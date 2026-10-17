@@ -1,11 +1,7 @@
 name: Check
-# Two jobs. `gate` (Linux, a few cents) runs on every PR and push: architecture, typecheck, lint
-# test style, baseline contracts, affected behavior tests and, when a change reaches it, the
-# harness gate (npm run verify:harness). `fast` (macOS) runs non-rig tests,
-# only where paid runners belong: PRs into main (dev -> main is opened by hand), pushes to main
-# and manual runs. A skipped job bills nothing. The rig suites run from rig.yml. This workflow
-# never listens to label events, so a label can never replace a code-event run with a skipped one.
-# No secrets; pull_request runs with the fork's read-only token.
+# Plan the complete Linux baseline + affected inventory once, then run independent shards.
+# `gate` and `fast` remain stable, fail-closed aggregate checks. macOS still belongs only to
+# main and owner dispatches; labels never replace a code-event run with a skipped one.
 on:
   pull_request:
     types: [opened, synchronize, reopened]
@@ -18,36 +14,27 @@ concurrency:
   group: check-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 jobs:
-  gate:
+  plan:
     runs-on: ubuntu-22.04
-    timeout-minutes: 30
+    timeout-minutes: 5
+    outputs:
+      unit_matrix: ${{ steps.plan.outputs.unit_matrix }}
+      seed_matrix: ${{ steps.plan.outputs.seed_matrix }}
+      harness_matrix: ${{ steps.plan.outputs.harness_matrix }}
+      harness_selected: ${{ steps.plan.outputs.harness_selected }}
+      fast_matrix: ${{ steps.plan.outputs.fast_matrix }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
-          # origin/dev lets check-test-style refuse allowlist additions against the merge base.
           fetch-depth: 0
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 24
           cache: npm
-      # Fast behavior tests use synthetic runtimes; no Electron download or native rebuild.
-      - name: Linux process sandbox prerequisites
-        run: sudo apt-get update && sudo apt-get install -y bubblewrap socat ripgrep
       - run: npm ci --ignore-scripts
-      # --ignore-scripts skips postinstall, which patches sandbox-runtime's executable lookup.
-      - name: Patch the sandbox runtime as postinstall does
-        run: node --input-type=module -e "await (await import('./scripts/patch-sandbox-runtime.mjs')).patchSandboxRuntime()"
-      - run: npm run verify:architecture
-      - run: npm run typecheck
-      - run: npm run lint
-      - run: node scripts/check-test-style.ts
-      # Public cases only; `--with-holdouts` is for the owner's machine and never runs in CI.
-      - name: Eval case isolation
-        run: node scripts/evals/check-isolation.ts
-      - name: Baseline behavior contracts
-        run: node scripts/test.mjs tests/conformance/seed-upgrade.test.ts tests/conformance/child-env.test.ts tests/conformance/words.test.ts tests/conformance/check-grammar.test.ts
-      - name: Change base
+      - name: Select and partition the complete test inventory
+        id: plan
         env:
           STUDIO_TEST_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
         run: |
@@ -58,36 +45,182 @@ jobs:
               STUDIO_TEST_BASE=$(git hash-object -t tree /dev/null)
             fi
           fi
-          echo "STUDIO_TEST_BASE=$STUDIO_TEST_BASE" >> "$GITHUB_ENV"
-      - name: Affected behavior tests
-        run: node scripts/affected-tests.mjs --tier L1 --run --base "$STUDIO_TEST_BASE"
-      # The harness's own behavior (harness-incidents and the scoreboard) before a loop or seed
-      # change merges. They boot the rig, so the selector files them under L3; run them here only
-      # when the change reaches them.
-      - name: Harness behavior gate
-        run: |
-          if node scripts/affected-tests.mjs --tier L3 --json --base "$STUDIO_TEST_BASE" | node scripts/harness-gate-selected.mjs; then
-            npm run verify:harness
-          else
-            echo "No change reaches the harness gate."
-          fi
-  fast:
-    if: github.event_name == 'workflow_dispatch' || github.base_ref == 'main' || github.ref == 'refs/heads/main'
-    runs-on: macos-26
-    timeout-minutes: 30
+          node scripts/ci-test-plan.mjs plan --base "$STUDIO_TEST_BASE" --output .studio-dev/ci/plan.json --github-output "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: check-test-plan
+          path: .studio-dev/ci/plan.json
+          include-hidden-files: true
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 7
+  static:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
-          # origin/dev lets check-test-style refuse allowlist additions against the merge base.
+          # Test-style additions are checked against the merge base with origin/dev.
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: npm run verify:architecture
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: node scripts/check-test-style.ts
+      # Public cases only; --with-holdouts never runs in CI.
+      - name: Eval case isolation
+        run: node scripts/evals/check-isolation.ts
+  unit:
+    needs: plan
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.unit_matrix) }}
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+          cache: npm
+      - name: Linux process sandbox prerequisites
+        run: sudo apt-get update && sudo apt-get install -y bubblewrap socat ripgrep
+      - run: npm ci --ignore-scripts
+      - name: Patch the sandbox runtime as postinstall does
+        run: node --input-type=module -e "await (await import('./scripts/patch-sandbox-runtime.mjs')).patchSandboxRuntime()"
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: check-test-plan
+          path: .studio-dev/ci
+      - name: Baseline and affected behavior tests
+        env:
+          SHARD: ${{ matrix.shard }}
+        run: node scripts/ci-test-plan.mjs run --plan .studio-dev/ci/plan.json --group unit --shard "$SHARD"
+  harness:
+    needs: plan
+    if: needs.plan.outputs.harness_selected == 'true'
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.harness_matrix) }}
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+          cache: npm
+      - name: Linux process sandbox prerequisites
+        run: sudo apt-get update && sudo apt-get install -y bubblewrap socat ripgrep
+      - run: npm ci --ignore-scripts
+      - name: Patch the sandbox runtime as postinstall does
+        run: node --input-type=module -e "await (await import('./scripts/patch-sandbox-runtime.mjs')).patchSandboxRuntime()"
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: check-test-plan
+          path: .studio-dev/ci
+      - name: Selected harness behavior gate
+        env:
+          SHARD: ${{ matrix.shard }}
+        run: node scripts/ci-test-plan.mjs run --plan .studio-dev/ci/plan.json --group harness --shard "$SHARD"
+  seed:
+    needs: plan
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.seed_matrix) }}
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+          cache: npm
+      - name: Linux process sandbox prerequisites
+        run: sudo apt-get update && sudo apt-get install -y bubblewrap socat ripgrep
+      - run: npm ci --ignore-scripts
+      - name: Patch the sandbox runtime as postinstall does
+        run: node --input-type=module -e "await (await import('./scripts/patch-sandbox-runtime.mjs')).patchSandboxRuntime()"
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: check-test-plan
+          path: .studio-dev/ci
+      - name: Mandatory seed upgrade contracts
+        env:
+          SHARD: ${{ matrix.shard }}
+        run: node scripts/ci-test-plan.mjs run --plan .studio-dev/ci/plan.json --group seed --shard "$SHARD"
+  gate:
+    if: always()
+    needs: [plan, static, unit, seed, harness]
+    runs-on: ubuntu-22.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Require every selected Linux check
+        env:
+          STUDIO_CI_NEEDS: ${{ toJSON(needs) }}
+        run: node scripts/ci-check-result.mjs gate
+  fast-tests:
+    needs: plan
+    if: github.event_name == 'workflow_dispatch' || github.base_ref == 'main' || github.ref == 'refs/heads/main'
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.fast_matrix) }}
+    runs-on: macos-26
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
           fetch-depth: 0
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 24
           cache: npm
       - run: npm ci
-      - run: npm run verify:architecture
-      - run: npm run typecheck
-      - run: npm run lint
-      - run: node scripts/check-test-style.ts
-      - run: node scripts/test.mjs --group fast
+      # Retain the macOS static gates once, alongside the first test shard.
+      - if: matrix.shard == 1
+        run: npm run verify:architecture
+      - if: matrix.shard == 1
+        run: npm run typecheck
+      - if: matrix.shard == 1
+        run: npm run lint
+      - if: matrix.shard == 1
+        run: node scripts/check-test-style.ts
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: check-test-plan
+          path: .studio-dev/ci
+      - name: Complete macOS fast inventory shard
+        env:
+          SHARD: ${{ matrix.shard }}
+        run: node scripts/ci-test-plan.mjs run --plan .studio-dev/ci/plan.json --group fast --shard "$SHARD"
+  fast:
+    if: always() && (github.event_name == 'workflow_dispatch' || github.base_ref == 'main' || github.ref == 'refs/heads/main')
+    needs: [plan, fast-tests]
+    runs-on: ubuntu-22.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Require every macOS fast shard
+        env:
+          STUDIO_CI_NEEDS: ${{ toJSON(needs) }}
+        run: node scripts/ci-check-result.mjs fast

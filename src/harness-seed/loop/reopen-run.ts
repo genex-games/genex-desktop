@@ -13,7 +13,9 @@
  * coordinator is told, and its continue_build reopens the build instead of handing the work to one
  * builder turn (`finishedLoopRun`), with the models the build was made with. A finished build no Loop
  * can go on from — no lead seated, a coordinator on a model without sessions, a kept older part — is
- * answered as with Loop off, and the chat says so once (`firstLoopUnused`).
+ * answered as with Loop off, and the chat says so once (`firstLoopUnused`). A game built in Unreal is
+ * neither: its finished Unreal Loop is never reopened, and the person's Loop message after it may
+ * start the next one (chat-dispatch.ts `startsNextUnrealLoop`).
  *
  * chat-dispatch.ts offers it only when every part it depends on says so (`servesReopen`): a seed
  * upgrade keeps a part the agent edited before, which would plan on the commission's model, bridge
@@ -29,6 +31,8 @@ import { HostMethod } from "./host-methods.ts";
 import { runUnderWay } from "./live-chat.ts";
 import { RoleKey, roleEngine, withRoles } from "./model-roles.ts";
 import { MESSAGE, REOPEN_RUN, reopenPromise } from "./reopen-run-prompts.ts";
+import { OPEN_LOOP_REFUSAL } from "./open-loop-prompts.ts";
+import { kindUnknown, LoopProfile, loopProfileOf } from "./folder-facts.ts";
 import { EventKind, RunEvent, RunState } from "./run-events.ts";
 import { latestRun } from "./run-inbox.ts";
 import { readJournal, writeJournal } from "./run-journal.ts";
@@ -82,6 +86,9 @@ export async function finishedLoopRun(
 ): Promise<AfterLoopRun | null> {
   if (run?.state !== RunState.Finished || !run.runId) return null;
   const journal = await readJournal(host, threadId, run.runId);
+  // A Loop that worked in the game folder itself (an open Loop) has no copy to go on from: the next
+  // Loop message starts a new one (chat-dispatch.ts `startsNextOpenLoop`).
+  if (journal?.director?.open) return null;
   if (typeof journal?.director?.lead?.chatSession !== "boolean") return null;
   return {
     runId: run.runId,
@@ -281,6 +288,11 @@ export async function reopenAfterReply(
   try {
     const journal = await readJournal(host, threadId, loopRun.runId);
     if (!journal?.run || !journal.director) throw new Error(MESSAGE.noJournal);
+    // A Loop that worked in the game folder itself has no copy to go on from, on any path that reopens.
+    if (journal.director.open) throw new Error(OPEN_LOOP_REFUSAL.notReopenable);
+    // A web Loop's build goes on only where the folder still reads as a web game: refused before any promise.
+    const elsewhere = folderRefusal(await folderNow(host, String(journal.run.project)));
+    if (elsewhere) throw new Error(elsewhere);
     const busy = await runUnderWay(studio, threadId, String(journal.run.project));
     if (busy) throw new Error(MESSAGE.alreadyBuilding(String(busy.run.project)));
     // Stop while that pass was waited out was for this build too.
@@ -307,6 +319,43 @@ export async function reopenAfterReply(
   } catch (err: unknown) {
     await tell(host, threadId, { type: EventKind.Error, message: MESSAGE.notReopened(errorWords(err)) });
   }
+}
+
+/** How a finished web Loop's folder reads now, for its reopen. */
+const FolderNow = {
+  Web: "web",
+  /** It reads, from facts Genex read, as another kind of project. */
+  Elsewhere: "elsewhere",
+  /** Genex can't read it, or it holds files of a kind Genex doesn't know: neither a web game nor another kind. */
+  Unknown: "unknown",
+  /** The list of projects could not be read. */
+  Unlisted: "unlisted",
+} as const;
+type FolderNow = (typeof FolderNow)[keyof typeof FolderNow];
+
+/**
+ * How the game's folder reads now (`FolderNow`): a list the host refused to give is no answer; a game
+ * the list doesn't hold is read as a web game, as nothing says otherwise.
+ */
+async function folderNow(host: Host, project: string): Promise<FolderNow> {
+  let listed: unknown;
+  try {
+    listed = await host.call(HostMethod.GameList, {});
+  } catch {
+    return FolderNow.Unlisted;
+  }
+  const game = Array.isArray(listed) ? listed.find((one) => one.name === project) : undefined;
+  if (!game) return FolderNow.Web;
+  if (kindUnknown(game)) return FolderNow.Unknown;
+  return loopProfileOf(game) === LoopProfile.Web ? FolderNow.Web : FolderNow.Elsewhere;
+}
+
+/** Why a finished web Loop's build can't go on in its folder as it reads now, or null when it can. */
+function folderRefusal(folder: FolderNow): string | null {
+  if (folder === FolderNow.Elsewhere) return OPEN_LOOP_REFUSAL.webBuildElsewhere;
+  if (folder === FolderNow.Unknown) return OPEN_LOOP_REFUSAL.folderUnknown;
+  if (folder === FolderNow.Unlisted) return OPEN_LOOP_REFUSAL.gamesUnreadable;
+  return null;
 }
 
 /**

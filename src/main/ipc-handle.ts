@@ -32,9 +32,17 @@ export type IpcHandler<C extends StudioInvokeChannel> = (
 ) => StudioInvokeResult<C> | Promise<StudioInvokeResult<C>>;
 
 // Plugin panels, connectors and terminals may run arbitrary local programs, and a chat's permission
-// mode and answers say what Claude may do on this Mac; only Studio's own main frame may reach
+// mode and answers say what Claude may do on this Mac; a job's Stop ends a
+// process and Open Privacy settings opens System Settings. Only Studio's own main frame may reach
 // them, never a plugin page or a game's frame.
-const STUDIO_UI_ONLY = ["studio:plugins.", "studio:mcp.", "studio:terminal.", "studio:permissions."];
+const STUDIO_UI_ONLY = [
+  "studio:plugins.",
+  "studio:mcp.",
+  "studio:terminal.",
+  "studio:permissions.",
+  "studio:jobs.",
+  "studio:app-look.",
+];
 
 /**
  * The `handle(channel, fn)` main registers every IPC channel through. Each call is refused unless a

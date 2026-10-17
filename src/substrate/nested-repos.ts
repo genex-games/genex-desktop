@@ -4,14 +4,19 @@
  * makes such a repository part of the folder's history, and the `.gitignore` rules the studio
  * needs before it commits anything there.
  */
-import { readdir, readFile, rename, writeFile } from "node:fs/promises";
+import { lstat, readdir, rename } from "node:fs/promises";
 import path from "node:path";
-import { pathExists } from "./fsx.ts";
+import { saysIgnoreLine } from "../shared/project-workspace.ts";
+import { pathExists, readRegularFile, writeFileNoFollow } from "./fsx.ts";
 import { isScannedChild } from "./project-shape.ts";
 import { git, gitOrNull } from "./snapshots.ts";
 
 /** Where a nested repository's own history is kept once the studio versions its files. */
 export const NESTED_BACKUP = ".git.studio-backup";
+
+/** The ignore file Genex tops up, and the most of it read (a larger one is left alone). */
+const IGNORE_FILE = ".gitignore";
+const IGNORE_FILE_MAX_BYTES = 1024 * 1024;
 
 /** git's tree-entry mode for a gitlink: a nested repository recorded as a pointer. */
 const GITLINK_MODE = "160000";
@@ -64,19 +69,77 @@ const IGNORE_RULES: Array<{ line: string; already: RegExp }> = [
   { line: ".playwright-cli/", already: /^\/?\.playwright-cli\/?$/m },
 ];
 
-/** Which of those rules a folder's `.gitignore` is still missing. */
-export function missingIgnoreRules(current: string | null): string[] {
-  return IGNORE_RULES.filter((rule) => current === null || !rule.already.test(current)).map((rule) => rule.line);
+/**
+ * Which of `lines` (the lines of the facts a folder holds, `shared/project-workspace.ts`) its
+ * `.gitignore` is still missing, each once. A path the file already mentions in any form, or makes
+ * an exception of (`saysIgnoreLine`), is not missing: the rules the person has are theirs.
+ */
+function missingFactLines(current: string | null, lines: readonly string[]): string[] {
+  const present = (current ?? "").split(/\r?\n/);
+  const missing: string[] = [];
+  for (const line of lines) {
+    const said = [...present, ...missing].some((other) => saysIgnoreLine(other, line));
+    if (!said) missing.push(line);
+  }
+  return missing;
 }
 
-/** Top up a folder's `.gitignore` with the rules the studio needs; what the user wrote is kept. */
-export async function ensureIgnoreRules(dir: string, header = ""): Promise<void> {
-  const file = path.join(dir, ".gitignore");
-  const current = await readFile(file, "utf8").catch(() => null);
-  const missing = missingIgnoreRules(current);
+/** Which of those rules a folder's `.gitignore` is still missing, then which of `extra` (`missingFactLines`). */
+export function missingIgnoreRules(current: string | null, extra: readonly string[] = []): string[] {
+  const generic = IGNORE_RULES.filter((rule) => current === null || !rule.already.test(current)).map(
+    (rule) => rule.line,
+  );
+  return [...generic, ...missingFactLines(current, extra)];
+}
+
+/**
+ * A folder's `.gitignore` as Genex may top it up: its text, `null` when there is none, or undefined
+ * when it is left alone (a link, a folder or anything but a plain file, or one past its cap). It
+ * is never read through a link.
+ */
+async function ownIgnoreFile(dir: string): Promise<string | null | undefined> {
+  const file = path.join(dir, IGNORE_FILE);
+  const info = await lstat(file).catch(() => null);
+  if (!info) return null;
+  if (!info.isFile()) return undefined;
+  return readRegularFile(file, IGNORE_FILE_MAX_BYTES).then(
+    (bytes) => bytes.toString("utf8"),
+    () => undefined,
+  );
+}
+
+/** The lines topping up a folder's `.gitignore` would add (`ensureIgnoreRules`); none for one left alone. */
+export async function ignoreRulesToWrite(dir: string, extra: readonly string[] = []): Promise<string[]> {
+  const current = await ownIgnoreFile(dir);
+  return current === undefined ? [] : missingIgnoreRules(current, extra);
+}
+
+/**
+ * Top up a folder's `.gitignore` with the rules the studio needs and `extra` (the facts' lines);
+ * what the user wrote is kept. A `.gitignore` that is a link or no plain file is left alone, and
+ * nothing is ever written through a link.
+ */
+export async function ensureIgnoreRules(dir: string, header = "", extra: readonly string[] = []): Promise<void> {
+  const current = await ownIgnoreFile(dir);
+  if (current === undefined) return;
+  const missing = missingIgnoreRules(current, extra);
   if (missing.length === 0) return;
   const before = current === null ? header : `${current.replace(/\s*$/, "")}\n`;
-  await writeFile(file, `${before}${missing.join("\n")}\n`);
+  await writeFileNoFollow(path.join(dir, IGNORE_FILE), `${before}${missing.join("\n")}\n`);
+}
+
+/**
+ * Top up an existing `.gitignore` with the facts' `lines` alone, before a commit Genex makes: the
+ * generic rules were written when the folder was opened and are the person's to change since, so
+ * a line they removed, or a file they deleted, stays that way. A link is left alone.
+ */
+export async function ensureFactIgnoreRules(dir: string, lines: readonly string[]): Promise<void> {
+  if (lines.length === 0) return;
+  const current = await ownIgnoreFile(dir);
+  if (current === null || current === undefined) return;
+  const missing = missingFactLines(current, lines);
+  if (missing.length === 0) return;
+  await writeFileNoFollow(path.join(dir, IGNORE_FILE), `${current.replace(/\s*$/, "")}\n${missing.join("\n")}\n`);
 }
 
 /** Whether `rel` is one of the nested repositories or lies inside one. */

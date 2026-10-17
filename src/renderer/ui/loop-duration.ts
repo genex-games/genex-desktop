@@ -29,6 +29,19 @@ export function formatDuration(minutes: number): string {
   return h ? `${h} h` : `${m} m`;
 }
 
+/** A count with its unit, singular for one: "1 hour", "30 minutes". */
+function counted(count: number, unit: string): string {
+  return `${count} ${unit}${count === 1 ? "" : "s"}`;
+}
+
+/** The limit spelled out for the Mode caption: 30 → "30 minutes", 105 → "1 hour 45 minutes". */
+export function limitWords(minutes: number): string {
+  const h = Math.floor(minutes / MINUTES_PER_HOUR);
+  const m = Math.round(minutes % MINUTES_PER_HOUR);
+  if (h && m) return `${counted(h, "hour")} ${counted(m, "minute")}`;
+  return h ? counted(h, "hour") : counted(m, "minute");
+}
+
 /** The Mode button's compact limit: 150 → "2h30", 120 → "2h", 30 → "30m". */
 export function shortDuration(minutes: number): string {
   const h = Math.floor(minutes / MINUTES_PER_HOUR);

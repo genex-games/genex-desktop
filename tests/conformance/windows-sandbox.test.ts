@@ -614,18 +614,21 @@ function withDomains(domains: string[]): SandboxRuntimeConfig {
   return { ...BASE_CONFIG, network: { ...BASE_CONFIG.network, allowedDomains: domains } };
 }
 
+/** A sandbox-runtime error as srt-win's spawn chokepoint raises it: its code and first CLI arg. */
+type InitializeFailure = { code: string; subcommand: string };
+
 function fakeSessionRuntime() {
   const calls: string[] = [];
   const configs: SandboxRuntimeConfig[] = [];
   let gate: Promise<void> | null = null;
-  const failures: string[] = [];
+  const failures: InitializeFailure[] = [];
   const runtime = {
     initialize: async (config: SandboxRuntimeConfig) => {
       calls.push("initialize");
       configs.push(config);
       if (gate) await gate;
-      const code = failures.shift();
-      if (code) throw Object.assign(new Error(`srt-win failed: ${code}`), { code });
+      const failure = failures.shift();
+      if (failure) throw Object.assign(new Error(`srt-win ${failure.subcommand} failed: ${failure.code}`), failure);
     },
     reset: async () => {
       calls.push("reset");
@@ -650,9 +653,13 @@ function fakeSessionRuntime() {
         open();
       };
     },
-    /** The next initializes fail with these sandbox-runtime codes, in order. */
+    /** The next initializes fail with these sandbox-runtime codes, in order, from the egress check. */
     failInitialize: (...codes: string[]) => {
-      failures.push(...codes);
+      failures.push(...codes.map((code) => ({ code, subcommand: "wfp" })));
+    },
+    /** The next initializes fail with this code from the given srt-win subcommand. */
+    failInitializeIn: (subcommand: string, ...codes: string[]) => {
+      failures.push(...codes.map((code) => ({ code, subcommand })));
     },
   };
 }
@@ -868,7 +875,17 @@ describe("the grant session", () => {
     assert.deepEqual(s.runtime.last().filesystem.allowWrite, [WS]);
   });
 
-  it("an srt-win timeout is tried again, up to three attempts in all", async () => {
+  it("an srt-win timeout in an ACL step is not tried again", async () => {
+    const s = session();
+    s.runtime.failInitializeIn("acl", "srt_win_timeout");
+    await assert.rejects(
+      s.session.join({}, { grants: { write: [GAMES], read: [] }, config: BASE_CONFIG }),
+      /srt_win_timeout/,
+    );
+    assert.deepEqual(s.runtime.calls, ["initialize"]);
+  });
+
+  it("an srt-win timeout in the egress check is tried again, up to three attempts in all", async () => {
     const s = session();
     s.runtime.failInitialize("srt_win_timeout", "srt_win_timeout");
     await s.session.join({}, { grants: { write: [GAMES], read: [] }, config: BASE_CONFIG });

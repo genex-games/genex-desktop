@@ -16,6 +16,7 @@ import type {
   StillExposure,
   StillMimeType,
 } from "../shared/preview-contract.ts";
+import type { PluginClipMimeType } from "../shared/plugins.ts";
 
 export type { CaptureSurface, CropRect, PreviewConsoleEntry, PreviewPixelStats, PreviewPortStatus };
 
@@ -41,6 +42,29 @@ export interface PreviewStill {
 
 /** A still, or the size of the smallest encoding that was still over the byte limit. */
 export type PreviewStillAnswer = { still: PreviewStill } | { tooLarge: { smallestBytes: number } };
+
+/** What a clip is asked for: how long and how fast to record, its byte limit and its poster's long side. */
+export interface PreviewClipRequest {
+  seconds: number;
+  fps: number;
+  maxBytes: number;
+  posterMaxPx: number;
+}
+
+/** One clip as a port recorded it: the video, the canvas's size, how long it ran, a JPEG poster and its motion. */
+export interface PreviewClip {
+  video: Buffer;
+  mimeType: PluginClipMimeType;
+  width: number;
+  height: number;
+  durationMs: number;
+  poster: Buffer;
+  /** 0–1: the share of sampled frame pairs that differ visibly. */
+  motion: number;
+}
+
+/** A clip, or the size of the smallest recording that was still over the byte limit. */
+export type PreviewClipAnswer = { clip: PreviewClip } | { tooLarge: { smallestBytes: number } };
 
 /**
  * What the studio's page shim is told when it is served onto a game's page (M4.1). The values
@@ -177,6 +201,12 @@ export interface PreviewPort {
    * ports compile without it; a caller that finds none takes no still.
    */
   still?(request: PreviewStillRequest): Promise<PreviewStillAnswer>;
+  /**
+   * Optional: `seconds` of the canvas the still reads, recorded in real time as the page draws it,
+   * for a plugin's clip. FakePreview and older ports compile without it; a caller that finds none
+   * records no clip.
+   */
+  clip?(request: PreviewClipRequest): Promise<PreviewClipAnswer>;
   /** Optional: a fresh capture cropped to `region` (pixels) and scaled up — the computer tool's zoom. */
   zoom?(
     region: [number, number, number, number],

@@ -14,6 +14,8 @@ import path from "node:path";
 import { execFileSync, spawnSync } from "node:child_process";
 import { pathToFileURL } from "node:url";
 import { packageBin } from "./package-bin.ts";
+import { FAST_TEST_CONCURRENCY, runTestBatch } from "./test-runtime.mjs";
+export { TEST_PRELOAD, testEnv } from "./test-runtime.mjs";
 
 export const RIG_HELPER = "tests/helpers/studio-rig.ts";
 export const HARNESS_GATE = ["tests/conformance/harness-incidents.test.ts", "tests/conformance/scoreboard.test.ts"];
@@ -289,11 +291,12 @@ export function changedFiles(root, { base, staged = false } = {}) {
       .split("\n")
       .map((s) => s.trim())
       .filter(Boolean);
-  if (staged) return lines(git(root, ["diff", "--cached", "--name-only", "--diff-filter=ACMRD"]));
+  // A rename changes both names: old-path importers and global runner policies must still be selected.
+  if (staged) return lines(git(root, ["diff", "--cached", "--no-renames", "--name-only", "--diff-filter=ACMRD"]));
   // A symlinked node_modules (a worktree sharing its checkout's install) is not ignored by `node_modules/`.
   return [
     ...new Set([
-      ...lines(git(root, ["diff", "--name-only", base ?? defaultBase(root)])),
+      ...lines(git(root, ["diff", "--no-renames", "--name-only", base ?? defaultBase(root)])),
       ...lines(git(root, ["ls-files", "-o", "--exclude-standard"])),
     ]),
   ]
@@ -377,57 +380,18 @@ export function changedFromArgs(root, opts) {
   ].sort();
 }
 
-// `git rev-parse --local-env-vars`: what git exports to a hook to pin it to one repository and index
-// (absolute paths in a linked worktree). A test that builds its own fixture repo would otherwise commit
-// into, and overwrite the index of, the checkout being committed.
-const GIT_REPO_ENV = [
-  "GIT_ALTERNATE_OBJECT_DIRECTORIES",
-  "GIT_CONFIG",
-  "GIT_CONFIG_PARAMETERS",
-  "GIT_CONFIG_COUNT",
-  "GIT_OBJECT_DIRECTORY",
-  "GIT_DIR",
-  "GIT_WORK_TREE",
-  "GIT_IMPLICIT_WORK_TREE",
-  "GIT_GRAFT_FILE",
-  "GIT_INDEX_FILE",
-  "GIT_NO_REPLACE_OBJECTS",
-  "GIT_REPLACE_REF_BASE",
-  "GIT_PREFIX",
-  "GIT_SHALLOW_FILE",
-  "GIT_COMMON_DIR",
-];
-/** The environment a spawned test run gets: no repository pinning, and not nested in a parent `node --test`. */
-export function testEnv(env = process.env) {
-  // Under a parent `node --test`, NODE_TEST_CONTEXT would turn this run into a silent subtest that exits 0.
-  const drop = new Set(["NODE_TEST_CONTEXT", ...GIT_REPO_ENV]);
-  return Object.fromEntries(
-    Object.entries(env).filter(
-      ([key]) => !drop.has(key) && !key.startsWith("GIT_CONFIG_KEY_") && !key.startsWith("GIT_CONFIG_VALUE_"),
-    ),
-  );
-}
-
-/**
- * Loaded into every test file's process: a file that leaves a child process running fails by name
- * instead of holding its `node --test` slot for good (tests/helpers/leftover-children.ts).
- */
-export const TEST_PRELOAD = ["--import", new URL("../tests/helpers/leftover-children.ts", import.meta.url).href];
-
-/** Pure tests run with Node's default parallelism; rig files one at a time. */
+/** Pure tests use bounded file parallelism; rig files run one at a time. */
 export function runSelection(root, { L1, L3 }, tier, parentEnv = process.env, stdio = "inherit") {
   const batches = [];
-  if (tier !== "L3" && L1.length) batches.push([...TEST_PRELOAD, "--test", ...L1]);
-  if (tier !== "L1" && L3.length) batches.push([...TEST_PRELOAD, "--test", "--test-concurrency=1", ...L3]);
+  if (tier !== "L3" && L1.length) batches.push({ files: L1, concurrency: FAST_TEST_CONCURRENCY });
+  if (tier !== "L1" && L3.length) batches.push({ files: L3, concurrency: 1 });
   if (!batches.length) {
     console.log("affected-tests: nothing to run for this change");
     return 0;
   }
-  const env = testEnv(parentEnv);
-  for (const args of batches) {
-    const result = spawnSync(process.execPath, args, { cwd: root, stdio, env });
-    if (result.error) console.error(result.error.message);
-    if (result.status !== 0) return result.status ?? 1;
+  for (const { files, concurrency } of batches) {
+    const status = runTestBatch(root, files, { concurrency, env: parentEnv, stdio });
+    if (status !== 0) return status;
   }
   return 0;
 }

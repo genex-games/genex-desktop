@@ -233,14 +233,24 @@ describe("removeTree", () => {
 
   it("on Windows, removes a folder another process works in once that process lets go", {
     skip: process.platform !== "win32" && "Windows refuses to remove a folder a process holds open",
-  }, async () => {
+  }, async (t) => {
     const dir = path.join(await tmpDir("remove-tree-"), "held");
     await mkdir(dir);
     await writeFile(path.join(dir, "file.txt"), "x");
     // A process's working folder is held open without delete sharing, as a folder another
-    // process is walking is: Windows refuses to remove it until the process lets go.
-    const holder = spawn(process.execPath, ["-e", "process.stdin.resume()"], { cwd: dir, stdio: "pipe" });
-    await once(holder, "spawn");
+    // process is walking is: Windows refuses to remove it until the process lets go. The child
+    // opens that folder as it starts, after `spawn` fires, so the folder is held only once the
+    // child runs and says so.
+    const holder = spawn(process.execPath, ["-e", "process.stdout.write('ready'); process.stdin.resume()"], {
+      cwd: dir,
+      stdio: "pipe",
+    });
+    t.after(async () => {
+      if (holder.exitCode !== null || holder.signalCode !== null) return;
+      holder.kill();
+      await once(holder, "exit");
+    });
+    await once(holder.stdout, "data");
     await assert.rejects(rm(dir, { recursive: true, force: true }), { code: "EBUSY" });
     await removeTree(dir, {
       sleep: async () => {

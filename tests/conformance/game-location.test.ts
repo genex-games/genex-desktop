@@ -56,7 +56,8 @@ describe("creating a game in a chosen folder", () => {
     assert.equal(game.dir, path.join(await realpath(parent), "Space Pong"));
     assert.equal(game.title, "Space Pong");
     assert.equal(game.library, false);
-    assert.match(await readFile(path.join(game.dir, "index.html"), "utf8"), /Space Pong/);
+    // New game makes an empty folder: its record carries the title, and no starter page is written.
+    assert.equal(await readFile(path.join(game.dir, "index.html"), "utf8").catch(() => null), null);
     assert.equal(JSON.parse(await readFile(path.join(game.dir, "studio.json"), "utf8")).title, "Space Pong");
     assert.deepEqual((await readdir(parent)).sort(), ["Space Pong", "notes.txt", "some-old-game"]);
     assert.equal(await readFile(path.join(parent, "some-old-game", "index.html"), "utf8"), "<title>theirs</title>");

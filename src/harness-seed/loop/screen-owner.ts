@@ -11,12 +11,19 @@
  * sibling can never shadow these names; it imports only a type from review.ts.
  */
 import type { Violation } from "./review.ts";
+import { HUD_LAYOUT_CHECKS } from "./hud-layout.ts";
 
 /** The critic a part is reviewed by when it is the screen's (judge.ts `CRITIC_PRINCIPLES` key). */
 export const SCREEN_CRITIC = "screen";
 
 /** A finding's category: a part drew on the screen another part owns. */
 export const SCREEN_OWNER_CATEGORY = "screen-owner";
+
+/** Take the HUD's layout checks off a part that does not draw it: it could never pass them by its own work. */
+function dropHudLayout(spec: ScreenSpec): void {
+  if (!Array.isArray(spec.checks)) return;
+  spec.checks = spec.checks.filter((check: { id?: unknown }) => !HUD_LAYOUT_CHECKS.includes(String(check?.id)));
+}
 
 /**
  * A line that draws on or changes the contract HUD, on `__studio.hud` or a handle to it: the
@@ -94,7 +101,8 @@ export function runningScreenOwner(running: readonly ScreenPart[]): string | nul
 /**
  * Tell every part of the run who owns the screen, the newest owner winning: a part started later
  * learns the owner, and an owner started later is learnt by the parts already running (the loop
- * reads its spec live, so their next review applies it). A part that `replaces` the owner (its
+ * reads its spec live, so their next review applies it) — and they are no longer held to the
+ * HUD's layout (`HUD_LAYOUT_CHECKS`), which is the owner's. A part that `replaces` the owner (its
  * restart) owns the screen in its place, whether or not it was started with critic=screen.
  */
 export function linkScreenOwner(
@@ -105,7 +113,10 @@ export function linkScreenOwner(
   const restartsOwner = Boolean(replaces) && specs.some((each) => each.id === replaces && each.ownsScreen === true);
   if (restartsOwner) spec.ownsScreen = true;
   if (spec.ownsScreen === true) {
-    for (const each of specs) each.screenOwner = spec.id;
+    for (const each of specs) {
+      each.screenOwner = spec.id;
+      if (each !== spec) dropHudLayout(each);
+    }
     spec.screenOwner = spec.id;
     return;
   }

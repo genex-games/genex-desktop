@@ -63,7 +63,8 @@ interface CodexLoginDependencies {
   probe?: (home: string, binary: string) => Promise<CodexAuthStatus>;
   openExternal: (url: string) => Promise<unknown>;
   onState: (state: CodexLoginState) => void;
-  onConnected: () => Promise<unknown>;
+  /** The sign-in into `home` was confirmed. */
+  onConnected: (home: string) => Promise<unknown>;
   timeoutMs?: number;
   /** The operating system the CLI runs on; the host's by default. */
   platform?: NodeJS.Platform;
@@ -217,7 +218,7 @@ export class CodexLoginController {
       if (status.loggedIn !== true || status.method !== "chatgpt") {
         throw new Error(status.method === "api_key" ? MESSAGE.apiKeyLogin : MESSAGE.notVerified);
       }
-      await this.#deps.onConnected();
+      await this.#deps.onConnected(attempt.home);
       if (this.#attempt !== attempt || attempt.cancelled) return;
       this.#line(MESSAGE.connected);
       this.#update({ phase: "connected", deviceCode: undefined });

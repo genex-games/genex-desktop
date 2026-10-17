@@ -21,7 +21,9 @@ import { Markdown } from "../ui/Markdown.tsx";
 import { FileText } from "../ui/FileText.tsx";
 import { AssetResults } from "../chat/AssetResults.tsx";
 import type { AssetDeliveredPayload } from "../../shared/game-assets.ts";
+import type { LoopProfile } from "../../shared/project-facts.ts";
 import { Presence, type PresenceChild } from "../ui/Presence.tsx";
+import { webBuildShown } from "../web-build-shown.ts";
 
 /** How long a finished build's card keeps the place of a result that has not come yet. */
 const RESULT_WAIT_MS = 3 * SECOND_MS;
@@ -66,6 +68,8 @@ export interface MorningCardProps {
   landingLine?: string | null;
   /** what the studio itself took from the run — its own ledger's one line, when it had one */
   learned?: string | null;
+  /** how the Loop worked on its project (`run_finished.profile`), until its run summary says so too */
+  profile?: LoopProfile | null;
   project: string | null;
   /** the merged build, when the run left one that is not the live game */
   commit: string | null;
@@ -94,6 +98,7 @@ export function MorningCard({
   summary,
   landingLine,
   learned,
+  profile = null,
   project,
   commit,
   after,
@@ -120,6 +125,8 @@ export function MorningCard({
     summary,
     landingLine: landingLine ?? null,
     learned: learned ?? null,
+    // The close says how the Loop worked before its summary loads: an in-place Loop never promises Live meanwhile.
+    profile: outcome?.profile ?? profile,
   });
   const outcomeHasPlayback = Boolean(project && outcome?.head && outcome.head !== outcome.base);
   const actions = handedOff
@@ -135,7 +142,10 @@ export function MorningCard({
   const showLive = (): void => {
     // A landed build is already the game folder; loading it puts the stage back on the real
     // thing after a run in which a merged build may have been shown from a worktree.
-    if (project) void window.studio.loadPreview(project).catch((err) => onNotice?.(problemWords(err), ToastTone.Error));
+    if (project) {
+      webBuildShown(project);
+      void window.studio.loadPreview(project).catch((err) => onNotice?.(problemWords(err), ToastTone.Error));
+    }
     onShowLive?.();
   };
   const button = (action: MorningAction): JSX.Element | null => {
@@ -170,6 +180,7 @@ export function MorningCard({
         key={action}
         title="Load this build in the Live tab from a copy; your game folder stays as it is"
         onClick={() => {
+          webBuildShown(project);
           void window.studio.showBuild(project, commit).catch((err) => onNotice?.(problemWords(err), ToastTone.Error));
           onShowLive?.();
         }}
@@ -196,7 +207,10 @@ export function MorningCard({
               if (project && summary.head)
                 return window.studio
                   .showBuild(project, summary.head)
-                  .then(() => onShowLive?.())
+                  .then(() => {
+                    webBuildShown(project);
+                    onShowLive?.();
+                  })
                   .catch((error) => onNotice?.(String(error), ToastTone.Error));
             }}
           />

@@ -5,9 +5,11 @@ import { compareIds } from "./compare-ids.ts";
  * context and the harness read the log without them.
  */
 import { APPROVED_PLAN_HEADING } from "./composer.ts";
-import { CustomEvent, customRecord, DELEGATED_PREFIX } from "./custom-events.ts";
+import { withoutMentionContext } from "./prompt-mention.ts";
+import { CustomEvent, customPayload, customRecord, DELEGATED_PREFIX } from "./custom-events.ts";
 import { type EventEnvelope, EventKind } from "./event-log.ts";
 import { messageQueueState, QueueState, type QueuedMessage } from "./message-queue.ts";
+import { workerKeyOf } from "./run-graph-events.ts";
 import { isExecutionEvent, RUN_START_EVENTS } from "./run-state.ts";
 
 /** The marker a rewind appends to the chat it rewound. */
@@ -25,7 +27,8 @@ export interface ChatRewind {
   hide: string[];
   /**
    * Rows in the range that stay: each settles something begun before it (a message's answer, a
-   * turn, a build, a question), which would otherwise read as open for good. Absent on rewinds
+   * turn, a build, a question, a background job, a worker) or starts a job or a worker still
+   * running, which would otherwise read as open for good. Absent on rewinds
    * made before a rewind could cross a build.
    */
   keep?: string[];
@@ -198,12 +201,50 @@ export type RewindFiles =
       outsideUnknown: boolean;
       /** Changed files too large to have been saved: they stay as they are. */
       tooLarge: number;
+      /** Those files by path, present only when there are any. */
+      tooLargeFiles?: string[];
       /** Nested repositories keep their own history; their files stay as they are. */
       nested: string[];
     }
   | { state: "unchanged"; nested: string[] }
-  | { state: "unavailable"; reason: FilesStay }
+  /** `tooLargeFiles` names the changed files when they were all too large to save (`FilesStay.TooLarge`). */
+  | { state: "unavailable"; reason: FilesStay; tooLargeFiles?: string[] }
   | { state: "none" };
+/** What left files too large to save out: a chat checkpoint, or a rewind that left them as they were. */
+export const SkippedBy = {
+  Checkpoint: "checkpoint",
+  Rewind: "rewind",
+} as const;
+export type SkippedBy = (typeof SkippedBy)[keyof typeof SkippedBy];
+
+/** One file too large to save, and its size when it was reported (0 when it was gone). */
+export interface SkippedFile {
+  file: string;
+  bytes: number;
+}
+
+/**
+ * The `checkpoint_skipped` record: files too large to save, so Rewind cannot bring them back.
+ * Every field is optional: a partial record says nothing.
+ */
+export interface CheckpointSkippedPayload {
+  project?: string;
+  /** The queue id of the message whose checkpoint, or rewind, left them. */
+  messageId?: string;
+  by?: SkippedBy;
+  /** The files, largest first (at most `CHECKPOINT_SKIPPED_FILES_LISTED` of them). */
+  files?: SkippedFile[];
+  /** How many files were left in all, when more than `files` lists. */
+  total?: number;
+  /** A single file larger than this is never saved. */
+  fileLimitBytes?: number;
+  /** New or changed content one checkpoint saves at most; the largest files past it are left. */
+  changeLimitBytes?: number;
+}
+
+/** How many of the files a `checkpoint_skipped` record lists by name; `total` counts the rest. */
+export const CHECKPOINT_SKIPPED_FILES_LISTED = 50;
+
 export interface RewindPreview {
   files: RewindFiles;
   /** A build is running: confirming stops it first. */
@@ -222,6 +263,92 @@ export interface RewindResult {
   files: number | null;
   /** Waiting follow-ups that left with it and the pictures their composer had attached. */
   held: Array<{ messageId: string; pickedImages: number }>;
+  /** Game files came back: the rewind's line offers to bring the newer version back by this id. */
+  undo?: { rewindId: string };
+}
+
+/**
+ * A rewind's undo id: the name of the `rewound/` ref that keeps the game folder as it was just
+ * before that rewind (`main/chat-checkpoints.ts`): base-36 time, a dash, eight hex digits.
+ */
+const REWIND_ID = /^[0-9a-z]{1,16}-[0-9a-f]{8}$/;
+
+/** Is this a rewind's undo id the host may name a ref by? */
+export function isRewindId(value: unknown): value is string {
+  return typeof value === "string" && REWIND_ID.test(value);
+}
+
+/** The `conversation_rewind_undone` record: which rewind's newer version came back, and how many files. */
+export interface RewindUndonePayload {
+  rewindId?: string;
+  files?: number;
+}
+
+/** What bringing the newer version back did: how many game files changed. */
+export interface UndoRewindResult {
+  files: number;
+}
+
+/** Why the newer version a rewind replaced cannot come back. */
+export const UndoRewindRefusal = {
+  /** Not the chat's newest rewind, or one that put no files back. */
+  NotOffered: "not-offered",
+  AlreadyBack: "already-back",
+  MessageSent: "message-sent",
+  Busy: "busy",
+  /** HEAD moved since the rewind: a commit or a landed build. */
+  HistoryChanged: "history-changed",
+  /** The saved folder is no longer kept. */
+  Gone: "gone",
+} as const;
+export type UndoRewindRefusal = (typeof UndoRewindRefusal)[keyof typeof UndoRewindRefusal];
+
+const UNDO_REFUSAL_WORDS: Record<UndoRewindRefusal, string> = {
+  [UndoRewindRefusal.NotOffered]: "Only the latest rewind can bring the newer version back.",
+  [UndoRewindRefusal.AlreadyBack]: "The newer version is already back.",
+  [UndoRewindRefusal.MessageSent]: "A message was sent after the rewind, so the newer version can’t come back now.",
+  [UndoRewindRefusal.Busy]: "Wait for this chat to finish, or press Stop, before bringing the newer version back.",
+  [UndoRewindRefusal.HistoryChanged]:
+    "The game’s history changed since the rewind, so the newer version can’t come back now.",
+  [UndoRewindRefusal.Gone]: "The newer version is no longer saved.",
+};
+
+export function undoRewindRefusalWords(reason: UndoRewindRefusal): string {
+  return UNDO_REFUSAL_WORDS[reason];
+}
+
+/** The chat's newest rewind marker, by id, and the undo id it carries (if any). */
+function newestRewind(events: readonly EventEnvelope[]): { id: string; rewindId: string | undefined } | null {
+  let newest: { id: string; rewindId: string | undefined } | null = null;
+  for (const event of events) {
+    const marker = customPayload(event.data, CustomEvent.ConversationRewound);
+    if (marker && (!newest || compareIds(event.id, newest.id) > 0))
+      newest = { id: event.id, rewindId: marker.rewindId };
+  }
+  return newest;
+}
+
+/**
+ * Why the chat no longer offers to bring back the version this rewind replaced, or null while it
+ * does: only the chat's newest rewind, only one that put files back, only once, and only until a
+ * message is sent after it. The conversation stays rewound either way.
+ */
+export function undoRewindRefusal(events: readonly EventEnvelope[], rewindId: string): UndoRewindRefusal | null {
+  const undone = events.some(
+    (event) => customPayload(event.data, CustomEvent.ConversationRewindUndone)?.rewindId === rewindId,
+  );
+  if (undone) return UndoRewindRefusal.AlreadyBack;
+  const newest = newestRewind(events);
+  if (!newest || newest.rewindId !== rewindId) return UndoRewindRefusal.NotOffered;
+  const sentAfter = events.some((event) => compareIds(event.id, newest.id) > 0 && isUserBubble(event));
+  return sentAfter ? UndoRewindRefusal.MessageSent : null;
+}
+
+/** The rewind whose newer version the chat offers to bring back now, by its undo id; null for none. */
+export function offeredRewindUndo(events: readonly EventEnvelope[]): string | null {
+  const rewindId = newestRewind(events)?.rewindId;
+  if (!isRewindId(rewindId)) return null;
+  return undoRewindRefusal(events, rewindId) === null ? rewindId : null;
 }
 
 /** A follow-up waiting in the queue when the chat is rewound: it leaves too, and its words come back. */
@@ -258,10 +385,14 @@ export interface RewindBuild {
 }
 export type RewindPlan = ({ ok: true } & PlannedRewind) | { ok: false; reason: RewindRefusal };
 
-/** An approved plan is sent as the request, the plan and a closing line; the request is the user's. */
+/**
+ * An approved plan is sent as the request, the plan and a closing line, and a message with @ tags
+ * carries lines about them after the words; the request is the user's.
+ */
 export const requestOf = (text: string): string => {
-  const at = text.indexOf(APPROVED_PLAN_HEADING);
-  return at < 0 ? text : text.slice(0, at);
+  const words = withoutMentionContext(text);
+  const at = words.indexOf(APPROVED_PLAN_HEADING);
+  return at < 0 ? words : words.slice(0, at);
 };
 
 /** What a queued message's saved action says about the pictures it carried. */
@@ -432,14 +563,46 @@ interface Begun {
   turns: Set<string>;
   runs: Set<string>;
   questions: Set<string>;
+  /** Jobs and workers started in the range so far, by `lingeringKey`. */
+  lingering: Set<string>;
+  /** Every job and worker the log records an end for, in the range or not. */
+  ended: ReadonlySet<string>;
+}
+
+/** The records that end what goes on past its turn: a job's end, a worker's end or verdict. */
+const LINGERING_ENDS: ReadonlySet<string> = new Set<string>([CustomEvent.JobEnded, CustomEvent.WorkerFinished]);
+
+/** A job row's or a worker row's key (`job:<id>`, `worker:<graph and id>`), or null for any other row. */
+function lingeringKey(eventType: string, payload: Record<string, unknown>): string | null {
+  if (eventType === CustomEvent.JobStarted || eventType === CustomEvent.JobEnded)
+    return typeof payload.jobId === "string" ? `job:${payload.jobId}` : null;
+  if (eventType !== CustomEvent.WorkerStarted && eventType !== CustomEvent.WorkerFinished) return null;
+  const worker = workerKeyOf(payload);
+  return worker ? `worker:${worker}` : null;
+}
+
+/** The jobs and workers the log records an end for. */
+function endedLingering(events: readonly EventEnvelope[]): Set<string> {
+  const ended = new Set<string>();
+  for (const event of events) {
+    const custom = customRecord(event.data);
+    const key =
+      custom && LINGERING_ENDS.has(custom.event_type) ? lingeringKey(custom.event_type, custom.payload) : null;
+    if (key) ended.add(key);
+  }
+  return ended;
 }
 
 /**
  * The rows of the range that settle something begun before it, and stay: the queue records of
  * messages that stay (the answer a withdrawn message joined), the end of a turn begun before it,
- * a build's lifecycle from before it (the close a rewind's Stop wrote), and the answer to a
- * question asked before it. Withdrawn, each would read as open for good: a message the harness
- * answers again, a turn still running, a build running forever, a card waiting on nobody.
+ * a build's lifecycle from before it (the close a rewind's Stop wrote), the answer to a question
+ * asked before it, and a background job's or a worker's end whose start stays. Withdrawn, each
+ * would read as open for good: a message the harness answers again, a turn still running, a build
+ * running forever, a card waiting on nobody, a job's Stop on work that ended, a worker still
+ * working. The start of a job that is still running stays too: a rewind stops only a build's jobs
+ * (and waits for their ends), so any other job goes on, and withdrawn it would run with no line
+ * and no Stop; a worker still working keeps its line the same way.
  */
 function keptInRange(
   events: readonly EventEnvelope[],
@@ -447,7 +610,13 @@ function keptInRange(
   from: string,
   leaving: ReadonlySet<string>,
 ): string[] {
-  const begun: Begun = { turns: new Set(), runs: new Set(), questions: new Set() };
+  const begun: Begun = {
+    turns: new Set(),
+    runs: new Set(),
+    questions: new Set(),
+    lingering: new Set(),
+    ended: endedLingering(events),
+  };
   return events
     .filter((event) => event.id >= from && !isRewound(event, rewinds) && settlesEarlier(event, leaving, begun))
     .map((event) => event.id);
@@ -462,7 +631,16 @@ function settlesEarlier(event: EventEnvelope, leaving: ReadonlySet<string>, begu
   const message = queueRecordOf(event);
   if (message !== null) return !leaving.has(message);
   if (isExecutionEvent(custom)) return stepsEarlierRun(custom.event_type, custom.payload, begun);
+  const lingering = lingeringKey(custom.event_type, custom.payload);
+  if (lingering) return settlesLingering(custom.event_type, lingering, begun);
   return answersEarlierQuestion(custom.event_type, custom.payload, begun);
+}
+
+/** A job's or a worker's end whose start came before the range, or the start of one with no end yet. */
+function settlesLingering(eventType: string, key: string, begun: Begun): boolean {
+  if (LINGERING_ENDS.has(eventType)) return !begun.lingering.has(key);
+  begun.lingering.add(key);
+  return !begun.ended.has(key);
 }
 
 /** A turn's end whose start came before the range. */

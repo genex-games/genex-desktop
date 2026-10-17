@@ -28,6 +28,8 @@ export const CHECKPOINT_TOOL = {
     "Tell the studio the game just reached a moment worth seeing (it first runs end-to-end, a feature became playable). The studio lights the user's Reload with your note, so they see it the moment they press it.",
   note: "One short sentence: what just became visible or playable.",
   reply: "Shown to the user.",
+  /** The studio's own checkpoint (`DelegateRequest.onCheckpoint`) threw: the session reads why and goes on. */
+  failed: (why: string) => `The checkpoint failed: ${why}`,
 } as const;
 
 /** `capture` as Claude Code reads it: an MCP tool whose answer is a list of frame files. */

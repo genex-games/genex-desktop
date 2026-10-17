@@ -316,9 +316,10 @@ const recordsFor = (event_type: RunEvent, items: readonly QueueAction[], extra: 
  *
  * While a build runs, its run's lead may take the chat (`lead`, live-chat.ts): a message it
  * takes is delivered to it with its receipt, and one that waited is handed to it once
- * `beforeProcess` answers with the lead's door for it. What the lead does not take (a picture, a
- * fresh build asked for, slash text) keeps its place and waits for the build to close, but holds
- * nothing back: the words sent after it still reach the lead, in the order they were sent.
+ * `beforeProcess` answers with the lead's door for it. What the lead does not take (a picture the
+ * chat did not save in the game, a fresh build asked for, slash text) keeps its place and waits for
+ * the build to close, but holds nothing back: the words sent after it still reach the lead, in the
+ * order they were sent.
  */
 export class MessageQueue {
   #threads = new Map<string, ThreadQueue>();

@@ -135,6 +135,7 @@ export class EngineRegistry {
           usage: engine.usageSnapshot?.() ?? null,
           catalog: engine.catalogSnapshot?.(),
           ...(engine.account ? { account: await engine.account().catch(() => null) } : {}),
+          ...(engine.server ? { server: await engine.server().catch(() => null) } : {}),
           provider: providerInfo(engine.id) ?? null,
           models: models.map(describedModel),
           defaultModel: (await engine.defaultModel?.()) ?? null,
@@ -187,6 +188,7 @@ function describedModel(m: EngineModel): EngineDescriptor["models"][number] {
     ...(m.stale ? { stale: true } : {}),
     ...(m.aliasOf ? { aliasOf: m.aliasOf } : {}),
     ...(m.note ? { note: m.note } : {}),
+    ...(m.free ? { free: true } : {}),
     ...(m.efforts !== undefined ? { efforts: m.efforts } : {}),
     ...(m.defaultEffort ? { defaultEffort: m.defaultEffort } : {}),
   };

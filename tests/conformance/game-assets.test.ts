@@ -1,10 +1,14 @@
-import { it } from "node:test";
+import { after, before, describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { mkdir, readdir, readFile, rm, stat, symlink, writeFile, utimes } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, realpath, rm, stat, symlink, writeFile, utimes } from "node:fs/promises";
 import path from "node:path";
 import { tmpDir } from "../helpers/tmp.ts";
+import { type CoreLite, coreLite } from "../helpers/core-lite.ts";
+import { copyProject, Project, TOY_PLUGIN, TOY_PLUGIN_ID } from "../helpers/project-fixtures.ts";
+import { PluginSourceKind } from "../../src/shared/plugins.ts";
 import { joinProjectAssets, readContainedImage, readGenexJobs, walkGameAssets } from "../../src/main/game-assets.ts";
 import { assetKind, isAudioFile } from "../../src/shared/game-assets.ts";
+import { DEFAULT_ASSET_FOLDERS, isAssetPath } from "../../src/shared/project-workspace.ts";
 import { isImageFile } from "../../src/substrate/game-workspace.ts";
 import type { EventEnvelope } from "../../src/substrate/types.ts";
 
@@ -266,7 +270,7 @@ it("Genex job records are read without being written, and an approval never leav
     [JOB_A],
   );
   assert.equal(records[0]!.operation, "image");
-  assert.equal(records[0]!.prompt!.length, 500);
+  assert.equal(records[0]!.prompt!.length, 900, "a prompt within the cap is kept whole, for the card's tooltip");
   assert.equal("approval" in records[0]!, false);
   assert.equal(JSON.stringify(records).includes("AAAA"), false);
   assert.deepEqual(await readdir(jobs), before);
@@ -320,6 +324,324 @@ it("the contained reader refuses everything that is not an image inside the game
     (await readContainedImage(path.join(root, "outside"), "secret.png", { prefixes: [] }))?.mimeType,
     "image/png",
   );
+});
+
+/** Write files into a folder, making their folders. */
+async function writeIn(dir: string, files: Record<string, string | Buffer>): Promise<void> {
+  for (const [file, data] of Object.entries(files)) {
+    await mkdir(path.dirname(path.join(dir, ...file.split("/"))), { recursive: true });
+    await writeFile(path.join(dir, ...file.split("/")), data);
+  }
+}
+
+it("walks the folders it is given, with their formats, each file once", async () => {
+  const root = path.join(await tmpDir("studio-asset-folders-"), "game");
+  await writeIn(root, {
+    "Content/Hero.uasset": "uasset",
+    "Content/notes.txt": "notes",
+    "assets/a.png": "png",
+    ".godot/x.png": "png",
+    "node_modules/p/i.png": "png",
+    "Saved/s.png": "png",
+  });
+  const files = async (folders: Parameters<typeof walkGameAssets>[1]) =>
+    (await walkGameAssets(root, folders)).entries.map((entry) => entry.file);
+  assert.deepEqual(
+    await files({ folders: [{ folder: "Content", formats: ["uasset"] }, { folder: "assets" }] }),
+    ["Content/Hero.uasset", "assets/a.png"],
+    "a folder's formats filter what it lists",
+  );
+  assert.deepEqual(
+    await files({ folders: [{ folder: "." }, { folder: "Content", formats: ["uasset"] }, { folder: "assets" }] }),
+    ["Content/Hero.uasset", "Content/notes.txt", "assets/a.png"],
+    "the root lists each file once, and never a hidden folder or one no walk enters",
+  );
+  assert.deepEqual(await files({ folders: [{ folder: ".", formats: ["png"] }] }), ["assets/a.png"]);
+  assert.deepEqual(await files({}), ["assets/a.png"], "today's folders when none are given");
+  // A linked asset folder is reported once and never walked, wherever the walk meets it.
+  await rm(path.join(root, "Content"), { recursive: true });
+  await symlink(path.join(root, "assets"), path.join(root, "Content"));
+  const linked = await walkGameAssets(root, { folders: [{ folder: "." }, { folder: "Content" }] });
+  assert.deepEqual(linked.skipped, [{ file: "Content", why: "symlink" }]);
+  assert.deepEqual(
+    linked.entries.map((entry) => entry.file),
+    ["assets/a.png"],
+  );
+});
+
+it("a game's asset folders list media only: data a script wrote there is no asset, a model's buffers stay readable", async () => {
+  const root = path.join(await tmpDir("studio-asset-media-"), "game");
+  await writeIn(root, {
+    "assets/terrain/T_m00032_p00032_64.bin": "tile",
+    "assets/terrain/manifest.json": "{}",
+    "assets/notes.txt": "notes",
+    "assets/rock.gltf": "{}",
+    "assets/rock.bin": "buffers",
+    "assets/rock.png": "png",
+    "public/assets/level.json": "{}",
+  });
+  assert.deepEqual(
+    (await walkGameAssets(root)).entries.map((entry) => entry.file),
+    ["assets/rock.gltf", "assets/rock.png"],
+  );
+  assert.equal(isAssetPath("assets/rock.bin", DEFAULT_ASSET_FOLDERS), true, "a glTF's buffers are read beside it");
+  assert.equal(isAssetPath("assets/terrain/manifest.json", DEFAULT_ASSET_FOLDERS), false);
+});
+
+it("a whole folder leaves out Genex's mood boards and build output", async () => {
+  const root = path.join(await tmpDir("studio-asset-whole-"), "game");
+  await writeIn(root, {
+    "art/a.png": "png",
+    "references/mood-1.png": "png",
+    "dist/y.png": "png",
+    "output/x.png": "png",
+    "levels/dist/z.png": "png",
+    "levels/references/r.png": "png",
+  });
+  const listed = await walkGameAssets(root, { folders: [{ folder: ".", formats: ["png"] }] });
+  assert.deepEqual(
+    listed.entries.map((entry) => entry.file),
+    ["art/a.png", "levels/references/r.png"],
+    "the mood boards at the game's root and build output anywhere stay out; a person's own references folder is listed",
+  );
+});
+
+it("an asset folder is walked only by its own spelling, so a case alias lists nothing twice", async () => {
+  const root = path.join(await tmpDir("studio-asset-case-"), "game");
+  await writeIn(root, { "Assets/t.png": "png", "Assets/t.png.meta": "meta", "Assets/Scripts/P.cs": "cs" });
+  const listed = await walkGameAssets(root, {
+    folders: [{ folder: "assets" }, { folder: "Assets", formats: ["png"] }],
+  });
+  assert.deepEqual(
+    listed.entries.map((entry) => entry.file),
+    ["Assets/t.png"],
+  );
+});
+
+it("a link at an inner part of an asset folder is reported and never walked", async () => {
+  const base = await tmpDir("studio-asset-inner-link-");
+  const root = path.join(base, "game");
+  await writeIn(base, { "outside/Assets/private.png": "png" });
+  await mkdir(root, { recursive: true });
+  await symlink(path.join(base, "outside"), path.join(root, "unity"));
+  const listed = await walkGameAssets(root, { folders: [{ folder: "unity/Assets" }] });
+  assert.deepEqual(listed.entries, [], "nothing outside the game is listed");
+  assert.deepEqual(listed.skipped, [{ file: "unity", why: "symlink" }]);
+});
+
+let lite: CoreLite;
+let cases: string;
+
+/** A copy of a project fixture with these files added, opened as a game. */
+async function adopted(name: Project, files: Record<string, string | Buffer> = {}) {
+  const dir = await copyProject(name, await mkdtemp(path.join(cases, "case-")));
+  await writeIn(dir, files);
+  const game = await lite.core.adoptProject(dir);
+  return { dir, name: game.name };
+}
+
+/** The game's assets as the Assets tab lists them. */
+const listed = async (game: string) => (await lite.core.projectAssets(game)).assets;
+
+async function listsByFactsAndPlugins(): Promise<void> {
+  const unreal = await adopted(Project.UnrealGame, {
+    "Content/Maps/Main.umap": "umap",
+    "Content/Hero.uasset": "uasset",
+    "Saved/x.uasset": "uasset",
+    "assets/models/rock.obj": "o rock\nv 0 0 0\n",
+  });
+  assert.deepEqual(
+    (await listed(unreal.name)).map((asset) => [asset.file, asset.kind]).sort(),
+    [["assets/models/rock.obj", "model"]],
+    "the media agents brought in, never Unreal's own packages (no preview) or the editor's scratch",
+  );
+
+  await lite.core.plugins.installLocal(TOY_PLUGIN, PluginSourceKind.Local, []);
+  await lite.core.plugins.setEnabled(TOY_PLUGIN_ID, true);
+  const toy = await adopted(Project.ToyProject);
+  assert.deepEqual(
+    (await listed(toy.name)).map((asset) => asset.file),
+    ["scenes/start.toyscene"],
+  );
+
+  const web = await adopted(Project.WebFolder, { "assets/a.png": "png", "art/b.png": "png", "src/c.png": "png" });
+  assert.deepEqual(
+    (await listed(web.name)).map((asset) => asset.file),
+    ["assets/a.png"],
+    "a web game lists what it listed before",
+  );
+
+  const unity = await adopted(Project.WebFolder, {
+    "ProjectSettings/ProjectVersion.txt": "m_EditorVersion: 6000.0.0f1\n",
+    "Assets/hero.png": PNG,
+    "Assets/hero.png.meta": "guid: 1\n",
+    "Assets/Scripts/Player.cs": "class Player {}\n",
+    "Assets/Scenes/Main.unity": "%YAML 1.1\n",
+  });
+  assert.deepEqual(
+    (await listed(unity.name)).map((asset) => asset.file),
+    ["Assets/hero.png"],
+    "a Unity game lists its media once, never its metadata, scripts or scenes",
+  );
+
+  const blend = await adopted(Project.WebFolder, {
+    "scene.blend": "BLENDER-v400\n",
+    "assets/a.png": PNG,
+    "dist/assets/a.png": PNG,
+    "references/mood-1.png": PNG,
+  });
+  const blendFiles = (await listed(blend.name)).map((asset) => asset.file);
+  assert.ok(blendFiles.includes("assets/a.png") && blendFiles.includes("scene.blend"), blendFiles.join(", "));
+  assert.ok(
+    !blendFiles.some((file) => file.startsWith("dist/") || file.startsWith("references/")),
+    "build output and the mood boards are no assets",
+  );
+}
+
+async function previewsInsideAssetFolders(): Promise<void> {
+  const unity = await adopted(Project.WebFolder, {
+    "ProjectSettings/ProjectVersion.txt": "m_EditorVersion: 6000.0.0f1\n",
+    "ProjectSettings/x.png": PNG,
+    "Assets/t.png": PNG,
+    "Assets/.cache/t.png": PNG,
+    "outside/secret.png": PNG,
+  });
+  await symlink(path.join(unity.dir, "outside/secret.png"), path.join(unity.dir, "Assets/linked.png"));
+  const preview = (file: string) => lite.core.previewProjectAsset({ project: unity.name, file });
+  assert.deepEqual(Buffer.from((await preview("Assets/t.png")).data), PNG);
+  await assert.rejects(preview("ProjectSettings/x.png"), /Only asset files can be previewed\./);
+  await assert.rejects(preview("Assets/.cache/t.png"), /Only asset files can be previewed\./);
+  await assert.rejects(preview("Assets/linked.png"), /Linked files cannot be previewed\./);
+  const image = (file: string) => lite.core.readProjectAsset({ project: unity.name, file });
+  assert.equal((await image("Assets/t.png"))?.mimeType, "image/png");
+  assert.equal(await image("ProjectSettings/x.png"), null, "the canvas reader keeps the same folders");
+  assert.equal(await image("Assets/linked.png"), null);
+  assert.equal(await image("Assets/.cache/t.png"), null, "the canvas reader refuses a hidden part too");
+
+  const godot = await adopted(Project.GodotGame, {
+    "art/x.png": PNG,
+    ".godot/imported/x.png": PNG,
+    ".studio/x.png": PNG,
+    "node_modules/p/x.png": PNG,
+    "references/mood-1.png": PNG,
+    "dist/x.png": PNG,
+    "Saved/x.png": PNG,
+  });
+  const godotImage = (file: string) => lite.core.readProjectAsset({ project: godot.name, file });
+  const godotPreview = (file: string) => lite.core.previewProjectAsset({ project: godot.name, file });
+  assert.equal((await godotImage("art/x.png"))?.mimeType, "image/png");
+  for (const file of [
+    ".godot/imported/x.png",
+    ".studio/x.png",
+    "node_modules/p/x.png",
+    "references/mood-1.png",
+    "dist/x.png",
+  ]) {
+    assert.equal(await godotImage(file), null, file);
+    await assert.rejects(godotPreview(file), /Only asset files can be previewed\./, file);
+  }
+  // Spelled in another case: a case-insensitive disk opens these as the folders above.
+  for (const file of ["SAVED/x.png", "References/mood-1.png", "Node_Modules/p/x.png", "DIST/x.png"])
+    assert.equal(await godotImage(file), null, file);
+}
+
+async function readsShareOneFactsWalk(): Promise<void> {
+  const unity = await adopted(Project.WebFolder, {
+    "ProjectSettings/ProjectVersion.txt": "m_EditorVersion: 6000.0.0f1\n",
+    "Assets/a.png": PNG,
+    "Assets/b.png": PNG,
+  });
+  const games = lite.core.games;
+  const factsOf = games.factsOf.bind(games);
+  let walks = 0;
+  games.factsOf = async (name: string) => {
+    walks += 1;
+    return factsOf(name);
+  };
+  try {
+    await lite.core.projectAssets(unity.name);
+    const reads = ["Assets/a.png", "Assets/b.png", "Assets/a.png", "Assets/b.png"].map((file) =>
+      lite.core.readProjectAsset({ project: unity.name, file }),
+    );
+    for (const read of await Promise.all(reads)) assert.equal(read?.mimeType, "image/png");
+    await lite.core.previewProjectAsset({ project: unity.name, file: "Assets/a.png" });
+    assert.equal(walks, 1, "the listing reads the facts; its thumbnails and previews reuse them");
+  } finally {
+    games.factsOf = factsOf;
+  }
+}
+
+describe("a project's assets, by its facts and plugins", () => {
+  before(async () => {
+    const root = await realpath(await tmpDir("studio-asset-facts-"));
+    cases = path.join(root, "cases");
+    await mkdir(cases);
+    lite = await coreLite({
+      gamesRoot: path.join(root, "games"),
+      executionPolicy: { allowedProjectRoot: root, runBackgroundImprovement: false },
+    });
+  });
+  after(async () => {
+    lite.core.plugins.cancel();
+    await lite.close();
+  });
+
+  it("lists what a project's facts and plugins name, by name when Genex cannot show it", listsByFactsAndPlugins);
+  it("previews a file inside a project's asset folders and refuses one outside", previewsInsideAssetFolders);
+  it("thumbnails and previews reuse the folders the listing found", readsShareOneFactsWalk);
+});
+
+describe("a game's asset folders as its facts change", () => {
+  let timed: CoreLite;
+  let root: string;
+  let clock = Date.parse("2026-01-01T00:00:00.000Z");
+  /** Longer than the ten seconds previews and thumbnails reuse a read of the folders for. */
+  const PAST_THE_WINDOW_MS = 60_000;
+  before(async () => {
+    root = await realpath(await tmpDir("studio-asset-clock-"));
+    timed = await coreLite({
+      gamesRoot: path.join(root, "games"),
+      executionPolicy: { allowedProjectRoot: root, runBackgroundImprovement: false },
+      assetFolders: { now: () => clock },
+    });
+  });
+  after(() => timed.close());
+
+  it("a listing reads them afresh; a preview reads them again once its window has passed", async () => {
+    const dir = await copyProject(Project.WebFolder, await mkdtemp(path.join(root, "case-")));
+    await writeIn(dir, { "Assets/a.png": PNG });
+    const game = await timed.core.adoptProject(dir);
+    const games = timed.core.games;
+    const factsOf = games.factsOf.bind(games);
+    let walks = 0;
+    games.factsOf = async (name: string) => {
+      walks += 1;
+      return factsOf(name);
+    };
+    const image = () => timed.core.readProjectAsset({ project: game.name, file: "Assets/a.png" });
+    const files = async () => (await timed.core.projectAssets(game.name)).assets.map((asset) => asset.file);
+    try {
+      assert.ok(!(await files()).includes("Assets/a.png"), "a web folder keeps no assets in Assets/");
+      assert.equal(await image(), null);
+      // The folder becomes a Unity project: the next listing finds its Assets folder at once.
+      await writeIn(dir, { "ProjectSettings/ProjectVersion.txt": "m_EditorVersion: 6000.0.0f1\n" });
+      const before = walks;
+      assert.ok((await files()).includes("Assets/a.png"), "the listing reads the facts afresh");
+      assert.equal(walks, before + 1);
+      assert.equal((await image())?.mimeType, "image/png", "and the reads after it use what it found");
+      assert.equal(walks, before + 1, "without another walk");
+
+      // The project file goes: within the window a read keeps the folders; past it, it walks again.
+      await rm(path.join(dir, "ProjectSettings"), { recursive: true });
+      assert.equal((await image())?.mimeType, "image/png");
+      assert.equal(walks, before + 1);
+      clock += PAST_THE_WINDOW_MS;
+      assert.equal(await image(), null, "past the window the read finds the folders as they are now");
+      assert.equal(walks, before + 2);
+    } finally {
+      games.factsOf = factsOf;
+    }
+  });
 });
 
 it("assetKind classifies by extension and treats anything else as other", () => {

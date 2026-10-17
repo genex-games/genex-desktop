@@ -31,7 +31,7 @@ These foundations and the agreed task scope take precedence over generic skill r
 `AGENTS.md` requires this workflow for design tasks. This guide states the principles and
 selects the relevant skills. Their `SKILL.md` files supply detailed techniques; open only the
 supporting references needed for the current change. Announce the chosen skills and their
-purpose briefly. Do not load all seven for every task.
+purpose briefly. Do not load them all for every task.
 
 The skills are repository-local in `.agents/skills`, which Codex discovers from the working
 directory up to the repository root. Matching descriptions support automatic selection;
@@ -53,6 +53,7 @@ in-app harness or change machine-wide agent settings.
 | Palette, themes, semantic color or contrast | [better-colors](../../.agents/skills/better-colors/SKILL.md) | Role-based color and measured contrast |
 | Type hierarchy, text sizing, wrapping or truncation | [better-typography](../../.agents/skills/better-typography/SKILL.md) | Readability with real content |
 | Labels, buttons, hints, empty states, errors or other product copy | [better-writing](../../.agents/skills/better-writing/SKILL.md) | Short, consistent, actionable language |
+| Illustrations, loading/empty/being-made drawings, icons with depth | [wire-art](../../.agents/skills/wire-art/SKILL.md) | Genex's wireframe art language and how to explore it |
 | User requests alternative designs for a component | [variant](../../.agents/skills/variant/SKILL.md) | Distinct options along one design axis, with tradeoffs |
 | User requests a component stress-test page | [break](../../.agents/skills/break/SKILL.md) | Real component states and content extremes in a visual report |
 

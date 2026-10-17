@@ -11,9 +11,12 @@ const REPORTED_NAMES_CAP = 24;
 /** A page that boots this slowly is told so: every look at the build waits that long. */
 const SLOW_BOOT_MS = 5 * SECOND_MS;
 
-/** Which page a port was actually given: the folder it is served from, plus the page in it. */
-export function servedKey(served: { entry: string; root: string | undefined }): string {
-  return JSON.stringify([served.root ?? null, served.entry]);
+/**
+ * Which page a port was actually given: the folder it is served from, the page in it, and the
+ * origin it is served under (a template game that starts loading the Genex SDK moves to loopback).
+ */
+export function servedKey(served: { entry: string; root: string | undefined; loopback?: boolean }): string {
+  return JSON.stringify([served.root ?? null, served.entry, served.loopback === true]);
 }
 
 /** A string the page reported, or nothing — never the word "undefined" on a sheet. */

@@ -318,11 +318,25 @@
   min-width: 200px;
   margin-top: 24px;
 }
-/* Connect and local models: one centred group under the Back/Skip bar, with Start building's place kept below it. */
+/* Connect, local models, OpenRouter and OpenCode: one centred group under the Back/Skip bar, with
+   Start building's place kept below it. */
 .onboarding-connect-screen,
-.onboarding-local {
+.onboarding-local,
+.onboarding-provider {
   justify-content: center;
   padding-block: 96px 56px;
+}
+/* A short window (down to the app's 680px) keeps the whole group and Start building in view; the
+   free model list takes the mark's place there. */
+@media (max-height: 760px) {
+  .onboarding-connect-screen,
+  .onboarding-local,
+  .onboarding-provider {
+    padding-block: 80px 32px;
+  }
+  .onboarding-provider[data-picking] .onboarding-mark {
+    display: none;
+  }
 }
 
 /* Connect and local models. */
@@ -354,6 +368,11 @@
   color: var(--ink-3);
   text-align: center;
   text-wrap: pretty;
+}
+/* A provider screen's words under its title: narrower than the connect screen's, in two balanced lines. */
+.onboarding-lede-narrow {
+  max-width: 380px;
+  text-wrap: balance;
 }
 .onboarding-marks {
   flex: none;
@@ -444,10 +463,186 @@
 .onboarding-code [data-slot="button"] {
   height: 40px;
 }
-.onboarding-local-row {
+/* "or use" and the three other ways: quiet buttons, a fill only under the pointer or focus, and
+   one line under them about the button pointed at. */
+.onboarding-ways {
   display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  margin-top: 28px;
+}
+.onboarding-ways-lead {
+  margin: 0;
+  font-size: 13px;
+  line-height: 20px;
+  font-variant-caps: all-small-caps;
+  letter-spacing: 0.06em;
+  color: var(--ink-3);
+}
+.onboarding-ways-row {
+  display: flex;
+  flex-wrap: wrap;
   justify-content: center;
-  margin-top: 36px;
+  gap: 4px;
+}
+.onboarding-way {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 32px;
+  padding: 0 12px;
+  border-radius: var(--radius-control);
+  font-family: var(--font-family-controls);
+  font-size: 14px;
+  white-space: nowrap;
+  color: var(--ink-2);
+  cursor: pointer;
+  transition:
+    background-color var(--duration-quick),
+    color var(--duration-quick);
+}
+.onboarding-way:is(:hover, :focus-visible) {
+  background: var(--control-hover, var(--hover));
+  color: var(--ink);
+}
+.onboarding-way[data-state="on"] {
+  color: var(--ink);
+}
+.onboarding-ways-hint {
+  min-height: 20px;
+  margin: 2px 0 0;
+  font-size: 13px;
+  line-height: 20px;
+  color: var(--ink-3);
+  text-align: center;
+}
+/* A provider screen's mark, its lines (as narrow as its words under the title), its key box and
+   its sign-in terminal. */
+.onboarding-provider .onboarding-note {
+  max-width: 380px;
+  text-wrap: balance;
+}
+.onboarding-mark {
+  margin-top: 24px;
+}
+.onboarding-key input {
+  width: 240px;
+}
+.onboarding-links {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 4px;
+}
+.onboarding-terminal {
+  width: 600px;
+  max-width: 100%;
+  margin-top: 24px;
+  overflow: hidden;
+  border-radius: var(--radius-card);
+  background: var(--surface);
+  box-shadow: var(--shadow-card);
+}
+.onboarding-terminal-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 40px;
+  padding: 0 4px 0 16px;
+  border-bottom: 1px solid var(--line);
+}
+.onboarding-terminal-title {
+  font-family: var(--font-family-controls);
+  font-size: 13px;
+  color: var(--ink-2);
+}
+.onboarding-terminal-body {
+  height: clamp(200px, 100vh - 480px, 300px);
+  min-height: 0;
+  padding-top: 8px;
+  background: var(--base);
+}
+/* OpenCode's free models as one radio group under its ready status: quiet rows, the picked one on a
+   surface with the accent dot. */
+.onboarding-free {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  width: 360px;
+  max-width: 100%;
+  margin-top: 12px;
+}
+.onboarding-free-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.onboarding-free-option {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 36px;
+  padding: 0 12px;
+  border-radius: var(--radius-control);
+  font-family: var(--font-family-controls);
+  font-size: 14px;
+  text-align: left;
+  color: var(--ink-2);
+  cursor: pointer;
+  transition:
+    background-color var(--duration-quick),
+    color var(--duration-quick);
+}
+/* The radio itself stays in the row for the keyboard and screen readers; the dot shows it. */
+.onboarding-free-input {
+  position: absolute;
+  inset: 0;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+.onboarding-free-option:hover {
+  background: var(--control-hover, var(--hover));
+  color: var(--ink);
+}
+.onboarding-free-option:has(:checked) {
+  background: var(--surface);
+  box-shadow: inset 0 0 0 1px var(--line);
+  color: var(--ink);
+}
+/* The hidden radio's keyboard focus shows on its row, as the app's inset edge. */
+.onboarding-free-option:has(:focus-visible) {
+  outline: 2px solid var(--foreground);
+  outline-offset: -2px;
+}
+.onboarding-free-dot {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 1.5px var(--ink-3);
+}
+.onboarding-free-option:has(:checked) .onboarding-free-dot {
+  box-shadow:
+    inset 0 0 0 4px var(--accent-primary),
+    inset 0 0 0 7px var(--surface);
+}
+.onboarding-free-detail {
+  flex: none;
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--ink-3);
+}
+.onboarding-terminal ~ .onboarding-connect-action {
+  margin-top: 16px;
 }
 .onboarding-link {
   display: inline-flex;

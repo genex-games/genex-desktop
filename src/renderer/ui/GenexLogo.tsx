@@ -1,3 +1,9 @@
+import { useId } from "react";
+
+/** The wordmark's G, also drawn alone by `GenexMark`. */
+const G_PATH =
+  "M14.8313 8.85849H6.76045V7.51031H19.2407V11.1697C19.2407 11.1697 18.2707 14.9788 9.80253 14.9788C9.80253 14.9788 0 15.257 0 7.10372C0 -0.450362 10.6042 0.0204315 10.6042 0.0204315C18.7669 0.0204315 19.2407 3.97937 19.2407 3.97937L17.1271 4.32176C17.1271 4.32176 16.4712 1.28301 10.4585 1.28301C10.4585 1.28301 2.40508 0.983416 2.40508 7.25352C2.40508 7.25352 2.22288 13.5022 9.91186 13.6734C15.961 13.866 16.8356 10.6561 16.9085 10.0997C17.1271 9.39349 16.1796 8.85849 14.8313 8.85849Z";
+
 /** Original Genex wordmark with theme-aware neutral stops (a palette's `logo` when set). See GENEX-SOURCES.md. */
 export function GenexLogo({ className = "" }: { className?: string }) {
   return (
@@ -27,10 +33,7 @@ export function GenexLogo({ className = "" }: { className?: string }) {
         d="M30.0656 13.6521H38.4834V15.0003H23.1055V0.0205078H38.4834V1.36869H29.9563C27.2233 1.36869 24.7628 1.13245 24.7628 4.10784C24.7628 7.08324 27.2233 6.7828 29.9563 6.7828H36.8072V8.13098H30.0656C27.2597 8.13098 24.7628 8.16423 24.7628 10.9129C24.7628 13.6616 27.2597 13.6521 30.0656 13.6521Z"
         fill="url(#paint3_linear_1520_2271)"
       />
-      <path
-        d="M14.8313 8.85849H6.76045V7.51031H19.2407V11.1697C19.2407 11.1697 18.2707 14.9788 9.80253 14.9788C9.80253 14.9788 0 15.257 0 7.10372C0 -0.450362 10.6042 0.0204315 10.6042 0.0204315C18.7669 0.0204315 19.2407 3.97937 19.2407 3.97937L17.1271 4.32176C17.1271 4.32176 16.4712 1.28301 10.4585 1.28301C10.4585 1.28301 2.40508 0.983416 2.40508 7.25352C2.40508 7.25352 2.22288 13.5022 9.91186 13.6734C15.961 13.866 16.8356 10.6561 16.9085 10.0997C17.1271 9.39349 16.1796 8.85849 14.8313 8.85849Z"
-        fill="url(#paint4_linear_1520_2271)"
-      />
+      <path d={G_PATH} fill="url(#paint4_linear_1520_2271)" />
       <defs>
         <linearGradient
           id="paint0_linear_1520_2271"
@@ -88,6 +91,32 @@ export function GenexLogo({ className = "" }: { className?: string }) {
           y2="24.3056"
           gradientUnits="userSpaceOnUse"
         >
+          <stop stopColor="var(--logo, var(--ink))" />
+          <stop offset="0.471154" stopColor="var(--logo-2, var(--ink-2))" />
+          <stop offset="1" stopColor="var(--logo, var(--ink))" stopOpacity="var(--logo-fade, 0.84)" />
+        </linearGradient>
+      </defs>
+    </svg>
+  );
+}
+
+/** The G of the wordmark alone, in the wordmark's theme-aware stops: Genex's mark beside its name. */
+export function GenexMark({ size = 14 }: { size?: number }) {
+  const fill = useId();
+  return (
+    <svg
+      role="img"
+      aria-label="Genex"
+      width={(size * 19.25) / 15}
+      height={size}
+      viewBox="0 0 19.25 15"
+      fill="none"
+      xmlns="http://www.w3.org/2000/svg"
+      className="shrink-0"
+    >
+      <path d={G_PATH} fill={`url(#${fill})`} />
+      <defs>
+        <linearGradient id={fill} x1="8.14413" y1="2.61419" x2="8.87972" y2="24.3056" gradientUnits="userSpaceOnUse">
           <stop stopColor="var(--logo, var(--ink))" />
           <stop offset="0.471154" stopColor="var(--logo-2, var(--ink-2))" />
           <stop offset="1" stopColor="var(--logo, var(--ink))" stopOpacity="var(--logo-fade, 0.84)" />

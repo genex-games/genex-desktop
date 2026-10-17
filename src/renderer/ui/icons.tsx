@@ -11,6 +11,8 @@ const FOLDER =
 const GEAR =
   "M9.08 5.97Q9.82 5.67 9.87 4.87L9.93 3.92Q9.99 2.92 10.97 2.76A9.3 9.3 0 0 1 13.03 2.76Q14.01 2.92 14.07 3.92L14.13 4.87Q14.18 5.67 14.92 5.97A6.7 6.7 0 0 1 15.76 6.46Q16.4 6.94 17.11 6.59L17.96 6.16Q18.86 5.72 19.49 6.49A9.3 9.3 0 0 1 20.52 8.27Q20.87 9.2 20.04 9.76L19.24 10.28Q18.58 10.72 18.68 11.51A6.7 6.7 0 0 1 18.68 12.49Q18.58 13.28 19.24 13.72L20.04 14.24Q20.87 14.8 20.52 15.73A9.3 9.3 0 0 1 19.49 17.51Q18.86 18.28 17.96 17.84L17.11 17.41Q16.4 17.06 15.76 17.54A6.7 6.7 0 0 1 14.92 18.03Q14.18 18.33 14.13 19.13L14.07 20.08Q14.01 21.08 13.03 21.24A9.3 9.3 0 0 1 10.97 21.24Q9.99 21.08 9.93 20.08L9.87 19.13Q9.82 18.33 9.08 18.03A6.7 6.7 0 0 1 8.24 17.54Q7.6 17.06 6.89 17.41L6.04 17.84Q5.14 18.28 4.51 17.51A9.3 9.3 0 0 1 3.48 15.73Q3.13 14.8 3.96 14.24L4.76 13.72Q5.42 13.28 5.32 12.49A6.7 6.7 0 0 1 5.32 11.51Q5.42 10.72 4.76 10.28L3.96 9.76Q3.13 9.2 3.48 8.27A9.3 9.3 0 0 1 4.51 6.49Q5.14 5.72 6.04 6.16L6.89 6.59Q7.6 6.94 8.24 6.46A6.7 6.7 0 0 1 9.08 5.97Z";
 const SPEAKER = "M3.5 10A1.5 1.5 0 0 1 5 8.5h2.3L11.5 5v14l-4.2-3.5H5A1.5 1.5 0 0 1 3.5 14z";
+const MIC_BODY = "M9 6.5a3 3 0 0 1 6 0v5a3 3 0 0 1-6 0z";
+const MIC_STAND = "M5.8 11.5a6.2 6.2 0 0 0 12.4 0M12 17.7v2.8";
 const INFINITY =
   "M12 12c-2-2.6-3.6-4-5.4-4a4 4 0 0 0 0 8c1.8 0 3.4-1.4 5.4-4zm0 0c2 2.6 3.6 4 5.4 4a4 4 0 0 0 0-8c-1.8 0-3.4 1.4-5.4 4z";
 
@@ -148,6 +150,22 @@ const glyphs = {
       <ellipse className="a-meridian" cx="12" cy="12" rx="3.7" ry="8.5" />
     </>
   ),
+  // Unreal's U in its ring, as the Unreal plugin's own picture draws it, in line.
+  unreal: (
+    <>
+      <circle cx="12" cy="12" r="8.5" />
+      <path d="M9 7.75v5a3 3 0 0 0 6 0v-5" />
+    </>
+  ),
+  // Godot's head as the Godot plugin's own picture draws it, in line: two antennae, two eyes, a mouth.
+  godot: (
+    <>
+      <rect x="4" y="7.5" width="16" height="12" rx="4" />
+      <path d="M8.5 7.5 7.5 4.5M15.5 7.5l1-3M10 16h4" />
+      <circle cx="9.5" cy="12.5" r="1.4" {...DOT} />
+      <circle cx="14.5" cy="12.5" r="1.4" {...DOT} />
+    </>
+  ),
   reload: (
     <g className="a-spin">
       <path d="M20 12a8 8 0 1 1-8-8c2.2 0 4.2.9 5.7 2.3L20 8.5" />
@@ -170,9 +188,25 @@ const glyphs = {
     </g>
   ),
   stop: <rect className="a-pulse" x="6.5" y="6.5" width="11" height="11" rx="2.5" />,
+  // Paused: two bars, the stop's size and corners.
+  pause: (
+    <g className="a-pulse">
+      <rect x="7" y="6.5" width="3.5" height="11" rx="1.2" />
+      <rect x="13.5" y="6.5" width="3.5" height="11" rx="1.2" />
+    </g>
+  ),
   // Full screen: the four corners pushed out to the edges.
   expand: (
     <path d="M4 9V6.5A2.5 2.5 0 0 1 6.5 4H9M15 4h2.5A2.5 2.5 0 0 1 20 6.5V9M20 15v2.5a2.5 2.5 0 0 1-2.5 2.5H15M9 20H6.5A2.5 2.5 0 0 1 4 17.5V15" />
+  ),
+  /** An update waiting: an arrow rising in a ring. */
+  update: (
+    <>
+      <circle cx="12" cy="12" r="8.5" />
+      <g className="a-up">
+        <path d="M12 16V8.5M8.75 11.5L12 8.25l3.25 3.25" />
+      </g>
+    </>
   ),
   send: (
     <g className="a-up">
@@ -289,6 +323,13 @@ const glyphs = {
       <path className="a-l3" pathLength={1} d="M8.5 15.5h4" />
     </>
   ),
+  // A four-point sparkle and a small one: something a model makes (home's Make your own background).
+  sparkle: (
+    <>
+      <path d="M11 3.5c.7 4.4 2.3 6 6.75 6.75-4.45.75-6.05 2.35-6.75 6.75-.7-4.4-2.3-6-6.75-6.75C8.7 9.5 10.3 7.9 11 3.5z" />
+      <path d="M18.5 15.5v4.5M16.25 17.75h4.5" />
+    </>
+  ),
   // A lightbulb: Add's Plan mode, a plan before anything is built (its row and the bulb that shows it).
   bulb: (
     <>
@@ -341,6 +382,29 @@ const glyphs = {
       <rect x="13.5" y="13.5" width="6.5" height="6.5" rx="1.8" />
     </>
   ),
+  // A heart: it beats once. A liked one is filled (`fill` on the glyph's path).
+  heart: <path className="a-pulse" d="M12 20s-7-4.4-7-10a4 4 0 0 1 7-2.6A4 4 0 0 1 19 10c0 5.6-7 10-7 10z" />,
+  // A pad: it bobs once, the way a hand picks it up.
+  gamepad: (
+    <g className="a-bob">
+      <path d="M7.5 6.5h9a4 4 0 0 1 3.95 3.37l.85 5.4a2.5 2.5 0 0 1-4.37 2.03L15.5 15.5h-7l-1.43 1.8A2.5 2.5 0 0 1 2.7 15.27l.85-5.4A4 4 0 0 1 7.5 6.5z" />
+      <path d="M8 9.5V13M6.25 11.25h3.5" />
+      <path d="M15.5 10.5h.01M17.5 12.5h.01" strokeWidth={2.4} />
+    </g>
+  ),
+  // A wrench: it twists once, as if tightening.
+  wrench: (
+    <g className="a-wig">
+      <path d="M14.5 6.5a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.1-3.1a5.5 5.5 0 0 1-7.3 7.3l-6.6 6.6a2.05 2.05 0 0 1-2.9-2.9l6.6-6.6a5.5 5.5 0 0 1 7.3-7.3z" />
+    </g>
+  ),
+  /** A screen on its stand: Genex does the work on this computer. */
+  computer: (
+    <g>
+      <rect x="3.5" y="4.5" width="17" height="11.5" rx="2" />
+      <path d="M9 20h6M12 16v4" />
+    </g>
+  ),
   box: (
     <g className="a-lift">
       <path d="M12 3.5l7.5 4.2v8.6L12 20.5l-7.5-4.2V7.7z" />
@@ -368,6 +432,50 @@ const glyphs = {
       <path d="M5 20c.6-3.8 3.4-6.2 7-6.2s6.4 2.4 7 6.2" />
     </>
   ),
+  // A figure with a plus beside it: asking someone to be a friend. The head nods once.
+  "user-plus": (
+    <>
+      <g className="a-bob">
+        <circle cx="9.5" cy="8.5" r="3.2" />
+      </g>
+      <path d="M4 19.5c.5-3.4 2.8-5.5 5.5-5.5s5 2.1 5.5 5.5M18.5 8v6M15.5 11h6" />
+    </>
+  ),
+  // A door and an arrow leaving through it: signing out.
+  "sign-out": (
+    <>
+      <path d="M10 4.5H6.5a2 2 0 0 0-2 2v11a2 2 0 0 0 2 2H10" />
+      <path d="M14.5 8l4 4-4 4M18.5 12H9" />
+    </>
+  ),
+  // Up and down chevrons: a control that opens a menu above or below.
+  chevrons: <path d="M8 9.5l4-4 4 4M8 14.5l4 4 4-4" />,
+  // Two links of a chain: an address to share.
+  link: (
+    <>
+      <path d="M10.5 13.5a3.5 3.5 0 0 0 5 0l3-3a3.5 3.5 0 0 0-5-5l-1 1" />
+      <path d="M13.5 10.5a3.5 3.5 0 0 0-5 0l-3 3a3.5 3.5 0 0 0 5 5l1-1" />
+    </>
+  ),
+  // Two figures side by side, for players together: the front head nods once.
+  users: (
+    <>
+      <g className="a-bob">
+        <circle cx="9" cy="8.5" r="3.2" />
+      </g>
+      <path d="M3.5 19.5c.5-3.4 2.8-5.5 5.5-5.5s5 2.1 5.5 5.5" />
+      <path d="M15.5 5.6a3.2 3.2 0 0 1 0 5.8M17.5 14.3c1.6.8 2.7 2.6 3 5.2" />
+    </>
+  ),
+  // A fork: one game, two ways on.
+  remix: (
+    <>
+      <circle cx="6.5" cy="5.5" r="2" />
+      <circle cx="17.5" cy="5.5" r="2" />
+      <circle cx="12" cy="18.5" r="2" />
+      <path d="M6.5 7.5v.8a3 3 0 0 0 3 3h5a3 3 0 0 0 3-3v-.8M12 11.3v5.2" />
+    </>
+  ),
   // Level meter: the bars rise back in one after another.
   sound: (
     <>
@@ -391,6 +499,21 @@ const glyphs = {
     <>
       <path d={SPEAKER} />
       <path d="M15 9.5a3.5 3.5 0 0 1 0 5M17.8 6.8a7.3 7.3 0 0 1 0 10.4" />
+      <path className="a-l1" pathLength={1} d="M4 4l16 16" />
+    </>
+  ),
+  // A game's voice chat, heard: the microphone, and its pickup arc drawing out.
+  mic: (
+    <>
+      <path d={MIC_BODY} />
+      <path className="a-l1" pathLength={1} d={MIC_STAND} />
+    </>
+  ),
+  // Not heard: the same microphone, crossed out; the stroke draws across it again.
+  "mic-off": (
+    <>
+      <path d={MIC_BODY} />
+      <path d={MIC_STAND} />
       <path className="a-l1" pathLength={1} d="M4 4l16 16" />
     </>
   ),
@@ -421,6 +544,52 @@ const glyphs = {
     </>
   ),
   circle: <circle className="a-pulse" cx="12" cy="12" r="7" />,
+  // Compact: two corners drawn in toward the middle, the context folding smaller.
+  compact: <path d="M4.5 14h5.5v5.5M19.5 10H14V4.5M14 10l6-6M4 20l6-6" />,
+  // A drive: where Genex keeps what it makes on this Mac.
+  drive: (
+    <>
+      <path d="M3.5 13l2.6-6.1A2.2 2.2 0 0 1 8.1 5.5h7.8a2.2 2.2 0 0 1 2 1.4l2.6 6.1V17a2.5 2.5 0 0 1-2.5 2.5H6A2.5 2.5 0 0 1 3.5 17z" />
+      <path d="M3.5 13h17" />
+      <circle cx="7.5" cy="16.25" r="1" {...DOT} />
+    </>
+  ),
+  // A model chip: the die and its pins, for models that run on this Mac.
+  chip: (
+    <>
+      <rect x="6.5" y="6.5" width="11" height="11" rx="2" />
+      <path d="M10 3.5v3M14 3.5v3M10 17.5v3M14 17.5v3M3.5 10h3M3.5 14h3M17.5 10h3M17.5 14h3" />
+    </>
+  ),
+  /** A film camera: video. */
+  video: (
+    <>
+      <path d="m16 13 5.2 3.5a.5.5 0 0 0 .8-.4V7.9a.5.5 0 0 0-.8-.4L16 11" />
+      <rect x="2" y="6" width="14" height="12" rx="2" />
+    </>
+  ),
+  /** Two notes: music. */
+  music: (
+    <>
+      <path d="M9 18V5l12-2v13" />
+      <circle cx="6" cy="18" r="3" />
+      <circle cx="18" cy="16" r="3" />
+    </>
+  ),
+  /** A pulse: an animation clip. */
+  motion: <path d="M4 12h3.5l2-6 4 12 2-6H20" />,
+  /** Four tiles: a texture set. */
+  tiles: (
+    <>
+      <rect x="4" y="4" width="7" height="7" rx="1" />
+      <rect x="13" y="4" width="7" height="7" rx="1" />
+      <rect x="4" y="13" width="7" height="7" rx="1" />
+      <rect x="13" y="13" width="7" height="7" rx="1" />
+    </>
+  ),
+  /** A small triangle up or down: a number that rose or fell. */
+  "caret-up": <path d="M12 7l6 9H6z" fill="currentColor" stroke="none" />,
+  "caret-down": <path d="M12 17l6-9H6z" fill="currentColor" stroke="none" />,
 } satisfies Record<string, ReactNode>;
 
 export type IconName = keyof typeof glyphs;

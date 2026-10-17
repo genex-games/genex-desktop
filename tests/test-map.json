@@ -1,6 +1,7 @@
 {
   "about": "Explicit edges for scripts/affected-tests.mjs, for inputs no test imports or names by a literal path. Keys use knowledge-map glob semantics (dir/** also owns hidden files); values are test files. Tier follows the test: rig tests land in L3. Changes under src/harness-seed/** and src/game-template/** already select the harness gate; do not repeat that here.",
   "map": {
+    ".github/workflows/check.yml": ["tests/conformance/ci-test-plan.test.ts"],
     "src/main/preview.ts": ["tests/conformance/page-shim.test.ts", "tests/conformance/page-serve.test.ts"],
     "src/page/**": ["tests/conformance/page-shim.test.ts", "tests/conformance/page-serve.test.ts"],
     "docs/**": ["tests/conformance/agent-context.test.ts", "tests/conformance/agent-instructions.test.ts"],
@@ -17,6 +18,36 @@
     ".agents/skills/**": ["tests/conformance/skills-sync.test.ts"],
     ".claude/skills/**": ["tests/conformance/skills-sync.test.ts"],
     ".claude/settings.json": ["tests/conformance/agent-settings.test.ts"],
-    "evals/**": ["tests/conformance/eval-contracts.test.ts"]
+    "evals/**": ["tests/conformance/eval-contracts.test.ts"],
+    "src/plugins/roblox/helper/**": [
+      "tests/conformance/roblox-helper-build.test.ts",
+      "tests/conformance/roblox-setup.test.ts",
+      "tests/conformance/roblox-backend.test.ts"
+    ],
+    "src/plugins/roblox/judges/**": ["tests/conformance/roblox-probes.test.ts"],
+    "src/plugins/roblox/*.luau": ["tests/conformance/roblox-probes.test.ts"],
+    "src/plugins/roblox/panel.html": [
+      "tests/conformance/roblox-backend.test.ts",
+      "tests/conformance/roblox-panel.test.ts"
+    ],
+    "src/plugins/roblox/skills/**": ["tests/conformance/plugin-skill-engines.test.ts"],
+    "src/plugins/roblox/templates/**": [
+      "tests/conformance/roblox-create-place.test.ts",
+      "tests/conformance/roblox-places.test.ts"
+    ],
+    "tests/fixtures/roblox-models/**": [
+      "tests/conformance/roblox-asset-gate.test.ts",
+      "tests/conformance/roblox-model-import.test.ts"
+    ],
+    "tests/fixtures/roblox-luau/**": [
+      "tests/conformance/roblox-check-scripts.test.ts",
+      "tests/conformance/roblox-luau-tools.test.ts"
+    ],
+    "tests/fixtures/fake-luau-tool.mjs": ["tests/conformance/roblox-check-scripts.test.ts"],
+    "tests/fixtures/roblox-studio/**": [
+      "tests/conformance/roblox-mcp-bridge.test.ts",
+      "tests/conformance/roblox-helper-protocol.test.ts",
+      "tests/conformance/roblox-helper-socket.test.ts"
+    ]
   }
 }

@@ -2,7 +2,7 @@
  * What the wake loop (wake.ts) says to the lead, as the model reads it: the digest at the top of
  * every message that wakes it, the question it is asked when nothing runs, why a wrap-up started,
  * the fresh start after a lost session and why it was lost, the rules of the loop, and the tool
- * set without `wait` — and the rules of the long turn it replaced, which the playbook no longer
+ * set without `worker_wait` — and the rules of the long turn it replaced, which the playbook no longer
  * names. Plain facts in, text out. It never imports briefs.ts, which reads from here.
  */
 import { shortSha } from "../git.ts";
@@ -12,6 +12,7 @@ import { minutes } from "../time.ts";
 import { FacetStage } from "../facet/stage.ts";
 import { SHIP_DEFECTS_NOT_POLISH } from "./art-direction-prompts.ts";
 import { LEAD_CARD_RULE, LEAD_FRESH_START, LEAD_INTEGRATE_SWAP } from "./lead-session-prompts.ts";
+import { WorkerTool } from "../workers/contract.ts";
 import { DirectorTool } from "./tool-specs.ts";
 import { HEARTBEAT_MS, NoteKind, WakeCause, WrapCause } from "./wake-schedule.ts";
 import type { LiveToolSpec } from "../../types/host-api.d.ts";
@@ -168,6 +169,10 @@ export const REASON_WORDS = {
   [NoteKind.DefectShelved]: "a defect nobody owns",
   [NoteKind.DefectRouted]: "a defect was handed to its owner",
   [NoteKind.UserToWorker]: "the user spoke to a worker",
+  [NoteKind.JobEnded]: "a job of the run ended",
+  [NoteKind.WorkerAsks]: "a worker asks the person something",
+  [NoteKind.AppCrashed]: "the project's app stopped",
+  [NoteKind.AppStopping]: "the project's app stopped answering",
   [WakeCause.UserMessage]: "the user spoke",
   [WakeCause.FinishRequested]: "the user asked to finish",
   [WakeCause.News]: "news",
@@ -178,15 +183,18 @@ export const REASON_WORDS = {
   [WakeCause.IdleAsk]: "nothing is running",
   [WakeCause.FinishMark]: "the finish mark — the art director looked at the whole game",
   [WakeCause.ShipLook]: "the art director's regular look at the whole game",
+  [WakeCause.TurnCap]: "your turn reached its cap",
+  [WakeCause.CarryOn]: "your turn ended; carry on",
 } as const satisfies Record<WakeReason, string>;
 
 /** The one line a finish request adds to the user's part of a digest. */
-const FINISH_ASKED = "THE USER ASKED TO FINISH: integrate what is ready and call finish.";
+const FINISH_ASKED =
+  "THE USER ASKED TO FINISH: no new workers or rounds. Each running loop worker ends the round it is in: integrate what it keeps as it lands. Once no loop worker runs the wrap-up starts (its finish stops a single session): look at the integrated build and call finish.";
 
 /** The rules every build card carries, the same on every wake: the rule of its seat goes between them. */
 const CARD_RULES = [
-  "- The user outranks the plan: answer them in the chat, directly and briefly, and act on what they ask; a question alone stops no worker.",
-  "- What you write is the user's chat: otherwise speak only when a part lands, the build can be looked at, something broke, the plan changed, or the build is done.",
+  "- The user outranks the plan: answer them in the chat, directly and briefly, and act on what they ask. An ask to finish, wrap up or stop adding — asked again as a question too — is wrap_up first; a question alone stops no worker.",
+  '- What you write is the user\'s chat: otherwise speak only when a part lands, the build can be looked at, something broke, the plan changed, or the build is done. A wake with nothing of that kind ends with no text at all — never "waiting" or "nothing new".',
   "- Evidence, not reports: judge, playtest or look at a single session's work before you integrate (a loop's kept rounds were judged), and look at the integrated build before you finish.",
   "- Plan before worker_start; parallel workers only on independent files.",
 ] as const;
@@ -248,6 +256,8 @@ function timeLine(facts: DigestFacts): string {
   const { now, softDeadline, finalDeadline, wrapping } = facts;
   if (wrapping)
     return `- time: wrapping up — ${minutes(finalDeadline - now)} minutes left, until ${utc(finalDeadline)}`;
+  if (facts.finishRequested)
+    return `- time: finishing at the user's request — the wrap-up starts once no loop worker runs; ${minutes(finalDeadline - now)} minutes in all`;
   return `- time: ${minutes(softDeadline - now)} working minutes, ${finishMarkWords(facts)}wrap-up at ${utc(softDeadline)}, ${minutes(finalDeadline - now)} minutes in all`;
 }
 
@@ -301,8 +311,9 @@ function workerLine(w: DigestWorker, pastMark = false): string {
  * The room for more workers: without it a lead runs fewer workers than the owner allowed, and
  * nothing it reads says a window stands idle.
  */
-function roomLine(room: WorkerRoom | null | undefined, pastMark = false): string {
+function roomLine(room: WorkerRoom | null | undefined, pastMark = false, finishing = false): string {
   if (!room) return "";
+  if (finishing) return `- workers: ${room.running} running — no new ones: the user asked to finish`;
   const free = Math.max(0, room.allowed - room.running);
   const use = pastMark
     ? "only finish workers (stage=finish) on parts that exist, no new parts or systems"
@@ -356,8 +367,9 @@ function standsSection(facts: DigestFacts): string {
     `- integration: ${integrationHead ? shortSha(integrationHead) : "no commit yet"}, last health pass ${healthWords(facts.integrationHealthy)}`,
     outcomesLine(facts.outcomes),
     defects.length ? `- defects nobody owns: ${defects.join(" | ")}` : "",
-    roomLine(facts.room, facts.finishMarkPassed === true),
-    ...workerLines(facts.workers, facts.finishMarkPassed === true),
+    roomLine(facts.room, facts.finishMarkPassed === true, facts.finishRequested),
+    // Asked to finish, a worker's next big step is nobody's work: it is not shown.
+    ...workerLines(facts.workers, facts.finishMarkPassed === true || facts.finishRequested),
     facts.priorLine ?? "",
     planWindowUntil === null
       ? ""
@@ -372,9 +384,9 @@ function standsSection(facts: DigestFacts): string {
 /** A timed build's completion rule, before its finish mark and from it on. */
 const TIMED_RULE = {
   building:
-    "- An explicit duration commission: spend the working time building, testing and improving; finish in the wrap-up, or when the user asks.",
+    "- An explicit duration commission: its hours are a cap. Build, test and improve; call finish with victory=yes as soon as the goal is reached, and a reviewer's yes ends the build. A finish that claims nothing waits for the wrap-up, unless the user asks.",
   finishing:
-    "- An explicit duration commission in its finish stage: no new parts or systems — the owners finish theirs (stage=finish), integrate, judge ship=yes; finish in the wrap-up, or when the user asks.",
+    "- An explicit duration commission in its finish stage: no new parts or systems — the owners finish theirs (stage=finish), integrate, judge ship=yes; call finish with victory=yes once the goal is reached (a reviewer's yes ends the build). A finish that claims nothing waits for the wrap-up, unless the user asks.",
 } as const;
 
 /** A build's completion rule when it is not a duration commission: optional polish is not its work. */
@@ -553,7 +565,7 @@ export function freshStart({
 export function wakeRules({ heartbeatMinutes }: { heartbeatMinutes: number }): string {
   return [
     "HOW THIS RUN WORKS — ONE DECISION PER TURN:",
-    "- Act, then end your turn: there is no wait tool. Between your turns nothing of yours runs; the workers keep building.",
+    "- Act, then end your turn: there is no worker_wait tool. Between your turns nothing of yours runs; the workers keep building.",
     `- The studio wakes you in this same session when something happens — the user speaks or asks to finish, a worker lands a round or ends, a look into a worktree finds a violation, the plan window closes, the wrap-up starts — and every ${heartbeatMinutes} minutes while workers run.`,
     "- Each wake opens with a digest: the user's words, what happened, where the run stands, and your build card.",
     "- End a turn with nothing running and the studio asks once what next; end the next one idle too and it starts the wrap-up.",
@@ -568,7 +580,7 @@ export function wakeRules({ heartbeatMinutes }: { heartbeatMinutes: number }): s
 export function longTurnRules(): string {
   return [
     "HOW THIS RUN WORKS — ONE LONG TURN:",
-    "- `wait` is your loop: act, then wait — it returns when the user speaks or asks to finish, a worker lands a round or ends, or a look into a worktree finds a violation.",
+    "- `worker_wait` is your loop: act, then wait — it returns when the user speaks or asks to finish, a worker lands a round or ends, or a look into a worktree finds a violation.",
     "- Stay in this turn while there is working time: when it ends, the run goes to its wrap-up (a timed build is asked to carry on first).",
     "- Your own hands: you are a director of your own, not the chat's session — you edit and commit in your integration worktree, and resolve a merge conflict there yourself.",
   ].join("\n");
@@ -579,7 +591,7 @@ export const WAKE_BRIEF = {
   planReview:
     ' THE USER ASKED TO READ IT FIRST: your first worker waits for their word (they may simply say "go") and builds the plan as it stands if they say nothing — end your turn after plan; you are woken when they answer or the window closes.',
   userSays:
-    "- The user speaks in this game's chat: their words open your next wake (THE USER SAYS) or reach you mid-turn. They outrank your plan; answer them there, briefly, and act on them.",
+    "- The user speaks in this game's chat: their words open your next wake (THE USER SAYS) or reach you mid-turn. They outrank your plan; reply briefly there and act on them.",
 } as const;
 
 /** What `worker_start` answers a waking lead while the builders wait for the user's word. */
@@ -597,7 +609,7 @@ const WAKE_TOOL_SWAPS = new Map<string, readonly [string, string]>([
   [
     DirectorTool.WorkerStart,
     [
-      "— use wait and worker_status.",
+      "— use worker_wait and worker_status.",
       "— end your turn; the studio wakes you when it lands a round or ends (worker_status for detail).",
     ],
   ],
@@ -607,13 +619,13 @@ const WAKE_TOOL_SWAPS = new Map<string, readonly [string, string]>([
 const LEAD_TOOL_SWAPS = new Map<string, readonly [string, string]>([[DirectorTool.Integrate, LEAD_INTEGRATE_SWAP]]);
 
 /**
- * The run tools a waking lead is offered: no `wait`, and descriptions that say to end the turn —
+ * The run tools a waking lead is offered: no `worker_wait`, and descriptions that say to end the turn —
  * and, for a lead (`lead`), that a conflict goes to a worker. A director whose cwd is the
  * integration worktree on the wake loop (a kept director.ts from before one session) resolves it itself.
  */
 export function wakeTools(tools: readonly LiveToolSpec[], { lead = false }: { lead?: boolean } = {}): LiveToolSpec[] {
   return tools
-    .filter((tool) => tool.name !== DirectorTool.Wait)
+    .filter((tool) => tool.name !== WorkerTool.Wait)
     .map((tool) => {
       const swap = WAKE_TOOL_SWAPS.get(tool.name) ?? (lead ? LEAD_TOOL_SWAPS.get(tool.name) : undefined);
       return swap ? { ...tool, description: tool.description.replace(swap[0], swap[1]) } : tool;

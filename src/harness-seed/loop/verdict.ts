@@ -133,6 +133,8 @@ export const VerdictSource = {
   Outage: "outage",
   /** The run stopped the round before anybody judged it. */
   Stopped: "stopped",
+  /** The Unreal lead saved it after looking at its own captures: a save point, with no judge. */
+  Lead: "lead",
 } as const;
 export type VerdictSource = (typeof VerdictSource)[keyof typeof VerdictSource];
 
@@ -153,6 +155,8 @@ const LOST_BY_SOURCE: Record<string, string> = {
   [VerdictSource.Broken]: VerdictRule.Broken,
   [VerdictSource.Outage]: VerdictRule.Unreachable,
   [VerdictSource.Stopped]: VerdictRule.Stopped,
+  // A save point the lead went back past (`rewind`): the lead preferred an earlier one.
+  [VerdictSource.Lead]: VerdictRule.Vetoed,
 } satisfies Record<VerdictSource, VerdictRule>;
 
 /** Sentences that need no fact but the rule. Counts are added by `because()` where they help. */

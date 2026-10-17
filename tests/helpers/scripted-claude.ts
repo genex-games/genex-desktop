@@ -123,3 +123,41 @@ export function scriptedClaude(plan: ScriptedToolStep[]): ScriptedClaude {
   }) as never;
   return record;
 }
+
+/**
+ * The stream of a session that ended its turn to wait on a background sleep, then was woken by that
+ * task after its input had ended: its tool call then is refused, as no answer can reach it, and it
+ * ends on a second result.
+ */
+export function wokenSession(): Array<Record<string, unknown>> {
+  const result = (text: string) => ({
+    type: "result",
+    subtype: "success",
+    is_error: false,
+    result: text,
+    num_turns: 2,
+    usage: { input_tokens: 10, output_tokens: 10 },
+  });
+  const call = (id: string, name: string) => ({
+    type: "assistant",
+    message: { content: [{ type: "tool_use", name, id, input: { command: "sleep 180" } }] },
+  });
+  const answer = (id: string, content: string, isError = false) => ({
+    type: "user",
+    message: { content: [{ type: "tool_result", tool_use_id: id, is_error: isError, content }] },
+  });
+  return [
+    { type: "system", subtype: "init", model: "claude-opus-5", session_id: "ses_woken", tools: [] },
+    call("tu_bg", "Bash"),
+    answer("tu_bg", "Command running in background"),
+    result("The generation is still running; I'll check back when the background sleep ends."),
+    {
+      type: "user",
+      message: { content: [{ type: "text", text: "<task-notification>sleep finished</task-notification>" }] },
+    },
+    call("tu_wait", "mcp__studio__genex__asset"),
+    answer("tu_wait", "The user doesn't want to take this action right now.", true),
+    { type: "assistant", message: { content: [{ type: "text", text: "Done." }] } },
+    result("Done."),
+  ];
+}

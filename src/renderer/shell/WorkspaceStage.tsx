@@ -14,8 +14,10 @@ import { stagedCounted } from "../state/library.ts";
 import { Room } from "../state/threads.ts";
 import { notifyProblem } from "../state/toasts.ts";
 import { useCoveredByHome } from "./HomeScreen.tsx";
+import { useCoveredByRemix } from "./RemixLayer.tsx";
 import { StagePreview } from "./store-leaves.tsx";
 import type { WorkspaceProps } from "./use-shell.ts";
+import { webBuildShown } from "../web-build-shown.ts";
 
 /** The stage beside the chat: a game's preview, or Studio's review when the Studio chat is open. */
 export const WorkspaceStage = memo(function WorkspaceStage({
@@ -30,8 +32,11 @@ export const WorkspaceStage = memo(function WorkspaceStage({
   const engines = useEngines((s) => s.list);
   const { activeThreadId, room, project, activeStatus } = threadsView;
   const { games, rootLabel, runsRoot } = useStageLibrary();
-  const covered = useCoveredByHome();
-  const stageVisible = room === Room.Build && !chrome.pluginsOpen && !welcoming && !covered;
+  // Under home or a remix being made, the stage is out of sight, and so is its game's native view.
+  const underHome = useCoveredByHome();
+  const underRemix = useCoveredByRemix();
+  const covered = underHome || underRemix;
+  const stageVisible = room === Room.Build && !chrome.workspaceCovered && !welcoming && !covered;
   const { beside } = views;
   const countStaged = useCallback((count: number) => app.library.setState((s) => stagedCounted(s, count), true), [app]);
   return (
@@ -72,6 +77,7 @@ export const WorkspaceStage = memo(function WorkspaceStage({
               void window.studio
                 .showBuild(name, commit)
                 .then(() => {
+                  webBuildShown(name);
                   navigation.selectGame(name);
                   views.showLive();
                 })

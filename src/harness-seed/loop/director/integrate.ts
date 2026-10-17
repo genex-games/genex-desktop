@@ -36,6 +36,7 @@ import { skipOptimization } from "../optimization.ts";
 import { EventKind, ExecutionStatus, JournalPhase, RunEvent, writeRunArtifact } from "../run-events.ts";
 import { isCommit } from "../shell.ts";
 import { CheckOrigin, loadCatalogue, recordCatalogueOutcomes, saveCatalogue } from "../spec.ts";
+import { blockersOf } from "../ship-blockers.ts";
 import { CLIP_DETAIL, CLIP_REASON } from "../text.ts";
 import { minutes, SECOND_MS, sleep } from "../time.ts";
 import { againstWords, NotLandedReason, observedFrom, VerdictPass, VerdictRule } from "../verdict.ts";
@@ -43,7 +44,8 @@ import { randomUUID } from "node:crypto";
 import { demosNamedBy, dependentsOf, lookOf, lostRegistrations, lostWords, setupKey } from "../registry.ts";
 import type { LostRegistration } from "../registry.ts";
 import { list, slug, yes } from "./args.ts";
-import { CLOSE_SETTLE_MS, timedWorkRemaining } from "./budgets.ts";
+import { CLOSE_SETTLE_MS } from "./budgets.ts";
+import { finishWaitsForCap } from "../time-cap.ts";
 import { workerDigest } from "./digests.ts";
 import { resolveByWorker, unresolvedOf } from "./conflict-worker.ts";
 import { contractAloneOnStart } from "./contract-gate.ts";
@@ -52,8 +54,27 @@ import { LEAD_DIRTY, LEAD_FIX_NEXT, LEAD_SET_ASIDE } from "./lead-session-prompt
 import type { SetAside } from "./lead-session.ts";
 import { BuildTarget, WindowLease } from "./loop-run.ts";
 import { LandingHow, landingWords } from "./rules.ts";
+import { closeReaders } from "../workers/director-pool.ts";
 import { shipFinishLine } from "./art-direction-prompts.ts";
+import { shipClaimRefusal } from "./blocker-prompts.ts";
+import { closeUnderWay, holdFinish, latchClose, releaseFinish } from "./close-latch.ts";
+import { FINISH_REPORT } from "../finish-check.ts";
+import {
+  CLAIM_ANSWER,
+  checkClaim,
+  claimAnswerBy,
+  claimJudgeBy,
+  closedBy,
+  type FinishCall,
+  keepProofOut,
+  proofKeptOut,
+} from "./finish-claim.ts";
+import { GIT_WITHOUT_PROOF } from "./proof-git.ts";
 import type { LastJudge, LoopRun, Worker } from "./loop-run.ts";
+import { holdBaseForMerge, releaseMergeHold, unlookedAfterMerge } from "./merge-hold.ts";
+import { noteKeptWork } from "./kept-work.ts";
+import { keptLeftOut, keptToMerge } from "./kept-judge.ts";
+import { userQuoted } from "./wrap-up.ts";
 import type { LastShip } from "./art-direction.ts";
 import type { Evidence } from "../evidence.ts";
 import type { AnyRecord, HarnessCtx } from "../../types/harness.d.ts";
@@ -130,8 +151,6 @@ const NOTHING_BEYOND_THE_START = "the integration branch has nothing beyond the 
 
 /** At most this many paths are named in a sentence about them. */
 const PATHS_NAMED = 8;
-/** The fewest characters of the user's own words that stand for their message (`userQuoted`). */
-const MIN_USER_QUOTE_CHARS = 8;
 
 /**
  * A file name or git's own words in a reason, with brackets for parentheses: the clock's close
@@ -256,7 +275,8 @@ async function resolveWorkerCommit(
   worker: Worker,
 ): Promise<{ commit: string; refusal?: undefined } | { refusal: string }> {
   const { ctx, integrationWorktree, workerCommit } = loopRun;
-  const commit = await workerCommit(worker);
+  // A stopped round goes in only once a judge preferred it to this branch; else the accepted one.
+  const commit = keptToMerge(worker) ?? (await workerCommit(worker));
   if (!commit) return { refusal: INTEGRATE_REFUSAL.noCommit(worker.id) };
   if (!isCommit(commit)) return { refusal: INTEGRATE_REFUSAL.notACommit(worker.id) };
   if (commit === worker.from) return { refusal: INTEGRATE_REFUSAL.nothingNew(worker.id, commit) };
@@ -369,6 +389,8 @@ async function mergeWorker(
     union: merge.union,
     stage: MergeStage.Director,
   });
+  // A worker started from another's kept work brings that work in too, judged on top of it.
+  await noteKeptWork(loopRun, state.integrationHead, true);
   return { ok: true, union: merge.union };
 }
 
@@ -410,6 +432,8 @@ async function healthPass(
     health.ok = false;
   }
   state.integrationHealthy = health.ok === true;
+  // The head has its answer: running loop workers read it from here (workers.ts `freshBase`).
+  releaseMergeHold(state);
   // Kept with the setup it was taken under: the next merge compares state paths only with a look
   // like its own (lostByMerge).
   rememberEvidence(head, health, { setup: setupKey(loopRun.run.setup) });
@@ -552,7 +576,7 @@ function integrationAnswer(
   });
 }
 
-/** A healthy merge closes the wave: running loop workers take this head at their next round. */
+/** A healthy merge closes the wave: this head is the one running loop workers fall back to while a newer one does not load. */
 function closeWaveIfHealthy(loopRun: LoopRun, health: Evidence): void {
   const { state } = loopRun;
   if (health.ok === true) state.waveHead = state.integrationHead;
@@ -563,6 +587,7 @@ async function closeWave(loopRun: LoopRun): Promise<string> {
   const { note, saveJournal, state } = loopRun;
   const head = state.integrationHead;
   state.waveHead = head;
+  releaseMergeHold(state);
   await saveJournal();
   if (head) note(WAVE_WORDS.closed(head));
   return JSON.stringify({
@@ -609,6 +634,7 @@ async function integrateWave(loopRun: LoopRun, ids: readonly string[]): Promise<
   const ready = await checkpointAssets(loopRun, label);
   if (ready.refusal) return ready.refusal;
   const previousHead = state.integrationHead;
+  const held = holdBaseForMerge(state, previousHead);
   const merged: Worker[] = [];
   const skipped: Record<string, string> = {};
   let union = false;
@@ -616,8 +642,7 @@ async function integrateWave(loopRun: LoopRun, ids: readonly string[]): Promise<
     const taken = await takeIntoWave(loopRun, id, label);
     if ("skipped" in taken) skipped[id] = taken.skipped;
     else if (!taken.merged.ok) {
-      // What merged before the conflict is on the branch, and nobody has looked at it yet.
-      if (merged.length) state.integrationHealthy = null;
+      unlookedAfterMerge(state, held, merged.length > 0);
       const wave = { merged: merged.map((worker) => worker.id), notTried: ids.slice(at + 1), skipped };
       return withFields(taken.merged.answer, { wave });
     } else {
@@ -625,7 +650,10 @@ async function integrateWave(loopRun: LoopRun, ids: readonly string[]): Promise<
       union = union || taken.merged.union;
     }
   }
-  if (!merged.length) return JSON.stringify({ merged: false, skipped });
+  if (!merged.length) {
+    unlookedAfterMerge(state, held, false);
+    return JSON.stringify({ merged: false, skipped });
+  }
   const pass = await healthPass(loopRun, merged, label, previousHead);
   closeWaveIfHealthy(loopRun, pass.health);
   await recordHealth(loopRun, merged, pass);
@@ -647,21 +675,32 @@ async function integrateOne(loopRun: LoopRun, args: AnyRecord): Promise<string> 
   const ready = await checkpointAssets(loopRun, label);
   if (ready.refusal) return ready.refusal;
   const previousHead = state.integrationHead;
+  const held = holdBaseForMerge(state, previousHead);
   const merged = await mergeWorker(loopRun, worker, resolved.commit, label);
-  if (!merged.ok) return merged.answer;
+  if (!merged.ok) {
+    unlookedAfterMerge(state, held, false);
+    return merged.answer;
+  }
   const pass = await healthPass(loopRun, [worker], label, previousHead);
   closeWaveIfHealthy(loopRun, pass.health);
   await recordHealth(loopRun, [worker], pass);
-  return integrationAnswer(loopRun, pass.health, merged.union, ready.setAside, { lost: pass.lost });
+  const leftOut = keptLeftOut(worker);
+  return integrationAnswer(loopRun, pass.health, merged.union, ready.setAside, {
+    lost: pass.lost,
+    ...(leftOut ? { extra: { keptLeftOut: leftOut } } : {}),
+  });
 }
 
 /**
  * `integrate`: one worker's accepted commit, or a wave of them (`worker=a,b,c`), merged into the
- * integration branch with one health pass. A healthy integrate closes the wave — running loop
- * workers take the integration branch once per wave, not after every commit — and `wave=close`
- * closes it by hand, after the lead's own commits (with or without workers to merge first).
+ * integration branch with one health pass. Running loop workers take the newest head at each round
+ * once its merge is seen to load (workers.ts `freshBase`); a healthy integrate closes the wave — the
+ * head they fall back to while a newer one does not load — and `wave=close` closes it by hand, after
+ * the lead's own commits (with or without workers to merge first), letting go any hold on the head.
  */
 export async function integrate(loopRun: LoopRun, args: AnyRecord) {
+  // A run whose close has started lands the head its reviewer read: nothing more is merged into it.
+  if (loopRun.state.finish || closeUnderWay(loopRun.state)) return CLAIM_ANSWER.integrateClosing;
   const closing =
     String(args.wave ?? "")
       .trim()
@@ -686,20 +725,43 @@ function judgeSawItLoad(judged: LastJudge | null, head: string | null): boolean 
 /**
  * The close's judge of the build it is about to make live (tools.ts `judgeTheLanding`, beside the
  * judging it shares). A kept older tools.ts has none, and would ignore the bounds this judge needs,
- * so that close lands as it always did and says it did not judge.
+ * so that close lands as it always did and says it did not judge. With `judgeBy` (a close inside a
+ * lead's call), the close waits for its judge until then and no longer, whatever tools.ts does.
  */
-async function judgeForTheClose(loopRun: LoopRun, head: string | null): Promise<void> {
+async function judgeForTheClose(
+  loopRun: LoopRun,
+  head: string | null,
+  bound: { judgeBy?: number; wait?: (ms: number) => Promise<void> } = {},
+): Promise<void> {
   const { judgeTheLanding, note } = loopRun;
-  if (typeof judgeTheLanding === "function") return judgeTheLanding(head);
-  note(`the close did not judge ${shortSha(head)}: this workspace keeps an older tools.ts without the close's judge`);
+  if (typeof judgeTheLanding !== "function") {
+    note(`the close did not judge ${shortSha(head)}: this workspace keeps an older tools.ts without the close's judge`);
+    return;
+  }
+  const { judgeBy, wait } = bound;
+  const judging = judgeTheLanding(head, judgeBy);
+  if (judgeBy === undefined) return judging;
+  if (
+    await closedBy(
+      judging.then(() => ({})),
+      judgeBy,
+      wait,
+    )
+  )
+    return;
+  note(`the close's judge of ${shortSha(head)} ran past the lead's call: the close lands by its own look`);
 }
 
 /**
  * The close's own look at the head the worktree stands on, its judge of that head, and the landing
  * they earn. The judge's word counts only for the head it looked at — the same sha this close
- * observed. On a resume it may be last session's, kept in the journal.
+ * observed. On a resume it may be last session's, kept in the journal. `judgeBy` is when the
+ * judge must be done, when the close runs inside a lead's call that ends then (`wait` its clock).
  */
-async function landWhatRuns(loopRun: LoopRun): Promise<AnyRecord> {
+async function landWhatRuns(
+  loopRun: LoopRun,
+  bound: { judgeBy?: number; wait?: (ms: number) => Promise<void> } = {},
+): Promise<AnyRecord> {
   const { baseCommit, ctx, decision, integrationRef, landIntegration, state, syncHead } = loopRun;
   // Whatever the director committed last is the build this close is about — not the head
   // the last integrate happened to leave behind.
@@ -724,7 +786,7 @@ async function landWhatRuns(loopRun: LoopRun): Promise<AnyRecord> {
   });
   await recordHeadHealth(loopRun, head, label, health);
   const before = state.lastJudge;
-  await judgeForTheClose(loopRun, head);
+  await judgeForTheClose(loopRun, head, bound);
   // A Stop pressed while the close looked or judged is obeyed: nothing is made live.
   if (ctx.cancelled) return notLanded(STOPPED_BY_USER, NotLandedReason.Stopped);
   // A judge that saw this head load still speaks for it when the close's own judge raced the load.
@@ -760,8 +822,34 @@ async function landWhatRuns(loopRun: LoopRun): Promise<AnyRecord> {
  * `because` is a function of the landing, but the ladder it reads is computed by the CALLER
  * and closed over: everything this close knows about why the run ended is known before it
  * starts, and a `Date.now()` read after a 90-second settle would have told a different story.
+ *
+ * A run closes once: a second asker while a close is under way (the clock's while a finish closes,
+ * or the other way round) waits for that close and gets its landing (close-latch.ts).
  */
-export async function closeTheLoopRun(
+export async function closeTheLoopRun(loopRun: LoopRun, options: CloseOptions): Promise<AnyRecord> {
+  return latchClose(loopRun.state, () => closeOnce(loopRun, options));
+}
+
+/** How a close goes: see `closeTheLoopRun`. */
+interface CloseOptions {
+  land?: boolean;
+  stopWhy?: string;
+  settleMs?: number;
+  because?: string | ((landed: AnyRecord) => string) | null;
+  summary?: string | null;
+  victory?: boolean;
+  /** A lost provider paused the run: it lands nothing, and says so. */
+  paused?: boolean;
+  /** When the close's judge must be done (a close inside a lead's call that ends then). */
+  judgeBy?: number;
+  /** The wait the close's judge is bounded on (a test may drive it); a real timer without. */
+  wait?: (ms: number) => Promise<void>;
+  /** The head a reviewer said yes to: a close that lands any other head is no victory. */
+  reviewed?: string | null;
+}
+
+/** The close itself (`closeTheLoopRun`). */
+async function closeOnce(
   loopRun: LoopRun,
   {
     land = true,
@@ -771,29 +859,28 @@ export async function closeTheLoopRun(
     summary = null,
     victory = false,
     paused = false,
-  }: {
-    land?: boolean;
-    stopWhy?: string;
-    settleMs?: number;
-    because?: string | ((landed: AnyRecord) => string) | null;
-    summary?: string | null;
-    victory?: boolean;
-    /** A lost provider paused the run: it lands nothing, and says so. */
-    paused?: boolean;
-  },
+    judgeBy,
+    wait,
+    reviewed,
+  }: CloseOptions,
 ): Promise<AnyRecord> {
   const { closeRun, ctx, report, runningWorkers, settleWorkers, stopWorker } = loopRun;
   for (const worker of runningWorkers()) await stopWorker(worker, stopWhy, "finalization");
   await settleWorkers(settleMs);
+  // The readers of the run's shared pool stop with its builders.
+  await closeReaders(loopRun).catch(() => {});
   let landed: AnyRecord;
   if (ctx.cancelled) landed = notLanded(STOPPED_BY_USER, NotLandedReason.Stopped);
   else if (paused) landed = notLanded(PAUSED_UNLANDED, NotLandedReason.Paused);
   else if (!land) landed = notLanded("land=no", NotLandedReason.NotAsked);
-  else landed = await landWhatRuns(loopRun);
-  report.victory = victory === true && landed.ok === true;
+  else landed = await landWhatRuns(loopRun, { judgeBy, wait });
+  // A reviewer's yes speaks for the head it read: a close that landed another is no victory.
+  const moved = reviewed !== undefined && landed.ok === true && loopRun.state.integrationHead !== reviewed;
+  report.victory = victory === true && landed.ok === true && !moved;
   if (summary !== null) report.summary = summary;
   // A Stop is the run's reason whoever was closing it: the chat marks a stopped run by these words.
   if (landed.why === NotLandedReason.Stopped) report.stoppedBecause = STOPPED_BY_USER;
+  else if (moved && victory === true) report.stoppedBecause = FINISH_REPORT.movedAfterYes;
   else if (typeof because === "function") report.stoppedBecause = because(landed);
   else if (because) report.stoppedBecause = because;
   await closeRun(landed);
@@ -823,49 +910,145 @@ function finishAnswer(loopRun: LoopRun, landed: AnyRecord): string {
 }
 
 /**
- * Did the user write `quote` in a message delivered into this run? The lead reads what they meant;
- * this only checks the words are theirs, as `plan`'s scope_instruction is checked (goals.ts).
+ * Close the run with the lead's summary. A timed build spends its working time unless the goal is
+ * reached: a finish that claims nothing ends it early only for the user — Finish, or their own words
+ * in a message to this run, which the lead quotes as `user_asked`, so a request to stop is never
+ * refused for the rest of the working time. A claim that the goal is reached (`victory=yes` with no
+ * Finish of the person's) is checked by a reviewer first whenever it comes (finish-claim.ts), on the
+ * head the close would land, and a yes ends the build; `call` is the lead's call (its start and the
+ * finish moment's notes and pictures), absent from a kept older tools.ts.
  */
-async function userQuoted(inbox: LoopRun["inbox"], quote: unknown): Promise<boolean> {
-  const words = typeof quote === "string" ? quote.trim() : "";
-  if (words.length < MIN_USER_QUOTE_CHARS) return false;
-  const said = await inbox.steering(undefined, false);
-  return said.some((text) => text.includes(words));
+export async function finish(loopRun: LoopRun, args: AnyRecord, call: FinishCall = {}) {
+  const started = call.started ?? Date.now();
+  const { state } = loopRun;
+  // Taken before anything waits, so a lead's parallel finish never starts a second one.
+  if (state.finish || closeUnderWay(state) || !holdFinish(state)) return "finish is already under way";
+  try {
+    return await finishHeld(loopRun, args, { ...call, started });
+  } finally {
+    releaseFinish(state);
+  }
 }
 
-/**
- * Close the run with the lead's summary. A timed build spends its working time: only the user ends
- * it early — Finish, or their own words in a message to this run, which the lead quotes as
- * `user_asked` (golden-boot-glory: "don't run the build" was refused for 159 minutes).
- */
-export async function finish(loopRun: LoopRun, args: AnyRecord) {
-  const { closeTheLoopRun, ctx, inbox, run, softDeadline, state } = loopRun;
-  if (state.finish) return "finish is already under way";
+/** `finish` once it holds the run's finish (above). */
+async function finishHeld(loopRun: LoopRun, args: AnyRecord, call: FinishCall & { started: number }) {
+  const { inbox, state } = loopRun;
   const summary = String(args.summary ?? "").trim();
   if (!summary) return "finish needs a summary for the user";
-  const userEnds = (await inbox.finishing()) || (await userQuoted(inbox, args.user_asked));
-  if (!ctx.cancelled && timedWorkRemaining(run, softDeadline, Date.now(), userEnds)) {
-    return `finish refused: ${minutes(softDeadline - Date.now())} working minutes remain in this timed build. Call run_status, plan and delegate the next concrete improvement, then test and integrate it. Keep working until the wrap-up window; do not idle or repeat finish. Only the user ends it early: when they asked you in a message to stop or finish now, call finish again with user_asked quoting their words exactly.`;
-  }
+  const finishing = await inbox.finishing();
+  const userEnds = finishing || (await userQuoted(inbox, args.user_asked));
   const land = yes(args.land, true);
-  const victory = yes(args.victory, false);
-  if (victory && state.goals && goalDecision(state.goals, state.integrationHead) !== GoalStatus.Passed) {
-    return "finish cannot claim victory: required acceptance is not verified on the integrated revision. Run playtest goal=<id>, or finish with victory=no and explain the gaps.";
+  // A Finish asked of the run (the person's, or the chat's agent's finish_run: the log does not say
+  // which) ends it with no check, and so with no victory: only a reviewer's yes records one. Words the
+  // lead quotes may lift a timed build's refusal, never stand in for that yes.
+  const victory = yes(args.victory, false) && !finishing;
+  const refused = finishRefusal(loopRun, { userEnds, victory });
+  if (refused) return refused;
+  const claims = victory;
+  // A claim's reviewer reads what would land: the lead's edits are committed before the art
+  // director looks, so its review stands on that head and a second claim needs no second look. The
+  // files it names as proof that git does not track stay out of the build.
+  if (claims) {
+    await keepProofOut(loopRun, list(args.proof));
+    await commitWhatWouldLand(loopRun);
   }
   // A goal build's finish with no ship review on its head: the art director looks once first.
   const shipRefusal =
     land && typeof loopRun.shipFinishGate === "function" ? await loopRun.shipFinishGate(userEnds) : null;
   if (shipRefusal) return shipRefusal;
-  state.finish = { summary, land, victory, at: Date.now() };
+  // The run began closing while the gates looked (the clock's close, a Stop): no claim is checked.
+  if (state.finish || closeUnderWay(state)) return CLAIM_ANSWER.alreadyClosed;
+  const close = await closingOf(loopRun, { summary, args, call, victory, claims, land });
+  if (!close.close) return close.answer;
+  // The run closed under the claim (the clock's close): nothing is closed a second time.
+  if (state.finish || closeUnderWay(state)) return CLAIM_ANSWER.alreadyClosed;
+  return closeOnFinish(loopRun, close, { summary, land, claims, call });
+}
+
+/**
+ * The close a finish decided on, and the lead's answer: the landing; for a claim, by its call's end,
+ * else that the run is closing (the close lands after the call).
+ */
+async function closeOnFinish(
+  loopRun: LoopRun,
+  close: ClosingVerdict,
+  finishing: { summary: string; land: boolean; claims: boolean; call: FinishCall & { started: number } },
+): Promise<string> {
+  const { closeTheLoopRun, ctx, run, state } = loopRun;
+  const { summary, land, claims, call } = finishing;
+  state.finish = { summary, land, victory: close.victory, at: Date.now() };
+  if (close.notDone?.length) loopRun.report.notDone = close.notDone;
   ctx.setStatus(`run ${run.runId} · director finishing`);
-  const landed = await closeTheLoopRun({
+  const closing = closeTheLoopRun({
     land,
     stopWhy: "the build is wrapping up",
-    because: "the director finished the run",
-    summary,
-    victory,
+    because: close.because,
+    summary: close.summary,
+    victory: close.victory,
+    ...(claims ? { judgeBy: claimJudgeBy(call.started), ...(call.wait ? { wait: call.wait } : {}) } : {}),
+    ...(close.reviewed === undefined ? {} : { reviewed: close.reviewed }),
   });
-  return finishAnswer(loopRun, landed);
+  if (!claims) return finishAnswer(loopRun, await closing);
+  // A claim's call answers by its end: a close still running then lands after it. A claim that
+  // closes without a yes tells the lead why first.
+  const landed = await closedBy(closing, claimAnswerBy(call.started), call.wait);
+  const told = close.told ? `${close.told} ` : "";
+  if (landed) return `${told}${finishAnswer(loopRun, landed)}`;
+  return close.victory ? CLAIM_ANSWER.closing : `${told}${CLAIM_ANSWER.closingUnwon}`;
+}
+
+/** The close a finish decided on: a victory or not, its words, what isn't done, what the lead is told, and the head a reviewer read. */
+interface ClosingVerdict {
+  victory: boolean;
+  because: string;
+  summary: string;
+  notDone?: string[];
+  told?: string;
+  reviewed?: string | null;
+}
+
+/**
+ * Why a finish is turned back before anything looks: a timed build's working time for a finish that
+ * claims nothing (a claim goes to its reviewer whenever it comes, time-cap.ts), or a claim its goals
+ * don't back.
+ */
+function finishRefusal(loopRun: LoopRun, finishing: { userEnds: boolean; victory: boolean }): string | null {
+  const { ctx, run, softDeadline, state } = loopRun;
+  const waits = { softDeadline, now: Date.now(), userEnds: finishing.userEnds, claims: finishing.victory };
+  if (!ctx.cancelled && finishWaitsForCap(run, waits)) {
+    return `finish refused: ${minutes(softDeadline - Date.now())} working minutes remain in this timed build. Call run_status, plan and delegate the next concrete improvement, then test and integrate it. Keep working until the wrap-up window; do not idle or repeat finish. Only the user ends it early: when they asked you in a message to finish, call wrap_up quoting their words exactly (the running rounds end first); to stop now, call finish again with user_asked quoting them.`;
+  }
+  const unverified = state.goals && goalDecision(state.goals, state.integrationHead) !== GoalStatus.Passed;
+  if (finishing.victory && unverified) {
+    return "finish cannot claim victory: required acceptance is not verified on the integrated revision. Run playtest goal=<id>, or finish with victory=no and explain the gaps.";
+  }
+  // The goal is reached when its outcomes are verified and the art director names no blocker on the head.
+  const review = shipOnHead(loopRun);
+  if (finishing.victory && review && blockersOf(review.defects).length) return shipClaimRefusal(review);
+  return null;
+}
+
+/** The head as the worktree stands, the lead's own edits committed: what a claim's close would land. */
+async function commitWhatWouldLand(loopRun: LoopRun): Promise<string | null> {
+  await loopRun.syncHead();
+  await commitFinalEdits(loopRun);
+  return loopRun.syncHead();
+}
+
+/** How a finish closes the run: on the lead's word, or, for a claim, as its reviewer decided; else the answer while it goes on. */
+async function closingOf(
+  loopRun: LoopRun,
+  finishing: { summary: string; args: AnyRecord; call: FinishCall; victory: boolean; claims: boolean; land: boolean },
+): Promise<({ close: true } & ClosingVerdict) | { close: false; answer: string }> {
+  const { summary, args, call, land } = finishing;
+  const finished = { close: true as const, because: "the director finished the run", summary };
+  if (!finishing.claims) return { ...finished, victory: finishing.victory };
+  // The reviewer reads what would land, and its yes speaks for that head only.
+  const read = await commitWhatWouldLand(loopRun);
+  const verdict = await checkClaim(loopRun, { summary, args, call, land, head: read });
+  if (!verdict.close) return verdict;
+  if (verdict.victory && (await loopRun.syncHead()) !== read) return { close: false, answer: CLAIM_ANSWER.moved };
+  return { ...finished, ...verdict, ...(verdict.victory ? { reviewed: read } : {}) };
 }
 
 /** What this run can honestly claim about the head it landed (`landingWords`, above). */
@@ -909,11 +1092,19 @@ async function nestedRefusal(loopRun: LoopRun): Promise<AnyRecord | null> {
  */
 async function commitFinalEdits(loopRun: LoopRun): Promise<AnyRecord | null> {
   const { ctx, integrationWorktree, protectHead, run, state } = loopRun;
-  const dirty = await gitAt(ctx, integrationWorktree, GIT.status).catch(() => "");
+  // The files a claim named as proof that git does not track are evidence, not the build.
+  const out = proofKeptOut(state);
+  const status = out.length ? GIT_WITHOUT_PROOF.status(out) : GIT.status;
+  const dirty = await gitAt(ctx, integrationWorktree, status).catch(() => "");
   if (!dirty) return null;
-  const commitError = await commitAll(ctx, integrationWorktree, `director ${run.runId}: final edits`, {
-    label: `director:${run.runId}:final-commit`,
-  }).then(
+  const message = `director ${run.runId}: final edits`;
+  const label = `director:${run.runId}:final-commit`;
+  const committing = out.length
+    ? gitAt(ctx, integrationWorktree, GIT_WITHOUT_PROOF.addAll(out), { label }).then(() =>
+        gitAt(ctx, integrationWorktree, GIT.commit(message), { label }),
+      )
+    : commitAll(ctx, integrationWorktree, message, { label });
+  const commitError = await committing.then(
     () => null,
     (err) => String(err?.message ?? err),
   );

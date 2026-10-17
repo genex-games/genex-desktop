@@ -11,16 +11,25 @@ import { Icon } from "../ui/icons.tsx";
 import { Markdown } from "../ui/Markdown.tsx";
 import { ResultButton } from "../ui/ResultButton.tsx";
 import { ToolRow } from "../ui/ToolChips.tsx";
-import { compactedWords, consentRequestedWords } from "../words.ts";
+import { compactedWords, consentLineWords } from "../words.ts";
 import { type Notify, notifyProblem } from "../state/toasts.ts";
 import { AssetResults } from "./AssetResults.tsx";
 import { ChatDisclosure } from "./ChatDisclosure.tsx";
 import { CommandRun } from "./CommandRun.tsx";
 import { GenexCoverCard } from "./GenexCoverCard.tsx";
 import { ChatQuestion } from "./ChatQuestion.tsx";
+import { EngineLinkLine } from "./EngineLinkLine.tsx";
+import { RewindLine } from "./RewindLine.tsx";
+import { JobLine } from "./JobLine.tsx";
+import { WorkerLine } from "./WorkerLine.tsx";
+import { AppAccessLine } from "./AppAccessLine.tsx";
+import { JudgeLine } from "./JudgeLine.tsx";
 import { PermissionOutcome } from "./PermissionRequest.tsx";
+import { PluginSuggestionCard } from "./PluginSuggestionCard.tsx";
 import { StudioLearningLine } from "./LearningSummary.tsx";
 import { UserMessage } from "./UserMessage.tsx";
+import { MentionResults } from "./MentionResults.tsx";
+import type { MentionOutcome } from "../../shared/prompt-mention.ts";
 import { WorkLog } from "./WorkLog.tsx";
 
 /** A paused run while nothing else runs: its own card offers Resume. */
@@ -42,6 +51,8 @@ export interface TranscriptContext {
   onShowAssets?: () => void;
   onOpenStudio?: () => void;
   onNotice: Notify;
+  /** The person turned on the plugin a card suggested: tell the agent, so the chat goes on. */
+  onPluginTurnedOn: (name: string) => void;
   /** A held build plan's "Approve plan": answer it with "go", keeping the draft. */
   onApprovePlan: () => Promise<void>;
   /** "Make changes": start the reply in the composer. */
@@ -67,15 +78,28 @@ export const TranscriptEntry = memo(function TranscriptEntry({
     [onNotice],
   );
   const deliveries = useMemo(() => (entry.kind === EntryKind.Assets ? [entry.delivery] : []), [entry]);
+  const making = useMemo(
+    () => (context.project ? { project: context.project, onNotice } : undefined),
+    [context.project, onNotice],
+  );
   switch (entry.kind) {
     case WORK_KIND:
-      return <WorkLog items={entry.items} />;
+      return (
+        <WorkLog
+          items={entry.items}
+          deliveries={entry.deliveries}
+          onOpenAssets={context.onShowAssets}
+          making={making}
+        />
+      );
     case EntryKind.Assets:
       return <AssetResults deliveries={deliveries} onOpenAssets={context.onShowAssets} />;
     case EntryKind.GenexCover:
       return <GenexCoverCard entry={entry} project={context.project} />;
     case EntryKind.User:
       return <UserEntry key={entry.id} entry={entry} context={context} />;
+    case EntryKind.Mentions:
+      return <MentionsEntry entry={entry} context={context} />;
     case EntryKind.Assistant:
       return <AssistantEntry key={entry.id} entry={entry} commands={context.commands} />;
     case EntryKind.Notice:
@@ -108,6 +132,7 @@ export const TranscriptEntry = memo(function TranscriptEntry({
           kept={entry.kept}
           undone={entry.undone}
           landed={entry.landed}
+          profile={entry.profile}
           // A run the plan limit cut off is paused, not finished: the card says so and
           // offers Resume itself, instead of leaving it to a grey line underneath.
           paused={!entry.superseded && resumable(entry.runId, context)}
@@ -128,6 +153,8 @@ export const TranscriptEntry = memo(function TranscriptEntry({
       return <ActionEntry entry={entry} context={context} resume={resume} />;
     case EntryKind.Compaction:
       return <CompactionEntry messages={entry.messages} summary={entry.summary} />;
+    case EntryKind.PluginSuggestion:
+      return <PluginSuggestionCard entry={entry} onNotice={onNotice} onTurnedOn={context.onPluginTurnedOn} />;
     default:
       return null;
   }
@@ -175,12 +202,30 @@ function AssistantEntry({
   );
 }
 
+/** The card of what a message's @ tags gave the agent, with Try again and Remove tag in this chat. */
+function MentionsEntry({
+  entry,
+  context,
+}: {
+  entry: { tags: MentionOutcome[]; messageId?: string };
+  context: TranscriptContext;
+}) {
+  return (
+    <MentionResults
+      tags={entry.tags}
+      threadId={context.threadId}
+      messageId={entry.messageId}
+      onProblem={notifyProblem(context.onNotice)}
+    />
+  );
+}
+
 /** A message the user sent, with the pictures sent with it. */
 function UserEntry({
   entry,
   context,
 }: {
-  entry: { id: string; text: string; about?: string };
+  entry: { id: string; text: string; about?: string; tags?: string[] };
   context: TranscriptContext;
 }) {
   const images = context.images.get(entry.id);
@@ -190,7 +235,15 @@ function UserEntry({
       : {};
   const { onRewind } = context;
   const rewind = onRewind && context.canRewind?.(entry.id) ? { rewindId: entry.id, onRewind } : {};
-  return <UserMessage text={entry.text} {...pictures} {...(entry.about ? { about: entry.about } : {})} {...rewind} />;
+  return (
+    <UserMessage
+      text={entry.text}
+      {...pictures}
+      {...(entry.about ? { about: entry.about } : {})}
+      {...(entry.tags ? { tags: entry.tags } : {})}
+      {...rewind}
+    />
+  );
 }
 
 /** The harness's system tags; UPDATE lines carry no heading. */
@@ -214,28 +267,44 @@ function SystemEntry({ entry }: { entry: Extract<Entry, { kind: typeof EntryKind
   return (
     <div className="flex min-w-0 flex-col gap-1 text-chat-sub leading-relaxed text-ink-2">
       {showsHeading && <span className="text-[12px] font-medium text-ink-3">{systemHeading(tag)}</span>}
-      <span>{stopped ? "Stopped" : <FileText text={entry.text} />}</span>
+      <span className="[overflow-wrap:anywhere]">{stopped ? "Stopped" : <FileText text={entry.text} />}</span>
     </div>
   );
 }
 
+/** A plugin's or connector's question once answered: one line, as Claude's own are, the request inside. */
 function ConsentOutcome({ entry }: { entry: Extract<Entry, { kind: typeof EntryKind.Action }> }): JSX.Element {
   return (
-    <div className="text-chat text-ink-2">
-      <p>{entry.consentPrompt || consentRequestedWords(entry.consentSource)}</p>
+    <ChatDisclosure
+      data-consent-outcome
+      lead={<Icon name="shield" size={14} className="shrink-0" />}
+      label={consentLineWords(entry.outcome ?? "", entry.consentSource)}
+    >
       {entry.consentExport && <ExportReview review={entry.consentExport} />}
-      <p className="mt-1 text-chat-sub text-ink-3">{entry.outcome}</p>
-      <details className="group/request mt-1">
-        <summary className="chat-disclosure">
-          Request details
-          <Icon name="chevron-right" size={14} className="chat-chevron group-open/request:rotate-90" />
-        </summary>
-        <p className="mt-1 text-chat-sub text-ink-3 [overflow-wrap:anywhere]">
-          <FileText text={entry.text} />
-        </p>
-      </details>
-    </div>
+      <p className="text-chat-sub text-ink-3 [overflow-wrap:anywhere]">
+        <FileText text={entry.text} />
+      </p>
+    </ChatDisclosure>
   );
+}
+
+/**
+ * The action entries that are one quiet line: an engine link, a rewind that put files back, a job,
+ * a worker, a missing permission, a judge's play.
+ */
+function quietLine(
+  entry: Extract<Entry, { kind: typeof EntryKind.Action }>,
+  context: TranscriptContext,
+): JSX.Element | null {
+  if (entry.action === EntryAction.EngineLink)
+    return <EngineLinkLine entry={entry} threadId={context.threadId} onNotice={context.onNotice} />;
+  if (entry.action === EntryAction.Rewound)
+    return <RewindLine entry={entry} threadId={context.threadId} onNotice={context.onNotice} />;
+  if (entry.action === EntryAction.Job) return <JobLine entry={entry} onNotice={context.onNotice} />;
+  if (entry.action === EntryAction.Worker) return <WorkerLine entry={entry} />;
+  if (entry.action === EntryAction.AppAccess) return <AppAccessLine entry={entry} onNotice={context.onNotice} />;
+  if (entry.action === EntryAction.Judge && entry.judge) return <JudgeLine judge={entry.judge} />;
+  return null;
 }
 
 function ActionEntry({
@@ -275,6 +344,8 @@ function ActionEntry({
       </ChatDisclosure>
     );
   }
+  const line = quietLine(entry, context);
+  if (line) return line;
   if (entry.action === EntryAction.Live) {
     return (
       <div data-build-updated className="flex min-w-0 items-center gap-3 text-chat text-ink-3">
@@ -304,7 +375,7 @@ function ActionEntry({
   return (
     <div key={entry.id} className="flex min-w-0 flex-col gap-1 text-chat-sub leading-relaxed text-ink-2">
       <span className="text-[12px] font-medium text-ink-3">{entry.tag}</span>
-      <span className="min-w-0">
+      <span className="min-w-0 [overflow-wrap:anywhere]">
         <FileText text={entry.text} />
         {entry.action === EntryAction.Rewind && snapshotId ? (
           <ResultButton

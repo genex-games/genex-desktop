@@ -23,6 +23,7 @@
  *    and every one of them is cancellable by the delegation's abort signal, so stopping a build
  *    really does stop the tool.
  */
+import { MCP_ASSET_META, type PluginToolAsset, readToolAsset } from "../../shared/asset-making.ts";
 import type { ChildProcess } from "node:child_process";
 import { PassThrough } from "node:stream";
 import { pathToFileURL } from "node:url";
@@ -33,7 +34,7 @@ import { commandNames, isWindows, isWindowsRunnable, pathDelimiter, toolchain } 
 import { windowsBaseEnv } from "../child-env.ts";
 import type { JsonSchemaValidator, JsonSchemaType } from "@modelcontextprotocol/sdk/validation";
 import type { OAuthClientProvider } from "@modelcontextprotocol/sdk/client/auth.js";
-import { McpHealth, McpTransport, type McpConnector } from "../../shared/mcp.ts";
+import { CONNECTOR_OUTCOME_META, McpHealth, McpTransport, type McpConnector } from "../../shared/mcp.ts";
 import type { LiveToolResult } from "../engines/types.ts";
 import { materializeSecrets, type SecretPort } from "./store.ts";
 import { errorMessage } from "../../shared/errors.ts";
@@ -56,6 +57,11 @@ const MAX_STDERR_CHARS = 4_000;
 const CHILD_CLOSE_GRACE_MS = 2 * SECOND_MS;
 /** `tools/list` pages read before the list is taken as complete. */
 const MAX_TOOL_PAGES = 20;
+/**
+ * What a server that only speaks the older SSE transport answers the Streamable HTTP POST with:
+ * no such route, method not allowed, or a request it cannot read. A URL saved as HTTP then tries SSE.
+ */
+const SSE_ONLY_STATUSES: ReadonlySet<number> = new Set([400, 404, 405]);
 
 /** What a connector's failures say. */
 const MESSAGE = {
@@ -75,6 +81,8 @@ export interface McpRawTool {
   name: string;
   description: string;
   inputSchema: Record<string, unknown>;
+  /** What a call of it makes, when its listing's `_meta` says ({@link MCP_ASSET_META}); a display hint, never authority. */
+  asset?: PluginToolAsset;
 }
 
 /**
@@ -168,7 +176,10 @@ interface SdkClient {
   listTools(
     params?: { cursor?: string },
     options?: { timeout?: number; signal?: AbortSignal },
-  ): Promise<{ tools: Array<{ name: string; description?: string; inputSchema?: unknown }>; nextCursor?: string }>;
+  ): Promise<{
+    tools: Array<{ name: string; description?: string; inputSchema?: unknown; _meta?: unknown }>;
+    nextCursor?: string;
+  }>;
   callTool(
     params: { name: string; arguments?: Record<string, unknown> },
     resultSchema?: unknown,
@@ -194,18 +205,26 @@ function text(value: unknown): string {
 
 /** One listed tool with a name, its schema defaulting to an empty object schema; undefined otherwise. */
 function rawTool(
-  tool: { name?: unknown; description?: unknown; inputSchema?: unknown } | null,
+  tool: { name?: unknown; description?: unknown; inputSchema?: unknown; _meta?: unknown } | null,
 ): McpRawTool | undefined {
   if (!tool || typeof tool.name !== "string" || !tool.name) return undefined;
   const schema =
     tool.inputSchema && typeof tool.inputSchema === "object"
       ? (tool.inputSchema as Record<string, unknown>)
       : { type: "object", properties: {} };
+  const asset = listedAsset(tool._meta);
   return {
     name: tool.name,
     description: typeof tool.description === "string" ? tool.description : "",
     inputSchema: schema,
+    ...(asset ? { asset } : {}),
   };
+}
+
+/** What a listed tool says it makes, read off its own `_meta` only; anything malformed says nothing. */
+function listedAsset(meta: unknown): PluginToolAsset | null {
+  if (!meta || typeof meta !== "object" || Array.isArray(meta) || !Object.hasOwn(meta, MCP_ASSET_META)) return null;
+  return readToolAsset((meta as Record<string, unknown>)[MCP_ASSET_META]);
 }
 
 /** One content part of an MCP tool result, as the wire may carry it. */
@@ -240,11 +259,37 @@ function structuredText(structured: unknown): string | undefined {
 }
 
 /**
+ * A connector's error answer. `outcomeUnknown` is set when the answer says the call may have taken
+ * effect before it failed ({@link CONNECTOR_OUTCOME_META}): the host records it so, and never
+ * repeats it on its own.
+ * It keeps Error's own name, so a record of it reads as the connector's words.
+ */
+export class ConnectorCallError extends Error {
+  readonly outcomeUnknown: boolean;
+  constructor(message: string, outcomeUnknown: boolean) {
+    super(message);
+    this.outcomeUnknown = outcomeUnknown;
+  }
+}
+
+/** Whether an answer's `_meta` says the call's outcome is unknown: exactly the marker, nothing like it. */
+function saysOutcomeUnknown(meta: unknown): boolean {
+  if (!meta || typeof meta !== "object" || Array.isArray(meta)) return false;
+  return (meta as Record<string, unknown>)[CONNECTOR_OUTCOME_META.Key] === CONNECTOR_OUTCOME_META.Unknown;
+}
+
+/**
  * An MCP result becomes the studio's own: text parts joined, images carried as images (a path is
- * not a picture), and `isError` raised so every engine reports it as a failed tool call.
+ * not a picture), and `isError` raised so every engine reports it as a failed tool call; an error
+ * that says its outcome is unknown is a {@link ConnectorCallError} saying so.
  */
 export function toLiveToolResult(result: unknown): LiveToolResult {
-  const value = (result ?? {}) as { content?: unknown; isError?: unknown; structuredContent?: unknown };
+  const value = (result ?? {}) as {
+    content?: unknown;
+    isError?: unknown;
+    structuredContent?: unknown;
+    _meta?: unknown;
+  };
   const parts: string[] = [];
   const images: ResultImage[] = [];
   for (const entry of Array.isArray(value.content) ? value.content : []) {
@@ -257,7 +302,11 @@ export function toLiveToolResult(result: unknown): LiveToolResult {
   const joined = parts.join("\n");
   const capped =
     joined.length > MAX_RESULT_CHARS ? `${joined.slice(0, MAX_RESULT_CHARS)}\n… (result truncated)` : joined;
-  if (value.isError) throw new Error(capped || "The connector reported an error with no message.");
+  if (value.isError)
+    throw new ConnectorCallError(
+      capped || "The connector reported an error with no message.",
+      saysOutcomeUnknown(value._meta),
+    );
   return images.length ? { text: capped, images } : capped;
 }
 
@@ -412,6 +461,21 @@ function serverIdentity(info: ReturnType<NonNullable<SdkClient["getServerVersion
   const raw = typeof info?.title === "string" ? info.title.replace(/[\u0000-\u001f\u007f]/g, "").trim() : "";
   const title = raw.slice(0, SERVER_TITLE_MAX_CHARS);
   return { ...(title ? { title } : {}), icons: info?.icons };
+}
+
+/** The HTTP status an SDK transport error carries (`StreamableHTTPError`, `SseError`), if any. */
+function httpStatusOf(error: unknown): number | undefined {
+  const code = (error as { code?: unknown } | null)?.code;
+  return typeof code === "number" ? code : undefined;
+}
+
+/** A connection that failed, with the HTTP status a URL server answered when it gave one. */
+export class McpConnectFailed extends Error {
+  readonly status: number | undefined;
+  constructor(message: string, status: number | undefined) {
+    super(message);
+    this.status = status;
+  }
 }
 
 export class McpConnection {
@@ -631,11 +695,33 @@ export class McpConnection {
     }
   }
 
+  /** Connect over the connector's transport; a URL saved as HTTP that answers like an SSE-only server gets SSE. */
   async #open(signal?: AbortSignal, timeoutMs = CONNECT_TIMEOUT_MS): Promise<void> {
+    try {
+      await this.#openOver(await this.#transportFor(), signal, timeoutMs);
+    } catch (error) {
+      if (!(await this.#speaksOnlySse(error))) throw error;
+      await this.#openOver(await this.#sseTransport(), signal, timeoutMs);
+    }
+  }
+
+  /** Whether a failed Streamable HTTP handshake is the refusal of a server that only speaks SSE. */
+  async #speaksOnlySse(error: unknown): Promise<boolean> {
+    if (this.connector.transport !== McpTransport.Http) return false;
+    const { StreamableHTTPError } = (await import("@modelcontextprotocol/sdk/client/streamableHttp.js")) as unknown as {
+      StreamableHTTPError: new (...args: never[]) => Error & { code?: number };
+    };
+    if (!(error instanceof StreamableHTTPError)) return false;
+    const unanswered = this.#transport;
+    this.#transport = undefined;
+    await unanswered?.close().catch(() => {});
+    return SSE_ONLY_STATUSES.has(error.code ?? 0);
+  }
+
+  async #openOver(transport: SdkTransport, signal?: AbortSignal, timeoutMs = CONNECT_TIMEOUT_MS): Promise<void> {
     const epoch = this.#epoch;
     const cancelled = () => epoch !== this.#epoch || Boolean(signal?.aborted);
     const client = await this.#newClient();
-    const transport = await this.#transportFor();
     this.#watch(client);
     if (cancelled()) throw new Error(MESSAGE.ConnectionCancelled);
     // Recorded before the handshake so a connect that times out still has its child to kill.
@@ -695,7 +781,7 @@ export class McpConnection {
           const message = this.#message(error);
           await this.close().catch(() => {});
           this.#setHealth(McpHealth.Failed, message);
-          throw new Error(message);
+          throw new McpConnectFailed(message, httpStatusOf(error));
         },
       )
       .finally(() => {

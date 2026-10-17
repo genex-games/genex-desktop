@@ -29,7 +29,7 @@ import {
   type TraceReading,
 } from "./honesty.ts";
 import type { CompactionEvent, ModelCallEvent, ObservationEvent, SessionRef, ToolCallEvent } from "./observation.ts";
-import { classifyTool } from "./tool-category.ts";
+import { classifyTool } from "../../../src/shared/tool-category.ts";
 import { promptTokens, sumUsage } from "./usage.ts";
 import { ObservationEventKind, ObservationSource, ServedModelRole } from "../vocabulary.ts";
 

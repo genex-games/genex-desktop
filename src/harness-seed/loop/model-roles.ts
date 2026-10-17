@@ -2,6 +2,7 @@
  * Legacy model exports remain for user-edited harness imports; catalogs live in the provider adapters.
  */
 
+import { effortCap } from "./effort-cap.ts";
 import type { AnyRecord } from "../types/harness.d.ts";
 import type { RunRoles } from "../types/host-api.d.ts";
 
@@ -41,6 +42,7 @@ export const EngineId = {
   OpenCode: "opencode",
   OpenRouter: "openrouter",
   Pi: "pi",
+  LocalServer: "local-server",
 } as const;
 export type EngineId = (typeof EngineId)[keyof typeof EngineId];
 
@@ -57,7 +59,13 @@ export function supportsSessions(
   return descriptor?.supportsSessions ?? descriptor?.kind === "delegated";
 }
 /** Session engines that are not delegated presets: they hold a session and can cross roles too. */
-const SESSION_ENGINES: readonly string[] = [EngineId.Bonsai, EngineId.OpenCode, EngineId.OpenRouter, EngineId.Pi];
+const SESSION_ENGINES: readonly string[] = [
+  EngineId.Bonsai,
+  EngineId.OpenCode,
+  EngineId.OpenRouter,
+  EngineId.Pi,
+  EngineId.LocalServer,
+];
 
 /** Session engines: the delegated ones, and the others that hold a session (`SESSION_ENGINES`). */
 export function hasSessionRoles(engine: string | null | undefined): boolean {
@@ -360,7 +368,12 @@ export function toolSyntax(engine: string | null | undefined): string {
   return "call each one by its name";
 }
 
-/** The composer's primary dial belongs to the planner, never another provider's worker. */
-export function roleEffort(run: RoleRun, role: string): string | undefined {
+/** The effort the user chose for `role`: the composer's primary dial belongs to the planner, never another provider's worker. */
+export function chosenEffort(run: RoleRun, role: string): string | undefined {
   return run.roles?.efforts?.[role as RoleKey] ?? (role === RoleKey.Planner ? run.effort : undefined);
+}
+
+/** The effort `role` runs at: the user's choice for it, a worker's and a reviewer's capped (effort-cap.ts). */
+export function roleEffort(run: RoleRun, role: string): string | undefined {
+  return effortCap(chosenEffort(run, role), role === RoleKey.Planner);
 }

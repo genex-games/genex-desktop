@@ -10,6 +10,13 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 export const PANEL_SDK_MARKER = "<!-- STUDIO_PANEL_SDK -->";
+/** Where a panel that wants Genex's own type asks for it: the fonts go in here as data. */
+export const PANEL_FONTS_MARKER = "<!-- STUDIO_PANEL_FONTS -->";
+/** Genex's type, as the app ships it: words in Zalando Sans SemiExpanded, actions and machine text in Geist Mono. */
+export const PANEL_FONTS = [
+  { family: "Zalando Sans SemiExpanded", file: "ZalandoSansSemiExpanded-variable.woff2", weight: "200 900" },
+  { family: "Geist Mono", file: "GeistMono-variable.woff2", weight: "100 900" },
+];
 const here = path.dirname(fileURLToPath(import.meta.url));
 
 /**
@@ -25,6 +32,24 @@ export async function inlinePanelSdk(html, sdkDir = here) {
   );
   // A function, so `$&` and friends inside the SDK source are never read as replacement patterns.
   return html.replace(PANEL_SDK_MARKER, () => `<script>${bridge}\n${ui}</script>`);
+}
+
+/**
+ * `html` with the fonts marker replaced by Genex's faces as `data:` fonts, the only fonts a panel's
+ * CSP lets load; unchanged when it has no marker.
+ * @param {string} html
+ * @param {string} fontsDir the folder holding the files PANEL_FONTS names (the app's `src/renderer/fonts`)
+ * @returns {Promise<string>}
+ */
+export async function inlinePanelFonts(html, fontsDir) {
+  if (!html.includes(PANEL_FONTS_MARKER)) return html;
+  const faces = await Promise.all(
+    PANEL_FONTS.map(async (font) => {
+      const data = (await readFile(path.join(fontsDir, font.file))).toString("base64");
+      return `@font-face{font-family:"${font.family}";font-style:normal;font-weight:${font.weight};font-display:swap;src:url(data:font/woff2;base64,${data}) format("woff2")}`;
+    }),
+  );
+  return html.replace(PANEL_FONTS_MARKER, () => `<style>${faces.join("\n")}</style>`);
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

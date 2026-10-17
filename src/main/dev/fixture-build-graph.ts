@@ -1,14 +1,17 @@
 /**
- * The `build-graph` fixture: two runs of a sword in ice for the Builds graph to draw.
+ * The `build-graph` fixture: two runs of a sword in ice for the Builds graph to draw. The same runs
+ * with the worker records a director's builders write today (`chat-workers` seeds them in a game
+ * of their own) draw as trees.
  */
 import fs from "node:fs/promises";
 import path from "node:path";
-import { CustomEvent } from "../../shared/custom-events.ts";
-import type { EventData } from "../../shared/event-log.ts";
+import { CustomEvent, customEventData, customRecord } from "../../shared/custom-events.ts";
+import { type EventData, EventKind } from "../../shared/event-log.ts";
 import { EngineId } from "../../shared/providers.ts";
 import type { StudioCore } from "../studio-core.ts";
 import { FIXTURE_MODEL, fixtureRun, gradientShot, type Rgb, roundShotDir } from "./fixture-kit.ts";
 import { ExecutionStatus } from "../../shared/run-state.ts";
+import { WorkerEnd, WorkerIsolation } from "../../shared/workers.ts";
 
 const SKY: Rgb = [168, 196, 222];
 const SNOW: Rgb = [226, 232, 238];
@@ -22,6 +25,16 @@ const MOUNTAIN =
   "Tall mountain: a tall, readable mountain behind the sword — a blue-grey mass with rock ribs and snow couloirs";
 const GOAL =
   "A single atmospheric 3D scene: a sword stuck in ice. The hero is one high-detail sword plunged into a block of ice on a frozen lake; around it a quiet frozen landscape with snow drifts, frozen rocks and distant misty cliffs.";
+
+/** The message the running run answers, sent with two reference pictures (the start node shows them). */
+const ASKED = {
+  messageId: "fixture-graph-live-ask",
+  text: "Make it feel like these: the blue ice and the dusk over the cliffs.",
+  pictures: [
+    { label: "Blue ice", from: ICE, to: SNOW },
+    { label: "Dusk over the cliffs", from: DUSK, to: ROCK },
+  ],
+} as const;
 
 /** The two runs: a finished run, and a run still running. */
 const LOOP_RUNS = [
@@ -42,14 +55,76 @@ interface LoopRun {
  * mountain undone four times and stopped), a round nobody judged that the lead merged anyway,
  * and a second run still running, its judges looking at a try.
  */
-export async function seedBuildGraph(core: StudioCore, project: string, threadId: string): Promise<void> {
+export async function seedBuildGraph(
+  core: StudioCore,
+  project: string,
+  threadId: string,
+  { builderRecords = false }: { builderRecords?: boolean } = {},
+): Promise<void> {
   for (const [runId, live] of LOOP_RUNS) {
     const loopRun: LoopRun = { runId, run: fixtureRun({ runId, project }), runsRoot: core.layout.runs };
     const events = await firstHalf(loopRun);
     events.push(...(live ? await stillRunning(loopRun) : await finished(loopRun)));
     await writeDirectorShots(path.join(core.layout.runs, runId, "director"), runId);
-    await core.append(events, threadId);
+    const run = builderRecords ? events.flatMap((data) => withBuilderRecords(loopRun, data)) : events;
+    await core.append([...(live ? await askedWithPictures(core, threadId) : []), ...run], threadId);
   }
+}
+
+/**
+ * The person's message with its pictures, as the chat records one it answers: the message, its
+ * queue records (queued with its attachments, then answered), and the pictures saved beside it.
+ */
+async function askedWithPictures(core: StudioCore, threadId: string): Promise<EventData[]> {
+  const { messageId, text, pictures } = ASKED;
+  const attachmentsArtifact = `message_attachments_${messageId}`;
+  const stills = pictures.map(({ label, from, to }) => ({
+    label,
+    mimeType: "image/png",
+    data: gradientShot(from, to).toString("base64"),
+  }));
+  await core.store.writeArtifact(threadId, attachmentsArtifact, { stills });
+  const queued = { messageId, action: { text, attachmentsArtifact, imageCount: stills.length } };
+  return [
+    { type: EventKind.Messages, messages: [{ role: "user", content: text }] },
+    customEventData(CustomEvent.CoordinatorMessageQueued, queued),
+    customEventData(CustomEvent.CoordinatorMessageProcessing, { messageId }),
+  ];
+}
+
+/** How a builder's close-out is recorded, by the state its `director_worker` gives. */
+const BUILDER_END: Readonly<Record<string, WorkerEnd>> = {
+  done: WorkerEnd.Done,
+  failed: WorkerEnd.Failed,
+  stopped: WorkerEnd.Stopped,
+};
+
+/**
+ * What a director writes today that these runs' records lack: the start saying its builders write
+ * worker records (the run's `autopilot_started` is replaced), and beside a builder's
+ * `director_worker` (`director-pool.ts`) the builder's start when it starts, its end at its close-out.
+ */
+function withBuilderRecords(loopRun: LoopRun, data: EventData): EventData[] {
+  const record = customRecord(data);
+  if (record?.event_type === CustomEvent.AutopilotStarted)
+    return [loopRun.run(CustomEvent.AutopilotStarted, { ...record.payload, workerRecords: true })];
+  return [data, ...builderRecord(loopRun, data)];
+}
+
+/** The worker record a director writes beside a builder's `director_worker`. */
+function builderRecord(loopRun: LoopRun, data: EventData): EventData[] {
+  const record = customRecord(data);
+  if (record?.event_type !== CustomEvent.DirectorWorker) return [];
+  const { workerId, title, state, stoppedBecause } = record.payload;
+  if (typeof workerId !== "string" || typeof title !== "string") return [];
+  if (state === "running")
+    return [loopRun.run(CustomEvent.WorkerStarted, { workerId, title, isolation: WorkerIsolation.Copy, task: title })];
+  const end = typeof state === "string" ? BUILDER_END[state] : undefined;
+  if (!end) return [];
+  const why = typeof stoppedBecause === "string" ? { stoppedBecause } : {};
+  // Every builder of these runs that finished made commits of its own, which the lead integrated.
+  const handedBack = end === WorkerEnd.Done ? { delivered: true } : {};
+  return [loopRun.run(CustomEvent.WorkerFinished, { workerId, title, state: end, ...why, ...handedBack })];
 }
 
 /** Both runs alike: the start, three rounds of the landscape and four merges. */

@@ -97,7 +97,8 @@ export type PluginCapability =
   | "jobs"
   | "network"
   | "export"
-  | "native-runtime";
+  | "native-runtime"
+  | "game-engine";
 
 export interface PluginTool {
   name: string;
@@ -117,16 +118,128 @@ export interface PluginTool {
  */
 export type PluginHostTool = "genex-cli" | "genex-cli-paid" | "genex-package";
 
+/**
+ * Who may call a tool (API 3): `agents`, the default, or `harness`: only Genex's own harness loop
+ * calls it by name, and no agent, chat or plan is handed it or told of it.
+ */
+export type PluginToolAudience = "agents" | "harness";
+
+/** The kinds of asset Genex draws while one is being made. */
+export type PluginAssetKind =
+  | "character"
+  | "creature"
+  | "model"
+  | "rigged-model"
+  | "animation"
+  | "image"
+  | "texture"
+  | "video"
+  | "sound-effect"
+  | "music"
+  | "voice";
+
+/**
+ * API 3: what a call of a tool makes. While the call runs, Genex shows it as a card of that kind on
+ * the Assets canvas and in the chat, in the spot its files will land, with the tool's name (`tool`,
+ * else your plugin's), your plugin's icon, and the argument named `prompt` (default `prompt`) as
+ * what was asked. An MCP server says the same per tool in its `tools/list` entry, as
+ * `_meta: { "genex/asset": { kind, prompt?, tool? } }`. It changes how a call is shown, nothing else.
+ */
+export interface PluginToolAsset {
+  kind: PluginAssetKind;
+  /** The argument that says what to make: one of the tool's parameters, at most 64 characters. */
+  prompt?: string;
+  /** The outside service doing the work, when your plugin is a front for one (at most 40 characters). */
+  tool?: string;
+}
+
 /** A tool as your manifest declares it. Agents see it as a plain `PluginTool`. */
 export interface PluginManifestTool extends PluginTool {
   /** Reserved for the bundled Genex plugin. */
   host?: PluginHostTool;
+  /** API 3: who may call the tool; agents when absent. */
+  audience?: PluginToolAudience;
+  /**
+   * API 3, with `confirmation`: one of the tool's string parameters the person may edit on its card,
+   * shown under the question in a field labelled `label` (one plain line, at most 60 characters).
+   * Their Allow runs the call with what the field holds (one plain line, 1–200 characters).
+   */
+  confirmationInput?: { parameter: string; label: string };
+  /** API 3, agent tools only: the kind of asset a call makes. */
+  asset?: PluginToolAsset;
+}
+
+/**
+ * An engine a game builds in: `web` (three.js in the browser, every game unless Genex linked it to
+ * an engine project), `unreal` or `godot`. A skill that names engines (non-empty, each once) reaches only
+ * those games' briefs, so web-only advice never reaches an Unreal game.
+ */
+export type PluginGameEngine = "web" | "unreal" | "godot";
+
+/** What an engine's editor can do in play (`engine.play`); absent fields are the editor defaults. */
+export interface PluginEnginePlay {
+  /** The most players one play opens, 1–8. */
+  players?: number;
+  clock?: "none" | "freeze" | "step-locked" | "replayable";
+  /** Whether the mouse aims as a player's does. */
+  pointer?: boolean;
+  /** Whether the game's state can be read in play. */
+  state?: boolean;
+}
+
+/**
+ * API 3, capability `game-engine`: the engine your plugin declares (`engine` in the manifest).
+ * - `id` is your plugin's own id (2–40 lowercase letters, digits and dashes), never `web`.
+ * - `label` is the engine's name as people read it, 1–40 characters on one line.
+ * - `projectFiles` lists 1–4 project files a game may link, each an extension of one or two
+ *   lowercase dotted parts (`.uproject`, `.project.json`) or, for a project that is a folder marked
+ *   by one fixed file, that file's whole lowercase name (`project.godot`: the project is named by
+ *   its folder).
+ * - `fact` is the fact a linked game holds: one your `detect` declares, or one of Genex's own.
+ * - `projectInFolder` is true when the Loop needs the project inside the game folder, because its
+ *   save points hold it.
+ * - `writesProjectFiles` is true when your agents change the project as files (scenes, scripts):
+ *   a linked project outside the game folder is then a folder the game's sessions read and write.
+ * - `apps` names the apps your editor runs as (Mac bundle ids, Windows `.exe` names, at most 4
+ *   each): computer use never drives them to build or play.
+ */
+export interface PluginEngineDeclaration {
+  id: string;
+  label: string;
+  projectFiles: string[];
+  fact: string;
+  projectInFolder: boolean;
+  writesProjectFiles?: boolean;
+  play?: PluginEnginePlay;
+  apps?: { mac?: string[]; windows?: string[] };
+}
+
+/**
+ * API 3, beside an `engine`: a blind judge that plays your engine's games in its editor (`judges` in
+ * the manifest, at most 8). It never sees code and answers from playing.
+ * - `id` 2–40 lowercase letters, digits and dashes, unique in the manifest; `label` 1–40 characters.
+ * - `facts` the facts of the games it judges (none: every game your plugin plays in its editor).
+ * - `brief` a Markdown file in your package (at most 16 000 characters), added to the judge's rubric.
+ * - `players` how many players its play opens, 1 to your `engine.play.players` (one when absent).
+ * - `probe` one of your harness tools that asks nothing, runs no host program and needs every lock
+ *   `play-open` needs; Genex runs it once right after the judge's play opens, and its `note` and
+ *   `images` (measurements and pictures, never source) open the judge's first answer.
+ */
+export interface PluginJudge {
+  id: string;
+  label: string;
+  facts?: string[];
+  brief: string;
+  players?: number;
+  probe?: string;
 }
 
 /** A skill whose text sits in the manifest (1–16 000 characters); agents get all of it in their brief. */
 export interface PluginInlineSkill {
   name: string;
   text: string;
+  /** API 3: the engines whose games' briefs carry this skill; every engine when absent. */
+  engines?: PluginGameEngine[];
 }
 
 /**
@@ -143,6 +256,8 @@ export interface PluginFileSkill {
   file: string;
   /** At most 16, each distinct from `file`. */
   references?: string[];
+  /** API 3: the engines whose games' briefs carry this skill; every engine when absent. */
+  engines?: PluginGameEngine[];
 }
 
 /** One of at most 32 skills a plugin gives agents; names are unique. */
@@ -158,10 +273,15 @@ export interface PluginToolbarItem {
   label: string;
   /** 1–60 characters, unique across the manifest. */
   ariaLabel: string;
-  /** A glyph of at most 4 characters, or a host icon: globe, export, play, image, box, boxes. */
+  /** A glyph of at most 4 characters, or a host icon: globe, export, play, image, box, boxes, unreal. */
   icon?: string;
   /** Default true: the button waits for a loaded game. */
   requiresProject?: boolean;
+  /**
+   * API 3: the facts of the games whose strip shows this button; every game when absent. Its status
+   * can still bring it out on another game (`shown`).
+   */
+  facts?: string[];
   target: PluginToolbarTarget;
   /** Names a declared action without confirmation that returns a PluginToolbarStatus. */
   status?: string;
@@ -174,6 +294,52 @@ export interface PluginToolbarStatus {
   tone?: "ok" | "warn" | "err" | "info";
   /** The button's action is due now: Studio draws it in the accent fill, otherwise in the quiet one. */
   attention?: boolean;
+  /** Draw the badge as a dot in its tone (ok green, warn amber, err red, info grey); its word moves to the tooltip. */
+  dot?: boolean;
+  /** A button scoped to `facts` shows on this game anyway (its chat chose the engine before the project exists). */
+  shown?: boolean;
+}
+
+/** A button on the setup card: the plugin action it runs (declared in `actions`), its arguments and its label. */
+export interface PluginSetupButton {
+  name: string;
+  args: Record<string, string>;
+  label: string;
+}
+
+/**
+ * One step of the setup card. `you` marks a step only the person can do (signing in) or one that
+ * stopped and waits for them, drawn with an orange ring; `working` one under way; `command` a line
+ * the person runs in Terminal themselves.
+ */
+export interface PluginSetupStep {
+  id: string;
+  label: string;
+  detail: string;
+  done: boolean;
+  you?: true;
+  working?: true;
+  action?: PluginSetupButton;
+  command?: string;
+}
+
+/**
+ * What a `game-engine` plugin's `steps` action answers: the setup card the chat shows above the
+ * composer while `open`, read again every few seconds (`game.engine.steps` shows it; the plugin's
+ * `show-steps` tool is how its agent asks for it). `primary` does every step it can for the person
+ * (Do it for me); `secondary` is the plugin's own way out in Hide's place (Don't use Unity, or Stop
+ * while it works); `doneSays` is what the agent is told once nothing is open, so the chat goes on,
+ * and `stuckSays` what it is told once when a step stopped. See "Setup in the chat" in the guide.
+ */
+export interface PluginSetupCard {
+  title: string;
+  intro: string;
+  open: boolean;
+  steps: PluginSetupStep[];
+  primary?: PluginSetupButton;
+  secondary?: PluginSetupButton;
+  doneSays?: string;
+  stuckSays?: string;
 }
 
 /**
@@ -207,6 +373,8 @@ export interface PluginMcpServer {
   requires?: { credential?: boolean; settings?: string[] };
   /** Raw MCP tool names. Deny wins; Studio caps a connector at 64 tools regardless. */
   toolPolicy?: { allow?: string[]; deny?: string[] };
+  /** API 3: raw MCP tool names that only read (list or describe what the server offers): they run with no card in any mode, as a file read does. A local plugin's still ask. */
+  reads?: string[];
   maxTools?: number;
   /** At most 1 800 000. */
   callTimeoutMs?: number;
@@ -235,13 +403,23 @@ export interface PluginManifest {
     type: "string" | "boolean" | "number";
     default: string | boolean | number;
   }>;
-  actions: Array<{ name: string; label: string; confirmation?: string }>;
+  actions: Array<{
+    name: string;
+    label: string;
+    confirmation?: string;
+    /** The action starts, quits or opens a desktop app or the browser, or writes outside your storage; a fixture profile refuses it. */
+    native?: true;
+  }>;
   /** API 2: hosts the backend talks to, disclosed at install and checked by the static scan. */
   network?: { hosts: string[] };
   /** API 2: up to four buttons contributed beside Live/Builds. */
   toolbar?: PluginToolbarItem[];
   /** API 2: up to four MCP servers the plugin ships, run by the host as connectors it owns. */
   mcpServers?: PluginMcpServer[];
+  /** API 3, capability `game-engine`: the engine the plugin declares. */
+  engine?: PluginEngineDeclaration;
+  /** API 3, beside `engine`: the blind judges that play your engine's games in its editor. */
+  judges?: PluginJudge[];
   /** Host-managed account flow. Status may finish a pending browser authorization. */
   account?: { connect: string; unlock: string; disconnect: string; status: string; cancel?: string };
   /**
@@ -329,6 +507,42 @@ export type PluginStillAnswer = { still: PluginStill } | { stillProblem: PluginS
  */
 export type PluginStillIgnored = { still?: undefined; stillProblem?: undefined; [key: string]: unknown };
 
+/**
+ * API 3: `observe` with a `clip` records `seconds` (2–10, default 5) of the bound game running, from
+ * the start of a moment its demo `demo` stages (a `config.demos` key: it sets up the moment and its
+ * own scripted input, and returns; the host then starts the game's clock and sends no input), on a
+ * hidden window of its own at `width`×`height` (whole pixels, 320–1920 by 240–1200), at `fps`
+ * (15–30, default 30), in at most `maxBytes` (256 KiB to 8 MiB, default 8 MiB). Send `files: []`
+ * and no `still`. A host older than this option ignores `clip` and answers an ordinary observation
+ * ({@link PluginClipIgnored}), so check the answer for `clip`, then `clipProblem`, and handle neither.
+ */
+export interface PluginClipRequest {
+  demo: string;
+  width: number;
+  height: number;
+  seconds?: number;
+  fps?: number;
+  maxBytes?: number;
+}
+export interface PluginClip {
+  video: Uint8Array;
+  /** MP4 (H.264) where the host's recorder can, else WebM (VP9 or VP8). */
+  mimeType: "video/webm" | "video/mp4";
+  /** The recorded canvas's size; a game that draws smaller is not scaled up. */
+  width: number;
+  height: number;
+  durationMs: number;
+  view: { demo: string };
+  /** JPEG of the first recorded frame, at most 1280 px on its long side. */
+  poster: Uint8Array;
+  /** 0–1: the share of sampled frame pairs that differ visibly; a frozen recording is about 0. */
+  motion: number;
+}
+/** A clip's problem codes are a still's: `too_large` when even the lowest bitrate is over `maxBytes`. */
+export type PluginClipAnswer = { clip: PluginClip } | { clipProblem: PluginStillProblem };
+/** What an API-3 host older than clips answers instead: an ordinary observation, with neither `clip` nor `clipProblem`. */
+export type PluginClipIgnored = { clip?: undefined; clipProblem?: undefined; [key: string]: unknown };
+
 /** Sanitized progress for Studio. `kind: 'toolbar'` updates a toolbar item's badge. */
 export interface PluginEvent {
   kind?: string;
@@ -337,7 +551,33 @@ export interface PluginEvent {
   title?: string;
   tone?: PluginToolbarStatus["tone"];
   attention?: boolean;
+  dot?: boolean;
   [key: string]: unknown;
+}
+
+/**
+ * A published game's ids at its engine's service, kept beside a link when the project lives there:
+ * positive decimal strings of at most 20 digits, never numbers, which would lose digits.
+ */
+export interface PluginEngineRemote {
+  placeId: string;
+  universeId: string;
+}
+
+/**
+ * A game's link to an engine project (`game-engine`): the engine (your `engine.id`), the project
+ * file's real path, its name (the file name without its declared extension, or its folder's name
+ * for a whole-name project file), when it was linked, and the published game's ids when you linked
+ * them. The host keeps it in the plugin's storage as `links/<game>.json`, where the plugin's MCP
+ * servers may read it, and mirrors it into the game's `studio.json`.
+ */
+export interface PluginEngineLink {
+  /** Your `engine.id`: the project's engine. */
+  kind: string;
+  project: string;
+  name: string;
+  linkedAt: string;
+  remote?: PluginEngineRemote;
 }
 
 /**
@@ -377,12 +617,99 @@ export interface PluginHostCall {
     method: "observe",
     args: { project: string; root: string; files: []; still: PluginStillRequest },
   ): Promise<PluginStillAnswer | PluginStillIgnored>;
+  /**
+   * API 3: a few seconds of the bound game running from a moment its demo stages; see
+   * {@link PluginClipRequest}. A host older than the option answers an ordinary observation
+   * ({@link PluginClipIgnored}).
+   */
+  (
+    method: "observe",
+    args: { project: string; root: string; files: []; clip: PluginClipRequest },
+  ): Promise<PluginClipAnswer | PluginClipIgnored>;
   (method: "observe", args: { project: string; root: string; files: string[] }): Promise<unknown>;
   /** Current plugin's explicitly unlocked memory lease; null never triggers OS access. */
   (method: "credentials.session"): Promise<string | null>;
   (method: "credentials.read"): Promise<string | null>;
   (method: "credentials.write", args: { token: string }): Promise<void>;
   (method: "credentials.clear"): Promise<void>;
+  /**
+   * `game-engine`: links the bound game to a project file of the engine your manifest declares
+   * (`engine.projectFiles`, checked by real path); a plugin that declares no engine is refused.
+   * `remote` keeps the published game's ids beside the link (ids of any other shape are dropped and
+   * the link is still made); linking the same file with other ids makes a new link. The chat it was
+   * called from shows one line with Undo, naming the project by `name` when you give one (one plain
+   * line, at most 80 characters: the project as people know it, when its file's name isn't), else
+   * by its file's name; `auto` says the link was made by the game's first call rather than asked
+   * for. From outside any game, `game` names one this plugin made with `game.create`; any other
+   * game is refused.
+   */
+  (
+    method: "game.engine.link",
+    args: { project: string; remote?: PluginEngineRemote; name?: string; auto?: boolean; game?: string },
+  ): Promise<PluginEngineLink>;
+  /** `game-engine`: the bound game's link, or null while it has none that still holds. */
+  (method: "game.engine.read"): Promise<PluginEngineLink | null>;
+  /** `game-engine`: shows the plugin's steps card (its `steps` action's answer) in the chat the call came from. */
+  (method: "game.engine.steps"): Promise<boolean>;
+  /**
+   * `game-engine`: a snapshot of the bound game, taken before the plugin changes files there, which
+   * Rewind lists under `reason` (one plain line, at most 200 characters). Refused without a bound game.
+   */
+  (method: "game.snapshot", args: { reason: string }): Promise<{ snapshotId: string }>;
+  /**
+   * `game-engine`: a new Genex game titled `title` (one plain line, at most 80 characters), for an
+   * engine project made with no game open: its name (`project`) and its folder, which the plugin
+   * may then link with `game.engine.link {game}`.
+   */
+  (method: "game.create", args: { title: string }): Promise<{ project: string; directory: string }>;
+  /**
+   * `game-engine`: the games whose run (a Loop) is going now and that this plugin linked to a
+   * project, each with that project file, so the plugin never quits an editor a run is using.
+   * Needs no bound game.
+   */
+  (method: "game.engine.runs"): Promise<PluginEngineRun[]>;
+  /**
+   * `game-engine`: Do it for me. Hands a setup task (one plain line, at most 300 characters) to the
+   * bound game's chat, shown there verbatim as "<your plugin's name> asks: <task>"; that chat's
+   * agent clicks it with the person's computer control, on the apps your `engine.apps` declares
+   * and no others. Only for setup clicks and publishing the person approved, never to build or
+   * play-test. The person must have asked: call it from an action they pressed, or from a tool
+   * that declares `confirmation` whose card they approved; any other call answers `not-person`
+   * (a plugin that came with Genex may also call it from its own tools, never from a moment; while
+   * the chat's own assist is under way, such a call answers `in-assist` and posts nothing).
+   * A plugin that did not come with Genex shows the task on a card first; computer control that
+   * is off is offered on a card for every chat. Windows, or a Mac with no driver, answers
+   * `unavailable`: show the click path instead.
+   */
+  (method: "game.engine.assist", args: PluginEngineAssistArgs): Promise<PluginEngineAssistAnswer>;
+  /**
+   * `game-engine`: whether Do it for me can run for your plugin on this computer: computer control
+   * has a desktop and its driver, and your `engine.apps` names apps here. Computer control that is
+   * off still counts (its card offers to turn it on). Asks the person nothing; false on Windows.
+   * Offer Do it for me only when it answers true, and the click path otherwise.
+   */
+  (method: "game.engine.canAssist"): Promise<boolean>;
+}
+
+/** `game.engine.assist`'s task: what the chat is asked to click, in plain words. */
+export interface PluginEngineAssistArgs {
+  task: string;
+}
+
+/** Why `game.engine.assist` started nothing. */
+export type PluginEngineAssistRefusal = "unavailable" | "declined" | "no-chat" | "not-person" | "no-apps" | "in-assist";
+
+/** `game.engine.assist`'s answer: whether the chat's turn started, and why not. */
+export interface PluginEngineAssistAnswer {
+  started: boolean;
+  reason?: PluginEngineAssistRefusal;
+}
+
+/** A game whose run is going, as `game.engine.runs` names it: its name, its title and its linked project file. */
+export interface PluginEngineRun {
+  game: string;
+  title: string;
+  project: string;
 }
 
 /**
@@ -391,6 +718,71 @@ export interface PluginHostCall {
  */
 export interface PluginHost {
   call: PluginHostCall;
+}
+
+/**
+ * API 3: one of Genex's moments a manifest `hooks` entry names. Your handler runs at it as a
+ * harness tool, in plugin order and then declaration order.
+ */
+export type PluginHookEvent =
+  | "run.prepare"
+  | "run.end"
+  | "turn.start"
+  | "turn.end"
+  | "checkpoint.before"
+  | "checkpoint.after"
+  | "restore.before"
+  | "restore.after"
+  | "worker.start"
+  | "worker.end"
+  | "tool.before"
+  | "tool.after"
+  | "health"
+  | "crash"
+  | "finish";
+
+/**
+ * API 3: what a handler is told about the moment it runs at. `args` is only a digest of your own
+ * tool's arguments at `tool.before`/`tool.after`, never the arguments themselves.
+ */
+export interface PluginHookContext {
+  on: PluginHookEvent;
+  runId?: string;
+  turn?: string;
+  label?: string;
+  worker?: { id: string; title: string; type?: string };
+  tool?: string;
+  args?: string;
+  /** The person asked for this moment themselves (their own Rewind): nothing waits for them. */
+  forPerson?: boolean;
+}
+
+/**
+ * API 3: what a handler answers. `block` stops a moment that can be stopped, with a reason;
+ * `note` adds a line to the record; `pending` says it is not ready yet, and Genex asks again;
+ * `images` hands back base64 PNG pictures; `recording` (an observer's) a short play recording as
+ * at most 8 frames in order. Anything else is ignored: a handler never rewrites arguments and never
+ * gives instructions.
+ */
+export interface PluginHookAnswer {
+  block?: string;
+  note?: string;
+  pending?: string;
+  images?: Array<{ name: string; data: string; measures?: Record<string, number> }>;
+  recording?: Array<{ name: string; data: string; measures?: Record<string, number> }>;
+}
+
+/**
+ * API 3: what an observer's tool is told when Genex runs it as one of your manifest's `observers`:
+ * the observer (`<plugin>/<id>`), the run it captures for, why (`finish`: a reviewer checks a
+ * lead's claim), and how long Genex gives this call (`withinMs`): answer the pictures you have by
+ * then, since a call cut at its limit hands back none.
+ */
+export interface PluginObserveContext {
+  observer: string;
+  runId: string;
+  why: "finish";
+  withinMs?: number;
 }
 
 /**
@@ -403,6 +795,10 @@ export interface PluginContext {
   /** The bound game's worktree. */
   directory?: string;
   threadId?: string;
+  /** Set when Genex runs this tool at one of its moments; answer a `PluginHookAnswer`. */
+  hook?: PluginHookContext;
+  /** Set when Genex runs this tool as one of your observers; answer `{images, recording?, note?}`. */
+  observe?: PluginObserveContext;
   /** Aborted when the user stops the turn. Local waiting ends; remote work may continue. */
   signal: AbortSignal;
   callId: number;
@@ -411,7 +807,13 @@ export interface PluginContext {
 
 /** What an optional `review` returns before a confirmed action reaches the native dialog. */
 export interface PluginReview {
+  /**
+   * The dialog's short question (at most 2,000 characters), asked instead of the manifest's
+   * `confirmation`; its confirm button then reads the action's label.
+   */
   message?: string;
+  /** Plain text under the question (at most 4,000 characters), shown only with a `message`. */
+  detail?: string;
   images?: Array<{ label: string; dataUrl: string }>;
 }
 
@@ -431,7 +833,44 @@ export type Activate = (host: PluginHost) => PluginActivation | Promise<PluginAc
 export interface PluginPanelContext {
   project: string | null;
   apiVersion: PluginApiVersion;
-  theme: { background: string; foreground: string; accent: string };
+  theme: {
+    background: string;
+    foreground: string;
+    /** The theme's raw accent: rings, marks and focus outlines. */
+    accent: string;
+    /** A primary button's fill under `accentForeground` text, at least 5:1; absent from older hosts. */
+    accentFill?: string;
+    /** Text on `accentFill` and `accentHover`. */
+    accentForeground?: string;
+    /** A primary button's fill while hovered, still readable under `accentForeground`. */
+    accentHover?: string;
+  };
+  /**
+   * What the frame sits on: `"page"` (the plugin's page) or `"card"` (a dialog). In a dialog the SDK
+   * marks the document `data-surface="card"`, shows the panel's visible `[data-panel-head]` (its
+   * heading and the line under it) as the dialog's title, sizes the frame to the panel's height so
+   * the dialog scrolls once, and lets the dialog's Back arrow press the visible `[data-panel-back]`.
+   * Absent from older hosts.
+   */
+  surface?: "page" | "card";
+}
+
+/**
+ * How `studioPlugin.call` rejects: an Error with the host's words, and `code: "cancelled"` when
+ * the person declined Studio's confirmation of the action. Any other failure has no code.
+ */
+export type PluginPanelError = Error & { code?: "cancelled" };
+
+/**
+ * What `studioPlugin.chooseFile` asks Studio's file picker for. Studio checks it in the panel host
+ * and again before the picker opens; any other field is refused. Mirrors
+ * `src/shared/plugin-file-request.ts`.
+ */
+export interface PluginFileRequest {
+  /** 1–80 characters on one line; Studio shows it after the plugin's name. */
+  title: string;
+  /** 1–4 different extensions without the dot: lowercase letters and digits, at most 10 each. */
+  extensions: string[];
 }
 
 /** The framework-free helpers `src/plugin-sdk/ui.js` installs on the bridge. */
@@ -457,6 +896,19 @@ export interface StudioPluginPanel {
     args?: Record<string, unknown>,
     options?: { timeoutMs: number },
   ): Promise<unknown>;
+  call(
+    method: "chooseFile",
+    name: undefined,
+    args: PluginFileRequest,
+    options?: { timeoutMs: number },
+  ): Promise<string | null>;
+  /**
+   * Studio's own native file picker, over its window: one existing file of the listed types. The
+   * answer is the file's real path, or null when the person cancels. Studio names the plugin in
+   * the picker, opens one at a time, and refuses an answer that is not a file of a listed type.
+   * The panel may wait as long as a panel request may (30 minutes). A fixture profile refuses it.
+   */
+  chooseFile(request: PluginFileRequest): Promise<string | null>;
   /** Present once `src/plugin-sdk/ui.js` is inlined after `panel.js`. */
   ui?: StudioPluginUi;
 }

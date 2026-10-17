@@ -19,6 +19,7 @@ import { latestRun } from "../../src/shared/coordinator.ts";
 import { seedRewindChat } from "../../src/main/dev/fixture-chat.ts";
 import { coreLite } from "../helpers/core-lite.ts";
 import { applyEvents } from "../../src/renderer/notifications.ts";
+import { EntryAction, EntryKind, toEntries } from "../../src/renderer/chat-entries.ts";
 import {
   REWIND_WORDS,
   restoresByDefault,
@@ -161,6 +162,32 @@ test("a rewind crosses a build: the build's rows leave with the message, an earl
   const run = latestRun(withoutRewound(earlier, [across.rewind]));
   assert.equal(run?.runId, "r0");
   assert.equal(run?.state, "finished");
+});
+
+test("a rewind keeps a job's end whose start stays, and the start of a job still running", () => {
+  const events = conversation();
+  const job = (jobId: string, title: string) => ({ jobId, project: "p", title, startedAt: "2026-01-01T12:00:00.000Z" });
+  const end = (jobId: string, title: string) => ({ ...job(jobId, title), state: "succeeded", durationMs: 240_000 });
+  const withJobs = [
+    ...events.slice(0, 8),
+    between("000008a", "job_started", job("j-before", "Unreal build")),
+    ...events.slice(8, 13),
+    between("000013a", "job_ended", end("j-before", "Unreal build")),
+    between("000013b", "job_started", job("j-running", "Asset bake")),
+    between("000013c", "job_started", job("j-done", "Shader compile")),
+    between("000013d", "job_ended", end("j-done", "Shader compile")),
+    ...events.slice(13),
+  ];
+  const planned = planRewind(withJobs, [], "b");
+  assert.ok(planned.ok);
+  assert.deepEqual(planned.rewind.keep, ["000013a", "000013b"]);
+  const lines = toEntries(withoutRewound(withJobs, [planned.rewind])).flatMap((entry) =>
+    entry.kind === EntryKind.Action && entry.action === EntryAction.Job ? [[entry.text, entry.job?.jobId]] : [],
+  );
+  assert.deepEqual(lines, [
+    ["In the background: Unreal build · finished · 4 min", undefined],
+    ["In the background: Asset bake", "j-running"],
+  ]);
 });
 
 test("a rewind is refused while a message is being answered or handed in, for waiting input, and once gone", () => {
@@ -580,6 +607,12 @@ test("the dialog says in one line why only the conversation rewinds, and offers 
       "Only the conversation rewinds: the files that changed were too large to save.",
     ],
   );
+  assert.equal(
+    rewindFilesWords({ state: "unavailable", reason: "too-large", tooLargeFiles: ["Content/big.uasset", "take2.wav"] })
+      .line,
+    "Only the conversation rewinds: the files that changed were too large to save: big.uasset, take2.wav.",
+    "the dialog names the files that keep the game files where they are",
+  );
   assert.equal(rewindFilesWords({ state: "none" }).line, "Only the conversation rewinds.");
   assert.equal(
     rewindFilesWords({ state: "unchanged", nested: [] }).line,
@@ -601,6 +634,20 @@ test("the dialog says in one line why only the conversation rewinds, and offers 
     "Including 1 file changed outside this chat: level.ts.",
   );
   assert.equal(restoresByDefault({ ...restore, outsideUnknown: true }), false);
+  assert.equal(
+    rewindFilesWords({ ...restore, tooLarge: 2, tooLargeFiles: ["Content/big.uasset", "audio/take2.wav"] }).nested,
+    "Too large to save, so they stay as they are: big.uasset, take2.wav.",
+    "the dialog names files too large to save before the person confirms",
+  );
+  assert.equal(
+    rewindFilesWords({ ...restore, tooLarge: 1, tooLargeFiles: ["big.uasset"] }).nested,
+    "Too large to save, so it stays as it is: big.uasset.",
+  );
+  assert.equal(
+    rewindFilesWords({ ...restore, tooLarge: 2 }).nested,
+    "2 files were too large to save and stay as they are.",
+    "an older answer without names keeps the count",
+  );
   assert.equal(restoresByDefault({ state: "unavailable", reason: "build-running" }), true, "no switch to start off");
   assert.deepEqual(
     [rewindBusyLabel(true), rewindBusyLabel(false), REWIND_WORDS.rewind, REWIND_WORDS.restoreFiles],

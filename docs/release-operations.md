@@ -58,7 +58,9 @@ SignPath project `genex-desktop`'s artifact configurations `app` and `installer`
 secret `SIGNPATH_API_TOKEN` is SignPath's CI user's API token. Publishing runs use the
 `release-signing` policy, which accepts only builds from this repository's GitHub workflows; a
 Package dispatch with `only: win32` and `test_sign` uses `test-signing`, SignPath's self-signed
-test certificate, to check the wiring.
+test certificate, to check the wiring. The SignPath Foundation program requires the README's
+[code signing policy](../README.md#code-signing-policy) (attribution, team roles, privacy) and a
+link to it from release notes that ship Windows files.
 
 The owner controls signing secrets, the protected release environment, tags and publication.
 Require product checks and approval on the actual release repository, including fork workflow

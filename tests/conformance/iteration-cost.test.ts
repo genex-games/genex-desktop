@@ -757,6 +757,7 @@ describe("a fast self-look at a bench page", () => {
       emit: () => {},
       games: { list: async () => games, dirFor: () => root },
       builds: { ensure: async () => ({ ok: true, output: root }) },
+      scriptsGuarded: async () => false,
     } as unknown as StudioCore;
     const service = new PreviewService(core, unservedPreviews() as CoreInternals);
     const session = { loaded: null, handle: () => "w1", get: async () => port, release: async () => {} };

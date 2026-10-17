@@ -23,7 +23,12 @@ import {
   autoResumePlan,
   type AutoResumeFacts,
 } from "../../src/main/core/auto-resume.ts";
-import { AutoResumeCause, CustomEvent, type RunAutoResumedPayload } from "../../src/shared/custom-events.ts";
+import {
+  AutoResumeCause,
+  CustomEvent,
+  customRecord,
+  type RunAutoResumedPayload,
+} from "../../src/shared/custom-events.ts";
 import { RunControlAction } from "../../src/shared/coordinator.ts";
 import { EngineFailureKind } from "../../src/shared/engine-requests.ts";
 import { EventKind, type EventEnvelope } from "../../src/shared/event-log.ts";
@@ -863,6 +868,27 @@ describe("the core: the switch, its default, and who may write the record", () =
       0,
       "nothing of the batch was written",
     );
+    await lite.close();
+  });
+
+  it("the harness cannot write a finish check record; its captures it can", async () => {
+    const lite = await coreLite();
+    const threadId = await lite.core.store.createThread({ title: "game" });
+    const append = (batch: unknown[]) => lite.api()["events.append"]!({ threadId, batch } as never);
+    const verdict = { type: EventKind.Custom, event_type: CustomEvent.FinishCheck, payload: { runId: RUN, round: 1 } };
+    const said = { type: EventKind.Messages, messages: [{ role: "assistant", content: "The reviewer said yes." }] };
+    const before = (await lite.core.store.listEvents(threadId)).length;
+    for (const batch of [[verdict], [said, verdict]]) {
+      await assert.rejects(append(batch), /written by the studio only/, "the whole batch is refused");
+    }
+    assert.equal((await lite.core.store.listEvents(threadId)).length, before, "nothing of either batch was written");
+    const capture = { runId: RUN, observer: "preview", source: "preview", images: [], recording: [] };
+    await append([{ type: EventKind.Custom, event_type: CustomEvent.ObserverCapture, payload: capture }]);
+    const written = (await lite.core.store.listEvents(threadId)).flatMap((event) => {
+      const type = customRecord(event.data)?.event_type;
+      return type ? [type] : [];
+    });
+    assert.deepEqual(written, [CustomEvent.ObserverCapture], "a capture is the harness's to record");
     await lite.close();
   });
 

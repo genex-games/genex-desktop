@@ -5,7 +5,12 @@ import os from "node:os";
 import path from "node:path";
 import type { Writable } from "node:stream";
 import type { McpChange, McpConnector } from "../../src/shared/mcp.ts";
-import { McpConnection, resolveExecutable } from "../../src/substrate/mcp/client.ts";
+import {
+  ConnectorCallError,
+  McpConnection,
+  resolveExecutable,
+  toLiveToolResult,
+} from "../../src/substrate/mcp/client.ts";
 import { McpRegistry } from "../../src/substrate/mcp/registry.ts";
 import { launchDigest, memorySecretPort } from "../../src/substrate/mcp/store.ts";
 import { MCP_QUALIFIED_TOOL } from "../../src/shared/mcp.ts";
@@ -119,6 +124,42 @@ test("a real server over stdio answers text, an image and an error, and stops wh
   } finally {
     await connection.close();
   }
+});
+
+test("an error answer that says its outcome is unknown is told apart from any other", () => {
+  const answer = (meta?: unknown) => ({
+    isError: true,
+    content: [{ type: "text", text: "x" }],
+    ...(meta === undefined ? {} : { _meta: meta }),
+  });
+  assert.throws(
+    () => toLiveToolResult(answer({ "genex/outcome": "unknown" })),
+    (error: unknown) => error instanceof ConnectorCallError && error.outcomeUnknown === true && error.message === "x",
+  );
+  const hostile: Array<[string, unknown]> = [
+    ["no _meta", undefined],
+    ["another case", { "genex/outcome": "Unknown" }],
+    ["not a string", { "genex/outcome": true }],
+    ["a trailing space", { "genex/outcome": "unknown " }],
+    ["an empty object", {}],
+    ["another key", { outcome: "unknown" }],
+    ["_meta not an object", "genex/outcome"],
+    ["_meta an array", [["genex/outcome", "unknown"]]],
+  ];
+  for (const [label, meta] of hostile)
+    assert.throws(
+      () => toLiveToolResult(answer(meta)),
+      (error: unknown) =>
+        error instanceof Error &&
+        (error as { outcomeUnknown?: unknown }).outcomeUnknown !== true &&
+        error.message === "x",
+      label,
+    );
+  assert.equal(
+    toLiveToolResult({ content: [{ type: "text", text: "fine" }], _meta: { "genex/outcome": "unknown" } }),
+    "fine",
+    "an answer that is not an error is an answer, whatever it carries",
+  );
 });
 
 test("a server that never answers initialize fails at the configured limit instead of hanging a delegation", async () => {
@@ -382,6 +423,38 @@ test("a plugin-declared server is owned by its plugin: memory only, credential o
     assert.deepEqual(await f.registry.list(), []);
     assert.deepEqual(await f.registry.toolsFor("alpha"), []);
     await assert.rejects(f.registry.tool("genex-blender__fd3", {}, { project: "alpha" }), /Unknown connector tool/);
+  } finally {
+    await f.close();
+  }
+});
+
+test("a plugin's connectors are told apart from the ones the user connected", async () => {
+  const f = await fixture();
+  const userBlock = "Tools from connected services the user set up.";
+  try {
+    await f.registry.save(draft(), {}, { trust: true });
+    await f.registry.registerPluginServer(
+      "genex",
+      { id: "blender", name: "Genex Blender", command: "ignored", args: [] },
+      { execPath: process.execPath, extraArgs: [SERVER] },
+    );
+    const tools = await f.registry.toolsFor("alpha");
+    const guidance = f.registry.guidance(tools);
+    const [user = "", plugin = ""] = guidance.split("[PLUGIN CONNECTORS]");
+    assert.match(user, /^\[CONNECTORS\]\n/, "the user's connectors keep their block");
+    assert.ok(user.includes(userBlock), "with today's sentence");
+    assert.match(user, /- Echo: 5 tools, named echo__\*/);
+    assert.doesNotMatch(user, /Genex Blender/, "a plugin's connector is not one the user set up");
+    assert.match(plugin, /plugins the user turned on/);
+    assert.match(plugin, /- Genex Blender: \d+ tools, named genex-blender__\*/);
+    assert.doesNotMatch(plugin, /Echo:/);
+
+    const onlyPlugin = f.registry.guidance(tools.filter((t) => t.name.startsWith("genex-blender__")));
+    assert.match(onlyPlugin, /^\[PLUGIN CONNECTORS\]\n/, "an empty user block is left out");
+    assert.ok(!onlyPlugin.includes(userBlock));
+    const onlyUser = f.registry.guidance(tools.filter((t) => t.name.startsWith("echo__")));
+    assert.doesNotMatch(onlyUser, /PLUGIN CONNECTORS/, "an empty plugin block is left out");
+    assert.equal(f.registry.guidance([]), "");
   } finally {
     await f.close();
   }
@@ -992,5 +1065,162 @@ test("a server's own name and picture, from its initialize answer, reach the con
     assert.match(view.icon ?? "", /^data:image\/png;base64,/);
   } finally {
     await f.close();
+  }
+});
+
+/** A server that speaks only the older SSE transport: GET opens the stream, POST to it is refused. */
+async function sseOnlyServer() {
+  const { McpServer } = await import("@modelcontextprotocol/sdk/server/mcp.js");
+  const { SSEServerTransport } = await import("@modelcontextprotocol/sdk/server/sse.js");
+  const { createServer } = await import("node:http");
+  const sessions = new Map<string, InstanceType<typeof SSEServerTransport>>();
+  const requests: string[] = [];
+  const server = createServer(async (request, response) => {
+    const url = new URL(request.url ?? "/", "http://127.0.0.1");
+    requests.push(`${request.method} ${url.pathname}`);
+    if (request.method === "GET" && url.pathname === "/sse") {
+      const transport = new SSEServerTransport("/messages", response);
+      sessions.set(transport.sessionId, transport);
+      const mcp = new McpServer({ name: "old-feed", version: "1.0.0" });
+      mcp.registerTool("ping", { description: "Answers pong" }, async () => ({
+        content: [{ type: "text", text: "pong" }],
+      }));
+      await mcp.connect(transport);
+      return;
+    }
+    const session = sessions.get(url.searchParams.get("sessionId") ?? "");
+    if (request.method === "POST" && url.pathname === "/messages" && session)
+      return void (await session.handlePostMessage(request, response));
+    response.writeHead(405).end();
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));
+  const { port } = server.address() as { port: number };
+  return {
+    url: `http://127.0.0.1:${port}/sse`,
+    requests,
+    async close() {
+      server.closeAllConnections();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    },
+  };
+}
+
+test("a URL saved as HTTP that only speaks SSE is reached over SSE", async () => {
+  const feed = await sseOnlyServer();
+  const connection = new McpConnection({
+    connector: draft({
+      id: "feed",
+      name: "Feed",
+      transport: "http",
+      url: feed.url,
+      command: undefined,
+      args: undefined,
+    }),
+    secrets: null,
+  });
+  try {
+    const tools = await connection.listTools();
+    assert.deepEqual(
+      tools.map((tool) => tool.name),
+      ["ping"],
+    );
+    assert.equal(connection.health, "ready");
+    assert.ok(feed.requests.includes("POST /sse"), "it tried the newer transport first");
+    assert.ok(feed.requests.includes("GET /sse"), "then opened the SSE stream");
+  } finally {
+    await connection.close();
+    await feed.close();
+  }
+});
+
+/** A URL server behind an account: every MCP request without a token is answered 401. */
+function accountServer() {
+  const issuer = "https://identity.example";
+  const requests: string[] = [];
+  const fetchImpl: typeof fetch = async (input, init) => {
+    const url = String(input instanceof Request ? input.url : input);
+    requests.push(`${init?.method ?? "GET"} ${url}`);
+    if (url === "https://docs.example/mcp")
+      return new Response("sign in first", {
+        status: 401,
+        headers: {
+          "www-authenticate": 'Bearer resource_metadata="https://docs.example/.well-known/oauth-protected-resource"',
+        },
+      });
+    if (url.includes("oauth-protected-resource"))
+      return Response.json({ resource: "https://docs.example/mcp", authorization_servers: [issuer] });
+    if (url.includes("/.well-known/"))
+      return Response.json({
+        issuer,
+        authorization_endpoint: `${issuer}/authorize`,
+        token_endpoint: `${issuer}/token`,
+        registration_endpoint: `${issuer}/register`,
+        response_types_supported: ["code"],
+        code_challenge_methods_supported: ["S256"],
+      });
+    if (url === `${issuer}/register`)
+      return Response.json({ client_id: "genex-client", redirect_uris: JSON.parse(String(init?.body)).redirect_uris });
+    throw new Error(`Unexpected fixture request: ${url}`);
+  };
+  return { fetchImpl, requests };
+}
+
+test("a URL server that asks for an account turns browser sign-in on when the person connects it", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "studio-mcp-"));
+  const server = accountServer();
+  const registry = new McpRegistry({
+    file: path.join(root, "mcp", "connectors.json"),
+    secrets: memorySecretPort(new Map()),
+    fetchImpl: server.fetchImpl,
+  });
+  await registry.init();
+  const opened: string[] = [];
+  try {
+    const remote = { transport: "http", url: "https://docs.example/mcp", command: undefined, args: undefined } as const;
+    await registry.save(draft({ id: "docs", name: "Docs", ...remote }));
+    await registry.save(draft({ id: "keyed", name: "Keyed", ...remote, headers: ["Authorization"] }));
+    const result = await registry.connect("docs", null, async (url) => void opened.push(url));
+    assert.equal(result.ok, false, "it waits for the browser");
+    const saved = (await registry.list()).find((view) => view.connector.id === "docs");
+    assert.equal(saved?.connector.authentication, "oauth");
+    assert.equal(opened.length, 1);
+    assert.match(opened[0] ?? "", /^https:\/\/identity\.example\/authorize\?/);
+    await registry.save(draft({ id: "api-key", name: "API key", ...remote, headers: ["X-API-Key"] }));
+    for (const id of ["keyed", "api-key"]) {
+      await registry.connect(id, null, async (url) => void opened.push(url));
+      const keyed = (await registry.list()).find((view) => view.connector.id === id);
+      assert.equal(keyed?.connector.authentication, undefined, `${id}: any key header is its own sign-in`);
+      assert.equal(opened.length, 1, `${id}: no browser opens`);
+    }
+  } finally {
+    await registry.cancelAuthorization("docs");
+    await registry.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("a sign-in switch that cannot be saved answers the failed connect instead of throwing", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "studio-mcp-"));
+  const server = accountServer();
+  const registry = new McpRegistry({
+    file: path.join(root, "mcp", "connectors.json"),
+    secrets: memorySecretPort(new Map()),
+    fetchImpl: server.fetchImpl,
+  });
+  await registry.init();
+  const opened: string[] = [];
+  try {
+    const remote = { transport: "http", url: "https://docs.example/mcp", command: undefined, args: undefined } as const;
+    await registry.save(draft({ id: "docs", name: "Docs", ...remote }));
+    // The connectors file can no longer be written: its folder is now a plain file.
+    await rm(path.join(root, "mcp"), { recursive: true, force: true });
+    await writeFile(path.join(root, "mcp"), "");
+    const result = await registry.connect("docs", null, async (url) => void opened.push(url));
+    assert.equal(result.ok, false);
+    assert.equal(typeof result.error, "string");
+    assert.deepEqual(opened, [], "no browser opens for a switch that was not kept");
+  } finally {
+    await registry.close();
+    await rm(root, { recursive: true, force: true });
   }
 });

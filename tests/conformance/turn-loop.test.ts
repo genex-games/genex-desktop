@@ -691,9 +691,14 @@ describe("engine fallback (M2)", () => {
 
   it("refuses a second contractor in the same project while one is building", async () => {
     const rig = await turnRig([]);
-    let release!: () => void;
+    let release = () => {};
     const gate = new Promise<void>((resolve) => {
       release = resolve;
+    });
+    // The first brief is in the engine, so it holds the folder's lock, before the second is sent.
+    let enter = () => {};
+    const entered = new Promise<void>((resolve) => {
+      enter = resolve;
     });
     const vendor: Engine = {
       id: "vendor",
@@ -702,6 +707,7 @@ describe("engine fallback (M2)", () => {
       status: async () => ({ code: "ready", detail: "signed in" }),
       models: async () => [],
       delegate: async () => {
+        enter();
         await gate;
         return { ok: true, engine: "vendor", summary: "done", turns: 1, usage: { input_tokens: 0, output_tokens: 0 } };
       },
@@ -715,6 +721,8 @@ describe("engine fallback (M2)", () => {
       prompt: string;
     }) => Promise<unknown>;
     const first = delegate({ engine: "vendor", project: "pong", prompt: "build it" });
+    // A first brief refused before it reaches the engine fails here, never waits forever.
+    await Promise.race([entered, first]);
     await assert.rejects(
       () => delegate({ engine: "vendor", project: "pong", prompt: "build it again" }),
       /already building in "pong"/,
@@ -1149,6 +1157,14 @@ describe("chat intake", () => {
   });
 });
 
+/** Genex's tool that makes a new, empty game a web game: a builder of a new web game calls it first. */
+const START_WEB_GAME = "start_web_game";
+
+/** As a builder on a game with no kind yet does: pick web, so the starter is there to build on. */
+async function startsWeb(request: import("../../src/substrate/engines/types.ts").DelegateRequest): Promise<void> {
+  if (request.liveTools?.some((tool) => tool.name === START_WEB_GAME)) await request.onLiveTool?.(START_WEB_GAME, {});
+}
+
 describe("a Loop chat that does the work itself", () => {
   /** A delegated engine that answers every session with `answer(request)`. */
   function vendorAnswering(
@@ -1170,6 +1186,7 @@ describe("a Loop chat that does the work itself", () => {
   it("checks code it changed before asking, and still waits for the answer", async () => {
     const rig = await turnRig([]);
     vendorAnswering(rig, async (request) => {
+      await startsWeb(request);
       await writeFile(path.join(request.cwd, "src/tweak.js"), "export const tweak = 1;\n");
       return {
         ok: true,
@@ -1266,6 +1283,7 @@ describe("delegated build observation", () => {
         // Exercise a delivered edit. A read-only status turn intentionally skips preview
         // validation; its unchanged files must not accidentally satisfy this build test.
         builds += 1;
+        await startsWeb(request);
         await writeFile(path.join(request.cwd, "src/acceptance.js"), `export const delivered = ${builds};\n`);
         return {
           ok: true,

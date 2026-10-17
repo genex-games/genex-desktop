@@ -23,6 +23,7 @@ import * as singleWorker from "../../src/harness-seed/loop/director/single-worke
 import * as autopilot from "../../src/harness-seed/loop/autopilot.ts";
 import * as spike from "../../src/harness-seed/loop/spike.ts";
 import * as chatSession from "../../src/harness-seed/loop/chat-session.ts";
+import { GameEngine } from "../../src/harness-seed/loop/game-engine.ts";
 import * as chatSteer from "../../src/harness-seed/loop/chat-steer-prompts.ts";
 import * as scout from "../../src/harness-seed/loop/scout.ts";
 import * as library from "../../src/harness-seed/loop/library.ts";
@@ -134,6 +135,16 @@ function builders(engine: string): Array<{ name: string; text: string }> {
         scaffolded: true,
         engine,
         launch: { toolName: "start_autopilot", hours: 8, project: "plaza" },
+      }),
+    },
+    {
+      // An Unreal game's brief names the Unreal Editor's tools, held to the same rule.
+      name: "buildContractorBrief",
+      text: chatSession.buildContractorBrief({
+        ask: "add a lighthouse",
+        engine,
+        gameEngine: GameEngine.Unreal,
+        engineProject: "/Users/me/Unreal Projects/Valley/Valley.uproject",
       }),
     },
     {

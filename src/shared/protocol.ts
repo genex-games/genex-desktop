@@ -73,7 +73,7 @@ export interface LoopCommission {
 
 /**
  * Composer Autopilot on a chat turn. Hours are the optional "stop after N hours" cap — absent
- * means run until the critics are satisfied (A2). Frames are the mood board.
+ * means run until what was asked is verified and nothing blocks it (A2). Frames are the mood board.
  */
 /** Who plans, builds and judges — one model id per job; `undefined`/"default" is the engine's own default. */
 export interface RunRoles {
@@ -100,11 +100,16 @@ export interface AutopilotCommission {
 
 /**
  * Who wrote a message the chat sends when the words are not the user's: the chat reporting how a
- * command the user ran from a reply went. The agent reads it; the transcript never draws it.
- * Recorded with the queued message: never rename a value.
+ * command the user ran from a reply went, that the person turned on a plugin the agent suggested,
+ * or what an engine's setup card has to say (done, or a step stopped). The agent reads it; the transcript never
+ * draws it. Recorded with the queued message: never rename a value.
  */
 export const MessageOrigin = {
   CommandResult: "command-result",
+  PluginTurnedOn: "plugin-turned-on",
+  SetupCard: "setup-card",
+  /** A tag the person tried again, now attached: its line for the agent. */
+  TagRetry: "tag-retry",
 } as const;
 export type MessageOrigin = (typeof MessageOrigin)[keyof typeof MessageOrigin];
 const MESSAGE_ORIGINS: ReadonlySet<unknown> = new Set(Object.values(MessageOrigin));
@@ -168,6 +173,29 @@ export type DispatchAction =
    * Unlike every other dispatch this one answers with a value — the tool's result.
    */
   | { type: "director_tool"; runId: string; name: string; args: Record<string, unknown> }
+  /**
+   * A worker tool (`WorkerTool`) the chat's own session called during the chat turn `turn` (its
+   * message id), forwarded to the harness's worker pool for that turn. Answers with the tool's result.
+   */
+  | { type: "worker_tool"; threadId: string; turn: string; name: string; args: Record<string, unknown> }
+  /**
+   * A judge that plays (`judge_play`), asked for by the chat's own session after a change: one blind
+   * judge plays the game in `root` (the game folder, as the host resolved it) on a hidden window and
+   * answers `ask`, held to `goalState` when given. Answers with the judge's outcome, never throws.
+   */
+  | {
+      type: "chat_judge";
+      threadId: string;
+      project: string;
+      root: string;
+      engine: string;
+      model?: string;
+      effort?: string;
+      ask: string;
+      goalState?: string;
+      /** The engine plugin's judge to play as (`PluginJudge.id`), checked by the host against the game's judges. */
+      judge?: string;
+    }
   | { type: "skillopt_start"; threadId: string; options?: Record<string, unknown> }
   | { type: "boot_notice"; notice: BootNotice };
 
@@ -185,6 +213,8 @@ export const DispatchActionType = {
   RunStop: "run_stop",
   AutopilotResume: "autopilot_resume",
   DirectorTool: "director_tool",
+  WorkerTool: "worker_tool",
+  ChatJudge: "chat_judge",
   SkilloptStart: "skillopt_start",
   BootNotice: "boot_notice",
 } as const satisfies Record<string, DispatchAction["type"]>;
@@ -214,8 +244,12 @@ export const HarnessCapability = {
   Rewind: "rewind",
   /** A message sent while the chat's own turn works joins that turn (`engine.steer`). */
   Steer: "steer",
+  /** The chat's own session may run workers: the harness answers `worker_tool` for its turn. */
+  Workers: "workers",
   /** A build whose jobs cross to or from a completion-only local engine (`crossesCompletionEngine`). */
   LocalRoles: "local-roles",
+  /** The chat's own session may ask a blind judge to play its game: the harness answers `chat_judge`. */
+  ChatJudge: "chat-judge",
 } as const;
 export type HarnessCapability = (typeof HarnessCapability)[keyof typeof HarnessCapability];
 
@@ -282,8 +316,19 @@ export interface RunReference {
  */
 export const DIRECTOR_LOOP_ENV = "STUDIO_DIRECTOR_LOOP";
 
+/**
+ * The studio's environment variable that sends a Loop on an Unreal game to the Unreal runner it had
+ * before the one Loop, for developers until a live Unreal Loop passes on the one Loop. Never a run
+ * record field, never shown. The seed's copy is loop/loop-switch.ts.
+ */
+export const UNREAL_RUNNER_ENV = "STUDIO_UNREAL_RUNNER";
+
+/** What `UNREAL_RUNNER_ENV` may name: the Unreal runner (`lead`). Never rename a value. */
+export const UnrealRunnerChoice = { Lead: "lead" } as const;
+export type UnrealRunnerChoice = (typeof UnrealRunnerChoice)[keyof typeof UnrealRunnerChoice];
+
 /** The studio's own variables a run's harness reads; nothing else of its environment is handed on. */
-const HARNESS_RUN_ENV = [DIRECTOR_LOOP_ENV] as const;
+const HARNESS_RUN_ENV = [DIRECTOR_LOOP_ENV, UNREAL_RUNNER_ENV] as const;
 
 /**
  * What of the studio's own environment the harness it spawns is handed: the run overrides it
@@ -327,8 +372,10 @@ export interface RunSpec {
   /** observationDelays: backoff (ms) before re-trying a blind camera — a test/ops knob. */
   budgets: {
     wallClockMs: number;
-    /** The composer's ∞: run until the judge is satisfied; `wallClockMs` is then only the safety ceiling. */
+    /** The composer's ∞: run until what was asked is verified and nothing blocks it; `wallClockMs` is then only the safety ceiling. */
     untilSatisfied?: boolean;
+    /** Genex credits the run's paid jobs may commit; an open Loop records 600 when none is given. */
+    creditCap?: number;
     /** Explicit intent; absent records retain legacy untilSatisfied semantics. */
     completionPolicy?: "goal" | "duration";
     maxIterations?: number;

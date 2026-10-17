@@ -1,16 +1,28 @@
-import { memo } from "react";
+import { memo, type RefObject, useLayoutEffect, useRef, useState } from "react";
 import { PerformanceBoundary } from "../../performance.tsx";
 import { PerformanceComponent } from "../../../shared/performance.ts";
 /**
  * The Builds graph's nodes: what you asked, the assets tile, every step, the optimization tile,
- * your build and — while it has the run between parts — the lead. Every picture node is one size:
+ * your build and the lead — in a tree for the whole run, with its background tile and the finish
+ * check; otherwise while it has the run between parts. Every picture node is one size:
  * its picture fills it and its words sit on the picture, so no state changes its height. A node at
  * work is its agent's screen: the window's newest frame, the agent's cursor, what it is doing.
  */
 import type { CSSProperties, JSX, ReactNode } from "react";
 import type { AgentScreenFrame } from "../../../shared/agent-screen.ts";
-import type { AssetInfo, AssetsNode, BaseNode, BlenderNode, OptimizationNode, Rect, RunNode } from "../../run-graph.ts";
-import { thumbShot, truncate } from "../../run-graph.ts";
+import { JobState } from "../../../shared/jobs.ts";
+import type {
+  AssetInfo,
+  AssetsNode,
+  BaseNode,
+  BlenderNode,
+  FinishCheckNode as FinishCheckModel,
+  OptimizationNode,
+  Rect,
+  RunNode,
+} from "../../run-graph.ts";
+import { runIdOf } from "../../run-graph.ts";
+import type { JobInfo } from "../../run-graph-workers.ts";
 import { AssetCardState, BLENDER_SOURCE } from "../../run-graph-assets.ts";
 import {
   askedRest,
@@ -22,21 +34,28 @@ import {
   stepWord,
   Tone,
 } from "../../run-steps.ts";
+import { FinishLook, finishCheckFace, finishCheckLook, jobsTileStatus, LeadFace } from "../../run-tree.ts";
 import { useStill } from "../../stills.ts";
 import { Icon } from "../../ui/icons.tsx";
-import { ASSET_THUMB_PX, blenderRender, firstImage, isMaking } from "../inspector/asset-jobs.ts";
+import { ASSET_THUMB_PX, assetsStatus, blenderRender, firstImage, isMaking } from "../inspector/asset-jobs.ts";
 import { optimizationStatus } from "../inspector/OptimizationPanel.tsx";
 import { IMAGE_OUTLINE } from "../inspector/pictures.tsx";
 import { GraphSelection } from "../inspector/selection.ts";
 import { NodeCursor, ScreenWords, useFrameSrc, usePartFrame } from "../inspector/screen.tsx";
 import { StateGlyph, TONE } from "../inspector/tone.tsx";
 import { sameStepNode, type StepNodeProps } from "./step-props.ts";
-import { useRoundStill } from "../run-stills.ts";
+import { useRoundStill, useSavePointShot, useWorkerStill } from "../run-stills.ts";
+import { AssetThumbnail } from "../AssetThumbnail.tsx";
+import { FINISH_CHECK_WORDS, JOBS_EYEBROW, LEAD_WORDS } from "../../words.ts";
+import { useNow } from "./use-builds-model.ts";
+import type { ReferenceFrame } from "../../../shared/protocol.ts";
+import type { ProjectAsset } from "../../../shared/game-assets.ts";
+import { imageSrc, useMessageImages } from "../../chat/MessageImages.tsx";
 
-/** How much of the prompt the start node shows. */
-const GOAL_CHARS = 48;
 /** How many asset pictures the assets tile shows before it counts the rest. */
 const ASSETS_SHOWN = 3;
+/** The largest side of the lead's picture. */
+const LEAD_PICTURE_PX = 640;
 
 /** How a node's frame looks: settled, a ghost of what is not there yet, at work right now, or your build. */
 const Variant = {
@@ -59,11 +78,22 @@ const RING: Record<Variant, string> = {
 };
 const SELECTED_RING = "0 0 0 2px var(--accent), 0 0 0 6px var(--accent-tint)";
 
+/** A ring of one state colour, drawn as the variants' rings are: the finish check's tinted edge. */
+const edgeRing = (edge: string): string => `0 0 0 1.5px ${edge}`;
+
+/** The frame's ring: selected first, then a settled node's own edge colour when it has one, else its variant's. */
+function frameRing(variant: Variant, selected: boolean, edge: string | null): string {
+  if (selected) return SELECTED_RING;
+  if (edge && variant === Variant.Normal) return edgeRing(edge);
+  return RING[variant];
+}
+
 /** A node's frame: a button at its rect, ringed by its variant; a ghost adds a dashed edge inside. */
 function NodeFrame({
   id,
   rect,
   variant = Variant.Normal,
+  edge = null,
   selected,
   label,
   screen = null,
@@ -73,6 +103,8 @@ function NodeFrame({
   id: string;
   rect: Rect;
   variant?: Variant;
+  /** A settled node's edge in its state's colour (a token), instead of the plain outline: only the finish check has one. */
+  edge?: string | null;
   selected: boolean;
   label: string;
   /** The window whose screen the node shows, while it shows one. */
@@ -85,7 +117,7 @@ function NodeFrame({
     top: rect.y,
     width: rect.w,
     height: rect.h,
-    boxShadow: selected ? SELECTED_RING : RING[variant],
+    boxShadow: frameRing(variant, selected, edge),
   };
   return (
     <button
@@ -139,13 +171,14 @@ const LOOK_STYLE: Record<Look, CSSProperties | undefined> = {
   [Look.Soft]: { opacity: 0.6 },
 };
 
-/** What a node shows while it has no picture: a shimmer while work is in hand, a flat inset, or the hatch. */
-const Fill = { Hatch: "hatch", Shimmer: "shimmer", Flat: "flat" } as const;
+/** What a node shows while it has no picture: a shimmer while work is in hand, a flat inset, the plain surface, or the hatch. */
+const Fill = { Hatch: "hatch", Shimmer: "shimmer", Flat: "flat", Surface: "surface" } as const;
 type Fill = (typeof Fill)[keyof typeof Fill];
 const FILL_CLASS: Record<Fill, string> = {
   [Fill.Hatch]: "hatch",
   [Fill.Shimmer]: "graph-shimmer",
   [Fill.Flat]: "bg-inset",
+  [Fill.Surface]: "bg-surface",
 };
 
 /** The status glyph alone, grown, at the bottom right: all that is left of a node zoomed far out. */
@@ -168,10 +201,14 @@ function FarGlyph({ glyph }: { glyph: ReactNode }): JSX.Element | null {
  */
 function NodeFace({
   src,
+  picture = null,
   look = Look.Plain,
   fill = Fill.Hatch,
+  tint = null,
   over = null,
   chip = null,
+  eyebrow = null,
+  eyebrowTone = Tone.Muted,
   name,
   word,
   tone,
@@ -179,18 +216,26 @@ function NodeFace({
   asked = null,
 }: {
   src: string | null;
+  /** Drawn in the picture's place when there is no still: a model as the Assets stage draws it. */
+  picture?: ReactNode;
   look?: Look;
   fill?: Fill;
+  /** A state's tint (a token) laid over the fill: only the finish check has one. */
+  tint?: string | null;
   /** Drawn on the picture, under the words: an agent's cursor. */
   over?: ReactNode;
   chip?: string | null;
+  /** A first line over the name that says what the node is, as a tile's (`TileText`). */
+  eyebrow?: string | null;
+  /** The first line's ink: muted, or the state's for the finish check. */
+  eyebrowTone?: Tone;
   name: string;
   word: ReactNode;
   tone: Tone;
   glyph: ReactNode;
   asked?: string | null;
 }): JSX.Element {
-  const pictured = Boolean(src);
+  const pictured = Boolean(src) || Boolean(picture);
   return (
     <>
       {src ? (
@@ -203,8 +248,11 @@ function NodeFace({
           style={LOOK_STYLE[look]}
         />
       ) : (
-        <span aria-hidden="true" className={`absolute inset-0 ${FILL_CLASS[fill]}`} />
+        <span aria-hidden="true" className={`absolute inset-0 ${FILL_CLASS[fill]}`} style={LOOK_STYLE[look]}>
+          {picture}
+        </span>
       )}
+      {tint ? <span aria-hidden="true" className="absolute inset-0" style={{ background: tint }} /> : null}
       {over}
       {chip ? (
         <span
@@ -219,6 +267,11 @@ function NodeFace({
         className="absolute inset-x-0 bottom-0 flex min-w-0 flex-col gap-px px-3 pt-7 pb-2.5 group-data-[zoom=far]/canvas:hidden"
         style={pictured ? PICTURED_CAPTION : PLAIN_CAPTION}
       >
+        {eyebrow ? (
+          <span className="truncate text-[11px] leading-[14px]" style={{ color: TONE[eyebrowTone] }}>
+            {eyebrow}
+          </span>
+        ) : null}
         <span className={`truncate text-[13.5px] leading-[18px] font-semibold ${pictured ? "text-white" : "text-ink"}`}>
           {name}
         </span>
@@ -237,13 +290,18 @@ function NodeFace({
   );
 }
 
-/** A tile's name and status in the flow of its card — the assets tile, which has no one picture. */
+/**
+ * A tile's name and status in the flow of its card — the assets tile and the background tile,
+ * which have no one picture — under an optional first line that says what the tile is.
+ */
 function TileText({
+  eyebrow = null,
   name,
   word,
   glyph,
   color = "var(--ink-3)",
 }: {
+  eyebrow?: string | null;
   name: string;
   word: string;
   glyph: ReactNode;
@@ -252,6 +310,7 @@ function TileText({
   return (
     <>
       <span className="flex min-w-0 flex-col gap-px px-1 group-data-[zoom=far]/canvas:hidden">
+        {eyebrow ? <span className="truncate text-[11px] leading-[14px] text-ink-3">{eyebrow}</span> : null}
         <span className="truncate text-[13.5px] leading-[18px] font-semibold text-ink">{name}</span>
         <span className="flex min-w-0 items-center gap-1.5 text-[12px] leading-4" style={{ color }}>
           {glyph}
@@ -287,13 +346,17 @@ export const StepNode = memo(function StepNode({
 }: StepNodeProps): JSX.Element | null {
   const working = isLiveStep(step);
   const shown = step.shown;
-  const shot = shown ? thumbShot(shown) : null;
+  const shot = useSavePointShot(shown, step.earlier);
   const src = useRoundStill({ runId }, step.facetId, shown?.iteration ?? 1, shot?.path ?? null, working && active);
-  const frame = usePartFrame(project, runId, step.facetId, working && active);
+  const frame = usePartFrame(project, runIdOf({ runId }), step.facetId, working && active);
   const screen = useFrameSrc(frame);
+  const worker = useWorkerStill(project, step.picture);
   const word = stepWord(step, active);
   const tries = step.tries.length;
   if (!rect) return null;
+  const still = screen ?? src ?? worker.src;
+  // With no picture of its own, a worker's step shows the asset it made.
+  const asset = still ? null : worker.asset;
   return (
     <PerformanceBoundary id={PerformanceComponent.StepNode}>
       <NodeFrame
@@ -306,8 +369,9 @@ export const StepNode = memo(function StepNode({
         onSelect={() => onSelect(step.id)}
       >
         <NodeFace
-          src={screen ?? src}
-          look={ghost ? Look.Dim : Look.Plain}
+          src={still}
+          picture={project && asset ? <WorkerAsset project={project} asset={asset} /> : null}
+          look={stepLook(ghost, worker.borrowed && still === worker.src)}
           fill={working ? Fill.Shimmer : Fill.Hatch}
           over={frame ? <NodeCursor frame={frame} box={rect} /> : null}
           chip={triesChip(tries, working)}
@@ -322,52 +386,160 @@ export const StepNode = memo(function StepNode({
   );
 }, sameStepNode);
 
+/** A step's picture: dim when it is not in the build, soft when it is a reader's borrowed save point. */
+function stepLook(ghost: boolean, borrowed: boolean): Look {
+  if (ghost) return Look.Dim;
+  return borrowed ? Look.Soft : Look.Plain;
+}
+
+/** A worker's delivered model or image, as the Assets stage draws its thumbnail. */
+function WorkerAsset({ project, asset }: { project: string; asset: ProjectAsset }): JSX.Element {
+  return <AssetThumbnail project={project} asset={asset} companions={[]} fallback={null} quiet />;
+}
+
 /** A step being checked says so before its checker's action; a step being built says only the action. */
 const checkingWord = (step: Step, word: string): string | null => (step.state === StepState.Judging ? word : null);
 
-/** The start node's face: building its starting point, failed to, or the prompt itself. */
-function StartFace({
-  src,
-  building,
-  failed,
-  goal,
-}: {
-  src: string | null;
-  building: boolean;
-  failed: boolean;
-  goal: string;
-}): JSX.Element {
-  if (building)
-    return (
-      <NodeFace
-        src={src}
-        fill={Fill.Shimmer}
-        name="You asked"
-        word="Starting point…"
-        tone={Tone.Accent}
-        glyph={<StateGlyph state={StepState.Building} />}
-      />
-    );
-  if (failed)
-    return (
-      <NodeFace
-        src={src}
-        fill={Fill.Flat}
-        name="You asked"
-        word="Start failed"
-        tone={Tone.Red}
-        glyph={<StateGlyph state={StepState.Undone} />}
-      />
-    );
-  return <NodeFace src={src} fill={Fill.Flat} name="You asked" word={`“${goal}”`} tone={Tone.Muted} glyph={null} />;
+/** The start node's words. */
+const START_WORDS = {
+  label: "You asked",
+  noPrompt: "No prompt recorded",
+  starting: "Starting point…",
+  failed: "Start failed",
+  showAll: "Show all",
+  showLess: "Show less",
+} as const;
+/** The start's request folded: to five lines in its own place, to three under its pictures (a class, so a far zoom still hides it). */
+const START_FOLD = { Alone: "line-clamp-5", UnderPictures: "line-clamp-3" } as const;
+type StartFold = (typeof START_FOLD)[keyof typeof START_FOLD];
+/** How many pictures the start shows; from one more on, the last of them counts the rest. */
+const START_PICTURES = 4;
+
+/** The start's state while its starting point is built, or after that failed; null for neither. */
+function startState(building: boolean, failed: boolean): ReactNode {
+  if (!building && !failed) return null;
+  const tone = building ? Tone.Accent : Tone.Red;
+  return (
+    <span className="flex min-w-0 items-center gap-1.5 text-[12px] leading-4" style={{ color: TONE[tone] }}>
+      <StateGlyph state={building ? StepState.Building : StepState.Undone} />
+      <span className="truncate">{building ? START_WORDS.starting : START_WORDS.failed}</span>
+    </span>
+  );
 }
 
-/** What you asked: the game's starting still and the prompt. */
+/**
+ * The pictures sent with the request, at the foot of the start's place so its words follow them
+ * at once: one kept whole, two side by side, more two by two, the last counting the rest.
+ */
+function StartPictures({ images }: { images: ReferenceFrame[] }): JSX.Element {
+  const [first] = images;
+  if (images.length === 1 && first)
+    return (
+      <span className="flex size-full items-end justify-center">
+        <img
+          src={imageSrc(first)}
+          alt=""
+          decoding="async"
+          draggable={false}
+          className="max-h-full max-w-full rounded-[14px]"
+          style={{ boxShadow: IMAGE_OUTLINE }}
+        />
+      </span>
+    );
+  const shown = images.slice(0, START_PICTURES);
+  const more = images.length > START_PICTURES ? images.length - START_PICTURES + 1 : 0;
+  // Two share one row, tall enough to meet the line into the lead; three or more fill the place.
+  const grid = shown.length > 2 ? "h-full grid-rows-2" : "h-[76px] grid-rows-1";
+  return (
+    <span className="flex size-full items-end">
+      <span className={`grid w-full grid-cols-2 gap-1.5 ${grid}`}>
+        {shown.map((image, index) => (
+          <span
+            key={`${image.label}-${index}`}
+            className="relative overflow-hidden rounded-[8px] bg-inset"
+            style={{ boxShadow: IMAGE_OUTLINE }}
+          >
+            <img src={imageSrc(image)} alt="" decoding="async" draggable={false} className="size-full object-cover" />
+            {more && index === shown.length - 1 ? (
+              <span className="absolute inset-0 grid place-items-center bg-black/70 text-[13px] leading-[18px] font-semibold text-white tabular-nums">
+                +{more}
+              </span>
+            ) : null}
+          </span>
+        ))}
+      </span>
+    </span>
+  );
+}
+
+/** Whether a clamped paragraph hides lines: measured after each paint of its words. */
+function useClamped(text: string, fold: StartFold): [RefObject<HTMLParagraphElement | null>, boolean] {
+  const ref = useRef<HTMLParagraphElement>(null);
+  const [clamped, setClamped] = useState(false);
+  useLayoutEffect(() => {
+    const paragraph = ref.current;
+    if (paragraph) setClamped(paragraph.scrollHeight > paragraph.clientHeight + 1);
+  }, [text, fold]);
+  return [ref, clamped];
+}
+
+/** The start's words: its label, its starting point's state, and the request, folded unless open. */
+function StartWords({
+  goal,
+  state,
+  fold,
+  open,
+  words,
+}: {
+  goal: string;
+  state: ReactNode;
+  fold: StartFold;
+  open: boolean;
+  words: RefObject<HTMLParagraphElement | null>;
+}): JSX.Element {
+  return (
+    <span className="flex min-w-0 flex-col gap-1">
+      <span className="text-[11px] leading-[14px] text-ink-3 transition-colors group-hover/start:text-ink-2">
+        {START_WORDS.label}
+      </span>
+      {state}
+      <p
+        ref={words}
+        className={`m-0 text-[13px] leading-[18px] text-pretty whitespace-pre-wrap text-ink [overflow-wrap:anywhere] group-data-[zoom=far]/canvas:hidden ${open ? "" : fold}`}
+      >
+        {goal}
+      </p>
+    </span>
+  );
+}
+
+/** Show all opens the start's words in place; Show less folds them back. */
+function ShowAll({ open, onToggle }: { open: boolean; onToggle: () => void }): JSX.Element {
+  return (
+    <button
+      type="button"
+      aria-expanded={open}
+      className="mt-1 cursor-pointer self-start rounded-[4px] p-0 text-[12px] leading-4 text-ink-3 hover:text-ink hover:underline focus-visible:outline-2 focus-visible:outline-accent group-data-[zoom=far]/canvas:hidden"
+      onClick={(event) => {
+        event.stopPropagation();
+        onToggle();
+      }}
+    >
+      {open ? START_WORDS.showLess : START_WORDS.showAll}
+    </button>
+  );
+}
+
+/**
+ * What you asked: the request itself, no card, with the pictures sent with it above the words
+ * (in the strip `wordsRect` keeps under them); words alone sit in the start's own place, on its
+ * line. Folded, they keep their place; Show all opens them in place, over what is below.
+ */
 export function StartNode({
   run,
   base,
   rect,
-  src,
+  wordsRect,
   active,
   selected,
   onSelect,
@@ -375,41 +547,60 @@ export function StartNode({
   run: RunNode;
   base: BaseNode | null;
   rect: Rect | undefined;
-  src: string | null;
+  wordsRect: Rect | undefined;
   active: boolean;
   selected: boolean;
   onSelect: () => void;
 }): JSX.Element | null {
+  const [open, setOpen] = useState(false);
+  const images = useMessageImages(run.asked?.threadId, run.asked?.messageId) ?? [];
+  const goal = run.goal || START_WORDS.noPrompt;
+  const pictured = images.length > 0 && wordsRect !== undefined;
+  const fold = pictured ? START_FOLD.UnderPictures : START_FOLD.Alone;
+  const [words, clamped] = useClamped(goal, fold);
   if (!rect) return null;
   const building = active && base !== null && !base.done;
-  const goal = run.goal ? truncate(run.goal, GOAL_CHARS) : "No prompt recorded";
+  const ring = frameRing(building ? Variant.Working : Variant.Ghost, selected, null);
+  const place: CSSProperties = { left: rect.x, top: rect.y, width: rect.w, minHeight: rect.h };
   return (
-    <NodeFrame
-      id={GraphSelection.Start}
-      rect={rect}
-      variant={building ? Variant.Working : Variant.Normal}
-      selected={selected}
-      label={`You asked: ${goal}`}
-      onSelect={onSelect}
+    <div
+      className={`absolute flex flex-col ${pictured ? "" : "justify-center"} ${open ? "z-10 rounded-[14px] bg-canvas" : ""}`}
+      style={place}
     >
-      <StartFace src={src} building={building} failed={base?.ok === false} goal={goal} />
-    </NodeFrame>
+      <button
+        type="button"
+        data-graph-node={GraphSelection.Start}
+        aria-label={`${START_WORDS.label}: ${goal}`}
+        aria-pressed={selected}
+        className="group/start relative flex cursor-pointer flex-col gap-2.5 rounded-[14px] p-0 text-left focus-visible:outline-2 focus-visible:outline-offset-[10px] focus-visible:outline-accent"
+        onClick={(event) => {
+          event.stopPropagation();
+          onSelect();
+        }}
+      >
+        <span
+          aria-hidden="true"
+          data-graph-ring
+          data-working={building && !selected ? "true" : undefined}
+          className="pointer-events-none absolute -inset-2.5 rounded-[18px] transition-[box-shadow] duration-150"
+          style={{ boxShadow: ring }}
+        />
+        {pictured ? (
+          <span className="block" style={{ height: rect.h }}>
+            <StartPictures images={images} />
+          </span>
+        ) : null}
+        <StartWords
+          goal={goal}
+          state={startState(building, base?.ok === false)}
+          fold={fold}
+          open={open}
+          words={words}
+        />
+      </button>
+      {clamped || open ? <ShowAll open={open} onToggle={() => setOpen((value) => !value)} /> : null}
+    </div>
   );
-}
-
-/** Where the run's assets have got to, in one line: failures first, then work in hand, then the game. */
-export function assetsStatus(jobs: AssetInfo[]): { text: string; tone: Tone } {
-  const made = jobs.filter((job) => job.state === AssetCardState.Delivered);
-  const failed = jobs.filter((job) => job.state === AssetCardState.Failed).length;
-  const making = jobs.length - made.length - failed;
-  const inGame = made.filter((job) => job.inGame).length;
-  const known = made.filter((job) => job.inGame !== undefined).length;
-  if (failed) return { text: `${failed} failed`, tone: Tone.Red };
-  if (making) return { text: `Making ${making}`, tone: Tone.Accent };
-  if (!known) return { text: `${made.length} delivered`, tone: Tone.Muted };
-  if (inGame === made.length) return { text: `${inGame} in game`, tone: Tone.Green };
-  if (inGame) return { text: `${inGame} of ${made.length} in game`, tone: Tone.Orange };
-  return { text: "Not in game yet", tone: Tone.Orange };
 }
 
 /** The glyph the assets tile wears for each tone of its status; the other tones wear none. */
@@ -576,37 +767,158 @@ export function ResultNode({
   );
 }
 
-/** The lead, while it has the run between parts: its own screen, when it has shown one. */
+/** How each of the lead's faces looks: its frame, what it shows without a picture, and its glyph. */
+const LEAD_LOOK: Record<LeadFace, { variant: Variant; fill: Fill; glyph: StepState }> = {
+  [LeadFace.Working]: { variant: Variant.Working, fill: Fill.Shimmer, glyph: StepState.Building },
+  [LeadFace.Waiting]: { variant: Variant.Working, fill: Fill.Shimmer, glyph: StepState.Building },
+  [LeadFace.Paused]: { variant: Variant.Normal, fill: Fill.Flat, glyph: StepState.NotInBuild },
+  [LeadFace.Stopped]: { variant: Variant.Normal, fill: Fill.Flat, glyph: StepState.NotInBuild },
+  [LeadFace.Done]: { variant: Variant.Normal, fill: Fill.Flat, glyph: StepState.InBuild },
+};
+
+const lowerFirst = (text: string): string => text.charAt(0).toLowerCase() + text.slice(1);
+
+/** The lead's faces that wear the run's last save point: its work is where that save point left it. */
+const SHOWS_LAST_SAVE: ReadonlySet<LeadFace> = new Set([LeadFace.Done, LeadFace.Paused]);
+
+/**
+ * The lead: while it works itself, its own screen when it has shown one. In a tree it stands for
+ * the whole run and says what it is doing: waiting for a worker, paused, done or stopped.
+ */
 export function LeadNode({
   rect,
   frame,
+  face = LeadFace.Working,
+  lastSave = null,
   selected,
   onSelect,
 }: {
   rect: Rect;
   frame: AgentScreenFrame | null;
+  face?: LeadFace;
+  /** The run's last save point: its picture is the lead's once the lead is done or paused. */
+  lastSave?: Step | null;
   selected: boolean;
   onSelect: () => void;
 }): JSX.Element {
-  const src = useFrameSrc(frame);
+  // Only the lead at work shows its screen; waiting, it is the workers' screens that move.
+  const shown = face === LeadFace.Working ? frame : null;
+  const saved = useSavePointShot(lastSave?.shown ?? null, lastSave?.earlier);
+  const settled = SHOWS_LAST_SAVE.has(face) && saved ? { run: saved.path, maxPx: LEAD_PICTURE_PX } : null;
+  const screen = useFrameSrc(shown);
+  const savedSrc = useStill(settled);
+  const src = screen ?? savedSrc;
+  const look = LEAD_LOOK[face];
+  const word = LEAD_WORDS.face[face];
   return (
     <NodeFrame
       id={GraphSelection.Lead}
       rect={rect}
-      variant={Variant.Working}
+      variant={look.variant}
       selected={selected}
-      label="The lead: working on the next step"
-      screen={frame?.handle ?? null}
+      label={`${LEAD_WORDS.name}: ${lowerFirst(word)}`}
+      screen={shown?.handle ?? null}
       onSelect={onSelect}
     >
       <NodeFace
         src={src}
-        fill={Fill.Shimmer}
-        over={frame ? <NodeCursor frame={frame} box={rect} /> : null}
-        name="The lead"
-        word={frame ? <ScreenWords frame={frame} /> : "Working on the next step"}
-        tone={Tone.Accent}
-        glyph={<StateGlyph state={StepState.Building} />}
+        fill={look.fill}
+        over={shown ? <NodeCursor frame={shown} box={rect} /> : null}
+        name={LEAD_WORDS.name}
+        word={shown ? <ScreenWords frame={shown} /> : word}
+        tone={STATE_TONE[look.glyph]}
+        glyph={<StateGlyph state={look.glyph} />}
+      />
+    </NodeFrame>
+  );
+}
+
+/** The glyph the background tile wears: work in hand while a job runs, none once all ended. */
+const JOBS_GLYPH: Partial<Record<Tone, StepState>> = { [Tone.Accent]: StepState.Building };
+
+/** The lead's background work, under it in a tree: the newest running job by name, the rest counted. */
+export function JobsTile({
+  jobs,
+  rect,
+  selected,
+  onSelect,
+}: {
+  jobs: JobInfo[];
+  rect: Rect;
+  selected: boolean;
+  onSelect: () => void;
+}): JSX.Element {
+  const now = useNow(jobs.some((job) => job.state === JobState.Running));
+  const status = jobsTileStatus(jobs, now);
+  const glyphState = JOBS_GLYPH[status.tone];
+  return (
+    <NodeFrame
+      id={GraphSelection.Jobs}
+      rect={rect}
+      selected={selected}
+      label={`${JOBS_EYEBROW}: ${status.title}, ${status.status}`}
+      onSelect={onSelect}
+    >
+      <span className="absolute inset-0 flex flex-col justify-end p-2">
+        <TileText
+          eyebrow={JOBS_EYEBROW}
+          name={status.title}
+          word={status.status}
+          glyph={glyphState ? <StateGlyph state={glyphState} /> : null}
+          color={TONE[status.tone]}
+        />
+      </span>
+    </NodeFrame>
+  );
+}
+
+/**
+ * How the finish check's frame looks in each of its looks (`finishCheckLook` gives the colours):
+ * a ghost until it runs, at work while it checks, settled on the plain surface once it answered.
+ */
+const FINISH_FRAME: Record<FinishLook, { variant: Variant; fill: Fill; glyph: StepState | null }> = {
+  [FinishLook.Placeholder]: { variant: Variant.Ghost, fill: Fill.Hatch, glyph: null },
+  [FinishLook.NotYet]: { variant: Variant.Normal, fill: Fill.Surface, glyph: null },
+  [FinishLook.Checking]: { variant: Variant.Working, fill: Fill.Shimmer, glyph: StepState.Judging },
+  [FinishLook.Done]: { variant: Variant.Normal, fill: Fill.Surface, glyph: StepState.InBuild },
+  [FinishLook.Stopped]: { variant: Variant.Normal, fill: Fill.Surface, glyph: StepState.Undone },
+};
+
+/** The finish check, the last node of a run's tree: the reviewer's check that the run is done. */
+export function FinishCheckNode({
+  node,
+  rect,
+  selected,
+  onSelect,
+}: {
+  node: FinishCheckModel;
+  rect: Rect;
+  selected: boolean;
+  onSelect: () => void;
+}): JSX.Element {
+  const colours = finishCheckLook(node);
+  const look = FINISH_FRAME[colours.look];
+  const face = finishCheckFace(node);
+  return (
+    <NodeFrame
+      id={GraphSelection.FinishCheck}
+      rect={rect}
+      variant={look.variant}
+      edge={colours.edge}
+      selected={selected}
+      label={`${FINISH_CHECK_WORDS.name}: ${face.name} · ${face.word}`}
+      onSelect={onSelect}
+    >
+      <NodeFace
+        src={null}
+        fill={look.fill}
+        tint={colours.fill}
+        eyebrow={FINISH_CHECK_WORDS.name}
+        eyebrowTone={colours.tone}
+        name={face.name}
+        word={face.word}
+        tone={colours.tone}
+        glyph={look.glyph ? <StateGlyph state={look.glyph} /> : null}
       />
     </NodeFrame>
   );

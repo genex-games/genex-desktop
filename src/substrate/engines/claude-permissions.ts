@@ -12,9 +12,12 @@
  * each of its calls first (`leadScreenHook`), ahead of every allow rule, to ask first while the chat
  * is in a mode its session could not be switched to. The picker switches both kinds of session
  * mid-turn (`liveControl`), and both carry the studio's rules for Auto's classifier
- * (claude-auto-mode.ts).
+ * (claude-auto-mode.ts). A worker of a chat's lead runs in the chat's mode (`workerAskingOptions`),
+ * asks as a lead does (`askWorker`), and never reaches what the never-touch list names, in any mode
+ * (`neverTouchHook`, `neverTouchFence`).
  */
 import { readdir, realpath } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import type { CanUseTool, PermissionResult, PermissionUpdate } from "@anthropic-ai/claude-agent-sdk";
 import { StudioPlatform } from "../../shared/boot.ts";
@@ -30,6 +33,14 @@ import {
   WHOLE_TOOL_RULES,
 } from "../../shared/permissions.ts";
 import { isInside } from "../paths.ts";
+import {
+  type NeverTouchHit,
+  type NeverTouchList,
+  neverTouchReason,
+  neverTouchVerdict,
+  pathVerdict,
+  screenedPaths,
+} from "./never-touch.ts";
 import { STUDIO_TOOL_PREFIX } from "./studio-tool-prompts.ts";
 import type {
   DelegateAsks,
@@ -37,7 +48,10 @@ import type {
   LeadAsks,
   PermissionControl,
   PermissionReply,
+  ScreenedCall,
   WithdrawnAnswer,
+  WorkerAsks,
+  WorkerSeat,
 } from "./types.ts";
 
 /** What Claude reads when a question ends without the person's answer, and the Plan card's refusals. */
@@ -55,6 +69,9 @@ const MESSAGE = {
   /** The host could not screen a lead's call: it is refused, never let through. */
   unscreened:
     "The studio could not check this, so it was not allowed. Do not retry it; say in your reply what you needed.",
+  /** The never-touch screen could not read a worker's call: it is refused, never let through. */
+  untouchable:
+    "Genex could not check what this call reaches, so it was not allowed. Do not retry it or work around it; carry on without it.",
   unfenced: (home: string, names: string[], shown: number) =>
     `[studio] Claude home fence: ${names.length} entries of ${home} stay readable to this session ` +
     `(past the rules' size budget, or not to be told apart from its own project): ` +
@@ -821,8 +838,8 @@ function switchFailure(mode: string, cause: unknown): Error & { code: ModeSwitch
 
 /**
  * The mode picker's hold on a running session that asks (the chat's own, a lead's, the
- * coordinator's): handed to the host once the session starts, and taken back once when it stops
- * taking control requests (`release`).
+ * coordinator's, a worker's): handed to the host once the session starts, and taken back once when
+ * it stops taking control requests (`release`).
  */
 export function liveControl(asks: DelegateAsks | undefined, stream: unknown): { release(): void } {
   const onControl = asks?.onControl;
@@ -852,4 +869,201 @@ export function liveControl(asks: DelegateAsks | undefined, stream: unknown): { 
 export function reportedMode(message: Record<string, unknown>): string {
   const mode = String(message.permissionMode ?? "");
   return mode === REPORTED_MANUAL ? PermissionMode.Manual : mode;
+}
+
+/** A worker's question: a lead's (`askLead`), the host naming the worker from the seat it built. */
+export function askWorker(asks: WorkerAsks, running: RunningSession): CanUseTool {
+  return askLead(asks, running);
+}
+
+/**
+ * Whether a worker's seat keeps it read-only: Plan (readers run, writers wait for the plan's
+ * approval), or a reader the lead started in place.
+ */
+export function workerReadOnly(seat: WorkerSeat, reader: boolean): boolean {
+  return reader || seat.mode === PermissionMode.Plan;
+}
+
+/**
+ * A worker's box: whether sandboxed commands run unasked, whether one may leave the box (asking),
+ * whether it writes, and whether it writes the home folder as well as its roots.
+ */
+export interface WorkerBox {
+  autoAllow: boolean;
+  unsandboxed: boolean;
+  writes: boolean;
+  home: boolean;
+}
+
+/**
+ * Each mode a worker that asks runs in: the session's mode and its box. Bypass's box writes the
+ * home folder too, runs every command unasked and never lets one leave it, so the never-touch list
+ * holds at the OS boundary in Bypass as in every other mode.
+ */
+const WORKER_MODES: Record<Exclude<PermissionMode, typeof PermissionMode.Plan>, WorkerBox> = {
+  [PermissionMode.Bypass]: { autoAllow: true, unsandboxed: false, writes: true, home: true },
+  [PermissionMode.Auto]: { autoAllow: true, unsandboxed: true, writes: true, home: false },
+  [PermissionMode.AcceptEdits]: { autoAllow: false, unsandboxed: true, writes: true, home: false },
+  [PermissionMode.Manual]: { autoAllow: false, unsandboxed: true, writes: true, home: false },
+};
+/** A worker that cannot ask, or a read-only one: the unattended box, writing only its roots (if any). */
+const UNASKED_BOX = { autoAllow: true, unsandboxed: false, home: false } as const;
+
+/**
+ * A worker's box, in every mode: Bypass's writes the home folder and runs every command in it
+ * unasked; Auto runs its sandboxed commands unasked, Accept edits and Manual ask about each; those
+ * three may run one outside the box once the mode approves it (Auto's classifier, the person
+ * otherwise), held then by the never-touch hook alone. A read-only worker, or one whose engine
+ * cannot ask, keeps the unattended box: nothing leaves it.
+ */
+export function workerBox(seat: WorkerSeat, reader: boolean): WorkerBox {
+  if (workerReadOnly(seat, reader)) return { ...UNASKED_BOX, writes: false };
+  if (!seat.asks || seat.mode === PermissionMode.Plan) return { ...UNASKED_BOX, writes: true };
+  return WORKER_MODES[seat.mode];
+}
+
+/**
+ * A worker's session options, in the chat's mode the host handed it: Bypass, Auto, Accept edits or
+ * Manual, each asking the host what Claude Code asks there (`askWorker`), launched with the flag
+ * every session that asks has. A read-only worker (Plan, a reader) and one that cannot ask keep the
+ * unattended shape: Accept edits with nobody to ask, so what is not allowed is refused, and the
+ * box (`workerBox`) holds the rest. Its mode is fixed for the session: no picker reaches it.
+ */
+export function workerAskingOptions(
+  seat: WorkerSeat,
+  running: RunningSession,
+  reader = false,
+): Record<string, unknown> {
+  const asks = seat.asks;
+  if (!asks || workerReadOnly(seat, reader)) return { permissionMode: PermissionMode.AcceptEdits };
+  return { permissionMode: seat.mode, allowDangerouslySkipPermissions: true, canUseTool: askWorker(asks, running) };
+}
+
+/**
+ * What a session's own Claude home hands it, by real path: the working folder's projects (the long
+ * tool output the CLI saves there and asks the model to Read), open; and its plans, shell
+ * snapshots, environment and todos, open for reading only: every session of that home sources
+ * those, so a worker that wrote them would run commands in the person's other sessions. A worker's
+ * never-touch list keeps these open when a sign-in root holds its Claude home (the person's
+ * `~/.claude`, Genex's engine homes); the credentials and settings stay on the list, and so does
+ * every other project.
+ */
+export async function sessionHomeOpen(
+  configHome: string,
+  cwd: string,
+): Promise<{ open: string[]; readOpen: string[] }> {
+  const home = await realOf(path.resolve(configHome));
+  const projects = path.join(home, PROJECTS_DIR);
+  const own = await ownProjects(cwd);
+  const listed = own.some((project) => project.prefix) ? await readdir(projects).catch(() => [] as string[]) : [];
+  const names = own.flatMap((project) =>
+    project.prefix ? listed.filter((name) => name.startsWith(project.name)) : [project.name],
+  );
+  return {
+    open: names.map((name) => path.join(projects, name)),
+    readOpen: [...SESSION_HOME_ENTRIES].map((entry) => path.join(home, entry)),
+  };
+}
+
+/** `dir` fenced around the open folders inside it: every entry on the way that holds none, whole. */
+async function fenceAround(dir: string, open: string[]): Promise<string[]> {
+  const inside = open.filter((folder) => isInside(dir, folder));
+  if (!inside.length) return [dir];
+  if (inside.some((folder) => path.resolve(folder) === dir)) return [];
+  const entries = await readdir(dir).catch(() => [] as string[]);
+  const fenced = await Promise.all(entries.map((entry) => fenceAround(path.join(dir, entry), inside)));
+  return fenced.flat();
+}
+
+/**
+ * The never-touch list as the folders a worker's box denies: its reads around the folders open to
+ * it and open for reading, its writes around the open ones alone. A root an open folder sits in
+ * (Genex's data, which holds the worker's own copy) is fenced around it, entry by entry, the way the
+ * Claude home is (`protectedTargets`): the box's denials win over its writable folders. Named by
+ * walking the folders, so an entry made later is fenced from the next session; until then the hook
+ * holds it.
+ */
+export async function neverTouchFence(list: NeverTouchList): Promise<{ reads: string[]; writes: string[] }> {
+  const open = list.open.map((folder) => path.resolve(folder));
+  const readable = [...open, ...(list.readOpen ?? []).map((folder) => path.resolve(folder))];
+  const fence = async (around: string[]) => {
+    const fenced = await Promise.all(list.roots.map((root) => fenceAround(path.resolve(root.path), around)));
+    return [...new Set(fenced.flat())];
+  };
+  return { reads: await fence(readable), writes: await fence(open) };
+}
+
+/** A path with its links resolved, as far as it exists: a link inside the game may lead anywhere. */
+async function realOf(target: string): Promise<string> {
+  try {
+    return await realpath(target);
+  } catch {
+    const parent = path.dirname(target);
+    if (parent === target) return target;
+    return path.join(await realOf(parent), path.basename(target));
+  }
+}
+
+/** One hook input as the call it screens; throws on one it cannot read. */
+function screenedCall(hook: { tool_name?: unknown; tool_input?: unknown }): ScreenedCall {
+  const tool = hook.tool_name;
+  const input = hook.tool_input;
+  if (typeof tool !== "string" || !tool) throw new TypeError("a tool call without a tool");
+  if (!input || typeof input !== "object" || Array.isArray(input)) throw new TypeError(`${tool} without its input`);
+  return { tool, input: input as Record<string, unknown> };
+}
+
+/**
+ * The never-touch verdict on a call, its paths as named, then as their links lead: the worker
+ * hook's screen (`neverTouchHook`), also run on a job's command before it starts. Throws on a call
+ * it cannot read; whoever runs it refuses those.
+ */
+export async function neverTouchScreen(
+  call: ScreenedCall,
+  list: NeverTouchList,
+  cwd: string,
+  home: string,
+): Promise<NeverTouchHit | null> {
+  const named = neverTouchVerdict(call, list, cwd, home);
+  if (named) return named;
+  for (const screened of screenedPaths(call, cwd, home)) {
+    const real = await realOf(screened.path);
+    const hit: NeverTouchHit | null = real === screened.path ? null : pathVerdict({ ...screened, path: real }, list);
+    if (hit) return hit;
+  }
+  return null;
+}
+
+/**
+ * The folder a call's relative paths are read from: where the session's shell stands now, which
+ * Claude Code hands each hook as `cwd` and moves with every `cd` a command leaves it in; the
+ * session's own folder when the hook names no absolute one.
+ */
+function shellFolder(reported: unknown, session: string): string {
+  return typeof reported === "string" && path.isAbsolute(reported) ? reported : session;
+}
+
+/**
+ * A worker's never-touch screen, as a PreToolUse hook: Claude Code runs hooks before its deny, ask
+ * and allow rules, in every mode, Bypass included. It screens every call, reads included (a lead's
+ * screen skips those): a file tool by its paths, a command by the paths it names and any keychain
+ * call, each path also as its links lead, relative paths from where the session's shell stands.
+ * Anything it cannot read or decide is refused.
+ */
+export function neverTouchHook(list: NeverTouchList, cwd: string, home: string = os.homedir()) {
+  return async (input: unknown): Promise<Record<string, unknown>> => {
+    const hook = input as {
+      hook_event_name?: unknown;
+      tool_name?: unknown;
+      tool_input?: unknown;
+      cwd?: unknown;
+    } | null;
+    if (hook?.hook_event_name !== PRE_TOOL_USE) return {};
+    try {
+      const hit = await neverTouchScreen(screenedCall(hook), list, shellFolder(hook.cwd, cwd), home);
+      return hit ? preToolDeny(neverTouchReason(hit)) : {};
+    } catch {
+      return preToolDeny(MESSAGE.untouchable);
+    }
+  };
 }

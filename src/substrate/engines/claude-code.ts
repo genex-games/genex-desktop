@@ -37,12 +37,20 @@ import {
   leadAskingOptions,
   leadScreenHook,
   liveControl,
+  neverTouchFence,
+  neverTouchHook,
+  sessionHomeOpen,
   permissionRules,
   preToolDeny,
   quietly,
   reportedMode,
   type RunningSession,
+  workerAskingOptions,
+  type WorkerBox,
+  workerBox,
+  workerReadOnly,
 } from "./claude-permissions.ts";
+import { neverTouchWhole } from "./never-touch.ts";
 import { describeWithSchema, zodShapeFromJsonSchema } from "./tool-schema.ts";
 import {
   type CompleteRequest,
@@ -60,6 +68,7 @@ import {
   type LiveToolResult,
   type LiveToolSpec,
   type StudioToolSpec,
+  type WorkerAsks,
 } from "./types.ts";
 import {
   CHECKPOINT_TOOL,
@@ -86,7 +95,7 @@ import {
   CompletionStop,
 } from "./common.ts";
 import { isInside, relativizeWorkspace } from "../paths.ts";
-import { baseDenyRead } from "../spawn.ts";
+import { baseDenyRead, claudeFoldersIn } from "../spawn.ts";
 import { isCommandScript, spawnCommand } from "../command-launch.ts";
 import { errorMessage } from "../../shared/errors.ts";
 import { CodingCliState } from "../../shared/coding-cli.ts";
@@ -97,6 +106,8 @@ import { EngineKind, EngineStatusCode, LoginSource } from "../../shared/engine-d
 import { ChatActivityPhase } from "../../shared/chat-activity.ts";
 import { ContextSource } from "../../shared/context.ts";
 import { EngineFailureKind, StopReason } from "../../shared/engine-requests.ts";
+import { SessionCostLedger, sessionTotals, turnShare } from "./session-cost.ts";
+import { AccountId, accountsRoot, SubscriptionAccounts } from "./subscription-accounts.ts";
 
 export interface ClaudeCodeEngineOptions {
   onModelsChanged?: () => void;
@@ -109,6 +120,8 @@ export interface ClaudeCodeEngineOptions {
    * simply do not override `CLAUDE_CONFIG_DIR`, and the SDK finds its own.
    */
   systemHome?: string;
+  /** The accounts this engine can run on; by default kept beside `engineHome` (`accountsRoot`). */
+  accounts?: SubscriptionAccounts;
   /** Default model id; `undefined` means "whatever Claude Code is configured to use". */
   model?: string;
   /** Directories the contractor must never read (the studio's secrets, engine homes). */
@@ -119,6 +132,11 @@ export interface ClaudeCodeEngineOptions {
   resolveCli?: typeof requireCodingCli;
   /** Injected in tests. */
   queryFn?: typeof import("@anthropic-ai/claude-agent-sdk").query;
+  /**
+   * Where each session's last running totals are kept across restarts (`session-cost.ts`); in
+   * memory only when absent.
+   */
+  sessionCosts?: string;
   /** Injected in tests. Production asks the `claude` CLI, never a credential file. */
   authStatusFn?: (home: string | null) => Promise<ClaudeAuthStatus>;
   /**
@@ -284,6 +302,8 @@ const MESSAGE = {
   JudgeFailed: "Claude Code judge failed",
   JudgeEmpty: "the Claude Code judge gave no reply",
   NotCompacted: "Claude Code did not compact the session",
+  WokeAfterEnd:
+    "the session went on after its turn ended (a background task woke it), when Genex could no longer answer its tool calls; what it did then is not finished work",
 } as const;
 
 /**
@@ -391,7 +411,11 @@ const AUTH_PATTERNS = [
 
 export class ClaudeCodeEngine implements Engine {
   #usage: ProviderUsage | null = null;
+  /** Each session's last running totals, so a delegation reports only its own share. */
+  readonly #costs: SessionCostLedger;
   #usageRead: Promise<ProviderUsage | null> | null = null;
+  /** Bumped by every login recheck: a usage read begun before it read the account before. */
+  #loginGeneration = 0;
   readonly #catalog: ModelCatalog;
   #telemetryAt = new WeakMap<object, number>();
   #telemetryEpoch = new WeakMap<object, number>();
@@ -452,6 +476,8 @@ export class ClaudeCodeEngine implements Engine {
   readonly compactsNatively = true;
   readonly engineHome: string;
   readonly systemHome: string;
+  /** The Terminal login, Studio's own and any added ones; the chosen one runs (`resolveLogin`). */
+  readonly accounts: SubscriptionAccounts;
   readonly #model: string | undefined;
   readonly #maxTurns: number | undefined;
   readonly #protectedPaths: string[];
@@ -474,6 +500,14 @@ export class ClaudeCodeEngine implements Engine {
     this.#catalog = new ModelCatalog(options.onModelsChanged);
     this.engineHome = options.engineHome;
     this.systemHome = options.systemHome ?? path.join(os.homedir(), ".claude");
+    this.accounts =
+      options.accounts ??
+      new SubscriptionAccounts({
+        systemHome: this.systemHome,
+        studioHome: this.engineHome,
+        root: accountsRoot(this.engineHome, EngineId.ClaudeCode),
+        signedIn: (home) => hasCredentials(home, CREDENTIAL_FILE),
+      });
     this.#model = options.model;
     // No default cap. The first live build hit turn 61 of 60 with $7.54 of work on disk and the
     // whole thing reported as a failure — a turn limit protects nothing the stop button and the
@@ -483,6 +517,7 @@ export class ClaudeCodeEngine implements Engine {
     this.#executable = options.executable;
     this.#resolveCli = options.resolveCli ?? requireCodingCli;
     this.#queryFn = options.queryFn;
+    this.#costs = new SessionCostLedger(options.sessionCosts);
     this.#authStatusFn = options.authStatusFn;
     this.judgeCwd = options.judgeCwd ?? JUDGE_CWD;
     // The judge's filter is a default, not a policy the caller cannot change; the delegate's is
@@ -552,6 +587,11 @@ export class ClaudeCodeEngine implements Engine {
    */
   async resolveLogin(): Promise<{ source: LoginSource; home: string | null }> {
     if (process.env.CLAUDE_CONFIG_DIR) return { source: LoginSource.Env, home: process.env.CLAUDE_CONFIG_DIR };
+    // An account the person chose in Settings runs, signed in or not: never another one silently.
+    const chosen = await this.accounts.chosen();
+    const chosenHome = chosen && this.accounts.homeFor(chosen);
+    if (chosen && chosenHome)
+      return { source: chosen === AccountId.Terminal ? LoginSource.System : LoginSource.Isolated, home: chosenHome };
     if (await hasCredentials(this.engineHome, CREDENTIAL_FILE))
       return { source: LoginSource.Isolated, home: this.engineHome };
     if (await hasCredentials(this.systemHome, CREDENTIAL_FILE))
@@ -689,12 +729,30 @@ export class ClaudeCodeEngine implements Engine {
     return this.status();
   }
 
+  /** Run on account `id` from now on: its sign-in, its models and its plan limits. */
+  async runOnAccount(id: string): Promise<EngineStatus> {
+    await this.accounts.choose(id);
+    return this.recheckLogin();
+  }
+
+  /** The email `claude auth status` reports for the account signed in to `home`, if it reports one. */
+  async accountEmail(home: string): Promise<string | null> {
+    const cliHome = home === this.systemHome ? null : home;
+    const installation = await this.#resolveCli(EngineId.ClaudeCode, this.#executable, undefined, false);
+    const status = await (
+      this.#authStatusFn ??
+      ((dir) => claudeAuthStatus(dir, { findBinary: async () => installation.path, env: installation.env }))
+    )(cliHome);
+    return status.email ?? null;
+  }
+
   /**
    * Forget the cached CLI, models and usage and ask Claude Code again. A recheck that arrives
    * while the CLI is being asked waits for that answer and then asks once more; rechecks that
    * arrive meanwhile join it, so a burst of them never asks the CLI more than twice.
    */
   recheckLogin(): Promise<EngineStatus> {
+    this.#forgetUsage();
     if (this.#recheckQueued) return this.#recheckQueued;
     const running = this.#authProbe;
     this.#recheckQueued = (async () => {
@@ -702,66 +760,85 @@ export class ClaudeCodeEngine implements Engine {
       this.#recheckQueued = null;
       invalidateCodingCli(EngineId.ClaudeCode);
       this.#catalog.invalidate();
-      this.#usage = null;
+      this.#forgetUsage();
       return this.probeAuth();
     })();
     return this.#recheckQueued;
   }
 
+  /** Drop the plan's limits and any read of them under way: they may be another account's. */
+  #forgetUsage(): void {
+    this.#loginGeneration += 1;
+    this.#usage = null;
+    this.#usageRead = null;
+  }
+
   /**
-   * The plan's limits for the composer. A session is opened, asked for its account usage and
-   * closed before any prompt is sent, so reading them never spends a turn. A reading from the
-   * last minute is fresh enough to reuse.
+   * The plan's limits for the composer. A reading from the last minute is fresh enough to reuse.
+   * A read that a login recheck overtook is dropped, and its callers wait for a read of the account
+   * signed in now.
    */
   async readUsage(): Promise<ProviderUsage | null> {
     if (this.#usage && Date.now() - Date.parse(this.#usage.measuredAt) < USAGE_FRESH_MS) return this.#usage;
     if (this.#usageRead) return this.#usageRead;
-    this.#usageRead = (async () => {
-      const login = await this.resolveLogin();
-      if (login.source === LoginSource.None) return null;
-      const installation = await this.#resolveCli(EngineId.ClaudeCode, this.#executable, undefined, false);
-      const query = await this.#query();
-      // The judges' empty directory: nothing of a game is in reach, and the OS may have swept it.
-      await mkdir(this.judgeCwd, { recursive: true });
-      const controller = new AbortController();
-      let release = (): void => {};
-      // A prompt that never yields: the CLI starts and answers control requests, and no turn begins.
-      const idle = (async function* () {
-        await new Promise<void>((resolve) => {
-          release = resolve;
-        });
-      })();
-      const stream = query({
-        prompt: idle,
-        options: {
-          ...claudeLaunchOptions(installation.path),
-          cwd: this.judgeCwd,
-          settingSources: [],
-          mcpServers: {},
-          strictMcpConfig: true,
-          allowedTools: [],
-          // No prompt is ever sent, so no tool can run; the judge's sandbox shape holds regardless.
-          maxTurns: 1,
-          permissionMode: "default",
-          sandbox: { enabled: true },
-          env: this.#sessionEnv(installation.env, login),
-          abortController: controller,
-        },
-      } as never);
-      try {
-        const usage = await readClaudeUsage(stream);
+    const generation = this.#loginGeneration;
+    const current = () => generation === this.#loginGeneration;
+    const read: Promise<ProviderUsage | null> = this.#askUsage()
+      .then((usage) => {
+        if (!current()) return this.readUsage();
         if (usage) this.#usage = usage;
         return usage ?? this.#usage;
-      } finally {
-        controller.abort();
-        release();
-      }
-    })()
-      .catch(() => this.#usage)
+      })
+      .catch(() => (current() ? this.#usage : this.readUsage()))
       .finally(() => {
-        this.#usageRead = null;
+        if (this.#usageRead === read) this.#usageRead = null;
       });
-    return this.#usageRead;
+    this.#usageRead = read;
+    return read;
+  }
+
+  /**
+   * Ask the signed-in account for its plan's limits. A session is opened, asked for its account
+   * usage and closed before any prompt is sent, so reading them never spends a turn.
+   */
+  async #askUsage(): Promise<ProviderUsage | null> {
+    const login = await this.resolveLogin();
+    if (login.source === LoginSource.None) return null;
+    const installation = await this.#resolveCli(EngineId.ClaudeCode, this.#executable, undefined, false);
+    const query = await this.#query();
+    // The judges' empty directory: nothing of a game is in reach, and the OS may have swept it.
+    await mkdir(this.judgeCwd, { recursive: true });
+    const controller = new AbortController();
+    let release = (): void => {};
+    // A prompt that never yields: the CLI starts and answers control requests, and no turn begins.
+    const idle = (async function* () {
+      await new Promise<void>((resolve) => {
+        release = resolve;
+      });
+    })();
+    const stream = query({
+      prompt: idle,
+      options: {
+        ...claudeLaunchOptions(installation.path),
+        cwd: this.judgeCwd,
+        settingSources: [],
+        mcpServers: {},
+        strictMcpConfig: true,
+        allowedTools: [],
+        // No prompt is ever sent, so no tool can run; the judge's sandbox shape holds regardless.
+        maxTurns: 1,
+        permissionMode: "default",
+        sandbox: { enabled: true },
+        env: this.#sessionEnv(installation.env, login),
+        abortController: controller,
+      },
+    } as never);
+    try {
+      return await readClaudeUsage(stream);
+    } finally {
+      controller.abort();
+      release();
+    }
   }
 
   catalogSnapshot = () => this.#catalog.snapshot();
@@ -885,7 +962,7 @@ export class ClaudeCodeEngine implements Engine {
       name: STUDIO_MCP_SERVER,
       version: "1.0.0",
       tools: [
-        checkpointTool(kit, request.onEvent),
+        checkpointTool(kit, request),
         ...(onCapture ? [captureTool(kit, onCapture)] : []),
         ...(onLiveTool ? (request.liveTools ?? []).map((spec) => liveTool(kit, spec, onLiveTool)) : []),
         ...interviewTools.map((spec) => intakeTool(kit, spec)),
@@ -1030,7 +1107,23 @@ export class ClaudeCodeEngine implements Engine {
     return this.#classify(err as Error);
   }
 
+  /**
+   * One delegation, its usage its own: a resumed session's running totals less what the session
+   * reported last (`session-cost.ts`), so its turns add up to what it spent.
+   */
   async delegate(request: DelegateRequest): Promise<DelegateResult> {
+    const before = await this.#costs.before(request.resume);
+    const result = await this.#steered(request);
+    const totals = sessionTotals(result.usage);
+    if (!totals) return result;
+    if (result.sessionId) await this.#costs.settle(result.sessionId, totals);
+    // A CLI that answered as another session (the resume was not taken) reported that one's totals.
+    const continued = result.sessionId !== undefined && result.sessionId === request.resume;
+    return { ...result, usage: { ...result.usage, ...turnShare(continued ? before : undefined, totals) } };
+  }
+
+  /** The delegation, with the steer said ready exactly once when the host asked to steer it. */
+  async #steered(request: DelegateRequest): Promise<DelegateResult> {
     const ready = request.steer?.ready;
     if (!ready) return this.#delegate(request, null);
     // Steer (DelegateRequest.steer): `ready` is said exactly once, whatever ends the delegation —
@@ -1079,9 +1172,9 @@ export class ClaudeCodeEngine implements Engine {
     this.#catalogEpoch.set(stream, this.#catalog.epoch());
     running.stream = stream as RunningSession["stream"];
     // The mode picker reaches a running turn of a session that asks (the chat's own, a lead's, the
-    // coordinator's): the host holds this until the session takes no more control requests (its
-    // input ended at a result) or its end, whichever comes first.
-    run.control = liveControl(asksOf(request), stream);
+    // coordinator's, a worker's): the host holds this until the session takes no more control
+    // requests (its input ended at a result) or its end, whichever comes first.
+    run.control = liveControl(rulesAsks(request), stream);
     // Started after the stream exists: a throw during setup must not leave a live timer whose
     // only job would be aborting a build that never began.
     const deadlineTimer = startDeadline(request.timeoutMs, startedAt, () => {
@@ -1113,8 +1206,9 @@ export class ClaudeCodeEngine implements Engine {
    * The contractor's session. It is a hired hand in ONE workspace, and every option here keeps
    * it there: its own sandbox, only the studio's MCP server, and none of the user's own config.
    */
-  async #delegateOptions(request: DelegateRequest, ctx: SessionContext): Promise<Record<string, unknown>> {
+  async #delegateOptions(asked: DelegateRequest, ctx: SessionContext): Promise<Record<string, unknown>> {
     const { cliInstallation, login, controller } = ctx;
+    const request = await withSessionHome(asked, login.home ?? this.systemHome);
     const interviewTools = request.interviewTools ?? [];
     const maxTurns = request.compact ? COMPACT_MAX_TURNS : (request.maxTurns ?? this.#maxTurns);
     const { cwd, directories, protectedPaths, rules } = await this.#contractorReach(request, login);
@@ -1153,9 +1247,13 @@ export class ClaudeCodeEngine implements Engine {
       strictMcpConfig: true,
       allowedTools: allowedToolsFor(request, interviewTools),
       disallowedTools: disallowedToolsFor(request),
+      ...blindBuiltIns(request),
       // No sandbox key at all for a session that asks: Claude Code's default, which a game's own
-      // project settings may still turn on. Every command it runs was asked about first.
-      ...(asks ? {} : { sandbox: unattendedSandbox(request, protectedPaths) }),
+      // project settings may still turn on. Every command it runs was asked about first. A worker
+      // is boxed in every mode, Bypass included (`workerSandbox`).
+      // The box denies the whole sign-in homes (`baseDenyRead`) whatever the session's own home
+      // hands it: it is fenced from the list as the host built it.
+      ...(await sandboxFor(asked, asks, protectedPaths)),
       ...(directories.length ? { additionalDirectories: directories } : {}),
       ...(await this.#delegateSettings(request, rules)),
       // Only pin a config home when the studio owns the login; otherwise let Claude Code find
@@ -1176,8 +1274,11 @@ export class ClaudeCodeEngine implements Engine {
     const cwd = path.resolve(request.cwd);
     const outsideCwd = (dir: string): boolean => !isInside(cwd, dir);
     const additional = (request.extraReads ?? []).map((dir) => path.resolve(dir)).filter(outsideCwd);
-    // The folders the person granted this chat ("Yes, and allow access to …") join the reads.
-    const granted = (asksOf(request)?.directories ?? []).map((dir) => path.resolve(dir)).filter(outsideCwd);
+    // The folders the person granted this chat ("Yes, and allow access to …") join the reads, and
+    // a worker's write roots its folders.
+    const granted = [...(rulesAsks(request)?.directories ?? []), ...workerWrites(request)]
+      .map((dir) => path.resolve(dir))
+      .filter(outsideCwd);
     // The config home this session's CLI uses: the studio's, the one the environment names, or
     // (the person's sign-in, or none) the CLI's default `~/.claude`.
     const configHome = login.home ?? this.systemHome;
@@ -1199,8 +1300,7 @@ export class ClaudeCodeEngine implements Engine {
       protectedPaths,
       configHome,
       cwd,
-      denyReads: request.denyReads ?? [],
-      permissions: asksOf(request),
+      ...ruleFences(request),
       // What the Claude home fence left readable, in the session's own log.
       warn: (message) => request.onEvent?.({ type: DelegateEventType.Stderr, payload: message }),
     });
@@ -1219,8 +1319,14 @@ export class ClaudeCodeEngine implements Engine {
         ...(Object.keys(rules).length ? { permissions: rules } : {}),
         // The chat's own session works in its game folder (the host checked), checkpointed before
         // each message; a lead or the coordinator answers for a build.
-        ...(asksOf(request)
-          ? { autoMode: autoModeRules({ cwd: path.resolve(request.cwd), gameFolder: Boolean(request.permissions) }) }
+        ...(rulesAsks(request)
+          ? {
+              autoMode: autoModeRules({
+                cwd: path.resolve(request.cwd),
+                gameFolder: Boolean(request.permissions),
+                worker: Boolean(request.worker),
+              }),
+            }
           : {}),
         // Current models return thinking blocks empty unless a summary is asked for; the chat
         // shows the summary under a collapsed "Thinking details". Display only.
@@ -1238,7 +1344,7 @@ export class ClaudeCodeEngine implements Engine {
     return subscriptionEnv({
       ...installationEnv,
       ...extra,
-      ...(login.source === LoginSource.Isolated ? { CLAUDE_CONFIG_DIR: this.engineHome } : {}),
+      ...(login.source === LoginSource.Isolated && login.home ? { CLAUDE_CONFIG_DIR: login.home } : {}),
     });
   }
 
@@ -1266,7 +1372,11 @@ export class ClaudeCodeEngine implements Engine {
     run.feed?.answered();
     // A string brief's input closes at the first result, a steered session's once it has answered
     // everything it read: a mode picked after that reaches nothing, and is for the next message.
-    if (!run.feed || run.feed.ended) run.control.release();
+    if (!run.feed || run.feed.ended) {
+      run.inputClosed = true;
+      run.closedSummary ??= run.summary;
+      run.control.release();
+    }
   }
 
   /** An assistant or user message: one more turn, the interview's calls, the activity line. */
@@ -1279,6 +1389,9 @@ export class ClaudeCodeEngine implements Engine {
     this.#observeTelemetry(stream, request.onEvent, run.sessionId);
     // A subagent's request is its own context, not the one the session's next turn starts from.
     if (message.parent_tool_use_id) return;
+    // A reply after the input ended: a background task woke the CLI, and no tool call it makes now
+    // can be answered (the host's permission answers go over the input).
+    if (run.inputClosed) run.wokeAfterEnd = true;
     run.contextTokens = requestTokens(message) ?? run.contextTokens;
     // Whether the main thread's last word was the CLI's own API error: a later reply clears it.
     run.apiError = apiErrorOf(message);
@@ -1384,6 +1497,7 @@ export class ClaudeCodeEngine implements Engine {
     }
     if (run.ok) this.#authFailure = null;
     this.#throwIfLimited(run);
+    failWokenWorker(run, request);
     const model = request.model ?? this.#model;
     const result: DelegateResult = {
       ok: run.ok,
@@ -1633,6 +1747,12 @@ interface RunState {
   compactError: string | null;
   /** The CLI's code on the main thread's last reply, when that reply was an API error (`SdkApiError`). */
   apiError: string | null;
+  /** The session's input has ended at a result: it takes nothing more, an answer to its tool calls included. */
+  inputClosed: boolean;
+  /** The session replied again after its input ended (a background task woke it). */
+  wokeAfterEnd: boolean;
+  /** What the session said at the result that closed its input, before anything woke it. */
+  closedSummary: string | null;
 }
 
 /** A delegation that has not heard anything from its contractor yet. */
@@ -1658,6 +1778,9 @@ function newRunState(usage: Usage, cliInstallation: ClaudeInstallation): RunStat
     compactSummary: null,
     compactError: null,
     apiError: null,
+    inputClosed: false,
+    wokeAfterEnd: false,
+    closedSummary: null,
   };
 }
 
@@ -1729,6 +1852,19 @@ function readInit(message: Record<string, unknown>, run: RunState): void {
   run.sessionId = String(message.session_id ?? "") || undefined;
 }
 
+/**
+ * A worker's turn is its whole job: what its session did after a background task woke it, past its
+ * input's end, is not its delivery, and the turn ends not ok, handing back what it said as its turn
+ * ended. A lead or the chat is resumed by its own loop, and keeps its last result's verdict.
+ */
+function failWokenWorker(run: RunState, request: DelegateRequest): void {
+  if (!run.wokeAfterEnd || !request.worker) return;
+  run.summary = run.closedSummary ?? run.summary;
+  run.ok = false;
+  run.errorSubtype = StopReason.Error;
+  run.errorText = MESSAGE.WokeAfterEnd;
+}
+
 /** The session's result message: how the build ended, what it said, what it cost. */
 function readResult(result: SdkResult, run: RunState): void {
   run.ok = result.is_error !== true && result.subtype === SDK_RESULT_SUCCESS;
@@ -1769,7 +1905,8 @@ function isFailedResult(result: SdkResult): boolean {
  * The tokens and cost a result reports, onto `usage`. The cost is the session's running total;
  * tokens are each result's own, so a steered session that answered twice adds them up. They are
  * the main loop's alone (the SDK's `usage`); every model the session called, subagents and
- * auxiliary calls included, is in `by_model` (its `modelUsage`).
+ * auxiliary calls included, is in `by_model` (its `modelUsage`). The cost and `by_model` become
+ * the delegation's own share once it ends (`delegate`, `session-cost.ts`).
  */
 function recordResultUsage(usage: Usage, result: SdkResult): void {
   const reported = result.usage;
@@ -1911,14 +2048,17 @@ function delegatePrompt(request: DelegateRequest): unknown {
 }
 
 /**
- * The session's PreToolUse hooks: the one that refuses an edit outside the facet's files, when the
- * delegation has an owner map, and a lead's or coordinator's screen (`leadScreenHook`), which sees
- * every tool call before Claude Code's own rules do.
+ * The session's PreToolUse hooks: a worker's never-touch screen first (`neverTouchHook`, every
+ * call, reads included, in every mode), the one that refuses an edit outside the facet's files,
+ * when the delegation has an owner map, and a lead's, coordinator's or asking worker's screen
+ * (`leadScreenHook`), which sees every tool call before Claude Code's own rules do.
  */
 function sessionHooks(request: DelegateRequest, cwd: string, run: RunState): { hooks?: unknown } {
+  const screen = request.leadAsks ?? askingWorker(request);
   const preToolUse = [
+    ...(request.worker ? [{ hooks: [neverTouchHook(request.worker.neverTouch, cwd)] }] : []),
     ...(request.ownership ? [{ matcher: EDIT_TOOLS_MATCHER, hooks: [ownershipHook(request.ownership, cwd)] }] : []),
-    ...(request.leadAsks ? [{ hooks: [leadScreenHook(request.leadAsks)] }] : []),
+    ...(screen ? [{ hooks: [leadScreenHook(screen)] }] : []),
   ];
   const hooks = {
     ...(preToolUse.length ? { PreToolUse: preToolUse } : {}),
@@ -1972,8 +2112,9 @@ function allowedToolsFor(request: DelegateRequest, interviewTools: StudioToolSpe
     ...interviewTools.map((t) => studioToolName(t.name)),
     // A session that asks gets no blanket allow either: it has no sandbox, and a bare "Bash"
     // would silence the very question it exists to ask. Its standing allows are the rules the
-    // person saved (settings `permissions.allow`).
-    ...(request.readOnly || asksOf(request) ? [] : [SHELL_TOOL]),
+    // person saved (settings `permissions.allow`). Nor does a worker: its box runs sandboxed
+    // commands unasked itself where its mode does (Auto), and asks about them where it does not.
+    ...(request.readOnly || asksOf(request) || request.worker ? [] : [SHELL_TOOL]),
     ...(researches(request) ? WEB_TOOLS : []),
   ];
 }
@@ -1983,32 +2124,118 @@ function allowedToolsFor(request: DelegateRequest, interviewTools: StudioToolSpe
  * web, and so may a read-only lead or coordinator the person may talk to (`leadAsks`), the chat's
  * main agent. Another read-only session answers from what it was handed, and a
  * performance-optimization candidate (an isolated copy of the game) is measured against its
- * baseline alone.
+ * baseline alone. A worker researches when it writes, or when its lead asked for research
+ * (`WorkerSeat.research`); a reader or a worker in Plan otherwise does not.
  */
 function researches(request: DelegateRequest): boolean {
-  return (!request.readOnly || Boolean(request.leadAsks)) && !request.optimization;
+  if (request.optimization) return false;
+  if (request.worker) return request.worker.research || !workerReadOnly(request.worker, Boolean(request.readOnly));
+  return !request.readOnly || Boolean(request.leadAsks);
 }
 
 /**
- * The tools the session never gets. A chat that may launch a build is still a full contractor:
- * it answers, researches or edits itself and launches only when the ask needs a build. A
- * read-only session (the playtester) may not even run a command. A read-only lead or coordinator
- * the person may talk to (`leadAsks`), the chat's main agent, keeps what the chat's own session
- * keeps, its helpers included; the chat's mode decides each call.
+ * The tools the session never gets. No session gets Claude Code's own sub-agents (Agent, Task):
+ * Genex runs the workers, under the person's ceiling and the chat's mode. A chat that may launch a
+ * build is still a full contractor: it answers, researches or edits itself and launches only when
+ * the ask needs a build. A read-only session (the playtester) may not even run a command. A
+ * read-only lead or coordinator the person may talk to (`leadAsks`), the chat's main agent, keeps
+ * what the chat's own session keeps; the chat's mode decides each call.
  */
 function disallowedToolsFor(request: DelegateRequest): string[] {
-  if (request.readOnly && request.leadAsks) return [...MESSAGING_TOOLS, ...ASKING_TOOLS];
-  if (request.readOnly) return [...MESSAGING_TOOLS, ...EDIT_TOOLS, SHELL_TOOL, ...SUBAGENT_TOOLS, ...WEB_TOOLS];
+  if (request.blind) return [...new Set([...JUDGE_DISALLOWED_TOOLS, ...EDIT_TOOLS, ...ASKING_TOOLS])];
+  if (request.worker) return workerDisallowedTools(request);
+  if (request.readOnly && !request.leadAsks)
+    return [...MESSAGING_TOOLS, ...EDIT_TOOLS, SHELL_TOOL, ...SUBAGENT_TOOLS, ...WEB_TOOLS];
   return [
     ...MESSAGING_TOOLS,
-    ...(request.optimization ? [...SUBAGENT_TOOLS, ...WEB_TOOLS] : []),
+    ...SUBAGENT_TOOLS,
+    ...(request.optimization ? WEB_TOOLS : []),
     ...(asksOf(request) ? ASKING_TOOLS : []),
   ];
+}
+
+/** The only built-in a blind judge may load: tool search, which brings in its deferred live tools. */
+const BLIND_BUILT_INS = ["ToolSearch"];
+
+/**
+ * A blind judge's built-ins, as an allowlist on top of its block list: a built-in Claude Code adds
+ * later (Skill, Workflow's sub-agents with their file tools) would otherwise reach it unasked.
+ * Every other session keeps Claude Code's own set.
+ */
+function blindBuiltIns(request: DelegateRequest): { tools?: string[] } {
+  return request.blind ? { tools: [...BLIND_BUILT_INS] } : {};
+}
+
+/**
+ * A worker never gets messaging, Claude Code's own sub-agents (depth is one) or its ways to ask the
+ * person; a read-only one (Plan, a reader) not its edits or shell either, and the web only when it
+ * researches.
+ */
+function workerDisallowedTools(request: DelegateRequest): string[] {
+  const readOnly = Boolean(request.worker && workerReadOnly(request.worker, Boolean(request.readOnly)));
+  return [
+    ...MESSAGING_TOOLS,
+    ...SUBAGENT_TOOLS,
+    ...ASKING_TOOLS,
+    ...(readOnly ? [...EDIT_TOOLS, SHELL_TOOL] : []),
+    ...(researches(request) ? [] : WEB_TOOLS),
+  ];
+}
+
+/**
+ * A worker's request whose never-touch list keeps open what its own Claude home hands the session
+ * (`sessionHomeOpen`): a sign-in root may hold that home, and the session still Reads what the CLI
+ * saved there for it, and reads (never writes) what every session of that home sources. Every
+ * other request as it came.
+ */
+async function withSessionHome(request: DelegateRequest, configHome: string | null): Promise<DelegateRequest> {
+  const seat = request.worker;
+  if (!seat || !configHome) return request;
+  const handed = await sessionHomeOpen(configHome, request.cwd);
+  const open = [...new Set([...seat.neverTouch.open, ...handed.open])];
+  const readOpen = [...new Set([...(seat.neverTouch.readOpen ?? []), ...handed.readOpen])];
+  return { ...request, worker: { ...seat, neverTouch: { ...seat.neverTouch, open, readOpen } } };
 }
 
 /** What the session asks with: the person's own session's permissions, or a lead's; none when unattended. */
 function asksOf(request: DelegateRequest): DelegateAsks | undefined {
   return request.permissions ?? request.leadAsks;
+}
+
+/** A worker's way to ask, when its seat lets it ask (not read-only, its engine able to ask). */
+function askingWorker(request: DelegateRequest): WorkerAsks | undefined {
+  const seat = request.worker;
+  if (!seat?.asks || workerReadOnly(seat, Boolean(request.readOnly))) return undefined;
+  return seat.asks;
+}
+
+/** What the session's rules and Auto settings are built from: whoever asks, a worker that asks included. */
+function rulesAsks(request: DelegateRequest): DelegateAsks | undefined {
+  return asksOf(request) ?? askingWorker(request);
+}
+
+/** A worker's write roots, when its box lets it write. */
+function workerWrites(request: DelegateRequest): string[] {
+  const seat = request.worker;
+  if (!seat || workerReadOnly(seat, Boolean(request.readOnly))) return [];
+  return seat.writeRoots;
+}
+
+/**
+ * The session's deny inputs: the host's reads, and for a worker the never-touch roots no open
+ * folder sits in, unreadable and (for one that asks) never edited, so Claude Code's own file tools
+ * are fenced in every mode as well as by the hook. A root holding an open folder (Genex's data,
+ * holding the worker's copy) is left to the hook here and fenced around in the box.
+ */
+function ruleFences(request: DelegateRequest): { denyReads: string[]; permissions: DelegateAsks | undefined } {
+  const denyReads = request.denyReads ?? [];
+  const asks = rulesAsks(request);
+  if (!request.worker) return { denyReads, permissions: asks };
+  const whole = neverTouchWhole(request.worker.neverTouch);
+  return {
+    denyReads: [...denyReads, ...whole],
+    permissions: asks ? { ...asks, protectWrites: [...asks.protectWrites, ...whole] } : undefined,
+  };
 }
 
 /**
@@ -2019,6 +2246,7 @@ function asksOf(request: DelegateRequest): DelegateAsks | undefined {
  * answers (claude-permissions.ts). The picker switches either mid-turn.
  */
 function permissionOptions(request: DelegateRequest, running: RunningSession): Record<string, unknown> {
+  if (request.worker) return workerAskingOptions(request.worker, running, Boolean(request.readOnly));
   if (request.permissions) return askingOptions(request.permissions, running);
   if (request.leadAsks) return leadAskingOptions(request.leadAsks, running);
   return { permissionMode: "acceptEdits" };
@@ -2039,6 +2267,59 @@ function unattendedSandbox(request: DelegateRequest, protectedPaths: string[]): 
       denyRead: [...baseDenyRead(), ...(request.denyReads ?? []), ...protectedPaths],
     },
   };
+}
+
+/** The session's sandbox: none for a session that asks; a worker's box, in every mode; else the unattended one. */
+async function sandboxFor(
+  request: DelegateRequest,
+  asks: DelegateAsks | undefined,
+  protectedPaths: string[],
+): Promise<{ sandbox?: Record<string, unknown> }> {
+  if (request.worker) {
+    const box = workerBox(request.worker, Boolean(request.readOnly));
+    return { sandbox: await workerSandbox(request, box, protectedPaths) };
+  }
+  return asks ? {} : { sandbox: unattendedSandbox(request, protectedPaths) };
+}
+
+/**
+ * A worker's box: it writes its roots (in Bypass the home folder too), never the studio's protected
+ * folders nor anything the never-touch list names, fenced around its own open folders
+ * (`neverTouchFence`). Bypass and Auto run its sandboxed commands unasked; any other mode asks. A
+ * command it wants run outside the box goes through the mode's own approval
+ * (`allowUnsandboxedCommands`): Auto's classifier, the person in Accept edits and Manual; none in
+ * Bypass, nor where nobody can be asked. Outside the box only the never-touch hook holds it. The
+ * sandbox takes no network wildcard, so a command's network use is asked about as the mode asks
+ * (Bypass allows it).
+ */
+async function workerSandbox(
+  request: DelegateRequest,
+  box: WorkerBox,
+  protectedPaths: string[],
+): Promise<Record<string, unknown>> {
+  const fence = request.worker ? await neverTouchFence(request.worker.neverTouch) : { reads: [], writes: [] };
+  const roots = workerWrites(request);
+  const writes = box.home ? [os.homedir(), ...roots] : roots;
+  return {
+    enabled: true,
+    autoAllowBashIfSandboxed: box.autoAllow,
+    allowUnsandboxedCommands: box.unsandboxed,
+    filesystem: {
+      ...(box.writes && writes.length ? { allowWrite: writes } : {}),
+      denyWrite: [...protectedPaths, ...fence.writes, ...workerClaudeFolders(request.cwd, roots)],
+      denyRead: [...baseDenyRead(), ...(request.denyReads ?? []), ...protectedPaths, ...fence.reads],
+    },
+  };
+}
+
+/**
+ * Claude Code's own folder in the worker's folder and every folder it writes, as write denies: a
+ * later session there (the chat's own, a lead's, the person's terminal) loads the settings and hooks
+ * it holds, and a copy's work merges into the game. Spelled as the harness's own box spells them
+ * (`claudeFolderDenyWrites`): on macOS in any case and before they exist.
+ */
+function workerClaudeFolders(cwd: string, roots: readonly string[]): string[] {
+  return claudeFoldersIn([cwd, ...roots]);
 }
 
 /** A system message that says which mode the session runs in: its init, or a status that changed it. */
@@ -2101,17 +2382,26 @@ type ToolAnswer = {
   isError?: boolean;
 };
 
-/** `checkpoint`: the contractor says the game just became worth seeing; the chat shows the note. */
-function checkpointTool(kit: McpKit, onEvent: DelegateRequest["onEvent"]) {
+/**
+ * `checkpoint`: the contractor says the game just became worth seeing; the chat shows the note, and
+ * the studio's own checkpoint, when the delegation has one, answers what it did. A checkpoint that
+ * failed reports as failed, never ending the build.
+ */
+function checkpointTool(kit: McpKit, request: Pick<DelegateRequest, "onEvent" | "onCheckpoint">) {
   const { tool, z } = kit;
   return tool(
     StudioTool.Checkpoint,
     CHECKPOINT_TOOL.description,
     { note: z.string().describe(CHECKPOINT_TOOL.note) },
-    async (args: { note: string }) => {
+    async (args: { note: string }): Promise<ToolAnswer> => {
       const note = String(args.note ?? "").slice(0, CHECKPOINT_NOTE_CHARS);
-      onEvent?.({ type: DelegateEventType.Checkpoint, payload: { note } });
-      return { content: [{ type: "text" as const, text: CHECKPOINT_TOOL.reply }] };
+      request.onEvent?.({ type: DelegateEventType.Checkpoint, payload: { note } });
+      if (!request.onCheckpoint) return { content: [{ type: "text", text: CHECKPOINT_TOOL.reply }] };
+      try {
+        return { content: [{ type: "text", text: await request.onCheckpoint(note) }] };
+      } catch (err) {
+        return { content: [{ type: "text", text: CHECKPOINT_TOOL.failed(errorMessage(err)) }], isError: true };
+      }
     },
   );
 }
@@ -2318,7 +2608,11 @@ export function compactSdkMessage(message: Record<string, unknown>, cwd?: string
   if (type === SdkMessage.Assistant || type === SdkMessage.User) {
     const inner = (message.message ?? {}) as { content?: unknown };
     const content = Array.isArray(inner.content) ? inner.content : [];
-    return { role: type, parts: content.map((part: Record<string, unknown>) => compactPart(part, cwd)) };
+    const parts = content.map((part: Record<string, unknown>) => compactPart(part, cwd));
+    // The CLI's own API error (a limit, a lost sign-in) arrives as an assistant message: marked, so
+    // no reader takes its text for the model's words (the run says what happened in its own).
+    const apiError = apiErrorOf(message);
+    return { role: type, parts, ...(apiError ? { apiError } : {}) };
   }
   if (type === SdkMessage.Result) {
     const result = message as SdkResult;

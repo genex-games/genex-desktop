@@ -127,7 +127,9 @@ test("capabilities refuse unsupported Fast/context settings and retain exact rol
     engines: { builder: "claude-code" },
     efforts: { planner: "high", builder: "max", judge: "low" },
   });
-  assert.equal(roleEffort({ roles, effort: "ultra" } as never, "builder"), "max");
+  assert.equal(roleEffort({ roles, effort: "ultra" } as never, "builder"), "high", "a worker thinks at most hard");
+  assert.equal(roleEffort({ roles, effort: "ultra" } as never, "planner"), "high");
+  assert.equal(roleEffort({ effort: "ultra" }, "planner"), "ultra", "the lead thinks as hard as the user set");
   assert.equal(roleEffort({ roles } as never, "judge"), "low");
   assert.equal(roleEffort({ effort: "ultra" }, "builder"), undefined);
 });

@@ -9,7 +9,7 @@ it("host candidate authority routes direct and delegated writes away from live, 
   const rig = await startRig();
   try {
     const api = rig.core.api() as unknown as Record<string, (p: any) => Promise<any>>;
-    await api["game.scaffold"]!({ name: "candidate-game", title: "Candidate game" });
+    await api["game.scaffold"]!({ name: "candidate-game", title: "Candidate game", kind: "web" });
     const snapshot = await api["snapshot.create"]!({
       scope: "game",
       project: "candidate-game",

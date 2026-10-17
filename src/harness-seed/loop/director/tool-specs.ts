@@ -6,6 +6,7 @@
 import { FACET_POLICY } from "../facet-loop.ts";
 import { KIND_NAMES } from "../kinds.ts";
 import { CHECK_KINDS, MAX_DONE, MAX_MILESTONES, renderCheckGrammar } from "../spec.ts";
+import { WorkerIsolation, WorkerTool, WorkerVerdict } from "../workers/contract.ts";
 import { MAX_PLAN_WORKERS, MAX_WAIT_S } from "./budgets.ts";
 import type { AnyRecord } from "../../types/harness.d.ts";
 import type { LiveToolSpec } from "../../types/host-api.d.ts";
@@ -22,12 +23,15 @@ export const DirectorTool = {
   WorkerStatus: "worker_status",
   WorkerSteer: "worker_steer",
   WorkerStop: "worker_stop",
-  Wait: "wait",
+  /** Genex's one worker model names it (`WorkerTool.Wait`); the handler also answers its old name `wait`. */
+  Wait: WorkerTool.Wait,
   Judge: "judge",
   Playtest: "playtest",
   Integrate: "integrate",
   Show: "show",
   Note: "note",
+  /** The user asked to finish: no worker or round starts after it, and the run wraps up once no loop worker runs (wrap-up.ts). */
+  WrapUp: "wrap_up",
   Finish: "finish",
   /** Not a director tool: the studio asking where a target lives (it is in no schema below). */
   ResolveRoot: "resolve_root",
@@ -63,7 +67,7 @@ export const DIRECTOR_TOOLS: LiveToolSpec[] = [
   {
     name: DirectorTool.RunStatus,
     description:
-      "Time, integration branch, worker progress and budgets, pool slots, free memory, loop thresholds and user guidance. Read it when the wake snapshot is stale or incomplete. Boards show the first failing and unmeasured checks; worker_status has the whole board.",
+      "Time, integration branch, worker progress and budgets, pool slots, free memory, loop thresholds and user guidance. Read it when the wake snapshot is stale. Boards show the first failing and unmeasured checks; worker_status has the whole board.",
     parameters: { type: "object", properties: {} },
   },
   {
@@ -130,7 +134,7 @@ export const DIRECTOR_TOOLS: LiveToolSpec[] = [
   {
     name: DirectorTool.WorkerStart,
     description:
-      "Start a background builder with its own git worktree and hidden preview. loop (default): build, gather evidence, check, compare blindly, keep or roll back, until done passes or the budget ends; accepted builds are committed. single: one session committed without a judge; you assess it. Returns a worker id — use wait and worker_status. One area the ask names per worker, on files of its own. The workers run_status allows are a ceiling: start the fewest that cover independent files.",
+      "Start a background builder with its own git worktree and hidden preview. loop (default): build, gather evidence, check, compare blindly, keep or roll back, until done passes or the budget ends; accepted builds are committed. single: one session committed without a judge; you assess it. Returns a worker id — use worker_wait and worker_status. One area the ask names per worker, on files of its own. The workers run_status allows are a ceiling: start the fewest that cover independent files. isolation read starts a reader: it writes nothing and reports what it found.",
     parameters: {
       type: "object",
       properties: {
@@ -143,10 +147,18 @@ export const DIRECTOR_TOOLS: LiveToolSpec[] = [
           description: "Slug (letters, digits, dashes), unique in the run.",
         },
         title: { type: "string", description: "A short title for the feed." },
-        brief: {
+        task: {
           type: "string",
           description:
             "What to build, where in the code, what done looks like, what not to touch. The builder never sees your conversation.",
+        },
+        isolation: {
+          type: "string",
+          description: `${WorkerIsolation.Copy} (default: a builder in its own worktree, which you integrate) or ${WorkerIsolation.Read} (a reader in the game folder that writes nothing).`,
+        },
+        research: {
+          type: "string",
+          description: "yes: a reader may search the web.",
         },
         mode: {
           type: "string",
@@ -241,7 +253,7 @@ export const DIRECTOR_TOOLS: LiveToolSpec[] = [
           description: "Id of the worker you are restarting, so Builds groups its rounds into one part.",
         },
       },
-      required: ["id", "brief"],
+      required: ["id", "task"],
     },
   },
   {
@@ -283,7 +295,7 @@ export const DIRECTOR_TOOLS: LiveToolSpec[] = [
         id: { type: "string" },
         why: {
           type: "string",
-          description: 'One line on why; the owner reads it instead of "at the user\'s request".',
+          description: "One line on why, for the owner.",
         },
       },
       required: ["id"],
@@ -291,13 +303,29 @@ export const DIRECTOR_TOOLS: LiveToolSpec[] = [
   },
   {
     name: DirectorTool.Wait,
-    description: `Wait until a worker ends, an iteration is accepted, new inspection evidence or user guidance arrives, or until the timeout (default 60 s, max ${MAX_WAIT_S}). Returns worker progress, touched files, contract violations, inspection and integration status. Use instead of polling; call again to wait longer.`,
+    description: `Wait until a worker ends, an iteration is accepted, new inspection evidence or user guidance arrives, or until the timeout (default 60 s, max ${MAX_WAIT_S}). Returns worker progress, touched files, contract violations, inspection and integration status.`,
     parameters: {
       type: "object",
       properties: {
         seconds: { type: "string", description: `1–${MAX_WAIT_S}` },
-        worker: { type: "string", description: "Only wake for this worker (still wakes for the user)." },
+        id: { type: "string", description: "Only wake for this worker (still wakes for the user)." },
+        worker: { type: "string", description: "The same as id." },
       },
+    },
+  },
+  {
+    name: WorkerTool.Mark,
+    description:
+      "Your word on a worker: used integrates its last accepted commit (as integrate does), rejected stops its news in every digest. A reader's mark only stops its news.",
+    parameters: {
+      type: "object",
+      properties: {
+        id: { type: "string", description: "The worker id." },
+        verdict: { type: "string", description: `${WorkerVerdict.Used} or ${WorkerVerdict.Rejected}.` },
+        // The person reads this note in the chat; the schema's size is ratcheted, so it says so briefly.
+        note: { type: "string", description: "Why, for the person." },
+      },
+      required: ["id", "verdict"],
     },
   },
   {
@@ -333,7 +361,7 @@ export const DIRECTOR_TOOLS: LiveToolSpec[] = [
   {
     name: DirectorTool.Playtest,
     description:
-      "Send a playtester into a build with one question (can you reach X, does Y work, is Z fun). It plays for a few minutes and answers yes/no with a report; use it for what only play can tell.",
+      "Send a playtester into a build with one question (can you reach X, does Y work, is Z fun). It plays a few minutes and answers yes/no with a report.",
     parameters: {
       type: "object",
       properties: {
@@ -349,6 +377,11 @@ export const DIRECTOR_TOOLS: LiveToolSpec[] = [
             "Zero-based acceptance scenario to verify; only independently passed scenarios reset no-progress attempts.",
         },
         ask: { type: "string", description: "One yes/no question (ignored with goal)." },
+        goal_state: {
+          type: "string",
+          description:
+            'Optional JSON state the game reaches when the ask is met, e.g. {"path":"level.cleared","truthy":true}: a blind judge plays to it; yes counts once the studio sees it.',
+        },
         minutes: { type: "string", description: "2–8, default 5." },
       },
       required: [],
@@ -375,7 +408,7 @@ export const DIRECTOR_TOOLS: LiveToolSpec[] = [
   {
     name: DirectorTool.Show,
     description:
-      "Offer a build to Live, the user's game view: integration (default), live, or a worker id. Live never changes under the user; its Reload button lights up and plays it when pressed. Nothing changes on disk.",
+      "Offer a build to Live, the user's game view: integration (default), live, or a worker id. Live never changes under the user; its Reload button lights up and plays it when pressed.",
     parameters: { type: "object", properties: { target: { type: "string" } } },
   },
   {
@@ -399,9 +432,21 @@ export const DIRECTOR_TOOLS: LiveToolSpec[] = [
     },
   },
   {
+    name: DirectorTool.WrapUp,
+    description:
+      "The user asked to finish or wrap up: call this first. No worker or round starts after it; running workers end the round they are in, you integrate what they keep, then the wrap-up starts. To stop at once: finish user_asked.",
+    parameters: {
+      type: "object",
+      properties: {
+        user_asked: { type: "string", description: "Their words asking to finish, quoted exactly." },
+      },
+      required: ["user_asked"],
+    },
+  },
+  {
     name: DirectorTool.Finish,
     description:
-      "Close the run: stop workers, land the integration branch in the live game folder when it is healthy (land=no keeps it unlanded), write the report. victory=yes only when you verified the goal. Call it before your deadline; an unfinished run lands nothing.",
+      "Close the run: stop workers, land the integration branch in the live game folder when it is healthy (land=no keeps it unlanded), write the report. Call it before your deadline; an unfinished run lands nothing.",
     parameters: {
       type: "object",
       properties: {
@@ -410,11 +455,18 @@ export const DIRECTOR_TOOLS: LiveToolSpec[] = [
           description: "What was built, what was verified, what remains — the user's report.",
         },
         land: { type: "string", description: "yes (default) or no." },
-        victory: { type: "string", description: "yes or no (default)." },
-        user_asked: {
+        victory: {
           type: "string",
           description:
-            "Timed build with working time left: the user's words asking to stop or finish now, quoted exactly from their message to this run.",
+            "yes claims the goal is reached: a reviewer who did none of the work checks your proof first (default no).",
+        },
+        proof: {
+          type: "string",
+          description: "Comma-separated files in the integration worktree that prove it: reports, logs, pictures.",
+        },
+        user_asked: {
+          type: "string",
+          description: "To stop now with working time left: the user's words asking for it, quoted exactly.",
         },
       },
       required: ["summary"],

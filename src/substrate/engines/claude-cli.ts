@@ -40,6 +40,8 @@ export interface ClaudeAuthStatus {
   /** `null` means we could not ask (no CLI, timeout) — not the same as signed out. */
   loggedIn: boolean | null;
   detail: string;
+  /** The signed-in account's email, when the CLI's JSON answer names one. */
+  email?: string;
 }
 
 export interface ClaudeLoginStart {
@@ -64,9 +66,11 @@ export function parseAuthStatus(exitCode: number, stdout: string, stderr: string
 /** The sign-in state a JSON answer states, in any of the spellings CLI versions have used. */
 function statusFromJson(parsed: Record<string, unknown>, text: string): ClaudeAuthStatus | null {
   if (typeof parsed.loggedIn === "boolean") {
+    const email = typeof parsed.email === "string" && parsed.email.includes("@") ? parsed.email : undefined;
     return {
       loggedIn: parsed.loggedIn,
       detail: String(parsed.email ?? parsed.message ?? (text || signedLabel(parsed.loggedIn))),
+      ...(email ? { email } : {}),
     };
   }
   if (typeof parsed.logged_in === "boolean") {

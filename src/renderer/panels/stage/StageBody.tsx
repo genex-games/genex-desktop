@@ -1,6 +1,6 @@
 /** What fills the stage's rectangle when it is not the running game: setup, the loader, an empty game, Builds, Assets or a file. */
 import type { JSX } from "react";
-import type { RunGraph as RunGraphModel } from "../../run-graph.ts";
+import { type RunGraph as RunGraphModel, runBuilding, runIdOf } from "../../run-graph.ts";
 import { readyToPlay } from "../../run-steps.ts";
 import { openSettings, SettingsSection } from "../../settings-navigation.ts";
 import { Button } from "../../ui/Button.tsx";
@@ -78,7 +78,7 @@ function BuildingGame({
   onWatch: () => void;
   onPlay: (head: string) => Promise<void>;
 }): JSX.Element {
-  const head = readyToPlay(graph, useRunSummary(project, graph.runId));
+  const head = readyToPlay(graph, useRunSummary(project, runIdOf(graph)));
   return (
     <StageEmpty
       art="building"
@@ -113,7 +113,7 @@ export function EmptyGame({
   onWatch: () => void;
   onPlay: (head: string) => Promise<void>;
 }): JSX.Element {
-  if (graph?.active) return <BuildingGame graph={graph} project={project} onWatch={onWatch} onPlay={onPlay} />;
+  if (runBuilding(graph)) return <BuildingGame graph={graph} project={project} onWatch={onWatch} onPlay={onPlay} />;
   return (
     <StageEmpty art="idea" title="Ready for your first idea" subtitle="Describe your game in the chat to begin." />
   );
@@ -162,7 +162,7 @@ export function StoppedGame({
   onPlay: (head: string) => Promise<void>;
   onResume: () => void;
 }): JSX.Element {
-  if (graph?.active) return <BuildingGame graph={graph} project={project} onWatch={onWatch} onPlay={onPlay} />;
+  if (runBuilding(graph)) return <BuildingGame graph={graph} project={project} onWatch={onWatch} onPlay={onPlay} />;
   return (
     <StageEmpty art="stopped" title="Game stopped" subtitle="" action={<PlayButton label="Play" onPlay={onResume} />} />
   );

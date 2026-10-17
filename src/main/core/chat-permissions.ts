@@ -17,6 +17,15 @@
  * answers within `LEAD_ASK_TIMEOUT_MS`. The picker switches a running lead as it switches the chat's
  * own session, beside it on the same chat (`#live`); while the chat is in a mode a lead could not
  * be switched to, its screen asks first (`#screenLeadCall`), so the chat's mode answers.
+ *
+ * A worker of the chat's lead asks the same way (`forWorker`), in the chat's mode, and the picker
+ * switches its running session as it switches a lead's: its card names it, a run worker's is
+ * withdrawn when nobody answers within `LEAD_ASK_TIMEOUT_MS` as a lead's is, and "always" counts for
+ * the whole chat, so the next worker and the chat's own session stand on it.
+ *
+ * The person's switch to Bypass answers every card still waiting that was asked in another mode
+ * (`ToolPermissions.allowInBypass`), and an "always" that names a mode moves only a Manual chat:
+ * it never takes a chat out of a mode the person moved it to since.
  */
 import { readdir, realpath } from "node:fs/promises";
 import path from "node:path";
@@ -55,6 +64,7 @@ import type {
   PermissionReply,
   ScreenedCall,
   WithdrawnAnswer,
+  WorkerAsks,
 } from "../../substrate/engines/types.ts";
 import { shortId } from "../../substrate/ids.ts";
 import { isInside } from "../../substrate/paths.ts";
@@ -63,12 +73,14 @@ import { PermissionStore } from "../permission-store.ts";
 import type { StudioCore } from "../studio-core.ts";
 import { ToolPermissions, type WithdrawnBy } from "../tool-permissions.ts";
 import { permissionAnswer, permissionRequest } from "./permission-requests.ts";
+import { JOB_PERMISSION_TOOL, JobRole } from "../../shared/jobs.ts";
+import { JOB_ANSWER } from "./job-tools-prompts.ts";
 
 /** The permission store's file, under engine-homes. */
 const STORE_FILE = "permissions.json";
 /**
- * How long a build's lead's or the run's coordinator's card waits for the person. A card nobody
- * sees must not hold a run's lead; the person can say it again.
+ * How long a build's lead's, the run's coordinator's or a run worker's card waits for the person.
+ * A card nobody sees must not hold a run; the person can say it again.
  */
 export const LEAD_ASK_TIMEOUT_MS = 5 * MINUTE_MS;
 /** How many of a chat's messages the host remembers as the person's. */
@@ -111,6 +123,12 @@ const MESSAGE = {
   invalidRule: "Invalid permission rule",
   notSwitched: (label: string) => `The running reply could not switch to ${label}. Your next message will use it.`,
   grantNotSaved: (error: unknown) => `Could not save a permission grant: ${String(error)}`,
+  /** A job card's question, in plain words: who wants to run what in the background. */
+  jobTitle: (who: string, title: string) => `${who} wants to run ${title} in the background`,
+  /** Where a job would run, in plain words. */
+  jobFolder: (folder: string) => (folder === "." ? "In the game's folder" : `In ${folder}`),
+  /** Who asks on a job card that names no worker. */
+  jobAsker: { lead: "The lead", chat: "Claude", worker: "A worker" },
 } as const;
 
 /** A chat's running session, as the host follows it: its engine and model, and whether the host moved its mode. */
@@ -216,6 +234,67 @@ async function asWalked(root: string, folders: readonly string[]): Promise<strin
     if (real === root || isInside(root, resolved) || !isInside(real, resolved)) return resolved;
     return path.join(root, path.relative(real, resolved));
   });
+}
+
+/** A worker of a chat's lead, as the host found it: the chat it answers to, and on what it runs. */
+export interface WorkerSessionAsk {
+  project: string;
+  /** The chat its lead answers: its questions are carded there. */
+  threadId: string;
+  worker: { id: string; title: string };
+  /** The run whose lead started it, or null for one the chat's own turn started: its card ends with that turn. */
+  runId: string | null;
+  engine: string;
+  model: string;
+  /** Whether its engine asks about each call (`Engine.permissionPrompts`). */
+  asks: boolean;
+  /** The folder it works in. */
+  cwd: string;
+  signal: AbortSignal;
+}
+
+/**
+ * A worker's place in the chat: the mode it runs in (the chat's as its engine honours it, Plan
+ * whenever the chat plans) and how it asks, when its engine can and it writes.
+ */
+export interface WorkerSession {
+  mode: PermissionMode;
+  asks: WorkerAsks | null;
+}
+
+/**
+ * A card's own terms: how long it waits, whether a turn's end withdraws it, the worker it names, and
+ * whether the person's switch to Bypass answers it (read from the chat's mode when it is asked).
+ */
+interface CardTerms {
+  timeoutMs?: number;
+  outlivesTurn?: boolean;
+  worker?: { id: string; title: string };
+  bypassAnswers?: boolean;
+}
+
+/** A job's start the person is asked about (`askForJob`): who wants it, what it runs and where. */
+export interface JobAskRequest {
+  project: string;
+  /** The chat whose mode answers and whose card it is. */
+  threadId: string;
+  asker: JobRole;
+  /** The job's plain title, as the person reads it. */
+  title: string;
+  command: string;
+  /** Its folder, relative to the folder the asker works in ("." for that folder). */
+  folder: string;
+  signal: AbortSignal;
+  /** The worker that asks, when one does. */
+  worker?: { id: string; title: string };
+  /** A run worker's run: its card waits as a lead's does. */
+  runId?: string | null;
+}
+
+/** Who a job card says asks: the worker by its title, the lead, or Claude for the chat's own session. */
+function jobAsker(job: JobAskRequest): string {
+  if (job.worker) return job.worker.title.trim() || MESSAGE.jobAsker.worker;
+  return job.asker === JobRole.Lead ? MESSAGE.jobAsker.lead : MESSAGE.jobAsker.chat;
 }
 
 /** A build's lead's or the run's coordinator's session: what its engine is handed, and its end. */
@@ -475,6 +554,78 @@ export class ChatPermissionService {
   }
 
   /**
+   * How a Loop's lead in place asks on an engine that does not ask about every call, or null for
+   * any thread but this game's open chat: the chat's mode as that engine honours it (Plan starts it
+   * elsewhere or read-only, as the chat's own session on it), its questions routed as a lead's
+   * (`#leadAsk`) and the picker's switches reaching it as they reach the chat's own session. The
+   * caller has already checked the seat (this game's lead of this chat's run, in place).
+   */
+  async forPlacedLead(ask: LeadSessionAsk): Promise<PersonSession | null> {
+    const { project, threadId } = ask;
+    const meta = await this.#threadMeta(threadId);
+    if (!isOpenGameChat(meta, project)) return null;
+    const chat = await this.#modeOf(threadId, meta);
+    const mode = engineMode(ask.engine, chat);
+    const lead: LeadState = {
+      engine: ask.engine,
+      model: ask.model,
+      steered: true,
+      running: leadModeFor(chat),
+      switching: Promise.resolve(),
+      askedFirst: new Set(),
+    };
+    const session: ChatSession = { engine: ask.engine, model: ask.model, steered: true };
+    const holder: LiveHolder = { live: null };
+    const request: DelegatePermissions = {
+      mode,
+      ...(await this.#standing(project, threadId, [ask.cwd, ...(ask.leads ? [ask.leads] : [])])),
+      ask: (question, asked) => this.#leadAsk(ask, lead, question, AbortSignal.any([asked, ask.signal])),
+      onControl: (control) => this.#onControl(threadId, mode, session, holder, control),
+    };
+    return { request, end: () => this.#onControl(threadId, mode, session, holder, null) };
+  }
+
+  /**
+   * A worker's place in its lead's chat, or null when that is not this game's open chat (it then
+   * runs unattended). The caller has already found the seat (a running run started in this chat, or
+   * the turn its own session answers). The picker switches its running session as it switches a
+   * lead's (`#onLeadControl`); while the chat is in a mode it could not be switched to, it asks first
+   * (`#screenLeadCall`), and each question is routed here (`#workerAsk`). Its box (what it writes,
+   * the network) stays the one its start's mode gave it.
+   */
+  async forWorker(ask: WorkerSessionAsk): Promise<WorkerSession | null> {
+    const { project, threadId } = ask;
+    const meta = await this.#threadMeta(threadId);
+    if (!isOpenGameChat(meta, project)) return null;
+    const chat = await this.#modeOf(threadId, meta);
+    const mode = chat === PermissionMode.Plan ? chat : engineMode(ask.engine, chat);
+    if (!ask.asks || mode === PermissionMode.Plan) return { mode, asks: null };
+    const holder: LiveHolder = { live: null };
+    const lead: LeadState = {
+      engine: ask.engine,
+      model: ask.model,
+      steered: true,
+      running: leadModeFor(mode),
+      switching: Promise.resolve(),
+      askedFirst: new Set(),
+    };
+    const asks: WorkerAsks = {
+      ...(await this.#standing(project, threadId, [ask.cwd])),
+      mode: lead.running,
+      worker: ask.worker,
+      screen: (call) => this.#screenLeadCall(ask, lead, call),
+      ask: (question, asked) => this.#workerAsk(ask, lead, question, AbortSignal.any([asked, ask.signal])),
+      onControl: (control) => this.#onLeadControl(threadId, lead, holder, control),
+    };
+    return { mode, asks };
+  }
+
+  /** The folders the person granted this chat ("always allow" a folder): a worker writes them too. */
+  chatDirs(threadId: string): string[] {
+    return [...(this.#chatGrants.get(threadId)?.dirs ?? [])];
+  }
+
+  /**
    * What a session that asks stands on: the saved "always allow" rules for the game and the chat,
    * the chat's granted folders, and the studio's own files it never edits — all but the folders it
    * works in (`open`): its cwd, and for a lead the integration worktree it builds in.
@@ -497,7 +648,7 @@ export class ChatPermissionService {
    * (`asksFirst`), so the chat's mode answers it (`#leadAsk`) rather than the mode the session runs
    * in. Anything else is left to the session's rules and mode, as for the chat's own session.
    */
-  async #screenLeadCall(ask: LeadSessionAsk, lead: LeadState, call: ScreenedCall): Promise<AskFirst | null> {
+  async #screenLeadCall(ask: { threadId: string }, lead: LeadState, call: ScreenedCall): Promise<AskFirst | null> {
     const { running } = lead;
     if (running === PermissionMode.Manual) return null;
     const mode = await this.#modeOf(ask.threadId, await this.#threadMeta(ask.threadId));
@@ -526,18 +677,105 @@ export class ChatPermissionService {
     ask: PermissionAsk,
     signal: AbortSignal,
   ): Promise<PermissionReply> {
+    const timeoutMs = this.#core.options.leadAskTimeoutMs ?? LEAD_ASK_TIMEOUT_MS;
+    return this.#seatedAsk(seat, lead, ask, signal, { timeoutMs, outlivesTurn: true });
+  }
+
+  /**
+   * A worker's question, as the chat's mode answers it, as a lead's is (`#leadAsk`), its card naming
+   * the worker. A run worker's waits as a lead's does: withdrawn when nobody answers within
+   * `LEAD_ASK_TIMEOUT_MS`, and no turn of the chat's ending withdraws it. A worker the chat's own
+   * turn started waits for the person until that turn ends, as the chat's own session does.
+   */
+  async #workerAsk(
+    seat: WorkerSessionAsk,
+    lead: LeadState,
+    ask: PermissionAsk,
+    signal: AbortSignal,
+  ): Promise<PermissionReply> {
+    return this.#seatedAsk(seat, lead, ask, signal, this.#workerCard(seat.runId, seat.worker));
+  }
+
+  /** A worker's card terms: a run worker's waits as a lead's does; a turn worker's ends with its turn. */
+  #workerCard(runId: string | null, worker: { id: string; title: string }): CardTerms {
+    if (runId === null) return { worker };
+    return { worker, outlivesTurn: true, timeoutMs: this.#core.options.leadAskTimeoutMs ?? LEAD_ASK_TIMEOUT_MS };
+  }
+
+  /**
+   * A question from a session seated beside the chat (a lead, the coordinator, a worker), as the
+   * chat's mode answers it: a chat closed since is denied at once, Bypass allows one running in
+   * another mode or a call the host asked about first, Plan denies, and anything else is a card on
+   * the card's own terms whose "always" never moves the mode.
+   */
+  async #seatedAsk(
+    seat: { project: string; threadId: string },
+    lead: LeadState,
+    ask: PermissionAsk,
+    signal: AbortSignal,
+    card: CardTerms,
+  ): Promise<PermissionReply> {
+    const bypassAllows = () => {
+      const hostAsked = lead.askedFirst.delete(ask.toolUseId);
+      return hostAsked || lead.running !== PermissionMode.Bypass;
+    };
+    return this.#askBesideChat(seat, ask, signal, card, { session: lead, bypassAllows, inPlan: MESSAGE.inPlan });
+  }
+
+  /**
+   * The rules every question asked beside the chat follows, whoever asks: a chat closed since is
+   * denied at once, Bypass allows when `bypassAllows` says so, Plan denies in `inPlan`'s words, and
+   * anything else is a card on the card's own terms whose "always" never moves the mode, answered by
+   * the person's switch to Bypass when it was asked in another mode.
+   */
+  async #askBesideChat(
+    seat: { project: string; threadId: string },
+    ask: PermissionAsk,
+    signal: AbortSignal,
+    card: CardTerms,
+    terms: { session: ChatSession; bypassAllows: () => boolean; inPlan: string },
+  ): Promise<PermissionReply> {
     const { project, threadId } = seat;
     const meta = await this.#threadMeta(threadId);
     if (!isOpenGameChat(meta, project)) return hostDeny(MESSAGE.chatClosed);
     const mode = await this.#modeOf(threadId, meta);
-    const hostAsked = lead.askedFirst.delete(ask.toolUseId);
-    if (mode === PermissionMode.Bypass && (hostAsked || lead.running !== PermissionMode.Bypass))
-      return { decision: PermissionDecision.Allow };
-    if (mode === PermissionMode.Plan) return hostDeny(MESSAGE.inPlan);
+    const bypassAllows = terms.bypassAllows();
+    if (mode === PermissionMode.Bypass && bypassAllows) return { decision: PermissionDecision.Allow };
+    if (mode === PermissionMode.Plan) return hostDeny(terms.inPlan);
     // Its mode is never its own to change: no "always" moves it.
     const always = ask.always.filter((grant) => grant.kind !== GrantKind.Mode);
-    const timeoutMs = this.#core.options.leadAskTimeoutMs ?? LEAD_ASK_TIMEOUT_MS;
-    return this.#ask(project, threadId, { ...ask, always }, signal, lead, { timeoutMs });
+    const bypassAnswers = mode !== PermissionMode.Bypass;
+    return this.#ask(project, threadId, { ...ask, always }, signal, terms.session, { ...card, bypassAnswers });
+  }
+
+  /**
+   * The person's card for a job's start, in the chat's mode now, as a question from beside the chat
+   * is (`#askBesideChat`), on the asker's card terms: the chat's own session's ends with its turn; a
+   * lead's waits at most `LEAD_ASK_TIMEOUT_MS` and outlives the turn; a worker's names the worker and
+   * waits as its other questions do (`#workerCard`).
+   * The card's question and description are plain words; the command is only in its input, which
+   * the card folds under Details. No "always": each job is asked on its own.
+   */
+  async askForJob(job: JobAskRequest): Promise<PermissionReply> {
+    const ask: PermissionAsk = {
+      tool: JOB_PERMISSION_TOOL,
+      input: { title: job.title, command: job.command, folder: job.folder },
+      toolUseId: shortId("job"),
+      title: MESSAGE.jobTitle(jobAsker(job), job.title),
+      description: MESSAGE.jobFolder(job.folder),
+      always: [],
+    };
+    const session: ChatSession = { engine: "", model: "", steered: true };
+    const terms = { session, bypassAllows: () => true, inPlan: JOB_ANSWER.inPlan };
+    return this.#askBesideChat(job, ask, job.signal, this.#jobCard(job), terms);
+  }
+
+  /** A job card's terms, by who asks for the job. */
+  #jobCard(job: JobAskRequest): CardTerms {
+    if (job.asker === JobRole.Lead)
+      return { timeoutMs: this.#core.options.leadAskTimeoutMs ?? LEAD_ASK_TIMEOUT_MS, outlivesTurn: true };
+    if (job.asker !== JobRole.Worker || !job.worker) return {};
+    return this.#workerCard(job.runId ?? null, job.worker);
   }
 
   /**
@@ -546,6 +784,11 @@ export class ChatPermissionService {
    */
   async planning(threadId: string): Promise<boolean> {
     return (await this.#threadMeta(threadId))?.permissionMode === PermissionMode.Plan;
+  }
+
+  /** The chat's permission mode now, as every question beside it is answered by. */
+  async modeOf(threadId: string): Promise<PermissionMode> {
+    return this.#modeOf(threadId, await this.#threadMeta(threadId));
   }
 
   /** A chat keeps the mode it first ran in; one that never chose is stamped with the default now. */
@@ -671,10 +914,10 @@ export class ChatPermissionService {
   /**
    * Claude asks to use a tool it cannot decide on alone. The request goes into the chat's log as a
    * `tool_permission` card, the UI is nudged, and the session waits (as Claude Code does, with no
-   * timeout of its own) for the person's answer, a Stop or the end of the turn. A lead's card
-   * (`leadCard`) waits at most its `timeoutMs`, and no turn of the chat's ending withdraws it: the
-   * lead is not that turn. The answer is logged the same way, and "always" is kept where its
-   * grants say.
+   * timeout of its own) for the person's answer, a Stop or the end of the turn. A lead's card waits
+   * at most its `timeoutMs`, and no turn of the chat's ending withdraws it (`outlivesTurn`): the lead
+   * is not that turn. A worker's card names it and has no timeout. The answer is logged the same
+   * way, and "always" is kept where its grants say.
    */
   async #ask(
     project: string,
@@ -682,11 +925,15 @@ export class ChatPermissionService {
     ask: PermissionAsk,
     signal: AbortSignal,
     session: ChatSession,
-    leadCard?: { timeoutMs: number },
+    card: CardTerms = {},
   ): Promise<PermissionReply> {
     const requestId = shortId("perm");
-    const base = permissionRequest({ requestId, project, threadId }, ask);
+    const base = {
+      ...permissionRequest({ requestId, project, threadId }, ask),
+      ...(card.worker ? { worker: card.worker } : {}),
+    };
     const pending: ToolPermissionEvent = { ...base, state: ToolPermissionState.Pending };
+    const bypassAnswers = card.bypassAnswers ?? (await this.modeOf(threadId)) !== PermissionMode.Bypass;
     await this.#core.append([customEventData(CustomEvent.ToolPermission, { ...pending })], threadId);
     this.#core.emit(UiEvent.ToolPermission, { requestId, threadId, project, state: pending.state });
     const plan = ask.tool === PLAN_TOOL;
@@ -696,16 +943,29 @@ export class ChatPermissionService {
       threadId,
       signal,
       plan,
-      ...(leadCard ? { timeoutMs: leadCard.timeoutMs, outlivesTurn: true } : {}),
+      ...(card.timeoutMs !== undefined ? { timeoutMs: card.timeoutMs } : {}),
+      ...(card.outlivesTurn ? { outlivesTurn: true } : {}),
+      ...(bypassAnswers ? { bypassAnswers: true } : {}),
     });
     const answer = this.#effectiveAnswer(given, base.always, session);
+    const kept = await this.#keptGrants(threadId, base.always);
     // The studio moves the running mode now; what the session reports next is its doing.
-    if (movedTo(answer, base.always)) session.steered = true;
-    await this.#keep(project, threadId, answer, base.always);
+    if (movedTo(answer, kept)) session.steered = true;
+    await this.#keep(project, threadId, answer, kept);
     const settled = settledRow(base, answer, by);
     await this.#core.append([customEventData(CustomEvent.ToolPermission, { ...settled })], threadId);
     this.#core.emit(UiEvent.ToolPermission, { requestId, threadId, project, state: settled.state });
     return answer ?? withdrawnAnswer(by);
+  }
+
+  /**
+   * What an "always" keeps: its grants, the mode among them only while the chat is in Manual. A
+   * chat the person moved to Auto or Bypass while the card waited keeps that mode.
+   */
+  async #keptGrants(threadId: string, always: PermissionGrant[] | undefined): Promise<PermissionGrant[] | undefined> {
+    if (!always?.some((grant) => grant.kind === GrantKind.Mode)) return always;
+    if ((await this.modeOf(threadId)) === PermissionMode.Manual) return always;
+    return always.filter((grant) => grant.kind !== GrantKind.Mode);
   }
 
   /**
@@ -813,6 +1073,8 @@ export class ChatPermissionService {
       await this.#core.store.updateThread(threadId, { metadata: { permissionMode: mode } });
     }
     if (isSteadyPermissionMode(mode)) await this.store.setDefaultMode(mode);
+    // Bypass asks nothing: what its chat still waits on the person for goes on now.
+    if (threadId !== null && mode === PermissionMode.Bypass) this.#ledger.allowInBypass(threadId);
     const failure = threadId === null ? null : await this.#switchLive(threadId, mode);
     this.#core.emit(UiEvent.PermissionsChanged, threadId !== null ? { threadId } : {});
     if (failure) throw failure;

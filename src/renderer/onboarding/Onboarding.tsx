@@ -5,8 +5,10 @@
  * it; the prompt lands on the Planner's sheet, then the Workers and Reviewers join (art.ts).
  * Clicking the composer takes the person's own idea, which waits in the real composer afterwards.
  * Connect: Claude Code and ChatGPT sign in through the same flows as Settings → Model Providers.
- * Each has one button that hugs its words and changes them as the sign-in moves on. Local models
- * download the Best fit for this Mac. The first connection turns Skip into Start building.
+ * Each has one button that hugs its words and changes them as the sign-in moves on. Under them,
+ * "or use" offers local models (the Best fit for this Mac downloads), OpenRouter (browser sign-in
+ * or a pasted key) and OpenCode (installs, then its free models run), each on its own screen. The
+ * first connection turns Skip into Start building.
  */
 import {
   useCallback,
@@ -17,7 +19,6 @@ import {
   type FormEvent,
   type JSX,
   type KeyboardEvent,
-  type ReactNode,
   type RefObject,
 } from "react";
 import type { EngineDescriptor } from "../types.ts";
@@ -27,6 +28,7 @@ import { EngineStatusCode } from "../../shared/engine-descriptor.ts";
 import type { ModelInstallJob } from "../../shared/model-install.ts";
 import { EngineId } from "../../shared/providers.ts";
 import { type ModelPullProgress, UiEvent } from "../../shared/ui-events.ts";
+import { preloadHomeBackdrop } from "../home-backdrop/preload.ts";
 import { Button } from "../ui/Button.tsx";
 import { GenexLogo } from "../ui/GenexLogo.tsx";
 import { Icon } from "../ui/icons.tsx";
@@ -34,10 +36,16 @@ import { LoaderGrid } from "../ui/LoadingState.tsx";
 import { CODE_FALLBACK_LABEL, useCodeFallback } from "../ui/SignInCard.tsx";
 import { useClaudeLogin, useSubscriptionAuth } from "../subscription-auth.ts";
 import { useCliInstall } from "../cli-install.ts";
-import { problemWords } from "../words.ts";
+import { LOCAL_SERVER_WORDS, problemWords } from "../words.ts";
+import { openSettings, SettingsSection } from "../settings-navigation.ts";
 import { SHOW_TERMINAL_EVENT } from "../panels/terminal-events.ts";
 import { prefersReducedMotion, REDUCED_MOTION_QUERY } from "../ui/media-queries.ts";
 import { ArtCanvas, type Draw } from "./ArtCanvas.tsx";
+import { OpenCodeScreen, useFreeModel, useOpenCode } from "./OpenCodeScreen.tsx";
+import { OpenRouterScreen, useOpenRouter } from "./OpenRouterScreen.tsx";
+import { OtherWays } from "./OtherWays.tsx";
+import { Check, Hug, OnboardingAction, StartBuilding, TopBar, useHeadingFocus } from "./parts.tsx";
+import { localWay, openCodeWay, openRouterWay, OtherWay, RouterStep, type WayView } from "./ways.ts";
 import {
   CHIP,
   ChipState,
@@ -68,21 +76,13 @@ import {
   type Subscription,
 } from "./state.ts";
 
-/**
- * The welcome's buttons that move it on, as `data-onboarding-action` names them: the stable hooks
- * an operator presses through dev control (words and classes may change; these do not).
- */
-const OnboardingAction = {
-  Next: "next",
-  Start: "start",
-  Skip: "skip",
-} as const;
-
-/** The three onboarding screens, in the order the person meets them. */
+/** The onboarding screens: the welcome, Connect, and one for each of Connect's other ways. */
 const Screen = {
   Welcome: "welcome",
   Connect: "connect",
   Local: "local",
+  OpenRouter: "openrouter",
+  OpenCode: "opencode",
 } as const;
 type Screen = (typeof Screen)[keyof typeof Screen];
 type Hardware = Awaited<ReturnType<typeof window.studio.hardware>>;
@@ -104,6 +104,15 @@ const SEND_AFTER_TYPING_MS = 2900;
 const SENT_BEAT_MS = 600;
 /** The fade out of the whole welcome when it finishes. */
 const LEAVE_MS = 260;
+
+/** Each of Connect's other ways opens its own screen. */
+const WAY_SCREEN: Record<OtherWay, Screen> = {
+  [OtherWay.Local]: Screen.Local,
+  [OtherWay.OpenRouter]: Screen.OpenRouter,
+  [OtherWay.OpenCode]: Screen.OpenCode,
+};
+/** The engines besides OpenCode that, once ready, are something to build with. */
+const BUILDS_WITH: readonly string[] = [EngineId.ClaudeCode, EngineId.Codex, EngineId.LocalServer, EngineId.OpenRouter];
 
 /** Each subscription's mark on the connect art. */
 const MARK_OF: Record<Subscription, Provider> = {
@@ -137,37 +146,6 @@ function useFit(width: number, height: number): [RefObject<HTMLDivElement | null
     return () => observer.disconnect();
   }, [width, height]);
   return [box, scale];
-}
-
-/** A width that follows its content, so a button's box glides to hug each new label. */
-function Hug({ swap, children }: { swap: string; children: ReactNode }): JSX.Element {
-  const inner = useRef<HTMLDivElement>(null);
-  const [width, setWidth] = useState<number | null>(null);
-  useLayoutEffect(() => {
-    const element = inner.current;
-    if (!element) return;
-    const measure = () => setWidth(element.offsetWidth);
-    measure();
-    const observer = new ResizeObserver(measure);
-    observer.observe(element);
-    return () => observer.disconnect();
-  }, [swap]);
-  return (
-    <div className="onboarding-hug" style={width === null ? undefined : { width }}>
-      <div ref={inner} key={swap} className="onboarding-hug-inner">
-        {children}
-      </div>
-    </div>
-  );
-}
-
-function Check(): JSX.Element {
-  return (
-    <svg aria-hidden="true" width="16" height="16" viewBox="0 0 16 16" className="onboarding-check">
-      <circle cx="8" cy="8" r="8" />
-      <path pathLength={1} d="M4.6 8.2l2.3 2.2 4.5-4.6" />
-    </svg>
-  );
 }
 
 /** The composer's text style, read once, so the streamed letters leave exactly where the typed ones stood. */
@@ -702,35 +680,6 @@ function useLocalModel(engines: EngineDescriptor[], onEnginesRefresh: () => void
 }
 type LocalModel = ReturnType<typeof useLocalModel>;
 
-function TopBar({ onBack, onSkip }: { onBack: () => void; onSkip?: () => void }): JSX.Element {
-  return (
-    <div className="onboarding-bar">
-      <Button variant="ghost" onClick={onBack}>
-        <Icon name="chevron-left" />
-        Back
-      </Button>
-      {onSkip && (
-        <Button
-          variant="ghost"
-          className="onboarding-swap"
-          data-onboarding-action={OnboardingAction.Skip}
-          onClick={onSkip}
-        >
-          Skip for now
-        </Button>
-      )}
-    </div>
-  );
-}
-
-function useHeadingFocus(): RefObject<HTMLHeadingElement | null> {
-  const heading = useRef<HTMLHeadingElement>(null);
-  useEffect(() => {
-    heading.current?.focus({ preventScroll: true });
-  }, []);
-  return heading;
-}
-
 /** The box a Claude Code sign-in asks for: the code the sign-in page shows. */
 function CodeForm({
   code,
@@ -1020,51 +969,26 @@ function useMarksArt(views: Record<Subscription, ConnectView>, markX: RefObject<
   return { marks, drawArt };
 }
 
-/** The row's way to local models: its offer, the download under way, or the model ready. */
-function LocalLink({ local, onLocal }: { local: LocalModel; onLocal: () => void }): JSX.Element {
-  const content = (): ReactNode => {
-    if (local.state === ChipState.Ready)
-      return (
-        <>
-          <Check />
-          {local.name} ready
-        </>
-      );
-    if (local.state === ChipState.Downloading)
-      return (
-        <>
-          <LoaderGrid />
-          Downloading {local.name} · {local.percent}%
-        </>
-      );
-    return "Use local models";
-  };
-  return (
-    <button type="button" className="onboarding-link" data-state={local.state} onClick={onLocal}>
-      {content()}
-    </button>
-  );
-}
-
 function Connect({
   engines,
   onEnginesRefresh,
-  local,
+  ways,
   anyOn,
   back,
   onBack,
-  onLocal,
+  onWay,
   onSkip,
   onStart,
   onTerminal,
 }: {
   engines: EngineDescriptor[];
   onEnginesRefresh: () => void;
-  local: LocalModel;
+  /** The row's buttons under the subscriptions: local models, OpenRouter and OpenCode. */
+  ways: Record<OtherWay, WayView>;
   anyOn: boolean;
   back: boolean;
   onBack: () => void;
-  onLocal: () => void;
+  onWay: (way: OtherWay) => void;
   onSkip: () => void;
   onStart: () => void;
   onTerminal: () => void;
@@ -1106,33 +1030,12 @@ function Connect({
           ))}
         </div>
       </div>
-      <div className="onboarding-local-row">
-        <LocalLink local={local} onLocal={onLocal} />
-      </div>
+      <OtherWays views={ways} onOpen={onWay} />
       <p role="alert" className="onboarding-problem onboarding-connect-problem">
         {shown ? problemWords(shown) : ""}
       </p>
       <StartBuilding anyOn={anyOn} onStart={onStart} />
     </section>
-  );
-}
-
-/** The foot of a screen: Start building, once anything is connected. */
-function StartBuilding({ anyOn, onStart }: { anyOn: boolean; onStart: () => void }): JSX.Element {
-  return (
-    <div className="onboarding-foot">
-      {anyOn && (
-        <Button
-          variant="default"
-          size="lg"
-          className="onboarding-cta onboarding-rise"
-          data-onboarding-action={OnboardingAction.Start}
-          onClick={onStart}
-        >
-          Start building
-        </Button>
-      )}
-    </div>
   );
 }
 
@@ -1226,18 +1129,38 @@ function LocalBody({ local }: { local: LocalModel }): JSX.Element {
   return <ModelRow local={local} pick={pick} />;
 }
 
+/** A server the person already runs (LM Studio, llama.cpp, TabbyAPI) is connected in Settings. */
+function ServerLink({ onServer }: { onServer: () => void }): JSX.Element {
+  return (
+    <p className="onboarding-note">
+      {LOCAL_SERVER_WORDS.onboardingLine}{" "}
+      <button
+        type="button"
+        className="onboarding-link"
+        data-state="idle"
+        data-onboarding-action={OnboardingAction.Server}
+        onClick={onServer}
+      >
+        {LOCAL_SERVER_WORDS.connectServer}
+      </button>
+    </p>
+  );
+}
+
 function Local({
   local,
   anyOn,
   onBack,
   onSkip,
   onStart,
+  onServer,
 }: {
   local: LocalModel;
   anyOn: boolean;
   onBack: () => void;
   onSkip: () => void;
   onStart: () => void;
+  onServer: () => void;
 }): JSX.Element {
   const heading = useHeadingFocus();
   const { load } = local;
@@ -1273,6 +1196,7 @@ function Local({
         className="onboarding-chip"
       />
       <LocalBody local={local} />
+      <ServerLink onServer={onServer} />
       <p role="alert" className="onboarding-problem">
         {local.error ?? ""}
       </p>
@@ -1324,55 +1248,81 @@ export function Onboarding({
   const [idea, setIdea] = useState("");
   const root = useRef<HTMLDivElement>(null);
   const local = useLocalModel(engines, onEnginesRefresh);
+  const router = useOpenRouter(engines, onEnginesRefresh);
+  const code = useOpenCode(engines, onEnginesRefresh);
   const { closing, leaving, finish } = useWelcomeExit(idea, onReady, onFinish);
   const ready = (id: string) => engines.find((engine) => engine.id === id)?.status.code === EngineStatusCode.Ready;
-  const anyOn = ready(EngineId.ClaudeCode) || ready(EngineId.Codex) || local.installed;
+  const othersOn = local.installed || BUILDS_WITH.some(ready);
+  // OpenCode's free models count: a ready OpenCode is something to build with.
+  const anyOn = othersOn || ready(EngineId.OpenCode);
+  const freeModel = useFreeModel(code, engines, othersOn);
+  /** Every way out of the welcome: the free model picked here (if any) goes with it. */
+  const end = (then?: () => void) => {
+    freeModel.remember();
+    finish(then);
+  };
+  const ways: Record<OtherWay, WayView> = {
+    [OtherWay.Local]: localWay(local.state, local.name, local.percent),
+    [OtherWay.OpenRouter]: openRouterWay(router.status, router.step === RouterStep.Browser),
+    [OtherWay.OpenCode]: openCodeWay(code.row),
+  };
 
   useEffect(() => {
     root.current?.focus({ preventScroll: true });
   }, []);
+  // Past the welcome, home's background gets ready behind these screens, so home opens on it.
+  useEffect(() => {
+    if (screen.id !== Screen.Welcome) void preloadHomeBackdrop();
+  }, [screen.id]);
   const go = (id: Screen, back = false) => setScreen({ id, back });
+  // Every screen after Connect goes back to it, and skips or starts the same way.
+  const after = { anyOn, onBack: () => go(Screen.Connect, true), onSkip: () => end(), onStart: () => end() };
 
   const current = (): JSX.Element => {
-    if (screen.id === Screen.Welcome)
-      return (
-        <Welcome
-          key={Screen.Welcome}
-          idea={idea}
-          back={screen.back}
-          onIdea={setIdea}
-          onNext={(draft) => {
-            if (draft) setIdea(draft);
-            go(Screen.Connect);
-          }}
-        />
-      );
-    if (screen.id === Screen.Connect)
-      return (
-        <Connect
-          key={Screen.Connect}
-          engines={engines}
-          onEnginesRefresh={onEnginesRefresh}
-          local={local}
-          anyOn={anyOn}
-          back={screen.back}
-          onBack={() => go(Screen.Welcome, true)}
-          onLocal={() => go(Screen.Local)}
-          onSkip={() => finish()}
-          onStart={() => finish()}
-          onTerminal={() => finish(() => window.dispatchEvent(new Event(SHOW_TERMINAL_EVENT)))}
-        />
-      );
-    return (
-      <Local
-        key={Screen.Local}
-        local={local}
-        anyOn={anyOn}
-        onBack={() => go(Screen.Connect, true)}
-        onSkip={() => finish()}
-        onStart={() => finish()}
-      />
-    );
+    switch (screen.id) {
+      case Screen.Welcome:
+        return (
+          <Welcome
+            key={Screen.Welcome}
+            idea={idea}
+            back={screen.back}
+            onIdea={setIdea}
+            onNext={(draft) => {
+              if (draft) setIdea(draft);
+              go(Screen.Connect);
+            }}
+          />
+        );
+      case Screen.Connect:
+        return (
+          <Connect
+            key={Screen.Connect}
+            engines={engines}
+            onEnginesRefresh={onEnginesRefresh}
+            ways={ways}
+            anyOn={anyOn}
+            back={screen.back}
+            onBack={() => go(Screen.Welcome, true)}
+            onWay={(way) => go(WAY_SCREEN[way])}
+            onSkip={() => end()}
+            onStart={() => end()}
+            onTerminal={() => end(() => window.dispatchEvent(new Event(SHOW_TERMINAL_EVENT)))}
+          />
+        );
+      case Screen.OpenRouter:
+        return <OpenRouterScreen key={Screen.OpenRouter} router={router} {...after} />;
+      case Screen.OpenCode:
+        return <OpenCodeScreen key={Screen.OpenCode} code={code} free={freeModel.free} {...after} />;
+      default:
+        return (
+          <Local
+            key={Screen.Local}
+            local={local}
+            {...after}
+            onServer={() => end(() => openSettings(SettingsSection.Providers))}
+          />
+        );
+    }
   };
 
   return (

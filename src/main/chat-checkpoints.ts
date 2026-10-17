@@ -14,12 +14,16 @@ import path from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { createHash, randomUUID } from "node:crypto";
-import { copyFile, lstat, mkdir, readdir, realpath, rm, rmdir } from "node:fs/promises";
+import { copyFile, lstat, mkdir, readdir, realpath, rm, rmdir, stat, utimes } from "node:fs/promises";
 import { GIT_ENV } from "../substrate/snapshots.ts";
 import { hostGitArgs, hostGitConfig, hostGitEnv } from "../substrate/git-policy.ts";
 import { pathExists } from "../substrate/fsx.ts";
 import { nestedRepos } from "../substrate/game-workspace.ts";
 import { isBelow } from "../substrate/paths.ts";
+import { ignoreLine, type PlacedRule, ruleGlob, ruleMatches } from "../shared/project-workspace.ts";
+import { ensureFactIgnoreRules } from "../substrate/nested-repos.ts";
+import { REWIND_REFS } from "../shared/game-history.ts";
+import { isRewindId, UndoRewindRefusal, undoRewindRefusalWords } from "../shared/chat-rewind.ts";
 
 /** Files the rewind never puts back: the game's shape and consent belong to now, not then. */
 const KEPT_PATHS = new Set(["studio.json"]);
@@ -82,9 +86,13 @@ export type CheckpointPlan =
       nested: string[];
       /** Changed files too large to have been saved: they stay as they are. */
       tooLarge: number;
+      /** Those files by path, present only when there are any. */
+      tooLargeFiles?: string[];
     }
   | { state: "unchanged"; nested: string[] }
-  | { state: "unavailable"; reason: "no-checkpoint" | "history-changed" | "too-large" };
+  | { state: "unavailable"; reason: "no-checkpoint" | "history-changed" }
+  /** Every changed file is too large to have been saved; `tooLargeFiles` names them. */
+  | { state: "unavailable"; reason: "too-large"; tooLargeFiles?: string[] };
 
 interface Change {
   status: string;
@@ -95,16 +103,33 @@ interface Snapshot {
   tree: string;
   nested: string[];
   skipped: string[];
+  /** The folder's rules it left out by, when it was taken now; none for a stored checkpoint. */
+  ruled: readonly PlacedRule[];
+}
+/** What a checkpoint left out: nested repositories, and files it skipped for their size. */
+export type LeftOut = Pick<Snapshot, "nested" | "skipped">;
+/**
+ * A finished restore: how many files came back, the saved copy that undoes it (and the id its
+ * `rewound/` ref is named by), and files too large to put back.
+ */
+export interface RestoredCheckpoint {
+  files: number;
+  saved: string;
+  rewindId: string;
+  /** Changed files too large to have been saved, which stayed as they are; present only when there are any. */
+  stayed?: string[];
 }
 
-const refRoot = (threadId: string) => `refs/studio/chat/${threadId}`;
+const refRoot = (threadId: string) => `${REWIND_REFS}${threadId}`;
 export const chatCheckpointRef = (
   threadId: string,
   messageId: string,
   phase: CheckpointPhase = CheckpointPhase.Before,
 ): string => `${refRoot(threadId)}/${phase}/${messageId}`;
-const rewoundRef = (threadId: string): string =>
-  `${refRoot(threadId)}/rewound/${Date.now().toString(36)}-${randomUUID().slice(0, 8)}`;
+/** Where the folder as it was just before a rewind is kept, by the id the rewind's line names it with. */
+const rewoundRef = (threadId: string, rewindId: string): string => `${refRoot(threadId)}/rewound/${rewindId}`;
+/** A new rewind's id: base-36 time, then eight hex digits (`shared/chat-rewind.ts` `isRewindId`). */
+const newRewindId = (): string => `${Date.now().toString(36)}-${randomUUID().slice(0, 8)}`;
 
 const exec = promisify(execFile);
 /** The PATH filters such as git-lfs are found on (an app started from the Finder has a bare one). */
@@ -137,14 +162,28 @@ const quiet = <T>(work: Promise<T>): Promise<T | null> => work.catch(() => null)
 const nul = (items: readonly string[]) => items.map((item) => `${item}\0`).join("");
 const message = (err: unknown) => String((err as Error)?.message ?? err);
 
+/** What a checkpoint asks of its owner about a folder. */
+export interface ChatCheckpointOptions {
+  /**
+   * The folder's own rules for what it holds (`shared/project-workspace.ts`), which a checkpoint of
+   * it leaves out besides `NEVER_CAPTURED`. A rejection counts as none.
+   */
+  neverCaptured?: (dir: string) => Promise<readonly PlacedRule[]>;
+}
+
+/** A file time in milliseconds as whole seconds, rounded down: never later than the time itself. */
+const wholeSeconds = (ms: number) => Math.floor(ms / 1000);
+
 export class ChatCheckpoints {
   readonly #indexes: string;
   readonly #tails = new Map<string, Promise<unknown>>();
   readonly #path?: () => Promise<string>;
+  readonly #neverCaptured: (dir: string) => Promise<readonly PlacedRule[]>;
   /** `toolchainPath`: the PATH git's filters are looked up on (see `toolPath`). */
-  constructor(indexes: string, toolchainPath?: () => Promise<string>) {
+  constructor(indexes: string, toolchainPath?: () => Promise<string>, options: ChatCheckpointOptions = {}) {
     this.#indexes = indexes;
     this.#path = toolchainPath;
+    this.#neverCaptured = options.neverCaptured ?? (async () => []);
   }
 
   /** One git operation per folder at a time: they share the private index. */
@@ -152,6 +191,20 @@ export class ChatCheckpoints {
     return serial(this.#tails, dir, async () => {
       if (this.#path && toolPath === undefined) toolPath = await this.#path().catch(() => process.env.PATH ?? "");
       return work();
+    });
+  }
+
+  /**
+   * Run `work` in the folder's queue, so no checkpoint interleaves with it, then reset the private
+   * index, so no later checkpoint leans on an object `work` removed.
+   */
+  exclusive<T>(dir: string, work: () => Promise<T>): Promise<T> {
+    return this.#serial(dir, async () => {
+      try {
+        return await work();
+      } finally {
+        await this.#resetIndex(dir);
+      }
     });
   }
 
@@ -173,7 +226,15 @@ export class ChatCheckpoints {
     // all), but entries it tells git to skip must be read like any other.
     const own = path.join(dir, ".git", "index");
     if (!fromHead && (await pathExists(own))) {
+      // With its times: git re-reads a file whose time (to the second) is not older than its
+      // index's own, so a same-size edit in the second the repository last read it is still seen.
+      // A copy dated now would read every such entry as unchanged. The times are read before the
+      // copy and rounded down to the second, so the copy is never dated later than its content: a
+      // git that rewrites the index in between, or a time in a second's last half millisecond,
+      // only makes more entries racy, which costs a re-read and never misses an edit.
+      const { atimeMs, mtimeMs } = await stat(own);
       await copyFile(own, file);
+      await utimes(file, wholeSeconds(atimeMs), wholeSeconds(mtimeMs));
       const flagged = (await read(dir, ["ls-files", "-v", "-z"], { GIT_INDEX_FILE: file }))
         .split("\0")
         .filter((line) => /^([a-z]|S) /.test(line))
@@ -227,11 +288,27 @@ export class ChatCheckpoints {
     }
   }
 
+  /**
+   * The folder's own rules for what it holds, less any that reaches a file the repository tracks:
+   * a tracked file stays in checkpoints as it stays in history, so Rewind still brings it back.
+   */
+  async #ruledOut(dir: string): Promise<readonly PlacedRule[]> {
+    const rules = await this.#neverCaptured(dir).catch((): PlacedRule[] => []);
+    if (!rules.length) return [];
+    const listed = await quiet(read(dir, ["ls-files", "-z", "--", ...rules.map((rule) => pattern(ruleGlob(rule)))]));
+    const tracked = (listed ?? "").split("\0").filter(Boolean);
+    return rules.filter((rule) => !tracked.some((file) => ruleMatches(file, rule)));
+  }
+
   async #treeOnce(dir: string, fromHead: boolean): Promise<Snapshot> {
     const index = await this.#index(dir, fromHead);
     const nested = await nestedRepos(dir);
+    // The folder's own rules for what it holds, like NEVER_CAPTURED: a folder a rule names now
+    // leaves the checkpoint even when an earlier one captured it.
+    const ruled = await this.#ruledOut(dir);
     const excluded = [
       ...NEVER_CAPTURED.map(pattern),
+      ...ruled.map((rule) => pattern(ruleGlob(rule))),
       ...nested.flatMap((name) => [`:(glob)${literal(name)}/**`, pattern(literal(name))]),
     ];
     const exclude = excluded.map((spec) => spec.replace(/^:\(/, ":(exclude,"));
@@ -254,13 +331,13 @@ export class ChatCheckpoints {
     // Nothing left out needs no record (`snapshotOf` reads its absence as empty): three fewer git
     // runs before most answers.
     if (!nested.length && !skipped.length)
-      return { tree: (await read(dir, ["write-tree"], env)).trim(), nested, skipped };
+      return { tree: (await read(dir, ["write-tree"], env)).trim(), nested, skipped, ruled };
     // What it left out goes into the tree for the commit, and straight back out of the index.
     const record = (await read(dir, ["hash-object", "-w", "--stdin"], {}, JSON.stringify({ nested, skipped }))).trim();
     await read(dir, ["update-index", "--add", "--cacheinfo", `100644,${record},${LEFT_OUT_FILE}`], env);
     const tree = (await read(dir, ["write-tree"], env)).trim();
     await read(dir, ["update-index", "--force-remove", "--", LEFT_OUT_FILE], env);
-    return { tree, nested, skipped };
+    return { tree, nested, skipped, ruled };
   }
 
   /**
@@ -291,13 +368,19 @@ export class ChatCheckpoints {
     return skip;
   }
 
-  async #take(dir: string, ref: string, text: string, deadline?: number): Promise<string | null> {
-    const [parent, { tree }] = await Promise.all([head(dir), this.#tree(dir)]);
+  /** Commit the folder as it is now onto `ref`; the commit and the rules it left out by, or null past the deadline. */
+  async #take(
+    dir: string,
+    ref: string,
+    text: string,
+    deadline?: number,
+  ): Promise<{ commit: string; ruled: readonly PlacedRule[] } | null> {
+    const [parent, { tree, ruled }] = await Promise.all([head(dir), this.#tree(dir)]);
     const commit = (await write(dir, ["commit-tree", tree, ...(parent ? ["-p", parent] : []), "-m", text])).trim();
     // Too late to be the folder before the answer: the answer may already be changing it.
     if (deadline !== undefined && Date.now() > deadline) return null;
     await write(dir, ["update-ref", ref, commit]);
-    return commit;
+    return { commit, ruled };
   }
 
   /**
@@ -316,9 +399,9 @@ export class ChatCheckpoints {
       const ref = chatCheckpointRef(threadId, messageId, phase);
       const existing = phase === CheckpointPhase.Before ? await commitAt(dir, ref) : null;
       if (existing) return existing;
-      const commit = await this.#take(dir, ref, `studio: ${phase} chat message ${messageId}`, deadline);
-      if (commit) await this.#prune(dir, `${refRoot(threadId)}/${phase}/`, CHAT_CHECKPOINTS_KEPT);
-      return commit;
+      const taken = await this.#take(dir, ref, `studio: ${phase} chat message ${messageId}`, deadline);
+      if (taken) await this.#prune(dir, `${refRoot(threadId)}/${phase}/`, CHAT_CHECKPOINTS_KEPT);
+      return taken?.commit ?? null;
     });
   }
 
@@ -352,14 +435,17 @@ export class ChatCheckpoints {
       const now = await this.#tree(dir);
       const { changes, tooLarge } = await restorable(dir, found.commit, now);
       if (!changes.length)
-        return tooLarge ? { state: "unavailable", reason: "too-large" } : { state: "unchanged", nested: now.nested };
+        return tooLarge.length
+          ? { state: "unavailable", reason: "too-large", tooLargeFiles: tooLarge }
+          : { state: "unchanged", nested: now.nested };
       const answers = await this.#answered(dir, threadId, answered, now.tree);
       const known = new Set([...(answers ?? []), ...ours]);
       return {
         state: "restore",
         files: changes.length,
         nested: now.nested,
-        tooLarge,
+        tooLarge: tooLarge.length,
+        ...(tooLarge.length ? { tooLargeFiles: tooLarge } : {}),
         outside: answers ? changes.map((change) => change.path).filter((file) => !known.has(file)) : [],
         outsideUnknown: answers === null,
       };
@@ -392,32 +478,69 @@ export class ChatCheckpoints {
    * `rewound/` ref; a restore that fails partway is undone from it before the error is reported,
    * and `putBack` undoes a finished one.
    */
-  restore(dir: string, threadId: string, messageId: string): Promise<{ files: number; saved: string }> {
+  restore(dir: string, threadId: string, messageId: string): Promise<RestoredCheckpoint> {
     return this.#serial(dir, async () => {
       const found = await this.#checkpoint(dir, threadId, messageId);
       if ("reason" in found) {
         throw new Error(found.reason === "history-changed" ? MESSAGE.HistoryChanged : MESSAGE.NoCheckpoint);
       }
-      const saved = await this.#take(dir, rewoundRef(threadId), `studio: game files before rewinding to ${messageId}`);
-      if (!saved) throw new Error(MESSAGE.NotSaved);
-      await this.#prune(dir, `${refRoot(threadId)}/rewound/`, REWOUND_KEPT);
-      try {
-        return { files: await restoreTo(dir, found.commit, await snapshotOf(dir, saved), this.#indexes), saved };
-      } catch (err) {
-        await restoreTo(dir, saved, await this.#tree(dir), this.#indexes).catch(() => {});
-        throw err;
-      }
+      return this.#restoreFrom(dir, threadId, found.commit, `studio: game files before rewinding to ${messageId}`);
     });
   }
 
-  /** Was the folder saved before this message was answered (and is that copy still kept)? */
-  async has(dir: string, threadId: string, messageId: string): Promise<boolean> {
-    return (await commitAt(dir, chatCheckpointRef(threadId, messageId))) !== null;
+  /**
+   * Put the folder back as it was just before a rewind (its `rewound/` ref), saving the present on
+   * a `rewound/` ref of its own first, so this too can be undone. Refused once the game's history
+   * moved since the rewind, as a restore is; a restore that fails partway is undone the same way.
+   */
+  restoreSaved(dir: string, threadId: string, rewindId: string): Promise<RestoredCheckpoint> {
+    const refused = (reason: UndoRewindRefusal) => new Error(undoRewindRefusalWords(reason));
+    if (!isRewindId(rewindId)) return Promise.reject(refused(UndoRewindRefusal.Gone));
+    return this.#serial(dir, async () => {
+      const saved = await commitAt(dir, rewoundRef(threadId, rewindId));
+      if (!saved) throw refused(UndoRewindRefusal.Gone);
+      if ((await parentOf(dir, saved)) !== (await head(dir))) throw refused(UndoRewindRefusal.HistoryChanged);
+      return this.#restoreFrom(dir, threadId, saved, `studio: game files before bringing back ${rewindId}`);
+    });
+  }
+
+  /** Save the folder on a new `rewound/` ref, then restore `target`; a failure puts the saved copy back. */
+  async #restoreFrom(dir: string, threadId: string, target: string, text: string): Promise<RestoredCheckpoint> {
+    const rewindId = newRewindId();
+    const taken = await this.#take(dir, rewoundRef(threadId, rewindId), text);
+    if (!taken) throw new Error(MESSAGE.NotSaved);
+    const saved = taken.commit;
+    await this.#prune(dir, `${refRoot(threadId)}/rewound/`, REWOUND_KEPT);
+    try {
+      const current = { ...(await snapshotOf(dir, saved)), ruled: taken.ruled };
+      const { files, stayed } = await restoreTo(dir, target, current, this.#indexes);
+      await keepIgnoring(dir, taken.ruled);
+      return { files, saved, rewindId, ...(stayed.length ? { stayed } : {}) };
+    } catch (err) {
+      await restoreTo(dir, saved, await this.#tree(dir), this.#indexes).catch(() => {});
+      throw err;
+    }
+  }
+
+  /** What a checkpoint commit left out (none for a commit that recorded nothing, or none at all). */
+  async leftOut(dir: string, commit: string): Promise<LeftOut> {
+    const { nested, skipped } = await snapshotOf(dir, commit);
+    return { nested, skipped };
+  }
+
+  /** Was the folder saved before this message was answered, or after with `phase` (and is that copy still kept)? */
+  async has(
+    dir: string,
+    threadId: string,
+    messageId: string,
+    phase: CheckpointPhase = CheckpointPhase.Before,
+  ): Promise<boolean> {
+    return (await commitAt(dir, chatCheckpointRef(threadId, messageId, phase))) !== null;
   }
 
   /** Undo a restore: the folder as it was when the rewind began. */
   putBack(dir: string, saved: string): Promise<number> {
-    return this.#serial(dir, async () => restoreTo(dir, saved, await this.#tree(dir), this.#indexes));
+    return this.#serial(dir, async () => (await restoreTo(dir, saved, await this.#tree(dir), this.#indexes)).files);
   }
 
   async #checkpoint(
@@ -427,9 +550,17 @@ export class ChatCheckpoints {
   ): Promise<{ commit: string } | { reason: "no-checkpoint" | "history-changed" }> {
     const commit = await commitAt(dir, chatCheckpointRef(threadId, messageId));
     if (!commit) return { reason: "no-checkpoint" };
-    const parent = (await quiet(read(dir, ["rev-parse", "--verify", "-q", `${commit}^1`])))?.trim() || null;
-    return parent === (await head(dir)) ? { commit } : { reason: "history-changed" };
+    return (await parentOf(dir, commit)) === (await head(dir)) ? { commit } : { reason: "history-changed" };
   }
+}
+
+/**
+ * Write the folder's rules of now back into its restored ignore file: a restore leaves what they
+ * leave out on disk, and an older ignore file may not name it, though the folder it put back may no
+ * longer hold what named those rules. A file that cannot be topped up is left as it is.
+ */
+async function keepIgnoring(dir: string, ruled: readonly PlacedRule[]): Promise<void> {
+  await ensureFactIgnoreRules(dir, ruled.map(ignoreLine)).catch(() => {});
 }
 
 /** A checkpoint commit's tree and what it left out. */
@@ -444,6 +575,7 @@ async function snapshotOf(dir: string, commit: string): Promise<Snapshot> {
     tree: commit,
     nested: Array.isArray(recorded.nested) ? recorded.nested : [],
     skipped: Array.isArray(recorded.skipped) ? recorded.skipped : [],
+    ruled: [],
   };
 }
 
@@ -453,24 +585,37 @@ function literal(name: string): string {
 }
 
 /**
- * A glob pathspec `git add` accepts even for an ignored path. It refuses an item that names an
- * ignored path outright, even to exclude it, unless the item's last part is a pattern. So a
- * last part without a wildcard gets one: its last character becomes a class (`dis[t]`), or,
- * when that is not ASCII, one `?` per UTF-8 byte (git matches classes byte by byte).
+ * A segment that holds a wildcard: as it is when it has one, else its last character becomes a
+ * class (`dis[t]`), or, when that is not ASCII, one `?` per UTF-8 byte (git matches classes byte
+ * by byte).
  */
-function pattern(glob: string): string {
-  const cut = glob.lastIndexOf("/") + 1;
-  const last = glob.slice(cut);
-  if (/[*?]|\[[^\]]*\]$/.test(last)) return `:(glob)${glob}`;
-  const chars = [...last];
+function wildcarded(segment: string): string {
+  if (/[*?]|\[[^\]]*\]/.test(segment)) return segment;
+  const chars = [...segment];
   const final = chars.pop() ?? "";
   const tail = /^[\x20-\x7e]$/.test(final) ? `[${final}]` : "?".repeat(Buffer.byteLength(final));
-  return `:(glob)${glob.slice(0, cut)}${chars.join("")}${tail}`;
+  return `${chars.join("")}${tail}`;
+}
+
+/**
+ * A glob pathspec `git add` accepts even for an ignored path. It refuses an item whose literal
+ * start names an ignored path outright, even to exclude it (`Saved/**` once `/Saved/` is ignored),
+ * so the first part and the last get a wildcard each (`Save[d]/**`, `dis[t]`).
+ */
+function pattern(glob: string): string {
+  const parts = glob.split("/");
+  const last = parts.length - 1;
+  return `:(glob)${parts.map((part, i) => (i === 0 || i === last ? wildcarded(part) : part)).join("/")}`;
 }
 
 async function head(dir: string): Promise<string | null> {
   return (await quiet(read(dir, ["rev-parse", "--verify", "-q", "HEAD^{commit}"])))?.trim() || null;
 }
+/** The commit a checkpoint was taken on (its first parent), or null for one taken before any commit. */
+async function parentOf(dir: string, commit: string): Promise<string | null> {
+  return (await quiet(read(dir, ["rev-parse", "--verify", "-q", `${commit}^1`])))?.trim() || null;
+}
+
 async function commitAt(dir: string, ref: string): Promise<string | null> {
   return (await quiet(read(dir, ["rev-parse", "--verify", "-q", `${ref}^{commit}`])))?.trim() || null;
 }
@@ -498,22 +643,26 @@ const ancestors = (file: string): string[] =>
 
 /**
  * The changes a restore may make: none to what either side left out, nested or skipped, nor
- * beneath a skipped file's place. `tooLarge` counts changed files held back for their size.
+ * beneath a skipped file's place, nor to what the folder's rules leave out now (an older
+ * checkpoint may have captured engine scratch a rule names since: it stays as it is, whole).
+ * `tooLarge` lists changed files held back for their size.
  */
 async function restorable(
   dir: string,
   target: string | Snapshot,
   current: Snapshot,
-): Promise<{ changes: Change[]; tooLarge: number }> {
+): Promise<{ changes: Change[]; tooLarge: string[] }> {
   const from = typeof target === "string" ? await snapshotOf(dir, target) : target;
   const skipped = new Set([...from.skipped, ...current.skipped]);
   const roots = [...from.nested, ...current.nested];
   const all = await changesBetween(dir, from.tree, current.tree);
   const tooLarge = (file: string) => skipped.has(file) || ancestors(file).some((parent) => skipped.has(parent));
   const nested = (file: string) => roots.some((root) => file === root || file.startsWith(`${root}/`));
+  const ruled = (file: string) => current.ruled.some((rule) => ruleMatches(file, rule));
+  const kept = (file: string) => tooLarge(file) || nested(file) || ruled(file);
   return {
-    changes: all.filter((change) => !tooLarge(change.path) && !nested(change.path)),
-    tooLarge: all.filter((change) => tooLarge(change.path)).length,
+    changes: all.filter((change) => !kept(change.path)),
+    tooLarge: all.filter((change) => tooLarge(change.path)).map((change) => change.path),
   };
 }
 
@@ -522,9 +671,15 @@ async function restorable(
  * first, and a path the restored rules ignore is left alone rather than deleted: it was not the
  * checkpoint's to have. Where a folder now stands in place of a file, or a file in place of a
  * folder, holding anything the checkpoints never saw, that place is left as it is, whole.
+ * Answers how many files it changed, and the changed files it left for their size.
  */
-async function restoreTo(dir: string, target: string, current: Snapshot, indexes: string): Promise<number> {
-  const { changes } = await restorable(dir, target, current);
+async function restoreTo(
+  dir: string,
+  target: string,
+  current: Snapshot,
+  indexes: string,
+): Promise<{ files: number; stayed: string[] }> {
+  const { changes, tooLarge } = await restorable(dir, target, current);
   const root = await realpath(dir);
   const index = path.join(indexes, `restore-${randomUUID()}.index`);
   const checkout = async (files: string[]) => {
@@ -550,7 +705,7 @@ async function restoreTo(dir: string, target: string, current: Snapshot, indexes
     );
     await checkout(back.filter((file) => !rules.includes(file) && !kept.has(file)));
     const restored = (change: Change) => change.status !== ADDED || removable.has(change.path);
-    return changes.filter((change) => !within(change.path) && restored(change)).length;
+    return { files: changes.filter((change) => !within(change.path) && restored(change)).length, stayed: tooLarge };
   } finally {
     await rm(index, { force: true });
   }

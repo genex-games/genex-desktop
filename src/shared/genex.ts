@@ -3,6 +3,8 @@ import { type CaptureSource, type StillExposure, StillMimeType } from "./preview
 
 /** The bundled Genex plugin's id: the host's own Genex surfaces (its page, the promo) look it up by this. */
 export const GENEX_PLUGIN_ID = "genex";
+/** The Genex plugin's skill that teaches an agent to write a Genex plugin (`plugins_find` names it). */
+export const GENEX_PLUGIN_AUTHOR_SKILL = "plugin-author";
 
 /**
  * The user actions the Genex plugin.json declares, as its panels, the Plugins page, the promo and
@@ -14,6 +16,8 @@ export const GenexAction = {
   Unlock: "unlock",
   Connect: "connect",
   Terms: "terms",
+  /** Whether the signed-in account still has Genex's updated terms to accept: `{ pending }`. */
+  TermsStatus: "terms-status",
   Disconnect: "disconnect",
   CancelConnect: "cancel-connect",
   Approve: "approve",
@@ -23,18 +27,101 @@ export const GenexAction = {
   PublishAllowUpload: "publish-allow-upload",
   PublishOpen: "publish-open",
   PublishBadge: "publish-badge",
+  CoverAuto: "cover-auto",
+  CoverPick: "cover-pick",
 } as const;
+export type GenexAction = (typeof GenexAction)[keyof typeof GenexAction];
+
+/**
+ * The Genex actions that belong to the person's account, not the agent's tools: signing in and
+ * out, the account's status and terms, and Publish with its cover and clip. They run while the
+ * Genex plugin is off.
+ */
+export const GENEX_ACCOUNT_ACTIONS: readonly GenexAction[] = [
+  GenexAction.Status,
+  GenexAction.Unlock,
+  GenexAction.Connect,
+  GenexAction.Terms,
+  GenexAction.TermsStatus,
+  GenexAction.Disconnect,
+  GenexAction.CancelConnect,
+  GenexAction.PublishStatus,
+  GenexAction.PublishDraft,
+  GenexAction.PublishGallery,
+  GenexAction.PublishAllowUpload,
+  GenexAction.PublishOpen,
+  GenexAction.PublishBadge,
+  GenexAction.CoverAuto,
+  GenexAction.CoverPick,
+];
 
 /**
  * The Genex SDK packages a game may add, each at the exact version Studio installs. The agent names
  * a package; the version always comes from here. Multiplayer's card asks for `^0.16.0`.
  */
 export const GENEX_GAME_PACKAGES = {
-  "@genex-ai/multiplayer": "0.16.1",
-  "@genex-ai/embed-sdk": "0.30.0",
+  "@genex-ai/multiplayer": "0.17.0",
+  "@genex-ai/embed-sdk": "0.33.0",
 } as const;
 /** A Genex SDK package a game may add. */
 export type GenexGamePackage = keyof typeof GENEX_GAME_PACKAGES;
+
+/**
+ * Where Studio's copy of `@genex-ai/embed-sdk` sits under a vendor folder (the app's, served as
+ * `/vendor/`, and a published copy's `vendor/`), and the module beside it that connects a page to
+ * Genex: a template game imports the SDK through its import map from there, and a published game
+ * that brings no SDK of its own is connected by that module.
+ */
+export const GENEX_EMBED_VENDOR = {
+  Sdk: "genex/embed-sdk",
+  Entry: "genex/embed-sdk/index.js",
+  Connect: "genex/connect.js",
+} as const;
+
+/**
+ * Where Studio's copy of `@genex-ai/multiplayer` sits under the vendor folder: its entry and its
+ * schema entry, built together so both share one copy of Colyseus's schema (a state class defined
+ * with one is unknown to the other). A template game maps both in its import map.
+ */
+export const GENEX_MULTIPLAYER_VENDOR = {
+  Dir: "genex/multiplayer",
+  Entry: "genex/multiplayer/index.js",
+  Schema: "genex/multiplayer/schema.js",
+} as const;
+
+/**
+ * What a template game's import map maps for each package, at `/vendor`: the specifiers it imports
+ * and Studio's copy of each. Multiplayer always brings player identity (`genexPackageSet`).
+ */
+export const GENEX_STUDIO_IMPORTS = {
+  "@genex-ai/embed-sdk": { "@genex-ai/embed-sdk": `/vendor/${GENEX_EMBED_VENDOR.Entry}` },
+  "@genex-ai/multiplayer": {
+    "@genex-ai/multiplayer": `/vendor/${GENEX_MULTIPLAYER_VENDOR.Entry}`,
+    "@genex-ai/multiplayer/schema": `/vendor/${GENEX_MULTIPLAYER_VENDOR.Schema}`,
+  },
+} as const satisfies Record<GenexGamePackage, Readonly<Record<string, string>>>;
+
+/** The packages a request installs: multiplayer always brings its player-identity dependency. */
+export function genexPackageSet(name: GenexGamePackage): GenexGamePackage[] {
+  return name === "@genex-ai/multiplayer" ? [name, "@genex-ai/embed-sdk"] : [name];
+}
+
+/** The import-map entries a template game needs for `name`, its dependency included. */
+export function studioSdkImports(name: GenexGamePackage): Record<string, string> {
+  return Object.assign({}, ...genexPackageSet(name).map((pkg) => GENEX_STUDIO_IMPORTS[pkg]));
+}
+
+/**
+ * The packages an import map takes from Studio's copies: each whose specifiers all map exactly to
+ * Studio's files. A Genex name mapped anywhere else (a CDN, the game's own file) turns nothing on.
+ */
+export function studioSdkPackages(imports: Readonly<Record<string, unknown>>): GenexGamePackage[] {
+  return (Object.keys(GENEX_STUDIO_IMPORTS) as GenexGamePackage[]).filter((pkg) =>
+    Object.entries(GENEX_STUDIO_IMPORTS[pkg]).every(
+      ([specifier, url]) => Object.hasOwn(imports, specifier) && imports[specifier] === url,
+    ),
+  );
+}
 /** Whether a name is one of those packages: an own key, never an inherited one. */
 export function isGenexGamePackage(name: unknown): name is GenexGamePackage {
   return typeof name === "string" && Object.hasOwn(GENEX_GAME_PACKAGES, name);
@@ -194,6 +281,20 @@ export const GenexUseVerification = {
 } as const;
 export type GenexUseVerification = (typeof GenexUseVerification)[keyof typeof GenexUseVerification];
 
+/** Why Genex took a job no further than asking: the person has something to do first. Wire values. */
+export const GenexBlocked = {
+  /** Genex's terms changed and the account has not accepted them yet. */
+  Terms: "terms",
+} as const;
+export type GenexBlocked = (typeof GenexBlocked)[keyof typeof GenexBlocked];
+
+/** What the Genex plugin announces to the app while a call runs (`events.emit`), by `kind`. Wire values. */
+export const GenexPluginEvent = {
+  /** The account's terms changed state: `{ kind, pending }`, so the app reads the account again. */
+  Terms: "terms",
+} as const;
+export type GenexPluginEvent = (typeof GenexPluginEvent)[keyof typeof GenexPluginEvent];
+
 export interface GenexJob {
   id: string;
   project: string;
@@ -209,6 +310,8 @@ export interface GenexJob {
   creditsRefunded?: number;
   files: string[];
   error?: string;
+  /** Set when the job went no further than asking the person for something first. */
+  blocked?: GenexBlocked;
   creditsQuoted?: number;
   createdAt: string;
   use?: {
@@ -257,7 +360,7 @@ export interface GenexPublishJob {
   kind: GenexPublishKind;
   state: GenexPublishJobState;
   phase: GenexPublishPhase;
-  deployment?: { id: string; digest: string; files: Array<{ path: string; sha256: string }> };
+  deployment?: { id: string; digest: string; files: Array<{ path: string; sha256: string; bodySha256?: string }> };
   expectedStagingRevision?: string;
   stagingUrl?: string;
   uploadedAt?: string;
@@ -299,8 +402,46 @@ export type GenexCoverOutcome = (typeof GenexCoverOutcome)[keyof typeof GenexCov
 /** The cover tool plugin.json declares (`genex__cover`): its kept shot is the card the chat shows. */
 export const GENEX_COVER_TOOL = "cover";
 
-/** What genex__cover does: photograph the genex-cover demo and keep it, or report the cover's state. */
-export const GenexCoverOperation = { Shoot: "shoot", Status: "status" } as const;
+/** The tool plugin.json declares for every generation (`genex__asset`): its `operation` says what it makes. */
+export const GENEX_ASSET_TOOL = "asset";
+
+/** How many characters of a generation's id Genex puts in the names of its output files. */
+const GENERATION_IN_NAME = 8;
+
+/**
+ * Whether a Genex output file is the provider's unprocessed source of another. Genex names each
+ * output after its generation and its role code (`…-cmv6qk2b-walk-animation-a1-source-glb.glb`),
+ * and a role with a `source` part is the copy from before Genex rigged or retargeted it.
+ */
+export function isGenexSourceOutput(file: string, generationId: string | null | undefined): boolean {
+  if (!generationId) return false;
+  const name = file.split("/").pop() ?? "";
+  const marker = `-${generationId.slice(0, GENERATION_IN_NAME)}-`;
+  const at = name.indexOf(marker);
+  if (at < 0) return false;
+  const role = name.slice(at + marker.length).replace(/\.[^.]+$/, "");
+  return role.split("-").includes("source");
+}
+
+/** A delivered file as far as folding sources needs it. */
+type Output = { file: string; kind: string; source?: string; generationId?: string };
+
+/**
+ * The files to show, less each Genex source copy whose generation also delivered a finished model:
+ * the copy is still in the game, it is just never a second card of the same thing. A source that
+ * came alone is shown.
+ */
+export function withoutGenexSources<T extends Output>(files: readonly T[]): T[] {
+  const isSource = (file: T) =>
+    file.source === GENEX_PLUGIN_ID && file.kind === "model" && isGenexSourceOutput(file.file, file.generationId);
+  const finished = new Set(
+    files.filter((file) => file.kind === "model" && file.generationId && !isSource(file)).map((f) => f.generationId),
+  );
+  return files.filter((file) => !(isSource(file) && finished.has(file.generationId)));
+}
+
+/** What genex__cover does: photograph the genex-cover demo and keep it, record the genex-clip demo, or report. */
+export const GenexCoverOperation = { Shoot: "shoot", Status: "status", Clip: "clip" } as const;
 export type GenexCoverOperation = (typeof GenexCoverOperation)[keyof typeof GenexCoverOperation];
 
 /** The folder of the Genex plugin's storage that holds one folder per game's cover, `covers/<project>/`. */
@@ -311,6 +452,15 @@ export const GENEX_COVER_SHOT_FILE = {
   [StillMimeType.Png]: "shot.png",
   [StillMimeType.Jpeg]: "shot.jpg",
 } as const satisfies Record<StillMimeType, string>;
+
+/** The folder beside the kept shot that holds the recent frames as `<sha256>.png|jpg`, listed in `candidates.json`. */
+export const GENEX_COVER_CANDIDATES_DIR = "candidates";
+
+/** The kept cover clip's video beside its record (`clip.json`) in `covers/<project>/`, named by its type. */
+export const GENEX_COVER_CLIP_FILE = {
+  "video/webm": "clip.webm",
+  "video/mp4": "clip.mp4",
+} as const;
 
 /** Mirror of Genex's cover upload limit (the CLI's `COVER_MAX_BYTES`, the API's `COVER_MAX_UPLOAD_BYTES`). */
 export const GENEX_COVER_MAX_BYTES = 8 * 1024 * 1024;
@@ -325,7 +475,20 @@ export interface GenexCoverShot {
   source: CaptureSource;
   stats: StillExposure;
   takenAt: string;
+  /** Who staged the frame: the game's genex-cover demo, or Studio's plain frame of a game with none. Absent: the demo. */
+  origin?: GenexCoverOrigin;
+  /** The person picked this frame among the candidates: Studio and a publish shoot no new one over it. */
+  pinned?: boolean;
 }
+
+/** Who staged a kept cover frame (`GenexCoverShot.origin`). Persisted: never rename one. */
+export const GenexCoverOrigin = {
+  /** The game's own `genex-cover` demo. */
+  Demo: "demo",
+  /** Studio's plain frame of the game as it loads, for a game with no genex-cover demo yet. */
+  Studio: "studio",
+} as const;
+export type GenexCoverOrigin = (typeof GenexCoverOrigin)[keyof typeof GenexCoverOrigin];
 
 /** Genex's luma numbers on a refused frame, as the CLI reports them (0–1). */
 export interface GenexCoverFrameStats {
@@ -356,12 +519,40 @@ export interface GenexCoverSent {
   settled?: GenexCoverOutcome;
 }
 
+/** Answers that mean the owner chose the game's cover on genex.games: that choice stands. */
+const OWNER_CHOSE = new Set<GenexCoverOutcome>([GenexCoverOutcome.KeptOwner, GenexCoverOutcome.Outranked]);
+
+/** Whether the last send found the owner's own cover, then or when these bytes were first sent. */
+export function ownerChoseCover(last: GenexCoverSent | null | undefined): boolean {
+  if (!last) return false;
+  return [last.kind, last.settled].some((kind) => kind !== undefined && OWNER_CHOSE.has(kind));
+}
+
 /** The game's Genex cover as the plugin reports it: the kept shot, the last send, and whether one runs. */
 export interface GenexCoverRecord {
   shot: GenexCoverShot | null;
   last: GenexCoverSent | null;
   /** A send is running for this game right now. */
   sending: boolean;
+  /** The recent frames the person can flip between, newest first, the kept shot among them. Absent from older plugins. */
+  candidates?: GenexCoverShot[];
+  /** The kept genex-clip recording, or null; absent from a plugin older than clips. */
+  clip?: GenexCoverClip | null;
+  /** How the last clip send went; null before any. */
+  clipLast?: GenexCoverSent | null;
+}
+
+/** The game's kept cover clip (`covers/<project>/clip.json`), beside its video: five seconds of real play. */
+export interface GenexCoverClip {
+  sha256: string;
+  mimeType: string;
+  bytes: number;
+  width: number;
+  height: number;
+  durationMs: number;
+  /** Share of sampled frame pairs that differ: a frozen recording is near 0. */
+  motion: number;
+  takenAt: string;
 }
 
 /** What Studio knows about this game's Genex pages. Never a credential, never the user's game folder. */

@@ -2,20 +2,35 @@
  * Publish pressed in Studio's own Publish dialog. The dialog Studio draws says what publishing
  * does and then shows the exact files that would go online; publishing that list is the consent,
  * so no native dialog and no chat card ask again. Only for a game Studio may open, only through
- * the bundled Genex plugin while it is on, and only for the very files the person saw.
+ * the bundled Genex plugin, on or off, and only for the very files the person saw.
  */
 import assert from "node:assert/strict";
-import { writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { test } from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
 import { EXPORT_APPROVAL_TTL_MS, ExportApprovals } from "../../src/main/core/export-approvals.ts";
-import { publishFromDialog, publishReview } from "../../src/main/core/genex-publish.ts";
-import { type ExportReview, type PluginBinding, PluginSourceKind } from "../../src/shared/plugins.ts";
+import { GenexStudioTool } from "../../src/main/core/genex-cli-prompts.ts";
+import {
+  PublishRefusal,
+  PublishRefusedError,
+  publishFromDialog,
+  publishReview,
+} from "../../src/main/core/genex-publish.ts";
+import type { ExportResult } from "../../src/shared/game-project.ts";
+import { GENEX_PLUGIN_ID, GenexAction, GenexPublishKind } from "../../src/shared/genex.ts";
+import { HostMethod } from "../../src/shared/harness-api.ts";
+import { type ExportReview, type PluginBinding, PluginService, PluginSourceKind } from "../../src/shared/plugins.ts";
 import { UiEvent, type UiEventMap } from "../../src/shared/ui-events.ts";
+import { writeEngineBinding } from "../../src/substrate/game-engine-binding.ts";
+import { ENGINES, UNREAL_ENGINE } from "../helpers/engines.ts";
 import { coreLite } from "../helpers/core-lite.ts";
 
 const GAME = "publish-me";
+/** A game that builds in Unreal, beside the rig's web game. */
+const UNREAL_GAME = "dirt-track";
+const UNREAL_TITLE = "Dirt Track";
+const UNREAL_REFUSAL = "Dirt Track builds in Unreal; publishing an Unreal game isn't supported yet.";
 type Consent = UiEventMap[typeof UiEvent.PluginConsent];
 
 /** How long a test waits for the host to ask about a file list. */
@@ -66,6 +81,24 @@ async function dialogRig() {
   return { ...lite, game, calls, staged, consents, exportStage, asked };
 }
 
+/** Dirt Track, linked to the Unreal project New game puts in its own `unreal/` folder. */
+async function addUnrealGame(rig: Awaited<ReturnType<typeof dialogRig>>) {
+  const game = await rig.core.games.scaffold(UNREAL_GAME, { title: UNREAL_TITLE });
+  const project = path.join(game.dir, "unreal", "DirtTrack.uproject");
+  await mkdir(path.dirname(project), { recursive: true });
+  await writeFile(project, "{}");
+  await writeEngineBinding(game.dir, project, UNREAL_ENGINE.id, ENGINES);
+  return game;
+}
+
+/** Refused for being an Unreal game: by its code, in the words the person reads. */
+const refusedAsUnreal = (error: unknown): boolean => {
+  assert.ok(error instanceof PublishRefusedError, String(error));
+  assert.equal(error.code, PublishRefusal.UnrealGame);
+  assert.equal(error.message, UNREAL_REFUSAL);
+  return true;
+};
+
 test("Publish first shows the files the game would upload, and starts nothing", async () => {
   const rig = await dialogRig();
   try {
@@ -105,7 +138,7 @@ test("publishing the shown files publishes the open game to the gallery, and the
   }
 });
 
-test("the name typed in the dialog reaches Genex as one clean line, and a blank one is left to Genex Tools", async () => {
+test("the name typed in the dialog reaches Genex as one clean line, and a blank one is left to the Genex plugin", async () => {
   const rig = await dialogRig();
   try {
     const titles: Array<[unknown, Record<string, unknown>]> = [
@@ -181,7 +214,7 @@ test("Publish refuses anything but a game's name and a file list, and asks Genex
   }
 });
 
-test("Publish needs the bundled Genex plugin, on", async () => {
+test("Publish needs the bundled Genex plugin installed, on or off", async () => {
   const rig = await dialogRig();
   try {
     const review = await publishReview(rig.core, GAME);
@@ -189,7 +222,6 @@ test("Publish needs the bundled Genex plugin, on", async () => {
     assert.ok(installed.some((p) => p.manifest.id === "genex" && p.source === PluginSourceKind.Bundled));
     const unusable: Array<[string, (p: (typeof installed)[number]) => (typeof installed)[number] | null]> = [
       ["missing", () => null],
-      ["off", (p) => ({ ...p, enabled: false })],
       ["removed", (p) => ({ ...p, removed: true })],
       ["not bundled", (p) => ({ ...p, source: PluginSourceKind.Local })],
     ];
@@ -204,6 +236,159 @@ test("Publish needs the bundled Genex plugin, on", async () => {
       await assert.rejects(publishFromDialog(rig.core, GAME, review), /Genex/, label);
     }
     assert.deepEqual(rig.calls, []);
+  } finally {
+    await rig.close();
+  }
+});
+
+test("Publish belongs to the account: with the Genex plugin off it still lists and publishes the game", async () => {
+  const rig = await dialogRig();
+  try {
+    await rig.core.plugins.setEnabled(GENEX_PLUGIN_ID, false);
+    const review = await publishReview(rig.core, GAME);
+    assert.ok(review.included.includes("index.html"));
+    await publishFromDialog(rig.core, GAME, review, "Off Plugin Game");
+    assert.deepEqual(
+      rig.calls.map((call) => [call.id, call.name, call.args]),
+      [[GENEX_PLUGIN_ID, GenexAction.PublishGallery, { title: "Off Plugin Game" }]],
+    );
+    assert.equal(rig.core.plugins.servesAction(GENEX_PLUGIN_ID, GenexAction.PublishGallery), true);
+    assert.equal(rig.core.plugins.servesAction(GENEX_PLUGIN_ID, GenexAction.Approve), false, "the agent's steps wait");
+  } finally {
+    await rig.close();
+  }
+});
+
+test("Publish refuses an Unreal game, whose folder holds no web build, and still publishes a web game", async () => {
+  const rig = await dialogRig();
+  try {
+    await addUnrealGame(rig);
+    const review = await publishReview(rig.core, GAME);
+    await assert.rejects(publishReview(rig.core, UNREAL_GAME), refusedAsUnreal);
+    await assert.rejects(publishFromDialog(rig.core, UNREAL_GAME, review), refusedAsUnreal);
+    assert.equal(rig.calls.length, 0, "Genex is asked nothing");
+    assert.equal(rig.consents.length, 0, "and nobody is asked anything");
+    await publishFromDialog(rig.core, GAME, review);
+    assert.deepEqual(
+      rig.calls.map((call) => [call.name, call.binding?.project]),
+      [[GenexAction.PublishGallery, GAME]],
+    );
+    assert.equal(rig.staged.length, 1, "Genex staged the web game's public copy");
+  } finally {
+    await rig.close();
+  }
+});
+
+test("Publish refuses a folder that holds another kind of project and no web game, by its own code", async () => {
+  const rig = await dialogRig();
+  try {
+    const godot = await rig.core.games.scaffold("lantern-keep", { title: "Lantern Keep" });
+    // A Godot project in place of the starter: no page, and no starter recorded in its studio.json.
+    await rm(path.join(godot.dir, "index.html"));
+    const meta = path.join(godot.dir, "studio.json");
+    const { contractVersion: _starter, ...kept } = JSON.parse(await readFile(meta, "utf8")) as Record<string, unknown>;
+    await writeFile(meta, JSON.stringify(kept));
+    await writeFile(path.join(godot.dir, "project.godot"), "config_version=5\n");
+    const refused = (error: unknown): boolean => {
+      assert.ok(error instanceof PublishRefusedError, String(error));
+      assert.equal(error.code, PublishRefusal.NotWebGame);
+      assert.equal(error.message, "Lantern Keep isn't a web game, so Genex can't publish it yet.");
+      return true;
+    };
+    await assert.rejects(publishReview(rig.core, "lantern-keep"), refused);
+    assert.equal(rig.calls.length, 0, "Genex is asked nothing");
+    assert.equal(rig.consents.length, 0, "and nobody is asked anything");
+    assert.deepEqual((await publishReview(rig.core, GAME)).included, ["index.html"], "a web game still is");
+  } finally {
+    await rig.close();
+  }
+});
+
+test("Publish puts a Godot game's web export online: its web/ folder in the root's place", async () => {
+  const rig = await dialogRig();
+  try {
+    const godot = await rig.core.games.scaffold("ember-run", { title: "Ember Run" });
+    await rm(path.join(godot.dir, "index.html"));
+    const meta = path.join(godot.dir, "studio.json");
+    const { contractVersion: _starter, ...kept } = JSON.parse(await readFile(meta, "utf8")) as Record<string, unknown>;
+    await writeFile(meta, JSON.stringify(kept));
+    await mkdir(path.join(godot.dir, "godot"), { recursive: true });
+    await writeFile(path.join(godot.dir, "godot", "project.godot"), "config_version=5\n");
+    await mkdir(path.join(godot.dir, "web"), { recursive: true });
+    await writeFile(
+      path.join(godot.dir, "web", "index.html"),
+      "<!doctype html><title>Ember Run</title><script src=index.js></script>",
+    );
+    for (const file of ["index.js", "index.wasm", "index.pck"])
+      await writeFile(path.join(godot.dir, "web", file), file);
+    await writeFile(path.join(godot.dir, "web", ".gdignore"), "");
+    const review = await publishReview(rig.core, "ember-run");
+    assert.deepEqual([...review.included].sort(), ["index.html", "index.js", "index.pck", "index.wasm"]);
+  } finally {
+    await rig.close();
+  }
+});
+
+test("Publish refuses a folder of its own files of a kind no rule knows: it is served as no web game", async () => {
+  const rig = await dialogRig();
+  try {
+    const own = await rig.core.games.scaffold("kite-script", { title: "Kite Script" });
+    await rm(path.join(own.dir, "index.html"));
+    await rm(path.join(own.dir, "src"), { recursive: true, force: true });
+    const meta = path.join(own.dir, "studio.json");
+    const { contractVersion: _starter, ...kept } = JSON.parse(await readFile(meta, "utf8")) as Record<string, unknown>;
+    await writeFile(meta, JSON.stringify(kept));
+    await writeFile(path.join(own.dir, "main.py"), "print('kite')\n");
+    const refused = (error: unknown): boolean => {
+      assert.ok(error instanceof PublishRefusedError, String(error));
+      assert.equal(error.code, PublishRefusal.NotWebGame);
+      return true;
+    };
+    await assert.rejects(publishReview(rig.core, "kite-script"), refused);
+    assert.equal(rig.calls.length, 0, "Genex is asked nothing");
+  } finally {
+    await rig.close();
+  }
+});
+
+test("an agent's genex__publish refuses an Unreal game before anyone is asked, and still reaches Genex for a web game", async () => {
+  const rig = await dialogRig();
+  try {
+    await addUnrealGame(rig);
+    const reached: Array<{ name: string; project: string }> = [];
+    // Consent and the backend both sit behind the registry's tool call: reaching it is reaching Genex.
+    rig.core.plugins.tool = async (name, _args, binding) => {
+      reached.push({ name, project: binding.project });
+      return {};
+    };
+    const publish = (project: string) =>
+      rig.api()[HostMethod.PluginsInvoke]({
+        project,
+        name: GenexStudioTool.Publish,
+        args: { operation: GenexPublishKind.Gallery },
+      });
+    await assert.rejects(publish(UNREAL_GAME), refusedAsUnreal);
+    assert.equal(reached.length, 0, "Genex is asked nothing");
+    assert.equal(rig.consents.length, 0, "and no card asks to publish it");
+    await publish(GAME);
+    assert.deepEqual(reached, [{ name: GenexStudioTool.Publish, project: GAME }]);
+  } finally {
+    await rig.close();
+  }
+});
+
+test("a Genex panel's own publish refuses an Unreal game at export.stage before anyone is asked, and still stages a web game", async () => {
+  const rig = await dialogRig();
+  try {
+    const unreal = await addUnrealGame(rig);
+    // What Genex's backend calls once a panel's or toolbar's publish action reached it.
+    const stage = (binding: PluginBinding) =>
+      rig.core.pluginServices.call(GENEX_PLUGIN_ID, PluginService.ExportStage, {}, binding) as Promise<ExportResult>;
+    await assert.rejects(stage({ project: UNREAL_GAME, directory: unreal.dir }), refusedAsUnreal);
+    assert.equal(rig.consents.length, 0, "no card asks about an Unreal game's files");
+    const staged = stage({ project: GAME, directory: rig.game.dir });
+    rig.core.resolveConsent((await rig.asked()).consentId, true);
+    assert.deepEqual((await staged).included, ["index.html"], "the web game's public copy is staged");
   } finally {
     await rig.close();
   }

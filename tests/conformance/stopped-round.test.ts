@@ -15,7 +15,18 @@ import type { EventEnvelope } from "../../src/substrate/types.ts";
 import { stopSignal, stopsThisRound } from "../../src/harness-seed/loop/facet-loop.ts";
 import { toEntries } from "../../src/renderer/chat-entries.ts";
 import { buildRunGraph, type IterationNode } from "../../src/renderer/run-graph.ts";
-import { partRows, STATE_TONE, stepSentence } from "../../src/renderer/run-steps.ts";
+import {
+  partRows,
+  rowMeta,
+  STATE_TONE,
+  StepState,
+  stepPill,
+  stepSentence,
+  stepWord,
+} from "../../src/renderer/run-steps.ts";
+import { CustomEvent } from "../../src/shared/custom-events.ts";
+import { ExecutionStatus } from "../../src/shared/run-state.ts";
+import { WorkerStopCode } from "../../src/shared/workers.ts";
 import { sideBySideWords, stoppedWords, verdictWords, wasStopped } from "../../src/renderer/words.ts";
 import { TRY_GLYPH, TRY_WORD } from "../../src/renderer/round-status.ts";
 
@@ -284,7 +295,9 @@ describe("a stop that lands between phases", () => {
     );
     // The review fix and the regression follow-up are delegations of their own: an abort lands
     // on them, not on the build turn, and used to be read for its session id and nothing else.
-    assert.equal((source.match(/fix\.ok === false && fix\.stopReason === StopReason\.Stopped/g) ?? []).length, 2);
+    // Both go through the one follow-up turn, which hands a steer over and ends a stop's round.
+    assert.equal((source.match(/await followUpTurn\(loop, round, /g) ?? []).length, 2);
+    assert.equal((source.match(/turn\.ok !== false \|\| turn\.stopReason !== StopReason\.Stopped/g) ?? []).length, 1);
     // One place commits and bookmarks the round, whichever phase the stop arrived in.
     assert.equal(
       (source.match(/attemptRef\(run\.runId, facet\.id, iteration, \{ stopped: true \}\)/g) ?? []).length,
@@ -310,5 +323,93 @@ describe("who asked the facet to stop", () => {
     });
     // A director that gives no reason still does not get to blame anyone.
     assert.deepEqual(stopSignal({ by: "director" }), { by: "director", reason: "stopped by the director" });
+  });
+});
+
+describe("a round the run's pause stopped", () => {
+  const stoppedAtPause = (stopCode: string): EventEnvelope[] => {
+    counter = 0;
+    const reason = "stopped by the director: the build is over";
+    const attemptBranch = "refs/studio/runs/run_stop/attempts/world/1-stopped";
+    return [
+      event(CustomEvent.RunStarted, { project: "racing", goal: "a night street race" }),
+      event(CustomEvent.AutopilotStarted, { facets: [], director: true }),
+      event(CustomEvent.FacetBuildStarted, { facetId: "world", facetTitle: "Track and night city", iteration: 1 }),
+      event(CustomEvent.FacetStopped, {
+        facetId: "world",
+        iteration: 1,
+        by: "director",
+        reason,
+        attemptBranch,
+        stopCode,
+      }),
+      event(CustomEvent.FacetIteration, {
+        facetId: "world",
+        facetTitle: "Track and night city",
+        iteration: 1,
+        winner: null,
+        satisfied: false,
+        verdictSource: "stopped",
+        reason,
+        attemptBranch,
+        stopCode,
+        shots: [],
+        flags: [],
+        diffs: {},
+      }),
+      event(CustomEvent.RunFinished, { victory: false, executionStatus: ExecutionStatus.Paused }),
+      event(CustomEvent.AutopilotPaused, { reason: "limit" }),
+    ];
+  };
+  const resumed = (): EventEnvelope[] => [
+    event(CustomEvent.RunAutoResumed, { cause: "limit-reset", attempt: 1 }),
+    event(CustomEvent.RunStarted, { project: "racing", goal: "a night street race" }),
+    event(CustomEvent.AutopilotStarted, { facets: [], director: true, resumed: true }),
+  ];
+  /** The studio's record that the build now holds the round's kept work (director/kept-work.ts). */
+  const keptWorkIn = (): EventEnvelope =>
+    event(CustomEvent.IntegrationMerge, {
+      facetId: "world",
+      commit: "142c304",
+      head: "606a3f8",
+      conflict: false,
+      stage: "director",
+    });
+  const worldStep = (events: EventEnvelope[]) => {
+    const graph = buildRunGraph(events);
+    assert.ok(graph);
+    const row = partRows(graph).find((r) => r.facet.facetId === "world");
+    assert.ok(row, "the part has its row");
+    const [step] = row.steps;
+    return {
+      word: stepWord(step!, graph.active),
+      pill: stepPill(step!, graph.active),
+      meta: rowMeta(row, graph.active),
+      state: step!.state,
+    };
+  };
+
+  it("is paused, not left out, while the run can still add its work", () => {
+    const paused = worldStep(stoppedAtPause(WorkerStopCode.RunEnded));
+    assert.deepEqual([paused.state, paused.word, paused.meta], [StepState.Paused, "Paused", "paused"]);
+    assert.match(paused.pill, /its work is kept/);
+    const back = worldStep([...stoppedAtPause(WorkerStopCode.RunEnded), ...resumed()]);
+    assert.equal(back.word, "Paused", "resumed, and the lead has not added it yet");
+  });
+
+  it("is added once the build holds its kept work, however the lead brought it in", () => {
+    const added = worldStep([...stoppedAtPause(WorkerStopCode.RunEnded), ...resumed(), keptWorkIn()]);
+    assert.deepEqual([added.state, added.word, added.meta], [StepState.InBuild, "Added", "added"]);
+  });
+
+  it("is left out only when the run ended without it, or the lead stopped it", () => {
+    const ended = worldStep([
+      ...stoppedAtPause(WorkerStopCode.RunEnded),
+      ...resumed(),
+      event(CustomEvent.RunFinished, { victory: true }),
+    ]);
+    assert.deepEqual([ended.state, ended.word, ended.meta], [StepState.NotInBuild, "Left out", "nothing added"]);
+    const byLead = worldStep(stoppedAtPause(WorkerStopCode.StoppedByLead));
+    assert.equal(byLead.word, "Left out", "the lead's own stop is its decision");
   });
 });

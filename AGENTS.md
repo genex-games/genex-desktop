@@ -40,6 +40,8 @@ historical task records at startup.
 Use scoped verification from [verification.md](docs/agent/verification.md#choose-the-verification-scope);
 its [layer table](docs/agent/verification.md#test-layers) lists available commands. Every check
 needs Node 24 (`.nvmrc`); select it (for example `nvm use`) before running any of them.
+On Apple Silicon, verify `node -p process.arch` says `arm64`: an Intel Node runs through
+Rosetta and makes local timing comparisons misleading.
 The scope table owns required checks; the layer catalog is not a cumulative checklist.
 
 - Red first: every fix starts with a test that fails for the reported reason.

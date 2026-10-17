@@ -1,0 +1,12 @@
+[2026.01.01-12.18.52:191][380]LogPlayLevel: Creating play world package: /Game/VehicleTemplate/Maps/UEDPIE_0_Lvl_VehicleBasic
+[2026.01.01-12.18.52:264][380]LogWorldPartition: Display: UWorldPartition::PostDuplicatePIE started...
+[2026.01.01-12.18.52:270][380]LogWorldPartition: Display: UWorldPartition::PostDuplicatePIE took 5.988 ms (total: 33.251 ms)
+[2026.01.01-12.18.52:270][380]LogPlayLevel: PIE: StaticDuplicateObject took: (0.079039s)
+[2026.01.01-12.18.52:270][380]LogPlayLevel: PIE: Created PIE world by copying editor world from /Game/VehicleTemplate/Maps/Lvl_VehicleBasic.Lvl_VehicleBasic to /Game/VehicleTemplate/Maps/UEDPIE_0_Lvl_VehicleBasic.Lvl_VehicleBasic (0.079071s)
+[2026.01.01-12.18.52:317][380]LogAudioMixerAudioUnit: Display: Bytes per submitted buffer: 8192
+[2026.01.01-12.18.52:317][380]LogAudioMixerAudioUnit: Warning: Error querying Sample Rate: 2003332927
+[2026.01.01-12.18.52:321][380]LogAudioMixer: Initializing Audio Bus Subsystem for audio device with ID 6
+[2026.01.01-12.18.52:322][380]LogSlate: Updating window title bar state: overlay mode, drag disabled, window buttons hidden, title bar hidden
+[2026.01.01-12.18.52:322][380]LogLoad: Game class is 'BP_GameMode_C'
+[2026.01.01-12.18.52:327][380]LogWorld: Bringing World /Game/VehicleTemplate/Maps/UEDPIE_0_Lvl_VehicleBasic.Lvl_VehicleBasic up for play (max tick rate 0) at 2026.01.01-12.18.52
+[2026.01.01-12.18.52:327][380]LogWorld: Bringing up level for play took: 0.005124

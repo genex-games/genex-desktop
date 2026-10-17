@@ -2,6 +2,7 @@
 import type { JSX } from "react";
 import { useEffect, useMemo, useState } from "react";
 import {
+  type AdviceInfo,
   checkWords,
   type IterationNode,
   IterationStatus,
@@ -10,6 +11,7 @@ import {
   plannedFlips,
   type RunGraph as RunGraphModel,
   type RunNode,
+  runIdOf,
   type Shot,
   thumbShot,
 } from "../../run-graph.ts";
@@ -169,6 +171,34 @@ function StepStory({ step, node }: { step: Step; node: IterationNode }): JSX.Ele
   );
 }
 
+/** A critic's advice on the try: each defect with its fix, its one bold move, and its gate answers. Advice, not a verdict. */
+function AdviceNotes({ advice }: { advice: AdviceInfo }): JSX.Element {
+  return (
+    <div className="flex flex-col gap-2.5">
+      {advice.defects.length ? (
+        <ul className="flex flex-col gap-1.5">
+          {advice.defects.map((item) => (
+            <li key={item.defect} className="text-body-sm text-ink-2 [overflow-wrap:anywhere]">
+              {item.defect}
+              {item.fix ? <span className="block text-ink-3">Fix: {item.fix}</span> : null}
+            </li>
+          ))}
+        </ul>
+      ) : null}
+      {advice.boldMove ? <Quote label="One bold move">{advice.boldMove}</Quote> : null}
+      {advice.gates.length ? (
+        <ul className="flex flex-col gap-1 text-body-sm text-ink-3">
+          {advice.gates.map((gate) => (
+            <li key={gate} className="[overflow-wrap:anywhere]">
+              {gate}
+            </li>
+          ))}
+        </ul>
+      ) : null}
+    </div>
+  );
+}
+
 function StepRows({
   graph,
   run,
@@ -193,6 +223,11 @@ function StepRows({
           <JudgesNotes node={node} graph={graph} quoted={judgesOn(node)} />
         </Row>
       ) : null}
+      {node.advice ? (
+        <Row label="Critic's advice" right={String(node.advice.defects.length)}>
+          <AdviceNotes advice={node.advice} />
+        </Row>
+      ) : null}
       {node.scoreboard ? (
         <Row label="Checks" right={checkCounts(node.scoreboard)}>
           <CheckList node={node} />
@@ -201,7 +236,7 @@ function StepRows({
       <Row label="Technical details">
         <Details
           rows={[
-            ["run", graph.runId],
+            ["run", runIdOf(graph)],
             ["part", node.facetId],
             ["round", String(node.iteration)],
             ["verdict by", node.verdictSource],
@@ -267,7 +302,7 @@ function StepView(props: StepPanelProps & { node: IterationNode; onPick: (at: nu
   const tries = step.tries;
   const picture = useStepPicture(props, node);
   // The try in hand, while its agent works: the card shows its screen, live, instead of its stills.
-  const screen = usePartScreen(props.project, graph.runId, step.facetId, graph.active && isLiveStep(step));
+  const screen = usePartScreen(props.project, runIdOf(graph), step.facetId, graph.active && isLiveStep(step));
   const liveFrame = node === tries.at(-1) ? screen.frame : null;
   const n = tries.indexOf(node) + 1;
   const rightLabel = rightLabelOf(step, n);

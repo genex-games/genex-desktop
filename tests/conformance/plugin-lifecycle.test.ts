@@ -12,7 +12,13 @@ import type { PluginChange } from "../../src/shared/plugins.ts";
 import { PluginRegistry, type PluginMcpLaunch } from "../../src/substrate/plugins/registry.ts";
 import { pluginBackendEnv } from "../../src/substrate/plugins/process.ts";
 import { scanPackage } from "../../src/substrate/plugins/scan.ts";
-import { EXAMPLE_PLUGIN, copyOfExample, type PluginFixture, pluginFixture } from "../helpers/plugins.ts";
+import {
+  EXAMPLE_PLUGIN,
+  copyOfExample,
+  installLocalOn,
+  type PluginFixture,
+  pluginFixture,
+} from "../helpers/plugins.ts";
 
 test("a plugin backend starts with the basics and nothing else of Studio's environment, on Windows too", () => {
   const parent = {
@@ -28,15 +34,31 @@ test("a plugin backend starts with the basics and nothing else of Studio's envir
     TMP: "C:\\Temp",
     PATHEXT: ".EXE;.CMD",
     ComSpec: "C:\\Windows\\system32\\cmd.exe",
+    ProgramData: "D:\\ProgramData",
+    "ProgramFiles(x86)": "D:\\Program Files (x86)",
   };
   const mac = pluginBackendEnv(parent, "darwin");
   assert.deepEqual(Object.keys(mac).sort(), ["ELECTRON_RUN_AS_NODE", "HOME", "PATH", "TMPDIR"]);
   const { PATH: _unused, ...windowsParent } = parent;
   const windows = pluginBackendEnv({ ...windowsParent, Path: "C:\\Windows" }, "win32");
   assert.equal(windows.PATH, "C:\\Windows", "PATH is read whatever its case");
-  for (const name of ["SystemRoot", "USERPROFILE", "APPDATA", "LOCALAPPDATA", "TEMP", "TMP", "PATHEXT", "ComSpec"])
+  for (const name of [
+    "SystemRoot",
+    "USERPROFILE",
+    "APPDATA",
+    "LOCALAPPDATA",
+    "TEMP",
+    "TMP",
+    "PATHEXT",
+    "ComSpec",
+    "ProgramData",
+    "ProgramFiles(x86)",
+  ])
     assert.equal(windows[name], parent[name as keyof typeof parent], name);
   assert.equal(windows.GITHUB_TOKEN, undefined);
+  // A development test of Unity's setup card gives the backend a made-up Mac to look in.
+  const testMac = pluginBackendEnv({ ...parent, STUDIO_ENGINE_TEST_ROOT: "/tmp/test-mac" }, "darwin");
+  assert.equal(testMac.STUDIO_ENGINE_TEST_ROOT, "/tmp/test-mac");
 });
 
 /** A local plugin whose every action answers with the PATH its backend was started with. */
@@ -49,7 +71,7 @@ async function installPathProbe(f: PluginFixture): Promise<void> {
     path.join(probe, "backend.mjs"),
     "export async function activate() { return { async action() { return { path: process.env.PATH }; } }; }\n",
   );
-  await f.registry.installLocal(probe);
+  await installLocalOn(f.registry, probe);
 }
 
 test("a plugin backend finds the user's tools on the login PATH, not the Finder's bare one", async () => {
@@ -211,7 +233,7 @@ test("a hot reload that changes what a plugin's MCP servers run is refused until
       m.name = "Watched";
       m.mcpServers = [server];
     });
-    await f.registry.installLocal(dir);
+    await installLocalOn(f.registry, dir);
     const watch = manualWatch(f.registry);
     await f.registry.watch("watched", true);
 
@@ -257,7 +279,7 @@ test("a hot reload that edits, adds or removes skills says which, by name, and t
     });
     await mkdir(path.join(dir, "skills"));
     await writeFile(path.join(dir, "skills", "card.md"), "# Card\n");
-    await f.registry.installLocal(dir);
+    await installLocalOn(f.registry, dir);
     const watch = manualWatch(f.registry);
     await f.registry.watch("skilled", true);
     const reload = async () => {
@@ -385,7 +407,7 @@ test("a node MCP server's credential is the bare token, and only after an explic
     );
     try {
       await registry.init();
-      await registry.installLocal(dir);
+      await installLocalOn(registry, dir);
       let launch: PluginMcpLaunch | undefined;
       registry.mcpHost = {
         register: (_id, _servers, l) => {
@@ -434,7 +456,7 @@ test("the tokens plugin accounts hold this session are known to the log redactor
     );
     try {
       await registry.init();
-      await registry.installLocal(dir);
+      await installLocalOn(registry, dir);
       assert.deepEqual(registry.heldCredentials(), [], "nothing is read from the saved account to answer this");
       await registry.action("acct", "unlock", {});
       assert.deepEqual(registry.heldCredentials(), ["held-plugin-FAKE-token"]);

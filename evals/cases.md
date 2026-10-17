@@ -284,6 +284,197 @@ checklist is graded once, on the final state, so it covers both turns.
 A three-hour deadline, so the case measures what a long Loop adds over a short build: whether the
 systems keep connecting, and whether later work breaks earlier work.
 
+## C12 · `vague-unreal-on` — no engine named, Unreal available *(draft: owner pins before first baseline)*
+
+**Exposure:** none
+
+> Make me a game where you fly a paper plane through a windy canyon and try not to crash.
+
+**Acceptance:**
+
+```
+[ ] the agent asks whether this is a web game or an Unreal game, or says it picks web
+[ ] KEY: nothing Unreal starts (no Unreal project, no editor) before the person picks Unreal
+[ ] if the person does not answer, the game is built as a web game
+[ ] a paper plane can be steered                            <- "fly a paper plane"
+[ ] the plane flies through a canyon                        <- "through a windy canyon"
+[ ] wind pushes the plane around                            <- "windy"
+[ ] crashing into the walls ends the run                    <- "try not to crash"
+```
+
+**Control:** the plane folds itself into a crane and lands on the agent's desk
+
+Lane setup the owner decides: the Unreal plugin installed and on, so the first message has two
+kinds to choose from. The case measures that a vague first message asks (with the choice card) or
+takes the web default, and never opens an engine the person did not ask for. Genex lanes only (pick them with `--lanes`): every raw lane is told to build a static web game, so
+this draft has no raw counterpart until the owner decides one.
+
+## C13 · `unreal-plugin-off` — Unreal asked for, the plugin off *(draft: owner pins before first baseline)*
+
+**Exposure:** none
+
+> Make a small racing game in Unreal: one track, one car, and a lap timer.
+
+**Acceptance:**
+
+```
+[ ] KEY: the first thing the person sees is the card to turn the Unreal plugin on   <- "in Unreal"
+[ ] nothing Unreal-specific runs (no project, no editor, no build) before the person's word
+[ ] the agent says plainly that Unreal needs its plugin, and what it can do without it
+[ ] the reply ends with the card: no web game is built in Unreal's place
+```
+
+**Control:** the car is a shopping trolley pushed by a pigeon
+
+Lane setup the owner decides: the Unreal plugin installed but turned off, Unreal itself installed.
+Only the person turns a plugin on and a lane answers typed questions only, so the grade is the order
+of events in the chat, not a game: the turn-it-on card comes first, and nothing Unreal runs before it.
+Genex lanes only (pick them with `--lanes`): every raw lane is told to build a static web game, so
+this draft has no raw counterpart until the owner decides one.
+
+## C14 · `port-to-unreal` — a web game moved to Unreal *(draft: owner pins before first baseline)*
+
+**Mode:** `edit-existing`
+**Exposure:** none
+**Start from:** `tests/fixtures/evals/games/edit-existing`
+
+> Port this game to Unreal. Keep how it plays: the movement, the jump and the gems.
+
+**Acceptance:**
+
+```
+[ ] a save point is taken before anything changes
+[ ] KEY: the web game's files stay as the reference, unchanged, beside the Unreal project
+[ ] an Unreal project exists in the folder                  <- "Port this game to Unreal"
+[ ] the player moves and jumps as in the web game           <- "the movement, the jump"
+[ ] gems can be collected                                   <- "the gems"
+[ ] the chat goes on with the Unreal tools, not the web build
+```
+
+**Control:** the port ships as a fax of the original game's source
+
+Lane setup the owner decides: the Unreal plugin installed and on. Every lane starts from the same
+small web game C9 uses, so the case measures a port, not a fresh build. Genex lanes only (pick them with `--lanes`): every raw lane is told to build a static web game, so
+this draft has no raw counterpart until the owner decides one.
+
+## C15 · `godot-no-plugin` — an engine with no plugin *(draft: owner pins before first baseline)*
+
+**Mode:** `follow-up`
+**Exposure:** none
+
+> Make a small top-down maze game in Godot 4, where a mouse looks for cheese before a cat finds it.
+
+**Follow-ups:**
+
+1. Go on without a plugin: use Godot itself.
+
+**Acceptance:**
+
+```
+[ ] the agent does not refuse, and does not switch to a web game unasked
+[ ] KEY: after the go-ahead, the agent works through jobs (Godot's own headless runs) and looks at
+    the running game
+[ ] a Godot 4 project exists in the folder                  <- "in Godot 4"
+[ ] a maze is shown from above                              <- "top-down maze"
+[ ] the mouse can be moved                                  <- "a mouse"
+[ ] cheese can be found, and finding it wins                <- "looks for cheese"
+[ ] a cat chases the mouse, and being caught loses          <- "before a cat finds it"
+[ ] writing a plugin is at most suggested, never required to go on
+```
+
+**Control:** the cheese is a full moon that the cat recites sonnets to
+
+Lane setup the owner decides: no Godot plugin installed, `godot` on the PATH. The folder starts
+empty. The first turn may stop at a plugin suggestion: the product goes on without a plugin only
+once the person says so, which the follow-up does. The case measures that an engine without a
+plugin is then worked with background jobs and a look at the app, not refused. Genex lanes only (pick them with `--lanes`): every raw lane is told to build a static web game, so
+this draft has no raw counterpart until the owner decides one.
+
+## C16 · `loop-finish-check` — a Loop ends on the reviewer's yes *(draft: owner pins before first baseline)*
+
+**Mode:** `long-horizon`
+**Exposure:** none
+**Deadline:** 180 min
+
+> A tower defence game with three tower types and ten waves. It is done when all ten waves can be
+> played through, each harder than the last, and the last one can be won.
+
+**Acceptance:**
+
+```
+[ ] three different towers can be placed                    <- "three tower types"
+[ ] there are ten waves                                     <- "ten waves"
+[ ] each wave is harder than the one before                 <- "each harder than the last"
+[ ] the last wave can be won                                <- "the last one can be won"
+[ ] KEY: the Loop never ends on the lead's word alone: ended before the lane's Finish, it ends on
+    a reviewer's yes, and the proof the reviewer read is on record
+[ ] a no from the reviewer sends the work on, and names what is missing
+```
+
+**Control:** the towers hold a referendum and vote to let the enemies through
+
+Lane setup the owner decides: a Loop with workers on, the default reviewer. The brief carries its
+own proof of done, so the grade can compare the reviewer's verdict with what was actually built.
+The 180-minute deadline, as C11's, leaves a ten-wave Loop room to claim before the lane presses
+Finish, which is the person's and no claim.
+
+## C17 · `timed-wrap-up` — a timed Loop wraps up at its time *(draft: owner pins before first baseline)*
+
+**Mode:** `long-horizon`
+**Exposure:** none
+
+> A side-scrolling platformer with a forest level, a cave level and a boss at the end. Do as much as
+> you can.
+
+**Acceptance:**
+
+```
+[ ] a playable side-scrolling level exists                  <- "A side-scrolling platformer"
+[ ] KEY: once the time is up the lead starts no new work, brings finished worker work in, and
+    the build runs
+[ ] the Loop then claims done, or is closed at the cap plus its grace with the not-checked line
+[ ] work still in progress at the time is left out, never half merged
+[ ] what was finished still plays after the wrap-up         <- "Do as much as you can"
+```
+
+**Control:** the boss is a houseplant that asks the player to water it
+
+Lane setup the owner decides: the Loop's hours set to 1 h; the brief names no time of its own, so
+the only limits are that cap and the lane's suffix. The default 90-minute deadline counts from the
+prompt while the cap and its 15-minute grace count from the Loop's start, so it leaves about 15
+minutes for the first turn before the Loop starts: the case measures how a timed Loop stops, not
+how much it builds.
+
+## C18 · `godot-loop` — a Loop in place on a project with no plugin *(draft: owner pins before first baseline)*
+
+**Mode:** `long-horizon`
+**Exposure:** none
+
+> A small Godot 4 game where a lighthouse keeper lights three lamps before a storm arrives. Go on
+> without a plugin, using Godot itself. It is done when all three lamps can be lit and lighting the
+> last one ends the storm.
+
+**Acceptance:**
+
+```
+[ ] a Godot 4 project exists in the folder                  <- "A small Godot 4 game"
+[ ] three lamps can be lit                                  <- "lights three lamps"
+[ ] a storm is coming, and lighting the last lamp ends it   <- "before a storm arrives"
+[ ] KEY: the lead works in the folder itself, with jobs and save points, not on web builds
+[ ] the Loop ends on a reviewer's yes (or the lane's Finish at its deadline), never on the lead's
+    word alone
+[ ] the game's last save point opens and runs in Godot
+```
+
+**Control:** the lighthouse is a giant candle the keeper keeps blowing out
+
+Lane setup the owner decides: no Godot plugin installed, `godot` on the PATH, a Loop on a session
+engine (Claude Code, Codex or OpenCode). The brief gives the go-ahead without a plugin. The Loop
+leads in place only once the folder reads as a Godot project, so the owner decides whether the lane
+starts the Loop after a first turn made it, or from a Godot start folder once long-horizon cases can
+have one. Genex lanes only (pick them with `--lanes`): every raw lane is told to build a static web game, so
+this draft has no raw counterpart until the owner decides one.
+
 ---
 
 # Rotation and holdouts
@@ -314,3 +505,10 @@ cases of the suite this one was ported from and are not ported; their numbers ar
 | C9 edit-existing | draft | — | — |
 | C10 follow-up | draft | — | — |
 | C11 long-horizon | draft | — | — |
+| C12 vague-unreal-on | draft | — | — |
+| C13 unreal-plugin-off | draft | — | — |
+| C14 port-to-unreal | draft | — | — |
+| C15 godot-no-plugin | draft | — | — |
+| C16 loop-finish-check | draft | — | — |
+| C17 timed-wrap-up | draft | — | — |
+| C18 godot-loop | draft | — | — |

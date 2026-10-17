@@ -27,12 +27,26 @@ export const STORAGE_KEYS = {
   appearance: "studio.appearance.v1",
   /** Home's background picture and effect (`home-backdrop/settings.ts` owns the format). */
   homeBackdrop: "studio.homeBackdrop.v1",
+  /** Live backgrounds a model made for home (`home-backdrop/made-shaders.ts` owns the format). */
+  homeBackdropShaders: "studio.homeBackdropShaders.v1",
+  /** Set ("1") once home's Background panel has been opened: its button stops glinting. */
+  homeBackdropFound: "studio.homeBackdropFound",
   /** The notifications feed (`notifications.ts` owns the format). */
   notifications: "studio.notifications",
   /** Set once the first-launch welcome is finished or skipped on this profile. */
   welcomed: "studio.welcomed",
   /** The Genex promo after the welcome: queued, then settled (`genex-promo.ts` owns the values). */
   genexPromo: "studio.genexPromo",
+  /** The games last opened in Play, newest first (`play/play-model.ts` owns the format). */
+  playRecent: "studio.play.recent",
+  /** Play's Genex card in the sidebar: "done" once dismissed (`play/play-model.ts` owns the value). */
+  playPromo: "studio.play.promo",
+  /** Play's cover clips paused by the row's control: "1" while paused (`play/clip-playback.ts` owns the value). */
+  playClipsPaused: "studio.play.clipsPaused",
+  /** The Genex account last signed in on this Mac, for an offline start (`state/people.ts` owns the format). */
+  genexMe: "studio.genex.me",
+  /** The Genex account's balance as last read, shown while genex.games can't be reached. */
+  genexCredits: "studio.genex.credits",
   /** The developer colour tweaker: open ("1") or not. */
   colorTweakerOpen: "studio.dev.colorTweaker.open",
   /** The developer colour tweaker's drafts and place (`appearance/tweaker/tweaker-memory.ts` owns the format). */
@@ -55,6 +69,14 @@ export const storageKeyFor = {
   threadLoop: (threadId: string): string => `studio.loop.${threadId}`,
   /** A game chat's own effort; the per-model effort only seeds fresh chats. */
   threadEffort: (threadId: string): string => `studio.threadEffort.${threadId}`,
+  /** The engine steps offer a game's Not now hid, by its record id (`chat/EngineStepsCard.tsx`). */
+  engineStepsDismissed: (project: string): string => `studio.engineSteps.dismissed.${project}`,
+  /** The Live view last chosen for a game whose folder has more than one, as its observer key (`live-views.ts`). */
+  liveView: (project: string): string => `studio.liveView.${project}`,
+  /** Set ("1") once a Genex account has met its generated avatar (`play/AvatarWelcome.tsx`). */
+  avatarWelcomed: (accountId: string): string => `studio.genex.avatarWelcomed.${accountId}`,
+  /** The welcome asked this account for its nickname on this Mac (saved or closed): it never asks again here. */
+  nicknameWelcomed: (accountId: string): string => `studio.genex.nicknameWelcomed.${accountId}`,
 } as const;
 
 /** The IndexedDB database of cover sphere stills (`ui/cover-stills.ts` owns the format). */

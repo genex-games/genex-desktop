@@ -45,10 +45,14 @@ test("a signing identity signs every file with the hardened runtime and the app'
   assert.equal(keychain.osxSign?.keychain, "/k/release.keychain-db");
 });
 
-test("the entitlements grant V8's JIT and nothing else: no devices, no library-validation exemption", async () => {
+test("the entitlements grant V8's JIT, Apple events for app_look and the microphone (Play's voice chat), nothing else: no camera, no library-validation exemption", async () => {
   const plist = await readFile(signing.ENTITLEMENTS, "utf8");
   const keys = [...plist.matchAll(/<key>([^<]+)<\/key>\s*<(\w+)\s*\/>/g)].map(([, key, value]) => `${key}=${value}`);
-  assert.deepEqual(keys, ["com.apple.security.cs.allow-jit=true"]);
+  assert.deepEqual(keys, [
+    "com.apple.security.cs.allow-jit=true",
+    "com.apple.security.automation.apple-events=true",
+    "com.apple.security.device.audio-input=true",
+  ]);
 });
 
 test("a signed build refuses a placeholder bundle id and names the fix", () => {

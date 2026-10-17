@@ -286,12 +286,29 @@ async function checkReferences(
   return check.neededVendor;
 }
 
-/** Drop the vendored files nothing loads (licences and notices stay), moving them to `excluded`. */
+/** The vendored library a file belongs to: its first folder under `vendor/`; null for the vendor root's own files. */
+function vendoredLibrary(rel: string): string | null {
+  const [, library, ...rest] = rel.split("/");
+  return rest.length > 0 && library ? library : null;
+}
+
+/**
+ * Whether a vendored licence, notice or version file stays: one at the vendor root always does,
+ * one inside a library's folder (`vendor/genex/LICENSES.md`) only when the game uses that library.
+ */
+function keptNotice(rel: string, usedLibraries: ReadonlySet<string>): boolean {
+  if (!/LICENSE|NOTICE|VERSION/i.test(rel)) return false;
+  const library = vendoredLibrary(rel);
+  return library === null || usedLibraries.has(library);
+}
+
+/** Drop the vendored files nothing loads (the notices of what stays stay too), moving them to `excluded`. */
 async function pruneUnusedVendor(staging: string, result: ExportResult, neededVendor: Set<string>): Promise<void> {
   if ([...neededVendor].some((file) => file.endsWith("/KTX2Loader.js")))
     for (const file of BASIS_FILES) neededVendor.add(BASIS_DIR + file);
+  const usedLibraries = new Set([...neededVendor].map(vendoredLibrary).filter((name) => name !== null));
   const unused = result.included.filter(
-    (rel) => rel.startsWith(`${VENDOR_DIR}/`) && !neededVendor.has(rel) && !/LICENSE|NOTICE|VERSION/i.test(rel),
+    (rel) => rel.startsWith(`${VENDOR_DIR}/`) && !neededVendor.has(rel) && !keptNotice(rel, usedLibraries),
   );
   for (const rel of unused) await rm(path.join(staging, rel));
   result.excluded.push(...unused);

@@ -3,7 +3,6 @@
  * IndexedDB at a size the effects never outgrow. A picture is decoded once and kept while shown.
  */
 import { HOME_BACKDROP_IMAGES_DB } from "../storage.ts";
-import { DEFAULT_BACKDROP_IMAGE } from "./settings.ts";
 
 const STORE = "images";
 /** Pictures a user can add. */
@@ -28,7 +27,7 @@ export interface BackdropPicture {
 /** The pictures every profile has, copied beside the renderer by the build. */
 export const BUNDLED_BACKDROPS: readonly BackdropPicture[] = [
   { id: "builtin:realm", label: "Realm", url: "media/home-backdrop-realm.jpg", added: false },
-  { id: DEFAULT_BACKDROP_IMAGE, label: "City", url: "media/home-backdrop-city.jpg", added: false },
+  { id: "builtin:city", label: "City", url: "media/home-backdrop-city.jpg", added: false },
   { id: "builtin:clouds", label: "Clouds", url: "media/home-backdrop-clouds.jpg", added: false },
   { id: "builtin:campfire", label: "Campfire", url: "media/home-backdrop-campfire.jpg", added: false },
 ];

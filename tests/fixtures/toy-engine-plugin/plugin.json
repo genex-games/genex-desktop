@@ -1,0 +1,381 @@
+{
+  "apiVersion": 3,
+  "id": "toy-engine",
+  "version": "1.0.0",
+  "name": "Toy Engine",
+  "publisher": "Genex tests",
+  "description": "A made-up engine for tests: it carries every section a plugin can declare, so tests see which ones Genex keeps.",
+  "backend": "backend.mjs",
+  "capabilities": [
+    "game-engine"
+  ],
+  "detect": [
+    {
+      "fact": "toy-project",
+      "files": [
+        "**/*.toyproj"
+      ],
+      "notUnder": [
+        "**/vendor/"
+      ]
+    }
+  ],
+  "engine": {
+    "id": "toy-engine",
+    "label": "Toy",
+    "projectFiles": [
+      ".toyproj"
+    ],
+    "fact": "toy-project",
+    "projectInFolder": false,
+    "play": {
+      "players": 3,
+      "clock": "none",
+      "pointer": true
+    },
+    "apps": {
+      "mac": [
+        "com.example.toy"
+      ],
+      "windows": [
+        "ToyEditor.exe"
+      ]
+    }
+  },
+  "tools": [
+    {
+      "name": "build",
+      "description": "Build the toy project and answer what went wrong.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "scene": {
+            "type": "string",
+            "description": "The scene to build first."
+          }
+        }
+      },
+      "facts": [
+        "toy-project"
+      ],
+      "needs": [
+        "toy-editor"
+      ]
+    },
+    {
+      "name": "editor-state",
+      "audience": "harness",
+      "description": "Whether the toy editor is open and whether the person is using it.",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      }
+    },
+    {
+      "name": "save-scenes",
+      "audience": "harness",
+      "description": "Save every open scene in the toy editor.",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      }
+    },
+    {
+      "name": "capture",
+      "audience": "harness",
+      "description": "Capture the toy editor's viewport.",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      }
+    },
+    {
+      "name": "reload-scenes",
+      "audience": "harness",
+      "description": "Reload every scene from disk after files changed under the editor.",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      }
+    },
+    {
+      "name": "reopen-editor",
+      "audience": "harness",
+      "description": "Open the toy editor again after it stopped.",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      }
+    },
+    {
+      "name": "end-editor",
+      "audience": "harness",
+      "description": "Close the toy editor at the end of a run.",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      }
+    },
+    {
+      "name": "play-open",
+      "audience": "harness",
+      "needs": [
+        "toy-editor"
+      ],
+      "description": "Start a toy play of up to three players. Answers {width, height, joined, players}.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "players": {
+            "type": "number",
+            "description": "How many players, 1 to 3; absent is one."
+          }
+        }
+      }
+    },
+    {
+      "name": "play-input",
+      "audience": "harness",
+      "needs": [
+        "toy-editor"
+      ],
+      "description": "Hold keys for a player for seconds. Answers {held, gameSeconds}.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "keys": {
+            "type": "string",
+            "description": "Web key codes joined by commas."
+          },
+          "seconds": {
+            "type": "number",
+            "description": "Seconds to hold them."
+          },
+          "dx": {
+            "type": "number",
+            "description": "Mouse motion to the right."
+          },
+          "dy": {
+            "type": "number",
+            "description": "Mouse motion down."
+          },
+          "wheel": {
+            "type": "number",
+            "description": "Wheel notches, up positive."
+          },
+          "player": {
+            "type": "number",
+            "description": "Which player, 1 to 3; absent is player 1."
+          }
+        },
+        "required": [
+          "keys",
+          "seconds"
+        ]
+      }
+    },
+    {
+      "name": "play-shot",
+      "audience": "harness",
+      "needs": [
+        "toy-editor"
+      ],
+      "description": "A stand-in picture of what a player sees. Answers {data, mime, width, height}.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "player": {
+            "type": "number",
+            "description": "Which player, 1 to 3; absent is player 1."
+          }
+        }
+      }
+    },
+    {
+      "name": "play-state",
+      "audience": "harness",
+      "needs": [
+        "toy-editor"
+      ],
+      "description": "A player's state in the toy play.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "player": {
+            "type": "number",
+            "description": "Which player, 1 to 3; absent is player 1."
+          }
+        }
+      }
+    },
+    {
+      "name": "play-pause",
+      "audience": "harness",
+      "needs": [
+        "toy-editor"
+      ],
+      "description": "The toy play cannot pause: answers unsupported.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "paused": {
+            "type": "boolean",
+            "description": "True stands the play still."
+          }
+        },
+        "required": [
+          "paused"
+        ]
+      }
+    },
+    {
+      "name": "play-close",
+      "audience": "harness",
+      "needs": [
+        "toy-editor"
+      ],
+      "description": "End the toy play. Answers {closed}.",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      }
+    },
+    {
+      "name": "toy-probe",
+      "audience": "harness",
+      "needs": [
+        "toy-editor"
+      ],
+      "description": "Measure the open toy play for a judge. Answers {note, images}.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "players": {
+            "type": "number",
+            "description": "How many players the play opened, 1 to 3; absent is one."
+          }
+        }
+      }
+    }
+  ],
+  "skills": [
+    {
+      "name": "toy-engine",
+      "summary": "How to build and check a toy project.",
+      "file": "skills/toy-engine.md",
+      "facts": [
+        "toy-project"
+      ],
+      "tools": [
+        "build"
+      ]
+    }
+  ],
+  "panels": [],
+  "settings": [],
+  "actions": [],
+  "locks": [
+    {
+      "id": "toy-editor",
+      "label": "Toy editor",
+      "per": "project",
+      "personFirst": "editor-state"
+    }
+  ],
+  "folders": [
+    {
+      "path": "~/Library/Application Support/ToyEngine",
+      "why": "The toy engine's settings"
+    }
+  ],
+  "hooks": [
+    {
+      "on": "run.prepare",
+      "tool": "editor-state"
+    },
+    {
+      "on": "checkpoint.before",
+      "tool": "save-scenes",
+      "messages": true
+    },
+    {
+      "on": "checkpoint.after",
+      "tool": "capture"
+    },
+    {
+      "on": "restore.after",
+      "tool": "reload-scenes"
+    },
+    {
+      "on": "health",
+      "tool": "editor-state"
+    },
+    {
+      "on": "crash",
+      "tool": "reopen-editor"
+    },
+    {
+      "on": "run.end",
+      "tool": "end-editor"
+    }
+  ],
+  "observers": [
+    {
+      "id": "viewport",
+      "facts": [
+        "toy-project"
+      ],
+      "tool": "capture"
+    }
+  ],
+  "judges": [
+    {
+      "id": "crowd",
+      "label": "Crowd",
+      "facts": [
+        "toy-project"
+      ],
+      "brief": "judges/crowd.md",
+      "players": 3,
+      "probe": "toy-probe"
+    },
+    {
+      "id": "plain",
+      "label": "Plain",
+      "brief": "judges/plain.md"
+    }
+  ],
+  "workspace": {
+    "ignore": [
+      "Cache/"
+    ],
+    "copySkip": [
+      "Cache/",
+      "Exports/"
+    ]
+  },
+  "assets": {
+    "folders": [
+      "scenes"
+    ],
+    "formats": [
+      "toyscene"
+    ]
+  },
+  "workerTypes": [
+    {
+      "id": "scene",
+      "description": "Edits one scene",
+      "tools": [
+        "build"
+      ],
+      "isolation": "copy"
+    }
+  ],
+  "scaffolds": [
+    {
+      "id": "game",
+      "label": "Toy game"
+    }
+  ]
+}

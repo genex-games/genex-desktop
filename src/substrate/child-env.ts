@@ -177,10 +177,18 @@ export function windowsBaseEnv(
     const value = envValue(parent, name);
     if (value !== undefined) env[name] = value;
   }
-  if (home) {
-    env.USERPROFILE = home;
-    env.APPDATA = path.win32.join(home, "AppData", "Roaming");
-    env.LOCALAPPDATA = path.win32.join(home, "AppData", "Local");
-  }
-  return env;
+  return home ? { ...env, ...windowsHomeEnv(home, platform) } : env;
+}
+
+/**
+ * The profile folders a child given its own `home` must see inside it on Windows, where
+ * `os.homedir()` reads USERPROFILE rather than HOME. Empty on macOS and Linux.
+ */
+export function windowsHomeEnv(home: string, platform: NodeJS.Platform = process.platform): Record<string, string> {
+  if (platform !== StudioPlatform.Windows) return {};
+  return {
+    USERPROFILE: home,
+    APPDATA: path.win32.join(home, "AppData", "Roaming"),
+    LOCALAPPDATA: path.win32.join(home, "AppData", "Local"),
+  };
 }

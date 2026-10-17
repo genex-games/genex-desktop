@@ -4,7 +4,7 @@
  * Composed by `StudioCore`; its state stays in the core.
  */
 import { assetWorkspaces } from "../asset-workspaces.ts";
-import { readAssetPreview } from "../asset-preview.ts";
+import { assertAssetPath, readAssetPreview } from "../asset-preview.ts";
 import { readModelRig } from "../model-rigs.ts";
 import type { ModelRig } from "../../shared/model-rig.ts";
 import { assertRelativePath, isBelow } from "../../substrate/paths.ts";
@@ -16,13 +16,15 @@ import {
   walkGameAssets,
 } from "../game-assets.ts";
 import type { ProjectAssets } from "../../shared/game-assets.ts";
+import { type AssetCall, assetCallJobs } from "./asset-calls.ts";
+import { type AssetFolder, assetFoldersFor, DEFAULT_ASSET_FOLDERS } from "../../shared/project-workspace.ts";
 import path from "node:path";
 import { rewindsOf, withoutRewound } from "../../shared/chat-rewind.ts";
 import { latestRun } from "../../shared/coordinator.ts";
 import { genexOutputFile, isGenexRef, parseGenexRef } from "../../shared/genex-ref.ts";
 import { createHash } from "node:crypto";
 import { lstat, realpath, writeFile } from "node:fs/promises";
-import { ensureDir, pathExists } from "../../substrate/fsx.ts";
+import { ensureDir, ensureDirBelow, pathExists, writeFileInDir } from "../../substrate/fsx.ts";
 import { describeUnknownImage, sniffImage } from "../../substrate/image-sniff.ts";
 import { git } from "../../substrate/snapshots.ts";
 import type { EventEnvelope } from "../../substrate/types.ts";
@@ -31,6 +33,7 @@ import type { StudioCore } from "../studio-core.ts";
 import { CustomEvent, customEventData } from "../../shared/custom-events.ts";
 import { EventKind } from "../../shared/event-log.ts";
 import { UiEvent } from "../../shared/ui-events.ts";
+import { SECOND_MS } from "../../shared/duration.ts";
 
 /** Errors the user (or the renderer on their behalf) reads when an asset request is refused. */
 const MESSAGE = {
@@ -53,6 +56,8 @@ const REFERENCE_SLUG_MAX_CHARS = 40;
 const MAX_PRESENCE_FILES = 200;
 /** The longest label a run's feedback keeps. */
 const FEEDBACK_LABEL_CHARS = 120;
+/** How long a game's asset folders are reused by its previews and thumbnails: the Assets stage's poll. */
+const ASSET_FOLDERS_FRESH_MS = 10 * SECOND_MS;
 
 /** A reference still written into the game; `created` when this call added the file. */
 export interface SavedReference {
@@ -88,10 +93,23 @@ function feedbackTarget(p: { facetId?: string; camera?: string; iteration?: numb
 export class AssetService {
   readonly #core: StudioCore;
   readonly #git: typeof git;
+  /** Each game's asset folders as last read, and when, shared by the reads that follow. */
+  readonly #folders = new Map<string, { at: number; folders: Promise<AssetFolder[]> }>();
+  /** The clock the folders' reuse window is read on. */
+  readonly #now: () => number;
+  /** The calls making an asset right now, which the plugin tools note (`asset-calls.ts`). */
+  readonly #calls: ReadonlyMap<string, AssetCall>;
 
-  constructor(core: StudioCore, runGit: typeof git = git) {
+  constructor(
+    core: StudioCore,
+    runGit: typeof git = git,
+    now: () => number = Date.now,
+    calls: ReadonlyMap<string, AssetCall> = new Map(),
+  ) {
     this.#core = core;
     this.#git = runGit;
+    this.#now = now;
+    this.#calls = calls;
   }
 
   /**
@@ -147,9 +165,13 @@ export class AssetService {
         `a run artifact must stay inside its run folder: ${JSON.stringify(`${runId}/${name}`).slice(0, 120)}`,
       );
     }
-    await ensureDir(dir);
-    await ensureDir(path.dirname(file));
-    await writeFile(file, data);
+    // The runs folder is one an agent's box writes: a link or a file on the way, or at the file's
+    // own name, is refused, never written through.
+    const parts = path.relative(path.resolve(this.#core.layout.runs), path.dirname(file)).split(path.sep);
+    const folder = await ensureDirBelow(this.#core.layout.runs, parts);
+    // Written by handle once it is known to be the file in that folder: a folder swapped for a link
+    // after the check above is refused, never written through.
+    await writeFileInDir(folder, path.basename(file), data);
     return file;
   }
 
@@ -219,7 +241,8 @@ export class AssetService {
 
   /**
    * What the game holds, read-only: the walk of its own asset folders joined with the project's
-   * delivery ledger and the Genex plugin's job records. The ledger is passed in because the
+   * delivery ledger and the Genex plugin's job records, and what is on its way: Genex's waiting
+   * jobs and every call making an asset right now. The ledger is passed in because the
    * renderer's bootstrap tail is not the project's whole log — `RunSummaryReader.forProject`
    * reads that, and the join ignores every event belonging to another project.
    */
@@ -227,15 +250,16 @@ export class AssetService {
     const dir = this.#core.games.dirFor(project);
     const autopilot = path.join(this.#core.layout.scratch, "autopilot");
     // Independent reads, side by side: the Assets stage polls this every ten seconds.
+    const folders = await this.#readFolders(project);
     const [walk, jobs, scratchRoot, listing, checkpoints] = await Promise.all([
-      walkGameAssets(dir),
+      walkGameAssets(dir, { folders }),
       readGenexJobs(this.#core.layout.engineHomes, project).catch(() => []),
       realpath(autopilot).catch(() => autopilot),
       this.#git(dir, ["worktree", "list", "--porcelain", "-z"]).catch(() => ""),
       this.#core.assetCheckpoints.records(),
     ]);
     const workspaces = assetWorkspaces(listing, this.#core.layout.scratch, scratchRoot);
-    return reconcileGeneratedAssets(
+    const inventory = await reconcileGeneratedAssets(
       this.#core.games.dirFor(project),
       this.#core.layout.engineHomes,
       joinProjectAssets({
@@ -250,6 +274,29 @@ export class AssetService {
       workspaces,
       checkpoints,
     );
+    inventory.jobs = [...(inventory.jobs ?? []), ...assetCallJobs(this.#calls, project)];
+    return inventory;
+  }
+
+  /**
+   * Where a game keeps its assets, by the facts its folder holds and the enabled plugins' `assets`.
+   * A listing reads them afresh; a preview or thumbnail reuses a read made in the last
+   * `ASSET_FOLDERS_FRESH_MS`, so opening the Assets stage is one facts walk, not one per picture.
+   */
+  assetFolders(project: string): Promise<AssetFolder[]> {
+    const kept = this.#folders.get(project);
+    if (kept && this.#now() - kept.at < ASSET_FOLDERS_FRESH_MS) return kept.folders;
+    return this.#readFolders(project);
+  }
+
+  /** One facts read of a game's asset folders, kept for the reads that follow. A folder that cannot be read answers today's folders. */
+  #readFolders(project: string): Promise<AssetFolder[]> {
+    const folders = this.#core.games.factsOf(project).then(
+      (facts) => assetFoldersFor(facts, this.#core.plugins?.workspaceSections() ?? []),
+      () => [...DEFAULT_ASSET_FOLDERS],
+    );
+    this.#folders.set(project, { at: this.#now(), folders });
+    return folders;
   }
 
   /**
@@ -285,7 +332,9 @@ export class AssetService {
       if (!(await this.#ownsGenexJob(p.project, ref.jobId))) throw new Error(MESSAGE.recordedAssetUnavailable);
       return readAssetPreview(path.join(dir, "output"), ref.path.join("/"), [], p.maxBytes);
     }
-    return readAssetPreview(this.#core.games.dirFor(p.project), p.file, undefined, p.maxBytes);
+    assertAssetPath(p.file, await this.assetFolders(p.project));
+    // The folders were checked above; the reader keeps its own hidden-part, link and file checks.
+    return readAssetPreview(this.#core.games.dirFor(p.project), p.file, [], p.maxBytes);
   }
 
   /** Whether this game's own Genex records hold the job. */

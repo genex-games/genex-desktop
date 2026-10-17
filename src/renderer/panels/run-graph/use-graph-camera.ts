@@ -1,13 +1,14 @@
 /**
- * Where the Builds canvas looks: a run opens fitted, a live one keeps its work in view until the
- * user moves the canvas, and a resize refits an untouched canvas. Opening a node glides it to the
+ * Where the Builds canvas looks: a run opens fitted (or where the user left it before the tab
+ * changed), a live one keeps its work in view until the user moves the canvas, and a resize refits
+ * an untouched canvas. Opening a node glides it to the
  * middle at the zoom the canvas already has, and its card opens in place over it; walking to another
  * glides there; closing glides back to the view it was opened from. Moving the canvas takes it over: following stops, and an open node
  * closes where it is.
  */
 import type { RefObject } from "react";
 import { useCallback, useEffect, useEffectEvent, useLayoutEffect, useRef, useState } from "react";
-import { type CanvasView, fitView, useCanvasView } from "../../canvas-view.ts";
+import { type CanvasView, fitView, keepView, keptView, useCanvasView, useOnWheel } from "../../canvas-view.ts";
 import { boundsOf, type Rect, type RunGraph as RunGraphModel } from "../../run-graph.ts";
 import type { PartRow, Step, StepsLayout } from "../../run-steps.ts";
 import { partOf } from "../inspector/selection.ts";
@@ -108,16 +109,30 @@ function useGlide(apply: Canvas["apply"]) {
   return { gliding, glide };
 }
 
-/** A run opens fitted; a live one keeps its work in view from then on, and stops once the run does. */
-function useOpenFitted(graph: RunGraphModel, ready: boolean, fit: () => void, onNewRun: () => void, setAuto: SetAuto) {
+/**
+ * A run opens where the user left it (`reopen`), else fitted; a live one keeps its work in view
+ * from then on, and stops once the run does.
+ */
+function useOpenFitted(
+  graph: RunGraphModel,
+  ready: boolean,
+  fit: () => void,
+  onNewRun: () => void,
+  setAuto: SetAuto,
+  reopen: (runId: string) => boolean,
+) {
   const opened = useRef<string | null>(null);
   useLayoutEffect(() => {
     if (!ready || opened.current === graph.runId) return;
     if (opened.current !== null) onNewRun();
     opened.current = graph.runId;
+    if (reopen(graph.runId)) {
+      setAuto(false);
+      return;
+    }
     setAuto(graph.active);
     fit();
-  }, [graph.runId, graph.active, fit, ready, onNewRun, setAuto]);
+  }, [graph.runId, graph.active, fit, ready, onNewRun, setAuto, reopen]);
   useEffect(() => {
     if (!graph.active) setAuto(false);
   }, [graph.active, setAuto]);
@@ -220,6 +235,49 @@ function useFocusSelected({
   }, [layout]);
 }
 
+/** One run's canvas, as its kept camera is named. */
+const graphViewKey = (runId: string): string => `builds\n${runId}`;
+
+/**
+ * Where the user left a run's canvas, kept when the tab or the run changes so it comes back there
+ * (the view an open node was opened from, as the node's card does not come back); a canvas never
+ * moved, or following the work, is fitted again. `reopen` puts a kept camera back.
+ */
+function useKeptGraphView({
+  runId,
+  canvas,
+  touched,
+  following,
+  returnView,
+}: {
+  runId: string;
+  canvas: Canvas;
+  touched: RefObject<boolean>;
+  following: boolean;
+  returnView: RefObject<CanvasView | null>;
+}) {
+  const { viewRef, apply } = canvas;
+  const followingRef = useRef(following);
+  followingRef.current = following;
+  useLayoutEffect(
+    () => () => {
+      const moved = touched.current && !followingRef.current;
+      keepView(graphViewKey(runId), moved ? (returnView.current ?? viewRef.current) : null);
+    },
+    [runId, touched, returnView, viewRef],
+  );
+  return useCallback(
+    (id: string): boolean => {
+      const kept = keptView(graphViewKey(id));
+      if (!kept) return false;
+      touched.current = true;
+      apply(kept);
+      return true;
+    },
+    [apply, touched],
+  );
+}
+
 /** The canvas camera of the Builds tab, and the zoom pill's actions. */
 export function useGraphCamera({
   graph,
@@ -262,7 +320,8 @@ export function useGraphCamera({
     closeHere();
   }, [closeHere]);
   const canvas = useCanvasView({ initial: { k: INITIAL_ZOOM, tx: 0, ty: 0 }, onPan: takeOver });
-  useTakeOverOnWheel(canvas.viewport, takeOver);
+  // A wheel over the canvas is the user moving it: the camera stops following, and an open node closes.
+  useOnWheel(canvas.viewport, takeOver);
   const { gliding, glide } = useGlide(canvas.apply);
   const { fit, showNow } = useFitting(canvas, layout, live, touched);
   const { viewport, viewRef, apply } = canvas;
@@ -283,9 +342,10 @@ export function useGraphCamera({
     returnView.current = null;
     onNewRun();
   }, [onNewRun]);
-  useOpenFitted(graph, ready, fit, onNewRunHere, setAuto);
-  useFollowLive({ viewport, active: graph.active, auto, selected, touched, focusOpen, fit, showNow });
   const following = auto && graph.active;
+  const reopen = useKeptGraphView({ runId: graph.runId, canvas, touched, following, returnView });
+  useOpenFitted(graph, ready, fit, onNewRunHere, setAuto, reopen);
+  useFollowLive({ viewport, active: graph.active, auto, selected, touched, focusOpen, fit, showNow });
   useFocusSelected({ canvas, selected, following, returnView, focusView, glide, layout });
 
   const zoom = (factor: number): void => {
@@ -314,14 +374,4 @@ export function useGraphCamera({
           }
         : null,
   };
-}
-
-/** A wheel over the canvas is the user moving it: the camera stops following, and an open node closes. */
-function useTakeOverOnWheel(viewport: RefObject<HTMLDivElement | null>, takeOver: () => void): void {
-  useEffect(() => {
-    const element = viewport.current;
-    if (!element) return;
-    element.addEventListener("wheel", takeOver, { passive: true });
-    return () => element.removeEventListener("wheel", takeOver);
-  }, [viewport, takeOver]);
 }

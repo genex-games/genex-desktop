@@ -50,11 +50,17 @@ interface DelegatedSession {
   ownership?: unknown;
   candidateId?: string;
   readOnly?: boolean;
+  /** A worker of a chat's lead: its words are a worker's in the chat, never the chat's own reply. */
+  worker?: unknown;
 }
 
-/** A lead's own session plans; a checker reviews; a session that owns work builds; anything else plans. */
+/**
+ * A lead's own session plans; a worker of a chat's lead, reader or writer, is a worker; a checker
+ * reviews; a session that owns work builds; anything else plans.
+ */
 function sessionRole(input: DelegatedSession): SessionActivityRole {
   if (input.director || input.coordinator) return SessionActivityRole.Planner;
+  if (input.worker) return SessionActivityRole.Builder;
   if (input.playtest || input.readOnly) return SessionActivityRole.Reviewer;
   const ownsWork = Boolean(input.selfCapture?.runId || input.ownership || input.candidateId);
   return ownsWork ? SessionActivityRole.Builder : SessionActivityRole.Planner;

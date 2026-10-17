@@ -17,6 +17,7 @@ import { roundStage } from "../stage.ts";
 import { fitBrief } from "../brief-fit.ts";
 import { blockBench } from "../build-block-prompts.ts";
 import { openCarriedFixes } from "../carried-fixes.ts";
+import { withIdentity } from "../../workers/identity.ts";
 
 /** A template game's entry module, when the shape names none. */
 const DEFAULT_ENTRY = "src/main.js";
@@ -158,11 +159,25 @@ function styleInput(loop: FacetLoop): AnyRecord | null {
   };
 }
 
-/** The build prompt for this round, as `facetPrompt` renders it from the loop's state. */
+/**
+ * The build prompt for this round, as `facetPrompt` renders it from the loop's state. A director's
+ * builder opens a fresh session with Genex's identity (the loop's `identity` option); a classic
+ * Autopilot's builders pass none and keep their prompt.
+ */
 export function facetPromptFor(
   loop: FacetLoop,
   round: FacetRound,
   { resumed, briefText = null, fix = null }: { resumed: boolean; briefText?: string | null; fix?: AnyRecord | null },
+): string {
+  const prompt = renderedPrompt(loop, round, { resumed, briefText, fix });
+  return resumed ? prompt : withIdentity(loop.options?.identity, prompt);
+}
+
+/** The build prompt as `facetPrompt` renders it from the loop's state. */
+function renderedPrompt(
+  loop: FacetLoop,
+  round: FacetRound,
+  { resumed, briefText, fix }: { resumed: boolean; briefText: string | null; fix: AnyRecord | null },
 ): string {
   const { game, gapHistory, legacy, ownShape, ownsMain, result, run, shape, spec, worktree } = loop;
   return facetPrompt({

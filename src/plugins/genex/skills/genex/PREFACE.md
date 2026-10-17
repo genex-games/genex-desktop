@@ -11,14 +11,19 @@ Where it disagrees with this preface, this preface wins.
   and never run `auth`, `tools` or `init`.
 - Skill cards are never copied into the game: no `.claude/skills`, `.agents/skills` or `AGENTS.md`
   is written. The Genex cards Studio carries are this plugin's skills, listed in your brief; read
-  one with `genex__skill {"name":"<skill>"}`.
+  one with `genex__skill {"name":"<skill>"}`. The lane cards the "Use it" section points to are
+  `genex-tool-model`, `genex-tool-character`, `genex-tool-texture`, `genex-tool-audio` and
+  `genex-tool-image`: read the one for a lane before its first call.
 
 ## Commands, as Studio tools
 
 - Generation (`image`, `model`, `model segment|rig|animate`, `texture`, `sfx`, `music`, `voice`,
   `character`, `animations search`) and `wait`: `genex__asset`. Call it with operation `status`
   first; it reports the account, credits and live lanes that `doctor` would. Its description lists
-  the operations; delivered files land in the game, so wire in those local paths.
+  the operations and which provider each lane is; its `options` parameter lists each lane's
+  options. Studio passes `--out-dir` and `--no-wait` itself, and delivered files land in the game,
+  so wire in those local paths. In a Godot game they land in its project (`godot/assets/...`),
+  which the game loads as `res://assets/...`.
 - `doctor`, `budget`, `llm models`, `llm status`, `llm cancel` and `shop list`: `genex__cli`.
   `budget --assets` is not available: Studio's own asset allowance and the user's approval govern
   asset spending.
@@ -35,7 +40,8 @@ Where it disagrees with this preface, this preface wins.
   {"name":"genex-cover"}` first, and never save a frame in `.genex/scratch`.
 - `npm i @genex-ai/multiplayer`: `genex__package {"package":"@genex-ai/multiplayer"}`, and
   `npm i @genex-ai/embed-sdk`: `genex__package {"package":"@genex-ai/embed-sdk"}`. Studio picks
-  the version and the user approves the install.
+  the version and the user approves the install. In a game made from Studio's template it maps
+  Studio's copy in the import map instead, and Studio calls `initEmbed()` for the game.
 - A `genex__cli` call carries the words of the command, its positional argument and its flags by
   name without dashes: `npx genex llm cancel <id>` is
   `genex__cli {"command":"llm cancel","args":"<id>"}`, and `--all` is `"options":{"all":true}`.

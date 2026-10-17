@@ -12,6 +12,7 @@
  * classic pipeline, a kept director.ts from before live chat — keeps its messages waiting.
  */
 import { leadLineOf, leadLinesChanged, type LeadLine } from "./director/lead-line.ts";
+import { attachedPicturesLine } from "./live-chat-prompts.ts";
 import { RunEvent } from "./run-events.ts";
 import { SteerDelivery } from "./steer-delivery.ts";
 import { type ActiveRun, type Studio, heldRuns } from "./studio-state.ts";
@@ -21,22 +22,51 @@ import type { HarnessCtx } from "../types/harness.d.ts";
 /** A message's words, trimmed; anything else reads as none. */
 const wordsOf = (action: QueueAction): string => String(action.text ?? "").trim();
 
-/** Pictures travel with the message: the lead reads words only, so these wait for the chat. */
-function carriesPictures(action: QueueAction): boolean {
-  const stills = Array.isArray(action.stills) && action.stills.length > 0;
-  const frames = Array.isArray(action.autopilot?.frames) && action.autopilot.frames.length > 0;
-  return stills || frames || Boolean(action.attachmentsArtifact || action.imageCount);
+/** The game's folder the chat saves a message's pictures in (`references`, relative to the game). */
+const REFERENCES_FOLDER = "references";
+
+/** How many pictures travel with a message: the composer's stills, a commission's frames, or the log's count. */
+function pictureCount(action: QueueAction): number {
+  if (Array.isArray(action.stills) && action.stills.length) return action.stills.length;
+  if (Array.isArray(action.autopilot?.frames) && action.autopilot.frames.length) return action.autopilot.frames.length;
+  const counted = Number(action.imageCount);
+  if (Number.isInteger(counted) && counted > 0) return counted;
+  return action.attachmentsArtifact ? 1 : 0;
+}
+
+/** A file the chat saved in the game's references folder: a plain path inside it, never out of it. */
+const isSavedReference = (file: unknown): file is string =>
+  typeof file === "string" && file.startsWith(`${REFERENCES_FOLDER}/`) && !file.split("/").includes("..");
+
+/**
+ * A message's pictures as the files the chat saved them to in the game, which the lead reads: none
+ * for a message without pictures, null when one of them was not saved (it waits for the chat).
+ */
+function savedPictures(action: QueueAction): string[] | null {
+  const count = pictureCount(action);
+  if (count === 0) return [];
+  const saved = Array.isArray(action.references) ? action.references.filter(isSavedReference) : [];
+  return saved.length >= count ? saved : null;
+}
+
+/** What the lead reads of a message: its words, and where the pictures it carries were saved. */
+function leadWordsOf(action: QueueAction): string {
+  const pictures = savedPictures(action) ?? [];
+  if (!pictures.length) return wordsOf(action);
+  return [wordsOf(action), attachedPicturesLine(pictures)].filter(Boolean).join("\n\n");
 }
 
 /**
- * Does the lead take this message: words for the chat — never a fresh build asked for (`newRun`, a
- * New build queued before the composer dropped it), Studio's own chat, a slash command (words to the
- * session, not to the lead) or a message with pictures.
+ * Does the lead take this message: words or saved pictures for the chat — never a fresh build asked
+ * for (`newRun`, a New build queued before the composer dropped it), Studio's own chat, a slash
+ * command (words to the session, not to the lead) or a picture the chat did not save in the game.
  */
 function forTheLead(action: QueueAction): boolean {
   const words = wordsOf(action);
+  const pictures = savedPictures(action);
   const ownTurn = Boolean(action.newRun || action.studioThread);
-  return words.length > 0 && !words.startsWith("/") && !ownTurn && !carriesPictures(action);
+  const said = words.length > 0 || Boolean(pictures?.length);
+  return said && pictures !== null && !words.startsWith("/") && !ownTurn;
 }
 
 /** The build this chat's messages wait for: its run that has not closed yet. */
@@ -55,7 +85,7 @@ function steerOf(line: LeadLine, item: QueueAction) {
       event_type: RunEvent.RunSteering,
       payload: {
         runId: line.runId,
-        text: wordsOf(item),
+        text: leadWordsOf(item),
         sourceMessageId: item.messageId,
         how: SteerDelivery.Lead,
         at: new Date().toISOString(),
@@ -133,6 +163,7 @@ export async function runUnderWay(studio: Studio, threadId: string, project: str
  */
 export function stopRun(active: ActiveRun): void {
   active.stopped = true;
+  active.stops = (active.stops ?? 0) + 1;
 }
 
 /** The composer's Stop: it reaches every run of this chat — or of every chat, when none is named. */

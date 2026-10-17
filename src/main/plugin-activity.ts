@@ -11,6 +11,8 @@
  * generated picture cannot be copied into the thread log by way of a tool result.
  */
 import { randomUUID } from "node:crypto";
+import type { CallMaking } from "../shared/asset-making.ts";
+import { GenexBlocked } from "../shared/genex.ts";
 import type { PluginToolFinishedPayload, PluginToolRole, PluginToolStartedPayload } from "../shared/game-assets.ts";
 import { isJsonObject } from "../substrate/fsx.ts";
 
@@ -110,11 +112,12 @@ export function resultDigest(record: unknown): string {
 
 /**
  * Which session asked. There is no `role` on a delegate request: the worker path sets
- * `selfCapture`, the director path sets `director`, and a plain chat build sets neither.
+ * `selfCapture`, a run's sub-agent sets `attribution`, the director path sets `director`, and a
+ * plain chat build sets none of them.
  */
-export function roleOf(context: { director?: unknown; selfCapture?: unknown }): PluginToolRole {
+export function roleOf(context: { director?: unknown; selfCapture?: unknown; attribution?: unknown }): PluginToolRole {
   if (context.director) return "director";
-  if (context.selfCapture) return "builder";
+  if (context.selfCapture || context.attribution) return "builder";
   return "chat";
 }
 
@@ -136,6 +139,8 @@ export interface PluginToolCall {
   engine: string;
   role: PluginToolRole;
   at?: string;
+  /** What the call makes, when its tool says (`shared/asset-making.ts`). */
+  making?: CallMaking;
 }
 
 /** The `plugin_tool_started` payload. `runId`/`facetId`/`iteration` stay at the top level on purpose. */
@@ -155,6 +160,7 @@ export function startedPayload(call: PluginToolCall): PluginToolStartedPayload {
     engine: call.engine,
     role: call.role,
     at: call.at ?? new Date().toISOString(),
+    ...(call.making ? { making: call.making } : {}),
   };
   return payload;
 }
@@ -178,6 +184,7 @@ export function finishedPayload(
   const record = failed ? null : (outcome as { result: unknown }).result;
   const { files, jobId, generationId } = jobIds(record);
   const error = failed ? String((outcome as { error: unknown }).error ?? "") : null;
+  const blocked = blockedBy(record);
   return {
     ...started,
     ok: !failed,
@@ -187,9 +194,16 @@ export function finishedPayload(
     ...(files?.length ? { files } : {}),
     ...(jobId ? { jobId } : {}),
     ...(generationId !== null ? { generationId } : {}),
+    ...(blocked ? { blocked } : {}),
     durationMs: positiveOrZero(durationMs, Math.round),
     ...(outcome.version ? { version: outcome.version } : {}),
   };
+}
+
+/** What a job-shaped result says the job is waiting on the person for, when it names a known reason. */
+function blockedBy(record: unknown): GenexBlocked | null {
+  if (!isJsonObject(record)) return null;
+  return Object.values(GenexBlocked).find((reason) => reason === record.blocked) ?? null;
 }
 
 /** A count or a duration as a whole number, and 0 for anything that is not a positive number. */

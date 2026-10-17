@@ -13,6 +13,12 @@ import type { EventEnvelope } from "../../src/shared/event-log.ts";
 import type { ConversationRecord, GameProject, ProjectAssets } from "../../src/shared/studio-api.ts";
 import type { UiEvent } from "../../src/shared/ui-events.ts";
 import { createRefresher } from "../../src/renderer/state/refresher.ts";
+import {
+  computerControlOffered,
+  computerControlOn,
+  setComputerControl,
+} from "../../src/renderer/use-computer-control.ts";
+import { StudioPlatform } from "../../src/shared/boot.ts";
 import { UpdateAction } from "../../src/shared/app-update.ts";
 import {
   createEventLogStore,
@@ -27,6 +33,7 @@ import {
   gameRemovedFromThreads,
   harnessDown,
   initialThreads,
+  personFirstLabel,
   projectOf,
   railThreadIds,
   returnTarget,
@@ -156,6 +163,7 @@ const gameProject = (name: string, extra: Partial<GameProject> = {}): GameProjec
     serve: ".",
   },
   built: false,
+  facts: [{ id: "web-game", path: ".", source: "core" }],
   ...extra,
 });
 const studioThread = thread("studio", { kind: "studio" });
@@ -638,6 +646,8 @@ describe("what each UI event makes the renderer read again", () => {
     assert.equal(uiEventReads(ev("plugin.event", { id: "genex", event: {} })).assets, null);
     assert.deepEqual(uiEventReads(ev("asset.delivered", { project: "pond" })).assets, { project: "pond" });
     assert.deepEqual(uiEventReads(ev("asset.delivered", {})).assets, { project: null });
+    assert.deepEqual(uiEventReads(ev("asset.jobs", { project: "pond" })).assets, { project: "pond" });
+    assert.equal(uiEventReads(ev("asset.jobs", {})).assets, null, "a change of jobs names its game");
   });
 });
 
@@ -781,6 +791,29 @@ describe("the studio: one subscription, the bootstrap and the commands that span
     assert.equal(app.session.getState().error, null);
   });
 
+  it("the chat a wait on the person is for reads it as it comes and goes; another chat never does", async () => {
+    const { fake, app } = started();
+    await tick();
+    app.selectThread("rift-chat");
+    const label = () => personFirstLabel(app.threads.getState(), app.threads.getState().activeThreadId);
+    assert.equal(label(), null);
+    fake.emit({
+      type: "lock.person-first",
+      payload: { project: "rift", threadId: "rift-chat", label: "Unreal", waiting: true },
+    });
+    assert.equal(label(), "Unreal");
+    fake.emit({
+      type: "lock.person-first",
+      payload: { project: "pond", threadId: "pond-chat", label: "Desk", waiting: true },
+    });
+    assert.equal(label(), "Unreal", "another chat's wait leaves this one's");
+    fake.emit({
+      type: "lock.person-first",
+      payload: { project: "rift", threadId: "rift-chat", label: "Unreal", waiting: false },
+    });
+    assert.equal(label(), null);
+  });
+
   it("feeds events from its one subscription and polls the log", async () => {
     const { fake, app, timers, stop } = started({ events: async () => ({ events: [], cursor: "c2" }) });
     await tick();
@@ -922,6 +955,26 @@ function rendererFiles(): string[] {
     .filter((file) => /\.tsx?$/.test(file))
     .map((file) => path.join(root, file));
 }
+
+describe("Settings → Permissions: Let agents control your computer", () => {
+  it("is off unless the host's settings say it is on, and offered only on macOS", () => {
+    assert.equal(computerControlOn(null), false, "before the settings load");
+    assert.equal(computerControlOn({ learning: true, selfImproving: false }), false, "an older host's view");
+    assert.equal(computerControlOn({ learning: true, selfImproving: false, computerControl: false }), false);
+    assert.equal(computerControlOn({ learning: true, selfImproving: false, computerControl: true }), true);
+    assert.equal(computerControlOffered(StudioPlatform.Mac), true);
+    for (const platform of [StudioPlatform.Windows, StudioPlatform.Linux, ""])
+      assert.equal(computerControlOffered(platform), false, platform || "before main answered");
+  });
+
+  it("the switch sends only this setting and shows what the host saved", async () => {
+    const fake = fakeStudioApi();
+    fake.stub("setSettings", async () => ({ learning: true, selfImproving: false, computerControl: false }));
+    const view = await setComputerControl(fake.api, true);
+    assert.deepEqual(fake.callsOf("setSettings"), [[{ computerControl: true }]]);
+    assert.equal(computerControlOn(view), false, "the switch follows the host's answer, not the click");
+  });
+});
 
 describe("components read the stores through selectors", () => {
   it("never calls a store hook without one, and never reaches a store's whole state", () => {

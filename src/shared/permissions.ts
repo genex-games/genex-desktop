@@ -4,10 +4,17 @@
  * engine's chat session follows the chat's mode as far as it can (`permissionModesFor`).
  *
  * Whoever answers the person in a game chat asks: the chat's own session, and a build's lead or the
- * run's coordinator on Claude Code while it answers a message the person sent. Unattended work (builders,
- * workers, playtesters, scouts, judges, candidates) never waits on a person: it keeps the sandboxed
- * contract of the engine that runs it. The host decides which is which from what it recorded
- * itself, and keeps the mode and every saved grant; the harness can neither read nor set them.
+ * run's coordinator on Claude Code while it answers a message the person sent. Workers of the
+ * chat's lead follow the chat's mode: Bypass in a box that writes the home folder too, Auto, Accept
+ * edits and Manual in a box that writes only their folders, Plan read-only; their questions wait in the chat, naming the
+ * worker, until the person answers, and "always" counts for the whole chat. A Codex worker cannot
+ * ask, so it is always boxed. In every mode, Bypass included, a worker never reaches a sign-in,
+ * Genex's own data or another game (the never-touch list). A web Loop snapshots the game before its
+ * first turn; the Unreal Loop's lead takes its first snapshot at its first save point, so its
+ * in-place workers before then have only the chat's checkpoints behind them. Other unattended work (playtesters, scouts, judges, candidates, a classic Autopilot's
+ * builders) keeps the sandboxed contract of the engine that runs it. The host decides which is
+ * which from what it recorded itself, and keeps the mode and every saved grant; the harness can
+ * neither read nor set them, and no agent's message ever counts as the person's answer.
  */
 import { EngineId } from "./providers.ts";
 
@@ -73,7 +80,8 @@ interface EnginePermissions {
  * Each engine's row. Claude Code asks mid-turn in every mode. Bonsai's tools run in the studio,
  * which asks before each edit or command; its commands always run in the studio's sandbox, so it
  * has no Bypass. Codex (`codex exec`) cannot ask mid-turn: Auto keeps its sandbox, Plan only reads,
- * Bypass drops its sandbox. OpenRouter's tools run in the studio's own session loop, as Bonsai's do.
+ * Bypass drops its sandbox. OpenRouter's and a local server's tools run in the studio's own session
+ * loop, as Bonsai's do.
  * OpenCode (`opencode run`) and Pi (`pi --mode json`) cannot ask mid-turn and always run in the
  * studio's sandbox: Auto, or Plan (read only). Any other engine (Ollama, whose tools run in the
  * harness, or one added later) keeps its
@@ -90,6 +98,10 @@ const ENGINE_PERMISSIONS: Readonly<Record<string, EnginePermissions>> = {
     withheld: UnavailableModeReason.CannotAsk,
   },
   [EngineId.OpenRouter]: {
+    modes: [PermissionMode.Auto, PermissionMode.Manual, PermissionMode.AcceptEdits, PermissionMode.Plan],
+    withheld: UnavailableModeReason.AlwaysSandboxed,
+  },
+  [EngineId.LocalServer]: {
     modes: [PermissionMode.Auto, PermissionMode.Manual, PermissionMode.AcceptEdits, PermissionMode.Plan],
     withheld: UnavailableModeReason.AlwaysSandboxed,
   },
@@ -202,8 +214,9 @@ export const ToolPermissionState = { Pending: "pending", Allowed: "allowed", Den
 export type ToolPermissionState = (typeof ToolPermissionState)[keyof typeof ToolPermissionState];
 
 /**
- * Who settled a request: the person, the work ending around it, or nobody answering a lead's card in
- * time (`timeout`). Persisted: never rename a value.
+ * Who settled a request: the person, the work ending around it, nobody answering a lead's or a run
+ * worker's card in time (`timeout`), or the person's switch to Bypass (`mode`). Persisted: never
+ * rename a value.
  */
 export const ToolPermissionBy = {
   User: "user",
@@ -211,6 +224,8 @@ export const ToolPermissionBy = {
   Turn: "turn",
   Restart: "restart",
   Timeout: "timeout",
+  /** The person switched the chat to Bypass while the card waited: allowed, as Bypass asks nothing. */
+  Mode: "mode",
 } as const;
 export type ToolPermissionBy = (typeof ToolPermissionBy)[keyof typeof ToolPermissionBy];
 
@@ -244,6 +259,8 @@ export interface ToolPermissionEvent {
   always?: PermissionGrant[];
   /** Set when a subagent asked. */
   agentId?: string;
+  /** Set when a worker of the chat's lead asked: the card names it. */
+  worker?: { id: string; title: string };
   state: ToolPermissionState;
   by?: ToolPermissionBy;
   /** Settled allow: once, or with its `always` grants. */

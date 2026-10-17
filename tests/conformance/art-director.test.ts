@@ -43,7 +43,9 @@ import { SHIP_QUESTION, shipFinishLine } from "../../src/harness-seed/loop/direc
 import { finishMarkMs } from "../../src/harness-seed/loop/director/budgets.ts";
 import { priorWorkersStatus, restoreLoopRun } from "../../src/harness-seed/loop/director/journal.ts";
 import { runWakeLoop, type DirectorTalk, type WakeClock } from "../../src/harness-seed/loop/director/wake.ts";
-import { WakeCause } from "../../src/harness-seed/loop/director/wake-schedule.ts";
+import { WakeCause, WrapCause } from "../../src/harness-seed/loop/director/wake-schedule.ts";
+import { HELD_TURN_WAIT_MS, MAX_HELD_TURNS } from "../../src/harness-seed/loop/director/turn-hold.ts";
+import { HOOK_PROMPTS } from "../../src/harness-seed/loop/hooks-prompts.ts";
 import { HOUR_MS, MINUTE_MS } from "../../src/harness-seed/loop/time.ts";
 import { ctxRecorder } from "../helpers/ctx-recorder.ts";
 
@@ -94,6 +96,12 @@ const SHIP_NO = {
   ],
   strengths: ["the dusk light"],
   reason: "the HUD is broken at a glance",
+};
+
+/** The same look with every defect a blocker: only a blocker is a builder's work (routeShipDefects). */
+const SHIP_BLOCKED = {
+  ...SHIP_NO,
+  defects: SHIP_NO.defects.map((defect) => ({ ...defect, severity: "blocker" })),
 };
 
 /** The seed's own folder, as a workspace laid down from it reads it. */
@@ -472,7 +480,8 @@ describe("the lead's judge ship=yes (director/tools.ts)", () => {
       "the ship review is a judge verdict on the record, asked its own question",
     );
 
-    // Each defect went to its owner: the running hud worker's board, the finished track's ledger line, the lead's.
+    // The blocker went to its owner, the running hud worker's board; the finished track's visible
+    // flaw and the unowned nit are the report's, never a round's.
     const hud = loopRun.state.workers.get("hud");
     const routed = hud.spec.checks.find((c: Record<string, unknown>) => /speed digits/.test(String(c.defect)));
     assert.equal(routed?.origin, CheckOrigin.Director);
@@ -481,11 +490,8 @@ describe("the lead's judge ship=yes (director/tools.ts)", () => {
       hud.steering.some((line: string) => /speed digits/.test(line)),
       "and the worker is told",
     );
-    assert.deepEqual(
-      loopRun.state.ledger.map((d: Record<string, unknown>) => d.owner).sort(),
-      ["integration", "track"],
-      "a finished part's defect waits under that part, an unowned one is the lead's",
-    );
+    // Flipped: a visible flaw and a nit were shelved as work under their part or the lead's.
+    assert.deepEqual(loopRun.state.ledger, [], "nothing but a blocker is shelved as work");
 
     assert.equal(loopRun.state.lastShip.head, HEAD);
     assert.equal(loopRun.state.lastShip.ship, false);
@@ -531,9 +537,9 @@ describe("the lead's judge ship=yes (director/tools.ts)", () => {
     );
   });
 
-  it("AD-4b. a part restarted to finish (worker_start replaces=<its id>) gets its ship defects on the new worker's board", async () => {
+  it("AD-4b. a part restarted to finish (worker_start replaces=<its id>) gets its blockers on the new worker's board", async () => {
     const host = fakeHost();
-    const { loopRun } = fakeLoopRun(host, { answers: { [HostMethod.EngineComplete]: replying(SHIP_NO) } });
+    const { loopRun } = fakeLoopRun(host, { answers: { [HostMethod.EngineComplete]: replying(SHIP_BLOCKED) } });
     loopRun.state.workers.set("track", loopWorker("track", { state: "done", endedAt: T0 + HOUR_MS }));
     loopRun.state.workers.set("track-2", loopWorker("track-2", { replaces: "track", state: "done" }));
     loopRun.state.workers.set("track-3", loopWorker("track-3", { replaces: "track-2" }));
@@ -560,7 +566,7 @@ describe("the lead's judge ship=yes (director/tools.ts)", () => {
     const { loopRun } = fakeLoopRun(host, {
       clock: { started: now, softDeadline: now + 4 * HOUR_MS, finalDeadline: now + 4 * HOUR_MS + 15 * MINUTE_MS },
       answers: {
-        [HostMethod.EngineComplete]: replying(SHIP_NO),
+        [HostMethod.EngineComplete]: replying(SHIP_BLOCKED),
         [HostMethod.SnapshotWorktree]: (params: Record<string, any>) => ({ path: `/runs/run_ad/${params.name}` }),
         [HostMethod.ThreadCreate]: "t-finish",
         [HostMethod.PreviewCapacity]: { headless: true, max: 12, free: 12, inUse: 0 },
@@ -604,7 +610,7 @@ describe("the lead's judge ship=yes (director/tools.ts)", () => {
     const ship = finisher.spec.checks.find((c: Record<string, unknown>) => /road texture/.test(String(c.defect)));
     assert.ok(ship, "the finisher is asked about the art director's defect in its part");
     assert.equal(ship.origin, CheckOrigin.Director);
-    assert.equal(ship.weight, CheckWeight.Identity, "a visible defect decides whether the part is done");
+    assert.equal(ship.weight, CheckWeight.Identity, "a blocker decides whether the part is done");
     assert.equal(ship.camera, "chase", "asked on the camera the art director saw it through");
     assert.ok(
       finisher.steering.some((line: string) => /road texture/.test(line)),
@@ -631,7 +637,7 @@ describe("the lead's judge ship=yes (director/tools.ts)", () => {
     assert.ok(finishDone({ won: true, summary: summarizeScoreboard(board(true), finisher.spec) }));
   });
 
-  it("AD-4f. a shelved defect from a review that would ship tells the worker that takes it that the art director would ship, and a worker still building fixes it beside its move", async () => {
+  it("AD-4f. a look that names no blocker shelves nothing and steers nobody; a visible flaw shelved before only blockers were work leaves the ledger when its part restarts, no round's work", async () => {
     const wouldShip = {
       ship: true,
       defects: [
@@ -655,19 +661,19 @@ describe("the lead's judge ship=yes (director/tools.ts)", () => {
     loopRun.state.plan = { summary: "A night race.", workers: [{ ...PARTS[0], single: true }, PARTS[1]] };
     loopRun.state.workers.set("track", loopWorker("track", { state: "done", endedAt: T0 + HOUR_MS }));
     await loopRun.judge({ target: "integration", ship: "yes" });
-    assert.ok(
-      loopRun.state.ledger.some((d: Record<string, unknown>) => d.owner === "track"),
-      "shelved: nobody runs it",
-    );
+    // Flipped: the visible flaw waited on the ledger as the track's work.
+    assert.deepEqual(loopRun.state.ledger, [], "a visible flaw is the report's: nothing is shelved");
+    // A ledger kept from a run before only blockers were work.
+    loopRun.state.ledger.push({ text: wouldShip.defects[0]!.what, owner: "track", from: "art-director", at: T0 });
     loopRun.runWorker = async () => {};
     loopRun.startMonitor = () => {};
 
     const started = await startFinisher(loopRun, { id: "track-2", replaces: "track", stage: "build" });
     assert.equal(started.started, "track-2", JSON.stringify(started));
-    const told = loopRun.state.workers.get("track-2").steering.find((line: string) => /road texture/.test(line)) ?? "";
-    assert.match(told, /would ship/, "the review it came from would ship the build");
-    assert.doesNotMatch(told, /would not ship/);
-    assert.match(told, /beside your move, never instead of it/, "a worker still building keeps its move");
+    const worker = loopRun.state.workers.get("track-2");
+    assert.ok(!worker.spec.checks.some((c: Record<string, unknown>) => /road texture/.test(String(c.defect))));
+    assert.ok(!worker.steering.some((line: string) => /road texture/.test(line)), "nobody is told to fix it");
+    assert.deepEqual(loopRun.state.ledger, [], "and it leaves the ledger");
   });
 
   it("AD-4d. a finish worker that names the part by its goal, not replaces=, takes the part's shelved defects too", async () => {
@@ -679,9 +685,9 @@ describe("the lead's judge ship=yes (director/tools.ts)", () => {
     assert.ok(!loopRun.state.ledger.some((d: Record<string, unknown>) => d.owner === "track"));
   });
 
-  it("AD-4c. a worker started for a part under another id (worker_start goal=<part>) takes that part's ship defects, as the contract gate reads its part", async () => {
+  it("AD-4c. a worker started for a part under another id (worker_start goal=<part>) takes that part's blockers, as the contract gate reads its part", async () => {
     const host = fakeHost();
-    const { loopRun } = fakeLoopRun(host, { answers: { [HostMethod.EngineComplete]: replying(SHIP_NO) } });
+    const { loopRun } = fakeLoopRun(host, { answers: { [HostMethod.EngineComplete]: replying(SHIP_BLOCKED) } });
     loopRun.state.workers.set("hud-gauges", loopWorker("hud-gauges", { goal: "hud" }));
     // A worker whose own id is a plan part builds that part, whatever goal it advances.
     loopRun.state.workers.set("track", loopWorker("track", { goal: "hud", state: "done" }));
@@ -700,7 +706,7 @@ describe("the lead's judge ship=yes (director/tools.ts)", () => {
 
   it("AD-4c. a new ship review swaps the art director's questions on running boards: a reworded defect replaces the old one, a gone one leaves, a repeated one keeps its id, and an unread review changes nothing", async () => {
     const reviews: unknown[] = [
-      SHIP_NO,
+      SHIP_BLOCKED,
       {
         ...SHIP_NO,
         defects: [
@@ -753,7 +759,7 @@ describe("the lead's judge ship=yes (director/tools.ts)", () => {
     );
   });
 
-  it("AD-4e. the art director's word to an owner follows its verdict and the defect's severity: a nit is optional polish, a build it would ship never reads as one it would not, and a build-stage worker is never told to fix it ahead of its move", async () => {
+  it("AD-4e. only a blocker reaches its owner: a look that names a nit and a visible flaw tells nobody, and a build-stage owner fixes a blocker beside its move, never ahead of it", async () => {
     const reviews: unknown[] = [
       {
         ship: true,
@@ -773,28 +779,23 @@ describe("the lead's judge ship=yes (director/tools.ts)", () => {
     loopRun.state.workers.set("hud", loopWorker("hud"));
     const finishing = { ...loopWorker("track").spec, stage: FacetStage.Finish };
     loopRun.state.workers.set("track", loopWorker("track", { spec: finishing }));
-    const told = (id: string): string => loopRun.state.workers.get(id).steering.at(-1) ?? "";
+    const steering = (id: string): string[] => loopRun.state.workers.get(id).steering;
 
     await loopRun.judge({ target: "integration", ship: "yes" });
-    const nit = told("hud");
-    assert.match(nit, /lap counter/);
-    assert.match(nit, /optional/, "a nit is optional polish");
-    assert.doesNotMatch(nit, /would not ship/, "the art director would ship this build");
-    assert.doesNotMatch(nit, /this iteration/, "a build-stage worker keeps its move");
-    assert.match(nit, /never ahead of your move/, "a builder never puts a nit ahead of its move");
-    const visible = told("track");
-    assert.match(visible, /bridge seams/);
-    assert.match(visible, /would ship/);
-    assert.doesNotMatch(visible, /would not ship/);
-    assert.doesNotMatch(visible, /optional/, "a defect a player notices is the finisher's work");
+    // Flipped: a nit was optional polish on the hud's board, and a visible flaw the finisher's work.
+    assert.deepEqual(
+      [steering("hud"), steering("track")],
+      [[], []],
+      "no round is steered by a flaw that blocks nothing",
+    );
 
     await loopRun.judge({ target: "integration", ship: "yes" });
-    const blocker = told("hud");
+    const blocker = steering("hud").at(-1) ?? "";
     assert.match(blocker, /speed digits/);
     assert.match(blocker, /would not ship/);
-    assert.doesNotMatch(blocker, /optional/);
     assert.doesNotMatch(blocker, /this iteration/, "a build-stage worker is not told to put it ahead of its move");
     assert.match(blocker, /beside your move, never instead of it/, "a builder fixes it beside its move");
+    assert.deepEqual(steering("track"), [], "the track's visible flaw is the report's");
   });
 
   it("AD-10. judge ship=yes looks at one build alone: with a start picture it makes no blind call and leaves no pick, and ship=yes against a build is refused in one line", async () => {
@@ -832,8 +833,8 @@ describe("the lead's judge ship=yes (director/tools.ts)", () => {
       ship: false,
       defects: [
         { what: "the speed digits are cut off", camera: "chase camera", part: "hud", severity: "blocker" },
-        { what: "the needle stutters", camera: "MOTION 2", part: "hud", severity: "visible" },
-        { what: "the gauge is unlit", camera: "eye:here", part: "hud", severity: "visible" },
+        { what: "the needle stutters", camera: "MOTION 2", part: "hud", severity: "blocker" },
+        { what: "the gauge is unlit", camera: "eye:here", part: "hud", severity: "blocker" },
       ],
       strengths: [],
       reason: "",
@@ -1045,7 +1046,7 @@ describe("the finish mark (director/budgets.ts, wake.ts, art-direction.ts)", () 
     assert.match(turns[1]!.prompt, /What next\?/, "asked what next first");
     assert.match(
       turns[1]!.prompt,
-      /BUILD CARD:[\s\S]*art director's blocker and visible defects[^\n]*not optional polish/,
+      /BUILD CARD:[\s\S]*art director's blockers are required finishing; its visible flaws and nits go in your report/,
       "a goal commission's card says the art director's defects are not optional polish",
     );
     assert.match(turns[2]!.prompt, /would not ship/, "then sent to art direction");
@@ -1085,11 +1086,14 @@ describe("the ship verdict on the record (director/integrate.ts)", () => {
       return { ok: true, line: "made live" };
     };
     const first = await loopRun.finish({ summary: "the race is ready" });
-    assert.match(first, /would not ship/);
+    // Flipped: the refusal said the art director would not ship; it names the blockers now.
+    assert.match(first, /names blockers on this build — hud: blocker: the speed digits/);
     assert.equal(closes.length, 0, "the first finish is turned back once, with the defects");
+    // A claim on this head is refused while its blocker stands: only a finish that claims nothing closes it.
+    assert.match(first, /Calling finish again with victory=no closes the build as it stands/);
     const second = await loopRun.finish({ summary: "the race is ready" });
     assert.equal(closes.length, 1, "never refused twice");
-    assert.match(second, /would not ship this build; 3 defects left/);
+    assert.match(second, /names 1 blocker on this build; 2 visible flaws and nits for your report/);
     assert.equal(shipCalls(host).length, 1, "reviewed once");
     // The finish call holds the look and the close: the gate's judging ends by its own bound, and
     // its one look answered the close's own question, so the close does not judge it again.
@@ -1111,6 +1115,24 @@ describe("the ship verdict on the record (director/integrate.ts)", () => {
     asked.closeTheLoopRun = async () => ({ ok: true, line: "made live" });
     assert.doesNotMatch(await asked.finish({ summary: "done" }), /refused|would not ship/);
     assert.equal(imageLabels(quick).length, 0);
+  });
+
+  it("AD-8d. a claim that the goal is reached is refused while the art director's look at its head names a blocker, never for a visible flaw", async () => {
+    const host = fakeHost();
+    const { loopRun } = fakeLoopRun(host, {
+      answers: { [HostMethod.EngineComplete]: replying(SHIP_NO) },
+      budgets: { wallClockMs: 2 * HOUR_MS, completionPolicy: "goal" },
+      clock: { started: Date.now(), softDeadline: Date.now() + HOUR_MS, finalDeadline: Date.now() + 2 * HOUR_MS },
+    });
+    await loopRun.judge({ target: "integration", ship: "yes" });
+    const claimed = await loopRun.finish({ summary: "the race is ready", victory: "yes" });
+    assert.match(claimed, /^finish cannot claim victory: the art director names blockers on this build — hud:/);
+    assert.equal(loopRun.state.finish, null, "nothing closed");
+
+    loopRun.state.lastShip = { ...loopRun.state.lastShip, ship: true, defects: SHIP_NO.defects.slice(1) };
+    loopRun.closeTheLoopRun = async () => ({ ok: true, line: "made live" });
+    const noBlocker = String(await loopRun.finish({ summary: "the race is ready", victory: "yes" }));
+    assert.doesNotMatch(noBlocker, /cannot claim victory: the art director/, "a visible flaw holds no claim back");
   });
 
   it("AD-8b. a goal build's finish whose close still owes a blind judge against the start is not held for the art director: the finish call has no time for both", async () => {
@@ -1138,7 +1160,7 @@ describe("the ship verdict on the record (director/integrate.ts)", () => {
     second.state.startEvidence = gameEvidence();
     second.state.lastJudge = { ...LEAD_PICK };
     second.closeTheLoopRun = async () => ({ ok: true, line: "made live" });
-    assert.match(await second.finish({ summary: "the race is ready" }), /would not ship/);
+    assert.match(await second.finish({ summary: "the race is ready" }), /names blockers/);
     assert.equal(second.state.lastJudge.pick, "challenger");
   });
 
@@ -1155,10 +1177,18 @@ describe("the ship verdict on the record (director/integrate.ts)", () => {
     assert.equal(shipCalls(host).length, 0, "and nothing is looked at for it");
   });
 
-  it("the finish answer counts the defects left whether or not the art director would ship", () => {
+  it("the finish answer counts the blockers, and the flaws and nits for the report", () => {
     const nits = [SHIP_NO.defects[2]!, { ...SHIP_NO.defects[2]!, what: "a seam in the sky" }];
-    assert.match(shipFinishLine({ ship: true, defects: nits as never }), /would ship this build; 2 defects left/);
-    assert.match(shipFinishLine({ ship: true, defects: [] }), /would ship this build\.$/);
+    // Flipped: it counted every defect as left; only a blocker is.
+    assert.match(
+      shipFinishLine({ ship: true, defects: nits as never }),
+      /names no blocker on this build; 2 visible flaws and nits for your report\.$/,
+    );
+    assert.match(shipFinishLine({ ship: true, defects: [] }), /names no blocker on this build\.$/);
+    assert.match(
+      shipFinishLine(SHIP_BLOCKED as never),
+      /names 3 blockers on this build — say so, and claim no more\.$/,
+    );
   });
 
   it("AD-9. worker_status names a finishing worker's stage after a Resume", async () => {
@@ -1234,6 +1264,23 @@ describe("the art director's regular look at the whole game (director/art-direct
       "the wake says why",
     );
     assert.equal(host.journals.at(-1)!.director.wake.finishMarkSaid, undefined, "the regular look is no finish mark");
+  });
+
+  it("AD-14d. once the user asked to finish, the regular look no longer comes: no round would take its blockers", async () => {
+    const host = fakeHost();
+    const { loopRun } = fakeLoopRun(host, { answers: { [HostMethod.EngineComplete]: replying(SHIP_NO) }, ...INFINITE });
+    busyWorkers(loopRun, ["hud", "track", "car", "city"]);
+    // The lead recorded the user's ask (wrap_up): its workers end the rounds they are in.
+    loopRun.inbox.finishing = async () => true;
+    loopRun.state.finishAsk = { at: T0, words: "wait for the last workers" };
+    const { talk, turns } = lead((turn) => {
+      if (turn === 2) loopRun.state.finished = true;
+      return DECIDED;
+    });
+    await runWakeLoop(loopRun, talk, BRIEF, fakeClock(T0 + 30 * MINUTE_MS));
+
+    assert.equal(shipCalls(host).length, 0, "no look while the build is finishing");
+    assert.equal(turns.length, 2, turns.map((t) => t.prompt.slice(0, 160)).join("\n---\n"));
   });
 
   it("AD-14c. the user is never kept waiting for a regular look: their words wake the lead first, and the look comes with the next wake", async () => {
@@ -1430,5 +1477,99 @@ describe("the goal ledger on every wake (director/progress.ts, wake.ts)", () => 
       "every 60 working minutes, and after the look at 90",
     );
     assert.match(wakes[2]!, /playtest goal=hud/);
+  });
+});
+
+describe("the lead's turn as Genex's moments name it (wake.ts)", () => {
+  it("a lead's turn names one turn at its start and at its end", async () => {
+    const host = fakeHost();
+    const quiet = { blocked: null, pending: null, notes: [], images: [], ran: [] };
+    const { loopRun } = fakeLoopRun(host, {
+      over: { game: { hookEvents: ["turn.start", "turn.end"] } },
+      answers: { [HostMethod.HooksFire]: () => quiet },
+    });
+    const { talk } = lead((turn) => {
+      if (turn === 2) loopRun.state.finished = true;
+      return { ok: true, sessionId: "lead-1", turns: 1 };
+    });
+    await runWakeLoop(loopRun, talk, BRIEF, fakeClock(T0 + MINUTE_MS));
+
+    const moments = host.calls
+      .filter((c) => c.method === HostMethod.HooksFire)
+      .map((c) => `${c.params.on} ${c.params.turn}`);
+    assert.deepEqual(moments, ["turn.start 1", "turn.end 1", "turn.start 2", "turn.end 2"]);
+  });
+
+  /** A run whose game hooks the lead's turns; `turnStart` answers each `turn.start` by its count. */
+  function heldRun(turnStart: (asked: number) => Record<string, unknown> | null) {
+    const host = fakeHost();
+    const quiet = { blocked: null, pending: null, notes: [], images: [], ran: [] };
+    let asked = 0;
+    const { loopRun } = fakeLoopRun(host, {
+      over: { game: { hookEvents: ["turn.start", "turn.end"] } },
+      answers: {
+        [HostMethod.HooksFire]: (params: Record<string, unknown>) => {
+          if (params.on !== "turn.start") return quiet;
+          asked += 1;
+          return { ...quiet, blocked: turnStart(asked) };
+        },
+      },
+    });
+    const starts = () => asked;
+    return { host, loopRun, starts };
+  }
+  const BENCH = { plugin: "bench", tool: "gate", reason: "The bench is being oiled." };
+
+  it("a turn held at its start is asked again after a wait and runs once nothing holds it, the brief first", async () => {
+    const { loopRun, starts } = heldRun((asked) => (asked <= 2 ? BENCH : null));
+    const clock = fakeClock(T0 + MINUTE_MS);
+    const { talk, turns } = lead(() => {
+      loopRun.state.finished = true;
+      return { ok: true, sessionId: "lead-1", turns: 1 };
+    });
+    const outcome = await runWakeLoop(loopRun, talk, BRIEF, clock);
+    assert.equal(starts(), 3);
+    assert.equal(clock.at - (T0 + MINUTE_MS), 2 * HELD_TURN_WAIT_MS, "a wait between asks");
+    assert.equal(turns.length, 1);
+    assert.match(turns[0]!.prompt, /You are the DIRECTOR/);
+    assert.notEqual(outcome.wrapCause, WrapCause.Idle);
+  });
+
+  it("a first turn held past every ask is no idle turn: the next turn opens with the held brief and the lead hears why", async () => {
+    const { loopRun } = heldRun((asked) => (asked <= MAX_HELD_TURNS ? BENCH : null));
+    const { talk, turns } = lead(() => {
+      loopRun.state.finished = true;
+      return { ok: true, sessionId: "lead-1", turns: 1 };
+    });
+    const outcome = await runWakeLoop(loopRun, talk, BRIEF, fakeClock(T0 + MINUTE_MS));
+    assert.equal(turns.length, 1, "only the turn nothing held reached the session");
+    assert.match(turns[0]!.prompt, /^You are the DIRECTOR/, "the held brief opens it");
+    assert.ok(turns[0]!.prompt.includes(HOOK_PROMPTS.turnHeld(BENCH.reason)), turns[0]!.prompt.slice(0, 400));
+    assert.notEqual(outcome.wrapCause, WrapCause.Idle);
+  });
+
+  it("a turn start that keeps being held ends the lead's turns as failed with the hold's reason, never idle", async () => {
+    const { loopRun, starts } = heldRun(() => BENCH);
+    const { talk, turns } = lead(() => ({ ok: true, sessionId: "lead-1", turns: 1 }));
+    const outcome = await runWakeLoop(loopRun, talk, BRIEF, fakeClock(T0 + MINUTE_MS));
+    assert.equal(turns.length, 0, "no held turn reached the session");
+    assert.ok(starts() >= MAX_HELD_TURNS);
+    assert.equal(outcome.wrapCause, WrapCause.Failed);
+    assert.match(String(outcome.failed?.errorText), /The bench is being oiled/);
+  });
+
+  it("a turn start Genex itself keeps holding for the person ends in the person's words, never the agents'", async () => {
+    const hold = {
+      plugin: "@genex",
+      tool: "",
+      reason: "The person is using Unreal. Try again later, or ask them in the chat.",
+    };
+    const { loopRun } = heldRun(() => ({ ...hold, hold: "person_first", label: "Unreal" }));
+    const { talk } = lead(() => ({ ok: true, sessionId: "lead-1", turns: 1 }));
+    const outcome = await runWakeLoop(loopRun, talk, BRIEF, fakeClock(T0 + MINUTE_MS));
+    assert.equal(outcome.wrapCause, WrapCause.Failed);
+    const words = String(outcome.failed?.errorText);
+    assert.match(words, /you were using Unreal|finish in Unreal/);
+    assert.doesNotMatch(words, /the person|ask them|Try again later|a plugin of this game/i);
   });
 });

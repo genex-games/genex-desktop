@@ -5,6 +5,7 @@ import {
   type BaseNode,
   type RunGraph as RunGraphModel,
   type RunNode,
+  runIdOf,
   RunStillStage,
   runStillPath,
 } from "../../run-graph.ts";
@@ -113,7 +114,7 @@ function StartDetails({
     <Row label="Technical details">
       <Details
         rows={[
-          ["run", graph.runId],
+          ["run", runIdOf(graph)],
           ["project", run.project],
           ["worker", modelLine(builderName(run.builderEngine), run.model)],
           ["lead", modelLine(run.engine, run.model)],

@@ -1,5 +1,6 @@
 /** What the build block (facet/build-block.ts) says to its builder, and why its round was kept. */
 import { slug } from "../spec.ts";
+import { BENCH_FOLDER } from "../bench.ts";
 import { BUILD_BLOCK_MAX_MS, BUILD_BLOCK_MIN_MS } from "./build-block.ts";
 import { MINUTE_MS } from "../time.ts";
 
@@ -8,7 +9,7 @@ const blockSpan = (): string =>
   `${Math.round(BUILD_BLOCK_MIN_MS / MINUTE_MS)}–${Math.round(BUILD_BLOCK_MAX_MS / MINUTE_MS)}`;
 
 /** A part's bench page in a template game: one page that mounts just its module (loop/library.ts's bench rule). */
-export const benchPage = (facetId: string): string => `bench/${slug(facetId, "part")}.html`;
+export const benchPage = (facetId: string): string => `${BENCH_FOLDER}${slug(facetId, "part")}.html`;
 
 /** The bench page a block names: a template game's for this part; a game the user brought has its own ways. */
 export const blockBench = ({

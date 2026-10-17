@@ -6,6 +6,8 @@
 @import "./styles/empty-states.css";
 @import "./styles/onboarding.css";
 @import "./styles/genex.css";
+@import "./styles/play.css";
+@import "./styles/people.css";
 @custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
 
 @source "./";
@@ -82,6 +84,7 @@
   --ink-3: var(--muted-foreground);
   --line: var(--border);
   --line-strong: #29292b;
+  --line-soft: var(--line-strong);
   --field: #1b1c1d;
   --stripe: color-mix(in oklab, #dee0e2 4%, transparent);
   --stripe-bg: var(--background);
@@ -123,9 +126,9 @@
   --dur-2: var(--duration-fast);
   --ease: var(--ease-smooth-out);
   --sidebar: #0b0b0d;
-  --danger-fill: #f08287;
-  --danger-foreground: #000000;
-  --danger-hover: color-mix(in oklab, #f08287 92%, #ffffff);
+  --danger-fill: #b54e55;
+  --danger-foreground: #ffffff;
+  --danger-hover: #bd565c;
   --success-foreground: #000000;
   --image-outline: #ffffff1a;
   --error-foreground: #000000;
@@ -181,6 +184,7 @@
   --color-ink-3: var(--ink-3);
   --color-line: var(--line);
   --color-line-strong: var(--line-strong);
+  --color-line-soft: var(--line-soft);
   --color-field: var(--field);
   --color-accent: var(--accent);
   --color-accent-ink: var(--accent-ink);
@@ -324,7 +328,8 @@
     transform: scale(1.2);
   }
 }
-[data-graph-node][data-working="true"]::after {
+/* The start node has no card, so its halo pulses on the ring around its words, not on them. */
+:is([data-graph-node], [data-graph-ring])[data-working="true"]::after {
   content: "";
   position: absolute;
   inset: 0;
@@ -341,8 +346,18 @@
  * minutes (renderer/motion-rest.ts). Chromium draws every frame while one runs. Only endless
  * animations are listed, inline ones by their `infinite`; entrance and exit animations finish. */
 :root[data-motion="rest"]
-:is(.chat-status-shimmer, .app-loader-shine, .animate-ping, .animate-spin, .loader-grid > span, [style*="infinite"]),
-:root[data-motion="rest"] :is([data-graph-node], .graph-shimmer)::after {
+:is(
+  .chat-status-shimmer,
+  .usage-skeleton,
+  .app-loader-shine,
+  .home-backdrop-glint,
+  .animate-ping,
+  .animate-spin,
+  .making-spinner,
+  .loader-grid > span,
+  [style*="infinite"]
+),
+:root[data-motion="rest"] :is([data-graph-node], [data-graph-ring], .graph-shimmer)::after {
   animation-play-state: paused !important;
 }
 /* A selected node opening into its card over the zoomed canvas. */
@@ -1079,16 +1094,25 @@
   opacity: 0;
 }
 /* Over a picture, the words under the composer carry a soft halo of the page, so they read without a cut-out. */
-.home-layer:has(.home-backdrop) :is(.home-folder-chip, .home-suggest) {
+.home-layer:has(:is(.home-backdrop, .home-backdrop-live)) :is(.home-folder-chip, .home-suggest) {
   text-shadow:
     0 0 3px var(--page),
     0 0 8px var(--page),
     0 0 16px var(--page);
 }
-.home-layer:has(.home-backdrop) :is(.home-folder-chip, .home-suggest) svg {
+.home-layer:has(:is(.home-backdrop, .home-backdrop-live)) :is(.home-folder-chip, .home-suggest) svg {
   filter: drop-shadow(0 0 3px var(--page)) drop-shadow(0 0 6px var(--page));
 }
-.home-backdrop[data-ready] {
+/* A live background fills home and centres on it: its subject sits behind home's line and
+   composer, and it redraws every frame, so the sidebar opening or closing simply reframes it. */
+.home-backdrop-live {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+}
+:is(.home-backdrop, .home-backdrop-live)[data-ready] {
   opacity: var(--backdrop-strength);
   animation: home-backdrop-in var(--duration-medium) var(--ease-smooth-out);
 }
@@ -1098,7 +1122,7 @@
   }
 }
 @media (prefers-reduced-motion: reduce) {
-  .home-backdrop[data-ready] {
+  :is(.home-backdrop, .home-backdrop-live)[data-ready] {
     animation: none;
   }
 }
@@ -1132,12 +1156,51 @@
   background: var(--color-control-hover);
   color: var(--color-control-text-hover);
 }
-/* The Background panel: the same controls as Settings, narrower, scrolling inside the window. */
+/* Until the panel is first opened: every few seconds a light sweeps across the picture, drawn by a
+   brighter copy of the icon seen only through a moving band. */
+.home-backdrop-button[data-glint] {
+  position: relative;
+}
+.home-backdrop-glint {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: var(--ink);
+  pointer-events: none;
+  filter: drop-shadow(0 0 3px color-mix(in oklab, var(--ink) 55%, transparent));
+  mask-image: linear-gradient(110deg, transparent 43%, #000 50%, transparent 57%);
+  mask-repeat: no-repeat;
+  mask-size: 300% 100%;
+  mask-position: 100% 0;
+  animation: home-backdrop-glint 4s 1s var(--ease-smooth-out) infinite;
+}
+.home-backdrop-button:hover .home-backdrop-glint {
+  animation: none;
+  opacity: 0;
+}
+@keyframes home-backdrop-glint {
+  0% {
+    mask-position: 100% 0;
+  }
+  30%,
+  100% {
+    mask-position: 0 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .home-backdrop-glint {
+    display: none;
+  }
+}
+/* The Background panel: the gallery and the chosen look's settings, scrolling inside the window. */
 .backdrop-panel {
-  width: 380px;
-  max-height: min(680px, var(--available-height));
+  width: 384px;
+  max-height: min(720px, var(--available-height));
   overflow-y: auto;
-  padding: 12px 16px 8px;
+  /* A scrollbar that comes and goes (a mouse's, not a trackpad's) keeps its room, so the tiles never reflow. */
+  scrollbar-gutter: stable;
+  padding: 12px 16px 16px;
   font-size: 13px;
   line-height: 1.5;
 }
@@ -1146,25 +1209,12 @@
   align-items: center;
   justify-content: space-between;
   min-height: 32px;
-  margin-block-end: 4px;
+  margin-block-end: 8px;
 }
 .backdrop-panel-heading h2 {
   font-size: 14px;
   font-weight: 500;
   color: var(--ink);
-}
-.backdrop-panel .backdrop-slider {
-  width: 150px;
-}
-.backdrop-panel .backdrop-row[data-top] {
-  grid-template-columns: 1fr;
-  gap: 8px;
-}
-.backdrop-panel .backdrop-row[data-top] > .backdrop-label {
-  line-height: 20px;
-}
-.backdrop-panel .backdrop-pictures {
-  justify-content: flex-start;
 }
 .backdrop-panel .backdrop-picture-choice {
   width: 56px;
@@ -1298,6 +1348,10 @@
   flex-direction: column;
   view-transition-name: launch-stage;
 }
+/* One stage may carry the name: a remix shown over a launching home is the one on screen. */
+.studio-shell:has([data-remix-layer]) [data-home] .home-launch-stage {
+  view-transition-name: none;
+}
 /* Home ⇄ game (ui/view-transition.ts): the composer glides to its new place and the rest crossfades.
    Only one composer may carry the name, so the chat's has it only while home is not up. */
 .home-composer [data-promptbar],
@@ -1368,6 +1422,14 @@ button.chat-header-title:hover {
     background-color var(--duration-quick),
     color var(--duration-quick);
 }
+/* A header control that says something beside its icon: the Free button. */
+.header-control[data-label] {
+  display: flex;
+  gap: 6px;
+  width: auto;
+  padding-inline: 8px;
+  font: 12px / 1 var(--font-family-code);
+}
 .header-control:hover,
 .header-control[aria-expanded="true"] {
   background: var(--control-hover, var(--hover));
@@ -1427,9 +1489,13 @@ button.chat-header-title:hover {
   justify-content: space-between;
   height: 44px;
 }
-/* Send feedback ends the toggle's line, its glyph centred over the bell's 28px column below. */
-.sidebar-feedback {
-  margin-inline-end: -2px;
+/* Search, the bell and Send feedback end the toggle's line, 28px each, centred on the toggle. */
+.sidebar-titlebar .sidebar-brand-actions {
+  height: 32px;
+}
+.sidebar-brand-actions .sidebar-feedback {
+  width: 28px;
+  height: 28px;
 }
 /* 72px keeps the toggle just clear of macOS's traffic lights; 8px down centres it on them and on the
  * headers' line, 24px from the top, where the chat and Plugins headers put it while the sidebar is hidden. */
@@ -1822,16 +1888,28 @@ button.chat-header-title:hover {
   width: 28px;
   height: 28px;
 }
-/* Only the game list scrolls. Its 3px thumb sits 2px from the border and shows while the sidebar is hovered or scrolling. */
+/* The game list scrolls, the friends under it scroll on their own, and what waits to be installed
+ * stands at the foot. Each thumb is 3px, 2px from the border, shown while the sidebar is hovered or
+ * scrolling. */
 .sidebar-list {
-  position: relative;
   display: flex;
   flex: 1;
+  flex-direction: column;
+  min-height: 0;
+}
+/* The games (Create's or Play's Recent) take what they need and scroll past it; the friends stand
+ * right under them. */
+.sidebar-lists {
+  position: relative;
+  display: flex;
+  flex: 0 1 auto;
+  flex-direction: column;
   min-height: 0;
 }
 .sidebar-scroll {
-  flex: 1;
+  flex: 0 1 auto;
   min-width: 0;
+  min-height: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
   /* The scrollbar's 7px stay reserved, so a selected game keeps its right inset with no scrollbar. */
@@ -1860,33 +1938,177 @@ button.chat-header-title:hover {
   transition: opacity var(--duration-quick);
   pointer-events: none;
 }
-.game-sidebar[data-scrolled="true"] .sidebar-fade {
+.game-sidebar[data-scrolled="true"] .sidebar-lists > .sidebar-fade {
   opacity: 1;
 }
-/* Relaunch to update floats over the foot of the game list while a downloaded version waits. The
- * list scrolls under it and fades out above it, as it does under the chrome at the top; its last
- * game and its scrollbar stop clear of the button. */
-.sidebar-footer {
-  position: absolute;
-  inset-inline: 0;
-  bottom: 0;
-  padding: 4px 8px 8px;
-  background: var(--sidebar);
+/* The games end in a long fade above the friends: a soft gap between the two, and a row cut by the
+ * list's foot reads as more below. The list's foot is as deep, so its last game ends clear of it. */
+.sidebar-lists > .sidebar-scroll {
+  padding-block-end: 40px;
 }
-.sidebar-footer::before {
+.sidebar-lists::after {
   content: "";
   position: absolute;
-  inset-inline: 0;
-  bottom: 100%;
-  height: 24px;
+  inset-inline: 0 7px;
+  bottom: 0;
+  height: 56px;
   background: linear-gradient(transparent, var(--sidebar));
   pointer-events: none;
 }
-.sidebar-list:has(.sidebar-footer) .sidebar-scroll {
-  padding-block-end: 72px;
+/* What waits for the person, at the foot of the list: Genex's updated terms while they wait to be
+ * accepted, the plugin updates line while plugin releases wait, Relaunch to update while a downloaded
+ * version does. */
+.sidebar-footer {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-block-start: auto;
+  padding: 4px 8px 8px;
 }
-.sidebar-list:has(.sidebar-footer) .sidebar-scroll::-webkit-scrollbar-track {
-  margin-block-end: 48px;
+/* The Genex account at the sidebar's foot (`play/ProfilePlate.tsx`), under the list in Play and in
+ * Create: the name opens the account's menu, the credits beside it open Credits. */
+/* The account plate: its name block, then (2px on, so the name has room) the credits (`people.css`). */
+.profile-plate {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 6px 8px 8px;
+  border-top: 1px solid var(--line);
+}
+.profile-plate-main {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  height: 44px;
+  padding-inline: 6px;
+  border-radius: var(--radius-control);
+  color: var(--ink);
+  text-align: start;
+  cursor: pointer;
+  transition: background-color var(--duration-quick);
+}
+.profile-plate-main:hover {
+  background: var(--sidebar-hover);
+}
+.profile-plate-main[data-state="open"] {
+  background: var(--sidebar-selected);
+}
+/* The name gives way before its plan: "Rab Ne… · Pro" rather than "Rab Neba · …". */
+.profile-plate-name {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  font-size: 14px;
+  line-height: 20px;
+  white-space: nowrap;
+}
+.profile-plate-name-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.profile-plate-plan {
+  flex: none;
+  white-space: pre;
+}
+.profile-plate-plan,
+.profile-plate-chevrons {
+  color: var(--ink-3);
+}
+.profile-plate-main:focus-visible {
+  outline: 2px solid var(--focus-edge);
+  outline-offset: -2px;
+}
+/* Where a face goes while there is no account to show: signed out, and while the browser signs in. */
+.plate-slot {
+  position: relative;
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+}
+.plate-slot-spin {
+  position: absolute;
+  inset: -1px;
+  border: 1.5px solid transparent;
+  border-top-color: var(--play-blue);
+  border-radius: 50%;
+  animation: plate-slot-spin 1s linear infinite;
+}
+@keyframes plate-slot-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .plate-slot-spin {
+    animation: none;
+  }
+}
+/* A sign-in genex.games ended: the account's face, dimmed. */
+.plate-ended-face {
+  display: inline-flex;
+  flex: none;
+  opacity: 0.45;
+}
+/* Offline, in the friends' place: the signal, which is not a button. */
+.plate-offline {
+  color: var(--ink-3);
+  cursor: default;
+}
+.plate-offline:hover {
+  background: transparent;
+}
+/* The account's menu: the person on top, then what there is to do. */
+.profile-menu {
+  min-width: 248px;
+}
+.profile-menu-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px;
+  font-size: 14px;
+}
+.profile-menu-sub,
+.profile-menu-value {
+  color: var(--ink-3);
+  font: 12px / 16px var(--font-family-mono);
+}
+/* A person's photo, round; everyone without one gets their generated avatar (`.cy-avatar`). */
+.person-avatar {
+  display: inline-block;
+  flex: none;
+  overflow: hidden;
+  border-radius: 50%;
+  background: var(--field);
+  box-shadow: inset 0 0 0 1px var(--image-outline, rgb(0 0 0 / 0.1));
+  user-select: none;
+}
+.person-avatar img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+/* A generated avatar: gear behind, the body, then the eyes, stacked canvases in one box. */
+.cy-avatar {
+  position: relative;
+  display: inline-block;
+  flex: none;
+  border-radius: 50%;
+  user-select: none;
+}
+.cy-avatar-layer {
+  position: absolute;
+  top: 0;
+  left: 0;
+  pointer-events: none;
 }
 /* A secondary button in the field colour: the light palette's own secondary fill is one step from the
  * sidebar and would vanish here. The label and the reload glyph share the ink, never the accent. */
@@ -1918,6 +2140,244 @@ button.chat-header-title:hover {
 }
 .sidebar-update[aria-busy="true"] .gi .a-spin {
   animation: gi-spin 1.5s cubic-bezier(0.22, 1, 0.36, 1) infinite;
+}
+/* The plugin updates line (`panels/SidebarPluginUpdates.tsx`): the plug and the count open the
+ * list on hover, the small button at its end installs what is ticked. */
+.sidebar-plugin-updates {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 32px;
+  padding-inline: 4px;
+  border-radius: var(--radius-control);
+  background: var(--field);
+  color: var(--ink);
+  font-size: 13px;
+  line-height: 18px;
+}
+.sidebar-plugin-updates-open {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  height: 26px;
+  padding-inline: 5px 4px;
+  border-radius: 8px;
+  text-align: start;
+  cursor: pointer;
+  transition: background-color var(--duration-quick);
+}
+/* The plug in a lighter blue than the accent fill, which reads too dark on the dark field. */
+.sidebar-plugin-updates-open .gi {
+  color: color-mix(in oklab, var(--accent-primary) 55%, var(--ink));
+}
+.sidebar-plugin-updates-open:hover,
+.sidebar-plugin-updates-open[data-popup-open] {
+  background: color-mix(in oklab, var(--ink) 5%, var(--field));
+}
+.sidebar-plugin-updates[aria-busy="true"] .gi .a-spin {
+  animation: gi-spin 1.5s cubic-bezier(0.22, 1, 0.36, 1) infinite;
+}
+/* Genex's updated terms (`panels/plugins/genex/GenexTermsLine.tsx`): the plugin updates line's dress,
+ * a page icon and the words, then Review. In the chat it is as wide as its words. */
+.genex-terms-line {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 32px;
+  padding-inline: 4px;
+  border-radius: var(--radius-control);
+  background: var(--field);
+  color: var(--ink);
+  font-size: 13px;
+  line-height: 18px;
+}
+.genex-terms-line-label {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  padding-inline: 5px 4px;
+}
+.genex-terms-line-label .gi {
+  color: color-mix(in oklab, var(--accent-primary) 55%, var(--ink));
+}
+.chat-genex-terms {
+  width: fit-content;
+  max-width: 100%;
+}
+.chat-genex-terms .genex-terms-line-label {
+  padding-inline-end: 8px;
+}
+/* Install what is ticked, on the line and in its list: the accent as a soft tint, its label a
+ * lighter blue on dark and a deeper one on light. */
+.plugin-updates-run {
+  flex: none;
+  height: 24px;
+  padding-inline: 9px;
+  border-radius: 7px;
+  background: color-mix(in oklab, var(--accent-primary) 20%, transparent);
+  color: color-mix(in oklab, var(--accent-primary) 62%, var(--ink));
+  font-size: 12px;
+  line-height: 16px;
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color var(--duration-quick);
+}
+.plugin-updates-run:enabled:hover {
+  background: color-mix(in oklab, var(--accent-primary) 30%, transparent);
+}
+.plugin-updates-run:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.plugin-updates-actions .plugin-updates-run {
+  height: 26px;
+  margin-inline-start: auto;
+  padding-inline: 11px;
+  border-radius: 8px;
+}
+/* Open Plugins: a quiet text button beside Update. */
+.plugin-updates-open-all {
+  height: 26px;
+  padding-inline: 8px;
+  border-radius: 8px;
+  color: var(--ink-3);
+  font-size: 12px;
+  line-height: 16px;
+  cursor: pointer;
+  transition:
+    color var(--duration-quick),
+    background-color var(--duration-quick);
+}
+.plugin-updates-open-all:hover {
+  background: var(--hover);
+  color: var(--ink);
+}
+/* The app's checkbox (`ui/Checkbox.tsx`): small, rounded, an outline until ticked, then the accent
+ * with a white mark (a dash when only some are ticked). */
+.check {
+  appearance: none;
+  flex: none;
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  border: 1.5px solid color-mix(in oklab, var(--ink) 30%, transparent);
+  border-radius: 5px;
+  background: transparent center / 10px 10px no-repeat;
+  cursor: pointer;
+  transition:
+    background-color var(--duration-quick),
+    border-color var(--duration-quick);
+}
+.check:checked,
+.check:indeterminate {
+  border-color: var(--accent-primary);
+  background-color: var(--accent-primary);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='3.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M5 12.5l4.5 4.5L19 7.5'/%3E%3C/svg%3E");
+}
+.check:indeterminate {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='3.2' stroke-linecap='round'%3E%3Cpath d='M6.5 12h11'/%3E%3C/svg%3E");
+}
+.check:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+.check:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+/* Its list: a box for all, rows of 28px that scroll past six, then Open Plugins and Update. */
+.plugin-updates-panel {
+  display: flex;
+  flex-direction: column;
+  width: 300px;
+  padding: 4px;
+}
+.plugin-updates-heading {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  height: 32px;
+  padding-inline: 10px;
+  color: var(--ink-3);
+  font-size: 12px;
+  cursor: pointer;
+}
+.plugin-updates-list {
+  max-height: 168px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.plugin-update-row {
+  display: flex;
+  align-items: center;
+  border-radius: 8px;
+  transition: background-color var(--duration-quick);
+}
+.plugin-update-row:hover {
+  background: var(--hover);
+}
+.plugin-update-pick {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+  height: 28px;
+  padding-inline: 10px 4px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.plugin-update-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.plugin-update-versions {
+  color: var(--ink-3);
+  font-family: var(--font-family-mono);
+  font-size: 11px;
+  white-space: nowrap;
+}
+.plugin-update-versions b {
+  color: var(--ink);
+  font-weight: 500;
+}
+.plugin-update-row[data-off="true"] :is(.plugin-update-name, .plugin-update-versions, .plugin-update-versions b) {
+  color: var(--ink-3);
+}
+.plugin-update-row[data-off="true"] .extension-icon {
+  opacity: 0.5;
+}
+.plugin-update-page {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  margin-inline-end: 2px;
+  border-radius: 6px;
+  color: var(--ink-3);
+  cursor: pointer;
+}
+.plugin-update-page:hover {
+  background: var(--hover-2);
+  color: var(--ink);
+}
+.plugin-updates-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 4px;
+  padding: 6px 2px 2px;
+  border-top: 1px solid var(--line);
 }
 .sidebar-games {
   display: flex;
@@ -2308,6 +2768,153 @@ button.chat-header-title:hover {
   outline: none;
   color: var(--color-icon);
 }
+/* Community plugins: a grid of open tiles, a dashed edge and no fill, like the make-your-own marks. */
+.community-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  margin-block-start: 12px;
+}
+.community-tile {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 0;
+  padding: 16px;
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--radius-card);
+}
+.community-tile-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+.community-tile .extension-icon-letter {
+  border: 1px dashed var(--line-strong);
+  outline: none;
+  background: transparent;
+}
+.community-tile-title {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+/* One line, cut with an ellipsis (full name in the tooltip), so the tiles' descriptions line up. */
+.community-tile-open {
+  overflow: hidden;
+  min-width: 0;
+  max-width: 100%;
+  line-height: 1.3;
+  text-align: start;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  overflow-wrap: normal;
+  cursor: pointer;
+}
+/* The name stretches over the whole tile, so the tile opens its page; the link and the control sit above it. */
+.community-tile {
+  position: relative;
+}
+.community-tile-open::after {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  content: "";
+}
+.community-tile-open:focus-visible {
+  outline: none;
+}
+.community-tile:has(.community-tile-open:focus-visible) {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+.community-tile:hover {
+  border-color: var(--ink-3);
+}
+.community-tile-control,
+.community-by .community-profile {
+  position: relative;
+  z-index: 1;
+}
+.community-tile-control {
+  flex-shrink: 0;
+}
+.community-by {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  color: var(--ink-3);
+  font-size: 12px;
+  line-height: 1.4;
+}
+.community-by-page {
+  margin-block: 4px 0;
+  font-size: 13px;
+}
+.community-profile {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--icon-selected, var(--accent-ink));
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.community-profile:hover {
+  text-decoration: underline;
+}
+.community-profile svg {
+  flex-shrink: 0;
+}
+.community-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-block-start: 12px;
+  padding-inline-start: 22px;
+  color: var(--ink-2);
+  font-size: 14px;
+  line-height: 1.5;
+  list-style: decimal;
+}
+.community-steps li::marker {
+  color: var(--ink-3);
+}
+.community-steps li[data-step-done] {
+  color: var(--ink-3);
+}
+.community-step-check {
+  display: inline-block;
+  margin-inline-end: 6px;
+  vertical-align: -2px;
+  color: var(--green);
+}
+/* A plugin that waits on its person: a quiet amber word beside its switch. */
+.community-needs-setup {
+  color: var(--orange);
+  font-size: 12px;
+  white-space: nowrap;
+}
+.community-tile-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.community-tile-description {
+  display: -webkit-box;
+  overflow: hidden;
+  color: var(--ink-3);
+  font-size: 13px;
+  line-height: 1.5;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
 /* A section whose own card frames it needs no rule under its title (the Marketplace). */
 .extensions-section-heading-plain {
   padding-block-end: 0;
@@ -2414,6 +3021,10 @@ button.chat-header-title:hover {
   white-space: nowrap;
   text-overflow: ellipsis;
 }
+/* Genex's row: the account's half of its line, a step brighter. */
+.extension-description-tail {
+  color: var(--ink-2);
+}
 /* A row's account once it needs no button: the browser step, or the balance. */
 .extension-account-note,
 .extension-credits,
@@ -2431,6 +3042,10 @@ button.chat-header-title:hover {
   display: inline-flex;
   align-items: center;
   gap: 8px;
+}
+/* The editor's own state ("Not open", "Starting") is a state, not a control: plain text, not the controls' mono. */
+.extension-connection-state[data-engine-word] {
+  font-family: var(--font-family-sans);
 }
 .extension-dot {
   width: 6px;
@@ -2716,13 +3331,178 @@ button.chat-header-title:hover {
   margin-inline-start: 60px;
   padding-block: 4px 18px;
 }
-.connector-form:has(> div) {
-  margin-block-start: 20px;
-  max-width: 640px;
-}
-.connector-form > div {
+/* Add MCP server: paste box, where it runs, name, command or URL, secrets, More options. */
+.connector-dialog {
+  display: grid;
   gap: 16px;
-  padding-block-start: 24px;
+  min-width: 0;
+  font-size: 13px;
+}
+.connector-field {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  color: var(--ink-2);
+}
+.connector-field input,
+.connector-secret input,
+.connector-paste textarea {
+  min-width: 0;
+  height: 36px;
+  padding-inline: 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--soft);
+  color: var(--ink);
+  font-size: 13px;
+  outline: none;
+}
+.connector-field input.font-mono,
+.connector-secret input.font-mono {
+  font-size: 12px;
+}
+.connector-field input:focus,
+.connector-secret input:focus,
+.connector-paste textarea:focus {
+  border-color: var(--focus-edge);
+}
+.connector-field input[aria-invalid="true"] {
+  border-color: color-mix(in oklab, var(--red) 45%, var(--line));
+}
+.connector-secret input:disabled {
+  opacity: 0.5;
+}
+.connector-hint,
+.connector-field > span {
+  color: var(--ink-3);
+  font-size: 12px;
+  line-height: 1.45;
+  text-wrap: pretty;
+}
+.connector-field > span.text-red {
+  color: var(--red);
+}
+.connector-label {
+  color: var(--ink-2);
+}
+.connector-paste {
+  display: grid;
+  gap: 6px;
+}
+.connector-paste textarea {
+  height: 64px;
+  padding-block: 10px;
+  resize: none;
+  font: 12px / 1.45 var(--font-family-mono);
+}
+.connector-paste textarea::placeholder {
+  font-family: var(--font-family-sans);
+  font-size: 13px;
+}
+.connector-paste p,
+.connector-secrets > p {
+  font-size: 12px;
+  line-height: 1.45;
+}
+.connector-pasted {
+  display: grid;
+  gap: 4px;
+}
+.connector-pasted-row,
+.connector-choice-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.connector-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 9px;
+  border-radius: 7px;
+  background: var(--accent-tint);
+  color: var(--accent-ink);
+  font: 12px / 16px var(--font-family-mono);
+}
+/* Clear beside the chip: a filled button at the chip's own height. */
+.connector-chip-button {
+  height: 22px;
+  padding-inline: 9px;
+  border-radius: 7px;
+  font-size: 12px;
+}
+.connector-choices {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.connector-choices legend {
+  padding: 0;
+  margin-block-end: 6px;
+}
+.connector-secrets {
+  display: grid;
+  gap: 8px;
+}
+.connector-secret {
+  display: grid;
+  grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr) auto;
+  align-items: center;
+  gap: 8px;
+}
+.connector-add-secret {
+  justify-self: start;
+  height: auto;
+  padding: 0;
+}
+.connector-more {
+  display: grid;
+  gap: 12px;
+  padding-block-start: 12px;
+  border-block-start: 1px solid var(--line);
+}
+.connector-more-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  justify-self: start;
+  color: var(--ink-2);
+  cursor: pointer;
+}
+.connector-more-toggle:hover {
+  color: var(--ink);
+}
+.connector-more-body {
+  display: grid;
+  gap: 12px;
+}
+.connector-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  line-height: 18px;
+  cursor: pointer;
+}
+.connector-option input {
+  margin-block-start: 2px;
+}
+.connector-option > span {
+  display: grid;
+  gap: 2px;
+}
+.connector-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+@container (max-width: 1080px) {
+  .community-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 @container (max-width: 680px) {
   .extensions-content {
@@ -2740,6 +3520,9 @@ button.chat-header-title:hover {
   }
   .extension-row {
     gap: 12px;
+  }
+  .community-grid {
+    grid-template-columns: minmax(0, 1fr);
   }
   .extension-information {
     grid-template-columns: 96px minmax(0, 1fr);
@@ -2840,6 +3623,16 @@ button.chat-header-title:hover {
   border-radius: 99px;
 }
 
+/* A page's content on its way (Pending `spinner`): the working mark centred over the shimmering label. */
+.pending-page {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  min-height: 200px;
+}
+
 /* Only current work animates. History and disclosures mount without entrance choreography. */
 .chat-status-shimmer {
   --shimmer-rest: color-mix(in oklab, var(--ink-3) 82%, var(--background));
@@ -2920,6 +3713,13 @@ button.chat-header-title:hover {
 /* A disclosure's chevron sits a little closer to its words than the gap between other parts. */
 .chat-disclosure > svg:last-child {
   margin-inline-start: -2px;
+}
+/* Wrapped words keep their mark and chevron on the first line, centred on it. */
+.chat-disclosure[data-wraps] {
+  align-items: flex-start;
+}
+.chat-disclosure[data-wraps] > svg {
+  margin-block: 4px;
 }
 /* The status line without details to open: laid out as its disclosure is, so nothing moves when one comes. */
 .chat-status-line {
@@ -3087,6 +3887,14 @@ button.chat-header-title:hover {
 .chat-tool-toggle:disabled {
   cursor: default;
 }
+/* A connector's picture: the work's play views under its heading, or small in its row (chat/ConnectorShots.tsx). */
+.chat-shot {
+  display: block;
+  flex: none;
+  overflow: hidden;
+  padding: 0;
+  border: 0;
+}
 /* The row's gap is wider than a word space; the path follows its "·" like the next word. The path
  * gives up its folders before the verb, and its name never paints past the row. */
 .chat-tool-toggle:has(+ .chat-tool-file) {
@@ -3216,6 +4024,13 @@ button.chat-header-title:hover {
 /* Rows already supply reading space; do not double it before the live status. */
 .chat-conversation-stack > [data-chat-transcript] {
   margin-block-end: -16px;
+}
+/* The live status belongs to the reply above it: half the stack's gap, so the reply sits closer
+   while the status keeps its place above the composer. */
+.chat-conversation-stack > .presence.chat-work {
+  /* Opening and closing collapse the half gap it keeps, not the stack's whole gap. */
+  --presence-gap: 0.5rem;
+  margin-block-start: -8px;
 }
 .chat-user-content[data-collapsed] {
   max-height: 154px;
@@ -3529,6 +4344,12 @@ a:focus-visible {
 :root :is(h1, h2, h3, [role="dialog"])[tabindex="-1"]:focus-visible {
   outline: none;
 }
+/* A tool row's toggle stretches over its row, and keyboard focus lights the whole row
+   (`.chat-tool-head:has(…:focus-visible)`): no edge or fill around the label alone. */
+:root .chat-tool-head > .chat-tool-toggle:focus-visible {
+  outline: none;
+  background-color: transparent;
+}
 :root :is(.theme-primary, .theme-destructive, [role="tab"][aria-selected="true"]):focus-visible {
   outline-color: currentColor;
 }
@@ -3821,50 +4642,374 @@ a:focus-visible {
 .appearance-customize {
   margin-block: 4px 12px;
 }
-/* Home background (panels/HomeBackdropSection.tsx): a preview of home, then one setting per row. */
+/* Home background (home-backdrop/BackdropControls.tsx): a gallery of looks, then the chosen look's
+   settings. Settings → Appearance shows them under a preview of home. Controls sit in the composer
+   pickers' well, and a slider's fill is their selected segment. */
 .backdrop-settings {
   margin-block: 20px 8px;
 }
-.backdrop-row {
+.backdrop-controls {
+  --backdrop-well: var(--well, color-mix(in oklab, var(--canvas) 75%, var(--popover)));
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+.backdrop-section-title {
+  display: block;
+  margin-block-end: 8px;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 16px;
+  color: var(--ink-3);
+}
+.backdrop-gallery {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 16px;
-  min-height: 44px;
+  grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
+  gap: 12px 8px;
 }
-.backdrop-row[data-top] {
-  align-items: start;
-  padding-block: 8px;
+.backdrop-gallery[data-kind="effect"] {
+  grid-template-columns: repeat(auto-fill, minmax(72px, 1fr));
 }
-.backdrop-row[data-top] > .backdrop-label {
-  line-height: 40px;
+.backdrop-tile {
+  position: relative;
+  min-width: 0;
 }
-.backdrop-label {
+.backdrop-tile-choice {
+  display: flex;
+  width: 100%;
+  flex-direction: column;
+  gap: 6px;
+  text-align: start;
+  cursor: pointer;
+  transition: scale var(--duration-quick);
+}
+.backdrop-tile-choice:active {
+  scale: 0.96;
+}
+.backdrop-tile-art {
+  position: relative;
+  display: grid;
+  aspect-ratio: 16 / 10;
+  place-items: center;
+  overflow: hidden;
+  border-radius: 10px;
+  background: var(--page);
+  color: var(--ink-3);
+  box-shadow: inset 0 0 0 1px var(--image-outline);
+  transition: box-shadow var(--duration-quick);
+}
+/* The art fills its frame; the outline is drawn over it so every tile has the same edge. */
+.backdrop-tile-art::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  box-shadow: inset 0 0 0 1px var(--image-outline);
+  pointer-events: none;
+}
+.backdrop-tile-choice:hover .backdrop-tile-art {
+  box-shadow: 0 0 0 1px var(--line-strong);
+}
+.backdrop-tile-choice[aria-pressed="true"] .backdrop-tile-art {
+  box-shadow:
+    0 0 0 2px var(--popover),
+    0 0 0 4px var(--accent-ink);
+}
+.backdrop-tile-choice:focus-visible {
+  outline: none;
+}
+.backdrop-tile-choice:focus-visible .backdrop-tile-art {
+  box-shadow:
+    0 0 0 2px var(--popover),
+    0 0 0 4px var(--ring);
+}
+.backdrop-tile-art > :is(canvas, .backdrop-preview-art) {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+.backdrop-tile-canvas {
+  opacity: 0;
+  transition: opacity var(--duration-fast);
+}
+.backdrop-tile-canvas[data-ready] {
+  opacity: 1;
+}
+.backdrop-tile-name {
+  overflow: hidden;
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--ink-2);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.backdrop-tile-choice[aria-pressed="true"] .backdrop-tile-name {
   color: var(--ink);
 }
-.backdrop-control {
+.backdrop-tile-remove {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  z-index: 1;
+  display: grid;
+  width: 18px;
+  height: 18px;
+  place-items: center;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--popover);
+  color: var(--ink-2);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity var(--duration-quick);
+}
+.backdrop-tile:hover .backdrop-tile-remove,
+.backdrop-tile-remove:focus-visible {
+  opacity: 1;
+}
+.backdrop-make-tile .backdrop-tile-art {
+  align-content: center;
+  gap: 2px;
+  background: transparent;
+  box-shadow: inset 0 0 0 1px transparent;
+  color: var(--ink-2);
+  outline: 1px dashed var(--input);
+  outline-offset: -1px;
+}
+.backdrop-make-tile .backdrop-tile-art::after {
+  content: none;
+}
+.backdrop-make-tile:hover .backdrop-tile-art {
+  background: var(--color-control-hover);
+  box-shadow: none;
+  color: var(--ink);
+}
+.backdrop-make-caption {
+  font-size: 11px;
+  line-height: 14px;
+  color: var(--ink-3);
+}
+.backdrop-make-tile[data-busy] svg {
+  animation: backdrop-making 1.4s var(--ease-smooth-out) infinite;
+}
+@keyframes backdrop-making {
+  50% {
+    opacity: 0.35;
+    scale: 0.8;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .backdrop-make-tile[data-busy] svg {
+    animation: none;
+  }
+}
+.backdrop-make {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.backdrop-make > .backdrop-section-title {
+  margin: 0;
+}
+.backdrop-make-prompt {
+  width: 100%;
+  resize: none;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  background: var(--field);
+  color: var(--ink);
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.5;
+}
+.backdrop-make-prompt::placeholder {
+  color: var(--ink-3);
+}
+.backdrop-make-prompt:focus-visible {
+  border-color: var(--focus-edge);
+  outline: none;
+}
+.backdrop-make-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.backdrop-make-ideas {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-inline-size: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.backdrop-make-idea {
+  padding: 4px 9px;
+  border: 1px solid var(--input);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--ink-2);
+  font-size: 12px;
+  line-height: 16px;
+  text-align: start;
+  cursor: pointer;
+}
+.backdrop-make-idea:hover {
+  background: var(--hover);
+  color: var(--ink);
+}
+.backdrop-make-idea:focus-visible {
+  border-color: var(--focus-edge);
+  outline: none;
+}
+.backdrop-make-problem {
+  margin: 0;
+}
+.backdrop-make-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.backdrop-make-model {
+  min-width: 0;
+  margin-inline-end: auto;
+  overflow: hidden;
+  font-size: 12px;
+  color: var(--ink-3);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.backdrop-look-settings {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.backdrop-sliders {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 6px;
+}
+/* A slider is a 34px bar: the native range input, unseen, takes the pointer and the keys; the fill
+   (the composer's selected segment, inset 2px) shows the value and ends in a grip. */
+.backdrop-slider {
+  position: relative;
+  height: 34px;
+  border-radius: var(--radius-control);
+  background: var(--backdrop-well);
+}
+.backdrop-slider > input {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+  -webkit-appearance: none;
+  appearance: none;
+}
+.backdrop-slider > input::-webkit-slider-thumb {
+  width: 4px;
+  height: 34px;
+  -webkit-appearance: none;
+  appearance: none;
+}
+.backdrop-slider-fill {
+  position: absolute;
+  inset-block: 2px;
+  inset-inline-start: 2px;
+  width: max(16px, calc((100% - 4px) * var(--fill)));
+  border-radius: calc(var(--radius-control) - 2px);
+  background: var(--thumb, var(--chip-hover, var(--line-strong)));
+  box-shadow: var(--thumb-shadow, 0 1px 2px #00000040);
+  pointer-events: none;
+}
+.backdrop-slider-fill::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  inset-inline-end: 6px;
+  width: 2px;
+  height: 14px;
+  border-radius: 1px;
+  background: var(--ink-3);
+  translate: 0 -50%;
+  transition: background-color var(--duration-quick);
+}
+.backdrop-slider:hover .backdrop-slider-fill::after,
+.backdrop-slider:active .backdrop-slider-fill::after {
+  background: var(--ink);
+}
+.backdrop-slider:has(> input:focus-visible) {
+  box-shadow: 0 0 0 2px var(--ring);
+}
+.backdrop-slider-label,
+.backdrop-slider-value {
+  position: absolute;
+  top: 50%;
+  translate: 0 -50%;
+  line-height: 1;
+  pointer-events: none;
+}
+.backdrop-slider-label {
+  inset-inline-start: 12px;
+  color: var(--ink);
+}
+/* Right-aligned in even digits: the value never shifts while it changes. */
+.backdrop-slider-value {
+  inset-inline-end: 12px;
+  color: var(--ink-2);
+  font-family: var(--font-family-mono);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.backdrop-swatches {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  justify-content: flex-end;
-  gap: 10px;
-  min-width: 0;
+  gap: 6px;
 }
-.backdrop-slider {
-  width: 200px;
-  accent-color: var(--accent-ink);
+.backdrop-swatch {
+  position: relative;
+  display: inline-flex;
+  height: 32px;
+  align-items: center;
+  gap: 8px;
+  padding-inline: 6px 12px;
+  border-radius: var(--radius-control);
+  background: var(--backdrop-well);
+  color: var(--ink-2);
+  font-family: var(--font-family-mono);
+  font-size: 12px;
+  cursor: pointer;
+  transition: color var(--duration-quick);
+}
+.backdrop-swatch:hover {
+  color: var(--ink);
+}
+.backdrop-swatch-dot {
+  width: 20px;
+  height: 20px;
+  border-radius: 999px;
+  box-shadow: inset 0 0 0 1px var(--image-outline);
+}
+.backdrop-swatch > input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
   cursor: pointer;
 }
-/* A fixed column, right-aligned in even digits: the slider beside it never moves while it is dragged. */
-.backdrop-value {
-  width: 40px;
-  text-align: end;
-  font-variant-numeric: tabular-nums;
-  color: var(--ink-2);
+.backdrop-swatch:has(> input:focus-visible) {
+  box-shadow: 0 0 0 2px var(--ring);
 }
 .backdrop-preview {
   position: relative;
-  margin-block: 8px 12px;
+  margin-block: 8px 16px;
   overflow: hidden;
   border: 1px solid var(--line);
   border-radius: 12px;
@@ -3879,6 +5024,9 @@ a:focus-visible {
   font-family: var(--font-family-mono);
   opacity: var(--backdrop-strength);
 }
+.backdrop-tile-art .backdrop-preview-art {
+  opacity: 1;
+}
 /* Where home's composer sits, so the preview shows what the picture is behind. */
 .backdrop-preview-composer {
   position: absolute;
@@ -3892,7 +5040,6 @@ a:focus-visible {
 .backdrop-pictures {
   display: flex;
   flex-wrap: wrap;
-  justify-content: flex-end;
   align-items: center;
   gap: 8px;
 }
@@ -3910,7 +5057,7 @@ a:focus-visible {
 }
 .backdrop-picture-choice[aria-pressed="true"] {
   box-shadow:
-    0 0 0 2px var(--page),
+    0 0 0 2px var(--popover),
     0 0 0 4px var(--accent-ink);
 }
 .backdrop-picture-choice img {
@@ -3960,16 +5107,13 @@ a:focus-visible {
   color: var(--ink);
 }
 .backdrop-problem {
-  flex-basis: 100%;
-  text-align: end;
+  margin-block-start: 8px;
 }
 .backdrop-characters {
-  width: 160px;
+  width: 100%;
   font-family: var(--font-family-mono);
 }
-.backdrop-more > summary {
-  min-height: 44px;
-}
+
 .appearance-row input[type="range"] {
   width: min(140px, 25vw);
   accent-color: var(--accent-ink);
@@ -4046,6 +5190,19 @@ a:focus-visible {
   background: var(--card);
   border: 1px solid var(--line);
   border-radius: var(--radius-card);
+}
+/* A sign-in under way in a provider card: the step it waits on and its small helps, on a soft well. */
+.sign-in-strip {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  min-height: 44px;
+  padding: 6px 8px 6px 12px;
+  border-radius: 12px;
+  background: var(--field);
+  font-size: 13px;
+  line-height: 18px;
 }
 /* A card that is a list: its rows reach nearly to its edge and carry their own padding. */
 .settings-card[data-list] {
@@ -4169,9 +5326,32 @@ a:focus-visible {
   position: relative;
   z-index: 1;
 }
+/* Open in Builds, at the foot of the Building card's parts: a quiet link above the card's own toggle. */
+.build-checklist-open {
+  display: inline-flex;
+  align-self: flex-start;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 0;
+  border: 0;
+  border-radius: 4px;
+  background: none;
+  color: var(--ink-3);
+  font-family: inherit;
+  cursor: pointer;
+  transition: color var(--duration-quick);
+}
+.build-checklist-open:is(:hover, :focus-visible) {
+  color: var(--ink);
+}
+.build-checklist-open:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
 @media (prefers-reduced-motion: reduce) {
   .build-card,
-  .build-card-open svg {
+  .build-card-open svg,
+  .build-checklist-open {
     transition: none;
   }
 }
@@ -4279,6 +5459,173 @@ a:focus-visible {
 }
 .asset-thumbnail {
   animation: fade-in 150ms ease-out;
+}
+/* An asset card while its asset is being made (panels/MakingCard.tsx), in the spot it will land:
+   the kind's drawing, the tool at top left, the clock at top right, the kind and prompt below. */
+.making-card {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  border-radius: var(--radius-card);
+  background: var(--inset);
+}
+.making-card[data-making="review"] {
+  box-shadow: 0 0 0 1.5px var(--accent);
+}
+.making-art-slot {
+  position: absolute;
+  left: 12px;
+  top: 10px;
+  width: 160px;
+  height: 112px;
+  pointer-events: none;
+}
+/* The drawing's line colour, and (outline) the beam's light: the accent mixed toward the ink, so it
+   reads on the card in either theme (the empty states' paler --wire-art is too faint for a status). */
+.making-art {
+  color: color-mix(in oklab, var(--accent-primary) 62%, var(--ink));
+  outline-color: color-mix(in oklab, var(--accent-primary) 30%, var(--ink));
+  outline-style: none;
+}
+/* Waiting for its tool, or ended without its files: grey and still. */
+.making-card:is(
+  [data-making="queued"],
+  [data-making="failed"],
+  [data-making="stopped"],
+  [data-making="unsure"],
+  [data-making="not-fetched"],
+  [data-making="not-in-game"]
+) .making-art {
+  color: var(--ink-3);
+  opacity: 0.45;
+}
+.making-card[data-making="failed"] .making-art {
+  opacity: 0.3;
+}
+.making-chip {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  /* Room for the clock at the other corner, up to an hour's worth. */
+  max-width: calc(100% - 66px);
+  height: 22px;
+  padding: 0 8px 0 3px;
+  border-radius: 7px;
+  font-size: 11px;
+  line-height: 14px;
+  pointer-events: none;
+}
+/* The tools' marks are drawn for a dark tile (the Genex page's), so they sit on one in either theme. */
+.making-chip-mark {
+  box-sizing: border-box;
+  width: 16px;
+  height: 16px;
+  flex: none;
+  padding: 2px;
+  border-radius: 4px;
+  object-fit: contain;
+  background: #1d1e21;
+}
+.making-corner {
+  position: absolute;
+  top: 12px;
+  right: 10px;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  line-height: 14px;
+  color: var(--ink-3);
+}
+.making-spinner {
+  animation: spin 0.9s linear infinite;
+}
+.making-label {
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  bottom: 11px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.making-title,
+.making-prompt {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.making-title {
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 18px;
+  color: var(--ink-3);
+}
+.making-title[data-tone="failed"] {
+  color: var(--red);
+}
+.making-prompt {
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--ink-3);
+}
+.making-tooltip {
+  max-width: 280px;
+  text-align: left;
+  text-wrap: pretty;
+}
+.making-picture {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+/* Approve keeps a card's own width: it fills a canvas card, and sits at the right of a larger one. */
+.making-actions {
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  bottom: 8px;
+  display: flex;
+  justify-content: flex-end;
+}
+.making-actions > * {
+  max-width: 168px;
+}
+.making-tabs {
+  top: 7px;
+  right: 7px;
+  gap: 2px;
+}
+.making-tab {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 6px;
+  font-family: var(--font-family-mono);
+  font-size: 11px;
+  color: var(--ink);
+  background: color-mix(in srgb, var(--background) 66%, transparent);
+  cursor: pointer;
+}
+.making-tab[aria-pressed="true"] {
+  background: var(--ink);
+  color: var(--background);
+}
+.making-tab:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 1px;
+}
+@media (prefers-reduced-motion: reduce) {
+  .making-spinner {
+    animation: none;
+  }
 }
 /* A row for what has no picture: a sound, an animation, a file. The trailing slot shows the sound's
    length at rest and gives way to the row's action on hover or focus. */
@@ -4562,6 +5909,12 @@ a:focus-visible {
 /* A card waiting above the composer fades in when it is shown, after the one before it is answered. */
 .chat-waiting-card:not([hidden]) {
   animation: chat-fade-in 200ms ease-out;
+}
+/* Above the composer the dock's own inset (14px) is the disclosure's overhang: without the pull its
+   hover fill starts where it does in the transcript and its words line up with the chat's, and the
+   card's height animation, which clips, never cuts it. */
+.chat-waiting-card [data-question-reopen] {
+  margin-inline: 0;
 }
 .chat-jump {
   animation: chat-fade-in var(--duration-quick) ease-out;
@@ -4913,6 +6266,326 @@ a:focus-visible {
   line-height: 16px;
   color: var(--ink-3);
 }
+/* An @ tag in a sentence, in the composer and in a sent message: an accent wash and an inset
+   hairline, no side padding (the composer's painted words must stay in register with its text). */
+.mention-pill {
+  border-radius: 6px;
+  background: color-mix(in oklab, var(--accent-primary) 12%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--accent-primary) 58%, transparent);
+  color: var(--accent-ink);
+  white-space: nowrap;
+}
+/* While the draft has tags, its words are drawn under the text box, whose own glyphs go clear. */
+.composer-input-wrap {
+  position: relative;
+  display: flex;
+  min-width: 0;
+}
+.composer-input-paint {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  white-space: pre-wrap;
+  color: var(--ink);
+  pointer-events: none;
+}
+.composer-input-wrap[data-painted] textarea {
+  color: transparent;
+  caret-color: var(--ink);
+}
+/* The painted words show through a see-through selection; the text box's own stay clear, so nothing doubles. */
+.composer-input-wrap[data-painted] textarea::selection {
+  background: color-mix(in oklab, var(--accent-fill) 40%, transparent);
+  color: transparent;
+}
+/* A tag in the composer wraps exactly where the text box wraps it, or the two layers drift apart. */
+.composer-input-paint .mention-pill {
+  white-space: pre-wrap;
+}
+/* The card under a message with @ tags: a row per tag; one that attached nothing is a warning
+   (orange, never the error red), with the one action that helps. */
+.mention-results {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-inline-start: auto;
+  width: min(100%, 420px);
+  padding: 6px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface);
+}
+.mention-result {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding: 6px 8px;
+  border-radius: 10px;
+  font-size: 13.5px;
+  line-height: 18px;
+}
+.mention-result[data-failed] {
+  background: var(--orange-tint);
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--orange) 45%, transparent);
+}
+.mention-result-cover {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 44px;
+  aspect-ratio: 16 / 9;
+  overflow: hidden;
+  border-radius: 6px;
+  background: #1a1b1e;
+  object-fit: cover;
+}
+/* A plugin's row shows the plugin's own logo, as its card in the picker does. */
+.mention-result-logo {
+  background: transparent;
+}
+.mention-result-logo .extension-icon {
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+}
+.mention-result-cover .mention-result-avatar {
+  width: 18px;
+  height: 18px;
+}
+.mention-result-text {
+  display: grid;
+  min-width: 0;
+}
+.mention-result-text > * {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mention-result-text b {
+  font-weight: 500;
+  color: var(--ink);
+}
+.mention-result-text span {
+  font-size: 12.5px;
+  color: var(--ink-3);
+}
+.mention-result[data-failed] .mention-result-text span {
+  color: color-mix(in oklab, var(--orange) 55%, var(--ink));
+  white-space: normal;
+}
+.mention-result-ok {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 4px;
+  margin-inline-start: auto;
+  font-size: 12.5px;
+  color: var(--ink);
+}
+.mention-result-action {
+  flex: none;
+  height: 28px;
+  margin-inline-start: auto;
+  padding: 0 10px;
+  border-radius: 9px;
+  background: var(--ink);
+  color: var(--surface);
+  font-size: 12.5px;
+  font-weight: 500;
+  cursor: pointer;
+}
+.mention-result-action:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+/* The @ picker: cover cards on shelves, as on genex.games. Words on a card are white on a dark
+   scrim in both themes, because they sit on a picture. */
+.mention-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding-bottom: 4px;
+}
+/* The shelves genex.games will fill, standing in while it answers: quiet cards with a slow sweep. */
+.mention-skeleton-label,
+.mention-skeleton-card,
+.mention-card:has(.mention-card-cover:not([data-loaded])) {
+  display: block;
+  background: linear-gradient(
+      100deg,
+      transparent 30%,
+      color-mix(in oklab, var(--foreground) 7%, transparent) 50%,
+      transparent 70%
+    )
+    var(--control-quiet);
+  background-size: 250% 100%;
+  animation: shimmer-sweep 1.8s ease-in-out infinite;
+}
+.mention-skeleton-label {
+  width: 72px;
+  height: 12px;
+  margin: 0 4px 8px;
+  border-radius: 6px;
+}
+.mention-skeleton-card {
+  aspect-ratio: 16 / 9;
+  border-radius: 12px;
+  border: 1px solid var(--control-quiet-edge);
+}
+@media (prefers-reduced-motion: reduce) {
+  .mention-skeleton-label,
+  .mention-skeleton-card,
+  .mention-card:has(.mention-card-cover:not([data-loaded])) {
+    animation: none;
+  }
+}
+/* A plugin's or Images' card: its picture in the middle of the plain card, above the title. */
+.mention-card-icon {
+  color: rgb(255 255 255 / 0.85);
+}
+.mention-card-icon > * {
+  margin-bottom: 12%;
+}
+/* A plugin's card is a short tile: its picture small in the bottom right, its name at the left. */
+.mention-card[data-mention-option] {
+  aspect-ratio: auto;
+  height: 68px;
+}
+.mention-card[data-mention-option] .mention-card-icon {
+  place-items: center end;
+  padding: 0 14px;
+}
+/* The name stops short of the picture, so the two never touch. */
+.mention-card[data-mention-option] .mention-card-title {
+  right: 68px;
+}
+.mention-card[data-mention-option] .mention-card-icon > * {
+  margin: 0;
+}
+.mention-card-icon .extension-icon {
+  width: 40px;
+  height: 40px;
+}
+.mention-shelf-label {
+  margin: 0;
+  padding: 0 4px 8px;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--ink-3);
+}
+.mention-grid {
+  display: grid;
+  grid-template-columns: repeat(var(--mention-columns, 2), minmax(0, 1fr));
+  gap: 12px;
+}
+.mention-card {
+  position: relative;
+  aspect-ratio: 16 / 9;
+  overflow: hidden;
+  border-radius: 12px;
+  border: 1px solid var(--control-quiet-edge);
+  background: #1a1b1e;
+  cursor: pointer;
+  transition: border-color 0.12s;
+}
+.mention-card:hover {
+  border-color: color-mix(in oklab, var(--accent-primary) 50%, var(--control-quiet-edge));
+}
+.mention-card[data-highlighted] {
+  border-color: var(--accent-primary);
+  box-shadow: 0 0 0 1px var(--accent-primary);
+}
+.mention-card[data-highlighted]::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: color-mix(in oklab, var(--accent-primary) 16%, transparent);
+  pointer-events: none;
+}
+.mention-card[aria-disabled] {
+  cursor: default;
+  opacity: 0.45;
+}
+.mention-card-cover {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  opacity: 0;
+  transition: opacity 0.2s ease-out;
+}
+.mention-card-cover[data-loaded] {
+  opacity: 1;
+}
+.mention-card-wash {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: linear-gradient(135deg, #2b2c31, #1b1c20);
+}
+.mention-card-wash .mention-card-avatar {
+  width: 26%;
+  height: auto;
+  aspect-ratio: 1;
+  margin-bottom: 10%;
+}
+.mention-card-scrim {
+  position: absolute;
+  inset: auto 0 0;
+  height: 55%;
+  background: linear-gradient(to top, rgb(0 0 0 / 0.75), rgb(0 0 0 / 0.35) 55%, transparent);
+  pointer-events: none;
+}
+.mention-card-chips {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  display: flex;
+  gap: 4px;
+}
+.mention-card-chips > span {
+  padding: 3px 7px;
+  border-radius: 999px;
+  background: rgb(0 0 0 / 0.55);
+  color: rgb(255 255 255 / 0.9);
+  font-size: 11px;
+  line-height: 13px;
+  backdrop-filter: blur(2px);
+}
+.mention-card-picked {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 999px;
+  background: var(--accent-primary);
+  color: #fff;
+}
+.mention-card-title {
+  position: absolute;
+  inset: auto 8px 6px;
+  overflow: hidden;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 18px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mention-cap {
+  margin: 4px -6px -6px;
+  padding: 8px 12px 10px;
+  border-top: 1px solid var(--prompt-bar-edge);
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--ink-3);
+}
 /* Row actions (Connect, Set up, Turn on) are filled, so they read as buttons before hover. */
 /* The one thing a row needs done (Connect, Retry): the accent fill with its white label, like the app's primary buttons. */
 .picker-action {
@@ -5023,11 +6696,15 @@ a:focus-visible {
   font-family: var(--font-family-content);
   font-size: 14px;
 }
-.picker-seg > button:hover {
+.picker-seg > button:enabled:hover {
   color: var(--control-text-hover, var(--ink-2));
 }
 .picker-seg > button[aria-checked="true"] {
   color: var(--control-text-hover, var(--ink));
+}
+/* A choice the control shows but can't take (Mode's Loop in an Unreal game); dims like the stepper's ends. */
+.picker-seg > button:disabled {
+  opacity: 0.4;
 }
 .picker-stepper {
   display: flex;
@@ -5292,13 +6969,29 @@ a:focus-visible {
   box-shadow: 0 1px 2px #00000040;
   transition: left 180ms var(--ease-smooth-out);
 }
+/* A free model's tag, right after its name in the model list. */
+.model-free-tag {
+  flex: none;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--hover);
+  color: var(--ink-3);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 16px;
+}
+.usage-limit-head:has(> .usage-skeleton) {
+  min-height: 20px;
+  align-items: center;
+}
 /* Plan limits under the context: one block per signed-in subscription. */
 /* The Genex block: this game's spend, then the balance every game shares. */
 .usage-credits {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
-  gap: 6px 12px;
-  padding-block: 4px 8px;
+  align-items: center;
+  gap: 8px 12px;
+  padding-block: 2px 8px;
   font-size: 13px;
 }
 .usage-credits dd {
@@ -5306,14 +6999,32 @@ a:focus-visible {
   font-size: 12px;
   font-variant-numeric: tabular-nums;
   text-align: end;
+  color: var(--ink);
 }
-.usage-plan,
+.usage-credits-name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  min-height: 24px;
+  font-weight: 500;
+  color: var(--ink);
+}
+/* Each plan, and Genex, is its own outlined block: the panel reads as a stack of accounts. */
+.usage-plan {
+  margin: 6px 4px 0;
+  padding: 6px 12px 4px;
+  border: 1px solid var(--line-strong, var(--line));
+  border-radius: 12px;
+}
+.usage-plan:last-child {
+  margin-bottom: 4px;
+}
 .usage-divider {
   position: relative;
   margin-top: 4px;
   padding: 10px 10px 2px;
 }
-.usage-plan::before,
 .usage-divider::before {
   content: "";
   position: absolute;
@@ -5326,13 +7037,12 @@ a:focus-visible {
   display: flex;
   align-items: center;
   gap: 8px;
-  min-height: 24px;
+  min-height: 28px;
   font-family: var(--font-family-content);
-  font-size: 12px;
+  font-size: 13px;
   line-height: 16px;
   font-weight: 500;
-  letter-spacing: 0.02em;
-  color: var(--ink-3);
+  color: var(--ink);
 }
 .usage-plan-link {
   display: inline-flex;
@@ -5353,16 +7063,41 @@ a:focus-visible {
   color: var(--ink-2);
 }
 .usage-plan-roles {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   min-width: 0;
   margin-inline-start: auto;
   overflow: hidden;
+  color: var(--ink-3);
+  font-size: 12px;
   text-overflow: ellipsis;
   font-weight: 400;
   letter-spacing: 0;
   white-space: nowrap;
 }
+/* Whether a plan is in use, as a dot before its words: filled green in use, an empty ring not. */
+.usage-plan-roles::before {
+  content: "";
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 1px var(--ink-3);
+}
+.usage-plan-roles[data-in-use]::before {
+  background: var(--green);
+  box-shadow: none;
+}
 .usage-limit {
   padding: 6px 0 4px;
+}
+/* Compact sits on the reading's line, a size under the panel's other actions. */
+.picker-action.usage-compact {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding-inline: 8px 10px;
 }
 .usage-limit-head {
   display: flex;
@@ -5396,6 +7131,83 @@ a:focus-visible {
 }
 p.usage-divider {
   padding-bottom: 6px;
+}
+/* A plan's usage while it is read: bars the size of the text they stand in for, swept by the same
+   soft light as current work (`chat-status-shimmer`), still under reduced motion. */
+.usage-skeleton {
+  --skeleton: var(--hover);
+  --skeleton-light: color-mix(in oklab, var(--hover) 82%, var(--ink));
+  display: inline-block;
+  height: 10px;
+  border-radius: 999px;
+  vertical-align: middle;
+  background: linear-gradient(100deg, var(--skeleton) 35%, var(--skeleton-light) 50%, var(--skeleton) 65%)
+    var(--skeleton);
+  background-size: 300% 100%;
+  animation: shimmer-sweep 2.1s cubic-bezier(0.45, 0, 0.25, 1) infinite;
+}
+.usage-limit-head .usage-skeleton {
+  align-self: center;
+}
+.usage-skeleton-sub {
+  height: 9px;
+}
+.usage-skeleton.usage-skeleton-meter {
+  display: block;
+  height: 4px;
+  margin-top: 6px;
+}
+@media (prefers-reduced-motion: reduce) {
+  .usage-skeleton {
+    animation: none;
+  }
+}
+/* A plan's account under its name; clicked, the others to switch to follow it. */
+.usage-plan-accounts {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  margin: -2px 0 2px;
+}
+.usage-plan-account {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  margin-inline: -6px;
+  padding: 2px 6px;
+  border-radius: 7px;
+  color: var(--ink-3);
+  font-size: 12px;
+  line-height: 16px;
+  transition:
+    background-color 120ms,
+    color 120ms;
+}
+.usage-plan-account:is(:hover, :focus-visible) {
+  background: var(--control-hover, var(--hover));
+  color: var(--ink);
+}
+/* The panel's last row: Model Providers in Settings, quiet like a menu's last item. */
+.usage-footer {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+  padding: 8px 10px;
+  border-radius: var(--radius-control);
+  color: var(--ink-2);
+  font-size: 13px;
+  line-height: 18px;
+  transition:
+    background-color 120ms,
+    color 120ms;
+}
+.usage-footer:is(:hover, :focus-visible) {
+  background: var(--control-hover, var(--hover));
+  color: var(--ink);
 }
 [data-mention-list] [data-highlighted] {
   background: var(--control-hover, var(--hover));
@@ -5501,6 +7313,123 @@ p.usage-divider {
     animation: none;
   }
   .app-loader-shine {
+    animation: none;
+  }
+}
+
+/* ── Step bar (ui/StepBar.tsx): a few named steps as one bar, for the Genex publish and a Play remix ── */
+.step-bar-group {
+  display: grid;
+  gap: 8px;
+}
+.step-bar,
+.step-bar-labels {
+  display: grid;
+  grid-auto-columns: minmax(0, 1fr);
+  grid-auto-flow: column;
+  gap: 4px;
+}
+.step-bar span {
+  position: relative;
+  height: 4px;
+  overflow: hidden;
+  border-radius: 2px;
+  background: var(--line-strong);
+}
+/* A place showing the bar may tone it with --step-done (filled segments, the light) and --step-name. */
+.step-bar span[data-state="done"] {
+  background: var(--step-done, var(--ink));
+}
+/* The step at work carries a light that crosses it, so a long upload never looks stuck. */
+.step-bar span[data-state="current"]::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent, var(--step-done, var(--ink)), transparent);
+  animation: step-bar-sweep 1.4s var(--ease-smooth-out) infinite;
+}
+@keyframes step-bar-sweep {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(100%);
+  }
+}
+.step-bar-labels {
+  color: var(--ink-3);
+  font-size: 12px;
+  line-height: 16px;
+}
+.step-bar-labels span[data-state="current"] {
+  color: var(--step-name, var(--ink));
+}
+@media (prefers-reduced-motion: reduce) {
+  .step-bar span[data-state="current"]::after {
+    animation: none;
+  }
+  .step-bar span[data-state="current"] {
+    background: var(--ink-3);
+  }
+}
+
+/* ── A Play remix being made (shell/RemixLayer.tsx): its sidebar row's ring and the stage's step bar ── */
+@property --remix-share {
+  syntax: "<number>";
+  inherits: false;
+  initial-value: 0;
+}
+.remix-avatar {
+  position: relative;
+  display: block;
+  flex: none;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: conic-gradient(var(--ink) calc(var(--remix-share) * 1turn), var(--line-strong) 0);
+  transition: --remix-share var(--duration-medium) var(--ease-smooth-out);
+}
+.remix-avatar > img,
+.remix-avatar > span {
+  position: absolute;
+  inset: 2.5px;
+  display: block;
+  width: calc(100% - 5px);
+  height: calc(100% - 5px);
+  border-radius: 50%;
+  object-fit: cover;
+  background: var(--hover);
+}
+.remix-stage {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  animation: fade-in var(--duration-fast) var(--ease-smooth-out);
+}
+/* The drawing's box at its own size; the empty band above and below the mark and its beam is
+   taken back, so the mark, the line and the bar sit together in the middle of the stage. */
+.remix-art {
+  width: 160px;
+  height: 112px;
+  max-width: 100%;
+  margin-block: -36px -20px;
+}
+.remix-steps {
+  --step-done: var(--ink-3);
+  --step-name: var(--ink-2);
+  width: 320px;
+  max-width: 100%;
+  margin-top: 4px;
+}
+.remix-steps .step-bar-labels {
+  text-align: center;
+}
+@media (prefers-reduced-motion: reduce) {
+  .remix-avatar {
+    transition: none;
+  }
+  .remix-stage {
     animation: none;
   }
 }

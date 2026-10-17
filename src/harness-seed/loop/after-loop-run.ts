@@ -66,6 +66,11 @@ export interface AfterLoopRun {
   messageId?: string;
   /** chat-dispatch.ts may reopen this finished run (reopen-run.ts) once its parts serve it. */
   reopenable?: boolean;
+  /**
+   * The run was a Loop that worked in the game folder itself (`journal.director.open`): it has no
+   * build to show or land, and a finished one is never reopened (a Loop message starts the next).
+   */
+  inPlace?: boolean;
 }
 
 /** What the harness calls the host with here. */
@@ -114,6 +119,7 @@ export async function afterLeadLoopRun(
     stoppedBecause: typeof run.stoppedBecause === "string" ? run.stoppedBecause : null,
     engine,
     model: action.model ?? plannerModel(run) ?? null,
+    ...(journal.director.open ? { inPlace: true } : {}),
   };
 }
 
@@ -135,12 +141,13 @@ function resumeTool(): StudioToolSpec[] {
  * answers for this run and message, and after a paused run the resume, bridged in and recorded.
  */
 export function afterLoopRunGrant(loopRun: AfterLoopRun): {
-  runControls: { runId: string; messageId?: string };
+  runControls: { runId: string; messageId?: string; inPlace?: boolean };
   interviewTools?: StudioToolSpec[];
 } {
   const { runId, messageId } = loopRun;
   return {
-    runControls: { runId, ...(messageId ? { messageId } : {}) },
+    // A Loop that worked in place keeps its status alone: the host offers no build to show or land.
+    runControls: { runId, ...(messageId ? { messageId } : {}), ...(loopRun.inPlace ? { inPlace: true } : {}) },
     ...(loopRun.state === RunState.Paused ? { interviewTools: resumeTool() } : {}),
   };
 }

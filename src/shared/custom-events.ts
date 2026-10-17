@@ -11,16 +11,26 @@
  * `customEvent` / `customPayload`, never `payload as`.
  */
 import type { ChatActivityPhase } from "./chat-activity.ts";
-import type { ChatRewind } from "./chat-rewind.ts";
+import type { ChatRewind, CheckpointSkippedPayload, RewindUndonePayload } from "./chat-rewind.ts";
 import type { PlanReviewRecord } from "./composer.ts";
 import type { ContextMeasurement } from "./context.ts";
 import type { AssetDeliveredPayload, PluginToolFinishedPayload, PluginToolStartedPayload } from "./game-assets.ts";
+import type { MentionTaggedPayload } from "./prompt-mention.ts";
 import type { PluginConsentEvent } from "./plugins.ts";
+import type { ConnectorToolEvent, ConnectorToolStartedEvent } from "./mcp.ts";
 import type { ToolPermissionEvent } from "./permissions.ts";
 import type { SteerDelivery } from "./message-queue.ts";
 import type { Usage } from "./event-log.ts";
+import type { LoopProfile } from "./project-facts.ts";
 import type { BuildObservation, ReadyResult, ReadyVia } from "./preview-contract.ts";
+import type { EngineLinkedPayload, EngineLinkUndonePayload, EngineStepsPayload } from "./game-engine.ts";
 import type { RunSpec } from "./protocol.ts";
+import type { PluginSuggestedPayload } from "./project-tools.ts";
+import type { AppLookAccessPayload, JobEndedPayload, JobStartedPayload } from "./jobs.ts";
+import type { ChatJudgeResultPayload } from "./chat-judge.ts";
+import type { WorkerFinishedPayload, WorkerStartedPayload } from "./workers.ts";
+import type { ObserverCapturePayload } from "./observers.ts";
+import type { FinishCheckPayload } from "./finish-check.ts";
 
 /**
  * Every custom event name in the studio's own code. A few are only read: names older versions
@@ -31,13 +41,33 @@ import type { RunSpec } from "./protocol.ts";
 export const CustomEvent = {
   // assets and plugins
   AssetDelivered: "asset_delivered",
+  /** What each @ tag of a message gave the agent; written by the host after the message is sent. */
+  MentionTagged: "mention_tagged",
   BlenderAsset: "blender_asset",
   ConnectorTool: "connector_tool",
+  /** A connector call on its way out, paired with its `connector_tool` by `callId`; written by the host only. */
+  ConnectorToolStarted: "connector_tool_started",
+  /** A game linked to an engine project; written by the host only. */
+  EngineLinked: "engine_linked",
+  /** Undo took an engine link back; written by the host only. */
+  EngineLinkUndone: "engine_link_undone",
+  /** An engine plugin offers its steps card in this chat; written by the host only. */
+  EngineSteps: "engine_steps",
   PluginConsent: "plugin_consent",
+  /** A session showed the person a card to turn a Genex plugin on or install it; written by the host only. */
+  PluginSuggested: "plugin_suggested",
   PluginTool: "plugin_tool",
   PluginToolStarted: "plugin_tool_started",
   /** Claude asking the person before it uses a tool (shared/permissions.ts); written by the host only. */
   ToolPermission: "tool_permission",
+  /** An agent's job started in the background (shared/jobs.ts); written by the host only. */
+  JobStarted: "job_started",
+  /** An agent's job ended, however it ended (shared/jobs.ts); written by the host only. */
+  JobEnded: "job_ended",
+  /** Genex cannot see app windows yet: the macOS access the person must allow (shared/jobs.ts); written by the host only. */
+  AppLookAccess: "app_look_access",
+  /** A blind judge played the game for the chat's own session (shared/chat-judge.ts); written by the host only. */
+  ChatJudgeResult: "chat_judge_result",
   // the unattended run and its lead
   AutopilotBase: "autopilot_base",
   AutopilotBaseStarted: "autopilot_base_started",
@@ -78,6 +108,13 @@ export const CustomEvent = {
   RunSteeringDelivered: "run_steering_delivered",
   RunVisualEvidence: "run_visual_evidence",
   WorkerStopRequested: "worker_stop_requested",
+  /** A worker a lead started, in a run or a chat turn, and its end or the lead's verdict; written by the harness. */
+  WorkerStarted: "worker_started",
+  WorkerFinished: "worker_finished",
+  /** An observer's pictures kept with a run (files only): the host's for a plugin's, the harness's for the preview and the lead's proof. */
+  ObserverCapture: "observer_capture",
+  /** One step of a Loop's finish check (checking, then the reviewer's yes, no or no answer); written by the harness. */
+  FinishCheck: "finish_check",
   // one part's rounds
   FacetBuildStarted: "facet_build_started",
   FacetCheckAdded: "facet_check_added",
@@ -106,6 +143,8 @@ export const CustomEvent = {
   FacetWindDown: "facet_wind_down",
   RecipeOutcome: "recipe_outcome",
   // the conversation, its queue and its sessions
+  /** Files too large to save that a chat checkpoint left out, or a rewind left as they were; written by the host only. */
+  CheckpointSkipped: "checkpoint_skipped",
   Compacted: "compacted",
   CompactionFailed: "compaction_failed",
   /** One direct model call (`engine.complete`) and what served it; written by the host only. */
@@ -115,6 +154,7 @@ export const CustomEvent = {
   ContractorHandoff: "contractor_handoff",
   ContractorSession: "contractor_session",
   ConversationCapabilitiesApplied: "conversation_capabilities_applied",
+  ConversationRewindUndone: "conversation_rewind_undone",
   ConversationRewound: "conversation_rewound",
   CoordinatorMessageDelivered: "coordinator_message_delivered",
   CoordinatorMessageHandled: "coordinator_message_handled",
@@ -283,9 +323,13 @@ export interface RunFinishedPayload extends RunScope {
   stopCode?: StopCode;
   reference?: string;
   stoppedBecause?: string;
+  /** What a Loop's reviewer found not done at its last no, one line each (a run that ended without its yes). */
+  notDone?: string[];
   executionStatus?: string;
   iterations?: unknown[];
   landed?: boolean;
+  /** How the Loop worked on its project: `open` for a Loop led in the project's own folder. */
+  profile?: LoopProfile;
   /** Why the run failed, when it did (the director's report). */
   failure?: { message?: string } | null;
   /** The provider failure that paused it, when one did (a director's run). */
@@ -360,6 +404,8 @@ export interface DelegatedData {
   tool_name?: string | null;
   decision_reason?: string | null;
   message?: string | null;
+  /** The CLI's own API error code: the message is its error text, never the model's words. */
+  apiError?: string;
   parts?: Array<{
     type: string;
     name?: string;
@@ -539,6 +585,7 @@ export interface SelfChangePayload {
 
 export interface CustomEventMap {
   asset_delivered: AssetDeliveredPayload;
+  mention_tagged: MentionTaggedPayload;
   /**
    * `facetId` and `beyond`: a card about a step beyond the ask names its part and the proposal, so a
    * restart of the part reads back what it already asked (seed loop/facet/beyond.ts).
@@ -560,6 +607,12 @@ export interface CustomEventMap {
     director?: boolean;
     /** The run's lead takes the chat while it builds (live chat): a message goes to it, not behind the build. */
     liveChat?: boolean;
+    /** The run's lead's workers write `worker_started`/`worker_finished`: its graph is a tree from the start. */
+    workerRecords?: boolean;
+    /** The run's lead claims through a finish check: its graph is a tree from the start, so nothing moves at its first claim. */
+    finishCheck?: boolean;
+    /** How the Loop works on its project: `open` for a Loop led in place, in the project's own folder. */
+    profile?: LoopProfile;
   };
   blender_asset: RunScope & {
     name?: string;
@@ -576,8 +629,12 @@ export interface CustomEventMap {
    */
   compacted: Partial<ContextMeasurement> & { messages?: number; trigger?: string; summary?: string; native?: boolean };
   completion_call: CompletionCallPayload;
-  connector_tool: RunScope & { connectorId?: string; tool?: string; ok?: boolean; error?: string | null };
+  connector_tool: RunScope & Omit<ConnectorToolEvent, "error"> & { error?: string | null };
+  connector_tool_started: RunScope & ConnectorToolStartedEvent;
   context_usage: ContextMeasurement;
+  engine_link_undone: EngineLinkUndonePayload;
+  engine_linked: EngineLinkedPayload;
+  engine_steps: EngineStepsPayload;
   contractor_session: ContractorSessionPayload;
   coordinator_message_delivered: SteerPayload;
   coordinator_message_handled: CoordinatorPayload;
@@ -588,8 +645,14 @@ export interface CustomEventMap {
   coordinator_message_steering: SteerPayload;
   coordinator_message_updated: CoordinatorPayload;
   delegation_incomplete: DelegationIncompletePayload;
-  /** A chat rewound to before a message (`shared/chat-rewind.ts`); `files`: game files put back, null when none were asked for. */
-  conversation_rewound: Partial<ChatRewind> & { files?: number | null };
+  /**
+   * A chat rewound to before a message (`shared/chat-rewind.ts`); `files`: game files put back, null
+   * when none were asked for; `rewindId`: the saved folder that brings the newer version back.
+   */
+  conversation_rewound: Partial<ChatRewind> & { files?: number | null; rewindId?: string };
+  /** The newer version a rewind replaced came back; the chat stayed rewound. */
+  conversation_rewind_undone: RewindUndonePayload;
+  checkpoint_skipped: CheckpointSkippedPayload;
   director_show: RunScope & { target?: string; root?: string };
   director_verdict: RunScope & { pass?: string; because?: string; decision?: { kept?: boolean | null } };
   director_worker: RunScope & {
@@ -639,9 +702,18 @@ export interface CustomEventMap {
   plan_review: PlanReviewRecord;
   preview_ready: PreviewReadyPayload;
   plugin_consent: PluginConsentEvent;
+  plugin_suggested: Partial<PluginSuggestedPayload>;
   plugin_tool: PluginToolFinishedPayload & { facetTitle?: string };
   plugin_tool_started: PluginToolStartedPayload & { facetTitle?: string };
   tool_permission: ToolPermissionEvent;
+  job_started: Partial<JobStartedPayload>;
+  job_ended: Partial<JobEndedPayload>;
+  app_look_access: Partial<AppLookAccessPayload>;
+  chat_judge_result: Partial<ChatJudgeResultPayload>;
+  worker_started: WorkerStartedPayload;
+  worker_finished: WorkerFinishedPayload;
+  observer_capture: Partial<ObserverCapturePayload>;
+  finish_check: Partial<FinishCheckPayload>;
   rebuild_and_restart_studio: { ok?: boolean; reason?: string };
   run_auto_resumed: RunAutoResumedPayload;
   run_control: RunScope & { action?: string };

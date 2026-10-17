@@ -28,6 +28,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import path from "node:path";
 import { isInside } from "../src/substrate/paths.ts";
 import { EngineId } from "../src/shared/providers.ts";
+import { normalizeToolName } from "../src/shared/tool-category.ts";
 import { readPriceTable, type ModelPrice, type PriceTable } from "./evals/prices.ts";
 
 /** The repository the census runs from, where `evals/prices.json` lives. */
@@ -204,20 +205,6 @@ function priceTokens(session: Session, price: ModelPrice | null, tokens: Request
 }
 
 /* ------------------------------------------------------------------ tools */
-
-const BRIDGE_TOOL = /(?:^|[\s"'`/])\.studio\/bridge\/tool\.mjs\s+([a-z][a-z0-9_]*)/;
-
-/**
- * One name for the same tool on both engines. Claude calls the studio's tools over MCP; Codex
- * runs the bridge in a shell. Both become `studio:<tool>` so a per-role tool profile compares.
- */
-export function normalizeToolName(name: string, argumentText: string): string {
-  const mcp = /^mcp__studio__(.+)$/.exec(name);
-  if (mcp) return `studio:${mcp[1]}`;
-  const bridge = BRIDGE_TOOL.exec(argumentText || "");
-  if (bridge) return `studio:${bridge[1]}`;
-  return name;
-}
 
 const countTool = (session: Session, name: string) => {
   session.tools[name] = (session.tools[name] ?? 0) + 1;

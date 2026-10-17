@@ -7,6 +7,7 @@
  */
 import type { ComposerSendOptions } from "../shared/composer.ts";
 import { RunState } from "../shared/run-state.ts";
+import { type EngineGame, engineLoopAvailable } from "./engine-game.ts";
 import type { PickedFrame } from "./reference-frames.ts";
 import {
   type KeyValueStorage,
@@ -33,11 +34,23 @@ export interface ComposerBuild {
   loop: LoopSetting | null;
 }
 
-/** What Mode shows and allows: the Loop it names, and whether it opens with that Loop to change. */
+/**
+ * What Mode shows and allows: the Loop it names, and whether it opens with that Loop to change.
+ * `loopUnavailable`: the game can't run a Loop yet, so Mode shows Off and offers Off alone.
+ */
 export interface ComposerLoopView {
   shown: LoopSetting;
   editable: boolean;
+  loopUnavailable?: true;
 }
+
+/**
+ * Whether the composer may start a Loop in this game. A web game runs the Loop; an engine game runs
+ * it unless its engine needs the project inside the game folder (`projectInFolder`, as Unreal's
+ * does: each part's undo point holds it there) and it lies elsewhere. No game (a draft chat) is a
+ * web game.
+ */
+export const loopAvailableFor = (game: EngineGame | null | undefined): boolean => engineLoopAvailable(game);
 
 /** A composer answering a running build it was not told about still sends it no commission. */
 export const RUNNING_BUILD: ComposerBuild = { state: RunState.Running, loop: null };
@@ -103,15 +116,34 @@ export function loopCommissions(build: Pick<ComposerBuild, "state"> | null | und
 
 /**
  * What Mode shows: the chat's own Loop while no build belongs to it or once its build finished; a
- * running or paused build's own limit, read-only (Stop and the Builds controls halt it).
+ * running or paused build's own limit, read-only (Stop and the Builds controls halt it). In a game
+ * that can't run a Loop yet (`loopAvailableFor`) the chat's own Loop shows Off and commissions
+ * nothing, while its kept pick stays for when the Loop can run; plan review still works.
  */
 export function composerLoopView(input: {
   own: LoopSetting;
   build: ComposerBuild | null | undefined;
+  loopAvailable?: boolean;
 }): ComposerLoopView {
-  const { own, build } = input;
-  if (loopCommissions(build)) return { shown: own, editable: true };
-  return { shown: build?.loop ?? UNKNOWN_BUILD_LOOP, editable: false };
+  const { own, build, loopAvailable = true } = input;
+  if (!loopCommissions(build)) return { shown: build?.loop ?? UNKNOWN_BUILD_LOOP, editable: false };
+  if (!loopAvailable) return { shown: { ...own, on: false }, editable: true, loopUnavailable: true };
+  return { shown: own, editable: true };
+}
+
+/** How far the person reaches Mode: whether it opens, and whether its Loop can change. */
+export interface ModeMenuReach {
+  opens: boolean;
+  changes: boolean;
+}
+
+/**
+ * How far the person reaches Mode: it opens, and its Loop changes, only while no build owns the
+ * chat and the run's coordinator is not answering.
+ */
+export function modeMenuReach(input: { view: ComposerLoopView; coordinating: boolean }): ModeMenuReach {
+  const changes = input.view.editable && !input.coordinating;
+  return { opens: changes, changes };
 }
 
 /** What a send carries besides its text: plan review, the pictures, and the Loop's commission. */
@@ -169,9 +201,12 @@ export function chatLoopExtras(input: {
   build: ComposerBuild | null | undefined;
   coordinating: boolean;
   gameMode: boolean;
+  /** The game can run a Loop (`loopAvailableFor`); without it the result carries none. */
+  loopAvailable?: boolean;
 }): ComposerExtras {
   const build = input.build ?? (input.coordinating ? RUNNING_BUILD : null);
   if (!reportCommissions(build)) return {};
-  const view = composerLoopView({ own: storedChatLoop(input.storage, input.threadId), build });
+  const own = storedChatLoop(input.storage, input.threadId);
+  const view = composerLoopView({ own, build, loopAvailable: input.loopAvailable });
   return composerExtras({ gameMode: input.gameMode, view, reviewPlan: false, frames: [] });
 }

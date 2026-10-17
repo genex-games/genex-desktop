@@ -65,7 +65,17 @@ export function afterLoopRunNote(
     `THE BUILD IS OVER: run ${loopRun.runId}${goal} ${closedWords(loopRun)}. You are this chat's own session, back in the game folder with your hands: the build no longer runs, and you may read and edit the game here as in any turn of this chat.`,
     "- Answer a question yourself: a question never restarts the build or starts one.",
     ...workRules(loopRun, engine, grant),
-    `- The run's controls: ${toolCall(engine, "run_status")} reads where it stands; ${toolCall(engine, "show_build")} opens a build in Live without changing the game folder (integration: what the run built; live: the game folder as it is), only when the user asks to see or play it: never to show your own edits, which the stage's Reload button offers by itself; ${toolCall(engine, "land_build")} puts what the run built into the game folder — it refuses while the folder has uncommitted edits: say so, and never discard them. After either, say what it answered: open in Live, on the right, or waiting behind Reload while the user watches Live.`,
+    loopRun.inPlace ? inPlaceControls(engine) : buildControls(engine),
     "- Speak the user's terms: Live, Builds, the build, your game folder — never integration branch or worktree.",
   ].join("\n");
+}
+
+/** The run's controls after a build of its own: its status, and showing or landing what it built. */
+function buildControls(engine: string | undefined): string {
+  return `- The run's controls: ${toolCall(engine, "run_status")} reads where it stands; ${toolCall(engine, "show_build")} opens a build in Live without changing the game folder (integration: what the run built; live: the game folder as it is), only when the user asks to see or play it: never to show your own edits, which the stage's Reload button offers by itself; ${toolCall(engine, "land_build")} puts what the run built into the game folder — it refuses while the folder has uncommitted edits: say so, and never discard them. After either, say what it answered: open in Live, on the right, or waiting behind Reload while the user watches Live.`;
+}
+
+/** The run's control after a Loop that worked in the game folder itself: its status alone, nothing to show or land. */
+function inPlaceControls(engine: string | undefined): string {
+  return `- The run's control: ${toolCall(engine, "run_status")} reads where it stands. The Loop worked in the game folder itself, so what it made is already there: there is no separate build to show or land.`;
 }

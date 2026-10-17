@@ -7,7 +7,7 @@ import os from "node:os";
 import path from "node:path";
 import { PluginRegistry } from "../../src/substrate/plugins/registry.ts";
 import { PluginServices } from "../../src/substrate/plugins/services.ts";
-import type { PluginManifest } from "../../src/shared/plugins.ts";
+import { type PluginManifest, type PluginSource, PluginSourceKind } from "../../src/shared/plugins.ts";
 
 const repo = path.resolve(import.meta.dirname, "../..");
 /** The bundled example plugin's source folder. */
@@ -25,9 +25,10 @@ export interface PluginFixture {
 
 /**
  * A registry with the example plugin, initialized, with a `game` binding at `root`. By default the
- * example is a bundled seed; `installed: 'local'` loads it from its folder instead, for suites that
- * update it from other local folders (a bundled id is Studio's alone and refuses those). `observe`
- * is the host's answer to the `observe` service (an empty object unless the test brings its own).
+ * example is a bundled seed; `installed: 'local'` loads it from its folder and turns it on instead,
+ * for suites that update it from other local folders (a bundled id is Studio's alone and refuses
+ * those), and the person allows each call of its tools (`personAllowsLocalTools`). `observe` is
+ * the host's answer to the `observe` service (an empty object unless the test brings its own).
  */
 export async function pluginFixture(
   options: { installed?: "bundled" | "local"; observe?: ConstructorParameters<typeof PluginServices>[2] } = {},
@@ -41,7 +42,11 @@ export async function pluginFixture(
     services.call(id, m, a, b),
   );
   await registry.init();
-  if (options.installed === "local") await registry.installLocal(EXAMPLE_PLUGIN, "local");
+  if (options.installed === "local") {
+    await installLocalOn(registry, EXAMPLE_PLUGIN);
+    // These suites are about updates, not the card: the person allows its tools too.
+    personAllowsLocalTools(registry);
+  }
   const binding = { project: "game", directory: root };
   return {
     root,
@@ -53,6 +58,39 @@ export async function pluginFixture(
       registry.cancel();
       await rm(root, { recursive: true, force: true });
     },
+  };
+}
+
+/**
+ * Loads a plugin from a local folder and turns it on, as the person does: a plugin loaded from a
+ * folder starts off. Answers the manifest it installed.
+ */
+export async function installLocalOn(
+  registry: PluginRegistry,
+  directory: string,
+  approvedCapabilities?: string[],
+  origin?: PluginSource,
+): Promise<PluginManifest> {
+  const manifest = await registry.installLocal(directory, PluginSourceKind.Local, approvedCapabilities, origin);
+  await registry.setEnabled(manifest.id, true);
+  return manifest;
+}
+
+/**
+ * The person's yes on each local plugin tool's card, for a test about something else: a local
+ * plugin's agent tool asks before it runs, and this allows each call once without a card (it saves
+ * no Always allow). A tool with its own `confirmation` asks as before. Answers how to put the
+ * registry's asking back.
+ */
+export function personAllowsLocalTools(registry: PluginRegistry): () => void {
+  const ask = registry.consent;
+  registry.consent = async (id, tool, args, binding, signal, options) => {
+    if (options?.offerAlways) return { approved: true, by: "user" };
+    if (!ask) throw new Error("No one answers a consent card in this test");
+    return ask(id, tool, args, binding, signal, options);
+  };
+  return () => {
+    registry.consent = ask;
   };
 }
 
@@ -127,6 +165,8 @@ export async function accountFixture() {
   const open = async () => {
     const r = new PluginRegistry(path.join(base, "installed"), seeds, PLUGIN_SDK_BACKEND, service);
     await r.init();
+    // These suites are about accounts, not the card: the person allows a local plugin's tools.
+    personAllowsLocalTools(r);
     return r;
   };
   const registries: PluginRegistry[] = [];

@@ -17,7 +17,7 @@ import path from "node:path";
 import { atomicWriteJson, ensureDir, listJsonFiles, readJson } from "./fsx.ts";
 import { shortId } from "./ids.ts";
 import { MINUTE_MS, SECOND_MS } from "../shared/duration.ts";
-import { harnessParamsProblem } from "../shared/harness-api.ts";
+import { HostRefusal, harnessParamsProblem } from "../shared/harness-api.ts";
 import {
   BootReason,
   DispatchActionType,
@@ -298,7 +298,12 @@ export class HarnessHost {
 
     child.stdout?.setEncoding("utf8");
     child.stdout?.on("data", (chunk: string) => {
-      for (const message of this.#codec.push<HarnessToHost>(chunk)) void this.#onMessage(message);
+      for (const message of this.#codec.push<HarnessToHost>(chunk)) {
+        // A host call from a process that has ended (stopped, or exited and since replaced) is never
+        // served: stdout may still deliver lines after 'exit', and its harness is gone.
+        if (message.kind === "rpc" && this.#child !== child) continue;
+        void this.#onMessage(message);
+      }
     });
     let stderr = "";
     const emitStderr = (line: string) => {
@@ -371,6 +376,15 @@ export class HarnessHost {
     clearTimeout(timer);
     this.#child = null;
     this.#setState(HarnessState.Stopped);
+  }
+
+  /**
+   * Stop once any restart already under way has booted or failed: a planned restart never kills
+   * another's boot (a crash restart, the watchdog's) as it starts.
+   */
+  async stopAfterRestarts(graceMs = STOP_GRACE_MS): Promise<void> {
+    while (this.#restarting) await this.#restarting.catch(() => {});
+    await this.stop(graceMs);
   }
 
   /**
@@ -503,7 +517,7 @@ export class HarnessHost {
     this.#lastHeartbeat = this.#now();
     const handler = this.options.api[message.method];
     if (!handler) {
-      this.#refuseRpc(message.id, { message: MESSAGE.UnknownMethod(message.method), name: "UnknownMethod" });
+      this.#refuseRpc(message.id, { message: MESSAGE.UnknownMethod(message.method), name: HostRefusal.UnknownMethod });
       return;
     }
     // A path-bearing method whose params are the wrong shape never reaches its handler: the
@@ -513,7 +527,7 @@ export class HarnessHost {
     if (refused) {
       this.#refuseRpc(message.id, {
         message: refused.message,
-        name: "InvalidParams",
+        name: HostRefusal.InvalidParams,
         data: { method: refused.method, issues: refused.issues },
       });
       return;

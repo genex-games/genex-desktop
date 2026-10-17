@@ -88,7 +88,7 @@ function renderControls(state,job,live){
   controls.replaceChildren();
   if(unresolved)button('Check again','Check deployment availability without uploading',false,()=>act('publish-status',{operation:'check'}));
   // The host asks first (the action's confirmation): only the user can say the upload did not land.
-  if(unresolved)button('I checked — allow a new upload','Allow a new upload after checking the deployment page',false,()=>act('publish-allow-upload',{jobId:job.id}));
+  if(unresolved)button('Publish again','Publish again without waiting for the last upload',false,()=>act('publish-allow-upload',{jobId:job.id}));
   if(termsPending(state))button('Review Genex terms','Review Genex terms',false,()=>act('terms'));
   // Publishing updates the draft and makes that build public in one press; a draft alone stays available for test builds.
   button(listed(state)?'Update the public version':'Publish','Publish this game on Genex',!state.connected||live,()=>act('publish-gallery'));

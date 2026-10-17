@@ -13,6 +13,8 @@ screen on `git-missing`). What differs from macOS:
   or a disposed member's folders, queue one `reset()` + `initialize()` that runs once no command
   holds the session; the last member out releases everything. A per-run grant outside the
   session's roots is refused (`not-granted`); network changes stay live (`updateConfig`).
+  `initialize()` is tried up to three times only when srt-win's egress check (`wfp`) times out; a
+  timed-out ACL step fails at once, since a retry would repeat its walk under the denied path's parent.
 - The sandbox user reads nothing in the profile unless granted, so each folder between
   `USERPROFILE` and a root gets `(RA)` (read attributes, no listing) after every apply, since
   srt-win's deny stamps replace the entry. The entry is set on that folder alone

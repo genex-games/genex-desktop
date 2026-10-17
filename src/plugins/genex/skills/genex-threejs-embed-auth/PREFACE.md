@@ -16,15 +16,29 @@ unchanged. Where it disagrees with this preface, this preface wins.
   design, as the card says. They persist only once the game is published to the gallery, which
   happens only when the user wants it public. Keep the card's localStorage fallback.
 - Studio installs the version it pins. Never run `npm i` for this package yourself.
-- A game made from Studio's template has no `package.json` (it loads three.js through an import
-  map), so it cannot add the SDK. Tell the user player identity needs a game with its own package
-  manager and build; never copy the SDK into the game by hand.
+- A game made from Studio's template has no `package.json`: there
+  `genex__package {"package":"@genex-ai/embed-sdk"}` maps Studio's copy in the import map, as
+  three.js is, and loads Studio's connect module after it. Never copy the SDK into the game by
+  hand. Read "In a game made from Studio's template" below.
+- Studio connects every web game it publishes that brings no SDK of its own, so genex.games can
+  sign its players in. A game needs the SDK only to use identity, saves or leaderboards itself.
+
+## In a game made from Studio's template
+
+Studio connects a template game to Genex itself: its connect module calls `initEmbed()` before the
+game's own code runs, in local test mode in Studio's preview and with the game's project once it is
+published. Skip the card's Bootstrap step and `genex.config.ts`: never call `initEmbed()` and never
+write a slug. Import everything else from `"@genex-ai/embed-sdk"` as the card shows
+(`waitForPlayer`, `loadPlayerState`, `savePlayerState`, `submitScore`, `getLeaderboard`), with the
+renderer first and the awaits where a name or a save is needed. Keep the import-map entry and the
+connect module's `<script>` that `genex__package` added.
 
 ## Config without `genex init`
 
-Studio never runs `genex init`, so the game starts without `src/genex.config.ts` or `.env`, and
+In a game with its own `package.json`, Studio never runs `genex init`, so the game starts without `src/genex.config.ts` or `.env`, and
 "re-run `genex init`" is not available. After the first draft, `genex__publish-status` reports the
-game's `slug`. Write the config yourself, then publish a new draft:
+game's `slug`. Write the config yourself, then publish a new draft (a template game:
+`src/genex.config.js`, the same object without `as const`, imported as `./genex.config.js`):
 
 ```ts
 // src/genex.config.ts

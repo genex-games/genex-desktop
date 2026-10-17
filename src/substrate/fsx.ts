@@ -14,6 +14,7 @@ import type { FileHandle } from "node:fs/promises";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { StudioPlatform } from "../shared/boot.ts";
+import { SECOND_MS } from "../shared/duration.ts";
 import { errorMessage } from "../shared/errors.ts";
 
 /** `readRegularFile` reads in chunks of at most this many bytes. */
@@ -26,11 +27,19 @@ const REPLACE_ATTEMPTS = 8;
 const REPLACE_RETRY_MS = 50;
 /** The codes Windows refuses a rename with while another handle holds the target. */
 const TRANSIENT_REPLACE = new Set(["EPERM", "EACCES", "EBUSY"]);
+/**
+ * How long a new folder's rename keeps trying on Windows, and the first wait between tries (each
+ * wait grows by it): OneDrive, an antivirus or the search indexer can hold a new folder's files
+ * for seconds, longer than {@link REPLACE_ATTEMPTS} allows a single file.
+ */
+const FOLDER_RENAME_BUDGET_MS = 30 * SECOND_MS;
+const FOLDER_RENAME_STEP_MS = 100;
 
 const MESSAGE = {
   DanglingLink: (file: string) => `refused: ${file} is a symlink to something that does not exist`,
   BrokenLink: (file: string) => `refused: ${file} is a symlink that cannot be followed`,
   Link: (file: string) => `refused: ${file} is a link`,
+  NotAFolder: (dir: string) => `refused: ${dir} is a link or a file, not a folder`,
   TooLarge: (file: string, maxBytes: number) => `${file} is larger than ${maxBytes} bytes`,
   NotRegular: (file: string) => `${file} is not a regular file`,
   InvalidJson: (file: string, cause: unknown) =>
@@ -120,6 +129,64 @@ export async function writeFileNoFollow(file: string, data: string | Uint8Array)
   }
 }
 
+/**
+ * Write `data` as `name` in `dir`, a folder {@link ensureDirBelow} made in a folder a box can write
+ * (the runs folder). The name is opened without following a link and without emptying what is
+ * there; only once the handle is the very file `name` names in `dir`, and `dir` still resolves to
+ * itself, is it emptied and written. A folder on the way swapped for a link after the check is
+ * refused (ELOOP) and nothing is written through it, nor any file emptied. `between` runs after the
+ * caller's check and before the open: a test's swap.
+ */
+export async function writeFileInDir(
+  dir: string,
+  name: string,
+  data: string | Uint8Array,
+  between?: () => Promise<void>,
+): Promise<void> {
+  await between?.();
+  const file = path.join(dir, name);
+  const handle = await openNoFollow(file, FS.O_WRONLY | FS.O_CREAT, 0o666);
+  try {
+    const [opened, named, real] = await Promise.all([
+      handle.stat(),
+      lstat(file).catch(() => null),
+      realpath(dir).catch(() => null),
+    ]);
+    const placed = real === dir && named !== null && !named.isSymbolicLink() && sameFile(opened, named);
+    if (!placed) throw linkRefused(file);
+    await handle.truncate(0);
+    await handle.writeFile(data);
+  } finally {
+    await handle.close();
+  }
+}
+
+/**
+ * Create `name` in `dir` (a folder {@link ensureDirBelow} made) and write `data`, refusing a name
+ * already there (a file or a link: EEXIST) and a `dir` swapped for a link after its check (ELOOP,
+ * the file it made through the link removed again). `between` runs before the open: a test's swap.
+ */
+export async function createFileInDir(
+  dir: string,
+  name: string,
+  data: string | Uint8Array,
+  between?: () => Promise<void>,
+): Promise<void> {
+  await between?.();
+  const file = path.join(dir, name);
+  const handle = await openNoFollow(file, FS.O_WRONLY | FS.O_CREAT | FS.O_EXCL, 0o666);
+  let placed = false;
+  try {
+    placed = (await realpath(dir).catch(() => null)) === dir;
+    if (placed) await handle.writeFile(data);
+  } finally {
+    await handle.close();
+  }
+  if (placed) return;
+  await unlink(file).catch(() => {});
+  throw linkRefused(file);
+}
+
 /** Why {@link readRegularFile} refused: not a regular file (a FIFO, a socket, a device), or too big. */
 export class NotARegularFileError extends Error {
   readonly code: "ENOTREG" | "EFBIG";
@@ -158,6 +225,26 @@ export async function readRegularFile(file: string, maxBytes: number): Promise<B
   }
 }
 
+/**
+ * The folder `parts` names below `root`, made where missing, by real path: each part on the way
+ * must be a folder of its own, never a link (to anywhere, inside `root` too) or a file, which is
+ * refused (ELOOP) before anything is made through it. For a host that writes in a folder its agents
+ * can write too (the runs folder); answers the real path of the folder.
+ */
+export async function ensureDirBelow(root: string, parts: readonly string[]): Promise<string> {
+  let dir = await realpath(root);
+  for (const part of parts) {
+    dir = path.join(dir, part);
+    await mkdir(dir).catch((err: NodeJS.ErrnoException) => {
+      if (err.code !== "EEXIST") throw err;
+    });
+    const info = await lstat(dir);
+    if (!info.isDirectory()) throw Object.assign(new Error(MESSAGE.NotAFolder(dir)), { code: "ELOOP" });
+  }
+  if ((await realpath(dir)) !== dir) throw Object.assign(new Error(MESSAGE.NotAFolder(dir)), { code: "ELOOP" });
+  return dir;
+}
+
 export async function ensureDir(dir: string): Promise<void> {
   await mkdir(dir, { recursive: true });
 }
@@ -182,6 +269,42 @@ export interface ReplaceOptions {
   rename?: (from: string, to: string) => Promise<void>;
   /** The wait between tries on Windows (default {@link REPLACE_RETRY_MS}). */
   retryDelayMs?: number;
+}
+
+/** How {@link renameFolder} renames, waits and looks; the defaults are this platform's own. */
+export interface RenameFolderOptions {
+  platform?: NodeJS.Platform;
+  rename?: (from: string, to: string) => Promise<void>;
+  sleep?: (ms: number) => Promise<unknown>;
+  exists?: (target: string) => Promise<boolean>;
+}
+
+const somethingAt = async (target: string) => Boolean(await lstat(target).catch(() => null));
+
+/**
+ * Renames a folder to `to`, which must not exist. On Windows a refusal while another app holds a
+ * file inside it (EPERM, EACCES, EBUSY) is tried again with growing waits for up to
+ * {@link FOLDER_RENAME_BUDGET_MS}, never once something has appeared at `to`; anything else, and
+ * every error elsewhere, fails at once with the rename's own error.
+ */
+export async function renameFolder(from: string, to: string, options: RenameFolderOptions = {}): Promise<void> {
+  const move = options.rename ?? rename;
+  const wait = options.sleep ?? sleep;
+  const exists = options.exists ?? somethingAt;
+  const windows = (options.platform ?? process.platform) === StudioPlatform.Windows;
+  let waited = 0;
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await move(from, to);
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code ?? "";
+      const transient = windows && TRANSIENT_REPLACE.has(code) && waited < FOLDER_RENAME_BUDGET_MS;
+      if (!transient || (await exists(to))) throw error;
+      const ms = Math.min(FOLDER_RENAME_STEP_MS * attempt, FOLDER_RENAME_BUDGET_MS - waited);
+      await wait(ms);
+      waited += ms;
+    }
+  }
 }
 
 /**

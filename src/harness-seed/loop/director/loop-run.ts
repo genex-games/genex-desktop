@@ -27,6 +27,8 @@ import {
   saveJournal as saveRunJournal,
   writeRunArtifact,
 } from "../run-events.ts";
+import type { FactRef, LoopProfile } from "../folder-facts.ts";
+import type { LoopGame } from "../engine-judges.ts";
 import { isCommit } from "../shell.ts";
 import { isTruncatedState, statePathsNamedByChecks } from "../state-shape.ts";
 import { verdictRecord } from "../verdict.ts";
@@ -44,16 +46,20 @@ import type { LedgerRecord } from "../ledger.ts";
 import type { EngineLimit } from "../outage.ts";
 import type { WorkerMode, WorkerState } from "../outcomes.ts";
 import type { RunInbox } from "../run-inbox.ts";
+import type { FinishAsk } from "./wrap-up.ts";
 import type { FacetSpec } from "../spec.ts";
 import type { RoundRecord } from "./digests.ts";
 import type { LoopRunClock, PriorWorker } from "./journal.ts";
 import type { ConflictMerge } from "./conflict-worker.ts";
 import type { LoopRunContract } from "./contract-gate.ts";
 import type { LeadSeat } from "./lead-session.ts";
+import type { OpenLoop } from "./open/contract.ts";
 import type { ShelvedDefect } from "./rules.ts";
 import type { NoteKind } from "./wake-schedule.ts";
 import type * as artDirectionFunctions from "./art-direction.ts";
 import type { LastShip } from "./art-direction.ts";
+import type { FinishTally } from "../finish-check.ts";
+import { noteKeptWork } from "./kept-work.ts";
 import type * as integrateFunctions from "./integrate.ts";
 import type * as loopRunFunctions from "./loop-run.ts";
 import type * as setupFunctions from "./setup.ts";
@@ -95,7 +101,15 @@ export interface Worker {
   deadline: number;
   state: WorkerState;
   stopRequested: boolean;
+  /** The lead's `worker_stop` asked its stop, not the run's close (its end record says so). */
+  stoppedByLead?: boolean;
   stopWhy: string | null;
+  /** What it kept beyond its last accepted commit when it ended: its stopped round's commit (kept-work.ts). */
+  keptCommit?: string | null;
+  /** That kept work is on the record as in the build (kept-work.ts `noteKeptWork`). */
+  keptInBuild?: boolean;
+  /** The kept commit a judge preferred to the integration branch: `integrate` may take it (kept-work.ts). */
+  keptJudged?: string | null;
   iterationsCap: number | undefined;
   steering: string[];
   iterations: RoundRecord[];
@@ -197,10 +211,16 @@ export interface LoopRunState {
   integrationWorktree: string;
   integrationHead: string | null;
   /**
-   * The head the last wave closed on (integrate.ts): what running loop workers merge, so they take
-   * the integration branch once per wave and not after every commit. Absent until a wave closes.
+   * The head the last healthy wave closed on (integrate.ts): what running loop workers merge while
+   * the newest integration head is one a health pass saw fail to load (workers.ts `freshBase`).
+   * Absent until a wave closes.
    */
   waveHead?: string | null;
+  /**
+   * The integration head before a worker's merge no health pass has answered yet (integrate.ts):
+   * what running loop workers keep taking until one does (workers.ts `freshBase`). Null otherwise.
+   */
+  headBeforeMerge?: string | null;
   /** The module contract loop workers are held to (contract-gate.ts), once committed. */
   contract?: LoopRunContract | null;
   /** Why the last contract could not be committed, until one is. */
@@ -241,10 +261,25 @@ export interface LoopRunState {
   plays: number;
   softDeadline: number;
   finalDeadline: number;
+  /**
+   * The end number of the run's last job end the lead has had (`jobs.list`, loop/jobs/watch.ts):
+   * the journal keeps it, so a restart reads on from there. Absent: none read yet.
+   */
+  jobsCursor?: number;
+  /**
+   * Where the lead's finish checks stand (finish-claim.ts): the journal keeps it, so a resumed run
+   * goes on counting the reviewer's no's. Absent until the lead claims the goal.
+   */
+  finishTally?: FinishTally;
   /** The art director's last word on the integration branch (art-direction.ts); absent until it looks. */
   lastShip?: LastShip | null;
   /** A goal build's finish was turned back once for the art director's defects: never again. */
   shipFinishRefused?: boolean;
+  /**
+   * The user's ask to finish, as the lead recorded it with `wrap_up` (wrap-up.ts): its own ask is no
+   * news to it. Not journaled: a resume voids the ask. Absent: the lead recorded none.
+   */
+  finishAsk?: FinishAsk | null;
 }
 
 /**
@@ -273,6 +308,15 @@ export interface LoopRunData {
   memoryRestored: boolean;
   ownShape: boolean;
   shape: LoopRunShape;
+  /** What the game's folder holds once it is ready (`game.list`'s `facts`); absent on a run a kept older setup.ts made. */
+  gameFacts?: FactRef[];
+  /**
+   * The game as far as Genex's moments go (`game.list`'s `hookEvents`): the run announces a moment
+   * only when the game's plugins hook it. Absent on a run a kept older setup.ts made: it announces none.
+   * Whether the studio plays it in its engine's editor, and the judges that play it there
+   * (`editorPlay`, `judges`), ride beside them; a kept older setup.ts leaves them out.
+   */
+  game?: LoopGame;
   capacity: HarnessResult<"preview.capacity"> | null;
   contractMissing: boolean;
   gameKind: string;
@@ -326,6 +370,18 @@ export interface LoopRunData {
   journaledSeq?: number;
   /** The journal as its last save wrote it (journal.ts `journalText`): a save that would write the same again is not made. */
   journalSaved?: string | null;
+  /**
+   * How the Loop works on its project (folder-facts.ts `loopProfileOf`): the web method, or in place
+   * (`open`). Absent on a web run a kept older setup.ts made.
+   */
+  profile?: LoopProfile;
+  /** An open Loop's own record (open/contract.ts): its facts, journal, git-write queue, clock and pool. Absent on a web run. */
+  open?: OpenLoop;
+  /**
+   * What waits for the end of each of the lead's turns before the next (an open Loop's autosave, and
+   * the rewind or restart its lead asked for); the wake loop awaits it. A web run sets none.
+   */
+  afterTurn?: () => Promise<void>;
 }
 
 /** A function of the run as the run carries it: bound, so the run itself is already given. */
@@ -477,7 +533,8 @@ export async function keepMemory(loopRun: LoopRun) {
  */
 export async function saveJournal(loopRun: LoopRun): Promise<number | void> {
   const { ctx, journal, run, threadId } = loopRun;
-  recordLoopRun(loopRun);
+  // An open Loop's worked time is on its own clock (a test's, or the wall clock).
+  recordLoopRun(loopRun, loopRun.open?.clock.now());
   const seq = loopRun.logSeq;
   const text = journalText(journal);
   // Saves overlap (a round's, a wake's): the log a slower one holds is never taken for a newer one's.
@@ -612,6 +669,8 @@ export async function syncHead(loopRun: LoopRun) {
   await protectHead(head);
   await saveJournal();
   await appendRun(RunEvent.DirectorProgress, { head });
+  // A worker's kept work the lead merged by hand is in the build now: it goes on the record.
+  await noteKeptWork(loopRun, head);
   note(`you committed ${shortSha(head)} — it is now the integration head`);
   return head;
 }
@@ -708,6 +767,7 @@ export async function evidenceOf(
     maxDemos = Infinity,
     requiredDemos = [],
     challenge = false,
+    camerasOwned = true,
   }: {
     handle?: string | null;
     label: string;
@@ -728,6 +788,8 @@ export async function evidenceOf(
     requiredDemos?: string[];
     /** Race the throttle-only bot after the demos (evidence.ts): the art director's whole-game look. */
     challenge?: boolean;
+    /** Does this build answer for the camera wiring (evidence.ts `camerasOwned`): a part that does not own the entry does not. */
+    camerasOwned?: boolean;
   },
 ): Promise<Evidence> {
   const { ctx, run } = loopRun;
@@ -750,6 +812,7 @@ export async function evidenceOf(
     setup: setup === undefined ? run.setup : setup,
     scaffold,
     inheritedConsole,
+    camerasOwned,
   });
 }
 

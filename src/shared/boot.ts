@@ -31,6 +31,12 @@ export const SandboxProblemCode = {
   NotProvisioned: "not-provisioned",
   /** Windows: Git for Windows is not installed, so there is no Git Bash to run commands in. */
   GitMissing: "git-missing",
+  /**
+   * Linux: the tools are installed but the sandbox cannot start a process, most often because the
+   * system lets only programs an AppArmor profile allows create user namespaces (Ubuntu 24.04 and
+   * the distributions built on it).
+   */
+  IsolationBlocked: "isolation-blocked",
 } as const;
 export type SandboxProblemCode = (typeof SandboxProblemCode)[keyof typeof SandboxProblemCode];
 
@@ -78,6 +84,8 @@ export interface SandboxProblem {
   installCommands: InstallCommand[];
   /** sandbox-runtime's own findings, for Details. */
   details: string[];
+  /** Isolation blocked by AppArmor: the command that installs a profile allowing it for this app. */
+  allowCommand?: string;
 }
 
 /** Main's answer to `bootState`: the platform, and the setup problem while the phase is SandboxSetup. */

@@ -24,6 +24,7 @@ import { MOTION_FRAMES } from "../policy.ts";
 import { roundFields } from "../record.ts";
 import { admitRound } from "../admission.ts";
 import { judgedOnMotion } from "../../motion-intent.ts";
+import { ownsCameraWiring } from "../camera-wiring.ts";
 import type { Check } from "../../spec.ts";
 
 /** The round's gate — a stop, the clock, a round that would not fit, fair share — and its opening: the status, the event, the user's steering. */
@@ -254,6 +255,7 @@ async function lookAtMergedIncumbent(loop: FacetLoop, round: FacetRound, worktre
     ...mergedLookExtras(loop),
     requiredDemos: demosNamedByChecks(spec.checks),
     keepPaths: statePathsNamedByChecks(spec.checks),
+    camerasOwned: ownsCameraWiring(loop),
     setup: facetSetup,
   });
   if (!merged.ok) return;

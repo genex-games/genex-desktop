@@ -9,9 +9,10 @@
  */
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, it } from "node:test";
+import { setTimeout as delay } from "node:timers/promises";
 import { promisify } from "node:util";
 import {
   GameBuilds,
@@ -23,10 +24,14 @@ import {
 } from "../../src/main/game-build.ts";
 import {
   candidateDirs,
+  GUARDED_ADD,
+  GUARDED_CI,
+  GUARDED_INSTALL,
   hasLoginEntries,
   mergePaths,
   packageCommands,
   resolveToolchain,
+  skippedSetupScripts,
 } from "../../src/substrate/toolchain.ts";
 import type { ProjectShape } from "../../src/substrate/game-workspace.ts";
 import { GENEX_GAME_PACKAGES } from "../../src/shared/genex.ts";
@@ -34,6 +39,9 @@ import type { RunRequest, RunResult } from "../../src/substrate/spawn.ts";
 import { tmpDir } from "../helpers/tmp.ts";
 
 const exec = promisify(execFile);
+
+/** How long a build held behind an install is watched for starting anyway. */
+const BUILD_HOLD_WINDOW_MS = 300;
 
 const GIT_ENV = {
   ...process.env,
@@ -54,6 +62,38 @@ const VITE_SHAPE: ProjectShape = {
   kind: "three-vite",
   serve: "dist",
 };
+
+/**
+ * Real npm through a POSIX shell (`shellRunner`). What these runs prove is npm's own settings
+ * order, the same on every platform; Windows has no /bin/sh to run them with.
+ */
+const POSIX_NPM = { skip: process.platform === "win32" && "runs npm through /bin/sh, which Windows lacks" };
+
+/** A runner that runs the command for real, outside any sandbox: npm's own behavior is the point. */
+async function shellRunner(request: RunRequest): Promise<RunResult> {
+  const started = Date.now();
+  const result = await exec("/bin/sh", ["-c", request.command], {
+    cwd: request.cwd,
+    env: { ...process.env, ...request.env },
+  }).then(
+    (out) => ({ code: 0, ...out }),
+    (error: { code?: number; stdout?: string; stderr?: string }) => ({
+      code: typeof error.code === "number" ? error.code : 1,
+      stdout: error.stdout ?? "",
+      stderr: error.stderr ?? "",
+    }),
+  );
+  return {
+    ...result,
+    signal: null,
+    durationMs: Date.now() - started,
+    timedOut: false,
+    truncated: false,
+    sandboxed: false,
+    command: request.command,
+    cwd: request.cwd,
+  };
+}
 
 /** A game folder that is a git repository, with a gitignored pile of screenshots beside it. */
 async function gameRepo(name: string): Promise<string> {
@@ -109,6 +149,52 @@ function fakeRunner(options: { code?: number; stderr?: string; writes?: boolean;
     },
   };
 }
+
+/** A step a held runner keeps waiting: when it has started, and the release that lets it finish. */
+interface Gate {
+  entered: Promise<void>;
+  release(): void;
+}
+
+/** A runner whose steps with a `held` label wait for the test to release them; it records each start and end. */
+function heldRunner(held: readonly string[]) {
+  const order: string[] = [];
+  const inner = fakeRunner();
+  const gates = new Map<string, { enter: () => void; released: Promise<void>; gate: Gate }>();
+  for (const label of held) {
+    let enter = () => {};
+    let release = () => {};
+    const entered = new Promise<void>((resolve) => {
+      enter = resolve;
+    });
+    const released = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    gates.set(label, { enter, released, gate: { entered, release } });
+  }
+  const run = async (request: RunRequest): Promise<RunResult> => {
+    const label = request.label ?? "";
+    order.push(`start ${label}`);
+    const waiting = gates.get(label);
+    if (waiting) {
+      waiting.enter();
+      await waiting.released;
+    }
+    const result = await inner.run(request);
+    order.push(`end ${label}`);
+    return result;
+  };
+  const gate = (label: string): Gate => {
+    const found = gates.get(label);
+    if (!found) throw new Error(`no gate for ${label}`);
+    return found.gate;
+  };
+  return { order, run, gate };
+}
+
+/** Whether `work` is still waiting once the hold window has passed. */
+const stillHeld = async (work: Promise<unknown>): Promise<boolean> =>
+  (await Promise.race([work.then(() => false), delay(BUILD_HOLD_WINDOW_MS).then(() => true)])) === true;
 
 describe("the toolchain a launched app can reach", () => {
   it("puts the login shell's PATH first and keeps every entry once", () => {
@@ -239,6 +325,61 @@ describe("building a game the user owns", () => {
     await writeFile(path.join(dir, "src", "main.ts"), "export const game = 3;\n");
     assert.equal((await builds.ensure({ project: "shadow", dir, shape: VITE_SHAPE })).ran, true);
     assert.equal(runner.calls.length, 2);
+  });
+
+  it("runs a build with npm's update check off, so the registry it may not reach is never asked", async () => {
+    const dir = await gameRepo("quiet");
+    const root = path.join(await tmpDir("studio-shadow-"), "builds");
+    const runner = fakeRunner();
+    const builds = new GameBuilds({ root, run: runner.run });
+    await builds.ensure({ project: "quiet", dir, shape: VITE_SHAPE });
+    await builds.install({ project: "quiet", dir, shape: VITE_SHAPE });
+    // npm asks registry.npmjs.org for a newer npm on every command; under the build's sandbox that
+    // is a denied connection, reported where the build's own error should be.
+    assert.deepEqual(
+      runner.calls.map((call) => call.env?.npm_config_update_notifier),
+      ["false", "false"],
+    );
+  });
+
+  it("holds a build and an install to their own game and their own scratch, never the other games", async () => {
+    const dir = await gameRepo("held");
+    const root = path.join(await tmpDir("studio-shadow-"), "builds");
+    const runner = fakeRunner();
+    const builds = new GameBuilds({ root, run: runner.run });
+    await builds.ensure({ project: "held", dir, shape: VITE_SHAPE });
+    await builds.install({ project: "held", dir, shape: VITE_SHAPE });
+    await writeFile(path.join(dir, "package.json"), '{ "name": "held" }\n');
+    await builds.addPackages({ project: "held", dir }, ["@genex-ai/multiplayer"]);
+    const [build, install, add] = runner.calls;
+    const shadow = path.dirname(build?.cwd ?? "");
+    assert.ok(shadow.startsWith(root), shadow);
+    assert.deepEqual(build?.confine, { write: [dir, shadow], tmp: path.join(shadow, "tmp") });
+    // A build downloads nothing: its npm keeps what it writes in its own scratch.
+    const own = path.join(shadow, "npm-cache");
+    assert.equal(build?.env?.npm_config_cache, own);
+    // An install that runs the game's package scripts fills its node_modules and a cache of its own:
+    // a script could plant anything in a cache the next game's install would read.
+    for (const request of [install, add]) {
+      assert.deepEqual(request?.confine, { write: [dir, own], tmp: path.join(shadow, "tmp") });
+      assert.equal(request?.env?.npm_config_cache, own);
+    }
+  });
+
+  it("builds a worktree the app made where it stands, held to that worktree, its game and its scratch", async () => {
+    const dir = await gameRepo("own-worktree");
+    const game = await gameRepo("own-game");
+    const root = path.join(await tmpDir("studio-shadow-"), "builds");
+    const runner = fakeRunner();
+    const builds = new GameBuilds({ root, run: runner.run, ours: () => true });
+    // The worktree's node_modules is a link to its game's, where `tsc -b` and webpack keep caches.
+    await builds.ensure({ project: "own-worktree", dir, game, shape: VITE_SHAPE });
+    const confine = runner.calls[0]?.confine;
+    assert.deepEqual(confine?.write.slice(0, 2), [dir, game]);
+    const scratch = confine?.write[2] ?? "";
+    assert.ok(scratch.startsWith(root), scratch);
+    assert.equal(confine?.write.length, 3);
+    assert.equal(confine?.tmp, path.join(scratch, "tmp"));
   });
 
   it("keeps the last build that worked when the next one breaks, and says why", async () => {
@@ -397,6 +538,292 @@ describe("building a game the user owns", () => {
       assert.equal(await readFile(path.join(dir, "package.json"), "utf8"), '{"name":"refused"}\n');
     });
   }
+
+  it("installs a copy of someone else's game only the guarded way: its lockfile, no package scripts", async () => {
+    const dir = await gameRepo("remix");
+    const root = path.join(await tmpDir("studio-shadow-"), "builds");
+    const runner = fakeRunner();
+    const builds = new GameBuilds({ root, run: runner.run });
+    await writeFile(path.join(dir, "package.json"), '{ "name": "remix", "dependencies": { "three": "0.185.1" } }\n');
+    await writeFile(path.join(dir, "package-lock.json"), "{}\n");
+
+    const result = await builds.installGuarded({ project: "remix", dir });
+    assert.equal(result?.ok, true);
+    const install = runner.calls[0];
+    assert.equal(install?.command, "npm ci --ignore-scripts");
+    assert.equal(install?.cwd, dir);
+    assert.deepEqual(install?.policy?.allowedDomains, [REGISTRY_DOMAIN]);
+    // Only npm writes the cache guarded installs share, every script off.
+    const cache = path.join(root, "package-cache");
+    assert.equal(install?.confine?.write.join("|"), [dir, cache].join("|"));
+    assert.equal(install?.env?.npm_config_cache, cache);
+    // The copy's own .npmrc ranks below these: it cannot turn scripts back on, move the registry
+    // or name a "git" program for npm to run while the registry is open.
+    assert.equal(install?.env?.npm_config_ignore_scripts, "true");
+    assert.equal(install?.env?.npm_config_registry, `https://${REGISTRY_DOMAIN}/`);
+    assert.equal(install?.env?.npm_config_git, "git");
+    // The lockfile names the packages whose setup scripts were skipped, whatever .npmrc says.
+    assert.equal(install?.env?.npm_config_package_lock, "true");
+
+    // No lockfile: npm resolves from the registry, still without scripts.
+    await rm(path.join(dir, "package-lock.json"));
+    await builds.installGuarded({ project: "remix", dir });
+    assert.equal(runner.calls.at(-1)?.command, "npm install --ignore-scripts");
+  });
+
+  const OTHER_MANAGERS = [
+    { name: "a pnpm lockfile", file: "pnpm-lock.yaml" },
+    { name: "a yarn lockfile", file: "yarn.lock" },
+    { name: "a bun lockfile", file: "bun.lock" },
+  ];
+  for (const row of OTHER_MANAGERS)
+    it(`installs a copy with ${row.name} with npm too, from its package.json, no scripts`, async () => {
+      const dir = await gameRepo("other-manager");
+      const runner = fakeRunner();
+      const builds = new GameBuilds({ root: path.join(await tmpDir("studio-shadow-"), "builds"), run: runner.run });
+      await writeFile(path.join(dir, "package.json"), '{ "name": "other" }\n');
+      await writeFile(path.join(dir, row.file), "\n");
+      assert.equal((await builds.installGuarded({ project: "other", dir }))?.ok, true);
+      // Another manager's own settings (.yarnrc.yml, .pnpmfile.cjs) can run code: it never runs.
+      assert.deepEqual(
+        runner.calls.map((call) => call.command),
+        [GUARDED_INSTALL],
+      );
+    });
+
+  it("installs from package.json when npm refuses the copy's lockfile, still without scripts", async () => {
+    const dir = await gameRepo("stale-lock");
+    await writeFile(path.join(dir, "package.json"), '{ "name": "stale" }\n');
+    await writeFile(path.join(dir, "package-lock.json"), "{}\n");
+    const commands: string[] = [];
+    const inner = fakeRunner();
+    const builds = new GameBuilds({
+      root: path.join(await tmpDir("studio-shadow-"), "builds"),
+      run: async (request) => {
+        commands.push(request.command);
+        const result = await inner.run(request);
+        // npm ci refuses a lockfile out of step with package.json.
+        return request.command === GUARDED_CI ? { ...result, code: 1 } : result;
+      },
+    });
+    assert.equal((await builds.installGuarded({ project: "stale", dir }))?.ok, true);
+    assert.deepEqual(commands, [GUARDED_CI, GUARDED_INSTALL]);
+  });
+
+  it("adds a Genex package to a guarded game the guarded way", async () => {
+    const dir = await gameRepo("guarded-add");
+    await writeFile(path.join(dir, "package.json"), '{ "name": "guarded" }\n');
+    await writeFile(path.join(dir, "pnpm-lock.yaml"), "\n");
+    const root = path.join(await tmpDir("studio-shadow-"), "builds");
+    const runner = fakeRunner();
+    const builds = new GameBuilds({ root, run: runner.run });
+    await builds.addPackages({ project: "guarded", dir, guarded: true }, ["@genex-ai/multiplayer"]);
+    const add = runner.calls[0];
+    assert.ok(add?.command.startsWith(GUARDED_ADD), add?.command);
+    assert.equal(add?.env?.npm_config_ignore_scripts, "true");
+    assert.equal(add?.env?.npm_config_cache, path.join(root, "package-cache"));
+  });
+
+  it("says which setup scripts a guarded game's install skipped when it does not build", async () => {
+    const dir = await gameRepo("needs-scripts");
+    await writeFile(
+      path.join(dir, "package.json"),
+      JSON.stringify({ name: "needs", scripts: { build: "vite build" } }),
+    );
+    await writeFile(
+      path.join(dir, "package-lock.json"),
+      JSON.stringify({
+        lockfileVersion: 3,
+        packages: {
+          "": { name: "needs" },
+          "node_modules/esbuild": { hasInstallScript: true },
+          "node_modules/vite/node_modules/fsevents": { hasInstallScript: true },
+          "node_modules/three": {},
+        },
+      }),
+    );
+    const root = path.join(await tmpDir("studio-shadow-"), "builds");
+    const failing = fakeRunner({ code: 1, stderr: "esbuild: binary missing" });
+    const guarded = await new GameBuilds({ root, run: failing.run }).ensure({
+      project: "needs-scripts",
+      dir,
+      shape: VITE_SHAPE,
+      guarded: true,
+    });
+    assert.deepEqual(guarded.problem?.skippedScripts, { own: false, packages: ["esbuild", "fsevents"] });
+    // A game whose scripts ran (the person's own, or a trusted copy) has none to offer.
+    const own = await new GameBuilds({ root: `${root}-own`, run: failing.run }).ensure({
+      project: "needs-scripts",
+      dir,
+      shape: VITE_SHAPE,
+    });
+    assert.equal(own.problem?.skippedScripts, null);
+  });
+
+  it("reads the setup scripts a guarded install skips: the game's own, and its packages' by name", () => {
+    assert.deepEqual(skippedSetupScripts({ scripts: { build: "vite build" } }, null), { own: false, packages: [] });
+    assert.deepEqual(
+      skippedSetupScripts(
+        { scripts: { postinstall: "node patch.js" } },
+        {
+          packages: {
+            "": { hasInstallScript: true },
+            "node_modules/@scope/native": { hasInstallScript: true },
+            "node_modules/a/node_modules/sharp": { hasInstallScript: true },
+            "node_modules/sharp": { hasInstallScript: true },
+            "node_modules/plain": { hasInstallScript: false },
+          },
+        },
+      ),
+      { own: true, packages: ["@scope/native", "sharp"] },
+    );
+    assert.deepEqual(skippedSetupScripts("not json", 7), { own: false, packages: [] });
+  });
+
+  it("installs nothing for a copy with no package.json", async () => {
+    const dir = await gameRepo("no-packages");
+    const runner = fakeRunner();
+    const builds = new GameBuilds({ root: path.join(await tmpDir("studio-shadow-"), "builds"), run: runner.run });
+    assert.equal(await builds.installGuarded({ project: "no-packages", dir }), null);
+    assert.equal(runner.calls.length, 0);
+  });
+
+  it("never builds a game while its packages are installing, so its code never meets the open registry", async () => {
+    const dir = await gameRepo("waiting");
+    await writeFile(path.join(dir, "package.json"), '{ "name": "waiting" }\n');
+    const root = path.join(await tmpDir("studio-shadow-"), "builds");
+    const order: string[] = [];
+    let installStarted = () => {};
+    const entered = new Promise<void>((resolve) => {
+      installStarted = resolve;
+    });
+    let finishInstall = () => {};
+    const installing = new Promise<void>((resolve) => {
+      finishInstall = resolve;
+    });
+    const inner = fakeRunner();
+    const builds = new GameBuilds({
+      root,
+      run: async (request) => {
+        const step = request.label?.split(":")[0];
+        order.push(`start ${step}`);
+        if (step === "install") {
+          installStarted();
+          await installing;
+        }
+        const result = await inner.run(request);
+        order.push(`end ${step}`);
+        return result;
+      },
+    });
+    const install = builds.installGuarded({ project: "waiting", dir });
+    await entered;
+    const build = builds.ensure({ project: "waiting", dir, shape: VITE_SHAPE });
+    // Unheld, this build finishes well inside the window: mirroring and a fake build take milliseconds.
+    const first = await Promise.race([build.then(() => "built"), delay(BUILD_HOLD_WINDOW_MS).then(() => "held")]);
+    assert.equal(first, "held");
+    assert.deepEqual(order, ["start install"]);
+    finishInstall();
+    await Promise.all([install, build]);
+    assert.deepEqual(order, ["start install", "end install", "start build", "end build"]);
+  });
+
+  it("starts no build of any game while an install runs, and no install under a running build", async () => {
+    const [a, b, c] = await Promise.all(["held-a", "held-b", "held-c"].map(gameRepo));
+    for (const dir of [a, b, c]) await writeFile(path.join(dir, "package.json"), '{ "name": "held" }\n');
+    const runner = heldRunner(["build:held-b", "install:held-a"]);
+    const builds = new GameBuilds({ root: path.join(await tmpDir("studio-shadow-"), "builds"), run: runner.run });
+    const buildB = builds.ensure({ project: "held-b", dir: b, shape: VITE_SHAPE });
+    await runner.gate("build:held-b").entered;
+    // The registry an install opens is open to every sandboxed process: another game's build runs first.
+    const installA = builds.installGuarded({ project: "held-a", dir: a });
+    assert.equal(await stillHeld(installA), true);
+    runner.gate("build:held-b").release();
+    await runner.gate("install:held-a").entered;
+    const buildC = builds.ensure({ project: "held-c", dir: c, shape: VITE_SHAPE });
+    assert.equal(await stillHeld(buildC), true);
+    runner.gate("install:held-a").release();
+    await Promise.all([buildB, installA, buildC]);
+    assert.deepEqual(runner.order, [
+      "start build:held-b",
+      "end build:held-b",
+      "start install:held-a",
+      "end install:held-a",
+      "start build:held-c",
+      "end build:held-c",
+    ]);
+  });
+
+  it("installs one folder's packages one install at a time", async () => {
+    const dir = await gameRepo("twice");
+    await writeFile(path.join(dir, "package.json"), '{ "name": "twice" }\n');
+    const runner = heldRunner(["install:twice"]);
+    const builds = new GameBuilds({ root: path.join(await tmpDir("studio-shadow-"), "builds"), run: runner.run });
+    const first = builds.installGuarded({ project: "twice", dir });
+    await runner.gate("install:twice").entered;
+    const second = builds.install({ project: "twice", dir, shape: VITE_SHAPE });
+    assert.equal(await stillHeld(second), true);
+    runner.gate("install:twice").release();
+    await Promise.all([first, second]);
+    assert.deepEqual(runner.order, [
+      "start install:twice",
+      "end install:twice",
+      "start install:twice",
+      "end install:twice",
+    ]);
+  });
+
+  it("runs a guarded install with the system's git, whatever program the copy's .npmrc names", POSIX_NPM, async () => {
+    const work = await tmpDir("studio-git-dep-");
+    // A package in a local repository: npm fetches a git dependency with the program its `git` names.
+    const dep = path.join(work, "dep");
+    await mkdir(dep);
+    await writeFile(path.join(dep, "package.json"), JSON.stringify({ name: "dep", version: "1.0.0" }));
+    await exec("git", ["init", "-q"], { cwd: dep, env: GIT_ENV });
+    await exec("git", ["add", "."], { cwd: dep, env: GIT_ENV });
+    await exec("git", ["commit", "-qm", "dep"], { cwd: dep, env: GIT_ENV });
+    const dir = await gameRepo("planted-git");
+    await writeFile(
+      path.join(dir, "package.json"),
+      JSON.stringify({ name: "planted-git", version: "1.0.0", dependencies: { dep: `git+file://${dep}` } }),
+    );
+    await writeFile(path.join(dir, "evil.sh"), `#!/bin/sh\ntouch "${path.join(dir, "pwned")}"\nexit 1\n`, {
+      mode: 0o755,
+    });
+    await writeFile(path.join(dir, ".npmrc"), "git=./evil.sh\n");
+    const builds = new GameBuilds({ root: path.join(await tmpDir("studio-shadow-"), "builds"), run: shellRunner });
+    const result = await builds.installGuarded({ project: "planted-git", dir });
+    assert.equal(result?.ok, true, result?.lines.join("\n"));
+    await assert.rejects(() => stat(path.join(dir, "pwned")), /ENOENT/);
+    assert.ok((await stat(path.join(dir, "node_modules", "dep", "package.json"))).isFile());
+  });
+
+  it("runs the guarded install without the copy's own scripts, whatever its .npmrc says", POSIX_NPM, async () => {
+    const dir = await gameRepo("planted-npmrc");
+    await writeFile(
+      path.join(dir, "package.json"),
+      JSON.stringify({
+        name: "planted",
+        version: "1.0.0",
+        scripts: { preinstall: "touch pwned", postinstall: "touch pwned" },
+      }),
+    );
+    await writeFile(
+      path.join(dir, "package-lock.json"),
+      JSON.stringify({
+        name: "planted",
+        version: "1.0.0",
+        lockfileVersion: 3,
+        requires: true,
+        packages: { "": { name: "planted", version: "1.0.0" } },
+      }),
+    );
+    await writeFile(path.join(dir, ".npmrc"), "ignore-scripts=false\ngit=./evil.sh\n");
+    const builds = new GameBuilds({ root: path.join(await tmpDir("studio-shadow-"), "builds"), run: shellRunner });
+    const result = await builds.installGuarded({ project: "planted", dir });
+    assert.equal(result?.ok, true, result?.lines.join("\n"));
+    await assert.rejects(() => stat(path.join(dir, "pwned")), /ENOENT/);
+  });
 
   it("adds nothing to a game with no package.json, such as one made from Studio's template", async () => {
     const dir = await gameRepo("template");

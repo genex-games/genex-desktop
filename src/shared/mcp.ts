@@ -10,6 +10,8 @@
  * `SecretStore` under `engine-homes/mcp/secrets` and are materialized only into a child's
  * environment (or a request header) at launch.
  */
+import type { CallMaking } from "./asset-making.ts";
+import type { CallCutOff } from "./plugins.ts";
 import type { SecretStorageIssue } from "./secret-storage.ts";
 
 /**
@@ -177,11 +179,62 @@ export interface McpChange {
   error?: string;
 }
 
-/** Payload of the `connector_tool` thread custom event. */
-export interface ConnectorToolEvent {
+/**
+ * The arguments a toolset gateway takes (Epic's Unreal MCP: `list_toolsets`, `describe_toolset`,
+ * `call_tool`): which toolset, which of its tools, and that tool's own arguments. A connector
+ * call's record names the toolset and tool it reached through them.
+ */
+export const ToolsetGatewayArg = {
+  Toolset: "toolset_name",
+  Tool: "tool_name",
+  Arguments: "arguments",
+} as const;
+export type ToolsetGatewayArg = (typeof ToolsetGatewayArg)[keyof typeof ToolsetGatewayArg];
+
+/** How much of a connector call's arguments its records keep, as characters of JSON. */
+export const CONNECTOR_ARGS_RECORD_MAX = 1024;
+
+/** Where a game keeps the pictures its connectors answered with, relative to its folder. */
+export const CONNECTOR_CAPTURES_DIR = ".studio/captures";
+
+/**
+ * The `_meta` entry a connector's error answer carries when the call may have taken effect before
+ * it failed (the app it drives went away mid-call): the host records the call as outcome unknown.
+ */
+export const CONNECTOR_OUTCOME_META = { Key: "genex/outcome", Unknown: "unknown" } as const;
+
+/** What a connector call was, as both of its records carry it. */
+export interface ConnectorCall {
+  /** Pairs a call's `connector_tool_started` with its `connector_tool`; absent in older logs. */
+  callId?: string;
   connectorId: string;
+  /** The server's own tool name. */
   tool: string;
+  /** The name the agent called it by, after the connector's prefix. */
   exposedName: string;
+  /** The plugin that ships this connector, when one does. */
+  pluginId?: string;
+  /** The connector as the person knows it when the call ran: its plugin's name, else its own. */
+  connectorName?: string;
+  /** A toolset gateway's toolset and tool ({@link ToolsetGatewayArg}). */
+  toolset?: string;
+  toolName?: string;
+  /**
+   * The tool's own arguments (a gateway call's `arguments`), clipped to
+   * {@link CONNECTOR_ARGS_RECORD_MAX} characters of JSON, credential-named fields redacted.
+   */
+  args?: Record<string, unknown>;
+  /** What the call makes, when the server's listing of the tool says (`_meta["genex/asset"]`). */
+  making?: CallMaking;
+}
+
+/** Payload of the `connector_tool_started` thread custom event: the call, on its way out. */
+export interface ConnectorToolStartedEvent extends ConnectorCall {
+  callId: string;
+}
+
+/** Payload of the `connector_tool` thread custom event: the call, and how it ended. */
+export interface ConnectorToolEvent extends ConnectorCall {
   ok: boolean;
   durationMs: number;
   /** The answer's text, capped for the log. */
@@ -189,6 +242,10 @@ export interface ConnectorToolEvent {
   error?: string;
   /** How many image parts came back; the bytes themselves never enter the log. */
   images?: number;
+  /** The pictures kept in the game's {@link CONNECTOR_CAPTURES_DIR}, as game-relative paths. */
+  captures?: string[];
+  /** Set when the call was cut off: its outcome is unknown. */
+  cutOff?: CallCutOff;
 }
 
 export function isMcpScope(value: unknown): value is McpScope {

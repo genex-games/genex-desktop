@@ -9,6 +9,7 @@ import { reviewDiff } from "./judge.ts";
 import { facetNotes } from "./repo.ts";
 import { commitArg, isCommit, shellQuote } from "./shell.ts";
 import { GIT } from "./git.ts";
+import { isBenchFile } from "./bench.ts";
 import {
   arrivedByMerge,
   EnforcedAction,
@@ -299,9 +300,9 @@ function isSourceFile(file: string): boolean {
   return /\.(m?js|ts)$/.test(file);
 }
 
-/** Inside the template: no Math.random, no wall clock, and new objects are tagged. */
+/** Inside the template's game code (never a bench page's, which the game never loads): no Math.random, no wall clock, and new objects are tagged. */
 function templateFindings({ file, added, template }: FileReview): Violation[] {
-  const templateSource = template && isSourceFile(file) && !file.endsWith("studio.js");
+  const templateSource = template && isSourceFile(file) && !file.endsWith("studio.js") && !isBenchFile(file);
   if (!templateSource) return [];
   const violations: Violation[] = [];
   for (const { line, text } of added) {

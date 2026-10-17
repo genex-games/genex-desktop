@@ -13,11 +13,10 @@ import { IconButton } from "../../ui/kit.tsx";
 import { PLUGINS_WORDS } from "../../words.ts";
 import { EXTENSIONS_TABS, ExtensionsTab, REFRESH_LABEL, TAB_LABEL } from "./labels.ts";
 
-/** What the Add menu can start: a GitHub install, a new or imported MCP server, the plugin guide, or a local plugin. */
+/** What the Add menu can start: a GitHub install, an MCP server, the plugin guide, or a local plugin. */
 export interface AddActions {
   installFromGithub: () => void;
   addServer: () => void;
-  importConfig: () => void;
   createPlugin: () => void;
   loadLocal: () => void;
 }
@@ -58,10 +57,6 @@ function AddMenu({
         <DropdownMenuItem onSelect={actions.addServer}>
           <Icon name="plugins" />
           {WORDS.server}
-        </DropdownMenuItem>
-        <DropdownMenuItem onSelect={actions.importConfig}>
-          <Icon name="copy" />
-          {WORDS.importConfig}
         </DropdownMenuItem>
         <DropdownMenuSeparator />
         {/* Making a plugin, then loading the folder to try it: the maker's pair. */}

@@ -389,7 +389,7 @@ describe("genex__package: a pinned Genex SDK install into the bound game", () =>
       /not bound to the game/,
     ],
     [
-      "a template game with no package.json",
+      "a game with no package.json that is not Studio's template",
       async (lib) => {
         const game = lib.games["space-race"] ?? "";
         await exec("git", ["rm", "-q", "package.json"], { cwd: game, env: GIT_ENV });
@@ -423,6 +423,95 @@ describe("genex__package: a pinned Genex SDK install into the bound game", () =>
     );
     assert.match(lib.runner.seen[0]?.request.command ?? "", /^pnpm add /);
   });
+});
+
+/** The library with space-race made from Studio's template: no package.json, three through an import map. */
+async function templateLibrary() {
+  const lib = await packageLibrary();
+  const game = lib.games["space-race"] ?? "";
+  await rm(path.join(game, "package.json"));
+  await rm(path.join(game, "pnpm-lock.yaml"));
+  const page = await readFile(path.join(repo, "src/game-template/index.html"), "utf8");
+  await writeFile(path.join(game, "index.html"), page);
+  await writeFile(path.join(game, "studio.json"), JSON.stringify({ name: "space-race", contractVersion: 1 }));
+  return { ...lib, game, page: path.join(game, "index.html"), binding: { project: "space-race", directory: game } };
+}
+
+describe("genex__package in a game made from Studio's template", () => {
+  const sdk = "@genex-ai/embed-sdk";
+
+  it("maps Studio's copy of the SDK in the import map and loads the connect module after it, and nothing runs", async () => {
+    const lib = await templateLibrary();
+    const answer = await lib.packages.add({ package: sdk }, lib.binding);
+    assert.equal(lib.runner.seen.length, 0, "no package manager runs");
+    assert.equal(answer.ok, true);
+    assert.equal(answer.version, GENEX_GAME_PACKAGES[sdk]);
+    assert.match(answer.lines.join("\n"), /never call initEmbed\(\)/);
+    const html = await readFile(lib.page, "utf8");
+    const [, body = ""] = /<script type="importmap">([\s\S]*?)<\/script>/.exec(html) ?? [];
+    const imports = JSON.parse(body).imports;
+    assert.equal(imports[sdk], "/vendor/genex/embed-sdk/index.js");
+    assert.equal(imports.three, "/vendor/three.module.js", "the template's own entries stay");
+    const connect = html.indexOf('<script type="module" src="/vendor/genex/connect.js"></script>');
+    assert.ok(connect > html.indexOf("</script>", html.indexOf("importmap")), "after the import map");
+    assert.ok(connect < html.indexOf('src="/src/main.js"'), "before the game's code");
+    await lib.packages.add({ package: sdk }, lib.binding);
+    assert.equal(await readFile(lib.page, "utf8"), html, "a second call changes nothing");
+  });
+
+  it("maps Studio's copies of multiplayer beside player identity and the connect module, and nothing runs", async () => {
+    const lib = await templateLibrary();
+    const answer = await lib.packages.add({ package: "@genex-ai/multiplayer" }, lib.binding);
+    assert.equal(answer.ok, true);
+    assert.equal(lib.runner.seen.length, 0, "no package manager runs");
+    assert.match(answer.lines.join("\n"), /never call initEmbed\(\)/);
+    const html = await readFile(lib.page, "utf8");
+    const [, body = ""] = /<script type="importmap">([\s\S]*?)<\/script>/.exec(html) ?? [];
+    const imports = JSON.parse(body).imports;
+    assert.equal(imports["@genex-ai/multiplayer"], "/vendor/genex/multiplayer/index.js");
+    assert.equal(imports["@genex-ai/multiplayer/schema"], "/vendor/genex/multiplayer/schema.js");
+    assert.equal(imports[sdk], "/vendor/genex/embed-sdk/index.js", "multiplayer brings player identity");
+    assert.equal(imports.three, "/vendor/three.module.js", "the template's own entries stay");
+    assert.equal(html.match(/\/vendor\/genex\/connect\.js/g)?.length, 1, "the connect module loads once");
+    await lib.packages.add({ package: "@genex-ai/multiplayer" }, lib.binding);
+    assert.equal(await readFile(lib.page, "utf8"), html, "a second call changes nothing");
+  });
+
+  const refused: Array<[string, (lib: Awaited<ReturnType<typeof templateLibrary>>) => Promise<unknown>, RegExp]> = [
+    [
+      "a page that is a link out of the game",
+      async (lib) => {
+        const outside = path.join(lib.root, "elsewhere.html");
+        await writeFile(outside, await readFile(lib.page, "utf8"));
+        await rm(lib.page);
+        await symlink(outside, lib.page);
+        return { package: sdk };
+      },
+      /no package\.json/,
+    ],
+    [
+      "a page whose import map does not parse",
+      async (lib) => {
+        await writeFile(lib.page, (await readFile(lib.page, "utf8")).replace('"imports": {', '"imports": {,'));
+        return { package: sdk };
+      },
+      /no import map Studio can read/,
+    ],
+  ];
+  for (const [name, arrange, message] of refused) {
+    it(`changes nothing for ${name}`, async () => {
+      const lib = await templateLibrary();
+      const args = (await arrange(lib)) as Record<string, unknown>;
+      const pages = async () => {
+        const files = [lib.page, path.join(lib.root, "elsewhere.html")];
+        return Promise.all(files.map((file) => readFile(file, "utf8").catch(() => null)));
+      };
+      const before = await pages();
+      await assert.rejects(lib.packages.add(args, lib.binding), message);
+      assert.deepEqual(await pages(), before, "no page changed");
+      assert.equal(lib.runner.seen.length, 0);
+    });
+  }
 });
 
 describe("what the user is asked about a host tool call", () => {

@@ -7,6 +7,10 @@
  * approved (the host asks for that once the turn ends: `main/core/plan-approval.ts`). The commands
  * of a session engine (Bonsai, OpenRouter) always run in the studio's sandbox, so it honours no Bypass
  * (`permissionModesFor`).
+ *
+ * A local session never carries a worker's seat: the host seats workers only on a delegated engine
+ * and offers a local session no worker tools, so work started on one runs unattended, with the
+ * sibling deny list and the session engine's commands in the studio's sandbox.
  */
 import path from "node:path";
 import { engineMode, PermissionDecision, PermissionMode } from "../../shared/permissions.ts";

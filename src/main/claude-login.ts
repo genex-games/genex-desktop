@@ -86,7 +86,8 @@ export interface ClaudeLoginDependencies {
   terminal?: (options: ClaudeTerminalOptions) => Promise<ClaudeLoginStart & { cancel?: () => Promise<void> }>;
   openExternal: (url: string) => Promise<unknown>;
   onState: (state: ClaudeLoginState) => void;
-  onConnected: () => Promise<unknown>;
+  /** The sign-in into `home` (null: the CLI's own) was confirmed, by the account `email` when the CLI named one. */
+  onConnected: (home: string | null, email?: string) => Promise<unknown>;
   /** How long the piped CLI has to say something we understand before the embedded terminal takes over. */
   graceMs?: number;
   timeoutMs?: number;
@@ -375,7 +376,7 @@ export class ClaudeLoginController {
       if (this.#attempt !== attempt || attempt.cancelled) return;
       // `null` is "we could not ask", which is not a sign-in: the engine's own handshake decides.
       if (status.loggedIn !== true) throw new Error(MESSAGE.notConfirmed);
-      await this.#deps.onConnected();
+      await this.#deps.onConnected(attempt.home, status.email);
       if (this.#attempt !== attempt || attempt.cancelled) return;
       this.#update({ phase: "connected", hasBrowserUrl: false, error: undefined });
     } catch {

@@ -5,6 +5,7 @@ import type { ModelCatalogStatus } from "./model-catalog.ts";
  * `substrate/engines/types.ts` re-exports the status and account types for engine code.
  */
 import type { CodingCliStatus } from "./coding-cli.ts";
+import type { LocalServerInfo } from "./local-server.ts";
 import type { ProviderInfo } from "./providers.ts";
 import type { ProviderUsage } from "./provider-usage.ts";
 
@@ -56,6 +57,8 @@ export interface EngineDescriptor {
   account?: EngineAccount | null;
   /** The provider table's row for this engine (`shared/providers.ts`); null for an unlisted engine. */
   provider?: ProviderInfo | null;
+  /** A local server engine: the saved server's address and software (never its key); null while none is saved. */
+  server?: LocalServerInfo | null;
   models: Array<{
     id: string;
     label: string;
@@ -70,6 +73,8 @@ export interface EngineDescriptor {
     /** A short alias the CLI resolves to another listed model, so pickers list that model once. */
     aliasOf?: string;
     note?: string;
+    /** Runs at no cost and with no account (OpenCode's own free models). */
+    free?: boolean;
     /** What the composer's effort menu offers for this model; empty = no effort dial. */
     efforts?: string[];
     defaultEffort?: string;

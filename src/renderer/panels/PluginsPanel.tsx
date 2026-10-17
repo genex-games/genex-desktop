@@ -5,12 +5,15 @@
  * page, the rows and buttons they share, and the page's state (`page.ts`).
  */
 import type { JSX, RefObject } from "react";
-import { useEffect, useRef, useState } from "react";
+import { usePeople } from "../state/hooks.ts";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { LOCAL_BLENDER_PLUGIN_ID } from "../../shared/local-blender.ts";
-import type { PluginInfo } from "../../shared/plugins.ts";
+import type { PluginIndexEntry, PluginIndexView, PluginInfo } from "../../shared/plugins.ts";
+import { pluginUpdates } from "../state/plugins.ts";
 import { Button } from "../ui/Button.tsx";
 import { Icon } from "../ui/icons.tsx";
 import { IconButton } from "../ui/kit.tsx";
+import { PluginIcon } from "../ui/PluginIcon.tsx";
 import type { ConnectorActions } from "./ConnectorsCard.tsx";
 import { PluginsToolbar } from "./plugins/header.tsx";
 import {
@@ -18,7 +21,9 @@ import {
   hasOwnPage,
   isActive,
   isOffList,
+  needsSetup,
   PLUGIN_GUIDE_URL,
+  pluginAccount,
   SEARCH_LABEL,
   shownIntro,
   shownName,
@@ -32,6 +37,7 @@ import {
   usePluginsPageData,
   useProviderSkills,
 } from "./plugins/page.ts";
+import { CatalogDetail, CatalogInstall, NeedsSetup } from "./plugins/CatalogDetail.tsx";
 import { MoreActions } from "./plugins/detail-parts.tsx";
 import { PluginDetail, type SettingValues } from "./plugins/PluginDetail.tsx";
 import { PluginsBrowse } from "./plugins/PluginsBrowse.tsx";
@@ -46,7 +52,12 @@ interface Props {
   project?: string | null;
   setupPlugin?: string;
   plugins: PluginInfo[];
+  /** The plugin index as the store last read it, or null before its first answer. */
+  index: PluginIndexView | null;
+  /** The sidebar's Update plugins is running: the page starts no action of its own meanwhile. */
+  updating: boolean;
   onPluginsRefresh: () => void;
+  onIndexRefresh: () => void;
   onBack: () => void;
   sidebarHidden: boolean;
   onToggleSidebar: () => void;
@@ -128,14 +139,19 @@ function useSetupPlugin(
 }
 
 /** The line under the page title: the skill's source, the plugin's description, or what the tab is for. */
-function pageIntro(nav: Navigation, detail: PluginInfo | undefined, plugins: PluginInfo[]): string | undefined {
+function pageIntro(
+  nav: Navigation,
+  detail: PluginInfo | undefined,
+  plugins: PluginInfo[],
+  accountName: string | null,
+): string | undefined {
   const { skill } = nav;
   if (skill) {
     if (skill.provider) return skill.provider;
     if (!skill.plugin) return SKILLS_WORDS.studioTitle;
     return plugins.find((p) => p.manifest.id === skill.plugin)?.manifest.name;
   }
-  return detail ? shownIntro(detail) : TAB_INTRO[nav.tab];
+  return detail ? shownIntro(detail, accountName) : TAB_INTRO[nav.tab];
 }
 
 /** A file skill's text, read from its plugin when its page opens; an inline skill already has it. */
@@ -238,7 +254,6 @@ function toolbarActions({
   const add = {
     installFromGithub: () => nav.setGithub(true),
     addServer: () => toPluginsTab(() => connectorActions.current?.add()),
-    importConfig: () => toPluginsTab(() => connectorActions.current?.import()),
     createPlugin: () => void window.studio.openUrl(PLUGIN_GUIDE_URL),
     loadLocal: () => void act(() => window.studio.pluginInstall()),
   };
@@ -249,13 +264,22 @@ export function PluginsPanel({
   setupPlugin,
   project,
   plugins,
+  index,
+  updating,
   onPluginsRefresh,
+  onIndexRefresh,
   onBack,
   sidebarHidden,
   onToggleSidebar,
 }: Props): JSX.Element {
-  const { error, setError, busy, act } = useBusyAction(onPluginsRefresh);
-  const data = usePluginsPageData(project, onPluginsRefresh, setError);
+  const action = useBusyAction(onPluginsRefresh);
+  const { error, setError, act } = action;
+  const busy = action.busy || updating;
+  const data = usePluginsPageData(project, onPluginsRefresh, onIndexRefresh, setError);
+  const updates = useMemo(
+    () => new Map(pluginUpdates(plugins, index).map((update) => [update.plugin.manifest.id, update])),
+    [plugins, index],
+  );
   const nav = useNavigation(setError);
   const skills = useProviderSkills(nav.tab, project, setError);
   const [settings, setSettings] = useState<Record<string, SettingValues>>({});
@@ -263,6 +287,8 @@ export function PluginsPanel({
   const afterMenu = useRef<(() => void) | null>(null);
   const { heading, scroll } = usePageTop(nav);
   const detail = plugins.find((p) => p.manifest.id === nav.detailId);
+  // A catalog plugin you don't have opens its listing page: how to start, and Install.
+  const listing = detail ? undefined : index?.entries.find((e) => e.id === nav.detailId);
   // Genex's page shows the failure inside its account card instead of above it.
   const ownPage = detail !== undefined && hasOwnPage(detail);
   const selectedPlugin = useOpenPanelPlugin(nav, plugins);
@@ -274,6 +300,7 @@ export function PluginsPanel({
     project,
     connections: data.connections,
     setConnections: data.setConnections,
+    updates,
     openPlugin: nav.openPlugin,
     setSelected: nav.setSelected,
     matches: (...values: string[]) =>
@@ -296,8 +323,16 @@ export function PluginsPanel({
         add={toolbar.add}
       />
       <div ref={scroll} className="extensions-scroll">
-        <div className={`extensions-content ${detail || nav.skill ? "extensions-content-detail" : ""}`}>
-          <PageHeading nav={nav} detail={detail} plugins={plugins} page={page} heading={heading} onBack={onBack} />
+        <div className={`extensions-content ${detail || listing || nav.skill ? "extensions-content-detail" : ""}`}>
+          <PageHeading
+            nav={nav}
+            detail={detail}
+            listing={listing && index ? { entry: listing, index } : undefined}
+            plugins={plugins}
+            page={page}
+            heading={heading}
+            onBack={onBack}
+          />
           {error && !ownPage && (
             <p role="alert" className="extensions-error">
               {error}
@@ -307,11 +342,13 @@ export function PluginsPanel({
             nav={nav}
             page={page}
             detail={detail}
+            listing={listing}
             plugins={plugins}
             selectedPlugin={selectedPlugin}
             settings={settings}
             onSettings={setSettings}
             data={data}
+            index={index}
             skills={skills}
             connectorActions={connectorActions}
           />
@@ -332,10 +369,37 @@ export function PluginsPanel({
   );
 }
 
+/** The title's controls: an installed plugin's menu and switch, or a catalog plugin's Install. */
+function TitleActions({
+  plugin,
+  listing,
+  page,
+}: {
+  plugin: PluginInfo | null;
+  listing: { entry: PluginIndexEntry; index: PluginIndexView } | null;
+  page: PluginsPage;
+}): JSX.Element | null {
+  if (plugin && !isOffList(plugin))
+    return (
+      <div className="extensions-title-actions">
+        {needsSetup(plugin, pluginAccount(page.connections, plugin.manifest.id)) && <NeedsSetup />}
+        <MoreActions detail={plugin} page={page} />
+        <PluginToggle plugin={plugin} page={page} />
+      </div>
+    );
+  if (!listing) return null;
+  return (
+    <div className="extensions-title-actions">
+      <CatalogInstall entry={listing.entry} index={listing.index} page={page} />
+    </div>
+  );
+}
+
 /** The back button, the mark, the title with the plugin's switch, and the intro line. */
 function PageHeading({
   nav,
   detail,
+  listing,
   plugins,
   page,
   heading,
@@ -343,14 +407,17 @@ function PageHeading({
 }: {
   nav: Navigation;
   detail: PluginInfo | undefined;
+  listing: { entry: PluginIndexEntry; index: PluginIndexView } | undefined;
   plugins: PluginInfo[];
   page: PluginsPage;
   heading: RefObject<HTMLHeadingElement | null>;
   onBack: () => void;
 }): JSX.Element {
   const { skill } = nav;
-  const inside = Boolean(detail || skill);
+  const accountName = usePeople((s) => s.me?.name ?? null);
+  const inside = Boolean(detail || listing || skill);
   const shownPlugin = detail && !skill ? detail : null;
+  const shownListing = listing && !skill ? listing : null;
   return (
     <>
       <Button className="extensions-back" onClick={inside ? nav.browse : onBack}>
@@ -358,19 +425,17 @@ function PageHeading({
         {inside ? TAB_LABEL[nav.tab] : PLUGINS_WORDS.back}
       </Button>
       {shownPlugin && <PluginPicture plugin={shownPlugin} size="large" />}
+      {shownListing && <PluginIcon name={shownListing.entry.name} size="large" />}
       {skill && <Mark large kind="box" />}
       <div className="extensions-title-row">
         <h1 ref={heading} tabIndex={-1}>
-          {skill?.name ?? (detail ? shownName(detail) : TAB_LABEL[nav.tab])}
+          {skill?.name ?? (detail ? shownName(detail) : (shownListing?.entry.name ?? TAB_LABEL[nav.tab]))}
         </h1>
-        {shownPlugin && !isOffList(shownPlugin) && (
-          <div className="extensions-title-actions">
-            <MoreActions detail={shownPlugin} page={page} />
-            <PluginToggle plugin={shownPlugin} page={page} />
-          </div>
-        )}
+        <TitleActions plugin={shownPlugin} listing={shownListing} page={page} />
       </div>
-      <p className="extensions-intro">{pageIntro(nav, detail, plugins)}</p>
+      <p className="extensions-intro">
+        {shownListing ? shownListing.entry.description : pageIntro(nav, detail, plugins, accountName)}
+      </p>
     </>
   );
 }
@@ -380,22 +445,26 @@ function PageBody({
   nav,
   page,
   detail,
+  listing,
   plugins,
   selectedPlugin,
   settings,
   onSettings,
   data,
+  index,
   skills,
   connectorActions,
 }: {
   nav: Navigation;
   page: PluginsPage;
   detail: PluginInfo | undefined;
+  listing: PluginIndexEntry | undefined;
   plugins: PluginInfo[];
   selectedPlugin: PluginInfo | undefined;
   settings: Record<string, SettingValues>;
   onSettings: (update: (all: Record<string, SettingValues>) => Record<string, SettingValues>) => void;
   data: ReturnType<typeof usePluginsPageData>;
+  index: PluginIndexView | null;
   skills: ReturnType<typeof useProviderSkills>;
   connectorActions: RefObject<ConnectorActions | null>;
 }): JSX.Element {
@@ -423,6 +492,7 @@ function PageBody({
       />
     );
   }
+  if (listing) return <CatalogDetail entry={listing} />;
   return (
     <>
       <SearchField nav={nav} />
@@ -432,7 +502,7 @@ function PageBody({
           page={page}
           query={nav.query}
           catalog={data.catalog}
-          index={data.index}
+          index={index}
           connectorActions={connectorActions}
         />
       ) : (

@@ -4,6 +4,7 @@ import { LOCAL_BLENDER_PLUGIN_ID } from "../../../shared/local-blender.ts";
 import type { PluginInfo } from "../../../shared/plugins.ts";
 import { Button } from "../../ui/Button.tsx";
 import { BlenderDoes, BlenderRuntimeCard } from "./BlenderRuntime.tsx";
+import { InstalledSteps } from "./CatalogDetail.tsx";
 import {
   Information,
   OpenPanelSection,
@@ -132,9 +133,10 @@ function GenericDetail({
         <OpenPanelSection selected={selected} selectedPlugin={selectedPlugin} page={page} />
       )}
       {blender && <BlenderDoes />}
+      <InstalledSteps manifest={detail.manifest} />
       <PluginConnections plugin={detail} page={page} />
       <PluginSkills detail={detail} onSkill={onSkill} />
-      <Information detail={detail} />
+      <Information detail={detail} page={page} />
     </>
   );
 }

@@ -1,0 +1,44 @@
+{
+  "map": "/Game/Maps/Map",
+  "gameMode": {
+    "path": "/Game/VehicleTemplate/Blueprints/BP_VehicleAdvGameMode",
+    "parent": "GameModeBase",
+    "defaultPawn": "BP_VehicleAdvOffroadCar"
+  },
+  "blueprints": [
+    { "name": "BP_Cone", "path": "/Game/PartsKit/BP_Cone", "parent": "Actor", "components": [], "variables": [] },
+    {
+      "name": "BP_VehicleAdvGameMode",
+      "path": "/Game/VehicleTemplate/Blueprints/BP_VehicleAdvGameMode",
+      "parent": "GameModeBase",
+      "components": [],
+      "variables": []
+    },
+    {
+      "name": "BP_VehicleAdvOffroadCar",
+      "path": "/Game/VehicleTemplate/Blueprints/OffroadCar/BP_VehicleAdvOffroadCar",
+      "parent": "WheeledVehiclePawn",
+      "components": [
+        { "name": "VehicleMesh", "class": "SkeletalMeshComponent" },
+        { "name": "BackSpringArm", "class": "SpringArmComponent" },
+        { "name": "BackCamera", "class": "CameraComponent" }
+      ],
+      "variables": [
+        { "name": "IsReversing", "type": "bool" },
+        { "name": "TopSpeed", "type": "float" },
+        { "name": "Target", "type": "Actor object ref" },
+        { "name": "Offset", "type": "Vector" },
+        { "name": "Gears", "type": "int array" }
+      ]
+    },
+    {
+      "name": "UI_Speedometer",
+      "path": "/Game/VehicleTemplate/UI/UI_Speedometer",
+      "parent": "UserWidget",
+      "components": [],
+      "variables": []
+    }
+  ],
+  "more": 0,
+  "inputActions": ["Jump", "Steering", "Throttle"]
+}

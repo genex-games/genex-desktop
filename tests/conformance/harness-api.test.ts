@@ -119,6 +119,50 @@ test("malformed params for a path-bearing method are refused with a clear error 
       ["preview.pair", { runId: "r1", left: { path: 9 }, right: {} }, "left.path"],
       ["run.artifact", { runId: "r1", name: null, base64: "" }, "name"],
       ["game.scaffold", undefined, "params"],
+      ["game.start", { project: "pong", starter: "Web" }, "starter"],
+      ["game.start", { project: "pong", starter: "../web" }, "starter"],
+      ["game.start", { project: "pong" }, "starter"],
+      ["game.start", { starter: "web" }, "project"],
+      ["game.start", { project: "pong", starter: "web", threadId: 7 }, "threadId"],
+      ["game.start", { project: "pong", starter: "web", threadId: { id: "chat" } }, "threadId"],
+      ["plugins.suggest", { project: "pong", plugin: "unreal" }, "threadId"],
+      ["plugins.suggest", { project: "pong", plugin: "unreal", threadId: 7 }, "threadId"],
+      ["plugins.tools", { project: 7 }, "project"],
+      ["plugins.find", { project: ["/"] }, "project"],
+      ["mcp.tools", { project: { toString: "/" } }, "project"],
+      // A worker grant decides whether a session is seated in the chat's mode: refused whole when malformed.
+      ["engine.delegate", { project: "pong", prompt: "go", worker: "w1" }, "worker"],
+      ["engine.delegate", { project: "pong", prompt: "go", worker: { id: 7, title: "x" } }, "worker.id"],
+      ["engine.delegate", { project: "pong", prompt: "go", worker: { id: "w1" } }, "worker.title"],
+      [
+        "engine.delegate",
+        { project: "pong", prompt: "go", worker: { id: "w1", title: "x", research: "yes" } },
+        "worker.research",
+      ],
+      [
+        "engine.delegate",
+        { project: "pong", prompt: "go", worker: { id: "w1", title: "x", runId: 3 } },
+        "worker.runId",
+      ],
+      // A reviewer's run and the folder it reads are paths the host places: refused whole when malformed.
+      ["engine.delegate", { project: "pong", prompt: "go", reviewer: "run" }, "reviewer"],
+      [
+        "engine.delegate",
+        { project: "pong", prompt: "go", reviewer: { runId: "../x", reads: "/g" } },
+        "reviewer.runId",
+      ],
+      ["engine.delegate", { project: "pong", prompt: "go", reviewer: { runId: "a/b", reads: "/g" } }, "reviewer.runId"],
+      [
+        "engine.delegate",
+        { project: "pong", prompt: "go", reviewer: { runId: "r", reads: "x".repeat(1025) } },
+        "reviewer.reads",
+      ],
+      ["engine.delegate", { project: "pong", prompt: "go", reviewer: { runId: "r" } }, "reviewer.reads"],
+      ["plugins.workerTypes", { project: 7 }, "project"],
+      ["plugins.workerTypes", {}, "project"],
+      ["jobs.list", { project: ["/"] }, "project"],
+      ["jobs.list", { project: "pong", runId: 7 }, "runId"],
+      ["jobs.list", { project: "pong", endedAfter: "3" }, "endedAfter"],
     ];
     for (const [method, params, field] of refusals) {
       const answer = await harness.rpc(method, params);
@@ -174,6 +218,20 @@ test("a well-formed call reaches its handler with the params exactly as the harn
         },
       ],
       ["game.setCover", { project: "pong", threadId: "t1", family: "dunes", palette: "dusk", seed: 3 }],
+      ["game.start", { project: "pong", starter: "web", threadId: "t1" }],
+      [
+        "engine.delegate",
+        {
+          project: "pong",
+          prompt: "go",
+          cwd: "/scratch/w1",
+          worker: { id: "w1", title: "Scene builder", runId: "r1", research: true },
+        },
+      ],
+      ["engine.delegate", { project: "pong", prompt: "go", worker: { id: "w2", title: "Reader", turn: "msg-1" } }],
+      ["plugins.workerTypes", { project: "pong" }],
+      ["jobs.list", { project: "pong", runId: "r1", endedAfter: 3 }],
+      ["jobs.list", { project: "pong", runId: null }],
       // Not path-bearing: nothing is checked, whatever arrives.
       ["preview.state", 5],
       // Stop is never refused on its params.

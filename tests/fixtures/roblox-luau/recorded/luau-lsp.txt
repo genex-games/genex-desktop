@@ -1,0 +1,5 @@
+[INFO] Loading definitions file: @roblox - {{storage}}/luau/roblox-types-1.70.1/globalTypes.None.d.luau
+[WARN] client does not allow didChangeWatchedFiles registration - automatic updating on sourcemap changes disabled
+{{folder}}/src/ServerScriptService/Main.server.luau [game/ServerScriptService/Main]:4.1-4.28: TypeError: Expected this to be 'number', but got 'string'
+src/ServerScriptService/Main.server.luau:5.7-5.12: LocalUnused: Variable 'unused' is never used; prefix with '_' to silence
+{{folder}}/src/StarterPlayer/StarterPlayerScripts/Input.client.luau [game/StarterPlayer/StarterPlayerScripts/Input]:4.33-4.43: TypeError: Unknown global 'missingName'; consider assigning to it first

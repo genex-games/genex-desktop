@@ -2,6 +2,7 @@
  * The build smoke (`--studio-smoke`): loaded by main with a dynamic import only when that flag is
  * set, so no smoke code runs, or is even evaluated, in a normal launch.
  */
+import { InteractionSource } from "../../shared/run-summary.ts";
 import { type BrowserWindow, app, type WebContents, type WebFrameMain } from "electron";
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
@@ -230,7 +231,9 @@ async function checkRenderedWindow(smoke: Smoke): Promise<void> {
   const rendered = (await wc.executeJavaScript(
     `JSON.stringify({
          columns: document.querySelectorAll(".column").length,
-         modes: [...document.querySelectorAll("[data-mode]")].map((t) => t.textContent),
+         // The retired Build/Review tabs; the Play/Create switch and the composer's permission
+         // button carry data-mode for their own state and are not that switch.
+         modes: [...document.querySelectorAll("[data-mode]:not(.play-switch):not(.composer-permission)")].map((t) => t.textContent),
          brand: document.querySelector(".brand")?.textContent ?? "",
          sidebarFooter: !!document.querySelector(".sidebar-footer"),
          composer: !!document.querySelector(".composer textarea"),
@@ -1056,13 +1059,15 @@ async function checkLocalPluginToolbar(buildSmoke: BuildSmoke): Promise<void> {
   const { wc, check, threadId, waitFor } = buildSmoke;
   const { core, resources } = buildSmoke.ctx;
   const exampleDir = path.join(resources, "examples/example");
-  await core.plugins.installLocal(
+  const example = await core.plugins.installLocal(
     exampleDir,
     "local",
     undefined,
     { kind: PluginSourceKind.Local, directory: exampleDir },
     await scanPackage(exampleDir, await inspectPackage(exampleDir)),
   );
+  // Loaded from a folder, it starts off: the person turns it on.
+  await core.plugins.setEnabled(example.id, true);
   await wc.executeJavaScript(`document.querySelector('nav [data-thread="${threadId}"]').click()`);
   // The top bar learns about the new plugin from plugins.changed alone: the page is closed,
   // so nothing else is polling the list.
@@ -1117,11 +1122,11 @@ async function checkLocalPluginToolbar(buildSmoke: BuildSmoke): Promise<void> {
 /** The offline marketplace, the GitHub install, and the example's own panel. */
 async function checkMarketplaceAndExample(buildSmoke: BuildSmoke): Promise<void> {
   const { wc, check, waitFor } = buildSmoke;
-  // A fixture profile is offline: the catalog offers nothing, so the Marketplace is only Coming soon.
+  // A fixture profile is offline: the catalog offers nothing, so Community plugins is only Coming soon.
   check(
-    "the Marketplace is coming soon in a fixture profile, and lists nothing",
+    "Community plugins is coming soon in a fixture profile, and the catalog lists nothing",
     await waitFor(
-      `!!document.querySelector('[aria-label="Studio plugins"] [data-marketplace-soon]')&&!document.querySelector('[aria-label="Studio plugins"] [data-more-plugins]')`,
+      `!!document.querySelector('[aria-label="Studio plugins"] [data-marketplace-soon]')&&!document.querySelector('[aria-label="Studio plugins"] [data-catalog-plugins]')`,
     ),
   );
   await wc.executeJavaScript(
@@ -1200,7 +1205,7 @@ async function checkPublishGate(buildSmoke: BuildSmoke): Promise<void> {
   check(
     "Studio draws the Publish dialog and reads the game's publishing state",
     await waitFor(
-      `!!document.querySelector('[role="dialog"][aria-label="Publish to the web"] [data-genex-publish-status]')&&!document.querySelector('[role="dialog"][aria-label="Publish to the web"] iframe')`,
+      `!!document.querySelector('[role="dialog"][data-testid="genex-publish"] [data-genex-publish-status]')&&!document.querySelector('[role="dialog"][data-testid="genex-publish"] iframe')`,
     ),
   );
   const publishRefused = await wc.executeJavaScript(
@@ -1208,40 +1213,45 @@ async function checkPublishGate(buildSmoke: BuildSmoke): Promise<void> {
   );
   check("fixture native policy blocks the publish confirmation", publishRefused);
   await wc.executeJavaScript(
-    `document.querySelector('[role="dialog"][aria-label="Publish to the web"] button[aria-label="Close"]').click()`,
+    `document.querySelector('[role="dialog"][data-testid="genex-publish"] button[aria-label="Close"]').click()`,
   );
   check(
     "Publish closes before changing plugin availability",
-    await waitFor(`!document.querySelector('[role="dialog"][aria-label="Publish to the web"]')`),
+    await waitFor(`!document.querySelector('[role="dialog"][data-testid="genex-publish"]')`),
   );
   await core.plugins.setEnabled("genex", false);
   check(
     "disabled Genex contributes no tools or guidance",
     !core.plugins.tools().some((t) => t.name.startsWith("genex__")) && !core.plugins.guidance().includes("Genex"),
   );
-  // Publish stays for every open game: with Genex off it offers to turn Genex on.
+  // Publish belongs to the account, not the agent's tools: with Genex off its own Publish stays.
   check(
-    "disabled Genex leaves a Publish that offers to turn it on",
-    await waitFor(`!!document.querySelector('button[aria-label="Publish game"]')`),
+    "disabled Genex keeps its own Publish",
+    await waitFor(
+      `!!document.querySelector('[data-plugin-toolbar="genex:publish"]') && !document.querySelector('[data-studio-publish]')`,
+    ),
   );
   await wc.executeJavaScript(`document.querySelector('button[aria-label="Publish game"]').click()`);
   check(
-    "Publish with Genex off asks to turn it on",
+    "Publish with Genex off opens the same dialog, which asks only for an account",
     await waitFor(
-      `[...document.querySelectorAll('[role="dialog"][aria-label="Publish to the web"] button')].some((b)=>b.textContent.trim()==="Turn on Genex plugin")`,
+      `!!document.querySelector('[role="dialog"][data-testid="genex-publish"] [data-genex-publish-status], [role="dialog"][data-testid="genex-publish"] [data-genex-publish-sign-in]')`,
     ),
   );
   await wc.executeJavaScript(
-    `document.querySelector('[role="dialog"][aria-label="Publish to the web"] button[aria-label="Close"]').click()`,
+    `document.querySelector('[role="dialog"][data-testid="genex-publish"] button[aria-label="Close"]').click()`,
   );
-  await core.plugins.remove("genex");
-  check(
-    "removed Genex retains prior accounting and ciphertext",
-    Boolean(await fs.stat(path.join(core.pluginServices.root("genex"), "credentials/genex.bin")).catch(() => null)),
+  const refusedRemoval = await core.plugins.remove("genex").then(
+    () => false,
+    () => true,
   );
-  await core.plugins.restore("genex");
   check(
-    "restored Genex brings its own Publish button back",
+    "Genex holds the app's account: it can't be removed, only turned off",
+    refusedRemoval && core.plugins.list().some((p) => p.manifest.id === "genex" && !p.removed),
+  );
+  await core.plugins.setEnabled("genex", true);
+  check(
+    "Genex back on keeps its own Publish button",
     await waitFor(
       `!document.querySelector('[data-studio-publish]') && !!document.querySelector('[data-plugin-toolbar="genex:publish"]')`,
     ),
@@ -1475,7 +1485,7 @@ async function checkPluginJobInGraph(buildSmoke: BuildSmoke, assetJobId: string)
   const assetCall = startedPayload({
     callId: randomUUID(),
     pluginId: "genex",
-    pluginName: "Genex Tools",
+    pluginName: "Genex plugin",
     tool: "asset",
     toolName: "genex__asset",
     args: { operation: "image", prompt: "A painted banner over the bridge" },
@@ -1505,7 +1515,7 @@ async function checkPluginJobInGraph(buildSmoke: BuildSmoke, assetJobId: string)
   check(
     "a plugin's asset job appears in the graph under the part that asked for it",
     await waitFor(
-      `(() => { const node = document.querySelector('[data-graph-node="assets"]'); if (!node || !node.textContent.includes('Making 1')) return false; node.click(); const panel = document.querySelector('[data-graph-panel="assets"]')?.textContent || ""; return panel.includes('Genex Tools') && panel.includes('Part 1') && panel.includes('Making'); })()`,
+      `(() => { const node = document.querySelector('[data-graph-node="assets"]'); if (!node || !node.textContent.includes('Making 1')) return false; node.click(); const panel = document.querySelector('[data-graph-panel="assets"]')?.textContent || ""; return panel.includes('Genex plugin') && panel.includes('Part 1') && panel.includes('Making'); })()`,
     ),
   );
   pushUiEvent({
@@ -2132,7 +2142,7 @@ async function seedOutcomeRun(buildSmoke: BuildSmoke): Promise<OutcomeRun> {
     head: "head-6",
     label: "Dialogue walkthrough",
     status: "incomplete",
-    source: "independent-playtester",
+    source: InteractionSource.IndependentPlaytester,
   });
   return { outcomeRun, outcomeEvent };
 }
@@ -2726,16 +2736,43 @@ async function openComputerSmoke(smoke: Smoke): Promise<ComputerSmoke> {
     ],
     smokeThread,
   );
-  await wc.executeJavaScript(`localStorage.setItem("studio.activeThread", ${JSON.stringify(smokeThread)})`);
-  await wc.executeJavaScript(`localStorage.setItem("studio.previewView", "builds")`);
   wc.reload();
-  await waitUntil(() => wc.executeJavaScript(`!!document.querySelector('nav [data-thread]')`).catch(() => false), {
-    timeoutMs: BUILD_WAIT_MS,
-    intervalMs: WINDOW_POLL_MS,
-  });
   const waitFor = (expression: string, ms = COMPUTER_WAIT_MS) =>
     waitUntil(() => wc.executeJavaScript(expression).catch(() => false), { timeoutMs: ms, intervalMs: WINDOW_POLL_MS });
+  // Every launch starts at home: open the game from the sidebar, as a person does, then Builds.
+  await openOnBuilds(wc, waitFor, smokeThread);
   return { ...smoke, project, runId, waitFor, callHost: hostCaller(core) };
+}
+
+/**
+ * Open a game's chat from the sidebar and its stage on Builds. Every launch starts at home, so a
+ * chat is opened the way a person opens it, never restored from storage.
+ */
+async function openOnBuilds(
+  wc: Smoke["wc"],
+  waitFor: (expression: string, ms?: number) => Promise<boolean>,
+  threadId: string,
+): Promise<void> {
+  const row = `nav [data-thread="${threadId}"]`;
+  await waitFor(`!!document.querySelector('${row}')`, BUILD_WAIT_MS);
+  await wc.executeJavaScript(`document.querySelector('${row}')?.click()`);
+  await waitFor(`!!document.querySelector('[data-stage-action="builds"]')`);
+  await wc.executeJavaScript(`document.querySelector('[data-stage-action="builds"]')?.click()`);
+}
+
+/**
+ * What the page shows of an agent's screen, for a check that did not see it: the stage, each graph
+ * node with whether it carries a screen and a picture, and the chat's build row.
+ */
+const AGENT_SCREEN_REPORT = `JSON.stringify({
+  stage: document.querySelector('[data-stage-view]')?.getAttribute('data-stage-view') ?? null,
+  nodes: [...document.querySelectorAll('[data-graph-node]')].map((n) => [n.getAttribute('data-graph-node'), n.getAttribute('data-agent-screen'), n.querySelectorAll('img').length]),
+  buildRow: document.querySelector('[data-build-status]') ? document.querySelectorAll('[data-build-status] img').length : null,
+})`;
+
+/** The page's report of agent screens, or why it could not be read. */
+async function agentScreenReport(wc: Smoke["wc"]): Promise<string> {
+  return wc.executeJavaScript(AGENT_SCREEN_REPORT).catch((error: Error) => `unreadable: ${error.message}`);
 }
 
 /** The game state a `computer state` call printed, parsed; the raw text when it would not parse. */
@@ -2855,6 +2892,7 @@ async function driveComputer(computerSmoke: ComputerSmoke, request: DelegateRequ
   results.tools = (request.liveTools ?? []).map((t) => t.name);
   results.shot = await computer({ action: "screenshot" });
   results.uiNode = await waitFor(`!!document.querySelector('[data-graph-node][data-agent-screen] img')`);
+  if (results.uiNode !== true) results.uiNodeReport = await agentScreenReport(computerSmoke.wc);
   results.state0 = stateOf(await computer({ action: "state" }));
   results.key = await computer({ action: "key", text: "i" });
   results.state1 = stateOf(await computer({ action: "state" }));
@@ -2912,7 +2950,11 @@ function checkComputerTool({ check }: ComputerSmoke, results: Seen): void {
     images(results.shot) === 1 && /s1_screen\.jpg/.test(asText(results.shot)),
     asText(results.shot).slice(0, 160),
   );
-  check("the agent's screen appears on its part's node in Builds while the session runs", results.uiNode === true);
+  check(
+    "the agent's screen appears on its part's node in Builds while the session runs",
+    results.uiNode === true,
+    String(results.uiNodeReport ?? ""),
+  );
   const s0 = results.state0 as Record<string, unknown>;
   check(
     "the fixture boots on the street map",
@@ -3106,9 +3148,8 @@ async function checkScriptedDirector(computerSmoke: ComputerSmoke): Promise<void
   const dirProject = await core.games.scaffold("director-smoke", { title: "Director smoke" });
   await fs.writeFile(path.join(dirProject.dir, "src", "main.js"), COMPUTER_SMOKE_GAME);
   const dirThread = await core.threadForGame(dirProject.name);
-  await wc.executeJavaScript(`localStorage.setItem("studio.activeThread", ${JSON.stringify(dirThread)})`);
   wc.reload();
-  await waitFor(`!!document.querySelector('nav [data-thread]')`, 15_000);
+  await openOnBuilds(wc, waitFor, dirThread);
   const dir: DirectorSeen = {};
   core.engines.register(
     scriptedCodex(
@@ -3150,9 +3191,11 @@ async function directLoopRun(
   dir.look = await call("look", { target: "integration" });
   dir.state = stateOf(await call("computer", { action: "state" }));
   dir.chatFrame = await waitFor(`!!document.querySelector('[data-build-status] img')?.naturalWidth`);
+  if (dir.chatFrame !== true) dir.chatFrameReport = await agentScreenReport(wc);
   // No part works yet, so the lead has the run: its node in Builds is its own screen.
   await wc.executeJavaScript(`document.querySelector('[data-stage-action="builds"]')?.click()`);
   dir.uiCard = await waitFor(`!!document.querySelector('[data-graph-node="lead"][data-agent-screen] img')`);
+  if (dir.uiCard !== true) dir.uiCardReport = await agentScreenReport(wc);
   // The run says what it is for before a builder starts (M3.8): worker_start refuses until plan has been called.
   await call("plan", {
     summary: "This run: a sign on the street.",
@@ -3179,7 +3222,7 @@ async function directLoopRun(
     ),
   );
   for (let i = 0; i < 30; i++) {
-    dir.waited = JSON.parse(asText(await call("wait", { seconds: "3", worker: "sign" })));
+    dir.waited = JSON.parse(asText(await call("worker_wait", { seconds: "3", worker: "sign" })));
     if (dir.waited.status?.workers?.[0]?.state !== "running") break;
   }
   dir.lookWorker = await call("look", { target: "sign" });
@@ -3197,8 +3240,16 @@ function checkDirectorLoopRun({ check }: ComputerSmoke, dir: DirectorSeen): void
       (dir.state?.maps as { activeId?: string })?.activeId === "street",
     `${asText(dir.look).slice(0, 120)} | ${JSON.stringify(dir.state).slice(0, 160)}`,
   );
-  check("the director's screen is the lead's node in Builds while it works", dir.uiCard === true);
-  check("the director's current view is the build row's picture in chat", dir.chatFrame === true);
+  check(
+    "the director's screen is the lead's node in Builds while it works",
+    dir.uiCard === true,
+    dir.uiCardReport ?? "",
+  );
+  check(
+    "the director's current view is the build row's picture in chat",
+    dir.chatFrame === true,
+    dir.chatFrameReport ?? "",
+  );
   check(
     "the worker built in a worktree of its own, with hands",
     dir.started?.mode === "single" &&

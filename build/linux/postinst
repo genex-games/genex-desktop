@@ -1,0 +1,42 @@
+#!/bin/sh
+# Genex's sandbox (bubblewrap) needs user namespaces that carry capabilities. Ubuntu 24.04 and the
+# distributions built on it hand those only to programs an AppArmor profile allows, so install one
+# for the app; the processes it starts, bubblewrap included, inherit it. The profile is the one
+# src/substrate/linux-isolation.ts writes. It is skipped where AppArmor is missing or too old to
+# read it (abi 4.0), and nothing here may fail the install.
+
+PROFILE_NAME=genex
+PROFILE="${DPKG_ROOT:-}/etc/apparmor.d/$PROFILE_NAME"
+
+install_profile() {
+  command -v apparmor_parser >/dev/null 2>&1 || return 0
+  [ -d "${DPKG_ROOT:-}/etc/apparmor.d" ] || return 0
+  draft=$(mktemp) || return 0
+  cat > "$draft" <<'PROFILE_TEXT'
+abi <abi/4.0>,
+include <tunables/global>
+
+profile genex "/usr/lib/genex/genex" flags=(unconfined) {
+  userns,
+
+  include if exists <local/genex>
+}
+PROFILE_TEXT
+  # Compile only: an AppArmor older than 4.0 refuses the abi and the userns rule, and needs no profile.
+  if apparmor_parser --skip-kernel-load --skip-cache "$draft" >/dev/null 2>&1; then
+    cp "$draft" "$PROFILE" && chmod 0644 "$PROFILE"
+  fi
+  rm -f "$draft"
+  [ -f "$PROFILE" ] || return 0
+  # Load it now, unless the kernel's AppArmor is off or this is a chroot building an image.
+  if command -v ischroot >/dev/null 2>&1 && ischroot; then return 0; fi
+  if command -v aa-enabled >/dev/null 2>&1 && ! aa-enabled --quiet; then return 0; fi
+  apparmor_parser --replace --skip-read-cache "$PROFILE" >/dev/null 2>&1 ||
+    echo "genex: the AppArmor profile will load at the next restart" >&2
+}
+
+case "$1" in
+  configure) install_profile ;;
+esac
+
+exit 0

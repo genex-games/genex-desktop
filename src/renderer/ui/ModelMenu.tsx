@@ -14,7 +14,8 @@ import { PickerLabel, PickerSeparator, pickerRow } from "./PickerPanel.tsx";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./tooltip.tsx";
 import { Icon } from "./icons.tsx";
 import { openSettings, SettingsSection } from "../settings-navigation.ts";
-import { findChoice, roleChoices } from "../model-choices.ts";
+import { MODEL_PICKER_WORDS } from "../words.ts";
+import { autoChoice, findChoice, roleChoices, withoutFreeWord } from "../model-choices.ts";
 import { modelKey as keyOf, parseModelKey } from "../model-key.ts";
 import { RovingAxis, rovingTarget } from "./roving-focus.ts";
 import type { RunRoles } from "../../shared/protocol.ts";
@@ -49,6 +50,8 @@ export interface ModelChoice extends ModelCapabilities {
   providerDefault?: boolean;
   /** The provider's id for the model this row runs, so a pick saved under another id still finds it. */
   resolvedModel?: string;
+  /** Runs at no cost and with no account: the studio may pick it when there is nothing else. */
+  free?: boolean;
 }
 /** The composer's way to open the menu (a plan that failed on its model offers "Choose model"). */
 export interface ModelMenuHandle {
@@ -118,7 +121,7 @@ function useRolePicks({
   onModel: (key: string) => void;
   onRoles?: (roles: RoleRecord) => void;
 }) {
-  const selected = choices.find((c) => c.key === modelKey) ?? choices.find((c) => !c.disabled);
+  const selected = choices.find((c) => c.key === modelKey) ?? autoChoice(choices);
   const engine = selected ? parseModelKey(selected.key).engine : undefined;
   const roleChoice = (role: RoleKey) => {
     if (role === "planner") return selected;
@@ -198,7 +201,16 @@ function ModelList({
                 }}
               >
                 <span className="flex min-w-0 flex-col text-left">
-                  <span className="truncate">{shortModelName(choice.name)}</span>
+                  <span className="flex min-w-0 items-center gap-2">
+                    <span className="truncate">
+                      {choice.free ? withoutFreeWord(shortModelName(choice.name)) : shortModelName(choice.name)}
+                    </span>
+                    {choice.free && (
+                      <span className="model-free-tag" data-free-tag>
+                        {MODEL_PICKER_WORDS.free}
+                      </span>
+                    )}
+                  </span>
                   {choice.detail && <span className="truncate text-micro text-muted-foreground">{choice.detail}</span>}
                 </span>
                 {current === choice.key && <Icon name="check" className="ml-auto" />}

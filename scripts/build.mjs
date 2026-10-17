@@ -1,6 +1,6 @@
 import { rendererBuildOptions, rendererBundleReport } from "./renderer-build.mjs";
 import { mainStartupReport } from "./main-build.mjs";
-import { buildPlugins } from "./build-plugins.mjs";
+import { buildPlugins, vendorEmbedSdk } from "./build-plugins.mjs";
 import { assertThreeLibsListed, stylesheetPackages, writeBundledNotices } from "./third-party-notices.mjs";
 import { patchSandboxRuntime } from "./patch-sandbox-runtime.mjs";
 await patchSandboxRuntime();
@@ -9,16 +9,21 @@ import { sourceIdentity, safeChild, publishBuild } from "./studio-dev/files.mjs"
 import { devRoot, slug } from "./studio-dev/ownership.mjs";
 import { SEED_GENERATED } from "./gen-harness-types.ts";
 import { packageBin } from "./package-bin.ts";
+import { vendorCuaDriver } from "./vendor-cua-driver.ts";
 import { vendorTsc } from "./vendor-tsc.ts";
+import { vendorGenexMultiplayer } from "./vendor-genex-multiplayer.ts";
 /**
  * Build — assembles `dist/` for Electron.
  *
  *   dist/main/main.mjs        substrate + app shell (ESM, Electron 43 supports ESM main)
  *   dist/preload/preload.cjs  renderer bridge (sandboxed preloads must be CommonJS)
+ *   dist/preload/play-mic.cjs Play game view's microphone (the app's mic in a published game's page)
  *   dist/renderer/*           React UI
  *   dist/resources/*          read-only app resources: the harness seed, the bootstrap, the game
  *                             template, vendored three.js, and the TypeScript 7 compiler the
- *                             in-app type gate runs (dist/resources/tsc, scripts/vendor-tsc.ts)
+ *                             in-app type gate runs (dist/resources/tsc, scripts/vendor-tsc.ts);
+ *                             on a macOS release, cua-driver for computer control
+ *                             (dist/resources/cua-driver, scripts/vendor-cua-driver.ts)
  *
  * esbuild only, deliberately: one tool, no plugin-compatibility surface, and the game workspaces
  * need no bundler at all (import maps + vendored three).
@@ -109,6 +114,12 @@ async function nodeContexts() {
       ...shared,
       entryPoints: [path.join(root, "src/preload/index.ts")],
       outfile: path.join(dist, "preload/preload.cjs"),
+      format: "cjs",
+    }),
+    await esbuild.context({
+      ...shared,
+      entryPoints: [path.join(root, "src/preload/play-mic.ts")],
+      outfile: path.join(dist, "preload/play-mic.cjs"),
       format: "cjs",
     }),
   ];
@@ -228,6 +239,11 @@ async function buildAll() {
   await mkdir(dist, { recursive: true });
   const contexts = [...(await nodeContexts()), ...(await rendererContexts()), ...(await pageContexts())];
   const bundledInputs = await runContexts(contexts);
+  // Genex's multiplayer SDK, for template games that turn multiplayer on: built once, even in
+  // watch mode, since node_modules does not change under a running build.
+  const genexSdk = await vendorGenexMultiplayer(root, path.join(dist, "resources", "vendor"));
+  console.log(`vendored Genex multiplayer: ${(genexSdk.bytes / 1024).toFixed(0)} KB`);
+  for (const input of genexSdk.inputs) bundledInputs.add(input);
   await buildTheme();
   await copyResources();
   if (watch) watchPlugins();
@@ -310,6 +326,13 @@ async function copyResources() {
       .map(([id, bytes]) => `${id} ${(bytes / 1024 / 1024).toFixed(1)} MB`)
       .join(", ")}`,
   );
+  // Computer control's driver ships with every macOS release, so it works once the app is installed
+  // (scripts/vendor-cua-driver.ts); a development build takes it only when asked to.
+  const vendorCua = release || process.env.GENEX_VENDOR_CUA_DRIVER === "1";
+  if (process.platform === "darwin" && vendorCua) {
+    const cua = await vendorCuaDriver(root, resources);
+    console.log(`vendored cua-driver ${cua.version}: ${(cua.bytes / 1024 / 1024).toFixed(1)} MB`);
+  }
   await buildPlugins(root, resources);
   // The stable bootstrap — shipped, never edited by the agent.
   await cp(path.join(root, "src/genex-host"), path.join(resources, "genex-host"), { recursive: true });
@@ -343,6 +366,8 @@ async function copyResources() {
     recursive: true,
   });
   await cp(path.join(root, "node_modules/three/LICENSE"), path.join(vendor, "three-LICENSE"));
+  // Genex's embed SDK, which a template game imports through its import map for player identity.
+  await vendorEmbedSdk(root, vendor);
   await cp(path.join(root, "THIRD-PARTY-NOTICES.md"), path.join(vendor, "THIRD-PARTY-NOTICES.md"));
   await writeFile(
     path.join(vendor, "VERSION.json"),

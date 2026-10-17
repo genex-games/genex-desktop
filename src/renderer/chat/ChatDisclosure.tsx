@@ -7,21 +7,27 @@ import { Presence } from "../ui/Presence.tsx";
 export function ChatDisclosure({
   label,
   children,
+  lead,
   suffix,
   open: controlled,
   onToggle,
   frame = true,
   triggerLabel,
+  wraps = false,
   className = "",
   ...props
 }: {
   label: ReactNode;
   children: ReactNode;
+  /** What leads the heading, before its words (a work group's plugin icons). */
+  lead?: ReactNode;
   suffix?: ReactNode;
   open?: boolean;
   onToggle?: () => void;
   frame?: boolean;
   triggerLabel?: string;
+  /** Words that must be read whole (a judge's verdict) wrap instead of trailing off. */
+  wraps?: boolean;
 } & Omit<HTMLAttributes<HTMLDivElement>, "onToggle">) {
   const [expanded, setExpanded] = useState(false);
   const open = controlled ?? expanded;
@@ -41,8 +47,10 @@ export function ChatDisclosure({
         aria-controls={id}
         onClick={onToggle ?? (() => setExpanded((value) => !value))}
         className="chat-disclosure"
+        data-wraps={wraps || undefined}
       >
-        <span ref={labelBox} className="min-w-0 truncate">
+        {lead}
+        <span ref={labelBox} className={wraps ? "min-w-0 [text-wrap:pretty]" : "min-w-0 truncate"}>
           {typeof label === "string" ? words : label}
         </span>
         {suffix}

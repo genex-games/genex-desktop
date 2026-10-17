@@ -304,6 +304,21 @@ test("the chat shows its own thinking summary, never a builder's and never an em
   assert.deepEqual(thoughts, ["The ask is research and a plan, so no build."]);
 });
 
+test("a provider's own error text is never the lead's reply: the run says what happened in its own words", () => {
+  const said = (id: number, text: string, apiError?: string) =>
+    custom(id, "delegated.claude-code", {
+      kind: "assistant",
+      role: "planner",
+      data: { parts: [{ type: "text", text }], ...(apiError ? { apiError } : {}) },
+    });
+  const entries = toEntries([
+    said(1, "You've hit your session limit · resets 3pm", "rate_limit"),
+    said(2, "The track is in; the city comes next."),
+  ]);
+  const replies = entries.flatMap((e) => (e.kind === "assistant" ? [e.text] : []));
+  assert.deepEqual(replies, ["The track is in; the city comes next."]);
+});
+
 test("a running web lookup says it is looking something up", () => {
   const entries = toEntries([
     custom(1, "delegated.claude-code", {

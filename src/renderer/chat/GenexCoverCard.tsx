@@ -12,12 +12,13 @@
  */
 import type { JSX } from "react";
 import { useState } from "react";
-import { ProjectAssetScope } from "../../shared/game-assets.ts";
 import { GENEX_PLUGIN_ID } from "../../shared/genex.ts";
 import type { GenexCoverEntry } from "../chat-entries.ts";
 import { openBeside } from "../open-beside.ts";
+import { readGenexShot } from "../panels/plugins/genex/genex-cover-shot.ts";
 import { coverCardPublish } from "../panels/plugins/genex/genex-publish-view.ts";
-import { useGenexPublishState } from "../panels/plugins/genex/use-genex-publishing.ts";
+import { type GenexPublishReading, useGenexPublishState } from "../panels/plugins/genex/use-genex-publishing.ts";
+import { composeInChat } from "../compose-in-chat.ts";
 import { openPluginSetup } from "../plugin-setup.ts";
 import { usePlugins } from "../state/hooks.ts";
 import { Button } from "../ui/Button.tsx";
@@ -44,12 +45,7 @@ function rememberShot(project: string, src: string | null): void {
   }
 }
 
-/** The kept shot as an image source, read at `maxPx` (or whole), or null when there is none. */
-async function readShot(project: string, maxPx?: number): Promise<string | null> {
-  const request = { project, scope: ProjectAssetScope.GenexCover, ...(maxPx ? { maxPx } : {}) };
-  const image = await window.studio.readProjectAsset(request).catch(() => null);
-  return image ? `data:${image.mimeType};base64,${image.data}` : null;
-}
+const readShot = readGenexShot;
 
 /**
  * The game's kept shot: undefined while it is first read, null when it cannot be. A card shows the
@@ -84,10 +80,9 @@ async function openShot(project: string, shown: string): Promise<void> {
  * publishing or done with this frame. It waits for the game's first publish record, so it never
  * shows and then goes.
  */
-function CoverPublish({ project }: { project: string }): JSX.Element | null {
+function CoverPublish({ project, reading }: { project: string; reading: GenexPublishReading }): JSX.Element | null {
   const plugins = usePlugins((s) => s.list);
-  const onStrip = coverCardPublish(plugins, project, null);
-  const { read, state } = useGenexPublishState(project, onStrip);
+  const { read, state } = reading;
   if (!read || !coverCardPublish(plugins, project, state)) return null;
   return (
     // The chat's result button (Play on a build card) in size and type; the accent fill marks it due.
@@ -104,10 +99,31 @@ function CoverPublish({ project }: { project: string }): JSX.Element | null {
   );
 }
 
-/** The card: the kept shot (its place held while it is read), the caption, and Publish. */
+/** Another beside Publish: asks this chat for a different cover, as the Publish banner's Another cover does. */
+function CoverAnother({ project }: { project: string }): JSX.Element {
+  return (
+    <Button
+      variant="ghost"
+      className="result-button"
+      data-genex-cover-another
+      aria-label={WORDS.anotherCoverLabel}
+      onClick={() => composeInChat({ project, text: WORDS.coverAnotherPrompt(""), send: true })}
+    >
+      <Icon name="reload" size={12} />
+      <span>{WORDS.coverCardAnother}</span>
+    </Button>
+  );
+}
+
+/** The card: the kept shot (its place held while it is read), the caption, Another and Publish. */
 export function GenexCoverCard({ entry, project }: { entry: GenexCoverEntry; project: string | null }) {
   const game = entry.project ?? project;
   const src = useKeptShot(game, entry.callId);
+  const plugins = usePlugins((s) => s.list);
+  const reading = useGenexPublishState(game, Boolean(game) && coverCardPublish(plugins, game ?? "", null));
+  const clip = reading.state?.cover?.clip ?? null;
+  // A cover is the Genex plugin's to make: with it off, nobody in the chat can.
+  const genexOn = plugins.some((p) => p.manifest.id === GENEX_PLUGIN_ID && p.enabled);
   // A shot that is gone (another game's chat, a cleared plugin) leaves no card: a caption says nothing.
   if (!game || src === null) return null;
   return (
@@ -121,7 +137,7 @@ export function GenexCoverCard({ entry, project }: { entry: GenexCoverEntry; pro
           type="button"
           title={WORDS.coverCardAlt}
           onClick={() => void openShot(game, src)}
-          className="asset-tile relative block aspect-video w-full min-w-0 cursor-pointer overflow-hidden rounded-[10px] bg-inset"
+          className="asset-tile relative block h-52 w-full min-w-0 cursor-pointer overflow-hidden rounded-[10px] bg-inset"
         >
           <img
             src={src}
@@ -130,13 +146,20 @@ export function GenexCoverCard({ entry, project }: { entry: GenexCoverEntry; pro
             draggable={false}
             className="size-full object-cover"
           />
+          {clip && (
+            <span className="genex-cover-card-clip" data-genex-cover-clip>
+              <Icon name="play" size={8} />
+              {WORDS.coverCardClip(clip.durationMs)}
+            </span>
+          )}
         </button>
       ) : (
-        <span aria-hidden className="block aspect-video w-full rounded-[10px] bg-inset" />
+        <span aria-hidden className="block h-52 w-full rounded-[10px] bg-inset" />
       )}
       <div className="flex min-h-8 min-w-0 items-center gap-3 ps-2">
         <p className="m-0 min-w-0 flex-1 truncate text-chat text-ink">{WORDS.coverCard}</p>
-        <CoverPublish project={game} />
+        {genexOn && <CoverAnother project={game} />}
+        <CoverPublish project={game} reading={reading} />
       </div>
     </section>
   );

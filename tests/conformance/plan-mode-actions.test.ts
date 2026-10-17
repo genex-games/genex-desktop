@@ -7,6 +7,7 @@
 import assert from "node:assert/strict";
 import path from "node:path";
 import { it } from "node:test";
+import { setTimeout } from "node:timers/promises";
 import type { McpConnector } from "../../src/shared/mcp.ts";
 import { PermissionMode } from "../../src/shared/permissions.ts";
 import { coreLite } from "../helpers/core-lite.ts";
@@ -56,6 +57,42 @@ it("in Plan mode a connector action is refused without a card, even one saved as
     );
   } finally {
     // A core-lite never started, so its stop leaves connectors to the test.
+    await lite.core.mcp.close();
+    await lite.close();
+  }
+});
+
+it("in Bypass a connector action runs without a card; in any other mode it still asks", async () => {
+  const lite = await coreLite();
+  try {
+    const project = "bypassing";
+    await lite.core.games.scaffold(project);
+    const threadId = await lite.core.createGameThread(project);
+    await lite.core.mcp.save({ ...echo(), toolPolicy: {} }, {}, { trust: true });
+    await lite.core.mcp.toolsFor(project);
+    const api = lite.api() as unknown as Record<string, (input: unknown) => Promise<unknown>>;
+    /** The first consent card the log holds, polled for up to two seconds. */
+    const firstCard = async () => {
+      for (let i = 0; i < 100; i++) {
+        const [card] = (await records(lite, "plugin_consent")) as Array<{ consentId?: unknown }>;
+        if (card) return card;
+        await setTimeout(20);
+      }
+      return undefined;
+    };
+    await lite.core.setPermissionMode(threadId, PermissionMode.Bypass);
+    const bypassed = api["mcp.invoke"]!({ project, threadId, name: "echo__echo", args: { text: "no questions" } });
+    const unexpected = await Promise.race([bypassed.then(() => undefined), firstCard()]);
+    if (unexpected) lite.core.resolveConsent(String(unexpected.consentId), true);
+    assert.equal(unexpected, undefined, "Bypass asks nothing");
+    assert.equal(await bypassed, "no questions");
+    await lite.core.setPermissionMode(threadId, PermissionMode.Auto);
+    const call = api["mcp.invoke"]!({ project, threadId, name: "echo__echo", args: { text: "asked" } });
+    const asked = await firstCard();
+    assert.ok(asked, "Auto still asks before a connector action nobody always-allowed");
+    lite.core.resolveConsent(String(asked.consentId), true);
+    assert.equal(await call, "asked");
+  } finally {
     await lite.core.mcp.close();
     await lite.close();
   }

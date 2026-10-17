@@ -26,7 +26,7 @@ Read the pricing reference with
 
 Other commands map onto Studio tools as the `genex` skill describes (`genex__skill {"name":"genex"}`).
 
-<!-- upstream @genex-ai/cli-demo/templates/skills/genex-llm-in-games/SKILL.md v1.36.2 sha256 08b998c09b88a188a9bfe055fa4e3c904bd1ba4fcb20e7700a4b6204e27540b9 -->
+<!-- upstream @genex-ai/cli-demo/templates/skills/genex-llm-in-games/SKILL.md v1.36.9 sha256 01274d76ee89e945428efeaa3970a63575f2e9727e481980fec9bea726f3c14d -->
 ---
 name: genex-llm-in-games
 description: Call a language model from inside a running game — an NPC that answers in its own words, a quest written for this save, a judge that reads what the player typed. The PLAYER pays and approves, on a Genex surface the game cannot forge. Covers the two modes (a popup per call, or one standing budget then many silent calls), benchmarking the price before declaring it, the receiver pattern, and honest handling of every refusal.
@@ -123,6 +123,14 @@ askButton.addEventListener('click', async () => {   // a real click
 handler, before any `await`.** The approval popup is reserved synchronously off
 the gesture; an `await` in front of it loses the gesture and nothing opens.
 `generate({ grantId })` needs no gesture at all — that is what a grant buys.
+
+**Two shells have no approval surface, and say so before anything is asked or
+charged.** Inside the Genex app every call on this lane resolves
+`{ status: 'failed', error: 'native_unsupported' }`; on a dev server in local
+test mode it is `local_test_unsupported`. Neither is a fault in the game. When
+`getShell()` from `@genex-ai/embed-sdk` is `"app"`, leave the feature's entry
+point out and play the authored fallback; never show it as an error. Which
+shell draws what is in `$genex-threejs-embed-auth` (`references/shells.md`).
 
 ## `estimateCoins` is a price, not an estimate
 
@@ -317,6 +325,7 @@ These are source contracts, not a claim that every stand runs this lane —
 - [ ] Disclosure numbers derive from the real loop and are written in `DESIGN.md`
 - [ ] Calls are batched and cached; nothing fires on an invisible timer
 - [ ] Every grant-ending code has in-fiction copy and a playable fallback
+- [ ] In the Genex app (`getShell() === "app"`) the feature's entry point is left out and the authored fallback plays
 - [ ] The in-game readout comes from `getSpendGrant()`
 - [ ] Exactly one `applyGeneration()` writer; boot re-attaches with `waitForGeneration()`
 - [ ] `generationId` is saved BEFORE the await

@@ -4,9 +4,14 @@
  */
 import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
-import type { GameCandidate, ProjectKind, ProjectShape } from "../shared/game-project.ts";
+import { GAME_RUNTIMES, TargetRuntime } from "../shared/computer-target.ts";
+import type { GameCandidate, PlayCommand, PlayEngine, ProjectKind, ProjectShape } from "../shared/game-project.ts";
+import { pageLoadsGenexSdk } from "../shared/genex-page.ts";
+import { CoreFact, FolderHolds, hasFact } from "../shared/project-facts.ts";
 import { pathExists, readJsonIfExists } from "./fsx.ts";
 import { isRemoteSrc, pageScripts, projectRelative } from "./game-page.ts";
+import { containedReal } from "./paths.ts";
+import { detectFacts } from "./project-facts.ts";
 import { declaredBootMs } from "./preview-ready.ts";
 import { isInstallCommand, packageCommands } from "./toolchain.ts";
 
@@ -19,6 +24,25 @@ const PROJECT_KINDS: readonly ProjectKind[] = [
   "engine-export",
   "own-script",
 ];
+
+/**
+ * What in a folder's top level is not the folder's own work: Genex's own bookkeeping, and the notes
+ * a person gathers before any game exists. Neither says what kind of project the folder is, so a
+ * folder holding only these (or nothing) is still an empty one.
+ */
+const NOT_OWN_FILES = {
+  /** Genex's record of the game and the stills folder the starter makes. */
+  Bookkeeping: ["studio.json", "references"],
+  /**
+   * The folder Genex's asset tools deliver into (`main/game-assets.ts`): what they write into a game
+   * with no kind yet never makes it a project of its own. `public/` counts only while it holds
+   * nothing but this folder (the bundled shape's `public/assets/`).
+   */
+  AssetFolder: "assets",
+  BundledParent: "public",
+  /** A loose note at the root, by its lower-cased extension. */
+  NoteExtensions: [".md", ".txt"],
+} as const;
 
 function isProjectKind(value: unknown): value is ProjectKind {
   return typeof value === "string" && (PROJECT_KINDS as readonly string[]).includes(value);
@@ -136,6 +160,16 @@ function isGenexGame(pkg: PackageManifest | null): boolean {
 }
 
 /**
+ * Whether a template game's page loads the Genex SDK through Studio's copy. The SDK keeps a preview
+ * from sending anyone to genex.games to sign in only in its local test mode, which only a loopback
+ * origin gets: the preview serves such a game there, as it does a built one.
+ */
+export async function templateLoadsGenexSdk(dir: string): Promise<boolean> {
+  const html = await readFile(path.join(dir, TEMPLATE_SHAPE.entry), "utf8").catch(() => null);
+  return html !== null && pageLoadsGenexSdk(html);
+}
+
+/**
  * Read a folder's own shape from the evidence in it: every script the page loads, the package's
  * build script and dependencies, the bundler's output folder, the engine's runtime files.
  * `null` means the studio's own template — recognised only by the two things the studio itself
@@ -195,6 +229,72 @@ function serveDirOf(entry: string): string {
   return dir === "" ? "." : dir;
 }
 
+/** The most arguments a declared play command may carry. */
+const MAX_PLAY_ARGS = 32;
+/** The longest single argument of a declared play command. */
+const MAX_PLAY_ARG_CHARS = 1024;
+
+/** One argument of a play command: a string of bounded length with no NUL, which no shell word can carry. */
+function usablePlayArg(arg: unknown): arg is string {
+  return typeof arg === "string" && arg.length <= MAX_PLAY_ARG_CHARS && !arg.includes("\0");
+}
+
+/**
+ * A play command as studio.json declares it, or null when any part is unusable: the command a
+ * plain path inside the folder (never absolute, never `..`, never a shell character or an
+ * option), the arguments a short list of strings. Nothing is resolved here — the command's real
+ * path is checked by {@link resolvePlayCommand} right before it runs.
+ */
+function declaredPlay(raw: unknown): PlayCommand | null {
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return null;
+  const { command, args, engine } = raw as { command?: unknown; args?: unknown; engine?: unknown };
+  if (typeof command !== "string" || !plainRelativePath(command)) return null;
+  const words = playArgs(args);
+  if (!words) return null;
+  const runs = declaredEngine(engine);
+  return runs ? { command, args: words, engine: runs } : { command, args: words };
+}
+
+/** A play's arguments: none when absent, else at most 32 usable words; null when unusable. */
+function playArgs(args: unknown): string[] | null {
+  if (args === undefined) return [];
+  if (!Array.isArray(args) || args.length > MAX_PLAY_ARGS || !args.every(usablePlayArg)) return null;
+  return [...args];
+}
+
+/** A plugin runtime's id as a manifest declares it: never a path, never a shell word. */
+const ENGINE_RUNTIME = /^[a-z][a-z0-9-]{0,39}$/;
+
+/** The engine a play names: a runtime id and its arguments; null when absent or unusable (the command still stands). */
+function declaredEngine(raw: unknown): PlayEngine | null {
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return null;
+  const { runtime, args } = raw as { runtime?: unknown; args?: unknown };
+  if (typeof runtime !== "string" || !ENGINE_RUNTIME.test(runtime)) return null;
+  const words = playArgs(args);
+  return words ? { runtime, args: words } : null;
+}
+
+/**
+ * The runtime studio.json declares, and a bridge game's play command; nothing for an unknown
+ * runtime — or for the desktop or a VM, which a game's folder never grants itself.
+ */
+function declaredRuntime(meta: ShapeMeta | null): Pick<ProjectShape, "runtime" | "play"> {
+  const runtime = GAME_RUNTIMES.find((known) => known === meta?.runtime);
+  if (!runtime) return {};
+  const play = runtime === TargetRuntime.Bridge ? declaredPlay(meta?.play) : null;
+  return play ? { runtime, play } : { runtime };
+}
+
+/**
+ * The real path of a bridge game's play command: inside the project once every link is
+ * followed, or a throw. Checked right before the command runs, because studio.json and the
+ * folder it names are both writable by any contractor between a read and a launch.
+ */
+export async function resolvePlayCommand(dir: string, play: PlayCommand): Promise<string> {
+  if (!plainRelativePath(play.command)) throw new Error(`not a plain path inside the project: ${play.command}`);
+  return containedReal(dir, play.command);
+}
+
 /** studio.json as `readProjectShape` reads it: every field unchecked until it is used. */
 interface ShapeMeta {
   entry?: unknown;
@@ -205,6 +305,8 @@ interface ShapeMeta {
   kind?: unknown;
   serve?: unknown;
   bootMs?: unknown;
+  runtime?: unknown;
+  play?: unknown;
 }
 
 /** A non-blank string field, trimmed; null for anything else. */
@@ -266,12 +368,85 @@ export async function readProjectShape(dir: string): Promise<ProjectShape> {
   // shape's own early return — and attached with a spread, never a mutation: TEMPLATE_SHAPE is
   // shared, and an undefined-valued key would break every shape a test compares whole.
   const bootMs = declaredBootMs(meta?.bootMs);
-  const declaredBoot = bootMs === null ? {} : { bootMs };
+  const declaredBoot = { ...(bootMs === null ? {} : { bootMs }), ...declaredRuntime(meta) };
   if (!meta || !recordsShape(meta)) {
     const detected = (await detectProjectShape(dir)) ?? TEMPLATE_SHAPE;
-    return bootMs === null ? detected : { ...detected, ...declaredBoot };
+    return { ...detected, ...declaredBoot };
   }
   return { ...(await recordedShape(dir, meta)), ...declaredBoot };
+}
+
+/**
+ * Whether a folder holds a web game at its root, by its facts (`detectFacts`): an `index.html` at
+ * its root, or the web starter's stamp (`contractVersion`) in its `studio.json`. A folder that can't
+ * be read holds none.
+ */
+export async function webGameSignal(dir: string): Promise<boolean> {
+  const facts = await detectFacts(dir, []).catch(() => []);
+  return hasFact(facts, CoreFact.WebGame, ".");
+}
+
+/** A top-level entry as these reads take it. */
+type TopEntry = { name: string; isFile(): boolean; isDirectory(): boolean };
+
+/** Whether a top-level entry is the folder's own work, not bookkeeping, a hidden file or a loose note. */
+function isOwnEntry(entry: TopEntry): boolean {
+  if (entry.name.startsWith(".")) return false;
+  if ((NOT_OWN_FILES.Bookkeeping as readonly string[]).includes(entry.name)) return false;
+  if (entry.isDirectory() && entry.name === NOT_OWN_FILES.AssetFolder) return false;
+  const extension = path.extname(entry.name).toLowerCase();
+  return !(entry.isFile() && (NOT_OWN_FILES.NoteExtensions as readonly string[]).includes(extension));
+}
+
+/**
+ * Whether a top-level entry is the folder's own work (`isOwnEntry`), reading into `public/`: one that
+ * holds nothing but Genex's asset folder (and hidden files) is Genex's output, not the folder's own.
+ */
+async function ownEntry(dir: string, entry: TopEntry): Promise<boolean> {
+  if (!isOwnEntry(entry)) return false;
+  if (!entry.isDirectory() || entry.name !== NOT_OWN_FILES.BundledParent) return true;
+  const inside = await readdir(path.join(dir, entry.name), { withFileTypes: true }).catch(() => null);
+  if (!inside) return true;
+  return inside.some(
+    (child) => !child.name.startsWith(".") && !(child.isDirectory() && child.name === NOT_OWN_FILES.AssetFolder),
+  );
+}
+
+/** Whether any top-level entry is the folder's own work (`ownEntry`). */
+async function anyOwnEntry(dir: string, entries: readonly TopEntry[]): Promise<boolean> {
+  for (const entry of entries) if (await ownEntry(dir, entry)) return true;
+  return false;
+}
+
+/** Whether a top-level entry is a loose note: a visible `*.md` or `*.txt` file. */
+function isNote(entry: TopEntry): boolean {
+  const extension = path.extname(entry.name).toLowerCase();
+  return (
+    entry.isFile() &&
+    !entry.name.startsWith(".") &&
+    (NOT_OWN_FILES.NoteExtensions as readonly string[]).includes(extension)
+  );
+}
+
+/**
+ * Whether a folder holds files of its own: any top-level entry but a hidden one, Genex's own
+ * bookkeeping (`studio.json`, `references/`), the folder its asset tools deliver into (`assets/`, or a
+ * `public/` holding only that) and loose notes at the root (`*.md`, `*.txt`).
+ */
+export async function holdsOwnFiles(dir: string): Promise<boolean> {
+  const entries = await readdir(dir, { withFileTypes: true }).catch(() => []);
+  return anyOwnEntry(dir, entries);
+}
+
+/**
+ * What a folder holds at its top level, besides hidden files, Genex's bookkeeping and its asset
+ * deliveries: files of its own (`holdsOwnFiles`), loose notes only, or nothing. Throws when the folder
+ * can't be read.
+ */
+export async function folderHolds(dir: string): Promise<FolderHolds> {
+  const entries = await readdir(dir, { withFileTypes: true });
+  if (await anyOwnEntry(dir, entries)) return FolderHolds.OwnFiles;
+  return entries.some(isNote) ? FolderHolds.Notes : FolderHolds.Nothing;
 }
 
 /** Folders that are output, dependencies or notes — a game is never *these*, so the scan skips them. */

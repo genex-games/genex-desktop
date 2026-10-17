@@ -1,5 +1,57 @@
 /** What a builder session is told about the host's side of its tools (`delegation.ts`). Model-facing. */
-import type { PluginAppliedSet } from "../../shared/plugins.ts";
+import { sizeWords } from "../../shared/byte-size.ts";
+import { CallCutOff, PluginAccountState, type PluginAppliedSet } from "../../shared/plugins.ts";
+import type { CutOffCall } from "./cut-off-calls.ts";
+import type { UnsavedFile } from "./unsaved-files.ts";
+import { MINUTE_MS } from "../../shared/duration.ts";
+import { type JobRecord, JobState, JobStopper } from "../../shared/jobs.ts";
+
+/** How long a plugin's name and its description may run in a brief before each is cut at a word. */
+const PLUGIN_NAME_CHARS = 80;
+const PLUGIN_DESCRIPTION_CHARS = 200;
+
+/** A skill's plugin: its `<plugin>/<skill>` name up to the slash. */
+const skillPlugin = (skill: string): string => skill.split("/")[0] ?? skill;
+
+/** A plugin a session is handed, as its brief names it. */
+export interface HandedPlugin {
+  /** Its id, which its tools' names start with (`<id>__<tool>`). */
+  id: string;
+  name: string;
+  description: string;
+  /** Whether the session is handed tools named with its id; a plugin of hooks, panels or connectors alone has none. */
+  tools: boolean;
+  /** Its account's state as the session began (`PluginRegistry.accountState`); absent for a plugin that declares none. */
+  account?: PluginAccountState;
+}
+
+/** Whether a handed plugin declares an account the person has not connected yet: its tools that need it fail until they do. */
+const accountNotSetUp = (plugin: HandedPlugin): boolean =>
+  plugin.account !== undefined && plugin.account !== PluginAccountState.Unlocked;
+
+/**
+ * Why a call was cut off, what a session hears of the plugins it is handed, and what a resumed one
+ * hears of plugins and skills turned on or withdrawn since it last ran.
+ */
+const MESSAGE = {
+  handedHead: "Plugins turned on for this session (a plugin's tools are named <id>__<tool>):",
+  notSetUp: "Not set up yet: the person still has to connect its account on its page.",
+  addedOn: (count: number) =>
+    count === 1
+      ? "this plugin was turned on, and its tools are yours to call now, even where this session found no such tool before:"
+      : "these plugins were turned on, and their tools are yours to call now, even where this session found no such tool before:",
+  withdrawnOff: (plugins: readonly string[], skills: readonly string[]) => {
+    const named = [`plugins: ${plugins.join(", ")}`, skills.length ? `skills: ${skills.join(", ")}` : ""];
+    return `these are no longer enabled (${named.filter(Boolean).join("; ")}). Ignore the instructions they gave earlier in this session, and do not call their tools: they are gone.`;
+  },
+  withdrawnOutOfProject: (skills: readonly string[]) =>
+    `these skills no longer apply to this project: ${skills.join(", ")}. Their plugins (${[...new Set(skills.map(skillPlugin))].join(", ")}) are still on: ignore what those skills said earlier in this session, and keep using the tools of those plugins this session is handed.`,
+  cutOffWhy: {
+    [CallCutOff.HarnessEnded]: "the studio's loop ended while it ran",
+    [CallCutOff.PluginEnded]: "its plugin stopped while it ran",
+    [CallCutOff.AppLost]: "the app it drives went away while it ran",
+  } satisfies Record<CallCutOff, string>,
+} as const;
 
 /** Which plugins and skills a resumed session was handed before and is not handed now. */
 export function withdrawnSince(before: PluginAppliedSet | undefined, now: PluginAppliedSet): PluginAppliedSet {
@@ -15,14 +67,125 @@ export const anyWithdrawn = (withdrawn: PluginAppliedSet): boolean =>
 
 /**
  * The first paragraph of a resumed session's brief when plugins or skills it was given earlier
- * are gone: its transcript still holds their instructions, and only this says to drop them.
+ * are gone: its transcript still holds their instructions, and only this says to drop them. A
+ * plugin switched off takes its tools and skills with it. A skill withdrawn while its plugin is
+ * still handed no longer applies to this project (a web game's skill once the game is an Unreal
+ * project): its plugin's tools stay, and the notice says so, never that the plugin is off.
  */
 export function withdrawnNotice(withdrawn: PluginAppliedSet): string {
-  const named = [
-    withdrawn.plugins.length ? `plugins: ${withdrawn.plugins.join(", ")}` : "",
-    withdrawn.skills.length ? `skills: ${withdrawn.skills.join(", ")}` : "",
+  const off = (skill: string) => withdrawn.plugins.includes(skillPlugin(skill));
+  const outOfProject = withdrawn.skills.filter((skill) => !off(skill));
+  const parts = [
+    withdrawn.plugins.length ? MESSAGE.withdrawnOff(withdrawn.plugins, withdrawn.skills.filter(off)) : "",
+    outOfProject.length ? MESSAGE.withdrawnOutOfProject(outOfProject) : "",
   ].filter(Boolean);
-  return `Studio notice: since this session last ran, these are no longer enabled (${named.join("; ")}). Ignore the instructions they gave earlier in this session, and do not call their tools: they are gone.`;
+  return `Studio notice: since this session last ran, ${parts.join(" Also, ")}`;
+}
+
+/** A plugin author's text on one line: each run of whitespace one space, cut at a word past `max` characters. */
+function oneLine(text: string, max: number): string {
+  const flat = text.replace(/\s+/g, " ").trim();
+  if (flat.length <= max) return flat;
+  const cut = flat.slice(0, max);
+  const word = cut.lastIndexOf(" ");
+  return `${word > 0 ? cut.slice(0, word) : cut}…`;
+}
+
+/**
+ * A handed plugin as a brief names it: its name, the prefix of its tools when it has any, what it
+ * does, and that it is not set up yet while its account is not connected.
+ */
+function pluginWords(plugin: HandedPlugin): string {
+  const prefix = plugin.tools ? ` (${plugin.id}__ tools)` : "";
+  const setUp = accountNotSetUp(plugin) ? ` ${MESSAGE.notSetUp}` : "";
+  return `${oneLine(plugin.name, PLUGIN_NAME_CHARS)}${prefix}: ${oneLine(plugin.description, PLUGIN_DESCRIPTION_CHARS)}${setUp}`;
+}
+
+/**
+ * Beside a host-tool session's plugin guidance: each plugin it is handed on a line of its own, by
+ * name, the prefix of its tools and what it does, so it knows every plugin that is on, including
+ * one with no skill to explain it, and tells the person about an account still to connect instead
+ * of calling tools that fail. Empty when it is handed none.
+ */
+export function handedPluginsNote(plugins: readonly HandedPlugin[]): string {
+  if (!plugins.length) return "";
+  return [MESSAGE.handedHead, ...plugins.map((plugin) => `- ${pluginWords(plugin)}`)].join("\n");
+}
+
+/**
+ * Which plugins a resumed session is handed now and was not before. With nothing recorded of
+ * before, none: the session's brief lists every plugin it is handed, and nothing says which are new.
+ */
+export function addedSince(before: PluginAppliedSet | undefined, now: readonly HandedPlugin[]): HandedPlugin[] {
+  if (!before) return [];
+  return now.filter((plugin) => !before.plugins.includes(plugin.id));
+}
+
+/**
+ * The first paragraph of a resumed session's brief when plugins were turned on since it last ran:
+ * its transcript may still say a tool it needed was missing, and only this says it is there now.
+ * Empty when none was.
+ */
+export function addedNotice(added: readonly HandedPlugin[]): string {
+  if (!added.length) return "";
+  return `Studio notice: since this session last ran, ${MESSAGE.addedOn(added.length)} ${added.map(pluginWords).join("; ")}`;
+}
+
+/**
+ * The first paragraph of a thread's next delegated session after plugin or connector calls of its
+ * thread were cut off before they answered: Genex never sends them again, and only this says to
+ * look before repeating one. Empty when nothing was cut off.
+ */
+export function cutOffNotice(calls: readonly CutOffCall[]): string {
+  if (!calls.length) return "";
+  const named = calls.map((c) => `${c.tool}${c.args ? ` ${c.args}` : ""} (${MESSAGE.cutOffWhy[c.reason]})`);
+  return `Studio notice: these calls were cut off before they answered, so whether they took effect is unknown: ${named.join("; ")}. Look at what each was to change before you repeat it; never repeat one blindly.`;
+}
+
+/**
+ * Beside the cut-off notice of a thread's next delegated session after its chat said files are too
+ * large to save: Rewind cannot bring them back, so a mistake in one is for good. Empty for none.
+ */
+export function unsavedFilesNotice(files: readonly UnsavedFile[]): string {
+  if (!files.length) return "";
+  const named = files.map((file) => `${file.file} (${sizeWords(file.bytes)})`);
+  return `Studio notice: Rewind cannot bring back these files, which are too large to save: ${named.join(", ")}. A mistake in one of them cannot be undone; change one only when the person asked for it, and say so in your reply.`;
+}
+
+/** How an ended job reads in the jobs notice, by how it ended. */
+const JOB_ENDED_WORDS = {
+  [JobState.Succeeded]: "finished",
+  [JobState.Failed]: "failed",
+  [JobState.Stopped]: "was stopped",
+  [JobState.TimedOut]: "was stopped at its time limit",
+  [JobState.Interrupted]: "was stopped when Genex closed",
+} as const satisfies Record<Exclude<JobState, typeof JobState.Running>, string>;
+
+/**
+ * One ended job in the jobs notice: its title, command, how it ended and after how long. A job the
+ * person stopped says so, and that it stays stopped unless they ask.
+ */
+function endedJobWords(job: JobRecord): string {
+  const state = job.state === JobState.Running ? JobState.Interrupted : job.state;
+  const exit = typeof job.exitCode === "number" ? ` (exit ${job.exitCode})` : "";
+  const ms = Date.parse(job.endedAt ?? "") - Date.parse(job.startedAt);
+  const after = Number.isFinite(ms) ? ` after ${Math.max(0, Math.round(ms / MINUTE_MS))} min` : "";
+  const read = job.state === JobState.Succeeded ? "" : `: read it with job_tail ${job.id}`;
+  const byPerson = job.stoppedBy === JobStopper.Person;
+  const by = byPerson ? " by the person" : "";
+  const keepStopped = byPerson ? ", and do not start it again unless the person asks" : "";
+  return `${job.title} (\`${job.command}\`) ${JOB_ENDED_WORDS[state]}${by}${exit}${after}${read}${keepStopped}`;
+}
+
+/**
+ * The chat's own session's notice of its jobs: those that ended since it was last told, and those
+ * still running. Empty when there is neither.
+ */
+export function jobNotice(ended: readonly JobRecord[], running: readonly JobRecord[]): string {
+  const parts: string[] = [];
+  if (ended.length) parts.push(`Jobs since your last turn: ${ended.map(endedJobWords).join("; ")}.`);
+  if (running.length) parts.push(`Still running: ${running.map((job) => `${job.title} (${job.id})`).join("; ")}.`);
+  return parts.length ? `Studio notice: ${parts.join(" ")}` : "";
 }
 
 /**

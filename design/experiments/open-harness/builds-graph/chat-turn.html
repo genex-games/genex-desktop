@@ -1,0 +1,131 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Chat turn with workers</title><style>
+@font-face{font-family:"Zalando Sans SemiExpanded";font-weight:200 900;font-display:swap;src:url(../../../../src/renderer/fonts/ZalandoSansSemiExpanded-variable.woff2) format("woff2")}
+@font-face{font-family:"Geist Mono";font-weight:100 900;font-display:swap;src:url(../../../../src/renderer/fonts/GeistMono-variable.woff2) format("woff2")}
+body{margin:0}
+.node{position:absolute;width:150px;height:94px;border-radius:12px;overflow:hidden;background:#ffffff;box-shadow:0 0 0 1px rgba(16,17,18,0.09)}
+.shade{position:absolute;left:0;right:0;bottom:0;padding:22px 10px 8px;display:flex;flex-direction:column;gap:1px;background:linear-gradient(rgba(10,12,20,0),rgba(10,12,20,0.62))}
+.nm{font-size:12.5px;line-height:16px;font-weight:650;color:#ffffff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.wd{font-size:11px;line-height:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.glyph{position:absolute;right:8px;top:8px;width:18px;height:18px;border-radius:9px;background:#ffffff;display:flex;align-items:center;justify-content:center}
+.chip{position:absolute;left:8px;top:8px;padding:0 6px;border-radius:6px;font-family:"Geist Mono",ui-monospace,monospace;font-size:10px;line-height:16px;color:#ffffff;background:rgba(10,12,20,0.55)}
+.hl{position:absolute;height:0;border-top:1.5px solid #c4c6c9}
+.vl{position:absolute;width:0;border-left:1.5px solid #c4c6c9}
+.pin{position:absolute;width:8px;height:8px;border-radius:4px;background:#f9faf9;border:1.5px solid #9da0a4}
+.rowlabel{position:absolute;font-family:"Geist Mono",ui-monospace,monospace;font-size:10.5px;line-height:14px;letter-spacing:0.04em;color:#5e5f62;text-transform:uppercase}
+.line{display:flex;gap:10px;align-items:flex-start;font-size:13.5px;line-height:20px;color:#393a3d}
+.dot{flex:none;width:18px;height:18px;border-radius:9px;display:flex;align-items:center;justify-content:center;margin-top:1px}
+</style></head><body>
+<div style="width: 1440px; height: 900px; position: relative; overflow: hidden; background: #f9faf9; font-family: 'Zalando Sans SemiExpanded', ui-sans-serif, system-ui, sans-serif; color: #101112; letter-spacing: -0.005em">
+
+<div style="position: absolute; left: 0; top: 0; width: 440px; height: 900px; border-right: 1px solid #e3e4e5; display: flex; flex-direction: column">
+<div style="height: 64px; padding: 0 20px; display: flex; align-items: center; gap: 14px; border-bottom: 1px solid #e3e4e5">
+<button type="button" aria-label="Show sidebar" style="width: 32px; height: 32px; border: 0; border-radius: 8px; background: transparent; display: flex; align-items: center; justify-content: center; color: #5e5f62"><svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="2" y="3" width="14" height="12" rx="2.5"></rect><line x1="7" y1="3" x2="7" y2="15"></line></svg></button>
+<span style="font-size: 16px; font-weight: 650; flex: 1">Drift Rally</span>
+<span style="font-family: 'Geist Mono', monospace; font-size: 11px; line-height: 18px; padding: 1px 8px; border-radius: 6px; background: #eef0f1; color: #5e5f62">web game</span>
+</div>
+<div style="flex: 1; padding: 22px 24px; display: flex; flex-direction: column; gap: 16px; overflow: hidden">
+<div style="align-self: flex-end; max-width: 300px; padding: 10px 14px; border-radius: 16px 16px 4px 16px; background: #eef0f1; font-size: 14px; line-height: 21px">The car drifts left on straight roads. Find why and fix it.</div>
+<p style="margin: 0; font-size: 14px; line-height: 22px">I'll put two workers on it: one checks the physics, one fixes the steering.</p>
+<div style="display: flex; flex-direction: column; gap: 10px">
+<div class="line"><span class="dot" style="background: rgba(36,159,86,0.14)"><svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="#1d7a43" stroke-width="1.8"><path d="M2 5.2l2 2 4-4.4"></path></svg></span><span>Checked the physics: the front wheels sit off center.</span></div>
+<div class="line"><span class="dot" style="background: rgba(36,159,86,0.14)"><svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="#1d7a43" stroke-width="1.8"><path d="M2 5.2l2 2 4-4.4"></path></svg></span><span>Centered the steering. Added to your game.</span></div>
+</div>
+<p style="margin: 0; font-size: 14px; line-height: 22px">Fixed. The front wheels sat off center, so the car pulled left at speed. It now holds a straight line.</p>
+<div style="display: flex; align-items: center; gap: 14px; padding: 10px; border: 1px solid #e3e4e5; border-radius: 14px; background: #ffffff">
+<div style="width: 96px; height: 60px; border-radius: 8px; flex: none; background: linear-gradient(150deg, #e7b15a 0%, #b5552f 50%, #3d2a2a 100%)"></div>
+<div style="flex: 1; display: flex; flex-direction: column; gap: 2px"><span style="font-size: 14.5px; font-weight: 650">Changes are live</span><span style="font-size: 13px; color: #5e5f62">1 part changed</span></div>
+<a href="#" style="padding: 7px 12px; border-radius: 9px; background: #eef0f1; color: #101112; font-size: 13px; font-weight: 600; text-decoration: none">▶ Play</a>
+</div>
+</div>
+<div style="margin: 0 16px 16px; padding: 12px 14px 10px; border: 1px solid #e3e4e5; border-radius: 18px; background: #ffffff; display: flex; flex-direction: column; gap: 10px">
+<label for="ask2" style="position: absolute; left: -9999px">Prompt</label>
+<input id="ask2" type="text" placeholder="Ask for a change…" style="border: 0; outline: none; font: inherit; font-size: 14.5px; background: transparent; color: #101112">
+<div style="display: flex; gap: 6px; align-items: center">
+<span style="padding: 4px 10px; border-radius: 999px; background: #eef0f1; color: #393a3d; font-size: 13px">Loop</span>
+<span style="padding: 4px 10px; border-radius: 999px; background: #eef0f1; color: #393a3d; font-size: 13px">Accept edits</span>
+<span style="flex: 1"></span>
+<span style="padding: 4px 10px; border-radius: 999px; background: #eef0f1; color: #393a3d; font-size: 13px">Opus 5.5</span>
+<button type="button" aria-label="Send" style="width: 30px; height: 30px; border-radius: 15px; border: 0; background: #c4c6c9; color: #ffffff; font-size: 15px">↑</button>
+</div>
+</div>
+</div>
+
+<div style="position: absolute; left: 440px; top: 0; width: 1000px; height: 900px">
+<div style="height: 64px; padding: 0 20px; display: flex; align-items: center; gap: 10px; border-bottom: 1px solid #e3e4e5">
+<div style="display: flex; padding: 3px; gap: 2px; border-radius: 11px; background: #eef0f1">
+<span style="padding: 5px 14px; border-radius: 8px; font-size: 13.5px; color: #393a3d">Live</span>
+<span style="padding: 5px 14px; border-radius: 8px; font-size: 13.5px; color: #ffffff; background: #3f61f5">Builds</span>
+<span style="padding: 5px 14px; border-radius: 8px; font-size: 13.5px; color: #393a3d">Assets</span>
+</div>
+<span style="flex: 1"></span>
+<select id="hist" aria-label="Show an earlier build" style="font: inherit; font-size: 13px; padding: 6px 10px; border-radius: 9px; border: 1px solid #c4c6c9; background: #ffffff; color: #101112">
+<option>This chat turn</option>
+<option>Loop from yesterday</option>
+</select>
+<span style="padding: 7px 14px; border-radius: 10px; background: #3f61f5; color: #ffffff; font-size: 13.5px; font-weight: 600">Publish</span>
+</div>
+<div style="height: 56px; padding: 0 20px; display: flex; align-items: center; gap: 10px; border-bottom: 1px solid #e3e4e5">
+<span style="width: 9px; height: 9px; border-radius: 5px; background: #1d7a43"></span>
+<span style="font-size: 15px; font-weight: 700">Live in your game</span>
+<span style="font-size: 15px; color: #5e5f62">· from this chat turn</span>
+<span style="flex: 1"></span>
+<span style="padding: 7px 14px; border-radius: 10px; background: #3f61f5; color: #ffffff; font-size: 13.5px; font-weight: 600">▶ Play</span>
+</div>
+
+<div style="position: absolute; left: 0; top: 120px; width: 1000px; height: 780px; background-color: #f9faf9; background-image: radial-gradient(#d5d7da 1.1px, transparent 1.2px); background-size: 18px 18px">
+<div class="hl" style="left: 216px; top: 343px; width: 40px"></div>
+<div class="hl" style="left: 406px; top: 343px; width: 22px"></div>
+<div class="vl" style="left: 428px; top: 277px; height: 132px"></div>
+<div class="hl" style="left: 428px; top: 277px; width: 18px"></div>
+<div class="hl" style="left: 428px; top: 409px; width: 18px"></div>
+<div class="hl" style="left: 596px; top: 277px; width: 22px"></div>
+<div class="hl" style="left: 596px; top: 409px; width: 22px"></div>
+<div class="vl" style="left: 618px; top: 277px; height: 132px"></div>
+<div class="hl" style="left: 618px; top: 343px; width: 18px"></div>
+<div class="pin" style="left: 441px; top: 272px"></div>
+<div class="pin" style="left: 441px; top: 404px"></div>
+<div class="pin" style="left: 631px; top: 338px"></div>
+
+<div class="node" style="left: 66px; top: 296px">
+<div style="position: absolute; inset: 0; padding: 10px; display: flex; flex-direction: column; gap: 6px">
+<span style="font-family: 'Geist Mono', monospace; font-size: 10px; letter-spacing: 0.06em; color: #5e5f62">WHAT YOU ASKED</span>
+<span style="font-size: 12.5px; line-height: 17px; font-weight: 600">The car drifts left on straight roads…</span>
+</div>
+</div>
+
+<div class="node" style="left: 256px; top: 296px; background: linear-gradient(135deg, #eef1fb 0%, #e3e8f8 100%)">
+<div style="position: absolute; left: 10px; top: 10px; font-family: 'Geist Mono', monospace; font-size: 10px; letter-spacing: 0.06em; color: #5e5f62">THE LEAD</div>
+<span class="glyph" style="box-shadow: 0 0 0 1px rgba(16,17,18,0.08)"><svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="#1d7a43" stroke-width="1.8"><path d="M2 5.2l2 2 4-4.4"></path></svg></span>
+<div style="position: absolute; left: 10px; right: 10px; bottom: 9px; display: flex; flex-direction: column; gap: 1px">
+<span style="font-size: 12.5px; line-height: 16px; font-weight: 650">The lead</span>
+<span class="wd" style="color: #1d7a43">Done</span>
+</div>
+</div>
+
+<div class="node" style="left: 446px; top: 230px">
+<div style="position: absolute; inset: 0; padding: 10px; display: flex; flex-direction: column; justify-content: space-between">
+<svg width="22" height="22" viewBox="0 0 22 22" fill="none" stroke="#5e5f62" stroke-width="1.5"><circle cx="9.5" cy="9.5" r="6"></circle><line x1="14" y1="14" x2="19" y2="19"></line></svg>
+<div style="display: flex; flex-direction: column; gap: 1px"><span style="font-size: 12.5px; line-height: 16px; font-weight: 650">Check the physics</span><span class="wd" style="color: #1d7a43">Done · found the cause</span></div>
+</div>
+<span class="glyph" style="box-shadow: 0 0 0 1px rgba(16,17,18,0.08)"><svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="#1d7a43" stroke-width="1.8"><path d="M2 5.2l2 2 4-4.4"></path></svg></span>
+</div>
+
+<div class="node" style="left: 446px; top: 362px; background: linear-gradient(150deg, #e7b15a 0%, #b5552f 50%, #3d2a2a 100%)">
+<span class="glyph"><svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="#1d7a43" stroke-width="1.8"><path d="M2 5.2l2 2 4-4.4"></path></svg></span>
+<div class="shade"><span class="nm">Center the steering</span><span class="wd" style="color: #8fe0a6">Added to your game</span></div>
+</div>
+
+<div class="node" style="left: 636px; top: 296px; box-shadow: 0 0 0 1px rgba(16,17,18,0.09), 0 0 0 5px #f9faf9, 0 0 0 6px #c4c6c9; background: linear-gradient(150deg, #e7b15a 0%, #b5552f 50%, #3d2a2a 100%)">
+<span class="glyph"><svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="#1d7a43" stroke-width="1.8"><path d="M2 5.2l2 2 4-4.4"></path></svg></span>
+<div class="shade"><span class="nm">Changes are live</span><span class="wd" style="color: #8fe0a6">Live in your game</span></div>
+</div>
+
+<div style="position: absolute; left: 806px; top: 318px; width: 160px; padding: 10px 12px; border-radius: 10px; border: 1px dashed #c4c6c9; background: #ffffff; font-size: 12px; line-height: 17px; color: #5e5f62">No finish check on a chat turn. You see the result yourself.</div>
+
+<div style="position: absolute; left: 20px; bottom: 20px; display: flex; align-items: center; gap: 12px; padding: 6px 12px; border-radius: 10px; border: 1px solid #e3e4e5; background: #ffffff; font-size: 13px; color: #393a3d">
+<span>−</span><span style="font-family: 'Geist Mono', monospace; font-size: 12px; color: #5e5f62">72%</span><span>+</span><span style="width: 1px; height: 16px; background: #e3e4e5"></span><span style="font-weight: 600">Fit</span>
+</div>
+</div>
+</div>
+</div>
+</body></html>

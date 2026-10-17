@@ -13,13 +13,9 @@ import { codeLanguage, highlightCode } from "../ui/syntax-highlight.ts";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip.tsx";
 import { type Notify, notifyProblem } from "../state/toasts.ts";
 import { fileManagerWords, problemWords } from "../words.ts";
-import type { BesideTarget } from "../open-beside.ts";
+import { type BesideTarget, besideName } from "../open-beside.ts";
 import { hostPlatform } from "../platform.ts";
 import { Pending } from "../ui/Pending.tsx";
-
-export function besideName(target: BesideTarget): string {
-  return target.kind === "image" ? target.name : (target.path.split("/").filter(Boolean).pop() ?? target.path);
-}
 
 /** Where reading the file stands. */
 const LoadState = {

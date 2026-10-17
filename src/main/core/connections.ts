@@ -6,9 +6,11 @@
 import type { ConnectionSnapshot } from "../../shared/connections.ts";
 import { CustomEvent, customEvent } from "../../shared/custom-events.ts";
 import { EventKind } from "../../shared/event-log.ts";
+import type { GameProject } from "../../shared/game-project.ts";
 import { mcpScopeCovers, type McpConnectorView } from "../../shared/mcp.ts";
 import { McpAuthState } from "../../substrate/mcp/oauth.ts";
-import type { PluginAppliedSet, PluginInfo } from "../../shared/plugins.ts";
+import { isAgentTool, type PluginAppliedSet, type PluginInfo, pluginReach } from "../../shared/plugins.ts";
+import { CoreFact, type GameKind, hasFact } from "../../shared/project-facts.ts";
 import type { ThreadFold } from "../../substrate/event-store.ts";
 import type { EventEnvelope } from "../../substrate/types.ts";
 import { UiEvent } from "../../shared/ui-events.ts";
@@ -24,6 +26,14 @@ const isNameList = (value: unknown): value is string[] =>
 
 /** One session's key in the applied fold: an engine's own session id, never mistaken for another engine's. */
 const sessionKey = (engine: string, session: string): string => JSON.stringify([engine, session]);
+
+/**
+ * Whether a game runs on the Studio template (Three.js through its import map under /vendor/): a
+ * web game at its root in the template's shape. A shape read from a folder with no page falls back
+ * to the template's, so a new empty game, a Godot or an Unreal project never claims it.
+ */
+const usesStudioTemplate = (game: Pick<GameProject, "shape" | "facts"> | undefined): boolean =>
+  game?.shape.kind === "studio-template" && hasFact(game.facts, CoreFact.WebGame, ".");
 
 /** The session and the set a delivered record carries; none for a record without a well-formed one. */
 function deliveredSetOf(event: EventEnvelope): [string, PluginAppliedSet] | undefined {
@@ -80,11 +90,12 @@ export class ConnectionService {
   /** Every tool source the settings and the composer show, with the thread's applied revision. */
   async snapshot(threadId?: string, project?: string | null): Promise<ConnectionSnapshot> {
     const connectors = await this.#core.mcp.list(project ?? null);
+    const game = project ? await this.#kindOf(project) : undefined;
     const plugins = await Promise.all(
       this.#core.plugins
         .list()
         .filter((p) => !p.removed)
-        .map((p) => this.#pluginSource(p)),
+        .map((p) => this.#pluginSource(p, game)),
     );
     return {
       revision: this.#revision,
@@ -105,15 +116,17 @@ export class ConnectionService {
   ): Promise<{ revision: number; text: string }> {
     const revision = this.#revision;
     const connections = await this.snapshot(threadId, project);
-    const connectors = await this.#enabledConnectors(project);
     const game = project ? (await this.#core.games.list()).find((g) => g.name === project) : undefined;
+    const kind: GameKind = game ?? { facts: [] };
+    const connectors = await this.#enabledConnectors(project, kind);
     const text = planningCapabilities(
       revision,
       this.#core.plugins.list(),
       connections,
       connectors,
-      game?.shape.kind === "studio-template",
+      usesStudioTemplate(game),
       audience,
+      kind,
     );
     if (audience === CapabilityAudience.Conversation)
       await this.#core.append(
@@ -157,11 +170,17 @@ export class ConnectionService {
     return new Map(state).get(sessionKey(engine, session));
   }
 
+  /** What a game's folder holds; a game whose facts can't be read has no kind yet. */
+  async #kindOf(project: string): Promise<GameKind> {
+    return this.#core.games.kindOf(project).catch(() => ({ facts: [] }));
+  }
+
   /** The enabled connectors that reach this game, with the tool names a plan may name. */
-  async #enabledConnectors(project: string | null | undefined) {
+  async #enabledConnectors(project: string | null | undefined, game: GameKind) {
     const views = await this.#core.mcp.list(project ?? null);
     return views
       .filter((v) => v.connector.enabled && mcpScopeCovers(v.connector.scope, project))
+      .filter((v) => this.#core.mcp.reaches(v.connector.id, game.facts, game.holds))
       .map((v) => ({
         id: v.connector.id,
         name: v.connector.name,
@@ -170,14 +189,17 @@ export class ConnectionService {
       }));
   }
 
-  async #pluginSource(p: PluginInfo): Promise<ConnectionSource> {
+  /** One plugin as a tool source; with a game, its tools are those that reach that game. */
+  async #pluginSource(p: PluginInfo, game: GameKind | undefined): Promise<ConnectionSource> {
+    // The tools agents get: one only the harness calls is no tool of theirs.
+    const agentTools = game ? pluginReach(p.manifest, game).tools : p.manifest.tools.filter(isAgentTool);
     return {
       id: p.manifest.id,
       name: p.manifest.name,
       kind: "plugin",
       enabled: p.enabled,
       health: p.health,
-      tools: p.enabled ? p.manifest.tools.length : 0,
+      tools: p.enabled ? agentTools.length : 0,
       pending: !!p.pendingVersion,
       reason: p.error,
       account: await this.#core.plugins.accountState(p.manifest.id),

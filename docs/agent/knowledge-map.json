@@ -47,13 +47,15 @@
         "docs/product/models-context.md",
         "docs/product/assets-plugins.md",
         "docs/product/studio-learning.md",
+        "docs/product/projects-engines.md",
         "docs/agent/feature-map.md",
         "docs/agent/architecture.md",
         "docs/agent/design.md",
         "docs/local-models.md",
         "docs/connections-and-context.md",
         "docs/tool-permissions.md",
-        "docs/performance.md"
+        "docs/performance.md",
+        "docs/play.md"
       ],
       "commands": ["typecheck", "test:build-ui"]
     },
@@ -74,7 +76,9 @@
         "docs/product/builds-live.md",
         "docs/product/assets-plugins.md",
         "docs/product/studio-learning.md",
+        "docs/product/projects-engines.md",
         "docs/agent/architecture.md",
+        "docs/play.md",
         "docs/conversation-coordinator.md",
         "docs/plugins.md",
         "docs/PLUGIN_GUIDE.md",
@@ -165,13 +169,22 @@
         "src/shared/preview-contract.ts",
         "tests/conformance/page-serve.test.ts",
         "tests/conformance/page-shim.test.ts",
-        "src/substrate/pixel-stats.ts"
+        "src/substrate/pixel-stats.ts",
+        "src/substrate/computer-*.ts",
+        "src/main/core/computer-*.ts",
+        "src/main/core/browser-preview-target.ts",
+        "src/shared/computer-target.ts",
+        "src/shared/play-protocol.ts",
+        "src/substrate/play-protocol-client.ts",
+        "src/main/core/game-bridge-target.ts"
       ],
       "documents": [
         "docs/agent/context.md",
         "docs/agent/architecture.md",
         "docs/product/builds-live.md",
-        "docs/performance.md"
+        "docs/performance.md",
+        "docs/computer-use.md",
+        "docs/play-protocol.md"
       ],
       "commands": ["check", "test:fast", "test:ui"]
     },
@@ -220,6 +233,7 @@
         "docs/agent/context.md",
         "docs/agent/architecture.md",
         "docs/product/assets-plugins.md",
+        "docs/product/projects-engines.md",
         "docs/plugins.md",
         "docs/PLUGIN_GUIDE.md",
         "docs/connections-and-context.md"
@@ -284,6 +298,7 @@
         "docs/agent/context.md",
         "docs/product/builds-live.md",
         "docs/product/studio-learning.md",
+        "docs/product/projects-engines.md",
         "docs/agent/architecture.md",
         "docs/local-models.md",
         "docs/connections-and-context.md",

@@ -53,6 +53,12 @@ it("model companions stay within the asset root and reject remote, encoded trave
   ])
     assert.throws(() => assetCompanion("assets/models/a.gltf", uri));
   assert.throws(() => assetCompanion("@genex/job/a.gltf", "../other/a.png"));
+  // A model in an engine's or a plugin's asset folder loads what lies beside it in its top folder;
+  // the main side holds the read to the game's asset folders.
+  assert.equal(assetCompanion("Assets/m/car.gltf", "car.bin"), "Assets/m/car.bin");
+  assert.equal(assetCompanion("Assets/m/car.obj", "../textures/car.png"), "Assets/textures/car.png");
+  assert.equal(assetCompanion("car.gltf", "car.bin"), "car.bin", "a model at the game's root");
+  assert.throws(() => assetCompanion("Assets/m/car.gltf", "../../secret.bin"), /leaves its asset folder/);
 });
 it("each advertised media format chooses a viewer while authoring and executable formats stay unsupported", () => {
   for (const ext of ["glb", "gltf", "fbx", "obj", "stl", "ply"]) assert.equal(assetPreviewMode(`a.${ext}`), "model");

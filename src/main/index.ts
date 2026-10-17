@@ -2,6 +2,8 @@ import { isClaudeLoginActive } from "../shared/claude-login.ts";
 import { isCodexLoginActive } from "../shared/codex-login.ts";
 import { updateCodingCli } from "../substrate/cli-update.ts";
 import { HarnessLogBatch } from "./harness-log-batch.ts";
+import { createDesktopControl } from "./desktop-control-host.ts";
+import type { DesktopControl } from "./core/desktop-control.ts";
 import { showAfterPaint } from "./window-ready.ts";
 import { PerformanceRecorder, watchEventLoop } from "./performance.ts";
 import { registerPerformanceIpc } from "./ipc/performance.ts";
@@ -28,6 +30,7 @@ import {
   net,
   protocol,
   powerSaveBlocker,
+  ShareMenu,
   shell,
   utilityProcess,
 } from "electron";
@@ -71,6 +74,7 @@ import {
   FIXTURE_UPDATE_RELEASE,
   FixtureName,
   fixtureEngines,
+  installOlderPlugins,
   isChatFixture,
   prepareFixture,
 } from "./dev/fixtures.ts";
@@ -88,6 +92,7 @@ import {
 import { RELEASE_CHECK_INTERVAL_MS, latestRelease } from "./release-check.ts";
 import { UpdateAction } from "../shared/app-update.ts";
 import { gatedHostTool } from "./core/genex-cli.ts";
+import { normalGamesElsewhere, normalGamesFolder } from "./core/never-touch-list.ts";
 import { diagnosticsText, gatherDiagnostics } from "./diagnostics.ts";
 import { type FeedbackSources, sendFeedback } from "./feedback.ts";
 import { renderGameCover } from "./game-cover-renderer.ts";
@@ -95,6 +100,8 @@ import { createIpcHandle, pushToRenderer } from "./ipc-handle.ts";
 import { registerBootIpc } from "./ipc/boot.ts";
 import { registerUpdateIpc } from "./ipc/update.ts";
 import { registerGamesIpc } from "./ipc/games.ts";
+import { registerStorageIpc } from "./ipc/storage.ts";
+import { registerJobsIpc } from "./ipc/jobs.ts";
 import { registerLearningIpc } from "./ipc/learning.ts";
 import { registerLoginIpc } from "./ipc/login.ts";
 import { registerCliInstallIpc } from "./ipc/cli-install.ts";
@@ -106,18 +113,51 @@ import { registerPermissionsIpc } from "./ipc/permissions.ts";
 import { registerPluginsIpc } from "./ipc/plugins.ts";
 import { type PreviewBoundsRecord, registerPreviewIpc } from "./ipc/preview.ts";
 import { registerProjectsIpc } from "./ipc/projects.ts";
+import { registerPlayIpc } from "./ipc/play.ts";
+import { registerGenexAccountIpc } from "./ipc/genex-account.ts";
+import {
+  createGenexAccount,
+  type GenexAccount,
+  type GenexAccountPort,
+  pluginAccountPort,
+} from "./core/genex-account.ts";
+import { devStandAccountPort } from "./dev/dev-stand-account.ts";
+import { fixtureAccountPort } from "./dev/fixture-genex-account.ts";
+import { openGenexPage } from "./genex-browser.ts";
+import { fixtureGamePage, fixturePlayRequest } from "./dev/fixture-play.ts";
+import { launchFixtureAccount } from "./dev/fixture-people.ts";
+import {
+  fixtureUpload,
+  networkUpload,
+  type PeopleDeps,
+  type PlayPeople,
+  playPeople,
+  refusingRequest,
+} from "./play/people.ts";
+import { type CreatorStats, creatorStats } from "./play/creator-stats.ts";
+import { type GenexCredits, genexCredits } from "./play/credits.ts";
+import { networkRequest, type PlayGallery, playGallery, type PlayWorld } from "./play/gallery.ts";
+import { fixtureClone, gitClone, gitCloneCode, remixGame } from "./play/remix.ts";
+import type { MentionSources } from "./core/mention-tags.ts";
+import type { PlayViewer } from "./play/viewer.ts";
+import { playMicStore } from "./play/mic-store.ts";
+import { wirePlayViewer } from "./play/viewer-view.ts";
+import { playOrigins } from "./play/origins.ts";
+import { PLAY_ORIGIN, type PlayPoint } from "../shared/play.ts";
 import { registerRunsIpc } from "./ipc/runs.ts";
 import { registerSettingsIpc } from "./ipc/settings.ts";
 import { readLicenseTexts } from "./licenses.ts";
 import { registerSkillsIpc } from "./ipc/skills.ts";
 import { registerTerminalIpc } from "./ipc/terminal.ts";
-import { registerThreadsIpc } from "./ipc/threads.ts";
+import { registerMentionRetry, registerThreadsIpc } from "./ipc/threads.ts";
 import { KeepAwake } from "./keep-awake.ts";
 import { routeStudioLink } from "./link-policy.ts";
 import { createLoginControllers, type SubscriptionEngine } from "./login-controllers.ts";
+import { createOpenRouterLogin } from "./openrouter-login.ts";
 import { openStudioLog } from "./logs.ts";
 import { migrateLegacyUserData, userDataMigrationLine } from "./user-data-migration.ts";
 import { confirmPluginInstall, reacquirePlugin } from "./plugin-install-dialog.ts";
+import { PLUGIN_PANEL_CSP } from "./plugin-panel-csp.ts";
 import { HttpStatus, textResponse } from "./page-serve.ts";
 import { GamePreview, registerGameScheme } from "./preview.ts";
 import { RunSummaryReader } from "./run-summary-reader.ts";
@@ -127,7 +167,10 @@ import { readFinishedFacts } from "./run-sharing-facts.ts";
 import { fieldPlatform } from "../shared/run-sharing.ts";
 import type { SmokeReadGates } from "./smoke/read-gates.ts";
 import type { EvalCoreOptions, EvalLaunch } from "./smoke/eval-lane.ts";
-import { StudioCore } from "./studio-core.ts";
+import { StudioCore, type StudioCoreOptions } from "./studio-core.ts";
+import { appLookAccess } from "./app-look-access.ts";
+import { layoutFor } from "./core/layout.ts";
+import { appLookRun, macAppLook, stubAppLook, unsupportedAppLook } from "../substrate/app-look.ts";
 import { TerminalService, type TerminalHost } from "./terminal-service.ts";
 import { TITLEBAR_HEIGHT, windowChrome } from "./window-chrome.ts";
 import { appUserModelId, runSquirrelStep, squirrelStartup } from "./windows-install.ts";
@@ -179,10 +222,6 @@ const FIXTURE_OPEN_POLL_MS = 50;
 const HYDRATED = "nav [data-thread], [data-sandbox-setup]";
 /** The model the local Bonsai acceptance runs when none is named. */
 const DEFAULT_BONSAI_MODEL = "bonsai-2:27b-pq2_0";
-/** A plugin panel is inert HTML: inline script and style only, no network, no navigation. */
-const PLUGIN_PANEL_CSP =
-  "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; connect-src 'none'; base-uri 'none'; form-action 'none'";
-
 /** A plugin's picture is an image: an SVG among them draws, but runs and fetches nothing. */
 const PLUGIN_ICON_CSP = "default-src 'none'; style-src 'unsafe-inline'; sandbox";
 
@@ -260,6 +299,8 @@ if (developerBuildUnlaunched || developerLaunchUnbacked) {
   console.error(MESSAGE.devLaunchRefused);
   app.exit(1);
 }
+/** The normal profile's data folder, read before a developer or test launch moves userData. */
+const normalProfileData = app.getPath("userData");
 const dev =
   devLaunchConfig !== undefined && __STUDIO_DEV_BUILD__
     ? (await import("./dev/launch-context.ts")).initializeLaunch(__STUDIO_DEV_BUILD__, devLaunchConfig)
@@ -343,6 +384,12 @@ configureCodingClis(
     : {},
 );
 const fixtureNativePolicy = fixtureProviders || isSmoke;
+/**
+ * Where Play talks to genex.games in this launch: genex.games itself, or a local or test copy that a
+ * development profile names (`play/origins.ts`); never in a packaged app, and never in a fixture
+ * launch, which answers Play from its own data.
+ */
+const playOrigin = playOrigins(process.env, dev !== null && !app.isPackaged && !fixtureNativePolicy);
 // Human review is an explicit opt-in; automated fixture windows stay parked and unfocusable.
 const interactiveFixture = process.env.STUDIO_FIXTURE_INTERACTIVE === "1";
 const parkedFixtureWindow = isSmoke || (fixtureProviders && !interactiveFixture);
@@ -371,6 +418,15 @@ let window: BrowserWindow | null = null;
 let preview: GamePreview | null = null;
 /** The Live game's full screen in the current window. */
 let gameScreen: GameFullScreen | null = null;
+/** Play's catalog, made with the core: the dashboard's reads and the viewer's likes and tickets. */
+let playCatalog: PlayGallery | null = null;
+let playAccount: { people: PlayPeople; creators: CreatorStats; credits: GenexCredits } | null = null;
+/** The app's Genex account, made with the core: Play, Settings and Publish read it. */
+let genexAccount: GenexAccount | null = null;
+/** The fixture account a fixture launch is signed in to Genex as (`dev/fixture-people.ts`), if any. */
+const fixtureGenexAccount = launchFixtureAccount(process.env.STUDIO_FIXTURE_GENEX_ACCOUNT, dev?.fixture);
+/** Play's game viewer in the current window. */
+let playView: PlayViewer | null = null;
 /** Where startup stands for the window: Ready, or the sandbox setup screen with its Retry. */
 const bootGate = createBootGate(
   process.platform,
@@ -477,6 +533,11 @@ const { codexLogin, claudeLogin, openCodeLogin, piLogin } = createLoginControlle
     const page = livePage();
     if (page) pushToRenderer(page, "studio:claude-login", state);
   },
+});
+// The person approved Genex on OpenRouter in the browser: the app comes forward to show it connected.
+const openRouterLogin = createOpenRouterLogin({
+  openExternal: (url) => shell.openExternal(url),
+  onReturn: () => showExistingWindow(),
 });
 
 /** The studio window's page, while there is one alive to receive a push (not closed, not crashed). */
@@ -599,15 +660,49 @@ function launchCoreOptions(): Partial<ConstructorParameters<typeof StudioCore>[0
       executionPolicy: { runBackgroundImprovement: false },
     };
   // Games live in a plain visible folder, not buried in Library — Finder should show them.
-  return { gamesRoot: path.join(app.getPath("home"), "AI Games") };
+  return { gamesRoot: normalGamesFolder(app.getPath("home")) };
 }
 
+/**
+ * Other Genex profiles' data no worker of this launch reaches: the normal profile's, and a developer
+ * build's checkout's development profiles, each unless it is this launch's own.
+ */
+function otherProfiles(userData: string): string[] {
+  const devProfiles = __STUDIO_DEV_BUILD__ ? [path.join(__STUDIO_DEV_BUILD__.checkout, ".studio-dev", "profiles")] : [];
+  return [normalProfileData, ...devProfiles].filter((dir) => path.resolve(dir) !== path.resolve(userData));
+}
+
+/**
+ * How agents look at app windows (`app_look`) and the macOS access it needs: a fixture profile
+ * looks at the stub (nothing on this Mac), macOS the real windows, other systems answer that it is
+ * macOS only for now.
+ */
+function appLookOptions(userData: string): Pick<StudioCoreOptions, "appLook" | "screenAccess"> {
+  if (fixtureNativePolicy) return { appLook: stubAppLook() };
+  if (process.platform !== "darwin") return { appLook: unsupportedAppLook() };
+  const { scratch, engineHomes } = layoutFor(userData);
+  const access = appLookAccess(engineHomes);
+  return { appLook: macAppLook({ run: appLookRun, scratchDir: scratch, access: access.status }), screenAccess: access };
+}
+
+/** Computer control (cua-driver), made with the first core: one registry, stopped on quit. */
+let desktop: DesktopControl | undefined;
+
 async function createCore(userData: string): Promise<StudioCore> {
-  const studio = new StudioCore({
+  desktop ??= createDesktopControl({ automated: isSmoke || isSelfTest, resources });
+  // Smoke runs keep everything under their throwaway userData.
+  const launch = launchCoreOptions();
+  const studio: StudioCore = new StudioCore({
     renderGameCover,
+    // Read at send time, once the core exists: Play's catalog and account hang off it.
+    mentionSources: mentionSourcesFor(() => studio),
+    ...(desktop ? { desktop } : {}),
     paths: { userData, resources },
-    // Smoke runs keep everything under their throwaway userData.
-    ...launchCoreOptions(),
+    ...appLookOptions(userData),
+    neverTouch: otherProfiles(userData),
+    // The normal profile keeps its games outside its data: another launch's workers never reach them.
+    neverTouchGames: normalGamesElsewhere(launch.gamesRoot, app.getPath("home")),
+    ...launch,
     ...(ollamaHost ? { ollamaHost } : {}),
     // Electron's binary doubles as node for the harness child process.
     execPath: process.execPath,
@@ -624,6 +719,9 @@ async function createCore(userData: string): Promise<StudioCore> {
       harnessLogBatch.push(line, stream);
     },
   });
+  // The plugin-updates fixture's profile holds older plugins before the core reads its plugin store.
+  if (fixtureProviders && dev?.fixture === FixtureName.PluginUpdates)
+    await installOlderPlugins(studio.layout.engineHomes, resources);
   performanceRecorder.mark("core-start");
   await studio.init();
   performanceRecorder.mark("core-ready");
@@ -725,6 +823,7 @@ async function createWindow(studio: StudioCore): Promise<BrowserWindow> {
   performanceRecorder.mark("window-created");
   win.on("unresponsive", () => studioLog.write("main", "studio window unresponsive"));
   attachPreviews(studio, win);
+  attachPlay(studio, win);
   collectRendererConsole(win);
   keepLinksOutside(studio, win);
   if (dev) {
@@ -804,6 +903,116 @@ function attachPreviews(studio: StudioCore, win: BrowserWindow): void {
   view.setOccluded(codexLogin.snapshot().visible);
   wireGameSound(studio, win, view);
   gameScreen = wireGameFullScreen({ studio, win, view, boundsSeen: previewBoundsSeen });
+}
+
+/**
+ * The app's Genex account for this core: the Genex plugin's account, kept while Genex is off, or a
+ * fixture launch's own (signed in as the fixture account it asked for).
+ */
+function genexAccountFor(studio: StudioCore): GenexAccount {
+  genexAccount ??= createGenexAccount({
+    port: genexAccountPort(studio),
+    openSignIn: (url) => openGenexPage(fixtureNativePolicy, url, playOrigin.web),
+  });
+  return genexAccount;
+}
+
+/**
+ * What the app's Genex account rides on: a fixture launch's own, a development copy of genex.games'
+ * own sign-in (the Genex plugin's token is genex.games' and the copy would refuse it), or the plugin's.
+ */
+function genexAccountPort(studio: StudioCore): GenexAccountPort {
+  if (fixtureNativePolicy) return fixtureAccountPort(fixtureGenexAccount, Date.now);
+  if (playOrigin.api !== PLAY_ORIGIN.api) {
+    const request = networkRequest(globalThis.fetch, playOrigin.api);
+    return devStandAccountPort({ request, now: Date.now, web: playOrigin.web });
+  }
+  return pluginAccountPort(studio.plugins);
+}
+
+/** Play's catalog for this core: genex.games over the network, or a fixture launch's own answers. */
+function playCatalogFor(studio: StudioCore): PlayGallery {
+  playCatalog ??= playGallery({
+    request: fixtureNativePolicy ? fixturePlayRequest : networkRequest(globalThis.fetch, playOrigin.api),
+    token: genexAccountFor(studio).token,
+    now: Date.now,
+    localImages: fixtureNativePolicy,
+  });
+  return playCatalog;
+}
+
+/**
+ * Play's people, a creator's numbers and the Credits tab for this core, all on the Genex account:
+ * genex.games over the network, or a fixture launch's own people and numbers.
+ */
+function playAccountFor(studio: StudioCore): NonNullable<typeof playAccount> {
+  const account = genexAccountFor(studio);
+  const deps: PeopleDeps = {
+    request: fixtureNativePolicy ? fixturePlayRequest : networkRequest(globalThis.fetch, playOrigin.api),
+    token: account.token,
+    now: Date.now,
+    localImages: fixtureNativePolicy,
+    upload: fixtureNativePolicy ? fixtureUpload : networkUpload(globalThis.fetch),
+    refused: account.refused,
+    web: playOrigin.web,
+  };
+  // A 401 to a creator's numbers or the credits ends the sign-in as one to the account's own calls does.
+  const counted = { ...deps, request: refusingRequest(deps.request, deps.refused) };
+  playAccount ??= { people: playPeople(deps), creators: creatorStats(counted), credits: genexCredits(counted) };
+  return playAccount;
+}
+
+/** Where a message's @ tags come from: Play's catalog, the Genex account and git (a fixture's stand-ins). */
+function mentionSourcesFor(core: () => StudioCore): MentionSources {
+  return {
+    world: (slug) => playCatalogFor(core()).world(slug),
+    me: async () => (await playAccountFor(core()).people.me())?.id ?? null,
+    clone: fixtureNativePolicy ? fixtureClone : gitCloneCode,
+    assetManifest: (slug) => playCatalogFor(core()).assetManifest(slug),
+  };
+}
+
+/** A Play game's public source as a new game of the person's own; answers its library name. */
+function remixPlayGame(studio: StudioCore, world: PlayWorld): Promise<string> {
+  return remixGame(world, {
+    gamesRoot: () => studio.layout.gamesRoot,
+    // A fixture launch never reaches the network: its copy is a local stand-in.
+    clone: fixtureNativePolicy ? fixtureClone : gitClone,
+    install: async (dir) => {
+      await studio.builds.installGuarded({ project: world.slug, dir });
+    },
+    adopt: async (dir, title) =>
+      (await studio.adoptProject(dir, { title, template: false, trustProjectSettings: false, guardScripts: true }))
+        .name,
+    build: async (name) => {
+      const game = (await studio.games.list()).find((listed) => listed.name === name);
+      if (game) await studio.builds.ensure({ project: name, dir: game.dir, shape: game.shape, guarded: true });
+    },
+    progress: (progress) => pushUiEvent({ type: UiEvent.PlayRemix, payload: { slug: world.slug, ...progress } }),
+  });
+}
+
+/** The Mac's share menu (Messages, Mail, AirDrop…) for `url`, under the button at `at` when the renderer said where. */
+function popShareMenu(url: string, at: PlayPoint | undefined): void {
+  const win = window;
+  if (!win || win.isDestroyed() || process.platform !== StudioPlatform.Mac) return;
+  new ShareMenu({ urls: [url] }).popup({ window: win, ...at });
+}
+
+/** Play's full-screen viewer in `win`: a published game, the studio's small menu over its corner. */
+function attachPlay(studio: StudioCore, win: BrowserWindow): void {
+  playView = wirePlayViewer({
+    win,
+    gallery: playCatalogFor(studio),
+    emit: (payload) => pushUiEvent({ type: UiEvent.PlayViewer, payload }),
+    openExternal: (url) => {
+      if (!fixtureNativePolicy) void openOutside(studio, win, url);
+    },
+    web: playOrigin.web,
+    offline: fixtureNativePolicy ? { gamePage: fixtureGamePage } : null,
+    micPreload: path.join(distRoot, "preload", "play-mic.cjs"),
+    micStore: playMicStore(path.join(userDataRoot, "play-mic.json")),
+  });
 }
 
 /**
@@ -1063,6 +1272,30 @@ function feedbackSources(studio: StudioCore): FeedbackSources {
   };
 }
 
+/** The coding-CLI installs Settings offers: busy while a sign-in, a run or a turn is under way. */
+function cliInstalls(studio: StudioCore) {
+  return createCliInstalls({
+    // Electron's fetch, so the installer download goes through the system proxy.
+    install: (provider) => installCodingCli(provider, { fetch: net.fetch }),
+    busy: () => {
+      const signingIn = isClaudeLoginActive(claudeLogin.snapshot()) || isCodexLoginActive(codexLogin.snapshot());
+      return keepAwake.held || studio.budget.userInFlight > 0 || signingIn;
+    },
+    update: async (provider) => {
+      const engine = studio.engines.get(provider);
+      const selected = await engine.account?.();
+      return studio.engines.maintain(provider, () => updateCodingCli(provider, selected?.cli.path));
+    },
+    found: async (provider) => {
+      await subscription(provider)?.recheckLogin();
+      await studio.engines.get(provider).refreshModels?.(true);
+      return (await resolveCodingCli(provider, undefined, undefined, true)).status.state === CodingCliState.Ready;
+    },
+    pushUiEvent,
+    log: (line) => studioLog.write("main", line),
+  });
+}
+
 /** Every IPC channel, registered once per launch by its domain's registrar in `./ipc/`. */
 function registerIpc(studio: StudioCore): void {
   const handle = createIpcHandle(ipcMain, {
@@ -1090,9 +1323,13 @@ function registerIpc(studio: StudioCore): void {
     smokeReads: isSmoke ? smokeReads : null,
     welcome: showsWelcome,
     developer: !app.isPackaged,
+    playWeb: playOrigin.web,
   });
+  registerMentionRetry(handle, studio);
   registerGamesIpc(handle, { core: studio, runSummaryReader, pushUiEvent });
-  registerModelsIpc(handle, { core: studio, subscription, pushUiEvent });
+  registerStorageIpc(handle, { core: studio });
+  registerJobsIpc(handle, { core: studio, openExternal: (url) => shell.openExternal(url) });
+  registerModelsIpc(handle, { core: studio, subscription, pushUiEvent, openRouterLogin });
   registerPreviewIpc(handle, {
     core: studio,
     preview: () => preview,
@@ -1112,7 +1349,13 @@ function registerIpc(studio: StudioCore): void {
     licenses: () => readLicenseTexts(resources),
   });
   registerRunSharingIpc(handle, { sharing: runSharing });
-  registerPluginsIpc(handle, { core: studio, marketplace: () => marketplace, confirmInstall, fixtureNativePolicy });
+  registerPluginsIpc(handle, {
+    core: studio,
+    marketplace: () => marketplace,
+    confirmInstall,
+    fixtureNativePolicy,
+    window: () => window,
+  });
   registerPermissionsIpc(handle, { core: studio });
   registerSkillsIpc(handle, { core: studio, subscription, home: () => app.getPath("home") });
   registerMcpIpc(handle, { core: studio, fixtureNativePolicy });
@@ -1125,30 +1368,17 @@ function registerIpc(studio: StudioCore): void {
     pushUiEvent,
     busy: () => keepAwake.held || (core?.budget.userInFlight ?? 0) > 0,
   });
-  registerCliInstallIpc(
-    handle,
-    createCliInstalls({
-      // Electron's fetch, so the installer download goes through the system proxy.
-      install: (provider) => installCodingCli(provider, { fetch: net.fetch }),
-      busy: () => {
-        const signingIn = isClaudeLoginActive(claudeLogin.snapshot()) || isCodexLoginActive(codexLogin.snapshot());
-        return keepAwake.held || studio.budget.userInFlight > 0 || signingIn;
-      },
-      update: async (provider) => {
-        const engine = studio.engines.get(provider);
-        const selected = await engine.account?.();
-        return studio.engines.maintain(provider, () => updateCodingCli(provider, selected?.cli.path));
-      },
-      found: async (provider) => {
-        await subscription(provider)?.recheckLogin();
-        await studio.engines.get(provider).refreshModels?.(true);
-        return (await resolveCodingCli(provider, undefined, undefined, true)).status.state === CodingCliState.Ready;
-      },
-      pushUiEvent,
-      log: (line) => studioLog.write("main", line),
-    }),
-  );
-  registerProjectsIpc(handle, { core: studio, window: () => window, gamesRootLabel });
+  registerCliInstallIpc(handle, cliInstalls(studio));
+  registerProjectsIpc(handle, { core: studio, window: () => window, gamesRootLabel, web: playOrigin.web });
+  registerGenexAccountIpc(handle, { account: genexAccountFor(studio) });
+  registerPlayIpc(handle, {
+    gallery: playCatalogFor(studio),
+    remix: (world) => remixPlayGame(studio, world),
+    viewer: () => playView,
+    ...playAccountFor(studio),
+    web: playOrigin.web,
+    share: popShareMenu,
+  });
   registerNotificationsIpc(handle, {
     notifications: { isSupported: () => Notification.isSupported(), create: (options) => new Notification(options) },
     window: () => window,
@@ -1639,6 +1869,11 @@ let shutdownInProgress = false;
 function quitSteps(): ShutdownStep[] {
   return shutdownSteps({ keepAwake, codexLogin, claudeLogin, terminals, core });
 }
+
+// Nothing drives the person's computer once the studio is going away.
+app.on("will-quit", () => {
+  void desktop?.stopAll();
+});
 
 app.on("before-quit", async (event) => {
   harnessLogBatch.flush();

@@ -17,7 +17,17 @@ import { sniffImage } from "../substrate/image-sniff.ts";
 import { assertRelativePath, isBelow } from "../substrate/paths.ts";
 import { isJsonObject, readRegularFile } from "../substrate/fsx.ts";
 import { isPluginId } from "../shared/plugin-id.ts";
-import { GENEX_COVER_MAX_BYTES, GENEX_COVER_SHOT_FILE, GENEX_COVERS_DIR } from "../shared/genex.ts";
+import {
+  GENEX_COVER_CANDIDATES_DIR,
+  GENEX_COVER_CLIP_FILE,
+  GENEX_COVER_MAX_BYTES,
+  GENEX_COVER_SHOT_FILE,
+  GENEX_COVERS_DIR,
+  GENEX_PLUGIN_ID,
+} from "../shared/genex.ts";
+import { PLUGIN_CLIP_MAX_BYTES, type PluginClipMimeType } from "../shared/plugins.ts";
+import { sniffClipContainer } from "../substrate/video-sniff.ts";
+import { genexJobShown, genexMaking, genexPhase, type MakingJob } from "../shared/asset-making.ts";
 import type { StillMimeType } from "../shared/preview-contract.ts";
 import { genexRef } from "../shared/genex-ref.ts";
 import { isImageFile } from "../substrate/game-workspace.ts";
@@ -25,17 +35,18 @@ import {
   type AssetAvailability,
   type AssetKind,
   type AssetSource,
+  assetExtension,
   assetKind,
+  isMediaFile,
   type ProjectAsset,
   type ProjectAssets,
 } from "../shared/game-assets.ts";
+import { type AssetFolder, DEFAULT_ASSET_FOLDERS, wholeFolderEnters } from "../shared/project-workspace.ts";
 import type { EventEnvelope } from "../substrate/types.ts";
 import { CustomEvent } from "../shared/custom-events.ts";
 import { EventKind } from "../shared/event-log.ts";
 import type { AssetDeliveryRecord } from "./asset-checkpoints.ts";
 
-/** The folders a game keeps generated and dropped-in assets in. `public/assets` is the bundled shape. */
-const ASSET_ROOTS = ["assets", "public/assets"] as const;
 /** Blender scripts live in `assets/src`; they are inputs, not assets. */
 const EXCLUDED_PREFIX = "assets/src/";
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -47,7 +58,8 @@ const JOB_CACHE_MAX = 512;
 const JOB_CACHE_BYTES = 8 * 1024 * 1024;
 const jobJsonCache = new Map<string, { stamp: string; value: Record<string, unknown>; bytes: number }>();
 let jobCacheBytes = 0;
-const PROMPT_MAX = 500;
+/** The longest prompt the inventory keeps (a 3D provider's own limit is 1024); a longer one is cut with an ellipsis. */
+const PROMPT_MAX = 1000;
 /** How many files an asset walk lists, and how deep below an asset root it goes. */
 const WALK_MAX_ENTRIES = 2000;
 const WALK_MAX_DEPTH = 6;
@@ -80,9 +92,22 @@ function byText(a: string, b: string): number {
 interface WalkState extends AssetWalk {
   maxEntries: number;
   maxDepth: number;
+  /** Every file listed so far, so a file two folders reach is listed once. */
+  listed: Set<string>;
 }
 
-async function walkAssetDir(state: WalkState, dir: string, rel: string, depth: number): Promise<void> {
+/** The folder being walked: the formats it lists (any, when absent) and whether it is the game itself. */
+interface WalkFolder {
+  formats?: ReadonlySet<string>;
+  whole: boolean;
+}
+
+/** A path inside a folder, relative to the game; the game's root (`""`) adds no prefix. */
+const childPath = (rel: string, name: string): string => (rel ? `${rel}/${name}` : name);
+/** The folder a game-relative path is in (`""` for the game's root). */
+const parentPath = (rel: string): string => rel.slice(0, Math.max(0, rel.lastIndexOf("/")));
+
+async function walkAssetDir(state: WalkState, at: WalkFolder, dir: string, rel: string, depth: number): Promise<void> {
   if (depth > state.maxDepth) {
     state.truncated = true;
     return;
@@ -91,59 +116,105 @@ async function walkAssetDir(state: WalkState, dir: string, rel: string, depth: n
   if (!names) return;
   for (const name of names.sort()) {
     if (name.startsWith(".")) continue;
-    const childRel = `${rel}/${name}`;
+    const childRel = childPath(rel, name);
     if (childRel.startsWith(EXCLUDED_PREFIX)) continue;
     if (state.entries.length >= state.maxEntries) {
       state.truncated = true;
       return;
     }
-    await visitAssetEntry(state, path.join(dir, name), childRel, depth);
+    await visitAssetEntry(state, at, path.join(dir, name), childRel, depth);
   }
 }
 
-async function visitAssetEntry(state: WalkState, child: string, childRel: string, depth: number): Promise<void> {
+/** Report a refused entry once, however many folders reach it. */
+function skip(state: WalkState, file: string, why: string): void {
+  if (!state.skipped.some((entry) => entry.file === file)) state.skipped.push({ file, why });
+}
+
+async function visitAssetEntry(
+  state: WalkState,
+  at: WalkFolder,
+  child: string,
+  childRel: string,
+  depth: number,
+): Promise<void> {
   const st = await lstat(child).catch(() => null);
   if (!st) return;
   if (st.isSymbolicLink()) {
-    state.skipped.push({ file: childRel, why: "symlink" });
+    skip(state, childRel, "symlink");
     return;
   }
   if (st.isDirectory()) {
-    await walkAssetDir(state, child, childRel, depth + 1);
+    // A walk of the whole game never enters dependencies, what engines write while they run,
+    // build output or Genex's mood boards.
+    if (at.whole && !wholeFolderEnters(parentPath(childRel), path.basename(child))) return;
+    await walkAssetDir(state, at, child, childRel, depth + 1);
     return;
   }
   if (!st.isFile()) {
-    state.skipped.push({ file: childRel, why: "not a regular file" });
+    skip(state, childRel, "not a regular file");
     return;
   }
   if (/\.md$/i.test(childRel)) return;
+  if (at.formats && !at.formats.has(assetExtension(childRel))) return;
+  if (state.listed.has(childRel)) return;
+  state.listed.add(childRel);
   state.entries.push({ file: childRel, bytes: st.size, mtime: new Date(st.mtimeMs).toISOString() });
 }
 
 /**
- * Every regular file under `assets/` and `public/assets/`, capped. Dotfiles, `*.md` and
- * `assets/src/**` are left out; a symlink anywhere — the asset roots themselves included — is
- * listed in `skipped` and the walk carries on past it, because one hostile link must not hide
- * the rest of a folder.
+ * The folder `folder` names inside the game, found part by part: each part a real folder (a link
+ * at any part is reported and left alone, so a link cannot make another folder read as this
+ * game's) spelled exactly as the disk has it, so on a disk that ignores case `assets` never walks
+ * `Assets/` a second time. Null when there is no such folder.
+ */
+async function exactFolder(state: WalkState, root: string, folder: string): Promise<string | null> {
+  let dir = root;
+  let rel = "";
+  for (const part of folder.split("/")) {
+    const entries = await readdir(dir, { withFileTypes: true }).catch(() => null);
+    const entry = entries?.find((candidate) => candidate.name === part);
+    rel = childPath(rel, part);
+    if (!entry) return null;
+    if (entry.isSymbolicLink()) {
+      skip(state, rel, "symlink");
+      return null;
+    }
+    if (!entry.isDirectory()) return null;
+    dir = path.join(dir, part);
+  }
+  return dir;
+}
+
+/** Walk one asset folder: the game's root as it is, any other folder only when it is a real folder. */
+async function walkAssetFolder(state: WalkState, root: string, { folder, formats }: AssetFolder): Promise<void> {
+  const at: WalkFolder = { whole: folder === ".", ...(formats ? { formats: new Set(formats) } : {}) };
+  if (at.whole) {
+    await walkAssetDir(state, at, root, "", 1);
+    return;
+  }
+  const dir = await exactFolder(state, root, folder);
+  if (dir) await walkAssetDir(state, at, dir, folder, 1);
+}
+
+/**
+ * Every regular file in a game's asset folders (`assets/` and `public/assets/` unless `folders`
+ * names others, as `shared/project-workspace.ts` `assetFoldersFor` finds them), each of a format its
+ * folder lists, each once, capped over the whole walk. Dotfiles, `*.md` and `assets/src/**` are left
+ * out, and the game's root folder (`"."`) enters no folder `wholeFolderEnters` refuses; a symlink anywhere —
+ * the asset folders themselves included — is listed in `skipped` and the walk carries on past it,
+ * because one hostile link must not hide the rest of a folder.
  */
 export async function walkGameAssets(
   root: string,
-  { maxEntries = WALK_MAX_ENTRIES, maxDepth = WALK_MAX_DEPTH }: { maxEntries?: number; maxDepth?: number } = {},
+  {
+    maxEntries = WALK_MAX_ENTRIES,
+    maxDepth = WALK_MAX_DEPTH,
+    folders = DEFAULT_ASSET_FOLDERS,
+  }: { maxEntries?: number; maxDepth?: number; folders?: readonly AssetFolder[] } = {},
 ): Promise<AssetWalk> {
-  const state: WalkState = { entries: [], skipped: [], truncated: false, maxEntries, maxDepth };
-  for (const base of ASSET_ROOTS) {
-    const dir = path.join(root, ...base.split("/"));
-    // The root itself is lstat-ed like every entry under it: a symlinked `assets/` is reported and
-    // left alone, never walked, so a link cannot make another folder read as this game's.
-    const st = await lstat(dir).catch(() => null);
-    if (!st) continue;
-    if (st.isSymbolicLink()) {
-      state.skipped.push({ file: base, why: "symlink" });
-      continue;
-    }
-    if (!st.isDirectory()) continue;
-    await walkAssetDir(state, dir, base, 1);
-  }
+  const state: WalkState = { entries: [], skipped: [], truncated: false, maxEntries, maxDepth, listed: new Set() };
+  for (const folder of folders) await walkAssetFolder(state, root, folder);
   state.entries.sort((a, b) => byText(a.file, b.file));
   return { entries: state.entries, truncated: state.truncated, skipped: state.skipped };
 }
@@ -183,40 +254,105 @@ export function genexCoverDir(engineHomes: string, project: string): string | nu
   return GENEX_PROJECT.test(project) ? path.join(engineHomes, "genex", GENEX_COVERS_DIR, project) : null;
 }
 
-/** The kept shot's image when the folder holds it as a plain file: its name, type and time. */
-async function shotCandidate(
+/** A kept file when the folder holds it as a plain file: its path, type and time. */
+async function keptFile<M extends string>(
   dir: string,
-  [mimeType, name]: [StillMimeType, string],
-): Promise<{ file: string; mimeType: StillMimeType; mtimeMs: number } | null> {
+  [mimeType, name]: [M, string],
+): Promise<{ file: string; mimeType: M; mtimeMs: number } | null> {
   const st = await lstat(path.join(dir, name)).catch(() => null);
   return st?.isFile() ? { file: path.join(dir, name), mimeType, mtimeMs: st.mtimeMs } : null;
 }
 
+/** How one kept cover file is found and checked: its names by type, its size cap and what its bytes are. */
+interface KeptCoverFile<M extends string> {
+  names: Record<M, string>;
+  maxBytes: number;
+  sniff: (data: Buffer) => string | null;
+}
+
 /**
- * The game's kept Genex cover shot, as bytes the renderer can show, or null. Its place is built
- * here from the game's name, never taken from anyone: the cover folder must be exactly that folder
- * by its real path (a link anywhere on the way from engine homes refuses it), and only `shot.png`
- * or `shot.jpg` is read: a regular file opened without following a link, at most Genex's upload
- * limit, whose bytes are the type its name says. While a shot of the other type replaces the last
- * one both are there for a moment, and the newer is the shot.
+ * The newest of a cover folder's kept files `kind` names, its bytes and its type, or null. The
+ * folder must be exactly `dir` by its real path (a link anywhere on the way refuses it), and the
+ * file a regular one opened without following a link, at most its cap, whose bytes are the type its
+ * name says. While a file of another type replaces the last one both are there for a moment, and
+ * the newer is the one.
+ */
+async function readKeptCoverFile<M extends string>(
+  dir: string | null,
+  kind: KeptCoverFile<M>,
+): Promise<{ mimeType: M; data: Buffer } | null> {
+  if (!dir || (await realpath(dir).catch(() => null)) !== dir) return null;
+  const entries = Object.entries(kind.names) as Array<[M, string]>;
+  const found = (await Promise.all(entries.map((entry) => keptFile(dir, entry)))).filter((kept) => kept !== null);
+  const newest = found.sort((a, b) => b.mtimeMs - a.mtimeMs)[0];
+  if (!newest) return null;
+  const data = await readRegularFile(newest.file, kind.maxBytes).catch(() => null);
+  if (!data || kind.sniff(data) !== newest.mimeType) return null;
+  return { mimeType: newest.mimeType, data };
+}
+
+/** A cover candidate's name: the sha256 of its bytes, 64 lowercase hex digits. */
+const COVER_CANDIDATE = /^[0-9a-f]{64}$/;
+
+/** A kept cover shot or candidate: PNG or JPEG, at most Genex's upload limit. */
+const coverShotKind = (names: Record<StillMimeType, string>): KeptCoverFile<StillMimeType> => ({
+  names,
+  maxBytes: GENEX_COVER_MAX_BYTES,
+  sniff: (data) => sniffImage(data)?.mimeType ?? null,
+});
+
+/** The kept cover clip: WebM or MP4, at most a clip's byte limit. */
+const COVER_CLIP: KeptCoverFile<PluginClipMimeType> = {
+  names: GENEX_COVER_CLIP_FILE,
+  maxBytes: PLUGIN_CLIP_MAX_BYTES,
+  sniff: sniffClipContainer,
+};
+
+/** The real game's cover folder under engine homes, by its real path, or null for a name no game has. */
+async function realCoverDir(engineHomes: string, project: unknown): Promise<string | null> {
+  if (typeof project !== "string") return null;
+  const homes = await realpath(engineHomes).catch(() => null);
+  return homes && genexCoverDir(homes, project);
+}
+
+/**
+ * The game's kept Genex cover shot, or with `candidate` one of its recent candidate shots
+ * (`candidates/<sha256>.png|jpg`), as bytes the renderer can show, or null. Its place is built
+ * here from the game's name and the candidate's 64 hex digits, never taken from anyone, and read as
+ * {@link readKeptCoverFile} reads: only `shot.png` or `shot.jpg` (or the candidate's own two names),
+ * each folder on the way its own real path.
  */
 export async function readGenexCoverShot(
   engineHomes: string,
   project: string,
-  { resize }: { resize?: (data: Buffer) => Promise<Buffer> } = {},
+  { resize, candidate }: { resize?: (data: Buffer) => Promise<Buffer>; candidate?: unknown } = {},
 ): Promise<{ mimeType: string; data: string } | null> {
-  const homes = typeof project === "string" ? await realpath(engineHomes).catch(() => null) : null;
-  const dir = homes && genexCoverDir(homes, project);
-  if (!dir || (await realpath(dir).catch(() => null)) !== dir) return null;
-  const files = Object.entries(GENEX_COVER_SHOT_FILE) as Array<[StillMimeType, string]>;
-  const found = (await Promise.all(files.map((entry) => shotCandidate(dir, entry)))).filter((shot) => shot !== null);
-  const shot = found.sort((a, b) => b.mtimeMs - a.mtimeMs)[0];
-  if (!shot) return null;
-  const data = await readRegularFile(shot.file, GENEX_COVER_MAX_BYTES).catch(() => null);
-  if (!data || sniffImage(data)?.mimeType !== shot.mimeType) return null;
-  const smaller = resize ? await resize(data).catch(() => null) : null;
+  if (candidate !== undefined && (typeof candidate !== "string" || !COVER_CANDIDATE.test(candidate))) return null;
+  const dir = await realCoverDir(engineHomes, project);
+  const kept =
+    candidate === undefined
+      ? await readKeptCoverFile(dir, coverShotKind(GENEX_COVER_SHOT_FILE))
+      : await readKeptCoverFile(
+          dir && path.join(dir, GENEX_COVER_CANDIDATES_DIR),
+          coverShotKind({ "image/png": `${candidate}.png`, "image/jpeg": `${candidate}.jpg` }),
+        );
+  if (!kept) return null;
+  const smaller = resize ? await resize(kept.data).catch(() => null) : null;
   if (smaller) return { mimeType: "image/jpeg", data: smaller.toString("base64") };
-  return { mimeType: shot.mimeType, data: data.toString("base64") };
+  return { mimeType: kept.mimeType, data: kept.data.toString("base64") };
+}
+
+/**
+ * The game's kept Genex cover clip (`clip.webm` or `clip.mp4`, the newer when both are there), as
+ * bytes the renderer can play, or null. Its place is built from the game's name alone and read as
+ * {@link readKeptCoverFile} reads, its bytes sniffed as the WebM or MP4 its name says.
+ */
+export async function readGenexCoverClip(
+  engineHomes: string,
+  project: string,
+): Promise<{ mimeType: PluginClipMimeType; data: string } | null> {
+  const kept = await readKeptCoverFile(await realCoverDir(engineHomes, project), COVER_CLIP);
+  return kept && { mimeType: kept.mimeType, data: kept.data.toString("base64") };
 }
 
 /** A value that is a plain object (not an array), as a record; otherwise null. */
@@ -314,7 +450,9 @@ function jobManifest(value: unknown): ProjectAsset["variants"] {
 function requestPrompt(request: Record<string, unknown> | null): string | undefined {
   const requested =
     request?.request && typeof request.request === "object" ? (request.request as Record<string, unknown>) : request;
-  return typeof requested?.prompt === "string" ? requested.prompt.slice(0, PROMPT_MAX) : undefined;
+  if (typeof requested?.prompt !== "string") return undefined;
+  const prompt = requested.prompt;
+  return prompt.length > PROMPT_MAX ? `${prompt.slice(0, PROMPT_MAX - 1)}…` : prompt;
 }
 
 /** One job folder's record, when it is this project's and named by its own id. */
@@ -732,7 +870,9 @@ function genexAvailability(
 
 /** One retained Genex original: joined onto its copies in the game, or listed on its own. */
 async function joinGenexOutput(ctx: Reconcile, job: AssetJobRecord, output: string, name: string): Promise<void> {
-  if (name.startsWith(".")) return;
+  // As in the game's own asset folders, data a generation came with (a clip's trajectory, its pose
+  // check) is the game's input, not an asset: only media is listed.
+  if (name.startsWith(".") || !isMediaFile(name)) return;
   const file = path.join(output, name);
   const info = await lstat(file).catch(() => null);
   if (!info?.isFile() || info.isSymbolicLink()) return;
@@ -903,23 +1043,39 @@ function markUnretainedGenex(inventory: ProjectAssets): void {
   }
 }
 
-/** Jobs with no file in the game yet, one per generation. */
-function pendingGenexJobs(assets: readonly ProjectAsset[], jobs: readonly AssetJobRecord[]): ProjectAssets["jobs"] {
+/**
+ * Genex's jobs with no file in the game yet, one per generation, in the shared words: what each
+ * makes, where it is and the tool its lane is routed to. A call that makes nothing and an approved
+ * review (its run goes on in a new job) have none.
+ */
+function pendingGenexJobs(assets: readonly ProjectAsset[], jobs: readonly AssetJobRecord[], now: number): MakingJob[] {
   const completed = new Set(assets.map((a) => a.generationId).filter(Boolean));
   const pending = new Map<string, AssetJobRecord>();
   for (const job of jobs) {
     const landed = completed.has(job.generationId) || assets.some((a) => a.jobId === job.id);
-    if (!landed) pending.set(job.generationId ?? job.id, job);
+    if (!landed && genexJobShown(job)) pending.set(job.generationId ?? job.id, job);
   }
-  return [...pending.values()].map((j) => ({
-    source: "genex",
+  return [...pending.values()].map((job) => genexWaitingJob(job, now));
+}
+
+/** One Genex job still on its way, in the shared words, as of `now`. */
+function genexWaitingJob(j: AssetJobRecord, now: number): MakingJob {
+  const made = genexMaking(j.operation);
+  const delivered = j.files.length > 0;
+  const started = j.createdAt ? Date.parse(j.createdAt) : Number.NaN;
+  const ageMs = Number.isFinite(started) ? now - started : null;
+  return {
+    source: GENEX_PLUGIN_ID,
     jobId: j.generationId ?? j.id,
-    at: j.createdAt,
-    operation: j.operation,
-    prompt: j.prompt,
+    phase: genexPhase(j.status, { delivered, ageMs }),
+    ...(made ? { kind: made.kind } : {}),
+    ...(made?.tool ? { tool: made.tool } : {}),
+    ...(j.createdAt ? { at: j.createdAt } : {}),
+    ...(j.operation ? { operation: j.operation } : {}),
+    ...(j.prompt ? { prompt: j.prompt } : {}),
     ...(j.status ? { pluginStatus: j.status } : {}),
-    ...(j.files.length ? { delivered: true } : {}),
-  }));
+    ...(delivered ? { delivered: true } : {}),
+  };
 }
 
 export async function reconcileGeneratedAssets(
@@ -929,6 +1085,7 @@ export async function reconcileGeneratedAssets(
   jobs: readonly AssetJobRecord[],
   workspaces: AssetWorkspace[] = [],
   deliveries: readonly AssetDeliveryRecord[] = [],
+  now: number = Date.now(),
 ): Promise<ProjectAssets> {
   const ctx: Reconcile = {
     inventory,
@@ -943,6 +1100,6 @@ export async function reconcileGeneratedAssets(
   await joinNativeDerivatives(ctx);
   inventory.assets = oneAssetPerId(inventory.assets);
   markUnretainedGenex(inventory);
-  inventory.jobs = pendingGenexJobs(inventory.assets, jobs);
+  inventory.jobs = pendingGenexJobs(inventory.assets, jobs, now);
   return inventory;
 }

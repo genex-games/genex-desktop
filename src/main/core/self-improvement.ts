@@ -28,7 +28,7 @@ import { HOUR_MS, MINUTE_MS } from "../../shared/duration.ts";
 import { EngineStatusCode } from "../../shared/engine-descriptor.ts";
 import { WorkClass } from "../../shared/harness-api.ts";
 import { ReasoningEffort } from "../../shared/model-preferences.ts";
-import { BootReason, DispatchActionType } from "../../shared/protocol.ts";
+import { BootReason } from "../../shared/protocol.ts";
 import { EngineId } from "../../shared/providers.ts";
 import { architectPickPrompt, architectRewritePrompt } from "./self-improvement-prompts.ts";
 import { UiEvent } from "../../shared/ui-events.ts";
@@ -487,11 +487,8 @@ export class SelfImprovementService {
 
   /** Restart the harness on a changed self; the caller checks it answers. */
   async #restartForSelfChange(detail: string): Promise<void> {
-    await this.#x.recovery.releaseHarnessLeases();
-    await this.#core.host.restart({
-      type: DispatchActionType.BootNotice,
-      notice: { reason: BootReason.SelfUpdate, detail },
-    });
+    await this.#x.recovery.endHarnessForRestart();
+    await this.#x.recovery.bootPlanned({ reason: BootReason.SelfUpdate, detail });
   }
 
   async noteImprovementFailure(note: string): Promise<void> {

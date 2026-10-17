@@ -9,6 +9,8 @@ import { gatherEvidence } from "../evidence.ts";
 import { commitAll, GIT, gitAt, gitlinks, headOf, resetClean, shortSha } from "../git.ts";
 import { keptContractWords } from "../contract-kept.ts";
 import { HostMethod } from "../host-methods.ts";
+import { editorPlayOf } from "../engine-judges.ts";
+import { factsOfGame, LoopProfile, ProjectStarter } from "../folder-facts.ts";
 import { AttachedContract, StudioContract } from "../page-contract.ts";
 import { readDeclaredGame } from "../kinds.ts";
 import { appendLedger, ledgerFromEvents, loadGameLessons, readLedger } from "../ledger.ts";
@@ -27,10 +29,25 @@ import path from "node:path";
 import { preparationBudgetMs } from "./budgets.ts";
 import { foundationFirst } from "./foundation.ts";
 import { contractBrief, preparationBudgetNote } from "./briefs.ts";
-import { loopRunClock, restoreLoopRun } from "./journal.ts";
+import { restoreLoopRun } from "./journal.ts";
+import { capClock, capHoursMs } from "../time-cap.ts";
 import { clampDirectorMemory } from "./memory.ts";
 import { outcomesAwaitPlan, reopenCommits, reopenMarkOf } from "./reopen.ts";
 import { startingHeads } from "./rules.ts";
+import { runIdentity, withIdentity } from "../workers/identity.ts";
+import { MAX_WORKERS_AT_ONCE } from "../workers/contract.ts";
+import { newOpenJournal, OPEN_WALL_CLOCK, type OpenClock, openJournalOf } from "./open/contract.ts";
+import { resumedOpenJournal } from "./open/older-journal.ts";
+import {
+  type OpenedGame,
+  openGame,
+  openLoopOf,
+  openLoopPool,
+  openRunMs,
+  openStartingPoint,
+  recordCreditCap,
+  settledAcrossPause,
+} from "./open/setup.ts";
 import { noteHudUpgrade } from "../held-hud.ts";
 import type { AnyRecord, HarnessCtx, Run } from "../../types/harness.d.ts";
 import type { ProjectShape, ReferenceFrame } from "../../types/host-api.d.ts";
@@ -50,6 +67,8 @@ const CONTRACT_SESSION_MAX_MS = 20 * MINUTE_MS;
 const TEMPLATE_SHAPE = { entry: "index.html", main: "src/main.js", build: null };
 /** What kind of game this is for the ledger, when its shape does not say. */
 const GameShapeKind = { OwnScript: "own-script", StudioTemplate: "studio-template" } as const;
+/** An open Loop's shape: no page, no entry module, no build step of the web method's. */
+const OPEN_SHAPE = { entry: "", main: "", build: null };
 
 /**
  * What a run learns from the session before it: its journal and the director's memory file — the
@@ -180,10 +199,10 @@ async function announceRunStart(
   ctx: HarnessCtx,
   threadId: string,
   run: Run,
-  start: { resume: boolean; liveChat: boolean },
+  start: { resume: boolean; liveChat: boolean; profile?: LoopProfile },
   capacity: AnyRecord | null,
 ) {
-  const { resume, liveChat } = start;
+  const { resume, liveChat, profile } = start;
   await ctx.call(HostMethod.EventsAppend, {
     threadId,
     batch: [
@@ -224,19 +243,26 @@ async function announceRunStart(
           integrationNotes: "",
           maxParallel: capacity?.max ?? 1,
           director: true,
+          // Every builder writes worker records (`workers/director-pool.ts`): Builds draws a tree from the start.
+          workerRecords: true,
           ...(resume ? { resumed: true } : {}),
           // The composer tells the person a message reaches the lead now (renderer chat/live-chat.ts).
           ...(liveChat ? { liveChat: true } : {}),
+          // How the Loop works on its project: written for an open Loop, so a web run's start reads as it did.
+          ...(profile ? { profile } : {}),
         },
       },
     ],
   });
 }
 
-/** The game, ready: scaffolded if new, on the current contract, loaded in the studio window. Answers its folder. */
+/**
+ * The game, ready: scaffolded if new, on the current contract, loaded in the studio window. Answers
+ * its folder, and keeps what the folder holds on the run for the brief (`gameFacts`).
+ */
 async function readyTheGame(loopRun: LoopRun): Promise<string> {
   const { ctx, decision, note, run } = loopRun;
-  await ctx.call(HostMethod.GameScaffold, { name: run.project, title: run.project });
+  await ctx.call(HostMethod.GameScaffold, { name: run.project, title: run.project, kind: ProjectStarter.Web });
   const upgraded = await ctx.call(HostMethod.GameUpgradeContract, { project: run.project }).catch(() => null);
   if (upgraded?.upgraded)
     await decision(
@@ -254,8 +280,12 @@ async function readyTheGame(loopRun: LoopRun): Promise<string> {
   }
   await ctx.call(HostMethod.PreviewLoad, { project: run.project }).catch(() => {});
   const games = await ctx.call(HostMethod.GameList, {}).catch(() => []);
-  const projectDir = games.find((g: AnyRecord) => g.name === run.project)?.dir ?? null;
+  const game = games.find((g: AnyRecord) => g.name === run.project);
+  const projectDir = game?.dir ?? null;
   if (!projectDir) throw new Error(`project ${run.project} has no folder`);
+  loopRun.gameFacts = factsOfGame(game);
+  // The moments the game's plugins hook, as `hooksOn` reads them: a web game lists none.
+  loopRun.game = { hookEvents: game?.hookEvents, ...editorPlayOf(game) };
   return projectDir;
 }
 
@@ -511,6 +541,9 @@ async function openIntegration(loopRun: LoopRun, forkCommit: string | null): Pro
   return wt.path;
 }
 
+/** This part prepares a Loop on a project of any kind (`prepareOpenLoopRun`): a run reads it by namespace before it leads one. */
+export const SERVES_OPEN_LOOP = true;
+
 /**
  * Everything a run knows before its first tool call, as one object: the run and its clock, the
  * game's shape and ledger, the starting point and the integration worktree forked from it, the
@@ -527,9 +560,23 @@ export async function prepareLoopRun(
     resume = false,
     oneSession = false,
     liveChat = false,
-  }: { threadId: string; run: Run; resume?: boolean; oneSession?: boolean; liveChat?: boolean },
+    profile = LoopProfile.Web,
+    clock: openClock,
+  }: {
+    threadId: string;
+    run: Run;
+    resume?: boolean;
+    oneSession?: boolean;
+    liveChat?: boolean;
+    /** How the Loop works on its project: the web method (the default), or in place (`prepareOpenLoopRun`). */
+    profile?: LoopProfile;
+    /** An open Loop's clock (the wake loop's); a web run reads the wall clock. */
+    clock?: OpenClock;
+  },
   modules: ReadonlyArray<Record<string, unknown>>,
 ): Promise<LoopRun> {
+  if (profile === LoopProfile.Open)
+    return prepareOpenLoopRun(ctx, { threadId, run, resume, liveChat, clock: openClock ?? OPEN_WALL_CLOCK }, modules);
   const loopRun = bindLoopRun({ ctx, threadId, run, resume }, modules);
   const { lookAtStart, saveJournal, rememberEvidence } = loopRun;
   const inbox = ctx.runInbox ?? createRunInbox(ctx, { threadId, runId: run.runId });
@@ -540,11 +587,12 @@ export async function prepareLoopRun(
   const prior = await readPriorLoopRun(ctx, threadId, run, resume, !oneSession);
   const { priorJournal, priorMemory, memoryRestored } = prior;
   // A Resume goes on with the working time the run had left: the budget is the run's, not
-  // each session's, and time spent paused does not count.
-  const clock = loopRunClock({
+  // each session's, and time spent paused does not count. The hours are a soft cap (time-cap.ts):
+  // a short grace follows them, and ∞ is capped at a day.
+  const clock = capClock({
     saved: resume ? priorJournal?.director?.clock : null,
     now: Date.now(),
-    totalMs: run.budgets?.wallClockMs ?? DEFAULT_WALL_CLOCK_MS,
+    totalMs: capHoursMs(run, run.budgets?.wallClockMs ?? DEFAULT_WALL_CLOCK_MS),
   });
   const { started, softDeadline, finalDeadline } = clock;
   const { ownShape, shape, gameKind } = await gameAtStart(ctx, run);
@@ -630,6 +678,130 @@ export async function prepareLoopRun(
   return loopRun;
 }
 
+/** What an open Loop's run knows once its folder is snapshotted: everything a web run's setup puts on it, in place. */
+function openLoopRunData(
+  facts: LoopRunFacts,
+  known: { inbox: LoopRunKnown["inbox"]; clock: NonNullable<LoopRunKnown["clock"]>; report: AnyRecord },
+): LoopRunKnown {
+  const { inbox, clock, report } = known;
+  return {
+    inbox,
+    started: clock.started,
+    finalDeadline: clock.finalDeadline,
+    softDeadline: clock.softDeadline,
+    clock,
+    priorJournal: facts.priorJournal,
+    memoryRestored: false,
+    ownShape: true,
+    shape: facts.shape,
+    capacity: null,
+    contractMissing: false,
+    gameKind: LoopProfile.Open,
+    priorLedger: [],
+    gameLessons: [],
+    report,
+    projectDir: facts.projectDir,
+    baseCommit: facts.baseCommit,
+    forkCommit: facts.forkCommit,
+    // The lead builds in the game folder itself: there is no copy of the game to integrate into.
+    integrationWorktree: facts.projectDir,
+    // A lead that is its chat's own session keeps no memory file.
+    memoryFile: "",
+    nestedRepos: [],
+    state: loopRunState(facts),
+    journal: loopRunJournal(facts),
+    startEvidence: null,
+    pooledWindows: false,
+    ...loopRunCounters(),
+  };
+}
+
+/** The facts an open Loop's state and journal are made of: the game folder is where the lead works. */
+function openLoopRunFacts(
+  start: { threadId: string; run: Run; priorJournal: AnyRecord | null },
+  game: OpenedGame,
+  baseCommit: string | null,
+  clock: { softDeadline: number; finalDeadline: number },
+): LoopRunFacts {
+  const { threadId, run, priorJournal } = start;
+  const { projectDir } = game;
+  return {
+    run,
+    threadId,
+    projectDir,
+    shape: OPEN_SHAPE,
+    ownShape: true,
+    baseCommit,
+    // No build of its own: the host reads the game folder for the run's files, and shows and lands nothing.
+    forkCommit: null,
+    integrationWorktree: projectDir,
+    fromScratch: false,
+    startEvidence: null,
+    priorJournal,
+    softDeadline: clock.softDeadline,
+    finalDeadline: clock.finalDeadline,
+  };
+}
+
+/**
+ * The run of an open Loop (a project that isn't a web game), built here because its state and
+ * journal are this module's: the game as listed, its hours and credit cap on the run's record before
+ * the run starts, Genex's snapshot of the folder before the first turn, the Loop's own record and the
+ * run's worker pool. No scaffold, contract, preview, ledger or copy of the game: the lead works in place.
+ */
+async function prepareOpenLoopRun(
+  ctx: HarnessCtx,
+  start: { threadId: string; run: Run; resume: boolean; liveChat: boolean; clock: OpenClock },
+  modules: ReadonlyArray<Record<string, unknown>>,
+): Promise<LoopRun> {
+  const { threadId, run, resume, liveChat, clock } = start;
+  const loopRun = bindLoopRun({ ctx, threadId, run, resume }, modules);
+  const inbox = ctx.runInbox ?? createRunInbox(ctx, { threadId, runId: run.runId });
+  // Its lead builds in the project itself, often with no workers: never "watching the workers".
+  ctx.setStatus(`run ${run.runId} · lead in place`);
+  const read = await readPriorLoopRun(ctx, threadId, run, resume, false);
+  // A run the Unreal runner paused goes on from its journal, turned into the one Loop's (older-journal.ts).
+  const resumed = resumedOpenJournal(read.priorJournal, clock.now());
+  const { prior: priorJournal, refused, spentBefore } = resumed;
+  const saved = resume ? priorJournal?.director?.clock : null;
+  const runClock = capClock({ saved, now: clock.now(), totalMs: openRunMs(run) });
+  const game = await openGame(ctx, run);
+  // A refused run keeps the record it came with: its refusal says nothing of a cap it never ran under.
+  if (!refused) recordCreditCap(run, spentBefore);
+  const report = loopRunReport(run, resume ? await earlierReport(ctx, threadId, run.runId) : null);
+  // A run refused at once announces nothing here: its refusal writes its whole record (`refuseResume`).
+  if (!refused)
+    await announceRunStart(
+      ctx,
+      threadId,
+      run,
+      { resume, liveChat, profile: LoopProfile.Open },
+      { max: 1 + MAX_WORKERS_AT_ONCE },
+    );
+  // A run that closes at once (its paused journal can't be read) takes no snapshot and opens no pool.
+  const baseCommit = refused ? null : await openStartingPoint(ctx, run, priorJournal);
+  const facts = openLoopRunFacts({ threadId, run, priorJournal }, game, baseCommit, runClock);
+  Object.assign(loopRun, openLoopRunData(facts, { inbox, clock: runClock, report }));
+  loopRun.gameFacts = game.facts;
+  loopRun.game = { hookEvents: game.hookEvents, ...editorPlayOf(game) };
+  // What the lead asked of a turn's end that a pause cut off is said, never run over the next turn's work.
+  const journal = openJournalOf(priorJournal);
+  const open = openLoopOf(game, journal ? settledAcrossPause(journal) : newOpenJournal(), clock);
+  loopRun.journal.director.open = open.journal;
+  loopRun.profile = LoopProfile.Open;
+  loopRun.open = open;
+  restoreLoopRun(loopRun);
+  // A refused run writes nothing over the journal it couldn't pick up: a Resume may yet.
+  if (refused) {
+    open.refused = refused;
+    open.refusalPauses = resumed.staysPaused === true;
+    return loopRun;
+  }
+  await loopRun.saveJournal();
+  await openLoopPool(loopRun, open);
+  return loopRun;
+}
+
 /** One look at the live game folder, as the run's "before". Null unless it can be observed. */
 export async function lookAtStart(loopRun: LoopRun, labelPrefix?: string) {
   const { ctx, run } = loopRun;
@@ -674,7 +846,8 @@ async function prepareInWorktree(
   try {
     const delegation = await ctx.call(HostMethod.EngineDelegate, {
       engine: roleEngine(run, RoleKey.Builder),
-      prompt: session.prompt,
+      // Genex's identity first: the game's folder and what the run found it holds.
+      prompt: withIdentity(runIdentity(loopRun), session.prompt),
       project: run.project,
       cwd: integrationWorktree,
       threadId,

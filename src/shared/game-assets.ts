@@ -11,6 +11,10 @@
  * `file` is always posix-relative to the game root: the renderer never receives absolute game paths.
  */
 
+import type { CallMaking, MakingJob } from "./asset-making.ts";
+import type { GenexBlocked } from "./genex.ts";
+import type { CallCutOff } from "./plugins.ts";
+
 export type AssetKind = "image" | "model" | "audio" | "video" | "other";
 /** `genex` and `blender` are the two the studio ships; any other value is a plugin id. */
 export type AssetSource = "genex" | "blender" | "imported" | (string & {});
@@ -65,18 +69,10 @@ export interface ProjectAssets {
   project: string;
   assets: ProjectAsset[];
   /**
-   * Jobs with no file in the game yet: the plugin's own word for each (`pluginStatus`), and
-   * `delivered` when the job did deliver files earlier that the game no longer holds.
+   * Jobs with no file in the game yet, any plugin's, in the shared words (`shared/asset-making.ts`):
+   * what each makes, where it is and who makes it.
    */
-  jobs?: Array<{
-    source: string;
-    jobId: string;
-    at?: string;
-    operation?: string;
-    prompt?: string;
-    pluginStatus?: string;
-    delivered?: boolean;
-  }>;
+  jobs?: MakingJob[];
   /** The walk hit its entry or depth cap: some files under `assets/` are not listed. */
   truncated: boolean;
   skipped: Array<{ file: string; why: string }>;
@@ -103,13 +99,6 @@ export interface AssetDeliveredPayload {
   workspace?: "game" | "build";
 }
 
-/** The plugin statuses that mean a job ended without its file: its card asks for attention. */
-const STALLED = new Set(["failed", "retrieval_failed", "stopped", "canceled"]);
-export function assetJobStalled(pluginStatus: string | null | undefined): boolean {
-  return STALLED.has(pluginStatus ?? "");
-}
-
-/** A delivery the game folder does not hold yet: it waits for its build to land. */
 /**
  * A delivery record the chat can show: one that lists its files. A record without that list has
  * nothing to show, and the cards that list a delivery's files would fail on it.
@@ -118,6 +107,7 @@ export function isAssetDelivery(delivery: Partial<AssetDeliveredPayload>): deliv
   return Array.isArray(delivery.files);
 }
 
+/** A delivery the game folder does not hold yet: it waits for its build to land. */
 export function deliveredToBuild(delivery: Pick<AssetDeliveredPayload, "workspace" | "runId">): boolean {
   return (
     delivery.workspace === "build" ||
@@ -127,20 +117,22 @@ export function deliveredToBuild(delivery: Pick<AssetDeliveredPayload, "workspac
 
 /**
  * Where `readProjectAsset` reads its one picture: the game's own asset folders, one Genex job's
- * saved inspection frame, or the game's kept Genex cover shot in the Genex plugin's storage. Wire
- * values: never rename one.
+ * saved inspection frame, the game's kept Genex cover shot (or one of its recent candidates) in the
+ * Genex plugin's storage, or the game's kept Genex cover clip beside it. Wire values: never rename one.
  */
 export const ProjectAssetScope = {
   Game: "game",
   GenexInspection: "genex-inspection",
   GenexCover: "genex-cover",
+  GenexCoverClip: "genex-cover-clip",
 } as const;
 export type ProjectAssetScope = (typeof ProjectAssetScope)[keyof typeof ProjectAssetScope];
 
 /**
  * What `readProjectAsset` is asked for. A file of the game (or of a Genex job) is named by the
- * caller; the Genex cover shot never is: the host builds its place from the game's name alone.
- * `maxPx` asks for a downscale.
+ * caller; the Genex cover shot and clip never are: the host builds their place from the game's name
+ * alone, and a cover `candidate` from its 64 lowercase hex digits (the sha256 of its bytes).
+ * `maxPx` asks for a downscale of a picture; a clip is answered as it was kept.
  */
 export type ProjectAssetRead =
   | {
@@ -150,7 +142,8 @@ export type ProjectAssetRead =
       scope?: typeof ProjectAssetScope.Game | typeof ProjectAssetScope.GenexInspection;
       jobId?: string;
     }
-  | { project: string; scope: typeof ProjectAssetScope.GenexCover; maxPx?: number };
+  | { project: string; scope: typeof ProjectAssetScope.GenexCover; maxPx?: number; candidate?: string }
+  | { project: string; scope: typeof ProjectAssetScope.GenexCoverClip };
 
 /** Which session asked for the tool. There is no `role` on a delegate request; it is derived. */
 export type PluginToolRole = "director" | "builder" | "chat";
@@ -175,6 +168,8 @@ export interface PluginToolStartedPayload {
   engine: string;
   role: PluginToolRole;
   at: string;
+  /** What the call makes, when its tool says (or it is Genex's asset tool): the host stamps it. */
+  making?: CallMaking;
 }
 
 /**
@@ -201,6 +196,10 @@ export interface PluginToolFinishedPayload extends PluginToolStartedPayload {
   durationMs: number;
   /** The installed plugin's version, kept from the API 1 shape of this event. */
   version?: string;
+  /** Set when the call was cut off: its outcome is unknown. */
+  cutOff?: CallCutOff;
+  /** Set when the job went no further than asking the person for something first (Genex's terms). */
+  blocked?: GenexBlocked;
 }
 
 /** How the app shows a file: the viewer it opens in, or none (unknown files stay metadata). */
@@ -257,6 +256,8 @@ export const ASSET_FORMATS: Readonly<Record<string, AssetFormat>> = Object.freez
   fbx: as("model", "model", "application/octet-stream"),
   stl: as("model", "model", "application/octet-stream"),
   ply: as("model", "model", "application/octet-stream"),
+  // An authoring app's own files: listed by name, opened in that app.
+  blend: as("model", "unsupported", "application/octet-stream"),
   mp3: as("audio", "audio", "audio/mpeg"),
   wav: as("audio", "audio", "audio/wav"),
   ogg: as("audio", "audio", "audio/ogg"),
@@ -276,7 +277,30 @@ export const ASSET_FORMATS: Readonly<Record<string, AssetFormat>> = Object.freez
   csv: as("other", "text", "text/plain"),
   atlas: as("other", "text", "text/plain"),
   bin: as("other", "unsupported", "application/octet-stream"),
+  // Unreal's packages and levels: only the editor reads them.
+  uasset: as("other", "unsupported", "application/octet-stream"),
+  umap: as("other", "unsupported", "application/octet-stream"),
 });
+
+/** The kinds of asset that are media: what an engine's asset folder shows besides its own formats. */
+const MEDIA_KINDS: readonly AssetKind[] = ["image", "model", "audio", "video"];
+
+/** The extensions of every media format the studio knows (images, models, audio, video), in table order. */
+export const MEDIA_FORMATS: readonly string[] = Object.freeze(
+  Object.entries(ASSET_FORMATS)
+    .filter(([, format]) => MEDIA_KINDS.includes(format.kind))
+    .map(([ext]) => ext),
+);
+
+/** Whether a file is media (an image, model, sound or video) by its extension: an asset of its own. */
+export const isMediaFile = (file: string): boolean => MEDIA_FORMATS.includes(assetExtension(file));
+
+/** What a model loads beside itself (a glTF's buffers, an OBJ's materials): read wherever models are. */
+export const MODEL_COMPANION_FORMATS: readonly string[] = Object.freeze(["bin", "mtl"]);
+
+/** Whether a list of formats names a model, so the model's companions are read beside it. */
+export const listsModels = (formats: readonly string[]): boolean =>
+  formats.some((format) => Object.hasOwn(ASSET_FORMATS, format) && ASSET_FORMATS[format]?.kind === "model");
 
 /** A file's lowercase extension: the text after its last dot. */
 export function assetExtension(file: string): string {

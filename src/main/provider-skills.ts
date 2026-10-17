@@ -44,6 +44,8 @@ const MESSAGE = {
   claudePlugins: "Could not read the installed Claude plugin inventory.",
   claudeNote:
     "Installed globally. Studio currently loads project skills only; these personal skills are not enabled in its Claude sessions.",
+  openCodeUnavailable: "OpenCode CLI is unavailable. Check Model Providers, then refresh skills.",
+  openCodeNote: "Installed globally. Studio's OpenCode sessions load no skills, so these are not enabled in them.",
   codexNote:
     "Reported by the selected Codex CLI profile. Availability does not mean a skill was used in a conversation.",
   invalidSkillMetadata: "Invalid skill metadata",
@@ -337,6 +339,47 @@ export async function codexGlobalSkills(cwd: string, login: CodexSkillLogin | nu
   } catch (error) {
     output.warnings.push(errorMessage(error));
   }
+  return output;
+}
+
+/** OpenCode's global config folder: XDG's when absolute, else the classic dot-config under home. */
+function openCodeConfigDir(home: string): string {
+  const xdg = process.env.XDG_CONFIG_HOME;
+  return xdg && path.isAbsolute(xdg) ? path.join(xdg, "opencode") : path.join(home, ".config", "opencode");
+}
+
+/** Whether the installed OpenCode CLI answers; test doubles stand in for discovery. */
+async function openCodeCliReady(): Promise<boolean> {
+  const cli = await resolveCodingCli(EngineId.OpenCode).catch(() => null);
+  return cli?.status.state === CodingCliState.Ready;
+}
+
+/**
+ * OpenCode's global skills, read-only: the `skills` folders its global config loads. Studio's
+ * OpenCode sessions deny every skill (`openCodeConfig`), so these never reach a builder (`NotLoaded`). A
+ * missing CLI reads as a warning naming the next step, never a throw, as Codex's does.
+ */
+export async function openCodeGlobalSkills(
+  home: string,
+  configDir: string = openCodeConfigDir(home),
+  cliReady: () => Promise<boolean> = openCodeCliReady,
+): Promise<ProviderSkillInventory> {
+  const output: ProviderSkillInventory = {
+    provider: EngineId.OpenCode,
+    label: "OpenCode",
+    source: "installed-files",
+    skills: [],
+    warnings: [],
+    note: MESSAGE.openCodeNote,
+    builders: ProviderBuilderUse.NotLoaded,
+  };
+  if (!(await cliReady().catch(() => false))) {
+    output.warnings.push(MESSAGE.openCodeUnavailable);
+    return output;
+  }
+  const inventory: SkillInventoryScan = { output, seen: new Set(), directories: new Set() };
+  await scanSkillRoot(inventory, path.join(configDir, "skills"), "global");
+  output.skills.sort((a, b) => a.name.localeCompare(b.name));
   return output;
 }
 

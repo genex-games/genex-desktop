@@ -8,6 +8,7 @@ import {
   plainDefect,
   type RunGraph as RunGraphModel,
   type RunNode,
+  runIdOf,
 } from "../../run-graph.ts";
 import { buildReview, elapsedWords, resultStatus, workedSpan } from "../../run-steps.ts";
 import { endedWords } from "../../round-status.ts";
@@ -22,6 +23,7 @@ import { GraphSelection } from "./selection.ts";
 import { Status } from "./tone.tsx";
 import type { InspectorProps } from "./types.ts";
 import { type Notify, notifyProblem, ToastTone } from "../../state/toasts.ts";
+import { webBuildShown } from "../../web-build-shown.ts";
 
 /** The most open problems the panel lists. */
 const STILL_OPEN_SHOWN = 5;
@@ -58,7 +60,7 @@ function BuildActions({
         onClick={() =>
           void window.studio
             .showBuild(build.project, build.head)
-            .then(() => undefined)
+            .then(() => webBuildShown(build.project))
             .catch(refuse)
         }
       >
@@ -147,7 +149,7 @@ function ResultRows({
         <div className="mt-2">
           <Details
             rows={[
-              ["run", graph.runId],
+              ["run", runIdOf(graph)],
               ["model", modelLine(run.engine, run.model)],
             ]}
           />

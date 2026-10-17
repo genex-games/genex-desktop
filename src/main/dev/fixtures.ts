@@ -1,7 +1,8 @@
 /**
  * Named developer fixtures: what a `studio:dev` fixture profile holds before its window opens
  * ({@link prepareFixture}) and what it adds once the window is up ({@link activateChatFixture}).
- * Each fixture's seed lives in its own `fixture-*.ts` module; this one picks them.
+ * Each fixture's seed lives in its own `fixture-*.ts` module; this one picks them. The one seed
+ * the core must find already there, the plugin-updates fixture's older plugins, is re-exported.
  */
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -11,7 +12,12 @@ import { EventKind, SnapshotScope } from "../../shared/event-log.ts";
 import { EngineId } from "../../shared/providers.ts";
 import type { StudioCore } from "../studio-core.ts";
 import { seedLargeBuildGraph } from "./fixture-large-graph.ts";
+import { seedLeadGraph } from "./fixture-lead-graph.ts";
 import { seedBuildGraph } from "./fixture-build-graph.ts";
+import { seedChatWorkers, seedChatWorkersLoop } from "./fixture-chat-workers.ts";
+import { seedFinishCheck } from "./fixture-finish-check.ts";
+import { seedPausedBuild } from "./fixture-paused-build.ts";
+import { seedBuildingCard } from "./fixture-building-card.ts";
 import { activateLiveChat, activatePlanReviews, seedChatFeedback, seedChatHistory } from "./fixture-chat.ts";
 import { hasLandedLoopRun, seedFirstLoopRun, seedLandedLoopRun } from "./fixture-history.ts";
 import {
@@ -24,6 +30,12 @@ import {
   isFixtureName,
 } from "./fixture-kit.ts";
 import { NOTIFICATIONS_START_MS, notificationArrivals, seedNotificationGames } from "./fixture-notifications.ts";
+import { announceOpenLoopWait, seedOpenLoops, seedOpenProjects } from "./fixture-open-projects.ts";
+import { seedStillsGame } from "./fixture-stills.ts";
+import { seedRobloxGame } from "./fixture-roblox.ts";
+import { seedGenexTerms } from "./fixture-genex-terms.ts";
+import { seedUnrealGame } from "./fixture-unreal.ts";
+import { seedUnrealChat } from "./fixture-unreal-chat.ts";
 import { setTimeout as sleep } from "node:timers/promises";
 import { StopReason } from "../../shared/engine-requests.ts";
 
@@ -33,6 +45,7 @@ const MESSAGE = {
 } as const;
 
 export { FIRST_LAUNCH_STATUS, fixtureEngines } from "./fixture-engines.ts";
+export { installOlderPlugins } from "./fixture-plugin-updates.ts";
 export {
   DevProviders,
   FIXTURE_NAMES,
@@ -127,13 +140,26 @@ async function seedForFixture(game: FixtureGame): Promise<void> {
   const { core, id, existing, threadId } = game;
   if (id === FixtureName.BuildGraph) return seedGraphOnce(game);
   if (id === FixtureName.LargeBuildGraph) return seedLargeBuildGraph(core, game.project.name, threadId);
+  if (id === FixtureName.LeadGraph) return seedLeadGraph(core, game.project.name, threadId);
+  if (id === FixtureName.ChatWorkers) return seedChatWorkers(core, game.project.name, threadId);
   if (id === FixtureName.Sidebar) return seedSidebar(core, game.project.name);
   // The rest seed a fresh profile only; a reused one keeps what it has.
-  if (existing) return;
+  if (!existing) return seedFreshFixture(game);
+}
+
+/** The seed of a fixture that seeds only a fresh profile. */
+async function seedFreshFixture(game: FixtureGame): Promise<void> {
+  const { core, id, threadId } = game;
   if (id === FixtureName.StudioActivity) return seedStudioActivity(core, threadId);
   if (id === FixtureName.Notifications) return seedNotificationGames(core);
   if (isChatFixture(id)) return seedChatHistory(core, game.project, threadId);
   if (id === FixtureName.ChatFeedback) return seedChatFeedback(core, game.project.name, threadId);
+  if (id === FixtureName.UnrealGame) return seedUnrealGame(core, game.project, threadId);
+  if (id === FixtureName.StillsGame) return seedStillsGame(core);
+  if (id === FixtureName.OpenProjects) return seedOpenProjects(core, game.project.name, threadId);
+  if (id === FixtureName.UnrealChat) return seedUnrealChat(core, game.project, threadId);
+  if (id === FixtureName.RobloxGame) return seedRobloxGame(core, game.project, threadId);
+  if (id === FixtureName.GenexTerms) return seedGenexTerms(core, game.project.name, threadId);
 }
 
 async function seedGraphOnce(game: FixtureGame): Promise<void> {
@@ -282,6 +308,31 @@ export async function activateChatFixture(
   }
   if (fixture.fixture === FixtureName.ChatFeedback) {
     await activatePlanReviews(core);
+    return;
+  }
+  if (fixture.fixture === FixtureName.ChatWorkers) {
+    await seedChatWorkersLoop(core);
+    return;
+  }
+  if (fixture.fixture === FixtureName.OpenProjects) {
+    await seedOpenLoops(core);
+    // After the window has read its first feed, so the wait reaches it as news.
+    setTimeout(
+      () => void announceOpenLoopWait(core).catch((error) => console.error("Open-projects fixture failed", error)),
+      NOTIFICATIONS_START_MS,
+    );
+    return;
+  }
+  if (fixture.fixture === FixtureName.FinishCheck) {
+    await seedFinishCheck(core, fixture.project, fixture.threadId);
+    return;
+  }
+  if (fixture.fixture === FixtureName.PausedBuild) {
+    await seedPausedBuild(core, fixture.project, fixture.threadId);
+    return;
+  }
+  if (fixture.fixture === FixtureName.BuildingCard) {
+    await seedBuildingCard(core, fixture.project, fixture.threadId);
     return;
   }
   if (isChatFixture(fixture.fixture)) await activateLiveChat(core, fixture);

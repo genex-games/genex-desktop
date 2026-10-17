@@ -1,3 +1,13 @@
+import { validateDetect } from "./detect-manifest.ts";
+import { validateEngine } from "./engine-manifest.ts";
+import { inspectJudgeBriefs, validateJudges } from "./judge-manifest.ts";
+import { validateAssets, validateWorkspace } from "./workspace-manifest.ts";
+import { validateFolders, validateWorkerTypes } from "./worker-manifest.ts";
+import { validateScaffolds } from "./scaffold-manifest.ts";
+import { validateMomentSections } from "./hook-manifest.ts";
+import { validateObservers } from "./observer-manifest.ts";
+import { RESERVED_TOOLBAR_LABELS } from "./reserved-labels.ts";
+import { applyToolScope, serverFacts, skillScopeFields, toolbarFacts } from "./scope-manifest.ts";
 import { validateNativeDeclarations } from "./native-manifest.ts";
 import { assertRelativePath, containedReal } from "../paths.ts";
 import path from "node:path";
@@ -5,6 +15,7 @@ import { createHash } from "node:crypto";
 import { constants, type Dirent } from "node:fs";
 import { lstat, open, readdir, readFile } from "node:fs/promises";
 import type {
+  PluginConfirmationInput,
   PluginFileSkill,
   PluginManifest,
   PluginManifestTool,
@@ -17,15 +28,23 @@ import type {
   PluginToolbarTarget,
 } from "../../shared/plugins.ts";
 import {
+  CONFIRMATION_INPUT_LABEL_MAX_CHARS,
+  confirmationInputValue,
   isFileSkill,
   isToolbarIconName,
   PLUGIN_SKILL_TOOL,
+  isPluginSetup,
+  PLUGIN_SETUP_STEP_CHARS,
+  PLUGIN_SETUP_STEPS,
   PluginCapability,
   PluginHostTool,
+  PluginToolAudience,
   TOOLBAR_ICON_NAMES,
 } from "../../shared/plugins.ts";
 import { PLUGIN_ID } from "../../shared/plugin-id.ts";
+import { GameEngine, isGameEngine } from "../../shared/game-engine.ts";
 import { MCP_ID, McpTransport } from "../../shared/mcp.ts";
+import { MakingKind, type PluginToolAsset, readToolAsset } from "../../shared/asset-making.ts";
 import { pictureType } from "../image-sniff.ts";
 
 /** The plugin's id, and every name it declares (tools, skills, panels, actions, settings). */
@@ -43,6 +62,7 @@ const HOST_CLI_PLUGIN = "genex";
 /** Host tools that spend credits or change the game: each needs the user's consent every time. */
 const CONSENTED_HOST_TOOLS: ReadonlySet<string> = new Set([PluginHostTool.GenexCliPaid, PluginHostTool.GenexPackage]);
 const HOST_TOOLS: ReadonlySet<unknown> = new Set(Object.values(PluginHostTool));
+const TOOL_AUDIENCES: ReadonlySet<unknown> = new Set(Object.values(PluginToolAudience));
 const KIB = 1024;
 /** The Genex blender server's own per-call ceiling is 15 minutes; 30 is the outer bound. */
 const MAX_CALL_TIMEOUT_MS = 1_800_000;
@@ -64,19 +84,6 @@ const SENSITIVE_ACTIONS = new Set([
   "publish-draft",
   "publish-gallery",
 ]);
-/** Labels Studio's own stage-strip buttons use; the build smoke finds them by exact text. */
-export const RESERVED_TOOLBAR_LABELS: ReadonlySet<string> = new Set([
-  "Retry",
-  "Ready",
-  "Live",
-  "Builds",
-  "Assets",
-  "Export",
-  "Plugins",
-  "Reload",
-  "State",
-  "Close plugins",
-]);
 const reservedLower = new Set([...RESERVED_TOOLBAR_LABELS].map((l) => l.toLowerCase()));
 const SUPPORTED_API_VERSIONS = [1, 2, 3];
 /** Declared limits, each the largest a manifest field may be. */
@@ -96,6 +103,8 @@ const LIMIT = {
   McpRequiredSettings: 32,
   McpMaxTools: 64,
   McpPolicyNames: 64,
+  /** The longest raw tool name a server's `reads` may name. */
+  McpToolNameChars: 128,
   ToolbarItems: 4,
   ToolbarLabelChars: 24,
   ToolbarAriaChars: 60,
@@ -136,6 +145,7 @@ const EnvSource = {
 
 /** What a publisher reads when a manifest is refused, and a caller when tool input is. */
 const MESSAGE = {
+  InvalidSetup: `setup must be 1 to ${PLUGIN_SETUP_STEPS} plain one-line steps of at most ${PLUGIN_SETUP_STEP_CHARS} characters`,
   InvalidIcon: "icon must name a .png, .jpg, .webp or .svg file inside the package",
   MissingIcon: (file: string) => `icon ${file} is missing from the package`,
   IconNotAFile: (file: string) => `icon ${file} is not a plain file`,
@@ -160,6 +170,7 @@ const MESSAGE = {
   SkillInDotFolder: "A plugin skill file may not be a dot file or sit in a dot folder: packing leaves those out",
   InvalidSkillReferences: `Invalid plugin skill references (at most ${LIMIT.SkillReferences}, distinct, and not the skill's own file)`,
   FileSkillNeedsApi3: "A plugin skill file requires apiVersion 3",
+  InvalidSkillEngines: `Invalid plugin skill engines (a non-empty list of ${Object.values(GameEngine).join(", ")}, each once)`,
   ReservedSkillTool: `Tool name "${PLUGIN_SKILL_TOOL}" is reserved for reading the plugin's file skills`,
   MissingSkillFile: (file: string) => `Plugin skill file ${file} is missing`,
   SkillNotAFile: (file: string) => `Plugin skill file ${file} is not a plain file`,
@@ -170,6 +181,11 @@ const MESSAGE = {
     "tools[].host runs a program Studio ships and is reserved for the bundled Genex plugin on apiVersion 3",
   InvalidHostTool: `Invalid tools[].host (${[...HOST_TOOLS].join(", ")})`,
   HostToolNeedsConfirmation: "A host tool that spends credits or installs packages needs a confirmation",
+  AudienceNeedsApi3: "tools[].audience requires apiVersion 3",
+  InvalidToolAudience: `Invalid tools[].audience (${[...TOOL_AUDIENCES].join(", ")})`,
+  AssetNeedsApi3: "tools[].asset requires apiVersion 3",
+  InvalidConfirmationInput: `Invalid tools[].confirmationInput (API 3, with a confirmation: { parameter: one of the tool's string parameters, label: one plain line of 1-${CONFIRMATION_INPUT_LABEL_MAX_CHARS} characters })`,
+  InvalidToolAsset: `Invalid tools[].asset (an agent tool's { kind: ${Object.values(MakingKind).join("|")}, prompt?: one of its parameters, tool?: a short name })`,
   InvalidPanel: "Invalid panel",
   InvalidAction: "Invalid action",
   SensitiveNeedsConfirmation: "Sensitive actions require trusted confirmation",
@@ -212,6 +228,7 @@ const MESSAGE = {
   InvalidRequiresCredential: "Invalid mcpServers requires.credential",
   CredentialNeedsCapability: "mcpServers requires.credential needs the credentials capability",
   InvalidToolPolicy: "Invalid mcpServers toolPolicy",
+  InvalidReads: "Invalid mcpServers reads (up to 64 distinct tool names)",
   InvalidToolPolicyList: (label: string) => `Invalid mcpServers toolPolicy ${label}`,
   InvalidToolbarLabel: "Invalid toolbar label (1-24 characters)",
   ReservedToolbarLabel: (label: string) => `Invalid toolbar label: "${label}" is reserved by Studio`,
@@ -220,6 +237,7 @@ const MESSAGE = {
   InvalidRequiresProject: "Invalid toolbar requiresProject",
   StatusUndeclared: "Invalid toolbar status: must name a declared action",
   StatusConfirms: "Invalid toolbar status: the action must not require confirmation",
+  InvalidNative: "Invalid action: native must be true when present",
   TooManyToolbarItems: "Invalid toolbar (at most 4 items)",
   InvalidToolbarId: "Invalid toolbar item id (unique, lowercase)",
   InvalidToolbarTarget: "Invalid toolbar target",
@@ -296,6 +314,50 @@ function validateHost(t: PluginManifestTool, m: PluginManifest): void {
     throw new Error(MESSAGE.HostToolNeedsConfirmation);
 }
 
+/** A tool's `audience` (API 3): one Studio knows. */
+function validateAudience(t: PluginManifestTool, m: PluginManifest): void {
+  if (m.apiVersion < 3) throw new Error(MESSAGE.AudienceNeedsApi3);
+  if (!TOOL_AUDIENCES.has(t.audience)) throw new Error(MESSAGE.InvalidToolAudience);
+}
+
+/**
+ * What a tool says its calls make (API 3): a kind Studio draws, a prompt that is one of its own
+ * parameters, and only on a tool agents call (the harness's own steps make no card).
+ */
+function toolAsset(t: PluginManifestTool, m: PluginManifest): PluginToolAsset {
+  if (m.apiVersion < 3) throw new Error(MESSAGE.AssetNeedsApi3);
+  const asset = readToolAsset(t.asset);
+  const promptKnown = asset?.prompt === undefined || Object.hasOwn(t.parameters.properties, asset.prompt);
+  if (!asset || !promptKnown || t.audience === PluginToolAudience.Harness) throw new Error(MESSAGE.InvalidToolAsset);
+  return asset;
+}
+
+/**
+ * The text parameter the person may edit on a tool's card (API 3): one of the tool's own string
+ * parameters, on a tool with a card, labelled in one plain line.
+ */
+function confirmationInput(t: PluginManifestTool, m: PluginManifest): PluginConfirmationInput {
+  const input: unknown = t.confirmationInput;
+  if (m.apiVersion < 3 || t.confirmation === undefined || !isRecord(input))
+    throw new Error(MESSAGE.InvalidConfirmationInput);
+  const { parameter, label } = input;
+  const declared = typeof parameter === "string" && Object.hasOwn(t.parameters.properties, parameter);
+  const text = declared && t.parameters.properties[parameter as string]?.type === "string";
+  const labelled = confirmationInputValue(label) === label && isText(label, 1, CONFIRMATION_INPUT_LABEL_MAX_CHARS);
+  if (!text || !labelled) throw new Error(MESSAGE.InvalidConfirmationInput);
+  return { parameter: parameter as string, label: label as string };
+}
+
+/** A tool's optional declarations: its consent question (API 2), its host program and its audience. */
+function validateToolOptions(t: PluginManifestTool, m: PluginManifest): void {
+  if (t.confirmation !== undefined) {
+    if (m.apiVersion < 2) throw new Error(MESSAGE.ConfirmationNeedsApi2);
+    if (!isText(t.confirmation, 1, LIMIT.ConfirmationChars)) throw new Error(MESSAGE.InvalidConfirmation);
+  }
+  if (t.host !== undefined) validateHost(t, m);
+  if (t.audience !== undefined) validateAudience(t, m);
+}
+
 /** One tool in canonical form; `names` holds the tool names already declared. */
 function validateTool(t: PluginManifestTool, m: PluginManifest, names: Set<string>): PluginManifestTool {
   assertName("tool", t?.name);
@@ -308,11 +370,7 @@ function validateTool(t: PluginManifestTool, m: PluginManifest, names: Set<strin
     required !== undefined &&
     (!Array.isArray(required) || required.some((k) => typeof k !== "string" || !Object.hasOwn(properties, k)));
   if (unknownRequired) throw new Error(MESSAGE.UnknownRequired);
-  if (t.confirmation !== undefined) {
-    if (m.apiVersion < 2) throw new Error(MESSAGE.ConfirmationNeedsApi2);
-    if (!isText(t.confirmation, 1, LIMIT.ConfirmationChars)) throw new Error(MESSAGE.InvalidConfirmation);
-  }
-  if (t.host !== undefined) validateHost(t, m);
+  validateToolOptions(t, m);
   const tool: PluginManifestTool = {
     name: t.name,
     description: t.description,
@@ -320,7 +378,12 @@ function validateTool(t: PluginManifestTool, m: PluginManifest, names: Set<strin
       required === undefined ? { type: "object", properties } : { type: "object", properties, required: [...required] },
   };
   if (t.confirmation !== undefined) tool.confirmation = t.confirmation;
+  if (t.confirmationInput !== undefined) tool.confirmationInput = confirmationInput(t, m);
   if (t.host !== undefined) tool.host = t.host;
+  // Agents are the default audience, so only the harness is written.
+  if (t.audience === PluginToolAudience.Harness) tool.audience = t.audience;
+  if (t.asset !== undefined) tool.asset = toolAsset(t, m);
+  applyToolScope(t, tool, m);
   return tool;
 }
 
@@ -350,12 +413,33 @@ function fileSkill(s: Record<string, unknown>, name: string, m: PluginManifest):
   return skill;
 }
 
-/** One skill in canonical form: inline text, or (API 3) a file with a summary; never both. */
-function validateSkill(raw: Record<string, unknown>, name: string, m: PluginManifest): PluginSkill {
-  if ((raw.text === undefined) === (raw.file === undefined)) throw new Error(MESSAGE.SkillTextOrFile);
-  if (raw.file !== undefined) return fileSkill(raw, name, m);
+/** The engines a skill names, in canonical form: known engines, at least one, each once. */
+function skillEngines(value: unknown): GameEngine[] {
+  const valid = Array.isArray(value) && value.length > 0 && value.every(isGameEngine);
+  if (!valid || new Set(value).size !== value.length) throw new Error(MESSAGE.InvalidSkillEngines);
+  return [...value];
+}
+
+/** An inline skill's text in canonical form. */
+function inlineSkill(raw: Record<string, unknown>, name: string): PluginSkill {
   if (!isText(raw.text, 1, LIMIT.SkillChars)) throw new Error(MESSAGE.InvalidSkillText);
   return { name, text: raw.text };
+}
+
+/**
+ * One skill in canonical form: inline text, or (API 3) a file with a summary; never both. Either
+ * may name the engines or the facts whose games' briefs carry it, and the agent tools it explains.
+ */
+function validateSkill(
+  raw: Record<string, unknown>,
+  name: string,
+  m: PluginManifest,
+  tools: PluginManifestTool[],
+): PluginSkill {
+  if ((raw.text === undefined) === (raw.file === undefined)) throw new Error(MESSAGE.SkillTextOrFile);
+  const skill = raw.file !== undefined ? fileSkill(raw, name, m) : inlineSkill(raw, name);
+  const engines = raw.engines === undefined ? {} : { engines: skillEngines(raw.engines) };
+  return { ...skill, ...engines, ...skillScopeFields(raw, tools, m) };
 }
 
 /**
@@ -380,7 +464,7 @@ function validateSkills(m: PluginManifest, tools: PluginManifestTool[]): PluginS
     const repeated = names.has(raw.name);
     if (repeated && !legacy) throw new Error(MESSAGE.DuplicateSkill);
     names.add(raw.name);
-    if (!repeated) skills.push(legacy ? legacySkill(raw, raw.name) : validateSkill(raw, raw.name, m));
+    if (!repeated) skills.push(legacy ? legacySkill(raw, raw.name) : validateSkill(raw, raw.name, m, tools));
   }
   if (skills.some(isFileSkill) && tools.some((t) => t.name === PLUGIN_SKILL_TOOL))
     throw new Error(MESSAGE.ReservedSkillTool);
@@ -425,11 +509,15 @@ function validateActions(m: PluginManifest): PluginManifest["actions"] {
       isText(a.label, 1, LIMIT.LabelChars) &&
       (a.confirmation === undefined || typeof a.confirmation === "string");
     if (!valid) throw new Error(MESSAGE.InvalidAction);
+    if (a.native !== undefined && a.native !== true) throw new Error(MESSAGE.InvalidNative);
     if (needsConfirmation(a, m) && !a.confirmation) throw new Error(MESSAGE.SensitiveNeedsConfirmation);
     names.add(a.name);
-    return a.confirmation === undefined
-      ? { name: a.name, label: a.label }
-      : { name: a.name, label: a.label, confirmation: a.confirmation };
+    return {
+      name: a.name,
+      label: a.label,
+      ...(a.confirmation === undefined ? {} : { confirmation: a.confirmation }),
+      ...(a.native ? { native: true as const } : {}),
+    };
   });
 }
 
@@ -518,10 +606,33 @@ function validateReachSections(m: PluginManifest, canonical: PluginManifest): vo
   }
 }
 
-/** The account flow (API 2) and the API 3 delivery limits and native declarations. */
+/**
+ * What the plugin shows of a game beside its moments (API 3): its observers, and its judges, whose
+ * probes are checked against the tools' canonical locks.
+ */
+function validateEvidenceSections(m: PluginManifest, canonical: PluginManifest): void {
+  if (m.observers !== undefined) canonical.observers = validateObservers(m, canonical);
+  if (m.judges !== undefined) canonical.judges = validateJudges({ ...m, engine: canonical.engine }, canonical.tools);
+}
+
+/**
+ * The account flow (API 2), and the API 3 delivery limits, native declarations, project detection,
+ * the engine a game-engine plugin declares, what a project's history leaves out and where its assets live, the plugin's worker types, its
+ * scaffolds and the folders its engine programs write to, its locks and the handlers of Genex's moments, its
+ * observers and its judges.
+ */
 function validateHostSections(m: PluginManifest, canonical: PluginManifest): void {
   if (m.account !== undefined) canonical.account = validateAccount(m, canonical.actions);
+  if (m.detect !== undefined) canonical.detect = validateDetect(m);
+  if (m.engine !== undefined) canonical.engine = validateEngine({ ...m, detect: canonical.detect });
+  if (m.workspace !== undefined) canonical.workspace = validateWorkspace(m);
+  if (m.assets !== undefined) canonical.assets = validateAssets(m);
   if (m.assetLimits !== undefined) canonical.assetLimits = validateAssetLimits(m);
+  if (m.workerTypes !== undefined) canonical.workerTypes = validateWorkerTypes({ ...m, tools: canonical.tools });
+  if (m.scaffolds !== undefined) canonical.scaffolds = validateScaffolds({ ...m, tools: canonical.tools });
+  if (m.folders !== undefined) canonical.folders = validateFolders(m);
+  validateMomentSections(m, canonical);
+  validateEvidenceSections(m, canonical);
   if (m.nativeRuntimes !== undefined || m.nativeJobs !== undefined) {
     if (m.apiVersion !== 3 || !hasCapability(m, PluginCapability.NativeRuntime))
       throw new Error(MESSAGE.NativeNeedsApi3);
@@ -567,6 +678,10 @@ export function validateManifest(value: unknown): PluginManifest {
   validateReachSections(m, canonical);
   validateHostSections(m, canonical);
   if (m.icon !== undefined) canonical.icon = validateIcon(m.icon);
+  if (m.setup !== undefined) {
+    if (!isPluginSetup(m.setup)) throw new Error(MESSAGE.InvalidSetup);
+    canonical.setup = [...m.setup];
+  }
   return canonical;
 }
 
@@ -659,8 +774,12 @@ function validateMcpServer(raw: PluginMcpServer, m: PluginManifest): PluginMcpSe
   if (requires) server.requires = requires;
   const toolPolicy = raw.toolPolicy === undefined ? undefined : mcpToolPolicy(raw.toolPolicy);
   if (toolPolicy) server.toolPolicy = toolPolicy;
+  const reads = raw.reads === undefined ? undefined : mcpReads(raw.reads);
+  if (reads) server.reads = reads;
   applyServerLimits(raw, server);
   server.description = raw.description;
+  const facts = serverFacts(raw, m);
+  if (facts) server.facts = facts;
   return server;
 }
 
@@ -759,6 +878,18 @@ function mcpToolPolicy(value: unknown): PluginMcpServer["toolPolicy"] {
   return Object.keys(out).length ? out : undefined;
 }
 
+/** The tools a server says only read: distinct names, within the policy list's cap. */
+function mcpReads(value: unknown): string[] | undefined {
+  const names = Array.isArray(value) ? value : null;
+  const valid =
+    names !== null &&
+    names.length <= LIMIT.McpPolicyNames &&
+    names.every((name) => isText(name, 1, LIMIT.McpToolNameChars)) &&
+    new Set(names).size === names.length;
+  if (!valid) throw new Error(MESSAGE.InvalidReads);
+  return names.length ? [...(names as string[])] : undefined;
+}
+
 /** A toolbar item's label and aria label: in length, trimmed, unique and none of Studio's own. */
 function validateToolbarLabels(raw: PluginToolbarItem, arias: Set<string>): void {
   if (!isText(raw.label, 1, LIMIT.ToolbarLabelChars) || raw.label.trim() !== raw.label)
@@ -798,9 +929,11 @@ function validateToolbar(value: unknown, m: PluginManifest): PluginToolbarItem[]
     validateToolbarExtras(raw);
     const target = validateTarget(raw.target, m);
     validateToolbarStatus(raw, m);
+    const facts = toolbarFacts(raw, m);
     const item: PluginToolbarItem = { id: raw.id, label: raw.label, ariaLabel: raw.ariaLabel, target };
     if (raw.icon !== undefined) item.icon = raw.icon;
     if (raw.requiresProject !== undefined) item.requiresProject = raw.requiresProject;
+    if (facts) item.facts = facts;
     if (raw.status !== undefined) item.status = raw.status;
     return item;
   });
@@ -838,6 +971,7 @@ export async function inspectPackage(root: string): Promise<PluginManifest> {
   await containedReal(root, m.backend);
   for (const p of m.panels) await containedReal(root, p.file);
   await inspectSkillFiles(root, m);
+  await inspectJudgeBriefs(root, m);
   if (m.icon) await readPluginIcon(root, m.icon);
   return m;
 }

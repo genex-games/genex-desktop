@@ -46,7 +46,11 @@ export function parseGenexJson(output: string): any {
 
 /**
  * The pinned CLI's whole environment, built from scratch: nothing else of Studio's reaches it.
- * `home` is a publish run's contained HOME, which also commits as the studio (GIT_ENV).
+ * `home` is the run's contained HOME: a publish run's workspace `home/`, or an asset run's in its
+ * project's tools workspace. Every Studio run of the CLI gets one (`GenexCliRun.home`), because the
+ * CLI removes `genex-*` skills from `.claude`, `.codex` and `.cursor` under its HOME before most
+ * commands; the user's own home would lose the skills they installed. A run with one also commits
+ * as the studio (GIT_ENV).
  * The CLI's crash reporting is off unless the user turned it on (`genexTelemetryEnv`). On Windows
  * it also gets what any program needs to start there, its profile folders inside `home` when set.
  */
@@ -87,7 +91,8 @@ export interface GenexCliRun {
   signal: AbortSignal | undefined;
   timeoutMs: number;
   parse: boolean;
-  home?: string;
+  /** The run's contained HOME (`genexCliEnv`); never the user's, so every run must name one. */
+  home: string;
   /**
    * The exit codes whose output is the command's answer rather than a failure; `[0]` unless given.
    * `genex cover <file>` exits 1 for a frame Genex refused, which is an answer like any other.

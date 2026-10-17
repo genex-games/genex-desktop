@@ -18,17 +18,24 @@
  * away from the caller's memory and puts it in one testable rule.
  */
 import { constants } from "node:fs";
-import { cp, mkdir, readdir, rm, stat, symlink, writeFile } from "node:fs/promises";
+import { cp, mkdir, readdir, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { ensureDir, pathExists } from "../substrate/fsx.ts";
 import { HOST_GIT_CONFIG } from "../substrate/snapshots.ts";
-import { packageCommandsIn } from "../substrate/toolchain.ts";
+import {
+  GUARDED_ADD,
+  GUARDED_CI,
+  GUARDED_INSTALL,
+  guardedInstallCommand,
+  packageCommandsIn,
+  skippedSetupScripts,
+} from "../substrate/toolchain.ts";
 import type { ProjectShape } from "../substrate/game-workspace.ts";
-import { type RunRequest, type RunResult, shellQuote } from "../substrate/spawn.ts";
-import type { BuildProblem, InstallResult } from "../shared/build-problem.ts";
+import { type RunConfinement, type RunRequest, type RunResult, shellQuote } from "../substrate/spawn.ts";
+import type { BuildProblem, InstallResult, SetupScripts } from "../shared/build-problem.ts";
 import { MINUTE_MS } from "../shared/duration.ts";
 import { GENEX_GAME_PACKAGES, isGenexGamePackage } from "../shared/genex.ts";
 
@@ -56,6 +63,22 @@ function isServedOutput(rel: string, serve: string | null): boolean {
  */
 export const REGISTRY_DOMAIN = "registry.npmjs.org";
 
+/**
+ * npm settings a guarded install pins. They rank above the copy's own `.npmrc`, which could
+ * otherwise turn scripts back on, point npm at another registry, or name a "git" program for npm
+ * to run while the registry is open.
+ */
+const GUARDED_NPM_ENV = {
+  npm_config_ignore_scripts: "true",
+  npm_config_registry: `https://${REGISTRY_DOMAIN}/`,
+  npm_config_git: "git",
+  npm_config_global: "false",
+  // The lockfile says which packages had setup scripts to skip (`setupScripts`).
+  npm_config_package_lock: "true",
+  npm_config_audit: "false",
+  npm_config_fund: "false",
+} as const;
+
 const MESSAGE = {
   UnknownPackage: (name: string) =>
     `${name || "nothing"} is not a package Studio adds: only ${Object.keys(GENEX_GAME_PACKAGES).join(" and ")}`,
@@ -66,7 +89,11 @@ export interface BuildSource {
   project: string;
   /** Where the sources are: the game folder, or a worktree the app made. */
   dir: string;
+  /** The game's own folder, when `dir` is a worktree of it: the worktree's packages are linked from there. */
+  game?: string;
   shape: ProjectShape;
+  /** Someone else's game whose setup scripts the person has not trusted (`guardScripts`): none run. */
+  guarded?: boolean;
 }
 
 export interface BuildOutcome {
@@ -101,9 +128,41 @@ export function buildFailureNote(problem: BuildProblem): string {
 /** Files that are never part of a build, however big the folder is. */
 const NEVER_MIRRORED = new Set([".git", "node_modules", ".studio"]);
 
+/**
+ * A build or an install held to `write` and the temp folder in its game's scratch: it never writes
+ * another game, the games folder or another build's scratch, whatever the game's scripts try.
+ */
+const confinement = (write: string[], shadow: string): RunConfinement => ({
+  write,
+  tmp: path.join(shadow, "tmp"),
+});
+
+/**
+ * What a build writes: its sources, its scratch and, for a worktree, the game it was made from —
+ * the worktree's node_modules is a link to that game's, where tools keep caches (`tsc -b`'s
+ * tsbuildinfo, webpack's cache).
+ */
+function buildWrites(source: BuildSource, dir: string, shadow: string): string[] {
+  const game = source.game ? path.resolve(source.game) : dir;
+  return game === dir ? [dir, shadow] : [dir, game, shadow];
+}
+
+/** A JSON file's value; null when it is missing or not JSON. */
+async function readJson(file: string): Promise<unknown> {
+  const text = await readFile(file, "utf8").catch(() => null);
+  if (text === null) return null;
+  try {
+    return JSON.parse(text) as unknown;
+  } catch {
+    return null;
+  }
+}
+
 /** Where one build runs, where its output is served from, and the last output that worked. */
 interface BuildPlace {
   inPlace: boolean;
+  /** The build's own scratch folder: its mirror, its output, its temp files. */
+  shadow: string;
   work: string;
   output: string;
   lastGood: string | null;
@@ -135,6 +194,11 @@ export class GameBuilds {
   readonly #built = new Map<string, Built>();
   /** The build already running for a source, so two looks at one folder are one build. */
   readonly #inFlight = new Map<string, Promise<BuildOutcome>>();
+  /**
+   * The installs running, by source folder. The registry an install opens is open to every
+   * sandboxed process, so while any runs no build starts: no game's code meets the open registry.
+   */
+  readonly #installing = new Map<string, Promise<void>>();
 
   constructor(options: {
     root: string;
@@ -162,6 +226,8 @@ export class GameBuilds {
    */
   async ensure(source: BuildSource): Promise<BuildOutcome> {
     const dir = path.resolve(source.dir);
+    // Asked again after each wait: another install may have started meanwhile.
+    while (this.#installing.size > 0) await Promise.all(this.#installing.values());
     const running = this.#inFlight.get(dir);
     if (running) return await running;
     const started = this.#ensure(source, dir);
@@ -183,7 +249,7 @@ export class GameBuilds {
     }
 
     const place = await this.#placeBuild(source.project, dir, serve);
-    const { inPlace, work, output, lastGood } = place;
+    const { inPlace, shadow, work, output, lastGood } = place;
     const key = await treeKey(dir, serve);
     const memoised = await this.#memoised(dir, key, lastGood);
     if (memoised) return memoised;
@@ -194,7 +260,9 @@ export class GameBuilds {
       cwd: work,
       timeoutMs: BUILD_TIMEOUT_MS,
       label: `build:${source.project}`,
-      env: this.#cacheEnv(),
+      // A build downloads nothing; whatever its npm keeps stays in the build's own scratch.
+      env: this.#packageEnv(this.#ownCache(source.project, dir)),
+      confine: confinement(buildWrites(source, dir, shadow), shadow),
     });
     if (result.code !== 0) {
       return this.#broken(dir, key, output, lastGood, await this.#problem(source, result));
@@ -221,7 +289,7 @@ export class GameBuilds {
     // sentence promising the opposite.
     const keepsLast = inPlace || output !== work;
     const lastGood = keepsLast && (await pathExists(path.join(output, "index.html"))) ? output : null;
-    return { inPlace, work, output, lastGood };
+    return { inPlace, shadow, work, output, lastGood };
   }
 
   /**
@@ -292,16 +360,79 @@ export class GameBuilds {
   async install(source: BuildSource): Promise<InstallResult> {
     if (!source.shape.install) return { ok: false, lines: ["this game declares no packages to install"] };
     const dir = path.resolve(source.dir);
-    const command = (await packageCommandsIn(dir)).install;
+    return await this.#holdingBuilds(dir, async () => {
+      const command = (await packageCommandsIn(dir)).install;
+      return await this.#installIn(source.project, dir, command, this.#ownCache(source.project, dir), {});
+    });
+  }
+
+  /**
+   * Install a game the person did not write — a remix — with nothing of it running while the
+   * registry is open: npm only, from its npm lockfile when it has one (else from package.json),
+   * every script off, and the settings its `.npmrc` could steer pinned. A lockfile npm refuses
+   * (one out of step with package.json) is installed from package.json instead. Null when there is
+   * no package.json.
+   */
+  async installGuarded(source: Pick<BuildSource, "project" | "dir">): Promise<InstallResult | null> {
+    const dir = path.resolve(source.dir);
+    return await this.#holdingBuilds(dir, async () => {
+      const command = guardedInstallCommand(await readdir(dir).catch(() => []));
+      if (!command) return null;
+      const installed = await this.#installIn(source.project, dir, command, this.#packageCache, GUARDED_NPM_ENV);
+      if (installed.ok || command !== GUARDED_CI) return installed;
+      return await this.#installIn(source.project, dir, GUARDED_INSTALL, this.#packageCache, GUARDED_NPM_ENV);
+    });
+  }
+
+  /** The setup scripts a guarded install in `dir` skipped: the game's own, and its packages'. */
+  async setupScripts(dir: string): Promise<SetupScripts> {
+    const read = (file: string) => readJson(path.join(dir, file));
+    const lock = (await read("npm-shrinkwrap.json")) ?? (await read("package-lock.json"));
+    return skippedSetupScripts(await read("package.json"), lock);
+  }
+
+  /**
+   * Do `work`, an install in `dir`, once every build already running is done and any install
+   * already in `dir` has finished, and start no build until it is done. The registry opening an
+   * install gets is process-wide, and no game's code may run while it lasts. Whatever `dir` had
+   * memoised was memoised without those packages.
+   */
+  async #holdingBuilds<T>(dir: string, work: () => Promise<T>): Promise<T> {
+    const before = [...this.#inFlight.values(), this.#installing.get(dir)];
+    const started = (async () => {
+      await Promise.allSettled(before);
+      return await work();
+    })();
+    const settled = started.then(
+      () => {},
+      () => {},
+    );
+    this.#installing.set(dir, settled);
+    try {
+      return await started;
+    } finally {
+      if (this.#installing.get(dir) === settled) this.#installing.delete(dir);
+      this.forget(dir);
+    }
+  }
+
+  /** Run an install in `dir` with the registry open, held to the game and the package cache `cache`. */
+  async #installIn(
+    project: string,
+    dir: string,
+    command: string,
+    cache: string,
+    pins: Record<string, string>,
+  ): Promise<InstallResult> {
     const result = await this.#run({
       command,
       cwd: dir,
       timeoutMs: INSTALL_TIMEOUT_MS,
-      label: `install:${source.project}`,
+      label: `install:${project}`,
       policy: { allowedDomains: [REGISTRY_DOMAIN] },
-      env: this.#cacheEnv(),
+      env: { ...this.#packageEnv(cache), ...pins },
+      confine: confinement([dir, cache], this.#shadow(project, dir)),
     });
-    this.forget(source.dir);
     return { ok: result.code === 0, lines: outputLines(result, result.code === 0 ? 3 : 6) };
   }
 
@@ -312,7 +443,10 @@ export class GameBuilds {
    * agent's. Only a key of {@link GENEX_GAME_PACKAGES}; the version always comes from that table.
    * A game without package.json (Studio's template, with its import maps) is refused.
    */
-  async addPackages(source: Pick<BuildSource, "project" | "dir">, names: readonly string[]): Promise<InstallResult> {
+  async addPackages(
+    source: Pick<BuildSource, "project" | "dir" | "guarded">,
+    names: readonly string[],
+  ): Promise<InstallResult> {
     const packages = names.filter(isGenexGamePackage);
     const unknown = names.find((name) => !isGenexGamePackage(name));
     if (unknown !== undefined || !packages.length) return { ok: false, lines: [MESSAGE.UnknownPackage(unknown ?? "")] };
@@ -320,26 +454,56 @@ export class GameBuilds {
     const manifest = await stat(path.join(dir, "package.json")).catch(() => null);
     if (!manifest?.isFile()) return { ok: false, lines: [MESSAGE.NoPackageJson] };
     const pinned = packages.map((name) => shellQuote(`${name}@${GENEX_GAME_PACKAGES[name]}`));
-    const result = await this.#run({
-      command: `${(await packageCommandsIn(dir)).add} ${pinned.join(" ")}`,
-      cwd: dir,
-      timeoutMs: INSTALL_TIMEOUT_MS,
-      label: `add-packages:${source.project}`,
-      policy: { allowedDomains: [REGISTRY_DOMAIN] },
-      env: this.#cacheEnv(),
+    // A guarded game adds the guarded way: npm, its scripts off, its settings pinned.
+    const cache = source.guarded ? this.#packageCache : this.#ownCache(source.project, dir);
+    const pins = source.guarded ? GUARDED_NPM_ENV : {};
+    return await this.#holdingBuilds(dir, async () => {
+      const add = source.guarded ? GUARDED_ADD : (await packageCommandsIn(dir)).add;
+      const result = await this.#run({
+        command: `${add} ${pinned.join(" ")}`,
+        cwd: dir,
+        timeoutMs: INSTALL_TIMEOUT_MS,
+        label: `add-packages:${source.project}`,
+        policy: { allowedDomains: [REGISTRY_DOMAIN] },
+        env: { ...this.#packageEnv(cache), ...pins },
+        confine: confinement([dir, cache], this.#shadow(source.project, dir)),
+      });
+      return { ok: result.code === 0, lines: outputLines(result, result.code === 0 ? 3 : 6) };
     });
-    this.forget(source.dir);
-    return { ok: result.code === 0, lines: outputLines(result, result.code === 0 ? 3 : 6) };
   }
 
   /**
    * Package managers keep their cache and their crash logs in `$HOME` (`~/.npm`), which no
    * agent process may write. Point them at the studio's own scratch instead, or the first thing
-   * an install does is fail on a directory it was never allowed to make.
+   * an install does is fail on a directory it was never allowed to make. npm's update check is
+   * off: it asks registry.npmjs.org for a newer npm on every command, and under a build's sandbox
+   * that denied connection was the only line the stage showed in place of the build's own error.
    */
-  #cacheEnv(): Record<string, string> {
-    const cache = path.join(this.root, "package-cache");
-    return { npm_config_cache: cache, YARN_CACHE_FOLDER: cache, PNPM_STORE_DIR: cache, BUN_INSTALL_CACHE: cache };
+  #packageEnv(cache: string): Record<string, string> {
+    return {
+      npm_config_cache: cache,
+      npm_config_logs_dir: path.join(cache, "_logs"),
+      npm_config_update_notifier: "false",
+      YARN_CACHE_FOLDER: cache,
+      PNPM_STORE_DIR: cache,
+      BUN_INSTALL_CACHE: cache,
+    };
+  }
+
+  /**
+   * Where guarded installs keep what they download, shared between games: only npm writes it, with
+   * every script off. An install that runs a game's scripts keeps its own ({@link #ownCache}).
+   */
+  get #packageCache(): string {
+    return path.join(this.root, "package-cache");
+  }
+
+  /**
+   * A game's own package cache, in its scratch: for its builds and for an install that runs its
+   * package scripts, which could plant anything in a cache the next game's install reads.
+   */
+  #ownCache(project: string, dir: string): string {
+    return path.join(this.#shadow(project, dir), "npm-cache");
   }
 
   /** One shadow per source folder: six worktrees of one game must not share an output. */
@@ -358,8 +522,15 @@ export class GameBuilds {
       needsInstall: declared && !(await pathExists(path.join(source.dir, "node_modules"))),
       install: source.shape.install,
       showingLastBuild: false,
+      skippedScripts: source.guarded ? await this.#skipped(source.dir) : null,
       at: new Date().toISOString(),
     };
+  }
+
+  /** The setup scripts a guarded game went without; null when there were none to skip. */
+  async #skipped(dir: string): Promise<SetupScripts | null> {
+    const skipped = await this.setupScripts(dir);
+    return skipped.own || skipped.packages.length > 0 ? skipped : null;
   }
 
   /**

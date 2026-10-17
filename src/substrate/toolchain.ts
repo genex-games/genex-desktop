@@ -24,6 +24,7 @@ import os from "node:os";
 import path from "node:path";
 import { SECOND_MS } from "../shared/duration.ts";
 import { StudioPlatform } from "../shared/boot.ts";
+import type { SetupScripts } from "../shared/build-problem.ts";
 
 /** The tools a game's build may need on PATH. `node` first: everything else rides on it. */
 export const BUILD_TOOLS = ["node", "npm", "pnpm", "yarn", "bun"] as const;
@@ -426,6 +427,44 @@ const LOCKFILES: Array<{ file: string; commands: PackageCommands }> = [
 export function packageCommands(files: string[]): PackageCommands {
   for (const row of LOCKFILES) if (files.includes(row.file)) return row.commands;
   return NPM_COMMANDS;
+}
+
+/** npm's install from the game's npm lockfile, every script off. */
+export const GUARDED_CI = "npm ci --ignore-scripts";
+/** npm's install from package.json alone, every script off. */
+export const GUARDED_INSTALL = "npm install --ignore-scripts";
+/** npm's add (`genex__package`) with every script off. */
+export const GUARDED_ADD = `${NPM_COMMANDS.add} --ignore-scripts`;
+
+/**
+ * How npm installs a game the person did not write (a remix), or null with no package.json: from
+ * its npm lockfile when it has one, else from package.json (another manager's lockfile is left
+ * aside: npm resolves the same ranges), and never a script, neither its packages' nor the game's.
+ */
+export function guardedInstallCommand(files: string[]): string | null {
+  if (!files.includes("package.json")) return null;
+  const locked = files.includes("package-lock.json") || files.includes("npm-shrinkwrap.json");
+  return locked ? GUARDED_CI : GUARDED_INSTALL;
+}
+
+/** The scripts npm runs for a package as it installs it: what a guarded install leaves undone. */
+const SETUP_SCRIPTS = ["preinstall", "install", "postinstall", "prepare"] as const;
+/** Where a package sits in npm's lockfile: its name follows the last `node_modules/`. */
+const LOCKED_PATH = /(?:^|\/)node_modules\/((?:@[^/]+\/)?[^/]+)$/;
+
+/**
+ * The setup scripts a guarded install skipped, from the game's package.json and npm's lockfile:
+ * the game's own, and each package with its own (`hasInstallScript`), by name.
+ */
+export function skippedSetupScripts(manifest: unknown, lock: unknown): SetupScripts {
+  const scripts = (manifest as { scripts?: Record<string, unknown> } | null)?.scripts ?? {};
+  const own = SETUP_SCRIPTS.some((name) => typeof scripts[name] === "string");
+  const locked = (lock as { packages?: Record<string, { hasInstallScript?: unknown }> } | null)?.packages ?? {};
+  const packages = Object.entries(locked).flatMap(([at, entry]) => {
+    const name = entry?.hasInstallScript === true ? LOCKED_PATH.exec(at)?.[1] : undefined;
+    return name ? [name] : [];
+  });
+  return { own, packages: [...new Set(packages)].sort() };
 }
 
 /**

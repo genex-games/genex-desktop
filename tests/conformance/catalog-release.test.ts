@@ -9,6 +9,9 @@ import { existsSync } from "node:fs";
 import { checkCatalog } from "../../marketplace/template/scripts/check-catalog.mjs";
 import { stageArtifact } from "../../marketplace/template/scripts/stage-artifact.mjs";
 
+/** The example package's source: its owner is the package's id, so the id is the publisher's own. */
+const SOURCE_REPO = "example/plugins";
+
 async function fixture(tier = "community") {
   const root = await mkdtemp(path.join(os.tmpdir(), "catalog-release-"));
   const pkg = path.join(root, "package");
@@ -18,7 +21,7 @@ async function fixture(tier = "community") {
     config,
     JSON.stringify({
       artifactBaseUrl: "https://plugins.example.invalid/releases",
-      packages: [{ directory: pkg, category: "tools", tier, repo: "acme/plugins", sha: "a".repeat(40) }],
+      packages: [{ directory: pkg, category: "tools", tier, repo: SOURCE_REPO, sha: "a".repeat(40) }],
     }),
   );
   const output = path.join(root, "output");
@@ -80,7 +83,7 @@ test("release gate refuses repacks, removed history, ownership takeover and roll
       } else {
         f.entry.version = scenario === "downgrade" ? "0.0.1" : "2.0.0";
         if (scenario === "publisher") f.entry.publisher = "Other";
-        if (scenario === "repo") f.entry.repo = "other/plugins";
+        if (scenario === "repo") f.entry.repo = "example/other-plugins";
         f.entry.artifact.url = `https://plugins.example.invalid/releases/${f.entry.id}/${f.entry.version}/${f.entry.artifact.sha256}.json`;
         await f.save();
       }
@@ -130,7 +133,7 @@ test("an official package's policy names its repositories, current first, and pa
   const f = await fixture("official");
   try {
     const policy = JSON.parse(await readFile(path.join(f.catalog, "policy.json"), "utf8"));
-    assert.deepEqual(policy.official, { [f.entry.id]: { publisher: f.entry.publisher, repos: ["acme/plugins"] } });
+    assert.deepEqual(policy.official, { [f.entry.id]: { publisher: f.entry.publisher, repos: [SOURCE_REPO] } });
     assert.equal((await f.check(f.uploads)).entries, 1);
     // The prepared repository carries its validator's tests; they include "this catalog passes".
     execFileSync(process.execPath, ["--test", "scripts/check-catalog.test.mjs"], { cwd: f.catalog, stdio: "pipe" });

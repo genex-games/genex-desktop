@@ -83,7 +83,7 @@ describe("the door: what the run promises", () => {
 
   it("∞ is still a choice, and still names the ceiling it stops at", () => {
     const promise = hoursPromise(null, at("04:10"));
-    assert.match(promise, /until its reviewers are satisfied/);
+    assert.match(promise, /until what you asked for is checked working/);
     assert.match(promise, new RegExp(`about ${clockAfter(HOURS_CEILING, at("04:10"))}`));
     // Whole strings, not substrings: 24 h from 04:10 is 04:10 again, so a caption that printed
     // the start time, or forgot the ceiling entirely, matched a bare /04:10/ just as well. The
@@ -138,6 +138,7 @@ describe("the door: what the app opens on launch", () => {
         pathLabel: name,
         library: true,
         built: false,
+        facts: [{ id: "web-game", path: ".", source: "core" }],
         shape: {
           entry: "index.html",
           main: "src/main.js",

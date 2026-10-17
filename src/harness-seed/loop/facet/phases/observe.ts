@@ -15,6 +15,7 @@ import { BuildFailure } from "./build.ts";
 import { MOTION_FRAMES } from "../policy.ts";
 import { brokenStreakWords } from "../rules.ts";
 import { roundFields } from "../record.ts";
+import { ownsCameraWiring } from "../camera-wiring.ts";
 
 /** Observation outages in a row that stop the facet: the challenger is held in the worktree, unjudged. */
 const OUTAGES_TO_STOP = 2;
@@ -72,6 +73,7 @@ async function gatherOnce(loop: FacetLoop, round: FacetRound): Promise<AnyRecord
       // The paths the board reads are cut last when the state is over the studio's budget.
       keepPaths: statePathsNamedByChecks(spec.checks),
       ...(role === FacetRole.Integration ? { maxDemos: Infinity } : {}),
+      camerasOwned: ownsCameraWiring(loop),
       setup: facetSetup,
       // An error the incumbent (or the base, before any incumbent) already logs is the
       // build's, not this challenger's: one shader line in a base nobody owns must not cost

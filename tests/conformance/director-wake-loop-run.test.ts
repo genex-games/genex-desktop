@@ -9,6 +9,7 @@ import { writeFile } from "node:fs/promises";
 import path from "node:path";
 import { afterEach, describe, it } from "node:test";
 import type { DelegateRequest, DelegateResult, LiveToolResult } from "../../src/substrate/engines/types.ts";
+import { reviewerAnswer, seatedReviewer } from "../helpers/reviewer.ts";
 import {
   customEvents,
   type FakePreview,
@@ -19,8 +20,12 @@ import {
 } from "../helpers/studio-rig.ts";
 import { messageQueueState } from "../../src/shared/message-queue.ts";
 import { toEntries } from "../../src/renderer/chat-entries.ts";
+import { buildRunGraph, GraphNodeKind } from "../../src/renderer/run-graph.ts";
+import { CustomEvent, customRecord } from "../../src/shared/custom-events.ts";
 import { deliveryOrder } from "../../src/renderer/chat/delivery-order.ts";
 import { chatContext } from "../../src/shared/chat-history.ts";
+import { JobRole, JobScopeKind } from "../../src/shared/jobs.ts";
+import { PermissionMode } from "../../src/shared/permissions.ts";
 
 /** No run here may hang the suite: each is over in well under a minute when it works. */
 const RIG_TIMEOUT_MS = 240_000;
@@ -310,6 +315,51 @@ describe("the lead is woken, not kept in one long turn", () => {
     await until(() => aborted > 0, "the worker to be stopped", 30_000);
   });
 
+  it("R8. a job that ends while the lead rests is in its next digest", { timeout: RIG_TIMEOUT_MS }, async () => {
+    const { rig, project, runId, dispatch, finished } = await loopRun("wake-by-job");
+    const lead: DelegateRequest[] = [];
+    let rested = false;
+    fakeEngine(rig, async (request) => {
+      if (!request.director) return hangUntilStopped(request, () => {});
+      lead.push(request);
+      const call = (name: string, args: Record<string, unknown>) => request.onLiveTool!(name, args);
+      if (lead.length === 1) {
+        await call("plan", plan);
+        await call("worker_start", startSky);
+        rested = true;
+        return turnResult("lead-1", "the sky is building");
+      }
+      await call("finish", { summary: "the bake failed; stopping here", land: "no" });
+      return turnResult("lead-1", "done");
+    });
+    const running = dispatch();
+    await until(() => rested, "the lead's first turn to end");
+    const threadId = await rig.core.threadForGame(project.name);
+    const job = await rig.core.jobs.start({
+      owner: {
+        project: project.name,
+        chatThreadId: threadId,
+        role: JobRole.Lead,
+        scope: { kind: JobScopeKind.Run, runId },
+      },
+      title: "Light bake",
+      command: "echo baking; exit 3",
+      cwd: rig.core.games.dirFor(project.name),
+      policy: { allowedDomains: [], allowLocalBinding: true },
+      mode: PermissionMode.Auto,
+    });
+    const events = await finished();
+    await running;
+
+    assert.equal(lead.length, 2, lead.map((t) => t.prompt.slice(0, 60)).join(" | "));
+    assert.equal(lead[1]!.resume, "lead-1", "the same session is woken");
+    const woken = lead[1]!.prompt;
+    assert.match(woken, /Light bake \(`echo baking; exit 3`, started by you\) failed \(exit 3\)/, woken);
+    assert.match(woken, new RegExp(`read it with job_tail ${job.id}`));
+    const continued = customEvents(events, "director_continued").filter((e) => e.runId === runId);
+    assert.ok(((continued[0]?.reasons ?? []) as string[]).includes("job_ended"), JSON.stringify(continued));
+  });
+
   it("R7. a Stop while the run prepares opens no lead session: the run closes as stopped", {
     timeout: RIG_TIMEOUT_MS,
   }, async () => {
@@ -386,10 +436,10 @@ describe("the long turn, one field away", () => {
 
       assert.equal(lead.length, 1);
       assert.ok(
-        (lead[0]!.liveTools ?? []).some((t) => t.name === "wait"),
+        (lead[0]!.liveTools ?? []).some((t) => t.name === "worker_wait"),
         "the long turn's wait",
       );
-      assert.match(lead[0]!.prompt, /`wait` is your loop/);
+      assert.match(lead[0]!.prompt, /`worker_wait` is your loop/);
       assert.match(results.finished, /run is closed/, results.finished);
     } finally {
       if (before === undefined) delete process.env.STUDIO_DIRECTOR_LOOP;
@@ -430,13 +480,14 @@ describe("the long turn, one field away", () => {
 
     assert.equal(lead.length, 2);
     assert.match(results.finished, /run is closed/, results.finished);
-    // The long turn is told its own loop — `wait` — and nothing of the wake loop's, playbook included.
-    assert.match(lead[0]!.prompt, /`wait` is your loop/);
+    // The long turn is told its own loop — `worker_wait`, the one worker model's name for its old
+    // `wait` — and nothing of the wake loop's, playbook included.
+    assert.match(lead[0]!.prompt, /`worker_wait` is your loop/);
     assert.doesNotMatch(lead[0]!.prompt, /end your turn/i);
     assert.doesNotMatch(lead[0]!.prompt, /asked once what next/i);
     assert.ok(lead[1]!.prompt.startsWith("The timed build still has"), lead[1]!.prompt.slice(0, 120));
     assert.ok(
-      (lead[0]!.liveTools ?? []).some((t) => t.name === "wait"),
+      (lead[0]!.liveTools ?? []).some((t) => t.name === "worker_wait"),
       "the long turn still has its wait",
     );
     const continued = customEvents(events, "director_continued").filter((e) => e.runId === runId);
@@ -537,6 +588,25 @@ describe("live chat during a build", () => {
     const log = await rig.core.store.listEvents(thread);
     const started = customEvents(log, "autopilot_started").find((e) => e.runId === runId);
     assert.equal(started?.liveChat, true, "the build says its lead takes the chat, so the composer can say so");
+    assert.equal(started?.workerRecords, true, "the run says from its start that its workers leave records");
+    const startIndex = log.findIndex(
+      (event) =>
+        customRecord(event.data)?.event_type === CustomEvent.AutopilotStarted &&
+        customRecord(event.data)?.payload.runId === runId,
+    );
+    const fromItsStart = buildRunGraph(log.slice(0, startIndex + 1), runId);
+    assert.equal(fromItsStart?.tree, true, "a tree before any worker starts: the lead never moves");
+    assert.deepEqual(
+      fromItsStart?.nodes.map((node) => node.kind),
+      [
+        GraphNodeKind.Run,
+        GraphNodeKind.Base,
+        GraphNodeKind.Lead,
+        GraphNodeKind.Integration,
+        GraphNodeKind.Final,
+        GraphNodeKind.FinishCheck,
+      ],
+    );
     assert.equal(customEvents(log, "run_registered").length, 1, "no second run started");
     assert.equal(customEvents(log, "coordinator_message_processing").length, 0, "never a turn of its own");
     const said = toEntries(deliveryOrder(log)).flatMap((e) => (e.kind === "assistant" ? [e.text] : []));
@@ -593,6 +663,56 @@ describe("live chat during a build", () => {
     );
     const finishedEvent = customEvents(events, "run_finished").find((e) => e.runId === runId)!;
     assert.equal(finishedEvent.stoppedBecause, "stopped by the user", "it ran until the user stopped it");
+  });
+
+  /*
+   * The golf game's lead: Codex continuing the chat's own session, whose first turn ran on while
+   * "stop" sat unread for its whole 45 minutes. Its very first turn is cut for the words now.
+   */
+  it("L10. a lead continuing the chat's own session is cut short in its first turn for a stop, and told a stop is wrap_up", {
+    timeout: RIG_TIMEOUT_MS,
+  }, async () => {
+    const { rig, project, runId, dispatch, finished } = await loopRun("live-first-cut");
+    // The chat already talked to Codex: the run's lead continues that session from its first turn.
+    await rig.core.append(
+      [
+        {
+          type: "custom",
+          event_type: "contractor_session",
+          payload: { project: project.name, engine: "codex", sessionId: "chat-1" },
+        },
+      ],
+      await rig.core.threadForGame(project.name),
+    );
+    const lead: DelegateRequest[] = [];
+    let working = false;
+    fakeEngine(rig, async (request) => {
+      if (!request.director) return hangUntilStopped(request, () => {});
+      lead.push(request);
+      if (lead.length === 1) {
+        // Its first turn, on the brief, works on and on.
+        working = true;
+        await aborted(request);
+        return stopped("chat-1");
+      }
+      speak(request, "Stopping: wrapping the build up.");
+      return turnResult("chat-1", "wrapping up");
+    });
+    const running = dispatch();
+    await until(() => working, "the lead's first turn to start");
+    const { thread, messageId } = await say(rig, project.name, "stop the build");
+    assert.equal((await stateOf(rig, thread, messageId))?.state, "delivered");
+    await until(() => lead.length === 2, "the first turn to be cut and resumed with the message");
+    await rig.core.host.dispatch({ type: "run_stop", runId }, 30_000);
+    await finished();
+    await running;
+
+    assert.equal(lead[0]?.resume, "chat-1", "the first turn continues the chat's own session");
+    const resumed = lead[1];
+    assert.equal(resumed?.resume, "chat-1", "the same session, resumed");
+    assert.match(String(resumed?.prompt), /cut short/i, "it is told it was cut");
+    assert.match(String(resumed?.prompt), /stop or finish[^\n]*wrap_up/i, "and that a stop is wrap_up");
+    assert.match(String(resumed?.prompt), /THE USER SAYS[\s\S]*stop the build/);
   });
 
   it("L3. an engine that reads input mid-turn takes the message in the running turn, and it is not said again", {
@@ -1049,6 +1169,8 @@ it("G3. current integrated acceptance permits early completion and keeps a recov
           answers: { "director-play": { answer: "yes", note: "Reached the dusk scene through interaction" } },
         }),
       );
+    // Flipped: the lead's claim is checked by a reviewer first, which says yes here.
+    if (seatedReviewer(request)) return reviewerAnswer("yes") as never;
     assert.ok(request.director, "no builder is needed after current acceptance passes");
     assert.ok(request.onLiveTool);
     await request.onLiveTool("plan", plan);

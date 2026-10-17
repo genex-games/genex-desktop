@@ -1,0 +1,855 @@
+{
+  "apiVersion": 3,
+  "id": "roblox",
+  "version": "0.1.3",
+  "icon": "icon.svg",
+  "name": "Roblox Studio",
+  "publisher": "Genex",
+  "description": "Agents build your game in Roblox Studio on this computer, through Studio's own MCP server and a small Genex helper. Needs Roblox Studio and a Roblox account. Not affiliated with Roblox Corporation. For people 18 and over.",
+  "backend": "backend.mjs",
+  "capabilities": ["network", "game-engine"],
+  "network": {
+    "hosts": [
+      "setup.rbxcdn.com",
+      "127.0.0.1",
+      "github.com",
+      "release-assets.githubusercontent.com",
+      "objects.githubusercontent.com",
+      "raw.githubusercontent.com"
+    ]
+  },
+  "detect": [{ "fact": "roblox-project", "files": ["**/*.rbxl", "**/*.rbxlx", "**/default.project.json"] }],
+  "engine": {
+    "id": "roblox",
+    "label": "Roblox Studio",
+    "projectFiles": [".rbxl", ".rbxlx", ".project.json"],
+    "fact": "roblox-project",
+    "projectInFolder": false,
+    "play": { "players": 8, "clock": "none", "pointer": true, "state": true },
+    "apps": { "mac": ["com.Roblox.RobloxStudio"], "windows": ["RobloxStudioBeta.exe"] },
+    "playerApps": { "mac": ["com.roblox.RobloxPlayer"], "windows": ["RobloxPlayerBeta.exe"] }
+  },
+  "tools": [
+    {
+      "name": "check-scripts",
+      "facts": ["roblox-project"],
+      "description": "Check the game's .luau files under src/ without Studio: types (luau-lsp with Roblox's definitions and a map of src/), lint (selene with Roblox's library) and format (StyLua). It checks the files changed since they last passed; all: true checks every file. Each problem comes back at its file and line: fix every error and warning, then run it again. Errors hold a build's finish back. Until the person adds the Luau checks it answers that and checks nothing.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "all": {
+            "type": "boolean",
+            "description": "Check every .luau file under src/, not only the ones changed since they last passed."
+          }
+        }
+      }
+    },
+    {
+      "name": "generate-mesh",
+      "facts": ["roblox-project"],
+      "needs": ["studio"],
+      "description": "Make a textured 3D mesh with Roblox's own AI from a prompt and add it to this game's place in Roblox Studio. It runs on the person's Roblox account, against its limits, and Roblox moderates what it makes on that account, so the person approves each call on a card. Use it for props and scenery the person asked for; keep it under 20,000 triangles (see the assets skill).",
+      "confirmation": "Make a 3D mesh with Roblox's AI? The prompt goes to Roblox, and it runs on your Roblox account, against its limits. The mesh is added to this game's place, and Roblox moderates what it makes on your Roblox account.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "prompt": { "type": "string", "description": "What to make, in the person's words." },
+          "parts": {
+            "type": "string",
+            "description": "Part names to split it into, comma-separated or a JSON array of names (at most 8). Leave out to let Roblox pick."
+          },
+          "segmentation": {
+            "type": "string",
+            "description": "auto (Roblox picks the parts, the default), none (one piece) or explicit (the names in parts)."
+          },
+          "triangles": { "type": "number", "description": "At most this many triangles, from 12 to 20000." },
+          "width": {
+            "type": "number",
+            "description": "The box it fits in, in studs: width, height and depth go together."
+          },
+          "height": { "type": "number", "description": "The box's height in studs." },
+          "depth": { "type": "number", "description": "The box's depth in studs." },
+          "background": {
+            "type": "boolean",
+            "description": "true answers a job id at once while Roblox works; wait for it with the Roblox Studio connection's wait_job_finished. Leave out to wait for the result."
+          }
+        },
+        "required": ["prompt"]
+      }
+    },
+    {
+      "name": "generate-model",
+      "facts": ["roblox-project"],
+      "needs": ["studio"],
+      "description": "Build a model from simple parts (blocks, spheres, cylinders, wedges) with Roblox's own AI, with attributes the person can tune afterwards, and add it to this game's place. It runs on the person's Roblox account (Roblox allows about 50 a day), so the person approves each call on a card. A reference picture goes in image, from store-image.",
+      "confirmation": "Build a model with Roblox's AI? The prompt, and a picture if one is given, go to Roblox, and it runs on your Roblox account (about 50 a day). The model is added to this game's place, and Roblox moderates what it makes on your Roblox account.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "prompt": {
+            "type": "string",
+            "description": "What to build and which attributes to expose, in the person's words. May be empty when image is given."
+          },
+          "image": { "type": "string", "description": "A reference picture: the IMAGEID_… that store-image answered." },
+          "parts": {
+            "type": "string",
+            "description": "Part names to split it into, comma-separated or a JSON array of names (at most 8). Leave out to let Roblox pick."
+          },
+          "segmentation": {
+            "type": "string",
+            "description": "auto (Roblox picks the parts, the default), none (one piece) or explicit (the names in parts)."
+          },
+          "background": {
+            "type": "boolean",
+            "description": "true answers a job id at once while Roblox works; wait for it with the Roblox Studio connection's wait_job_finished. Leave out to wait for the result."
+          }
+        },
+        "required": ["prompt"]
+      }
+    },
+    {
+      "name": "generate-texture",
+      "facts": ["roblox-project"],
+      "needs": ["studio"],
+      "description": "Give a mesh in this game's place a new texture with Roblox's own AI, from a prompt. The new texture replaces the mesh's own. It runs on the person's Roblox account, so the person approves each call on a card. Keep textures plain: no text, logos or faces.",
+      "confirmation": "Retexture a mesh with Roblox's AI? The prompt and the mesh go to Roblox, and it runs on your Roblox account. The new texture replaces the mesh's own in this game's place, and Roblox moderates it on your Roblox account.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "prompt": { "type": "string", "description": "The look to give it, such as rusty metal." },
+          "instance": {
+            "type": "string",
+            "description": "The Studio path of the MeshPart or Model, such as Workspace.Barrel. Leave out to use the one selected in Studio."
+          }
+        },
+        "required": ["prompt"]
+      }
+    },
+    {
+      "name": "generate-material",
+      "facts": ["roblox-project"],
+      "needs": ["studio"],
+      "description": "Make a material (a MaterialVariant) with Roblox's own AI and add it to this game's place. Use it by setting a part's Material to the base and its MaterialVariant to the name. It runs on the person's Roblox account, so the person approves each call on a card.",
+      "confirmation": "Make a material with Roblox's AI? The description goes to Roblox, and it runs on your Roblox account. The material is added to this game's place, and Roblox moderates it on your Roblox account.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "The material's name: letters, digits, spaces, _ or -, at most 50 characters."
+          },
+          "base": {
+            "type": "string",
+            "description": "The base material it builds on, such as Brick, Wood, Metal, Grass or Concrete (Roblox's Enum.Material names)."
+          },
+          "pattern": { "type": "string", "description": "Regular (tiles evenly) or Organic (natural, uneven)." },
+          "description": { "type": "string", "description": "How it looks." },
+          "background": {
+            "type": "boolean",
+            "description": "true answers a job id at once while Roblox works; wait for it with the Roblox Studio connection's wait_job_finished. Leave out to wait for the result."
+          }
+        },
+        "required": ["name", "base", "pattern", "description"]
+      }
+    },
+    {
+      "name": "segment-mesh",
+      "facts": ["roblox-project"],
+      "needs": ["studio"],
+      "description": "Split a mesh in this game's place into named parts with Roblox's own AI; the parts are added as a new Model next to it. It runs on the person's Roblox account, so the person approves each call on a card.",
+      "confirmation": "Split a mesh into parts with Roblox's AI? The mesh and the part names go to Roblox, and it runs on your Roblox account. The parts are added to this game's place next to the mesh.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "parts": {
+            "type": "string",
+            "description": "The part names, comma-separated or a JSON array (at most 5), such as head, body, tail."
+          },
+          "instance": {
+            "type": "string",
+            "description": "The Studio path of the MeshPart or Model, such as Workspace.Barrel. Leave out to use the one selected in Studio."
+          }
+        },
+        "required": ["parts"]
+      }
+    },
+    {
+      "name": "roblox-playtest",
+      "facts": ["roblox-project"],
+      "needs": ["studio"],
+      "description": "Hand a play-testing task to Roblox's own playtest agent, which plays the game in Studio and reports back. It runs on the person's Roblox account against a daily limit, needs Studio's Playtest Agent beta (File › Beta Features), and the person approves each call on a card. Genex's own play tests (the computer tool and judge_play) come first; use this only when the person asks for Roblox's agent.",
+      "confirmation": "Let Roblox's playtest agent play this game? The task and what it sees of the place go to Roblox, and it runs on your Roblox account, against its daily limit. It plays in Roblox Studio and reports back.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "task": { "type": "string", "description": "What to test and what to report, in detail." },
+          "title": {
+            "type": "string",
+            "description": "A short title Studio shows while it works, such as Testing the obby."
+          }
+        },
+        "required": ["task"]
+      }
+    },
+    {
+      "name": "roblox-explore",
+      "facts": ["roblox-project"],
+      "description": "Hand a question about this game's place to Roblox's own explore agent, which reads the place and its scripts and answers. It runs on the person's Roblox account, so the person approves each call on a card. The Roblox Studio connection's read tools and the game's .luau files answer most questions without it.",
+      "confirmation": "Let Roblox's explore agent look through this game's place? The task and the parts and scripts it reads go to Roblox, and it runs on your Roblox account. It only reads, and reports back.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "task": { "type": "string", "description": "What to find out, in detail." },
+          "title": {
+            "type": "string",
+            "description": "A short title Studio shows while it works, such as Finding coin scripts."
+          }
+        },
+        "required": ["task"]
+      }
+    },
+    {
+      "name": "upload-image",
+      "facts": ["roblox-project"],
+      "description": "Upload pictures to the person's Roblox account as image assets this game can use (decals, textures, UI). Each picture is a .png or .jpg file in the game folder (at most 5 MB) or an https address; the answer gives each one's rbxassetid. Roblox moderates every upload on the person's account, so the person approves each call on a card. No text, logos or faces.",
+      "confirmation": "Upload pictures to your Roblox account? The pictures go to Roblox as your assets, and Roblox moderates them: a refused picture counts against your Roblox account. Each comes back as an asset id this game can use.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "images": {
+            "type": "string",
+            "description": "The pictures, comma-separated or a JSON array (at most 10): paths in the game folder such as art/coin.png, or https addresses."
+          }
+        },
+        "required": ["images"]
+      }
+    },
+    {
+      "name": "store-image",
+      "facts": ["roblox-project"],
+      "description": "Send one picture from the game folder to Roblox so its AI tools can use it as a reference (generate-model's image). It answers an IMAGEID_… for that. The picture is a .png or .jpg file of at most 5 MB. The person approves each call on a card.",
+      "confirmation": "Send a picture to Roblox for its AI tools? The picture goes to Roblox under your Roblox account, so its AI tools can use it as a reference.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "file": {
+            "type": "string",
+            "description": "The picture's path in the game folder, such as art/reference.png."
+          }
+        },
+        "required": ["file"]
+      }
+    },
+    {
+      "name": "insert-asset",
+      "facts": ["roblox-project"],
+      "needs": ["studio"],
+      "description": "Insert a free Creator Store asset (a model, mesh, image, sound) into this game's place by its id, which the connection's search_asset finds. Genex checks the price first and refuses paid assets. The answer lists every script the asset brought, flagged where it uses require with an id, loadstring, getfenv, HttpService or MarketplaceService: read each one and delete what you don't understand. The person approves each insert on a card.",
+      "confirmation": "Insert a free Creator Store asset into this game's place? Its id goes to Roblox, and Studio fetches it on your Roblox account. Genex refuses paid assets and lists any scripts it brings, since they run when the game plays.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string", "description": "The asset's id: plain digits, such as 580221169." },
+          "name": { "type": "string", "description": "The name it gets in the place; give the search result's name." },
+          "type": {
+            "type": "string",
+            "description": "The asset's type from the search: Model, Package, Mesh, MeshPart, Image, Decal, Audio, Video or Animation."
+          },
+          "parent": {
+            "type": "string",
+            "description": "Where it goes, such as Workspace.Scenery. Leave out for Workspace."
+          }
+        },
+        "required": ["id"]
+      }
+    },
+    {
+      "name": "check-model",
+      "facts": ["roblox-project"],
+      "description": "Check a .glb or .gltf model in the game folder before it goes into the place: at most 20,000 triangles, closed (no holes), one material, at most 4 bones per vertex, its root at the origin, and textures at most 1024 by 1024 (sizes read from the PNG or JPEG). It answers each problem in plain words; fix them in Blender and export again. An FBX isn't checked: export it as .glb. Nothing leaves the computer.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "file": { "type": "string", "description": "The model's path in the game folder, such as models/chair.glb." },
+          "textureSide": {
+            "type": "number",
+            "description": "A stricter longest texture side than 1024, a whole number such as 512 for small props."
+          }
+        },
+        "required": ["file"]
+      }
+    },
+    {
+      "name": "import-model",
+      "facts": ["roblox-project"],
+      "needs": ["studio"],
+      "description": "Add a .glb or .gltf model from the game folder to this game's place as an anchored MeshPart at the origin, in studs (glTF's metres converted). It runs check-model first and adds only a model that passes. Only the shape comes in: give it a SurfaceAppearance for its textures. Studio uploads it to the person's Roblox account when they publish the place. The person approves each import on a card.",
+      "confirmation": "Add this model to the game's place? Genex checks it first, then Studio adds it. It is uploaded to your Roblox account when you publish the place, and Roblox moderates it there.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "file": { "type": "string", "description": "The model's path in the game folder, such as models/chair.glb." },
+          "name": { "type": "string", "description": "The part's name in the place. Leave out for the file's name." }
+        },
+        "required": ["file"]
+      }
+    },
+    {
+      "name": "publish-update",
+      "facts": ["roblox-project"],
+      "description": "Publish an update of this game's place to Roblox, only when the person asks for it. The person approves on a card; then this game's chat clicks File › Publish to Roblox in Roblox Studio with their computer control (a Mac only; elsewhere the answer gives the person Studio's click path). It updates a place that is already published (one the person just published by hand is linked first); a place never published gets first-publish instead. The place must be open in Studio: call open-studio first when it isn't. Never publish unasked, and never call it from the turn that does the clicking.",
+      "confirmation": "Publish an update of this game's place to Roblox? This game's chat clicks File › Publish to Roblox in Roblox Studio with computer control. Everyone who plays the game gets the update, and it is published on your Roblox account.",
+      "parameters": { "type": "object", "properties": {} }
+    },
+    {
+      "name": "first-publish",
+      "facts": ["roblox-project"],
+      "description": "Publish this game's place to Roblox for the first time, as a new game, when the person asks to publish and the place isn't on Roblox yet (publish-update answers so). Pass the game's name; the person sees it on the card, may change it there, and approves. The place must be open in Studio: call open-studio first when it isn't. The turn that answers the chat's \"Roblox Studio asks: Publish …\" message then clicks File › Publish to Roblox in Roblox Studio with computer control, keeping Studio's privacy and settings, and stops at any age, ID, two-step, terms or payment question. Genex links this game to the published place by itself afterwards. Never publish unasked, and never call it from the turn that does the clicking.",
+      "confirmation": "Publish this game to Roblox for the first time, under the name shown? This game's chat clicks File › Publish to Roblox in Roblox Studio with computer control and keeps the privacy Studio gives a new game. It is published on your Roblox account.",
+      "confirmationInput": { "parameter": "name", "label": "Name on Roblox" },
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "The game's name on Roblox, one plain line of at most 50 characters with no double quotes: the person's own words for it, else this Genex game's title. The person sees it on the card and may change it there."
+          }
+        },
+        "required": ["name"]
+      }
+    },
+    {
+      "name": "do-it-for-me",
+      "description": "Turn on Roblox Studio's MCP server with Genex's computer control, as Do it for me in the Roblox Studio panel does: this chat's next turn clicks Studio's switch (Assistant › ⋯ › Settings › MCP Servers). Call it yourself whenever Studio is open but its tools don't answer because the switch is off; never ask the person to click it. It clicks nothing when something else is missing and names the tool for that step instead. With computer control off, Genex asks the person once on a card. End your turn once it has started.",
+      "parameters": { "type": "object", "properties": {} }
+    },
+    {
+      "name": "setup",
+      "description": "Set Roblox Studio up for Genex, as Set up in the Roblox Studio panel does: add the Genex helper to Studio's Plugins folder and turn on Studio's MCP server. Genex does it only while Studio is closed; with Studio open, call restart-studio. On a Mac, macOS may ask the person to let Genex use the Documents folder. The person approves on a card.",
+      "confirmation": "Add the Genex helper to Roblox Studio's Plugins folder and turn on Studio's MCP server?",
+      "parameters": { "type": "object", "properties": {} }
+    },
+    {
+      "name": "restart-studio",
+      "description": "Quit Roblox Studio normally (Studio asks the person to save, as it always does), set it up for Genex while it is closed (the helper and the MCP server switch), and open this game's place again, as Restart Studio in the panel does. Use it when Studio is open and the helper is missing, or its MCP server is off where do-it-for-me can't click. The person approves on a card.",
+      "confirmation": "Quit Roblox Studio, set it up for Genex while it is closed, and open it again? Studio asks you to save your place first, as it always does.",
+      "parameters": { "type": "object", "properties": {} }
+    },
+    {
+      "name": "open-studio",
+      "description": "Open this game's place in Roblox Studio, or bring Studio forward when it has the place open already, as Open Studio in the panel does; with no place yet, Studio alone. Call it whenever the Roblox Studio tools answer that Studio isn't open.",
+      "parameters": { "type": "object", "properties": {} }
+    },
+    {
+      "name": "get-studio",
+      "description": "Get Roblox Studio when it isn't on this computer, as Get Roblox Studio in the panel does: Genex downloads it from Roblox, checks Roblox signed it, installs it and sets it up. The person approves the download on a card and signs in to Roblox in the Studio that opens (only they can). It answers at once; show-steps shows where it stands.",
+      "confirmation": "Download Roblox Studio from Roblox (about 11 MB on Mac, 14 MB on Windows), check that Roblox signed it, and install it?",
+      "parameters": { "type": "object", "properties": {} }
+    },
+    {
+      "name": "cancel-get-studio",
+      "description": "Stop getting Roblox Studio, only when the person asks to.",
+      "parameters": { "type": "object", "properties": {} }
+    },
+    {
+      "name": "quit-studio",
+      "description": "Quit Roblox Studio normally, only when the person asks: Studio asks them to save first, and Genex never force-quits it. Refused while a build uses Studio. The person approves on a card.",
+      "confirmation": "Quit Roblox Studio? Studio asks you to save your place first, as it always does.",
+      "parameters": { "type": "object", "properties": {} }
+    },
+    {
+      "name": "undo-setup",
+      "description": "Take back what Set up did in Roblox Studio (the Genex helper and the MCP server switch Genex turned on), only when the person asks to. The person approves on a card.",
+      "confirmation": "Take back what Genex set up in Roblox Studio: the Genex helper in its Plugins folder (and that folder, if Genex made it) and the MCP server switch Genex turned on. Anything changed since stays as it is.",
+      "parameters": { "type": "object", "properties": {} }
+    },
+    {
+      "name": "places",
+      "facts": ["roblox-project"],
+      "description": "List the Roblox places this game could build in: the places open in Roblox Studio (with their published ids) and the place files Studio opened lately, each marked when this or another game builds in it. Link one with use-project, or make one with new-game. Nothing is changed.",
+      "parameters": { "type": "object", "properties": {} }
+    },
+    {
+      "name": "add-luau-checks",
+      "facts": ["roblox-project"],
+      "description": "Download luau-lsp, selene and StyLua from GitHub (about 15 MB) so check-scripts can check this game's Luau, as Add Luau checks in the panel does. Call it when check-scripts answers that the checks aren't added. The person approves on a card.",
+      "confirmation": "Download luau-lsp, selene and StyLua from GitHub (about 15 MB) to check this game's scripts? Genex keeps them in its own storage; they run on this computer, outside Genex's sandbox.",
+      "parameters": { "type": "object", "properties": {} }
+    },
+    {
+      "name": "luau-note",
+      "audience": "harness",
+      "description": "For Genex only: at a worker's end, the Luau checks over the scripts changed since they last passed, noted with each problem's file and line.",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      }
+    },
+    {
+      "name": "luau-finish",
+      "audience": "harness",
+      "description": "For Genex only: before a build finishes, the Luau checks over every script; errors hold the finish back, warnings and format differences are notes.",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      }
+    },
+    {
+      "name": "studio-activity",
+      "audience": "harness",
+      "description": "For Genex only: as the Roblox Studio lock's probe, whether the person is using Studio for this game (personActive), read before Genex's own calls to it.",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      }
+    },
+    {
+      "name": "use-project",
+      "makes": ["roblox-project"],
+      "description": "Link this game to a Roblox place: one open in Roblox Studio, by its label from places (Place1, or Place1 (2) for a second Studio with that name), or a .rbxl or .rbxlx file by its full path. Call it yourself when this game has no place or Genex lost it (the Roblox Studio tools answer that it isn't linked); switch a game that has a place to another only when the person asks. A file in Documents, Desktop or Downloads that macOS guards is linked by its label once it is open in Studio. Later Roblox Studio calls in this game go to that place, and the chat shows the link with Undo. A place another game builds in is refused.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "project": {
+            "type": "string",
+            "description": "The open place's name as the Roblox Studio panel lists it, or the place file's full path."
+          }
+        },
+        "required": ["project"]
+      }
+    },
+    {
+      "name": "show-steps",
+      "description": "Show the person the Roblox Studio setup card again: getting Studio, signing in, the Genex helper, Studio's MCP server and this game's place. Use it when the Roblox Studio tools are missing or answer that Studio isn't open; it does nothing when every step is done.",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      }
+    },
+    {
+      "name": "new-game",
+      "makes": ["roblox-project"],
+      "ready": "engine-status",
+      "description": "Make this game's Roblox place from Genex's Baseplate (a baseplate, a spawn point and daylight) in this game's folder as <game>.rbxlx: Genex links this game to it and opens it in Roblox Studio, as New Roblox game in the Roblox Studio panel does. Use it only when the person chose Roblox for this game and it has no Roblox place yet; a game that already builds in one is refused. Studio takes a moment to start: once the Roblox Studio tools answer, build the game there.",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      }
+    },
+    {
+      "name": "engine-status",
+      "audience": "harness",
+      "description": "For Genex's chat only: whether this computer has the Roblox Studio a new Roblox game is made with (ready), its version, and the engine question's words for Roblox.",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      }
+    },
+    {
+      "name": "open-for-run",
+      "audience": "harness",
+      "description": "For Genex only: at a Loop's start, Roblox Studio connected for this game's place, the place opened in Studio when it isn't; blocks with the setup step when Studio can't be.",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      }
+    },
+    {
+      "name": "save-place",
+      "audience": "harness",
+      "description": "For Genex only: before a checkpoint (each chat message's too) and before a restore, sends the scripts still on their way to Studio, then has the Genex helper export what changed of the place into the game folder, beside the scripts.",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      }
+    },
+    {
+      "name": "hero-shots",
+      "audience": "harness",
+      "description": "For Genex only: Roblox Studio's viewport as a picture, for a Loop's save points and its viewport observer.",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      }
+    },
+    {
+      "name": "load-place",
+      "audience": "harness",
+      "needs": ["studio"],
+      "description": "For Genex only: after a restore, has the Genex helper load the restored place into Roblox Studio and brings Studio's scripts in step with src/; leaves the load waiting when Studio isn't connected.",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      }
+    },
+    {
+      "name": "studio-state",
+      "audience": "harness",
+      "description": "For Genex only: whether Roblox Studio is connected for this game and answers (a dialog may be open when it doesn't), and its MCP server lists it.",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      }
+    },
+    {
+      "name": "studio-crash-note",
+      "audience": "harness",
+      "description": "For Genex only: when Roblox Studio closed under a run, asks the person to reopen it. Genex never closes or force-quits Studio.",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      }
+    },
+    {
+      "name": "team-note",
+      "audience": "harness",
+      "description": "For Genex only: at a turn's start, who else is in this place in Team Create, when that changed.",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      }
+    },
+    {
+      "name": "play-open",
+      "audience": "harness",
+      "needs": ["studio"],
+      "description": "For Genex's computer tool only: start a play test in this game's Roblox Studio, or join the one running. One player is Play Solo, as the person's own account; 2 to 8 are a multiplayer test of test players through the Genex helper. Answers {width, height, joined, players, capabilities, liveData} (liveData: Studio can reach the published game's live saved data), or {refused, message} (no-editor when Studio isn't open for this game, unsupported for more than 8 players or when the helper can't start a test).",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "players": {
+            "type": "number",
+            "description": "How many players, 1 to 8; absent is one."
+          }
+        }
+      }
+    },
+    {
+      "name": "play-input",
+      "audience": "harness",
+      "needs": ["studio"],
+      "description": "For Genex's computer tool only: move one player's mouse aim for one frame when asked, then hold keys and mouse buttons together for seconds, then let go. Answers {held, gameSeconds} once that time has passed, or {refused, message} (unknown-key for a key Roblox has no name for).",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "keys": {
+            "type": "string",
+            "description": "Web key codes or mouse buttons (MouseLeft, MouseRight) held together, joined by commas: KeyW,ShiftLeft (empty: just let the game play)."
+          },
+          "seconds": {
+            "type": "number",
+            "description": "Seconds to hold them, 0.05 to 10."
+          },
+          "dx": {
+            "type": "number",
+            "description": "Pixels to move the aim right first (negative: left)."
+          },
+          "dy": {
+            "type": "number",
+            "description": "Pixels to move the aim down the screen first (negative: up)."
+          },
+          "wheel": {
+            "type": "number",
+            "description": "Notches of the mouse wheel first, up positive."
+          },
+          "player": {
+            "type": "number",
+            "description": "Which player, 1 to the players the test opened; absent is player 1."
+          }
+        },
+        "required": ["keys", "seconds"]
+      }
+    },
+    {
+      "name": "play-shot",
+      "audience": "harness",
+      "needs": ["studio"],
+      "description": "For Genex's computer tool only: a picture of what one player sees in the running test, Roblox's own interface included. Answers {data (base64), mime (image/jpeg), width, height}, or {refused, message}.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "player": {
+            "type": "number",
+            "description": "Which player, 1 to the players the test opened; absent is player 1."
+          }
+        }
+      }
+    },
+    {
+      "name": "play-state",
+      "audience": "harness",
+      "needs": ["studio"],
+      "description": "For Genex's computer tool only: one player in the running test, as their client sees them (position, velocity, health, leaderstats, attributes) and as the server sees every player, with the last lines of that player's output. Answers {player, players, mode, client, server, console}, or {refused, message}.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "player": {
+            "type": "number",
+            "description": "Which player, 1 to the players the test opened; absent is player 1."
+          }
+        }
+      }
+    },
+    {
+      "name": "play-pause",
+      "audience": "harness",
+      "needs": ["studio"],
+      "description": "For Genex's computer tool only: Roblox Studio can't hold a play test still, so this answers {refused: unsupported} unless the Genex helper can.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "paused": {
+            "type": "boolean",
+            "description": "True stands the game still; false lets it run."
+          }
+        },
+        "required": ["paused"]
+      }
+    },
+    {
+      "name": "play-close",
+      "audience": "harness",
+      "needs": ["studio"],
+      "description": "For Genex's computer tool only: end the play test the computer started (a play the person started goes on). Answers {closed}.",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      }
+    },
+    {
+      "name": "players-state",
+      "audience": "harness",
+      "needs": ["studio"],
+      "description": "For Genex's multiplayer judge only: once a play test opens, a picture from each player and what each player's client sees of every player (who is there, leaderstats and attributes) against what the server holds. Answers {note, images}.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "players": {
+            "type": "number",
+            "description": "How many players the play opened, 1 to 8."
+          }
+        }
+      }
+    },
+    {
+      "name": "cheat-remotes",
+      "audience": "harness",
+      "needs": ["studio"],
+      "description": "For Genex's cheater judge only: once a play test opens, sends every remote the player's client can reach hostile values from that client, and reads the server's leaderstats and attributes before and after each; sends nothing when the play can reach the live game's saved data. Answers {note, images}.",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      }
+    },
+    {
+      "name": "phone-check",
+      "audience": "harness",
+      "needs": ["studio"],
+      "description": "For Genex's phone judge only: once a play test opens, shows the game on a phone and a tablet, upright and sideways, through Studio's Device Simulator, with a picture of each, the interface that overlaps, runs off the screen or under the device's edges and Roblox's buttons, and the place's memory against a phone's budget; puts the simulated device back. Answers {note, images}.",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      }
+    }
+  ],
+  "skills": [
+    {
+      "name": "roblox-studio",
+      "text": "This game is built in the person's own Roblox Studio, which stays open and visible; Genex attaches to this game's place through the Roblox Studio connection (its tools fill in which Studio and place, so never pick one yourself).\nScripts are files: write and change the game's code as .luau files under src/<Service>/ in the game folder, named as the luau skill says. Genex's helper keeps them in step with Studio both ways. Never edit a script's Source through execute_luau. Everything else in the place (parts, models, UI, lighting, settings) you read with the connection's read tools and change with execute_luau in Edit.\nPlay-testing: the computer tool plays the game in Studio's own play session as a player would, and judge_play hands it to a judge who never saw the code. The desktop tool never builds or play-tests in Studio; it is refused there except in the turn that answers a setup click or a publish the person asked for (Do it for me, Publish to Roblox, Publish an update), which clicks it itself.\nAsk first: Roblox's AI tools (mesh, texture, material and model generation, its playtest and explore agents), uploads and Creator Store inserts each show the person a card, because they run on the person's Roblox account and moderation penalties land on it. Never ask for Roblox API keys or passwords, never read cookies or sign-in files, never put bots in live servers, and never publish unasked: when the person asks, first-publish (a place never published, under the game's name) or publish-update (a place already on Roblox) shows them a card and the turn that answers its \"Roblox Studio asks: Publish …\" message clicks File › Publish to Roblox itself, as the publish skill says; Genex links the game to the published place by itself.\nSetup is yours: when Studio is missing, closed or not set up, its MCP server is off or this game has no place, call this plugin's tools for that step (get-studio, setup, restart-studio, open-studio, do-it-for-me, places, use-project, new-game) and never ask the person to click; only signing in to Roblox, macOS's own prompts and Studio's or Roblox's own questions (saving, age, ID, two-step, terms, payment) are theirs.\nThe person comes first: while they work in Studio, Genex's calls wait. Never close or force-quit Studio. Save points cover the scripts and the place; Rewind brings both back.\nRead the matching Roblox skill before that work: luau (code), remotes (anything a client sends), player-data (saving), purchases (Robux), ui-scale (any UI), assets (models, textures, sounds), get-started (Studio not connected or not set up), publish (a turn that publishes).",
+      "facts": ["roblox-project"]
+    },
+    {
+      "name": "luau",
+      "summary": "How this game's Luau is written: --!strict, typed modules, where server and client code live, Rojo file names under src/, the engine's rules (task library, events over polling, cleanup) and the checks code must pass.",
+      "file": "skills/luau.md",
+      "facts": ["roblox-project"]
+    },
+    {
+      "name": "remotes",
+      "summary": "Server-authoritative RemoteEvents and RemoteFunctions: the client only asks; every handler checks rate, types, ranges and state before the server acts, so the cheater judge can't change the game. Read before writing or changing any remote.",
+      "file": "skills/remotes.md",
+      "facts": ["roblox-project"]
+    },
+    {
+      "name": "player-data",
+      "summary": "Saving player data safely: one server owns a profile through a session lock, every write is UpdateAsync, autosave, save on leave and in BindToClose, retries and migrations, and testing without touching live players' data.",
+      "file": "skills/player-data.md",
+      "facts": ["roblox-project"]
+    },
+    {
+      "name": "purchases",
+      "summary": "Developer products and game passes: an idempotent ProcessReceipt that records each PurchaseId with the grant before answering PurchaseGranted, what is not proof of a purchase, and what stays the person's (ids, prices).",
+      "file": "skills/purchases.md",
+      "facts": ["roblox-project"]
+    },
+    {
+      "name": "ui-scale",
+      "summary": "UI that fits phones, tablets, monitors and TVs: Scale over Offset, UIScale and constraints, ScreenInsets safe areas and the top bar inset, touch target sizes, readable text and gamepad selection. Read before building or changing any UI.",
+      "file": "skills/ui-scale.md",
+      "facts": ["roblox-project"]
+    },
+    {
+      "name": "assets",
+      "summary": "Roblox's rules for models, textures and sounds: at most 20k triangles, watertight, one material per mesh, 4 bone influences, root at the origin, phone-sized textures, moderation risk to the person's account, and safe Creator Store inserts.",
+      "file": "skills/assets.md",
+      "facts": ["roblox-project"]
+    },
+    {
+      "name": "get-started",
+      "summary": "Getting Roblox Studio connected through Genex's Roblox Studio button: what each status means, sign-in, the MCP server switch, choosing the place, and troubleshooting. Read when the Studio tools are missing or answer that Studio isn't open.",
+      "file": "skills/get-started.md",
+      "facts": ["roblox-project"]
+    },
+    {
+      "name": "publish",
+      "summary": "Publishing to Roblox with computer control: Studio's File › Publish to Roblox for a new game and for an update, what to keep as Studio has it, and the questions where the turn stops for the person. Read before a turn that publishes.",
+      "file": "skills/publish.md",
+      "facts": ["roblox-project"]
+    }
+  ],
+  "judges": [
+    {
+      "id": "multiplayer",
+      "label": "Multiplayer",
+      "facts": ["roblox-project"],
+      "brief": "judges/multiplayer.md",
+      "players": 3,
+      "probe": "players-state"
+    },
+    {
+      "id": "cheater",
+      "label": "Cheater",
+      "facts": ["roblox-project"],
+      "brief": "judges/cheater.md",
+      "players": 1,
+      "probe": "cheat-remotes"
+    },
+    {
+      "id": "phone",
+      "label": "Phone",
+      "facts": ["roblox-project"],
+      "brief": "judges/phone.md",
+      "players": 1,
+      "probe": "phone-check"
+    }
+  ],
+  "panels": [{ "id": "setup", "title": "Roblox Studio", "file": "panel.html", "placement": "settings" }],
+  "settings": [],
+  "actions": [
+    { "name": "status", "label": "Roblox Studio status" },
+    { "name": "toolbar-status", "label": "Roblox Studio connection" },
+    { "name": "steps", "label": "Roblox Studio setup steps" },
+    {
+      "name": "setup",
+      "label": "Set up",
+      "confirmation": "Add the Genex helper to Roblox Studio's Plugins folder and turn on Studio's MCP server?",
+      "native": true
+    },
+    {
+      "name": "undo-setup",
+      "label": "Undo Set up",
+      "confirmation": "Take back what Genex set up in Roblox Studio: the Genex helper in its Plugins folder (and that folder, if Genex made it) and the MCP server switch Genex turned on. Anything changed since stays as it is.",
+      "native": true
+    },
+    {
+      "name": "restart-studio",
+      "label": "Restart Studio",
+      "confirmation": "Quit Roblox Studio, set it up for Genex while it is closed, and open it again? Studio asks you to save your place first, as it always does.",
+      "native": true
+    },
+    { "name": "do-it-for-me", "label": "Do it for me", "native": true },
+    {
+      "name": "get-studio",
+      "label": "Get Roblox Studio",
+      "confirmation": "Download Roblox Studio from Roblox (about 11 MB on Mac, 14 MB on Windows), check that Roblox signed it, and install it?",
+      "native": true
+    },
+    { "name": "cancel-get-studio", "label": "Stop getting Roblox Studio" },
+    { "name": "open-studio", "label": "Open Studio", "native": true },
+    { "name": "quit-studio", "label": "Quit Studio", "native": true },
+    { "name": "places", "label": "Choose your place", "native": true },
+    { "name": "use-place", "label": "Use in this game", "native": true },
+    { "name": "create", "label": "New Roblox game", "native": true },
+    {
+      "name": "add-luau-checks",
+      "label": "Add Luau checks",
+      "confirmation": "Download luau-lsp, selene and StyLua from GitHub (about 15 MB) to check this game's scripts? Genex keeps them in its own storage; they run on this computer, outside Genex's sandbox.",
+      "native": true
+    },
+    {
+      "name": "publish-update",
+      "label": "Publish an update",
+      "confirmation": "Publish an update of this game's place to Roblox? This game's chat clicks File › Publish to Roblox in Roblox Studio with computer control. Everyone who plays the game gets the update, and it is published on your Roblox account.",
+      "native": true
+    },
+    {
+      "name": "first-publish",
+      "label": "Publish to Roblox",
+      "confirmation": "Publish this game to Roblox as a new game? This game's chat clicks File › Publish to Roblox in Roblox Studio with computer control and keeps the privacy Studio gives a new game. It is published on your Roblox account.",
+      "native": true
+    }
+  ],
+  "toolbar": [
+    {
+      "id": "studio",
+      "label": "Roblox Studio",
+      "ariaLabel": "Roblox Studio",
+      "icon": "box",
+      "facts": ["roblox-project"],
+      "target": { "kind": "panel", "id": "setup" },
+      "status": "toolbar-status"
+    }
+  ],
+  "mcpServers": [
+    {
+      "id": "studio",
+      "facts": ["roblox-project"],
+      "needs": ["studio"],
+      "transport": "stdio",
+      "command": "node",
+      "args": ["studio-mcp.mjs"],
+      "cwd": "storage:project",
+      "reads": [
+        "search_game_tree",
+        "inspect_instance",
+        "script_read",
+        "script_search",
+        "script_grep",
+        "get_console_output",
+        "get_studio_state",
+        "screen_capture",
+        "list_plugin_guis",
+        "capture_plugin_gui",
+        "search_asset",
+        "skill",
+        "wait_job_finished"
+      ],
+      "maxTools": 24,
+      "callTimeoutMs": 330000,
+      "description": "Roblox Studio, for this game's open place. The person's own Studio through its built-in MCP server: read the place (game tree, instances, scripts, console output, pictures) and change it with execute_luau, in Edit unless you name another data model. Genex picks this game's Studio itself, so studio_id is never yours to give. Scripts are the game's .luau files, play-testing goes through the computer tool and judge_play, and Roblox's AI tools, uploads and inserts ask the person first: execute_luau refuses code that inserts, uploads, publishes or reaches the internet or a live game's data."
+    }
+  ],
+  "workerTypes": [
+    {
+      "id": "scripts",
+      "description": "Writes the game's Luau as .luau files under src/ in a copy and checks them with check-scripts",
+      "tools": ["check-scripts"],
+      "isolation": "copy"
+    }
+  ],
+  "locks": [{ "id": "studio", "label": "Roblox Studio", "per": "project", "personFirst": "studio-activity" }],
+  "hooks": [
+    { "on": "run.prepare", "tool": "open-for-run", "facts": ["roblox-project"] },
+    { "on": "turn.start", "tool": "team-note", "facts": ["roblox-project"] },
+    { "on": "checkpoint.before", "tool": "save-place", "facts": ["roblox-project"], "messages": true },
+    { "on": "checkpoint.after", "tool": "hero-shots", "facts": ["roblox-project"] },
+    { "on": "restore.before", "tool": "save-place", "facts": ["roblox-project"] },
+    { "on": "restore.after", "tool": "load-place", "facts": ["roblox-project"] },
+    { "on": "health", "tool": "studio-state", "facts": ["roblox-project"] },
+    { "on": "crash", "tool": "studio-crash-note", "facts": ["roblox-project"] },
+    { "on": "worker.end", "tool": "luau-note", "facts": ["roblox-project"] },
+    { "on": "finish", "tool": "luau-finish", "facts": ["roblox-project"] }
+  ],
+  "observers": [{ "id": "viewport", "facts": ["roblox-project"], "tool": "hero-shots", "live": "stills" }],
+  "scaffolds": [{ "id": "game", "label": "Roblox game", "tool": "new-game" }]
+}

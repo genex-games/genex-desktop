@@ -66,7 +66,9 @@ import {
   stagedCounted,
   type LibraryStore,
 } from "./library.ts";
-import { createPluginsStore, type PluginsStore } from "./plugins.ts";
+import { createPluginsStore, PLUGIN_INDEX_POLL_MS, type PluginsStore } from "./plugins.ts";
+import { createPlayStore, type PlayStore, remixProgressed, viewerReported } from "./play.ts";
+import { createPeopleStore, type PeopleStore } from "./people.ts";
 import {
   bootstrapFailed,
   bootstrapReady,
@@ -83,6 +85,7 @@ import {
   projectOf,
   stageProjectSet,
   statusBootstrapped,
+  personFirstReported,
   statusReported,
   threadAdded,
   threadReplaced,
@@ -97,6 +100,11 @@ import { createUpdateStore, updateDownloaded, type UpdateStore } from "./update.
 
 /** The log is the source of truth; this poll is the safety net for anything the stream missed. */
 export const EVENT_POLL_MS = 3 * SECOND_MS;
+/** What a launch says when it stops before making a game. */
+const MESSAGE = {
+  outOfUsage: (why: string) =>
+    `${why.replace(/[\s.]+$/, "")}. No game was made: send it again after the reset, from another account or with another model.`,
+} as const;
 
 /** An agent screen that went away. */
 const SCREEN_CLOSED: AgentScreenEvent["state"] = "closed";
@@ -121,6 +129,10 @@ export interface Studio {
   readonly library: LibraryStore;
   readonly engines: EnginesStore;
   readonly plugins: PluginsStore;
+  /** Play: genex.games' catalog, Recent and the viewer (`play.ts`). */
+  readonly play: PlayStore;
+  /** Play's people: the Genex account, friends and profiles (`people.ts`). */
+  readonly people: PeopleStore;
   readonly agentScreens: AgentScreensStore;
   readonly commandRuns: CommandRunsStore;
   /** What commands a reply offered have printed, outside React state. */
@@ -199,6 +211,8 @@ interface Stores {
   readonly library: LibraryStore;
   readonly engines: EnginesStore;
   readonly plugins: PluginsStore;
+  readonly play: PlayStore;
+  readonly people: PeopleStore;
   readonly agentScreens: AgentScreensStore;
   readonly commandRuns: CommandRunsStore;
   readonly commandOutput: CommandOutput;
@@ -227,6 +241,8 @@ function createStores(
     library: createLibraryStore(api, timers, visibility, publication.publish),
     engines: createEnginesStore(api),
     plugins: createPluginsStore(api),
+    play: createPlayStore(api, storage),
+    people: createPeopleStore(api, storage),
     agentScreens: createAgentScreensStore(),
     commandRuns: createCommandRunsStore(),
     commandOutput: createCommandOutput(),
@@ -320,9 +336,10 @@ function bootstrapper(api: StudioApi, stores: Stores, storage: KeyValueStorage |
       engines.setState((state) => enginesLoaded(state, boot.engines), true);
       threads.setState((state) => openedThreads(state, boot), true);
       const welcome = shouldWelcome(boot.welcome, boot.games.length, safeStorage(storage));
-      const developer = boot.developer;
-      session.setState((state) => bootstrapReady(state, { welcome, developer }), true);
+      const { developer, playWebOrigin: playWeb } = boot;
+      session.setState((state) => bootstrapReady(state, { welcome, developer, playWeb }), true);
       void plugins.refresh();
+      void plugins.refreshIndex();
       // An update downloaded before this window opened, or before a reload, still waits.
       const ready = await api.readyUpdate().catch(() => null);
       if (superseded()) return;
@@ -341,8 +358,14 @@ function bootstrapper(api: StudioApi, stores: Stores, storage: KeyValueStorage |
 }
 
 /** The events that change a store directly, beyond the reads they ask for. */
-function applyUiEvent({ agentScreens, threads, layout, library, update }: Stores, event: UiEvent): void {
+function applyUiEvent({ agentScreens, threads, layout, library, update, play }: Stores, event: UiEvent): void {
   switch (event.type) {
+    case UiEvent.PlayViewer:
+      play.setState((state) => viewerReported(state, event.payload), true);
+      break;
+    case UiEvent.PlayRemix:
+      play.setState((state) => remixProgressed(state, event.payload), true);
+      break;
     case UiEvent.PreviewFrame:
       agentScreens.setState((state) => frameReceived(state, event.payload), true);
       break;
@@ -359,6 +382,9 @@ function applyUiEvent({ agentScreens, threads, layout, library, update }: Stores
       if (all) threads.setState((state) => statusReported(state, all), true);
       break;
     }
+    case UiEvent.PersonFirst:
+      threads.setState((state) => personFirstReported(state, event.payload), true);
+      break;
     case UiEvent.StageShow:
       // The chat put a build on screen for the game on the stage: that is Live, so Live shows.
       if (event.payload.project === projectOf(threads.getState()))
@@ -396,7 +422,11 @@ function refreshAfter(stores: Stores, event: UiEvent): void {
   if (reads.games) void stores.library.refreshGames();
   if (reads.staged) void stores.library.refreshStaged();
   if (reads.engines) void stores.engines.refresh();
-  if (reads.plugins) void stores.plugins.refresh();
+  if (reads.plugins) {
+    void stores.plugins.refresh();
+    // A plugin that was just updated is no longer one the index has a newer release for.
+    void stores.plugins.refreshIndex();
+  }
   if (reads.assets) stores.library.refreshAssets(reads.assets.project);
 }
 
@@ -439,14 +469,18 @@ async function enterProject(
 const UNTITLED_GAME = "Untitled game";
 let launches = 0;
 
-/** The name for a launch's game: the model's, else Untitled game, waiting for an idea. Never fails. */
+/**
+ * The name for a launch's game: the model's, else Untitled game, waiting for an idea, and whether
+ * the picked model is out of usage (`limited`). Never fails.
+ */
 async function launchName(api: StudioApi, input: LaunchInput): Promise<GameName> {
   const { engine, model } = parseModelKey(input.modelKey);
   const request = { prompt: input.text, ...(engine ? { engine } : {}), ...(model ? { model } : {}) };
   const named = await api.nameGame(request).catch(() => null);
+  const limited = typeof named?.limited === "string" && named.limited.trim() ? { limited: named.limited.trim() } : {};
   const title = named?.title.trim();
-  if (!title) return { title: UNTITLED_GAME, provisional: true };
-  return named?.provisional ? { title, provisional: true } : { title };
+  if (!title) return { title: UNTITLED_GAME, provisional: true, ...limited };
+  return named?.provisional ? { title, provisional: true, ...limited } : { title, ...limited };
 }
 
 /** The new chat opens on home's model and effort, the ones its first message was written for. */
@@ -461,8 +495,18 @@ async function launchGame(ctx: StudioContext, input: LaunchInput): Promise<void>
   const { launch } = stores;
   if (launch.getState().launch) return;
   const id = `launch-${++launches}`;
-  launch.setState((state) => launchStarted(state, { id, text: input.text, extras: input.extras, at: ctx.now() }), true);
-  const { title, provisional } = await launchName(api, input);
+  const known = stores.library.getState().games.map((game) => game.name);
+  launch.setState(
+    (state) => launchStarted(state, { id, text: input.text, extras: input.extras, at: ctx.now(), known }),
+    true,
+  );
+  const { title, provisional, limited } = await launchName(api, input);
+  // The picked model cannot take the game's first turn: no game waits empty for it, and the words go back home.
+  if (limited) {
+    notify(MESSAGE.outOfUsage(limited), ToastTone.Error);
+    launch.setState((state) => launchFailed(state, id), true);
+    return;
+  }
   launch.setState((state) => launchNamed(state, id, title), true);
   try {
     const options = { ...(input.parent ? { parent: input.parent } : {}), ...(provisional ? { provisional } : {}) };
@@ -521,6 +565,10 @@ function startStores(ctx: StudioContext, bootstrap: () => Promise<void>, timers:
     if (!ctx.visibility.hidden()) void stores.eventLog.refresh();
   };
   const poll = timers.setInterval(refresh, EVENT_POLL_MS);
+  // A release published while the studio runs is offered without a restart.
+  const indexPoll = timers.setInterval(() => {
+    if (!ctx.visibility.hidden()) void stores.plugins.refreshIndex();
+  }, PLUGIN_INDEX_POLL_MS);
   const unwatchVisibility = ctx.visibility.subscribe(refresh);
   void bootstrap();
   return () => {
@@ -529,6 +577,7 @@ function startStores(ctx: StudioContext, bootstrap: () => Promise<void>, timers:
     unfollow();
     unwatchVisibility();
     timers.clearInterval(poll);
+    timers.clearInterval(indexPoll);
   };
 }
 

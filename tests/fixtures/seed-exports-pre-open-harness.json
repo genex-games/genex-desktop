@@ -1,0 +1,164 @@
+{
+  "from": "10ffbcd3",
+  "modules": {
+    "loop/autopilot.ts": [
+      "PLAN_REVIEW_WAIT_MS",
+      "baseBrief",
+      "clampFacets",
+      "concurrencyProfile",
+      "contractWiringAsk",
+      "decompose",
+      "inheritedConsoleAfterLoad",
+      "lookThatThrew",
+      "makeLock",
+      "observationOnlyFailure",
+      "parseSteeringBacklog",
+      "rollBackGame",
+      "runAutopilot",
+      "schedule",
+      "unjudgedByObservation"
+    ],
+    "loop/chat-dispatch.ts": [
+      "coordinatorReopens",
+      "handleUserMessage",
+      "intakeBudgets",
+      "judgeableFirst",
+      "launchFromIntake",
+      "launchPromise",
+      "ownSessionAfterNight",
+      "ownSessionReopens",
+      "rewindMoodBoard"
+    ],
+    "loop/chat-session.ts": [
+      "SERVES_AFTER_NIGHT",
+      "buildContractorBrief",
+      "buildInterviewBrief",
+      "isContinueAsk",
+      "isResumeFailure",
+      "lastContractorSession",
+      "nameFromAsk",
+      "originalAsk",
+      "resolveChatProject"
+    ],
+    "loop/delegated-turn.ts": [
+      "DELEGATE_TOOL",
+      "MessageUsageSource",
+      "SERVES_AFTER_NIGHT",
+      "SERVES_REOPEN",
+      "runDelegatedTurn"
+    ],
+    "loop/director/briefs.ts": [
+      "SERVES_LEAD",
+      "continuationPrompt",
+      "contractBrief",
+      "directorBrief",
+      "limitResumePrompt",
+      "preparationBudgetNote",
+      "resumeNote",
+      "singleWorkerBrief",
+      "wrapUpPrompt"
+    ],
+    "loop/director/setup.ts": [
+      "SERVES_LEAD",
+      "buildStartingPoint",
+      "installContract",
+      "lookAtStart",
+      "nightReport",
+      "pageAttaches",
+      "prepareNight"
+    ],
+    "loop/game-engine.ts": [
+      "GameEngine",
+      "engineOfGame"
+    ],
+    "loop/gauntlet.ts": [
+      "EMPTY_SCENE_PROBE",
+      "MISSING_CONTRACT",
+      "STEP_WITNESS",
+      "applySetup",
+      "buildBrief",
+      "classifyEvidenceFailure",
+      "consoleProblems",
+      "gatherEvidence",
+      "observationOnlyFailure",
+      "proveStep",
+      "runGauntlet",
+      "unversionedNested",
+      "withObservationPatience"
+    ],
+    "loop/prompt.ts": [
+      "CONTEXT_SHARE",
+      "estimateMessagesTokens",
+      "estimateTokens",
+      "eventsToMessages",
+      "eventsToMessagesWithSources",
+      "materializePrompt",
+      "readStanding",
+      "windowMessages",
+      "windowMessagesToBudget"
+    ],
+    "loop/run-dispatch.ts": [
+      "SERVES_REOPEN",
+      "chooseRunner",
+      "handleRunStart",
+      "keptNewRounds",
+      "nightRefusal",
+      "resumeRun"
+    ],
+    "loop/unreal/lead-between.ts": [
+      "MAX_REOPENS",
+      "addModuleIfAsked",
+      "betweenTurns",
+      "ensureEditor",
+      "haltedBy",
+      "recoverEditor",
+      "refreshCpp"
+    ],
+    "loop/unreal/lead-journal.ts": [
+      "DEFAULT_CREDIT_CAP",
+      "SNAPSHOT_SCOPE",
+      "fromOlderLoop",
+      "gameText",
+      "leadJournalOf",
+      "milestoneNow",
+      "newLeadJournal",
+      "oneGitWrite",
+      "readLeadJournal",
+      "requiredNow",
+      "saveLead",
+      "unrealTool",
+      "why"
+    ],
+    "loop/unreal/lead.ts": [
+      "SAVE_STEER_MS",
+      "TURN_MS",
+      "WRAP_UP_MS",
+      "runUnrealLead"
+    ],
+    "loop/unreal/restore.ts": [
+      "RestoreFailure",
+      "closeEditor",
+      "coldRestore",
+      "editorAnswers",
+      "editorGone",
+      "sourceStamp",
+      "unsavedWork"
+    ],
+    "loop/unreal/save-point.ts": [
+      "LeadPluginTool",
+      "SAVE_POINT_MS",
+      "autosave",
+      "editorActivity",
+      "markLog",
+      "savePoint"
+    ],
+    "tools/game-tools.ts": [
+      "tools"
+    ],
+    "tools/index.ts": [
+      "argumentProblems",
+      "createToolRegistry",
+      "loadToolModules"
+    ]
+  }
+}

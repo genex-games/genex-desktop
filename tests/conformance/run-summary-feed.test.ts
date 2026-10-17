@@ -7,6 +7,7 @@ import {
   type GraphCursor,
 } from "../../src/shared/run-summary-feed.ts";
 import type { RunSummary } from "../../src/shared/run-summary.ts";
+import { keepSummary, keptSummary } from "../../src/renderer/use-run-summary.ts";
 import type { UiEvent } from "../../src/shared/ui-events.ts";
 import type { EventEnvelope } from "../../src/shared/event-log.ts";
 
@@ -320,4 +321,16 @@ test("only a preview of the run's own game, or none, reaches its feed", async ()
   emit(null);
   assert.equal(seen.length, 2);
   assert.equal(seen[1]!.preview, null);
+});
+
+test("a run's view that mounts again starts from the newest summary it was sent, never another run's", () => {
+  const first = summary([], 0);
+  const newer = { ...summary([event("a")], 0), revision: 2 } as RunSummary;
+  keepSummary(first);
+  keepSummary(newer);
+  assert.equal(keptSummary("p", "r"), newer);
+  assert.equal(keptSummary("p", "other"), null);
+  assert.equal(keptSummary(null, "r"), null);
+  for (let i = 0; i < 20; i++) keepSummary({ ...first, runId: `run-${i}` } as RunSummary);
+  assert.equal(keptSummary("p", "r"), null, "only the most recent runs are kept");
 });

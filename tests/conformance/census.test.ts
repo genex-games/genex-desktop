@@ -16,7 +16,6 @@ import {
   classifyBrief,
   defaultHomes,
   lookLine,
-  normalizeToolName,
   ownedByStudio,
   readClaudeSession,
   readCodexSession,
@@ -28,6 +27,7 @@ import {
 } from "../../scripts/transcript-census.ts";
 import { PRICE_TABLE_SCHEMA, PRICE_UNIT, validatePriceTable } from "../../scripts/evals/prices.ts";
 import { CodexEngine, type CodexExec } from "../../src/substrate/engines/codex.ts";
+import { normalizeToolName } from "../../src/shared/tool-category.ts";
 import { replanCheck } from "../../src/harness-seed/loop/replan.ts";
 import { fixtureCodingCli } from "../helpers/external-cli.ts";
 import { tmpDir } from "../helpers/tmp.ts";

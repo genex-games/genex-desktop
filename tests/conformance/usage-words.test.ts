@@ -2,7 +2,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { type ContextUsage, measuredContext } from "../../src/shared/context.ts";
-import { contextReading, limitLevel, planWords, resetWords } from "../../src/renderer/ui/usage-words.ts";
+import { contextReading, limitLevel, pendingPlans, planWords, resetWords } from "../../src/renderer/ui/usage-words.ts";
 
 const context = (over: Partial<ContextUsage>): ContextUsage => ({ ...over }) as ContextUsage;
 
@@ -111,5 +111,17 @@ describe("a plan's limits", () => {
 
   it("marks a limit high from three quarters and full from nine tenths", () => {
     assert.deepEqual([null, 10, 75, 89, 90].map(limitLevel), [undefined, undefined, "high", "high", "full"]);
+  });
+});
+
+describe("plans drawn while usage is read", () => {
+  it("names each plan this setup uses, the main agent's first, and one unnamed plan when none is known", () => {
+    assert.deepEqual(pendingPlans({ codex: ["builder"], "claude-code": ["planner", "judge"] }), [
+      "claude-code",
+      "codex",
+    ]);
+    assert.deepEqual(pendingPlans({ codex: ["planner"], "claude-code": [] }), ["codex"]);
+    assert.deepEqual(pendingPlans({ opencode: ["planner"] }), [null], "a provider without plan limits draws no plan");
+    assert.deepEqual(pendingPlans({}), [null]);
   });
 });

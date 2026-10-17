@@ -136,6 +136,30 @@ test("changed files come from the diff against a base plus untracked files, the 
   assert.throws(() => areaFiles(root, "missing"), /Unknown area: missing/);
 });
 
+test("renames retain old and new paths for base and staged selection, including deleted-path importers", (t) => {
+  const root = fixture(t);
+  const git = (...args: string[]) => gitIn(root, ...args);
+  fs.mkdirSync(path.join(root, "scripts"));
+  fs.mkdirSync(path.join(root, "misc"));
+  fs.writeFileSync(path.join(root, "scripts/test-runtime.mjs"), "export const runtime = true;\n");
+  git("init", "-q");
+  git("config", "diff.renames", "true");
+  git("add", "-A");
+  git("commit", "-qm", "base");
+  const base = git("rev-parse", "HEAD").trim();
+  git("mv", "scripts/test-runtime.mjs", "misc/renamed-runtime.mjs");
+  git("mv", "src/helper.ts", "src/renamed-helper.ts");
+  const expected = ["misc/renamed-runtime.mjs", "scripts/test-runtime.mjs", "src/helper.ts", "src/renamed-helper.ts"];
+  for (const options of [{ base }, { staged: true }]) {
+    const changed = changedFiles(root, options);
+    assert.deepEqual(changed, expected);
+    assert.deepEqual(selectTests(root, changed).L1, [
+      "tests/conformance/lazy.test.ts",
+      "tests/conformance/pure.test.ts",
+    ]);
+  }
+});
+
 test("the CLI reports JSON and --run exits with the selected tests' status", (t) => {
   const root = fixture(t);
   const cli = (...args: string[]) => spawnSync(process.execPath, [script, ...args], { cwd: root, encoding: "utf8" });
@@ -260,6 +284,28 @@ test('builds a repo', () => {
     ),
     ["GIT_AUTHOR_NAME", "PATH"],
   );
+});
+
+test("affected execution bounds pure workers and keeps the rig batch serial", (t) => {
+  const root = fixture(t);
+  const files = ["pure", "lazy", "rig"].map((name) => `tests/conformance/${name}.test.ts`);
+  for (const file of files)
+    fs.writeFileSync(
+      path.join(root, file),
+      `import { test } from 'node:test'; import fs from 'node:fs';
+test('records execution', () => fs.appendFileSync('execution.jsonl', JSON.stringify({file:${JSON.stringify(file)},argv:process.execArgv})+'\\n'));
+`,
+    );
+  assert.equal(runSelection(root, { L1: files.slice(0, 2), L3: files.slice(2) }, "all", process.env, "ignore"), 0);
+  const seen = fs
+    .readFileSync(path.join(root, "execution.jsonl"), "utf8")
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line));
+  assert.deepEqual(seen.map(({ file }) => file).sort(), [...files].sort());
+  assert.equal(seen.at(-1).file, files[2]);
+  for (const { file, argv } of seen)
+    assert.ok(argv.includes(`--test-concurrency=${file === files[2] ? 1 : 2}`), `${file}: ${argv}`);
 });
 
 // The hook runs under /bin/sh here, with shell-script stand-ins for npm and node.

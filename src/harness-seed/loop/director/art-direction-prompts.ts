@@ -5,6 +5,7 @@
  * from modules as new as it, so a seed upgrade never finds it older than a caller.
  */
 import { DefectSeverity } from "../ship-review.ts";
+import { blockersOf } from "../ship-blockers.ts";
 import { shortSha } from "../git.ts";
 import type { ShipDefect } from "../ship-review.ts";
 
@@ -14,17 +15,17 @@ export const SHIP_QUESTION = "Would you ship this as the user's demo today?";
 /** The group of the defects no plan part owns: the lead's. */
 export const NO_PART = "no part — yours";
 
-/** The rule from the finish mark on, as the lead reads it. */
+/** The rule from the finish mark on, and after a look that names a blocker, as the lead reads it. */
 export const FINISH_MARK_RULE =
-  "From here no new parts or systems: finish what exists. worker_steer stage=finish on each running owner of a part with defects (or, for a finished part, worker_start stage=finish replaces=<its id> owns=<its files> from=integration, which takes that part's defects on its board); a finish round may win on polish. Integrate, then judge ship=yes again.";
+  "From here no new parts or systems: finish what exists. worker_steer stage=finish on each running owner of a part with a blocker (or, for a finished part, worker_start stage=finish replaces=<its id> owns=<its files> from=integration, which takes that part's blockers on its board); a finish round may win on polish. Integrate, then judge ship=yes again.";
 
 /**
- * What a goal build's card and brief say of the art director's defects: a goal build reports
- * blockers instead of optional polish, and the art director's blocker and visible defects are not
- * that polish — its look turns a goal build's first finish back with them.
+ * What a goal build's card and brief say of the art director's defects: its blockers are required
+ * finishing — its look turns a goal build's first finish back with them — and its visible flaws
+ * and nits are the user's report, never a round.
  */
 export const SHIP_DEFECTS_NOT_POLISH =
-  "The art director's blocker and visible defects are required finishing, not optional polish; its nits stay optional.";
+  "The art director's blockers are required finishing; its visible flaws and nits go in your report and never start a round.";
 
 /** What a ship defect on a worker's board is, as its steer says it. */
 export interface ShipSteerFacts {
@@ -32,7 +33,7 @@ export interface ShipSteerFacts {
   defect: string;
   /** The question's id on the worker's board. */
   checkId: string;
-  /** How much it matters: a nit is optional polish; a blocker or visible defect is the work. */
+  /** How much it matters: only a blocker reaches a board (art-direction.ts `routeShipDefects`). */
   severity: DefectSeverity;
   /** The review's verdict: ship, not ship, or none read. */
   ship: boolean | null;
@@ -48,23 +49,18 @@ function steerOpening(ship: boolean | null): string {
 }
 
 /**
- * What the owner of a ship defect is told when it lands on its board, by the review's verdict and
- * the defect's severity: a nit is optional polish that decides nothing; a blocker or a visible
- * defect must be gone before the part is done — a finisher's round's work, and for a worker still
- * building, beside its move, never ahead of it.
+ * What the owner of a blocker is told when it lands on its board, by the review's verdict: it must
+ * be gone before the part is done — a finisher's round's work, and for a worker still building,
+ * beside its move, never ahead of it.
  */
 export function shipSteer({ defect, checkId, severity, ship, finishing }: ShipSteerFacts): string {
-  if (severity === DefectSeverity.Nit) {
-    const when = finishing ? "take it if this round has room" : "never ahead of your move";
-    return `The art director noticed a nit in your part: "${defect}" (${checkId} on your board). It is optional polish — ${when}; it decides nothing.`;
-  }
   const work = finishing ? "it is this round's work" : "fix it beside your move, never instead of it";
   return `${steerOpening(ship)}: "${defect}" (${severity}). It is on your board as ${checkId} and must be gone before your part is done — ${work}.`;
 }
 
-/** What to do next when the art director would ship the build. */
-const SHIP_YES_NEXT =
-  "The art director would ship this build: hand any nits left to their owners with stage=finish, or finish.";
+/** What to do next when the art director names no blocker: its other defects are the report's. */
+const NO_BLOCKER_NEXT =
+  "The art director names no blocker: its visible flaws and nits go in your report and never start a round (fix a quick one yourself if you like). Finish once the required outcomes are verified.";
 
 /** What to do next when nobody could read the art director's answer. */
 const SHIP_UNREAD_NEXT =
@@ -100,9 +96,9 @@ interface ShipWords {
 const SHIP_LOOK_HEADING =
   "THE ART DIRECTOR'S LOOK AT THE WHOLE GAME — the studio's regular look while workers build, not the finish mark";
 
-/** What the lead does after a regular look: its defects are already with their owners, and building goes on. */
+/** What the lead does after a regular look: its blockers are already with their owners, and building goes on. */
 const SHIP_LOOK_NEXT =
-  "Each defect is on its owner's board — a building owner fixes it beside its move — or, for a part nobody builds now, on your ledger. The build stage goes on: no finish stage before the finish mark. Steer by the verdict, not by single defects.";
+  "Each blocker is on its owner's board — a building owner fixes it beside its move — or, for a part nobody builds now, on your ledger; visible flaws and nits are for your report, never a round. The build stage goes on: no finish stage before the finish mark.";
 
 /** The do-not-regress list in a line, as the lead reads it, or nothing when the review named none. */
 function doNotRegressLine(review: ShipWords): string {
@@ -130,11 +126,10 @@ export function defectsByPart(defects: readonly ShipDefect[]): Record<string, st
 export const noticed = (defects: readonly ShipDefect[]): number =>
   defects.filter((d) => d.severity !== DefectSeverity.Nit).length;
 
-/** The line that says what to do after a ship review. */
+/** The line that says what to do after a ship review: a blocker is finished by its owner; anything less is the report's. */
 export function shipNext({ ship, defects }: ShipWords): string {
   if (ship === null) return SHIP_UNREAD_NEXT;
-  if (ship && !noticed(defects)) return SHIP_YES_NEXT;
-  return FINISH_MARK_RULE;
+  return blockersOf(defects).length ? FINISH_MARK_RULE : NO_BLOCKER_NEXT;
 }
 
 /** Ship or not, in the words a sentence starts with. */
@@ -199,16 +194,18 @@ export function shipLookBlock({
 /** What `finish` adds about the art director's last look at the head it closed on, or nothing. */
 export function shipFinishLine(review: ShipWords | null): string {
   if (!review || review.ship === null) return "";
-  const left = review.defects.length;
-  if (review.ship)
-    return left
-      ? ` The art director would ship this build; ${left} defects left.`
-      : " The art director would ship this build.";
-  return ` The art director would not ship this build; ${left} defects left — say so, and claim no more.`;
+  const blockers = blockersOf(review.defects).length;
+  const flaws = review.defects.length - blockers;
+  const report = flaws ? `; ${flaws} visible flaws and nits for your report` : "";
+  if (blockers)
+    return ` The art director names ${blockers} blocker${blockers === 1 ? "" : "s"} on this build${report} — say so, and claim no more.`;
+  return ` The art director names no blocker on this build${report}.`;
 }
 
-/** Why a goal build's first finish is turned back: the art director's look found what to finish. */
+/** Why a goal build's first finish is turned back: the art director's look found blockers to finish. */
 export function shipFinishRefusal(review: ShipWords): string {
-  const groups = Object.entries(defectsByPart(review.defects)).map(([part, lines]) => `${part}: ${lines.join(" | ")}`);
-  return `finish turned back once: the art director would not ship this build — ${groups.join("; ") || "no defects named"}. ${FINISH_MARK_RULE} Calling finish again closes the build as it stands.`;
+  const groups = Object.entries(defectsByPart(blockersOf(review.defects))).map(
+    ([part, lines]) => `${part}: ${lines.join(" | ")}`,
+  );
+  return `finish turned back once: the art director names blockers on this build — ${groups.join("; ")}. ${FINISH_MARK_RULE} Calling finish again with victory=no closes the build as it stands; a claim waits until no blocker stands.`;
 }

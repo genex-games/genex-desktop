@@ -14,9 +14,12 @@ import { it } from "node:test";
 import assert from "node:assert/strict";
 import os from "node:os";
 import path from "node:path";
-import { cp, mkdtemp, writeFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 import { customEvents, startRig, waitForLog } from "../helpers/studio-rig.ts";
+import { errorMessage } from "../../src/shared/errors.ts";
 import type { McpConnector } from "../../src/shared/mcp.ts";
 import type { DelegateRequest } from "../../src/substrate/engines/types.ts";
 import { createToolRegistry } from "../../src/harness-seed/tools/index.ts";
@@ -54,6 +57,24 @@ async function approveFixtureConnector(
   assert.ok(ask);
   rig.core.resolveConsent(String(ask.consentId), true);
   return pending;
+}
+
+/**
+ * A plugin connector's call that needs no card (a tool its manifest says only reads, or any of its
+ * tools in an Auto chat): how it settled, an answer or an error, with no `plugin_consent` row added.
+ */
+async function runsUnasked(
+  rig: Awaited<ReturnType<typeof startRig>>,
+  invoke: () => Promise<unknown>,
+): Promise<{ value: unknown } | { error: unknown }> {
+  const cards = async () => customEvents(await rig.core.listAllEvents(), "plugin_consent").length;
+  const before = await cards();
+  const outcome = await invoke().then(
+    (value) => ({ value }),
+    (error: unknown) => ({ error }),
+  );
+  assert.equal(await cards(), before, "it ran with no card");
+  return outcome;
 }
 
 it("connection status tracks a delegated response through revocation and clears when it settles", async () => {
@@ -462,6 +483,7 @@ it("a plugin ships its own MCP server: started with it, fed on fd 3, and gone wh
         : real(id, method, args as never, binding as never)) as typeof services.call;
 
     await rig.core.plugins.installLocal(await pluginPackage());
+    await rig.core.plugins.setEnabled("mcpdemo", true);
     const view = async () => (await rig.core.mcp.list()).find((v) => v.connector.id === "mcpdemo-echo");
     const listed = await view();
     assert.ok(listed, "the plugin server is listed as a connector the plugin owns");
@@ -595,10 +617,10 @@ it("bundled main Genex MCP joins an existing chat after account unlock on every 
           );
           const tools = request.liveTools?.filter((t) => t.name.startsWith("genex-creator__")) ?? [];
           assert.equal(tools.length, 4);
-          assert.equal(
-            await approveFixtureConnector(rig, () => request.onLiveTool!("genex-creator__generation_status", {})),
-            "Genex fixture: generation_status",
-          );
+          // A new chat is in Auto, where a plugin's connector runs with no card.
+          assert.deepEqual(await runsUnasked(rig, () => request.onLiveTool!("genex-creator__generation_status", {})), {
+            value: "Genex fixture: generation_status",
+          });
           assert.doesNotMatch(JSON.stringify(request.liveTools), /creator-fixture-credential/);
           assert.ok(
             !request.liveTools?.some((t) => t.name === "genex-creator__generate"),
@@ -628,6 +650,122 @@ it("bundled main Genex MCP joins an existing chat after account unlock on every 
     );
   } finally {
     await rig.stop();
+  }
+});
+
+/**
+ * Epic's Unreal MCP on a local port, as UE 5.8.3 answers: `initialize` opens a session with the
+ * tools capability (and an empty serverInfo name), and every tool call returns `returnValue`.
+ */
+async function fakeUnrealMcp(returnValue: string, project: string) {
+  const server = createServer(async (request, response) => {
+    let body = "";
+    for await (const chunk of request) body += chunk;
+    if (request.method !== "POST") return void response.writeHead(request.method === "DELETE" ? 202 : 405).end();
+    const message = JSON.parse(body);
+    if (message.id === undefined) return void response.writeHead(202).end();
+    const result =
+      message.method === "initialize"
+        ? {
+            protocolVersion: message.params.protocolVersion,
+            capabilities: { resources: {}, tools: { listChanged: true } },
+            serverInfo: { name: "", title: "", version: "" },
+          }
+        : {
+            content: [
+              {
+                type: "text",
+                // The Genex editor helper's project_file names the project this editor has open.
+                text: JSON.stringify({
+                  returnValue: message.params?.arguments?.tool_name === "project_file" ? project : returnValue,
+                }),
+              },
+            ],
+          };
+    const headers = { "content-type": "application/json", "mcp-session-id": "fake-session" };
+    response.writeHead(200, headers).end(JSON.stringify({ jsonrpc: "2.0", id: message.id, result }));
+  });
+  // Setup gives a project a port in Genex's block, 18000–18999; the bridge trusts no other.
+  const start = 18_000 + Math.floor(Math.random() * 1000);
+  for (let step = 0; step < 1000 && !server.listening; step++) {
+    const port = 18_000 + ((start - 18_000 + step) % 1000);
+    await new Promise<void>((resolve) => {
+      server.once("error", () => resolve());
+      server.listen(port, "127.0.0.1", () => resolve());
+    });
+  }
+  const close = () =>
+    new Promise<void>((resolve) => {
+      server.closeAllConnections();
+      server.close(() => resolve());
+    });
+  return { port: (server.address() as AddressInfo).port, close };
+}
+
+it("bundled Unreal Editor starts off, then finds the set-up project's editor from the plugin's storage", async () => {
+  const rig = await startRig({ replies: [] });
+  const drift = path.join(os.homedir(), "Documents", "Unreal Projects", "Drift", "Drift.uproject");
+  const unreal = await fakeUnrealMcp("21 toolsets", drift);
+  try {
+    const project = "unreal-bridge";
+    const game = await rig.core.games.scaffold(project);
+    // The editor connector reaches a game that holds an Unreal project; one not linked to it still
+    // goes to the project chosen in the panel.
+    await writeFile(path.join(game.dir, "Bridge.uproject"), "{}");
+    const threadId = await rig.core.createGameThread(project);
+    const view = async () => (await rig.core.mcp.list()).find((v) => v.connector.id === "unreal-editor");
+    assert.equal(rig.core.plugins.enabled("unreal"), false, "an early integration waits to be turned on");
+    assert.equal(await view(), undefined);
+    await rig.core.plugins.setEnabled("unreal", true);
+    const connector = await view();
+    assert.ok(connector, "enabling the plugin lists its connector");
+    assert.equal(connector.trusted, true, "the bundled plugin's own dialog is the trust gate");
+    const api = rig.core.api() as unknown as Record<string, (input: any) => Promise<any>>;
+    // What Set up Unreal leaves in the plugin's storage: the project and its own port.
+    const record = path.join(rig.core.pluginServices.root("unreal"), "setup", "drift", "record.json");
+    const setUp = async () => {
+      await mkdir(path.dirname(record), { recursive: true });
+      await writeFile(
+        record,
+        JSON.stringify({ project: drift, uproject: { added: [], enabled: [] }, port: unreal.port }),
+      );
+    };
+    const answers: Array<Awaited<ReturnType<typeof runsUnasked>>> = [];
+    rig.core.engines.register({
+      id: "claude-code",
+      label: "fixture",
+      kind: "delegated",
+      status: async () => ({ code: "ready" }),
+      models: async () => [],
+      delegate: async (request: DelegateRequest) => {
+        const tools = request.liveTools?.filter((t) => t.name.startsWith("unreal-editor__")).map((t) => t.name);
+        assert.deepEqual(tools?.sort(), [
+          "unreal-editor__call_tool",
+          "unreal-editor__describe_toolset",
+          "unreal-editor__list_toolsets",
+        ]);
+        const onLiveTool = request.onLiveTool;
+        assert.ok(onLiveTool, "the studio injects live tools");
+        // The manifest says `list_toolsets` only reads: it never asks.
+        const list = () => runsUnasked(rig, () => onLiveTool("unreal-editor__list_toolsets", {}));
+        answers.push(await list());
+        await setUp();
+        answers.push(await list());
+        return { ok: true, engine: "claude-code", summary: "fixture", turns: 1, usage: {} };
+      },
+    } as never);
+    await api["engine.delegate"]({ engine: "claude-code", project, threadId, prompt: "Look at the Unreal project" });
+    // A failed tool call reaches the engine as an Error; an answer as the tool's result.
+    const [none, found] = answers.map((answer) =>
+      "error" in answer ? errorMessage(answer.error) : JSON.stringify(answer.value),
+    );
+    assert.match(none, /set up/i, "with no project set up the agent learns what to do");
+    assert.match(none, /Unreal button/);
+    assert.match(found, /21 toolsets/, "the bridge reached the set-up project's own port");
+    assert.match(found, /Drift/, "and names the project that answered");
+  } finally {
+    await rig.stop();
+    await unreal.close();
   }
 });
 

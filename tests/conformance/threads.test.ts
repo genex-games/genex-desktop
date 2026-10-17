@@ -24,7 +24,10 @@ import {
   materializePrompt,
 } from "../../src/harness-seed/loop/prompt.ts";
 import { compactThread } from "../../src/harness-seed/loop/compact.ts";
+import { GameEngine } from "../../src/harness-seed/loop/game-engine.ts";
 import { isContinueAsk } from "../../src/harness-seed/loop/turn-loop.ts";
+import { tools as gameTools } from "../../src/harness-seed/tools/game-tools.ts";
+import { ctxRecorder } from "../helpers/ctx-recorder.ts";
 
 const rigs: Rig[] = [];
 afterEach(async () => {
@@ -143,6 +146,7 @@ describe("per-game threads", () => {
     const rig = await startRig({
       replies: [
         { toolCalls: [{ id: "c1", name: "new_game", arguments: { name: "arena", title: "Arena" } }] },
+        { toolCalls: [{ id: "c2", name: "start_web_game", arguments: { project: "arena" } }] },
         { text: "Scaffolded the arena." },
       ],
     });
@@ -158,6 +162,44 @@ describe("per-game threads", () => {
     assert.equal((record.metadata as { project?: string }).project, "arena");
     assert.equal(record.title, "make a top-down arena shooter");
     assert.notEqual(await rig.core.createGameThread(), threadId, "＋ opens a new chat, not the arena's");
+    // The game it made started empty, and its start_web_game wrote the web starter.
+    const arena = (await rig.core.games.list()).find((game) => game.name === "arena");
+    assert.deepEqual(
+      arena?.facts.map(({ id, path }) => ({ id, path })),
+      [{ id: "web-game", path: "." }],
+    );
+  });
+
+  it("a local model's new_game makes an empty folder unless it asks for web, and start_web_game starts one", async () => {
+    const tool = (name: string) => {
+      const found = gameTools.find((candidate) => candidate.name === name);
+      assert.ok(found, name);
+      return found;
+    };
+    const rows = [
+      { tool: "new_game", args: { name: "arena" }, method: "game.scaffold", params: { name: "arena", title: "arena" } },
+      {
+        tool: "new_game",
+        args: { name: "arena", kind: "web" },
+        method: "game.scaffold",
+        params: { name: "arena", title: "arena", kind: "web" },
+      },
+      {
+        tool: "start_web_game",
+        args: { project: "arena" },
+        method: "game.start",
+        // Flipped: the start names its chat, so the host holds it while that chat plans.
+        params: { project: "arena", starter: "web", threadId: "thread-1" },
+      },
+    ];
+    for (const row of rows) {
+      const host = ctxRecorder({
+        unknown: { value: null },
+        handlers: { [row.method]: () => ({ name: "arena", dir: "/g/arena" }) },
+      });
+      await tool(row.tool).execute(row.args, host.ctx as never);
+      assert.deepEqual(host.paramsOf(row.method), [row.params], `${row.tool} ${JSON.stringify(row.args)}`);
+    }
   });
 
   it("adopts a chat that built a game but was never named after it", async () => {
@@ -657,6 +699,53 @@ describe("context management", () => {
     );
     assert.match(tool.content, /clamped from this message/, "the cut is stated in place; the log keeps the whole");
     assert.equal(prompt.messages.length, 3, "nothing else is dropped");
+  });
+
+  it("a local model's identity names no engine and says where it runs and what the game holds; a web game's adds three.js and the web rules", async () => {
+    const seed = new URL("../../src/harness-seed", import.meta.url).pathname;
+    const systemFor = async (game: Record<string, unknown> | null, kinds: unknown[] = []) => {
+      const ctx = {
+        workspace: seed,
+        call: async (method: string) => {
+          if (method === "game.list") return game ? [game] : [];
+          if (method === "events.list") return [];
+          if (method === "plugins.tools") return { tools: [], guidance: "", kinds, revision: 1 };
+          return null;
+        },
+      };
+      return (await materializePrompt(ctx as never, { threadId: "t1", project: "g" } as never)).systemPrompt;
+    };
+    const neutral = await systemFor({ name: "g", web: false });
+    assert.match(neutral, /You build games on this Mac/, "the shipped identity was read");
+    assert.doesNotMatch(neutral, /three\.js/i);
+    assert.match(await systemFor({ name: "g", web: true }), /three\.js/);
+    assert.match(await systemFor({ name: "g" }), /three\.js/, "a descriptor without the flag is a web game");
+    assert.doesNotMatch(
+      await systemFor({ name: "g", web: true, engine: { kind: GameEngine.Unreal } }),
+      /three\.js/i,
+      "a game linked to Unreal is no web page",
+    );
+    const godot = await systemFor({ name: "g", dir: "/AI Games/g", facts: [{ id: "godot-project", path: "." }] });
+    assert.match(godot, /inside Genex[^\n]*the folder `AI Games\/g`; it holds a Godot project at its root/);
+    assert.doesNotMatch(godot, /window\.__studio|game_state\(\)/, "a Godot game gets no web page rules");
+    const web = await systemFor({ name: "g", dir: "/AI Games/g", facts: [{ id: "web-game", path: "." }] });
+    assert.match(web, /it holds a web game at its root/);
+    assert.match(web, /window\.__studio/);
+    assert.match(web, /game_state\(\)/);
+    // A new game with no kind yet starts as a web game through start_web_game, by its bare name.
+    for (const holds of [undefined, "nothing", "notes"]) {
+      const pending = await systemFor({ name: "g", dir: "/AI Games/g", facts: [], ...(holds ? { holds } : {}) });
+      assert.match(pending, /call start_web_game first/, `${holds}: web is the default`);
+      assert.match(pending, /call plugins_find/, `${holds}: an engine goes through plugins_find`);
+    }
+    // An engine plugin that is on names its kind tool, as a chat's brief does.
+    const unrealKind = { plugin: "unreal", name: "Unreal Engine", tool: "unreal__new-game", makes: ["unreal-project"] };
+    const offered = await systemFor({ name: "g", dir: "/AI Games/g", facts: [] }, [unrealKind]);
+    assert.match(offered, /When the request names Unreal Engine, call unreal__new-game/);
+    assert.match(offered, /call start_web_game first/, "web is still the default");
+    const own = await systemFor({ name: "g", dir: "/AI Games/g", facts: [], holds: "own-files" });
+    assert.doesNotMatch(own, /start_web_game/, "a folder of its own files takes no starter");
+    assert.match(own, /look through them first/);
   });
 
   it("compactThread summarises via the engine and appends a compacted event", async () => {

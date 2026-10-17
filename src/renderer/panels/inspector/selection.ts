@@ -9,8 +9,12 @@ export const GraphSelection = {
   Assets: "assets",
   Optimization: "optimization",
   Final: "final",
-  /** the lead, while it has the run between parts */
+  /** the lead of a run or a chat turn: in a tree for the whole run, else while it has the run between parts */
   Lead: "lead",
+  /** the lead's background work, under it in a tree */
+  Jobs: "jobs",
+  /** the reviewer's check that a run is done, the last node of a run's tree */
+  FinishCheck: "finish_check",
 } as const;
 export type GraphSelection = (typeof GraphSelection)[keyof typeof GraphSelection];
 

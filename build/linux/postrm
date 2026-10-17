@@ -1,0 +1,21 @@
+#!/bin/sh
+# Take away the AppArmor profile postinst installed, on remove and purge. An upgrade keeps it: the
+# new version's postinst writes it again. Nothing here may fail the removal.
+
+PROFILE_NAME=genex
+PROFILE="${DPKG_ROOT:-}/etc/apparmor.d/$PROFILE_NAME"
+
+remove_profile() {
+  [ -f "$PROFILE" ] || return 0
+  if command -v apparmor_parser >/dev/null 2>&1; then
+    apparmor_parser --remove "$PROFILE" >/dev/null 2>&1 || true
+  fi
+  rm -f "$PROFILE"
+  rm -f "${DPKG_ROOT:-}"/var/cache/apparmor/*/"$PROFILE_NAME"
+}
+
+case "$1" in
+  remove | purge) remove_profile ;;
+esac
+
+exit 0

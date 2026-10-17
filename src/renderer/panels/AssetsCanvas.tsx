@@ -1,10 +1,13 @@
 /** Asset inventory with local image, media, model and animation previews. */
 import type { JSX } from "react";
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { assetJobStalled, type ProjectAsset } from "../../shared/game-assets.ts";
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import type { ProjectAsset } from "../../shared/game-assets.ts";
+import { isGenexSource, type MakingJob, MakingPhase } from "../../shared/asset-making.ts";
+import { withoutGenexSources } from "../../shared/genex.ts";
+import type { MakingSource } from "../asset-making.ts";
 import { foldMotions, type FoldedMotions } from "../../shared/model-rig.ts";
-import { layoutAssets, type PendingJob } from "../assets-layout.ts";
-import { useCanvasView, gridTransform } from "../canvas-view.ts";
+import { layoutAssets } from "../assets-layout.ts";
+import { gridTransform, keepView, keptView, useCanvasView, useOnWheel } from "../canvas-view.ts";
 import { boundsOf } from "../run-graph.ts";
 import { useLibrary } from "../state/hooks.ts";
 import { assetsOf } from "../state/library.ts";
@@ -18,8 +21,12 @@ import { useModelRigs } from "../model-rigs.ts";
 import { type Notify, notifyProblem } from "../state/toasts.ts";
 import { typingIn } from "./keyboard.ts";
 import { Pending } from "../ui/Pending.tsx";
+import { MakingCard, usePluginSources } from "./MakingCard.tsx";
+import { MakingReviewsProvider } from "./MakingReviews.tsx";
 
-const NO_PENDING: PendingJob[] = [];
+const NO_WAITING: MakingJob[] = [];
+/** A Genex job waiting for the person's choice: the canvas then reads Genex for its candidates. */
+const waitsForGenexChoice = (job: MakingJob): boolean => isGenexSource(job.source) && job.phase === MakingPhase.Review;
 /** Nothing folded: before the models' headers are read. */
 const NOTHING_FOLDED: FoldedMotions = { clipsOf: new Map(), loose: [], motions: new Set() };
 /** The canvas's dot grid, in canvas pixels, and one press of zoom in or out. */
@@ -28,7 +35,6 @@ const ZOOM_STEP = 1.2;
 
 type Layout = ReturnType<typeof layoutAssets>;
 type Group = Layout["groups"][number];
-type Job = Group["jobs"][number];
 
 interface Props {
   project: string;
@@ -36,22 +42,38 @@ interface Props {
   onNotice: Notify;
 }
 
-/** A job still on its way: what was asked, and whether it needs attention. */
-function PendingCard({ layout, group, job }: { layout: Layout; group: Group; job: Job }): JSX.Element | null {
-  const rect = layout.rects[`pending:${group.source}:${job.jobId ?? ""}`];
+/** A job still on its way, in the spot its asset will land. */
+function WaitingCard({
+  layout,
+  group,
+  job,
+  plugin,
+}: {
+  layout: Layout;
+  group: Group;
+  job: MakingJob;
+  plugin: MakingSource;
+}): JSX.Element | null {
+  const rect = layout.rects[`pending:${group.source}:${job.jobId}`];
   if (!rect) return null;
   return (
-    <div
-      data-asset-pending={job.jobId ?? ""}
-      className="absolute flex flex-col justify-center gap-2 rounded-card bg-surface p-3"
-      style={{ left: rect.x, top: rect.y, width: rect.w, height: rect.h }}
-    >
-      <span className="text-chat-sub text-ink-2">
-        {assetJobStalled(job.status) ? "Asset request needs attention" : "Creating asset…"}
-      </span>
-      {job.prompt && <span className="line-clamp-3 text-micro text-ink-3">{job.prompt}</span>}
+    <div className="absolute" style={{ left: rect.x, top: rect.y, width: rect.w, height: rect.h }}>
+      <MakingCard job={job} plugin={plugin} />
     </div>
   );
+}
+
+/**
+ * Who a group's cards came from: a source Studio names itself (Genex, Blender, your files) by that
+ * name, any other plugin by its own name and picture, a connector by the name its jobs carry.
+ */
+function sourceOf(group: Group, plugins: ReadonlyMap<string, MakingSource>): MakingSource {
+  const plugin = plugins.get(group.source);
+  const named = group.label !== group.source;
+  if (named) return { ...plugin, name: group.label };
+  if (plugin) return plugin;
+  const carried = group.jobs.find((job) => job.waiting?.sourceName)?.waiting?.sourceName;
+  return { name: carried ?? group.label };
 }
 
 /** Every group of the inventory: its heading, its jobs still on their way, and its asset cards. */
@@ -71,6 +93,7 @@ const AssetGroups = memo(function AssetGroups({
   onOpen: (asset: ProjectAsset) => void;
 }): JSX.Element {
   const companions = useMemo(() => assets.map((a) => a.assetRef ?? a.file), [assets]);
+  const plugins = usePluginSources();
   const tile = (asset: ProjectAsset): JSX.Element =>
     asset.kind === "audio" ? (
       <AudioTile project={project} asset={asset} onOpen={() => onOpen(asset)} />
@@ -113,14 +136,15 @@ const AssetGroups = memo(function AssetGroups({
       {layout.groups.map((group) => {
         const head = layout.rects[group.id];
         if (!head) return null;
+        const source = sourceOf(group, plugins);
         return (
           <div key={group.id}>
             <div className="absolute flex items-baseline gap-2" style={{ left: head.x, top: head.y, width: head.w }}>
-              <span className="text-body-sm font-medium text-ink">{group.label}</span>
+              <span className="text-body-sm font-medium text-ink">{source.name}</span>
             </div>
             {group.jobs.map((job) => (
               <div key={job.id}>
-                {job.pending && <PendingCard layout={layout} group={group} job={job} />}
+                {job.waiting && <WaitingCard layout={layout} group={group} job={job.waiting} plugin={source} />}
                 {job.assets.map((asset) => card(group, asset))}
               </div>
             ))}
@@ -205,33 +229,59 @@ function AssetsZoom({
   );
 }
 
-/** The canvas's camera: fitted once per game, with small collections kept at their natural size. */
+/** One game's canvas, as its kept camera is named. */
+const assetsViewKey = (project: string): string => `assets\n${project}`;
+
+/**
+ * The canvas's camera: fitted once per game before it is drawn, with small collections kept at
+ * their natural size. A camera the user moved (a pan, the wheel, the zoom buttons) comes back as
+ * they left it when the tab or the game returns; Fit hands it back to fitting.
+ */
 function useAssetsCamera(project: string, loaded: boolean, layout: Layout) {
-  const canvas = useCanvasView({ initial: { k: 1, tx: 0, ty: 0 } });
-  const { viewRef, fit, zoomBy } = canvas;
+  const touched = useRef(false);
+  const touch = useCallback(() => {
+    touched.current = true;
+  }, []);
+  const canvas = useCanvasView({ initial: keptView(assetsViewKey(project)) ?? { k: 1, tx: 0, ty: 0 }, onPan: touch });
+  const { viewRef, fit, zoomBy, apply, viewport } = canvas;
+  useOnWheel(viewport, touch);
   const fitted = useRef<string | null>(null);
   const fitAssets = useCallback(
     (bounds: ReturnType<typeof boundsOf>) => {
+      touched.current = false;
       fit(bounds);
       // A small collection stays at its natural card size; larger collections fit down.
       if (viewRef.current.k > 1) zoomBy(1 / viewRef.current.k);
     },
     [fit, zoomBy, viewRef],
   );
-  // Another game is another canvas: fitted again. (Before the fit below, so the new game's first fit sticks.)
-  // biome-ignore lint/correctness/useExhaustiveDependencies: a new game is the reason to fit again
-  useEffect(() => {
-    fitted.current = null;
-  }, [project]);
-  // Fit once per project, as soon as there is something to fit.
-  useEffect(() => {
+  // Another game is another canvas: its kept camera, else fitted again. Leaving keeps this one's.
+  useLayoutEffect(() => {
+    const kept = keptView(assetsViewKey(project));
+    touched.current = kept !== null;
+    fitted.current = kept ? project : null;
+    if (kept) apply(kept);
+    return () => {
+      const moved = touched.current && fitted.current === project;
+      keepView(assetsViewKey(project), moved ? viewRef.current : null);
+    };
+  }, [project, apply, viewRef]);
+  // Fit once per project, as soon as there is something to fit, before it is painted.
+  useLayoutEffect(() => {
     if (!loaded || fitted.current === project) return;
     const bounds = boundsOf(Object.values(layout.rects));
     if (!bounds) return;
     fitted.current = project;
     fitAssets(bounds);
   }, [loaded, project, layout, fitAssets]);
-  return { ...canvas, fitAssets };
+  const zoomByHand = useCallback(
+    (factor: number) => {
+      touch();
+      zoomBy(factor);
+    },
+    [touch, zoomBy],
+  );
+  return { ...canvas, zoomBy: zoomByHand, fitAssets };
 }
 
 // One press, one dismissal — the same chain the Builds canvas uses, so Escape never also
@@ -260,7 +310,7 @@ function useProjectAssets(project: string) {
   const ledger = useLibrary((s) => assetsOf(s, project).value);
   const loadError = useLibrary((s) => assetsOf(s, project).error);
   const refresh = useCallback(() => studio().library.refreshAssets(project), [project]);
-  return { ledger, loadError, refresh, assets: ledger?.assets ?? [], pending: ledger?.jobs ?? NO_PENDING };
+  return { ledger, loadError, refresh, assets: ledger?.assets ?? [], waiting: ledger?.jobs ?? NO_WAITING };
 }
 
 /** The selected asset and the one open in the preview: cleared for another game, moved to a job the stage asks for. */
@@ -294,22 +344,31 @@ function useFoldedMotions(project: string, assets: ProjectAsset[]): FoldedMotion
   return useMemo(() => (rigs ? foldMotions(rigs) : null), [rigs]);
 }
 
+/**
+ * The files that get a card, once the models' headers are read: clips ride on their model (a clip
+ * whose model came earlier keeps its own), and a Genex source copy on the finished model it was
+ * made into.
+ */
+function cardedAssets(assets: ProjectAsset[], folded: FoldedMotions | null): ProjectAsset[] {
+  if (!folded) return [];
+  return withoutGenexSources(
+    assets.filter((asset) => !folded.motions.has(asset.file) || folded.loose.includes(asset.file)),
+  );
+}
+
 export function AssetsCanvas({ project, onNotice, focusJob }: Props): JSX.Element {
-  const { ledger, loadError, refresh, assets, pending } = useProjectAssets(project);
+  const { ledger, loadError, refresh, assets, waiting } = useProjectAssets(project);
   const { selected, setSelected, previewAsset, setPreviewAsset } = useAssetSelection(project, assets, focusJob);
   const folded = useFoldedMotions(project, assets);
-  const carded = useMemo(
-    () =>
-      folded ? assets.filter((asset) => !folded.motions.has(asset.file) || folded.loose.includes(asset.file)) : [],
-    [assets, folded],
-  );
+  const carded = useMemo(() => cardedAssets(assets, folded), [assets, folded]);
   // Nothing is laid out until the models' headers are read, so no card shows that then folds away.
   const headersRead = folded !== null;
   const layout = useMemo(
-    () => layoutAssets(carded, headersRead ? pending : NO_PENDING),
-    [carded, pending, headersRead],
+    () => layoutAssets(carded, headersRead ? waiting : NO_WAITING),
+    [carded, waiting, headersRead],
   );
   const camera = useAssetsCamera(project, Boolean(ledger) && headersRead, layout);
+  const waitsOnYou = waiting.some(waitsForGenexChoice);
   const { view, viewport, onBackgroundDown, moved, panning } = camera;
 
   const reveal = useCallback(
@@ -358,18 +417,20 @@ export function AssetsCanvas({ project, onNotice, focusJob }: Props): JSX.Elemen
             transformOrigin: "0 0",
           }}
         >
-          <AssetGroups
-            layout={layout}
-            project={project}
-            assets={assets}
-            selected={selected}
-            folded={folded ?? NOTHING_FOLDED}
-            onOpen={openAsset}
-          />
+          <MakingReviewsProvider project={project} waiting={waitsOnYou} onNotice={onNotice}>
+            <AssetGroups
+              layout={layout}
+              project={project}
+              assets={assets}
+              selected={selected}
+              folded={folded ?? NOTHING_FOLDED}
+              onOpen={openAsset}
+            />
+          </MakingReviewsProvider>
         </div>
       </div>
 
-      {!assets.length && !pending.length ? (
+      {!assets.length && !waiting.length ? (
         <div className="hatch absolute inset-0 grid place-items-center overflow-y-auto p-8 text-center">
           <EmptyAssets loadError={loadError} loaded={Boolean(ledger)} onRetry={refresh} />
         </div>

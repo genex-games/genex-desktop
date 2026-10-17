@@ -16,8 +16,16 @@ import {
   type OpenCodeExec,
   type OpenCodeInvocation,
   openCodeSandbox,
+  openCodeServerUrl,
+  settledListing,
 } from "../../src/substrate/engines/opencode.ts";
-import { OpenCodeAccess, openCodeConfig, parseOpenCodeModels } from "../../src/substrate/engines/opencode-cli.ts";
+import {
+  OpenCodeAccess,
+  openCodeConfig,
+  openCodeConfigV2,
+  parseOpenCodeApiModels,
+  parseOpenCodeModels,
+} from "../../src/substrate/engines/opencode-cli.ts";
 import { translateOpenCodeEvent } from "../../src/substrate/engines/opencode-events.ts";
 import { EngineError, type DelegateEvent } from "../../src/substrate/engines/types.ts";
 import { tmpDir } from "../helpers/tmp.ts";
@@ -294,6 +302,108 @@ describe("OpenCode sessions", () => {
     assert.deepEqual(invocation?.sandbox.writableRoots.slice(0, 1), [invocation?.cwd]);
   });
 
+  it("hands a session its live tools as a local MCP server in its own sandbox, allowed without asking", async () => {
+    const shims: string[] = [];
+    const { engine, seen } = await engineWith(async function* (invocation) {
+      const config = JSON.parse(invocation.env.OPENCODE_CONFIG_CONTENT ?? "{}");
+      const command = config.mcp?.studio?.command as string[] | undefined;
+      if (command?.[1]) {
+        await access(command[1], constants.R_OK);
+        shims.push(command[1]);
+      }
+      yield* replay([]);
+    });
+    const cwd = await game();
+    const computer = {
+      name: "computer",
+      description: "hands",
+      parameters: { type: "object" as const, properties: {} },
+    };
+    await engine.delegate({
+      cwd,
+      prompt: "Play it",
+      readOnly: true,
+      liveTools: [computer],
+      onLiveTool: async () => "ok",
+    });
+    const config = JSON.parse(seen[0]?.env.OPENCODE_CONFIG_CONTENT ?? "{}");
+    assert.equal(config.mcp.studio.type, "local");
+    assert.equal(config.mcp.studio.enabled, true);
+    assert.equal(config.mcp.studio.command[0], "node");
+    assert.equal(shims.length, 1, "the shim was there while the session ran");
+    assert.ok(shims[0]!.startsWith(seen[0]!.cwd), "inside the session's own folder, so inside its sandbox");
+    assert.equal(config.permission["studio_*"], "allow", "OpenCode's run rejects any tool it would ask about");
+    assert.match(seen[0]?.prompt ?? "", /studio_computer/);
+    assert.match(seen[0]?.prompt ?? "", /node \.studio\/bridge\/tool\.mjs/, "the bridge stays the fallback");
+  });
+
+  it("keeps a session on the bridge alone when its MCP tools are switched off, or it has no tool", async () => {
+    const off = await engineWith(async function* () {
+      yield* replay([]);
+    });
+    const cwd = await game();
+    const quiet = new OpenCodeEngine({
+      scratchRoot: path.join(off.root, "scratch2"),
+      protectedPaths: [],
+      execFn: (invocation) => {
+        off.seen.push(invocation);
+        return replay([]);
+      },
+      resolveCli: ready,
+      listModels: () => fixture("opencode-models-1.18.txt"),
+      mcpTools: false,
+    });
+    const computer = {
+      name: "computer",
+      description: "hands",
+      parameters: { type: "object" as const, properties: {} },
+    };
+    await quiet.delegate({ cwd, prompt: "Play", readOnly: true, liveTools: [computer], onLiveTool: async () => "ok" });
+    await off.engine.delegate({ cwd, prompt: "Build" });
+    for (const invocation of off.seen) {
+      const config = JSON.parse(invocation.env.OPENCODE_CONFIG_CONTENT ?? "{}");
+      assert.equal(config.mcp, undefined);
+      assert.equal(config.permission["studio_*"], undefined);
+    }
+  });
+
+  it("a blind judge reads nothing: no file tool, nothing outside its folder, only its live tools", async () => {
+    const { engine, seen } = await engineWith(async function* () {
+      yield* replay([]);
+    });
+    const cwd = await game();
+    const computer = {
+      name: "computer",
+      description: "hands",
+      parameters: { type: "object" as const, properties: {} },
+    };
+    await engine.delegate({
+      cwd,
+      prompt: "Judge by playing",
+      readOnly: true,
+      blind: true,
+      liveTools: [computer],
+      onLiveTool: async () => "ok",
+    });
+    const config = JSON.parse(seen[0]?.env.OPENCODE_CONFIG_CONTENT ?? "{}");
+    for (const tool of ["read", "glob", "grep", "list", "edit", "external_directory"])
+      assert.equal(config.permission[tool], "deny", `${tool} is not a blind judge's`);
+    assert.equal(config.permission["studio_*"], "allow");
+  });
+
+  it("tells a Loop's reviewer the build it tests is the folder it reads, never its own empty home", async () => {
+    const { engine, seen, root } = await engineWith(async function* () {
+      yield* replay([]);
+    });
+    const home = path.join(root, "reviewers", "abc", "opencode", "call");
+    await mkdir(home, { recursive: true });
+    const reads = await game();
+    await engine.delegate({ cwd: home, prompt: "review the claim", readOnly: true, reviewer: { reads } });
+    const prompt = seen[0]?.prompt ?? "";
+    assert.ok(prompt.includes(`The build you are testing is at ${reads}.`), prompt);
+    assert.ok(!prompt.includes(`is at ${home}`) && !prompt.includes(`is at ${seen[0]?.cwd}.`), "never its home");
+  });
+
   it("plans in Plan: read-only, from a folder of its own", async () => {
     const { engine, seen } = await engineWith(() => replay([]));
     const cwd = await game();
@@ -568,8 +678,302 @@ describe("OpenCode's sandbox and config", () => {
         assert.equal(config.permission.external_directory, access === "read-only" ? "allow" : "deny");
         if (access !== "build") assert.equal(config.permission.edit, "deny");
         assert.equal(config.permission.webfetch, "deny");
+        assert.equal(config.permission.skill, "deny", "no skill, the person's own or a game's, reaches a session");
         assert.equal(config.share, "disabled");
       }
     }
+  });
+});
+
+const v2 = async () => ({
+  ready: true,
+  path: "/opt/homebrew/bin/opencode",
+  version: "opencode v2.0.20",
+  detail: "ok",
+});
+
+/** An engine on a 2.x CLI whose sessions replay `stream`, listing the recorded 2.0.20 catalog. */
+async function engineV2(stream: (invocation: OpenCodeInvocation) => AsyncIterable<Record<string, unknown>>) {
+  const root = await tmpDir("opencode-v2-");
+  const seen: OpenCodeInvocation[] = [];
+  const engine = new OpenCodeEngine({
+    scratchRoot: path.join(root, "scratch"),
+    protectedPaths: [path.join(root, "secrets")],
+    execFn: (invocation) => {
+      seen.push(invocation);
+      return stream(invocation);
+    },
+    resolveCli: v2,
+    listModels: () => fixture("opencode-api-model-2.0.20.json"),
+  });
+  return { engine, seen };
+}
+
+/** A 2.x permission rule as the config writes it. */
+type Rule = { action: string; resource: string; effect: string };
+
+/** What 2.x decides for one call by these rules: the last that matches, as OpenCode reads them. */
+const decide = (rules: Rule[], action: string, resource = "anything") =>
+  rules.findLast(
+    (rule) => (rule.action === "*" || rule.action === action) && (rule.resource === "*" || rule.resource === resource),
+  )?.effect;
+
+/** What 2.x decides with its own wildcard matching (`*` matches any run of characters), as `permission.ts` does. */
+const decideWild = (rules: Rule[], action: string) => {
+  const matches = (pattern: string, value: string) =>
+    new RegExp(
+      `^${pattern
+        .split("*")
+        .map((part) => part.replace(/[.+?^${}()|[\]\\]/g, "\\$&"))
+        .join(".*")}$`,
+    ).test(value);
+  return rules.findLast((rule) => matches(rule.action, action) && matches(rule.resource, "anything"))?.effect;
+};
+
+describe("OpenCode 2.x and the studio's MCP tools", () => {
+  it("declares the studio's server under mcp.servers, Code Mode off, and allows only its tools past the deny of everything", () => {
+    const command = ["node", "/run/.studio/bridge/mcp.mjs"];
+    const config = JSON.parse(openCodeConfigV2(OpenCodeAccess.ReadOnly, true, command));
+    assert.deepEqual(config.mcp.servers.studio.command, command);
+    assert.equal(config.mcp.servers.studio.type, "local");
+    assert.equal(config.mcp.servers.studio.codemode, false, "tools are called directly, pictures come back as content");
+    const rules = config.permissions as Rule[];
+    assert.equal(decideWild(rules, "studio_computer"), "allow");
+    assert.equal(decideWild(rules, "other_server_tool"), "deny");
+    assert.deepEqual(config.agents.build.permissions, rules, "the build agent carries the same rules");
+    const none = JSON.parse(openCodeConfigV2(OpenCodeAccess.ReadOnly, true));
+    assert.equal(none.mcp, undefined);
+    assert.equal(decideWild(none.permissions as Rule[], "studio_computer"), "deny");
+  });
+
+  it("a blind judge on 2.x reads no file either", () => {
+    const rules = JSON.parse(openCodeConfigV2(OpenCodeAccess.Blind, true, ["node", "x"])).permissions as Rule[];
+    for (const action of ["read", "glob", "grep", "external_directory", "edit"])
+      assert.equal(decideWild(rules, action), "deny", action);
+    assert.equal(decideWild(rules, "studio_computer"), "allow");
+  });
+});
+
+describe("OpenCode 2.x's model list", () => {
+  it("reads `GET /api/model`: runnable models as provider/id, their limits, price, variants and the free ones", async () => {
+    const listed = parseOpenCodeApiModels(await fixture("opencode-api-model-2.0.20.json"));
+    assert.deepEqual(
+      listed.map((model) => model.row.id),
+      ["opencode/exo-free", "opencode/ling-3.1-flash-free", "opencode/space-bunny-free", "opencode/big-pickle"],
+    );
+    const [exo] = listed;
+    assert.equal(exo?.row.label, "Exo Free");
+    assert.equal(exo?.row.contextWindow, 1_048_576);
+    assert.equal(exo?.row.maxTokens, 131_072);
+    assert.deepEqual(exo?.row.efforts, ["high"]);
+    assert.equal(exo?.row.supportsVision, true);
+    assert.equal(exo?.row.note, "opencode · Free");
+    assert.deepEqual(exo?.hosts, ["opencode.ai"]);
+    assert.ok(listed.every((model) => model.anonymous && model.row.free === true));
+    assert.equal(listed[3]?.row.efforts, undefined, "no variants, no dial");
+  });
+
+  it("names a model by the id `--model` takes, and skips what it cannot run; an unreadable list is refused", () => {
+    const listing = (fields: Record<string, unknown>) =>
+      JSON.stringify({
+        location: { directory: "/game" },
+        data: [
+          {
+            id: "m-alias",
+            modelID: "m-upstream",
+            providerID: "p",
+            capabilities: { tools: true, output: ["text"] },
+            cost: [{ input: 1, output: 2 }],
+            ...fields,
+          },
+        ],
+      });
+    assert.equal(parseOpenCodeApiModels(listing({}))[0]?.row.id, "p/m-alias", "the id, not the provider's model id");
+    assert.equal(parseOpenCodeApiModels(listing({}))[0]?.anonymous, false);
+    assert.deepEqual(parseOpenCodeApiModels(listing({ enabled: false })), []);
+    assert.deepEqual(parseOpenCodeApiModels(listing({ status: "deprecated" })), []);
+    assert.deepEqual(parseOpenCodeApiModels(listing({ capabilities: { tools: false } })), []);
+    assert.deepEqual(parseOpenCodeApiModels(listing({ capabilities: { tools: true, output: ["text", "image"] } })), []);
+    assert.deepEqual(
+      parseOpenCodeApiModels(listing({ variants: [{ id: "default" }, { id: "low" }, { id: 7 }] }))[0]?.row.efforts,
+      ["low"],
+      "`default` is no variant",
+    );
+    assert.deepEqual(parseOpenCodeApiModels(listing({ settings: { baseURL: "http://plain.example" } }))[0]?.hosts, []);
+    assert.deepEqual(parseOpenCodeApiModels(JSON.stringify({ data: [] })), [], "nothing signed in, not an error");
+    assert.deepEqual(parseOpenCodeApiModels(""), []);
+    for (const broken of ["Error: no server", "{}", '{"data":{}}', "[1,2"])
+      assert.throws(() => parseOpenCodeApiModels(broken), /could not be read/, broken);
+  });
+});
+
+describe("OpenCode 2.x sessions", () => {
+  it("runs each session on a private server inside the sandbox, never the person's background one", async () => {
+    const { engine, seen } = await engineV2(async function* () {
+      yield* replay(await events("opencode-run-2.0.20.jsonl"));
+    });
+    await engine.refreshModels(true);
+    const cwd = await game();
+    const result = await engine.delegate({ cwd, prompt: "Write hello", model: "opencode/exo-free", effort: "high" });
+    assert.equal(result.ok, true);
+    assert.equal(result.summary, "Done: wrote out.txt");
+    assert.equal(result.sessionId, "ses_ed89ed804ffehtTg3vwhCjGdit");
+    assert.equal(result.usage.input_tokens, 2049);
+    const [invocation] = seen;
+    assert.deepEqual(invocation?.argv, [
+      "run",
+      "--format",
+      "json",
+      "--standalone",
+      "--agent",
+      "build",
+      "--model",
+      "opencode/exo-free#high",
+    ]);
+    const real = await import("node:fs/promises").then((fs) => fs.realpath(cwd));
+    assert.equal(invocation?.env.PWD, real, "2.x reads its folder from PWD before its working directory");
+    assert.equal(invocation?.env.OPENCODE_DISABLE_PROJECT_CONFIG, "1", "a game's own OpenCode config never loads");
+    const home = invocation?.env.OPENCODE_TEST_HOME ?? "";
+    assert.ok(home.startsWith(path.dirname(invocation?.sandbox.scratchDir ?? "")), "an empty home of its own");
+    await access(home);
+    assert.ok(
+      invocation?.sandbox.secretPaths.every((denied) => !home.startsWith(denied)),
+      "where the sandbox refuses nothing it looks at",
+    );
+    const config = JSON.parse(invocation?.env.OPENCODE_CONFIG_CONTENT ?? "{}");
+    assert.deepEqual(config.permissions[0], { action: "*", resource: "*", effect: "deny" });
+    assert.deepEqual(config.agents.build.permissions, config.permissions, "and the agent it runs ends on them");
+    assert.equal(config.permission, undefined, "never 1.18's shape");
+    assert.equal(config.share, "disabled");
+    assert.equal(config.update, "disable");
+    assert.deepEqual(invocation?.domains, ["opencode.ai", "models.dev", "models.opencode.ai"]);
+  });
+
+  it("resumes by session id, and leaves the variant off a model with no such dial", async () => {
+    const { engine, seen } = await engineV2(() => replay([]));
+    await engine.refreshModels(true);
+    const cwd = await game();
+    await engine.delegate({ cwd, prompt: "go on", resume: "ses_1", model: "opencode/big-pickle", effort: "high" });
+    await engine.delegate({ cwd, prompt: "go on" });
+    const [resumed, unpicked] = seen.map((invocation) => invocation.argv);
+    assert.deepEqual(resumed?.slice(-4), ["--model", "opencode/big-pickle", "--session", "ses_1"]);
+    assert.ok(!unpicked?.includes("--model"), "with no pick, OpenCode's own default model runs");
+  });
+
+  it("never asks: a closed world of allow and deny, edits only in a build, other folders only read-only", () => {
+    const bridgeCall = "node .studio/bridge/tool.mjs *";
+    const table: Array<[OpenCodeAccess, boolean, Record<string, string>]> = [
+      ["build", false, { edit: "allow", shell: "allow", read: "allow", external_directory: "deny" }],
+      [
+        "read-only",
+        true,
+        { edit: "deny", shell: "deny", [bridgeCall]: "allow", read: "allow", external_directory: "allow" },
+      ],
+      ["read-only", false, { edit: "deny", [bridgeCall]: "deny", read: "allow", external_directory: "allow" }],
+      ["answer", false, { edit: "deny", [bridgeCall]: "deny", read: "deny", glob: "deny", external_directory: "deny" }],
+    ];
+    const never = ["webfetch", "websearch", "skill", "subagent", "question", "a_future_tool"];
+    for (const [access, bridge, expected] of table) {
+      const rules = JSON.parse(openCodeConfigV2(access, bridge)).permissions as Rule[];
+      assert.deepEqual(rules[0], { action: "*", resource: "*", effect: "deny" }, access);
+      assert.ok(
+        rules.every((rule) => rule.effect === "allow" || rule.effect === "deny"),
+        access,
+      );
+      for (const [call, effect] of Object.entries(expected)) {
+        const [action, resource] = call === bridgeCall ? ["shell", bridgeCall] : [call, undefined];
+        assert.equal(decide(rules, action, resource), effect, `${access} ${bridge} ${call}`);
+      }
+      for (const action of never) assert.equal(decide(rules, action), "deny", `${access} ${action}`);
+    }
+  });
+});
+
+describe("OpenCode 2.x failures and status", () => {
+  it("reads 2.x's failures by the status they carry", async () => {
+    const recorded = translateOpenCodeEvent((await events("opencode-error-2.0.20.jsonl"))[0] ?? {});
+    assert.deepEqual(recorded.failure, {
+      message: "Variant unavailable for opencode/big-pickle: nosuchvariant",
+      status: null,
+    });
+    const { engine } = await engineV2(() =>
+      replay([
+        {
+          type: "error",
+          sessionID: "ses_r",
+          error: { type: "provider.rate-limit", message: "Slow down", status: 429 },
+        },
+      ]),
+    );
+    await assert.rejects(
+      engine.delegate({ cwd: await game(), prompt: "x" }),
+      (err) => err instanceof EngineError && err.kind === "rate_limit",
+    );
+    const shell = translateOpenCodeEvent((await events("opencode-run-2.0.20.jsonl"))[1] ?? {});
+    assert.match(JSON.stringify(shell.events[0]?.payload), /"name":"Bash".*echo hello > out\.txt/);
+    assert.match(JSON.stringify(shell.events[1]?.payload), /call_00_gc7cglcccprpw0bt7aombz4s/);
+  });
+
+  it("refuses Compact now, as 1.18 does: OpenCode compacts its own sessions", async () => {
+    const { engine } = await engineV2(() => replay([]));
+    await assert.rejects(
+      engine.delegate({ cwd: await game(), prompt: "", compact: true, resume: "ses_1" }),
+      /compacts its own/,
+    );
+  });
+
+  it("says when OpenCode is newer than Genex has tested, and still runs it", async () => {
+    const root = await tmpDir("opencode-v2-status-");
+    const status = (version: string) =>
+      new OpenCodeEngine({
+        scratchRoot: root,
+        resolveCli: async () => ({ ready: true, path: "/x/opencode", version, detail: "ok" }),
+        listModels: () => fixture("opencode-api-model-2.0.20.json"),
+      }).status();
+    const tested = await status("opencode v2.0.26");
+    assert.equal(tested.code, "ready");
+    assert.doesNotMatch(tested.detail, /tested/);
+    const newer = await status("opencode v2.4.1");
+    assert.equal(newer.code, "ready");
+    assert.match(newer.detail, /2\.4\.1/);
+    assert.match(newer.detail, /newer than Genex has tested/);
+  });
+});
+
+describe("OpenCode 2.x's private listing server", () => {
+  it("waits for a listing to settle: two reads that agree, or the last read when time runs out", async () => {
+    const reads = (answers: string[]) => {
+      let index = 0;
+      return async () => answers[Math.min(index++, answers.length - 1)] ?? "";
+    };
+    const empty = JSON.stringify({ data: [] });
+    const two = JSON.stringify({ data: [{ id: "a" }, { id: "b" }] });
+    const one = JSON.stringify({ data: [{ id: "a" }] });
+    const waits: number[] = [];
+    const wait = async (ms: number) => {
+      waits.push(ms);
+    };
+    assert.equal(await settledListing(reads([empty, one, two, two]), { attempts: 10, intervalMs: 50, wait }), two);
+    assert.deepEqual(waits, [50, 50, 50]);
+    assert.equal(
+      await settledListing(reads([empty]), { attempts: 3, intervalMs: 50, wait }),
+      empty,
+      "nothing ever listed: an empty list",
+    );
+  });
+
+  it("talks only to a loopback HTTP address the server reports", () => {
+    assert.equal(openCodeServerUrl('{"url":"http://127.0.0.1:56877"}'), "http://127.0.0.1:56877");
+    assert.equal(openCodeServerUrl('{"url":"http://localhost:4000/"}'), "http://localhost:4000");
+    for (const hostile of [
+      '{"url":"http://example.com:80"}',
+      '{"url":"https://127.0.0.1.example.com"}',
+      '{"url":"file:///etc/passwd"}',
+      '{"url":"http://user:pw@127.0.0.1:1"}',
+      '{"url":7}',
+      "Server listening on http://127.0.0.1:1",
+      "",
+    ])
+      assert.equal(openCodeServerUrl(hostile), null, hostile);
   });
 });

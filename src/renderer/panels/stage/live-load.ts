@@ -6,7 +6,7 @@
 import type { RefObject } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { SECOND_MS } from "../../../shared/duration.ts";
-import { StageView } from "../../stage.ts";
+import { gameStartedSince, type StageGameKind, StageView } from "../../stage.ts";
 
 /** While a page loads behind the loader the stage asks often; otherwise once a second is enough. */
 const LIVE_LOADING_TICK_MS = 150;
@@ -57,6 +57,27 @@ export function useLiveLoad(project: string | null) {
     );
   }, []);
   return { state, setState, stopped, setStopped, liveLoad, setLiveLoad, liveLoadRef, loadLive };
+}
+
+/**
+ * Load the stage's game into Live once it takes a kind (`gameStartedSince`): while it had none Live
+ * loaded nothing. A game Live doesn't show as the web preview (`noPage`: the Unreal card, the
+ * latest pictures) has no page, so it loads nothing either way. Answers whether the
+ * game has no kind yet (`pending`), as given.
+ */
+export function useLoadOnceStarted(
+  game: StageGameKind & { noPage: boolean },
+  loadLive: ReturnType<typeof useLiveLoad>["loadLive"],
+): boolean {
+  const { project, pending, noPage } = game;
+  const seen = useRef<StageGameKind>({ project, pending });
+  useEffect(() => {
+    const before = seen.current;
+    seen.current = { project, pending };
+    if (noPage || !project || !gameStartedSince(before, { project, pending })) return;
+    void loadLive(project, () => window.studio.loadPreview(project)).catch(() => {});
+  }, [project, pending, noPage, loadLive]);
+  return pending;
 }
 
 /** How one page load is settling, tracked across probes. */

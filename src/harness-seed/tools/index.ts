@@ -123,7 +123,8 @@ async function addHostTools(
   byName: Map<string, RegisteredTool>,
   options: RegistryOptions,
 ): Promise<HostTools> {
-  const plugins = await ctx.call(HostMethod.PluginsTools, {});
+  // The game's facts pick its plugin tools, as for a delegated session of the same game.
+  const plugins = await ctx.call(HostMethod.PluginsTools, { project: options.project ?? null });
   for (const tool of plugins.tools) {
     if (byName.has(tool.name)) throw new Error(`Plugin tool collision: ${tool.name}`);
     byName.set(tool.name, pluginTool(tool));

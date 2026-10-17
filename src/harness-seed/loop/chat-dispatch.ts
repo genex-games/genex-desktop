@@ -32,10 +32,23 @@ import { MESSAGE as REOPEN_MESSAGE } from "./reopen-run-prompts.ts";
 import { conversationThrough, latestRun } from "./run-inbox.ts";
 import { eventsToMessages } from "./prompt.ts";
 import { EngineId, hasSessionRoles, supportsSessions } from "./model-roles.ts";
+import {
+  factsOfGame,
+  LoopProfile,
+  loopProfileOf,
+  openLoopBecause,
+  ProjectStarter,
+  startWebIfPending,
+} from "./folder-facts.ts";
+import { leadsInPlace } from "./engine-seat.ts";
+import { OPEN_LAUNCH_WORDS, OPEN_LOOP_REFUSAL } from "./open-loop-prompts.ts";
+import { openLoopServed } from "./open-loop-parts.ts";
+import { servesOpenLoop } from "./director/open/contract.ts";
+import { OLDER_LEAD_JOURNAL_KIND } from "./director/open/older-journal.ts";
 import { withSteers } from "./chat-steer-prompts.ts";
 import { HostMethod } from "./host-methods.ts";
 import { StudioContract } from "./page-contract.ts";
-import { EventKind, RunEvent, RunState } from "./run-events.ts";
+import { EventKind, RunEvent, RunMode, RunState } from "./run-events.ts";
 import { HOUR_MS } from "./time.ts";
 import { endClock } from "./wall-clock.ts";
 import { handleRunStart, loopRunRefusal } from "./run-dispatch.ts";
@@ -43,7 +56,7 @@ import { runUnderWay } from "./live-chat.ts";
 import { readJournal } from "./run-journal.ts";
 import { followupAsk } from "./studio-prompts.ts";
 import { type ActiveRun, type RunReopen, StatusLane, type Studio } from "./studio-state.ts";
-import { clampRunHours } from "./config.ts";
+import { clampRunHours, MAX_RUN_HOURS } from "./config.ts";
 import { CLIP_GAME_TITLE } from "./text.ts";
 import { createScope, userWordsInLog } from "./scope.ts";
 import type { AnyRecord, ForwardedCall, HarnessCtx, HarnessEvent, Host, HostCall } from "../types/harness.d.ts";
@@ -72,7 +85,7 @@ const MESSAGE = {
   stoppedBeforeTurn: "Stopped before it started — nothing was done. Send a message to go on.",
   turnFailed: (failure: unknown) => `turn failed: ${failure}`,
   // What the user is owed before they walk away: when to come back, that the machine has to
-  // stay awake, and that a paused run is not a lost one. "until the critics are satisfied"
+  // stay awake, and that a paused run is not a lost one. "until satisfied" alone
   // answered none of those — the first real run ended on the plan's five-hour window at 105
   // of 180 minutes and nobody had been told that could happen.
   buildPromised: (end: string) => `Building until about ${end} — keep the app open and the Mac awake. `,
@@ -257,7 +270,8 @@ function ownsMessage(active: ActiveRun, action: QueueAction): boolean {
  * The run a message is for: the one under way on its thread or game, else the thread's last one.
  * A run that has closed is the log's (finished or paused) even while its learning pass runs. Whether
  * the message keeps its commission is decided once the run it answers after is known
- * (`keepsCommission`).
+ * (`keepsCommission`). A Loop message after an Unreal game's finished run is for no run: it may
+ * start the next one (`startsNextOpenLoop`).
  */
 async function routeMessage(studio: Studio, action: QueueAction): Promise<RunRecord | null> {
   // A message never clears an active run's stop flag. Cancellation is an explicit action; a run
@@ -267,7 +281,45 @@ async function routeMessage(studio: Studio, action: QueueAction): Promise<RunRec
   const stoppedFirst = studio.stoppedMessages?.has(String(action.messageId)) === true;
   if (!active && !stoppedFirst) studio.cancels.delete(action.threadId);
   const previousRun = latestRun(await studio.host.call(HostMethod.EventsList, { threadId: action.threadId }));
-  return existingRun(action, active, previousRun);
+  const existing = existingRun(action, active, previousRun);
+  if (!active && (await startsNextOpenLoop(studio.host, action, existing))) return null;
+  return existing;
+}
+
+/**
+ * Does the person's Loop message start the next Loop of a project that isn't a web game (folder-facts.ts
+ * `loopProfileOf`) whose last run has finished? Such a Loop worked in the game folder itself, with no
+ * copy to go on from, so a finished one is never reopened (`reopen-run.ts` `finishedLoopRun`); the
+ * next Loop builds on what the project holds, so a new run continues it. So does a finished web
+ * Loop's whose folder now reads, from its facts, as another kind of project: its build can't go on
+ * there. The message is then the chat's own, as before the first Loop: its session may launch the
+ * build. Exported for its tests.
+ */
+export async function startsNextOpenLoop(host: Host, action: QueueAction, run: RunRecord | null): Promise<boolean> {
+  if (run?.state !== RunState.Finished || chatWrote(action)) return false;
+  if (!(action.autopilot ?? action.loop)) return false;
+  // The finished run's own journal says what it was, whatever its folder reads as now.
+  const inPlace = await finishedInPlace(host, action.threadId, run);
+  if (inPlace === true) return true;
+  const listed = await host.call(HostMethod.GameList, {}).catch(() => null);
+  const project = run.project ?? action.project;
+  const game = Array.isArray(listed) ? listed.find((one) => one.name === project) : undefined;
+  if (!game) return false;
+  // A finished web Loop's build can't go on in a folder that now reads, from facts Genex read, as
+  // another kind of project: the next Loop starts there instead of a reopen it would refuse.
+  if (inPlace === false) return factsOfGame(game).length > 0 && loopProfileOf(game) === LoopProfile.Open;
+  return loopProfileOf(game) === LoopProfile.Open;
+}
+
+/**
+ * Whether a finished run's journal is a Loop that worked in the game folder itself (`director.open`,
+ * or the Unreal runner's from before); null when there is no journal to read.
+ */
+async function finishedInPlace(host: Host, threadId: string, run: RunRecord): Promise<boolean | null> {
+  if (typeof run.runId !== "string") return null;
+  const journal = await readJournal(host, threadId, run.runId).catch(() => null);
+  if (!journal) return null;
+  return Boolean(journal.director?.open) || journal.kind === OLDER_LEAD_JOURNAL_KIND;
 }
 
 /**
@@ -413,7 +465,8 @@ async function afterLoopRunFor(host: Host, action: QueueAction, existing: RunRec
     ...(action.messageId ? { messageId: action.messageId } : {}),
     // Its finished build may be reopened only when every part the reopen depends on serves it, and
     // only by the person's own words: a question's Loop a command's result would inherit is not theirs.
-    ...(ownSessionReopens() && !chatWrote(action) ? { reopenable: true } : {}),
+    // A Loop that worked in the game folder itself is never reopened: a Loop message starts the next.
+    ...(ownSessionReopens() && !chatWrote(action) && !loopRun.inPlace ? { reopenable: true } : {}),
   };
 }
 
@@ -709,17 +762,29 @@ export async function launchFromIntake(
   requireGoal(spec);
   const games = await host.call(HostMethod.GameList, {});
   const project = intakeProject(action, spec, games);
+  // A Loop with no game yet makes a web game; one on a game with no kind starts it as one.
   if (!games.some((g) => g.name === project)) {
     await ctx.call(HostMethod.GameScaffold, {
       name: project,
       title: spec.goal?.slice(0, CLIP_GAME_TITLE) || project,
       threadId: action.threadId,
+      kind: ProjectStarter.Web,
     });
   }
+  await startWebIfPending(host, project, games);
+  // A Loop on a project that isn't a web game: kept edited parts that can't lead it (the run's start
+  // among them) refuse it first, before a web game's checks could ask for web files in the folder.
+  const listed = games.find((g) => g.name === project) ?? null;
+  const openLoop = listed !== null && loopProfileOf(listed) === LoopProfile.Open;
+  if (openLoop && !openLoopLaunches()) throw new Error(OPEN_LOOP_REFUSAL.openLoopNeedsUpdate);
   // What the folder itself refuses (loopRunRefusal): a page that cannot load, a game that is
   // already compiled. Said in chat now, instead of found out at 3am.
   const readiness = await host.call(HostMethod.GameValidate, { project }).catch(() => null);
-  const refusal = loopRunRefusal(games.find((g) => g.name === project) ?? null, readiness?.problems ?? []);
+  const refusal = loopRunRefusal(
+    games.find((g) => g.name === project) ?? null,
+    readiness?.problems ?? [],
+    readiness?.missing,
+  );
   if (refusal) throw new Error(refusal);
   const run = intakeRun(spec, action, project, readiness, await userWordsSoFar(host, action));
   // A promise the run cannot keep is worse than no promise: a second Loop for a game
@@ -730,6 +795,14 @@ export async function launchFromIntake(
   if (busy) throw new Error(MESSAGE.alreadyBuilding(busy.run.project));
   // Stop while that pass was waited out was for this run too.
   if (ctx.cancelled) throw new Error(MESSAGE.stoppedBeforeLaunch);
+  // A Loop on a project that isn't a web game is led by the chat's own session in place: said now,
+  // before anything is promised, when the run's engine is none the host seats there.
+  const needsSession = await needsSessionRefusal(host, listed, spec);
+  if (needsSession) throw new Error(needsSession);
+  // Such a Loop adds no connection and ends on a reviewer's yes: its own promise.
+  const promise = openLoop
+    ? openLaunchPromise(run.budgets, Date.now())
+    : launchPromise(run.budgets, run.readiness, Date.now());
   // The board did its job — the run spec carries the frames now; the next interview on this
   // thread starts with a clean slate.
   studio.moodBoards.delete(action.threadId);
@@ -739,7 +812,7 @@ export async function launchFromIntake(
       batch: [
         {
           type: EventKind.Messages,
-          messages: [{ role: "assistant", content: launchPromise(run.budgets, run.readiness, Date.now()) }],
+          messages: [{ role: "assistant", content: promise }],
         },
       ],
     })
@@ -751,6 +824,27 @@ export async function launchFromIntake(
   void handleRunStart(studio, { type: "run_start", threadId: action.threadId, run }, { keepStop: true }).catch(
     (err: unknown) => host.notify("run.failed", { error: String(err) }),
   );
+}
+
+/** Whether a Loop on a project that isn't a web game can be launched: every part it needs serves one, the run's start (read by namespace) among them. */
+function openLoopLaunches(): boolean {
+  return openLoopServed() && servesOpenLoop([runDispatchParts]);
+}
+
+/**
+ * Why a Loop on this game can't start on the run's engine, or null: a Loop on a project that isn't a
+ * web game needs an engine the host seats in place (`leadsInPlace`: its lead is the chat's own, with
+ * its jobs and looks); a web game keeps classic Autopilot on any engine.
+ */
+async function needsSessionRefusal(host: Host, game: AnyRecord | null, spec: AnyRecord): Promise<string | null> {
+  const openLoop = spec.mode === RunMode.Autopilot && game !== null && loopProfileOf(game) === LoopProfile.Open;
+  if (!openLoop) return null;
+  const engine = typeof spec.engine === "string" ? spec.engine : EngineId.Ollama;
+  const listed = await host.call(HostMethod.EngineDescribe, {}).catch(() => []);
+  const described = (Array.isArray(listed) ? listed : []).find((e) => e.id === engine);
+  return leadsInPlace(described)
+    ? null
+    : OPEN_LOOP_REFUSAL.needsSession(described?.label ?? engine, openLoopBecause(game));
 }
 
 /**
@@ -778,7 +872,7 @@ function intakeProject(action: QueueAction, spec: AnyRecord, games: readonly { n
 
 /**
  * The time a commissioned run is given: its hours (held to the run limits), and whether the
- * composer asked for ∞, which runs until the judge is satisfied with those hours as the ceiling.
+ * composer asked for ∞, which runs until what was asked is verified, with those hours as the ceiling.
  * The app reads these back (`src/shared/run-state.ts` `recordedRunLoop`).
  */
 export function intakeBudgets(spec: AnyRecord): RunSpec["budgets"] {
@@ -880,6 +974,18 @@ export function launchPromise(
     ? MESSAGE.untilSatisfiedPromised(dayAndClockAfter(budgets.wallClockMs, now))
     : MESSAGE.buildPromised(clockAfter(budgets.wallClockMs, now));
   return when + MESSAGE.planWindow + judgeableFirst(readiness);
+}
+
+/**
+ * What the chat promises as a Loop on a project that isn't a web game launches at `now`: when it
+ * ends (a reviewer's yes within its safety stop, or its hours) and the plan's window; it adds no
+ * connection to the game, so it promises none.
+ */
+export function openLaunchPromise(budgets: RunSpec["budgets"], now: number): string {
+  const when = budgets.untilSatisfied
+    ? OPEN_LAUNCH_WORDS.untilFinish(dayAndClockAfter(MAX_RUN_HOURS * HOUR_MS, now))
+    : MESSAGE.buildPromised(clockAfter(budgets.wallClockMs, now));
+  return when + MESSAGE.planWindow;
 }
 
 /** "Sunday 10:05 PM" — the day and wall clock this many milliseconds after `now`. */

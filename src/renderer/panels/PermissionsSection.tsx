@@ -1,7 +1,8 @@
 /**
- * Settings → Permissions: the mode new chats start in, then what Claude does without asking, by
- * action: one row per saved "always allow" rule, however many games hold it, opening to those
- * games. A view of what the host keeps; each chat still picks its own mode in the composer.
+ * Settings → Permissions: the mode new chats start in, whether agents may ask to control the
+ * person's computer, then what Claude does without asking, by action: one row per saved "always
+ * allow" rule, however many games hold it, opening to those games. A view of what the host keeps;
+ * each chat still picks its own mode in the composer.
  */
 import { type JSX, useEffect, useRef, useState } from "react";
 import {
@@ -24,8 +25,11 @@ import {
 import { GameAvatar } from "../ui/GameAvatar.tsx";
 import { Icon } from "../ui/icons.tsx";
 import { Pending } from "../ui/Pending.tsx";
+import { Switch } from "../ui/switch.tsx";
+import { hostPlatform } from "../platform.ts";
+import { computerControlOffered, useComputerControl } from "../use-computer-control.ts";
 import { usePermissionSettings } from "../use-permission-settings.ts";
-import { permissionRuleWords, problemWords } from "../words.ts";
+import { COMPUTER_CONTROL_SETTING_WORDS, permissionRuleWords, problemWords } from "../words.ts";
 import { plural } from "../../shared/skill-words.ts";
 
 /** The section's own words. */
@@ -85,6 +89,34 @@ function StartingMode({
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
+    </section>
+  );
+}
+
+/** "Let agents control your computer": off by default, and offered only where a desktop driver runs (macOS). */
+function ComputerControl(): JSX.Element | null {
+  const { on, busy, error, change } = useComputerControl();
+  if (on === null && !error) return null;
+  const offered = computerControlOffered(hostPlatform());
+  return (
+    <section aria-label={COMPUTER_CONTROL_SETTING_WORDS.section} data-computer-control className="settings-card">
+      <div className="flex items-center justify-between gap-3">
+        <label htmlFor="permissions-computer-control" className="flex min-w-0 flex-col gap-0.5">
+          <span className="settings-card-title">{COMPUTER_CONTROL_SETTING_WORDS.label}</span>
+          <span className="max-w-[460px] text-ink-3">{COMPUTER_CONTROL_SETTING_WORDS.detail}</span>
+        </label>
+        <Switch
+          id="permissions-computer-control"
+          checked={on === true}
+          disabled={busy || on === null || !offered}
+          onCheckedChange={change}
+        />
+      </div>
+      {error && (
+        <p role="alert" className="mt-2 text-red">
+          {error}
+        </p>
+      )}
     </section>
   );
 }
@@ -262,6 +294,7 @@ export function PermissionsSection(): JSX.Element {
   return (
     <div ref={root} data-permission-settings className="appearance-section flex flex-col gap-3">
       <StartingMode mode={settings.defaultMode} busy={busy} onPick={pickMode} />
+      <ComputerControl />
       <AllowedActions settings={settings} busy={busy} onForget={forget} />
       {failure && (
         <p role="alert" className="text-red">

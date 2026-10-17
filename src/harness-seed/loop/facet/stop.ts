@@ -10,6 +10,9 @@ import type { FacetLoop } from "./state.ts";
 /** How much of a stop's reason the stopped round's commit subject keeps. */
 const COMMIT_SUBJECT_CHARS = 100;
 
+/** The stop's code on the round's records (the run's close, or the lead), when its asker gave one. */
+const stopCodeOf = (stop: { code?: string }): { stopCode?: string } => (stop.code ? { stopCode: stop.code } : {});
+
 /**
  * The round the run stopped, recorded as stopped. What is on disk is committed and bookmarked
  * on `refs/studio/runs/<run>/attempts/<facet>/<n>-stopped`, the worktree is left standing, and
@@ -19,7 +22,7 @@ const COMMIT_SUBJECT_CHARS = 100;
 export async function finishStoppedRound(
   loop: FacetLoop,
   iteration: number,
-  stop: { by?: string; reason: string },
+  stop: { by?: string; reason: string; code?: string },
 ): Promise<boolean> {
   const { appendRun, ctx, facet, facetThreadId, gitOptions, gitWhere, publishIteration, result, run, worktree } = loop;
   let stoppedBranch = null;
@@ -47,6 +50,7 @@ export async function finishStoppedRound(
     by: stop.by,
     reason: stop.reason,
     attemptBranch: stoppedBranch,
+    ...stopCodeOf(stop),
   });
   await publishIteration({
     runId: run.runId,
@@ -61,6 +65,7 @@ export async function finishStoppedRound(
     defects: [],
     reason: stop.reason,
     verdictSource: VerdictSource.Stopped,
+    ...stopCodeOf(stop),
     partial: false,
     unmeasured: [],
     scoreboard: null,

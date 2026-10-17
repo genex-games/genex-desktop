@@ -1,3 +1,29 @@
+import type {
+  PlayControl,
+  PlayFeedPage,
+  PlayFeedRequest,
+  PlayGame,
+  PlayPoint,
+  PlayShelf,
+  PlayShelves,
+} from "./play.ts";
+import type { GenexCatalogItem } from "./mention-corpus.ts";
+import type { MentionRef, MentionRetry } from "./prompt-mention.ts";
+import type {
+  AvatarStyle,
+  FriendActionRequest,
+  FriendStatus,
+  PlayCreator,
+  PlayFriendsPage,
+  PlayMe,
+  PlayPeopleResult,
+  PlayProfile,
+  PresenceVisibility,
+} from "./play-people.ts";
+import type { GenexAccountView } from "./genex-account.ts";
+import type { PlayCredits } from "./play-credits.ts";
+import type { HandleCheck, HandleSave } from "./handle.ts";
+import type { PlayStats, StatsPeriod } from "./play-stats.ts";
 import type { PerformanceMark } from "./performance.ts";
 import type { ComposerSendOptions } from "./composer.ts";
 import type {
@@ -9,10 +35,12 @@ import type {
   PluginIndexView,
   PluginPanelDocument,
 } from "./plugins.ts";
+import type { PluginFileRequest } from "./plugin-file-request.ts";
 import type { McpConnectorView, McpTestResult, McpToolSummary } from "./mcp.ts";
 import type { McpConnectorDraft } from "./mcp-import.ts";
 import type { ConversationRecord, EventEnvelope, SnapshotRecord } from "./event-log.ts";
 import type { EngineDescriptor } from "./engine-descriptor.ts";
+import type { BackdropShaderRequest, BackdropShaderResult } from "./backdrop-shader.ts";
 import type { FolderInspection, GameLocation, GameName, GameNameRequest, GameProject } from "./game-project.ts";
 import type { BuildProblem, InstallResult } from "./build-problem.ts";
 import type { LoopRunReview } from "./run-review.ts";
@@ -58,6 +86,8 @@ export interface Bootstrap {
   welcome?: boolean;
   /** An unpackaged developer run: the renderer may offer its developer tools (the colour tweaker). */
   developer?: boolean;
+  /** The website Play links to: genex.games', unless a development profile points Play elsewhere. */
+  playWebOrigin?: string;
 }
 
 /** The window-control overlay's background and glyph colours, as `#rrggbb`. */
@@ -159,6 +189,8 @@ export interface StudioApi {
     project?: string,
   ): Promise<{ images?: Array<{ label: string; dataUrl: string }>; message?: string; ticket?: string }>;
   pluginAction(id: string, name: string, args: unknown, project?: string, ticket?: string): Promise<unknown>;
+  /** A plugin panel's Choose file: Studio's native file picker; the chosen file's real path, or null when cancelled. */
+  pluginChooseFile(id: string, request: PluginFileRequest): Promise<string | null>;
   /** The files Publish would put online for a game, for Studio's Publish dialog to show. Uploads nothing. */
   genexPublishReview(project: string): Promise<ExportReview>;
   /**
@@ -174,8 +206,14 @@ export interface StudioApi {
   pluginGithubVersions(repo: string): Promise<GithubVersion[]>;
   pluginUpdate(id: string): Promise<void>;
   pluginWatch(id: string, enabled: boolean): Promise<void>;
+  /** The person's Ask every time: a local plugin's tools they always allowed ask again before they run. */
+  pluginForgetAllowed(id: string): Promise<void>;
   /** The user's answer to a `plugin_consent` card; `resolved` is false once the question is no longer waiting. */
-  pluginConsent(consentId: string, approved: boolean): Promise<{ resolved: boolean }>;
+  /**
+   * The person's answer to a consent card; `always` (a connector's card) also allows that tool from
+   * now on, and `input` is their edit of the card's field, when it has one.
+   */
+  pluginConsent(consentId: string, approved: boolean, always?: boolean, input?: string): Promise<{ resolved: boolean }>;
 
   /**
    * Claude Code permissions for game chats. Studio UI only (main-frame guarded); the harness has
@@ -208,6 +246,8 @@ export interface StudioApi {
   mcpCancelAuthorization(id: string): Promise<void>;
   mcpDisconnectAccount(id: string): Promise<void>;
   mcpTools(id: string): Promise<McpToolSummary[]>;
+  /** A plugin's connector asks again before every call: its "Always allow" answers are forgotten. */
+  mcpForgetAlwaysAllowed(id: string): Promise<void>;
 
   /** The platform and where startup stands (`shared/boot.ts`); the renderer asks before anything else. */
   bootState(): Promise<BootState>;
@@ -235,6 +275,8 @@ export interface StudioApi {
   appAbout(): Promise<AppAbout>;
   bootstrap(): Promise<Bootstrap>;
   send(text: string, options?: ComposerSendOptions): Promise<boolean>;
+  /** A sent message's failed @ tag, fetched again or taken off; its result card shows the outcome. */
+  mentionRetry(threadId: string, messageId: string, tag: MentionRef, action: MentionRetry): Promise<void>;
   answerPlan(threadId: string, id: string, approved: boolean): Promise<boolean>;
   cancelTurn(threadId: string): Promise<boolean>;
   changeQueuedMessage(
@@ -256,6 +298,12 @@ export interface StudioApi {
     messageId: string,
     files: boolean,
   ): Promise<import("./chat-rewind.ts").RewindResult>;
+  /**
+   * Bring back the game files (and, through the restore steps, the engine's state) as they were
+   * just before the chat's newest rewind; the conversation stays rewound. Refused once a message
+   * was sent after it, or once it came back.
+   */
+  undoRewind(threadId: string, rewindId: string): Promise<import("./chat-rewind.ts").UndoRewindResult>;
   /** Every thread's events after `after`; ask again with the returned `cursor`, not an event id. */
   events(after?: string): Promise<EventFeed>;
   threadEvents(threadId: string): Promise<EventEnvelope[]>;
@@ -266,6 +314,16 @@ export interface StudioApi {
   renameThread(threadId: string, title: string): Promise<ConversationRecord>;
   compactThread(threadId: string, options?: { engine?: string; model?: string }): Promise<boolean>;
   archiveGame(project: string): Promise<boolean>;
+  /** What freeing space deletes now, in one game or (none named) in all of them. */
+  storageSpace(project?: string): Promise<import("./storage-space.ts").StorageSpace>;
+  /** Free space in one game (refused while it works) or (none named) in every game not working. */
+  freeStorage(project?: string): Promise<import("./storage-space.ts").StorageFreed>;
+  /** Takes back a game's engine link from its chat line; refused once the link has changed since. */
+  undoEngineLink(request: import("./game-engine.ts").EngineLinkUndo): Promise<boolean>;
+  /** The person's Stop on a job's chat line: the job's record, or null for a job the game never had. */
+  stopJob(project: string, jobId: string): Promise<import("./jobs.ts").JobRecord | null>;
+  /** Opens macOS System Settings at the Privacy & Security pane that grants what app_look needs. */
+  openPrivacySettings(pane: import("./jobs.ts").AppLookAccessKind): Promise<boolean>;
   engines(): Promise<EngineDescriptor[]>;
   /** Plan limits of each signed-in subscription; reading them never starts a turn. */
   providerUsage(): Promise<ProviderUsageReport[]>;
@@ -276,6 +334,8 @@ export interface StudioApi {
   createGame(title: string, options?: { parent?: string; provisional?: boolean }): Promise<GameProject>;
   /** A name for a game started from its first request, by the model picked for it; never fails for want of a model. */
   nameGame(request: GameNameRequest): Promise<GameName>;
+  /** A live background for home from a description, by the model picked on home (`core/backdrop-generation.ts`). */
+  makeBackdrop(request: BackdropShaderRequest): Promise<BackdropShaderResult>;
   /**
    * Create game's location: the native folder dialog, answered with the folder checked as
    * creating there will be. Resolves to null when cancelled; a refused folder rejects with why.
@@ -310,6 +370,7 @@ export interface StudioApi {
     agentsMax?: number;
     blender?: boolean;
     autoResume?: boolean;
+    computerControl?: boolean;
   }): Promise<StudioSettingsView>;
   /** Settings → Copy diagnostics: versions, provider status and the recent log, already redacted. */
   diagnostics(): Promise<string>;
@@ -333,7 +394,13 @@ export interface StudioApi {
   subscriptionSignIn(opts?: {
     engine?: string;
     separate?: boolean;
+    /** The account to sign in to (`SubscriptionAccountView.id`), or `NEW_ACCOUNT` for one more. */
+    account?: string;
   }): Promise<{ started: boolean; missingCli?: boolean; error?: string }>;
+  /** A subscription's accounts: the Terminal login, Studio's own and any added ones. */
+  subscriptionAccounts(engine: string): Promise<import("./subscription-accounts.ts").SubscriptionAccountView[]>;
+  /** Run a subscription on one of its accounts from the next message on; answers its status. */
+  subscriptionUseAccount(engine: string, account: string): Promise<import("./engine-descriptor.ts").EngineStatus>;
   /** The Claude sign-in as the card shows it: which phase, and the code box when one is wanted. */
   claudeLoginState(): Promise<ClaudeLoginState>;
   claudeLoginCode(code: string): Promise<ClaudeLoginState>;
@@ -350,6 +417,26 @@ export interface StudioApi {
   openRouterKeySave(key: string): Promise<import("./engine-descriptor.ts").EngineStatus>;
   /** Forget the saved OpenRouter key. */
   openRouterKeyClear(): Promise<import("./engine-descriptor.ts").EngineStatus>;
+  /**
+   * Connect OpenRouter in the browser: OpenRouter's page opens, and the call settles once the
+   * person approved Genex there (the key is then checked and saved, never sent back), cancelled,
+   * or it failed. A new call replaces one still waiting.
+   */
+  openRouterSignIn(): Promise<import("./openrouter-login.ts").OpenRouterSignInResult>;
+  /** Open the waiting sign-in's page again; false when none is waiting. */
+  openRouterSignInReopen(): Promise<boolean>;
+  /** Stop the waiting sign-in; false when none is waiting. */
+  openRouterSignInCancel(): Promise<boolean>;
+  /**
+   * Connect a model server the person runs (`shared/local-server.ts`): check the address is on this
+   * computer or the local network, ask the server for its models with the key when one is given,
+   * and save both only when it answers. The key never comes back.
+   */
+  localServerConnect(url: string, key?: string): Promise<import("./local-server.ts").LocalServerConnectResult>;
+  /** Forget the saved local server's address and key. */
+  localServerForget(): Promise<import("./engine-descriptor.ts").EngineStatus>;
+  /** The model servers answering on this computer's usual ports, for Settings to offer. */
+  localServerFind(): Promise<import("./local-server.ts").FoundLocalServer[]>;
   terminalList(): Promise<import("./terminal.ts").TerminalSession[]>;
   terminalAccessibility(): Promise<boolean>;
   terminalOpen(project: string): Promise<import("./terminal.ts").TerminalSession>;
@@ -371,8 +458,67 @@ export interface StudioApi {
   codexLoginOpenBrowser(): Promise<unknown>;
   codexLoginRetry(method: "browser" | "device"): Promise<CodexLoginState>;
   onCodexLogin(listener: (state: CodexLoginState) => void): () => void;
-  subscriptionForgetStudioLogin(engine?: string): Promise<boolean>;
+  /** Sign Studio out of one of its own accounts (Studio's first when `account` is unset). */
+  subscriptionForgetStudioLogin(engine?: string, account?: string): Promise<boolean>;
   openUrl(url: string): Promise<boolean>;
+  /** Play: one page of a tab of genex.games' catalog. */
+  playFeed(request: PlayFeedRequest): Promise<PlayFeedPage>;
+  /** Play: each shelf's count and the tabs with something in them, shelf by shelf. */
+  playShelves(): Promise<PlayShelves>;
+  /** Play: what on one shelf of the catalog answers a search, best first. */
+  playSearch(query: string, shelf: PlayShelf): Promise<PlayGame[]>;
+  /** The whole catalog for the composer's @ picker: every shelf, who made each, whether it may be taken. */
+  playCatalog(): Promise<GenexCatalogItem[]>;
+  /** Play: copy a game's public source into a new game of the person's own; answers its library name. */
+  playRemix(slug: string): Promise<string>;
+  /** Play: players in each named game now; a game nobody counts is left out. */
+  playOnline(slugs: string[]): Promise<Record<string, number>>;
+  /** Play: open a game full screen in the viewer; how it goes arrives as `UiEvent.PlayViewer`. */
+  playOpen(slug: string): Promise<void>;
+  /** Play: close the viewer. */
+  playClose(): Promise<void>;
+  /** Play: one of the viewer header's controls (Like, Share, Exit…); main answers with `UiEvent.PlayViewer`. */
+  playControl(control: PlayControl, at?: PlayPoint): Promise<void>;
+  /** Play: the Genex account the app is signed in as, or null while it is signed out. */
+  playMe(): Promise<PlayMe | null>;
+  /** Play: rename the account (2–20 characters); the account as it is after. */
+  playRename(name: string): Promise<PlayMe | null>;
+  /** Play: make a square WebP picture (at most 512 KB) the account's avatar; the account as it is after. */
+  playAvatar(webp: Uint8Array): Promise<PlayMe | null>;
+  /** Play: anyone's public profile and games, with the viewer's relationship to them. */
+  playProfile(userId: string): Promise<PlayProfile>;
+  /** Play: the Friends page, read at once: friends, requests both ways, visibility, invite link. */
+  playFriends(): Promise<PlayFriendsPage>;
+  /** Play: add, accept, withdraw or remove a friend; the relationship after it. */
+  playFriend(request: FriendActionRequest): Promise<FriendStatus>;
+  /** Play: people whose name matches, to add them. */
+  playPeople(query: string): Promise<PlayPeopleResult>;
+  /** Play: whether friends see the game the account is in. */
+  playVisibility(visibility: PresenceVisibility): Promise<PresenceVisibility>;
+  /** Play: show the generated avatar or the uploaded photo, in the app and on genex.games; the account after. */
+  playAvatarStyle(style: AvatarStyle): Promise<PlayMe | null>;
+  /** Play: show another generated avatar, in the app and on genex.games; the account after. */
+  playAvatarVariant(variant: number): Promise<PlayMe | null>;
+  /** Play: the account's own stats for a period; null while genex.games has none to give. */
+  playStats(days: StatsPeriod): Promise<PlayStats | null>;
+  /** Play: the Top creators row; null while genex.games does not rank creators. */
+  playCreators(): Promise<PlayCreator[] | null>;
+  /** The Genex plugin's Credits tab: balance, plan, invite bonus, live prices and recent spends. */
+  playCredits(): Promise<PlayCredits>;
+  /** Play: what a typed nickname is: a shape problem or the account's own at once, else genex.games' answer. */
+  playHandleCheck(handle: string): Promise<HandleCheck>;
+  /** Play: make a nickname the account's (its own one again confirms it); a refusal says why. */
+  playSetHandle(handle: string): Promise<HandleSave>;
+  /** Play: the Mac's share menu for a page of Play's website (an invite or a profile link), by `at`. */
+  playShare(url: string, at?: PlayPoint): Promise<void>;
+  /** The app's Genex account: signed out, signing in, signed in, or a sign-in genex.games ended. Never asks the network. */
+  genexAccount(): Promise<GenexAccountView>;
+  /** Sign in to Genex in the browser (again, after a sign-in ended); the account as it is after. */
+  genexSignIn(): Promise<GenexAccountView>;
+  /** Stop a sign-in waiting in the browser; the account as it is after. */
+  genexCancelSignIn(): Promise<GenexAccountView>;
+  /** Sign out of Genex once the person confirms in Studio's question; the account as it is after. */
+  genexSignOut(): Promise<GenexAccountView>;
   /** A macOS notification; clicking it focuses Studio and sends `notification.open` with the id. */
   notify(note: { id?: string; title: string; subtitle?: string; body: string }): Promise<boolean>;
   /** The Dock badge: how much work waits on the person. Zero clears it. */
@@ -449,6 +595,8 @@ export interface StudioApi {
   /** What waits for this game's Live Reload and the build Live shows, as `live.behind` says it: read on mount. */
   liveBehind(project: string): Promise<LiveBehindEvent>;
   previewState(): Promise<unknown>;
+  /** The Live game as it looks now (a JPEG data URL), taken before a dialog covers it; null when there is none. */
+  previewCoverStill(): Promise<string | null>;
   /** Whose page Live holds, whether it is still navigating, and whether its requests have settled. */
   previewLive(): Promise<{
     project: string | null;
@@ -461,8 +609,11 @@ export interface StudioApi {
   }>;
   /** Why the stage cannot show this game's own build; null when the last build was fine. */
   buildProblem(project: string): Promise<BuildProblem | null>;
-  /** Install this game's packages — the one action that reaches the network, on the user's press. */
-  installPackages(project: string): Promise<InstallResult>;
+  /**
+   * Install this game's packages — the one action that reaches the network, on the user's press.
+   * `scripts`: the person trusts a remix's setup scripts, which then run (and from then on).
+   */
+  installPackages(project: string, options?: { scripts?: boolean }): Promise<InstallResult>;
   startRun(spec: {
     project: string;
     goal: string;
@@ -555,6 +706,8 @@ export interface StudioSettingsView {
   blender?: boolean;
   /** Resume builds automatically after an engine limit resets or the loop restarts; on by default. */
   autoResume?: boolean;
+  /** Let agents control your computer (Settings → Permissions, macOS); off by default. */
+  computerControl?: boolean;
 }
 
 declare global {

@@ -85,6 +85,7 @@ test("a backend written against the SDK declaration compiles clean", (t) => {
         const job: unknown = await ctx.host('jobs.read', { id: 'job-1' });
         await ctx.host('events.emit', { kind: 'toolbar', item: 'publish', badge: 'Draft', tone: 'info' });
         await ctx.host('observe', { project: 'g', root: '/games/g', files: ['index.html'] });
+        const snapshot: { snapshotId: string } = await ctx.host('game.snapshot', { reason: 'Before an update' });
         const shot = await ctx.host('observe', {
           project: 'g', root: '/games/g', files: [],
           still: { demo: 'hero-shot', width: 1920, height: 1080, maxBytes: 8388608 },
@@ -106,7 +107,7 @@ test("a backend written against the SDK declaration compiles clean", (t) => {
           olderHost = true;
         }
         await ctx.host('observe', { project: 'g', root: '/games/g', files: [], still: { camera: 'eye:down', width: 1280, height: 720 } });
-        return { root, text, written, delivered, dir: exported.dir, files: exported.files, token, job, still, problem, olderHost };
+        return { root, text, written, delivered, dir: exported.dir, files: exported.files, token, job, snapshot, still, problem, olderHost };
       }
       import type { PluginStillProblemCode } from ${quote(sdk)};
     `,
@@ -116,8 +117,9 @@ test("a backend written against the SDK declaration compiles clean", (t) => {
         const context: PluginPanelContext = await window.studioPlugin.call('context');
         await window.studioPlugin.call('settings');
         await window.studioPlugin.call('action', 'hello', {});
+        const chosen: string | null = await window.studioPlugin.chooseFile({ title: 'Choose a project', extensions: ['uproject'] });
         window.studioPlugin.ui?.status('Status', 'ready');
-        return context.project;
+        return chosen ?? context.project;
       }
     `,
   });
@@ -171,6 +173,82 @@ test("the SDK manifest mirror, its skills and tool hosts, and src/shared/plugins
       declare const sdkHost: SdkHost; declare const sharedHost: SharedHost;
       export const hostToShared: SharedHost = sdkHost;
       export const hostToSdk: SdkHost = sharedHost;
+    `,
+    "engine.ts": `
+      import type { PluginEngineDeclaration as SdkEngine, PluginEngineLink as SdkLink } from ${quote(sdk)};
+      import type { EngineDeclaration as SharedEngine, EngineBinding } from ${quote(path.resolve("src/shared/game-engine.ts"))};
+      declare const sdkEngine: SdkEngine; declare const sharedEngine: SharedEngine;
+      export const engineToShared: SharedEngine = sdkEngine;
+      export const engineToSdk: SdkEngine = sharedEngine;
+      type SharedLink = EngineBinding & { name: string };
+      declare const sdkLink: SdkLink; declare const sharedLink: SharedLink;
+      export const linkToShared: SharedLink = sdkLink;
+      export const linkToSdk: SdkLink = sharedLink;
+    `,
+    "assist.ts": `
+      import type { PluginEngineAssistAnswer as SdkAnswer, PluginEngineAssistArgs as SdkArgs } from ${quote(sdk)};
+      import type { EngineAssistAnswer as SharedAnswer, EngineAssistArgs as SharedArgs } from ${quote(shared)};
+      declare const sdkAnswer: SdkAnswer; declare const sharedAnswer: SharedAnswer;
+      export const answerToShared: SharedAnswer = sdkAnswer;
+      export const answerToSdk: SdkAnswer = sharedAnswer;
+      declare const sdkArgs: SdkArgs; declare const sharedArgs: SharedArgs;
+      export const argsToShared: SharedArgs = sdkArgs;
+      export const argsToSdk: SdkArgs = sharedArgs;
+    `,
+    "judge.ts": `
+      import type { PluginJudge as SdkJudge } from ${quote(sdk)};
+      import type { PluginJudge as SharedJudge } from ${quote(shared)};
+      declare const sdkJudge: SdkJudge; declare const sharedJudge: SharedJudge;
+      export const judgeToShared: SharedJudge = sdkJudge;
+      export const judgeToSdk: SdkJudge = sharedJudge;
+    `,
+  });
+  assert.equal(diagnostics.length, 0, report(diagnostics));
+});
+
+test("the panel's Choose file request and src/shared/plugin-file-request.ts are mutually assignable", (t) => {
+  const request = path.resolve("src/shared/plugin-file-request.ts");
+  const diagnostics = compile(t, {
+    "file-request.ts": `
+      import type { PluginFileRequest as SdkRequest } from ${quote(sdk)};
+      import type { PluginFileRequest as SharedRequest } from ${quote(request)};
+      declare const sdkRequest: SdkRequest; declare const sharedRequest: SharedRequest;
+      export const requestToShared: SharedRequest = sdkRequest;
+      export const requestToSdk: SdkRequest = sharedRequest;
+    `,
+  });
+  assert.equal(diagnostics.length, 0, report(diagnostics));
+});
+
+test("the SDK's moments, what a handler is told and what it answers, and src/shared/plugin-hooks.ts are mutually assignable", (t) => {
+  const hooks = path.resolve("src/shared/plugin-hooks.ts");
+  const diagnostics = compile(t, {
+    "hooks.ts": `
+      import type { PluginHookAnswer as SdkAnswer, PluginHookContext as SdkContext, PluginHookEvent as SdkEvent } from ${quote(sdk)};
+      import type { HookAnswer as SharedAnswer, HookContext as SharedContext, HookEvent as SharedEvent } from ${quote(hooks)};
+      declare const sdkEvent: SdkEvent; declare const sharedEvent: SharedEvent;
+      export const eventToShared: SharedEvent = sdkEvent;
+      export const eventToSdk: SdkEvent = sharedEvent;
+      declare const sdkContext: SdkContext; declare const sharedContext: SharedContext;
+      export const contextToShared: SharedContext = sdkContext;
+      export const contextToSdk: SdkContext = sharedContext;
+      declare const sdkAnswer: SdkAnswer; declare const sharedAnswer: SharedAnswer;
+      export const answerToShared: SharedAnswer = sdkAnswer;
+      export const answerToSdk: SdkAnswer = sharedAnswer;
+    `,
+  });
+  assert.equal(diagnostics.length, 0, report(diagnostics));
+});
+
+test("what the SDK tells an observer's tool and src/shared/observers.ts are mutually assignable", (t) => {
+  const observers = path.resolve("src/shared/observers.ts");
+  const diagnostics = compile(t, {
+    "observe.ts": `
+      import type { PluginObserveContext as SdkObserve } from ${quote(sdk)};
+      import type { ObserveContext as SharedObserve } from ${quote(observers)};
+      declare const sdkObserve: SdkObserve; declare const sharedObserve: SharedObserve;
+      export const observeToShared: SharedObserve = sdkObserve;
+      export const observeToSdk: SdkObserve = sharedObserve;
     `,
   });
   assert.equal(diagnostics.length, 0, report(diagnostics));

@@ -1,24 +1,31 @@
-# Genex shops in AI Game Studio
+# Genex payments in AI Game Studio
 
 You are building inside AI Game Studio. Below the upstream marker is Genex's monetization card,
 unchanged. Where it disagrees with this preface, this preface wins.
 
-- `npx genex shop list`: `genex__cli {"command":"shop list"}`.
-- `npx genex shop add|set|remove|test`: `genex__cli-paid`, with the item name or sku in `args` and
-  the flags by name in `options`, for example
-  `genex__cli-paid {"command":"shop add","args":"Iron Key","options":{"price":100,"type":"durable"}}`.
-  The user approves each call, because it changes what the game sells.
-- Shop commands need the game's hosted project: publish a draft with
-  `genex__publish {"operation":"draft"}` first.
-- `npx genex image` for item art is `genex__asset` with operation `image`; use the image URL it
-  reports as the item's `icon`.
+- Sell with the card's dynamic payment requests (`requestPayment`, `getPayment`, `getPayments`).
+  They need no CLI call, no `genex shop add` and no item catalog.
+- Studio's `@genex-ai/embed-sdk` already exports them. Add the package with
+  `genex__package {"package":"@genex-ai/embed-sdk"}` if the game does not have it yet; never run
+  the card's `npm install @genex-ai/embed-sdk@latest`. In a game made from Studio's template,
+  import them from `"@genex-ai/embed-sdk"` and never call `initEmbed()`: Studio's connect module
+  does, as the `genex-threejs-embed-auth` skill describes.
+- Studio's preview runs in local test mode, which has no wallet: a payment there never opens the
+  platform sheet. Check the buttons, layout and delivery code with the game's own test fixtures.
+  A real payment needs a build published on Genex (`genex__publish`), a signed-in player and that
+  player's confirmation: tell the user where to try it rather than claiming it works.
+- Only a game that already sells catalog items keeps the card's "Existing catalog items" commands:
+  `npx genex shop list` is `genex__cli {"command":"shop list"}`, and
+  `npx genex shop add|set|remove|test` is `genex__cli-paid` with the item name or sku in `args` and
+  the flags by name in `options`. The user approves each paid call, because it changes what the
+  game sells.
 - Other commands map onto Studio tools as the `genex` skill describes
   (`genex__skill {"name":"genex"}`).
 
-<!-- upstream @genex-ai/cli-demo/templates/skills/genex-monetization/SKILL.md v1.36.2 sha256 e48b5404bbc451f324e61d3b027f6176fd55412cb297f1066416969afc64a0e0 -->
+<!-- upstream @genex-ai/cli-demo/templates/skills/genex-monetization/SKILL.md v1.36.9 sha256 24b4b798c597ce452af4bfa394cd4ca655710750d9f6e749c2b4ed8dd540e844 -->
 ---
 name: genex-monetization
-description: Build an in-game shop that sells for platform coin — item catalog, purchase flow, delivery, and the per-game soft-currency economy a purchase attaches to. Use when the player asks to sell things, add a shop, monetize, or make the game earn. Carries the hard rules: no paid randomness, no gambling in coin, no donation mechanics, and a real-money price beside every coin price.
+description: Add dynamic coin payments for game goods or actions — platform consent, recoverable receipts, and idempotent delivery without a required product catalog. Use when the player asks to sell things, add a shop, monetize, or make the game earn. Carries the hard rules: no paid randomness, no gambling in coin, no donation mechanics, and a real-money price beside every coin price.
 ---
 
 # Genex Monetization
@@ -28,8 +35,8 @@ buys coin with real money once; spending it inside a game is a ledger movement
 the game never touches. You design what is for sale; the platform owns the
 wallet, the confirmation, and the money.
 
-Load this when the game should sell something. Ask first if it should — a game
-with no loop worth monetizing is better without a shop (see §1).
+Load this when the user asks to sell something or add payments. Build the game
+loop before adding commerce; no shop screen or product catalog is required.
 
 ## The hard rules, and the test that generalizes them
 
@@ -112,15 +119,18 @@ Nine checks. Each one is answerable about your actual design.
    shop, remove the annoyance instead of selling the cure.
 5. **Everything sold is reachable free.** Spending is a shortcut or a
    decoration, never the only path.
-6. **Prices land on the grid.** Item prices use 50 / 100 / 200 / 500 / 1000 coin
-   so every coin pack divides evenly into them and nobody is left holding change
-   they cannot spend.
-7. **Every price shows real money next to it.** The server sends
-   `priceDisplayUsdCents` with every item — render it. `250 coins ($2.49)`.
+6. **A payment has one clear price and promised result.** `amountCoins` is a
+   positive whole number from 1 to 100000, further bounded by the platform
+   surface. Dynamic payments do not use the legacy catalog price grid.
+7. **Every price shows real money next to it.** The platform confirmation
+   shows the server-frozen `priceDisplayUsdCents`. If rendering a receipt or
+   catalog price in the game, render that value too; never invent an exchange
+   rate. A button can simply say “Unlock” and let Genex show the price.
 8. **One currency layer between money and goods.** Coin buys items. A per-game
    earned currency buys per-game upgrades. They never convert into each other.
-9. **Purchases never expire and survive a reinstall.** Entitlements live on the
-   server; the game re-reads them on every boot.
+9. **Paid ownership survives a reinstall.** Receipts live on the server; the
+   game recovers them on every boot and restores the promised state. A
+   confirmation can expire; a paid receipt does not expire with it.
 
 For a per-game earned currency, the load-bearing number is **minutes of play per
 unit earned**. Set it, then price the cheapest meaningful item at one to three
@@ -128,231 +138,200 @@ sessions of earning. Everything else follows. Spend sinks come in three kinds �
 permanent upgrades, refills, cosmetics — and cosmetics are what absorbs late-game
 currency without touching balance.
 
-## Stocking the shop
+## Dynamic payment requests
 
-Items live on the platform, not in the game's code. You create them with the CLI,
-and the game names them by id — which is what stops a game inventing its own
-items or repricing them.
-
-```bash
-npx genex shop add "Iron Key" --price 100 --type durable
-#   → id: sku_a1b2c3   ← what the game passes to buy()
-
-npx genex shop list                    # what this game sells, and the valid prices
-npx genex shop set sku_a1b2c3 --price 200
-npx genex shop remove sku_a1b2c3       # retires it; players who bought it keep it
-```
-
-`--type consumable` (default) is spent on use; `durable` is owned permanently.
-
-**Prices come off a fixed grid** — `genex shop list` prints it, and an off-grid
-price is refused. The grid exists so every coin pack divides evenly by the
-cheapest item, which is what stops a player being left holding change too small
-to spend. Pick the nearest grid price rather than working around it.
-
-Record the ids in `DESIGN.md` next to what each item does. They are the one
-thing the game's code cannot regenerate for itself.
-
-## Item art
-
-**Every item ships with a picture.** `--icon` is optional to the command and not
-optional to the product: a SKU with no icon renders as a coloured plate with a
-generic box on it, in your shop and on the platform's resale market, where it
-sits next to other games' items that do have art.
-
-**It has to be the item.** Not "a fantasy key" — *this* key, the one the player
-just picked up, in this game's light and this game's palette. An icon that shows
-a different object than the world does is worse than the plate, because the
-plate at least does not claim anything.
-
-So if the item exists as an asset — a generated model, a sprite, a texture —
-generate the art FROM it. Point the camera at the model in the game, or use the
-asset image, and feed that frame in as the reference:
+Requires `@genex-ai/embed-sdk` **>= 0.33.0**. Earlier versions, including
+`^0.32.0`, do not export these payment helpers. Update the game's dependency
+before wiring them, then rebuild and publish the game:
 
 ```bash
-# 1. capture the real item -> ./iron-key-ref.png  (crop it SQUARE, see below)
-npx genex image "shop item art of the exact object in the reference image: an ornate iron key, centred, lit from above with a soft rim light, on a clean dark backdrop, no text, no watermark, no interface" \
-  --edit ./iron-key-ref.png --quality high
-#    -> https://assets.genex.technology/generations/<id>/image-main
-
-# 2. attach it
-npx genex shop add "Iron Key" --price 100 --type durable --icon <that url>
-npx genex shop set sku_a1b2c3 --icon <that url>     # or fix one later
+npm install @genex-ai/embed-sdk@latest
 ```
 
-`--edit` takes a **local file** (≤ 4 MB) as well as an asset URL, so a screenshot
-goes straight in. Two things about that lane:
-
-- **It keeps the reference's shape**, so `--aspect` does nothing here — crop the
-  reference square before you pass it, or you will get a wide icon in a square
-  cell.
-- It is a different model from the plain text lane, and a better one for this
-  job, because the reference is what makes the picture the item and not a
-  picture of the idea.
-
-No asset yet? Same prompt without `--edit`, anchored on the item's name and on
-**the game's own vibe words** — take them from `DESIGN.md` rather than inventing
-a style, and generate the whole shop in one sitting with the same style clause
-so the shelf reads as one set.
-
-Prompt shape, and every clause earns its place: one object, centred, on a clean
-simple backdrop, lit the way the game lights things, closing with *no text, no
-watermark, no interface*. Say what you want, never what you don't — an image
-model reads "no swords" as "swords", so a ban only works when the thing is
-absent from the prompt entirely.
-
-## The API
-
-From `@genex-ai/embed-sdk`, already installed. `initEmbed()` must have run.
+After `initEmbed()` and player identity are ready:
 
 ```ts
-import { getShop, buy, getEntitlements, consumeEntitlement } from '@genex-ai/embed-sdk';
+import { requestPayment, getPayment, getPayments } from '@genex-ai/embed-sdk';
 
-const items = await getShop();
-// [{ id, type, name, iconUrl, priceCoins, priceDisplayUsdCents }]
-```
+// Prepare and save this order AND its promised action before enabling the button.
+// Generate its id once. Keep the same id and terms across retries and reloads.
+const order = {
+  orderId: 'unlock-iron-gate-run-42',
+  title: 'Open the iron gate',
+  description: 'Unlock the shortcut for this run.',
+  amountCoins: 75,
+};
 
-Render `name`, `iconUrl`, `priceCoins` **and** `priceDisplayUsdCents`. Never
-hardcode a price: the server charges what its own catalog says, so a hardcoded
-number can silently disagree with what the player is charged.
-
-`getShop()` works for a **guest** and inside a **preview** build, so the shop
-window renders for everyone — that is the point of showing it to a signed-out
-player at all. Buying is what needs an account.
-
-**Your game cannot read the player's coin balance, and no HUD should show one.**
-The wallet spans every game on the platform, so an untrusted game is not told how
-much a player can spend. Show what you *can* know — what they own, from
-`getEntitlements()` — and let `buy()` report `insufficient_balance` if it comes
-to that.
-
-### Buying
-
-```ts
-buyButton.addEventListener('click', async () => {   // must be a real click
-  const result = await buy({ skuId: item.id });
-  if (result.status === 'canceled') return;         // normal — say nothing
-  if (result.status !== 'succeeded') {
-    showMessage(result.message ?? 'That did not go through.');
+buyButton.addEventListener('click', async () => {
+  const result = await requestPayment(order); // first async operation in the click
+  if (result.status === 'canceled') return;
+  if (result.status === 'succeeded' && result.payment) {
+    await applyPaidOrderOnce(result.payment); // your saved, idempotent game action
     return;
   }
-  await deliverPending();
+  if (result.status === 'pending') {
+    showMessage('Payment is still being checked.');
+    return; // recover this order; do not create a replacement charge
+  }
+  showMessage('Purchase did not complete.');
 });
 ```
 
-**Call `buy()` synchronously from the click handler.** On the game's own origin
-the confirmation is a popup, and browsers only allow one while a user gesture is
-live — an `await` before it loses the gesture and nothing opens.
+No `genex shop add`, SKU id, catalog card or item icon is needed. A payment can
+buy a described game action, unlock or item. The hard rules above still apply.
+The game never supplies a recipient: the platform uses the game's own split.
+This API is for coin commerce; in-game LLM requests use their own funding and
+consent flow (`$genex-llm-in-games`), not a payment wrapped around a model call.
 
-`buy()` resolves when the SERVER says what happened, not when a window closes.
-Statuses: `succeeded`, `canceled`, `expired`, `insufficient_balance`, `failed`.
+The server freezes `title`, `description`, `amountCoins` and the real-money
+value before Genex asks the player. **Creating a request neither debits nor
+reserves coin.** Only the player's explicit confirmation on the platform
+surface can move money. The game cannot draw, skin or confirm that sheet.
 
-The player confirms on a Genex-drawn surface — your game does not render the
-price sheet, cannot skin it, and cannot complete a purchase itself. That is
-deliberate: it is what lets a player trust a purchase in a game they have never
-played before.
+An `orderId` belongs to this player in this game. The same id with the same
+terms returns the same payment, including a terminal result. Changing its terms
+returns `payment_conflict`. After an order is canceled or expired, a deliberate
+new purchase gets a new id; a network retry never does. Do not generate ids
+inside a retry loop or replace them just because the SDK stopped waiting.
 
-### Delivering
+### Confirmation and results
+
+**Call `requestPayment()` synchronously from the click handler.** On the game's
+own origin it reserves a popup while the user gesture is live, then fills it
+with the platform confirmation. Awaiting a save or fetch first can block it;
+prepare and persist the order before enabling its purchase button.
+
+The result has `status`, optional `payment` (the receipt), and optional `message`.
+Statuses are `succeeded`, `canceled`, `expired`, `insufficient_balance`, `failed`
+and `pending`. A timeout or uncertain response is `pending`: it is not proof of
+failure and not permission to apply the action or charge again. `canceled` is
+ordinary player choice; do not show an error for it.
+
+**Your game cannot read the player's coin balance, and no HUD should show one.**
+The wallet spans the platform; let Genex show the balance and handle consent.
+Only fulfil a payment whose authoritative receipt says `succeeded`.
+
+The surface depends on the shell (`$genex-threejs-embed-auth`,
+`references/shells.md`):
+
+- **On the game's Genex page the sheet is drawn above the game.** To show it,
+  the page leaves fullscreen first, and the SDK lets go of the
+  pointer lock before it asks. Treat payment like a pause; re-enter fullscreen
+  and pointer lock from the player's next Resume click.
+- **The Genex app has no purchase surface yet.** `requestPayment()` fails
+  without opening a sheet; the legacy `buy()` resolves
+  `failed` without opening anything too. When `getShell()` from `@genex-ai/embed-sdk` is `"app"`,
+  hide payment buttons or make the shop browse-only; do not show a failure toast.
+- Local test mode has no wallet. Preview builds cannot spend real coin either.
+  Verify layout and delivery with game-owned test fixtures; a real payment needs
+  a published build, a signed-in player and explicit platform consent.
+
+### Receipts and delivery after a restart
 
 ```ts
-async function deliverPending() {
-  for (const e of await getEntitlements({ excludeConsumed: true })) {
-    // Branch on skuType (consumable | durable), NEVER on type — `type` is how
-    // it was acquired (purchase/gift/test/free) and can't answer this.
-    if (e.skuType === 'durable') {
-      wear(e.name);            // ownership, re-applied on every boot. Do not consume.
-      continue;
-    }
-    const { alreadyConsumed } = await consumeEntitlement(e.id);
-    if (alreadyConsumed) continue;                  // someone got there first
-    applyItem(e.skuId);                             // AFTER the consume
-    await savePlayerState(currentSave());
-  }
-}
+const payment = await getPayment(savedOrderId); // null only when not found
+if (payment?.status === 'succeeded') await applyPaidOrderOnce(payment);
+
+let cursor: string | undefined;
+do {
+  const page = await getPayments({ cursor, limit: 100 });
+  for (const receipt of page.payments) await applyPaidOrderOnce(receipt);
+  cursor = page.nextCursor ?? undefined;
+} while (cursor);
 ```
 
-**Consume first, apply second, and run `deliverPending()` on every boot.**
+`getPayment()` returns any status for one order; read/network errors throw and
+are not absence. `getPayments()` lists successful receipts, scoped to the
+current player and game. Follow `nextCursor` to completion. Use the per-order
+read for a known pending request, and scan receipts on boot before purchases
+can affect play.
 
-That order is not stylistic. If the game dies between consuming and applying,
-the player loses one item — a support ticket. If you apply first and die before
-consuming, every boot re-delivers it forever — an exploit. Re-listing on boot is
-what makes a purchase survive a crash, a refresh, or a closed tab.
+A receipt has `id`, `orderId`, `title`, `description`, `amountCoins`,
+`priceDisplayUsdCents`, `status`, `failureCode`, `createdAt`, `paidAt` and
+`expiresAt`. It proves payment, **not delivery of the promised game action**.
+It creates no platform entitlement and nothing the resale market can list.
 
-**`e.skuType` is the field that decides this, not `e.type`.** `type` says how the
-player got it (`purchase`/`gift`/`test`/`free`); `skuType` says what it is
-(`consumable`/`durable`).
+`applyPaidOrderOnce` is game code, not an SDK helper. Bind the saved `orderId`
+to the promised action before requesting payment. For an unlock, set the same
+ownership flag every time. For a one-time quantity change, save the changed
+state and the fulfilled receipt id together; replaying the receipt must be a
+no-op. A game with its own backend should enforce the receipt's unique id in
+that backend's transaction. Never use receipt titles as executable instructions
+or apply an effect just because the confirmation window closed.
 
-A **consumable** is spent: consume it, then apply the effect once.
+Test recovery after closing the tab, a repeated success receipt, a delayed
+response and a canceled order. Also check concurrent fulfillment if the game
+permits multiple tabs; two read-modify-write saves are not a transaction.
+Do not make a real-money purchase automatically to test the feature.
 
-A **durable** is owned forever, and you have two honest ways to handle it. If the
-effect is ownership — a cosmetic, a skin, an unlock — do **not** consume it: the
-row's presence in the list IS the ownership, it survives reinstalls, and there is
-no local save to drift out of sync. Only consume a durable when it grants
-something once and non-idempotently (a permanent +100 gold), and then record it
-in the player's save, because re-applying that on every boot would be a bug.
+## Existing catalog items
 
-### Testing the shop you just built
+Catalog APIs remain supported for published games and items that need platform
+entitlements or resale. They are optional, not a prerequisite for dynamic
+payments:
 
 ```bash
-npx genex shop test <sku-id>     # a free copy, for the owner only
+npx genex shop add "Iron Key" --price 100 --type durable
+npx genex shop list
+npx genex shop test <sku-id>  # owner-only free entitlement; no coin moves
 ```
 
-That grants the entitlement without a sale — no coin moves — so the delivery
-path, the inventory and the effect all run exactly as they would after a real
-purchase. Reload the game and it should be there.
+`getShop()` reads catalog items even for guests and preview builds;
+`buy({ skuId })` requests their platform confirmation. These prices must follow
+the grid printed by `genex shop list`. Render `name`, `iconUrl`, `priceCoins`
+and `priceDisplayUsdCents`; use an image of the actual item for its icon.
+`genex shop set` edits a listing and `genex shop remove` retires it without
+removing a buyer's ownership.
 
-You *can* also just buy your own item, but it costs you the full price and pays
-you nothing: your share of a sale you funded goes to the platform, never into
-your own earnings. Use the test grant instead.
+Re-list `getEntitlements({ excludeConsumed: true })` on boot. Branch on
+`skuType` (`consumable`/`durable`), never `type` (purchase/gift/test/free).
+For a consumable, await `consumeEntitlement(id)` BEFORE applying its effect
+and skip `alreadyConsumed: true`. This prevents repeated delivery but a crash
+between consume and save can lose that effect; do not promise atomic game-state
+delivery. A durable ownership unlock is never consumed: restore it from the
+entitlement on every boot. Dynamic receipts do not use this consumption API.
 
 ## Checklist
 
-- [ ] Items exist (`npx genex shop list`) before the shop UI is written
-- [ ] Delivery was verified with `npx genex shop test`, not by trying to buy your own item
-- [ ] The game has a loop and a progression before it has a shop
-- [ ] Every item price is on the 50/100/200/500/1000 grid
-- [ ] Every price renders `priceDisplayUsdCents` beside the coin figure
-- [ ] `buy()` is called synchronously inside a click/tap handler
-- [ ] `canceled` is silent; only real failures show a message
-- [ ] `deliverPending()` runs on every boot, before the player can act
-- [ ] `consumeEntitlement()` is awaited BEFORE the effect is applied
-- [ ] `alreadyConsumed: true` skips the effect
-- [ ] Durable purchases are written to the player's save
-- [ ] No timer, "limited", "ends in", or stock counter anywhere
+- [ ] The game has a worthwhile loop before commerce
+- [ ] The saved order binds one stable id, exact terms and promised action
+- [ ] `requestPayment()` starts directly from a click/tap
+- [ ] Genex shows the frozen coin and real-money price and receives consent
+- [ ] No payment buttons in the Genex app
+- [ ] Cancellation is silent; uncertain outcomes remain pending
+- [ ] Recovery reads receipts before applying any paid action
+- [ ] Fulfillment is idempotent, including reload and concurrent-tab cases
+- [ ] No paid randomness, coin wagering, donation prompt or pressure timer
 - [ ] Nothing sold is unreachable without paying
-- [ ] No paid randomness, no coin wagering, no donation prompt
 
 ## Troubleshooting
 
-**`buy()` returns `failed` with "the confirmation window was blocked"** — `buy()`
-was not called inside a user gesture, or an `await` ran before it. Move it to the
-first line of the click handler.
+**The confirmation window was blocked** — an `await` ran before
+`requestPayment()`, or there was no click. Persist the order earlier and make
+the payment request the click handler's first async operation.
 
-**The purchase succeeded but the player got nothing** — the game applied the
-effect without consuming, or never ran `deliverPending()` on boot. The
-entitlement is still there; re-list it.
+**`payment_conflict`** — the same order id was reused with different terms.
+Recover its original request; create a new id only for a new purchase.
 
-**The player got the item twice** — the effect was applied before consuming, or
-`alreadyConsumed` was ignored. Both are the same bug.
+**`pending` or an interrupted tab** — use `getPayment(orderId)`. Never assume
+failure, issue a replacement charge, or deliver while the status is uncertain.
 
-**`unauthorized` from `getShop()`** — no player identity yet. `initEmbed()` must
-have run and `waitForPlayer()` resolved. See `$genex-threejs-embed-auth`.
+**Payment succeeded but nothing happened** — find the saved order's action and
+recover its receipt. The platform records payment; the game owns fulfillment.
 
-**`guest_no_wallet`** — guests play but hold no wallet. Show the shop as
-sign-in-to-buy rather than hiding it.
+**The player got the effect twice** — delivery did not deduplicate by receipt
+id or the save update raced. Fix fulfillment; do not change the order id.
 
-**`staging_no_purchase`** — a `genex preview` build cannot spend real coin. Test
-the shop's layout on staging; test a purchase after `genex promote`.
+**`guest_no_wallet`** — ask the player to sign in before purchase.
 
-**`getShop()` returns nothing** — the game has no items yet. `npx genex shop add
-"<name>" --price <coin>` and use the id it prints.
+**`staging_no_purchase`** — previews cannot spend; verify layout there and use
+a published build for an explicitly approved real purchase.
 
-**`price_off_grid`** — that price isn't on the platform's grid. `npx genex shop
-list` prints the valid ones; pick the nearest.
+**`surface_cap`** — the amount exceeds the server's limit for this confirmation
+surface. Do not split it into smaller hidden charges to bypass the limit.
 
-**Everything coin-related 404s** — in-game purchases aren't enabled on this
-environment. Nothing to fix in the game; say so and build the rest.
+**`price_off_grid`** — this applies to legacy catalog SKUs only. Dynamic
+payments accept whole amounts subject to their own caps.
 
-**Purchases do nothing in local testing** — local test mode has no wallet and no
-server. `buy()` returns `failed` immediately by design. Test purchases on a
-preview or published build.
+**Everything coin-related 404s** — coin commerce is disabled on this stand.
+Build the rest and report the unavailable lane.

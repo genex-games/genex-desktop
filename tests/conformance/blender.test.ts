@@ -15,12 +15,12 @@ after(async () => {
 /**
  * A fake Blender: answers `-b --version`, and for a real call writes a `glTF`-prefixed file
  * and a PNG-magic file where the wrapper's `--` arguments say, then prints the result line.
- * `BIG=1` in its own folder makes the "glb" report an oversize byte count.
+ * `glbBytes` makes the "glb" that big; `echoArgs` puts its arguments after `--` in the result line.
  */
 async function fakeBlender(
   app: string,
   version: string,
-  options: { glbBytes?: number; fail?: string } = {},
+  options: { glbBytes?: number; fail?: string; echoArgs?: boolean } = {},
 ): Promise<string> {
   const binary = path.join(app, "Contents", "MacOS", "Blender");
   await mkdir(path.dirname(binary), { recursive: true });
@@ -35,7 +35,7 @@ async function fakeBlender(
     options.glbBytes ? `dd if=/dev/zero bs=${options.glbBytes} count=1 >> "$GLB" 2>/dev/null` : "",
     'printf "\\211PNG\\r\\n\\032\\nfake" > "$PNG"',
     'printf "\\211PNG\\r\\n\\032\\nfake" > "${PNG%.png}-front.png"',
-    `echo 'STUDIO_BLENDER_RESULT {"ok": true, "meshes": [{"name": "Body", "polygons": 200, "triangles": 400, "materials": ["Fur"]}, {"name": "Tail", "polygons": 120, "triangles": 240, "materials": ["Fur"]}], "meshCount": 2, "polygons": 320, "triangles": 640, "size": [1.0, 0.5, 1.2], "framedSize": [1.0, 0.5, 1.2], "materials": ["Fur"], "glbBytes": ${options.glbBytes ?? 4096}, "renders": ["$PNG", "\${PNG%.png}-front.png"], "seconds": 0.4}'`,
+    `echo 'STUDIO_BLENDER_RESULT {"ok": true, "meshes": [{"name": "Body", "polygons": 200, "triangles": 400, "materials": ["Fur"]}, {"name": "Tail", "polygons": 120, "triangles": 240, "materials": ["Fur"]}], "meshCount": 2, "polygons": 320, "triangles": 640, "size": [1.0, 0.5, 1.2], "framedSize": [1.0, 0.5, 1.2], "materials": ["Fur"], "glbBytes": ${options.glbBytes ?? 4096}, "renders": ["$PNG", "\${PNG%.png}-front.png"], ${options.echoArgs ? `"argv": "'"$*"'", ` : ""}"seconds": 0.4}'`,
     "exit 0",
     "",
   ].join("\n");
@@ -70,7 +70,8 @@ describe("Blender through the public plugin API", () => {
     const binary = await fakeBlender(path.join(await tmpDir("blender-runtime-"), "Blender.app"), "5.2.1");
     const manifest = JSON.parse(await readFile(path.join(source, "plugin.json"), "utf8"));
     manifest.nativeRuntimes[0].candidates = [binary];
-    manifest.nativeJobs[0].gpu = false;
+    // A fake app has no bundle identifier, which the GPU cache grant reads.
+    for (const job of manifest.nativeJobs) job.gpu = false;
     await writeFile(path.join(source, "plugin.json"), JSON.stringify(manifest));
     // Studio's own blender with a fake runtime: a local folder can no longer take a bundled id.
     await rig.core.plugins.installLocal(source, "bundled", manifest.capabilities);
@@ -223,6 +224,34 @@ describe("Blender through the public plugin API", () => {
     act = async (request) => {
       last = await invoke(request, { name: "dog" });
       assert.ok(last.record.files.every((f: string) => f.startsWith("public/assets/blender/")));
+    };
+    await delegate({ cwd: worktree });
+
+    // A compose job: the host stages the script, the named game files and the padded slots, and
+    // the wrapper gets each staged copy with the label it reads it by.
+    await writeFile(path.join(worktree, "assets", "src", "common.py"), "SIZE = 4\n");
+    await mkdir(path.join(worktree, "assets", "tex"), { recursive: true });
+    await writeFile(path.join(worktree, "assets", "tex", "rust.png"), "\x89PNG\r\n\x1a\nfixture");
+    await fakeBlender(path.dirname(path.dirname(path.dirname(binary))), "5.2.1", { echoArgs: true });
+    act = async (request) => {
+      last = await invoke(request, {
+        name: "Dog_Two",
+        script: "assets/src/dog.py",
+        inputs: "assets/src/common.py,assets/tex/rust.png",
+        rig: true,
+      });
+      assert.equal(last.record.name, "dog-two", JSON.stringify(last.record));
+      const argv = String(last.record.stats.argv).split(" ");
+      assert.deepEqual(argv.slice(3, 8), [
+        "dog-two",
+        "--rig",
+        "1",
+        "--inputs",
+        "assets/src/common.py,assets/tex/rust.png",
+      ]);
+      const slots = argv.flatMap((arg, i) => (arg === "--slot" ? [path.basename(argv[i + 1] ?? "")] : []));
+      const padding = Array.from({ length: 7 }, (_, i) => `input${i + 3}.py`);
+      assert.deepEqual(slots, ["input1.py", "input2.png", ...padding], "unused slots carry the script again");
     };
     await delegate({ cwd: worktree });
   });

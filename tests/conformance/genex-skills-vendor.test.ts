@@ -7,7 +7,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { readdir, readFile } from "node:fs/promises";
+import { copyFile, readdir, readFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { buildPlugins } from "../../scripts/build-plugins.mjs";
@@ -15,9 +15,11 @@ import {
   CARDS_LICENSE,
   GENEX_CARDS,
   GENEX_SKILL,
+  declareVendoredReferences,
   type GenexSkillsVendor,
   manifestDisagreements,
   splitVendoredSkill,
+  writeManifest,
 } from "../../scripts/refresh-genex-skills.ts";
 import { GENEX_GAME_PACKAGES } from "../../src/shared/genex.ts";
 import type { PluginManifest } from "../../src/shared/plugins.ts";
@@ -97,6 +99,16 @@ test("Studio's multiplayer package pin satisfies the range the multiplayer card 
   assert.ok((patch ?? -1) >= Number(asked[3]));
 });
 
+test("Studio's embed SDK pin is at least the version the monetization card's payments require", async () => {
+  const card = await readFile(path.join(CARDS, "genex-monetization", "SKILL.md"), "utf8");
+  const asked = /Requires `@genex-ai\/embed-sdk` \*\*>= (\d+)\.(\d+)\.(\d+)\*\*/.exec(card);
+  assert.ok(asked, "the card names the minimum embed SDK");
+  const pinned = GENEX_GAME_PACKAGES["@genex-ai/embed-sdk"].split(".").map(Number);
+  const minimum = asked.slice(1).map(Number);
+  const order = pinned.map((part, i) => part - (minimum[i] ?? 0)).find((difference) => difference !== 0) ?? 0;
+  assert.ok(order >= 0, `Studio pins ${pinned.join(".")}; the card needs ${minimum.join(".")}`);
+});
+
 test("a Genex payload built without dependencies carries the skills, without prefaces, within the skill caps", async () => {
   const resources = await tmpDir("studio-genex-skills-");
   await buildPlugins(process.cwd(), resources, { dependencies: false });
@@ -135,12 +147,63 @@ test("a manifest and a vendored set disagree exactly where a file is on one side
     ],
     ["a vendored reference not declared", card(), ["card/SKILL.md", "card/references/b.md"], [/vendored but no skill/]],
     ["an inline skill only", { skills: [{ name: "inline", text: "Hi." }] }, [], []],
+    [
+      "a skill Studio writes itself",
+      { skills: [{ name: "plugin-author", summary: "Studio's.", file: "skills/plugin-author/SKILL.md" }] },
+      [],
+      [],
+    ],
   ];
   for (const [name, manifest, vendored, expected] of rows) {
     const problems = manifestDisagreements(manifest, vendored);
     assert.equal(problems.length, expected.length, `${name}: ${problems.join("; ")}`);
     expected.forEach((pattern, i) => assert.match(problems[i] ?? "", pattern, name));
   }
+});
+
+test("a refresh declares exactly the references it vendored, keeping the declared ones in order", () => {
+  const skill = (name: string, references?: string[]) => ({
+    name,
+    summary: `${name}.`,
+    file: `skills/${name}/SKILL.md`,
+    ...(references ? { references } : {}),
+  });
+  const manifest = {
+    skills: [
+      skill("grown", ["skills/grown/references/b.md"]),
+      skill("shrunk", ["skills/shrunk/references/gone.md"]),
+      skill("plain"),
+      { name: "inline", text: "Hi." },
+      skill("plugin-author", ["skills/plugin-author/references/own.md"]),
+    ],
+  } as Pick<PluginManifest, "skills">;
+  const vendored = [
+    "grown/SKILL.md",
+    "grown/references/c.md",
+    "grown/references/a.md",
+    "grown/references/b.md",
+    "shrunk/SKILL.md",
+    "plain/SKILL.md",
+  ];
+  const declared = declareVendoredReferences(manifest, vendored);
+  assert.deepEqual(declared.skills, [
+    skill("grown", ["skills/grown/references/b.md", "skills/grown/references/a.md", "skills/grown/references/c.md"]),
+    skill("shrunk"),
+    skill("plain"),
+    { name: "inline", text: "Hi." },
+    skill("plugin-author", ["skills/plugin-author/references/own.md"]),
+  ]);
+  assert.deepEqual(manifestDisagreements(declared, vendored), []);
+  assert.deepEqual(manifest.skills[0], skill("grown", ["skills/grown/references/b.md"]), "the input is not changed");
+});
+
+test("plugin.json written back by a script keeps the repository's formatting", async () => {
+  const dir = await tmpDir("studio-genex-manifest-");
+  const file = path.join(dir, "plugin.json");
+  await copyFile("src/plugins/genex/plugin.json", file);
+  const text = await readFile(file, "utf8");
+  await writeManifest(process.cwd(), file, JSON.parse(text));
+  assert.equal(await readFile(file, "utf8"), text);
 });
 
 test("the cards carry the pinned CLI's own MIT license, in the source tree and in every build", async () => {

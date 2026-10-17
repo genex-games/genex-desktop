@@ -1,10 +1,12 @@
 import { useState } from "react";
 import type { LoopSetting } from "../loop-setting.ts";
+import { UNREAL_WORDS } from "../words.ts";
 import { Popover, PopoverContent, PopoverTrigger } from "./popover.tsx";
 import { PickerCaption, PickerSegmented, pickerItem } from "./PickerPanel.tsx";
 import { Icon } from "./icons.tsx";
 import {
   formatDuration,
+  limitWords,
   MAX_LOOP_MINUTES,
   MIN_LOOP_MINUTES,
   MINUTES_PER_HOUR,
@@ -25,7 +27,7 @@ const LoopChoice = {
 } as const;
 type Choice = (typeof LoopChoice)[keyof typeof LoopChoice] | `${number}`;
 
-/** The segment the Loop control shows: off, until it passes, a preset, or custom. */
+/** The segment the Loop control shows: off, no time limit, a preset, or custom. */
 function loopChoice(loopOn: boolean, hours: number | null, custom: boolean): Choice {
   if (!loopOn) return LoopChoice.Off;
   if (hours === null) return LoopChoice.UntilSatisfied;
@@ -47,19 +49,18 @@ function chosenLoop(next: Choice, current: LoopSetting): LoopSetting {
  * Loop allows a build and never orders one: the agent makes a small change itself.
  */
 function loopWords(loopOn: boolean, minutes: number | null) {
-  if (!loopOn) return { state: "Off", caption: "Each message runs one turn.", label: "Auto", time: null };
+  if (!loopOn) return { state: "Off", caption: "Does what you ask, then stops.", label: "Auto", time: null };
   if (minutes === null)
     return {
-      state: "Until it passes",
-      caption:
-        "Small changes are made right away. When a message needs a build, it plans, builds and reviews until the build passes.",
+      state: "No time limit",
+      caption: "A team of AIs builds and tests your idea until it’s done.",
       label: "Loop",
       time: null,
     };
-  const limit = formatDuration(minutes);
+  const limit = limitWords(minutes);
   return {
     state: limit,
-    caption: `Small changes are made right away. When a message needs a build, it builds for up to ${limit}.`,
+    caption: `A team of AIs builds and tests your idea for up to ${limit}.`,
     label: "Loop",
     time: shortDuration(minutes),
   };
@@ -115,18 +116,49 @@ function CustomLimit({
   );
 }
 
+/** The Loop's segments: Off, ∞, the presets and Custom. While the game can't run a Loop, only Off can be picked. */
+function loopOptions(unavailable: boolean) {
+  const loop = { disabled: unavailable };
+  return [
+    { value: LoopChoice.Off, label: "Off" },
+    {
+      value: LoopChoice.UntilSatisfied,
+      // The prompt bar's own ∞, which mono would draw flat; the hidden ∞ is its text.
+      label: (
+        <>
+          <Icon name="infinity" />
+          <span className="sr-only">∞</span>
+        </>
+      ),
+      title: "No time limit",
+      ...loop,
+    },
+    { value: "0.5" as const, label: "30 m", ...loop },
+    { value: "1" as const, label: "1 h", ...loop },
+    { value: "2" as const, label: "2 h", ...loop },
+    { value: LoopChoice.Custom, label: "Custom", ...loop },
+  ];
+}
+
 /**
- * One Loop control: Off, until the build passes, a preset or a custom time. Without `onChange` the
- * Loop is shown, not changed (a build already owns it). Plan mode lives in Add (`ComposerAddMenu`).
+ * One Loop control: Off, no time limit, a preset or a custom time. Without `onChange` the
+ * Loop is shown, not changed (a build already owns it). With `loopUnavailable` (a game whose
+ * engine needs its project in the game folder and finds it elsewhere) it shows Off, offers Off
+ * alone and says why. Plan mode lives in Add (`ComposerAddMenu`).
  */
 export function ComposerModeMenu({
   value,
   onChange,
   disabled,
+  loopUnavailable = false,
+  unavailableWhy,
 }: {
   value: LoopSetting;
   onChange?: (next: LoopSetting) => void;
   disabled?: boolean;
+  loopUnavailable?: boolean;
+  /** Why there is no Loop, when the game can say (its project and where it is). */
+  unavailableWhy?: string;
 }) {
   const { on: loopOn, hours } = value;
   const timed = hours !== null;
@@ -136,6 +168,8 @@ export function ComposerModeMenu({
   const minutes = timed ? Math.round(hours * MINUTES_PER_HOUR) : null;
   // One setting per pick: two setters in a row would lose the first to a stale closure.
   const pick = (next: Choice) => {
+    // Off is already the Loop shown, and a pick would overwrite the one the chat keeps for later.
+    if (loopUnavailable) return;
     setDraft(null);
     setCustom(next === LoopChoice.Custom);
     onChange?.(chosenLoop(next, value));
@@ -198,24 +232,7 @@ export function ComposerModeMenu({
               label="Loop time limit"
               value={choice}
               onChange={pick}
-              options={[
-                { value: LoopChoice.Off, label: "Off" },
-                {
-                  value: LoopChoice.UntilSatisfied,
-                  // The prompt bar's own ∞, which mono would draw flat; the hidden ∞ is its text.
-                  label: (
-                    <>
-                      <Icon name="infinity" />
-                      <span className="sr-only">∞</span>
-                    </>
-                  ),
-                  title: "Until the build passes",
-                },
-                { value: "0.5", label: "30 m" },
-                { value: "1", label: "1 h" },
-                { value: "2", label: "2 h" },
-                { value: LoopChoice.Custom, label: "Custom" },
-              ]}
+              options={loopOptions(loopUnavailable)}
             />
           )}
           {onChange && customLimit !== null && (
@@ -227,7 +244,9 @@ export function ComposerModeMenu({
               onMinutes={setMinutes}
             />
           )}
-          <PickerCaption>{caption}</PickerCaption>
+          <PickerCaption>
+            {loopUnavailable ? (unavailableWhy ?? UNREAL_WORDS.loopUnavailable(null, "")) : caption}
+          </PickerCaption>
         </div>
       </PopoverContent>
     </Popover>

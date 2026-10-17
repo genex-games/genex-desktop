@@ -7,7 +7,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { accountFixture, accountPackage, copyOfExample, pluginFixture } from "../helpers/plugins.ts";
+import { accountFixture, accountPackage, copyOfExample, installLocalOn, pluginFixture } from "../helpers/plugins.ts";
 import type { PluginManifest, PluginSource } from "../../src/shared/plugins.ts";
 import { McpRegistry } from "../../src/substrate/mcp/registry.ts";
 import { memorySecretPort } from "../../src/substrate/mcp/store.ts";
@@ -25,7 +25,7 @@ test("a same-id package from another publisher does not inherit the saved accoun
   try {
     const a = await accountPackage(f.base, "a", "Publisher A"),
       b = await accountPackage(f.base, "b", "Publisher B");
-    await f.registry.installLocal(a.dir, "local", a.manifest.capabilities);
+    await installLocalOn(f.registry, a.dir, a.manifest.capabilities);
     await f.registry.action("acct", "unlock", {});
     assert.equal(await f.registry.accountState("acct"), "unlocked");
     assert.deepEqual(await f.registry.tool("acct__greet", { name: "Ada" }, f.binding), { session: "TOKEN-OF-A" });
@@ -69,12 +69,12 @@ test("a removed plugin reinstalled by another publisher does not inherit its acc
   try {
     const a = await accountPackage(f.base, "a", "Publisher A"),
       b = await accountPackage(f.base, "b", "Publisher B");
-    await f.registry.installLocal(a.dir, "local", a.manifest.capabilities);
+    await installLocalOn(f.registry, a.dir, a.manifest.capabilities);
     await f.registry.action("acct", "unlock", {});
     await f.registry.remove("acct");
     await assert.rejects(f.registry.installLocal(b.dir, "github", b.manifest.capabilities, GITHUB), /replace/i);
     // Control: the package the account belongs to comes back with it, as removal promised.
-    await f.registry.installLocal(a.dir, "local", a.manifest.capabilities);
+    await installLocalOn(f.registry, a.dir, a.manifest.capabilities);
     assert.equal(await f.registry.accountState("acct"), "unlocked");
     assert.deepEqual(await f.registry.tool("acct__greet", { name: "Ada" }, f.binding), { session: "TOKEN-OF-A" });
     await f.registry.remove("acct");
@@ -136,7 +136,7 @@ test("a same-id package from another publisher does not inherit the MCP secrets 
     };
     const a = await accountPackage(f.base, "a", "Publisher A", withServer),
       b = await accountPackage(f.base, "b", "Publisher B", withServer);
-    await f.registry.installLocal(a.dir, "local", a.manifest.capabilities);
+    await installLocalOn(f.registry, a.dir, a.manifest.capabilities);
     assert.ok(
       (await mcp.list()).some((c) => c.connector.id === "acct-srv"),
       "A published its server",

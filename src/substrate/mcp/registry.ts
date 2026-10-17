@@ -22,6 +22,7 @@
  * games. A connection with no lease and no call for `idleCloseMs` is closed, and the next use
  * opens it again.
  */
+import type { PluginToolAsset } from "../../shared/asset-making.ts";
 import {
   MCP_ID,
   MCP_QUALIFIED_TOOL,
@@ -39,7 +40,9 @@ import type { LiveToolResult } from "../engines/types.ts";
 import type { McpLiveTool } from "../../shared/mcp.ts";
 import type { SecretStorageIssue } from "../../shared/secret-storage.ts";
 import { exposedToolName, flatParameters } from "../engines/tool-schema.ts";
+import path from "node:path";
 import {
+  McpConnectFailed,
   McpConnection,
   CALL_TIMEOUT_MS,
   CONNECT_TIMEOUT_MS,
@@ -50,6 +53,8 @@ import {
 } from "./client.ts";
 import { pickServerIcon, resolveServerIcon } from "./server-icon.ts";
 import {
+  GRANTS_FILE,
+  McpGrantStore,
   McpSecretsLocked,
   McpStore,
   launchDigest,
@@ -64,6 +69,7 @@ import { McpSessionSecrets } from "./session-secrets.ts";
 import { resetToolchain } from "../toolchain.ts";
 import { errorMessage } from "../../shared/errors.ts";
 import { MINUTE_MS, SECOND_MS } from "../../shared/duration.ts";
+import { type FactRef, type FolderHolds, type GameKind, scopeReaches } from "../../shared/project-facts.ts";
 
 /** The harness reads connector tools over `mcp.tools`, so their shape lives in `shared/mcp.ts`. */
 export type { McpLiveTool };
@@ -79,9 +85,13 @@ export interface McpPluginServer {
   /** Environment variable names the host materializes; values never come from the manifest. */
   env?: string[];
   toolPolicy?: { allow?: string[]; deny?: string[] };
+  /** The raw tools the plugin's manifest says only read: they run with no card (`toolOnlyReads`). */
+  reads?: string[];
   maxTools?: number;
   callTimeoutMs?: number;
   description?: string;
+  /** The facts of the games whose sessions get this server (the manifest's `facts`); every game when absent. */
+  facts?: string[];
   /**
    * Why this server cannot run yet, in words a person can act on ("unlock the account first").
    * It is still listed — a server the user has not finished setting up is a thing to finish, not
@@ -129,6 +139,21 @@ const MAX_DESCRIPTION = 1_000;
 /** When connections disagree, the connector reads as the first of these any of them is in. */
 const HEALTH_PRECEDENCE = [McpHealth.Connecting, McpHealth.Ready, McpHealth.Failed, McpHealth.Idle] as const;
 
+/**
+ * The agent's paragraph about connectors: the user's own and those a plugin brings each get a
+ * block, because a plugin's connector (such as an app on this Mac) is not a service the user set up.
+ */
+const GUIDANCE = {
+  User: [
+    "[CONNECTORS]",
+    "Tools from connected services the user set up. They run outside this workspace and may cost money or change data elsewhere — read what one does before calling it.",
+  ],
+  Plugin: [
+    "[PLUGIN CONNECTORS]",
+    "Tools that plugins the user turned on bring, such as an app on this Mac. Each plugin's guidance says how to use them; read what one does before calling it.",
+  ],
+} as const;
+
 /** What a person reads when the registry refuses a connector, a secret or a tool call. */
 const MESSAGE = {
   PluginIdTooLong: "A plugin id that owns a connector must fit a connector id",
@@ -164,7 +189,15 @@ interface Entry {
   description?: string;
   /** Missing plugin prerequisites apply to every project, unlike transport failures. */
   unavailable?: string;
+  /** A plugin's server for some facts only: never started for a game whose facts it does not reach. */
+  facts?: string[];
+  /** A plugin's raw tools that only read, as its manifest says. */
+  reads?: string[];
 }
+
+/** Whether an entry reaches a game; a caller that names no game (no facts) is not narrowed. */
+const entryReaches = (entry: Entry, game: GameKind | undefined): boolean =>
+  game === undefined || scopeReaches(entry.facts, game);
 
 /** A server's title and picture as the connector list shows them, when it has introduced itself. */
 function identityView(
@@ -247,7 +280,15 @@ function pluginEntry(
   if (definition.maxTools) entry.maxTools = definition.maxTools;
   if (definition.description) entry.description = definition.description;
   if (definition.unavailable) entry.unavailable = definition.unavailable;
+  if (definition.facts) entry.facts = [...definition.facts];
+  if (definition.reads?.length) entry.reads = [...definition.reads];
   return entry;
+}
+
+/** A connector whose policy also lets `raw` run without asking. */
+function withAutoApproved(connector: McpConnector, raw: string): McpConnector {
+  const autoApprove = [...new Set([...(connector.toolPolicy.autoApprove ?? []), raw])];
+  return { ...connector, toolPolicy: { ...connector.toolPolicy, autoApprove } };
 }
 
 /** The user's own connector as saved from the card, dated, and never one a plugin owns. */
@@ -272,6 +313,21 @@ function applyTrust(connector: McpConnector, previous: McpConnector | undefined,
   if (trust || previous?.trustedLaunch === digest) connector.trustedLaunch = digest;
   else delete connector.trustedLaunch;
 }
+
+/** The HTTP status of a server that wants an account before it answers. */
+const SIGN_IN_FIRST = 401;
+
+/**
+ * A URL server of the person's own, with no sign-in and no key header, that answered "sign in
+ * first": its next Connect signs in through the browser. Every header is a secret value, so any
+ * header at all (`Authorization`, `X-API-Key`, …) is its own sign-in.
+ */
+const asksForSignIn = (entry: Entry, error: unknown): boolean => {
+  const c = entry.connector;
+  const keyed = (c.headers?.length ?? 0) > 0;
+  const remote = c.transport !== McpTransport.Stdio && c.authentication === undefined;
+  return remote && !keyed && !entry.plugin && error instanceof McpConnectFailed && error.status === SIGN_IN_FIRST;
+};
 
 /** The OAuth account no longer matches: the connector is off, or its url or sign-in changed. */
 const accountChanged = (previous: McpConnector | undefined, next: McpConnector) =>
@@ -300,6 +356,8 @@ export class McpRegistry {
   #connections = new Map<string, Map<string | null, McpConnection>>();
   #errors = new Map<string, string>();
   #exposed = new Map<string, Map<string | null, Map<string, string>>>();
+  /** What each connector's tools say they make, by raw tool name, from their latest listing. */
+  #assets = new Map<string, Map<string, PluginToolAsset>>();
   #leases = new Map<string, number>();
   /** Leases and calls in flight per connection key: a busy connection is never idle-closed. */
   #busy = new Map<string, Map<string | null, number>>();
@@ -312,9 +370,13 @@ export class McpRegistry {
   #pending = new Map<string, { connector: McpConnector; secrets?: Record<string, string> }>();
   #removals = new Set<string>();
   #tail: Promise<unknown> = Promise.resolve();
+  readonly #grantStore: McpGrantStore;
+  /** Plugin connectors' "always allow" grants by connector id (the user's own keep theirs in the connector). */
+  #grants = new Map<string, string[]>();
 
   constructor(options: McpRegistryOptions) {
     this.store = new McpStore(options.file);
+    this.#grantStore = new McpGrantStore(path.join(path.dirname(options.file), GRANTS_FILE));
     this.#secrets = options.secrets ?? null;
     this.#secretsLocked = this.#secrets ? null : (options.secretsLocked ?? null);
     this.#sessionSecrets = this.#secrets ? new McpSessionSecrets(this.#secrets) : null;
@@ -398,6 +460,7 @@ export class McpRegistry {
 
   async init(): Promise<void> {
     const loaded = await this.store.load();
+    this.#grants = await this.#grantStore.load();
     for (const [id, message] of loaded.errors) this.#errors.set(id, message);
     for (const connector of loaded.connectors) this.#entries.set(connector.id, { connector });
   }
@@ -551,6 +614,7 @@ export class McpRegistry {
     const connections = this.#connections.get(id);
     this.#connections.delete(id);
     this.#exposed.delete(id);
+    this.#assets.delete(id);
     for (const cancel of this.#idleTimers.get(id)?.values() ?? []) cancel();
     this.#idleTimers.delete(id);
     await Promise.all([...(connections?.values() ?? [])].map((c) => c.close().catch(() => {})));
@@ -768,7 +832,7 @@ export class McpRegistry {
       const id = pluginConnectorId(pluginId, definition);
       const existing = this.#entries.get(id);
       if (existing && existing.plugin !== pluginId) throw new Error(MESSAGE.IdTaken);
-      const connector = pluginConnector(id, pluginId, definition, existing?.connector.createdAt);
+      const connector = this.#withGrants(pluginConnector(id, pluginId, definition, existing?.connector.createdAt));
       await this.#drop(id);
       this.#entries.set(id, pluginEntry(pluginId, definition, connector, launch));
       if (definition.unavailable) this.#errors.set(id, definition.unavailable);
@@ -792,6 +856,8 @@ export class McpRegistry {
         return !entry || entry.plugin === pluginId;
       });
       if (!owned.length) return;
+      // Another package's server is not the one the person always allowed.
+      if (owned.filter((id) => this.#grants.delete(id)).length) await this.#grantStore.save(this.#grants);
       const keys = (await this.#secrets?.list()) ?? [];
       for (const id of owned) {
         this.#oauth.get(id)?.lock();
@@ -899,13 +965,24 @@ export class McpRegistry {
       throw new Error(MESSAGE.SwitchedOffOrChanged(entry.connector.name));
   }
 
-  #eligible(project?: string | null): Entry[] {
+  #eligible(project?: string | null, game?: GameKind): Entry[] {
     return [...this.#entries.values()].filter(
       (entry) =>
         entry.connector.enabled &&
         mcpScopeCovers(entry.connector.scope, project ?? null) &&
-        launchTrusted(entry.connector),
+        launchTrusted(entry.connector) &&
+        entryReaches(entry, game),
     );
+  }
+
+  /**
+   * Whether connector `id` reaches a game with `facts`: a plugin's server that names facts reaches
+   * only a game holding one of them (`[]`, no kind yet, is served as a web game, unless `holds` says
+   * its folder is of a kind Genex can't name); every other does.
+   */
+  reaches(id: string, facts: readonly FactRef[], holds?: FolderHolds): boolean {
+    const entry = this.#entries.get(id);
+    return entry !== undefined && entryReaches(entry, { facts, holds });
   }
 
   #allowed(entry: Entry, tool: string): boolean {
@@ -918,10 +995,25 @@ export class McpRegistry {
   /**
    * The tools this project's delegation may use. Every in-scope connector is connected in
    * parallel with its own timeout; one that fails contributes nothing, records why, and is
-   * tried again the next time a delegation starts.
+   * tried again the next time a delegation starts. With the game's `facts`, a plugin's server
+   * scoped to other facts is left out and never started; with `kindServers: false`, so is every
+   * plugin server scoped to facts at all.
    */
-  async toolsFor(project?: string | null, options: { signal?: AbortSignal } = {}): Promise<McpLiveTool[]> {
-    const entries = this.#eligible(project);
+  async toolsFor(
+    project?: string | null,
+    options: {
+      signal?: AbortSignal;
+      facts?: readonly FactRef[];
+      holds?: FolderHolds | undefined;
+      kindServers?: boolean;
+    } = {},
+  ): Promise<McpLiveTool[]> {
+    const game = options.facts ? { facts: options.facts, holds: options.holds } : undefined;
+    // `kindServers: false` leaves out every plugin server scoped to facts: a game kind's own server,
+    // such as an engine's live editor, which a worker is never handed.
+    const entries = this.#eligible(project, game).filter(
+      (entry) => options.kindServers !== false || !entry.facts?.length,
+    );
     const lists = await Promise.all(entries.map((entry) => this.#listFor(entry, project, options.signal)));
     const live: McpLiveTool[] = [];
     for (const { entry, tools } of lists) {
@@ -970,6 +1062,7 @@ export class McpRegistry {
    */
   #publish(entry: Entry, tools: McpRawTool[], project: string | null): McpLiveTool[] {
     const id = entry.connector.id;
+    this.#noteAssets(id, tools);
     const exposed = new Map<string, string>();
     const live: McpLiveTool[] = [];
     const cap = Math.min(entry.maxTools ?? MAX_TOOLS_PER_CONNECTOR, MAX_TOOLS_PER_CONNECTOR);
@@ -1013,9 +1106,94 @@ export class McpRegistry {
     return undefined;
   }
 
+  /** What the tools of a connector's latest listing say they make. */
+  #noteAssets(id: string, tools: readonly McpRawTool[]): void {
+    const declared = new Map<string, PluginToolAsset>();
+    for (const tool of tools) if (tool.asset) declared.set(tool.name, tool.asset);
+    if (declared.size) this.#assets.set(id, declared);
+    else this.#assets.delete(id);
+  }
+
+  /** What a call of a proxied tool makes, when its server's listing says; undefined otherwise. */
+  assetOf(name: string): PluginToolAsset | undefined {
+    const raw = this.rawName(name);
+    if (raw === undefined) return undefined;
+    return this.#assets.get(name.slice(0, name.indexOf("__")))?.get(raw);
+  }
+
   /** The display name of the connector a proxied tool belongs to, for words a person reads. */
   nameOf(id: string): string | undefined {
     return this.#entries.get(id)?.connector.name;
+  }
+
+  /** A plugin connector's policy with the person's saved "always allow" grants added. */
+  #withGrants(connector: McpConnector): McpConnector {
+    const granted = this.#grants.get(connector.id);
+    if (!granted?.length) return connector;
+    const autoApprove = [...new Set([...(connector.toolPolicy.autoApprove ?? []), ...granted])];
+    return { ...connector, toolPolicy: { ...connector.toolPolicy, autoApprove } };
+  }
+
+  /**
+   * The person's "Always allow" on a connector's card: that exact tool runs without asking from
+   * now on. Their own connector keeps it in connectors.json, where the Connectors card shows it; a
+   * plugin's keeps it beside that file, since plugin connectors live in memory.
+   */
+  async alwaysAllow(name: string, project: string | null, signal?: AbortSignal): Promise<void> {
+    if (!MCP_QUALIFIED_TOOL.test(name)) throw new Error(MESSAGE.UnknownTool);
+    const id = name.slice(0, name.indexOf("__"));
+    const entry = this.#entries.get(id);
+    if (!entry) throw new Error(MESSAGE.UnknownTool);
+    const raw = await this.#rawToolName(id, name.slice(id.length + 2), project, signal);
+    if (!this.#allowed(entry, raw)) throw new Error(MESSAGE.ToolNotAllowed(raw, entry.connector.name));
+    return this.#serial(async () => {
+      const current = this.#entries.get(id);
+      if (!current) throw new Error(MESSAGE.UnknownTool);
+      current.connector = withAutoApproved(current.connector, raw);
+      const pending = this.#pending.get(id);
+      if (pending) pending.connector = withAutoApproved(pending.connector, raw);
+      if (current.plugin) {
+        this.#grants.set(id, current.connector.toolPolicy.autoApprove ?? [raw]);
+        await this.#grantStore.save(this.#grants);
+      } else await this.#persist();
+      this.#fire(id);
+    });
+  }
+
+  /**
+   * Whether a plugin connector's tool only reads, as the plugin's manifest says: it runs with no
+   * card. Never a user's connector (it has no manifest), and never a tool its policy refuses.
+   */
+  async toolOnlyReads(name: string, project: string | null, signal?: AbortSignal): Promise<boolean> {
+    if (!MCP_QUALIFIED_TOOL.test(name)) return false;
+    const id = name.slice(0, name.indexOf("__"));
+    const entry = this.#entries.get(id);
+    if (!entry?.plugin || !entry.reads?.length) return false;
+    const raw = await this.#rawToolName(id, name.slice(id.length + 2), project, signal).catch(() => null);
+    return raw !== null && entry.reads.includes(raw) && this.#allowed(entry, raw);
+  }
+
+  /** The exact tools a connector runs without asking. */
+  alwaysAllowed(id: string): string[] {
+    return [...(this.#entries.get(id)?.connector.toolPolicy.autoApprove ?? [])];
+  }
+
+  /** The plugin a connector belongs to, or undefined for the user's own. */
+  ownerOf(id: string): string | undefined {
+    return this.#entries.get(id)?.plugin;
+  }
+
+  /** Take back every "always allow" a plugin's connector was given: each of its calls asks again. */
+  async forgetAlwaysAllowed(id: string): Promise<void> {
+    return this.#serial(async () => {
+      const entry = this.#entries.get(id);
+      if (!entry?.plugin) throw new Error(MESSAGE.UnknownConnector);
+      if (!this.#grants.delete(id)) return;
+      const { allow, deny } = entry.connector.toolPolicy;
+      entry.connector = { ...entry.connector, toolPolicy: { ...(allow ? { allow } : {}), ...(deny ? { deny } : {}) } };
+      await this.#grantStore.save(this.#grants);
+      this.#fire(id);
+    });
   }
 
   /** Only a user-saved exact-name grant can bypass consent; server annotations never grant authority. */
@@ -1033,6 +1211,12 @@ export class McpRegistry {
     const currentGrant = entry.connector.toolPolicy.autoApprove?.includes(raw) === true;
     const pendingGrant = !pending || pending.toolPolicy.autoApprove?.includes(raw) === true;
     return currentGrant && pendingGrant;
+  }
+
+  /** The longest one call of a connector tool (by its agent name) may take: its connector's, or the default. */
+  callTimeoutOf(name: string): number {
+    const id = name.slice(0, Math.max(0, name.indexOf("__")));
+    return this.#entries.get(id)?.callTimeoutMs ?? CALL_TIMEOUT_MS;
   }
 
   /**
@@ -1154,6 +1338,7 @@ export class McpRegistry {
 
   /** Cache the exposed names of a connected connector's allowed tools for this project. */
   #cacheNames(id: string, entry: Entry, project: string | null, tools: McpRawTool[]): void {
+    this.#noteAssets(id, tools);
     const scoped = this.#exposed.get(id) ?? new Map();
     const names = new Map<string, string>();
     for (const tool of tools
@@ -1187,6 +1372,15 @@ export class McpRegistry {
       this.#oauth.get(id)?.ready();
       return { ok: true, tools: tools.map((t) => this.#summary(entry, t)), durationMs: Date.now() - started };
     } catch (error) {
+      if (openBrowser && entry && asksForSignIn(entry, error)) {
+        // A switch that cannot be kept is this connect's failure, never a throw past it.
+        const switched = await this.save({ ...entry.connector, authentication: "oauth" }).then(
+          () => null,
+          (saveError: unknown) => saveError,
+        );
+        if (switched === null) return this.connect(id, project, openBrowser);
+        return { ok: false, tools: [], error: errorMessage(switched), durationMs: Date.now() - started };
+      }
       const message = errorMessage(error);
       this.#oauth.get(id)?.ready();
       if (entry && this.#entries.get(id) === entry && entry.connector.enabled) {
@@ -1241,8 +1435,9 @@ export class McpRegistry {
   }
 
   /**
-   * One short paragraph naming what is connected. Deliberately not per-engine: connector tools
-   * are never spelled out in a prompt builder (the engine-voice gate), only counted here.
+   * One short paragraph naming what is connected: the user's own connectors, then those plugins
+   * bring, each block left out when empty. Deliberately not per-engine: connector tools are never
+   * spelled out in a prompt builder (the engine-voice gate), only counted here.
    */
   guidance(tools?: McpLiveTool[]): string {
     const counts = new Map<string, number>();
@@ -1250,20 +1445,20 @@ export class McpRegistry {
       const id = tool.name.slice(0, tool.name.indexOf("__"));
       counts.set(id, (counts.get(id) ?? 0) + 1);
     }
-    const lines: string[] = [];
+    const user: string[] = [];
+    const plugin: string[] = [];
     for (const [id, count] of counts) {
       const entry = this.#entries.get(id);
       if (!entry) continue;
-      lines.push(
+      (entry.plugin ? plugin : user).push(
         `- ${entry.connector.name}: ${count} tool${count === 1 ? "" : "s"}, named ${id}__*${entry.description ? ` — ${entry.description}` : ""}`,
       );
     }
-    if (!lines.length) return "";
-    return [
-      "[CONNECTORS]",
-      "Tools from connected services the user set up. They run outside this workspace and may cost money or change data elsewhere — read what one does before calling it.",
-      ...lines,
-    ].join("\n");
+    const blocks = [
+      ...(user.length ? [[...GUIDANCE.User, ...user]] : []),
+      ...(plugin.length ? [[...GUIDANCE.Plugin, ...plugin]] : []),
+    ];
+    return blocks.map((block) => block.join("\n")).join("\n\n");
   }
 
   /**

@@ -1,12 +1,14 @@
 /**
- * The composer usage panel's Genex block, the one place "used by this game" belongs: this game's
- * spend beside the balance every game shares. Read when the panel opens, only while Genex is on
- * and connected; otherwise the block is not there.
+ * The composer usage panel's Genex block, the one place "used in this game" belongs: the balance
+ * every game shares beside Genex's mark, and this game's spend under it. Read when the panel opens,
+ * only while Genex is on and connected; otherwise the block is not there.
  */
 import type { JSX } from "react";
 import { useState } from "react";
 import { GENEX_PLUGIN_ID, GenexAction, type GenexStatus } from "../../../../shared/genex.ts";
 import { useAsyncEffect } from "../../../use-async-effect.ts";
+import { CreditsShard } from "../../../play/CreditsShard.tsx";
+import { GenexMark } from "../../../ui/GenexLogo.tsx";
 import { GENEX_WORDS } from "../../../words.ts";
 import { CreditsKind, creditsOf, isGenexStatus, spentOf } from "./genex-view.ts";
 
@@ -30,7 +32,7 @@ function useGameStatus(project: string | null | undefined, open: boolean): Genex
   return status;
 }
 
-/** The block: this game's spend, then what is left for all games. */
+/** The block: Genex's mark, name and balance, then this game's spend. */
 export function GenexCredits({
   project,
   open,
@@ -47,20 +49,22 @@ export function GenexCredits({
   if (spent === null && balance === null) return null;
   return (
     <section className="usage-plan" aria-label={WORDS.title} data-usage-genex="">
-      <div className="usage-plan-head">
-        <span className="truncate">{WORDS.title}</span>
-      </div>
       <dl className="usage-credits">
+        <dt className="usage-credits-name">
+          <GenexMark />
+          <span className="truncate">{WORDS.title}</span>
+        </dt>
+        <dd>
+          {left !== null && <CreditsShard size={12} />}
+          {balance}
+        </dd>
         {spent !== null && (
           <>
-            <dt>{WORDS.thisGame}</dt>
-            <dd>{NUMBER.format(spent)}</dd>
-          </>
-        )}
-        {balance !== null && (
-          <>
-            <dt className="text-ink-3">{WORDS.left}</dt>
-            <dd className="text-ink-3">{balance}</dd>
+            <dt className="text-ink-3">{WORDS.thisGame}</dt>
+            <dd>
+              <CreditsShard size={12} />
+              {NUMBER.format(spent)}
+            </dd>
           </>
         )}
       </dl>

@@ -1,5 +1,5 @@
 import { execFile, spawn, type ChildProcess, type ChildProcessByStdio } from "node:child_process";
-import type { Readable } from "node:stream";
+import type { Readable, Writable } from "node:stream";
 import { constants } from "node:fs";
 import { access, mkdir, lstat, open, realpath, writeFile } from "node:fs/promises";
 import path from "node:path";
@@ -122,10 +122,13 @@ export function nativeSandboxProfile(p: {
   interpreters?: string[];
   reads: string[];
   writes: string[];
+  /** Files the job may write whose names only start so (a program's own temporary names): plain absolute paths only. */
+  writePrefixes?: string[];
   denied: string[];
   gpu: boolean;
 }): string {
   const subpaths = (values: string[]) => values.map((v) => `(subpath ${quote(v)})`).join(" ");
+  const prefixes = (p.writePrefixes ?? []).filter((v) => PLAIN_PREFIX.test(v));
   const programs = [...new Set([...(p.interpreters ?? []), ...JOB_UTILITIES])];
   return [
     "(version 1)",
@@ -153,10 +156,17 @@ export function nativeSandboxProfile(p: {
       : [`(allow mach-lookup ${MACH_SERVICES.map((n) => `(global-name ${quote(n)})`).join(" ")})`]),
     `(allow file-read* ${subpaths(p.reads)})`,
     `(allow file-read* file-write* ${subpaths(p.writes)})`,
+    ...(prefixes.length ? [`(allow file-read* file-write* ${prefixes.map(prefixRule).join(" ")})`] : []),
     ...(p.denied.length ? [`(deny file-read* ${subpaths(p.denied)})`] : []),
     "(deny network*)",
   ].join("\n");
 }
+/** A write prefix the profile accepts: an absolute path of plain characters, never a folder's whole contents. */
+const PLAIN_PREFIX = /^\/[A-Za-z0-9._/-]*[A-Za-z0-9_-]$/;
+
+/** A write prefix as a Seatbelt rule: every file in its folder whose name starts with it (never a path below), its dots matched as dots. */
+const prefixRule = (prefix: string) => `(regex #"^${prefix.replaceAll(".", "\\.")}[^/]*$")`;
+
 /** The `PATH` a job runs with; `/usr/bin/env <program>` looks the program up here. */
 const JOB_PATH = "/usr/bin:/bin";
 /**
@@ -245,6 +255,8 @@ export interface NativeProcessRequest {
   scratch: string;
   reads: string[];
   writes: string[];
+  /** Files written under names that only start so (`nativeSandboxProfile`): real absolute paths. */
+  writePrefixes?: string[];
   denyRead: string[];
   gpu?: boolean;
   signal: AbortSignal;
@@ -281,8 +293,14 @@ const aliases = async (values: string[]) => [
   ),
 ];
 
+/** What a confined process may reach: its program, the folders it reads and writes, and the GPU. */
+type SandboxRequest = Pick<
+  NativeProcessRequest,
+  "binary" | "binaryRoot" | "scratch" | "reads" | "writes" | "writePrefixes" | "denyRead" | "gpu"
+>;
+
 /** Write the job's sandbox profile and make its private HOME; returns both paths. */
-async function prepareSandbox(p: NativeProcessRequest): Promise<{ profile: string; home: string }> {
+async function prepareSandbox(p: SandboxRequest): Promise<{ profile: string; home: string }> {
   const root = p.binaryRoot ?? runtimeRoot(p.binary);
   const binaryRoot = await realpath(root).catch(() => path.resolve(root));
   const reads = await aliases([...p.reads, binaryRoot, ...SYSTEM_READS]),
@@ -292,7 +310,11 @@ async function prepareSandbox(p: NativeProcessRequest): Promise<{ profile: strin
   await mkdir(home, { recursive: true });
   const interpreters = await scriptInterpreters(p.binary);
   const profile = path.join(p.scratch, "native.sb");
-  await writeFile(profile, nativeSandboxProfile({ binaryRoot, interpreters, reads, writes, denied, gpu: !!p.gpu }));
+  const writePrefixes = p.writePrefixes ?? [];
+  await writeFile(
+    profile,
+    nativeSandboxProfile({ binaryRoot, interpreters, reads, writes, writePrefixes, denied, gpu: !!p.gpu }),
+  );
   return { profile, home };
 }
 
@@ -402,6 +424,28 @@ function superviseJob(
       void finish(code, signal);
     });
   });
+}
+
+/**
+ * A long-lived confined process with its stdin and stdout open: a game an engine plugin's runtime
+ * plays for the studio's computer tool (Play Protocol), in the same profile as a job (`gpu` for an
+ * engine that draws), its own process group, its whole tree stopped once it exits. No deadline:
+ * its owner quits or kills it; the caller removes `scratch` after it exits.
+ */
+export async function spawnNativeLongLived(
+  p: SandboxRequest & { args: string[]; cwd: string },
+): Promise<ChildProcessByStdio<Writable, Readable, Readable>> {
+  const { profile, home } = await prepareSandbox(p);
+  const child = spawn("/usr/bin/sandbox-exec", ["-f", profile, p.binary, ...p.args], {
+    cwd: p.cwd,
+    env: { HOME: home, TMPDIR: p.scratch, TMP: p.scratch, TEMP: p.scratch, PATH: JOB_PATH, LANG: "en_US.UTF-8" },
+    detached: true,
+    stdio: ["pipe", "pipe", "pipe"],
+  });
+  const killAll = treeKiller(child);
+  // Nothing the game started outlives it.
+  child.once("exit", () => void killAll());
+  return child;
 }
 
 export async function runNativeProcess(p: NativeProcessRequest): Promise<NativeProcessResult> {

@@ -31,6 +31,15 @@ export function fullScreenOffered(stage: { run: LiveRun; live: boolean; loading:
   return stage.run === LiveRun.Running && stage.live && !stage.loading && !stage.empty;
 }
 
+/**
+ * Play/Stop and the sound wait for a game with something to run: while the first plan is written,
+ * the scene is empty or the game has no kind yet, a running page has nothing to stop or hear. A
+ * stopped game keeps its Play, and a press under way keeps its spinner.
+ */
+export function gameControlsShown(stage: { run: LiveRun; nothingYet: boolean }): boolean {
+  return stage.run !== LiveRun.Running || !stage.nothingYet;
+}
+
 /** Play/Stop for this game's Live: its state and the press. */
 export function useLiveRun(
   project: string | null,
@@ -70,14 +79,15 @@ export function useLiveRun(
 }
 
 /**
- * The game's controls on the stage: Play/Stop, the sound, full screen while the running game is
- * on the stage, and the loader over a load (`loader-presence.ts`). `stage` says what the stage
- * shows: Live in sight, a page still loading, the empty scaffold.
+ * The game's controls on the stage: Play/Stop, the sound, whether either shows
+ * (`gameControlsShown`), full screen while the running game is on the stage, and the loader over a
+ * load (`loader-presence.ts`). `stage` says what the stage shows: Live in sight, a page still
+ * loading, the empty scaffold, the first plan being written.
  */
 export function useStageControls(
   project: string | null,
   live: ReturnType<typeof useLiveLoad>,
-  stage: { onLive: boolean; loading: boolean; empty: boolean },
+  stage: { onLive: boolean; loading: boolean; empty: boolean; firstPlan: boolean },
   onNotice: Notify,
 ) {
   const { run, toggle } = useLiveRun(project, live, onNotice);
@@ -85,9 +95,12 @@ export function useStageControls(
   const loader = useLoaderPresence(stage.loading);
   const { onLive, empty } = stage;
   const covering = loader.covering;
+  // The Planner covers an empty stage, or a page still loading, while the first plan is written.
+  const nothingYet = empty || (stage.firstPlan && stage.loading);
   return useMemo(
     () => ({
       run: { state: run, toggle },
+      gameControls: gameControlsShown({ run, nothingYet }),
       sound,
       loader,
       fullScreen: {
@@ -95,6 +108,6 @@ export function useStageControls(
         enter: () => void window.studio.previewFullScreen(),
       },
     }),
-    [run, toggle, sound, loader, onLive, covering, empty],
+    [run, toggle, sound, loader, onLive, covering, empty, nothingYet],
   );
 }

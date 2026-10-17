@@ -33,7 +33,7 @@ test("an asset poll uses the revisions from one worktree listing", async () => {
   for (const folder of [engineHomes, game, worker]) await mkdir(folder, { recursive: true });
   const calls: string[][] = [];
   const core = {
-    games: { dirFor: () => game },
+    games: { dirFor: () => game, factsOf: async () => [] },
     layout: { scratch, engineHomes },
     assetCheckpoints: { records: async () => [] },
   };

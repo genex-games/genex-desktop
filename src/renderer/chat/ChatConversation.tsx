@@ -8,10 +8,11 @@ import { PerformanceComponent } from "../../shared/performance.ts";
 import { QueueState } from "../../shared/message-queue.ts";
 import { EntryKind } from "../chat-entries.ts";
 import { QueuedMessage, SendingMessage } from "../panels/QueuedMessage.tsx";
-import type { Notify } from "../state/toasts.ts";
+import { MessageOrigin } from "../../shared/protocol.ts";
+import { type Notify, notifyProblem } from "../state/toasts.ts";
 import { Button } from "../ui/Button.tsx";
 import { Presence, type PresenceChild } from "../ui/Presence.tsx";
-import { PLAN_WORDS } from "../words.ts";
+import { PLAN_WORDS, pluginTurnedOnWords } from "../words.ts";
 import type { ChatHistory } from "./chat-panel-props.ts";
 import { ChatWork } from "./ChatWork.tsx";
 import { type ConversationEntry, entrySize } from "./conversation-entries.ts";
@@ -40,6 +41,10 @@ function useTranscriptContext(parts: ChatParts): TranscriptContext {
         const { composer, focusComposer } = latest.current;
         if (!composer.drafts.draft) composer.drafts.setDraft(PLAN_WORDS.changePrefill);
         focusComposer();
+      },
+      onPluginTurnedOn: (name: string) => {
+        const { report, props } = latest.current;
+        void report(pluginTurnedOnWords(name), MessageOrigin.PluginTurnedOn).catch(notifyProblem(props.onNotice));
       },
     }),
     [],
@@ -209,6 +214,7 @@ const ConversationContent = memo(function ConversationContent({
             items={view.visibleEntries}
             scroller={follow.scroller}
             follow={follow.atBottom}
+            hold={follow.holding}
             entrance={(entry, appended) => rowEntrance(entry, appended, view)}
             still={loading}
             renderItem={renderItem}
@@ -217,7 +223,7 @@ const ConversationContent = memo(function ConversationContent({
           <PendingBubbles key={`pending:${threadId}`} sends={sends} />
           <StreamingReply threadId={threadId} events={view.events} onShowing={onStreaming} />
 
-          <ChatWork key={`work:${threadId}`} {...view.line} still={loading} />
+          <ChatWork key={`work:${threadId}`} {...view.line} still={loading} onNotice={onNotice} />
           {threadId && (
             <WaitingFollowUps
               key={`waiting:${threadId}`}
@@ -247,7 +253,9 @@ function ChatScroll({ follow, children }: { follow: FollowScroll; children: Reac
       data-chat-scroll
       aria-label="Conversation"
       tabIndex={0}
-      className="h-full overflow-y-auto px-5 py-5"
+      // Nothing in the conversation is wider than its column: a long unbroken line wraps or scrolls
+      // in its own box, never the whole conversation sideways.
+      className="h-full overflow-x-clip overflow-y-auto px-5 py-5"
     >
       <div className="chat-conversation-stack flex min-w-0 flex-col gap-4">{children}</div>
     </div>

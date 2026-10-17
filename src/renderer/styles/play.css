@@ -1,0 +1,1360 @@
+/* ── Play: the genex.games catalog inside the app ───────────────────────────────────────── */
+/* Play's own blue marks the Genex card's glyphs; the switch and everything else wear the app's roles. */
+:root {
+  /* genex.games' own blue. The colour tweaker's "Play: switch and tabs" group sets the selected
+     blue, its edge and text, the switch's track and edge, and the other tabs' backing, edge and text
+     (`--play-selected*`, `--play-switch-track`, `--play-switch-edge`, `--play-tab-*`), and the focused
+     search's edge (`--play-search-focus`). */
+  --play-blue: #4b60bf;
+  --play-icon: #4da3ff;
+  --play-track: rgb(77 81 96 / 0.1);
+  --play-track-edge: rgb(121 127 139 / 0.21);
+  --play-placeholder: color-mix(in oklab, var(--ink) 6%, transparent);
+  /* A liked heart and the like's sparks. */
+  --play-like: #ff5c7a;
+}
+:root[data-theme="light"] {
+  --play-icon: #1f6fd6;
+}
+
+/* Play's selected look, genex.games' blue secondary (its Invite and agent buttons): the blue at 12%
+   with a 1px edge of it at 40%, the label in ink. The switch's pill and the selected tab wear it, and so
+   do the app's other segmented switches (the Genex plugin's Tools / Credits, the stats' period), so the
+   colour tweaker's "Play: switches and tabs" group tunes them all at once. */
+.play-switch-pill,
+.play-tab[aria-selected="true"],
+.genex-tab[aria-selected="true"],
+.stats-period[aria-selected="true"] {
+  background: color-mix(in srgb, var(--play-selected, var(--play-blue)) 12%, transparent);
+  box-shadow: inset 0 0 0 1px
+    var(--play-selected-edge, color-mix(in srgb, var(--play-selected, var(--play-blue)) 40%, transparent));
+  color: var(--play-selected-text, var(--ink));
+}
+
+/* Play / Create beside the wordmark: a small track, the selected pill sliding to the side that is on. */
+.play-switch {
+  position: relative;
+  display: inline-grid;
+  grid-template-columns: 44px 54px;
+  flex: none;
+  padding: 2px;
+  border-radius: 9px;
+  background: var(--play-switch-track, var(--play-track));
+  box-shadow: inset 0 0 0 1px var(--play-switch-edge, var(--play-track-edge));
+}
+.play-switch-pill {
+  position: absolute;
+  inset-block: 2px;
+  inset-inline-start: 2px;
+  width: 44px;
+  border-radius: 7px;
+  transition:
+    translate var(--duration-fast) var(--ease-smooth-out),
+    width var(--duration-fast) var(--ease-smooth-out);
+}
+.play-switch[data-mode="create"] .play-switch-pill {
+  width: 54px;
+  translate: 44px 0;
+}
+.play-switch-tab {
+  position: relative;
+  height: 22px;
+  border-radius: 7px;
+  color: var(--ink-3);
+  font: 11px / 16px var(--font-family-mono);
+  cursor: pointer;
+  transition: color var(--duration-quick);
+}
+.play-switch-tab:hover,
+.play-switch-tab[aria-selected="true"],
+.genex-tab:hover,
+.stats-period:hover {
+  color: var(--play-selected-text, var(--ink));
+}
+/* The other segmented switches sit in the Play / Create switch's track. */
+.genex-tabs,
+.stats-periods {
+  background: var(--play-switch-track, var(--play-track));
+  box-shadow: inset 0 0 0 1px var(--play-switch-edge, var(--play-track-edge));
+}
+.play-switch-tab:focus-visible {
+  outline: 2px solid var(--focus-edge);
+  outline-offset: -2px;
+}
+
+/* A shelf's size at the end of its row, as genex.games shows it. */
+.sidebar-count {
+  flex: none;
+  color: var(--ink-3);
+  font: 11px / 16px var(--font-family-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Create's rooms and Play's shelves share the place under the brand: the one that is off folds up.
+   Settings stays under both, one row's gap below the last row that is up. */
+.sidebar-nav-shared {
+  margin-block-start: 2px;
+}
+.sidebar-fold {
+  display: grid;
+  grid-template-rows: 1fr;
+  transition:
+    grid-template-rows var(--duration-fast) var(--ease-smooth-out),
+    opacity 180ms ease;
+}
+.sidebar-fold > .sidebar-nav {
+  min-height: 0;
+  overflow: hidden;
+}
+.sidebar-fold[data-folded="true"] {
+  grid-template-rows: 0fr;
+  opacity: 0;
+}
+.game-sidebar .sidebar-games-heading {
+  transition: min-height var(--duration-fast) var(--ease-smooth-out);
+}
+/* Recent stands as far below the shelves as Games does below Create's rows: the same 18px, and the
+   height Games' 28px + button gives it. */
+.game-sidebar[data-play="true"] .sidebar-games-heading {
+  min-height: 28px;
+}
+.sidebar-games-heading > span {
+  animation: play-fade-in 200ms ease-out both;
+}
+
+/* The games and Recent share the list's place: the one that is off slides out and fades. */
+.sidebar-lists > .sidebar-scroll {
+  transition:
+    opacity 180ms ease,
+    translate var(--duration-fast) var(--ease-smooth-out),
+    visibility 0s;
+}
+.sidebar-lists > .sidebar-scroll[data-off="true"] {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  translate: 16px 0;
+  transition:
+    opacity 180ms ease,
+    translate var(--duration-fast) var(--ease-smooth-out),
+    visibility 0s linear var(--duration-fast);
+}
+.sidebar-lists > .play-recent-scroll[data-off="true"] {
+  translate: -16px 0;
+}
+/* Recent's rows stand 2px apart; a big cover fills most of the row's height, the title close beside it. */
+[data-play-recent-list] {
+  gap: 2px;
+}
+.play-recent-row {
+  gap: 8px;
+  padding-block: 6px;
+  padding-inline-end: 8px;
+}
+/* A rounded 16:9 rectangle, so Play's rows read apart from Create's round game pictures; its edge is
+   the theme's line. */
+.play-thumb {
+  flex: none;
+  height: 28px;
+  aspect-ratio: 16 / 9;
+  border-radius: 7px;
+  object-fit: cover;
+  outline: 1px solid var(--line);
+  outline-offset: -1px;
+}
+.play-thumb-blank {
+  background: var(--play-placeholder);
+}
+
+/* The Genex card at the sidebar's foot. */
+.play-promo {
+  position: relative;
+  flex: none;
+  margin: 8px;
+  overflow: hidden;
+  border-radius: var(--radius-card);
+  background: var(--surface);
+  box-shadow:
+    var(--shadow-card),
+    0 16px 48px rgb(0 0 0 / 0.15);
+  color: var(--ink);
+  animation: play-promo-in 480ms var(--ease-smooth-out) both;
+}
+.play-promo .genex-promo-body {
+  padding: 12px 12px 0;
+}
+.play-promo-features {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-block-start: 14px;
+}
+.play-promo-features li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 20px;
+}
+.play-promo-feature-icon {
+  color: var(--play-icon);
+}
+.play-promo .genex-promo-footer {
+  gap: 4px;
+  padding: 14px 8px 8px;
+}
+.play-promo .genex-promo-link {
+  min-width: 0;
+  padding-inline: 8px;
+}
+@keyframes play-promo-in {
+  from {
+    opacity: 0;
+    translate: 0 12px;
+  }
+}
+@media (max-height: 640px) {
+  .play-promo-media {
+    display: none;
+  }
+}
+
+/* The dashboard, on the app's plain page colour: tabs and search ride a bar with no background over
+   the grid, which scrolls under it. Scrolling on down, the bar steps up out of the window; any scroll
+   up brings it back (a control with the keyboard keeps it there). */
+.play-page {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-width: 0;
+  background: var(--page);
+}
+.play-toolbar {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  min-height: 48px;
+  padding: 16px 20px 8px;
+  flex-shrink: 0;
+  transition: translate 300ms var(--ease-smooth-out);
+}
+.play-toolbar[data-hidden]:not(:focus-within) {
+  translate: 0 -100%;
+  transition-duration: 220ms;
+}
+:root[data-platform="darwin"] .play-toolbar-inset {
+  padding-inline-start: 80px;
+}
+/* The ring of a focused tab stays inside the row: it is padded, not clipped. */
+.play-tabs {
+  display: flex;
+  gap: 2px;
+  min-width: 0;
+  padding: 6px;
+  margin: -6px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+/* A tab is a 30px pill; only the selected one shows its fill and edge. */
+.play-tab {
+  height: 30px;
+  padding-inline: 11px;
+  border-radius: 9px;
+  color: var(--play-tab-text, var(--ink-3));
+  font-size: 15px;
+  line-height: 20px;
+  letter-spacing: -0.027em;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    color var(--duration-quick),
+    background-color var(--duration-quick),
+    box-shadow var(--duration-quick);
+}
+.play-tab:not([aria-selected="true"]):hover {
+  color: var(--ink);
+}
+.play-tab:focus-visible {
+  outline: 2px solid var(--focus-edge);
+  outline-offset: 2px;
+}
+/* The top row's one pause, just after the tabs: a quiet glyph the tabs' height and colour. */
+.play-clips-toggle {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  margin-inline-start: -8px;
+  border-radius: 9px;
+  color: var(--play-tab-text, var(--ink-3));
+  cursor: pointer;
+  transition:
+    color var(--duration-quick),
+    background-color var(--duration-quick),
+    box-shadow var(--duration-quick);
+}
+.play-clips-toggle:hover {
+  color: var(--ink);
+}
+.play-clips-toggle:focus-visible {
+  outline: 2px solid var(--focus-edge);
+  outline-offset: 2px;
+}
+.play-search {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+  width: min(240px, 36%);
+  height: 32px;
+  margin-inline-start: auto;
+  padding-inline: 10px;
+  border-radius: var(--radius-button);
+  background: var(--play-track);
+  box-shadow: inset 0 0 0 1px var(--play-track-edge);
+  color: var(--ink-3);
+  cursor: text;
+  transition:
+    box-shadow var(--duration-quick),
+    background-color var(--duration-quick);
+}
+.play-search:focus-within {
+  box-shadow: inset 0 0 0 1px var(--play-search-focus, color-mix(in oklab, var(--ink) 18%, transparent));
+}
+/* Once the cards scroll under the bar, each of its controls gets a see-through backing of the page
+   colour with a faint edge, so it reads over a cover; the chosen tab keeps its blue over it. */
+.play-toolbar[data-scrolled]
+:where(.play-tab:not([aria-selected="true"]), .play-search, .sidebar-toggle, .play-clips-toggle) {
+  background: color-mix(in srgb, var(--play-tab-backing, var(--page)) 90%, transparent);
+  box-shadow: inset 0 0 0 1px var(--play-tab-edge, color-mix(in oklab, var(--ink) 9%, transparent));
+}
+.play-toolbar[data-scrolled] .play-search:focus-within {
+  box-shadow: inset 0 0 0 1px var(--play-search-focus, color-mix(in oklab, var(--ink) 18%, transparent));
+}
+.play-toolbar[data-scrolled] .play-tab:not([aria-selected="true"]):hover {
+  background: color-mix(in srgb, var(--play-tab-backing, var(--page)) 97%, transparent);
+}
+.play-toolbar[data-scrolled] .play-tab[aria-selected="true"] {
+  background:
+    linear-gradient(
+      color-mix(in srgb, var(--play-selected, var(--play-blue)) 12%, transparent),
+      color-mix(in srgb, var(--play-selected, var(--play-blue)) 12%, transparent)
+    ),
+    color-mix(in srgb, var(--play-tab-backing, var(--page)) 94%, transparent);
+}
+.play-search input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: var(--ink);
+  font: 13px / 20px var(--font-family-mono);
+  letter-spacing: -0.02em;
+}
+.play-search input::placeholder {
+  color: var(--ink-3);
+}
+/* The cards fade out under the floating bar as the sidebar's games do under its chrome: the page
+   colour solid behind the bar's top, then a wide, soft cosine fall to nothing 152px down. Once the
+   bar steps away a 96px fall of the same curve stays, with no solid part. The foot of the page fades the cards out the same way over
+   48px, as much as its padding, so the last row ends clear of it. The scrollbar's strip stays unfaded. */
+.play-fade {
+  position: absolute;
+  inset-inline: 0 10px;
+  z-index: 1;
+  pointer-events: none;
+}
+.play-fade-top {
+  /* Where the page colour stops being solid: behind the bar's top, none once the bar is away. */
+  --play-fade-solid: 26%;
+  top: 0;
+  height: 152px;
+  /* Then a cosine fall to nothing: no slope at either end, so neither end shows an edge. */
+  background: linear-gradient(
+    var(--page) 0%,
+    var(--page) var(--play-fade-solid),
+    color-mix(in srgb, var(--page) 97.6%, transparent)
+      calc(var(--play-fade-solid) + (100% - var(--play-fade-solid)) * 0.1),
+    color-mix(in srgb, var(--page) 90.5%, transparent)
+      calc(var(--play-fade-solid) + (100% - var(--play-fade-solid)) * 0.2),
+    color-mix(in srgb, var(--page) 79.4%, transparent)
+      calc(var(--play-fade-solid) + (100% - var(--play-fade-solid)) * 0.3),
+    color-mix(in srgb, var(--page) 65.5%, transparent)
+      calc(var(--play-fade-solid) + (100% - var(--play-fade-solid)) * 0.4),
+    color-mix(in srgb, var(--page) 50%, transparent)
+      calc(var(--play-fade-solid) + (100% - var(--play-fade-solid)) * 0.5),
+    color-mix(in srgb, var(--page) 34.5%, transparent)
+      calc(var(--play-fade-solid) + (100% - var(--play-fade-solid)) * 0.6),
+    color-mix(in srgb, var(--page) 20.6%, transparent)
+      calc(var(--play-fade-solid) + (100% - var(--play-fade-solid)) * 0.7),
+    color-mix(in srgb, var(--page) 9.5%, transparent)
+      calc(var(--play-fade-solid) + (100% - var(--play-fade-solid)) * 0.8),
+    color-mix(in srgb, var(--page) 2.4%, transparent)
+      calc(var(--play-fade-solid) + (100% - var(--play-fade-solid)) * 0.9),
+    transparent 100%
+  );
+  opacity: 0;
+  transition:
+    opacity var(--duration-quick),
+    height 300ms var(--ease-smooth-out);
+}
+.play-fade-top[data-shown] {
+  opacity: 1;
+}
+.play-fade-top[data-bar-away] {
+  --play-fade-solid: 0%;
+  height: 96px;
+  transition-duration: var(--duration-quick), 220ms;
+}
+.play-fade-bottom {
+  bottom: 0;
+  height: 48px;
+  background: linear-gradient(
+    transparent 0%,
+    color-mix(in srgb, var(--page) 6%, transparent) 10%,
+    color-mix(in srgb, var(--page) 21%, transparent) 25%,
+    color-mix(in srgb, var(--page) 45%, transparent) 45%,
+    color-mix(in srgb, var(--page) 70%, transparent) 65%,
+    color-mix(in srgb, var(--page) 90%, transparent) 85%,
+    var(--page) 100%
+  );
+}
+/* The scrollbar's room stays reserved, so the grid does not shift between a long tab and a short one. */
+.play-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+/* The grid spans the page between the header's own insets: its edges line up with the tabs and search. */
+.play-content {
+  padding: 8px 20px 48px;
+}
+/* Cards stay big enough to see the game: fewer, larger columns, close together. */
+.play-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 16px 12px;
+}
+.play-more {
+  height: 1px;
+}
+.play-notice {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding-block: 72px;
+  color: var(--ink-3);
+  font-size: 14px;
+  line-height: 20px;
+  text-align: center;
+}
+
+/* Offline (`PlayOffline.tsx`): a signal of four dot-matrix bars lighting one after another as if
+   looking for a connection, over what cannot load and that it comes back by itself. */
+.play-offline {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding-block: 88px 72px;
+  color: var(--ink-3);
+  font-size: 14px;
+  line-height: 20px;
+  text-align: center;
+  animation: play-offline-in 320ms var(--ease-smooth-out) both;
+}
+.play-offline .play-offline-mark {
+  margin-block-end: 12px;
+}
+.play-offline > button {
+  margin-block-start: 12px;
+}
+.play-offline-title {
+  color: var(--ink);
+  font-size: 15px;
+  font-weight: 500;
+  line-height: 22px;
+}
+@keyframes play-offline-in {
+  from {
+    opacity: 0;
+    translate: 0 6px;
+  }
+}
+.play-offline-mark {
+  flex: none;
+  color: var(--ink-3);
+}
+.play-offline-mark > rect {
+  opacity: 0.3;
+  animation: play-offline-seek 2.4s steps(2, jump-none) infinite;
+}
+.play-offline-mark > rect:nth-of-type(2) {
+  animation-delay: 240ms;
+}
+.play-offline-mark > rect:nth-of-type(3) {
+  animation-delay: 480ms;
+}
+.play-offline-mark > rect:nth-of-type(4) {
+  animation-delay: 720ms;
+}
+@keyframes play-offline-seek {
+  0%,
+  60%,
+  100% {
+    opacity: 0.3;
+  }
+  10%,
+  45% {
+    opacity: 1;
+  }
+}
+/* On the bar while offline, beside the search, in the scrolled controls' see-through backing. */
+.play-offline-chip {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 6px;
+  height: 24px;
+  margin-inline: auto -8px;
+  padding-inline: 8px;
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--play-tab-backing, var(--page)) 90%, transparent);
+  box-shadow: inset 0 0 0 1px var(--play-tab-edge, color-mix(in oklab, var(--ink) 9%, transparent));
+  color: var(--ink-3);
+  font: 11px / 16px var(--font-family-mono);
+  animation: play-offline-in 240ms var(--ease-smooth-out) both;
+}
+.play-offline-chip i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 1px currentColor;
+}
+.play-offline-chip + .play-search {
+  margin-inline-start: 0;
+}
+/* Under the cards when their next page could not be read. */
+.play-more-failed .play-offline-mark {
+  scale: 0.75;
+}
+.play-more-failed {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding-block: 32px 8px;
+  color: var(--ink-3);
+  font-size: 13px;
+  line-height: 20px;
+}
+
+/* A card: a cover to press and play (edged in the colour theme's border), its numbers over the
+   corner, the title and who made it, straight on the page. */
+.play-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+  /* A long catalog lays out and paints only the cards near the screen. */
+  content-visibility: auto;
+  contain-intrinsic-size: auto 260px;
+}
+.play-card-cover {
+  position: relative;
+  display: block;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  overflow: hidden;
+  border-radius: 12px;
+  background: var(--play-placeholder);
+  cursor: pointer;
+}
+.play-card-cover::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  box-shadow: inset 0 0 0 1px var(--line);
+  transition: box-shadow var(--duration-fast) var(--ease-smooth-out);
+  pointer-events: none;
+}
+.play-card-cover:hover::after {
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--ink) 30%, var(--line));
+}
+.play-card-cover:focus-visible {
+  outline: 2px solid var(--focus-edge);
+  outline-offset: 2px;
+}
+.play-card-image {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  opacity: 0;
+  transition:
+    opacity 200ms ease-out,
+    scale var(--duration-fast) var(--ease-smooth-out);
+}
+.play-card-image[data-shown] {
+  opacity: 1;
+}
+.play-card-cover:hover .play-card-image {
+  scale: 1.03;
+}
+/* The cover's clip lies over the still and fades in on its first frame, as genex.games plays it. */
+.play-card-clip {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 200ms ease-out;
+}
+.play-card-clip[data-shown] {
+  opacity: 1;
+}
+.play-card-shade {
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(120% 90% at 100% 100%, rgb(0 0 0 / 0.5), transparent 55%);
+  pointer-events: none;
+}
+.play-card-stats {
+  position: absolute;
+  inset-inline-end: 12px;
+  inset-block-end: 10px;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  color: #fff;
+  font: 500 14px / 20px var(--font-family-mono);
+  letter-spacing: -0.02em;
+  text-shadow: 0 1px 2px rgb(0 0 0 / 0.35);
+}
+.play-card-stats > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.play-card-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--green);
+}
+.play-card-play path {
+  fill: currentColor;
+  stroke: none;
+}
+.play-card-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+  padding-inline-start: 2px;
+}
+.play-card-title {
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 17px;
+  font-weight: 500;
+  line-height: 21px;
+  letter-spacing: -0.016em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.play-card-author {
+  margin-block-start: 1px;
+  overflow: hidden;
+  color: var(--ink-3);
+  font: 12px / 16px var(--font-family-mono);
+  letter-spacing: -0.02em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.play-card-remix {
+  flex: none;
+}
+
+/* A card on its way: the same shape, shimmering; it appears only if the wait is not over at once. */
+.play-card-placeholder {
+  animation: play-fade-in 200ms 120ms ease-out both;
+}
+.play-card-placeholder .play-card-meta {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+}
+.play-bar {
+  display: block;
+  height: 12px;
+  border-radius: 6px;
+}
+.play-bar-title {
+  width: 62%;
+  height: 14px;
+}
+.play-bar-author {
+  width: 36%;
+  height: 10px;
+}
+.play-card-placeholder :is(.play-card-cover, .play-bar) {
+  position: relative;
+  overflow: hidden;
+  background: var(--play-placeholder);
+}
+.play-card-placeholder :is(.play-card-cover, .play-bar)::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent, var(--play-placeholder), transparent);
+  translate: -100% 0;
+  animation: play-shimmer 1.4s ease-in-out infinite;
+}
+@keyframes play-shimmer {
+  to {
+    translate: 100% 0;
+  }
+}
+@keyframes play-fade-in {
+  from {
+    opacity: 0;
+  }
+}
+
+/* While the game (a native view) lies under the header, the window's drag regions would still take
+   the pointer over it: the OS gathers them for the whole window, under child views too. None drag
+   meanwhile, but the header's own empty space, which stays the window's to drag. */
+.studio-shell[data-play-native] * {
+  -webkit-app-region: no-drag;
+}
+
+/* The viewer: the header across the top, and under it the game, or its cover while it loads and
+   what went wrong when it cannot. */
+.play-viewer {
+  position: fixed;
+  inset: 0;
+  z-index: 250;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: #000;
+  color: #f5f5f5;
+  outline: none;
+  animation: play-fade-in 180ms ease-out both;
+}
+.play-viewer-stage {
+  position: relative;
+  display: grid;
+  flex: 1;
+  min-height: 0;
+  place-items: center;
+  overflow: hidden;
+}
+
+/* The header: the app's own 48px bar in the sidebar's colours over a hairline. Back and the game's
+   name with its facts, then a note, the guest's offer and the actions as rounded pills; Remix wears
+   Play's blue secondary. Its empty space drags the window. */
+.play-viewer-bar {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+  height: 48px;
+  padding: 0 12px 0 16px;
+  background: var(--sidebar);
+  box-shadow: inset 0 -1px 0 var(--line);
+  color: var(--ink);
+  font-family: var(--font-family-sans);
+  -webkit-app-region: drag;
+}
+.studio-shell[data-play-native] .play-viewer-bar {
+  -webkit-app-region: drag;
+}
+/* Clear of macOS's traffic lights, on one line with them. */
+:root[data-platform="darwin"] .play-viewer-bar {
+  padding-inline-start: 80px;
+}
+.play-viewer-bar button {
+  -webkit-app-region: no-drag;
+  cursor: pointer;
+}
+.play-viewer-bar-back {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 9px;
+  color: var(--ink-3);
+  transition:
+    background-color var(--duration-quick),
+    color var(--duration-quick);
+}
+.play-viewer-bar-back:hover {
+  background: var(--sidebar-hover);
+  color: var(--ink);
+}
+.play-viewer-bar-name {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  min-width: 0;
+  max-width: 34%;
+  line-height: 16px;
+}
+.play-viewer-bar-title {
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 14px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.play-viewer-bar-facts {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--ink-3);
+  font: 11px / 16px var(--font-family-mono);
+  white-space: nowrap;
+}
+.play-viewer-bar-online {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--green);
+}
+.play-viewer-bar-online[data-offline] {
+  background: none;
+  box-shadow: inset 0 0 0 1px currentColor;
+}
+.play-viewer-bar-gap {
+  flex: 1;
+}
+.play-viewer-bar-actions {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 6px;
+}
+
+/* A header button: 32px with 9px corners, rounded but never a pill. Its icon and its label each
+   stack two states, so a note takes the label's place in the button itself: the labels fold into
+   each other (grid tracks 1fr ↔ 0fr), the button changes width with them, and a done note swaps
+   the icon for a check drawn in, over a green tint. */
+.play-viewer-bar-pill {
+  display: inline-flex;
+  align-items: center;
+  height: 32px;
+  padding-inline: 12px;
+  border-radius: 9px;
+  background: color-mix(in oklab, var(--ink) 6%, transparent);
+  color: var(--ink);
+  font-size: 13px;
+  white-space: nowrap;
+  transition:
+    background-color 280ms var(--ease-smooth-out),
+    box-shadow 280ms var(--ease-smooth-out),
+    color 280ms var(--ease-smooth-out);
+}
+.play-viewer-bar-pill:hover:enabled {
+  background: color-mix(in oklab, var(--ink) 11%, transparent);
+}
+.play-viewer-bar-pill:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+.play-viewer-bar-exit {
+  padding-inline: 8px;
+}
+.play-bar-icon {
+  position: relative;
+  display: grid;
+  flex: none;
+  width: 16px;
+  height: 16px;
+  margin-inline-end: 6px;
+}
+.play-bar-icon > * {
+  grid-area: 1 / 1;
+  transition:
+    opacity 200ms ease-out,
+    scale 340ms cubic-bezier(0.3, 1.5, 0.5, 1),
+    rotate 340ms cubic-bezier(0.3, 1.5, 0.5, 1);
+}
+.play-bar-check {
+  opacity: 0;
+  scale: 0.4;
+  rotate: -40deg;
+}
+.play-bar-check path {
+  stroke-dasharray: 1;
+  stroke-dashoffset: 1;
+  transition: stroke-dashoffset 320ms 120ms ease-out;
+}
+.play-viewer-bar-pill[data-note="done"] .play-bar-icon > :first-child {
+  opacity: 0;
+  scale: 0.4;
+  rotate: 40deg;
+}
+.play-viewer-bar-pill[data-note="done"] .play-bar-check {
+  opacity: 1;
+  scale: 1;
+  rotate: 0deg;
+}
+.play-viewer-bar-pill[data-note="done"] .play-bar-check path {
+  stroke-dashoffset: 0;
+}
+.play-viewer-bar-pill[data-note="done"],
+.play-viewer-bar-pill[data-note="done"]:hover:enabled {
+  background: color-mix(in srgb, var(--green) 14%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--green) 40%, transparent);
+}
+.play-bar-label {
+  display: grid;
+  grid-template-columns: 0fr;
+  transition: grid-template-columns 360ms cubic-bezier(0.3, 0.7, 0.2, 1);
+}
+.play-bar-label > span {
+  min-width: 0;
+  overflow: hidden;
+  opacity: 0;
+  filter: blur(3px);
+  transition:
+    opacity 220ms ease-out,
+    filter 220ms ease-out;
+}
+.play-bar-label[data-shown] {
+  grid-template-columns: 1fr;
+}
+.play-bar-label[data-shown] > span {
+  opacity: 1;
+  filter: none;
+}
+.play-viewer-bar-remix {
+  background: color-mix(in srgb, var(--play-selected, var(--play-blue)) 12%, transparent);
+  box-shadow: inset 0 0 0 1px
+    var(--play-selected-edge, color-mix(in srgb, var(--play-selected, var(--play-blue)) 40%, transparent));
+  color: var(--play-selected-text, var(--ink));
+}
+.play-viewer-bar-remix:hover:enabled {
+  background: color-mix(in srgb, var(--play-selected, var(--play-blue)) 22%, transparent);
+}
+/* The game's voice chat: the mic switch and its menu of microphones, joined, beside the name. On,
+   it wears Play's selected look; off, the game's own voice chat hears nothing from the person. */
+.play-viewer-bar-mic {
+  display: flex;
+  flex: none;
+  gap: 2px;
+  margin-inline-start: 14px;
+}
+.play-mic-switch {
+  padding-inline: 8px;
+  border-start-end-radius: 4px;
+  border-end-end-radius: 4px;
+}
+.play-mic-switch .play-bar-icon {
+  margin-inline-end: 0;
+}
+.play-mic-switch .play-bar-label > span {
+  padding-inline-start: 6px;
+}
+.play-mic-menu {
+  justify-content: center;
+  width: 22px;
+  padding-inline: 0;
+  border-start-start-radius: 4px;
+  border-end-start-radius: 4px;
+  color: var(--ink-3);
+}
+.play-viewer-bar-mic[data-on] .play-viewer-bar-pill {
+  background: color-mix(in srgb, var(--play-selected, var(--play-blue)) 12%, transparent);
+  box-shadow: inset 0 0 0 1px
+    var(--play-selected-edge, color-mix(in srgb, var(--play-selected, var(--play-blue)) 40%, transparent));
+  color: var(--play-selected-text, var(--ink));
+}
+.play-viewer-bar-mic[data-on] .play-viewer-bar-pill:hover:enabled {
+  background: color-mix(in srgb, var(--play-selected, var(--play-blue)) 22%, transparent);
+}
+/* Opening: the switch is on and the microphone is not feeding the game yet. */
+.play-viewer-bar-mic[data-on]:not([data-live]) .play-mic-switch .play-bar-icon {
+  opacity: 0.6;
+}
+.play-viewer-bar :is(button, a):focus-visible {
+  outline: 2px solid var(--focus-edge);
+  outline-offset: 2px;
+}
+
+/* Like: a liked heart is filled pink. The player's own like pops it, throws eight square sparks in
+   steps (the loader's pixels) and rolls the count up. */
+.play-like-heart {
+  position: relative;
+  display: grid;
+  place-items: center;
+}
+.play-like-heart .gi path {
+  transition:
+    fill 180ms ease-out,
+    stroke 180ms ease-out;
+}
+.play-viewer-bar-pill[aria-pressed="true"] .play-like-heart .gi path {
+  fill: var(--play-like);
+  stroke: var(--play-like);
+}
+.play-like-heart[data-burst] .gi {
+  animation: play-like-pop 520ms cubic-bezier(0.3, 1.6, 0.5, 1);
+}
+@keyframes play-like-pop {
+  30% {
+    scale: 0.7;
+  }
+  65% {
+    scale: 1.28;
+  }
+}
+.play-like-sparks {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  pointer-events: none;
+}
+.play-like-sparks i {
+  position: absolute;
+  left: -1px;
+  top: -1px;
+  width: 2px;
+  height: 2px;
+  background: var(--play-like);
+  transform: rotate(var(--angle)) translateY(-6px);
+  animation: play-like-spark 600ms steps(5) forwards;
+}
+.play-like-sparks i:nth-child(even) {
+  background: #8fa6ff;
+}
+@keyframes play-like-spark {
+  to {
+    transform: rotate(var(--angle)) translateY(-17px) scale(0.5);
+    opacity: 0;
+  }
+}
+.play-like-count {
+  display: inline-block;
+}
+.play-like-count[data-rolled] {
+  animation: play-like-count 360ms cubic-bezier(0.3, 1.4, 0.5, 1);
+}
+@keyframes play-like-count {
+  from {
+    translate: 0 9px;
+    opacity: 0;
+  }
+}
+
+/* The guest's offer: a strip in Play's blue secondary with 8px corners wipes in from the left around
+   the Genex G (alone, in ink; it pops a moment after), one line and a solid Install plugin; its ×
+   sits just outside the strip and fades in after it. */
+.play-viewer-bar-guest {
+  display: flex;
+  flex: 0 1 auto;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  margin-inline-start: 14px;
+}
+.play-viewer-bar-guest-strip {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+  height: 32px;
+  padding-inline: 8px 4px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--play-selected, var(--play-blue)) 12%, transparent);
+  box-shadow: inset 0 0 0 1px
+    var(--play-selected-edge, color-mix(in srgb, var(--play-selected, var(--play-blue)) 40%, transparent));
+  color: var(--play-selected-text, var(--ink));
+  font-size: 13px;
+  white-space: nowrap;
+  animation: play-guest-in 520ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+@keyframes play-guest-in {
+  from {
+    clip-path: inset(0 100% 0 0 round 8px);
+    opacity: 0.4;
+  }
+  to {
+    clip-path: inset(0 0 0 0 round 8px);
+    opacity: 1;
+  }
+}
+.play-viewer-bar-guest-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* The Genex G alone, in the line's ink: no tile, no colour of its own. */
+.play-genex-mark {
+  flex: none;
+  color: currentColor;
+  animation: play-tile-pop 400ms 180ms cubic-bezier(0.3, 1.5, 0.5, 1) both;
+}
+@keyframes play-tile-pop {
+  from {
+    scale: 0.4;
+    opacity: 0;
+  }
+}
+.play-viewer-bar-install {
+  flex: none;
+  height: 24px;
+  padding-inline: 10px;
+  border-radius: 6px;
+  background: var(--play-selected, var(--play-blue));
+  color: #ffffff;
+  font-size: 12px;
+  transition: filter var(--duration-quick);
+}
+.play-viewer-bar-install:hover {
+  filter: brightness(1.12);
+}
+.play-viewer-bar-dismiss {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  color: var(--ink-3);
+  animation: play-guest-fade 300ms 400ms both;
+}
+@keyframes play-guest-fade {
+  from {
+    opacity: 0;
+  }
+}
+.play-viewer-bar-dismiss:hover {
+  background: color-mix(in oklab, var(--ink) 8%, transparent);
+  color: var(--ink);
+}
+/* The loader: the cover developing as an ordered dither in 4px cells (`dither.ts`) under fine scan
+   lines and a dark edge, and the title over a 1px dot rail (a dot every 4px) with a lit run sweeping
+   along it. No word "Loading": the title and the line say it. */
+.play-loader-dither {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  image-rendering: pixelated;
+  opacity: 0;
+  transition: opacity 200ms ease-out;
+  pointer-events: none;
+}
+.play-loader-dither[data-shown] {
+  opacity: 1;
+}
+.play-viewer-stage::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background:
+    repeating-linear-gradient(to bottom, rgb(0 0 0 / 0.22) 0 1px, transparent 1px 3px),
+    radial-gradient(120% 90% at 50% 50%, rgb(31 60 160 / 0.06), rgb(0 3 10 / 0.62));
+  pointer-events: none;
+}
+.play-viewer-status {
+  z-index: 2;
+}
+.play-loader-status {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  animation: play-loader-in 420ms var(--ease-smooth-out) both;
+}
+@keyframes play-loader-in {
+  from {
+    opacity: 0;
+    translate: 0 8px;
+  }
+}
+.play-loader-title {
+  max-width: min(640px, calc(100vw - 64px));
+  overflow: hidden;
+  color: #fff;
+  font-size: 28px;
+  font-weight: 500;
+  line-height: 34px;
+  letter-spacing: -0.02em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-shadow: 0 2px 24px rgb(0 0 0 / 0.6);
+}
+.play-loader-line {
+  position: relative;
+  width: 240px;
+  height: 1px;
+  overflow: hidden;
+  background: repeating-linear-gradient(90deg, rgb(150 176 255 / 0.26) 0 1px, transparent 1px 4px);
+}
+.play-loader-line::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: repeating-linear-gradient(90deg, #d4e0ff 0 1px, transparent 1px 4px);
+  mask: linear-gradient(90deg, transparent, #000 40%, #000 60%, transparent) no-repeat;
+  mask-size: 72px 100%;
+  animation: play-loader-run 1.3s linear infinite;
+}
+@keyframes play-loader-run {
+  from {
+    mask-position: -72px 0;
+  }
+  to {
+    mask-position: 240px 0;
+  }
+}
+.play-viewer-failed {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 20px 24px;
+  border-radius: var(--radius-card);
+  background: rgb(8 12 22 / 0.88);
+  box-shadow: inset 0 0 0 1px rgb(31 143 255 / 0.35);
+}
+.play-viewer-failed .play-offline-mark {
+  margin-block-end: 8px;
+  color: rgb(200 214 255 / 0.8);
+}
+.play-viewer-failed h2 {
+  font-size: 17px;
+  font-weight: 500;
+  line-height: 24px;
+}
+.play-viewer-failed p {
+  color: rgb(255 255 255 / 0.7);
+  font-size: 14px;
+  line-height: 20px;
+}
+.play-viewer-actions {
+  display: flex;
+  gap: 8px;
+  margin-block-start: 10px;
+}
+
+/* Reduce Motion: things change in place; Play's shimmer and slides hold still. */
+@media (prefers-reduced-motion: reduce) {
+  .play-switch-pill,
+  .sidebar-fold,
+  .sidebar-lists > .sidebar-scroll,
+  .play-card-image,
+  .game-sidebar .sidebar-games-heading {
+    transition: none;
+  }
+  .play-card-clip {
+    display: none;
+  }
+  .sidebar-lists > .sidebar-scroll[data-off="true"] {
+    translate: none;
+    transition: none;
+  }
+  .play-promo,
+  .play-card-placeholder,
+  .play-viewer,
+  .play-loader-status,
+  .play-loader-line::after,
+  .play-like-heart .gi,
+  .play-like-count,
+  .play-viewer-bar-guest-strip,
+  .play-viewer-bar-dismiss,
+  .play-genex-mark,
+  .play-offline,
+  .play-offline-chip,
+  .play-offline-mark > rect,
+  .sidebar-games-heading > span {
+    animation: none;
+  }
+  .play-offline-mark > rect {
+    opacity: 0.6;
+  }
+  .play-toolbar,
+  .play-fade-top {
+    transition: none;
+  }
+  .play-like-sparks {
+    display: none;
+  }
+  .play-loader-line::after {
+    mask-position: 84px 0;
+  }
+  .play-card-placeholder :is(.play-card-cover, .play-bar)::before {
+    animation: none;
+    display: none;
+  }
+  .play-card-cover:hover .play-card-image {
+    scale: none;
+  }
+}
+:root[data-motion="rest"] .play-card-placeholder :is(.play-card-cover, .play-bar)::before {
+  animation-play-state: paused;
+}
+
+/* ── Play's people: the Friends page and profiles (`PlayFriends.tsx`, `PlayProfile.tsx`) ───── */
+/* The same page and bar as the dashboard; the bar holds only the sidebar's toggle and Back. */
+.people-toolbar {
+  min-height: 56px;
+}
+.people-content {
+  padding: 4px 32px 56px;
+}
+.play-card-author-link {
+  color: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+.play-card-author-link:hover {
+  color: var(--ink);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.play-card-author-link:focus-visible {
+  outline: 2px solid var(--focus-edge);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* The maker's name in the viewer's header: it leaves the game for their profile. */
+.play-viewer-bar-maker {
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+.play-viewer-bar-maker:hover {
+  color: var(--ink);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.play-viewer-bar-maker:focus-visible {
+  outline: 2px solid var(--focus-edge);
+  outline-offset: 2px;
+  border-radius: 4px;
+}

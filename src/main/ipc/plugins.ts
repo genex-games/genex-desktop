@@ -1,18 +1,19 @@
 /** Plugins: the trust dialogs, reviewed actions, consent answers, and installing from any origin. */
 import { randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
-import { dialog, shell } from "electron";
+import { type BrowserWindow, dialog } from "electron";
 import { MINUTE_MS } from "../../shared/duration.ts";
 import { isUserCancelled, UserCancelledError } from "../../shared/errors.ts";
 import type { StudioInvokePayload } from "../../shared/ipc-channels.ts";
-import { tagGenexLink } from "../../plugins/genex/http.ts";
 import { isGithubVersion, PluginCapability, type PluginSource, PluginSourceKind } from "../../shared/plugins.ts";
 import type { PluginMarketplace } from "../../substrate/plugins/marketplace.ts";
 import { scanPackage } from "../../substrate/plugins/scan.ts";
 import { publishFromDialog, publishReview } from "../core/genex-publish.ts";
+import { createPluginFilePicker } from "../core/plugin-file-picker.ts";
+import { openGenexPage } from "../genex-browser.ts";
 import { assertNativeActionAllowed } from "../dev/native-policy.ts";
 import type { ConfirmPluginInstall } from "../plugin-install-dialog.ts";
-import { actionApprovalDetail } from "../plugin-install-words.ts";
+import { type ActionApprovalDialog, actionApprovalDialog } from "../plugin-install-words.ts";
 import { installLocalPlugin } from "../plugin-local-install.ts";
 import type { StudioCore } from "../studio-core.ts";
 import type { IpcHandle } from "./registrar.ts";
@@ -29,6 +30,10 @@ const REACQUIRED_ORIGINS: ReadonlySet<string> = new Set([
 ]);
 /** The longest GitHub link a lookup reads; a real one is a fraction of it. */
 const GITHUB_LINK_MAX_CHARS = 2048;
+/** The longest question a plugin's review may ask in the native dialog. */
+const REVIEW_MESSAGE_MAX_CHARS = 2_000;
+/** The longest text a plugin's review may show under its question. */
+const REVIEW_DETAIL_MAX_CHARS = 4_000;
 
 /** Why a plugin request from the renderer is refused. */
 const MESSAGE = {
@@ -38,10 +43,10 @@ const MESSAGE = {
   noNewerRelease: "No compatible newer release is available for this installed plugin",
   actionUnavailable: "Plugin action unavailable",
   reviewFirst: "Review this action in Studio before approving",
-  invalidAuthUrl: "Invalid authentication URL",
   stillStarting: "Studio is still starting",
   notFound: "Plugin not found",
   invalidLink: "Invalid GitHub link",
+  invalidReview: `Invalid plugin review: its message and detail are text of at most ${REVIEW_MESSAGE_MAX_CHARS} and ${REVIEW_DETAIL_MAX_CHARS} characters`,
 } as const;
 
 export interface PluginsIpcDeps {
@@ -50,13 +55,20 @@ export interface PluginsIpcDeps {
   marketplace(): PluginMarketplace | null;
   confirmInstall: ConfirmPluginInstall;
   fixtureNativePolicy: boolean;
+  /** The studio window, which a panel's file picker opens over; null while it is closed. */
+  window(): BrowserWindow | null;
+}
+
+/** The words a plugin's review gives the native dialog: its question and the text under it. */
+interface ReviewWords {
+  message?: string;
+  detail?: string;
 }
 
 /** A review the user approves in Studio before the action's own dialog asks again. */
-interface Approval {
+interface Approval extends ReviewWords {
   key: string;
   expires: number;
-  message?: string;
 }
 
 /** What the plugin handlers share: their deps and the reviews waiting for approval. */
@@ -74,8 +86,11 @@ export function registerPluginsIpc(handle: IpcHandle, deps: PluginsIpcDeps): voi
   // The user's answer to a consent card. Studio UI only: the main-frame guard above covers the
   // channel, and the core's RPC table has no equivalent, so no agent can approve its own request.
   handle("studio:plugins.consent", async (p) => {
-    if (typeof p?.consentId !== "string" || typeof p.approved !== "boolean") throw new Error(MESSAGE.invalidConsent);
-    return { resolved: core.resolveConsent(p.consentId, p.approved) };
+    const always = p?.always ?? false;
+    const input = p?.input;
+    const answer = typeof p?.consentId === "string" && typeof p.approved === "boolean" && typeof always === "boolean";
+    if (!answer || (input !== undefined && typeof input !== "string")) throw new Error(MESSAGE.invalidConsent);
+    return { resolved: core.resolveConsent(p.consentId, p.approved, always, input) };
   });
   handle("studio:plugins.list", async () => core.plugins.list());
   handle("studio:plugins.catalog", async () => core.plugins.catalog());
@@ -92,9 +107,17 @@ export function registerPluginsIpc(handle: IpcHandle, deps: PluginsIpcDeps): voi
   handle("studio:plugins.setting", async (p) => core.plugins.setSetting(p.id, p.key, p.value));
   handle("studio:plugins.review", async (p) => {
     const info = await core.plugins.review(p.id, p.name, p.args, await core.pluginBinding(p.project));
-    return { ...info, ticket: issueTicket(ctx, actionKey(p.id, p.name, p.args, p.project), info.message) };
+    const words = reviewWords(info);
+    return { ...info, ticket: issueTicket(ctx, actionKey(p.id, p.name, p.args, p.project), words) };
   });
   handle("studio:plugins.action", async (p) => runPluginAction(ctx, p));
+  // A panel's Choose file. The panel host checked the request; main checks it again, and the plugin.
+  const chooseFile = createPluginFilePicker({
+    window: deps.window,
+    showOpenDialog: (window, options) => dialog.showOpenDialog(window, options),
+    plugins: () => core.plugins.list(),
+  });
+  handle("studio:plugins.choose-file", async (p) => chooseFile(p?.id, p?.request));
   // Studio's own Publish dialog: its Publish press is the consent to the files it lists, so nothing asks again.
   handle("studio:plugins.genex-publish-review", async (p) => publishReview(core, p?.project));
   handle("studio:plugins.genex-publish", async (p) => publishFromDialog(core, p?.project, p?.review, p?.title));
@@ -123,17 +146,38 @@ export function registerPluginsIpc(handle: IpcHandle, deps: PluginsIpcDeps): voi
     if (typeof p.enabled !== "boolean") throw new Error(MESSAGE.invalidState);
     await core.plugins.watch(p.id, p.enabled);
   });
+  // The person's Ask every time on a local plugin's page: its tools ask again before they run.
+  handle("studio:plugins.forget-allowed", async (p) => {
+    if (typeof p?.id !== "string") throw new Error(MESSAGE.notFound);
+    await core.plugins.forgetAllowed(p.id);
+  });
 }
 
 function actionKey(id: string, name: string, args: unknown, project?: string): string {
   return JSON.stringify({ id, name, args, project });
 }
 
+/** Is `value` absent, or text of at most `max` characters? */
+const optionalText = (value: unknown, max: number): value is string | undefined =>
+  value === undefined || (typeof value === "string" && value.length <= max);
+
+/**
+ * The question and text a plugin's review gives the native dialog, refused unless each is bounded
+ * text: the dialog shows them as the plugin wrote them. An empty question is no question.
+ */
+function reviewWords(info: unknown): ReviewWords {
+  if (!info || typeof info !== "object") return {};
+  const { message, detail } = info as Record<string, unknown>;
+  const bounded = optionalText(message, REVIEW_MESSAGE_MAX_CHARS) && optionalText(detail, REVIEW_DETAIL_MAX_CHARS);
+  if (!bounded) throw new Error(MESSAGE.invalidReview);
+  return { ...(message ? { message } : {}), ...(detail ? { detail } : {}) };
+}
+
 /** Remember a review for {@link PLUGIN_APPROVAL_TTL_MS}, dropping the ones that expired. */
-function issueTicket(ctx: PluginsContext, key: string, message: string | undefined): string {
+function issueTicket(ctx: PluginsContext, key: string, words: ReviewWords): string {
   for (const [ticket, value] of ctx.approvals) if (value.expires < Date.now()) ctx.approvals.delete(ticket);
   const ticket = randomUUID();
-  ctx.approvals.set(ticket, { key, expires: Date.now() + PLUGIN_APPROVAL_TTL_MS, message });
+  ctx.approvals.set(ticket, { key, expires: Date.now() + PLUGIN_APPROVAL_TTL_MS, ...words });
   return ticket;
 }
 
@@ -148,37 +192,31 @@ function takeApproval(ctx: PluginsContext, ticket: string | undefined, key: stri
 
 async function runPluginAction(ctx: PluginsContext, p: ActionRequest) {
   const { core } = ctx;
-  const plugin = core.plugins.list().find((x) => x.manifest.id === p.id && x.enabled && !x.removed);
+  // On, or Genex's account actions (sign-in, Publish) while Genex is off: they are the person's, not the agent's.
+  const serves = core.plugins.servesAction(p.id, p.name);
+  const plugin = serves ? core.plugins.list().find((x) => x.manifest.id === p.id) : undefined;
   const action = plugin?.manifest.actions.find((a) => a.name === p.name);
   if (!plugin || !action) throw new Error(MESSAGE.actionUnavailable);
+  // An action that starts or opens an app or writes outside the plugin's storage never runs in a fixture.
+  if (action.native) assertNativeActionAllowed(ctx.fixtureNativePolicy, "studio:plugins.native-action");
   if (action.confirmation) {
     const approval = takeApproval(ctx, p.ticket, actionKey(p.id, p.name, p.args, p.project));
     if (!approval) throw new Error(MESSAGE.reviewFirst);
     assertNativeActionAllowed(ctx.fixtureNativePolicy, "studio:plugins.approval");
     const approved = await confirmAction(
-      `${plugin.manifest.name}: ${action.label}`,
-      approval.message || action.confirmation,
-      p.args,
+      actionApprovalDialog({ plugin: plugin.manifest.name, action, review: approval, args: p.args }),
     );
     if (!approved) throw new UserCancelledError();
   }
   const result = await core.plugins.action(p.id, p.name, p.args, await core.pluginBinding(p.project));
-  if (result?.verifyUrl && opensSignIn(plugin, p.name)) await openVerifyUrl(ctx, result.verifyUrl);
+  // Fixture profiles never open the browser, whichever plugin action asks.
+  if (result?.verifyUrl && opensSignIn(plugin, p.name)) await openGenexPage(ctx.fixtureNativePolicy, result.verifyUrl);
   return result;
 }
 
-/** The native dialog in front of a reviewed action; true when approved. */
-async function confirmAction(title: string, message: string, args: unknown): Promise<boolean> {
-  const detail = actionApprovalDetail(args);
-  const choice = await dialog.showMessageBox({
-    type: "question",
-    title,
-    message,
-    ...(detail ? { detail } : {}),
-    buttons: ["Cancel", "Approve"],
-    defaultId: 0,
-    cancelId: 0,
-  });
+/** The native dialog in front of a reviewed action, Cancel first and the default; true when confirmed. */
+async function confirmAction(box: ActionApprovalDialog): Promise<boolean> {
+  const choice = await dialog.showMessageBox({ type: "question", ...box, defaultId: 0, cancelId: 0 });
   return choice.response === 1;
 }
 
@@ -186,15 +224,6 @@ async function confirmAction(title: string, message: string, args: unknown): Pro
 function opensSignIn(plugin: InstalledPlugin, name: string): boolean {
   const signInActions = [plugin.manifest.account?.connect ?? "connect", ...EXTERNAL_AUTH_ACTIONS];
   return signInActions.includes(name) && plugin.manifest.capabilities.includes(PluginCapability.ExternalAuth);
-}
-
-async function openVerifyUrl(ctx: PluginsContext, verifyUrl: string): Promise<void> {
-  // Fixture profiles never open the browser, whichever plugin action asks.
-  assertNativeActionAllowed(ctx.fixtureNativePolicy, "studio:open-url");
-  const url = new URL(verifyUrl);
-  if (url.protocol !== "https:") throw new Error(MESSAGE.invalidAuthUrl);
-  // Genex's sign-in, terms and game pages go tagged `s=desktop`; the code in the link is kept.
-  await shell.openExternal(tagGenexLink(url.href));
 }
 
 function requireMarketplace(ctx: PluginsContext): PluginMarketplace {

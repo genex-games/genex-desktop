@@ -42,8 +42,37 @@ export const FixtureName = {
   Notifications: "notifications",
   BuildGraph: "build-graph",
   LargeBuildGraph: "large-build-graph",
+  /** An Unreal lead's runs on the Builds graph: milestones, save points, sub-agents and the critic's advice. */
+  LeadGraph: "lead-graph",
   SandboxSetup: "sandbox-setup",
   UpdateReady: "update-ready",
+  UnrealGame: "unreal-game",
+  UnrealChat: "unreal-chat",
+  /** The game linked to a stand-in Roblox place with Roblox Studio on: its toolbar button, link line and steps card. */
+  RobloxGame: "roblox-game",
+  /**
+   * Workers on the Builds graph and in the chat: a chat turn's two, and, written after the start,
+   * a Loop's three with its lead's jobs, build-graph's web Loops and lead-graph's Unreal lead runs
+   * with their workers' records.
+   */
+  ChatWorkers: "chat-workers",
+  /** The finish check on the Builds graph and in the chat: four Loops, one in each of its looks. */
+  FinishCheck: "finish-check",
+  /** Live's run pictures for a folder no observer draws, and the sentence for one with none yet. */
+  StillsGame: "stills-game",
+  /**
+   * Projects that aren't web games: a Godot-shaped game and its Loops in place (a worker's question,
+   * a close no reviewer checked), an Unreal plugin project's kind label and its Loop waiting on the
+   * editor, a plugin loaded from a folder, and the card that offers the Unreal plugin.
+   */
+  OpenProjects: "open-projects",
+  PluginUpdates: "plugin-updates",
+  /** Signed in with Genex's updated terms to accept: the sidebar's line and Review under a held-up Genex call. */
+  GenexTerms: "genex-terms",
+  /** A Loop a usage limit paused and resumed: a worker's try Paused, one Added after, one Left out. */
+  PausedBuild: "paused-build",
+  /** A Loop still going, for the chat's Building card and its parts: added, working, restarted, waiting. */
+  BuildingCard: "building-card",
 } as const;
 export type FixtureName = (typeof FixtureName)[keyof typeof FixtureName];
 

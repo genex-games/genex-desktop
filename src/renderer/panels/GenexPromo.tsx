@@ -23,7 +23,8 @@ import {
   storedGenexPromo,
 } from "../genex-promo.ts";
 import { runPluginAction } from "../plugin-actions.ts";
-import { usePlugins, useThreads } from "../state/hooks.ts";
+import { playToolsUrl } from "../../shared/play.ts";
+import { usePlayWeb, usePlugins, useThreads } from "../state/hooks.ts";
 import { Room, roomOf } from "../state/threads.ts";
 import { Button } from "../ui/Button.tsx";
 import { Icon, type IconName } from "../ui/icons.tsx";
@@ -33,8 +34,6 @@ import { GENEX_WORDS } from "../words.ts";
 
 const WORDS = GENEX_WORDS.promo;
 
-/** Where Learn more goes. */
-const GENEX_TOOLS_URL = "https://genex.games/tools";
 /** The film and its still, copied beside the renderer by the build. */
 const PROMO_VIDEO = "media/genex-promo.mp4";
 const PROMO_POSTER = "media/genex-promo-poster.jpg";
@@ -201,11 +200,12 @@ function Footer({
 }
 
 /**
- * Opens Genex Tools in the browser. Where the browser may not be opened (a fixture profile), the
+ * Opens the Genex plugin's page in the browser. Where the browser may not be opened (a fixture profile), the
  * address is copied instead and the link says so for a moment.
  */
 function LearnMore(): JSX.Element {
   const [copied, setCopied] = useState(false);
+  const toolsUrl = playToolsUrl(usePlayWeb());
   useEffect(() => {
     if (!copied) return;
     const timer = window.setTimeout(() => setCopied(false), COPIED_NOTE_MS);
@@ -213,9 +213,9 @@ function LearnMore(): JSX.Element {
   }, [copied]);
   const open = async (): Promise<void> => {
     try {
-      await window.studio.openUrl(GENEX_TOOLS_URL);
+      await window.studio.openUrl(toolsUrl);
     } catch {
-      await navigator.clipboard.writeText(GENEX_TOOLS_URL).then(
+      await navigator.clipboard.writeText(toolsUrl).then(
         () => setCopied(true),
         () => undefined,
       );

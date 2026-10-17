@@ -498,6 +498,48 @@ describe("game chat permissions", () => {
     assert.deepEqual(forgotten.rules, []);
   });
 
+  it("a card still waiting when the person switches the chat to Bypass is allowed, as Bypass asks nothing", async () => {
+    await core.setPermissionMode(threadId, "default");
+    const { card, done } = await asking({ tool: "Bash", input: { command: "npm test" }, always: [] });
+    await core.setPermissionMode(threadId, "bypassPermissions");
+    assert.deepEqual(await done(), { decision: "allow" }, "the session goes on");
+    const settled = (await rows(card.requestId)).at(-1)!;
+    assert.deepEqual([settled.state, settled.by], ["allowed", "mode"]);
+    assert.equal(core.answerPermission(card.requestId, { decision: "deny" }), false, "nothing left to answer");
+  });
+
+  it("a card Claude Code asks in Bypass itself is still the person's to answer after a switch away and back", async () => {
+    await core.setPermissionMode(threadId, "bypassPermissions");
+    const { card, done } = await asking({ tool: "Bash", input: { command: "rm -rf build" }, always: [] });
+    await core.setPermissionMode(threadId, "default");
+    await core.setPermissionMode(threadId, "bypassPermissions");
+    assert.deepEqual(
+      (await rows(card.requestId)).map((row) => row.state),
+      ["pending"],
+    );
+    assert.equal(core.answerPermission(card.requestId, { decision: "deny" }), true);
+    assert.deepEqual(await done(), { decision: "deny" });
+  });
+
+  it("'always' with a mode in it moves a Manual chat, and never takes a chat out of Bypass or Auto", async () => {
+    const editsFromNowOn = [{ kind: "mode" as const, mode: "acceptEdits" as const }];
+    const ask = { tool: "Edit", input: { file_path: "src/a.ts" }, always: editsFromNowOn };
+    await core.setPermissionMode(threadId, "default");
+    const manual = await asking(ask);
+    assert.equal(core.answerPermission(manual.card.requestId, { decision: "always" }), true);
+    await manual.done();
+    assert.equal((await core.store.getRecord(threadId)).metadata?.permissionMode, "acceptEdits", "Manual moves");
+    for (const looser of ["auto", "bypassPermissions"] as const) {
+      await core.setPermissionMode(threadId, "default");
+      const { card, done } = await asking(ask);
+      // The person moved the chat on while the card waited (Bypass answers it; Auto leaves it to them).
+      await core.setPermissionMode(threadId, looser);
+      if (looser === "auto") assert.equal(core.answerPermission(card.requestId, { decision: "always" }), true);
+      await done();
+      assert.equal((await core.store.getRecord(threadId)).metadata?.permissionMode, looser, `${looser} stays`);
+    }
+  });
+
   it("a deny carries the person's words; a plan approval sets the chat's mode", async () => {
     const denied = await asking({
       tool: "Write",

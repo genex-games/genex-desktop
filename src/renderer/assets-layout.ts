@@ -13,10 +13,11 @@
  * The rectangles are laid out in that order, five to a row, with fixed card sizes per kind, so
  * the same ledger always draws the same canvas.
  */
+import type { MakingJob } from "../shared/asset-making.ts";
 import { type AssetKind, type AssetSource, assetKind, type ProjectAsset } from "../shared/game-assets.ts";
 
 /** The sources the studio names itself (`AssetSource`); any other source is a plugin id. */
-const Source = {
+export const Source = {
   Genex: "genex",
   Blender: "blender",
   /** files nobody generated: dropped into the game folder by hand */
@@ -40,23 +41,8 @@ export interface AssetGroupJob {
   status?: string;
   prompt?: string;
   assets: ProjectAsset[];
-  /** A job the studio has heard start and not heard finish: one placeholder card, no files yet. */
-  pending?: boolean;
-}
-
-/**
- * A generation that is happening right now. It has no files on disk yet, so it cannot come from
- * the walk; the canvas carries it so a wait of several minutes is visible rather than an
- * unchanged screen.
- */
-export interface PendingJob {
-  source: string;
-  jobId: string;
-  at?: string;
-  operation?: string;
-  prompt?: string;
-  /** The plugin's own word for the job. */
-  pluginStatus?: string;
+  /** A job still on its way, with no file in the game yet: one card in the spot its asset will land. */
+  waiting?: MakingJob;
 }
 
 export interface AssetGroup {
@@ -125,10 +111,10 @@ function compareJobs(a: AssetGroupJob, b: AssetGroupJob): number {
  * Sort a project's assets into source → job → file. Files with no job id share one bucket per
  * source, which is what "the folder" means for hand-dropped files.
  */
-export function groupAssets(assets: readonly ProjectAsset[], pending: readonly PendingJob[] = []): AssetGroup[] {
+export function groupAssets(assets: readonly ProjectAsset[], waiting: readonly MakingJob[] = []): AssetGroup[] {
   const bySource = new Map<string, Map<string, AssetGroupJob>>();
   for (const asset of assets) addAsset(jobsOf(bySource, asset.source || Source.Imported), asset);
-  for (const job of pending) addPending(jobsOf(bySource, job.source || Source.Imported), job);
+  for (const job of waiting) addWaiting(jobsOf(bySource, job.source || Source.Imported), job);
   const groups: AssetGroup[] = [];
   for (const [source, jobs] of bySource) {
     const ordered = [...jobs.values()].sort(compareJobs);
@@ -174,15 +160,15 @@ function addAsset({ source, jobs }: SourceJobs, asset: ProjectAsset): void {
   job.assets.push(asset);
 }
 
-function addPending({ source, jobs }: SourceJobs, job: PendingJob): void {
-  // A delivery that has already landed wins: the real files replace the placeholder.
+function addWaiting({ source, jobs }: SourceJobs, job: MakingJob): void {
+  // A delivery that has already landed wins: the real files replace the card.
   if (jobs.has(job.jobId)) return;
   jobs.set(job.jobId, {
     id: `job:${source}:${job.jobId}`,
     jobId: job.jobId,
     at: job.at ?? null,
     assets: [],
-    pending: true,
+    waiting: job,
     ...(job.pluginStatus ? { status: job.pluginStatus } : {}),
     ...(job.prompt ? { prompt: job.prompt } : {}),
   });
@@ -197,8 +183,8 @@ export function cardHeight(kind: AssetKind): number {
  * Deterministic rectangles: source groups contain a continuous grid in job order.
  * A completed job needs no metadata row or empty band between its previews.
  */
-export function layoutAssets(assets: readonly ProjectAsset[], pending: readonly PendingJob[] = []): AssetsLayout {
-  const groups = groupAssets(assets, pending);
+export function layoutAssets(assets: readonly ProjectAsset[], waiting: readonly MakingJob[] = []): AssetsLayout {
+  const groups = groupAssets(assets, waiting);
   const rects: Record<string, AssetRect> = {};
   const widths: number[] = [];
   let y = PAD;
@@ -234,7 +220,7 @@ function placeGroup(rects: Record<string, AssetRect>, group: AssetGroup, top: nu
     };
   }
   const bottom = grid.rowTop + grid.rowHeight;
-  const usedColumns = Math.min(COLUMNS, group.count + group.jobs.filter((job) => job.pending).length);
+  const usedColumns = Math.min(COLUMNS, group.count + group.jobs.filter((job) => job.waiting).length);
   const rect = {
     x: PAD,
     y: top,
@@ -245,9 +231,9 @@ function placeGroup(rects: Record<string, AssetRect>, group: AssetGroup, top: nu
   return rect;
 }
 
-/** A pending job is one placeholder card; a delivered one is a card per file. */
+/** A waiting job is one card; a delivered one is a card per file. */
 function jobCards(group: AssetGroup, job: AssetGroupJob): Array<{ id: string; height: number }> {
-  if (job.pending) return [{ id: `pending:${group.source}:${job.jobId ?? ""}`, height: CARD_IMAGE_H }];
+  if (job.waiting) return [{ id: `pending:${group.source}:${job.jobId ?? ""}`, height: CARD_IMAGE_H }];
   return job.assets.map((asset) => ({
     id: `asset:${asset.file}`,
     height: cardHeight(asset.kind ?? assetKind(asset.file)),

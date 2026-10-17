@@ -1,4 +1,4 @@
-import { compactGraphEvents } from "../shared/run-graph-events.ts";
+import { answeredRecords, compactGraphEvents } from "../shared/run-graph-events.ts";
 import path from "node:path";
 import { lstat, readdir, realpath } from "node:fs/promises";
 import { compareIds } from "../shared/compare-ids.ts";
@@ -101,13 +101,15 @@ export class RunSummaryCache {
   async #build(events: EventEnvelope[], project: string, runId: string, runs: string): Promise<RunSummary> {
     const summary = this.#fold(events, project, runId);
     if (RUN_ID.test(runId)) summary.runDirectory = path.join(runs, runId);
-    summary.graphEvents = compactGraphEvents(
-      events.filter((event) => {
+    summary.graphEvents = compactGraphEvents([
+      // The message the run answers, ahead of its own records: its start shows that message's pictures.
+      ...answeredRecords(events, runId),
+      ...events.filter((event) => {
         if (event.data.type !== EventKind.Custom) return false;
         const facts = event.data.payload as { runId?: string; project?: string };
         return facts?.runId === runId && (!facts.project || facts.project === project);
       }),
-    );
+    ]);
     await this.#supplement(summary, runs);
     summary.revision = ++this.#revision;
     return summary;

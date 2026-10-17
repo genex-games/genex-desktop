@@ -1,0 +1,162 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Loop with workers</title><style>
+@font-face{font-family:"Zalando Sans SemiExpanded";font-weight:200 900;font-display:swap;src:url(../../../../src/renderer/fonts/ZalandoSansSemiExpanded-variable.woff2) format("woff2")}
+@font-face{font-family:"Geist Mono";font-weight:100 900;font-display:swap;src:url(../../../../src/renderer/fonts/GeistMono-variable.woff2) format("woff2")}
+body{margin:0}
+.node{position:absolute;width:150px;height:94px;border-radius:12px;overflow:hidden;background:#ffffff;box-shadow:0 0 0 1px rgba(16,17,18,0.09)}
+.shade{position:absolute;left:0;right:0;bottom:0;padding:22px 10px 8px;display:flex;flex-direction:column;gap:1px;background:linear-gradient(rgba(10,12,20,0),rgba(10,12,20,0.62))}
+.nm{font-size:12.5px;line-height:16px;font-weight:650;color:#ffffff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.wd{font-size:11px;line-height:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.glyph{position:absolute;right:8px;top:8px;width:18px;height:18px;border-radius:9px;background:#ffffff;display:flex;align-items:center;justify-content:center}
+.chip{position:absolute;left:8px;top:8px;padding:0 6px;border-radius:6px;font-family:"Geist Mono",ui-monospace,monospace;font-size:10px;line-height:16px;color:#ffffff;background:rgba(10,12,20,0.55)}
+.hl{position:absolute;height:0;border-top:1.5px solid #c4c6c9}
+.vl{position:absolute;width:0;border-left:1.5px solid #c4c6c9}
+.pin{position:absolute;width:8px;height:8px;border-radius:4px;background:#f9faf9;border:1.5px solid #9da0a4}
+.rowlabel{position:absolute;font-family:"Geist Mono",ui-monospace,monospace;font-size:10.5px;line-height:14px;letter-spacing:0.04em;color:#5e5f62;text-transform:uppercase}
+.line{display:flex;gap:10px;align-items:flex-start;font-size:13.5px;line-height:20px;color:#393a3d}
+.dot{flex:none;width:18px;height:18px;border-radius:9px;display:flex;align-items:center;justify-content:center;margin-top:1px}
+</style></head><body>
+<div style="width: 1440px; height: 900px; position: relative; overflow: hidden; background: #f9faf9; font-family: 'Zalando Sans SemiExpanded', ui-sans-serif, system-ui, sans-serif; color: #101112; letter-spacing: -0.005em">
+
+<!-- Chat column -->
+<div style="position: absolute; left: 0; top: 0; width: 440px; height: 900px; border-right: 1px solid #e3e4e5; display: flex; flex-direction: column">
+<div style="height: 64px; padding: 0 20px; display: flex; align-items: center; gap: 14px; border-bottom: 1px solid #e3e4e5">
+<button type="button" aria-label="Show sidebar" style="width: 32px; height: 32px; border: 0; border-radius: 8px; background: transparent; display: flex; align-items: center; justify-content: center; color: #5e5f62"><svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="2" y="3" width="14" height="12" rx="2.5"></rect><line x1="7" y1="3" x2="7" y2="15"></line></svg></button>
+<span style="font-size: 16px; font-weight: 650; flex: 1">Lantern</span>
+<span style="font-family: 'Geist Mono', monospace; font-size: 11px; line-height: 18px; padding: 1px 8px; border-radius: 6px; background: #eef0f1; color: #5e5f62">Unreal project</span>
+</div>
+<div style="flex: 1; padding: 22px 24px; display: flex; flex-direction: column; gap: 16px; overflow: hidden">
+<div style="align-self: flex-end; max-width: 300px; padding: 10px 14px; border-radius: 16px 16px 4px 16px; background: #eef0f1; font-size: 14px; line-height: 21px">Port the web racer to Unreal and make the track feel fast.</div>
+<div style="font-size: 12px; line-height: 16px; color: #5e5f62">∞ Loop started · up to 24 h · Auto mode</div>
+<p style="margin: 0; font-size: 14px; line-height: 22px; color: #101112">I'll study the web game, port the car and build the track in Unreal, with three workers at once.</p>
+<div style="display: flex; flex-direction: column; gap: 10px">
+<div class="line"><span class="dot" style="background: rgba(36,159,86,0.14)"><svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="#1d7a43" stroke-width="1.8"><path d="M2 5.2l2 2 4-4.4"></path></svg></span><span>Studied the web game.</span></div>
+<div class="line"><span class="dot" style="background: rgba(36,159,86,0.14)"><svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="#1d7a43" stroke-width="1.8"><path d="M2 5.2l2 2 4-4.4"></path></svg></span><span>Ported the car. Added to your game.</span></div>
+<div class="line"><span class="dot" style="background: rgba(63,97,245,0.14)"><span style="width: 7px; height: 7px; border-radius: 4px; background: #3f61f5"></span></span><span style="color: #101112">Building the track in Unreal…</span></div>
+<div class="line"><span class="dot" style="background: #eef0f1"><svg width="10" height="10" viewBox="0 0 10 10" fill="#5e5f62"><path d="M3 2l5 3-5 3z"></path></svg></span><span>Unreal build running in the background · 4 min</span></div>
+</div>
+<div style="display: flex; align-items: center; gap: 14px; padding: 10px; border: 1px solid #e3e4e5; border-radius: 14px; background: #ffffff">
+<div style="width: 96px; height: 60px; border-radius: 8px; flex: none; background: linear-gradient(160deg, #6f8fb3 0%, #2c3d55 55%, #a3b6c9 100%)"></div>
+<div style="flex: 1; display: flex; flex-direction: column; gap: 2px"><span style="font-size: 14.5px; font-weight: 650">Save point 6</span><span style="font-size: 13px; color: #5e5f62">The car drives on the new track</span></div>
+<a href="#" style="padding: 7px 12px; border-radius: 9px; background: #eef0f1; color: #101112; font-size: 13px; font-weight: 600; text-decoration: none">Open in Unreal</a>
+</div>
+</div>
+<div style="margin: 0 16px 16px; padding: 12px 14px 10px; border: 1px solid #e3e4e5; border-radius: 18px; background: #ffffff; display: flex; flex-direction: column; gap: 10px">
+<label for="ask" style="position: absolute; left: -9999px">Prompt</label>
+<input id="ask" type="text" placeholder="Ask for a change…" style="border: 0; outline: none; font: inherit; font-size: 14.5px; background: transparent; color: #101112">
+<div style="display: flex; gap: 6px; align-items: center">
+<span style="padding: 4px 10px; border-radius: 999px; background: rgba(63,97,245,0.12); color: #2d4bd4; font-size: 13px; font-weight: 600">∞ Loop</span>
+<span style="padding: 4px 10px; border-radius: 999px; background: #eef0f1; color: #393a3d; font-size: 13px">Auto</span>
+<span style="flex: 1"></span>
+<span style="padding: 4px 10px; border-radius: 999px; background: #eef0f1; color: #393a3d; font-size: 13px">Opus 5.5</span>
+<button type="button" aria-label="Stop the Loop" style="width: 30px; height: 30px; border-radius: 15px; border: 0; background: #101112; display: flex; align-items: center; justify-content: center"><span style="width: 9px; height: 9px; border-radius: 2px; background: #ffffff"></span></button>
+</div>
+</div>
+</div>
+
+<!-- Builds pane -->
+<div style="position: absolute; left: 440px; top: 0; width: 1000px; height: 900px">
+<div style="height: 64px; padding: 0 20px; display: flex; align-items: center; gap: 10px; border-bottom: 1px solid #e3e4e5">
+<div style="display: flex; padding: 3px; gap: 2px; border-radius: 11px; background: #eef0f1">
+<span style="padding: 5px 14px; border-radius: 8px; font-size: 13.5px; color: #393a3d">Live</span>
+<span style="padding: 5px 14px; border-radius: 8px; font-size: 13.5px; color: #ffffff; background: #3f61f5">Builds</span>
+<span style="padding: 5px 14px; border-radius: 8px; font-size: 13.5px; color: #393a3d">Assets</span>
+</div>
+<span style="flex: 1"></span>
+<span style="font-size: 13px; color: #5e5f62">Loop · 1 h so far</span>
+</div>
+<div style="height: 56px; padding: 0 20px; display: flex; align-items: center; gap: 10px; border-bottom: 1px solid #e3e4e5">
+<span style="width: 9px; height: 9px; border-radius: 5px; background: #3f61f5; box-shadow: 0 0 0 4px rgba(63,97,245,0.16)"></span>
+<span style="font-size: 15px; font-weight: 700">Working</span>
+<span style="font-size: 15px; color: #5e5f62">· 3 workers on it</span>
+<span style="flex: 1"></span>
+<button type="button" style="padding: 7px 14px; border-radius: 10px; border: 1px solid #c4c6c9; background: #ffffff; font: inherit; font-size: 13.5px; font-weight: 600; color: #101112">Stop</button>
+</div>
+
+<!-- Canvas -->
+<div style="position: absolute; left: 0; top: 120px; width: 1000px; height: 780px; background-color: #f9faf9; background-image: radial-gradient(#d5d7da 1.1px, transparent 1.2px); background-size: 18px 18px">
+
+<!-- edges -->
+<div class="hl" style="left: 186px; top: 377px; width: 40px"></div>
+<div class="hl" style="left: 376px; top: 377px; width: 22px"></div>
+<div class="vl" style="left: 398px; top: 245px; height: 264px"></div>
+<div class="hl" style="left: 398px; top: 245px; width: 18px"></div>
+<div class="hl" style="left: 398px; top: 509px; width: 18px"></div>
+<div class="hl" style="left: 398px; top: 377px; width: 18px"></div>
+<div class="hl" style="left: 566px; top: 245px; width: 22px"></div>
+<div class="hl" style="left: 566px; top: 377px; width: 22px"></div>
+<div class="hl" style="left: 566px; top: 509px; width: 22px"></div>
+<div class="vl" style="left: 588px; top: 245px; height: 264px"></div>
+<div class="hl" style="left: 588px; top: 377px; width: 18px"></div>
+<div class="hl" style="left: 756px; top: 377px; width: 40px; border-top-style: dashed"></div>
+<div style="position: absolute; left: 300px; top: 424px; width: 0; height: 30px; border-left: 1.5px dashed #c4c6c9"></div>
+<div class="pin" style="left: 411px; top: 240px"></div>
+<div class="pin" style="left: 411px; top: 372px"></div>
+<div class="pin" style="left: 411px; top: 504px"></div>
+<div class="pin" style="left: 601px; top: 372px"></div>
+
+<!-- what you asked -->
+<div class="node" style="left: 36px; top: 330px">
+<div style="position: absolute; inset: 0; padding: 10px; display: flex; flex-direction: column; gap: 6px">
+<span style="font-family: 'Geist Mono', monospace; font-size: 10px; letter-spacing: 0.06em; color: #5e5f62">WHAT YOU ASKED</span>
+<span style="font-size: 12.5px; line-height: 17px; font-weight: 600">Port the web racer to Unreal and make the track…</span>
+</div>
+</div>
+
+<!-- the lead -->
+<div class="node" style="left: 226px; top: 330px; box-shadow: 0 0 0 1.5px #3f61f5, 0 0 0 6px rgba(63,97,245,0.16); background: linear-gradient(135deg, #dfe5fb 0%, #c9d3f7 50%, #e6eafb 100%)">
+<div style="position: absolute; left: 10px; top: 10px; display: flex; gap: 6px; align-items: center"><span style="width: 7px; height: 7px; border-radius: 4px; background: #3f61f5"></span><span style="font-family: 'Geist Mono', monospace; font-size: 10px; letter-spacing: 0.06em; color: #2d4bd4">THE LEAD</span></div>
+<div style="position: absolute; left: 10px; right: 10px; bottom: 9px; display: flex; flex-direction: column; gap: 1px">
+<span style="font-size: 12.5px; line-height: 16px; font-weight: 650">The lead</span>
+<span class="wd" style="color: #2d4bd4">Waiting for a worker</span>
+</div>
+</div>
+
+<!-- jobs under the lead -->
+<div class="node" style="left: 226px; top: 454px; height: 66px; background: #ffffff">
+<div style="position: absolute; inset: 0; padding: 9px 10px; display: flex; flex-direction: column; gap: 3px">
+<span style="font-family: 'Geist Mono', monospace; font-size: 10px; letter-spacing: 0.06em; color: #5e5f62">IN THE BACKGROUND</span>
+<span style="font-size: 12.5px; line-height: 16px; font-weight: 650">Unreal build</span>
+<span class="wd" style="color: #2d4bd4">4 min · 2 finished</span>
+</div>
+</div>
+
+<!-- worker rows -->
+<div class="node" style="left: 416px; top: 198px">
+<div style="position: absolute; inset: 0; padding: 10px; display: flex; flex-direction: column; justify-content: space-between">
+<svg width="22" height="22" viewBox="0 0 22 22" fill="none" stroke="#5e5f62" stroke-width="1.5"><circle cx="9.5" cy="9.5" r="6"></circle><line x1="14" y1="14" x2="19" y2="19"></line></svg>
+<div style="display: flex; flex-direction: column; gap: 1px"><span style="font-size: 12.5px; line-height: 16px; font-weight: 650">Study the web game</span><span class="wd" style="color: #1d7a43">Done</span></div>
+</div>
+<span class="glyph" style="box-shadow: 0 0 0 1px rgba(16,17,18,0.08)"><svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="#1d7a43" stroke-width="1.8"><path d="M2 5.2l2 2 4-4.4"></path></svg></span>
+</div>
+
+<div class="node" style="left: 416px; top: 330px; background: linear-gradient(150deg, #c86b4f 0%, #6b2f2a 45%, #2b2f3a 100%)">
+<span class="glyph"><svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="#1d7a43" stroke-width="1.8"><path d="M2 5.2l2 2 4-4.4"></path></svg></span>
+<div class="shade"><span class="nm">Port the car</span><span class="wd" style="color: #8fe0a6">Added to your game</span></div>
+</div>
+
+<div class="node" style="left: 416px; top: 462px; box-shadow: 0 0 0 1.5px #3f61f5, 0 0 0 6px rgba(63,97,245,0.16); background: linear-gradient(170deg, #9fb4c8 0%, #4d6a86 40%, #23303f 100%)">
+<div class="shade"><span class="nm">Build the track</span><span class="wd" style="color: #b8c1ff">Working in Unreal</span></div>
+</div>
+
+<!-- result -->
+<div class="node" style="left: 606px; top: 330px; box-shadow: 0 0 0 1px rgba(16,17,18,0.09), 0 0 0 5px #f9faf9, 0 0 0 6px #c4c6c9; background: linear-gradient(160deg, #6f8fb3 0%, #2c3d55 55%, #a3b6c9 100%)">
+<span class="glyph"><svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="#1d7a43" stroke-width="1.8"><path d="M2 5.2l2 2 4-4.4"></path></svg></span>
+<div class="shade"><span class="nm">Save point 6</span><span class="wd" style="color: #8fe0a6">Saved</span></div>
+</div>
+
+<!-- finish check, not yet claimed -->
+<div class="node" style="left: 796px; top: 330px; box-shadow: none; background: repeating-linear-gradient(135deg, #f1f2f3 0 6px, #f9faf9 6px 12px); border: 1.5px dashed #c4c6c9; box-sizing: border-box">
+<div style="position: absolute; inset: 0; padding: 10px; display: flex; flex-direction: column; justify-content: space-between">
+<span style="font-family: 'Geist Mono', monospace; font-size: 10px; letter-spacing: 0.06em; color: #5e5f62">FINISH CHECK</span>
+<div style="display: flex; flex-direction: column; gap: 1px"><span style="font-size: 12.5px; line-height: 16px; font-weight: 650; color: #393a3d">Not yet</span><span class="wd" style="color: #5e5f62">Runs at the end</span></div>
+</div>
+</div>
+
+<!-- zoom -->
+<div style="position: absolute; left: 20px; bottom: 20px; display: flex; align-items: center; gap: 12px; padding: 6px 12px; border-radius: 10px; border: 1px solid #e3e4e5; background: #ffffff; font-size: 13px; color: #393a3d">
+<span>−</span><span style="font-family: 'Geist Mono', monospace; font-size: 12px; color: #5e5f62">72%</span><span>+</span><span style="width: 1px; height: 16px; background: #e3e4e5"></span><span style="font-weight: 600">Fit</span>
+</div>
+</div>
+</div>
+</div>
+</body></html>

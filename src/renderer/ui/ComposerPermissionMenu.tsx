@@ -154,7 +154,7 @@ function ModeRow({
         <span className="flex h-5 min-w-0 items-center gap-2">
           <span className="truncate">{words.label}</span>
           {auto && (
-            <span className="inline-flex h-5 shrink-0 items-center rounded-[6px] bg-accent-tint px-1.5 font-mono text-micro text-accent-ink">
+            <span className="inline-flex h-5 shrink-0 items-center rounded-[6px] bg-accent-tint px-1.5 font-mono text-micro text-[color-mix(in_srgb,var(--accent-ink)_70%,var(--ink))]">
               {WORDS.recommended}
             </span>
           )}
@@ -249,9 +249,9 @@ export function ComposerPermissionMenu({
     if (bypass) onMode(PermissionMode.Bypass);
   };
   const label = pillLabel(mode, autoUnavailable);
-  // The recommended mode needs no words: the shield and its tooltip say it. Any other mode is a
-  // choice the person made, so the pill names it while the bar has room (theme.css).
-  const quiet = mode === PermissionMode.Auto;
+  // Auto and Bypass need no words: their shields (Bypass's in orange) and the tooltip say it. Any
+  // other mode is a choice the person made, so the pill names it while the bar has room (theme.css).
+  const quiet = mode === PermissionMode.Auto || mode === PermissionMode.Bypass;
   return (
     <>
       <Popover open={open} onOpenChange={setOpen}>

@@ -62,6 +62,7 @@ import { diedEarly, OptimizationOutcome, StopCode, stopWith } from "./outcomes.t
 import { baseBrief, contractWiringAsk } from "./prompts-build.ts";
 import { integratorBrief } from "./autopilot-prompts.ts";
 import { HostMethod } from "./host-methods.ts";
+import { ProjectStarter } from "./folder-facts.ts";
 import {
   appendRun as appendRunEvent,
   EventKind,
@@ -73,6 +74,7 @@ import {
   saveJournal as saveRunJournal,
 } from "./run-events.ts";
 import { readJournal, writeJournal } from "./run-journal.ts";
+import { journalProbes } from "./probe-count.ts";
 import { clip, CLIP_DETAIL, CLIP_REASON } from "./text.ts";
 import { MINUTE_MS, SECOND_MS, sleep } from "./time.ts";
 import { isPlainRecord } from "./json.ts";
@@ -395,7 +397,9 @@ export async function decompose(
   const craftRecipes = await library.loadRecipes(ctx.workspace).catch(() => []);
   const backlog = await previousSteering(ctx, run);
   const single = singleFacetPlan(run, known);
-  const activePlugins = await ctx.call(HostMethod.PluginsTools, {}).catch(() => ({ guidance: "" }));
+  const activePlugins = await ctx
+    .call(HostMethod.PluginsTools, { project: run.project })
+    .catch(() => ({ guidance: "" }));
   const ask = plannerAsk({
     run,
     profile,
@@ -1254,7 +1258,11 @@ async function openReport(pipeline: Pipeline): Promise<PipelineEnd> {
     ...(priorJournal?.optimization ? { optimization: priorJournal.optimization } : {}),
   };
   pipeline.journal = journal;
-  const saveJournal = () => saveRunJournal(ctx, threadId, run.runId, journal);
+  // The hands-on probes the run spent ride on the journal's copy of the run, which a Resume starts from.
+  const saveJournal = () => {
+    journalProbes(journal, run);
+    return saveRunJournal(ctx, threadId, run.runId, journal);
+  };
   pipeline.saveJournal = saveJournal;
   await saveJournal();
   await prepareFolder(pipeline);
@@ -1353,7 +1361,7 @@ function autopilotStartedPayload(pipeline: Pipeline): AnyRecord {
 /** The game folder made ready: scaffolded, its contract current, loaded in the preview; the catalogue read. */
 async function prepareFolder(pipeline: Pipeline): Promise<void> {
   const { ctx, run, threadId } = pipeline;
-  await ctx.call(HostMethod.GameScaffold, { name: run.project, title: run.project });
+  await ctx.call(HostMethod.GameScaffold, { name: run.project, title: run.project, kind: ProjectStarter.Web });
   // A game scaffolded before the v2 contract gets the current studio.js (its old copy kept
   // beside it), so scene checks and eye cameras exist from the first iteration.
   const upgraded = await ctx.call(HostMethod.GameUpgradeContract, { project: run.project }).catch(() => null);

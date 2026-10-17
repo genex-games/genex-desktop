@@ -2,6 +2,7 @@
 import path from "node:path";
 import { dialog, shell, type BrowserWindow } from "electron";
 import { tagGenexLink } from "../../plugins/genex/http.ts";
+import { browserMayOpen } from "../play/origins.ts";
 import { containedReal } from "../../substrate/paths.ts";
 import { ChatFileOpen } from "../../shared/chat-files.ts";
 import { isGenexRef } from "../../shared/genex-ref.ts";
@@ -11,7 +12,7 @@ import type { IpcHandle } from "./registrar.ts";
 
 /** Why a project request from the renderer is refused. */
 const MESSAGE = {
-  httpsOnly: "only https urls",
+  httpsOnly: "only https urls, or the pages of the website Play links to",
   noWindow: "the window is not open",
   unknownProject: (name: string) => `unknown project ${name}`,
 } as const;
@@ -22,14 +23,16 @@ export interface ProjectsIpcDeps {
   window(): BrowserWindow | null;
   /** `~/AI Games`, as a human reads it — the renderer never sees absolute paths. */
   gamesRootLabel(root: string): string;
+  /** The website Play links to (`play/origins.ts`): a development profile's may be plain http on this Mac. */
+  web: string;
 }
 
 export function registerProjectsIpc(
   handle: IpcHandle,
-  { core, window: currentWindow, gamesRootLabel }: ProjectsIpcDeps,
+  { core, window: currentWindow, gamesRootLabel, web }: ProjectsIpcDeps,
 ): void {
   handle("studio:open-url", async (payload) => {
-    if (!/^https:\/\//i.test(payload.url ?? "")) throw new Error(MESSAGE.httpsOnly);
+    if (!browserMayOpen(String(payload.url ?? ""), web)) throw new Error(MESSAGE.httpsOnly);
     // Every renderer link lands here; a genex.games page goes tagged `s=desktop`.
     await shell.openExternal(tagGenexLink(payload.url));
     return true;

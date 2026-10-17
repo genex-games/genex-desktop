@@ -23,7 +23,10 @@
  */
 import { loadSkills, formatSkillIndex, type Skill } from "./skills.ts";
 import type { AnyRecord, HarnessCtx, HarnessEvent } from "../types/harness.d.ts";
-import type { Message } from "../types/host-api.d.ts";
+import type { GameProject, Message } from "../types/host-api.d.ts";
+import { holdsWebGame } from "./web-game.ts";
+import { factsOfGame, kindPending, kindUnknown } from "./folder-facts.ts";
+import { appIdentity, pendingKindRule, unknownKindRules } from "./project-prompts.ts";
 import { HostMethod } from "./host-methods.ts";
 import { EventKind, RunEvent } from "./run-events.ts";
 
@@ -96,8 +99,9 @@ export async function readStanding(
   options: Pick<PromptOptions, "project" | "projectDir" | "extraReads">,
 ): Promise<StandingContext> {
   const skills = await loadSkills(ctx.workspace);
-  const identity = await readPromptFile(ctx, "prompts/identity.md");
-  const rules = await readPromptFile(ctx, "prompts/operating-rules.md");
+  const game = await turnGame(ctx, options.project);
+  const identity = await readIdentity(ctx, options.project, game);
+  const rules = await readRules(ctx, options.project, game);
   const memory = (await ctx.call(HostMethod.ArtifactRead, { artifactId: "memory" }).catch(() => null)) ?? {};
   const notes = options.project ? await readGameNotes(ctx, options.project) : null;
   const inventory = options.project ? await readProjectInventory(ctx, options.project, options) : null;
@@ -419,6 +423,66 @@ function formatMemory(memory: unknown): string {
     ([key, value]) => `- **${key}**: ${typeof value === "string" ? value : JSON.stringify(value)}`,
   );
   return `## What you remember\n${lines.join("\n")}`;
+}
+
+/** The turn's game as the host lists it; undefined with no game, or when the host cannot list them. */
+async function turnGame(ctx: HarnessCtx, project: string | null | undefined): Promise<GameProject | undefined> {
+  if (!project) return undefined;
+  const games = await ctx.call(HostMethod.GameList).catch(() => null);
+  return Array.isArray(games) ? games.find((g) => g.name === project) : undefined;
+}
+
+/** Whether the turn's game is a web page: a host that cannot list the games leaves it one, as every game was. */
+const webTurn = (project: string | null | undefined, game: GameProject | undefined) =>
+  Boolean(project) && holdsWebGame(game);
+
+/**
+ * How a local turn's game with no facts is built: one with no kind yet takes the web starter first
+ * (`start_web_game`), the kind tool of an engine plugin on offer (`plugins.tools`' `kinds`) when the
+ * request names that engine, or goes through `plugins_find`; one of a kind Genex can't name is looked
+ * through first. A local model calls its tools by their bare names and has no question card.
+ */
+async function noFactRules(ctx: HarnessCtx, project: string, game: GameProject | undefined): Promise<string> {
+  if (kindUnknown(game)) return unknownKindRules(undefined, game?.holds).join("\n");
+  if (!kindPending(game)) return "";
+  const plugins = await ctx.call(HostMethod.PluginsTools, { project }).catch(() => null);
+  const kinds = Array.isArray(plugins?.kinds) ? plugins.kinds : [];
+  return pendingKindRule(undefined, kinds, null, game?.holds, false).join("\n");
+}
+
+/**
+ * Who the model is: engine-neutral, plus where it runs and what the turn's game holds
+ * (`appIdentity`) and, for a game with no facts, how its kind is picked (`noFactRules`), plus what
+ * a web game adds (three.js, the preview window) when the game is one (`holdsWebGame`). With no game
+ * there is nothing to add.
+ */
+async function readIdentity(
+  ctx: HarnessCtx,
+  project: string | null | undefined,
+  game: GameProject | undefined,
+): Promise<string> {
+  const identity = await readPromptFile(ctx, "prompts/identity.md");
+  if (!project) return identity;
+  const folderLabel = game?.dir ? game.dir.split("/").slice(-2).join("/") : project;
+  const app = appIdentity({ folderLabel, facts: factsOfGame(game), holds: game?.holds ?? null });
+  const web = webTurn(project, game) ? await readPromptFile(ctx, "prompts/identity-web.md") : "";
+  return [identity, app, await noFactRules(ctx, project, game), web].filter((text) => text.trim()).join("\n\n");
+}
+
+/**
+ * How the model works: the rules for every turn, plus the web page's (the preview, its controls,
+ * `window.__studio`, determinism) only when the turn's game is a web game. A kept copy of the
+ * rules from before they were split still carries the web rules for every turn.
+ */
+async function readRules(
+  ctx: HarnessCtx,
+  project: string | null | undefined,
+  game: GameProject | undefined,
+): Promise<string> {
+  const rules = await readPromptFile(ctx, "prompts/operating-rules.md");
+  if (!webTurn(project, game)) return rules;
+  const web = await readPromptFile(ctx, "prompts/operating-rules-web.md");
+  return [rules, web].filter((text) => text.trim()).join("\n\n");
 }
 
 async function readPromptFile(ctx: HarnessCtx, relative: string): Promise<string> {

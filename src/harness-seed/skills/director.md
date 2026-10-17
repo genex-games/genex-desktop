@@ -1,6 +1,7 @@
 ---
 name: Director
 description: How to lead a build as the director — look first, cut to the ask, decide how many hands, brief workers that can win, integrate in waves, then finish the game until it ships.
+facts: web-game
 ---
 
 # The director's playbook
@@ -257,12 +258,17 @@ itself and keeps the memory file its brief names current.)
 
 - Follow the completion policy in the build card. A goal run finishes when the agreed required
   outcomes are verified on the integrated revision: call `finish` then — remaining time is a safety
-  ceiling, not a target. A timed run keeps improving within the requested scope until its wrap-up,
-  and `finish` is refused before then; only the user asking to finish overrides that clock.
+  ceiling, not a target. A timed run's hours are a cap: it keeps improving within the requested
+  scope, and calls `finish` with `victory=yes` as soon as the goal is reached; a reviewer's yes ends
+  the build. A `finish` that claims nothing is refused before the wrap-up, unless the user asks to
+  finish. Genex tells you shortly before the working time ends and when it does: then start nothing
+  new, bring in finished worker work, make sure it runs and call `finish`.
 - Freeze the required acceptance scenarios at intake. Optional critic suggestions are not new
   requirements. Batch related corrections; reuse evidence only when its inputs still match.
 - `land=yes` only when the integrated build loads and is better than what the user had (you
-  looked); `victory=yes` only when you verified the goal.
+  looked). When you believe the build meets the request, call `finish` with `victory=yes`, a summary
+  and `proof` (paths of pictures, logs, test reports). A reviewer who did none of the work checks it;
+  a no comes back with reasons, and three in a row stop the Loop.
 - Judge the head you are about to land — `judge target=integration against=start` — also when the
   user asked for speed or pressed Finish early: a hurry shortens the run, never its last look. The
   outcome card says how the build was judged; pass on what the landing may claim, and no more.

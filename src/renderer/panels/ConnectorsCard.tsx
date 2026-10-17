@@ -13,31 +13,32 @@
  * `connectors/` holds the parts: the form's state and save rules, one connector's entry, and the form.
  */
 import type { JSX, Ref } from "react";
-import { useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
+import { useCallback, useEffect, useImperativeHandle, useState } from "react";
 import { errorMessage } from "../../shared/errors.ts";
 import type { McpConnectorView, McpToolSummary } from "../../shared/mcp.ts";
-import { type McpConnectorDraft, type McpDraft, parseMcpSnippet } from "../../shared/mcp-import.ts";
+import { type McpConnectorDraft, type McpDraft, parseMcpInput } from "../../shared/mcp-import.ts";
 import { UiEvent } from "../../shared/ui-events.ts";
 import { Button } from "../ui/Button.tsx";
 import { Icon } from "../ui/icons.tsx";
 import { ConnectorEntry, type EntryActions } from "./connectors/ConnectorEntry.tsx";
 import { PluginIcon } from "../ui/PluginIcon.tsx";
-import { ConnectorForm, type FormProps, Label } from "./connectors/ConnectorForm.tsx";
+import { ConnectorDialog, type FormProps, type PasteState } from "./connectors/ConnectorForm.tsx";
 import {
   blankDraft,
   connectorToSave,
   type Draft,
   draftFrom,
   draftFromImport,
+  secretsToSave,
   withToolAllowed,
   withToolAutoApproved,
 } from "./connectors/draft.ts";
 import { Pending } from "../ui/Pending.tsx";
 import { PLUGINS_WORDS } from "../words.ts";
 
+/** What the plugins page's Add menu can ask of the card. */
 export interface ConnectorActions {
   add: () => void;
-  import: () => void;
 }
 
 /** The connectors as the host lists them, re-read whenever the host says they changed. */
@@ -76,45 +77,6 @@ function useConnectorViews(project: string | null | undefined, setError: (error:
 /** Whether a connector matches the search, by its name or id. */
 const connectorMatches = (view: McpConnectorView, query: string): boolean =>
   `${view.connector.name} ${view.connector.id}`.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase());
-
-/** Paste an `mcpServers` block or a Codex `[mcp_servers.…]` section and read it into connectors. */
-function SnippetForm({
-  snippet,
-  warnings,
-  onSnippet,
-  onRead,
-  onCancel,
-}: {
-  snippet: string;
-  warnings: string[];
-  onSnippet: (snippet: string) => void;
-  onRead: () => void;
-  onCancel: () => void;
-}): JSX.Element {
-  return (
-    <div className="mt-2 flex flex-col gap-2 border-t border-line pt-2">
-      <Label text="Paste an mcpServers block or a Codex [mcp_servers.…] section">
-        <textarea
-          aria-label="Configuration snippet"
-          value={snippet}
-          onChange={(event) => onSnippet(event.target.value)}
-          className="h-28 rounded-sm bg-soft p-2 font-mono text-micro text-ink outline-none"
-        />
-      </Label>
-      <div className="flex items-center gap-2">
-        <Button onClick={onRead}>Read snippet</Button>
-        <Button aria-label="Cancel the import" onClick={onCancel}>
-          Cancel
-        </Button>
-      </div>
-      {warnings.map((warning) => (
-        <p key={warning} className="text-micro text-orange">
-          {warning}
-        </p>
-      ))}
-    </div>
-  );
-}
 
 /** The connectors a pasted snippet held, waiting to be reviewed one at a time. */
 function ImportChoices({
@@ -224,17 +186,15 @@ function ConnectorList({
   );
 }
 
-/** The card's opening lines: loading, nothing configured, its error, and what a pasted snippet warned about. */
+/** The card's opening lines: loading, nothing configured, and its error. */
 function CardNotices({
   views,
   error,
   drafting,
-  warnings,
 }: {
   views: McpConnectorView[] | null;
   error: string;
   drafting: boolean;
-  warnings: string[];
 }): JSX.Element {
   const noServers = views !== null && !views.some((view) => !isPluginServer(view)) && !drafting;
   return (
@@ -256,85 +216,76 @@ function CardNotices({
           {error}
         </p>
       )}
-      {warnings.map((warning) => (
-        <p key={warning} className="text-sm text-orange">
-          {warning}
-        </p>
-      ))}
     </>
   );
 }
 
-/** The connector form's state: the draft, the server's tools, and a pasted snippet with what it held. */
+/** A paste box that has read nothing yet. */
+const NO_PASTE: PasteState = { filled: false, warnings: [], choices: [] };
+
+/** The form's state: the draft, the server's tools, and what a paste filled in or held. */
 function useConnectorDraft() {
   const [draft, setDraft] = useState<Draft | null>(null);
   const [tools, setTools] = useState<McpToolSummary[]>([]);
-  const [snippet, setSnippet] = useState<string | null>(null);
-  const [warnings, setWarnings] = useState<string[]>([]);
+  const [paste, setPaste] = useState<{ filled: boolean; warnings: string[] }>(NO_PASTE);
   const [imports, setImports] = useState<McpDraft[]>([]);
   const update = (change: (draft: Draft) => Draft): void =>
     setDraft((current) => (current ? change(current) : current));
   const patch = (change: Partial<McpConnectorDraft>): void =>
     update((current) => ({ ...current, connector: { ...current.connector, ...change } }));
-  const importDraft = (first: McpDraft): void => {
-    setDraft(draftFromImport(first));
+  const importDraft = (item: McpDraft): void => {
+    setDraft(draftFromImport(item));
     setTools([]);
-    setSnippet(null);
-    setImports((current) => current.filter((d) => d !== first));
+    setPaste((current) => ({ ...current, filled: true }));
+    setImports((current) => current.filter((d) => d !== item));
   };
-  const readSnippet = (): void => {
-    const parsed = parseMcpSnippet(snippet ?? "");
-    setWarnings(parsed.warnings);
-    setImports(parsed.drafts);
+  const readPaste = (text: string): void => {
+    const parsed = parseMcpInput(text);
+    setPaste({ filled: false, warnings: parsed.warnings });
+    setImports(parsed.drafts.length > 1 ? parsed.drafts : []);
     const only = parsed.drafts.length === 1 ? parsed.drafts[0] : undefined;
     if (only) importDraft(only);
+  };
+  const clearPaste = (): void => {
+    setDraft(blankDraft());
+    setPaste(NO_PASTE);
+    setImports([]);
+  };
+  const close = (): void => {
+    setDraft(null);
+    setTools([]);
+    setPaste(NO_PASTE);
   };
   return {
     draft,
     setDraft,
     tools,
     setTools,
-    snippet,
-    setSnippet,
-    warnings,
-    setWarnings,
+    paste,
     imports,
     setImports,
     update,
     patch,
     importDraft,
-    readSnippet,
+    readPaste,
+    clearPaste,
+    close,
   };
 }
 
-/** Add and Import, as the plugins page's menu calls them, and the form taking focus when either opens it. */
-function useFormOpeners(
+/** Add, as the plugins page's menu calls it. */
+function useFormOpener(
   ref: Ref<ConnectorActions> | undefined,
   d: ReturnType<typeof useConnectorDraft>,
   setError: (error: string) => void,
 ) {
-  const form = useRef<HTMLDivElement>(null);
   const addConnector = () => {
     setError("");
-    d.setDraft(blankDraft());
+    d.clearPaste();
     d.setTools([]);
-    d.setSnippet(null);
   };
-  const importConnector = () => {
-    setError("");
-    d.setSnippet("");
-    d.setWarnings([]);
-    d.setDraft(null);
-  };
-  useImperativeHandle(ref, () => ({ add: addConnector, import: importConnector }));
-  const drafting = Boolean(d.draft);
-  const pasting = d.snippet !== null;
-  useEffect(() => {
-    if (!drafting && !pasting) return;
-    form.current?.scrollIntoView({ block: "nearest" });
-    form.current?.querySelector<HTMLElement>("input, textarea")?.focus({ preventScroll: true });
-  }, [drafting, pasting]);
-  return { form, addConnector };
+  useImperativeHandle(ref, () => ({ add: addConnector }));
+  return addConnector;
 }
 
 /** Open a saved connector in the form, and list its tools for the checklist. */
@@ -379,21 +330,74 @@ function useConnectorAct(refresh: () => Promise<void>, setError: (error: string)
 /** Save the form's connector with its secrets, close the form, and connect it when it may run now. */
 async function saveDraft(
   draft: Draft,
+  taken: ReadonlySet<string>,
   d: ReturnType<typeof useConnectorDraft>,
   act: EntryActions["act"],
   project: string | null | undefined,
 ): Promise<void> {
-  const connector = connectorToSave(draft);
+  const connector = connectorToSave(draft, taken);
+  const secrets = secretsToSave(draft);
   await act(async () => {
-    const saved = await window.studio.mcpSave(connector, Object.keys(draft.secrets).length ? draft.secrets : undefined);
-    d.setDraft(null);
-    d.setTools([]);
+    const saved = await window.studio.mcpSave(connector, Object.keys(secrets).length ? secrets : undefined);
+    d.close();
     if (saved.connector.enabled && !saved.pending) {
       // Connection/authentication progress belongs to the live host view. OAuth can
       // finish after this request returns; retaining its initial challenge is stale.
       await window.studio.mcpConnect(saved.connector.id, project ?? undefined);
     }
   });
+}
+
+/** The Add or Edit window over the card, while a draft is open. */
+function CardDialog({
+  d,
+  views,
+  project,
+  error,
+  setError,
+  busy,
+  act,
+}: {
+  d: ReturnType<typeof useConnectorDraft>;
+  views: McpConnectorView[] | null;
+  project: string | null | undefined;
+  error: string;
+  setError: (error: string) => void;
+  busy: boolean;
+  act: EntryActions["act"];
+}): JSX.Element | null {
+  const { draft } = d;
+  if (!draft) return null;
+  const taken = new Set((views ?? []).map((view) => view.connector.id));
+  const editingView = draft.isNew ? undefined : views?.find((v) => v.connector.id === draft.connector.id);
+  return (
+    <ConnectorDialog
+      props={{ draft, update: d.update, patch: d.patch } satisfies FormProps}
+      project={project}
+      takenIds={taken}
+      tools={d.tools}
+      stored={new Set(editingView?.secrets ?? [])}
+      secretsAvailable={views?.[0]?.secretsAvailable ?? true}
+      secretsLocked={views?.[0]?.secretsLocked}
+      paste={{ ...d.paste, choices: d.imports }}
+      error={error}
+      busy={busy}
+      onPaste={d.readPaste}
+      onChoose={d.importDraft}
+      onClearPaste={d.clearPaste}
+      onToolAllowed={(name, allowed) =>
+        d.patch({ toolPolicy: withToolAllowed(draft.connector.toolPolicy, name, allowed) })
+      }
+      onToolAutoApproved={(name, approved) =>
+        d.patch({ toolPolicy: withToolAutoApproved(draft.connector.toolPolicy, name, approved) })
+      }
+      onSave={() => void saveDraft(draft, taken, d, act, project)}
+      onCancel={() => {
+        d.close();
+        setError("");
+      }}
+    />
+  );
 }
 
 export function ConnectorsCard({
@@ -413,17 +417,11 @@ export function ConnectorsCard({
   const [error, setError] = useState("");
   const { views, refresh } = useConnectorViews(project, setError);
   const d = useConnectorDraft();
-  const { draft, snippet, setSnippet, setWarnings } = d;
   const { busy, act } = useConnectorAct(refresh, setError);
   const [tested, setTested] = useState<Record<string, string>>({});
-  const { form, addConnector } = useFormOpeners(ref, d, setError);
+  const addConnector = useFormOpener(ref, d, setError);
   const edit = (view: McpConnectorView): void => editConnector(view, d, setError);
-  const save = async (): Promise<void> => {
-    if (draft) await saveDraft(draft, d, act, project);
-  };
-
   const ownCount = (views ?? []).filter((view) => !isPluginServer(view)).length;
-  const editingView = draft && !draft.isNew ? views?.find((v) => v.connector.id === draft.connector.id) : undefined;
   const actions: EntryActions = { busy, act, project, tested, setTested, onEdit: edit, onOpenPlugin };
 
   return (
@@ -438,60 +436,15 @@ export function ConnectorsCard({
           Add server
         </Button>
       </div>
-      <CardNotices
-        views={views}
-        error={error}
-        drafting={Boolean(draft)}
-        warnings={snippet === null ? d.warnings : []}
-      />
+      <CardNotices views={views} error={error} drafting={Boolean(d.draft)} />
       <ImportChoices
         imports={d.imports}
-        drafting={Boolean(draft)}
+        drafting={Boolean(d.draft)}
         onChoose={d.importDraft}
-        onDismiss={() => {
-          d.setImports([]);
-          setWarnings([]);
-        }}
+        onDismiss={() => d.setImports([])}
       />
       <ConnectorList views={views} query={query} actions={actions} pluginName={pluginName} />
-      <div ref={form} className="connector-form">
-        {snippet !== null && (
-          <SnippetForm
-            snippet={snippet}
-            warnings={d.warnings}
-            onSnippet={setSnippet}
-            onRead={d.readSnippet}
-            onCancel={() => {
-              setSnippet(null);
-              setWarnings([]);
-            }}
-          />
-        )}
-        {draft && (
-          <ConnectorForm
-            props={{ draft, update: d.update, patch: d.patch } satisfies FormProps}
-            project={project}
-            tools={d.tools}
-            stored={new Set(editingView?.secrets ?? [])}
-            secretsAvailable={views?.[0]?.secretsAvailable ?? true}
-            secretsLocked={views?.[0]?.secretsLocked}
-            error={error}
-            busy={busy}
-            onToolAllowed={(name, allowed) =>
-              d.patch({ toolPolicy: withToolAllowed(draft.connector.toolPolicy, name, allowed) })
-            }
-            onToolAutoApproved={(name, approved) =>
-              d.patch({ toolPolicy: withToolAutoApproved(draft.connector.toolPolicy, name, approved) })
-            }
-            onSave={() => void save()}
-            onCancel={() => {
-              d.setDraft(null);
-              d.setTools([]);
-              setError("");
-            }}
-          />
-        )}
-      </div>
+      <CardDialog d={d} views={views} project={project} error={error} setError={setError} busy={busy} act={act} />
     </section>
   );
 }

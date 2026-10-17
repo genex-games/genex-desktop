@@ -1,4 +1,4 @@
-import type { RunGraphEvent } from "../shared/run-graph-events.ts";
+import { graphKeyOf, type RunGraphEvent, turnOfGraphKey, workerKeyOf } from "../shared/run-graph-events.ts";
 /**
  * Run graph — the pure data model behind the Build room's node-graph view of an Autopilot run.
  *
@@ -10,12 +10,21 @@ import type { RunGraphEvent } from "../shared/run-graph-events.ts";
  *
  * plus dashed cross-edges for defects the judge routed to another facet and for builder flags
  * that name a target facet. `run-steps.ts` folds it into what the Builds tab draws. The payload
- * readers live in `run-graph-parse.ts` and the asset cards in `run-graph-assets.ts`.
+ * readers live in `run-graph-parse.ts`, the asset cards in `run-graph-assets.ts` and the workers'
+ * and jobs' records in `run-graph-workers.ts`, the finish check's rounds in `run-graph-finish.ts`.
+ *
+ * A graph holding a worker's, a job's or a finish check's records is a tree: the lead is a node of
+ * its own, carrying the jobs, and a run's tree ends in the finish check until the run finishes, or
+ * for good once the lead made a claim. A chat turn that
+ * started workers is a graph of its own, keyed by the turn (`shared/run-graph-events.ts`).
  */
 import { CustomEvent } from "../shared/custom-events.ts";
+import { finishRecordOf } from "../shared/finish-check.ts";
 import { HOUR_MS } from "../shared/duration.ts";
-import type { EventEnvelope } from "../shared/event-log.ts";
+import { type EventEnvelope, EventKind } from "../shared/event-log.ts";
+import type { MakingPhase } from "../shared/asset-making.ts";
 import type { ProjectAsset, ProjectAssets } from "../shared/game-assets.ts";
+import { messageQueueState, QueueState, type QueueView } from "../shared/message-queue.ts";
 import { normalizeOptimization, type OptimizationResultV1 } from "../shared/optimization.ts";
 import {
   executionStep,
@@ -27,6 +36,8 @@ import {
   roundOutcome,
 } from "../shared/run-state.ts";
 import type { RunSummary } from "../shared/run-summary.ts";
+import { LoopProfile } from "../shared/project-facts.ts";
+import { isWorkerStopCode, poolWorkerId, type WorkerStopCode } from "../shared/workers.ts";
 import {
   type AssetLedger,
   type AssetPlace,
@@ -36,6 +47,7 @@ import {
   blenderAsset,
   keptAssetJobs,
   newAssetLedger,
+  settleAssetJobs,
 } from "./run-graph-assets.ts";
 import {
   bool,
@@ -49,6 +61,8 @@ import {
   parseMerge,
   parseMove,
   parseScoreboard,
+  parseAdvice,
+  parseShot,
   parseShots,
   parseVerdict,
   record,
@@ -57,9 +71,31 @@ import {
   strings,
   strOrNull,
 } from "./run-graph-parse.ts";
+import {
+  type JobInfo,
+  newWorkerLedger,
+  onJobEnded,
+  onJobStarted,
+  onWorkerFinished,
+  onWorkerStarted,
+  type WorkerInfo,
+  type WorkerLedger,
+} from "./run-graph-workers.ts";
+import { type CaptureInfo, captureOf, foldCapture } from "./run-graph-captures.ts";
+import {
+  type FinishCheckFields,
+  type FinishLedger,
+  finishCheckFields,
+  foldFinishRecord,
+  settleOpenRounds,
+} from "./run-graph-finish.ts";
 import { ABANDONED_ROUND_LABEL, buildingRoundLabel, verdictLabel } from "./words.ts";
 
 export { digestField } from "./run-graph-parse.ts";
+export type { JobInfo, WorkerInfo } from "./run-graph-workers.ts";
+export type { CaptureInfo } from "./run-graph-captures.ts";
+export { FinishCheckState } from "./run-graph-finish.ts";
+export type { FinishRound } from "./run-graph-finish.ts";
 
 // ── nodes ─────────────────────────────────────────────────────────────────────────────────
 
@@ -74,6 +110,10 @@ export const GraphNodeKind = {
   Final: "final",
   Blender: "blender",
   Assets: "assets",
+  /** the lead of a run or a chat turn, drawn as a node of its own in a tree */
+  Lead: "lead",
+  /** the reviewer's check of the lead's claim that a run is done: the last node of a run's tree */
+  FinishCheck: "finish_check",
 } as const;
 export type GraphNodeKind = (typeof GraphNodeKind)[keyof typeof GraphNodeKind];
 /** `building` = a move/fix/liveness was asked for the iteration but no verdict has landed yet;
@@ -233,6 +273,19 @@ export interface Shot {
   path: string;
 }
 
+/**
+ * A critic's fresh look at a round the lead saved (`director_verdict` with `advice: true`): what it
+ * saw wrong with the fix for each, one bold move, and its answers to the lead's gates. It is
+ * advice: it decided nothing, so it is never a verdict.
+ */
+export interface AdviceInfo {
+  at: string;
+  defects: Array<{ defect: string; fix: string }>;
+  boldMove: string;
+  gates: string[];
+  shots: string[];
+}
+
 export interface DiffInfo {
   camera: string;
   diffFraction: number | null;
@@ -281,6 +334,8 @@ export interface RunNode {
   builderEngine: string | null;
   /** labels of the reference stills the run was given */
   referenceFrames: string[];
+  /** The pictures the person sent with the message the run answers, for its start node; null when none. */
+  asked: AskedPictures | null;
   /**
    * A run the lead runs itself (`autopilot_started.director`). It has no shared-base stage
    * unless it built a starting point of its own, and its builders are single sessions rather
@@ -331,6 +386,12 @@ export interface FacetNode {
   checksAdded: number;
   replans: number;
   outages: number;
+  /** A sub-agent's files are in the game folder, waiting for the lead to use them (`director_worker.delivered`). */
+  delivered: boolean;
+  /** A single-session worker's session ended in failure, so it delivered nothing (`director_worker.state` failed). */
+  failed: boolean;
+  /** What the worker's own records say (`worker_started`/`worker_finished`); absent on a part that wrote none. */
+  worker?: WorkerInfo;
 }
 
 export interface IterationNode {
@@ -360,6 +421,8 @@ export interface IterationNode {
   routedIn: number;
   outage: OutageInfo | null;
   shots: Shot[];
+  /** The picture the lead named as showing what a save point changed: its own proof, apart from `shots`. */
+  shown: Shot | null;
   diffs: DiffInfo[];
   merge: MergeInfo | null;
   /** when the verdict landed */
@@ -372,6 +435,10 @@ export interface IterationNode {
   notes: NoteInfo[];
   /** The round's own verdict record — null on a run from before the round wrote one. */
   verdict: VerdictRecord | null;
+  /** The critic's advice on this round, when the lead asked for it: never a verdict. */
+  advice: AdviceInfo | null;
+  /** Why a stopped round stopped, in the app's code: the run's own close, or the lead. */
+  stopCode: WorkerStopCode | null;
 }
 
 export interface IntegrationNode {
@@ -400,6 +467,8 @@ export interface FinalNode {
   summary: string | null;
   /** Did the run's merged build reach the live game folder (null until the run closes)? */
   landed: boolean | null;
+  /** A Loop led in its project's own folder (`open`): what it kept is in the project, with no build to play. */
+  profile?: LoopProfile;
   /** The merged build's commit — playable and landable after the run, landed or not. */
   integrationHead: string | null;
   /** Where the run started; a head equal to it holds nothing to play. */
@@ -416,9 +485,10 @@ export interface FinalNode {
 /**
  * Where an asked-for asset is, from the log's point of view. `requested` is the call going out,
  * `generating` is a job the plugin accepted and has not delivered yet, and the two end states
- * are the only ones that say what happened. A call that delivers nothing never becomes a card.
+ * are the only ones that say what happened; `unfinished` is a job still open when its run or chat
+ * turn ended, which nothing will deliver now. A call that delivers nothing never becomes a card.
  */
-export type AssetState = "requested" | "generating" | "delivered" | "failed";
+export type AssetState = "requested" | "generating" | "delivered" | "failed" | "unfinished";
 
 /**
  * One asset the run asked for: a `blender_asset` event, or a plugin tool call joined to its
@@ -432,6 +502,8 @@ export interface AssetInfo {
   preview?: ProjectAsset;
   /** a copy is in the game itself, not only in a build workspace */
   inGame?: boolean;
+  /** where the game's inventory says the job is while it lists it as waiting; set by the Builds page */
+  waiting?: MakingPhase;
   generationId?: string;
   name: string;
   file: string | null;
@@ -471,6 +543,8 @@ export interface AssetInfo {
   derived?: Array<{
     pluginName: string | null;
     name: string;
+    /** the part whose call did this work, when one did */
+    facetId: string | null;
     files: string[];
     size: number[] | null;
     triangles: number | null;
@@ -499,6 +573,23 @@ export interface OptimizationNode {
   result: OptimizationResultV1;
 }
 
+/** The lead of a tree, carrying the background work (jobs) of its run or chat turn, oldest first. */
+export interface LeadNode {
+  kind: "lead";
+  id: "lead";
+  jobs: JobInfo[];
+}
+
+/**
+ * The reviewer's check of the lead's claim that the run is done, by a reviewer that did none of the
+ * work: where its newest round stands, and every round (`run-graph-finish.ts`). Before any claim it
+ * is `not_yet` with no round, the place the check waits in.
+ */
+export interface FinishCheckNode extends FinishCheckFields {
+  kind: "finish_check";
+  id: "finish_check";
+}
+
 export type GraphNode =
   | RunNode
   | BaseNode
@@ -508,7 +599,9 @@ export type GraphNode =
   | OptimizationNode
   | FinalNode
   | BlenderNode
-  | AssetsNode;
+  | AssetsNode
+  | LeadNode
+  | FinishCheckNode;
 
 /** A plain flow edge, a defect the judge routed to another part, or a builder's flag naming one. */
 export const EdgeKind = { Flow: "flow", Routed: "routed", Flag: "flag" } as const;
@@ -549,6 +642,12 @@ export interface RunGraph {
    * instead of a sentence about the run.
    */
   verdicts: VerdictRecord[];
+  /** It holds a worker's or a job's records: the lead is a node of its own, at the root. */
+  tree: boolean;
+  /** The pictures the run's observers kept (`observer_capture`), oldest first: what Live shows of a run. */
+  captures: CaptureInfo[];
+  /** The chat turn (its message id) this graph is, when it is a turn's and no run's. */
+  turn?: string;
 }
 
 export const FACET_PALETTE = ["#9a5cff", "#f09a2f", "#2fbfb0", "#f0567a", "#4f8cff", "#5ccf6b"] as const;
@@ -588,7 +687,20 @@ interface PartRef {
 
 /** Everything `buildRunGraph` gathers while it reads the log, before the graph is assembled. */
 interface GraphDraft {
+  /** the graph's key: a run id, or a chat turn's key */
   runId: string;
+  /** the chat turn this graph is, when it is one */
+  turn: string | null;
+  workers: WorkerLedger;
+  /** the run's start said its lead's workers write worker records (`autopilot_started.workerRecords`) */
+  leadsWorkers: boolean;
+  jobs: Map<string, JobInfo>;
+  /** the run's finish check, by round (`finish_check`); a chat turn's stays empty */
+  finish: FinishLedger;
+  /** the first round of the run's current ask: a finished run reopened counts its check afresh */
+  finishFrom: number;
+  /** the run's observers' pictures (`observer_capture`); a chat turn's stays empty */
+  captures: CaptureInfo[];
   run: RunNode;
   base: BaseNode;
   /** a new-game run announced its base stage (`autopilot_base_started`) */
@@ -618,6 +730,10 @@ interface GraphDraft {
   eventAt: string | null;
   /** the place in the log of the record being read */
   seq: number;
+  /** The chat's messages that carried pictures (their queue records), by id: how many each sent. */
+  sentPictures: Map<string, number>;
+  /** The person's message the chat answers now, with its pictures: what a run starting now was asked with. */
+  answering: AskedPictures | null;
 }
 
 /** One record of this run, read once: the part and round it names, after restarts are folded in. */
@@ -630,11 +746,22 @@ interface RunEntry {
   round: number | null;
 }
 
-/** What a lead's worker reports about itself (`director_worker.state`, a summary task's `state`). */
-export const WorkerState = { Running: "running", Done: "done" } as const;
+/** A chat message's pictures, as `studio:message-images` reads them: the chat, the message, how many. */
+export interface AskedPictures {
+  threadId: string;
+  messageId: string;
+  count: number;
+}
 
-/** The records that name the run the Builds page shows. */
-const RUN_ID_EVENTS = new Set<string>([CustomEvent.RunStarted, CustomEvent.RunRegistered, CustomEvent.FacetIteration]);
+/** What a lead's worker reports about itself (`director_worker.state`, a summary task's `state`). */
+export const WorkerState = { Running: "running", Done: "done", Failed: "failed" } as const;
+
+/** The records that name the run the Builds page shows: the last run one names is the newest. */
+export const RUN_ID_EVENTS: ReadonlySet<string> = new Set<string>([
+  CustomEvent.RunStarted,
+  CustomEvent.RunRegistered,
+  CustomEvent.FacetIteration,
+]);
 
 /** Same rule as the run gallery: the last run the log mentions is the one shown. */
 export function lastRunId(events: EventEnvelope[]): string | null {
@@ -648,30 +775,119 @@ export function lastRunId(events: EventEnvelope[]): string | null {
   return last;
 }
 
-export function buildRunGraph(events: RunGraphEvent[]): RunGraph | null {
-  const runId = lastRunId(events);
-  if (!runId) return null;
-  const graph = newGraphDraft(runId);
+/**
+ * The run a graph is, for anything that asks the app about it (its summary, stills, previews,
+ * worker threads, a reply about it); null for a chat turn's graph, which has no run of its own.
+ */
+export const runIdOf = (graph: Pick<RunGraph, "runId">): string | null =>
+  turnOfGraphKey(graph.runId) === null ? graph.runId : null;
+
+/**
+ * Whether a run is building on this graph: a run's graph that is still going. A chat turn's
+ * workers change the game itself, so its graph is never a run building in builders' copies.
+ */
+export const runBuilding = (graph: RunGraph | null): graph is RunGraph =>
+  graph?.active === true && runIdOf(graph) !== null;
+
+/** The records that make a chat turn's graph: a worker it started, or one's end. */
+export const WORKER_EVENTS = new Set<string>([CustomEvent.WorkerStarted, CustomEvent.WorkerFinished]);
+
+/**
+ * The graph the Builds page shows: the run `lastRunId` names, or a chat turn whose first worker
+ * record is later in the log than that run's last mention; the later wins. Null when there is none.
+ */
+export function lastGraphKey(events: EventEnvelope[]): string | null {
+  let last: string | null = null;
+  const turns = new Set<string>();
   for (const event of events) {
     const custom = customOf(event);
     if (!custom) continue;
-    graph.eventAt = event.graphLastAt ?? event.created_at;
-    graph.seq = event.graphSequence ?? graph.seq + 1;
-    if (custom.event_type === CustomEvent.UserFeedback) {
-      readNote(graph, event, custom.payload);
-      continue;
+    const runId = RUN_ID_EVENTS.has(custom.event_type) ? strOrNull(custom.payload.runId) : null;
+    if (runId) last = runId;
+    // Only a record that names its worker places a turn, as the history lists them (`readTurnRecord`).
+    const placed = WORKER_EVENTS.has(custom.event_type) && workerKeyOf(custom.payload) !== null;
+    const key = placed ? turnKeyOf(custom.payload) : null;
+    if (key && !turns.has(key)) {
+      turns.add(key);
+      last = key;
     }
-    if (str(custom.payload.runId) !== runId) continue;
-    trackExecution(graph, custom, event.created_at);
-    applyRunEvent(graph, custom, runEntry(graph, event, custom.payload));
   }
+  return last;
+}
+
+/** A record's chat turn graph key, when it names a turn and no run. */
+export function turnKeyOf(payload: Payload): string | null {
+  const key = graphKeyOf(payload);
+  return key && turnOfGraphKey(key) !== null && !strOrNull(payload.runId) ? key : null;
+}
+
+/**
+ * The graph of a run or of a chat turn (`key`; the newest by default) from the chat's log: every
+ * custom record that names it. Null when no record does, or when a turn has no worker's record.
+ */
+export function buildRunGraph(events: RunGraphEvent[], key: string | null = lastGraphKey(events)): RunGraph | null {
+  if (!key) return null;
+  const graph = newGraphDraft(key, turnOfGraphKey(key));
+  let named = false;
+  for (const event of events) named = readRecord(graph, event) || named;
+  if (!graph.turn) return named ? assembleGraph(graph) : null;
+  if (!graph.workers.placed) return null;
+  settleTurn(graph, events);
   return assembleGraph(graph);
 }
 
-function newGraphDraft(runId: string): GraphDraft {
+/** Read one record of the log into the graph; true when it names the graph. A turn's graph keeps no notes. */
+function readRecord(graph: GraphDraft, event: RunGraphEvent): boolean {
+  const custom = customOf(event);
+  if (!custom) return false;
+  graph.eventAt = event.graphLastAt ?? event.created_at;
+  graph.seq = event.graphSequence ?? graph.seq + 1;
+  if (custom.event_type === CustomEvent.UserFeedback) {
+    if (!graph.turn) readNote(graph, event, custom.payload);
+    return false;
+  }
+  if (followQueue(graph, event, custom)) return false;
+  if (graphKeyOf(custom.payload) !== graph.runId) return false;
+  if (!graph.turn) trackExecution(graph, custom, event.created_at);
+  applyRunEvent(graph, custom, runEntry(graph, event, custom.payload));
+  return true;
+}
+
+/**
+ * The chat's queue records, which name no run: a queued message that carried pictures, and the one
+ * the chat answers now. True when the record was one of them.
+ */
+function followQueue(
+  graph: GraphDraft,
+  event: RunGraphEvent,
+  custom: { event_type: string; payload: Payload },
+): boolean {
+  const messageId = strOrNull(custom.payload.messageId);
+  if (custom.event_type === CustomEvent.CoordinatorMessageQueued) {
+    const action = record(custom.payload.action);
+    const count = typeof action?.imageCount === "number" ? action.imageCount : 0;
+    if (messageId && action?.attachmentsArtifact && count > 0) graph.sentPictures.set(messageId, count);
+    return true;
+  }
+  if (custom.event_type !== CustomEvent.CoordinatorMessageProcessing) return false;
+  const count = messageId ? (graph.sentPictures.get(messageId) ?? 0) : 0;
+  graph.answering = messageId && count > 0 ? { threadId: event.thread_id, messageId, count } : null;
+  return true;
+}
+
+function newGraphDraft(runId: string, turn: string | null): GraphDraft {
   return {
     runId,
-    run: newRunNode(runId),
+    turn,
+    sentPictures: new Map(),
+    answering: null,
+    workers: newWorkerLedger(),
+    leadsWorkers: false,
+    jobs: new Map(),
+    finish: new Map(),
+    finishFrom: 0,
+    captures: [],
+    run: { ...newRunNode(runId), director: turn !== null },
     base: {
       kind: GraphNodeKind.Base,
       id: GraphNodeKind.Base,
@@ -729,6 +945,7 @@ function newRunNode(runId: string): RunNode {
     model: null,
     builderEngine: null,
     referenceFrames: [],
+    asked: null,
     director: false,
     paused: false,
   };
@@ -780,6 +997,8 @@ function facet(graph: GraphDraft, facetId: string, title?: string): FacetDraft {
       checksAdded: 0,
       replans: 0,
       outages: 0,
+      delivered: false,
+      failed: false,
     },
     iterations: new Map(),
     completed: 0,
@@ -818,6 +1037,7 @@ function iteration(graph: GraphDraft, facetId: string, n: number, title?: string
     routedIn: 0,
     outage: owner.outages.get(n) ?? null,
     shots: [],
+    shown: null,
     diffs: [],
     merge: null,
     judgedAt: null,
@@ -826,6 +1046,8 @@ function iteration(graph: GraphDraft, facetId: string, n: number, title?: string
     judgedSeq: null,
     notes: [],
     verdict: null,
+    advice: null,
+    stopCode: null,
   };
   owner.iterations.set(n, node);
   return node;
@@ -881,6 +1103,8 @@ function trackExecution(graph: GraphDraft, custom: { event_type: string; payload
   graph.execution = executionStep(graph.execution, graph.runId, { ...custom, at });
   graph.run.active = graph.execution?.state === RunState.Running;
   graph.run.paused = graph.execution?.state === RunState.Paused;
+  // No reviewer is at work after a close, a pause's included.
+  if (custom.event_type === CustomEvent.RunFinished) settleOpenRounds(graph.finish);
   if (graph.run.active && closedState(before)) reopenAfterClose(graph, before);
 }
 
@@ -897,7 +1121,9 @@ function reopenAfterClose(graph: GraphDraft, closedAs: RunState): void {
   graph.run.finishedAt = null;
   graph.run.victory = null;
   graph.run.stoppedBecause = null;
-  if (closedAs === RunState.Finished) graph.mergedHead = null;
+  if (closedAs !== RunState.Finished) return;
+  graph.mergedHead = null;
+  graph.finishFrom = Math.max(0, ...graph.finish.keys()) + 1;
 }
 
 /** One record of the run, handed to the reader of its kind; the parts' own records go on to `applyPartEvent`. */
@@ -942,7 +1168,7 @@ function applyRunEvent(graph: GraphDraft, custom: { event_type: string }, entry:
       onMerge(graph, entry);
       break;
     case CustomEvent.DirectorVerdict:
-      onDirectorVerdict(graph, payload);
+      onDirectorVerdict(graph, entry);
       break;
     case CustomEvent.IntegrationHealth:
       onHealth(graph, payload);
@@ -955,6 +1181,18 @@ function applyRunEvent(graph: GraphDraft, custom: { event_type: string }, entry:
       break;
     case CustomEvent.RunFinished:
       onRunFinished(graph, entry);
+      break;
+    case CustomEvent.JobStarted:
+      onJobStarted(graph.jobs, payload);
+      break;
+    case CustomEvent.JobEnded:
+      onJobEnded(graph.jobs, payload);
+      break;
+    case CustomEvent.FinishCheck:
+      onFinishCheck(graph, payload);
+      break;
+    case CustomEvent.ObserverCapture:
+      onCapture(graph, entry);
       break;
     default:
       applyPartEvent(graph, custom, entry);
@@ -972,6 +1210,10 @@ function applyPartEvent(graph: GraphDraft, custom: { event_type: string }, entry
       break;
     case CustomEvent.DirectorWorker:
       onDirectorWorker(graph, entry.payload);
+      break;
+    case CustomEvent.WorkerStarted:
+    case CustomEvent.WorkerFinished:
+      onWorkerRecord(graph, entry, custom.event_type === CustomEvent.WorkerStarted);
       break;
     case CustomEvent.FacetMove:
       onMove(graph, entry);
@@ -1002,6 +1244,19 @@ function applyPartEvent(graph: GraphDraft, custom: { event_type: string }, entry
   }
 }
 
+/** A step of the run's finish check onto its round; a chat turn's graph, or a record it cannot place, takes none. */
+function onFinishCheck(graph: GraphDraft, payload: Payload): void {
+  const check = graph.turn ? null : finishRecordOf(payload);
+  if (check?.runId === graph.runId) foldFinishRecord(graph.finish, check);
+}
+
+/** An observer's pictures onto the run's captures; a chat turn's graph, or another run's record, takes none. */
+function onCapture(graph: GraphDraft, entry: RunEntry): void {
+  if (graph.turn || entry.payload.runId !== graph.runId) return;
+  const capture = captureOf(entry.payload, entry.event.created_at);
+  if (capture) foldCapture(graph.captures, capture);
+}
+
 function blenderNode(version: string | null): BlenderNode {
   return { kind: GraphNodeKind.Blender, id: GraphNodeKind.Blender, version, assets: [] };
 }
@@ -1011,6 +1266,8 @@ function onRunStarted(graph: GraphDraft, entry: RunEntry): void {
   const { payload } = entry;
   run.project = strOrNull(payload.project);
   run.goal = str(payload.goal, "");
+  // Its first start record is the message it answers; a resume or a later steer is not.
+  if (run.startedAt === null) run.asked = graph.answering;
   run.startedAt = entry.event.created_at;
   // Absent budgets leave the earlier value; an ∞ build has only a safety ceiling, never a duration.
   const loop = recordedRunLoop(payload.budgets);
@@ -1035,6 +1292,8 @@ function onBlenderAsset(graph: GraphDraft, entry: RunEntry): void {
 function onAutopilotStarted(graph: GraphDraft, payload: Payload): void {
   graph.run.maxParallel = num(payload.maxParallel);
   graph.run.director = payload.director === true;
+  // A run whose lead writes worker records, or claims through a finish check, is a tree from its start.
+  graph.leadsWorkers ||= payload.workerRecords === true || payload.finishCheck === true;
   for (const row of records(payload.facets)) {
     const id = strOrNull(row.id);
     if (!id) continue;
@@ -1094,6 +1353,51 @@ function onDirectorWorker(graph: GraphDraft, payload: Payload): void {
   // A single-session builder that ran to the end did the work it was given: the card must
   // say "done", not "stopped", which is what the lead ending one early means.
   if (state === WorkerState.Done) draft.node.satisfied = true;
+  draft.node.delivered = state === WorkerState.Done && payload.delivered === true;
+  draft.node.failed = state === WorkerState.Failed;
+}
+
+/**
+ * A worker's start or end, or the lead's verdict on it (`run-graph-workers.ts`), on the row of its
+ * part. A chat turn starts with its first worker's record, and asks what that worker's start says
+ * the person asked.
+ */
+function onWorkerRecord(graph: GraphDraft, entry: RunEntry, started: boolean): void {
+  const row = (workerId: string, title: string | undefined) => facet(graph, restartOf(graph, workerId).id, title).node;
+  const fold = started ? onWorkerStarted : onWorkerFinished;
+  if (!fold(graph.workers, row, entry.payload, graph.seq) || !graph.turn) return;
+  graph.run.startedAt ??= entry.event.created_at;
+  if (started && !graph.run.goal) graph.run.goal = str(entry.payload.ask, "").trim();
+}
+
+/**
+ * The lead still answers a chat turn's message: the queue's record of it says it is being answered.
+ * Its workers may all have ended while the lead goes on (it adds their work, or changes the game).
+ */
+export const answeringTurn = (queue: QueueView, turn: string): boolean =>
+  queue.messages.get(turn)?.state === QueueState.Processing;
+
+/**
+ * A chat turn's graph once its records are read: it asks what the person's queued message said
+ * when no worker kept it, works while a worker of it works or the lead still answers the message,
+ * and holds no build of a run's.
+ */
+function settleTurn(graph: GraphDraft, events: EventEnvelope[]): void {
+  const { run, final, turn } = graph;
+  const queue = messageQueueState(events);
+  if (!run.goal && turn) run.goal = queuedAsk(events, queue, turn);
+  const working = [...graph.facets.values()].some((draft) => draft.node.building);
+  run.active = working || (turn !== null && answeringTurn(queue, turn));
+  final.done = !run.active;
+  graph.mergedHead = null;
+}
+
+/** The words of the message a chat turn answers, as the queue's record of it names them; "" for none. */
+function queuedAsk(events: EventEnvelope[], queue: QueueView, turn: string): string {
+  const queued = queue.messages.get(turn);
+  const said = queued?.eventId ? events.find((event) => event.id === queued.eventId) : undefined;
+  const asked = said?.data.type === EventKind.Messages ? said.data.messages.find((m) => m.role === "user") : undefined;
+  return (asked?.content ?? queued?.action?.text ?? "").trim();
 }
 
 /**
@@ -1208,12 +1512,14 @@ function recordVerdict(node: IterationNode, payload: Payload): void {
   node.verdictSource = source;
   node.verdictLabel = verdictLabel(winner, satisfied, source);
   node.reason = str(payload.reason, "");
+  node.stopCode = isWorkerStopCode(payload.stopCode) ? payload.stopCode : null;
   // A stopped round was never judged: the gap it carries is the builder's brief, not a finding.
   node.biggestGap = node.status === IterationStatus.Stopped ? "" : str(payload.biggest_gap, "");
   node.defects = strings(payload.defects);
   node.unmeasured = strings(payload.unmeasured);
   node.scoreboard = parseScoreboard(payload.scoreboard);
   node.shots = parseShots(payload.shots);
+  node.shown = parseShot(payload.shown);
   node.diffs = parseDiffs(payload.diffs);
 }
 
@@ -1257,11 +1563,26 @@ function onMerge(graph: GraphDraft, entry: RunEntry): void {
 
 /**
  * The lead's own passes — the fork gate, its judge, a health pass, the close. Each one is a
- * build somebody looked at, with the sentence that look produced.
+ * build somebody looked at, with the sentence that look produced. A critic's advice comes the
+ * same way and is no verdict: it goes on the round it looked at, and nothing else reads it.
  */
-function onDirectorVerdict(graph: GraphDraft, payload: Payload): void {
-  const verdict = parseVerdict(payload);
+function onDirectorVerdict(graph: GraphDraft, entry: RunEntry): void {
+  if (entry.payload.advice === true) {
+    onAdvice(graph, entry);
+    return;
+  }
+  const verdict = parseVerdict(entry.payload);
   if (verdict) graph.verdicts.push(verdict);
+}
+
+/** A critic's advice, on the round it names, else its part's latest round; dropped when its part has none. */
+function onAdvice(graph: GraphDraft, entry: RunEntry): void {
+  const advice = parseAdvice(entry.payload, entry.event.created_at);
+  const draft = entry.facetId ? graph.facets.get(entry.facetId) : undefined;
+  if (!advice || !draft) return;
+  const latest = Math.max(0, ...draft.iterations.keys());
+  const round = draft.iterations.get(entry.round ?? latest) ?? draft.iterations.get(latest);
+  if (round) round.advice = advice;
 }
 
 /** Did the merged build run? Only a head that did is worth offering the user mid-run. */
@@ -1300,6 +1621,9 @@ function onRunFinished(graph: GraphDraft, entry: RunEntry): void {
   final.stoppedBecause = run.stoppedBecause;
   final.summary = reportSummary(payload);
   final.landed = typeof payload.landed === "boolean" ? payload.landed : null;
+  // Each close says its own profile: a later one that names none is no earlier close's Loop in place.
+  if (payload.profile === LoopProfile.Open) final.profile = LoopProfile.Open;
+  else delete final.profile;
   final.integrationHead = strOrNull(payload.integrationHead);
   final.baseCommit = strOrNull(payload.baseCommit);
   final.landing = parseLanding(record(payload.landingResult));
@@ -1364,10 +1688,13 @@ function assembleGraph(graph: GraphDraft): RunGraph {
     base.done = true;
   }
   const facetNodes = [...graph.facets.values()].sort((a, b) => a.node.index - b.node.index);
+  const tree = isTree(graph);
   const nodes: GraphNode[] = [run, base];
   const edges: GraphEdge[] = [flowEdge(GraphNodeKind.Run, GraphNodeKind.Base)];
+  if (tree) drawLead(graph, nodes, edges);
   for (const draft of facetNodes) drawPart(draft, run.active, nodes, edges);
   drawClose(graph, nodes, edges);
+  if (tree && drawsFinishCheck(graph)) drawFinishCheck(graph, nodes, edges);
   edges.push(...crossEdges(graph));
   pinNotes(graph);
   return {
@@ -1381,7 +1708,53 @@ function assembleGraph(graph: GraphDraft): RunGraph {
     lastMerged: graph.lastMerged,
     mergedHead: graph.mergedHead,
     verdicts: graph.verdicts,
+    tree,
+    captures: graph.captures,
+    ...(graph.turn ? { turn: graph.turn } : {}),
   };
+}
+
+/**
+ * A graph is a tree when its run's start says its lead's workers write worker records or that it
+ * claims through a finish check (from its start, so nothing moves when the first worker starts or
+ * the lead first claims), or when it holds a worker's, a job's or a finish check's records; every
+ * other log keeps its old layout.
+ */
+const isTree = (graph: GraphDraft): boolean =>
+  graph.leadsWorkers || graph.workers.placed || graph.jobs.size > 0 || graph.finish.size > 0;
+
+/**
+ * A run draws its finish check while it waits for one, and once its lead made a claim for the ask it
+ * is on, finished or not: a reopened run that finished again without a claim of its own draws none.
+ */
+const drawsFinishCheck = (graph: GraphDraft): boolean =>
+  awaitsFinishCheck(graph) || [...graph.finish.keys()].some((round) => round >= graph.finishFrom);
+
+/**
+ * A run's tree waits for its finish check until the run finishes; a chat turn's never has one. A
+ * paused run is not over, though the director closes a pause with a `run_finished` that says so.
+ */
+function awaitsFinishCheck(graph: GraphDraft): boolean {
+  if (graph.turn) return false;
+  const state = graph.execution?.state;
+  if (state === RunState.Paused) return true;
+  return !graph.final.done && state !== RunState.Finished;
+}
+
+/** The lead at the root of a tree, carrying its jobs in the order they started. */
+function drawLead(graph: GraphDraft, nodes: GraphNode[], edges: GraphEdge[]): void {
+  nodes.push({ kind: GraphNodeKind.Lead, id: GraphNodeKind.Lead, jobs: [...graph.jobs.values()] });
+  edges.push(flowEdge(GraphNodeKind.Run, GraphNodeKind.Lead));
+}
+
+/** The finish check at the end of a run's tree: where its rounds stand, or not yet run. */
+function drawFinishCheck(graph: GraphDraft, nodes: GraphNode[], edges: GraphEdge[]): void {
+  nodes.push({
+    kind: GraphNodeKind.FinishCheck,
+    id: GraphNodeKind.FinishCheck,
+    ...finishCheckFields(graph.finish, !awaitsFinishCheck(graph), graph.finishFrom),
+  });
+  edges.push(flowEdge(GraphNodeKind.Final, GraphNodeKind.FinishCheck));
 }
 
 /** One part's column: its header, then its rounds in order, flowing into the integration. */
@@ -1422,12 +1795,37 @@ function settleRound(node: IterationNode, draft: FacetDraft, runActive: boolean)
   });
 }
 
+/**
+ * The part an asset record names, as the graph draws it: a pool worker's plugin calls name it by
+ * its bare id (`w4`) where its own records name it `pool.w4`, so a bare id with no part of its own
+ * is that worker's.
+ */
+function partOfAsset(graph: GraphDraft, facetId: string | null): string | null {
+  if (facetId === null || graph.facets.has(facetId)) return facetId;
+  const worker = poolWorkerId(facetId);
+  return graph.facets.has(worker) ? worker : facetId;
+}
+
+/**
+ * Every asset card on the part that asked for it, a retried failure folded into its success, and
+ * nothing still "making" once the run or chat turn is over (a paused run may yet deliver).
+ */
+function settleAssets(graph: GraphDraft): AssetInfo[] {
+  const cards = [...graph.assets.jobs, ...(graph.blender?.assets ?? [])];
+  for (const card of cards) {
+    card.facetId = partOfAsset(graph, card.facetId);
+    for (const step of card.derived ?? []) step.facetId = partOfAsset(graph, step.facetId);
+  }
+  settleAssetJobs(graph.assets, !graph.run.active && !graph.run.paused);
+  return keptAssetJobs(graph.assets);
+}
+
 /** The integration, the optimisation when there was one, the final card, and the modeller and asset nodes. */
 function drawClose(graph: GraphDraft, nodes: GraphNode[], edges: GraphEdge[]): void {
   const { optimization, blender } = graph;
   nodes.push(graph.integration, ...(optimization ? [optimization] : []), graph.final);
   if (blender) nodes.push(blender);
-  const jobs = keptAssetJobs(graph.assets);
+  const jobs = settleAssets(graph);
   if (jobs.length) nodes.push({ kind: GraphNodeKind.Assets, id: GraphNodeKind.Assets, jobs });
   if (!optimization) {
     edges.push(flowEdge(GraphNodeKind.Integration, GraphNodeKind.Final));
@@ -1675,8 +2073,9 @@ export interface Rect extends Size {
 
 /**
  * Each asset job of the graph joined to the game's asset inventory: the inventory's record of it
- * (by job id, the remote generation id, else one of its files) for its thumbnail, and whether a
- * copy is in the game itself rather than only in a build workspace. An inventory entry with no
+ * (by job id, the remote generation id, else one of its files) for its thumbnail, whether a copy
+ * is in the game itself rather than only in a build workspace, and where the inventory says a job
+ * still on its way is (a Genex job still making two hours on is Not confirmed). An inventory entry with no
  * delivery record is a plain file walked in the game folder itself.
  */
 export function joinAssetInventory(nodes: GraphNode[], inventory: ProjectAssets | null): GraphNode[] {
@@ -1691,8 +2090,36 @@ function joinJob(job: AssetInfo, inventory: ProjectAssets | null): AssetInfo {
     if (job.jobId && a.jobId === job.jobId) return true;
     return Boolean(job.generationId) && a.generationId === job.generationId;
   };
-  const asset = inventory?.assets.find(ofJob) ?? inventory?.assets.find((a) => job.files.includes(a.file));
-  return { ...job, preview: asset, inGame: asset ? inGameCopy(asset) : undefined };
+  const records = inventory?.assets.filter(ofJob) ?? [];
+  const asset = previewRecord(records) ?? inventory?.assets.find((a) => job.files.includes(a.file));
+  // A waiting job goes by the call's id, the plugin's job id, or (Genex) the generation's.
+  const ids = [job.callId, job.jobId, job.generationId];
+  const waiting = inventory?.jobs?.find((w) => ids.includes(w.jobId));
+  return {
+    ...job,
+    preview: asset,
+    inGame: asset ? inGameCopy(asset) : undefined,
+    ...(waiting ? { waiting: waiting.phase } : {}),
+  };
+}
+
+/** The kinds of file a job's thumbnail can be drawn from. */
+const DRAWN_KINDS: ReadonlySet<ProjectAsset["kind"]> = new Set(["model", "image"]);
+
+/** Whether a record is the file its plugin prefers for the job (by its game path or its name). */
+const isPreferred = (a: ProjectAsset): boolean =>
+  Boolean(a.preferredFile) && (a.file === a.preferredFile || a.file.endsWith(`/${a.preferredFile}`));
+
+/**
+ * The record a job's thumbnail is drawn from: the file its plugin prefers, else its biggest model
+ * or picture (a character's motion-only clips are kilobytes beside the megabytes of its mesh, and
+ * draw an empty stage), else its first.
+ */
+function previewRecord(records: ProjectAsset[]): ProjectAsset | undefined {
+  const preferred = records.find(isPreferred);
+  if (preferred) return preferred;
+  const drawn = records.filter((a) => DRAWN_KINDS.has(a.kind)).sort((a, b) => b.bytes - a.bytes);
+  return drawn[0] ?? records[0];
 }
 
 /** A delivered asset is in the game when a present copy is the project's; a walked file with no delivery record is. */

@@ -77,6 +77,10 @@ function assetsRead(event: UiEvent): UiEventReads["assets"] {
     const project = event.payload?.project;
     return { project: typeof project === "string" ? project : null };
   }
+  if (event.type === UiEvent.AssetJobs) {
+    const project = event.payload?.project;
+    return typeof project === "string" ? { project } : null;
+  }
   return null;
 }
 

@@ -107,7 +107,7 @@ const smokeGameSource = (revision) =>
 
 const replies = [
   {
-    toolCalls: [{ id: "call_new", name: "new_game", arguments: { name: "selftest", title: "Self Test" } }],
+    toolCalls: [{ id: "call_new", name: "new_game", arguments: { name: "selftest", title: "Self Test", kind: "web" } }],
     text: "Creating the project.",
   },
   {

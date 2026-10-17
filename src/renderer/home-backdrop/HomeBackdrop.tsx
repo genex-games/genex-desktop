@@ -11,9 +11,32 @@ import { Scheme } from "../appearance/themes.ts";
 import { drawBackdrop } from "./draw.ts";
 import { colorLightness } from "./field.ts";
 import { loadBackdropPicture } from "./images.ts";
-import { BackdropEffect, type BackdropSettings, DEFAULT_BACKDROP_IMAGE } from "./settings.ts";
+import { useMadeShaders } from "./made-shaders.ts";
+import { shaderFor } from "./presets.ts";
+import { ShaderCanvas, type ShaderCanvasMode } from "./ShaderCanvas.tsx";
+import { PointerSource } from "./shader-stage.ts";
+import { BackdropEffect, type BackdropSettings, BackdropSource, DEFAULT_BACKDROP_IMAGE } from "./settings.ts";
 import { useBackdrop, useBackdropPreviewShown } from "./store.ts";
 import { type BackdropView, homeView, previewView, type Rect, type Size } from "./view.ts";
+
+/** On a dark page a live background draws at this share of its strength, to read as it does on a light one. */
+const DARK_PAGE_STRENGTH = 0.5;
+/** Home's live background: full frame rate, the pointer anywhere in the window. */
+const HOME_LIVE: ShaderCanvasMode = {
+  fps: 60,
+  maxDensity: 1.5,
+  pointer: PointerSource.Window,
+  stillTime: 6,
+  darkStrength: DARK_PAGE_STRENGTH,
+};
+/** The Settings preview: a small canvas, so a lower rate and a sharper density cost little. */
+const PREVIEW_LIVE: ShaderCanvasMode = {
+  fps: 30,
+  maxDensity: 2,
+  pointer: PointerSource.None,
+  stillTime: 6,
+  darkStrength: DARK_PAGE_STRENGTH,
+};
 
 /** A resize redraws once it has been still this long. */
 const RESIZE_SETTLE_MS = 120;
@@ -129,7 +152,7 @@ function useBackdropDrawing(
   drawing: BackdropView | null,
   onDrawn: () => void,
 ): void {
-  const shown = settings.effect !== BackdropEffect.Off;
+  const shown = settings.source === BackdropSource.Picture;
   const { scheme } = useAppearance();
   const drawn = useRef(onDrawn);
   drawn.current = onDrawn;
@@ -213,15 +236,31 @@ export function BackdropPreview({
   home: Rect;
 }): JSX.Element | null {
   const canvas = useRef<HTMLCanvasElement>(null);
-  const shown = settings.effect !== BackdropEffect.Off;
+  const live = settings.source === BackdropSource.Shader;
+  const shown = settings.source === BackdropSource.Picture;
   const width = useSettledWidth(canvas, shown);
   const density = window.devicePixelRatio || 1;
   const drawing = useMemo(
     () => (width ? previewView(frame, home, width, density) : null),
     [frame, home, width, density],
   );
+  if (live) return <LiveBackground settings={settings} mode={PREVIEW_LIVE} className="backdrop-preview-art" />;
   if (!shown) return null;
   return <BackdropCanvas settings={settings} drawing={drawing} canvas={canvas} className="backdrop-preview-art" />;
+}
+
+/** The live background the settings choose, moving unless Reduce Motion is on. */
+function LiveBackground({
+  settings,
+  mode,
+  className,
+}: {
+  settings: BackdropSettings;
+  mode: ShaderCanvasMode;
+  className: string;
+}): JSX.Element {
+  const { body } = shaderFor(settings.shader, useMadeShaders());
+  return <ShaderCanvas body={body} settings={settings} moving mode={mode} className={className} />;
 }
 
 /** `value`, once it has stopped changing for `ms`; the first value, and any with no wait, at once. */
@@ -244,9 +283,16 @@ export function HomeBackground(): JSX.Element | null {
   const settle = useBackdropPreviewShown() ? HOME_SETTLE_MS : 0;
   const settings = useSettledValue(useBackdrop(), settle);
   const canvas = useRef<HTMLCanvasElement>(null);
-  const shown = settings.effect !== BackdropEffect.Off;
+  const live = settings.source === BackdropSource.Shader;
+  const shown = settings.source === BackdropSource.Picture;
   const screen = useSettledScreen(shown);
   const drawing = useMemo(() => homeView({ width: screen.width, height: screen.height }, screen.density), [screen]);
+  if (live)
+    return (
+      <div className="home-backdrop-frame">
+        <LiveBackground settings={settings} mode={HOME_LIVE} className="home-backdrop-live" />
+      </div>
+    );
   if (!shown) return null;
   return (
     <div className="home-backdrop-frame">

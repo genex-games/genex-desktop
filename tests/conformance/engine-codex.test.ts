@@ -15,6 +15,7 @@ import { describe, it } from "node:test";
 import {
   CodexEngine,
   effortArgs,
+  HostSkills,
   normaliseEffort,
   readCodexCatalogue,
   translateEvent,
@@ -33,9 +34,10 @@ import {
   LOCK_MARKER,
 } from "../../src/substrate/engines/ownership-locks.ts";
 import { StudioBridge } from "../../src/substrate/engines/studio-bridge.ts";
-import { type DelegatePermissions, EngineError } from "../../src/substrate/engines/types.ts";
+import { type DelegatePermissions, EngineError, type WorkerSeat } from "../../src/substrate/engines/types.ts";
+import { NeverTouchKind } from "../../src/substrate/engines/never-touch.ts";
 import { planModeNote } from "../../src/substrate/engines/codex-prompts.ts";
-import type { PermissionMode } from "../../src/shared/permissions.ts";
+import { PermissionMode } from "../../src/shared/permissions.ts";
 import { spawn } from "node:child_process";
 import { tmpDir } from "../helpers/tmp.ts";
 
@@ -327,6 +329,19 @@ describe("codex engine", () => {
     assert.doesNotMatch(call.prompt, /The build you are testing/);
   });
 
+  it("tells a Loop's reviewer the build it tests is the folder it reads, never its own empty home", async () => {
+    const { fn, seen } = fakeExec(successRun);
+    const { engine, root } = await signedInEngine(fn);
+    const home = path.join(root, "scratch", "reviewers", "abc", "codex", "call");
+    const reads = path.join(root, "game");
+    await mkdir(home, { recursive: true });
+    await mkdir(reads, { recursive: true });
+    await engine.delegate({ prompt: "review the claim", cwd: home, readOnly: true, reviewer: { reads } });
+    const call = seen[0]!;
+    assert.ok(call.prompt.includes(`The build you are testing is at ${reads}.`), call.prompt);
+    assert.ok(!call.prompt.includes(`is at ${home}`), "never its home");
+  });
+
   it("follows the chat's permission mode: Plan reads from a folder of its own, Bypass drops the sandbox, and a mode it cannot ask in runs in Auto's sandbox", async () => {
     const { fn, seen } = fakeExec(successRun);
     const { engine, root } = await signedInEngine(fn);
@@ -374,6 +389,173 @@ describe("codex engine", () => {
     // Unattended work has no mode at all: the sandboxed contract.
     await engine.delegate({ prompt: "build pong", cwd: game });
     assert.ok(sandboxed(seen.at(-1)!.argv));
+  });
+
+  it("a Codex worker is always boxed: its roots writable, the network on only in a Bypass chat, never the bypass flag", async () => {
+    // Codex has no hook Genex sets and its bypass flag drops every fence, so a worker is boxed in
+    // every mode: the never-touch list holds for its writes at the OS boundary.
+    const { fn, seen } = fakeExec(successRun);
+    const { engine, root } = await signedInEngine(fn);
+    const game = path.join(root, "game");
+    const refs = path.join(root, "refs");
+    for (const dir of [game, refs]) await mkdir(dir, { recursive: true });
+    const seat = (mode: PermissionMode): WorkerSeat => ({
+      id: "w1",
+      title: "Scene builder",
+      mode,
+      writeRoots: [game, refs],
+      neverTouch: { roots: [{ path: path.join(root, "other-game"), kind: NeverTouchKind.OtherGame }], open: [] },
+      research: false,
+    });
+    const writable = (argv: string[]) => {
+      const roots = argv.find((arg) => arg.startsWith("sandbox_workspace_write.writable_roots="));
+      return roots ? (JSON.parse(roots.slice(roots.indexOf("=") + 1)) as string[]) : null;
+    };
+    const boxed = (argv: string[]) =>
+      argv.includes('sandbox_mode="workspace-write"') && argv.includes('approval_policy="never"');
+    const network = (argv: string[]) => argv.find((arg) => arg.startsWith("sandbox_workspace_write.network_access="));
+
+    for (const mode of ["bypassPermissions", "auto", "acceptEdits", "default"] as const) {
+      await engine.delegate({ prompt: "build the scene", cwd: game, worker: seat(mode) });
+      const call = seen.at(-1)!;
+      assert.equal(call.cwd, game, mode);
+      assert.ok(boxed(call.argv), `${mode}: boxed`);
+      assert.ok(!call.argv.includes("--dangerously-bypass-approvals-and-sandbox"), `${mode}: never the bypass flag`);
+      assert.deepEqual(writable(call.argv), [game, refs], `${mode}: its write roots`);
+      const open = mode === "bypassPermissions";
+      assert.equal(network(call.argv), `sandbox_workspace_write.network_access=${open}`, mode);
+      assert.ok(call.prompt.includes(path.join(root, "other-game")), `${mode}: the brief names what it never reaches`);
+    }
+    await engine.delegate({ prompt: "plan the scene", cwd: game, worker: seat("plan") });
+    const plan = seen.at(-1)!;
+    assert.notEqual(plan.cwd, game, "Plan reads from a folder of its own");
+    assert.deepEqual(writable(plan.argv), [plan.cwd], "and writes only the studio's bridge there");
+    assert.equal(network(plan.argv), "sandbox_workspace_write.network_access=false");
+    await engine.delegate({ prompt: "read the scene", cwd: game, readOnly: true, worker: seat("auto") });
+    assert.notEqual(seen.at(-1)!.cwd, game, "a reader in place starts elsewhere too");
+  });
+
+  it("a Codex worker searches the web as a writer or a research worker, and never otherwise", async () => {
+    // The same rule as a Claude Code worker's (`researches`): its lead's research grant, or writing.
+    const { fn, seen } = fakeExec(successRun);
+    const { engine, root } = await signedInEngine(fn);
+    const game = path.join(root, "game");
+    await mkdir(game, { recursive: true });
+    const seat = (mode: PermissionMode, research: boolean): WorkerSeat => ({
+      id: "w1",
+      title: "Scout",
+      mode,
+      writeRoots: [game],
+      neverTouch: { roots: [], open: [] },
+      research,
+    });
+    const search = () => seen.at(-1)!.argv.filter((arg) => arg.startsWith("web_search="));
+    const cases: Array<[name: string, worker: WorkerSeat, readOnly: boolean, mode: string]> = [
+      ["a writer", seat(PermissionMode.Auto, false), false, "live"],
+      ["a research reader", seat(PermissionMode.Auto, true), true, "live"],
+      ["a reader", seat(PermissionMode.Auto, false), true, "disabled"],
+      ["a research worker in Plan", seat(PermissionMode.Plan, true), false, "live"],
+      ["a worker in Plan", seat(PermissionMode.Plan, false), false, "disabled"],
+    ];
+    for (const [name, worker, readOnly, mode] of cases) {
+      await engine.delegate({ prompt: "look into it", cwd: game, readOnly, worker });
+      assert.deepEqual(search(), [`web_search="${mode}"`], name);
+    }
+    await engine.delegate({ prompt: "build pong", cwd: game });
+    assert.deepEqual(search(), [], "a session with no seat keeps Codex's own setting");
+  });
+
+  it("a Codex worker's writable roots never hold a never-touch root, and its brief never puts its own folder off limits", async () => {
+    // Codex's box cannot deny inside a writable folder: a granted folder holding another game, a
+    // sign-in or Genex's data would open it whole.
+    const { fn, seen } = fakeExec(successRun);
+    const { engine, root } = await signedInEngine(fn);
+    const userData = path.join(root, "userData");
+    const copy = path.join(userData, "scratch", "autopilot", "run_1", "w1");
+    const games = path.join(root, "games");
+    const otherGame = path.join(games, "other");
+    const fakeHome = path.join(root, "home");
+    const refs = path.join(root, "refs");
+    for (const dir of [copy, otherGame, path.join(fakeHome, ".codex"), refs]) await mkdir(dir, { recursive: true });
+    const seat: WorkerSeat = {
+      id: "w1",
+      title: "Scene builder",
+      mode: PermissionMode.Auto,
+      writeRoots: [
+        copy,
+        games,
+        otherGame,
+        fakeHome,
+        path.join(fakeHome, ".codex"),
+        path.join(userData, "plugin"),
+        refs,
+      ],
+      neverTouch: {
+        roots: [
+          { path: path.join(fakeHome, ".codex"), kind: NeverTouchKind.Login },
+          { path: userData, kind: NeverTouchKind.GenexData },
+          { path: otherGame, kind: NeverTouchKind.OtherGame },
+        ],
+        open: [copy],
+      },
+      research: false,
+    };
+    await engine.delegate({ prompt: "build the scene", cwd: copy, worker: seat });
+    const call = seen.at(-1)!;
+    const roots = call.argv.find((arg) => arg.startsWith("sandbox_workspace_write.writable_roots="));
+    assert.deepEqual(JSON.parse(roots?.slice(roots.indexOf("=") + 1) ?? "null"), [copy, refs]);
+    const listed = call.prompt.split("\n").map((line) => line.trim());
+    assert.ok(!listed.includes(userData), "the data folder holding its own copy is not off limits whole");
+    for (const named of [otherGame, path.join(fakeHome, ".codex")]) assert.ok(listed.includes(named), named);
+  });
+
+  it("turns Codex's own sub-agents and its screen and browser hands off in every session, once each", async () => {
+    // Genex runs the workers; computer use and the browsers stay off until Genex hands them out.
+    const OFF = [
+      "computer_use",
+      "in_app_browser",
+      "browser_use",
+      "browser_use_external",
+      "multi_agent",
+      "multi_agent_v2",
+    ];
+    const { fn, seen } = fakeExec(successRun);
+    const { engine, root } = await signedInEngine(fn);
+    const game = path.join(root, "game");
+    await mkdir(game, { recursive: true });
+    const bypass: DelegatePermissions = {
+      mode: "bypassPermissions",
+      allow: [],
+      directories: [],
+      protectWrites: [],
+      ask: async () => ({ decision: "deny" }),
+    };
+    await engine.delegate({ prompt: "build pong", cwd: game });
+    await engine.delegate({ prompt: "make it jump", cwd: game, permissions: bypass });
+    const evalLane = fakeExec(successRun);
+    const suppressing = new CodexEngine({
+      resolveCli: fixtureCodingCli,
+      engineHome: path.join(root, "codex-home"),
+      systemHome: path.join(root, "no-system-login"),
+      executable: "/fake/codex",
+      authStatusFn: async () => ({ loggedIn: true, method: "chatgpt", detail: "Logged in using ChatGPT" }),
+      execFn: evalLane.fn,
+      hostSkills: HostSkills.Suppress,
+      hostSkillsDir: path.join(root, "no-skills"),
+    });
+    await suppressing.delegate({ prompt: "build pong", cwd: game });
+    const sessions: Array<[string, string[] | undefined]> = [
+      ["a default session", seen[0]?.argv],
+      ["a Bypass chat", seen[1]?.argv],
+      ["the eval lane", evalLane.seen[0]?.argv],
+    ];
+    for (const [name, argv = []] of sessions) {
+      for (const feature of OFF) {
+        const times = argv.filter((arg, i) => arg === feature && argv[i - 1] === "--disable").length;
+        assert.equal(times, 1, `${name}: --disable ${feature} once`);
+      }
+      assert.equal(argv.at(-1), "-", `${name}: the prompt still comes last, on stdin`);
+    }
   });
 
   it("resumes a session by id rather than starting a fresh contractor", async () => {
@@ -552,6 +734,39 @@ describe("codex engine", () => {
     const status = await engine.probeAuth();
     assert.equal(status.code, "needs_login");
     assert.match(status.detail, /API key/i);
+  });
+
+  it("runs on the account chosen in Settings, even over Studio's own profile", async () => {
+    const root = await tmpDir("studio-codex-accounts-");
+    const systemHome = path.join(root, "dot-codex");
+    const engineHome = path.join(root, "engine-home");
+    for (const dir of [systemHome, engineHome]) {
+      await mkdir(dir, { recursive: true });
+      await writeFile(path.join(dir, "auth.json"), "{}");
+    }
+    await writeFile(path.join(engineHome, "studio-login.json"), "{}");
+    const { fn, seen } = fakeExec(successRun);
+    const engine = new CodexEngine({
+      resolveCli: fixtureCodingCli,
+      engineHome,
+      systemHome,
+      executable: "/fake/codex",
+      authStatusFn: async () => ({ loggedIn: true, method: "chatgpt", detail: "Logged in using ChatGPT" }),
+      execFn: fn,
+    });
+    const added = await engine.accounts.newAccount();
+    await writeFile(path.join(added.home, "auth.json"), "{}");
+    await engine.accounts.remember(added.id, {});
+    await engine.runOnAccount(added.id);
+    const cwd = path.join(root, "game");
+    await mkdir(cwd, { recursive: true });
+    await engine.delegate({ prompt: "build", cwd });
+    await engine.runOnAccount("terminal");
+    await engine.delegate({ prompt: "build", cwd });
+    assert.deepEqual(
+      seen.map((call) => call.env.CODEX_HOME),
+      [added.home, systemHome],
+    );
   });
 
   it("keeps borrowing this Mac's Codex sign-in after a build: nothing a build leaves reads as the studio's own", async () => {

@@ -194,6 +194,47 @@ test("a chat checkpoint saved before readings were kept per role is rebuilt, and
   }
 });
 
+test("a chat checkpoint saved before running jobs were kept is rebuilt, and an older job's start stays in reach", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "studio-chat-context-"));
+  try {
+    const store = await EventStore.open(root);
+    const thread = await store.createThread();
+    const jobId = "0f3c9a52-7d41-4c1e-9b8e-2a6f1d0c4b17";
+    await store.appendEvents(thread, [
+      {
+        type: EventKind.Custom,
+        event_type: CustomEvent.JobStarted,
+        payload: { jobId, project: "game", title: "Server", command: "serve", startedAt: new Date(0).toISOString() },
+      },
+    ]);
+    await store.appendEvents(
+      thread,
+      Array.from({ length: CHAT_PAGE_SIZE + 40 }, (_, i) => ({
+        type: EventKind.Messages,
+        messages: [{ role: "assistant" as const, content: `Step ${i}` }],
+      })),
+    );
+    const all = await store.listEvents(thread, {});
+    // What the app saved before (format 6): no running job among the facts.
+    await fs.writeFile(
+      path.join(store.threadDir(thread), "chat-context.json"),
+      JSON.stringify({ version: 6, head: all.at(-1)?.id, rewinds: 0, events: [] }),
+    );
+    const page = await store.chatPage(thread);
+    assert.ok(
+      !page.events.some((e) => customPayload(e.data, CustomEvent.JobStarted)),
+      "the start is older than the loaded page",
+    );
+    assert.deepEqual(
+      page.context.flatMap((e) => customPayload(e.data, CustomEvent.JobStarted)?.jobId ?? []),
+      [jobId],
+      "the running job's start is in the chat's facts, so its line keeps Stop",
+    );
+  } finally {
+    await removeTree(root);
+  }
+});
+
 test("a reading with no role and a planner's are the main session's: the newer replaces the older in the facts", () => {
   const planner = reading(1, SessionActivityRole.Planner, 40_000);
   const unnamed = reading(2, undefined, 45_000);
@@ -313,6 +354,40 @@ test("parallel plugin calls match their own outcomes and delivered assets stay v
   assert.equal(rows.find((row) => row.key === "b")!.state, "failed");
   assert.ok(entries.some((e) => e.kind === "assets"));
   assert.equal(new Set(entries.map((e) => e.id)).size, entries.length);
+});
+
+test("a call making an asset carries the ids its job may go by; a call that makes nothing carries none", () => {
+  const making = { kind: "character", tool: "meshy", prompt: "Knight" };
+  const entries = toEntries([
+    custom(1, "plugin_tool_started", { callId: "a", pluginId: "genex", tool: "asset", making }),
+    custom(2, "plugin_tool", {
+      callId: "a",
+      pluginId: "genex",
+      tool: "asset",
+      making,
+      ok: true,
+      jobId: "j",
+      generationId: "g",
+    }),
+    custom(3, "plugin_tool_started", { callId: "b", pluginId: "genex", tool: "cover" }),
+    custom(4, "connector_tool_started", {
+      callId: "c",
+      connectorId: "paint",
+      tool: "paint",
+      exposedName: "paint",
+      making,
+    }),
+    custom(5, "connector_tool_started", { connectorId: "paint", tool: "paint", exposedName: "paint", making }),
+  ]);
+  const rows = entries.flatMap((e) => (e.kind === "tools" ? e.rows : []));
+  assert.deepEqual(rows.find((row) => row.key === "a")!.making, { ids: ["a", "j", "g"] }, "the call's, then its job's");
+  assert.equal(rows.find((row) => row.key === "b")!.making, undefined);
+  assert.deepEqual(rows.find((row) => row.key === "c")!.making, { ids: ["c"] });
+  assert.equal(
+    rows.filter((row) => row.making).length,
+    2,
+    "a connector record from before calls had ids has no job to find",
+  );
 });
 
 test("build-workspace deliveries wait for their run result; game-folder deliveries show where they land", () => {
@@ -774,12 +849,13 @@ test("routine narration folds by what its record says, not by the words written 
     ["line:PART"],
     "a judge that could not be reached is trouble",
   );
+  // A connector call is a step of the work, failed or not, never a narration line.
   assert.deepEqual(
     lines([
       custom(7, "connector_tool", { connectorId: "figma", tool: "get", ok: false, error: "denied" }),
       custom(8, "connector_tool", { connectorId: "figma", tool: "get", ok: true }),
     ]),
-    ["line:TOOL", "activity:1"],
+    ["tools", "tools"],
   );
   assert.deepEqual(lines([custom(9, "blender_asset", { ...run, name: "boat", ok: false, error: "crash" })]), [
     "line:BLENDER",

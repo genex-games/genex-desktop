@@ -10,8 +10,8 @@ a defect outside the list is described in full.
 - `[light-cone]` visible volumetric cones, pyramids or "huts" over lamps.
 - `[moire]` shimmer or stripes on fine repeating textures (ceilings, grilles, skies).
 - `[floating]` props, characters or enemies hovering above or sunk into the floor.
-- `[duplicate-overlay]` the same HUD element or readout drawn twice; overlapping or misaligned
-  overlays; a `user:view` frame showing UI the canvas frame lacks.
+- `[duplicate-overlay]` the same HUD element or readout drawn twice within one frame; overlapping
+  or misaligned overlays. Never a difference between `user:view` and a canvas frame.
 - `[hud-crowding]` HUD panels, gauges or readouts that claim a large share of the frame or the
   middle of the play view, or run into each other (the HUD line, when given, measures both).
 - `[jagged-hud]` stair-stepped circles, arcs or diagonals in the HUD; pixelated gauges, icons or

@@ -2,15 +2,19 @@
  * The line below the transcript that says what is happening: the chat's own work (with the work
  * log folded in), else a running build's status, else Studio quietly learning, else nothing.
  */
-import type { JSX, Key } from "react";
+import { type JSX, type Key, useMemo } from "react";
 import type { AgentScreenFrame } from "../../shared/agent-screen.ts";
 import { leadFrameOf } from "../state/agent-screens.ts";
 import { useAgentScreens } from "../state/hooks.ts";
 import { LoadingState } from "../ui/LoadingState.tsx";
 import { Presence, type PresenceChild } from "../ui/Presence.tsx";
+import type { BuildParts } from "./build-checklist.ts";
 import { BuildStatus } from "./BuildStatus.tsx";
 import type { ActivityItem } from "./conversation-entries.ts";
 import { WorkLogContent } from "./WorkLog.tsx";
+import { makingCalls } from "./making-calls.ts";
+import { MakingTiles } from "./MakingTiles.tsx";
+import type { Notify } from "../state/toasts.ts";
 
 export interface ChatWorkProps {
   /** The chat's own work is under way. */
@@ -21,8 +25,10 @@ export interface ChatWorkProps {
   workKey: Key | null | undefined;
   /** What the busy line says (`busyLabel`). */
   label: string;
-  /** The running build's one line (`buildCaption`): what is happening now, one thing at a time. */
+  /** The running build's one line: its parts counted (`checklistCaption`), else what is happening now (`buildCaption`). */
   caption: string;
+  /** What the running build's card lists its parts from (`build-checklist.ts`), once it has a plan or a worker. */
+  parts: BuildParts | null;
   /** The busy line waits on the user rather than working. */
   waiting: boolean;
   busySince: number | null;
@@ -37,6 +43,8 @@ export interface ChatWorkProps {
   onShowBuilds?: () => void;
   /** The chat is loading: the line it opens with is simply there. */
   still?: boolean;
+  /** Where an approval from a card of what the work is making reports a problem. */
+  onNotice?: Notify;
 }
 
 /** What the line is: the chat's own work, a running build or Studio learning. A change of kind swaps it. */
@@ -48,14 +56,33 @@ const WorkKind = {
 
 /**
  * The line reads the lead's screen itself (a frame of the store's), so a new frame from any worker
- * re-renders at most this line, never the chat around it. A running build is one card with one
- * line: the parts' detail lives on Builds, not in a list under it. The line opens and closes in
- * place, and a work line becoming the build card (or back) closes one as the other opens.
+ * re-renders at most this line, never the chat around it. A running build is one card: one line
+ * counting its parts, and the card opens to their list — added, working, still to come — in place
+ * of a line for each worker in the transcript; every detail of a part lives on Builds. The line
+ * opens and closes in place, and a work line becoming the build card (or back) closes one as the
+ * other opens.
  */
 export function ChatWork(props: ChatWorkProps): JSX.Element {
   const { activeRunId, project } = props;
   const leadFrame = useAgentScreens((s) => (activeRunId ? leadFrameOf(s, project, activeRunId) : undefined));
-  return <Presence still={props.still}>{workLine(props, leadFrame)}</Presence>;
+  return (
+    <Presence still={props.still} className="chat-work">
+      {workLine(props, leadFrame)}
+    </Presence>
+  );
+}
+
+const NO_NOTICE: Notify = () => {};
+
+/** What the chat's work is still making, under its line, as the Assets canvas shows it. */
+function WorkMaking({ props }: { props: ChatWorkProps }): JSX.Element | null {
+  const calls = useMemo(() => makingCalls(props.details ?? []), [props.details]);
+  if (!props.project || !calls.length) return null;
+  return (
+    <div className="mt-1">
+      <MakingTiles project={props.project} calls={calls} onNotice={props.onNotice ?? NO_NOTICE} />
+    </div>
+  );
 }
 
 /** The line on show, keyed by its kind, or nothing. */
@@ -73,6 +100,7 @@ function workLine(props: ChatWorkProps, leadFrame: AgentScreenFrame | undefined)
               waiting={props.waiting}
               {...(props.busySince ? { since: props.busySince } : {})}
             />
+            <WorkMaking props={props} />
           </div>
         ),
       },
@@ -88,6 +116,7 @@ function workLine(props: ChatWorkProps, leadFrame: AgentScreenFrame | undefined)
               budgetMs={props.budgetMs}
               {...(leadFrame ? { frame: leadFrame } : {})}
               {...(props.onShowBuilds ? { onOpenBuilds: props.onShowBuilds } : {})}
+              parts={props.parts}
               caption={props.caption}
             />
           </div>

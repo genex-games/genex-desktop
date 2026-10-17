@@ -9,6 +9,7 @@ import { newBuildOffer } from "../../src/renderer/stage.ts";
 import type { EventEnvelope } from "../../src/substrate/types.ts";
 import {
   buildRunGraph,
+  buildsView,
   hasMergedBuild,
   nextStep,
   passedFraction,
@@ -18,6 +19,7 @@ import {
   type Rect,
 } from "../../src/renderer/run-graph.ts";
 import { checkCounts } from "../../src/renderer/words.ts";
+import { answeredRecords } from "../../src/shared/run-graph-events.ts";
 
 let counter = 0;
 function event(eventType: string, payload: Record<string, unknown>): EventEnvelope {
@@ -169,6 +171,53 @@ describe("buildRunGraph", () => {
     assert.equal(buildProgress(graph).title, "Building the starting point");
     const finished = buildRunGraph([...events, event("autopilot_base", { ok: true, empty: true })])!;
     assert.equal(buildProgress(finished).title, "The starting point is ready");
+  });
+
+  it("keeps the pictures the person sent with the message the run answers, for the start node", () => {
+    /** A queue record of the chat's, which names no run. */
+    const queue = (eventType: string, payload: Record<string, unknown>): EventEnvelope => {
+      const record = event(eventType, {});
+      return { ...record, thread_id: "chat", data: { type: "custom", event_type: eventType, payload } };
+    };
+    const pictures = { text: "Recreate this area", attachmentsArtifact: "message_attachments_m1", imageCount: 2 };
+    const asked = buildRunGraph([
+      queue("coordinator_message_queued", { messageId: "m0", action: { text: "hi" } }),
+      queue("coordinator_message_processing", { messageId: "m0" }),
+      queue("coordinator_message_queued", { messageId: "m1", action: pictures }),
+      queue("coordinator_message_processing", { messageId: "m1" }),
+      event("run_registered", { goal: "Recreate this area" }),
+      event("run_started", { goal: "Recreate this area" }),
+      // A later message steered into the run never becomes what it was asked with.
+      queue("coordinator_message_queued", { messageId: "m2", action: { ...pictures, attachmentsArtifact: "x" } }),
+      queue("coordinator_message_processing", { messageId: "m2" }),
+      event("run_started", { goal: "Recreate this area", resumed: true }),
+    ]);
+    const askedOf = (graph: ReturnType<typeof buildRunGraph>) => {
+      const run = graph?.nodes.find((node) => node.kind === "run");
+      return run?.kind === "run" ? run.asked : undefined;
+    };
+    assert.deepEqual(askedOf(asked), { threadId: "chat", messageId: "m1", count: 2 });
+    const plain = buildRunGraph([
+      queue("coordinator_message_queued", { messageId: "m3", action: { text: "Make a game" } }),
+      queue("coordinator_message_processing", { messageId: "m3" }),
+      event("run_registered", { goal: "Make a game" }),
+    ]);
+    assert.equal(askedOf(plain), null, "a message without pictures leaves the start to its words");
+    // The run's summary hands the graph its own records only, and the message it answers.
+    const log = [
+      queue("coordinator_message_queued", { messageId: "m0", action: { text: "hi" } }),
+      queue("coordinator_message_processing", { messageId: "m0" }),
+      queue("coordinator_message_queued", { messageId: "m1", action: pictures }),
+      queue("coordinator_message_queued", { messageId: "m9", action: { text: "queued behind" } }),
+      queue("coordinator_message_processing", { messageId: "m1" }),
+      event("run_registered", { goal: "Recreate this area" }),
+      queue("coordinator_message_processing", { messageId: "m9" }),
+    ];
+    assert.deepEqual(
+      answeredRecords(log, "run_x").map((record) => record.id),
+      [log[2]!.id, log[4]!.id],
+    );
+    assert.deepEqual(answeredRecords(log, "run_other"), [], "a run with no record of its own answers nothing");
   });
 
   it("returns null for a thread with no run", () => {
@@ -436,7 +485,9 @@ import {
   runStillPath,
   thumbShot,
 } from "../../src/renderer/run-graph.ts";
-import { layoutSteps, partRows, STEPS } from "../../src/renderer/run-steps.ts";
+import { layoutSteps, partRows, STEPS, Tone } from "../../src/renderer/run-steps.ts";
+import { assetsStatus, isMaking, stoppedShort } from "../../src/renderer/panels/inspector/asset-jobs.ts";
+import { MakingPhase } from "../../src/shared/asset-making.ts";
 
 describe("notes and plain words", () => {
   it("pins a user note to the round it named and records the first later verdict of that part", () => {
@@ -809,6 +860,72 @@ describe("the plugins' asset jobs in the run graph", () => {
     assert.equal(node.jobs[0]!.iteration, 2);
   });
 
+  it("drops a Genex request refused before a generation started, and fails a generation that did", () => {
+    counter = 0;
+    // Genex answers a refused request as a job that failed with no generation, not as an error.
+    const refused = (callId: string, error: string) =>
+      finished(callId, {
+        jobId: `job-${callId}`,
+        result: JSON.stringify({ id: `job-${callId}`, operation: "character", status: "failed", files: [], error }),
+      });
+    const graph = buildRunGraph([
+      event("run_started", { goal: "a farm", project: "farm" }),
+      started("call-1"),
+      refused("call-1", "✗ Error: Cannot quote this generation (HTTP 400). No generation was sent."),
+      started("call-2"),
+      refused("call-2", '{"kind":"character","status":"selection_required","selector":"Casual Walk"}'),
+      started("call-3"),
+      finished("call-3", {
+        jobId: "job-3",
+        generationId: "gen-3",
+        result: JSON.stringify({ id: "job-3", generationId: "gen-3", status: "failed", error: "The rig failed." }),
+      }),
+    ])!;
+    const node = graph.nodes.find((n) => n.kind === "assets");
+    assert.ok(node && node.kind === "assets");
+    assert.deepEqual(
+      node.jobs.map((job) => [job.callId, job.state, job.error]),
+      [["call-3", "failed", "The rig failed."]],
+      "only the generation that started and failed is listed, in Genex's words",
+    );
+  });
+
+  it("reads a job the log leaves on its way as the game's inventory does, so a stale one stops making", () => {
+    counter = 0;
+    const graph = buildRunGraph([
+      event("run_started", { goal: "a farm", project: "farm" }),
+      started("call-1"),
+      finished("call-1", { jobId: "job-1", generationId: "gen-1", result: '{"id":"job-1","status":"accepted"}' }),
+    ])!;
+    // The inventory lists a Genex job by its generation, and has read its record two hours on.
+    const inventory = (phase: MakingPhase) => ({
+      project: "farm",
+      assets: [],
+      jobs: [{ source: "genex", jobId: "gen-1", phase }],
+      truncated: false,
+      skipped: [],
+    });
+    const jobOf = (phase: MakingPhase) => {
+      const node = buildsView(graph, null, inventory(phase)).nodes.find((n) => n.kind === "assets");
+      assert.ok(node && node.kind === "assets");
+      return node.jobs;
+    };
+    const stale = jobOf(MakingPhase.Unsure);
+    assert.deepEqual(
+      [isMaking(stale[0]!), stoppedShort(stale[0]!), assetsStatus(stale)],
+      [false, MakingPhase.Unsure, { text: "1 not confirmed", tone: Tone.Orange }],
+      "a job Genex still says it is making two hours on is Not confirmed, not Making",
+    );
+    const making = jobOf(MakingPhase.Making);
+    assert.deepEqual(
+      [isMaking(making[0]!), stoppedShort(making[0]!), assetsStatus(making)],
+      [true, null, { text: "Making 1", tone: Tone.Accent }],
+    );
+    const unlisted = buildsView(graph, null, null).nodes.find((n) => n.kind === "assets");
+    assert.ok(unlisted && unlisted.kind === "assets");
+    assert.equal(isMaking(unlisted.jobs[0]!), true, "with no inventory read, the log's word stands");
+  });
+
   it("joins a call that names no job to the delivery of the same files", () => {
     counter = 0;
     const graph = buildRunGraph([
@@ -865,6 +982,7 @@ describe("the plugins' asset jobs in the run graph", () => {
       {
         pluginName: "Local Blender",
         name: "tank-inspect",
+        facetId: null,
         files: ["assets/blender/b-1/model.glb", "assets/blender/b-1/render.png"],
         size: [1, 0.579, 0.4685],
         triangles: 144143,
@@ -909,6 +1027,23 @@ describe("the plugins' asset jobs in the run graph", () => {
       at: "2026-09-05T10:05:00.000Z",
     });
     assert.equal(node.jobs[0]!.state, "delivered", "a failed check does not fail the asset");
+  });
+
+  it("reads a call's operation only where the digest writes it, never out of its prompt", () => {
+    counter = 0;
+    const graph = buildRunGraph([
+      event("run_started", { goal: "a farm", project: "farm", reference: { name: "x" } }),
+      started("call-5", {
+        pluginId: "sprite-forge",
+        pluginName: "Sprite Forge",
+        tool: "paint",
+        toolName: "sprite-forge__paint",
+        args: "prompt=a shop sign that reads operation=status",
+      }),
+    ])!;
+    const node = graph.nodes.find((n) => n.kind === "assets");
+    assert.ok(node && node.kind === "assets", "a call whose prompt mentions a lookup is still an asset");
+    assert.equal(node.jobs[0]?.operation, null);
   });
 
   /**

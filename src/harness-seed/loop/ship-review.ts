@@ -25,6 +25,7 @@ import { scopeLines } from "./scope-prompts.ts";
 import { visionJudgeLines } from "./vision-prompts.ts";
 import { clip, CLIP_REASON } from "./text.ts";
 import { doNotRegressOf } from "./do-not-regress.ts";
+import { roleEffort, RoleKey } from "./model-roles.ts";
 import {
   BUILD_OUTPUT,
   framesLine,
@@ -102,8 +103,17 @@ export interface ShipAsk {
 /** The judge plumbing's ask and answer, as judge.ts `askJudgeFor` takes and gives them. */
 type AskJudgeFor = (
   ctx: HarnessCtx,
-  ask: { run: Run; systemPrompt: string; userContent: string; images?: MessageImage[] },
+  ask: { run: Run; systemPrompt: string; userContent: string; images?: MessageImage[]; effort?: string },
 ) => Promise<{ raw: AnyRecord; judged: AnyRecord }>;
+
+/**
+ * The effort the art director is asked at: the run's judge effort, which a reviewer's ceiling holds
+ * to a look that ends inside its few minutes (director/art-direction.ts `ART_DIRECTION_JUDGE_MS`;
+ * model-roles.ts `WORKER_EFFORT_CEILING`).
+ */
+export function shipReviewEffort(run: Run): string | undefined {
+  return roleEffort(run, RoleKey.Judge);
+}
 
 /** One frame as an image block for the judge. */
 const imageOf = (base64: string, label: string): MessageImage => ({ mimeType: "image/jpeg", data: base64, label });
@@ -274,7 +284,7 @@ export async function shipReview(ctx: HarnessCtx, ask: ShipAsk): Promise<ShipRev
     ask,
     images.map((image) => image.label ?? ""),
   );
-  const answer = await askJudgeFor(ctx, { run, systemPrompt, userContent, images });
+  const answer = await askJudgeFor(ctx, { run, systemPrompt, userContent, images, effort: shipReviewEffort(run) });
   const review = readShipReview(answer.raw, parts, shownCameras(evidence));
   return {
     ...review,

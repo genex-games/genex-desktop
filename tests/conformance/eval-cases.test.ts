@@ -339,6 +339,13 @@ describe("the committed case file", () => {
         ["edit-existing", CaseMode.EditExisting],
         ["follow-up", CaseMode.FollowUp],
         ["long-horizon", CaseMode.LongHorizon],
+        ["vague-unreal-on", CaseMode.Build],
+        ["unreal-plugin-off", CaseMode.Build],
+        ["port-to-unreal", CaseMode.EditExisting],
+        ["godot-no-plugin", CaseMode.FollowUp],
+        ["loop-finish-check", CaseMode.LongHorizon],
+        ["timed-wrap-up", CaseMode.LongHorizon],
+        ["godot-loop", CaseMode.LongHorizon],
       ],
     );
     for (const c of cases) assert.equal(c.visibility, CaseVisibility.Public);

@@ -1,0 +1,41 @@
+Setting up bundled DotNet SDK
+/Users/Shared/Epic Games/UE_5.8/Engine/Binaries/ThirdParty/DotNet/10.0/mac-arm64
+Running dotnet Engine/Binaries/DotNET/UnrealBuildTool/UnrealBuildTool.dll GxCppEditor Mac Development -Project=/Users/me/Games/rush/unreal/GxCpp.uproject -WaitMutex
+Log file: /Users/me/Library/Application Support/Epic/UnrealBuildTool/Log.txt
+Determining max actions to execute in parallel (12 physical cores, 12 logical cores)
+  Executing up to 12 processes, one per physical core
+Using 'git status' to determine working set for adaptive non-unity build (/Users/me/Games/rush).
+UbaServer - Listening on 0.0.0.0:1345
+Invalidating makefile for GxCppEditor (ispc deleted)
+Compiling with Mac SDK 26.2, minimum Target OS version 14.00
+CppDependencyCache - There is no partition covering path to /Users/me/Games/rush/unreal/Intermediate/Build/Mac/arm64/UnrealEditor/Development/GxCpp/GxCpp.cpp.d!
+CppDependencyCache - There is no partition covering path to /Users/me/Games/rush/unreal/Intermediate/Build/Mac/arm64/UnrealEditor/Development/GxCpp/GxProbe.cpp.d!
+CppDependencyCache - There is no partition covering path to /Users/me/Games/rush/unreal/Intermediate/Build/Mac/arm64/UnrealEditor/Development/GxCpp/Module.GxCpp.gen.cpp.d!
+CppDependencyCache - There is no partition covering path to /Users/me/Games/rush/unreal/Intermediate/Build/Mac/arm64/UnrealEditor/Development/GxCpp/GxSpinner.cpp.d!
+CppDependencyCache - There is no partition covering path to /Users/me/Games/rush/unreal/Intermediate/Build/Mac/arm64/UnrealEditor/Development/GxCpp/PerModuleInline.gen.cpp.d!
+Building GxCppEditor...
+===== Toolchain Information =====
+Using Clang compiler 19.1.5 (/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang++)
+  Apple clang version 17.0.0 (clang-1700.6.3.2) Target: arm64-apple-darwin25.3.0 Thread model: posix InstalledDir: /Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin
+Using Clang archiver (/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/libtool)
+  Apple clang version 17.0.0 (clang-1700.6.3.2) Target: arm64-apple-darwin25.3.0 Thread model: posix InstalledDir: /Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin
+[Adaptive Build] Excluded from GxCpp unity file: GxLapTimer.cpp
+=================================
+Using Unreal Build Accelerator local executor to run 3 action(s)
+  CPU 12 physical cores, 12 logical cores
+  Memory 32 GB physical, 28 GB/32 GB committed
+  UBA Storage capacity 40 GB
+[1/3] Compile [Apple] GxLapTimer.cpp
+/Users/me/Games/rush/unreal/Source/GxCpp/Parts/Lap/GxLapTimer.cpp:6:9: error: use of undeclared identifier 'FStrin'; did you mean 'FString'?
+    6 |     return FStrin::Printf(TEXT("%d:%05.3f"), Minutes, Seconds - Minutes * 60.f);
+      |            ^~~~~~
+      |            FString
+/Users/Shared/Epic Games/UE_5.8/Engine/Source/Runtime/Core/Public/Misc/NamePermissionList.h:16:7: note: 'FString' declared here
+   16 | class FString;
+      |       ^
+1 error generated.
+Total time in Unreal Build Accelerator local executor: 3.70 seconds
+
+Result: Failed (OtherCompilationError)
+Total execution time: 7.36 seconds
+Trace written to file /Users/me/Library/Application Support/Epic/UnrealBuildTool/Trace.uba with size 5.1kb

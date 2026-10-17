@@ -8,6 +8,11 @@ import type { ChatFileRef } from "../shared/chat-files.ts";
 
 export type BesideTarget = { kind: "file"; path: string } | { kind: "image"; name: string; src: string };
 
+/** A file's or image's own name, as its tab and its viewer show it. */
+export function besideName(target: BesideTarget): string {
+  return target.kind === "image" ? target.name : (target.path.split("/").filter(Boolean).pop() ?? target.path);
+}
+
 export const OPEN_BESIDE_EVENT = "studio:open-beside";
 export const OPEN_FILE_EVENT = "studio:open-file";
 

@@ -4,7 +4,7 @@
  * The provider's default model is always listed.
  */
 import { type JSX, useId, useState } from "react";
-import { latestModels, modelName, runnableModels, shownModels } from "../model-lineup.ts";
+import { latestModels, modelName, offersLineup, runnableModels, shownModels } from "../model-lineup.ts";
 import { matchingModels, offersSearch } from "./picker-search.ts";
 import { useEngines, useModelPicker } from "../state/hooks.ts";
 import { pickerModelSet, pickerModelsReset } from "../state/model-picker.ts";
@@ -36,8 +36,9 @@ function pickerRows(
   runnable: ReadonlySet<string>,
 ): PickerRow[] {
   const models = engine.models.filter((model) => model.id !== DEFAULT_MODEL);
-  const latest = latestModels(engine.id, models, runnable);
-  const shown = shownModels(engine.id, models, choices, runnable);
+  const lineup = offersLineup(engine);
+  const latest = lineup ? latestModels(engine.id, models, runnable) : new Set<string>();
+  const shown = shownModels(engine.id, models, choices, runnable, lineup);
   return models.map((model) => ({
     id: model.id,
     name: modelName(engine.id, model),

@@ -3,9 +3,14 @@ import assert from "node:assert/strict";
 import { cp, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { installLocalPlugin, pluginOriginWords, reviewPluginInstall } from "../../src/main/plugin-local-install.ts";
+import {
+  asksBeforeInstall,
+  installLocalPlugin,
+  pluginOriginWords,
+  reviewPluginInstall,
+} from "../../src/main/plugin-local-install.ts";
 import type { PluginManifest, PluginSource } from "../../src/shared/plugins.ts";
-import { accountFixture, accountPackage, copyOfExample, pluginFixture } from "../helpers/plugins.ts";
+import { accountFixture, accountPackage, copyOfExample, installLocalOn, pluginFixture } from "../helpers/plugins.ts";
 import { PluginRegistry } from "../../src/substrate/plugins/registry.ts";
 
 async function fixture(t: { after: (fn: () => Promise<void>) => void }) {
@@ -33,6 +38,8 @@ async function fixture(t: { after: (fn: () => Promise<void>) => void }) {
 test("local reinstall reviews the current manifest and scan, can be cancelled, and installs only reviewed bytes", async (t) => {
   const f = await fixture(t);
   await installLocalPlugin(f.registry, f.source, async () => true);
+  // Loaded from a folder, it starts off: the person turns it on.
+  await f.registry.setEnabled("example", true);
   await f.registry.setSetting("example", "greeting", "Saved greeting");
   await f.registry.remove("example");
   f.manifest.version = "2.0.0";
@@ -65,8 +72,9 @@ test("local reinstall reviews the current manifest and scan, can be cancelled, a
   assert.equal(reviews, 2);
   const installed = f.registry.list()[0]!;
   assert.equal(installed.manifest.version, "2.0.0");
-  assert.equal(installed.enabled, true);
+  assert.equal(installed.enabled, false, "loaded again after removal, it starts off");
   assert.equal(installed.scan?.verdict, "caution");
+  await f.registry.setEnabled("example", true);
   assert.equal((await f.registry.settings("example")).greeting, "Saved greeting");
   assert.deepEqual(await f.registry.action("example", "hello", {}), {
     text: "The isolated plugin backend is working.",
@@ -124,7 +132,7 @@ test("the install review names a replacement, refuses a connector id and never c
       b = await accountPackage(f.base, "b", "Publisher B");
     const localA: PluginSource = { kind: "local", directory: a.dir };
     assert.deepEqual(reviewPluginInstall(f.registry, a.manifest, localA, []), {});
-    await f.registry.installLocal(a.dir, "local", a.manifest.capabilities);
+    await installLocalOn(f.registry, a.dir, a.manifest.capabilities);
     assert.deepEqual(
       reviewPluginInstall(f.registry, a.manifest, localA, []),
       {},
@@ -157,6 +165,38 @@ test("the install review names a replacement, refuses a connector id and never c
     assert.match(pluginOriginWords({ ...GITHUB, kind: "index" }), /cataloged, not audited/);
   } finally {
     await f.close();
+  }
+});
+
+test("Studio's own plugin installs and updates without asking; code from anywhere else, or a seed that takes over another plugin, asks", async () => {
+  const BUNDLED: PluginSource = { kind: "bundled" };
+  const seeded = await pluginFixture();
+  try {
+    const seed = seeded.registry.bundledManifest("example");
+    assert.ok(seed);
+    const update = { ...seed, version: "9.0.0" };
+    assert.equal(asksBeforeInstall(BUNDLED, reviewPluginInstall(seeded.registry, update, BUNDLED, [])), false);
+  } finally {
+    await seeded.close();
+  }
+  const elsewhere: PluginSource[] = [
+    { kind: "local", directory: "/tmp/example" },
+    GITHUB,
+    { ...GITHUB, kind: "index" },
+    { kind: "catalog", url: "https://plugins.example.invalid/a.zip", sha256: "c".repeat(64) },
+  ];
+  for (const origin of elsewhere) assert.equal(asksBeforeInstall(origin, {}), true, origin.kind);
+  assert.equal(asksBeforeInstall(undefined, {}), true, "an unnamed origin is not taken for Studio's own");
+  // A local plugin took the id before Studio shipped a seed under it: the seed erases its account and data.
+  const local = await pluginFixture({ installed: "local" });
+  try {
+    const manifest = local.registry.list()[0]?.manifest;
+    assert.ok(manifest);
+    const review = reviewPluginInstall(local.registry, { ...manifest, publisher: "Genex" }, BUNDLED, []);
+    assert.ok(review.replaces);
+    assert.equal(asksBeforeInstall(BUNDLED, review), true);
+  } finally {
+    await local.close();
   }
 });
 

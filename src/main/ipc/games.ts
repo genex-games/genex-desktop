@@ -45,6 +45,7 @@ export function registerGamesIpc(handle: IpcHandle, { core, runSummaryReader, pu
   );
   // The request is the user's own words, read by their own model; the name only names a folder later.
   handle("studio:game.name", async (payload) => core.nameGame(payload));
+  handle("studio:backdrop.make", async (payload) => core.makeBackdrop(payload));
   handle("studio:game.update", async (payload) => {
     const cover = payload.patch?.cover;
     if (cover?.kind === "image") {
@@ -58,6 +59,8 @@ export function registerGamesIpc(handle: IpcHandle, { core, runSummaryReader, pu
     return core.updateGame(payload.project, payload.patch);
   });
   handle("studio:game.remove", async (payload) => core.removeGame(payload.project));
+  // The chat line's Undo names a link by its time, so a click on an older line can't undo a newer link.
+  handle("studio:game.engine.undo", async (payload) => core.undoEngineLink(payload));
   handle("studio:games", async () => core.games.list());
   handle("studio:snapshots", async () => core.snapshotIndex.all());
   // The reference stills the user gave a game (`<project>/references/`), small, for the Builds tab's prompt card.

@@ -230,6 +230,27 @@ describe("gatherEvidence after the stale-frame run", () => {
     assert.equal(observationOnlyFailure(evidence.problems), false);
   });
 
+  it("every camera identical is a warning for a part that does not own the camera wiring: it is judged on its other evidence", async () => {
+    const { ctx } = stubCtx({ frames: ["AAAA", "AAAA", "AAAA", "AAAA"], cameras: ["default", "close", "wide"] });
+    const evidence = await gather(ctx, { camerasOwned: false });
+    assert.equal(evidence.ok, true, `problems: ${evidence.problems.join("; ")}`);
+    assert.ok(evidence.warnings.some((w: string) => w.includes("the camera wiring is the entry owner's")));
+  });
+
+  it("the director's own look at a part that does not own the entry (its judge) reads identical cameras as a warning too", async () => {
+    const { evidenceOf } = await import("../../src/harness-seed/loop/director/loop-run.ts");
+    const { ctx } = stubCtx({ frames: ["AAAA", "AAAA", "AAAA", "AAAA"], cameras: ["default", "close", "wide"] });
+    const loopRun = { ctx, run, state: { workers: new Map() } };
+    const look = (camerasOwned?: boolean) =>
+      evidenceOf(loopRun as never, "/runs/run_test/workers/sound", {
+        label: "judge_1",
+        ...(camerasOwned === undefined ? {} : { camerasOwned }),
+      } as never);
+    const part = await look(false);
+    assert.equal(part.ok, true, `problems: ${part.problems.join("; ")}`);
+    assert.ok(part.warnings.some((w: string) => w.includes("the camera wiring is the entry owner's")));
+  });
+
   it("one duplicated camera is a warning, not a voided challenger", async () => {
     // default=A, close=A, retake close=A (genuinely wired to the same view), wide=C.
     const { ctx } = stubCtx({ frames: ["AAAA", "AAAA", "AAAA", "CCCC"], cameras: ["default", "close", "wide"] });

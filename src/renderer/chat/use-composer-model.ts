@@ -231,6 +231,7 @@ export function composerSendOptions(
     preferences: model.preferences,
     ...(extras?.reviewPlan ? { reviewPlan: true } : {}),
     ...(extras?.frames?.length ? { frames: extras.frames } : {}),
+    ...(extras?.mentions?.length ? { mentions: extras.mentions } : {}),
     ...(extras?.autopilot && input.autopilot ? { autopilot: autopilotSendOptions(extras.autopilot, roles) } : {}),
   };
 }

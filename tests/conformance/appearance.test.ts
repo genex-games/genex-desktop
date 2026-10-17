@@ -6,6 +6,7 @@ import {
   PRESETS,
   accentFill,
   contrastRatio,
+  darkDangerFill,
   exportTheme,
   hex,
   importTheme,
@@ -17,6 +18,7 @@ import {
   shadowsOf,
   themeVariables,
 } from "../../src/renderer/appearance/themes.ts";
+import { oklch } from "../../src/shared/oklch.ts";
 
 /** Genex's own presets are tuned by hand in the colour tweaker; ported families keep full AA. */
 const handTuned = (id: string): boolean => id.startsWith("genex-");
@@ -58,6 +60,31 @@ test("filled accent controls keep white text readable for any accent, and keep d
       }
   assert.equal(accentFill("#0969da").fill, "#0969da");
   assert.notEqual(accentFill("#8aa7cc").fill, "#8aa7cc");
+});
+
+test("a dark theme's destructive fill is its red deepened under a white label; a light theme's stays as set", () => {
+  for (const preset of PRESETS) {
+    const p = preset.colors;
+    const v = themeVariables(p);
+    const dark = darkDangerFill(p);
+    assert.equal(v["--destructive"], p.danger, `${preset.id}: red text keeps the palette's red`);
+    if (preset.scheme === "light") {
+      assert.equal(dark, null, preset.id);
+      assert.equal(v["--danger-fill"], p.danger, preset.id);
+      continue;
+    }
+    assert.ok(dark, preset.id);
+    assert.equal(v["--danger-fill"], dark.fill, preset.id);
+    assert.equal(v["--danger-hover"], dark.hover, preset.id);
+    assert.equal(v["--danger-foreground"], "#ffffff", `${preset.id}: white label`);
+    for (const fill of [dark.fill, dark.hover])
+      assert.ok(contrastRatio(fill, "#ffffff") >= 4.5, `${preset.id}: white label on ${fill}`);
+    const [L, C] = oklch(dark.fill);
+    const [redL] = oklch(p.danger);
+    assert.ok(L < redL, `${preset.id}: ${dark.fill} is deeper than ${p.danger}`);
+    // A hex colour holds its chroma to about 0.005.
+    assert.ok(C <= 0.155, `${preset.id}: ${dark.fill} is a deep red, not a neon one`);
+  }
 });
 
 test("configured borders stay literal at default contrast instead of being brightened", () => {
@@ -337,4 +364,13 @@ test("a palette's graph accent colours the builds graph alone; unset, the graph 
   const set = themeVariables({ ...base, graph: "#7c5cff" });
   assert.equal(set["--graph"], "#7c5cff");
   assert.equal(set["--accent-primary"], base.accent);
+});
+
+test("a box inside a card has a soft edge: the card's own edge on a light theme, the control edge on a dark one", () => {
+  for (const preset of PRESETS) {
+    const v = themeVariables(preset.colors);
+    const soft = preset.scheme === "light" ? v["--border"] : v["--line-strong"];
+    assert.ok(soft, preset.id);
+    assert.equal(v["--line-soft"], soft, preset.id);
+  }
 });

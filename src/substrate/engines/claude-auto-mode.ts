@@ -1,6 +1,7 @@
 /**
  * The studio's rules for Claude Code's Auto classifier: the settings key `autoMode`, which every
- * session that asks carries (a game chat's own session, a build's lead, the run's coordinator) and
+ * session that asks carries (a game chat's own session, a build's lead, the run's coordinator, a
+ * worker of the chat's lead) and
  * which only Auto reads (and Plan, where it runs with Auto's semantics).
  *
  * Auto should let a person building a game have everything ordinary game work needs without a
@@ -36,6 +37,26 @@ export interface AutoModeSeat {
    * a build's lead or the run's coordinator, whose edits are not checkpointed that way.
    */
   gameFolder: boolean;
+  /** A worker of the chat's lead: boxed, prompted by the lead, its work merged by the lead. */
+  worker?: boolean;
+}
+
+/** What the classifier reads about where the session runs and who prompts it. */
+function sessionFacts(seat: AutoModeSeat): string[] {
+  if (seat.worker)
+    return [
+      "**AI Game Studio**: A game chat on the person's own Mac. The person chose Auto and expects ordinary game-development work done without asking; this session's prompts come from the chat's lead, not from them.",
+      "**Worker session**: This session is a worker of the chat's lead on the person's Mac, in a sandbox that writes only its own folders; the lead merges its work. The game folder is checkpointed before each of the person's messages.",
+    ];
+  if (seat.gameFolder)
+    return [
+      "**AI Game Studio**: A game chat on the person's own Mac, no sandbox. The person is in the chat, chose Auto, and expects ordinary game-development work done without asking.",
+      `**Game folder**: ${seat.cwd}, the working directory and trusted repo, is the person's game. Before each message the studio checkpoints under refs/studio/ the files git does not ignore (not .env*, nested repos or files over 50 MB); Rewind restores them while HEAD stays put.`,
+    ];
+  return [
+    "**AI Game Studio**: A game chat on the person's own Mac, no sandbox. The person chose Auto and expects ordinary game-development work done without asking; while a build runs they may be away, and this session's prompts come from the studio's build loop, not from them.",
+    "**Build session**: This session leads or answers for a build of the person's game. A lead edits and commits in the run's integration worktree, the build's workers change the game in worktrees of their own, and the studio lands the work in the game folder; its own edits there are not checkpointed.",
+  ];
 }
 
 /** The session's `autoMode` settings: environment facts and carve-outs, on top of Claude Code's own. */
@@ -43,12 +64,7 @@ export function autoModeRules(seat: AutoModeSeat): { environment: string[]; allo
   return {
     environment: [
       BUILT_IN,
-      seat.gameFolder
-        ? "**AI Game Studio**: A game chat on the person's own Mac, no sandbox. The person is in the chat, chose Auto, and expects ordinary game-development work done without asking."
-        : "**AI Game Studio**: A game chat on the person's own Mac, no sandbox. The person chose Auto and expects ordinary game-development work done without asking; while a build runs they may be away, and this session's prompts come from the studio's build loop, not from them.",
-      seat.gameFolder
-        ? `**Game folder**: ${seat.cwd}, the working directory and trusted repo, is the person's game. Before each message the studio checkpoints under refs/studio/ the files git does not ignore (not .env*, nested repos or files over 50 MB); Rewind restores them while HEAD stays put.`
-        : "**Build session**: This session leads or answers for a build of the person's game. A lead edits and commits in the run's integration worktree, the build's workers change the game in worktrees of their own, and the studio lands the work in the game folder; its own edits there are not checkpointed.",
+      ...sessionFacts(seat),
       "**Download sources**: Public package registries, CDNs, GitHub and font, sound or asset sites are ordinary download sources, not trusted destinations for the person's data (the game's own remote stays trusted).",
     ],
     allow: [

@@ -8,7 +8,7 @@
 import assert from "node:assert/strict";
 import path from "node:path";
 import { describe, it } from "node:test";
-import { baseDenyRead, claudeFolderDenyWrites } from "../../src/substrate/spawn.ts";
+import { baseDenyRead, baseDenyWrite, claudeFolderDenyWrites } from "../../src/substrate/spawn.ts";
 
 const HOME = "/home/player";
 
@@ -89,8 +89,74 @@ describe("base deny-read list", () => {
     assert.ok(!denied.includes(path.join(HOME, "AppData", "Roaming", "Microsoft", "Credentials")));
   });
 
+  it("hides OpenCode 2.x's background-server password, where its config folder is", () => {
+    // With it, any process allowed onto localhost could drive OpenCode's server, which runs outside every sandbox.
+    for (const row of TABLE) {
+      const denied = baseDenyRead(HOME, row.platform, {});
+      assert.ok(denied.includes(path.join(HOME, ".config", "opencode", "service.json")), row.platform);
+    }
+    const moved = baseDenyRead(HOME, "darwin", { XDG_CONFIG_HOME: "/xdg/config" });
+    assert.ok(moved.includes(path.join("/xdg/config", "opencode", "service.json")));
+    const relative = baseDenyRead(HOME, "linux", { XDG_CONFIG_HOME: "relative" });
+    assert.ok(
+      relative.includes(path.join(HOME, ".config", "opencode", "service.json")),
+      "a relative XDG folder is ignored",
+    );
+  });
+
   it("never denies the home folder itself", () => {
     for (const row of TABLE) assert.ok(!baseDenyRead(HOME, row.platform, {}).includes(HOME), row.platform);
+  });
+});
+
+/**
+ * Roblox's sign-ins: Studio's and the player's cookie jars (the `.ROBLOSECURITY` session), Studio's
+ * local storage and StudioMCP's token. Genex never reads them, and neither may an agent's command
+ * (a planted script asking for one is the attack). Studio's Assistant settings, which switch its MCP
+ * server, are never written by one.
+ */
+describe("Roblox's sign-ins are out of every agent's reach", () => {
+  const MAC_READ = [path.join("Library", "HTTPStorages"), path.join("Library", "Roblox")];
+  const WINDOWS_READ = [
+    path.join("AppData", "Local", "Roblox", "LocalStorage"),
+    path.join("AppData", "Local", "Roblox", "StudioMCP"),
+  ];
+
+  it("on a Mac, the cookie jars and Roblox's own folder are on the deny-read list", () => {
+    const denied = baseDenyRead(HOME, "darwin", {});
+    for (const relative of MAC_READ) assert.ok(denied.includes(path.join(HOME, relative)), relative);
+  });
+
+  // POSIX paths: the macOS policy is built where it runs.
+  it("on a Mac, the cookie jars, local storage and StudioMCP's token are never read", {
+    skip: process.platform === "win32",
+  }, async () => {
+    const denies = await macDeny(baseDenyRead(HOME, "darwin", {}));
+    for (const target of [
+      path.join(HOME, "Library", "HTTPStorages", "com.Roblox.RobloxStudio.binarycookies"),
+      path.join(HOME, "Library", "Roblox", "StudioMCP", "auth.token"),
+      path.join(HOME, "Library", "Roblox", "LocalStorage", "RobloxCookies.dat"),
+      path.join(HOME, "Library", "Roblox", "rbx-storage.db"),
+    ])
+      assert.ok(denies(target), target);
+    assert.ok(
+      !denies(path.join(HOME, "Documents", "Roblox", "Plugins", "Genex.rbxm")),
+      "the Plugins folder is not a sign-in",
+    );
+  });
+
+  it("on Windows, the same stores under LOCALAPPDATA are never read", () => {
+    const denied = baseDenyRead(HOME, "win32", {});
+    for (const relative of WINDOWS_READ) assert.ok(denied.includes(path.join(HOME, relative)), relative);
+    const moved = baseDenyRead(HOME, "win32", { LOCALAPPDATA: path.join(HOME, "local") });
+    assert.ok(moved.includes(path.join(HOME, "local", "Roblox", "StudioMCP")));
+  });
+
+  it("Studio's Assistant settings, which turn its MCP server on, are never written", () => {
+    assert.ok(baseDenyWrite(HOME, "darwin", {}).includes(path.join(HOME, "Library", "Roblox", "AssistantSettings")));
+    assert.ok(
+      baseDenyWrite(HOME, "win32", {}).includes(path.join(HOME, "AppData", "Local", "Roblox", "AssistantSettings")),
+    );
   });
 });
 

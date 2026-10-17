@@ -41,10 +41,27 @@ import { retainSpan, type OperationSpan } from "./director/timing.ts";
  * turn keeps a separate director whose cwd is the integration worktree.
  */
 import { plannerModel, roleEffort, RoleKey } from "./model-roles.ts";
-import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { GIT, gitAt } from "./git.ts";
 import { MIN_DELEGATE_TIMEOUT_MS, PLAN_REVIEW_WAIT_MS } from "./config.ts";
+import { FINISH_REPORT, notDoneOf } from "./finish-check.ts";
+import { closeSettled, closeUnderWay, latchClose } from "./director/close-latch.ts";
+import { fireHooks, HookEvent, notesText, runScope } from "./hooks.ts";
+import { type HeldBack, heldTurnEnding, runHeldWords } from "./director/held-words.ts";
+import { LoopProfile } from "./folder-facts.ts";
+import { judgedInEditor, loopJudges } from "./director/open/judge-rounds.ts";
+import { loopSkill } from "./loop-skills.ts";
+import { closeRunPool } from "./workers/run-pool.ts";
+import { leadsOpenLoop } from "./director/open/active-work.ts";
+import { briefWriter } from "./director/open/brief.ts";
+import { closeInPlace, refuseResume } from "./director/open/close.ts";
+import { MESSAGE as OPEN_END, openEndWords, timeUpWithoutYes } from "./director/open/finish.ts";
+import { openBetweenTurns } from "./director/open/between.ts";
+import { creditCapOf, OPEN_WALL_CLOCK, restartsApp } from "./director/open/contract.ts";
+import { settleRecovery } from "./director/open/health.ts";
+import { openStartHeld } from "./director/open/prompts.ts";
+import { openTools } from "./director/open/tool-specs.ts";
+import { openHandler } from "./director/open/tools.ts";
 import { HostMethod } from "./host-methods.ts";
 import { EngineFailure, engineLimitOf, StopReason } from "./outage.ts";
 import { isProviderLoss, noteProviderLoss, pauseDecision, pauseEnding } from "./provider-loss.ts";
@@ -53,6 +70,8 @@ import { isCommit } from "./shell.ts";
 import { isResumeFailure } from "./chat-session.ts";
 import { CLIP_QUOTE } from "./text.ts";
 import { MINUTE_MS, minutes, SECOND_MS, sleep } from "./time.ts";
+import { noClaimRead, ranOutUnchecked } from "./time-cap.ts";
+import { TIME_CAP_WORDS } from "./time-cap-prompts.ts";
 import { NotLandedReason } from "./verdict.ts";
 import * as loopRunFunctions from "./director/loop-run.ts";
 import * as workerFunctions from "./director/workers.ts";
@@ -72,6 +91,7 @@ import { reopenMarkOf } from "./director/reopen.ts";
 import { reopenNote } from "./director/reopen-prompts.ts";
 import { timedWorkRemaining } from "./director/budgets.ts";
 import { continuationPrompt, directorBrief, limitResumePrompt, resumeNote, wrapUpPrompt } from "./director/briefs.ts";
+import { finishAsked } from "./director/wrap-up.ts";
 import { DIRECTOR_TOOLS, directors } from "./director/tool-specs.ts";
 import {
   LIMIT_WAIT_MARGIN_MS,
@@ -86,7 +106,7 @@ import { DirectorLoop, directorLoopOf, WRAP_UP_MARGIN_MS, WrapCause } from "./di
 import { openLeadLine, type LeadLine } from "./director/lead-line.ts";
 import { bookmarkLead, freshChat, leadSeat, servesLead } from "./director/lead-session.ts";
 import type { LoopRun } from "./director/loop-run.ts";
-import type { DirectorTalk } from "./director/wake.ts";
+import type { DirectorTalk, WakeClock } from "./director/wake.ts";
 import type { AnyRecord, HarnessCtx, Run } from "../types/harness.d.ts";
 import type { DelegateImage, DelegateResult, LiveToolSpec, ReferenceFrame } from "../types/host-api.d.ts";
 
@@ -166,8 +186,16 @@ export function seatsLead(loop: DirectorLoop): boolean {
   return loop === DirectorLoop.Wake && servesLead(LEAD_PARTS);
 }
 
+/**
+ * This part leads a Loop on a project of any kind: a web game by the web method, any other project
+ * in place (`LoopProfile.Open`). A run reads it by namespace before it leads an open Loop.
+ */
+export const SERVES_OPEN_LOOP = true;
+
 /** How many reference stills the director's first turn carries. */
 const MAX_REFERENCE_IMAGES = 8;
+/** The director's playbook, by its slug among the workspace's skills. */
+const DIRECTOR_SKILL = "director";
 /** How often the long turn's limit wait looks at `ctx.cancelled`. */
 const LIMIT_WAIT_POLL_MS = SECOND_MS;
 /** A continuation that made no tool call and returned within this is empty; this many in a row end the session. */
@@ -182,14 +210,12 @@ const FAILURE_CHARS = 500;
 /** How much of an engine limit's message the decision card quotes. */
 const LIMIT_MESSAGE_CHARS = 160;
 
-/** The director's playbook (skills/director.md — SkillOpt trains it), without its front matter. */
-async function directorSkill(ctx: HarnessCtx): Promise<string> {
-  try {
-    const skill = await readFile(path.join(ctx.workspace, "skills", "director.md"), "utf8");
-    return skill.replace(/^---[\s\S]*?---\n?/, "");
-  } catch {
-    return "";
-  }
+/**
+ * The director's playbook (skills/director.md — SkillOpt trains it), without its front matter: the
+ * web method, so it reaches a web game's Loop only (loop-skills.ts).
+ */
+function directorSkill(ctx: HarnessCtx, loopRun: LoopRun): Promise<string> {
+  return loopSkill(ctx.workspace, DIRECTOR_SKILL, { facts: loopRun.gameFacts });
 }
 
 /** The reference stills the director's first turn carries. */
@@ -213,10 +239,22 @@ function runTools(loop: DirectorLoop, loopRun: LoopRun): LiveToolSpec[] {
 }
 
 /**
+ * Where a lead's session sits: an open Loop's lead writes in the game folder itself (its grant says
+ * `inPlace`), a web lead that is its chat's own session sits there read-only, and a long turn's
+ * director works in the integration worktree.
+ */
+function leadPlace(loopRun: LoopRun): { readOnly?: true; cwd?: string } {
+  if (leadsOpenLoop(loopRun)) return {};
+  return loopRun.lead ? { readOnly: true } : { cwd: loopRun.integrationWorktree };
+}
+
+/**
  * One turn of the director's own session, on its own engine and model. A lead that is its chat's
  * own session (one session, director/lead-session.ts) sits in the game folder — no `cwd` — seated
  * as a lead (`readOnly`, which the host reads as the lead's seat, not a lock); its grant names the
  * integration worktree it leads and builds in (`root`). A long turn's director works in that worktree.
+ * An open Loop's lead writes in the game folder (`inPlace`, its `root`), and every lead's paid jobs
+ * are held to the credit cap its run record names.
  */
 function delegateTurn(
   loopRun: LoopRun,
@@ -227,11 +265,12 @@ function delegateTurn(
   timeoutMs: number,
 ): Promise<DelegateResult> {
   const { ctx, integrationWorktree, lead, run, threadId } = loopRun;
+  const creditCap = creditCapOf(run);
   return ctx.call(HostMethod.EngineDelegate, {
     engine: run.engine,
     prompt,
     project: run.project,
-    ...(lead ? { readOnly: true } : { cwd: integrationWorktree }),
+    ...leadPlace(loopRun),
     threadId,
     // The director's session is the orchestrator: its own engine, its own model — never the
     // workers', which may belong to the other subscription (cross-provider roles).
@@ -240,6 +279,7 @@ function delegateTurn(
     preferences: run.preferences,
     timeoutMs: Math.max(MIN_DELEGATE_TIMEOUT_MS, timeoutMs),
     ...(sessionId ? { resume: sessionId } : {}),
+    ...(creditCap === null ? {} : { creditCap }),
     // A waking lead answers the chat while its build runs: what the person sends reaches its turn
     // under way (`engine.steer`, addressed by the run; director/wake.ts).
     ...(loopRun.waking ? { chatTurn: { messageId: run.runId } } : {}),
@@ -251,6 +291,7 @@ function delegateTurn(
       setup: run.setup ?? null,
       tools,
       ...(lead?.chatSession ? { chatSession: true } : {}),
+      ...(leadsOpenLoop(loopRun) ? { inPlace: true } : {}),
     },
     ...(images.length ? { images } : {}),
   });
@@ -337,6 +378,18 @@ async function resumeWords(loopRun: LoopRun): Promise<string | null> {
 }
 
 /**
+ * What the run stands on as its lead's first turn opens: the web method's contract and starting
+ * point, why a plugin held the start back, and (an open Loop) what the plugins said at the start.
+ */
+interface StartOfRun {
+  contract: AnyRecord | null;
+  startingPoint: AnyRecord | null;
+  held?: string;
+  blocked?: HeldBack;
+  notes?: string[];
+}
+
+/**
  * What the director stands on before its first turn. A game the user brought that cannot be
  * judged is made judgeable first (M2.6). Once that has worked it is never redone — the commit is
  * on the branch a resumed run stands on — but an attempt that failed (a session limit
@@ -345,11 +398,20 @@ async function resumeWords(loopRun: LoopRun): Promise<string | null> {
  * resumed run stands on the one it already has. (The two are exclusive: an own-shape game is
  * never from scratch.)
  */
-async function prepareTheStart(
-  loopRun: LoopRun,
-): Promise<{ contract: AnyRecord | null; startingPoint: AnyRecord | null }> {
+async function prepareTheStart(loopRun: LoopRun): Promise<StartOfRun> {
   const { baseCommit, buildStartingPoint, contractMissing, ctx, installContract, journal, priorJournal } = loopRun;
   const { shotsOf, startEvidence, state, writeVerdict } = loopRun;
+  // A Stop while an open Loop read its journal or took its starting point: no plugin prepares an app for it.
+  if (leadsOpenLoop(loopRun) && ctx.cancelled) return { contract: null, startingPoint: null };
+  // The game's plugins prepare their apps first; one that can't holds the run back before any turn.
+  const prepared = await fireHooks(ctx, loopRun.game, HookEvent.RunPrepare, runScope(loopRun));
+  // A Stop while the steps worked is the user's stop (the caller closes it so), never a hold.
+  if (prepared.blocked && ctx.cancelled) return { contract: null, startingPoint: null };
+  if (prepared.blocked)
+    return { contract: null, startingPoint: null, held: runHeldWords(prepared.blocked), blocked: prepared.blocked };
+  // An open Loop has none of the web method's start: what the plugins said opens its lead's brief.
+  if (leadsOpenLoop(loopRun)) return { contract: null, startingPoint: null, notes: notesText(prepared) };
+  for (const text of notesText(prepared)) loopRun.note(text);
   const firstLoopRunOnABuild = !priorJournal?.director && !state.fromScratch;
   if (firstLoopRunOnABuild && startEvidence) {
     await writeVerdict("director/start/verdict.json", {
@@ -376,7 +438,7 @@ function openingBrief(
 ): string {
   const { capacity, finalDeadline, gameLessons, integrationWorktree, lead, nestedRepos, ownShape, run, shape } =
     loopRun;
-  const { softDeadline, state } = loopRun;
+  const { softDeadline, state, gameFacts, projectDir } = loopRun;
   return directorBrief({
     run,
     shape,
@@ -395,6 +457,9 @@ function openingBrief(
     contract: start.contract,
     loop,
     lead: lead ? { gameFolder: lead.folder } : null,
+    // What the game's folder holds and where it is, as the run found it ready.
+    facts: gameFacts ?? null,
+    gameFolder: projectDir || null,
   });
 }
 
@@ -505,6 +570,7 @@ async function wrapUp(loopRun: LoopRun, talk: DirectorTalk, result: Partial<Dele
         integrationHealthy: state.integrationHealthy,
         workers: [...state.workers.values()],
         fromScratch: state.fromScratch,
+        userAsked: await finishAsked(loopRun),
       }),
       talk.sessionId,
       left - WRAP_UP_MARGIN_MS,
@@ -528,10 +594,28 @@ function sessionEndWords(
   const { ctx, softDeadline, state } = loopRun;
   if (ctx.cancelled) return "stopped by the user";
   if (state.limit) return pauseEnding(state.limit.kind, String(state.limit.message).slice(0, CLIP_QUOTE));
+  // A turn Genex's moments kept holding back ran no session: its own words say why, never "failed".
+  const held = heldTurnEnding(result);
+  if (held) return held;
   if (wrapCause === WrapCause.Idle || wrapCause === WrapCause.Finish) return WAKE_ENDING[wrapCause];
   const onTheClock = wrapCause !== WrapCause.Failed && at >= softDeadline - OUT_OF_TIME_MS;
+  // A claim still under review when the session ended was made: it ran out of time, not uncalled.
+  if (onTheClock && state.finishTally?.checking)
+    return "the time ran out while a reviewer checked the director's claim";
+  // A claim a reviewer got and gave no yes to was made too: not "without calling finish".
+  if (onTheClock && state.finishTally?.asked)
+    return "the director ran out of time before a reviewer said yes to its claim";
   if (onTheClock) return "the director ran out of time without calling finish";
   return `the director's session ended (${endedHow(result, "on its own")}) before it called finish`;
+}
+
+/**
+ * What a web close says it left undone, in the report's field and the summary: the reviewer's last
+ * no, else, when its time ran out with no claim read (`unchecked`), that no reviewer read one.
+ */
+function closeUndone(notDone: string[], unchecked: boolean): { notDone: string[]; summary: string } | null {
+  if (notDone.length) return { notDone, summary: FINISH_REPORT.summaryNotDone(notDone) };
+  return unchecked ? { notDone: [TIME_CAP_WORDS.notChecked], summary: TIME_CAP_WORDS.notChecked } : null;
 }
 
 /**
@@ -539,19 +623,47 @@ function sessionEndWords(
  * branch once more on a window of its own, and lands what runs — the same close `finish` takes
  * (M4.10). The judge's last word on the same head counts too: a health pass that raced the load
  * must not keep a build the judge passed from the user. A run a lost provider paused lands
- * nothing: nobody can check the build now, and Resume carries it on from its head.
+ * nothing: nobody can check the build now, and Resume carries it on from its head. `now` is the
+ * run's own clock (the wake loop's), which says whether its time ran out.
  */
-async function closeLeftOpen(
+export async function closeLeftOpen(
   loopRun: LoopRun,
   result: Partial<DelegateResult>,
   wrapCause: WrapCause | null = null,
+  now: number = Date.now(),
 ): Promise<void> {
   const { closeTheLoopRun, ctx, state } = loopRun;
-  const why = sessionEndWords(loopRun, result, Date.now(), wrapCause);
+  const why = sessionEndWords(loopRun, result, now, wrapCause);
+  // A close after the reviewer's no names what it found not done, in the report's own field and in
+  // the summary the person reads on the run's card.
+  const notDone = ctx.cancelled ? [] : notDoneOf(state.finishTally);
+  // An open Loop closes in place: nothing to land, the game folder is the live project. One whose
+  // app couldn't be brought back pauses with the person's words for it.
+  const halted = loopRun.open?.halted;
+  if (halted) return closeInPlace(loopRun, { victory: false, because: halted, paused: true });
+  if (leadsOpenLoop(loopRun)) {
+    // Its time ran out with no reviewer's yes: it says where it stands, in its own words.
+    const timeUp = !heldTurnEnding(result) && timeUpWithoutYes(loopRun, wrapCause);
+    const because = timeUp ? OPEN_END.timeUpNoClaim : (openEndWords(loopRun, result, wrapCause) ?? why);
+    // ...and, when no reviewer read a claim, that too (time-cap.ts).
+    return closeInPlace(loopRun, {
+      victory: false,
+      because,
+      notDone,
+      unchecked: timeUp && noClaimRead(state.finishTally),
+    });
+  }
+  // Out of time with no claim checked: the report says no reviewer read one (time-cap.ts), in its
+  // own field and in the summary the person reads, as the open Loop's close does.
+  const unchecked =
+    !notDone.length && ranOutUnchecked(loopRun, { at: now, held: Boolean(heldTurnEnding(result)), wrapCause });
+  const undone = closeUndone(notDone, unchecked);
+  if (undone) loopRun.report.notDone = undone.notDone;
   const paused = Boolean(state.limit);
   await closeTheLoopRun({
     land: !paused,
     paused,
+    ...(undone ? { summary: undone.summary } : {}),
     stopWhy: "the build is over",
     settleMs: OPEN_LOOP_RUN_SETTLE_MS,
     because: (landed: AnyRecord) =>
@@ -568,12 +680,45 @@ async function closeLeftOpen(
  * read it.
  */
 async function closeAfterCrash(loopRun: LoopRun, err: any): Promise<void> {
-  const { closeRun, ctx, report, runningWorkers, state, stopWorker } = loopRun;
-  if (state.finished) return;
-  for (const worker of runningWorkers()) await stopWorker(worker, "the build ended early", "cleanup");
+  if (loopRun.state.finished) return;
+  if (leadsOpenLoop(loopRun)) return closeOpenAfterCrash(loopRun, err);
+  // A close under way (a claim's, which may outlast its call) is waited for: the run closes once,
+  // and this close runs only when that one failed before the run finished.
+  await latchClose(loopRun.state, async () => {
+    await crashClose(loopRun, err);
+    return {};
+  });
+}
+
+/** What a run threw, as its close reads it. */
+type Thrown = { kind?: unknown; message?: unknown } | null | undefined;
+
+/** A run that threw, in its report: the failure unless the user stopped it, and why it stopped. Answers whether it was a stop. */
+function crashReport(loopRun: LoopRun, err: Thrown): boolean {
+  const { ctx, report } = loopRun;
   const aborted = err?.kind === EngineFailure.Aborted || ctx.cancelled;
   if (!aborted) report.failure = { message: String(err?.message ?? err).slice(0, FAILURE_CHARS) };
   report.stoppedBecause = aborted ? "stopped by the user" : "the build hit a problem and stopped early";
+  return aborted;
+}
+
+/**
+ * An open Loop that threw closes in place, saying why; a close already under way (a claim's) is joined
+ * as it is. A turn Genex ended because the project's app couldn't be brought back pauses the Loop.
+ */
+async function closeOpenAfterCrash(loopRun: LoopRun, err: Thrown): Promise<void> {
+  const halted = loopRun.open?.halted;
+  if (halted) return closeInPlace(loopRun, { victory: false, because: halted, paused: true });
+  if (!closeUnderWay(loopRun.state)) crashReport(loopRun, err);
+  await closeInPlace(loopRun, { victory: false, because: String(loopRun.report.stoppedBecause) });
+}
+
+/** The close of a run that threw (`closeAfterCrash`): its workers stopped, its report saying why, nothing landed. */
+async function crashClose(loopRun: LoopRun, err: any): Promise<void> {
+  const { closeRun, report, runningWorkers, state, stopWorker } = loopRun;
+  if (state.finished) return;
+  for (const worker of runningWorkers()) await stopWorker(worker, "the build ended early", "cleanup");
+  const aborted = crashReport(loopRun, err);
   await closeRun({
     ok: false,
     reason: report.stoppedBecause,
@@ -608,8 +753,24 @@ async function bringTheWindowHome(loopRun: LoopRun): Promise<void> {
  * recreated at resume, memory file and all.
  */
 async function tearDown(loopRun: LoopRun): Promise<void> {
-  const { ctx, integrationWorktree, protectWorker, run, state } = loopRun;
+  const { ctx, run } = loopRun;
   directors.delete(run.runId);
+  // An open Loop's lead worked in the game folder: there is no worktree to remove, only its workers to settle.
+  if (leadsOpenLoop(loopRun)) {
+    // A close that outlasted its lead's call finishes writing how the Loop ended before the run ends.
+    await closeSettled(loopRun.state);
+    await closeRunPool(run.runId);
+    // A recovery of the project's app still under way stops before the run's end, as far as it can.
+    await settleRecovery(loopRun);
+  } else await removeWorktrees(loopRun);
+  // The run is over: the game's plugins hear it (their notes are logged by Genex).
+  await fireHooks(ctx, loopRun.game, HookEvent.RunEnd, runScope(loopRun));
+  ctx.setStatus("idle");
+}
+
+/** A web run's worktrees go, the window brought home first and each worker's commits put on its ref. */
+async function removeWorktrees(loopRun: LoopRun): Promise<void> {
+  const { ctx, integrationWorktree, protectWorker, run, state } = loopRun;
   await bringTheWindowHome(loopRun);
   for (const worker of state.workers.values()) {
     // The settle above is bounded: a worker still judging when it expires has commits in a
@@ -623,7 +784,6 @@ async function tearDown(loopRun: LoopRun): Promise<void> {
   await ctx
     .call(HostMethod.SnapshotRemoveWorktree, { project: run.project, path: integrationWorktree })
     .catch(() => {});
-  ctx.setStatus("idle");
 }
 
 /**
@@ -657,11 +817,19 @@ async function wakeLoopRun(
   talk: DirectorTalk,
   brief: () => string,
   line: LeadLine | null,
+  clock: WakeClock,
 ): Promise<void> {
-  const outcome = await runWakeLoop(loopRun, talk, brief, SYSTEM_CLOCK, line);
+  const outcome = await runWakeLoop(loopRun, talk, brief, clock, line);
   await line?.release();
-  if (!loopRun.state.finished) await closeLeftOpen(loopRun, outcome.failed ?? outcome.result, outcome.wrapCause);
+  if (loopRun.state.finished) return;
+  // Stopped before the lead's session ever worked (its first turn waited for the folder, or a plugin held it).
+  if (stoppedBeforeAnyTurn(loopRun)) return closeStoppedStart(loopRun);
+  await closeLeftOpen(loopRun, outcome.failed ?? outcome.result, outcome.wrapCause, clock.now());
 }
+
+/** An open Loop the person stopped before any session of its lead's read its message this time. */
+const stoppedBeforeAnyTurn = (loopRun: LoopRun): boolean =>
+  leadsOpenLoop(loopRun) && loopRun.ctx.cancelled === true && !loopRun.open?.halted && !loopRun.open?.sessionWorked;
 
 /**
  * Seat a waking run's lead (director/lead-session.ts): the chat's own session when it can
@@ -683,20 +851,39 @@ async function seatTheLead(loopRun: LoopRun): Promise<void> {
  * answers the session's tool calls, director/integrate.ts merges and closes the run. What stays
  * here is the director's own session: its turns (the wake loop, director/wake.ts, or the long
  * turn), the close of whatever it left open, and the teardown of the run's worktrees whatever
- * happened.
+ * happened. An open Loop (`profile`, a project that isn't a web game) is the same wake loop led in
+ * place: its chat's own session works in the game folder with its own tools (director/open/), and
+ * it closes there, landing nothing.
  */
 export async function runDirector(
   ctx: HarnessCtx,
-  { threadId, run, resume = false }: { threadId: string; run: Run; resume?: boolean },
+  {
+    threadId,
+    run,
+    resume = false,
+    profile = LoopProfile.Web,
+    clock: ownClock,
+  }: {
+    threadId: string;
+    run: Run;
+    resume?: boolean;
+    /** How the Loop works on its project: the web method (the default), or in place (`LoopProfile.Open`). */
+    profile?: LoopProfile;
+    /** The wake loop's clock: the wall clock, or a test's. */
+    clock?: WakeClock;
+  },
 ): Promise<AnyRecord> {
+  const open = profile === LoopProfile.Open;
+  const clock = ownClock ?? (open ? OPEN_WALL_CLOCK : SYSTEM_CLOCK);
   // The run's own word, else the studio's environment (a shipped build's way back to the long turn).
-  const loop = directorLoopOf(run, process.env);
+  // An open Loop always wakes: its lead is the chat's own session, working in the game folder.
+  const loop = open ? DirectorLoop.Wake : directorLoopOf(run, process.env);
   // A waking run's lead is its chat's own session (one session): it keeps no memory file.
-  const oneSession = seatsLead(loop);
+  const oneSession = open || seatsLead(loop);
   // A waking run's lead takes the chat while it builds (`leadLine` below), and its start says so
   // when the chat's queue hands messages to it (a kept older queue keeps them behind the build).
   const liveChat = loop === DirectorLoop.Wake && servesLiveChat();
-  const timings: { operationSpans?: OperationSpan[]; omittedSpans?: number } = {};
+  const timings: HostTimings = {};
   let tracing: LoopRun | undefined;
   const measured = tracedContext(ctx, run, (span) =>
     retainSpan(timings, {
@@ -705,8 +892,28 @@ export async function runDirector(
       head: tracing?.state.integrationHead ?? null,
     }),
   );
-  const loopRun = await prepareLoopRun(measured, { threadId, run, resume, oneSession, liveChat }, LOOP_RUN_MODULES);
+  const options = { threadId, run, resume, oneSession, liveChat, ...(open ? { profile, clock } : {}) };
+  const loopRun = await prepareLoopRun(measured, options, LOOP_RUN_MODULES);
+  // A paused run its open Loop can't pick up is refused before anything of it runs or is written over.
+  const refused = loopRun.open?.refused;
+  if (refused) {
+    await refuseResume(loopRun, refused, loopRun.open?.refusalPauses === true);
+    return loopRun.report;
+  }
   tracing = loopRun;
+  keepTimings(loopRun, timings);
+  if (oneSession) await seatTheLead(loopRun);
+  const session = await sessionParts(ctx, loopRun, loop);
+  const line = leadLine(loopRun, loop);
+  await leadTheRun(loopRun, { ...session, loop, line, clock });
+  return loopRun.report;
+}
+
+/** What the host's spans of a run add up to, kept on its journal and its report. */
+type HostTimings = { operationSpans?: OperationSpan[]; omittedSpans?: number };
+
+/** The run's host timings, a resumed run's earlier spans first, on its journal and its report. */
+function keepTimings(loopRun: LoopRun, timings: HostTimings): void {
   const prior = loopRun.priorJournal?.director?.hostTimings;
   const current = timings.operationSpans ?? [];
   if (Array.isArray(prior?.operationSpans)) {
@@ -716,32 +923,108 @@ export async function runDirector(
   }
   loopRun.journal.director.hostTimings = timings;
   loopRun.report.hostTimings = timings;
-  const { report } = loopRun;
-  if (oneSession) await seatTheLead(loopRun);
-  const skill = await directorSkill(ctx);
-  const talk = directorTalk(loopRun, referenceImages(run), runTools(loop, loopRun));
-  directors.set(run.runId, loopRun.handler);
-  const resumeNoteText = await resumeWords(loopRun);
-  const line = leadLine(loopRun, loop);
+}
+
+/** What the lead's session is opened with: the playbook, the session and its tools, and a resumed run's words. */
+interface SessionParts {
+  skill: string;
+  talk: DirectorTalk;
+  resumeNote: string | null;
+}
+
+/**
+ * The lead's session and the dispatch of its tools: the director's, or an open Loop's own (its
+ * tools, no web playbook, no resume words about a branch: its brief names its save points).
+ */
+async function sessionParts(ctx: HarnessCtx, loopRun: LoopRun, loop: DirectorLoop): Promise<SessionParts> {
+  const { run } = loopRun;
+  const open = leadsOpenLoop(loopRun);
+  const skill = open ? "" : await directorSkill(ctx, loopRun);
+  const types = loopRun.open?.pool?.state.types ?? [];
+  const workers = loopRun.open?.pool?.state.allowed;
+  const judge = judgedInEditor(loopRun);
+  const tools = open
+    ? openTools(types, { restart: restartsApp(loopRun.game), workers, judge, judges: loopJudges(loopRun) })
+    : runTools(loop, loopRun);
+  const talk = directorTalk(loopRun, referenceImages(run), tools);
+  directors.set(run.runId, open ? openHandler(loopRun) : loopRun.handler);
+  // Between an open Loop's turns, Genex keeps what its lead left and runs the rewind or restart it asked for.
+  if (open) loopRun.afterTurn = () => openBetweenTurns(loopRun);
+  const resumeNote = open ? null : await resumeWords(loopRun);
+  return { skill, talk, resumeNote };
+}
+
+/** A start a plugin held back closes before any turn, saying why: in place for an open Loop, landing nothing. */
+async function closeHeldStart(loopRun: LoopRun, start: StartOfRun): Promise<void> {
+  // A Loop that never started keeps nothing: no checkpoint reaches into the app or the person's files.
+  // A resumed Loop held back stays paused with the working time it had: Resume picks it up once the cause is fixed.
+  if (leadsOpenLoop(loopRun) && start.blocked) {
+    const because = openStartHeld(start.blocked, loopRun.resume);
+    const end = { victory: false, because, keepNothing: true, unworked: true, paused: loopRun.resume };
+    return closeInPlace(loopRun, end);
+  }
+  await loopRun.closeTheLoopRun({
+    land: false,
+    stopWhy: "the run didn't start",
+    because: start.held,
+  });
+}
+
+/**
+ * A run the person stopped before its first turn closes as their stop. An open Loop that never ran a
+ * turn keeps nothing (no checkpoint reaches into the app its plugins were preparing) and pauses with the
+ * working time it came with.
+ */
+async function closeStoppedStart(loopRun: LoopRun): Promise<void> {
+  if (!leadsOpenLoop(loopRun)) return closeLeftOpen(loopRun, {});
+  const because = sessionEndWords(loopRun, {}, Date.now(), null);
+  return closeInPlace(loopRun, { victory: false, because, keepNothing: true, unworked: true });
+}
+
+/** The brief the lead's session opens with: an open Loop's own, or the director's (`openingBrief`). */
+async function briefOf(
+  loopRun: LoopRun,
+  parts: SessionParts & { loop: DirectorLoop },
+  start: StartOfRun,
+): Promise<() => string> {
+  if (leadsOpenLoop(loopRun)) return briefWriter(loopRun, start.notes ?? []);
+  return () => openingBrief(loopRun, parts.skill, parts.resumeNote, start, parts.loop);
+}
+
+/**
+ * The run under its lead: its start, the lead's turns (the wake loop, director/wake.ts, or the long
+ * turn), the close of whatever it left open, and the teardown whatever happened.
+ */
+async function leadTheRun(
+  loopRun: LoopRun,
+  parts: SessionParts & { loop: DirectorLoop; line: LeadLine | null; clock: WakeClock },
+): Promise<void> {
+  const { line, loop, talk, clock } = parts;
   // Until the lead's loop takes the line, nobody has heard a word the chat handed it.
   let looping = false;
   try {
     const start = await prepareTheStart(loopRun);
+    // A plugin held the run back while it prepared: it closes before any turn, saying why.
+    if (start.held) {
+      await line?.release({ heardNone: true });
+      await closeHeldStart(loopRun, start);
+      return;
+    }
     // A Stop while the run prepared (the starting point, the contract): no session opens, and
     // the run closes as the user's stop — a session has Edit and Bash and would work on.
     if (loopRun.ctx.cancelled) {
       // Its lead never heard a word: what the chat handed it goes back before the close.
       await line?.release({ heardNone: true });
-      await closeLeftOpen(loopRun, {});
-      return report;
+      await closeStoppedStart(loopRun);
+      return;
     }
-    const brief = () => openingBrief(loopRun, skill, resumeNoteText, start, loop);
+    const brief = await briefOf(loopRun, parts, start);
     if (loop === DirectorLoop.Turn) {
       await runTurnLoop(loopRun, talk, brief());
-      return report;
+      return;
     }
     looping = true;
-    await wakeLoopRun(loopRun, talk, brief, line);
+    await wakeLoopRun(loopRun, talk, brief, line, clock);
   } catch (err: any) {
     // Given back before the close: after `run_finished` a message loses its Queued state in the paged chat.
     await line?.release({ heardNone: !looping });
@@ -750,5 +1033,4 @@ export async function runDirector(
     await line?.release();
     await tearDown(loopRun);
   }
-  return report;
 }

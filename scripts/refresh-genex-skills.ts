@@ -8,16 +8,20 @@
  * read from `--skill-md <file>`, fetched with `--fetch`, or kept from the current vendored copy.
  * The CLI's MIT license is copied beside them as `LICENSE-cards`, so every build carries it.
  * `vendor.json` records the versions and each upstream part's sha256, which
- * `tests/conformance/genex-skills-vendor.test.ts` holds to the pin.
+ * `tests/conformance/genex-skills-vendor.test.ts` holds to the pin. Each card's `references` in
+ * plugin.json is rewritten to the references just vendored, so a reference the CLI adds or drops
+ * needs no hand edit; a card the manifest never declared still fails the refresh.
  *
  *   npm run genex:skills -- [--skill-md <file> | --fetch]
  */
+import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { isFileSkill, type PluginManifest } from "../src/shared/plugins.ts";
+import { promisify } from "node:util";
+import { isFileSkill, type PluginFileSkill, type PluginManifest } from "../src/shared/plugins.ts";
 
 /** The skill vendored from https://genex.games/SKILL.md. */
 export const GENEX_SKILL = "genex";
@@ -33,7 +37,14 @@ export const GENEX_CARDS = [
   "genex-tool-publish",
   "genex-cover",
   "genex-updates",
+  "genex-tool-model",
+  "genex-tool-character",
+  "genex-tool-texture",
+  "genex-tool-audio",
+  "genex-tool-image",
 ] as const;
+/** Skills Studio writes itself beside the vendored ones: never fetched, never in `vendor.json`. */
+export const STUDIO_SKILLS: readonly string[] = ["plugin-author"];
 /** The CLI's own license, copied beside the cards so every build of the payload carries it. */
 export const CARDS_LICENSE = "LICENSE-cards";
 const CLI_PACKAGE = "@genex-ai/cli-demo";
@@ -176,12 +187,14 @@ async function vendorCard(v: Vendoring, cards: string, card: string) {
 /**
  * Where plugin.json's file skills disagree with what was vendored: a declared file or reference that
  * is not vendored, a vendored reference the skill does not list, or a vendored skill never declared.
+ * Studio's own skills (`STUDIO_SKILLS`) are not vendored and are not compared.
  */
 export function manifestDisagreements(manifest: Pick<PluginManifest, "skills">, vendored: string[]): string[] {
   const packaged = new Set(vendored.map((f) => `${PACKAGE_SKILLS}/${f}`));
   const problems: string[] = [];
   const declared = new Set<string>();
   for (const skill of manifest.skills.filter(isFileSkill)) {
+    if (STUDIO_SKILLS.includes(skill.name)) continue;
     for (const file of [skill.file, ...(skill.references ?? [])]) {
       declared.add(file);
       if (!packaged.has(file)) problems.push(`${skill.name}: ${file} is declared but not vendored`);
@@ -190,6 +203,37 @@ export function manifestDisagreements(manifest: Pick<PluginManifest, "skills">, 
   for (const file of packaged)
     if (!declared.has(file)) problems.push(`${file} is vendored but no skill in ${MANIFEST} declares it`);
   return problems;
+}
+
+/**
+ * The manifest with each vendored skill's `references` set to the references vendored for it: the
+ * ones it already declared keep their order, new ones follow sorted, and ones no longer vendored go.
+ */
+export function declareVendoredReferences<M extends Pick<PluginManifest, "skills">>(
+  manifest: M,
+  vendored: string[],
+): M {
+  const packaged = vendored.map((f) => `${PACKAGE_SKILLS}/${f}`);
+  const skills = manifest.skills.map((skill) => {
+    if (!isFileSkill(skill) || STUDIO_SKILLS.includes(skill.name)) return skill;
+    const folder = `${path.posix.dirname(skill.file)}/${REFERENCES}/`;
+    const now = packaged.filter((f) => f.startsWith(folder));
+    const kept = (skill.references ?? []).filter((f) => now.includes(f));
+    const references = [...kept, ...now.filter((f) => !kept.includes(f)).sort()];
+    // Spread then assign keeps an existing `references` key where it was in the file.
+    const next: PluginFileSkill = { ...skill, references };
+    if (references.length === 0) delete next.references;
+    return next;
+  });
+  return { ...manifest, skills };
+}
+
+/** Write a plugin.json the way the repository formats it (Biome, with the root's configuration). */
+export async function writeManifest(root: string, file: string, manifest: unknown): Promise<void> {
+  await writeFile(file, `${JSON.stringify(manifest, null, 2)}\n`);
+  // Biome's own launcher, run by this Node: `.bin/biome` is a `.cmd` shim on Windows.
+  const biome = path.join(root, "node_modules", "@biomejs", "biome", "bin", "biome");
+  await promisify(execFile)(process.execPath, [biome, "format", "--write", `--config-path=${root}`, file]);
 }
 
 /** Vendor every Genex skill and write vendor.json; returns what plugin.json disagrees with. */
@@ -212,7 +256,9 @@ export async function refreshGenexSkills(options: Options): Promise<string[]> {
     license: { source: `${CLI_PACKAGE}/LICENSE`, sha256: sha256(license), bytes: Buffer.byteLength(license) },
   };
   await writeFile(path.join(v.skills, "vendor.json"), `${JSON.stringify(record, null, 2)}\n`);
-  const manifest = JSON.parse(await readFile(path.join(options.root, MANIFEST), "utf8"));
+  const manifestFile = path.join(options.root, MANIFEST);
+  const manifest = declareVendoredReferences(JSON.parse(await readFile(manifestFile, "utf8")), Object.keys(v.files));
+  await writeManifest(options.root, manifestFile, manifest);
   return manifestDisagreements(manifest, Object.keys(v.files));
 }
 

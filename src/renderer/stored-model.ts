@@ -28,6 +28,11 @@ export function storedChatModel(storage: Storage, threadId: string, meta: Thread
   );
 }
 
+/** The welcome's pick of the first model: the first game's chat opens on it, as on a pick made in a game chat. */
+export function rememberWelcomeModel(storage: Pick<globalThis.Storage, "setItem">, key: string): void {
+  storage.setItem(LAST_MODEL_KEY, key);
+}
+
 /** A Studio pick never becomes the model new games inherit. */
 export function rememberChatModel(storage: Storage, threadId: string, key: string, studio = false): void {
   if (studio) {

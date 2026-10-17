@@ -31,6 +31,8 @@ export interface AddMenuEntry {
   toggle: (on: boolean) => void;
   /** The plugin's or server's own picture, when it has one. */
   icon?: string;
+  /** A plugin row's plugin id (the row's own id is namespaced by its kind). */
+  pluginId?: string;
 }
 
 /** What the menu's rows can do, bound by the menu to its studio calls. */
@@ -53,7 +55,7 @@ const AUTHORIZING: Account = "authorizing";
 const FAILED: Account = "failed";
 const ACCOUNT_WORDS = PLUGINS_WORDS.account;
 
-/** Short name of a plugin's own server: "Genex Tools · Blender" → "Blender". */
+/** Short name of a plugin's own server: "Genex plugin · Blender" → "Blender". */
 export const serverName = (view: McpConnectorView): string =>
   view.connector.name.split(" · ").pop() ?? view.connector.name;
 
@@ -175,6 +177,7 @@ export function addMenuEntries(
       scope: EntryScope.AllGames,
       status: pluginStatus(plugin, owned, state, actions),
       toggle: (on) => actions.enablePlugin(plugin, on),
+      pluginId: plugin.manifest.id,
       ...(plugin.iconUrl ? { icon: plugin.iconUrl } : {}),
     };
   });
@@ -204,6 +207,8 @@ export interface MentionOption {
   id: string;
   name: string;
   pick: () => void;
+  /** A plugin's own picture, for its card. */
+  icon?: string;
 }
 
 /** The option that adds images; it answers to "images" and to "reference mood board". */
@@ -214,7 +219,7 @@ export function mentionOptions(
   mention: string | null,
   entries: AddMenuEntry[],
   pickImages: () => void,
-  mentionEntry: (name: string) => void,
+  mentionEntry: (entry: AddMenuEntry) => void,
 ): MentionOption[] {
   const query = (mention ?? "").toLowerCase();
   const images = IMAGES_OPTION.includes(query) || "reference mood board".includes(query);
@@ -222,6 +227,6 @@ export function mentionOptions(
     ...(images ? [{ id: IMAGES_OPTION, name: "Images", pick: pickImages }] : []),
     ...entries
       .filter((e) => e.on && e.name.toLowerCase().includes(query))
-      .map((e) => ({ id: e.id, name: e.name, pick: () => mentionEntry(e.name) })),
+      .map((e) => ({ id: e.id, name: e.name, pick: () => mentionEntry(e), ...(e.icon ? { icon: e.icon } : {}) })),
   ];
 }

@@ -7,7 +7,7 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
-import { link, mkdir, readFile, readlink, rm, symlink, writeFile } from "node:fs/promises";
+import { link, mkdir, readdir, readFile, readlink, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, it } from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
@@ -94,6 +94,44 @@ describe("native job sandbox profile", { skip: !darwin && "Seatbelt is macOS-onl
       !deniedMach.includes("com.apple.coreservices.launchservicesd"),
       "a GPU job can check in with LaunchServices, which AppKit needs to start",
     );
+  });
+
+  it("a write prefix lets a job write only files whose names start with it, and a prefix it can't spell plainly grants nothing", async () => {
+    const root = await realpath(await tmpDir("native-prefix-"));
+    const temp = path.join(root, "temp");
+    const scratch = path.join(root, "scratch");
+    await mkdir(temp);
+    await mkdir(scratch);
+    await mkdir(path.join(temp, "tmpproject.binary-d"));
+    const result = await runNativeProcess({
+      binary: "/bin/sh",
+      args: [
+        "-c",
+        `echo a > ${temp}/tmpproject.binary-x1y2; echo b > ${temp}/other; echo c > ${temp}/tmpprojectXbinary; echo d > ${temp}/tmpproject.binary-d/below`,
+      ],
+      cwd: root,
+      scratch,
+      reads: [],
+      writes: [],
+      writePrefixes: [path.join(temp, "tmpproject.binary")],
+      denyRead: [],
+      signal: new AbortController().signal,
+      timeoutMs: 5000,
+      maxOutputBytes: 16000,
+    });
+    assert.deepEqual((await readdir(temp)).sort(), ["tmpproject.binary-d", "tmpproject.binary-x1y2"], result.stderr);
+    assert.deepEqual(await readdir(path.join(temp, "tmpproject.binary-d")), [], "never a path below a name it starts");
+    for (const hostile of ['/tmp/a"b', "/", "/tmp/", "relative/x", "/tmp/.*", "/tmp/a)(allow default"]) {
+      const profile = nativeSandboxProfile({
+        binaryRoot: "/bin",
+        reads: [],
+        writes: [],
+        writePrefixes: [hostile],
+        denied: [],
+        gpu: false,
+      });
+      assert.ok(!profile.includes("regex"), `${hostile} grants nothing`);
+    }
   });
 
   it("a job cannot signal a process outside itself", async () => {

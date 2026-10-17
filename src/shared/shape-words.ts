@@ -2,32 +2,27 @@
  * A project's shape, in the words a person reads — and the choices the Open Game sheet offers.
  *
  * `ProjectShape` is the studio's own vocabulary — `three-vite`, `engine-export`, `serve: "dist"`
- * — and it reaches three surfaces at once: the Open Game sheet, the toast that says what was
- * opened, and the stage header. One table, so all three say the same thing. The sheet's rows are
+ * — and it reaches two surfaces at once: the Open Game sheet and the toast that says what was
+ * opened. One table, so both say the same thing. The sheet's rows are
  * here too, as data: what a folder offers is worth testing without a window. (The harness's own
  * status vocabulary is a different job and lives in `renderer/words.ts`; nothing here reads a run.)
  */
 import type { FolderInspection, ProjectKind, ProjectShape } from "./game-project.ts";
 
-/** For each kind: the phrase that finishes "This folder holds …", and the stage header's chip. */
-const KINDS: Record<ProjectKind, { phrase: string; chip: string }> = {
-  "studio-template": { phrase: "a game made from the Genex starter", chip: "studio starting point" },
-  "three-vite": { phrase: "a 3D game with its own build", chip: "3D · own build" },
-  "three-modules": { phrase: "a 3D game that runs as written", chip: "3D · runs as written" },
-  canvas2d: { phrase: "a 2D canvas game", chip: "2D canvas" },
-  phaser: { phrase: "a Phaser game", chip: "Phaser" },
-  "engine-export": { phrase: "a game exported from a game engine", chip: "engine export" },
-  "own-script": { phrase: "a game with its own scripts", chip: "own scripts" },
+/** For each kind: the phrase that finishes "This folder holds …". */
+const KINDS: Record<ProjectKind, string> = {
+  "studio-template": "a game made from the Genex starter",
+  "three-vite": "a 3D game with its own build",
+  "three-modules": "a 3D game that runs as written",
+  canvas2d: "a 2D canvas game",
+  phaser: "a Phaser game",
+  "engine-export": "a game exported from a game engine",
+  "own-script": "a game with its own scripts",
 };
 
 /** What this folder holds, as a phrase: "This folder holds …". */
 export function kindWords(kind: ProjectKind): string {
-  return KINDS[kind].phrase;
-}
-
-/** The same fact in the two or three words a header has room for. */
-export function kindChip(kind: ProjectKind): string {
-  return KINDS[kind].chip;
+  return KINDS[kind];
 }
 
 /** How the studio will run it: the build it runs first, or nothing at all. */
@@ -146,32 +141,66 @@ export function openOptions(inspection: FolderInspection): OpenOption[] {
       button: candidate.rel === "." ? "Open this game" : `Open ${candidate.rel}/`,
     };
   });
-  // `starter` is empty when the folder is a game of its own — its own row above says it.
-  if (inspection.starter.length > 0) {
-    const beside = inspection.candidates.length > 0;
-    options.push({
-      id: ".",
-      label: "This folder",
-      headline: beside ? "no game of its own" : "an empty folder",
-      detail: beside
-        ? "the game inside it stays exactly where it is"
-        : "Genex adds a starter game, then you describe the one you want",
-      facts: [
-        ...(beside ? ["No starter game is written beside the game you already have."] : []),
-        ...nestedWords(inspection.nested),
-      ],
-      problems: [],
-      writes: inspection.starter,
-      engineExport: false,
-      // Keeping the parent must never drop a second index.html beside somebody's real game.
-      choice: {
-        ...(beside ? { template: false } : {}),
-        ...(inspection.nested.length > 0 ? { versionNested: true } : {}),
-      },
-      button: beside ? "Keep this folder" : "Start a game here",
-    });
-  }
+  // `starter` is empty when the folder is a game of its own — its own row above says it. A folder
+  // with no game in it always keeps its row, even when it needs nothing more: somebody's own
+  // project that is no web page, or an empty folder that already holds Genex's bookkeeping.
+  if (inspection.starter.length > 0 || inspection.candidates.length === 0) options.push(folderOption(inspection));
   return options;
+}
+
+/** The words of the folder's own row: kept beside the game inside it, opened as it is, or started in. */
+function folderWords(
+  beside: boolean,
+  { ownFiles, webStarter }: Pick<FolderInspection, "ownFiles" | "webStarter">,
+): Pick<OpenOption, "headline" | "detail" | "button"> {
+  if (beside) {
+    return {
+      headline: "no game of its own",
+      detail: "the game inside it stays exactly where it is",
+      button: "Keep this folder",
+    };
+  }
+  if (ownFiles) {
+    return {
+      headline: "files of its own, no web page",
+      detail: "Genex keeps every file as it is and writes no starter game",
+      button: "Open this folder",
+    };
+  }
+  if (webStarter) {
+    return {
+      headline: "a web game with no page yet",
+      detail: "Genex adds the starter's missing files and keeps every file that is there",
+      button: "Open this folder",
+    };
+  }
+  return {
+    headline: "an empty folder",
+    detail: "Genex keeps it empty; your first message decides what it becomes",
+    button: "Start a game here",
+  };
+}
+
+/** The row for opening the picked folder itself, when no game of its own was found at its root. */
+function folderOption(inspection: FolderInspection): OpenOption {
+  const beside = inspection.candidates.length > 0;
+  return {
+    id: ".",
+    label: "This folder",
+    ...folderWords(beside, inspection),
+    facts: [
+      ...(beside ? ["No starter game is written beside the game you already have."] : []),
+      ...nestedWords(inspection.nested),
+    ],
+    problems: [],
+    writes: inspection.starter,
+    engineExport: false,
+    // Keeping the parent must never drop a second index.html beside somebody's real game.
+    choice: {
+      ...(beside ? { template: false } : {}),
+      ...(inspection.nested.length > 0 ? { versionNested: true } : {}),
+    },
+  };
 }
 
 /** Which row opens by default — the one `inspect` suggested, else the first. */

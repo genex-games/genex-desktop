@@ -1,9 +1,11 @@
 /**
- * The Genex plugin's page, below its title: the account card, the tools it routes, the skills it
- * gives agents and what it is. The page is app-wide: one balance covers every game,
- * a game's own spend is in its usage panel, and Publish lives on the game's stage.
+ * The Genex plugin's page, below its title, in two tabs: Tools (the account card, what waits for
+ * review, the tools it routes, the skills it gives agents and what it is) and Credits (the balance,
+ * what credits pay for at live prices, recent spends). The page is app-wide: one balance covers
+ * every game, a game's own spend is in its usage panel, and Publish lives on the game's stage.
  */
-import type { JSX } from "react";
+import type { JSX, KeyboardEvent } from "react";
+import { useId } from "react";
 import { GenexAction } from "../../../../shared/genex.ts";
 import type { PluginInfo } from "../../../../shared/plugins.ts";
 import { Button } from "../../../ui/Button.tsx";
@@ -16,8 +18,10 @@ import type { PluginsPage } from "../page.ts";
 import { Section } from "../rows.tsx";
 import type { ShownSkill } from "../skills-sections.ts";
 import { GenexAccount } from "./GenexAccount.tsx";
+import { GenexCreditsTab } from "./GenexCreditsTab.tsx";
+import { chooseGenexTab, GENEX_TABS, GenexTab, useGenexTab } from "./genex-tab.ts";
 import { type GenexJobRow, genexJobRows, JobState } from "./genex-view.ts";
-import { ROUTED_TOOLS, toolCopy } from "./routed-tools.ts";
+import { markIsLight, ROUTED_TOOLS, toolCopy } from "./routed-tools.ts";
 import { type GenexLive, useGenexStatus } from "./use-genex-status.ts";
 
 /** The tools Genex routes, each with its mark and what it does. */
@@ -32,7 +36,7 @@ function RoutedTools(): JSX.Element {
           return (
             <li key={id} className="genex-tool" data-genex-tool={id}>
               <span className="genex-tool-mark" aria-hidden="true">
-                <img src={mark} alt="" draggable={false} />
+                <img src={mark} alt="" draggable={false} data-light-mark={markIsLight(id) || undefined} />
               </span>
               <span className="genex-tool-copy">
                 <span className="genex-tool-name">{tool.name}</span>
@@ -43,6 +47,44 @@ function RoutedTools(): JSX.Element {
         })}
       </ul>
     </Section>
+  );
+}
+
+/** One Review button: a candidate's number, or the remesh. */
+function ReviewButton({ id, candidate, live }: { id: string; candidate: number | null; live: GenexLive }): JSX.Element {
+  return (
+    <Button
+      disabled={live.running !== null}
+      onClick={() => void live.act(GenexAction.Approve, { id, ...(candidate ? { candidate } : {}) })}
+    >
+      {GENEX_WORDS.review.button(candidate)}
+    </Button>
+  );
+}
+
+/** A preview candidate: its picture above its Review button, so the person chooses by looking. */
+function CandidateReview({
+  row,
+  candidate,
+  live,
+}: {
+  row: GenexJobRow;
+  candidate: number;
+  live: GenexLive;
+}): JSX.Element {
+  const picture = row.pictures[candidate];
+  return (
+    <div className="genex-candidate" data-genex-candidate={candidate}>
+      {picture && (
+        <img
+          className="genex-candidate-picture"
+          src={picture}
+          alt={GENEX_WORDS.review.picture(candidate)}
+          draggable={false}
+        />
+      )}
+      <ReviewButton id={row.id} candidate={candidate} live={live} />
+    </div>
   );
 }
 
@@ -60,15 +102,13 @@ function ReviewRow({ row, live }: { row: GenexJobRow; live: GenexLive }): JSX.El
         {GENEX_WORDS.state[row.state]}
       </span>
       <div className="genex-job-actions">
-        {row.candidates.map((candidate) => (
-          <Button
-            key={candidate ?? "remesh"}
-            disabled={live.running !== null}
-            onClick={() => void live.act(GenexAction.Approve, { id: row.id, ...(candidate ? { candidate } : {}) })}
-          >
-            {GENEX_WORDS.review.button(candidate)}
-          </Button>
-        ))}
+        {row.candidates.map((candidate) =>
+          candidate === null ? (
+            <ReviewButton key="remesh" id={row.id} candidate={null} live={live} />
+          ) : (
+            <CandidateReview key={candidate} row={row} candidate={candidate} live={live} />
+          ),
+        )}
       </div>
     </li>
   );
@@ -104,6 +144,58 @@ function LiveAccount({ detail, page }: { detail: PluginInfo; page: PluginsPage }
   );
 }
 
+/** The page's tabs: Tools (with the account) and Credits; arrow keys move along them. */
+function GenexTabs({ tab, ids }: { tab: GenexTab; ids: string }): JSX.Element {
+  const words = GENEX_WORDS.tabs;
+  const label: Record<GenexTab, string> = {
+    [GenexTab.Tools]: words.tools,
+    [GenexTab.Credits]: words.credits,
+  };
+  const keys = (event: KeyboardEvent<HTMLButtonElement>, index: number): void => {
+    const moves: Record<string, number> = { ArrowLeft: index - 1, ArrowRight: index + 1 };
+    const next = GENEX_TABS[moves[event.key] ?? -1];
+    if (!next) return;
+    event.preventDefault();
+    chooseGenexTab(next);
+    event.currentTarget.parentElement?.querySelector<HTMLButtonElement>(`[data-genex-tab="${next}"]`)?.focus();
+  };
+  return (
+    <div className="genex-tabs" role="tablist" aria-label={words.label}>
+      {GENEX_TABS.map((id, index) => (
+        <button
+          key={id}
+          type="button"
+          role="tab"
+          id={`${ids}-${id}`}
+          aria-controls={`${ids}-panel`}
+          aria-selected={id === tab}
+          tabIndex={id === tab ? 0 : -1}
+          data-genex-tab={id}
+          className="genex-tab"
+          onClick={() => chooseGenexTab(id)}
+          onKeyDown={(event) => keys(event, index)}
+        >
+          {label[id]}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/** Genex is off: the line that says what that takes away (the agent's tools, not the account), and what went wrong. */
+function GenexOff({ page }: { page: PluginsPage }): JSX.Element {
+  return (
+    <>
+      <p className="genex-off">{GENEX_WORDS.account.off}</p>
+      {page.error && (
+        <p role="alert" className="extensions-error">
+          {page.error}
+        </p>
+      )}
+    </>
+  );
+}
+
 /** The Genex page below its title. */
 export function GenexDetail({
   detail,
@@ -115,27 +207,28 @@ export function GenexDetail({
   onSkill: (skill: ShownSkill) => void;
 }): JSX.Element {
   const active = isActive(detail);
+  const tab = useGenexTab();
+  const ids = useId();
   return (
-    <div className="genex-page">
-      <PluginNotes detail={detail} />
-      <div className="extensions-detail-actions">
-        <UpdateButton detail={detail} page={page} />
+    <div className="genex-page" data-genex-page={tab}>
+      <GenexTabs tab={tab} ids={ids} />
+      <div role="tabpanel" id={`${ids}-panel`} aria-labelledby={`${ids}-${tab}`} className="contents">
+        {tab === GenexTab.Tools && (
+          <>
+            <p className="genex-section-intro">{GENEX_WORDS.router.intro}</p>
+            <PluginNotes detail={detail} />
+            <div className="extensions-detail-actions">
+              <UpdateButton detail={detail} page={page} />
+            </div>
+            {active ? <LiveAccount detail={detail} page={page} /> : <GenexOff page={page} />}
+            <RoutedTools />
+            <PluginSkills detail={detail} onSkill={onSkill} />
+            <Information detail={detail} />
+          </>
+        )}
+        {/* Credits are the account's, which stays signed in with the plugin off. */}
+        {tab === GenexTab.Credits && <GenexCreditsTab />}
       </div>
-      {active ? (
-        <LiveAccount detail={detail} page={page} />
-      ) : (
-        <>
-          <p className="genex-off">{GENEX_WORDS.account.off}</p>
-          {page.error && (
-            <p role="alert" className="extensions-error">
-              {page.error}
-            </p>
-          )}
-        </>
-      )}
-      <RoutedTools />
-      <PluginSkills detail={detail} onSkill={onSkill} />
-      <Information detail={detail} />
     </div>
   );
 }

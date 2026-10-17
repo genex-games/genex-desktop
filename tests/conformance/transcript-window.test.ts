@@ -3,12 +3,15 @@ import { test } from "node:test";
 import {
   ESTIMATED_ROW_PX,
   heightEstimate,
+  heldScrollTop,
   KEEP_SCREENS,
   LOAD_AHEAD_SCREENS,
   loadsEarlier,
   MOUNT_SCREENS,
   mountedRange,
   type RowRange,
+  readingLine,
+  resizedWidth,
   rowOffsets,
   retainedViewport,
   type TranscriptViewport,
@@ -158,4 +161,39 @@ test("earlier history does not load twice, past its start, or again after a fail
     false,
     "a failed page waits for Try again",
   );
+});
+
+test("the reading line is the first block that reaches the top of the view", () => {
+  const blocks = [
+    { item: "above", top: -200, bottom: -40 },
+    { item: "empty", top: -10, bottom: -10 },
+    { item: "crossing", top: -12, bottom: 30 },
+    { item: "below", top: 40, bottom: 90 },
+  ];
+  assert.deepEqual(readingLine(blocks, 0), { item: "crossing", top: -12 });
+  assert.deepEqual(readingLine(blocks, 35), { item: "below", top: 5 });
+  assert.equal(readingLine(blocks, 100), null);
+  assert.equal(readingLine([], 0), null);
+});
+
+test("holding the reading line moves the scroll by however far the line moved", () => {
+  // Text above it wrapped onto two more lines: the line sits 44 px lower, so the scroll follows it.
+  assert.equal(heldScrollTop(840, 56, 12), 884);
+  // An image above it got shorter: the line came up, so the scroll comes back.
+  assert.equal(heldScrollTop(840, 9, 12), 837);
+  assert.equal(heldScrollTop(840, 12, 12), 840);
+});
+
+test("only the chat's own width changing holds the reading line", () => {
+  // Widths are the scroller's outer box, which a scrollbar appearing does not change.
+  const cases: [number, number, boolean][] = [
+    [433, 423, true],
+    [423, 433, true],
+    [433, 433, false],
+    [0, 433, false],
+    [433, 0, false],
+    [0, 0, false],
+  ];
+  for (const [previous, next, holds] of cases)
+    assert.equal(resizedWidth(previous, next), holds, `${previous} → ${next}`);
 });

@@ -3,6 +3,7 @@
  * reported, and each generation of the open game in plain words. Pure: the page draws these and
  * never works them out again.
  */
+import { MINUTE_MS, SECOND_MS } from "../../../../shared/duration.ts";
 import {
   GenexJobStatus,
   GenexOperation,
@@ -10,8 +11,36 @@ import {
   type GenexStatus,
   GenexUseStage,
 } from "../../../../shared/genex.ts";
+import { genexMaking, MakingKind } from "../../../../shared/asset-making.ts";
+import { kindLook } from "../../../asset-making.ts";
+import { isReviewImage } from "../../../plugin-actions.ts";
 import type { IconName } from "../../../ui/icons.tsx";
 import { GENEX_WORDS } from "../../../words.ts";
+
+/** How often the page re-reads Genex while something is under way, and otherwise. */
+export const GENEX_ACTIVE_POLL_MS = 5 * SECOND_MS;
+export const GENEX_IDLE_POLL_MS = MINUTE_MS;
+
+/**
+ * Job states that are still moving on Genex's side. Not `approved`: an approved review's run goes
+ * on in a new job, and the review keeps that state for good. Not `generated`: Genex has finished,
+ * and the files wait for a wait or a download that nothing starts by itself. Either one kept the
+ * page reading every 5 s for as long as it was open, against the account's shared request budget.
+ */
+const MOVING_JOBS: ReadonlySet<string> = new Set([
+  GenexJobStatus.Requested,
+  GenexJobStatus.Submitting,
+  GenexJobStatus.Accepted,
+  GenexJobStatus.Generating,
+]);
+
+/** Whether a sign-in or a generation is under way, so the page should look again soon. */
+const underWay = (status: GenexStatus | null): boolean =>
+  Boolean(status?.authorization) || (status?.jobs ?? []).some((job) => MOVING_JOBS.has(job.status));
+
+/** How long the page waits before reading Genex's status again. */
+export const genexPollMs = (status: GenexStatus | null): number =>
+  underWay(status) ? GENEX_ACTIVE_POLL_MS : GENEX_IDLE_POLL_MS;
 
 /** Which of the account card's shapes the status calls for. */
 export const GenexAccountKind = {
@@ -66,6 +95,15 @@ export function creditsOf(status: GenexStatus): CreditsView {
   return typeof balance === "number" && Number.isFinite(balance)
     ? { kind: CreditsKind.Count, count: balance }
     : { kind: CreditsKind.Unknown };
+}
+
+/**
+ * The account's balance as the Credits tab shows it: Unlimited only when genex.games says so, and
+ * Unknown (never Unlimited) when it couldn't read the balance.
+ */
+export function accountCreditsOf(credits: { balance: number | null; unlimited: boolean }): CreditsView {
+  if (credits.unlimited) return { kind: CreditsKind.Unlimited };
+  return credits.balance === null ? { kind: CreditsKind.Unknown } : { kind: CreditsKind.Count, count: credits.balance };
 }
 
 /** The game's spend from the CLI's budget answer, only when it is a real number. */
@@ -130,33 +168,12 @@ const JOB_STATE: Partial<Record<string, JobState>> = {
   [GenexJobStatus.Unresolved]: JobState.Unsure,
 } satisfies Partial<Record<GenexJobStatus, JobState>>;
 
-/** An asset family: its label on the page and the glyph it wears. */
-const ModelFamily = { label: GENEX_WORDS.kind.model, icon: "box" } as const;
-const CharacterFamily = { label: GENEX_WORDS.kind.character, icon: "character" } as const;
-const AnimationFamily = { label: GENEX_WORDS.kind.animation, icon: "character" } as const;
+/** A lookup the page still names by what it looks up: a character's clips are its animations. */
+const LOOKUP_KIND: Partial<Record<string, MakingKind>> = { [GenexOperation.CharacterMotions]: MakingKind.Animation };
 
-const OPERATION: Partial<Record<string, { label: string; icon: IconName }>> = {
-  [GenexOperation.Model]: ModelFamily,
-  [GenexOperation.ModelImport]: ModelFamily,
-  [GenexOperation.ModelSegment]: ModelFamily,
-  [GenexOperation.ModelRig]: { label: GENEX_WORDS.kind.rig, icon: "character" },
-  [GenexOperation.ModelAnimate]: AnimationFamily,
-  [GenexOperation.Character]: CharacterFamily,
-  [GenexOperation.CharacterPreview]: CharacterFamily,
-  [GenexOperation.CharacterFinalize]: CharacterFamily,
-  [GenexOperation.CharacterImport]: CharacterFamily,
-  [GenexOperation.Creature]: { label: GENEX_WORDS.kind.creature, icon: "character" },
-  [GenexOperation.CharacterAnimate]: AnimationFamily,
-  [GenexOperation.CreatureAnimate]: AnimationFamily,
-  [GenexOperation.CharacterMotions]: AnimationFamily,
-  [GenexOperation.Image]: { label: GENEX_WORDS.kind.image, icon: "image" },
-  [GenexOperation.Texture]: { label: GENEX_WORDS.kind.texture, icon: "image" },
-  [GenexOperation.Video]: { label: GENEX_WORDS.kind.video, icon: "image" },
-  [GenexOperation.Sfx]: { label: GENEX_WORDS.kind.sfx, icon: "sound" },
-  [GenexOperation.Music]: { label: GENEX_WORDS.kind.music, icon: "sound" },
-  [GenexOperation.Voice]: { label: GENEX_WORDS.kind.voice, icon: "sound" },
-};
-const UNKNOWN_OPERATION = { label: GENEX_WORDS.kind.asset, icon: "box" } as const;
+/** What a generation is called and the glyph it wears on the page; an unnamed asset for one Studio does not know. */
+const familyOf = (operation: string) =>
+  kindLook(genexMaking(operation)?.kind ?? (Object.hasOwn(LOOKUP_KIND, operation) ? LOOKUP_KIND[operation] : null));
 
 /** One generation, as the page lists it. */
 export interface GenexJobRow {
@@ -171,6 +188,8 @@ export interface GenexJobRow {
   error: string | null;
   /** What a review waits on: numbered candidates, one `null` for a remesh, or nothing. */
   candidates: Array<number | null>;
+  /** Each candidate's picture by its number, when its review could show it; a remesh has none. */
+  pictures: Partial<Record<number, string>>;
 }
 
 function stateOf(job: GenexJob): JobState {
@@ -194,13 +213,25 @@ function candidatesOf(job: GenexJob, state: JobState): Array<number | null> {
   return job.operation === GenexOperation.CharacterPreview ? PREVIEW_CANDIDATES : [null];
 }
 
+/** The candidates' pictures, so the person chooses by looking before any review opens. */
+function picturesOf(job: GenexJob, candidates: Array<number | null>): Partial<Record<number, string>> {
+  const pictures: Partial<Record<number, string>> = {};
+  for (const candidate of candidates) {
+    if (candidate === null) continue;
+    const image = job.approval?.images?.find((each) => each.label === String(candidate));
+    if (isReviewImage(image?.dataUrl)) pictures[candidate] = image.dataUrl;
+  }
+  return pictures;
+}
+
 const fileName = (file: string | undefined): string | null => (file ? (file.split("/").pop() ?? file) : null);
 
 /** The game's generations, newest first. */
 export function genexJobRows(jobs: readonly GenexJob[]): GenexJobRow[] {
   return [...jobs].reverse().map((job) => {
-    const family = OPERATION[job.operation] ?? UNKNOWN_OPERATION;
+    const family = familyOf(job.operation);
     const state = stateOf(job);
+    const candidates = candidatesOf(job, state);
     return {
       id: job.id,
       label: family.label,
@@ -209,7 +240,8 @@ export function genexJobRows(jobs: readonly GenexJob[]): GenexJobRow[] {
       state,
       credits: creditWords(job),
       error: job.error ?? null,
-      candidates: candidatesOf(job, state),
+      candidates,
+      pictures: picturesOf(job, candidates),
     };
   });
 }

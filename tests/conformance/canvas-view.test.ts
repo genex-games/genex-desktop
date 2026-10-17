@@ -9,7 +9,16 @@
  */
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { MAX_ZOOM, MIN_ZOOM, clamp, fitView, zoomAt, type CanvasView } from "../../src/renderer/canvas-view.ts";
+import {
+  MAX_ZOOM,
+  MIN_ZOOM,
+  clamp,
+  fitView,
+  keepView,
+  keptView,
+  zoomAt,
+  type CanvasView,
+} from "../../src/renderer/canvas-view.ts";
 
 const near = (actual: number, expected: number, why: string): void => {
   assert.ok(Math.abs(actual - expected) < 1e-9, `${why}: ${actual} != ${expected}`);
@@ -87,5 +96,22 @@ describe("clamp", () => {
     assert.equal(clamp(5, 0, 1), 1);
     assert.equal(clamp(-5, 0, 1), 0);
     assert.equal(clamp(0.5, 0, 1), 0.5);
+  });
+});
+
+describe("a canvas's camera across a tab switch", () => {
+  it("comes back as the user left it, per canvas, and is forgotten when there is nothing of theirs to keep", () => {
+    const moved: CanvasView = { k: 1.44, tx: -120, ty: 36 };
+    keepView("assets\nlantern", moved);
+    assert.deepEqual(keptView("assets\nlantern"), moved);
+    assert.equal(keptView("assets\nharbor"), null, "another canvas starts fresh");
+    keepView("assets\nlantern", null);
+    assert.equal(keptView("assets\nlantern"), null);
+  });
+
+  it("keeps only the most recent canvases", () => {
+    for (let i = 0; i < 200; i++) keepView(`run ${i}`, { k: 1, tx: i, ty: 0 });
+    assert.equal(keptView("run 0"), null);
+    assert.equal(keptView("run 199")?.tx, 199);
   });
 });

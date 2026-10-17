@@ -1,6 +1,6 @@
 import type { MessageOrigin } from "../../shared/protocol.ts";
 import { RunState } from "../../shared/run-state.ts";
-import { chatLoopExtras, loopCommissions, reportCommissions } from "../loop-setting.ts";
+import { chatLoopExtras, loopAvailableFor, loopCommissions, reportCommissions } from "../loop-setting.ts";
 import { browserStorage } from "../storage.ts";
 import type { ComposerExtras } from "../ui/PromptBar.tsx";
 import type { ChatPanelProps } from "./chat-panel-props.ts";
@@ -90,7 +90,10 @@ export function useSubmit(
  * plain chat message, with no bubble, no draft change and no reply-about note. It carries the chat's
  * Loop only before the chat's first build, and never reopens one (`reportCommissions`).
  */
-export function useReport(props: ChatPanelProps, chat: ChatThread, composer: ChatComposerState) {
+/** Sends words the chat wrote itself, marked with who wrote them. */
+export type Report = (text: string, origin: MessageOrigin) => Promise<void>;
+
+export function useReport(props: ChatPanelProps, chat: ChatThread, composer: ChatComposerState): Report {
   const { model } = composer;
   const { threadId, run } = chat;
   return async (text: string, origin: MessageOrigin): Promise<void> => {
@@ -102,6 +105,7 @@ export function useReport(props: ChatPanelProps, chat: ChatThread, composer: Cha
       build: composer.build,
       coordinating: run?.state === RunState.Running,
       gameMode: !chat.isStudioThread,
+      loopAvailable: loopAvailableFor(chat.folder),
     });
     const options = { autopilot: reportCommissions(run), extras };
     await props.onSend(text, { ...composerSendOptions(model, key, options), origin });

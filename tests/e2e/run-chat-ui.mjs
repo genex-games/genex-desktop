@@ -226,12 +226,13 @@ try {
       limit: 20,
     });
     assert.match(build.text, /^Building/);
-    // Mode names the running build's own Loop, read-only: a 30-minute limit leads with its time.
+    // Mode names the running build's own Loop: a 30-minute limit leads with its time. Intentionally
+    // flipped: Mode opens during the build, read-only, for the chat's "Don't wait for me" switch.
     const mode = (await op("snapshot", { surface: "desktop", scope: "[data-promptbar]", limit: 40 })).controls.find(
       (c) => c.label === "Mode",
     );
     assert.equal(mode?.text, "30m Loop", "Mode shows the running build's limit");
-    assert.equal(mode?.disabled, true, "a running build's Loop is not changed from Mode");
+    assert.equal(mode?.disabled, false, "Mode opens during the build; its Loop is shown, not changed");
     assert.ok(
       build.controls.some((c) => c.text === "Building" && c.title === "Open in Builds"),
       "the build card opens Builds",

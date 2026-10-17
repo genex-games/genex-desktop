@@ -31,7 +31,9 @@ import type {
   StudioToolSpec,
   ToolDefinition,
 } from "./engine-requests.ts";
+import type { ComputerTraceSummary } from "./computer-target.ts";
 import type { ConversationRecord, EventData, EventEnvelope, Message, SnapshotRecord } from "./event-log.ts";
+import { FINISH_REASON_CHARS, type FinishCheckStep } from "./finish-check.ts";
 import type { ProjectAssets } from "./game-assets.ts";
 import type {
   AttachReport,
@@ -41,11 +43,20 @@ import type {
   GameProject,
   ProjectRecent,
 } from "./game-project.ts";
+import type { JobView } from "./jobs.ts";
 import type { McpLiveTool } from "./mcp.ts";
 import type { SteerDelivery } from "./message-queue.ts";
 import type { ModelPreferences } from "./model-preferences.ts";
 import type { OptimizationCandidate, ProfileRequest, Revision } from "./optimization.ts";
-import type { PluginTool } from "./plugins.ts";
+import {
+  type CheckpointAnswer,
+  type HookEvent,
+  type HookReport,
+  isHookLabel,
+  isSeedFiredHookEvent,
+} from "./plugin-hooks.ts";
+import { type CapturedFile, isPluginObserverKey } from "./observers.ts";
+import type { PluginKindOffer, PluginTool } from "./plugins.ts";
 import type {
   BuildObservation,
   CaptureSurface,
@@ -58,9 +69,12 @@ import type {
   PreviewPortStatus,
   ReadyResult,
 } from "./preview-contract.ts";
+import { ProjectStarter } from "./project-facts.ts";
+import type { PluginsFindAnswer, PluginsSuggestAnswer, StartHeldInPlan } from "./project-tools.ts";
 import type { ReferenceFrame } from "./protocol.ts";
 import type { HardwareReport, StudioSettingsView } from "./studio-api.ts";
 import type { StudioActivityItem } from "./studio-activity.ts";
+import { isWorkerId, isWorkerTitle, type WorkerGrant, type WorkerType } from "./workers.ts";
 
 /** Budget class of a completion or delegation; anything but `improvement` is user work. */
 export const WorkClass = {
@@ -99,6 +113,33 @@ export interface GameImageRead {
   data: string;
   bytes: number;
   file: string;
+}
+
+/** One picture of a capture: its file kept with the run, and its pixels (downscaled) for a reviewer's prompt. */
+export interface CapturedImage extends CapturedFile {
+  mimeType: string;
+  data: string;
+}
+
+/** A finish check's round as the host answers it: the reviewer's yes or no with reasons, or no answer and why. */
+export interface FinishRoundAnswer {
+  round: number;
+  step: FinishCheckStep;
+  reasons?: string[];
+  why?: string;
+}
+
+/**
+ * One observer's capture (`observers.capture`): its pictures and its play recording's frames in
+ * order, its note, or the problem that kept it from capturing (a lock not given, a failed step).
+ */
+export interface ObserverCaptureResult {
+  observer: string;
+  label: string;
+  images: CapturedImage[];
+  recording: CapturedImage[];
+  note?: string;
+  problem?: string;
 }
 
 /** A stills source for `preview.pair`: inline bytes, or a path under the studio's runs. */
@@ -154,7 +195,11 @@ export interface HarnessDelegateParams {
    * `show_build`, `land_build`, shared/coordinator.ts `RunControl`), answered by the host for this
    * run and message as the coordinator's tools are. Honoured only for the chat's own session.
    */
-  runControls?: { runId: string; messageId?: string };
+  /**
+   * `inPlace`: the run was a Loop that worked in the game folder itself, with no build of its own:
+   * its controls are only the status, never a build to show or land.
+   */
+  runControls?: { runId: string; messageId?: string; inPlace?: boolean };
   /**
    * This session is its chat's current turn: the message it answers. What the person sends
    * meanwhile can reach it (`engine.steer`); honoured only for the chat's own session, and for a
@@ -192,7 +237,44 @@ export interface HarnessDelegateParams {
   computer?: boolean;
   /** The director: the run's orchestrating session, with the harness's run tools forwarded. */
   director?: DelegateDirectorGrant & { tools?: LiveToolSpec[] };
+  /**
+   * A run's sub-agent: every plugin call this session makes carries the run and the agent's id (its
+   * part id, recorded as `facetId`), so what it makes is recorded under that run and lands on the
+   * agent's own node in the Builds graph.
+   */
+  attribution?: { runId: string; agentId: string };
+  /**
+   * Plugin tool and connector names (or name prefixes, such as `blender__`) this session may use:
+   * a tool whose agent name starts with none of them is not offered; a plugin with an offered tool
+   * also keeps its skill reader `<plugin>__skill` and its guidance. Absent, every tool is offered.
+   */
+  toolAllow?: string[];
+  /**
+   * The Genex credits the paid jobs of this session's run (its `attribution` or `director` run) may
+   * commit, counted across every session of the run: once they have, the run's next paid Genex job
+   * is refused before Genex is asked. Anything but a whole number allows none; absent, no cap.
+   */
+  creditCap?: number;
   candidateId?: string;
+  /**
+   * A worker of a chat's lead: honoured only by the host's own finding (a running run started in
+   * this game's open chat, or the chat turn its own session answers now), and then run in the
+   * chat's permission mode, asking in the chat. A grant the host cannot confirm runs unattended.
+   */
+  worker?: WorkerGrant;
+  /**
+   * The worker tools the chat's own session may call (`WorkerTool`), answered by the harness's pool
+   * for this turn (`worker_tool`). Honoured only for the chat's own session answering a chat turn,
+   * on a harness that claims `workers`, and never for a worker: depth is one.
+   */
+  workers?: { tools?: LiveToolSpec[] };
+  /**
+   * A Loop's reviewer: read-only, in a fresh home of its own, reading `reads` (the lead's folder) and
+   * the run's captures (on Codex a brief, not a boundary), looking at app windows with `app_look` and nothing else. Honoured only when
+   * `readOnly`, for a run of this game, reading the game's folder or its own copy in the run's
+   * folder; anything else is refused before an engine starts. Every other grant is dropped.
+   */
+  reviewer?: { runId: string; reads: string };
 }
 
 /**
@@ -272,6 +354,9 @@ export interface HarnessHostApi {
       reason?: string;
       /** Narrows the restore below what the record captured, e.g. game-only from a "both" snapshot. */
       scope?: HarnessSnapshotScope;
+      /** The chat and run the restore answers to: while that chat plans, the game's restore steps wait. */
+      threadId?: string;
+      runId?: string;
     };
     result: boolean;
   };
@@ -290,11 +375,48 @@ export interface HarnessHostApi {
     params: { project: string; threadId?: string };
     result: { ready: boolean; reason: string; hostedVerified: false };
   };
-  "plugins.tools": { params: void; result: { tools: PluginTool[]; guidance: string; revision: number } };
+  /**
+   * The plugin tools and guidance for the game `project` names, by its facts (none named, or a
+   * game with no kind yet: a web game's), and the tools on offer that make a kind of project.
+   */
+  "plugins.tools": {
+    params: { project?: string | null };
+    result: { tools: PluginTool[]; guidance: string; revision: number; kinds: PluginKindOffer[] };
+  };
+  /**
+   * The kinds of worker the plugins on offer declare for the game `project` names, by its facts
+   * (`PluginManifest.workerTypes`), each with its tools as agent names: what a lead may start.
+   */
+  "plugins.workerTypes": { params: { project: string }; result: WorkerType[] };
+  /**
+   * The agent's search for a Genex plugin, by a fact or words: installed plugins (on, then off) and
+   * Genex's catalog, never another source; read-only.
+   */
+  "plugins.find": {
+    params: { project?: string | null; fact?: string | null; text?: string | null };
+    result: PluginsFindAnswer;
+  };
+  /**
+   * The turn-it-on card in `threadId`, a chat of `project`, for a plugin that is installed but off
+   * or in Genex's catalog; it turns nothing on. Refused (`shown: false`, nothing written) otherwise.
+   */
+  "plugins.suggest": {
+    params: { project: string; threadId: string; plugin: string; reason?: string };
+    result: PluginsSuggestAnswer;
+  };
   /** What this game's builders can use, for a conversation that cannot call it (the local coordinator). */
   "capabilities.describe": { params: { threadId: string; project?: string }; result: string };
   "plugins.invoke": {
-    params: { project: string; threadId?: string; name: string; args: Record<string, unknown> };
+    params: {
+      project: string;
+      threadId?: string;
+      name: string;
+      args: Record<string, unknown>;
+      /** The harness's own step: a tool the plugin keeps for the harness. An agent's call never sets it. */
+      step?: boolean;
+      /** The step writes (a chat's checkpoint, a run's save point or editor change), which Plan mode holds back. */
+      checkpoint?: boolean;
+    };
     result: unknown;
   };
   "mcp.tools": {
@@ -304,6 +426,73 @@ export interface HarnessHostApi {
   "mcp.invoke": {
     params: { project: string; threadId?: string; name: string; args?: Record<string, unknown> };
     result: LiveToolResult;
+  };
+  /**
+   * A worker writing in place starts: it takes Genex's one writer in place in the game folder,
+   * across every pool of the game, and the per-game locks of the plugins that are on that the
+   * game's tools need, until `locks.release`. `labels` names the apps those locks guard. Never
+   * waits: a lock another worker holds answers `busy`, in words naming who, and nothing is taken.
+   * A worker is known by the run that started it, else its chat, and its id.
+   */
+  "locks.hold": {
+    params: { project: string; threadId: string; runId?: string | null; holder: { id: string; title: string } };
+    result: { held: true; labels: string[] } | { busy: string };
+  };
+  /**
+   * A checkpoint of the game folder: the enabled plugins' `checkpoint.before` steps, a snapshot
+   * named for `label`, then their `checkpoint.after` steps, under their locks. `onlyIfUnsaved`
+   * skips it when the locks' probes say nothing is unsaved, or one can't tell. Held while the chat
+   * plans.
+   */
+  "checkpoint.take": {
+    params: {
+      project: string;
+      threadId?: string | null;
+      runId?: string | null;
+      label: string;
+      onlyIfUnsaved?: boolean;
+    };
+    result: CheckpointAnswer;
+  };
+  /**
+   * One of Genex's moments the harness announces (`SEED_FIRED_HOOK_EVENTS`): the enabled plugins'
+   * steps for it run in order and their answers come back. A restore announced here is a restart:
+   * no file changes.
+   */
+  "hooks.fire": {
+    params: {
+      project: string;
+      threadId?: string | null;
+      runId?: string | null;
+      on: HookEvent;
+      turn?: string | null;
+      label?: string | null;
+      worker?: { id: string; title: string; type?: string | null } | null;
+    };
+    result: HookReport;
+  };
+  /**
+   * Run the game's observers for a run of this game (one, when `observer` names it as
+   * `<plugin>/<id>`): each of a plugin that is on runs its tool as a harness step under that tool's
+   * locks, the person first, the run's own holds passing. Its pictures are kept with the run and
+   * recorded as `observer_capture`; a failing or held observer answers a `problem`. Plan mode never
+   * holds it: it only looks. `withinMs` is the time the harness still waits: every observer's lock
+   * wait and call fit in it, and nothing is kept or recorded after it.
+   */
+  "observers.capture": {
+    params: {
+      project: string;
+      runId: string;
+      threadId?: string | null;
+      observer?: string | null;
+      withinMs?: number | null;
+    };
+    result: ObserverCaptureResult[];
+  };
+  /** A worker writing in place ended: every lock it holds in the game is let go; another's are untouched. */
+  "locks.release": {
+    params: { project: string; threadId: string; runId?: string | null; holder: { id: string } };
+    result: boolean;
   };
 
   // — sandboxed execution —
@@ -327,11 +516,56 @@ export interface HarnessHostApi {
   /** The Self-improvement switch, asked by the harness before each thing it would learn. */
   "learning.enabled": { params: void; result: boolean };
   "engine.complete": { params: HarnessCompleteParams; result: CompleteResponse };
-  /** Stop: aborts a thread's completions, a project's delegations, or the delegation in one worktree. */
-  "engine.abort": { params: { threadId?: string; cwd?: string; project?: string }; result: { aborted: number } };
-  /** Steering that cannot wait (M3.4): cuts one worktree's build turn short so its caller can resume it. */
-  "engine.interrupt": { params: { cwd: string }; result: { interrupted: boolean } };
+  /**
+   * Stop: aborts a thread's completions, a project's delegations, or the delegation in one worktree
+   * (with `worker`, the in-place worker of that id working in `cwd`; with `lead`, a run id, only the
+   * session the host seated there as that run's lead in place). With `reviewer` (a run id), only
+   * the sessions the host seated as that run's reviewers (of `project`, when named), nothing else.
+   */
+  "engine.abort": {
+    params: { threadId?: string; cwd?: string; project?: string; worker?: string; reviewer?: string; lead?: string };
+    result: { aborted: number };
+  };
+  /**
+   * Steering that cannot wait (M3.4): cuts one worktree's build turn short so its caller can resume
+   * it (with `worker`, the in-place worker of that id working in `cwd`).
+   */
+  "engine.interrupt": { params: { cwd: string; worker?: string }; result: { interrupted: boolean } };
   "engine.delegate": { params: HarnessDelegateParams; result: DelegateResult };
+  /**
+   * A Loop's finish check, asked by the harness and answered by the host: only the host writes the
+   * reviewer's verdict. The run must be a running run of this game with no round held. The host
+   * records the round's `checking` step, seats the reviewer read-only (as `engine.delegate`'s
+   * `reviewer` grant seats one, reading `reads`), reads its yes or no, and holds that answer until
+   * the harness settles the round.
+   */
+  "finish.review": {
+    params: {
+      project: string;
+      runId: string;
+      engine: string;
+      model?: string | null;
+      effort?: string | null;
+      prompt: string;
+      images: DelegateImage[];
+      reads: string;
+      timeoutMs: number;
+      maxTurns: number;
+      claim: string;
+      proof: string[];
+      observers: string[];
+    };
+    result: FinishRoundAnswer;
+  };
+  /**
+   * End the held round of a run: the host records its outcome and counts the no's in a row from its
+   * own records (`stopped` once they reach the cap). `unanswered` turns the held answer into no
+   * answer, with why (a yes that lapsed, a turn that ended); nothing turns a no or no answer into a yes.
+   */
+  "finish.settle": {
+    params: { project: string; runId: string; round: number; unanswered?: string | null };
+    result: FinishRoundAnswer & { rejections: number; stopped: boolean };
+  };
   /**
    * Steer: messages the person sent while the chat's turn works, into the session answering that
    * turn (`chatTurn` is `into`). `accepted` lists what the session took; `how` is how (`SteerDelivery`
@@ -363,10 +597,25 @@ export interface HarnessHostApi {
    */
   "game.contentStamp": { params: { project: string; split?: boolean }; result: string | ContentStamps | null };
   "game.recents": { params: void; result: ProjectRecent[] };
+  /**
+   * Make a game's folder: Genex's bookkeeping only, or with the starter `kind` names (`"web"`, or
+   * an older caller's `"studio-template"`); any other kind is refused.
+   */
   "game.scaffold": { params: { name: string; title?: string; threadId?: string; kind?: string }; result: GameProject };
+  /**
+   * Write a starter into a game that has no kind yet (no facts); a game with a kind is refused.
+   * `threadId`, the chat a local model's `start_web_game` answers: while that chat (this game's) is
+   * in Plan mode nothing is written and the Plan answer comes back instead. A call with no thread (a
+   * Loop's start, which runs only once its run is approved) is not checked.
+   */
+  "game.start": {
+    params: { project: string; starter: ProjectStarter; threadId?: string };
+    result: GameProject | StartHeldInPlan;
+  };
   "game.validate": {
     params: { project: string; candidateId?: string };
-    result: { ok: boolean; problems: string[]; warnings: string[]; contract: ContractWord };
+    /** `missing`: the files a web page needs that are not there, by name (`problems` says it in sentences). */
+    result: { ok: boolean; problems: string[]; missing: string[]; warnings: string[]; contract: ContractWord };
   };
   /** The live half of `game.validate`: serve the page, wait for it, ask what the hook got hold of. */
   "game.attached": {
@@ -458,6 +707,48 @@ export interface HarnessHostApi {
     params: { runId: string; a: string; b: string; label?: string; handle?: string };
     result: (PixelDiff & { heatmapPath: string | null }) | null;
   };
+  /**
+   * The `computer` tool, run by the host on a window the harness leased: the same tool every
+   * session engine holds, for an engine whose tool loop is the harness's own (Ollama). `describe`
+   * answers the tool's schema instead of running an action; otherwise `args` is one call.
+   */
+  "preview.computer": {
+    params: DelegatePlaytestGrant & {
+      handle: string;
+      args?: Record<string, unknown>;
+      describe?: boolean;
+      /** Start a new session on this window even when one for the same build and round exists: reloaded, reseeded, its own trace. */
+      fresh?: boolean;
+    };
+    result: { tool: LiveToolSpec } | { answer: LiveToolResult; trace: ComputerTraceSummary };
+  };
+  /**
+   * The `desktop` tool, run by the host for an engine whose tool loop is the harness's own
+   * (Ollama): the person's computer, behind the consent asked on a card in `threadId`. `describe`
+   * answers the tool's schema and starts the chat's session afresh; `unavailable` says why there is
+   * none (computer control off in Settings, no desktop driver, no chat to ask in).
+   */
+  "desktop.computer": {
+    params: { project: string; threadId?: string; args?: Record<string, unknown>; describe?: boolean };
+    result: { tool: LiveToolSpec } | { answer: LiveToolResult } | { unavailable: string };
+  };
+  /**
+   * `judge_play`, run by the host for an engine whose tool loop is the harness's own (Ollama), as
+   * session engines are handed it (`core/judge-play-tool.ts`): a blind judge plays the game, the
+   * chat's model playing, and the outcome is one line in `threadId`. `unavailable` says why not
+   * (no chat to record in, a game the studio does not play in a window).
+   */
+  "judge.play": {
+    params: {
+      project: string;
+      threadId?: string;
+      args?: Record<string, unknown>;
+      engine?: string;
+      model?: string;
+      effort?: string;
+    };
+    result: { answer: LiveToolResult } | { unavailable: string };
+  };
   "preview.input": {
     params: { actions?: PreviewInputAction[]; handle?: string };
     result: { ok: boolean; applied: number; width: number; height: number };
@@ -511,7 +802,21 @@ export interface HarnessHostApi {
       live: boolean;
       headless: boolean;
       memory: { freeMb: number; totalMb: number };
+      /** The most workers the person's Settings let one chat run at once. */
+      workers: number;
     };
+  };
+
+  // — jobs: the long processes the agents start, which the app owns —
+  /**
+   * A game's jobs, read-only: only those that ended after `endedAfter` (an end number) when it is
+   * given, only `runId`'s (its lead's and its workers') when that is, and the game's last end
+   * number, read together so a reader that goes on from `seq` misses none and hears none twice.
+   * The harness can neither start nor stop a job.
+   */
+  "jobs.list": {
+    params: { project: string; runId?: string | null; endedAfter?: number | null };
+    result: { jobs: JobView[]; seq: number };
   };
 
   // — runs, guardian, ui —
@@ -544,6 +849,14 @@ export type HarnessResult<K extends HarnessHostMethod> = HarnessHostApi[K]["resu
 
 /** The handler table `StudioCore.api()` returns: one typed function per method. */
 export type HarnessHostHandlers = { [K in HarnessHostMethod]: (params: HarnessParams<K>) => Promise<HarnessResult<K>> };
+
+/**
+ * The names the host refuses a host call with, before any handler runs: a method it doesn't serve
+ * (an older Genex, to the harness) or params of the wrong shape. The harness tells them apart by
+ * name, never by message (its copy is held equal by `seed-contracts.test.ts`): never rename one.
+ */
+export const HostRefusal = { UnknownMethod: "UnknownMethod", InvalidParams: "InvalidParams" } as const;
+export type HostRefusal = (typeof HostRefusal)[keyof typeof HostRefusal];
 
 /**
  * Every host method, as call sites write it: `ctx.call(HostMethod.EventsList, { threadId })`. The
@@ -581,11 +894,19 @@ export const HostMethod = {
   SnapshotWorktree: "snapshot.worktree",
   SnapshotRemoveWorktree: "snapshot.removeWorktree",
   PluginsTools: "plugins.tools",
+  PluginsWorkerTypes: "plugins.workerTypes",
+  PluginsFind: "plugins.find",
+  PluginsSuggest: "plugins.suggest",
   PluginsPreflightMultiplayer: "plugins.preflightMultiplayer",
   CapabilitiesDescribe: "capabilities.describe",
   PluginsInvoke: "plugins.invoke",
   McpTools: "mcp.tools",
   McpInvoke: "mcp.invoke",
+  LocksHold: "locks.hold",
+  LocksRelease: "locks.release",
+  CheckpointTake: "checkpoint.take",
+  HooksFire: "hooks.fire",
+  ObserversCapture: "observers.capture",
   RunExec: "run.exec",
   EngineDescribe: "engine.describe",
   StudioContext: "studio.context",
@@ -595,6 +916,8 @@ export const HostMethod = {
   EngineAbort: "engine.abort",
   EngineInterrupt: "engine.interrupt",
   EngineDelegate: "engine.delegate",
+  FinishReview: "finish.review",
+  FinishSettle: "finish.settle",
   EngineSteer: "engine.steer",
   CoordinatorTool: "coordinator.tool",
   EngineDelegations: "engine.delegations",
@@ -605,6 +928,7 @@ export const HostMethod = {
   GameContentStamp: "game.contentStamp",
   GameRecents: "game.recents",
   GameScaffold: "game.scaffold",
+  GameStart: "game.start",
   GameValidate: "game.validate",
   GameAttached: "game.attached",
   GameUpgradeContract: "game.upgradeContract",
@@ -613,6 +937,7 @@ export const HostMethod = {
   GameTree: "game.tree",
   GameExport: "game.export",
   GameReferences: "game.references",
+  JobsList: "jobs.list",
   PreviewLoad: "preview.load",
   PreviewProfile: "preview.profile",
   PreviewReload: "preview.reload",
@@ -624,6 +949,9 @@ export const HostMethod = {
   PreviewCrop: "preview.crop",
   PreviewDiff: "preview.diff",
   PreviewInput: "preview.input",
+  PreviewComputer: "preview.computer",
+  DesktopComputer: "desktop.computer",
+  JudgePlay: "judge.play",
   PreviewConsole: "preview.console",
   PreviewGpuErrors: "preview.gpuErrors",
   PreviewStatus: "preview.status",
@@ -662,6 +990,22 @@ void hostMethodsAreListed;
 const text = z.string();
 const optionalText = z.string().nullish();
 const project = z.string();
+/** A worker a lock is held for or a moment names, by its id (or kind): `isWorkerId`. */
+const workerId = z.custom<string>(isWorkerId);
+/** A worker's title a person could read: `isWorkerTitle`. */
+const workerTitle = z.custom<string>(isWorkerTitle);
+/** A moment's label: one line of at most 120 characters. */
+const hookLabel = z.custom<string>(isHookLabel);
+/** A run named as one plain path segment, as the host names runs. */
+const runIdSegment = z.string().regex(/^[a-zA-Z0-9_-]{1,80}$/);
+/** The longest folder a reviewer may name to read, in characters. */
+const REVIEWER_READS_CHARS = 1024;
+/** The longest claim a finish review records, in characters. */
+const FINISH_CLAIM_CHARS = 4_000;
+/** The most proof files or observers a finish review names. */
+const FINISH_NAMES_MAX = 64;
+/** A plugin's observer by key (`<plugin>/<id>`): `isPluginObserverKey`. */
+const observerKey = z.custom<string>(isPluginObserverKey);
 
 /**
  * Engine control on a worktree (`engine.abort`, `engine.interrupt`) is deliberately absent: its
@@ -676,15 +1020,56 @@ export const HARNESS_PARAM_SCHEMAS = {
   "optimization.promote": z.object({ candidateId: text, resultArtifact: text }),
   "optimization.reconcile": z.object({ project }),
   "snapshot.create": z.object({ project: optionalText }),
-  "snapshot.restore": z.object({ project: optionalText }),
+  "snapshot.restore": z.object({ project: optionalText, threadId: optionalText, runId: optionalText }),
   "snapshot.diff": z.object({ workspace: optionalText }),
   "snapshot.worktree": z.object({ project, commit: optionalText, name: text, runId: optionalText }),
   "snapshot.removeWorktree": z.object({ project, path: text }),
   "capabilities.describe": z.object({ project: optionalText }),
-  "plugins.invoke": z.object({ project }),
+  "plugins.tools": z.object({ project: optionalText }).nullish(),
+  "plugins.workerTypes": z.object({ project }),
+  "jobs.list": z.object({ project, runId: optionalText, endedAfter: z.number().nullish() }),
+  "plugins.find": z.object({ project: optionalText }).nullish(),
+  "plugins.suggest": z.object({ project, threadId: text }),
+  "plugins.invoke": z.object({ project, step: z.boolean().optional(), checkpoint: z.boolean().optional() }),
   "plugins.preflightMultiplayer": z.object({ project, threadId: optionalText }),
   "mcp.tools": z.object({ project: optionalText }).nullish(),
   "mcp.invoke": z.object({ project }),
+  "locks.hold": z.object({
+    project,
+    threadId: text,
+    runId: optionalText,
+    holder: z.object({ id: workerId, title: workerTitle }),
+  }),
+  "locks.release": z.object({ project, threadId: text, runId: optionalText, holder: z.object({ id: workerId }) }),
+  "checkpoint.take": z.object({
+    project,
+    threadId: optionalText,
+    runId: optionalText,
+    label: hookLabel,
+    onlyIfUnsaved: z.boolean().nullish(),
+  }),
+  "hooks.fire": z.object({
+    project,
+    threadId: optionalText,
+    runId: optionalText,
+    on: z.custom<HookEvent>(isSeedFiredHookEvent),
+    turn: hookLabel.nullish(),
+    label: hookLabel.nullish(),
+    worker: z
+      .object({
+        id: workerId,
+        title: workerTitle,
+        type: workerId.nullish(),
+      })
+      .nullish(),
+  }),
+  "observers.capture": z.object({
+    project,
+    runId: runIdSegment,
+    threadId: optionalText,
+    observer: observerKey.nullish(),
+    withinMs: z.number().finite().nullish(),
+  }),
   "run.exec": z.object({ cwd: optionalText, project: optionalText }),
   "engine.delegate": z.object({
     project,
@@ -692,12 +1077,40 @@ export const HARNESS_PARAM_SCHEMAS = {
     extraReads: z.array(text).nullish(),
     selfCapture: z.object({ project, root: text, runId: optionalText, facetId: optionalText }).nullish(),
     playtest: z.object({ project, root: text, runId: optionalText, facetId: optionalText }).nullish(),
-    director: z.object({ project, root: text, runId: text }).nullish(),
+    director: z.object({ project, root: text, runId: text, inPlace: z.boolean().nullish() }).nullish(),
+    worker: z
+      .object({ id: text, title: text, runId: optionalText, turn: optionalText, research: z.boolean().nullish() })
+      .nullish(),
+    reviewer: z.object({ runId: runIdSegment, reads: z.string().min(1).max(REVIEWER_READS_CHARS) }).nullish(),
   }),
+  "finish.review": z.object({
+    project,
+    runId: runIdSegment,
+    reads: z.string().min(1).max(REVIEWER_READS_CHARS),
+    claim: z.string().max(FINISH_CLAIM_CHARS),
+    proof: z.array(z.string().max(REVIEWER_READS_CHARS)).max(FINISH_NAMES_MAX),
+    observers: z.array(z.string().max(REVIEWER_READS_CHARS)).max(FINISH_NAMES_MAX),
+  }),
+  // Settling names nothing but its round: a field it does not take (a step, a verdict) is refused.
+  "finish.settle": z.strictObject({
+    project,
+    runId: runIdSegment,
+    round: z.number().int().min(1),
+    // One reason, as clipped and marked (`…`).
+    unanswered: z
+      .string()
+      .min(1)
+      .max(FINISH_REASON_CHARS + 1)
+      .nullish(),
+  }),
+  "preview.computer": z.object({ project, root: text, handle: text, runId: optionalText, facetId: optionalText }),
+  "desktop.computer": z.object({ project }),
+  "judge.play": z.object({ project }),
   "game.setCover": z.object({ project }),
   "game.setCoverShader": z.object({ project }),
   "game.contentStamp": z.object({ project }),
-  "game.scaffold": z.object({ name: text }),
+  "game.scaffold": z.object({ name: text, kind: optionalText }),
+  "game.start": z.object({ project, starter: z.enum([ProjectStarter.Web]), threadId: optionalText }),
   "game.validate": z.object({ project }),
   "game.attached": z.object({ project, root: optionalText, entry: optionalText }),
   "game.upgradeContract": z.object({ project }),

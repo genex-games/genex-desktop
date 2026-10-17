@@ -2,18 +2,26 @@
  * The transcript follows the newest entry while the reader is at the bottom, and stops the moment
  * they scroll up, open a disclosure or press a navigation key; what arrives meanwhile is counted
  * for "Jump to latest". Earlier history loads a few screens before the reader reaches its top.
+ * While the chat's width changes, the line the reader is on holds still instead: text rewrapping
+ * below it and pictures scaling above it would otherwise shake it up and down.
  */
 import type { KeyboardEvent, PointerEvent, RefObject, WheelEvent } from "react";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { type EarlierHistory, loadsEarlier } from "./transcript-window.ts";
+import { type EarlierHistory, heldScrollTop, loadsEarlier, readingLine, resizedWidth } from "./transcript-window.ts";
 
 /** Within this many pixels of the bottom, the reader is at the bottom. */
 const AT_BOTTOM_PX = 64;
+/** The width counts as settled once it has not changed for this long (ms); a following chat then returns to its newest line. */
+const WIDTH_SETTLE_MS = 150;
+/** The blocks a reading line can be, inside the transcript row it falls in. */
+const READING_BLOCKS = "p, li, h1, h2, h3, h4, pre, blockquote, table, img, [data-chat-entry] > *";
 
 export interface FollowScroll {
   scroller: RefObject<HTMLDivElement | null>;
   /** The reader is at the bottom: the virtual transcript anchors to it. */
   atBottom: RefObject<boolean>;
+  /** The chat's width is changing and the reading line holds still: the virtual transcript leaves the scroll alone. */
+  holding: RefObject<boolean>;
   /** Entries that arrived while the reader was elsewhere. */
   unseen: number;
   jumpToLatest(): void;
@@ -41,6 +49,7 @@ export function useFollowScroll({
 }): FollowScroll {
   const scroller = useRef<HTMLDivElement>(null);
   const atBottom = useRef(true);
+  const holding = useRef(false);
   const inspectingHistory = useRef(false);
   const lastCount = useRef(0);
   const [unseen, setUnseen] = useState(0);
@@ -55,6 +64,8 @@ export function useFollowScroll({
   // biome-ignore lint/correctness/useExhaustiveDependencies: a new chat starts at its bottom
   useEffect(() => {
     inspectingHistory.current = false;
+    // Another chat opens at its newest line, never at a line held for the last one.
+    holding.current = false;
     atBottom.current = true;
     lastCount.current = 0;
     setUnseen(0);
@@ -65,6 +76,8 @@ export function useFollowScroll({
   useLayoutEffect(() => {
     const added = count - lastCount.current;
     lastCount.current = count;
+    // A held reading line returns to the newest one when the width settles.
+    if (holding.current) return;
     if (atBottom.current) {
       scroller.current?.scrollTo({ top: scroller.current.scrollHeight });
       setUnseen(0);
@@ -87,18 +100,26 @@ export function useFollowScroll({
     const element = scroller.current;
     const content = element?.firstElementChild;
     if (!element || !content) return;
+    const hold = widthHold(element, holding, () => {
+      if (atBottom.current) element.scrollTop = element.scrollHeight;
+    });
     const observer = new ResizeObserver(() => {
       // Follow before paint, including decoded media and composer resizing.
+      if (hold.keep()) return;
       if (atBottom.current) element.scrollTop = element.scrollHeight;
     });
     observer.observe(content);
     observer.observe(element);
-    return () => observer.disconnect();
+    return () => {
+      observer.disconnect();
+      hold.dispose();
+    };
   }, []);
 
   return {
     scroller,
     atBottom,
+    holding,
     unseen,
     jumpToLatest,
     handlers: {
@@ -142,4 +163,71 @@ export function useFollowScroll({
       },
     },
   };
+}
+
+/** Where a reading line was held: the element and its top relative to the scroller's top edge. */
+interface HeldLine {
+  element: Element;
+  top: number;
+}
+
+/**
+ * Holds the reader's line still while the scroller's width changes. `keep` runs on every resize,
+ * before paint: on a new width it starts (or extends) the hold, and while holding it moves the
+ * scroll so the line stays where it was. Once the width settles, `settled` runs.
+ */
+function widthHold(
+  element: HTMLElement,
+  holding: RefObject<boolean>,
+  settled: () => void,
+): { keep(): boolean; dispose(): void } {
+  let width = element.offsetWidth;
+  let line: HeldLine | null = null;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const release = (): void => {
+    holding.current = false;
+    line = null;
+    settled();
+  };
+  return {
+    keep() {
+      const next = element.offsetWidth;
+      const resized = resizedWidth(width, next);
+      width = next;
+      if (resized) {
+        holding.current = true;
+        clearTimeout(timer);
+        timer = setTimeout(release, WIDTH_SETTLE_MS);
+      }
+      if (!holding.current) {
+        line = null;
+        return false;
+      }
+      const viewTop = element.getBoundingClientRect().top;
+      if (!line?.element.isConnected) {
+        line = readingLineIn(element, viewTop);
+        return true;
+      }
+      const top = line.element.getBoundingClientRect().top - viewTop;
+      element.scrollTop = heldScrollTop(element.scrollTop, top, line.top);
+      return true;
+    },
+    dispose() {
+      clearTimeout(timer);
+      holding.current = false;
+    },
+  };
+}
+
+/** The block at the top of the view: the transcript row there, then the paragraph, item or picture inside it. */
+function readingLineIn(element: HTMLElement, viewTop: number): HeldLine | null {
+  const placed = (candidate: Element) => {
+    const box = candidate.getBoundingClientRect();
+    return { item: candidate, top: box.top, bottom: box.bottom };
+  };
+  const row = readingLine([...element.querySelectorAll("[data-chat-entry]")].map(placed), viewTop);
+  if (!row) return null;
+  const block = readingLine([...row.item.querySelectorAll(READING_BLOCKS)].map(placed), viewTop);
+  const line = block ?? row;
+  return { element: line.item, top: line.top };
 }

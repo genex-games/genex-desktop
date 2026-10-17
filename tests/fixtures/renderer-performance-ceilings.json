@@ -4,5 +4,6 @@
   "foldsWithHiddenWorkers": 1,
   "gestureMidCommitCount": 0,
   "gesturePaintsPerFrame": 1,
-  "gestureSettleCommitCount": 1
+  "gestureSettleCommitCount": 1,
+  "earlierRunsLooked": 8
 }

@@ -12,6 +12,9 @@ import {
   type NoticeState,
 } from "../../src/renderer/notifications.ts";
 import type { EventEnvelope } from "../../src/renderer/types.ts";
+import { resultStatus } from "../../src/renderer/run-steps.ts";
+import { loopRunWords, outcomeTitle } from "../../src/renderer/words.ts";
+import { summarizeRun, summaryOutcome } from "../../src/shared/run-summary.ts";
 
 let n = 0;
 const at = "2026-09-24T10:00:00.000Z";
@@ -113,6 +116,58 @@ describe("notifications", () => {
       ],
     );
     assert.equal(arrived.length, 3);
+  });
+
+  it("a Loop that worked in its project's own folder is kept there, never promised as something to play", () => {
+    const { state } = run(EMPTY_NOTICES, [
+      custom("t1", "run_finished", { runId: "r1", project: "web", landed: true, executionStatus: "completed" }),
+      custom("t2", "run_finished", {
+        runId: "r2",
+        project: "godot",
+        landed: true,
+        executionStatus: "completed",
+        profile: "open",
+      }),
+    ]);
+    const texts = Object.fromEntries(activityNotices(state.items).map((item) => [item.project, item.text]));
+    assert.match(String(texts.web), /Changes are live/);
+    assert.match(String(texts.godot), /kept in your project/);
+    assert.doesNotMatch(String(texts.godot), /live/i);
+  });
+
+  it("the run card and its result say a Loop led in its project's own folder kept its work there, never to play in Live", () => {
+    const closed = (project: string, profile?: string) =>
+      summarizeRun(
+        [
+          custom("t1", "run_started", { runId: `r-${project}`, project }),
+          custom("t1", "run_finished", {
+            runId: `r-${project}`,
+            project,
+            landed: true,
+            executionStatus: "completed",
+            ...(profile ? { profile } : {}),
+          }),
+        ],
+        project,
+        `r-${project}`,
+      );
+    const open = closed("godot", "open");
+    const web = closed("web");
+    const graph = { turn: false, active: false } as never;
+    const openWords = [
+      outcomeTitle(summaryOutcome(open), "card"),
+      outcomeTitle(summaryOutcome(open), "full"),
+      resultStatus(graph, open).word,
+      ...Object.values(loopRunWords({ rounds: 0, landed: true, profile: "open" })),
+      ...Object.values(
+        loopRunWords({ rounds: 0, landed: true, profile: "open", stoppedBecause: "stopped by the user" }),
+      ),
+    ];
+    for (const words of openWords) assert.doesNotMatch(words, /live|play/i, words);
+    assert.ok(openWords.every((words) => !/open Live to play it/.test(words)));
+    assert.match(outcomeTitle(summaryOutcome(web), "card"), /Changes are live/, "a web Loop's card is as it was");
+    assert.equal(resultStatus(graph, web).word, "Live in your game");
+    assert.match(loopRunWords({ rounds: 0, landed: true }).because, /open Live to play it/);
   });
 
   it("words a failed build and a failed plan, and a started run settles the chat's question", () => {

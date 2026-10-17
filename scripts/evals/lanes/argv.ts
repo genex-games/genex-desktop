@@ -10,7 +10,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import {
-  HOST_SKILL_DISABLED_FEATURES,
+  CODEX_SCREEN_FEATURES,
   hostSkillFiles,
   hostSkillSuppressionArgs,
 } from "../../../src/substrate/engines/codex.ts";
@@ -41,7 +41,7 @@ export const BANNED_ARGV: readonly string[] = [
 ];
 
 /** Codex features that reach past the workspace: the desktop and the app's own browsers (Rule 7); the app's own list. */
-export const DISABLED_CODEX_FEATURES = HOST_SKILL_DISABLED_FEATURES;
+export const DISABLED_CODEX_FEATURES = CODEX_SCREEN_FEATURES;
 
 /** The pinned MCP config raw Claude gets with `--strict-mcp-config`: no servers at all. */
 export const EMPTY_MCP_CONFIG = { mcpServers: {} } as const;

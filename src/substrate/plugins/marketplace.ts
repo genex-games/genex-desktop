@@ -17,6 +17,7 @@ import {
   GithubLookupKind,
   GithubLookupProblem,
   GithubVersionKind,
+  isPluginSetup,
   PLUGIN_CATEGORIES,
   PluginSourceKind,
   PluginTier,
@@ -79,6 +80,7 @@ const MESSAGE = {
   InvalidEntry: (id: string) => `Invalid marketplace entry ${id}`,
   InvalidCategory: (id: string) => `Invalid marketplace category for ${id}`,
   InvalidTier: (id: string) => `Invalid marketplace tier for ${id}`,
+  InvalidSetup: (id: string) => `Invalid setup steps for ${id}`,
   InvalidRepo: (id: string) => `Invalid marketplace repo for ${id}`,
   InvalidSha: (id: string) => `Invalid marketplace sha for ${id}`,
   InvalidVersion: (id: string) => `Invalid marketplace version for ${id}`,
@@ -341,11 +343,12 @@ const isStringList = (value: unknown) => Array.isArray(value) && value.every((c)
 const isPinnedArtifact = (artifact: PluginIndexEntry["artifact"]) =>
   Boolean(artifact?.url?.startsWith("https://")) && SHA256.test(artifact?.sha256 ?? "");
 
-/** The listing fields of an entry: what it is called and where it sits. */
+/** The listing fields of an entry: what it is called, where it sits and how its page says to start. */
 function validateEntryListing(e: PluginIndexEntry): void {
   if (!hasListingText(e)) throw new Error(MESSAGE.InvalidEntry(e.id));
   if (!(PLUGIN_CATEGORIES as readonly string[]).includes(e.category)) throw new Error(MESSAGE.InvalidCategory(e.id));
   if (!isKnownTier(e.tier)) throw new Error(MESSAGE.InvalidTier(e.id));
+  if (e.setup !== undefined && !isPluginSetup(e.setup)) throw new Error(MESSAGE.InvalidSetup(e.id));
 }
 
 /** The source fields of an entry: the pinned repository, commit and version, what it may do, and its links. */
@@ -398,6 +401,7 @@ export function validateIndex(value: unknown): PluginIndex {
     if (e.subdir !== undefined) entry.subdir = e.subdir;
     if (e.minStudioVersion !== undefined) entry.minStudioVersion = e.minStudioVersion;
     if (e.docsUrl !== undefined) entry.docsUrl = e.docsUrl;
+    if (e.setup !== undefined) entry.setup = [...e.setup];
     if (e.artifact !== undefined) entry.artifact = { url: e.artifact.url, sha256: e.artifact.sha256.toLowerCase() };
     return entry;
   });

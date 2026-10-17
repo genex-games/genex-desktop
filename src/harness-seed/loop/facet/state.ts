@@ -89,6 +89,8 @@ export interface FacetOptions {
   onLoopState: ((state: AnyRecord) => void) | null;
   buildBlock: boolean;
   onProviderLost: ((lost: AnyRecord) => void) | null;
+  deadlineCeiling: (() => number) | null;
+  onDeadline: ((deadline: number) => void) | null;
 }
 
 /** What `runFacetLoop` works out once from its options: the facet, its places, its engine, its clock. */
@@ -462,6 +464,13 @@ function optionDefaults(): Omit<FacetOptions, "runThreadId" | "facetThreadId" | 
     buildBlock: false,
     /** Called when a round starts waiting for a lost provider (facet/provider.ts) — the director's wake. */
     onProviderLost: null,
+    /**
+     * The latest a wait for the model provider may move the facet's deadline to (facet/paused-clock.ts):
+     * the run's working deadline. Null keeps the deadline where it is, as it always was.
+     */
+    deadlineCeiling: null,
+    /** Told the facet's new deadline when a wait for its provider moved it on (the director's worker record). */
+    onDeadline: null,
   };
 }
 
@@ -628,14 +637,17 @@ async function builderEngine(ctx: HarnessCtx, run: AnyRecord, budgets: AnyRecord
   };
 }
 
-/** The facet's clock: how long it had, whether a step still fits, and what a build turn holds back. */
-function clock(ctx: HarnessCtx, deadline: number) {
+/**
+ * The facet's clock: how long it had, whether a step still fits, and what a build turn holds back.
+ * `deadlineNow` reads the deadline as it stands: a wait for the provider moves it on (paused-clock.ts).
+ */
+function clock(ctx: HarnessCtx, deadline: number, deadlineNow: () => number) {
   // "Enough time left" scales with the facet's own clock: ten minutes on a run, a slice of a
   // short run — a fixed floor silently disabled spikes and follow-ups on anything under an hour.
   const budgetMs = Math.max(1, deadline - Date.now());
   return {
     budgetMs,
-    hasTime: (ms: number) => deadline - Date.now() > Math.min(ms, budgetMs * CLOCK_SHARE),
+    hasTime: (ms: number) => deadlineNow() - Date.now() > Math.min(ms, budgetMs * CLOCK_SHARE),
     // What a build turn holds back so the clock can be met with "finish cleanly" instead of a cut.
     // A slice of this facet's own clock, the same idiom: three fixed minutes is most of a short
     // worker's whole budget.
@@ -701,7 +713,7 @@ export async function createFacetLoopState(ctx: HarnessCtx, raw: FacetLoopOption
     ...recorders(ctx, facetParts.critic, options),
     ...anchor,
     ...engine,
-    ...clock(ctx, options.deadline),
+    ...clock(ctx, options.deadline, () => loop.deadline),
     ...resumed,
     engineFailures: 0,
     observationOutages: 0,

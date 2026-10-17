@@ -1,7 +1,9 @@
 /** Genex web trace geometry; completed activity stays static and details mount on demand. */
 import { memo, useState, type JSX } from "react";
 import { type ChatFileLink, wholeFileName } from "../../shared/chat-files.ts";
+import type { GenexBlocked } from "../../shared/genex.ts";
 import { useChatFileNames, useChatFiles } from "../chat-files.ts";
+import { RowShots } from "../chat/ConnectorShots.tsx";
 import { TOOL_ACTIVITY_WORDS, type ToolIcon } from "../words.ts";
 import { FileLink } from "./FileText.tsx";
 import { Icon, type IconName } from "./icons.tsx";
@@ -24,6 +26,17 @@ export interface ToolChipRow {
   state?: ToolState;
   detail?: Array<{ text: string; tone?: OutputTone }>;
   detailMono?: boolean;
+  /** The plugin or connector the step ran in, as a work heading names it ("Worked in Unreal"). */
+  source?: { id: string; name: string };
+  /** The pictures the step answered with (game-relative paths); `play` ones go up to the work's strip. */
+  shots?: Array<{ path: string; play: boolean }>;
+  /**
+   * A step that makes an asset (its record says what, `CallMaking`): the ids its job may go by in
+   * the game's inventory, the call's own first, then the job and generation it answered with.
+   */
+  making?: { ids: string[] };
+  /** The call went no further than asking the person for something first (Genex's terms). */
+  blocked?: GenexBlocked;
 }
 const icons: Record<ToolIcon, IconName> = {
   think: "harness",
@@ -174,7 +187,19 @@ function useToolFile(row: ToolChipRow) {
   return { threadId, name, link };
 }
 
-export const ToolRow = memo(function ToolRow({ row }: { row: ToolChipRow }): JSX.Element {
+/** A step's pictures that stay in its row: all but those its work group shows under its heading. */
+function rowShots(row: ToolChipRow, inStrip: readonly string[] | undefined): string[] {
+  return (row.shots ?? []).flatMap((shot) => (inStrip?.includes(shot.path) ? [] : [shot.path]));
+}
+
+export const ToolRow = memo(function ToolRow({
+  row,
+  inStrip,
+}: {
+  row: ToolChipRow;
+  /** The pictures its work group shows under its heading, which the row leaves out. */
+  inStrip?: readonly string[];
+}): JSX.Element {
   const [open, setOpen] = useState(false);
   const state = row.failed ? ToolState.Failed : (row.state ?? ToolState.Unknown);
   const failed = state === ToolState.Failed;
@@ -187,6 +212,7 @@ export const ToolRow = memo(function ToolRow({ row }: { row: ToolChipRow }): JSX
   // A file the row names is a link beside the toggle, never inside it: the toggle stretches over
   // the row (`chat-tool-toggle`), the link sits above it.
   const file = useToolFile(row);
+  const shots = rowShots(row, inStrip);
   return (
     <div data-tool-state={state}>
       <div data-tool-head className="chat-tool-head text-step">
@@ -210,6 +236,7 @@ export const ToolRow = memo(function ToolRow({ row }: { row: ToolChipRow }): JSX
         {file.link && file.name && (
           <ToolFileLink row={row} threadId={file.threadId} name={file.name} link={file.link} ink={ink} />
         )}
+        <RowShots paths={shots} />
         {settledOther && <span className={`shrink-0 text-chat-sub ${ink}`}>{settledLabel(state)}</span>}
         {details && <Icon name={open ? "chevron-down" : "chevron-right"} size={12} className="shrink-0 text-icon" />}
       </div>

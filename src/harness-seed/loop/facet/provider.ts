@@ -17,6 +17,8 @@ import type { AnyRecord } from "../../types/harness.d.ts";
 import { RoundFlow, stoppedByUser } from "./flow.ts";
 import { type OutagePhase, roundFields } from "./record.ts";
 import { finishStoppedRound } from "./stop.ts";
+import { stopSignal } from "./rules.ts";
+import { clockRoom, sleepOnPausedClock } from "./paused-clock.ts";
 import type { FacetLoop, FacetRound } from "./state.ts";
 
 /** How often a round waiting for its provider looks again: a stop, its clock, the provider back. */
@@ -94,6 +96,7 @@ export async function stopOutOfUsage(loop: FacetLoop, round: FacetRound): Promis
   const { engineId, result, worktree } = loop;
   const failure = round.buildEngineError;
   stopWith(result, StopCode.UsageLimit, `the engine (${engineId}) is out of usage: ${round.buildFailed}`);
+  result.lostToProvider = EngineFailure.UsageLimit;
   // By kind as well as in words: a director on the other subscription reads this as the
   // workers' limit, not its own (cross-provider roles).
   result.limit = {
@@ -125,9 +128,10 @@ async function keepHalfBuilt(loop: FacetLoop, round: FacetRound): Promise<void> 
 }
 
 /**
- * Wait while `lost` holds: answers `RoundFlow.Stop` when the run stopped the round (its work kept
- * on the `…-stopped` ref) or the facet's time ran out first, and nothing when the provider is
- * back and the caller may build or verify again. Never a verdict, never a strike.
+ * Wait while `lost` holds, the facet's clock paused (paused-clock.ts): answers `RoundFlow.Stop` when
+ * the run stopped the round or the user asked to finish (its work kept on the `…-stopped` ref), or
+ * the clock reached its ceiling first, and nothing when the provider is back and the caller may build or verify again.
+ * Never a verdict, never a strike: a round that ends here is the provider's (`result.lostToProvider`).
  */
 export async function waitForProvider(
   loop: FacetLoop,
@@ -141,13 +145,21 @@ export async function waitForProvider(
   for (;;) {
     if (loop.ctx.cancelled) return stoppedByUser(loop);
     if (await loop.stoppedHere(round.iteration)) return RoundFlow.Stop;
-    const now = Date.now();
-    if (lost.until !== null && now >= lost.until) return null;
-    if (now >= loop.deadline) {
-      const reason = `its time ran out while its model provider was unavailable (${lossWords(lost.kind)})`;
-      await finishStoppedRound(loop, round.iteration, { by: WAITED_OUT_BY, reason });
+    // Asked to finish, a round that cannot build ends now: it would hold the wrap-up for the provider.
+    const asked = stopSignal(await loop.finishRequested(loop.iterationsThisRound).catch(() => false));
+    if (asked) {
+      await finishStoppedRound(loop, round.iteration, asked);
       return RoundFlow.Stop;
     }
-    await loop.sleepFor(Math.min(pollMs(loop), loop.deadline - now, (lost.until ?? Infinity) - now));
+    const now = Date.now();
+    if (lost.until !== null && now >= lost.until) return null;
+    const room = clockRoom(loop);
+    if (now >= room) {
+      const reason = `its time ran out while its model provider was unavailable (${lossWords(lost.kind)})`;
+      await finishStoppedRound(loop, round.iteration, { by: WAITED_OUT_BY, reason });
+      loop.result.lostToProvider = lost.kind;
+      return RoundFlow.Stop;
+    }
+    await sleepOnPausedClock(loop, Math.min(pollMs(loop), room - now, (lost.until ?? Infinity) - now));
   }
 }

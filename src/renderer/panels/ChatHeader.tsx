@@ -13,7 +13,10 @@ import { formatTokens } from "../chat-labels.ts";
 import { TOGGLE_TERMINAL_EVENT } from "./terminal-events.ts";
 import type { ContextUsage } from "../../shared/context.ts";
 import { hostPlatform } from "../platform.ts";
-import { fileManagerWords } from "../words.ts";
+import { fileManagerWords, freeGameWords, freeSpaceWords } from "../words.ts";
+import type { GameStorage } from "../chat/use-game-storage.ts";
+import { freeableBytes } from "../../shared/storage-space.ts";
+import { FreeSpaceSheet } from "./FreeSpaceSheet.tsx";
 import { HarnessGuideButton } from "../chat/HarnessGuide.tsx";
 
 interface Props {
@@ -29,9 +32,14 @@ interface Props {
   onReveal?: () => void;
   onExport?: () => void;
   exporting?: boolean;
+  /** A game chat's space and freeing it (the Free button, once it is worth it). */
+  storage?: GameStorage;
   sidebarHidden: boolean;
   onToggleSidebar: () => void;
 }
+
+/** How much a game's space must reach before the header offers to free it. */
+const OFFER_FREE_BYTES = 1024 ** 3;
 
 /** A 32px icon-only header control with its tooltip. */
 function HeaderButton({
@@ -183,6 +191,39 @@ function ChatTitle({
   );
 }
 
+/**
+ * Free: shown once a game's older builds and Rewind copies reach `OFFER_FREE_BYTES`; its tooltip
+ * says what goes and what stays, and a confirmation asks before anything is deleted.
+ */
+function FreeSpaceButton({ storage, game }: { storage: GameStorage; game: string }): JSX.Element | null {
+  const [confirming, setConfirming] = useState(false);
+  const { space } = storage;
+  if (!space || freeableBytes(space) < OFFER_FREE_BYTES) return null;
+  return (
+    <>
+      {confirming && (
+        <FreeSpaceSheet space={space} game={game} onFree={storage.free} onDone={() => setConfirming(false)} />
+      )}
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <button
+            type="button"
+            data-free-space
+            data-label
+            disabled={storage.freeing}
+            onClick={() => setConfirming(true)}
+            className="no-drag header-control"
+          >
+            <Icon name="drive" />
+            {freeGameWords(space)}
+          </button>
+        </TooltipTrigger>
+        <TooltipContent className="max-w-64">{freeSpaceWords(space, game)}</TooltipContent>
+      </Tooltip>
+    </>
+  );
+}
+
 /** The ⋯ menu: export the game, rename the chat. Closing it returns focus to the rename field. */
 function ChatActions({
   input,
@@ -197,11 +238,39 @@ function ChatActions({
 }): JSX.Element {
   const [menuOpen, setMenuOpen] = useState(false);
   return (
-    <DropdownMenu open={menuOpen} onOpenChange={setMenuOpen}>
+    <ChatActionsMenu
+      input={input}
+      open={menuOpen}
+      onOpenChange={setMenuOpen}
+      exporting={exporting}
+      onExport={onExport}
+      onRename={onRename}
+    />
+  );
+}
+
+/** The ⋯ menu itself, opened and closed by its owner. */
+function ChatActionsMenu({
+  input,
+  open,
+  onOpenChange,
+  exporting,
+  onExport,
+  onRename,
+}: {
+  input: RefObject<HTMLInputElement | null>;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  exporting?: boolean;
+  onExport?: () => void;
+  onRename: () => void;
+}): JSX.Element {
+  return (
+    <DropdownMenu open={open} onOpenChange={onOpenChange}>
       <Tooltip>
         <TooltipTrigger asChild>
           <DropdownMenuTrigger asChild>
-            <button type="button" aria-expanded={menuOpen} aria-label="Chat actions" className="no-drag header-control">
+            <button type="button" aria-expanded={open} aria-label="Chat actions" className="no-drag header-control">
               <Icon name="more" />
             </button>
           </DropdownMenuTrigger>
@@ -244,6 +313,7 @@ export function ChatHeader({
   onReveal,
   onExport,
   exporting,
+  storage,
   sidebarHidden,
   onToggleSidebar,
 }: Props): JSX.Element {
@@ -292,6 +362,7 @@ export function ChatHeader({
       {isStudio && <HarnessGuideButton />}
       <span className="min-w-2 flex-1 self-stretch" />
 
+      {project && storage && <FreeSpaceButton storage={storage} game={chatTitle} />}
       {contextUsage && contextWindow ? (
         <ContextMeter usage={{ ...contextUsage, contextWindow }} compacting={compacting} onCompact={onCompact} />
       ) : null}

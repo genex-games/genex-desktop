@@ -7,6 +7,7 @@ import {
   CHAT_CHECKPOINTS_KEPT,
   CHECKPOINT_FILE_MAX_BYTES,
   ChatCheckpoints,
+  CheckpointPhase,
   chatCheckpointRef,
 } from "../../src/main/chat-checkpoints.ts";
 import { ensureRepo, git } from "../../src/substrate/snapshots.ts";
@@ -28,6 +29,41 @@ const exists = (dir: string, file: string) =>
     () => true,
     () => false,
   );
+
+/** The repository index's time within the second its entries were read: at its start, and in its last 0.2 ms. */
+const RACY_INDEX_TIMES = [
+  { name: "at the start of that second", within: 0 },
+  { name: "in the last fraction of that second, which a millisecond time rounds up", within: 0.9998 },
+];
+
+for (const row of RACY_INDEX_TIMES)
+  test(`a same-size edit in the second the repository last read the file is in the checkpoint: the copied index stays racy (index written ${row.name})`, async (t) => {
+    const { dir, checkpoints } = await game(t);
+    // git compares file times to the second, and re-reads a file whose time is not older than its
+    // index's own: the repository's index, written that second, must not read as newer once copied.
+    await git(dir, ["config", "core.trustctime", "false"]);
+    const desk = path.join(dir, "desk.txt");
+    const second = Math.floor(Date.now() / 1000 - 100);
+    await fs.writeFile(desk, "birch\n");
+    await fs.utimes(desk, second, second);
+    await git(dir, ["add", "desk.txt"]);
+    await git(dir, ["commit", "-q", "-m", "a desk"]);
+    await fs.utimes(path.join(dir, ".git", "index"), second + row.within, second + row.within);
+    await fs.writeFile(desk, "green\n");
+    await fs.utimes(desk, second, second);
+    const seen = /desk\.txt/.test(await git(dir, ["--no-optional-locks", "status", "--porcelain"]));
+    // A git built to compare sub-second times (USE_NSEC) reads an index written later in that second
+    // as newer than the file, so the entry is clean to git itself: the row proves nothing there, and
+    // the whole-second row still guards the copied index.
+    if (!seen && row.within > 0) {
+      t.skip("this git compares sub-second file times, so it reads that index as newer than the edit");
+      return;
+    }
+    assert.ok(seen, "git itself sees it");
+
+    const commit = await checkpoints.take(dir, "thread-racy", "msg_racy");
+    assert.equal(await git(dir, ["show", `${commit}:desk.txt`]), "green\n");
+  });
 
 test("checkpoints disable repository fsmonitor, hooks and content filters", async (t) => {
   const { dir, checkpoints } = await game(t);
@@ -284,11 +320,38 @@ test("files too large to keep are never deleted or overwritten by a restore, and
     outsideUnknown: false,
     nested: [],
     tooLarge: 2,
+    tooLargeFiles: ["intro.mp4", "music.ogg"],
   });
   await checkpoints.restore(dir, "thread-1", "msg_a");
   assert.equal(await read(dir, "intro.mp4"), "compressed");
   assert.equal((await fs.stat(path.join(dir, "music.ogg"))).size, CHECKPOINT_FILE_MAX_BYTES + 1);
   assert.equal(await read(dir, "src/main.js"), "jump();\n");
+});
+
+test("names what a checkpoint left out, and what a rewind left as it is", async (t) => {
+  const { dir, checkpoints } = await game(t);
+  await fs.writeFile(path.join(dir, "theme.wav"), "small");
+  const before = await checkpoints.take(dir, "thread-1", "msg_a");
+  assert.ok(before);
+  assert.deepEqual(await checkpoints.leftOut(dir, before), { nested: [], skipped: [] }, "nothing left out");
+  await fs.truncate(path.join(dir, "theme.wav"), CHECKPOINT_FILE_MAX_BYTES + 1);
+  await fs.writeFile(path.join(dir, "src", "main.js"), "changed();\n");
+  const after = await checkpoints.take(dir, "thread-1", "msg_a", CheckpointPhase.After);
+  assert.ok(after);
+  assert.deepEqual(await checkpoints.leftOut(dir, after), { nested: [], skipped: ["theme.wav"] });
+  const plan = await checkpoints.plan(dir, "thread-1", "msg_a");
+  assert.equal(plan.state, "restore");
+  assert.deepEqual(plan.state === "restore" && plan.tooLargeFiles, ["theme.wav"], "the plan names it");
+  const restored = await checkpoints.restore(dir, "thread-1", "msg_a");
+  assert.deepEqual(restored.stayed, ["theme.wav"], "the restore says it stayed");
+  assert.equal((await fs.stat(path.join(dir, "theme.wav"))).size, CHECKPOINT_FILE_MAX_BYTES + 1);
+  assert.equal(await read(dir, "src/main.js"), "jump();\n");
+  // Nothing held back: no list at all.
+  await fs.writeFile(path.join(dir, "theme.wav"), "small");
+  await fs.writeFile(path.join(dir, "src", "main.js"), "again();\n");
+  const plain = await checkpoints.plan(dir, "thread-1", "msg_a");
+  assert.equal(plain.state === "restore" && "tooLargeFiles" in plain, false);
+  assert.equal("stayed" in (await checkpoints.restore(dir, "thread-1", "msg_a")), false);
 });
 
 test("a folder standing where the checkpoint had a file is kept while it holds anything never saved", async (t) => {
@@ -405,7 +468,11 @@ test("a file too large to save standing where the checkpoint had a folder is lef
   await fs.rm(path.join(dir, "intro"), { recursive: true });
   await fs.writeFile(path.join(dir, "intro"), "");
   await fs.truncate(path.join(dir, "intro"), CHECKPOINT_FILE_MAX_BYTES + 1);
-  assert.deepEqual(await checkpoints.plan(dir, "thread-1", "msg_a"), { state: "unavailable", reason: "too-large" });
+  assert.deepEqual(await checkpoints.plan(dir, "thread-1", "msg_a"), {
+    state: "unavailable",
+    reason: "too-large",
+    tooLargeFiles: ["intro/frame1.png"],
+  });
   await checkpoints.restore(dir, "thread-1", "msg_a");
   assert.equal((await fs.stat(path.join(dir, "intro"))).size, CHECKPOINT_FILE_MAX_BYTES + 1);
 });
@@ -435,4 +502,67 @@ test("a settled checkpoint operation releases its folder queue", async (t) => {
   await checkpoints.take(dir, "thread-1", "queue-release");
   assert.ok(queues.size > 0);
   for (const queue of queues) assert.equal(queue.has(dir), false);
+});
+
+test("the folder as it was before a rewind comes back by the rewind's id, saving the present first", async (t) => {
+  const { dir, checkpoints } = await game(t);
+  await checkpoints.take(dir, "thread-1", "msg_a");
+  await fs.writeFile(path.join(dir, "src", "main.js"), "fly();\n");
+  await fs.writeFile(path.join(dir, "src", "boss.js"), "roar();\n");
+  const rewound = await checkpoints.restore(dir, "thread-1", "msg_a");
+  assert.equal(await read(dir, "src/main.js"), "jump();\n");
+  const back = await checkpoints.restoreSaved(dir, "thread-1", rewound.rewindId);
+  assert.equal(back.files, 2);
+  assert.equal(await read(dir, "src/main.js"), "fly();\n");
+  assert.equal(await read(dir, "src/boss.js"), "roar();\n");
+  assert.notEqual(back.rewindId, rewound.rewindId, "the present was saved on a ref of its own");
+  // …so bringing it back can itself be undone.
+  assert.equal(await checkpoints.restoreSaved(dir, "thread-1", back.rewindId).then((r) => r.files), 2);
+  assert.equal(await read(dir, "src/main.js"), "jump();\n");
+});
+
+test("the folder before a rewind does not come back once the game's history moved", async (t) => {
+  const { dir, checkpoints } = await game(t);
+  await checkpoints.take(dir, "thread-1", "msg_a");
+  await fs.writeFile(path.join(dir, "src", "main.js"), "fly();\n");
+  const rewound = await checkpoints.restore(dir, "thread-1", "msg_a");
+  await fs.writeFile(path.join(dir, "notes.txt"), "kept\n");
+  await git(dir, ["add", "notes.txt"]);
+  await git(dir, ["commit", "-q", "-m", "a note"]);
+  await assert.rejects(checkpoints.restoreSaved(dir, "thread-1", rewound.rewindId), /history changed since the rewind/);
+  assert.equal(await read(dir, "src/main.js"), "jump();\n");
+});
+
+test("a rewind id that is not one names no ref, and nothing is saved or changed", async (t) => {
+  const { dir, checkpoints } = await game(t);
+  await checkpoints.take(dir, "thread-1", "msg_a");
+  await fs.writeFile(path.join(dir, "src", "main.js"), "fly();\n");
+  const rewound = await checkpoints.restore(dir, "thread-1", "msg_a");
+  const refs = async () => git(dir, ["for-each-ref", "--format=%(refname)", "refs/studio/"]);
+  const before = await refs();
+  const hostile = [
+    "",
+    "..",
+    "../before/msg_a",
+    "../../../../heads/main",
+    "HEAD",
+    "refs/heads/main",
+    `${rewound.rewindId}/x`,
+    `${rewound.rewindId}\n`,
+    "-delete",
+    "mabc1-0123abcz",
+    "MABC1-0123ABCD",
+    "mabc1-0123abc",
+    "a".repeat(17) + "-0123abcd",
+    "mabc1-0123abcd", // well formed, but no rewind saved it
+  ];
+  for (const rewindId of hostile) {
+    await assert.rejects(
+      checkpoints.restoreSaved(dir, "thread-1", rewindId),
+      /no longer saved/,
+      JSON.stringify(rewindId),
+    );
+  }
+  assert.equal(await refs(), before, "no ref was written");
+  assert.equal(await read(dir, "src/main.js"), "jump();\n", "the folder is as it was");
 });

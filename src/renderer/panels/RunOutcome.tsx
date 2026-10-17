@@ -1,12 +1,13 @@
 import { RunCapture } from "../chat/RunCapture.tsx";
 import { ResultButton } from "../ui/ResultButton.tsx";
 import type { JSX } from "react";
-import { useEffect, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { ExecutionStatus } from "../../shared/run-state.ts";
 import { summaryCounts, summaryOutcome, type RunSummary } from "../../shared/run-summary.ts";
 import { plural } from "../../shared/skill-words.ts";
-import { outcomeTitle } from "../words.ts";
+import { CHECK_WORDS, outcomeTitle } from "../words.ts";
 import { Icon } from "../ui/icons.tsx";
+import { CHECK_MARKS, checkGroups, checkMeta, checkNote, checkTitle } from "../outcome-checks.ts";
 import { FileText } from "../ui/FileText.tsx";
 import { openBuildGraph } from "../open-build.ts";
 import { workedShortWords } from "../run-steps.ts";
@@ -150,61 +151,115 @@ export function coverageWords(summary: RunSummary): string {
   return `${passed} structural check${passed === 1 ? "" : "s"} passed.${visual} ${interactionWords(summary, current)}`;
 }
 
-/** Who took a check: the independent playtester, a judge (visual and structural), or a recorded check. */
-function checkSource(e: Evidence): string {
-  if (e.source === "independent-playtester") return "Independent playtester";
-  return e.category === "visual" || e.category === "structural" ? "Reviewer" : "Recorded check";
-}
-
-function EvidenceRow({
-  e,
-  head,
-  onCapture,
-}: {
-  e: Evidence;
-  head: string | null;
-  onCapture: (image: string | null) => void;
-}): JSX.Element {
-  const capture = e.capture;
+/**
+ * A check's title, clamped to three lines; Show all appears only when the clamp actually hides
+ * words (a judge's whole question), measured on the rendered text, never guessed from its length.
+ */
+function CheckTitle({ text }: { text: string }): JSX.Element {
+  const ref = useRef<HTMLSpanElement>(null);
+  const [open, setOpen] = useState(false);
+  const [clamped, setClamped] = useState(false);
+  useLayoutEffect(() => {
+    const node = ref.current;
+    if (node && !open) setClamped(node.scrollHeight > node.clientHeight);
+  }, [text, open]);
   return (
-    <div className="flex flex-col gap-0.5">
-      <span className={e.status === "failed" ? "text-red" : "text-ink"}>{e.label}</span>
-      <span className="text-micro text-ink-3">
-        {e.status} · {e.category} · {e.head?.slice(0, HEAD_CHARS) ?? "revision unknown"}
-        {e.head !== head ? " · historical" : ""} · {checkSource(e)}
+    <>
+      <span ref={ref} className={`text-ink [overflow-wrap:anywhere] ${open ? "" : "line-clamp-3"}`}>
+        {text}
       </span>
-      {e.note && <span className="break-words text-ink-3">{e.note}</span>}
-      {capture && (
+      {(clamped || open) && (
         <button
           type="button"
-          className="w-fit cursor-pointer text-accent-ink hover:underline"
-          onClick={() =>
-            void window.studio
-              .readRunStill(capture)
-              .then((image) => onCapture(image ? `data:${image.mimeType};base64,${image.data}` : null))
-          }
+          aria-expanded={open}
+          className="w-fit cursor-pointer text-micro text-ink-3 hover:text-ink-2"
+          onClick={() => setOpen(!open)}
         >
-          View capture
+          {open ? CHECK_WORDS.showLess : CHECK_WORDS.showAll}
         </button>
       )}
+    </>
+  );
+}
+
+/**
+ * One check: its state's mark, what was checked, the state in words with who checked and what it
+ * rests on, the checker's note, and its capture when it has one.
+ */
+function EvidenceRow({ e, onCapture }: { e: Evidence; onCapture: (image: string | null) => void }): JSX.Element {
+  const capture = e.capture;
+  const mark = CHECK_MARKS[e.status];
+  const note = checkNote(e);
+  return (
+    <div data-check-status={e.status} className="grid grid-cols-[14px_minmax(0,1fr)] gap-x-2.5">
+      <Icon name={mark.icon} size={14} strokeWidth={2} className={`mt-[3px] ${mark.tone}`} />
+      <div className="flex min-w-0 flex-col gap-0.5">
+        <CheckTitle text={checkTitle(e)} />
+        <span className={`text-micro ${e.status === "failed" ? "text-red" : "text-ink-3"}`}>{checkMeta(e)}</span>
+        {note && <span className="text-ink-3 [overflow-wrap:anywhere]">{note}</span>}
+        {capture && (
+          <button
+            type="button"
+            className="w-fit cursor-pointer text-accent-ink hover:underline"
+            onClick={() =>
+              void window.studio
+                .readRunStill(capture)
+                .then((image) => onCapture(image ? `data:${image.mimeType};base64,${image.data}` : null))
+            }
+          >
+            View capture
+          </button>
+        )}
+      </div>
     </div>
   );
 }
 
-/** Every recorded check, on the revision and scope it was taken on, with its capture when it has one. */
+/** One group of checks: this build's, or an earlier build's under its own heading. */
+function CheckGroup({
+  label,
+  rows,
+  onCapture,
+}: {
+  label: string | null;
+  rows: readonly Evidence[];
+  onCapture: (image: string | null) => void;
+}): JSX.Element | null {
+  if (!rows.length) return null;
+  return (
+    <section className="flex flex-col gap-3">
+      {label && <h4 className="text-micro text-ink-3">{label}</h4>}
+      {rows.map((e) => (
+        <EvidenceRow key={`${e.head}:${e.category}:${e.label}`} e={e} onCapture={onCapture} />
+      ))}
+    </section>
+  );
+}
+
+/** Every recorded check, this build's first and failures first, with its capture when it has one. */
 export function OutcomeChecks({ summary }: { summary: RunSummary }): JSX.Element {
   const [capture, setCapture] = useState<string | null>(null);
   useEffect(() => setCapture(null), [summary.runId, summary.head]);
+  const groups = checkGroups(summary.evidence, summary.head);
   return (
-    <div data-outcome-checks className="flex flex-col gap-2.5 text-body-sm text-ink-2 select-text">
-      <p>{coverageWords(summary)}</p>
-      {!summary.completeHistory && <p className="text-ink-3">History incomplete — counts describe recorded events.</p>}
+    <div data-outcome-checks className="flex flex-col gap-5 text-body-sm text-ink-2 select-text">
+      <div className="flex flex-col gap-1">
+        <p>{coverageWords(summary)}</p>
+        {!summary.completeHistory && (
+          <p className="text-ink-3">History incomplete — counts describe recorded events.</p>
+        )}
+      </div>
       {summary.evidence.length === 0 ? (
         <p className="text-ink-3">No checks recorded.</p>
       ) : (
-        summary.evidence.map((e) => (
-          <EvidenceRow key={`${e.head}:${e.category}:${e.label}`} e={e} head={summary.head} onCapture={setCapture} />
-        ))
+        <>
+          <CheckGroup
+            label={groups.earlier.length ? CHECK_WORDS.thisBuild : null}
+            rows={groups.current}
+            onCapture={setCapture}
+          />
+          <CheckGroup label={CHECK_WORDS.earlierBuilds} rows={groups.earlier} onCapture={setCapture} />
+        </>
       )}
       {capture && (
         <figure className="flex flex-col gap-1">

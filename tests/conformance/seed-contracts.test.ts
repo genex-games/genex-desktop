@@ -12,9 +12,25 @@ import * as seedContractLessons from "../../src/harness-seed/loop/contract-lesso
 import * as seedCompletionPolicy from "../../src/harness-seed/loop/completion-policy.ts";
 import { endsSessions as seedEndsSessions } from "../../src/harness-seed/loop/compaction-log.ts";
 import * as seedDelegatedTurn from "../../src/harness-seed/loop/delegated-turn.ts";
+import * as seedFolderFacts from "../../src/harness-seed/loop/folder-facts.ts";
+import * as seedEngineGame from "../../src/harness-seed/loop/engine-game.ts";
+import * as seedGameEngine from "../../src/harness-seed/loop/game-engine.ts";
+import * as seedUnrealLead from "../../src/harness-seed/loop/unreal/lead-contract.ts";
+import * as seedUnrealLive from "../../src/harness-seed/loop/unreal/live-contract.ts";
+import blenderManifest from "../../src/plugins/blender/plugin.json" with { type: "json" };
+import genexManifest from "../../src/plugins/genex/plugin.json" with { type: "json" };
+import { PartRunState, PlayCheckShot } from "../../src/plugins/unreal/editor-queue.ts";
+import { LeadLoopToolName, LiveLoopToolName, LoopToolName } from "../../src/plugins/unreal/loop-tools.ts";
+import { LeadPluginTool as seedLeadPluginTool } from "../../src/harness-seed/loop/unreal/save-point.ts";
+import { PluginCallBlocker as seedPluginCallBlocker } from "../../src/harness-seed/loop/unreal/lead-steps.ts";
+import { PluginCallBlocker } from "../../src/shared/plugins.ts";
+import { LOCK_LABEL_CHARS } from "../../src/shared/plugin-hooks.ts";
+import { HelperState } from "../../src/plugins/unreal/setup.ts";
+import unrealManifest from "../../src/plugins/unreal/plugin.json" with { type: "json" };
 import * as seedInbox from "../../src/harness-seed/loop/run-inbox.ts";
 import * as seedQueue from "../../src/harness-seed/loop/message-queue.ts";
 import * as seedRoles from "../../src/harness-seed/loop/model-roles.ts";
+import * as seedEffort from "../../src/harness-seed/loop/effort-cap.ts";
 import * as seedOutage from "../../src/harness-seed/loop/outage.ts";
 import * as seedOutcomes from "../../src/harness-seed/loop/outcomes.ts";
 import {
@@ -23,6 +39,12 @@ import {
 } from "../../src/harness-seed/loop/preview-gone.ts";
 import { PageMethod as seedPageMethod } from "../../src/harness-seed/loop/page-contract.ts";
 import * as seedJudgeProvenance from "../../src/harness-seed/loop/judge-provenance.ts";
+import { InteractionObjective, InteractionSource, InteractionStatus } from "../../src/shared/run-summary.ts";
+import * as seedInteractionEvidence from "../../src/harness-seed/loop/interaction-evidence.ts";
+import * as seedInteractionWords from "../../src/harness-seed/loop/interaction-words.ts";
+import * as seedComputerLoop from "../../src/harness-seed/loop/computer-loop.ts";
+import { ScreenRole } from "../../src/shared/agent-screen.ts";
+import { ComputerPacing } from "../../src/shared/computer-target.ts";
 import * as seedRunEvents from "../../src/harness-seed/loop/run-events.ts";
 import * as seedSkills from "../../src/harness-seed/loop/skills.ts";
 import * as seedStateShape from "../../src/harness-seed/loop/state-shape.ts";
@@ -30,12 +52,22 @@ import { SteerDelivery as seedSteerDelivery } from "../../src/harness-seed/loop/
 import * as seedTime from "../../src/harness-seed/loop/time.ts";
 import * as seedWakeSchedule from "../../src/harness-seed/loop/director/wake-schedule.ts";
 import { DelegationRefusal as seedDelegationRefusal } from "../../src/harness-seed/loop/director/lead-session.ts";
+import * as seedWorkers from "../../src/harness-seed/loop/workers/contract.ts";
+import * as seedWhere from "../../src/harness-seed/loop/workers/where.ts";
+import * as seedWorkerRecords from "../../src/harness-seed/loop/workers/records.ts";
+import * as seedJobs from "../../src/harness-seed/loop/jobs/contract.ts";
+import * as seedBudgets from "../../src/harness-seed/loop/director/budgets.ts";
+import { yes as seedYes } from "../../src/harness-seed/loop/director/args.ts";
+import { DirectorTool as seedDirectorTool } from "../../src/harness-seed/loop/director/tool-specs.ts";
+import { finishLands, RunWriteTool } from "../../src/main/core/worker-tools.ts";
 import { RESUME_RUN as seedResumeRun } from "../../src/harness-seed/loop/after-loop-run.ts";
 import { REOPEN_RUN as seedReopenRun } from "../../src/harness-seed/loop/reopen-run-prompts.ts";
 import { tools as seedGameTools } from "../../src/harness-seed/tools/game-tools.ts";
 import * as seedVerdict from "../../src/harness-seed/loop/verdict.ts";
 import { endsChatSessions } from "../../src/shared/chat-rewind.ts";
 import * as coordinator from "../../src/shared/coordinator.ts";
+import { throughClaudeFolder as seedThroughClaudeFolder } from "../../src/harness-seed/loop/workers/claude-folder.ts";
+import { throughClaudeFolder } from "../../src/substrate/paths.ts";
 import {
   CUSTOM_EVENT_TYPES,
   CompletionRole,
@@ -44,9 +76,33 @@ import {
   customPayload,
 } from "../../src/shared/custom-events.ts";
 import * as duration from "../../src/shared/duration.ts";
+import { TargetRuntime } from "../../src/shared/computer-target.ts";
+import { ENGINE_ID, engineOf, GameEngine, isEngineGame } from "../../src/shared/game-engine.ts";
+import { ToolPermissionState } from "../../src/shared/permissions.ts";
+import {
+  CoreFact,
+  type FactRef,
+  FactSource,
+  FolderHolds,
+  factsOfEngine,
+  kindPending,
+  kindUnknown,
+  LoopProfile,
+  loopProfileOf,
+  ProjectStarter,
+  pluginFactSource,
+  servedAsWebGame,
+  servedFacts,
+  WEB_LOOP_FACTS,
+} from "../../src/shared/project-facts.ts";
+import { ProjectTool } from "../../src/shared/project-tools.ts";
+import * as workers from "../../src/shared/workers.ts";
+import * as jobs from "../../src/shared/jobs.ts";
+import { SnapshotRefusal } from "../../src/substrate/snapshots.ts";
 import { DelegationRefusal, EngineFailureKind, StopReason } from "../../src/shared/engine-requests.ts";
 import * as queue from "../../src/shared/message-queue.ts";
 import * as roles from "../../src/shared/model-roles.ts";
+import { ReasoningEffort } from "../../src/shared/model-preferences.ts";
 import { GameFront, GameSteer, PreviewConsoleSource, PreviewGone } from "../../src/shared/preview-contract.ts";
 import { EngineId } from "../../src/shared/providers.ts";
 import {
@@ -61,7 +117,21 @@ import { applyEdits, SKILL_EDIT_OPS } from "../../src/shared/skill-edits.ts";
 import * as studioStateShape from "../../src/shared/studio-state-shape.ts";
 import { CONTRACT_LESSONS_FILE, LESSONS_SKILL, StagedTarget } from "../../src/shared/self-change-files.ts";
 import { EventKind, type EventEnvelope, MessageUsageSource } from "../../src/shared/event-log.ts";
-import { DIRECTOR_LOOP_ENV, harnessRunEnv } from "../../src/shared/protocol.ts";
+import {
+  DIRECTOR_LOOP_ENV,
+  HarnessCapability,
+  harnessRunEnv,
+  UNREAL_RUNNER_ENV,
+  UnrealRunnerChoice,
+} from "../../src/shared/protocol.ts";
+import { CHAT_JUDGE_CAPABILITY } from "../../src/harness-seed/loop/chat-judge.ts";
+import * as seedEngineJudges from "../../src/harness-seed/loop/engine-judges.ts";
+import { judgePlayToolWithJudges } from "../../src/main/core/judge-play-tool-prompts.ts";
+import { LOCAL_ROLES_CAPABILITY } from "../../src/harness-seed/loop/local-roles-served.ts";
+import * as seedEngineSeat from "../../src/harness-seed/loop/engine-seat.ts";
+import * as seedLoopSwitch from "../../src/harness-seed/loop/loop-switch.ts";
+import { EngineKind } from "../../src/shared/engine-descriptor.ts";
+import { savedByLead } from "../../src/renderer/words.ts";
 
 let clock = 0;
 const at = () => new Date(Date.UTC(2026, 8, 24, 0, 0, clock++)).toISOString();
@@ -380,6 +450,28 @@ describe("model roles (shared/model-roles.ts ↔ loop/model-roles.ts)", () => {
   });
 });
 
+describe("effort per role (shared/model-roles.ts ↔ loop/effort-cap.ts)", () => {
+  it("caps a worker's and a reviewer's effort at high, keeps the lead's as set, and agrees on every level", () => {
+    assert.deepEqual(seedEffort.EFFORT_ORDER, Object.values(ReasoningEffort), "the same levels, least to most");
+    assert.equal(seedEffort.WORKER_EFFORT_CEILING, roles.WORKER_EFFORT_CEILING);
+    const levels = [...Object.values(ReasoningEffort), "turbo", undefined];
+    for (const role of ["planner", "builder", "judge"] as const)
+      for (const effort of levels)
+        assert.equal(
+          roles.roleEffortCap(role, effort),
+          seedEffort.effortCap(effort, role === "planner"),
+          `${role} at ${String(effort)}`,
+        );
+    assert.deepEqual(
+      ["max", "ultra", "xhigh", "high", "medium", "low"].map((effort) => roles.roleEffortCap("builder", effort)),
+      ["high", "high", "high", "high", "medium", "low"],
+    );
+    assert.equal(roles.roleEffortCap("judge", "max"), "high");
+    assert.equal(roles.roleEffortCap("planner", "max"), "max", "the lead thinks as hard as the user set");
+    assert.equal(roles.roleEffortCap("builder", "turbo"), "turbo", "a level no engine names is left alone");
+  });
+});
+
 describe("vocabularies (src/shared ↔ the seed's copies)", () => {
   it("names every record the harness writes as the app names it (RunEvent ⊆ CustomEvent)", () => {
     const known = new Set<string>(CUSTOM_EVENT_TYPES);
@@ -394,6 +486,21 @@ describe("vocabularies (src/shared ↔ the seed's copies)", () => {
     assert.deepEqual(seedRunEvents.EventKind, EventKind);
   });
 
+  it("names who played and what an interaction rests on as the app does", () => {
+    assert.deepEqual(seedInteractionWords.InteractionSource, InteractionSource);
+    assert.deepEqual(seedInteractionWords.InteractionObjective, InteractionObjective);
+    assert.deepEqual(seedInteractionEvidence.InteractionStatus, InteractionStatus);
+  });
+
+  it("names who holds the computer and how its clock is held as the host does", () => {
+    const roles: Readonly<Record<string, string>> = ScreenRole;
+    for (const [member, role] of Object.entries(seedComputerLoop.PlayRole))
+      assert.equal(roles[member], role, `PlayRole.${member} is ScreenRole.${member}`);
+    const pacings: Readonly<Record<string, string>> = ComputerPacing;
+    for (const [member, pacing] of Object.entries(seedComputerLoop.PlayPacing))
+      assert.equal(pacings[member], pacing, `PlayPacing.${member} is ComputerPacing.${member}`);
+  });
+
   it("stages a lessons suggestion for the file the host lets it write", () => {
     assert.deepEqual(seedContractLessons.StagedTarget, StagedTarget);
     assert.equal(seedContractLessons.CONTRACT_LESSONS_FILE, CONTRACT_LESSONS_FILE);
@@ -406,6 +513,47 @@ describe("vocabularies (src/shared ↔ the seed's copies)", () => {
 
   it("has the same run execution statuses", () => {
     assert.deepEqual(seedRunEvents.ExecutionStatus, ExecutionStatus);
+  });
+
+  it("names the same game engines as the app's engine record", () => {
+    assert.deepEqual(seedGameEngine.GameEngine, GameEngine);
+    // The runtimes a game's studio.json may name, as the seed spells them (folder-facts.ts).
+    assert.deepEqual(seedFolderFacts.GameRuntime, { Browser: TargetRuntime.Browser, Bridge: TargetRuntime.Bridge });
+    assert.equal(seedGameEngine.engineOfGame(undefined), GameEngine.Web);
+    const linked = { engine: { kind: GameEngine.Unreal, project: "/p/A.uproject", linkedAt: "" } } as const;
+    assert.equal(seedGameEngine.engineOfGame(linked), GameEngine.Unreal);
+    // Any engine an installed plugin declares is the game's engine, by its id, as the app's `engineOf`.
+    const toy = { kind: "toy-engine", project: "/p/A.toyproj", linkedAt: "" };
+    assert.equal(seedGameEngine.engineOfGame({ engine: toy }), engineOf(toy));
+    assert.equal(seedGameEngine.engineOfGame({ engine: toy }), "toy-engine");
+    assert.equal(seedGameEngine.ENGINE_ID.source, ENGINE_ID.source);
+    const misspelt = { kind: "Toy Engine", project: "/p/A.toyproj", linkedAt: "" };
+    assert.equal(seedGameEngine.engineOfGame({ engine: misspelt }), GameEngine.Web, "a kind no engine id spells");
+  });
+
+  it("tells an engine game from a web game as the app does", () => {
+    for (const kind of [GameEngine.Web, GameEngine.Unreal, "toy-engine", undefined, null, "", "Toy Engine", 3])
+      assert.equal(seedEngineGame.isEngineGame(kind), isEngineGame(kind), String(kind));
+  });
+  it("reads why the host held a plugin call back as the host answers it", () => {
+    assert.deepEqual(seedPluginCallBlocker, PluginCallBlocker);
+  });
+
+  it("calls the Unreal plugin's Loop tools by their names, and reads a part run's end as the plugin writes it", () => {
+    const named = Object.fromEntries(
+      Object.entries(LoopToolName).map(([key, tool]) => [key, `${unrealManifest.id}__${tool}`]),
+    );
+    assert.deepEqual(seedUnrealLive.UnrealLoopTool, named);
+    assert.deepEqual(seedUnrealLive.PartRunEnd, { Done: PartRunState.Done, Failed: PartRunState.Failed });
+  });
+
+  it("calls the Unreal plugin's harness tools for the lead by their names, and reads a play-check as the plugin writes it", () => {
+    const named = Object.fromEntries(
+      Object.entries(LiveLoopToolName).map(([key, tool]) => [key, `${unrealManifest.id}__${tool}`]),
+    );
+    assert.deepEqual(seedUnrealLive.UnrealLivePluginTool, named);
+    assert.deepEqual(seedUnrealLive.LiveCamera, PlayCheckShot);
+    assert.deepEqual(seedUnrealLive.EditorHelperState, HelperState);
   });
 
   it("names a run journal's phases as the harness writes them", () => {
@@ -441,11 +589,41 @@ describe("vocabularies (src/shared ↔ the seed's copies)", () => {
   });
 
   it("reads why the host refused a delegation the same way", () => {
-    assert.deepEqual(seedDelegationRefusal, DelegationRefusal);
+    // The director's copy names the lock; the worker pool's copy names the ceiling.
+    assert.deepEqual(
+      { ...seedDelegationRefusal, TooManyWorkers: seedWorkers.WorkerRefusal.TooManyWorkers },
+      DelegationRefusal,
+    );
+  });
+
+  it("finds Claude Code's own folder in a path as the host does, however it is spelled", () => {
+    const paths = [
+      ".claude/settings.json",
+      ".CLAUDE/hooks/pre.sh",
+      "src/.claude/agents/a.md",
+      ".claude. /x",
+      ".claude::$DATA",
+      "a\\.Claude\\b",
+      ".claude",
+      "claude/settings.json",
+      ".claudex/a",
+      "src/main.ts",
+      "",
+    ];
+    for (const rel of paths) assert.equal(seedThroughClaudeFolder(rel), throughClaudeFolder(rel), rel);
   });
 
   it("names the director loop's override in the studio's environment the same way", () => {
     assert.equal(seedWakeSchedule.DIRECTOR_LOOP_ENV, DIRECTOR_LOOP_ENV);
+  });
+
+  it("names the Unreal runner's switch in the studio's environment the same way", () => {
+    assert.equal(seedLoopSwitch.UNREAL_RUNNER_ENV, UNREAL_RUNNER_ENV);
+    assert.deepEqual(seedLoopSwitch.UnrealRunnerChoice, UnrealRunnerChoice);
+  });
+
+  it("names the engine kind the host seats in place as the app does", () => {
+    assert.equal(seedEngineSeat.SEATED_ENGINE_KIND, EngineKind.Delegated);
   });
 
   it("hands the harness only the run overrides of the studio's environment, each only when it is set", () => {
@@ -454,6 +632,12 @@ describe("vocabularies (src/shared ↔ the seed's copies)", () => {
       [{ [DIRECTOR_LOOP_ENV]: "turn" }, { [DIRECTOR_LOOP_ENV]: "turn" }],
       [{ [DIRECTOR_LOOP_ENV]: " turn " }, { [DIRECTOR_LOOP_ENV]: "turn" }],
       [{ [DIRECTOR_LOOP_ENV]: "  " }, {}],
+      [{ [UNREAL_RUNNER_ENV]: "lead" }, { [UNREAL_RUNNER_ENV]: "lead" }],
+      [
+        { [UNREAL_RUNNER_ENV]: " lead ", [DIRECTOR_LOOP_ENV]: "turn" },
+        { [UNREAL_RUNNER_ENV]: "lead", [DIRECTOR_LOOP_ENV]: "turn" },
+      ],
+      [{ [UNREAL_RUNNER_ENV]: "" }, {}],
       // The workers' handover switch of 2026-10-03 is gone with the handover: never handed on.
       [{ STUDIO_WORKER_HANDOVER: "1" }, {}],
       [{ HOME: "/Users/someone", ANTHROPIC_API_KEY: "sk-ant-x", PATH: "/usr/bin", STUDIO_OTHER: "1" }, {}],
@@ -464,6 +648,11 @@ describe("vocabularies (src/shared ↔ the seed's copies)", () => {
   it("reads a verdict record's pass and rule as the harness writes them", () => {
     assert.deepEqual(seedVerdict.VerdictPass, VerdictPass);
     assert.deepEqual(seedVerdict.VerdictRule, VerdictRule);
+  });
+
+  it("writes a lead's save point with the verdict source the renderer reads as saved by the lead", () => {
+    assert.equal(seedUnrealLead.LEAD_VERDICT_SOURCE, seedVerdict.VerdictSource.Lead);
+    assert.equal(savedByLead(seedUnrealLead.LEAD_VERDICT_SOURCE), true);
   });
 
   it("names why a loop stopped the same way, and reads a run's close by its code", () => {
@@ -511,6 +700,185 @@ describe("vocabularies (src/shared ↔ the seed's copies)", () => {
       { second: seedTime.SECOND_MS, minute: seedTime.MINUTE_MS, hour: seedTime.HOUR_MS },
       { second: duration.SECOND_MS, minute: duration.MINUTE_MS, hour: duration.HOUR_MS },
     );
+  });
+});
+
+describe("project facts (shared/project-facts.ts ↔ loop/folder-facts.ts)", () => {
+  it("reads a fact an enabled plugin's detect found by the source the app writes", () => {
+    const source = pluginFactSource("toys");
+    assert.ok(source.startsWith(seedFolderFacts.PLUGIN_FACT_SOURCE_PREFIX));
+    for (const other of Object.values(FactSource))
+      assert.ok(!other.startsWith(seedFolderFacts.PLUGIN_FACT_SOURCE_PREFIX), other);
+  });
+
+  it("the seed's fact ids and served facts are the app's", () => {
+    assert.deepEqual(seedFolderFacts.CoreFact, CoreFact);
+    const at = (id: string, path: string) => ({ id, path, source: FactSource.Core });
+    const linked = { kind: GameEngine.Unreal, project: "/p/A.uproject", linkedAt: "" } as const;
+    const toyLinked = { kind: "toy-engine", project: "/p/A.toyproj", linkedAt: "" };
+    assert.deepEqual(seedFolderFacts.FolderHolds, FolderHolds);
+    // Each descriptor beside the facts the app lists for the same folder, and whether both serve it
+    // as a web game: only one with no kind yet or one holding a web game at its root is.
+    const table: Array<[string, seedFolderFacts.FactsOfDescriptor & object, FactRef[], boolean]> = [
+      ["a game with no kind yet", { facts: [] }, [], true],
+      ["an empty folder", { facts: [], holds: FolderHolds.Nothing }, [], true],
+      ["a folder of notes", { facts: [], holds: FolderHolds.Notes }, [], true],
+      ["a folder of its own files of a kind no rule knows", { facts: [], holds: FolderHolds.OwnFiles }, [], false],
+      ["a folder that can't be read", { facts: [], holds: FolderHolds.Unreadable }, [], false],
+      ["a web game", { facts: [at(CoreFact.WebGame, ".")] }, [at(CoreFact.WebGame, ".")], true],
+      [
+        "an Unreal project with a site",
+        { facts: [at(CoreFact.WebGame, "site"), at(CoreFact.UnrealProject, ".")] },
+        [at(CoreFact.WebGame, "site"), at(CoreFact.UnrealProject, ".")],
+        false,
+      ],
+      ["an older descriptor", {}, [at(CoreFact.WebGame, ".")], true],
+      ["an older linked one", { engine: linked }, [at(CoreFact.UnrealProject, ".")], false],
+      ["an older one linked to another engine", { engine: toyLinked }, [at("toy-project", ".")], false],
+      ["an older folder with no web page (a Godot one, say)", { web: false }, [at(CoreFact.GodotProject, ".")], false],
+    ];
+    for (const [name, descriptor, facts, web] of table) {
+      const kind = { facts, holds: descriptor.holds ?? undefined };
+      assert.equal(servedAsWebGame(kind), web, `${name}: the app serves it as web`);
+      assert.equal(seedFolderFacts.servedAsWeb(descriptor), web, `${name}: the seed serves it as web`);
+      assert.equal(seedFolderFacts.kindPending(descriptor), kindPending(kind), `${name}: kind pending`);
+      if ("facts" in descriptor)
+        assert.equal(seedFolderFacts.kindUnknown(descriptor), kindUnknown(kind), `${name}: kind unknown`);
+      // A descriptor that carries its facts is served by the same facts (an older one by its older fields).
+      if ("facts" in descriptor)
+        assert.deepEqual(
+          seedFolderFacts.servedFactsOf(descriptor),
+          servedFacts(kind).map(({ id, path }) => ({ id, path })),
+          `${name}: served facts`,
+        );
+    }
+    assert.deepEqual(seedFolderFacts.FACT_ROOT, ".", "the root as a fact's path spells it");
+    for (const engine of Object.values(GameEngine))
+      assert.deepEqual(
+        seedFolderFacts.factsOfEngine(engine),
+        factsOfEngine(engine).map(({ id, path }) => ({ id, path })),
+        `${engine}: the facts an engine stands for`,
+      );
+  });
+
+  it("picks a Loop's profile from the folder's facts as the app does", () => {
+    assert.deepEqual(seedFolderFacts.LoopProfile, LoopProfile);
+    assert.deepEqual([...seedFolderFacts.WEB_LOOP_FACTS].sort(), [...WEB_LOOP_FACTS].sort());
+    const at = (id: string, where: string) => ({ id, path: where });
+    const { Web, Open } = LoopProfile;
+    const table: Array<[string, { facts: FactRef[]; holds?: FolderHolds }, LoopProfile]> = [
+      ["no kind yet", { facts: [] }, Web],
+      ["its own files of a kind no rule knows", { facts: [], holds: FolderHolds.OwnFiles }, Open],
+      ["a web game", { facts: [at(CoreFact.WebGame, ".")] }, Web],
+      ["a web game with a second site", { facts: [at(CoreFact.WebGame, "."), at(CoreFact.WebGame, "site")] }, Web],
+      [
+        "a web game holding Blender files",
+        { facts: [at(CoreFact.WebGame, "."), at(CoreFact.BlenderAssets, "assets")] },
+        Web,
+      ],
+      ["a site in a subfolder only", { facts: [at(CoreFact.WebGame, "site")] }, Open],
+      ["an Unreal project", { facts: [at(CoreFact.UnrealProject, ".")] }, Open],
+      [
+        "a web game with an Unreal project linked in",
+        { facts: [at(CoreFact.WebGame, "."), at(CoreFact.UnrealProject, "unreal")] },
+        Open,
+      ],
+      [
+        "an Unreal project with a site",
+        { facts: [at(CoreFact.UnrealProject, "."), at(CoreFact.WebGame, "site")] },
+        Open,
+      ],
+      ["a Godot project", { facts: [at(CoreFact.GodotProject, ".")] }, Open],
+      ["a plugin's kind", { facts: [at("toy-project", ".")] }, Open],
+      ["Blender files alone", { facts: [at(CoreFact.BlenderAssets, ".")] }, Open],
+      ["an Unreal plugin", { facts: [at(CoreFact.UnrealPlugin, ".")] }, Open],
+    ];
+    for (const [name, game, profile] of table) {
+      assert.equal(loopProfileOf(game), profile, `${name}: the app's profile`);
+      assert.equal(seedFolderFacts.loopProfileOf(game), profile, `${name}: the seed's profile`);
+    }
+  });
+
+  it("the seed's starters and project tool names are the app's", () => {
+    assert.deepEqual(seedFolderFacts.ProjectStarter, ProjectStarter);
+    assert.deepEqual(seedFolderFacts.ProjectTool, ProjectTool);
+  });
+
+  it("the capabilities the seed claims when its parts serve them are the app's", () => {
+    assert.equal(CHAT_JUDGE_CAPABILITY, HarnessCapability.ChatJudge);
+    assert.equal(LOCAL_ROLES_CAPABILITY, HarnessCapability.LocalRoles);
+  });
+
+  it("names an engine's judge in judge_play by the argument the host reads, for a direct model and a Loop lead alike", async () => {
+    const judges = [{ id: "crowd", label: "Crowd" }];
+    const keys = (spec: { parameters?: { properties?: Record<string, unknown> } } | undefined) =>
+      Object.keys(spec?.parameters?.properties ?? {}).sort();
+    const hostTool = judgePlayToolWithJudges(judges);
+    const [directTool] = (await import("../../src/harness-seed/tools/judge-tools.ts")).tools;
+    assert.equal(directTool?.name, hostTool.name);
+    assert.deepEqual(
+      keys(directTool as never),
+      keys(hostTool),
+      "the direct model's tool takes the session's arguments",
+    );
+    assert.deepEqual(keys(seedEngineJudges.judgePlaySpec(judges)), keys(hostTool), "so does a Loop lead's");
+    assert.equal(seedEngineJudges.servesEngineJudges(), true, "the shipped judge modules hand the judge on");
+  });
+});
+
+describe("a lead's sub-agent tools (bundled plugins ↔ loop/unreal/lead-contract.ts)", () => {
+  const { AgentKind, AGENT_TOOL_ALLOW } = seedUnrealLead;
+  const agentNames = (manifest: { id: string; tools?: Array<{ name: string }> }) =>
+    (manifest.tools ?? []).map((tool) => `${manifest.id}__${tool.name}`);
+  const allows = (kind: seedUnrealLead.AgentKind, name: string) =>
+    AGENT_TOOL_ALLOW[kind].some((entry) => name.startsWith(entry));
+
+  it("names only tools the bundled plugins have, by their agent names", () => {
+    const bundled = [blenderManifest, genexManifest, unrealManifest].flatMap(agentNames);
+    // A renamed plugin or tool fails here, not in a run.
+    for (const entry of Object.values(AGENT_TOOL_ALLOW).flat())
+      assert.ok(
+        bundled.some((name) => name.startsWith(entry)),
+        entry,
+      );
+    const offered: Array<[seedUnrealLead.AgentKind, string]> = [
+      [AgentKind.BlenderModel, `${blenderManifest.id}__model`],
+      [AgentKind.BlenderPrep, `${blenderManifest.id}__model`],
+      [AgentKind.GenexCast, `${genexManifest.id}__asset`],
+      [AgentKind.GenexCast, `${blenderManifest.id}__model`],
+      [AgentKind.Sound, `${genexManifest.id}__asset`],
+      [AgentKind.Texture, `${genexManifest.id}__asset`],
+      [AgentKind.Cpp, `${unrealManifest.id}__check-part`],
+    ];
+    for (const [kind, name] of offered) assert.equal(allows(kind, name), true, `${kind} ${name}`);
+  });
+
+  it("never offers any kind the user's editor, publishing, a CLI or the Unreal plugin's other tools", () => {
+    const never = [
+      "unreal-editor__call_tool",
+      "unreal-editor__list_toolsets",
+      "unreal-editor__describe_toolset",
+      ...["publish", "publish-status", "cli", "cli-paid", "package"].map((tool) => `${genexManifest.id}__${tool}`),
+      ...agentNames(unrealManifest).filter((name) => name !== `${unrealManifest.id}__check-part`),
+    ];
+    for (const kind of Object.values(AgentKind))
+      for (const name of never) assert.equal(allows(kind, name), false, `${kind} ${name}`);
+  });
+});
+
+describe("the Unreal plugin's harness tools a save asks (plugins/unreal ↔ the seed's and the app's names)", () => {
+  const harness = new Set(
+    (unrealManifest.tools as Array<{ name: string; audience?: string }>)
+      .filter((tool) => tool.audience === "harness")
+      .map((tool) => `${unrealManifest.id}__${tool.name}`),
+  );
+
+  it("names the lead's tools as the plugin does, each a harness tool of its manifest", () => {
+    const named = Object.fromEntries(
+      Object.entries(LeadLoopToolName).map(([key, tool]) => [key, `${unrealManifest.id}__${tool}`]),
+    );
+    assert.deepEqual(seedLeadPluginTool, named);
+    for (const name of Object.values(seedLeadPluginTool)) assert.ok(harness.has(name), name);
   });
 });
 
@@ -568,5 +936,127 @@ describe("how many workers a run may run (shared/builders.ts ↔ loop/director/b
         builders,
         `${builders} builders in a pool of ${builders + LEAD_WINDOWS}`,
       );
+  });
+});
+
+describe("where a run keeps its tracks (shared/game-history.ts ↔ loop/repo.ts)", () => {
+  it("names every ref of a run under the root the app clears finished runs' tracks from", async () => {
+    const { RUN_REFS } = await import("../../src/shared/game-history.ts");
+    const repo = await import("../../src/harness-seed/loop/repo.ts");
+    for (const ref of [
+      repo.runRef("run_1", "integration"),
+      repo.runRef("run_1", "worker", 2),
+      repo.attemptRef("run_1", "f", 1),
+    ])
+      assert.ok(ref.startsWith(`${RUN_REFS}run_1/`), ref);
+  });
+});
+
+describe("long processes the agents start (shared/jobs.ts ↔ loop/jobs/contract.ts)", () => {
+  it("names the job states and tools as the app does", () => {
+    assert.deepEqual(seedJobs.JobState, jobs.JobState);
+    assert.deepEqual(seedJobs.JobStopper, jobs.JobStopper);
+    assert.deepEqual(seedJobs.JobRole, jobs.JobRole);
+    assert.deepEqual(seedJobs.JobTool, jobs.JobTool);
+    assert.equal(seedJobs.APP_LOOK_TOOL_NAME, jobs.APP_LOOK_TOOL_NAME);
+  });
+});
+
+describe("one worker model (shared/workers.ts ↔ loop/workers/contract.ts)", () => {
+  it("names the worker tools, isolations, verdicts and refusals as the app does", () => {
+    assert.deepEqual(seedWorkers.WorkerTool, workers.WorkerTool);
+    assert.deepEqual(seedWorkers.WorkerIsolation, workers.WorkerIsolation);
+    assert.deepEqual(seedWorkers.WorkerVerdict, workers.WorkerVerdict);
+    assert.equal(seedWorkers.MAX_WORKERS_AT_ONCE, workers.MAX_WORKERS_AT_ONCE);
+    assert.equal(seedWorkers.WorkerRefusal.TooManyWorkers, DelegationRefusal.TooManyWorkers);
+    assert.equal(seedWorkers.WorkerRefusal.CopyTooLarge, SnapshotRefusal.CopyTooLarge);
+    assert.equal(seedWorkers.WORKER_QUESTION_EVENT, CustomEvent.ToolPermission);
+    assert.equal(seedWorkers.WORKER_QUESTION_PENDING, ToolPermissionState.Pending);
+    // A worker waits as long as the director's own wait may.
+    assert.equal(seedWorkers.MAX_WORKER_WAIT_S, seedBudgets.MAX_WAIT_S);
+    // The verdict the Unreal lead's agents are marked with is the worker verdict, value for value.
+    assert.deepEqual({ ...seedUnrealLead.AgentVerdict }, { ...workers.WorkerVerdict });
+    // A worker's start and end records, its end states, its pool id and the caps of its words.
+    assert.deepEqual(
+      { ...seedWorkers.WorkerEvent },
+      { Started: CustomEvent.WorkerStarted, Finished: CustomEvent.WorkerFinished },
+    );
+    assert.deepEqual(seedWorkers.WorkerEnd, workers.WorkerEnd);
+    assert.deepEqual(seedWorkers.WorkerStopCode, workers.WorkerStopCode);
+    // Each end is a state the pool's records keep, by the same word.
+    const { Done, Failed, Stopped } = seedWorkerRecords.WorkerState;
+    assert.deepEqual({ ...workers.WorkerEnd }, { Done, Failed, Stopped });
+    assert.equal(seedWorkers.POOL_WORKER_PREFIX, workers.POOL_WORKER_PREFIX);
+    assert.equal(seedWorkers.WORKER_TASK_CHARS, workers.WORKER_TASK_CHARS);
+    assert.equal(seedWorkers.WORKER_ASK_CHARS, workers.WORKER_ASK_CHARS);
+    assert.equal(seedWorkers.WORKER_SUMMARY_CHARS, workers.WORKER_SUMMARY_CHARS);
+    assert.equal(seedWorkers.WORKER_TITLE_CHARS, workers.WORKER_TITLE_CHARS);
+    // Where an in-place worker works is a lock's label, as long as a label may be.
+    assert.equal(seedWhere.WORKER_WHERE_CHARS, LOCK_LABEL_CHARS);
+  });
+
+  it("Plan holds the director's merge and its landing finish by the seed's own names and its own reading of land", () => {
+    assert.equal(RunWriteTool.Integrate, seedDirectorTool.Integrate);
+    assert.equal(RunWriteTool.Finish, seedDirectorTool.Finish);
+    for (const land of [
+      undefined,
+      null,
+      "",
+      " ",
+      "yes",
+      "Y",
+      "true",
+      "1",
+      "no",
+      "n",
+      "false",
+      "0",
+      "maybe",
+      true,
+      false,
+    ])
+      assert.equal(finishLands({ land }), seedYes(land, true), `land=${JSON.stringify(land)}`);
+  });
+});
+
+describe("Genex's moments (shared/plugin-hooks.ts ↔ loop/hooks.ts)", () => {
+  it("names the hook events, the blocking ones, checkpoint skips, Genex's holds and the label cap as the app does", async () => {
+    const seed = await import("../../src/harness-seed/loop/hooks.ts");
+    const app = await import("../../src/shared/plugin-hooks.ts");
+    assert.deepEqual(seed.HookEvent, app.HookEvent);
+    assert.deepEqual([...seed.SEED_FIRED_HOOK_EVENTS].sort(), [...app.SEED_FIRED_HOOK_EVENTS].sort());
+    assert.deepEqual([...seed.BLOCKING_HOOK_EVENTS].sort(), [...app.BLOCKING_HOOK_EVENTS].sort());
+    assert.deepEqual(seed.CheckpointSkip, app.CheckpointSkip);
+    assert.equal(seed.HOOK_BLOCKED, app.HOOK_BLOCKED);
+    assert.deepEqual(seed.HookHold, app.HookHold);
+    assert.equal(seed.HOOK_LABEL_CHARS, app.HOOK_LABEL_CHARS);
+  });
+
+  it("tells an older host by the name the host refuses an unknown method with", async () => {
+    const seed = await import("../../src/harness-seed/loop/hooks.ts");
+    const { HostRefusal } = await import("../../src/shared/harness-api.ts");
+    assert.equal(seed.UNKNOWN_METHOD, HostRefusal.UnknownMethod);
+    assert.equal(seed.olderHost({ name: HostRefusal.UnknownMethod }), true);
+    assert.equal(seed.olderHost({ name: HostRefusal.InvalidParams }), false);
+  });
+});
+
+describe("a game's observers and a lead's claim (shared/observers.ts ↔ loop/finish-contract.ts)", () => {
+  it("names the finish check's steps, its rejection and reason caps, the capture sources, the events and the lead call's deadline as the app does", async () => {
+    const seed = await import("../../src/harness-seed/loop/finish-contract.ts");
+    const app = await import("../../src/shared/observers.ts");
+    const check = await import("../../src/shared/finish-check.ts");
+    const { BRIDGE_TOOL_DEADLINE_MS } = await import("../../src/substrate/engines/studio-bridge.ts");
+    assert.deepEqual({ ...seed.FinishCheckStep }, { ...check.FinishCheckStep });
+    assert.equal(seed.MAX_FINISH_REJECTIONS, check.MAX_FINISH_REJECTIONS);
+    assert.equal(seed.MAX_FINISH_REASONS, check.MAX_FINISH_REASONS);
+    assert.equal(seed.FINISH_REASON_CHARS, check.FINISH_REASON_CHARS);
+    assert.equal(seed.FINISH_CHECK_EVENT, CustomEvent.FinishCheck);
+    assert.deepEqual({ ...seed.ObserverSource }, { ...app.ObserverSource });
+    assert.equal(seed.PREVIEW_OBSERVER, app.PREVIEW_OBSERVER);
+    assert.equal(seed.PROOF_OBSERVER, app.PROOF_OBSERVER);
+    assert.equal(seed.OBSERVER_CAPTURE_EVENT, CustomEvent.ObserverCapture);
+    // Everything a lead's finish does happens inside its one call, which the bridge cuts at this deadline.
+    assert.equal(seed.LEAD_CALL_MS, BRIDGE_TOOL_DEADLINE_MS);
   });
 });

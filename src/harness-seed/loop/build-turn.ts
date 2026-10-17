@@ -18,13 +18,13 @@ import { runTurn } from "./turn-loop.ts";
 import { BUILD_TURN_MAX_ROUNDS, MIN_DELEGATE_TIMEOUT_MS } from "./config.ts";
 import { TurnStatus } from "./turn-record.ts";
 import type { HarnessCtx } from "../types/harness.d.ts";
-import type { DelegateResult } from "../types/host-api.d.ts";
+import type { DelegateResult, HarnessDelegateParams } from "../types/host-api.d.ts";
 
 /**
- * One build turn's request. Delegated: `timeoutMs` (floored at a minute) and `delegation`
- * (selfCapture, ownership, extraReads, images … spread into the call as given). Direct:
- * `metadata` for the thread's turn, `deadlineMs`, and `turn` (extra `runTurn` options such as
- * `text`, `iteration`, `setup`).
+ * One build turn's request. Delegated: `timeoutMs` (floored at a minute), a run's sub-agent's
+ * `attribution` and `toolAllow`, and `delegation` (selfCapture, ownership, extraReads, images …
+ * spread into the call as given). Direct: `metadata` for the thread's turn, `deadlineMs`, and
+ * `turn` (extra `runTurn` options such as `text`, `iteration`, `setup`).
  */
 export interface BuildTurnOptions {
   delegated: boolean;
@@ -38,6 +38,10 @@ export interface BuildTurnOptions {
   cwd?: string | null;
   resume?: string | null;
   timeoutMs?: number;
+  /** A run's sub-agent: whose plugin calls these are, so what it makes lands on its own node. */
+  attribution?: HarnessDelegateParams["attribution"];
+  /** A run's sub-agent: the plugin tools and connectors (or name prefixes) it may be offered. */
+  toolAllow?: HarnessDelegateParams["toolAllow"];
   delegation?: Record<string, unknown>;
   metadata?: Record<string, unknown>;
   deadlineMs?: number;
@@ -63,6 +67,8 @@ export async function buildTurn(ctx: HarnessCtx, options: BuildTurnOptions): Pro
     cwd = null,
     resume = null,
     timeoutMs,
+    attribution,
+    toolAllow,
     delegation = {},
     metadata = {},
     deadlineMs,
@@ -81,6 +87,8 @@ export async function buildTurn(ctx: HarnessCtx, options: BuildTurnOptions): Pro
       ...effort,
       ...(resume ? { resume } : {}),
       timeoutMs: Math.max(MIN_DELEGATE_TIMEOUT_MS, timeoutMs ?? MIN_DELEGATE_TIMEOUT_MS),
+      ...(attribution ? { attribution } : {}),
+      ...(toolAllow ? { toolAllow } : {}),
       ...delegation,
     });
   }

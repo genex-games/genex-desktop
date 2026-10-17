@@ -59,6 +59,25 @@ function knownImages(threadId: string | undefined, messageId: string | undefined
   return known.get(imagesKey(threadId, messageId)) ?? null;
 }
 
+/** The pictures sent with a chat message, once loaded (null until then): the chat's and the Builds graph's. */
+export function useMessageImages(threadId: string | undefined, messageId: string | undefined): ReferenceFrame[] | null {
+  const [images, setImages] = useState<ReferenceFrame[] | null>(() => knownImages(threadId, messageId));
+  useEffect(() => {
+    if (!threadId || !messageId) return;
+    let current = true;
+    void imagesOf(threadId, messageId).then((list) => {
+      if (current) setImages(list);
+    });
+    return () => {
+      current = false;
+    };
+  }, [threadId, messageId]);
+  return images;
+}
+
+/** A sent picture as an image source. */
+export const imageSrc = (image: ReferenceFrame): string => `data:${image.mimeType};base64,${image.data}`;
+
 /**
  * The pictures someone sent with a message, above its words: proof they went with it. A message
  * still on its way shows the pictures the composer had (`frames`) in the same tiles.
@@ -74,17 +93,7 @@ export function MessageImages({
   count?: number;
   frames?: ReferenceFrame[];
 }): JSX.Element | null {
-  const [images, setImages] = useState<ReferenceFrame[] | null>(() => knownImages(threadId, messageId));
-  useEffect(() => {
-    if (!threadId || !messageId) return;
-    let current = true;
-    void imagesOf(threadId, messageId).then((list) => {
-      if (current) setImages(list);
-    });
-    return () => {
-      current = false;
-    };
-  }, [threadId, messageId]);
+  const images = useMessageImages(threadId, messageId);
   const shown = frames ?? images ?? Array.from({ length: Math.min(count, 12) }, () => null);
   if (!shown.length) return null;
   return (
@@ -100,18 +109,12 @@ export function MessageImages({
               openBeside({
                 kind: "image",
                 name: image.label || `Image ${index + 1}`,
-                src: `data:${image.mimeType};base64,${image.data}`,
+                src: imageSrc(image),
               })
             }
             className="h-[84px] w-[120px] cursor-pointer overflow-hidden rounded-[12px] bg-inset shadow-[inset_0_0_0_1px_var(--line)]"
           >
-            <img
-              src={`data:${image.mimeType};base64,${image.data}`}
-              alt=""
-              decoding="async"
-              draggable={false}
-              className="size-full object-cover"
-            />
+            <img src={imageSrc(image)} alt="" decoding="async" draggable={false} className="size-full object-cover" />
           </button>
         ) : (
           <span key={index} aria-hidden className="h-[84px] w-[120px] rounded-[12px] bg-inset" />

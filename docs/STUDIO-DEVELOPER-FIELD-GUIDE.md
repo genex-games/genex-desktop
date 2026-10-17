@@ -101,6 +101,7 @@ warnings); the UI clears its per-render timing measures each minute there. `npm 
 | Profile `workspaces/harness/` | Active editable game-building harness; upgrades preserve self-edits |
 | Profile `engine-homes/`, `runs/`, `exoharness/` | Provider/plugin/runtime state, run artifacts and persisted events |
 | Profile `scratch/`, `exports/` | App-managed build workspaces and export destinations |
+| Profile `jobs/<game>/<id>/` | Agent jobs' records (`job.json`) and logs (`output.log`); the last 50 ended jobs per game are kept |
 | Profile `opened-files/` | Read-only copies of build-only files a chat link opened in their app |
 | Profile `Crashpad/` | Local crash dumps, never uploaded. Dumps hold process memory; review before sharing |
 | Profile `run-sharing/` | Share build metrics' state, install identity and unsent rows (owner-only files) |
@@ -202,7 +203,7 @@ paths remain unavailable. Paid account acceptance remains a separate live gate. 
 logs even when an isolated retry passes: sandbox-runtime's one-second executable lookup has
 intermittently reported a missing bash during loaded test runs.
 
-Unity retirement: the active app supports browser games only. The CLI, editor, bridge, Unity templates, tools and UI are archived in `archive/unity/`; no feature flag enables them. There is no Unity-specific compatibility or migration path. Ordinary browser-project validation remains. Historical Unity plans describe archived behavior; existing user work and the source archive remain preserved.
+Unity retirement: the earlier built-in Unity integration (CLI, editor, bridge, Unity templates, tools and UI) is archived in `archive/unity/`; no feature flag enables it. There is no compatibility or migration path from it. Unity is now reached through the [bundled Unity plugin](plugins.md#the-bundled-unity-plugin), which shares no code with the archive. Ordinary browser-project validation remains. Historical Unity plans describe archived behavior; existing user work and the source archive remain preserved.
 
 Full regression coverage: `npm run typecheck`, `npm test`, `npm run test:e2e` (real sandbox, scripted
 Ollama wire, Chromium and CSS), `npm run test:build-ui` (build/history fixture, and since M1.8
@@ -338,6 +339,31 @@ transport credentials from reports. No permanent monitor or performance threshol
 into `.studio-dev/builds/<build-id>`, creates fresh owned fixture state and returns actual
 readiness/identity JSON. `npm run studio:dev -- fixtures` lists the named fixtures. Among them:
 build-graph (two sword-in-ice runs: folded tries, an undone step, a lead-merged unjudged round),
+lead-graph (two Unreal lead runs: milestone columns, save points, sub-agents with their cards, the
+critic's advice on a round),
+chat-workers (a chat message's two workers on Builds and as chat lines, after an earlier Loop; three
+more games, written after the start so their Loops read as going: Fixture Loop with three workers,
+the lead's background work and the finish check not run yet; Fixture web Loop with build-graph's
+runs and Fixture Unreal Loop with lead-graph's, each with its workers' records, drawn as trees),
+finish-check (four Loops written after the start, one per finish check look: Done and Stopped in
+the Builds history, Not yet after one no, and the newest Checking),
+paused-build (a Loop a usage limit paused and resumed, written after the start: one worker's try
+Paused, one Added after the resume, one Left out by the lead's stop),
+building-card (a Loop still going, written after the start, for the chat's Building card and its
+parts: two added, one working with its time left, one restarted on one row, one waiting;
+`[data-build-toggle]` opens `[data-build-checklist]`),
+stills-game (Pine valley, a Blender scene with no web page, whose finished Loop kept the lead's two
+renders as proof: Live's run pictures, `[data-live-view="stills"]` `[data-live-still]`; and
+Mountain pass, a Blender game with no run, whose Live says where pictures come from),
+open-projects (projects that aren't web games: Moon base, a Godot folder whose earlier timed Loop
+closed not checked by a reviewer and whose Loop in place, written after the start, has a worker's
+question waiting; Level tools, an Unreal plugin project with the sidebar's kind label, its Loop sent
+back once and, about four seconds after launch, waiting for you to finish in Unreal; Lantern racer,
+a web game beside an Unreal project, with Live's Web game and Unreal tabs; Paper plane, a web game
+ported to Unreal, its chat holding the port's turn and the line asking for the access `app_look`
+needs (Open Screen Recording and Accessibility settings); Moon tools, a plugin
+loaded from a folder with one tool that runs without asking; and the web game's chat offering the
+Unreal plugin, which is off),
 first-launch (an empty library and the welcome; Claude Code needs a sign-in, Codex is not
 installed, and sign-in, links and downloads are refused as in every fixture) and notifications
 (six games; about four seconds after launch a question, a plan, a plugin permission, a sign-out
@@ -345,7 +371,17 @@ and delivered, failed and stopped builds arrive as news; macOS notifications are
 sandbox-setup (the window opens on "Set up the protected workspace" for a Linux machine missing
 bubblewrap and socat, `[data-sandbox-setup]`; `[data-sandbox-retry]` opens the studio) and
 update-ready (the sidebar offers `[data-update-restart]` for a stand-in Genex 0.2.0; the restart
-itself is refused as native).
+itself is refused as native) and plugin-updates (Genex and Blender installed one version back: their
+rows and pages offer `Update to <version>` and the sidebar `[data-plugins-update]`, each refused as
+native) and unreal-game (the game linked to a stand-in Unreal project inside
+its folder with the Unreal plugin on: the chat's link line with Undo, the Unreal Live card with a
+stand-in viewport shot from one finished run, and the steps card, whose rows come from the real plugin, so it stays hidden on a Mac whose Xcode is ready)
+and unreal-chat (a short synthetic Unreal chat, `tests/fixtures/unreal-chat/sample-chat.json`:
+connector rows in words, Worked in Unreal headings, failures, play views and a Blender delivery)
+and roblox-game (the game linked to a stand-in place, `FixtureGame.rbxlx`, at its top with the
+Roblox Studio plugin on: the toolbar's Roblox Studio button, the chat's link line with Undo and the
+steps card `[data-engine-steps]` (rows `[data-step=studio|sign-in|helper|mcp|place]`), whose rows come from the real plugin on
+this machine; Set up, Open Studio and Get Roblox Studio are native, so a fixture refuses them).
 Use `--reuse` explicitly for a stopped existing profile with the same fixture/provider mode.
 `--providers live` is explicit, retained, and uses existing ambient account semantics; no auth
 or account copying is performed. Fixtures park background improvement but keep the real core,
@@ -434,6 +470,12 @@ read `logs`. A run paused by an engine limit or a loop crash continues from
 `[data-run-resume="<runId>"]` once the limit resets. Never restart or drive the window while the
 owner is using it; leave the profile running at the end.
 
+Run overrides reach the harness from the studio's environment only by name (`harnessRunEnv`):
+`STUDIO_DIRECTOR_LOOP=turn` picks the long turn for a run that names no loop, and
+`STUDIO_UNREAL_RUNNER=lead` sends a new Loop on an Unreal project, and the resume of a run that
+runner wrote, to the Unreal runner from before the one Loop. Neither is a run record field or shown
+in the UI; set it on start and restart.
+
 Transport descriptors are private local capabilities under the owned profile; never copy them
 into task records. Unix sockets live in a short 0700 temporary directory, with owner-only socket
 permissions. Protocol v1 uses bounded newline-delimited JSON, request IDs and one operation at
@@ -497,11 +539,17 @@ navigation; component fixtures do not prove account access or native game layeri
 Genex account regressions: `run-genex-account-ui.mjs` renders the Genex page's own account card
 and checks that a failed connect keeps its reason after the status is read again. It does not
 establish real browser/Keychain authorization.
-`run-publish-cover-ask-ui.mjs` renders the production Publish dialog beside the production
-ChatPanel of the same game with a fake `window.studio`: the cover ask shows only while the plugin
-reports no shot to send and no owner's cover, and its press closes the dialog and leaves the ask
-in that game's composer once however often it is pressed, focused and unsent (screenshots in `.studio-dev/evidence/`). A fixture
+`run-publish-cover-ui.mjs` renders the production Publish dialog beside the production
+ChatPanel of the same game with a fake `window.studio`: with no shot the dialog asks the plugin to
+take one, the arrows pick a recent frame, Another cover sends its request through that chat and
+the banner says one is coming until a new frame arrives, and a kept clip plays behind its switch
+(screenshots in `.studio-dev/evidence/`). A fixture
 profile cannot show this dialog's body, since its Genex account is never connected.
+`run-publish-test-link-ui.mjs` renders the same dialog for its test link: it shows under "Publish
+to the web" for a tested draft before the first publish and under the labelled public link while
+live changes wait, never when the draft is the live build; its line names a second player only for
+a multiplayer game; no row is wider than the main press; and each main press still makes exactly
+one `genexPublish` call (screenshots in `.studio-dev/evidence/`).
 `run-chat-cover-card-ui.mjs` renders the production ChatPanel beside the production stage strip:
 the thread's latest kept `genex__cover` shot is one Genex cover card once its turn has ended (none
 mid-turn, the turn's work one group), read through the `genex-cover` scope, whose Publish opens

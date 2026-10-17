@@ -15,6 +15,8 @@ import type { LaunchState } from "./launch.ts";
 import type { LayoutState } from "./layout.ts";
 import type { LibraryState } from "./library.ts";
 import type { ModelPickerState } from "./model-picker.ts";
+import type { PeopleState } from "./people.ts";
+import type { PlayState } from "./play.ts";
 import type { PluginsState } from "./plugins.ts";
 import { type SessionState, SessionStatus } from "./session.ts";
 import { studio } from "./studio.ts";
@@ -32,6 +34,8 @@ export const useThreads = <T>(select: Selector<ThreadsState, T>): T => useStore(
 export const useLibrary = <T>(select: Selector<LibraryState, T>): T => useStore(studio().library, select);
 export const useEngines = <T>(select: Selector<EnginesState, T>): T => useStore(studio().engines, select);
 export const usePlugins = <T>(select: Selector<PluginsState, T>): T => useStore(studio().plugins, select);
+export const usePlay = <T>(select: Selector<PlayState, T>): T => useStore(studio().play, select);
+export const usePeople = <T>(select: Selector<PeopleState, T>): T => useStore(studio().people, select);
 export const useAgentScreens = <T>(select: Selector<AgentScreensState, T>): T =>
   useStore(studio().agentScreens, select);
 export const useCommandRuns = <T>(select: Selector<CommandRunsState, T>): T => useStore(studio().commandRuns, select);
@@ -115,6 +119,9 @@ export const useLayoutView = () =>
 
 /** Whether this is an unpackaged developer run, which offers the developer tools. */
 export const useDeveloperRun = (): boolean => useSession((s) => s.developer);
+
+/** The website Play links to: genex.games', unless a development profile points Play elsewhere. */
+export const usePlayWeb = (): string => useSession((s) => s.playWeb);
 
 /** The session as the shell reads it: two booleans, so a change of error text never re-renders. */
 export const useSessionView = () =>

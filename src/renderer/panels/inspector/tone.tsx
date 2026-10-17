@@ -22,8 +22,11 @@ const DOT_SCALE = 0.6;
 const STATE_ICON: Partial<Record<StepState, { name: IconName; strokeWidth: number }>> = {
   [StepState.InBuild]: { name: "check", strokeWidth: 2.6 },
   [StepState.Kept]: { name: "check", strokeWidth: 2.6 },
+  [StepState.Delivered]: { name: "check", strokeWidth: 2.6 },
   [StepState.Undone]: { name: "undo", strokeWidth: 2.4 },
   [StepState.NotInBuild]: { name: "stop", strokeWidth: 2.4 },
+  [StepState.NotDelivered]: { name: "stop", strokeWidth: 2.4 },
+  [StepState.Paused]: { name: "pause", strokeWidth: 2.4 },
 };
 
 /** A step's state as one small glyph in its tone. */

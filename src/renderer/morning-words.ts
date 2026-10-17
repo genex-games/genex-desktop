@@ -29,6 +29,8 @@ export interface MorningLoopRun {
   landingLine?: string | null;
   /** what the studio's own ledger made of the run (loop/ledger.ts), when it had something to say */
   learned?: string | null;
+  /** how the Loop worked on its project (`run_finished.profile`): `open` kept its work in the project's own folder */
+  profile?: string | null;
 }
 
 /** The card's buttons, in the order they are shown; the first is the primary one. */
@@ -74,6 +76,7 @@ export function morningWords(loopRun: MorningLoopRun): MorningWords {
     // the user cannot see for themselves. The sentence itself is words.ts's, so the card, the run
     // pill and the Builds drawer cannot say it three ways.
     landing: loopRun.landingLine ?? null,
+    profile: loopRun.profile ?? null,
   });
   const summary = (loopRun.summary ?? "").trim();
   const learned = (loopRun.learned ?? "").trim();

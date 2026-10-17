@@ -16,6 +16,7 @@ import type { McpChange } from "./mcp.ts";
 import type { CliInstallJob } from "./cli-install.ts";
 import type { ModelInstallJob } from "./model-install.ts";
 import type { ToolPermissionState } from "./permissions.ts";
+import type { PlayViewerEvent, RemixProgress } from "./play.ts";
 import type { PluginChange, PluginConsentEvent } from "./plugins.ts";
 import type { BootNotice, HarnessState } from "./protocol.ts";
 import type { RunSummary } from "./run-summary.ts";
@@ -114,6 +115,8 @@ export interface UiEventMap {
   /** One event of a delegated contractor session, as its engine reported it. */
   "delegated.event": { engine: string; type: string; payload: unknown };
   "asset.delivered": AssetDeliveredPayload;
+  /** A call making an asset started or ended: the game's waiting jobs changed (`ProjectAssets.jobs`). */
+  "asset.jobs": { project: string };
   /** A coordinator tool put a build on screen: the chat of that game brings Live forward. */
   "stage.show": { project: string; view: "live" };
 
@@ -154,11 +157,22 @@ export interface UiEventMap {
   /** ⌥⌘M pressed while the Live game had the keyboard: the renderer owns the switch and flips it. */
   "preview.sound.toggle": { at: number };
 
+  // — play —
+  /** Play's game viewer loaded, played, failed or closed (`main/play/viewer.ts`). */
+  "play.viewer": PlayViewerEvent;
+  /** A remix moved to its next step or downloaded more of its models (`main/play/remix.ts`). */
+  "play.remix": RemixProgress;
+
   // — plugins and connectors —
   "plugins.changed": PluginChange;
   /** Something a plugin reported about itself; `event` is the plugin's own value, unchecked. */
   "plugin.event": { id: string; event: unknown; project?: string; threadId?: string };
   "plugin.consent": { consentId: string; threadId?: string; project: string; state: PluginConsentEvent["state"] };
+  /**
+   * A call waits for the person to finish in what a plugin's lock guards (`label`, the app they
+   * see), or (`waiting: false`) no longer does: the chat's working line says so meanwhile.
+   */
+  "lock.person-first": { project: string; threadId?: string; label: string; waiting: boolean };
   /**
    * A game chat's Claude session asked the person (`tool_permission` in the log), or the question
    * settled. A nudge to read the log again, never state: the harness may send any name.
@@ -246,6 +260,7 @@ export const UiEvent = {
   DelegationCheckpoint: "delegation.checkpoint",
   DelegatedEvent: "delegated.event",
   AssetDelivered: "asset.delivered",
+  AssetJobs: "asset.jobs",
   StageShow: "stage.show",
   RunKeepawake: "run.keepawake",
   RunStopping: "run.stopping",
@@ -271,9 +286,12 @@ export const UiEvent = {
   PreviewFrame: "preview.frame",
   LiveBehind: "live.behind",
   PreviewSoundToggle: "preview.sound.toggle",
+  PlayViewer: "play.viewer",
+  PlayRemix: "play.remix",
   PluginsChanged: "plugins.changed",
   PluginEvent: "plugin.event",
   PluginConsent: "plugin.consent",
+  PersonFirst: "lock.person-first",
   ToolPermission: "tool.permission",
   PermissionsChanged: "permissions.changed",
   McpChanged: "mcp.changed",

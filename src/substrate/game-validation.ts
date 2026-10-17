@@ -65,6 +65,8 @@ const MESSAGE = {
 export interface GameValidation {
   ok: boolean;
   problems: string[];
+  /** The files a web page needs that are not there, by name; `problems` says the same in sentences. */
+  missing: string[];
   warnings: string[];
   contract: ContractWord;
   reach: ContractReach;
@@ -275,12 +277,13 @@ function contractWarnings(use: ContractUse): string[] {
  * contract (hard-coded `Math.random`, no `window.__studio`).
  */
 export async function validateGameDir(dir: string): Promise<GameValidation> {
-  const problems: string[] = [];
   const warnings: string[] = [];
   const shape = await readProjectShape(dir);
   const indexExists = await pathExists(path.join(dir, "index.html"));
-  if (!indexExists) problems.push(MESSAGE.MissingFile("index.html"));
-  if (!(await pathExists(path.join(dir, shape.main)))) problems.push(MESSAGE.MissingFile(shape.main));
+  const missing: string[] = [];
+  if (!indexExists) missing.push("index.html");
+  if (!(await pathExists(path.join(dir, shape.main)))) missing.push(shape.main);
+  const problems = missing.map((file) => MESSAGE.MissingFile(file));
 
   // Only what the page actually loads. A template `src/main.js` left beside a Godot export or
   // a Vite game used to prove the contract on the studio's own dead scaffold, so validation
@@ -309,7 +312,7 @@ export async function validateGameDir(dir: string): Promise<GameValidation> {
   const contract = contractWord(use.installsContract, reach, nonExecutable);
   if (contract === ContractWord.Missing) problems.push(NO_CONTRACT_PROBLEM);
   warnings.push(...contractWarnings(use));
-  return { ok: problems.length === 0, problems, warnings, contract, reach, shape };
+  return { ok: problems.length === 0, problems, missing, warnings, contract, reach, shape };
 }
 
 /** The reachable-source walk's state: what it found, what it still has to open, and what it has seen. */

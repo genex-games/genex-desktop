@@ -3,8 +3,9 @@ import { UiEvent } from "../../../shared/ui-events.ts";
 import { useEffect, useRef, useState } from "react";
 import type { ConnectionSnapshot } from "../../../shared/connections.ts";
 import type { McpConnectorView } from "../../../shared/mcp.ts";
-import type { PluginIndexView, PluginPanelDocument } from "../../../shared/plugins.ts";
+import type { PluginPanelDocument } from "../../../shared/plugins.ts";
 import type { ProjectSkillInventory, ProviderSkillInventory } from "../../../shared/provider-skills.ts";
+import type { PluginUpdate } from "../../state/plugins.ts";
 import { ExtensionsTab, PLUGINS_POLL_MS } from "./labels.ts";
 
 /** A plugin panel open on the page, and the plugin it belongs to. */
@@ -22,6 +23,8 @@ export interface PluginsPage {
   project: string | null | undefined;
   connections: ConnectionSnapshot | null;
   setConnections: (value: ConnectionSnapshot) => void;
+  /** The newer version each installed plugin can move to, by plugin id. */
+  updates: ReadonlyMap<string, PluginUpdate>;
   openPlugin: (id: string) => void;
   setSelected: (panel: OpenPanel | null) => void;
   matches: (...values: string[]) => boolean;
@@ -57,16 +60,22 @@ export interface CatalogRow {
   version: string;
 }
 
-/** What the page polls while open (plugins, connections, catalog) and reads once (Studio skills, the marketplace). */
+/**
+ * What the page polls while open (plugins, connections, catalog) and reads once (Studio skills). The
+ * plugin index is the store's: opening the page asks for it again.
+ */
 export function usePluginsPageData(
   project: string | null | undefined,
   onPluginsRefresh: () => void,
+  onIndexRefresh: () => void,
   setError: (error: string) => void,
 ) {
   const [connections, setConnections] = useState<ConnectionSnapshot | null>(null);
   const [builtins, setBuiltins] = useState<Array<{ name: string; text: string; description: string }>>([]);
   const [catalog, setCatalog] = useState<CatalogRow[]>([]);
-  const [index, setIndex] = useState<PluginIndexView | null>(null);
+  useEffect(() => {
+    onIndexRefresh();
+  }, [onIndexRefresh]);
   useEffect(() => {
     let disposed = false;
     const fail = (e: unknown): void => {
@@ -104,12 +113,6 @@ export function usePluginsPageData(
         if (!disposed) setBuiltins(value);
       })
       .catch(fail);
-    void window.studio
-      .pluginsIndex()
-      .then((view) => {
-        if (!disposed) setIndex(view);
-      })
-      .catch(fail);
     const timer = setInterval(update, PLUGINS_POLL_MS);
     document.addEventListener("visibilitychange", update);
     const unsubscribe = window.studio.onEvent((event) => {
@@ -126,7 +129,7 @@ export function usePluginsPageData(
       unsubscribe();
     };
   }, [onPluginsRefresh, project, setError]);
-  return { connections, setConnections, builtins, catalog, index };
+  return { connections, setConnections, builtins, catalog };
 }
 
 /**

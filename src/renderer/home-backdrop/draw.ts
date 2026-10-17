@@ -183,7 +183,14 @@ function drawAscii(
   }
 }
 
-/** Draw `source` through the settings' effect over the whole frame; Off leaves it clear. */
+/** The picture as it is, cut to cover the frame. */
+function drawPicture(context: CanvasRenderingContext2D, source: BackdropSource, frame: BackdropFrame): void {
+  const crop = coverCrop(source.width, source.height, frame.width, frame.height);
+  context.imageSmoothingQuality = "high";
+  context.drawImage(source, crop.sx, crop.sy, crop.sw, crop.sh, 0, 0, frame.width, frame.height);
+}
+
+/** Draw `source` through the settings' effect over the whole frame, or as it is with no effect. */
 export function drawBackdrop(
   context: CanvasRenderingContext2D,
   source: BackdropSource,
@@ -193,7 +200,10 @@ export function drawBackdrop(
   const { scale, origin } = frame;
   context.setTransform(scale, 0, 0, scale, -origin.x * scale, -origin.y * scale);
   context.clearRect(0, 0, frame.width, frame.height);
-  if (settings.effect === BackdropEffect.Off) return;
+  if (settings.effect === BackdropEffect.None) {
+    drawPicture(context, source, frame);
+    return;
+  }
   context.fillStyle = frame.ink;
   if (settings.effect === BackdropEffect.Ascii) {
     drawAscii(context, source, settings, frame);

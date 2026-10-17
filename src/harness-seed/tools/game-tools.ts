@@ -13,6 +13,9 @@ import { REFERENCE_MIN_STILLS, ReferenceKind, RunMode } from "../loop/run-events
 import { MINUTE_MS } from "../loop/time.ts";
 import { TurnStop } from "../loop/turn-record.ts";
 import { isRecord } from "../loop/json.ts";
+import { LoopProfile, loopProfileOf, ProjectStarter, ProjectTool } from "../loop/folder-facts.ts";
+import { OPEN_LAUNCH_WORDS } from "../loop/open-loop-prompts.ts";
+import { UNTIL_DONE_WORDS } from "../loop/until-done-prompts.ts";
 import { scopeItems } from "../loop/scope.ts";
 
 /** How long `run_command` lets a command run when the call names no timeout. */
@@ -110,19 +113,50 @@ export const tools: HarnessTool[] = [
   {
     name: "new_game",
     description:
-      "Create a new game project from the three.js template. The template already satisfies the studio contract (window.__studio), so the first screenshot works immediately.",
+      "Create a new game project. With kind 'web' Genex writes its three.js starter, which already satisfies the studio contract (window.__studio), so the first screenshot works immediately. Leave kind out for an empty folder you fill yourself.",
     parameters: {
       type: "object",
-      properties: { name: str("lowercase project id, e.g. 'pong'"), title: str("human title") },
+      properties: {
+        name: str("lowercase project id, e.g. 'pong'"),
+        title: str("human title"),
+        kind: { type: "string", enum: [ProjectStarter.Web], description: "'web' for the three.js starter" },
+      },
       required: ["name"],
     },
     async execute(args, ctx) {
       if (ctx.project) {
         return `This chat is already working in "${ctx.project}". Do not create another folder. Write files here with write_file.`;
       }
-      const project = await ctx.call(HostMethod.GameScaffold, { name: args.name, title: args.title ?? args.name });
+      const web = args.kind === ProjectStarter.Web;
+      const project = await ctx.call(HostMethod.GameScaffold, {
+        name: args.name,
+        title: args.title ?? args.name,
+        ...(web ? { kind: ProjectStarter.Web } : {}),
+      });
+      if (!web) return `Created ${project.name} at ${project.dir}: an empty folder, yours to fill.`;
       await ctx.call(HostMethod.PreviewLoad, { project: args.name });
       return `Created ${project.name} at ${project.dir} and loaded it in the preview.`;
+    },
+  },
+
+  {
+    name: ProjectTool.StartWebGame,
+    description:
+      "Make this game a web game: Genex writes its three.js starter here, which Live shows beside the chat. Only while the folder has no kind yet.",
+    parameters: { type: "object", properties: { project: str("project id; defaults to this chat's folder") } },
+    async execute(args, ctx) {
+      const pin = pinProject(args, ctx);
+      if (pin.error) return { ok: false, content: pin.error };
+      const project = pin.project as string;
+      // The chat this turn answers: while it is in Plan the host writes nothing and says why.
+      const started = await ctx.call(HostMethod.GameStart, {
+        project,
+        starter: ProjectStarter.Web,
+        threadId: ctx.threadId,
+      });
+      if ("blocker" in started) return started.message;
+      await ctx.call(HostMethod.PreviewLoad, { project });
+      return "The web starter is in the folder; build on it.";
     },
   },
 
@@ -361,7 +395,7 @@ export const tools: HarnessTool[] = [
   {
     name: "start_autopilot",
     description:
-      "Launch a build — only when Loop is on and the ask is to build the game or change it substantially, never for research, a plan or a small change. Know first what the game is and how it should look; when nobody said, ask_user instead. The build decomposes into facets, builds each against a blind critic, and integrates; it starts from this folder as you leave it when your reply ends. Call it once, last, then recap.",
+      "Launch a build — only when Loop is on and the ask is to build the game or change it substantially, never for research, a plan or a small change. Know first what the game is and how it should look; when nobody said, ask_user instead. The build runs as the launch rules say for this project; it starts from this folder as you leave it when your reply ends. Call it once, last, then recap.",
     parameters: {
       type: "object",
       properties: {
@@ -391,8 +425,8 @@ export const tools: HarnessTool[] = [
       // outrank the binding, and the run then built in a second, empty folder while the user
       // typed into the chat attached to the first.
       const project = slugProject(args.project || args.direction || args.goal);
-      // No cap set means run until the critics are satisfied — with a 24h safety ceiling so a
-      // wedged run can never hold the machine forever.
+      // No cap set means run until what was asked is verified and nothing blocks it — with a 24h
+      // safety ceiling so a wedged run can never hold the machine forever.
       const capped = typeof autopilot.hours === "number" && autopilot.hours > 0;
       const hours = capped ? clampRunHours(autopilot.hours) : MAX_RUN_HOURS;
       const notes = criticNotes(args);
@@ -421,7 +455,7 @@ export const tools: HarnessTool[] = [
         ...(autopilot.reviewPlan === true ? { reviewPlan: true } : {}),
         ...scopeArgs(args),
       };
-      const clock = capped ? `Building for up to ${hours} h` : `Building until the critics are satisfied`;
+      const clock = capped ? `Building for up to ${hours} h` : await untilDoneWords(ctx, ctx.project ?? project);
       return {
         ok: true,
         content: `${clock}${towardTheBar(kind, run.reference.name, frames.length)}`,
@@ -431,6 +465,16 @@ export const tools: HarnessTool[] = [
     },
   },
 ];
+
+/** How an ∞ build runs, as the launch tool answers: a web game's until what was asked is verified, any other project's until a reviewer's yes. */
+async function untilDoneWords(ctx: ToolCtx, project: string): Promise<string> {
+  // A game list Genex can't read leaves the web words, as before.
+  const listed = await Promise.resolve()
+    .then(() => ctx.call(HostMethod.GameList, {}))
+    .catch(() => null);
+  const game = Array.isArray(listed) ? listed.find((one) => one?.name === project) : undefined;
+  return game && loopProfileOf(game) === LoopProfile.Open ? OPEN_LAUNCH_WORDS.building : `Building ${UNTIL_DONE_WORDS}`;
+}
 
 /** The reference stills the composer attached, without empty slots. */
 function attachedFrames(frames: AnyRecord[] | null | undefined): AnyRecord[] {

@@ -1,0 +1,52 @@
+{
+  "name": "Game",
+  "className": "DataModel",
+  "children": [
+    {
+      "name": "ReplicatedStorage",
+      "className": "ReplicatedStorage",
+      "children": [
+        {
+          "name": "Round",
+          "className": "ModuleScript",
+          "filePaths": ["src/ReplicatedStorage/Round/init.luau"],
+          "children": [
+            { "name": "Timer", "className": "ModuleScript", "filePaths": ["src/ReplicatedStorage/Round/Timer.luau"] }
+          ]
+        },
+        {
+          "name": "Shared",
+          "className": "Folder",
+          "children": [
+            { "name": "Util", "className": "ModuleScript", "filePaths": ["src/ReplicatedStorage/Shared/Util.luau"] }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "ServerScriptService",
+      "className": "ServerScriptService",
+      "children": [
+        { "name": "Main", "className": "Script", "filePaths": ["src/ServerScriptService/Main.server.luau"] },
+        { "name": "Odd:Name", "className": "Script", "filePaths": ["src/ServerScriptService/Odd%3AName.server.luau"] }
+      ]
+    },
+    {
+      "name": "StarterPlayer",
+      "className": "StarterPlayer",
+      "children": [
+        {
+          "name": "StarterPlayerScripts",
+          "className": "StarterPlayerScripts",
+          "children": [
+            {
+              "name": "Input",
+              "className": "LocalScript",
+              "filePaths": ["src/StarterPlayer/StarterPlayerScripts/Input.client.luau"]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

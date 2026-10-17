@@ -13,13 +13,21 @@
  */
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdir, readFile, symlink, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { after, before, describe, it } from "node:test";
 import { pathToFileURL } from "node:url";
 import { GenexTools } from "../../src/plugins/genex/adapter.ts";
+import { bringsOwnSdk } from "../../src/plugins/genex/entry-page.ts";
 import { MESSAGE as PUBLISH_MESSAGE } from "../../src/plugins/genex/publish.ts";
-import { cleanGenexTitle, defaultGenexTitle, type GenexGameManifest } from "../../src/shared/genex.ts";
+import {
+  cleanGenexTitle,
+  defaultGenexTitle,
+  GENEX_EMBED_VENDOR,
+  GENEX_GAME_PACKAGES,
+  type GenexGameManifest,
+  studioSdkImports,
+} from "../../src/shared/genex.ts";
 import { genexGameManifest, readGenexGameManifest } from "../../src/substrate/genex-game-manifest.ts";
 import { startGenexFixtureApi } from "../helpers/genex-fixture-api.ts";
 import { tmpDir } from "../helpers/tmp.ts";
@@ -28,6 +36,18 @@ const PROJECT = "racing-demo";
 const SLUG = "racing-demo";
 const SIGN_IN = "0.30.0";
 const SIGN_IN_GAME: GenexGameManifest = { dependencies: { "@genex-ai/embed-sdk": SIGN_IN } };
+/** The embed SDK Studio ships with a game that brings none of its own. */
+const STUDIO_SDK = GENEX_GAME_PACKAGES["@genex-ai/embed-sdk"];
+/** A page as Studio's template writes it: no `<head>` tag, three.js through an import map. */
+const TEMPLATE_PAGE = [
+  "<!doctype html>",
+  '<meta charset="utf-8" />',
+  "<title>Racing</title>",
+  '<script type="importmap">{"imports":{"three":"./vendor/three.module.js"}}</script>',
+  '<script type="module" src="./src/main.js"></script>',
+].join("\n");
+/** A page with no import map and no head tag. */
+const BARE_PAGE = '<!doctype html><meta charset="utf-8"><title>Racing</title>';
 /** A test window short enough for a failing draft to give up at once. */
 const QUICK_TEST_MS = 50;
 
@@ -61,6 +81,8 @@ interface Seen {
 /**
  * A fixture Genex for one hosted game. `broken` serves a stale deployment marker, so the draft
  * test never passes; `failFirstDeploy` answers the first deploy with a 500 before anything lands.
+ * As Genex does, the project records sign-in support only for the build players get: a draft
+ * upload keeps it with the draft, and promoting the draft makes it the project's.
  */
 async function genexFixture(options: { broken?: boolean; failFirstDeploy?: boolean } = {}) {
   const temp = await tmpDir("studio-genex-gate-");
@@ -72,7 +94,8 @@ async function genexFixture(options: { broken?: boolean; failFirstDeploy?: boole
   const hosted = new Map<string, string>();
   let status = "draft",
     stagingCommitSha = "",
-    embedSdkVersion: string | undefined,
+    embedSdkVersion: string | null = null,
+    draftEmbedSdkVersion: string | undefined,
     deployAttempts = 0,
     api = "";
   const note = (event: string) => {
@@ -124,11 +147,12 @@ async function genexFixture(options: { broken?: boolean; failFirstDeploy?: boole
       note(`deploy:${deploy.channel}`);
       seen.deploys.push(deploy);
       stagingCommitSha = deploy.commit;
-      if (typeof deploy.embedSdkVersion === "string") embedSdkVersion = deploy.embedSdkVersion;
+      if (typeof deploy.embedSdkVersion === "string") draftEmbedSdkVersion = deploy.embedSdkVersion;
       return reply.json({ url: `${api}/live`, channel: deploy.channel ?? "production" });
     }
     if (url === "/api/games/p1/promote" && method === "POST") {
       note("promote");
+      if (draftEmbedSdkVersion) embedSdkVersion = draftEmbedSdkVersion;
       return reply.json({ commit: stagingCommitSha, url: `${api}/live` });
     }
     if (url.startsWith("/api/gallery/world/")) return reply.json({ item: null });
@@ -142,18 +166,27 @@ async function genexFixture(options: { broken?: boolean; failFirstDeploy?: boole
   });
   const workspace = path.join(genex.root, "publish", PROJECT);
   /** What the host's `export.stage` answers: the public copy, and what the game's package.json says. */
-  const exportStage = (manifest?: GenexGameManifest) => async () => {
-    const dist = path.join(workspace, "dist");
-    await mkdir(dist, { recursive: true });
-    await writeFile(path.join(dist, "index.html"), '<!doctype html><meta charset="utf-8"><title>Racing</title>');
-    return { dir: dist, files: 1, included: ["index.html"], excluded: [], ...(manifest ? { genex: manifest } : {}) };
-  };
-  /** Publish under `title`; `manifest` null is a game whose package.json names no Genex package. */
-  const publish = async (title?: string, manifest: GenexGameManifest | null = SIGN_IN_GAME) => {
-    const started = await genex.publishGallery(PROJECT, exportStage(manifest ?? undefined), title);
+  const exportStage =
+    (manifest?: GenexGameManifest, page = BARE_PAGE) =>
+    async () => {
+      const dist = path.join(workspace, "dist");
+      await mkdir(dist, { recursive: true });
+      await writeFile(path.join(dist, "index.html"), page);
+      return { dir: dist, files: 1, included: ["index.html"], excluded: [], ...(manifest ? { genex: manifest } : {}) };
+    };
+  /** Publish `page` under `title`; `manifest` null is a game whose package.json names no Genex package. */
+  const publish = async (title?: string, manifest: GenexGameManifest | null = SIGN_IN_GAME, page?: string) => {
+    const started = await genex.publishGallery(PROJECT, exportStage(manifest ?? undefined, page), title);
     return genex.publishWait(PROJECT, started.job?.id);
   };
-  return { genex, server, seen, workspace, game, publish, close: () => server.close() };
+  /** Put the game on its draft page only, and wait until that draft passes its test or fails it. */
+  const draft = async (manifest: GenexGameManifest = SIGN_IN_GAME) => {
+    const started = await genex.publishDraft(PROJECT, exportStage(manifest));
+    return genex.publishWait(PROJECT, started.job?.id);
+  };
+  /** The sign-in support Genex records for the project: the public build's. */
+  const recordedSignIn = () => embedSdkVersion;
+  return { genex, server, seen, hosted, workspace, game, publish, draft, recordedSignIn, close: () => server.close() };
 }
 
 describe("publishing tests the build before players get it", () => {
@@ -165,6 +198,7 @@ describe("publishing tests the build before players get it", () => {
       assert.equal(done.job?.state, "done", done.job?.error);
       assert.equal(done.job?.phase, "ready", done.job?.checkError);
       assert.equal(fx.seen.deploys[0]?.embedSdkVersion, SIGN_IN, "the upload names the sign-in support it ships");
+      assert.equal(fx.recordedSignIn(), SIGN_IN, "and Genex records it once the draft is promoted");
       assert.deepEqual(fx.seen.events, ["deploy:staging", "test", "promote", "list"], "nothing is public untested");
       assert.equal(fx.seen.deploys.length, 1, "the draft and the public version are one upload");
       assert.equal(fx.seen.listings[0]?.title, "Racing Demo");
@@ -174,6 +208,21 @@ describe("publishing tests the build before players get it", () => {
       const copy = JSON.parse(await readFile(path.join(fx.workspace, "package.json"), "utf8"));
       assert.deepEqual(copy.dependencies, { "@genex-ai/embed-sdk": SIGN_IN });
       await assert.rejects(readFile(path.join(fx.game, "package.json")), "the game folder is never written");
+    } finally {
+      await fx.close();
+    }
+  });
+
+  it("passes a sign-in game's first draft, whose sign-in support Genex keeps with the draft until it goes public", async (t) => {
+    if (!hasGit) return t.skip("git is not installed on this machine; the Genex publish path requires it");
+    const fx = await genexFixture();
+    try {
+      const done = await fx.draft();
+      assert.equal(done.job?.phase, "ready", done.job?.checkError);
+      assert.ok(done.readyDraft, "the draft is recorded as tested");
+      assert.equal(fx.seen.deploys[0]?.embedSdkVersion, SIGN_IN);
+      assert.equal(fx.recordedSignIn(), null, "nothing is public, so the project records no sign-in support yet");
+      assert.ok(!fx.seen.events.includes("promote"));
     } finally {
       await fx.close();
     }
@@ -232,15 +281,76 @@ describe("publishing tests the build before players get it", () => {
     }
   });
 
-  it("leaves no package.json in Studio's copy for a game that names no Genex package", async (t) => {
+  it("tells Genex a game that names no Genex package signs in through the SDK Studio ships with it", async (t) => {
     if (!hasGit) return t.skip("git is not installed on this machine; the Genex publish path requires it");
     const fx = await genexFixture();
     try {
-      await fx.publish("Racing Demo");
+      await fx.publish("Racing Demo", { dependencies: { "@genex-ai/multiplayer": "0.17.0" } });
       const plain = await fx.publish(undefined, null);
       assert.equal(plain.job?.state, "done", plain.job?.error);
-      assert.equal(fx.seen.deploys[1]?.embedSdkVersion, undefined);
-      await assert.rejects(readFile(path.join(fx.workspace, "package.json")), "the earlier copy's manifest is gone");
+      assert.equal(fx.seen.deploys[1]?.embedSdkVersion, STUDIO_SDK);
+      const copy = JSON.parse(await readFile(path.join(fx.workspace, "package.json"), "utf8"));
+      assert.deepEqual(
+        copy.dependencies,
+        { "@genex-ai/embed-sdk": STUDIO_SDK },
+        "the earlier copy's packages are gone",
+      );
+    } finally {
+      await fx.close();
+    }
+  });
+});
+
+/** The relative modules `file` imports, and theirs, as paths beside it. */
+function moduleGraph(hosted: Map<string, string>, file: string, seen = new Set<string>()): Set<string> {
+  if (seen.has(file)) return seen;
+  seen.add(file);
+  for (const [, ref = ""] of (hosted.get(file) ?? "").matchAll(/\bfrom\s*["'](\.[^"']+)["']/g))
+    moduleGraph(hosted, path.posix.join(path.posix.dirname(file), ref), seen);
+  return seen;
+}
+
+describe("a published game connects to Genex as it boots", () => {
+  const connect = `vendor/${GENEX_EMBED_VENDOR.Connect}`;
+  const tag = `<script type="module" src="./${connect}"></script>`;
+
+  it("ships a game that brings no SDK with Studio's, connected to the project its first publish created", async (t) => {
+    if (!hasGit) return t.skip("git is not installed on this machine; the Genex publish path requires it");
+    const fx = await genexFixture();
+    try {
+      const done = await fx.publish("Racing Demo", null, TEMPLATE_PAGE);
+      assert.equal(done.job?.state, "done", done.job?.error);
+      const page = fx.hosted.get("index.html") ?? "";
+      assert.match(page, /^<!doctype html>/, "the doctype stays first, so the page renders in standards mode");
+      assert.match(page, /<head>[\s\S]*<\/head>/, "a head the games host can put its environment into");
+      const importMapEnd = page.indexOf("</script>", page.indexOf('type="importmap"'));
+      const connectAt = page.indexOf(tag);
+      assert.ok(connectAt > importMapEnd, "connected after the import map, which must come before any module");
+      assert.ok(connectAt < page.indexOf('src="./src/main.js"'), "and before the game's own code runs");
+      const script = fx.hosted.get(connect) ?? "";
+      assert.match(script, /import \{ initEmbed \} from "\.\/embed-sdk\/index\.js"/);
+      assert.match(script, new RegExp(`slug: "${SLUG}"`), "the project the first publish created");
+      const sdk = moduleGraph(fx.hosted, `vendor/${GENEX_EMBED_VENDOR.Entry}`);
+      for (const file of sdk) assert.ok(fx.hosted.has(file), `${file} is uploaded`);
+      assert.ok(sdk.size > 1, "the SDK's chunks go up with its entry");
+      assert.equal(fx.seen.deploys[0]?.embedSdkVersion, STUDIO_SDK, "Genex records the sign-in support it ships");
+      await assert.rejects(readFile(path.join(fx.game, "index.html")), "the game folder is never written");
+    } finally {
+      await fx.close();
+    }
+  });
+
+  it("leaves a game that ships its own SDK to connect itself", async (t) => {
+    if (!hasGit) return t.skip("git is not installed on this machine; the Genex publish path requires it");
+    const fx = await genexFixture();
+    try {
+      const done = await fx.publish("Racing Demo", SIGN_IN_GAME, TEMPLATE_PAGE);
+      assert.equal(done.job?.state, "done", done.job?.error);
+      const page = fx.hosted.get("index.html") ?? "";
+      assert.ok(!page.includes(connect), "one SDK answers the site, never two");
+      assert.ok(![...fx.hosted.keys()].some((file) => file.startsWith("vendor/genex/")));
+      assert.match(page, /^<!doctype html>\n?<head><meta name="studio-deployment"/, "its page still gets a head");
+      assert.equal(fx.seen.deploys[0]?.embedSdkVersion, SIGN_IN);
     } finally {
       await fx.close();
     }
@@ -280,8 +390,8 @@ describe("what a game's package.json tells Genex", () => {
       ["sign-in", { dependencies: { "@genex-ai/embed-sdk": "0.30.0", three: "1" } }, SIGN_IN_GAME],
       [
         "dev dependency",
-        { devDependencies: { "@genex-ai/multiplayer": "^0.16.1" } },
-        { dependencies: { "@genex-ai/multiplayer": "^0.16.1" } },
+        { devDependencies: { "@genex-ai/multiplayer": "^0.17.0" } },
+        { dependencies: { "@genex-ai/multiplayer": "^0.17.0" } },
       ],
       ["a path, not a version", { dependencies: { "@genex-ai/embed-sdk": "file:../../etc" } }, undefined],
       ["a URL, not a version", { dependencies: { "@genex-ai/embed-sdk": "https://x.invalid/sdk.tgz" } }, undefined],
@@ -330,6 +440,54 @@ describe("what a game's package.json tells Genex", () => {
     assert.equal(await readGenexGameManifest(linked), undefined, "a link out of the game");
     await mkdir(path.join(root, "dir-game", "package.json"), { recursive: true });
     assert.equal(await readGenexGameManifest(path.join(root, "dir-game")), undefined, "a folder named package.json");
+  });
+
+  it("tells Genex the multiplayer a template game's import map takes from Studio, at Studio's pin, with its genex.json settings", async () => {
+    const root = await tmpDir("studio-genex-manifest-");
+    const game = path.join(root, "template");
+    await mkdir(game);
+    const page = (imports: Record<string, string>) =>
+      `<script type="importmap">${JSON.stringify({ imports: { three: "/vendor/three.module.js", ...imports } })}</script>`;
+    const multiplayer = { "@genex-ai/multiplayer": GENEX_GAME_PACKAGES["@genex-ai/multiplayer"] };
+    await writeFile(path.join(game, "index.html"), page({}));
+    assert.equal(await readGenexGameManifest(game), undefined, "a template game that turns nothing on");
+    // Player identity alone is Studio's to name: it connects the game and names the SDK it ships.
+    await writeFile(path.join(game, "index.html"), page(studioSdkImports("@genex-ai/embed-sdk")));
+    assert.equal(await readGenexGameManifest(game), undefined, "Studio's own sign-in");
+    await writeFile(path.join(game, "index.html"), page(studioSdkImports("@genex-ai/multiplayer")));
+    assert.deepEqual(await readGenexGameManifest(game), { dependencies: multiplayer });
+    await writeFile(path.join(game, "genex.json"), JSON.stringify({ matchmaking: { preset: "duel" } }));
+    assert.deepEqual(await readGenexGameManifest(game), {
+      dependencies: multiplayer,
+      genex: { matchmaking: { preset: "duel" } },
+    });
+    // A Genex name mapped anywhere but Studio's copy is not Studio's to vouch for.
+    await writeFile(
+      path.join(game, "index.html"),
+      page({ "@genex-ai/multiplayer": "https://esm.sh/@genex-ai/multiplayer" }),
+    );
+    await writeFile(path.join(game, "genex.json"), "{ not json");
+    assert.equal(await readGenexGameManifest(game), undefined, "a CDN copy and unparsable settings");
+    // A package.json is the game's own say, even when it names nothing.
+    await writeFile(path.join(game, "index.html"), page(studioSdkImports("@genex-ai/multiplayer")));
+    await writeFile(path.join(game, "package.json"), "{}");
+    assert.equal(await readGenexGameManifest(game), undefined, "a package.json wins over the page");
+    await rm(path.join(game, "package.json"));
+    const outside = path.join(root, "outside.json");
+    await writeFile(outside, JSON.stringify({ mobileControls: true }));
+    await rm(path.join(game, "genex.json"));
+    await symlink(outside, path.join(game, "genex.json"));
+    assert.deepEqual(
+      await readGenexGameManifest(game),
+      { dependencies: multiplayer },
+      "settings linked in from outside the game are not read",
+    );
+  });
+
+  it("connects a template game that maps Studio's multiplayer, and leaves a game with its own SDK alone", () => {
+    assert.equal(bringsOwnSdk({ dependencies: { "@genex-ai/multiplayer": "0.17.0" } }), false);
+    assert.equal(bringsOwnSdk({ dependencies: { "@genex-ai/embed-sdk": "0.30.0" } }), true);
+    assert.equal(bringsOwnSdk(undefined), false);
   });
 });
 

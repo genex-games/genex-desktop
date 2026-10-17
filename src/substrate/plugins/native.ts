@@ -50,7 +50,8 @@ const TAR_LIST_MAX_BUFFER = 4 * 1024 ** 2;
 const TAR_EXTRACT_TIMEOUT_MS = 2 * MINUTE_MS;
 /** A Studio native job id: a UUID, so it names a folder and never a path. */
 const idPattern = /^[a-f0-9-]{36}$/;
-const SEMVER = /^\d+\.\d+\.\d+$/;
+/** A runtime's version as its probe reads it: x.y.z, or x.y (read as x.y.0: Godot names a first release 4.3). */
+const SEMVER = /^\d+\.\d+(\.\d+)?$/;
 /** The environment a runtime's version probe runs with: nothing of Studio's. */
 const PROBE_ENV = { PATH: "/usr/bin:/bin", LANG: "en_US.UTF-8" };
 /** Candidate path prefixes a runtime declaration may start with, and the folder each stands for. */
@@ -107,8 +108,9 @@ const MESSAGE = {
 
 /** Whether `version` is at least `minimum`, comparing major, minor and patch. */
 const versionAtLeast = (version: string, minimum: string) => {
-  const a = version.split(".").map(Number),
-    b = minimum.split(".").map(Number);
+  const parts = (text: string) => [...text.split(".").map(Number), 0, 0, 0].slice(0, 3);
+  const a = parts(version),
+    b = parts(minimum);
   for (let i = 0; i < 3; i++) {
     if (a[i] !== b[i]) return Number(a[i]) > Number(b[i]);
   }
@@ -186,6 +188,27 @@ export interface NativeInvocation {
   signal: AbortSignal;
 }
 type Emit = (event: unknown) => void;
+/** How a call reaches a plugin's backend: a person's setup action, or an agent's tool. */
+const Invocation = { Action: "action", Tool: "tool" } as const;
+
+/** Whether one of `entries` is named `name` and asks the person first. */
+const confirmedEntry = (entries: ReadonlyArray<{ name: string; confirmation?: string }>, name: string) =>
+  entries.some((entry) => entry.name === name && Boolean(entry.confirmation));
+
+/**
+ * Whether the person confirmed this install: their own setup action, or an agent's tool of the same
+ * name whose card they answered (a tool with a `confirmation` asks before it runs). Either way the
+ * download is the manifest's pinned one: no call chooses a binary or a URL.
+ */
+function installConfirmed(
+  manifest: PluginManifest,
+  install: { action: string },
+  invocation: Pick<NativeInvocation, "method" | "name">,
+): boolean {
+  if (invocation.name !== install.action) return false;
+  if (invocation.method === Invocation.Tool) return confirmedEntry(manifest.tools, install.action);
+  return invocation.method === Invocation.Action && confirmedEntry(manifest.actions, install.action);
+}
 type RuntimeInstall = NonNullable<PluginNativeRuntime["install"]>;
 /** The folders one native job works in, all under its own job folder. */
 interface JobDirs {
@@ -510,32 +533,32 @@ export class PluginNativeServices {
     const key = path.join(root, runtime.id);
     if (method === PluginService.RuntimeInstallation) return this.#installation(root, runtime, key);
     if (method === PluginService.RuntimeCancelInstall) {
-      if (invocation.method !== "action") throw new Error(MESSAGE.CancelNeedsAction);
+      if (invocation.method !== Invocation.Action) throw new Error(MESSAGE.CancelNeedsAction);
       this.#installControllers.get(key)?.abort();
       return true;
     }
     if (method !== PluginService.RuntimeInstall) throw new Error(MESSAGE.UnknownRuntimeOperation);
     const install = runtime.install;
-    if (!install) throw new Error(MESSAGE.InstallNeedsAction);
-    const trusted =
-      invocation.method === "action" &&
-      invocation.name === install.action &&
-      manifest.actions.some((a) => a.name === install.action && a.confirmation);
-    if (!trusted) throw new Error(MESSAGE.InstallNeedsAction);
+    if (!install || !installConfirmed(manifest, install, invocation)) throw new Error(MESSAGE.InstallNeedsAction);
+    const byAgent = invocation.method === Invocation.Tool;
     if (!this.#installing.has(key)) {
       const controller = new AbortController();
+      // An agent's call answers once the download starts, so its deadline never cuts the download short.
+      const signal = byAgent ? controller.signal : AbortSignal.any([invocation.signal, controller.signal]);
       this.#installControllers.set(key, controller);
       this.#installing.set(
         key,
-        this.#install(runtime, install, root, AbortSignal.any([invocation.signal, controller.signal]), emit).finally(
-          () => {
-            this.#installing.delete(key);
-            this.#installControllers.delete(key);
-          },
-        ),
+        this.#install(runtime, install, root, signal, emit).finally(() => {
+          this.#installing.delete(key);
+          this.#installControllers.delete(key);
+        }),
       );
     }
-    return this.#installing.get(key);
+    const installing = this.#installing.get(key);
+    if (!byAgent) return installing;
+    // The install record says how it ended (`runtime.installation`), so nobody waits on it here.
+    installing?.catch(() => {});
+    return { started: true };
   }
   /** The last install record; one still marked active with no install running here was interrupted. */
   async #installation(root: string, runtime: PluginNativeRuntime, key: string) {

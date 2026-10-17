@@ -1,0 +1,5 @@
+{
+  "FileVersion": 3,
+  "FriendlyName": "Genex editor helper",
+  "Modules": [{ "Name": "GenexEditorHelper", "Type": "Editor", "LoadingPhase": "Default" }]
+}

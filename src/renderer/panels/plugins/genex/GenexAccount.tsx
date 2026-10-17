@@ -5,6 +5,7 @@
  */
 import type { JSX, ReactNode } from "react";
 import { GenexAction } from "../../../../shared/genex.ts";
+import { CreditsShard } from "../../../play/CreditsShard.tsx";
 import { Button } from "../../../ui/Button.tsx";
 import { Icon } from "../../../ui/icons.tsx";
 import { Pending } from "../../../ui/Pending.tsx";
@@ -58,7 +59,10 @@ function Stat({ label, value, warn = false }: { label: string; value: string; wa
   return (
     <div className="genex-stat" data-warn={warn || undefined}>
       <dt>{label}</dt>
-      <dd>{value}</dd>
+      <dd>
+        <CreditsShard size={20} />
+        {value}
+      </dd>
     </div>
   );
 }
@@ -121,7 +125,7 @@ function StateBody({ view, live }: { view: GenexAccountView; live: GenexLive }):
   const connect = () => void live.act(GenexAction.Connect);
   switch (view.kind) {
     case GenexAccountKind.Loading:
-      return <Pending label={WORDS.loading} className="genex-checking" />;
+      return <Pending label={WORDS.loading} className="genex-checking" spinner />;
     case GenexAccountKind.SignedOut:
       return (
         <Prompt
@@ -174,7 +178,7 @@ function StateBody({ view, live }: { view: GenexAccountView; live: GenexLive }):
         </Prompt>
       );
     case GenexAccountKind.Checking:
-      return <Pending label={WORDS.checking} className="genex-checking" />;
+      return <Pending label={WORDS.checking} className="genex-checking" spinner />;
     case GenexAccountKind.Attention:
       return (
         <Prompt

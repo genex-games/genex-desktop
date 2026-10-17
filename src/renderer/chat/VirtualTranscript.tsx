@@ -39,12 +39,14 @@ const ROW_OPENING = "chat-row-open";
  * row, more for one taking over a placeholder mid-opening), or null when it is simply there.
  * `appended` says it arrived after the rows before it (history and earlier pages never are).
  * While `still` (the chat is loading) nothing has been seen, so what is there once it loads is
- * history too.
+ * history too. While `hold` (the chat's width is changing) the scroller keeps the reader's line
+ * itself, so the rows leave the scroll alone.
  */
 export function VirtualTranscript<T extends { id: string }>({
   items,
   scroller,
   follow,
+  hold,
   renderItem,
   sizeOf,
   entrance,
@@ -53,6 +55,7 @@ export function VirtualTranscript<T extends { id: string }>({
   items: T[];
   scroller: RefObject<HTMLDivElement | null>;
   follow: RefObject<boolean>;
+  hold?: RefObject<boolean>;
   renderItem: (item: T) => ReactNode;
   /** What an unmeasured row's height is guessed from (stable: a module-level function). */
   sizeOf?: (item: T) => RowSize;
@@ -102,8 +105,9 @@ export function VirtualTranscript<T extends { id: string }>({
     };
   }, [scroller]);
   useLayoutEffect(() => {
-    // Following the bottom keeps its own place; otherwise the row that was on top stays there.
-    const previous = follow.current ? null : oldPositions.current;
+    // Following the bottom, or holding the reader's line, keeps its own place; otherwise the row
+    // that was on top stays there.
+    const previous = follow.current || hold?.current ? null : oldPositions.current;
     const element = scroller.current;
     const layout = { ids: items.map((item) => item.id), offsets };
     if (previous && element) {
@@ -112,7 +116,7 @@ export function VirtualTranscript<T extends { id: string }>({
     }
     oldPositions.current = layout;
   }, [offsets]);
-  useHostAnchor(host, scroller, follow);
+  useHostAnchor(host, scroller, follow, hold);
   const enterFrom = (item: T): number | null => {
     const appended = entering.has(item.id);
     if (entrance) return entrance(item, appended);
@@ -184,6 +188,7 @@ function useHostAnchor(
   host: RefObject<HTMLDivElement | null>,
   scroller: RefObject<HTMLDivElement | null>,
   follow: RefObject<boolean>,
+  hold: RefObject<boolean> | undefined,
 ): void {
   const hostTop = useRef<number | null>(null);
   useLayoutEffect(() => {
@@ -192,7 +197,7 @@ function useHostAnchor(
     const top = host.current.getBoundingClientRect().top - element.getBoundingClientRect().top + element.scrollTop;
     const moved = hostTop.current === null ? 0 : top - hostTop.current;
     hostTop.current = top;
-    if (moved && !follow.current) element.scrollTop += moved;
+    if (moved && !follow.current && !hold?.current) element.scrollTop += moved;
   });
 }
 

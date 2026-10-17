@@ -169,7 +169,7 @@ SKILL.md is the assignment story, verbatim. Everything else is Recipe 1/2 mechan
 
 | Thing | Channel | Authority |
 | --- | --- | --- |
-| Each player's avatar (+ `uid`, hp, `life`) | `me.set` / `players` | each player |
+| Each player's avatar (hp, `life`; the relay stamps `uid`) | `me.set` / `players` | each player |
 | The team map (`id → red/blue`) | `shared` (`"teams"`) | the **host** — the SKILL.md reconciler, every tick |
 | Team scores | `shared` (exactly-once marker — SKILL.md host section) | `room.isHost` |
 | Attacks / defeats | `send` (Recipe 2 rules verbatim) | attacker / victim |

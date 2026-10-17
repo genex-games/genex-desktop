@@ -18,7 +18,9 @@ export type StillSource =
   | { project: string; asset: string; maxPx?: number; version?: string };
 
 const STILL_CACHE_MAX = 64;
-const cache = new Map<string, { identity: string; pending: Promise<string | null> }>();
+/** A read on its way, and its picture once it arrived. */
+type StillEntry = { identity: string; pending: Promise<string | null>; value?: string };
+const cache = new Map<string, StillEntry>();
 
 const dataUrl = (still: { mimeType: string; data: string } | null): string | null =>
   still ? `data:${still.mimeType};base64,${still.data}` : null;
@@ -60,7 +62,10 @@ export function loadStill(source: StillSource): Promise<string | null> {
   for (const [older, entry] of cache) if (entry.identity === identity) cache.delete(older);
   const pending = read(source).then(
     (value) => {
-      if (!value && cache.get(key)?.pending === pending) cache.delete(key);
+      const entry = cache.get(key);
+      if (entry?.pending !== pending) return value;
+      if (value) entry.value = value;
+      else cache.delete(key);
       return value;
     },
     () => {
@@ -76,9 +81,16 @@ export function loadStill(source: StillSource): Promise<string | null> {
   return pending;
 }
 
+/** The picture already read for a cached source, there at once; undefined until its read answered. */
+export function stillNow(source: StillSource): string | undefined {
+  const key = keyOf(source);
+  return key === null ? undefined : cache.get(key)?.value;
+}
+
 /**
- * The same read as a hook. A cached source starts blank when it changes; a `retry` source keeps
- * showing the last picture until the new read answers.
+ * The same read as a hook. A picture already read shows from the first frame, so a card that
+ * mounts again never pops it in; an unread cached source starts blank when it changes; a `retry`
+ * source keeps showing the last picture until the new read answers.
  */
 export function useStill(source: StillSource | null): string | null {
   const [src, setSrc] = useState<string | null>(null);
@@ -98,5 +110,5 @@ export function useStill(source: StillSource | null): string | null {
       cancelled = true;
     };
   }, [key]);
-  return src;
+  return (source ? stillNow(source) : undefined) ?? src;
 }

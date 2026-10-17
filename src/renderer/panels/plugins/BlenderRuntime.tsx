@@ -95,7 +95,7 @@ function RuntimeBody({ plugin, blender }: { plugin: PluginInfo; blender: ReturnT
   const install = plugin.manifest.nativeRuntimes?.[0]?.install;
   const pinned = /(\d+\.\d+\.\d+)/.exec(install?.url ?? "")?.[1] ?? "";
   const size = install ? megabytes(install.bytes) : "";
-  if (!status) return <Pending label={WORDS.checking} className="genex-checking" />;
+  if (!status) return <Pending label={WORDS.checking} className="genex-checking" spinner />;
   const job = status.installation;
   if (job?.active)
     return (

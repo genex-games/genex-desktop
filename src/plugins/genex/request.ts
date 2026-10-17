@@ -36,54 +36,64 @@ export const TOOL_OPERATIONS = [...Object.keys(OPERATIONS), GenexOperation.Inspe
 /** Operations answered by the host itself, from delivered files, never by the CLI. */
 export const USE_OPERATIONS = new Set<string>([GenexOperation.InspectUse, GenexOperation.VerifyUse]);
 
-const OPTIONS = new Set([
-  "image",
-  "edit",
-  "frame",
-  "start-frame",
-  "video",
-  "preset",
-  "type",
-  "granularity",
-  "transparent",
-  "terrain",
-  "duration",
-  "voice",
-  "aspect",
-  "quality",
-  "candidates",
-  "size",
-  "loop",
-  "remove-bg",
-  "bg-mode",
-  "parts",
-  "locomotion",
-  "direct-text",
-  "candidate",
-  "texture",
-  "geometry",
-  "quad",
-  "low-poly",
-  "face-limit",
-  "auto-size",
-  "clean",
-  "upscale",
-  "inpaint",
-  "resolution",
-  "first-frame",
-  "last-frame",
-  "voice-id",
-  "polycount",
-  "pose",
-  "no-ultra",
-  "no-controller-pack",
-  "glass",
-  "action",
-  "animation",
-  "lean",
-  "no-fingers",
-  "height",
-]);
+/** The options a one-shot Meshy body takes: `creature`, and `character` on its direct routes. */
+const MESHY_ONE_SHOT = ["image", "polycount", "height", "pose", "texture", "no-ultra", "animation"] as const;
+
+/**
+ * The options each operation forwards to the CLI: all the host accepts for it, and what a refusal
+ * names. Taken from what the pinned CLI reads for each command; a flag the CLI would silently drop
+ * for that command (or refuse beside `--no-wait`, which Studio always passes) is not listed.
+ */
+export const LANE_OPTIONS = {
+  [GenexOperation.Model]: ["auto-size", "face-limit", "low-poly", "texture", "geometry", "quad", "parts", "image"],
+  [GenexOperation.Image]: [
+    "aspect",
+    "size",
+    "quality",
+    "transparent",
+    "candidates",
+    "edit",
+    "inpaint",
+    "remove-bg",
+    "bg-mode",
+    "clean",
+    "upscale",
+  ],
+  [GenexOperation.Texture]: ["terrain"],
+  [GenexOperation.Video]: ["duration", "resolution", "loop", "frame", "start-frame", "first-frame", "last-frame"],
+  [GenexOperation.Sfx]: ["duration", "loop"],
+  [GenexOperation.Music]: ["duration"],
+  [GenexOperation.Voice]: ["voice", "voice-id"],
+  [GenexOperation.ModelImport]: [],
+  [GenexOperation.ModelSegment]: ["granularity"],
+  [GenexOperation.ModelRig]: ["type"],
+  [GenexOperation.ModelAnimate]: ["preset"],
+  [GenexOperation.Character]: ["direct-text", ...MESHY_ONE_SHOT, "no-controller-pack"],
+  [GenexOperation.Creature]: MESHY_ONE_SHOT,
+  [GenexOperation.CharacterPreview]: ["candidate", "texture", "no-ultra"],
+  [GenexOperation.CharacterFinalize]: ["animation", "height"],
+  [GenexOperation.CharacterImport]: ["height", "no-fingers"],
+  [GenexOperation.CharacterAnimate]: ["action", "animation", "locomotion", "video", "duration"],
+  [GenexOperation.CreatureAnimate]: ["locomotion", "video", "duration", "lean"],
+  [GenexOperation.CharacterMotions]: [],
+  [GenexOperation.AnimationsSearch]: [],
+  [GenexOperation.Wait]: [],
+} as const satisfies Record<keyof typeof OPERATIONS, readonly string[]>;
+
+/** An operation's options, for a refusal to name: the lane's own, or none. */
+const laneOptions = (operation: string): readonly string[] =>
+  Object.hasOwn(LANE_OPTIONS, operation) ? LANE_OPTIONS[operation as keyof typeof LANE_OPTIONS] : [];
+
+const WAIT_HINT =
+  "Studio submits every create without waiting: pick the result up with operation wait and its generationId.";
+/** The line a refusal adds for an option agents reach for that the lanes or Studio settle themselves. */
+const OPTION_HINTS: Readonly<Record<string, string>> = {
+  provider:
+    "There is no provider option: each lane's provider is fixed (status names them). The model lane is Tripo; Meshy makes only character and creature bodies.",
+  wait: WAIT_HINT,
+  noWait: WAIT_HINT,
+  "no-wait": WAIT_HINT,
+};
 /** Options whose value is a file in the game, copied into the job before the CLI sees it. */
 export const FILE_OPTIONS = new Set([
   "image",
@@ -116,6 +126,8 @@ const MAX_ANIMATIONS = 16;
 const MAX_TEXT_CHARS = 16000;
 /** A generation id or an animation name: no leading dash, so it can never read as a CLI flag. */
 export const GENEX_NAME = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,159}$/;
+/** A catalog clip named or searched for ("Left Slash", 466): spaces inside, never a leading dash. */
+const ANIMATION_SELECTOR = /^[a-zA-Z0-9][a-zA-Z0-9 _-]{0,159}$/;
 const SCALAR_TYPES = ["string", "number", "boolean"];
 
 const MESSAGE = {
@@ -123,7 +135,13 @@ const MESSAGE = {
   OptionsNotObject: "Options must be an object",
   InvalidPrompt: "Invalid asset prompt",
   InvalidAnimation: "Invalid animation selection",
-  UnsupportedOption: (key: string) => `Unsupported Genex option: ${key}`,
+  UnsupportedOption: (operation: string, key: string) => {
+    const takes = laneOptions(operation);
+    const lane = takes.length ? `${operation} takes: ${takes.join(", ")}.` : `${operation} takes no options.`;
+    const hint = Object.hasOwn(OPTION_HINTS, key) ? OPTION_HINTS[key] : "";
+    return [`Unsupported Genex option for ${operation}: ${key}.`, lane, hint].filter(Boolean).join(" ");
+  },
+  InvalidOptionValue: (key: string) => `Genex option ${key} takes a string, a number or true/false`,
   InvalidNumber: "Invalid numeric Genex option",
   OptionTooLong: "Genex option is too long",
   InvalidRequest: "Invalid asset request",
@@ -136,15 +154,17 @@ const isFlagLike = (value: string) => value.startsWith("-");
 /** One to {@link MAX_ANIMATIONS} animation names or numbers, none of them flag-like. */
 function isValidAnimationSelection(value: unknown[]): boolean {
   if (!value.length || value.length > MAX_ANIMATIONS) return false;
-  return value.every((item) => ["string", "number"].includes(typeof item) && GENEX_NAME.test(String(item)));
+  return value.every((item) => ["string", "number"].includes(typeof item) && ANIMATION_SELECTOR.test(String(item)));
 }
 
-function validateOption(key: string, value: unknown): void {
+/** One option of `operation`: one its lane takes, with a bounded scalar (or clip list) value. */
+function validateOption(operation: string, key: string, value: unknown): void {
+  if (!laneOptions(operation).includes(key)) throw new Error(MESSAGE.UnsupportedOption(operation, key));
   if (key === "animation" && Array.isArray(value)) {
     if (!isValidAnimationSelection(value)) throw new Error(MESSAGE.InvalidAnimation);
     return;
   }
-  if (!OPTIONS.has(key) || !SCALAR_TYPES.includes(typeof value)) throw new Error(MESSAGE.UnsupportedOption(key));
+  if (!SCALAR_TYPES.includes(typeof value)) throw new Error(MESSAGE.InvalidOptionValue(key));
   if (typeof value === "number" && !Number.isFinite(value)) throw new Error(MESSAGE.InvalidNumber);
   const unsafeText = typeof value === "string" && (value.length > MAX_TEXT_CHARS || isFlagLike(value));
   if (unsafeText) throw new Error(MESSAGE.OptionTooLong);
@@ -162,7 +182,7 @@ export function validateGenexRequest(request: GenexRequest): void {
   if (!request || !Object.hasOwn(OPERATIONS, request.operation)) throw new Error(MESSAGE.Unsupported);
   if (hasInvalidOptions(request)) throw new Error(MESSAGE.OptionsNotObject);
   if (hasInvalidPrompt(request)) throw new Error(MESSAGE.InvalidPrompt);
-  for (const [key, value] of Object.entries(request.options ?? {})) validateOption(key, value);
+  for (const [key, value] of Object.entries(request.options ?? {})) validateOption(request.operation, key, value);
   if (hasOversizedPromptOrBadId(request)) throw new Error(MESSAGE.InvalidRequest);
 }
 

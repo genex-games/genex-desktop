@@ -16,10 +16,16 @@ const NATIVE_CHANNELS = [
   "studio:plugins.lookup-github",
   "studio:plugins.github-versions",
   "studio:plugins.update",
+  // A plugin panel's Choose file opens Studio's native file picker; a fixture profile answers unsupported.
+  "studio:plugins.choose-file",
   // Publish from Studio's dialog uploads the game to Genex with the user's real account.
   "studio:plugins.genex-publish",
   "studio:subscription.signin",
   "studio:subscription.forget-studio-login",
+  // A subscription's accounts: listing asks each account's CLI for its email; choosing one changes
+  // the account every run signs in with.
+  "studio:subscription.accounts",
+  "studio:subscription.use-account",
   // OpenCode's sign-in runs its CLI in a terminal and reaches the provider the person picks.
   "studio:opencode.signin",
   // Pi's sign-in runs its TUI in a terminal so the person can `/login`.
@@ -30,6 +36,16 @@ const NATIVE_CHANNELS = [
   // deletes it there. A fixture profile has no key and no network.
   "studio:openrouter.key.save",
   "studio:openrouter.key.clear",
+  // The browser sign-in opens OpenRouter in the person's browser, listens on a loopback port and
+  // redeems the code with OpenRouter; opening its page again is the browser too.
+  "studio:openrouter.signin",
+  "studio:openrouter.signin.reopen",
+  // Connecting asks the person's own model server on this computer or the local network, and keeps
+  // its key in the OS secret store; finding one asks this computer's usual ports. A fixture
+  // profile reaches no server.
+  "studio:local-server.connect",
+  "studio:local-server.forget",
+  "studio:local-server.find",
   "studio:codex-login.browser",
   "studio:codex-login.retry",
   "studio:claude-login.browser",
@@ -71,6 +87,10 @@ const NATIVE_CHANNELS = [
   "studio:update.restart",
   // Download opens the waiting release's page in the person's real browser.
   "studio:update.download",
+  // Open Privacy settings opens macOS System Settings.
+  "studio:app-look.open-settings",
+  // Share… pops the Mac's share menu (Messages, Mail, AirDrop), which hands the link to other apps.
+  "studio:play.share",
 ] as const satisfies readonly StudioInvokeChannel[];
 /**
  * Native steps inside a handler, asserted by name with `assertNativeActionAllowed`; no channel of
@@ -79,6 +99,10 @@ const NATIVE_CHANNELS = [
 const NATIVE_STEPS = [
   // `studio:plugins.action` asserts it before the native dialog that approves a confirmed action.
   "studio:plugins.approval",
+  // `studio:plugins.action` asserts it before an action its manifest marks `native`: one that starts,
+  // quits or opens a desktop app or the browser, or writes outside the plugin's storage. A fixture
+  // profile refuses it before the backend runs.
+  "studio:plugins.native-action",
   // Names left from Genex's own channels, from before Genex became a plugin. Kept native, so a
   // channel that brings one back starts out refused in fixtures.
   "studio:genex.connect",
@@ -122,12 +146,16 @@ const FIXTURE_SAFE = [
   "studio:bootstrap",
   "studio:performance.mark",
   "studio:send",
+  // A failed @ tag fetched again: a fixture launch's tag sources are its own stand-ins, as Remix's are.
+  "studio:mentions.retry",
   "studio:plan.answer",
   "studio:cancel",
   "studio:queue.message",
-  // Rewind reads and rewrites only the chat's own log and its game folder's checkpoints.
+  // Rewind, and bringing back what it replaced, read and rewrite only the chat's own log and its
+  // game folder's checkpoints.
   "studio:chat.rewind.preview",
   "studio:chat.rewind",
+  "studio:chat.rewind.undo",
   "studio:events",
   "studio:chat.page",
   "studio:compact",
@@ -148,9 +176,17 @@ const FIXTURE_SAFE = [
   "studio:snapshots",
   "studio:rollback",
   "studio:game.archive",
+  // What freeing space deletes, and deleting it: git in the games' folders, Genex's own copies.
+  "studio:storage",
+  "studio:storage.free",
+  "studio:game.engine.undo",
+  // Stops a process this profile's own agent started; nothing outside the profile changes.
+  "studio:jobs.stop",
   "studio:game.create",
   // Naming a new game is one completion on the picked engine, like a chat message (`studio:send`).
   "studio:game.name",
+  // Making home's background is one completion on the picked engine too.
+  "studio:backdrop.make",
   "studio:game.update",
   "studio:game.remove",
   "studio:game.references",
@@ -171,6 +207,8 @@ const FIXTURE_SAFE = [
   "studio:preview.load",
   "studio:preview.screens",
   "studio:preview.bounds",
+  // A picture of the app's own game view for its own stage: nothing outside the app is reached.
+  "studio:preview.cover-still",
   "studio:preview.sound",
   "studio:preview.reload",
   "studio:preview.stop",
@@ -216,7 +254,8 @@ const FIXTURE_SAFE = [
   "studio:skills.project",
   "studio:plugins.skill",
   // Reading the index and watching a local folder open no dialog and, offline, no socket either.
-  // Actions reach native steps only through the `plugins.approval`/`open-url` checks inside them.
+  // Actions reach native steps only through the `plugins.approval`, `plugins.native-action` and
+  // `open-url` checks inside them.
   "studio:plugins.consent",
   // A chat's mode, its cards' answers and the saved rules: the profile's own files, no dialog or socket.
   "studio:permissions.get",
@@ -236,6 +275,49 @@ const FIXTURE_SAFE = [
   "studio:plugins.genex-publish-review",
   "studio:plugins.index",
   "studio:plugins.watch",
+  // A local plugin's grants live in the profile's install record; no dialog, no socket.
+  "studio:plugins.forget-allowed",
+  // Play: a fixture launch answers the catalog from its own fixture data and plays a local stand-in
+  // page (`dev/fixture-play.ts`), so no socket opens; Remix inside the viewer is not a channel.
+  "studio:play.feed",
+  "studio:play.shelves",
+  "studio:play.search",
+  "studio:play.catalog",
+  // A remix writes a new game into the profile's own games folder; a fixture launch's copy is a
+  // local stand-in (`play/remix.ts` `fixtureClone`), so no socket opens.
+  "studio:play.remix",
+  "studio:play.online",
+  "studio:play.open",
+  "studio:play.close",
+  // The viewer header's controls: a fixture launch's likes, tickets and invites answer signed out, even with its account.
+  "studio:play.control",
+  // Play's people: a fixture launch answers from its own people (`dev/fixture-play.ts`), signed out
+  // unless the launch asks for its fixture account, and an avatar "upload" stays in memory.
+  "studio:play.me",
+  "studio:play.rename",
+  "studio:play.avatar",
+  "studio:play.profile",
+  "studio:play.friends",
+  "studio:play.friend",
+  "studio:play.people",
+  "studio:play.visibility",
+  "studio:play.avatarStyle",
+  "studio:play.avatarVariant",
+  // A creator's stats, Top creators and the Credits tab: a fixture launch answers from its own
+  // made-up numbers, signed out unless it asks for its fixture account.
+  "studio:play.stats",
+  "studio:play.creators",
+  "studio:play.credits",
+  // The nickname: a fixture launch answers a check and a save from its own people (a few names
+  // taken or kept), signed out unless it asks for its fixture account; the save lasts the launch.
+  "studio:play.handle-check",
+  "studio:play.handle",
+  // The app's Genex account: a fixture launch's is its own (`dev/fixture-genex-account.ts`), signed
+  // in as the fixture account it asked for; its sign-in opens no page and its sign-out lasts the launch.
+  "studio:genex-account.read",
+  "studio:genex-account.sign-in",
+  "studio:genex-account.cancel",
+  "studio:genex-account.sign-out",
   // Connectors write a file inside the profile; only the trust step is native.
   "studio:mcp.list",
   "studio:mcp.save",
@@ -245,6 +327,7 @@ const FIXTURE_SAFE = [
   "studio:mcp.cancel-authorization",
   "studio:mcp.disconnect-account",
   "studio:mcp.tools",
+  "studio:mcp.forget-always",
   "studio:connections",
   "studio:claude-login.state",
   "studio:claude-login.code",
@@ -252,6 +335,8 @@ const FIXTURE_SAFE = [
   "studio:codex-login.state",
   "studio:codex-login.cancel",
   "studio:codex-login.dismiss",
+  // Stopping OpenRouter's browser sign-in only closes its loopback callback.
+  "studio:openrouter.signin.cancel",
   // Adoption opens no network and writes only inside the profile's own games root.
   "studio:project.inspect",
   "studio:project.adopt",

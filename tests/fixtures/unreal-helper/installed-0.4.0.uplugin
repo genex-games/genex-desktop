@@ -1,0 +1,19 @@
+{
+	"FileVersion": 3,
+	"Version": 4,
+	"VersionName": "0.4.0",
+	"FriendlyName": "Genex editor helper",
+	"Description": "Lets Genex build and play-test this game: applies and rolls back parts, holds the player's input during a play session, captures the play view, probes the pawns and the player's view for Genex's judge, imports assets and exports the node reference and the project's Blueprints for Genex's checks. Python only, nothing to compile.",
+	"Category": "Editor",
+	"CreatedBy": "Genex",
+	"CanContainContent": true,
+	"EditorOnly": true,
+	"EnabledByDefault": true,
+	"Plugins": [
+		{ "Name": "PythonScriptPlugin", "Enabled": true },
+		{ "Name": "ToolsetRegistry", "Enabled": true },
+		{ "Name": "ModelContextProtocol", "Enabled": true },
+		{ "Name": "EditorToolset", "Enabled": true },
+		{ "Name": "EnhancedInput", "Enabled": true }
+	]
+}

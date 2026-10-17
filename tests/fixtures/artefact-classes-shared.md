@@ -10,8 +10,8 @@ a defect outside the list is described in full.
 - `[light-cone]` visible volumetric cones, pyramids or "huts" over lamps.
 - `[moire]` shimmer or stripes on fine repeating textures (ceilings, grilles, skies).
 - `[floating]` props, characters or enemies hovering above or sunk into the floor.
-- `[duplicate-overlay]` the same HUD element or readout drawn twice; overlapping or misaligned
-  overlays; a `user:view` frame showing UI the canvas frame lacks.
+- `[duplicate-overlay]` the same HUD element or readout drawn twice within one frame; overlapping
+  or misaligned overlays. Never a difference between `user:view` and a canvas frame.
 - `[primitive]` a weapon, prop or character that is an untextured box/capsule with no silhouette.
 - `[no-hands]` a first-person view with no arms or hands holding the weapon or tool.
 - `[noise-as-texture]` tiling noise standing in for a material.

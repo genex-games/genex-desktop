@@ -22,6 +22,12 @@ export interface PluginConsentRequest {
    * `by: 'turn'`); its own session's end, a Stop, the answer or the timeout do.
    */
   outlivesTurn?: boolean;
+  /**
+   * A connector's question the chat's mode can answer: the person switching `threadId` (the chat
+   * the call answers to) to one of `modes` approves it (`approveForMode`), as that mode asks
+   * nothing first for it.
+   */
+  modeAnswers?: { threadId: string; modes: readonly string[] };
 }
 
 export interface PluginConsentPending {
@@ -37,6 +43,10 @@ export interface PluginConsentPending {
 export interface PluginConsentResult {
   approved: boolean;
   by: PluginConsentBy;
+  /** The person chose Always allow (a connector's card only offers it). */
+  always?: boolean;
+  /** On an approval: the person's edit of the card's field (`confirmationInput`), as they sent it. */
+  input?: string;
 }
 
 export interface PluginConsentOptions {
@@ -46,7 +56,12 @@ export interface PluginConsentOptions {
   now?: () => number;
 }
 
-type Waiting = { entry: PluginConsentPending; outlivesTurn: boolean; settle: (result: PluginConsentResult) => void };
+type Waiting = {
+  entry: PluginConsentPending;
+  outlivesTurn: boolean;
+  modeAnswers: PluginConsentRequest["modeAnswers"];
+  settle: (result: PluginConsentResult) => void;
+};
 
 export class PluginConsent {
   readonly #timeoutMs: number;
@@ -83,15 +98,24 @@ export class PluginConsent {
         resolve(result);
       };
       request.signal?.addEventListener("abort", onAbort, { once: true });
-      this.#waiting.set(request.consentId, { entry, outlivesTurn: request.outlivesTurn === true, settle });
+      this.#waiting.set(request.consentId, {
+        entry,
+        outlivesTurn: request.outlivesTurn === true,
+        modeAnswers: request.modeAnswers,
+        settle,
+      });
     });
   }
 
-  /** The user's answer. False when the id is unknown or already settled — a second click changes nothing. */
-  resolve(consentId: string, approved: boolean): boolean {
+  /**
+   * The user's answer, with their edit of the card's field when it has one (kept on an approval
+   * only). False when the id is unknown or already settled — a second click changes nothing.
+   */
+  resolve(consentId: string, approved: boolean, always = false, input?: string): boolean {
     const waiting = this.#waiting.get(consentId);
     if (!waiting) return false;
-    waiting.settle({ approved, by: "user" });
+    const edited = approved && input !== undefined ? { input } : {};
+    waiting.settle({ approved, by: "user", ...(approved && always ? { always: true } : {}), ...edited });
     return true;
   }
 
@@ -107,6 +131,18 @@ export class PluginConsent {
       if (scope.threadId !== undefined && waiting.entry.threadId !== scope.threadId) continue;
       if (by === "turn" && waiting.outlivesTurn) continue;
       waiting.settle({ approved: false, by });
+      settled += 1;
+    }
+    return settled;
+  }
+
+  /** The person switched chat `threadId` to `mode`: each question that mode answers is approved (`by: 'mode'`). */
+  approveForMode(threadId: string, mode: string): number {
+    let settled = 0;
+    for (const waiting of [...this.#waiting.values()]) {
+      const answers = waiting.modeAnswers;
+      if (answers?.threadId !== threadId || !answers.modes.includes(mode)) continue;
+      waiting.settle({ approved: true, by: "mode" });
       settled += 1;
     }
     return settled;

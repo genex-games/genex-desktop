@@ -8,7 +8,12 @@ import { EngineId } from "../shared/providers.ts";
  * other engine's CLI owns it and compacts at its own point (Claude Code, Codex, OpenCode): the
  * studio sets no threshold for them.
  */
-const STUDIO_COMPACTED_ENGINES: readonly string[] = [EngineId.Bonsai, EngineId.Ollama, EngineId.OpenRouter];
+const STUDIO_COMPACTED_ENGINES: readonly string[] = [
+  EngineId.Bonsai,
+  EngineId.Ollama,
+  EngineId.OpenRouter,
+  EngineId.LocalServer,
+];
 /** Where the studio compacts a local engine's context when no threshold is set. */
 const LOCAL_DEFAULT_COMPACTION_PERCENT = 70;
 /** The longest engine, model and thread ids a settings key accepts. */

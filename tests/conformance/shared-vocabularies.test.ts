@@ -72,7 +72,8 @@ describe("engines", () => {
   it("have one id table the provider list comes from", () => {
     assert.deepEqual(
       PROVIDERS.map((provider) => provider.id),
-      // Flipped (OpenCode, OpenRouter): the metered providers follow the local ones.
+      // Flipped (OpenCode, OpenRouter, Pi, a local server): the metered providers follow the local
+      // ones, and a server the person runs comes last.
       [
         EngineId.ClaudeCode,
         EngineId.Codex,
@@ -81,6 +82,7 @@ describe("engines", () => {
         EngineId.OpenCode,
         EngineId.OpenRouter,
         EngineId.Pi,
+        EngineId.LocalServer,
       ],
     );
   });

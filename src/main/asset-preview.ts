@@ -5,6 +5,7 @@ import { constants } from "node:fs";
 import { assertRelativePath } from "../substrate/paths.ts";
 import { ASSET_PREVIEW_MIME, assetExtension } from "../shared/asset-preview.ts";
 import { StudioPlatform } from "../shared/boot.ts";
+import { type AssetFolder, isAssetPath } from "../shared/project-workspace.ts";
 
 /** The largest file previewed in memory (the message below names it: 100 MiB). */
 const PREVIEW_MAX_BYTES = 100 * 1024 * 1024;
@@ -27,6 +28,11 @@ const MESSAGE = {
     "This file exceeds the 100 MiB in-app preview memory limit. The original is unchanged; open it in its authoring app.",
   changedWhileReading: "Asset changed while reading. Try again.",
 } as const;
+
+/** Refuse a file outside a game's asset folders (or not of a format its folder lists), as a preview does. */
+export function assertAssetPath(file: string, folders: readonly AssetFolder[]): void {
+  if (!isAssetPath(file, folders)) throw new Error(MESSAGE.notAnAsset);
+}
 
 /** Bounded in-memory preview, not an asset-generation or export size restriction. */
 export async function readAssetPreview(

@@ -6,17 +6,21 @@
  * The frame is the game's own demo named `genex-cover` (`config.demos`), photographed by the host
  * through `observe` with a `still` into this plugin's storage, `covers/<project>/`. It is sent with
  * the pinned CLI's `genex cover <file> --json` after a publish is recorded, or at once by
- * genex__cover-set. Studio never sends a frame nobody staged and never reads the game folder for
- * one; Genex decides everything that matters (who outranks whom, the dark and flat gate, the
+ * genex__cover-set. Until the game has that demo, Studio keeps a plain frame of it as it loads
+ * (`GenexCoverOrigin.Studio`), so Publish always shows a cover; the recent frames are kept as
+ * candidates the person flips between. Studio never reads the game folder for a frame; Genex
+ * decides everything that matters (who outranks whom, the dark and flat gate, the
  * stored size), so every threshold here is an advisory mirror.
  */
 import { createHash, randomUUID } from "node:crypto";
 import { lstat, mkdir, open, readdir, readFile, rm } from "node:fs/promises";
 import path from "node:path";
-import { SECOND_MS } from "../../shared/duration.ts";
+import { MINUTE_MS, SECOND_MS } from "../../shared/duration.ts";
 import {
+  GENEX_COVER_CANDIDATES_DIR,
   GENEX_COVER_MAX_BYTES,
   GENEX_COVER_SHOT_FILE,
+  GenexCoverOrigin,
   type GenexCoverFrameStats,
   GenexCoverOperation,
   GenexCoverOutcome,
@@ -37,6 +41,10 @@ export const COVER_VIEW = "genex-cover";
 export const COVER_MAX_BYTES = GENEX_COVER_MAX_BYTES;
 /** What the host is asked for: the genex-cover demo at Genex's recommended 1920×1080, within its limit. */
 export const COVER_STILL = { demo: COVER_VIEW, width: 1920, height: 1080, maxBytes: COVER_MAX_BYTES } as const;
+/** The camera of Studio's own frame for a game with no genex-cover demo: the view the game renders itself. */
+export const COVER_FALLBACK_CAMERA = "default";
+/** How soon after its last one Studio may take a game's cover again on its own. */
+export const COVER_AUTO_GAP_MS = 2 * MINUTE_MS;
 /** Mirror of the host's ceiling for one backend call (`CALL_TIMEOUT_MS` in the plugin registry). */
 export const INVOCATION_BUDGET_MS = 190 * SECOND_MS;
 /** A publish shoots again only with this much of its call left, so its own answer still arrives. */
@@ -61,6 +69,11 @@ const WIDE_TOLERANCE = 0.01;
 const REASON_CHARS = 240;
 const AVAILABLE_MAX = 32;
 const SHOT_RECORD = "shot.json";
+const CANDIDATES_RECORD = "candidates.json";
+/** How many recent frames the person can flip between in Publish. */
+export const COVER_CANDIDATES_MAX = 4;
+/** A candidate's name: the sha256 of its image bytes, nothing a path could hide in. */
+const CANDIDATE_SHA = /^[0-9a-f]{64}$/;
 const SENT_RECORD = "sent.json";
 /** A send's own copy of the shot it uploads, beside the shot: removed when the send ends. */
 const SEND_COPY_PREFIX = ".send-";
@@ -117,7 +130,10 @@ export type CoverDelivery = (typeof CoverDelivery)[keyof typeof CoverDelivery];
  */
 export interface CoverCamera {
   invokedAt: number;
-  shoot(): Promise<unknown>;
+  /** A still of the genex-cover demo, or of the camera named (Studio's own frame of a game with no demo). */
+  shoot(view?: { camera: string }): Promise<unknown>;
+  /** A recording of the genex-clip demo; absent where the host records no clips. */
+  record?(): Promise<unknown>;
 }
 
 /** The CLI's answer to an upload. */
@@ -163,7 +179,7 @@ const percent = (n: number) => `${Math.round(n * 100)}%`;
 /** Every sentence the cover speaks: to the agent in tool answers, and to both in publish warnings. */
 export const MESSAGE = {
   PreviewLabel: "The genex-cover shot (preview)",
-  BadOperation: "Cover operation must be shoot or status",
+  BadOperation: "Cover operation must be shoot, clip or status",
   NoShotSent: "No cover frame was sent: this game has no genex-cover shot, so Genex keeps the cover it has.",
   NoTimeToShoot:
     "There was not enough time left in this request to shoot the cover again, so the last genex-cover shot was sent.",
@@ -193,6 +209,7 @@ export const MESSAGE = {
   SendTimedOut: "Genex did not answer about the cover in time",
   OwnerHolds:
     "The owner chose this game's cover on genex.games and that choice stands: send nothing, and never ask them to clear it.",
+  NoSuchCandidate: "That cover is no longer among this game's recent frames.",
   TermsFirst: "Genex's terms have changed: the user must accept them on genex.games before the cover can be set.",
 } as const;
 
@@ -264,6 +281,8 @@ const asBuffer = (bytes: Uint8Array) => Buffer.from(bytes.buffer, bytes.byteOffs
 const STILL_TYPES = new Set<string>(Object.values(StillMimeType));
 const PROBLEM_CODES = new Set<string>(Object.values(PluginStillProblemCode));
 const SOURCES = new Set<string>(Object.values(CaptureSource));
+const ORIGINS = new Set<string>(Object.values(GenexCoverOrigin));
+const optionalFlag = (value: unknown) => value === undefined || typeof value === "boolean";
 
 /** The exposure numbers of a still or a kept shot, or null when any is missing or out of range. */
 function exposure(value: unknown): StillExposure | null {
@@ -502,7 +521,8 @@ function isShot(value: unknown): value is GenexCoverShot {
   const typed = typeof value.sha256 === "string" && typeof value.takenAt === "string";
   const sized = wholePixels(value.width) && wholePixels(value.height) && wholePixels(value.bytes);
   const known = STILL_TYPES.has(String(value.mimeType)) && SOURCES.has(String(value.source));
-  return typed && sized && known && exposure(value.stats) !== null;
+  const marks = (value.origin === undefined || ORIGINS.has(String(value.origin))) && optionalFlag(value.pinned);
+  return typed && sized && known && marks && exposure(value.stats) !== null;
 }
 
 async function readJsonFile(file: string): Promise<unknown> {
@@ -546,8 +566,25 @@ async function writePrivateFile(file: string, bytes: Uint8Array): Promise<void> 
   }
 }
 
-/** Keep a still as the game's shot: its image, then its record, then drop an image of the other type. */
-export async function saveShot(dir: string, still: CoverStill, takenAt: string): Promise<GenexCoverShot> {
+/** Put a shot's image and then its record in place as the kept shot, and drop an image of the other type. */
+async function keepShot(dir: string, shot: GenexCoverShot, image: Uint8Array): Promise<GenexCoverShot> {
+  await writePrivateFile(shotPath(dir, shot), image);
+  await atomicWriteText(path.join(dir, SHOT_RECORD), `${JSON.stringify(shot, null, 2)}\n`, { mode: PRIVATE_FILE });
+  const other = shot.mimeType === StillMimeType.Png ? StillMimeType.Jpeg : StillMimeType.Png;
+  await rm(shotPath(dir, { mimeType: other }), { force: true });
+  return shot;
+}
+
+/**
+ * Keep a still as the game's shot, and as the newest of its candidates. `origin` says who staged
+ * it: a new shot is never pinned, so the person's earlier pick gives way to it.
+ */
+export async function saveShot(
+  dir: string,
+  still: CoverStill,
+  takenAt: string,
+  origin: GenexCoverOrigin = GenexCoverOrigin.Demo,
+): Promise<GenexCoverShot> {
   await mkdir(dir, { recursive: true, mode: PRIVATE_DIR });
   const shot: GenexCoverShot = {
     sha256: sha256(still.image),
@@ -558,12 +595,65 @@ export async function saveShot(dir: string, still: CoverStill, takenAt: string):
     source: still.source,
     stats: still.stats,
     takenAt,
+    ...(origin === GenexCoverOrigin.Studio ? { origin } : {}),
   };
-  await writePrivateFile(shotPath(dir, shot), still.image);
-  await atomicWriteText(path.join(dir, SHOT_RECORD), `${JSON.stringify(shot, null, 2)}\n`, { mode: PRIVATE_FILE });
-  const other = shot.mimeType === StillMimeType.Png ? StillMimeType.Jpeg : StillMimeType.Png;
-  await rm(shotPath(dir, { mimeType: other }), { force: true });
+  await keepShot(dir, shot, still.image);
+  await addCandidate(dir, shot, still.image);
   return shot;
+}
+
+/** Where a game's candidates live, and one candidate's image by its type. */
+const candidatesDir = (dir: string) => path.join(dir, GENEX_COVER_CANDIDATES_DIR);
+const candidatePath = (dir: string, shot: Pick<GenexCoverShot, "sha256" | "mimeType">) =>
+  path.join(candidatesDir(dir), `${shot.sha256}${path.extname(GENEX_COVER_SHOT_FILE[shot.mimeType])}`);
+
+/** The recorded candidates, newest first: whole records named by a sha256 only, the pin left off. */
+async function candidateRecords(dir: string): Promise<GenexCoverShot[]> {
+  const listed = await readJsonFile(path.join(dir, CANDIDATES_RECORD));
+  if (!Array.isArray(listed)) return [];
+  return listed
+    .filter((entry): entry is GenexCoverShot => isShot(entry) && CANDIDATE_SHA.test(entry.sha256))
+    .map(({ pinned: _pinned, ...shot }) => shot)
+    .slice(0, COVER_CANDIDATES_MAX);
+}
+
+/** Add a kept shot to the front of the candidates; the oldest past {@link COVER_CANDIDATES_MAX} goes, image and all. */
+async function addCandidate(dir: string, shot: GenexCoverShot, image: Uint8Array): Promise<void> {
+  await mkdir(candidatesDir(dir), { recursive: true, mode: PRIVATE_DIR });
+  const before = await candidateRecords(dir);
+  const { pinned: _pinned, ...entry } = shot;
+  const listed = [entry, ...before.filter((c) => c.sha256 !== shot.sha256)];
+  const kept = listed.slice(0, COVER_CANDIDATES_MAX);
+  await writePrivateFile(candidatePath(dir, shot), image);
+  await atomicWriteText(path.join(dir, CANDIDATES_RECORD), `${JSON.stringify(kept, null, 2)}\n`, {
+    mode: PRIVATE_FILE,
+  });
+  for (const gone of listed.slice(COVER_CANDIDATES_MAX)) await rm(candidatePath(dir, gone), { force: true });
+}
+
+/** The candidates whose images are still there as recorded, newest first. */
+export async function readCandidates(dir: string): Promise<GenexCoverShot[]> {
+  const records = await candidateRecords(dir);
+  const present = await Promise.all(
+    records.map(async (shot) => {
+      const image = await lstat(candidatePath(dir, shot)).catch(() => null);
+      return image?.isFile() && image.size === shot.bytes ? shot : null;
+    }),
+  );
+  return present.filter((shot) => shot !== null);
+}
+
+/**
+ * Make one candidate the kept shot, pinned: the person chose it, so neither Studio nor a publish
+ * shoots a new frame over it. Null when no candidate by that sha256 is whole on disk.
+ */
+export async function pickCandidate(dir: string, sha: unknown): Promise<GenexCoverShot | null> {
+  if (typeof sha !== "string" || !CANDIDATE_SHA.test(sha)) return null;
+  const candidate = (await readCandidates(dir)).find((shot) => shot.sha256 === sha);
+  if (!candidate) return null;
+  const image = await readFile(candidatePath(dir, candidate)).catch(() => null);
+  if (!image || sha256(image) !== candidate.sha256) return null;
+  return keepShot(dir, { ...candidate, pinned: true }, image);
 }
 
 /**

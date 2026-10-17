@@ -4,7 +4,9 @@
  * another repository one level down.
  *
  * Built with the machine's real git. Commits carry a fixture identity and skip signing and hooks,
- * so the builders behave the same whatever the developer's global git config says.
+ * and checkouts keep line endings as committed, so the builders behave the same whatever the
+ * developer's global or system git config says: Git for Windows installs with core.autocrlf=true,
+ * which wrote LF files back as CRLF where the studio's own git (isolated config) reads them as LF.
  */
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
@@ -20,6 +22,8 @@ const IDENTITY = [
   "commit.gpgsign=false",
   "-c",
   "core.hooksPath=/dev/null",
+  "-c",
+  "core.autocrlf=false",
 ];
 
 export async function fixtureGit(dir: string, args: string[]): Promise<string> {

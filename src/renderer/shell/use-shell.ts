@@ -52,7 +52,7 @@ export function useShell() {
     chooseView: views.chooseStageView,
   });
   const firstAsks = useEventLog(useShallow((s) => firstAsksFromEvents(s.feed)));
-  const notices = useShellNotices(app, { ready, dialogs, away: chrome.pluginsOpen }, navigation, views);
+  const notices = useShellNotices(app, { ready, dialogs, away: chrome.workspaceCovered }, navigation, views);
   // At home, the keyboard's composer is home's; the chat's stays mounted beneath it.
   const homeUp = room === Room.Home;
   useShellShortcuts(dialogs, chrome, navigation, homeUp ? handoff.homeComposer : handoff.composer);

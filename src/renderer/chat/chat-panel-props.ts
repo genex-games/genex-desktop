@@ -17,6 +17,8 @@ export interface ChatPanelProps {
   activeThread: ConversationRecord | null;
   status: string;
   busySince: number | null;
+  /** What the open chat's work waits for the person to finish in (a lock's label), when it does. */
+  personFirst?: string | null;
   firstAsk?: string | null;
   loading: boolean;
   loadError?: string;

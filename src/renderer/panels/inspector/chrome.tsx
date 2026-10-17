@@ -115,6 +115,12 @@ const CARD_STYLE = {
 };
 
 /**
+ * A card whose own status carries the colour (the finish check's) wears a neutral edge instead of
+ * the accent ring, so a Not yet, Done or Stopped check never reads blue.
+ */
+const NEUTRAL_CARD_STYLE = { ...CARD_STYLE, boxShadow: "0 0 0 1px var(--line), var(--shadow-overlay)" };
+
+/**
  * The card a selected node opens into. It sits over the canvas, centred where the camera
  * put the node; the graph stays visible and live around it. Previous and next walk the graph
  * beside the card (inside it when the stage is narrow); ← and → do the same.
@@ -133,6 +139,7 @@ export function Panel({
   reply,
   onReply,
   actions,
+  neutralEdge = false,
   children,
 }: {
   id: string;
@@ -148,6 +155,8 @@ export function Panel({
   reply?: Reply | null;
   onReply?: ((reply: Reply) => void) | null;
   actions?: ReactNode;
+  /** A neutral edge for the open card instead of the accent ring: only the finish check's card. */
+  neutralEdge?: boolean;
   children?: ReactNode;
 }): JSX.Element {
   const card = useRef<HTMLElement>(null);
@@ -164,7 +173,7 @@ export function Panel({
         data-graph-panel={id}
         aria-label={label}
         className="pointer-events-auto flex max-h-full w-full max-w-[560px] flex-col overflow-hidden rounded-[18px] bg-surface outline-none select-text"
-        style={CARD_STYLE}
+        style={neutralEdge ? NEUTRAL_CARD_STYLE : CARD_STYLE}
         onPointerDown={(event) => event.stopPropagation()}
         onClick={(event) => event.stopPropagation()}
       >

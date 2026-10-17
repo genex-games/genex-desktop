@@ -12,10 +12,18 @@ import { tmpDir } from "./tmp.ts";
 
 const src = fileURLToPath(new URL("../../src", import.meta.url));
 
+let resources: Promise<string> | undefined;
+
+/** One read-only assembly per test file; every core still gets its own writable profile. */
+export function sharedResources(): Promise<string> {
+  resources ??= makeResources();
+  return resources;
+}
+
 /**
- * Assemble the read-only resources the core expects, without needing a build. The type gate's
+ * Assemble a fresh resources folder, for fixtures that change what the app ships. The type gate's
  * compiler is linked from node_modules, not copied; `tsc: false` leaves it out, as a build that
- * lost it would.
+ * lost it would. Readers that do not change resources use `sharedResources` instead.
  */
 export async function makeResources({ tsc = true }: { tsc?: boolean } = {}): Promise<string> {
   const dir = path.join(await tmpDir("studio-res-"), "resources");

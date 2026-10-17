@@ -3,6 +3,7 @@
  * allowed, not required), and the note that puts attached pictures in front of the model.
  */
 import { launchDecision } from "./launch-prompts.ts";
+import { UNTIL_DONE_WORDS } from "./until-done-prompts.ts";
 import { NARROW_TO_THE_ASK } from "./narrow-prompts.ts";
 import type { AnyRecord } from "../types/harness.d.ts";
 
@@ -35,7 +36,7 @@ function autopilotBriefing(autopilot: AnyRecord): string {
     ``,
     hours
       ? `A build is capped at ${hours} hour${hours === 1 ? "" : "s"}.`
-      : `No time cap — a build runs until its critics are satisfied.`,
+      : `No time cap — a build runs ${UNTIL_DONE_WORDS}.`,
     ...launchDecision("start_autopilot"),
     `The build decomposes the ask into facets, builds them with blind per-facet critics, and integrates.`,
     ``,

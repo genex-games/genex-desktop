@@ -30,6 +30,36 @@ export const COLOR_ROLES = [
   "danger",
 ] as const;
 export type ColorRole = (typeof COLOR_ROLES)[number];
+/**
+ * Play's tinted families (people.css): the profile chips and edit button, the tint buttons (Invite,
+ * Join, Copy), the credits card and the invite card, each a hue the stylesheet mixes into its fill and
+ * edge. Unset, each wears the Play / Create switch's selected blue, the credits card the chips' hue.
+ */
+export const PLAY_HUE_ROLES = ["peopleChip", "peopleTint", "creditsCard", "inviteCard"] as const;
+export type PlayHueRole = (typeof PLAY_HUE_ROLES)[number];
+/**
+ * Play's people, stats and credits colours set by name (people.css): the chips' label and number, the
+ * primary button, genex.games' blue, playing now, Pro, the request count, the stats' line and changes,
+ * and the credit shard. Unset, each keeps the stylesheet's own colour for the scheme.
+ */
+export const PEOPLE_ROLES = [
+  "peopleChipText",
+  "peopleChipNumber",
+  "playBlue",
+  "peoplePrimary",
+  "peoplePrimaryShade",
+  "peopleLive",
+  "peopleLiveText",
+  "peoplePro",
+  "peopleRequest",
+  "statsLine",
+  "statsUp",
+  "statsDown",
+  "shardLight",
+  "shardMid",
+  "shardDark",
+] as const;
+export type PeopleRole = (typeof PEOPLE_ROLES)[number];
 /** Roles a palette may set or leave to the app, which derives each from the core roles until it is set. */
 export const DETAIL_ROLES = [
   "accentFill",
@@ -60,10 +90,21 @@ export const DETAIL_ROLES = [
   "meterFull",
   "promptEdge",
   "viewSwitch",
+  "playSelected",
+  "playSelectedEdge",
+  "playTrack",
+  "playTrackEdge",
+  "playSelectedText",
+  "playTab",
+  "playTabEdge",
+  "playTabText",
+  "playSearchFocus",
   "wireArt",
   "hatch",
   "hatchGround",
   "settingsTab",
+  ...PLAY_HUE_ROLES,
+  ...PEOPLE_ROLES,
 ] as const;
 export type DetailRole = (typeof DETAIL_ROLES)[number];
 /** Every role a palette can carry: the core ones, then the details. */
@@ -108,10 +149,38 @@ const DETAIL_SOURCE: Record<DetailRole, ColorRole> = {
   meterFull: "danger",
   promptEdge: "border",
   viewSwitch: "accent",
+  playSelected: "accent",
+  playSelectedEdge: "accent",
+  playTrack: "hover",
+  playTrackEdge: "controlBorder",
+  playSelectedText: "foreground",
+  playTab: "background",
+  playTabEdge: "border",
+  playTabText: "muted",
+  playSearchFocus: "controlBorder",
   wireArt: "accent",
   hatch: "foreground",
   hatchGround: "background",
   settingsTab: "accent",
+  peopleChip: "accent",
+  peopleTint: "accent",
+  creditsCard: "accent",
+  inviteCard: "accent",
+  peopleChipText: "accent",
+  peopleChipNumber: "accent",
+  playBlue: "accent",
+  peoplePrimary: "accent",
+  peoplePrimaryShade: "accent",
+  peopleLive: "success",
+  peopleLiveText: "success",
+  peoplePro: "accent",
+  peopleRequest: "accent",
+  statsLine: "accent",
+  statsUp: "success",
+  statsDown: "danger",
+  shardLight: "accent",
+  shardMid: "accent",
+  shardDark: "accent",
 };
 /** The variable each place-dependent detail is drawn as; unset, theme.css falls back per place. */
 const PLACE_VARIABLE: Partial<Record<DetailRole, string>> = {
@@ -139,10 +208,38 @@ const PLACE_VARIABLE: Partial<Record<DetailRole, string>> = {
   meterFull: "--meter-full",
   promptEdge: "--prompt-edge",
   viewSwitch: "--switch-fill",
+  playSelected: "--play-selected",
+  playSelectedEdge: "--play-selected-edge",
+  playTrack: "--play-switch-track",
+  playTrackEdge: "--play-switch-edge",
+  playSelectedText: "--play-selected-text",
+  playTab: "--play-tab-backing",
+  playTabEdge: "--play-tab-edge",
+  playTabText: "--play-tab-text",
+  playSearchFocus: "--play-search-focus",
   wireArt: "--wire-art",
   hatch: "--hatch-stripe",
   hatchGround: "--hatch-ground",
   settingsTab: "--settings-tab",
+  peopleChip: "--people-chip-hue",
+  peopleTint: "--people-tint-hue",
+  creditsCard: "--credits-card-hue",
+  inviteCard: "--people-invite-hue",
+  peopleChipText: "--people-chip-ink",
+  peopleChipNumber: "--people-chip-number",
+  playBlue: "--play-blue",
+  peoplePrimary: "--people-primary-top",
+  peoplePrimaryShade: "--people-primary-bottom",
+  peopleLive: "--people-live",
+  peopleLiveText: "--people-live-ink",
+  peoplePro: "--people-pro",
+  peopleRequest: "--people-request",
+  statsLine: "--stats-line",
+  statsUp: "--stats-up",
+  statsDown: "--stats-down",
+  shardLight: "--shard-light",
+  shardMid: "--shard-mid",
+  shardDark: "--shard-dark",
 };
 /** The variable each shadow is drawn as; unset, theme.css keeps the place's own. */
 const SHADOW_VARIABLE: Record<ShadowPlace, string> = {
@@ -186,7 +283,7 @@ export const PRESETS: ThemePreset[] = [
     Scheme.Dark,
     [
       "#0f0f10",
-      "#dee0e2",
+      "#ecf0f3",
       "#151516",
       "#0d0d0e",
       "#19191a",
@@ -202,13 +299,24 @@ export const PRESETS: ThemePreset[] = [
     ],
     {
       icon: "#939393",
-      iconSelected: "#b3b6f5",
+      iconSelected: "#5474d0",
       logo: "#ffffff",
       logoShade: "#efefef",
       graph: "#4d7fd6",
       art: "#6c80be",
       artPaper: "#1b1a1b",
       promptEdge: "#292929",
+      playSelected: "#2454d2",
+      playSelectedEdge: "#24304e",
+      playTrack: "#141417",
+      playTrackEdge: "#1f2021",
+      playTab: "#0d0d0e",
+      playTabEdge: "#232325",
+      peopleChip: "#4169d1",
+      inviteCard: "#4160b1",
+      peopleChipText: "#e3e6f4",
+      peopleChipNumber: "#d8ddf4",
+      peoplePrimaryShade: "#1a34b5",
     },
   ),
   preset(
@@ -257,7 +365,21 @@ export const PRESETS: ThemePreset[] = [
       meterHigh: "#f1cb46",
       meterFull: "#d13c4a",
       promptEdge: "#e9e9ea",
+      playSelected: "#1661d9",
+      playSelectedEdge: "#cadbf6",
+      playTrack: "#ffffff",
+      playTrackEdge: "#ebebeb",
+      playTab: "#ffffff",
+      playTabEdge: "#f1f1f1",
       wireArt: "#a2abd5",
+      peopleChip: "#bfbfbf",
+      peopleTint: "#c3d5ff",
+      creditsCard: "#b1c3e6",
+      inviteCard: "#a9b8d9",
+      peopleChipText: "#3f61b2",
+      peopleChipNumber: "#3a5ace",
+      peoplePrimary: "#5b84e3",
+      peoplePrimaryShade: "#4561e4",
       shadows: {
         panel: { y: 17, blur: 40, spread: -10, color: "#000000", alpha: 0 },
         promptBar: { y: 3, blur: 8, spread: 0, color: "#000000", alpha: 3 },
@@ -431,6 +553,10 @@ const SET_FILL_HOVER_SHIFT = 0.04;
 const SET_FILL_DARKENS_ABOVE = 0.85;
 /** How many steps a colour takes toward black or white to become readable. */
 const READABLE_STEPS = 100;
+/** The luminance above which a background reads as light. */
+const LIGHT_BACKGROUND = 0.4;
+/** How vivid a dark theme's destructive fill may be in OKLCH: a deep red, never a neon one. */
+const DARK_DANGER_CHROMA = 0.15;
 /** Every custom preset's id starts with this. */
 export const CUSTOM_PRESET_PREFIX = "custom-";
 /** The appearance modes, in the order Settings offers them. */
@@ -704,6 +830,16 @@ export function sidebarRowMix(p: Palette, row: SidebarRow): { color: string; per
     : { color: p.hover, percent: share.dark };
 }
 /**
+ * A dark theme's destructive fill and hover: its red, no more vivid than `DARK_DANGER_CHROMA`,
+ * deepened under a white label as the accent fill is, so it pairs with the accent button. Null in a
+ * light theme, whose red fills as set.
+ */
+export function darkDangerFill(p: Palette): { fill: string; hover: string } | null {
+  if (luminance(p.background) > LIGHT_BACKGROUND) return null;
+  const [L, C, h] = oklch(p.danger);
+  return accentFill(fromOklch(L, Math.min(C, DARK_DANGER_CHROMA), h));
+}
+/**
  * The CSS variables a palette draws. Every colour is drawn exactly as set, however low its contrast:
  * the palette's author owns readability (the colour tweaker shows each role's contrast). Only a
  * contrast above the default lifts muted text further.
@@ -722,6 +858,8 @@ export function themeVariables(p: Palette, contrast = DEFAULT_CONTRAST): Record<
   const controlBorder = controlEdge(p, contrast, mix);
   const hoverFill = (color: string) => mix(color, onColor(color) === "#000000" ? "#ffffff" : "#000000", 92);
   const primary = accentButton(p);
+  const darkDanger = darkDangerFill(p);
+  const dangerFill = darkDanger?.fill ?? p.danger;
   const sidebarFill = (row: SidebarRow) => {
     const { color, percent } = sidebarRowMix(p, row);
     return mix(color, p.sidebar, percent);
@@ -742,6 +880,9 @@ export function themeVariables(p: Palette, contrast = DEFAULT_CONTRAST): Record<
     "--border": edge,
     "--input": controlBorder,
     "--line-strong": controlBorder,
+    // A box inside a card (a setup step): as quiet as the card's own edge where light, which a
+    // dark card would swallow, so there it takes the control edge.
+    "--line-soft": luminance(p.background) > LIGHT_BACKGROUND ? edge : controlBorder,
     "--accent-primary": p.accent,
     "--accent-primary-dark": p.accent,
     "--accent-ink": accentInk,
@@ -763,12 +904,12 @@ export function themeVariables(p: Palette, contrast = DEFAULT_CONTRAST): Record<
     "--green": p.success,
     "--orange": p.warning,
     "--destructive": p.danger,
-    "--danger-fill": p.danger,
-    "--danger-foreground": onColor(p.danger),
-    "--danger-hover": hoverFill(p.danger),
+    "--danger-fill": dangerFill,
+    "--danger-foreground": onColor(dangerFill),
+    "--danger-hover": darkDanger?.hover ?? hoverFill(p.danger),
     "--success-foreground": onColor(p.success),
     "--error-foreground": onColor(p.danger),
-    "--image-outline": luminance(p.background) > 0.4 ? "#0000001a" : "#ffffff1a",
+    "--image-outline": luminance(p.background) > LIGHT_BACKGROUND ? "#0000001a" : "#ffffff1a",
     "--shadow-overlay": `0 0 0 1px ${edge}, 0 16px 48px #00000026`,
     "--shadow-raised": `0 0 0 1px ${edge}, 0 8px 24px #00000020`,
     ...placeVariables(p),

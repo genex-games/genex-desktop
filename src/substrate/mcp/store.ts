@@ -425,3 +425,65 @@ export async function storedSecretFields(port: SecretPort | null, connector: Mcp
   }
   return fields;
 }
+
+/** The file beside connectors.json that keeps plugin connectors' "always allow" grants. */
+export const GRANTS_FILE = "always-allowed.json";
+/** A tool name a grant may hold; longer is not a tool any server exposes. */
+const GRANT_NAME_MAX = 200;
+/** Grants one connector may hold. */
+const GRANTS_PER_CONNECTOR_MAX = 200;
+
+/** Connector id → the exact raw tool names the person said always to allow, from the file's text. */
+function parseGrants(raw: string): Map<string, string[]> {
+  const out = new Map<string, string[]>();
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return out;
+  }
+  const grants = (parsed as { grants?: unknown } | null)?.grants;
+  if (typeof grants !== "object" || grants === null || Array.isArray(grants)) return out;
+  for (const [id, names] of Object.entries(grants)) {
+    if (!MCP_ID.test(id) || !Array.isArray(names)) continue;
+    const valid = names.filter(
+      (name): name is string => typeof name === "string" && name.length > 0 && name.length <= GRANT_NAME_MAX,
+    );
+    if (valid.length) out.set(id, [...new Set(valid)].slice(0, GRANTS_PER_CONNECTOR_MAX));
+  }
+  return out;
+}
+
+/**
+ * Plugin connectors live in memory, so the "always allow" a person gives one of them is kept
+ * here instead of in connectors.json, and added to its policy each time the plugin registers it.
+ */
+export class McpGrantStore {
+  readonly file: string;
+  #write: Promise<unknown> = Promise.resolve();
+  constructor(file: string) {
+    this.file = file;
+  }
+
+  /** The saved grants; a missing or unreadable file is none. */
+  async load(): Promise<Map<string, string[]>> {
+    try {
+      return parseGrants(await readFile(this.file, "utf8"));
+    } catch {
+      return new Map();
+    }
+  }
+
+  async save(grants: ReadonlyMap<string, readonly string[]>): Promise<void> {
+    const file = this.file;
+    const value = { version: 1, grants: Object.fromEntries(grants) };
+    const operation = this.#write
+      .catch(() => {})
+      .then(async () => {
+        await mkdir(path.dirname(file), { recursive: true, mode: 0o700 });
+        await atomicWriteText(file, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 });
+      });
+    this.#write = operation;
+    await operation;
+  }
+}

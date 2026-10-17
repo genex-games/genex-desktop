@@ -5,6 +5,7 @@
  * `unavailable` before anything is loaded. The window takes the asked size for this lease only, and
  * is given back (and closed) in `finally` however the still ends; the whole still has one budget.
  * The request reaching here was checked field by field (`stillOrder` in `plugins/services.ts`).
+ * The lease, its budget, the load and the demo are shared with a clip (`view-clip.ts`) by export.
  */
 import { setTimeout as sleep } from "node:timers/promises";
 import { SECOND_MS } from "../../shared/duration.ts";
@@ -53,8 +54,8 @@ export interface ViewStillOptions {
   wait?: (ms: number, signal: AbortSignal) => Promise<unknown>;
 }
 
-/** The parts of the core's previews a still uses. */
-type StillPreviews = Pick<PreviewService, "pool" | "sessionPortFor" | "loadServed" | "applySetup">;
+/** The parts of the core's previews a still or a clip uses. */
+export type ViewPreviews = Pick<PreviewService, "pool" | "sessionPortFor" | "loadServed" | "applySetup">;
 /** A port that can take a still. */
 type StillPort = PreviewPort & { still: NonNullable<PreviewPort["still"]> };
 /** What the page answered a `__studio` call, or why the call itself failed. */
@@ -64,7 +65,10 @@ type PageAnswer = { answer: unknown } | { threw: string };
 const never = () => new Promise<never>(() => {});
 const waitFor = (ms: number, signal: AbortSignal) => sleep(ms, undefined, { signal });
 
-function problem(code: PluginStillProblemCode, detail: Omit<PluginStillProblem, "code"> = {}): PluginStillAnswer {
+/** A still's answer when it took no picture. */
+type StillRefusal = { stillProblem: PluginStillProblem };
+
+function problem(code: PluginStillProblemCode, detail: Omit<PluginStillProblem, "code"> = {}): StillRefusal {
   return { stillProblem: { code, ...detail } };
 }
 
@@ -76,7 +80,7 @@ const canStill = (port: PreviewPort): port is StillPort => typeof port.still ===
  * when the page answers, but nothing it then asks reaches a window already given back, where a
  * closed preview would build itself a new view to answer.
  */
-function untilAbandoned(port: StillPort, abandoned: AbortSignal): StillPort {
+export function untilAbandoned<P extends PreviewPort>(port: P, abandoned: AbortSignal): P {
   return new Proxy(port, {
     get(target, key) {
       const value: unknown = Reflect.get(target, key);
@@ -90,7 +94,7 @@ function untilAbandoned(port: StillPort, abandoned: AbortSignal): StillPort {
 }
 
 /** The pool, when it has hidden windows; null when the only window is the person's own, or none. */
-function hiddenPool(previews: StillPreviews): PreviewPool | null {
+export function hiddenPool(previews: ViewPreviews): PreviewPool | null {
   try {
     const pool = previews.pool();
     return pool.headless ? pool : null;
@@ -120,7 +124,7 @@ async function pageCall(port: PreviewPort, method: GameView, arg?: string): Prom
  * A demo or camera call's outcome: null when the view is on screen; `view_unknown` with the names
  * the page has when it has none by that one (or no contract at all); `view_failed` otherwise.
  */
-function viewOutcome(called: PageAnswer): PluginStillAnswer | null {
+function viewOutcome(called: PageAnswer): StillRefusal | null {
   if ("threw" in called) return problem(PluginStillProblemCode.ViewFailed, { reason: called.threw });
   const { answer } = called;
   if (answer === null || typeof answer !== "object")
@@ -144,7 +148,7 @@ async function listedNames(port: PreviewPort, method: GameView): Promise<{ names
 }
 
 /** Run a demo the game lists, to its end state; a name it does not list is never called. */
-async function runDemo(port: PreviewPort, name: string): Promise<PluginStillAnswer | null> {
+export async function runDemo(port: PreviewPort, name: string): Promise<StillRefusal | null> {
   const listed = await listedNames(port, GameView.Demos);
   if ("threw" in listed) return problem(PluginStillProblemCode.ViewFailed, { reason: listed.threw });
   if (!listed.names.includes(name))
@@ -157,7 +161,7 @@ async function runDemo(port: PreviewPort, name: string): Promise<PluginStillAnsw
  * by `default`; any other name is never called. Every game looks a camera up on a plain object, so
  * an unlisted `constructor` or `toString` would otherwise "place" a camera the game never had.
  */
-async function placeCamera(port: PreviewPort, name: string): Promise<PluginStillAnswer | null> {
+async function placeCamera(port: PreviewPort, name: string): Promise<StillRefusal | null> {
   const cameras = await listedNames(port, GameView.Cameras);
   if ("threw" in cameras) return problem(PluginStillProblemCode.ViewFailed, { reason: cameras.threw });
   const eyes = await listedNames(port, GameView.Eyes);
@@ -173,24 +177,87 @@ function viewOf(order: PluginStillOrder): PluginStillView {
   return order.demo !== undefined ? { demo: order.demo } : { camera: order.camera };
 }
 
-/** The still's own window at the asked size, or why there is none. */
-async function sizedWindow(
+/** What a lease needs to know of its port: whether it can take this kind of picture, and why not. */
+export interface WindowNeed<P extends PreviewPort> {
+  capable: (port: PreviewPort) => port is P;
+  incapable: string;
+}
+
+/** The lease's own window at the asked size, or why there is none. */
+export async function sizedWindow<P extends PreviewPort>(
   pool: PreviewPool,
   session: SessionPort,
-  order: PluginStillOrder,
-): Promise<{ port: StillPort } | { refused: PluginStillAnswer }> {
+  size: { width: number; height: number },
+  need: WindowNeed<P>,
+): Promise<{ port: P } | { refused: PluginStillProblem }> {
   try {
     const port = await session.get();
     const handle = session.handle();
-    if (!canStill(port))
-      return { refused: problem(PluginStillProblemCode.Unavailable, { reason: MESSAGE.noStillCapture }) };
-    if (!handle) return { refused: problem(PluginStillProblemCode.Unavailable, { reason: MESSAGE.noLease }) };
-    pool.resize(handle, { width: order.width, height: order.height });
+    if (!need.capable(port)) return { refused: { code: PluginStillProblemCode.Unavailable, reason: need.incapable } };
+    if (!handle) return { refused: { code: PluginStillProblemCode.Unavailable, reason: MESSAGE.noLease } };
+    pool.resize(handle, { width: size.width, height: size.height });
     return { port };
   } catch (err) {
-    return { refused: problem(PluginStillProblemCode.Unavailable, { reason: errorMessage(err) }) };
+    return { refused: { code: PluginStillProblemCode.Unavailable, reason: errorMessage(err) } };
   }
 }
+
+/**
+ * Load the bound game in a leased window and put it in play, or answer why it did not load. A lease
+ * its budget gave up on (`abandoned`) stops here, between the steps as inside them.
+ */
+export async function openGame(
+  previews: ViewPreviews,
+  port: PreviewPort,
+  binding: PluginBinding,
+  abandoned: AbortSignal,
+): Promise<PluginStillProblem | null> {
+  const loaded = await previews
+    .loadServed(port, binding.project, binding.directory, undefined, true)
+    .catch((err: unknown) => ({ problem: errorMessage(err) }));
+  abandoned.throwIfAborted();
+  if (loaded.problem) return { code: PluginStillProblemCode.LoadFailed, reason: loaded.problem };
+  await previews.applySetup(port, null);
+  abandoned.throwIfAborted();
+  return null;
+}
+
+/** What one lease of a hidden window is: its label, its budget and its clock, and what it does inside. */
+export interface Lease<A> {
+  label: string;
+  timeoutMs: number;
+  wait?: ViewStillOptions["wait"];
+  /** The work in the window; it stops at its next step once `abandoned` aborts. */
+  run: (pool: PreviewPool, session: SessionPort, abandoned: AbortSignal) => Promise<A>;
+  /** The answer when the build has no hidden window. */
+  unavailable: () => A;
+  /** The answer when the budget runs out first. */
+  late: () => A;
+}
+
+/**
+ * One hidden window leased for `lease.run` alone, within one budget: whichever comes first, the
+ * work's answer or the budget's, is the answer, and the window is given back before it is given.
+ */
+export async function leased<A>(previews: ViewPreviews, lease: Lease<A>): Promise<A> {
+  const pool = hiddenPool(previews);
+  if (!pool) return lease.unavailable();
+  const budget = new AbortController();
+  const session = previews.sessionPortFor({ label: lease.label });
+  const work = lease.run(pool, session, budget.signal);
+  // Work abandoned at its deadline stops at its next step; nobody reads what it settles to.
+  work.catch(() => {});
+  const late = (lease.wait ?? waitFor)(lease.timeoutMs, budget.signal).then(lease.late, never);
+  try {
+    return await Promise.race([work, late]);
+  } finally {
+    budget.abort();
+    await session.release();
+  }
+}
+
+/** A window that can take a still. */
+const STILL_NEED: WindowNeed<StillPort> = { capable: canStill, incapable: MESSAGE.noStillCapture };
 
 /** The picture of the view now on screen, never larger than asked. */
 async function photograph(port: StillPort, order: PluginStillOrder): Promise<PluginStillAnswer> {
@@ -219,21 +286,16 @@ async function photograph(port: StillPort, order: PluginStillOrder): Promise<Plu
  * may load, probe, play or photograph in it again, inside a step or between two.
  */
 async function shoot(
-  previews: StillPreviews,
+  previews: ViewPreviews,
   pool: PreviewPool,
   session: SessionPort,
   { binding, order, abandoned }: { binding: PluginBinding; order: PluginStillOrder; abandoned: AbortSignal },
 ): Promise<PluginStillAnswer> {
-  const window = await sizedWindow(pool, session, order);
-  if ("refused" in window) return window.refused;
+  const window = await sizedWindow(pool, session, order, STILL_NEED);
+  if ("refused" in window) return { stillProblem: window.refused };
   const port = untilAbandoned(window.port, abandoned);
-  const loaded = await previews
-    .loadServed(port, binding.project, binding.directory, undefined, true)
-    .catch((err: unknown) => ({ problem: errorMessage(err) }));
-  abandoned.throwIfAborted();
-  if (loaded.problem) return problem(PluginStillProblemCode.LoadFailed, { reason: loaded.problem });
-  await previews.applySetup(port, null);
-  abandoned.throwIfAborted();
+  const unopened = await openGame(previews, port, binding, abandoned);
+  if (unopened) return { stillProblem: unopened };
   const placed = order.demo !== undefined ? await runDemo(port, order.demo) : await placeCamera(port, order.camera);
   abandoned.throwIfAborted();
   if (placed) return placed;
@@ -245,27 +307,18 @@ async function shoot(
  * or the problem that stopped it, within the budget; the window is given back before it answers.
  */
 export async function viewStill(
-  previews: StillPreviews,
+  previews: ViewPreviews,
   binding: PluginBinding,
   order: PluginStillOrder,
   options: ViewStillOptions = {},
 ): Promise<PluginStillAnswer> {
-  const pool = hiddenPool(previews);
-  if (!pool) return problem(PluginStillProblemCode.Unavailable, { reason: MESSAGE.noHiddenWindow });
   const timeoutMs = options.timeoutMs ?? STILL_TIMEOUT_MS;
-  const budget = new AbortController();
-  const session = previews.sessionPortFor({ label: `still:${binding.project}` });
-  const shot = shoot(previews, pool, session, { binding, order, abandoned: budget.signal });
-  // A still abandoned at its deadline stops at its next step; nobody reads what it settles to.
-  shot.catch(() => {});
-  const late = (options.wait ?? waitFor)(timeoutMs, budget.signal).then(
-    () => problem(PluginStillProblemCode.Timeout, { reason: MESSAGE.timedOut(timeoutMs) }),
-    never,
-  );
-  try {
-    return await Promise.race([shot, late]);
-  } finally {
-    budget.abort();
-    await session.release();
-  }
+  return leased(previews, {
+    label: `still:${binding.project}`,
+    timeoutMs,
+    ...(options.wait ? { wait: options.wait } : {}),
+    run: (pool, session, abandoned) => shoot(previews, pool, session, { binding, order, abandoned }),
+    unavailable: () => problem(PluginStillProblemCode.Unavailable, { reason: MESSAGE.noHiddenWindow }),
+    late: () => problem(PluginStillProblemCode.Timeout, { reason: MESSAGE.timedOut(timeoutMs) }),
+  });
 }

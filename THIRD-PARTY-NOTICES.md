@@ -15,6 +15,8 @@ licenses and terms of included third-party software.
   `@modelcontextprotocol/sdk`, `@xterm/*`, `zod` and their dependencies) keep their license
   files in the packaged `node_modules`.
 - Electron supplies its own license and Chromium notices.
+- On macOS, cua-driver (MIT) keeps its license and cua's notices under `dist/resources/cua-driver`
+  ([Vendored Cua Driver](#vendored-cua-driver-cua-driver)).
 - The TypeScript 7 compiler (Apache-2.0), `@types/node` and `undici-types` (MIT) that the
   self-edit type gate runs keep their license and notice files under `dist/resources/tsc`.
 - The Genex asset CLI (`@genex-ai/cli-demo`, MIT) and its dependencies keep their license files
@@ -27,6 +29,18 @@ licenses and terms of included third-party software.
   trademark of the Blender Foundation; Local Blender uses it only to identify Blender, which it
   runs (https://www.blender.org/about/logo/). No endorsement is implied.
 - `src/plugins/genex/icon.png` is Genex's own icon from genex.games.
+- `src/plugins/godot/icon.svg` and the `godot` glyph in `src/renderer/ui/icons.tsx` redraw the
+  head of the Godot logo as simplified line art. The Godot logo is by Andrea Calabró, licensed
+  under CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/); these drawings change it.
+  Godot and the Godot logo are trademarks of the Godot Foundation, used only to identify Godot,
+  which the Godot plugin runs. Genex is not affiliated with or endorsed by the Godot Foundation.
+- `src/plugins/unreal/icon.svg` and the `unreal` glyph in `src/renderer/ui/icons.tsx` draw a U in
+  a ring to identify Unreal Engine, which the Unreal plugin runs. Unreal and Unreal Engine are
+  trademarks or registered trademarks of Epic Games, Inc. in the United States and elsewhere.
+  Genex is not affiliated with or endorsed by Epic Games.
+- The Unity plugin uses a generic icon and names Unity only to identify it. Unity is a trademark
+  or registered trademark of Unity Technologies or its affiliates in the U.S. and elsewhere.
+  Genex is not affiliated with or endorsed by Unity Technologies.
 
 ## Routed tool marks
 
@@ -44,11 +58,40 @@ text behind a Studio-written preface; `vendor.json` records each source, version
 `npm run genex:skills` refreshes them.
 
 - Eight platform cards and their references, copied unchanged from
-  `@genex-ai/cli-demo` 1.36.2 `templates/skills` (MIT, Copyright (c) 2026 me-ai-org). The
+  `@genex-ai/cli-demo` 1.36.9 `templates/skills` (MIT, Copyright (c) 2026 me-ai-org). The
   license text ships beside them as `skills/LICENSE-cards`, copied from the CLI's `LICENSE`.
-- `genex/SKILL.md` wraps https://genex.games/SKILL.md (v1.36.2), which is not part of the npm
+- `genex/SKILL.md` wraps https://genex.games/SKILL.md (v1.36.9), which is not part of the npm
   package. It is attributed to Genex here; its license is not yet confirmed (see "Status not yet
   recorded" below).
+
+## Adapted Roblox skill
+
+`src/plugins/roblox/skills/get-started.md` (shipped as
+`dist/resources/plugins/roblox/skills/get-started.md`) adapts the `roblox-get-started` skill from
+Roblox's [roblox-studio-agent-plugin](https://github.com/Roblox/roblox-studio-agent-plugin)
+(plugin version 0.2.1, `skills/roblox-get-started`), MIT, Copyright (c) 2026 Roblox Corporation. It
+is rewritten for Genex's Roblox Studio button and keeps the original's license text at its end.
+The Roblox Studio plugin's other skills are Genex's own. Roblox and Roblox Studio are trademarks of
+Roblox Corporation; Genex is not affiliated with Roblox Corporation.
+
+## Luau checks downloaded on request
+
+The Roblox Studio plugin's **Add Luau checks** downloads these public releases from GitHub, each
+pinned by version, size and sha256 (`src/plugins/roblox/luau-tools.ts`), only when the person
+confirms it. None of them is in the app's build or this repository; they are kept in the plugin's
+own storage (`<plugin storage>/luau/<name>-<version>/`) and run on the person's computer to check a
+game's scripts.
+
+- [luau-lsp](https://github.com/JohnnyMorganz/luau-lsp) 1.70.1 (`luau-lsp-macos.zip`,
+  `luau-lsp-win64.zip`), MIT, Copyright (c) 2022 JohnnyMorganz; and its Roblox type definitions
+  `scripts/globalTypes.None.d.luau` at the same tag, from the same repository and license.
+- [selene](https://github.com/Kampfkarren/selene) 0.32.0 (`selene-0.32.0-macos.zip`,
+  `selene-0.32.0-windows.zip`), Mozilla Public License 2.0. selene fetches Roblox's API library
+  itself on its first run.
+- [StyLua](https://github.com/JohnnyMorganz/StyLua) 2.6.0 (`stylua-macos-aarch64.zip`,
+  `stylua-macos-x86_64.zip`, `stylua-windows-x86_64.zip`), Mozilla Public License 2.0.
+
+Each release ships its own license; Genex neither changes nor redistributes these programs.
 
 ## Vendored three.js
 
@@ -57,6 +100,24 @@ authors); its license ships as `dist/resources/vendor/three-LICENSE`. The copied
 tree includes third-party libraries under their own terms, listed with their licenses in
 [three.js add-on libraries](#threejs-add-on-libraries); the Assets viewer also copies the Draco and
 Basis Universal decoders to `dist/renderer/decoders`.
+
+## Vendored Cua Driver (cua-driver)
+
+On macOS, computer control runs cua-driver 0.35.2 from [trycua/cua](https://github.com/trycua/cua)
+(MIT, Copyright (c) 2025 Cua AI, Inc.), bundled as `dist/resources/cua-driver/cua-driver`: the
+executable from cua's release, thinned to the app's architecture and signed with the app's identity
+(`scripts/vendor-cua-driver.ts`). Its license and cua's third-party notices for that release
+(code derived from trope-cua, Interface-Agent, yabai, QuickJS-ng, rquickjs and T3 Code, all MIT)
+ship beside it as `LICENSE.md` and `THIRD_PARTY_NOTICES.md`, copied from `build/cua-driver/`. The
+bundled copy runs with cua's telemetry and update check turned off.
+
+## Vendored Genex embed SDK (@genex-ai/embed-sdk)
+
+Template games and published games that bring no SDK of their own use Genex's player-identity SDK,
+`@genex-ai/embed-sdk` 0.33.0 (MIT, as its package.json declares; the package ships no license
+file). Its browser modules are copied unchanged to `dist/resources/vendor/genex/embed-sdk` and to
+`dist/resources/plugins/genex/embed-sdk`, and from there into a published game's
+`vendor/genex/embed-sdk`.
 
 ## Cover orb shaders from orbkit
 
@@ -95,14 +156,17 @@ SOFTWARE.
 
 Zalando Sans SemiExpanded, Geist and Geist Mono are used as published under the SIL Open Font
 License 1.1 (Geist Mono as its Google Fonts Latin subset). Their OFL texts ship beside them in
-`dist/renderer/fonts`. Copies with their OFL texts in `design/genex-promo-video/public/fonts`
-render the Genex promo film.
+`dist/renderer/fonts`. Copies with their OFL texts in `design/genex-promo-video/public/fonts` and
+`design/play-publish-video/public/fonts` render the promo films.
 
-## Promo film
+## Promo films
 
-The film in `src/renderer/media` is made by Genex with Remotion, which is not bundled, from
-recordings of genex.games. One clip, `village-game.mp4`, was generated through fal.ai with Nano
-Banana Pro and Seedance 2.5 (`design/genex-promo-video/README.md`).
+The films in `src/renderer/media` are made by Genex with Remotion, which is not bundled. The
+Genex promo film is made from recordings of genex.games; one clip, `village-game.mp4`, was
+generated through fal.ai with Nano Banana Pro and Seedance 2.5 (`design/genex-promo-video/README.md`).
+The Play film, `play-publish.mp4`, shows game covers from the public genex.games gallery
+(`design/play-publish-video/README.md`); its players and its desk were made with Genex image
+generation for the film.
 
 ## Components under other terms
 
@@ -111,6 +175,11 @@ Banana Pro and Seedance 2.5 (`design/genex-promo-video/README.md`).
   (https://code.claude.com/docs/en/legal-and-compliance). Its native CLI packages are excluded.
 - The Blender logo in `src/renderer/ui/brand.tsx` is a trademark of the Blender Foundation, used
   unaltered to refer to Blender under its logo guidelines (https://www.blender.org/about/logo/).
+- The X logo in `src/renderer/ui/brand.tsx` is a trademark of X Corp., used unaltered only to name
+  X on Post on X, under its brand toolkit (https://about.x.com/en/who-we-are/brand-toolkit).
+- The GitHub mark in `src/renderer/ui/brand.tsx` is Primer Octicons' `mark-github` (MIT,
+  © GitHub, Inc.) and a trademark of GitHub, Inc., used unaltered only to mark a link to a
+  community plugin publisher's GitHub profile (https://github.com/logos).
 
 ## Status not yet recorded
 
@@ -214,6 +283,58 @@ SOFTWARE.
 ## Packages without a license file
 
 These npm packages ship in the app without a license file of their own; their notices follow.
+
+### @genex-ai/embed-sdk 0.33.0
+
+Bundled into `vendor/genex/`, the player-identity SDK a game made from Studio's template maps in its import
+map. Its package and repository (https://github.com/genex-games/genex) declare the MIT license
+without a license file. The MIT terms:
+
+Copyright (c) 2026 Genex
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+### @genex-ai/multiplayer 0.17.0
+
+Bundled into `vendor/genex/`, the multiplayer SDK a game made from Studio's template maps in its import
+map. Its package and repository (https://github.com/genex-games/genex) declare the MIT license
+without a license file. The MIT terms:
+
+Copyright (c) 2026 Genex
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
 
 ### github-url-to-object 4.0.6
 
@@ -322,9 +443,11 @@ SOFTWARE.
 
 ## Provider marks from lobe-icons
 
-The Claude Code and Codex marks in `src/renderer/ui/provider-marks.ts` are copied unaltered from
-@lobehub/icons-static-svg 1.95.1 (claudecode.svg, codex.svg). Claude Code is a trademark of
-Anthropic and Codex of OpenAI; the marks only name the subscriptions Studio connects to.
+The Claude Code, Codex, OpenRouter and OpenCode marks in `src/renderer/ui/provider-marks.ts` are
+copied unaltered from @lobehub/icons-static-svg 1.95.1 (claudecode.svg, codex.svg,
+openrouter-color.svg, opencode.svg). Claude Code is a trademark of Anthropic, Codex of OpenAI,
+OpenRouter of OpenRouter, Inc. and OpenCode of its owners; the marks only name the providers
+Studio connects to.
 Source: https://github.com/lobehub/lobe-icons/blob/master/LICENSE
 
 MIT License

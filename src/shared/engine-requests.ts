@@ -5,6 +5,7 @@
  * travel — callbacks, abort signals and the host-injected tool handlers.
  */
 import type { Message, Usage } from "./event-log.ts";
+import type { ComputerTraceSummary } from "./computer-target.ts";
 import type { PreviewSetup } from "./preview-contract.ts";
 
 export interface ToolDefinition {
@@ -83,8 +84,26 @@ export interface DelegatePlaytestGrant {
   handle?: string;
   entry?: string;
   setup?: PreviewSetup | null;
-  role?: "playtester" | "scout";
+  /** A `judge` plays blind (no files, no shell) on a stepped clock, with only the `computer` tool. */
+  role?: "playtester" | "scout" | "judge";
   label?: string;
+  /** A goal the studio checks after every move; the first time it holds is studio-verified. */
+  quest?: { id: string; until: NonNullable<PreviewSetup["verify"]> };
+  /** The most moves (input actions, waits, batch steps) the session may make, counted by the host. */
+  maxActions?: number;
+  /** How the build's clock is held between moves: wall-time pacing, or seeded exact steps. */
+  pacing?: "paced" | "stepped";
+  /**
+   * How many players a game played in its engine's editor opens for this session (1 to
+   * `MAX_PLAY_PLAYERS`, never more than its engine declares); absent is one.
+   */
+  players?: number;
+  /**
+   * A judge the game's engine plugin declares (`PluginJudge.id`), for a `judge` role on a game played
+   * in its editor: the host appends its brief to the session's rubric, opens its players and runs
+   * its probe once the play opens. A judge the game does not have is refused.
+   */
+  judge?: string;
 }
 
 /**
@@ -105,6 +124,11 @@ export interface DelegateDirectorGrant {
    * lead in its game's folder.
    */
   chatSession?: boolean;
+  /**
+   * A Loop's lead that works in the game folder itself (an open Loop); honoured only for a run of
+   * this game started in this chat.
+   */
+  inPlace?: boolean;
 }
 
 /** A still that goes into the builder's prompt as an image block. */
@@ -158,11 +182,14 @@ export type StopReason = (typeof StopReason)[keyof typeof StopReason];
 
 /**
  * Why the host refused a delegation before any engine ran (the error's `code`). Wire values: the
- * harness's copy is `DelegationRefusal` in `loop/director/lead-session.ts`; never rename one.
+ * harness's copies are `DelegationRefusal` in `loop/director/lead-session.ts` (`FolderBusy`) and
+ * `WorkerRefusal` in `loop/workers/contract.ts` (`TooManyWorkers`); never rename one.
  */
 export const DelegationRefusal = {
   /** Another session is already working under the same lock (`delegation.ts` `#assertFolderFree`). */
   FolderBusy: "folder_busy",
+  /** The chat already runs as many workers as the person's Settings allow. */
+  TooManyWorkers: "too_many_workers",
 } as const;
 export type DelegationRefusal = (typeof DelegationRefusal)[keyof typeof DelegationRefusal];
 
@@ -218,4 +245,6 @@ export interface DelegateResult {
   contextTokens?: number;
   /** A `compact` delegation compacted the session, which goes on under the same id. */
   compacted?: boolean;
+  /** A playtest's or judge's computer trace: where it was written, and whether its goal was verified. */
+  trace?: ComputerTraceSummary;
 }

@@ -21,6 +21,9 @@ export const DirectorLoop = {
 } as const satisfies Record<string, NonNullable<Run["directorLoop"]>>;
 export type DirectorLoop = (typeof DirectorLoop)[keyof typeof DirectorLoop];
 
+/** This part wakes an open Loop's lead too (its turn cap, its workers' questions, its app's crashes): a run reads it by namespace. */
+export const SERVES_OPEN_LOOP = true;
+
 /**
  * The harness's environment variable that picks the loop for a run that names none: the studio
  * hands it on from its own (shared/protocol.ts `DIRECTOR_LOOP_ENV`, which this copies).
@@ -65,6 +68,14 @@ export const NoteKind = {
   DefectRouted: "defect_routed",
   /** The user spoke to one worker, or about a worker that is not building. */
   UserToWorker: "user_to_worker",
+  /** A job of the run (the lead's or a worker's) ended, and not by the agent's own stop. */
+  JobEnded: "job_ended",
+  /** A worker of an open Loop's pool waits on the person with a question. */
+  WorkerAsks: "worker_asks",
+  /** The project's app stopped under an open Loop, and what Genex did about it. */
+  AppCrashed: "app_crashed",
+  /** The project's app stopped answering under an open Loop, and Genex is bringing it back: said, never woken for. */
+  AppStopping: "app_stopping",
 } as const;
 export type NoteKind = (typeof NoteKind)[keyof typeof NoteKind];
 
@@ -75,11 +86,15 @@ export type WakeUrgency = (typeof WakeUrgency)[keyof typeof WakeUrgency];
 /** How soon each kind of line wakes the lead. A line it sleeps through still opens the next digest. */
 export const NOTE_WAKE = {
   [NoteKind.UserToWorker]: WakeUrgency.Now,
+  [NoteKind.WorkerAsks]: WakeUrgency.Now,
+  [NoteKind.AppCrashed]: WakeUrgency.Now,
+  [NoteKind.AppStopping]: WakeUrgency.Never,
   [NoteKind.WorkerRound]: WakeUrgency.Soon,
   [NoteKind.WorkerLoop]: WakeUrgency.Soon,
   [NoteKind.WorkerEnded]: WakeUrgency.Soon,
   [NoteKind.WorkerLimit]: WakeUrgency.Soon,
   [NoteKind.MonitorViolation]: WakeUrgency.Soon,
+  [NoteKind.JobEnded]: WakeUrgency.Soon,
   [NoteKind.WorkerStopped]: WakeUrgency.Never,
   [NoteKind.MonitorQuiet]: WakeUrgency.Never,
   [NoteKind.DefectShelved]: WakeUrgency.Never,
@@ -107,6 +122,10 @@ export const WakeCause = {
    * `shipLookAt`): its defects go to their owners, and the build stage goes on.
    */
   ShipLook: "ship_look",
+  /** An open Loop's lead reached its turn's cap with working time left: it goes on at once. */
+  TurnCap: "turn_cap",
+  /** An open Loop's lead whose turn worked, woken at once to go on: never the question of what next. */
+  CarryOn: "carry_on",
 } as const;
 export type WakeCause = (typeof WakeCause)[keyof typeof WakeCause];
 /** Why one wake happened: a kind of line, or a cause of its own. */
@@ -130,6 +149,10 @@ export const TurnEnd = {
   Close: "close",
   /** A goal build idle twice with no ship review on its head: the finish mark is due now, once. */
   ArtDirection: "art_direction",
+  /** An open Loop's turn reached its own cap: the lead is woken again at once, never rested. */
+  Continue: "continue",
+  /** An open Loop's lead whose turn worked: woken again at once to go on, whatever else is at work. */
+  CarryOn: "carry_on",
 } as const;
 export type TurnEnd = (typeof TurnEnd)[keyof typeof TurnEnd];
 
@@ -313,8 +336,22 @@ export interface TurnFacts {
   /** Working time is left and nobody asked to finish. */
   workingTimeLeft: boolean;
   finishRequested: boolean;
+  /**
+   * The user asked to finish while workers still run the rounds they are in, with working time
+   * left: the wrap-up waits for them (absent: no). Only the director's: an open Loop wraps up at once.
+   */
+  lastRoundsRunning?: boolean;
   /** A goal build with no ship review on its head, not yet sent to art direction (absent: never). */
   artDirectionOwed?: boolean;
+  /** The turn ended because it reached its own cap (an open Loop's), not because the lead ended it (absent: no). */
+  capped?: boolean;
+  /**
+   * The turn did something (an open Loop's lead builds by itself; absent: no): it kept a save point,
+   * changed the folder, merged a worker, asked for a rewind or a restart, or had a claim turned down.
+   */
+  worked?: boolean;
+  /** The Loop runs until a reviewer accepts its finish (an open Loop's ∞), not for its hours (absent: no). */
+  untilFinish?: boolean;
 }
 
 /** What the loop does next, whether the idle question has been asked, and why a wrap-up starts. */
@@ -330,20 +367,32 @@ const busy = (turn: TurnFacts): boolean => turn.running > 0 || turn.planWindowOp
 /**
  * A turn has ended. With work going on the lead rests until something happens; with nothing
  * running and time left it is asked once what next, and a second idle turn starts the wrap-up —
- * unless the art director is owed a look first (a goal build, once: `artDirectionOwed`).
+ * unless the art director is owed a look first (a goal build, once: `artDirectionOwed`). An open
+ * Loop's lead builds by itself: after a turn that `worked` it goes on at once, whatever else is at
+ * work (news reaches a working lead mid-turn), and the question is not spent on it; under ∞
+ * (`untilFinish`) an idle lead rests until something happens, since only a reviewer's yes or its
+ * hours end that Loop.
  * Out of working time — or asked by the user to finish — it wraps up; a failed turn does too,
- * unless a lost provider failed it: then the run closes paused, and no wrap-up lands a build.
+ * unless a lost provider failed it: then the run closes paused, and no wrap-up lands a build. Asked
+ * to finish while workers end the rounds they are in, it rests until the last one lands, as a
+ * failed turn does then too: a wrap-up now would stop them mid-round. A turn its own cap cut short
+ * (an open Loop's) is no failure: the lead goes on at once.
  */
 export function afterTurn(turn: TurnFacts): TurnVerdict {
   if (turn.closed || turn.providerLost === true) return { next: TurnEnd.Close, idleAsked: turn.idleAsked };
+  if (turn.lastRoundsRunning === true) return { next: TurnEnd.Sleep, idleAsked: false };
   if (!turn.workingTimeLeft) {
     const wrapCause = turn.finishRequested ? WrapCause.Finish : WrapCause.Deadline;
     return { next: TurnEnd.WrapUp, idleAsked: turn.idleAsked, wrapCause };
   }
+  if (turn.capped === true) return { next: TurnEnd.Continue, idleAsked: false };
   if (!turn.ok) return { next: TurnEnd.WrapUp, idleAsked: turn.idleAsked, wrapCause: WrapCause.Failed };
+  // A lead that builds by itself rests only after a turn that did nothing: its workers' and jobs' news reaches it mid-turn.
+  if (turn.worked === true) return { next: TurnEnd.CarryOn, idleAsked: false };
   if (busy(turn)) return { next: TurnEnd.Sleep, idleAsked: false };
   if (!turn.idleAsked) return { next: TurnEnd.AskIdle, idleAsked: true };
   if (turn.artDirectionOwed === true) return { next: TurnEnd.ArtDirection, idleAsked: true };
+  if (turn.untilFinish === true) return { next: TurnEnd.Sleep, idleAsked: true };
   return { next: TurnEnd.WrapUp, idleAsked: true, wrapCause: WrapCause.Idle };
 }
 

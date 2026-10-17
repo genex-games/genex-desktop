@@ -56,6 +56,10 @@ export function registerMcpIpc(handle: IpcHandle, { core, fixtureNativePolicy }:
   handle("studio:mcp.cancel-authorization", async (p) => core.mcp.cancelAuthorization(p.id));
   handle("studio:mcp.disconnect-account", async (p) => core.mcp.disconnectAccount(p.id));
   handle("studio:mcp.tools", async (p) => core.mcp.tools(p.id));
+  handle("studio:mcp.forget-always", async (p) => {
+    if (typeof p?.id !== "string") throw new Error("Invalid connector id");
+    await core.mcp.forgetAlwaysAllowed(p.id);
+  });
 }
 
 /** A project name lists that project's connectors, null the global ones, anything else all of them. */

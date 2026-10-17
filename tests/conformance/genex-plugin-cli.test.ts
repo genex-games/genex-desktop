@@ -36,7 +36,7 @@ test("a worktree with shared dependencies keeps the pinned CLI inside its plugin
     const target = await realpath(path.join(resources, "plugins/genex"));
     const packaged = createRequire(path.join(target, "backend.mjs")).resolve("@genex-ai/cli-demo/package.json");
     assert.equal(packaged, path.join(target, "node_modules/@genex-ai/cli-demo/package.json"));
-    assert.equal(JSON.parse(await readFile(packaged, "utf8")).version, "1.36.2");
+    assert.equal(JSON.parse(await readFile(packaged, "utf8")).version, "1.36.9");
   } finally {
     await removeTree(temp);
   }
@@ -344,7 +344,14 @@ test("publish creates the hosted project in Studio-owned storage and makes the e
       ),
       false,
     );
-    assert.deepEqual(uploads.sort(), ["index.html", "studio-deployment.json"]);
+    // A game that brings no Genex SDK goes up connected with the plugin's own copy of it.
+    const sdk = uploads.filter((file) => file.startsWith("vendor/genex/embed-sdk/"));
+    assert.deepEqual(uploads.filter((file) => !sdk.includes(file)).sort(), [
+      "index.html",
+      "studio-deployment.json",
+      "vendor/genex/connect.js",
+    ]);
+    assert.ok(sdk.includes("vendor/genex/embed-sdk/index.js") && sdk.length > 1, sdk.join(", "));
     // The token reaches the CLI on fd 3 and must stay there: nothing under Studio's publish
     // workspace — the CLI's own contained HOME included — may hold it in plain text.
     for (const entry of await readdir(path.join(data, "publish"), { recursive: true, withFileTypes: true })) {

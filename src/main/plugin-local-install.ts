@@ -26,9 +26,9 @@ export const pluginOriginWords = (origin?: PluginSource): string => {
     case PluginSourceKind.Catalog:
       return "a curated release (cataloged, not audited)";
     case PluginSourceKind.Local:
-      return "local folder";
+      return origin.directory ? `the folder ${origin.directory}` : "a local folder";
     default:
-      return "bundled";
+      return "Genex (built in)";
   }
 };
 
@@ -57,6 +57,15 @@ export function reviewPluginInstall(
     );
   const replaces = registry.replacement(manifest, from);
   return replaces ? { replaces } : {};
+}
+
+/**
+ * Whether installing asks the user first. A bundled seed is Studio's own code, shipped inside the
+ * app the user already installed, so installing or updating one asks nothing — unless it takes over
+ * a plugin from elsewhere, whose saved account and data it erases. An unnamed origin always asks.
+ */
+export function asksBeforeInstall(origin: PluginSource | undefined, review: PluginInstallReview): boolean {
+  return origin?.kind !== PluginSourceKind.Bundled || review.replaces !== undefined;
 }
 
 /** Review a snapshot: a local author may keep editing while the native trust dialog is open. */

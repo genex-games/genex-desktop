@@ -19,17 +19,31 @@ import { ColorTweakerHost } from "./appearance/tweaker/ColorTweakerHost.tsx";
 import { Onboarding } from "./onboarding/Onboarding.tsx";
 import { AppDialogs } from "./panels/AppDialogs.tsx";
 import { GenexPromo } from "./panels/GenexPromo.tsx";
+import { nativeViewsUp } from "./play/play-model.ts";
+import { AvatarWelcome } from "./play/AvatarWelcome.tsx";
+import { PlayPages } from "./play/PlayPages.tsx";
+import { PlayViewerLayer } from "./play/PlayViewerLayer.tsx";
+import { useGuestSignIn } from "./play/use-genex-sign-in.ts";
+import { usePlayRemixes } from "./play/use-play-remixes.ts";
 import { AppSidebar } from "./shell/AppSidebar.tsx";
 import { PluginsRoom, Toasts } from "./shell/store-leaves.tsx";
 import { useChatWidthVariable } from "./shell/use-shell-chrome.ts";
 import { noticeState } from "./shell/use-shell-notices.ts";
 import { useShell } from "./shell/use-shell.ts";
 import { Workspace } from "./shell/Workspace.tsx";
-import { useEngines, useUpdate } from "./state/hooks.ts";
+import { useEngines, usePlay, useUpdate } from "./state/hooks.ts";
 import { CodexLoginPanel } from "./ui/CodexLoginPanel.tsx";
 
 /** `data-room` while Plugins covers the workspace. */
 const PLUGINS_ROOM = "plugins";
+/** `data-room` while Play's dashboard covers it. */
+const PLAY_ROOM = "play";
+
+/** The room `data-room` names: Plugins or Play over the workspace, else the open conversation's. */
+const roomName = (chrome: { pluginsOpen: boolean; playOpen: boolean }, room: string): string => {
+  if (chrome.pluginsOpen) return PLUGINS_ROOM;
+  return chrome.playOpen ? PLAY_ROOM : room;
+};
 
 export function App(): JSX.Element {
   const shell = useRef<HTMLDivElement>(null);
@@ -39,6 +53,12 @@ export function App(): JSX.Element {
   const engines = useEngines((s) => s.list);
   const updateReady = useUpdate((s) => s.ready !== null);
   useChatWidthVariable(shell, app);
+  usePlayRemixes(navigation, chrome);
+  useGuestSignIn();
+  // While Play's game or its menu lies over the window, no drag region takes the pointer from them (play.css).
+  const playNative = usePlay((s) => nativeViewsUp(s.viewer));
+  // A game playing in Play is modal: nothing under it takes the keyboard or a click.
+  const viewing = usePlay((s) => s.viewer !== null);
   useEffect(() => {
     const refresh = () => {
       void app.engines.refresh();
@@ -50,13 +70,14 @@ export function App(): JSX.Element {
     <div
       ref={shell}
       data-studio-state
-      data-room={chrome.pluginsOpen ? PLUGINS_ROOM : room}
+      data-room={roomName(chrome, room)}
       data-active-thread={activeThreadId ?? ""}
       data-project={project ?? ""}
       data-sidebar-open={chrome.sidebarVisible}
       data-compact={chrome.compactWindow}
       data-notices={noticeState(notices)}
       data-update-ready={updateReady || undefined}
+      data-play-native={playNative || undefined}
       className="studio-shell h-full bg-canvas"
     >
       <AppSidebar
@@ -66,6 +87,7 @@ export function App(): JSX.Element {
         navigation={navigation}
         notices={notices}
         welcoming={welcoming}
+        covered={viewing}
       />
       {chrome.drawerCovers && (
         <button
@@ -75,7 +97,7 @@ export function App(): JSX.Element {
           onClick={chrome.toggleSidebar}
         />
       )}
-      <main className="relative min-h-0 min-w-0" inert={chrome.drawerCovers || welcoming}>
+      <main className="relative min-h-0 min-w-0" inert={chrome.drawerCovers || welcoming || viewing}>
         <Workspace
           app={app}
           chrome={chrome}
@@ -90,11 +112,13 @@ export function App(): JSX.Element {
             setupPlugin={chrome.setupPlugin}
             project={project}
             onPluginsRefresh={app.plugins.refresh}
+            onIndexRefresh={app.plugins.refreshIndex}
             onBack={() => chrome.setPluginsOpen(false)}
             sidebarHidden={chrome.sidebarHidden}
             onToggleSidebar={chrome.toggleSidebar}
           />
         )}
+        {chrome.playOpen && !chrome.pluginsOpen && <PlayPages chrome={chrome} onNewGame={navigation.newGame} />}
       </main>
       <AppDialogs
         dialogs={dialogs}
@@ -112,7 +136,9 @@ export function App(): JSX.Element {
           onFinish={welcome.finishWelcome}
         />
       )}
-      <GenexPromo welcoming={welcoming} pluginsOpen={chrome.pluginsOpen} project={project} />
+      <GenexPromo welcoming={welcoming} pluginsOpen={chrome.workspaceCovered} project={project} />
+      <AvatarWelcome blocked={welcoming} />
+      <PlayViewerLayer />
       <Toasts />
       <CodexLoginPanel />
       <ColorTweakerHost />

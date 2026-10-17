@@ -23,10 +23,19 @@ export interface GameLibraryEntry {
   removed?: boolean;
   /** Folder trust is host metadata; project files cannot grant it. */
   trustProjectSettings?: boolean;
+  /**
+   * A copy of someone else's game (a Play remix) whose setup scripts the person has not trusted:
+   * its packages install with none of them. Host metadata, like the trust above.
+   */
+  guardScripts?: boolean;
   cover?: GameCover;
   primaryThreadId?: string;
+  /** The folder's content stamp as New game made it (`GameProject.scaffoldStamp`). */
+  scaffoldStamp?: string;
   /** The title waits for the game's first idea; any title given since clears it. */
   provisional?: boolean;
+  /** New game made it and no answer has ended with it built yet (`GameProject.awaitingFirstBuild`). */
+  awaitingFirstBuild?: boolean;
 }
 export interface GameUpdate {
   title?: string;

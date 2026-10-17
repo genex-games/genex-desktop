@@ -16,12 +16,11 @@ import type { AnyRecord } from "../../../types/harness.d.ts";
 import type { Check } from "../../spec.ts";
 import { STUDIO_CONTRACT, type FacetLoop, type FacetRound } from "../state.ts";
 import { isStopped, RoundFlow, stoppedByUser } from "../flow.ts";
-import { FOLLOWUP_MS } from "../policy.ts";
 import { roundFields } from "../record.ts";
-import { StopReason } from "../../outage.ts";
 import { unresolvedMergeWords } from "../gate-prompts.ts";
 import { ownedByFacet } from "../owned.ts";
 import { integrationLine } from "../merged-heads.ts";
+import { followUpTurn } from "../follow-up.ts";
 
 /** The review's fix turn is asked only with this much of the facet's clock left (or a slice of a short one). */
 const REVIEW_FIX_MIN_MS = 5 * MINUTE_MS;
@@ -154,19 +153,16 @@ function reviewOptions(loop: FacetLoop, round: FacetRound, root: string, model: 
   };
 }
 
-/** The one fix turn, in the builder's own session. Answers the round's end when the run stopped it. */
+/**
+ * The one fix turn, in the builder's own session. The fix turn is a delegation of its own: an abort
+ * lands here, not on the build turn — a steer is handed over and the fix goes on, a stop ends the
+ * round. Answers the round's end when the run stopped it.
+ */
 async function askForReviewFix(loop: FacetLoop, round: FacetRound): Promise<RoundFlow> {
-  const { ctx, stoppedHere } = loop;
   try {
-    const fix = await round.delegate(reviewFixPrompt(round.review.violations), loop.sessionId, FOLLOWUP_MS);
-    if (fix.sessionId) loop.sessionId = fix.sessionId;
-    // The fix turn is a delegation of its own: an abort lands here, not on the build turn.
-    if (fix.ok === false && fix.stopReason === StopReason.Stopped) {
-      await stoppedHere(round.iteration, true);
-      return RoundFlow.Stop;
-    }
+    if (await followUpTurn(loop, round, reviewFixPrompt(round.review.violations))) return RoundFlow.Stop;
   } catch (err: any) {
-    if (isStopped(err, ctx)) return stoppedByUser(loop);
+    if (isStopped(err, loop.ctx)) return stoppedByUser(loop);
   }
 }
 

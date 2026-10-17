@@ -604,6 +604,8 @@ describe("autopilot: a 2-facet run on the fake engine", () => {
       // The brief was written into the worktree before the build turn, self-ignored by git.
       assert.match(request.prompt, /READ .*\.studio\/BRIEF\.md FIRST/);
     }
+    // A classic Autopilot's builders carry no worker grant: they stay unattended, as before.
+    for (const request of otherDelegations) assert.equal(request.worker, undefined, "no worker seat");
     // The base builder ran in the live folder; the playtester played the integrated build
     // read-only with live tools bound to a pooled preview.
     assert.ok(otherDelegations.some((r) => /BASE BUILDER/.test(r.prompt) && r.cwd === gameDir));

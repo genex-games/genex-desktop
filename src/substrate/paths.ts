@@ -19,7 +19,8 @@ import path from "node:path";
 import { StudioPlatform } from "../shared/boot.ts";
 
 const MESSAGE = {
-  InvalidPath: "Invalid plugin path",
+  InvalidPath:
+    "Invalid plugin path: name a file by its relative path inside its folder, with / between folders (no absolute path, backslash, control character, empty, . or .. part)",
   EscapesRoot: "Path escapes authorized root",
 } as const;
 

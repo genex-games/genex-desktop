@@ -1,6 +1,7 @@
 ---
 name: Facet decomposition
 description: Turn an Autopilot ask into typed facet specs with verifiable checks, sized to the engine.
+facts: web-game
 trainable: true
 ---
 

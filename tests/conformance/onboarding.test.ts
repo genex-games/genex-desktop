@@ -1,6 +1,7 @@
 /**
  * First launch: who is welcomed, what each subscription's one-line button says in every sign-in
- * state, and that the art draws finite shapes from where the words really are.
+ * state, what the "or use" row and the OpenRouter and OpenCode screens show, and that the art draws
+ * finite shapes from where the words really are.
  */
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
@@ -11,9 +12,25 @@ import {
   WELCOMED_KEY,
   type ConnectInput,
 } from "../../src/renderer/onboarding/state.ts";
+import { composerOpening } from "../../src/renderer/chat/use-composer-model.ts";
+import { resolveChoice, toChoices } from "../../src/renderer/model-choices.ts";
+import { rememberWelcomeModel } from "../../src/renderer/stored-model.ts";
+import type { EngineDescriptor } from "../../src/renderer/types.ts";
+import {
+  freeModelOptions,
+  pickedFreeModel,
+  picksFreeModel,
+  localWay,
+  openCodeMark,
+  openCodeWay,
+  openRouterWay,
+  routerMark,
+  routerStep,
+} from "../../src/renderer/onboarding/ways.ts";
 import {
   drawChip,
   drawMarks,
+  drawMeteredMark,
   drawPlanner,
   drawWelcome,
   PLANNER_VIEW,
@@ -142,6 +159,164 @@ describe("first launch", () => {
   });
 });
 
+describe("first launch's other ways", () => {
+  it("names each button in the row for its state, and says what it offers", () => {
+    assert.deepEqual(localWay("idle", "", 0), {
+      state: "idle",
+      label: "Local models",
+      hint: "Free and private. Runs on this Mac.",
+    });
+    assert.equal(localWay("downloading", "Qwen 3.5", 42).label, "Downloading Qwen 3.5 · 42%");
+    assert.deepEqual(localWay("ready", "Qwen 3.5", 100).state, "on");
+    assert.equal(localWay("ready", "Qwen 3.5", 100).label, "Qwen 3.5 ready");
+
+    assert.deepEqual(openRouterWay("needs_login", false), {
+      state: "idle",
+      label: "OpenRouter",
+      hint: "One key for hundreds of models. Pay as you go.",
+    });
+    assert.equal(openRouterWay(undefined, false).state, "idle", "an engine list without OpenRouter yet");
+    assert.equal(openRouterWay("needs_login", true).state, "busy", "a browser sign-in is waiting");
+    assert.deepEqual(openRouterWay("ready", true), {
+      state: "on",
+      label: "OpenRouter connected",
+      hint: "Billed to your OpenRouter credits.",
+    });
+    assert.equal(openRouterWay("error", false).state, "idle", "a key OpenRouter cannot check is not connected");
+
+    assert.equal(openCodeWay("not_installed").label, "OpenCode");
+    assert.equal(openCodeWay("installing").state, "busy");
+    assert.deepEqual(
+      [openCodeWay("free_only").state, openCodeWay("free_only").label],
+      ["on", "OpenCode ready"],
+      "free models are something to build with",
+    );
+    assert.equal(openCodeWay("connected").label, "OpenCode connected");
+    for (const row of ["signed_out", "signing_in", "unreachable"] as const)
+      assert.equal(openCodeWay(row).state, "idle", row);
+  });
+
+  it("puts OpenRouter's screen at one step, a connected engine before anything left under way", () => {
+    const local = { signingIn: false, pasting: false, saving: false };
+    assert.equal(routerStep("needs_login", local), "offer");
+    assert.equal(routerStep(undefined, local), "offer");
+    assert.equal(routerStep("needs_login", { ...local, signingIn: true }), "browser");
+    assert.equal(routerStep("needs_login", { ...local, pasting: true }), "key");
+    assert.equal(routerStep("needs_login", { ...local, pasting: true, saving: true }), "checking");
+    assert.equal(routerStep("error", { ...local, pasting: true }), "key", "an unreachable check keeps the key box");
+    assert.equal(routerStep("ready", { signingIn: true, pasting: true, saving: true }), "on");
+    assert.deepEqual((["offer", "browser", "key", "checking", "on"] as const).map(routerMark), [
+      "idle",
+      "busy",
+      "idle",
+      "busy",
+      "on",
+    ]);
+  });
+
+  it("shows OpenCode's mark missing until installed and lit once any of its models run", () => {
+    assert.equal(openCodeMark("not_installed", false), "missing");
+    assert.equal(openCodeMark("installing", false), "busy");
+    assert.equal(openCodeMark("not_installed", true), "busy", "a recheck is under way");
+    assert.equal(openCodeMark("free_only", false), "on");
+    assert.equal(openCodeMark("connected", true), "on");
+    assert.equal(openCodeMark("signing_in", false), "busy");
+    assert.equal(openCodeMark("signed_out", false), "idle");
+    assert.equal(openCodeMark("unreachable", false), "idle");
+  });
+});
+
+/** OpenCode installed with no provider signed in: it lists only its own free models (and one it cannot run). */
+const freeOpenCode: EngineDescriptor = {
+  id: "opencode",
+  label: "OpenCode",
+  kind: "delegated",
+  status: { code: "ready", detail: "" },
+  account: { source: "none", afterSignOut: "signed-out", cli: { state: "ready" } },
+  defaultModel: null,
+  models: [
+    {
+      id: "opencode/big-pickle",
+      label: "Big Pickle",
+      contextWindow: 200_000,
+      supportsTools: true,
+      supportsVision: false,
+      free: true,
+    },
+    {
+      id: "opencode/claude-sonnet",
+      label: "Claude Sonnet",
+      contextWindow: 200_000,
+      supportsTools: true,
+      supportsVision: false,
+    },
+    {
+      id: "opencode/grok-code",
+      label: "Grok Code Fast",
+      contextWindow: 256_000,
+      supportsTools: true,
+      supportsVision: false,
+      free: true,
+    },
+  ],
+};
+
+describe("the free model first launch builds with", () => {
+  it("offers OpenCode's default first, then each free model OpenCode lists", () => {
+    const options = freeModelOptions(freeOpenCode.models);
+    assert.deepEqual(
+      options.map((option) => [option.key, option.name, option.detail]),
+      [
+        ["opencode::default", "OpenCode default", "Follows OpenCode"],
+        ["opencode::opencode/big-pickle", "Big Pickle", null],
+        ["opencode::opencode/grok-code", "Grok Code Fast", null],
+      ],
+      "a model that needs a sign-in is not offered",
+    );
+    assert.deepEqual(
+      freeModelOptions([]).length,
+      1,
+      "with no free model listed yet, OpenCode's default is still there",
+    );
+  });
+
+  it("keeps a pick only while OpenCode still offers it, and falls back to OpenCode's default", () => {
+    const options = freeModelOptions(freeOpenCode.models);
+    assert.equal(pickedFreeModel(options, "opencode::opencode/grok-code"), "opencode::opencode/grok-code");
+    assert.equal(pickedFreeModel(options, "opencode::opencode/gone"), "opencode::default");
+    assert.equal(pickedFreeModel(options, "claude-code::opus"), "opencode::default");
+  });
+
+  it("asks only while OpenCode's free models are all the person can build with", () => {
+    assert.equal(picksFreeModel("free_only", false), true);
+    assert.equal(
+      picksFreeModel("free_only", true),
+      false,
+      "Claude Code, ChatGPT, OpenRouter or a local model is ready",
+    );
+    for (const row of ["connected", "not_installed", "installing", "signing_in", "signed_out", "unreachable"] as const)
+      assert.equal(picksFreeModel(row, false), false, row);
+  });
+
+  it("seeds the first game's chat with the pick; OpenCode's default stays a usable choice that names no model", () => {
+    const values = new Map<string, string>();
+    const storage = {
+      getItem: (key: string) => values.get(key) ?? null,
+      setItem: (key: string, value: string) => void values.set(key, value),
+      removeItem: (key: string) => void values.delete(key),
+    };
+    rememberWelcomeModel(storage, "opencode::default");
+    const home = { id: "home", meta: { kind: "game" as const, project: null } };
+    const opening = composerOpening(storage, home);
+    assert.equal(opening.modelKey, "opencode::default", "the first game's chat opens on the welcome's pick");
+    const chosen = resolveChoice(toChoices([freeOpenCode]), opening.modelKey);
+    assert.equal(chosen?.key, "opencode::default");
+    assert.notEqual(chosen?.disabled, true, "OpenCode's default runs with no sign-in");
+    rememberWelcomeModel(storage, "opencode::opencode/big-pickle");
+    assert.equal(resolveChoice(toChoices([freeOpenCode]), composerOpening(storage, home).modelKey)?.name, "Big Pickle");
+  });
+});
+
 /** A 2D context that records what is drawn and refuses a non-finite coordinate. */
 function recorder() {
   const calls: Array<{ name: string; args: unknown[] }> = [];
@@ -225,6 +400,9 @@ describe("first-launch art", () => {
           palette,
         );
       }
+    for (const id of ["openrouter", "opencode"] as const)
+      for (const state of ["idle", "busy", "on", "missing"] as const)
+        for (const tg of [0, 0.3, 2, 7.5]) drawMeteredMark(recorder().ctx, id, state, tg, tg < 1 ? tg : -1, palette);
     for (const state of ["idle", "downloading", "ready"] as const) drawChip(recorder().ctx, state, 40, 1.5, palette);
   });
 

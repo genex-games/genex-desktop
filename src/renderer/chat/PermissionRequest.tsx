@@ -18,17 +18,22 @@ import { Icon } from "../ui/icons.tsx";
 import { Markdown } from "../ui/Markdown.tsx";
 import { useMoreBelow } from "../ui/scroll-fade.ts";
 import { SyntaxCode } from "../ui/SyntaxCode.tsx";
-import { alwaysWords, permissionLineWords, permissionPath, permissionTitleWords } from "../words.ts";
+import {
+  alwaysWords,
+  permissionCommandWords,
+  permissionInsteadWords,
+  permissionLineWords,
+  permissionPath,
+  permissionTitleWords,
+} from "../words.ts";
 import { ChatDisclosure } from "./ChatDisclosure.tsx";
 import { type ChatChoice, ChatQuestion } from "./ChatQuestion.tsx";
 
 /** The card's own words. */
 const WORDS = {
-  runCommand: "Claude wants to run a command",
   allow: "Allow",
   allowOnce: "Just this once.",
   deny: "Deny",
-  insteadPlaceholder: "Tell Claude what to do instead…",
   keepPlanningPlaceholder: "Keep planning: what should change?",
   reviewRequest: "Review permission request",
   reviewPlan: "Review plan",
@@ -174,7 +179,7 @@ export function PermissionRequest({
 }): JSX.Element {
   if (isPlanRequest(event)) return <PlanRequest event={event} onAnswer={onAnswer} planModes={planModes} />;
   // The command is on the card in full, so the question does not repeat it.
-  const question = commandOf(event) ? WORDS.runCommand : permissionTitleWords(event);
+  const question = commandOf(event) ? permissionCommandWords(event) : permissionTitleWords(event);
   const description = event.description || event.reason;
   const choices: ChatChoice[] = [
     { id: PermissionDecision.Allow, label: WORDS.allow, description: WORDS.allowOnce },
@@ -187,7 +192,7 @@ export function PermissionRequest({
       description={description}
       choices={choices}
       reopenLabel={WORDS.reviewRequest}
-      answerPlaceholder={WORDS.insteadPlaceholder}
+      answerPlaceholder={permissionInsteadWords(event)}
       onConfirm={(id) => onAnswer(choiceAnswer(id))}
       onAnswerText={(message) => onAnswer({ decision: PermissionDecision.Deny, message })}
     >
@@ -236,7 +241,11 @@ function SettledRequest({ event }: { event: ToolPermissionEvent }): JSX.Element 
 /** A settled request in the conversation, one line ("Allowed · npm install three") that opens to the request. */
 export function PermissionOutcome({ event }: { event: ToolPermissionEvent }): JSX.Element {
   return (
-    <ChatDisclosure data-permission-outcome label={permissionLineWords(event)}>
+    <ChatDisclosure
+      data-permission-outcome
+      lead={<Icon name="shield" size={14} className="shrink-0" />}
+      label={permissionLineWords(event)}
+    >
       <SettledRequest event={event} />
     </ChatDisclosure>
   );

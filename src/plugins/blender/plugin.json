@@ -1,17 +1,18 @@
 {
   "apiVersion": 3,
   "id": "blender",
-  "version": "1.1.1",
+  "version": "1.7.0",
   "name": "Local Blender",
   "publisher": "Studio",
   "description": "Model 3D assets with Blender on this Mac. No account or credits.",
   "icon": "icon.png",
   "backend": "backend.mjs",
   "capabilities": ["native-runtime", "project.read", "project.write", "jobs", "observe"],
+  "detect": [{ "fact": "blender-assets", "files": ["**/*.blend"] }],
   "tools": [
     {
       "name": "status",
-      "description": "Inspect local Blender readiness and recorded jobs; no account or paid generation.",
+      "description": "Inspect local Blender readiness and recorded jobs; no account or paid generation. When Blender can't run on this Mac, the answer says what to tell the user and how it is fixed.",
       "parameters": {
         "type": "object",
         "properties": {}
@@ -19,23 +20,43 @@
     },
     {
       "name": "model",
-      "description": "Run a bpy script from assets/src in local Blender; export GLB and two renders. The script builds the scene and must not export or render. Returns exact asset paths and mesh/material stats. Load the returned GLB and verify visible use in the game. To import an existing GLB, pass model and use bpy.ops.import_scene.gltf(filepath=ASSET_INPUTS[\"model\"]).",
+      "description": "Run a bpy script from assets/src in local Blender; export a GLB and two colour renders. The script builds the scene in metres with +Z up and the front along +X, and must not export or render. Returns exact asset paths and mesh, material, armature and action stats, with each material slot's faces and triangles. To transform an existing GLB, pass model and use bpy.ops.import_scene.gltf(filepath=ASSET_INPUTS[\"model\"]). Name other game files the script reads in inputs. Pass rig to export armatures with their actions too. In an Unreal game: one mesh per file (join the parts), the pivot at the base, and Blender metres become Unreal centimetres. Load or import the returned GLB and verify visible use in the game. Run Blender through this tool: in a worker's sandbox, Blender started from a shell cannot reach the GPU and crashes at startup.",
       "parameters": {
         "type": "object",
         "properties": {
           "name": {
-            "type": "string"
+            "type": "string",
+            "description": "The asset's name: letters, digits, dashes or underscores, at most 40. snake_case and capitals become lowercase with dashes."
           },
           "script": {
-            "type": "string"
+            "type": "string",
+            "description": "Optional: the path of the bpy script in this game, such as assets/src/house.py. Write the script to that file first, then pass its path; never pass code here. Left out: assets/src/<name>.py."
           },
           "model": {
             "type": "string",
             "description": "Optional project-relative GLB to transform. It is staged and available as ASSET_INPUTS[\"model\"]. Do not use absolute paths."
+          },
+          "inputs": {
+            "type": "string",
+            "description": "Optional: up to 8 more files of this game the script reads, comma-separated: .py modules in assets/src (import them by name) and .json, .png, .jpg or .glb files under assets/ or public/assets/. Each is staged read-only; ASSET_INPUTS[\"<its path>\"] is where the script reads it. No links, dotfiles or files outside those folders; 32 MiB each, 64 MiB together."
+          },
+          "rig": {
+            "type": "boolean",
+            "description": "Also export the scene's armatures with their actions (skinned meshes and their clips), each armature's scale applied to its bones and clips so every bone is in metres (a rig imported at 0.01 comes out at 1). Left out: meshes only."
           }
         },
         "required": ["name"]
-      }
+      },
+      "asset": { "kind": "model", "prompt": "name" }
+    },
+    {
+      "name": "install",
+      "description": "Download the Blender Genex pins (about 350 MB) into Genex's own storage, once the user confirms it on a card, when blender__status says Blender is missing or too old. The user's own Blender stays as it is. It answers as the download starts; call blender__status until its runtime reads ready, a few minutes later.",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      },
+      "confirmation": "Download Blender 5.2.1 (about 346 MB) into Genex's Local Blender storage, so agents can model with it. Genex verifies its digest, and your own Blender stays as it is."
     },
     {
       "name": "retrieve",
@@ -54,7 +75,8 @@
   "skills": [
     {
       "name": "local-modeling",
-      "text": "For useful 3D silhouettes, Local Blender can model assets from a bpy script at assets/src/<name>.py. Inspect blender__status first. The model script starts from an empty scene; do not save/export/render. Call blender__model, inspect returned renders, load the exact returned model.glb path with GLTFLoader and verify it in the actual game preview. Each export has a unique job directory. Preserve those paths in code; this is not the old assets/<slug>.glb layout. Reuse geometry and inspect triangle/texture costs. Size is a performance diagnostic, not a 4 MiB rejection. Native outputs including renders are capped at 100 MiB per job. For an existing GLB pass model to blender__model and import ASSET_INPUTS[\"model\"]; only declared inputs are readable. Preserve the source model. Local Blender and a remote modeling connector are independent choices; never switch to a paid service implicitly."
+      "engines": ["web"],
+      "text": "For useful 3D silhouettes, Local Blender can model assets from a bpy script at assets/src/<name>.py. Inspect blender__status first. The model script starts from an empty scene; do not save/export/render. Call blender__model, inspect returned renders, load the exact returned model.glb path with GLTFLoader and verify it in the actual game preview. Each export has a unique job directory. Preserve those paths in code; this is not the old assets/<slug>.glb layout. Reuse geometry and inspect triangle/texture costs. Size is a performance diagnostic, not a 4 MiB rejection. Native outputs including renders are capped at 100 MiB per job. For an existing GLB pass model to blender__model and import ASSET_INPUTS[\"model\"]; the script can read no other file of the game unless inputs names it (a shared module in assets/src, a texture image). Preserve the source model. Local Blender and a remote modeling connector are independent choices; never switch to a paid service implicitly."
     }
   ],
   "panels": [
@@ -139,6 +161,11 @@
         {
           "source": "value",
           "name": "name"
+        },
+        "--rig",
+        {
+          "source": "value",
+          "name": "rig"
         }
       ],
       "inputs": ["script"],
@@ -146,6 +173,10 @@
         "name": {
           "pattern": "^[a-z0-9][a-z0-9-]{0,39}$",
           "maxLength": 40
+        },
+        "rig": {
+          "pattern": "^[01]$",
+          "maxLength": 1
         }
       },
       "outputs": ["model.glb", "render.png", "render-front.png"],
@@ -185,6 +216,12 @@
           "source": "value",
           "name": "name"
         },
+        "--rig",
+        {
+          "source": "value",
+          "name": "rig"
+        },
+        "--model",
         {
           "source": "input",
           "name": "model"
@@ -195,6 +232,10 @@
         "name": {
           "pattern": "^[a-z0-9][a-z0-9-]{0,39}$",
           "maxLength": 40
+        },
+        "rig": {
+          "pattern": "^[01]$",
+          "maxLength": 1
         }
       },
       "outputs": ["model.glb", "render.png", "render-front.png"],
@@ -202,6 +243,128 @@
       "maxOutputBytes": 64000,
       "maxAssetBytes": 104857600,
       "gpu": true
+    },
+    {
+      "id": "compose",
+      "runtime": "blender",
+      "args": [
+        "-b",
+        "--factory-startup",
+        "-noaudio",
+        "--python-exit-code",
+        "1",
+        "--python",
+        {
+          "source": "package",
+          "name": "wrapper.py"
+        },
+        "--",
+        {
+          "source": "input",
+          "name": "script"
+        },
+        {
+          "source": "output",
+          "name": "model.glb"
+        },
+        {
+          "source": "output",
+          "name": "render.png"
+        },
+        {
+          "source": "value",
+          "name": "name"
+        },
+        "--rig",
+        {
+          "source": "value",
+          "name": "rig"
+        },
+        "--inputs",
+        {
+          "source": "value",
+          "name": "inputs"
+        },
+        "--slot",
+        {
+          "source": "input",
+          "name": "input1"
+        },
+        "--slot",
+        {
+          "source": "input",
+          "name": "input2"
+        },
+        "--slot",
+        {
+          "source": "input",
+          "name": "input3"
+        },
+        "--slot",
+        {
+          "source": "input",
+          "name": "input4"
+        },
+        "--slot",
+        {
+          "source": "input",
+          "name": "input5"
+        },
+        "--slot",
+        {
+          "source": "input",
+          "name": "input6"
+        },
+        "--slot",
+        {
+          "source": "input",
+          "name": "input7"
+        },
+        "--slot",
+        {
+          "source": "input",
+          "name": "input8"
+        },
+        "--slot",
+        {
+          "source": "input",
+          "name": "input9"
+        }
+      ],
+      "inputs": ["script", "input1", "input2", "input3", "input4", "input5", "input6", "input7", "input8", "input9"],
+      "values": {
+        "name": {
+          "pattern": "^[a-z0-9][a-z0-9-]{0,39}$",
+          "maxLength": 40
+        },
+        "rig": {
+          "pattern": "^[01]$",
+          "maxLength": 1
+        },
+        "inputs": {
+          "pattern": "^[A-Za-z0-9_./,-]{1,1024}$",
+          "maxLength": 1024
+        }
+      },
+      "outputs": ["model.glb", "render.png", "render-front.png"],
+      "timeoutMs": 120000,
+      "maxOutputBytes": 64000,
+      "maxAssetBytes": 104857600,
+      "gpu": true
+    }
+  ],
+  "workerTypes": [
+    {
+      "id": "blender_model",
+      "description": "A new hard-surface model or kit pieces in Local Blender",
+      "tools": ["model", "retrieve", "status"],
+      "isolation": "copy"
+    },
+    {
+      "id": "blender_prep",
+      "description": "Welds, decimates, scales, pivots, joins or makes LODs of given models",
+      "tools": ["model", "retrieve", "status"],
+      "isolation": "copy"
     }
   ]
 }

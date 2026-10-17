@@ -58,6 +58,7 @@ import { capActions, type PreviewInputAction } from "../substrate/preview-input.
 import { applyInputAction, type PageDispatch } from "./preview-input-driver.ts";
 import { cropImageFile, diffImageFiles, encodedImageStats, pairJpeg, resizeToJpeg } from "./preview-images.ts";
 import { DEFAULT_SHOT_QUALITY, encodeStill, stillFit } from "./core/capture.ts";
+import { clipPageOn, recordClip } from "./preview-clip.ts";
 import {
   ATTACH_PROBE,
   GL_PROBE,
@@ -81,6 +82,8 @@ import { chooseCapture, probePageUi, resolveSurface, type PageUi } from "../subs
 import type {
   CropRect,
   PageAttachReport,
+  PreviewClipAnswer,
+  PreviewClipRequest,
   PreviewStillAnswer,
   PreviewStillRequest,
   ShimOptions,
@@ -160,6 +163,11 @@ const SCHEME = "game";
 const STOPPED_PAGE = "data:text/html;charset=utf-8,";
 /** The pause before the one compositor retry a failed capture gets. */
 const COMPOSITOR_RETRY_MS = 250;
+/** How long a dialog waits for the stage's cover frame before the game view leaves without one. */
+const COVER_STILL_WAIT_MS = 150;
+/** The cover frame's longest side and JPEG quality: a picture under a dialog, not evidence. */
+const COVER_STILL_MAX_PX = 1600;
+const COVER_STILL_QUALITY = 80;
 /** The longest a capture waits for the page to present two frames. */
 const FRAME_WAIT_MS = 400;
 /** The longest the Live stage's readiness probe waits for the page to answer. */
@@ -776,6 +784,30 @@ export class GamePreview {
     });
   }
 
+  /**
+   * The frame the stage holds while a dialog or popover takes the view's rectangle away
+   * (`native-bounds.ts`): the compositor's picture of the game as it is now, taken before the
+   * view leaves, so the stage shows the game under the dialog rather than an empty slot. Null
+   * when no view is on screen or the frame is not back in time; it never holds a dialog long.
+   */
+  async coverStill(): Promise<string | null> {
+    const view = this.#view;
+    const bounds = this.#requestedBounds;
+    if (!view || view.webContents.isDestroyed() || this.#fill || !bounds?.width || !bounds.height) return null;
+    const image = await Promise.race([
+      view.webContents.capturePage().catch(() => null),
+      sleep(COVER_STILL_WAIT_MS).then(() => null),
+    ]);
+    if (!image || image.isEmpty()) return null;
+    const size = image.getSize();
+    const scale = Math.min(1, COVER_STILL_MAX_PX / Math.max(size.width, size.height));
+    const shown =
+      scale < 1
+        ? image.resize({ width: Math.round(size.width * scale), height: Math.round(size.height * scale) })
+        : image;
+    return `data:image/jpeg;base64,${shown.toJPEG(COVER_STILL_QUALITY).toString("base64")}`;
+  }
+
   /** JPEG because these go straight into a vision model's context. */
   async screenshot(quality = DEFAULT_SHOT_QUALITY): Promise<Buffer> {
     await this.#profiler.invalidate("screenshot during sample");
@@ -933,6 +965,42 @@ export class GamePreview {
         preview: scaledTo(image, size, request.previewMaxPx).toJPEG(STILL_PREVIEW_QUALITY),
       },
     };
+  }
+
+  /**
+   * A plugin's clip: `seconds` of the canvas a still reads, recorded in the page as the game draws
+   * it (`preview-clip.ts`), never longer, with a JPEG poster of its first frame and its motion. An
+   * offscreen window paints at least `fps` frames a second while it records, and its own rate after.
+   */
+  async clip(request: PreviewClipRequest): Promise<PreviewClipAnswer> {
+    await this.#profiler.invalidate("clip during sample");
+    const wc = this.create().webContents;
+    const rate = this.options.offscreen ? wc.getFrameRate() : null;
+    if (rate !== null && rate < request.fps) wc.setFrameRate(request.fps);
+    if (this.options.offscreen && !wc.isPainting()) wc.startPainting();
+    try {
+      return await recordClip(
+        {
+          page: clipPageOn((expression) => wc.executeJavaScript(expression, true)),
+          sleep,
+          now: () => performance.now(),
+          bitmap: (dataUrl) => {
+            const image = nativeImage.createFromDataURL(dataUrl);
+            if (image.isEmpty()) return null;
+            const size = image.getSize();
+            return { bgra: image.toBitmap(), width: size.width, height: size.height };
+          },
+          jpeg: (dataUrl, maxPx) => {
+            const image = nativeImage.createFromDataURL(dataUrl);
+            if (image.isEmpty()) return null;
+            return scaledTo(image, image.getSize(), maxPx).toJPEG(STILL_PREVIEW_QUALITY);
+          },
+        },
+        request,
+      );
+    } finally {
+      if (rate !== null && rate < request.fps && !wc.isDestroyed()) wc.setFrameRate(rate);
+    }
   }
 
   /**

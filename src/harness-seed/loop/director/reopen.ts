@@ -37,6 +37,8 @@ export interface ReopenMark {
  * the finished run's verified outcomes would tell the lead to finish, or refuse every worker for
  * the ask. So is the art director's word: its review judged the finished build for the old ask, and
  * the finish it turned back once (`shipFinishRefused`) was the old commission's, not the new one's.
+ * So are the reviewer's no's (`finishTally`): their count and reasons were the old ask's; only its
+ * round number goes on, so no new round shares a number with an old one.
  * Everything else — the plan, the workers, the defects nobody owns, the log — goes on.
  */
 export function reopenedJournal(journal: AnyRecord, run: AnyRecord, mark: ReopenMark): AnyRecord {
@@ -52,7 +54,16 @@ export function reopenedJournal(journal: AnyRecord, run: AnyRecord, mark: Reopen
     ...director
   } = journal.director ?? {};
   const integrationHead = mark.finishedHead ?? director.integrationHead ?? null;
-  return { ...journal, run, director: { ...director, goals: null, integrationHead, reopened: mark } };
+  const finishTally = freshTally(director.finishTally);
+  const counted = finishTally ? { finishTally } : {};
+  return { ...journal, run, director: { ...director, ...counted, goals: null, integrationHead, reopened: mark } };
+}
+
+/** A finished run's finish checks for a new ask: no no's, no reasons, the round number kept; none when there was none. */
+function freshTally(saved: unknown): AnyRecord | null {
+  if (!saved || typeof saved !== "object") return null;
+  const round = Number((saved as AnyRecord).round);
+  return { round: Number.isSafeInteger(round) && round > 0 ? round : 0, rejections: 0, checking: false, reasons: [] };
 }
 
 /** The reopen this journal starts a run from, or null (a new run, a paused one resumed). */

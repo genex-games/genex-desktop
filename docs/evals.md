@@ -57,7 +57,8 @@ What every lane shares:
 - Codex host-skill suppression: every `~/.agents/skills/*/SKILL.md` is disabled by path (a linked
   skill also by its real path, the app's `hostSkillFiles`) and `computer_use`, `in_app_browser`,
   `browser_use` and `browser_use_external` are turned off, on lanes C and D and on the Codex
-  grader (`hostSkillSuppressionArgs`).
+  grader (`hostSkillSuppressionArgs`). Lane D and the grader run the app's engine, which turns
+  these and Codex's own sub-agents off in every session.
 - The containment the app gives that engine's main agent. Every argv builder refuses
   `bypassPermissions`, `--dangerously-*` and `danger-full-access`. Each registry row's
   `flagsDigest` pins its argv shape, suffix, answer sentence, deliverable and stripped
@@ -186,8 +187,10 @@ malformed case throws `CaseFileError` naming the case and field.
 
 Pinned: C1 `medieval-village` (dev-tuned: the seed was iterated on village runs), C2 `shooter`,
 C3 `mini-golf`, C5 `vague-brief` and C8 `canary` (no checklist; its verdict is machine-only).
-C9 `edit-existing`, C10 `follow-up` and C11 `long-horizon` are drafts the owner pins before a
-first baseline. Private holdouts live in `$GENEX_EVALS_HOME/cases-private.md`, every case
+C9 `edit-existing`, C10 `follow-up`, C11 `long-horizon` and C12-C18 (projects, engines and the
+Loop's finish: `vague-unreal-on`, `unreal-plugin-off`, `port-to-unreal`, `godot-no-plugin`,
+`loop-finish-check`, `timed-wrap-up`, `godot-loop`; C12-C15 and C18 on Genex lanes only) are drafts
+the owner pins before a first baseline. Private holdouts live in `$GENEX_EVALS_HOME/cases-private.md`, every case
 marked holdout; holdout rows never enter Git or an export.
 
 Anti-fitting is a static check: `npm run check:isolation` (in `check:static` and CI, public
@@ -211,7 +214,7 @@ blocks from it. A missing measurement is never zero: a pin is a value, `{unavail
 | `time.builds`, `delegationP50Ms` | Chat delegations and facet builds (Genex lanes) |
 | `tokens` | Uncached input, cache write, cache read, output, reasoning; by role (lead, workers, judges, subagents, auxiliary) and by model; `coverage` full, stream-only, partial-judges, trace-dirty or unmeasured |
 | `context` | Peak and compactions |
-| `calls` | Model calls, and tool calls by `ToolCategory` (`src/shared/eval-lane.ts`: read, search, edit, shell, build, install, browser, studio, subagent, web, planning, skill, other) |
+| `calls` | Model calls, and tool calls by `ToolCategory` (`src/shared/eval-lane.ts`: read, search, edit, shell, build, install, browser, studio, subagent, web, planning, skill, other), all classified by `src/shared/tool-category.ts`. In Genex lanes and the app's field rows a tool call is a `tool_use` part of a delegated record; raw Claude and Codex lanes count the stream's tool calls |
 | `cost.apiEquivalentUsd` | Tokens priced by `evals/prices.json`; one unpriced model makes it `unavailable: price-unknown` |
 | `outcome`, `output` | How the run ended, harness failure, typed no-build, questions, trace completeness, provider noise; `validateGameDir` of the stop-time snapshot, `verifiedBeforeDone` |
 
@@ -248,7 +251,12 @@ The Genex lanes read these from the eval profile's event log (`genex-events.ts`,
   `output_tokens` includes reasoning and `reasoning_tokens` is its thinking share; `by_model`
   (Claude) covers every model the session called (field rows count the main model's share beyond
   the main loop as `subagents` and every other model as `auxiliary`); `compactions`,
-  `duration_api_ms` and `ttft_ms`.
+  `duration_api_ms` and `ttft_ms`. A delegated Claude call's `cost_usd` and `by_model` are its own
+  share of its session's running totals: Claude Code reports both as totals a resumed session
+  carries on, so the engine subtracts what the same session reported last (remembered across
+  restarts; a counter that went down counts from zero, `substrate/engines/session-cost.ts`). The
+  calls of one session add up to what it spent, and one turn's passes are joined by adding them
+  (`plan-approval.ts` `joinedResult`).
   Context readings keep their source ([native context telemetry](connections-and-context.md#native-context-telemetry)).
 - `completion_call` records every `engine.complete`: requested and served model, usage, latency,
   failure kind and the caller's provenance (judge, playtester or SkillOpt gate).
@@ -532,7 +540,10 @@ calibration results and human labels.
   days) and posted by `src/main/run-sharing.ts` with no credentials or redirects. Its tokens are
   normalized like the ledger's, its first boot is `build_observation.ready.pageMs`, its
   `recordedAt` is the finish hour, and a chat build's row comes from the handled message's own
-  turn (a message that opened no turn shares nothing). A 410 on a POST pauses sending for a day;
+  turn (a message that opened no turn shares nothing); a run's records in that thread stay in the
+  run's row. Its `calls.tools` counts builder tool calls by category, as a Genex lane does; rows
+  from app versions up to 0.1.7 counted the chat's own tool requests in total only, so split any
+  `calls.tools` analysis by `app.version`. A 410 on a POST pauses sending for a day;
   Delete what I shared keeps working while it is paused, and a partial delete reports the rows
   it removed. Only a packaged app with no `--studio-*` switch, dev profile or test user data
   sends. [PRIVACY.md](../PRIVACY.md) is the consent text; `RUN_SHARING_CONSENT_VERSION`
@@ -594,7 +605,6 @@ five-minute rows read `unknown`); both set `STUDIO_BROWSER_TESTS=1`.
 - Edit-existing, follow-up and long-horizon cases run as plain builds: no start-folder seeding or
   follow-up turns yet.
 - The prober writes PNG frames and no video; pairwise rows are never published.
-- Field rows count tool calls in total only (`byCategory` is empty).
 - The lane root keeps the evals home out of an agent's casual listing, not out of reach: its
   `CLAUDE_CONFIG_DIR` or `CODEX_HOME` still names a folder inside it.
 - Studio scratch sessions are attributed by time, so two streams sharing one engine home (a Genex

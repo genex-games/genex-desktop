@@ -1,14 +1,23 @@
 /** The panel of the run's assets: every job a plugin was asked for, grouped by where it got to, and the modeller's work. */
 import type { JSX } from "react";
 import type { AssetInfo, BlenderNode, RunGraph as RunGraphModel } from "../../run-graph.ts";
-import { truncate } from "../../run-graph.ts";
+import { runIdOf, truncate } from "../../run-graph.ts";
 import { AssetCardState } from "../../run-graph-assets.ts";
 import { useStill } from "../../stills.ts";
 import { BlenderLogo } from "../../ui/brand.tsx";
 import { Icon } from "../../ui/icons.tsx";
-import { kilobyteWords } from "../../words.ts";
+import { ASSET_JOB_WORDS, kilobyteWords } from "../../words.ts";
 import { AssetThumbnail } from "../AssetThumbnail.tsx";
-import { ASSET_THUMB_PX, blenderRender, firstImage, isMaking, kindWord, trianglesWords } from "./asset-jobs.ts";
+import {
+  ASSET_THUMB_PX,
+  blenderRender,
+  firstImage,
+  isMaking,
+  kindWord,
+  stoppedGroups,
+  stoppedShort,
+  trianglesWords,
+} from "./asset-jobs.ts";
 import { Details, Panel, Row, Rows, Section } from "./chrome.tsx";
 import { joinDots } from "./format.ts";
 import { IMAGE_OUTLINE } from "./pictures.tsx";
@@ -50,8 +59,16 @@ function AssetPicture({
         <Icon name="info" size={14} />
       </span>
     );
+  // A job that stopped short is grey and still, as its card on the Assets tab is.
+  if (stoppedShort(job))
+    return (
+      <span className="grid shrink-0 place-items-center rounded-[6px] bg-inset text-ink-3" style={PICTURE_FRAME}>
+        <Icon name="info" size={14} />
+      </span>
+    );
+  if (isMaking(job)) return <span className="graph-shimmer block shrink-0 rounded-[6px]" style={PICTURE_FRAME} />;
   if (job.state !== AssetCardState.Delivered)
-    return <span className="graph-shimmer block shrink-0 rounded-[6px]" style={PICTURE_FRAME} />;
+    return <span className="hatch block shrink-0 rounded-[6px]" style={PICTURE_FRAME} />;
   return (
     <button
       type="button"
@@ -176,6 +193,8 @@ function jobGroups(jobs: AssetInfo[]): Array<[string, AssetInfo[]]> {
   return [
     ["Failed", jobs.filter((job) => job.state === AssetCardState.Failed)],
     ["Making", jobs.filter(isMaking)],
+    ...stoppedGroups(jobs),
+    [ASSET_JOB_WORDS.notFinishedGroup, jobs.filter((job) => job.state === AssetCardState.Unfinished)],
     ["Not in your game yet", made.filter((job) => job.inGame === false)],
     ["In your game", made.filter((job) => job.inGame)],
     ["Delivered", made.filter((job) => job.inGame === undefined)],
@@ -207,7 +226,7 @@ function AssetDetails({
     <Row label="Technical details">
       <Details
         rows={[
-          ["run", graph.runId],
+          ["run", runIdOf(graph)],
           ["files", joinDots(files) || null],
           ["jobs", joinDots(jobs.map((job) => job.jobId)) || null],
         ]}

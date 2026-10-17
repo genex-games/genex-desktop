@@ -1,0 +1,2 @@
+scene "start"
+  sprite "gardener" at 4, 2

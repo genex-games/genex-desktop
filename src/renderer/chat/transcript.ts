@@ -28,6 +28,7 @@ import {
 } from "../../shared/run-state.ts";
 import type { RunSummary } from "../../shared/run-summary.ts";
 import { isStudioRecord } from "../../shared/studio-activity.ts";
+import { isWorkerOfGraph, workerKeyOf } from "../../shared/run-graph-events.ts";
 import { EntryAction, EntryKind, toEntries } from "../chat-entries.ts";
 import type { LoopSetting } from "../loop-setting.ts";
 import {
@@ -49,6 +50,8 @@ const isWaiting = (message: QueuedMessage): boolean =>
 
 /** A plugin's question that still waits on the user. */
 const CONSENT_PENDING: PluginConsentEvent["state"] = "pending";
+/** The key prefix of a running worker's start. */
+const WORKER_KEY = "worker:";
 /** A plugin tool's records, traces of the worker that called it. */
 const WORKER_TOOL_EVENTS: ReadonlySet<string> = new Set([CustomEvent.PluginToolStarted, CustomEvent.PluginTool]);
 
@@ -75,6 +78,46 @@ function pendingConsents(stateEvents: readonly EventEnvelope[]): Map<string | un
     else pending.delete(consent.consentId);
   }
   return pending;
+}
+
+/** Background work still running in this thread: its start, so its line and Stop stay reachable. */
+function runningJobs(threadEvents: readonly EventEnvelope[]): Map<string, EventEnvelope> {
+  const running = new Map<string, EventEnvelope>();
+  for (const event of threadEvents) {
+    const started = customEvent(event, CustomEvent.JobStarted);
+    const ended = started ? null : customEvent(event, CustomEvent.JobEnded);
+    const jobId = (started ?? ended)?.jobId;
+    if (typeof jobId !== "string") continue;
+    if (started) running.set(`job:${jobId}`, event);
+    else running.delete(`job:${jobId}`);
+  }
+  return running;
+}
+
+/** A run that finished: its workers left with no end work no more. */
+function settleRunWorkers(running: Map<string, EventEnvelope>, runId: unknown): void {
+  if (typeof runId !== "string" || !runId) return;
+  for (const key of running.keys()) if (isWorkerOfGraph(key.slice(WORKER_KEY.length), runId)) running.delete(key);
+}
+
+/** Workers still working in this thread: the first start of each, so its line stays reachable. */
+function runningWorkers(threadEvents: readonly EventEnvelope[]): Map<string, EventEnvelope> {
+  const running = new Map<string, EventEnvelope>();
+  for (const event of threadEvents) {
+    const runEnd = customEvent(event, CustomEvent.RunFinished);
+    if (runEnd) {
+      settleRunWorkers(running, runEnd.runId);
+      continue;
+    }
+    const started = customEvent(event, CustomEvent.WorkerStarted);
+    const finished = started ? null : customEvent(event, CustomEvent.WorkerFinished);
+    const worker = workerKeyOf(started ?? finished ?? {});
+    if (!worker) continue;
+    const key = `${WORKER_KEY}${worker}`;
+    if (finished) running.delete(key);
+    else if (!running.has(key)) running.set(key, event);
+  }
+  return running;
 }
 
 /** Does this record answer an open intake question: a user message, or a build that started? */
@@ -107,7 +150,8 @@ function isRunningWorkerTrace(event: EventEnvelope, activeRunId: string | null):
 
 /**
  * The transcript: the loaded page, plus what must stay reachable whatever page is loaded (a
- * plugin's pending question, an intake question not yet answered), in delivery order.
+ * plugin's pending question, an intake question not yet answered, background work still
+ * running, a worker still working), in delivery order.
  */
 export function transcriptEntries(input: {
   /** The loaded page and its live tail. */
@@ -126,6 +170,8 @@ export function transcriptEntries(input: {
   // Current-state context keeps an intake question reachable even when its history page is unloaded.
   const interview = openInterview(input.threadEvents);
   if (interview) pending.set("interview", interview);
+  for (const [key, start] of runningJobs(input.threadEvents)) pending.set(key, start);
+  for (const [key, start] of runningWorkers(input.threadEvents)) pending.set(key, start);
   const loadedIds = new Set(input.events.map((event) => event.id));
   // Waiting input keeps its bubble whatever page is loaded: queued, or being handed to the running turn.
   for (const message of input.queued) if (isWaiting(message) && message.eventId) loadedIds.add(message.eventId);
@@ -136,8 +182,12 @@ export function transcriptEntries(input: {
     return !isRunningWorkerTrace(event, input.activeRunId);
   });
   // Merging sorts by id; delivery order is applied to the merged log so it is not undone.
+  // A message's queue id by the event that wrote it, read before delivery order moves the event.
+  const queueIds = new Map(
+    [...queue.messages.values()].flatMap((message) => (message.eventId ? [[message.eventId, message.messageId]] : [])),
+  );
   return conversationEntries(
-    toEntries(deliveryOrder(mergeChatEvents([...pending.values()], transcript), queue.messages)),
+    toEntries(deliveryOrder(mergeChatEvents([...pending.values()], transcript), queue.messages), queueIds),
   );
 }
 

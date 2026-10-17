@@ -18,7 +18,7 @@ import { STEER_STALL_MS, steerFeed, steerSession, userFrame } from "../../src/su
 import { credentialHomes } from "../../src/substrate/credential-homes.ts";
 import { absoluteRule } from "../../src/substrate/engines/claude-permissions.ts";
 import { EngineError, type Engine } from "../../src/substrate/engines/types.ts";
-import { registeredSchema, scriptedClaude } from "../helpers/scripted-claude.ts";
+import { registeredSchema, scriptedClaude, wokenSession } from "../helpers/scripted-claude.ts";
 import { tmpDir } from "../helpers/tmp.ts";
 
 // An engine resolves — and sweeps — its login homes the moment it is built, and `CLAUDE_CONFIG_DIR`
@@ -259,6 +259,28 @@ describe("claude code delegated engine", () => {
       parts: Array<{ type: string; name?: string }>;
     };
     assert.equal(toolUse.parts[0]?.name, "Write");
+  });
+
+  it("runs on the account chosen in Settings: an added one in its own home, the Terminal login in the CLI's", async () => {
+    const root = await tmpDir("studio-engine-accounts-");
+    const home = path.join(root, "claude-home");
+    const systemHome = path.join(root, "dot-claude");
+    for (const dir of [home, systemHome]) {
+      await mkdir(dir, { recursive: true });
+      await writeFile(path.join(dir, ".credentials.json"), "{}");
+    }
+    const { fn, seen } = fakeQuery(successRun);
+    const engine = new ClaudeCodeEngine({ resolveCli: fixtureCodingCli, engineHome: home, systemHome, queryFn: fn });
+    const added = await engine.accounts.newAccount();
+    await writeFile(path.join(added.home, ".credentials.json"), "{}");
+    await engine.accounts.remember(added.id, { email: "work@example.com" });
+    await engine.accounts.choose(added.id);
+    await engine.delegate({ prompt: "build", cwd: "/tmp/game-workspace" });
+    await engine.accounts.choose("terminal");
+    await engine.delegate({ prompt: "build", cwd: "/tmp/game-workspace" });
+    const envs = seen.map((call) => (call as { env: Record<string, string> }).env.CLAUDE_CONFIG_DIR);
+    assert.deepEqual(envs, [added.home, undefined]);
+    assert.deepEqual(await engine.resolveLogin(), { source: "system", home: systemHome });
   });
 
   it("turns a subscription throttle into a recoverable engine error", async () => {
@@ -752,6 +774,17 @@ describe("claude code delegated engine", () => {
     assert.equal(init.session_id, "ses_1");
   });
 
+  it("marks the CLI's own API error on the mirrored message, so no reader takes it for the model's words", () => {
+    const errored = compactSdkMessage({
+      type: "assistant",
+      error: "rate_limit",
+      message: { content: [{ type: "text", text: "You've hit your session limit · resets 3pm" }] },
+    }) as { apiError?: string; parts: unknown[] };
+    assert.equal(errored.apiError, "rate_limit");
+    const spoken = compactSdkMessage({ type: "assistant", message: { content: [{ type: "text", text: "Done." }] } });
+    assert.equal((spoken as { apiError?: string }).apiError, undefined);
+  });
+
   it("preserves completed reply text so the durable message matches its stream", () => {
     const compacted = compactSdkMessage({
       type: "assistant",
@@ -807,7 +840,8 @@ describe("claude code delegated engine", () => {
     // Flipped (step 1): research is part of building — web search and page reading, with the
     // shell still sandboxed.
     assert.deepEqual(call.allowedTools, ["mcp__studio__checkpoint", "Bash", "WebSearch", "WebFetch"]);
-    assert.deepEqual(call.disallowedTools, ["SendMessage", "ListAgents"]);
+    // Flipped: no session gets Claude Code's own sub-agents; Genex runs the workers.
+    assert.deepEqual(call.disallowedTools, ["SendMessage", "ListAgents", "Agent", "Task"]);
     // Thinking arrives as a summary instead of an empty block, for the chat's Thinking details.
     assert.equal((call.settings as Record<string, unknown>).showThinkingSummaries, true);
     // The delegate default is ABSENT, not empty: a build session is exactly where a project
@@ -2088,5 +2122,17 @@ describe("an account whose access was taken away (provider lost)", () => {
     ];
     const engine = await engineWithLogin(fakeQuery(recovered).fn);
     assert.equal((await engine.delegate({ prompt: "build", cwd: "/tmp/x" })).ok, true);
+  });
+});
+
+/** A session that ended its turn to wait on a background sleep, then was woken by it after its input had ended. */
+const wokenRun = wokenSession();
+
+describe("a session that goes on after its input ended", () => {
+  it("without a worker's seat, a session a background task woke after its last result keeps that result's verdict: its own loop resumes it", async () => {
+    const engine = await engineWithLogin(fakeQuery(wokenRun).fn);
+    const answer = await engine.delegate({ prompt: "Make the character.", cwd: await tmpDir("claude-woken-") });
+    assert.equal(answer.ok, true);
+    assert.equal(answer.summary, "Done.");
   });
 });

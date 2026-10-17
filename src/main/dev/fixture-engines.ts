@@ -1,7 +1,7 @@
 /**
- * The scripted engines of a fixture session: Ollama, Claude Code, Codex, OpenCode, Pi and OpenRouter
- * stand-ins that answer from fixed text, never reach an account, a key or the network, and start no
- * vendor worker. Markers in
+ * The scripted engines of a fixture session: Ollama, Claude Code, Codex, OpenCode, Pi, OpenRouter and
+ * local server stand-ins that answer from fixed text, never reach an account, a key, a server or the
+ * network, and start no vendor worker. Markers in
  * the user's words (`fixture:pending`, `fixture:stream`, `fixture:plan`, …) choose the script.
  */
 import { ChatActivityPhase } from "../../shared/chat-activity.ts";
@@ -9,6 +9,7 @@ import { EngineKind, EngineStatusCode } from "../../shared/engine-descriptor.ts"
 import { EngineFailureKind, StopReason } from "../../shared/engine-requests.ts";
 import { HOUR_MS } from "../../shared/duration.ts";
 import { EngineId } from "../../shared/providers.ts";
+import { type LocalServerInfo, LocalServerKind } from "../../shared/local-server.ts";
 import {
   type CompleteRequest,
   DelegateEventType,
@@ -18,6 +19,7 @@ import {
   EngineError,
   type EngineStatus,
 } from "../../substrate/engines/types.ts";
+import { BACKDROP_SYSTEM_PROMPT, REPAIR_OPENING } from "../core/backdrop-generation-prompts.ts";
 import { GAME_NAME_SYSTEM_PROMPT } from "../core/game-naming-prompts.ts";
 import { FIXTURE_MODEL } from "./fixture-kit.ts";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -31,12 +33,30 @@ const FIXTURE_ENGINES = [
   EngineId.OpenCode,
   EngineId.Pi,
   EngineId.OpenRouter,
+  EngineId.LocalServer,
 ] as const;
-/** The fixture engines the studio's own loop drives: the local model, and OpenRouter's API. */
-const DIRECT_FIXTURES: ReadonlySet<string> = new Set([EngineId.Ollama, EngineId.OpenRouter]);
+/** The fixture engines the studio's own loop drives: the local model, OpenRouter's API and a local server. */
+const DIRECT_FIXTURES: ReadonlySet<string> = new Set([EngineId.Ollama, EngineId.OpenRouter, EngineId.LocalServer]);
 const READY_STATUS: EngineStatus = { code: EngineStatusCode.Ready, detail: "AG-933 fixture; no account or network" };
+/** No local server is connected in a fixture session, so the picker's lists stay as they were. */
+const NO_LOCAL_SERVER: EngineStatus = {
+  code: EngineStatusCode.NotInstalled,
+  detail: "AG-933 fixture; no local server is connected",
+};
+/** The server a ready local server stand-in reaches: TabbyAPI's default address, with a key kept. */
+const FIXTURE_SERVER: LocalServerInfo = {
+  url: "http://127.0.0.1:5000/v1",
+  kind: LocalServerKind.TabbyApi,
+  hasKey: true,
+};
+/** The status each fixture starts with when the session names none: ready, but for the local server. */
+const DEFAULT_STATUS: Partial<Record<string, EngineStatus>> = { [EngineId.LocalServer]: NO_LOCAL_SERVER };
 /** How long naming a game takes, so home's Naming step can be seen. */
 const NAMING_DELAY_MS = 2500;
+/** How long making a background takes, so the panel's progress can be seen. */
+const BACKDROP_DELAY_MS = 1500;
+/** A description holding this gets a shader the GPU refuses first, so the repair can be seen. */
+const BROKEN_BACKDROP_MARKER = "fixture:broken";
 /** How long a scripted plan takes to come back, so its progress can be seen. */
 const PLAN_DELAY_MS = 1200;
 /** Pauses between streamed pieces: a Studio reply, a slow one, and a game chat's. */
@@ -52,6 +72,7 @@ const LONG_REPLY_SECTIONS = 12;
 const MESSAGE = {
   plainReply: "Fixture response. No new build was started.",
   gameName: "Tiny Island Fishing",
+  backdropTitle: "Fixture Waves",
   studioReply:
     "Fixture Studio reply: game chats build games. This conversation explains Studio, its runs, and the instruction changes in Activity.",
   studioFollowUp: "Fixture follow-up: the earlier conversation and recorded Studio activity are still in context.",
@@ -74,7 +95,7 @@ const LATEST_MESSAGE = "LATEST USER MESSAGE:\n";
 
 /**
  * First launch: an empty library, Claude Code waiting for a sign-in, Codex and OpenCode not
- * installed, and OpenRouter with no key.
+ * installed, OpenRouter with no key, and no local server.
  */
 export const FIRST_LAUNCH_STATUS: Record<string, EngineStatus> = {
   [EngineId.ClaudeCode]: {
@@ -85,6 +106,7 @@ export const FIRST_LAUNCH_STATUS: Record<string, EngineStatus> = {
   [EngineId.OpenCode]: { code: EngineStatusCode.NotInstalled, detail: "AG-933 fixture; no OpenCode CLI" },
   [EngineId.Pi]: { code: EngineStatusCode.NotInstalled, detail: "AG-933 fixture; no Pi CLI" },
   [EngineId.OpenRouter]: { code: EngineStatusCode.NeedsLogin, detail: "AG-933 fixture; no OpenRouter key" },
+  [EngineId.LocalServer]: NO_LOCAL_SERVER,
 };
 
 export function fixtureEngines(directChat = false, statuses: Record<string, EngineStatus> = {}): Engine[] {
@@ -100,7 +122,7 @@ function fixtureEngine(
   pendingSessions: Set<string>,
 ): Engine {
   const direct = DIRECT_FIXTURES.has(id);
-  // Ollama completes one turn at a time; OpenRouter holds a Genex session, as the real one does.
+  // Ollama completes one turn at a time; OpenRouter and a local server hold Genex sessions, as the real ones do.
   const local = id === EngineId.Ollama;
   return {
     id,
@@ -109,7 +131,14 @@ function fixtureEngine(
     supportsSessions: !(directChat && local),
     // Claude Code reads the person's messages mid-turn; Codex is interrupted and resumed instead.
     ...(id === EngineId.ClaudeCode ? { steersMidTurn: true } : {}),
-    status: async () => statuses[id] ?? READY_STATUS,
+    status: async () => statuses[id] ?? DEFAULT_STATUS[id] ?? READY_STATUS,
+    // A local server stand-in names its server only while the session has it ready.
+    ...(id === EngineId.LocalServer
+      ? {
+          server: async () =>
+            (statuses[id] ?? NO_LOCAL_SERVER).code === EngineStatusCode.Ready ? FIXTURE_SERVER : null,
+        }
+      : {}),
     models: async () => [
       {
         id: FIXTURE_MODEL,
@@ -178,6 +207,10 @@ async function completeFixture(id: EngineId, request: CompleteRequest) {
     return reply(id, MESSAGE.gameName);
   }
   const latestUser = request.messages.findLast((message) => message.role === "user")?.content ?? "";
+  if (request.systemPrompt === BACKDROP_SYSTEM_PROMPT) {
+    await sleep(BACKDROP_DELAY_MS, undefined, { signal: request.signal }).catch(() => {});
+    return reply(id, backdropReply(latestUser));
+  }
   if (latestUser.includes(PENDING_MARKER)) await pending(request.signal, id);
   if (request.systemPrompt?.startsWith("You are the Harness assistant")) return studioReply(id, request, latestUser);
   const transcript = JSON.stringify(request.messages);
@@ -189,6 +222,26 @@ async function completeFixture(id: EngineId, request: CompleteRequest) {
     return reply(id, MESSAGE.streamedReply);
   }
   return reply(id, MESSAGE.plainReply);
+}
+
+/**
+ * A background's waves. The first answer to a `fixture:broken` description returns a float as a
+ * colour; a repair gets the working one.
+ */
+function backdropReply(request: string): string {
+  const broken = request.includes(BROKEN_BACKDROP_MARKER) && !request.includes(REPAIR_OPENING);
+  const result = broken ? "wave" : "vec4f(color, 1.0)";
+  return `Title: ${MESSAGE.backdropTitle}
+\`\`\`wgsl
+@fragment fn fs_main(@location(0) uv: vec2f) -> @location(0) vec4f {
+  let p = bd_centered(uv);
+  let wave = 0.5 + 0.5 * sin(p.x * 6.0 * backdrop.scale + backdrop.time + sin(p.y * 4.0 + backdrop.time * 0.7) * 2.0);
+  let band = smoothstep(0.02, 0.0, abs(fract(p.y * 5.0 * backdrop.scale + wave * 0.6) - 0.5) - 0.2);
+  var color = bd_glow(backdrop.page.rgb, backdrop.accent.rgb, wave * 0.18);
+  color = bd_glow(color, backdrop.ink.rgb, band * 0.7);
+  return ${result};
+}
+\`\`\``;
 }
 
 /** The Studio thread's assistant: a first reply, a follow-up, or nothing for `fixture:failure`. */

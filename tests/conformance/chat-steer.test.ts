@@ -580,6 +580,50 @@ describe("steered session: an engine without input mid-turn is interrupted and r
     assert.equal(result.summary, "done");
     assert.equal("steered" in result, false, "the result is the engine's, untouched");
   });
+  it("a session the engine answers it cannot find (another account, never saved) starts fresh, so the chat goes on", async () => {
+    const lost: DelegateResult = {
+      ok: false,
+      summary: "",
+      turns: 0,
+      usage: {},
+      engine: "claude-code",
+      stopReason: "error",
+      errorText: "No conversation found with session ID: aa932c8a-f6c0-463c-8fa0-87a9ae52895c",
+    };
+    const calls: Array<{ prompt: string; resume: string | null }> = [];
+    const result = await steeredCall({ cancelled: false }, undefined, {
+      prompt: "PROMPT",
+      resume: "aa932c8a-f6c0-463c-8fa0-87a9ae52895c",
+      fresh: () => "FRESH",
+      call: async (prompt, resume) => {
+        calls.push({ prompt, resume });
+        return calls.length === 1 ? lost : ok("done", "s2");
+      },
+    });
+    assert.deepEqual(
+      calls.map((c) => [c.prompt, c.resume]),
+      [
+        ["PROMPT", "aa932c8a-f6c0-463c-8fa0-87a9ae52895c"],
+        ["FRESH", null],
+      ],
+    );
+    assert.equal(result.summary, "done");
+
+    // A failure that only mentions Resume (a usage cap's words) is an answer, never a lost session.
+    const capped = { ...lost, errorText: "You've hit your weekly limit; press Resume once it resets" };
+    const once: Array<string | null> = [];
+    const answer = await steeredCall({ cancelled: false }, undefined, {
+      prompt: "PROMPT",
+      resume: "s1",
+      fresh: () => "FRESH",
+      call: async (_prompt, resume) => {
+        once.push(resume);
+        return capped;
+      },
+    });
+    assert.deepEqual(once, ["s1"]);
+    assert.equal(answer, capped);
+  });
 });
 
 /** A chat whose game has a finished run: its messages are answered by the run's coordinator. */

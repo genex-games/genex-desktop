@@ -1,15 +1,26 @@
 /**
  * A plugin's own MCP servers on its page, as Connections: each with its picture, a name and one
  * line, and where it stands (Ready, Off, waiting on the account) or the one setting it needs.
- * They used to hide on the Plugins list behind "Show disabled and optional connections".
+ * They used to hide on the Plugins list behind "Show disabled and optional connections". An engine
+ * plugin's connection is only as ready as its editor: once on, it says what its toolbar button
+ * says (Not installed, Not set up, Not open, Starting, Ready), not the bridge's own Ready.
  */
 import type { JSX } from "react";
 import { useState } from "react";
 import { McpHealth, type McpConnectorView } from "../../../shared/mcp.ts";
-import { type PluginInfo, type PluginMcpServer, PluginAccountState } from "../../../shared/plugins.ts";
+import { toolbarStatusFrom } from "../../../shared/plugin-toolbar.ts";
+import {
+  type PluginInfo,
+  type PluginMcpServer,
+  PluginAccountState,
+  PluginCapability,
+  type PluginToolbarStatus,
+} from "../../../shared/plugins.ts";
 import { Button } from "../../ui/Button.tsx";
 import { useAsyncEffect } from "../../use-async-effect.ts";
-import { PLUGINS_WORDS } from "../../words.ts";
+import { UNREAL_PLUGIN_ID } from "../../unreal-game.ts";
+import { UNITY_PLUGIN_ID } from "../../../shared/observers.ts";
+import { PLUGINS_WORDS, UNITY_WORDS, UNREAL_WORDS, consentToolWords } from "../../words.ts";
 import { isActive, pluginAccount, pluginIconUrl } from "./labels.ts";
 import { type PluginsPage, usePluginServers } from "./page.ts";
 import { PluginIcon } from "../../ui/PluginIcon.tsx";
@@ -61,8 +72,38 @@ const STATE_WORDS: Record<ConnectionState, string> = {
   ready: WORDS.ready,
 };
 
-/** The first sentence of a manifest description: the server's one line when the page has no name for it. */
-const firstSentence = (text: string): string => /^[^.!?]*[.!?]?/.exec(text)?.[0]?.trim() || text;
+/**
+ * The first sentence of a manifest description: the server's one line when the page has no name
+ * for it. A stop ends it only before a space or the end, so "Unreal Editor 5.8" stays whole.
+ */
+const firstSentence = (text: string): string => /^.*?[.!?](?=\s|$)/s.exec(text)?.[0]?.trim() || text;
+
+/** Studio's own names for a bundled plugin's servers, by plugin and server id, where the manifest's line speaks to agents. */
+const OWN_NAMES: Readonly<Record<string, Readonly<Record<string, ConnectionNames>>>> = {
+  [UNREAL_PLUGIN_ID]: { editor: UNREAL_WORDS.connection },
+  [UNITY_PLUGIN_ID]: { editor: UNITY_WORDS.connection },
+};
+
+/**
+ * An engine plugin's word for where its editor stands, from its toolbar button's status action,
+ * asked while the plugin is on; null for any other plugin or until it answers.
+ */
+function useEngineWord(plugin: PluginInfo, project: string | null | undefined): PluginToolbarStatus | null {
+  const [word, setWord] = useState<PluginToolbarStatus | null>(null);
+  const engine = plugin.manifest.capabilities.includes(PluginCapability.GameEngine);
+  const action = engine && isActive(plugin) ? plugin.manifest.toolbar?.find((item) => item.status)?.status : undefined;
+  useAsyncEffect(
+    (alive) => {
+      if (!action) return;
+      window.studio.pluginAction(plugin.manifest.id, action, {}, project ?? undefined).then(
+        (value) => alive() && setWord(toolbarStatusFrom(value)),
+        () => alive() && setWord(null),
+      );
+    },
+    [plugin.manifest.id, action, project],
+  );
+  return action ? word : null;
+}
 /** A server id as a name: `creator` reads "Creator". */
 const titleOf = (id: string): string => `${id.charAt(0).toLocaleUpperCase()}${id.slice(1).replaceAll("-", " ")}`;
 
@@ -119,6 +160,24 @@ function SettingEditor({
   );
 }
 
+/** The tools a person always allowed for this server, and the button that makes each ask again. */
+function AlwaysAllowed({ page, view }: { page: PluginsPage; view: McpConnectorView | undefined }): JSX.Element | null {
+  const tools = view?.connector.toolPolicy.autoApprove ?? [];
+  if (!view || !tools.length) return null;
+  return (
+    <span className="extension-description" data-always-allowed="">
+      {WORDS.alwaysAllowed(tools.map((tool) => consentToolWords(tool)).join(", "))}{" "}
+      <Button
+        variant="ghost"
+        disabled={page.busy}
+        onClick={() => void page.act(() => window.studio.mcpForgetAlwaysAllowed(view.connector.id))}
+      >
+        {WORDS.askEveryTime}
+      </Button>
+    </span>
+  );
+}
+
 /** One server's row. */
 function ConnectionRow({
   plugin,
@@ -139,6 +198,9 @@ function ConnectionRow({
 }): JSX.Element {
   const account = pluginAccount(page.connections, plugin.manifest.id);
   const state = connectionState(plugin, server, view, { settings, account });
+  const engineWord = useEngineWord(plugin, page.project);
+  // A ready bridge to an editor that isn't ready reads as the editor's own state, with no green dot.
+  const editorWord = state === ConnectionState.Ready ? engineWord?.badge : undefined;
   const title = names?.title ?? titleOf(server.id);
   const settingKey = server.requires?.settings?.[0];
   const setting = plugin.manifest.settings.find((s) => s.key === settingKey);
@@ -154,11 +216,17 @@ function ConnectionRow({
         </span>
       </div>
       {state !== ConnectionState.NeedsSetting && (
-        <span className="extension-connection-state" data-state={state}>
-          {state === ConnectionState.Ready && <span className="extension-dot" aria-hidden="true" />}
-          {STATE_WORDS[state]}
+        <span
+          className="extension-connection-state"
+          data-state={state}
+          data-engine-word={editorWord ? "" : undefined}
+          title={editorWord ? engineWord?.title : undefined}
+        >
+          {state === ConnectionState.Ready && !editorWord && <span className="extension-dot" aria-hidden="true" />}
+          {editorWord ?? STATE_WORDS[state]}
         </span>
       )}
+      <AlwaysAllowed page={page} view={view} />
       {editable && settingKey && (
         <SettingEditor
           plugin={plugin}
@@ -209,7 +277,7 @@ export function PluginConnections({
           page={page}
           server={server}
           view={views.find((v) => typeof v.connector.source === "object" && v.connector.source.server === server.id)}
-          names={names[server.id]}
+          names={names[server.id] ?? OWN_NAMES[manifest.id]?.[server.id]}
           settings={settings}
           onSaved={(key, value) => setSettings((current) => ({ ...current, [key]: value }))}
         />

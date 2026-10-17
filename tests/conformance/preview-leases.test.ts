@@ -6,6 +6,7 @@
  */
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { realpath } from "node:fs/promises";
 import { setImmediate } from "node:timers/promises";
 import { OVERFLOW_WINDOWS_MAX, PreviewPool } from "../../src/substrate/preview-pool.ts";
 import { coreLite } from "../helpers/core-lite.ts";
@@ -125,6 +126,50 @@ describe("harness-borrowed preview windows", () => {
  * its own (Live's WebGL context among the ones Chromium drops first). Past `OVERFLOW_WINDOWS_MAX`
  * a session waits for a window to close, and one that ends while it waits opens none.
  */
+describe("the computers of a harness that ended", () => {
+  it("stops the preview.computer sessions on its windows, on a crash and before a restart", async () => {
+    const ports = fakePorts();
+    const lite = await coreLite({ preview: {} as never, createHeadlessPreview: ports.create, previewPoolMax: 6 });
+    lite.core.host.restart = (async () => {}) as never;
+    lite.core.host.healthcheck = (async () => true) as never;
+    try {
+      const { core } = lite;
+      const api = lite.api() as unknown as Record<string, (input?: unknown) => Promise<unknown>>;
+      const project = "lease-computer";
+      await core.games.scaffold(project);
+      const root = await realpath(core.games.dirFor(project));
+      const released: string[] = [];
+      let made = 0;
+      // The session a leased window's computer holds: its release ends a Play Protocol game's process.
+      core._computerToolsFor = (async () => {
+        const id = `session-${++made}`;
+        return {
+          liveTools: [{ name: "computer", description: "", parameters: { type: "object", properties: {} } }],
+          onLiveTool: async () => "ok",
+          trace: () => ({}),
+          release: async () => {
+            released.push(id);
+          },
+        };
+      }) as never;
+      const playOn = async () => {
+        const { handle } = (await api["preview.acquire"]!({ label: "facet" })) as { handle: string };
+        await api["preview.computer"]!({ handle, project, root, describe: true });
+        return handle;
+      };
+      await playOn();
+      await core.host.options.onUnexpectedExit!({ at: Date.now(), code: 1, signal: null, harnessVersion: null });
+      assert.deepEqual(released, ["session-1"], "a crash stops the dead harness's computer sessions");
+
+      await playOn();
+      await core.recover("test wedge");
+      assert.deepEqual(released, ["session-1", "session-2"], "a restart stops the old harness's sessions");
+    } finally {
+      await lite.close();
+    }
+  });
+});
+
 describe("windows past the pool's ceiling", () => {
   it("opens at most OVERFLOW_WINDOWS_MAX, then queues sessions until a window closes", async () => {
     const ports = fakePorts();

@@ -125,6 +125,11 @@ async function eventNamesInSource(): Promise<Map<string, string[]>> {
     if (ts.isStringLiteralLike(node)) return [node.text];
     if (ts.isTemplateExpression(node)) return [`${templateHead(node)}*`];
     if (ts.isPropertyAccessExpression(node)) return [...vocabularyValues(vocabularies, node)];
+    // A string constant naming the event, here or imported (the seed's `FINISH_CHECK_EVENT`).
+    if (ts.isIdentifier(node)) {
+      const text = constantText(node);
+      return text === undefined ? [] : [text];
+    }
     if (ts.isParenthesizedExpression(node) || ts.isAsExpression(node)) return literals(node.expression);
     if (ts.isConditionalExpression(node)) return [...literals(node.whenTrue), ...literals(node.whenFalse)];
     return [];

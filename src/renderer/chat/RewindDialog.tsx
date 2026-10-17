@@ -6,18 +6,20 @@ import { Switch } from "../ui/switch.tsx";
 import { problemWords } from "../words.ts";
 import { REWIND_WORDS, restoresByDefault, rewindBusyLabel, rewindFilesWords } from "./rewind-words.ts";
 
-/** What the dialog says about the game files: checking, refused, or what they will do. */
+/** What the dialog says about the game files: checking, refused, or what they will do, and what an engine project keeps. */
 function RewindFilesBody({
   files,
   refused,
   restore,
   busy,
+  engineNote,
   onRestore,
 }: {
   files: RewindFiles | null;
   refused: string;
   restore: boolean;
   busy: boolean;
+  engineNote: string | null;
   onRestore: (restore: boolean) => void;
 }): JSX.Element {
   const switchId = useId();
@@ -53,6 +55,11 @@ function RewindFilesBody({
         )
       )}
       {words.nested && <p className="text-ink-3">{words.nested}</p>}
+      {engineNote && (
+        <p data-rewind-engine-note className="text-ink-3">
+          {engineNote}
+        </p>
+      )}
     </div>
   );
 }
@@ -69,6 +76,7 @@ export function RewindDialog({
   threadId,
   eventId,
   messageId,
+  engineNote = null,
   returnFocus,
   onRewound,
   onDismiss,
@@ -76,6 +84,8 @@ export function RewindDialog({
   threadId: string;
   eventId: string;
   messageId: string;
+  /** What Rewind can't undo in the game's engine project (`engine-game.ts` `engineRewindNote`); none for a web game. */
+  engineNote?: string | null;
   /** Focus on close (the composer after a rewind); the opener when it holds nothing. */
   returnFocus?: RefObject<HTMLElement | null>;
   onRewound: (result: RewindResult) => void;
@@ -131,7 +141,14 @@ export function RewindDialog({
         if (!busy) onDismiss();
       }}
     >
-      <RewindFilesBody files={files} refused={refused} restore={restore} busy={busy} onRestore={setRestore} />
+      <RewindFilesBody
+        files={files}
+        refused={refused}
+        restore={restore}
+        busy={busy}
+        engineNote={engineNote}
+        onRestore={setRestore}
+      />
       {error && (
         <p role="alert" className="text-xs text-red">
           {error}

@@ -11,6 +11,7 @@ import { GameWorkspaces } from "../../src/substrate/game-workspace.ts";
 import { coverFromBrief, validateGameCover } from "../../src/shared/game-library.ts";
 import { gameCoverSvg } from "../../src/shared/game-cover.ts";
 import { librarySearch } from "../../src/renderer/game-search.ts";
+import { tmpDir } from "../helpers/tmp.ts";
 let rig: Rig;
 before(async () => {
   rig = await startRig({ replies: [] });
@@ -114,6 +115,26 @@ describe("game-first library", () => {
     await rig.core.games.ensureCover(game.name);
     assert.deepEqual((await rig.core.games.presentation(game.name)).cover, uploaded);
     assert.throws(() => validateGameCover({ kind: "image", dataUrl: 'data:image/svg+xml,<svg onload="alert(1)"/>' }));
+  });
+  it("a game New game made carries its folder's stamp as made, which the folder keeps until something is built", async () => {
+    const api = rig.core.api();
+    const listed = async (name: string) => (await api["game.list"]()).find((g) => g.name === name);
+    const stampNow = async (project: string) => {
+      const stamps = await api["game.contentStamp"]({ project, split: true });
+      return typeof stamps === "string" ? stamps : stamps?.all;
+    };
+    const made = await rig.core.createGame("City Circuit");
+    const stamp = (await listed(made.name))?.scaffoldStamp;
+    assert.ok(stamp, "the harness reads it from game.list");
+    assert.equal(made.scaffoldStamp, stamp, "New game answers it too");
+    assert.equal(await stampNow(made.name), stamp, "nothing built yet");
+    const restarted = new GameWorkspaces(rig.core.games);
+    assert.equal((await restarted.list()).find((g) => g.name === made.name)?.scaffoldStamp, stamp, "kept by the index");
+    // New game makes an empty folder: the first build writes the game's first file.
+    await writeFile(path.join(made.dir, "main.js"), "// the first build\n");
+    assert.notEqual(await stampNow(made.name), stamp, "a build changes the folder, never the stamp it was made with");
+    const adopted = await rig.core.adoptProject(await tmpDir("opened-game-"));
+    assert.equal((await listed(adopted.name))?.scaffoldStamp, undefined, "a folder the user opened has none");
   });
   it("creates new games in a chosen folder while existing games keep their folders, names and chats", async () => {
     const original = rig.core.games.root;

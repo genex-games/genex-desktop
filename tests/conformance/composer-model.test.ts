@@ -19,6 +19,7 @@ import {
   composerLoopView,
   lastLoop,
   loopCommissions,
+  modeMenuReach,
   pinChatLoop,
   rememberChatLoop,
   reportCommissions,
@@ -536,6 +537,19 @@ describe("what a chat's Loop is", () => {
       assert.deepEqual(storedChatLoop(storage({ ...globals, "studio.loop.A": bad }), "A"), { on: true, hours: 1 }, bad);
     }
     assert.deepEqual(storedChatLoop(storage(globals)), { on: true, hours: 1 }, "no chat reads the last pick");
+  });
+
+  it("while a build owns the chat, or its coordinator answers, Mode stays shut; with neither it opens and changes", () => {
+    const running = composerLoopView({ own: halfHour, build: { state: "running", loop: infinite } });
+    for (const coordinating of [false, true])
+      assert.deepEqual(
+        modeMenuReach({ view: running, coordinating }),
+        { opens: false, changes: false },
+        `coordinating: ${coordinating}`,
+      );
+    const own = composerLoopView({ own: halfHour, build: null });
+    assert.deepEqual(modeMenuReach({ view: own, coordinating: false }), { opens: true, changes: true });
+    assert.deepEqual(modeMenuReach({ view: own, coordinating: true }), { opens: false, changes: false });
   });
 
   it("Mode shows the chat's own Loop with no build or after it finished, and a running or paused build's own limit", () => {

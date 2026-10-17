@@ -4,14 +4,25 @@
   Hardened-runtime entitlements for the app and every helper (scripts/package-signing.cjs).
   allow-jit: V8 needs it in main, the renderers and the ELECTRON_RUN_AS_NODE children (harness,
   plugin backends, MCP servers, the self-edit gate).
-  Deliberately absent: camera, microphone, bluetooth, USB, location and print (games are denied
-  media permissions in main/preview.ts), and disable-library-validation, so only native addons
-  signed with the app's own team load. Third-party plugins' native addons are not supported; the
-  install scan already reports a .node file as a dangerous native binary.
+  automation.apple-events: an agent's app_look reads a window's accessibility tree through System
+  Events (osascript run by main), and the bundled cua-driver (dist/resources/cua-driver, signed with
+  these entitlements) may message an app it drives; the hardened runtime refuses Apple events
+  without it. The driver needs no entitlement for Accessibility or Screen Recording: it runs embedded,
+  as the app's child, so macOS asks for and keeps those grants as the app's own.
+  audio-input: voice chat in Play, the microphone a published game's page gets only while the person
+  turns on the mic in its header (main/play/viewer-view.ts); games in Create are still denied every
+  media permission (main/preview.ts).
+  Deliberately absent: camera, bluetooth, USB, location and print, and disable-library-validation,
+  so only native addons signed with the app's own team load. Third-party plugins' native addons are
+  not supported; the install scan already reports a .node file as a dangerous native binary.
 -->
 <plist version="1.0">
   <dict>
     <key>com.apple.security.cs.allow-jit</key>
+    <true/>
+    <key>com.apple.security.automation.apple-events</key>
+    <true/>
+    <key>com.apple.security.device.audio-input</key>
     <true/>
   </dict>
 </plist>

@@ -12,6 +12,7 @@ import { Button } from "../ui/Button.tsx";
 import { Icon } from "../ui/icons.tsx";
 import type { ModelSettingsProps } from "./ModelsSection.tsx";
 import { Pending } from "../ui/Pending.tsx";
+import { LOCAL_SERVER_WORDS } from "../words.ts";
 
 /** Where the Add from Ollama hint sends the user to find a model's name. */
 const OLLAMA_LIBRARY_URL = "https://ollama.com/search";
@@ -722,7 +723,27 @@ function MoreModels({
   );
 }
 
-export function LocalModelsSection({ engines, onEnginesRefresh }: ModelSettingsProps): JSX.Element {
+/** A model server the person already runs is connected in Model Providers: one line says where. */
+function OtherServer({ onOpenProviders }: { onOpenProviders: () => void }): JSX.Element {
+  return (
+    <p className="pt-6 text-body-sm text-muted-foreground" data-local-server-pointer>
+      {LOCAL_SERVER_WORDS.otherServer}{" "}
+      <button
+        type="button"
+        onClick={onOpenProviders}
+        className="cursor-pointer text-accent-ink underline-offset-4 hover:underline focus-visible:underline focus-visible:outline-none"
+      >
+        {LOCAL_SERVER_WORDS.connectIt}
+      </button>
+    </p>
+  );
+}
+
+export function LocalModelsSection({
+  engines,
+  onEnginesRefresh,
+  onOpenProviders,
+}: ModelSettingsProps & { onOpenProviders?: () => void }): JSX.Element {
   const installs = useModelInstalls(onEnginesRefresh);
   const { hardware, pulling, progress, failure } = installs;
   const removal = useModelRemoval((model) => {
@@ -805,6 +826,8 @@ export function LocalModelsSection({ engines, onEnginesRefresh }: ModelSettingsP
           installOllamaFor={installOllamaFor}
         />
       )}
+
+      {onOpenProviders && <OtherServer onOpenProviders={onOpenProviders} />}
     </div>
   );
 }

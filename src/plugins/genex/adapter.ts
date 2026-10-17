@@ -1,4 +1,5 @@
 import { markDeployment, verifyDeployment } from "./deployment.ts";
+import { bringsOwnSdk, connectPublishedCopy } from "./entry-page.ts";
 import path from "node:path";
 import { recordGenexUse, type GenexObserver } from "../../substrate/genex-outcomes.ts";
 import { fileURLToPath } from "node:url";
@@ -15,8 +16,11 @@ import {
   cleanGenexTitle,
   defaultGenexTitle,
   GENEX_COVERS_DIR,
+  GenexCoverOrigin,
+  GenexBlocked,
   GenexCoverOutcome,
   type GenexCoverSent,
+  ownerChoseCover,
   GenexHostedStatus,
   GenexJobStatus,
   GenexOperation,
@@ -43,6 +47,8 @@ import {
   CoverOperation,
   coverRides,
   type CoverView,
+  COVER_AUTO_GAP_MS,
+  COVER_FALLBACK_CAMERA,
   COVER_SEND_TIMEOUT_MS,
   COVER_VIEW_TIMEOUT_MS,
   decideSend,
@@ -57,8 +63,10 @@ import {
   ownerPick,
   parseCoverAnswer,
   parseCoverView,
+  pickCandidate,
   PROBLEM_GUIDANCE,
   PUBLISH_SHOT_TIMEOUT_MS,
+  readCandidates,
   readSent,
   readShot,
   readStillAnswer,
@@ -69,10 +77,24 @@ import {
   unchangedRecord,
   writeSent,
 } from "./cover.ts";
+import {
+  CLIP_MESSAGE,
+  clipGuidance,
+  clipProblemGuidance,
+  clipSentRecord,
+  clipToSend,
+  freezeClip,
+  readClip,
+  readClipAnswer,
+  readClipSent,
+  saveClip,
+  writeClipSent,
+} from "./clip.ts";
 import { windowsBaseEnv } from "../../substrate/child-env.ts";
 import { envPath } from "../../substrate/toolchain.ts";
 import {
   ACCEPT_URL,
+  DeviceStatus,
   GenexRoute,
   genexFetch,
   HTTP_FORBIDDEN,
@@ -80,6 +102,7 @@ import {
   HTTP_UNAUTHORIZED,
   isGenexAuthorizationUrl,
   isGenexLink,
+  MIN_POLL_INTERVAL_S,
   statusOf,
   withSignal,
 } from "./http.ts";
@@ -93,6 +116,8 @@ import {
   validateGenexRequest,
 } from "./request.ts";
 import {
+  applyFoundGeneration,
+  applyGenerationView,
   approvalImageUrl,
   approvalLabels,
   deliveredElsewhereMessage,
@@ -100,13 +125,15 @@ import {
   fetchApprovalImage,
   fetchDesktopVariant,
   filesPresent,
+  type FoundGeneration,
+  generationView,
+  type GenerationView,
   hasDownloadableResult,
   isRemoteFailure,
+  isSettledView,
   isUncertainSubmit,
   JOB_ID,
   jobStatusFromRemote,
-  reconciledJobStatus,
-  manifestFromView,
   readLedger,
   RECONCILE_BATCH,
   settledFailureStatus,
@@ -126,6 +153,7 @@ import {
   linkFor,
   linkTarget,
   listingLanded,
+  isOpen,
   markUnknownAfterRestart,
   MAX_UPLOADS,
   mergeMeta,
@@ -135,11 +163,11 @@ import {
   publicSteps,
   publishArgs,
   publishPhaseFor,
+  publishedConnection,
   recordPages,
   PUBLISH_ERROR_TAIL_CHARS,
   PublishLinkTarget,
   shareLink,
-  signInRecorded,
   stagingLink,
   stoppedBeforePromotion,
   uploadMissing,
@@ -161,14 +189,27 @@ const PUBLISH_WAIT_MS = 150_000;
 const MIN_PUBLISH_WAIT_MS = SECOND_MS;
 /** How long a verified sign-in is trusted before status asks Genex again. */
 const SESSION_CACHE_MS = 2 * MINUTE_MS;
-/** Genex's device flow never asks Studio to poll faster than this. */
-const MIN_POLL_INTERVAL_S = 5;
+/** Kept back from the host's ceiling for one call, to record a generation's answer once its CLI stops. */
+const ASSET_SETTLE_MS = 10 * SECOND_MS;
+/** A generation is not submitted with less than this left of its call: its CLI could not finish. */
+const MIN_ASSET_SUBMIT_MS = 30 * SECOND_MS;
+/** How long a generation waits for the person to accept Genex's updated terms: as long as the CLI waits. */
+const TERMS_WAIT_MS = 100 * SECOND_MS;
+/** How often a generation waiting on the terms asks Genex again. */
+const TERMS_POLL_MS = 3 * SECOND_MS;
 /** The workspace folder name: letters, digits, `_` and `-` only, so it can never be a path. */
 const PROJECT_NAME = /^[a-zA-Z0-9_-]+$/;
 const DEVICE_LABEL = "AI Game Studio";
 
-/** Where Genex's device sign-in stands, as its poll answers. */
-const DeviceStatus = { Approved: "approved", Denied: "denied", Expired: "expired" } as const;
+/**
+ * How a reconcile reads Genex: not at all, afresh, or afresh only about generations this process
+ * has not yet seen settle. Status reads are the last kind: the page, the usage panel and the
+ * agent read status often, and a game's finished generations would otherwise each be asked about
+ * again on every read, against the one per-account request budget every client shares.
+ */
+const RemoteRead = { None: "none", Fresh: "fresh", Remembered: "remembered" } as const;
+type RemoteRead = (typeof RemoteRead)[keyof typeof RemoteRead];
+
 const DEVICE_ENDED = new Set<string>([DeviceStatus.Denied, DeviceStatus.Expired]);
 
 const MESSAGE = {
@@ -186,7 +227,34 @@ const MESSAGE = {
   ApprovalNotPending: "Approval is no longer pending",
   ChooseCandidate: "Choose candidate 1, 2, or 3",
   CredentialsUninitialized: "Genex credentials are not initialized",
+  NoTimeToSubmit:
+    "Waiting for Genex's terms used up this call, so nothing was submitted or charged. Make this request again now that they are accepted.",
+  TermsPending:
+    "Genex's terms changed and the user has not accepted them yet, so nothing was submitted or charged. Studio shows them Review in the chat and in the sidebar: ask them to accept the terms, then make this request again.",
 } as const;
+
+/**
+ * How long a generation's CLI may run once `elapsedMs` of its call has gone (the terms wait among
+ * it): its own timeout, cut so it stops, and its answer is recorded, before the host's ceiling for
+ * the call ends the backend's work midway. Zero when too little is left to submit at all.
+ */
+export function assetCliTimeoutMs(elapsedMs: number): number {
+  const left = INVOCATION_BUDGET_MS - ASSET_SETTLE_MS - elapsedMs;
+  if (left < MIN_ASSET_SUBMIT_MS) return 0;
+  return Math.min(ASSET_TIMEOUT_MS, left);
+}
+
+/** What a generation tells the app while it runs: the account's terms began or stopped waiting for the person. */
+export interface GenexExecuteHooks {
+  termsPending?: (pending: boolean) => Promise<void>;
+}
+
+/** A generation waited for the terms and the person did not accept them in time. */
+class GenexTermsPending extends Error {
+  constructor() {
+    super(MESSAGE.TermsPending);
+  }
+}
 
 /** `genex cover` exits 0 for a frame set or outranked and 1 for any other answer: both are answers. */
 const COVER_ANSWER_EXIT_CODES = [0, 1] as const;
@@ -204,6 +272,8 @@ async function readJsonOr<T>(file: string, fallback: T | null = null): Promise<T
 
 /** The CLI's record of a publish workspace's hosted project. */
 const metaFile = (dir: string) => path.join(dir, ".genex/project.json");
+/** The installed SDK's browser files, where a run from source (no build beside the backend) finds them. */
+const installedEmbedSdk = () => path.dirname(fileURLToPath(import.meta.resolve("@genex-ai/embed-sdk")));
 
 /** An approval as the agent sees it: the images stay in Studio for the user to review. */
 const approvalSummary = (approval: NonNullable<GenexJob["approval"]>) => ({
@@ -320,13 +390,22 @@ export class GenexTools {
   #publishJobs = new Map<string, { job: GenexPublishJob; done: Promise<void> }>();
   /** The cover send running per game: the one a publish leaves behind it, or genex__cover-set's. */
   #coverSteps = new Map<string, CoverStep>();
+  /** When Studio last took each game's cover on its own (`coverAuto`). */
+  #coverAutoAt = new Map<string, number>();
   /** The last write to a game's kept shot, or a send's read of it: each waits for the one before. */
   #coverWrites = new Map<string, Promise<unknown>>();
+  /** Genex's last word on each generation seen settled, by generation id: status reads apply it without asking again. */
+  #settledGenerations = new Map<string, GenerationView>();
+  /** Which generation each generic reservation became, by reservation id, as Genex named it. */
+  #foundGenerations = new Map<string, FoundGeneration>();
   /** How long a publish's new draft has to pass its test before the publish gives up on going public. */
   readonly #draftTestMs: number;
   readonly #coverTimeouts: CoverTimeouts;
   /** The tools' clock: a publish's shot is measured against the invocation it runs in. */
   readonly #now: () => number;
+  /** The folder of the browser SDK a published game that brings none of its own is connected with. */
+  readonly #embedSdk: string | undefined;
+  readonly #termsWait: { waitMs: number; pollMs: number };
   constructor(
     root: string,
     api = "https://api.genex.games",
@@ -338,6 +417,10 @@ export class GenexTools {
       draftTestMs?: number;
       coverTimeouts?: Partial<CoverTimeouts>;
       now?: () => number;
+      /** Where the build put the SDK's browser files beside the backend; else the installed package's. */
+      embedSdk?: string;
+      /** How long a generation waits for the person to accept Genex's terms, and how often it asks. */
+      termsWait?: { waitMs: number; pollMs: number };
     } = {},
   ) {
     this.root = root;
@@ -349,6 +432,8 @@ export class GenexTools {
       viewMs: options.coverTimeouts?.viewMs ?? COVER_VIEW_TIMEOUT_MS,
     };
     this.#now = options.now ?? Date.now;
+    this.#termsWait = options.termsWait ?? { waitMs: TERMS_WAIT_MS, pollMs: TERMS_POLL_MS };
+    this.#embedSdk = options.embedSdk;
     this.#credentials = options.credentials;
     this.#observe = options.observe;
     this.#deliver = options.deliver ?? deliverGenexFiles;
@@ -425,6 +510,9 @@ export class GenexTools {
     this.#disconnecting = true;
     this.#auth = null;
     this.#sessionIdentity = undefined;
+    // What Genex said under this sign-in is not carried over to the next one.
+    this.#settledGenerations.clear();
+    this.#foundGenerations.clear();
     for (const c of this.#controllers.keys()) c.abort();
     await this.#account(async () => {
       await (await this.#store()).clear();
@@ -434,10 +522,16 @@ export class GenexTools {
     if (!(await this.#token())) return { badge: "Connect", tone: "warn", title: MESSAGE.ConnectBadge };
     return {};
   }
+  /**
+   * A project's tools workspace, where the asset commands run. `home/` is the CLI's HOME: the CLI
+   * removes `genex-*` skills from the agent folders under its HOME before every command, so the
+   * user's own must never be that HOME.
+   */
   async #workspace(project: string) {
     if (!PROJECT_NAME.test(project)) throw new Error(PUBLISH_MESSAGE.InvalidProject);
     const cwd = path.join(this.root, "projects", project);
     await mkdir(path.join(cwd, ".genex"), { recursive: true });
+    await mkdir(path.join(cwd, "home"), { recursive: true, mode: 0o700 });
     await atomicWriteJson(path.join(cwd, ".genex/workspace.json"), { mode: "tools", version: 1 });
     return cwd;
   }
@@ -605,6 +699,8 @@ export class GenexTools {
       if (state.job.state !== GenexPublishJobState.Unresolved) return state;
       finishJob(state.job, GenexPublishJobState.Failed, new Date().toISOString());
       state.job.error = PUBLISH_MESSAGE.AllowedNewUpload;
+      delete state.job.checkError;
+      delete state.job.nextCheckAt;
       await this.#savePublishState(project, state);
       return state;
     });
@@ -678,7 +774,7 @@ export class GenexTools {
     };
     if (kind === GenexPublishKind.Gallery)
       job.title = cleanGenexTitle(title) ?? state.title ?? defaultGenexTitle(project);
-    if (exportStage) await this.#exportGame(project, state, job, dir, exportStage);
+    const connect = exportStage ? await this.#exportGame(project, state, job, dir, exportStage) : false;
     const cover = coverRides(kind, state);
     // The shot is taken here, inside the invocation: a detached upload gets no answer from host services.
     const shotLines = cover && camera ? await this.#reshoot(project, camera) : [];
@@ -687,7 +783,7 @@ export class GenexTools {
     if (shotLines.length) state.warnings = shotLines;
     delete state.lastError;
     await this.#savePublishState(project, state);
-    const done = this.#runPublishJob(project, kind, job, cover);
+    const done = this.#runPublishJob(project, kind, job, { cover, connect });
     this.#publishJobs.set(project, { job, done });
     this.#exporting.delete(project);
     void done.finally(() => {
@@ -695,14 +791,17 @@ export class GenexTools {
     });
     return this.#withCover(project, { ...state, job });
   }
-  /** Export the game into the publish workspace and mark it, inside the invocation that asked. */
+  /**
+   * Export the game into the publish workspace and mark it, inside the invocation that asked. True
+   * when the game brings no SDK of its own, so Studio connects the copy once Genex names its project.
+   */
   async #exportGame(
     project: string,
     state: GenexPublishState,
     job: GenexPublishJob,
     dir: string,
     exportStage: () => Promise<unknown>,
-  ): Promise<void> {
+  ): Promise<boolean> {
     this.#exporting.add(project);
     try {
       const startPhase = job.phase;
@@ -713,9 +812,11 @@ export class GenexTools {
       state.lastExportAt = new Date().toISOString();
       const files = exported?.files;
       if (Number.isSafeInteger(files)) job.export = { files: files as number };
-      await this.#writeWorkspaceManifest(dir, project, job, exported?.genex);
+      const connect = !bringsOwnSdk(exported?.genex);
+      await this.#writeWorkspaceManifest(dir, project, job, exported?.genex, connect);
       job.deployment = await markDeployment(path.join(dir, "dist"), job.id);
       job.phase = startPhase;
+      return connect;
     } catch (error) {
       job.state = GenexPublishJobState.Failed;
       job.phase = GenexPublishPhase.Failed;
@@ -728,23 +829,35 @@ export class GenexTools {
   }
   /**
    * The CLI tells Genex what the game ships (sign-in support above all) from the package.json of
-   * the folder it runs in: Studio's copy gets the game's Genex part of it, or none.
+   * the folder it runs in: Studio's copy gets the game's Genex part of it, plus the SDK Studio ships
+   * with a game that brings none (`studioSdk`), or none at all.
    */
   async #writeWorkspaceManifest(
     dir: string,
     project: string,
     job: GenexPublishJob,
     manifest: GenexGameManifest | undefined,
+    studioSdk: boolean,
   ): Promise<void> {
-    const pkg = workspaceManifest(project, manifest);
+    const pkg = workspaceManifest(project, manifest, studioSdk);
     const file = path.join(dir, "package.json");
     if (!pkg) {
       await rm(file, { force: true });
       return;
     }
     await atomicWriteJson(file, pkg);
-    const embed = manifest?.dependencies["@genex-ai/embed-sdk"];
+    const embed = pkg.dependencies["@genex-ai/embed-sdk"];
     if (embed) job.embedSdkVersion = embed;
+  }
+  /**
+   * Connect Studio's copy to the project Genex keeps for the game, which a first publish has only
+   * just created, then mark it again: the draft test checks the files that really go up.
+   */
+  async #connectCopy(run: PublishRun, meta: HostedMeta): Promise<void> {
+    const dist = path.join(run.dir, "dist");
+    await connectPublishedCopy(dist, this.#embedSdk ?? installedEmbedSdk(), publishedConnection(meta, this.api));
+    run.job.deployment = await markDeployment(dist, run.job.id);
+    await this.#persistJob(run.project, run.job);
   }
   /**
    * The upload itself, detached from the invocation that asked for it. Every phase is persisted. A
@@ -754,7 +867,12 @@ export class GenexTools {
    * asks again then, from what Genex just said: a game its owner listed on genex.games since
    * Studio last looked is public, and its draft sends nothing.
    */
-  async #runPublishJob(project: string, kind: GenexPublishKind, job: GenexPublishJob, cover: boolean): Promise<void> {
+  async #runPublishJob(
+    project: string,
+    kind: GenexPublishKind,
+    job: GenexPublishJob,
+    { cover, connect }: { cover: boolean; connect: boolean },
+  ): Promise<void> {
     const dir = this.#publishDir(project);
     const home = path.join(dir, "home");
     const controller = new AbortController();
@@ -763,6 +881,7 @@ export class GenexTools {
     try {
       const meta = await this.#ensureHostedProject(project, dir, home, job, controller.signal);
       run.attempt.slug = meta.slug;
+      if (connect) await this.#connectCopy(run, meta);
       const outs = kind === GenexPublishKind.Draft ? [await this.#uploadDraft(run)] : await this.#uploadTested(run);
       if (!outs) return;
       const relist = needsRelisting(meta, (await this.#publishState(project)).title, job.title);
@@ -829,9 +948,8 @@ export class GenexTools {
     return null;
   }
   /**
-   * Test the draft an upload just put online: Genex serves this upload's revision, every exported
-   * file, and records the sign-in support it shipped. Tried again with backoff until the test time
-   * is up; a pass is recorded as the ready draft.
+   * Test the draft an upload just put online: Genex serves this upload's revision and every exported
+   * file. Tried again with backoff until the test time is up; a pass is recorded as the ready draft.
    */
   async #draftPasses(run: PublishRun, out: string): Promise<boolean> {
     const { job } = run;
@@ -965,11 +1083,18 @@ export class GenexTools {
       job.phase = next.foreground ? GenexPublishPhase.VerifyingDeployment : GenexPublishPhase.Unresolved;
       job.nextCheckAt = next.at;
     }
+    // The user may have settled this upload while Genex was being asked: their choice stands.
+    const latest = await this.#publishState(project);
+    if (latest.job?.id !== job.id || !isOpen(latest.job)) {
+      Object.assign(state, latest);
+      return;
+    }
     await this.#savePublishState(project, state);
   }
   /**
-   * Genex serves this upload's revision and every exported file, and does not report sign-in
-   * support other than the build shipped: the draft passes. Returns it as the ready draft, unstamped.
+   * Genex serves this upload's revision and every exported file: the draft passes. Returns it as the
+   * ready draft, unstamped. Its sign-in support is not read back: Genex keeps a draft's with the draft
+   * and records it on the project only when that build goes public, so the project's is the public build's.
    */
   async #confirmDraft(slug: unknown, job: GenexPublishJob): Promise<Omit<ReadyDraft, "verifiedAt">> {
     const { stagingUrl, deployment, expectedStagingRevision } = job;
@@ -977,8 +1102,6 @@ export class GenexTools {
     const remote = await this.#fetch(GenexRoute.projectBySlug(typeof slug === "string" ? slug : ""));
     const revision = remote?.project?.stagingCommitSha ?? remote?.project?.stagingCommit;
     if (revision !== expectedStagingRevision) throw new Error(PUBLISH_MESSAGE.RevisionMismatch);
-    const signIn = signInRecorded(job.embedSdkVersion, remote?.project);
-    if (!signIn.ok) throw new Error(PUBLISH_MESSAGE.SignInNotRecorded(job.embedSdkVersion ?? "none", signIn.reported));
     await verifyDeployment(stagingUrl, deployment);
     return { revision, url: stagingUrl, digest: deployment.digest };
   }
@@ -1048,10 +1171,16 @@ export class GenexTools {
   /** A publish state with the game's cover, and the cover lines of its own job among its warnings. */
   async #withCover(project: string, state: GenexPublishState): Promise<GenexPublishState> {
     const dir = this.#coverDir(project);
-    const [shot, last] = await Promise.all([readShot(dir), readSent(dir)]);
+    const [shot, last, candidates, clip, clipLast] = await Promise.all([
+      readShot(dir),
+      readSent(dir),
+      readCandidates(dir),
+      readClip(dir),
+      readClipSent(dir),
+    ]);
     const own = last?.jobId !== undefined && last.jobId === state.job?.id;
     const warnings = [...(state.warnings ?? []), ...(own ? (last.lines ?? []) : [])];
-    const cover = { shot, last, sending: this.#coverSteps.has(project) };
+    const cover = { shot, last, sending: this.#coverSteps.has(project), candidates, clip, clipLast };
     return { ...state, ...(warnings.length ? { warnings } : {}), cover };
   }
   /**
@@ -1085,6 +1214,94 @@ export class GenexTools {
         { mimeType: "image/jpeg", data: reading.still.preview.toString("base64"), label: COVER_MESSAGE.PreviewLabel },
       ],
     };
+  }
+  /**
+   * Studio's own cover step, as the Publish dialog opens and after a turn on the game: a fresh
+   * frame of the genex-cover demo, or, for a game with no demo and no frame from one, a plain
+   * frame of the game as it loads, so Publish always shows a cover. Nothing over the person's own
+   * pick or the owner's cover on Genex, nothing beside a publish or a send, and at most once per
+   * {@link COVER_AUTO_GAP_MS} a game. Answers the game's publish state with its cover.
+   */
+  async coverAuto(project: string, camera?: CoverCamera): Promise<GenexPublishState> {
+    if (camera && (await this.#coverAutoDue(project))) {
+      this.#coverAutoAt.set(project, this.#now());
+      await this.#autoShoot(project, camera).catch(() => {});
+      // A clip needs the game's own genex-clip demo to play itself: without one nothing is recorded.
+      await this.#recordClip(project, camera).catch(() => null);
+    }
+    return this.#withCover(project, await this.publishStatus(project));
+  }
+  /** Whether Studio may take this game's cover now on its own. */
+  async #coverAutoDue(project: string): Promise<boolean> {
+    const busy = this.#publishJobs.has(project) || this.#coverSteps.has(project);
+    const recent = this.#now() - (this.#coverAutoAt.get(project) ?? Number.NEGATIVE_INFINITY) < COVER_AUTO_GAP_MS;
+    if (busy || recent) return false;
+    const dir = this.#coverDir(project);
+    const [shot, last] = await Promise.all([readShot(dir), readSent(dir)]);
+    return !shot?.pinned && !ownerChoseCover(last);
+  }
+  /** One shot of the genex-cover demo, else Studio's plain frame unless a demo's frame is already kept. */
+  async #autoShoot(project: string, camera: CoverCamera): Promise<void> {
+    const dir = this.#coverDir(project);
+    const demo = readStillAnswer(await within(camera.shoot(), this.#coverTimeouts.shotMs));
+    if ("still" in demo) {
+      const takenAt = new Date(this.#now()).toISOString();
+      await this.#coverWrite(project, () => saveShot(dir, demo.still, takenAt));
+      return;
+    }
+    const kept = await readShot(dir);
+    const noDemo = demo.problem.code === PluginStillProblemCode.ViewUnknown;
+    if (!noDemo || (kept && kept.origin !== GenexCoverOrigin.Studio)) return;
+    const plain = readStillAnswer(
+      await within(camera.shoot({ camera: COVER_FALLBACK_CAMERA }), this.#coverTimeouts.shotMs),
+    );
+    if (!("still" in plain)) return;
+    const takenAt = new Date(this.#now()).toISOString();
+    await this.#coverWrite(project, () => saveShot(dir, plain.still, takenAt, GenexCoverOrigin.Studio));
+  }
+  /**
+   * genex__cover clip: record the game's genex-clip demo now and keep it as its clip. A problem
+   * keeps the last clip and says what to fix; a recording comes back as its first frame.
+   */
+  async coverClip(project: string, camera: CoverCamera): Promise<Record<string, unknown>> {
+    const taken = await this.#recordClip(project, camera);
+    if (!taken)
+      return {
+        operation: CoverOperation.Clip,
+        problem: { code: PluginStillProblemCode.Unavailable },
+        guidance: CLIP_MESSAGE.Unavailable,
+      };
+    if ("problem" in taken)
+      return {
+        operation: CoverOperation.Clip,
+        problem: taken.problem,
+        kept: await readClip(this.#coverDir(project)),
+        guidance: clipProblemGuidance(taken.problem),
+      };
+    return {
+      operation: CoverOperation.Clip,
+      clip: taken.clip,
+      guidance: clipGuidance(taken.clip),
+      images: [{ mimeType: "image/jpeg", data: taken.poster.toString("base64"), label: CLIP_MESSAGE.PosterLabel }],
+    };
+  }
+  /** Record the genex-clip demo and keep it; null when this camera records no clips. */
+  async #recordClip(project: string, camera: CoverCamera) {
+    if (!camera.record) return null;
+    const answer = await camera.record().catch(() => null);
+    const reading = readClipAnswer(answer);
+    if ("problem" in reading) return reading;
+    const takenAt = new Date(this.#now()).toISOString();
+    const dir = this.#coverDir(project);
+    const clip = await this.#coverWrite(project, () => saveClip(dir, reading.clip, takenAt));
+    return { clip, poster: reading.clip.poster };
+  }
+  /** The person picked a candidate in Publish: it becomes the kept shot, pinned. Answers the publish state. */
+  async coverPick(project: string, sha: unknown): Promise<GenexPublishState> {
+    const dir = this.#coverDir(project);
+    const picked = await this.#coverWrite(project, () => pickCandidate(dir, sha));
+    if (!picked) throw new Error(COVER_MESSAGE.NoSuchCandidate);
+    return this.#withCover(project, await this.publishStatus(project));
   }
   /**
    * genex__cover status: the kept shot, the last send and, for a hosted game while signed in,
@@ -1148,6 +1365,8 @@ export class GenexTools {
    * Never throws: by now the job is exporting, and a cover may not hold it up or fail it.
    */
   async #reshoot(project: string, camera: CoverCamera): Promise<string[]> {
+    // The person picked this frame among the candidates: it goes as it is.
+    if ((await readShot(this.#coverDir(project)))?.pinned) return [];
     const left = INVOCATION_BUDGET_MS - (this.#now() - camera.invokedAt);
     if (left < MIN_REMAINING_FOR_SHOT_MS) return [COVER_MESSAGE.NoTimeToShoot];
     const answer = await within(camera.shoot(), this.#coverTimeouts.shotMs).catch(() => null);
@@ -1163,13 +1382,22 @@ export class GenexTools {
       return [COVER_MESSAGE.ShotNotKept];
     }
   }
-  /** Start a cover send for a game: after publish `jobId`, or (none) for genex__cover-set. */
+  /**
+   * Start a cover send for a game: after publish `jobId`, or (none) for genex__cover-set. Only a
+   * publish's step sends the kept clip; genex__cover-set's approval covers the picture alone.
+   */
   #startCoverStep(project: string, jobId?: string): CoverStep {
     const controller = new AbortController();
     this.#controllers.set(controller, { project });
     const step: CoverStep = { ...(jobId ? { jobId } : {}), controller, done: Promise.resolve(null) };
+    const withClip = jobId !== undefined;
     step.done = this.#sendCover(project, controller.signal, jobId)
       .catch(() => null)
+      .then(async (record) => {
+        // The clip rides behind the cover, never instead of it: a clip that fails changes nothing else.
+        if (withClip) await this.#sendClip(project, controller.signal, jobId).catch(() => {});
+        return record;
+      })
       .finally(() => {
         this.#controllers.delete(controller);
         if (this.#coverSteps.get(project) === step) this.#coverSteps.delete(project);
@@ -1234,6 +1462,40 @@ export class GenexTools {
       await rm(copy, { force: true });
     }
   }
+  /**
+   * Send the kept clip unless Genex settled these bytes, with the build it was recorded from (the
+   * revision the last upload shipped): Genex keeps a clip only of a build the game ships. What goes
+   * out is a copy taken when the send began; a stopped send writes nothing.
+   */
+  async #sendClip(project: string, signal: AbortSignal, jobId?: string): Promise<void> {
+    const dir = this.#coverDir(project);
+    const planned = await this.#coverWrite(project, async () => {
+      const [clip, last] = await Promise.all([readClip(dir), readClipSent(dir)]);
+      if (!clipToSend(clip, last) || !clip) return null;
+      const copy = await freezeClip(dir, clip);
+      return copy ? { clip, copy } : null;
+    });
+    if (!planned) return;
+    try {
+      const revision = (await readJsonOr<HostedMeta>(metaFile(this.#publishDir(project))))?.stagingCommit;
+      if (!revision || signal.aborted) return;
+      const { out } = (await this.#spawnCli(
+        this.#publishDir(project),
+        ["cover", "--clip", planned.copy, "--commit", revision, "--json"],
+        signal,
+        {
+          timeoutMs: this.#coverTimeouts.sendMs,
+          parse: false,
+          home: path.join(this.#publishDir(project), "home"),
+          answerExitCodes: COVER_ANSWER_EXIT_CODES,
+        },
+      ).catch(() => ({ out: "" }))) as { out: string };
+      if (signal.aborted) return;
+      await writeClipSent(dir, clipSentRecord(out, planned.clip, new Date(this.#now()).toISOString(), jobId));
+    } finally {
+      await rm(planned.copy, { force: true });
+    }
+  }
   /** Write a send's outcome, unless the send was stopped. */
   async #keepSent(dir: string, signal: AbortSignal, record: GenexCoverSent): Promise<GenexCoverSent | null> {
     if (signal.aborted) return null;
@@ -1279,9 +1541,13 @@ export class GenexTools {
       return { kind: GenexCoverOutcome.Failed, message: timedOut ? COVER_MESSAGE.SendTimedOut : errorMessage(error) };
     }
   }
-  /** Asset commands: structured output, the asset timeout, the user's own HOME. */
-  async #cli(cwd: string, args: string[], signal?: AbortSignal): Promise<any> {
-    return this.#spawnCli(cwd, args, signal, { timeoutMs: ASSET_TIMEOUT_MS, parse: true });
+  /** Asset commands: structured output, the asset timeout (or less), the workspace's contained HOME. */
+  async #cli(cwd: string, args: string[], signal?: AbortSignal, timeoutMs = ASSET_TIMEOUT_MS): Promise<any> {
+    return this.#spawnCli(cwd, args, signal, {
+      timeoutMs,
+      parse: true,
+      home: path.join(cwd, "home"),
+    });
   }
   /** Publish commands: plain logs (preview/publish/promote ignore `--json`), a long timeout, a contained HOME. */
   async #cliText(cwd: string, args: string[], signal: AbortSignal | undefined, home: string): Promise<{ out: string }> {
@@ -1293,7 +1559,7 @@ export class GenexTools {
     cwd: string,
     args: string[],
     signal: AbortSignal | undefined,
-    options: { timeoutMs: number; parse: boolean; home?: string; answerExitCodes?: readonly number[] },
+    options: { timeoutMs: number; parse: boolean; home: string; answerExitCodes?: readonly number[] },
   ) {
     const cli = genexCliPath();
     const authEpoch = this.#authEpoch;
@@ -1304,37 +1570,44 @@ export class GenexTools {
     return runGenexCli({ cli, preload: this.#preload, api: this.api, token, cwd, args, signal, ...options });
   }
   /** Read Genex's durable admission evidence; never change its credit ledger. */
-  async #reconcileJob(cwd: string, job: GenexJob, remote = false, signal?: AbortSignal) {
+  async #reconcileJob(cwd: string, job: GenexJob, read: RemoteRead = RemoteRead.None, signal?: AbortSignal) {
     const reservation = await readLedger(cwd, job);
-    if (remote && !job.generationId) await this.#findGeneration(job, reservation, signal);
-    if (remote && job.generationId) await this.#refreshGeneration(job, job.generationId, signal);
+    const remote = read !== RemoteRead.None;
+    if (remote && !job.generationId) await this.#findGeneration(job, reservation, read, signal);
+    if (remote && job.generationId) await this.#refreshGeneration(job, job.generationId, read, signal);
     if (job.generationId && isUncertainSubmit(job)) job.status = GenexJobStatus.Accepted;
   }
-  /** Ask Genex which generation a generic reservation became. */
-  async #findGeneration(job: GenexJob, reservation: LedgerRow | undefined, signal?: AbortSignal) {
+  /** Ask Genex which generation a generic reservation became, unless it named one that has since settled. */
+  async #findGeneration(job: GenexJob, reservation: LedgerRow | undefined, read: RemoteRead, signal?: AbortSignal) {
     if (reservation?.generic !== true || typeof reservation.id !== "string") return;
+    const known = read === RemoteRead.Remembered ? this.#foundGenerations.get(reservation.id) : undefined;
+    if (known && this.#settledGenerations.has(known.id)) {
+      applyFoundGeneration(job, known);
+      return;
+    }
     try {
       const found = await this.#fetch(GenexRoute.generationRequest(reservation.id), withSignal(signal));
-      if (typeof found.id === "string") {
-        job.generationId = found.id;
-        job.remoteStatus = found.status;
-        if (Number.isSafeInteger(found.creditsQuoted)) job.creditsQuoted = found.creditsQuoted;
-      }
+      if (typeof found.id !== "string") return;
+      const answer: FoundGeneration = { id: found.id, status: found.status, creditsQuoted: found.creditsQuoted };
+      applyFoundGeneration(job, answer);
+      this.#foundGenerations.set(reservation.id, answer);
     } catch {} // A failed lookup cannot authorize a replacement or release a reservation.
   }
-  /** Copy Genex's view of a generation onto the job: status, files and credits. */
-  async #refreshGeneration(job: GenexJob, generationId: string, signal?: AbortSignal) {
+  /**
+   * Copy Genex's view of a generation onto the job: status, files and credits. A remembered read
+   * applies Genex's last word on a settled generation without asking again; any read that asks
+   * remembers the answer once it is settled.
+   */
+  async #refreshGeneration(job: GenexJob, generationId: string, read: RemoteRead, signal?: AbortSignal) {
+    const known = read === RemoteRead.Remembered ? this.#settledGenerations.get(generationId) : undefined;
+    if (known) {
+      applyGenerationView(job, known);
+      return;
+    }
     try {
-      const response = await this.#fetch(GenexRoute.generation(generationId), withSignal(signal));
-      const view = response.generation ?? response;
-      if (typeof view.status === "string") {
-        job.remoteStatus = view.status;
-        const awaitingFiles = !job.files.length && job.status !== GenexJobStatus.ApprovalRequired;
-        if (awaitingFiles) job.status = reconciledJobStatus(view.status);
-      }
-      if (Array.isArray(view.files)) job.manifest = manifestFromView(view.files);
-      if (typeof view.creditsCharged === "number") job.creditsCharged = view.creditsCharged;
-      if (typeof view.creditsRefunded === "number") job.creditsRefunded = view.creditsRefunded;
+      const view = generationView(await this.#fetch(GenexRoute.generation(generationId), withSignal(signal)));
+      applyGenerationView(job, view);
+      if (isSettledView(view)) this.#settledGenerations.set(generationId, view);
     } catch {} // Preserve last known state; absence is not completion or refund evidence.
   }
   /** Poll a pending device sign-in when its interval is due, and save an approved token. */
@@ -1386,10 +1659,11 @@ export class GenexTools {
       if (job) jobs.push(job);
     }
     jobs.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+    const read = connected ? RemoteRead.Remembered : RemoteRead.None;
     for (let offset = 0; offset < jobs.length; offset += RECONCILE_BATCH) {
       signal?.throwIfAborted();
       const batch = jobs.slice(offset, offset + RECONCILE_BATCH);
-      await Promise.all(batch.map((job) => this.#reconcileJob(cwd, job, connected, signal)));
+      await Promise.all(batch.map((job) => this.#reconcileJob(cwd, job, read, signal)));
     }
     return jobs;
   }
@@ -1440,9 +1714,10 @@ export class GenexTools {
     cwd: string,
     request: GenexRequest,
     signal: AbortSignal,
+    timeoutMs: number,
   ): Promise<NonNullable<GenexJob["approval"]>> {
     if (!request.id) throw new Error(MESSAGE.ApprovalNeedsSource);
-    const response = (await this.#cli(cwd, ["wait", request.id, "--no-download"], signal)) as ReviewAnswer;
+    const response = (await this.#cli(cwd, ["wait", request.id, "--no-download"], signal, timeoutMs)) as ReviewAnswer;
     const labels = approvalLabels(request.operation);
     const urls = labels.map((label) => approvalImageUrl(request.operation, response, label));
     if (urls.some((url) => typeof url !== "string")) throw new Error(MESSAGE.ApprovalViewsMissing);
@@ -1468,6 +1743,7 @@ export class GenexTools {
     signal?: AbortSignal,
     approved = false,
     threadId?: string,
+    hooks: GenexExecuteHooks = {},
   ): Promise<GenexJob | unknown> {
     const controller = new AbortController();
     this.#controllers.set(controller, { project, threadId });
@@ -1475,11 +1751,34 @@ export class GenexTools {
     signal?.addEventListener("abort", stop, { once: true });
     if (signal?.aborted) stop();
     try {
-      return await this.#execute(project, root, request, controller.signal, approved);
+      return await this.#execute(project, root, request, controller.signal, approved, hooks);
     } finally {
       signal?.removeEventListener("abort", stop);
       this.#controllers.delete(controller);
     }
+  }
+  /** Whether the signed-in account still has Genex's updated terms to accept. */
+  async termsStatus(signal?: AbortSignal): Promise<{ pending: boolean }> {
+    const legal = await this.#fetch(GenexRoute.LegalStatus, withSignal(signal));
+    return { pending: legal?.accepted === false };
+  }
+  /**
+   * Before a generation reaches Genex: while the account's terms wait for the person, say so and ask
+   * again until they accept or the wait runs out. Accepted terms cost one question and say nothing;
+   * a question Genex does not answer stops nothing (the CLI meets any refusal itself).
+   */
+  async #waitForTerms(signal: AbortSignal, hooks: GenexExecuteHooks): Promise<void> {
+    const pending = async () => (await this.termsStatus(signal).catch(() => ({ pending: false }))).pending;
+    if (!(await pending())) return;
+    await hooks.termsPending?.(true);
+    const deadline = this.#now() + this.#termsWait.waitMs;
+    while (this.#now() < deadline) {
+      await sleep(this.#termsWait.pollMs, undefined, { signal });
+      if (await pending()) continue;
+      await hooks.termsPending?.(false);
+      return;
+    }
+    throw new GenexTermsPending();
   }
   /** Status as the agent sees it: approval images stay in Studio. */
   async #statusForAgent(project: string, signal: AbortSignal) {
@@ -1508,8 +1807,10 @@ export class GenexTools {
     request: GenexRequest,
     signal: AbortSignal,
     approved: boolean,
+    hooks: GenexExecuteHooks,
   ): Promise<unknown> {
     if (signal?.aborted) throw new Error(MESSAGE.StoppedBeforeSubmission);
+    const startedAt = this.#now();
     if (request.operation === GenexOperation.Status) return this.#statusForAgent(project, signal);
     if (USE_OPERATIONS.has(request.operation)) return this.#recordUse(project, root, request, signal);
     validateGenexRequest(request);
@@ -1531,8 +1832,11 @@ export class GenexTools {
     await atomicWriteJson(path.join(dir, "request.json"), { root, request });
     await save();
     try {
+      if (!READ_OPERATIONS.has(request.operation)) await this.#waitForTerms(signal, hooks);
+      const cliMs = assetCliTimeoutMs(this.#now() - startedAt);
+      if (cliMs === 0) throw new Error(MESSAGE.NoTimeToSubmit);
       if (APPROVAL_OPERATIONS.has(request.operation) && !approved) {
-        job.approval = await this.#approvalReview(cwd, request, signal);
+        job.approval = await this.#approvalReview(cwd, request, signal, cliMs);
         job.status = GenexJobStatus.ApprovalRequired;
         await save();
         return { ...job, approval: approvalSummary(job.approval) };
@@ -1540,13 +1844,14 @@ export class GenexTools {
       const { args, output } = await cliArgsFor(request, root, dir, approved);
       job.status = GenexJobStatus.Submitting;
       await save();
-      const response = await this.#cli(cwd, args, signal);
+      const response = await this.#cli(cwd, args, signal, cliMs);
       await this.#recordAnswer(cwd, dir, root, job, response, output, signal);
       await save();
       return { ...job, result: response };
     } catch (e) {
       job.status = failedJobStatus(job, signal.aborted);
       job.error = (e as Error).message;
+      if (e instanceof GenexTermsPending) job.blocked = GenexBlocked.Terms;
       await this.#reconcileJob(cwd, job);
       job.status = settledFailureStatus(job, READ_OPERATIONS.has(request.operation), () => signal.aborted);
       await save();
@@ -1579,7 +1884,7 @@ export class GenexTools {
   }
   /** Reconcile with Genex, fetch the desktop variant, then deliver the output into the game. */
   async #deliverResult(cwd: string, job: GenexJob, root: string, output: string, signal: AbortSignal) {
-    await this.#reconcileJob(cwd, job, true, signal);
+    await this.#reconcileJob(cwd, job, RemoteRead.Fresh, signal);
     await fetchDesktopVariant(job, output, signal);
     job.files = await this.#deliver(output, root, job.id);
     if (job.preferredFile) job.preferredFile = job.files.find((file) => path.basename(file) === job.preferredFile);

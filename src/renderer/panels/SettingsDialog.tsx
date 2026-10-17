@@ -8,10 +8,13 @@ import { ModelProvidersSection, type ModelSettingsProps } from "./ModelsSection.
 import { LocalModelsSection } from "./LocalModelsSection.tsx";
 import { HarnessSection } from "./HarnessSection.tsx";
 import { GamesSection } from "./GamesSection.tsx";
+import { StorageSection } from "./StorageSection.tsx";
 import { PermissionsSection } from "./PermissionsSection.tsx";
 import { PrivacySection } from "./PrivacySection.tsx";
 import { AboutSection } from "./AboutSection.tsx";
-import { ABOUT_WORDS, PRIVACY_WORDS } from "../words.ts";
+import { AccountSection, AccountSignOut } from "./AccountSection.tsx";
+import { usePeople } from "../state/hooks.ts";
+import { ABOUT_WORDS, ACCOUNT_WORDS, PRIVACY_WORDS, STORAGE_WORDS } from "../words.ts";
 
 interface SectionTab {
   id: SettingsSection;
@@ -20,41 +23,53 @@ interface SectionTab {
 }
 
 const SECTIONS: readonly SectionTab[] = [
+  { id: SettingsSection.Account, label: ACCOUNT_WORDS.tab, icon: "character" },
   { id: SettingsSection.Providers, label: "Model Providers", icon: "globe" },
   { id: SettingsSection.Local, label: "Local Models", icon: "box" },
   { id: SettingsSection.Appearance, label: "Appearance", icon: "palette" },
   { id: SettingsSection.Games, label: "Games", icon: "folder" },
+  { id: SettingsSection.Storage, label: STORAGE_WORDS.tab, icon: "drive" },
   { id: SettingsSection.Harness, label: "Harness", icon: "harness" },
   { id: SettingsSection.Permissions, label: "Permissions", icon: "shield" },
   { id: SettingsSection.Privacy, label: PRIVACY_WORDS.tab, icon: "eye" },
   { id: SettingsSection.About, label: ABOUT_WORDS.tab, icon: "info" },
 ];
 
+/** A section's title: Genex account says "Sign in to Genex" while there is no account to show. */
+function sectionTitle(section: SettingsSection, signedIn: boolean): string | undefined {
+  if (section === SettingsSection.Account && !signedIn) return ACCOUNT_WORDS.signInTitle;
+  return SECTIONS.find((tab) => tab.id === section)?.label;
+}
+
 /** The tab a key moves to from the tab at `index`: first, last, next or previous (wrapping), or none. */
-function tabAfterKey(key: string, index: number): SectionTab | undefined {
-  const count = SECTIONS.length;
-  if (key === "Home") return SECTIONS[0];
-  if (key === "End") return SECTIONS[count - 1];
-  if (key === "ArrowDown" || key === "ArrowRight") return SECTIONS[(index + 1) % count];
-  if (key === "ArrowUp" || key === "ArrowLeft") return SECTIONS[(index + count - 1) % count];
+function tabAfterKey(sections: readonly SectionTab[], key: string, index: number): SectionTab | undefined {
+  const count = sections.length;
+  if (key === "Home") return sections[0];
+  if (key === "End") return sections[count - 1];
+  if (key === "ArrowDown" || key === "ArrowRight") return sections[(index + 1) % count];
+  if (key === "ArrowUp" || key === "ArrowLeft") return sections[(index + count - 1) % count];
   return undefined;
 }
 
 /** The body of one settings section. */
 function SectionBody({
   section,
+  onSection,
   engines,
   onEnginesRefresh,
   gamesRootLabel,
   onGamesRoot,
 }: {
   section: SettingsSection;
+  onSection: (section: SettingsSection) => void;
   engines: EngineDescriptor[];
   onEnginesRefresh: ModelSettingsProps["onEnginesRefresh"];
   gamesRootLabel: string;
   onGamesRoot: (label: string) => void;
 }): JSX.Element {
+  if (section === SettingsSection.Account) return <AccountSection />;
   if (section === SettingsSection.Games) return <GamesSection rootLabel={gamesRootLabel} onRoot={onGamesRoot} />;
+  if (section === SettingsSection.Storage) return <StorageSection />;
   if (section === SettingsSection.Appearance) return <AppearanceSection />;
   if (section === SettingsSection.Providers)
     return <ModelProvidersSection engines={engines} onEnginesRefresh={onEnginesRefresh} />;
@@ -62,7 +77,13 @@ function SectionBody({
   if (section === SettingsSection.Permissions) return <PermissionsSection />;
   if (section === SettingsSection.Privacy) return <PrivacySection />;
   if (section === SettingsSection.About) return <AboutSection />;
-  return <LocalModelsSection engines={engines} onEnginesRefresh={onEnginesRefresh} />;
+  return (
+    <LocalModelsSection
+      engines={engines}
+      onEnginesRefresh={onEnginesRefresh}
+      onOpenProviders={() => onSection(SettingsSection.Providers)}
+    />
+  );
 }
 
 /** Reference Genex settings layout, using the desktop dialog's focus and preview lifecycle. Its surfaces
@@ -93,9 +114,10 @@ export function SettingsDialog({
     media.addEventListener("change", update);
     return () => media.removeEventListener("change", update);
   }, []);
+  const signedIn = usePeople((s) => s.me !== null);
   const selectedTab = useRef<HTMLButtonElement>(null);
   const navigate = (event: KeyboardEvent<HTMLButtonElement>, index: number) => {
-    const next = tabAfterKey(event.key, index);
+    const next = tabAfterKey(SECTIONS, event.key, index);
     if (!next) return;
     event.preventDefault();
     onSection(next.id);
@@ -145,8 +167,9 @@ export function SettingsDialog({
           </div>
         </nav>
         <div className="settings-content flex min-h-0 min-w-0 flex-1 flex-col">
-          <div className="mt-3.5 flex min-h-8 shrink-0 items-center ps-5 pe-14">
-            <h2 className="text-lg font-medium text-foreground">{SECTIONS.find((tab) => tab.id === section)?.label}</h2>
+          <div className="mt-3.5 flex min-h-8 shrink-0 items-center gap-3 ps-5 pe-14">
+            <h2 className="text-lg font-medium text-foreground">{sectionTitle(section, signedIn)}</h2>
+            {section === SettingsSection.Account && signedIn && <AccountSignOut />}
           </div>
           <div
             key={section}
@@ -158,6 +181,7 @@ export function SettingsDialog({
           >
             <SectionBody
               section={section}
+              onSection={onSection}
               engines={engines}
               onEnginesRefresh={onEnginesRefresh}
               gamesRootLabel={gamesRootLabel}

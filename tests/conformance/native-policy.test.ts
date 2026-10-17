@@ -72,7 +72,7 @@ test("a live profile runs native channels", async () => {
   handle("studio:open-url", () => true);
   assert.deepEqual(await listeners.get("studio:open-url")!(studio, {}), { ok: true, value: true });
 });
-test("plugin, connector and terminal channels answer only Studio's main frame", async () => {
+test("plugin, connector, terminal, job and Privacy settings channels answer only Studio's main frame", async () => {
   const { ipc, listeners } = recorder();
   const handle = createIpcHandle(ipc, { fixture: false, isStudioUi });
   let ran = 0;
@@ -92,9 +92,23 @@ test("plugin, connector and terminal channels answer only Studio's main frame", 
     ran++;
     return [];
   });
+  handle("studio:jobs.stop", () => {
+    ran++;
+    return null;
+  });
+  handle("studio:app-look.open-settings", () => {
+    ran++;
+    return true;
+  });
   const subframe = { sender: studio.sender, senderFrame: "plugin-panel-frame" },
     other = { sender: "game-webcontents", senderFrame: "game-frame" };
-  for (const channel of ["studio:plugins.list", "studio:mcp.list", "studio:terminal.list"]) {
+  for (const channel of [
+    "studio:plugins.list",
+    "studio:mcp.list",
+    "studio:terminal.list",
+    "studio:jobs.stop",
+    "studio:app-look.open-settings",
+  ]) {
     for (const event of [subframe, other])
       assert.deepEqual(
         await listeners.get(channel)!(event, {}),
@@ -104,7 +118,7 @@ test("plugin, connector and terminal channels answer only Studio's main frame", 
     assert.equal((await listeners.get(channel)!(studio, {})).ok, true, channel);
   }
   assert.deepEqual(await listeners.get("studio:games")!(other, {}), { ok: true, value: [] });
-  assert.equal(ran, 4);
+  assert.equal(ran, 6);
 });
 test("a channel is never both fixture-safe and native", () => {
   assert.deepEqual(
@@ -120,7 +134,11 @@ test("native accounts, terminals, plugin installs, external opens and Genex are 
     "studio:plugins.lookup-github",
     "studio:plugins.github-versions",
     "studio:plugins.update",
+    // A panel's Choose file opens Studio's native file picker.
+    "studio:plugins.choose-file",
     "studio:plugins.approval",
+    // A plugin action that starts, quits or opens an app or the browser, or writes outside its storage.
+    "studio:plugins.native-action",
     "studio:plugins.host-cli",
     "studio:plugins.host-package",
     "studio:open-url",
@@ -146,6 +164,8 @@ test("native accounts, terminals, plugin installs, external opens and Genex are 
     "studio:genex.approve",
     // Set up creates a Windows user account and network filters, behind an administrator prompt.
     "studio:boot.setup",
+    // Open Privacy settings opens macOS System Settings.
+    "studio:app-look.open-settings",
   ]) {
     assert.equal(classifyChannel(channel), "native", channel);
     assert.throws(() => assertNativeActionAllowed(true, channel), /unsupported-in-fixture/, channel);
@@ -170,6 +190,8 @@ test("fixture-safe channels run in fixtures and an unclassified one is refused t
     "studio:message-images",
     "studio:provider-usage",
     "studio:badge",
+    // The person's Stop on a job this profile's own agent started.
+    "studio:jobs.stop",
   ]) {
     assert.equal(classifyChannel(channel), "fixture-safe", channel);
     assert.doesNotThrow(() => assertNativeActionAllowed(true, channel), channel);
@@ -180,4 +202,18 @@ test("fixture-safe channels run in fixtures and an unclassified one is refused t
     /unsupported-in-fixture: studio:brand-new\.native is not classified/,
   );
   assert.doesNotThrow(() => assertNativeActionAllowed(false, "studio:brand-new.native"));
+});
+test("a fixture profile checks and saves a nickname from its own people, and never pops the Mac's share menu", async () => {
+  assert.equal(classifyChannel("studio:play.handle-check"), "fixture-safe");
+  assert.equal(classifyChannel("studio:play.handle"), "fixture-safe");
+  assert.equal(classifyChannel("studio:play.share"), "native");
+  const { ipc, listeners } = recorder();
+  const handle = createIpcHandle(ipc, { fixture: true, isStudioUi });
+  let shared = 0;
+  handle("studio:play.share", () => {
+    shared++;
+  });
+  const answer = await listeners.get("studio:play.share")!(studio, { url: "https://genex.games/@rabneba" });
+  assert.equal(answer.ok, false);
+  assert.equal(shared, 0, "the menu never opened");
 });

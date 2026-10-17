@@ -183,6 +183,7 @@ describe("Copy diagnostics", () => {
       agentsMax: 5,
       blender: true,
       autoResume: true,
+      computerControl: false,
     };
     const sent: unknown[] = [];
     registerSettingsIpc(handle, {

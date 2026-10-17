@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { loadStill } from "../../src/renderer/stills.ts";
+import { loadStill, stillNow } from "../../src/renderer/stills.ts";
 import { fakeStudioApi, installFakeStudio } from "../helpers/fake-studio-api.ts";
 
 test("still cache bounds retained images and refreshes the least recently used entry", async () => {
@@ -37,6 +37,20 @@ test("a newer version evicts the previous still for the same path", async () => 
     await loadStill({ run: "versioned", version: "2" });
     await loadStill({ run: "versioned", version: "1" });
     assert.equal(reads, 3);
+  } finally {
+    restore();
+  }
+});
+
+test("a still already read is there at once for a card that mounts again; a retry capture never is", async () => {
+  const studio = fakeStudioApi({ readRunStill: async (file) => ({ mimeType: "image/jpeg", data: file }) });
+  const restore = installFakeStudio(studio);
+  try {
+    assert.equal(stillNow({ run: "shot-now" }), undefined, "nothing before the first read");
+    const read = await loadStill({ run: "shot-now" });
+    assert.equal(stillNow({ run: "shot-now" }), read);
+    await loadStill({ run: "capture", retry: "1" });
+    assert.equal(stillNow({ run: "capture", retry: "1" }), undefined);
   } finally {
     restore();
   }

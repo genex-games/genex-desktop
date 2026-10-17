@@ -9,8 +9,10 @@
 import { mkdir, realpath } from "node:fs/promises";
 import path from "node:path";
 import { StudioCore, type StudioCoreOptions } from "../../src/main/studio-core.ts";
-import { makeResources } from "./resources.ts";
+import { sharedResources } from "./resources.ts";
 import { closeBeforeCleanup, tmpDir } from "./tmp.ts";
+
+export { sharedResources };
 
 export type CoreApi = ReturnType<StudioCore["api"]>;
 
@@ -30,14 +32,6 @@ export interface CoreLiteOptions extends Partial<Omit<StudioCoreOptions, "paths"
   init?: boolean;
   /** A resources folder of the test's own (`makeResources`), instead of the file's shared copy. */
   resources?: string;
-}
-
-// Copying the seed and building the plugins costs about a second; every core in one test file
-// can share one read-only copy. node --test runs each file in its own process, so this is per file.
-let resources: Promise<string> | undefined;
-export function sharedResources(): Promise<string> {
-  resources ??= makeResources();
-  return resources;
 }
 
 export async function coreLite(options: CoreLiteOptions = {}): Promise<CoreLite> {

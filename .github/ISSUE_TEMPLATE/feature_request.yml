@@ -2,6 +2,11 @@ name: Feature request
 description: Suggest a change to what the app does or how it is developed.
 labels: [enhancement]
 body:
+  - type: markdown
+    attributes:
+      value: >-
+        Check the [roadmap board](https://github.com/orgs/genex-games/projects/1)
+        first. If your idea is already there, add a thumbs-up or a comment on that issue instead.
   - type: textarea
     id: problem
     attributes:

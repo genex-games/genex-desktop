@@ -661,6 +661,62 @@ describe("integration in waves", () => {
     assert.equal(loopRun.state.waveHead, fix);
   });
 
+  it("a running worker keeps the head before a merge until the merge's health pass answers, and never takes one that failed it", async () => {
+    const { repo, head } = await integrationRepo();
+    const { loopRun } = stubLoopRun(repo, head, null);
+    const hook = loopIntegration(loopRun as never);
+    const car = await workerBranch(repo, head, "car", { "src/car.js": "export const car = 1;\n" });
+    const city = await workerBranch(repo, head, "city", { "src/city.js": "export const city = 1;\n" });
+    loopRun.state.workers.set("car", { id: "car", title: "car", from: head, lastCommit: car, merging: null });
+    loopRun.state.workers.set("city", { id: "city", title: "city", from: head, lastCommit: city, merging: null });
+    const taken: Array<string | null> = [];
+    const look = loopRun.patientEvidence;
+    let loads = true;
+    loopRun.patientEvidence = async (root: string, options: Record<string, any>) => {
+      // A round starting while the health pass looks.
+      taken.push(await hook.head());
+      const seen = await look(root, options);
+      return { ...seen, ok: loads, problems: loads ? [] : ["the page threw on load"] };
+    };
+    await integrate(loopRun as never, { worker: "car" });
+    const carHead = loopRun.state.integrationHead;
+    assert.deepEqual(taken, [head], "the merged head is not taken while its health pass looks");
+    assert.equal(await hook.head(), carHead, "a merge that loads is taken");
+
+    loads = false;
+    await integrate(loopRun as never, { worker: "city" });
+    assert.deepEqual(taken, [head, carHead]);
+    assert.notEqual(loopRun.state.integrationHead, carHead);
+    assert.equal(await hook.head(), carHead, "a merge that does not load is never taken");
+  });
+
+  it("a wave a conflict stopped holds running workers on the head before it until a look or the lead's wave=close lets them go", async () => {
+    const { headLooked } = await import("../../src/harness-seed/loop/director/merge-hold.ts");
+    const { repo, head } = await integrationRepo();
+    const { loopRun } = stubLoopRun(repo, head, null);
+    const hook = loopIntegration(loopRun as never);
+    const car = await workerBranch(repo, head, "car", { "src/car.js": "export const car = 1;\n" });
+    const rival = await workerBranch(repo, head, "rival", { "src/car.js": "export const car = 2;\n" });
+    loopRun.state.workers.set("car", { id: "car", title: "car", from: head, lastCommit: car, merging: null });
+    loopRun.state.workers.set("rival", { id: "rival", title: "rival", from: head, lastCommit: rival, merging: null });
+    const answer = JSON.parse(await integrate(loopRun as never, { worker: "car,rival" }));
+    assert.deepEqual(answer.wave?.merged, ["car"], JSON.stringify(answer));
+    const merged = loopRun.state.integrationHead;
+    assert.notEqual(merged, head);
+    assert.equal(await hook.head(), head, "what merged before the conflict waits for a look");
+
+    headLooked(loopRun.state as never, head, true);
+    assert.equal(await hook.head(), head, "a look at another head lets nothing go");
+    headLooked(loopRun.state as never, merged, false);
+    assert.equal(await hook.head(), head, "nor one that saw it fail");
+    await integrate(loopRun as never, { wave: "close" });
+    assert.equal(await hook.head(), merged, "the lead's wave=close: workers take the head as it stands");
+
+    loopRun.state.headBeforeMerge = head;
+    headLooked(loopRun.state as never, merged, true);
+    assert.equal(await hook.head(), merged, "a judge or a fork gate that saw it load lets them take it");
+  });
+
   it("a clean merge brings each merged loop worker into the first wave the art director waits for", async () => {
     const { repo, head } = await integrationRepo();
     const { loopRun } = stubLoopRun(repo, head, null);
@@ -1077,7 +1133,7 @@ describe("a contract written on the run's starting point (review)", () => {
 });
 
 describe("running loop workers follow the wave, not every commit (review)", () => {
-  it("a loop worker's integration head stays on the wave's head after a lead commit until the wave closes", async () => {
+  it("a loop worker takes a lead's commit at its next round, not once its wave closes", async () => {
     const { repo, head } = await integrationRepo();
     const { loopRun } = stubLoopRun(repo, head, null);
     const hook = loopIntegration(loopRun as never);
@@ -1085,7 +1141,8 @@ describe("running loop workers follow the wave, not every commit (review)", () =
     loopRun.state.waveHead = head;
     const fix = await commitFiles(repo, { "src/main.js": "// FACET WIRING\n// lead\n" }, "lead fix");
     loopRun.state.integrationHead = fix;
-    assert.equal(await hook.head(), head, "the lead's commit waits for the wave");
+    // Flipped: the lead's commit waited for the wave, and every merge landed behind it.
+    assert.equal(await hook.head(), fix, "the lead's commit is the next round's base");
     await integrate(loopRun as never, { wave: "close" });
     assert.equal(await hook.head(), fix);
   });
@@ -1246,5 +1303,96 @@ describe("a build paused before the contract gate shipped, resumed (review)", ()
     const loopRun = resumedOver(repo, head, structuredClone(before.journal.director));
     const refused = await contractBeforeFork(loopRun as never, { id: "car" }, WorkerMode.Loop);
     assert.match(String(refused), /2 parts that loop, and no module contract yet/);
+  });
+});
+
+describe("a claim's close inside the lead's call (integrate.ts, director/tools.ts)", () => {
+  /** A close over a real repository whose head the run built, its landing a stand-in. */
+  async function builtClose() {
+    const { repo, head } = await integrationRepo();
+    const stub = stubLoopRun(repo, head, null);
+    const built = await commitFiles(repo, { "src/car.js": "export {};\n" }, "the run's build");
+    const judged: Array<[string | null, number | undefined]> = [];
+    const landings: unknown[] = [];
+    Object.assign(stub.loopRun, {
+      baseCommit: head,
+      report: {},
+      syncHead: async () => {
+        stub.loopRun.state.integrationHead = await fixtureGit(repo, ["rev-parse", "HEAD"]);
+        return stub.loopRun.state.integrationHead;
+      },
+      runningWorkers: () => [],
+      settleWorkers: async () => {},
+      stopWorker: async () => {},
+      closeRun: async () => {},
+      // A judge that ignores the time it is given (a kept older tools.ts) and never answers.
+      judgeTheLanding: (at: string | null, judgeBy?: number) => {
+        judged.push([at, judgeBy]);
+        return new Promise(() => {});
+      },
+      landIntegration: async (land: boolean) => {
+        landings.push(land);
+        return { ok: true, line: "it loaded at the close" };
+      },
+    });
+    stub.loopRun.state.integrationHead = built;
+    return { ...stub, built, judged, landings };
+  }
+
+  it("a judge that runs past the lead's call is left behind: the close lands by its own look, on the call's clock", {
+    timeout: 10_000,
+  }, async () => {
+    const { loopRun, built, judged, landings, notes } = await builtClose();
+    const waits: Array<() => void> = [];
+    const wait = () => new Promise<void>((done) => void waits.push(done));
+    const judgeBy = Date.now() + 60_000;
+    const closing = closeTheLoopRun(loopRun as never, { land: true, settleMs: 0, judgeBy, wait });
+    while (!waits.length) await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.deepEqual(judged, [[built, judgeBy]], "the judge was told when to be done");
+    assert.deepEqual(landings, [], "nothing lands while the judge still has its time");
+    // The judge's time runs out on the test's clock, never on a real timer.
+    for (const done of waits) done();
+    const landed = await closing;
+    assert.equal(landed.ok, true, JSON.stringify(landed));
+    assert.deepEqual(landings, [true], "landed by the close's own look");
+    assert.ok(
+      notes.some((note) => /ran past the lead's call: the close lands by its own look/.test(note)),
+      notes.join("\n"),
+    );
+  });
+
+  it("the close's judge is done by the claim's time when that is sooner than its own", async () => {
+    const { landingJudgeUntil } = await import("../../src/harness-seed/loop/director/tools.ts");
+    const { FINAL_JUDGE_MS } = await import("../../src/harness-seed/loop/director/finish-claim.ts");
+    const now = 1_000_000;
+    assert.equal(landingJudgeUntil(now, now + 60_000), now + 60_000, "the claim's sooner time");
+    assert.equal(landingJudgeUntil(now, now + FINAL_JUDGE_MS + 1), now + FINAL_JUDGE_MS, "its own time at most");
+    assert.equal(landingJudgeUntil(now), now + FINAL_JUDGE_MS, "outside a claim, its own time");
+  });
+
+  it("a close that lands another head than the one its reviewer said yes to is no victory", async () => {
+    const { FINISH_REPORT } = await import("../../src/harness-seed/loop/finish-check.ts");
+    const { loopRun, built } = await builtClose();
+    loopRun.judgeTheLanding = async () => {};
+    const landed = await closeTheLoopRun(loopRun as never, {
+      land: true,
+      settleMs: 0,
+      victory: true,
+      because: "the director finished the run",
+      reviewed: "f".repeat(40),
+    });
+    assert.equal(landed.ok, true);
+    assert.equal(loopRun.state.integrationHead, built);
+    assert.equal(loopRun.report.victory, false, "the reviewer never read the head that landed");
+    assert.equal(loopRun.report.stoppedBecause, FINISH_REPORT.movedAfterYes);
+  });
+
+  it("once a close has started, integrate merges nothing more into the build", async () => {
+    const { repo, head } = await integrationRepo();
+    const stub = stubLoopRun(repo, head, null);
+    stub.loopRun.state.finish = { summary: "red", land: true, victory: true, at: 0 };
+    const answer = await integrate(stub.loopRun as never, { worker: "sky" });
+    assert.match(String(answer), /closing: nothing more is integrated/);
+    assert.equal(await fixtureGit(repo, ["rev-parse", "HEAD"]), head);
   });
 });

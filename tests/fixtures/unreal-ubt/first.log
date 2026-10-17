@@ -1,0 +1,38 @@
+Setting up bundled DotNet SDK
+/Users/Shared/Epic Games/UE_5.8/Engine/Binaries/ThirdParty/DotNet/10.0/mac-arm64
+Running dotnet Engine/Binaries/DotNET/UnrealBuildTool/UnrealBuildTool.dll GxCppEditor Mac Development -Project=/Users/me/Games/rush/unreal/GxCpp.uproject -WaitMutex
+Log file: /Users/me/Library/Application Support/Epic/UnrealBuildTool/Log.txt
+Determining max actions to execute in parallel (12 physical cores, 12 logical cores)
+  Executing up to 12 processes, one per physical core
+Using 'git status' to determine working set for adaptive non-unity build (/Users/me/Games/rush).
+Creating makefile for GxCppEditor (no existing makefile)
+UbaServer - Listening on 0.0.0.0:1345
+Compiling with Mac SDK 26.2, minimum Target OS version 14.00
+UHT compiled-in object format Default
+Building GxCppEditor...
+===== Toolchain Information =====
+Using Clang compiler 19.1.5 (/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang++)
+  Apple clang version 17.0.0 (clang-1700.6.3.2) Target: arm64-apple-darwin25.3.0 Thread model: posix InstalledDir: /Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin
+Using Clang archiver (/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/libtool)
+  Apple clang version 17.0.0 (clang-1700.6.3.2) Target: arm64-apple-darwin25.3.0 Thread model: posix InstalledDir: /Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin
+=================================
+Using Unreal Build Accelerator local executor to run 7 action(s)
+  CPU 12 physical cores, 12 logical cores
+  Memory 32 GB physical, 22.85 GB/32 GB committed
+  UBA Storage capacity 40 GB
+[1/7] Compile [Apple] SharedPCH.UnrealEd.Project.ValApi.ValExpApi.Cpp20.h
+[2/7] Compile [Apple] GxCpp.cpp
+[3/7] Compile [Apple] GxProbe.cpp
+[4/7] Compile [Apple] PerModuleInline.gen.cpp
+[5/7] Compile [Apple] Module.GxCpp.gen.cpp
+[6/7] Link [Apple] libUnrealEditor-GxCpp.dylib
+[7/7] WriteMetadata GxCppEditor.target [NoUba]
+
+Total time in Unreal Build Accelerator local executor: 20.24 seconds
+Output binary: /Users/Shared/Epic Games/UE_5.8/Engine/Binaries/Mac/UnrealEditor
+Deploying GxCppEditor Mac Development...
+Deploying now!
+
+Result: Succeeded
+Total execution time: 30.46 seconds
+Trace written to file /Users/me/Library/Application Support/Epic/UnrealBuildTool/Trace.uba with size 6.5kb

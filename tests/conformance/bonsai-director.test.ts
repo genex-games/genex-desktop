@@ -36,6 +36,9 @@ it("a local director uses real persisted local workers, integrates their work an
           stopReason: "stop",
           message: { role: "assistant", content },
         });
+        // Flipped: the director's claim is checked by a reviewer first (a local session here), which says yes.
+        if (JSON.stringify(r.messages).includes("You are the reviewer of a Loop"))
+          return done('```json\n{"verdict":"yes","reasons":["Both parts are in."],"notDone":[]}\n```');
         if (!r.tools?.length) return done('{"answer":"yes","pass":true}');
         const last = r.messages.at(-1);
         const prior = r.messages

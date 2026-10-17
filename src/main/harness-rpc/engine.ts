@@ -2,10 +2,50 @@
 import path from "node:path";
 import { HostMethod, type HarnessHostHandlers } from "../../shared/harness-api.ts";
 import { ToolPermissionBy } from "../../shared/permissions.ts";
+import { workerLockKey } from "../../shared/workers.ts";
 import { steerIntoChat } from "../core/chat-steer.ts";
 import { CompletionService } from "../core/completion.ts";
 import { hardwareReport } from "../core/hardware-report.ts";
+import type { ActiveDelegation } from "../core/internals.ts";
+import { stopMoments } from "../core/moment-stops.ts";
 import type { CoreInternals, StudioCore } from "../studio-core.ts";
+
+/**
+ * The delegation Stop or an interrupt reaches in `cwd`: the one keyed by it, or with `worker`, that
+ * worker's alone (an in-place worker runs under `workerLockKey`, beside the chat's own session in
+ * the same folder; a worker in its own copy, or one the host did not seat, is keyed by its folder
+ * and found by the id its grant named, `askedWorker`), or with `lead`, the session seated there as
+ * that run's lead in place alone. Never another session there.
+ */
+function delegationAt(
+  x: CoreInternals,
+  cwd: string,
+  worker: string | undefined,
+  lead?: string,
+): ActiveDelegation | undefined {
+  const key = path.resolve(cwd);
+  if (typeof lead === "string") {
+    const atFolder = x.activeDelegations.get(key);
+    return atFolder?.leadsInPlace === lead ? atFolder : undefined;
+  }
+  if (typeof worker !== "string") return x.activeDelegations.get(key);
+  const inPlace = x.activeDelegations.get(workerLockKey(key, worker));
+  if (inPlace) return inPlace;
+  const atFolder = x.activeDelegations.get(key);
+  return atFolder?.askedWorker === worker ? atFolder : undefined;
+}
+
+/** Abort the sessions the host seated as `runId`'s reviewers (of `project`, when named); how many. */
+function abortReviewers(x: CoreInternals, runId: string, project: string | undefined): number {
+  let aborted = 0;
+  for (const delegation of x.activeDelegations.values()) {
+    const theirs = delegation.reviewer === runId && (project === undefined || delegation.project === project);
+    if (!theirs) continue;
+    delegation.abort.abort();
+    aborted += 1;
+  }
+  return aborted;
+}
 
 export function engineRpc(core: StudioCore, x: CoreInternals) {
   const completion = new CompletionService(core, x);
@@ -17,9 +57,12 @@ export function engineRpc(core: StudioCore, x: CoreInternals) {
     // (all of them when no thread is given — the shutdown and stop-everything paths).
     // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: the worker-stop path is owned elsewhere and kept as written
     [HostMethod.EngineAbort]: async (p) => {
+      // A run's reviewers alone: the check that asked for them was abandoned.
+      if (typeof p.reviewer === "string") return { aborted: abortReviewers(x, p.reviewer, p.project) };
       let aborted = 0;
       if (!p.cwd) {
         x.cancelConnectorCalls(p);
+        stopMoments(x, p);
         core.plugins?.cancel({ project: p.project, threadId: p.threadId });
         const scope = { ...(p.project ? { project: p.project } : {}), ...(p.threadId ? { threadId: p.threadId } : {}) };
         x.consent.cancel(scope, "stop");
@@ -27,7 +70,7 @@ export function engineRpc(core: StudioCore, x: CoreInternals) {
       }
       // One worker: the delegation building in this worktree, nothing else.
       if (p.cwd) {
-        const running = x.activeDelegations.get(path.resolve(p.cwd));
+        const running = delegationAt(x, p.cwd, p.worker, p.lead);
         if (running) {
           running.abort.abort();
           aborted += 1;
@@ -64,7 +107,7 @@ export function engineRpc(core: StudioCore, x: CoreInternals) {
      * rounds, and reads its queue at the top of the next one anyway.
      */
     [HostMethod.EngineInterrupt]: async (p) => {
-      const running = p.cwd ? x.activeDelegations.get(path.resolve(p.cwd)) : undefined;
+      const running = p.cwd ? delegationAt(x, p.cwd, p.worker) : undefined;
       if (!running) return { interrupted: false };
       running.abort.abort();
       return { interrupted: true };

@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { SECOND_MS } from "../../shared/duration.ts";
-import type { RunGraph } from "../run-graph.ts";
+import { type RunGraph, runIdOf } from "../run-graph.ts";
 import { IMAGE_OUTLINE } from "./inspector/pictures.tsx";
 import { pollWhile } from "./run-stills.ts";
 
@@ -15,9 +15,10 @@ async function latestCapture(
   facetId: string,
   iteration: number,
 ): Promise<{ file: string | null; caption: string } | null> {
-  if (!latestCaptureAvailable || typeof window.studio.buildPreview !== "function") return null;
+  const runId = runIdOf(graph);
+  if (!runId || !latestCaptureAvailable || typeof window.studio.buildPreview !== "function") return null;
   try {
-    const latest = await window.studio.buildPreview({ runId: graph.runId, facetId, iteration });
+    const latest = await window.studio.buildPreview({ runId, facetId, iteration });
     if (!latest) return { file: null, caption: "Recorded check capture" };
     return {
       file: latest.path ?? null,

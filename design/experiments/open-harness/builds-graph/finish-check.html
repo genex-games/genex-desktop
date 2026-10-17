@@ -1,0 +1,88 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Finish check states</title><style>
+@font-face{font-family:"Zalando Sans SemiExpanded";font-weight:200 900;font-display:swap;src:url(../../../../src/renderer/fonts/ZalandoSansSemiExpanded-variable.woff2) format("woff2")}
+@font-face{font-family:"Geist Mono";font-weight:100 900;font-display:swap;src:url(../../../../src/renderer/fonts/GeistMono-variable.woff2) format("woff2")}
+body{margin:0}
+.panel{position:relative;border:1px solid #e3e4e5;border-radius:16px;overflow:hidden;background:#ffffff}
+.cv{position:absolute;left:0;top:52px;right:0;bottom:0;background-color:#f9faf9;background-image:radial-gradient(#d5d7da 1.1px,transparent 1.2px);background-size:18px 18px}
+.head{height:52px;padding:0 18px;display:flex;align-items:center;gap:10px;border-bottom:1px solid #e3e4e5}
+.node{position:absolute;width:150px;height:94px;border-radius:12px;overflow:hidden;background:#ffffff;box-shadow:0 0 0 1px rgba(16,17,18,0.09)}
+.shade{position:absolute;left:0;right:0;bottom:0;padding:22px 10px 8px;display:flex;flex-direction:column;gap:1px;background:linear-gradient(rgba(10,12,20,0),rgba(10,12,20,0.62))}
+.nm{font-size:12.5px;line-height:16px;font-weight:650;color:#ffffff}
+.wd{font-size:11px;line-height:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.eb{font-family:"Geist Mono",ui-monospace,monospace;font-size:10px;letter-spacing:0.06em;color:#5e5f62}
+.hl{position:absolute;height:0;border-top:1.5px solid #c4c6c9}
+.card{position:absolute;left:400px;top:30px;width:236px;padding:14px;border-radius:12px;background:#ffffff;box-shadow:0 0 0 1px rgba(16,17,18,0.09),0 8px 24px rgba(16,17,18,0.06);display:flex;flex-direction:column;gap:8px;font-size:12.5px;line-height:18px;color:#393a3d}
+.pill{display:inline-flex;align-items:center;gap:6px;padding:2px 10px;border-radius:999px;font-family:"Geist Mono",ui-monospace,monospace;font-size:11px;line-height:18px;font-weight:600;letter-spacing:0.03em;text-transform:uppercase}
+.result{left:40px;top:100px;box-shadow:0 0 0 1px rgba(16,17,18,0.09),0 0 0 5px #f9faf9,0 0 0 6px #c4c6c9;background:linear-gradient(160deg,#6f8fb3 0%,#2c3d55 55%,#a3b6c9 100%)}
+</style></head><body>
+<div style="width: 1440px; height: 900px; box-sizing: border-box; padding: 40px; background: #f6f7f7; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); grid-template-rows: repeat(2, minmax(0, 1fr)); gap: 40px; font-family: 'Zalando Sans SemiExpanded', ui-sans-serif, system-ui, sans-serif; color: #101112; letter-spacing: -0.005em">
+
+<div class="panel">
+<div class="head"><span class="pill" style="color: #2d4bd4; background: rgba(63,97,245,0.12)">Reviewing</span><span style="font-size: 14px; color: #5e5f62">The lead said done. A reviewer looks at the proof.</span></div>
+<div class="cv">
+<div class="node result"><div class="shade"><span class="nm">Save point 9</span><span class="wd" style="color: #8fe0a6">Saved</span></div></div>
+<div class="hl" style="left: 190px; top: 147px; width: 40px"></div>
+<div class="node" style="left: 230px; top: 100px; box-shadow: 0 0 0 1.5px #3f61f5, 0 0 0 6px rgba(63,97,245,0.16); background: linear-gradient(135deg, #dfe5fb 0%, #c9d3f7 50%, #e6eafb 100%)">
+<div style="position: absolute; inset: 0; padding: 10px; display: flex; flex-direction: column; justify-content: space-between"><span class="eb" style="color: #2d4bd4">FINISH CHECK</span><div style="display: flex; flex-direction: column; gap: 1px"><span style="font-size: 12.5px; font-weight: 650">Reviewer</span><span class="wd" style="color: #2d4bd4">Checking the proof</span></div></div>
+</div>
+<div class="card">
+<span class="eb">THE REVIEWER</span>
+<span style="font-weight: 650; color: #101112">A second agent that did none of the work.</span>
+<span>Looking at 6 pictures from Unreal, a 20 s play recording and the build log.</span>
+<span style="color: #5e5f62">Your request: "Port the web racer to Unreal and make the track feel fast."</span>
+</div>
+</div>
+</div>
+
+<div class="panel">
+<div class="head"><span class="pill" style="color: #87560b; background: rgba(223,160,74,0.2)">No · 1 of 3</span><span style="font-size: 14px; color: #5e5f62">The reasons go back. The lead keeps working.</span></div>
+<div class="cv">
+<div class="node result"><div class="shade"><span class="nm">Save point 9</span><span class="wd" style="color: #8fe0a6">Saved</span></div></div>
+<div class="hl" style="left: 190px; top: 147px; width: 40px"></div>
+<div class="node" style="left: 230px; top: 100px; background: #fffaf2; box-shadow: 0 0 0 1.5px #c99a4e">
+<div style="position: absolute; inset: 0; padding: 10px; display: flex; flex-direction: column; justify-content: space-between"><span class="eb" style="color: #87560b">FINISH CHECK</span><div style="display: flex; flex-direction: column; gap: 1px"><span style="font-size: 12.5px; font-weight: 650">Not yet</span><span class="wd" style="color: #87560b">2 reasons · round 1 of 3</span></div></div>
+</div>
+<div style="position: absolute; left: 230px; top: 216px; width: 150px; font-size: 11.5px; line-height: 16px; color: #5e5f62">The lead gets the reasons and goes on working.</div>
+<div class="card">
+<span class="eb">WHY NOT YET</span>
+<div style="display: flex; gap: 8px"><span style="color: #87560b">1</span><span>The track has no finish line, so a lap never ends.</span></div>
+<div style="display: flex; gap: 8px"><span style="color: #87560b">2</span><span>The lap timer isn't on screen in any shot.</span></div>
+<span style="color: #5e5f62">Two more no's in a row and the Loop stops with a report.</span>
+</div>
+</div>
+</div>
+
+<div class="panel">
+<div class="head"><span class="pill" style="color: #1d7a43; background: rgba(36,159,86,0.13)">Yes</span><span style="font-size: 14px; color: #5e5f62">The proof matches the request. The Loop ends.</span></div>
+<div class="cv">
+<div class="node result"><div class="shade"><span class="nm">Save point 11</span><span class="wd" style="color: #8fe0a6">Saved</span></div></div>
+<div class="hl" style="left: 190px; top: 147px; width: 40px"></div>
+<div class="node" style="left: 230px; top: 100px; background: #f2fbf5; box-shadow: 0 0 0 1.5px #5fb27c">
+<div style="position: absolute; inset: 0; padding: 10px; display: flex; flex-direction: column; justify-content: space-between"><span class="eb" style="color: #1d7a43">FINISH CHECK</span><div style="display: flex; flex-direction: column; gap: 1px"><span style="font-size: 12.5px; font-weight: 650">Done</span><span class="wd" style="color: #1d7a43">Reviewer said yes</span></div></div>
+</div>
+<div class="card">
+<span class="eb">WHY YES</span>
+<span>A full lap runs from start to the finish line, the timer counts on screen, and the car holds the road at top speed.</span>
+<span style="color: #5e5f62">Loop ended after 3 h 40 m. Open in Unreal to play it.</span>
+</div>
+</div>
+</div>
+
+<div class="panel">
+<div class="head"><span class="pill" style="color: #ad2f3c; background: rgba(186,52,65,0.1)">Stopped · 3 no's</span><span style="font-size: 14px; color: #5e5f62">Three no's in a row. A report says what isn't done.</span></div>
+<div class="cv">
+<div class="node result"><div class="shade"><span class="nm">Save point 14</span><span class="wd" style="color: #8fe0a6">Saved</span></div></div>
+<div class="hl" style="left: 190px; top: 147px; width: 40px"></div>
+<div class="node" style="left: 230px; top: 100px; background: #fdf3f4; box-shadow: 0 0 0 1.5px #d27a83">
+<div style="position: absolute; inset: 0; padding: 10px; display: flex; flex-direction: column; justify-content: space-between"><span class="eb" style="color: #ad2f3c">FINISH CHECK</span><div style="display: flex; flex-direction: column; gap: 1px"><span style="font-size: 12.5px; font-weight: 650">Stopped</span><span class="wd" style="color: #ad2f3c">3 no's in a row</span></div></div>
+</div>
+<div class="card">
+<span class="eb">WHAT ISN'T DONE</span>
+<span>The finish line triggers, but the lap timer still resets when the car respawns.</span>
+<span style="color: #5e5f62">The report is in the chat. Your last save point stays as it is.</span>
+</div>
+</div>
+</div>
+
+</div>
+</body></html>

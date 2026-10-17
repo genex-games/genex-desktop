@@ -18,6 +18,7 @@ import {
   type DelegateResult,
   type LiveToolResult,
 } from "../../src/substrate/engines/types.ts";
+import { reviewerAnswer, seatedReviewer } from "../helpers/reviewer.ts";
 import { customEvents, makeFakePreview, startRig, waitForLog, type Rig } from "../helpers/studio-rig.ts";
 import { BRIDGE_TOOL_CMD } from "../../src/harness-seed/loop/model-roles.ts";
 
@@ -89,7 +90,13 @@ describe("a run on two subscriptions", () => {
     const seen: Array<{ engine: string; request: DelegateRequest }> = [];
     const results: Record<string, any> = {};
     let completes: Record<string, CompleteRequest[]> = {};
+    const reviewers: Array<{ engine: string; request: DelegateRequest }> = [];
     completes = twoEngines(rig, async (engine, request) => {
+      // Flipped: the director's claim is checked by a reviewer first, which says yes here.
+      if (seatedReviewer(request)) {
+        reviewers.push({ engine, request });
+        return reviewerAnswer("yes", [], engine) as never;
+      }
       seen.push({ engine, request });
       if (request.director) {
         const call = (name: string, args: Record<string, unknown>) => request.onLiveTool!(name, args);
@@ -162,6 +169,12 @@ describe("a run on two subscriptions", () => {
     assert.equal(directors[0]!.request.model, "opus");
     assert.ok(directors[0]!.request.prompt.includes("mcp__studio__"), "the director reads mcp__ names");
     assert.equal(directors[0]!.request.prompt.includes("tool.mjs"), false, "and never the bridge");
+
+    // The reviewer of the director's claim sat on the Reviewers role's engine and model.
+    assert.deepEqual(
+      reviewers.map((r) => [r.engine, r.request.model]),
+      [["codex", "gpt-6-astra"]],
+    );
 
     // The worker went to Codex, on the workers' model, in Codex's voice.
     const workers = seen.filter((s) => !s.request.director);
@@ -283,7 +296,13 @@ describe("a run on two subscriptions", () => {
     const project = await rig.core.games.scaffold("local-reviewers", { title: "Local reviewers" });
     const seen: Array<{ engine: string; request: DelegateRequest }> = [];
     const results: Record<string, any> = {};
+    const reviewers: Array<{ engine: string; request: DelegateRequest }> = [];
     const completes = twoEngines(rig, async (engine, request) => {
+      // Flipped: the director's claim is checked by a reviewer first, which says yes here.
+      if (seatedReviewer(request)) {
+        reviewers.push({ engine, request });
+        return reviewerAnswer("yes", [], engine) as never;
+      }
       seen.push({ engine, request });
       if (request.director) {
         const call = (name: string, args: Record<string, unknown>) => request.onLiveTool!(name, args);
@@ -364,6 +383,11 @@ describe("a run on two subscriptions", () => {
       "every session went to Claude Code; none was asked of Ollama",
     );
     assert.equal(seen.filter((s) => !s.request.director)[0]?.request.model, "opus", "the worker builds on opus");
+    assert.deepEqual(
+      reviewers.map((r) => r.engine),
+      ["claude-code"],
+      "Ollama holds no session, so the reviewer sits on the run's own engine",
+    );
     assert.equal(results.judged.ok, true, JSON.stringify(results.judged));
     assert.ok((results.judgeCalls.local as string[]).length >= 1, "the vision judge ran on Ollama");
     assert.ok(

@@ -22,7 +22,8 @@
 import path from "node:path";
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
-import { inspectPackage, RESERVED_TOOLBAR_LABELS } from "../src/substrate/plugins/manifest.ts";
+import { inspectPackage } from "../src/substrate/plugins/manifest.ts";
+import { RESERVED_TOOLBAR_LABELS } from "../src/substrate/plugins/reserved-labels.ts";
 import { containedReal } from "../src/substrate/paths.ts";
 import { scanPackage } from "../src/substrate/plugins/scan.ts";
 import { PluginProcess } from "../src/substrate/plugins/process.ts";

@@ -499,6 +499,22 @@ describe("what the morning card says the studio learned", () => {
     assert.equal(learnedThisRun([]), "", "a run with no rounds learned nothing worth a line");
   });
 
+  it("never promises an open Loop's work in Live: it was kept in the project's own folder", () => {
+    const words = morningWords({
+      rounds: 3,
+      kept: 3,
+      undone: 0,
+      landed: true,
+      paused: false,
+      hasBuild: false,
+      profile: "open",
+    });
+    for (const line of [words.headline, words.because ?? ""]) {
+      assert.doesNotMatch(line, /\blive\b/i, line);
+      assert.doesNotMatch(line, /\bplay/i, line);
+    }
+  });
+
   it("reaches the card as its own line, scrubbed like every other harness sentence", () => {
     const words = morningWords({
       rounds: 21,

@@ -41,6 +41,51 @@ it("exports public runtime files without nested credentials or private directori
   }
 });
 
+it("ships Studio's Genex SDK, with its licenses, only in a game that maps it", async () => {
+  const temp = await mkdtemp(path.join(os.tmpdir(), "studio-export-genex-"));
+  const game = path.join(temp, "game"),
+    vendor = path.join(temp, "vendor");
+  try {
+    await mkdir(game);
+    await mkdir(path.join(vendor, "genex"), { recursive: true });
+    await writeFile(path.join(vendor, "three.module.js"), "export const REVISION = 'test';");
+    await writeFile(path.join(vendor, "three-LICENSE"), "three notice");
+    await writeFile(path.join(vendor, "genex", "multiplayer.js"), 'export * from "./chunk-A.js";');
+    await writeFile(path.join(vendor, "genex", "chunk-A.js"), "export const connect = () => {};");
+    await writeFile(path.join(vendor, "genex", "embed-sdk.js"), "export const waitForPlayer = () => {};");
+    await writeFile(path.join(vendor, "genex", "LICENSES.md"), "colyseus notice");
+    await writeFile(path.join(vendor, "genex", "VERSION.json"), "{}");
+    const page = (imports: Record<string, string>) =>
+      `<script type="importmap">${JSON.stringify({ imports: { three: "/vendor/three.module.js", ...imports } })}</script><script type="module" src="./main.js"></script>`;
+    await writeFile(path.join(game, "index.html"), page({}));
+    await writeFile(path.join(game, "main.js"), 'import * as THREE from "three"; console.log(THREE);');
+    const solo = await exportPublicGame(game, path.join(temp, "solo"), ["index.html", "main.js"], vendor);
+    assert.deepEqual(
+      solo.included.filter((rel) => rel.startsWith("vendor/genex/")),
+      [],
+      "a single-player game carries none of it, licenses included",
+    );
+    assert.ok(solo.included.includes("vendor/three-LICENSE"), "the vendor root's own notices stay");
+
+    await writeFile(
+      path.join(game, "index.html"),
+      page({
+        "@genex-ai/multiplayer": "/vendor/genex/multiplayer.js",
+        "@genex-ai/embed-sdk": "/vendor/genex/embed-sdk.js",
+      }),
+    );
+    await writeFile(
+      path.join(game, "main.js"),
+      'import { connect } from "@genex-ai/multiplayer"; console.log(connect);',
+    );
+    const online = await exportPublicGame(game, path.join(temp, "online"), ["index.html", "main.js"], vendor);
+    for (const rel of ["multiplayer.js", "chunk-A.js", "embed-sdk.js", "LICENSES.md", "VERSION.json"])
+      assert.ok(online.included.includes(`vendor/genex/${rel}`), rel);
+  } finally {
+    await rm(temp, { recursive: true, force: true });
+  }
+});
+
 it("validates module dependencies, ignores commented examples and keeps only reachable vendored files", async () => {
   const temp = await mkdtemp(path.join(os.tmpdir(), "studio-export-modules-"));
   const game = path.join(temp, "game"),

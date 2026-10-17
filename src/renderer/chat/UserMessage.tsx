@@ -1,4 +1,5 @@
-import { memo, useId, useLayoutEffect, useRef, useState } from "react";
+import { memo, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { splitMentions } from "../../shared/prompt-mention.ts";
 import type { ReferenceFrame } from "../../shared/protocol.ts";
 import { FileText } from "../ui/FileText.tsx";
 import { Icon } from "../ui/icons.tsx";
@@ -6,7 +7,28 @@ import { IconButton } from "../ui/kit.tsx";
 import { MessageImages } from "./MessageImages.tsx";
 
 /** The words of a sent message, folded to seven lines with Show more once they run longer. */
-function UserBubble({ text, pending }: { text: string; pending: boolean }) {
+/** The words with their @ tags painted as on the composer; the rest keeps its file links. */
+function TaggedText({ text, tags }: { text: string; tags: readonly string[] | undefined }) {
+  const known = useMemo(() => new Set(tags ?? []), [tags]);
+  if (!known.size) return <FileText text={text} />;
+  return (
+    <>
+      {splitMentions(text, known).map((run, index) =>
+        run.handle ? (
+          // biome-ignore lint/suspicious/noArrayIndexKey: runs are positional and rebuilt with the text.
+          <span key={index} className="mention-pill" data-mention-tag={run.handle}>
+            {run.text}
+          </span>
+        ) : (
+          // biome-ignore lint/suspicious/noArrayIndexKey: runs are positional and rebuilt with the text.
+          <FileText key={index} text={run.text} />
+        ),
+      )}
+    </>
+  );
+}
+
+function UserBubble({ text, pending, tags }: { text: string; pending: boolean; tags?: readonly string[] }) {
   const id = useId();
   const content = useRef<HTMLDivElement>(null);
   const [expanded, setExpanded] = useState(false);
@@ -36,7 +58,7 @@ function UserBubble({ text, pending }: { text: string; pending: boolean }) {
         }}
       >
         <div id={id} ref={content} className="whitespace-pre-wrap">
-          <FileText text={text} />
+          <TaggedText text={text} tags={tags} />
         </div>
       </div>
       {overflow && (
@@ -73,8 +95,11 @@ export const UserMessage = memo(function UserMessage({
   rewindId,
   onRewind,
   about,
+  tags,
 }: {
   text: string;
+  /** The @ tags the message carried, painted in its words. */
+  tags?: string[];
   pending?: boolean;
   threadId?: string;
   imagesOf?: string;
@@ -91,7 +116,7 @@ export const UserMessage = memo(function UserMessage({
   // the bubble's last 22px line: 8px padding, less the 1px it overhangs that line each side.
   const placed = (
     <div className="relative ms-auto w-fit max-w-[88%]">
-      <UserBubble text={text} pending={pending} />
+      <UserBubble text={text} pending={pending} tags={tags} />
       {rewind && onRewind && (
         <IconButton
           icon="rewind"

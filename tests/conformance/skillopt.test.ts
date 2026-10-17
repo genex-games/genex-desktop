@@ -155,6 +155,68 @@ describe("ranking and task mining", () => {
     assert.equal(tasks[0]!.prompt, "no impact feedback");
   });
 
+  it("an Unreal game's web build observations teach nothing", () => {
+    const observed = (project: string, ok: boolean) => ({
+      data: { type: "custom", event_type: "build_observation", payload: { project, brief: `build ${project}`, ok } },
+    });
+    // The first real Unreal game's three chat builds were checked as a web page and failed.
+    const events = [
+      observed("fog-valley", false),
+      observed("pong", true),
+      observed("fog-valley", false),
+      observed("fog-valley", false),
+    ];
+    const games = [
+      {
+        name: "fog-valley",
+        engine: { kind: "unreal" as const, project: "/p/Valley.uproject", linkedAt: "2026-10-04T10:00:00.000Z" },
+      },
+      { name: "pong" },
+    ];
+    const tasks = mineValidationTasks(events as never, 10, games);
+    assert.deepEqual(
+      tasks.map((task) => task.prompt),
+      ["build pong"],
+    );
+    assert.equal(mineValidationTasks(events as never, 10).length, 4, "the game list is what sets them aside");
+  });
+
+  it("leaves out what the web preview saw of a project that isn't a web game", () => {
+    const observed = (project: string) => ({
+      data: {
+        type: "custom",
+        event_type: "build_observation",
+        payload: { project, brief: `build ${project}`, ok: false },
+      },
+    });
+    const events = ["moth", "godot-moth", "unreal-site", "toy", "kite", "fresh"].map(observed);
+    const games = [
+      { name: "moth", facts: [{ id: "web-game", path: "." }] },
+      { name: "godot-moth", facts: [{ id: "godot-project", path: "." }] },
+      {
+        name: "unreal-site",
+        facts: [
+          { id: "unreal-project", path: "." },
+          { id: "web-game", path: "site" },
+        ],
+      },
+      { name: "toy", facts: [{ id: "toy-project", path: "." }] },
+      {
+        name: "kite",
+        facts: [
+          { id: "web-game", path: "." },
+          { id: "blender-assets", path: "assets" },
+        ],
+      },
+      { name: "fresh", facts: [] },
+    ];
+    assert.deepEqual(
+      mineValidationTasks(events as never, 10, games).map((task) => task.prompt),
+      ["build moth", "build kite", "build fresh"],
+      "only web games' builds are evidence",
+    );
+  });
+
   it("never hands a win to an unparseable judge", () => {
     assert.equal(parseVerdict("I think A is nicer, honestly").pick, "tie");
     assert.equal(parseVerdict('```json\n{"pick":"A","biggest_gap":"g"}\n```').pick, "A");
@@ -473,6 +535,35 @@ describe("skillopt: the gate", () => {
     assert.ok(counts.analyst >= 1, "evidence in a game thread must reach the analyst");
     const pass = customEvents(await rig.core.listAllEvents(), "skillopt_pass").at(-1)!;
     assert.equal(pass.tasks, 2, "the pass reports exactly what it mined");
+  });
+
+  it("leaves out what the web preview saw of a game that now builds in Unreal", async () => {
+    const { writeEngineBinding } = await import("../../src/substrate/game-engine-binding.ts");
+    const { ENGINES, UNREAL_ENGINE } = await import("../helpers/engines.ts");
+    const { respond } = makeResponder({ edits: [], gate: "reject" });
+    const rig = await startRig({ respond });
+    rigs.push(rig);
+    const unreal = await rig.core.games.scaffold("fog-valley", { title: "Fog Valley" });
+    const uproject = path.join(await tmpDir("unreal-project-"), "Valley.uproject");
+    await writeFile(uproject, "{}\n");
+    await writeEngineBinding(unreal.dir, uproject, UNREAL_ENGINE.id, ENGINES);
+    const observed = (project: string, brief: string, ok: boolean) => ({
+      type: "custom" as const,
+      event_type: "build_observation",
+      payload: { project, brief, ok, consoleErrors: 0, summary: brief },
+    });
+    await rig.core.append(
+      ["add a lighthouse", "add fog", "add a wanderer"].map((brief) => observed("fog-valley", brief, false)),
+      await rig.core.threadForGame("fog-valley"),
+    );
+    await rig.core.append(
+      [observed("pong", "make pong", true), observed("pong", "add a score", false)],
+      await rig.core.threadForGame("pong"),
+    );
+
+    await rig.core.host.dispatch({ type: "skillopt_start", threadId: rig.core.mainThread }, 90_000);
+    const pass = customEvents(await rig.core.listAllEvents(), "skillopt_pass").at(-1)!;
+    assert.equal(pass.tasks, 2, "only the web game's builds are evidence");
   });
 
   it("learns from one half of the evidence and tests on the other, swapping sides between votes", async () => {

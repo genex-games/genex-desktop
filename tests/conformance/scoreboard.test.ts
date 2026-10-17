@@ -2086,6 +2086,19 @@ describe("code reviewer, mechanical half", () => {
     assert.equal(other.screenOwner, "hud-2");
   });
 
+  it("a screen owner takes the HUD's layout checks off the parts already running: theirs to keep is one HUD, not its size", async () => {
+    const { linkScreenOwner } = await import("../../src/harness-seed/loop/screen-owner.ts");
+    const layout = [{ id: "hud-coverage" }, { id: "hud-overlap" }, { id: "single-hud" }, { id: "laps" }];
+    const world: Record<string, unknown> = { id: "world", checks: [...layout] };
+    const hud: Record<string, unknown> = { id: "hud", ownsScreen: true, checks: [...layout] };
+    linkScreenOwner([world, hud], hud);
+    assert.deepEqual(
+      (world.checks as Array<{ id: string }>).map((check) => check.id),
+      ["single-hud", "laps"],
+    );
+    assert.equal((hud.checks as unknown[]).length, 4, "the owner keeps every one");
+  });
+
   it("says the same thing to the model half of the review", () => {
     const rubric = readFileSync(pathMod.join(repoRoot, "src/harness-seed/judge/code-review.md"), "utf8");
     for (const global of ["__studioClock", "__studioDraw", "__studioCapture", "__studioGl", "__studioHook"])

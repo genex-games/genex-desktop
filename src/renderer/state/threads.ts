@@ -11,7 +11,7 @@ import { sameSnapshot, shareRecords } from "./snapshot-equality.ts";
  */
 import { createStore, type StoreApi } from "zustand/vanilla";
 import { ThreadKind } from "../../shared/event-log.ts";
-import type { ThreadStatusMap } from "../../shared/ui-events.ts";
+import type { ThreadStatusMap, UiEvent, UiEventMap } from "../../shared/ui-events.ts";
 import type { ConversationRecord, GameProject, StudioApi } from "../../shared/studio-api.ts";
 import type { ThreadMeta } from "../types.ts";
 import { createRefresher } from "./refresher.ts";
@@ -39,6 +39,11 @@ export interface ThreadsState {
   stageThreadId: string | null;
   /** The game chat Cmd-1 returns to, remembered across launches. */
   lastGameThreadId: string | null;
+  /**
+   * What the person is waited on to finish in, per chat: each lock's label ("Unreal") a call waits
+   * on there, in the order the waits began.
+   */
+  personFirst: Readonly<Record<string, readonly string[]>>;
 }
 
 export const initialThreads = (lastGameThreadId: string | null = null): ThreadsState => ({
@@ -49,6 +54,7 @@ export const initialThreads = (lastGameThreadId: string | null = null): ThreadsS
   stageProject: null,
   stageThreadId: null,
   lastGameThreadId,
+  personFirst: {},
 });
 
 const text = (value: unknown): string | undefined => (typeof value === "string" ? value : undefined);
@@ -215,6 +221,34 @@ export function stageProjectSet(state: ThreadsState, project: string | null): Th
 export function statusReported(state: ThreadsState, all: ThreadStatusMap): ThreadsState {
   if (state.statusSource === "live" && sameSnapshot(state.status, all)) return state;
   return { ...state, status: all, statusSource: "live" };
+}
+
+/**
+ * A call began or stopped waiting for the person to finish in an app a plugin guards. Read field
+ * by field: a wait with no chat or no label to name is not shown. A chat keeps every label waited
+ * on there; the end of one wait forgets only its own label.
+ */
+export function personFirstReported(state: ThreadsState, notice: UiEventMap[typeof UiEvent.PersonFirst]): ThreadsState {
+  const { threadId, label, waiting } = notice;
+  const named = typeof label === "string" && label.trim() !== "";
+  const placed = typeof threadId === "string" && threadId !== "" && !(threadId in Object.prototype);
+  if (!named || !placed) return state;
+  const app = label.trim();
+  const shown = Object.hasOwn(state.personFirst, threadId) ? (state.personFirst[threadId] ?? []) : [];
+  if (waiting === true)
+    return shown.includes(app)
+      ? state
+      : { ...state, personFirst: { ...state.personFirst, [threadId]: [...shown, app] } };
+  if (!shown.includes(app)) return state;
+  const left = shown.filter((other) => other !== app);
+  const { [threadId]: _ended, ...rest } = state.personFirst;
+  return { ...state, personFirst: left.length ? { ...rest, [threadId]: left } : rest };
+}
+
+/** What the person is waited on to finish in, in one chat (the first wait still going); null when nothing waits for them there. */
+export function personFirstLabel(state: ThreadsState, threadId: string | null): string | null {
+  if (!threadId || !Object.hasOwn(state.personFirst, threadId)) return null;
+  return state.personFirst[threadId]?.[0] ?? null;
 }
 
 /** A harness that is not ready has nothing running: no stale "working" line survives it. */

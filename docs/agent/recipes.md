@@ -155,13 +155,19 @@ No core change. See [the plugin guide](../PLUGIN_GUIDE.md) and [plugin contract]
    `npm run plugin:pack -- <prebuilt-dir> <artifact.json>`.
 4. For a first-party plugin under `src/plugins/`, extend `tests/conformance/plugins.test.ts`
    or `plugin-devkit.test.ts`. Manifest validation lives in `src/substrate/plugins/manifest.ts`.
+5. Any change to a bundled plugin (manifest, skills, backend, shipped files) bumps its `version`:
+   profiles run the installed package and are only offered a newer one.
 
 ## Panel or stage action
 
 1. Plugin stage button: declare `toolbar[]` with a matching `actions[]` in the manifest; the
    host renders it through `src/renderer/panels/PluginToolbar.tsx`. No core change.
+   An engine's button (one per engine plugin) names the engine's `facts` and an `icon`, says its
+   status as a dot, and opens a panel built to [Engine panels](../../design/genex/README.md#engine-panels)
+   (`src/plugins/unreal/panel.html` and `src/plugins/unity/panel.html` are the models).
 2. Built-in stage view: extend `StageView` and `VIEWS` in `src/renderer/stage.ts`, the
-   `ViewSwitcher` in `src/renderer/panels/PreviewPanel.tsx` (`data-stage-action`), and the
+   tabs in `src/renderer/panels/stage/stage-tabs.ts` (`stageTabs`, `data-stage-action`; drawn by
+   `StageStrip`'s `ViewSwitcher`), and the
    stage switching in `src/renderer/shell/use-stage-views.ts` and `shell/WorkspaceStage.tsx`.
    Full-stage views must hide the native game view through the preview bounds call.
 3. Panel control: add a stable `data-*` attribute or aria-label and keep existing ones;
@@ -179,7 +185,8 @@ not.
 1. Format: one row in `ASSET_FORMATS` in `src/shared/game-assets.ts` — kind, preview mode,
    MIME, and whether it is a raster thumbnail or a model texture. The inventory, the preview's
    MIME map, main's contained readers (`isImageFile`) and the audio checks (`isAudioFile`) all
-   read that row.
+   read that row. Where a project keeps a format (an engine's asset folder) is the
+   `CORE_WORKSPACE` table in `src/shared/project-workspace.ts`.
 2. Preview: `assetPreviewMode` in `src/shared/asset-preview.ts` only if the mode needs new logic.
 3. 3D formats: a loader branch in `src/renderer/asset-model-viewer.js`; copy any decoder in
    `scripts/build.mjs`.

@@ -1,0 +1,12 @@
+﻿Log file open, 01/01/26 12:00:00
+LogInit: Running DelayedAutoRegister Phase StartOfEnginePreInit
+LogInit: Display: Running engine for game: DirtTrack
+LogCsvProfiler: Display: Metadata set : platform="Mac"
+LogTrace: Display: Control listening on port 1985
+LogCsvProfiler: Display: Metadata set : config="Development"
+LogCsvProfiler: Display: Metadata set : buildversion="++UE5+Release-5.8-CL-58210709"
+LogCsvProfiler: Display: Metadata set : engineversion="5.8.3-58210709+++UE5+Release-5.8"
+LogCsvProfiler: Display: Metadata set : enginereleaseversion="5.8.3"
+LogCsvProfiler: Display: Metadata set : commandline="" {{PROJECT}}""
+[2026.01.01-12.00.16:385][  0]LogTemp: Error test: UE::UnifiedErrorTest::Empty: [Empty error]
+[2026.01.01-12.00.16:894][  0]LogAudioMixerAudioUnit: Warning: Error querying Sample Rate: 2003332927

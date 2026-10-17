@@ -159,6 +159,19 @@ export function isRunControl(name: string): name is RunControl {
   return RUN_CONTROLS.has(name);
 }
 
+/** The controls a Loop that worked in the game folder itself keeps: its status alone, no build to show or land. */
+const IN_PLACE_CONTROLS: ReadonlySet<string> = new Set<string>([RunControl.RunStatus]);
+
+/** The run's controls a grant hands the chat's own session: all of them, or the status alone after an in-place Loop. */
+export function runControlsFor(grant: { inPlace?: boolean }): readonly StudioToolSpec[] {
+  return grant.inPlace === true ? runControlTools.filter((tool) => IN_PLACE_CONTROLS.has(tool.name)) : runControlTools;
+}
+
+/** Is this one of the controls a grant hands (`runControlsFor`)? */
+export function isGrantedRunControl(name: string, grant: { inPlace?: boolean }): name is RunControl {
+  return isRunControl(name) && (grant.inPlace !== true || IN_PLACE_CONTROLS.has(name));
+}
+
 /**
  * The builds a chat's own session records to start, which the harness starts once its reply ends:
  * a Loop's launch (the seed's `tools/game-tools.ts`), a finished build reopened

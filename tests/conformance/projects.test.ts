@@ -10,6 +10,7 @@ import { startRig, waitForLog, type Rig } from "../helpers/studio-rig.ts";
 import { tmpDir } from "../helpers/tmp.ts";
 import { countImages } from "../helpers/fake-ollama.ts";
 import { slugFromName, tildePath } from "../../src/substrate/game-workspace.ts";
+import { ProjectStarter } from "../../src/shared/project-facts.ts";
 
 const PNG_1x1 = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
@@ -27,7 +28,7 @@ describe("project folders", () => {
     assert.equal(tildePath("/Users/simeon/coding/rift", "/Users/simeon"), "~/coding/rift");
   });
 
-  it("adopts a folder anywhere, keeps the user's stills, and scaffolds the missing game files", async () => {
+  it("adopts a folder anywhere, keeps the user's stills, and its web starter brings the missing game files", async () => {
     const rig = await startRig({ replies: [] });
     rigs.push(rig);
     const dir = path.join(await tmpDir("studio-project-"), "mood-board");
@@ -40,6 +41,9 @@ describe("project folders", () => {
     assert.equal(project.library, false);
     assert.match(project.pathLabel, /mood-board/);
     assert.equal(project.dir, await realpath(dir));
+    // A folder of notes and stills starts with no kind; its web starter is written once picked.
+    assert.equal(await readFile(path.join(dir, "index.html"), "utf8").catch(() => null), null);
+    await rig.core.games.start(project.name, ProjectStarter.Web);
     assert.ok(await readFile(path.join(dir, "index.html"), "utf8"));
     // The assets door (AG-930): a scaffolded or adopted game gets the folder, the loader and the git attributes.
     assert.match(await readFile(path.join(dir, "assets", "README.md"), "utf8"), /studio's own tools/);

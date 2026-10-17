@@ -9,7 +9,9 @@ import { readdir, readFile } from "node:fs/promises";
  * gets a harness — so this asserts readiness explicitly. It also reads the packaged binary's fuses,
  * the sandbox helpers the package carries, on macOS a signature that holds (an ad-hoc local build's
  * too: macOS's folder privacy refuses an app whose signature does not bind its Info.plist without
- * asking) and, with STUDIO_EXPECT_SIGNED=1, the Developer ID signature and Gatekeeper's verdict.
+ * asking) and, with STUDIO_EXPECT_SIGNED=1, the Developer ID signature and Gatekeeper's verdict. On
+ * macOS it also checks the bundled cua-driver: the pinned version, its license, and that it starts
+ * embedded from inside the package (signed with the app's own identity when STUDIO_EXPECT_SIGNED=1).
  *
  *   npm run package && node tests/e2e/run-packaged-smoke.mjs
  *   STUDIO_PACKAGE_DIR=<out/Genex-<platform>-<arch>> overrides the package folder.
@@ -22,6 +24,12 @@ import { listPackage, extractFile } from "@electron/asar";
 import { FuseState, FuseV1Options, getCurrentFuseWire } from "@electron/fuses";
 import { startFakeOllama } from "../helpers/fake-ollama.ts";
 import { packagedApp, posixEntries } from "./packaged-app.mjs";
+import { existsSync } from "node:fs";
+import { mkdtemp, rm } from "node:fs/promises";
+import os from "node:os";
+import { setTimeout as sleep } from "node:timers/promises";
+import { CUA_DRIVER_RELEASE } from "../../scripts/vendor-cua-driver.ts";
+import { embeddedEnv, HOST_BUNDLE_ID } from "../../src/substrate/cua-embedded.ts";
 
 const root = fileURLToPath(new URL("../..", import.meta.url));
 const target = `${process.platform}-${process.arch}`;
@@ -166,6 +174,7 @@ addCheck(
   wrongFuses.map(([name]) => `${name}=${String.fromCharCode(fuses[FuseV1Options[name]] ?? 63)}`).join(", "),
 );
 if (process.platform === "darwin") await signatureChecks();
+if (process.platform === "darwin") await cuaDriverChecks();
 // Keep the fallback in smoke mode if the gate regresses: this negative probe must
 // never initialize normal product data merely to prove a packaged flag is refused.
 const denied = spawn(bin, fixtureElectronArgs(["--studio-smoke", "--studio-dev-launch=/not-an-owned-launch.json"]), {
@@ -213,6 +222,50 @@ function addCheck(name, ok, detail) {
 }
 
 /**
+ * The cua-driver every macOS build carries for computer control (scripts/vendor-cua-driver.ts): the
+ * pinned version beside its license, and a daemon that starts embedded, as the app starts it, from
+ * inside the package. A Developer ID build signs it with the app's own team.
+ */
+async function cuaDriverChecks() {
+  const dir = path.join(resourcesDir, "app.asar.unpacked", "dist", "resources", "cua-driver");
+  const driver = path.join(dir, "cua-driver");
+  const version = await readFile(path.join(dir, "VERSION"), "utf8").catch(() => "");
+  addCheck(
+    "package carries the pinned cua-driver with its license and notices",
+    version.trim() === CUA_DRIVER_RELEASE.version &&
+      existsSync(path.join(dir, "LICENSE.md")) &&
+      existsSync(path.join(dir, "THIRD_PARTY_NOTICES.md")),
+    `VERSION ${version.trim() || "missing"}`,
+  );
+  const socketDir = await mkdtemp(path.join(os.tmpdir(), "genex-cua-smoke-"));
+  const socket = path.join(socketDir, "d.sock");
+  const daemon = spawn(driver, ["serve", "--embedded", "--socket", socket], {
+    env: { PATH: "/usr/bin:/bin", HOME: os.homedir(), ...embeddedEnv(HOST_BUNDLE_ID) },
+    stdio: "ignore",
+  });
+  daemon.on("error", () => {});
+  let listening = false;
+  for (let tries = 0; tries < 100 && !listening; tries += 1) {
+    listening = existsSync(socket);
+    if (!listening) await sleep(100);
+  }
+  daemon.kill("SIGKILL");
+  await rm(socketDir, { recursive: true, force: true });
+  addCheck("the bundled cua-driver starts embedded from inside the package", listening, driver);
+  if (!expectSigned) return;
+  const run = promisify(execFile);
+  const teamOf = async (file) =>
+    /^TeamIdentifier=(.+)$/m.exec((await run("codesign", ["-dv", file]).catch((error) => error)).stderr ?? "")?.[1] ??
+    "";
+  const [driverTeam, appTeam] = [await teamOf(driver), await teamOf(appBundle)];
+  addCheck(
+    "the bundled cua-driver is signed with the app's own team",
+    driverTeam === appTeam,
+    `${driverTeam} vs ${appTeam}`,
+  );
+}
+
+/**
  * Every macOS build: a strict deep signature named for the app's bundle id. A Developer ID build
  * also: Gatekeeper's acceptance, and no library-validation exemption.
  */
@@ -244,6 +297,11 @@ async function signatureChecks() {
   const developerId = gatekeeper.ok && /source=Notarized Developer ID/.test(gatekeeper.text);
   addCheck("Gatekeeper accepts the app as a notarized Developer ID build", developerId, gatekeeper.text.trim());
   const entitlements = await outcome("codesign", ["-d", "--entitlements", "-", "--xml", appBundle]);
-  const exempt = /disable-library-validation|device\.(?:camera|audio-input)/.test(entitlements.text);
-  addCheck("signed entitlements carry no library-validation or device exemptions", entitlements.ok && !exempt);
+  // The microphone is Play's voice chat (build/entitlements.mac.plist); nothing else is a device exemption.
+  const exempt = /disable-library-validation|device\.(?!audio-input<)/.test(entitlements.text);
+  const microphone = /device\.audio-input</.test(entitlements.text);
+  addCheck(
+    "signed entitlements carry the microphone for Play's voice chat and no other library-validation or device exemption",
+    entitlements.ok && microphone && !exempt,
+  );
 }

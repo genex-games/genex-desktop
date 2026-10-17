@@ -36,7 +36,7 @@ const TerminalView = lazy(() => import("./TerminalView.tsx"));
 export type MeteredProviderProps = { engines: EngineDescriptor[]; onEnginesRefresh: () => Promise<void> | void };
 
 /** A row's actions: each clears the last error and keeps its own. */
-function useRun(): { run: (action: () => Promise<unknown>) => Promise<void>; error: string | null } {
+export function useRun(): { run: (action: () => Promise<unknown>) => Promise<void>; error: string | null } {
   const [error, setError] = useState<string | null>(null);
   const run = async (action: () => Promise<unknown>): Promise<void> => {
     setError(null);
@@ -49,21 +49,29 @@ function useRun(): { run: (action: () => Promise<unknown>) => Promise<void>; err
   return { run, error };
 }
 
-/** "Check connection" first, then the row's own items, in the Account menu of a connected row. */
-function AccountMenu({
+/**
+ * "Check connection" first, then the row's own items, in the Account menu of a connected row; a
+ * row that holds no account (a local server) names its menu by what it holds.
+ */
+export function AccountMenu({
   name,
+  label = WORDS.account,
+  menuName = `${name} account`,
   onCheck,
   children,
 }: {
   name: string;
+  label?: string;
+  /** The trigger's accessible name. */
+  menuName?: string;
   onCheck: () => void;
   children: JSX.Element;
 }): JSX.Element {
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button aria-label={`${name} account`}>
-          {WORDS.account}
+        <Button aria-label={menuName}>
+          {label}
           <Icon name="chevron-down" size={14} />
         </Button>
       </DropdownMenuTrigger>
@@ -79,7 +87,7 @@ function AccountMenu({
 }
 
 /** A menu item's word and, under it, its quieter line. */
-function ItemWords({ title, line }: { title: string; line: string }): JSX.Element {
+export function ItemWords({ title, line }: { title: string; line: string }): JSX.Element {
   return (
     <span className="flex flex-col gap-0.5">
       <span>{title}</span>
@@ -127,7 +135,7 @@ function ProviderCard({
 }
 
 /** Recheck one engine (its models too), then read the engines again; the row says it is looking. */
-function useRecheck(engineId: string, onEnginesRefresh: () => Promise<void> | void) {
+export function useRecheck(engineId: string, onEnginesRefresh: () => Promise<void> | void) {
   const [checking, setChecking] = useState(false);
   const recheck = async (): Promise<void> => {
     setChecking(true);

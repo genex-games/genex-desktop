@@ -1,0 +1,118 @@
+name: Follow the Genex CLI
+
+# When npm's `latest` @genex-ai/cli-demo is newer than the pin Studio ships, open the same bump
+# PR a person made by hand in #90: exact pin and lockfile, vendored skills refreshed from the
+# package and genex.games/SKILL.md, the Genex plugin's patch version, and the version mentions
+# in THIRD-PARTY-NOTICES and two tests. Without it a CLI fix for a generation tool reaches
+# desktop users only when someone remembers to bump.
+#
+# Why these choices:
+#   - Every 6 hours: the check is one registry read and costs nothing until there is a new
+#     version, and a CLI fix should reach the next desktop release the same day.
+#   - Scheduled runs start from the default branch, which is `dev`, so the bump is based there.
+#   - One branch per version (`genex-cli/<version>`): a run that finds the branch already pushed
+#     stops, so an unmerged bump is never opened twice.
+#   - The PR is opened with GITHUB_TOKEN, which by GitHub's rule starts no other workflow. So
+#     this job runs the checks a bump can break before it pushes, and says so in the PR body.
+#   - contents/pull-requests write is used only for that one push and that one PR.
+on:
+  schedule:
+    - cron: "17 */6 * * *"
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: genex-cli-follow
+  cancel-in-progress: false
+jobs:
+  follow:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: dev
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+      - name: Is npm ahead of the pin?
+        id: check
+        run: |
+          set -euo pipefail
+          node scripts/follow-genex-cli.ts --check | tee -a "$GITHUB_OUTPUT"
+      - name: Is a bump for this version already open?
+        id: branch
+        if: steps.check.outputs.behind == 'true'
+        env:
+          LATEST: ${{ steps.check.outputs.latest }}
+        run: |
+          set -euo pipefail
+          if git ls-remote --exit-code --heads origin "genex-cli/${LATEST}" >/dev/null; then
+            echo "Branch genex-cli/${LATEST} exists; nothing to do."
+            echo "open=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "open=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Bump
+        id: bump
+        if: steps.check.outputs.behind == 'true' && steps.branch.outputs.open == 'false'
+        run: |
+          set -euo pipefail
+          # Install scripts stay off, as in context.yml: they download Electron and patch the runtime.
+          npm ci --ignore-scripts
+          node scripts/follow-genex-cli.ts --apply | tee -a "$GITHUB_OUTPUT"
+      - name: Checks a bump can break
+        if: steps.bump.outcome == 'success'
+        run: |
+          set -euo pipefail
+          node --test --test-concurrency=1 \
+            tests/conformance/genex-skills-vendor.test.ts \
+            tests/conformance/plugin-install-words.test.ts \
+            tests/conformance/genex-cli-follow.test.ts
+          npm run --silent lint
+      - name: Open the pull request
+        if: steps.bump.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CLI: ${{ steps.bump.outputs.cli }}
+          FROM_CLI: ${{ steps.bump.outputs.from_cli }}
+          PLUGIN: ${{ steps.bump.outputs.plugin }}
+        run: |
+          set -euo pipefail
+          BRANCH="genex-cli/${CLI}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$BRANCH"
+          git add -A
+          git commit -m "Bump the Genex plugin to ${PLUGIN} and pin the bundled Genex CLI to ${CLI}"
+          git push origin "$BRANCH"
+          cat > "${RUNNER_TEMP}/body.md" <<EOF
+          ## What and why
+
+          \`@genex-ai/cli-demo\` ${CLI} is npm's \`latest\`; Studio pinned ${FROM_CLI}. A bundled
+          plugin reaches a profile only through a versioned update, so the Genex plugin moves to
+          ${PLUGIN}. Opened by \`.github/workflows/genex-cli-follow.yml\`; read the CLI's changes
+          between ${FROM_CLI} and ${CLI} before merging.
+
+          ## Validation
+
+          | Check / layer | Result and evidence |
+          | --- | --- |
+          | genex-skills-vendor, plugin-install-words, genex-cli-follow (L1) | Passed in the workflow run before this PR was opened |
+          | Biome (\`npm run lint\`) | Passed in the same run |
+
+          A pull request opened by GITHUB_TOKEN starts no other workflow, so \`check\` has not run
+          here: push any commit to this branch, or run \`check\` by hand, before merging.
+
+          Flipped assertions: none (version literals only).
+
+          ## Documentation
+
+          Vendored skills refreshed by \`npm run genex:skills -- --fetch\`; THIRD-PARTY-NOTICES names ${CLI}.
+          EOF
+          gh pr create --base dev --head "$BRANCH" \
+            --title "Bump the Genex plugin to ${PLUGIN} and pin the bundled Genex CLI to ${CLI}" \
+            --body-file "${RUNNER_TEMP}/body.md"

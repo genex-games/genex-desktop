@@ -24,13 +24,14 @@ import {
   PLAN_TOOL,
   plansByTurn,
 } from "../../shared/permissions.ts";
-import type { Usage } from "../../shared/event-log.ts";
+import type { ModelTokenUsage, Usage } from "../../shared/event-log.ts";
 import type {
   DelegatePermissions,
   DelegateRequest,
   DelegateResult,
   PermissionReply,
 } from "../../substrate/engines/types.ts";
+import { MODEL_ROW_COUNTS } from "../../substrate/engines/session-cost.ts";
 import { planApprovedNote, planRevisionNote } from "./delegation-prompts.ts";
 
 /** How many times one turn's plan may be sent back and planned again before the turn just ends. */
@@ -71,18 +72,50 @@ function isPlanReply(result: DelegateResult): result is DelegateResult & { sessi
   return result.ok && plain && Boolean(result.summary.trim()) && typeof result.sessionId === "string";
 }
 
-/** Two token counts as one. */
+/** The counts of a pass's usage that are its own, and so add up across the passes of one turn. */
+const PASS_COUNTS = [
+  "input_tokens",
+  "output_tokens",
+  "cache_read_tokens",
+  "cache_write_tokens",
+  "reasoning_tokens",
+  "cost_usd",
+  "compactions",
+] as const satisfies ReadonlyArray<keyof Usage>;
+
+/** The keys of `T` whose values are counts. */
+type CountKey<T> = { [K in keyof T]-?: T[K] extends number | undefined ? K : never }[keyof T];
+
+/** Each count in `keys`, the two passes' added up; absent when neither pass reported it. */
+function added<T>(first: T, next: T, keys: ReadonlyArray<CountKey<T>>): Partial<Record<CountKey<T>, number>> {
+  const out: Partial<Record<CountKey<T>, number>> = {};
+  for (const key of keys) {
+    const a = first[key];
+    const b = next[key];
+    if (typeof a !== "number" && typeof b !== "number") continue;
+    out[key] = (typeof a === "number" ? a : 0) + (typeof b === "number" ? b : 0);
+  }
+  return out;
+}
+
+/** Both passes' models: each pass reports its own share of every model (`session-cost.ts`). */
+function addedModels(first: Usage["by_model"], next: Usage["by_model"]): Usage["by_model"] {
+  if (!first || !next) return next ?? first;
+  const models = new Set([...Object.keys(first), ...Object.keys(next)]);
+  const rows = [...models].flatMap((id): Array<[string, ModelTokenUsage]> => {
+    const a = first[id];
+    const b = next[id];
+    if (a && b) return [[id, { ...b, ...added(a, b, MODEL_ROW_COUNTS) }]];
+    const only = b ?? a;
+    return only ? [[id, only]] : [];
+  });
+  return Object.fromEntries(rows);
+}
+
+/** Two passes' usage as one: every count each pass reported for itself, added up. */
 function addedUsage(first: Usage, next: Usage): Usage {
-  const sum = (key: "input_tokens" | "output_tokens" | "cache_read_tokens" | "cache_write_tokens" | "cost_usd") =>
-    first[key] === undefined && next[key] === undefined ? {} : { [key]: (first[key] ?? 0) + (next[key] ?? 0) };
-  return {
-    ...next,
-    ...sum("input_tokens"),
-    ...sum("output_tokens"),
-    ...sum("cache_read_tokens"),
-    ...sum("cache_write_tokens"),
-    ...sum("cost_usd"),
-  };
+  const byModel = addedModels(first.by_model, next.by_model);
+  return { ...next, ...added(first, next, PASS_COUNTS), ...(byModel ? { by_model: byModel } : {}) };
 }
 
 /** One turn's passes as the one result the caller reads: the last pass's ending, everything counted. */

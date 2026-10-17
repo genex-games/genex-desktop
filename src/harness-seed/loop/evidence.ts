@@ -18,6 +18,9 @@ import { applyPlayScript } from "./play-script.ts";
 // A namespace, not named imports: a seed upgrade may keep an older kinds.ts the agent edited, which
 // has no `cruiseFor` or `startKeysFor`, and a missing named import would stop this file loading.
 import * as kinds from "./kinds.ts";
+// A namespace too: routes.ts is newer than an evidence.ts a workspace may keep, and this pass
+// replays the run's routes only when it is there.
+import * as routes from "./routes.ts";
 import { LOAD_RACE_RETRY_MS, OBSERVATION_RETRY_MS, RACE_RETRY_MS, WINDOW_RETRIES_MS } from "./config.ts";
 import { HostMethod } from "./host-methods.ts";
 import { PageMethod } from "./page-contract.ts";
@@ -123,6 +126,11 @@ export interface GatherOptions {
   keepPaths?: string[];
   /** Look at this size: a leased window is sized before it loads (`preview.viewport`), never the live view. */
   viewport?: { width: number; height: number } | null;
+  /**
+   * The build's camera wiring is this look's to answer for (default): a part that does not own the
+   * entry cannot rewire the cameras, so a dead cameras contract is a warning for it, never a failure.
+   */
+  camerasOwned?: boolean;
 }
 
 /** The pass's own state, phase to phase: its arguments, then what each phase found. */
@@ -774,6 +782,7 @@ export async function gatherEvidence(
     inheritedConsole = [],
     keepPaths = [],
     viewport = null,
+    camerasOwned = true,
   }: GatherOptions,
 ): Promise<Evidence> {
   const kept = Array.isArray(keepPaths) ? keepPaths.map(String) : [];
@@ -803,6 +812,7 @@ export async function gatherEvidence(
     // The bot's race is read by its position and finish: cut last, like the board's own paths.
     keepPaths: challenge === true ? [...new Set([...kept, ...RACE_PATHS])] : kept,
     viewport,
+    camerasOwned,
   };
   for (const phase of LOOK_OPENING) {
     const done = await phase(look);
@@ -863,6 +873,7 @@ const LOOK_PHASES: Array<(look: Look) => Promise<LookEnd>> = [
   runDemos,
   runChallenge,
   weighFrames,
+  replayKeptRoutes,
   readLateStatus,
   readConsole,
   reportLook,
@@ -2035,11 +2046,17 @@ function weighBlackness(look: Look, statBearing: Shot[]): void {
 /** When every camera returned the same frame: an overlay, a dead camera contract, a stale picture, or one viewpoint. */
 function sameFrameEverywhere(look: Look): void {
   const { canvasSourced, declaredViewpoints, problems, uiEntries, uiPrimary, warnings } = look;
+  // Several viewpoints drawn on the canvas, all one picture: the camera wiring switches nothing.
+  const wiringDead = declaredViewpoints.length > 1 && canvasSourced;
   if (uiPrimary) {
     warnings.push(
       `a full-screen overlay covers the game (${uiEntries.slice(0, MAX_UI_ENTRIES).join(", ") || "the page"}) — every camera frame is the same picture behind it; judge user:view`,
     );
-  } else if (declaredViewpoints.length > 1 && canvasSourced) {
+  } else if (wiringDead && look.camerasOwned === false) {
+    warnings.push(
+      "every camera returned the same frame — the camera wiring is the entry owner's, not this part's: judge it on its other evidence",
+    );
+  } else if (wiringDead) {
     problems.push("every camera returned the same frame — debugCamera switches nothing, the cameras contract is dead");
   } else if (declaredViewpoints.length > 1) {
     warnings.push(
@@ -2090,6 +2107,33 @@ async function weighFrames(look: Look): Promise<LookEnd> {
   weighBlackness(look, weighDraws(look));
   weighDuplicates(look);
   weighEmptyBase(look);
+}
+
+/**
+ * (8b) the run's kept routes (routes.ts), replayed on this build after every photograph is taken —
+ * a replay reloads the page in the host's own computer session and moves it — and only on a leased
+ * window, never the user's own view. A deterministic route that no longer reaches its goal is a
+ * failed check naming the step; every divergence is a warning the judge and the next builder read.
+ */
+async function replayKeptRoutes(look: Look): Promise<LookEnd> {
+  const { ctx, entry, handle, iterationId, labelPrefix, prefix, problems, root, run, warnings } = look;
+  if (typeof routes.replayRoutes !== "function" || !handle || problems.length > 0) return;
+  const iteration = typeof iterationId === "number" ? iterationId : undefined;
+  try {
+    const replayed = await routes.replayRoutes(ctx, {
+      run,
+      root,
+      handle,
+      labelPrefix: labelPrefix ?? prefix,
+      ...(entry ? { entry } : {}),
+      ...(iteration === undefined ? {} : { iteration }),
+    });
+    if (!replayed) return;
+    look.routeReplays = replayed;
+    warnings.push(...replayed.notes);
+  } catch (err: any) {
+    warnings.push(`the run's routes could not be replayed: ${err?.message ?? err}`);
+  }
 }
 
 /**
@@ -2240,6 +2284,8 @@ async function reportLook(look: Look): Promise<LookEnd> {
       // The drive's readings: whether the racing line steered it, the corner it photographed, and
       // the throttle-only bot's race (judge-facts.ts words each one; `throttle-bot-loses` reads the race).
       ...drivenReadings(look),
+      // The run's kept routes replayed on this build: only when it keeps any.
+      ...(look.routeReplays ? { routes: look.routeReplays } : {}),
     },
   };
 }

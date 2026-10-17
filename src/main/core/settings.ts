@@ -1,4 +1,4 @@
-/** The studio's own settings (Studio's header and Settings → Harness) and the bounds they are read within. */
+/** The studio's own settings (Studio's header, Settings → Harness and Permissions) and the bounds they are read within. */
 import { DEFAULT_BUILDERS, MAX_BUILDERS } from "../../shared/builders.ts";
 import { DEFAULT_POOL_MAX, MAX_POOL_MAX } from "../../substrate/preview-pool.ts";
 
@@ -66,4 +66,11 @@ export interface StudioSettings {
    * bounded per run, never after the user's Stop or Finish (`core/auto-resume.ts`).
    */
   autoResume: boolean;
+  /**
+   * Let agents control your computer (Settings → Permissions, default OFF for every install, new
+   * or existing; macOS only). Off, no session is handed the `desktop` tool, no consent card shows,
+   * cua-driver never starts and `desktop.computer` answers that it is off; turning it off stops a
+   * running driver. On, each chat session and each app still asks first (`core/desktop-tools.ts`).
+   */
+  computerControl: boolean;
 }

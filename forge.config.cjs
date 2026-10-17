@@ -48,6 +48,14 @@ const DMG_ICON_SIZE = 128;
 /** What the app refuses to start without on Linux: the process sandbox and code search. */
 const LINUX_DEPENDS = ["bubblewrap", "socat", "ripgrep"];
 const LINUX_CATEGORIES = ["Development", "Game"];
+/**
+ * The deb's maintainer scripts: install and remove the AppArmor profile that lets the sandbox
+ * create user namespaces on Ubuntu 24.04 and the distributions built on it.
+ */
+const DEB_SCRIPTS = {
+  postinst: path.join(__dirname, "build", "linux", "postinst"),
+  postrm: path.join(__dirname, "build", "linux", "postrm"),
+};
 /** The Windows installer's file name, the same for every version so a download link can stay put. */
 const WINDOWS_SETUP_EXE = "Genex-Setup.exe";
 /** Only with a WINDOWS_SIGN_* certificate, parameters or hook; otherwise unsigned. */
@@ -106,6 +114,15 @@ module.exports = {
       NSDesktopFolderUsageDescription: folderAccess("your Desktop"),
       NSDownloadsFolderUsageDescription: folderAccess("your Downloads folder"),
       NSRemovableVolumesUsageDescription: folderAccess("folders on an external drive"),
+      // app_look reads an app window's accessibility tree through System Events (Automation), and
+      // the embedded cua-driver runs as Genex, so its Automation and screen requests name Genex too.
+      NSAppleEventsUsageDescription:
+        "Genex reads an app window when an agent looks at it. It clicks and types only after you let the chat's agent use your computer.",
+      NSScreenCaptureUsageDescription:
+        "Genex sees your screen only after you let the chat's agent use your computer, so it can see the apps it works in.",
+      // Voice chat in a Play game, only while the person turns its mic on in the game's header.
+      NSMicrophoneUsageDescription:
+        "Genex uses your microphone for voice chat in Play games, while you turn the mic on.",
     },
     // The Windows executable's version resource: what Explorer, Task Manager and UAC show.
     win32metadata: {
@@ -179,6 +196,7 @@ module.exports = {
           homepage: HOMEPAGE,
           icon: `${ICON}.png`,
           depends: LINUX_DEPENDS,
+          scripts: DEB_SCRIPTS,
         },
       },
     },

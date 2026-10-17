@@ -1,5 +1,13 @@
 import { providerInfo } from "../shared/providers.ts";
 import type { ExportReview } from "../shared/plugins.ts";
+import type { PluginSuggestedPayload } from "../shared/project-tools.ts";
+import { parseSuggestion } from "./chat/plugin-suggestion.ts";
+import { type JobHandle, type JobStart, jobEndLine, jobStart, missingPanes } from "./chat/job-lines.ts";
+import { type AppLookAccessKind, JobTool } from "../shared/jobs.ts";
+import { type ChatJudgeResultPayload, readChatJudgeResult } from "../shared/chat-judge.ts";
+import { type WorkerLine, workerEndLine, workerLineEnded, workerStartLine } from "./chat/worker-lines.ts";
+import { workerKeyOf } from "../shared/run-graph-events.ts";
+import { type FinishRecord, FinishCheckStep, finishRecordOf } from "../shared/finish-check.ts";
 /**
  * The chat transcript as entries: the thread's event log read once, oldest first, into the
  * bubbles, tool-chip groups, narration lines and cards the chat draws. Pure — `chat/transcript.ts`
@@ -39,12 +47,22 @@ import { plainDefect, reportSummary } from "./run-graph.ts";
 import type { EventEnvelope } from "./types.ts";
 import type { ToolChipRow } from "./ui/ToolChips.tsx";
 import { OutputTone, ToolState } from "./ui/tool-state.ts";
+import { type MentionOutcome, mergeMentionResults, withoutMentionContext } from "../shared/prompt-mention.ts";
+import { type EngineLinkedPayload, GameEngine, isEngineId, isGameEngine } from "../shared/game-engine.ts";
+import { LoopProfile } from "../shared/project-facts.ts";
+import { offeredRewindUndo } from "../shared/chat-rewind.ts";
+import { type ConnectorStep, connectorStep, endsPlay, showsPlayView, startsPlay } from "./chat/connector-steps.ts";
 import {
   A_PLUGIN,
+  FINISH_CHECK_WORDS,
+  GAME_ENGINE_WORDS,
+  appAccessMissing,
   autopilotStartWords,
   checkReplanWords,
+  checkpointSkippedWords,
   circuitBreakWords,
-  connectorWords,
+  chatSourceName,
+  connectorStepWords,
   consentAskWords,
   consentOutcomeWords,
   decisionWords,
@@ -97,6 +115,10 @@ export const EntryKind = {
   Action: "action",
   Morning: "morning",
   Compaction: "compaction",
+  /** A session's card to turn a Genex plugin on or install it (`plugin_suggested`). */
+  PluginSuggestion: "plugin-suggestion",
+  /** What a message's @ tags gave the agent (`mention_tagged`): one card under the message. */
+  Mentions: "mentions",
 } as const;
 export type EntryKind = (typeof EntryKind)[keyof typeof EntryKind];
 
@@ -109,6 +131,18 @@ export const EntryAction = {
   Consent: "consent",
   /** Claude's own Allow / Deny question, or a plan to approve (`tool_permission`). */
   Permission: "permission",
+  /** A game now builds in an engine project: one line, with Undo while it is the newest link. */
+  EngineLink: "engine-link",
+  /** Background work an agent started (`job_started`): one line, with Stop while it runs. */
+  Job: "job",
+  /** A worker a lead started (`worker_started`): one line naming its task, rewritten as it ends. */
+  Worker: "worker",
+  /** Genex can't see app windows yet (`app_look_access`): one line, with Open Privacy settings per pane. */
+  AppAccess: "app-access",
+  /** A blind judge played the game for the chat's own session (`chat_judge_result`): one line, the question inside. */
+  Judge: "judge",
+  /** A rewind put game files back (`conversation_rewound`): one line, with Bring back newer version while offered. */
+  Rewound: "rewound",
 } as const;
 export type EntryAction = (typeof EntryAction)[keyof typeof EntryAction];
 
@@ -121,6 +155,8 @@ export type Entry =
       contractor?: boolean;
       /** What a note sent to a build from its graph was about. */
       about?: string;
+      /** The @ tags the message carried, painted in its words. */
+      tags?: string[];
     }
   /**
    * A line of narration. `attention` marks one that reports trouble (a round stopped or broke
@@ -134,6 +170,10 @@ export type Entry =
   | { kind: typeof EntryKind.Activity; id: string; rows: Array<{ text: string; tag?: string }> }
   /** The conversation was compacted: its own row, opening to the summary that replaced the messages. */
   | { kind: typeof EntryKind.Compaction; id: string; messages: number | null; summary: string | null }
+  /** A message's @ tags and their results; `messageId` is the queue's, for Try again. */
+  | { kind: typeof EntryKind.Mentions; id: string; messageId?: string; tags: MentionOutcome[] }
+  /** The turn-it-on card a session showed: its button is read from the live plugin list. */
+  | { kind: typeof EntryKind.PluginSuggestion; id: string; suggestion: PluginSuggestedPayload }
   /** One plain line about what Harness learned; `link` opens Activity. */
   | { kind: typeof EntryKind.Learning; id: string; text: string; link: string }
   | {
@@ -161,9 +201,15 @@ export type Entry =
       prefill?: string;
       /** action "consent": a plugin's question to the user — Approve/Decline while it is pending, its outcome after. */
       consentId?: string;
+      /** Whose card it is: the plugin's id, or the studio's own (`StudioConsentSource`). */
+      consentSourceId?: string;
       consentSource?: string;
       consentPrompt?: string;
       consentExport?: ExportReview;
+      /** A connector's card: Always allow is offered. */
+      consentAlwaysOffered?: boolean;
+      /** A card with a field the person may edit before Allow: its label and the value it holds. */
+      consentInput?: { label: string; value: string };
       /** action "permission": Claude's own Allow / Deny question (or a plan to approve), as first asked, and how it ended. */
       permission?: ToolPermissionEvent;
       pending?: boolean;
@@ -176,6 +222,18 @@ export type Entry =
        */
       steers?: Array<{ label: string; prefill: string }>;
       snapshotId?: string;
+      /** action "engine-link": what Undo takes back; absent once taken back or replaced by a newer link. */
+      engineLink?: { project: string; pluginId: string; linkedAt: string };
+      /** action "rewound": the rewind whose newer version comes back; absent once the chat no longer offers it. */
+      rewindUndo?: string;
+      /** action "job": what Stop reaches, and when the job started; absent once its end is read. */
+      job?: JobHandle;
+      /** action "worker": its work ended well (done, used or added), so its mark is ticked. */
+      workerDone?: boolean;
+      /** action "app-access": the Privacy & Security panes still to allow. */
+      appAccess?: AppLookAccessKind[];
+      /** action "judge": what the judge established, in the words of a build's checks list. */
+      judge?: ChatJudgeResultPayload;
     }
   /**
    * The morning: what the run amounts to, in one card. It replaces the line that read
@@ -200,6 +258,8 @@ export type Entry =
       kept: number;
       undone: number;
       landed: boolean | null;
+      /** how the Loop worked on its project (`run_finished.profile`): an `open` Loop kept its work in place */
+      profile: LoopProfile | null;
       project: string | null;
       commit: string | null;
       /** the first and last frames the run recorded, as saved-run stills */
@@ -214,6 +274,7 @@ export type Entry =
     };
 
 type ToolsEntry = Extract<Entry, { kind: typeof EntryKind.Tools }>;
+type SystemEntry = Extract<Entry, { kind: typeof EntryKind.System }>;
 /** The card of the Genex cover a builder kept. */
 export type GenexCoverEntry = Extract<Entry, { kind: typeof EntryKind.GenexCover }>;
 type ActionEntry = Extract<Entry, { kind: typeof EntryKind.Action }>;
@@ -241,7 +302,6 @@ export const SystemTag = {
   Part: "PART",
   Move: "MOVE",
   Blender: "BLENDER",
-  Tool: "TOOL",
   Fix: "FIX",
   Alive: "ALIVE",
   Waiting: "WAITING",
@@ -254,6 +314,9 @@ export const SystemTag = {
   Checked: "CHECKED",
   Show: "SHOW",
   Checkpoint: "CHECKPOINT",
+  Engine: "ENGINE",
+  /** The reviewer's check of the lead's claim that the goal is reached: never routine. */
+  FinishCheck: "FINISH CHECK",
 } as const;
 export type SystemTag = (typeof SystemTag)[keyof typeof SystemTag];
 
@@ -264,7 +327,6 @@ const ROUTINE_TAGS = new Set<string>([
   SystemTag.TheBuild,
   SystemTag.Part,
   SystemTag.Move,
-  SystemTag.Tool,
   SystemTag.Blender,
   SystemTag.Fix,
   SystemTag.Reviewer,
@@ -277,7 +339,11 @@ const ROUTINE_TAGS = new Set<string>([
 
 /** Records that start a run: any interview question still open is answered by it. */
 const RUN_OPENING_EVENTS = new Set<string>([CustomEvent.RunRegistered, CustomEvent.RunStarted]);
-/** Records that show a run moved on: its steering card is no longer waiting. */
+/**
+ * Records that show a run moved on: its steering card is no longer waiting. A worker's start is not
+ * one: a reader starts while a held plan still waits for the person, and only builders (their
+ * `director_worker`) wait for that answer.
+ */
 const RUN_MOVING_EVENTS = [CustomEvent.DirectorWorker, CustomEvent.FacetBuildStarted, CustomEvent.RunFinished] as const;
 /**
  * Queue bookkeeping: a follow-up waiting (a steered one too, until the running turn reads it),
@@ -310,6 +376,7 @@ const NOTICE_EVENTS = [
   CustomEvent.AutopilotPlanReview,
 ] as const;
 const PLUGIN_CALL_EVENTS = [CustomEvent.PluginToolStarted, CustomEvent.PluginTool] as const;
+const CONNECTOR_CALL_EVENTS = [CustomEvent.ConnectorToolStarted, CustomEvent.ConnectorTool] as const;
 
 /** The arguments a tool chip names, in order of preference. */
 const CHIP_ARGUMENT_KEYS = [
@@ -327,6 +394,11 @@ const CHIP_ARGUMENT_KEYS = [
   "keys",
   "key",
 ] as const;
+/**
+ * Tools whose chip names an argument of their own: a job's start reads by its title, never its
+ * command. A map, so a tool named like an object's own member (`constructor`) finds nothing here.
+ */
+const TOOL_CHIP_KEYS: ReadonlyMap<string, readonly string[]> = new Map([[JobTool.Start, ["title"]]]);
 /** How much of a tool's result a chip keeps. */
 const TOOL_RESULT_MAX_CHARS = 12000;
 /** How far back a build report looks for the contractor bubble it restates, and how much of it must match. */
@@ -337,10 +409,11 @@ const CONTRACTOR_STOPPED = /^Contractor stopped after \d+ turns \(stopped\)/;
 /** The system message the studio writes into a conversation it restarted. */
 const RESTART_MESSAGE_PREFIX = "You were restarted (";
 
-function chipFor(args: unknown): string | undefined {
+/** The argument a tool's chip names, by the tool's name. */
+function chipFor(name: string, args: unknown): string | undefined {
   if (!args || typeof args !== "object") return undefined;
   const record = args as Record<string, unknown>;
-  for (const key of CHIP_ARGUMENT_KEYS) {
+  for (const key of TOOL_CHIP_KEYS.get(pluginToolKey(name)) ?? CHIP_ARGUMENT_KEYS) {
     const value = record[key];
     if (Array.isArray(value) && value.length) return value.map(String).join("+");
     if (typeof value === "string" && value) return value;
@@ -349,9 +422,9 @@ function chipFor(args: unknown): string | undefined {
 }
 
 /** A mirrored call's chip: its input when that is text, else the argument it names. */
-function inputChip(input: unknown): { chip?: string } {
+function inputChip(name: string, input: unknown): { chip?: string } {
   if (typeof input === "string") return { chip: input };
-  const chip = chipFor(input);
+  const chip = chipFor(name, input);
   return chip ? { chip } : {};
 }
 
@@ -373,6 +446,19 @@ const pluginToolKey = (name: string): string =>
     .trim()
     .replace(/^mcp__[^_]+__/i, "")
     .toLowerCase();
+
+/**
+ * The tool a host record names, keyed as the session's own record of the same call is: a
+ * plugin's (`plugin_tool_started`) and a connector's (`connector_tool_started`, `connector_tool`).
+ */
+function hostedToolKey(event: EventEnvelope): string[] {
+  const plugin = customEvent(event, CustomEvent.PluginToolStarted);
+  if (plugin) return [pluginToolKey(String(plugin.toolName ?? ""))];
+  const connector = customEvent(event, CONNECTOR_CALL_EVENTS);
+  return connector?.connectorId && connector.exposedName
+    ? [pluginToolKey(`${connector.connectorId}__${connector.exposedName}`)]
+    : [];
+}
 
 /** How an engine mirrors a call to one of the studio's own tools (Claude's MCP, Codex's bridge). */
 const STUDIO_TOOL_PREFIX = /^mcp__studio__/i;
@@ -413,6 +499,10 @@ interface ChatDraft {
    * host's own `plugin_tool` record is what marks it, best effort, within the same turn.
    */
   hostedTools: Set<string>;
+  /** A session's own requests for a hosted tool (`hostedTools`): the host's record is their row. */
+  hostedCalls: Set<string>;
+  /** An Unreal play session runs: the editor window's pictures are play views until it stops. */
+  playing: boolean;
   turnModels: Map<string, { engine?: string; model?: string }>;
   activeTurns: Map<string, string>;
   /**
@@ -423,13 +513,41 @@ interface ChatDraft {
   runResults: Map<string, MorningEntry>;
   /** Follow-ups typed during work and not yet delivered: a Stop with one waiting hands over to it. */
   waiting: Set<string>;
+  /**
+   * Each sent message's bubble by its queue id, and the @ tag cards whose message has not shown
+   * yet: main records a message's tags as it hands the message on, which can be before the queue
+   * writes the message itself.
+   */
+  tagged: {
+    queueIds: ReadonlyMap<string, string>;
+    bubbles: Map<string, UserEntry>;
+    cards: Map<string, MentionsEntry>;
+  };
   /** The chip group new tool rows join, until a line of narration closes it. */
   group: ToolsEntry | null;
+  /** Each game's engine-link lines by the link's time, with the game's title, so Undo lands on its line. */
+  engineLinks: Map<string, { entry: ActionEntry; title?: string; game: string }>;
+  /** Each rewind's line by its undo id, so bringing its newer version back lands on its line. */
+  rewindLines: Map<string, ActionEntry>;
+  /** Each job's line by its id, with how it was named, so its end rewrites that line. */
+  jobs: Map<string, { entry: ActionEntry; start: JobStart }>;
+  /** The jobs whose end is on this page: an end recorded again (after a crash) draws nothing more. */
+  endedJobs: Set<string>;
+  /** Each worker's line by its graph and id (`workerKeyOf`), with what its records said, so later ones rewrite it. */
+  workerLines: Map<string, { entry: ActionEntry; line: WorkerLine }>;
+  /** Each finish check round's line by its run and round, so the round's verdict rewrites it; `checking` until it has one. */
+  finishLines: Map<string, { entry: SystemEntry; runId: string; checking: boolean }>;
 }
 
-export function toEntries(events: EventEnvelope[]): Entry[] {
-  const chat = newChatDraft(events);
+/**
+ * The chat's entries from its log. `queueIds` names each sent message's queue id by the event that
+ * wrote it (the queue's own record, read from the log in its written order); without it, a message
+ * is named by the queue record right after it.
+ */
+export function toEntries(events: EventEnvelope[], queueIds?: ReadonlyMap<string, string>): Entry[] {
+  const chat = newChatDraft(events, queueIds ?? queueIdsInOrder(events));
   for (const event of events) readEvent(chat, event);
+  keepOfferedRewind(chat, events);
   placeLastCoverCard(chat);
   for (const [runId, deliveries] of chat.runAssets) {
     const result = chat.runResults.get(runId);
@@ -438,7 +556,18 @@ export function toEntries(events: EventEnvelope[]): Entry[] {
   return withUniqueIds(foldRoutine(chat.entries, chat.runResults));
 }
 
-function newChatDraft(events: EventEnvelope[]): ChatDraft {
+/** Each message's queue id by the event before its `coordinator_message_queued` record. */
+function queueIdsInOrder(events: readonly EventEnvelope[]): Map<string, string> {
+  const ids = new Map<string, string>();
+  for (const [index, event] of events.entries()) {
+    const queued = customPayload(event.data, CustomEvent.CoordinatorMessageQueued)?.messageId;
+    const before = events[index - 1];
+    if (queued && before) ids.set(before.id, queued);
+  }
+  return ids;
+}
+
+function newChatDraft(events: EventEnvelope[], queueIds: ReadonlyMap<string, string>): ChatDraft {
   return {
     signInReplies: new Set(
       events.flatMap((event, index) => {
@@ -452,6 +581,12 @@ function newChatDraft(events: EventEnvelope[]): ChatDraft {
       }),
     ),
     entries: [],
+    engineLinks: new Map(),
+    rewindLines: new Map(),
+    jobs: new Map(),
+    endedJobs: new Set(),
+    workerLines: new Map(),
+    finishLines: new Map(),
     rounds: { kept: 0, undone: 0, firstShot: null, lastShot: null },
     rowByCall: new Map(),
     directTurns: new Map(),
@@ -459,17 +594,15 @@ function newChatDraft(events: EventEnvelope[]): ChatDraft {
     workerCalls: new Set(),
     pluginCalls: new Map(),
     cover: null,
-    hostedTools: new Set(
-      events.flatMap((e) => {
-        const started = customEvent(e, CustomEvent.PluginToolStarted);
-        return started ? [pluginToolKey(String(started.toolName ?? ""))] : [];
-      }),
-    ),
+    hostedTools: new Set(events.flatMap(hostedToolKey)),
+    hostedCalls: new Set(),
+    playing: false,
     turnModels: new Map(),
     activeTurns: new Map(),
     runAssets: new Map(),
     runResults: new Map(),
     waiting: new Set(),
+    tagged: { queueIds, bubbles: new Map(), cards: new Map() },
     group: null,
   };
 }
@@ -596,7 +729,8 @@ const NOTE_ABOUT = "Note to the build";
 /** A user bubble; a note sent to a build from its graph shows the words the user wrote, and what they were about. */
 function userEntry(id: string, content: string): Entry {
   const note = splitFeedback(content);
-  if (!note) return { id, kind: EntryKind.User, text: content };
+  // The lines about the message's @ tags are the agent's; the person sees their own words.
+  if (!note) return { id, kind: EntryKind.User, text: withoutMentionContext(content) };
   return { id, kind: EntryKind.User, text: note.text, about: NOTE_ABOUT };
 }
 
@@ -605,7 +739,9 @@ function readMessages(chat: ChatDraft, eventId: string, data: Extract<EventData,
     const messageId = `${eventId}-${messageIndex}`;
     if (message.role === "user") {
       for (const entry of chat.entries) if (awaitsAnswer(entry)) entry.pending = false;
-      chat.entries.push(userEntry(messageId, message.content));
+      const bubble = userEntry(messageId, message.content);
+      chat.entries.push(bubble);
+      placeTagCard(chat, chat.tagged.queueIds.get(eventId), bubble);
     } else if (message.role === "assistant") {
       readReply(chat, messageId, message, data.usage?.model);
     } else if (message.role === "system") {
@@ -697,9 +833,14 @@ function requestTool(
   event: EventEnvelope,
   data: Extract<EventData, { type: "tool_requested" }>,
 ): void {
+  // A plugin's or connector's call the host records itself: that record is its row.
+  if (chat.hostedTools.has(pluginToolKey(data.request.name))) {
+    chat.hostedCalls.add(data.tool_call_id);
+    return;
+  }
   const group = toolGroup(chat, event.id);
   const style = toolWords(data.request.name);
-  const chip = chipFor(data.request.arguments);
+  const chip = chipFor(data.request.name, data.request.arguments);
   const row: ToolChipRow = {
     key: data.tool_call_id,
     input: data.request.arguments,
@@ -715,6 +856,7 @@ function requestTool(
 }
 
 function settleTool(chat: ChatDraft, eventId: string, data: Extract<EventData, { type: "tool_result" }>): void {
+  if (chat.hostedCalls.has(data.tool_call_id)) return;
   const row = chat.rowByCall.get(data.tool_call_id) ?? orphanResultRow(chat, eventId, data.tool_call_id);
   const { ok, content } = data.result;
   const lines = content.slice(0, TOOL_RESULT_MAX_CHARS).split("\n");
@@ -831,6 +973,8 @@ function settleDelegatedTools(chat: ChatDraft, scope: string, payload: Delegated
 }
 
 function readDelegatedTurn(chat: ChatDraft, eventId: string, scope: string, payload: DelegatedRecord): void {
+  // A provider's own error text (a limit, a lost sign-in) is never a reply: the run says it in its words.
+  if (payload.data?.apiError) return;
   for (const [i, part] of (payload.data?.parts ?? []).entries()) {
     const key = `${eventId}-${i}`;
     if (readDelegatedWords(chat, key, part, payload)) continue;
@@ -844,7 +988,7 @@ function readDelegatedTurn(chat: ChatDraft, eventId: string, scope: string, payl
 
 /**
  * A call the host records itself, so its mirror would be a second row: a plugin's (`plugin_tool`),
- * and a run control of the coordinator's or of the chat's own session after a run — the host
+ * a connector's (`connector_tool`), and a run control of the coordinator's or of the chat's own session after a run — the host
  * records its request and result when it runs it (conversation.ts `coordinatorTool`). A resume the
  * session only recorded runs once its reply ends, and shows then.
  */
@@ -893,7 +1037,7 @@ function addDelegatedToolRow(
     icon: did.icon,
     label: did.label,
     activeLabel: did.active ?? toolActivityWords(did.icon),
-    ...inputChip(part.input),
+    ...inputChip(part.name ?? "", part.input),
   };
   toolGroup(chat, eventId).rows.push(row);
   chat.rowByCall.set(row.key, row);
@@ -986,6 +1130,13 @@ function narrateRebuild(chat: ChatDraft, event: EventEnvelope): void {
   say(chat, event.id, tag, `${restart.reason ?? TRANSCRIPT_WORDS.rebuiltItself}`);
 }
 
+/** Files too large to save, which Rewind cannot bring back: never folded away with routine lines. */
+function narrateCheckpointSkipped(chat: ChatDraft, event: EventEnvelope): void {
+  const skipped = customPayload(event.data, CustomEvent.CheckpointSkipped);
+  const words = skipped ? checkpointSkippedWords(skipped) : null;
+  if (words) say(chat, event.id, SystemTag.Checkpoint, words, true);
+}
+
 function narrateSeed(chat: ChatDraft, event: EventEnvelope): void {
   const seed = customPayload(event.data, CustomEvent.SeedUpgraded);
   if (seed) say(chat, event.id, SystemTag.Seed, seedUpgradeWords(seed));
@@ -1002,6 +1153,279 @@ function narrateCompaction(chat: ChatDraft, event: EventEnvelope): void {
     messages: typeof compaction.messages === "number" ? compaction.messages : null,
     summary: summary || null,
   });
+}
+
+/**
+ * The engine a link names, as the chat says it: the label its plugin declares; a record with no
+ * label by Genex's own words for an engine it knows, else by the engine's id; one that names no
+ * engine is from before engines were declared, all the Unreal plugin's.
+ */
+function linkedEngineWords(link: EngineLinkedPayload): string {
+  const label = typeof link.label === "string" ? link.label.trim() : "";
+  if (label) return label;
+  if (isGameEngine(link.engine)) return GAME_ENGINE_WORDS[link.engine];
+  return isEngineId(link.engine) ? link.engine : GAME_ENGINE_WORDS[GameEngine.Unreal];
+}
+
+/** "Fog Valley now builds in Unreal · Valley": the newest link of a game keeps its Undo. */
+function narrateEngineLink(chat: ChatDraft, event: EventEnvelope): void {
+  const link = customPayload(event.data, CustomEvent.EngineLinked);
+  if (!link) return;
+  const game = `${link.pluginId ?? ""}\n${link.project ?? ""}`;
+  for (const earlier of chat.engineLinks.values()) if (earlier.game === game) delete earlier.entry.engineLink;
+  const engine = linkedEngineWords(link);
+  const { pluginId, project, linkedAt } = link;
+  const entry: ActionEntry = {
+    id: event.id,
+    kind: EntryKind.Action,
+    tag: SystemTag.Engine,
+    action: EntryAction.EngineLink,
+    text: TRANSCRIPT_WORDS.engineLinked(link.title, engine, link.name ?? ""),
+    ...(pluginId && project && linkedAt ? { engineLink: { project, pluginId, linkedAt } } : {}),
+  };
+  closeGroup(chat);
+  chat.entries.push(entry);
+  if (link.linkedAt) chat.engineLinks.set(link.linkedAt, { entry, game, ...(link.title ? { title: link.title } : {}) });
+}
+
+/** "The chat went back, and 2 game files with it": only a rewind that put files back draws a line. */
+function narrateRewound(chat: ChatDraft, event: EventEnvelope): void {
+  const rewound = customPayload(event.data, CustomEvent.ConversationRewound);
+  const files = rewound?.files;
+  if (typeof files !== "number" || files <= 0) return;
+  const entry: ActionEntry = {
+    id: event.id,
+    kind: EntryKind.Action,
+    tag: SystemTag.Checkpoint,
+    action: EntryAction.Rewound,
+    text: TRANSCRIPT_WORDS.rewound(files),
+    ...(rewound?.rewindId ? { rewindUndo: rewound.rewindId } : {}),
+  };
+  closeGroup(chat);
+  chat.entries.push(entry);
+  if (rewound?.rewindId) chat.rewindLines.set(rewound.rewindId, entry);
+}
+
+/** The newer version came back: its rewind's line says so (the chat stays rewound). */
+function narrateRewindUndone(chat: ChatDraft, event: EventEnvelope): void {
+  const rewindId = customPayload(event.data, CustomEvent.ConversationRewindUndone)?.rewindId;
+  const line = rewindId ? chat.rewindLines.get(rewindId) : undefined;
+  if (line) line.outcome = TRANSCRIPT_WORDS.rewindUndone;
+}
+
+/** Only the rewind the chat still offers keeps Bring back newer version (`offeredRewindUndo`). */
+function keepOfferedRewind(chat: ChatDraft, events: readonly EventEnvelope[]): void {
+  if (!chat.rewindLines.size) return;
+  const offered = offeredRewindUndo(events);
+  for (const [rewindId, entry] of chat.rewindLines) if (rewindId !== offered) delete entry.rewindUndo;
+}
+
+/** "In the background: Unreal build": a job's line, with Stop while it runs; one without a title draws nothing. */
+function narrateJobStarted(chat: ChatDraft, event: EventEnvelope): void {
+  const payload = customPayload(event.data, CustomEvent.JobStarted);
+  const start = payload ? jobStart(payload) : null;
+  if (!start) return;
+  const entry: ActionEntry = {
+    id: event.id,
+    kind: EntryKind.Action,
+    tag: SystemTag.Engine,
+    action: EntryAction.Job,
+    text: start.line,
+    ...(start.job ? { job: start.job } : {}),
+  };
+  closeGroup(chat);
+  chat.entries.push(entry);
+  if (start.jobId) chat.jobs.set(start.jobId, { entry, start });
+}
+
+/**
+ * A job's end rewrites its line with the outcome; with its start not on this page, it is a line of
+ * its own. Only a job's first end counts.
+ */
+function narrateJobEnded(chat: ChatDraft, event: EventEnvelope): void {
+  const payload = customPayload(event.data, CustomEvent.JobEnded);
+  if (!payload) return;
+  const jobId = typeof payload.jobId === "string" ? payload.jobId : "";
+  if (jobId && chat.endedJobs.has(jobId)) return;
+  const started = chat.jobs.get(jobId);
+  const line = jobEndLine(payload, started?.start);
+  if (!line) return;
+  if (jobId) chat.endedJobs.add(jobId);
+  if (started) {
+    started.entry.text = line;
+    delete started.entry.job;
+    chat.jobs.delete(jobId);
+    return;
+  }
+  closeGroup(chat);
+  chat.entries.push({
+    id: event.id,
+    kind: EntryKind.Action,
+    tag: SystemTag.Engine,
+    action: EntryAction.Job,
+    text: line,
+  });
+}
+
+/**
+ * A run's worker is a row of its Building card's list (chat/build-checklist.ts), added or working
+ * there: never a line of the transcript. A chat turn's worker, which has no card, keeps its line.
+ */
+const ofRun = (payload: { runId?: unknown }): boolean => typeof payload.runId === "string" && payload.runId !== "";
+
+/**
+ * A chat turn's worker's line: "Port the car…". A start for a worker still working on the page (a
+ * resume) changes nothing; one after its end (a builder started again under its id) is a new
+ * attempt, a line of its own that carries nothing of the old end.
+ */
+function narrateWorkerStarted(chat: ChatDraft, event: EventEnvelope): void {
+  const payload = customPayload(event.data, CustomEvent.WorkerStarted);
+  const key = payload && !ofRun(payload) ? workerKeyOf(payload) : null;
+  if (!payload || !key) return;
+  const known = chat.workerLines.get(key)?.line;
+  if (known && !workerLineEnded(known)) return;
+  const line = workerStartLine(payload);
+  if (line) pushWorkerLine(chat, event.id, key, line);
+}
+
+/**
+ * A worker's end, and the lead's verdict after it, rewrite its line in place; with its start not
+ * on this page, the first of them is a line of its own, and the rest rewrite that one.
+ */
+function narrateWorkerFinished(chat: ChatDraft, event: EventEnvelope): void {
+  const payload = customPayload(event.data, CustomEvent.WorkerFinished);
+  const key = payload && !ofRun(payload) ? workerKeyOf(payload) : null;
+  if (!payload || !key) return;
+  const known = chat.workerLines.get(key);
+  const line = workerEndLine(payload, known?.line);
+  if (!line) return;
+  if (!known) {
+    pushWorkerLine(chat, event.id, key, line);
+    return;
+  }
+  rewriteWorkerLine(known, line);
+}
+
+/** A worker's line on the page, rewritten in place with what its records say now. */
+function rewriteWorkerLine(known: { entry: ActionEntry; line: WorkerLine }, line: WorkerLine): void {
+  known.line = line;
+  known.entry.text = line.text;
+  known.entry.workerDone = line.done;
+}
+
+/** A worker's own line, remembered by its key: never routine, so it never folds into activity. */
+function pushWorkerLine(chat: ChatDraft, id: string, key: string, line: WorkerLine): void {
+  const entry: ActionEntry = {
+    id,
+    kind: EntryKind.Action,
+    tag: SystemTag.TheLead,
+    action: EntryAction.Worker,
+    text: line.text,
+    workerDone: line.done,
+  };
+  closeGroup(chat);
+  chat.entries.push(entry);
+  chat.workerLines.set(key, { entry, line });
+}
+
+/** A finish check round's line: the reviewer at work, its yes, its no with the first reason, a stop, or no answer. */
+function finishLine(check: FinishRecord): string {
+  const { chat } = FINISH_CHECK_WORDS;
+  if (check.step === FinishCheckStep.Checking) return chat.checking;
+  if (check.step === FinishCheckStep.Accepted) return chat.accepted;
+  if (check.step === FinishCheckStep.Unanswered) return chat.unanswered(check.why ?? "");
+  if (check.stopped) return chat.stopped(check.reasons.join(" "));
+  return chat.rejected(check.rejections ?? 1, check.reasons[0] ?? "");
+}
+
+/**
+ * One line per round of a run's finish check: written when the reviewer starts, rewritten in place
+ * by its verdict; a verdict whose start is not on this page is a line of its own. A stop asks for
+ * attention.
+ */
+function narrateFinishCheck(chat: ChatDraft, event: EventEnvelope): void {
+  const payload = customPayload(event.data, CustomEvent.FinishCheck);
+  const check = payload ? finishRecordOf(payload) : null;
+  if (!check) return;
+  const key = `${check.runId}\u0000${check.round}`;
+  const text = finishLine(check);
+  const checking = check.step === FinishCheckStep.Checking;
+  const known = chat.finishLines.get(key);
+  if (known) {
+    known.entry.text = text;
+    known.checking = checking;
+    if (check.stopped) known.entry.attention = true;
+    return;
+  }
+  const entry: SystemEntry = {
+    id: event.id,
+    kind: EntryKind.System,
+    tag: SystemTag.FinishCheck,
+    text,
+    ...(check.stopped ? { attention: true } : {}),
+  };
+  chat.entries.push(entry);
+  chat.finishLines.set(key, { entry, runId: check.runId, checking });
+}
+
+/** A run finished: a round of its finish check still checking (no verdict reached the log) had no answer. */
+function narrateRunFinishSettled(chat: ChatDraft, event: EventEnvelope): void {
+  const runId = customPayload(event.data, CustomEvent.RunFinished)?.runId;
+  if (!runId) return;
+  for (const known of chat.finishLines.values()) {
+    if (known.runId !== runId || !known.checking) continue;
+    known.entry.text = FINISH_CHECK_WORDS.chat.unanswered("");
+    known.checking = false;
+  }
+}
+
+/** Genex can't see app windows yet: one line naming what to allow, with a button per pane. */
+function narrateAppAccess(chat: ChatDraft, event: EventEnvelope): void {
+  const payload = customPayload(event.data, CustomEvent.AppLookAccess);
+  const missing = payload ? missingPanes(payload) : [];
+  if (missing.length === 0) return;
+  closeGroup(chat);
+  chat.entries.push({
+    id: event.id,
+    kind: EntryKind.Action,
+    tag: SystemTag.Ask,
+    action: EntryAction.AppAccess,
+    text: appAccessMissing(missing),
+    appAccess: missing,
+  });
+}
+
+/** A blind judge's play for the chat's own session: one line; an old or partial record draws nothing. */
+function narrateChatJudge(chat: ChatDraft, event: EventEnvelope): void {
+  const judge = readChatJudgeResult(customPayload(event.data, CustomEvent.ChatJudgeResult));
+  if (!judge) return;
+  closeGroup(chat);
+  chat.entries.push({
+    id: event.id,
+    kind: EntryKind.Action,
+    tag: SystemTag.Ask,
+    action: EntryAction.Judge,
+    text: judge.ask,
+    judge,
+  });
+}
+
+/** A session's turn-it-on card for a Genex plugin; an old or partial record draws nothing. */
+function narratePluginSuggested(chat: ChatDraft, event: EventEnvelope): void {
+  const suggested = customPayload(event.data, CustomEvent.PluginSuggested);
+  const suggestion = suggested ? parseSuggestion(suggested) : null;
+  if (!suggestion) return;
+  closeGroup(chat);
+  chat.entries.push({ kind: EntryKind.PluginSuggestion, id: event.id, suggestion });
+}
+
+/** Undo took a link back: its line says what the game builds in now, and offers Undo no more. */
+function narrateEngineUndone(chat: ChatDraft, event: EventEnvelope): void {
+  const undone = customPayload(event.data, CustomEvent.EngineLinkUndone);
+  const line = undone?.linkedAt ? chat.engineLinks.get(undone.linkedAt) : undefined;
+  if (!line) return;
+  delete line.entry.engineLink;
+  line.entry.outcome = TRANSCRIPT_WORDS.engineUndone(line.title, undone?.restored);
 }
 
 function narrateImprovement(chat: ChatDraft, event: EventEnvelope): void {
@@ -1128,13 +1552,25 @@ function narratePluginCall(chat: ChatDraft, event: EventEnvelope): void {
   const row =
     (payload.callId ? chat.pluginCalls.get(payload.callId) : undefined) ?? openPluginRow(chat, event, payload);
   row.chip = payload.tool ?? payload.toolName;
+  if (payload.pluginId)
+    row.source = {
+      id: payload.pluginId,
+      name: chatSourceName({ pluginId: payload.pluginId, name: payload.pluginName }),
+    };
   row.state = pluginCallState(closing, payload.ok);
   row.failed = row.state === ToolState.Failed;
   row.detail = [{ text }, ...(raw.result ? [{ text: String(raw.result) }] : [])];
+  if (payload.making) row.making = { ids: makingIds(payload) };
+  if ("blocked" in payload && payload.blocked) row.blocked = payload.blocked;
   if (row.state === ToolState.Succeeded && keptGenexCover(payload)) holdCoverCard(chat, event, payload);
 }
 
 type PluginCallPayload = CustomPayload<typeof CustomEvent.PluginTool | typeof CustomEvent.PluginToolStarted>;
+
+/** The ids a call's job may go by in the game's inventory: the call's own while it runs, then the job it answered with. */
+function makingIds(payload: { callId?: string; jobId?: string; generationId?: string }): string[] {
+  return [payload.callId, payload.jobId, payload.generationId].filter((id): id is string => Boolean(id));
+}
 
 /**
  * A finished `genex__cover` shoot that kept a new shot: Genex's own tool asked to shoot, and its
@@ -1207,6 +1643,53 @@ function openPluginRow(
   return row;
 }
 
+/** A bubble: the user's, or the assistant's (one entry shape holds both). */
+type UserEntry = Extract<Entry, { kind: typeof EntryKind.User | typeof EntryKind.Assistant }>;
+type MentionsEntry = Extract<Entry, { kind: typeof EntryKind.Mentions }>;
+
+/**
+ * What a message's @ tags gave the agent (and again when a tag is tried again or taken off): one
+ * card under the message, each tag's latest result, and the message's words paint the tags. The
+ * card waits for its message when the tags were recorded first.
+ */
+function narrateMentions(chat: ChatDraft, event: EventEnvelope): void {
+  const tagged = customPayload(event.data, CustomEvent.MentionTagged);
+  const tags = tagged?.tags ?? [];
+  if (!tags.length) return;
+  const messageId = tagged?.messageId;
+  const known = messageId ? chat.tagged.cards.get(messageId) : undefined;
+  if (known) {
+    known.tags = mergeMentionResults(known.tags, tags);
+    return;
+  }
+  const card: MentionsEntry = { kind: EntryKind.Mentions, id: event.id, ...(messageId ? { messageId } : {}), tags };
+  if (!messageId) {
+    const at = chat.entries.findLastIndex((entry) => entry.kind === EntryKind.User);
+    putTagCard(chat, card, at);
+    return;
+  }
+  chat.tagged.cards.set(messageId, card);
+  const bubble = chat.tagged.bubbles.get(messageId);
+  if (bubble) putTagCard(chat, card, chat.entries.indexOf(bubble));
+}
+
+/** A sent message's bubble, by its queue id: a card already waiting for it goes under it. */
+function placeTagCard(chat: ChatDraft, messageId: string | undefined, bubble: Entry): void {
+  if (!messageId || bubble.kind !== EntryKind.User) return;
+  chat.tagged.bubbles.set(messageId, bubble);
+  const card = chat.tagged.cards.get(messageId);
+  if (card && !chat.entries.includes(card)) putTagCard(chat, card, chat.entries.indexOf(bubble));
+}
+
+/** The card under the bubble at `at` (at the end when there is none), and the bubble paints its tags. */
+function putTagCard(chat: ChatDraft, card: MentionsEntry, at: number): void {
+  const bubble = chat.entries[at];
+  if (bubble?.kind === EntryKind.User) bubble.tags = card.tags.map((tag) => tag.handle);
+  // Under its message, ahead of anything the turn has said since.
+  if (at < 0) chat.entries.push(card);
+  else chat.entries.splice(at + 1, 0, card);
+}
+
 function narrateDelivery(chat: ChatDraft, event: EventEnvelope): void {
   const delivery = customPayload(event.data, CustomEvent.AssetDelivered);
   if (!delivery || !isAssetDelivery(delivery)) return;
@@ -1216,12 +1699,61 @@ function narrateDelivery(chat: ChatDraft, event: EventEnvelope): void {
 }
 
 /**
- * A connector tool call. One record, written whichever way it ended — a connector has no
- * started/finished pair, because the host writes it around a single await.
+ * A connector tool call, from the host's own records of it: `connector_tool_started` opens the row
+ * as the call goes out, `connector_tool` completes it, paired by `callId` (an older log has only
+ * the closing record, which then makes the row). The row says the step in words, and its pictures
+ * are play views while an Unreal play session runs.
  */
 function narrateConnector(chat: ChatDraft, event: EventEnvelope): void {
-  const connector = customPayload(event.data, CustomEvent.ConnectorTool);
-  if (connector) say(chat, event.id, SystemTag.Tool, connectorWords(connector), connector.ok === false);
+  const { data } = event;
+  const call = customPayload(data, CONNECTOR_CALL_EVENTS);
+  if (!call || data.type !== EventKind.Custom) return;
+  const closing = data.event_type === CustomEvent.ConnectorTool;
+  const step = connectorStep(call);
+  const where = chatSourceName({ pluginId: call.pluginId, name: call.connectorName, id: call.connectorId });
+  const words = connectorStepWords(step, where, closing ? { ok: call.ok, error: call.error } : {});
+  const row =
+    (call.callId ? chat.pluginCalls.get(call.callId) : undefined) ?? openConnectorRow(chat, event, call.callId);
+  row.icon = words.icon;
+  row.label = words.label;
+  row.activeLabel = words.active;
+  if (call.args) row.input = call.args;
+  if (call.pluginId || call.connectorName) row.source = { id: call.pluginId ?? call.connectorId ?? "", name: where };
+  row.state = pluginCallState(closing, call.ok !== false);
+  row.failed = row.state === ToolState.Failed;
+  if (call.making && call.callId) row.making = { ids: [call.callId] };
+  if (closing) settleConnectorRow(chat, row, call, step);
+}
+
+/** A connector call that came back: its answer or error, its pictures, and whether play now runs. */
+function settleConnectorRow(
+  chat: ChatDraft,
+  row: ToolChipRow,
+  call: CustomPayload<typeof CustomEvent.ConnectorTool>,
+  step: ConnectorStep,
+): void {
+  row.detail = connectorDetail(call.ok === false ? call.error : call.result, row.failed === true);
+  const play = showsPlayView(step, chat.playing);
+  if (call.captures?.length) row.shots = call.captures.map((path) => ({ path, play }));
+  if (call.ok !== false && startsPlay(step)) chat.playing = true;
+  if (endsPlay(step)) chat.playing = false;
+}
+
+function openConnectorRow(chat: ChatDraft, event: EventEnvelope, callId: string | undefined): ToolChipRow {
+  const row: ToolChipRow = { key: callId ?? event.id, icon: "run", label: "" };
+  toolGroup(chat, event.id).rows.push(row);
+  chat.pluginCalls.set(row.key, row);
+  return row;
+}
+
+/** A connector's answer or error, line by line, as it came: the detail never flattens it. */
+function connectorDetail(text: string | null | undefined, failed: boolean): ToolChipRow["detail"] {
+  const lines = String(text ?? "")
+    .slice(0, TOOL_RESULT_MAX_CHARS)
+    .split("\n");
+  return lines.join("").trim()
+    ? lines.map((line) => ({ text: line, ...(failed ? { tone: OutputTone.Err } : {}) }))
+    : [];
 }
 
 function narrateFix(chat: ChatDraft, event: EventEnvelope): void {
@@ -1311,7 +1843,7 @@ function narrateConsent(chat: ChatDraft, event: EventEnvelope): void {
   const consentId = consent.consentId ?? event.id;
   const existing = chat.entries.find((e): e is ActionEntry => isConsentCard(e) && e.consentId === consentId);
   const pending = consent.state === "pending";
-  const outcome = () => consentOutcomeWords({ state: consent.state, by: consent.by });
+  const outcome = () => consentOutcomeWords({ state: consent.state, by: consent.by, always: consent.always });
   if (existing) {
     existing.pending = pending;
     if (!pending) existing.outcome = outcome();
@@ -1324,9 +1856,12 @@ function narrateConsent(chat: ChatDraft, event: EventEnvelope): void {
     tag: SystemTag.Ask,
     action: EntryAction.Consent,
     consentId,
+    ...(consent.pluginId ? { consentSourceId: consent.pluginId } : {}),
     consentSource: consent.pluginName || A_PLUGIN,
     consentPrompt: consent.prompt || undefined,
     consentExport: consent.exportReview,
+    ...(consent.alwaysOffered ? { consentAlwaysOffered: true } : {}),
+    ...(consent.input ? { consentInput: consent.input } : {}),
     text: consentAskWords({
       pluginName: consent.pluginName,
       tool: consent.tool,
@@ -1444,6 +1979,14 @@ function pausedOnOf(finished: FinishedPayload): string | null {
   return typeof kind === "string" ? kind : null;
 }
 
+const LOOP_PROFILES: ReadonlySet<unknown> = new Set(Object.values(LoopProfile));
+const isLoopProfile = (value: unknown): value is LoopProfile => LOOP_PROFILES.has(value);
+
+/** How the closed Loop worked on its project (`run_finished.profile`), or null for a close that names none it knows. */
+function profileOf(finished: FinishedPayload): LoopProfile | null {
+  return isLoopProfile(finished.profile) ? finished.profile : null;
+}
+
 function morningCard(chat: ChatDraft, id: string, finished: FinishedPayload): MorningEntry {
   const { rounds } = chat;
   const judged = rounds.kept + rounds.undone;
@@ -1465,6 +2008,7 @@ function morningCard(chat: ChatDraft, id: string, finished: FinishedPayload): Mo
     kept: rounds.kept,
     undone: rounds.undone,
     landed: finished.landed ?? null,
+    profile: profileOf(finished),
     project: finished.project ?? null,
     commit: unlandedHead && finished.project ? unlandedHead : null,
     before: rounds.firstShot,
@@ -1535,7 +2079,21 @@ const NARRATORS: readonly Narrator[] = [
   narrateRestore,
   narrateRebuild,
   narrateSeed,
+  narrateCheckpointSkipped,
   narrateCompaction,
+  narrateEngineLink,
+  narrateEngineUndone,
+  narrateRewound,
+  narrateRewindUndone,
+  narrateJobStarted,
+  narrateJobEnded,
+  narrateWorkerStarted,
+  narrateWorkerFinished,
+  narrateFinishCheck,
+  narrateRunFinishSettled,
+  narrateAppAccess,
+  narrateChatJudge,
+  narratePluginSuggested,
   narrateImprovement,
   narrateSkillAccepted,
   narrateRunStart,
@@ -1544,6 +2102,7 @@ const NARRATORS: readonly Narrator[] = [
   narrateMove,
   narrateModel,
   narratePluginCall,
+  narrateMentions,
   narrateDelivery,
   narrateConnector,
   narrateFix,

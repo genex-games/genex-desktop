@@ -5,8 +5,14 @@
  * the connectors and previews take to close (B3).
  */
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
 import { it } from "node:test";
 import { runShutdown, settleWithin, shutdownSteps, type ShutdownTimers } from "../../src/main/app-lifecycle.ts";
+import { type JobOwner, JobRole, JobScopeKind, JobState, JobStopper } from "../../src/shared/jobs.ts";
+import { PermissionMode } from "../../src/shared/permissions.ts";
+import type { JobSpawn } from "../../src/substrate/jobs.ts";
+import { coreLite } from "../helpers/core-lite.ts";
+import { running } from "../helpers/processes.ts";
 import { startRig } from "../helpers/studio-rig.ts";
 
 const alive = (pid: number) => {
@@ -84,5 +90,88 @@ it("quitting kills a harness that will not stop, as the last step before the app
     rig.core.host.stop = stop;
     await stop().catch(() => {});
     await rig.stop().catch(() => {});
+  }
+});
+
+/** Starts a job's command in a group of its own, as the sandbox does, without the sandbox. */
+const plainJobSpawn: JobSpawn = async (request) => ({
+  child: spawn("/bin/sh", ["-c", request.command], { cwd: request.cwd, detached: true, stdio: "pipe" }),
+  sandboxed: false,
+});
+
+const jobOwner: JobOwner = {
+  project: "game",
+  chatThreadId: "thread-1",
+  role: JobRole.Chat,
+  scope: { kind: JobScopeKind.Chat },
+};
+
+function killGroup(pid: number | undefined): void {
+  try {
+    if (pid) process.kill(-pid, "SIGKILL");
+  } catch {
+    /* already gone */
+  }
+}
+
+it("quitting stops every agent job after the harness and before the sandbox closes, and leaves other apps alone", {
+  skip: process.platform === "win32" && "process groups and /bin/sh are POSIX",
+}, async () => {
+  const rig = await startRig({}, { jobSpawn: plainJobSpawn });
+  // Stands in for an app a person can see, such as the editor a plugin opened: not a job.
+  const other = spawn("/bin/sh", ["-c", "sleep 30"], { detached: true, stdio: "ignore" });
+  const job = await rig.core.jobs.start({
+    owner: jobOwner,
+    title: "Server",
+    command: "sleep 30",
+    cwd: rig.userData,
+    policy: {},
+    mode: PermissionMode.Auto,
+  });
+  const seen: string[] = [];
+  const hostStop = rig.core.host.stop.bind(rig.core.host);
+  const dispose = rig.core.sandbox.dispose.bind(rig.core.sandbox);
+  try {
+    rig.core.host.stop = async () => {
+      seen.push(`host stop, job ${running(job.pid ?? 0) ? "running" : "gone"}`);
+      await hostStop();
+    };
+    rig.core.sandbox.dispose = async () => {
+      seen.push(`sandbox dispose, job ${running(job.pid ?? 0) ? "running" : "gone"}`);
+      await dispose();
+    };
+    await rig.core.stop();
+    assert.deepEqual(seen, ["host stop, job running", "sandbox dispose, job gone"]);
+    const record = await rig.core.jobs.get(jobOwner.project, job.id);
+    assert.equal(record?.state, JobState.Stopped);
+    assert.equal(record?.stoppedBy, JobStopper.Quit);
+    assert.ok(other.pid && running(other.pid), "a process that is not a job is left running");
+  } finally {
+    rig.core.host.stop = hostStop;
+    rig.core.sandbox.dispose = dispose;
+    killGroup(job.pid);
+    killGroup(other.pid);
+    await rig.stop().catch(() => {});
+  }
+});
+
+it("a core that never started still stops the jobs it was handed when it stops", {
+  skip: process.platform === "win32" && "process groups and /bin/sh are POSIX",
+}, async () => {
+  const lite = await coreLite({ jobSpawn: plainJobSpawn });
+  const job = await lite.core.jobs.start({
+    owner: jobOwner,
+    title: "Server",
+    command: "sleep 30",
+    cwd: lite.userData,
+    policy: {},
+    mode: PermissionMode.Auto,
+  });
+  try {
+    await lite.close();
+    assert.equal(running(job.pid ?? 0), false);
+    assert.equal((await lite.core.jobs.get(jobOwner.project, job.id))?.stoppedBy, JobStopper.Quit);
+  } finally {
+    killGroup(job.pid);
   }
 });

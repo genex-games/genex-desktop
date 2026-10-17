@@ -42,7 +42,13 @@ import {
   windowsSetupProblem,
 } from "./sandbox-unavailable.ts";
 import { childEnv, windowsBaseEnv } from "./child-env.ts";
-import { credentialHomes, sandboxedCliHomes } from "./credential-homes.ts";
+import {
+  credentialHomes,
+  HOME_SIGN_IN_STORES,
+  openCodeServicePassword,
+  ROBLOX_ASSISTANT_SETTINGS,
+  sandboxedCliHomes,
+} from "./credential-homes.ts";
 import { isInside } from "./paths.ts";
 import { envValue } from "./toolchain.ts";
 import {
@@ -102,10 +108,26 @@ export interface RunRequest {
   stdin?: string;
   /** Per-run policy overlay (e.g. opening `registry.npmjs.org` for one install). */
   policy?: Partial<SandboxPolicy>;
+  /** Hold this run to its own folders in place of the sandbox's writable roots (macOS and Linux). */
+  confine?: RunConfinement;
   /** Correlation label used for sandbox-violation attribution and logging. */
   label?: string;
   maxOutputBytes?: number;
   signal?: AbortSignal;
+}
+
+/**
+ * The folders a confined run writes: a game's build or install writes its game and its own scratch,
+ * never another game, the games folder or another build's scratch. The sandbox's deny lists still
+ * hold, and so do the few folders srt itself keeps writable for every run (its own temp folder,
+ * npm's and Claude's logs under `$HOME`). On Windows srt-win grants writes for the whole session,
+ * so a confinement there changes nothing: the run writes what every sandboxed process there writes.
+ */
+export interface RunConfinement {
+  /** The only folders the run may write. */
+  write: readonly string[];
+  /** The run's TMPDIR, a folder of its own; made before the run and writable too. */
+  tmp: string;
 }
 
 export interface RunResult {
@@ -202,6 +224,13 @@ const DEFAULT_MAX_OUTPUT_CHARS = 256 * 1024;
 const DEFAULT_TIMEOUT_MS = 10 * MINUTE_MS;
 /** The shell srt runs a wrapped command under on macOS. */
 const SANDBOX_SHELL = "/bin/bash";
+/**
+ * Marks srt's outer `bash -c` as a nested shell. A top-level `bash -c` (SHLVL unset) whose stdin
+ * is a socket, as node's stdio pipes are, takes itself for an rshd login and reads ~/.bashrc:
+ * that shell runs outside the sandbox, so the user's rc file would run before every command and
+ * whatever it printed would lead the command's output.
+ */
+const NESTED_SHELL_ENV = { SHLVL: "1" } as const;
 /** The shell a command runs under when the sandbox is off (tests of the fallback path only). */
 const UNSANDBOXED_SHELL = "/bin/sh";
 
@@ -257,7 +286,7 @@ function asSetupProblem(error: unknown): unknown {
 }
 
 /** What a launch needs from a run or a long-lived start. */
-type LaunchRequest = Pick<RunRequest, "command" | "cwd" | "env" | "label" | "policy" | "stdin">;
+type LaunchRequest = Pick<RunRequest, "command" | "cwd" | "env" | "label" | "policy" | "stdin" | "confine">;
 
 /** How one process starts: the program, its arguments, its environment, and whether srt wraps it. */
 interface LaunchPlan {
@@ -322,19 +351,35 @@ export function baseDenyRead(
   platform: NodeJS.Platform = process.platform,
   env: Record<string, string | undefined> = process.env,
 ): string[] {
-  if (platform === StudioPlatform.Windows) return [...windowsDenyRead(home, env), ...credentialHomes()];
+  const openCodeService = openCodeServicePassword(env, home);
+  if (platform === StudioPlatform.Windows)
+    return [...windowsDenyRead(home, env), openCodeService, ...credentialHomes()];
   const linuxStores =
     platform === StudioPlatform.Linux ? LINUX_SECRET_STORES.map((parts) => path.join(home, ...parts)) : [];
   return [
-    path.join(home, ".ssh"),
-    path.join(home, "Library", "Keychains"),
-    path.join(home, ".aws"),
-    path.join(home, ".config", "gh"),
-    path.join(home, ".netrc"),
+    ...HOME_SIGN_IN_STORES.map((parts) => path.join(home, ...parts)),
+    openCodeService,
     ...linuxStores,
     // SEC-3: the coding CLIs' sign-in homes, wherever the environment has moved them.
     ...credentialHomes(),
   ];
+}
+
+/**
+ * Paths no agent process may write on `platform`, on top of the caller's list: the coding CLIs'
+ * sign-in homes and Roblox Studio's Assistant settings (which switch its MCP server).
+ */
+export function baseDenyWrite(
+  home = os.homedir(),
+  platform: NodeJS.Platform = process.platform,
+  env: Record<string, string | undefined> = process.env,
+): string[] {
+  const localAppData = env.LOCALAPPDATA ?? path.join(home, "AppData", "Local");
+  const assistant =
+    platform === StudioPlatform.Windows
+      ? path.join(localAppData, ...ROBLOX_ASSISTANT_SETTINGS.windows)
+      : path.join(home, ...ROBLOX_ASSISTANT_SETTINGS.mac);
+  return [...credentialHomes(), assistant];
 }
 
 /** `.claude` in any case, as a sandbox glob: macOS's file system does not tell the cases apart. */
@@ -379,6 +424,16 @@ export function claudeFolderDenyWrites(
   const others = gameDirs.map((dir) => path.resolve(dir)).filter((dir) => path.dirname(dir) !== root);
   const games = [path.join(literalGlob(root), "*"), ...others.map(literalGlob)];
   return [...new Set(games.map((game) => path.join(game, CLAUDE_FOLDER_GLOB)))];
+}
+
+/**
+ * Claude Code's own folder in each of `folders`, as write denies spelled as
+ * {@link claudeFolderDenyWrites} spells a game's: a later session there loads the settings and hooks
+ * it holds. A worker's box and a job's box deny it in every folder they write.
+ */
+export function claudeFoldersIn(folders: readonly string[]): string[] {
+  const resolved = [...new Set(folders.map((folder) => path.resolve(folder)))];
+  return [...new Set(resolved.flatMap((folder) => claudeFolderDenyWrites(path.dirname(folder), [folder])))];
 }
 
 /**
@@ -429,7 +484,11 @@ export class ProcessSandbox {
       allowWrite: [...options.writableRoots, scratchDir, ...own],
       allowRead: options.readableRoots ?? [],
       denyRead: [...baseDenyRead(os.homedir(), platform).filter(notOwn), ...options.secretPaths],
-      denyWrite: [...credentialHomes().filter(notOwn), ...options.secretPaths, ...(options.denyWrite ?? [])],
+      denyWrite: [
+        ...baseDenyWrite(os.homedir(), platform).filter(notOwn),
+        ...options.secretPaths,
+        ...(options.denyWrite ?? []),
+      ],
     };
     const sandbox = new ProcessSandbox(policy, options.enabled ?? true, scratchDir, platform);
     sandbox.#toolPath = options.toolPath ?? null;
@@ -675,12 +734,13 @@ export class ProcessSandbox {
     const manager = this.#manager;
     if (!manager) throw new Error(MESSAGE.NotInitialized);
     if (this.#windows) return this.#windowsLaunchPlan(manager, this.#windows, request, signal);
+    const tmp = await this.#runTmp(request);
     const wrapped = await prepareSandbox(
       () =>
         manager.wrapWithSandboxArgv(
-          this.#withScratchTmp(request.command),
+          this.#withTmp(request.command, tmp),
           process.platform === "darwin" ? SANDBOX_SHELL : undefined,
-          this.#overlay(request.policy ?? {}),
+          this.#overlay(request.policy ?? {}, request.confine),
           signal,
           request.cwd,
           { commandId: request.label ?? request.command, commandText: request.command },
@@ -689,7 +749,8 @@ export class ProcessSandbox {
     );
     const [file, ...args] = wrapped.argv;
     if (!file) throw new Error(MESSAGE.EmptyArgv);
-    return { file, args, env: await this.#env(wrapped.env, request.env), sandboxed: true, cwd: request.cwd };
+    const env = { ...(await this.#env(wrapped.env, request.env, tmp)), ...NESTED_SHELL_ENV };
+    return { file, args, env, sandboxed: true, cwd: request.cwd };
   }
 
   /**
@@ -697,7 +758,7 @@ export class ProcessSandbox {
    * Windows program needs to start and the env file's `MSYS_NO_PATHCONV=1`.
    */
   async #unsandboxedPlan(request: LaunchRequest): Promise<LaunchPlan> {
-    const own = await this.#env(process.env, request.env);
+    const own = await this.#env(process.env, request.env, await this.#runTmp(request));
     const plan = { args: ["-c", request.command], sandboxed: false, cwd: request.cwd };
     if (this.#platform !== StudioPlatform.Windows) return { ...plan, file: UNSANDBOXED_SHELL, env: own };
     const bash = this.#seams.bash === undefined ? await findGitBash() : this.#seams.bash;
@@ -933,10 +994,14 @@ export class ProcessSandbox {
    * so the studio's own environment (whatever credentials its shell exported) is allow-listed
    * down to the toolchain basics; the child's own variables are the caller's to pass.
    */
-  async #env(parent: NodeJS.ProcessEnv, own: Record<string, string> | undefined): Promise<Record<string, string>> {
+  async #env(
+    parent: NodeJS.ProcessEnv,
+    own: Record<string, string> | undefined,
+    tmp: string = this.scratchDir,
+  ): Promise<Record<string, string>> {
     return childEnv(parent, {
       base: "sandbox",
-      set: { ...this.#tmpEnv(), ...(await this.#pathEnv()), ...(own ?? {}) },
+      set: { ...tmpEnv(tmp), ...(await this.#pathEnv()), ...(own ?? {}) },
     });
   }
 
@@ -946,26 +1011,41 @@ export class ProcessSandbox {
     return resolved ? { PATH: resolved } : {};
   }
 
-  /** Point every temp-file convention at the agent's own scratch dir. */
-  #tmpEnv(): Record<string, string> {
-    return { TMPDIR: this.scratchDir, TMP: this.scratchDir, TEMP: this.scratchDir };
+  /**
+   * A run's temp folder: its confinement's own, or the agent's scratch dir. A confinement's folders
+   * are made first: srt on Linux leaves out a writable folder that is not there yet.
+   */
+  async #runTmp(request: LaunchRequest): Promise<string> {
+    if (!request.confine) return this.scratchDir;
+    const { write, tmp } = request.confine;
+    await Promise.all([...write, tmp].map((dir) => mkdir(dir, { recursive: true })));
+    return tmp;
   }
 
   /**
    * srt assigns its own `TMPDIR` (`/tmp/claude`) *inside* the wrapped argv, so an env override
    * cannot win — the assignment has to happen in the command itself. Verified against 0.0.73.
    */
-  #withScratchTmp(command: string): string {
-    const dir = shellQuote(this.scratchDir);
+  #withTmp(command: string, tmp: string): string {
+    const dir = shellQuote(tmp);
     return `export TMPDIR=${dir} TMP=${dir} TEMP=${dir}; ${command}`;
   }
 
-  #overlay(patch: Partial<SandboxPolicy>): import("@anthropic-ai/sandbox-runtime").SandboxRuntimeConfig {
+  /**
+   * A run's own config: the sandbox's, widened by the run's patch, or — for a confined run — with
+   * the confinement's folders as its only writable ones. srt takes a per-spawn `allowWrite` in
+   * place of the process-wide one.
+   */
+  #overlay(
+    patch: Partial<SandboxPolicy>,
+    confine?: RunConfinement,
+  ): import("@anthropic-ai/sandbox-runtime").SandboxRuntimeConfig {
+    const writable = confine ? [...confine.write, confine.tmp] : this.policy.allowWrite;
     return this.toRuntimeConfig({
       ...this.policy,
       ...patch,
       allowedDomains: [...this.policy.allowedDomains, ...(patch.allowedDomains ?? [])],
-      allowWrite: [...this.policy.allowWrite, ...(patch.allowWrite ?? [])],
+      allowWrite: [...writable, ...(patch.allowWrite ?? [])],
       allowRead: [...this.policy.allowRead, ...(patch.allowRead ?? [])],
       // Deny lists are never weakened by a per-run overlay.
       denyRead: [...this.policy.denyRead, ...(patch.denyRead ?? [])],
@@ -973,6 +1053,9 @@ export class ProcessSandbox {
     });
   }
 }
+
+/** Point every temp-file convention at `dir`. */
+const tmpEnv = (dir: string): Record<string, string> => ({ TMPDIR: dir, TMP: dir, TEMP: dir });
 
 /** Single-quote a value for POSIX shells. */
 export function shellQuote(value: string): string {

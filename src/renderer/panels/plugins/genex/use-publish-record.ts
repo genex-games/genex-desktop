@@ -8,7 +8,7 @@ import { SECOND_MS } from "../../../../shared/duration.ts";
 import { GenexAction, GenexPublishStatusOperation, type GenexPublishState } from "../../../../shared/genex.ts";
 import type { ExportReview, PluginInfo } from "../../../../shared/plugins.ts";
 import { type PluginReviewRequest, runPluginAction } from "../../../plugin-actions.ts";
-import { publishView } from "./genex-publish-view.ts";
+import { type PublishButton, publishView } from "./genex-publish-view.ts";
 
 /** How often the dialog re-reads the record while an attempt runs, and otherwise. */
 const RUNNING_POLL_MS = 2 * SECOND_MS;
@@ -93,5 +93,14 @@ export function usePublishRecord(plugin: PluginInfo, project: string | null) {
     /** Publish under `title`: the press is the consent to exactly the listed files. */
     publish: (title: string): Promise<void> =>
       run(Pressing.Publish, async () => window.studio.genexPublish(game, await currentFiles(), title)),
+    /**
+     * Publish again while Studio cannot tell whether the last upload reached Genex: settle that
+     * upload (`again` names it), then publish under `title` as Publish does.
+     */
+    publishAgain: (again: PublishButton, title: string): Promise<void> =>
+      run(Pressing.Publish, async () => {
+        await runPluginAction({ plugin, name: again.action, args: again.args ?? {}, project, review: setReview });
+        await window.studio.genexPublish(game, await currentFiles(), title);
+      }),
   };
 }

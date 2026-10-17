@@ -128,6 +128,7 @@ test("the preload sends each payload in the shape main reads", async () => {
   await api.send("hi", { thread: "t1" });
   await api.cancelModelDownload();
   await api.recheckEngines();
+  await api.pluginChooseFile("unreal", { title: "Choose a project", extensions: ["uproject"] });
   assert.deepEqual(invokes, [
     { channel: "studio:bootstrap", payload: undefined },
     { channel: "studio:thread.new", payload: {} },
@@ -143,6 +144,10 @@ test("the preload sends each payload in the shape main reads", async () => {
     { channel: "studio:send", payload: { text: "hi", thread: "t1" } },
     { channel: "studio:cancel-model-download", payload: {} },
     { channel: "studio:engines.recheck", payload: {} },
+    {
+      channel: "studio:plugins.choose-file",
+      payload: { id: "unreal", request: { title: "Choose a project", extensions: ["uproject"] } },
+    },
   ]);
 });
 

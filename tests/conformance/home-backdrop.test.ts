@@ -13,14 +13,20 @@ import {
   rampCharacter,
   thresholded,
 } from "../../src/renderer/home-backdrop/field.ts";
+import { SHADER_PRESETS, withPreset } from "../../src/renderer/home-backdrop/presets.ts";
+import { lumaOf, type Rgba, readableColor } from "../../src/renderer/home-backdrop/readable-color.ts";
 import { homeView, previewView } from "../../src/renderer/home-backdrop/view.ts";
 import {
   BACKDROP_RANGES,
   BackdropEffect,
+  BackdropSource,
   backdropDecimals,
   DEFAULT_BACKDROP,
   DotGrid,
+  EFFECT_LOOKS,
   normalizeBackdrop,
+  THEME_COLORS,
+  withEffect,
 } from "../../src/renderer/home-backdrop/settings.ts";
 
 const FLAT = { grain: 0, gamma: 1, blackPoint: 0, whitePoint: 255 };
@@ -50,6 +56,7 @@ describe("home background settings read back", () => {
 
   const hostile: Array<[string, Record<string, unknown>, Partial<typeof DEFAULT_BACKDROP>]> = [
     ["an unknown effect", { effect: "plasma" }, { effect: DEFAULT_BACKDROP.effect }],
+    ["an unknown source", { source: "webcam" }, { source: DEFAULT_BACKDROP.source }],
     ["a picture path", { image: "../../etc/passwd" }, { image: DEFAULT_BACKDROP.image }],
     ["a picture URL", { image: "https://example.com/a.png" }, { image: DEFAULT_BACKDROP.image }],
     ["columns past the range", { lineColumns: 100_000 }, { lineColumns: BACKDROP_RANGES.lineColumns.max }],
@@ -62,6 +69,13 @@ describe("home background settings read back", () => {
     ["dots inverted", { dotMin: 10, dotMax: 4 }, { dotMin: 4, dotMax: 4 }],
     ["a threshold past white", { threshold: 400 }, { threshold: 255 }],
     ["a dot straying more than a step", { dotNoise: 3 }, { dotNoise: 1 }],
+    ["a shader path", { shader: "../../etc/passwd" }, { shader: DEFAULT_BACKDROP.shader }],
+    ["a shader URL", { shader: "https://example.com/x.wgsl" }, { shader: DEFAULT_BACKDROP.shader }],
+    ["a made shader's id with a path in it", { shader: "custom:../x" }, { shader: DEFAULT_BACKDROP.shader }],
+    ["shader source in place of an id", { shader: "@fragment fn fs_main() {}" }, { shader: DEFAULT_BACKDROP.shader }],
+    ["a speed past the range", { speed: 50 }, { speed: BACKDROP_RANGES.speed.max }],
+    ["a backwards speed", { speed: -1 }, { speed: BACKDROP_RANGES.speed.min }],
+    ["a pattern too small", { scale: 0.01 }, { scale: BACKDROP_RANGES.scale.min }],
   ];
   for (const [name, saved, expected] of hostile)
     it(`holds ${name} to what it may be`, () => {
@@ -70,8 +84,8 @@ describe("home background settings read back", () => {
         assert.equal(settings[key as keyof typeof settings], value, key);
     });
 
-  it("keeps a colour for each theme: light marks on the light page, dark ones on the dark", () => {
-    assert.deepEqual(DEFAULT_BACKDROP.colors, { light: "#e8e8e8", dark: "#171717" });
+  it("keeps a colour for each theme, the theme's own until one is picked", () => {
+    assert.deepEqual(DEFAULT_BACKDROP.colors, { light: null, dark: null });
     assert.deepEqual(normalizeBackdrop({ colors: { light: "#A1B2C3", dark: null } }).colors, {
       light: "#a1b2c3",
       dark: null,
@@ -85,8 +99,46 @@ describe("home background settings read back", () => {
       );
   });
 
+  it("keeps a live background's shader and its colours: the theme's when saved so, the default's when unreadable", () => {
+    const settings = normalizeBackdrop({
+      source: BackdropSource.Shader,
+      effect: BackdropEffect.None,
+      shader: "custom:5b1e-9f",
+      shaderColors: { light: "#FF00AA", dark: "teal" },
+      shaderAccents: { light: null, dark: 42 },
+    });
+    assert.equal(settings.source, BackdropSource.Shader);
+    assert.equal(settings.effect, BackdropEffect.None);
+    assert.equal(settings.shader, "custom:5b1e-9f");
+    assert.deepEqual(settings.shaderColors, { light: "#ff00aa", dark: DEFAULT_BACKDROP.shaderColors.dark });
+    assert.deepEqual(settings.shaderAccents, { light: null, dark: DEFAULT_BACKDROP.shaderAccents.dark });
+    assert.equal(normalizeBackdrop({ shader: "preset:phosphor" }).shader, "preset:phosphor");
+  });
+
   it("cuts a long ramp to its longest", () => {
     assert.equal(normalizeBackdrop({ asciiCharacters: "x".repeat(200) }).asciiCharacters.length, 24);
+  });
+});
+
+describe("a background's source and effect read back", () => {
+  it("keeps an effect on top of a live background, and a picture with none", () => {
+    const live = normalizeBackdrop({ source: BackdropSource.Shader, effect: BackdropEffect.Dots });
+    assert.deepEqual([live.source, live.effect], [BackdropSource.Shader, BackdropEffect.Dots]);
+    const plain = normalizeBackdrop({ source: BackdropSource.Picture, effect: BackdropEffect.None });
+    assert.deepEqual([plain.source, plain.effect], [BackdropSource.Picture, BackdropEffect.None]);
+  });
+
+  it("reads settings saved before the source had its own field", () => {
+    const cases: Array<[unknown, BackdropSource, BackdropEffect]> = [
+      [{ effect: "off" }, BackdropSource.Off, DEFAULT_BACKDROP.effect],
+      [{ effect: "dots" }, BackdropSource.Picture, BackdropEffect.Dots],
+      [{ effect: "ascii" }, BackdropSource.Picture, BackdropEffect.Ascii],
+      [{ effect: "shader" }, BackdropSource.Shader, BackdropEffect.None],
+    ];
+    for (const [saved, source, effect] of cases) {
+      const settings = normalizeBackdrop(saved);
+      assert.deepEqual([settings.source, settings.effect], [source, effect], JSON.stringify(saved));
+    }
   });
 });
 
@@ -189,5 +241,104 @@ describe("what home's background draws", () => {
     const window = { width: 1200, height: 800 };
     const home = { x: 240, y: 0, width: 960, height: 800 };
     assert.deepEqual(previewView(window, home, 480, 2), { frame: window, view: home, scale: 1 });
+  });
+});
+
+describe("choosing a bundled live background", () => {
+  it("starts home on a bundled one, in one palette on either page", () => {
+    assert.ok(SHADER_PRESETS.some((preset) => preset.id === DEFAULT_BACKDROP.shader));
+    assert.equal(DEFAULT_BACKDROP.source, BackdropSource.Shader);
+    for (const colors of [DEFAULT_BACKDROP.shaderColors, DEFAULT_BACKDROP.shaderAccents])
+      assert.equal(colors.light, colors.dark);
+    assert.deepEqual(DEFAULT_BACKDROP.colors, THEME_COLORS);
+  });
+
+  it("holds its glow to its range", () => {
+    assert.equal(normalizeBackdrop({ glow: 0.4 }).glow, 0.4);
+    assert.equal(normalizeBackdrop({ glow: 9 }).glow, BACKDROP_RANGES.glow.max);
+    assert.equal(normalizeBackdrop({ glow: -1 }).glow, 0);
+    assert.equal(normalizeBackdrop({ glow: "bright" }).glow, DEFAULT_BACKDROP.glow);
+  });
+
+  it("draws it in the default colours, keeping the strength, speed, size and glow set", () => {
+    const tuned = { strength: 0.25, speed: 0.2, scale: 2, glow: 0.9 };
+    const picked = { ...DEFAULT_BACKDROP, ...tuned, shaderColors: { light: "#ff00aa", dark: "#00ffaa" } };
+    for (const preset of SHADER_PRESETS) {
+      const chosen = withPreset(picked, preset);
+      assert.equal(chosen.source, BackdropSource.Shader);
+      assert.equal(chosen.shader, preset.id);
+      assert.deepEqual(
+        [chosen.shaderColors, chosen.shaderAccents],
+        [DEFAULT_BACKDROP.shaderColors, DEFAULT_BACKDROP.shaderAccents],
+      );
+      assert.deepEqual([chosen.strength, chosen.speed, chosen.scale, chosen.glow], Object.values(tuned));
+    }
+  });
+
+  it("keeps an effect drawn over a live background, and starts plain coming from a picture", () => {
+    const [first, second] = SHADER_PRESETS;
+    const overLive = withPreset({ ...withPreset(DEFAULT_BACKDROP, first), effect: BackdropEffect.Dots }, second);
+    assert.equal(overLive.effect, BackdropEffect.Dots);
+    const picture = { ...DEFAULT_BACKDROP, source: BackdropSource.Picture, effect: BackdropEffect.Lines };
+    const fromPicture = withPreset(picture, second);
+    assert.equal(fromPicture.effect, BackdropEffect.None);
+  });
+});
+
+describe("a live background's colour on its page", () => {
+  const close = (a: Rgba, b: Rgba): boolean => a.every((value, index) => Math.abs(value - (b[index] ?? 0)) < 1e-6);
+
+  it("lifts a colour too dark to show on a dark page, keeping its hue", () => {
+    const navy: Rgba = [0.04, 0.05, 0.2, 1];
+    const lifted = readableColor(navy, true);
+    assert.ok(lumaOf(lifted) >= 0.199);
+    assert.equal(Math.max(...lifted.slice(0, 3)), lifted[2], "still bluest");
+    assert.ok(lifted[0] < lifted[2] && lifted[1] < lifted[2]);
+    assert.ok(lumaOf(readableColor([0, 0, 0, 1], true)) >= 0.199, "black becomes a grey that shows");
+  });
+
+  it("draws the theme's accent as it is", () => {
+    const accent: Rgba = [0x47 / 255, 0x59 / 255, 0xc2 / 255, 1];
+    assert.ok(close(readableColor(accent, true), accent));
+  });
+
+  it("darkens a colour too light to show on a light page", () => {
+    assert.ok(lumaOf(readableColor([0.95, 0.95, 0.9, 1], false)) <= 0.551);
+  });
+
+  it("leaves a colour that already reads alone", () => {
+    const ink: Rgba = [0.87, 0.88, 0.89, 1];
+    assert.ok(close(readableColor(ink, true), ink));
+    const dark: Rgba = [0.1, 0.1, 0.12, 1];
+    assert.ok(close(readableColor(dark, false), dark));
+  });
+});
+
+describe("choosing an effect", () => {
+  it("puts its tuned look in place, which the sliders then move on", () => {
+    for (const effect of [BackdropEffect.Lines, BackdropEffect.Dots, BackdropEffect.Ascii]) {
+      const from = effect === BackdropEffect.Lines ? BackdropEffect.Dots : BackdropEffect.Lines;
+      const chosen = withEffect({ ...DEFAULT_BACKDROP, effect: from }, effect);
+      assert.equal(chosen.effect, effect);
+      assert.deepEqual({ ...chosen, ...EFFECT_LOOKS[effect] }, chosen, effect);
+    }
+  });
+
+  it("keeps what was set when it is already the effect, or when it is none", () => {
+    const tuned = { ...DEFAULT_BACKDROP, effect: BackdropEffect.Dots, strength: 0.9, gamma: 2 };
+    assert.deepEqual(withEffect(tuned, BackdropEffect.Dots), tuned);
+    const plain = withEffect(tuned, BackdropEffect.None);
+    assert.deepEqual([plain.effect, plain.strength, plain.gamma], [BackdropEffect.None, 0.9, 2]);
+  });
+
+  it("starts home in the default effect's own look", () => {
+    const look = EFFECT_LOOKS[DEFAULT_BACKDROP.effect];
+    assert.ok(look);
+    assert.deepEqual({ ...DEFAULT_BACKDROP, ...look }, DEFAULT_BACKDROP);
+  });
+
+  it("holds every tuned look to the sliders' ranges", () => {
+    for (const look of Object.values(EFFECT_LOOKS))
+      if (look) assert.deepEqual(normalizeBackdrop({ ...DEFAULT_BACKDROP, ...look }), { ...DEFAULT_BACKDROP, ...look });
   });
 });

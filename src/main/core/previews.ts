@@ -7,6 +7,7 @@ import {
   genexJobDir,
   isGenexInspectionFile,
   readContainedImage,
+  readGenexCoverClip,
   readGenexCoverShot,
   readGenexJobs,
 } from "../game-assets.ts";
@@ -22,13 +23,24 @@ import {
   type GameProject,
 } from "../../substrate/game-workspace.ts";
 import type { HarnessParams, HarnessResult } from "../../shared/harness-api.ts";
+import type { ProjectShape } from "../../shared/game-project.ts";
+import { templateLoadsGenexSdk } from "../../substrate/project-shape.ts";
 import { genexOutputFile, isGenexRef } from "../../shared/genex-ref.ts";
 import { type ProjectAssetRead, ProjectAssetScope } from "../../shared/game-assets.ts";
 import { resetToolchain } from "../../substrate/toolchain.ts";
 import { buildFailureNote, servedAfterBuild } from "../game-build.ts";
 import type { BuildProblem, InstallResult } from "../../shared/build-problem.ts";
 import { describeUnknownImage, sniffImage } from "../../substrate/image-sniff.ts";
-import { claudeFolderChanges, git } from "../../substrate/snapshots.ts";
+import {
+  claudeFolderChanges,
+  type CopySize,
+  git,
+  SnapshotRefusal,
+  SnapshotRefusedError,
+  WRITER_COPY_MAX_BYTES,
+} from "../../substrate/snapshots.ts";
+import { sizeWords } from "../../shared/byte-size.ts";
+import { isAssetPath, ruleMatches, webFolderOf } from "../../shared/project-workspace.ts";
 import type { DelegateRequest } from "../../substrate/engines/types.ts";
 import type { ReferenceFrame } from "../../shared/protocol.ts";
 import type { Revision } from "../../shared/optimization.ts";
@@ -46,7 +58,7 @@ import {
 } from "../../shared/agent-screen.ts";
 import type { CoreInternals, StudioCore } from "../studio-core.ts";
 import { CAMERA_SETTLE_MS, DEFAULT_SHOT_QUALITY, DEFAULT_STILL_QUALITY, captureSurface, tookPage } from "./capture.ts";
-import { PreviewIdentityState, type ServedRoot } from "./internals.ts";
+import { delegationsIn, PreviewIdentityState, type ServedRoot } from "./internals.ts";
 import { iterationDir, safePathSegment } from "./run-shots.ts";
 import { readyNote, servedKey, strayPage } from "./page-report.ts";
 import type { SessionPort } from "./session-port.ts";
@@ -114,8 +126,19 @@ const REFERENCE_NOTE = /\.(md|txt|json)$/i;
 /** How long the stand-in stays open once the harness stops using it: a game in it keeps running. */
 const STAND_IN_IDLE_MS = 2 * MINUTE_MS;
 
+/** How many of a too-large copy's largest folders its refusal names. */
+const COPY_FOLDERS_NAMED = 3;
+
 /** Errors the user reads when a build cannot be shown or landed, and why a reference is no still. */
 const MESSAGE = {
+  // Every copy holds the whole game, whatever the task, and the person reads it when a build
+  // cannot start: so it names no worker and no smaller task. What to do comes first: a lead's
+  // reason is clipped to a couple of hundred characters.
+  copyTooLarge: (size: CopySize, cap: number) =>
+    `This game is too large to copy, so nothing that needs its own copy of it can start; work in the game folder itself. A copy would take ${sizeWords(size.bytes)}, more than the ${sizeWords(cap)} allowed (most of it in ${size.folders
+      .slice(0, COPY_FOLDERS_NAMED)
+      .map((folder) => `${folder.folder} ${sizeWords(folder.bytes)}`)
+      .join(", ")}).`,
   noPreview: "no preview is attached (headless mode)",
   benchRefused: (page: string, why: string) =>
     `capture did not load the bench page "${page}": ${why}. Nothing was loaded. A bench page is a .html file inside this workspace, such as bench/<part>.html.`,
@@ -148,6 +171,7 @@ const MESSAGE = {
   landingConflicted: (revision: string, excerpt: string) =>
     `landing ${revision} conflicted with the game folder; nothing was changed (${excerpt})`,
   noSuchGame: (project: string) => `there is no game called "${project}"`,
+  noPackages: "this game has no package.json, so there is nothing to install",
   stillUnreadable: "unreadable",
   stillTooLarge: `larger than ${REFERENCE_MAX_MB} MB`,
   stillNotJudgeable: (what: string) => `${what} — the reviewers cannot read it; re-save as JPEG or PNG`,
@@ -320,6 +344,15 @@ async function placeCamera(port: PreviewPort, camera: string, placeable: boolean
   return actual;
 }
 
+/**
+ * The page the preview opens from the game's own folder: its shape's entry, or for a game whose web
+ * game is in a folder of it (an engine's web export, `webFolderOf`) that folder's page.
+ */
+function sourceEntry(game: GameProject | undefined, shape: ProjectShape): string {
+  const folder = game ? webFolderOf(game) : null;
+  return folder ? `${folder}/${TEMPLATE_SHAPE.entry}` : shape.entry;
+}
+
 /** The address a load answers with when the build had nothing to serve. */
 function unservedUrl(p: { project: string; entry?: string | undefined }): string {
   return `game://${p.project}/${p.entry ?? "index.html"}`;
@@ -438,6 +471,28 @@ async function sameRealPath(a: string, b: string): Promise<boolean> {
 
 function invalidStillSize(maxPx: number | undefined): boolean {
   return maxPx !== undefined && (!Number.isInteger(maxPx) || maxPx < 1 || maxPx > STILL_MAX_PX);
+}
+
+/**
+ * What an agent-screen frame reads of a target: a picture, its size and the pointer. Every preview
+ * port is one; a Play Protocol game's target is adapted to it (`computer-tools.ts`).
+ */
+export type FramePort = Pick<
+  PreviewPort,
+  "screenshot" | "screenshotCard" | "screenshotWithStats" | "resizeImage" | "viewSize" | "pointer"
+>;
+
+/**
+ * Whether the preview serves a game on its loopback origin: one built from its own sources, or a
+ * template game that loads the Genex SDK, whose local test mode only a loopback origin gets.
+ */
+async function servedOnLoopback(
+  descriptor: GameProject | undefined,
+  shape: ProjectShape,
+  dir: string,
+): Promise<boolean> {
+  if (descriptor?.built === true) return true;
+  return !shape.own && (await templateLoadsGenexSdk(dir));
 }
 
 export class PreviewService {
@@ -585,9 +640,11 @@ export class PreviewService {
   ): Promise<{ entry: string; root: string | undefined; loopback: boolean; stale: string | null } | null> {
     const descriptor = (await this.#core.games.list().catch(() => [] as GameProject[])).find((g) => g.name === project);
     const shape = descriptor?.shape ?? TEMPLATE_SHAPE;
-    const loopback = descriptor?.built === true;
-    const base = root ?? this.#core.games.dirFor(project);
-    const outcome = await this.#core.builds.ensure({ project, dir: base, shape });
+    const game = this.#core.games.dirFor(project);
+    const base = root ?? game;
+    const loopback = await servedOnLoopback(descriptor, shape, base);
+    const guarded = await this.#core.scriptsGuarded(project);
+    const outcome = await this.#core.builds.ensure({ project, dir: base, game, shape, guarded });
     const note = outcome.problem ? buildFailureNote(outcome.problem) : null;
     if (note) port.note?.("error", note, { loadError: true });
     // The live folder is the one the user is looking at, so it is the one whose trouble the
@@ -602,7 +659,7 @@ export class PreviewService {
     // its own, and a review worktree keeps the root its caller passed.
     const asSource = path.resolve(served.dir) === path.resolve(base);
     return {
-      entry: entry ?? (asSource ? shape.entry : path.basename(shape.entry)),
+      entry: entry ?? (asSource ? sourceEntry(descriptor, shape) : path.basename(shape.entry)),
       root: asSource ? (root ?? undefined) : served.dir,
       loopback,
       stale: served.stale ? note : null,
@@ -1079,7 +1136,7 @@ export class PreviewService {
 
   /** A new picture of a worker's window, downscaled for its node, with the cursor and the deed. */
   async frame(
-    port: PreviewPort,
+    port: FramePort,
     screen: AgentScreen,
     jpeg: Buffer | null,
     caption: string | null,
@@ -1121,7 +1178,7 @@ export class PreviewService {
     }
   }
 
-  async #captureFrame(port: PreviewPort, screen: AgentScreen, deed: FrameDeed, state: PendingFrame): Promise<void> {
+  async #captureFrame(port: FramePort, screen: AgentScreen, deed: FrameDeed, state: PendingFrame): Promise<void> {
     const { jpeg } = deed;
     try {
       if (!jpeg && port.screenshotCard) {
@@ -1145,7 +1202,7 @@ export class PreviewService {
     }
   }
 
-  #publishFrame(port: PreviewPort, screen: AgentScreen, jpeg: Buffer, { caption, act }: FrameDeed): void {
+  #publishFrame(port: FramePort, screen: AgentScreen, jpeg: Buffer, { caption, act }: FrameDeed): void {
     const size = port.viewSize?.() ?? COMPUTER_VIEW;
     const cursor = port.pointer?.() ?? { x: Math.round(size.width / 2), y: Math.round(size.height / 2) };
     const frame: AgentScreenFrame = {
@@ -1208,6 +1265,28 @@ export class PreviewService {
   /** Whether the studio may version this game's own nested repositories inside a fork of it. */
   async nestedPolicy(projectDir: string): Promise<{ versionNested: boolean }> {
     return { versionNested: await this.#core.games.nestedConsent(projectDir).catch(() => false) };
+  }
+
+  /**
+   * How a worker's copy of `commit` is made, checked before anything is: its nested repositories'
+   * files leave out the game's copy-skip and ignore rules (only the ignore rules when the copy
+   * versions them: it commits what it receives, and tracked files are never left out), and a copy
+   * larger than a copy may take is refused (`CopyTooLarge`) with its size and where that is.
+   */
+  async prepareWriterCopy(
+    project: string,
+    commit: string,
+  ): Promise<{ versionNested: boolean; skip: (rel: string) => boolean }> {
+    const { games, snapshots } = this.#core;
+    const { versionNested } = await this.nestedPolicy(games.dirFor(project));
+    const rules = await games.copyRulesOf(project);
+    const left = versionNested ? rules.ignored : rules.skip;
+    const skip = (rel: string) => left.some((rule) => ruleMatches(rel, rule));
+    const size = await snapshots.copySize(project, commit, skip);
+    const cap = this.#core.options.writerCopyMaxBytes ?? WRITER_COPY_MAX_BYTES;
+    if (size.bytes > cap)
+      throw new SnapshotRefusedError(SnapshotRefusal.CopyTooLarge, project, MESSAGE.copyTooLarge(size, cap));
+    return { versionNested, skip };
   }
 
   /**
@@ -1279,10 +1358,13 @@ export class PreviewService {
 
   async readProjectAsset(p: ProjectAssetRead): Promise<{ mimeType: string; data: string } | null> {
     if (!p || typeof p.project !== "string") return null;
+    // The game's kept Genex cover clip: its place is the host's, from the game's name alone; a video as it was kept.
+    if (p.scope === ProjectAssetScope.GenexCoverClip)
+      return readGenexCoverClip(this.#core.layout.engineHomes, p.project);
     const resize = this.#resizeTo(p.maxPx);
-    // The game's kept Genex cover shot: its place is the host's, from the game's name alone.
+    // The game's kept Genex cover shot or one of its candidates: the same place, from the same name.
     if (p.scope === ProjectAssetScope.GenexCover)
-      return readGenexCoverShot(this.#core.layout.engineHomes, p.project, resize);
+      return readGenexCoverShot(this.#core.layout.engineHomes, p.project, { ...resize, candidate: p.candidate });
     if (typeof p.file !== "string") return null;
     if (p.scope === ProjectAssetScope.GenexInspection) {
       const dir = genexJobDir(this.#core.layout.engineHomes, p.project, String(p.jobId ?? ""));
@@ -1290,7 +1372,8 @@ export class PreviewService {
       return readContainedImage(dir, p.file, { prefixes: [], ...resize });
     }
     if (isGenexRef(p.file)) return this.#readGenexOutput(p.project, p.file, resize);
-    return readContainedImage(this.#core.games.dirFor(p.project), p.file, resize);
+    if (!isAssetPath(p.file, await this.#x.assets.assetFolders(p.project))) return null;
+    return readContainedImage(this.#core.games.dirFor(p.project), p.file, { prefixes: [], ...resize });
   }
 
   /** A downscale to `maxPx` for an image read, when one is asked for and the preview can. */
@@ -1314,6 +1397,11 @@ export class PreviewService {
     const jobs = await readGenexJobs(this.#core.layout.engineHomes, project);
     if (!jobs.some((job) => job.id === output.jobId)) return null;
     return readContainedImage(path.join(dir, "output"), output.file, { prefixes: [], ...resize });
+  }
+
+  /** A picture made at most `maxPx` on its longest side (a JPEG), or null when nothing here can resize it. */
+  resizeStill(data: Buffer, maxPx: number): Promise<Buffer | null> {
+    return resizedStill(this.#optionalPreview(), data, maxPx);
   }
 
   async readRunStill(filePath: string, maxPx?: number): Promise<{ mimeType: string; data: string } | null> {
@@ -1382,8 +1470,8 @@ export class PreviewService {
     this.#core.snapshots.register({ name: project, dir: projectDir });
     // The chat's own session asking to land (a run control) holds the folder while it waits for
     // this answer: it is not a contractor building there. Anyone else in the folder is.
-    const building = [...this.#x.activeDelegations.entries()].some(
-      ([cwd, delegation]) => path.resolve(cwd) === path.resolve(projectDir) && delegation.abort !== asker,
+    const building = delegationsIn(this.#x.activeDelegations, projectDir).some(
+      (delegation) => delegation.abort !== asker,
     );
     if (building) throw new Error(MESSAGE.contractorBuilding(project));
     const resolved = (await git(projectDir, ["rev-parse", "--verify", `${commit}^{commit}`]).catch(() => "")).trim();
@@ -1446,10 +1534,19 @@ export class PreviewService {
    * only thing the studio ever opens the network for, it happens because the user pressed a
    * button, and it opens exactly one domain for exactly this command.
    */
-  async installPackages(project: string): Promise<InstallResult> {
+  /**
+   * The stage's Install packages. Someone else's game installs the guarded way, no setup script
+   * running, until the person trusts its scripts (`scripts`): from then on they run.
+   */
+  async installPackages(project: string, options: { scripts?: boolean } = {}): Promise<InstallResult> {
     const descriptor = (await this.#core.games.list()).find((game) => game.name === project);
     if (!descriptor) throw new Error(MESSAGE.noSuchGame(project));
-    const result = await this.#core.builds.install({ project, dir: descriptor.dir, shape: descriptor.shape });
+    if (options.scripts) await this.#core.games.trustScripts(project);
+    const source = { project, dir: descriptor.dir, shape: descriptor.shape };
+    const guarded = await this.#core.scriptsGuarded(project);
+    const result = guarded
+      ? ((await this.#core.builds.installGuarded(source)) ?? { ok: false, lines: [MESSAGE.noPackages] })
+      : await this.#core.builds.install(source);
     if (result.ok) this.#x.buildProblems.delete(project);
     return result;
   }

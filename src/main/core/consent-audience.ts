@@ -31,7 +31,8 @@ export async function consentAudience(core: StudioCore, binding: PluginBinding, 
 /**
  * A declined run prerequisite is not asked again until the user explicitly resumes that run; a
  * chat's declined call, not until the user's next message — a model that asked again at once got
- * a new card for the same no, as often as it asked.
+ * a new card for the same no, as often as it asked. Only the user's own no counts: a card nobody
+ * answered is not a no, and the agent was told it may ask again later.
  */
 export async function priorConsentDecline(
   core: StudioCore,
@@ -39,7 +40,7 @@ export async function priorConsentDecline(
   runId: string | undefined,
   tool: string,
   args: Record<string, unknown>,
-): Promise<{ approved: false; by: "user" | "timeout" } | null> {
+): Promise<{ approved: false; by: "user" } | null> {
   const events = await core.store.listEvents(threadId);
   if (!runId) return chatDecline(events, tool, args);
   for (const event of events.toReversed()) {
@@ -60,7 +61,7 @@ function chatDecline(
   events: readonly EventEnvelope[],
   tool: string,
   args: Record<string, unknown>,
-): { approved: false; by: "user" | "timeout" } | null {
+): { approved: false; by: "user" } | null {
   for (const event of events.toReversed()) {
     if (userSpoke(event)) return null;
     const record = customRecord(event.data);
@@ -76,7 +77,7 @@ function userSpoke(event: EventEnvelope): boolean {
   return event.data.type === EventKind.Messages && event.data.messages.some((message) => message.role === "user");
 }
 
-function declinedDecision(state: unknown, by: unknown): { approved: false; by: "user" | "timeout" } | null {
-  if (state !== "declined") return null;
-  return by === "user" || by === "timeout" ? { approved: false, by } : null;
+/** The user's own no; a stop, a restart or a card nobody answered is not one. */
+function declinedDecision(state: unknown, by: unknown): { approved: false; by: "user" } | null {
+  return state === "declined" && by === "user" ? { approved: false, by } : null;
 }

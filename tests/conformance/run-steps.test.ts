@@ -33,7 +33,10 @@ import {
   STEPS,
   triesWord,
   workedShortWords,
+  workerStopWords,
 } from "../../src/renderer/run-steps.ts";
+import type { WorkerInfo } from "../../src/renderer/run-graph-workers.ts";
+import { WorkerEnd, WorkerStopCode } from "../../src/shared/workers.ts";
 import { sideBySideWords } from "../../src/renderer/words.ts";
 const START = Date.parse("2026-09-19T15:36:00.000Z");
 let minute = 0;
@@ -167,6 +170,20 @@ describe("tries fold into steps", () => {
       "Add a wreck-lifecycle system",
     );
     assert.equal(headline("[defect-x] make the hay less plastic"), "Make the hay less plastic");
+  });
+});
+
+describe("the start node", () => {
+  it("with pictures, keeps a strip for its words under them, and the assets move down past it", () => {
+    const plain = layoutSteps([], { assets: true });
+    const pictured = layoutSteps([], { assets: true, startWords: true });
+    const start = pictured.rects.start!;
+    const words = pictured.rects["start:words"]!;
+    assert.deepEqual(start, plain.rects.start, "the pictures keep the start's place on the middle line");
+    assert.equal(plain.rects["start:words"], undefined, "words alone fit the start's own place");
+    assert.deepEqual(words, { x: start.x, y: start.y + start.h, w: STEPS.startW, h: STEPS.startWordsH });
+    assert.equal(pictured.rects.assets!.y, words.y + words.h + STEPS.assetsGap);
+    assert.ok(pictured.height > plain.height, "the canvas makes room for it");
   });
 });
 
@@ -670,5 +687,91 @@ describe("the words a card wears", () => {
     assert.equal(buildReview(looked("judge", "first-build", empty)), null);
     const unseen = "Nothing to compare it with: the game as it stood could not be photographed.";
     assert.equal(buildReview(looked("judge", "no-start", unseen)), null);
+  });
+});
+
+describe("why a worker stopped short, on its card", () => {
+  const worker = (ended: WorkerEnd | null, stopCode: WorkerStopCode | null = null): WorkerInfo => ({
+    type: null,
+    isolation: null,
+    in: null,
+    where: null,
+    task: "Port the car",
+    summary: null,
+    turn: null,
+    ended,
+    stopCode,
+    verdict: null,
+    note: null,
+    merged: false,
+    startedSeq: null,
+    settledSeq: null,
+  });
+  it("says the end record's code in the app's words, and nothing without one: the record's own reason is the lead's", () => {
+    const cases: Array<[string, WorkerInfo, string | null]> = [
+      [
+        "refused by the host",
+        worker(WorkerEnd.Failed, WorkerStopCode.HostRefused),
+        "Your Settings allow no more workers at once",
+      ],
+      ["the turn ended", worker(WorkerEnd.Failed, WorkerStopCode.TurnEnded), "The chat turn ended first"],
+      ["an error", worker(WorkerEnd.Failed, WorkerStopCode.Error), "It ran into an error"],
+      ["no code", worker(WorkerEnd.Failed), null],
+      ["finished", worker(WorkerEnd.Done, WorkerStopCode.Error), null],
+      ["stopped by the Loop's end", worker(WorkerEnd.Stopped, WorkerStopCode.RunEnded), "The Loop ended first"],
+      ["stopped by the lead", worker(WorkerEnd.Stopped, WorkerStopCode.StoppedByLead), "The lead stopped it"],
+      ["stopped, no code", worker(WorkerEnd.Stopped), null],
+      ["still working", worker(null), null],
+    ];
+    for (const [name, info, expected] of cases) assert.equal(workerStopWords(info), expected, name);
+  });
+
+  it("a worker in place says where it works by the lock it holds, before the engine an older record names", () => {
+    const rows: Array<[string, Record<string, unknown>, string]> = [
+      ["where alone", { where: "Unreal" }, "Working in Unreal"],
+      ["where wins over in", { where: "Toy editor", in: "unreal" }, "Working in Toy editor"],
+      ["an older record's in", { in: "unreal" }, "Working in Unreal"],
+      ["a where that is no text", { where: 7, in: "unreal" }, "Working in Unreal"],
+      ["an empty where", { where: "  " }, "Working"],
+      ["neither", {}, "Working"],
+    ];
+    for (const [name, extra, expected] of rows) {
+      const title = "Build the track";
+      const graph = buildRunGraph([
+        event("run_started", { goal: "a track" }),
+        event("worker_started", { workerId: "pool.w1", title, isolation: "lock", task: title, ...extra }),
+      ]);
+      assert.ok(graph, name);
+      const step = partRows(graph, null)[0]?.steps.find((each) => each.worker);
+      assert.ok(step, name);
+      assert.equal(stepWord(step, graph.active), expected, name);
+    }
+  });
+
+  it("a failed builder's card never says the harness's own reason, whether or not its end has a code", () => {
+    const why = "left conflict markers in src/main.ts — nothing was committed and the merge was aborted";
+    const title = "Fit Plaza in with the rest of the game";
+    for (const code of [WorkerStopCode.Error, null]) {
+      const events = [
+        event("run_started", { goal: "a plaza" }),
+        event("director_worker", { workerId: "plaza-2", title, state: "running", mode: "single" }),
+        event("worker_started", { workerId: "plaza-2", title, isolation: "copy", task: title }),
+        event("director_worker", { workerId: "plaza-2", title, state: "failed", mode: "single", stoppedBecause: why }),
+        event("worker_finished", {
+          workerId: "plaza-2",
+          title,
+          state: "failed",
+          stoppedBecause: why,
+          ...(code ? { stopCode: code } : {}),
+        }),
+      ];
+      const graph = buildRunGraph(events);
+      assert.ok(graph);
+      const info = partRows(graph, null)[0]?.steps.find((step) => step.worker)?.worker;
+      assert.ok(info, `${code}: the builder's row has its worker records`);
+      const said = workerStopWords(info) ?? "";
+      assert.equal(said, code ? "It ran into an error" : "", `${code}`);
+      assert.doesNotMatch(said, /reader|writer|editor|copy|lock|merg|isolation|sandbox|seat|conflict/i, `${code}`);
+    }
   });
 });

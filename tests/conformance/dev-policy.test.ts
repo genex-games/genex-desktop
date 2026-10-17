@@ -14,6 +14,7 @@ import { CodexEngine } from "../../src/substrate/engines/codex.ts";
 import { ClaudeCodeEngine } from "../../src/substrate/engines/claude-code.ts";
 import { OpenCodeEngine } from "../../src/substrate/engines/opencode.ts";
 import { OpenRouterEngine } from "../../src/substrate/engines/openrouter.ts";
+import { LocalServerEngine } from "../../src/substrate/engines/local-server.ts";
 test("pre-init injection avoids every real engine status/models/auth probe and keeps sandbox enabled", async (t) => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "dev-policy-"));
   for (const proto of [
@@ -22,6 +23,7 @@ test("pre-init injection avoids every real engine status/models/auth probe and k
     ClaudeCodeEngine.prototype,
     OpenCodeEngine.prototype,
     OpenRouterEngine.prototype,
+    LocalServerEngine.prototype,
   ])
     for (const key of ["status", "models", "probeAuth"])
       if (typeof (proto as any)[key] === "function")
@@ -43,8 +45,8 @@ test("pre-init injection avoids every real engine status/models/auth probe and k
   });
   await core.start();
   assert.equal(core.host.state, "ready");
-  // Flipped (OpenCode, OpenRouter): five scripted engines, never a real one.
-  assert.equal((await core.engines.describe()).length, 5);
+  // Flipped (OpenCode, OpenRouter, a local server): six scripted engines, never a real one.
+  assert.equal((await core.engines.describe()).length, 6);
   assert.equal(core.sandbox.enabled, true);
   await core.updateSettings({ architect: true });
   let calls = 0;
@@ -172,6 +174,8 @@ test("fixture native guard covers all account, external, picker, export and down
   for (const channel of [
     "studio:plugins.index",
     "studio:plugins.watch",
+    // Forgetting a local plugin's Always allow writes its install record and opens nothing.
+    "studio:plugins.forget-allowed",
     // Listing, editing and removing connectors stay open: they write a file inside the profile and
     // open no dialog. Only the trust step is native.
     "studio:mcp.list",
@@ -181,6 +185,11 @@ test("fixture native guard covers all account, external, picker, export and down
     "studio:mcp.tools",
   ])
     assert.ok(!FIXTURE_BLOCKED_CHANNELS.has(channel), channel);
+  // Bringing back the newer version after a Rewind rewrites only the chat's game folder from its own
+  // checkpoints, as the Rewind does.
+  const { classifyChannel, ChannelClass } = await import("../../src/main/dev/native-policy.ts");
+  assert.equal(classifyChannel("studio:chat.rewind.undo"), ChannelClass.FixtureSafe);
+  assert.doesNotThrow(() => assertNativeActionAllowed(true, "studio:chat.rewind.undo"));
   // …and adoption is not one of them: it opens no network and writes only inside the profile's
   // own games root, which is the one way a dev profile can hold a game that is not the fixture.
   assert.doesNotThrow(() => assertNativeActionAllowed(true, "studio:project.adopt"));

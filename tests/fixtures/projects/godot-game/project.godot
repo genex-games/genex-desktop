@@ -1,0 +1,8 @@
+; Engine configuration file.
+
+config_version=5
+
+[application]
+
+config/name="Pebble Run"
+run/main_scene="res://scenes/main.tscn"

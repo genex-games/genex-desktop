@@ -7,6 +7,9 @@ in the form coding agents read, and the two must agree. Report security problems
 
 ## Before you start
 
+- Tip: look at the [roadmap board](https://github.com/orgs/genex-games/projects/1)
+  first to see what is already in progress, so you don't duplicate work. An assigned issue is
+  being worked on; issues labelled `help wanted` or `good first issue` are a good place to start.
 - Open an issue (bug or feature template) before a large change, so the approach can be agreed.
 - Contributor terms are not settled yet: see [Contributor terms](#contributor-terms) below.
   Until they are, a pull request may be held before merge.
@@ -69,13 +72,17 @@ until their relevant inputs change.
 
 Single files: `npm test -- tests/conformance/<name>.test.ts`. A UI change also needs a rendered
 look, not just a build; follow the [design workflow](docs/agent/design.md).
+Named tests avoid graph setup. Full `npm test` runs non-rig files with two workers, then rigs
+serially; use it at broad checkpoints. On Apple Silicon, `node -p process.arch` should say
+`arm64` after `nvm use`, so tests do not run through Rosetta.
 
 ## Continuous integration
 
-- **Check** (`.github/workflows/check.yml`) runs on every pull request and push: architecture
-  boundaries, typecheck, Biome lint, test-style, baseline behavior contracts and affected L1
-  tests in the Linux `gate` job. PR tests compare against the target branch's exact base SHA. The macOS
-  `fast` job runs non-rig tests only on PRs targeting `main`, pushes to `main`, and dispatches.
+- **Check** (`.github/workflows/check.yml`) runs on every pull request and dev/main push:
+  independent static checks, up to six jobs covering regular baseline/affected L1 files,
+  three mandatory seed-upgrade jobs, and selected harness groups. The Linux `gate` requires all selected work
+  to pass. PR selection uses the target branch's exact base SHA. The macOS `fast` aggregate
+  covers up to six non-rig shards only on PRs targeting `main`, pushes to `main`, and dispatches.
 - **Rig** (`rig.yml`) runs the serial rig group on pull requests labelled `full-tests` and on
   demand. Add that label when you touch core, harness or engine code.
 - **Developer documentation** (`context.yml`) checks handbook size, links and the knowledge map.
@@ -91,6 +98,14 @@ ran (a focused pass is not a full run), red-first evidence for fixes, flipped as
 docs you updated or why they are still accurate. Docs describe the current app: replace outdated
 statements in the same pull request instead of appending history. Keep one change per pull
 request, and keep raw logs and screenshots out of Git.
+
+## When the team takes over a contribution
+
+Sometimes your pull request lands on work the team already owns. We then build on your code in
+our own pull request and credit you: we keep your commits where we can, so you appear in the
+repository's contributors; where we rewrite, our commits carry a
+`Co-authored-by: Your Name <your GitHub email>` trailer; and we thank you by handle in the
+release notes. Your pull request is then closed with a link to ours.
 
 ## Contributor terms
 

@@ -8,6 +8,7 @@
  */
 import { MAX_RUN_HOURS } from "./config.ts";
 import { askUser } from "./interview-question.ts";
+import { UNTIL_DONE_WORDS } from "./until-done-prompts.ts";
 import { toolCall } from "./model-roles.ts";
 import { endClock } from "./wall-clock.ts";
 import type { RunSpec, StudioToolSpec } from "../types/host-api.d.ts";
@@ -52,7 +53,7 @@ export const MESSAGE = {
   reopening: (end: string) =>
     `The build goes on until your request is checked, by about ${end} at the latest — keep the app open and the Mac awake.`,
   reopeningUntilSatisfied: (ceiling: string) =>
-    `The build goes on until its critics are satisfied, and stops by about ${ceiling} whatever happens — keep the app open and the Mac awake.`,
+    `The build goes on until what you asked for is checked working, and stops by about ${ceiling} whatever happens — keep the app open and the Mac awake.`,
   /** Said once for a finished build that no Loop can go on from here (chat-dispatch.ts); the message is answered as with Loop off. */
   loopUnused:
     "Loop can't continue this build here, so this message is answered as with Loop off — the build stays as it finished.",
@@ -61,7 +62,7 @@ export const MESSAGE = {
 /** How long the reopened build may run, as the session reads it. */
 function budgetWords(hours: number | null): string {
   if (typeof hours === "number" && hours > 0) return `up to ${hours} h`;
-  return `until its judges are satisfied, ${MAX_RUN_HOURS} h at most`;
+  return `${UNTIL_DONE_WORDS}, ${MAX_RUN_HOURS} h at most`;
 }
 
 /** An explicit start over, and the question when it is unclear: only beside a bridged launch. */

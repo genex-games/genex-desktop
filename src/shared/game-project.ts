@@ -3,7 +3,12 @@
  * Game sheet shows about a picked folder. `substrate/game-workspace.ts` decides and writes these
  * and re-exports the types; the renderer reads them through `window.studio`.
  */
+import type { GameRuntime } from "./computer-target.ts";
+import type { EngineBinding, LinkedEngine } from "./game-engine.ts";
 import type { GameLibraryEntry } from "./game-library.ts";
+import type { HookEvent } from "./plugin-hooks.ts";
+import type { JudgeRef } from "./plugins.ts";
+import type { FolderHolds, ProjectFact } from "./project-facts.ts";
 
 export interface GameProject {
   primaryThreadId?: string;
@@ -22,8 +27,56 @@ export interface GameProject {
   shape: ProjectShape;
   /** `shape.own`: the folder brought its own game, so the studio builds it and serves its output. */
   built: boolean;
+  /** The engine project Genex linked this game to; absent for a web game (`shared/game-engine.ts`). */
+  engine?: EngineBinding;
+  /** The linked engine as its plugin declares it (its name, project files, project in the folder); absent for a web game. */
+  linkedEngine?: LinkedEngine;
+  /**
+   * True when an engine plugin that is on plays this game in its editor (its play tools hold the
+   * game's link): judges and the computer play it there. Filled by the harness's `game.list`.
+   */
+  editorPlay?: boolean;
+  /** The judges that play this game in its editor, as its engine plugin declares them; only with `editorPlay`. */
+  judges?: JudgeRef[];
+  /**
+   * What the folder holds, by `shared/project-facts.ts`: the core table, the enabled plugins'
+   * `detect` and the engine link. Empty while the first message has not picked a kind.
+   */
+  facts: ProjectFact[];
+  /**
+   * What the folder holds while it has no facts (`FolderHolds`): nothing or notes (no kind yet), files
+   * of its own of a kind no rule knows, or unreadable. Absent once it has facts, and from older lists.
+   */
+  holds?: FolderHolds;
+  /** The moments the plugins that are on hook for this folder (`shared/plugin-hooks.ts`); absent: none. */
+  hookEvents?: HookEvent[];
+  /** What a port replaced, kept in the folder as the reference and no longer a kind of this game. */
+  portedFrom?: ProjectFact[];
+  /**
+   * The scaffold a plugin's tool made this project with, as studio.json records it (its rules stay
+   * there): what the sidebar names a project that isn't a game ("Unreal plugin").
+   */
+  scaffold?: { plugin: string; id: string; label: string };
+  /**
+   * Whether `facts` hold `web-game` at the root; kept for parts that read it. Absent from a
+   * descriptor made before it was recorded, read as a web game.
+   */
+  web?: boolean;
+  /**
+   * The folder's content stamp (`game.contentStamp`'s `all`) as New game made it from the template;
+   * absent for a folder the studio did not make that way. While the folder's stamp still equals
+   * it, nothing has been built in the game yet.
+   */
+  scaffoldStamp?: string;
   /** Named before anyone said what the game is: its first idea renames it in place (`nameFromIdea`). */
   provisional?: boolean;
+  /**
+   * New game made it and no answer in its chats has ended with the game made yet; absent once one
+   * has, and for every game New game did not make, which came with a game of its own.
+   */
+  awaitingFirstBuild?: true;
+  /** The game loads Genex's multiplayer: its package.json names it, or its page maps Studio's copy. */
+  multiplayer?: true;
 }
 
 /**
@@ -80,6 +133,35 @@ export interface ProjectShape {
    * and then the studio waits its own default.
    */
   bootMs?: number;
+  /**
+   * How the studio runs and reaches the game: its own browser window (the default, when absent)
+   * or a process speaking the Genex Play Protocol (`docs/play-protocol.md`).
+   */
+  runtime?: GameRuntime;
+  /** How a `bridge` game is started; absent for a browser game or when studio.json's is unusable. */
+  play?: PlayCommand;
+}
+
+/**
+ * The command that starts a Play Protocol game, as studio.json declares it: a plain path inside
+ * the project (resolved by real path before it runs) and its arguments, each passed as one word.
+ */
+export interface PlayCommand {
+  command: string;
+  args: string[];
+  /**
+   * An engine an enabled plugin runs for the game instead (a Godot game's own Godot): the plugin's
+   * declared native runtime, by its id, and its arguments. The studio finds the runtime where the
+   * plugin says it is and starts it in its native-job sandbox with a window and the GPU, which an
+   * engine needs to draw; the command stays for a person to run. Absent when unusable.
+   */
+  engine?: PlayEngine;
+}
+
+/** An engine runtime a plugin declares, by id, and the arguments the studio starts it with. */
+export interface PlayEngine {
+  runtime: string;
+  args: string[];
 }
 
 /** What the served page does with the contract the judge reads — a word, not a sentence. Wire values: never rename one. */
@@ -134,6 +216,11 @@ export interface GameName {
   title: string;
   /** The message named no game (a greeting, a test) or the model gave no name: the title waits for an idea. */
   provisional?: boolean;
+  /**
+   * The engine the person picked is out of usage until a reset (a weekly or monthly cap), in its
+   * own words: its first turn cannot run, so no game is made from this message.
+   */
+  limited?: string;
 }
 
 export interface GameLocation {
@@ -152,12 +239,20 @@ export interface FolderInspection {
   /** Repositories of their own directly inside the picked folder — what keeping it has to answer for. */
   nested: string[];
   /**
-   * What opening the picked folder *itself* would write into it: the starter game when no game
-   * was found, and only the studio's own files when the game is one level down (keeping the
-   * parent never writes a game beside the real one). Empty when the folder is a game of its own
-   * — its own candidate answers that instead.
+   * What opening the picked folder *itself* would write into it: the starter game when the folder
+   * holds nothing of its own, and only Genex's bookkeeping when it holds files of its own and no
+   * web page, including a folder whose game is one level down (keeping the parent never writes a
+   * game beside the real one). Empty when the folder is a game of its own — its own candidate
+   * answers that instead.
    */
   starter: string[];
+  /** The folder holds files of its own and no web page: opening it writes only Genex's bookkeeping. */
+  ownFiles: boolean;
+  /**
+   * Opening the folder itself writes the web starter's missing files: it is a web game by the
+   * starter's stamp in its studio.json, though no page of its own is a candidate.
+   */
+  webStarter: boolean;
 }
 
 export interface ProjectRecent {

@@ -11,14 +11,19 @@ Where it disagrees with this preface, this preface wins.
   and never run `auth`, `tools` or `init`.
 - Skill cards are never copied into the game: no `.claude/skills`, `.agents/skills` or `AGENTS.md`
   is written. The Genex cards Studio carries are this plugin's skills, listed in your brief; read
-  one with `genex__skill {"name":"<skill>"}`.
+  one with `genex__skill {"name":"<skill>"}`. The lane cards the "Use it" section points to are
+  `genex-tool-model`, `genex-tool-character`, `genex-tool-texture`, `genex-tool-audio` and
+  `genex-tool-image`: read the one for a lane before its first call.
 
 ## Commands, as Studio tools
 
 - Generation (`image`, `model`, `model segment|rig|animate`, `texture`, `sfx`, `music`, `voice`,
   `character`, `animations search`) and `wait`: `genex__asset`. Call it with operation `status`
   first; it reports the account, credits and live lanes that `doctor` would. Its description lists
-  the operations; delivered files land in the game, so wire in those local paths.
+  the operations and which provider each lane is; its `options` parameter lists each lane's
+  options. Studio passes `--out-dir` and `--no-wait` itself, and delivered files land in the game,
+  so wire in those local paths. In a Godot game they land in its project (`godot/assets/...`),
+  which the game loads as `res://assets/...`.
 - `doctor`, `budget`, `llm models`, `llm status`, `llm cancel` and `shop list`: `genex__cli`.
   `budget --assets` is not available: Studio's own asset allowance and the user's approval govern
   asset spending.
@@ -35,16 +40,17 @@ Where it disagrees with this preface, this preface wins.
   {"name":"genex-cover"}` first, and never save a frame in `.genex/scratch`.
 - `npm i @genex-ai/multiplayer`: `genex__package {"package":"@genex-ai/multiplayer"}`, and
   `npm i @genex-ai/embed-sdk`: `genex__package {"package":"@genex-ai/embed-sdk"}`. Studio picks
-  the version and the user approves the install.
+  the version and the user approves the install. In a game made from Studio's template it maps
+  Studio's copy in the import map instead, and Studio calls `initEmbed()` for the game.
 - A `genex__cli` call carries the words of the command, its positional argument and its flags by
   name without dashes: `npx genex llm cancel <id>` is
   `genex__cli {"command":"llm cancel","args":"<id>"}`, and `--all` is `"options":{"all":true}`.
 - Any other `npx genex` command is not available in Studio. Say so rather than work around it.
 
-<!-- upstream https://genex.games/SKILL.md v1.36.2 sha256 68977a37e486412655ec2d289084e8b1fcd2e0d93c0d16432eced4d6cffc0f7b -->
+<!-- upstream https://genex.games/SKILL.md v1.36.9 sha256 574d8254b3c98a5396ce75b27f42d6752e9e8b33d1f4caf1fc85256260144e2d -->
 ---
 name: genex
-version: 1.36.2
+version: 1.36.9
 description: >-
   Game-dev asset generation for your agent. Proactively check Genex before
   shipping placeholder assets, hand-rolling programmer art, or telling the user
@@ -89,7 +95,7 @@ The game's folder is the workspace: setup marks the folder you run it in, and ev
 4. If it ends with **"Not approved yet"**, nothing is broken - the user had not finished yet. Run `npx genex auth` to pick up the **same** code. Never restart from scratch, never treat that message as an error.
 5. When it is done, the folder has tool skill cards in every agent workspace it detected (`.claude/skills`, `.codex/skills`, `.cursor/skills`, `.hermes/skills` or `.agents/skills` for OpenClaw), the workspace rules in `AGENTS.md`, and this machine signed in. Nothing was created on the Genex platform and none of the user's files were touched.
 
-This file tracks CLI `1.36.2` (the `version` above). `npx genex --version` equal or newer is fine - the installed CLI carries its own, newer skill cards. Older means your local CLI is behind this file: run `npm i -D @genex-ai/cli-demo@latest` in this folder. `npx genex tools` cannot fix it - an older CLI only reinstalls its own older cards, and in a folder that is already set up it returns before the card step. Any `npx genex` command after the bump re-projects the cards. Re-fetch this file from `https://genex.games/SKILL.md` if a command below no longer exists.
+This file tracks CLI `1.36.9` (the `version` above). `npx genex --version` equal or newer is fine - the installed CLI carries its own, newer skill cards. Older means your local CLI is behind this file: run `npm i -D @genex-ai/cli-demo@latest` in this folder. `npx genex tools` cannot fix it - an older CLI only reinstalls its own older cards, and in a folder that is already set up it returns before the card step. Any `npx genex` command after the bump re-projects the cards. Re-fetch this file from `https://genex.games/SKILL.md` if a command below no longer exists.
 
 ## Never delete or overwrite anything in this folder
 

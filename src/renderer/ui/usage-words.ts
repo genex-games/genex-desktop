@@ -20,6 +20,16 @@ const LIMIT_HIGH = 75;
 /** A reset further off than this is said as a day and time, not a countdown. */
 const COUNTDOWN_MINUTES = 24 * MINUTES_PER_HOUR;
 
+/**
+ * The plans to draw while usage is still being read: each subscription this setup uses, by name,
+ * the main agent's first (its roles keyed by engine id); one unnamed plan when none is known.
+ */
+export function pendingPlans(usedBy: Readonly<Record<string, readonly string[]>>): Array<string | null> {
+  const engines = Object.keys(PLAN_PROVIDERS).filter((engine) => usedBy[engine]?.length);
+  const leadFirst = (engine: string): number => (usedBy[engine]?.includes("planner") ? 0 : 1);
+  return engines.length ? [...engines].sort((a, b) => leadFirst(a) - leadFirst(b)) : [null];
+}
+
 /** "Claude Max plan", "ChatGPT Plus plan", or the brand alone when the plan is not reported. */
 export function planWords(engine: string, plan?: string): string {
   const brand = PLAN_PROVIDERS[engine]?.brand ?? engine;

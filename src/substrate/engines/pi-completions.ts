@@ -110,7 +110,8 @@ function emptyPiUsage() {
 
 /** A pi-ai assistant message, the fields an engine reads. */
 export interface PiAssistant {
-  content: Array<{ type: string; text?: string; id?: string; name?: string; arguments?: unknown }>;
+  /** A thinking part carries its words in `thinking`; text parts in `text`. */
+  content: Array<{ type: string; text?: string; thinking?: string; id?: string; name?: string; arguments?: unknown }>;
   usage?: {
     input?: number;
     output?: number;
@@ -133,7 +134,7 @@ export function fromPiAssistant(
   const toolCalls: NonNullable<Message["tool_calls"]> = [];
   for (const part of assistant.content ?? []) {
     if (part.type === "text") text += part.text ?? "";
-    else if (part.type === "thinking") reasoning += part.text ?? "";
+    else if (part.type === "thinking") reasoning += part.thinking ?? part.text ?? "";
     else if (part.type === "toolCall") {
       // A call the model left unnamed still needs an id no other round repeats: its result is bound by it.
       toolCalls.push({
@@ -229,9 +230,13 @@ export async function drainPiStream(stream: PiStream, request: CompleteRequest, 
   }
 }
 
-/** The HTTP status a stream error names ("429: <body>"), or null when it names none. */
+/**
+ * The HTTP status a stream error names, or null when it names none: "429: <body>", or the OpenAI
+ * client's "401 status code (no body)" for an error body without its `error` field (FastAPI's
+ * `detail`, which TabbyAPI and other local servers answer with).
+ */
 export function streamHttpStatus(message: string): number | null {
-  const http = /^(\d{3}):\s/.exec(message.trim());
+  const http = /^(\d{3})(?::\s|\s+status code\b)/.exec(message.trim());
   return http ? Number(http[1]) : null;
 }
 

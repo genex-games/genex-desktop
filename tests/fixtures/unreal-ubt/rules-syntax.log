@@ -1,0 +1,14 @@
+Setting up bundled DotNet SDK
+/Users/Shared/Epic Games/UE_5.8/Engine/Binaries/ThirdParty/DotNet/10.0/mac-arm64
+Running dotnet Engine/Binaries/DotNET/UnrealBuildTool/UnrealBuildTool.dll GxCheckEditor Mac Development -Project=/Users/me/Games/check/unreal/Gx-Check.uproject -NoMutex
+Log file: /Users/me/Library/Application Support/Epic/UnrealBuildTool/Log.txt
+/Users/me/Games/check/unreal/Source/GxCheck/GxCheck.Build.cs(8,180): error CS1002: ; expected
+Determining max actions to execute in parallel (12 physical cores, 12 logical cores)
+  Executing up to 12 processes, one per physical core
+UbaServer - Listening on 0.0.0.0:1345
+Expecting to find a type to be declared in a target rules named 'GxCheckEditorTarget'.  This type must derive from the 'TargetRules' type defined by UnrealBuildTool.
+
+Result: Failed (RulesError)
+Total execution time: 1.25 seconds
+Trace written to file /Users/me/Library/Application Support/Epic/UnrealBuildTool/Trace.uba with size 1.8kb
+Invalidating makefile for GxCheckEditor (GxCheck.Build.cs modified)

@@ -3,7 +3,7 @@ import type { JSX, KeyboardEvent as ReactKeyboardEvent, ReactNode } from "react"
 import { useRef, useState } from "react";
 import { clamp } from "../../canvas-view.ts";
 import { type IterationNode, type RunGraph as RunGraphModel, thumbShot } from "../../run-graph.ts";
-import { TRY_GLYPH, TRY_WORD } from "../../round-status.ts";
+import { TRY_GLYPH, tryWord } from "../../round-status.ts";
 import { Icon } from "../../ui/icons.tsx";
 import { useRoundStill } from "../run-stills.ts";
 import { capitalise } from "./format.ts";
@@ -200,7 +200,7 @@ export function TryThumb({
   return (
     <button
       type="button"
-      aria-label={`Try ${n}: ${TRY_WORD[node.status]}`}
+      aria-label={`Try ${n}: ${tryWord(node)}`}
       aria-pressed={selected}
       onClick={onSelect}
       className="flex cursor-pointer flex-col items-center gap-1 rounded-[8px] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"

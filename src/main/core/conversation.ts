@@ -29,6 +29,7 @@ import {
   DispatchActionType,
   HarnessCapability,
   HarnessState,
+  MessageOrigin,
   type DispatchAction,
   type ReferenceFrame,
 } from "../../shared/protocol.ts";
@@ -40,6 +41,31 @@ import { settleWithin } from "../app-lifecycle.ts";
 import { threadOr } from "./main-thread.ts";
 import { CapabilityAudience } from "../planning-capabilities.ts";
 import { isQueueMessageId } from "./rewind.ts";
+import {
+  type MentionSources,
+  type MentionTarget,
+  type ResolvedMentions,
+  resolveMentions,
+  tagOf,
+} from "./mention-tags.ts";
+import {
+  type MentionOutcome,
+  type MentionRef,
+  MentionResult,
+  MentionRetry,
+  readMentionRefs,
+} from "../../shared/prompt-mention.ts";
+
+/** A message with no tags. */
+const NO_TAGS: ResolvedMentions = { readRoots: [], context: "", outcomes: [] };
+
+/** Where tags come from when the core has no genex.games: every genex.games tag says it did not arrive. */
+const OFFLINE_SOURCES: MentionSources = {
+  world: () => Promise.reject(new Error("offline")),
+  me: async () => null,
+  clone: () => Promise.reject(new Error("offline")),
+  assetManifest: () => Promise.reject(new Error("offline")),
+};
 
 /** Which build `show_build` and `land_build` mean when the coordinator names none: the run's own. */
 const INTEGRATION_BUILD = "integration";
@@ -85,6 +111,8 @@ const THREAD_TITLE_CHARS = 56;
 
 /** User-facing copy of this module, and what the coordinator reads when a tool call is refused. */
 const MESSAGE = {
+  tagNoGame: "Tags belong to a game's chat",
+  tagRetried: (handle: string) => `@${handle} did not arrive with my last message; it is attached now.`,
   autopilotOutdated:
     "This build of the studio can't run a timed build yet — your brief is saved above, and sending it again once the " +
     "studio has updated itself will start the build. (Its own loop code predates timed builds: the seed's " +
@@ -257,9 +285,10 @@ export class ConversationService {
     this.#x.selfImprovement.touchActivity();
     if (await this.#requestPlanReview(text, options, sentAt)) return;
     const target = await this.#messageTarget(text, options);
+    const tags = await this.#resolveTags(target, options);
     const { extraReads, stills } = target.studioThread
       ? { extraReads: [], stills: options.frames }
-      : await this.#namedPaths(text, target, options.frames);
+      : await this.#namedPaths(text, target, options.frames, tags.readRoots);
     const { sendOptions, resume } =
       !target.studioThread && options.engine
         ? await this.#resumeContractor(target.threadId, options)
@@ -269,7 +298,13 @@ export class ConversationService {
       this.#core.emit(UiEvent.GameChanged, { project: target.project });
     }
     const references = await this.#saveMoodBoard(target.project, sendOptions);
-    const action = this.#userMessageAction(text, target, sendOptions, { resume, extraReads, stills, references });
+    // The agent reads the tags' lines after the person's words; the chat shows the words alone.
+    const action = this.#userMessageAction(text + tags.context, target, sendOptions, {
+      resume,
+      extraReads,
+      stills,
+      references,
+    });
     const refusal = this.#commissionRefusal(sendOptions);
     if (refusal) {
       // The renderer already cleared the composer — the brief must survive in the log, ahead of
@@ -288,6 +323,53 @@ export class ConversationService {
     const messageId = action.type === DispatchActionType.UserMessage ? action.messageId : undefined;
     if (!target.studioThread) this.#x.permissions.notePersonMessage(target.threadId, messageId);
     await this.#core.host.dispatch(action);
+    // After the message, so the chat shows each tag's line under it.
+    if (tags.outcomes.length)
+      await this.#core.append(
+        [customEventData(CustomEvent.MentionTagged, { ...(messageId ? { messageId } : {}), tags: tags.outcomes })],
+        target.threadId,
+      );
+  }
+
+  /**
+   * A failed tag of a sent message, tried again or taken off. Again resolves it as a send would
+   * and, when it now attaches, tells the agent in a line the chat leaves out; either way the
+   * message's result card shows the tag's new result.
+   */
+  async retryMention(threadId: string, messageId: string, ref: MentionRef, action: MentionRetry): Promise<void> {
+    const record = await this.#core.store.getRecord(threadId);
+    const meta = record.metadata as ThreadMeta;
+    const project = meta?.kind === ThreadKind.Game ? meta.project : undefined;
+    if (!project) throw new Error(MESSAGE.tagNoGame);
+    const recordTags = (tags: MentionOutcome[]) =>
+      this.#core.append([customEventData(CustomEvent.MentionTagged, { messageId, tags })], threadId);
+    if (action === MentionRetry.Remove) {
+      await recordTags([{ ...tagOf(ref), result: MentionResult.Removed }]);
+      return;
+    }
+    const target = { threadId, project, newProject: false, studioThread: false };
+    const tags = await this.#resolveTags(target, { mentions: [ref] });
+    await recordTags(tags.outcomes);
+    if (tags.outcomes.every((tag) => tag.result === MentionResult.Unavailable)) return;
+    await this.sendUserMessage(`${MESSAGE.tagRetried(ref.handle)}${tags.context}`, {
+      thread: threadId,
+      origin: MessageOrigin.TagRetry,
+    });
+  }
+
+  /** The message's @ tags made real for its game; none outside a game's chat. */
+  async #resolveTags(target: MessageTarget, options: ComposerSendOptions): Promise<ResolvedMentions> {
+    const refs = readMentionRefs(options.mentions);
+    const project = target.project;
+    if (!refs.length || !project || target.studioThread) return NO_TAGS;
+    const games = await this.#core.games.list();
+    const game = games.find((entry) => entry.name === project);
+    const tagTarget: MentionTarget = {
+      gameDir: this.#core.games.dirFor(project),
+      webGame: !game?.engine,
+      libraryDir: async (name) => (name === project ? null : (games.find((entry) => entry.name === name)?.dir ?? null)),
+    };
+    return resolveMentions(refs, tagTarget, this.#core.options.mentionSources ?? OFFLINE_SOURCES);
   }
 
   /** A game thread whose plan is under review, or that asked for one, sends the message there. */
@@ -394,6 +476,7 @@ export class ConversationService {
     text: string,
     target: MessageTarget,
     frames: ReferenceFrame[] | undefined,
+    taggedRoots: readonly string[] = [],
   ): Promise<{ extraReads: string[]; stills: ReferenceFrame[] | undefined }> {
     const named = await resolveNamedPaths(text, { home: this.#core.games.homeDir });
     const { workspace } = named;
@@ -403,7 +486,7 @@ export class ConversationService {
     if (!project) return { extraReads: [], stills: frames };
     const record = await this.#core.store.getRecord(target.threadId).catch(() => null);
     const meta = (record?.metadata ?? {}) as { extraReads?: string[] };
-    const extraReads = [...new Set([...(meta.extraReads ?? []), ...named.stillRoots])];
+    const extraReads = [...new Set([...(meta.extraReads ?? []), ...named.stillRoots, ...taggedRoots])];
     this.#x.delegation.addReadRoots(project, extraReads);
     // updateThread merges: only the key this changes, so a stale copy never overwrites others.
     if (record && extraReads.length) await this.#core.store.updateThread(target.threadId, { metadata: { extraReads } });

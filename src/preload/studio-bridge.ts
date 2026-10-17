@@ -76,6 +76,8 @@ function threadCalls(bridge: BridgeCalls) {
   return {
     bootstrap: () => invoke("studio:bootstrap"),
     send: (text, options) => invoke("studio:send", { text, ...options }),
+    mentionRetry: (threadId, messageId, tag, action) =>
+      invoke("studio:mentions.retry", { threadId, messageId, tag, action }),
     answerPlan: (threadId, id, approved) => invoke("studio:plan.answer", { threadId, id, approved }),
     cancelTurn: (threadId) => invoke("studio:cancel", { threadId }),
     changeQueuedMessage: (threadId, messageId, operation, text) =>
@@ -84,6 +86,7 @@ function threadCalls(bridge: BridgeCalls) {
       invoke("studio:chat.rewind.preview", { threadId, eventId, messageId }),
     rewindChat: (threadId, eventId, messageId, files) =>
       invoke("studio:chat.rewind", { threadId, eventId, messageId, files }),
+    undoRewind: (threadId, rewindId) => invoke("studio:chat.rewind.undo", { threadId, rewindId }),
     events: (after) => invoke("studio:events", { after }),
     threadEvents: (threadId) => invoke("studio:thread.events", { threadId }),
     chatPage: (threadId, before) => invoke("studio:chat.page", { threadId, before }),
@@ -106,9 +109,15 @@ function gameCalls(bridge: BridgeCalls) {
   const { invoke } = bridge;
   return {
     archiveGame: (project) => invoke("studio:game.archive", { project }),
+    storageSpace: (project) => invoke("studio:storage", project === undefined ? {} : { project }),
+    freeStorage: (project) => invoke("studio:storage.free", project === undefined ? {} : { project }),
+    undoEngineLink: (request) => invoke("studio:game.engine.undo", request),
+    stopJob: (project, jobId) => invoke("studio:jobs.stop", { project, jobId }),
+    openPrivacySettings: (pane) => invoke("studio:app-look.open-settings", { pane }),
     createGame: (title, options) =>
       invoke("studio:game.create", { title, ...(options?.parent === undefined ? {} : { parent: options.parent }) }),
     nameGame: (request) => invoke("studio:game.name", request),
+    makeBackdrop: (request) => invoke("studio:backdrop.make", request),
     pickGameLocation: () => invoke("studio:game.location.pick"),
     chooseGamesRoot: () => invoke("studio:games-root.choose"),
     updateGame: (project, patch) => invoke("studio:game.update", { project, patch }),
@@ -131,7 +140,8 @@ function gameCalls(bridge: BridgeCalls) {
     projectModelRigs: (p) => invoke("studio:game.asset.rigs", p),
     projectAssets: (project) => invoke("studio:game.assets", { project }),
     readProjectAsset: (p) => invoke("studio:game.asset.still", p),
-    installPackages: (project) => invoke("studio:packages.install", { project }),
+    installPackages: (project, options) =>
+      invoke("studio:packages.install", { project, scripts: options?.scripts === true }),
   } satisfies Partial<StudioApi>;
 }
 
@@ -212,6 +222,35 @@ function studioCalls(bridge: BridgeCalls) {
     lookupModel: (model) => invoke("studio:models.lookup", { model }),
     removeModel: (model) => invoke("studio:models.remove", { model }),
     openUrl: (url) => invoke("studio:open-url", { url }),
+    playFeed: (request) => invoke("studio:play.feed", request),
+    playShelves: () => invoke("studio:play.shelves"),
+    playSearch: (query, shelf) => invoke("studio:play.search", { query, shelf }),
+    playCatalog: () => invoke("studio:play.catalog"),
+    playRemix: (slug) => invoke("studio:play.remix", { slug }),
+    playOnline: (slugs) => invoke("studio:play.online", { slugs }),
+    playOpen: (slug) => invoke("studio:play.open", { slug }),
+    playClose: () => invoke("studio:play.close"),
+    playControl: (control, at) => invoke("studio:play.control", { control, at }),
+    playMe: () => invoke("studio:play.me"),
+    playRename: (name) => invoke("studio:play.rename", { name }),
+    playAvatar: (webp) => invoke("studio:play.avatar", { webp }),
+    playProfile: (userId) => invoke("studio:play.profile", { userId }),
+    playFriends: () => invoke("studio:play.friends"),
+    playFriend: (request) => invoke("studio:play.friend", request),
+    playPeople: (query) => invoke("studio:play.people", { query }),
+    playVisibility: (visibility) => invoke("studio:play.visibility", { visibility }),
+    playAvatarStyle: (style) => invoke("studio:play.avatarStyle", { style }),
+    playAvatarVariant: (variant) => invoke("studio:play.avatarVariant", { variant }),
+    playStats: (days) => invoke("studio:play.stats", { days }),
+    playCreators: () => invoke("studio:play.creators"),
+    playCredits: () => invoke("studio:play.credits"),
+    playHandleCheck: (handle) => invoke("studio:play.handle-check", { handle }),
+    playSetHandle: (handle) => invoke("studio:play.handle", { handle }),
+    playShare: (url, at) => invoke("studio:play.share", { url, at }),
+    genexAccount: () => invoke("studio:genex-account.read"),
+    genexSignIn: () => invoke("studio:genex-account.sign-in"),
+    genexCancelSignIn: () => invoke("studio:genex-account.cancel"),
+    genexSignOut: () => invoke("studio:genex-account.sign-out"),
     notify: (note) => invoke("studio:notify", note),
     setBadge: (count) => invoke("studio:badge", { count }),
   } satisfies Partial<StudioApi>;
@@ -232,6 +271,7 @@ function pluginCalls(bridge: BridgeCalls) {
     pluginReview: (id, name, args, project) => invoke("studio:plugins.review", { id, name, args, project }),
     pluginAction: (id, name, args, project, ticket) =>
       invoke("studio:plugins.action", { id, name, args, project, ticket }),
+    pluginChooseFile: (id, request) => invoke("studio:plugins.choose-file", { id, request }),
     genexPublishReview: (project) => invoke("studio:plugins.genex-publish-review", { project }),
     genexPublish: (project, review, title) => invoke("studio:plugins.genex-publish", { project, review, title }),
     pluginsIndex: (refresh) => invoke("studio:plugins.index", { refresh }),
@@ -240,7 +280,14 @@ function pluginCalls(bridge: BridgeCalls) {
     pluginGithubVersions: (repo) => invoke("studio:plugins.github-versions", { repo }),
     pluginUpdate: (id) => invoke("studio:plugins.update", { id }),
     pluginWatch: (id, enabled) => invoke("studio:plugins.watch", { id, enabled }),
-    pluginConsent: (consentId, approved) => invoke("studio:plugins.consent", { consentId, approved }),
+    pluginForgetAllowed: (id) => invoke("studio:plugins.forget-allowed", { id }),
+    pluginConsent: (consentId, approved, always, input) =>
+      invoke("studio:plugins.consent", {
+        consentId,
+        approved,
+        ...(always ? { always } : {}),
+        ...(input !== undefined ? { input } : {}),
+      }),
     permissions: () => invoke("studio:permissions.get"),
     setPermissionMode: (threadId, mode) => invoke("studio:permissions.mode", { threadId, mode }),
     answerPermission: (requestId, answer) => invoke("studio:permissions.answer", { requestId, answer }),
@@ -254,6 +301,7 @@ function pluginCalls(bridge: BridgeCalls) {
     mcpCancelAuthorization: (id) => invoke("studio:mcp.cancel-authorization", { id }),
     mcpDisconnectAccount: (id) => invoke("studio:mcp.disconnect-account", { id }),
     mcpTools: (id) => invoke("studio:mcp.tools", { id }),
+    mcpForgetAlwaysAllowed: (id) => invoke("studio:mcp.forget-always", { id }),
   } satisfies Partial<StudioApi>;
 }
 
@@ -264,8 +312,13 @@ function accountCalls(bridge: BridgeCalls) {
     recheckEngines: (engine) => invoke("studio:engines.recheck", engine ? { engine } : {}),
     // One grammar for both subscriptions: which login, sign me in, forget the studio's account.
     subscriptionSignIn: (opts) => invoke("studio:subscription.signin", opts ?? {}),
-    subscriptionForgetStudioLogin: (engine) =>
-      invoke("studio:subscription.forget-studio-login", engine ? { engine } : {}),
+    subscriptionForgetStudioLogin: (engine, account) =>
+      invoke("studio:subscription.forget-studio-login", {
+        ...(engine ? { engine } : {}),
+        ...(account ? { account } : {}),
+      }),
+    subscriptionAccounts: (engine) => invoke("studio:subscription.accounts", { engine }),
+    subscriptionUseAccount: (engine, account) => invoke("studio:subscription.use-account", { engine, account }),
     claudeLoginState: () => invoke("studio:claude-login.state"),
     claudeLoginCode: (code) => invoke("studio:claude-login.code", { code }),
     claudeLoginOpenBrowser: () => invoke("studio:claude-login.browser"),
@@ -274,6 +327,12 @@ function accountCalls(bridge: BridgeCalls) {
     piSignIn: () => invoke("studio:pi.signin"),
     openRouterKeySave: (key) => invoke("studio:openrouter.key.save", { key }),
     openRouterKeyClear: () => invoke("studio:openrouter.key.clear"),
+    openRouterSignIn: () => invoke("studio:openrouter.signin"),
+    openRouterSignInReopen: () => invoke("studio:openrouter.signin.reopen"),
+    openRouterSignInCancel: () => invoke("studio:openrouter.signin.cancel"),
+    localServerConnect: (url, key) => invoke("studio:local-server.connect", key ? { url, key } : { url }),
+    localServerForget: () => invoke("studio:local-server.forget"),
+    localServerFind: () => invoke("studio:local-server.find"),
     onClaudeLogin: (listener) => subscribe("studio:claude-login", listener),
     codexLoginState: () => invoke("studio:codex-login.state"),
     codexLoginCancel: () => invoke("studio:codex-login.cancel"),
@@ -319,5 +378,6 @@ function previewCalls(bridge: BridgeCalls) {
     liveBehind: (project) => invoke("studio:live.behind", { project }),
     previewState: () => invoke("studio:preview.state"),
     previewLive: () => invoke("studio:preview.live"),
+    previewCoverStill: () => invoke("studio:preview.cover-still"),
   } satisfies Partial<StudioApi>;
 }

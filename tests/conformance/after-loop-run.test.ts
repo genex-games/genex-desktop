@@ -671,7 +671,10 @@ describe("the chat's own session after a finished build, with Loop on (reopen-ru
 
     const untilSatisfied = afterLoopRunNote(finished as never, "codex", { ...grant, hours: null, frameCount: 0 });
     assert.match(untilSatisfied, /\.studio\/bridge\/tool\.mjs reopen_run/);
-    assert.match(untilSatisfied, /until its judges are satisfied, 24 h at most/);
+    assert.match(
+      untilSatisfied,
+      /until what was asked is verified and the art director names no blocker, 24 h at most/,
+    );
     assert.doesNotMatch(untilSatisfied, /still\(s\)/);
     const noStartOver = afterLoopRunNote(finished as never, "claude-code", { ...grant, launchTool: null });
     assert.doesNotMatch(noStartOver, /start over|start_autopilot|ask_user/);

@@ -10,9 +10,11 @@
  * Composed by `StudioCore`; its state stays here.
  */
 import path from "node:path";
-import { rm } from "node:fs/promises";
+import { lstat, rm } from "node:fs/promises";
 import { setTimeout as sleep } from "node:timers/promises";
 import {
+  CHECKPOINT_SKIPPED_FILES_LISTED,
+  type CheckpointSkippedPayload,
   endsChatSessions,
   FilesStay,
   harnessView,
@@ -26,6 +28,12 @@ import {
   rewindRefusalWords,
   RewindRefusal,
   rewindsOf,
+  SkippedBy,
+  type SkippedFile,
+  type UndoRewindResult,
+  UndoRewindRefusal,
+  undoRewindRefusal,
+  undoRewindRefusalWords,
   withoutRewound,
 } from "../../shared/chat-rewind.ts";
 import type { PlanReview } from "../../shared/composer.ts";
@@ -37,15 +45,29 @@ import { messageQueueState } from "../../shared/message-queue.ts";
 import { DispatchActionType, HarnessCapability, HarnessState, type ReferenceFrame } from "../../shared/protocol.ts";
 import { RunState } from "../../shared/run-state.ts";
 import { latestRun } from "../../shared/coordinator.ts";
+import type { PlacedRule } from "../../shared/project-workspace.ts";
 import { UiEvent } from "../../shared/ui-events.ts";
 import { listDirs, pathExists } from "../../substrate/fsx.ts";
 import { isUuid } from "../../substrate/ids.ts";
 import { toolchain } from "../../substrate/toolchain.ts";
-import { CheckpointPhase, ChatCheckpoints } from "../chat-checkpoints.ts";
+import {
+  CHECKPOINT_CHANGE_MAX_BYTES,
+  CHECKPOINT_FILE_MAX_BYTES,
+  CheckpointPhase,
+  ChatCheckpoints,
+} from "../chat-checkpoints.ts";
 import type { CoreInternals, StudioCore } from "../studio-core.ts";
+import { noteUnsaved } from "./unsaved-files.ts";
+import { HookBlockedError } from "./plugin-hooks.ts";
+import { HookHold } from "../../shared/plugin-hooks.ts";
 
 /** How long a message's answer waits for the game checkpoint before going ahead without it. */
-const CHAT_CHECKPOINT_WAIT_MS = 30 * SECOND_MS;
+export const CHAT_CHECKPOINT_WAIT_MS = 30 * SECOND_MS;
+/**
+ * What a message's checkpoint keeps of its wait for the snapshot itself: the engine's steps that
+ * save first (`PluginHook.messages`) end this long before the wait does.
+ */
+export const MESSAGE_SNAPSHOT_ROOM_MS = 5 * SECOND_MS;
 /** How long a rewind waits for the harness to take back the mood board; it never waits for more. */
 const REWIND_NOTICE_TIMEOUT_MS = 3 * SECOND_MS;
 /**
@@ -64,6 +86,35 @@ const REFERENCE_FILE = /^references\/[^/]+$/;
 /** The artifacts a run coordinator keeps its session in, one per run. */
 const COORDINATOR_ARTIFACT_PREFIX = "coordinator_";
 
+/**
+ * What the person reads when Genex itself kept their Rewind from the game's app (its lock), by the
+ * hold and the app's label: never the words written for agents. Their own action never waits for
+ * them or the plan, so another holder at work there is what holds it in practice.
+ */
+const REWIND_HELD = {
+  [HookHold.Busy]: (app: string) =>
+    `Something else is working in ${app} now, so nothing was rewound. Rewind again once it's done.`,
+  [HookHold.PersonFirst]: (app: string) =>
+    `You were using ${app}, so nothing was rewound. Rewind again once you're done there.`,
+  [HookHold.CantTell]: (app: string) =>
+    `Genex couldn't tell whether ${app} was free, so nothing was rewound. Rewind again in a moment.`,
+  [HookHold.Plan]: () => "The chat is in Plan mode, so nothing was rewound.",
+} as const satisfies Record<HookHold, (app: string) => string>;
+
+/** The same holds, when they kept the newer version a rewind replaced from coming back. */
+const UNDO_HELD = {
+  [HookHold.Busy]: (app: string) =>
+    `Something else is working in ${app} now, so the newer version didn't come back. Try again once it's done.`,
+  [HookHold.PersonFirst]: (app: string) =>
+    `You were using ${app}, so the newer version didn't come back. Try again once you're done there.`,
+  [HookHold.CantTell]: (app: string) =>
+    `Genex couldn't tell whether ${app} was free, so the newer version didn't come back. Try again in a moment.`,
+  [HookHold.Plan]: () => "The chat is in Plan mode, so the newer version didn't come back.",
+} as const satisfies Record<HookHold, (app: string) => string>;
+
+/** The app a hold names when its lock gave no label. */
+const THE_APP = "the game's app";
+
 const MESSAGE = {
   WaitForRewind: "Wait for the rewind to finish, then try again.",
   WaitToSend: "Wait for the rewind to finish, then send it again.",
@@ -77,6 +128,12 @@ const MESSAGE = {
     `[core] the game checkpoint before ${messageId} took too long; that message can rewind the chat, not its files`,
   checkpointFailed: (phase: CheckpointPhase, messageId: string, err: unknown) =>
     `[core] no game checkpoint ${phase} ${messageId}: ${errorMessage(err).slice(0, LOG_DETAIL_CHARS)}`,
+  stepsFailed: (messageId: string, err: unknown) =>
+    `[core] the engine steps before ${messageId} failed; its files are still saved: ${errorMessage(err).slice(0, LOG_DETAIL_CHARS)}`,
+  rulesFailed: (err: unknown) =>
+    `[core] a game checkpoint went on without the folder's ignore rules: ${errorMessage(err).slice(0, LOG_DETAIL_CHARS)}`,
+  skippedNotReported: (threadId: string, err: unknown) =>
+    `[core] files too large to save in ${threadId} could not be reported: ${errorMessage(err).slice(0, LOG_DETAIL_CHARS)}`,
   putBackFailed: (err: unknown) => `[core] rewind could not put the game files back: ${errorMessage(err)}`,
   tidyFailed: (threadId: string, what: string, err: unknown) =>
     `[core] after rewinding ${threadId}, ${what} failed: ${errorMessage(err)}`,
@@ -113,10 +170,22 @@ interface RemainingAction {
   eventId: string;
   action: RewoundAction;
 }
-/** Game files a rewind put back, and the saved copy that undoes it. */
+/** Game files a rewind put back, the saved copy that undoes it (and its id), and files too large to put back. */
 interface RestoredFiles {
   files: number;
   saved: string;
+  rewindId: string;
+  stayed?: string[];
+}
+/** Who left files too large to save, for the chat's line: a message's checkpoint, or a rewind. */
+type SkippedReport = Required<Pick<CheckpointSkippedPayload, "project" | "messageId" | "by">>;
+
+/** Each file with its size now, largest first (0 for one already gone); links are never followed. */
+async function sizedFiles(dir: string, files: readonly string[]): Promise<SkippedFile[]> {
+  const sized = await Promise.all(
+    files.map(async (file) => ({ file, bytes: (await lstat(path.join(dir, file)).catch(() => null))?.size ?? 0 })),
+  );
+  return sized.sort((a, b) => b.bytes - a.bytes || a.file.localeCompare(b.file));
 }
 /** One rewind as asked for and first planned. */
 interface RewindRequest {
@@ -179,8 +248,13 @@ function withdrawnActions(rows: readonly EventEnvelope[], eventId: string): Rewo
     .map(actionOf);
 }
 
+/** A rewind that put files back offers to bring the newer version back by its saved copy's id. */
+const undoOf = (restored: RestoredFiles | null): string | null =>
+  restored && restored.files > 0 ? restored.rewindId : null;
+
 /** What the composer gets back to offer the message (and its waiting follow-ups) again. */
 function rewindResult(first: PlannedRewind, messageId: string, restored: RestoredFiles | null): RewindResult {
+  const rewindId = undoOf(restored);
   return {
     text: [first.text, ...first.held.map((held) => held.text)].filter((text) => text.trim()).join("\n\n"),
     messageId,
@@ -190,6 +264,7 @@ function rewindResult(first: PlannedRewind, messageId: string, restored: Restore
     held: first.held
       .filter((held) => held.pickedImages > 0)
       .map((held) => ({ messageId: held.messageId, pickedImages: held.pickedImages })),
+    ...(rewindId ? { undo: { rewindId } } : {}),
   };
 }
 
@@ -222,6 +297,8 @@ export class ChatRewindService {
   readonly #inFlight = new Map<string, Set<Promise<void>>>();
   /** Per chat, the game checkpoint its next answer waits for (bounded; it never fails the answer). */
   readonly #checkpointsBefore = new Map<string, Promise<void>>();
+  /** Per chat, the files too large to save its last report named (sorted, one per line). */
+  readonly #reportedSkips = new Map<string, string>();
   #checkpoints?: ChatCheckpoints;
 
   constructor(core: StudioCore, x: CoreInternals) {
@@ -234,8 +311,20 @@ export class ChatRewindService {
     this.#checkpoints ??= new ChatCheckpoints(
       path.join(this.#core.layout.scratch, "chat-checkpoints"),
       async () => (await toolchain()).path,
+      // The folder's rules for what it holds now, topped up first (one walk per checkpoint).
+      { neverCaptured: (dir) => this.#rules(dir) },
     );
     return this.#checkpoints;
+  }
+
+  /** What a game folder's rules leave out of its checkpoints; none, logged, when they cannot be read. */
+  async #rules(dir: string): Promise<PlacedRule[]> {
+    try {
+      return await this.#core.games.ensureWorkspaceRules(dir);
+    } catch (err) {
+      this.#log(MESSAGE.rulesFailed(err));
+      return [];
+    }
   }
 
   #log(line: string): void {
@@ -348,8 +437,104 @@ export class ChatRewindService {
     )
       return;
     const before = phase === CheckpointPhase.Before;
+    await this.#saveEngineFirst(dir, meta.project, { threadId, messageId, phase }, deadline);
     const taken = await this.checkpoints.take(dir, threadId, messageId, phase, before ? deadline : undefined);
-    if (!taken) this.#log(MESSAGE.checkpointLate(messageId));
+    if (!taken) {
+      this.#log(MESSAGE.checkpointLate(messageId));
+      return;
+    }
+    await this.#reportCheckpointSkips(threadId, dir, taken, {
+      project: meta.project,
+      messageId,
+      by: SkippedBy.Checkpoint,
+    });
+  }
+
+  /**
+   * Before each of a message's checkpoints, the one before its answer and the one after, the
+   * game's engine saves what it holds (its steps that ask to run for each message), so what an
+   * answer changed only in the engine lands inside its own pair and a Rewind brings it back too.
+   * They end before the snapshot's own room in the message's wait; whatever they answer, or if
+   * they fail, the folder is saved next.
+   */
+  async #saveEngineFirst(
+    dir: string,
+    project: string,
+    at: { threadId: string; messageId: string; phase: CheckpointPhase },
+    deadline: number,
+  ) {
+    const { threadId, messageId, phase } = at;
+    try {
+      // A message answered again after a restart keeps its first checkpoint: nothing to save for it.
+      if (await this.checkpoints.has(dir, threadId, messageId, phase)) return;
+      await this.#x.hooks.prepareMessageCheckpoint({
+        project,
+        threadId,
+        deadline: deadline - MESSAGE_SNAPSHOT_ROOM_MS,
+      });
+    } catch (err) {
+      this.#log(MESSAGE.stepsFailed(messageId, err));
+    }
+  }
+
+  /**
+   * A checkpoint that left files out for their size says so once per new set: the chat gets a line
+   * and the thread's next delegated session is told. A report that fails is logged, never more.
+   */
+  async #reportCheckpointSkips(threadId: string, dir: string, commit: string, report: SkippedReport): Promise<void> {
+    try {
+      const { skipped } = await this.checkpoints.leftOut(dir, commit);
+      const set = [...skipped].sort().join("\n");
+      const reported = this.#reportedSkips.get(threadId);
+      if (set === (reported ?? "")) return;
+      if (!skipped.length) {
+        this.#reportedSkips.delete(threadId);
+        return;
+      }
+      // Claimed before the report's awaits, so a checkpoint right behind it is not told twice.
+      this.#reportedSkips.set(threadId, set);
+      await this.#reportSkipped(threadId, dir, skipped, report).catch((err: unknown) => {
+        if (this.#reportedSkips.get(threadId) === set) this.#reportedSkips.delete(threadId);
+        throw err;
+      });
+    } catch (err) {
+      this.#log(MESSAGE.skippedNotReported(threadId, err));
+    }
+  }
+
+  /**
+   * Changed files a rewind left as they are for their size, reported like a checkpoint's: those a
+   * restore held back, or, when only the chat went back, every changed file if all were too large.
+   */
+  async #reportLeftTooLarge(threadId: string, project: string, applied: AppliedRewind): Promise<void> {
+    const messageId = applied.planned.rewind.messageId;
+    const dir = this.#core.games.dirFor(project);
+    const stayed = applied.restored ? (applied.restored.stayed ?? []) : await this.#allTooLarge(threadId, dir, applied);
+    if (!stayed.length) return;
+    await this.#reportSkipped(threadId, dir, stayed, { project, messageId, by: SkippedBy.Rewind });
+  }
+
+  /** The changed files, when every one was too large to save and the checkpoint could have been asked. */
+  async #allTooLarge(threadId: string, dir: string, applied: AppliedRewind): Promise<string[]> {
+    if (filesStay(applied.planned)) return [];
+    const plan = await this.checkpoints.plan(dir, threadId, applied.planned.rewind.messageId);
+    const tooLarge = plan.state === "unavailable" && plan.reason === FilesStay.TooLarge;
+    return tooLarge ? (plan.tooLargeFiles ?? []) : [];
+  }
+
+  /** Files too large to save, with their sizes: noted for the lead, and a line in the chat. */
+  async #reportSkipped(threadId: string, dir: string, files: readonly string[], report: SkippedReport): Promise<void> {
+    const sized = await sizedFiles(dir, files);
+    noteUnsaved(this.#x.unsavedFiles, threadId, sized);
+    const listed = sized.slice(0, CHECKPOINT_SKIPPED_FILES_LISTED);
+    const record = customEventData(CustomEvent.CheckpointSkipped, {
+      ...report,
+      files: listed,
+      ...(sized.length > listed.length ? { total: sized.length } : {}),
+      fileLimitBytes: CHECKPOINT_FILE_MAX_BYTES,
+      changeLimitBytes: CHECKPOINT_CHANGE_MAX_BYTES,
+    });
+    await this.#core.append([record], threadId);
   }
 
   // ── the conversation as it reads ─────────────────────────────────────────────────────────
@@ -583,9 +768,13 @@ export class ChatRewindService {
     await this.#core.host.dispatch({ type: DispatchActionType.QueueResume, threadId });
   }
 
-  /** The build is still closing: running in the log, held by the harness, or its work still in flight. */
+  /**
+   * The build is still closing: running in the log, held by the harness, its work still in flight,
+   * or its jobs not yet ended (so their ends are in the log the rewind reads, and leave with it).
+   */
   async #stillStopping(threadId: string, project: string | null, runId: string): Promise<boolean> {
-    if (this.#x.activeRunIds.has(runId) || this.#chatBusy(threadId, project)) return true;
+    const runClosing = this.#x.activeRunIds.has(runId) || this.#x.runJobStops.has(runId);
+    if (runClosing || this.#chatBusy(threadId, project)) return true;
     return (await this.#runningBuild(threadId)) !== null;
   }
 
@@ -604,8 +793,41 @@ export class ChatRewindService {
     return this.#core.host.dispatch({ type: DispatchActionType.QueueMessage, threadId, messageId, operation });
   }
 
-  /** Files first, then the conversation. Nothing half-done: a failure puts the files back. */
+  /**
+   * Files first, then the conversation. Nothing half-done: a failure puts the files back. The files
+   * change between the game's plugins' restore steps (an editor saved and closed before, opened
+   * after), the person's own: they never wait for the person or the plan, and a step's block keeps
+   * the files and fails the rewind with its reason.
+   */
   async #apply(request: RewindRequest): Promise<AppliedRewind> {
+    const project = request.meta?.project;
+    if (!(request.files && request.dir && project)) return this.#applyFiles(request);
+    return this.#forPerson(project, request.threadId, REWIND_HELD, () => this.#applyFiles(request));
+  }
+
+  /**
+   * The person's own change to the game files, between the game's plugins' restore steps: they
+   * never wait for the person or the plan. Genex's own hold is worded from its type and label for
+   * the person (`held`); a step's own block keeps its reason.
+   */
+  async #forPerson<T>(
+    project: string,
+    threadId: string,
+    held: Record<HookHold, (app: string) => string>,
+    run: () => Promise<T>,
+  ): Promise<T> {
+    try {
+      return await this.#x.hooks.restoreWithHooks(project, run, { forPerson: true, threadId });
+    } catch (error) {
+      if (error instanceof HookBlockedError && error.hold) {
+        const detail = { hold: error.hold, ...(error.label ? { label: error.label } : {}) };
+        throw new HookBlockedError(held[error.hold](error.label ?? THE_APP), detail);
+      }
+      throw error;
+    }
+  }
+
+  async #applyFiles(request: RewindRequest): Promise<AppliedRewind> {
     const { dir } = request;
     let restored: RestoredFiles | null = null;
     try {
@@ -687,11 +909,17 @@ export class ChatRewindService {
         (err: unknown) => this.#log(MESSAGE.tidyFailed(threadId, what, err)),
       );
     await tidy("clearing coordinator sessions", () => this.#clearCoordinatorSessions(threadId));
+    const rewindId = undoOf(applied.restored);
     const marker = customEventData(CustomEvent.ConversationRewound, {
       ...applied.planned.rewind,
       files: applied.restored?.files ?? null,
+      ...(rewindId ? { rewindId } : {}),
     });
     await tidy("recording the rewind", () => this.#core.append([marker], threadId));
+    if (meta?.project) {
+      const project = meta.project;
+      await tidy("reporting files too large to put back", () => this.#reportLeftTooLarge(threadId, project, applied));
+    }
     // Rebuilt now, so the chat reloading after the marker gets it at once.
     await tidy("rebuilding the chat state", () => this.#core.store.chatState(threadId));
     // The harness keeps the Loop mood board the remaining messages gave it (best effort: the
@@ -709,6 +937,57 @@ export class ChatRewindService {
     }
     this.#core.emit(UiEvent.ThreadUpdated, { threadId, project });
     this.#core.emit(UiEvent.ThreadRewound, { threadId });
+  }
+
+  // ── bringing back the newer version ──────────────────────────────────────────────────────
+  /**
+   * Bring back the game files the chat's newest rewind replaced, as they were just before it,
+   * between the game's restore steps (so an engine reloads them too); the conversation stays
+   * rewound. Offered once, and only until a message is sent after that rewind
+   * (`undoRewindRefusal`). Held as a rewind is: no message is taken meanwhile.
+   */
+  async undo(threadId: string, rewindId: string): Promise<UndoRewindResult> {
+    if (this.#rewinding.has(threadId)) throw new Error(MESSAGE.AlreadyRewinding);
+    this.#rewinding.add(threadId);
+    try {
+      return await this.#undoOnce(threadId, rewindId);
+    } finally {
+      this.#rewinding.delete(threadId);
+    }
+  }
+
+  async #undoOnce(threadId: string, rewindId: string): Promise<UndoRewindResult> {
+    const meta = await this.#meta(threadId);
+    if (meta?.kind !== ThreadKind.Game || !meta.project) throw new Error(MESSAGE.OnlyGameChat);
+    const project = meta.project;
+    const refusal = undoRewindRefusal(await this.#core.store.listEvents(threadId), rewindId);
+    if (refusal) throw new Error(undoRewindRefusalWords(refusal));
+    if (this.#chatBusy(threadId, project) || (await this.#runningBuild(threadId))) {
+      throw new Error(undoRewindRefusalWords(UndoRewindRefusal.Busy));
+    }
+    const dir = this.#core.games.dirFor(project);
+    await this.#core.assertProjectAllowed(dir);
+    const files = await this.#forPerson(project, threadId, UNDO_HELD, () => this.#bringBack(threadId, dir, rewindId));
+    void this.#x.previews.offerLive({ project, root: null }).catch(() => {});
+    this.#core.emit(UiEvent.GameChanged, { project });
+    this.#core.emit(UiEvent.ThreadUpdated, { threadId, project });
+    return { files };
+  }
+
+  /**
+   * The files back, then the chat's record of it (which ends the offer). Nothing half-done: when
+   * the record cannot be written, the files go back to how the undo found them.
+   */
+  async #bringBack(threadId: string, dir: string, rewindId: string): Promise<number> {
+    const restored = await this.checkpoints.restoreSaved(dir, threadId, rewindId);
+    const record = customEventData(CustomEvent.ConversationRewindUndone, { rewindId, files: restored.files });
+    try {
+      await this.#core.append([record], threadId);
+    } catch (err) {
+      await this.checkpoints.putBack(dir, restored.saved).catch((e) => this.#log(MESSAGE.putBackFailed(e)));
+      throw err;
+    }
+    return restored.files;
   }
 
   /** A run coordinator's saved session remembers the withdrawn turns: the next one starts fresh. */

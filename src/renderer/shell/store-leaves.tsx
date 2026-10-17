@@ -15,10 +15,14 @@ export function StagePreview(props: Omit<ComponentProps<typeof PreviewPanel>, "p
   return <PreviewPanel {...props} plugins={plugins} />;
 }
 
-/** The Plugins room, reading the plugin list itself. */
-export function PluginsRoom(props: Omit<ComponentProps<typeof PluginsPanel>, "plugins">): JSX.Element {
+/** The Plugins room, reading the plugin list, the index and Update plugins' run itself. */
+export function PluginsRoom(
+  props: Omit<ComponentProps<typeof PluginsPanel>, "plugins" | "index" | "updating">,
+): JSX.Element {
   const plugins = usePlugins((s) => s.list);
-  return <PluginsPanel {...props} plugins={plugins} />;
+  const index = usePlugins((s) => s.index);
+  const updating = usePlugins((s) => s.updating);
+  return <PluginsPanel {...props} plugins={plugins} index={index} updating={updating} />;
 }
 
 /** The toast stack, reading the toasts itself: a toast coming or going re-renders only the stack. */

@@ -1,28 +1,58 @@
 import { consentAudience, priorConsentDecline } from "./consent-audience.ts";
+import { STUDIO_CONSENT_NAMES, type StudioConsentSource } from "../../shared/plugins.ts";
 /**
  * Plugin and connector tools as agents call them: the consent a confirmed tool waits for, the
  * call itself with its durable record, and the MCP servers a plugin declares. Composed by
  * `StudioCore`; its state stays in the core.
  */
 import { PluginConsentDeclined, type PluginMcpLaunch } from "../../substrate/plugins/registry.ts";
+import { PluginCallCutOff, PluginCallNotSent } from "../../substrate/plugins/process.ts";
 import { containedReal } from "../../substrate/paths.ts";
 import { finishedPayload, roleOf, startedPayload } from "../plugin-activity.ts";
 import type { PluginToolStartedPayload } from "../../shared/game-assets.ts";
 import {
+  CallCutOff,
+  CONFIRMATION_INPUT_MAX_CHARS,
+  confirmationInputValue,
   type PluginBinding,
+  PluginCallBlocker,
   type PluginConsentBy,
   type PluginConsentEvent,
   type PluginInfo,
+  type PluginManifest,
+  type PluginManifestTool,
   type PluginMcpServer,
   PLUGIN_SKILL_TOOL,
   PluginSourceKind,
   type PluginTool,
+  PluginToolAudience,
 } from "../../shared/plugins.ts";
 import type { McpPluginServer } from "../../substrate/mcp/registry.ts";
-import type { McpLaunch } from "../../substrate/mcp/client.ts";
+import { ConnectorCallError, type McpLaunch } from "../../substrate/mcp/client.ts";
 import { secretKey } from "../../substrate/mcp/store.ts";
 import { genexTelemetryEnv } from "../../substrate/genex-telemetry.ts";
-import { type ConnectorToolEvent, McpHealth, type McpChange } from "../../shared/mcp.ts";
+import { windowsHomeEnv } from "../../substrate/child-env.ts";
+import { type ConnectorCall, type ConnectorToolEvent, McpHealth, type McpChange } from "../../shared/mcp.ts";
+import { connectorCallFields, keepCaptures } from "./connector-record.ts";
+import { noteCutOff } from "./cut-off-calls.ts";
+import { closeAssetCall, type OpenedCall, openAssetCall } from "./asset-calls.ts";
+import { type CallMaking, callMaking, genexCallMaking } from "../../shared/asset-making.ts";
+import { GENEX_ASSET_TOOL, GENEX_PLUGIN_ID } from "../../shared/genex.ts";
+import { HOLD_OF_REFUSAL, isLockRefused, type LockRefused, PERSON_FIRST_ASK_MS } from "./plugin-locks.ts";
+import { HOOK_CALL_MS, HOOK_LOCK_WAIT_MS } from "./plugin-hooks.ts";
+import { EMPTY_HOOK_REPORT, HookEvent, type HookReport } from "../../shared/plugin-hooks.ts";
+import { BRIDGE_TOOL_DEADLINE_MS } from "../../substrate/engines/studio-bridge.ts";
+import { GenexStudioTool } from "./genex-cli-prompts.ts";
+import { type RunCreditCap, RunCreditLedger } from "./run-credits.ts";
+import { assertPublishable } from "./genex-publish.ts";
+import {
+  afterKindChange,
+  beforeKindChange,
+  isRefused,
+  type KindChange,
+  type KindChangeRefused,
+  madeBy,
+} from "./kind-change.ts";
 import path from "node:path";
 import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
@@ -34,11 +64,32 @@ import type { LiveToolResult } from "../../substrate/engines/types.ts";
 import type { CoreInternals, StudioCore } from "../studio-core.ts";
 import { errorMessage } from "../../shared/errors.ts";
 import { CustomEvent, customEventData } from "../../shared/custom-events.ts";
-import { MINUTE_MS } from "../../shared/duration.ts";
+import { MINUTE_MS, SECOND_MS } from "../../shared/duration.ts";
 import { UiEvent } from "../../shared/ui-events.ts";
+import { PermissionMode } from "../../shared/permissions.ts";
+import type { PluginConsentRequest } from "../plugin-consent.ts";
 
 /** Nine minutes: under the Codex bridge's 600 s tool ceiling, so a slow answer still reaches the engine as "declined". */
 export const CONSENT_TIMEOUT_MS = 9 * MINUTE_MS;
+
+/** What an agent's call leaves of the engine bridge's deadline for the trip there and back. */
+const AGENT_CALL_TRIP_MS = 5 * SECOND_MS;
+
+/**
+ * How long one agent's call may take from when Genex has it to its answer, its card, its plugin's
+ * steps around it, its wait for its locks and the call itself together: within the engine bridge's
+ * deadline (`BRIDGE_TOOL_DEADLINE_MS`), so the agent always reads an answer.
+ */
+export const AGENT_CALL_MS = BRIDGE_TOOL_DEADLINE_MS - AGENT_CALL_TRIP_MS;
+
+/**
+ * What a call keeps of its time for its plugin's steps after it (`tool.after`), when its plugin has
+ * any for the game: their lock wait, one short ask and their limit.
+ */
+const AFTER_STEPS_MS = HOOK_LOCK_WAIT_MS[HookEvent.ToolAfter] + PERSON_FIRST_ASK_MS + HOOK_CALL_MS[HookEvent.ToolAfter];
+
+/** The least time a call with a deadline is started with: with less left, it does not run at all. */
+const CALL_FLOOR_MS = PERSON_FIRST_ASK_MS;
 
 /** The consent card shows 120 characters of the arguments; the thread keeps this much of them, forever. */
 export const CONSENT_ARGS_MAX = 2000;
@@ -64,19 +115,93 @@ export const PLUGIN_MCP_SHARED = "_shared";
 const MESSAGE = {
   exportConfirmation: "Review the files that will be uploaded. Approve only if this staged copy is ready to share.",
   connectorConversation: "Connector calls require a game conversation for consent",
-  connectorConfirmation: "Allow this connector action? It may read or change data in the connected service.",
+  connectorConfirmation: (name: string) => `Let the agent use ${name}?`,
+  localConnectorConfirmation: (plugin: string, tool: string) =>
+    `${plugin} was loaded from a folder on this Mac and runs with your access. Let it run ${tool}?`,
   unlockFirst: "Unlock this plugin's account first.",
   setSettingFirst: (key: string) => `Set "${key}" in this plugin's settings first.`,
   bundledOnly: "Only the bundled plugin may start a program Studio ships",
   inPlan:
     "The chat is in Plan mode, so this action did not run: plugin and connector actions wait until the plan is approved. Put it in your plan instead.",
+  unknownTool: (name: string) => `Unknown tool: ${name}`,
+  outOfTime:
+    "This call ran out of the time one call may take, so whether it took effect is unknown. Look before you repeat it.",
+  tooLate:
+    "This call did not run: too little of the time one call may take was left when its turn came (its card was answered late). Nothing changed, so it can be called again.",
 } as const;
 
-/** What a plugin call the chat's Plan mode held back answers the agent with. */
-const PLAN_BLOCKER = "plan_mode";
+/** The answer, never an error, of a plugin call the chat's Plan mode held back. */
+const PLAN_ANSWER = { consent: "declined", blocker: PluginCallBlocker.PlanMode, message: MESSAGE.inPlan } as const;
 
-/** The plugin whose MCP server is Studio's own Genex CLI, seeded with a tools workspace. */
-const GENEX_PLUGIN_ID = "genex";
+/**
+ * The answer, never an error, of a plugin call whose lock was not given in time: like a declined
+ * consent. `hold` is Genex's typed hold, which the harness words the person's line from.
+ */
+export const lockAnswer = (refused: LockRefused) =>
+  ({
+    consent: "declined",
+    blocker: PluginCallBlocker.Lock,
+    lock: refused.label,
+    reason: refused.code,
+    hold: HOLD_OF_REFUSAL[refused.code],
+    message: refused.message,
+  }) as const;
+
+/** The answer, never an error, of an agent's call the person declined or whose lock was not given; null for any other failure. */
+function declinedAnswer(err: unknown): object | null {
+  if (isLockRefused(err)) return lockAnswer(err);
+  if (!(err instanceof PluginConsentDeclined)) return null;
+  return {
+    consent: "declined",
+    blocker: "approval_required",
+    by: err.by,
+    message: CONSENT_DECLINED_MESSAGES[err.by],
+  };
+}
+
+/** An agent's call its plugin's own `tool.before` step blocked: the block's reason is its answer. */
+class ToolMomentBlocked extends Error {
+  readonly reason: string;
+  constructor(reason: string) {
+    super(reason);
+    this.name = "ToolMomentBlocked";
+    this.reason = reason;
+  }
+}
+
+/** An agent's call that did not run: too little of its time was left to start it (`MESSAGE.tooLate`). */
+class NotRunInTime extends Error {
+  constructor() {
+    super(MESSAGE.tooLate);
+    this.name = "NotRunInTime";
+  }
+}
+
+/**
+ * The answer, never an error, of an agent's call that did not run: its plugin's `tool.before` block,
+ * too little of its time left, a declined card or a lock not given; null for any other failure.
+ */
+function notRunAnswer(err: unknown): object | null {
+  if (err instanceof ToolMomentBlocked) return { blocked: err.reason };
+  if (err instanceof NotRunInTime) return { notRun: true, message: err.message };
+  return declinedAnswer(err);
+}
+
+/** Nothing to let go: a call that needs no lock. */
+const NO_RELEASE = (): void => {};
+
+/**
+ * How long a `tool.*` moment may wait for its locks and run its steps within `room`, what is left
+ * of its call's time for it: its own wait and limit, less when that is all there is.
+ */
+function momentBudget(
+  on: typeof HookEvent.ToolBefore | typeof HookEvent.ToolAfter,
+  room: number,
+): { waitMs: number; limitMs: number } {
+  const limitMs = Math.max(0, Math.min(HOOK_CALL_MS[on], room - PERSON_FIRST_ASK_MS));
+  const waitMs = Math.max(0, Math.min(HOOK_LOCK_WAIT_MS[on], room - PERSON_FIRST_ASK_MS - limitMs));
+  return { waitMs, limitMs };
+}
 
 /** A manifest env source (`PluginMcpEnvValue`): its prefix, and what follows it. */
 const ENV_SOURCE = {
@@ -91,6 +216,19 @@ export interface PluginCallContext {
   engine: string;
   selfCapture?: { runId?: string; facetId?: string; iteration?: number } | null;
   director?: { runId?: string } | null;
+  /** A run's sub-agent: its calls are recorded under its run, on its own part (the agent id). */
+  attribution?: { runId: string; agentId: string } | null;
+  /** The run's Genex credit cap its paid calls count against (`run-credits.ts`); none without one. */
+  credits?: RunCreditCap | null;
+  /** Who is calling: the harness's own step, or an agent (absent). A tool kept for the harness runs only for the harness. */
+  caller?: PluginToolAudience;
+  /** A harness step that writes (a chat's checkpoint, a run's save point or editor change): Plan mode holds it back. */
+  checkpoint?: boolean;
+  /**
+   * The worker the call is made by (`workerHolder`): it passes the locks that worker holds for its
+   * whole life (an in-place writer's), still giving way to the person. The lead's calls carry none.
+   */
+  holder?: string;
   /**
    * A build's lead's call, the chat's main agent's: its consent card outlives the chat's turns, as
    * its tool permission cards do, and is asked each time, never answered by an earlier decline in
@@ -99,16 +237,82 @@ export interface PluginCallContext {
   lead?: boolean;
 }
 
+/** The name of a consent card the studio itself asks with, or null for a plugin's. */
+function studioConsentName(source: string): string | null {
+  return Object.hasOwn(STUDIO_CONSENT_NAMES, source) ? STUDIO_CONSENT_NAMES[source as StudioConsentSource] : null;
+}
+
+/** How a connector call is made, beyond its name, arguments and game. */
+export interface ConnectorCallOptions {
+  /** A build's lead's call: its card and the call outlive the chat's turns, ending with its own session. */
+  outlivesTurn?: boolean;
+  /**
+   * Whether the run the calling session works for covers this call with its own consent, so no card
+   * is shown: the Unreal Loop's lead calling its game's engine connector (the host's
+   * delegation decides, `DelegationService`). Asked only when Plan mode, a saved "always allow" and
+   * Bypass have not settled the call; Plan mode always refuses first.
+   */
+  runConsent?: () => Promise<boolean>;
+  /**
+   * The run the calling session works for (a run's worker or sub-agent, the Unreal Loop's lead):
+   * its call answers to the Plan mode and Bypass of the chat that run was started in, not to the
+   * thread the session reports on.
+   */
+  runId?: string;
+  /** The worker the call is made by, as `PluginCallContext.holder`. */
+  holder?: string;
+  /** The harness itself made the call (`mcp.invoke`): its end, planned or not, cuts the call off. */
+  byHarness?: boolean;
+}
+
+/**
+ * What a plugin tool call makes, stamped on its record: Genex's asset tool by its operation, any
+ * other tool by its manifest's `asset`; null for a call that makes nothing.
+ */
+function pluginCallMaking(
+  manifest: Pick<PluginManifest, "id" | "tools"> | undefined,
+  tool: string,
+  args: Record<string, unknown>,
+): CallMaking | null {
+  if (!manifest) return null;
+  if (manifest.id === GENEX_PLUGIN_ID) return tool === GENEX_ASSET_TOOL ? genexCallMaking(args) : null;
+  const declared = manifest.tools.find((t) => t.name === tool)?.asset;
+  return declared ? callMaking(declared, args) : null;
+}
+
 export class PluginToolService {
   readonly #core: StudioCore;
+  /** What each run's Genex jobs committed, against its cap. */
+  readonly #credits = new RunCreditLedger();
   readonly #x: Pick<
     CoreInternals,
-    "activeConnectorCalls" | "consent" | "mcpSecrets" | "planning" | "pluginCallAttribution"
+    | "activeConnectorCalls"
+    | "assetCalls"
+    | "chatMode"
+    | "consent"
+    | "cutOffCalls"
+    | "hooks"
+    | "locks"
+    | "mcpSecrets"
+    | "planning"
+    | "pluginCallAttribution"
   >;
 
   constructor(
     core: StudioCore,
-    x: Pick<CoreInternals, "activeConnectorCalls" | "consent" | "mcpSecrets" | "planning" | "pluginCallAttribution">,
+    x: Pick<
+      CoreInternals,
+      | "activeConnectorCalls"
+      | "assetCalls"
+      | "chatMode"
+      | "consent"
+      | "cutOffCalls"
+      | "hooks"
+      | "locks"
+      | "mcpSecrets"
+      | "planning"
+      | "pluginCallAttribution"
+    >,
   ) {
     this.#core = core;
     this.#x = x;
@@ -123,35 +327,44 @@ export class PluginToolService {
    */
   async requestConsent(
     pluginId: string,
-    tool: PluginTool,
+    tool: PluginTool & Pick<PluginManifestTool, "confirmationInput">,
     args: Record<string, unknown>,
     binding: PluginBinding,
     signal?: AbortSignal,
     exportReview?: PluginConsentEvent["exportReview"],
-  ): Promise<{ approved: boolean; by: PluginConsentBy }> {
+    options: {
+      offerAlways?: boolean;
+      displayName?: string;
+      modeAnswers?: PluginConsentRequest["modeAnswers"];
+      /**
+       * Asked for the person's own act (a press, or a card they just approved): an earlier no to the
+       * same card in this chat never answers it.
+       */
+      afresh?: boolean;
+    } = {},
+  ): Promise<{ approved: boolean; by: PluginConsentBy; always?: boolean; input?: string }> {
     const consentId = shortId("consent");
     const attribution = this.#x.pluginCallAttribution.get(binding);
     const threadId = await consentAudience(this.#core, binding, attribution?.runId);
     const name = `${pluginId}__${tool.name}`;
-    const declined = await this.#declinedBefore(attribution, threadId, name, args);
+    const declined = options.afresh ? null : await this.#declinedBefore(attribution, threadId, name, args);
     if (declined) return declined;
-    const pluginName = this.#pluginName(pluginId);
     const base = {
       consentId,
       pluginId,
-      pluginName,
+      pluginName: options.displayName ?? this.#pluginName(pluginId),
       tool: name,
       args: consentArgsDigest(args),
       project: binding.project,
-      ...(binding.threadId ? { threadId: binding.threadId } : {}),
-      ...(binding.threadId && threadId !== binding.threadId ? { originThreadId: binding.threadId } : {}),
-      ...(attribution?.runId ? { runId: attribution.runId } : {}),
-      ...(attribution?.facetId ? { facetId: attribution.facetId } : {}),
+      ...consentThreads(binding.threadId, threadId, attribution),
       prompt: tool.confirmation ?? "",
       ...(exportReview ? { exportReview } : {}),
+      ...(options.offerAlways ? { alwaysOffered: true } : {}),
     };
+    const field = cardField(tool, args);
     const asked: PluginConsentEvent = {
       ...base,
+      ...field,
       state: "pending",
       expiresAt: Date.now() + (this.#core.options.consentTimeoutMs ?? CONSENT_TIMEOUT_MS),
     };
@@ -165,6 +378,7 @@ export class PluginToolService {
       ...(signal ? { signal } : {}),
       // A build's lead is not the chat's turn: another turn ending leaves its question waiting.
       ...(attribution?.lead ? { outlivesTurn: true } : {}),
+      ...(options.modeAnswers ? { modeAnswers: options.modeAnswers } : {}),
     });
     try {
       await this.#core.append([customEventData(CustomEvent.PluginConsent, { ...asked })], threadId);
@@ -179,21 +393,33 @@ export class PluginToolService {
       await waiting;
       throw error;
     }
-    const result = await waiting;
+    const { input: sent, ...result } = await waiting;
+    const { edited, shown } = cardEdit(field, result, sent);
+    await this.#recordAnswer({ ...base, ...shown }, result, performance.now() - waitStarted, threadId);
+    return edited ? { ...result, input: edited } : result;
+  }
+
+  /** A card's answer, logged beside its question and announced to the chat. */
+  async #recordAnswer(
+    card: Omit<PluginConsentEvent, "state">,
+    result: { approved: boolean; by: PluginConsentBy; always?: boolean },
+    durationMs: number,
+    threadId: string,
+  ): Promise<void> {
     const answered: PluginConsentEvent = {
-      ...base,
+      ...card,
       state: result.approved ? "approved" : "declined",
       by: result.by,
-      durationMs: performance.now() - waitStarted,
+      ...(result.always ? { always: true } : {}),
+      durationMs,
     };
     await this.#core.append([customEventData(CustomEvent.PluginConsent, { ...answered })], threadId);
     this.#core.emit(UiEvent.PluginConsent, {
-      consentId,
+      consentId: card.consentId,
       threadId,
-      project: binding.project,
+      project: card.project,
       state: answered.state,
     });
-    return result;
   }
 
   /**
@@ -220,11 +446,19 @@ export class PluginToolService {
     return this.#x.planning(await consentAudience(this.#core, binding, runId));
   }
 
+  /** The chat a call answers to, as `#planning` finds it; null for a call no chat makes. */
+  async #audience(project: string, threadId: string | undefined, runId?: string): Promise<string | null> {
+    if (!threadId) return null;
+    const binding: PluginBinding = { project, directory: this.#core.games.dirFor(project), threadId };
+    return consentAudience(this.#core, binding, runId);
+  }
+
   /** The name a consent card shows: the connector's or plugin's own, else its id. */
   #pluginName(pluginId: string): string {
     return (
       this.#core.mcp.nameOf(pluginId) ??
       this.#core.plugins.list().find((p) => p.manifest.id === pluginId)?.manifest.name ??
+      studioConsentName(pluginId) ??
       pluginId
     );
   }
@@ -250,7 +484,12 @@ export class PluginToolService {
    * Run a plugin tool for an agent, on either path (an engine's live tool or the harness's
    * `plugins.invoke`). The host writes the `plugin_tool_started` / `plugin_tool` pair around the
    * call so the chat and the Builds graph see it start and end; a declined consent is an answer
-   * the agent can read, never an error.
+   * the agent can read, never an error. A tool only the harness calls is a step of its own loop
+   * (an editor poll, a save), not an agent's work: it runs only when the harness says so
+   * (`ctx.caller`), with no pair, or a run's polls would bury the calls the chat and the graph are
+   * for. A run's call answers to the Plan mode of the chat the run was started in. A tool that
+   * changes what the game is (`makes`) is refused while a run of the game is going, and otherwise
+   * snapshots the game first and records what it replaced (`kind-change.ts`).
    */
   async invokePluginTool(
     name: string,
@@ -259,111 +498,420 @@ export class PluginToolService {
     signal: AbortSignal | undefined,
     ctx: PluginCallContext,
   ): Promise<unknown> {
-    const runId = this.#x.pluginCallAttribution.get(binding)?.runId;
-    if (!readsSkill(name) && (await this.#planning(binding.project, binding.threadId, runId)))
-      return { consent: "declined", blocker: PLAN_BLOCKER, message: MESSAGE.inPlan };
+    if (this.#harnessStep(name)) return this.#runHarnessStep(name, args, binding, signal, ctx);
+    const deadline = this.#x.locks.clock.now() + AGENT_CALL_MS;
+    if (!readsSkill(name) && (await this.#planning(binding.project, binding.threadId, callRun(ctx)?.runId)))
+      return { ...PLAN_ANSWER };
+    const kindChange = await this.#beforeKindChange(name, binding);
+    if (kindChange && isRefused(kindChange)) return kindChange;
     const started = await this.pluginToolStarted(name, args, binding, ctx);
     let result: unknown;
     try {
-      result = await this.#core.plugins.tool(name, args, binding, signal);
+      result = await this.#callAgentTool(name, args, binding, signal, ctx, deadline);
     } catch (err) {
-      await this.pluginToolFinished(started, { error: err }, 0, binding);
-      if (err instanceof PluginConsentDeclined)
-        return {
-          consent: "declined",
-          blocker: "approval_required",
-          by: err.by,
-          message: CONSENT_DECLINED_MESSAGES[err.by],
-        };
+      // The plugin's own `tool.before` step blocked it: the block is the answer, and the record's
+      // words (the card came first, so the call shows, not run, with why).
+      await this.pluginToolFinished(
+        started,
+        { error: err instanceof ToolMomentBlocked ? err.reason : err },
+        0,
+        binding,
+      );
+      const notRun = notRunAnswer(err);
+      if (notRun) return notRun;
       throw err;
     }
     // Counted before the bytes are split off downstream: the record that reaches the log never holds them.
     const returned = (result as { images?: unknown } | null)?.images;
     const count = Array.isArray(returned) ? returned.length : 0;
     await this.pluginToolFinished(started, { result }, count, binding);
-    return result;
+    const answered = kindChange ? await afterKindChange(this.#core, kindChange, result) : result;
+    const afterBudget = momentBudget(HookEvent.ToolAfter, deadline - this.#x.locks.clock.now());
+    const after = await this.#ownToolMoment(HookEvent.ToolAfter, name, args, binding, signal, ctx, afterBudget);
+    return withHookNotes(answered, after.notes);
+  }
+
+  /** Whether the called tool's own plugin has steps at a `tool.*` moment for the bound game: a skill read is no action. */
+  async #hasToolSteps(on: HookEvent, name: string, binding: PluginBinding): Promise<boolean> {
+    if (readsSkill(name) || !binding.project) return false;
+    return this.#x.hooks.hasSteps(on, { project: binding.project, tool: name });
+  }
+
+  /**
+   * The plugin's own `tool.before` steps, within what is left of the call's time `until` it must
+   * end: none when it hooks nothing there, and the call does not run when no time is left for them.
+   */
+  async #beforeSteps(
+    name: string,
+    args: Record<string, unknown>,
+    binding: PluginBinding,
+    signal: AbortSignal | undefined,
+    ctx: PluginCallContext,
+    until: number,
+  ): Promise<void> {
+    if (!(await this.#hasToolSteps(HookEvent.ToolBefore, name, binding))) return;
+    const budget = momentBudget(HookEvent.ToolBefore, until - this.#x.locks.clock.now());
+    if (budget.limitMs <= 0) throw new NotRunInTime();
+    const before = await this.#ownToolMoment(HookEvent.ToolBefore, name, args, binding, signal, ctx, budget);
+    if (before.blocked) throw new ToolMomentBlocked(before.blocked.reason);
+  }
+
+  /**
+   * A `tool.*` moment around an agent's call of a plugin's own tool: only that plugin's steps run,
+   * told the tool and a digest of its arguments, never the arguments, under the caller's holder (a
+   * worker writing in place passes its own locks), within `budget`, what is left of the call's time
+   * (the before steps leave the after steps theirs). A skill read is no action.
+   */
+  async #ownToolMoment(
+    on: typeof HookEvent.ToolBefore | typeof HookEvent.ToolAfter,
+    name: string,
+    args: Record<string, unknown>,
+    binding: PluginBinding,
+    signal: AbortSignal | undefined,
+    ctx: PluginCallContext,
+    budget: { waitMs: number; limitMs: number },
+  ): Promise<HookReport> {
+    if (readsSkill(name) || !binding.project) return EMPTY_HOOK_REPORT;
+    const runId = callRun(ctx)?.runId;
+    return this.#x.hooks.fire(
+      on,
+      {
+        project: binding.project,
+        ...(binding.threadId ? { threadId: binding.threadId } : {}),
+        ...(runId ? { runId } : {}),
+        tool: name,
+        args: JSON.stringify(consentArgsDigest(args)),
+      },
+      { ...(signal ? { signal } : {}), ...(ctx.holder ? { holder: ctx.holder } : {}), ...budget },
+    );
+  }
+
+  /**
+   * An agent's call itself, between its records: refused before its card or Genex is asked when it
+   * cannot go (a publish of a game Genex cannot export, a run's spent credit cap), its arguments
+   * checked and its card answered, its plugin's own `tool.before` steps run, then run in its turn
+   * at the locks it needs, the person first, the chat showing the call going meanwhile.
+   */
+  async #callAgentTool(
+    name: string,
+    args: Record<string, unknown>,
+    binding: PluginBinding,
+    signal: AbortSignal | undefined,
+    ctx: PluginCallContext,
+    deadline: number,
+  ): Promise<unknown> {
+    // Refused before its consent card: Genex would export an Unreal game's folder as a web game.
+    if (name === GenexStudioTool.Publish) await assertPublishable(this.#core, binding.project);
+    // Refused before Genex is asked: the run's paid jobs have committed its credit cap.
+    const overCap = this.#credits.refusal(name, ctx.credits ?? null);
+    if (overCap) throw new Error(overCap);
+    // Its arguments are checked and its card answered first: a refused call runs no step of its
+    // plugin's and never waits its turn, and no lock is held while the person reads the card. Then
+    // the plugin's own `tool.before` steps, then its turn at its locks.
+    // A call with steps after it or locks to hold ends where the after steps' time begins, its wait
+    // for its locks leaving it its ceiling, and does not start with almost none of its time left.
+    // A call with neither keeps the time it always had: an approved call is never cut for a late card.
+    let release = NO_RELEASE;
+    const runEnds = new AbortController();
+    let ends: AbortSignal | null = null;
+    const cut = () => runEnds.abort(new Error(MESSAGE.outOfTime));
+    const left = (until: number) => until - this.#x.locks.clock.now();
+    const takeTurn = async (): Promise<void> => {
+      const reserve = (await this.#hasToolSteps(HookEvent.ToolAfter, name, binding)) ? AFTER_STEPS_MS : 0;
+      const until = deadline - reserve;
+      await this.#beforeSteps(name, args, binding, signal, ctx, until);
+      const bounded = reserve > 0 || this.#core.plugins.needsOf(name).length > 0;
+      if (!bounded) return;
+      if (left(until) <= CALL_FLOOR_MS) throw new NotRunInTime();
+      const waitMs = this.#lockWaitMs(left(until) - this.#core.plugins.callCeilingOf(name));
+      release = await this.#holdNeeds(name, binding, signal, ctx.holder, callRun(ctx)?.runId, waitMs);
+      if (left(until) <= CALL_FLOOR_MS) throw new NotRunInTime();
+      ends = this.#x.locks.clock.timeout(left(until));
+      ends.addEventListener("abort", cut, { once: true });
+    };
+    const callSignal = signal ? AbortSignal.any([signal, runEnds.signal]) : runEnds.signal;
+    try {
+      const result = await this.#core.plugins.tool(name, args, binding, callSignal, undefined, undefined, takeTurn);
+      this.#credits.count(name, ctx.credits ?? null, result);
+      return result;
+    } catch (err) {
+      const outOfTime = runEnds.signal.aborted && !signal?.aborted;
+      // Ended before it was sent: it never ran, so it may be called again.
+      if (outOfTime && err instanceof PluginCallNotSent) throw new NotRunInTime();
+      if (outOfTime) throw new Error(MESSAGE.outOfTime);
+      throw err;
+    } finally {
+      (ends as AbortSignal | null)?.removeEventListener("abort", cut);
+      release();
+    }
+  }
+
+  /** An agent's wait for its locks: its own, or less when that is all its call's time leaves (never below nothing). */
+  #lockWaitMs(room: number): number {
+    return Math.max(0, Math.min(this.#x.locks.agentWaitMs, room - PERSON_FIRST_ASK_MS));
+  }
+
+  /** A call to a tool that makes a kind of project in the bound game: refused during its run, else snapshotted first. */
+  async #beforeKindChange(name: string, binding: PluginBinding): Promise<KindChange | KindChangeRefused | null> {
+    const makes = madeBy(this.#core, name);
+    if (makes.length === 0 || !binding.project) return null;
+    return beforeKindChange(this.#core, binding.project, name, makes);
+  }
+
+  /**
+   * A tool its plugin keeps for the harness: it runs only as the harness's own step, never for an
+   * agent, and with no records. Plan mode holds back a step the harness marks `checkpoint` (a
+   * chat's save, a run's save point, shot, play or editor change); its reads (polls and waits) run
+   * while the chat plans.
+   */
+  async #runHarnessStep(
+    name: string,
+    args: Record<string, unknown>,
+    binding: PluginBinding,
+    signal: AbortSignal | undefined,
+    ctx: PluginCallContext,
+  ): Promise<unknown> {
+    if (ctx.caller !== PluginToolAudience.Harness) throw new Error(MESSAGE.unknownTool(name));
+    const runId = callRun(ctx)?.runId;
+    if (ctx.checkpoint && (await this.#planning(binding.project, binding.threadId, runId))) return { ...PLAN_ANSWER };
+    let release = NO_RELEASE;
+    try {
+      release = await this.#holdNeeds(name, binding, signal, ctx.holder, runId, this.#x.locks.agentWaitMs);
+      return await this.#core.plugins.tool(name, args, binding, signal, PluginToolAudience.Harness);
+    } catch (err) {
+      if (isLockRefused(err)) return lockAnswer(err);
+      throw err;
+    } finally {
+      release();
+    }
+  }
+
+  /**
+   * Hold, for one call, the locks the tool or connector `name` needs (`PluginRegistry.needsOf`):
+   * in turn behind other holders, and while the person uses what one guards, until the agent's
+   * wait runs out (`LockRefused`). A wait on the person is told to the chat the call answers to.
+   * Answers the release; a call that needs nothing holds nothing.
+   */
+  async #holdNeeds(
+    name: string,
+    binding: PluginBinding,
+    signal: AbortSignal | undefined,
+    holder: string | undefined,
+    runId: string | undefined,
+    waitMs: number,
+  ): Promise<() => void> {
+    const needs = this.#core.plugins.needsOf(name);
+    if (!needs.length) return NO_RELEASE;
+    const threadId = binding.threadId ? await consentAudience(this.#core, binding, runId) : undefined;
+    return this.#x.locks.hold(needs, {
+      binding,
+      ...(threadId ? { threadId } : {}),
+      ...(signal ? { signal } : {}),
+      waitMs,
+      holder: holder ?? shortId("call"),
+    });
+  }
+
+  /** Whether `name` is a tool its plugin keeps for the harness's own calls (`audience: "harness"`). */
+  #harnessStep(name: string): boolean {
+    const [pluginId = "", tool = ""] = name.split("__");
+    const manifest = this.#core.plugins.list().find((p) => p.manifest.id === pluginId)?.manifest;
+    return manifest?.tools.find((t) => t.name === tool)?.audience === PluginToolAudience.Harness;
   }
 
   /**
    * Run one connector tool for an agent, on either path (an engine's live tool or the harness's
-   * `mcp.invoke`), and write the `connector_tool` record either way. It is its own event: a
-   * connector is not a plugin, it reaches a service outside this Mac, and reusing `plugin_tool`
-   * would put a name in the ledger that no installed plugin answers to.
+   * `mcp.invoke`), and write its records either way: `connector_tool_started` once the call goes
+   * out (after consent), and `connector_tool` when it ends, paired by `callId`. They are their own
+   * events: a connector is not a plugin, it reaches a service outside this Mac, and reusing
+   * `plugin_tool` would put a name in the ledger that no installed plugin answers to.
    *
-   * The record holds what the call was and how it ended — never the bytes. Image parts are
-   * counted; the answer's text is cut to 4 KiB, because a log is a story, not a cache. A build's
-   * lead's call outlives the chat's turns (`outlivesTurn`): its session's end or a Stop ends it.
+   * The records hold what the call was and how it ended — never the bytes. The arguments are
+   * clipped (`connectorCallFields`); the answer's text is cut to 4 KiB, because a log is a story,
+   * not a cache; its pictures are counted and kept in the game's captures folder, and the record
+   * lists them. A build's lead's call outlives the chat's turns (`outlivesTurn`): its session's
+   * end or a Stop ends it. A live run's call may need no card (`runConsent`).
    */
   async invokeConnectorTool(
     name: string,
     args: Record<string, unknown>,
     binding: { project?: string | null; threadId?: string } | undefined,
     signal?: AbortSignal,
-    { outlivesTurn = false }: { outlivesTurn?: boolean } = {},
+    options: ConnectorCallOptions = {},
   ): Promise<LiveToolResult> {
+    const outlivesTurn = options.outlivesTurn === true;
     const started = Date.now();
+    const deadline = this.#x.locks.clock.now() + AGENT_CALL_MS;
     const controller = new AbortController();
-    this.#x.activeConnectorCalls.set(controller, { ...binding, ...(outlivesTurn ? { outlivesTurn } : {}) });
+    this.#x.activeConnectorCalls.set(controller, {
+      ...binding,
+      ...(outlivesTurn ? { outlivesTurn } : {}),
+      ...(options.byHarness ? { byHarness: true } : {}),
+    });
     const callSignal = signal ? AbortSignal.any([signal, controller.signal]) : controller.signal;
-    const connectorId = name.slice(0, Math.max(0, name.indexOf("__")));
-    const exposedName = name.slice(connectorId.length + 2);
-    const write = async (event: ConnectorToolEvent): Promise<void> => {
-      // Bookkeeping never fails a tool call: a log that cannot be written loses the record, not the work.
-      await this.#core
-        .append([customEventData(CustomEvent.ConnectorTool, { ...event })], binding?.threadId)
-        .catch(() => {});
-    };
+    const call = this.#connectorCall(name, args);
+    let sent = false;
+    let release = NO_RELEASE;
     try {
-      await this.#connectorConsent(name, args, binding, callSignal, outlivesTurn);
+      await this.#connectorConsent(name, args, binding, callSignal, options);
+      release = await this.#holdConnectorNeeds(name, binding, callSignal, options, deadline);
+      await this.#appendQuietly(customEventData(CustomEvent.ConnectorToolStarted, { ...call }), binding);
+      sent = true;
+      this.#connectorAssetCall(call, binding?.project, started);
       const result = await this.#core.mcp.tool(name, args, binding, callSignal);
       const text = typeof result === "string" ? result : result.text;
-      const images = typeof result === "string" ? 0 : (result.images?.length ?? 0);
-      await write({
-        connectorId,
-        tool: this.#core.mcp.rawName(name) ?? exposedName,
-        exposedName,
-        ok: true,
-        durationMs: Date.now() - started,
-        result: String(text ?? "").slice(0, CONNECTOR_RESULT_CAP),
-        ...(images ? { images } : {}),
-      });
+      const images = typeof result === "string" ? [] : (result.images ?? []);
+      const captures = await this.#keepConnectorCaptures(binding?.project, images);
+      await this.#appendQuietly(
+        customEventData(CustomEvent.ConnectorTool, {
+          ...call,
+          ok: true,
+          durationMs: Date.now() - started,
+          result: String(text ?? "").slice(0, CONNECTOR_RESULT_CAP),
+          ...(images.length ? { images: images.length } : {}),
+          ...(captures.length ? { captures } : {}),
+        } satisfies ConnectorToolEvent),
+        binding,
+      );
       return result;
     } catch (err) {
-      await write({
-        connectorId,
-        tool: this.#core.mcp.rawName(name) ?? exposedName,
-        exposedName,
-        ok: false,
-        durationMs: Date.now() - started,
-        error: String(errorMessage(err)).slice(0, CONNECTOR_RESULT_CAP),
-      });
+      const cutOff = sent ? connectorCutOff(err, callSignal) : null;
+      await this.#connectorFailed(name, call, err, cutOff, Date.now() - started, binding);
       throw err;
     } finally {
+      release();
       this.#x.activeConnectorCalls.delete(controller);
+      // A call that was never one making an asset closes nothing.
+      if (sent) this.#assetCallClosed(call.callId, binding?.project, false);
     }
   }
 
   /**
-   * The person's say before a connector action nobody saved "always allow" for. A build's lead's
-   * card outlives the chat's other turns (`outlivesTurn`), as its call does.
+   * The locks a plugin's connector needs, held for its call as a plugin tool's are (after its
+   * consent): its wait leaves the call its connector's own time within the call's.
+   */
+  #holdConnectorNeeds(
+    name: string,
+    binding: { project?: string | null; threadId?: string } | undefined,
+    signal: AbortSignal,
+    { holder, runId }: ConnectorCallOptions,
+    deadline: number,
+  ): Promise<() => void> {
+    if (!binding?.project) return Promise.resolve(NO_RELEASE);
+    const bound: PluginBinding = {
+      project: binding.project,
+      directory: this.#core.games.dirFor(binding.project),
+      ...(binding.threadId ? { threadId: binding.threadId } : {}),
+    };
+    const room = deadline - this.#x.locks.clock.now() - this.#core.mcp.callTimeoutOf(name);
+    return this.#holdNeeds(name, bound, signal, holder, runId, this.#lockWaitMs(room));
+  }
+
+  /**
+   * A connector call's closing record when it failed. A call cut off before it answered says why
+   * (`cutOff`: outcome unknown), and its thread's next delegated session is told to check it.
+   */
+  async #connectorFailed(
+    name: string,
+    call: ConnectorCall & { callId: string },
+    err: unknown,
+    cutOff: CallCutOff | null,
+    durationMs: number,
+    binding: { threadId?: string } | undefined,
+  ): Promise<void> {
+    if (cutOff)
+      noteCutOff(this.#x.cutOffCalls, binding?.threadId, { tool: name, args: cutOffArgs(call), reason: cutOff });
+    await this.#appendQuietly(
+      customEventData(CustomEvent.ConnectorTool, {
+        ...call,
+        ok: false,
+        durationMs,
+        error: String(errorMessage(err)).slice(0, CONNECTOR_RESULT_CAP),
+        ...(cutOff ? { cutOff } : {}),
+      } satisfies ConnectorToolEvent),
+      binding,
+    );
+  }
+
+  /** What a connector call is, as its records name it: the connector, its plugin, the tool and the arguments. */
+  #connectorCall(name: string, args: Record<string, unknown>): ConnectorCall & { callId: string } {
+    const connectorId = name.slice(0, Math.max(0, name.indexOf("__")));
+    const exposedName = name.slice(connectorId.length + 2);
+    const pluginId = this.#core.mcp.ownerOf(connectorId);
+    const declared = this.#core.mcp.assetOf(name);
+    return {
+      callId: shortId("connector"),
+      connectorId,
+      tool: this.#core.mcp.rawName(name) ?? exposedName,
+      exposedName,
+      ...(pluginId ? { pluginId } : {}),
+      connectorName: this.#connectorName(connectorId),
+      ...connectorCallFields(args),
+      ...(declared ? { making: callMaking(declared, args) } : {}),
+    };
+  }
+
+  /** A connector's pictures, kept in its game's captures folder; bookkeeping never fails the call. */
+  async #keepConnectorCaptures(
+    project: string | null | undefined,
+    images: ReadonlyArray<{ data: string }>,
+  ): Promise<string[]> {
+    if (!project || !images.length) return [];
+    try {
+      const dir = this.#core.games.dirFor(project);
+      await this.#core.assertProjectAllowed(dir);
+      return await keepCaptures(dir, images);
+    } catch (error) {
+      this.#core.options.onLog?.(
+        `[core] could not keep ${project}'s connector pictures: ${errorMessage(error)}`,
+        "stderr",
+      );
+      return [];
+    }
+  }
+
+  /** Bookkeeping never fails a tool call: a log that cannot be written loses the record, not the work. */
+  async #appendQuietly(
+    record: ReturnType<typeof customEventData>,
+    binding: { threadId?: string } | undefined,
+  ): Promise<void> {
+    await this.#core.append([record], binding?.threadId).catch(() => {});
+  }
+
+  /**
+   * The person's say before a connector action nobody saved "always allow" for and no live run's
+   * own consent covers. A build's lead's card outlives the chat's other turns (`outlivesTurn`), as
+   * its call does.
    */
   async #connectorConsent(
     name: string,
     args: Record<string, unknown>,
     binding: { project?: string | null; threadId?: string } | undefined,
     signal: AbortSignal,
-    outlivesTurn: boolean,
+    { outlivesTurn = false, runConsent, runId }: ConnectorCallOptions,
   ): Promise<void> {
     if (!binding?.project) throw new Error(MESSAGE.connectorConversation);
     // Before any saved grant: "always allow" is for work the person approved, and a plan is not yet.
-    if (await this.#planning(binding.project, binding.threadId)) throw new Error(MESSAGE.inPlan);
-    if (await this.#core.mcp.toolAutoApproved(name, binding.project, signal)) return;
+    // A run's session answers to the chat its run was started in.
+    if (await this.#planning(binding.project, binding.threadId, runId)) throw new Error(MESSAGE.inPlan);
     const split = name.indexOf("__");
+    const id = name.slice(0, split);
+    const displayName = this.#connectorName(id);
+    // A server a plugin loaded from a folder runs runs with the person's access: it asks every call,
+    // and no saved grant, read, mode or run of theirs answers for it.
+    const local = this.#localOwner(id);
+    const audience = await this.#audience(binding.project, binding.threadId, runId);
+    const unasked: true | PermissionMode[] = local
+      ? []
+      : await this.#unaskedIn(name, audience, binding.project, signal, runConsent);
+    if (unasked === true) return;
     const tool: PluginTool = {
       name: name.slice(split + 2),
       description: "Connector action",
       parameters: { type: "object", properties: {} },
-      confirmation: MESSAGE.connectorConfirmation,
+      confirmation: local
+        ? MESSAGE.localConnectorConfirmation(displayName, name.slice(split + 2))
+        : MESSAGE.connectorConfirmation(displayName),
     };
     const asking: PluginBinding = {
       project: binding.project,
@@ -371,8 +919,55 @@ export class PluginToolService {
       ...(binding.threadId ? { threadId: binding.threadId } : {}),
     };
     if (outlivesTurn) this.#x.pluginCallAttribution.set(asking, { lead: true });
-    const grant = await this.requestConsent(name.slice(0, split), tool, args, asking, signal);
+    const modeAnswers = audience && unasked.length ? { threadId: audience, modes: unasked } : null;
+    const grant = await this.requestConsent(id, tool, args, asking, signal, undefined, {
+      offerAlways: !local,
+      displayName,
+      ...(modeAnswers ? { modeAnswers } : {}),
+    });
     if (!grant.approved) throw new PluginConsentDeclined(name, grant.by);
+    if (grant.always)
+      await this.#core.mcp.alwaysAllow(name, binding.project, signal).catch((error: unknown) => {
+        // The call itself was approved; only the "from now on" is lost, and the next call asks again.
+        this.#core.options.onLog?.(`[core] could not save always allow for ${name}: ${errorMessage(error)}`, "stderr");
+      });
+  }
+
+  /**
+   * Whether a connector call goes out with no card (true), else the chat modes that would send it
+   * with none, so the person's switch to one answers its card: a saved Always allow, a tool its
+   * plugin says only reads, the chat's Bypass (any connector) or Auto (a plugin's, which works on
+   * this Mac; the person's own may reach services beyond it), or the run the person started
+   * covering its own builder's calls. None of them lifts Plan, checked before.
+   */
+  async #unaskedIn(
+    name: string,
+    audience: string | null,
+    project: string,
+    signal: AbortSignal,
+    runConsent: ConnectorCallOptions["runConsent"],
+  ): Promise<true | PermissionMode[]> {
+    if (await this.#core.mcp.toolAutoApproved(name, project, signal)) return true;
+    if (await this.#core.mcp.toolOnlyReads(name, project, signal)) return true;
+    const plugin = this.#core.mcp.ownerOf(name.slice(0, name.indexOf("__"))) !== undefined;
+    const modes: PermissionMode[] = plugin ? [PermissionMode.Bypass, PermissionMode.Auto] : [PermissionMode.Bypass];
+    if (audience && modes.includes(await this.#x.chatMode(audience))) return true;
+    if (await runConsent?.()) return true;
+    return modes;
+  }
+
+  /** Whether connector `id` is a server of a plugin loaded from a folder on this Mac. */
+  #localOwner(id: string): boolean {
+    const owner = this.#core.mcp.ownerOf(id);
+    if (!owner) return false;
+    return this.#core.plugins.list().some((p) => p.manifest.id === owner && p.source === PluginSourceKind.Local);
+  }
+
+  /** A connector as a person knows it: a plugin's by the plugin's own name, else the connector's. */
+  #connectorName(id: string): string {
+    const owner = this.#core.mcp.ownerOf(id);
+    const plugin = owner ? this.#core.plugins.list().find((p) => p.manifest.id === owner)?.manifest.name : undefined;
+    return plugin ?? this.#pluginName(id);
   }
 
   /**
@@ -452,9 +1047,11 @@ export class PluginToolService {
       command: process.execPath,
       args,
       ...(server.toolPolicy ? { toolPolicy: server.toolPolicy } : {}),
+      ...(server.reads ? { reads: server.reads } : {}),
       ...(server.maxTools ? { maxTools: server.maxTools } : {}),
       ...(server.callTimeoutMs ? { callTimeoutMs: server.callTimeoutMs } : {}),
       description: server.description,
+      ...(server.facts ? { facts: server.facts } : {}),
       ...(unavailable ? { unavailable } : {}),
     };
   }
@@ -506,7 +1103,10 @@ export class PluginToolService {
         );
         const token = wantsCredential ? await launch.credential().catch(() => undefined) : undefined;
         if (token) secrets.push(token);
-        return { cwd: dir, extraEnv: { ...env, HOME: home }, ...(secrets.length ? { secrets } : {}) };
+        // On Windows `~` is USERPROFILE, so the profile folders move into `home` with HOME: the Genex
+        // CLI's skill cleanup and any server's dotfiles then stay out of the user's own profile.
+        const homeEnv = { HOME: home, ...windowsHomeEnv(home) };
+        return { cwd: dir, extraEnv: { ...env, ...homeEnv }, ...(secrets.length ? { secrets } : {}) };
       },
       ...(wantsCredential ? credentialPipe : {}),
     };
@@ -570,18 +1170,16 @@ export class PluginToolService {
   ): Promise<{ callId: string; startedAt: number; payload: PluginToolStartedPayload }> {
     const [pluginId = "", tool = ""] = name.split("__");
     const installed = this.#core.plugins.list().find((p) => p.manifest.id === pluginId);
-    // The same order the Blender record uses: the worker that owns the worktree first, then the
-    // modelling ask, then the director's own session.
-    const sources = [ctx.selfCapture, ctx.director].filter(
-      (s): s is { runId?: string; facetId?: string; iteration?: number } => !!s,
-    );
-    const asked = sources.find((s) => typeof s.runId === "string" && s.runId) ?? null;
+    const attributed = ctx.attribution ? { runId: ctx.attribution.runId, facetId: ctx.attribution.agentId } : null;
+    const asked = callRun(ctx);
+    const making = pluginCallMaking(installed?.manifest, tool, args);
     const payload = startedPayload({
       pluginId,
       pluginName: installed?.manifest.name ?? pluginId,
       tool,
       toolName: name,
       args,
+      ...(making ? { making } : {}),
       project: binding.project,
       ...(binding.threadId ? { threadId: binding.threadId } : {}),
       ...(asked?.runId ? { runId: asked.runId } : {}),
@@ -591,6 +1189,7 @@ export class PluginToolService {
       role: roleOf({
         ...(ctx.director ? { director: ctx.director } : {}),
         ...(ctx.selfCapture ? { selfCapture: ctx.selfCapture } : {}),
+        ...(attributed ? { attribution: attributed } : {}),
       }),
     });
     if (asked || ctx.lead)
@@ -599,7 +1198,48 @@ export class PluginToolService {
     await this.#core
       .append([customEventData(CustomEvent.PluginToolStarted, { ...payload })], binding.threadId)
       .catch(() => {});
+    if (making)
+      this.#assetCallOpened({
+        callId: payload.callId,
+        project: binding.project,
+        source: pluginId,
+        sourceName: payload.pluginName,
+        at: payload.at,
+        making,
+      });
     return { callId: payload.callId, startedAt: Date.now(), payload };
+  }
+
+  /** A call making an asset went out: while it runs it is one of its game's waiting jobs. */
+  #assetCallOpened(call: OpenedCall): void {
+    if (openAssetCall(this.#x.assetCalls, call) && call.project) this.#assetJobsChanged(call.project);
+  }
+
+  /**
+   * A call making an asset came back. Genex's own create has no call job, but it wrote its job
+   * record before answering: the game's jobs are read again now, not at the next poll.
+   */
+  #assetCallClosed(callId: string, project: string | null | undefined, making: boolean): void {
+    const closed = closeAssetCall(this.#x.assetCalls, callId);
+    const changed = closed ?? (making ? project : null);
+    if (changed) this.#assetJobsChanged(changed);
+  }
+
+  /** A connector call that says it makes an asset went out: its game's waiting job while it runs. */
+  #connectorAssetCall(call: ConnectorCall & { callId: string }, project: string | null | undefined, at: number): void {
+    if (!call.making) return;
+    this.#assetCallOpened({
+      callId: call.callId,
+      project,
+      source: call.pluginId ?? call.connectorId,
+      ...(call.connectorName ? { sourceName: call.connectorName } : {}),
+      at: new Date(at).toISOString(),
+      making: call.making,
+    });
+  }
+
+  #assetJobsChanged(project: string): void {
+    this.#core.emit(UiEvent.AssetJobs, { project });
   }
 
   /** The same call, closed: what it answered or what it threw, with the image count taken before the bytes were stripped. */
@@ -610,17 +1250,34 @@ export class PluginToolService {
     binding?: PluginBinding,
   ): Promise<void> {
     if (binding) this.#x.pluginCallAttribution.delete(binding);
+    this.#assetCallClosed(started.payload.callId, started.payload.project, started.payload.making !== undefined);
     const version = this.#core.plugins.list().find((p) => p.manifest.id === started.payload.pluginId)?.manifest.version;
-    const payload = finishedPayload(
-      started.payload,
-      { ...outcome, ...(version ? { version } : {}) },
-      images,
-      Date.now() - started.startedAt,
-    );
+    const cutOff = "error" in outcome && outcome.error instanceof PluginCallCutOff ? outcome.error.reason : null;
+    const { payload: call } = started;
+    if (cutOff)
+      noteCutOff(this.#x.cutOffCalls, call.threadId, { tool: call.toolName, args: call.args, reason: cutOff });
+    const payload = {
+      ...finishedPayload(call, { ...outcome, ...(version ? { version } : {}) }, images, Date.now() - started.startedAt),
+      ...(cutOff ? { cutOff } : {}),
+    };
     await this.#core
       .append([customEventData(CustomEvent.PluginTool, { ...payload })], started.payload.threadId)
       .catch(() => {});
   }
+}
+
+/** Where a consent card belongs: the asking thread, the chat it shows in, and the run it came from. */
+function consentThreads(
+  asking: string | undefined,
+  shownIn: string,
+  attribution: { runId?: string; facetId?: string } | undefined,
+): Pick<PluginConsentEvent, "threadId" | "originThreadId" | "runId" | "facetId"> {
+  return {
+    ...(asking ? { threadId: asking } : {}),
+    ...(asking && shownIn !== asking ? { originThreadId: asking } : {}),
+    ...(attribution?.runId ? { runId: attribution.runId } : {}),
+    ...(attribution?.facetId ? { facetId: attribution.facetId } : {}),
+  };
 }
 
 /**
@@ -645,18 +1302,106 @@ export function consentArgsDigest(args: Record<string, unknown>): Record<string,
   return digest;
 }
 
+/** A card's field as its event carries it: none, or its label and the value it holds. */
+type CardField = Pick<PluginConsentEvent, "input">;
+
+/**
+ * The field a tool's card shows (`confirmationInput`): its label, and the agent's value for that
+ * parameter, cut to what a field sends; nothing for a card with none.
+ */
+function cardField(tool: Pick<PluginManifestTool, "confirmationInput">, args: Record<string, unknown>): CardField {
+  const declared = tool.confirmationInput;
+  if (!declared) return {};
+  const value = args[declared.parameter];
+  const shown = typeof value === "string" ? value.slice(0, CONFIRMATION_INPUT_MAX_CHARS) : "";
+  return { input: { label: declared.label, value: shown } };
+}
+
+/**
+ * What an answer did to a card's field: only the person's own Allow edits, and only a card that
+ * has a field, with one plain line. The field as the answered card shows it, and the edit if any.
+ */
+function cardEdit(
+  field: CardField,
+  result: { approved: boolean; by: PluginConsentBy },
+  sent: string | undefined,
+): { edited?: string; shown: CardField } {
+  if (!field.input || !result.approved || result.by !== "user") return { shown: field };
+  const edited = confirmationInputValue(sent);
+  return edited ? { edited, shown: { input: { ...field.input, value: edited } } } : { shown: field };
+}
+
+/** The run session a call works for, or null for a chat's own call. */
+type CallRun = { runId?: string; facetId?: string; iteration?: number };
+
+/**
+ * The run session a plugin call works for, as its context names it. The same order the Blender
+ * record uses: a sub-agent's own attribution first, then the worker that owns the worktree, then
+ * the modelling ask, then the director's own session.
+ */
+function callRun(ctx: PluginCallContext): CallRun | null {
+  const attributed = ctx.attribution ? { runId: ctx.attribution.runId, facetId: ctx.attribution.agentId } : null;
+  const sources = [attributed, ctx.selfCapture, ctx.director].filter((s): s is CallRun => !!s);
+  return sources.find((s) => typeof s.runId === "string" && s.runId) ?? null;
+}
+
+/**
+ * Why a connector call that went out ended with its outcome unknown: the harness's end cut it off
+ * (its signal's reason), or the connector said the app it drives went away mid-call. Null for any
+ * other failure, whose outcome its error states.
+ */
+function connectorCutOff(err: unknown, signal: AbortSignal): CallCutOff | null {
+  if (signal.aborted && signal.reason instanceof PluginCallCutOff) return signal.reason.reason;
+  if (err instanceof PluginCallCutOff) return err.reason;
+  if (err instanceof ConnectorCallError && err.outcomeUnknown) return CallCutOff.AppLost;
+  return null;
+}
+
+/** A connector call's arguments as a cut-off notice repeats them: the toolset's tool and its own arguments. */
+function cutOffArgs(call: ConnectorCall): string {
+  const named = [call.toolset, call.toolName].filter(Boolean).join(".");
+  const args = call.args ? JSON.stringify(call.args) : "";
+  return [named, args].filter(Boolean).join(" ");
+}
+
+/**
+ * A tool's answer with its plugin's `tool.after` notes: after a text answer's words, else under
+ * `genex.notes` beside the answer's own fields (and beside a note Genex already added there).
+ */
+function withHookNotes(result: unknown, notes: HookReport["notes"]): unknown {
+  if (!notes.length) return result;
+  const texts = notes.map((note) => note.text);
+  if (typeof result === "string") return [result, ...texts].filter(Boolean).join("\n\n");
+  if (!isRecordValue(result)) return { answer: result ?? null, genex: { notes: texts } };
+  return { ...result, genex: { ...genexFields(result.genex), notes: texts } };
+}
+
+/** What an answer already holds under `genex`: a note Genex added is kept beside the plugin's notes. */
+function genexFields(genex: unknown): Record<string, unknown> {
+  if (typeof genex === "string") return { note: genex };
+  return isRecordValue(genex) ? genex : {};
+}
+
+const isRecordValue = (value: unknown): value is Record<string, unknown> =>
+  value !== null && typeof value === "object" && !Array.isArray(value);
+
 /** A plugin's skill tool: reading how to use the plugin is planning, never an action. */
 function readsSkill(name: string): boolean {
   return name.slice(name.indexOf("__") + 2) === PLUGIN_SKILL_TOOL;
 }
 
-/** What the agent reads when its plugin request was not approved — an answer, never an error. */
+/**
+ * What the agent reads when its plugin request was not approved — an answer, never an error. A
+ * card nobody answered is not a no: the person may be away, so the agent carries on and asks later.
+ */
 export const CONSENT_DECLINED_MESSAGES: Record<PluginConsentBy, string> = {
   user: "The user declined this request. Do not retry unless they ask.",
-  timeout: `Nobody answered within ${CONSENT_TIMEOUT_MS / MINUTE_MS} minutes; the request was declined. Ask the user before trying again.`,
+  timeout: `Nobody answered within ${CONSENT_TIMEOUT_MS / MINUTE_MS} minutes. The user may be away, so this is not a no: carry on with other work and ask again later.`,
   stop: "The turn was stopped before the user answered.",
   turn: "The turn was stopped before the user answered.",
   restart: "The studio restarted before the user answered. Ask again before trying this action.",
+  // A mode answers only with a yes; listed so every ending has its words.
+  mode: "The chat's mode answered this request.",
 };
 
 export const requireFromHere = createRequire(import.meta.url);

@@ -99,7 +99,10 @@ export function PickerPill({
   );
 }
 
-/** One choice among a few, with a sliding thumb. Arrow keys move the choice like any radio group. */
+/**
+ * One choice among a few, with a sliding thumb. Arrow keys move the choice like any radio group;
+ * a disabled choice is shown but never taken.
+ */
 export function PickerSegmented<T extends string | number>({
   label,
   options,
@@ -107,7 +110,7 @@ export function PickerSegmented<T extends string | number>({
   onChange,
 }: {
   label: string;
-  options: Array<{ value: T; label: ReactNode; title?: string }>;
+  options: Array<{ value: T; label: ReactNode; title?: string; disabled?: boolean }>;
   value: T | null | undefined;
   onChange: (value: T) => void;
 }) {
@@ -120,6 +123,7 @@ export function PickerSegmented<T extends string | number>({
     // Arrows belong to this group, not to a menu's Back gesture.
     event.preventDefault();
     event.stopPropagation();
+    if (option.disabled) return;
     onChange(option.value);
     buttons.current[target]?.focus();
   };
@@ -151,6 +155,7 @@ export function PickerSegmented<T extends string | number>({
           aria-checked={i === index}
           tabIndex={i === Math.max(0, index) ? 0 : -1}
           title={option.title}
+          disabled={option.disabled}
           data-value={String(option.value)}
           onClick={() => onChange(option.value)}
         >

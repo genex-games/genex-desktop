@@ -1,7 +1,7 @@
 /** Skills: the studio's own, a game's own, plugin skills' text, and those the signed-in providers already hold. */
 import path from "node:path";
 import type { ProjectSkillInventory, ProviderSkillInventory } from "../../shared/provider-skills.ts";
-import { claudeGlobalSkills, codexGlobalSkills, projectSkills } from "../provider-skills.ts";
+import { claudeGlobalSkills, codexGlobalSkills, openCodeGlobalSkills, projectSkills } from "../provider-skills.ts";
 import { studioSkills } from "../skill-inventory.ts";
 import type { StudioCore } from "../studio-core.ts";
 import type { SubscriptionEngine } from "../login-controllers.ts";
@@ -51,6 +51,7 @@ export function registerSkillsIpc(handle: IpcHandle, { core, subscription, home 
         return Promise.all([
           claudeGlobalSkills(claude?.home ?? path.join(home(), ".claude"), home()),
           codexGlobalSkills(core.layout.harnessWs, codex ?? null),
+          openCodeGlobalSkills(home()),
         ]);
       })().finally(() => {
         providerSkillsPending = undefined;

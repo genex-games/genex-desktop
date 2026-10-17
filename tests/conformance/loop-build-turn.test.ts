@@ -50,6 +50,29 @@ describe("a delegated build turn", () => {
     ]);
   });
 
+  it("carries a run's sub-agent: its attribution and its tool allowlist reach the delegation", async () => {
+    const recorder = ctxRecorder({ handlers: { "engine.delegate": () => ({ ok: true }) } });
+    await buildTurn(recorder.ctx, {
+      ...base,
+      delegated: true,
+      cwd: "/w/agent-2",
+      attribution: { runId: "run_a", agentId: "agent-2" },
+      toolAllow: ["blender__", "genex__asset"],
+    });
+    const [sent] = recorder.paramsOf("engine.delegate");
+    assert.deepEqual(sent?.attribution, { runId: "run_a", agentId: "agent-2" });
+    assert.deepEqual(sent?.toolAllow, ["blender__", "genex__asset"]);
+  });
+
+  it("names no attribution or allowlist for a turn that is nobody's sub-agent", async () => {
+    const recorder = ctxRecorder({ handlers: { "engine.delegate": () => ({ ok: true }) } });
+    await buildTurn(recorder.ctx, { ...base, delegated: true });
+    const [sent] = recorder.paramsOf("engine.delegate");
+    assert.ok(sent);
+    assert.equal("attribution" in sent, false);
+    assert.equal("toolAllow" in sent, false);
+  });
+
   it("sends an effort only when the caller named one — and exactly what it named, even none", async () => {
     const recorder = ctxRecorder({ handlers: { "engine.delegate": () => ({ ok: true }) } });
     await buildTurn(recorder.ctx, { ...base, delegated: true, timeoutMs: 5 * 60_000 });

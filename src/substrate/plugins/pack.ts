@@ -123,6 +123,7 @@ export function catalogEntry(packed: PackedPlugin, source: CatalogSource, artifa
   if (source.subdir) entry.subdir = source.subdir;
   if (source.docsUrl) entry.docsUrl = source.docsUrl;
   if (source.minStudioVersion) entry.minStudioVersion = source.minStudioVersion;
+  if (manifest.setup) entry.setup = [...manifest.setup];
   return entry;
 }
 

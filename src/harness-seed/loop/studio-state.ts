@@ -16,14 +16,27 @@ export type StatusLane = (typeof StatusLane)[keyof typeof StatusLane];
 /**
  * Which loop conducts a run. Never persisted: a spec names only the unattended one (`mode:
  * "autopilot"`, the persisted `RunMode` in run-events.ts), and `chooseRunner` decides whether the
- * director or the classic pipeline conducts it.
+ * director (on a project of any kind) or the classic pipeline (a web game's) conducts it, or which
+ * words refuse it.
  */
 export const RunnerKind = {
   Director: "director",
   Autopilot: "autopilot",
   Gauntlet: "gauntlet",
+  /** The Unreal runner from before the one Loop (`loop/unreal/lead.ts`), only when the internal switch names it. */
+  Unreal: "unreal",
+  /** A Loop on a project that isn't a web game, on an engine that keeps no session: refused with words. */
+  NeedsSession: "needs_session",
+  /** A run of a web game's own kind (the gauntlet) on a project that isn't one: refused with words. */
+  WebOnly: "web_only",
 } as const;
 export type RunnerKind = (typeof RunnerKind)[keyof typeof RunnerKind];
+
+/**
+ * This part names the runners of a Loop on a project of any kind (`RunnerKind.NeedsSession`,
+ * `RunnerKind.WebOnly`): a run reads it by namespace before it leads an open Loop.
+ */
+export const SERVES_OPEN_LOOP = true;
 
 /**
  * A run this loop is conducting (or reserving), and the promise that settles when it is over —
@@ -31,6 +44,10 @@ export type RunnerKind = (typeof RunnerKind)[keyof typeof RunnerKind];
  * itself is over, before that pass: the chat is free from then on (live-chat.ts). A run-dispatch.ts
  * kept from before live chat sets neither, and the chat waits for `settled` as it did. `stopped` is
  * the run's own Stop (live-chat.ts `stopRun`), which its pass keeps whatever the chat does next.
+ * `closing` is set just before the run appends its own end (`run_finished`, `autopilot_paused`): a
+ * new start here (a Resume of that pause) waits for the close as for a done run, never refused by it.
+ * `stops` counts the Stops that reached the run (`stopRun`), so a start waiting for its close sees a
+ * Stop pressed again on a run that was already stopped.
  */
 export interface ActiveRun {
   run: Run;
@@ -38,7 +55,9 @@ export interface ActiveRun {
   settled: Promise<unknown>;
   closed?: Promise<unknown>;
   done?: boolean;
+  closing?: boolean;
   stopped?: boolean;
+  stops?: number;
 }
 
 /** A finished build reopened: the reopened run hears what was said after `after` (reopen-run.ts). */

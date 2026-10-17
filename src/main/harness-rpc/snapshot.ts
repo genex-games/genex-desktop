@@ -5,6 +5,7 @@ import { ensureDir } from "../../substrate/fsx.ts";
 import { EventKind, SnapshotScope } from "../../shared/event-log.ts";
 import { HostMethod, type HarnessHostHandlers, type HarnessParams } from "../../shared/harness-api.ts";
 import { resolveCommit, HARNESS_WORKSPACE } from "../../substrate/snapshots.ts";
+import { stoppableMoment } from "../core/moment-stops.ts";
 import type { CoreInternals, StudioCore } from "../studio-core.ts";
 import { isBelow } from "../../substrate/paths.ts";
 
@@ -31,6 +32,11 @@ function worktreeDir(scratch: string, p: HarnessParams<typeof HostMethod.Snapsho
   const plainSlugs = WORKTREE_NAME.test(name) && WORKTREE_RUN_ID.test(runId);
   if (!plainSlugs) throw new Error(MESSAGE.notPlainSlug);
   return path.join(scratch, "autopilot", runId, name);
+}
+
+/** The chat and run a restore answers to, as the harness named them: that chat's Plan mode holds the game's restore steps. */
+function answersTo(p: HarnessParams<typeof HostMethod.SnapshotRestore>): { threadId?: string; runId?: string } {
+  return { ...(p.threadId ? { threadId: p.threadId } : {}), ...(p.runId ? { runId: p.runId } : {}) };
 }
 
 /** The commit a worktree is detached at: the one named (resolved as a commit), or the live HEAD. */
@@ -81,14 +87,25 @@ export function snapshotRpc(core: StudioCore, x: CoreInternals) {
       return core.snapshotIndex.get(record.snapshot_id) ?? record;
     },
     [HostMethod.SnapshotRestore]: async (p) => {
+      // No boot is read here: nothing is awaited before the moment begins, so a harness ending
+      // after that ends the moment itself (`stopMoments`).
       const record = core.snapshotIndex.get(p.snapshotId);
       if (!record) throw new Error(MESSAGE.unknownSnapshot(p.snapshotId));
       const scope = p.scope ?? record.scope;
       // A refusal (SnapshotRefusedError) reaches the harness with its typed `code`.
-      const rescue = await core.snapshots.restore(record, {
-        ...(p.project ? { gameWorkspace: p.project } : {}),
-        ...(p.scope ? { scope: p.scope } : {}),
-      });
+      const restore = () =>
+        core.snapshots.restore(record, {
+          ...(p.project ? { gameWorkspace: p.project } : {}),
+          ...(p.scope ? { scope: p.scope } : {}),
+        });
+      // A game folder's restore runs its plugins' restore steps around it; a block before it
+      // (`HookBlockedError`, code `hook_blocked`) reaches the harness and nothing is restored.
+      const gameFolder = p.project && scope !== SnapshotScope.Harness && record.git.game ? p.project : null;
+      const rescue = gameFolder
+        ? await stoppableMoment(x, { project: gameFolder, ...answersTo(p) }, (signal) =>
+            x.hooks.restoreWithHooks(gameFolder, restore, { ...answersTo(p), signal }),
+          )
+        : await restore();
       // The harness came back from the past: files the app once wrote now differ from the
       // manifest, and unrepaired that difference reads as agent edits at the next boot.
       if (scope !== SnapshotScope.Game) await core.reconcileSeedManifest();
@@ -124,10 +141,12 @@ export function snapshotRpc(core: StudioCore, x: CoreInternals) {
       await core.assertProjectAllowed(gameDir);
       core.snapshots.register({ name: p.project, dir: gameDir });
       const commit = await worktreeCommit(core, p.project, p.commit);
+      // Before anything is made or removed: a copy too large to make is refused with nothing changed.
+      const copy = await x.previews.prepareWriterCopy(p.project, commit);
       await clearWorktree(core, x, p.project, scratch, dir);
       await ensureDir(path.dirname(dir));
       await x.assertNoLinkBelow(scratch, dir);
-      await core.snapshots.worktreeAt(p.project, commit, dir, await x.previews.nestedPolicy(gameDir));
+      await core.snapshots.worktreeAt(p.project, commit, dir, copy);
       return { path: dir, commit };
     },
     [HostMethod.SnapshotRemoveWorktree]: async (p) => {

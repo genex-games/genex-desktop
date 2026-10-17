@@ -10,6 +10,8 @@ const profile = path.dirname(arg("studio-dev-launch"));
 const main = arg("settings-main");
 const build = JSON.parse(fs.readFileSync(path.resolve(main, "../../build.json"), "utf8"));
 const checks = [];
+/** How many 50 ms looks the first chat gets to load before the draft is typed: a slow start takes seconds. */
+const PROMPT_READY_TRIES = 600;
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const check = (name, ok, detail) => {
   checks.push({ name, ok: Boolean(ok), ...(detail === undefined ? {} : { detail }) });
@@ -94,6 +96,94 @@ const openTooltip = async () => {
 const overlaps = (box, view) =>
   box.right > view.x && box.left < view.x + view.width && box.bottom > view.y && box.top < view.y + view.height;
 await import(pathToFileURL(main).href);
+/**
+ * The person's own model server: found on this computer, asked for its key, then connected. The
+ * host's answers are synthetic; the key typed is never shown again.
+ */
+async function localServerRow(engines) {
+  const url = "http://127.0.0.1:5000/v1";
+  const typedKey = "tabby-fixture-key-0123456789";
+  const row = '[data-provider-row="local-server"]';
+  const connects = [];
+  replace("studio:local-server.find", () => [{ url, kind: "tabbyapi", needsKey: true, models: 0 }]);
+  replace("studio:local-server.connect", (_event, payload) => {
+    connects.push({ url: payload.url, keyGiven: Boolean(payload.key) });
+    if (!payload.key) return { ok: false, problem: "needs_key", kind: "tabbyapi" };
+    return { ok: true, status: { code: "ready", detail: "TabbyAPI, 1 model" } };
+  });
+  // The row asks for servers when its form opens: open it again with the answers above.
+  await click("#settings-tab-local");
+  check(
+    "Local Models points to a server the person already runs",
+    await until(`!!document.querySelector('[data-local-server-pointer] button')`),
+  );
+  await click("[data-local-server-pointer] button");
+  check(
+    "a server found on this computer is one click away",
+    await until(`!!document.querySelector('[data-local-server-use="${url}"]')`),
+  );
+  await click(`[data-local-server-use="${url}"]`);
+  check(
+    "a found server that wants a key fills the address and waits for the key",
+    await until(
+      `document.querySelector('${row} input[aria-label="Server address"]').value==='${url}' && document.activeElement===document.querySelector('${row} input[aria-label="API key"]')`,
+    ),
+  );
+  await click(`${row} [data-local-server-form] button[type="submit"]`);
+  check(
+    "a server that asks for a key says so, and where TabbyAPI keeps it",
+    await until(
+      `(()=>{const t=document.querySelector('${row}').textContent;return t.includes('asks for an API key') && t.includes('api_tokens.yml');})()`,
+    ),
+    connects,
+  );
+  await click(`${row} input[aria-label="API key"]`);
+  await wc.debugger.sendCommand("Input.insertText", { text: typedKey });
+  await click(`${row} [data-local-server-form] button[type="submit"]`);
+  const ready = engines.map((engine) =>
+    engine.id === "local-server"
+      ? {
+          ...engine,
+          status: { code: "ready", detail: "TabbyAPI, 1 model" },
+          server: { url, kind: "tabbyapi", hasKey: true },
+          models: [
+            {
+              id: "Qwen3.8-27B-exl3",
+              label: "Qwen3.8-27B-exl3",
+              contextWindow: 131_072,
+              supportsTools: true,
+              supportsVision: true,
+            },
+          ],
+        }
+      : engine,
+  );
+  replace("studio:engines", () => ready);
+  emit("engines.changed", {});
+  check(
+    "a connected server names itself and lists its model with its context",
+    await until(
+      `(()=>{const r=document.querySelector('${row}');return r.querySelector('.status-plate[data-tone="connected"]') && r.textContent.includes('TabbyAPI at 127.0.0.1:5000') && r.querySelector('[data-local-server-models]')?.textContent.includes('131k context · sees images');})()`,
+    ),
+  );
+  check(
+    "the key went to the host once and is never shown",
+    connects.length === 2 && connects[1].keyGiven && !(await js(`document.body.innerHTML.includes('${typedKey}')`)),
+    connects,
+  );
+  await capture("local-server-connected");
+  await click('[aria-label="Local server options"]');
+  check(
+    "the server menu checks, changes the address or disconnects",
+    await until(
+      `Array.from(document.querySelectorAll('[role="menuitem"]')).map(e=>e.textContent).join('|')==='Check connectionAlso refreshes the model list|Change address…Connect another server or port|Disconnect'`,
+    ),
+  );
+  await key("Escape");
+  replace("studio:engines", () => engines);
+  emit("engines.changed", {});
+}
+
 async function acceptance() {
   try {
     for (let n = 0; n < 300 && !fs.existsSync(path.join(profile, "controller.json")); n++) await wait(100);
@@ -107,8 +197,16 @@ async function acceptance() {
       if (args[0] === 3) errors.push(args[1]);
     });
     const initial = await js(`JSON.stringify({...document.querySelector('[data-studio-state]').dataset})`);
-    await click('[aria-label="Prompt"]');
+    // The composer takes no input until its chat has loaded, and the page is still settling then: a
+    // click can land where the prompt was a moment ago. Focus it by name before typing the draft.
+    const promptReady = `document.querySelector('[aria-label="Prompt"]')?.disabled===false`;
+    for (let n = 0; n < PROMPT_READY_TRIES && !(await js(promptReady).catch(() => false)); n++) await wait(50);
+    await js(`document.querySelector('[aria-label="Prompt"]')?.focus()`);
     await wc.debugger.sendCommand("Input.insertText", { text: "Keep this unsent idea" });
+    check(
+      "the unsent draft is in the composer",
+      await until(`document.querySelector('[aria-label="Prompt"]').value==='Keep this unsent idea'`),
+    );
     // Live shows the game once its page has loaded and settled, a moment after the window is ready.
     for (let n = 0; n < 200 && !nativeVisible(); n++) await wait(50);
     check("fixture has a native Live game", nativeVisible());
@@ -411,6 +509,7 @@ async function acceptance() {
         `!document.querySelector('[role="menu"]') && !!document.querySelector('[data-testid="settings-dialog"]')`,
       ),
     );
+    await localServerRow(connected);
     await capture("providers-connected");
     await key("Escape");
     // The model list's Add more models route restores the stable composer trigger.
@@ -435,10 +534,8 @@ async function acceptance() {
         `!document.querySelector('[data-testid="settings-dialog"]') && document.activeElement.getAttribute('aria-label')==='Model settings'`,
       ),
     );
-    check(
-      "unsent composer draft is preserved",
-      await js(`document.querySelector('[aria-label="Prompt"]').value==='Keep this unsent idea'`),
-    );
+    const draft = await js(`document.querySelector('[aria-label="Prompt"]').value`);
+    check("unsent composer draft is preserved", draft === "Keep this unsent idea", draft);
     check(
       "workspace selection is preserved",
       initial === (await js(`JSON.stringify({...document.querySelector('[data-studio-state]').dataset})`)),

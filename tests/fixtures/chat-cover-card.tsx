@@ -24,7 +24,11 @@ import { ProjectAssetScope, type ProjectAssetRead } from "../../src/shared/game-
 import { GenexAction, type GenexCoverRecord, GenexCoverOutcome, type GenexPublishState } from "../../src/shared/genex.ts";
 import type { PluginInfo } from "../../src/shared/plugins.ts";
 import { CaptureSource, StillMimeType } from "../../src/shared/preview-contract.ts";
+import { CoreFact, type FactRef } from "../../src/shared/project-facts.ts";
 import { fakeStudioApi } from "../helpers/fake-studio-api.ts";
+
+/** The game is a web game at its root, so the strip offers Publish. */
+const WEB_GAME: readonly FactRef[] = [{ id: CoreFact.WebGame, path: "." }];
 
 const GAME = "harbor-run";
 const THREAD = `${GAME}-thread`;
@@ -289,7 +293,15 @@ function render(events: EventEnvelope[]) {
         </div>
         <div style={{ flex: 1, background: "var(--inset)", padding: 12 }}>
           <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
-            <PluginToolbar plugins={plugins} project={GAME} emptyGame={false} onNotice={noop} onOpenChange={noop} />
+            <PluginToolbar
+              plugins={plugins}
+              project={GAME}
+              facts={WEB_GAME}
+              emptyGame={false}
+              game={{ builtOnce: true, multiplayer: false }}
+              onNotice={noop}
+              onOpenChange={noop}
+            />
           </div>
         </div>
       </div>,

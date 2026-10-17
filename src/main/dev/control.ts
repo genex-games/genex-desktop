@@ -30,6 +30,16 @@ const VIRTUAL_KEY: Record<string, number> = {
 /** Where a scroll with no selector turns the wheel: inside the studio's content, clear of the title bar. */
 const DEFAULT_SCROLL_POINT = { x: 40, y: 80 };
 
+/**
+ * What a key press types: Enter its return, a printable character itself (so it types into whatever
+ * has focus, a plugin panel's frame included), and nothing for other named keys or a shortcut.
+ */
+function keyText(key: string, modifiers: number): string | undefined {
+  if (key === "Enter") return "\r";
+  const shortcut = (modifiers & (CDP_MODIFIER.Meta | CDP_MODIFIER.Control | CDP_MODIFIER.Alt)) !== 0;
+  return key.length === 1 && !shortcut ? key : undefined;
+}
+
 type ActionOf<M extends Operation["method"]> = Extract<Operation, { method: M }>;
 
 export class DesktopControl {
@@ -81,11 +91,8 @@ export class DesktopControl {
     const windowsVirtualKeyCode =
       VIRTUAL_KEY[params.key] ?? (params.key.length === 1 ? params.key.toUpperCase().charCodeAt(0) : 0);
     const p = { key: params.key, code: params.code, modifiers, windowsVirtualKeyCode };
-    await this.cdp(wc, "Input.dispatchKeyEvent", {
-      ...p,
-      type: "keyDown",
-      ...(params.key === "Enter" ? { text: "\r" } : {}),
-    });
+    const text = keyText(params.key, modifiers);
+    await this.cdp(wc, "Input.dispatchKeyEvent", { ...p, type: "keyDown", ...(text ? { text } : {}) });
     await this.cdp(wc, "Input.dispatchKeyEvent", { ...p, type: "keyUp" });
     return { dispatched: true };
   }

@@ -4,7 +4,7 @@
  * the chat's own session has no timeout. Claude Code waits for the person, so this does too; the
  * delegation's own deadline and Stop still end the wait through the signal and `cancel()`. Only a
  * build's lead or the run's coordinator asks with a `timeoutMs`: nobody may be looking at its
- * card, and a run must not wait on it. Its card also outlives the chat's turns (`outlivesTurn`):
+ * card, and a run must not wait on it (a run's worker asks as it does). Its card also outlives the chat's turns (`outlivesTurn`):
  * the lead is not the chat's turn, so another message's turn ending is not its end. Settles each
  * request exactly once and never touches disk or the event log: the permission service records
  * the question and its answer around it.
@@ -37,6 +37,11 @@ export interface ToolPermissionRequest {
    * (`cancel` with `by: 'turn'`); its own session's end, a Stop, the answer or `timeoutMs` do.
    */
   outlivesTurn?: boolean;
+  /**
+   * Asked while the chat was not in Bypass: the person's switch to Bypass answers it, as Bypass
+   * asks nothing (`allowInBypass`). A card Claude Code asks in Bypass itself never is.
+   */
+  bypassAnswers?: boolean;
 }
 
 export interface ToolPermissionPending {
@@ -58,6 +63,7 @@ export type WithdrawnBy = typeof ToolPermissionBy.Stop | typeof ToolPermissionBy
 type Waiting = {
   entry: ToolPermissionPending;
   outlivesTurn: boolean;
+  bypassAnswers: boolean;
   settle: (result: ToolPermissionResult) => void;
 };
 
@@ -102,7 +108,12 @@ export class ToolPermissions {
         resolve(result);
       };
       request.signal?.addEventListener("abort", onAbort, { once: true });
-      this.#waiting.set(request.requestId, { entry, outlivesTurn: request.outlivesTurn === true, settle });
+      this.#waiting.set(request.requestId, {
+        entry,
+        outlivesTurn: request.outlivesTurn === true,
+        bypassAnswers: request.bypassAnswers === true && !entry.plan,
+        settle,
+      });
     });
   }
 
@@ -131,6 +142,21 @@ export class ToolPermissions {
       if (scope.threadId !== undefined && waiting.entry.threadId !== scope.threadId) continue;
       if (by === ToolPermissionBy.Turn && waiting.outlivesTurn) continue;
       waiting.settle({ answer: null, by });
+      settled += 1;
+    }
+    return settled;
+  }
+
+  /**
+   * The person switched the chat to Bypass: each of its cards asked while it was in another mode is
+   * allowed (`by: 'mode'`); a plan and a card Claude Code asked in Bypass itself still wait. Returns
+   * how many were settled.
+   */
+  allowInBypass(threadId: string): number {
+    let settled = 0;
+    for (const waiting of [...this.#waiting.values()]) {
+      if (waiting.entry.threadId !== threadId || !waiting.bypassAnswers) continue;
+      waiting.settle({ answer: { decision: PermissionDecision.Allow }, by: ToolPermissionBy.Mode });
       settled += 1;
     }
     return settled;

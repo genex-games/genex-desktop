@@ -5,6 +5,7 @@
 import { PlanReviewState } from "../../shared/composer.ts";
 import { EntryAction, EntryKind } from "../chat-entries.ts";
 import { loopCommissions } from "../loop-setting.ts";
+import { autoChoice } from "../model-choices.ts";
 import { noteSentWords, type ReplyAbout } from "../reply-about.ts";
 import { type Notify, ToastTone } from "../state/toasts.ts";
 import type { AutopilotSend, ComposerExtras } from "../ui/PromptBar.tsx";
@@ -36,7 +37,7 @@ const REVIEW_TAKES_MESSAGE: ReadonlySet<string> = new Set([
 export function sendKey(model: ComposerModel, extras: ComposerExtras | undefined): string | null {
   if (model.selected !== null) return model.selected;
   if (!extras?.autopilot) return null;
-  return model.choices.find((choice) => !choice.disabled)?.key ?? null;
+  return autoChoice(model.choices)?.key ?? null;
 }
 
 /**

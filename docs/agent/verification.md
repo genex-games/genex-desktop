@@ -24,6 +24,8 @@ when its behavior is in scope.
 ### Focused commands and prerequisites
 
 Use installed Node 24 (`nvm use`); `node scripts/check-node.mjs` checks it without installation.
+Use native `arm64` Node on Apple Silicon (`node -p process.arch`); record architecture in
+benchmarks and compare matched runtimes, separately from any Rosetta-to-native gain.
 Restoring missing or mismatched locked dependencies with `npm ci` is included in authorized
 build/run/test work. Do not repeat it without need. Dependency upgrades and global installations
 are separate decisions; do not change machine-wide runtimes incidentally.
@@ -35,6 +37,12 @@ node scripts/affected-tests.mjs --files src/shared/chat-activity.ts --run
 node scripts/affected-tests.mjs --area <area-id> --tier L3 --run
 npm run review:context -- --files <paths>
 ```
+
+Named files/globs avoid the affected graph and run serially by default. Flags need explicit
+files or `--group fast|rig`; a name filter alone does not imply full discovery. Full `npm test`
+runs the fast group with two file workers, then rigs serially, and still runs rigs after fast
+failures. `--group rig` cannot override serial execution. The child-process leak check remains
+enabled; runtime isolation overrides are deliberate caller choices.
 
 The selector combines import edges and `tests/test-map.json`. By default it reads changes
 against the merge base with `origin/dev`, including untracked files; `--staged`, `--base REF`,
@@ -65,7 +73,7 @@ This is a command catalog. The scope table above determines which layers apply.
 
 | Layer | Available checks |
 | --- | --- |
-| L0 | `npm run check:static`: typecheck, architecture, context, changed-script syntax, changed-file lint, test style and vocabulary. |
+| L0 | `npm run check:static`: typecheck, architecture, context, changed-script syntax, changed-file lint, test style, vocabulary and bundled plugin versions. |
 | L1 | `npm run check`: L0 plus affected non-rig tests; named tests for red/green iteration. |
 | L2 | `npm run test:area -- <id>` for an area's non-rig tests; `npm run verify:harness` for harness/template behavior. `test:fast` covers all non-rig tests when that breadth is needed. |
 | L3 | `node scripts/affected-tests.mjs --tier L3 --run` for affected rig suites. `npm run test:rig` covers all rigs at broad checkpoints; full `npm test` covers all Node tests. |
@@ -83,10 +91,17 @@ execute from temporary copies.
 
 ## CI and platform checks
 
-Every PR and dev/main push runs Linux static, baseline and affected L1 checks, plus the harness gate
-when a change reaches it, with the Linux sandbox tools installed, so a test that opens a sandbox
-must release it ([tests](../../tests/AGENTS.md#runner)). Its macOS fast
-group, plus package, Windows and terminal workflows, run on PRs into
+Every PR and dev/main push runs independent Linux static checks and a test plan. The plan unions
+mandatory baseline files with affected L1 files and removes duplicates. Regular files use up to
+six jobs; mandatory seed-upgrade cases use three separate jobs. Selected harness coverage uses
+up to six jobs: ordinary root groups stay whole, and the large incident group is divided into
+complete direct test subtrees. Every assigned group/case runs exactly once. Jobs retain the Linux
+sandbox and child-process cleanup checks ([tests](../../tests/AGENTS.md#runner)). `gate` requires
+successful planning, static checks, unit and seed jobs; only an explicitly unselected harness may skip.
+Changes to the exact shared runner/toolchain inputs listed in `ci-test-plan.mjs` select the
+entire fast inventory and harness, including deletion/rename of those inputs.
+The macOS fast group also uses up to six jobs behind its `fast` aggregate. Its existing events,
+plus the package, Windows and terminal workflows, remain PRs into
 `main`, pushes to `main`, and dispatches. The owner opens dev-to-main PRs by hand.
 Rig runs are separate: `full-tests`-labelled PRs and dispatches. Label core/harness/engine PRs
 `full-tests`. For platform-sensitive work, dispatch the relevant workflow on its branch.

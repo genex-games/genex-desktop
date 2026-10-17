@@ -31,7 +31,9 @@ with "Waiting for a maintainer…" until a maintainer has reviewed your package 
 artifact; that is expected. Maintainers check that the artifact matches your source at the
 commit, run it, and look at static findings, account behavior and install/update evidence.
 
-Do not reuse another publisher's id or change the validation policy in a submission. New
+A community id is your GitHub name from the source repository, alone or before a dash (`you` or
+`you-my-plugin`), so a vendor's bare name stays the vendor's. Do not reuse another publisher's id
+or change the validation policy in a submission. New
 hosting origins and ownership transfers are separate maintainer decisions.
 
 Required evidence: fresh install, a real harmless tool call, activation in the same chat,

@@ -81,7 +81,24 @@ const str = { type: "string" };
 
 /** The tools this session grants: reading always, writing unless read-only, then the studio's own. */
 export function localToolDefinitions(request: DelegateRequest, readonly: boolean): ToolDefinition[] {
-  const definitions: ToolDefinition[] = [
+  // A blind judge sees the build only through its live tools: no file of the build is offered.
+  const definitions: ToolDefinition[] = request.blind ? [] : fileReadTools();
+  if (!readonly)
+    definitions.push(
+      tool(LocalTool.EditFile, LOCAL_TOOL_DESCRIPTION.editFile, { path: str, oldText: str, newText: str }, [
+        "path",
+        "oldText",
+        "newText",
+      ]),
+      tool(LocalTool.WriteFile, LOCAL_TOOL_DESCRIPTION.writeFile, { path: str, content: str }, ["path", "content"]),
+      tool(LocalTool.RunCommand, LOCAL_TOOL_DESCRIPTION.runCommand, { command: str }, ["command"]),
+    );
+  return withRequestTools(request, definitions);
+}
+
+/** The tools that read the session's files. */
+function fileReadTools(): ToolDefinition[] {
+  return [
     tool(
       LocalTool.ReadFile,
       LOCAL_TOOL_DESCRIPTION.readFile,
@@ -94,16 +111,10 @@ export function localToolDefinitions(request: DelegateRequest, readonly: boolean
     ),
     tool(LocalTool.ListFiles, LOCAL_TOOL_DESCRIPTION.listFiles, { path: str }),
   ];
-  if (!readonly)
-    definitions.push(
-      tool(LocalTool.EditFile, LOCAL_TOOL_DESCRIPTION.editFile, { path: str, oldText: str, newText: str }, [
-        "path",
-        "oldText",
-        "newText",
-      ]),
-      tool(LocalTool.WriteFile, LOCAL_TOOL_DESCRIPTION.writeFile, { path: str, content: str }, ["path", "content"]),
-      tool(LocalTool.RunCommand, LOCAL_TOOL_DESCRIPTION.runCommand, { command: str }, ["command"]),
-    );
+}
+
+/** The request's own tools after the session's: capture, live studio tools and interview tools, names unique. */
+function withRequestTools(request: DelegateRequest, definitions: ToolDefinition[]): ToolDefinition[] {
   if (request.onCapture)
     definitions.push(
       tool(LocalTool.Capture, LOCAL_TOOL_DESCRIPTION.capture, {

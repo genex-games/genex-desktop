@@ -1,6 +1,6 @@
 /**
  * Settings → Model Providers. One row per subscription, then the metered providers
- * (`MeteredProviders.tsx`): name and CLI version, one status plate, one line of context, and at most
+ * (`MeteredProviders.tsx`) and the person's own model server (`LocalServerRow.tsx`): name and CLI version, one status plate, one line of context, and at most
  * one visible action. Account changes, a recheck (which also refreshes
  * the model list) and updating the CLI live in the row's Account menu; the model list speaks up
  * only while it loads or after a refresh failed (`catalog-note.ts`).
@@ -22,14 +22,18 @@ import {
   DropdownMenuTrigger,
 } from "../ui/dropdown-menu.tsx";
 import { Icon } from "../ui/icons.tsx";
-import { CODE_FALLBACK_LABEL, useCodeFallback } from "../ui/SignInCard.tsx";
-import { problemWords } from "../words.ts";
+import { useCodeFallback } from "../ui/SignInCard.tsx";
+import { ViewSwitcher } from "../ui/view-switcher.tsx";
+import { PROVIDER_ACCOUNT_WORDS, problemWords } from "../words.ts";
+import { NEW_ACCOUNT, type SubscriptionAccountView } from "../../shared/subscription-accounts.ts";
+import { accountLabel, activeAccount, switchAccount, useSubscriptionAccounts } from "../subscription-accounts.ts";
 import { useCliInstall } from "../cli-install.ts";
 import { SHOW_TERMINAL_EVENT } from "./terminal-events.ts";
 import { PickerModels } from "./PickerModels.tsx";
 import { CatalogNoteKind, catalogNote } from "./catalog-note.ts";
 import { type ProviderWords, RowHeading, RowTone, type RowView } from "./provider-row.tsx";
 import { MeteredProviderRows } from "./MeteredProviders.tsx";
+import { LocalServerRow } from "./LocalServerRow.tsx";
 
 const PROVIDERS: Record<string, ProviderWords> = {
   [EngineId.ClaudeCode]: {
@@ -58,8 +62,9 @@ interface RowActions {
   /** Asks the CLI for its model list again. */
   refreshModels: () => Promise<void>;
   openGuide: () => Promise<void>;
-  signOut: () => Promise<void>;
-  signIn: (options?: { separate?: boolean }) => Promise<void>;
+  /** Sign Studio out of one of its own accounts (Studio's first when unnamed). */
+  signOut: (account?: string) => Promise<void>;
+  signIn: (options?: { separate?: boolean; account?: string }) => Promise<void>;
 }
 
 /** The row's in-app install of its CLI (`useCliInstall`). */
@@ -102,43 +107,78 @@ function missingView(
   return { tone: RowTone.Off, status: "Not installed", line: `Install it to use your ${words.plans} plan.`, actions };
 }
 
-/** Where a Claude sign-in is waiting, by its phase. */
-const CLAUDE_SIGN_IN_LINE: Partial<Record<ClaudeLoginState["phase"], string>> = {
-  code: "Paste the code the sign-in page shows you.",
-  terminal: "Finish signing in in Studio's terminal.",
-  verifying: "Checking the sign-in…",
+/** Where a Claude sign-in is waiting, by its phase, as the waiting strip says it. */
+const CLAUDE_SIGN_IN_STEP: Partial<Record<ClaudeLoginState["phase"], string>> = {
+  terminal: PROVIDER_ACCOUNT_WORDS.inTerminal,
+  verifying: PROVIDER_ACCOUNT_WORDS.verifying,
 };
 
-/** A sign-in is under way: where to finish it and, for Claude, its terminal, page and cancel. */
-function signingInView(
-  engineId: string,
-  login: ClaudeLoginState | null,
-  act: RowActions,
-  codeFallback: ReturnType<typeof useCodeFallback>,
-): RowView {
-  if (engineId === EngineId.Codex)
-    return {
-      tone: RowTone.Busy,
-      status: "Signing in…",
-      line: "Finish signing in in your browser.",
-      actions: <Button onClick={() => void act.run(() => window.studio.codexLoginCancel())}>Cancel</Button>,
-    };
+/** A sign-in is under way: the row says so and offers Cancel; the waiting strip below holds its steps. */
+function signingInView(engineId: string, act: RowActions): RowView {
+  const cancel = engineId === EngineId.Codex ? window.studio.codexLoginCancel : window.studio.claudeLoginCancel;
+  return {
+    tone: RowTone.Busy,
+    status: "Signing in…",
+    line: null,
+    actions: <Button onClick={() => void act.run(() => cancel())}>Cancel</Button>,
+  };
+}
+
+/**
+ * The sign-in's waiting strip: the step it waits on, shimmering, and its two small helps beside it
+ * (the sign-in page again, the code the browser showed); asked for, the code box takes its place.
+ */
+function SignInStrip({
+  engineId,
+  login,
+  act,
+  codeFallback,
+  code,
+  setCode,
+}: {
+  engineId: string;
+  login: ClaudeLoginState | null;
+  act: RowActions;
+  codeFallback: ReturnType<typeof useCodeFallback>;
+  code: string;
+  setCode: (code: string) => void;
+}): JSX.Element {
+  if (codeFallback.pasting)
+    return (
+      <div className="sign-in-strip" data-sign-in-strip="code">
+        <CodeEntry act={act} code={code} setCode={setCode} />
+      </div>
+    );
+  const claude = engineId === EngineId.ClaudeCode;
   const phase = login?.phase;
-  const waitingOnBrowser = phase === "code" && !codeFallback.pasting;
-  const line = (!waitingOnBrowser && phase && CLAUDE_SIGN_IN_LINE[phase]) || "Finish signing in in your browser.";
-  const actions = (
-    <>
+  const step = (claude && phase && CLAUDE_SIGN_IN_STEP[phase]) || PROVIDER_ACCOUNT_WORDS.waiting;
+  const openPage = claude ? window.studio.claudeLoginOpenBrowser : window.studio.codexLoginOpenBrowser;
+  const canOpen = claude ? Boolean(login?.hasBrowserUrl) : true;
+  return (
+    <div className="sign-in-strip" data-sign-in-strip="waiting">
+      <span className="chat-status-shimmer min-w-0 flex-1 truncate" data-shimmer>
+        {step}
+      </span>
       {phase === "terminal" && (
-        <Button onClick={() => window.dispatchEvent(new Event(SHOW_TERMINAL_EVENT))}>Show terminal</Button>
+        <Button
+          className="h-7 bg-control-hover px-2.5"
+          onClick={() => window.dispatchEvent(new Event(SHOW_TERMINAL_EVENT))}
+        >
+          {PROVIDER_ACCOUNT_WORDS.showTerminal}
+        </Button>
       )}
-      {login?.hasBrowserUrl && (
-        <Button onClick={() => void act.run(() => window.studio.claudeLoginOpenBrowser())}>Open sign-in page</Button>
+      {canOpen && (
+        <Button className="h-7 bg-control-hover px-2.5" onClick={() => void act.run(() => openPage())}>
+          {PROVIDER_ACCOUNT_WORDS.openPage}
+        </Button>
       )}
-      {waitingOnBrowser && <Button onClick={codeFallback.pasteCode}>{CODE_FALLBACK_LABEL}</Button>}
-      <Button onClick={() => void act.run(() => window.studio.claudeLoginCancel())}>Cancel</Button>
-    </>
+      {claude && phase === "code" && (
+        <Button className="h-7 bg-control-hover px-2.5" onClick={codeFallback.pasteCode}>
+          {PROVIDER_ACCOUNT_WORDS.haveCode}
+        </Button>
+      )}
+    </div>
   );
-  return { tone: RowTone.Busy, status: "Signing in…", line, actions };
 }
 
 /** Where the connected account's login comes from. */
@@ -160,19 +200,22 @@ function ItemWords({ title, line }: { title: string; line: string }): JSX.Elemen
 }
 
 function AccountMenu({
-  engineId,
   words,
   account,
+  accounts,
   act,
   install,
 }: {
-  engineId: string;
   words: ProviderWords;
   account: Account;
+  accounts: readonly SubscriptionAccountView[];
   act: RowActions;
   install: RowInstall;
 }): JSX.Element {
   const version = account?.cli.version;
+  // Studio can sign out of its own accounts; the Terminal login is the CLI's, signed out in Terminal.
+  const inUse = account?.source === "isolated" ? activeAccount(accounts) : null;
+  const signOutOf = inUse && !inUse.terminal ? inUse : null;
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
@@ -193,23 +236,13 @@ function AccountMenu({
         <DropdownMenuItem disabled={install.installing} onSelect={() => void install.update()}>
           {version ? <ItemWords title={`Update ${words.name}`} line={`You have ${version}`} /> : `Update ${words.name}`}
         </DropdownMenuItem>
-        {account?.source !== "env" && <DropdownMenuSeparator />}
-        {account?.source !== "env" && (
-          <DropdownMenuItem
-            onSelect={() =>
-              void act.run(() => act.signIn(engineId === EngineId.Codex ? undefined : { separate: true }))
-            }
-          >
-            <ItemWords title="Use a different account…" line="Your Terminal login stays as it is" />
-          </DropdownMenuItem>
-        )}
-        {account?.source === "isolated" && (
-          <DropdownMenuItem onSelect={() => void act.signOut()}>
-            {account.afterSignOut === "terminal" ? (
-              <ItemWords title="Switch back to your Terminal login" line="Signs Studio out of this account" />
-            ) : (
-              "Sign out"
-            )}
+        {signOutOf && <DropdownMenuSeparator />}
+        {signOutOf && (
+          <DropdownMenuItem onSelect={() => void act.signOut(signOutOf.id)}>
+            <ItemWords
+              title={PROVIDER_ACCOUNT_WORDS.signOut(accountLabel(signOutOf))}
+              line={PROVIDER_ACCOUNT_WORDS.signOutLine}
+            />
           </DropdownMenuItem>
         )}
       </DropdownMenuContent>
@@ -233,15 +266,14 @@ function rowView(row: {
   words: ProviderWords;
   cliMissing: boolean;
   signingIn: boolean;
-  login: ClaudeLoginState | null;
   loginError: string | null | undefined;
   act: RowActions;
   install: RowInstall;
-  codeFallback: ReturnType<typeof useCodeFallback>;
+  accounts: readonly SubscriptionAccountView[];
 }): RowView {
   const { engineId, engine, words, act } = row;
   if (row.cliMissing) return missingView(words, engine.account?.cli, act, row.install);
-  if (row.signingIn) return signingInView(engineId, row.login, act, row.codeFallback);
+  if (row.signingIn) return signingInView(engineId, act);
   if (engine.status.code === EngineStatusCode.Ready && row.install.installing)
     return {
       tone: RowTone.Busy,
@@ -255,7 +287,7 @@ function rowView(row: {
       status: "Connected",
       line: [planName(engine.usage?.plan), loginSource(engine.account)].filter(Boolean).join(" · ") || null,
       actions: (
-        <AccountMenu engineId={engineId} words={words} account={engine.account} act={act} install={row.install} />
+        <AccountMenu words={words} account={engine.account} accounts={row.accounts} act={act} install={row.install} />
       ),
     };
   if (engine.status.code === EngineStatusCode.NeedsLogin)
@@ -279,12 +311,10 @@ function rowView(row: {
 
 /** The Claude sign-in's code box, while the sign-in page is waiting for the code. */
 function CodeEntry({
-  login,
   act,
   code,
   setCode,
 }: {
-  login: ClaudeLoginState | null;
   act: RowActions;
   code: string;
   setCode: (code: string) => void;
@@ -304,14 +334,13 @@ function CodeEntry({
         onKeyDown={(event) => {
           if (event.key === "Enter" && code.trim()) void submitCode();
         }}
-        className="h-8 w-52 rounded-control border border-input bg-field px-2.5 font-mono text-xs text-foreground outline-none placeholder:text-muted-foreground focus:border-accent-ink"
+        // The person has just come back from the browser holding the code; the box takes it.
+        autoFocus
+        className="h-8 w-52 rounded-control border border-input bg-card px-2.5 font-mono text-xs text-foreground outline-none placeholder:text-muted-foreground focus:border-accent-ink"
       />
       <Button variant="default" disabled={!code.trim()} onClick={() => void submitCode()}>
         Continue
       </Button>
-      {login?.hasBrowserUrl && (
-        <Button onClick={() => void act.run(() => window.studio.claudeLoginOpenBrowser())}>Open sign-in page</Button>
-      )}
     </div>
   );
 }
@@ -349,9 +378,9 @@ function useRowActions(
     recheck,
     refreshModels: () => run(() => window.studio.refreshModels(engineId)),
     openGuide: () => run(() => window.studio.openUrl(guide)),
-    signOut: () =>
+    signOut: (account) =>
       run(async () => {
-        await window.studio.subscriptionForgetStudioLogin(engineId);
+        await window.studio.subscriptionForgetStudioLogin(engineId, account);
         await refresh();
       }),
     signIn,
@@ -413,6 +442,55 @@ function CatalogLine({
   );
 }
 
+/**
+ * The provider's accounts as tabs under its name: the one in use is selected, another runs from the
+ * next message once clicked (signing in on the web first when it is signed out), and + adds one.
+ */
+function AccountTabs({
+  engineId,
+  words,
+  accounts,
+  act,
+}: {
+  engineId: string;
+  words: ProviderWords;
+  accounts: readonly SubscriptionAccountView[];
+  act: RowActions;
+}): JSX.Element {
+  const items = accounts.map((account) => ({ key: account.id, label: accountLabel(account) }));
+  const active = activeAccount(accounts)?.id ?? "";
+  const pick = (account: string): Promise<void> =>
+    act.run(async () => {
+      await switchAccount(engineId, account, act.signIn);
+      await act.recheck();
+    });
+  return (
+    <div className="flex min-w-0 flex-wrap items-center gap-1.5" data-account-tabs={engineId}>
+      <ViewSwitcher
+        items={items}
+        active={active}
+        sans
+        label={PROVIDER_ACCOUNT_WORDS.tabs(words.name)}
+        className="min-w-0 max-w-full overflow-x-auto"
+        dataAttribute="data-account"
+        onSelect={(account) => {
+          if (account !== active) void pick(account);
+        }}
+      />
+      <Button
+        variant="ghost"
+        size="icon"
+        className="size-7"
+        aria-label={PROVIDER_ACCOUNT_WORDS.add}
+        title={PROVIDER_ACCOUNT_WORDS.add}
+        onClick={() => void pick(NEW_ACCOUNT)}
+      >
+        <Icon name="plus" size={14} />
+      </Button>
+    </div>
+  );
+}
+
 function ProviderRow({
   engineId,
   engines,
@@ -426,6 +504,8 @@ function ProviderRow({
   const install = useCliInstall(engineId);
   const codeFallback = useCodeFallback(login?.phase);
   const [code, setCode] = useState("");
+  // Read again whenever the engines are: a sign-in or a switch elsewhere changes the list.
+  const { accounts } = useSubscriptionAccounts(engineId, engine);
 
   // Coming back from installing the CLI in another app is the moment to look again.
   useEffect(() => {
@@ -437,18 +517,7 @@ function ProviderRow({
 
   if (!engine) return null;
   const { claudeLogin, signingIn, loginError } = signInState(engineId, login, waiting, error);
-  const view = rowView({
-    engineId,
-    engine,
-    words,
-    cliMissing,
-    signingIn,
-    login: claudeLogin,
-    loginError,
-    act,
-    install,
-    codeFallback,
-  });
+  const view = rowView({ engineId, engine, words, cliMissing, signingIn, loginError, act, install, accounts });
   // Signed in with a working CLI: the model list belongs to the row, also while the CLI updates.
   const connected = !cliMissing && !signingIn && engine.status.code === EngineStatusCode.Ready;
   // A recheck keeps the row's line and actions in place; only the status says it is looking.
@@ -457,9 +526,22 @@ function ProviderRow({
   // A sign-in error belongs to the Sign in button; it is noise once the row is about something else.
   const signInTrouble = !cliMissing && !signingIn && engine.status.code === EngineStatusCode.NeedsLogin;
   const problem = act.actionError ?? install.problem ?? (signInTrouble ? loginError : null);
+  // Accounts to switch between, once there is one: never while signing in, nor for a login the environment sets.
+  const showAccounts = !cliMissing && !signingIn && engine.account?.source !== "env" && accounts.length > 0;
   return (
     <section aria-label={words.name} className="settings-card gap-2">
       <RowHeading words={words} version={engine.account?.cli.version} tone={tone} status={status} view={view} />
+      {showAccounts && <AccountTabs engineId={engineId} words={words} accounts={accounts} act={act} />}
+      {signingIn && (
+        <SignInStrip
+          engineId={engineId}
+          login={claudeLogin}
+          act={act}
+          codeFallback={codeFallback}
+          code={code}
+          setCode={setCode}
+        />
+      )}
       {/* The model catalog belongs to a connected account; a signed-out row keeps its one Sign in action. */}
       {connected && (
         <>
@@ -467,7 +549,6 @@ function ProviderRow({
           <PickerModels engine={engine} name={words.name} />
         </>
       )}
-      {signingIn && codeFallback.pasting && <CodeEntry login={claudeLogin} act={act} code={code} setCode={setCode} />}
       {problem && (
         <p role="alert" className="text-body-sm text-red">
           {problemWords(problem)}
@@ -484,12 +565,14 @@ export function ModelProvidersSection({ engines, onEnginesRefresh }: ModelSettin
   useEffect(() => {
     onEnginesRefresh();
   }, [onEnginesRefresh]);
+  const localServer = engines.find((engine) => engine.id === EngineId.LocalServer);
   return (
     <div className="flex flex-col gap-3">
       {SUBSCRIPTION_ENGINES.map((id) => (
         <ProviderRow key={id} engineId={id} engines={engines} onEnginesRefresh={onEnginesRefresh} />
       ))}
       <MeteredProviderRows engines={engines} onEnginesRefresh={onEnginesRefresh} />
+      {localServer && <LocalServerRow engine={localServer} onEnginesRefresh={onEnginesRefresh} />}
     </div>
   );
 }

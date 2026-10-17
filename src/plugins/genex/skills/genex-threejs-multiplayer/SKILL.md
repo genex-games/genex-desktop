@@ -3,24 +3,39 @@
 You are building inside AI Game Studio. Below the upstream marker is Genex's multiplayer card,
 unchanged. Where it disagrees with this preface, this preface wins.
 
-## Multiplayer works only on the published Genex draft
+## Multiplayer runs on the Genex draft link, with two different players
 
 - Studio's preview is single-player. It opens a game that uses `@genex-ai/embed-sdk` in local
   test mode (`?genex_local_test=1`): the relay gets no credential there, so `connect()` and
   `matchmake()` fail by design. Rendering, controls and feel can still be checked in the preview.
-- Check prerequisites before building online features: a package-managed project, the pinned
-  SDKs, and an authorized hosted test route. Request both SDKs in one approval with
+- The draft link is multiplayer. A draft plays in rooms of its own, apart from the live game, so
+  testers on the draft link meet each other and never real players. Anyone with the link can join,
+  as a guest or signed in, before the game is published to the gallery.
+- Check prerequisites before building online features: the pinned SDKs and an authorized hosted
+  test route. Request both SDKs in one approval with
   `genex__package {"package":"@genex-ai/multiplayer"}` (it includes embed-sdk). After approval,
   build the game; publish a draft with
   `genex__publish {"operation":"draft"}`; wait with `genex__publish-status`; then test on the draft
-  link. Only the owner can open a draft, so hand the link to the user to try in two tabs; a friend
-  can join only once the game is published to the gallery. Until someone has played the draft,
-  say plainly that multiplayer was not exercised.
-- Studio installs the version it pins, which satisfies the card's `^0.16.0`. Never run
+  link as TWO DIFFERENT players. Hand the user the link and tell them exactly how: open it in a
+  normal window and an incognito window (the incognito one plays as a guest), or send it to a
+  friend. Two tabs on one account are one player: the newer tab takes the seat. Until two players
+  have played the draft, say plainly that multiplayer was not exercised.
+- Nobody can save or buy on the draft link, the owner included. Test saves and purchases after
+  publishing.
+- Studio installs the version it pins, which satisfies the card's `^0.17.0`. Never run
   `npm i` for these packages yourself.
-- A game made from Studio's template has no `package.json` (it loads three.js through an import
-  map), so it cannot add these packages. Tell the user multiplayer needs a game with its own
-  package manager and build; never copy the SDK into the game by hand.
+- A game made from Studio's template has no `package.json`: it loads three.js through an import
+  map, and the same `genex__package` call maps Studio's copies of both SDKs into that map and loads
+  Studio's connect module after it, with nothing downloaded. Studio connects the game: never call
+  `initEmbed()`, skip the card's Bootstrap step, `genex.config.ts` and "Config without `genex init`"
+  below, and never write a slug. Import the rest exactly as the card shows (`waitForPlayer`,
+  `getColyseusAuth` and `getColyseusUrls` from `"@genex-ai/embed-sdk"`), in plain JavaScript: the
+  template has no TypeScript build, so leave out the card's type annotations. Its settings go in
+  `genex.json` at the game's root (`{"matchmaking": {...}}`) wherever the card says package.json's
+  `genex` field. Never copy the SDK into the game by hand.
+- A game with its own build but no `package.json` needs one first: give it one, then call
+  `genex__package`. A game's shape is never a reason to refuse multiplayer: restructure what you
+  must, and keep its single-player play working.
 
 - If approval is declined or times out, or the hosted test route is unavailable, report the
   specific blocker. Preserve local play; do not retry without changed authorization or claim
@@ -28,9 +43,15 @@ unchanged. Where it disagrees with this preface, this preface wins.
 
 ## Config without `genex init`
 
-Studio never runs `genex init`, so the game starts without `src/genex.config.ts` or `.env`. After
+A remixed game already has a `src/genex.config.*` (and maybe a `.env`) naming the game it was
+copied from. A config naming another game signs every player into that other game, so Genex
+refuses to deploy it. Publish a draft; when it is refused for naming another game, read this game's
+slug from `genex__publish-status`, set it in the config, and publish the draft again.
+
+Studio never runs `genex init`, so a new game starts without `src/genex.config.ts` or `.env`. After
 the first draft, `genex__publish-status` reports the game's `slug`. Write the config yourself,
-then publish a new draft:
+then publish a new draft (a template game: `src/genex.config.js`, the same object without
+`as const`, imported as `./genex.config.js`):
 
 ```ts
 // src/genex.config.ts
@@ -59,7 +80,7 @@ For example: `genex__skill {"name":"genex-threejs-multiplayer","file":"skills/ge
 available in Studio: build chat, voice and the character from the SDK calls the card shows.
 Commands map onto Studio tools as the `genex` skill describes (`genex__skill {"name":"genex"}`).
 
-<!-- upstream @genex-ai/cli-demo/templates/skills/genex-threejs-multiplayer/SKILL.md v1.36.2 sha256 54f6a7324ae013962bd128efbd1cf217c41e0960df882259022e214b33072723 -->
+<!-- upstream @genex-ai/cli-demo/templates/skills/genex-threejs-multiplayer/SKILL.md v1.36.9 sha256 64fc5498203e6d99244781f39237ddc22b83d5fb70932c23cec2d07eb553b7a7 -->
 ---
 name: genex-threejs-multiplayer
 description: Realtime multiplayer for Genex Three.js games with `@genex-ai/multiplayer` — a relay whose SDK auto-smooths remote players AND shared objects (you do NOT write interpolation). Use whenever 2+ players share a world: movement sync, a shared ball/NPC via objects + ownership, host-authoritative scores/waves, shots/emotes, presence. MANDATORY for any multiplayer game — load before writing networking code.
@@ -95,23 +116,42 @@ example, the shared-object/ball code, rotation, and host usage. Read
 calling multiplayer done, run the mandatory
 [netcode feel gate](references/genex-netcode-feel-checklist.md).
 
+## Testing multiplayer: on the preview link, with two different players
+
+**A preview build is multiplayer in rooms of its own.** `npx genex preview` (the
+`preview--<slug>` address) plays in rooms the relay keeps apart from the live game: testers on the
+preview link meet each other and never meet real players, and a published game's players never see
+an untested build. Anyone with the preview link can join, as a guest or signed in, even before the
+game is published. You do nothing for this: the game always passes its plain slug; the relay picks
+the room.
+
+- **Test it on the preview, as two DIFFERENT players:** the preview link is the `preview--<slug>`
+  address `npx genex preview` prints on its "Live" line (the dashboard's draft page is the owner's
+  only). Open it in a normal window and an incognito window (the incognito one plays as a guest),
+  or send it to a friend.
+  Two tabs on one account are ONE seat: the newer tab takes it (close code 4409).
+- Until two players have played it, tell the user multiplayer is built but not yet verified, give
+  them the preview link and say exactly that: open it in a normal and an incognito window.
+- Nobody can save or buy on a preview, the owner included. Test progression saves and purchases
+  after publishing.
+
 ## Install
 
 ```bash
-npm i @genex-ai/multiplayer@^0.16.0
+npm i @genex-ai/multiplayer@^0.17.0
 ```
 
-> Pin `@^0.16.0` (not a bare `npm i`, and not an older range): automatic TURN — the thing that
+> Pin `@^0.17.0` (not a bare `npm i`, and not an older range): 0.17 speaks the relay's current
+> wire protocol, and the relay **refuses every older SDK** — a game built on 0.16 or earlier
+> cannot join a room at all (its joins fail with `unsupported protocol`). 0.17 also added a
+> relay-stamped per-game player id (`p.uid`), relay-assigned teams for the `open` preset
+> (`p.team`) and the `room:open` event. Earlier floors still hold: automatic TURN — the thing that
 > lets players behind symmetric NAT or carrier CGNAT be heard at all — landed in 0.16, mesh voice
-> in 0.15, room text chat in 0.14, host-only `setRoomOpen()` in 0.13; cross-region invites can
-> select the inviter's exact relay with the optional `url` override since 0.11; unowned object
-> writes warn instead of failing silently, live connected-player presence, supplier-form
-> `connect()` auth and regional relay selection (`getColyseusUrls()` + `urls`) landed in 0.10;
-> confirmed object controls, snaps, host-tick teardown, and reconnect rebasing in 0.9. An older
-> resolve does not have those — and because this package is still `0.x`, a caret range is
-> minor-locked, so `^0.12.0` would resolve to 0.12.x and give you no voice at all.
+> in 0.15, room text chat in 0.14, host-only `setRoomOpen()` in 0.13. Because this package is
+> still `0.x`, a caret range is minor-locked, so `^0.16.0` would resolve to 0.16.x and never join.
 
-This skill targets `@genex-ai/multiplayer` **≥ 0.16.0** (`objects`/`host` since 0.4; verified per-player `avatarUrl` since 0.12;
+This skill targets `@genex-ai/multiplayer` **≥ 0.17.0** (relay protocol 3, `p.uid`/`p.team` and
+`room:open` since 0.17; `objects`/`host` since 0.4; verified per-player `avatarUrl` since 0.12;
 room text chat via `room.chat` since 0.14; mesh voice via `room.voice` since 0.15;
 automatic TURN (voice connects behind symmetric NAT with no configuration) since 0.16;
 `matchmake()` since 0.5; private lobbies since 0.7; auto-reconnect + `inputs`/`onHostTick`
@@ -194,6 +234,8 @@ mm.on("matched", () => syncSession());
 mm.on("matchStart", () => syncSession()); // duel/arena/teams only
 mm.on("matchEnded", (result) => showResult(result)); // duel/arena/teams only
 mm.on("error", (e) => showQueueError(e)); // after SDK retries; fix, then mm.retry()
+// 4409 = opened in another tab/device, 4401 = signed out: the handle stops, never requeues.
+mm.on("disconnect", () => showMenu("This game is open somewhere else.")); // mm.retry() only on a click
 
 // Every frame AND a low-rate timer: the handle swaps in a new Session after
 // seating, terminal drop/requeue, and the next match.
@@ -392,8 +434,9 @@ halves of this rule are non-negotiable:
    is never written (host bug, host left), every player is stuck on the waiting screen forever.
    A ready-check or countdown is fine as an ADDITION layered on top of `status === 'playing'`
    (host writes it to `shared` so it survives host migration), never as a replacement for it.
-2. **Verify it for real before calling multiplayer done**: open the game in two browser windows
-   (one regular + one incognito, so they're two players), join with both, and watch the waiting
+2. **Verify it for real before calling multiplayer done**: on the preview link (see "Testing
+   multiplayer"), open it in two browser windows (one regular + one incognito, so they're two
+   players), join with both, and watch the waiting
    screen disappear on BOTH the moment the count reaches `minPlayers` (with
    `minPlayers: 2, maxPlayers: 2`: the instant the second player joins). If it doesn't close on
    both, the lobby is broken — fix it; do not ship a waiting room you haven't watched close.
@@ -463,12 +506,38 @@ and friends join it; the lobby is persistent (rounds replay, nobody is evicted):
 
 ```ts
 import { createPrivate, joinPrivate } from "@genex-ai/multiplayer";
-const lobby = await createPrivate<MyState>({ urls, room: slug, auth: () => getColyseusAuth() });  // live NOW
-showCode(lobby.code);                                                   // share this
-// a friend, elsewhere:
-const lobby = await joinPrivate<MyState>(code, { urls, room: slug, auth: () => getColyseusAuth() });
+import { share, getEntry } from "@genex-ai/embed-sdk";              // 0.32.0+
+const opts = { urls, room: slug, auth: () => getColyseusAuth() };
+
+// host
+const lobby = await createPrivate<MyState>(opts);                    // live NOW
+showCode(lobby.code);                 // always show the code too: the way in when a link will not do
+inviteBtn.onclick = async () => {     // share() starts inside the click, before any await
+  const { status, url } = await share({ text: "Join my lobby", params: { lobby: lobby.code } });
+  if (status === "copied") toast("Invite link copied");
+  if (status === "unavailable") showLink(url);       // no share sheet, no clipboard: show the link
+};
+
+// friend: ONE way in, for the code from a link and for a code typed by hand
+async function enter(code: string) {
+  if (!/^[\w-]{1,32}$/.test(code)) return null;      // a link is text anyone can write: take a code, nothing else
+  try { return await joinPrivate<MyState>(code, opts); }
+  catch { showNotice("That lobby is no longer open"); return null; }
+}
+// at boot, after waitForPlayer(): did they arrive on an invite link?
+const invited = getEntry().params.get("lobby");
+const joined = invited ? await enter(invited) : null;  // null → the menu, with its "Enter code" field
 // same handle API as matchmake(): lobby.session, lobby.matchmaking, eliminated()/score()/finish(), cancel()
 ```
+
+`share()` builds the link itself — the game's page on Genex plus `?lobby=<code>`, or the
+address the game is on where that is a preview address or a creator's own domain — and
+`getEntry()` hands the parameter back to whoever opens it. **Never build the invite from
+`location.href`**: on the game's page that is the frame's bare address, not the page a friend
+should land on. `lobby` is this example's name; any name works except the ones Genex keeps
+(`$genex-threejs-embed-auth`, `references/shells.md`). `joinPrivate` REJECTS when the code leads
+to no lobby this player can reach — it closed, or its host is on another region's relay — so
+catch it and show the menu, and keep the typed code as the second way in.
 
 ## Connect
 
@@ -705,7 +774,8 @@ fights (many writers). A ball on `objects` glides and has one owner. That's the 
   - `ids()` — all object ids seen.
 - `room.isHost` / `room.host` — you are (or who is) the elected authority. Use to pick the single
   writer of `shared` scores/rounds and the single simulator of host-owned objects. Settles within
-  the first patch after connect — read in your loop / react to `on('host')`, not once.
+  the first patch after connect — read in your loop / react to `on('host')`, not once. `isHost` is
+  false while reconnecting (until the fresh snapshot lands), so gating a write on it is safe.
   `room.host === undefined` before that patch means **authority is not ready**:
   do not start host-owned simulation and do not synthesize an "acting host" from
   a locally sorted roster. Clients can briefly observe different rosters, so
@@ -736,10 +806,22 @@ fights (many writers). A ball on `objects` glides and has one owner. That's the 
   mesh — everyone uploads to everyone, and reliability, not bandwidth, breaks first). The
   room still holds 64 players; the 7th `join()` is refused, so handle `voice:rejected`
   instead of retrying. `join()` MUST run inside a click/tap — browsers gate both the mic
-  prompt and audio playback on a user gesture — and it REJECTS when the player denies the
-  mic, which is an ordinary outcome to show, not an error to swallow. For a 3D game use
-  `npx genex controller voice` (proximity audio + push-to-talk); it joins with
-  `{ spatial: true }` and drives a `THREE.PositionalAudio` per speaker. **TURN is automatic
+  prompt and audio playback on a user gesture — and it REJECTS when the microphone is
+  refused, which is an ordinary outcome to show, not an error to swallow. **Two refusals are
+  not the player's.** On its Genex page a game gets the microphone only when its BUILD
+  declared it: `npx genex preview` / `npx genex publish` declare it when the game's own
+  source calls `.voice.join()` with nothing or with options written at the call, and print
+  what the build is given — read that line. `voice.join(opts)` with the options in a
+  variable is not seen: declare the microphone in `package.json` then. When the
+  page withheld it, `join()` rejects with an error whose `name` is `VoiceNotDelegatedError`
+  (SDK 0.16.2+, Chromium browsers; elsewhere it arrives as the browser's own error): show
+  "Voice chat is not available here", never "allow your microphone" — the player was never
+  asked. And the Genex app refuses the microphone for every game: hide the voice button when
+  `getShell()` from `@genex-ai/embed-sdk` is `"app"`. The declaration rule, and the
+  `package.json` line for a call the CLI cannot see, are in `$genex-threejs-embed-auth`
+  (`references/shells.md`).
+  For a 3D game use `npx genex controller voice` (proximity audio + push-to-talk); it joins
+  with `{ spatial: true }` and drives a `THREE.PositionalAudio` per speaker. **TURN is automatic
   — do not pass `iceServers`**: `join()` fetches short-lived relay credentials from the
   platform before opening any peer connection, which is what lets the ~15% of players behind
   symmetric NAT or carrier CGNAT be heard at all (in a mesh they fail every leg, so they
@@ -954,11 +1036,11 @@ function awardOnce(scorerUid: string, name: string, marker: `__${string}`, seq: 
 ```
 
 **Key scores by a STABLE identity, never the session id.** A session id dies on every reload —
-the points orphan into a duplicate row and the player's color changes. Publish a short `uid` in
-each player's state (from the embed identity: `const { user } = await waitForPlayer()`,
-`uid = user.id` — stable for signed-in players AND guests; see `$genex-threejs-embed-auth`), and
-key `scores`/colors/`isMe` by that uid. When an event only carries a session id, map it via
-`room.players.get(sid)?.stateRaw.uid`.
+the points orphan into a duplicate row and the player's color changes. The relay stamps every
+player with `uid` — their stable id **in this game**, the same across reloads, never their account
+id — so key `scores`/colors/`isMe` by it. When an event only carries a session id, map it via
+`room.players.get(sid)?.uid`. Never publish the account id (`user.id`) in player state yourself:
+every peer reads it.
 
 For host-simulated NPCs, the host claims and drives each enemy as an `object`; when the host
 leaves, its enemies are reassigned to the new host, which reads their `stateRaw` and keeps
@@ -1009,10 +1091,11 @@ from any still capture whether movement feels smooth.** Don't try — it leads t
    other (and the ball, if any). That's all a capture can prove. Local test mode (what the dev
    server boots into — the embed-auth skill) can NOT do this: it mints no relay credential, so `connect()`
    fails there by design and two local-test tabs never see each other — run the two-client check
-   on the published game (or have the owner open their draft), and if multiplayer wasn't
-   exercised, say exactly that in your handoff instead of implying it was.
+   on the preview link (see "Testing multiplayer"), and if multiplayer wasn't exercised, say
+   exactly that in your handoff instead of implying it was.
 3. **Then say plainly:** *"Multiplayer smoothness depends on your network and can only be felt by a
-   person — open it in two tabs or with a friend and tell me how it feels."* Stop there.
+   person — open the preview link in a normal and a private window, or send it to a friend, and
+   tell me how it feels."* Stop there.
 
 ### When the human reports a problem, match the symptom (don't guess)
 
@@ -1086,7 +1169,7 @@ host-driven saving works as long as ANY account is in the room.
 
 ## Checklist
 
-- [ ] `npm i @genex-ai/multiplayer@^0.16.0` (automatic TURN, mesh voice, room text chat, connected presence, supplier auth, confirmed controls, snap epochs, reconnect-safe host ticks, unowned-write warnings, cross-region exact-relay overrides); config wired into the build.
+- [ ] `npm i @genex-ai/multiplayer@^0.17.0` (the only range the relay accepts; per-game `p.uid`, automatic TURN, mesh voice, room text chat, connected presence, supplier auth, confirmed controls, snap epochs, reconnect-safe host ticks, unowned-write warnings, cross-region exact-relay overrides); config wired into the build.
 - [ ] The plan names one net model, the player-experience reason, start/quorum, late-join/backfill,
       and below-quorum/end behavior. The agent inferred it unless the experience was genuinely ambiguous.
 - [ ] `reconnecting`/`reconnected`/`disconnect` render an overlay (don't tear the scene down).
@@ -1105,7 +1188,7 @@ host-driven saving works as long as ANY account is in the room.
       dedupe keys, the victim applies its own damage, respawn publishes via `me.snap`, and
       projectiles are hard-capped objects removed with `removeConfirmed`.
 - [ ] Host score writes are exactly-once (marker in the same `shared` write) and keyed by the
-      stable embed `uid`, never the session id.
+      relay-stamped `p.uid`, never the session id.
 - [ ] Host renders objects OWNED BY OTHERS from the stream (authority follows ownership).
 - [ ] `connect()` runs AFTER `await waitForPlayer()` (never `waitForAuth()` — guests would
       hang) and passes `auth: () => getColyseusAuth()` (the relay rejects tokenless joins —

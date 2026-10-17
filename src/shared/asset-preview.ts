@@ -13,10 +13,16 @@ export const ASSET_PREVIEW_MIME: Readonly<Record<string, string>> = Object.freez
 export function assetPreviewMode(file: string): AssetPreviewMode {
   return assetFormat(file)?.preview ?? "unsupported";
 }
-/** The folder a model's resources must stay inside: its Genex ref, `public/assets` or `assets`. */
+/**
+ * The folder a model's resources must stay inside: its Genex ref, `public/assets`, or the top
+ * folder the model is in (`assets`, Unity's `Assets`, a plugin's folder), or the game's root for a
+ * model there. The main side holds every read to the game's asset folders besides.
+ */
 function companionRoot(base: string): string[] {
   if (isGenexRef(base)) return base.split("/").slice(0, 2);
-  return base.startsWith("public/assets/") ? ["public", "assets"] : ["assets"];
+  if (base.startsWith("public/assets/")) return ["public", "assets"];
+  const parts = base.split("/");
+  return parts.length > 1 ? parts.slice(0, 1) : [];
 }
 
 function decodedResource(uri: string): string {

@@ -31,6 +31,7 @@ import { isRunning, WorkerMode } from "../outcomes.ts";
 import { DEFAULT_CAMERA } from "../cameras.ts";
 import { uniqueCheckId } from "../facet/defects.ts";
 import { DefectSeverity } from "../ship-review.ts";
+import { blockersOf } from "../ship-blockers.ts";
 import { CheckKind, CheckOrigin, CheckWeight, type Check } from "../spec.ts";
 import { clip, CLIP_QUOTE, CLIP_REASON } from "../text.ts";
 import { MINUTE_MS, SECOND_MS } from "../time.ts";
@@ -348,19 +349,20 @@ function giveDoNotRegress(worker: Worker & { spec: AnyRecord }, doNotRegress: re
 }
 
 /**
- * Hand each ship defect to its owner: the running loop worker whose part it names gets it on its
- * board as the director's own question (its fix is a strong flip, so the round is kept); a part
- * that is finished, a single session or not started has it on the ledger under its id; a defect
- * no part owns is the lead's, on the ledger under the integration. A review with a verdict first
- * takes the earlier reviews' questions it does not ask again off the running boards, and gives every
- * running loop worker its do-not-regress list in place of the last one. Answers what went where.
+ * Hand each blocker to its owner: the running loop worker whose part it names gets it on its board
+ * as the director's own question (its fix is a strong flip, so the round is kept); a part that is
+ * finished, a single session or not started has it on the ledger under its id; a blocker no part
+ * owns is the lead's, on the ledger under the integration. A visible flaw or a nit starts and steers
+ * no round: it stays on the review, for the user's report. A review with a verdict first takes the
+ * earlier reviews' questions it does not ask again off the running boards, and gives every running
+ * loop worker its do-not-regress list in place of the last one. Answers what went where.
  */
 export function routeShipDefects(
   loopRun: LoopRun,
   review: Pick<ShipReview, "defects"> & Partial<Pick<ShipReview, "ship" | "doNotRegress">>,
 ): ShipRoute[] {
   const { note, state } = loopRun;
-  const routes = shipDefectsToChecks(review, state.workers, state.plan);
+  const routes = shipDefectsToChecks({ defects: blockersOf(review.defects) }, state.workers, state.plan);
   // Only a review with a verdict replaces the last one's questions and list: one nobody could read leaves them.
   if (typeof review.ship === "boolean") {
     tellRetired(loopRun, retireShipChecks(loopRun, routes));
@@ -401,14 +403,14 @@ function partStartedOn(loopRun: LoopRun, worker: Worker): string | null {
 
 /**
  * A shelved defect as the art director named it: its last look's defect with the same words for
- * that part (severity and camera kept), else a visible one on the default camera — a defect the
- * art director named and nobody fixed is one a player notices until a look says it is gone.
+ * that part (severity and camera kept), else a blocker on the default camera — only a blocker is
+ * shelved, and one nobody fixed blocks until a look says it is gone.
  */
 function shelvedShipDefect(loopRun: LoopRun, part: string, text: string): ShipDefect {
   const named = (loopRun.state.lastShip?.defects ?? []).find(
     (defect) => defect.part === part && clip(defect.what, CLIP_REASON) === text,
   );
-  return named ?? { what: text, camera: null, part, severity: DefectSeverity.Visible };
+  return named ?? { what: text, camera: null, part, severity: DefectSeverity.Blocker };
 }
 
 /** Is a ship question with these words on the worker's board now? */
@@ -433,6 +435,11 @@ export function takeShelvedShipDefects(loopRun: LoopRun, worker: Worker): ShipRo
   const taken: ShipRoute[] = [];
   for (const entry of shelved) {
     const defect = shelvedShipDefect(loopRun, part, entry.text);
+    // Shelved before only blockers were work: the report has it, and no round takes it.
+    if (defect.severity !== DefectSeverity.Blocker) {
+      ledger.splice(ledger.indexOf(entry), 1);
+      continue;
+    }
     const route = { part, defect, check: shipCheck({ checks: worker.spec.checks ?? [] }, defect) };
     onBoard(loopRun, worker, route, loopRun.state.lastShip?.ship ?? null);
     if (!onItsBoard(worker, route.check)) continue;
@@ -586,8 +593,8 @@ function closeJudgeOwed(loopRun: LoopRun): AnyRecord | null | undefined {
 }
 
 /**
- * A goal build's finish with no review on its head: the art director looks once, and a "no" turns
- * the finish back once, with the defects — never twice, never for the user's own finish, never in
+ * A goal build's finish with no review on its head: the art director looks once, and a blocker turns
+ * the finish back once, with the blockers — never twice, never for the user's own finish, never in
  * the wrap-up (no time to act on it). The look runs inside the lead's `finish` call, so it is
  * bounded by `finishGateJudgeMs` and answers the close's own question too, so the close does not
  * judge the head again; when the close still owes a blind judge against the start, there is no
@@ -612,7 +619,7 @@ export async function shipFinishGate(
   }
   const how = owed ? { ask: { question: owed.question }, final: true } : {};
   const { review } = await artDirectionPass(loopRun, { ...how, judgeMs: finishGateJudgeMs() });
-  if (review?.ship !== false) return null;
+  if (!review || !blockersOf(review.defects).length) return null;
   state.shipFinishRefused = true;
   await loopRun.saveJournal();
   return shipFinishRefusal(review);

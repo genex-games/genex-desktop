@@ -400,7 +400,7 @@ describe("a finished build the run's coordinator answers for", () => {
         reopen,
       });
     assert.match(prompt({ hours: 2 }), /Loop is on[\s\S]*continue_build reopens it[\s\S]*up to 2 h/);
-    assert.match(prompt({ hours: null }), /until its judges are satisfied/);
+    assert.match(prompt({ hours: null }), /until what was asked is verified and the art director names no blocker/);
     assert.doesNotMatch(prompt(null), /Loop is on/, "no Loop, no reopen: continue_build hands the work to a builder");
 
     assert.equal(coordinatorReopens(), true);
@@ -415,7 +415,8 @@ describe("reopening the finished build once the reply has ended", () => {
 
     assert.deepEqual(
       calls.map((c) => c.method),
-      ["artifact.read", "events.list", "artifact.write", "events.append", "events.append"],
+      // The game's kind is read before anything is promised: a web Loop's build goes on only where the folder reads as one.
+      ["artifact.read", "game.list", "events.list", "artifact.write", "events.append", "events.append"],
     );
     const journal = store.journal as Json;
     assert.equal(journal.phase, "done", "the run rewrites its phase when it starts");
@@ -452,7 +453,7 @@ describe("reopening the finished build once the reply has ended", () => {
     assert.equal(studio.moodBoards.has(THREAD), false, "the chat's mood board did its job");
   });
 
-  it("R4b. Loop ∞: until its critics are satisfied, under the day's ceiling; no words from the session, the message's", async () => {
+  it("R4b. Loop ∞: until what was asked is checked working, under the day's ceiling; no words from the session, the message's", async () => {
     const unbounded = studioWith();
     await reopenAfterReply(
       unbounded.studio as never,
@@ -472,7 +473,7 @@ describe("reopening the finished build once the reply has ended", () => {
       steersOf(unbounded.log).map((steer) => steer?.text),
       ["more"],
     );
-    assert.match(String(toldOf(unbounded.calls)[0]?.words), /until its critics are satisfied/);
+    assert.match(String(toldOf(unbounded.calls)[0]?.words), /until what you asked for is checked working/);
   });
 
   it("R4c. the reopening message joins the user's words in the build's scope, once; a build without scope gets none, and words the log does not have change nothing", async () => {

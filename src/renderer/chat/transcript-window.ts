@@ -1,8 +1,8 @@
 /**
  * The transcript's variable-height window, as arithmetic: where each row starts, how tall a row
  * not yet measured is guessed to be, which rows are mounted around the viewport, how far the
- * scroll must move to keep the top row in place when rows above it change height, and when
- * earlier history loads ahead of the reader.
+ * scroll must move to keep the top row in place when rows above it change height, which line the
+ * reader is on while the chat's width changes, and when earlier history loads ahead of the reader.
  */
 
 /** A row's height before anything has been measured, in pixels. */
@@ -138,6 +138,32 @@ export function anchorShift(previous: TranscriptLayout, next: TranscriptLayout, 
   const moved = next.ids.indexOf(id);
   if (moved < 0) return 0;
   return (next.offsets[moved] ?? 0) - (previous.offsets[index] ?? 0);
+}
+
+/** A block of the transcript and where it lies, relative to the scroller's top edge. */
+export interface PlacedBlock<T> {
+  item: T;
+  top: number;
+  bottom: number;
+}
+
+/** The line a reader is on: the first block with height that reaches below `viewTop`, and its top. */
+export function readingLine<T>(blocks: readonly PlacedBlock<T>[], viewTop: number): { item: T; top: number } | null {
+  const block = blocks.find((candidate) => candidate.bottom > candidate.top && candidate.bottom > viewTop);
+  return block ? { item: block.item, top: block.top - viewTop } : null;
+}
+
+/**
+ * The chat was resized: its outer width (a scrollbar appearing does not change it) went from one
+ * shown width to another. Hiding or showing the chat (a width of 0) is not a resize.
+ */
+export function resizedWidth(previous: number, next: number): boolean {
+  return previous > 0 && next > 0 && previous !== next;
+}
+
+/** The scroll that puts a line that now sits at `top` back where it was held (`heldTop`). */
+export function heldScrollTop(scrollTop: number, top: number, heldTop: number): number {
+  return scrollTop + top - heldTop;
 }
 
 /** Keep React state when scrolling neither mounts nor unmounts a row of the `mounted` ones. */

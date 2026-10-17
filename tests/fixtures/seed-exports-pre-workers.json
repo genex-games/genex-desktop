@@ -1,0 +1,167 @@
+{
+  "from": "6860e0f3",
+  "modules": {
+    "loop/chat-session.ts": [
+      "SERVES_AFTER_NIGHT",
+      "buildContractorBrief",
+      "buildInterviewBrief",
+      "isContinueAsk",
+      "isResumeFailure",
+      "lastContractorSession",
+      "nameFromAsk",
+      "originalAsk",
+      "resolveChatProject"
+    ],
+    "loop/delegated-turn.ts": [
+      "DELEGATE_TOOL",
+      "MessageUsageSource",
+      "SERVES_AFTER_NIGHT",
+      "SERVES_REOPEN",
+      "runDelegatedTurn"
+    ],
+    "loop/director/briefs.ts": [
+      "SERVES_LEAD",
+      "continuationPrompt",
+      "contractBrief",
+      "directorBrief",
+      "limitResumePrompt",
+      "preparationBudgetNote",
+      "resumeNote",
+      "singleWorkerBrief",
+      "wrapUpPrompt"
+    ],
+    "loop/director/integrate.ts": [
+      "SERVES_LEAD",
+      "appendClose",
+      "closeRun",
+      "closeTheNight",
+      "finish",
+      "integrate",
+      "keepGameLessons",
+      "landIntegration",
+      "landingClaim"
+    ],
+    "loop/director/lead-session-prompts.ts": [
+      "CHAT_SO_FAR_CHARS",
+      "CHAT_SO_FAR_MESSAGES",
+      "CONFLICT_WORDS",
+      "LEAD_BRIEF",
+      "LEAD_CARD_RULE",
+      "LEAD_DIRTY",
+      "LEAD_FIX_NEXT",
+      "LEAD_FORK_REFUSED",
+      "LEAD_FRESH_START",
+      "LEAD_INTEGRATE_SWAP",
+      "LEAD_LIVE_DIRTY",
+      "LEAD_PRIOR_BRINGS_IN",
+      "LEAD_RESUMED_MEMORY",
+      "LEAD_SET_ASIDE",
+      "LEAD_START_DIRTY",
+      "chatSoFar"
+    ],
+    "loop/director/setup.ts": [
+      "SERVES_LEAD",
+      "buildStartingPoint",
+      "installContract",
+      "lookAtStart",
+      "nightReport",
+      "pageAttaches",
+      "prepareNight"
+    ],
+    "loop/director/tool-specs.ts": [
+      "DIRECTOR_TOOLS",
+      "DirectorTool",
+      "directorTool",
+      "directors",
+      "headSynced"
+    ],
+    "loop/director/tools.ts": [
+      "SERVES_LEAD",
+      "handler",
+      "judge",
+      "judgeTheLanding",
+      "playtest",
+      "show",
+      "statusText",
+      "wait",
+      "workersEngineLimit"
+    ],
+    "loop/director/wake-prompts.ts": [
+      "CARD_MAX_LINES",
+      "DIGEST_MAX_LINES",
+      "DIGEST_MAX_WORKERS",
+      "FRESH_LOG_LINES",
+      "FRESH_NOTES",
+      "REASON_WORDS",
+      "SERVES_LEAD",
+      "SESSION_LOST_WHY",
+      "USER_SAYS_CHARS",
+      "USER_SAYS_MAX",
+      "WAKE_BRIEF",
+      "WAKE_START_NEXT",
+      "buildCard",
+      "carryOn",
+      "freshStart",
+      "idleAsk",
+      "longTurnRules",
+      "planHeldWords",
+      "planSetWords",
+      "sinceThen",
+      "userSaysBlock",
+      "wakeDigest",
+      "wakeRules",
+      "wakeTools",
+      "wrapLead"
+    ],
+    "loop/director/wake.ts": [
+      "BUSY_RETRY_MS",
+      "LIMIT_WAIT_MARGIN_MS",
+      "MAX_BUSY_RETRIES",
+      "MAX_FRESH_SESSIONS",
+      "MAX_LIMIT_WAITS",
+      "SERVES_LEAD",
+      "SYSTEM_CLOCK",
+      "WAKE_ENDING",
+      "WAKE_POLL_MS",
+      "WRAP_UP_MIN_MS",
+      "fitHappened",
+      "journalWake",
+      "runWakeLoop"
+    ],
+    "loop/director/workers.ts": [
+      "SERVES_LEAD",
+      "holdForPlanReview",
+      "interruptWorker",
+      "lookAtWorker",
+      "monitorSweep",
+      "noteWorkerLimit",
+      "protectWorker",
+      "recordRound",
+      "routeUserSteers",
+      "runWorker",
+      "setPlan",
+      "settleWorkers",
+      "startMonitor",
+      "startRefusal",
+      "startWorker",
+      "stopWorker"
+    ],
+    "loop/facet/phases/brief.ts": [
+      "facetPromptFor",
+      "writeBrief"
+    ],
+    "loop/facet/phases/build.ts": [
+      "BuildFailure",
+      "buildChallenger"
+    ],
+    "loop/main.ts": [
+      "cancelThread",
+      "createStudio",
+      "judgeableFirst",
+      "nightRefusal"
+    ],
+    "tools/game-tools.ts": [
+      "tools"
+    ]
+  }
+}

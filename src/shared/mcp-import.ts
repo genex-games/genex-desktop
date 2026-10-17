@@ -13,6 +13,8 @@
  */
 import { MCP_ENV_NAME, MCP_HEADER_NAME, MCP_ID, type McpConnector, type McpTransport } from "./mcp.ts";
 import { errorMessage } from "./errors.ts";
+import { CommandLineProblem, splitCommandLine } from "./command-line.ts";
+import { EngineId } from "./providers.ts";
 
 /** A connector the user has not saved yet: no `createdAt`, no trust digest, no owner. */
 export type McpConnectorDraft = Omit<McpConnector, "createdAt" | "trustedLaunch" | "source">;
@@ -33,14 +35,20 @@ export interface McpImport {
 
 const MAX_SNIPPET = 256 * 1024;
 
-/** Best-effort id from a server name: lowercase, `_`/space/dot → `-`, trimmed to the id class. */
-function draftId(name: string): string | null {
-  const id = name
+/** A server name in the id's characters: lowercase, anything else → `-`, trimmed; may still start with a digit. */
+export function connectorSlug(name: string): string {
+  return name
     .toLowerCase()
     .replace(/[^a-z0-9-]+/g, "-")
     .replace(/^-+/, "")
     .replace(/-+$/, "")
-    .slice(0, 32);
+    .slice(0, 32)
+    .replace(/-+$/, "");
+}
+
+/** Best-effort id from a server name, or null when the slug is not an id. */
+function draftId(name: string): string | null {
+  const id = connectorSlug(name);
   return MCP_ID.test(id) ? id : null;
 }
 
@@ -440,4 +448,248 @@ export function parseMcpSnippet(text: unknown): McpImport {
   } catch (error) {
     return { drafts: [], warnings: [`Studio could not read that snippet: ${errorMessage(error)}`] };
   }
+}
+
+/** A whole pasted value that is one web address. */
+const REMOTE_URL = /^https?:\/\/\S+$/i;
+/** A leading `NAME=value` word of a command line: a variable set for the program. */
+const ASSIGNMENT = /^([A-Z_][A-Z0-9_]*)=([\s\S]*)$/;
+/** Words in a host, package or file name that say nothing about which server it is. */
+const GENERIC_NAMES: ReadonlySet<string> = new Set([
+  "mcp",
+  "api",
+  "www",
+  "app",
+  "server",
+  "servers",
+  "cli",
+  "index",
+  "main",
+  "src",
+  "dist",
+  "build",
+  "lib",
+  "bin",
+  "out",
+]);
+/** The "mcp" and "server" a package name wears around the part that names it. */
+const NAME_AFFIXES = /^(mcp[-_]server[-_]|server[-_]|mcp[-_])|([-_]mcp[-_]server|[-_]server|[-_]mcp)$/g;
+/** Package runners, with the subcommand that comes before the package (`pipx run`). */
+const PACKAGE_RUNNERS: ReadonlyMap<string, string | null> = new Map([
+  ["npx", null],
+  ["bunx", null],
+  ["uvx", null],
+  ["pipx", "run"],
+  ["pnpm", "dlx"],
+  ["yarn", "dlx"],
+  ["npm", "exec"],
+]);
+/** Programs that run a script file, with a subcommand some of them take first (`deno run`). */
+const INTERPRETERS: ReadonlyMap<string, string | null> = new Map([
+  ["node", null],
+  ["python", null],
+  ["python3", null],
+  ["ruby", null],
+  ["php", null],
+  ["deno", "run"],
+  ["bun", "run"],
+  ["uv", "run"],
+]);
+/** The agents' own `mcp add` commands, which name a server rather than run one; Codex's program is named as its engine. */
+const MCP_ADD_PROGRAMS: ReadonlySet<string> = new Set(["claude", EngineId.Codex]);
+
+const INPUT_MESSAGE = {
+  [CommandLineProblem.UnclosedQuote]: "That command has a quote that is never closed.",
+  [CommandLineProblem.TrailingBackslash]: "That command ends with a backslash.",
+  OnlyVariables: "That line sets variables but names no command to run.",
+  AddWithoutServer: "That mcp add line names no server to add.",
+  TooLarge: "That snippet is too large to read.",
+  NotImported: (option: string) => `mcp add: ${option} is not imported. Review the server before saving.`,
+} as const;
+
+/** "context7-mcp" → "Context7", "notes_mcp" → "Notes": the naming part, words capitalised. */
+function displayName(raw: string): string {
+  return raw
+    .replace(NAME_AFFIXES, "")
+    .split(/[-_\s.]+/)
+    .filter(Boolean)
+    .map((word) => word.charAt(0).toLocaleUpperCase() + word.slice(1))
+    .join(" ");
+}
+
+/** Whether a name part names nothing in particular once its "mcp" and "server" are gone. */
+const isGeneric = (part: string): boolean => {
+  const bare = part.replace(NAME_AFFIXES, "").toLowerCase();
+  return !bare || GENERIC_NAMES.has(bare);
+};
+
+/** "mcp.linear.app" → "Linear", "localhost" → "Localhost": the host's naming label. */
+function nameFromUrl(url: string): string {
+  let host: string;
+  try {
+    host = new URL(url).hostname;
+  } catch {
+    return "Server";
+  }
+  if (/^[\d.]+$|:/.test(host)) return host;
+  const labels = host.split(".");
+  const named = labels.length > 1 ? labels.slice(0, -1) : labels;
+  return displayName(named.find((label) => !isGeneric(label)) ?? named.at(-1) ?? host);
+}
+
+/** A package's naming part: "@scope/server-x@1.2" → "x", or the scope when the rest says nothing. */
+function nameFromPackage(spec: string): string {
+  const bare = spec.replace(/(.)@[^/]*$/, "$1");
+  const [scope, pkg] = bare.startsWith("@") ? bare.slice(1).split("/") : [undefined, bare];
+  const part = pkg && !isGeneric(pkg) ? pkg : (scope ?? pkg ?? bare);
+  return displayName(part);
+}
+
+/** A script path's naming part: its file, or the nearest folder that says more than "index" or "build". */
+function nameFromPath(path: string): string {
+  const parts = path.split("/").filter((part) => part && part !== "." && part !== "..");
+  const stems = parts.map((part, i) => (i === parts.length - 1 ? part.replace(/\.[^.]+$/, "") : part));
+  const named = [...stems].reverse().find((stem) => !isGeneric(stem));
+  return displayName(named ?? stems.at(-1) ?? path);
+}
+
+/** The first word after a program (and its subcommand) that is not an option. */
+function operandAfter(words: readonly string[], subcommand: string | null): string | undefined {
+  const rest = words.slice(1);
+  const from = subcommand && rest[0] === subcommand ? 1 : 0;
+  return rest.slice(from).find((word) => !word.startsWith("-"));
+}
+
+/** What to call a server started by these words: its package, its script, or its program. */
+function nameFromCommand(words: readonly string[]): string {
+  const program = (words[0] ?? "").split("/").at(-1) ?? "";
+  const runner = PACKAGE_RUNNERS.get(program);
+  const pkg = runner === undefined ? undefined : operandAfter(words, runner);
+  if (pkg) return nameFromPackage(pkg);
+  const interpreter = INTERPRETERS.get(program);
+  const script = interpreter === undefined ? undefined : operandAfter(words, interpreter);
+  if (script) return nameFromPath(script);
+  return nameFromPath(words[0] ?? "") || "Server";
+}
+
+/** `NAME=value` words before the program, and the words from the program on. */
+function leadingVariables(words: readonly string[]): { env: Record<string, string>; rest: string[] } {
+  const env: Record<string, string> = {};
+  let i = 0;
+  for (; i < words.length; i++) {
+    const assignment = ASSIGNMENT.exec(words[i] ?? "");
+    if (!assignment) break;
+    env[assignment[1] ?? ""] = assignment[2] ?? "";
+  }
+  return { env, rest: words.slice(i) };
+}
+
+/** What an `mcp add` line asks for: its server's name, how it is reached, and its values. */
+interface McpAddLine {
+  name?: string;
+  target: string[];
+  transport?: string;
+  env: Record<string, string>;
+  headers: Record<string, string>;
+}
+
+/** Options of `claude mcp add` / `codex mcp add` that take a value, and what each fills. */
+const ADD_OPTIONS: ReadonlyMap<string, "env" | "header" | "transport" | "url" | "ignored"> = new Map([
+  ["-e", "env"],
+  ["--env", "env"],
+  ["-H", "header"],
+  ["--header", "header"],
+  ["-t", "transport"],
+  ["--transport", "transport"],
+  ["--url", "url"],
+  ["-s", "ignored"],
+  ["--scope", "ignored"],
+]);
+
+/** Record one option's value on the line being read. */
+function applyAddOption(line: McpAddLine, kind: string, value: string): void {
+  if (kind === "env") {
+    const at = value.indexOf("=");
+    if (at > 0) line.env[value.slice(0, at)] = value.slice(at + 1);
+  } else if (kind === "header") {
+    const at = value.indexOf(":");
+    if (at > 0) line.headers[value.slice(0, at).trim()] = value.slice(at + 1).trim();
+  } else if (kind === "transport") line.transport = value.toLowerCase();
+  else if (kind === "url") line.target = [value];
+}
+
+/** Read the words after `mcp add`: options anywhere before `--`, the name, then the URL or command. */
+function readMcpAdd(words: readonly string[], warnings: string[]): McpAddLine {
+  const line: McpAddLine = { target: [], env: {}, headers: {} };
+  const positional: string[] = [];
+  for (let i = 0; i < words.length; i++) {
+    const word = words[i] ?? "";
+    if (word === "--") {
+      line.target = words.slice(i + 1);
+      break;
+    }
+    const [flag = word, inline] = word.startsWith("--") ? word.split(/=(.*)/s) : [word];
+    const kind = ADD_OPTIONS.get(flag);
+    if (kind) {
+      const value = inline ?? words[++i] ?? "";
+      applyAddOption(line, kind, value);
+      continue;
+    }
+    if (word.startsWith("-")) warnings.push(INPUT_MESSAGE.NotImported(word));
+    else positional.push(word);
+  }
+  line.name = positional[0];
+  if (!line.target.length) line.target = positional.slice(1);
+  return line;
+}
+
+/** A draft for `name` started by `words`, or reached at the one URL among them. */
+function launchDraft(
+  name: string,
+  words: readonly string[],
+  values: { env: Record<string, string>; headers?: Record<string, string>; transport?: string },
+  warnings: string[],
+): McpDraft | null {
+  const [first = "", ...args] = words;
+  const remote = REMOTE_URL.test(first);
+  const entry: Record<string, unknown> = remote
+    ? { url: first, ...(values.transport === "sse" ? { type: "sse" } : {}), headers: values.headers }
+    : { command: first, args, env: values.env };
+  if (remote && Object.keys(values.env).length) entry.env = values.env;
+  return draftFrom(name, entry, warnings);
+}
+
+/** A pasted command line: a server this Mac runs, or one an agent's `mcp add` line describes. */
+function fromCommandLine(text: string): McpImport {
+  const split = splitCommandLine(text);
+  if (!split.ok) return { drafts: [], warnings: [INPUT_MESSAGE[split.problem]] };
+  const warnings: string[] = [];
+  const { env, rest } = leadingVariables(split.words);
+  if (!rest.length) return { drafts: [], warnings: [INPUT_MESSAGE.OnlyVariables] };
+  const isAdd = MCP_ADD_PROGRAMS.has(rest[0] ?? "") && rest[1] === "mcp" && rest[2] === "add";
+  if (!isAdd) {
+    const draft = launchDraft(nameFromCommand(rest), rest, { env }, warnings);
+    return { drafts: draft ? [draft] : [], warnings };
+  }
+  const line = readMcpAdd(rest.slice(3), warnings);
+  if (!line.name || !line.target.length) return { drafts: [], warnings: [INPUT_MESSAGE.AddWithoutServer] };
+  const draft = launchDraft(line.name, line.target, { ...line, env: { ...env, ...line.env } }, warnings);
+  return { drafts: draft ? [draft] : [], warnings };
+}
+
+/**
+ * Whatever a server's install page gives you to copy: a URL, a command line (an agent's
+ * `mcp add` line included), or a JSON or Codex TOML snippet. Never throws.
+ */
+export function parseMcpInput(text: string): McpImport {
+  const trimmed = text.trim();
+  if (!trimmed) return { drafts: [], warnings: [] };
+  if (text.length > MAX_SNIPPET) return { drafts: [], warnings: [INPUT_MESSAGE.TooLarge] };
+  if (trimmed.startsWith("{") || /^\s*\[mcp_servers/m.test(text)) return parseMcpSnippet(text);
+  if (REMOTE_URL.test(trimmed)) {
+    const warnings: string[] = [];
+    const draft = draftFrom(nameFromUrl(trimmed), { url: trimmed }, warnings);
+    return { drafts: draft ? [draft] : [], warnings };
+  }
+  return fromCommandLine(trimmed);
 }

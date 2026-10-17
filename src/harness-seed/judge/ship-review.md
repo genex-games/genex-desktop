@@ -25,11 +25,14 @@ List every distinct defect a player would notice, worst first. For each one:
 - `camera`: the label of the frame that shows it best;
 - `part`: the id of the PART that owns it, exactly as PARTS lists it, or null when no part does
   or you cannot tell;
-- `severity`: `blocker` (you would not ship with it), `visible` (a player sees it at a glance)
-  or `nit` (only a close look finds it).
+- `severity`: `blocker` — the game does not do what GOAL asks, or reads as broken at once: it
+  does not start, the screen is black or empty, the player cannot play, a part SCOPE asks for is
+  missing, or something is plainly broken (a car through the road, the camera inside a wall);
+  `visible` — a player sees it at a glance, but the game works and reads as meant; `nit` — only a
+  close look finds it. Only a blocker sends a builder back to work: visible flaws and nits go in
+  the user's report, so never raise one to a blocker to have it fixed.
 
-`ship` is true only when nothing a player would notice stands in the way: no blocker and nothing
-visible you would be embarrassed by.
+`ship` is true when no defect is a blocker.
 
 ## Do not regress
 

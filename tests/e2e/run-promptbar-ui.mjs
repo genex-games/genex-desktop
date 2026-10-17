@@ -145,7 +145,7 @@ app.whenReady().then(async()=>{
 
  await click('[data-promptbar] [aria-label="Context and usage"]');
  const usagePanel='[data-slot="popover-content"][aria-label="Context and usage"]';
- check('context comes first with its window and automatic compaction',await element(usagePanel,'e.textContent.startsWith("Context window") && e.textContent.includes("Not measured yet") && e.textContent.includes("Compacts automatically")'));
+ check('context comes first with its window and automatic compaction',await element(usagePanel,'e.textContent.startsWith("Context window") && !e.textContent.includes("Not measured yet") && e.textContent.includes("Compacts automatically") && e.querySelector("[aria-label=\\"Context used\\"]").getAttribute("aria-valuetext")==="Not measured yet"'));
  await wait(300);
  check('each signed-in subscription shows its plan limits',await element(usagePanel,'e.querySelectorAll("[role=progressbar]").length===5 && e.textContent.includes("Claude Max plan") && e.textContent.includes("ChatGPT Pro plan") && e.textContent.includes("Weekly · Fable") && e.textContent.includes("Resets in 3 h 54 m")'));
  check('split roles name who draws on each plan, orchestrator\'s plan first',await js('[...document.querySelectorAll("[data-usage-engine]")].map(e=>e.dataset.usageEngine+":"+e.querySelector(".usage-plan-roles").textContent).join("|")==="codex:Main agent · Reviewers|claude-code:Workers"'));
@@ -240,13 +240,17 @@ app.whenReady().then(async()=>{
  await element('[data-promptbar] textarea','(e.focus(),true)');await cdp('Input.dispatchKeyEvent',{type:'keyDown',key:'a',code:'KeyA',modifiers:4,commands:['selectAll']});await key('Backspace');
  await click('[data-specimen-build="running-inf"]');const runningInf=await mode();
  await click('[data-specimen-chat="b"]');await click('[data-specimen-build="running-30"]');const running30=await mode();
- check('a running build names its own limit',runningInf.text==="∞ Loop"&&runningInf.disabled&&running30.text==="30m Loop"&&running30.disabled&&await ownLoop('a',true,0.5)&&await ownLoop('b',true,null),{runningInf,running30});
- check('a running build\'s Mode is dimmed like the composer\'s disabled icons',runningInf.opacity==="0.45"&&running30.opacity==="0.45",{runningInf,running30});
- await capture('mode-running-build');
+ // Intentionally flipped: Mode opens during a Loop build, read-only, for the chat's "Don't wait for me" switch.
+ const READ_ONLY_MODE='Boolean(document.querySelector("[aria-label=\\"Mode options\\"][data-open]"))&&!document.querySelector("[aria-label=\\"Mode options\\"][data-open] [aria-label=\\"Loop time limit\\"]")&&Boolean(document.querySelector("[aria-label=\\"Mode options\\"][data-open] [data-dont-wait-row]"))';
+ check('a running build names its own limit, and its Mode opens',runningInf.text==="∞ Loop"&&!runningInf.disabled&&running30.text==="30m Loop"&&!running30.disabled&&await ownLoop('a',true,0.5)&&await ownLoop('b',true,null),{runningInf,running30});
+ await click('[aria-label="Mode"]');
+ check('a running build\'s Mode is read-only: no Loop control, and the Don\'t wait for me switch',await js(READ_ONLY_MODE),await element('[aria-label="Mode options"]','e.textContent'));
+ await capture('mode-running-build');await close();
  await click('[data-specimen-build="paused-30"]');const paused=await mode();
- check('a paused build\'s Mode is read-only with its limit',paused.text==="30m Loop"&&paused.disabled,paused);
- check('a paused build\'s Mode is dimmed too',paused.opacity==="0.45",paused);
- await capture('mode-paused-build');
+ check('a paused build\'s Mode names its limit and opens',paused.text==="30m Loop"&&!paused.disabled,paused);
+ await click('[aria-label="Mode"]');
+ check('a paused build\'s Mode is read-only too, with the switch',await js(READ_ONLY_MODE),await element('[aria-label="Mode options"]','e.textContent'));
+ await capture('mode-paused-build');await close();
  await click('[data-specimen-build="finished"]');const finished=await mode();await click('[aria-label="Mode"]');
  check('a finished build\'s Mode is the chat\'s own Loop again, with no new-build choice',finished.text==="∞ Loop"&&!finished.disabled&&finished.opacity==="1"&&await element('[aria-label="Loop time limit"] [aria-checked="true"]','e.dataset.value==="inf"')&&await element('[aria-label="Mode options"]','!/new build/i.test(e.textContent)'),{finished,options:await element('[aria-label="Mode options"]','e.textContent')});
  await capture('mode-finished-build');

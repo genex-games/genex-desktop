@@ -3,10 +3,11 @@
  * labelled — `control.ts` refuses an ambiguous selector at run time. The game's name and folder
  * live in the chat header; the rest of this strip drags the window.
  */
-import type { JSX } from "react";
+import { type JSX, useRef } from "react";
 import { SOUND_SHORTCUT } from "../../../shared/game-sound.ts";
 import type { PluginInfo } from "../../../shared/plugins.ts";
-import { kindChip } from "../../../shared/shape-words.ts";
+import type { FactRef } from "../../../shared/project-facts.ts";
+import type { LiveView } from "../../live-views.ts";
 import type { BesideTarget } from "../../open-beside.ts";
 import type { LiveBehind, StageView } from "../../stage.ts";
 import type { GameProject } from "../../types.ts";
@@ -16,42 +17,18 @@ import { Shortcut } from "../../ui/Shortcut.tsx";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../../ui/tooltip.tsx";
 import { ViewSwitcher } from "../../ui/view-switcher.tsx";
 import { liveBehindLabel, liveBehindWords, STAGE_WORDS } from "../../words.ts";
-import { besideName } from "../FileViewer.tsx";
 import type { Notify } from "../../state/toasts.ts";
 import { PluginToolbar } from "../PluginToolbar.tsx";
 import { LiveRun } from "./live-run.ts";
+import { activeStageTab, type StageTab, type StageTabKey, stageTabs } from "./stage-tabs.ts";
+import { useStripFold } from "./strip-fold.ts";
 
-/** A tab name longer than this is shortened in the middle, keeping this much of its start and end. */
-const TAB_NAME_MAX = 26;
-const TAB_NAME_HEAD = 14;
-const TAB_NAME_TAIL = 10;
+/** The facts of a game whose descriptor isn't loaded yet: none, served as a web game. */
+const NO_FACTS: readonly FactRef[] = [];
 
-/** A tab keeps its width: a long file name is shortened in the middle, the full name is the viewer's title. */
-function shortName(name: string): string {
-  return name.length > TAB_NAME_MAX ? `${name.slice(0, TAB_NAME_HEAD)}…${name.slice(-TAB_NAME_TAIL)}` : name;
-}
-
-/** The view switcher's tabs: Live, Builds once there is a build to draw, Assets, and a file opened beside. */
-function viewItems(hasBuilds: boolean, buildsLive: boolean, beside: BesideTarget | null) {
-  const label = (key: StageView): string => {
-    if (key === "live") return "Live";
-    if (key === "assets") return "Assets";
-    return `Builds${buildsLive ? " ●" : ""}`;
-  };
-  const views: StageView[] = ["live", ...(hasBuilds ? ["builds" as const] : []), "assets"];
-  return [
-    ...views.map((key) => ({ key, label: label(key) })),
-    ...(beside
-      ? [
-          {
-            key: "file" as const,
-            label: shortName(besideName(beside)),
-            icon: <Icon name={beside.kind === "image" ? "image" : "file"} size={13} />,
-          },
-        ]
-      : []),
-  ];
-}
+/** The view switcher's items: the strip's tabs (`stage-tabs.ts`), a file's with its glyph. */
+const switcherItems = (tabs: readonly StageTab[]) =>
+  tabs.map(({ icon, ...tab }) => (icon ? { ...tab, icon: <Icon name={icon} size={13} /> } : tab));
 
 /**
  * Reload. While Live is behind — the game changed, a build is ready — it carries the accent dot
@@ -93,6 +70,17 @@ function ReloadButton({ behind, onReload }: { behind: LiveBehind | null; onReloa
 const STRIP_ICON_BUTTON =
   "surface-glass grid size-8 shrink-0 cursor-pointer place-items-center rounded-lg text-foreground transition-colors duration-(--duration-quick) enabled:active:scale-[0.96] disabled:cursor-default disabled:opacity-50";
 
+/**
+ * Play/Stop's dress: the action's own colour on its tint (green to play, red to stop), and the
+ * plain glass while a start or stop is under way.
+ */
+const RUN_LOOK = {
+  [LiveRun.Running]: "border border-transparent bg-red-tint text-red",
+  [LiveRun.Stopping]: "surface-glass text-foreground",
+  [LiveRun.Stopped]: "border border-transparent bg-green-tint text-green",
+  [LiveRun.Starting]: "surface-glass text-foreground",
+} as const satisfies Record<LiveRun, string>;
+
 /** What Play/Stop says for each state of the game. */
 const RUN_LABEL = {
   [LiveRun.Running]: STAGE_WORDS.stop,
@@ -123,7 +111,7 @@ function RunButton({ run, onToggle }: { run: LiveRun; onToggle: () => void }): J
           aria-disabled={busy}
           data-stage-run={run}
           onClick={busy ? undefined : onToggle}
-          className={cn(STRIP_ICON_BUTTON, busy && "cursor-default")}
+          className={cn(STRIP_ICON_BUTTON, RUN_LOOK[run], busy && "cursor-default")}
         >
           {/* Keyed by state, so each glyph fades and grows in as it takes the last one's place. */}
           <span key={run} className="grid place-items-center animate-in fade-in-0 zoom-in-75 duration-150">
@@ -193,7 +181,8 @@ function SoundButton({ on, onToggle }: { on: boolean; onToggle: () => void }): J
 /**
  * The strip over the stage: what the folder is, the view switcher, Play/Stop and Reload, then at
  * its end the game's sound, full screen and plugin buttons. An earlier build opens from its result
- * card in the chat, not from here.
+ * card in the chat, not from here. An Unreal game plays in Unreal, not in a web page here, so it
+ * has none of the web game's controls and no Publish: there is no web build to put online.
  */
 export function StageStrip({
   loaded,
@@ -202,13 +191,16 @@ export function StageStrip({
   buildsLive,
   beside,
   stageView,
-  onView,
+  live,
+  onTab,
   behind,
   onReload,
   run,
   fullScreen,
   sound,
   emptyGame,
+  livePreview,
+  gameControls,
   plugins,
   onNotice,
   onToolbarOpen,
@@ -219,7 +211,9 @@ export function StageStrip({
   buildsLive: boolean;
   beside: BesideTarget | null;
   stageView: StageView;
-  onView: (view: StageView) => void;
+  /** Live's views of the folder (`liveViewsFor`) and the one shown: more than one gets a tab each. */
+  live: { views: readonly LiveView[]; shown: LiveView };
+  onTab: (key: StageTabKey) => void;
   /** What waits for Live's Reload, when anything does. */
   behind: LiveBehind | null;
   onReload: () => void;
@@ -231,52 +225,61 @@ export function StageStrip({
   sound: { on: boolean; toggle: () => void };
   /** The game has nothing in it yet: no plugin button's action is due. */
   emptyGame: boolean;
+  /** Live shows the game's web preview (`live-views.ts`): only then do Run, Reload, Sound and Full screen show. */
+  livePreview: boolean;
+  /** The game has something to run (`gameControlsShown`): only then do Play/Stop and Sound show. */
+  gameControls: boolean;
   plugins: PluginInfo[];
   onNotice: Notify;
   onToolbarOpen: (open: boolean) => void;
 }): JSX.Element {
+  const strip = useRef<HTMLDivElement>(null);
+  const start = useRef<HTMLDivElement>(null);
+  const end = useRef<HTMLDivElement>(null);
+  // One row, always: once the labelled buttons would overflow it, they fold into icons together.
+  const folded = useStripFold(strip, [start, end]);
   return (
     <div
+      ref={strip}
       data-stage-strip=""
-      className="titlebar-drag window-controls-end flex min-h-12 max-h-30 shrink-0 flex-wrap items-center gap-2 overflow-auto border-b border-line bg-canvas ps-3 pe-2 py-1.5"
+      data-folded={folded ? "" : undefined}
+      className="titlebar-drag window-controls-end flex h-12 shrink-0 flex-nowrap items-center gap-2 overflow-x-auto overflow-y-hidden border-b border-line bg-canvas ps-3 pe-2 [scrollbar-width:none]"
     >
-      {/* What this folder is, from its own evidence — so nobody has to guess why the stage is
-          showing a built page, and an engine export says so before a run is asked for. */}
-      {loaded?.built ? (
-        <span
-          data-stage-kind={loaded.shape.kind}
-          title={`The studio found this and keeps it as it is: ${loaded.shape.main}`}
-          className="no-drag shrink-0 rounded-control bg-inset px-1.5 py-0.5 text-micro text-ink-3"
-        >
-          {kindChip(loaded.shape.kind)}
-        </span>
-      ) : null}
-      {/* One segmented group for every loaded game; Builds joins it once there is a build to
+      {/* Two groups the fold measures, neither of them no-drag: every gap between the strip's
+          controls still drags the window. */}
+      <div ref={start} className="flex shrink-0 items-center gap-2">
+        {/* One segmented group for every loaded game; Builds joins it once there is a build to
           draw, and Assets is always there — a game with no build still has files. Plugin buttons
           follow it as siblings, so they are there for a game with no build either. */}
-      {project ? (
-        <ViewSwitcher
-          className="no-drag shrink-0"
-          label="Game view"
-          dataAttribute="data-stage-action"
-          items={viewItems(hasBuilds, buildsLive, beside)}
-          active={stageView}
-          onSelect={onView}
-        />
-      ) : null}
-      {/* Siblings, not a group: every gap between the strip's controls drags the window. */}
-      {project ? <RunButton run={run.state} onToggle={run.toggle} /> : null}
-      {project ? <ReloadButton behind={behind} onReload={onReload} /> : null}
+        {project ? (
+          <ViewSwitcher
+            className="no-drag shrink-0"
+            label="Game view"
+            dataAttribute="data-stage-action"
+            items={switcherItems(stageTabs({ views: live.views, plugins, hasBuilds, buildsLive, beside }))}
+            active={activeStageTab(stageView, live.views, live.shown)}
+            onSelect={onTab}
+          />
+        ) : null}
+        {livePreview && gameControls ? <RunButton run={run.state} onToggle={run.toggle} /> : null}
+        {livePreview ? <ReloadButton behind={behind} onReload={onReload} /> : null}
+      </div>
       <span className="min-w-0 flex-1 self-stretch" />
-      {project ? <SoundButton on={sound.on} onToggle={sound.toggle} /> : null}
-      {project ? <FullScreenButton offered={fullScreen.offered} onEnter={fullScreen.enter} /> : null}
-      <PluginToolbar
-        plugins={plugins}
-        project={project}
-        emptyGame={emptyGame}
-        onNotice={onNotice}
-        onOpenChange={onToolbarOpen}
-      />
+      <div ref={end} className="flex shrink-0 items-center gap-2">
+        {livePreview && gameControls ? <SoundButton on={sound.on} onToggle={sound.toggle} /> : null}
+        {livePreview ? <FullScreenButton offered={fullScreen.offered} onEnter={fullScreen.enter} /> : null}
+        <PluginToolbar
+          plugins={plugins}
+          project={project}
+          facts={loaded?.facts ?? NO_FACTS}
+          holds={loaded?.holds}
+          emptyGame={emptyGame}
+          game={{ builtOnce: !loaded?.awaitingFirstBuild, multiplayer: loaded?.multiplayer === true }}
+          onNotice={onNotice}
+          onOpenChange={onToolbarOpen}
+          folded={folded}
+        />
+      </div>
     </div>
   );
 }

@@ -12,12 +12,24 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, it } from "node:test";
+import { MAX_FINISH_REJECTIONS } from "../../src/shared/finish-check.ts";
 import {
   autopilotStartWords,
+  backgroundCount,
+  BUILD_HISTORY_WORDS,
+  FINISH_CHECK_WORDS,
+  JOBS_EYEBROW,
+  JOBS_WORDS,
+  LEAD_WORDS,
+  TURN_WORDS,
+  WORKER_LINE_WORDS,
+  WORKER_STOP_WORDS,
+  WORKER_WORDS,
+  workersOnIt,
   checkCounts,
   checkReplanWords,
   circuitBreakWords,
-  connectorWords,
+  connectorStepWords,
   consentAskWords,
   decisionWords,
   fixWords,
@@ -51,9 +63,13 @@ import {
   withoutIds,
 } from "../../src/renderer/words.ts";
 import { morningWords } from "../../src/renderer/morning-words.ts";
+import { LeadFace, leadAbout } from "../../src/renderer/run-tree.ts";
 import { endedWords } from "../../src/renderer/round-status.ts";
 import { toEntries } from "../../src/renderer/chat-entries.ts";
 import { DirectorTool } from "../../src/harness-seed/loop/director/tool-specs.ts";
+import { WorkerTool } from "../../src/shared/workers.ts";
+import { APP_LOOK_TOOL_NAME, JobTool } from "../../src/shared/jobs.ts";
+import { connectorStep, showsPlayView, StepAction } from "../../src/renderer/chat/connector-steps.ts";
 import type { RunSummary } from "../../src/shared/run-summary.ts";
 import type { EventEnvelope } from "../../src/substrate/types.ts";
 
@@ -129,6 +145,87 @@ function rendererFiles(): string[] {
   return out;
 }
 
+describe("background work", () => {
+  it("counts background work as running and finished, leaving out a zero", () => {
+    assert.equal(backgroundCount(1, 2), "1 running · 2 finished");
+    assert.equal(backgroundCount(0, 2), "2 finished");
+    assert.equal(backgroundCount(1, 0), "1 running");
+  });
+});
+
+describe("the lead, its workers and the finish check on the graph", () => {
+  /** Every string a table holds, its functions called with a sample. */
+  const said = (value: unknown): string[] => {
+    if (typeof value === "string") return [value];
+    if (typeof value === "function") return [String(value("Unreal"))];
+    if (value && typeof value === "object") return Object.values(value).flatMap(said);
+    return [];
+  };
+
+  it("no worker, lead, job, finish check, history or chat turn word names how a worker works", () => {
+    const words = said([
+      WORKER_WORDS,
+      WORKER_LINE_WORDS,
+      WORKER_STOP_WORDS,
+      LEAD_WORDS,
+      JOBS_EYEBROW,
+      JOBS_WORDS,
+      FINISH_CHECK_WORDS,
+      BUILD_HISTORY_WORDS,
+      BUILD_HISTORY_WORDS.turnFrom("Monday"),
+      BUILD_HISTORY_WORDS.loopFrom(BUILD_HISTORY_WORDS.yesterday),
+      TURN_WORDS,
+      workersOnIt(3),
+    ]);
+    assert.ok(words.length > 20, "the tables were read");
+    const forbidden =
+      /\b(reader|writer|editor|copy|lock|merged?|isolation|sandbox|seat|sub-agents?|helper|night|overnight|morning|tonight)\b|\bbuild \d/i;
+    assert.deepEqual(
+      words.filter((text) => forbidden.test(text)),
+      [],
+    );
+    assert.equal(workersOnIt(1), "1 worker on it");
+    assert.equal(WORKER_WORDS.workingIn("Unreal"), "Working in Unreal");
+  });
+});
+
+describe("the finish check's words", () => {
+  it("the finish check words take the shared cap and say reviewer", () => {
+    const cap = String(MAX_FINISH_REJECTIONS);
+    assert.equal(FINISH_CHECK_WORDS.stoppedWord, `${cap} no's in a row`);
+    assert.equal(FINISH_CHECK_WORDS.roundWord(2, 1), `2 reasons · round 1 of ${cap}`);
+    assert.equal(FINISH_CHECK_WORDS.roundWord(1, 2), `1 reason · round 2 of ${cap}`);
+    assert.equal(
+      FINISH_CHECK_WORDS.chat.rejected(1, "No finish line."),
+      `The reviewer sent the work back (1 of ${cap}): No finish line.`,
+    );
+    assert.match(FINISH_CHECK_WORDS.moreNos(1), /^Two more no's in a row/);
+    assert.match(FINISH_CHECK_WORDS.moreNos(MAX_FINISH_REJECTIONS - 1), /^One more no in a row/);
+    for (const text of [
+      FINISH_CHECK_WORDS.doneWord,
+      FINISH_CHECK_WORDS.unanswered,
+      FINISH_CHECK_WORDS.chat.checking,
+      FINISH_CHECK_WORDS.chat.accepted,
+      FINISH_CHECK_WORDS.chat.unanswered("its session ended"),
+      FINISH_CHECK_WORDS.chat.stopped("No timer."),
+    ])
+      assert.match(text, /\breviewer\b/i, text);
+    assert.doesNotMatch(FINISH_CHECK_WORDS.chat.stopped("No timer."), /\b3\b/, "no literal count in the stop line");
+  });
+});
+
+describe("the lead's card", () => {
+  it("in a tree, the lead at work never says nothing works, and names workers; a graph that is no tree keeps its words", () => {
+    const inTree = leadAbout(LeadFace.Working, true);
+    assert.doesNotMatch(inTree, /no part|nothing/i);
+    assert.doesNotMatch(inTree, /\bparts?\b/i);
+    assert.match(inTree, /\bworker\b/);
+    assert.equal(leadAbout(LeadFace.Working, false), LEAD_WORDS.about.working, "old logs read as they did");
+    for (const face of Object.values(LeadFace).filter((face) => face !== LeadFace.Working))
+      assert.equal(leadAbout(face, true), LEAD_WORDS.about[face], face);
+  });
+});
+
 describe("statusWords", () => {
   it("says what the lead is doing, never which run it is doing it in", () => {
     const run = "run run_fixture123456";
@@ -148,6 +245,14 @@ describe("statusWords", () => {
     assert.deepEqual(statusWords(`${run} · director finishing`), {
       line: "The lead is finishing the build",
       short: "Finishing",
+    }); // A Loop led in place has no workers to watch by default: its lead builds in the project itself.
+    assert.deepEqual(statusWords(`${run} · lead in place`), {
+      line: "The lead is building in your project",
+      short: "The lead",
+    });
+    assert.deepEqual(statusWords(`${run} · lead in place finishing`), {
+      line: "A reviewer is checking the lead's finish",
+      short: "Checking",
     });
   });
 
@@ -275,6 +380,19 @@ describe("how a run reads when it is over", () => {
       loopRunWords({ rounds: 2, landed: false, stoppedBecause: "the director failed on run_fixture123456" }).because,
       RUN_ID,
     );
+  });
+
+  it("a reason that is already a sentence ends with one full stop", () => {
+    const reason = "The finish line triggers, but the lap timer still resets when the car respawns.";
+    for (const words of [
+      loopRunWords({ rounds: 0, landed: false, hasBuild: false, stoppedBecause: reason }),
+      loopRunWords({ rounds: 0, landed: false, hasBuild: true, stoppedBecause: reason }),
+      loopRunWords({ rounds: 0, landed: null, stoppedBecause: reason }),
+    ]) {
+      assert.match(words.because, /respawns\.$/);
+      assert.doesNotMatch(words.because, /\.\.$/);
+    }
+    assert.match(loopRunWords({ rounds: 0, landed: null, stoppedBecause: "Is it done?" }).because, /done\?$/);
   });
 
   it("promises a playable build only when there is one", () => {
@@ -421,6 +539,18 @@ describe("the morning card", () => {
     const older = loopRun({ landed: true, hasBuild: false, stoppedBecause: "the director finished the run" });
     // Flipped: no time-of-day words in the app's copy.
     assert.equal(older.because, "This build is your game now — open Live to play it.");
+  });
+
+  it("a finished Loop that kept its work in place never says open Live", () => {
+    for (const over of [
+      { landed: true },
+      { landed: true, landingLine: "made live, a judge preferred it" },
+      { landed: true, stoppedBecause: "stopped by the user" },
+    ]) {
+      const words = loopRun({ hasBuild: false, ...over, profile: "open" });
+      assert.doesNotMatch(`${words.headline} ${words.because}`, /open Live/, JSON.stringify(over));
+      assert.match(`${words.headline} ${words.because}`, /kept in your project/i, JSON.stringify(over));
+    }
   });
 
   it("offers the build itself when the run merged one but did not make it live", () => {
@@ -910,6 +1040,11 @@ describe("tools", () => {
   it("names the lead's and the chat's run tools, never 'used …'", () => {
     const names = [
       ...Object.values(DirectorTool).filter((name) => name !== DirectorTool.ResolveRoot),
+      // Every lead's and the chat's worker tools, the same six everywhere.
+      ...Object.values(WorkerTool),
+      // The background-work tools and the look-only app tool the chat, leads and workers share.
+      ...Object.values(JobTool),
+      APP_LOOK_TOOL_NAME,
       "capture",
       "checkpoint",
       "continue_build",
@@ -995,26 +1130,74 @@ describe("tools", () => {
     );
   });
 
-  it("names the connector and the tool for a connector call, and never leaks an id", () => {
-    assert.equal(connectorWords({ connectorId: "figma", tool: "get_file", ok: true }), "asked figma for get file");
+  it("names a connector step by what it did, falls back to its connector and tool, and never leaks an id", () => {
+    const step = (tool: string, toolName?: string) => connectorStep({ tool, ...(toolName ? { toolName } : {}) });
+    assert.deepEqual(connectorStepWords(step("get_file"), "Figma"), {
+      label: "Figma · get_file",
+      active: "Working in Figma",
+      icon: "run",
+    });
     assert.equal(
-      connectorWords({ connectorId: "figma", tool: "get_file", ok: false, error: "no such file" }),
-      "figma · get file failed — no such file",
+      connectorStepWords(step("get_file"), "Figma", { ok: false, error: "no such file" }).label,
+      "Figma · get_file: no such file",
     );
-    // A record with nothing in it is still a sentence.
-    assert.equal(connectorWords({}), "asked a connector for a tool");
+    // A record with nothing in it is still a line.
+    assert.equal(connectorStepWords(step(""), "").active, "Working in a connector");
     // The server's own error text passes the same gate as the model's.
-    const leaky = connectorWords({
-      connectorId: "figma",
-      tool: "get_file",
+    const leaky = connectorStepWords(step("get_file"), "figma", {
       ok: false,
       error: "job run_fixture123456 died at 69f573d411",
-    });
+    }).label;
     assert.doesNotMatch(leaky, /run_fixture123456/);
     assert.doesNotMatch(leaky, /69f573d411/);
     // The card's own health words never borrow the two labels the build smoke matches exactly.
     const card = readFileSync(path.join(root, "src/renderer/panels/ConnectorsCard.tsx"), "utf8");
     assert.doesNotMatch(card, /\b(Retry|Ready)\b/);
+  });
+
+  it("every tool of the Genex editor helper's build and play toolsets has its own step", () => {
+    const toolsets = {
+      "genex_build.tools.GenexBuildTools": [
+        "set_route",
+        "track_terrain",
+        "dirt_material",
+        "run_script",
+        "shot_cameras",
+        "capture_shot",
+        "capture_play",
+        "motion_strip",
+        "import_model",
+        "import_character",
+        "import_animation",
+        "import_sound",
+        "retarget",
+        "attach_to_socket",
+        "audit",
+        "attach_mesh",
+      ],
+      "genex_play.tools.GenexPlayTools": [
+        "list_actions",
+        "hold",
+        "release_all",
+        "project_file",
+        "player_state",
+        "settle",
+        "drive_route",
+        "probe_route",
+      ],
+    };
+    const step = (toolset: string, toolName: string, args: Record<string, unknown> = {}) =>
+      connectorStep({ tool: "call_tool", toolset, toolName, args });
+    for (const [toolset, tools] of Object.entries(toolsets))
+      for (const tool of tools) assert.notEqual(step(toolset, tool).action, StepAction.Other, `${toolset} ${tool}`);
+    const build = "genex_build.tools.GenexBuildTools";
+    const label = (toolName: string, args: Record<string, unknown>) =>
+      connectorStepWords(step(build, toolName, args), "Unreal").label;
+    assert.match(label("run_script", { file: "track", args_json: "{}" }), /track/);
+    assert.match(label("capture_shot", { camera: "HeroCam_Start" }), /HeroCam_Start/);
+    assert.match(label("import_model", { file: "/tmp/bike.fbx", dest: "/Game/Bike", name: "SM_Bike" }), /SM_Bike/);
+    assert.equal(showsPlayView(step(build, "motion_strip", { frames: 4, interval_s: 0.5 }), false), true);
+    assert.equal(showsPlayView(step(build, "capture_play", { name: "jump" }), false), true);
   });
 
   it("folds a delegated minute into one closed line", () => {

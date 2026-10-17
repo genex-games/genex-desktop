@@ -6,7 +6,7 @@ import type { JSX, RefObject } from "react";
 import { useEffect, useRef } from "react";
 import type { PluginIconSize } from "../../../ui/PluginIcon.tsx";
 import { BOARD_CELLS, type Cell, loopMs, pieceFrames } from "./router-icon.ts";
-import { ICON_TOOLS, toolMark } from "./routed-tools.ts";
+import { ICON_TOOLS, markIsLight, toolMark } from "./routed-tools.ts";
 
 /** Where a cell is, as a percentage of a tile's own size (a CSS translate): the board's inset, the step between cells, and just off each side. */
 const INSET_PCT = 17.6;
@@ -60,7 +60,7 @@ export function RouterIcon({ size = "row" }: { size?: PluginIconSize }): JSX.Ele
     <span ref={board} className={`extension-icon extension-icon-${size} router-icon`} aria-hidden="true">
       {tools.map((tool, i) => (
         <span key={tool} className="router-tile" style={{ transform: translate(FRAMES[i]?.[0]?.cell ?? [-1, -1]) }}>
-          <img src={toolMark(tool)} alt="" draggable={false} />
+          <img src={toolMark(tool)} alt="" draggable={false} data-light-mark={markIsLight(tool) || undefined} />
         </span>
       ))}
     </span>

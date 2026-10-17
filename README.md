@@ -37,7 +37,7 @@ Genex is early: expect rough edges, and tell us about them in
 → Make 3D assets locally with the Blender plugin\
 → Meshy, Tripo, ElevenLabs and more through the Genex tools router\
 → Export anywhere, or publish to the web\
-→ Unity and Unreal plugins soon\
+→ Build in Unreal or Godot on your Mac with their plugins\
 → Native C++ games soon
 
 > [!TIP]
@@ -86,7 +86,21 @@ The [plugin guide](docs/PLUGIN_GUIDE.md) covers tools, panels, settings and acco
 - [Developer field guide](docs/STUDIO-DEVELOPER-FIELD-GUIDE.md): run commands and where data lives
 - [Release operations](docs/release-operations.md): packaging, signing and publishing a release
 
+### Code signing policy
+
+Free code signing provided by [SignPath.io](https://about.signpath.io/), certificate by
+[SignPath Foundation](https://signpath.org/).
+
+Windows builds are signed only when GitHub Actions builds them from this repository's source,
+and a maintainer approves each release before it is signed.
+
+- Committers and reviewers: [members of genex-games](https://github.com/orgs/genex-games/people)
+- Approvers: [owners of genex-games](https://github.com/orgs/genex-games/people?query=role%3Aowner)
+
+Privacy: what Genex stores and sends is in its [privacy policy](PRIVACY.md); connected providers,
+plugins and services have their own policies.
+
 ---
 
-[Privacy](PRIVACY.md) · [Security](SECURITY.md) · [MIT license](LICENSE), copyright `genex.games` ·
-[Third-party notices](THIRD-PARTY-NOTICES.md)
+[Privacy](PRIVACY.md) · [Security](SECURITY.md) · [Code signing policy](#code-signing-policy) ·
+[MIT license](LICENSE), copyright `genex.games` · [Third-party notices](THIRD-PARTY-NOTICES.md)

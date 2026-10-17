@@ -117,6 +117,44 @@ it("a thousand-step graph folds once when workers add no missing lifecycle", asy
   assert.equal(folds, ceilings.foldsWithHiddenWorkers);
 });
 
+it("Live's pictures project each finished or paused earlier run once, however many batches arrive", async () => {
+  const { picturesGraph, settledGraphOf, settledKeys } = await import("../../src/renderer/live-views.ts");
+  const { buildHistory } = await import("../../src/renderer/build-progress.ts");
+  const { buildRunGraph } = await import("../../src/renderer/run-graph.ts");
+  const { ObserverLive } = await import("../../src/shared/observers.ts");
+  const { CustomEvent } = await import("../../src/shared/custom-events.ts");
+  const runs = Array.from({ length: 9 }, (_, n) => `run_${n}`);
+  const custom = (n: number, eventType: string, payload: Record<string, unknown>): EventEnvelope => ({
+    ...event(`e${String(n).padStart(4, "0")}`),
+    data: { type: EventKind.Custom, event_type: eventType, payload },
+  });
+  const log = runs.flatMap((runId, n) => [
+    custom(n * 3, CustomEvent.RunStarted, { runId, goal: "Make it", project: "game" }),
+    ...(n < runs.length - 1 ? [custom(n * 3 + 1, CustomEvent.RunFinished, { runId, victory: true })] : []),
+    // Recovery closes a run the app quit under with its finish, then a pause: it stays paused.
+    ...(runId === "run_3" ? [custom(n * 3 + 2, CustomEvent.AutopilotPaused, { runId })] : []),
+  ]);
+  let projections = 0;
+  const graphOf = (runId: string) => {
+    projections++;
+    return buildRunGraph(log, runId);
+  };
+  const cache = new Map();
+  const view = { live: ObserverLive.Stills, at: ".", observer: null };
+  const shown = buildRunGraph(log, runs.at(-1));
+  const keys = settledKeys(log, buildHistory(log, "lead"));
+  assert.equal(keys(runs.at(-1) as string), null, "a running run is never kept");
+  assert.notEqual(keys("run_3"), null, "a paused run is kept until a record names it again");
+  for (let batch = 0; batch < 5; batch++) picturesGraph(shown, runs, settledGraphOf(cache, graphOf, keys), view);
+  assert.equal(projections, ceilings.earlierRunsLooked, "each finished or paused earlier run is projected once");
+  const reopened = [...log, custom(99, CustomEvent.RunStarted, { runId: "run_7", goal: "More", project: "game" })];
+  assert.notEqual(
+    settledKeys(reopened, buildHistory(reopened, "lead"))("run_7"),
+    keys("run_7"),
+    "a reopened run is projected afresh",
+  );
+});
+
 it("coordinator status is transient and never triggers event polling", async () => {
   const { uiEventReads } = await import("../../src/renderer/state/ui-event-routes.ts");
   const { UiEvent } = await import("../../src/shared/ui-events.ts");

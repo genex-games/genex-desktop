@@ -189,14 +189,22 @@ function roundCostEstimate(buildMs: number | null, afterMs: number | null, runMs
  * because a run that stopped five workers to fix one shader must not tell the owner they did
  * it. Returns null when nobody has asked.
  */
-export function stopSignal(answer: unknown): { by: string; reason: string } | null {
+export function stopSignal(answer: unknown): RoundStop | null {
   const asked = "finishing after the current attempt at the user’s request";
   if (!answer) return null;
   if (answer === true) return { by: "user", reason: asked };
-  const { by: who, reason: why } = answer as { by?: string; reason?: unknown };
+  const { by: who, reason: why, code } = answer as { by?: string; reason?: unknown; code?: unknown };
   const by = who === "director" ? "director" : "user";
   const reason = String(why ?? "").trim();
-  return { by, reason: reason || (by === "director" ? "stopped by the director" : asked) };
+  const stop = { by, reason: reason || (by === "director" ? "stopped by the director" : asked) };
+  return typeof code === "string" && code ? { ...stop, code } : stop;
+}
+
+/** Who stopped a round and why, with the app's code for it when the asker gave one (`WorkerStopCode`). */
+export interface RoundStop {
+  by: string;
+  reason: string;
+  code?: string;
 }
 
 /**
@@ -205,10 +213,7 @@ export function stopSignal(answer: unknown): { by: string; reason: string } | nu
  * abandons the round it is in. `aborted` is the engine's own word — the turn was aborted, so
  * the round is over whoever asked, and the reason is theirs if they gave one.
  */
-export function stopsThisRound(
-  answer: unknown,
-  { aborted = false }: { aborted?: boolean } = {},
-): { by: string; reason: string } | null {
+export function stopsThisRound(answer: unknown, { aborted = false }: { aborted?: boolean } = {}): RoundStop | null {
   const asked = stopSignal(answer);
   if (aborted) return asked ?? { by: "user", reason: "stopped before the round finished" };
   return asked?.by === "director" ? asked : null;

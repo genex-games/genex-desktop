@@ -1,9 +1,10 @@
 /**
- * The home background's controls: the effect, the picture (bundled or added), the marks' colour,
- * and the effect's own settings. Settings → Appearance shows them under a preview; home's own
- * Background button shows them over home itself, where the change is seen as it is made.
+ * The home background's controls: a gallery of looks (live backgrounds, the ones a model made,
+ * Make your own, and the picture effects), then the chosen look's own settings: its picture, its
+ * colours and its sliders. Settings → Appearance shows them under a preview; home's own Background
+ * button shows them over home itself, where the change is seen as it is made.
  */
-import type { ChangeEvent, JSX, ReactNode, SyntheticEvent } from "react";
+import type { ChangeEvent, CSSProperties, JSX, ReactNode } from "react";
 import { useEffect, useRef, useState } from "react";
 import {
   addBackdropUpload,
@@ -22,31 +23,37 @@ import {
   type BackdropColors,
   type BackdropNumber,
   type BackdropSettings,
+  BackdropSource,
   backdropDecimals,
   DEFAULT_BACKDROP,
+  EFFECT_LOOKS,
   DEFAULT_BACKDROP_IMAGE,
   DotGrid,
 } from "./settings.ts";
 import { useAppearance } from "../appearance/store.ts";
+import { openSettings, SettingsSection } from "../settings-navigation.ts";
+import { BackdropGallery } from "./BackdropGallery.tsx";
+import type { GenerationModel } from "./generation-model.ts";
+import { MakeBackground } from "./MakeBackground.tsx";
+import { useMadeShaders } from "./made-shaders.ts";
+import { shaderFor } from "./presets.ts";
 import { updateBackdrop } from "./store.ts";
 import { Button } from "../ui/Button.tsx";
 import { Icon } from "../ui/icons.tsx";
 import { Input } from "../ui/input.tsx";
-import { prefersReducedMotion } from "../ui/media-queries.ts";
 import { ViewSwitcher } from "../ui/view-switcher.tsx";
 
 const MESSAGE = {
-  heading: "Home background",
-  effect: "Effect",
+  settings: "Settings",
   picture: "Picture",
   upload: "Upload",
   addedPicture: (n: number) => `Added picture ${n}`,
   remove: (label: string) => `Remove ${label}`,
-  reset: "Reset",
   color: "Color",
-  colorHex: "Color hex",
+  colors: "Colors",
+  main: "Main color",
+  accent: "Accent color",
   useTheme: "Use theme",
-  more: "More settings",
   grid: "Grid",
   characters: "Characters",
   problems: {
@@ -57,12 +64,6 @@ const MESSAGE = {
   } satisfies Record<UploadProblem, string>,
 } as const;
 
-const EFFECTS = [
-  { key: BackdropEffect.Off, label: "Off" },
-  { key: BackdropEffect.Lines, label: "Lines" },
-  { key: BackdropEffect.Dots, label: "Dots" },
-  { key: BackdropEffect.Ascii, label: "ASCII" },
-] as const;
 const GRIDS = [
   { key: DotGrid.Regular, label: "Regular" },
   { key: DotGrid.Benday, label: "Ben-Day" },
@@ -86,64 +87,89 @@ const LABELS: Record<BackdropNumber, string> = {
   dotNoise: "Noise",
   threshold: "Threshold",
   asciiColumns: "Columns",
+  speed: "Speed",
+  scale: "Size",
+  glow: "Glow",
 };
-/** Under More settings: each effect's finer controls, then the image's preparation. */
-const MORE_SLIDERS: Record<BackdropEffect, readonly BackdropNumber[]> = {
-  [BackdropEffect.Off]: [],
-  [BackdropEffect.Lines]: ["threshold"],
-  [BackdropEffect.Dots]: ["threshold", "dotCorner", "dotNoise"],
-  [BackdropEffect.Ascii]: ["threshold"],
+/** A live background's own sliders. */
+const LIVE_SLIDERS: readonly BackdropNumber[] = ["speed", "scale", "glow"];
+/** Each effect's sliders, all shown, before the image's preparation. */
+const EFFECT_SLIDERS: Record<BackdropEffect, readonly BackdropNumber[]> = {
+  [BackdropEffect.None]: [],
+  [BackdropEffect.Lines]: ["lineColumns", "lineRows", "threshold"],
+  [BackdropEffect.Dots]: ["dotStep", "dotMin", "dotMax", "dotAngle", "threshold", "dotCorner", "dotNoise"],
+  [BackdropEffect.Ascii]: ["asciiColumns", "threshold"],
 };
-const TONE: readonly BackdropNumber[] = ["blur", "grain", "gamma", "blackPoint", "whitePoint"];
-const OWN_SLIDERS: Record<BackdropEffect, readonly BackdropNumber[]> = {
-  [BackdropEffect.Off]: [],
-  [BackdropEffect.Lines]: ["lineColumns", "lineRows"],
-  [BackdropEffect.Dots]: ["dotStep", "dotMin", "dotMax", "dotAngle"],
-  [BackdropEffect.Ascii]: ["asciiColumns"],
-};
+const TONE: readonly BackdropNumber[] = ["grain", "gamma", "blackPoint", "whitePoint"];
+/** Blur softens a still picture before its marks are drawn; a live scene is already soft at its size. */
+const PICTURE_TONE: readonly BackdropNumber[] = ["blur", ...TONE];
+
+/** The image's preparation an effect reads: none without one, no blur over a live scene. */
+function toneFor(settings: BackdropSettings): readonly BackdropNumber[] {
+  if (settings.effect === BackdropEffect.None) return [];
+  return settings.source === BackdropSource.Shader ? TONE : PICTURE_TONE;
+}
 const PICTURE_TYPES = "image/png,image/jpeg,image/webp,image/gif";
 const HEX = /^#[0-9a-f]{6}$/i;
 /** The colour shown when the theme's cannot be read as hex. */
 const FALLBACK_INK = "#000000";
 
-/** The theme's text colour as `#rrggbb`, what the marks use until a colour is chosen. */
-function themeInk(): string {
-  const ink = getComputedStyle(document.documentElement).getPropertyValue("--ink").trim().toLowerCase();
-  return HEX.test(ink) ? ink : FALLBACK_INK;
+/** A theme colour as `#rrggbb`, what a swatch shows until a colour is chosen. */
+function themeHex(name: string): string {
+  const color = getComputedStyle(document.documentElement).getPropertyValue(name).trim().toLowerCase();
+  return HEX.test(color) ? color : FALLBACK_INK;
 }
 
 const change = (patch: Partial<BackdropSettings>): void => updateBackdrop((previous) => ({ ...previous, ...patch }));
 
-/** A setting: its name on the left, its control on the right. */
-function Row({ label, children, top }: { label: ReactNode; children: ReactNode; top?: boolean }): JSX.Element {
+/** A titled group of settings. */
+function Group({ title, children }: { title: string; children: ReactNode }): JSX.Element {
   return (
-    <div className="backdrop-row" data-top={top || undefined}>
-      <span className="backdrop-label">{label}</span>
-      <div className="backdrop-control">{children}</div>
+    <div className="backdrop-group">
+      <h3 className="backdrop-section-title">{title}</h3>
+      {children}
     </div>
   );
 }
 
-/** A number on a slider; its value sits in a column of its own, so dragging never moves the slider. */
+/**
+ * A number as a thick bar: its name inside at the start, its value inside at the end, the filled
+ * share showing where it sits. The whole bar is the handle; arrow keys step it.
+ */
 function Slider({ name, value }: { name: BackdropNumber; value: number }): JSX.Element {
   const { min, max, step } = BACKDROP_RANGES[name];
   const id = `backdrop-${name}`;
+  const fill = (value - min) / (max - min);
   return (
-    <Row label={<label htmlFor={id}>{LABELS[name]}</label>}>
+    <div className="backdrop-slider" style={{ "--fill": fill } as CSSProperties}>
       <input
         id={id}
         type="range"
-        className="backdrop-slider"
+        aria-label={LABELS[name]}
         min={min}
         max={max}
         step={step}
         value={value}
         onChange={(event) => change({ [name]: Number(event.target.value) })}
       />
-      <output htmlFor={id} className="backdrop-value">
+      <span className="backdrop-slider-fill" aria-hidden="true" />
+      <span className="backdrop-slider-label" aria-hidden="true">
+        {LABELS[name]}
+      </span>
+      <output htmlFor={id} className="backdrop-slider-value">
         {value.toFixed(backdropDecimals(name))}
       </output>
-    </Row>
+    </div>
+  );
+}
+
+function Sliders({ names, settings }: { names: readonly BackdropNumber[]; settings: BackdropSettings }) {
+  return (
+    <div className="backdrop-sliders">
+      {names.map((name) => (
+        <Slider key={name} name={name} value={settings[name]} />
+      ))}
+    </div>
   );
 }
 
@@ -235,7 +261,7 @@ function PicturePicker({ selected }: { selected: string }): JSX.Element {
   };
   const full = pictures.filter((picture) => picture.added).length >= MAX_BACKDROP_UPLOADS;
   return (
-    <Row label={MESSAGE.picture} top>
+    <Group title={MESSAGE.picture}>
       <div className="backdrop-pictures" role="group" aria-label={MESSAGE.picture}>
         {pictures.map((picture) => (
           <PictureChoice
@@ -270,66 +296,88 @@ function PicturePicker({ selected }: { selected: string }): JSX.Element {
           {problem}
         </p>
       )}
-    </Row>
+    </Group>
+  );
+}
+
+/** One colour as a swatch chip: the colour and its hex, the system picker under it. */
+function Swatch({
+  label,
+  color,
+  onPick,
+  data,
+}: {
+  label: string;
+  color: string;
+  onPick: (color: string) => void;
+  data?: string;
+}): JSX.Element {
+  return (
+    <label className="backdrop-swatch" data-backdrop-color={data}>
+      <span className="backdrop-swatch-dot" style={{ background: color }} />
+      <span className="backdrop-swatch-hex">{color}</span>
+      <input type="color" aria-label={label} value={color} onChange={(event) => onPick(event.target.value)} />
+    </label>
   );
 }
 
 /**
- * The marks' colour in the theme on screen: the theme's text until one is picked, with the way back
- * to it. The other theme keeps its own.
+ * The look's colours in the theme on screen: a live background's two, or a picture's marks' one,
+ * each the theme's until picked, with the way back to it. The other theme keeps its own.
  */
-function ColorRow({ colors }: { colors: BackdropColors }): JSX.Element {
+function ColorGroup({ settings }: { settings: BackdropSettings }): JSX.Element {
   const { scheme } = useAppearance();
-  const color = colors[scheme];
-  const shown = color ?? themeInk();
-  const [draft, setDraft] = useState(shown);
-  useEffect(() => setDraft(shown), [shown]);
-  const setColor = (next: string | null): void =>
-    updateBackdrop((previous) => ({ ...previous, colors: { ...previous.colors, [scheme]: next } }));
-  const commit = (): void => {
-    const next = draft.trim().toLowerCase();
-    if (HEX.test(next)) setColor(next);
-    else setDraft(shown);
+  const live = settings.source === BackdropSource.Shader;
+  const main = live ? "shaderColors" : "colors";
+  const mains: BackdropColors = live ? settings.shaderColors : settings.colors;
+  const accents = settings.shaderAccents;
+  const set = (key: "colors" | "shaderColors" | "shaderAccents", next: string | null): void =>
+    updateBackdrop((previous) => ({ ...previous, [key]: { ...previous[key], [scheme]: next } }));
+  const picked = mains[scheme] !== null || (live && accents[scheme] !== null);
+  const useTheme = (): void => {
+    set(main, null);
+    if (live) set("shaderAccents", null);
   };
   return (
-    <Row label={MESSAGE.color}>
-      {color && (
-        <Button variant="ghost" onClick={() => setColor(null)}>
-          {MESSAGE.useTheme}
-        </Button>
-      )}
-      <div className="color-control">
-        <input
-          type="color"
-          value={shown}
-          aria-label={MESSAGE.color}
-          data-backdrop-color
-          onChange={(event) => setColor(event.target.value)}
+    <Group title={live ? MESSAGE.colors : MESSAGE.color}>
+      <div className="backdrop-swatches">
+        <Swatch
+          label={live ? MESSAGE.main : MESSAGE.color}
+          color={mains[scheme] ?? themeHex("--ink")}
+          onPick={(color) => set(main, color)}
+          data="main"
         />
-        <input
-          aria-label={MESSAGE.colorHex}
-          value={draft}
-          maxLength={7}
-          spellCheck={false}
-          onChange={(event) => setDraft(event.target.value)}
-          onBlur={commit}
-          onKeyDown={(event) => {
-            if (event.key === "Enter") commit();
-          }}
-        />
+        {live && (
+          <Swatch
+            label={MESSAGE.accent}
+            color={accents[scheme] ?? themeHex("--accent-ink")}
+            onPick={(color) => set("shaderAccents", color)}
+            data="accent"
+          />
+        )}
+        {picked && (
+          <Button
+            variant="ghost"
+            className="ms-auto bg-foreground/[0.07] hover:bg-foreground/[0.12]"
+            onClick={useTheme}
+          >
+            {MESSAGE.useTheme}
+          </Button>
+        )}
       </div>
-    </Row>
+    </Group>
   );
 }
 
 /** The ramp field: what is typed shows at once; a ramp too short to draw with waits. */
-function CharactersRow({ value }: { value: string }): JSX.Element {
+function CharactersField({ value }: { value: string }): JSX.Element {
   const [draft, setDraft] = useState(value);
   useEffect(() => setDraft(value), [value]);
   return (
-    <Row label={<label htmlFor="backdrop-characters">{MESSAGE.characters}</label>}>
+    <Group title={MESSAGE.characters}>
       <Input
         id="backdrop-characters"
+        aria-label={MESSAGE.characters}
         className="backdrop-characters"
         value={draft}
         maxLength={ASCII_RAMP_MAX}
@@ -340,74 +388,84 @@ function CharactersRow({ value }: { value: string }): JSX.Element {
         }}
         onBlur={() => setDraft(value)}
       />
-    </Row>
+    </Group>
   );
 }
 
-/** An opened disclosure grows downward; bring what it revealed into view. */
-function revealOpened(event: SyntheticEvent<HTMLDetailsElement>): void {
-  const details = event.currentTarget;
-  if (!details.open) return;
-  requestAnimationFrame(() =>
-    details.scrollIntoView({ block: "nearest", behavior: prefersReducedMotion() ? "auto" : "smooth" }),
-  );
-}
-
-function EffectSettings({ settings }: { settings: BackdropSettings }): JSX.Element {
+/** An effect's own choices beyond its sliders: the dot grid, or the characters. */
+function EffectChoices({ settings }: { settings: BackdropSettings }): JSX.Element | null {
+  if (settings.effect === BackdropEffect.Ascii) return <CharactersField value={settings.asciiCharacters} />;
+  if (settings.effect !== BackdropEffect.Dots) return null;
   return (
-    <>
-      <Slider name="strength" value={settings.strength} />
-      {OWN_SLIDERS[settings.effect].map((name) => (
-        <Slider key={name} name={name} value={settings[name]} />
-      ))}
-      {settings.effect === BackdropEffect.Dots && (
-        <Row label={MESSAGE.grid}>
-          <ViewSwitcher
-            items={GRIDS}
-            active={settings.dotGrid}
-            onSelect={(dotGrid) => change({ dotGrid })}
-            label={MESSAGE.grid}
-            sans
-          />
-        </Row>
-      )}
-      {settings.effect === BackdropEffect.Ascii && <CharactersRow value={settings.asciiCharacters} />}
-      <details className="appearance-details backdrop-more" onToggle={revealOpened}>
-        <summary>{MESSAGE.more}</summary>
-        {[...MORE_SLIDERS[settings.effect], ...TONE].map((name) => (
-          <Slider key={name} name={name} value={settings[name]} />
-        ))}
-      </details>
-    </>
+    <Group title={MESSAGE.grid}>
+      <ViewSwitcher
+        items={GRIDS}
+        active={settings.dotGrid}
+        onSelect={(dotGrid) => change({ dotGrid })}
+        label={MESSAGE.grid}
+        sans
+      />
+    </Group>
+  );
+}
+
+/** The chosen look's settings: its picture, its colours, then every slider it has, and its effect's grid or characters. */
+function LookSettings({ settings }: { settings: BackdropSettings }): JSX.Element {
+  const made = useMadeShaders();
+  const live = settings.source === BackdropSource.Shader;
+  const plain = settings.effect === BackdropEffect.None;
+  const showsPicture = !live || shaderFor(settings.shader, made).readsPicture;
+  // A picture with no effect is drawn in its own colours: there are no marks to colour.
+  const coloured = live || !plain;
+  const sliders: BackdropNumber[] = [
+    "strength",
+    ...(live ? LIVE_SLIDERS : []),
+    ...EFFECT_SLIDERS[settings.effect],
+    ...toneFor(settings),
+  ];
+  return (
+    <div className="backdrop-look-settings" data-backdrop-look-settings>
+      {showsPicture && <PicturePicker selected={settings.image} />}
+      {coloured && <ColorGroup settings={settings} />}
+      <Group title={MESSAGE.settings}>
+        <Sliders names={sliders} settings={settings} />
+      </Group>
+      <EffectChoices settings={settings} />
+    </div>
   );
 }
 
 /** Everything that sets the background, below whatever heading its place gives it. */
-export function BackdropControls({ settings }: { settings: BackdropSettings }): JSX.Element {
+export function BackdropControls({
+  settings,
+  model,
+}: {
+  settings: BackdropSettings;
+  /** The model Make your own writes with; null when none is connected. */
+  model: GenerationModel | null;
+}): JSX.Element {
+  const [making, setMaking] = useState(false);
+  const make = (): void => {
+    if (model) setMaking(true);
+    else openSettings(SettingsSection.Providers);
+  };
   return (
-    <>
-      <Row label={MESSAGE.effect}>
-        <ViewSwitcher
-          items={EFFECTS}
-          active={settings.effect}
-          onSelect={(effect) => change({ effect })}
-          label={MESSAGE.effect}
-          sans
-          dataAttribute="data-backdrop-effect"
-        />
-      </Row>
-      {settings.effect !== BackdropEffect.Off && (
-        <>
-          <PicturePicker selected={settings.image} />
-          <ColorRow colors={settings.colors} />
-          <EffectSettings settings={settings} />
-        </>
-      )}
-    </>
+    <div className="backdrop-controls">
+      <BackdropGallery settings={settings} connected={model !== null} onMake={make} />
+      {making && model && <MakeBackground model={model} onClose={() => setMaking(false)} />}
+      {!making && settings.source !== BackdropSource.Off && <LookSettings settings={settings} />}
+    </div>
   );
 }
 
-/** Back to the defaults, keeping the effect and the picture. */
+/** Back to the defaults and the effect's tuned look, keeping the source, the effect, the picture and the shader. */
 export function resetBackdrop(): void {
-  updateBackdrop((previous) => ({ ...DEFAULT_BACKDROP, effect: previous.effect, image: previous.image }));
+  updateBackdrop(({ source, effect, image, shader }) => ({
+    ...DEFAULT_BACKDROP,
+    ...EFFECT_LOOKS[effect],
+    source,
+    effect,
+    image,
+    shader,
+  }));
 }

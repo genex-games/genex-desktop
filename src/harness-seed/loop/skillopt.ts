@@ -42,7 +42,8 @@ import { EngineFailure } from "./outage.ts";
 import { VerdictSource } from "./verdict.ts";
 import { WorkerState } from "./outcomes.ts";
 import { clip, CLIP_DETAIL, CLIP_REASON } from "./text.ts";
-import type { HarnessWorkClass } from "../types/host-api.d.ts";
+import { type FactsOfDescriptor, LoopProfile, loopProfileOf } from "./folder-facts.ts";
+import type { GameProject, HarnessWorkClass } from "../types/host-api.d.ts";
 
 /**
  * Every model call a pass makes is improvement work. Without the tag the host books it as user
@@ -230,7 +231,9 @@ async function openPass(ctx: HarnessCtx, options: SkillOptOptions): Promise<Pass
   const lastRun = latestRunEngine(events);
   const engine = options.engine ?? lastRun?.engine ?? EngineId.Ollama;
   const model = options.engine ? options.model : (options.model ?? lastRun?.model);
-  const tasks = mineValidationTasks(events, options.maxTasks ?? DEFAULT_MAX_TASKS);
+  // The games as they are now: what the web preview saw of one that isn't a web game is no evidence.
+  const games = await ctx.call(HostMethod.GameList, {}).catch(() => null);
+  const tasks = mineValidationTasks(events, options.maxTasks ?? DEFAULT_MAX_TASKS, Array.isArray(games) ? games : []);
   // Only skills that declare `trainable: true` are optimised — the planner's, in the v2 seed.
   // Builder skills are retired from SkillOpt (HARNESS-REWORK.md §4.6): the Claude Code
   // contractor never read them, and the technique library with its outcome gate replaces
@@ -544,17 +547,39 @@ async function finishPass(
 /**
  * Cheap, replayable sub-tasks mined from what actually happened, rather than a synthetic
  * benchmark: iteration verdicts carry the gap that was being closed and whether it won.
+ * `games` are the studio's games as they are now: a build observation of one that isn't a web game
+ * (its Loop works in place) is set aside.
  */
-export function mineValidationTasks(events: readonly HarnessEvent[], limit: number): ValidationTask[] {
+export function mineValidationTasks(
+  events: readonly HarnessEvent[],
+  limit: number,
+  games: readonly (Pick<GameProject, "name"> & FactsOfDescriptor)[] = [],
+): ValidationTask[] {
   const tasks: ValidationTask[] = [];
+  const openGames = new Set(games.filter((game) => loopProfileOf(game) === LoopProfile.Open).map((g) => g.name));
   for (const event of events) {
     if (event.data?.type !== EventKind.Custom) continue;
     const type = event.data.event_type;
+    if (isOpenBuildObservation(type, event.data.payload, openGames)) continue;
     const mine = Object.hasOwn(TASK_MINERS, type) ? TASK_MINERS[type] : undefined;
     const task = mine?.(event.data.payload ?? {}, tasks.length);
     if (task) tasks.push(task);
   }
   return tasks.filter((task) => task.prompt).slice(-limit);
+}
+
+/**
+ * A chat build's preview observation of a game that isn't a web game (an Unreal, Godot or plugin
+ * project, or one whose web site is in a folder of its own): the web preview of its root shows a
+ * black canvas or another page, which says nothing about the game, so it teaches the web method
+ * nothing.
+ */
+function isOpenBuildObservation(
+  type: unknown,
+  payload: AnyRecord | undefined,
+  openGames: ReadonlySet<string>,
+): boolean {
+  return type === RunEvent.BuildObservation && openGames.has(String(payload?.project ?? ""));
 }
 
 /** One custom event's payload → the task it teaches, or null. `mined` counts the tasks so far. */

@@ -150,7 +150,7 @@ export interface SubscriptionAuth {
   waiting: boolean;
   error: string | null;
   missingCli: boolean;
-  signIn: (opts?: { separate?: boolean }) => Promise<void>;
+  signIn: (opts?: { separate?: boolean; account?: string }) => Promise<void>;
   refresh: () => Promise<void>;
 }
 
@@ -186,7 +186,7 @@ export function useSubscriptionAuth(
 
   // Claude can request a separate profile. Codex always creates an app-specific login; the
   // user can sign into their existing subscription without changing their terminal's login.
-  const signIn = async (opts?: { separate?: boolean }): Promise<void> => {
+  const signIn = async (opts?: { separate?: boolean; account?: string }): Promise<void> => {
     setError(null);
     const result = await window.studio
       .subscriptionSignIn({ engine: engineId, ...(opts ?? {}) })

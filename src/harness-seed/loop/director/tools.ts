@@ -1,9 +1,12 @@
 import { keepCheckpoint } from "./progress.ts";
 import { retainSpan, timedOperation } from "./timing.ts";
+import { capRefusesWorker, runNow } from "./cap-lines.ts";
 import { GoalBlocker, GoalStatus, goalDecision, recordGoalEvidence, replanGoal } from "./goals.ts";
 /**
  * The director's tools as its session calls them: the handler the studio forwards every call to,
- * and the tools that only look — `run_status`, `wait`, `judge`, `playtest`, `show`.
+ * and the tools that only look — `run_status`, `worker_wait`, `judge`, `playtest`, `show`. The
+ * worker tools follow Genex's one worker model (`loop/workers/`): `worker_mark` and a reader's calls
+ * are answered there.
  */
 
 import { renderScoreboard, runDeterministicChecks, summarizeScoreboard, toScoreboard, unmeasured } from "../checks.ts";
@@ -13,19 +16,30 @@ import { HostMethod } from "../host-methods.ts";
 import { askVisionBoard, blindCompare, Side, visionCheck } from "../judge.ts";
 import { EngineFailure, outageDelays, withProviderPatience } from "../outage.ts";
 import { isRunning, WorkerMode } from "../outcomes.ts";
+import { isCommit } from "../shell.ts";
 import { runPlaytest } from "../playtester.ts";
+import { handsOnJudgesOn, runHandsOnJudge } from "../hands-on-judge.ts";
+import { parseGoalState, questId, type Quest } from "../quest.ts";
+import { keepRouteOf } from "../routes.ts";
 import { attemptRef } from "../repo.ts";
+import { InteractionObjective, InteractionSource } from "../interaction-words.ts";
 import { RunEvent, SteeringSource } from "../run-events.ts";
 import { CheckKind, CheckWeight, MoveOwner, normalizeFacetSpec, normalizeMilestone } from "../spec.ts";
 import { FacetStage, isFinishing, stageArg } from "../facet/stage.ts";
 import { playtestStepWords } from "../facet/beyond.ts";
 import { withOpenRung } from "../facet/growth.ts";
+import { ownsCameraWiring } from "../facet/camera-wiring.ts";
+import { headLooked } from "./merge-hold.ts";
+import { FacetRole } from "../facet/state.ts";
 import {
   STEER_BACK_TO_BUILD,
   STEER_EMPTY_REFUSAL,
   steerStageRefusal,
   steerStageWords,
 } from "../facet/stage-prompts.ts";
+import { fireHooks, HookEvent, runScope } from "../hooks.ts";
+import { FINAL_JUDGE_MS, finishCallOf } from "./finish-claim.ts";
+import { HOOK_PROMPTS } from "../hooks-prompts.ts";
 import { CLIP_REASON } from "../text.ts";
 import { MINUTE_MS, minutes, SECOND_MS, sleep } from "../time.ts";
 import { Against, againstWords, observedFrom, VerdictPass, VerdictRule } from "../verdict.ts";
@@ -45,6 +59,18 @@ import { plainly } from "./rules.ts";
 import { DirectorTool, headSynced } from "./tool-specs.ts";
 import { passDeadline } from "./wake-schedule.ts";
 import { workingGoal } from "../goal-prompts.ts";
+import { WorkerTool } from "../workers/contract.ts";
+import {
+  briefOf,
+  markWorker,
+  pooledAnswer,
+  readerLines,
+  rejectedNews,
+  unrejected,
+  waitingBuilders,
+} from "../workers/director-pool.ts";
+import { wrapUp } from "./wrap-up.ts";
+import { noteKeptJudged } from "./kept-judge.ts";
 import type { LastJudge, LoopRun, Worker } from "./loop-run.ts";
 import type { LastShip } from "./art-direction.ts";
 import type { CheckResult } from "../checks.ts";
@@ -66,12 +92,6 @@ const STOPPED_BY_USER = "STOPPED BY THE USER: the run is over; end your session 
 const JUDGE_STATE_CHARS = 1_200;
 /** How many GPU errors a judge's answer carries. */
 const JUDGE_GPU_ERRORS = 4;
-/**
- * How soon after it starts the close's own judge must be done asking (`judgeTheLanding`). The close
- * runs inside the lead's `finish` call, which the engine gives up on after ten minutes, and the
- * settle, the close's look and the judge's own look share that time.
- */
-const FINAL_JUDGE_MS = 4 * MINUTE_MS;
 /** judge.ts's confidence for an answer that states none — a coin flip; the close counts only a surer one. */
 const COIN_FLIP = 0.5;
 /** A playtest's minutes: at least two, at most eight, five unless the director says otherwise. */
@@ -80,7 +100,7 @@ const PLAYTEST_MAX_MINUTES = 8;
 const PLAYTEST_DEFAULT_MINUTES = 5;
 /** The most actions a director's playtester takes. */
 const PLAYTEST_MAX_ACTIONS = 20;
-/** A `wait` that names no length waits a minute. */
+/** A `worker_wait` that names no length waits a minute. */
 const WAIT_DEFAULT_S = 60;
 /** How much of a worker's brief, iterations and attempts `worker_status` carries. */
 const STATUS_BRIEF_CHARS = 600;
@@ -262,7 +282,11 @@ interface JudgePass extends JudgeAsk {
 async function judgedHead(loopRun: LoopRun, target: JudgeAsk["target"]): Promise<string | null> {
   const { baseCommit, ctx, integrationWorktree, projectDir, state } = loopRun;
   if (target.root === integrationWorktree) return headOf(ctx, integrationWorktree).catch(() => state.integrationHead);
-  return target.worker?.lastCommit ?? (target.root === projectDir ? baseCommit : null);
+  // An ended worker's worktree stands on its stopped round when it kept one: that is what is judged.
+  const worker = target.worker;
+  const kept = worker && !isRunning(worker) ? worker.keptCommit : null;
+  if (isCommit(kept)) return String(kept);
+  return worker?.lastCommit ?? (target.root === projectDir ? baseCommit : null);
 }
 
 /** The judge's answer before anything is scored: what it saw of the build. */
@@ -286,6 +310,7 @@ function rememberJudgedHead(loopRun: LoopRun, head: string | null, evidence: Evi
   const { errorsLogged, rememberEvidence, state } = loopRun;
   if (!head) return;
   if (evidence.ok === true) state.healthByHead.set(head, true);
+  headLooked(state, head, evidence.ok === true);
   state.consoleByHead.set(head, errorsLogged(evidence));
   rememberEvidence(head, evidence);
 }
@@ -431,6 +456,7 @@ async function otherBuild(
     cameras: cameras.length ? cameras : null,
     setup: against.worker?.setup ?? run.setup ?? null,
     inheritedConsole: consoleInheritedBy(against.worker),
+    camerasOwned: judgedOwnsCameras(against.worker),
   }).catch(() => null);
   return { other, worker: against.worker ?? null };
 }
@@ -658,6 +684,11 @@ async function recordJudgement(loopRun: LoopRun, pass: JudgePass, scored: CheckR
     }).catch(() => {});
 }
 
+/** Does the judged build answer for its camera wiring: the integration's does, a part's only when it owns the entry (camera-wiring.ts). */
+function judgedOwnsCameras(worker: Worker | null | undefined): boolean {
+  return !worker || ownsCameraWiring({ ownsMain: Boolean(worker.ownsMain), role: FacetRole.Facet });
+}
+
 /** One judge pass on the window it leased: look, score, ask, compare, and write it all down. */
 async function judgeOnWindow(loopRun: LoopRun, ask: JudgeAsk, handle: string | null): Promise<string> {
   const { consoleInheritedBy, ctx, integrationWorktree, journal, note, patientEvidence, run, saveJournal, state } =
@@ -671,6 +702,7 @@ async function judgeOnWindow(loopRun: LoopRun, ask: JudgeAsk, handle: string | n
     setup: target.worker?.setup ?? run.setup ?? null,
     scaffold: state.baseHeads.has(head),
     inheritedConsole: consoleInheritedBy(target.worker),
+    camerasOwned: judgedOwnsCameras(target.worker),
     // The art director looks at a real screen's size; the window is 960×600 again once released.
     // Its whole-game look also races the throttle-only bot, so it is told how hard the race is.
     ...(ask.ship ? { viewport: SHIP_VIEW, challenge: true } : {}),
@@ -700,6 +732,12 @@ async function judgeOnWindow(loopRun: LoopRun, ask: JudgeAsk, handle: string | n
   await askJudgeQuestion(loopRun, pass);
   /** The worker whose build this one was put beside, when it was put beside one. */
   const againstWorker = await compareJudged(loopRun, pass);
+  // A stopped round a judge preferred to the integration branch may go into it (kept-work.ts).
+  if (target.worker) {
+    const pick = pass.out.verdict?.pick ?? null;
+    const preferred = ask.againstKey === BuildTarget.Integration && pick === Side.Challenger;
+    noteKeptJudged(target.worker, head, pick === null ? null : preferred);
+  }
   await shipStep(loopRun, pass);
   pass.out.head = head ?? null;
   if (keepsJudgement) journal.director.lastJudge = judgement;
@@ -780,19 +818,25 @@ function finallyJudged(judged: LastJudge | null, head: string | null): boolean {
  * finish, so builds went live with no judge having looked. A build the user had a picture of is
  * compared blind with it; a new game, or one whose start nobody could photograph, is asked whether
  * it shows what the user asked for. It looks through the studio's window when every other is
- * taken, its calls end by `FINAL_JUDGE_MS` (and with the user's Stop), and its word is kept as
- * every judge's is (`state.lastJudge`, a judge verdict), for the landing's claim.
+ * taken, its calls end by `FINAL_JUDGE_MS` (or `judgeBy`, a lead's call's end, when sooner; and
+ * with the user's Stop), and its word is kept as every judge's is (`state.lastJudge`, a judge
+ * verdict), for the landing's claim.
  */
-export async function judgeTheLanding(loopRun: LoopRun, head: string | null): Promise<void> {
+export async function judgeTheLanding(loopRun: LoopRun, head: string | null, judgeBy?: number): Promise<void> {
   const { note } = loopRun;
   const ask = closeJudgeAsk(loopRun, head);
   if (!ask) return;
-  const options = { borrow: true, final: true, until: Date.now() + FINAL_JUDGE_MS };
+  const options = { borrow: true, final: true, until: landingJudgeUntil(Date.now(), judgeBy) };
   await judge(loopRun, ask, options).catch((err: unknown) =>
     note(
       `the close could not judge ${shortSha(head)}: ${String((err as Error)?.message ?? err).slice(0, CLIP_REASON)}`,
     ),
   );
+}
+
+/** When the close's judge must be done, from `now`: its own time at most, and by `judgeBy` when that is sooner (a claim's call). */
+export function landingJudgeUntil(now: number, judgeBy?: number): number {
+  return Math.min(now + FINAL_JUDGE_MS, judgeBy ?? Number.POSITIVE_INFINITY);
 }
 
 /**
@@ -885,43 +929,106 @@ async function folderState(loopRun: LoopRun, root: string): Promise<{ head: stri
   return { head, clean };
 }
 
+/** What one session in a build established: its answer, its record, who played and what it rests on. */
+interface PlaySession {
+  result: CheckResult | null;
+  report: AnyRecord | null;
+  source: InteractionSource;
+  objective: InteractionObjective;
+  trace: string | null;
+}
+
+/**
+ * One session in the build: a blind judge that plays to the lead's goal state when it named one
+ * (the studio checks the state; a verified, replayable route is kept for later builds), else the
+ * playtester on the lead's question.
+ */
+async function sessionIn(
+  loopRun: LoopRun,
+  { ask, n, playRoot, handle, deadline, setup, quest }: AnyRecord,
+): Promise<PlaySession> {
+  const { ctx, run } = loopRun;
+  const checks = [{ id: "director-play", kind: CheckKind.Play, ask, expect: "yes", weight: CheckWeight.Normal }];
+  const labelPrefix = `director/play_${n}`;
+  if (quest) {
+    const judged = await runHandsOnJudge(ctx, {
+      run: { ...run, setup },
+      root: playRoot,
+      handle,
+      questions: checks as Check[],
+      quest,
+      deadline,
+      labelPrefix,
+      iteration: n,
+      facetId: `play-${n}`,
+    });
+    if (judged.objective === InteractionObjective.StudioVerified)
+      await keepRouteOf({ run, journal: loopRun.journal }, judged.trace, quest).catch(() => null);
+    return {
+      result: judged.results[0] ?? null,
+      report: judged.report,
+      source: InteractionSource.HandsOnJudge,
+      objective: judged.objective,
+      trace: judged.trace?.path ?? null,
+    };
+  }
+  const played = await runPlaytest(ctx, {
+    run: { ...run, setup },
+    spec: { id: `play-${n}`, title: "director playtest", intent: ask, cameras: ["default"] },
+    checks: checks as Check[],
+    root: playRoot,
+    handle,
+    deadline,
+    iteration: n,
+    labelPrefix,
+    maxActions: PLAYTEST_MAX_ACTIONS,
+  });
+  return {
+    result: played?.results?.[0] ?? null,
+    report: played?.report ?? null,
+    source: InteractionSource.IndependentPlaytester,
+    objective: InteractionObjective.ModelSaid,
+    trace: null,
+  };
+}
+
 /** One playtest in a folder that is the build: play it, record what it established, and answer. */
 async function playIn(
   loopRun: LoopRun,
-  { target, ask, n, playRoot, handle, budget, goalId, scenario }: AnyRecord,
+  { target, ask, n, playRoot, handle, budget, goalId, scenario, quest }: AnyRecord,
 ): Promise<string> {
-  const { appendRun, ctx, finalDeadline, note, run, softDeadline } = loopRun;
+  const { appendRun, finalDeadline, note, run, softDeadline } = loopRun;
   const before = await folderState(loopRun, playRoot);
   // A playtest in the wrap-up plays until the wrap-up's end, not the working deadline behind it.
   const until = passDeadline({ now: Date.now(), softDeadline, finalDeadline });
-  const played = await runPlaytest(ctx, {
-    run: { ...run, setup: target.worker?.setup ?? run.setup ?? null },
-    spec: { id: `play-${n}`, title: "director playtest", intent: ask, cameras: ["default"] },
-    checks: [{ id: "director-play", kind: CheckKind.Play, ask, expect: "yes", weight: CheckWeight.Normal }] as Check[],
-    root: playRoot,
+  const session = await sessionIn(loopRun, {
+    ask,
+    n,
+    playRoot,
     handle,
     deadline: Math.min(until, Date.now() + budget),
-    iteration: n,
-    labelPrefix: `director/play_${n}`,
-    maxActions: PLAYTEST_MAX_ACTIONS,
+    setup: target.worker?.setup ?? run.setup ?? null,
+    quest,
   });
   const after = await folderState(loopRun, playRoot);
   const untouched = before.clean && after.clean && before.head === after.head;
-  const result = played?.results?.[0] ?? null;
+  const result = session.result;
   const words = playWords(result?.pass);
   await appendRun(RunEvent.RunInteractionEvidence, {
     head: untouched ? before.head : null,
     label: ask,
     status: words.status,
     note: result?.note ?? result?.reason ?? null,
-    source: "independent-playtester",
+    source: session.source,
+    objective: session.objective,
+    ...(session.trace ? { trace: session.trace } : {}),
   }).catch(() => {});
   if (goalId && loopRun.state.goals && untouched && before.head && target.root === loopRun.integrationWorktree) {
     recordGoalEvidence(loopRun.state.goals, goalId, before.head, result?.pass ?? undefined, scenario);
     await keepCheckpoint(loopRun, before.head);
     await loopRun.saveJournal();
   }
-  const bigMove = played?.report?.bigMove ?? null;
+  const bigMove = session.report?.bigMove ?? null;
   // A step beyond the ask is labelled for the lead and put to the user (facet/beyond.ts), never a move.
   const step = playtestStepWords(bigMove);
   note(`playtested ${target.label}: ${words.said}${step.note}`);
@@ -931,11 +1038,29 @@ async function playIn(
     question: ask,
     answer: words.answer,
     note: result?.note ?? result?.reason ?? "",
-    actions: played?.report?.actions ?? 0,
-    report: played?.report?.report ?? "",
+    actions: session.report?.actions ?? 0,
+    report: session.report?.report ?? "",
+    ...(session.source === InteractionSource.HandsOnJudge ? { objective: session.objective } : {}),
     bigMove,
     ...(step.card ? { bigMoveOutsideAsk: "put to the user as a decision card; never a move" } : {}),
   });
+}
+
+/**
+ * The lead's `goal_state` as the quest a judge that plays is sent to reach: null without one (or
+ * with judges that play turned off for the run), the refusal when it cannot be read.
+ */
+function questOf(run: LoopRun["run"], goalState: unknown, ask: string): Quest | { error: string } | null {
+  const parsed = parseGoalState(goalState);
+  if (!parsed || !handsOnJudgesOn(run)) return null;
+  if ("error" in parsed) return parsed;
+  return { id: questId(ask, "goal"), until: parsed.until };
+}
+
+/** Is `scenario` absent, or a zero-based index of the goal's acceptance scenarios? */
+function scenarioOf(acceptance: readonly unknown[], scenario: number | undefined): boolean {
+  if (scenario === undefined) return true;
+  return Number.isInteger(scenario) && scenario >= 0 && scenario < acceptance.length;
 }
 
 export async function playtest(loopRun: LoopRun, args: AnyRecord) {
@@ -946,17 +1071,15 @@ export async function playtest(loopRun: LoopRun, args: AnyRecord) {
   if (args.goal && !goal) return "Unknown required goal; read run_status.";
   if (goal && target.root !== loopRun.integrationWorktree) return "Goal evidence must verify the integration revision.";
   const scenario = args.scenario === undefined ? undefined : Number(args.scenario);
-  if (
-    goal &&
-    scenario !== undefined &&
-    (!Number.isInteger(scenario) || scenario < 0 || scenario >= goal.acceptance.length)
-  )
+  if (goal && !scenarioOf(goal.acceptance, scenario))
     return "scenario must name a zero-based acceptance index from run_status";
   const scenarios = scenario === undefined ? goal?.acceptance : [goal?.acceptance[scenario]];
   const ask = goal
     ? `Verify every required scenario through actual interaction: ${scenarios?.join("; ")}. Report no or unmeasured when a dependency or hosted two-client route is unavailable. Screenshots and protocol tests alone cannot prove multiplayer.`
     : String(args.ask ?? "").trim();
   if (!ask) return "playtest needs one yes/no question (ask)";
+  const quest = questOf(run, args.goal_state, ask);
+  if (quest && "error" in quest) return quest.error;
   const n = ++state.plays;
   const budget =
     Math.min(PLAYTEST_MAX_MINUTES, Math.max(PLAYTEST_MIN_MINUTES, num(args.minutes, PLAYTEST_DEFAULT_MINUTES))) *
@@ -976,6 +1099,7 @@ export async function playtest(loopRun: LoopRun, args: AnyRecord) {
         budget,
         goalId: goal?.id,
         scenario,
+        quest,
       });
     } catch (err: any) {
       return `playtest failed: ${err?.message ?? err}`;
@@ -1008,14 +1132,15 @@ export async function show(loopRun: LoopRun, args: AnyRecord) {
   }
 }
 
-/** Does this line of the run's log wake a `wait` that asked only about `only` (or about nobody)? */
+/** Does this line of the run's log wake a `worker_wait` that asked only about `only` (or about nobody)? */
 const wakes = (only: string | null, text: string): boolean =>
   !only || text.includes(`worker ${only}`) || text.startsWith("USER");
 
 export async function wait(loopRun: LoopRun, args: AnyRecord) {
   const { ctx, finalDeadline, inbox, ledgerLines, note, notesSince, routeUserSteers, softDeadline, state } = loopRun;
   const seconds = Math.min(MAX_WAIT_S, Math.max(1, num(args.seconds, WAIT_DEFAULT_S)));
-  const only = args.worker ? slug(args.worker) : null;
+  const asked = args.worker ?? args.id;
+  const only = asked ? slug(asked) : null;
   const from = loopRun.waitSeq;
   const until = Date.now() + seconds * SECOND_MS;
   const finishing0 = await inbox.finishing().catch(() => false);
@@ -1028,11 +1153,16 @@ export async function wait(loopRun: LoopRun, args: AnyRecord) {
     const finishing = await inbox.finishing().catch(() => false);
     if (finishing && !finishing0)
       note("USER ASKS TO FINISH: wrap up the current work, integrate what is ready, and call finish");
-    if (notesSince(from).some((entry: { text: string }) => wakes(only, entry.text))) break;
+    // A builder that newly waits on the person is told in the log, which wakes this wait.
+    await waitingBuilders(loopRun).catch(() => null);
+    const news = notesSince(from).filter((entry: { text: string }) => !rejectedNews(loopRun, entry.text));
+    if (news.some((entry: { text: string }) => wakes(only, entry.text))) break;
     await sleep(SECOND_MS);
   }
+  const asking = await waitingBuilders(loopRun).catch(() => new Map<string, string>());
   const unread = notesSince(from);
-  const happened = unread.map((e: { text: string }) => e.text);
+  // A worker the lead rejected is not news any more (`worker_mark rejected`).
+  const happened = unread.map((e: { text: string }) => e.text).filter((text) => !rejectedNews(loopRun, text));
   // Snapshot before the later status awaits: a note arriving during those awaits belongs
   // to the next response. Never consume a notification that has not been returned.
   const lastUnread = unread.at(-1);
@@ -1052,7 +1182,7 @@ export async function wait(loopRun: LoopRun, args: AnyRecord) {
         lastHealthPass: state.integrationHealthy,
         ...(state.ledger.length ? { defectsNobodyOwns: ledgerLines() } : {}),
       },
-      workers: [...state.workers.values()].map((w) => waitDigest(w, now)),
+      workers: unrejected(loopRun, [...state.workers.values()]).map((w) => withQuestion(waitDigest(w, now), asking)),
       // What the user said is already in `happened`, as USER SAYS; this is the standing request.
       user: { finishRequested: await inbox.finishing().catch(() => false) },
     },
@@ -1061,14 +1191,24 @@ export async function wait(loopRun: LoopRun, args: AnyRecord) {
 
 // ── the tools that act on one worker, and the note ──
 
-/** Every worker: this session's, then those from before a pause (what the journal kept of them). */
-function everyWorkerStatus(loopRun: LoopRun): string {
+/** A builder's digest, with the question it waits on the person with, if any. */
+function withQuestion(digest: AnyRecord, asking: ReadonlyMap<string, string>): AnyRecord {
+  const question = asking.get(String(digest.id));
+  return question ? { ...digest, waitingForPerson: question } : digest;
+}
+
+/** Every worker: this session's, then those from before a pause (what the journal kept of them), then its readers. */
+async function everyWorkerStatus(loopRun: LoopRun): Promise<string> {
   const { state } = loopRun;
-  return JSON.stringify([...[...state.workers.values()].map((w) => workerDigest(w)), ...priorWorkersStatus(loopRun)]);
+  const asking = await waitingBuilders(loopRun).catch(() => new Map<string, string>());
+  const current = [...state.workers.values()].map((w) => withQuestion(workerDigest(w), asking));
+  const builders = [...current, ...priorWorkersStatus(loopRun)];
+  const readers = await readerLines(loopRun);
+  return JSON.stringify(readers ? [...builders, { readers: readers.split("\n") }] : builders);
 }
 
 /** One worker in detail — one from before a pause as the journal kept it — or every worker when no id is given. */
-function workerStatus(loopRun: LoopRun, args: AnyRecord): string {
+async function workerStatus(loopRun: LoopRun, args: AnyRecord): Promise<string> {
   const { state } = loopRun;
   if (!args.id) return everyWorkerStatus(loopRun);
   const worker = state.workers.get(slug(args.id));
@@ -1076,8 +1216,9 @@ function workerStatus(loopRun: LoopRun, args: AnyRecord): string {
     const prior = priorWorkerStatus(loopRun, slug(args.id));
     return prior ? JSON.stringify(prior) : `no worker "${args.id}"`;
   }
+  const asking = await waitingBuilders(loopRun).catch(() => new Map<string, string>());
   return JSON.stringify({
-    ...workerDigest(worker),
+    ...withQuestion(workerDigest(worker), asking),
     brief: worker.brief.slice(0, STATUS_BRIEF_CHARS),
     iterationsDetail: worker.iterations.slice(-STATUS_ITERATIONS),
     attempts: (worker.result?.attempts ?? []).slice(-STATUS_ATTEMPTS),
@@ -1208,6 +1349,7 @@ async function stopWorkerTool(loopRun: LoopRun, args: AnyRecord): Promise<string
   if (!isRunning(worker)) return `worker ${worker.id} is already ${worker.state}`;
   const why = String(args.why ?? "").trim();
   const at = worker.mode === WorkerMode.Loop ? worker.iterations.length + 1 : 1;
+  worker.stoppedByLead = true;
   await stopWorker(worker, why);
   await decision(
     `director stopped worker ${worker.id}${why ? `: ${why}` : ""}`,
@@ -1221,7 +1363,7 @@ async function stopWorkerTool(loopRun: LoopRun, args: AnyRecord): Promise<string
     worker.mode === WorkerMode.Loop
       ? `Its unfinished edits are committed in ${worker.worktree}, kept on ${attemptRef(run.runId, worker.id, at, { stopped: true })} — nothing is reset, and that round is recorded as stopped, not judged.`
       : `Whatever it had written is committed in ${worker.worktree} as its last commit.`,
-    `Its last accepted commit${worker.lastCommit ? ` (${shortSha(worker.lastCommit)})` : ""} is what integrate would take; worker_status once it settles.`,
+    `Its last accepted commit${worker.lastCommit ? ` (${shortSha(worker.lastCommit)})` : ""} is what integrate would take; the stopped round goes in only once judge target=${worker.id} against=integration prefers it. worker_status once it settles.`,
   ].join(" ");
 }
 
@@ -1290,19 +1432,35 @@ function oneAtATime<T>(loopRun: LoopRun, change: () => T | Promise<T>): Promise<
 }
 
 /**
+ * The lead's `finish`, unless a plugin of the game holds it back: the lead hears why and the run goes
+ * on. Only the lead's own call asks; the close's own finish fires no moment.
+ */
+async function finishUnlessHeld(loopRun: LoopRun, args: AnyRecord): Promise<unknown> {
+  // The call's clock starts here: the moment, a reviewer of a claim and the close share it.
+  const started = Date.now();
+  const held = await fireHooks(loopRun.ctx, loopRun.game, HookEvent.Finish, runScope(loopRun));
+  if (held.blocked) return HOOK_PROMPTS.finishHeld(held.blocked.reason);
+  return loopRun.finish(args, finishCallOf(started, held));
+}
+
+/**
  * The tools another part of the run answers (workers.ts, integrate.ts, the looks above). The
  * handler returns their answer as it comes, as the switch it replaced always did: a failure in one
  * of them rejects the dispatch instead of becoming a `<tool> failed: …` sentence.
  */
 const HANDED_OFF = {
   [DirectorTool.Plan]: (loopRun, args) => oneAtATime(loopRun, () => loopRun.setPlan(args)),
-  [DirectorTool.WorkerStart]: (loopRun, args) => oneAtATime(loopRun, () => loopRun.startWorker(args)),
+  // `task` is the brief's name; a kept prompt's `brief` is still read (`briefOf`).
+  // From the Loop's cap on no worker starts (cap-lines.ts): the time is for putting the build together.
+  [DirectorTool.WorkerStart]: (loopRun, args) =>
+    capRefusesWorker(loopRun, runNow(loopRun)) ??
+    oneAtATime(loopRun, () => loopRun.startWorker({ ...args, brief: briefOf(args) })),
   [DirectorTool.Wait]: (loopRun, args) => loopRun.wait(args),
   [DirectorTool.Judge]: (loopRun, args) => loopRun.judge(args),
   [DirectorTool.Playtest]: (loopRun, args) => loopRun.playtest(args),
   [DirectorTool.Integrate]: (loopRun, args) => loopRun.integrate(args),
   [DirectorTool.Show]: (loopRun, args) => loopRun.show(args),
-  [DirectorTool.Finish]: (loopRun, args) => loopRun.finish(args),
+  [DirectorTool.Finish]: (loopRun, args) => finishUnlessHeld(loopRun, args),
 } satisfies Partial<Record<DirectorTool, Tool>>;
 
 /** The tools this handler answers itself: it waits for each, so a failure is said as a sentence. */
@@ -1317,10 +1475,23 @@ const ANSWERED_HERE = {
   [DirectorTool.WorkerStop]: stopWorkerTool,
   [DirectorTool.Note]: noteTool,
   [DirectorTool.GoalUpdate]: updateGoal,
+  [DirectorTool.WrapUp]: wrapUp,
 } satisfies Record<Exclude<DirectorTool, keyof typeof HANDED_OFF>, Tool>;
 
+/** The worker tools of Genex's one model the director answers beside its own (no `DirectorTool` key of theirs). */
+const WORKER_TOOLS_HERE = { [WorkerTool.Mark]: markWorker } satisfies Record<string, Tool>;
+
+/**
+ * The names a tool used to have: not offered, but a playbook or a journal an agent kept may still
+ * call it, so it is answered as the tool it became.
+ */
+const OLD_NAMES: Readonly<Record<string, DirectorTool>> = { wait: DirectorTool.Wait };
+
 /** A tool by the name the session called it, or null for a name the run does not answer. */
-function toolNamed(name: string): { tool: Tool; answeredHere: boolean } | null {
+function toolNamed(called: string): { tool: Tool; answeredHere: boolean } | null {
+  const name = Object.hasOwn(OLD_NAMES, called) ? (OLD_NAMES[called] as string) : called;
+  if (Object.hasOwn(WORKER_TOOLS_HERE, name))
+    return { tool: WORKER_TOOLS_HERE[name as keyof typeof WORKER_TOOLS_HERE], answeredHere: true };
   if (Object.hasOwn(ANSWERED_HERE, name))
     return { tool: ANSWERED_HERE[name as keyof typeof ANSWERED_HERE], answeredHere: true };
   if (Object.hasOwn(HANDED_OFF, name))
@@ -1358,6 +1529,9 @@ async function answer(loopRun: LoopRun, name: string, args: AnyRecord): Promise<
     if (headSynced(name)) await syncHead();
     // Whatever the director last wrote into its memory file, kept where a resume can read it.
     await keepMemory();
+    // A reader of the run's shared pool, or a start the web method refuses (`pooledAnswer`).
+    const pooled = await pooledAnswer(loopRun, name, args);
+    if (pooled !== null) return pooled;
     const named = toolNamed(name);
     if (!named) return `unknown director tool: ${name}`;
     if (named.answeredHere) return await named.tool(loopRun, args);

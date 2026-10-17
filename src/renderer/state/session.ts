@@ -3,6 +3,7 @@
  * launch is being welcomed (the welcome covers the app and ends at home, its idea in the composer).
  */
 import { createStore, type StoreApi } from "zustand/vanilla";
+import { PLAY_ORIGIN } from "../../shared/play.ts";
 
 /** Where the bootstrap stands. */
 export const SessionStatus = {
@@ -19,6 +20,8 @@ export interface SessionState {
   welcoming: boolean;
   /** An unpackaged developer run: the developer tools (the colour tweaker) are offered. */
   developer: boolean;
+  /** The website Play links to: genex.games', unless a development profile points Play elsewhere. */
+  playWeb: string;
 }
 
 export const initialSession = (): SessionState => ({
@@ -26,19 +29,24 @@ export const initialSession = (): SessionState => ({
   error: null,
   welcoming: false,
   developer: false,
+  playWeb: PLAY_ORIGIN.web,
 });
 
 export function bootstrapStarted(state: SessionState): SessionState {
   return { ...state, status: SessionStatus.Loading };
 }
 
-export function bootstrapReady(state: SessionState, opening: { welcome?: boolean; developer?: boolean }): SessionState {
+export function bootstrapReady(
+  state: SessionState,
+  opening: { welcome?: boolean; developer?: boolean; playWeb?: string },
+): SessionState {
   return {
     ...state,
     status: SessionStatus.Ready,
     error: null,
     welcoming: opening.welcome === true,
     developer: opening.developer === true,
+    playWeb: opening.playWeb ?? PLAY_ORIGIN.web,
   };
 }
 

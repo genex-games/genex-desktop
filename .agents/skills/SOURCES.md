@@ -25,7 +25,8 @@ Mirror: `.claude/skills/` is a byte-identical copy of this directory for Claude 
 agents load the same design and engineering skills. Edit here, copy there;
 `tests/conformance/skills-sync.test.ts` fails on any difference. The engineering skills
 (`add-ipc-channel`, `add-event-type`, `add-plugin-tool`, `run-area-tests`,
-`verify-ui-via-dev-control`, `harness-incident-fix`) are local to this repository.
+`verify-ui-via-dev-control`, `harness-incident-fix`) and the design skill `wire-art` (Genex's
+wireframe art language) are local to this repository.
 
 Local design rule (2026-09-19): `better-ui/SKILL.md` adds "Pointer cursor for clickable controls"
 to enforce the application's cursor convention and review enabled, disabled and specialized

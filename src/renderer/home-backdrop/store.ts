@@ -4,7 +4,7 @@
  * domain store.
  */
 import { useEffect, useSyncExternalStore } from "react";
-import { readText, STORAGE_KEYS, writeText } from "../storage.ts";
+import { browserStorage, type KeyValueStorage, readText, STORAGE_KEYS, writeText } from "../storage.ts";
 import { type BackdropSettings, DEFAULT_BACKDROP, normalizeBackdrop } from "./settings.ts";
 
 let current: BackdropSettings | null = null;
@@ -33,6 +33,11 @@ function subscribe(listener: () => void): () => void {
   return () => {
     listeners.delete(listener);
   };
+}
+
+/** The settings now, outside a component. */
+export function backdropNow(): BackdropSettings {
+  return settings();
 }
 
 /** The current settings, kept up to date. */
@@ -66,4 +71,17 @@ export function useBackdropPreview(shown: boolean): void {
 /** Whether a preview of home is on screen. */
 export function useBackdropPreviewShown(): boolean {
   return useSyncExternalStore(subscribePreviews, () => previews > 0);
+}
+
+/**
+ * Whether home's Background panel has been opened on this Mac: until it has, its button glints now
+ * and then. Where nothing can be remembered it never glints, so it cannot glint for ever.
+ */
+export function backdropButtonFound(storage: KeyValueStorage | null = browserStorage()): boolean {
+  return !storage || readText(STORAGE_KEYS.homeBackdropFound, storage) === "1";
+}
+
+/** Remember that the Background panel has been opened. */
+export function markBackdropButtonFound(storage: KeyValueStorage | null = browserStorage()): void {
+  writeText(STORAGE_KEYS.homeBackdropFound, "1", storage);
 }

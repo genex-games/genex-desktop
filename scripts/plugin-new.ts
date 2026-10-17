@@ -10,7 +10,8 @@
 import path from "node:path";
 import { cp, mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
-import { inspectPackage, RESERVED_TOOLBAR_LABELS } from "../src/substrate/plugins/manifest.ts";
+import { inspectPackage } from "../src/substrate/plugins/manifest.ts";
+import { RESERVED_TOOLBAR_LABELS } from "../src/substrate/plugins/reserved-labels.ts";
 import { PLUGIN_ID } from "../src/shared/plugin-id.ts";
 import { inlinePanelSdk } from "../src/plugin-sdk/inline-panel-sdk.mjs";
 import { PLUGIN_GUIDE_URL } from "../src/shared/plugins.ts";

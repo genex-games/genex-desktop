@@ -243,6 +243,21 @@ function entries(value: unknown, split: (value: unknown) => string[]): string[] 
 }
 
 /**
+ * A part's done scenarios: sentences, or entries written in worker_start's {what, check} shape,
+ * which keep their sentence. An entry with neither is dropped: stringified it read "[object
+ * Object]", and that became the goal's acceptance and the question its blind judge was asked.
+ */
+function scenarios(value: unknown): string[] {
+  if (!Array.isArray(value)) return entries(value, lines);
+  const sentence = (entry: unknown) =>
+    typeof entry === "string" ? entry : String((entry as AnyRecord | null)?.what ?? "");
+  return value
+    .map(sentence)
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+}
+
+/**
  * What kind of game this is (M4.4). Declared here or nowhere: the board, the play script the
  * harness drives and the line every judge reads all come from it, and nothing is assumed.
  */
@@ -278,7 +293,7 @@ function planPart(entry: unknown, id: string): PlanPart {
       .trim()
       .slice(0, PART_SEAM),
     owns: entries(raw.owns, list),
-    done: entries(raw.done, lines).slice(0, PART_DONE),
+    done: scenarios(raw.done).slice(0, PART_DONE),
     ...(raw.multiplayer === true ? { multiplayer: true } : {}),
     ...(singlePart(raw) ? { single: true } : {}),
     minutes: Math.round(num(raw.minutes, 0)) || null,
@@ -609,6 +624,8 @@ export interface WorkerSpecInput {
   forkedFrom?: string | null;
   /** "finish" for a worker that finishes what exists (facet/stage.ts); absent or anything else, the build stage. */
   stage?: string | null;
+  /** This part draws the HUD (spec.ts `withHarnessChecks`): its coverage and overlap are its own; absent, it does. */
+  drawsHud?: boolean;
 }
 
 /**
@@ -625,13 +642,22 @@ function withDeclaredGame<S extends FacetSpec>(
     ownsMain,
     screen,
     keepsFrontEnd,
-  }: { kind: string | null; traits: string[]; ownsMain: boolean; screen: boolean; keepsFrontEnd: boolean },
+    drawsHud,
+  }: {
+    kind: string | null;
+    traits: string[];
+    ownsMain: boolean;
+    screen: boolean;
+    keepsFrontEnd: boolean;
+    drawsHud: boolean;
+  },
 ): S {
   const kindName = isGameKind(kind) ? kind : null;
   if (!kindName && !traits.length) return spec;
   const declared: AnyRecord = { ...(kindName ? { kind: kindName } : {}) };
   for (const trait of Object.values(GameTrait)) if (traits.includes(trait)) declared[trait] = true;
-  return withHarnessChecks(spec, { ownsMain, game: normalizeGameTraits(declared), screen, keepsFrontEnd });
+  const game = normalizeGameTraits(declared);
+  return withHarnessChecks(spec, { ownsMain, game, screen, keepsFrontEnd, drawsHud });
 }
 
 /**
@@ -689,6 +715,7 @@ export function compileWorkerSpec(
     index = 0,
     forkedFrom = null,
     stage = null,
+    drawsHud = true,
   }: WorkerSpecInput,
   base: AnyRecord | null = null,
   { rarelyMeasurable: rarely = [] }: { rarelyMeasurable?: Array<{ id: string; rounds: number }> } = {},
@@ -700,7 +727,7 @@ export function compileWorkerSpec(
     { id, title: title || id, intent: brief, owns, identity, cameras, checks, done, milestones: rungs, budgetShare: 0 },
     index,
   );
-  spec = withDeclaredGame(spec, { kind, traits, ownsMain, screen, keepsFrontEnd: setup?.begin === false });
+  spec = withDeclaredGame(spec, { kind, traits, ownsMain, screen, keepsFrontEnd: setup?.begin === false, drawsHud });
   const expr = setupVerifyExpr(setup?.verify);
   if (expr) spec = withRequestedStateCheck(spec, { expr, note: setup?.note ?? "" });
   // Before validation: a screen part's board may be mostly vision (spec.ts visionHeavy).

@@ -184,6 +184,39 @@ export function useCanvasView(options: { initial?: CanvasView; onPan?: () => voi
   };
 }
 
+/** How many canvases' cameras outlive their tab; the oldest is forgotten past this. */
+const KEPT_VIEWS_MAX = 64;
+const keptViews = new Map<string, CanvasView>();
+
+/**
+ * Keep the camera a user left a canvas at, for when its tab comes back; null forgets it, and the
+ * canvas opens fitted again.
+ */
+export function keepView(key: string, view: CanvasView | null): void {
+  keptViews.delete(key);
+  if (!view) return;
+  keptViews.set(key, view);
+  while (keptViews.size > KEPT_VIEWS_MAX) {
+    const oldest = keptViews.keys().next().value;
+    if (oldest !== undefined) keptViews.delete(oldest);
+  }
+}
+
+/** The camera a user left this canvas at, or null when it opens fitted. */
+export function keptView(key: string): CanvasView | null {
+  return keptViews.get(key) ?? null;
+}
+
+/** Calls `onWheel` for every wheel over the viewport (the user moving the canvas), passively. */
+export function useOnWheel(viewport: RefObject<HTMLDivElement | null>, onWheel: () => void): void {
+  useEffect(() => {
+    const element = viewport.current;
+    if (!element) return;
+    element.addEventListener("wheel", onWheel, { passive: true });
+    return () => element.removeEventListener("wheel", onWheel);
+  }, [viewport, onWheel]);
+}
+
 /** Wheel zoom about the cursor, on a non-passive listener so the page never scrolls under a pinch. */
 function useWheelZoom(
   viewport: RefObject<HTMLDivElement | null>,

@@ -12,8 +12,8 @@ import {
 } from "../shared/plugins.ts";
 import type { PluginMarketplace } from "../substrate/plugins/marketplace.ts";
 import { assertNativeActionAllowed } from "./dev/native-policy.ts";
-import { reviewPluginInstall } from "./plugin-local-install.ts";
-import { installDetail } from "./plugin-install-words.ts";
+import { asksBeforeInstall, reviewPluginInstall } from "./plugin-local-install.ts";
+import { installPrompt, installUpdateFacts } from "./plugin-install-words.ts";
 import type { StudioCore } from "./studio-core.ts";
 
 /** Ask the user whether to install (or replace with) this package; true when they agreed. */
@@ -25,13 +25,11 @@ export type ConfirmPluginInstall = (
   note?: string,
 ) => Promise<boolean>;
 
-/** The dialog's fixed words; the rest is built from the package. */
+/** The dialog's fixed words; its question, body and confirming button are built from the package. */
 const MESSAGE = {
   installTitle: "Install plugin",
   replaceTitle: "Replace plugin",
   cancel: "Cancel",
-  install: "Install",
-  replace: "Replace and erase data",
   notInCatalog: "Plugin is not in the curated catalog",
   cancelled: "Cancelled by user",
 } as const;
@@ -41,6 +39,7 @@ const MESSAGE = {
  * capabilities are new since the installed version, and what the static scan saw — disclosure, not
  * isolation: the backend runs as trusted native code either way. `note` carries anything the user
  * must weigh besides the package itself, such as an index that has moved to another commit.
+ * Genex's own bundled plugins install and update without it (`asksBeforeInstall`).
  */
 export function confirmPluginInstall(
   core: () => Pick<StudioCore, "plugins" | "mcp">,
@@ -49,23 +48,18 @@ export function confirmPluginInstall(
   return async (manifest, origin, scan, previous, note) => {
     assertNativeActionAllowed(fixtureNativePolicy, "studio:plugins.install");
     // Refused before anything is asked: a bundled id from elsewhere, or an id a connector answers for.
-    const { replaces } = reviewPluginInstall(core().plugins, manifest, origin, core().mcp.ids());
-    // A replacement is a new plugin, not an update of the one it erases: every capability and server is new.
-    const before = replaces ? undefined : previous;
-    // The installed version's scan, so a scanned update can say which skills' bytes changed.
-    const previousScan = before
-      ? core()
-          .plugins.list()
-          .find((p) => p.manifest.id === manifest.id)?.scan
-      : undefined;
+    const review = reviewPluginInstall(core().plugins, manifest, origin, core().mcp.ids());
+    if (!asksBeforeInstall(origin, review)) return true;
+    const { replaces } = review;
+    const facts = installUpdateFacts(core().plugins.list(), manifest, origin, previous, Boolean(replaces));
+    const { before, previousScan, staysOn } = facts;
+    const prompt = installPrompt({ manifest, origin, scan, before, previousScan, replaces, note, staysOn });
     const choice = await dialog.showMessageBox({
       type: "warning",
       title: replaces ? MESSAGE.replaceTitle : MESSAGE.installTitle,
-      message: replaces
-        ? `Replace ${replaces.name} with ${manifest.name} ${manifest.version}?`
-        : `Install ${manifest.name} ${manifest.version}?`,
-      detail: installDetail({ manifest, origin, scan, before, previousScan, replaces, note }),
-      buttons: [MESSAGE.cancel, replaces ? MESSAGE.replace : MESSAGE.install],
+      message: prompt.message,
+      detail: prompt.detail,
+      buttons: [MESSAGE.cancel, prompt.confirm],
       defaultId: 0,
       cancelId: 0,
     });

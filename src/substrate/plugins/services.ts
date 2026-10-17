@@ -2,12 +2,25 @@ import { deliverAssetFiles } from "../genex-delivery.ts";
 import path from "node:path";
 import { lstat, mkdir, readdir, readFile, realpath, writeFile } from "node:fs/promises";
 import {
+  ENGINE_ASSIST_TASK_MAX_CHARS,
+  type EngineAssistAnswer,
+  EngineAssistRefusal,
+  PLUGIN_CLIP_DEFAULT_BYTES,
+  PLUGIN_CLIP_DEFAULT_FPS,
+  PLUGIN_CLIP_DEFAULT_SECONDS,
+  PLUGIN_CLIP_MAX_BYTES,
+  PLUGIN_CLIP_MAX_FPS,
+  PLUGIN_CLIP_MAX_SECONDS,
+  PLUGIN_CLIP_MIN_BYTES,
+  PLUGIN_CLIP_MIN_FPS,
+  PLUGIN_CLIP_MIN_SECONDS,
   PLUGIN_STILL_DEFAULT_BYTES,
   PLUGIN_STILL_MAX_BYTES,
   PLUGIN_STILL_MIN_BYTES,
   PLUGIN_STILL_VIEW_NAME,
   PluginService,
   type PluginBinding,
+  type PluginClipOrder,
   type PluginStillOrder,
 } from "../../shared/plugins.ts";
 import { VIEWPORT_MAX, VIEWPORT_MIN } from "../preview-pool.ts";
@@ -17,11 +30,17 @@ import { readGenexGameManifest } from "../genex-game-manifest.ts";
 import { SecretStore } from "../secrets.ts";
 import { atomicWriteJson } from "../fsx.ts";
 import { createHash } from "node:crypto";
+import type { EngineLinkHost } from "./engine-links.ts";
+import type { PluginInvocation } from "./process.ts";
 import { assertRelativePath, containedReal, isBelow, isInside, toPosixRelative } from "../paths.ts";
 
 const MAX_CREDENTIAL_CHARS = 65536;
 const MAX_PROJECT_WRITE_CHARS = 2_000_000;
 const MAX_OBSERVED_FILES = 1000;
+/** The longest reason a plugin may give a snapshot: Rewind lists it as one line. */
+const MAX_SNAPSHOT_REASON_CHARS = 200;
+/** A game a plugin makes is titled in one plain line of at most this many characters. */
+const MAX_GAME_TITLE_CHARS = 80;
 /** A project name: it becomes a folder under the plugin's storage, so it can never be a path. */
 const PROJECT_NAME = /^[a-zA-Z0-9_-]+$/;
 const JOB_REFERENCE = /^[a-zA-Z0-9_-]{1,100}$/;
@@ -49,8 +68,17 @@ const MESSAGE = {
   PathEscapes: "Path escapes project",
   SymlinkOutput: "Symlink output refused",
   InvalidJobReference: "Invalid job reference",
+  EngineLinksUnavailable: "Engine links unavailable",
+  InvalidSnapshotReason: `Invalid snapshot reason: one plain line of at most ${MAX_SNAPSHOT_REASON_CHARS} characters`,
+  SnapshotsUnavailable: "Snapshots unavailable",
+  InvalidGameTitle: `Invalid game title: one plain line of at most ${MAX_GAME_TITLE_CHARS} characters`,
+  InvalidAssistTask: `Invalid task: one plain line of at most ${ENGINE_ASSIST_TASK_MAX_CHARS} characters`,
+  GamesUnavailable: "Games unavailable",
+  RunsUnavailable: "Runs unavailable",
+  NotMadeHere: "A link may name only a game this plugin made, and only from outside another game",
   InvalidObservation: "Invalid observation: give { project, root, files }",
   InvalidStill: (why: string) => `Invalid still: ${why}`,
+  InvalidClip: (why: string) => `Invalid clip: ${why}`,
   Unknown: "Unknown plugin service",
 } as const;
 
@@ -67,12 +95,31 @@ const STILL_REFUSAL = {
 /** The keys a still request may carry. */
 const STILL_KEYS = new Set(["demo", "camera", "width", "height", "maxBytes"]);
 
-/** One service call: the plugin, its storage root, the backend's untyped arguments and the bound game. */
+/** Why a clip request is refused, in the words of {@link MESSAGE.InvalidClip}. */
+const CLIP_REFUSAL = {
+  NotObject: "it must be an object",
+  UnknownKey: (key: string) => `unknown key ${JSON.stringify(key)}`,
+  Demo: "name the demo that stages it: 1–64 letters, digits, ':', '_' or '-', starting with a letter or digit",
+  Side: STILL_REFUSAL.Side,
+  Seconds: `seconds must be a number from ${PLUGIN_CLIP_MIN_SECONDS} to ${PLUGIN_CLIP_MAX_SECONDS}`,
+  Fps: `fps must be a whole number from ${PLUGIN_CLIP_MIN_FPS} to ${PLUGIN_CLIP_MAX_FPS}`,
+  Bytes: `maxBytes must be a whole number from ${PLUGIN_CLIP_MIN_BYTES} to ${PLUGIN_CLIP_MAX_BYTES}`,
+  Files: "a clip observes no files: send files: []",
+  Both: "ask for a still or a clip, not both",
+} as const;
+/** The keys a clip request may carry. */
+const CLIP_KEYS = new Set(["demo", "width", "height", "seconds", "fps", "maxBytes"]);
+
+/**
+ * One service call: the plugin, its storage root, the backend's untyped arguments, the bound game,
+ * and the call of the plugin's it was made on behalf of (absent for the host's own requests).
+ */
 interface ServiceCall {
   id: string;
   root: string;
   args: any;
   binding?: PluginBinding;
+  invocation?: PluginInvocation;
 }
 type AssetLimits = { fileBytes: number; projectBytes: number };
 
@@ -118,9 +165,115 @@ export function stillOrder(raw: unknown): PluginStillOrder {
   return { ...view, width: still.width, height: still.height, maxBytes };
 }
 
+const isNumberWithin = (value: unknown, min: number, max: number): value is number =>
+  typeof value === "number" && Number.isFinite(value) && value >= min && value <= max;
+
+/** A clip's whole-pixel sides, each within what a pooled window can take. */
+function clipSides(clip: Record<string, unknown>): { width: number; height: number } {
+  const { width, height } = clip;
+  if (!isWholeWithin(width, VIEWPORT_MIN.width, VIEWPORT_MAX.width))
+    throw new Error(MESSAGE.InvalidClip(CLIP_REFUSAL.Side("width", VIEWPORT_MIN.width, VIEWPORT_MAX.width)));
+  if (!isWholeWithin(height, VIEWPORT_MIN.height, VIEWPORT_MAX.height))
+    throw new Error(MESSAGE.InvalidClip(CLIP_REFUSAL.Side("height", VIEWPORT_MIN.height, VIEWPORT_MAX.height)));
+  return { width, height };
+}
+
+/** A clip's length, rate and byte limit, each defaulted when absent and refused when out of bounds. */
+function clipPacing(clip: Record<string, unknown>): { seconds: number; fps: number; maxBytes: number } {
+  const seconds = clip.seconds === undefined ? PLUGIN_CLIP_DEFAULT_SECONDS : clip.seconds;
+  if (!isNumberWithin(seconds, PLUGIN_CLIP_MIN_SECONDS, PLUGIN_CLIP_MAX_SECONDS))
+    throw new Error(MESSAGE.InvalidClip(CLIP_REFUSAL.Seconds));
+  const fps = clip.fps === undefined ? PLUGIN_CLIP_DEFAULT_FPS : clip.fps;
+  if (!isWholeWithin(fps, PLUGIN_CLIP_MIN_FPS, PLUGIN_CLIP_MAX_FPS))
+    throw new Error(MESSAGE.InvalidClip(CLIP_REFUSAL.Fps));
+  const maxBytes = clip.maxBytes === undefined ? PLUGIN_CLIP_DEFAULT_BYTES : clip.maxBytes;
+  if (!isWholeWithin(maxBytes, PLUGIN_CLIP_MIN_BYTES, PLUGIN_CLIP_MAX_BYTES))
+    throw new Error(MESSAGE.InvalidClip(CLIP_REFUSAL.Bytes));
+  return { seconds, fps, maxBytes };
+}
+
+/**
+ * A plugin's clip request, checked field by field and rebuilt from its known keys, so nothing
+ * unchecked reaches the host: the demo that stages it by a plain name, whole-pixel sides a pooled
+ * window can take, and a length, rate and byte limit (each defaulted) within the host's bounds.
+ * Throws before anything else runs.
+ */
+export function clipOrder(raw: unknown): PluginClipOrder {
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw))
+    throw new Error(MESSAGE.InvalidClip(CLIP_REFUSAL.NotObject));
+  const clip = raw as Record<string, unknown>;
+  const unknown = Object.keys(clip).find((key) => !CLIP_KEYS.has(key));
+  if (unknown !== undefined) throw new Error(MESSAGE.InvalidClip(CLIP_REFUSAL.UnknownKey(unknown)));
+  const demo = clip.demo;
+  if (typeof demo !== "string" || !PLUGIN_STILL_VIEW_NAME.test(demo))
+    throw new Error(MESSAGE.InvalidClip(CLIP_REFUSAL.Demo));
+  return { demo, ...clipSides(clip), ...clipPacing(clip) };
+}
+
+/** The still or the clip an `observe` asks for, each checked, never both and never beside files. */
+function observedView(args: { still?: unknown; clip?: unknown; files: unknown[] }): {
+  still?: PluginStillOrder;
+  clip?: PluginClipOrder;
+} {
+  if (args.still !== undefined && args.clip !== undefined) throw new Error(MESSAGE.InvalidClip(CLIP_REFUSAL.Both));
+  if (args.clip !== undefined) {
+    const clip = clipOrder(args.clip);
+    if (args.files.length) throw new Error(MESSAGE.InvalidClip(CLIP_REFUSAL.Files));
+    return { clip };
+  }
+  if (args.still === undefined) return {};
+  const still = stillOrder(args.still);
+  if (args.files.length) throw new Error(MESSAGE.InvalidStill(STILL_REFUSAL.Files));
+  return { still };
+}
+
 function requireBinding(binding: PluginBinding | undefined): PluginBinding {
   if (!binding) throw new Error(MESSAGE.ProjectRequired);
   return binding;
+}
+
+/** A character Rewind could not show on one line: a control character, a line break included. */
+const isControl = (char: string) => {
+  const code = char.charCodeAt(0);
+  return code < 0x20 || code === 0x7f;
+};
+
+/** A snapshot reason as Rewind lists it: one plain line of text, trimmed; anything else is refused. */
+function snapshotReason(value: unknown): string {
+  const reason = typeof value === "string" ? value.trim() : "";
+  const plain = reason.length > 0 && reason.length <= MAX_SNAPSHOT_REASON_CHARS && ![...reason].some(isControl);
+  if (!plain) throw new Error(MESSAGE.InvalidSnapshotReason);
+  return reason;
+}
+
+/** A setup task a plugin hands to the chat: one plain line, trimmed, of at most {@link ENGINE_ASSIST_TASK_MAX_CHARS} characters. */
+function assistTask(value: unknown): string {
+  const task = typeof value === "string" ? value.trim() : "";
+  const plain = task.length > 0 && task.length <= ENGINE_ASSIST_TASK_MAX_CHARS && ![...task].some(isControl);
+  if (!plain) throw new Error(MESSAGE.InvalidAssistTask);
+  return task;
+}
+
+/** Whether a call is Genex's own step: a moment's or an observer's, never the person's nor an agent's. */
+const isGenexStep = (invocation: PluginInvocation | undefined, binding: PluginBinding | undefined): boolean =>
+  !invocation || Boolean(binding?.hook || binding?.observe);
+
+/**
+ * Whether a call is the person's own: a plugin action they pressed, or a tool call whose own card
+ * they approved (the host sets `confirmed`). A Genex moment's or an observer's step is never theirs.
+ */
+function isPersonsCall(invocation: PluginInvocation | undefined, binding: PluginBinding | undefined): boolean {
+  if (!invocation || isGenexStep(invocation, binding)) return false;
+  if (invocation.method === "action") return true;
+  return invocation.method === "tool" && invocation.confirmed === true;
+}
+
+/** A game title a plugin asked for: one plain line, trimmed, of at most {@link MAX_GAME_TITLE_CHARS} characters. */
+function gameTitle(value: unknown): string {
+  const title = typeof value === "string" ? value.trim() : "";
+  const plain = title.length > 0 && title.length <= MAX_GAME_TITLE_CHARS && ![...title].some(isControl);
+  if (!plain) throw new Error(MESSAGE.InvalidGameTitle);
+  return title;
 }
 
 /** Bytes of regular files under `dir` (none when it is missing); any link or special file is refused. */
@@ -190,16 +343,23 @@ async function jobReferenceFile({ root, args }: ServiceCall): Promise<string> {
   return path.join(dir, `${args.id}.json`);
 }
 
+/**
+ * The host's look at the bound game. A clip comes as the fourth argument, and only then: a call
+ * with no clip is the three-argument call it always was.
+ */
+export type PluginObserve = (
+  binding: PluginBinding,
+  files: string[],
+  still?: PluginStillOrder,
+  clip?: PluginClipOrder,
+) => Promise<unknown>;
+
 export class PluginServices {
   readonly dataRoot: string;
   readonly adoptedRoots: Record<string, string>;
-  /** The host's look at the bound game: its loaded files, or (with `still`) one named view. */
-  readonly observe: (binding: PluginBinding, files: string[], still?: PluginStillOrder) => Promise<unknown>;
-  constructor(
-    dataRoot: string,
-    adoptedRoots: Record<string, string>,
-    observe: (binding: PluginBinding, files: string[], still?: PluginStillOrder) => Promise<unknown>,
-  ) {
+  /** The host's look at the bound game: its loaded files, (with `still`) one named view, or (with `clip`) a recorded moment. */
+  readonly observe: PluginObserve;
+  constructor(dataRoot: string, adoptedRoots: Record<string, string>, observe: PluginObserve) {
     this.dataRoot = dataRoot;
     this.adoptedRoots = adoptedRoots;
     this.observe = observe;
@@ -213,6 +373,34 @@ export class PluginServices {
   exportStage: ((binding: PluginBinding, target: string, pluginId: string) => Promise<ExportResult>) | undefined;
   assetRoot: ((binding: PluginBinding) => Promise<string>) | undefined;
   assetLimits: ((id: string) => AssetLimits | undefined) | undefined;
+  /** Host engine links (`game.engine.*`). Unset → those services report 'Engine links unavailable'. */
+  engineLinks: EngineLinkHost | undefined;
+  /** Host snapshots (`game.snapshot`): a game snapshot of the bound game. Unset → 'Snapshots unavailable'. */
+  gameSnapshot: ((binding: PluginBinding, reason: string) => Promise<{ snapshotId: string }>) | undefined;
+  /** Host games (`game.create`): makes a Genex game with this title; its name and folder. Unset → 'Games unavailable'. */
+  gameCreate: ((title: string) => Promise<{ project: string; directory: string }>) | undefined;
+  /**
+   * Host assists (`game.engine.assist`): hands a setup task to the bound game's chat. Never reached
+   * from a Genex moment or an observer; `asked` says whether the person made the call (a press, or a
+   * card they approved). Unset, every call answers `unavailable`.
+   */
+  engineAssist:
+    | ((
+        pluginId: string,
+        binding: PluginBinding | undefined,
+        task: string,
+        call: { asked: boolean; signal?: AbortSignal },
+      ) => Promise<EngineAssistAnswer>)
+    | undefined;
+  /**
+   * Host assists' reach (`game.engine.canAssist`): whether Do it for me can run for the plugin on this
+   * computer. Unset, it never can.
+   */
+  engineCanAssist: ((pluginId: string) => Promise<boolean>) | undefined;
+  /** Host runs (`game.engine.runs`): the games whose run is going now. Unset → 'Runs unavailable'. */
+  runningGames: (() => Promise<Array<{ project: string; directory: string; title: string }>>) | undefined;
+  /** The games each plugin made through `game.create` while this host runs, by name, with their folders. */
+  #madeGames = new Map<string, Map<string, string>>();
   #deliveries = new Map<string, Promise<unknown>>();
   root(id: string) {
     return this.adoptedRoots[id] ?? path.join(this.dataRoot, id);
@@ -237,6 +425,15 @@ export class PluginServices {
     [PluginService.Observe]: (call) => this.#observeFiles(call),
     [PluginService.ProjectRead]: readProjectFile,
     [PluginService.ProjectWrite]: writeProjectFile,
+    [PluginService.GameEngineLink]: ({ id, args, binding }) =>
+      this.#engine().link(id, this.#linkBinding(id, args, binding), args),
+    [PluginService.GameCreate]: ({ id, args }) => this.#createGame(id, args?.title),
+    [PluginService.GameEngineRead]: ({ id, binding }) => this.#engine().read(id, requireBinding(binding)),
+    [PluginService.GameEngineSteps]: ({ id, binding }) => this.#engine().steps(id, requireBinding(binding)),
+    [PluginService.GameSnapshot]: ({ args, binding }) => this.#gameSnapshot(requireBinding(binding), args?.reason),
+    [PluginService.GameEngineRuns]: ({ id }) => this.#engineRuns(id),
+    [PluginService.GameEngineAssist]: (call) => this.#assist(call),
+    [PluginService.GameEngineCanAssist]: async ({ id }) => (this.engineCanAssist ? this.engineCanAssist(id) : false),
     [PluginService.JobsRead]: async (call) =>
       JSON.parse(await readFile(await jobReferenceFile(call), "utf8").catch(() => "null")),
     [PluginService.JobsWrite]: async (call) => {
@@ -244,12 +441,79 @@ export class PluginServices {
       return true;
     },
   };
-  async call(id: string, method: string, args: any, binding?: PluginBinding): Promise<unknown> {
+  /** A game snapshot of the bound game under the plugin's reason, checked before anything is taken. */
+  async #gameSnapshot(binding: PluginBinding, reason: unknown): Promise<{ snapshotId: string }> {
+    const checked = snapshotReason(reason);
+    if (!this.gameSnapshot) throw new Error(MESSAGE.SnapshotsUnavailable);
+    return this.gameSnapshot(binding, checked);
+  }
+  /**
+   * Do it for me: a Genex moment's or an observer's step answers `not-person` and nothing happens;
+   * any other call reaches the host with a task it can show verbatim, marked `asked` when it is the
+   * person's own (`isPersonsCall`), and the host decides whose unasked call may start one.
+   */
+  async #assist({ id, args, binding, invocation }: ServiceCall): Promise<EngineAssistAnswer> {
+    if (isGenexStep(invocation, binding)) return { started: false, reason: EngineAssistRefusal.NotPerson };
+    const task = assistTask(args?.task);
+    if (!this.engineAssist) return { started: false, reason: EngineAssistRefusal.Unavailable };
+    const asked = isPersonsCall(invocation, binding);
+    return this.engineAssist(id, binding, task, {
+      asked,
+      ...(invocation?.signal ? { signal: invocation.signal } : {}),
+    });
+  }
+  /** The games whose run is going now that this plugin linked to a project, with that project. */
+  async #engineRuns(id: string): Promise<Array<{ game: string; title: string; project: string }>> {
+    if (!this.runningGames) throw new Error(MESSAGE.RunsUnavailable);
+    const runs: Array<{ game: string; title: string; project: string }> = [];
+    for (const game of await this.runningGames()) {
+      const binding = { project: game.project, directory: game.directory };
+      const link = await this.#engine()
+        .read(id, binding)
+        .catch(() => null);
+      if (link) runs.push({ game: game.project, title: game.title, project: link.project });
+    }
+    return runs;
+  }
+  /** A game the plugin asked for, made by the host and remembered as the plugin's to link. */
+  async #createGame(id: string, title: unknown): Promise<{ project: string; directory: string }> {
+    const checked = gameTitle(title);
+    if (!this.gameCreate) throw new Error(MESSAGE.GamesUnavailable);
+    const made = await this.gameCreate(checked);
+    const games = this.#madeGames.get(id) ?? new Map<string, string>();
+    games.set(made.project, made.directory);
+    this.#madeGames.set(id, games);
+    return made;
+  }
+
+  /**
+   * The game a link is for: the bound game, or (`game` named, from outside any game) one this very
+   * plugin made through `game.create`; anything else is refused before the link is made.
+   */
+  #linkBinding(id: string, args: unknown, binding: PluginBinding | undefined): PluginBinding {
+    const game = args && typeof args === "object" ? (args as { game?: unknown }).game : undefined;
+    if (game === undefined) return requireBinding(binding);
+    const directory = typeof game === "string" ? this.#madeGames.get(id)?.get(game) : undefined;
+    if (directory === undefined || binding?.project) throw new Error(MESSAGE.NotMadeHere);
+    return { ...binding, project: game as string, directory };
+  }
+
+  #engine(): EngineLinkHost {
+    if (!this.engineLinks) throw new Error(MESSAGE.EngineLinksUnavailable);
+    return this.engineLinks;
+  }
+  async call(
+    id: string,
+    method: string,
+    args: any,
+    binding?: PluginBinding,
+    invocation?: PluginInvocation,
+  ): Promise<unknown> {
     const root = this.root(id);
     await mkdir(root, { recursive: true, mode: 0o700 });
     const handler = Object.hasOwn(this.#handlers, method) ? this.#handlers[method] : undefined;
     if (!handler) throw new Error(MESSAGE.Unknown);
-    return handler({ id, root, args, binding });
+    return handler({ id, root, args, binding, ...(invocation ? { invocation } : {}) });
   }
   /** Deliver files, one delivery at a time per plugin and project. */
   async #deliver(call: ServiceCall): Promise<unknown> {
@@ -304,7 +568,8 @@ export class PluginServices {
   }
   /**
    * `observe`: every argument is checked before the host looks: the bound game's own project and
-   * root, a bounded list of files that exist inside it, and a still request (if any) with no files.
+   * root, a bounded list of files that exist inside it, and a still or a clip request (if any, never
+   * both) with no files.
    */
   async #observeFiles({ args, binding }: ServiceCall): Promise<unknown> {
     if (args === null || typeof args !== "object" || typeof args.root !== "string")
@@ -313,13 +578,13 @@ export class PluginServices {
       binding && args.project === binding.project && path.resolve(args.root) === path.resolve(binding.directory);
     if (!binding || !inWorktree) throw new Error(MESSAGE.OutsideWorktree);
     if (!Array.isArray(args.files) || args.files.length > MAX_OBSERVED_FILES) throw new Error(MESSAGE.InvalidAssetList);
-    const still = args.still === undefined ? undefined : stillOrder(args.still);
-    if (still && args.files.length) throw new Error(MESSAGE.InvalidStill(STILL_REFUSAL.Files));
+    const { still, clip } = observedView(args);
     for (const file of args.files)
       await containedReal(binding.directory, file).catch((e: NodeJS.ErrnoException) => {
         if (isMissing(e)) throw new Error(MESSAGE.NotInWorkspace(file));
         throw e;
       });
+    if (clip) return this.observe(binding, [], undefined, clip);
     return this.observe(binding, args.files, still);
   }
 }

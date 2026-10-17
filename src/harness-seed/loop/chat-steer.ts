@@ -15,6 +15,16 @@ import { SteerDelivery } from "./steer-delivery.ts";
 import { EngineFailure, StopReason } from "./outage.ts";
 import type { DelegateImage, DelegateResult } from "../types/host-api.d.ts";
 
+/**
+ * Whether an engine's answer says the session it was asked to resume does not exist: a session
+ * another account made, or one the engine never saved. Here, not in chat-session.ts: an agent's kept
+ * copy of that module would lack it. Narrower than `isResumeFailure` (chat-session.ts), since an
+ * answer's words (a cap's "press Resume") are not an error's.
+ */
+function isLostSession(text: unknown): boolean {
+  return /no conversation found|conversation not found|session (id )?not found/i.test(String(text ?? ""));
+}
+
 /** One engine call of the turn: the prompt it sends, the session it resumes, and its pictures. */
 interface Leg {
   prompt: string;
@@ -98,15 +108,25 @@ export async function steeredCall(
   }
 }
 
-/** One leg; a saved session that cannot be resumed is started afresh with everything the turn was told. */
+/**
+ * One leg; a saved session that cannot be resumed — the engine threw, or answered that it has no
+ * such session (another account's, one never saved) — is started afresh with everything the turn
+ * was told, so the chat never stays stuck on a session that is gone.
+ */
 async function callOrStartFresh(options: SteeredCallOptions, told: QueueAction[], leg: Leg): Promise<DelegateResult> {
-  try {
-    return await options.call(leg.prompt, leg.resume, leg.images);
-  } catch (err) {
-    if (!leg.resume || !isResumeFailure(err)) throw err;
+  const startFresh = () => {
     const fresh = options.fresh?.() ?? options.prompt;
     return options.call(withSteers(fresh, textsOf(told)), null, [...(options.images ?? []), ...stillsOf(told)]);
+  };
+  let result: DelegateResult;
+  try {
+    result = await options.call(leg.prompt, leg.resume, leg.images);
+  } catch (err) {
+    if (!leg.resume || !isResumeFailure(err)) throw err;
+    return startFresh();
   }
+  const lost = Boolean(leg.resume) && !result.ok && isLostSession(result.errorText);
+  return lost ? startFresh() : result;
 }
 
 /** The turn's legs, until one ends it: its own ending, a Stop, a failure, or a question already asked. */

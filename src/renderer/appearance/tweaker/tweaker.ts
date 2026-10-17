@@ -15,7 +15,11 @@ import {
   defaultPresetId,
   hex,
   PRESETS,
+  PEOPLE_ROLES,
+  PLAY_HUE_ROLES,
   type Palette,
+  type PeopleRole,
+  type PlayHueRole,
   SHADOW_PLACES,
   Scheme,
   type Shadow,
@@ -82,6 +86,8 @@ const READ_ON_SURFACES: readonly AnyRole[] = [
   "danger",
   "settingsTab",
 ];
+/** Play's blue (genex.games' own): the selected tab and switch side unless a palette sets one (play.css `--play-blue`). */
+const PLAY_BLUE = "#4b60bf";
 /** WCAG AA: body text, and icons and other graphics that identify a control. */
 const TEXT_CONTRAST = 4.5;
 const GRAPHIC_CONTRAST = 3;
@@ -102,6 +108,13 @@ const DETAIL_VARIABLE: Record<
     | "promptChipFill"
     | "sidebarSelected"
     | "sidebarHover"
+    | "playSelected"
+    | "playSelectedEdge"
+    | "playTrackEdge"
+    | "playTabEdge"
+    | "playSearchFocus"
+    | PeopleRole
+    | PlayHueRole
   >,
   string
 > = {
@@ -123,6 +136,10 @@ const DETAIL_VARIABLE: Record<
   meterHigh: "--orange",
   meterFull: "--destructive",
   viewSwitch: "--accent-fill",
+  playTrack: "--hover",
+  playSelectedText: "--foreground",
+  playTab: "--background",
+  playTabText: "--muted-foreground",
   wireArt: "--accent-ink",
   hatchGround: "--background",
   settingsTab: "--accent-ink",
@@ -139,6 +156,50 @@ const ON_GROUND: readonly { marks: readonly DetailRole[]; grounds: readonly Deta
 
 /** The panel's role groups and the names it shows (the order comment above `PRESETS`). */
 export const ROLE_GROUPS: readonly { label: string; roles: readonly AnyRole[] }[] = [
+  // First while Play's colours are being tuned, so the panel opens on them.
+  {
+    label: "Play: chips, buttons and cards",
+    roles: [
+      "peopleChip",
+      "peopleChipText",
+      "peopleChipNumber",
+      "peopleTint",
+      "peoplePrimary",
+      "peoplePrimaryShade",
+      "creditsCard",
+      "inviteCard",
+    ],
+  },
+  {
+    label: "Play: switches and tabs (Play / Create, Tools / Credits, stats period)",
+    roles: [
+      "playSelected",
+      "playSelectedEdge",
+      "playSelectedText",
+      "playTrack",
+      "playTrackEdge",
+      "playTab",
+      "playTabEdge",
+      "playTabText",
+      "playSearchFocus",
+    ],
+  },
+  {
+    label: "Play: people and stats",
+    roles: [
+      "playBlue",
+      "peopleLive",
+      "peopleLiveText",
+      "peoplePro",
+      "peopleRequest",
+      "statsLine",
+      "statsUp",
+      "statsDown",
+      "shardLight",
+      "shardMid",
+      "shardDark",
+    ],
+  },
   { label: "Surfaces", roles: ["background", "sidebar", "surface", "popover", "field", "hover"] },
   { label: "Sidebar rows", roles: ["sidebarSelected", "sidebarHover"] },
   { label: "Lines", roles: ["border", "controlBorder"] },
@@ -201,10 +262,38 @@ export const ROLE_LABEL: Record<AnyRole, string> = {
   meterFull: "Meter full",
   promptEdge: "Prompt bar edge",
   viewSwitch: "View switch",
+  playSelected: "Selected blue",
+  playTrack: "Switch track",
+  playSelectedText: "Selected text",
+  playSelectedEdge: "Selected edge",
+  playTrackEdge: "Switch edge",
+  playTab: "Tab backing",
+  playTabEdge: "Tab edge",
+  playTabText: "Tab text",
+  playSearchFocus: "Search focus edge",
   wireArt: "Cube",
   hatch: "Stripes",
   hatchGround: "Stripe ground",
   settingsTab: "Selected tab",
+  peopleChip: "Chips and edit button",
+  peopleChipText: "Chip label",
+  peopleChipNumber: "Chip number",
+  peopleTint: "Tint buttons (Invite, Join, Copy)",
+  creditsCard: "Credits card",
+  inviteCard: "Invite card",
+  playBlue: "Genex blue",
+  peoplePrimary: "Primary button",
+  peoplePrimaryShade: "Primary button shade",
+  peopleLive: "Playing now dot",
+  peopleLiveText: "Playing now text",
+  peoplePro: "Pro",
+  peopleRequest: "Request count",
+  statsLine: "Stats line",
+  statsUp: "Up",
+  statsDown: "Down",
+  shardLight: "Credit shard light",
+  shardMid: "Credit shard",
+  shardDark: "Credit shard dark",
 };
 
 /**
@@ -277,6 +366,14 @@ const ACCENT_TINT = 0.12;
 const PROMPT_EDGE_SHARE = 0.65;
 /** How much text the stage's stripes carry over the canvas (theme.css `--stripe`). */
 const STRIPE_INK = 0.04;
+/**
+ * Play's edges while unset (play.css): the selected blue's, the switch track's grey, the scrolled
+ * tabs' ink and the focused search's muted ink.
+ */
+const PLAY_SELECTED_EDGE_SHARE = 0.4;
+const PLAY_TRACK_EDGE = { color: "#797f8b", share: 0.21 } as const;
+const PLAY_TAB_EDGE_SHARE = 0.09;
+const PLAY_SEARCH_FOCUS_SHARE = 0.18;
 /** How much of the logo the wordmark's secondary ink keeps against the muted text (`--logo-2`). */
 const LOGO_SHADE_SHARE = 0.7;
 /** `color` at `alpha` over `ground`, blended as the browser composites it. */
@@ -302,6 +399,85 @@ function sidebarRowColor(palette: Palette, row: SidebarRow): string {
   return mixOklab(color, palette.sidebar, percent / 100);
 }
 
+/** people.css's own colours for Play's people, stats and credits, on a dark canvas and a light one. */
+const PEOPLE_COLORS: Record<Scheme, Record<PeopleRole, string>> = {
+  [Scheme.Dark]: {
+    peopleChipText: "#9fb0ff",
+    peopleChipNumber: "#d3dbff",
+    playBlue: "#4b60bf",
+    peoplePrimary: "#4b60bf",
+    peoplePrimaryShade: "#3f51a8",
+    peopleLive: "#22a55b",
+    peopleLiveText: "#5fd18b",
+    peoplePro: "#8d9bff",
+    peopleRequest: "#3f61f5",
+    statsLine: "#7d8ff0",
+    statsUp: "#5fd18b",
+    statsDown: "#ff8a7a",
+    shardLight: "#aeb7e2",
+    shardMid: "#6b7fdc",
+    shardDark: "#4555a8",
+  },
+  [Scheme.Light]: {
+    peopleChipText: "#3d58d8",
+    peopleChipNumber: "#1e33b4",
+    playBlue: "#4b60bf",
+    peoplePrimary: "#4b60bf",
+    peoplePrimaryShade: "#3f51a8",
+    peopleLive: "#22a55b",
+    peopleLiveText: "#16803f",
+    peoplePro: "#4353d9",
+    peopleRequest: "#3f61f5",
+    statsLine: "#4b60bf",
+    statsUp: "#16803f",
+    statsDown: "#b42318",
+    shardLight: "#aeb7e2",
+    shardMid: "#4b60bf",
+    shardDark: "#313e7c",
+  },
+};
+/** A canvas darker than this is a dark scheme's: people.css picks its colours by the theme. */
+const DARK_CANVAS_LIGHTNESS = 0.5;
+const isPeopleRole = (role: AnyRole): role is PeopleRole => (PEOPLE_ROLES as readonly string[]).includes(role);
+const isPlayHueRole = (role: AnyRole): role is PlayHueRole => (PLAY_HUE_ROLES as readonly string[]).includes(role);
+/** An unset people role's colour: people.css's own for the palette's scheme. */
+function peopleColor(palette: Palette, role: PeopleRole): string {
+  const scheme = oklch(palette.background)[0] < DARK_CANVAS_LIGHTNESS ? Scheme.Dark : Scheme.Light;
+  return PEOPLE_COLORS[scheme][role];
+}
+
+/** {@link DETAIL_VARIABLE} looked up by any role: the details with no variable of their own answer nothing. */
+const DETAIL_VARIABLES: ReadonlyMap<string, string> = new Map(Object.entries(DETAIL_VARIABLE));
+
+/**
+ * Details drawn, while unset, as one colour over a ground: the ground, the colour and its share. The
+ * onboarding art's sheet and marks are faint ink over the canvas and its buttons the accent tint; the
+ * prompt bar's edge is the divider over its panel; the stage's stripes are faint ink; Play's edges are
+ * its blue, a grey and faint ink over the page.
+ */
+const LAYERED: Partial<Record<AnyRole, (p: Palette) => [string, string, number]>> = {
+  artPaper: (p) => [p.background, p.foreground, SHEET_INK],
+  artMark: (p) => [p.background, p.foreground, MARK_FACE_INK],
+  artButton: (p) => [p.background, p.accent, ACCENT_TINT],
+  promptEdge: (p) => [p.surface, p.border, PROMPT_EDGE_SHARE],
+  hatch: (p) => [p.background, p.foreground, STRIPE_INK],
+  playSelectedEdge: (p) => [p.background, p.playSelected ?? PLAY_BLUE, PLAY_SELECTED_EDGE_SHARE],
+  playTrackEdge: (p) => [p.background, PLAY_TRACK_EDGE.color, PLAY_TRACK_EDGE.share],
+  playTabEdge: (p) => [p.background, p.foreground, PLAY_TAB_EDGE_SHARE],
+  playSearchFocus: (p) => [p.background, p.foreground, PLAY_SEARCH_FOCUS_SHARE],
+};
+
+/**
+ * An unset Play colour: the selected blue is Play's own, the tinted families wear it (the credits card
+ * the chips' hue), and the people and stats colours are people.css's own; null for any other role.
+ */
+function unsetPlayColor(palette: Palette, role: AnyRole): string | null {
+  if (role === "playSelected") return PLAY_BLUE;
+  if (isPeopleRole(role)) return peopleColor(palette, role);
+  if (!isPlayHueRole(role)) return null;
+  return role === "creditsCard" ? shownColor(palette, "peopleChip") : (palette.playSelected ?? PLAY_BLUE);
+}
+
 /** The colour a role is drawn in: its own, or for an unset detail the one the app derives. */
 export function shownColor(palette: Palette, role: AnyRole): string {
   const own = palette[role];
@@ -311,15 +487,14 @@ export function shownColor(palette: Palette, role: AnyRole): string {
   if (isSidebarRow(role)) return sidebarRowColor(palette, role);
   // Unset, the prompt bar's chips wear the canvas chip's fill (theme.css `--prompt-chip-fill`).
   if (role === "promptChipFill") return shownColor(palette, "controlFill");
-  // Unset, the onboarding art draws these as faint ink over the canvas, and its buttons as the accent tint.
-  if (role === "artPaper") return over(palette.background, palette.foreground, SHEET_INK);
-  if (role === "artMark") return over(palette.background, palette.foreground, MARK_FACE_INK);
-  if (role === "artButton") return over(palette.background, palette.accent, ACCENT_TINT);
-  // Unset, the prompt bar's edge is the divider over its panel, and the logo's shade is mixed as --ink-2 is.
-  if (role === "promptEdge") return over(palette.surface, palette.border, PROMPT_EDGE_SHARE);
-  if (role === "hatch") return over(palette.background, palette.foreground, STRIPE_INK);
+  const layered = LAYERED[role]?.(palette);
+  if (layered) return over(...layered);
+  // Unset, the logo's shade is mixed as --ink-2 is.
   if (role === "logoShade") return mixOklab(palette.logo ?? palette.foreground, palette.muted, LOGO_SHADE_SHARE);
-  return themeVariables(palette, DEFAULT_CONTRAST)[DETAIL_VARIABLE[role]] ?? "";
+  const play = unsetPlayColor(palette, role);
+  if (play) return play;
+  const variable = DETAIL_VARIABLES.get(role);
+  return variable ? (themeVariables(palette, DEFAULT_CONTRAST)[variable] ?? "") : "";
 }
 
 /** Each shadow's name in the panel, and what it falls on. */

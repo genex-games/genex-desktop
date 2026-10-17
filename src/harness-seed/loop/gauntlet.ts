@@ -21,6 +21,7 @@ import { Against, againstWords, observedFrom, VerdictPass, verdictRecord, Verdic
 import { StopCode, stopWith } from "./outcomes.ts";
 import { appendRun, EventKind, REFERENCE_MIN_STILLS, ReferenceKind, RunEvent, RunMode } from "./run-events.ts";
 import { HostMethod } from "./host-methods.ts";
+import { ProjectStarter } from "./folder-facts.ts";
 import { HOUR_MS, MINUTE_MS, SECOND_MS, sleepUnlessCancelled } from "./time.ts";
 import { BriefPhase, buildBrief } from "./gauntlet-prompts.ts";
 import { gatherEvidence, observationOnlyFailure, withObservationPatience } from "./evidence.ts";
@@ -120,7 +121,11 @@ export async function runGauntlet(ctx: HarnessCtx, options: GauntletOptions): Pr
 
   await announceRunStart(ctx, threadId, run, origin);
   // Ensure the project exists and is on screen before anything is judged.
-  await ctx.call(HostMethod.GameScaffold, { name: run.project as string, title: run.project });
+  await ctx.call(HostMethod.GameScaffold, {
+    name: run.project as string,
+    title: run.project,
+    kind: ProjectStarter.Web,
+  });
   await ctx.call(HostMethod.PreviewLoad, { project: run.project });
 
   // A named bar without pixels is the hollow comparison the first run already suffered.

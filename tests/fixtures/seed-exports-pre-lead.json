@@ -1,0 +1,669 @@
+{
+  "from": "2171d10e",
+  "modules": {
+    "loop/build-turn.ts": [
+      "buildTurn"
+    ],
+    "loop/chat-dispatch.ts": [
+      "coordinatorReopens",
+      "handleUserMessage",
+      "intakeBudgets",
+      "judgeableFirst",
+      "launchFromIntake",
+      "launchPromise",
+      "ownSessionAfterNight",
+      "ownSessionReopens",
+      "rewindMoodBoard"
+    ],
+    "loop/chat-session.ts": [
+      "SERVES_AFTER_NIGHT",
+      "buildContractorBrief",
+      "buildInterviewBrief",
+      "isContinueAsk",
+      "isResumeFailure",
+      "lastContractorSession",
+      "nameFromAsk",
+      "originalAsk",
+      "resolveChatProject"
+    ],
+    "loop/coordinator-prompts.ts": [
+      "COORDINATOR_RECORD_CHARS",
+      "COORDINATOR_SYSTEM",
+      "SERVES_REOPEN",
+      "coordinatorPrompt"
+    ],
+    "loop/delegated-turn.ts": [
+      "DELEGATE_TOOL",
+      "MessageUsageSource",
+      "SERVES_AFTER_NIGHT",
+      "SERVES_REOPEN",
+      "runDelegatedTurn"
+    ],
+    "loop/git.ts": [
+      "GIT",
+      "LABEL_SHA_LENGTH",
+      "SERVES_LEAD",
+      "SHORT_SHA_LENGTH",
+      "commitAll",
+      "gitAt",
+      "gitExec",
+      "gitlinks",
+      "headOf",
+      "isAncestor",
+      "landIntegration",
+      "mergeNoFf",
+      "rawFailure",
+      "refArg",
+      "resetClean",
+      "shortFailure",
+      "shortSha",
+      "unversionedNested",
+      "updateRef"
+    ],
+    "loop/launch-prompts.ts": [
+      "RESUME_LOOP_CHAT",
+      "launchDecision",
+      "launchRules"
+    ],
+    "loop/run-dispatch.ts": [
+      "SERVES_REOPEN",
+      "chooseRunner",
+      "handleRunStart",
+      "keptNewRounds",
+      "nightRefusal",
+      "resumeRun"
+    ],
+    "loop/studio-state.ts": [
+      "RunnerKind",
+      "StatusLane",
+      "heldRuns"
+    ],
+    "loop/unreal-prompts.ts": [
+      "UNREAL_NEW_GAME_TOOL",
+      "engineChoiceRule",
+      "offersUnrealGame",
+      "unrealRules",
+      "unrealWorkHere",
+      "unrealWorkspaceRule"
+    ],
+    "loop/unreal/cpp.ts": [
+      "ADD_MODULE_TIMEOUT_MS",
+      "CPP_POLL_MS",
+      "CppAddState",
+      "cppFolder",
+      "cppSupport",
+      "ensureCppModule",
+      "readCppStatus",
+      "whileAdding"
+    ],
+    "loop/unreal/editor-crash.ts": [
+      "REOPEN_POLL_MS",
+      "REOPEN_TIMEOUT_MS",
+      "ReopenEnd",
+      "ReopenState",
+      "readCrash",
+      "reopenEditor"
+    ],
+    "loop/unreal/live-contract.ts": [
+      "CheckpointOutcome",
+      "EditorHelperState",
+      "FOUNDATION_FEATURE",
+      "FeaturePlayerField",
+      "FeatureState",
+      "GENEX_TAG_PREFIX",
+      "HarnessCheckId",
+      "HelperKind",
+      "HelperRunState",
+      "JudgeStanding",
+      "LIVE_JOURNAL_KIND",
+      "LiveCamera",
+      "MAX_CHECKPOINT_IMAGES",
+      "PartRunEnd",
+      "PlayCheckFailure",
+      "UnrealLivePluginTool",
+      "UnrealLiveTool",
+      "UnrealLoopTool"
+    ],
+    "loop/unreal/restore.ts": [
+      "RestoreFailure",
+      "closeEditor",
+      "coldRestore",
+      "editorAnswers",
+      "editorGone",
+      "sourceStamp",
+      "unsavedWork"
+    ],
+    "loop/verdict.ts": [
+      "Against",
+      "NotLandedReason",
+      "VERDICT_PASSES",
+      "VerdictPass",
+      "VerdictRule",
+      "VerdictSource",
+      "againstWords",
+      "observedFrom",
+      "plainClause",
+      "roundRule",
+      "verdictRecord"
+    ]
+  },
+  "imports": {
+    "loop/build-turn.ts": {
+      "./host-methods.ts": [
+        "HostMethod"
+      ],
+      "./turn-loop.ts": [
+        "runTurn"
+      ],
+      "./config.ts": [
+        "BUILD_TURN_MAX_ROUNDS",
+        "MIN_DELEGATE_TIMEOUT_MS"
+      ],
+      "./turn-record.ts": [
+        "TurnStatus"
+      ]
+    },
+    "loop/chat-dispatch.ts": {
+      "./completion-policy.ts": [
+        "CompletionPolicy"
+      ],
+      "./turn-loop.ts": [
+        "runTurn"
+      ],
+      "./turn-record.ts": [
+        "TurnStatus",
+        "TurnStop",
+        "sayInTurn"
+      ],
+      "./coordinator.ts": [
+        "runCoordinatorTurn"
+      ],
+      "./after-night.ts": [
+        "afterLeadNight",
+        "resumeAfterReply",
+        "servesAfterNight"
+      ],
+      "./reopen-run.ts": [
+        "commissionHours",
+        "finishedNight",
+        "firstLoopUnused",
+        "keepsCommission",
+        "reopenAfterReply",
+        "reopens",
+        "servesReopen"
+      ],
+      "./reopen-run-prompts.ts": [
+        "MESSAGE"
+      ],
+      "./run-inbox.ts": [
+        "conversationThrough",
+        "latestRun"
+      ],
+      "./prompt.ts": [
+        "eventsToMessages"
+      ],
+      "./model-roles.ts": [
+        "EngineId",
+        "hasSessionRoles",
+        "supportsSessions"
+      ],
+      "./game-engine.ts": [
+        "GameEngine",
+        "engineOfGame"
+      ],
+      "./chat-steer-prompts.ts": [
+        "withSteers"
+      ],
+      "./host-methods.ts": [
+        "HostMethod"
+      ],
+      "./page-contract.ts": [
+        "StudioContract"
+      ],
+      "./run-events.ts": [
+        "EventKind",
+        "RunEvent",
+        "RunState"
+      ],
+      "./time.ts": [
+        "HOUR_MS"
+      ],
+      "./wall-clock.ts": [
+        "endClock"
+      ],
+      "./run-dispatch.ts": [
+        "handleRunStart",
+        "nightRefusal"
+      ],
+      "./live-chat.ts": [
+        "runUnderWay"
+      ],
+      "./run-journal.ts": [
+        "readJournal"
+      ],
+      "./studio-prompts.ts": [
+        "followupAsk"
+      ],
+      "./studio-state.ts": [
+        "StatusLane"
+      ],
+      "./config.ts": [
+        "clampRunHours"
+      ],
+      "./text.ts": [
+        "CLIP_GAME_TITLE"
+      ]
+    },
+    "loop/chat-session.ts": {
+      "./launch-prompts.ts": [
+        "RESUME_LOOP_CHAT",
+        "launchRules"
+      ],
+      "./game-engine.ts": [
+        "GameEngine"
+      ],
+      "./session-compact-prompts.ts": [
+        "handoverSection"
+      ],
+      "./model-roles.ts": [
+        "toolCall"
+      ],
+      "./run-events.ts": [
+        "EventKind",
+        "InterviewMode",
+        "RunEvent"
+      ],
+      "./unreal-prompts.ts": [
+        "engineChoiceRule",
+        "unrealRules",
+        "unrealWorkHere",
+        "unrealWorkspaceRule"
+      ],
+      "./brief-window.ts": [
+        "TRANSCRIPT_CHARS",
+        "TRANSCRIPT_MESSAGES"
+      ]
+    },
+    "loop/coordinator-prompts.ts": {
+      "./run-inbox.ts": [
+        "runSnapshot"
+      ],
+      "./reopen-run-prompts.ts": [
+        "coordinatorReopenRules"
+      ]
+    },
+    "loop/delegated-turn.ts": {
+      "./config.ts": [
+        "GIT_TIMEOUT_MS",
+        "MIN_DELEGATE_TIMEOUT_MS"
+      ],
+      "./git.ts": [
+        "GIT",
+        "gitAt"
+      ],
+      "./chat-session.ts": [
+        "buildContractorBrief",
+        "isContinueAsk",
+        "lastContractorSession",
+        "nameFromAsk",
+        "resolveChatProject"
+      ],
+      "../tools/game-tools.ts": [
+        "tools"
+      ],
+      "./interview-question.ts": [
+        "askUser",
+        "recordInterviewQuestion"
+      ],
+      "./after-night.ts": [
+        "afterNightGrant",
+        "resumeAsked"
+      ],
+      "./after-night-prompts.ts": [
+        "afterNightNote"
+      ],
+      "./reopen-run.ts": [
+        "commissionHours",
+        "reopenAsked",
+        "reopens"
+      ],
+      "./reopen-run-prompts.ts": [
+        "reopenRunTool"
+      ],
+      "./chat-steer.ts": [
+        "steeredCall"
+      ],
+      "./game-engine.ts": [
+        "GameEngine",
+        "engineOfGame"
+      ],
+      "./unreal-prompts.ts": [
+        "offersUnrealGame"
+      ],
+      "./outage.ts": [
+        "EngineFailure",
+        "StopReason"
+      ],
+      "./host-methods.ts": [
+        "HostMethod"
+      ],
+      "./page-contract.ts": [
+        "StudioContract"
+      ],
+      "./run-events.ts": [
+        "EventKind",
+        "RunEvent"
+      ],
+      "./text.ts": [
+        "CLIP_BRIEF",
+        "CLIP_GAME_TITLE",
+        "clip"
+      ],
+      "./time.ts": [
+        "SECOND_MS",
+        "sleep"
+      ],
+      "./first-preview.ts": [
+        "recordFirstPreview"
+      ],
+      "./tool-loop.ts": [
+        "canFallBack",
+        "runToolLoop"
+      ],
+      "./chat-continuity.ts": [
+        "briefSummary",
+        "goesOn"
+      ],
+      "./compaction-log.ts": [
+        "compactedSummary",
+        "endedByCompaction"
+      ],
+      "./turn-record.ts": [
+        "TurnStop",
+        "sayInTurn"
+      ]
+    },
+    "loop/git.ts": {
+      "./host-methods.ts": [
+        "HostMethod"
+      ],
+      "./repo.ts": [
+        "STUDIO_AS"
+      ],
+      "./shell.ts": [
+        "REFUSED_VALUE_CHARS",
+        "commitArg",
+        "shellQuote"
+      ],
+      "./config.ts": [
+        "GIT_TIMEOUT_MS"
+      ],
+      "./json.ts": [
+        "isRecord"
+      ]
+    },
+    "loop/launch-prompts.ts": {
+      "./config.ts": [
+        "MAX_RUN_HOURS"
+      ],
+      "./game-engine.ts": [
+        "GameEngine"
+      ],
+      "./interview-question.ts": [
+        "askUser"
+      ],
+      "./model-roles.ts": [
+        "toolCall"
+      ]
+    },
+    "loop/run-dispatch.ts": {
+      "./game-engine.ts": [
+        "GameEngine",
+        "engineOfGame"
+      ],
+      "./unreal/live.ts": [
+        "runUnrealLive"
+      ],
+      "./model-roles.ts": [
+        "EngineId",
+        "modelOn",
+        "supportsSessions",
+        "withRoles"
+      ],
+      "./gauntlet.ts": [
+        "runGauntlet"
+      ],
+      "./autopilot.ts": [
+        "runAutopilot"
+      ],
+      "./director.ts": [
+        "runDirector"
+      ],
+      "./skillopt.ts": [
+        "runSkillOpt"
+      ],
+      "./learning.ts": [
+        "learningOn"
+      ],
+      "./run-inbox.ts": [
+        "createRunInbox"
+      ],
+      "./host-methods.ts": [
+        "HostMethod"
+      ],
+      "./run-journal.ts": [
+        "readJournal"
+      ],
+      "./run-events.ts": [
+        "EventKind",
+        "ExecutionStatus",
+        "RunEvent",
+        "RunMode"
+      ],
+      "./studio-state.ts": [
+        "RunnerKind",
+        "heldRuns"
+      ],
+      "./live-chat.ts": [
+        "passCtx"
+      ],
+      "./after-night.ts": [
+        "resumeStopped"
+      ]
+    },
+    "loop/studio-state.ts": {},
+    "loop/unreal-prompts.ts": {
+      "./interview-question.ts": [
+        "askUser"
+      ],
+      "./model-roles.ts": [
+        "toolCall"
+      ]
+    },
+    "loop/unreal/cpp.ts": {
+      "../text.ts": [
+        "CLIP_DETAIL",
+        "clip"
+      ],
+      "../time.ts": [
+        "MINUTE_MS",
+        "SECOND_MS",
+        "minutes"
+      ]
+    },
+    "loop/unreal/editor-crash.ts": {
+      "../text.ts": [
+        "CLIP_DETAIL",
+        "CLIP_QUOTE",
+        "CLIP_REASON",
+        "clip"
+      ],
+      "../time.ts": [
+        "MINUTE_MS",
+        "SECOND_MS",
+        "minutes"
+      ]
+    },
+    "loop/unreal/live-contract.ts": {
+      "../director/tool-specs.ts": [
+        "DirectorTool"
+      ]
+    },
+    "loop/unreal/restore.ts": {
+      "../host-methods.ts": [
+        "HostMethod"
+      ],
+      "../text.ts": [
+        "CLIP_DETAIL",
+        "clip"
+      ],
+      "../time.ts": [
+        "SECOND_MS"
+      ],
+      "./editor-crash.ts": [
+        "ReopenEnd",
+        "reopenEditor"
+      ],
+      "./live-contract.ts": [
+        "UnrealLivePluginTool",
+        "UnrealLoopTool"
+      ],
+      "./live-journal.ts": [
+        "unrealTool"
+      ]
+    },
+    "loop/verdict.ts": {}
+  },
+  "retired": {
+    "loop/unreal/board.ts": [
+      "MAX_JUDGE_CHECKS",
+      "ROUTE_PROGRESS_KEPT_SHARE",
+      "ROUTE_PROGRESS_MIN_M",
+      "SPAWN_FACING_MAX_DEG",
+      "featureCheckId",
+      "liveBoard",
+      "liveBoardSpec",
+      "playCheckArgs",
+      "routeProgressNeeded",
+      "withJudgeCheck"
+    ],
+    "loop/unreal/checkpoint.ts": [
+      "CHECKPOINT_MS",
+      "baselineCheckpoint",
+      "restoreHeldStep",
+      "stepCheckpoint"
+    ],
+    "loop/unreal/features.ts": [
+      "LEFT_OUT_RESTORES",
+      "MAX_FEATURES",
+      "MAX_FEATURE_CHECKS",
+      "MAX_FEATURE_HELPERS",
+      "MAX_KEPT_STEPS",
+      "afterCheckpoint",
+      "foundationFeature",
+      "nextFeature",
+      "plannedProgress",
+      "readFeatureCheck",
+      "readFeaturePlan"
+    ],
+    "loop/unreal/helpers.ts": [
+      "HELPER_MS",
+      "LocalBlenderTool",
+      "MAX_HELPERS",
+      "MAX_PULL_FILES",
+      "MAX_PULL_FILE_BYTES",
+      "SoundPluginTool",
+      "addModuleIfAsked",
+      "helperNews",
+      "helperStatus",
+      "offersSound",
+      "pullHelper",
+      "refreshCpp",
+      "settleHelpers",
+      "startAsked",
+      "startHelper",
+      "startPlanned",
+      "unpullRestored"
+    ],
+    "loop/unreal/keep-rule.ts": [
+      "asksJudge",
+      "checkpointPick",
+      "decideCheckpoint"
+    ],
+    "loop/unreal/live-graph.ts": [
+      "checkpointRound",
+      "closeOf",
+      "closeWorkers",
+      "featurePlanned",
+      "featureWorker",
+      "helperMerged",
+      "helperWorkerEvent",
+      "keptMerge",
+      "liveStarted",
+      "runFinished",
+      "tellUser"
+    ],
+    "loop/unreal/live-journal.ts": [
+      "freshJournal",
+      "landedFeatures",
+      "liveJournalOf",
+      "plannedFeatures",
+      "progressOf",
+      "readLiveJournal",
+      "saveLive",
+      "setProgress",
+      "specOf",
+      "unrealTool"
+    ],
+    "loop/unreal/live-prompts.ts": [
+      "PYTHON_TUPLES",
+      "SPARSE_MOTION_FPS",
+      "VEHICLE_TEMPLATE_FACTS",
+      "checkpointWords",
+      "featureStates",
+      "judgeIntent",
+      "liveBrief",
+      "livePlanPrompt",
+      "stepPrompt"
+    ],
+    "loop/unreal/live-run-prompts.ts": [
+      "CARRIED",
+      "HANDOVER_WHY",
+      "HELPER_WORDS",
+      "LIVE_TOOL_WORDS",
+      "RUN_STATUS",
+      "STEER",
+      "handoverWords",
+      "helperBrief"
+    ],
+    "loop/unreal/live-tools.ts": [
+      "LIVE_TOOLS",
+      "liveToolHandler",
+      "runStatusText"
+    ],
+    "loop/unreal/live.ts": [
+      "runUnrealLive"
+    ],
+    "loop/unreal/probe-prompts.ts": [
+      "PROBE_LINE",
+      "judgeChecks"
+    ],
+    "loop/unreal/probes.ts": [
+      "AIRBORNE_CM_S",
+      "FACING_OFF_DEG",
+      "GROUND_GAP_CM",
+      "MOVING_CM_S",
+      "PartProbe",
+      "PostProcessSetting",
+      "ProbeGround",
+      "ProbePawnKind",
+      "ProbeSource",
+      "VEHICLE_GAP_CM",
+      "probeLines"
+    ],
+    "loop/unreal/runner.ts": [
+      "PartRunEnd",
+      "UnrealLoopTool"
+    ]
+  }
+}

@@ -1,9 +1,8 @@
-import { lstat } from "node:fs/promises";
-import path from "node:path";
 import { GENEX_PLUGIN_ID } from "../../shared/genex.ts";
 import { PluginAccountState } from "../../shared/plugins.ts";
 import type { StudioCore } from "../studio-core.ts";
 import type { HarnessHostApi } from "../../shared/harness-api.ts";
+import { takesGenexPackages } from "./genex-package.ts";
 
 type Readiness = HarnessHostApi["plugins.preflightMultiplayer"]["result"];
 
@@ -17,7 +16,7 @@ export function multiplayerReadiness(facts: {
   if (!facts.manifest)
     return {
       ready: false,
-      reason: "The game needs a regular package.json before SDK installation.",
+      reason: "The game needs a package.json (or to be made from Studio's template) before SDK installation.",
       hostedVerified: false,
     };
   if (!facts.install)
@@ -50,10 +49,9 @@ export function multiplayerReadiness(facts: {
 export async function preflightMultiplayer(core: StudioCore, project: string, threadId?: string): Promise<Readiness> {
   const binding = await core.pluginBinding(project, threadId);
   if (!binding) throw new Error("Open a game before checking prerequisites");
-  const manifest = await lstat(path.join(binding.directory, "package.json")).catch(() => null);
   const tools = new Set(core.plugins.tools().map((tool) => tool.name));
   return multiplayerReadiness({
-    manifest: manifest?.isFile() === true,
+    manifest: await takesGenexPackages(binding.directory),
     install: tools.has("genex__package"),
     publish: tools.has("genex__publish"),
     account: await core.plugins.accountState(GENEX_PLUGIN_ID),

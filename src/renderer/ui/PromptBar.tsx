@@ -1,6 +1,6 @@
 import { markPerformance } from "../performance.tsx";
 import { PerformanceMarkName } from "../../shared/performance.ts";
-import type { ClipboardEvent, DragEvent, JSX, Ref, RefObject } from "react";
+import type { ClipboardEvent, DragEvent, JSX, KeyboardEvent, Ref, RefObject } from "react";
 import { useEffect, useId, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Icon } from "./icons.tsx";
 import { Shortcut } from "./Shortcut.tsx";
@@ -23,7 +23,13 @@ import { ComposerPermissionMenu } from "./ComposerPermissionMenu.tsx";
 import type { PermissionMode } from "../../shared/permissions.ts";
 import { ComposerAddMenu, type AddMenuHandle, PlanModeOff } from "./ComposerAddMenu.tsx";
 import { ComposerLimits, type ContextUsage } from "./ComposerLimits.tsx";
-import { ComposerCommandMenu, compactCommand, useComposerCommands } from "./ComposerCommandMenu.tsx";
+import {
+  ComposerCommandMenu,
+  compactCommand,
+  type PluginCommand,
+  useComposerCommands,
+} from "./ComposerCommandMenu.tsx";
+import { useAsyncEffect } from "../use-async-effect.ts";
 import { selectedCompact } from "../chat/compact-control.ts";
 import { useToolbarFit } from "./toolbar-fit.ts";
 import { composerPlaceholder, PLAN_PLACEHOLDER } from "../composer-placeholder.ts";
@@ -33,12 +39,25 @@ import {
   composerExtras,
   composerLoopView,
   type LoopSetting,
+  modeMenuReach,
   pinChatLoop,
   rememberChatLoop,
   RUNNING_BUILD,
   storedChatLoop,
 } from "../loop-setting.ts";
 import { parseModelKey } from "../model-key.ts";
+import {
+  atomicBackspaceRange,
+  splitMentions,
+  insertMention as insertTag,
+  type MentionDoc,
+  type MentionRef,
+  mentionQueryAt,
+  mentionRef,
+  pluginDoc,
+  PROMPT_MENTION_MAX,
+  sentMentions,
+} from "../../shared/prompt-mention.ts";
 export { shortModelName };
 export type { ModelChoice, RoleGroup, RoleRecord, RoleRow };
 export interface AutopilotSend {
@@ -51,6 +70,8 @@ export interface ComposerExtras {
   autopilot?: AutopilotSend;
   reviewPlan?: boolean;
   frames?: PickedFrame[];
+  /** The games, tools and assets the message tags with @. */
+  mentions?: MentionRef[];
 }
 
 /** Adds pictures to a composer's attachments: `{conversationKey, frames}` (a rewound message's). */
@@ -137,7 +158,7 @@ function useLoopSettings(props: PromptBarProps) {
     removeKey(STORAGE_KEYS.autopilotReview);
   }, [conversationKey, coordinating]);
   const build = props.build ?? (coordinating ? RUNNING_BUILD : null);
-  const view = composerLoopView({ own: setting, build });
+  const view = composerLoopView({ own: setting, build, loopAvailable: props.loopAvailable });
   const chooseLoop = (next: LoopSetting): void => {
     setPick({ thread: conversationKey, setting: next });
     rememberChatLoop(browserStorage(), conversationKey, next);
@@ -146,12 +167,15 @@ function useLoopSettings(props: PromptBarProps) {
   const planAvailable = view.editable && !coordinating;
   // What the bulb, Add's row and the box show: plan review that this chat's next send will carry.
   const planOn = reviewPlan && planAvailable;
-  return { setting, view, chooseLoop, reviewPlan, setReviewPlan, planAvailable, planOn };
+  return { setting, view, chooseLoop, reviewPlan, setReviewPlan, planAvailable, planOn, gate: props.loopGate };
 }
 
 type Mention = { query: string; start: number; end: number };
 
-/** @ at the caret opens Add as a mention list; the query is what follows it. */
+/**
+ * @ at the caret opens Add as the @ picker; the query is what follows it. A picked card puts its
+ * `@handle` in the text and joins `tagged`, the map the send and the painted tags read.
+ */
 function useMention(
   gameMode: boolean,
   draft: string,
@@ -160,30 +184,80 @@ function useMention(
 ) {
   const [mention, setMention] = useState<Mention | null>(null);
   const [mentionOption, setMentionOption] = useState<string | null>(null);
+  const [tagged, setTagged] = useState<ReadonlyMap<string, MentionDoc>>(() => new Map());
   const mentionListId = useId();
   const findMention = (text: string, caret: number | null): Mention | null => {
     if (!gameMode || caret === null) return null;
-    const match = /(^|\s)@([^\s@]*)$/.exec(text.slice(0, caret));
-    if (!match) return null;
-    const [, lead = "", query = ""] = match;
-    return { query, start: match.index + lead.length, end: caret };
+    const open = mentionQueryAt(text, caret);
+    return open ? { query: open.query, start: open.start, end: caret } : null;
+  };
+  const placeCaret = (caret: number): void => {
+    requestAnimationFrame(() => {
+      inputRef.current?.focus();
+      inputRef.current?.setSelectionRange(caret, caret);
+    });
   };
   const insertMention = (text: string | null): void => {
     if (!mention) return;
     const insert = text ?? "";
     setDraft(draft.slice(0, mention.start) + insert + draft.slice(mention.end));
     setMention(null);
-    const caret = mention.start + insert.length;
-    requestAnimationFrame(() => {
-      inputRef.current?.focus();
-      inputRef.current?.setSelectionRange(caret, caret);
-    });
+    placeCaret(mention.start + insert.length);
+  };
+  /** The draft becomes this tag alone, ready for the words after it (a pick from the / list). */
+  const startWith = (doc: MentionDoc): void => {
+    const value = `@${doc.handle} `;
+    setTagged((current) => new Map(current).set(doc.handle, doc));
+    setDraft(value);
+    setMention(null);
+    placeCaret(value.length);
+  };
+  const insertDoc = (doc: MentionDoc): void => {
+    const caret = mention?.end ?? inputRef.current?.selectionStart ?? draft.length;
+    const open = mention ? { start: mention.start, query: mention.query } : null;
+    const next = insertTag(draft, caret, doc.handle, open);
+    setTagged((current) => new Map(current).set(doc.handle, doc));
+    setDraft(next.value);
+    setMention(null);
+    placeCaret(next.caret);
   };
   // A draft replaced from outside (another chat, a prefill) leaves no @ to complete.
   useLayoutEffect(() => {
     if (mention && draft[mention.start] !== "@") setMention(null);
   }, [draft]);
-  return { mention, setMention, mentionOption, setMentionOption, mentionListId, findMention, insertMention };
+  const inText = useMemo(() => sentMentions(draft, tagged), [draft, tagged]);
+  const taggedNow = useMemo(() => new Set(inText.map((doc) => doc.handle)), [inText]);
+  return {
+    mention,
+    setMention,
+    mentionOption,
+    setMentionOption,
+    mentionListId,
+    findMention,
+    insertMention,
+    insertDoc,
+    startWith,
+    tagged,
+    taggedNow,
+    atCap: inText.length >= PROMPT_MENTION_MAX,
+    refs: (): MentionRef[] => inText.map(mentionRef),
+  };
+}
+
+/** One Backspace right after a whole tag removes the tag; true when it did. */
+function backspaceTag(
+  event: KeyboardEvent<HTMLTextAreaElement>,
+  tagged: ReadonlyMap<string, MentionDoc>,
+  setDraft: (text: string) => void,
+): boolean {
+  if (event.key !== "Backspace" || event.altKey || event.metaKey || event.ctrlKey) return false;
+  const input = event.currentTarget;
+  const range = atomicBackspaceRange(input.value, input.selectionStart, input.selectionEnd, tagged);
+  if (!range) return false;
+  event.preventDefault();
+  setDraft(input.value.slice(0, range.start) + input.value.slice(range.end));
+  requestAnimationFrame(() => input.setSelectionRange(range.start, range.start));
+  return true;
 }
 
 /**
@@ -476,6 +550,10 @@ interface PromptBarProps {
   build?: ComposerBuild | null;
   gameMode?: boolean;
   project?: string | null;
+  /** The game can run a Loop (`loopAvailableFor`); without it Mode offers Off alone and says why. */
+  loopAvailable?: boolean;
+  /** Why the game can't run a Loop, naming its project and where it is (`engineLoopGate`). */
+  loopGate?: string;
   contexts?: ContextUsage[];
   contextUsage?: ContextUsage | null;
   onCompact?: () => void;
@@ -495,6 +573,8 @@ interface PromptBarProps {
   /** Controlled draft — ChatPanel keys this per thread so a half-written brief cannot follow you. */
   value?: string;
   onChange?: (text: string) => void;
+  /** Where the @ picker opens: under the prompt bar on the home screen, above it in a chat. */
+  mentionSide?: "top" | "bottom";
   /** Composer stays usable, but Enter/send starts sign-in instead of a turn. */
   blockSend?: boolean;
   onBlockedSend?: () => void;
@@ -519,7 +599,8 @@ function useComposerSend(
     loop: ReturnType<typeof useLoopSettings>;
     board: ReturnType<typeof useBoardFrames>;
     inputRef: RefObject<HTMLTextAreaElement | null>;
-    clearMention: () => void;
+    /** The @ query to close on send, and the tags in the draft, read at the moment it is sent. */
+    mentions: Pick<ReturnType<typeof useMention>, "setMention" | "refs">;
   },
 ) {
   const ignoreStopUntil = useRef(0);
@@ -546,18 +627,22 @@ function useComposerSend(
     const text = draft.trim();
     const sentFrames = board.frames;
     setDraft("");
-    composer.clearMention();
+    composer.mentions.setMention(null);
     // The board goes with the message — a chip that lingers after send reads as "not sent".
     // The harness keeps the board attached for the rest of the interview on its side.
     if (sentFrames.length) board.setFrames([]);
     // A failed send is already durable in the thread (main appends the error); catching here
     // only stops the same failure from surfacing twice as console noise.
-    const extras = composerExtras({
-      gameMode: props.gameMode ?? true,
-      view: loop.view,
-      reviewPlan: loop.reviewPlan,
-      frames: sentFrames,
-    });
+    const tags = composer.mentions.refs();
+    const extras = {
+      ...composerExtras({
+        gameMode: props.gameMode ?? true,
+        view: loop.view,
+        reviewPlan: loop.reviewPlan,
+        frames: sentFrames,
+      }),
+      ...(tags.length ? { mentions: tags } : {}),
+    };
     loop.setReviewPlan(false);
     void Promise.resolve(props.onSend(text, Object.keys(extras).length ? extras : undefined)).catch(() => {
       if (extras.reviewPlan) loop.setReviewPlan(true);
@@ -594,8 +679,84 @@ function PromptInput({
   commandMenuRef: RefObject<AddMenuHandle | null>;
   onEnter: () => void;
 }): JSX.Element {
-  const { mention, setMention, findMention } = mentions;
   const list = listAria(mentions, commands);
+  const painted = useMemo(() => splitMentions(draft, mentions.tagged), [draft, mentions.tagged]);
+  const hasTags = painted.some((run) => run.handle);
+  const mirror = useRef<HTMLDivElement>(null);
+  return (
+    <div className="composer-input-wrap" data-painted={hasTags || undefined}>
+      {hasTags ? <PaintedDraft runs={painted} mirrorRef={mirror} /> : null}
+      <PromptTextarea
+        {...{
+          inputRef,
+          draft,
+          setDraft,
+          disabled,
+          placeholder,
+          mentions,
+          commands,
+          addMenuRef,
+          commandMenuRef,
+          onEnter,
+        }}
+        list={list}
+        onScroll={(top) => {
+          if (mirror.current) mirror.current.scrollTop = top;
+        }}
+      />
+    </div>
+  );
+}
+
+/**
+ * The draft's words drawn under a text box whose own glyphs are clear while it has tags, so a tag
+ * shows as a pill in the sentence. The layer has the text box's box and type, glyph for glyph.
+ */
+function PaintedDraft({
+  runs,
+  mirrorRef,
+}: {
+  runs: { text: string; handle: string | null }[];
+  mirrorRef: RefObject<HTMLDivElement | null>;
+}): JSX.Element {
+  return (
+    <div ref={mirrorRef} aria-hidden className={`${PROMPT_INPUT_CLASS} composer-input-paint`}>
+      {runs.map((run, index) =>
+        run.handle ? (
+          // biome-ignore lint/suspicious/noArrayIndexKey: runs are positional and rebuilt with the draft.
+          <span key={index} className="mention-pill">
+            {run.text}
+          </span>
+        ) : (
+          // biome-ignore lint/suspicious/noArrayIndexKey: runs are positional and rebuilt with the draft.
+          <span key={index}>{run.text}</span>
+        ),
+      )}
+      {/* A last empty line still takes its height, as in the text box. */}
+      {"\u200b"}
+    </div>
+  );
+}
+
+/** The text box: the draft, the @ and / lists' keys, and one Backspace per whole tag. */
+function PromptTextarea({
+  inputRef,
+  draft,
+  setDraft,
+  disabled,
+  placeholder,
+  mentions,
+  commands,
+  addMenuRef,
+  commandMenuRef,
+  onEnter,
+  list,
+  onScroll,
+}: Parameters<typeof PromptInput>[0] & {
+  list: { id: string; option: string | null } | null;
+  onScroll: (top: number) => void;
+}): JSX.Element {
+  const { mention, setMention, findMention } = mentions;
   return (
     <textarea
       ref={inputRef}
@@ -618,6 +779,7 @@ function PromptInput({
         markPerformance(PerformanceMarkName.Keydown);
         if (addMenuRef.current?.keyDown(event)) return;
         if (commandMenuRef.current?.keyDown(event)) return;
+        if (backspaceTag(event, mentions.tagged, setDraft)) return;
         const sends = event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing;
         if (sends) {
           event.preventDefault();
@@ -626,6 +788,7 @@ function PromptInput({
       }}
       placeholder={placeholder}
       aria-label="Prompt"
+      onScroll={(event) => onScroll(event.currentTarget.scrollTop)}
       {...(list
         ? {
             "aria-controls": list.id,
@@ -633,10 +796,14 @@ function PromptInput({
             "aria-activedescendant": list.option ?? undefined,
           }
         : {})}
-      className="composer-input min-h-[35px] w-full min-w-0 resize-none bg-transparent pt-[6px] pr-2 pb-[9px] pl-[7px] text-composer text-ink outline-none [overflow-wrap:anywhere] placeholder:text-ink-3"
+      className={`${PROMPT_INPUT_CLASS} resize-none bg-transparent text-ink outline-none placeholder:text-ink-3`}
     />
   );
 }
+
+/** The text box's box and type, which the painted words under it share glyph for glyph. */
+const PROMPT_INPUT_CLASS =
+  "composer-input min-h-[35px] w-full min-w-0 pt-[6px] pr-2 pb-[9px] pl-[7px] text-composer [overflow-wrap:anywhere]";
 
 /** The / command list in a game's composer; the Harness chat has none. */
 function CommandList({
@@ -644,24 +811,56 @@ function CommandList({
   commands,
   anchor,
   menuRef,
+  onPlugin,
 }: {
   props: PromptBarProps;
   commands: ReturnType<typeof useComposerCommands>;
   anchor: RefObject<HTMLDivElement | null>;
   menuRef: RefObject<AddMenuHandle | null>;
+  /** A plugin picked from the list: the draft becomes its tag. */
+  onPlugin: (doc: MentionDoc) => void;
 }): JSX.Element | null {
+  // A plugin picked from the / list: the message becomes its @ tag, ready for the words after it.
+  const plugins = usePluginCommands(commands.query !== null, (plugin) => {
+    commands.setQuery(null);
+    onPlugin(pluginDoc(plugin));
+  });
   if (props.gameMode === false) return null;
   return (
     <ComposerCommandMenu
       ref={menuRef}
       query={commands.query}
       options={compactCommand(composerCompact(props), props.onCompact && commands.runner(props.onCompact))}
+      plugins={plugins}
       anchor={anchor}
       listId={commands.listId}
       onClose={() => commands.setQuery(null)}
       onActiveOption={commands.setActiveOption}
     />
   );
+}
+
+/**
+ * The plugins that are on, for the / list, read when it opens; picking one tags it in the message
+ * as @ does. A failed read offers none.
+ */
+function usePluginCommands(open: boolean, tag: (plugin: { id: string; name: string }) => void): PluginCommand[] {
+  const [names, setNames] = useState<{ id: string; name: string }[]>([]);
+  useAsyncEffect(
+    (alive) => {
+      if (!open) return;
+      window.studio.pluginsList().then(
+        (plugins) => {
+          if (!alive()) return;
+          const on = plugins.filter((plugin) => plugin.enabled && !plugin.removed && !plugin.unlisted);
+          setNames(on.map((plugin) => ({ id: plugin.manifest.id, name: plugin.manifest.name })));
+        },
+        () => {},
+      );
+    },
+    [open],
+  );
+  return names.map((plugin) => ({ ...plugin, pick: () => tag(plugin) }));
 }
 
 /** Compact now as this composer's selected model and its work allow it. */
@@ -724,8 +923,7 @@ export function PromptBar(props: PromptBarProps): JSX.Element {
   const contextual = loop.planOn ? PLAN_PLACEHOLDER : (props.placeholder ?? DEFAULT_PLACEHOLDER);
   const placeholderNow = props.about?.placeholder ?? composerPlaceholder(coordinating, contextual, props.leadListens);
   useAutosize(inputRef, draft, placeholderNow);
-  const clearMention = (): void => mentions.setMention(null);
-  const composer = useComposerSend(props, { draft, setDraft, loop, board, inputRef, clearMention });
+  const composer = useComposerSend(props, { draft, setDraft, loop, board, inputRef, mentions });
 
   return (
     <div
@@ -763,7 +961,12 @@ export function PromptBar(props: PromptBarProps): JSX.Element {
           commandMenuRef={commandMenuRef}
           onEnter={composer.send}
         />
-        <CommandList props={props} commands={commands} anchor={panelRef} menuRef={commandMenuRef} />
+        <CommandList
+          {...{ props, commands }}
+          anchor={panelRef}
+          menuRef={commandMenuRef}
+          onPlugin={mentions.startWith}
+        />
         <ImagePicker fileRef={fileRef} onFiles={board.addFiles} />
         <ComposerToolbar
           model={props.model}
@@ -773,18 +976,13 @@ export function PromptBar(props: PromptBarProps): JSX.Element {
           coordinating={coordinating}
           project={props.project}
           loop={loop}
-          limits={{
-            contextUsage: props.contextUsage,
-            contexts: props.contexts,
-            onCompact: props.onCompact,
-            compacting: props.compacting,
-            compactBusy: props.compactBusy,
-          }}
+          limits={composerLimits(props)}
           panelRef={panelRef}
           addMenuRef={addMenuRef}
           modelMenuRef={modelMenuRef}
           modelNudge={composer.modelNudge}
           mentions={mentions}
+          mentionSide={props.mentionSide ?? "top"}
           onPickImages={() => fileRef.current?.click()}
           onClosed={() => inputRef.current?.focus()}
           send={
@@ -799,6 +997,12 @@ export function PromptBar(props: PromptBarProps): JSX.Element {
       </div>
     </div>
   );
+}
+
+/** The context meter's inputs, as the chat passed them. */
+function composerLimits(props: PromptBarProps): ComposerLimitsInput {
+  const { contextUsage, contexts, onCompact, compacting, compactBusy } = props;
+  return { contextUsage, contexts, onCompact, compacting, compactBusy };
 }
 
 /** What the composer can do for the chat: focus, open the model menu, or take the welcome's idea. */
@@ -881,6 +1085,7 @@ interface ComposerToolbarProps {
   /** A blocked send's beat while Connect AI model is lit (`useModelNudge`), else null. */
   modelNudge: number | null;
   mentions: ReturnType<typeof useMention>;
+  mentionSide: "top" | "bottom";
   onPickImages: () => void;
   onClosed: () => void;
   send: JSX.Element;
@@ -890,6 +1095,8 @@ interface ComposerToolbarProps {
 function ComposerToolbar(props: ComposerToolbarProps): JSX.Element {
   const { gameMode, loop, permissions } = props;
   const { view } = loop;
+  // Mode's Loop changes only while no build owns the chat.
+  const reach = modeMenuReach({ view, coordinating: props.coordinating });
   const toolbar = useRef<HTMLDivElement>(null);
   useToolbarFit(toolbar);
   return (
@@ -898,8 +1105,10 @@ function ComposerToolbar(props: ComposerToolbarProps): JSX.Element {
       {gameMode && (
         <ComposerModeMenu
           value={view.shown}
-          onChange={view.editable ? loop.chooseLoop : undefined}
-          disabled={props.coordinating || !view.editable}
+          onChange={reach.changes ? loop.chooseLoop : undefined}
+          disabled={!reach.opens}
+          loopUnavailable={view.loopUnavailable === true}
+          unavailableWhy={loop.gate}
         />
       )}
       {gameMode && permissions && (
@@ -929,6 +1138,7 @@ function AttachControl({
   panelRef,
   addMenuRef,
   mentions,
+  mentionSide,
   onPickImages,
 }: ComposerToolbarProps): JSX.Element {
   if (gameMode) {
@@ -945,6 +1155,7 @@ function AttachControl({
         onMention={mentions.insertMention}
         onMentionClose={() => mentions.setMention(null)}
         onActiveOption={mentions.setMentionOption}
+        tagging={{ tagged: mentions.taggedNow, atCap: mentions.atCap, onPick: mentions.insertDoc, side: mentionSide }}
       />
     );
   }

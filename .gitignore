@@ -3,6 +3,7 @@ dist/
 out/
 .DS_Store
 *.log
+!tests/fixtures/unreal-ubt/*.log
 
 # Local developer notes, builds, profiles and evidence never enter PRs.
 .studio-dev/

@@ -12,6 +12,7 @@ import {
   type GameProject,
 } from "../../substrate/game-workspace.ts";
 import { ThreadKind } from "../../shared/event-log.ts";
+import { starterOfKind } from "../../shared/project-facts.ts";
 import type { AttachReport } from "../../shared/game-project.ts";
 import {
   HostMethod,
@@ -24,6 +25,8 @@ import { describeUnknownImage, sniffImage } from "../../substrate/image-sniff.ts
 import { git } from "../../substrate/snapshots.ts";
 import type { CoreInternals, StudioCore } from "../studio-core.ts";
 import { attachReport, noAttachment, str } from "../core/page-report.ts";
+import { startHeldInPlan } from "../core/project-tools.ts";
+import { withEditorPlay } from "../core/editor-play-session.ts";
 import { isBelow, throughClaudeFolder, throughGitFolder } from "../../substrate/paths.ts";
 
 /** The largest image `game.read` hands back. */
@@ -115,7 +118,8 @@ export function gameRpc(core: StudioCore, x: CoreInternals) {
       return core.assetCheckpoints.checkpoint(p.project, workspace, p.assetIds);
     },
     // — games —
-    [HostMethod.GameList]: async () => core.games.list(),
+    // An engine game a plugin plays in its editor says so, with its judges: what the Loop and the chat offer.
+    [HostMethod.GameList]: async () => withEditorPlay(core, await core.games.list()),
     [HostMethod.GameSetCover]: async (p) => x.setGameCover(p.project, p, p.threadId),
     // Harnesses installed before recipes still author custom GLSL covers through this.
     [HostMethod.GameSetCoverShader]: async (p) => x.setGameCoverShader(p.project, p.surface, p.threadId),
@@ -126,6 +130,12 @@ export function gameRpc(core: StudioCore, x: CoreInternals) {
         : workspaceContentStamp(core.games.dirFor(p.project)),
     [HostMethod.GameRecents]: async () => core.games.recents(),
     [HostMethod.GameScaffold]: async (p) => scaffold(core, x, p),
+    // The starter a game with no kind yet takes on (a local model's `start_web_game`, a Loop's launch).
+    // A local model's names its chat: while that chat is in Plan nothing is written, as for the chat's
+    // own `start_web_game`. `readyProject` tells the app its game changed.
+    [HostMethod.GameStart]: async (p) =>
+      (await startHeldInPlan(core, x, p.project, p.threadId)) ??
+      x.readyProject(await core.games.start(p.project, p.starter)),
     // No `game.adopt` here (ARCH-1): adopting a folder widens the sandbox, so it is the user's
     // Open Game sheet's to do (`adoptProject`), never the agent-editable harness's.
     [HostMethod.GameValidate]: async (p) =>
@@ -181,9 +191,12 @@ async function scaffold(
   x: CoreInternals,
   p: HarnessParams<typeof HostMethod.GameScaffold>,
 ): Promise<HarnessResult<typeof HostMethod.GameScaffold>> {
-  if (p.kind && p.kind !== "studio-template") throw new Error(MESSAGE.onlyBrowserGames);
-  const project = await core.games.scaffold(p.name, p.title ? { title: p.title } : {});
-  await x.readyProject(project);
+  // No kind makes a game with no kind yet; the web starter only when the caller names it.
+  const starter = starterOfKind(p.kind);
+  if (starter === undefined) throw new Error(MESSAGE.onlyBrowserGames);
+  const options = p.title ? { title: p.title } : {};
+  const made = starter ? await core.games.scaffold(p.name, options) : await core.games.makeEmpty(p.name, options);
+  const project = await x.readyProject(made);
   // A brief sent from an unbound "new game" thread names that thread the moment the
   // folder exists — the chat and the project become one thing.
   if (p.threadId && p.threadId !== core.mainThread) {

@@ -1,17 +1,19 @@
 import { type JSX, useEffect, useRef, useState } from "react";
 import { Popover, PopoverContent, PopoverTrigger } from "./popover.tsx";
-import { ComposerTip, PickerCaption } from "./PickerPanel.tsx";
+import { ComposerTip } from "./PickerPanel.tsx";
 import { Icon } from "./icons.tsx";
 import { contextLabel, type ModelChoice, type RoleKey } from "./ModelMenu.tsx";
-import { contextReading, limitLevel, PLAN_PROVIDERS, planWords, resetWords } from "./usage-words.ts";
+import { contextReading, limitLevel, pendingPlans, PLAN_PROVIDERS, planWords, resetWords } from "./usage-words.ts";
 import { MINUTE_MS, SECOND_MS } from "../../shared/duration.ts";
 import { usePolling } from "../use-polling.ts";
 import { GenexCredits } from "../panels/plugins/genex/GenexCredits.tsx";
 import type { ProviderUsage, ProviderUsageReport } from "../../shared/provider-usage.ts";
 import type { ContextUsage } from "../../shared/context.ts";
-import { Pending } from "./Pending.tsx";
 import { selectedCompact } from "../chat/compact-control.ts";
-import { COMPACT_WORDS } from "../words.ts";
+import { COMPACT_WORDS, PROVIDER_ACCOUNT_WORDS } from "../words.ts";
+import { openSettings, SettingsSection } from "../settings-navigation.ts";
+import type { SubscriptionAccountView } from "../../shared/subscription-accounts.ts";
+import { accountLabel, activeAccount, switchAccount, useSubscriptionAccounts } from "../subscription-accounts.ts";
 export type { ContextUsage };
 /** The ring's circumference: a circle of radius 6. */
 const RING = 2 * Math.PI * 6;
@@ -68,21 +70,74 @@ function LimitWindow({ window }: { window: ProviderUsage["windows"][number] }) {
   );
 }
 
+/**
+ * The account a plan's limits belong to, and the others to switch to: the one in use names the
+ * plan's line, clicking it lists the rest. A switch to an account that is not signed in starts its
+ * web sign-in and opens Model Providers, where that sign-in shows.
+ */
+function PlanAccounts({
+  engine,
+  accounts,
+  onSwitched,
+}: {
+  engine: string;
+  accounts: readonly SubscriptionAccountView[];
+  onSwitched: () => void;
+}): JSX.Element {
+  const [open, setOpen] = useState(false);
+  const inUse = activeAccount(accounts);
+  const others = accounts.filter((account) => !account.active);
+  const signIn = async (opts: { account: string }): Promise<void> => {
+    await window.studio.subscriptionSignIn({ engine, ...opts });
+    openSettings(SettingsSection.Providers);
+  };
+  const pick = (account: string): void => {
+    setOpen(false);
+    void switchAccount(engine, account, signIn)
+      .catch(() => {})
+      .finally(onSwitched);
+  };
+  return (
+    <div className="usage-plan-accounts">
+      <button type="button" className="usage-plan-account" aria-expanded={open} onClick={() => setOpen((was) => !was)}>
+        <span className="truncate">{inUse ? accountLabel(inUse) : PROVIDER_ACCOUNT_WORDS.terminal}</span>
+        <Icon name="chevron-down" size={12} />
+      </button>
+      {open &&
+        others.map((account) => (
+          <button
+            type="button"
+            key={account.id}
+            className="usage-plan-account picker-expand"
+            data-switch-account={account.id}
+            onClick={() => pick(account.id)}
+          >
+            <span className="truncate">{PROVIDER_ACCOUNT_WORDS.switchTo(accountLabel(account))}</span>
+          </button>
+        ))}
+    </div>
+  );
+}
+
 function PlanLimits({
   report,
   roles,
   showRoles,
   allRoles,
+  onSwitched,
 }: {
   report: ProviderUsageReport;
   roles: RoleKey[];
   showRoles: boolean;
   allRoles: number;
+  /** Another account runs now: read usage again, and the accounts with it. */
+  onSwitched: (reloadAccounts: () => void) => void;
 }) {
   const usage: ProviderUsage | null = report.usage;
   const page = PLAN_PROVIDERS[report.engine]?.usagePage;
   const title = planWords(report.engine, usage?.plan);
   const stale = usage && Date.now() - Date.parse(usage.measuredAt) > STALE_MS;
+  const { accounts, reload } = useSubscriptionAccounts(report.engine, report);
   return (
     <section className="usage-plan" data-usage-engine={report.engine}>
       <div className="usage-plan-head">
@@ -99,8 +154,15 @@ function PlanLimits({
         ) : (
           <span className="truncate">{title}</span>
         )}
-        {showRoles && <span className="usage-plan-roles">{rolesWords(roles, allRoles)}</span>}
+        {showRoles && (
+          <span className="usage-plan-roles" data-in-use={roles.length > 0 || undefined}>
+            {rolesWords(roles, allRoles)}
+          </span>
+        )}
       </div>
+      {accounts.length > 1 && (
+        <PlanAccounts engine={report.engine} accounts={accounts} onSwitched={() => onSwitched(reload)} />
+      )}
       {usage?.windows.map((window) => (
         <LimitWindow key={window.id} window={window} />
       ))}
@@ -144,19 +206,66 @@ function usePlanUsage(open: boolean) {
   return { reports, failed, refresh };
 }
 
-/** Each subscription's plan limits, once read; until then that they are being checked, or that they cannot be. */
+/** A bar the size of the text it stands in for, shimmering softly while that text is read. */
+function SkeletonBar({ width, className = "" }: { width?: number; className?: string }): JSX.Element {
+  return <span aria-hidden className={`usage-skeleton ${className}`} style={width ? { width } : undefined} />;
+}
+
+/** A limit row while its numbers are read: its name, its reset and percent, and its meter. */
+function SkeletonLimit({ name }: { name: number }): JSX.Element {
+  return (
+    <div className="usage-limit">
+      <div className="usage-limit-head">
+        <SkeletonBar width={name} />
+        <SkeletonBar width={118} className="usage-skeleton-sub" />
+      </div>
+      <SkeletonBar className="usage-skeleton-meter" />
+    </div>
+  );
+}
+
+/**
+ * The plans while their usage is read, drawn at their real size: each plan this setup uses by its
+ * name and roles, its limits as soft shimmering bars; one unnamed plan when none is known.
+ */
+function PendingPlans({ usedBy }: { usedBy: Record<string, RoleKey[]> }): JSX.Element {
+  const allRoles = Object.values(usedBy).flat().length;
+  const plans = pendingPlans(usedBy);
+  return (
+    <div role="status" aria-busy="true" aria-label="Checking plan usage…" data-usage-pending>
+      {plans.map((engine) => (
+        <section key={engine ?? "plan"} className="usage-plan">
+          <div className="usage-plan-head">
+            {engine ? <span className="truncate">{planWords(engine)}</span> : <SkeletonBar width={112} />}
+            {engine && plans.length > 1 && (
+              <span className="usage-plan-roles" data-in-use>
+                {rolesWords(usedBy[engine] ?? [], allRoles)}
+              </span>
+            )}
+          </div>
+          <SkeletonLimit name={92} />
+          <SkeletonLimit name={130} />
+        </section>
+      ))}
+    </div>
+  );
+}
+
+/** Each subscription's plan limits, once read; until then their skeletons, or that they cannot be read. */
 function PlanUsage({
   reports,
   failed,
   usedBy,
+  onSwitched,
 }: {
   reports: ProviderUsageReport[] | null;
   failed: boolean;
   usedBy: Record<string, RoleKey[]>;
+  onSwitched: (reloadAccounts: () => void) => void;
 }): JSX.Element {
   if (reports === null && failed)
     return <p className="usage-note usage-divider">Plan usage isn’t available right now.</p>;
-  if (reports === null) return <Pending label="Checking plan usage…" className="usage-note usage-divider" />;
+  if (reports === null) return <PendingPlans usedBy={usedBy} />;
   // The orchestrator's plan first, then the others this setup draws on, then any left to switch to.
   const rank = (engineId: string) => planRank(usedBy[engineId]);
   const plans = [...reports].sort((a, b) => rank(a.engine) - rank(b.engine));
@@ -169,6 +278,7 @@ function PlanUsage({
           roles={usedBy[report.engine] ?? []}
           showRoles={plans.length > 1}
           allRoles={Object.values(usedBy).flat().length}
+          onSwitched={onSwitched}
         />
       ))}
     </>
@@ -210,6 +320,8 @@ export function ComposerLimits({
     contexts,
     modelWindow: selected?.contextWindow,
   });
+  // The line names how full the context is only once it was measured; the meter's text says when not.
+  const reading = percent == null ? COMPACT_WORDS.automatic : `${summary} · ${COMPACT_WORDS.automatic}`;
   const compact = selectedCompact(models, modelKey, { compacting: Boolean(compacting), busy: Boolean(compactBusy) });
   return (
     <Popover open={open} onOpenChange={setOpen}>
@@ -240,7 +352,7 @@ export function ComposerLimits({
         side="top"
         align="end"
         sideOffset={8}
-        className="picker-panel w-[340px] max-w-(--available-width) max-h-(--available-height) overflow-y-auto p-1.5"
+        className="picker-panel w-[360px] max-w-(--available-width) max-h-(--available-height) overflow-y-auto p-1.5"
         aria-label="Context and usage"
       >
         <section className="px-2.5 pt-1.5 pb-2">
@@ -264,18 +376,46 @@ export function ComposerLimits({
           >
             <i style={{ width: `${percent ?? 0}%` }} data-full={(percent ?? 0) >= CONTEXT_FULL || undefined} />
           </div>
-          <p className="mt-2 text-[12px] leading-4 text-ink-3">{summary} · Compacts automatically</p>
-        </section>
-        {compact.shown && onCompact && (
-          <div className="flex items-center gap-2 pr-1">
-            <PickerCaption>{COMPACT_WORDS.caption}</PickerCaption>
-            <button type="button" className="picker-action ml-auto" disabled={compact.disabled} onClick={onCompact}>
-              {compacting ? COMPACT_WORDS.running : COMPACT_WORDS.action}
-            </button>
+          <div className="mt-2 flex min-h-6 items-center gap-2">
+            <p className="min-w-0 flex-1 truncate text-[12px] leading-4 text-ink-3" title={reading}>
+              {reading}
+            </p>
+            {compact.shown && onCompact && (
+              <button
+                type="button"
+                className="picker-action usage-compact"
+                title={COMPACT_WORDS.caption}
+                disabled={compact.disabled}
+                onClick={onCompact}
+              >
+                <Icon name="compact" size={14} />
+                {compacting ? COMPACT_WORDS.running : COMPACT_WORDS.action}
+              </button>
+            )}
           </div>
-        )}
-        <PlanUsage reports={reports} failed={failed} usedBy={usedBy} />
+        </section>
+        <PlanUsage
+          reports={reports}
+          failed={failed}
+          usedBy={usedBy}
+          onSwitched={(reloadAccounts) => {
+            refresh(true);
+            reloadAccounts();
+          }}
+        />
         <GenexCredits project={project} open={open} />
+        <button
+          type="button"
+          className="usage-footer"
+          data-usage-providers
+          onClick={() => {
+            setOpen(false);
+            openSettings(SettingsSection.Providers);
+          }}
+        >
+          {PROVIDER_ACCOUNT_WORDS.modelProviders}
+          <Icon name="chevron-right" size={14} className="ml-auto" />
+        </button>
       </PopoverContent>
     </Popover>
   );
