@@ -443,6 +443,53 @@ describe("render perf feature costs", () => {
   });
 });
 
+describe("render perf Stage A feature costs", () => {
+  it("holds each Stage A feature a row draws to its plan section 4 budget (owner decision D17)", async () => {
+    // GA round 2: the Lakeside v2 ultra rows read +6.0 and +6.3 ms against 5.5 because the budgets
+    // knew only pass 1's features, while those rows also draw the terrain, grass, probes, volumes,
+    // froxel fog, screen inputs and the sun mask.
+    const budgets = JSON.parse(await readFile(path.join(FIXTURES, "budgets.json"), "utf8"));
+    const tierA = [
+      "terrain",
+      "grass",
+      "reflection-probes",
+      "irradiance-volumes",
+      "froxel-fog",
+      "screen-inputs",
+      "sun-mask",
+    ];
+    const withTierA = async (froxel: string) => {
+      const record = await fixture("baseline.json");
+      for (const row of record.rows.filter((r) => r.applied && (r.profile ?? "off") !== "off")) {
+        if (!row.applied) continue;
+        row.applied.featuresDrawn = [...switchedOn(row), ...tierA];
+        row.applied.featureShapes = { "froxel-fog": froxel };
+      }
+      return featureCosts(record, budgets).find((c) => c.row === "bench-outdoor" && c.profile === "high");
+    };
+    const high = await withTierA("high");
+    assert.deepEqual(high?.budgetEntries, [
+      "hdr-tonemap",
+      "bloom",
+      "reflection-probes",
+      "irradiance-volumes",
+      "froxel-fog-high",
+      "screen-inputs",
+      "terrain",
+      "grass",
+      "sun-mask",
+    ]);
+    assert.ok(Math.abs((high?.budgetMs ?? 0) - (0.3 + 0.4 + 0.3 + 0.2 + 0.8 + 0.1 + 0.8 + 1.5 + 0.5)) < 1e-9);
+    const ultra = await withTierA("ultra");
+    assert.ok(ultra?.budgetEntries.includes("froxel-fog-ultra"), "the ultra grid has its own 1.2 ms");
+    assert.ok(!ultra?.budgetEntries.includes("froxel-fog-high"));
+    const ids = new Set(budgets.entries.map((e: { id: string }) => e.id));
+    for (const id of ["grading", "dof-ring", "dof-circular", "motion-blur", "decals", "particles"]) {
+      assert.ok(ids.has(id), `${id} has its plan section 4 budget`);
+    }
+  });
+});
+
 describe("render perf command line", () => {
   const run = (...args: string[]) => spawnSync(process.execPath, [SCRIPT, ...args], { cwd: REPO, encoding: "utf8" });
 

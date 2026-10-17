@@ -210,6 +210,19 @@ fn off_pops(off: &Run) -> Vec<Vec<u32>> {
     off.pops.iter().zip(&off.excursions).map(|(pops, excursions)| pops.iter().chain(excursions).copied().collect()).collect()
 }
 
+/// Add to each frame's not-the-shadows' pixels the pops of `on` within `radius` pixels of the
+/// frame's edge (owner decision D12: content entering at the frame's edge is foliage and TAA
+/// quality, not a shadow pop).
+fn add_frame_edge(not_shadows: &mut [Vec<u32>], on: &[Vec<u32>], (width, height): (usize, usize), radius: usize) {
+    let at_edge = |i: u32| {
+        let (x, y) = (i as usize % width, i as usize / width);
+        x < radius || y < radius || x + radius >= width || y + radius >= height
+    };
+    for (pixels, pops) in not_shadows.iter_mut().zip(on) {
+        pixels.extend(pops.iter().copied().filter(|i| at_edge(*i)));
+    }
+}
+
 /// What a run of frames did, frame by frame.
 struct Run {
     /// How far (pixels) a frame's motion may carry a value to the next: the envelope's radius.
@@ -526,12 +539,19 @@ fn judge_row(label: &str, radius: usize, on: &Run, off: &Run, class: DeviceClass
     let pixels = on.popped.len();
     // D12 flipped: an on-run pop at a pixel that also pops at the same frame of the off run by
     // SH-15's plain test (not only by the envelope) is not the shadows'.
-    let off_popped = off_pops(off);
+    let width = on.last.as_ref().map_or(1, |last| last.width() as usize);
+    let height = on.last.as_ref().map_or(1, |last| last.height() as usize);
+    let mut off_popped = off_pops(off);
+    // D12 flipped (GA round 2): on a desktop class, content entering at the frame's edge is not
+    // the shadows' either: an on-run pop within the path's motion radius of the edge, where the
+    // frames before and after hold no neighbourhood for the envelope to find its value in.
+    if class.form == FormFactor::Desktop {
+        add_frame_edge(&mut off_popped, &on.pops, (width, height), radius);
+    }
     let pops = attributed(&on.pops, &off_popped, pixels);
     let worst = pops.iter().copied().max().unwrap_or(0);
     let worst_frame = pops.iter().position(|count| *count == worst).unwrap_or(0);
     let total: usize = pops.iter().sum();
-    let width = on.last.as_ref().map_or(1, |last| last.width() as usize);
     let worst_pixels: Vec<String> = attributed_pixels(&on.pops, &off_popped, worst_frame, width).iter().map(|(x, y)| format!("[{x}, {y}]")).collect();
     let flicker: Vec<f64> = attributed(&on.flickers, &off.flickers, pixels).iter().map(|count| *count as f64 / on.pixels()).collect();
     let (flicker_mean, flicker_max) = (mean(&flicker), flicker.iter().copied().fold(0.0, f64::max));

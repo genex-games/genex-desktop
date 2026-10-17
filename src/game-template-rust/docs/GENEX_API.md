@@ -212,8 +212,9 @@ faces. A cell behind a wall lends a surface no light, so a volume may reach acro
 next room or the street. The grid is baked a few cells a frame the first time the volume appears
 and fades in once baked, and again when the sky changes or the box or its cells change: objects
 that move later do not change it. Only scenes the sky or an HDR map lights take it. The device's
-quality bakes the first volumes a frame declares (4 on `medium`, 8 on `high` and `ultra`, 2 to 4
-on phones, none on `low` and the low phones); the rest take the sky's light. Give a volume to each
+quality bakes the first volumes a frame declares (4 on `medium`, 8 on `high` and `ultra`; 2 to 4
+on phones at `high` and `ultra` only, none at a phone's own `medium` or `low` preset or on the
+low phones); the rest take the sky's light. Give a volume to each
 room or courtyard whose bounced colour matters, alongside its reflection probe.
 
 Posters, puddles, grime and stains are decals, not thin boxes over a surface (which fight it for
@@ -692,7 +693,8 @@ to `frame_index` so the history averages it: noise that never moves stays as gra
 sharpens it. The world pass draws one sample per pixel under TAA (MSAA is off, on every
 destination). A budget refit that asks for other anti-aliasing draws the closest one the world
 pass has and is listed `pipeline-change-deferred`, as a Studio run's preset change is while its
-pipelines compile off the frame thread (Live keeps the last preset until then). TAA's knobs are the preset's; a game may tune
+pipelines compile off the frame thread (Live keeps the last preset until then); a new window or
+canvas size whose budget changes the samples rebuilds the world pass for them. TAA's knobs are the preset's; a game may tune
 them per class from code only: `RenderConfig::new().class(class, ClassOverride { taa:
 Some(TaaQuality::DEFAULT.with_jitter_cycle(JitterCycle::Sixteen)), ..Default::default() })`
 (`.with_alpha_min(..)` for a steadier history, `.with_lod_bias(..)` for sharper textures).

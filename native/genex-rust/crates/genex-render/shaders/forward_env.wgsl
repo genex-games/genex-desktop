@@ -163,9 +163,13 @@ fn gx_env_light(world_pos: vec3<f32>, dir: vec3<f32>, lod: f32, n: vec3<f32>) ->
                     total += weight;
                 }
             } else if row.max_layer.w < 0.0 {
-                let weight = gx_probe_influence(row, world_pos) * row.capture_intensity.y;
-                if weight > 0.0 {
-                    diffuse += gx_volume_irradiance(row, world_pos, n) * (weight * row.capture_intensity.w);
+                let influence = gx_probe_influence(row, world_pos) * row.capture_intensity.y;
+                if influence > 0.0 {
+                    // A point the volume's cells cannot see (behind the wall they stop at) takes
+                    // none of it: the sky fills its share.
+                    let volume = gx_volume_irradiance(row, world_pos, n);
+                    let weight = influence * volume.a;
+                    diffuse += volume.rgb * (weight * row.capture_intensity.w);
                     volumes += weight;
                 }
             }
@@ -217,20 +221,29 @@ fn gx_volume_sees(origin: i32, cells: vec3<i32>, cell: vec3<i32>, axis: u32, off
     return clamp((f32(code) * reach_step + tolerance - abs(offset)) / tolerance, 0.0, 1.0);
 }
 
-// The trilinear position along axis `axis` of a point between cells `base` and `base + 1` at
-// `t`, moved toward the cell that sees it (`irradiance::visible_share`): each side weighs its
-// share by whether its cell (the one nearest the point across the other axes, `near`) sees the
-// point, so a wall across the axis leaves the point reading its own side's cells only.
-fn gx_volume_visible_share(origin: i32, cells: vec3<i32>, near: vec3<i32>, axis: u32, t: f32, offset: f32, spacing: f32, step: vec2<f32>) -> f32 {
+// Whether the two cells around a point along `axis` see it (`irradiance::axis_sees`): the one
+// nearest it across the other axes (`near`) and the next one along the axis (the same cell when
+// the volume has one cell along it), `offset` the point's distance past `near`'s centre.
+fn gx_volume_axis_sees(origin: i32, cells: vec3<i32>, near: vec3<i32>, axis: u32, offset: f32, spacing: f32, step: vec2<f32>) -> vec2<f32> {
+    let lower = gx_volume_sees(origin, cells, near, axis, offset, step.x, step.y);
     if cells[axis] < 2 {
-        return t;
+        return vec2<f32>(lower, lower);
     }
     var upper = near;
     upper[axis] = near[axis] + 1;
-    let lower_sees = gx_volume_sees(origin, cells, near, axis, offset, step.x, step.y);
-    let upper_sees = gx_volume_sees(origin, cells, upper, axis, offset - spacing, step.x, step.y);
-    let low = (1.0 - t) * max(lower_sees, GX_VOLUME_HIDDEN_WEIGHT);
-    let high = t * max(upper_sees, GX_VOLUME_HIDDEN_WEIGHT);
+    return vec2<f32>(lower, gx_volume_sees(origin, cells, upper, axis, offset - spacing, step.x, step.y));
+}
+
+// The trilinear position along an axis of a point between two cells at `t`, moved toward the cell
+// that sees it (`irradiance::visible_share`): each side weighs its share by whether its cell
+// (`sees`, from `gx_volume_axis_sees`) sees the point, so a wall across the axis leaves the point
+// reading its own side's cells only. `single`: the volume has one cell along the axis.
+fn gx_volume_visible_share(t: f32, sees: vec2<f32>, single: bool) -> f32 {
+    if single {
+        return t;
+    }
+    let low = (1.0 - t) * max(sees.x, GX_VOLUME_HIDDEN_WEIGHT);
+    let high = t * max(sees.y, GX_VOLUME_HIDDEN_WEIGHT);
     return high / max(low + high, 1e-12);
 }
 
@@ -241,8 +254,11 @@ fn gx_volume_visible_share(origin: i32, cells: vec3<i32>, near: vec3<i32>, axis:
 // face's texels kept inside its sub-block). With leak control (desktop and web) the position is
 // first moved along each axis toward the side whose cell sees the point (six reach loads,
 // `gx_volume_visible_share`): a cell behind a wall lends the point no light. Without (phones) the
-// filter blends the eight cells as they are.
-fn gx_volume_irradiance(row: GxProbeRow, p: vec3<f32>, n: vec3<f32>) -> vec3<f32> {
+// filter blends the eight cells as they are. Alpha is how far the volume sees the point
+// (`irradiance::grid_seen`; 1 without leak control): along each axis the better of the two cells
+// around it, so a point past the wall every cell stops at (a room's outside wall in the volume's
+// fade band, GA round 2: the Lakeside cabin's front wall read its dark room) takes none of it.
+fn gx_volume_irradiance(row: GxProbeRow, p: vec3<f32>, n: vec3<f32>) -> vec4<f32> {
     let cells = gx_volume_cells(row);
     let leak_control = ((u32(row.capture_intensity.x) >> 18u) & 1u) == 1u;
     let origin = i32(-row.max_layer.w) - 1;
@@ -250,6 +266,7 @@ fn gx_volume_irradiance(row: GxProbeRow, p: vec3<f32>, n: vec3<f32>) -> vec3<f32
     let spacing = (row.max_layer.xyz - lo) / vec3<f32>(cells);
     let at = p + n * row.capture_intensity.z;
     var grid = clamp((at - lo) / spacing - 0.5, vec3<f32>(0.0), vec3<f32>(cells - 1));
+    var seen = 1.0;
     if leak_control {
         let base = min(vec3<i32>(floor(grid)), max(cells - 2, vec3<i32>(0)));
         let t = grid - vec3<f32>(base);
@@ -257,12 +274,16 @@ fn gx_volume_irradiance(row: GxProbeRow, p: vec3<f32>, n: vec3<f32>) -> vec3<f32
         // How far the point is from the base cells' centres along each axis.
         let offset = at - (lo + (vec3<f32>(base) + 0.5) * spacing);
         let step = vec2<f32>(GX_REACH_DIAGONALS * length(spacing) / f32(GX_REACH_MASK), GX_VOLUME_REACH_TOLERANCE * min(spacing.x, min(spacing.y, spacing.z)));
+        let sx = gx_volume_axis_sees(origin, cells, vec3<i32>(base.x, near.y, near.z), 0u, offset.x, spacing.x, step);
+        let sy = gx_volume_axis_sees(origin, cells, vec3<i32>(near.x, base.y, near.z), 1u, offset.y, spacing.y, step);
+        let sz = gx_volume_axis_sees(origin, cells, vec3<i32>(near.x, near.y, base.z), 2u, offset.z, spacing.z, step);
         let moved = vec3<f32>(
-            gx_volume_visible_share(origin, cells, vec3<i32>(base.x, near.y, near.z), 0u, t.x, offset.x, spacing.x, step),
-            gx_volume_visible_share(origin, cells, vec3<i32>(near.x, base.y, near.z), 1u, t.y, offset.y, spacing.y, step),
-            gx_volume_visible_share(origin, cells, vec3<i32>(near.x, near.y, base.z), 2u, t.z, offset.z, spacing.z, step),
+            gx_volume_visible_share(t.x, sx, cells.x < 2),
+            gx_volume_visible_share(t.y, sy, cells.y < 2),
+            gx_volume_visible_share(t.z, sz, cells.z < 2),
         );
         grid = vec3<f32>(base) + moved;
+        seen = min(max(sx.x, sx.y), min(max(sy.x, sy.y), max(sz.x, sz.y)));
     }
     let size = vec3<f32>(textureDimensions(env_irradiance));
     let texel = vec3<f32>(f32(origin), 0.0, 0.0) + grid + 0.5;
@@ -272,5 +293,5 @@ fn gx_volume_irradiance(row: GxProbeRow, p: vec3<f32>, n: vec3<f32>) -> vec3<f32
     let x = textureSampleLevel(env_irradiance, env_sampler, (texel + vec3<f32>(0.0, select(0.0, half, n.x < 0.0), 0.0)) / size, 0.0).rgb;
     let y = textureSampleLevel(env_irradiance, env_sampler, (texel + vec3<f32>(0.0, select(0.0, half, n.y < 0.0), third)) / size, 0.0).rgb;
     let z = textureSampleLevel(env_irradiance, env_sampler, (texel + vec3<f32>(0.0, select(0.0, half, n.z < 0.0), 2.0 * third)) / size, 0.0).rgb;
-    return x * nn.x + y * nn.y + z * nn.z;
+    return vec4<f32>(x * nn.x + y * nn.y + z * nn.z, seen);
 }

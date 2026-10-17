@@ -10,7 +10,7 @@
 
 use genex_render::Gpu;
 use genex_render::device_class::{DeviceClass, FormFactor, PerformanceTier};
-use genex_render::irradiance::{IrradianceVolume, held_volumes};
+use genex_render::irradiance::{AmbientCube, IrradianceVolume, ambient_cube, grid_seen, held_volumes, volume_row};
 use genex_render::lights::{Lighting, binned_frame};
 use genex_render::presets::preset_quality;
 use genex_render::probes::ReflectionProbe;
@@ -36,6 +36,57 @@ fn the_presets_bake_volumes_from_medium_up_and_phones_read_them_in_three_fetches
         assert!(!phone.irradiance_leak_control, "mobile-{tier:?}: three trilinear fetches");
     }
     assert_eq!(Quality::off().environment.irradiance_volumes, 0, "the off quality bakes none");
+}
+
+/// Owner decision D16 (2026-10-18): a feature that cannot fit a phone's eighth of the frame is off
+/// at the phone's own preset and stays a person's or game's choice at `high` and `ultra`. The
+/// volumes' time-sliced bake measured +1.9 ms on the mobile-high proxy (4.1 ms against 2.083), so
+/// no phone bakes them at its default preset; `high` on mobile-mid and mobile-high still does.
+#[test]
+fn phones_bake_no_volumes_at_their_default_preset_and_still_do_at_high() {
+    for tier in [PerformanceTier::Low, PerformanceTier::Mid, PerformanceTier::High] {
+        let phone = class(FormFactor::Mobile, tier);
+        let preset = genex_render::presets::class_defaults(phone).preset;
+        assert_eq!(preset_quality(preset, phone).environment.irradiance_volumes, 0, "mobile-{tier:?} at its default {preset:?}");
+        assert_eq!(preset_quality(QualityPreset::Medium, phone).environment.irradiance_volumes, 0, "mobile-{tier:?} at medium");
+    }
+    let high = |tier| preset_quality(QualityPreset::High, class(FormFactor::Mobile, tier)).environment.irradiance_volumes;
+    assert_eq!([high(PerformanceTier::Low), high(PerformanceTier::Mid), high(PerformanceTier::High)], [0, 2, 4], "a phone's high preset keeps its cap");
+}
+
+/// A 4 x 2 x 4 volume of 1 m cells filling a room whose walls stand on the box's faces: each cell's
+/// reaches stop at the walls (`open`: nothing around, every reach the most a cell records).
+fn room_cells(volume: &IrradianceVolume, open: bool) -> impl Fn([u32; 3]) -> AmbientCube {
+    let reach_max = volume.reach_max();
+    let size = [4.0_f32, 2.0, 4.0];
+    move |cell: [u32; 3]| {
+        let reaches: [f32; 6] = std::array::from_fn(|face| {
+            let (axis, centre) = (face / 2, cell[face / 2] as f32 + 0.5);
+            let wall = if face % 2 == 0 { size[axis] - centre } else { centre };
+            if open { reach_max } else { wall }
+        });
+        ambient_cube([[0.1; 3]; 6], reaches, reach_max)
+    }
+}
+
+/// GA round 2: the Lakeside cabin's sunless front wall read 67 levels at medium against 90 without
+/// the room's volume, because a point on a wall's outside face inside the volume's fade band read
+/// the room's cells behind the wall at the volume's full weight. With leak control the volume
+/// weighs a point by how far its cells see it ([`grid_seen`]): none past the wall, all of it inside
+/// the room and past an open box's face.
+#[test]
+fn a_room_s_volume_lends_nothing_past_its_wall_and_everything_inside() {
+    let volume = IrradianceVolume::new([0.0, 0.0, 0.0], [4.0, 2.0, 4.0]).with_cells([4, 2, 4]).with_blend(0.3);
+    let row = volume_row(&volume, Some(0), 1.0, true);
+    let (walled, open) = (room_cells(&volume, false), room_cells(&volume, true));
+    let outside = ([4.2, 1.0, 2.0], [1.0, 0.0, 0.0]);
+    assert!(grid_seen(&row, &walled, outside.0, outside.1) < 0.01, "the wall's outside face: {}", grid_seen(&row, &walled, outside.0, outside.1));
+    assert!(grid_seen(&row, &open, outside.0, outside.1) > 0.99, "an open box's fade band keeps the volume");
+    for (p, n) in [([3.95, 1.0, 2.0], [-1.0, 0.0, 0.0]), ([2.0, 0.02, 2.0], [0.0, 1.0, 0.0]), ([1.3, 1.1, 2.7], [0.0, 0.0, 1.0])] {
+        assert!(grid_seen(&row, &walled, p, n) > 0.99, "inside the room at {p:?}: {}", grid_seen(&row, &walled, p, n));
+    }
+    let phone = volume_row(&volume, Some(0), 1.0, false);
+    assert_eq!(grid_seen(&phone, &walled, outside.0, outside.1), 1.0, "phones read the cells as they are");
 }
 
 #[test]

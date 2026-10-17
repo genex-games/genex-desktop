@@ -406,33 +406,78 @@ pub fn visible_share(cube_at: &dyn Fn([u32; 3]) -> AmbientCube, lower: [u32; 3],
     high / (low + high).max(1.0e-12)
 }
 
+/// Where a lookup of `row` at `p` with normal `n` lands among its cells (`gx_volume_irradiance`):
+/// the point offset along its normal and placed among the cell centres.
+struct GridPoint {
+    cells: [u32; 3],
+    leak_control: bool,
+    spacing: Vec3,
+    /// The lower corner cell of the eight around the point.
+    base: [u32; 3],
+    /// The point's trilinear position past `base` (0..1 along each axis).
+    t: [f32; 3],
+    /// The cell nearest the point.
+    near: [u32; 3],
+    /// The point's distance past `base`'s centre along each axis.
+    offset: Vec3,
+    /// The reach decode's `reach_max` and the visibility's tolerance.
+    scale: (f32, f32),
+}
+
+impl GridPoint {
+    fn of(row: &GpuProbeRow, p: [f32; 3], n: [f32; 3]) -> GridPoint {
+        let (cells, leak_control) = row_cells(row);
+        let lo = Vec3::new(row.min_blend[0], row.min_blend[1], row.min_blend[2]);
+        let hi = Vec3::new(row.max_layer[0], row.max_layer[1], row.max_layer[2]);
+        let counts = Vec3::new(cells[0] as f32, cells[1] as f32, cells[2] as f32);
+        let spacing = (hi - lo) / counts;
+        let at = Vec3::from(p) + Vec3::from(n) * row.capture_intensity[2];
+        let grid = ((at - lo) / spacing - 0.5).clamp(Vec3::ZERO, counts - 1.0);
+        let base: [u32; 3] = std::array::from_fn(|axis| (grid[axis].floor() as u32).min(cells[axis].saturating_sub(2)));
+        let t: [f32; 3] = std::array::from_fn(|axis| grid[axis] - base[axis] as f32);
+        let near: [u32; 3] = std::array::from_fn(|axis| base[axis] + u32::from(t[axis] > 0.5));
+        let offset = at - (lo + (Vec3::new(base[0] as f32, base[1] as f32, base[2] as f32) + 0.5) * spacing);
+        let scale = (REACH_DIAGONALS * spacing.length(), REACH_TOLERANCE * spacing.min_element());
+        GridPoint { cells, leak_control, spacing, base, t, near, offset, scale }
+    }
+
+    /// The cell `near` with `base`'s index along `axis`: the lower of the two around the point.
+    fn lower(&self, axis: usize) -> [u32; 3] {
+        let mut lower = self.near;
+        lower[axis] = self.base[axis];
+        lower
+    }
+
+    /// Whether the two cells around the point along `axis` see it (`gx_volume_axis_sees`): the
+    /// lower one and the next (the same one when the volume has one cell along the axis).
+    fn axis_sees(&self, cube_at: &dyn Fn([u32; 3]) -> AmbientCube, axis: usize) -> (f32, f32) {
+        let lower = self.lower(axis);
+        let lower_sees = sees(&cube_at(lower), axis, self.offset[axis], self.scale.0, self.scale.1);
+        if self.cells[axis] < 2 {
+            return (lower_sees, lower_sees);
+        }
+        let mut upper = lower;
+        upper[axis] += 1;
+        (lower_sees, sees(&cube_at(upper), axis, self.offset[axis] - self.spacing[axis], self.scale.0, self.scale.1))
+    }
+}
+
 /// A volume's irradiance (over pi) at `p` for unit normal `n` (`gx_volume_irradiance`), its cells'
 /// ambient cubes read through `cube_at`: the point offset along its normal, placed among the cell
 /// centres, and with the row's leak control moved along each axis toward the side whose cell
 /// (the one nearest it across the other axes) sees it ([`visible_share`]); then the trilinear blend
 /// of the eight cells around it (what the sampler's filter returns for each face).
 pub fn grid_irradiance(row: &GpuProbeRow, cube_at: &dyn Fn([u32; 3]) -> AmbientCube, p: [f32; 3], n: [f32; 3]) -> [f32; 3] {
-    let (cells, leak_control) = row_cells(row);
-    let lo = Vec3::new(row.min_blend[0], row.min_blend[1], row.min_blend[2]);
-    let hi = Vec3::new(row.max_layer[0], row.max_layer[1], row.max_layer[2]);
-    let counts = Vec3::new(cells[0] as f32, cells[1] as f32, cells[2] as f32);
-    let spacing = (hi - lo) / counts;
-    let at = Vec3::from(p) + Vec3::from(n) * row.capture_intensity[2];
-    let grid = ((at - lo) / spacing - 0.5).clamp(Vec3::ZERO, counts - 1.0);
+    let point = GridPoint::of(row, p, n);
+    let (cells, base) = (point.cells, point.base);
     let last = cells.map(|count| count.saturating_sub(1));
-    let base: [u32; 3] = std::array::from_fn(|axis| (grid[axis].floor() as u32).min(cells[axis].saturating_sub(2)));
-    let mut t: [f32; 3] = std::array::from_fn(|axis| grid[axis] - base[axis] as f32);
-    if leak_control {
-        let near: [u32; 3] = std::array::from_fn(|axis| base[axis] + u32::from(t[axis] > 0.5));
-        let offset = at - (lo + (Vec3::new(base[0] as f32, base[1] as f32, base[2] as f32) + 0.5) * spacing);
-        let scale = (REACH_DIAGONALS * spacing.length(), REACH_TOLERANCE * spacing.min_element());
+    let mut t = point.t;
+    if point.leak_control {
         t = std::array::from_fn(|axis| {
             if cells[axis] < 2 {
                 return t[axis];
             }
-            let mut lower = near;
-            lower[axis] = base[axis];
-            visible_share(cube_at, lower, axis, t[axis], offset[axis], (spacing[axis], scale.0, scale.1))
+            visible_share(cube_at, point.lower(axis), axis, t[axis], point.offset[axis], (point.spacing[axis], point.scale.0, point.scale.1))
         });
     }
     let mut sum = [0.0_f32; 3];
@@ -447,8 +492,22 @@ pub fn grid_irradiance(row: &GpuProbeRow, cube_at: &dyn Fn([u32; 3]) -> AmbientC
     sum
 }
 
+/// How far a volume's cells see `p` (`gx_volume_irradiance`'s alpha), which scales the volume's
+/// weight there: with the row's leak control, along each axis the better of the two cells around
+/// the point, the least over the axes; 1 without. A point past the wall every cell stops at (a
+/// room's outside wall inside the volume's fade band) takes none of the volume (GA round 2: the
+/// Lakeside cabin's sunless front wall read its dark room, 67 levels against 90 without the volume).
+pub fn grid_seen(row: &GpuProbeRow, cube_at: &dyn Fn([u32; 3]) -> AmbientCube, p: [f32; 3], n: [f32; 3]) -> f32 {
+    let point = GridPoint::of(row, p, n);
+    if !point.leak_control {
+        return 1.0;
+    }
+    (0..3).map(|axis| point.axis_sees(cube_at, axis)).map(|(lower, upper)| lower.max(upper)).fold(1.0, f32::min)
+}
+
 /// How the volumes at a point share its diffuse light (`gx_env_light`'s diffuse weights): each published
-/// row's `probes::influence` times how far it has faded in (any other row weighs nothing), divided
+/// row's `probes::influence` times how far it has faded in (the shader also times how far its cells
+/// see the point, [`grid_seen`]; any other row weighs nothing), divided
 /// by their sum when it passes 1, and the sky's SH9 what is left of 1. Returns the volumes' weights
 /// in row order and the sky's.
 pub fn blend(rows: &[GpuProbeRow], p: [f32; 3]) -> (Vec<f32>, f32) {

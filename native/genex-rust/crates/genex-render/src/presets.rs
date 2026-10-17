@@ -122,8 +122,9 @@ pub const MOBILE_PROBES_PER_TIER: [u8; 4] = [2, 4, 8, 8];
 /// Irradiance volumes baked per desktop and browser preset (low, medium, high and ultra; renderer
 /// pass 2 A.4: medium and up).
 pub const VOLUMES_PER_PRESET: [u8; 4] = [0, 4, 8, 8];
-/// The most irradiance volumes a phone of each tier (low, mid, high, ultra) bakes, whatever the
-/// preset asks (plan A.4: none on mobile-low, which keeps the sky's SH9).
+/// The most irradiance volumes a phone of each tier (low, mid, high, ultra) bakes at `high` and
+/// `ultra` (plan A.4: none on mobile-low, which keeps the sky's SH9; D16: none at a phone's
+/// `medium` or `low`).
 pub const MOBILE_VOLUMES_PER_TIER: [u8; 4] = [0, 2, 4, 4];
 /// The most local lights a phone bins (`LightQuality::cap`), whatever the preset asks.
 pub const MOBILE_MAX_LIGHTS: u32 = 256;
@@ -585,9 +586,13 @@ fn apply_mobile_caps(quality: &mut Quality, preset: QualityPreset, class: Device
     quality.environment.reflection_probes = quality.environment.reflection_probes.min(tier_probes);
     quality.environment.probe_side_max = MOBILE_PROBE_SIDE_MAX_PX;
     quality.environment.continuous_sky = false;
-    // A.4: phones read a volume's ambient cube in three trilinear fetches, no leak control.
+    // A.4: phones read a volume's ambient cube in three trilinear fetches, no leak control. Owner
+    // decision D16: the bake's time slice alone measured +1.9 ms on the mobile-high proxy (an
+    // eighth of the frame is 2.083 ms), so a phone bakes volumes only at `high` and `ultra`, a
+    // person's or game's choice; its own preset (medium or low) keeps the sky's SH9.
     let tier_volumes = MOBILE_VOLUMES_PER_TIER[PerformanceTier::ALL.iter().position(|tier| *tier == class.tier).unwrap_or(0)];
-    quality.environment.irradiance_volumes = quality.environment.irradiance_volumes.min(tier_volumes);
+    let phone_volumes = if preset >= QualityPreset::High { tier_volumes } else { 0 };
+    quality.environment.irradiance_volumes = quality.environment.irradiance_volumes.min(phone_volumes);
     quality.environment.irradiance_leak_control = false;
     // A.5: phones keep the analytic fog until the froxel fog is measured on them (mobile-high only,
     // behind that measurement).

@@ -184,12 +184,12 @@ impl Applied {
     /// [`Applied::json`] with what `renderer`'s last frame drew (RQ5 review: the row reported the
     /// quality's switches, so a TAA ask drawn as MSAA read as TAA): the world pass's samples, and
     /// `taa` and `upscaler` from the frame's path.
-    fn drawn_json(&self, renderer: &Renderer) -> Value {
+    fn drawn_json(&self, renderer: &Renderer, content: Content) -> Value {
         let mut value = self.json();
         let path = renderer.last_scene();
         let taa = path.is_some_and(|path| path.taa);
         let upscaled = path.is_some_and(|path| path.fsr.easu || path.fsr.rcas);
-        let drawn: Vec<&str> = RenderFeature::ALL
+        let mut drawn: Vec<&str> = RenderFeature::ALL
             .into_iter()
             .filter(|feature| match feature {
                 RenderFeature::Taa => taa,
@@ -198,6 +198,13 @@ impl Applied {
             })
             .map(RenderFeature::wire)
             .collect();
+        let hdr = path.is_some_and(|path| path.hdr);
+        let content = Content { terrain: renderer.terrain_stats().is_some(), grass: renderer.grass_stats().is_some(), ..content };
+        let stage_a = stage_a_drawn(&self.quality, renderer.look(), hdr && taa, content);
+        drawn.extend(stage_a.iter().map(|(feature, _)| *feature));
+        for (feature, shape) in stage_a.into_iter().filter_map(|(feature, shape)| shape.map(|shape| (feature, shape))) {
+            value["featureShapes"][feature] = json!(shape);
+        }
         value["featuresDrawn"] = json!(drawn);
         value["samples"] = json!(renderer.sample_count());
         value["scenePath"] = json!({ "taa": taa, "easu": path.is_some_and(|path| path.fsr.easu), "rcas": path.is_some_and(|path| path.fsr.rcas) });
@@ -213,6 +220,49 @@ fn ao_shape(quality: &Quality) -> &'static str {
         genex_render::settings::AoResolution::Full => "full",
         _ => "off",
     }
+}
+
+/// What a scene declares that a Stage A feature draws for (owner decision D17: a row is charged
+/// a feature's budget only when its frames draw it). The terrain and the grass are read off the
+/// renderer; the rest from the frame a subject drew.
+#[derive(Clone, Copy, Debug, Default)]
+struct Content {
+    terrain: bool,
+    grass: bool,
+    reflection_probes: usize,
+    irradiance_volumes: usize,
+    decals: usize,
+}
+
+/// The Stage A features `quality` draws under `look` on `content` (`taa_hdr`: the frame is the
+/// HDR scene TAA resolves, where the sun mask runs), named as `tests/fixtures/render-perf/
+/// budgets.json` names them, each with the shape its budget is keyed by. GPU particles have a
+/// budget but no matrix scene declares any.
+fn stage_a_drawn(quality: &Quality, look: &Look, taa_hdr: bool, content: Content) -> Vec<(&'static str, Option<&'static str>)> {
+    use genex_render::post::dof::DofTier;
+    use genex_render::post::motion_blur::MotionBlurTier;
+    let environment = &quality.environment;
+    let froxel = environment.froxel_fog.filter(|_| quality.fog).map(|grid| if grid == genex_render::froxel::ULTRA_GRID { "ultra" } else { "high" });
+    let dof = match quality.dof {
+        _ if !look.depth_of_field.enabled => None,
+        DofTier::Ring => Some("ring"),
+        DofTier::Circular => Some("circular"),
+        _ => None,
+    };
+    let rows = [
+        ("grading", look.grading != genex_render::post::grading::Grading::NEUTRAL, None),
+        ("reflection-probes", environment.ibl && environment.reflection_probes > 0 && content.reflection_probes > 0, None),
+        ("irradiance-volumes", environment.irradiance_volumes > 0 && content.irradiance_volumes > 0, None),
+        ("froxel-fog", froxel.is_some(), froxel),
+        ("screen-inputs", !quality.screen_inputs.is_empty(), None),
+        ("terrain", content.terrain, None),
+        ("grass", content.grass && quality.grass != genex_render::foliage::GrassQuality::OFF, None),
+        ("dof", dof.is_some(), dof),
+        ("motion-blur", look.motion_blur.enabled && quality.motion_blur != MotionBlurTier::Off, None),
+        ("decals", quality.lights.decals > 0 && content.decals > 0, None),
+        ("sun-mask", genex_render::post::sun_mask::key(quality, taa_hdr, taa_hdr).is_some(), None),
+    ];
+    rows.into_iter().filter(|(_, on, _)| *on).map(|(feature, _, shape)| (feature, shape)).collect()
 }
 
 /// The sun shadows' shape as a row records it, so a profile drawing other cascades than `off`'s
@@ -409,6 +459,10 @@ trait Subject {
     fn scene_at(&self, _frame: u32) -> Option<Scene> {
         None
     }
+    /// What the scene declares for the Stage A features (none but the lakeside's do).
+    fn content(&mut self) -> Content {
+        Content::default()
+    }
 }
 
 /// A lakeside shot, or the tour: the simulation advances one tick per frame.
@@ -434,6 +488,12 @@ impl Subject for LakesideSubject {
 
     fn renderer(&mut self) -> &mut Renderer {
         &mut self.stage.renderer
+    }
+
+    fn content(&mut self) -> Content {
+        let Some(frame) = self.runtime.frame(View::Named(self.view)) else { return Content::default() };
+        let lights = frame.lights();
+        Content { reflection_probes: lights.reflection_probes.len(), irradiance_volumes: lights.irradiance_volumes.len(), decals: frame.decals().len(), ..Content::default() }
     }
 }
 
@@ -567,6 +627,8 @@ const NODES_REASON: &str = "renderer-timer-not-wired: the renderer takes a GpuTi
 
 /// One matrix row.
 fn row(cell: Cell, size: [u32; 2], applied: &Applied, mut samples: Samples, subject: &mut dyn Subject) -> Value {
+    let content = subject.content();
+    let applied_json = applied.drawn_json(subject.renderer(), content);
     json!({
         "row": cell.name(),
         "profile": applied.profile.name(),
@@ -580,7 +642,7 @@ fn row(cell: Cell, size: [u32; 2], applied: &Applied, mut samples: Samples, subj
         "nodesReason": NODES_REASON,
         "stats": stats_json(subject.renderer().last_stats()),
         "scene": subject.facts(),
-        "applied": applied.drawn_json(subject.renderer()),
+        "applied": applied_json,
     })
 }
 
@@ -1103,7 +1165,7 @@ fn metal_final_bench_and_stress_captures_at_each_preset() {
                 Some(_) => {}
             }
             support::write_png(&dir.join(format!("{name}.png")), &capture);
-            let mut row = applied.drawn_json(frames.renderer());
+            let mut row = applied.drawn_json(frames.renderer(), Content::default());
             row["scene"] = json!(cell.name());
             row["shot"] = json!(shot);
             row["settleFrames"] = json!(settle);

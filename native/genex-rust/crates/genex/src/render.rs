@@ -1132,14 +1132,21 @@ impl RenderControl {
     /// Live frames draw at `output` (the window's pixels, capped by the class's reference
     /// resolution) into a window present filling `window` (renderer pass 2, P2-0.9 step B): the
     /// budget, its ceiling and dynamic resolution's upscale cost are fitted at them again when
-    /// either changes. Captures never move with them.
+    /// either changes. Captures never move with them. A refit whose quality draws another sample
+    /// count is a pipeline change (GA round 2: the web canvas's first output dropped MSAA for the
+    /// budget while the world pass kept its 4 samples, deferred until a settings change).
     pub fn set_live_output(&mut self, output: (u32, u32), window: Option<(u32, u32)>) {
         if (output, window) == (self.output, self.window) {
             return;
         }
+        let samples = |control: &RenderControl| genex_render::renderer::landed_samples(control.live.quality.anti_aliasing);
+        let before = samples(self);
         self.output = output;
         self.window = window;
         self.resolve();
+        if samples(self) != before {
+            self.generation += 1;
+        }
     }
 
     /// The size Live frames draw at (the world size until [`RenderControl::set_live_output`]).
@@ -2061,6 +2068,29 @@ mod tests {
             assert!(poorer.is_empty(), "{:?} is offered above {:?} but draws none of {poorer:?}", offered[at], &offered[..at]);
         }
         assert_eq!(offered, [QualityPreset::Low, QualityPreset::Medium]);
+    }
+
+    /// GA round 2 (live-app finding 2): Web Live booted at the world size, where medium's MSAA fit
+    /// the browser's budget; the canvas then reported its 2000x1226 output, the refit dropped MSAA
+    /// (`budget: msaa`), but the world pass kept the 4 samples its first frame was built with
+    /// (`pipeline-change-deferred: anti-aliasing`) until a settings change, while dynamic resolution
+    /// sat at its floor. A new output whose fitted quality draws another sample count is a
+    /// pipeline change; one that keeps it is not.
+    #[test]
+    fn a_new_live_output_whose_budget_changes_the_world_pass_samples_is_a_pipeline_change() {
+        let hints = json!({"maxTouchPoints": 0, "coarsePointer": false, "shortSideCssPx": 1080, "deviceMemoryGb": 8, "uaMobile": false});
+        let web = DeviceFacts::new(TargetOs::Web, wgpu::Backend::BrowserWebGpu, wgpu::DeviceType::Other)
+            .with_web(web_hints_from_json(&hints).expect("hints"));
+        let mut browser = RenderControl::new(RenderConfig::new(), (960, 540));
+        browser.probe(web, None);
+        let samples = |control: &RenderControl| genex_render::renderer::landed_samples(control.live_asked().quality.anti_aliasing);
+        let (before, generation) = (samples(&browser), browser.pipeline_generation());
+        browser.set_live_output((2000, 1226), None);
+        assert_ne!(samples(&browser), before, "the premise: the budget at the canvas's output draws another sample count");
+        assert!(browser.pipeline_generation() > generation, "the world pass is rebuilt for the samples the budget left");
+        let generation = browser.pipeline_generation();
+        browser.set_live_output((2004, 1228), None);
+        assert_eq!(browser.pipeline_generation(), generation, "an output that keeps the samples rebuilds nothing");
     }
 
     /// A Mac probed with `memory` bytes of GPU-visible memory (None: the platform did not say),
