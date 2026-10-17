@@ -616,11 +616,15 @@ test("a live native capture is taken only of a playing, shown Native view", asyn
       checkVisibility: () => shown,
       getBoundingClientRect: () => ({ x: 10.2, y: 20.6, width: 320, height: 180 }),
     };
+    const marks = new Set<string>();
     const host = {
       getAttribute: (name: string) => (name === "data-stage-native-canvas" ? phase : null),
+      setAttribute: (name: string) => marks.add(name),
+      removeAttribute: (name: string) => marks.delete(name),
       querySelector: (selector: string) => (selector === "canvas" ? canvas : null),
     };
     const document = { querySelector: () => (phase === null ? null : host) };
+    const requestAnimationFrame = (run: () => void) => setImmediate(run);
     const image = {
       isEmpty: () => false,
       toPNG: () => Buffer.from("png"),
@@ -629,14 +633,16 @@ test("a live native capture is taken only of a playing, shown Native view", asyn
     const win = {
       isDestroyed: () => false,
       webContents: {
-        executeJavaScript: async (source: string) => runInNewContext(source, { document }),
+        executeJavaScript: async (source: string) => runInNewContext(source, { document, requestAnimationFrame }),
         capturePage: async (rect: unknown) => {
           captured.push(rect);
+          hiddenWhileCaptured.push(marks.has("data-stage-native-capturing"));
           return image;
         },
       },
     };
-    return { win: win as unknown as Parameters<typeof liveNativeViewOf>[0], captured };
+    const hiddenWhileCaptured: boolean[] = [];
+    return { win: win as unknown as Parameters<typeof liveNativeViewOf>[0], captured, hiddenWhileCaptured, marks };
   };
   const playing = windowWith("playing", true);
   assert.deepEqual(await liveNativeViewOf(playing.win), {
@@ -644,6 +650,10 @@ test("a live native capture is taken only of a playing, shown Native view", asyn
     dimensions: { width: 320, height: 180 },
   });
   assert.deepEqual(playing.captured, [{ x: 10, y: 21, width: 320, height: 180 }]);
+  // GA round 2: the capture held Studio's Click to play pill drawn over the game. Studio's overlays
+  // are hidden while the window is captured, and shown again after.
+  assert.deepEqual(playing.hiddenWhileCaptured, [true], "Studio's overlays are hidden for the capture");
+  assert.deepEqual([...playing.marks], [], "and shown again after it");
   for (const [phase, shown] of [
     ["starting", true],
     ["refused", true],
@@ -651,8 +661,9 @@ test("a live native capture is taken only of a playing, shown Native view", asyn
     ["playing", false],
     [null, true],
   ] as const) {
-    const { win, captured } = windowWith(phase, shown);
+    const { win, captured, marks } = windowWith(phase, shown);
     assert.equal(await liveNativeViewOf(win), null, `${phase} ${shown}`);
     assert.deepEqual(captured, [], `${phase} ${shown}: nothing was captured`);
+    assert.deepEqual([...marks], [], `${phase} ${shown}: the overlays were left alone`);
   }
 });

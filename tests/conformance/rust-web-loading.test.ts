@@ -562,6 +562,9 @@ describe("Lakeside's cold first start in Chromium keeps a lit, moving page", { s
       await page.addInitScript(PROGRESS_LOG);
       const started = Date.now();
       await page.goto(`${served.origin}/index.html`, { waitUntil: "commit" });
+      // The shots start at the first paint: before it Chromium has no frame to capture and answers
+      // "Unable to capture screenshot" (GA round 2, red in 2 of 3 runs at the first shot).
+      await page.waitForFunction(() => performance.getEntriesByType("paint").length > 0, null, { polling: "raf" });
       const shots: Array<{ at: number; took: number; lit: number }> = [];
       for (;;) {
         const from = Date.now();

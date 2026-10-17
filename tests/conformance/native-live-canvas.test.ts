@@ -13,6 +13,7 @@ import {
   canvasActions,
   canvasBacking,
   CanvasPhase,
+  awaitsFirstFrame,
   canvasPhase,
   canvasWords,
   clipText,
@@ -173,6 +174,28 @@ describe("which frames the canvas draws", () => {
     assert.equal(gate.draw(meta({ seq: 5, runId: NATIVE_NO_RUN_ID }), unstarted, paint(5)), FrameVerdict.Foreign);
     assert.deepEqual(painted, [1]);
     assert.deepEqual(gate.counts(), { drawn: 1, dropped: 4 });
+  });
+
+  // GA round 2: Native Live's first open showed one or two black frames between the starting card
+  // and the game's first frame, because the card left as soon as the run was ready. The canvas now
+  // stays veiled (the card's "Drawing the first frame") until the shown run's own first frame is drawn.
+  it("names the run whose frame it drew last, and the canvas stays veiled until the shown run's first frame", () => {
+    const gate = createFrameGate();
+    assert.equal(gate.drawnRun(), null, "nothing drawn yet");
+    gate.draw(meta({ seq: 1, runId: "run-0" }), shown, () => {});
+    assert.equal(gate.drawnRun(), null, "another run's frame is not drawn");
+    gate.draw(meta({ seq: 2 }), shown, () => {});
+    assert.equal(gate.drawnRun(), "run-1");
+    const ready = embedded(NativeRunState.Ready);
+    assert.equal(awaitsFirstFrame(CanvasPhase.Playing, ready, null), true, "ready, nothing drawn: still veiled");
+    assert.equal(awaitsFirstFrame(CanvasPhase.Playing, ready, "embed-0"), true, "an older run's frame does not count");
+    assert.equal(awaitsFirstFrame(CanvasPhase.Playing, ready, "embed-1"), false, "its own first frame lifts the veil");
+    assert.equal(
+      awaitsFirstFrame(CanvasPhase.Starting, embedded(NativeRunState.Starting), null),
+      false,
+      "the card is up",
+    );
+    assert.equal(awaitsFirstFrame(CanvasPhase.Ended, embedded(NativeRunState.Stopped), null), false);
   });
 
   it("keeps one frame in flight: a frame that arrives mid-draw is dropped, and a draw that throws frees the gate", () => {

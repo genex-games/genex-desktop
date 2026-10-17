@@ -57,6 +57,7 @@ import {
 } from "../shared/preview-contract.ts";
 import { NotARegularFileError, readRegularFile } from "./fsx.ts";
 import { computePixelStats } from "./pixel-stats.ts";
+import { planNativeInput } from "./native-input-plan.ts";
 import type { PreviewInputAction } from "./preview-input.ts";
 import type { PreviewPort } from "./preview-port.ts";
 import type { ReadySnapshot } from "./preview-ready.ts";
@@ -600,9 +601,20 @@ export class NativeGamePort implements PreviewPort {
     if (!checked) throw new Error(MESSAGE.inputRefused);
     const touchless = this.#protocol() !== NATIVE_PROTOCOL_VERSION;
     if (touchless && checked.some(isTouch)) throw new NativeError(NativeRefusal.TouchNotTaken, MESSAGE.touchNeedsV2);
-    await this.call(NativeOp.Input, { actions: checked });
+    // The runtime applies one message at its next tick and leaves timed kinds to the host.
+    for (const step of planNativeInput(checked)) {
+      if ("waitMs" in step) await this.#pause(step.waitMs);
+      else await this.call(NativeOp.Input, { actions: step.send });
+    }
     const size = this.#readyEvent?.size ?? { width: 0, height: 0 };
     return { ok: true, applied: checked.length, width: size.width, height: size.height };
+  }
+
+  /** A pause on the port's own clock (a fake one in tests). */
+  #pause(ms: number): Promise<void> {
+    return new Promise((done) => {
+      this.#io.timers.setTimeout(done, ms);
+    });
   }
 
   /** The game's stderr lines and `fatal` events since `sinceMs`. */

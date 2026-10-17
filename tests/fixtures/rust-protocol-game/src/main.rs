@@ -12,8 +12,8 @@
 //! - A red cube sits in the upper half of the 96 x 64 world: a top-down capture has red rows above
 //!   the middle and none below it.
 //! - Named camera `top`, eye `eye:spawn`; demos `walk` (KeyD for 100 ms) and `crash` (a panic).
-//! - `KeyH` pressed shows (or hides) an egui button labelled `Shop`: `state().hud.items` names it
-//!   and captures carry it.
+//! - `KeyH` pressed shows (or hides) an egui button labelled `Shop` at world pixels (8, 8) to
+//!   (48, 28): `state().hud.items` names it, captures carry it and `shopClicks` counts its clicks.
 //! - A custom GPU pass `broken` whose rebuild refuses: the run lists it in
 //!   `state().volatile.customPasses` with `gpu-pass-invalid` and draws on without it.
 
@@ -31,6 +31,7 @@ struct World {
     touch: Option<(u32, String, f32, f32)>,
     taps: u32,
     shop: bool,
+    shop_clicks: u32,
 }
 
 /// A custom pass whose rebuild refuses, as a broken pass in a generated game would.
@@ -72,8 +73,9 @@ fn main() {
         }
     });
     game.on_ui(|sim, ui, _| {
-        if sim.world.shop {
-            let _ = ui.button("Shop");
+        let place = egui::Rect::from_min_size(egui::pos2(8.0, 8.0), egui::vec2(40.0, 20.0));
+        if sim.world.shop && ui.put(place, egui::Button::new("Shop")).clicked() {
+            sim.world.shop_clicks += 1;
         }
     });
     game.gpu_pass("broken", PassStage::Post, Broken);
@@ -90,6 +92,7 @@ fn main() {
         None => Value::Null,
     });
     game.probe("taps", |sim| json!(sim.world.taps));
+    game.probe("shopClicks", |sim| json!(sim.world.shop_clicks));
     game.probe_volatile("ticksSeen", |sim| json!(sim.world.x));
     game.demo("walk", |d| {
         d.inject(Input::key_down(Key::KeyD));

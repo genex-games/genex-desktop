@@ -6210,3 +6210,8 @@ p.usage-divider {
     animation: none;
   }
 }
+
+/* A live capture of the Native view (studio:dev `capture --frame live`) is of the game alone. */
+[data-stage-native-canvas][data-stage-native-capturing] :is([data-stage-native-capture], [data-stage-native-hint]) {
+  visibility: hidden;
+}

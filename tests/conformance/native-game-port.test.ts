@@ -49,6 +49,7 @@ import {
   NativeOpRefusedError,
   type NativePortIo,
 } from "../../src/substrate/native-game-port.ts";
+import { NATIVE_INPUT_TICK_MS } from "../../src/substrate/native-input-plan.ts";
 import type { GameChild } from "../../src/substrate/spawn.ts";
 import { running } from "../helpers/processes.ts";
 import { tmpDir } from "../helpers/tmp.ts";
@@ -657,6 +658,97 @@ describe("what the port does not do", () => {
     assert.deepEqual(await r.port.studioCall("eye", "front"), { __missing: true });
     await r.clock.settle();
     assert.equal(r.game.requests.length, 0);
+  });
+
+  /** Answers every `input` request as the runtime would, recording each message's actions and the clock. */
+  function inputGame(r: Rig) {
+    const sent: Array<{ at: number; actions: unknown }> = [];
+    let answered = 0;
+    const answer = async () => {
+      await r.clock.settle();
+      for (const request of r.game.requests.slice(answered)) {
+        answered += 1;
+        if (request.op !== NativeOp.Input) continue;
+        sent.push({ at: r.clock.timers.now(), actions: (request.arg as { actions: unknown }).actions });
+        r.game.send({ id: request.id, ok: true, op: NativeOp.Input, result: { held: [], ignored: 0 } });
+      }
+      await r.clock.settle();
+    };
+    /** Runs the clock in `step` ms beats for `ms`, answering on the way. */
+    const run = async (ms: number, step = 1) => {
+      for (let spent = 0; spent < ms; spent += step) {
+        await answer();
+        await r.clock.advance(step);
+      }
+      await answer();
+    };
+    return { sent, run };
+  }
+
+  it("a hold keeps its keys down for its whole duration: down, the pause, then up (the runtime leaves timed actions to the host)", async () => {
+    const r = await rig();
+    const game = inputGame(r);
+    let done = false;
+    const played = r.port.input([{ type: "hold", keys: ["ArrowRight"], ms: 3000 }]).then((answer) => {
+      done = true;
+      return answer;
+    });
+    await game.run(2990, 10);
+    assert.deepEqual(game.sent, [{ at: 0, actions: [{ type: "down", keys: ["ArrowRight"] }] }], "still held");
+    assert.equal(done, false, "the call answers when the hold ends");
+    await game.run(20, 10);
+    assert.deepEqual(game.sent.at(-1), { at: 3000, actions: [{ type: "up", keys: ["ArrowRight"] }] });
+    assert.deepEqual(await played, { ok: true, applied: 1, width: 64, height: 64 });
+  });
+
+  it("wait pauses between messages, actions between timed ones travel together, and a positioned click hovers a tick before it taps", async () => {
+    const r = await rig();
+    const game = inputGame(r);
+    const played = r.port.input([
+      { type: "down", keys: ["KeyD"] },
+      { type: "tap", keys: ["Space"] },
+      { type: "wait", ms: 1000 },
+      { type: "up", keys: ["KeyD"] },
+      { type: "click", x: 0.25, y: 0.5, button: "left" },
+    ]);
+    await game.run(1100, 1);
+    assert.deepEqual(
+      game.sent.map((message) => message.actions),
+      [
+        [
+          { type: "down", keys: ["KeyD"] },
+          { type: "tap", keys: ["Space"] },
+        ],
+        [{ type: "up", keys: ["KeyD"] }],
+        [{ type: "move", x: 0.25, y: 0.5 }],
+        [{ type: "click", button: "left" }],
+      ],
+    );
+    const [first, up, move, click] = game.sent.map((message) => message.at);
+    assert.equal(first, 0);
+    assert.ok((up ?? 0) >= 1000, `the wait holds the next message back: ${up}`);
+    assert.ok((click ?? 0) - (move ?? 0) >= NATIVE_INPUT_TICK_MS, "the pointer lands a tick before the press");
+    assert.equal((await played).applied, 5);
+  });
+
+  it("a drag presses where it starts, glides over several ticks and releases where it ends", async () => {
+    const r = await rig();
+    const game = inputGame(r);
+    const played = r.port.input([{ type: "drag", fromX: 0, fromY: 0, x: 0.6, y: 0.3 }]);
+    await game.run(300, 1);
+    await played;
+    const kinds = game.sent.map((message) => (message.actions as Array<{ type: string }>).map((a) => a.type).join(","));
+    assert.deepEqual(kinds, ["move", "mousedown", "move", "move", "move", "move", "move", "move", "mouseup"]);
+    assert.deepEqual(
+      game.sent.at(-2)?.actions,
+      [{ type: "move", x: 0.6, y: 0.3 }],
+      "the glide ends where the drag does",
+    );
+    const times = game.sent.map((message) => message.at);
+    assert.ok(
+      times.every((at, i) => i === 0 || at > (times[i - 1] ?? 0)),
+      `one message per tick: ${times}`,
+    );
   });
 
   it("input outside its shape is refused before anything is sent", async () => {

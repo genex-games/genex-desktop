@@ -9,7 +9,12 @@
  */
 import type { JSX, RefObject } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { type NativeInputAction, NativeRunState, type NativeRunStatus } from "../../../shared/native-contract.ts";
+import {
+  BootStage,
+  type NativeInputAction,
+  NativeRunState,
+  type NativeRunStatus,
+} from "../../../shared/native-contract.ts";
 import { useNative } from "../../state/hooks.ts";
 import { nativeEmbedOf, nativeStoreFor } from "../../state/native.ts";
 import { studio } from "../../state/studio.ts";
@@ -17,6 +22,7 @@ import { Button } from "../../ui/Button.tsx";
 import { NATIVE_WORDS } from "../../words.ts";
 import { TroubleDetails } from "./build-problem.tsx";
 import {
+  awaitsFirstFrame,
   CanvasAction,
   CanvasPhase,
   canvasActions,
@@ -140,10 +146,14 @@ const isVideoFrame = (frame: unknown): frame is VideoFrame =>
  * synchronously inside the listener (the preload closes it after), one at a time. False once
  * WebGL2 turned out to be missing; a lost context is drawn again once it is restored.
  */
-function useFrames(canvasRef: RefObject<HTMLCanvasElement | null>, shown: ShownRun | null): boolean {
+function useFrames(
+  canvasRef: RefObject<HTMLCanvasElement | null>,
+  shown: ShownRun | null,
+): { drawable: boolean; drawnRun: string | null } {
   const shownRef = useRef(shown);
   shownRef.current = shown;
   const [drawable, setDrawable] = useState(true);
+  const [drawnRun, setDrawnRun] = useState<string | null>(null);
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -164,6 +174,8 @@ function useFrames(canvasRef: RefObject<HTMLCanvasElement | null>, shown: ShownR
       const current = renderer;
       if (!current || !isVideoFrame(frame)) return;
       gate.draw(meta, shownRef.current, () => current.draw(frame, meta.width, meta.height));
+      // React skips the update when the run is the same: one render per run's first frame.
+      setDrawnRun(gate.drawnRun());
     });
     return () => {
       stop();
@@ -172,7 +184,7 @@ function useFrames(canvasRef: RefObject<HTMLCanvasElement | null>, shown: ShownR
       renderer?.dispose();
     };
   }, [canvasRef]);
-  return drawable;
+  return { drawable, drawnRun };
 }
 
 /**
@@ -493,8 +505,34 @@ function CanvasCard({
   );
 }
 
+/**
+ * Over a ready run whose first frame has not been drawn yet: the starting card's last words, so the
+ * person never sees the empty (black) canvas between the card and the game. It takes no clicks.
+ */
+function FirstFrameVeil(): JSX.Element {
+  return (
+    <div
+      data-stage-native-first-frame=""
+      className="pointer-events-none absolute inset-0 grid place-items-center bg-base/80 p-8"
+    >
+      <span aria-live="polite" className="chat-status-shimmer text-body-sm">
+        {NATIVE_WORDS.boot.stage[BootStage.Frame]}
+      </span>
+    </div>
+  );
+}
+
 /** Over a playing game: Click to play until captured, then a short hint on how to give the keyboard back. */
-function CaptureHint({ captured, onCapture }: { captured: boolean; onCapture: () => void }): JSX.Element {
+function CaptureHint({
+  captured,
+  onCapture,
+  veiled,
+}: {
+  captured: boolean;
+  onCapture: () => void;
+  /** The first frame is not drawn yet: the pill waits under the veil's words, the click still captures. */
+  veiled: boolean;
+}): JSX.Element {
   if (captured)
     return (
       <span
@@ -517,7 +555,7 @@ function CaptureHint({ captured, onCapture }: { captured: boolean; onCapture: ()
       }}
       onClick={onCapture}
     >
-      <span className="surface-glass rounded-lg px-3 py-1.5 text-body-sm text-ink">
+      <span className={`surface-glass rounded-lg px-3 py-1.5 text-body-sm text-ink${veiled ? " invisible" : ""}`}>
         {NATIVE_WORDS.embed.clickToPlay}
       </span>
     </button>
@@ -539,8 +577,9 @@ export function NativeLiveCanvas({
   const canvas = useRef<HTMLCanvasElement>(null);
   const keyboard = useRef<HTMLTextAreaElement>(null);
   const embed = useNative((state) => nativeEmbedOf(state, project));
-  const drawable = useFrames(canvas, shownOf(embed.status));
+  const { drawable, drawnRun } = useFrames(canvas, shownOf(embed.status));
   const phase = canvasPhase(embed.status, embed.failed, drawable);
+  const veiled = awaitsFirstFrame(phase, embed.status, drawnRun);
   const playing = phase === CanvasPhase.Playing;
   const measured = useEmbedHold(box, project, embed.status?.state === NativeRunState.Ready);
   const { captured, capture } = useCapture(project, box, canvas, keyboard, active && playing);
@@ -569,7 +608,8 @@ export function NativeLiveCanvas({
         spellCheck={false}
         className="sr-only"
       />
-      {playing ? <CaptureHint captured={captured} onCapture={capture} /> : null}
+      {playing ? <CaptureHint captured={captured} onCapture={capture} veiled={veiled} /> : null}
+      {veiled ? <FirstFrameVeil /> : null}
       {playing ? null : <CanvasCard phase={phase} status={embed.status} popOut={onPopOut !== null} onAction={act} />}
     </div>
   );

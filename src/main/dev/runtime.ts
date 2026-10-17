@@ -451,35 +451,50 @@ async function captureLiveNative(rt: NativeSurfaceRuntime, name: string) {
 
 /** The attribute Live's Native view (`NativeLiveCanvas`) writes its phase to; its canvas is what a live capture crops to. */
 const NATIVE_CANVAS_ATTRIBUTE = "data-stage-native-canvas";
+/** Set on the Native view while it is captured: the theme hides Studio's overlays (Click to play, the hint) under it. */
+const NATIVE_CAPTURING_ATTRIBUTE = "data-stage-native-capturing";
 
 /**
  * The page script answering the Native view canvas's box, or null unless the view is `playing` and
  * shown (pass 2, TS-F2): a Starting or refused card, or a view hidden behind another stage view,
- * still has a box, and the compositor would answer its pixels as the game's.
+ * still has a box, and the compositor would answer its pixels as the game's. For a box it hides
+ * Studio's overlays and answers after two frames, so the compositor has drawn the view without them.
  */
-const NATIVE_CANVAS_BOX = `(() => {
+const NATIVE_CANVAS_BOX = `(async () => {
   const host = document.querySelector(${JSON.stringify(`[${NATIVE_CANVAS_ATTRIBUTE}]`)});
   const canvas = host ? host.querySelector("canvas") : null;
   if (!host || !canvas || host.getAttribute(${JSON.stringify(NATIVE_CANVAS_ATTRIBUTE)}) !== ${JSON.stringify(NativeCanvasPhase.Playing)}) return null;
   if (!canvas.checkVisibility({ visibilityProperty: true, opacityProperty: true })) return null;
+  host.setAttribute(${JSON.stringify(NATIVE_CAPTURING_ATTRIBUTE)}, "");
+  for (let frame = 0; frame < 2; frame++) await new Promise((drawn) => requestAnimationFrame(() => drawn()));
   const r = canvas.getBoundingClientRect();
   return [r.x, r.y, r.width, r.height];
 })()`;
 
+/** The page script showing Studio's overlays over the Native view again after a capture. */
+const NATIVE_CANVAS_UNCOVER = `(() => {
+  const host = document.querySelector(${JSON.stringify(`[${NATIVE_CANVAS_ATTRIBUTE}]`)});
+  if (host) host.removeAttribute(${JSON.stringify(NATIVE_CAPTURING_ATTRIBUTE)});
+})()`;
+
 /**
- * The studio window cropped to the Native view's canvas, or null when no Native view is playing and
- * shown (nothing is captured then).
+ * The studio window cropped to the Native view's canvas without Studio's overlays, or null when no
+ * Native view is playing and shown (nothing is captured then).
  */
 export async function liveNativeViewOf(win: BrowserWindow): Promise<LiveNativeView | null> {
   if (win.isDestroyed()) return null;
   const box: unknown = await win.webContents.executeJavaScript(NATIVE_CANVAS_BOX);
-  if (!Array.isArray(box) || box.length !== 4 || !box.every((n) => typeof n === "number" && Number.isFinite(n)))
-    return null;
-  const [x, y, width, height] = box.map((n: number) => Math.round(n));
-  if (width <= 0 || height <= 0) return null;
-  const image = await win.webContents.capturePage({ x, y, width, height }, { stayHidden: true, stayAwake: true });
-  if (image.isEmpty()) return null;
-  return { png: image.toPNG(), dimensions: image.getSize() };
+  if (!Array.isArray(box)) return null;
+  try {
+    if (box.length !== 4 || !box.every((n) => typeof n === "number" && Number.isFinite(n))) return null;
+    const [x, y, width, height] = box.map((n: number) => Math.round(n));
+    if (width <= 0 || height <= 0) return null;
+    const image = await win.webContents.capturePage({ x, y, width, height }, { stayHidden: true, stayAwake: true });
+    if (image.isEmpty()) return null;
+    return { png: image.toPNG(), dimensions: image.getSize() };
+  } finally {
+    if (!win.isDestroyed()) await win.webContents.executeJavaScript(NATIVE_CANVAS_UNCOVER).catch(() => {});
+  }
 }
 
 /** The native run's console (its stderr and fatal events), in the logs answer's shape and budget. */

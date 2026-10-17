@@ -125,6 +125,8 @@ export interface FrameGate {
   /** Paint `meta`'s frame now, synchronously, unless it is not the shown run's or one is being drawn. */
   draw(meta: NativeFrameMeta, shown: ShownRun | null, paint: () => void): FrameVerdict;
   counts(): { drawn: number; dropped: number };
+  /** The run whose frame was painted last, or null before the first. */
+  drawnRun(): string | null;
 }
 
 /** A gate with nothing drawn yet. A paint that throws frees the gate before the error goes on. */
@@ -132,6 +134,7 @@ export function createFrameGate(): FrameGate {
   let busy = false;
   let drawn = 0;
   let dropped = 0;
+  let drawnRun: string | null = null;
   return {
     draw(meta, shown, paint) {
       const verdict = busy ? FrameVerdict.Busy : FrameVerdict.Draw;
@@ -144,12 +147,14 @@ export function createFrameGate(): FrameGate {
       try {
         drawn += 1;
         paint();
+        drawnRun = meta.runId;
       } finally {
         busy = false;
       }
       return outcome;
     },
     counts: () => ({ drawn, dropped }),
+    drawnRun: () => drawnRun,
   };
 }
 
@@ -341,6 +346,14 @@ export function canvasPhase(status: NativeRunStatus | null, failed: boolean, can
   if (status.state === NativeRunState.Refused) return CanvasPhase.Refused;
   if (ENDED.has(status.state)) return CanvasPhase.Ended;
   return PLAYING.has(status.state) ? CanvasPhase.Playing : CanvasPhase.Starting;
+}
+
+/**
+ * Whether a playing canvas still waits for the shown run's first frame (`drawnRun` is the run the
+ * canvas drew last): until then it keeps the starting card's words over an empty canvas, never black.
+ */
+export function awaitsFirstFrame(phase: CanvasPhase, status: NativeRunStatus | null, drawnRun: string | null): boolean {
+  return phase === CanvasPhase.Playing && status !== null && status.runId !== drawnRun;
 }
 
 /** Refusals no new embedded run gets past: the canvas offers Pop out alone. */
