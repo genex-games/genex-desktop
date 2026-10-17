@@ -5,10 +5,11 @@ share, is in [architecture](agent/architecture.md#processes-and-trust-boundaries
 
 [`src/substrate/windows-sandbox.ts`](../src/substrate/windows-sandbox.ts)
 drives sandbox-runtime's srt-win backend (vendored `srt-win.exe` from `app.asar.unpacked`):
-commands run as the local `srt-sandbox` user under Git Bash. The host runs git itself too, so the
-core checks for Git for Windows before anything else at startup (`ensureHostGit`, which also puts
-its `cmd` folder on PATH for a Retry after installing Git); none opens the setup screen on
-`git-missing`. What differs from macOS:
+commands run as the local `srt-sandbox` user under Git Bash. The packaged app brings its own Git
+for Windows as `resources\git` and prefers it to an installed one (`findGitBash`); a development
+build uses the installed Git. The host runs git itself too, so the core settles which Git before
+anything else at startup (`ensureHostGit`, which puts its `cmd` folder first on PATH); with none,
+the setup screen opens on `git-missing`. What differs from macOS:
 
 - Grants are NTFS ACL entries set at `initialize()` for the whole process. One
   `WindowsSandboxSession` holds the union of every `ProcessSandbox`'s roots. A folder opened later,
@@ -37,6 +38,20 @@ its `cmd` folder on PATH for a Retry after installing Git); none opens the setup
   codes.
 - `killChild` kills the srt-win broker, whose job ends the tree; `HarnessHost.stop()` sends
   `shutdown` and kills only after the grace.
+
+## Bundled Git
+
+[`scripts/vendor-git-for-windows.ts`](../scripts/vendor-git-for-windows.ts) downloads the portable
+edition pinned by version and SHA-256 during a Windows release build (`build.mjs --release`, or
+`GENEX_VENDOR_GIT=1`), unpacks it with 7-Zip and leaves out what Genex never reaches: the
+documentation, gitk and git gui with Tcl/Tk, Vim (a git command that wants an editor fails at once
+instead of waiting) and Git Credential Manager (host git runs without the system config and never
+prompts; sandboxed commands have the credential helper off). Forge copies it beside the archive
+([`scripts/package-git.cjs`](../scripts/package-git.cjs)). It sits in the install folder, which
+the session already grants for reading, so it needs no grant of its own. The Squirrel install check
+runs its Git Bash and `cmd\git.exe` with no other Git on PATH. To move to a newer Git, change the
+pin; the build refuses a release that lacks a path the trim list names, so the list is reviewed.
+The terminal panel still opens an installed Git Bash, else PowerShell.
 
 ## Denied reads
 

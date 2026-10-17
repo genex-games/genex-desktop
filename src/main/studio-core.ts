@@ -755,7 +755,8 @@ export class StudioCore {
   async init(): Promise<void> {
     const mark = (step: string): void => this.options.markBoot?.(`core:${step}`);
     // The host runs git itself (snapshots, the harness workspace) before the sandbox looks for Git
-    // Bash, so a Windows PC without Git for Windows gets the setup screen here, not `spawn git ENOENT`.
+    // Bash, so Windows settles which Git first: the app's own, else an installed one. Without any (a
+    // development build on a PC without Git) the setup screen opens here, not `spawn git ENOENT`.
     if (process.platform === StudioPlatform.Windows && !(await ensureHostGit())) {
       throw new SandboxUnavailableError(gitMissingProblem());
     }

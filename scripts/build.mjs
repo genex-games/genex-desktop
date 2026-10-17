@@ -10,6 +10,8 @@ import { devRoot, slug } from "./studio-dev/ownership.mjs";
 import { SEED_GENERATED } from "./gen-harness-types.ts";
 import { packageBin } from "./package-bin.ts";
 import { vendorCuaDriver } from "./vendor-cua-driver.ts";
+import { vendorGitForWindows } from "./vendor-git-for-windows.ts";
+import { VENDORED_GIT } from "./package-git.cjs";
 import { vendorTsc } from "./vendor-tsc.ts";
 import { vendorGenexMultiplayer } from "./vendor-genex-multiplayer.ts";
 /**
@@ -24,6 +26,9 @@ import { vendorGenexMultiplayer } from "./vendor-genex-multiplayer.ts";
  *                             in-app type gate runs (dist/resources/tsc, scripts/vendor-tsc.ts);
  *                             on a macOS release, cua-driver for computer control
  *                             (dist/resources/cua-driver, scripts/vendor-cua-driver.ts)
+ *
+ * A Windows release also vendors Git for Windows, outside dist/ because it ships beside the
+ * archive rather than in it (scripts/vendor-git-for-windows.ts, scripts/package-git.cjs).
  *
  * esbuild only, deliberately: one tool, no plugin-compatibility surface, and the game workspaces
  * need no bundler at all (import maps + vendored three).
@@ -332,6 +337,16 @@ async function copyResources() {
   if (process.platform === "darwin" && vendorCua) {
     const cua = await vendorCuaDriver(root, resources);
     console.log(`vendored cua-driver ${cua.version}: ${(cua.bytes / 1024 / 1024).toFixed(1)} MB`);
+  }
+  // Git for Windows ships with every Windows release, so the app starts on a PC without Git; Forge
+  // copies it beside the archive (scripts/package-git.cjs). A development build uses an installed Git.
+  const vendorGit = release || process.env.GENEX_VENDOR_GIT === "1";
+  if (process.platform === "win32" && vendorGit) {
+    const cacheDir = path.join(root, "node_modules", ".cache", "genex", "git-for-windows-archive");
+    const git = await vendorGitForWindows(VENDORED_GIT, { cacheDir });
+    console.log(
+      `vendored Git for Windows ${git.version}: ${git.files} files, ${(git.bytes / 1024 / 1024).toFixed(1)} MB`,
+    );
   }
   await buildPlugins(root, resources);
   // The stable bootstrap — shipped, never edited by the agent.

@@ -132,6 +132,12 @@ report.checks.push({
   detail: `${privateEntries.length} private development entries`,
 });
 if (privateEntries.length) report.failed++;
+const cacheEntries = entries.filter((entry) => /^\/node_modules\/\.cache(\/|$)/.test(entry));
+addCheck(
+  "packaged archive excludes the build's download cache (vendored Git, archives)",
+  cacheEntries.length === 0,
+  `${cacheEntries.length} cache entries`,
+);
 const forbidden = /(?:^|\/)node_modules\/(?:@openai\/codex(?:-[^/]+)?|@anthropic-ai\/claude-agent-sdk-[^/]+)(?:\/|$)/;
 const unpacked = posixEntries(await readdir(`${archive}.unpacked`, { recursive: true }));
 const codingBinaries = [...entries, ...unpacked].filter((entry) => forbidden.test(entry));

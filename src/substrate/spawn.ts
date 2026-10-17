@@ -65,6 +65,7 @@ import {
   renderEnvFile,
   srtWinExecFailure,
   srtWinPath,
+  windowsDependencyErrors,
   windowsDenyRead,
   windowsRunEnv,
   windowsSessionFor,
@@ -192,6 +193,8 @@ export interface WindowsSeams {
   session?: WindowsSandboxSession;
   /** The real user's profile folder (default: the home folder). */
   profile?: string;
+  /** sandbox-runtime's Windows dependency check (default: {@link windowsDependencyErrors}). */
+  dependencyErrors?: () => Promise<string[]>;
 }
 
 /** The part of sandbox-runtime's `SandboxManager` this file drives. */
@@ -265,7 +268,8 @@ const MESSAGE = {
  * Refuse, with the typed setup problem, a platform or machine the sandbox cannot run on: the
  * window then offers the fix instead of the app quitting. Missing Linux tools are looked up on
  * PATH only after sandbox-runtime's own check fails. On Windows the dependency check runs srt-win
- * probes of its own, so it is skipped: `initialize` reports a missing setup with a typed code.
+ * probes of its own, so it is skipped here and asked only when a start fails
+ * ({@link asWindowsSetupProblem}).
  */
 function assertSandboxReady(
   runtime: Pick<SandboxRuntime, "isSupportedPlatform" | "checkDependencies">,
@@ -283,6 +287,24 @@ function assertSandboxReady(
 function asSetupProblem(error: unknown): unknown {
   const setup = windowsSetupProblem(error, [errorMessage(error)]);
   return setup ? new SandboxUnavailableError(setup) : error;
+}
+
+/**
+ * A failed Windows start as the setup problem the window shows, when it is one: by the error's
+ * code, else by sandbox-runtime's dependency check, whose refusal `initialize` throws untyped. A
+ * failure the check does not explain, or a check that fails itself, stays the error it was.
+ */
+async function asWindowsSetupProblem(error: unknown, dependencyErrors: () => Promise<string[]>): Promise<unknown> {
+  const typed = asSetupProblem(error);
+  if (typed !== error) return typed;
+  const errors = await dependencyErrors().catch((): string[] => []);
+  const problem = sandboxProblem({
+    platform: StudioPlatform.Windows,
+    supported: true,
+    dependencyErrors: errors,
+    missingTools: [],
+  });
+  return problem ? new SandboxUnavailableError(problem) : error;
 }
 
 /** What a launch needs from a run or a long-lived start. */
@@ -612,8 +634,8 @@ export class ProcessSandbox {
     const backend = { session, bash, read, profile, curlHome: await writeCurlHome(this.scratchDir) };
     await session
       .join(this, { grants: this.#windowsGrants(backend), config: this.#windowsSessionConfig() })
-      .catch((error: unknown) => {
-        throw asSetupProblem(error);
+      .catch(async (error: unknown) => {
+        throw await asWindowsSetupProblem(error, this.#seams.dependencyErrors ?? windowsDependencyErrors);
       });
     this.#windows = backend;
   }

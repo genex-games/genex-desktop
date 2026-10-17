@@ -64,6 +64,11 @@ const GIT_REGISTRY_KEY = "HKLM\\SOFTWARE\\GitForWindows";
 const GIT_REGISTRY_VALUE = "InstallPath";
 /** Git Bash inside a Git for Windows install. */
 const GIT_BASH = ["bin", "bash.exe"] as const;
+/**
+ * The folder in a packaged Windows app's resources that holds Genex's own Git for Windows
+ * (`scripts/package-git.cjs` copies it there; `scripts/vendor-git-for-windows.ts` makes it).
+ */
+export const BUNDLED_GIT_DIR = "git";
 /** `git --exec-path` is `<root>/<mingw64|clangarm64>/libexec/git-core`: three levels below the root. */
 const EXEC_PATH_DEPTH = 3;
 /** A path on a drive letter, as Git for Windows reports its own folders. */
@@ -401,21 +406,37 @@ export function gitRootFromExecPath(execPath: string): string | null {
   return root;
 }
 
-/** How Git Bash is looked up; the defaults ask the registry, then `git`. */
+/**
+ * Genex's own Git for Windows in a packaged app (`<resources>\git`), or null outside one: Electron
+ * sets `process.resourcesPath`, plain Node does not.
+ */
+export function bundledGitRoot(resources: string | undefined = process.resourcesPath): string | null {
+  return resources ? win.join(resources, BUNDLED_GIT_DIR) : null;
+}
+
+/** How Git Bash is looked up; the defaults ask Genex's own Git, the registry, then `git`. */
 export interface GitBashLookup {
+  /** Genex's own Git for Windows (default: {@link bundledGitRoot}). */
+  bundled?: string | null;
   registry?: () => Promise<string>;
   execPath?: () => Promise<string>;
   exists?: (file: string) => boolean;
 }
 
-/** Git Bash (`<Git>\bin\bash.exe`), from the registry or from `git --exec-path`; null when neither finds it. */
+/**
+ * Git Bash (`<Git>\bin\bash.exe`): Genex's own copy first, since a packaged app ships the Git it
+ * was tested with, then an installed Git for Windows from the registry or from `git --exec-path`
+ * (a development build has no copy of its own); null when none has it.
+ */
 export async function findGitBash(lookup: GitBashLookup = {}): Promise<string | null> {
+  const bundled = lookup.bundled === undefined ? bundledGitRoot() : lookup.bundled;
   const registry =
     lookup.registry ??
     (async () => (await run("reg", ["query", GIT_REGISTRY_KEY, "/v", GIT_REGISTRY_VALUE], TOOL_RUN)).stdout);
   const execPath = lookup.execPath ?? (async () => (await run("git", ["--exec-path"], TOOL_RUN)).stdout);
   const exists = lookup.exists ?? existsSync;
   const lookups = [
+    async () => bundled,
     () => registry().then(gitRootFromRegistry, () => null),
     () => execPath().then(gitRootFromExecPath, () => null),
   ];
@@ -433,9 +454,9 @@ export function gitRootOf(bash: string): string {
 }
 
 /**
- * Make the host's own `git` (game snapshots, the harness workspace) runnable on Windows: Git for
- * Windows' `cmd` folder goes first on PATH when it is not there yet, as after installing Git while
- * Genex was open. False when Git for Windows is not installed.
+ * Make the host's own `git` (game snapshots, the harness workspace) the one {@link findGitBash}
+ * chose: that Git's `cmd` folder goes first on PATH when it is not there yet, as for Genex's own
+ * Git or after installing Git while Genex was open. False when there is no Git for Windows.
  */
 export async function ensureHostGit(
   lookup: GitBashLookup = {},
@@ -948,6 +969,17 @@ export async function srtSandboxSid(srtWin: string): Promise<string | null> {
   } catch {
     return null;
   }
+}
+
+/**
+ * sandbox-runtime's own Windows dependency check, the one its `initialize` runs first: the
+ * sandbox user, its credential and the WFP filters. `initialize` reports that refusal as a plain
+ * Error with no code, so a failed start asks again here to tell "not set up yet" from a fault.
+ */
+export async function windowsDependencyErrors(srtWin: string = srtWinPath()): Promise<string[]> {
+  const srt = await import(SRT_PACKAGE);
+  const result = await srt.checkWindowsDependenciesAsync({ srtWin: srt.resolveSrtWin({ path: srtWin }) });
+  return result.errors;
 }
 
 const sessions = new WeakMap<object, WindowsSandboxSession>();

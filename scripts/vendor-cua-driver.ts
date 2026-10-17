@@ -12,16 +12,13 @@
  * Moving to a newer driver: change the pin below and the two notice files, then verify computer
  * control live (docs/computer-use.md).
  */
-import { createHash } from "node:crypto";
-import { createWriteStream } from "node:fs";
-import { chmod, copyFile, mkdir, mkdtemp, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, copyFile, mkdir, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { Readable } from "node:stream";
-import { pipeline } from "node:stream/promises";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { CUA_DRIVER_BINARY, CUA_DRIVER_DIR } from "../src/substrate/cua-embedded.ts";
+import { type Download, fetchTo, verifiedArchive } from "./pinned-download.ts";
 
 /** A driver release: its version, where its macOS executable is, and that archive's SHA-256. */
 export interface CuaDriverRelease {
@@ -45,16 +42,13 @@ const VERSION_FILE = "VERSION";
 const LIPO_ARCH: Readonly<Record<string, string>> = { arm64: "arm64", x64: "x86_64" };
 
 const MESSAGE = {
-  digest: (url: string, got: string, want: string) =>
-    `cua-driver archive ${url} has SHA-256 ${got}, not the pinned ${want}: refusing it`,
-  download: (url: string, status: number) => `downloading ${url} failed: HTTP ${status}`,
   arch: (arch: string) => `no cua-driver build for the ${arch} architecture`,
 } as const;
 
 /** What vendoring touches outside itself, so a test can stand in for the network and `lipo`. */
 export interface VendorCuaDriverDeps {
   /** Write what `url` answers to `file`. */
-  download(url: string, file: string): Promise<void>;
+  download: Download;
   /** Run a tool (`tar`, `lipo`) to completion. */
   run(command: string, args: string[]): Promise<void>;
 }
@@ -65,46 +59,12 @@ export interface VendoredCuaDriver {
   bytes: number;
 }
 
-/** Download with Node's own fetch, streamed to disk. */
-async function fetchTo(url: string, file: string): Promise<void> {
-  const response = await fetch(url);
-  if (!response.ok || !response.body) throw new Error(MESSAGE.download(url, response.status));
-  await pipeline(Readable.fromWeb(response.body as import("node:stream/web").ReadableStream), createWriteStream(file));
-}
-
 const defaultDeps: VendorCuaDriverDeps = {
   download: fetchTo,
   run: async (command, args) => {
     await promisify(execFile)(command, args);
   },
 };
-
-/** A file's SHA-256, or null when there is no file. */
-async function digestOf(file: string): Promise<string | null> {
-  const bytes = await readFile(file).catch(() => null);
-  return bytes ? createHash("sha256").update(bytes).digest("hex") : null;
-}
-
-/** The pinned archive in the cache, downloaded when missing or not the pinned bytes. */
-async function verifiedArchive(
-  release: CuaDriverRelease,
-  cacheDir: string,
-  deps: VendorCuaDriverDeps,
-): Promise<string> {
-  await mkdir(cacheDir, { recursive: true });
-  const archive = path.join(cacheDir, path.basename(new URL(release.url).pathname));
-  if ((await digestOf(archive)) === release.sha256) return archive;
-  const partial = `${archive}.part`;
-  await rm(partial, { force: true });
-  await deps.download(release.url, partial);
-  const got = await digestOf(partial);
-  if (got !== release.sha256) {
-    await rm(partial, { force: true });
-    throw new Error(MESSAGE.digest(release.url, got ?? "none", release.sha256));
-  }
-  await rename(partial, archive);
-  return archive;
-}
 
 /**
  * Put the pinned cua-driver in `<resources>/cua-driver/`: the executable for `arch`, cua's license
@@ -126,7 +86,7 @@ export async function vendorCuaDriver(
   const release = options.release ?? CUA_DRIVER_RELEASE;
   const deps = options.deps ?? defaultDeps;
   const cacheDir = options.cacheDir ?? path.join(root, "node_modules", ".cache", "genex", "cua-driver");
-  const archive = await verifiedArchive(release, cacheDir, deps);
+  const archive = await verifiedArchive("cua-driver", release, cacheDir, deps.download);
   const unpacked = await mkdtemp(path.join(os.tmpdir(), "genex-cua-vendor-"));
   try {
     // Only the executable, by its exact name: nothing else in the archive is written anywhere.

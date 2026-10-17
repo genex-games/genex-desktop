@@ -4,6 +4,7 @@
  * `ai-game-studio` and failed in CI. Each Linux maker must name the packaged executable.
  */
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { test } from "node:test";
 
@@ -30,4 +31,13 @@ test("Windows packages as a per-user Squirrel installer named Genex-Setup.exe, w
   assert.equal(squirrel.config.noMsi, true);
   const { CompanyName, ProductName } = config.packagerConfig.win32metadata;
   assert.deepEqual([CompanyName, ProductName], ["Genex", "Genex"]);
+});
+
+test("Squirrel's install window plays Genex's own animation, a looping 400 × 260 GIF", () => {
+  const config = require("../../forge.config.cjs");
+  const squirrel = config.makers.find((maker: { name: string }) => maker.name === "@electron-forge/maker-squirrel");
+  const gif = readFileSync(squirrel.config.loadingGif);
+  assert.equal(gif.subarray(0, 6).toString("latin1"), "GIF89a");
+  assert.deepEqual([gif.readUInt16LE(6), gif.readUInt16LE(8)], [400, 260], "the size of Squirrel's install window");
+  assert.ok(gif.includes(Buffer.from("NETSCAPE2.0", "latin1")), "the animation loops");
 });

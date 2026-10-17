@@ -12,7 +12,8 @@
  * (dist/resources/tsc) are **spawned** as child processes and the vendored three.js is **served**
  * to the preview, and none of that works from inside an asar archive.
  * Runtime resources (including the Genex plugin payload) are unpacked. Coding CLIs are external installations:
- * exclude Codex and Claude SDK native packages; retain the Claude JavaScript SDK only.
+ * exclude Codex and Claude SDK native packages; retain the Claude JavaScript SDK only. A Windows
+ * package also carries Git for Windows outside the archive (scripts/package-git.cjs).
  */
 const path = require("node:path");
 const { FusesPlugin } = require("@electron-forge/plugin-fuses");
@@ -24,6 +25,7 @@ const {
   trimSandboxVendor,
 } = require("./scripts/package-prune.cjs");
 const { APP_BUNDLE_ID, localSigningHook, macSigning, windowsSigning } = require("./scripts/package-signing.cjs");
+const { copyBundledGit } = require("./scripts/package-git.cjs");
 const { version } = require("./package.json");
 
 const PRODUCT_NAME = "Genex";
@@ -81,6 +83,9 @@ module.exports = {
       /^\/node_modules\/@genex-ai\/cli-demo(?:\/|$)/,
       /\/node_modules\/@anthropic-ai\/claude-agent-sdk-[^/]+(?:\/|$)/,
       /\/node_modules\/@openai\/codex(?:-[^/]+)?(?:\/|$)/,
+      // The build's download cache (vendored Git and cua-driver, their archives). It is no module,
+      // so the packager's prune keeps it; what ships from it is copied where it belongs.
+      /^\/node_modules\/\.cache($|\/)/,
       /^\/(?!dist(?:\/|$)|node_modules(?:\/|$)|package\.json$|LICENSE(?:\..*)?$|THIRD-PARTY-NOTICES\.md$)/,
       /^\/archive($|\/)/,
       /^\/src($|\/)/,
@@ -96,6 +101,9 @@ module.exports = {
       /^\/tsconfig\.json$/,
       /\.map$/,
     ],
+    // Windows: the Git for Windows the build vendored, beside the app as resources\git, so agents
+    // have Git Bash and the snapshots have git on a PC without Git (scripts/package-git.cjs).
+    afterCopy: [async ({ buildPath, platform }) => copyBundledGit(buildPath, platform)],
     // Forge's prune keeps the trees of ignored dependencies and every platform's node-pty and
     // sandbox-runtime helpers; drop what the target never loads (scripts/package-prune.cjs).
     afterPrune: [
@@ -172,6 +180,8 @@ module.exports = {
         description: SUMMARY,
         setupExe: WINDOWS_SETUP_EXE,
         setupIcon: `${ICON}.ico`,
+        // Shown while Setup installs: a dithered ripple field that bends where it crosses the G.
+        loadingGif: path.join(__dirname, "build", "installing.gif"),
         noMsi: true,
         ...(windowsSign ? { windowsSign } : {}),
       },

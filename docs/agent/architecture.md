@@ -163,8 +163,8 @@ scope: Codex's cover pre-existing files, never directories; the Claude hook matc
   contract in [`src/shared/boot.ts`](../../src/shared/boot.ts)): the platform, which it sets as
   `data-platform` on the root, and the phase. When `ProcessSandbox` raises
   `SandboxUnavailableError` ([`src/substrate/sandbox-unavailable.ts`](../../src/substrate/sandbox-unavailable.ts):
-  unsupported platform, missing Linux tools found by a PATH lookup, Windows `not_provisioned` or
-  `wfp_fence_inactive` by code, Linux `isolation-blocked` from
+  unsupported platform, missing Linux tools on PATH, Windows `not_provisioned` or
+  `wfp_fence_inactive` by code or by srt's dependency check, Linux `isolation-blocked` from
   [`linux-isolation.ts`](../../src/substrate/linux-isolation.ts)), main holds the boot gate
   ([`src/main/boot-gate.ts`](../../src/main/boot-gate.ts)) and opens a core-less setup window
   instead of exiting; `studio:boot.retry` recreates the core and, once started, replaces

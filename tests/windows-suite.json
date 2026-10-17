@@ -300,6 +300,7 @@
   "tests/conformance/usage-words.test.ts",
   "tests/conformance/user-data-migration.test.ts",
   "tests/conformance/user-paths.test.ts",
+  "tests/conformance/vendor-git-for-windows.test.ts",
   "tests/conformance/window-chrome.test.ts",
   "tests/conformance/window-ready.test.ts",
   "tests/conformance/windows-install.test.ts",
