@@ -198,6 +198,9 @@ fog where it runs). Each feature is per emitter:
   colliding frame's emit pass waits for the prepass.
 - Rotation, growth, spawn boxes and streaks stretched along the motion (rain). TAA's reactive mask
   covers the billboard as drawn (`particle_billboard.wgsl`).
+- **Camera fade** (`near_fade`; the rain preset's `RAIN_NEAR_FADE`, 2 m): a billboard is gone
+  within a quarter of it in front of the camera and fades in over the rest, so a drop passing
+  just in front of the lens draws no wide streak for one frame.
 
 A class draws at most `particle_cap` particles a frame (every slot on desktops, 32,768 on high
 phones, 8,192 on the rest; past it every n-th slot). The budget row (`tests/particles.rs`): 64k

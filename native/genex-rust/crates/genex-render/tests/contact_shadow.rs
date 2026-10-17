@@ -495,6 +495,45 @@ fn the_ray_cast_depth_matches_the_projection_of_the_ground_and_the_block() {
     assert!(points.len() > 20 && points.iter().all(|p| deep_in_shadow(*p, &block, 0.0, 0.25)));
 }
 
+/// GA (renderer pass 2): open ground with nothing on it casts no contact shadow onto itself, at the
+/// screen's border too. A border texel's neighbour beyond the screen read as the texel itself (the
+/// clamped read), its slope came out zero and with it the tolerance that keeps a slanted surface
+/// from shadowing itself: Lakeside's dolly darkened the frame's left column by half for one frame
+/// (the shadows-on run 20 against the shadows-off run's 41).
+#[test]
+#[ignore = "needs a GPU: run with --ignored metal"]
+fn metal_open_ground_casts_no_contact_shadow_on_itself_at_the_screen_border() {
+    let _turn = gpu_shared();
+    let Some(gpu) = gpu() else { return };
+    let look = Look::default().with_contact_shadow_length(FAR_RAY);
+    let camera = cast_camera(FAR_EYE, FAR_CRATE, FAR_SIZE, [0.0, 0.0]);
+    let depth = cast_depth(&camera, FAR_SIZE, &[]);
+    // Low suns from either side and behind, each under TAA's noise for a few frames.
+    let suns = [[-0.55, 0.12, -0.6], [0.55, 0.12, -0.6], [0.1, 0.12, 0.9]];
+    let frames: Vec<_> = suns
+        .iter()
+        .flat_map(|sun| (0..4u64).map(move |f| (*sun, f)))
+        .map(|(sun_dir, frame_index)| ContactShadowFrame { depth: depth.clone(), camera, facts: ContactShadowFacts { sun_dir, frame_index, taa: true, depth_reversed: true } })
+        .collect();
+    let masks = contact_shadow_masks(&gpu, &look, FAR_SIZE, &frames).expect("masks");
+    let (width, height) = masks[0].size;
+    let border = |x: u32, y: u32| x == 0 || y == 0 || x + 1 == width || y + 1 == height;
+    let mut worst = (1.0f32, 0usize, 0u32, 0u32, false);
+    for (k, mask) in masks.iter().enumerate() {
+        for y in 0..height {
+            for x in 0..width {
+                let v = mask.at(x, y);
+                if v < worst.0 {
+                    worst = (v, k, x, y, border(x, y));
+                }
+            }
+        }
+    }
+    write_evidence("open-ground-border.bgra", &mask_bgra(&masks[worst.1]));
+    let (visibility, frame, x, y, on_border) = worst;
+    assert!(visibility >= 0.99, "open ground shadows itself: visibility {visibility:.3} at mask texel ({x}, {y}) (border {on_border}) in frame {frame} of {}", masks.len());
+}
+
 /// The pan row's render size and frames.
 const PAN_SIZE: (u32, u32) = (512, 288);
 const PAN_FRAMES: u32 = 128;

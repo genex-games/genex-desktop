@@ -191,11 +191,17 @@ fn pops_at(before: &Envelope, now: &Envelope, after: &Envelope, i: usize) -> boo
 }
 
 /// Whether pixel `i`'s own luma in frame `now` jumps by more than [`POP_LEVELS`] from the frames
-/// before and after, the same way, while those two agree within it: SH-15's plain one-frame pop.
+/// before and after, the same way, and came back as [`pops_at`] judges it (the frame after holds
+/// the frame before's value near the pixel, or the other way round): SH-15's plain one-frame pop.
+/// GA (owner decision D12): the came-back test is the envelope's, as the shadows-on run's pop is
+/// judged; a speck in the canopy that jumped 83 levels up and 100 down at the same pixel and frame
+/// of both runs was the shadows' only because the shadows-off run's own two frames differed by 17
+/// levels instead of 16.
 fn excursion_at(before: &Envelope, now: &Envelope, after: &Envelope, i: usize) -> bool {
     let (b, n, a) = (f64::from(before.luma[i]), f64::from(now.luma[i]), f64::from(after.luma[i]));
     let same_way = (n - b).signum() == (n - a).signum();
-    (n - b).abs() > POP_LEVELS && (n - a).abs() > POP_LEVELS && same_way && (b - a).abs() <= POP_LEVELS
+    let came_back = after.holds(i, before.luma[i], POP_LEVELS) || before.holds(i, after.luma[i], POP_LEVELS);
+    (n - b).abs() > POP_LEVELS && (n - a).abs() > POP_LEVELS && same_way && came_back
 }
 
 /// What pops in a shadows-off run at each frame, for attributing a shadows-on run's pops (owner
@@ -886,6 +892,11 @@ fn harbour_run(path: HarbourPath, radius: usize, drawn: &Drawn, keep: bool) -> O
     runtime.start();
     runtime.step(f64::from(SHOT_TICK) * FIXED_STEP_MS);
     assert!(presenter.install_for(&mut runtime).is_empty(), "every pass installs");
+    // The weather is unshadowed and casts nothing, but its streaks over a shadowed wall read as
+    // the shadows changing (GA: 0.33-0.53% of the picture at once), as the glare did (G0): both
+    // runs of a pair draw without it. Its own one-frame streak across the lens is held by
+    // genex-render's `metal_a_rain_drop_just_in_front_of_the_camera_fades_out_while_a_far_one_draws`.
+    runtime.sim_mut().world.weather = showcase_game::street::Weather { steam: Vec::new(), rain: Vec::new() };
     let pose = |runtime: &mut genex::Runtime<Harbour>, k: f32| {
         let (eye, target) = path(k);
         let world = &mut runtime.sim_mut().world;

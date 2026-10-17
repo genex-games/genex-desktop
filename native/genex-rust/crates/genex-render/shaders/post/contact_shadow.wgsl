@@ -184,16 +184,25 @@ fn gx_contact_texel_centre(uv: vec2<f32>) -> vec2<f32> {
     return (clamp(floor(uv * size), vec2<f32>(0.0), size - vec2<f32>(1.0)) + vec2<f32>(0.5)) / size;
 }
 
+// Whether screen uv `uv` lies on the screen.
+fn gx_contact_on_screen_uv(uv: vec2<f32>) -> bool {
+    return all(uv >= vec2<f32>(0.0)) && all(uv < vec2<f32>(1.0));
+}
+
 // The receiver's change in view distance per depth texel along `step` (one texel across or
-// down): of the two neighbours on that axis that are not sky, the smaller difference, so a texel
-// on a silhouette takes its own surface's slope rather than the step to the background (or none
-// when the one neighbour read was sky, which left a silhouette with no tolerance at all).
+// down): of the two neighbours on that axis that are on the screen and not sky, the smaller
+// difference, so a texel on a silhouette takes its own surface's slope rather than the step to the
+// background (or none when the one neighbour read was sky, which left a silhouette with no
+// tolerance at all). A neighbour beyond the screen's edge is not read (GA): the clamped read was
+// the texel itself, a slope of zero, and a slanted surface shadowed itself along the border.
 fn gx_contact_axis_slope(uv: vec2<f32>, here: f32, step: vec2<f32>) -> f32 {
     let before = gx_contact_depth_at(uv - step);
     let after = gx_contact_depth_at(uv + step);
     let none = 3.4e38;
-    let a = select(abs(gx_view_distance(gx_frame.proj, before) - here), none, gx_contact_is_sky(before));
-    let b = select(abs(gx_view_distance(gx_frame.proj, after) - here), none, gx_contact_is_sky(after));
+    let a_read = gx_contact_on_screen_uv(uv - step) && !gx_contact_is_sky(before);
+    let b_read = gx_contact_on_screen_uv(uv + step) && !gx_contact_is_sky(after);
+    let a = select(none, abs(gx_view_distance(gx_frame.proj, before) - here), a_read);
+    let b = select(none, abs(gx_view_distance(gx_frame.proj, after) - here), b_read);
     let slope = min(a, b);
     return select(slope, 0.0, slope >= none);
 }

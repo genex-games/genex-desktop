@@ -316,11 +316,25 @@ fn particle_soft(pixel: vec2<f32>, depth: f32) -> f32 {
     return select(curved, 1.0 - curved, above);
 }
 
+// The camera fade (GA): a billboard's fragment `depth` world units in front of the camera is gone
+// within a quarter of the emitter's near fade and fades in over the rest of it, so a drop passing
+// just in front of the lens draws no wide streak for one frame; 1 without a near fade.
+fn particle_near(depth: f32) -> f32 {
+    let fade = particle_emitter.surface.w;
+    if fade <= 0.0 {
+        return 1.0;
+    }
+    return smoothstep(fade * PARTICLE_NEAR_GONE, fade, depth);
+}
+
+// The share of the near fade in front of the camera where a billboard draws nothing.
+const PARTICLE_NEAR_GONE: f32 = 0.25;
+
 // The legacy LDR world: the particle's sRGB colour fogged in linear light, encoded back.
 @fragment
 fn fs_particle_fogged(in: ParticleFogOut) -> @location(0) vec4<f32> {
     let shape = particle_shape(in.corner_depth.xy, in.life);
-    let alpha = in.color.a * shape.a * particle_soft(in.clip.xy, in.corner_depth.z);
+    let alpha = in.color.a * shape.a * particle_soft(in.clip.xy, in.corner_depth.z) * particle_near(in.corner_depth.z);
     let tinted = (particle_emitter.flags.x & PARTICLE_FLAG_FLIPBOOK) != 0u;
     if particle_fog.color.a <= 0.0 && !tinted {
         return vec4<f32>(in.color.rgb, alpha);
@@ -337,5 +351,5 @@ fn fs_particle_hdr_fogged(in: ParticleHdrOut) -> @location(0) vec4<f32> {
     let shape = particle_shape(in.corner_depth.xy, in.life);
     let fogged = shape.rgb * in.paint.rgb + in.glow;
     let exposed = min(fogged * frame.cascade_splits.z, vec3<f32>(64512.0));
-    return vec4<f32>(exposed, in.paint.a * shape.a * particle_soft(in.clip.xy, in.corner_depth.z));
+    return vec4<f32>(exposed, in.paint.a * shape.a * particle_soft(in.clip.xy, in.corner_depth.z) * particle_near(in.corner_depth.z));
 }

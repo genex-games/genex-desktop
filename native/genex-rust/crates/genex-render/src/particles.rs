@@ -80,6 +80,9 @@ pub const FLIPBOOK_GRID_MAX: u32 = 16;
 const FLIPBOOK_CELL_MIP_MIN: u32 = 4;
 /// Flipbook atlases one renderer may hold.
 pub const PARTICLE_ATLASES_MAX: usize = 16;
+/// How far in front of the camera rain fades in, world units (GA): a drop 0.6 m from Harbour
+/// Street's camera drew a 9-pixel-wide streak for exactly one frame.
+pub const RAIN_NEAR_FADE: f32 = 2.0;
 /// The view depth the "no surface" texel holds (`PARTICLE_NO_SURFACE` in particles_depth.wgsl).
 const NO_SURFACE_DEPTH: f32 = 3.0e38;
 
@@ -227,6 +230,10 @@ pub struct EmitterDesc {
     /// Soft particles: world units over which a billboard fades out as it nears the opaque scene
     /// behind it (0: a hard intersection).
     pub soft_distance: f32,
+    /// Camera fade: world units in front of the camera over which a billboard fades in (nothing
+    /// within the first quarter), so a particle passing just in front of the lens draws no wide
+    /// one-frame streak (0: none).
+    pub near_fade: f32,
     /// Draw back to front (a GPU bitonic sort by view depth) instead of in slot order.
     pub sorted: bool,
     /// Textured from a flipbook atlas instead of the round dot.
@@ -256,6 +263,7 @@ impl EmitterDesc {
             spin: 0.0,
             stretch: 0.0,
             soft_distance: 0.0,
+            near_fade: 0.0,
             sorted: false,
             flipbook: None,
             collision: None,
@@ -286,7 +294,8 @@ impl EmitterDesc {
     }
 
     /// Rain over the box of half sides `extent` around `origin` (its top): streaks falling 9 m/s
-    /// at 60 ticks a second, stopped where they meet what the camera sees.
+    /// at 60 ticks a second, stopped where they meet what the camera sees, and faded out over the
+    /// [`RAIN_NEAR_FADE`] in front of the camera.
     pub fn rain(origin: [f32; 3], extent: [f32; 3], seed: u32) -> EmitterDesc {
         EmitterDesc {
             extent,
@@ -302,6 +311,7 @@ impl EmitterDesc {
             lifetime_ticks: 60,
             stretch: 1.6,
             soft_distance: 0.05,
+            near_fade: RAIN_NEAR_FADE,
             collision: Some(DepthCollision { thickness: 0.6, rest_ticks: 0 }),
             ..EmitterDesc::fountain(origin, seed)
         }
@@ -376,7 +386,7 @@ impl EmitterDesc {
             params: [self.rate_per_tick, self.lifetime_ticks, self.seed, self.slots()],
             spawn: [(newest % slots) as u32, newest as u32, (newest >> 32) as u32, spawned.min(slots) as u32],
             shape: [self.size_end, self.rotation_jitter, self.spin, self.stretch],
-            surface: [self.soft_distance.max(0.0), collision.thickness.max(0.0), collision.rest_ticks as f32, 0.0],
+            surface: [self.soft_distance.max(0.0), collision.thickness.max(0.0), collision.rest_ticks as f32, self.near_fade.max(0.0)],
             book,
             flags: [bits, stride.max(1), 0, 0],
             extent: [self.extent[0], self.extent[1], self.extent[2], 0.0],
@@ -404,7 +414,7 @@ pub struct GpuEmitter {
     pub spawn: [u32; 4],
     /// Size at death over size at birth, rotation jitter, spin, stretch.
     pub shape: [f32; 4],
-    /// Soft distance, collision thickness, rest ticks, 0.
+    /// Soft distance, collision thickness, rest ticks, near fade.
     pub surface: [f32; 4],
     /// Flipbook columns, rows, frames, cycles (0 without one).
     pub book: [f32; 4],

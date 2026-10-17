@@ -38,7 +38,8 @@ struct Emitter {
     // (radians a tick); w: stretch along the motion (ticks of velocity; 0: a square billboard).
     shape: vec4<f32>,
     // x: soft distance (world units; 0: a hard intersection); y: depth collision thickness (world
-    // units; 0: no collision); z: ticks a particle rests where it hit before it is gone; w: reserved.
+    // units; 0: no collision); z: ticks a particle rests where it hit before it is gone; w: camera
+    // fade (world units in front of the camera over which a billboard fades in; 0: none).
     surface: vec4<f32>,
     // Flipbook: x columns, y rows, z frames, w cycles over a life (all 0: the round dot).
     book: vec4<f32>,

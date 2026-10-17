@@ -313,6 +313,50 @@ fn metal_rain_stops_on_the_awning_it_falls_onto() {
     assert!(collided * 10 <= through, "with collision the rain stops on the awning ({collided} pixels against {through})");
 }
 
+/// GA (renderer pass 2): a rain streak passing just in front of the camera fades out instead of
+/// drawing a wide streak across the lens for one frame. On Harbour Street a drop 0.6 m from the
+/// camera drew a 9-pixel-wide streak over the shadowed street for exactly one frame (the
+/// `metal_harbour_street_shadows_add_no_one_frame_pops_on_a_pan_or_a_creep` row's 43-pixel pop and
+/// its 0.33-0.53% step), as engines' rain fades near the camera.
+#[test]
+#[ignore = "needs a GPU: run with --ignored metal"]
+fn metal_a_rain_drop_just_in_front_of_the_camera_fades_out_while_a_far_one_draws() {
+    let Some(gpu) = gpu() else { return };
+    let size = (256, 144);
+    let camera = CameraDesc::look_at([0.0, 1.5, 6.0], [0.0, 1.5, 0.0]);
+    let mut renderer = renderer(&gpu, size);
+    // One still drop of the rain preset's look, without the depth collision, at `distance` metres
+    // in front of the camera; its size scaled with the distance so both cover the same pixels.
+    let drop = |distance: f32| EmitterDesc {
+        extent: [0.0; 3],
+        velocity: [0.0; 3],
+        speed_jitter: 0.0,
+        spread: 0.0,
+        size: 0.012 * distance / 0.5,
+        rate_per_tick: 1,
+        lifetime_ticks: 1,
+        collision: None,
+        soft_distance: 0.0,
+        color_start: [255; 4],
+        color_end: [255; 4],
+        ..EmitterDesc::rain([0.0, 1.5, 6.0 - distance], [0.0; 3], 1)
+    };
+    let near = renderer.add_emitter(&gpu, drop(0.5)).expect("near");
+    let far = renderer.add_emitter(&gpu, drop(6.0)).expect("far");
+    let plain = draw(&gpu, &mut renderer, &ground(camera));
+    let with = |renderer: &mut FrameRenderer, emitter| {
+        let mut frame = ground(camera);
+        frame.particles(emitter, 0);
+        draw(&gpu, renderer, &frame)
+    };
+    let centre = (size.0 as i32 / 2, size.1 as i32 / 2);
+    let lift = |capture: &Capture| (0..3).map(|c| texel(capture, centre)[c].abs_diff(texel(&plain, centre)[c])).max().unwrap_or(0);
+    let (near_lift, far_lift) = (lift(&with(&mut renderer, near)), lift(&with(&mut renderer, far)));
+    eprintln!("a white rain drop at the centre: {near_lift} levels at 0.5 m, {far_lift} at 6 m");
+    assert!(far_lift >= 60, "a drop 6 m away draws ({far_lift} levels)");
+    assert!(u32::from(near_lift) * 4 <= u32::from(far_lift), "a drop 0.5 m from the camera fades out ({near_lift} levels against {far_lift} at 6 m)");
+}
+
 /// The particles' budget (TIER-AB plan A.11): at most this many milliseconds of GPU time for 64k
 /// particles.
 const PARTICLES_64K_MS_MAX: f32 = 0.5;

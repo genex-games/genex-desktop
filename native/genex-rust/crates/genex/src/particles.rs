@@ -163,7 +163,8 @@ impl Particles {
     }
 
     /// Rain falling from the top face of the box centred on `origin` with half sides `extent`:
-    /// streaks stopped where they meet what the camera sees (a roof, an awning, the road).
+    /// streaks stopped where they meet what the camera sees (a roof, an awning, the road), faded
+    /// out within two metres of the camera.
     pub fn rain(origin: Vec3, extent: Vec3) -> Particles {
         Particles::of(EmitterDesc::rain(origin.to_array(), extent.to_array(), 1))
     }
