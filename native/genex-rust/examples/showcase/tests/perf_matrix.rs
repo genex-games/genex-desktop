@@ -1677,10 +1677,22 @@ fn the_asset_table_is_read_once_so_a_frame_does_not_read_or_leak_the_glbs_again(
 }
 
 #[test]
-fn the_matrix_names_eleven_scenes_and_five_profiles() {
+fn the_matrix_names_fifteen_scenes_and_five_profiles() {
+    // Nine Lakeside shots (pass 1's five and Lakeside v2's four), three bench and three stress scenes.
     let names: Vec<String> = Cell::all().into_iter().map(Cell::name).collect();
-    assert_eq!(names.len(), 11, "{names:?}");
-    for want in ["lakeside-wide", "lakeside-closeup", "bench-materials", "bench-outdoor", "bench-city", "stress-plaza", "stress-forest", "stress-occlusion"] {
+    assert_eq!(names.len(), 15, "{names:?}");
+    let lakeside = [
+        "lakeside-wide",
+        "lakeside-dock",
+        "lakeside-cabin",
+        "lakeside-forest",
+        "lakeside-closeup",
+        "lakeside-golden-wide",
+        "lakeside-shore",
+        "lakeside-forest-floor",
+        "lakeside-cabin-interior",
+    ];
+    for want in lakeside.into_iter().chain(["bench-materials", "bench-outdoor", "bench-city", "stress-plaza", "stress-forest", "stress-occlusion"]) {
         assert!(names.iter().any(|n| n == want), "no {want} in {names:?}");
     }
     let all: Vec<String> = DEFAULT_PROFILES.split(',').filter_map(Profile::from_name).map(Profile::name).collect();

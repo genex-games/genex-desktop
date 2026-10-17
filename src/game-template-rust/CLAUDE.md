@@ -73,8 +73,9 @@ never the quality.
   capture after adding an environment.
 - **Prefer built-ins to custom passes.** A custom material or pass is for what they cannot draw,
   written at `api = 2` (linear, pre-exposed colour; a grade of your own goes at `PostHdr`). A
-  Level-3 pass is not fogged, lit by point or spot lights or shadowed yet, and a custom material
-  casts no shadow: keep ground and characters built-in or `api = 2` surfaces. v1 work in the world
+  Level-3 pass is not fogged or lit by point or spot lights yet (it shadows itself from
+  `gx_shadow_map`), and a custom material casts no shadow: keep ground and characters built-in
+  or `api = 2` surfaces. v1 work in the world
   holds the whole frame on the old LDR scene.
 - **Temporal effects.** `high` and `ultra` draw TAA. Draw everything that moves on its own (a
   character, an enemy, a vehicle) under `frame.id(key)` with a key that stays with it, end it with

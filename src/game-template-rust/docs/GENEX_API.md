@@ -256,6 +256,13 @@ replaces the clear colour; elsewhere the flat ambient light and the clear colour
 both sensible. An environment's light is brighter than a flat ambient: retune
 `ev_compensation` (or the map's `with_intensity`) against a capture after adding one.
 
+The air between is the look's fog, off by default: `[render.look]`'s `fog_*` keys, or in code
+`RenderConfig::new().fog(Fog::default().with_density(0.02).with_height(0.3, 0.0).with_range(0.0, 0.9)
+.with_color([1.0, 1.0, 1.0]))` (`use genex::render::Fog;`). Its in-scatter is the environment's
+horizon light tinted by the colour; under the sky `.with_aerial_perspective(false)` drops the air's
+own scattering. On desktop and web `high` and `ultra` the fog is a lit volume with sun shafts;
+`.with_volumetric(false)` keeps the plain height fog there too.
+
 Sun shadows are a row of the preset table, per device class, drawn as listed (the switch is `shadows`; `genex.toml`'s `[render.shadows]` sets `distance` and `blend_band` on every preset):
 
 | preset | cascades x side | filter | depth, far cascades | reach | cascade blend, end fade |
@@ -658,7 +665,7 @@ and one mesh are one instanced call, and `gx_draw` is still the drawing instance
 1 holds the frame's read-only `gx_draws` table). A v2 post pass reads `gx_scene` and `gx_frame` (and `gx_env_sh`, the
 environment's SH9) on the display-ready frame after the tonemap, and `gx_depth`, `gx_normals` and
 `gx_motion` (the prepass's motion vectors, written whenever a source declares them; the
-formula is under Custom GPU passes) (an effect on the HDR scene before it is a Level-3 `PostHdr` pass; Level-3 passes do not read the sun's shadow maps yet, so grass or water drawn by a pass is not shadowed), and
+formula is under Custom GPU passes) (an effect on the HDR scene before it is a Level-3 `PostHdr` pass; grass or water a Level-3 pass draws shadows itself from the v2 tables' `gx_shadow_map`, under Custom GPU passes), and
 textures from `gfx.texture(path)` bind through `gfx.material_textured(path, &uniforms,
 &[&texture])` (a missing texture binds a white 1x1 texel, never the checker; game textures carry
 their mips, and the linear sampler filters anisotropically). A v1 material keeps working

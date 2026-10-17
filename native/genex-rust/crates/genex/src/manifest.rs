@@ -153,6 +153,12 @@ pub const TERRAIN_CALLS: [&str; 13] = [
     "Scatter::new",
     "terrain.scatter",
 ];
+/// The look's fog calls of the facade, as agents call them: the fog a config draws
+/// (`RenderConfig::new().fog(..)`), made from `Fog::default()` and shaped (`.with_density(..)`,
+/// `.with_height(..)`, `.with_range(..)`, `.with_color(..)`, `.with_aerial_perspective(..)`), and
+/// renderer pass 2 A.5's opt-out of the lit volume on `high` and `ultra` (`.with_volumetric(..)`).
+pub const FOG_CALLS: [&str; 8] =
+    [".fog", "Fog::default", ".with_density", ".with_height", ".with_range", ".with_color", ".with_aerial_perspective", ".with_volumetric"];
 /// The `[[wgsl]] api` versions the facade has defined; the runtime admits those genex-render
 /// serves (`EXTENSION_APIS`; `extension-api-unavailable` for the rest).
 pub const WGSL_EXTENSION_APIS: [i64; 2] = [1, 2];

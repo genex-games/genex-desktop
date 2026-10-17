@@ -38,6 +38,10 @@ const EVIDENCE_ENV: &str = "GENEX_WINDOW_EVIDENCE_DIR";
 /// The template's world (`src/game-template-rust/src/main.rs`) and a 1080p window, twice its size.
 const TEMPLATE_WORLD: [u32; 2] = [960, 540];
 const TEMPLATE_WINDOW: [u32; 2] = [1920, 1080];
+/// The stack the shot's frames run on: a desktop shell runs them on the game's main thread (8 MiB
+/// on macOS). A test thread's default 2 MiB is too small for an unoptimized (debug) build of the
+/// renderer, whose moves are not elided, so `cargo test --workspace` overflowed it.
+const SHELL_STACK_BYTES: usize = 8 * 1024 * 1024;
 
 #[derive(Default)]
 struct Shapes;
@@ -69,7 +73,13 @@ fn game() -> Game<Shapes> {
 
 /// The shot of `game()` in `WINDOW`, or None when the host has no GPU (unless one is required).
 fn shot() -> Option<DesktopShot> {
-    shot_of(game(), WINDOW)
+    on_shell_stack(|| shot_of(game(), WINDOW))
+}
+
+/// `run` on a thread with the shell's stack ([`SHELL_STACK_BYTES`]); its panic is this thread's.
+fn on_shell_stack<T: Send + 'static>(run: impl FnOnce() -> T + Send + 'static) -> T {
+    let thread = std::thread::Builder::new().name("shell-stack".to_owned()).stack_size(SHELL_STACK_BYTES).spawn(run);
+    thread.expect("the shot's thread starts").join().unwrap_or_else(|panic| std::panic::resume_unwind(panic))
 }
 
 /// The shot of `game` in `window`, or None when the host has no GPU (unless one is required).
@@ -152,9 +162,12 @@ fn write_evidence(shot: &DesktopShot, name: &str) {
 
 #[test]
 fn metal_the_template_in_a_1080p_window_is_upscaled_not_nearest_blocky() {
-    let mut game = Game::new(template::World::default()).world_size(TEMPLATE_WORLD[0], TEMPLATE_WORLD[1]);
-    template::wire(&mut game);
-    let Some(shot) = shot_of(game, TEMPLATE_WINDOW) else { return };
+    let template_shot = || {
+        let mut game = Game::new(template::World::default()).world_size(TEMPLATE_WORLD[0], TEMPLATE_WORLD[1]);
+        template::wire(&mut game);
+        shot_of(game, TEMPLATE_WINDOW)
+    };
+    let Some(shot) = on_shell_stack(template_shot) else { return };
     write_evidence(&shot, "template-1080p-window.ppm");
     // Step B (F1/RC-03): rendered at the window's own pixels, not upscaled from 960x540.
     assert_eq!(shot.output, TEMPLATE_WINDOW, "the template is rendered natively at 1080p");

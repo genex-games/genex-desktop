@@ -149,6 +149,23 @@ fn the_particle_calls_and_refusals_are_the_fixtures() {
 }
 
 #[test]
+fn the_fog_calls_are_the_fixtures_and_each_is_a_call_of_the_facade() {
+    use genex::render::{Fog, RenderConfig};
+    let pinned = fixture();
+    assert_eq!(names(&pinned["fog"]["calls"]), genex::manifest::FOG_CALLS);
+    // Every pinned name is a real call, chained as GENEX_API.md teaches it.
+    let fog = Fog::default()
+        .with_density(0.02)
+        .with_height(0.3, 0.0)
+        .with_range(0.0, 0.9)
+        .with_color([1.0, 1.0, 1.0])
+        .with_aerial_perspective(false)
+        .with_volumetric(false);
+    assert!(fog.is_on() && !fog.volumetric && !fog.aerial_perspective);
+    let _config = RenderConfig::new().fog(fog);
+}
+
+#[test]
 fn the_terrain_calls_and_refusals_are_the_fixtures() {
     use genex::TerrainErrorCode;
     let pinned = fixture();

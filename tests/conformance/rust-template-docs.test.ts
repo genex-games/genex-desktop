@@ -92,6 +92,7 @@ const FACADE = JSON.parse(
   instanceGroups: { calls: string[]; refusals: string[] };
   terrain: { calls: string[]; refusals: string[] };
   particles: { calls: string[]; refusals: string[] };
+  fog: { calls: string[] };
 };
 
 /** The seed's recipes, whose `evidence` cites sections of the reference. */
@@ -274,6 +275,11 @@ describe("GENEX_API.md is the facade's reference", () => {
     const text = api();
     for (const call of FACADE.particles.calls) assert.ok(text.includes(`${call}(`), `GENEX_API.md teaches ${call}(..)`);
     for (const refusal of FACADE.particles.refusals) assert.ok(text.includes(refusal), `GENEX_API.md names ${refusal}`);
+  });
+
+  it("teaches every fog call, the volumetric opt-out among them", () => {
+    const text = api();
+    for (const call of FACADE.fog.calls) assert.ok(text.includes(`${call}(`), `GENEX_API.md teaches ${call}(..)`);
   });
 
   it("teaches every local-light and emission call, and the template points at them", () => {
