@@ -587,8 +587,7 @@ pub fn demote_quality(current: &Quality, lower: &Quality) -> Quality {
     quality.shadows.map_size = min_used(current.shadows.map_size, lower.shadows.map_size);
     quality.shadows.far_cadence = current.shadows.far_cadence.max(lower.shadows.far_cadence);
     quality.bloom.enabled = current.bloom.enabled && lower.bloom.enabled;
-    quality.bloom.mips = min_used(current.bloom.mips, lower.bloom.mips);
-    quality.bloom.half_res = current.bloom.half_res || lower.bloom.half_res;
+    quality.bloom.resolution = min_used(current.bloom.resolution, lower.bloom.resolution);
     if ao_rank(lower.ao.resolution) < ao_rank(current.ao.resolution) {
         quality.ao.resolution = lower.ao.resolution;
     }

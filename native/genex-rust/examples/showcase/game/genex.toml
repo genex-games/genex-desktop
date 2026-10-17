@@ -1,8 +1,8 @@
 # The lakeside showcase: a Rust · wgpu game the owner opens in Studio (Home, Open a folder…).
 # Everything the scene draws comes from the facade (models, cubes, the sun, the lights, the ambient
-# light and the environment: the renderer's physical sky, or an HDR sky map), the terrain material
-# (extension ladder level 2, material API v2: four PBR layers blended by a splat map and their
-# heights) and four custom GPU passes (level 3, custom-pass API v2) for what no built-in draws
+# light and the environment: the renderer's physical sky, or an HDR sky map; the ground is the
+# built-in terrain, six PBR layers blended by a control map and their heights) and four custom GPU
+# passes (level 3, custom-pass API v2) for what no built-in draws
 # (clouds, grass, the lake, the light sprites), whose WGSL sources are listed below. Photo-scanned CC0
 # textures and a golden-hour sky map are fetched by `node scripts/showcase-assets.ts fetch`
 # (assets-manifest.json); without them the scene draws its procedural stand-ins. The look (AgX,
@@ -13,17 +13,7 @@ world_size = [1280, 720]
 save_name = "lakeside"
 
 [[wgsl]]
-path = "shaders/terrain.wgsl"
-kind = "material"
-api = 2
-
-[[wgsl]]
 path = "shaders/common.wgsl"
-kind = "pass"
-api = 2
-
-[[wgsl]]
-path = "shaders/grass.wgsl"
 kind = "pass"
 api = 2
 

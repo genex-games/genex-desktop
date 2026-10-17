@@ -118,6 +118,7 @@ struct MeshletPrevModel {
 struct MeshletMotionFrame {
     prev_view_proj: mat4x4<f32>,
     jitter: vec4<f32>,
+    reproject: mat4x4<f32>,
 }
 
 @group(3) @binding(0) var<uniform> meshlet_motion_frame: MeshletMotionFrame;

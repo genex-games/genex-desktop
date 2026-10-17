@@ -29,6 +29,35 @@ fn a_frame_with_no_lighting_calls_draws_today_s_lighting() {
 }
 
 #[test]
+fn reflection_probes_reach_the_scene_s_lighting_in_call_order_and_are_not_draws() {
+    let mut frame = Frame::default();
+    let room = genex::ReflectionProbe::new(Vec3::new(-6.0, 0.15, 7.8), Vec3::new(6.0, 3.6, 15.8)).with_capture(Vec3::new(0.0, 1.6, 12.0)).with_blend(0.4);
+    frame.reflection_probe(&room);
+    frame.reflection_probe(&genex::ReflectionProbe::new(Vec3::ZERO, Vec3::ONE).with_intensity(0.5));
+    assert_eq!(frame.draw_calls(), 0, "probes are not draws");
+    let probes = scene_of(&frame).lighting.reflection_probes;
+    assert_eq!(probes.len(), 2);
+    assert_eq!((probes[0].min, probes[0].max, probes[0].capture, probes[0].blend), ([-6.0, 0.15, 7.8], [6.0, 3.6, 15.8], [0.0, 1.6, 12.0], 0.4));
+    assert_eq!((probes[1].capture, probes[1].intensity), ([0.5; 3], 0.5));
+    assert!(scene_of(&Frame::default()).lighting.reflection_probes.is_empty(), "none by default");
+}
+
+#[test]
+fn irradiance_volumes_reach_the_scene_s_lighting_in_call_order_and_are_not_draws() {
+    let mut frame = Frame::default();
+    let room = genex::IrradianceVolume::new(Vec3::new(-6.0, 0.15, 7.8), Vec3::new(6.0, 3.6, 15.8)).with_blend(0.4);
+    assert_eq!(room.cells, [12, 4, 8], "a cell about every metre");
+    frame.irradiance_volume(&room);
+    frame.irradiance_volume(&genex::IrradianceVolume::new(Vec3::ZERO, Vec3::ONE).with_cells([2, 3, 4]).with_intensity(0.5));
+    assert_eq!(frame.draw_calls(), 0, "volumes are not draws");
+    let volumes = scene_of(&frame).lighting.irradiance_volumes;
+    assert_eq!(volumes.len(), 2);
+    assert_eq!((volumes[0].min, volumes[0].max, volumes[0].cells, volumes[0].blend), ([-6.0, 0.15, 7.8], [6.0, 3.6, 15.8], [12, 4, 8], 0.4));
+    assert_eq!((volumes[1].cells, volumes[1].intensity), ([2, 3, 4], 0.5));
+    assert!(scene_of(&Frame::default()).lighting.irradiance_volumes.is_empty(), "none by default");
+}
+
+#[test]
 fn a_sun_call_reaches_the_scene_s_lighting() {
     let mut frame = Frame::default();
     frame.sun(Vec3::new(0.0, 1.0, -1.0), Color::rgb(255, 200, 150), 4.0);

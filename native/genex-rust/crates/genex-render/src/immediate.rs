@@ -61,7 +61,7 @@ use crate::layout::{GpuStructLayout, NO_TEXTURE};
 use crate::limits::{IMMEDIATE_QUADS_MAX, check_count};
 use crate::overlay::{OverlayPainter, paint_overlay};
 use crate::pacing::{FrameAction, FrameGate, FrameTally};
-use crate::particles::{EmitterDesc, EmitterId, GpuEmitter, GpuParticle, ParticlePass};
+use crate::particles::{EmitterDesc, EmitterId, GpuEmitter, GpuParticle, GpuParticleShape, GpuSortStep, ParticleAtlas, ParticleAtlasId, ParticlePass};
 use crate::post::exposure::{ExposureHistory, ExposureInput, ExposurePass, ExposureSource, exposure_source};
 use crate::prepass::ExtensionDemand;
 use crate::renderer::{FRAME_PRE_EXPOSURE_OFFSET, RenderOptions, Renderer, ScenePath, StagePrepass, WORLD_FORMAT, WorldNodes, WorldPass, WorldStage, shader};
@@ -178,6 +178,8 @@ pub const PART2_GPU_STRUCTS: &[GpuStructLayout] = &[
     GpuStructLayout { wgsl: "GxPost", rust_size: size_of::<GpuPost>(), rust_align: align_of::<GpuPost>() },
     GpuStructLayout { wgsl: "Emitter", rust_size: size_of::<GpuEmitter>(), rust_align: align_of::<GpuEmitter>() },
     GpuStructLayout { wgsl: "Particle", rust_size: size_of::<GpuParticle>(), rust_align: align_of::<GpuParticle>() },
+    GpuStructLayout { wgsl: "ParticleShape", rust_size: size_of::<GpuParticleShape>(), rust_align: align_of::<GpuParticleShape>() },
+    GpuStructLayout { wgsl: "SortStep", rust_size: size_of::<GpuSortStep>(), rust_align: align_of::<GpuSortStep>() },
 ];
 
 /// Vertices of one quad: two triangles.
@@ -228,7 +230,7 @@ impl ImmediateFrame {
     /// captures settled).
     pub fn from_scene(scene: Scene) -> ImmediateFrame {
         let mut frame = ImmediateFrame::new(scene.camera, scene.clear);
-        frame.counter.add(WORLD_TAG, (scene.draws.len() + scene.skinned.len()) as u32);
+        frame.counter.add(WORLD_TAG, (scene.mesh_instances() + scene.skinned.len()) as u32);
         frame.scene = scene;
         frame
     }
@@ -365,7 +367,7 @@ impl ImmediateFrame {
         let corners = [turn(x, y), turn(x + w, y), turn(x + w, y + h), turn(x, y + h)];
         // Quads sample the colour arrays of every size class (the reference carries the class;
         // class 0 is the bare layer).
-        let layer = if texture.kind() == TextureKind::Color { texture.reference() } else { NO_TEXTURE };
+        let layer = if texture.kind().array() == TextureKind::Color { texture.reference() } else { NO_TEXTURE };
         self.quad(corners, source, tint, layer)
     }
 
@@ -378,9 +380,10 @@ impl ImmediateFrame {
         self.quad(corners, [0.0, 0.0, 1.0, 1.0], color, NO_TEXTURE)
     }
 
-    /// Draw `mesh` with a custom material, tinted `tint`.
+    /// Draw `mesh` with a custom material, tinted `tint`, under the current draw id
+    /// ([`ImmediateFrame::id`]): its motion history follows the id (T-04).
     pub fn custom(&mut self, mesh: MeshId, model: [f32; 16], material: CustomMaterialId, tint: [u8; 4]) -> &mut Self {
-        self.custom.push(CustomDraw { mesh, model, material, tint });
+        self.custom.push(CustomDraw { id: self.scene.id(), mesh, model, material, tint });
         self.counter.count();
         self
     }
@@ -402,6 +405,18 @@ impl ImmediateFrame {
     /// The 3D scene so far.
     pub fn scene(&self) -> &Scene {
         &self.scene
+    }
+
+    /// Draw a retained instance group (renderer pass 2 A.0b) with `material`: one logical draw.
+    pub fn group(&mut self, group: &crate::retained::InstanceGroup, material: Material) -> &mut Self {
+        self.scene.draw_group_with(group, material);
+        self.counter.count();
+        self
+    }
+
+    /// The custom-material draws so far, in call order.
+    pub fn custom_draws(&self) -> &[CustomDraw] {
+        &self.custom
     }
 
     /// 2D quads so far.
@@ -540,7 +555,9 @@ impl QuadPass {
         }
         let Some(vertices) = &self.vertices else { return Ok(0) };
         gpu.queue.write_buffer(vertices, 0, bytes);
-        let view_proj = Camera2d::SCREEN.view_proj(renderer.size());
+        // 2D coordinates are the game's logical world pixels at any output size (renderer pass 2,
+        // P2-0.9 step B): a Live frame drawn at the window's pixels scales them, never moves them.
+        let view_proj = Camera2d::SCREEN.view_proj(renderer.logical_size());
         gpu.queue.write_buffer(&self.uniforms, 0, bytemuck::bytes_of(&GpuQuad2d { view_proj }));
         let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("quads"),
@@ -576,6 +593,7 @@ impl QuadPass {
 /// the custom passes of each stage (M2.19).
 struct Part2Stage<'a> {
     device: &'a wgpu::Device,
+    queue: &'a wgpu::Queue,
     materials: &'a mut CustomMaterials,
     particles: &'a mut ParticlePass,
     custom: &'a mut dyn CustomStage,
@@ -589,6 +607,16 @@ impl WorldStage for Part2Stage<'_> {
         // an HDR scene is written with the exposure the history adapted to.
         if let Some(exposure) = self.pre_exposure.as_ref().filter(|_| world.hdr) {
             encoder.copy_buffer_to_buffer(exposure, 0, world.frame_uniforms, FRAME_PRE_EXPOSURE_OFFSET, PRE_EXPOSURE_BYTES);
+        }
+        // `before-cull` passes run on their own encoders, each submitted at once, and so does the
+        // v1/v2 frame refresh ahead of them: the frame so far (the timer's begin pass, the exposure
+        // copy above) is submitted first, as nodes 9, 18 and 23 do before their encoder stages.
+        // Otherwise the refresh read the CPU's pre-exposure (1.0 under auto exposure) and the
+        // passes ran before the frame's timer (renderer pass 2, RC-02).
+        if self.custom.runs(PassStage::BeforeCull) {
+            let fresh = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("frame") });
+            let so_far = std::mem::replace(encoder, fresh);
+            self.queue.submit([so_far.finish()]);
         }
         self.custom.before_cull(encoder, world);
     }
@@ -610,11 +638,13 @@ impl WorldStage for Part2Stage<'_> {
     }
 
     fn reactive_draws(&self) -> bool {
-        self.particles.draws()
+        self.particles.draws() || self.custom.reactive_draws()
     }
 
     fn reactive(&self, pass: &mut wgpu::RenderPass<'_>, node: &crate::post::taa::ReactiveNode) {
         self.particles.draw_reactive(pass, node);
+        // The Level-3 passes' coverage last: their pipelines set everything they bind.
+        self.custom.reactive(pass, node);
     }
 
     fn pre_exposure_source(&self) -> Option<&Buffer> {
@@ -696,7 +726,19 @@ impl FrameNodesOf<'_> {
             self.stage.custom.prepass_motion(motion);
         }
         self.stage.custom.after_prepass(&views);
+        // Soft and colliding particles read the opaque scene's depth (renderer pass 2 A.11).
+        self.stage.particles.set_scene_depth(Some(views.depth.clone()));
         self.prepass = Some(views);
+    }
+
+    /// Node 15a, ahead of the reactive coverage: the Level-3 in-world passes' own motion
+    /// (`PassFrame::motion_draws`) over the prepass's, against (and into) the prepass depth, so
+    /// TAA reprojects what they move (renderer pass 2, B.7).
+    fn encode_pass_motion(&mut self, frame: &mut FrameEncoder) {
+        let (Some(motion), Some(prepass)) = (&self.motion, &self.prepass) else { return };
+        if self.stage.custom.temporal_motion(frame.encoder(), motion, &prepass.depth) {
+            frame.count_render_passes(1);
+        }
     }
 
     /// What this frame's post passes bind beside the base frame: the v2 frame bytes, the
@@ -833,6 +875,11 @@ impl FrameNodes for FrameNodesOf<'_> {
                 self.hand_environment();
                 Ok(())
             }
+            NodeId::Reactive => {
+                self.encode_pass_motion(frame);
+                self.world.encode(id, frame, &mut self.stage);
+                Ok(())
+            }
             _ => {
                 self.world.encode(id, frame, &mut self.stage);
                 Ok(())
@@ -960,7 +1007,7 @@ impl FrameRenderer {
             quads: QuadPass::new(device)?,
             materials: CustomMaterials::new(device, context, samples),
             posts: PostPasses::new(device, context)?,
-            particles: ParticlePass::new(device, samples)?,
+            particles: ParticlePass::new(gpu, samples)?,
             context,
             renderer,
             gate: FrameGate::default(),
@@ -1004,6 +1051,12 @@ impl FrameRenderer {
         self.renderer.add_meshes_with_meshlets(gpu, parts)
     }
 
+    /// Add every part of one model with its meshlets and levels of detail
+    /// ([`Renderer::add_model_parts`], renderer pass 2 A6.9).
+    pub fn add_model_parts(&mut self, gpu: &Gpu, parts: Vec<crate::scene::ModelPart>) -> Result<Vec<MeshId>, RenderError> {
+        self.renderer.add_model_parts(gpu, parts)
+    }
+
     /// Add a skinned mesh.
     pub fn add_skinned_mesh(&mut self, gpu: &Gpu, data: &SkinnedMeshData) -> Result<SkinId, RenderError> {
         self.renderer.add_skinned_mesh(gpu, data)
@@ -1012,6 +1065,12 @@ impl FrameRenderer {
     /// Add a texture.
     pub fn add_texture(&mut self, gpu: &Gpu, data: &TextureData, kind: TextureKind) -> Result<TextureId, RenderError> {
         self.renderer.add_texture(gpu, data, kind)
+    }
+
+    /// Add a compressed texture in the renderer's family ([`Renderer::add_compressed_texture`],
+    /// renderer pass 2 A6.4).
+    pub fn add_compressed_texture(&mut self, gpu: &Gpu, texture: &crate::texture::CompressedTexture, kind: TextureKind) -> Result<TextureId, RenderError> {
+        self.renderer.add_compressed_texture(gpu, texture, kind)
     }
 
     /// Admit a custom material (`Material::custom(wgsl, uniforms)`); `uniforms` are its block's
@@ -1048,6 +1107,18 @@ impl FrameRenderer {
         textures: &[TextureData],
     ) -> Result<PostPassId, RenderError> {
         self.posts.add_api(gpu, api, stage, wgsl, uniforms, textures)
+    }
+
+    /// The last frame's Level-2 material draws: (draws issued, pipeline binds) (renderer pass 2
+    /// A.0, LG-20).
+    pub fn custom_material_draws(&self) -> (u32, u32) {
+        (self.materials.frame_draws(), self.materials.frame_pipeline_binds())
+    }
+
+    /// The draw calls the last frame's Level-2 material draws took (renderer pass 2 A.0, LG-20
+    /// step 3: one instanced call per run of a v2 (material, mesh) pair).
+    pub fn custom_material_draw_calls(&self) -> u32 {
+        self.materials.frame_draw_calls()
     }
 
     /// Bytes the frame holds on the GPU beside the mesh library: the renderer's pooled targets,
@@ -1097,6 +1168,17 @@ impl FrameRenderer {
         self.particles.add(gpu, desc)
     }
 
+    /// Add a flipbook atlas emitters can name ([`crate::particles::Flipbook`]).
+    pub fn add_particle_atlas(&mut self, gpu: &Gpu, atlas: &ParticleAtlas) -> Result<ParticleAtlasId, RenderError> {
+        self.particles.add_atlas(gpu, atlas)
+    }
+
+    /// Draw at most `cap` particles a frame ([`crate::particles::particle_cap`] of the device's
+    /// class; every n-th slot past it). Desktop's cap until set.
+    pub fn set_particle_cap(&mut self, cap: u32) {
+        self.particles.set_cap(cap);
+    }
+
     /// The emitter's description.
     pub fn emitter(&self, id: EmitterId) -> Option<EmitterDesc> {
         self.particles.desc(id)
@@ -1144,7 +1226,7 @@ impl FrameRenderer {
         let ev_compensation = if scene.hdr && self.renderer.quality().exposure { look.ev_compensation } else { 0.0 };
         self.materials.set_frame_facts(v2_frame_facts(&self.renderer, frame, &history, &scene, ev_compensation));
         self.materials.keep_frame_v2(frame.post.iter().any(|id| self.posts.api(*id) == Some(crate::abi::ABI_V2)));
-        custom.begin_frame(&StageFrame { history, ev_compensation });
+        custom.begin_frame(&StageFrame { history, ev_compensation, camera: frame.scene().camera });
         // The environment as it stands (graph node 11 hands over a new bake when it lands): the
         // frames that bake nothing, or whose node 11 does not run, bind what the forward pass binds.
         let environment = self.renderer.environment_views();
@@ -1159,7 +1241,8 @@ impl FrameRenderer {
         budget.charge(self.materials.prepare(gpu, &frame.custom, frame.seconds, self.renderer.library())?)?;
         budget.charge(self.particles.prepare(gpu, &frame.particles)?)?;
         self.start_history(gpu, &history)?;
-        if history.history_reset() {
+        // A dynamic-resolution step restarts the index but keeps these (RC-05).
+        if history.drops_history() {
             self.renderer.reset_shadow_history();
             self.renderer.reset_ao_history();
             if self.settle.is_none() {
@@ -1176,9 +1259,14 @@ impl FrameRenderer {
         self.follow_scene(gpu, self.pipeline_facts(stage_reason))?;
         // Inputs drive producers: what the frame's Level-3 passes and the Level-2 v2 sources it
         // draws read decides whether the prepass runs, whatever the preset's own consumers say.
-        let extension_inputs = self.materials.inputs_of(&frame.custom) | self.posts.inputs_of(&frame.post);
+        // Soft and colliding particles read the scene's depth where the quality lets the prepass run
+        // (renderer pass 2 A.11).
+        let particle_inputs = self.particles.inputs_of(&frame.particles, self.renderer.quality().prepass);
+        let extension_inputs = self.materials.inputs_of(&frame.custom) | self.posts.inputs_of(&frame.post) | particle_inputs;
         let demand = ExtensionDemand { extension_inputs, ..custom.prepass_demand() };
         let stage_prepass = StagePrepass { demand, draws: self.materials.prepass_draws() };
+        // The terrain's grass sways in the shared wind at the tick's simulated seconds (A.8).
+        self.renderer.set_foliage_seconds(frame.seconds);
         let prep = self.renderer.begin_frame_prepass(frame.scene(), path, stage_reason, stage_prepass)?;
         // TAA's reactive coverage marks the billboards too (graph node 15a).
         if let Some((node, reversed)) = self.renderer.reactive_node() {
@@ -1190,7 +1278,7 @@ impl FrameRenderer {
         let mut encoder = FrameEncoder::new(&gpu.device, &gpu.queue, "frame");
         let mut nodes = FrameNodesOf {
             world: self.renderer.world_nodes(&prep),
-            stage: Part2Stage { device: &gpu.device, materials: &mut self.materials, particles: &mut self.particles, custom: &mut *custom, pre_exposure },
+            stage: Part2Stage { device: &gpu.device, queue: &gpu.queue, materials: &mut self.materials, particles: &mut self.particles, custom: &mut *custom, pre_exposure },
             gpu,
             frame,
             quads: &mut self.quads,
@@ -1315,7 +1403,7 @@ impl FrameRenderer {
     }
 
     /// Show the last world target again on a repeat frame: letterbox it into `target` (a window
-    /// surface's view of `format`, `window` pixels), a blit with no graph node.
+    /// surface's view of `format`, `window` pixels) through the window present, no graph node.
     pub fn present_repeat(&mut self, gpu: &Gpu, target: &wgpu::TextureView, format: wgpu::TextureFormat, window: (u32, u32)) {
         self.renderer.present(gpu, target, format, window);
     }

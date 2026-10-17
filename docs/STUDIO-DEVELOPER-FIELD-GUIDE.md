@@ -459,7 +459,9 @@ snapshot (desktop, scope/limit), click (selector/scope), type (plus text/replace
 game.input (existing bounded action union), game.state and game.renderSettings (the game's verb,
 with an optional `set`) (each with an optional `surface`: `game`, the default, or `native` for the
 open game's native run), window.resize, capture (`--surface native` takes `--frame pinned`, the
-run's own capture profile, or `live`, the studio window's Native view), logs, runs, cpu.start/stop,
+run's own capture profile, drawn at `--size WxH` when given (64 to 4096 a side; a C++ game, which
+draws its world size only, is refused), or `live`, the studio window's Native view, taken only
+while that view is playing and shown), logs, runs, cpu.start/stop,
 main.cpu.start/stop (a profile of the main process), heap,
 trace.start/stop and stop. `graph.drag` takes bounded duration/distance/steps and returns
 commit counters through release; `window.resize` takes bounded width/height deltas, steps and

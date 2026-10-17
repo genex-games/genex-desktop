@@ -11,10 +11,10 @@ import http from "node:http";
 import type { AddressInfo } from "node:net";
 import path from "node:path";
 import { after, before, describe, it } from "node:test";
-import { chromium } from "@playwright/test";
 import { probeBoot, runQuickProbe } from "../../scripts/evals/grade/quick-probe.ts";
 import { probeLockPath } from "../../scripts/evals/prober/lock.ts";
 import { CheckResult, EntranceVia, ProbeRow, RendererMode } from "../../scripts/evals/vocabulary.ts";
+import { playwrightHeadlessChromiumOnDisk } from "../helpers/playwright-chromium.ts";
 import { tmpDir } from "../helpers/tmp.ts";
 
 /** Why this file skips. */
@@ -23,16 +23,10 @@ const SkipReason = {
   NoChromium: "no Playwright Chromium is installed; this suite never downloads one",
 } as const;
 
+/** The probes run in software mode, a headless launch the headless shell alone serves. */
 function skipReason(): string | false {
   if (process.env.STUDIO_BROWSER_TESTS !== "1") return SkipReason.NotOptedIn;
-  const executable = (() => {
-    try {
-      return chromium.executablePath();
-    } catch {
-      return "";
-    }
-  })();
-  return executable && fs.existsSync(executable) ? false : SkipReason.NoChromium;
+  return playwrightHeadlessChromiumOnDisk() ? false : SkipReason.NoChromium;
 }
 
 const GAME_DIR = path.resolve(import.meta.dirname, "../fixtures/evals/prober/game");

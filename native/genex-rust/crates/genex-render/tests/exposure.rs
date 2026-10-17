@@ -16,9 +16,10 @@ use genex_render::layout::GpuExposureState;
 use genex_render::pacing::{FrameAction, FrameGate, FramePacer};
 use genex_render::post::exposure::{
     EXPOSURE_FLAG_INSTANT, EXPOSURE_KEY_LUMINANCE, ExposureHistory, ExposureInput, ExposurePass, ExposureRun, ExposureSource, GpuExposureParams,
-    GpuPreExposure, TICKS_PER_SECOND, adapt_ev, cpu_histogram, exposure_of_ev, exposure_source, meter_ev, metering_id, ticks_to_adapt,
+    GpuPreExposure, TICKS_PER_SECOND, adapt_ev, aim_ev, cpu_histogram, exposure_of_ev, exposure_source, meter_ev, metering_id, metering_weight,
+    ticks_to_adapt,
 };
-use genex_render::settings::{EXPOSURE_HISTOGRAM_BINS, ExposureMode, Look, Metering, Quality};
+use genex_render::settings::{CompensationCurve, EXPOSURE_HISTOGRAM_BINS, ExposureMode, Look, Metering, Quality};
 use genex_render::shaders::{EXPOSURE_ADAPT, EXPOSURE_HISTOGRAM};
 use naga::proc::Layouter;
 
@@ -48,11 +49,12 @@ fn bin_centre_ev(bin: u32) -> f32 {
     -8.0 + (bin as f32 + 0.5) / BINS_PER_EV
 }
 
-/// A grey radiance image whose every texel's EV is a bin centre (bins 40..90), so fp16 rounding and
-/// GPU `log2` never move a sample across a bin edge.
+/// A grey radiance image whose every texel's EV is a bin centre (bins 40..90), constant over each
+/// 16² block so every metered cell averages one value: fp16 rounding and GPU `log2` never move a
+/// sample across a bin edge.
 fn binned_scene() -> Vec<[f32; 3]> {
     (0..HEIGHT)
-        .flat_map(|y| (0..WIDTH).map(move |x| 40 + (x * 7 + y * 13) % 50))
+        .flat_map(|y| (0..WIDTH).map(move |x| 40 + ((x / 16) * 7 + (y / 16) * 13) % 50))
         .map(|bin| {
             let l = EXPOSURE_KEY_LUMINANCE * libm::exp2f(bin_centre_ev(bin));
             [l, l, l]
@@ -71,6 +73,36 @@ fn ramp_scene() -> Vec<[f32; 3]> {
             })
         })
         .collect()
+}
+
+/// A hash of `(x, y)` in `0..1` (a fixed integer mix: the same texture on every run).
+fn hash01(x: u32, y: u32) -> f32 {
+    let mut h = x.wrapping_mul(0x8da6_b343) ^ y.wrapping_mul(0xd816_3841) ^ 0x9e37_79b9;
+    h ^= h >> 15;
+    h = h.wrapping_mul(0x2c1b_3c6d);
+    h ^= h >> 12;
+    (h >> 8) as f32 / (1u32 << 24) as f32
+}
+
+/// A wide world of fine detail: every texel's EV is spread over ±2 EV around middle grey (grass,
+/// bark, gravel at a texel each), with one texel in 97 a small light 5 EV up (a lantern, a glint).
+fn detailed_world(x: u32, y: u32) -> [f32; 3] {
+    let lantern = hash01(x ^ 0x55, y) < 1.0 / 97.0;
+    let ev = if lantern { 5.0 } else { -2.0 + 4.0 * hash01(x, y) };
+    let l = EXPOSURE_KEY_LUMINANCE * libm::exp2f(ev);
+    [l, l, l]
+}
+
+/// A `size` view of [`detailed_world`] panned `offset` texels to the right.
+fn panned(size: (u32, u32), offset: u32) -> Vec<[f32; 3]> {
+    (0..size.1).flat_map(|y| (0..size.0).map(move |x| detailed_world(x + offset, y))).collect()
+}
+
+/// The population standard deviation of `values`.
+fn std_dev(values: &[f32]) -> f32 {
+    let n = values.len() as f32;
+    let mean = values.iter().sum::<f32>() / n;
+    libm::sqrtf(values.iter().map(|v| (v - mean) * (v - mean)).sum::<f32>() / n)
 }
 
 fn doubled(scene: &[[f32; 3]]) -> Vec<[f32; 3]> {
@@ -135,11 +167,14 @@ fn metered_ev_is_clamped_to_the_look_limits() {
 
 #[test]
 fn adaptation_moves_a_fixed_step_per_tick_and_lands_on_the_target() {
-    let mut look = auto_look();
+    // The linear tracker (transition 0): what every look did before P2-0.10's hybrid step.
+    let mut look = auto_look().with_adaptation_transition(0.0);
     look.adaptation_up = 3.0;
     look.adaptation_down = 1.0;
-    assert_eq!(ticks_to_adapt(1.0, &look), 61, "1 EV darker at 1 EV/s, plus a tick of rounding slack");
-    assert_eq!(ticks_to_adapt(-1.5, &look), 31, "1.5 EV brighter at 3 EV/s");
+    // P2-0.10 flipped 61 and 31: the settle time is now counted by stepping the reference, and the
+    // snap onto the target absorbs the f32 sum's shortfall that cost the extra tick.
+    assert_eq!(ticks_to_adapt(1.0, &look), 60, "1 EV darker at 1 EV/s");
+    assert_eq!(ticks_to_adapt(-1.5, &look), 30, "1.5 EV brighter at 3 EV/s");
     let tick = GpuExposureParams::new(&look, 8, 1, false);
     let mut ev = 0.0;
     for frame in 1..=61 {
@@ -165,6 +200,10 @@ fn ticks_to_settle(look: &Look, target: f32) -> u32 {
     ticks
 }
 
+/// How close to a +8 EV step into sunlight the exposure is 3 s later (P2-0.10 flipped "lands
+/// exactly within 3 s": the hybrid step's last 1e-4 EV take longer, invisibly).
+const SUN_SETTLE_EV: f32 = 1.0 / 32.0;
+
 #[test]
 fn by_default_the_image_darkens_fast_and_brightens_slowly() {
     // Walking out of a dark interior into sunlight (+8 EV) must not leave the picture blown out
@@ -173,7 +212,9 @@ fn by_default_the_image_darkens_fast_and_brightens_slowly() {
     let into_the_sun = ticks_to_settle(&look, 8.0);
     let into_the_dark = ticks_to_settle(&look, -8.0);
     assert!(into_the_sun < into_the_dark, "+8 EV settles in {into_the_sun} ticks, -8 EV in {into_the_dark}");
-    assert!(into_the_sun <= 3 * 60, "+8 EV settles within 3 s ({into_the_sun} ticks)");
+    let tick = GpuExposureParams::new(&look, 8, 1, false);
+    let after_3_s = (0..3 * 60).fold(0.0, |ev, _| adapt_ev(ev, 8.0, &tick));
+    assert!(8.0 - after_3_s <= SUN_SETTLE_EV, "+8 EV is within {SUN_SETTLE_EV} EV after 3 s ({after_3_s})");
     assert!(ticks_to_adapt(8.0, &look) >= into_the_sun, "the documented settle time bounds it");
 }
 
@@ -200,6 +241,97 @@ fn a_120_hz_display_adapts_as_a_60_hz_one() {
     let slow = rendered_ticks(60.0, 60);
     assert_eq!(fast.iter().sum::<u32>(), slow.iter().sum::<u32>(), "one second of ticks either way");
     assert_eq!(run(fast).to_bits(), run(slow).to_bits());
+}
+
+/// The most of the linear tracker's wobble the hybrid adaptation may keep when the metered target
+/// wobbles by a sixteenth of an EV every tick (P2-0.10 acceptance: the wobble falls by half or more).
+const JITTER_SHARE_MAX: f32 = 0.5;
+
+/// The adapted EV after each of 600 ticks while the metered target wobbles within ±`amplitude` EV
+/// around 0 (a fixed pseudo-random sequence), from a settled start.
+fn wobbling_run(look: &Look, amplitude: f32) -> Vec<f32> {
+    let tick = GpuExposureParams::new(look, 8, 1, false);
+    let mut ev = 0.0;
+    (0..600u32)
+        .map(|k| {
+            ev = adapt_ev(ev, amplitude * (2.0 * hash01(k, 7) - 1.0), &tick);
+            ev
+        })
+        .collect()
+}
+
+#[test]
+fn a_target_wobbling_by_a_sixteenth_of_an_ev_barely_moves_the_exposure() {
+    let mut linear = auto_look();
+    linear.adaptation_transition = 0.0;
+    let (steady, chasing) = (std_dev(&wobbling_run(&auto_look(), 1.0 / 16.0)), std_dev(&wobbling_run(&linear, 1.0 / 16.0)));
+    eprintln!("adapted EV std over 600 ticks: hybrid {steady:.5}, linear {chasing:.5}");
+    assert!(steady <= JITTER_SHARE_MAX * chasing, "hybrid {steady} against linear {chasing}");
+}
+
+#[test]
+fn far_from_the_target_the_adaptation_is_linear_and_near_it_eases_on_and_lands() {
+    let look = auto_look();
+    let tick = GpuExposureParams::new(&look, 8, 1, false);
+    let speed = look.adaptation_down / TICKS_PER_SECOND;
+    assert_eq!(adapt_ev(0.0, 4.0, &tick), speed, "4 EV away: a full step");
+    let near = adapt_ev(0.0, 0.1, &tick);
+    assert!(near > 0.0 && near < 0.1 * speed / look.adaptation_transition * 1.0001, "0.1 EV away eases: {near}");
+    // It lands exactly (a settled capture's exposure is a fixed point), within the documented time.
+    let ticks = ticks_to_adapt(0.1, &look);
+    let mut ev = 0.0;
+    for _ in 0..ticks {
+        ev = adapt_ev(ev, 0.1, &tick);
+    }
+    assert_eq!(ev, 0.1, "lands on the target within {ticks} ticks");
+    // A frame after a stall runs a hundred ticks: it steps each one, so it lands, never past.
+    assert_eq!(adapt_ev(0.0, 0.3, &GpuExposureParams::new(&look, 8, 103, false)), 0.3, "a stalled frame lands on the target");
+    let two = adapt_ev(0.0, 0.3, &GpuExposureParams::new(&look, 8, 2, false));
+    assert_eq!(two, adapt_ev(adapt_ev(0.0, 0.3, &tick), 0.3, &tick), "a 30 Hz frame adapts as two 60 Hz ones");
+}
+
+/// The most the metered EV of a panning view of fine detail may move, as a standard deviation over
+/// 32 one-texel steps (P2-0.10, C3; recorded on the point-sampling meter: see the WP record).
+/// Half of the point-sampling meter's: 0.0162, 0.0631 and 0.0957.
+const PAN_METER_STD_MAX: [(u8, f32); 3] = [(4, 0.0081), (8, 0.0316), (16, 0.0479)];
+
+#[test]
+fn a_panning_view_of_fine_detail_meters_a_steady_ev() {
+    let look = auto_look();
+    let spreads: Vec<(u8, f32, f32)> = PAN_METER_STD_MAX
+        .iter()
+        .map(|&(divisor, limit)| {
+            let params = GpuExposureParams::new(&look, divisor, 1, true);
+            let meter = |step| meter_ev(&cpu_histogram(&panned((WIDTH, HEIGHT), step), (WIDTH, HEIGHT), 1.0, &params), &params).expect("metered");
+            let spread = std_dev(&(0..32).map(meter).collect::<Vec<f32>>());
+            eprintln!("1/{divisor}: metered EV std over a 32-texel pan {spread:.5}");
+            (divisor, spread, limit)
+        })
+        .collect();
+    for (divisor, spread, limit) in spreads {
+        assert!(spread <= limit, "1/{divisor}: {spread} EV");
+    }
+}
+
+#[test]
+fn the_compensation_curve_is_aimed_at_by_the_adaptation() {
+    let curve = CompensationCurve::new(&[(0.0, 0.0), (-4.0, -2.0), (f32::NAN, 1.0)]);
+    assert_eq!(curve.points(), &[[-4.0, -2.0], [0.0, 0.0]], "sorted, the NaN point left out");
+    assert_eq!((curve.at(-6.0), curve.at(-2.0), curve.at(3.0)), (-2.0, -1.0, 0.0), "flat beyond the ends, linear between");
+    let look = auto_look().with_compensation_curve(curve);
+    let params = GpuExposureParams::new(&look, 8, 1, false);
+    // A dusk scene metered at EV -3 is drawn 1.5 EV darker than middle grey: it stays a dusk.
+    assert_eq!(aim_ev(-3.0, &params), -3.0 + 1.5);
+    assert_eq!(aim_ev(2.0, &params), 2.0, "a day scene is untouched");
+    assert_eq!(aim_ev(-3.0, &GpuExposureParams::new(&auto_look(), 8, 1, false)), -3.0, "no curve, no compensation");
+}
+
+#[test]
+fn ground_metering_weighs_the_lower_rows_more() {
+    let id = metering_id(Metering::Ground);
+    assert_eq!(metering_weight(id, [0.5, 1.0]), 16, "the bottom row at full weight");
+    assert_eq!(metering_weight(id, [0.5, 0.0]), 1, "the top row at a sixteenth");
+    assert!(metering_weight(id, [0.1, 0.25]) < metering_weight(id, [0.9, 0.75]));
 }
 
 #[test]
@@ -502,6 +634,57 @@ fn metal_low_and_high_quality_meter_within_an_eighth_ev() {
     };
     let (low, high) = (meter(16), meter(4));
     assert!((low - high).abs() <= 0.125, "low {low} high {high}");
+}
+
+/// The most the adapted EV may wobble (standard deviation over 600 one-tick frames) while the
+/// camera pans 2 texels a tick over [`detailed_world`], by input divisor (medium 8, low 16): half of
+/// what the point-sampling meter with the linear tracker gave (P2-0.10 acceptance; the WP record
+/// has both runs: 0.0333 and 0.0409 EV on the M4 Max).
+const PAN_EXPOSURE_STD_MAX: [(u8, f32); 2] = [(8, 0.0166), (16, 0.0205)];
+
+#[test]
+#[ignore = "needs a GPU: run with --ignored metal"]
+fn metal_a_camera_panning_over_fine_detail_and_small_lights_holds_the_exposure_steady() {
+    let Some(gpu) = gpu() else { return };
+    let rig = Rig::new(gpu, (WIDTH, HEIGHT));
+    let look = auto_look();
+    let mut record = Vec::new();
+    for (divisor, limit) in PAN_EXPOSURE_STD_MAX {
+        let quality = quality(divisor);
+        let mut history = rig.history(&look);
+        rig.frame(&mut history, &panned(rig.size, 0), &look, &quality, 1, true);
+        let evs: Vec<f32> = (1..=600).map(|tick| rig.frame(&mut history, &panned(rig.size, 2 * tick), &look, &quality, 1, false).state.ev).collect();
+        let wobble = std_dev(&evs);
+        eprintln!("1/{divisor}: adapted EV std over a 600-tick pan {wobble:.5}");
+        record.push((divisor, wobble, limit, format!("{{\"divisor\": {divisor}, \"ev_std\": {wobble}, \"evs\": {evs:?}}}")));
+    }
+    if let Ok(dir) = std::env::var("GENEX_EXPOSURE_OUT") {
+        std::fs::create_dir_all(&dir).expect("evidence dir");
+        let rows: Vec<&str> = record.iter().map(|row| row.3.as_str()).collect();
+        std::fs::write(std::path::Path::new(&dir).join("pan-jitter.json"), format!("[{}]\n", rows.join(", "))).expect("record");
+    }
+    for (divisor, wobble, limit, _) in record {
+        assert!(wobble <= limit, "1/{divisor}: the exposure wobbles by {wobble} EV (std)");
+    }
+}
+
+#[test]
+#[ignore = "needs a GPU: run with --ignored metal"]
+fn metal_the_gpu_aims_at_the_compensation_curve_as_the_cpu_does() {
+    let Some(gpu) = gpu() else { return };
+    let rig = Rig::new(gpu, (64, 64));
+    let look = auto_look().with_compensation_curve(CompensationCurve::new(&[(-4.0, -2.0), (0.0, 0.0)]));
+    // A dusk scene: every texel at the centre of the bin around EV -3.
+    let dusk = EXPOSURE_KEY_LUMINANCE * libm::exp2f(bin_centre_ev(40));
+    let scene = vec![[dusk; 3]; 64 * 64];
+    let mut history = rig.history(&look);
+    let frame = rig.frame(&mut history, &scene, &look, &quality(8), 1, true);
+    let params = GpuExposureParams::new(&look, 8, 1, true);
+    let metered = meter_ev(&cpu_histogram(&frame.texels, rig.size, frame.pre_exposure, &params), &params).expect("metered");
+    let aim = aim_ev(metered, &params);
+    assert!(aim > metered + 1.0, "the curve keeps the dusk dark: metered {metered}, aimed {aim}");
+    assert!((frame.state.target_ev - aim).abs() < 1e-3, "gpu {} cpu {aim}", frame.state.target_ev);
+    assert_eq!(frame.state.ev, frame.state.target_ev, "instant");
 }
 
 #[test]

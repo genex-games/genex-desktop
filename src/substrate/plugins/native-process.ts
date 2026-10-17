@@ -51,12 +51,29 @@ const SHEBANG_READ_BYTES = 256;
 const MESSAGE = {
   InvalidCacheIdentity: "Invalid native application cache identity",
   CacheCrossesSymlink: "Native runtime cache crosses a symlink",
+  NoUserCache: "The user's cache folder cannot be resolved",
 } as const;
 
 /** The folder a runtime may start programs from: its `.app` bundle, or the executable's own directory. */
 export function runtimeRoot(binary: string): string {
   const end = binary.indexOf(".app/");
   return end < 0 ? path.dirname(binary) : binary.slice(0, end + 4);
+}
+/**
+ * The user's cache folder (`getconf DARWIN_USER_CACHE_DIR`), as a real path without its trailing
+ * slash: where Metal keeps each application's shader cache, in a folder named by its bundle id.
+ * Null where there is none (not a Mac) or it cannot be resolved.
+ */
+export async function darwinUserCacheDir(): Promise<string | null> {
+  if (process.platform !== "darwin") return null;
+  try {
+    const named = (
+      await exec("/usr/bin/getconf", ["DARWIN_USER_CACHE_DIR"], { timeout: PROBE_TIMEOUT_MS })
+    ).stdout.trim();
+    return named ? await realpath(named) : null;
+  } catch {
+    return null;
+  }
 }
 /** Metal's compiler uses the application's OS cache, ignoring HOME/TMPDIR. Resolve only
  * this executable's bundle identifier; never grant the whole user cache or Library. */
@@ -72,9 +89,8 @@ async function gpuCache(binary: string): Promise<string[]> {
     )
   ).stdout.trim();
   if (!/^[a-zA-Z0-9][a-zA-Z0-9.-]{1,150}$/.test(id)) throw new Error(MESSAGE.InvalidCacheIdentity);
-  const base = await realpath(
-    (await exec("/usr/bin/getconf", ["DARWIN_USER_CACHE_DIR"], { timeout: PROBE_TIMEOUT_MS })).stdout.trim(),
-  );
+  const base = await darwinUserCacheDir();
+  if (!base) throw new Error(MESSAGE.NoUserCache);
   const cache = path.join(base, id);
   await mkdir(cache, { recursive: true });
   if ((await lstat(cache)).isSymbolicLink() || (await realpath(cache)) !== cache)

@@ -89,6 +89,10 @@ const FACADE = JSON.parse(
   temporalCalls: string[];
   environment: { calls: string[]; kinds: string[]; hdriSun: string[] };
   lights: { calls: string[] };
+  instanceGroups: { calls: string[]; refusals: string[] };
+  terrain: { calls: string[]; refusals: string[] };
+  particles: { calls: string[]; refusals: string[] };
+  fog: { calls: string[] };
 };
 
 /** The seed's recipes, whose `evidence` cites sections of the reference. */
@@ -251,6 +255,31 @@ describe("GENEX_API.md is the facade's reference", () => {
       assert.ok(text.includes(variant), `GENEX_API.md names ${variant}`);
     }
     assert.ok(read("CLAUDE.md").includes("frame.environment("), "CLAUDE.md points at frame.environment(..)");
+  });
+
+  it("teaches every retained instance group call and refusal", () => {
+    const text = api();
+    for (const call of FACADE.instanceGroups.calls)
+      assert.ok(text.includes(`${call}(`), `GENEX_API.md teaches ${call}(..)`);
+    for (const refusal of FACADE.instanceGroups.refusals)
+      assert.ok(text.includes(refusal), `GENEX_API.md names ${refusal}`);
+  });
+
+  it("teaches every terrain call and refusal", () => {
+    const text = api();
+    for (const call of FACADE.terrain.calls) assert.ok(text.includes(`${call}(`), `GENEX_API.md teaches ${call}(..)`);
+    for (const refusal of FACADE.terrain.refusals) assert.ok(text.includes(refusal), `GENEX_API.md names ${refusal}`);
+  });
+
+  it("teaches every particle call and refusal", () => {
+    const text = api();
+    for (const call of FACADE.particles.calls) assert.ok(text.includes(`${call}(`), `GENEX_API.md teaches ${call}(..)`);
+    for (const refusal of FACADE.particles.refusals) assert.ok(text.includes(refusal), `GENEX_API.md names ${refusal}`);
+  });
+
+  it("teaches every fog call, the volumetric opt-out among them", () => {
+    const text = api();
+    for (const call of FACADE.fog.calls) assert.ok(text.includes(`${call}(`), `GENEX_API.md teaches ${call}(..)`);
   });
 
   it("teaches every local-light and emission call, and the template points at them", () => {

@@ -53,7 +53,7 @@ import { errorMessage } from "../../shared/errors.ts";
 import { secretRedactor } from "../../shared/redact.ts";
 import { SECOND_MS } from "../../shared/duration.ts";
 import { HarnessState } from "../../shared/protocol.ts";
-import { NativeOp } from "../../shared/native-contract.ts";
+import { NativeCanvasPhase, NativeOp } from "../../shared/native-contract.ts";
 import type { RenderSettingsChange } from "../../shared/render-quality.ts";
 
 /** Why the developer runtime cannot start, or cannot reach a native run. */
@@ -62,8 +62,10 @@ const MESSAGE = {
   nativeUnsupported: (method: string) => `${method} has no native counterpart: a native game has no web contents`,
   noOpenGame: "open a C++ game in the studio first",
   noNativeRun: "start the open game first (Play, or an agent's run)",
-  nativeViewHidden: "show the game's Native view in Live to capture what it shows",
+  nativeViewHidden: "show the game's Native view in Live, playing, to capture what it shows",
   frameNotNative: "--frame names a native capture's frame; use it with --surface native",
+  sizeNotNative: "--size draws a native run's pinned capture at that size; use it with --surface native",
+  sizeNotLive: "--size draws the pinned capture; Live's view is the window's own size (drop --frame live)",
 } as const;
 /** JPEG quality of a native surface capture. */
 const NATIVE_CAPTURE_QUALITY = 90;
@@ -352,7 +354,7 @@ export function refuseNativeOperation(op: Operation): void {
 /** What a native operation does to a run's port. */
 export type NativeSurfacePort = Pick<
   NativeGamePort,
-  "studioState" | "input" | "screenshotWithStats" | "consoleEntries"
+  "studioState" | "input" | "screenshotWithStats" | "screenshotAt" | "consoleEntries"
 > & {
   /** The run's `renderSettings` op (a read without `set`). */
   call(op: typeof NativeOp.RenderSettings, arg: { set?: RenderSettingsChange }): Promise<unknown>;
@@ -410,12 +412,18 @@ type NativeCaptureParams = Extract<Operation, { method: typeof DevMethod.Capture
 
 /**
  * A capture of the native run, saved beside the other captures. `pinned` (the default) is the run's
- * own capture op, a JPEG of the pinned capture profile; `live` is the studio window's Native view,
- * the frame the person sees with their preset and panel applied (a PNG).
+ * own capture op, a JPEG of the pinned capture profile, at `size` when one is given (the 4K/1440p
+ * capture plan); `live` is the studio window's Native view, the frame the person sees with their
+ * preset and panel applied (a PNG), at the window's own size.
  */
 async function captureNative(rt: NativeSurfaceRuntime, port: NativeSurfacePort, params: NativeCaptureParams) {
-  if (params.frame === NativeCaptureFrame.Live) return captureLiveNative(rt, params.name);
-  const shot = await port.screenshotWithStats(NATIVE_CAPTURE_QUALITY);
+  if (params.frame === NativeCaptureFrame.Live) {
+    if (params.size !== undefined) throw new DevError(DevErrorCode.InvalidRequest, MESSAGE.sizeNotLive);
+    return captureLiveNative(rt, params.name);
+  }
+  const shot = params.size
+    ? await port.screenshotAt(params.size, NATIVE_CAPTURE_QUALITY)
+    : await port.screenshotWithStats(NATIVE_CAPTURE_QUALITY);
   const file = await rt.diagnostics.destination(`${DevSurface.Native}-${params.name}.jpg`);
   await fsp.writeFile(file, shot.jpeg, { flag: "wx", mode: 0o600 });
   return {
@@ -441,15 +449,30 @@ async function captureLiveNative(rt: NativeSurfaceRuntime, name: string) {
   };
 }
 
-/** The selector of Live's Native view canvas (`NativeLiveCanvas`), whose box a live capture crops to. */
-const NATIVE_CANVAS_SELECTOR = "[data-stage-native-canvas] canvas";
+/** The attribute Live's Native view (`NativeLiveCanvas`) writes its phase to; its canvas is what a live capture crops to. */
+const NATIVE_CANVAS_ATTRIBUTE = "data-stage-native-canvas";
 
-/** The studio window cropped to the Native view's canvas, or null when no Native view is shown. */
-async function liveNativeViewOf(win: BrowserWindow): Promise<LiveNativeView | null> {
+/**
+ * The page script answering the Native view canvas's box, or null unless the view is `playing` and
+ * shown (pass 2, TS-F2): a Starting or refused card, or a view hidden behind another stage view,
+ * still has a box, and the compositor would answer its pixels as the game's.
+ */
+const NATIVE_CANVAS_BOX = `(() => {
+  const host = document.querySelector(${JSON.stringify(`[${NATIVE_CANVAS_ATTRIBUTE}]`)});
+  const canvas = host ? host.querySelector("canvas") : null;
+  if (!host || !canvas || host.getAttribute(${JSON.stringify(NATIVE_CANVAS_ATTRIBUTE)}) !== ${JSON.stringify(NativeCanvasPhase.Playing)}) return null;
+  if (!canvas.checkVisibility({ visibilityProperty: true, opacityProperty: true })) return null;
+  const r = canvas.getBoundingClientRect();
+  return [r.x, r.y, r.width, r.height];
+})()`;
+
+/**
+ * The studio window cropped to the Native view's canvas, or null when no Native view is playing and
+ * shown (nothing is captured then).
+ */
+export async function liveNativeViewOf(win: BrowserWindow): Promise<LiveNativeView | null> {
   if (win.isDestroyed()) return null;
-  const box: unknown = await win.webContents.executeJavaScript(
-    `(() => { const r = document.querySelector(${JSON.stringify(NATIVE_CANVAS_SELECTOR)})?.getBoundingClientRect(); return r ? [r.x, r.y, r.width, r.height] : null; })()`,
-  );
+  const box: unknown = await win.webContents.executeJavaScript(NATIVE_CANVAS_BOX);
   if (!Array.isArray(box) || box.length !== 4 || !box.every((n) => typeof n === "number" && Number.isFinite(n)))
     return null;
   const [x, y, width, height] = box.map((n: number) => Math.round(n));
@@ -544,6 +567,7 @@ type CaptureParams = Extract<Operation, { method: typeof DevMethod.Capture }>["p
 
 async function captureSurface(rt: Runtime, params: CaptureParams) {
   if (params.frame !== undefined) throw new DevError(DevErrorCode.InvalidRequest, MESSAGE.frameNotNative);
+  if (params.size !== undefined) throw new DevError(DevErrorCode.InvalidRequest, MESSAGE.sizeNotNative);
   if (params.surface === DevSurface.Game && !gameViewShown(rt.preview))
     throw new DevError(DevErrorCode.MissingPrerequisite, "select Live to capture the current game surface");
   const target = surfaceContents(rt, params.surface);

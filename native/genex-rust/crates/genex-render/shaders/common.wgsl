@@ -41,6 +41,13 @@ struct FrameUniforms {
     // xy: TAA's jitter of the camera's projection in NDC (y up; 0 without TAA), added by every
     // camera depth writer's gx_clip_position; view_proj stays unjittered. zw: last frame's.
     jitter: vec4<f32>,
+    // Each cascade's comparison bias in its light depth (NDC): one world-space bias over each
+    // cascade's light depth (shadow.rs `Cascades::comparison_bias`), read through
+    // gx_sun_cascade_bias (the v2 prelude's reads the shared `shadow_params.x`).
+    cascade_bias: vec4<f32>,
+    // x: the frame's texture mip bias (`settings::frame_texture_lod_bias`, T-06), read through
+    // gx_texture_lod_bias; y, z, w: reserved (0).
+    texture_lod: vec4<f32>,
 }
 
 struct Light {
@@ -58,24 +65,38 @@ struct LightExt {
     spot: vec4<f32>,
     // x: cos of the inner half-angle; y: kind (GX_LIGHT_POINT, GX_LIGHT_SPOT); z: shadow slot
     // (-1 none; its map is the slot's tile of the spot atlas, the shadow-array layer after the drawn
-    // cascades); w: reserved.
+    // cascades); w: how far the spot's shadow has faded out as its slot changes hands (0 whole,
+    // GX_SPOT_SHADOW_UNFADED, to 1 none; 0 in every row until spot slots fade).
     params: vec4<f32>,
 }
 
 // The light bins' grid and depth mapping (RQ6.0): the binning dispatch's uniform and the header
-// of `light_zbins` (its first GX_LIGHT_BIN_HEADER_WORDS words; the depths are f32 bits).
+// of the bin table (its first GX_LIGHT_BIN_HEADER_WORDS words; the depths are f32 bits).
 struct LightBinParams {
     // x, y: tiles across and down; z: mask words per tile; w: tile side in pixels.
     grid: vec4<u32>,
     // x: z-bins; y: lights binned; z: view depth where z-bin 0 starts; w: z-bins per unit depth.
     depth: vec4<u32>,
+    // The clusterable kinds' ends in the binned index space (pass 2 A.0, LG-16): x lights, y
+    // decals, z probes (every object); w reserved.
+    ranges: vec4<u32>,
+    // The decals' (xy) and probes' (zw) own z-bin start depth and z-bins per unit depth.
+    kind_depth: vec4<u32>,
 }
 
 const GX_LIGHT_POINT: u32 = 0u;
 const GX_LIGHT_SPOT: u32 = 1u;
 const GX_LIGHT_EXT_VEC4S: u32 = 2u;
 const GX_SPOT_MATRIX_VEC4S: u32 = 4u;
-const GX_LIGHT_BIN_HEADER_WORDS: u32 = 8u;
+const GX_SPOT_SHADOW_UNFADED: f32 = 0.0;
+// The LOD crossfade of an instance-table row that is not fading (the instance fade table's value,
+// layout::INSTANCE_FADE_WHOLE): drawn whole.
+const GX_INSTANCE_FADE_WHOLE: f32 = 1.0;
+const GX_LIGHT_BIN_HEADER_WORDS: u32 = 16u;
+// Z-bins per clusterable kind (cluster::LIGHT_ZBINS); kind k's start at the header plus k of them.
+const GX_LIGHT_ZBINS: u32 = 64u;
+// Where the tile masks start in the bin table, in words (cluster::LIGHT_TILES_OFFSET_WORDS).
+const GX_LIGHT_TILES_OFFSET_WORDS: u32 = 256u;
 // A z-bin no light touches: lowest index 0xFFFF above highest 0.
 const GX_ZBIN_EMPTY: u32 = 0x0000ffffu;
 const GX_ZBIN_INDEX_BITS: u32 = 16u;
@@ -99,19 +120,27 @@ struct Material {
     base_color: vec4<f32>,
     // x: metallic, y: roughness, z: 1 for the missing-asset checker, w: normal-map scale.
     params: vec4<f32>,
-    // Texture-array layers: x base colour, y normal map, z metallic-roughness; NO_TEXTURE if none.
+    // Texture references: x base colour, y normal map, z metallic-roughness, w ambient occlusion
+    // (P2-0.12; equal to z for an ORM texture, whose red is then read from z's texel);
+    // NO_TEXTURE if none.
     textures: vec4<u32>,
 }
 
 struct Batch {
+    // The batch's first slot in each view's region of the visible list.
     first_instance: u32,
     instance_count: u32,
     index_count: u32,
     first_index: u32,
     base_vertex: i32,
-    pad0: u32,
-    pad1: u32,
-    pad2: u32,
+    // Its first instance-table row (A6.9: every level's batch of a mesh holds its rows).
+    first_row: u32,
+    // The batch's level of detail (A6.9, mesh_lod.rs `batch_lod`): the tag (0: no levels; bit 31,
+    // then the level in bits 0-3 and the chain's length in bits 4-7), then the chain's errors over
+    // the mesh's bounding radius as half-float pairs.
+    lod: u32,
+    lod_error01: u32,
+    lod_error23: u32,
 }
 
 struct PassView {
@@ -120,16 +149,23 @@ struct PassView {
     // 1: `base` is the visible-list row (a transparent draw); 0: the vertex's slot finds it.
     direct: u32,
     base: u32,
-    pad: u32,
+    // Where the drawn variant's region of the slot-base table starts (P2-0.12: 0 for plain
+    // batches, the variant's index times the plan's slots for the others' rows).
+    slot_offset: u32,
 }
 
 struct CullViews {
     // MAX_VIEWS (layout.rs): the camera, four cascades, four shadowed spots; the active views
     // lead and the rest are 0.
     planes: array<array<vec4<f32>, 6>, 9>,
-    // x: visible-list rows per view, y: batches, z: active views, w: the views the frame holds
+    // x: visible-list slots per view, y: batches, z: active views, w: the views the frame holds
     // (bit v: a far cascade off its cadence keeps last frame's map, so its cull is skipped).
     params: vec4<u32>,
+    // The levels of detail's view (A6.9): the camera position xyz, w the output's pixels a world
+    // unit at distance 1 over the error threshold (0: levels off).
+    lod: vec4<f32>,
+    // x: 1 when a batch draws a level.
+    lod_params: vec4<u32>,
 }
 
 struct DrawIndexedArgs {
@@ -364,8 +400,10 @@ struct GxEnvSh {
 
 // A material row's v2 extension, parallel to the material table.
 struct GxMaterialExt {
-    // rgb: emissive radiance in scene units.
+    // rgb: emissive radiance in scene units; a: the occlusion map's strength (P2-0.12).
     emissive: vec4<f32>,
+    // x: emissive map layer (-1 none), y: its size class, z: flags, w: the alpha cutoff (P2-0.12;
+    // 0: not alpha-tested).
     params: vec4<f32>,
 }
 

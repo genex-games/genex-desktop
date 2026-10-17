@@ -36,6 +36,13 @@
 //! `gx_expose`); a v2 post pass runs at stage [`PostStage::Hdr`] (after TAA's place, before bloom
 //! and the tonemap) or [`PostStage::Ldr`] (v1's place).
 //!
+//! **Draw rows (renderer pass 2 A.0, LG-20 step 3).** A v2 material's group 1 is the frame's
+//! read-only table of draw rows (`gx_draws`, one [`crate::abi::GxDrawV2`] per draw), and the draws
+//! of one (material, mesh) pair are one instanced call. The geometry stage reads its instance's
+//! row; `gx_draw` is a private copy the fragment reads as before: when a source's fragment reads
+//! it, admission hands `fs_material` the instance's row (`@location(6)`) and opens its body by
+//! copying that row in ([`ValidatedExtension::source`] is the opened text, on the same lines).
+//!
 //! **Declared inputs.** The bindings a v2 source's entry points actually read (naga's usage
 //! analysis, not every prelude declaration) decide the frame inputs it asks the graph to produce
 //! ([`ValidatedExtension::inputs`]: depth, normals, motion, environment, the HDR scene). A binding
@@ -116,6 +123,8 @@ use crate::texture::{TextureData, TextureKind, rect_mip_chain};
 const DIAGNOSTIC_MAX_CHARS: usize = 2048;
 /// Bytes between custom draws' rows in the per-draw uniform: WebGPU core's uniform offset alignment.
 const DRAW_STRIDE: u64 = 256;
+/// Bytes of one v2 draw row in `gx_draws` (packed: the instances of a call are adjacent rows).
+const V2_ROW_BYTES: u64 = size_of::<GxDrawV2>() as u64;
 /// The linear game sampler's anisotropic filtering (WebGPU core allows up to 16): a tiled ground
 /// texture seen at a grazing angle stays sharp along the view instead of blurring to its far mips.
 const GAME_SAMPLER_ANISOTROPY: u16 = 16;
@@ -508,13 +517,125 @@ fn written_for_other_api(kind: ExtensionKind, api: u32, source: &str, context: &
 }
 
 fn admit(kind: ExtensionKind, api: u32, source: &str, context: &ExtensionContext) -> Result<ValidatedExtension, RenderError> {
-    let full = format!("{}\n{source}", kind.prelude(api));
+    let prelude = kind.prelude(api);
+    let full = format!("{prelude}\n{source}");
     let module = naga::front::wgsl::parse_str(&full).map_err(|error| invalid(error.emit_to_string(&full)))?;
     check_entry_points(kind, api, &module)?;
     let game = check_bindings(kind, api, &module)?;
     let (needs, info) = check_capabilities(&module, &full, context)?;
     let inputs = if api == ABI_V1 { RenderInputs::NONE } else { inputs_for(kind.v2_table(), &used_bindings(&module, &info)) };
+    let reads_row = kind == ExtensionKind::Material && api == ABI_V2 && fragment_reads(&module, &info, DRAW_ROW_GLOBAL);
+    let full = if reads_row { opened_draw_row(&full, prelude.len() + 1, context)? } else { full };
     Ok(ValidatedExtension { kind, api, source: full, game, needs, inputs })
+}
+
+/// The v2 material prelude's private copy of the fragment's draw row (`gx_draw`).
+const DRAW_ROW_GLOBAL: &str = "gx_draw";
+/// What [`opened_draw_row`] adds to `fs_material`'s parameters: the drawn instance's row, which
+/// the v2 geometry stage writes at this location (`GxVertexOutV2::gx_row`).
+const DRAW_ROW_PARAMETER: &str = "@location(6) @interpolate(flat) gx_row: u32, ";
+/// What it opens `fs_material`'s body with: the row the instance draws with.
+const DRAW_ROW_STORE: &str = " gx_draw = gx_draws[gx_row];";
+
+/// Whether the fragment entry point (or a function it calls) reads or writes the private global
+/// `name` (naga's usage analysis).
+fn fragment_reads(module: &naga::Module, info: &ModuleInfo, name: &str) -> bool {
+    let Some(entry) = module.entry_points.iter().position(|ep| ep.stage == naga::ShaderStage::Fragment) else { return false };
+    let Some((handle, _)) = module.global_variables.iter().find(|(_, var)| var.name.as_deref() == Some(name)) else { return false };
+    !info.get_entry_point(entry)[handle].is_empty()
+}
+
+/// `full` (the v2 material prelude, then the game's source from byte `game_at`) with the game's
+/// `fs_material` handed its instance's row and opened by copying that row into `gx_draw`
+/// (renderer pass 2 A.0, LG-20 step 3): the draws of one (material, mesh) pair are one instanced
+/// call, and a fragment reading `gx_draw.prev_model` or `gx_draw.params` reads its own draw's.
+/// Both insertions stay on the lines they are made on, so a diagnostic's line is unchanged; the
+/// opened source is admitted again (a refusal here is the renderer's fault, named as one).
+fn opened_draw_row(full: &str, game_at: usize, context: &ExtensionContext) -> Result<String, RenderError> {
+    let not_opened = || layout("the renderer could not hand `fs_material` its draw row");
+    let (parameters, body) = fs_material_openings(&full[game_at..]).ok_or_else(not_opened)?;
+    let mut opened = String::with_capacity(full.len() + DRAW_ROW_PARAMETER.len() + DRAW_ROW_STORE.len());
+    opened.push_str(&full[..game_at + parameters]);
+    opened.push_str(DRAW_ROW_PARAMETER);
+    opened.push_str(&full[game_at + parameters..game_at + body]);
+    opened.push_str(DRAW_ROW_STORE);
+    opened.push_str(&full[game_at + body..]);
+    let module = naga::front::wgsl::parse_str(&opened).map_err(|_| not_opened())?;
+    check_capabilities(&module, &opened, context).map_err(|_| not_opened())?;
+    Ok(opened)
+}
+
+/// One WGSL token of [`wgsl_tokens`]: an identifier or a single punctuation character, and the
+/// byte just after it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum WgslToken<'a> {
+    Word(&'a str, usize),
+    Mark(char, usize),
+}
+
+/// The identifiers and punctuation of `source` outside comments (`//` lines and nested `/* */`
+/// blocks); numbers read as words. Enough to find a function's parameter list and body: WGSL has
+/// no strings, and neither its attributes nor its types hold braces.
+fn wgsl_tokens(source: &str) -> Vec<WgslToken<'_>> {
+    let bytes = source.as_bytes();
+    let mut tokens = Vec::new();
+    let mut at = 0;
+    while at < bytes.len() {
+        let rest = &bytes[at..];
+        if rest.starts_with(b"//") {
+            at += rest.iter().position(|b| *b == b'\n').unwrap_or(rest.len());
+        } else if rest.starts_with(b"/*") {
+            at += block_comment_len(rest);
+        } else if bytes[at].is_ascii_alphanumeric() || bytes[at] == b'_' {
+            let end = at + rest.iter().position(|b| !(b.is_ascii_alphanumeric() || *b == b'_')).unwrap_or(rest.len());
+            tokens.push(WgslToken::Word(&source[at..end], end));
+            at = end;
+        } else {
+            let mark = source[at..].chars().next().unwrap_or(' ');
+            if !mark.is_whitespace() {
+                tokens.push(WgslToken::Mark(mark, at + mark.len_utf8()));
+            }
+            at += mark.len_utf8();
+        }
+    }
+    tokens
+}
+
+/// Bytes of the (nested) block comment `rest` starts with, to its end or the source's.
+fn block_comment_len(rest: &[u8]) -> usize {
+    let (mut depth, mut at) = (0usize, 0);
+    while at < rest.len() {
+        if rest[at..].starts_with(b"/*") {
+            (depth, at) = (depth + 1, at + 2);
+        } else if rest[at..].starts_with(b"*/") {
+            (depth, at) = (depth - 1, at + 2);
+            if depth == 0 {
+                return at;
+            }
+        } else {
+            at += 1;
+        }
+    }
+    rest.len()
+}
+
+/// Where `fn fs_material(` 's parameters start and its body's `{` ends, in `game`.
+fn fs_material_openings(game: &str) -> Option<(usize, usize)> {
+    let tokens = wgsl_tokens(game);
+    let named = tokens.windows(3).position(|t| {
+        matches!(t, [WgslToken::Word("fn", _), WgslToken::Word(name, _), WgslToken::Mark('(', _)] if *name == ExtensionKind::Material.fragment_entry())
+    })?;
+    let WgslToken::Mark('(', parameters) = tokens[named + 2] else { return None };
+    let mut depth = 1usize;
+    for token in &tokens[named + 3..] {
+        match (*token, depth) {
+            (WgslToken::Mark('(', _), _) => depth += 1,
+            (WgslToken::Mark(')', _), _) => depth = depth.checked_sub(1)?,
+            (WgslToken::Mark('{', body), 0) => return Some((parameters, body)),
+            _ => {}
+        }
+    }
+    None
 }
 
 fn check_entry_points(kind: ExtensionKind, api: u32, module: &naga::Module) -> Result<(), RenderError> {
@@ -1246,6 +1367,10 @@ impl PostPassId {
 /// One draw of a mesh with a custom material.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct CustomDraw {
+    /// The draw id current when it was drawn (`frame.id(key)`, [`crate::motion::DrawId`]), if
+    /// any: under TAA a moving custom draw keeps its motion history by it (renderer pass 2,
+    /// P2-0.8b T-04), else by its mesh and ordinal ([`crate::motion::CustomMotion`]).
+    pub id: Option<crate::motion::DrawId>,
     /// The mesh.
     pub mesh: MeshId,
     /// Model matrix, column-major.
@@ -1284,15 +1409,17 @@ pub struct GpuPost {
 /// grew, a texture was added, shadows reallocated) or a new environment bake rebuilds the group.
 #[derive(Clone, Debug, PartialEq)]
 struct V2FrameKey {
-    buffers: [Buffer; 5],
+    buffers: [Buffer; 4],
     views: [wgpu::TextureView; 6],
     environment: Option<EnvironmentViews>,
+    /// The material sampler (a quality's anisotropy replaces it; renderer pass 2 P2-0.12).
+    sampler: wgpu::Sampler,
 }
 
 impl V2FrameKey {
     fn of(world: &WorldPass<'_>, environment: Option<&EnvironmentViews>) -> V2FrameKey {
         V2FrameKey {
-            buffers: [world.lights.clone(), world.materials.clone(), world.light_ext.clone(), world.light_tiles.clone(), world.light_zbins.clone()],
+            buffers: [world.lights.clone(), world.materials.clone(), world.light_ext.clone(), world.light_bins.clone()],
             views: [
                 world.shadow_map.clone(),
                 world.color_textures.clone(),
@@ -1302,12 +1429,22 @@ impl V2FrameKey {
                 world.aerial.clone(),
             ],
             environment: environment.cloned(),
+            sampler: world.texture_sampler.clone(),
         }
     }
 }
 
+/// A Level-2 pipeline: made on the compile pool inside error scopes, `Err` with wgpu's message when
+/// the backend refused it (renderer pass 2, RC-04).
+type CheckedPipeline = Compiled<Result<RenderPipeline, String>>;
+
+/// The typed refusal of a source whose pipeline failed after naga accepted it.
+fn pipeline_failed(message: &str) -> RenderError {
+    invalid(format!("its pipeline failed: {message}"))
+}
+
 struct CustomMaterial {
-    pipeline: Compiled<RenderPipeline>,
+    pipeline: CheckedPipeline,
     extension: ValidatedExtension,
     game: Option<GameGroup>,
 }
@@ -1326,16 +1463,28 @@ struct DrawRows {
 }
 
 impl DrawRows {
-    /// Grow to `bytes` when smaller; rows of `row_bytes` at [`DRAW_STRIDE`].
+    /// Grow to `bytes` when smaller; rows of `row_bytes` at [`DRAW_STRIDE`], one bound at a time
+    /// by its dynamic offset (v1).
     fn reserve(&mut self, device: &Device, layout: &BindGroupLayout, bytes: u64, row_bytes: u64) -> Result<(), RenderError> {
+        self.reserve_as(device, layout, bytes, BufferUsages::UNIFORM, Some(row_bytes))
+    }
+
+    /// Grow to `bytes` when smaller: one storage table of tightly packed rows, bound whole (v2's
+    /// `gx_draws`, LG-20 step 3).
+    fn reserve_table(&mut self, device: &Device, layout: &BindGroupLayout, bytes: u64) -> Result<(), RenderError> {
+        self.reserve_as(device, layout, bytes, BufferUsages::STORAGE, None)
+    }
+
+    fn reserve_as(&mut self, device: &Device, layout: &BindGroupLayout, bytes: u64, usage: BufferUsages, row_bytes: Option<u64>) -> Result<(), RenderError> {
         if self.buffer.as_ref().is_some_and(|b| b.size() >= bytes) {
             return Ok(());
         }
-        let grown = buffer(device, "custom draws", bytes.next_power_of_two(), BufferUsages::UNIFORM | BufferUsages::COPY_DST)?;
+        let grown = buffer(device, "custom draws", bytes.next_power_of_two(), usage | BufferUsages::COPY_DST)?;
+        let resource = row_bytes.map_or_else(|| grown.as_entire_binding(), |row| sized(&grown, row));
         self.group = Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("custom draws"),
             layout,
-            entries: &[wgpu::BindGroupEntry { binding: 0, resource: sized(&grown, row_bytes) }],
+            entries: &[wgpu::BindGroupEntry { binding: 0, resource }],
         }));
         self.buffer = Some(grown);
         Ok(())
@@ -1364,6 +1513,9 @@ pub struct CustomMaterials {
     /// The renderer's environment v2 materials bind (None: the neutral inputs).
     environment: Option<EnvironmentViews>,
     frame: Vec<CustomDraw>,
+    /// Last frame's custom draws by key (T-04), and this frame's draws' previous transforms.
+    motion: crate::motion::CustomMotion,
+    frame_prev: Vec<crate::motion::CustomPrev>,
     frame_facts: FrameFacts,
     /// Whether this frame's [`FrameV2`] is refreshed although no v2 material draws (v2 post passes
     /// read it).
@@ -1388,22 +1540,37 @@ pub struct SunShadowConstants {
     pub blend_band: f32,
     /// The fraction of the last cascade's depth range the shadows fade out over.
     pub end_fade: f32,
+    /// The least perceptual roughness the surfaces shade with (`GX_ROUGHNESS_FLOOR`, renderer pass 2
+    /// P2-0.12 LG-04): the forward pass's, so a v2 highlight of the sun's disc matches the
+    /// built-in one.
+    pub roughness_floor: f32,
 }
 
 impl SunShadowConstants {
-    /// The legacy renderer's: 3x3 PCF, a static pattern, hard switches and a hard end.
-    pub const LEGACY: SunShadowConstants = SunShadowConstants { filter: ShadowFilter::Pcf3x3, temporal: false, blend_band: 0.0, end_fade: 0.0 };
+    /// The legacy renderer's: 3x3 PCF, a static pattern, hard switches and a hard end, the
+    /// legacy roughness floor.
+    pub const LEGACY: SunShadowConstants =
+        SunShadowConstants { filter: ShadowFilter::Pcf3x3, temporal: false, blend_band: 0.0, end_fade: 0.0, roughness_floor: 0.04 };
 
-    /// The v2 prelude's pipeline constants.
-    fn constants(&self) -> [(&'static str, f64); 4] {
+    /// The v2 prelude's pipeline constants. `GX_SUN_SOFT_EDGES` follows the band and the end fade
+    /// as the forward pass's does (renderer pass 2, P2-0.3: it also turns the lookup's normal
+    /// offset towards the light), so a legacy custom surface keeps the legacy lookup bit for bit.
+    fn constants(&self) -> [(&'static str, f64); 6] {
         [
+            ("GX_ROUGHNESS_FLOOR", f64::from(self.roughness_floor)),
             ("GX_SHADOW_FILTER", f64::from(self.filter.shader_id())),
             ("GX_SHADOW_TEMPORAL", f64::from(u8::from(self.temporal))),
             ("GX_SUN_BLEND_BAND", f64::from(self.blend_band)),
             ("GX_SUN_END_FADE", f64::from(self.end_fade)),
+            ("GX_SUN_SOFT_EDGES", f64::from(u8::from(self.blend_band > 0.0 || self.end_fade > 0.0))),
         ]
     }
 }
+
+/// The far plane's index among `cull::frustum_planes`' six, and the plane every point is inside of:
+/// the Level-2 draws' cull keeps no far plane (LG-20).
+const FAR_PLANE: usize = 5;
+const ALWAYS_INSIDE: [f32; 4] = [0.0, 0.0, 0.0, 1.0];
 
 const MATERIAL_ATTRIBUTES: [wgpu::VertexAttribute; 3] = wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3, 2 => Float32x2];
 
@@ -1433,6 +1600,8 @@ impl CustomMaterials {
             frame_group_v2: None,
             environment: None,
             frame: Vec::new(),
+            motion: crate::motion::CustomMotion::new(),
+            frame_prev: Vec::new(),
             frame_facts: FrameFacts::new((1, 1), (1, 1)),
             keep_frame_v2: false,
             frame_v2_due: false,
@@ -1481,9 +1650,14 @@ impl CustomMaterials {
     }
 
     /// This frame's custom geometry for the depth/normal prepass (graph node 7): each prepared
-    /// draw's mesh at its model matrix, so the prepass's consumers see the custom materials too.
+    /// draw's mesh at its model matrix, so the prepass's consumers see the custom materials too,
+    /// with last frame's model matrix for its motion (T-04: matched by draw id or mesh ordinal).
     pub fn prepass_draws(&self) -> Vec<crate::prepass::PrepassDraw> {
-        self.frame.iter().map(|draw| crate::prepass::PrepassDraw { mesh: draw.mesh, model: draw.model }).collect()
+        self.frame
+            .iter()
+            .zip(&self.frame_prev)
+            .map(|(draw, prev)| crate::prepass::PrepassDraw { mesh: draw.mesh, model: draw.model, prev_model: prev.model, history: prev.history })
+            .collect()
     }
 
     /// What the next frames' v2 sources read about the camera, sizes and scene.
@@ -1526,7 +1700,7 @@ impl CustomMaterials {
         Ok(())
     }
 
-    fn pipeline(&self, extension: &ValidatedExtension, game: Option<&BindGroupLayout>) -> Compiled<RenderPipeline> {
+    fn pipeline(&self, extension: &ValidatedExtension, game: Option<&BindGroupLayout>) -> CheckedPipeline {
         let device = &self.device;
         let api = extension.api;
         let module = shader_module(device, "custom material", extension);
@@ -1540,7 +1714,7 @@ impl CustomMaterials {
         let sun = self.sun_shadows.constants();
         let constants: &[(&str, f64)] = if api == ABI_V1 { &[] } else { &sun };
         let options = wgpu::PipelineCompilationOptions { constants, ..Default::default() };
-        crate::compile::render_pipeline(device, &wgpu::RenderPipelineDescriptor {
+        crate::compile::render_pipeline_checked(device, &wgpu::RenderPipelineDescriptor {
             label: Some("custom material"),
             layout: Some(&layout),
             vertex: wgpu::VertexState { module: &module, entry_point: Some(ExtensionKind::Material.vertex_entry(api)), compilation_options: options.clone(), buffers: &buffers },
@@ -1579,6 +1753,10 @@ impl CustomMaterials {
             v2_group(gpu, &extension, uniforms, textures, shared)?
         };
         let pipeline = self.pipeline(&extension, game.as_ref().map(|g| &g.layout));
+        // Admission waits for its own compile: a pipeline the backend refuses is refused here.
+        if let Err(message) = pipeline.get() {
+            return Err(pipeline_failed(message));
+        }
         self.materials.push(CustomMaterial { pipeline, extension, game });
         Ok(CustomMaterialId((self.materials.len() - 1) as u32))
     }
@@ -1591,7 +1769,7 @@ impl CustomMaterials {
             return false;
         }
         self.sun_shadows = sun;
-        let rebuilt: Vec<(usize, Compiled<RenderPipeline>)> = self
+        let rebuilt: Vec<(usize, CheckedPipeline)> = self
             .materials
             .iter()
             .enumerate()
@@ -1619,7 +1797,7 @@ impl CustomMaterials {
         self.facts = facts;
         // The neutral depth input follows the depth convention.
         self.frame_group_v2 = None;
-        let pipelines: Vec<Compiled<RenderPipeline>> = self.materials.iter().map(|m| self.pipeline(&m.extension, m.game.as_ref().map(|g| &g.layout))).collect();
+        let pipelines: Vec<CheckedPipeline> = self.materials.iter().map(|m| self.pipeline(&m.extension, m.game.as_ref().map(|g| &g.layout))).collect();
         for (material, pipeline) in self.materials.iter_mut().zip(pipelines) {
             material.pipeline = pipeline;
         }
@@ -1657,36 +1835,48 @@ impl CustomMaterials {
                 return Err(RenderError::refused(RenderCode::MeshInvalid, format!("mesh {} is not in the library", draw.mesh.raw())));
             }
         }
-        let v2_drawn = draws.iter().any(|draw| self.api_of(draw.material) == ABI_V2);
+        // Matched against last frame's draws once the frame is admitted (T-04): their previous
+        // models feed the prepass's motion and `GxDrawV2::prev_model`, last frame's time `prev_time`.
+        let rows: Vec<crate::motion::CustomRow> = draws.iter().map(|draw| custom_row(draw, library)).collect();
+        let (prevs, prev_seconds) = self.motion.apply(&rows, seconds);
+        // LG-20: the draws in the camera's view, by material (one pipeline bind per material);
+        // every draw keeps its motion history above and its index in the frame below.
+        let order = self.drawn_order(draws, &rows);
+        let v2_drawn = order.iter().any(|at| self.api_of(draws[*at].material) == ABI_V2);
         self.frame_v2_due = v2_drawn || self.keep_frame_v2;
         if let Some(shared) = self.shared.as_mut().filter(|_| v2_drawn || self.keep_frame_v2) {
             // A material binds the renderer's light table and sun shadows ([`CustomMaterials::bind_frame`]).
             let facts = FrameFacts { renderer_lights: true, ..self.frame_facts };
             shared.frame.write(&gpu.queue, &facts, seconds);
         }
-        if draws.is_empty() {
+        if order.is_empty() {
+            self.frame_prev.clear();
             return Ok(0);
         }
-        let bytes = draws.len() as u64 * DRAW_STRIDE;
+        let bytes = order.len() as u64 * DRAW_STRIDE;
+        let v2_bytes = order.len() as u64 * V2_ROW_BYTES;
         let mut v1_rows = vec![0u8; bytes as usize];
-        let mut v2_rows = vec![0u8; if v2_drawn { bytes as usize } else { 0 }];
-        for (i, draw) in draws.iter().enumerate() {
+        let mut v2_rows = vec![0u8; if v2_drawn { v2_bytes as usize } else { 0 }];
+        for (slot, i) in order.iter().copied().enumerate() {
+            let (draw, prev) = (&draws[i], &prevs[i]);
             let normal = crate::instance::instance_row(&draw.model, [0.0; 3], 0.0, 0).normal;
-            let params = [seconds, i as f32, 0.0, 0.0];
-            let at = i * DRAW_STRIDE as usize;
+            let params = [seconds, i as f32, prev_seconds, 0.0];
             if self.api_of(draw.material) == ABI_V1 {
+                let at = slot * DRAW_STRIDE as usize;
                 let row = GpuCustomDraw { model: draw.model, normal, tint: draw.tint.map(|c| f32::from(c) / 255.0), params };
                 v1_rows[at..at + size_of::<GpuCustomDraw>()].copy_from_slice(bytemuck::bytes_of(&row));
                 continue;
             }
+            // v2 rows are packed by slot: an instanced call's instances are its run of slots.
+            let at = slot * V2_ROW_BYTES as usize;
             let tint = [0, 1, 2].map(|c| crate::texture::srgb_to_linear(draw.tint[c]));
-            let row = GxDrawV2 { model: draw.model, normal, prev_model: draw.model, tint: [tint[0], tint[1], tint[2], f32::from(draw.tint[3]) / 255.0], params };
+            let row = GxDrawV2 { model: draw.model, normal, prev_model: prev.model, tint: [tint[0], tint[1], tint[2], f32::from(draw.tint[3]) / 255.0], params };
             v2_rows[at..at + size_of::<GxDrawV2>()].copy_from_slice(bytemuck::bytes_of(&row));
         }
         let device = &self.device;
         self.rows_v1.reserve(device, &self.v1.draw, bytes, size_of::<GpuCustomDraw>() as u64)?;
         if v2_drawn {
-            self.rows_v2.reserve(device, &self.v2.draw, bytes, size_of::<GxDrawV2>() as u64)?;
+            self.rows_v2.reserve_table(device, &self.v2.draw, v2_bytes)?;
         }
         if let Some(target) = &self.rows_v1.buffer {
             gpu.queue.write_buffer(target, 0, &v1_rows);
@@ -1694,8 +1884,45 @@ impl CustomMaterials {
         if let Some(target) = self.rows_v2.buffer.as_ref().filter(|_| v2_drawn) {
             gpu.queue.write_buffer(target, 0, &v2_rows);
         }
-        self.frame = draws.to_vec();
+        self.frame = order.iter().map(|at| draws[*at]).collect();
+        self.frame_prev = order.iter().map(|at| prevs[*at]).collect();
         Ok(bytes)
+    }
+
+    /// The indices of `draws` the frame draws, in drawing order (renderer pass 2 A.0, LG-20): the
+    /// ones whose world sphere (`rows`' bounds) is inside the camera's side and near planes (no far
+    /// plane, so either depth convention keeps them), sorted by material, equal materials in frame
+    /// order. Every draw without a camera.
+    fn drawn_order(&self, draws: &[CustomDraw], rows: &[crate::motion::CustomRow]) -> Vec<usize> {
+        let planes = self.frame_facts.camera.map(|camera| {
+            let (width, height) = self.frame_facts.output_size;
+            let mut planes = crate::cull::frustum_planes(camera.view_proj(width.max(1) as f32 / height.max(1) as f32));
+            planes[FAR_PLANE] = ALWAYS_INSIDE;
+            planes
+        });
+        let seen = |at: &usize| planes.as_ref().is_none_or(|planes| crate::cull::in_frustum(planes, rows[*at].bounds));
+        let mut order: Vec<usize> = (0..draws.len()).filter(seen).collect();
+        // LG-20 step 3: by mesh within a material, so each v2 pair's draws are one run (one call).
+        order.sort_by_key(|at| (draws[*at].material.0, draws[*at].mesh.raw()));
+        order
+    }
+
+    /// This frame's draw calls ([`CustomMaterials::draw`]) as runs of its draws: a v2 material's
+    /// draws of one mesh are one instanced call (LG-20 step 3); a v1 draw is a call of its own
+    /// (its row is a uniform bound by offset).
+    fn calls(&self) -> Vec<std::ops::Range<usize>> {
+        let mut calls: Vec<std::ops::Range<usize>> = Vec::new();
+        for (at, draw) in self.frame.iter().enumerate() {
+            let joins = |run: &std::ops::Range<usize>| {
+                let first = &self.frame[run.start];
+                first.material == draw.material && first.mesh == draw.mesh && self.api_of(draw.material) != ABI_V1
+            };
+            match calls.last_mut() {
+                Some(run) if joins(run) => run.end = at + 1,
+                _ => calls.push(at..at + 1),
+            }
+        }
+        calls
     }
 
     /// Refresh the v1 frame bytes (and the v2 frame, when due) from the world pass's
@@ -1710,6 +1937,7 @@ impl CustomMaterials {
             let key = V2FrameKey::of(world, self.environment.as_ref());
             if self.frame_group_v2.as_ref().is_none_or(|(held, _)| *held != key) {
                 let frame = sized(shared.frame.buffer(), GX_FRAME_V2_BYTES);
+                let (light_zbins, light_tiles) = crate::tables::light_bin_slices(world.light_bins);
                 let mut bound = vec![
                     ("frame", frame),
                     ("lights", world.lights.as_entire_binding()),
@@ -1717,8 +1945,9 @@ impl CustomMaterials {
                     // z-bins the forward pass walks, so a v2 material is lit by the frame's points
                     // and spots as a built-in surface is.
                     ("light_ext", world.light_ext.as_entire_binding()),
-                    ("light_tiles", world.light_tiles.as_entire_binding()),
-                    ("light_zbins", world.light_zbins.as_entire_binding()),
+                    // Two slices of the one bin table (LG-16), so the v2 map is unchanged.
+                    ("light_tiles", wgpu::BindingResource::Buffer(light_tiles)),
+                    ("light_zbins", wgpu::BindingResource::Buffer(light_zbins)),
                     ("materials", world.materials.as_entire_binding()),
                     ("color_textures", wgpu::BindingResource::TextureView(world.color_textures)),
                     ("data_textures", wgpu::BindingResource::TextureView(world.data_textures)),
@@ -1761,7 +1990,9 @@ impl CustomMaterials {
         pass.set_vertex_buffer(0, world.vertices.slice(..));
         pass.set_index_buffer(world.indices.slice(..), wgpu::IndexFormat::Uint32);
         let mut bound_api = None;
-        for (i, draw) in self.frame.iter().enumerate() {
+        let mut bound_material = None;
+        for run in self.calls() {
+            let (i, draw) = (run.start, &self.frame[run.start]);
             let (Some(material), Some(mesh)) = (self.materials.get(draw.material.0 as usize), world.library.entry(draw.mesh)) else { continue };
             let api = material.extension.api;
             let v2_group = self.frame_group_v2.as_ref().map(|(_, group)| group);
@@ -1771,18 +2002,44 @@ impl CustomMaterials {
                 pass.set_bind_group(0, frame_group, &[]);
                 bound_api = Some(api);
             }
-            pass.set_pipeline(&material.pipeline);
-            pass.set_bind_group(1, draw_group, &[(i as u64 * DRAW_STRIDE) as u32]);
-            if let Some(game) = &material.game {
-                pass.set_bind_group(2, &game.group, &[]);
+            // A rebuild the backend refused draws nothing (its admission compiled clean).
+            let Ok(pipeline) = material.pipeline.get() else { continue };
+            // The draws come sorted by material (LG-20): its pipeline and game group bind once.
+            if bound_material != Some(draw.material) {
+                pass.set_pipeline(pipeline);
+                if let Some(game) = &material.game {
+                    pass.set_bind_group(2, &game.group, &[]);
+                }
+                bound_material = Some(draw.material);
             }
-            pass.draw_indexed(mesh.first_index..mesh.first_index + mesh.index_count, mesh.base_vertex, 0..1);
+            let indices = mesh.first_index..mesh.first_index + mesh.index_count;
+            if api == ABI_V1 {
+                pass.set_bind_group(1, draw_group, &[(i as u64 * DRAW_STRIDE) as u32]);
+                pass.draw_indexed(indices, mesh.base_vertex, 0..1);
+                continue;
+            }
+            // The run's rows are its slots of `gx_draws` (`instance_index` counts from the first).
+            pass.set_bind_group(1, draw_group, &[]);
+            pass.draw_indexed(indices, mesh.base_vertex, run.start as u32..run.end as u32);
         }
     }
 
     /// Draws this frame issues.
     pub fn frame_draws(&self) -> u32 {
         self.frame.len() as u32
+    }
+
+    /// Draw calls this frame's draws take ([`CustomMaterials::draw`]): one per v2 (material,
+    /// mesh) pair drawn, one per v1 draw (LG-20 step 3).
+    pub fn frame_draw_calls(&self) -> u32 {
+        self.calls().len() as u32
+    }
+
+    /// Pipeline binds this frame's draws make ([`CustomMaterials::draw`]: one per run of a
+    /// material, the draws being sorted by material).
+    pub fn frame_pipeline_binds(&self) -> u32 {
+        let changes = self.frame.windows(2).filter(|pair| pair[0].material != pair[1].material).count();
+        (changes + usize::from(!self.frame.is_empty())) as u32
     }
 }
 
@@ -1795,6 +2052,21 @@ impl WorldStage for CustomMaterials {
     fn opaque(&self, pass: &mut wgpu::RenderPass<'_>, world: &WorldPass<'_>) {
         self.draw(pass, world);
     }
+
+    // Renderer pass 2, P2-0.8b (T-04): drawn as a renderer's stage (`render_staged`), the custom
+    // draws reach the prepass as the frame renderer's do, so its consumers (TAA's motion, AO,
+    // contact shadows) see them; without it they read the background behind them.
+    fn prepass_draws(&self) -> Vec<crate::prepass::PrepassDraw> {
+        CustomMaterials::prepass_draws(self)
+    }
+}
+
+/// `draw` as its motion is matched (T-04): its id, mesh, model and world bounds (the library
+/// mesh's sphere under its model; a mesh the library lacks was refused before this is asked).
+fn custom_row(draw: &CustomDraw, library: &crate::scene::MeshLibrary) -> crate::motion::CustomRow {
+    let (center, radius) = library.entry(draw.mesh).map_or(([0.0; 3], 0.0), |entry| (entry.center, entry.radius));
+    let bounds = crate::instance::instance_row(&draw.model, center, radius, 0).bounds;
+    crate::motion::CustomRow { id: draw.id, mesh: draw.mesh, model: draw.model, bounds }
 }
 
 fn unknown_material(id: CustomMaterialId) -> RenderError {
@@ -1861,7 +2133,7 @@ impl PostFrame<'_> {
 }
 
 struct PostPass {
-    pipeline: Compiled<RenderPipeline>,
+    pipeline: CheckedPipeline,
     extension: ValidatedExtension,
     stage: PostStage,
     format: TextureFormat,
@@ -1966,7 +2238,7 @@ impl PostPasses {
         }
     }
 
-    fn pipeline(&self, extension: &ValidatedExtension, format: TextureFormat, game: Option<&BindGroupLayout>) -> Compiled<RenderPipeline> {
+    fn pipeline(&self, extension: &ValidatedExtension, format: TextureFormat, game: Option<&BindGroupLayout>) -> CheckedPipeline {
         let device = &self.device;
         let api = extension.api;
         let module = shader_module(device, "post pass", extension);
@@ -1977,7 +2249,7 @@ impl PostPasses {
         };
         let layout = pipeline_layout(device, "post pass", &groups);
         let targets = [Some(wgpu::ColorTargetState { format, blend: None, write_mask: wgpu::ColorWrites::ALL })];
-        crate::compile::render_pipeline(device, &wgpu::RenderPipelineDescriptor {
+        crate::compile::render_pipeline_checked(device, &wgpu::RenderPipelineDescriptor {
             label: Some("post pass"),
             layout: Some(&layout),
             vertex: wgpu::VertexState { module: &module, entry_point: Some(ExtensionKind::PostPass.vertex_entry(api)), compilation_options: Default::default(), buffers: &[] },
@@ -2022,6 +2294,10 @@ impl PostPasses {
         };
         let format = self.format_at(stage);
         let pipeline = self.pipeline(&extension, format, game.as_ref().map(|g| &g.layout));
+        // Admission waits for its own compile: a pipeline the backend refuses is refused here.
+        if let Err(message) = pipeline.get() {
+            return Err(pipeline_failed(message));
+        }
         self.passes.push(PostPass { pipeline, extension, stage, format, game });
         Ok(PostPassId((self.passes.len() - 1) as u32))
     }
@@ -2041,7 +2317,7 @@ impl PostPasses {
             return Ok(false);
         }
         self.facts = facts;
-        let rebuilt: Vec<(TextureFormat, Compiled<RenderPipeline>)> = self
+        let rebuilt: Vec<(TextureFormat, CheckedPipeline)> = self
             .passes
             .iter()
             .map(|pass| {
@@ -2145,9 +2421,11 @@ impl PostPasses {
         let (texture, view) = target;
         let size = texture.size();
         let (copy, source) = self.scratch(texture);
-        self.write_params(gpu, ids, size, frame);
+        self.write_params(gpu, &running, size, frame);
         for (i, index) in running {
             let pass = &self.passes[index];
+            // A rebuild the backend refused draws nothing (its admission compiled clean).
+            let Ok(pipeline) = pass.pipeline.get() else { continue };
             if pass.format != texture.format() {
                 continue;
             }
@@ -2164,7 +2442,7 @@ impl PostPasses {
                 })],
                 ..Default::default()
             });
-            render.set_pipeline(&pass.pipeline);
+            render.set_pipeline(pipeline);
             render.set_bind_group(0, &group, &[]);
             match (&pass.game, pass.extension.api == ABI_V1) {
                 (Some(game), true) => render.set_bind_group(1, &game.group, &[]),
@@ -2178,16 +2456,18 @@ impl PostPasses {
         }
     }
 
-    /// The rows of the passes of `ids` at their index in it: v1's `GxPost`, v2's `GxPostV2`.
-    fn write_params(&self, gpu: &Gpu, ids: &[PostPassId], size: wgpu::Extent3d, frame: &PostFrame<'_>) {
+    /// The rows of the `running` passes (their index in the frame's list, their pass) at that
+    /// index: v1's `GxPost`, v2's `GxPostV2`, sized from this stage's target. Only these rows are
+    /// written: the hdr and ldr stages write theirs into one buffer before the frame's one
+    /// submission, so a stage writing every row would hand the other stage its target's size
+    /// (renderer pass 2, RC-01: below scale 1 an hdr pass sampled a cropped scene).
+    fn write_params(&self, gpu: &Gpu, running: &[(usize, usize)], size: wgpu::Extent3d, frame: &PostFrame<'_>) {
         let (w, h) = (size.width as f32, size.height as f32);
-        let mut v1 = vec![0u8; ids.len() * DRAW_STRIDE as usize];
-        let mut v2 = vec![0u8; if self.params_v2.is_some() { ids.len() * DRAW_STRIDE as usize } else { 0 }];
-        for (i, id) in ids.iter().enumerate() {
-            let at = i * DRAW_STRIDE as usize;
+        for &(i, index) in running {
+            let at = i as u64 * DRAW_STRIDE;
             let row = GpuPost { size: [w, h, 1.0 / w, 1.0 / h], params: [frame.seconds, i as f32, 0.0, 0.0] };
-            v1[at..at + size_of::<GpuPost>()].copy_from_slice(bytemuck::bytes_of(&row));
-            let Some(pass) = self.passes.get(id.0 as usize).filter(|pass| pass.extension.api == ABI_V2) else { continue };
+            gpu.queue.write_buffer(&self.params, at, bytemuck::bytes_of(&row));
+            let Some(pass) = self.passes.get(index).filter(|pass| pass.extension.api == ABI_V2) else { continue };
             // Stage hdr on the legacy LDR scene sees the display-ready frame: 0, as at ldr.
             let stage_hdr = pass.stage == PostStage::Hdr && pass.format != WORLD_FORMAT;
             let row = GxPostV2 {
@@ -2204,11 +2484,9 @@ impl PostPasses {
                 reserved0: 0,
                 reserved1: 0,
             };
-            v2[at..at + size_of::<GxPostV2>()].copy_from_slice(bytemuck::bytes_of(&row));
-        }
-        gpu.queue.write_buffer(&self.params, 0, &v1);
-        if let Some(target) = &self.params_v2 {
-            gpu.queue.write_buffer(target, 0, &v2);
+            if let Some(target) = &self.params_v2 {
+                gpu.queue.write_buffer(target, at, bytemuck::bytes_of(&row));
+            }
         }
     }
 
@@ -2273,6 +2551,67 @@ const _: () = assert!(size_of::<GxPostV2>() as u64 <= DRAW_STRIDE && size_of::<G
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// LG-20 step 3: `fs_material`'s parameter list and body are found past comments that name it,
+    /// attributes on their own lines and nested parentheses, and a source without one (or with a
+    /// broken one) has none; nothing else is read as its openings.
+    #[test]
+    fn the_fragment_entry_is_opened_where_its_parameters_and_body_start() {
+        let cases: &[(&str, Option<(&str, &str)>)] = &[
+            ("@fragment fn fs_material(in: GxMaterialInV2) -> @location(0) vec4<f32> { return in.tint; }", Some(("in: GxMaterialInV2", " return in.tint; }"))),
+            ("// fn fs_material( is not here\n/* nor fn fs_material( /* nested */ here */\n@fragment\nfn fs_material(\n  in: GxMaterialInV2,\n) -> @location(0) vec4<f32>\n{\n  return in.tint;\n}", Some(("\n  in: GxMaterialInV2,", "\n  return in.tint;\n}"))),
+            ("@ fragment fn fs_material(@builtin(position) p: vec4<f32>) -> @location(0) vec4<f32> { return p; }", Some(("@builtin(position) p", " return p; }"))),
+            ("fn fs_material_helper(x: f32) -> f32 { return x; } @fragment fn fs_material() -> @location(0) vec4<f32> { return vec4<f32>(1.0); }", Some((") ->", " return vec4"))),
+            ("fn fs_material_helper(x: f32) -> f32 { return x; }", None),
+            ("@fragment fn fs_material(in: GxMaterialInV2 -> @location(0) vec4<f32> { return in.tint; }", None),
+            ("@fragment fn fs_material(in: GxMaterialInV2)) -> vec4<f32> { return in.tint; }", None),
+            ("/* fn fs_material(in: X) { */", None),
+            ("", None),
+        ];
+        for (source, wanted) in cases {
+            let found = fs_material_openings(source).map(|(parameters, body)| (&source[parameters..], &source[body..]));
+            match (found, wanted) {
+                (Some((parameters, body)), Some((after_paren, after_brace))) => {
+                    assert!(parameters.starts_with(after_paren), "{source:?}: parameters at {parameters:?}");
+                    assert!(body.starts_with(after_brace), "{source:?}: body at {body:?}");
+                }
+                (found, wanted) => assert_eq!(found.is_some(), wanted.is_some(), "{source:?}: {found:?}"),
+            }
+        }
+    }
+
+    /// A v2 material reading `gx_draw` compiles with its draw row handed in (on the same lines); one
+    /// that does not is compiled as written.
+    #[test]
+    fn a_v2_material_reading_its_draw_row_is_opened_and_one_that_does_not_is_kept() {
+        let context = ExtensionContext::new(Features::empty(), Features::empty());
+        let reads = "@fragment\nfn fs_material(in: GxMaterialInV2) -> @location(0) vec4<f32> {\n  return vec4<f32>(gx_draw.params.y);\n}";
+        let helper = "fn row_time() -> f32 { return gx_draw.params.x; }\n@fragment fn fs_material(in: GxMaterialInV2) -> @location(0) vec4<f32> { return vec4<f32>(row_time()); }";
+        let ignores = "@fragment fn fs_material(in: GxMaterialInV2) -> @location(0) vec4<f32> { return in.tint; }";
+        for source in [reads, helper] {
+            let admitted = validate_api(ExtensionKind::Material, ABI_V2, source, &context).expect("admitted");
+            let game = &admitted.source()[MATERIAL_V2_PRELUDE.len() + 1..];
+            assert!(game.contains(DRAW_ROW_PARAMETER) && game.contains(DRAW_ROW_STORE), "{game}");
+            assert_eq!(game.lines().count(), source.lines().count(), "the opened source keeps its lines");
+        }
+        let kept = validate_api(ExtensionKind::Material, ABI_V2, ignores, &context).expect("admitted");
+        assert_eq!(kept.source(), format!("{MATERIAL_V2_PRELUDE}\n{ignores}"));
+    }
+
+    /// Renderer pass 2, P2-0.8b (T-04): a custom draw carries the draw id current when it was
+    /// drawn (`frame.id(key)` reaches it through the facade), so its motion follows the id.
+    #[test]
+    fn a_custom_draw_carries_the_draw_id_current_when_drawn() {
+        use crate::motion::DrawId;
+        let mut frame = crate::immediate::ImmediateFrame::new(CameraDesc::look_at([0.0, 0.0, 4.0], [0.0; 3]), [0, 0, 0, 255]);
+        let material = CustomMaterialId::from_raw(0);
+        let at = |x: f32| glam::Mat4::from_translation(glam::Vec3::new(x, 0.0, 0.0)).to_cols_array();
+        frame.custom(MeshId::CUBE, at(0.0), material, [255; 4]);
+        frame.id(Some(DrawId::from("flag"))).custom(MeshId::CUBE, at(1.0), material, [255; 4]);
+        frame.id(None).custom(MeshId::SPHERE, at(2.0), material, [255; 4]);
+        let ids: Vec<Option<DrawId>> = frame.custom_draws().iter().map(|draw| draw.id).collect();
+        assert_eq!(ids, [None, Some(DrawId::from("flag")), None]);
+    }
 
     #[test]
     fn the_frame_v2_remap_validates_against_webgpu_core() {

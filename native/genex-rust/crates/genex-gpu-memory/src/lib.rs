@@ -12,7 +12,9 @@
 //! is None, and the class budget stands.
 //!
 //! Its own crate because the queries are FFI: genex-render stays safe Rust, so an ejected fork of it
-//! builds under the lane's `-F unsafe_code`, and an eject leaves this crate the store's.
+//! builds under the lane's `-F unsafe_code`, and an eject leaves this crate the store's. For the
+//! same reason it also opens the Vulkan pipeline cache from saved bytes ([`open_pipeline_cache`],
+//! renderer pass 2, RC-09): wgpu marks that call `unsafe` for the bytes' provenance.
 
 #![cfg_attr(
     not(target_arch = "wasm32"),
@@ -98,4 +100,22 @@ fn vulkan_device_local(adapter: &wgpu::Adapter) -> Option<u64> {
 #[cfg(all(not(target_arch = "wasm32"), not(any(windows, target_os = "linux", target_os = "android"))))]
 fn vulkan_device_local(_adapter: &wgpu::Adapter) -> Option<u64> {
     None
+}
+
+/// A pipeline cache on `device` (opened with `Features::PIPELINE_CACHE`), started from `data` when
+/// wgpu accepts it and empty otherwise (`fallback`: a stale, foreign or truncated file never fails
+/// the open); None when the device has no pipeline cache (Metal, D3D12 and the web keep their own).
+pub fn open_pipeline_cache(device: &wgpu::Device, data: Option<&[u8]>) -> Option<wgpu::PipelineCache> {
+    if !device.features().contains(wgpu::Features::PIPELINE_CACHE) {
+        return None;
+    }
+    let descriptor = wgpu::PipelineCacheDescriptor { label: Some("genex pipeline cache"), data, fallback: true };
+    // SAFETY: wgpu requires `data` to come from `PipelineCache::get_data` of an adapter with the
+    // same `util::pipeline_cache_key`. genex-render's only caller passes the bytes it saved under
+    // that key for this game, and wgpu checks the header it wrote (magic, ABI, backend, adapter
+    // key, validation key and size) before the driver sees any of it, falling back to an empty
+    // cache when they do not match.
+    #[allow(unsafe_code, reason = "wgpu marks pipeline-cache creation unsafe for the bytes' provenance; the block says why it holds")]
+    let cache = unsafe { device.create_pipeline_cache(&descriptor) };
+    Some(cache)
 }

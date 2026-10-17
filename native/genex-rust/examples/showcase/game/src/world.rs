@@ -4,7 +4,7 @@
 use genex::math::{self, Vec3, vec3};
 use genex::prelude::*;
 use genex::render::{Environment, HdriEnvironment, SkyParams};
-use genex::{CustomMaterial, Gfx, Model};
+use genex::{Gfx, Model, Terrain, TerrainLayer};
 
 use crate::layout::{TreeLod, layout, tree_asset};
 
@@ -67,13 +67,36 @@ pub const SHOTS: [Shot; 5] = [
     Shot { name: "closeup", eye: vec3(-30.0, 0.55, -2.0), target: vec3(-14.0, 1.1, -6.0), fovy: 42.0 },
 ];
 
+/// Lakeside v2's shots (renderer pass 2, plan section 6), after pass 1's five (kept for continuity;
+/// the tour flies through those only): a wide golden hour over the lake into the low sun, a shore
+/// close-up crouched on the east beach's pebbles, looking along the waterline with the sun behind,
+/// the forest floor looking into the sun through the trunks and the cabin's lamplit room from its
+/// back corner (the table lamp, the hearth and the sun through the open door; a reflection probe
+/// and an irradiance volume over the room). 6–9 hold them.
+pub const V2_SHOTS: [Shot; 4] = [
+    Shot { name: "golden-wide", eye: vec3(-44.0, 13.0, -14.0), target: vec3(8.0, 0.0, 6.0), fovy: 52.0 },
+    Shot { name: "shore", eye: vec3(27.0, 0.9, -2.0), target: vec3(8.0, 0.3, -14.0), fovy: 46.0 },
+    Shot { name: "forest-floor", eye: vec3(-24.0, 0.6, -44.0), target: vec3(-8.0, 2.4, -32.0), fovy: 56.0 },
+    Shot { name: "cabin-interior", eye: vec3(-7.675, 1.8, -23.673), target: vec3(-9.688, 1.05, -19.598), fovy: 60.0 },
+];
+
+/// Every named shot: pass 1's five, then Lakeside v2's.
+pub fn named_shots() -> impl Iterator<Item = &'static Shot> {
+    SHOTS.iter().chain(V2_SHOTS.iter())
+}
+
+/// Named shot `i` ([`named_shots`] order; past the last, the last).
+pub fn shot_at(i: usize) -> &'static Shot {
+    named_shots().nth(i).unwrap_or(&V2_SHOTS[V2_SHOTS.len() - 1])
+}
+
 /// How the camera moves.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub enum CameraMode {
     /// The slow fly-through of every shot (the default).
     #[default]
     Tour,
-    /// One fixed shot ([`SHOTS`]).
+    /// One fixed shot ([`named_shots`]).
     Shot(usize),
     /// The free camera.
     Free,
@@ -84,7 +107,7 @@ impl CameraMode {
     pub fn label(self) -> &'static str {
         match self {
             CameraMode::Tour => "tour",
-            CameraMode::Shot(i) => SHOTS[i.min(SHOTS.len() - 1)].name,
+            CameraMode::Shot(i) => shot_at(i).name,
             CameraMode::Free => "free",
         }
     }
@@ -195,16 +218,17 @@ pub struct TreeMeshes {
 /// The model handles and materials the draw hook uses, one per asset, made once per seed.
 #[derive(Clone, Debug, Default)]
 pub struct Models {
-    /// The terrain grid.
-    pub terrain: Model,
-    /// The terrain's material (`shaders/terrain.wgsl`).
-    pub terrain_material: CustomMaterial,
+    /// The ground: the renderer's built-in terrain over the layout's heights ([`terrain`]).
+    pub terrain: Option<Terrain>,
     /// Broadleaf meshes: per variant, per level of detail ([`TreeLod::ALL`]).
     pub broadleaf: Vec<Vec<TreeMeshes>>,
     /// Pine meshes: per variant, per level of detail.
     pub pine: Vec<Vec<TreeMeshes>>,
     /// Rock variants.
     pub rock: Vec<Model>,
+    /// The beach's pebbles and the path's stones, scattered on the terrain's layers
+    /// ([`crate::draw::stone_groups`]): one retained instance group per rock variant and kind.
+    pub stones: Vec<genex::InstanceGroup>,
     /// A unit cylinder (radius 0.5, height 1 from y 0).
     pub cylinder: Model,
     /// A unit sphere (radius 1) with smooth normals.
@@ -215,22 +239,62 @@ pub struct Models {
     pub surfaces: crate::draw::Surfaces,
 }
 
-/// The terrain material's uniforms: the terrain's half extent, the water level and how far its
-/// detail reaches, then each layer's tile in metres (grass, soil, sand, rock: the fetched
-/// textures' real sizes, assets-manifest.json `worldSizeMetres`, the sand's smaller than its own).
-fn terrain_uniforms() -> [f32; 8] {
-    [crate::layout::TERRAIN_HALF, crate::layout::WATER_LEVEL, TERRAIN_DETAIL_REACH, 0.0, 2.0, 2.0, 3.0, 2.4]
+/// The fetched CC0 layers (`assets/fetched/`, `scripts/showcase-assets.ts fetch`): each a base
+/// colour with its height in alpha and a data map (normal, roughness, occlusion), named by the
+/// manifest's terrain outputs. Without the asset cache every layer draws flat in its fallback.
+fn layer(name: &str, tile: f32) -> TerrainLayer {
+    TerrainLayer::textured(&format!("fetched/{name}-layer.png"), &format!("fetched/{name}-data.png"), tile)
 }
 
-/// How far the terrain's bumps reach (metres): beyond it the ground keeps only its colour.
-const TERRAIN_DETAIL_REACH: f32 = 90.0;
-/// The terrain material's source (`genex.toml`'s `[[wgsl]]` row) and its textures: the splat map
-/// the layout writes, and the fetched atlases (missing without the asset cache: the material
-/// draws its procedural layers then).
-pub const TERRAIN_WGSL: &str = "shaders/terrain.wgsl";
-const SPLAT_MAP: &str = "terrain-splat.png";
-const ALBEDO_ATLAS: &str = "fetched/terrain-albedo.png";
-const DETAIL_ATLAS: &str = "fetched/terrain-detail.png";
+/// The lush meadow's grass (renderer pass 2 A.8): knee-high blades from a dark foot to a fresh
+/// green, a fifth of the tips dry, a few yellow flowers, the low sun shining through them.
+pub fn lush_grass() -> genex::Grass {
+    genex::Grass::meadow(30.0, 0.5)
+        .with_height(0.14, 0.5)
+        .with_width(0.022, 0.042)
+        .with_colors(Color::rgb(39, 58, 25), Color::rgb(84, 112, 47))
+        .with_dry(Color::rgb(149, 129, 75), 0.18)
+        .with_flowers(Color::rgb(237, 206, 79), 0.025)
+        .with_transmission(0.7)
+}
+
+/// The dry meadow's grass: taller and sparser, most of its tips gone gold.
+pub fn dry_grass() -> genex::Grass {
+    genex::Grass::meadow(22.0, 0.7)
+        .with_height(0.3, 0.7)
+        .with_width(0.022, 0.042)
+        .with_colors(Color::rgb(48, 60, 27), Color::rgb(112, 118, 52))
+        .with_dry(Color::rgb(160, 136, 76), 0.6)
+        .with_flowers(Color::rgb(232, 225, 210), 0.015)
+        .with_transmission(0.75)
+}
+
+/// The lakeside's ground on the built-in terrain (renderer pass 2 A.7): the layout's heights every
+/// [`crate::layout::TERRAIN_SPACING`] metres and its control map, six layers (tiles in metres: the
+/// fetched textures' real sizes, assets-manifest.json `worldSizeMetres`): the scanned forest floor
+/// greened for the lush meadow and gilded where it dries, the soil, the sand, the rock and the
+/// lake bed (the sand darkened under the water). Made once per process.
+pub fn terrain() -> Terrain {
+    static TERRAIN: std::sync::OnceLock<Terrain> = std::sync::OnceLock::new();
+    TERRAIN
+        .get_or_init(|| {
+            use crate::layout::{TERRAIN_HALF, TERRAIN_SAMPLES, TERRAIN_SPACING, terrain_ground};
+            let (heights, control) = terrain_ground();
+            let origin = math::vec2(-TERRAIN_HALF, -TERRAIN_HALF);
+            let ground = Terrain::from_heights([TERRAIN_SAMPLES; 2], origin, TERRAIN_SPACING, heights).expect("the layout's heights");
+            let layers = vec![
+                layer("terrain-grass", 2.0).with_tint(vec3(0.68, 1.0, 0.5)).with_fallback(Color::rgb(54, 79, 34)).with_grass(lush_grass()),
+                layer("terrain-grass", 2.0).with_tint(vec3(1.3, 1.08, 0.58)).with_fallback(Color::rgb(126, 108, 66)).with_grass(dry_grass()),
+                layer("terrain-soil", 2.0).with_fallback(Color::rgb(108, 84, 62)),
+                layer("terrain-sand", 3.0).with_fallback(Color::rgb(170, 152, 125)),
+                layer("terrain-rock", 2.4).with_fallback(Color::rgb(138, 134, 126)),
+                layer("terrain-sand", 3.0).with_tint(vec3(0.42, 0.4, 0.36)).with_fallback(Color::rgb(104, 92, 76)),
+            ];
+            let look = genex::TerrainLook { macro_variation: 0.2, macro_scale: 9.0, wet_darkening: 0.45, wet_roughness: 0.32, blend_depth: 0.18 };
+            ground.with_layers(layers).and_then(|ground| ground.with_control(control)).expect("the layout's control map").with_look(look)
+        })
+        .clone()
+}
 
 impl Models {
     /// Every handle, from the game's `assets/`.
@@ -242,17 +306,18 @@ impl Models {
                 .map(|lod| TreeMeshes { wood: assets.model(&tree_asset(pine, variant, *lod, false)), foliage: assets.model(&tree_asset(pine, variant, *lod, true)) })
                 .collect()
         };
-        let textures = [SPLAT_MAP, ALBEDO_ATLAS, DETAIL_ATLAS].map(|path| gfx.texture(path));
+        let rock: Vec<Model> = (0..3).map(|i| assets.model(&format!("rock-{i}.glb"))).collect();
+        let surfaces = crate::draw::Surfaces::new();
         Models {
-            terrain: assets.model("terrain.glb"),
-            terrain_material: gfx.material_textured(TERRAIN_WGSL, &terrain_uniforms(), &[&textures[0], &textures[1], &textures[2]]),
+            terrain: Some(terrain()),
             broadleaf: (0..3).map(|v| tree(false, v)).collect(),
             pine: (0..2).map(|v| tree(true, v)).collect(),
-            rock: (0..3).map(|i| assets.model(&format!("rock-{i}.glb"))).collect(),
+            stones: crate::draw::stone_groups(&terrain(), &rock, &surfaces),
+            rock,
             cylinder: assets.model("cylinder.glb"),
             sphere: assets.model("sphere.glb"),
             parts: crate::draw::Parts::load(assets),
-            surfaces: crate::draw::Surfaces::new(),
+            surfaces,
         }
     }
 }
@@ -293,7 +358,7 @@ impl World {
     pub fn camera(&self) -> Camera {
         match self.mode {
             CameraMode::Tour => tour(self.seconds()),
-            CameraMode::Shot(i) => SHOTS[i.min(SHOTS.len() - 1)].camera(),
+            CameraMode::Shot(i) => shot_at(i).camera(),
             CameraMode::Free => {
                 let free = &self.free;
                 Camera { fovy: 50.0, ..Camera::look_at(free.eye, free.eye + free.forward()) }
@@ -343,13 +408,13 @@ fn tapped_scene(world: &World, ctx: &Ctx<'_>) -> bool {
     ctx.touches.all().iter().filter(ended).any(|touch| !on_hud(touch.position))
 }
 
-/// One tick: the clock, the camera keys (1–5 a shot, Space the tour, F the free camera, H the HUD,
+/// One tick: the clock, the camera keys (1–9 a shot, Space the tour, F the free camera, H the HUD,
 /// O the graphics panel; a tap on the scene steps to the next shot), the backdrop (B) and the free
 /// camera's flight.
 pub fn update(world: &mut World, ctx: &Ctx<'_>) {
     world.tick = ctx.tick + 1;
     let before = world.mode;
-    let digits = [Key::Digit1, Key::Digit2, Key::Digit3, Key::Digit4, Key::Digit5];
+    let digits = [Key::Digit1, Key::Digit2, Key::Digit3, Key::Digit4, Key::Digit5, Key::Digit6, Key::Digit7, Key::Digit8, Key::Digit9];
     if let Some(shot) = digits.iter().position(|key| ctx.keys.pressed(*key)) {
         world.mode = CameraMode::Shot(shot);
     }
@@ -372,7 +437,7 @@ pub fn update(world: &mut World, ctx: &Ctx<'_>) {
     }
     if tapped_scene(world, ctx) && world.mode != CameraMode::Free {
         world.mode = match world.mode {
-            CameraMode::Shot(i) if i + 1 < SHOTS.len() => CameraMode::Shot(i + 1),
+            CameraMode::Shot(i) if i + 1 < SHOTS.len() + V2_SHOTS.len() => CameraMode::Shot(i + 1),
             CameraMode::Shot(_) => CameraMode::Tour,
             _ => CameraMode::Shot(0),
         };
@@ -391,7 +456,6 @@ pub fn scene_probe() -> Value {
     json!({
         "trees": layout.trees.len(),
         "rocks": layout.rocks.len(),
-        "grassBlades": layout.blades.len(),
         "lanterns": layout.lanterns.len(),
         "fireflies": layout.fireflies.len(),
     })

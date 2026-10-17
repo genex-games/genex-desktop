@@ -30,11 +30,13 @@ import {
   releaseActions,
   releasesCapture,
   resizeDue,
+  startingProgress,
   textAction,
 } from "../../src/renderer/panels/stage/native-live.ts";
 import { NATIVE_WORDS } from "../../src/renderer/words.ts";
 import { BuildTarget } from "../../src/shared/game-project.ts";
 import {
+  BootStage,
   NATIVE_FRAME_SIDE_MAX,
   NATIVE_GAMEPAD_AXES_MAX,
   NATIVE_GAMEPAD_BUTTONS_MAX,
@@ -79,6 +81,43 @@ describe("the canvas's size and the pointer's place on the game", () => {
         const size = embedSizeOf(rect, dpr);
         assert.deepEqual(parseNativeEmbedSize(size), size, `main accepts ${JSON.stringify([rect, dpr])}`);
       }
+  });
+
+  it("asks for the slot's exact device pixels when the browser reports them, so the ring is never resampled", () => {
+    // A flex slot 812.5 CSS px wide at dpr 2 covers 1625 device px; the rounded CSS side gave 1626,
+    // and the compositor stretched every frame by 1625/1626 (renderer pass 2, TS-F3).
+    const device = { width: 1625, height: 915 };
+    const size = embedSizeOf({ width: 812.5, height: 457.5 }, 2, device);
+    assert.deepEqual(size, { width: 813, height: 458, dpr: 2, device });
+    assert.deepEqual(
+      canvasBacking(size ?? { width: 0, height: 0, dpr: 1 }),
+      device,
+      "the ring is the device-pixel box",
+    );
+    assert.deepEqual(parseNativeEmbedSize(size), size, "main accepts it");
+    // At a fractional ratio (Windows 125%, page zoom) the rounding error is a whole device pixel too.
+    const zoomed = embedSizeOf({ width: 640.4, height: 360.2 }, 1.25, { width: 801, height: 450 });
+    assert.deepEqual(canvasBacking(zoomed ?? { width: 0, height: 0, dpr: 1 }), { width: 801, height: 450 });
+    // A report that no longer matches the slot (a resize between the two) is left out: CSS times the ratio.
+    const stale = embedSizeOf({ width: 812.5, height: 457.5 }, 2, { width: 1400, height: 915 });
+    assert.deepEqual(stale, { width: 813, height: 458, dpr: 2 });
+    assert.deepEqual(
+      embedSizeOf({ width: 9000, height: 20 }, 1, { width: 9000, height: 20 }),
+      {
+        width: NATIVE_FRAME_SIDE_MAX,
+        height: 20,
+        dpr: 1,
+      },
+      "a capped side drops the device pixels",
+    );
+  });
+
+  it("asks again when only the device pixels changed", () => {
+    const sent = { width: 813, height: 458, dpr: 2, device: { width: 1625, height: 915 } };
+    assert.equal(resizeDue(sent, { ...sent, device: { ...sent.device } }), null);
+    const moved = { ...sent, device: { width: 1626, height: 915 } };
+    assert.deepEqual(resizeDue(sent, moved), moved);
+    assert.deepEqual(resizeDue({ width: 813, height: 458, dpr: 2 }, sent), sent);
   });
 
   it("backs the canvas with the ring (CSS pixels times the ratio, within the ring caps) while CSS keeps the slot", () => {
@@ -285,6 +324,29 @@ function embedded(state: NativeRunState, extra: Partial<NativeRunStatus> = {}): 
 }
 
 describe("what Live's canvas says about the embedded run", () => {
+  // Owner decision D11: while the game starts, the card says where its boot is (the pipelines n
+  // of m) and the bar fills with it; a stage with no count shows its words alone.
+  it("says where a starting game's boot is and fills the bar as its pipelines compile", () => {
+    const at = (progress: NativeRunStatus["progress"]) =>
+      startingProgress(embedded(NativeRunState.Starting, { progress }));
+    assert.equal(startingProgress(null), null, "nothing before the host answered");
+    assert.equal(at(null), null, "a game that names no stage");
+    const device = at({ stage: BootStage.Device, done: null, total: null });
+    assert.equal(device?.words, NATIVE_WORDS.boot.stage[BootStage.Device]);
+    const some = at({ stage: BootStage.Pipelines, done: 12, total: 40 });
+    assert.equal(some?.words, NATIVE_WORDS.boot.counted(BootStage.Pipelines, 12, 40));
+    const all = at({ stage: BootStage.Pipelines, done: 40, total: 40 });
+    assert.ok((device?.fill ?? 1) < (some?.fill ?? 0) && (some?.fill ?? 1) < (all?.fill ?? 0), "the bar only fills");
+    assert.equal(
+      canvasWords(
+        CanvasPhase.Starting,
+        embedded(NativeRunState.Starting, { progress: { stage: BootStage.Pipelines, done: 12, total: 40 } }),
+      ).detail,
+      NATIVE_WORDS.boot.counted(BootStage.Pipelines, 12, 40),
+      "the card's detail is the boot's words",
+    );
+  });
+
   it("waits while the run is on its way, plays once it is ready, and says how it ended or why it was refused", () => {
     assert.equal(canvasPhase(null, false, true), CanvasPhase.Starting);
     for (const state of [NativeRunState.Building, NativeRunState.Admitting, NativeRunState.Starting])

@@ -46,6 +46,7 @@
  * dev flavour (the `studio` feature, so the game serves fd 3); an export and every web build
  * never link genex-studio (`RustFlavour`, `rust-manifest.ts`).
  */
+import type { LoadingStyle } from "../shared/loading-style.ts";
 import { createHash } from "node:crypto";
 import { constants as FS_CONSTANTS } from "node:fs";
 import { chmod, copyFile, lstat, mkdir, readdir, realpath, rename, rm, rmdir, writeFile } from "node:fs/promises";
@@ -116,6 +117,8 @@ const MESSAGE = {
   unsafeCode: `${ExtensionRefusal.UnsafeCode}: \`unsafe\` code builds only in a game the person trusts`,
   trustClaimed: `${ExtensionRefusal.TrustPersonOnly}: the game's own files cannot trust it; only the person can, in Studio`,
   buildScriptLinked: (file: string) => `${file} is a link or not a file, and the build lane never works through one`,
+  stoppedBySignal: (signal: string) =>
+    `the build stopped on ${signal} before it printed anything (the system ends a build this way when memory or disk runs out)`,
 } as const;
 
 /** How long a whole `cargo build` (or clippy) may run, per destination. */
@@ -284,6 +287,8 @@ export type RustStaged =
       wgslToml?: string;
       /** `[web] wasm_budget_mb`, the web export's code budget in MB of gzip; null or absent: the default. */
       wasmBudgetMb?: number | null;
+      /** `[render.loading]`, checked: the web page's loading screen; null or absent: the defaults. */
+      loading?: LoadingStyle | null;
     }
   | { ok: false; code: string; detail: string };
 
@@ -580,6 +585,8 @@ interface Plan extends Pending {
   wgslToml: string | null;
   /** The game's web budget in MB of gzip, as staged; null: the default. */
   wasmBudgetMb: number | null;
+  /** The game's `[render.loading]`, as staged; null: the defaults. */
+  loading: LoadingStyle | null;
   /** What the game may use of its profile's crate overlay. */
   grant: Extract<RustCrateGrant, { ok: true }>;
   /** The store's own vendored crates (the toolchain's `vendor` is the merged source when the game has a grant). */
@@ -802,6 +809,7 @@ export class RustBuilds implements GameBuildLane {
         renderToml: null,
         wgslToml: null,
         wasmBudgetMb: null,
+        loading: null,
         grant,
         storeVendor: located.toolchain.vendor,
         trust,
@@ -852,6 +860,7 @@ export class RustBuilds implements GameBuildLane {
     plan.renderToml = staged.renderToml ?? null;
     plan.wgslToml = staged.wgslToml ?? null;
     plan.wasmBudgetMb = staged.wasmBudgetMb ?? null;
+    plan.loading = staged.loading ?? null;
     const outside = staged.dependencies.filter(
       (name) => name !== FACADE_CRATE && !Object.hasOwn(RUST_CRATE_ALLOWLIST, name) && !plan.grant.names.includes(name),
     );
@@ -1014,6 +1023,7 @@ export class RustBuilds implements GameBuildLane {
       out: path.join(plan.bin, WEB_DIR),
       shell,
       title: plan.title,
+      ...(plan.loading === null ? {} : { loading: plan.loading }),
       optimize: plan.purpose === CppBuildPurpose.Export,
       ...(plan.wasmBudgetMb === null ? {} : { budgetMb: plan.wasmBudgetMb }),
       tools,
@@ -1118,6 +1128,9 @@ export class RustBuilds implements GameBuildLane {
     const messages: CargoMessages = parseCargoMessages(result.stdout, stageDir(plan.bin), manifest);
     const rendered = diagnosticLines(messages);
     const lines = rendered.length ? rendered : outputLinesOf(result);
+    // A step the system killed (memory or disk) prints nothing: name the signal, never an empty problem.
+    const killedBy = lines.length === 0 && !result.timedOut ? result.signal : null;
+    if (killedBy) lines.push(MESSAGE.stoppedBySignal(killedBy));
     const reason = result.timedOut ? BuildProblemCode.TimedOut : BuildProblemCode.CommandFailed;
     const problem = { command: result.command, code: result.code, diagnostics: messages.diagnostics };
     const unsafeRefused = !plan.trust.trusted && messages.diagnostics.some((d) => d.code === UNSAFE_CODE_LINT);

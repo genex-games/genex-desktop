@@ -80,18 +80,105 @@ fn saturation(rgb: [f32; 3]) -> f32 {
     if hi <= 0.0 { 0.0 } else { (hi - lo) / hi }
 }
 
+/// How much more saturated punchy keeps a warm light than plain AgX does, at least.
+const PUNCHY_SATURATION_SHARE_MIN: f32 = 1.05;
+
 #[test]
 fn agx_punchy_keeps_warm_lights_saturated_where_plain_agx_greys_them() {
     // A lantern's warm glow, a lit window and a saturated red, at and above display white.
     for radiance in [[1.0, 0.75, 0.3], [2.4, 1.6, 0.5], [3.0, 0.4, 0.2]] {
         let plain = saturation(tonemap_cpu(Tonemapper::Agx, radiance));
         let punchy = saturation(tonemap_cpu(Tonemapper::AgxPunchy, radiance));
-        assert!(punchy > plain * 1.15, "{radiance:?}: punchy {punchy} against plain {plain}");
+        // P2-0.10 flipped 1.15 to 1.05: saturation 1.4 about display luminance after Godot's curve
+        // (1.35, 1.17 and 1.11 of plain AgX's here), where pass 1's punchy saturated the encoded
+        // colour (1.6 of it) and crushed the darks with it.
+        assert!(punchy > plain * PUNCHY_SATURATION_SHARE_MIN, "{radiance:?}: punchy {punchy} against plain {plain}");
     }
-    // Mid grey stays near mid grey and highlights still roll off below white.
+    // Mid grey stays near mid grey and highlights still roll off below white. P2-0.10 flipped the
+    // highlight from 20 to 12: Godot's curve reaches display white at its white, 16.29 (Blender
+    // AgX's 2^6.5 x 0.18), where pass 1's punchy approached it asymptotically.
     let grey = tonemap_cpu(Tonemapper::AgxPunchy, [0.18; 3]);
     assert!((0.08..0.25).contains(&grey[1]), "mid grey: {grey:?}");
-    assert!(tonemap_cpu(Tonemapper::AgxPunchy, [20.0; 3]).iter().all(|c| *c < 1.0));
+    assert!(tonemap_cpu(Tonemapper::AgxPunchy, [12.0; 3]).iter().all(|c| *c < 1.0));
+}
+
+/// The floor in a block's shadow lit by the blue sky alone (pre-exposed linear radiance): the colour
+/// pass 1's punchy look crushed to a near-black navy, [3, 20, 38] (P2-0.10, C1).
+const DIM_SKY_BLUE: [f32; 3] = [0.025, 0.035, 0.052];
+/// Display middle grey: scene 0.18 draws at sRGB 128 under AgX, give or take this many levels.
+const MIDDLE_GREY_LEVELS: f32 = 2.0;
+/// The lowest level a channel of [`DIM_SKY_BLUE`] may draw at: crushed means within a few levels
+/// of black.
+const DIM_BLUE_CHANNEL_MIN: f32 = 16.0;
+/// The share of plain AgX's luma [`DIM_SKY_BLUE`] keeps under punchy (contrast deepens it, never
+/// to black).
+const DIM_BLUE_LUMA_SHARE_MIN: f32 = 0.7;
+/// The steepest log-log slope of the punchy curve in the shadows (radiance 0.01 to 0.05): how much a
+/// wobble of shadow radiance (PCF, PCSS, AO or TAA noise) is amplified on screen. Pass 1's punchy
+/// was 2.3 at 0.01, plain AgX is 1.7.
+const SHADOW_SLOPE_MAX: f32 = 1.55;
+
+fn encoded_levels(tonemapper: Tonemapper, rgb: [f32; 3]) -> [f32; 3] {
+    tonemap_cpu(tonemapper, rgb).map(|c| encode_srgb(c) * 255.0)
+}
+
+#[test]
+fn agx_and_punchy_draw_middle_grey_at_display_middle_grey() {
+    for tonemapper in [Tonemapper::Agx, Tonemapper::AgxPunchy] {
+        let level = encoded_levels(tonemapper, [0.18; 3])[1];
+        assert!((level - 128.0).abs() <= MIDDLE_GREY_LEVELS, "{tonemapper:?}: scene 0.18 draws at {level}, not sRGB 128 ± {MIDDLE_GREY_LEVELS}");
+    }
+}
+
+#[test]
+fn punchy_keeps_a_dim_sky_lit_blue_readable() {
+    let (plain, punchy) = (encoded_levels(Tonemapper::Agx, DIM_SKY_BLUE), encoded_levels(Tonemapper::AgxPunchy, DIM_SKY_BLUE));
+    let luma = |c: [f32; 3]| 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
+    assert!(punchy.iter().all(|c| *c >= DIM_BLUE_CHANNEL_MIN), "no channel crushed: punchy {punchy:?} (plain AgX {plain:?})");
+    assert!(luma(punchy) >= DIM_BLUE_LUMA_SHARE_MIN * luma(plain), "punchy {punchy:?} keeps the blue readable beside plain AgX {plain:?}");
+    assert!(punchy[2] > punchy[1] && punchy[1] > punchy[0], "still blue: {punchy:?}");
+}
+
+#[test]
+fn punchy_amplifies_shadow_noise_no_more_than_its_contrast() {
+    for radiance in [0.01f32, 0.02, 0.03, 0.05] {
+        let at = |r: f32| libm::logf(luminance(tonemap_cpu(Tonemapper::AgxPunchy, [r; 3])));
+        let slope = (at(radiance * 1.02) - at(radiance)) / libm::logf(1.02);
+        assert!(slope <= SHADOW_SLOPE_MAX, "punchy's log-slope at {radiance}: {slope} (a {:.0}% wobble shows as {:.0}%)", 5.0, 5.0 * slope);
+    }
+}
+
+/// The most of the hue shift equivalent gains give a blue sky that the CAT16 balance may give it
+/// (computed: 3.9° against 6.8° at temperature 0.5).
+const HUE_SHIFT_SHARE_MAX: f32 = 0.7;
+
+/// A hue angle in degrees (the HSV hexagon's).
+fn hue(rgb: [f32; 3]) -> f32 {
+    let (r, g, b) = (rgb[0], rgb[1], rgb[2]);
+    libm::atan2f(libm::sqrtf(3.0) * (g - b), 2.0 * r - g - b).to_degrees()
+}
+
+/// `look`'s white balance applied to linear `rgb` (the tonemap's first step).
+fn balanced(look: &Look, rgb: [f32; 3]) -> [f32; 3] {
+    let m = look.white_balance_matrix();
+    std::array::from_fn(|row| m[0][row] * rgb[0] + m[1][row] * rgb[1] + m[2][row] * rgb[2])
+}
+
+#[test]
+fn a_warm_white_balance_warms_neutrals_and_keeps_a_blue_sky_blue() {
+    let sky = [0.2, 0.4, 0.9];
+    let warm = Look::default().with_temperature(0.5, 0.0);
+    let grey = balanced(&warm, [0.18; 3]);
+    assert!(grey[0] > grey[1] && grey[1] > grey[2], "a warm balance warms grey: {grey:?}");
+    assert!((luminance(grey) / 0.18 - 1.0).abs() < 0.05, "and keeps its brightness: {grey:?}");
+    // Gains warm grey as much, but grey the sky out: the hue of a blue sky walks towards violet.
+    let gains = Look::default().with_white_balance([grey[0] / 0.18, grey[1] / 0.18, grey[2] / 0.18]);
+    let (cat, gained) = (balanced(&warm, sky), balanced(&gains, sky));
+    let shift = |c: [f32; 3]| (hue(c) - hue(sky)).abs();
+    assert!(shift(cat) < HUE_SHIFT_SHARE_MAX * shift(gained), "CAT16 keeps the sky's hue: {cat:?} ({}°) against gains {gained:?} ({}°)", shift(cat), shift(gained));
+    // The default balance is exactly the identity: every existing look draws byte for byte as before.
+    assert_eq!(Look::default().white_balance_matrix(), [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]);
+    assert_eq!(Look::default().with_temperature(0.0, 0.0).white_balance_matrix(), Look::default().white_balance_matrix());
 }
 
 #[test]
@@ -756,6 +843,73 @@ fn metal_hdr_and_tonemap_cost_at_1080p() {
         std::fs::write(path, format!("{row}\n")).expect("perf row");
     }
     assert!(p50s.iter().all(|ms| *ms > 0.0));
+}
+
+/// What AgX punchy's curve may add to a 1080p frame over plain AgX's, at p50 (its budget: P2-0.10
+/// holds the whole tonemap to 0.3 ms; Godot's curve is a power and a few divides where three.js'
+/// AgX is a log2, a sixth-order polynomial and a power).
+const PUNCHY_OVER_AGX_MS_MAX: f32 = 0.05;
+
+#[test]
+#[ignore = "needs a GPU: run with --ignored metal"]
+fn metal_agx_punchy_costs_no_more_than_plain_agx_at_1080p() {
+    let Some(gpu) = gpu() else { return };
+    let (width, height) = (1920, 1080);
+    let scene = bright_scene(6.0);
+    // The clamp (`none`) is the pass without a curve; interleaved rounds, as the HDR cost row.
+    let curves = [Tonemapper::None, Tonemapper::Agx, Tonemapper::AgxPunchy];
+    let mut renderers: Vec<Renderer> = curves
+        .iter()
+        .map(|tonemapper| {
+            let mut renderer = Renderer::new(&gpu, width, height).expect("renderer");
+            renderer.set_scene_format(SceneFormat::Rgba16Float);
+            renderer.set_quality(&hdr_quality());
+            renderer.set_look(look(*tonemapper, 0.0));
+            renderer.set_msaa_resolve(Some(MsaaResolve::Hardware));
+            renderer
+        })
+        .collect();
+    // Each round's p50 per curve: punchy's cost over AgX is the median of the rounds' paired
+    // differences, so a clock step that lands on one curve's block of one round moves one pair
+    // (G0 perf-platform: one of four runs read punchy 0.507 ms against AgX 0.430 ms).
+    const ROUNDS: u64 = 8;
+    let mut landed: Vec<Vec<Vec<f32>>> = vec![vec![Vec::new(); curves.len()]; ROUNDS as usize];
+    for round in 0..ROUNDS {
+        for (k, renderer) in renderers.iter_mut().enumerate() {
+            for frame in 0..80u64 {
+                let Some(times) = renderer.arm_frame_timer(&gpu.queue) else {
+                    eprintln!("skipped: no timestamp queries");
+                    return;
+                };
+                if round > 0 && frame >= 8 {
+                    landed[round as usize][k].extend(times);
+                }
+                renderer.set_frame_index(frame);
+                renderer.render(&gpu, &scene, CullPath::Gpu).expect("frame");
+                renderer.finish_frame_timer();
+                let _ = gpu.device.poll(wgpu::PollType::wait_indefinitely());
+            }
+        }
+    }
+    let median = |values: &mut Vec<f32>| {
+        values.sort_by(f32::total_cmp);
+        values[(values.len() - 1) / 2]
+    };
+    let rounds: Vec<Vec<f32>> = landed.iter_mut().skip(1).map(|round| round.iter_mut().map(&median).collect()).collect();
+    let p50: Vec<f32> = (0..curves.len()).map(|k| median(&mut rounds.iter().map(|round| round[k]).collect())).collect();
+    let punchy_over_agx = median(&mut rounds.iter().map(|round| round[2] - round[1]).collect());
+    let row = format!(
+        "{{\"row\":\"tonemap-curves-1080p\",\"adapter\":\"{}\",\"noneP50Ms\":{:.4},\"agxP50Ms\":{:.4},\"punchyP50Ms\":{:.4},\"punchyOverAgxMedianMs\":{punchy_over_agx:.4}}}",
+        gpu.receipt().adapter,
+        p50[0],
+        p50[1],
+        p50[2]
+    );
+    println!("{row}");
+    if let Ok(path) = std::env::var("GENEX_PERF_OUT") {
+        std::fs::write(path, format!("{row}\n")).expect("perf row");
+    }
+    assert!(punchy_over_agx <= PUNCHY_OVER_AGX_MS_MAX, "punchy over AgX {punchy_over_agx} ms a round (p50s: punchy {} ms, AgX {} ms)", p50[2], p50[1]);
 }
 
 /// `value` rounded to the nearest half float (what an `rgba16float` texel holds), as f32.

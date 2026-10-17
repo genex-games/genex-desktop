@@ -36,6 +36,28 @@
 @group(0) @binding(10) var<uniform> env_sh: GxEnvSh;
 @group(0) @binding(11) var brdf_lut: texture_2d<f32>;
 @group(0) @binding(12) var env_sampler: sampler;
+
+// The environment's cubes as the shared lighting chunks read them (renderer pass 2 A.3;
+// shaders/forward_env.wgsl answers the same three for the forward pass): a v2 material's
+// reflection is the sky's cube (reflection probes reach the forward pass only).
+fn gx_env_levels() -> u32 {
+    return textureNumLevels(env_specular);
+}
+
+fn gx_env_sky(dir: vec3<f32>, lod: f32) -> vec3<f32> {
+    return textureSampleLevel(env_specular, env_sampler, dir, lod).rgb;
+}
+
+// A v2 material's environment light: the sky's cube and its SH9 (renderer pass 2 A.3 and A.4:
+// reflection probes and irradiance volumes reach the forward pass only).
+struct GxEnvLight {
+    reflection: vec3<f32>,
+    diffuse: vec3<f32>,
+}
+
+fn gx_env_light(world_pos: vec3<f32>, dir: vec3<f32>, lod: f32, n: vec3<f32>) -> GxEnvLight {
+    return GxEnvLight(gx_env_sky(dir, lod), gx_env_irradiance(n));
+}
 // Screen-space ambient occlusion (RQ4; render size, 1 = unoccluded).
 @group(0) @binding(13) var ao_map: texture_2d<f32>;
 // Aerial perspective (RQ4): rgb in-scatter, a transmittance, over view-space froxels.
@@ -48,6 +70,16 @@
 // The sun's screen-space contact shadows (RQ4; render size, 1 = unshadowed).
 @group(0) @binding(19) var contact_shadow_mask: texture_2d<f32>;
 
+// The light walk's reads (shaders/lighting/local_lights.wgsl): the renderer binds `light_zbins`
+// and `light_tiles` as two slices of its one bin table (pass 2 A.0, LG-16).
+fn gx_light_bin_word(i: u32) -> u32 {
+    return light_zbins[i];
+}
+
+fn gx_light_tile_word(i: u32) -> u32 {
+    return light_tiles[i];
+}
+
 // The surface chunk's larger material size classes (RQ6.4) are the forward pass's: a v2 material
 // binds class 0 only (the twelve sampled textures of plan section 2.9), so this reads the class-0
 // layer of any reference. The built-in surface (`gx_surface`) is never called from here.
@@ -58,8 +90,43 @@ fn gx_class_texel(color: bool, reference: u32, uv: vec2<f32>, uv_dx: vec2<f32>, 
     return textureSampleGrad(data_textures, texture_sampler, uv, layer(reference), uv_dx, uv_dy);
 }
 
-// One custom draw: its model and normal matrices, last frame's model matrix, its linear tint and
-// x: the simulated time in seconds, y: the draw's index in the frame.
+// Whether a v2 material binds the size class of material texture `reference` (the decal chunk
+// asks; renderer pass 2 A.10): class 0 only, so a decal with a map of a larger class reaches the
+// forward pass's surfaces, not a v2 material's.
+fn gx_decal_texture_bound(reference: u32) -> bool {
+    return reference == NO_TEXTURE || (reference >> GX_TEXTURE_CLASS_SHIFT) == 0u;
+}
+
+// The texel of decal texture `reference` (class 0) at `uv` and mip `lod`.
+fn gx_decal_class_texel(color: bool, reference: u32, uv: vec2<f32>, lod: f32) -> vec4<f32> {
+    if color {
+        return textureSampleLevel(color_textures, texture_sampler, uv, layer(reference), lod);
+    }
+    return textureSampleLevel(data_textures, texture_sampler, uv, layer(reference), lod);
+}
+
+// The world-position gradients the decal chunk samples a v2 surface's decals with: `gx_shade_pbr`
+// takes no derivatives (it may be called in non-uniform control flow), so the footprint of one
+// render pixel at `world_pos` is laid isotropically along two axes of the surface's plane (normal
+// `n`): a decal seen at a grazing angle samples a finer mip than the forward pass would.
+struct GxDecalFootprint {
+    dx: vec3<f32>,
+    dy: vec3<f32>,
+}
+
+fn gx_decal_footprint_v2(world_pos: vec3<f32>, n: vec3<f32>) -> GxDecalFootprint {
+    let m = frame.unjittered_view_proj;
+    let clip = m * vec4<f32>(world_pos, 1.0);
+    let focal = length(vec3<f32>(m[0].y, m[1].y, m[2].y));
+    let pixel = 2.0 * max(clip.w, 1e-6) / max(focal * frame.render_size.y, 1e-6);
+    let axis = select(vec3<f32>(0.0, 1.0, 0.0), vec3<f32>(1.0, 0.0, 0.0), abs(n.y) > 0.9);
+    let t = normalize(cross(n, axis));
+    return GxDecalFootprint(t * pixel, cross(n, t) * pixel);
+}
+
+// One custom draw: its model and normal matrices, last frame's model matrix (matched by draw id,
+// else mesh and ordinal; this frame's without history), its linear tint and x: the simulated time
+// in seconds, y: the draw's index in the frame, z: last frame's simulated time (x on the first).
 struct GxDrawV2 {
     model: mat4x4<f32>,
     normal: mat4x4<f32>,
@@ -68,8 +135,14 @@ struct GxDrawV2 {
     params: vec4<f32>,
 }
 
-// Group 1: the draw.
-@group(1) @binding(0) var<uniform> gx_draw: GxDrawV2;
+// Group 1: the frame's draw rows, one per draw (renderer pass 2 A.0, LG-20 step 3). The draws of
+// one (material, mesh) pair are one instanced call, so each vertex reads its instance's row.
+@group(1) @binding(0) var<storage, read> gx_draws: array<GxDrawV2>;
+
+// The fragment's own draw: the renderer opens `fs_material` with `gx_draw = gx_draws[..]` when the
+// source reads it (`extension::open_draw_row`), so `gx_draw.prev_model` and `gx_draw.params` read
+// the drawn instance's row as they read a draw's own uniform before.
+var<private> gx_draw: GxDrawV2;
 
 struct GxMaterialInV2 {
     // `gx_clip_position` of the world position: `@invariant`, as every depth writer's is.
@@ -84,17 +157,32 @@ struct GxMaterialInV2 {
     @location(5) clip_previous: vec4<f32>,
 }
 
+// What the geometry stage writes: `GxMaterialInV2` and the instance's row (`gx_draws`' index),
+// which a `fs_material` reading `gx_draw` is handed at @location(6).
+struct GxVertexOutV2 {
+    @builtin(position) @invariant position: vec4<f32>,
+    @location(0) world_position: vec3<f32>,
+    @location(1) normal: vec3<f32>,
+    @location(2) uv: vec2<f32>,
+    @location(3) tint: vec4<f32>,
+    @location(4) clip_current: vec4<f32>,
+    @location(5) clip_previous: vec4<f32>,
+    @location(6) @interpolate(flat) gx_row: u32,
+}
+
 @vertex
-fn gx_vs_material_v2(@location(0) position: vec3<f32>, @location(1) normal: vec3<f32>, @location(2) uv: vec2<f32>) -> GxMaterialInV2 {
-    let world = gx_draw.model * vec4<f32>(position, 1.0);
-    var out: GxMaterialInV2;
+fn gx_vs_material_v2(@location(0) position: vec3<f32>, @location(1) normal: vec3<f32>, @location(2) uv: vec2<f32>, @builtin(instance_index) instance: u32) -> GxVertexOutV2 {
+    let draw = gx_draws[instance];
+    let world = draw.model * vec4<f32>(position, 1.0);
+    var out: GxVertexOutV2;
     out.position = gx_clip_position(frame.view_proj, world, GX_NO_JITTER);
     out.world_position = world.xyz;
-    out.normal = normalize((gx_draw.normal * vec4<f32>(normal, 0.0)).xyz);
+    out.normal = normalize((draw.normal * vec4<f32>(normal, 0.0)).xyz);
     out.uv = uv;
-    out.tint = gx_draw.tint;
+    out.tint = draw.tint;
     out.clip_current = frame.unjittered_view_proj * world;
-    out.clip_previous = frame.prev_view_proj * (gx_draw.prev_model * vec4<f32>(position, 1.0));
+    out.clip_previous = frame.prev_view_proj * (draw.prev_model * vec4<f32>(position, 1.0));
+    out.gx_row = instance;
     return out;
 }
 
@@ -113,7 +201,7 @@ alias GxSurface = Surface;
 fn gx_surface_v2(world_pos: vec3<f32>, normal: vec3<f32>, albedo: vec3<f32>, metallic: f32, roughness: f32) -> GxSurface {
     let n = normalize(normal);
     let v = normalize(frame.camera_pos.xyz - world_pos);
-    return Surface(world_pos, n, n, v, albedo, 1.0, clamp(metallic, 0.0, 1.0), clamp(roughness, 0.04, 1.0));
+    return Surface(world_pos, n, n, v, albedo, 1.0, clamp(metallic, 0.0, 1.0), clamp(roughness, GX_ROUGHNESS_FLOOR, 1.0));
 }
 
 // `s` with its roughness widened by how fast its shading normal turns across the pixel (`n_dx`,
@@ -153,15 +241,22 @@ fn gx_scene_pixel(world_pos: vec3<f32>) -> vec2<f32> {
 
 // The renderer's own shading of `s` in the order its forward pass applies it (ambient, the sun,
 // the local lights, fog), exposed for the scene target: what a built-in surface writes, the sun's
-// shadows filtered, blended across cascades and faded out as the preset draws them.
-fn gx_shade_pbr(s: GxSurface) -> vec3<f32> {
-    gx_sun_shadow_context(gx_scene_pixel(s.world_pos), frame.frame_index, GX_SUN_BLEND_BAND);
+// shadows filtered, blended across cascades and faded out as the preset draws them, and on the HDR
+// scene the sun a disc for the highlight (`gx_sun_area_direction`, renderer pass 2 P2-0.12).
+fn gx_shade_pbr(surface: GxSurface) -> vec3<f32> {
+    gx_sun_shadow_context(gx_scene_pixel(surface.world_pos), frame.frame_index, GX_SUN_BLEND_BAND);
     gx_sun_shadow_end_fade(GX_SUN_END_FADE);
-    let sun = normalize(frame.sun_dir.xyz);
+    // The decals binned at this fragment, before any light (renderer pass 2 A.10).
+    let footprint = gx_decal_footprint_v2(surface.world_pos, surface.geometric);
+    let s = gx_decals(surface, footprint.dx, footprint.dy);
+    var sun = normalize(frame.sun_dir.xyz);
+    if gx_scene_shades_hdr() {
+        sun = gx_sun_area_direction(sun, frame.sun_dir.w, s.n, s.v);
+    }
     var color = gx_ambient(s);
     color += gx_sun(s, sun);
     color = gx_local_lights(color, s);
-    color = gx_apply_fog_aerial(color, s.world_pos, gx_aerial_at(s.world_pos));
+    color = gx_apply_fog_air(color, s.world_pos, gx_air_at(s.world_pos));
     return gx_expose(color);
 }
 
@@ -198,6 +293,20 @@ fn gx_screen_texel_v2(world_pos: vec3<f32>, size: vec2<u32>) -> vec2<i32> {
 }
 
 // Whether a v2 material reads the AO term: always (the neutral term reads exactly 1).
+// The sun chunk's comparison bias for `cascade`: the v2 frame carries one shared bias
+// (`shadow_params.x`): cascade 0's on depth32 maps, whose light depths span one multiple of their
+// map widths so it is every cascade's world bias, `shadow::DEPTH_BIAS` otherwise (renderer pass 2,
+// P2-0.3). A per-cascade lane in `GxFrameV2` is an ABI decision.
+fn gx_sun_cascade_bias(cascade: u32) -> f32 {
+    return frame.shadow_params.x;
+}
+
+// The surface chunk's texture mip bias: the pipeline's constant alone (the v2 frame carries no
+// texture lane; renderer pass 2 P2-0.8b T-06 left `GxFrameV2` unchanged).
+fn gx_texture_lod_bias() -> f32 {
+    return GX_TEXTURE_LOD_BIAS;
+}
+
 fn gx_ao_drawn() -> bool {
     return true;
 }
@@ -207,21 +316,27 @@ fn gx_ambient_occlusion(world_pos: vec3<f32>) -> vec4<f32> {
     return gx_ao_decode(textureLoad(ao_map, gx_screen_texel_v2(world_pos, textureDimensions(ao_map)), 0));
 }
 
+// The sun's visibility from the screen mask (renderer pass 2, B.7): none for a v2 material (-1),
+// which is drawn after the prepass the mask was made from, so the sun chunk shades it inline.
+fn gx_sun_screen_shadow(world_pos: vec3<f32>) -> f32 {
+    return -1.0;
+}
+
 // The sun's screen-space contact shadow at `world_pos` (1: unshadowed).
 fn gx_contact_shadow(world_pos: vec3<f32>) -> f32 {
     return textureLoad(contact_shadow_mask, gx_screen_texel_v2(world_pos, textureDimensions(contact_shadow_mask)), 0).r;
 }
 
-// The volume's slices (fog::AERIAL_SIDE).
-const GX_AERIAL_SIDE_V2: f32 = 32.0;
+// The air at `world_pos` (the forward pass's `gx_air_at`; renderer pass 2 SI-04 and A.5): the
+// volume bound in the aerial slot, in-scatter, transmittance per channel and whether it holds the
+// height fog (the froxel fog's).
+fn gx_air_at(world_pos: vec3<f32>) -> GxAir {
+    return gx_air_sample(aerial_perspective, env_sampler, gx_aerial_froxel(world_pos));
+}
 
-// The aerial-perspective volume's texel at `world_pos` (the forward pass's `gx_aerial_at`):
-// sampled inside half a texel of the edges and faded to no air in front of the first slice.
+// The air at `world_pos` as one grey texel (rgb in-scatter, a the mean transmittance), for shaders
+// written against the grey form (`gx_apply_fog_aerial`).
 fn gx_aerial_at(world_pos: vec3<f32>) -> vec4<f32> {
-    let uvw = gx_aerial_froxel(world_pos);
-    let half = 0.5 / GX_AERIAL_SIDE_V2;
-    let held = clamp(uvw, vec3<f32>(half), vec3<f32>(1.0 - half));
-    let air = textureSampleLevel(aerial_perspective, env_sampler, held, 0.0);
-    let f = clamp(uvw.z / half, 0.0, 1.0);
-    return vec4<f32>(air.rgb * f, 1.0 - (1.0 - air.a) * f);
+    let air = gx_air_at(world_pos);
+    return vec4<f32>(air.inscatter, (air.transmittance.x + air.transmittance.y + air.transmittance.z) / 3.0);
 }

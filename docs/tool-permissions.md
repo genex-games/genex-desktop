@@ -757,8 +757,10 @@ game file or `genex.toml` key reaches it, so an agent can only suggest it in cha
 
 ## Residual risks
 
-- The conformance gate of an ejected game does not judge Live's ring yet: every caller reports the
-  `live-ring` check `unavailable` until the frames-host probe lands, and a green run counts it so.
+- The conformance gate of an ejected game does not judge Live's ring yet: the app's callers
+  (`check_conformance`, the eject gate) have no frames host and report the `live-ring` check
+  `unavailable`, and a green run counts it so. Only a developer's `npm run conformance:game`
+  watches the ring, through the built app's frames addon.
   An export is gated on the Mac judging build's digest, while the export compiles its own build:
   an `engine/` edit between the two ships sources the suite did not judge.
 

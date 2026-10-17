@@ -198,14 +198,16 @@ class Recompile(HelperCase):
         self.assertEqual(result['log'][0], 'Hot reload could not start for GxCpp.uproject')
 
     def test_a_reload_that_logs_an_error_after_a_new_library_is_not_ok(self) -> None:
+        # Each case's hot reload writes its own fresh suffix, as Unreal's does: a second write of one
+        # name within a coarse file clock's tick (ext4 on the Linux runner) keeps its time stamp.
         cases = {
-            'the hot reload failed': 'LogHotReload: Error: Hot reload failed, GxCpp could not be reloaded.',
-            'the module did not load': 'LogModuleManager: Error: Unable to load module GxCpp-5706.',
+            'the hot reload failed': ('5706', 'LogHotReload: Error: Hot reload failed, GxCpp could not be reloaded.'),
+            'the module did not load': ('5707', 'LogModuleManager: Error: Unable to load module GxCpp-5707.'),
         }
-        for label, line in cases.items():
+        for label, (suffix, line) in cases.items():
             with self.subTest(label):
                 self.fresh()
-                self.ubt([*COMPILED, f'{STAMP}{line}'], suffix='5706')
+                self.ubt([*COMPILED, f'{STAMP}{line}'], suffix=suffix)
                 result = self.recompile()
                 self.assertEqual({k: result[k] for k in ['ok', 'compiled', 'missing']},
                                  {'ok': False, 'compiled': True, 'missing': []})

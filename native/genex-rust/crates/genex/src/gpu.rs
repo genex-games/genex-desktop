@@ -76,8 +76,12 @@
 //! prepass writes motion vectors (TAA), the same stages read them through
 //! [`PassFrame::prepass_motion`] and as `gx_motion` (`rg16float` NDC motion, current minus
 //! previous, jitter removed: a pixel at `uv` was at `uv - motion * vec2(0.5, -0.5)` last frame;
-//! zero motion before that). Geometry a pass draws in the world carries no motion of its own, so
-//! TAA may trail it when it moves fast. A v1 pass at `after-opaque` or
+//! zero motion before that). Under TAA an in-world pass hands TAA what it moves itself:
+//! [`PassFrame::motion_draws`] (a vertex animation's motion, evaluated at [`PassFrame::tick`] and
+//! [`PassFrame::prev_tick`], for example with the shared `gx_wind`) and [`PassFrame::reactive_draws`]
+//! (the coverage of blended work moving over the scene), built with [`PassSetup::motion_target`],
+//! [`PassSetup::reactive_target`] and [`PassSetup::temporal_depth`]; without them its pixels keep
+//! the motion of what the prepass drew behind them. A v1 pass at `after-opaque` or
 //! `after-transparent` keeps the game's frame on the legacy LDR scene (`custom-pass-v1-in-world`
 //! in `state().volatile.render.degraded`); write new passes at v2. Bloom and fog are the look's
 //! (`genex::render::RenderConfig::bloom` and `RenderConfig::fog`), not a pass's job:

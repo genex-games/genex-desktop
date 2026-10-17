@@ -1,8 +1,9 @@
 /**
  * The two five-minute rows the soak feeds, computed with no browser.
  *
- * `l1.survives_5min`: a crash (the main thread stopped answering) fails; an unbounded JS heap fails;
- * a soak shorter than `SPEC_SOAK_MS` is `unknown`, whichever reason shortened it; a heap Chromium
+ * `l1.survives_5min`: a crash (the main thread stopped answering) fails at any soak length; a soak
+ * shorter than `SPEC_SOAK_MS` is otherwise `unknown`, whichever reason shortened it, and its heap
+ * growth is only reported; over the full soak an unbounded JS heap fails; a heap Chromium
  * reported as one quantised value is `unknown` (a constant series carries no growth signal, and a
  * pass on it would be a pass on nothing). The heap is `performance.memory`: JS only, so a GPU-side
  * leak is invisible to it, and the detail says so.
@@ -123,18 +124,20 @@ export function survivesRow(soak: SoakRun | null, heap: HeapGrowth, shortenedWhy
     const detail = `The page stopped responding after ${seconds(soak.ranMs)}s: ${soak.crashReason}.`;
     return machineRow(id, CheckResult.Fail, detail, value);
   }
-  if (heap.unbounded) {
-    const ratio = (heap.lastBytes ?? 0) / (heap.firstBytes ?? 1);
-    const detail = `JS heap grew at ${((heap.slopeBytesPerSec ?? 0) / KIB).toFixed(0)} KB/s and ended ${ratio.toFixed(2)}x its settled baseline.${jsOnly}`;
-    return machineRow(id, CheckResult.Fail, detail, value);
-  }
+  const ratio = (heap.lastBytes ?? 0) / (heap.firstBytes ?? 1);
+  const growth = `JS heap grew at ${((heap.slopeBytesPerSec ?? 0) / KIB).toFixed(0)} KB/s and ended ${ratio.toFixed(2)}x its settled baseline.`;
+  // A heap read over less than the specified soak is no leak verdict: the page's garbage may not
+  // have met a major collection yet (the prober's own fixture climbs 3x in 30s while instrumented,
+  // then ends the full soak below where it settled).
   if (soak.ranMs < SPEC_SOAK_MS) {
     const why = shortenedWhy
       ? `: ${shortenedWhy}. That is the probe's own budget, not a verdict on the game's stability`
       : "";
-    const detail = `No crash, but the soak ran ${seconds(soak.ranMs)}s, not the ${seconds(SPEC_SOAK_MS)}s the check specifies${why}.`;
+    const seen = heap.unbounded ? ` ${growth}` : "";
+    const detail = `No crash, but the soak ran ${seconds(soak.ranMs)}s, not the ${seconds(SPEC_SOAK_MS)}s the check specifies${why}.${seen}`;
     return machineRow(id, CheckResult.Unknown, detail, value);
   }
+  if (heap.unbounded) return machineRow(id, CheckResult.Fail, `${growth}${jsOnly}`, value);
   if (!heap.available) return machineRow(id, CheckResult.Unknown, `${heapUnknownDetail(soak, heap)}${jsOnly}`, value);
   const detail = `Survived ${seconds(soak.ranMs)}s with no crash; settled JS heap slope ${((heap.slopeBytesPerSec ?? 0) / KIB).toFixed(1)} KB/s.${jsOnly}`;
   return machineRow(id, CheckResult.Pass, detail, value);

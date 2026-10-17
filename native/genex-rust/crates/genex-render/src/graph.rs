@@ -27,6 +27,9 @@
 //! on [`crate::post::fsr::LANDED`]; [`TemporalFrame`] is what they know about a frame. RQ5.6
 //! landed all three. The reactive coverage (15a) is a pass node between the transparent draws and
 //! the MSAA resolve: TAA draws one sample, so a frame never runs both and the world pass stays one.
+//! Renderer pass 2 A.9 lands the look's depth of field (17a) and motion blur (17b) between TAA's
+//! resolve and `post-hdr`, gated on [`crate::post::dof::LANDED`] and
+//! [`crate::post::motion_blur::LANDED`].
 
 use wgpu::{CommandEncoder, Device, Queue, RenderPass, TextureFormat};
 
@@ -92,6 +95,10 @@ pub enum NodeId {
     Resolve,
     /// 17: TAA (RQ5).
     Taa,
+    /// 17a: the look's depth of field (renderer pass 2 A.9).
+    Dof,
+    /// 17b: the look's motion blur (renderer pass 2 A.9).
+    MotionBlur,
     /// 18: Level-3 `post-hdr` and Level-2 `hdr` post passes (RQ1).
     PostHdr,
     /// 19: bloom (RQ4).
@@ -176,6 +183,8 @@ impl NodeId {
             NodeId::Occlusion => crate::meshlet_cull::occlusion_landed(),
             NodeId::Reactive | NodeId::Taa => crate::post::taa::LANDED,
             NodeId::LightBinning => crate::cluster::LANDED,
+            NodeId::Dof => crate::post::dof::LANDED,
+            NodeId::MotionBlur => crate::post::motion_blur::LANDED,
             _ => matches!(
                 self,
                 NodeId::Tables
@@ -214,6 +223,8 @@ impl NodeId {
             NodeId::Prepass if crate::prepass::LANDED => &[Target::SceneDepth, Target::Normals],
             NodeId::Reactive if crate::post::taa::LANDED => &[Target::ReactiveMask],
             NodeId::Taa if crate::post::taa::LANDED => &[Target::SceneColor, Target::TaaHistory],
+            NodeId::Dof if crate::post::dof::LANDED => &[Target::SceneColor],
+            NodeId::MotionBlur if crate::post::motion_blur::LANDED => &[Target::SceneColor],
             NodeId::LightBinning if crate::cluster::LANDED => &[Target::LightBins],
             NodeId::AfterPrepass if crate::prepass::LANDED && crate::custom_pass::AFTER_PREPASS_SERVED => &[Target::PassOwned],
             NodeId::Ao if crate::post::ao::LANDED => &[Target::AmbientOcclusion],
@@ -243,6 +254,8 @@ pub fn quality_allows(id: NodeId, quality: &Quality) -> bool {
         NodeId::Environment => quality.environment.ibl || quality.environment.sky,
         NodeId::Sky => quality.environment.sky,
         NodeId::Reactive | NodeId::Taa => quality.anti_aliasing.temporal(),
+        // The look turns the lens on; a node runs on the HDR scene only (`post::dof::frame_settings`).
+        NodeId::Dof | NodeId::MotionBlur => quality.hdr,
         NodeId::Bloom => quality.bloom.enabled,
         NodeId::Exposure => quality.hdr && quality.exposure,
         NodeId::Tonemap => quality.hdr,
@@ -321,6 +334,8 @@ pub const FRAME_GRAPH: &[NodeSpec] = &[
     node(NodeId::Reactive, NodeKind::Pass, "reactive"),
     node(NodeId::Resolve, NodeKind::InPass, "resolve"),
     node(NodeId::Taa, NodeKind::Pass, "taa"),
+    node(NodeId::Dof, NodeKind::Pass, "dof"),
+    node(NodeId::MotionBlur, NodeKind::Pass, "motion-blur"),
     node(NodeId::PostHdr, NodeKind::Pass, "post-hdr"),
     node(NodeId::Bloom, NodeKind::Pass, "bloom"),
     node(NodeId::Exposure, NodeKind::Compute, "exposure"),
@@ -536,7 +551,8 @@ pub struct TemporalFrame {
     pub jitter: [f32; 2],
     /// The previous frame's jitter (this frame's on a history reset).
     pub prev_jitter: [f32; 2],
-    /// The mip bias materials sample with (0 without TAA).
+    /// The mip bias materials sample with ([`crate::settings::frame_texture_lod_bias`]: TAA's,
+    /// FSR1's upscale's without TAA (renderer pass 2, P2-0.8b T-06), else 0), at the frame's scale.
     pub texture_lod_bias: f32,
     /// The render size (the history's).
     pub render_size: (u32, u32),
@@ -569,7 +585,7 @@ impl TemporalFrame {
             fsr,
             jitter: config.jitter,
             prev_jitter,
-            texture_lod_bias: if taa { quality.taa.texture_lod_bias(config.scale) } else { 0.0 },
+            texture_lod_bias: crate::settings::frame_texture_lod_bias(&quality.taa, taa, fsr.easu, config.scale),
             render_size: config.render_size,
             output_size: config.output_size,
             frame_index: config.frame_index,
@@ -637,10 +653,13 @@ mod tests {
         // no environment: its sky and IBL switches are off, so those nodes never run there. Its
         // prepass switch is off too (RQ4.1), and so are two-pass occlusion (R2.4), AO, contact
         // shadows and bloom (RQ4.6), light binning (RQ6.7: the binned path is the HDR scene's), and
-        // TAA's reactive coverage and resolve (RQ5.6: the legacy renderer draws MSAA).
+        // TAA's reactive coverage and resolve (RQ5.6: the legacy renderer draws MSAA), and the
+        // look's depth of field and motion blur (renderer pass 2 A.9: the HDR scene's).
         let hdr_only = [
             NodeId::Reactive,
             NodeId::Taa,
+            NodeId::Dof,
+            NodeId::MotionBlur,
             NodeId::LightBinning,
             NodeId::Prepass,
             NodeId::Occlusion,
@@ -676,6 +695,32 @@ mod tests {
         assert_eq!((frame.render_size, frame.output_size, frame.frame_index, frame.history_reset), ((960, 540), (1920, 1080), 5, false));
     }
 
+    /// Renderer pass 2, P2-0.8b (T-06): a frame FSR1's EASU upscales without TAA (every phone
+    /// preset, medium under DRS) samples material textures with the negative mip bias FSR1 asks
+    /// for, `log2(render / display)` of that frame's scale, so a dynamic-resolution step moves it;
+    /// TAA's frames keep their own bias and a frame at scale 1 none.
+    #[test]
+    fn an_easu_frame_without_taa_samples_textures_with_the_upscales_mip_bias() {
+        let mut quality = Quality::off();
+        quality.hdr = true;
+        quality.set_feature(RenderFeature::Upscaler, true);
+        let settings = crate::settings::RenderSettings::off().with_quality(crate::settings::PresetChoice::Off, quality);
+        for scale in [0.5f32, 0.6, 0.75, 1.0] {
+            let config = settings.frame_config((1920, 1080), scale, 5, false);
+            let frame = TemporalFrame::new(&settings, &config, false);
+            assert!(!frame.taa, "an MSAA or no-AA frame");
+            let expected = if scale < 1.0 { libm::log2f(scale) } else { 0.0 };
+            assert_eq!(frame.fsr.easu, scale < 1.0, "EASU runs below scale 1");
+            assert!((frame.texture_lod_bias - expected).abs() < 1e-6, "scale {scale}: bias {} against log2(scale) {expected}", frame.texture_lod_bias);
+        }
+        let mut taa = quality;
+        taa.set_feature(RenderFeature::Taa, true);
+        let settings = crate::settings::RenderSettings::off().with_quality(crate::settings::PresetChoice::Off, taa);
+        let config = settings.frame_config((1920, 1080), 0.5, 5, false);
+        let frame = TemporalFrame::new(&settings, &config, false);
+        assert_eq!(frame.texture_lod_bias, taa.taa.texture_lod_bias(0.5), "TAA keeps its own bias");
+    }
+
     #[test]
     fn a_feature_switched_off_removes_its_node_from_the_schedule() {
         let mut quality = Quality::off();
@@ -689,7 +734,7 @@ mod tests {
             assert!(!quality_allows(node, &on), "{} off in the legacy renderer", spec(node).wire);
             on.set_feature(feature, true);
             if feature == RenderFeature::Bloom {
-                on.bloom.mips = 4;
+                on.bloom.resolution = crate::post::bloom::CHAIN_RESOLUTION;
             }
             assert!(quality_allows(node, &on), "{} follows its switch", spec(node).wire);
         }

@@ -802,3 +802,334 @@ fn metal_under_auto_exposure_the_sky_is_exposed_as_the_geometry_is() {
     let (manual, auto) = (manual_sky / manual_ground, auto_sky / auto_ground);
     assert!((auto / manual - 1.0).abs() < 0.03, "sky over ground: {auto} under auto exposure, {manual} under manual (exposure {exposure})");
 }
+
+// ---------------------------------------------------------------------------------------------
+// Pass 2 P2-0.11 (SI-15): an f64 reference for the sky-view LUT
+
+/// The atmosphere a LUT was computed from, in f64 (km): the medium of `sky_view.wgsl`.
+struct ReferenceSky {
+    bottom: f64,
+    top: f64,
+    rayleigh: [f64; 3],
+    rayleigh_falloff: f64,
+    mie_scattering: f64,
+    mie_extinction: f64,
+    mie_g: f64,
+    mie_falloff: f64,
+    ozone: [f64; 3],
+    ozone_centre: f64,
+    ozone_width: f64,
+    ground_albedo: [f64; 3],
+    multiscatter_factor: f64,
+    /// The transmittance to the top, by height (rows) and zenith cosine (columns).
+    transmittance: Vec<[f64; 3]>,
+    /// All scattering orders past the first per unit illuminance, by height and sun cosine.
+    multiscatter: Vec<[f64; 3]>,
+}
+
+/// Rows and columns of the reference's transmittance table.
+const REFERENCE_T_HEIGHTS: usize = 256;
+const REFERENCE_T_COSINES: usize = 1024;
+/// Midpoint steps of one transmittance integral.
+const REFERENCE_T_STEPS: usize = 400;
+/// Side of the reference's multiple-scattering table, its gathering directions per side and
+/// steps per gathering ray.
+const REFERENCE_MS_SIDE: usize = 32;
+const REFERENCE_MS_DIRECTIONS: usize = 16;
+const REFERENCE_MS_STEPS: usize = 100;
+/// Steps along a view ray (quadratic spacing, midpoints).
+const REFERENCE_VIEW_STEPS: usize = 2000;
+
+struct Medium {
+    rayleigh: [f64; 3],
+    mie: f64,
+    extinction: [f64; 3],
+}
+
+fn dot3(a: [f64; 3], b: [f64; 3]) -> f64 {
+    a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
+}
+
+fn length3(a: [f64; 3]) -> f64 {
+    dot3(a, a).sqrt()
+}
+
+impl ReferenceSky {
+    fn new(row: &genex_render::layout::GpuSkyAtmosphere) -> ReferenceSky {
+        let f = |v: f32| f64::from(v);
+        let mut sky = ReferenceSky {
+            bottom: f(row.radii[0]),
+            top: f(row.radii[1]),
+            rayleigh: [0, 1, 2].map(|c| f(row.rayleigh[c])),
+            rayleigh_falloff: f(row.rayleigh[3]),
+            mie_scattering: f(row.mie[0]),
+            mie_extinction: f(row.mie[1]),
+            mie_g: f(row.mie[2]),
+            mie_falloff: f(row.mie[3]),
+            ozone: [0, 1, 2].map(|c| f(row.ozone[c])),
+            ozone_centre: f(row.radii[2]),
+            ozone_width: f(row.radii[3]),
+            ground_albedo: [0, 1, 2].map(|c| f(row.ground_albedo[c])),
+            multiscatter_factor: f(row.ozone[3]),
+            transmittance: Vec::new(),
+            multiscatter: Vec::new(),
+        };
+        sky.transmittance = (0..REFERENCE_T_HEIGHTS * REFERENCE_T_COSINES)
+            .map(|index| {
+                let height = (sky.top - sky.bottom) * (index / REFERENCE_T_COSINES) as f64 / (REFERENCE_T_HEIGHTS - 1) as f64;
+                let mu = -1.0 + 2.0 * (index % REFERENCE_T_COSINES) as f64 / (REFERENCE_T_COSINES - 1) as f64;
+                sky.transmittance_exact(height, mu)
+            })
+            .collect();
+        sky.multiscatter = (0..REFERENCE_MS_SIDE * REFERENCE_MS_SIDE)
+            .map(|index| {
+                let height = (sky.top - sky.bottom) * (index / REFERENCE_MS_SIDE) as f64 / (REFERENCE_MS_SIDE - 1) as f64;
+                let sun_cos = -1.0 + 2.0 * (index % REFERENCE_MS_SIDE) as f64 / (REFERENCE_MS_SIDE - 1) as f64;
+                sky.multiscatter_exact(height.clamp(0.01, sky.top - sky.bottom - 0.01), sun_cos)
+            })
+            .collect();
+        sky
+    }
+
+    fn medium(&self, height: f64) -> Medium {
+        let rayleigh_density = (-height * self.rayleigh_falloff).exp();
+        let mie_density = (-height * self.mie_falloff).exp();
+        let ozone = (1.0 - (height - self.ozone_centre).abs() / (0.5 * self.ozone_width)).max(0.0);
+        let rayleigh = self.rayleigh.map(|s| s * rayleigh_density);
+        Medium {
+            rayleigh,
+            mie: self.mie_scattering * mie_density,
+            extinction: [0, 1, 2].map(|c| rayleigh[c] + self.mie_extinction * mie_density + self.ozone[c] * ozone),
+        }
+    }
+
+    /// The distance along unit `dir` from `origin` to the ground, None when it misses.
+    fn ground_distance(&self, origin: [f64; 3], dir: [f64; 3]) -> Option<f64> {
+        let b = dot3(origin, dir);
+        let c = dot3(origin, origin) - self.bottom * self.bottom;
+        let discriminant = b * b - c;
+        (b <= 0.0 && discriminant >= 0.0).then(|| (-b - discriminant.sqrt()).max(0.0))
+    }
+
+    /// The distance along unit `dir` from `origin` inside the atmosphere to its top.
+    fn top_distance(&self, origin: [f64; 3], dir: [f64; 3]) -> f64 {
+        let b = dot3(origin, dir);
+        let c = dot3(origin, origin) - self.top * self.top;
+        (-b + (b * b - c).max(0.0).sqrt()).max(0.0)
+    }
+
+    /// The transmittance from `height` along zenith cosine `mu` to the top, by a midpoint integral.
+    fn transmittance_exact(&self, height: f64, mu: f64) -> [f64; 3] {
+        let origin = [0.0, self.bottom + height, 0.0];
+        let dir = [(1.0 - mu * mu).max(0.0).sqrt(), mu, 0.0];
+        let reach = self.top_distance(origin, dir);
+        let dt = reach / REFERENCE_T_STEPS as f64;
+        let mut depth = [0.0; 3];
+        for i in 0..REFERENCE_T_STEPS {
+            let t = (i as f64 + 0.5) * dt;
+            let p = [dir[0] * t, origin[1] + dir[1] * t, 0.0];
+            let medium = self.medium((length3(p) - self.bottom).max(0.0));
+            for (total, extinction) in depth.iter_mut().zip(medium.extinction) {
+                *total += extinction * dt;
+            }
+        }
+        depth.map(|d| (-d).exp())
+    }
+
+    /// The tabled transmittance (bilinear in height and cosine).
+    fn transmittance(&self, height: f64, mu: f64) -> [f64; 3] {
+        let y = (height / (self.top - self.bottom)).clamp(0.0, 1.0) * (REFERENCE_T_HEIGHTS - 1) as f64;
+        let x = ((mu + 1.0) * 0.5).clamp(0.0, 1.0) * (REFERENCE_T_COSINES - 1) as f64;
+        bilinear(&self.transmittance, REFERENCE_T_COSINES, REFERENCE_T_HEIGHTS, x, y)
+    }
+
+    /// The tabled multiple scattering (bilinear in height and sun cosine).
+    fn multiscatter(&self, height: f64, sun_cos: f64) -> [f64; 3] {
+        let y = (height / (self.top - self.bottom)).clamp(0.0, 1.0) * (REFERENCE_MS_SIDE - 1) as f64;
+        let x = ((sun_cos + 1.0) * 0.5).clamp(0.0, 1.0) * (REFERENCE_MS_SIDE - 1) as f64;
+        bilinear(&self.multiscatter, REFERENCE_MS_SIDE, REFERENCE_MS_SIDE, x, y)
+    }
+
+    /// Hillaire's isotropic multiple-scattering estimate at `height` with the sun at `sun_cos`: the
+    /// second order gathered over the sphere with the lit ground, summed over every order as
+    /// 1 / (1 - f_ms), times the multiple-scattering factor.
+    fn multiscatter_exact(&self, height: f64, sun_cos: f64) -> [f64; 3] {
+        let origin = [0.0, self.bottom + height, 0.0];
+        let sun = [(1.0 - sun_cos * sun_cos).max(0.0).sqrt(), sun_cos, 0.0];
+        let isotropic = 1.0 / (4.0 * core::f64::consts::PI);
+        let (mut light, mut transfer) = ([0.0; 3], [0.0; 3]);
+        let n = REFERENCE_MS_DIRECTIONS;
+        for k in 0..n * n {
+            let azimuth = 2.0 * core::f64::consts::PI * ((k % n) as f64 + 0.5) / n as f64;
+            let cos_polar = 1.0 - 2.0 * ((k / n) as f64 + 0.5) / n as f64;
+            let sin_polar = (1.0 - cos_polar * cos_polar).max(0.0).sqrt();
+            let dir = [azimuth.cos() * sin_polar, cos_polar, azimuth.sin() * sin_polar];
+            let ground = self.ground_distance(origin, dir);
+            let reach = ground.unwrap_or_else(|| self.top_distance(origin, dir));
+            let mut throughput = [1.0_f64; 3];
+            for i in 0..REFERENCE_MS_STEPS {
+                let (t0, t1) = (reach * i as f64 / REFERENCE_MS_STEPS as f64, reach * (i + 1) as f64 / REFERENCE_MS_STEPS as f64);
+                let dt = t1 - t0;
+                let p = [0, 1, 2].map(|c| origin[c] + (t0 + 0.5 * dt) * dir[c]);
+                let r = length3(p);
+                let sample_height = (r - self.bottom).max(0.0);
+                let medium = self.medium(sample_height);
+                let lit = if self.ground_distance(p, sun).is_some() { 0.0 } else { 1.0 };
+                let sun_t = self.transmittance(sample_height, dot3(sun, p) / r);
+                for c in 0..3 {
+                    let scattering = medium.rayleigh[c] + medium.mie;
+                    let step = (-medium.extinction[c] * dt).exp();
+                    let integral = (1.0 - step) / medium.extinction[c].max(1e-12);
+                    light[c] += throughput[c] * lit * sun_t[c] * scattering * isotropic * integral;
+                    transfer[c] += throughput[c] * scattering * integral;
+                    throughput[c] *= step;
+                }
+            }
+            if let Some(t) = ground {
+                let p = [0, 1, 2].map(|c| origin[c] + t * dir[c]);
+                let mu = dot3(sun, p) / length3(p);
+                let sun_t = self.transmittance(0.0, mu);
+                for c in 0..3 {
+                    light[c] += throughput[c] * sun_t[c] * mu.max(0.0) * self.ground_albedo[c] / core::f64::consts::PI;
+                }
+            }
+        }
+        let count = (n * n) as f64;
+        [0, 1, 2].map(|c| light[c] / count / (1.0 - transfer[c] / count).max(1e-4) * self.multiscatter_factor)
+    }
+
+    /// The radiance per unit sun illuminance reaching a camera `height` km up along unit `dir`
+    /// with the sun towards unit `sun`, the disk excluded (`sky_integrate`, integrated finely).
+    fn radiance(&self, height: f64, dir: [f64; 3], sun: [f64; 3]) -> [f64; 3] {
+        let origin = [0.0, self.bottom + height, 0.0];
+        let ground = self.ground_distance(origin, dir);
+        let reach = ground.unwrap_or_else(|| self.top_distance(origin, dir)).min(9000.0);
+        let cos_theta = dot3(dir, sun);
+        let rayleigh_phase = 3.0 / (16.0 * core::f64::consts::PI) * (1.0 + cos_theta * cos_theta);
+        let g = self.mie_g;
+        let mie_phase = 3.0 / (8.0 * core::f64::consts::PI) * (1.0 - g * g) / (2.0 + g * g) * (1.0 + cos_theta * cos_theta) / (1.0 + g * g - 2.0 * g * cos_theta).max(1e-12).powf(1.5);
+        let (mut radiance, mut throughput) = ([0.0; 3], [1.0_f64; 3]);
+        let steps = REFERENCE_VIEW_STEPS as f64;
+        for i in 0..REFERENCE_VIEW_STEPS {
+            let (t0, t1) = (reach * (i as f64 / steps).powi(2), reach * ((i + 1) as f64 / steps).powi(2));
+            let dt = t1 - t0;
+            let p = [0, 1, 2].map(|c| origin[c] + (t0 + 0.5 * dt) * dir[c]);
+            let r = length3(p);
+            let sample_height = (r - self.bottom).max(0.0);
+            let sun_cos = dot3(sun, p) / r;
+            let medium = self.medium(sample_height);
+            let lit = if self.ground_distance(p, sun).is_some() { 0.0 } else { 1.0 };
+            let sun_t = self.transmittance(sample_height, sun_cos);
+            let multiple = self.multiscatter(sample_height, sun_cos);
+            for c in 0..3 {
+                let single = lit * sun_t[c] * (medium.rayleigh[c] * rayleigh_phase + medium.mie * mie_phase);
+                let source = single + multiple[c] * (medium.rayleigh[c] + medium.mie);
+                let step = (-medium.extinction[c] * dt).exp();
+                radiance[c] += throughput[c] * source * (1.0 - step) / medium.extinction[c].max(1e-12);
+                throughput[c] *= step;
+            }
+        }
+        if let Some(t) = ground {
+            let p = [0, 1, 2].map(|c| origin[c] + t * dir[c]);
+            let mu = dot3(sun, p) / length3(p);
+            let sun_t = self.transmittance(0.0, mu);
+            for c in 0..3 {
+                radiance[c] += throughput[c] * sun_t[c] * mu.max(0.0) * self.ground_albedo[c] / core::f64::consts::PI;
+            }
+        }
+        radiance
+    }
+}
+
+/// `table` (`width` × `height`, rows of `width`) at fractional texel `(x, y)`, bilinear.
+fn bilinear(table: &[[f64; 3]], width: usize, height: usize, x: f64, y: f64) -> [f64; 3] {
+    let (x0, y0) = ((x.floor() as usize).min(width - 1), (y.floor() as usize).min(height - 1));
+    let (x1, y1) = ((x0 + 1).min(width - 1), (y0 + 1).min(height - 1));
+    let (fx, fy) = (x - x0 as f64, y - y0 as f64);
+    let at = |x: usize, y: usize| table[y * width + x];
+    [0, 1, 2].map(|c| {
+        let top = at(x0, y0)[c] * (1.0 - fx) + at(x1, y0)[c] * fx;
+        let bottom = at(x0, y1)[c] * (1.0 - fx) + at(x1, y1)[c] * fx;
+        top * (1.0 - fy) + bottom * fy
+    })
+}
+
+/// The view direction and sun of sky-view texel `(x, y)` of a `width` × `height` LUT at `height_km`
+/// for a sun at zenith cosine `sun_cos` (`cs_sky_view`'s parameterisation).
+fn sky_view_texel_rays(sky: &ReferenceSky, (x, y): (u32, u32), (width, height): (u32, u32), height_km: f64, sun_cos: f64) -> ([f64; 3], [f64; 3]) {
+    let unit = [f64::from(x) / f64::from(width.max(2) - 1), f64::from(y) / f64::from(height.max(2) - 1)];
+    let tangent = (height_km * (2.0 * sky.bottom + height_km)).sqrt();
+    let beta = (tangent / (sky.bottom + height_km)).clamp(-1.0, 1.0).acos();
+    let horizon = core::f64::consts::PI - beta;
+    let zenith = if unit[1] < 0.5 {
+        let coord = 1.0 - 2.0 * unit[1];
+        horizon * (1.0 - coord * coord)
+    } else {
+        let coord = unit[1] * 2.0 - 1.0;
+        horizon + beta * coord * coord
+    };
+    let light_view_cos = 1.0 - 2.0 * unit[0] * unit[0];
+    let dir = [zenith.sin() * light_view_cos, zenith.cos(), zenith.sin() * (1.0 - light_view_cos * light_view_cos).max(0.0).sqrt()];
+    let sun = [(1.0 - sun_cos * sun_cos).max(0.0).sqrt(), sun_cos, 0.0];
+    (dir, sun)
+}
+
+/// A compared sky-view texel: where, the LUT's value and the reference's.
+type Compared = ((u32, u32), [f32; 4], [f64; 3]);
+
+/// The share by which a sky-view LUT texel may differ from the f64 reference (SI-15).
+const SKY_VIEW_REFERENCE_TOLERANCE: f64 = 0.03;
+/// The share of the brightest reference value a dimmer channel's error is measured against.
+const SKY_VIEW_DIM_FLOOR: f64 = 0.01;
+
+#[test]
+#[ignore = "needs a GPU: run with --ignored metal"]
+fn metal_the_sky_view_lut_holds_the_f64_reference_within_three_percent() {
+    // SI-15: the sky's rows were qualitative only ("bluer overhead", "reddens"). The sky-view LUT
+    // (30 steps over LUT transmittance and multiple scattering) against Hillaire's integral in f64
+    // (2000 steps, transmittance and multiple scattering integrated finely), at a high noon-ish
+    // sun and a low one, over the sky, at the horizon band's edges and below it.
+    let Some(gpu) = gpu() else { return };
+    let quality = environment(QualityPreset::High);
+    let params = SkyParams::default();
+    let mut failures = Vec::new();
+    let mut worst = 0.0_f64;
+    for elevation in [45.0_f32, 5.0] {
+        let sun_dir = sun_at(elevation);
+        let state = baked_sky(&gpu, &params, &quality, sun_dir);
+        let row = genex_render::sky::atmosphere(&params, &quality, &frame(sun_dir, 0));
+        let reference = ReferenceSky::new(&row);
+        let (width, height) = state.lut_size(SkyLut::SkyView).expect("made");
+        let texels = state.read_lut(&gpu, SkyLut::SkyView).expect("read");
+        let height_km = f64::from(row.ground_albedo[3]).clamp(0.001, reference.top - reference.bottom - 0.01);
+        let scale = [0, 1, 2].map(|c| f64::from(row.sun_illuminance[c] * row.sun_illuminance[3]));
+        let rows = [0, height / 8, height / 4, height * 3 / 8, height / 2 - 3, height / 2 + 3, height * 5 / 8, height * 7 / 8, height - 1];
+        let columns = [0, width / 4, width / 2, width * 3 / 4, width - 1];
+        let compared: Vec<Compared> = rows
+            .iter()
+            .flat_map(|y| columns.map(|x| (x, *y)))
+            .map(|(x, y)| {
+                let (dir, sun) = sky_view_texel_rays(&reference, (x, y), (width, height), height_km, f64::from(sun_dir[1]));
+                let want = reference.radiance(height_km, dir, sun);
+                ((x, y), texels[(y * width + x) as usize], [0, 1, 2].map(|c| want[c] * scale[c]))
+            })
+            .collect();
+        // A channel far dimmer than the sky (the ground at a low sun) is held to a share of the
+        // brightest reference value instead of its own.
+        let floor = SKY_VIEW_DIM_FLOOR * compared.iter().flat_map(|(_, _, want)| *want).fold(0.0, f64::max);
+        for ((x, y), got, want) in compared {
+            for c in 0..3 {
+                let error = (f64::from(got[c]) - want[c]).abs() / want[c].max(floor);
+                worst = worst.max(error);
+                if error > SKY_VIEW_REFERENCE_TOLERANCE {
+                    failures.push(format!("sun {elevation} texel ({x}, {y}) channel {c}: LUT {} reference {:.5} ({:.1}%)", got[c], want[c], 100.0 * error));
+                }
+            }
+        }
+    }
+    eprintln!("sky-view LUT against the f64 reference: worst {:.2}%; {} texel channels over {:.0}%", 100.0 * worst, failures.len(), 100.0 * SKY_VIEW_REFERENCE_TOLERANCE);
+    for failure in &failures {
+        eprintln!("  {failure}");
+    }
+    assert!(failures.is_empty(), "{} sky-view texel channels are over the tolerance", failures.len());
+}

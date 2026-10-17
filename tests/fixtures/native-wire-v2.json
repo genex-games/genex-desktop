@@ -3,6 +3,7 @@
   "protocol": { "v1": 1, "current": 2 },
   "inputKind": { "touch": "touch" },
   "events": { "deviceRestored": "device-restored", "starting": "starting" },
+  "bootStages": ["wasm", "assets", "device", "pipelines", "frame", "ready"],
   "touchPhases": ["start", "move", "end"],
   "lifecycle": ["launched", "resumed", "suspended"],
   "wgpuBackends": ["metal", "vulkan", "d3d12", "webgpu"],
@@ -139,7 +140,7 @@
     ],
     "tonemappers": ["khronos-neutral", "agx", "aces", "none", "agx-punchy"],
     "exposureModes": ["manual", "auto"],
-    "metering": ["average", "center", "spot"],
+    "metering": ["average", "center", "spot", "ground"],
     "lookKeys": [
       "tonemapper",
       "exposure",
@@ -164,13 +165,20 @@
       "contact_shadow_length"
     ],
     "qualityKeys": ["preset", "render_scale", "fps"],
-    "renderKeys": ["form_factors", "preset", "look", "class", "shadows"],
+    "renderKeys": ["form_factors", "preset", "look", "class", "shadows", "loading"],
     "shadowKeys": ["distance", "blend_band"],
     "shadowDistance": { "min": 10, "max": 400 },
     "shadowBlendBandMax": 0.5,
     "settingsSources": ["toml", "reference-class", "verb"],
     "captureExposure": ["instant"],
-    "rendererFeatures": ["timestamp-query", "rg11b10ufloat-renderable", "depth-clip-control"],
+    "rendererFeatures": [
+      "timestamp-query",
+      "rg11b10ufloat-renderable",
+      "depth-clip-control",
+      "texture-compression-bc",
+      "texture-compression-astc",
+      "texture-compression-etc2"
+    ],
     "renderInputs": ["depth", "normals", "motion", "environment", "hdr-scene"],
     "postPassStages": ["ldr", "hdr"],
     "settingsRefusals": [

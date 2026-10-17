@@ -80,6 +80,7 @@
 //!
 //! [`FrameRenderer`]: genex_render::FrameRenderer
 
+mod hud_history;
 #[cfg(not(target_arch = "wasm32"))]
 mod warm;
 
@@ -96,7 +97,7 @@ use crate::runtime::{FIXED_STEP_MS, Runtime, View};
 use genex_hud::egui::epaint::textures::TexturesDelta;
 use genex_hud::{HudPaint, HudPainter};
 use genex_render::custom_pass::{CUSTOM_TAG, CustomPass, CustomPasses, NoCustom, PassStage, PipelineFacts};
-use genex_render::device_loss::{GpuOpener, Resilient};
+use genex_render::device_loss::{CompressedSource, GpuOpener, ModelParts, PartsSource, Resilient, TextureSource};
 use genex_render::extension::{CustomMaterialId, PostPassId, PostStage};
 use genex_render::hdri::{HdriImage, PreparedMap};
 use genex_render::settings::{Environment, Quality};
@@ -106,10 +107,11 @@ use genex_render::immediate::HUD_TAG;
 use genex_render::mesh::{CUBE_TRIANGLES, GlbMaterial, GlbModel, MeshData, SPHERE_TRIANGLES, decode_image};
 use genex_render::meshlet::MeshletSet;
 use genex_render::motion::DrawId;
+use genex_render::letterbox::{letterbox, output_for_window};
 use genex_render::overlay::OverlayPainter;
 use genex_render::lights::SpotLight;
 use genex_render::scene::{CameraDesc, Lighting, Material, MeshId, PointLight, Scene, scaled};
-use genex_render::texture::{TextureData, TextureId, TextureKind, linear_to_srgb, srgb_to_linear};
+use genex_render::texture::{CompressedTexture, TextureData, TextureFamily, TextureId, TextureKind, family_file, linear_to_srgb, read_ktx2, srgb_to_linear};
 use genex_render::presets::{on_ldr_scene, with_world_samples};
 use genex_render::renderer::landed_samples;
 use genex_render::timing::{Clock, CpuTimer};
@@ -119,8 +121,10 @@ use genex_render::{CullPath, Gpu, GpuCounters, ImmediateFrame, RenderCode, Rende
 /// The renderer's planes for a facade camera, which carries none.
 const NEAR_PLANE: f32 = 0.1;
 const FAR_PLANE: f32 = 1000.0;
-/// The world target is painted at one device pixel per world pixel: captures are taken at the
-/// logical world size, and Live and the canvas letterbox that picture.
+/// Device pixels per HUD point before a window is known. A capture paints the HUD into the world
+/// target at its own size's pixels per point (1 at the logical world size, 2 for a capture asked
+/// at twice it); Live paints it over the window after the upscale, at the letterbox's own ratio
+/// ([`Presenter::present`]).
 pub const WORLD_PIXELS_PER_POINT: f32 = 1.0;
 /// The native-enhanced features a game declares, as the lane compiles them in: wire names
 /// (`subgroup`, `ray-query`, ...) joined by commas. Absent or empty: WebGPU core only. The web is
@@ -148,11 +152,31 @@ pub struct Drawn {
 pub trait ModelSource {
     /// The bytes of `path`, or None when the game has no such asset.
     fn model_bytes(&self, path: &str) -> Option<Vec<u8>>;
+
+    /// Whether the game has an asset at `path` (by default: whether its bytes read).
+    fn has_asset(&self, path: &str) -> bool {
+        self.model_bytes(path).is_some()
+    }
+
+    /// The bytes of `path` when the program holds them for its whole life (the table a game
+    /// compiled in), so a renderer replays the upload by decoding them again instead of keeping a
+    /// decoded copy (review F6). None, the default: the upload's data is kept.
+    fn static_bytes(&self, _path: &str) -> Option<&'static [u8]> {
+        None
+    }
 }
 
 impl ModelSource for AssetTable {
     fn model_bytes(&self, path: &str) -> Option<Vec<u8>> {
-        self.iter().find(|(known, _)| *known == path).map(|(_, bytes)| bytes.to_vec())
+        self.static_bytes(path).map(<[u8]>::to_vec)
+    }
+
+    fn has_asset(&self, path: &str) -> bool {
+        self.static_bytes(path).is_some()
+    }
+
+    fn static_bytes(&self, path: &str) -> Option<&'static [u8]> {
+        self.iter().find(|(known, _)| *known == path).map(|(_, bytes)| *bytes)
     }
 }
 
@@ -193,12 +217,46 @@ pub trait Uploads {
     fn add_meshes_with_meshlets(&mut self, parts: Vec<(MeshData, Option<MeshletSet>)>) -> Result<Vec<MeshId>, RenderError> {
         self.add_meshes(parts.into_iter().map(|(mesh, _)| mesh).collect())
     }
+    /// Add every part of one model with its meshlets and levels of detail (a GLB part's
+    /// `genex_lods`, renderer pass 2 A6.9): a renderer draws each instance at the level its
+    /// distance picks (the default drops the levels: [`Uploads::add_meshes_with_meshlets`]).
+    fn add_model_parts(&mut self, parts: ModelParts) -> Result<Vec<MeshId>, RenderError> {
+        self.add_meshes_with_meshlets(parts.into_iter().map(|part| (part.mesh, part.meshlets)).collect())
+    }
     /// Add a texture as the next layer of its kind's array.
     fn add_texture(&mut self, data: &TextureData, kind: TextureKind) -> Result<TextureId, RenderError>;
+    /// [`Uploads::add_meshes_with_meshlets`] for parts `source` decodes again from bytes the
+    /// program holds for its whole life: a renderer that replays uploads keeps the source, not the
+    /// parts (the default adds them as any other).
+    fn add_meshes_from(&mut self, parts: ModelParts, _source: PartsSource) -> Result<Vec<MeshId>, RenderError> {
+        self.add_model_parts(parts)
+    }
+    /// [`Uploads::add_texture`] for a texture `source` decodes again, as [`Uploads::add_meshes_from`].
+    fn add_texture_from(&mut self, data: &TextureData, kind: TextureKind, _source: TextureSource) -> Result<TextureId, RenderError> {
+        self.add_texture(data, kind)
+    }
     /// The widest HDR environment map the device keeps (a decoded map is box-filtered down to it
     /// before it is cached, `genex_render::hdri::prepare_map`); 0, the default, keeps it whole.
     fn environment_map_width(&self) -> u32 {
         0
+    }
+    /// The compressed texture families the device samples, best first (renderer pass 2 A6.4);
+    /// none, the default: every texture loads its image.
+    fn compressed_families(&self) -> Vec<TextureFamily> {
+        Vec::new()
+    }
+    /// The family the renderer stores its larger textures in (RGBA8, the default).
+    fn texture_family(&self) -> TextureFamily {
+        TextureFamily::Rgba8
+    }
+    /// Store the larger textures in `family` from the first texture on; refused by default.
+    fn set_texture_family(&mut self, family: TextureFamily) -> Result<(), RenderError> {
+        Err(RenderError::refused(RenderCode::TextureInvalid, format!("{family:?} textures are not taken here")))
+    }
+    /// Add a compressed texture in the renderer's family (`source` reads its file again for a
+    /// replay); refused by default.
+    fn add_compressed_texture(&mut self, texture: &CompressedTexture, _kind: TextureKind, _source: Option<CompressedSource>) -> Result<TextureId, RenderError> {
+        Err(RenderError::refused(RenderCode::TextureInvalid, format!("{:?} textures are not taken here", texture.family())))
     }
 }
 
@@ -215,12 +273,43 @@ impl Uploads for Resilient {
         Resilient::add_meshes_with_meshlets(self, parts)
     }
 
+    fn add_model_parts(&mut self, parts: ModelParts) -> Result<Vec<MeshId>, RenderError> {
+        Resilient::add_model_parts(self, parts)
+    }
+
     fn add_texture(&mut self, data: &TextureData, kind: TextureKind) -> Result<TextureId, RenderError> {
         Resilient::add_texture(self, data, kind)
     }
 
+    fn add_meshes_from(&mut self, parts: ModelParts, source: PartsSource) -> Result<Vec<MeshId>, RenderError> {
+        Resilient::add_meshes_from(self, parts, source)
+    }
+
+    fn add_texture_from(&mut self, data: &TextureData, kind: TextureKind, source: TextureSource) -> Result<TextureId, RenderError> {
+        Resilient::add_texture_from(self, data, kind, source)
+    }
+
     fn environment_map_width(&self) -> u32 {
         self.renderer().renderer().environment_map_width()
+    }
+
+    fn compressed_families(&self) -> Vec<TextureFamily> {
+        self.renderer().renderer().compressed_families()
+    }
+
+    fn texture_family(&self) -> TextureFamily {
+        self.renderer().renderer().texture_family()
+    }
+
+    fn set_texture_family(&mut self, family: TextureFamily) -> Result<(), RenderError> {
+        Resilient::set_texture_family(self, family)
+    }
+
+    fn add_compressed_texture(&mut self, texture: &CompressedTexture, kind: TextureKind, source: Option<CompressedSource>) -> Result<TextureId, RenderError> {
+        match source {
+            Some(source) => Resilient::add_compressed_texture_from(self, texture, kind, source),
+            None => Resilient::add_compressed_texture(self, texture, kind),
+        }
     }
 }
 
@@ -236,6 +325,50 @@ pub struct AssetCache {
     /// the device's width, its sun found on the full map. The presenter uploads one when the frame
     /// lights with it (again after the environment left it, or the device was lost).
     environments: Vec<(String, Option<Arc<PreparedMap>>)>,
+    /// Whether the texture family was chosen (renderer pass 2 A6.4): at the first frame naming a
+    /// texture, before any texture loads.
+    family_chosen: bool,
+}
+
+/// Store the renderer's larger textures in the first family (best first for the device) the
+/// game ships a file of for a texture `frame` names (`<stem>.<family>.ktx2`, the Studio's import
+/// step writes them; renderer pass 2 A6.4). A game without one keeps RGBA8, and so does a renderer
+/// that already holds a texture.
+fn choose_texture_family(frame: &Frame, source: &dyn ModelSource, uploads: &mut dyn Uploads, log: &mut dyn FnMut(&str)) {
+    let paths: Vec<&str> = texture_paths(frame).map(|(path, _)| path).filter(|path| is_safe_asset_path(path)).collect();
+    let shipped = uploads.compressed_families().into_iter().find(|family| paths.iter().any(|path| source.has_asset(&family_file(path, *family))));
+    let Some(family) = shipped else { return };
+    if let Err(error) = uploads.set_texture_family(family) {
+        log(&format!("{} textures not taken: {error}", family.wire()));
+    }
+}
+
+/// `path`'s compressed file in the renderer's family uploaded as `kind` (renderer pass 2 A6.4),
+/// or `None` when the renderer stores RGBA8, the game ships no such file or it was refused (the
+/// image loads instead; a refusal is logged). A lost device is passed on.
+fn load_compressed(path: &str, kind: TextureKind, source: &dyn ModelSource, uploads: &mut dyn Uploads, log: &mut dyn FnMut(&str)) -> Result<Option<TextureId>, RenderError> {
+    let family = uploads.texture_family();
+    if family == TextureFamily::Rgba8 || !is_safe_asset_path(path) {
+        return Ok(None);
+    }
+    let file = family_file(path, family);
+    let Some(bytes) = source.model_bytes(&file) else { return Ok(None) };
+    let texture = match read_ktx2(&bytes) {
+        Ok(texture) => texture,
+        Err(error) => {
+            log(&format!("texture {file:?} refused: {error}; loading {path:?}"));
+            return Ok(None);
+        }
+    };
+    let again = source.static_bytes(&file).map(|bytes| -> CompressedSource { Arc::new(move || read_ktx2(bytes)) });
+    match uploads.add_compressed_texture(&texture, kind, again) {
+        Ok(id) => Ok(Some(id)),
+        Err(error) if error.code() == RenderCode::DeviceLost => Err(error),
+        Err(error) => {
+            log(&format!("texture {file:?} refused: {error}; loading {path:?}"));
+            Ok(None)
+        }
+    }
 }
 
 impl AssetCache {
@@ -285,6 +418,10 @@ impl AssetCache {
     /// `source`, handed to `uploads`; each refusal is told to `log` once. A lost device stops
     /// the load (`device-lost`) and leaves what was not loaded to be tried again.
     pub fn load(&mut self, frame: &Frame, source: &dyn ModelSource, uploads: &mut dyn Uploads, log: &mut dyn FnMut(&str)) -> Result<(), RenderError> {
+        if !self.family_chosen && texture_paths(frame).next().is_some() {
+            choose_texture_family(frame, source, uploads, log);
+            self.family_chosen = true;
+        }
         for path in model_paths(frame) {
             if self.tried(path) {
                 continue;
@@ -298,6 +435,10 @@ impl AssetCache {
             if self.textures.iter().any(|(known, k, _)| known == path && *k == kind) {
                 continue;
             }
+            if let Some(id) = load_compressed(path, kind, source, uploads, log)? {
+                self.textures.push((path.to_owned(), kind, Some(id)));
+                continue;
+            }
             let at = match read.iter().position(|(known, _)| *known == path) {
                 Some(at) => at,
                 None => {
@@ -305,8 +446,9 @@ impl AssetCache {
                     read.len() - 1
                 }
             };
+            let again = source.static_bytes(path).map(|bytes| -> TextureSource { Arc::new(move || decode_image(bytes)) });
             let id = match &read[at].1 {
-                Some(data) => upload_texture(uploads, data, kind, &format!("texture {path:?}"), log)?,
+                Some(data) => upload_texture(uploads, (data, kind, again), &format!("texture {path:?}"), log)?,
                 None => None,
             };
             self.textures.push((path.to_owned(), kind, id));
@@ -354,6 +496,10 @@ fn read_environment(path: &str, source: &dyn ModelSource, log: &mut dyn FnMut(&s
 fn model_paths(frame: &Frame) -> impl Iterator<Item = &str> {
     let shapes = frame.draws().iter().filter_map(|draw| match &draw.shape {
         Shape::Model { model, .. } => model.path(),
+        Shape::Group { group } => match group.shape() {
+            crate::GroupShape::Model(model) => model.path(),
+            crate::GroupShape::Cube | crate::GroupShape::Sphere => None,
+        },
         Shape::Cube { .. } | Shape::Sphere { .. } | Shape::Line { .. } => None,
     });
     let custom = frame.custom_draws().iter().filter_map(|draw| match &draw.mesh {
@@ -368,9 +514,10 @@ fn texture_paths(frame: &Frame) -> impl Iterator<Item = (&str, TextureKind)> {
     let materials = frame.draws().iter().filter_map(|draw| match &draw.shape {
         Shape::Model { material, .. } => material.as_ref(),
         Shape::Cube { material, .. } | Shape::Sphere { material, .. } => Some(material),
+        Shape::Group { group } => group.material(),
         Shape::Line { .. } => None,
     });
-    materials.flat_map(|material| {
+    let drawn = materials.flat_map(|material| {
         let slots = [
             (material.base_texture(), TextureKind::Color),
             (material.normal_texture(), TextureKind::Normal),
@@ -378,7 +525,57 @@ fn texture_paths(frame: &Frame) -> impl Iterator<Item = (&str, TextureKind)> {
             (material.emissive_texture(), TextureKind::Color),
         ];
         slots.into_iter().filter_map(|(path, kind)| Some((path?, kind)))
-    })
+    });
+    // The terrain's layers (renderer pass 2 A.7): base colour and height, then the data texture.
+    let terrain = frame.drawn_terrain().into_iter().flat_map(|terrain| terrain.layers().iter()).flat_map(|layer| {
+        let slots = [(layer.albedo(), TextureKind::Color), (layer.data(), TextureKind::Data)];
+        slots.into_iter().filter_map(|(path, kind)| Some((path?, kind)))
+    });
+    // The decals' maps (renderer pass 2 A.10): base colour, normal map, ORM.
+    let decals = frame.decals().iter().flat_map(|decal| {
+        let slots = [(decal.base_texture(), TextureKind::Color), (decal.normal_texture(), TextureKind::Normal), (decal.orm_texture(), TextureKind::Data)];
+        slots.into_iter().filter_map(|(path, kind)| Some((path?, kind)))
+    });
+    drawn.chain(terrain).chain(decals)
+}
+
+/// The terrain `frame` draws as the renderer takes it (renderer pass 2 A.7), its layers' textures
+/// from `assets` (a missing one draws its layer flat), with its version; None without one. A
+/// renderer drawn without the presenter (a scene bridge) hands it to `Renderer::set_terrain`.
+pub fn terrain_of(frame: &Frame, assets: &AssetCache) -> Option<(genex_render::terrain::TerrainDesc, u64)> {
+    let terrain = frame.drawn_terrain()?;
+    Some((terrain_desc(terrain, assets), terrain.version()))
+}
+
+/// The renderer's terrain for `terrain`, its layers' textures from `assets` (a missing one draws
+/// its layer flat).
+fn terrain_desc(terrain: &crate::Terrain, assets: &AssetCache) -> genex_render::terrain::TerrainDesc {
+    let layers = terrain
+        .layers()
+        .iter()
+        .map(|layer| {
+            let (tint, fallback, tile, roughness, normal_strength) = layer.look();
+            let texture = |path: Option<&str>, kind| path.and_then(|path| assets.texture(path, kind));
+            let linear = |c: u8| genex_render::texture::srgb_to_linear(c);
+            let albedo = texture(layer.albedo(), TextureKind::Color);
+            // Without its base colour the layer is flat in its fallback colour.
+            let tint = match albedo {
+                Some(_) => tint.to_array(),
+                None => [linear(fallback.r), linear(fallback.g), linear(fallback.b)],
+            };
+            genex_render::terrain::TerrainLayer {
+                albedo,
+                data: texture(layer.data(), TextureKind::Data),
+                tint,
+                tile,
+                roughness,
+                normal_strength,
+                // Its grass (A.8), in linear colours.
+                grass: layer.grass().map(crate::Grass::render_layer),
+            }
+        })
+        .collect();
+    genex_render::terrain::TerrainDesc { heights: terrain.heights().clone(), control: terrain.control().to_vec(), layers, look: terrain.look() }
 }
 
 /// A texture file decoded, or `None` (logged) when its path is unsafe, it is not in the game's
@@ -395,15 +592,18 @@ fn read_texture(path: &str, source: &dyn ModelSource, log: &mut dyn FnMut(&str))
     decode_image(&bytes).map_err(|error| log(&format!("texture {path:?} refused: {error}"))).ok()
 }
 
+/// One texture to upload: its data, the array it goes to and, for bytes the program holds for its
+/// whole life, how a replay decodes it again.
+type TextureUpload<'a> = (&'a TextureData, TextureKind, Option<TextureSource>);
+
 /// Upload one texture: its id, `None` (logged as `what`) when refused, `device-lost` passed on.
-fn upload_texture(
-    uploads: &mut dyn Uploads,
-    data: &TextureData,
-    kind: TextureKind,
-    what: &str,
-    log: &mut dyn FnMut(&str),
-) -> Result<Option<TextureId>, RenderError> {
-    match uploads.add_texture(data, kind) {
+fn upload_texture(uploads: &mut dyn Uploads, texture: TextureUpload<'_>, what: &str, log: &mut dyn FnMut(&str)) -> Result<Option<TextureId>, RenderError> {
+    let (data, kind, again) = texture;
+    let added = match again {
+        Some(source) => uploads.add_texture_from(data, kind, source),
+        None => uploads.add_texture(data, kind),
+    };
+    match added {
         Ok(id) => Ok(Some(id)),
         Err(error) if error.code() == RenderCode::DeviceLost => Err(error),
         Err(error) => {
@@ -432,7 +632,14 @@ fn load_model(path: &str, source: &dyn ModelSource, uploads: &mut dyn Uploads, l
     let mut triangles = 0u32;
     // Every part in one upload: the renderer copies its whole library once, not once a material.
     // Each part brings the clusters the importer wrote (R2.3); a part without them clusters at runtime.
-    let meshes = match uploads.add_meshes_with_meshlets(glb.parts().iter().map(|part| (part.mesh.clone(), part.meshlets.clone())).collect()) {
+    // Its levels of detail (`genex_lods`, A6.9) come along: far instances draw a coarser level.
+    let model_parts: ModelParts = glb.model_parts();
+    let still = source.static_bytes(path);
+    let added = match still {
+        Some(bytes) => uploads.add_meshes_from(model_parts, Arc::new(move || GlbModel::parts_from_glb(bytes))),
+        None => uploads.add_model_parts(model_parts),
+    };
+    let meshes = match added {
         Ok(meshes) => meshes,
         Err(error) if error.code() == RenderCode::DeviceLost => return Err(error),
         Err(error) => {
@@ -447,7 +654,7 @@ fn load_model(path: &str, source: &dyn ModelSource, uploads: &mut dyn Uploads, l
         }
         triangles = triangles.saturating_add(triangles_of(&part.mesh));
         let material = match part.material {
-            Some(material) => Some(glb_textures(path, &glb, &material, &mut images, uploads, log)?),
+            Some(material) => Some(glb_textures((path, still), &glb, &material, &mut images, uploads, log)?),
             None => None,
         };
         parts.push(ModelPart { mesh, material });
@@ -456,9 +663,11 @@ fn load_model(path: &str, source: &dyn ModelSource, uploads: &mut dyn Uploads, l
 }
 
 /// `material` with its images uploaded, each image and kind once per model (`images` holds those
-/// done); an image that cannot be used leaves its slot untextured (logged).
+/// done); an image that cannot be used leaves its slot untextured (logged). `model` is the model's
+/// path and, when the program holds them for its whole life, its bytes (a replay decodes an image
+/// from them again).
 fn glb_textures(
-    path: &str,
+    model: (&str, Option<&'static [u8]>),
     glb: &GlbModel,
     material: &GlbMaterial,
     images: &mut Vec<(u32, TextureKind, Option<TextureId>)>,
@@ -469,9 +678,11 @@ fn glb_textures(
         if images.iter().any(|(i, k, _)| *i == image && *k == kind) {
             continue;
         }
+        let (path, still) = model;
         let what = format!("model {path:?} image {image}");
+        let again = still.map(|bytes| -> TextureSource { Arc::new(move || GlbModel::image_from_glb(bytes, image)) });
         let id = match glb.image(image) {
-            Some(Ok(data)) => upload_texture(uploads, data, kind, &what, log)?,
+            Some(Ok(data)) => upload_texture(uploads, (data, kind, again), &what, log)?,
             Some(Err(error)) => {
                 log(&format!("{what} refused: {error}"));
                 None
@@ -523,6 +734,21 @@ pub struct Presenter {
     /// Every texture the HUD set so far (the font atlas first), frees applied: what a painter on
     /// a re-created device receives before anything else.
     hud_history: TexturesDelta,
+    /// The last Live frame's HUD, painted over the window after the upscale at every present
+    /// (its texture changes wait in `hud_unsent`); None after a capture, whose world carries its own.
+    live_hud: Option<HudPaint>,
+    /// Device pixels per HUD point of the last window present: what the next Live HUD is
+    /// tessellated at.
+    window_pixels_per_point: f32,
+    /// The window the presents go to, in pixels, once a shell said or presented
+    /// ([`Presenter::set_window_size`]): Live frames draw at its letterbox's pixels.
+    window: Option<(u32, u32)>,
+    /// The size captures draw at when one was asked for ([`Presenter::set_capture_size`]).
+    capture_size: Option<(u32, u32)>,
+    /// What the next settled captures ask of the look's lens ([`Presenter::set_capture_lens`]).
+    capture_lens: crate::render::CaptureLens,
+    /// The output size the last draw drew at (Live's window pixels or a capture's size).
+    last_output: Option<(u32, u32)>,
     source: Box<dyn ModelSource>,
     assets: AssetCache,
     /// Why the last frame was not drawn, until one is.
@@ -554,6 +780,10 @@ pub struct Presenter {
     /// The environment map last handed to the device: the device's generation, the map's path and
     /// whether the upload was taken (a new device after a loss uploads it again; a refusal is
     /// logged once per device).
+    /// The terrain version the renderer refused (logged once; not tried again until it changes).
+    terrain_refused: Option<u64>,
+    /// The game's particle emitters and flipbook atlases on the renderer (renderer pass 2 A.11).
+    particles: ParticlesHeld,
     environment_map: Option<(u32, String, bool)>,
     /// The samples per pixel Live's world pass is fixed to and the settings generation that fixed
     /// them (`RenderControl::pipeline_generation`); None before the first Live frame.
@@ -653,9 +883,10 @@ fn paints(paint: &HudPaint) -> bool {
 }
 
 impl Presenter {
-    /// A presenter on `gpu` (opened with the game's `declared` native-enhanced features) with a
-    /// world target of `size`; `open` re-opens a device after a loss, models come from `source`
-    /// and refusals go to `log`.
+    /// A presenter on `gpu` (opened with the game's `declared` native-enhanced features) for a game
+    /// whose logical world is `size` (Live frames then draw at the window's pixels, captures at the
+    /// world size or the size asked for); `open` re-opens a device after a loss, models come from
+    /// `source` and refusals go to `log`.
     pub fn with_gpu(
         gpu: Gpu,
         size: [u32; 2],
@@ -674,6 +905,12 @@ impl Presenter {
             hud,
             hud_unsent: TexturesDelta::default(),
             hud_history: TexturesDelta::default(),
+            live_hud: None,
+            window_pixels_per_point: WORLD_PIXELS_PER_POINT,
+            window: None,
+            capture_size: None,
+            capture_lens: crate::render::CaptureLens::default(),
+            last_output: None,
             source,
             assets: AssetCache::default(),
             failed: None,
@@ -690,6 +927,8 @@ impl Presenter {
             facts: None,
             level2: Level2::default(),
             environment_map: None,
+            terrain_refused: None,
+            particles: ParticlesHeld::default(),
             live_samples: None,
             refused_rebuild: None,
             off_thread: false,
@@ -704,14 +943,12 @@ impl Presenter {
     }
 
     /// Warm each explicit settings change's renderer off the frame thread and keep the renderer a
-    /// change replaced as the spare for its samples (see the module docs; a studio run). The web has
-    /// no threads: there it changes nothing.
+    /// change replaced as the spare for its samples (see the module docs; a studio run, a desktop
+    /// game). The web has no threads: there it keeps the spare only, so a capture on other samples
+    /// and Live after it swap renderers instead of rebuilding each from the uploads (review F5).
     pub fn set_off_thread_changes(&mut self, on: bool) {
-        if cfg!(target_arch = "wasm32") {
-            return;
-        }
-        self.off_thread = on;
         self.resilient.set_keep_spare(on);
+        self.off_thread = on && !cfg!(target_arch = "wasm32");
     }
 
     /// The platform's clock for frame timing (the web shell's `performance.now()`).
@@ -754,6 +991,16 @@ impl Presenter {
         let _ = runtime;
     }
 
+    /// Whether the boot's warm-up ([`Presenter::warm_boot`]) is still compiling the first Live
+    /// frame's pipelines: a shell shows its loading screen meanwhile instead of waiting on that
+    /// frame (owner decision D11). Never on the web, which warms nothing off its one thread.
+    pub fn boot_warming(&self) -> bool {
+        #[cfg(not(target_arch = "wasm32"))]
+        return self.held.is_none() && self.warming.as_ref().is_some_and(|warming| !warming.is_finished());
+        #[cfg(target_arch = "wasm32")]
+        false
+    }
+
     /// The game's render settings, once attached by a draw.
     pub fn render_settings(&self) -> Option<&RenderHandle> {
         self.render.as_ref()
@@ -769,8 +1016,9 @@ impl Presenter {
     /// Whether the last draw used what a Live frame uses now (so a capture left the Live picture
     /// in the world target, and no Live redraw is needed after it).
     pub fn last_draw_is_live(&self) -> bool {
-        let live = self.render.as_ref().map(|handle| handle.borrow().live_frame());
-        self.last_choice.is_some() && live == self.last_choice
+        let Some(handle) = self.render.as_ref() else { return false };
+        let (live, output) = (handle.borrow().live_frame(), handle.borrow().live_output());
+        self.last_choice == Some(live) && self.last_output == Some(output)
     }
 
     /// Attach `runtime`'s render settings, probing them with this device's facts when no shell
@@ -832,9 +1080,9 @@ impl Presenter {
         // for Live and captures whichever draws first.
         let (texture_class, textures) = handle.borrow().texture_arrays();
         let device = self.resilient.gpu().device.clone();
-        let renderer = self.resilient.renderer_mut().renderer_mut();
-        renderer.set_texture_arrays(&device, texture_class, textures);
-        set_choice(renderer, &choice, class);
+        let frame_renderer = self.resilient.renderer_mut();
+        frame_renderer.renderer_mut().set_texture_arrays(&device, texture_class, textures);
+        set_choice(frame_renderer, &choice, class);
         // The game's meshlet setting (R2): which meshes cluster and whether occlusion may cull
         // them; a change re-clusters the library once. A refusal keeps the last setting.
         if let Err(error) = self.resilient.set_meshlets(choice.meshlets) {
@@ -944,8 +1192,7 @@ impl Presenter {
         hud: &mut HudPaint,
     ) -> Result<Drawn, RenderError> {
         let fresh = std::mem::take(&mut hud.textures_delta);
-        self.hud_history.append(fresh.clone());
-        self.hud_history.free.clear();
+        hud_history::record(&mut self.hud_history, fresh.clone());
         self.hud_unsent.append(fresh);
         hud.textures_delta = std::mem::take(&mut self.hud_unsent);
         let drawn = self.render(frame, camera, passes, tick, hud);
@@ -966,15 +1213,32 @@ impl Presenter {
         self.load(frame)?;
         self.admit(frame)?;
         self.light(frame)?;
+        self.terrain(frame)?;
+        self.hold_particles(frame)?;
         let (mut immediate, mut drawn) = self.immediate(frame, camera);
         // The tick's simulated seconds (`gx_draw.params.x`, `gx_post.params.x`), never wall time.
         immediate.set_seconds((tick as f64 * FIXED_STEP_MS / 1000.0) as f32);
         self.sync_passes(passes);
         immediate.set_tick(tick);
+        // Each emitter as it is at the frame's tick (a refused one is skipped).
+        for particles in frame.drawn_particles() {
+            if let Some(id) = self.particles.emitter(particles.version()) {
+                immediate.particles(id, tick);
+            }
+        }
         if std::mem::take(&mut self.keep_warm_frame) {
             self.warm_frame = Some(immediate.clone());
         }
-        let painted = paints(hud);
+        // Live paints the HUD over the window after the upscale (`Presenter::present`), so the world
+        // target is drawn without it; its texture changes stay in `hud` for `draw` to keep. A
+        // capture's world carries its own HUD, so a present after it paints none over it.
+        let live_hud = if self.capturing {
+            self.live_hud = None;
+            0
+        } else {
+            self.keep_live_hud(hud)
+        };
+        let painted = self.capturing && paints(hud);
         let mut overlay = HudOverlay { painter: &mut self.hud, paint: hud };
         let overlay: Option<&mut dyn OverlayPainter> = if painted { Some(&mut overlay) } else { None };
         let report = if self.capturing {
@@ -983,14 +1247,108 @@ impl Presenter {
             let graded = self.custom_passes && self.passes.runs_at(PassStage::PostHdr);
             let frames = self.resilient.renderer().settle_frames_graded(graded);
             self.last_settle_frames = Some(frames);
+            // A recovered renderer starts from the defaults: the shot's lens is handed over per capture.
+            self.resilient.renderer_mut().renderer_mut().set_capture_lens(self.capture_lens);
             settle(&mut self.resilient, &mut self.passes, self.custom_passes, passes, tick, &immediate, overlay, frames)?
         } else {
             draw_once(&mut self.resilient, &mut self.passes, self.custom_passes, passes, tick, &immediate, overlay)?
         };
         let extra = |tag: &str| report.tags.iter().find(|(name, _)| name == tag).map_or(0, |(_, count)| *count);
-        drawn.draw_calls = drawn.draw_calls.saturating_add(extra(CUSTOM_TAG)).saturating_add(extra(HUD_TAG));
+        let hud_draws = extra(HUD_TAG).saturating_add(live_hud);
+        drawn.draw_calls = drawn.draw_calls.saturating_add(extra(CUSTOM_TAG)).saturating_add(hud_draws);
         drawn.gpu = report.gpu;
         Ok(drawn)
+    }
+
+    /// The window the next presents go to is `window` pixels: Live's HUD is tessellated at its
+    /// letterbox's ratio from the next frame on. A shell that knows its window before the first
+    /// frame says so (every present says so again), so even that frame's HUD lands on the
+    /// window's pixels.
+    pub fn set_window_size(&mut self, window: (u32, u32)) {
+        let world = self.resilient.renderer().renderer().logical_size();
+        let view = letterbox(window, world);
+        if view.width > 0 && world.0 > 0 {
+            self.window_pixels_per_point = view.width as f32 / world.0 as f32;
+            self.window = Some(window);
+        }
+    }
+
+    /// Draw the next settled captures with what `lens` asks of the look's depth of field and
+    /// motion blur (`capture`'s `lens`; renderer pass 2 A.9). Neither by default: a capture is a
+    /// still of the held frame.
+    pub fn set_capture_lens(&mut self, lens: crate::render::CaptureLens) {
+        self.capture_lens = lens;
+    }
+
+    /// Draw the next captures at `size` (`capture --size`, the 4K/1440p plan; each side 64..=4096),
+    /// or at the world size again (None). The HUD is painted at that size's pixels per point.
+    pub fn set_capture_size(&mut self, size: Option<(u32, u32)>) {
+        self.capture_size = size.map(|(width, height)| genex_render::caps::world_size(width, height));
+    }
+
+    /// The size Live frames draw at now (renderer pass 2, P2-0.9 step B; findings F1/RC-03): the
+    /// window's letterbox in its own pixels, capped at the Live class's reference resolution's
+    /// pixels (`presets::reference_resolution`), or the world size before a window is known. The
+    /// window present copies it texel for texel, or upscales it past the cap.
+    fn live_output(&self, handle: &RenderHandle) -> (u32, u32) {
+        let world = self.resilient.renderer().renderer().logical_size();
+        let Some(window) = self.window else { return world };
+        let (cap_w, cap_h) = genex_render::presets::reference_resolution(handle.borrow().live_class());
+        output_for_window(world, window, u64::from(cap_w) * u64::from(cap_h))
+    }
+
+    /// Hand the settings this draw's output size (Live's window pixels, or the capture's size)
+    /// before they are asked for the frame's quality, so the budget is fitted at it; answers it.
+    fn frame_output(&mut self, handle: &RenderHandle) -> (u32, u32) {
+        handle.borrow_mut().set_capture_size(self.capture_size);
+        if self.capturing {
+            return handle.borrow().capture_output();
+        }
+        let output = self.live_output(handle);
+        let world = self.resilient.renderer().renderer().logical_size();
+        let window = self.window.map(|window| letterbox(window, world)).map(|view| (view.width, view.height));
+        handle.borrow_mut().set_live_output(output, window);
+        output
+    }
+
+    /// Draw the next frame at `output`: a refusal (a target over the texture limits) keeps the
+    /// size the renderer had and is logged.
+    fn set_output(&mut self, output: (u32, u32)) {
+        let renderer = self.resilient.renderer_mut().renderer_mut();
+        if let Err(error) = renderer.set_output_size(output) {
+            (self.log)(&format!("output size {}x{} refused: {error}", output.0, output.1));
+        }
+        self.last_output = Some(self.resilient.renderer().renderer().size());
+    }
+
+    /// Keep a Live frame's HUD primitives for the window presents (a capture keeps none); answers
+    /// how many, the frame's `hud`-tagged draws.
+    fn keep_live_hud(&mut self, hud: &mut HudPaint) -> u32 {
+        let primitives = std::mem::take(&mut hud.primitives);
+        let draws = u32::try_from(primitives.len()).unwrap_or(u32::MAX);
+        self.live_hud = Some(HudPaint { primitives, textures_delta: TexturesDelta::default(), pixels_per_point: hud.pixels_per_point });
+        draws
+    }
+
+    /// Letterbox the world target into a window's `target` (`window` pixels of `format`) through
+    /// the renderer's window present (FSR1 up, Catmull-Rom down), then paint the last Live frame's
+    /// HUD over the letterbox at the window's own pixels. Every shell presents through this: a
+    /// window's frame, the web canvas, a phone's surface and Studio's Live ring.
+    pub fn present(&mut self, target: &wgpu::TextureView, format: wgpu::TextureFormat, window: (u32, u32)) {
+        self.set_window_size(window);
+        let Some(mut paint) = self.live_hud.take() else {
+            self.resilient.present(target, format, window);
+            return;
+        };
+        paint.textures_delta = std::mem::take(&mut self.hud_unsent);
+        paint.pixels_per_point = self.window_pixels_per_point;
+        let painted = paints(&paint);
+        let mut overlay = HudOverlay { painter: &mut self.hud, paint: &mut paint };
+        let overlay: Option<&mut dyn OverlayPainter> = if painted { Some(&mut overlay) } else { None };
+        self.resilient.present_with(target, format, window, overlay);
+        // What the painter did not take (a lost device paints nothing) waits for the next one.
+        self.hud_unsent = std::mem::take(&mut paint.textures_delta);
+        self.live_hud = Some(paint);
     }
 
     /// Hand the pass registry this frame's render size and the renderer's pipeline-shaping facts;
@@ -1011,8 +1369,14 @@ impl Presenter {
     pub fn draw_view<W: Default + 'static>(&mut self, runtime: &mut Runtime<W>, view: View<'_>) -> Option<Result<Drawn, RenderError>> {
         let camera = runtime.camera(view)?;
         let frame = runtime.frame(view)?;
-        let mut hud = runtime.hud_paint(WORLD_PIXELS_PER_POINT);
         let handle = self.attach(runtime);
+        let output = self.frame_output(&handle);
+        let world = self.resilient.renderer().renderer().logical_size();
+        // A capture paints its HUD into the world target at the capture's own pixels per point (1 at
+        // the world size); Live paints it over the window after the upscale.
+        let capture_ppp = output.0 as f32 / world.0.max(1) as f32;
+        let pixels_per_point = if self.capturing { capture_ppp } else { self.window_pixels_per_point };
+        let mut hud = runtime.hud_paint(pixels_per_point);
         let live = !self.capturing;
         // The frame's Level-2 extensions first: a v1 material it brings keeps it on the legacy LDR
         // scene, which `apply` reads to choose the anti-aliasing, so the first frame that draws one
@@ -1031,6 +1395,8 @@ impl Presenter {
                 self.apply(&handle, choice, live);
             }
         }
+        // After any rebuild `apply` made: a new renderer starts at the world size.
+        self.set_output(output);
         self.keep_warm_frame = live && self.wants_warm(&handle, held.is_some());
         let timing = live.then(|| self.begin_live());
         let drawn = crate::gpu::host::with_passes(runtime, |passes, tick| self.draw(&frame, &camera, passes, tick, &mut hud));
@@ -1043,6 +1409,8 @@ impl Presenter {
             let scene = self.resilient.renderer().renderer().last_scene();
             handle.borrow_mut().note_ldr_reason(scene.and_then(|scene| scene.ldr_reason));
         }
+        // The buffers the renderer holds (LG-13), counted at the device budget's next fit.
+        handle.borrow_mut().note_buffers(self.resilient.renderer().renderer().buffer_ledger());
         // The spot atlas the renderer now holds (a shadowed spot asked for), in the budget from now on.
         handle.borrow_mut().note_spot_atlas(self.resilient.renderer().renderer().uses_shadowed_spots());
         if let Ok(drawn) = &drawn {
@@ -1170,6 +1538,30 @@ impl Presenter {
         Ok(())
     }
 
+    /// Hand the renderer the terrain `frame` draws (renderer pass 2 A.7), once per terrain version
+    /// and device (again after a device loss or a warmed renderer's swap), or take it away. A
+    /// refused terrain is logged once and the frame draws without it; a lost device stops the
+    /// frame (`device-lost`).
+    fn terrain(&mut self, frame: &Frame) -> Result<(), RenderError> {
+        let wanted = frame.drawn_terrain();
+        let held = self.resilient.renderer().renderer().terrain_version();
+        let version = wanted.map(crate::Terrain::version);
+        if held == version || (version.is_some() && version == self.terrain_refused) {
+            return Ok(());
+        }
+        let desc = wanted.map(|terrain| terrain_desc(terrain, &self.assets));
+        let (gpu, renderer) = self.resilient.parts_mut();
+        match renderer.renderer_mut().set_terrain(gpu, desc.as_ref().zip(version)) {
+            Ok(()) => Ok(()),
+            Err(error) if error.code() == RenderCode::DeviceLost => Err(error),
+            Err(error) => {
+                self.terrain_refused = version;
+                (self.log)(&format!("terrain refused: {error}: drawing the frame without it"));
+                Ok(())
+            }
+        }
+    }
+
     /// Create on the device every Level-2 extension `frame` uses that is not there yet, and re-send
     /// changed uniforms. A refusal is noted on the handle (and logged once); a lost device stops
     /// the frame (`device-lost`) and leaves the extension to be tried again.
@@ -1244,6 +1636,57 @@ impl Presenter {
         }
     }
 
+    /// Hand the renderer every particle emitter `frame` draws that it does not hold yet (renderer
+    /// pass 2 A.11), with its flipbook's atlas read from the game's assets once per path and grid.
+    /// Uploads go through the resilient renderer, so a device loss or a rebuild replays them under
+    /// the same ids. A refused emitter or atlas is logged once (the emitter is not drawn; one whose
+    /// atlas was refused draws round dots); a lost device stops the frame (`device-lost`).
+    fn hold_particles(&mut self, frame: &Frame) -> Result<(), RenderError> {
+        for particles in frame.drawn_particles() {
+            if self.particles.tried(particles.version()) {
+                continue;
+            }
+            let mut desc = particles.desc();
+            if let Some(book) = particles.flipbook() {
+                let atlas = self.particle_atlas(book)?;
+                desc.flipbook = atlas.map(|atlas| genex_render::particles::Flipbook { atlas, frames: book.frames, cycles: book.cycles, blend: book.blend });
+            }
+            let id = match self.resilient.add_emitter(desc) {
+                Ok(id) => Some(id),
+                Err(error) if error.code() == RenderCode::DeviceLost => return Err(error),
+                Err(error) => {
+                    (self.log)(&format!("particles refused: {error}: drawing the frame without them"));
+                    None
+                }
+            };
+            self.particles.emitters.push((particles.version(), id));
+        }
+        Ok(())
+    }
+
+    /// The renderer's atlas for `book`, uploaded on first use; None (logged) when its image is
+    /// missing or refused.
+    fn particle_atlas(&mut self, book: &crate::ParticleFlipbook) -> Result<Option<genex_render::particles::ParticleAtlasId>, RenderError> {
+        let key = (book.atlas().to_owned(), book.grid());
+        if let Some((_, id)) = self.particles.atlases.iter().find(|(held, _)| *held == key) {
+            return Ok(*id);
+        }
+        let log = self.log;
+        let image = read_texture(book.atlas(), &*self.source, &mut |line| log(line));
+        let (columns, rows) = book.grid();
+        let id = match image.map(|image| self.resilient.add_particle_atlas(genex_render::particles::ParticleAtlas { image, columns, rows })) {
+            Some(Ok(id)) => Some(id),
+            Some(Err(error)) if error.code() == RenderCode::DeviceLost => return Err(error),
+            Some(Err(error)) => {
+                log(&format!("particle atlas {:?} refused: {error}: drawing round particles", book.atlas()));
+                None
+            }
+            None => None,
+        };
+        self.particles.atlases.push((key, id));
+        Ok(id)
+    }
+
     fn material_id(&self, key: Option<GpuKey>) -> Option<CustomMaterialId> {
         self.level2.materials[held_at(&self.level2.materials, &key?)?].id
     }
@@ -1257,6 +1700,9 @@ impl Presenter {
         let (mut immediate, mut drawn) = world_frame(frame, camera, &self.assets);
         for draw in frame.custom_draws() {
             immediate.tag(&draw.tag);
+            // Its draw id keys its motion under TAA as a plain draw's does (renderer pass 2,
+            // P2-0.8b T-04); an id-less one matches by its mesh and order.
+            immediate.id(draw.id);
             let triangles = self.push_custom(&mut immediate, &mut drawn, draw);
             note_triangles(&mut drawn, &draw.tag, triangles);
         }
@@ -1307,12 +1753,38 @@ impl Drop for Presenter {
 
 /// What the presenter hands the renderer for one frame's `choice` drawn as `class`: the same on the
 /// frame thread and a warm-up thread.
-fn set_choice(renderer: &mut genex_render::Renderer, choice: &FrameChoice, class: DeviceClass) {
+fn set_choice(frame_renderer: &mut genex_render::FrameRenderer, choice: &FrameChoice, class: DeviceClass) {
+    // The particles a frame of the class draws at most (renderer pass 2 A.11).
+    frame_renderer.set_particle_cap(genex_render::particles::particle_cap(class));
+    let renderer = frame_renderer.renderer_mut();
     renderer.set_quality(&choice.quality);
     renderer.set_render_scale(choice.scale);
     renderer.set_scene_format(choice.scene_format);
     renderer.set_look(choice.look);
     renderer.set_device_class(class);
+}
+
+/// The particle emitters (by [`crate::Particles::version`]) and flipbook atlases (by asset path and
+/// grid) the presenter handed the renderer, each with its id or None where it was refused.
+#[derive(Debug, Default)]
+struct ParticlesHeld {
+    emitters: Vec<(u64, Option<genex_render::particles::EmitterId>)>,
+    atlases: Vec<(AtlasKey, Option<genex_render::particles::ParticleAtlasId>)>,
+}
+
+/// A flipbook atlas's key: its asset path and its grid (columns, rows).
+type AtlasKey = (String, (u32, u32));
+
+impl ParticlesHeld {
+    /// Whether emitter `version` was handed over (held or refused).
+    fn tried(&self, version: u64) -> bool {
+        self.emitters.iter().any(|(held, _)| *held == version)
+    }
+
+    /// The renderer's id of emitter `version`, if it holds it.
+    fn emitter(&self, version: u64) -> Option<genex_render::particles::EmitterId> {
+        self.emitters.iter().find(|(held, _)| *held == version).and_then(|(_, id)| *id)
+    }
 }
 
 /// The display intervals noted since the last Live frame: what dynamic resolution reads as the
@@ -1477,6 +1949,36 @@ fn surface(material: &crate::Material, tint: Color, assets: &AssetCache) -> Mate
     surface
 }
 
+/// The renderer's decal for a facade decal (renderer pass 2 A.10), its maps as `assets` loaded
+/// them: `None` while a base-colour texture it names is not loaded (missing, refused or still
+/// loading), since that texture is its shape; a missing normal or ORM texture leaves that map out.
+/// The renderer holds or drops hostile values (`decals::Decal::held`).
+fn decal_of(decal: &crate::Decal, assets: &AssetCache) -> Option<genex_render::decals::Decal> {
+    let texture = |path: Option<&str>, kind: TextureKind| path.and_then(|path| assets.texture(path, kind));
+    let albedo = texture(decal.base_texture(), TextureKind::Color);
+    if decal.base_texture().is_some() && albedo.is_none() {
+        return None;
+    }
+    let linear = |c: u8| genex_render::texture::srgb_to_linear(c);
+    let color = decal.color;
+    Some(genex_render::decals::Decal {
+        model: decal.transform.to_cols_array(),
+        albedo,
+        normal: texture(decal.normal_texture(), TextureKind::Normal),
+        orm: texture(decal.orm_texture(), TextureKind::Data),
+        color: [linear(color.r), linear(color.g), linear(color.b)],
+        opacity: decal.opacity * f32::from(color.a) / 255.0,
+        albedo_mix: decal.albedo_mix,
+        normal_strength: decal.normal_strength,
+        flatten: decal.flatten,
+        roughness: decal.roughness,
+        metallic: decal.metallic,
+        occlusion: decal.occlusion,
+        depth_fade: decal.depth_fade,
+        angle_fade: decal.angle_fade,
+    })
+}
+
 /// Whether a local light at `position` reaching `range` can light anything: a finite position and
 /// a positive finite range.
 fn usable_light(position: glam::Vec3, range: f32) -> bool {
@@ -1529,6 +2031,30 @@ fn lighting(lights: &Lights) -> Lighting {
         .map(|light| PointLight { position: light.position.to_array(), range: light.range, color: rgb(light.color), intensity: intensity(light.intensity) })
         .collect();
     lighting.spots = lights.spots.iter().filter(|light| usable_light(light.position, light.range)).map(spot_light).collect();
+    // The renderer holds or drops a hostile probe (`probes::ReflectionProbe::held`).
+    lighting.reflection_probes = lights
+        .reflection_probes
+        .iter()
+        .map(|probe| genex_render::probes::ReflectionProbe {
+            min: probe.min.to_array(),
+            max: probe.max.to_array(),
+            capture: probe.capture.to_array(),
+            blend: probe.blend,
+            intensity: probe.intensity,
+        })
+        .collect();
+    // The renderer holds or drops a hostile volume (`irradiance::IrradianceVolume::held`).
+    lighting.irradiance_volumes = lights
+        .irradiance_volumes
+        .iter()
+        .map(|volume| genex_render::irradiance::IrradianceVolume {
+            min: volume.min.to_array(),
+            max: volume.max.to_array(),
+            cells: volume.cells,
+            blend: volume.blend,
+            intensity: volume.intensity,
+        })
+        .collect();
     lighting
 }
 
@@ -1539,6 +2065,8 @@ trait WorldSink {
     /// draw to its last frame by it (RQ5.1).
     fn id(&mut self, id: Option<DrawId>);
     fn mesh(&mut self, mesh: MeshId, model: [f32; 16], material: Material);
+    /// A retained instance group drawing with `material` (renderer pass 2 A.0b).
+    fn group(&mut self, group: &genex_render::retained::InstanceGroup, material: Material);
     fn line(&mut self, from: [f32; 3], to: [f32; 3], color: [u8; 4]);
     fn lighting(&mut self) -> &mut Lighting;
 }
@@ -1552,6 +2080,10 @@ impl WorldSink for Scene {
 
     fn mesh(&mut self, mesh: MeshId, model: [f32; 16], material: Material) {
         self.draw(mesh, model, material);
+    }
+
+    fn group(&mut self, group: &genex_render::retained::InstanceGroup, material: Material) {
+        self.draw_group_with(group, material);
     }
 
     fn line(&mut self, from: [f32; 3], to: [f32; 3], color: [u8; 4]) {
@@ -1578,6 +2110,10 @@ impl WorldSink for ImmediateFrame {
         ImmediateFrame::mesh(self, mesh, model, material);
     }
 
+    fn group(&mut self, group: &genex_render::retained::InstanceGroup, material: Material) {
+        ImmediateFrame::group(self, group, material);
+    }
+
     fn line(&mut self, from: [f32; 3], to: [f32; 3], color: [u8; 4]) {
         ImmediateFrame::line(self, from, to, color);
     }
@@ -1592,6 +2128,7 @@ impl WorldSink for ImmediateFrame {
 /// not loaded yet) draw the missing-asset checker cube under their transform.
 fn write_world(sink: &mut impl WorldSink, frame: &Frame, assets: &AssetCache, drawn: &mut Drawn) {
     *sink.lighting() = lighting(frame.lights());
+    sink.lighting().decals = frame.decals().iter().filter_map(|decal| decal_of(decal, assets)).collect();
     for draw in frame.draws() {
         sink.tag(&draw.tag);
         sink.id(draw.id);
@@ -1631,6 +2168,41 @@ fn push_shape(sink: &mut impl WorldSink, assets: &AssetCache, missing: &mut Vec<
         Shape::Line { from, to, color } => {
             sink.line(from.to_array(), to.to_array(), rgba(*color));
             0
+        }
+        Shape::Group { group } => push_group(sink, assets, missing, group),
+    }
+}
+
+/// Add one retained instance group to `sink` (renderer pass 2 A.0b): the renderer's group of
+/// each mesh it draws, with the material the matching single draw would take; answers its
+/// triangles (every transform's).
+fn push_group(sink: &mut impl WorldSink, assets: &AssetCache, missing: &mut Vec<String>, group: &crate::InstanceGroup) -> u32 {
+    let count = group.len() as u32;
+    let white = crate::Material::color(Color::WHITE);
+    let own = || surface(group.material().unwrap_or(&white), Color::WHITE, assets);
+    match group.shape() {
+        crate::GroupShape::Cube => {
+            sink.group(&group.render_group(MeshId::CUBE), own());
+            CUBE_TRIANGLES.saturating_mul(count)
+        }
+        crate::GroupShape::Sphere => {
+            sink.group(&group.render_group(MeshId::SPHERE), own());
+            SPHERE_TRIANGLES.saturating_mul(count)
+        }
+        crate::GroupShape::Model(model) => {
+            let Some(loaded) = model.path().and_then(|path| assets.model(path)) else {
+                sink.group(&group.render_group(MeshId::CUBE), Material::missing());
+                note_missing(missing, model.path());
+                return CUBE_TRIANGLES.saturating_mul(count);
+            };
+            for part in &loaded.parts {
+                let drawn_with = match (group.material(), &part.material) {
+                    (None, Some(glb)) => glb.to_material(rgba(Color::WHITE)),
+                    _ => own(),
+                };
+                sink.group(&group.render_group(part.mesh), drawn_with);
+            }
+            loaded.triangles.saturating_mul(count)
         }
     }
 }

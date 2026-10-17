@@ -129,10 +129,15 @@ fn sun() -> Vec3 {
 /// with the renderer's conventions (right-handed look-at, D3D depth 0..1, near plane `REACH`
 /// beyond the box towards the sun).
 fn light_view_proj(center: Vec3, half: f32) -> Mat4 {
-    let sun = sun();
-    let eye = center + sun * (half + REACH);
+    light_frustum(center, half, sun(), REACH, 2.0 * half + REACH)
+}
+
+/// [`light_view_proj`] under the sun `sun`, its eye `reach` beyond the box towards the sun and its
+/// light depth `depth` long.
+fn light_frustum(center: Vec3, half: f32, sun: Vec3, reach: f32, depth: f32) -> Mat4 {
+    let eye = center + sun * (half + reach);
     let view = glam::camera::rh::view::look_at_mat4(eye, center, Vec3::Y);
-    let proj = glam::camera::rh::proj::directx::orthographic(-half, half, -half, half, 0.0, 2.0 * half + REACH);
+    let proj = glam::camera::rh::proj::directx::orthographic(-half, half, -half, half, 0.0, depth);
     proj * view
 }
 
@@ -175,6 +180,12 @@ fn fs_caster(@builtin(position) p: vec4<f32>) -> CasterOut {
     if d.y < 0.0 {
         t = min(t, clamp(-origin.y / d.y, 0.0, 1.0));
     }
+    if caster.size.z > 0.5 {
+        // The open ground alone.
+        var bare: CasterOut;
+        bare.depth = t;
+        return bare;
+    }
     let inv = vec3<f32>(1.0 / away_from_zero(d.x), 1.0 / away_from_zero(d.y), 1.0 / away_from_zero(d.z));
     let t0 = (vec3<f32>(-POLE_HALF, 0.0, -POLE_HALF) - origin) * inv;
     let t1 = (vec3<f32>(POLE_HALF, POLE_HEIGHT, POLE_HALF) - origin) * inv;
@@ -196,11 +207,20 @@ struct ShadowMap {
     _texture: wgpu::Texture,
     array: wgpu::TextureView,
     sampler: wgpu::Sampler,
+    /// The renderer's non-filtering sampler PCSS's blocker search gathers through (frame binding 18).
+    point: wgpu::Sampler,
     matrices: Vec<Mat4>,
     texel_world: Vec<f32>,
 }
 
 fn shadow_map(gpu: &Gpu, cascades: &[([f32; 3], f32)], px: u32) -> ShadowMap {
+    let layers: Vec<(Mat4, f32)> = cascades.iter().map(|(center, half)| (light_view_proj(Vec3::from(*center), *half), *half)).collect();
+    shadow_map_of(gpu, &layers, px, true)
+}
+
+/// The analytic depth array of `cascades` (each a light view-projection and its half extent), the
+/// pole standing on the ground when `pole`, the open ground alone otherwise.
+fn shadow_map_of(gpu: &Gpu, cascades: &[(Mat4, f32)], px: u32, pole: bool) -> ShadowMap {
     let layers = cascades.len() as u32;
     let texture = gpu.device.create_texture(&wgpu::TextureDescriptor {
         label: Some("analytic shadow map"),
@@ -230,11 +250,11 @@ fn shadow_map(gpu: &Gpu, cascades: &[([f32; 3], f32)], px: u32) -> ShadowMap {
         multiview_mask: None,
         cache: None,
     });
-    let matrices: Vec<Mat4> = cascades.iter().map(|(center, half)| light_view_proj(Vec3::from(*center), *half)).collect();
+    let matrices: Vec<Mat4> = cascades.iter().map(|(matrix, _)| *matrix).collect();
     let mut encoder = gpu.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("caster") });
     for (layer, matrix) in matrices.iter().enumerate() {
         let mut uniform = matrix.inverse().to_cols_array().to_vec();
-        uniform.extend([px as f32, px as f32, 0.0, 0.0]);
+        uniform.extend([px as f32, px as f32, if pole { 0.0 } else { 1.0 }, 0.0]);
         let buffer = buffer_with(gpu, "caster", wgpu::BufferUsages::UNIFORM, bytemuck::cast_slice(&uniform));
         let group = gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("caster"),
@@ -273,13 +293,18 @@ fn shadow_map(gpu: &Gpu, cascades: &[([f32; 3], f32)], px: u32) -> ShadowMap {
         compare: Some(wgpu::CompareFunction::LessEqual),
         ..Default::default()
     });
+    let point = gpu.device.create_sampler(&wgpu::SamplerDescriptor { label: Some("shadow blockers"), ..Default::default() });
     let texel_world = cascades.iter().map(|(_, half)| 2.0 * half / px as f32).collect();
-    ShadowMap { _texture: texture, array, sampler, matrices, texel_world }
+    ShadowMap { _texture: texture, array, sampler, point, matrices, texel_world }
 }
 
 /// The forward frame over `map` with cascades ending at `ends`, the sun `radius_deg` wide.
 fn frame(map: &ShadowMap, camera: [f32; 3], forward: [f32; 3], ends: [f32; 4], radius_deg: f32, px: u32) -> GpuFrame {
-    let sun = sun();
+    frame_lit(map, camera, forward, ends, radius_deg, px, sun())
+}
+
+/// [`frame`] under the sun `sun` (the direction the map was drawn with).
+fn frame_lit(map: &ShadowMap, camera: [f32; 3], forward: [f32; 3], ends: [f32; 4], radius_deg: f32, px: u32, sun: Vec3) -> GpuFrame {
     let drawn = map.matrices.len();
     let lane = |values: &[f32], c: usize| if c < drawn { values[c] } else { 0.0 };
     let offsets: Vec<f32> = map.texel_world.iter().map(|texel| texel * NORMAL_OFFSET_TEXELS).collect();
@@ -303,6 +328,8 @@ fn frame(map: &ShadowMap, camera: [f32; 3], forward: [f32; 3], ends: [f32; 4], r
         cascade_texels: std::array::from_fn(|c| lane(&map.texel_world, c)),
         shadow_soft: [libm::tanf(radius), 0.0, 0.0, 0.0],
         shadow_counts: [drawn as u32, 0, 0, 0],
+        // Each cascade's comparison bias, as `scene::write_cascades` fills it.
+        cascade_bias: [BIAS; 4],
         ..GpuFrame::default()
     }
 }
@@ -420,6 +447,7 @@ fn visibility(gpu: &Gpu, map: &ShadowMap, frame: &GpuFrame, run: Run, rows: &[([
             wgpu::BindGroupEntry { binding: 0, resource: frame_buffer.as_entire_binding() },
             wgpu::BindGroupEntry { binding: 6, resource: wgpu::BindingResource::TextureView(&map.array) },
             wgpu::BindGroupEntry { binding: 7, resource: wgpu::BindingResource::Sampler(&map.sampler) },
+            wgpu::BindGroupEntry { binding: 18, resource: wgpu::BindingResource::Sampler(&map.point) },
             wgpu::BindGroupEntry { binding: 40, resource: storage.as_entire_binding() },
             wgpu::BindGroupEntry { binding: 41, resource: params.as_entire_binding() },
         ],
@@ -546,7 +574,7 @@ fn metal_a_penumbra_wider_than_a_fine_cascades_kernel_keeps_its_width_across_the
     let map = two_cascades(&gpu);
     let wide_sun = 5.0;
     let fine_cap = 16.0 * map.texel_world[0];
-    for (filter, search) in [(ShadowFilter::Pcss, 16), (ShadowFilter::PcssLite, 8)] {
+    for (filter, search) in [(ShadowFilter::Pcss, 8), (ShadowFilter::PcssLite, 6)] {
         let profile = |ends| {
             let frame = frame(&map, CAMERA, [0.0, -1.0, 0.0], ends, wide_sun, MAP_PX);
             visibility(&gpu, &map, &frame, Run::filter(filter), &edge_line(4.0))
@@ -617,37 +645,487 @@ fn metal_without_taa_two_frames_of_a_static_scene_are_byte_identical() {
     assert!(first.iter().zip(&again).all(|(a, b)| a.to_bits() == b.to_bits()), "under TAA a frame index is the same bits every time");
 }
 
+/// `frame` with every cascade's normal offset cascade 0's, so a lookup in either cascade starts
+/// from the same point (the band's own offset is then that one too).
+fn one_offset(mut frame: GpuFrame) -> GpuFrame {
+    let offset = frame.cascade_offsets[0];
+    let drawn = frame.shadow_counts[0] as usize;
+    for c in 0..drawn {
+        frame.cascade_offsets[c] = offset;
+    }
+    frame.shadow_params[1] = offset;
+    frame.shadow_params[2] = if drawn > 1 { offset } else { 0.0 };
+    frame
+}
+
+/// The ground line of [`edge_line`], each row on its own pixel (a pixel's noise turns its taps).
+fn edge_line_spread(behind: f32) -> Vec<([f32; 3], [f32; 2])> {
+    edge_line(behind).into_iter().enumerate().map(|(i, (point, _))| (point, [i as f32, 7.0])).collect()
+}
+
+/// Cascade ends that put the ground (view depth 10) `fade` of the way through cascade 0's blend
+/// band of `band` (negative: before it; above 1: past cascade 0's end, in cascade 1).
+fn ends_at_fade(fade: f32, band: f32) -> [f32; 4] {
+    // fade = (10 - (end - band end)) / (band end), so end = 10 / (1 - band + band fade).
+    [GROUND_DEPTH / (1.0 - band + band * fade), 200.0, 0.0, 0.0]
+}
+
+/// The filters each preset draws with, and whether TAA turns their taps there: phones' hardware
+/// tap, low and medium's 3x3 PCF, the 5x5 PCF a game may ask for, high's PCSS-lite and ultra's PCSS.
+const PRESET_FILTERS: [(ShadowFilter, bool); 5] = [
+    (ShadowFilter::Hardware2x2, false),
+    (ShadowFilter::Pcf3x3, false),
+    (ShadowFilter::Pcf5x5, false),
+    (ShadowFilter::PcssLite, true),
+    (ShadowFilter::Pcss, true),
+];
+
+/// `Run::filter(filter)`, turning with the frame when `temporal`.
+fn preset_run(filter: ShadowFilter, temporal: bool) -> Run {
+    let run = Run::filter(filter);
+    if temporal { run.temporal() } else { run }
+}
+
+/// Renderer pass 2, P2-0.3 (SH-02): inside the cascade blend band every quality lerps the two
+/// cascades' lookups, under TAA too. Under TAA the band dithered one cascade per pixel with the
+/// noise that turned the taps, so the history held two cascades' edges and a ring boiled at each
+/// split on a moving camera (every reference engine lerps: Bevy, Godot, MJP). Flipped (named in the
+/// PR): "under TAA each pixel takes one cascade's lookup" now expects the lerp.
 #[test]
 #[ignore = "GPU: run with -- --ignored metal"]
-fn metal_the_cascade_band_lerps_without_taa_and_dithers_under_it() {
+fn metal_the_cascade_band_lerps_both_lookups_with_or_without_taa() {
     let _shared = gpu_shared();
     let Some(gpu) = gpu() else { return };
     let map = two_cascades(&gpu);
-    let rows = edge_line(3.0);
+    let rows = edge_line_spread(3.0);
     let band = 0.1;
-    // Cascade 0 ends at 10.5 and its band starts at 9.45: the ground (depth 10) is 52 % through it.
-    let ends = [10.5, 200.0, 0.0, 0.0];
-    let fade = (GROUND_DEPTH - (ends[0] - band * ends[0])) / (band * ends[0]);
-    let at = |ends: [f32; 4], run: Run| visibility(&gpu, &map, &frame(&map, CAMERA, [0.0, -1.0, 0.0], ends, SUN_RADIUS_DEG, MAP_PX), run, &rows);
-    let pcss = Run::filter(ShadowFilter::Pcss);
-    let near = at(IN_NEAR, pcss);
-    let far = at(IN_FAR, pcss);
-    let blended = at(ends, pcss.with_context(0, band));
-    for ((n, f), b) in near.iter().zip(&far).zip(&blended) {
-        let want = n + (f - n) * fade;
-        assert!((b - want).abs() <= 1e-5, "the band lerps the two cascades {fade}: {n} .. {f} gave {b}, want {want}");
+    let fade = 0.52;
+    let at = |ends: [f32; 4], run: Run| visibility(&gpu, &map, &one_offset(frame(&map, CAMERA, [0.0, -1.0, 0.0], ends, SUN_RADIUS_DEG, MAP_PX)), run, &rows);
+    for (filter, temporal) in PRESET_FILTERS.into_iter().chain([(ShadowFilter::Pcf3x3, true), (ShadowFilter::Pcss, false)]) {
+        let run = preset_run(filter, temporal);
+        let near = at(IN_NEAR, run.with_context(5, 0.0));
+        let far = at(IN_FAR, run.with_context(5, 0.0));
+        let blended = at(ends_at_fade(fade, band), run.with_context(5, band));
+        let worst = near.iter().zip(&far).zip(&blended).map(|((n, f), b)| (b - (n + (f - n) * fade)).abs()).fold(0.0_f32, f32::max);
+        eprintln!("{filter:?} temporal {temporal}: the band strays {worst:.5} from the lerp of the two cascades at {fade}");
+        assert!(worst <= 1e-4, "{filter:?} temporal {temporal}: the band is not the lerp of both cascades' lookups (worst {worst})");
+        let unblended = at(ends_at_fade(fade, band), run.with_context(5, 0.0));
+        assert!(near.iter().zip(&unblended).all(|(a, b)| a.to_bits() == b.to_bits()), "{filter:?}: no band is a hard switch");
     }
-    let unblended = at(ends, pcss.with_context(0, 0.0));
-    assert!(near.iter().zip(&unblended).all(|(a, b)| a.to_bits() == b.to_bits()), "no band is a hard switch");
-    let dithered = at(ends, pcss.temporal().with_context(0, band));
-    let near_t = at(IN_NEAR, pcss.temporal());
-    let far_t = at(IN_FAR, pcss.temporal());
-    let from_far = dithered.iter().zip(&near_t).zip(&far_t).filter(|((d, n), f)| d.to_bits() == f.to_bits() && d.to_bits() != n.to_bits()).count();
-    assert!(
-        dithered.iter().zip(&near_t).zip(&far_t).all(|((d, n), f)| d.to_bits() == n.to_bits() || d.to_bits() == f.to_bits()),
-        "under TAA each pixel takes one cascade's lookup"
+}
+
+/// How far a ground point's visibility may move between two neighbouring band positions of
+/// [`metal_a_ground_points_visibility_changes_smoothly_as_the_cascade_band_sweeps_over_it`] (the
+/// band crosses the point in [`BAND_SWEEP_STEPS`] steps: a lerp moves it by |far - near| / 48).
+const BAND_STEP_MAX: f32 = 0.05;
+const BAND_SWEEP_STEPS: usize = 48;
+
+/// Points across the pole's shadow: its side edge 2.5 m behind it and its tip (the 8 m pole under
+/// the 45 degree sun ends its shadow at z = -8.5), each on its own pixel.
+fn edge_points() -> Vec<([f32; 3], [f32; 2])> {
+    let mut points = Vec::new();
+    for i in 0..24 {
+        points.push(([0.3 + i as f32 * 0.02, 0.0, -3.0], [i as f32, 3.0]));
+        points.push(([-0.2 + i as f32 * 0.02, 0.0, -8.0 - i as f32 * 0.04], [i as f32, 11.0]));
+    }
+    points
+}
+
+/// Renderer pass 2, P2-0.3 (SH-02, the RQ3 continuity rule): as the cascade blend band sweeps
+/// over a ground point, from before the band through it into the next cascade, its visibility
+/// changes in small steps at every preset's filter: no cascade's lookup switches in whole at any
+/// band position (the dither under TAA did: a ring at the split), and the band's start and end
+/// are no steps (one normal offset for both lookups, eased across the band). Under TAA the frame
+/// gives both cascades cascade 0's normal offset, so the lookups stay on their texels and the
+/// filter's per-texel noise holds still while the band moves; the filters without noise sweep
+/// their own offsets.
+#[test]
+#[ignore = "GPU: run with -- --ignored metal"]
+fn metal_a_ground_points_visibility_changes_smoothly_as_the_cascade_band_sweeps_over_it() {
+    let _shared = gpu_shared();
+    let Some(gpu) = gpu() else { return };
+    let map = two_cascades(&gpu);
+    let points = edge_points();
+    let band = 0.1;
+    let mut problems = Vec::new();
+    for (filter, temporal) in PRESET_FILTERS {
+        let run = preset_run(filter, temporal).with_context(9, band);
+        let sweep: Vec<Vec<f32>> = (0..=BAND_SWEEP_STEPS)
+            .map(|k| {
+                let fade = -0.1 + 1.2 * k as f32 / BAND_SWEEP_STEPS as f32;
+                let frame = frame(&map, CAMERA, [0.0, -1.0, 0.0], ends_at_fade(fade, band), SUN_RADIUS_DEG, MAP_PX);
+                visibility(&gpu, &map, &if temporal { one_offset(frame) } else { frame }, run, &points)
+            })
+            .collect();
+        let (mut worst, mut at) = (0.0_f32, (0, 0));
+        for (k, pair) in sweep.windows(2).enumerate() {
+            for (p, (a, b)) in pair[0].iter().zip(&pair[1]).enumerate() {
+                if (b - a).abs() > worst {
+                    worst = (b - a).abs();
+                    at = (k, p);
+                }
+            }
+        }
+        eprintln!("{filter:?} temporal {temporal}: the largest step across the band sweep is {worst:.4} (step {}, point {:?})", at.0, points[at.1].0);
+        if worst > BAND_STEP_MAX {
+            problems.push(format!("{filter:?} temporal {temporal}: a ground point's visibility steps {worst:.3} at sweep step {} ({:?})", at.0, points[at.1].0));
+        }
+    }
+    assert!(problems.is_empty(), "{problems:#?}");
+}
+
+/// Renderer pass 2, P2-0.3 (SH-02, RQ3: a penumbra continuous across cascades within 15 %): in the
+/// middle of the blend band the penumbra's width is the mean of the two cascades' within 15 %, at
+/// every filter a preset blends with, on the pole's side edge and under TAA too. The hardware tap
+/// is measured but not held: no preset blends it (low and the phones switch hard), and its two
+/// one-texel edges sit on two cascades' texel grids.
+#[test]
+#[ignore = "GPU: run with -- --ignored metal"]
+fn metal_in_the_cascade_band_the_penumbra_keeps_its_width_at_every_preset() {
+    let _shared = gpu_shared();
+    let Some(gpu) = gpu() else { return };
+    let map = two_cascades(&gpu);
+    let band = 0.1;
+    let rows = edge_line_spread(4.0);
+    let mut problems = Vec::new();
+    for (filter, temporal) in PRESET_FILTERS {
+        let run = preset_run(filter, temporal).with_context(3, band);
+        let width = |fade: f32| {
+            let frame = frame(&map, CAMERA, [0.0, -1.0, 0.0], ends_at_fade(fade, band), SUN_RADIUS_DEG, MAP_PX);
+            let profile = visibility(&gpu, &map, &frame, run, &rows);
+            let low = crossing(&profile, 0.1).unwrap_or(f32::NAN);
+            let high = profile.iter().rposition(|v| *v < 0.9).map_or(f32::NAN, |i| (i + 1) as f32 * STEP);
+            high - low
+        };
+        let (near, middle, far) = (width(-0.5), width(0.5), width(1.5));
+        let mean = 0.5 * (near + far);
+        let off = (middle - mean).abs() / mean;
+        eprintln!("{filter:?} temporal {temporal}: penumbra {near:.4} m in cascade 0, {middle:.4} m mid-band, {far:.4} m in cascade 1 ({:.1} % off their mean)", off * 100.0);
+        // A NaN width (no crossing found) is a problem too.
+        let held = off.partial_cmp(&0.15).is_some_and(|order| order.is_le());
+        if filter != ShadowFilter::Hardware2x2 && !held {
+            problems.push(format!("{filter:?} temporal {temporal}: mid-band penumbra {middle:.4} m against {near:.4} / {far:.4} m ({:.1} %)", off * 100.0));
+        }
+    }
+    assert!(problems.is_empty(), "{problems:#?}");
+}
+
+/// The probe of PCSS's blocker search in cascade 0 under `run`: each row's search result (x the
+/// distance to the average blocker, y the blocker weight, z the receiver's own tap), as `gx_sun_pcss`
+/// searches with `search` taps.
+fn blocker_search(gpu: &Gpu, map: &ShadowMap, frame: &GpuFrame, run: Run, search: u32, rows: &[([f32; 3], [f32; 2])]) -> Vec<[f32; 3]> {
+    let source = format!(
+        "{}\n{}",
+        genex_render::shaders::FORWARD,
+        r"
+struct SearchProbe {
+    frame_key: u32,
+    search: u32,
+    pad0: u32,
+    pad1: u32,
+}
+@group(0) @binding(40) var<storage, read_write> search_rows: array<vec4<f32>>;
+@group(0) @binding(41) var<uniform> search_probe: SearchProbe;
+
+@compute @workgroup_size(64)
+fn cs_search_probe(@builtin(global_invocation_id) id: vec3<u32>) {
+    let rows = arrayLength(&search_rows) / 2u;
+    if id.x >= rows {
+        return;
+    }
+    let at = id.x * 2u;
+    gx_sun_shadow_context(search_rows[at + 1u].xy, search_probe.frame_key, 0.0);
+    let p = search_rows[at].xyz;
+    let n = vec3<f32>(0.0, 1.0, 0.0);
+    let offset = frame.cascade_offsets[0];
+    let receiver = gx_sun_lookup(p, n, 0u, offset);
+    let reach = min(gx_sun_front_distance(receiver.reference, gx_sun_scale(0u)) * tan(frame.sun_dir.w), GX_PCSS_MAX_WORLD);
+    let searched = gx_sun_pcss_cascade(p, n, 0u, offset, reach);
+    search_rows[at] = vec4<f32>(gx_sun_blockers(p, n, searched, offset, reach, search_probe.search), 0.0);
+}
+"
     );
-    eprintln!("under TAA {from_far} of {} band samples took the next cascade", rows.len());
+    let module = gpu.device.create_shader_module(wgpu::ShaderModuleDescriptor { label: Some("search probe"), source: wgpu::ShaderSource::Wgsl(source.into()) });
+    let constants = run.constants();
+    let pipeline = gpu.device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+        label: Some("search probe"),
+        layout: None,
+        module: &module,
+        entry_point: Some("cs_search_probe"),
+        compilation_options: wgpu::PipelineCompilationOptions { constants: &constants, ..Default::default() },
+        cache: None,
+    });
+    let key = run.context.map_or(0, |context| context.frame_key);
+    let data: Vec<[f32; 4]> = rows.iter().flat_map(|(p, pixel)| [[p[0], p[1], p[2], 0.0], [pixel[0], pixel[1], 0.0, 0.0]]).collect();
+    let storage = buffer_with(gpu, "search rows", wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC, bytemuck::cast_slice(&data));
+    let frame_buffer = buffer_with(gpu, "search frame", wgpu::BufferUsages::UNIFORM, bytemuck::bytes_of(frame));
+    let params = buffer_with(gpu, "search params", wgpu::BufferUsages::UNIFORM, bytemuck::cast_slice(&[key, search, 0, 0]));
+    let group = gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("search probe"),
+        layout: &pipeline.get_bind_group_layout(0),
+        entries: &[
+            wgpu::BindGroupEntry { binding: 0, resource: frame_buffer.as_entire_binding() },
+            wgpu::BindGroupEntry { binding: 6, resource: wgpu::BindingResource::TextureView(&map.array) },
+            wgpu::BindGroupEntry { binding: 18, resource: wgpu::BindingResource::Sampler(&map.point) },
+            wgpu::BindGroupEntry { binding: 40, resource: storage.as_entire_binding() },
+            wgpu::BindGroupEntry { binding: 41, resource: params.as_entire_binding() },
+        ],
+    });
+    let mut encoder = gpu.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("search probe") });
+    {
+        let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor { label: Some("search probe"), timestamp_writes: None });
+        pass.set_pipeline(&pipeline);
+        pass.set_bind_group(0, &group, &[]);
+        pass.dispatch_workgroups((rows.len() as u32).div_ceil(64), 1, 1);
+    }
+    gpu.queue.submit([encoder.finish()]);
+    let bytes = read_buffer(gpu, &storage, (data.len() * 16) as u64);
+    bytemuck::cast_slice::<u8, [f32; 4]>(&bytes).chunks(2).map(|pair| [pair[0][0], pair[0][1], pair[0][2]]).collect()
+}
+
+/// Renderer pass 2, P2-0.3 (SH-03, S3): under TAA, PCSS's blocker search is the same on every
+/// frame. Its taps turned with the frame, and a frame whose taps found no blocker returned the
+/// light whole, so the outer penumbra jumped between 1 and the filtered value from frame to frame
+/// (the boil on swaying leaf shadows). Red on the pre-fix head as the whole-light count: 4 of 750
+/// PCSS-lite rows went lit whole on some TAA frame where the frames' mean was below 0.95. The search
+/// is now one fixed pattern, so the row holds its result bit for bit across TAA frames, and finds a
+/// blocker wherever the penumbra is; the whole-light count is printed (the filter's 16 taps still
+/// turn, and one turn can leave all of them lit at the penumbra's outer edge).
+#[test]
+#[ignore = "GPU: run with -- --ignored metal"]
+fn metal_under_taa_pcss_finds_its_blockers_on_every_frame() {
+    let _shared = gpu_shared();
+    let Some(gpu) = gpu() else { return };
+    let map = two_cascades(&gpu);
+    let rows = edge_line_spread(4.0);
+    let frame = frame(&map, CAMERA, [0.0, -1.0, 0.0], IN_NEAR, SUN_RADIUS_DEG, MAP_PX);
+    let mut problems = Vec::new();
+    for (filter, search) in [(ShadowFilter::Pcss, 8), (ShadowFilter::PcssLite, 6)] {
+        let frames: Vec<Vec<f32>> = (0..16).map(|key| visibility(&gpu, &map, &frame, Run::filter(filter).temporal().with_context(key, 0.0), &rows)).collect();
+        let searches: Vec<Vec<[f32; 3]>> = (0..16).map(|key| blocker_search(&gpu, &map, &frame, Run::filter(filter).temporal().with_context(key, 0.0), search, &rows)).collect();
+        let mut whole = 0;
+        let mut unfound = 0;
+        for r in 0..rows.len() {
+            let values: Vec<f32> = frames.iter().map(|f| f[r]).collect();
+            let most = values.iter().copied().fold(0.0_f32, f32::max);
+            let mean = values.iter().sum::<f32>() / values.len() as f32;
+            whole += usize::from(most >= 0.9999 && mean < 0.95);
+            unfound += usize::from(mean < 0.95 && searches[0][r][1] <= 0.0);
+            if searches.iter().any(|s| s[r].map(f32::to_bits) != searches[0][r].map(f32::to_bits)) {
+                problems.push(format!("{filter:?}: row {r}'s blocker search changes with the frame key"));
+            }
+        }
+        eprintln!("{filter:?} under TAA: {whole} of {} penumbra rows lit whole on some frame (filter turn), {unfound} found no blocker", rows.len());
+        if unfound > 0 {
+            problems.push(format!("{filter:?}: {unfound} penumbra rows find no blocker"));
+        }
+    }
+    problems.truncate(8);
+    assert!(problems.is_empty(), "{problems:#?}");
+}
+
+/// The largest step PCSS's profile may take between two ground points 1 mm apart where it leaves
+/// its penumbra (P2-0.3): a smooth edge 0.3 m wide moves about 0.003 there.
+const PCSS_EDGE_STEP_MAX: f32 = 0.02;
+/// The TAA frames whose mean is the converged picture in the edge row (the filter's taps turn
+/// with each shadow-map texel, so one frame steps by that noise from texel to texel).
+const CONVERGED_FRAMES: u32 = 32;
+
+/// Renderer pass 2, P2-0.3 (SH-03): PCSS leaves its penumbra for the light without a step. Where
+/// the blocker search stopped finding a blocker, PCSS returned the light whole: the outer edge of
+/// every soft shadow ended in a one-step jump from the filtered value to 1 (and the point taps
+/// stepped wherever one crossed a texel). The search weighs each texel it reads, and an empty one
+/// eases into a one-texel filter. Measured on the static pattern (without TAA) on the pre-fix
+/// head, where the static search's edge stepped 0.022 (PCSS-lite); since the fix the filter's taps
+/// turn with the shadow-map texel, so the row holds the mean of TAA frames (what TAA converges to)
+/// and the static picture's own steps are recorded.
+#[test]
+#[ignore = "GPU: run with -- --ignored metal"]
+fn metal_pcss_leaves_its_penumbra_for_the_light_without_a_step() {
+    let _shared = gpu_shared();
+    let Some(gpu) = gpu() else { return };
+    let map = two_cascades(&gpu);
+    let frame = frame(&map, CAMERA, [0.0, -1.0, 0.0], IN_NEAR, SUN_RADIUS_DEG, MAP_PX);
+    let z = -POLE_HALF - 4.0;
+    let rows: Vec<([f32; 3], [f32; 2])> = (0..=900).map(|i| ([0.3 + i as f32 * 0.001, 0.0, z], [0.0, 0.0])).collect();
+    let mut problems = Vec::new();
+    for filter in [ShadowFilter::Pcss, ShadowFilter::PcssLite] {
+        let still = visibility(&gpu, &map, &frame, Run::filter(filter).with_context(0, 0.0), &rows);
+        let still_step = still.windows(2).filter(|pair| pair[0].min(pair[1]) > 0.9).map(|pair| (pair[1] - pair[0]).abs()).fold(0.0_f32, f32::max);
+        eprintln!("{filter:?} without TAA: the largest 1 mm step past 0.9 is {still_step:.4}");
+        let mut profile = vec![0.0_f32; rows.len()];
+        for key in 0..CONVERGED_FRAMES {
+            for (sum, v) in profile.iter_mut().zip(visibility(&gpu, &map, &frame, Run::filter(filter).temporal().with_context(key, 0.0), &rows)) {
+                *sum += v / CONVERGED_FRAMES as f32;
+            }
+        }
+        let (mut worst, mut at) = (0.0_f32, 0);
+        for (i, pair) in profile.windows(2).enumerate() {
+            if pair[0].max(pair[1]) > 0.5 && (pair[1] - pair[0]).abs() > worst {
+                worst = (pair[1] - pair[0]).abs();
+                at = i;
+            }
+        }
+        eprintln!("{filter:?}: the largest 1 mm step in the outer penumbra is {worst:.4} at x {:.3} ({:.4} -> {:.4})", rows[at].0[0], profile[at], profile[at + 1]);
+        if worst > PCSS_EDGE_STEP_MAX {
+            problems.push(format!("{filter:?}: the penumbra steps {worst:.3} at x {:.3}", rows[at].0[0]));
+        }
+    }
+    assert!(problems.is_empty(), "{problems:#?}");
+}
+
+/// The Lakeside's sun (`showcase_game::layout::SUN_DIR`): about 7 degrees up.
+fn low_sun() -> Vec3 {
+    Vec3::new(0.794, 0.122, 0.596).normalize()
+}
+
+/// Renderer pass 2, P2-0.3 (SH-11): open ground under a 7 degree sun takes no shadow of its own at
+/// high and ultra. The ground's light depth climbs 8.1 per unit across the map there, and the
+/// receiver plane held its slope to 4, so PCSS's sun-side taps compared against a reference too
+/// shallow, found the ground itself and shadowed it (noise that turned with the frame under TAA).
+#[test]
+#[ignore = "GPU: run with -- --ignored metal"]
+fn metal_open_ground_under_a_low_sun_takes_no_shadow_of_its_own() {
+    let _shared = gpu_shared();
+    let Some(gpu) = gpu() else { return };
+    let sun = low_sun();
+    let layers: Vec<(Mat4, f32)> = [NEAR_CASCADE, FAR_CASCADE].iter().map(|(center, half)| (light_frustum(Vec3::from(*center), *half, sun, REACH, 2.0 * half + REACH), *half)).collect();
+    let map = shadow_map_of(&gpu, &layers, MAP_PX, false);
+    let rows: Vec<([f32; 3], [f32; 2])> = (0..48 * 48).map(|i| ([-3.0 + (i % 48) as f32 * 0.125, 0.0, -8.0 + (i / 48) as f32 * 0.2], [(i % 48) as f32, (i / 48) as f32])).collect();
+    let mut problems = Vec::new();
+    for radius_deg in [0.6, SUN_RADIUS_DEG] {
+        let frame = frame_lit(&map, CAMERA, [0.0, -1.0, 0.0], IN_NEAR, radius_deg, MAP_PX, sun);
+        for filter in [ShadowFilter::Pcss, ShadowFilter::PcssLite] {
+            for key in 0..4 {
+                let lit = visibility(&gpu, &map, &frame, Run::filter(filter).temporal().with_context(key, 0.0), &rows);
+                let dark = lit.iter().filter(|v| **v < 0.99).count();
+                let least = lit.iter().copied().fold(1.0_f32, f32::min);
+                if key == 0 {
+                    eprintln!("{filter:?}, a {radius_deg} degree sun 7 degrees up: {dark} of {} open-ground rows shadowed (least {least:.3})", rows.len());
+                }
+                if dark > 0 {
+                    problems.push(format!("{filter:?} {radius_deg} deg frame {key}: {dark} open-ground rows shadow themselves (least {least:.3})"));
+                }
+            }
+        }
+    }
+    assert!(problems.is_empty(), "{problems:#?}");
+}
+
+/// Renderer pass 2, P2-0.3 (S4): a receiver past its cascade's far plane compares against what the
+/// map holds instead of reading lit. A far cascade the cadence holds (low and phones) keeps last
+/// frame's light depth, and a fresh receiver past its far plane went fully lit for that frame: a
+/// shadow blinking at 30 Hz on a camera walking downhill. The reference is clamped to the map.
+#[test]
+#[ignore = "GPU: run with -- --ignored metal"]
+fn metal_a_receiver_past_its_cascades_far_plane_still_takes_the_casters_shadow() {
+    let _shared = gpu_shared();
+    let Some(gpu) = gpu() else { return };
+    // A map high over the ground whose light depth (38 m) ends above the pole's shadow at z = -4
+    // (38.9 m from its eye) and holds the pole's top (30.5 m).
+    let center = Vec3::new(0.0, 6.0, -3.0);
+    let short = light_frustum(center, 4.0, sun(), REACH, 38.0);
+    let map = shadow_map_of(&gpu, &[(short, 4.0)], MAP_PX, true);
+    let frame = frame(&map, CAMERA, [0.0, -1.0, 0.0], [100.0, 0.0, 0.0, 0.0], SUN_RADIUS_DEG, MAP_PX);
+    let umbra: Vec<([f32; 3], [f32; 2])> = (0..25).map(|i| ([-0.2 + (i % 5) as f32 * 0.1, 0.0, -4.2 + (i / 5) as f32 * 0.1], [i as f32, 0.0])).collect();
+    let open: Vec<([f32; 3], [f32; 2])> = (0..25).map(|i| ([2.2 + (i % 5) as f32 * 0.1, 0.0, -4.2 + (i / 5) as f32 * 0.1], [i as f32, 1.0])).collect();
+    for point in umbra.iter().chain(&open) {
+        let z = (short * Vec3::from(point.0).extend(1.0)).z;
+        assert!(z > 1.0, "the row {:?} lies past the far plane ({z})", point.0);
+    }
+    let mut problems = Vec::new();
+    for filter in [ShadowFilter::Hardware2x2, ShadowFilter::Pcf3x3, ShadowFilter::Pcf5x5, ShadowFilter::Pcss] {
+        let shade = visibility(&gpu, &map, &frame, Run::filter(filter).with_context(0, 0.0), &umbra);
+        let light = visibility(&gpu, &map, &frame, Run::filter(filter).with_context(0, 0.0), &open);
+        let (darkest_umbra, darkest_light) = (shade.iter().copied().fold(0.0_f32, f32::max), light.iter().copied().fold(1.0_f32, f32::min));
+        eprintln!("{filter:?}: past the far plane the umbra reads at most {darkest_umbra:.3}, the open ground at least {darkest_light:.3}");
+        if darkest_umbra > 0.05 {
+            problems.push(format!("{filter:?}: the pole's umbra past the far plane reads lit ({darkest_umbra:.3})"));
+        }
+        if darkest_light < 0.95 {
+            problems.push(format!("{filter:?}: the open ground past the far plane reads shadowed ({darkest_light:.3})"));
+        }
+    }
+    assert!(problems.is_empty(), "{problems:#?}");
+}
+
+/// The probe of the sun chunk's normal offset: each row's normal (xyz) in, its world offset at
+/// `offset` 1 (xyz) out.
+fn normal_offsets(gpu: &Gpu, frame: &GpuFrame, soft_edges: bool, normals: &[Vec3]) -> Vec<Vec3> {
+    let source = format!(
+        "{}\n{}",
+        genex_render::shaders::FORWARD,
+        r"
+@group(0) @binding(40) var<storage, read_write> offset_rows: array<vec4<f32>>;
+
+@compute @workgroup_size(64)
+fn cs_offset_probe(@builtin(global_invocation_id) id: vec3<u32>) {
+    if id.x >= arrayLength(&offset_rows) {
+        return;
+    }
+    offset_rows[id.x] = vec4<f32>(gx_sun_normal_offset(offset_rows[id.x].xyz, 1.0), 0.0);
+}
+"
+    );
+    let module = gpu.device.create_shader_module(wgpu::ShaderModuleDescriptor { label: Some("offset probe"), source: wgpu::ShaderSource::Wgsl(source.into()) });
+    let constants = [("GX_SUN_SOFT_EDGES", f64::from(u8::from(soft_edges)))];
+    let pipeline = gpu.device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+        label: Some("offset probe"),
+        layout: None,
+        module: &module,
+        entry_point: Some("cs_offset_probe"),
+        compilation_options: wgpu::PipelineCompilationOptions { constants: &constants, ..Default::default() },
+        cache: None,
+    });
+    let data: Vec<[f32; 4]> = normals.iter().map(|n| [n.x, n.y, n.z, 0.0]).collect();
+    let storage = buffer_with(gpu, "offset rows", wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC, bytemuck::cast_slice(&data));
+    let frame_buffer = buffer_with(gpu, "offset frame", wgpu::BufferUsages::UNIFORM, bytemuck::bytes_of(frame));
+    let group = gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("offset probe"),
+        layout: &pipeline.get_bind_group_layout(0),
+        entries: &[wgpu::BindGroupEntry { binding: 0, resource: frame_buffer.as_entire_binding() }, wgpu::BindGroupEntry { binding: 40, resource: storage.as_entire_binding() }],
+    });
+    let mut encoder = gpu.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("offset probe") });
+    {
+        let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor { label: Some("offset probe"), timestamp_writes: None });
+        pass.set_pipeline(&pipeline);
+        pass.set_bind_group(0, &group, &[]);
+        pass.dispatch_workgroups((normals.len() as u32).div_ceil(64), 1, 1);
+    }
+    gpu.queue.submit([encoder.finish()]);
+    let bytes = read_buffer(gpu, &storage, (data.len() * 16) as u64);
+    bytemuck::cast_slice::<u8, [f32; 4]>(&bytes).iter().map(|v| Vec3::new(v[0], v[1], v[2])).collect()
+}
+
+/// Renderer pass 2, P2-0.3 (B5a, SH-06): the lookup's normal offset follows the light, as Godot's
+/// does (`scene_forward_clustered.glsl`, MIT): it is scaled by 1 - N.L, so a surface facing the sun
+/// takes none and a grazing one takes it whole, and its part along the light is removed, so it
+/// moves the lookup across the map and never along the light's depth. The features-off frame
+/// (`GX_SUN_SOFT_EDGES` off) keeps the legacy offset along the normal, bit for bit.
+#[test]
+#[ignore = "GPU: run with -- --ignored metal"]
+fn metal_the_normal_offset_follows_the_light() {
+    let _shared = gpu_shared();
+    let Some(gpu) = gpu() else { return };
+    let map = two_cascades(&gpu);
+    let frame = frame(&map, CAMERA, [0.0, -1.0, 0.0], IN_NEAR, SUN_RADIUS_DEG, MAP_PX);
+    let l = sun();
+    let side = l.cross(Vec3::X).normalize();
+    let normals = [l, side, Vec3::Y, -l, (l + side).normalize()];
+    let soft = normal_offsets(&gpu, &frame, true, &normals);
+    for (n, v) in normals.iter().zip(&soft) {
+        let n_l = n.dot(l).max(0.0);
+        let along = *n * (1.0 - n_l);
+        let want = along - l * l.dot(along);
+        assert!((*v - want).length() <= 1e-5, "the offset of {n:?} is {v:?}, want {want:?}");
+        assert!(v.dot(l).abs() <= 1e-5, "the offset of {n:?} has no part along the light ({})", v.dot(l));
+    }
+    assert!(soft[0].length() <= 1e-6, "a surface facing the sun takes no offset");
+    assert!((soft[1].length() - 1.0).abs() <= 1e-5, "a grazing surface takes the whole offset");
+    let legacy = normal_offsets(&gpu, &frame, false, &normals);
+    for (n, v) in normals.iter().zip(&legacy) {
+        assert_eq!(n.to_array().map(f32::to_bits), v.to_array().map(f32::to_bits), "the features-off offset runs along the normal");
+    }
 }
 
 #[test]
@@ -815,6 +1293,7 @@ fn cost_ms(gpu: &Gpu, map: &ShadowMap, frame: &GpuFrame, filter: ShadowFilter) -
             wgpu::BindGroupEntry { binding: 0, resource: frame_buffer.as_entire_binding() },
             wgpu::BindGroupEntry { binding: 6, resource: wgpu::BindingResource::TextureView(&map.array) },
             wgpu::BindGroupEntry { binding: 7, resource: wgpu::BindingResource::Sampler(&map.sampler) },
+            wgpu::BindGroupEntry { binding: 18, resource: wgpu::BindingResource::Sampler(&map.point) },
             wgpu::BindGroupEntry { binding: 40, resource: out.as_entire_binding() },
             wgpu::BindGroupEntry { binding: 41, resource: grid.as_entire_binding() },
         ],

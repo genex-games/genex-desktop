@@ -38,7 +38,11 @@
 //! verb, which may have moved the view); every other frame encodes nothing and leaves the canvas
 //! alone (WebGPU keeps its last picture), unless the canvas was resized, when the last world target
 //! is presented again. A 120 or 144 Hz display therefore runs the graph once per tick;
-//! [`studio_frame_tally`] answers the frames rendered and repeated.
+//! [`studio_frame_tally`] answers the frames rendered and repeated. Once the device is lost (the
+//! browser reset its GPU) [`studio_frame`] throws an Error whose `code` is `device-lost` (review
+//! F4); the shell flushes the saves and shows its card with that code. The presenter keeps one
+//! spare renderer, so a capture on other samples than Live's and the Live frame after it swap
+//! renderers instead of rebuilding each from the uploads (review F5).
 //!
 //! [`studio_call`] answers every page verb through genex-studio's `Studio::web()` (the C++ web
 //! build's `webCall` envelope and shapes, the shared ops only; `starting` until boot succeeded).
@@ -74,6 +78,7 @@ use genex_render::immediate::Rect2d;
 use genex_render::lights::{PointLight, SpotLight};
 use genex_render::texture::{TextureData, TextureKind};
 use genex_render::device_class::DeviceClass;
+use genex_render::post::grading::{Grading, GradingLut, GradingLutError};
 use genex_render::presets::preset_quality;
 use genex_render::settings::{
     AntiAliasing, Environment, ExposureMode, Fog, Look, Quality, QualityPreset, RenderFeature, SceneFormat, ShadowFilter, ShadowFormat, TextureClass,
@@ -194,6 +199,16 @@ fn render_refusal(error: &RenderError) -> JsValue {
     refusal(error.code().wire(), error)
 }
 
+/// The refusal of a frame on a lost device: an Error whose `code` is `device-lost`, which the
+/// shell reads without parsing the message.
+fn device_lost_refusal() -> JsValue {
+    let code = RenderCode::DeviceLost.wire();
+    let error = refusal(code, "the browser lost the GPU device; reload the page");
+    // Setting a property on a fresh Error object cannot fail; the message still names the code.
+    let _ = js_sys::Reflect::set(&error, &JsValue::from_str("code"), &JsValue::from_str(code));
+    error
+}
+
 fn with_shell<T>(f: impl FnOnce(&mut Shell) -> Result<T, JsValue>) -> Result<T, JsValue> {
     SHELL.with_borrow_mut(|slot| match slot.as_mut() {
         Some(shell) => f(shell),
@@ -296,7 +311,10 @@ async fn open_graphics(canvas: Option<HtmlCanvasElement>, world: [u32; 2], model
     };
     let adapter = instance.request_adapter(&options).await.map_err(|error| no_adapter(error.to_string()))?;
     let gpu = Gpu::open(adapter).await?;
-    let presenter = Presenter::with_gpu(gpu, world, wgpu::Features::empty(), Box::new(no_reopen), Box::new(models), log_to_console)?;
+    let mut presenter = Presenter::with_gpu(gpu, world, wgpu::Features::empty(), Box::new(no_reopen), Box::new(models), log_to_console)?;
+    // One spare renderer (the web has no threads, so nothing is warmed off the frame): a capture on
+    // the pinned profile's samples and Live after it swap instead of rebuilding (review F5).
+    presenter.set_off_thread_changes(true);
     log_uncaptured(presenter.gpu());
     let canvas = match (canvas, surface) {
         (Some(element), Some(surface)) => Some(configure_canvas(presenter.gpu(), element, surface)),
@@ -436,7 +454,7 @@ fn present_to_canvas(graphics: &mut Graphics) {
         _ => return,
     };
     let view = texture.texture.create_view(&wgpu::TextureViewDescriptor::default());
-    screen.presenter.resilient.present(&view, canvas.config.format, size);
+    screen.presenter.present(&view, canvas.config.format, size);
     screen.presenter.gpu().queue.present(texture);
 }
 
@@ -444,7 +462,7 @@ fn present_to_canvas(graphics: &mut Graphics) {
 /// when it ran one (module docs), else leave the canvas's last picture. The frame meter counts
 /// every animation frame. Answers the ticks run; none while a capture is in flight (the frame
 /// neither advances nor draws, and a page verb's drawing is held too ([`studio_call`]), so the
-/// capture reads back the picture it drew).
+/// capture reads back the picture it drew). Throws `device-lost` once the device is lost.
 #[wasm_bindgen]
 pub fn studio_frame(frame_ms: f64) -> Result<u32, JsValue> {
     with_shell(|shell| {
@@ -459,6 +477,9 @@ pub fn studio_frame(frame_ms: f64) -> Result<u32, JsValue> {
             render_world(shell)?;
         }
         let graphics = graphics(shell)?;
+        if graphics.screen.presenter.resilient.is_lost() {
+            return Err(device_lost_refusal());
+        }
         graphics.screen.shown(frame_ms);
         if action == FrameAction::Render || canvas_resized(graphics) {
             present_to_canvas(graphics);
@@ -575,7 +596,26 @@ const CHECK_EFFECT_PRESETS: [(QualityPreset, &str); 4] =
 /// screen-effect constants, and a v2 material binding the effects (AO, contact mask, aerial
 /// volume). The second frame takes AO's history path.
 fn effects_variant(gpu: &Gpu, preset: QualityPreset, class: DeviceClass) -> Result<(), RenderError> {
-    effects_at(gpu, preset, class, 1.0)
+    effects_at(gpu, preset, class, 1.0, None)
+}
+
+/// The graded variants (renderer pass 2 A.2): desktop-high's medium and the low phone's own preset
+/// with the look's parametric grading and an identity 17³ LUT, so the tonemap's `GX_GRADING`
+/// pipelines and their 3D LUT binding are created on the browser's device (the phone's LUT side is
+/// capped at 16).
+const CHECK_GRADING_PRESETS: [(QualityPreset, &str, &str); 2] =
+    [(QualityPreset::Medium, "desktop-high", "grading-desktop"), (QualityPreset::Low, "mobile-low", "grading-mobile-low-class")];
+
+/// The identity LUT's side the graded variants draw.
+const CHECK_GRADING_LUT_SIDE: u32 = 17;
+/// The graded variants' contrast (the showcase grade's).
+const CHECK_GRADING_CONTRAST: f32 = 1.15;
+
+/// [`effects_variant`] under the check's grading.
+fn grading_variant(gpu: &Gpu, preset: QualityPreset, class: DeviceClass) -> Result<(), RenderError> {
+    let refused = |error: GradingLutError| RenderError::refused(RenderCode::DeviceFailed, error.to_string());
+    let lut = GradingLut::identity(CHECK_GRADING_LUT_SIDE).and_then(GradingLut::intern).map_err(refused)?;
+    effects_at(gpu, preset, class, 1.0, Some(Grading::NEUTRAL.with_contrast(CHECK_GRADING_CONTRAST).with_lut(lut, 1.0)))
 }
 
 /// The presets the check draws below scale 1 (RQ5 review): the high phone's medium at its nominal
@@ -586,10 +626,10 @@ const CHECK_UPSCALE_PRESETS: [(QualityPreset, &str, f32); 2] = [(QualityPreset::
 
 /// [`effects_variant`] at render `scale`; an error when FSR1's upscale did not run below 1.
 fn upscale_variant(gpu: &Gpu, preset: QualityPreset, class: DeviceClass, scale: f32) -> Result<(), RenderError> {
-    effects_at(gpu, preset, class, scale)
+    effects_at(gpu, preset, class, scale, None)
 }
 
-fn effects_at(gpu: &Gpu, preset: QualityPreset, class: DeviceClass, scale: f32) -> Result<(), RenderError> {
+fn effects_at(gpu: &Gpu, preset: QualityPreset, class: DeviceClass, scale: f32, grading: Option<Grading>) -> Result<(), RenderError> {
     let quality = preset_quality(preset, class);
     let msaa = genex_render::renderer::landed_samples(quality.anti_aliasing) > 1;
     let mut renderer = FrameRenderer::new(gpu, CHECK_SIZE, CHECK_SIZE, RenderOptions { msaa })?;
@@ -598,7 +638,8 @@ fn effects_at(gpu: &Gpu, preset: QualityPreset, class: DeviceClass, scale: f32) 
     part1.set_device_class(class);
     part1.set_quality(&quality);
     part1.set_render_scale(scale);
-    part1.set_look(part1.look().with_fog(Fog::default().with_density(0.02).with_height(0.3, 0.0)));
+    let fogged = part1.look().with_fog(Fog::default().with_density(0.02).with_height(0.3, 0.0));
+    part1.set_look(grading.map_or(fogged, |grading| fogged.with_grading(grading)));
     part1.set_environment(&Environment::sky());
     let material = renderer.add_material_api(gpu, ABI_V2, SHADED_V2_CHECK, &[], &[])?;
     let mut frame = ImmediateFrame::new(CameraDesc::look_at([0.0, 2.0, 6.0], [0.0, 0.0, 0.0]), [0, 0, 0, 255]);
@@ -749,6 +790,82 @@ fn textures_variant(gpu: &Gpu) -> Result<(), RenderError> {
     renderer.render(gpu, &frame, CullPath::Gpu, None).map(drop)
 }
 
+/// The terrain's pipelines (renderer pass 2 A.7) at `preset` on desktop-high: a small rolling
+/// height field with a flat and a textured layer, two frames (the casters, the prepass with motion
+/// on a TAA preset, the world pass's `Equal` or MSAA variant). With `grass` the flat layer grows a
+/// meadow (A.8): the grass's generation passes, its prepass, motion prepass and world pass, and on
+/// high its cascade casters.
+fn terrain_variant(gpu: &Gpu, preset: QualityPreset, grass: bool) -> Result<(), RenderError> {
+    use genex_render::terrain::{ControlTexel, Heightfield, TerrainDesc, TerrainLayer};
+    let class = DeviceClass::from_wire("desktop-high").ok_or_else(|| RenderError::refused(RenderCode::DeviceFailed, "no desktop-high class"))?;
+    let quality = preset_quality(preset, class);
+    let msaa = genex_render::renderer::landed_samples(quality.anti_aliasing) > 1;
+    let mut renderer = FrameRenderer::new(gpu, CHECK_SIZE, CHECK_SIZE, RenderOptions { msaa })?;
+    let part1 = renderer.renderer_mut();
+    part1.set_scene_format(SceneFormat::Rgba16Float);
+    part1.set_device_class(class);
+    part1.set_quality(&quality);
+    let heights = Heightfield::from_fn((65, 65), [-16.0, -16.0], 0.5, |x, z| 0.8 * ((x * 0.4).floor() - (z * 0.3).floor()).abs().min(3.0))?;
+    let texture = TextureData::rgba8(4, 4, vec![128; 64])?;
+    let albedo = renderer.add_texture(gpu, &texture, TextureKind::Color)?;
+    let data = renderer.add_texture(gpu, &texture, TextureKind::Data)?;
+    let meadow = TerrainLayer::flat([0.2, 0.3, 0.1]);
+    let meadow = if grass { meadow.with_grass(genex_render::foliage::GrassLayer::meadow(1.0, 0.4)) } else { meadow };
+    let layers = vec![meadow, TerrainLayer::textured(Some(albedo), Some(data), 2.0)];
+    let control = (0..65 * 65).map(|i| ControlTexel::blend(0, 1, (i % 255) as u8)).collect();
+    let desc = TerrainDesc { heights, control, layers, look: Default::default() };
+    renderer.renderer_mut().set_terrain(gpu, Some((&desc, 1)))?;
+    let mut frame = ImmediateFrame::new(CameraDesc::look_at([0.0, 4.0, 8.0], [0.0, 0.0, 0.0]), [0, 0, 0, 255]);
+    for tick in 1..=2 {
+        frame.set_tick(tick);
+        renderer.render(gpu, &frame, CullPath::Gpu, None)?;
+    }
+    match renderer.renderer().terrain_stats() {
+        Some(stats) if stats.camera_rows > 0 => {}
+        _ => return Err(RenderError::refused(RenderCode::DeviceFailed, "the terrain drew no row")),
+    }
+    if grass && renderer.renderer().grass_stats().is_none() {
+        return Err(RenderError::refused(RenderCode::DeviceFailed, "the meadow drew no grass"));
+    }
+    Ok(())
+}
+
+/// The look's lens (renderer pass 2 A.9, graph nodes 17a and 17b) on desktop-high's high under TAA:
+/// depth of field and motion blur at the preset's tiers (the ring gather and the reconstruction,
+/// `ring`) or at the other ones (the circular gather and the direct blur), two frames with the
+/// camera moving, so the nodes' pipelines (the reconstruction's block reduction a compute pass over
+/// an `r32uint` storage texture) are created on the browser's device.
+fn lens_variant(gpu: &Gpu, ring: bool) -> Result<(), RenderError> {
+    use genex_render::post::dof::{DepthOfField, DofTier};
+    use genex_render::post::motion_blur::{MotionBlur, MotionBlurTier};
+    let class = DeviceClass::from_wire("desktop-high").ok_or_else(|| RenderError::refused(RenderCode::DeviceFailed, "no desktop-high class"))?;
+    let mut quality = preset_quality(QualityPreset::High, class);
+    if !ring {
+        quality.dof = DofTier::Circular;
+        quality.motion_blur = MotionBlurTier::Direct;
+    }
+    let msaa = genex_render::renderer::landed_samples(quality.anti_aliasing) > 1;
+    let mut renderer = FrameRenderer::new(gpu, CHECK_SIZE, CHECK_SIZE, RenderOptions { msaa })?;
+    let part1 = renderer.renderer_mut();
+    part1.set_scene_format(SceneFormat::Rgba16Float);
+    part1.set_device_class(class);
+    part1.set_quality(&quality);
+    let look = part1.look().with_depth_of_field(DepthOfField::focused(2.0, 1.4)).with_motion_blur(MotionBlur::shutter(0.5));
+    part1.set_look(look);
+    for tick in 1..=2u64 {
+        let x = tick as f32 * 0.5;
+        let mut frame = ImmediateFrame::new(CameraDesc::look_at([x, 2.0, 6.0], [x, 0.0, 0.0]), [0, 0, 0, 255]);
+        frame.cube(translation(0.0, 0.5, 0.0), [200, 60, 50, 255]);
+        frame.set_tick(tick);
+        renderer.render(gpu, &frame, CullPath::Gpu, None)?;
+    }
+    let held = |label: &str| renderer.renderer().buffer_ledger().entries().iter().any(|entry| entry.label == label && entry.bytes > 0);
+    if !(held(genex_render::budget::DEPTH_OF_FIELD_LABEL) && held(genex_render::budget::MOTION_BLUR_LABEL)) {
+        return Err(RenderError::refused(RenderCode::DeviceFailed, "the lens did not draw"));
+    }
+    Ok(())
+}
+
 /// Every renderer pipeline variant on `gpu`, each under its own scopes: the renderer with and
 /// without MSAA at each check scale, a shadowed HDR frame per shadow filter and layout, the RQ4
 /// screen effects per preset row, the meshlet path with and without occlusion, RQ6's binned lights
@@ -776,6 +893,10 @@ fn pipeline_variants(gpu: &Gpu, inject_invalid: bool) -> Vec<(String, VariantSco
         let name = format!("effects-{}-{wire}", preset.wire());
         variants.push(variant(gpu, name, |gpu| effects_variant(gpu, preset, class)));
     }
+    for (preset, wire, name) in CHECK_GRADING_PRESETS {
+        let Some(class) = DeviceClass::from_wire(wire) else { continue };
+        variants.push(variant(gpu, name.to_owned(), |gpu| grading_variant(gpu, preset, class)));
+    }
     for (preset, wire, scale) in CHECK_UPSCALE_PRESETS {
         let Some(class) = DeviceClass::from_wire(wire) else { continue };
         let name = format!("upscale-{}-{wire}", preset.wire());
@@ -790,6 +911,15 @@ fn pipeline_variants(gpu: &Gpu, inject_invalid: bool) -> Vec<(String, VariantSco
         variants.push(variant(gpu, name, |gpu| lights_variant(gpu, hdr)));
     }
     variants.push(variant(gpu, "textures-classes".to_owned(), textures_variant));
+    for (preset, name) in [(QualityPreset::Medium, "terrain-medium"), (QualityPreset::High, "terrain-high")] {
+        variants.push(variant(gpu, name.to_owned(), move |gpu| terrain_variant(gpu, preset, false)));
+    }
+    for (preset, name) in [(QualityPreset::Medium, "grass-medium"), (QualityPreset::High, "grass-high")] {
+        variants.push(variant(gpu, name.to_owned(), move |gpu| terrain_variant(gpu, preset, true)));
+    }
+    for (ring, name) in [(true, "lens-ring"), (false, "lens-circular")] {
+        variants.push(variant(gpu, name.to_owned(), move |gpu| lens_variant(gpu, ring)));
+    }
     variants.push(variant(gpu, "hud".to_owned(), |gpu| {
         drop(HudPainter::new(&gpu.device, WORLD_FORMAT));
         Ok(())
@@ -841,7 +971,8 @@ fn start_readback(shell: &mut Shell) -> Result<Readback, JsValue> {
         usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
         view_formats: &[],
     });
-    // Nearest-texel present at world size with opaque alpha: the world target's own bytes.
+    // The world target at its own size (the window present's texel-for-texel copy) with opaque
+    // alpha: its own bytes.
     let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
     presenter.resilient.present(&view, WORLD_FORMAT, (width, height));
     let gpu = presenter.gpu();

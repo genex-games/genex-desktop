@@ -6,7 +6,7 @@
 //!   GENEX_REQUIRE_METAL=1 node scripts/toolchains/rust-env.ts -- cargo test -p showcase --release \
 //!     --offline --locked --test perf_matrix -- --ignored metal --nocapture
 //!
-//! Scenes: the five lakeside shots (fixed cameras, one simulation tick per frame from tick 600, drawn
+//! Scenes: the nine lakeside shots (pass 1's five and Lakeside v2's four; fixed cameras, one simulation tick per frame from tick 600, drawn
 //! as the studio draws them), the three bench scenes along their camera paths, and the two stress
 //! scenes ([`showcase_game::stress`]: 1,024 point lights over a plaza; a 1.5 M triangle forest).
 //! Profiles: `off` (today's renderer) and the four presets as the host's device class resolves them.
@@ -41,7 +41,7 @@ use genex_render::device_class::{DeviceClass, FormFactor, PerformanceTier, Targe
 use genex_render::presets::{class_defaults, default_preset, preset_quality, reference_resolution, scene_format};
 use genex_render::renderer::FrameStats;
 use genex_render::scene::{FramePlan, MeshLibrary, MeshletState, Scene};
-use genex_render::settings::{AntiAliasing, ExposureMode, Look, Quality, QualityPreset, RenderFeature, Tonemapper};
+use genex_render::settings::{AntiAliasing, CompensationCurve, ExposureMode, Look, Quality, QualityPreset, RenderFeature, Tonemapper};
 use genex_render::{RenderOptions, Renderer};
 use genex_render::meshlet_cull::CullPass;
 use showcase_game::bench::SceneId;
@@ -257,16 +257,14 @@ fn lakeside_look() -> Look {
     look
 }
 
-/// The look a capture of `cell` draws with: the lakeside's, with the scene's own floor on what
-/// auto exposure meters where it sets one (the dusk plaza, `StressId::ev_min`).
+/// The look a capture of `cell` draws with: the lakeside's, with the scene's own exposure
+/// compensation curve where it sets one (the dusk plaza, `StressId::exposure_curve`).
 fn scene_look(cell: Cell) -> Look {
-    let mut look = lakeside_look();
-    if let Cell::Stress(id) = cell
-        && let Some(ev_min) = id.ev_min()
-    {
-        look.ev_min = ev_min;
+    let look = lakeside_look();
+    match cell {
+        Cell::Stress(id) => id.exposure_curve().map_or(look, |points| look.with_compensation_curve(CompensationCurve::new(points))),
+        _ => look,
     }
-    look
 }
 
 /// GPU timestamps around a frame: a stamped dispatch first in the frame's first encoder and a
@@ -483,7 +481,8 @@ enum Cell {
 impl Cell {
     /// The scenes in report order.
     fn all() -> Vec<Cell> {
-        let mut cells: Vec<Cell> = SHOTS.iter().map(|shot| Cell::Lakeside(shot.name)).collect();
+        // Every named shot: pass 1's five and Lakeside v2's four (the D7 whole-frame rows).
+        let mut cells: Vec<Cell> = showcase_game::world::named_shots().map(|shot| Cell::Lakeside(shot.name)).collect();
         cells.extend(SceneId::ALL.into_iter().map(Cell::Bench));
         cells.extend(StressId::ALL.into_iter().map(Cell::Stress));
         cells
@@ -682,6 +681,60 @@ fn metal_matrix_scenes_by_profiles_by_sizes() {
     let record = merge(head.json, rows, Vec::new());
     write_record(&out_path("matrix", &head.sha, "GENEX_PERF_OUT"), &record);
     println!("{record:#}");
+}
+
+/// Owner decision D7 (2026-10-14): a whole frame within 16.7 ms GPU p95 at desktop-high's high at
+/// 1440p output and at ultra at 4K output on the reference M4 Max, both allowed dynamic resolution.
+const D7_FRAME_BUDGET_MS: f64 = 16.7;
+/// D7's outputs and presets: high at 1440p, ultra at 4K.
+const D7_ROWS: [([u32; 2], QualityPreset); 2] = [([2560, 1440], QualityPreset::High), ([3840, 2160], QualityPreset::Ultra)];
+
+/// D7 (G0 perf-platform, 2026-10-15): at 1440p high and 4K ultra every scene's whole frame fits
+/// [`D7_FRAME_BUDGET_MS`] at scale 1 or at one of the class's dynamic-resolution steps (the highest
+/// that fits is the one DRS settles on). The matrix measured scale 1 alone, where stress-forest's 4K
+/// ultra frame is 17.4 ms. `GENEX_PERF_OUT` receives the record (default `perf/d7-<sha>.json`).
+#[test]
+#[ignore = "needs a GPU: run with --ignored metal"]
+fn metal_d7_whole_frames_fit_at_1440p_high_and_4k_ultra_with_dynamic_resolution() {
+    let Some((gpu, timestamp_problem)) = open() else { return };
+    let Some(stamps) = timestamp_problem.is_none().then(|| Stamps::new(&gpu)) else {
+        eprintln!("skipped: no timestamp queries");
+        return;
+    };
+    let (warmup, frames) = (env_u32("GENEX_PERF_WARMUP", DEFAULT_WARMUP), env_u32("GENEX_PERF_FRAMES", DEFAULT_FRAMES).max(1));
+    let class = classify(gpu.device_facts());
+    let steps: Vec<f32> = class_defaults(class).drs_steps.iter().rev().copied().collect();
+    let (mut rows, mut problems) = (Vec::new(), Vec::new());
+    for (size, preset) in D7_ROWS {
+        for cell in Cell::all().into_iter().filter(|cell| kept(&cell.name())) {
+            let mut measured = Vec::new();
+            let mut fits = None;
+            for scale in &steps {
+                let hundredths = (scale * 100.0).round() as u16;
+                let profile = if hundredths >= 100 { Profile::Preset(preset) } else { Profile::Scaled(preset, hundredths) };
+                let mut subject = cell.build(&gpu, size, profile_options(profile, class));
+                apply_profile(subject.renderer(), profile, class);
+                let mut samples = measure(&gpu, Some(&stamps), warmup, frames, subject.as_mut());
+                let p = p95(&mut samples.gpu);
+                measured.push(json!({ "scale": scale, "gpuP95Ms": p }));
+                if p <= D7_FRAME_BUDGET_MS {
+                    fits = Some(*scale);
+                    break;
+                }
+            }
+            let name = cell.name();
+            eprintln!("D7 {name} {} {size:?}: fits at {fits:?} ({measured:?})", preset.wire());
+            rows.push(json!({ "row": name, "preset": preset.wire(), "size": size, "fitsAtScale": fits, "steps": measured }));
+            if fits.is_none() {
+                problems.push(format!("{name} at {} {size:?} is over {D7_FRAME_BUDGET_MS} ms at every DRS step", preset.wire()));
+            }
+        }
+    }
+    let method = json!({ "warmupFrames": warmup, "measuredFrames": frames, "statistic": "GPU timestamp p95, scale 1 then each DRS step down until one fits", "budgetMs": D7_FRAME_BUDGET_MS, "drsSteps": steps });
+    let head = header(&gpu, &timestamp_problem, "render-perf-d7", method);
+    let record = merge(head.json, rows, Vec::new());
+    write_record(&out_path("d7", &head.sha, "GENEX_PERF_OUT"), &record);
+    assert!(problems.is_empty(), "{problems:#?}");
 }
 
 /// The presenter-path row's limit: Live frames through `Presenter::draw_view` (render settings,
@@ -1624,10 +1677,22 @@ fn the_asset_table_is_read_once_so_a_frame_does_not_read_or_leak_the_glbs_again(
 }
 
 #[test]
-fn the_matrix_names_eleven_scenes_and_five_profiles() {
+fn the_matrix_names_fifteen_scenes_and_five_profiles() {
+    // Nine Lakeside shots (pass 1's five and Lakeside v2's four), three bench and three stress scenes.
     let names: Vec<String> = Cell::all().into_iter().map(Cell::name).collect();
-    assert_eq!(names.len(), 11, "{names:?}");
-    for want in ["lakeside-wide", "lakeside-closeup", "bench-materials", "bench-outdoor", "bench-city", "stress-plaza", "stress-forest", "stress-occlusion"] {
+    assert_eq!(names.len(), 15, "{names:?}");
+    let lakeside = [
+        "lakeside-wide",
+        "lakeside-dock",
+        "lakeside-cabin",
+        "lakeside-forest",
+        "lakeside-closeup",
+        "lakeside-golden-wide",
+        "lakeside-shore",
+        "lakeside-forest-floor",
+        "lakeside-cabin-interior",
+    ];
+    for want in lakeside.into_iter().chain(["bench-materials", "bench-outdoor", "bench-city", "stress-plaza", "stress-forest", "stress-occlusion"]) {
         assert!(names.iter().any(|n| n == want), "no {want} in {names:?}");
     }
     let all: Vec<String> = DEFAULT_PROFILES.split(',').filter_map(Profile::from_name).map(Profile::name).collect();
@@ -1767,4 +1832,76 @@ fn the_overhead_gate_holds_a_meshlet_path_to_five_percent_on_an_immediate_mode_g
     slower_cpu.cpu_p95_ms = 1.3;
     let ratio = compare(&instance, &slower_cpu, GeometryPath::Meshlets).cpu_p95_ratio.expect("a ratio");
     assert!((ratio - 1.3).abs() < 1e-9, "{ratio}");
+}
+
+/// Interleaved runs of each side in the indirect-validation A/B.
+const INDIRECT_AB_RUNS: u32 = 3;
+
+/// The median of `values` (nearest rank).
+fn median(values: &mut [f64]) -> f64 {
+    values.sort_by(f64::total_cmp);
+    values[values.len() / 2]
+}
+
+/// Renderer pass 2 (prior art's "measure first"): what wgpu's indirect-call validation costs on
+/// this adapter. The same scenes at high, 1280x720, on a device with the validation (every game's)
+/// and one without it (`Gpu::headless_without_indirect_validation`, measurement only), interleaved
+/// [`INDIRECT_AB_RUNS`] times; the record keeps each side's median of the per-run p50s (GPU stamps
+/// and whole frame). A record, not a gate: the validation stays on until the renderer proves its
+/// indirect arguments in range.
+#[test]
+#[ignore = "needs a GPU: run with --ignored metal"]
+fn metal_indirect_validation_cost_is_recorded() {
+    let Some((gpu, timestamp_problem)) = open() else { return };
+    let Ok(unvalidated) = Gpu::headless_without_indirect_validation(gpu.device_facts().features & wgpu::Features::TIMESTAMP_QUERY) else { return };
+    let (warmup, frames) = (env_u32("GENEX_PERF_WARMUP", DEFAULT_WARMUP), env_u32("GENEX_PERF_FRAMES", DEFAULT_FRAMES).max(1));
+    let class = classify(gpu.device_facts());
+    let profile = Profile::Preset(QualityPreset::High);
+    let size = [1280, 720];
+    let cells = [Cell::Lakeside("wide"), Cell::Bench(SceneId::City), Cell::Stress(StressId::Forest)];
+    let mut rows = Vec::new();
+    for cell in cells.into_iter().filter(|cell| kept(&cell.name())) {
+        let mut sides: [(Vec<f64>, Vec<f64>); 2] = Default::default();
+        for _ in 0..INDIRECT_AB_RUNS {
+            for (side, device) in [&gpu, &unvalidated].into_iter().enumerate() {
+                let stamps = timestamp_problem.is_none().then(|| Stamps::new(device));
+                let mut subject = cell.build(device, size, profile_options(profile, class));
+                apply_profile(subject.renderer(), profile, class);
+                let mut samples = measure(device, stamps.as_ref(), warmup, frames, subject.as_mut());
+                if !samples.gpu.is_empty() {
+                    sides[side].0.push(percentile_of(&mut samples.gpu, 0.5));
+                }
+                sides[side].1.push(percentile_of(&mut samples.frame, 0.5));
+            }
+        }
+        let [(mut gpu_on, mut frame_on), (mut gpu_off, mut frame_off)] = sides;
+        let gpu_ms = |values: &mut Vec<f64>| if values.is_empty() { Value::Null } else { json!(median(values)) };
+        let row = json!({
+            "row": cell.name(),
+            "profile": profile.name(),
+            "size": size,
+            "runs": INDIRECT_AB_RUNS,
+            "validated": { "gpuP50Ms": gpu_ms(&mut gpu_on), "frameP50Ms": median(&mut frame_on) },
+            "unvalidated": { "gpuP50Ms": gpu_ms(&mut gpu_off), "frameP50Ms": median(&mut frame_off) },
+        });
+        eprintln!("{row}");
+        rows.push(row);
+    }
+    let method = json!({
+        "warmupFrames": warmup,
+        "measuredFrames": frames,
+        "runs": INDIRECT_AB_RUNS,
+        "statistic": "median over interleaved runs of each run's nearest-rank p50",
+        "sides": "validated: InstanceFlags::VALIDATION_INDIRECT_CALL (every game's device); unvalidated: the flag cleared (measurement only)",
+    });
+    let head = header(&gpu, &timestamp_problem, "render-indirect-validation", method);
+    let record = merge(head.json, rows, Vec::new());
+    write_record(&out_path("indirect-validation", &head.sha, "GENEX_PERF_OUT"), &record);
+    println!("{record:#}");
+}
+
+/// The value at fraction `p` of `values` (nearest rank), sorting them.
+fn percentile_of(values: &mut [f64], p: f64) -> f64 {
+    values.sort_by(f64::total_cmp);
+    support::percentile(values, p)
 }

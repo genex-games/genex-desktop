@@ -3,15 +3,16 @@
 //! screen is black. One [`Presentation`] answers both where the image is drawn and which world
 //! pixel a finger is on, so what is seen and what is touched never disagree.
 //!
-//! [`SafePresenter`] draws it. genex-render's `present` letterboxes into a whole target, so with
+//! [`SafePresenter`] draws it through genex's presenter (the world upscaled into the letterbox, the
+//! HUD painted over it at the screen's pixels), which letterboxes into a whole target, so with
 //! insets the shell presents into an offscreen texture of the safe rectangle's size and copies it
 //! into the surface at the rectangle's origin, after clearing the surface black. A surface that
 //! cannot be a copy destination is presented whole, and its presentation has no insets.
 
 use crate::mobile::safe_area::SafeArea;
 use genex_render::letterbox::{Viewport, letterbox};
+use genex::present::Presenter;
 use genex_render::Gpu;
-use genex_render::device_loss::Resilient;
 
 /// Where the game goes in one window: the safe rectangle and the letterbox inside it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -88,18 +89,18 @@ pub struct SafePresenter {
 }
 
 impl SafePresenter {
-    /// Present the renderer's world target into `surface` (its texture, created with `COPY_DST`
+    /// Present the world target and the HUD into `surface` (its texture, created with `COPY_DST`
     /// whenever `presentation` is inset).
-    pub fn present(&mut self, renderer: &mut Resilient, surface: &wgpu::Texture, format: wgpu::TextureFormat, presentation: &Presentation) {
+    pub fn present(&mut self, presenter: &mut Presenter, surface: &wgpu::Texture, format: wgpu::TextureFormat, presentation: &Presentation) {
         let surface_view = surface.create_view(&wgpu::TextureViewDescriptor::default());
         let safe = presentation.safe_rect();
         if !presentation.is_inset() || safe.width == 0 || safe.height == 0 {
-            renderer.present(&surface_view, format, (surface.width(), surface.height()));
+            presenter.present(&surface_view, format, (surface.width(), surface.height()));
             return;
         }
-        let target = self.target_for(renderer.gpu(), (safe.width, safe.height), format);
-        renderer.present(&target.view, format, target.size);
-        let gpu = renderer.gpu();
+        let target = self.target_for(presenter.gpu(), (safe.width, safe.height), format);
+        presenter.present(&target.view, format, target.size);
+        let gpu = presenter.gpu();
         let mut encoder = gpu.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("safe-area") });
         clear_black(&mut encoder, &surface_view);
         encoder.copy_texture_to_texture(

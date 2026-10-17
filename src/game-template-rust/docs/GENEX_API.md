@@ -96,7 +96,13 @@ answer.
 `ctx.pads`, `ctx.pointer` (fraction of the frame, y down), `ctx.look`, `ctx.wheel`,
 `ctx.text`, `ctx.rng` (the only randomness), `ctx.dt` (1/60), `ctx.tick` (ticks since the last
 seed), `ctx.world_size`, and `ctx.save(file, bytes)` / `ctx.load(file)` for the game's own save
-folder (a safe relative name; a folder the studio gives each run).
+folder (a safe relative name; a folder the studio gives each run). On Vulkan the renderer keeps
+its pipeline cache in the same folder (`genex-pipeline-cache/<adapter>.bin`): leave that name alone.
+
+`world_size` is the game's logical size on every screen: touches, the pointer, the HUD's points
+and a capture's default size are measured in it. It is not the resolution: Live frames are drawn
+at the window's own pixels (capped per device class), so a larger window is sharper, never a
+stretched picture, and a capture is drawn at the world size unless a check asks for another.
 
 Edges fire on the first tick after input arrives, so a long step never presses a key twice.
 `Input::key_tap(Key::Space)`, `Input::key_down`, `Input::key_up`, `Input::click_at(x, y)`,
@@ -125,7 +131,9 @@ state in the world and let `on_ui` read it. Give a widget its visible label: che
 by it (`state().hud.items`). While a widget holds the keyboard's focus (Tab to it, or a tapped
 text field), keys are the widget's and the update hooks see none until Escape or a click
 elsewhere; mouse buttons and touches stay the game's. On a phone keep tap targets large and clear
-of the screen edges.
+of the screen edges. The HUD's fonts are text fonts only (letters, digits, punctuation): an emoji
+or icon glyph draws as a box, so draw icons with shapes (`ui.painter()`), and open the settings
+panel with `genex::render::settings_button(ui, "Settings")`, a drawn gear beside its label.
 
 ## Drawing
 
@@ -135,7 +143,12 @@ of the screen edges.
 handle; a missing or unsafe path (absolute, `..`, `.`, backslash) gives a missing model that
 draws as a magenta checker, never a crash. A model the renderer could not load (not in
 `assets/`, or malformed) is named in `state().__render.missingModels`, a key that is absent
-while every model loads. `Camera::look_at(position, target)` places a view;
+while every model loads. The Studio's asset import writes a compressed (Draco, meshopt) or
+quantized (`KHR_mesh_quantization`, gltfpack's default) GLB back plain with float attributes; at
+runtime an attribute stored in any other layout than core glTF's is refused, never misread. A
+model of 512 or more triangles gets simplified levels at import, and each drawn copy far from the
+camera draws a coarser one, in its shadows too.
+`Camera::look_at(position, target)` places a view;
 `Camera { projection: Projection::Orthographic, fovy: 12.0, ..Camera::look_at(position, target) }`
 draws it orthographic, `fovy` then being the view's height in world units (a 2D or isometric
 game: an object keeps its size at any distance).
@@ -150,8 +163,10 @@ defaults (a white sun at 2.5 from `(0.4, 1, 0.3)`, white ambient at 0.08). For a
 shadow map, `frame.spot_light_with(&SpotLight::new(position, direction, range, color, intensity)
 .with_cone_degrees(25.0, 40.0).with_shadow(true))` (`use genex::render::SpotLight;`); the
 device's quality decides how many spots get a shadow map (none on `low` and `medium`, two on
-`high`, four on `ultra`, at most one on a phone), given each frame to the asking spots on screen
-nearest the camera, and the rest light unshadowed. Point and spot lights fade smoothly to nothing
+`high`, four on `ultra`, at most one on a phone), given to the asking spots on screen nearest the
+camera, and the rest light unshadowed. A spot keeps its map until another stays clearly nearer
+for a quarter of a second; the two shadows then cross-fade over a quarter of a second, so none pops
+as the camera moves (a capture gives the maps to the nearest spots). Point and spot lights fade smoothly to nothing
 at their range, so give each the range it needs, not more: a lantern 3 to 4 units, a street lamp
 8. Every preset bins them by screen tile and depth, on the HDR and the LDR scene alike, so a scene
 may hold hundreds; the preset caps how many a frame lights (phones at most 256), nearest first,
@@ -159,7 +174,8 @@ fading the farthest kept ones out so a light crossing the cap never pops. Give a
 `Material::color(Color::rgb(255, 200, 80)).with_metallic(1.0).with_roughness(0.25)`, textures by
 asset path with `.with_base_texture("textures/bark.png")`, drawn with `frame.cube_with`,
 `frame.sphere_with` or `frame.model_with` (a GLB's own materials, emission and textures load by
-themselves). A missing texture leaves the surface untextured; `.with_untextured_color(color)` names
+themselves: an alpha-`MASK` leaf or fence is cut out in its shadow too, a `doubleSided` card
+draws both faces, an occlusion map darkens its crevices' ambient light). A missing texture leaves the surface untextured; `.with_untextured_color(color)` names
 the colour drawn then, so optional downloaded textures keep a stand-in. A texture keeps its resolution up to the size class the device and the game's
 `[render]` choose at load (512 texels on `low`, 1024 on `medium`, 2048 from `high` on desktops;
 phones stop at 1024), so author it at the size it is seen at; the classes stay fixed until the
@@ -171,6 +187,51 @@ surface glows with `Material::emissive(color, strength)` or
 above it the look's bloom haloes it; `.with_emissive_texture(path)` masks it). Emission lights
 the picture, not other surfaces: pair a lantern's glowing glass with a `frame.point_light`, a lit
 window with a `frame.spot_light` shining out of it.
+
+A room's polished floor reflects the sky until it has a reflection probe:
+`frame.reflection_probe(&ReflectionProbe::new(min, max).with_capture(eye).with_blend(0.4))`
+(`use genex::render::ReflectionProbe;`) covers the axis-aligned box `min..max`, the room's inside
+from its floor to its ceiling; glossy surfaces in it reflect a cube captured from `capture`
+(default the box's centre; put it at eye height in the room), each wall seen where it stands,
+fading into the sky and the next probe over `blend` units past the box's faces (overlapping probes
+share their light, so no seam shows). The cube is
+captured from the scene the first frame the probe appears, and again when the sky changes or the
+probe's box or capture point moves: objects that move later are not in it. The device's quality
+gives cubes to the first probes a frame declares (4 on `low`, 8 on `medium`, 16 on `high` and
+`ultra`; 2 to 8 on phones); the rest reflect the sky. Give a probe to each room or courtyard,
+not to open ground (the sky is its reflection already).
+
+A room's surfaces take the sky's diffuse light through its walls, and a white floor stays white
+beside a sunlit red wall, until it has an irradiance volume:
+`frame.irradiance_volume(&IrradianceVolume::new(min, max).with_blend(0.3))`
+(`use genex::render::IrradianceVolume;`) covers the axis-aligned box `min..max` with a grid of
+cells (about one per metre; `.with_cells([x, y, z])`, 1 to 32 each, at most 4096) baked from the
+scene: surfaces in it take their diffuse ambient light from the cells around them, the light the
+room's own walls, floor and lamps bounce, fading into the sky's over `blend` units past the box's
+faces. A cell behind a wall lends a surface no light, so a volume may reach across a wall into the
+next room or the street. The grid is baked a few cells a frame the first time the volume appears
+and fades in once baked, and again when the sky changes or the box or its cells change: objects
+that move later do not change it. Only scenes the sky or an HDR map lights take it. The device's
+quality bakes the first volumes a frame declares (4 on `medium`, 8 on `high` and `ultra`, 2 to 4
+on phones, none on `low` and the low phones); the rest take the sky's light. Give a volume to each
+room or courtyard whose bounced colour matters, alongside its reflection probe.
+
+Posters, puddles, grime and stains are decals, not thin boxes over a surface (which fight it for
+depth and float off it at a distance): `frame.decal(&Decal::on_wall(center, facing, width,
+height).with_base_texture("decals/poster.png"))` (`use genex::render::Decal;`) lays the texture
+onto every surface in a box `width` by `height` centred on the wall, looking out along `facing`
+and reaching 0.2 into and out of the wall (`.with_depth(d)`); `Decal::on_ground(center, width,
+length)` lays one on the ground. The base texture's alpha is its shape (until it loads, the decal
+is not drawn); `.with_color(c)` tints it, `.with_opacity(a)`, `.rotated(radians)` turns it on its
+surface, `.with_normal_texture(path, strength)` and `.with_orm_texture(path)` add its bumps and
+its occlusion-roughness-metallic, `.with_roughness(r)` and `.with_metallic(m)` give the surface
+its sheen, `.with_albedo_mix(0.0)` keeps the surface's colour and `.with_flatten(1.0)` smooths its
+bumps away: a puddle is `Decal::on_ground(..).with_base_texture("decals/puddle.png")
+.with_color(dark).with_roughness(0.04).with_flatten(1.0)`. A decal fades on surfaces turned away
+from it (no streaks down a wall from a floor decal) and towards the box's front and back.
+Overlapping decals blend evenly whatever the order. The device draws the nearest 64 (16 on
+phones), fading the farthest out. Decals reach Level-2 v2 materials too, through `gx_shade_pbr`
+(textures of up to 256 texels there).
 
 Give a frame an environment with `frame.environment(..)` (`use genex::render::Environment;`): it
 lights the scene beyond its lights and is drawn behind it, the same on every device.
@@ -195,6 +256,13 @@ replaces the clear colour; elsewhere the flat ambient light and the clear colour
 both sensible. An environment's light is brighter than a flat ambient: retune
 `ev_compensation` (or the map's `with_intensity`) against a capture after adding one.
 
+The air between is the look's fog, off by default: `[render.look]`'s `fog_*` keys, or in code
+`RenderConfig::new().fog(Fog::default().with_density(0.02).with_height(0.3, 0.0).with_range(0.0, 0.9)
+.with_color([1.0, 1.0, 1.0]))` (`use genex::render::Fog;`). Its in-scatter is the environment's
+horizon light tinted by the colour; under the sky `.with_aerial_perspective(false)` drops the air's
+own scattering. On desktop and web `high` and `ultra` the fog is a lit volume with sun shafts;
+`.with_volumetric(false)` keeps the plain height fog there too.
+
 Sun shadows are a row of the preset table, per device class, drawn as listed (the switch is `shadows`; `genex.toml`'s `[render.shadows]` sets `distance` and `blend_band` on every preset):
 
 | preset | cascades x side | filter | depth, far cascades | reach | cascade blend, end fade |
@@ -205,10 +273,15 @@ Sun shadows are a row of the preset table, per device class, drawn as listed (th
 | `ultra` | 4 x 4096 | PCSS | 32-bit, every frame | 80 units | 10 %, last 10 % |
 
 Neighbouring cascades blend across the band, so no seam shows where one ends, and the shadows fade
-out before the shadow distance instead of stopping on a line. Phones are held to 2 cascades of at
-most 1536 px, no PCSS, 16-bit depth and 40 units, and the far cascade redraws every second frame;
-the weakest phone class draws 512 px cascades. The low desktop tier also draws 16-bit depth with
-the far cascade every second frame. A request never passes a class's caps, so one config is right
+out before the shadow distance instead of stopping on a line. Shadows hold still while the camera
+moves: the band lerps both cascades on every frame, PCSS finds the same blockers on every frame,
+and the depth bias is one world-space distance per cascade, so a contact gap never changes size as
+other objects come into view. At `high` and `ultra` under TAA an opaque surface's soft sun shadow
+comes from a screen mask that averages PCSS over frames and filters it edge-aware, so a penumbra
+holds still on a pan; transparent surfaces filter inline. Phones are held to 2 cascades of at
+most 1536 px, no PCSS, 16-bit depth and 40 units, and the far cascade redraws every second frame
+(and on every frame something in it moves, so a walking character's shadow never steps at half
+rate); the weakest phone class draws 512 px cascades. The low desktop tier also draws 16-bit depth with the far cascade every second frame. A request never passes a class's caps, so one config is right
 on every device. To ask for more at one preset, from code:
 `RenderConfig::new().shadows_at(QualityPreset::High, ShadowConfig::new().cascades(4))`
 (`genex::render::ShadowConfig`: `.cascades(1..=4)`, `.map_size(512..=4096)`,
@@ -248,9 +321,9 @@ up to 2 GiB).
 | preset | anti-aliasing | sun cascades | bloom | AO | contact shadows | lights (shadowed spots) |
 | --- | --- | --- | --- | --- | --- | --- |
 | `low` | MSAA 4x | 2 | off | off | off | 64 (0) |
-| `medium` | MSAA 4x | 2 | 5 mips | half size | off | 256 (0) |
-| `high` | TAA | 3 | 6 mips | half size, history | on | 1024 (2) |
-| `ultra` | TAA, RCAS | 4 | 7 mips | full size | on | 1024 (4) |
+| `medium` | MSAA 4x | 2 | on | half size | off | 256 (0) |
+| `high` | TAA | 3 | on | half size, history | on | 1024 (2) |
+| `ultra` | TAA, RCAS | 4 | on | full size | on | 1024 (4) |
 
 Every preset draws HDR, image-based lighting, the sky and fog; below a render scale of 1 it
 upscales (EASU with RCAS, bilinear on a desktop's `low`). Phones are capped whatever the preset:
@@ -258,22 +331,24 @@ upscales (EASU with RCAS, bilinear on a desktop's `low`). Phones are capped what
 shadows while the world pass is multisampled.
 
 The look maps the linear HDR scene to the display. `tonemapper`: `khronos-neutral`
-(default) keeps authored colours; `agx-punchy` is the filmic choice
-for a bright, high-contrast scene; plain `agx` greys saturated lights,
-so keep it for a muted photographic look; `aces` is a punchier film curve; `none` clamps.
+(default) keeps authored colours; `agx-punchy` is filmic, for a bright,
+high-contrast scene; plain `agx` is
+muted; `aces` is a punchier film curve; `none` clamps.
 `exposure`: `manual` (default) is fixed at `ev_compensation` EV (0 is 1.0, +1 doubles it); `auto`
-meters the scene (`metering`: `average`, `center`, `spot`), holds it within `ev_min..=ev_max`,
+meters the scene (`metering`: `average`, `center`, `spot`, sky-aware `ground`), holds it within `ev_min..=ev_max`,
 adds the compensation and adapts at `adaptation_speed_up` (default 1) and `adaptation_speed_down`
-(3) EV per simulated second. Use `auto` where sky, sun or lights sit next to shade, with
-`ev_compensation = 0.5` for a sunlit scene (1.5 under `agx-punchy`); keep `manual` for flat, stylized colour. The rest of
+(3) EV per simulated second. Use `auto` where light meets shade, with `ev_compensation = 0.5`
+for a sunlit scene; keep `manual` for flat, stylized colour. Keep dusk dark with
+`.exposure_curve(&[(-8.0, -6.0), (0.0, 0.0)])` (metered EV, EV added). The rest of
 `[render.look]` is equal on every preset: `bloom_intensity` (default 0.04, threshold-free),
-`bloom_threshold`, `bloom_radius`; fog lit by the sky, off at `fog_density` 0, shaped by
+`bloom_threshold`, `bloom_radius` (the glow's spread); fog lit by the sky, off at `fog_density` 0, shaped by
 `fog_height_falloff`, `fog_base_height`, `fog_start`, `fog_max_opacity`, `fog_color` and
-`fog_aerial_perspective`; `ao_intensity`, `ao_radius`; `contact_shadow_length`. `fog_color`
-tints what is behind the scene (sky, map or clear colour): keep it white and warm or cool the
-whole frame with `.white_balance([1.0, 0.85, 0.65])` in code instead. The presets choose how an effect is drawn, never how it looks. In code:
-`RenderConfig::new().tonemap(Tonemap::KhronosNeutral).exposure(Exposure::auto().compensation(0.5)).fog(Fog::default().with_density(0.02))`
-(`genex::render`).
+`fog_aerial_perspective`; `ao_intensity`, `ao_radius`; `contact_shadow_length`. Warm the
+frame in code with `.temperature(0.3, 0.0)` or `.white_balance([1.0, 0.85, 0.65])`, not `fog_color`. In code:
+`RenderConfig::new().tonemap(Tonemap::KhronosNeutral).exposure(Exposure::auto().compensation(0.5)).grading(Grading::NEUTRAL.with_contrast(1.15))`
+(`genex::render`; contrast turns about middle grey; `.with_lut(GradingLut::parse_cube(text)?.intern()?, 0.8)` adds a `.cube` LUT).
+Depth of field and motion blur are off by default: `.depth_of_field(DepthOfField::focused(3.0, 2.0))`,
+`.motion_blur(MotionBlur::shutter(0.5))`; a capture draws them when its `lens` asks.
 
 Each feature has a switch; off is its cheaper variant, never a refusal:
 
@@ -289,8 +364,8 @@ Each feature has a switch; off is its cheaper variant, never a refusal:
 | `meshlets`, `occlusion` | clustered big meshes, Hi-Z culling (off on every preset) | the instance path |
 | `texture-quality` | texture size classes above 256 texels (read at load) | 256 texels |
 
-On an M4 Max at 1080p (GPU p50) HDR with tonemap and exposure costs about 0.1 ms, bloom 0.25 to
-0.4, AO 0.45 to 0.6 (1.4 at `ultra`), contact shadows 0.15 to 0.3, TAA 0.2, EASU with RCAS under
+On an M4 Max at 1080p (GPU p50) HDR with tonemap and exposure costs about 0.1 ms,
+bloom 0.25-0.4, AO 0.45-0.6 (1.4 at `ultra`), contact shadows 0.15-0.3, TAA 0.2, EASU with RCAS under
 0.3 and `ultra`'s sun shadows about 0.6.
 
 Quality resolves in order, each layer overriding the one before it key by key: the class's preset
@@ -305,11 +380,13 @@ preset = "auto"             # auto | low | medium | high | ultra
 [render.look]
 tonemapper = "agx-punchy"
 exposure = "auto"
-ev_compensation = 1.5       # EV, within ±10
+ev_compensation = 0.5       # EV, within ±10
 
 [render.shadows]            # every preset, held to each class's caps
 distance = 60               # world units, 10..=400
 blend_band = 0.1            # of each cascade, 0..=0.5
+
+[render.loading]            # see Loading screen
 
 [render.class.mobile-mid]   # what this game wants on older phones
 render_scale = 0.67         # 0.5..=1
@@ -318,17 +395,18 @@ bloom = false               # any switch above
 ```
 
 The build lane compiles `[render]` into every destination. In code,
-`game.render_settings(RenderConfig::new().preset(QualityPreset::Medium))` (a game that sets a
-config in code is not read from `[render]`). Give the person the last word: call
+`game.render_settings(RenderConfig::new().preset(QualityPreset::Medium))` (then `[render]` is not
+read). Give the person the last word: call
 `genex::render::settings_panel(ui)` from `on_ui` (an options menu); it shows the detected class, a
 row of presets (none drawing less than the one below), the render scale and a
 switch per feature (Tab, Space). A preset change rebuilds the renderer for its anti-aliasing (a short
 hitch). A switch this build does not draw is reported off and listed `not-landed`.
 
 TAA jitters the camera by a fraction of a pixel and blends with last frame through motion vectors
-that match each draw to its last frame by id. Name everything that moves on its own with
-`frame.id(key)` (a string or integer that stays with the object) until `frame.end_id()` or the
-next id; unnamed draws match by order within their mesh, which suits still scenery. Call
+that match each draw (`frame.custom` ones too) to its last frame by id. Name everything that moves
+on its own with `frame.id(key)` (a string or integer that stays with the object) until
+`frame.end_id()` or the next id; unnamed draws match by order within their mesh, which suits still
+scenery. Call
 `frame.camera_cut()` on the frame a shot changes (respawn, cutscene, teleport), never every frame:
 TAA, auto exposure and AO history start over. A camera that jumps on its own is a cut already.
 Shaders under TAA: see Custom materials and post passes.
@@ -338,16 +416,17 @@ a v2 source reads the frame's `depth`, `normals`, `motion`, `environment` and `h
 (`RenderInputs::DEPTH`, `NORMALS`, `MOTION`, `ENVIRONMENT`, `HDR_SCENE`) and the look's exposure;
 v1 keeps working but holds the whole frame on the LDR scene. Level-3 passes register at
 `PassStage::BeforeCull`, `AfterPrepass`, `AfterOpaque`, `AfterTransparent`, `PostHdr` (before the
-tonemap, where a grade of your own goes) or `Post`. Bloom, fog, lights, shadows and the environment
+tonemap) or `Post`. Bloom, fog, lights, shadows and the environment
 reach a v2 material as they reach a built-in surface, so prefer the built-ins and the look to a
 custom pass.
 
 Captures are drawn on a pinned profile (a fixed reference class, the game's `[render]`, the verb's
 layer, the nominal scale), ignore the person's saved choice and settle on their own history: TAA a
-whole jitter cycle (8 frames, 16 on `ultra`), auto exposure at once, a custom pass starting empty.
-Each capture's `render` names its preset, class, settings source and settle frames, so one build
-on one adapter gives one picture, with one known exception: under TAA (`high`, `ultra`), two
-captures of one tick can differ by one level in a few pixels (open renderer work). `state().volatile.render` (class, preset, scale, `features`,
+whole jitter cycle (8 frames, 16 on `ultra`) with AO weighing those frames alike, auto exposure at
+once, a custom pass starting empty. Desktop-high and desktop-ultra captures assume that 2 GiB, so
+1440p and 4K captures keep their preset. Each capture's `render` names its preset, class, settings
+source and settle frames: one build on one adapter gives one picture, except that under TAA two
+captures of one tick can differ by one level in a few pixels. `state().volatile.render` (class, preset, scale, `features`,
 `degraded`, `gpuMs`, `cpuMs`) describes the last drawn frame, sits outside the checksum and is
 never compared.
 
@@ -364,6 +443,28 @@ Rules for agents:
   must read as the same game; `{set: {features: {hdr: false}}}` compares the look against the
   old LDR scene. `{set: {preset: null, features: null, deviceClass: null,
   renderScaleLock: null, frameBudgetMs: null}}` gives the game's own settings back.
+
+## Loading screen
+
+From the first paint until the game's first lit frame every destination shows the game's loading
+screen: its title, a spinner that keeps turning while shaders compile, a bar and the stage in words
+(downloading the game, loading assets, starting the graphics, preparing shaders n of m, drawing the
+first frame). The web page, Live, a desktop window and a phone all draw it; a game never draws its own. Style
+it in `genex.toml`, never in code:
+
+```toml
+[render.loading]            # every key optional
+title = "Harbour Nights"    # default: [game] title; 1..=60 characters
+background = "#1b2233"      # sRGB #rrggbb (the default)
+accent = "#7fb2ec"          # the spinner and the bar
+text = "#eceae4"            # the title and the stage
+logo = "ui/logo.png"        # a PNG, JPEG or WebP under assets/ (shown on the web page)
+```
+
+Pick colours from the game's palette with the text readable on the background. A value outside these
+rules is refused `invalid-render-loading`. A first-ever web start compiles every shader (a few
+seconds); later starts take the browser's cache. A start that stops progressing for two minutes
+shows a card with the typed code `boot-timeout` naming the stage it stopped at.
 
 ## Big meshes (meshlets)
 
@@ -401,6 +502,136 @@ so a moving camera never shows a stale hole; a camera cut and a capture start wi
 history. A meshlet picture is not guaranteed bit-equal to the instance path's: where two draws tie in
 depth they may resolve in another order.
 
+## Retained instance groups
+
+Many copies of one shape that rarely move (a forest, rocks, fence posts, a city's buildings)
+draw as a retained group: made once, drawn every frame, its instance rows computed and uploaded
+once instead of every frame (a 50,000-instance scatter drawn one by one writes 8 MB of rows a
+frame; as a group, none after its first frame).
+
+```rust
+// on_reset: keep the group in the world.
+let trees = (0..5000).map(|i| Transform::from_xyz((i % 100) as f32, 0.0, (i / 100) as f32)).collect();
+sim.world.forest = Some(InstanceGroup::models(&pine, trees).expect("a group"));
+// on_draw:
+if let Some(forest) = &sim.world.forest { frame.group(forest); }
+```
+
+`InstanceGroup::cubes(transforms, &material)`, `InstanceGroup::spheres(transforms, &material)`
+(radius 1: scale the transform), `InstanceGroup::models(&model, transforms)` (the GLB's materials)
+and `InstanceGroup::models_with(&model, transforms, &material)` make one; `frame.group(&group)`
+draws it, one logical draw, and the picture is the one drawing each transform with `frame.cube`,
+`frame.sphere` or `frame.model` gives. `group.update(first, &transforms)` (in `on_update`)
+replaces a range and only those rows are uploaded again. A group holds at most
+`INSTANCE_GROUP_MAX` transforms (`too-many-instances`); an update past its end is refused
+(`range-out-of-group`) and changes nothing. A missing model draws the checker at every transform.
+Things that move every tick stay ordinary draws.
+
+## Terrain
+
+Ground that spans the world (hills, a valley, a beach) is a heightmap terrain: made once, drawn
+every frame with `frame.terrain(&terrain)`, one logical draw. The renderer draws it finer near
+the camera and coarser far away (continuous levels of detail that morph, so the ground never
+pops or cracks), casts it into the sun's shadows, and shades it per pixel from up to
+`TERRAIN_LAYER_MAX` (16) material layers.
+
+```rust
+// on_reset: heights every 0.5 m over 192 m, two layers, a control texel per height sample.
+let terrain = Terrain::from_fn([385, 385], vec2(-96.0, -96.0), 0.5, |x, z| hills(x, z))
+    .expect("heights")
+    .with_layers(vec![
+        TerrainLayer::textured("ground/grass-layer.png", "ground/grass-data.png", 2.0).with_fallback(Color::rgb(54, 79, 34)),
+        TerrainLayer::flat(Color::rgb(138, 134, 126)),
+    ])
+    .expect("layers");
+let texels: Vec<TerrainTexel> = samples.iter().map(|s| TerrainTexel::blend(0, 1, s.rockiness)).collect();
+sim.world.ground = Some(terrain.with_control(&texels).expect("a control texel per sample"));
+// on_draw:
+if let Some(ground) = &sim.world.ground { frame.terrain(ground); }
+```
+
+`Terrain::from_fn(samples, origin, spacing, |x, z| height)` or `Terrain::from_heights(samples,
+origin, spacing, &heights)` (row-major, x fastest) make one: at most `TERRAIN_SAMPLES_MAX` (2049)
+samples a side. A layer is `TerrainLayer::textured(albedo, data, tile)` (two files under
+`assets/`: the base colour with the layer's height in alpha, and a data texture with the normal's
+x and y in red and green, roughness in blue and occlusion in alpha, one tile every `tile` metres,
+`.with_tint(..)`, `.with_fallback(..)` for the colour it draws without its texture) or
+`TerrainLayer::flat(color)`. `terrain.with_layers(..)` sets them; without a control map every
+sample is layer 0. `TerrainTexel::layer(i)`, `TerrainTexel::blend(base, overlay, amount)` and
+`.with_wetness(..)` make one control texel per height sample for `terrain.with_control(..)`; the
+renderer blends the texels around each pixel by weight and by each layer's height, and hex-tiles
+the layers on desktop `high` and `ultra` so no tile repeats visibly. `terrain.height(x, z)`
+answers the ground's height anywhere (the same bits on every destination): place things and
+build colliders with it. Refusals change nothing: `terrain-heights-invalid` (a side outside
+2..=2049, a spacing that is not positive, a height that is not a number),
+`terrain-layers-invalid` (no layer, more than 16, a tile that is not positive) and
+`terrain-control-invalid` (a control map of another size, a texel naming a missing layer). A
+frame draws one terrain.
+
+A layer can grow grass: `TerrainLayer::textured(..).with_grass(Grass::meadow(36.0, 0.5))` (blades a
+square metre up to `GRASS_DENSITY_MAX` (150), the tallest blade in metres up to `GRASS_HEIGHT_MAX`
+(2)), with `.with_height(shortest, tallest)`, `.with_width(narrowest, widest)`,
+`.with_colors(root, tip)`, `.with_dry(color, share)`, `.with_flowers(color, share)` and
+`.with_transmission(..)` (how much of the sun behind a blade shines through it). Wherever the
+control map paints that layer, the renderer grows blades around the camera on the GPU (nothing is
+uploaded per blade; a blade belongs to its place, so the field never swims), thinner and wider far
+away and gone past a reach that grows with the preset, swaying in the shared wind (simulated time,
+with its own motion so TAA keeps it sharp), shadowed by the sun and lit through from behind.
+Desktop and web `medium`, `high` and `ultra` draw it (`high` and `ultra` also cast its shadows);
+the high phones draw a third of it from `high`; `low` and the low phones draw the ground alone, so
+paint the grassy layer's own colour close to the grass's. Grass out of range (a density or height
+past its cap, a share outside 0..1, a number that is not one) is refused `terrain-layers-invalid`.
+
+Bushes, rocks and flowers are placed on a terrain once, at a loading point, and drawn as an
+instance group: `terrain.scatter(&Scatter::new(0.4, &[0, 1]).with_scale(0.7, 1.3).with_seed(2),
+vec2(-60.0, -60.0), vec2(60.0, 60.0))` returns the transforms standing on the ground wherever
+layers 0 and 1 cover it (instances a square metre, up to 16), with `.on_flat_ground(0.9)` (only
+where the ground's normal has at least that much y), `.following_ground(share)` (lean with the
+slope), `.with_cap(most)` (past it they thin evenly; give phones a smaller cap). An instance belongs
+to its place, so the same rule gives the same instances for any area that covers them: scatter
+chunks as the player moves and they meet exactly. A rule out of range or an empty area places
+nothing.
+
+## Particles
+
+Steam from a vent, rain over a street, sparks from a fountain: an emitter made once and drawn every
+frame with `frame.particles(&emitter)`, one logical draw. A particle is a pure function of the
+emitter and the tick the frame is drawn at, never of earlier frames, so Live and a capture of the
+same tick draw the same particles; nothing is read back and the simulation never sees them.
+
+```rust
+// on_reset: kept in the world.
+sim.world.steam = Particles::steam(vec3(4.0, 0.0, -2.0));
+sim.world.rain = Particles::rain(vec3(0.0, 9.0, -10.0), vec3(6.0, 0.0, 14.0))
+    .with_rate(120, 70)
+    .expect("rain");
+// on_draw:
+frame.particles(&sim.world.steam).particles(&sim.world.rain);
+```
+
+`Particles::steam(origin)` rises slowly, grows and turns, drawn back to front and soft where it
+meets walls and the ground; `Particles::rain(top, half_extent)` falls as streaks from the top of a
+box and stops where it meets what the camera sees; `Particles::fountain(origin)` throws round warm
+sparks. Change one with `.with_rate(per_tick, lifetime_ticks)` (at most `PARTICLES_MAX`, 16384,
+alive at once), `.with_origin(origin, half_extent)`, `.with_motion(velocity, spread, gravity)`
+(world units a tick at 60 ticks a second), `.with_look(size, end_scale, start, end)`,
+`.with_soft(distance)` (a billboard fades out over that many metres as it nears the scene behind
+it instead of cutting a line; soft where the quality may run the depth prepass, desktop `medium`
+and up, hard elsewhere), `.with_sorted(true)` (back to front, for smoke and steam that overlap),
+`.with_collision(thickness, rest_ticks)` (a particle whose path went behind a visible surface, by
+less than `thickness` metres, rests there, fading, then is gone; one hitting something out of view
+is not stopped), `.with_shape(stretch_ticks, rotation_jitter, spin)` and `.with_seed(seed)`.
+`.with_flipbook(atlas, columns, rows, frames, cycles, blend)` textures it from an sRGB atlas
+under `assets/` (frames read row by row from the top left, played `cycles` times over a life,
+cross-faded when `blend`); a missing atlas draws round particles and is logged once. Refusals
+change nothing: `particles-count-invalid` (none alive, or more than 16384 at once) and
+`particles-flipbook-invalid` (no frames, or a grid of no cells or more than 16 a side). Each
+`with_*` answers the changed emitter and leaves the old one as it was. An emitter is its
+description: the same one made again (in the next `on_reset`) is the same emitter, while a renderer
+holds 16 different ones, so make them at a loading point, not a new one every frame.
+A phone draws at most 32768 particles a frame (8192 on the low phones): past that every n-th
+particle of each emitter is drawn.
+
 ## Custom materials and post passes
 
 Level 2 of the extension ladder is a WGSL source: declare each WGSL source in `genex.toml` as a `[[wgsl]]` row (`path`,
@@ -427,10 +658,14 @@ scene alike (`gx_expose` holds even a blinding emissive
 under the scene's limit). `gx_surface_v2` takes no derivatives, so it does not filter a shiny
 highlight against sparkle; wrap it as built-in surfaces are, in uniform control flow:
 `let n = normalize(in.normal); let s = gx_filter_specular_v2(gx_surface_v2(in.world_position, n,
-albedo, 0.0, 0.2), dpdx(n), dpdy(n));` a v2 post pass reads `gx_scene` and `gx_frame` (and `gx_env_sh`, the
+albedo, 0.0, 0.2), dpdx(n), dpdy(n));` `gx_draw.prev_model` is the draw's model last frame
+(matched by its id) and `gx_draw.params.z` last frame's simulated seconds (`params.x` this
+frame's), so a vertex animation can place itself at both times. The draws of one v2 material
+and one mesh are one instanced call, and `gx_draw` is still the drawing instance's own row (group
+1 holds the frame's read-only `gx_draws` table). A v2 post pass reads `gx_scene` and `gx_frame` (and `gx_env_sh`, the
 environment's SH9) on the display-ready frame after the tonemap, and `gx_depth`, `gx_normals` and
 `gx_motion` (the prepass's motion vectors, written whenever a source declares them; the
-formula is under Custom GPU passes) (an effect on the HDR scene before it is a Level-3 `PostHdr` pass; Level-3 passes do not read the sun's shadow maps yet, so grass or water drawn by a pass is not shadowed), and
+formula is under Custom GPU passes) (an effect on the HDR scene before it is a Level-3 `PostHdr` pass; grass or water a Level-3 pass draws shadows itself from the v2 tables' `gx_shadow_map`, under Custom GPU passes), and
 textures from `gfx.texture(path)` bind through `gfx.material_textured(path, &uniforms,
 &[&texture])` (a missing texture binds a white 1x1 texel, never the checker; game textures carry
 their mips, and the linear sampler filters anisotropically). A v1 material keeps working
@@ -440,7 +675,10 @@ but its frame stays on the legacy LDR scene (`material-v1-in-hdr` in `degraded`)
 The look's fog reaches a v2 material and particles as it reaches a built-in surface (`gx_shade_pbr`
 applies it; call `gx_apply_fog` on linear radiance only for a surface shaded its own way), and
 under the physical sky the air's aerial perspective with it (`fog_aerial_perspective = false`
-turns that off).
+turns that off). On desktop and web `high` and `ultra` the fog is a lit volume: the sun's shadows
+carve shafts out of it and local lights glow in it, for built-in surfaces, transparents, v2
+materials (through `gx_shade_pbr`) and particles alike. A Level-3 pass applying the fog from its
+tables (`fog_color`, `fog_params`) draws the plain height fog, without shafts.
 
 Shaders under TAA: a v2 material and a v2 pass in the world draw through `gx_frame.view_proj`,
 which carries the jitter, so they line up with the scene; `inv_view_proj` is its inverse (the depth
@@ -486,9 +724,14 @@ real depth (`gx_depth`, in the frame's depth convention) and octahedral normals 
 prepass's motion vectors at the same stages, as `gx_motion` and `ctx.prepass_motion()` (the
 declaration alone makes the prepass write them, with or without TAA): `rg16float` NDC motion,
 current minus previous with the jitter removed, so the pixel at `uv` was at
-`uv - motion * vec2(0.5, -0.5)` last frame. Geometry a pass draws in the world has no motion of its own (its pixels keep the
-motion of what is behind them), so under TAA a fast-moving in-world pass draw may trail: keep
-such geometry slow, or draw it at `PostHdr`. In the world and at `PostHdr` a v2 pass draws in the scene format
+`uv - motion * vec2(0.5, -0.5)` last frame (where no geometry drew, the sky included, the motion is
+the camera's own). Under TAA an in-world pass hands TAA what it moves itself:
+`ctx.motion_draws()` draws its motion (a vertex animation evaluated at `ctx.tick()` and
+`ctx.prev_tick()`, for example with the shared `gx_wind`; pipelines use `setup.motion_target()`,
+`setup.temporal_depth(true)` and `setup.temporal_multisample()`), and `ctx.reactive_draws()` the
+coverage of blended work moving over the scene (a glow sprite: `setup.reactive_target()`,
+`setup.temporal_depth(false)`), so neither trails; without them its pixels keep the motion of what
+is behind them. In the world and at `PostHdr` a v2 pass draws in the scene format
 (`setup.world_format()`): write linear radiance times `pre_exposure` on the HDR scene, and
 sRGB-encoded colour when `scene_ldr` is 1; under `depth_reversed` the far plane is depth 0 and
 `setup.world_depth(..)` already compares `Greater`. A v2 pass that lights with the environment
@@ -514,14 +757,19 @@ reach geometry a pass draws yet (grass, water), but the sun's shadows do: the v2
 bind its cascades, `@binding(9) var gx_shadow_map: texture_depth_2d_array` and `@binding(10) var
 gx_shadow_sampler: sampler_comparison` (in the cascade `c` whose `gx_frame.cascade_ends[c]` holds the
 point's view depth, compare the depth of the point lifted by `cascade_offsets[c]` along its normal
-in `cascade_view_proj[c]` less `shadow_params.x`; `cascade_splits.w` is 0 on a frame without sun
+in `cascade_view_proj[c]` less `shadow_params.x`, the comparison bias every cascade shares;
+`cascade_splits.w` is 0 on a frame without sun
 shadows; the showcase's grass does this). The tables carry the fog row
 (`gx_frame.fog_color`, `gx_frame.fog_params`) and the environment cube (`gx_env_specular`) but no
 fog function, so such a pass repeats the height fog with the cube read just above the horizon as
 its in-scatter (the showcase's `look_fog`; the air's aerial perspective does not reach it) and
 lights a ground lantern with a soft additive disc of its own. Every resource counts against the GPU caps, WGSL is checked against WebGPU core
 plus `[gpu] native_features`, no buffer is mappable, and a pass wgpu rejects stops running with
-`gpu-pass-invalid` (listed with its code in `state().volatile.customPasses`). Each pass counts one
+`gpu-pass-invalid` (listed with its code in `state().volatile.customPasses`). In-world draws are
+checked as they are recorded (slices, usages, offsets, index and indirect ranges); on the web, where
+wgpu answers a frame later, a frame whose in-world draws reach further than one already accepted
+(more vertices or instances, a smaller vertex slice, another pipeline) leaves that pass out until
+its own answer comes. Each pass counts one
 draw under the `custom` tag; native captures and Live show its output, and the web build runs
 them in the browser's WebGPU too (`PostHdr` included), so a web capture shows them.
 
@@ -588,6 +836,9 @@ native_features = ["subgroup"]
 
 [web]                     # optional: the browser build's code budget, in MB of gzip
 wasm_budget_mb = 8        # 1..=32, default 4
+
+[physics]                 # optional: a game with no physics builds without Rapier
+enabled = false           # default true
 ```
 
 Unknown keys are refused. A `[[crate_request]]` row is a request, never an approval: keep it
@@ -608,6 +859,11 @@ A web export is built for size. Past its budget (`[web] wasm_budget_mb`, default
 still exports, with a warning that it loads slower on phones and weak devices; raise the budget
 only when the brief targets strong desktops. Past 32 MB it is refused `wasm-over-budget`, and a
 budget outside 1..=32 is refused `invalid-web-budget`. Live builds have no budget.
+
+Rapier is about a fifth of a web build's code. A game that never touches `sim.physics` or
+`genex::physics` sets `[physics] enabled = false`: it builds without Rapier, `sim.physics` is an
+empty stand-in that is never stepped, and code that reaches for Rapier does not compile until
+physics is turned back on.
 
 ## Extension ladder
 

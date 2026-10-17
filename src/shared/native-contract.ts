@@ -115,6 +115,43 @@ export const NativeEvent = {
 } as const;
 export type NativeEvent = (typeof NativeEvent)[keyof typeof NativeEvent];
 
+/**
+ * Where a game's boot is (owner decision D11: real progress on every destination), in the order a
+ * boot passes them. A native game's `starting` event names one with its `done` of `total` (genex
+ * `protocol::BootStage`); the web shell's `genex:progress` events and `GenexShell.progress` carry
+ * the same words (its own copy, `LoadStage` in `src/game-template-rust/web/shell.html`). Wire
+ * values: never rename one.
+ */
+export const BootStage = {
+  /** The browser downloads the game's module: bytes of bytes. */
+  Wasm: "wasm",
+  /** The game's staged files are fetched (web) or its models and textures uploaded (native): files of files. */
+  Assets: "assets",
+  /** The GPU device opens. */
+  Device: "device",
+  /** The renderer's pipelines compile: pipelines of pipelines (total unknown until the boot listed them). */
+  Pipelines: "pipelines",
+  /** The first frame is drawn. */
+  Frame: "frame",
+  /** The first lit frame is on screen: the loading state leaves. */
+  Ready: "ready",
+} as const;
+export type BootStage = (typeof BootStage)[keyof typeof BootStage];
+
+/** The largest count a boot's progress names (pipelines, files); a larger one is not a count. */
+export const NATIVE_BOOT_COUNT_MAX = 1_000_000;
+
+/** Where a starting game's boot is: its stage and, where counted, `done` of `total` (null when not counted). */
+export interface NativeBootProgress {
+  stage: BootStage;
+  done: number | null;
+  total: number | null;
+}
+
+const BOOT_STAGES: ReadonlySet<string> = new Set(Object.values(BootStage));
+/** Whether `value` names a boot stage. */
+export const isBootStage = (value: unknown): value is BootStage => typeof value === "string" && BOOT_STAGES.has(value);
+
 /** How a run is shown. Sent to the renderer: never rename a value. */
 export const NativeRunMode = {
   /** The person's Play window. */
@@ -218,6 +255,25 @@ export const NativeLifecycle = {
 } as const;
 export type NativeLifecycle = (typeof NativeLifecycle)[keyof typeof NativeLifecycle];
 
+/**
+ * Where Live's Native canvas stands: the wire values of its `data-stage-native-canvas` attribute,
+ * which the renderer writes and the dev control's live capture reads (a capture is taken only of a
+ * canvas that is `playing`).
+ */
+export const NativeCanvasPhase = {
+  /** Building, checking or starting the Mac build, or waiting for the host's answer. */
+  Starting: "starting",
+  /** The game runs (or waits, paused, while Live is hidden): its frames are drawn. */
+  Playing: "playing",
+  Refused: "refused",
+  Ended: "ended",
+  /** The embed call itself failed. */
+  Failed: "failed",
+  /** No WebGL2 to draw frames with. */
+  CantDraw: "cant-draw",
+} as const;
+export type NativeCanvasPhase = (typeof NativeCanvasPhase)[keyof typeof NativeCanvasPhase];
+
 /** Where a native run stands. Sent to the renderer: never rename a value. */
 export const NativeRunState = {
   Building: "building",
@@ -297,7 +353,7 @@ export const NativeRefusal = {
   ForeignImport: "foreign-import",
   /** No adapter on a WebGPU-core backend, or one below core limits: the designed refusal, never a fallback. */
   GpuUnsupported: "gpu-unsupported",
-  /** The GPU device was lost; the run re-creates it, and `capture` answers this meanwhile. */
+  /** The GPU device was lost; the run re-creates it, and `capture` answers this meanwhile (a web page shows its card with this code). */
   DeviceLost: "device-lost",
   /** A frame or step deadline passed: the supervisor took it for a GPU hang and ended the run. */
   GpuHang: "gpu-hang",
@@ -428,6 +484,8 @@ export type GameBoxProblem = (typeof GameBoxProblem)[keyof typeof GameBoxProblem
 export const NATIVE_CAPTURE_FORMAT = "bgra8";
 /** The longest side a capture may have; a reply declaring more is refused before any read. */
 export const NATIVE_CAPTURE_MAX_PX = 4096;
+/** The shortest side a capture may be asked to draw at: the world target's smallest (`MIN_WORLD_PX`). */
+export const NATIVE_CAPTURE_MIN_PX = 64;
 /** The most bytes `readRegularFile` will take for one capture. */
 export const NATIVE_CAPTURE_MAX_BYTES = NATIVE_CAPTURE_MAX_PX * NATIVE_CAPTURE_MAX_PX * 4;
 /** One protocol line, in either direction, may not exceed this. */
@@ -635,6 +693,12 @@ export interface NativeEmbedSize {
   width: number;
   height: number;
   dpr: number;
+  /**
+   * The canvas's exact device pixels, when the browser reports them (`devicePixelContentBoxSize`):
+   * a slot's CSS side is often fractional, and its rounded CSS side times the ratio can be a
+   * device pixel off, which the compositor would then resample every frame.
+   */
+  device?: { width: number; height: number };
 }
 
 /** The highest device-pixel ratio Live sends. */
@@ -644,23 +708,52 @@ const isEmbedSide = (value: unknown): value is number =>
   Number.isInteger(value) && Number(value) >= 1 && Number(value) <= NATIVE_FRAME_SIDE_MAX;
 const isEmbedDpr = (value: unknown): value is number =>
   typeof value === "number" && Number.isFinite(value) && value >= 1 && value <= EMBED_DPR_MAX;
+const isDeviceSide = (value: unknown): value is number =>
+  Number.isInteger(value) && Number(value) >= 1 && Number(value) <= NATIVE_FRAME_SIDE_MAX * EMBED_DPR_MAX;
 
-/** Checks a renderer-sent embed size: integer CSS sides 1..`NATIVE_FRAME_SIDE_MAX`, a dpr in [1, 4]; a copy, or null. */
-export function parseNativeEmbedSize(value: unknown): NativeEmbedSize | null {
+/**
+ * Whether `device` pixels cover a `css`-pixel side at `dpr`: within one CSS pixel (the CSS side is
+ * the rounded one, the device side the snapped box).
+ */
+export const deviceSideFits = (device: number, css: number, dpr: number): boolean =>
+  Math.abs(device - css * dpr) <= dpr;
+
+/** Checks an embed size's device pixels against its CSS sides: a copy, or null. */
+function parseEmbedDevice(
+  value: unknown,
+  width: number,
+  height: number,
+  dpr: number,
+): { width: number; height: number } | null {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
-  const { width, height, dpr } = value as Record<string, unknown>;
-  if (!isEmbedSide(width) || !isEmbedSide(height) || !isEmbedDpr(dpr)) return null;
-  return { width, height, dpr };
+  const device = value as Record<string, unknown>;
+  if (!isDeviceSide(device.width) || !isDeviceSide(device.height)) return null;
+  const fits = deviceSideFits(device.width, width, dpr) && deviceSideFits(device.height, height, dpr);
+  return fits ? { width: device.width, height: device.height } : null;
 }
 
 /**
- * The ring a canvas of `size` asks the game for, in device pixels: the CSS sides times the dpr,
- * scaled down with the aspect kept until each side is at most `NATIVE_FRAME_SIDE_MAX` and the slot
- * at most `NATIVE_FRAME_PIXELS_MAX` pixels; never below one pixel a side.
+ * Checks a renderer-sent embed size: integer CSS sides 1..`NATIVE_FRAME_SIDE_MAX`, a dpr in [1, 4]
+ * and, when sent, integer device sides within one CSS pixel of the CSS sides; a copy, or null.
+ */
+export function parseNativeEmbedSize(value: unknown): NativeEmbedSize | null {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
+  const { width, height, dpr, device } = value as Record<string, unknown>;
+  if (!isEmbedSide(width) || !isEmbedSide(height) || !isEmbedDpr(dpr)) return null;
+  if (device === undefined) return { width, height, dpr };
+  const pixels = parseEmbedDevice(device, width, height, dpr);
+  return pixels ? { width, height, dpr, device: pixels } : null;
+}
+
+/**
+ * The ring a canvas of `size` asks the game for, in device pixels: the canvas's own device pixels
+ * when it reported them, else the CSS sides times the dpr, scaled down with the aspect kept until
+ * each side is at most `NATIVE_FRAME_SIDE_MAX` and the slot at most `NATIVE_FRAME_PIXELS_MAX`
+ * pixels; never below one pixel a side.
  */
 export function ringSizeFor(size: NativeEmbedSize): { width: number; height: number } {
-  const width = Math.max(1, Math.round(size.width * size.dpr));
-  const height = Math.max(1, Math.round(size.height * size.dpr));
+  const width = Math.max(1, size.device?.width ?? Math.round(size.width * size.dpr));
+  const height = Math.max(1, size.device?.height ?? Math.round(size.height * size.dpr));
   const longest = Math.max(width, height);
   const sided =
     longest <= NATIVE_FRAME_SIDE_MAX
@@ -1000,9 +1093,10 @@ export interface NativeDeviceRestoredEvent {
   event: typeof NativeEvent.DeviceRestored;
 }
 
-/** A v2 game is still starting: a boot step finished before its `ready`. */
+/** A v2 game is still starting: a boot step finished before its `ready`, and where its boot is when it says. */
 export interface NativeStartingEvent {
   event: typeof NativeEvent.Starting;
+  progress?: NativeBootProgress;
 }
 
 /** Every event a game may send. */
@@ -1060,6 +1154,28 @@ export interface NativeCaptureReply {
 }
 
 /**
+ * What a capture asks of the look's lens (a Rust · wgpu game): its depth of field and motion blur,
+ * neither by default, so a capture is a still of the held frame.
+ */
+export interface NativeCaptureLens {
+  depthOfField?: boolean;
+  motionBlur?: boolean;
+}
+
+/** A size a capture is asked to draw at, in whole pixels. */
+export interface NativeCaptureSize {
+  width: number;
+  height: number;
+}
+
+/** Whether `value` is a size a capture may be asked to draw at: whole pixels, each side 64..4096. */
+export function isNativeCaptureSize(value: unknown): value is NativeCaptureSize {
+  const side = (n: unknown) =>
+    Number.isSafeInteger(n) && Number(n) >= NATIVE_CAPTURE_MIN_PX && Number(n) <= NATIVE_CAPTURE_MAX_PX;
+  return isRecord(value) && side(value.width) && side(value.height);
+}
+
+/**
  * Per-op arguments: the host builds these, and the seed copy holds the same shapes. Ops absent
  * from the map take no argument.
  */
@@ -1067,7 +1183,8 @@ export interface NativeOpArgs {
   [NativeOp.Seed]: { seed: number };
   [NativeOp.Step]: { ms: number };
   [NativeOp.Input]: { actions: NativeInputAction[] };
-  [NativeOp.Capture]: { camera?: string };
+  /** `size`: draw the pinned capture at that size (a Rust · wgpu game; the 4K/1440p plan). */
+  [NativeOp.Capture]: { camera?: string; size?: NativeCaptureSize; lens?: NativeCaptureLens };
   [NativeOp.DebugCamera]: { camera: string | null };
   [NativeOp.Demo]: { name: string };
   [NativeOp.Audio]: { muted: boolean };
@@ -1114,6 +1231,24 @@ type UncheckedOp = Exclude<NativeOp, keyof NativeOpResults>;
 const everyOpHasAResult: [UncheckedOp] extends [never] ? true : { unchecked: UncheckedOp } = true;
 void everyOpHasAResult;
 
+/**
+ * A `starting` event, with the boot's progress when it names a known stage (counts out of shape,
+ * negative, fractional, past {@link NATIVE_BOOT_COUNT_MAX} or done past total read as uncounted). A
+ * progress it cannot read is dropped, never the event: its deadline still counts.
+ */
+function startingEvent(value: Record<string, unknown>): NativeStartingEvent {
+  if (!isBootStage(value.stage)) return { event: NativeEvent.Starting };
+  const count = (raw: unknown) =>
+    Number.isSafeInteger(raw) && Number(raw) >= 0 && Number(raw) <= NATIVE_BOOT_COUNT_MAX ? Number(raw) : null;
+  const done = count(value.done);
+  const total = count(value.total);
+  const counted = done !== null && total !== null && done <= total;
+  return {
+    event: NativeEvent.Starting,
+    progress: { stage: value.stage, done: counted ? done : null, total: counted ? total : null },
+  };
+}
+
 /** What a run looks like to the renderer, the harness and `studio:native.state`. */
 export interface NativeRunStatus {
   project: string;
@@ -1134,6 +1269,8 @@ export interface NativeRunStatus {
   exit: { code: number | null; signal: string | null } | null;
   /** The harness lease that started it; null for the person's window. */
   owner: string | null;
+  /** Where a starting game's boot is (its last `starting` that named a stage); absent or null otherwise. */
+  progress?: NativeBootProgress | null;
   startedAt: string;
   endedAt: string | null;
 }
@@ -1577,7 +1714,7 @@ export function parseNativeEvent(value: unknown): NativeEventMessage | null {
     case NativeEvent.DeviceRestored:
       return { event: NativeEvent.DeviceRestored };
     case NativeEvent.Starting:
-      return { event: NativeEvent.Starting };
+      return startingEvent(value);
     default:
       return null;
   }

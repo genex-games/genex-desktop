@@ -53,14 +53,14 @@ pub const fn occlusion_landed() -> bool {
 }
 
 /// The meshlet cull and its scan.
-pub const MESHLET_CULL: &str = concat!(include_str!("../shaders/common.wgsl"), include_str!("../shaders/meshlet_cull.wgsl"));
+pub const MESHLET_CULL: &str = crate::shaders::minify::shipped_wgsl!(concat!(include_str!("../shaders/common.wgsl"), include_str!("../shaders/meshlet_cull.wgsl")));
 /// The meshlet draws' vertex pulling.
-pub const MESHLET_DRAW: &str = concat!(
+pub const MESHLET_DRAW: &str = crate::shaders::minify::shipped_wgsl!(concat!(
     include_str!("../shaders/common.wgsl"),
     include_str!("../shaders/clip_position.wgsl"),
     include_str!("../shaders/shadow_caster.wgsl"),
     include_str!("../shaders/meshlet_draw.wgsl")
-);
+));
 /// The meshlet draw's vertex entry point (a depth writer: `@invariant`, `gx_clip_position`),
 /// paired with the forward module's fragments.
 pub const MESHLET_DRAW_VERTEX_ENTRY: &str = "vs_meshlet";
@@ -313,21 +313,22 @@ impl MeshletFrame {
         let mut instances = Vec::new();
         let mut instance_triangles = Vec::new();
         let (mut candidates, mut candidate_triangles) = (0u64, 0u64);
-        let mut batch = 0usize;
+        // The plain library batches in row order (a mesh's levels follow it, A6.9): a mesh's batch
+        // is the one starting at its slot base.
+        let library_batches = &plan.batches[..plan.static_batches as usize];
         for (mesh, base) in plan.slot_base.iter().enumerate().take(library.len()) {
             if *base == NO_BATCH {
                 continue;
             }
-            let at = batch;
-            batch += 1;
-            let Some(row) = plan.batches.get(at).filter(|row| row.first_instance == *base) else { continue };
+            let at = library_batches.partition_point(|row| row.first_instance < *base);
+            let Some(row) = library_batches.get(at).filter(|row| row.first_instance == *base) else { continue };
             let Some(MeshletState::Clustered(range)) = library.meshlet_state(MeshId::from_raw(mesh as u32)) else { continue };
             if range.meshlet_count == 0 {
                 continue;
             }
             batches[at] = true;
             let triangles = u64::from(row.index_count / 3);
-            for instance in row.first_instance..row.first_instance + row.instance_count {
+            for instance in row.first_row..row.first_row + row.instance_count {
                 instances.push(GpuMeshletInstance {
                     instance,
                     first_meshlet: range.first_meshlet,
@@ -621,7 +622,8 @@ fn compute_pipeline(device: &Device, layout: &BindGroupLayout, module: &wgpu::Sh
         layout: Some(&pipeline_layout(device, entry, &[layout])),
         module,
         entry_point: Some(entry),
-        compilation_options: Default::default(),
+        // A8.6: every meshlet-cull kernel writes its lanes' workgroup slots first.
+        compilation_options: crate::compile::written_first(),
         cache: None,
     })
 }

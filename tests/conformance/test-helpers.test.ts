@@ -1,7 +1,7 @@
 /**
  * The shared fakes and probes other suites build on: a renderer `window.studio`, a harness `ctx`,
  * whether a process still runs, the check every test file runs for the child processes it
- * leaves, and the removal of a test's temporary folder. Their own contract, so a consumer's failure is about the code under test and not about
+ * leaves, the removal of a test's temporary folder, and whether Playwright's headless Chromium is on disk. Their own contract, so a consumer's failure is about the code under test and not about
  * the helper.
  */
 import assert from "node:assert/strict";
@@ -16,6 +16,7 @@ import { SECOND_MS } from "../../src/shared/duration.ts";
 import { ctxRecorder } from "../helpers/ctx-recorder.ts";
 import { fakeStudioApi, installFakeStudio, STUDIO_METHODS } from "../helpers/fake-studio-api.ts";
 import { EXIT_GRACE_ENV } from "../helpers/leftover-children.ts";
+import { headlessChromiumOnDisk } from "../helpers/playwright-chromium.ts";
 import { running } from "../helpers/processes.ts";
 import { REMOVE_PATIENCE_MS, removeAll, removeTree, tmpDir } from "../helpers/tmp.ts";
 
@@ -250,4 +251,35 @@ describe("removeTree", () => {
     });
     assert.equal(existsSync(dir), false);
   });
+});
+
+describe("headlessChromiumOnDisk", () => {
+  const FULL =
+    "/Users/x/Library/Caches/ms-playwright/chromium-1243/chrome-mac-arm64/Chromium.app/Contents/MacOS/Chromium";
+  const SHELL = "/Users/x/Library/Caches/ms-playwright/chromium_headless_shell-1243";
+  const WINDOWS_FULL = "C:\\Users\\x\\AppData\\Local\\ms-playwright\\chromium-1243\\chrome-win\\chrome.exe";
+  const WINDOWS_SHELL = "C:\\Users\\x\\AppData\\Local\\ms-playwright\\chromium_headless_shell-1243";
+  const rows: { label: string; executable: string; present: string[]; onDisk: boolean }[] = [
+    { label: "the full build", executable: FULL, present: [FULL], onDisk: true },
+    // A headless launch with no channel runs the shell, so the full build need not be there.
+    { label: "only the headless shell of the same revision", executable: FULL, present: [SHELL], onDisk: true },
+    { label: "the headless shell on Windows", executable: WINDOWS_FULL, present: [WINDOWS_SHELL], onDisk: true },
+    {
+      label: "only an older revision's shell",
+      executable: FULL,
+      present: ["/Users/x/Library/Caches/ms-playwright/chromium_headless_shell-1234"],
+      onDisk: false,
+    },
+    { label: "neither", executable: FULL, present: [], onDisk: false },
+    { label: "Playwright names no executable", executable: "", present: [SHELL], onDisk: false },
+    { label: "a path with no revision folder", executable: "/opt/chrome/chrome", present: [SHELL], onDisk: false },
+  ];
+  for (const row of rows) {
+    it(`${row.label}: ${row.onDisk ? "on disk" : "not on disk"}`, () => {
+      assert.equal(
+        headlessChromiumOnDisk(row.executable, (candidate) => row.present.includes(candidate)),
+        row.onDisk,
+      );
+    });
+  }
 });

@@ -287,6 +287,9 @@ impl<W: Default + 'static> Runtime<W> {
     pub fn new(mut game: Game<W>) -> Result<Runtime<W>, InstallError> {
         validate(&game)?;
         let world = std::mem::take(&mut game.initial);
+        let saves = saves_of(game.save_name.as_deref());
+        // RC-09: a Vulkan device keeps its pipeline cache with the game's saves.
+        genex_render::compile::keep_pipeline_caches_in(Some(saves.clone()));
         let core = Core {
             sim: fresh_sim(world, &game),
             seed: DEFAULT_SEED,
@@ -295,7 +298,7 @@ impl<W: Default + 'static> Runtime<W> {
             rng: Cell::new(Pcg32::seeded(u64::from(DEFAULT_SEED))),
             merger: Merger::default(),
             pointer_lock: false,
-            gfx: Gfx::new(game.world_size, saves_of(game.save_name.as_deref()), game.wgsl.clone()),
+            gfx: Gfx::new(game.world_size, saves, game.wgsl.clone()),
             hud: Hud::new(),
             clock: FrameClock::default(),
             tally: Tally::default(),
@@ -683,9 +686,21 @@ fn saves_of(save_name: Option<&str>) -> Saves {
 }
 
 fn fresh_sim<W>(world: W, game: &Game<W>) -> Sim<W> {
+    Sim { world, physics: fresh_physics(), facets: FacetState::fresh(&game.facets) }
+}
+
+/// An empty physics world stepping at the fixed tick.
+#[cfg(feature = "physics")]
+fn fresh_physics() -> crate::PhysicsWorld {
     let mut physics = crate::PhysicsWorld::default();
     physics.integration_parameters.dt = FIXED_STEP_SECONDS;
-    Sim { world, physics, facets: FacetState::fresh(&game.facets) }
+    physics
+}
+
+/// A game built without physics: its empty stand-in.
+#[cfg(not(feature = "physics"))]
+fn fresh_physics() -> crate::PhysicsWorld {
+    crate::PhysicsWorld
 }
 
 fn simulated_ms(tick: u64) -> f64 {
@@ -740,6 +755,7 @@ fn tick<W>(game: &Game<W>, core: &mut Core<W>) {
         // The person's panel choice is kept per device, outside the simulation.
         core.render.borrow_mut().save(core.gfx.saves());
     }
+    #[cfg(feature = "physics")]
     core.sim.physics.step();
     core.tick += 1;
 }

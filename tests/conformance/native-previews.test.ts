@@ -771,7 +771,14 @@ describe("a C++ builder's capture looks at the destination it names", {
         // The rig's game is a clean checkout: the capture rendered its commit with no edits.
         edited: false,
         capturedAt: null,
-        provenance: { ...NATIVE_PROVENANCE, build: { ...NATIVE_PROVENANCE.build }, runId: "run1" },
+        // TS-F1: a port that names neither the render settings nor the output size saves both as null.
+        provenance: {
+          ...NATIVE_PROVENANCE,
+          build: { ...NATIVE_PROVENANCE.build },
+          runId: "run1",
+          render: null,
+          outputSize: null,
+        },
       },
     );
   });

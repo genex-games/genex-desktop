@@ -19,6 +19,7 @@ import { captureSurface } from "../../src/main/core/capture.ts";
 import { GameStack } from "../../src/shared/game-project.ts";
 import { CaptureSurface } from "../../src/shared/preview-contract.ts";
 import {
+  BootStage,
   NATIVE_CALL_TIMEOUT_MS,
   NATIVE_CAPTURE_MAX_BYTES,
   NATIVE_CAPTURE_MAX_PX,
@@ -35,6 +36,8 @@ import {
   type NativeTimers,
 } from "../../src/shared/native-contract.ts";
 import { BuildTarget } from "../../src/shared/game-project.ts";
+import { captureProvenanceOf } from "../../src/shared/build-preview.ts";
+import { CaptureExposure, SettingsSource } from "../../src/shared/render-quality.ts";
 import {
   fnv1a64Hex,
   NATIVE_LOG_REPEAT_FLUSH_MS,
@@ -302,6 +305,19 @@ describe("a start that says it is still starting", () => {
     assert.equal(r.game.killed(), false);
     await r.clock.advance(1);
     assert.equal(await ready, NativeRefusal.ReadyTimeout);
+  });
+
+  // Owner decision D11: Live shows where the boot is (pipelines n of m) while it waits.
+  it("a `starting` that names its stage reaches the run's listeners with its progress", async () => {
+    const r = await rig({ ready: false });
+    const heard: unknown[] = [];
+    r.port.onEvent((event) => heard.push(event));
+    r.game.send({ event: NativeEvent.Starting, stage: BootStage.Pipelines, done: 3, total: 9 });
+    await r.clock.settle();
+    assert.deepEqual(heard, [
+      { event: NativeEvent.Starting, progress: { stage: BootStage.Pipelines, done: 3, total: 9 } },
+    ]);
+    assert.equal(r.game.killed(), false);
   });
 
   it("a ready after `starting` is the handshake as ever, and `starting` after it is reply-invalid", async () => {
@@ -1239,7 +1255,29 @@ describe("where a capture came from", () => {
       camera: "default",
       runId: "0123456789ab",
       build,
+      render: null,
+      outputSize: { width: 2, height: 2 },
     });
+  });
+
+  // Pass 2 (TS-F1): a builder capture kept no word of the settings that drew it, so a frame drawn
+  // after `renderSettings {set:{deviceClass:"mobile-mid", preset:"low"}}` read as a regression.
+  it("a capture keeps the render settings the game answered with, a verb change named as such", async () => {
+    const r = await rig({ io: { runId: "0123456789ab", build } });
+    const render = {
+      preset: "low",
+      deviceClass: "mobile-mid",
+      settingsSource: SettingsSource.Verb,
+      scale: 1,
+      settleFrames: 8,
+      historyReset: true,
+      exposure: CaptureExposure.Instant,
+    };
+    const taken = await shot(r, bgra([4, 5, 6, 255], 4), { render: { ...render, extra: "dropped" } });
+    assert.deepEqual(taken.provenance.render, render, "only the provenance's own fields are kept");
+    assert.equal(taken.provenance.render?.settingsSource, SettingsSource.Verb);
+    const saved = captureProvenanceOf(JSON.parse(JSON.stringify(taken.provenance)));
+    assert.deepEqual(saved?.render, render, "the saved sidecar reads it back");
   });
 
   it("the camera is the one the last answered debugCamera left the game on; a refused one changes nothing", async () => {
@@ -1266,6 +1304,64 @@ describe("where a capture came from", () => {
     assert.equal((await shot(r, pixels)).provenance.camera, "default");
   });
 
+  // Renderer pass 2, P2-0.9 step B (the 4K/1440p capture plan): `capture --size` asks the game for
+  // its pinned capture at that size; the saved frame's `outputSize` is the size read back.
+  it("screenshotAt sends the size asked for and keeps the size read back as outputSize", async () => {
+    const r = await rig({ io: { runId: "0123456789ab", build } });
+    const pixels = bgra([4, 5, 6, 255], 64 * 64);
+    const taking = r.port.screenshotAt({ width: 64, height: 64 });
+    const request = await lastRequest(r);
+    assert.equal(request.op, NativeOp.Capture);
+    assert.deepEqual(request.arg, { size: { width: 64, height: 64 } });
+    await mkdir(path.join(r.stateDir, "captures"), { recursive: true });
+    await writeFile(path.join(r.stateDir, "captures", "7.bgra"), pixels);
+    r.game.send({
+      id: request.id,
+      ok: true,
+      op: "capture",
+      result: { seq: 7, width: 64, height: 64, format: "bgra8", digest: fnv1a64Hex(pixels) },
+    });
+    assert.deepEqual((await taking).provenance.outputSize, { width: 64, height: 64 });
+  });
+
+  it("a capture size outside whole pixels in 64..4096 is refused before anything is sent", async () => {
+    const hostile = [
+      { width: 63, height: 64 },
+      { width: 64, height: NATIVE_CAPTURE_MAX_PX + 1 },
+      { width: 64.5, height: 64 },
+      { width: -64, height: 64 },
+      { width: Number.NaN, height: 64 },
+      { width: Number.POSITIVE_INFINITY, height: 64 },
+      { width: 64 },
+      { width: "64", height: 64 },
+    ];
+    for (const size of hostile) {
+      const r = await rig();
+      // The hostile shapes are the point: a caller's size is not trusted to be the declared type.
+      const refusal = await refusalOf(r.port.screenshotAt(size as never));
+      assert.equal(refusal, NativeRefusal.Unsupported, JSON.stringify(size));
+      await r.clock.settle();
+      assert.equal(r.game.requests.length, 0, `${JSON.stringify(size)}: nothing sent`);
+    }
+  });
+
+  it("a game that draws another size than the one asked for is refused and nothing is encoded", async () => {
+    const r = await rig();
+    const pixels = bgra([4, 5, 6, 255], 4);
+    const taking = refusalOf(r.port.screenshotAt({ width: 128, height: 72 }));
+    const request = await lastRequest(r);
+    await mkdir(path.join(r.stateDir, "captures"), { recursive: true });
+    await writeFile(path.join(r.stateDir, "captures", "7.bgra"), pixels);
+    r.game.send({
+      id: request.id,
+      ok: true,
+      op: "capture",
+      result: { seq: 7, width: 2, height: 2, format: "bgra8", digest: fnv1a64Hex(pixels) },
+    });
+    assert.equal(await taking, NativeRefusal.Unsupported, "a C++ game draws its world size only");
+    assert.deepEqual(r.encoded, [], "nothing was encoded");
+  });
+
   it("captureSurface hands the port's provenance on unchanged, as the harness's screenshot saves it", async () => {
     const r = await rig({ io: { runId: "0123456789ab", build } });
     const pixels = bgra([4, 5, 6, 255], 4);
@@ -1286,6 +1382,8 @@ describe("where a capture came from", () => {
       camera: "default",
       runId: "0123456789ab",
       build,
+      render: null,
+      outputSize: { width: 2, height: 2 },
     });
   });
 

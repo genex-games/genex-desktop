@@ -2,8 +2,9 @@
  * Web parity for the renderer (renderer follow-up RQ0.3): the lakeside showcase built for wasm32
  * (`scripts/spike/rust-wgpu/web-showcase.sh`: `examples/showcase-web`, packaged by the lane's
  * `packageWeb` with its staged assets) runs in Chromium's WebGPU on the one presenter native runs
- * draw with (genex's `present.rs`): its four Level-3 custom passes (what no built-in draws: the
- * clouds, grass, the lake, the light sprites) are installed at `studio_boot`,
+ * draw with (genex's `present.rs`): its three Level-3 custom passes (what no built-in draws: the
+ * clouds, the lake, the light sprites; its meadow is the terrain's own grass since renderer pass 2
+ * A.8) are installed at `studio_boot`,
  * listed in `state().volatile.customPasses` with no refusal, and change the picture; `state()`
  * carries the frame meter (`fps`) and the presenter's per-tag triangles; and every renderer
  * pipeline variant is created on the browser's device under error scopes, which report an
@@ -25,6 +26,7 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { type Browser, type BrowserContext, chromium, type Page } from "@playwright/test";
 import { MINUTE_MS, SECOND_MS } from "../../src/shared/duration.ts";
+import { playwrightHeadlessChromiumOnDisk } from "../helpers/playwright-chromium.ts";
 import { tmpDir } from "../helpers/tmp.ts";
 
 const execFileAsync = promisify(execFile);
@@ -43,11 +45,10 @@ const OUTPUT_MAX_BYTES = 64 * 1024 * 1024;
 const WORLD = { width: 1280, height: 720 };
 const PASSES = [
   { name: "clouds", stage: "after-opaque" },
-  { name: "grass", stage: "after-opaque" },
   { name: "lake", stage: "after-transparent" },
   { name: "lights", stage: "after-transparent" },
 ] as const;
-/** The shot the A/B is taken from, and its grass and lake in world pixels (x0, y0, x1, y1). */
+/** The shot the A/B is taken from, and its meadow and lake in world pixels (x0, y0, x1, y1). */
 const SHOT = "wide";
 const MEADOW = { x0: 900, y0: 420, x1: 1240, y1: 700 };
 const LAKE = { x0: 420, y0: 330, x1: 860, y1: 520 };
@@ -74,10 +75,31 @@ const MESHLET_VARIANTS: readonly string[] = [
   // lowest step after TAA) and the RQ5 shader modules.
   "upscale-medium-mobile-high",
   "upscale-high-desktop-high",
+  // Renderer pass 2 A.2: the tonemap's graded pipelines and 3D LUT binding on desktop and on the
+  // low phone (its LUT side capped at 16).
+  "grading-desktop",
+  "grading-mobile-low-class",
   "shader-taa",
   "shader-taa-reactive",
   "shader-easu",
   "shader-rcas",
+  // Renderer pass 2 A.7: the terrain's pipelines (casters, the prepass with motion, the world
+  // pass's MSAA and `Equal` variants) and its modules.
+  "terrain-medium",
+  "terrain-high",
+  "shader-terrain",
+  "shader-terrain-shadow",
+  // Renderer pass 2 A.9: the look's depth of field and motion blur after TAA (graph nodes 17a and
+  // 17b) at the preset's tiers (the ring gather, the reconstruction) and the other ones.
+  "lens-ring",
+  "lens-circular",
+  // Renderer pass 2 A.8: the terrain's grass (generation, prepass, motion prepass, world pass and,
+  // on high, the cascade casters) and its modules.
+  "grass-medium",
+  "grass-high",
+  "shader-grass-gen",
+  "shader-grass",
+  "shader-grass-shadow",
 ];
 /** The variant the browser row injects so its error scope must report it (web.rs). */
 const INJECTED_VARIANT = "injected-invalid";
@@ -103,17 +125,9 @@ const browserSkip = (): string | false => {
     return "not run: the Rust toolchain with wasm-bindgen and wasm-opt is not installed";
   }
   if (process.env.STUDIO_BROWSER_TESTS !== "1") return "launches Chromium; set STUDIO_BROWSER_TESTS=1 to run";
-  let executable = "";
-  try {
-    executable = chromium.executablePath();
-  } catch {
-    executable = "";
-  }
-  const revision = /^(.*[/\\])chromium-(\d+)[/\\]/.exec(executable);
-  const headlessShell = revision ? `${revision[1]}chromium_headless_shell-${revision[2]}` : "";
-  const installed =
-    (executable !== "" && existsSync(executable)) || (headlessShell !== "" && existsSync(headlessShell));
-  return installed ? false : "no Playwright Chromium is installed; this suite never downloads one";
+  return playwrightHeadlessChromiumOnDisk()
+    ? false
+    : "no Playwright Chromium is installed; this suite never downloads one";
 };
 
 interface Served {
@@ -269,7 +283,7 @@ describe("Lakeside on the web: the shared presenter runs Level-3 passes in Chrom
     showcase?.close();
   });
 
-  it("installs all four passes at boot with no refusal, and state() counts fps and triangles", {
+  it("installs all three passes at boot with no refusal, and state() counts fps and triangles", {
     timeout: 2 * BOOT_TIMEOUT_MS,
   }, async () => {
     const { context, page } = await openShell(browser, showcase.origin, false);
@@ -294,7 +308,7 @@ describe("Lakeside on the web: the shared presenter runs Level-3 passes in Chrom
     await context.close();
   });
 
-  it("draws grass, lake and sprites over the built-in scene: > 5% of the meadow and the lake differ from the passes off", {
+  it("draws clouds, lake and sprites over the built-in scene: > 5% of the meadow and the lake differ from the passes off", {
     timeout: 2 * BOOT_TIMEOUT_MS,
   }, async () => {
     const { context, page } = await openShell(browser, showcase.origin, true);

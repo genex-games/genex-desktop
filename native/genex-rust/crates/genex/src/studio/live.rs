@@ -133,33 +133,46 @@ mod mac {
             self.changed = true;
         }
 
-        /// After a frame: send it in a free slot when it changed, at most one per
-        /// [`MIN_FRAME_INTERVAL`].
+        /// After a frame: send the frame the GPU finished since the last call, then submit this one
+        /// into a free slot when it changed, at most one per [`MIN_FRAME_INTERVAL`]. Neither waits
+        /// for the GPU (review F8): the frame thread draws the next frame while the GPU finishes
+        /// this one, and the loop polls again soon while one is in flight ([`Live::in_flight`]).
         pub(crate) fn present(&mut self, presenter: &mut Presenter, visible: bool) -> Presented {
-            let too_soon = self.last_sent.is_some_and(|at| at.elapsed() < MIN_FRAME_INTERVAL);
-            if !visible || !self.changed || too_soon {
-                return Presented::Skipped;
-            }
-            let Some(letterbox) = self.letterbox.as_ref() else { return Presented::Skipped };
             let Some(Some(sender)) = self.sender.as_mut() else { return Presented::Skipped };
-            if sender.free_slot().is_none() {
-                return Presented::Skipped;
+            let device = presenter.gpu().device.clone();
+            let sent = match sender.poll_sent(&device) {
+                Ok(sent) => sent.is_some(),
+                Err(error) => return self.gone(&error),
+            };
+            let too_soon = self.last_sent.is_some_and(|at| at.elapsed() < MIN_FRAME_INTERVAL);
+            let Some(letterbox) = self.letterbox.as_ref() else { return Presented::Skipped };
+            if !visible || !self.changed || too_soon || sender.free_slot().is_none() {
+                return if sent { Presented::Sent } else { Presented::Skipped };
             }
-            presenter.resilient.present(&letterbox.view, WORLD_FORMAT, letterbox.size);
+            presenter.present(&letterbox.view, WORLD_FORMAT, letterbox.size);
             let gpu = presenter.gpu();
-            match sender.present(&gpu.device, &gpu.queue, &letterbox.view) {
+            match sender.submit(&gpu.device, &gpu.queue, &letterbox.view) {
                 Ok(Some(_)) => {
                     self.changed = false;
                     self.last_sent = Some(Instant::now());
                     Presented::Sent
                 }
+                Ok(None) if sent => Presented::Sent,
                 Ok(None) => Presented::Skipped,
-                Err(error) => {
-                    eprintln!("genex: Live frame not sent: {error:?}");
-                    self.close();
-                    Presented::Gone
-                }
+                Err(error) => self.gone(&error),
             }
+        }
+
+        /// Whether a submitted frame waits for the GPU to be sent.
+        pub(crate) fn in_flight(&self) -> bool {
+            matches!(&self.sender, Some(Some(sender)) if sender.in_flight())
+        }
+
+        /// The ring failed: it is let go and the studio told.
+        fn gone(&mut self, error: &genex_frames::FramesError) -> Presented {
+            eprintln!("genex: Live frame not sent: {error:?}");
+            self.close();
+            Presented::Gone
         }
 
         /// Let the ring go (the studio is gone, or the game is closing).
@@ -189,6 +202,9 @@ mod elsewhere {
         pub(crate) fn device_changed(&mut self) {}
         pub(crate) fn present(&mut self, _presenter: &mut Presenter, _visible: bool) -> Presented {
             Presented::Skipped
+        }
+        pub(crate) fn in_flight(&self) -> bool {
+            false
         }
         pub(crate) fn close(&mut self) {}
     }

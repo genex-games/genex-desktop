@@ -9,8 +9,9 @@ title = "__GAME_TITLE__"
 # phones each start on their own class's preset and the person can change it in the settings
 # panel. The look is the game's, the same on every device: a filmic curve with auto exposure and a
 # light ground haze that fades the far floor into the horizon (thin enough to leave the near scene clear).
-# AgX's punchy look deepens shadows, so the exposure sits 1.5 EV up: the floor in the block's shadow,
-# lit by the blue sky alone, then reads as a blue-grey instead of a near-black navy.
+# AgX's punchy look adds contrast and colour about middle grey without moving it; the exposure sits
+# half an EV up, as for any sunlit scene, so the sunlit floor reads bright and the floor in the
+# block's shadow, lit by the blue sky alone, reads as a blue-grey.
 [render]
 form_factors = ["desktop", "mobile"]
 preset = "auto"
@@ -18,5 +19,5 @@ preset = "auto"
 [render.look]
 tonemapper = "agx-punchy"
 exposure = "auto"
-ev_compensation = 1.5
+ev_compensation = 0.5
 fog_density = 0.002

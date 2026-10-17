@@ -96,6 +96,14 @@ pub const OP_RENDER_SETTINGS: &str = "renderSettings";
 /// (`NATIVE_RENDER_KEY`). Outside the checksum; never compared.
 pub const STATE_RENDER: &str = "render";
 
+/// `capture`'s `lens` argument and its two switches (`NativeCaptureLens`): what a settled capture
+/// asks of the look's depth of field and motion blur (renderer pass 2 A.9; neither by default).
+pub const CAPTURE_LENS: &str = "lens";
+/// `lens.depthOfField`.
+pub const LENS_DEPTH_OF_FIELD: &str = "depthOfField";
+/// `lens.motionBlur`.
+pub const LENS_MOTION_BLUR: &str = "motionBlur";
+
 /// A wire value outside its shape: the field that failed. The host's own check refuses the same.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct BadField(pub &'static str);
@@ -370,6 +378,12 @@ vocabulary! {
         Rg11b10UfloatRenderable => "rg11b10ufloat-renderable",
         /// `DEPTH_CLIP_CONTROL`: shadow casters drawn with unclipped depth (exact pancaking).
         DepthClipControl => "depth-clip-control",
+        /// `TEXTURE_COMPRESSION_BC`: BC7 material textures.
+        TextureCompressionBc => "texture-compression-bc",
+        /// `TEXTURE_COMPRESSION_ASTC`: ASTC 4x4 material textures.
+        TextureCompressionAstc => "texture-compression-astc",
+        /// `TEXTURE_COMPRESSION_ETC2`: ETC2 RGBA8 material textures.
+        TextureCompressionEtc2 => "texture-compression-etc2",
     }
 }
 
@@ -1080,6 +1094,14 @@ mod tests {
     fn the_starting_event_is_the_fixtures() {
         let wire = fixture();
         assert_eq!(wire["events"]["starting"], Value::from(genex_core::protocol::Event::STARTING));
+    }
+
+    /// Owner decision D11: the stages a `starting` event names, in boot order, are the host's.
+    #[test]
+    fn the_boot_stages_are_the_fixtures() {
+        let wire = fixture();
+        let stages: Vec<String> = genex_core::protocol::BootStage::ALL.iter().map(|stage| stage.wire().to_owned()).collect();
+        assert_eq!(names(&wire["bootStages"]), stages);
     }
 
     #[test]

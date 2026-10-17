@@ -808,7 +808,6 @@ dependencies = [
  "bytemuck",
  "ecolor",
  "emath",
- "epaint_default_fonts",
  "font-types",
  "harfrust",
  "log",
@@ -1085,6 +1084,7 @@ dependencies = [
  "egui",
  "egui-wgpu",
  "egui-winit",
+ "epaint_default_fonts",
  "genex-core",
  "genex-platform-desktop",
  "wgpu",
@@ -1169,6 +1169,7 @@ dependencies = [
  "genex-gpu-memory",
  "glam 0.33.12",
  "gltf",
+ "ktx2",
  "libm",
  "log",
  "naga",
@@ -1685,6 +1686,15 @@ dependencies = [
  "send_wrapper",
  "symphonia",
  "triple_buffer",
+]
+
+[[package]]
+name = "ktx2"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1d50be8a24c37debdf3170be6ca396d5b5b165f37f94837891adac735ca416b8"
+dependencies = [
+ "bitflags 2.13.2",
 ]
 
 [[package]]

@@ -40,7 +40,10 @@ export const ImportConverter = {
   AudioToOgg: "audio-to-ogg",
   /** A glTF whose meshes are Draco- or meshopt-compressed, written back uncompressed. */
   GltfDecompress: "gltf-decompress",
-  /** A KTX2 texture, transcoded once per destination's texture format and kept as it is. */
+  /**
+   * A KTX2 texture, transcoded once per destination's texture format and kept as it is; a square,
+   * mipmapped Basis one also gets a fixed-format KTX2 per family beside it (`<stem>.<family>.ktx2`).
+   */
   Ktx2Check: "ktx2-check",
   /** A Radiance `.hdr` environment map, its header and size checked against the renderer's caps and kept as it is. */
   HdrCheck: "hdr-check",

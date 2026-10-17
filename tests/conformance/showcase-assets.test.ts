@@ -1,6 +1,7 @@
 /**
- * The lakeside showcase's fetched assets (`scripts/showcase-assets.ts`): the committed manifest is
- * CC0-only, pinned and on allowlisted hosts; a hostile URL, file name or licence is refused before
+ * The showcase scenes' fetched assets (`scripts/showcase-assets.ts`): each scene's committed
+ * manifest (the lakeside's and Harbour Street's) is CC0-only, pinned and on allowlisted hosts; the
+ * command names a known scene; a hostile URL, file name or licence is refused before
  * anything downloads; and a download is cached only when its size and sha256 match, so a bad
  * byte never reaches the cache. The network is a stub here.
  */
@@ -18,10 +19,12 @@ import {
   checkedUrl,
   checkManifest,
   fetchFile,
-  MANIFEST_PATH,
   type Manifest,
   type ManifestAsset,
   type ManifestFile,
+  parseArgs,
+  SCENES,
+  ShowcaseScene,
   sha256,
 } from "../../scripts/showcase-assets.ts";
 import { tmpDir } from "../helpers/tmp.ts";
@@ -64,18 +67,58 @@ async function refusalOf(run: () => Promise<unknown>): Promise<AssetRefusal | un
   return undefined;
 }
 
-describe("the committed manifest", () => {
-  it("lists only CC0 assets, every file pinned to its sha256 on an allowlisted host", async () => {
-    const manifest = JSON.parse(await readFile(MANIFEST_PATH, "utf8")) as Manifest;
-    checkManifest(manifest);
-    for (const entry of manifest.assets) {
-      assert.equal(entry.licence, CC0, entry.id);
-      for (const item of entry.files) {
-        assert.match(item.sha256 ?? "", /^[0-9a-f]{64}$/, `${entry.id}/${item.name} is pinned`);
-        assert.ok(ALLOWED_HOSTS.has(new URL(item.url).hostname), item.url);
+describe("the committed manifests", () => {
+  for (const scene of Object.values(ShowcaseScene)) {
+    it(`${scene}: lists only CC0 assets, every file pinned to its sha256 on an allowlisted host`, async () => {
+      const manifest = JSON.parse(await readFile(SCENES[scene].manifest, "utf8")) as Manifest;
+      checkManifest(manifest);
+      for (const entry of manifest.assets) {
+        assert.equal(entry.licence, CC0, entry.id);
+        for (const item of entry.files) {
+          assert.match(item.sha256 ?? "", /^[0-9a-f]{64}$/, `${entry.id}/${item.name} is pinned`);
+          assert.ok(ALLOWED_HOSTS.has(new URL(item.url).hostname), item.url);
+        }
       }
-    }
+    });
+  }
+
+  it("keeps each scene's manifest, cache and installed copy apart", () => {
+    const folders = Object.values(SCENES).flatMap((scene) => [scene.manifest, scene.cache, scene.installed]);
+    assert.equal(new Set(folders).size, folders.length, "no two scenes share a manifest, cache or install folder");
   });
+});
+
+describe("the command line", () => {
+  it("fetches the lakeside by default and another scene by --scene", () => {
+    assert.deepEqual(parseArgs(["fetch"]), { scene: ShowcaseScene.Lakeside, pin: false, install: false });
+    assert.deepEqual(parseArgs(["fetch", "--scene", ShowcaseScene.HarbourStreet, "--pin"]), {
+      scene: ShowcaseScene.HarbourStreet,
+      pin: true,
+      install: false,
+    });
+    assert.deepEqual(parseArgs(["fetch", "--install", "--scene", ShowcaseScene.Lakeside]), {
+      scene: ShowcaseScene.Lakeside,
+      pin: false,
+      install: true,
+    });
+  });
+
+  const refused: [string, string[]][] = [
+    ["no command", []],
+    ["another command", ["download"]],
+    ["an unknown flag", ["fetch", "--force"]],
+    ["an unknown scene", ["fetch", "--scene", "moon-base"]],
+    ["a scene that names a path", ["fetch", "--scene", "../lakeside"]],
+    ["--scene with no value", ["fetch", "--scene"]],
+  ];
+  for (const [what, argv] of refused) {
+    it(`refuses ${what}`, () => {
+      assert.equal(
+        refusal(() => parseArgs(argv)),
+        AssetRefusal.Usage,
+      );
+    });
+  }
 });
 
 describe("hostile manifest rows are refused before anything downloads", () => {

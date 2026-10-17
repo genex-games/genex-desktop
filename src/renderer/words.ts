@@ -40,7 +40,7 @@ import {
   isCompiledStack,
 } from "../shared/game-project.ts";
 import { DestinationBadge, TargetRefusal } from "../shared/game-targets.ts";
-import { GameBoxProblem, NativeRefusal, NativeRunState } from "../shared/native-contract.ts";
+import { BootStage, GameBoxProblem, NativeRefusal, NativeRunState } from "../shared/native-contract.ts";
 import {
   PrewarmState,
   ToolchainId,
@@ -4089,6 +4089,19 @@ export const CRATE_REQUEST_WORDS = {
 /** A C++ game's own run: Play on Mac's card, its states and why a run was refused. */
 export const NATIVE_WORDS = {
   title: "Playing on Mac",
+  /** Where a starting game's boot is (owner decision D11), the web shell's own words. */
+  boot: {
+    stage: {
+      [BootStage.Wasm]: "Downloading the game",
+      [BootStage.Assets]: "Loading assets",
+      [BootStage.Device]: "Starting the graphics",
+      [BootStage.Pipelines]: "Preparing shaders",
+      [BootStage.Frame]: "Drawing the first frame",
+      [BootStage.Ready]: "Ready",
+    } satisfies Record<BootStage, string>,
+    counted: (stage: BootStage, done: number, total: number) =>
+      `${NATIVE_WORDS.boot.stage[stage]} · ${done} of ${total}`,
+  },
   /** Where the run stands, by `NativeRunState`. */
   state: {
     [NativeRunState.Building]: "Building for Mac",

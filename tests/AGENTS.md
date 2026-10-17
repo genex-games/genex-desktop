@@ -75,6 +75,10 @@ through the JS API imports `@typescript/typescript6`.
 - `processes.ts`: `running(pid)`, whether a process still runs. A test that proves a stop left
   nothing behind asks it, not `process.kill(pid, 0)`, which also finds a process that exited but
   is not reaped yet.
+- `playwright-chromium.ts`: whether a browser suite can launch Playwright's Chromium headless
+  without downloading one. A headless launch with no channel runs the headless shell of the
+  installed Playwright's revision, so that shell alone is enough; a suite that launches with
+  `channel: "chromium"` needs the full build.
 - `pe.ts`, `elf.ts`: pure-TS writers of minimal PE/COFF (`writePe`) and ELF64 (`writeElf`) images
   for the Windows and Linux bundle gates' rows. Each returns a `layout` of offsets, so a hostile
   row corrupts one field of an otherwise valid file (`patched`, `retagNeeded`). No compiler is

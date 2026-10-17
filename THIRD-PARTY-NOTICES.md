@@ -132,6 +132,11 @@ exceptions: Genex ships them (below).
 - zig (MIT) for the Windows and Linux cross-builds, and llvm-mingw (LLVM under Apache-2.0 with
   LLVM exception; the mingw-w64 runtime and headers under ZPL-2.1 and public-domain terms) as its
   pinned fallback.
+- The Basis Universal v2.50 WebAssembly encoder (`basis_encoder.js` and `basis_encoder.wasm`,
+  Apache-2.0 with its NOTICE, the text under [Basis Universal](#basis-universal)), which the Rust ·
+  wgpu asset import step encodes textures with (`src/substrate/asset-import/basis-encoder.ts`,
+  pinned by sha256 at the `v2_50` release commit). So far only a development fetch
+  (`scripts/toolchains/basis-encoder.ts fetch`) downloads it; it is not committed or shipped.
 - The Rust crate checker, installed on the first crate approval: cargo-deny (MIT OR Apache-2.0)
   and cargo-vet (MIT OR Apache-2.0) from their official GitHub releases, and the RustSec
   advisory-db (CC0-1.0) at the commit `native/genex-rust/crate-policy.json` pins. The trusted
@@ -184,7 +189,7 @@ notice; the toolchain store compiles it into the headless raylib library on the 
 
 The `genex` workspace in `native/genex-rust` (Genex's own code, MIT) builds offline from a vendored
 crate set: `scripts/spike/rust-wgpu/vendor-allowlist.toml` names the direct dependencies,
-`setup-toolchain.sh` vendors their resolved closure (468 crates) into the project-local toolchain
+`setup-toolchain.sh` vendors their resolved closure (469 crates) into the project-local toolchain
 folder, and `native/genex-rust/Cargo.lock` pins what the workspace uses. No crate source is copied
 into this repository or shipped inside Genex.app; each vendored crate keeps its licence files in
 its own folder. A Rust game or a `genex` release links only the subset its targets and features
@@ -208,7 +213,7 @@ Notable terms in the closure:
 | MIT | 84 | alsa-sys 0.4.0, android-properties 0.2.2, block2 0.5.1, block2 0.6.2, bytes 1.12.1, calloop 0.13.0, calloop 0.14.5, calloop-wayland-source 0.3.0, calloop-wayland-source 0.4.1, cfg_aliases 0.2.2, color_quant 1.1.0, combine 4.6.8, crunchy 0.2.4, dispatch 0.2.0, dlib 0.5.3, extended 0.1.0, fax 0.2.7, harfrust 0.12.0, inflections 1.1.1, libm 0.2.16, libredox 0.1.25, libudev-sys 0.1.4, mint 0.5.9, nix 0.31.3, nu-ansi-term 0.50.3, objc-sys 0.3.5, objc2 0.5.3, objc2 0.6.5, objc2-app-kit 0.2.2, objc2-cloud-kit 0.2.2, objc2-contacts 0.2.2, objc2-core-data 0.2.2, objc2-core-image 0.2.2, objc2-core-location 0.2.2, objc2-encode 4.1.0, objc2-foundation 0.2.2, objc2-foundation 0.3.2, objc2-link-presentation 0.2.2, objc2-metal 0.2.2, objc2-quartz-core 0.2.2, objc2-symbols 0.2.2, objc2-ui-kit 0.2.2, objc2-uniform-type-identifiers 0.2.2, objc2-user-notifications 0.2.2, oorandom 11.1.5, orbclient 0.3.55, ordered-float 5.5.0, pulp 0.22.3, pulp-wasm-simd-flag 0.1.1, quick-xml 0.41.0, raw-cpuid 11.6.0, reborrow 0.5.5, redox_syscall 0.4.1, redox_syscall 0.5.18, redox_syscall 0.9.4, sctk-adwaita 0.10.1, simd-adler32 0.3.10, slab 0.4.12, smithay-client-toolkit 0.19.2, smithay-client-toolkit 0.20.0, smithay-clipboard 0.7.3, spin 0.9.9, strict-num 0.1.1, tiff 0.11.3, tokio 1.53.2, tracing 0.1.44, tracing-core 0.1.36, urlencoding 2.1.3, wayland-backend 0.3.17, wayland-client 0.31.15, wayland-csd-frame 0.3.0, wayland-cursor 0.31.14, wayland-protocols 0.32.13, wayland-protocols-experimental 20250721.0.1, wayland-protocols-misc 0.3.12, wayland-protocols-plasma 0.3.12, wayland-protocols-wlr 0.3.12, wayland-scanner 0.31.11, wayland-sys 0.31.11, winnow 1.0.4, x11-dl 2.21.0, xcursor 0.3.11, xkbcommon-dl 0.4.2, zmij 1.0.23 |
 | Apache-2.0 OR MIT | 37 | alsa 0.11.0, atomic-waker 1.1.2, autocfg 1.5.1, bit-set 0.10.0, bit-vec 0.9.1, bit_field 0.10.3, cesu8 1.1.0, color 0.3.3, concurrent-queue 2.5.0, console_error_panic_hook 0.1.7, equivalent 1.0.2, fastrand 2.5.0, fearless_simd 0.4.1, fnv 1.0.7, gilrs 0.11.2, gilrs-core 0.6.8, glifo 0.2.0, indexmap 2.14.2, kurbo 0.13.1, linebender_resource_handle 0.1.1, minicov 0.3.8, nohash-hasher 0.2.0, noise 0.9.0, peniko 0.6.1, pin-project 1.1.13, pin-project-internal 1.1.13, pin-project-lite 0.2.17, polling 3.11.0, pollster 0.4.0, portable-atomic 1.15.0, portable-atomic-util 0.2.8, rustc-hash 1.1.0, rustc-hash 2.1.3, simd_cesu8 1.2.0, uuid 1.27.0, vello_common 0.1.0, vello_cpu 0.1.0 |
 | Zlib OR Apache-2.0 OR MIT | 24 | bytemuck 1.25.2, bytemuck_derive 1.12.1, dispatch2 0.3.1, objc2-app-kit 0.3.2, objc2-audio-toolbox 0.3.2, objc2-avf-audio 0.3.2, objc2-cloud-kit 0.3.2, objc2-core-audio 0.3.2, objc2-core-audio-types 0.3.2, objc2-core-data 0.3.2, objc2-core-foundation 0.3.2, objc2-core-graphics 0.3.2, objc2-core-image 0.3.2, objc2-core-location 0.3.2, objc2-core-text 0.3.2, objc2-core-video 0.3.2, objc2-io-kit 0.3.2, objc2-io-surface 0.3.2, objc2-metal 0.3.2, objc2-quartz-core 0.3.2, objc2-ui-kit 0.3.2, objc2-user-notifications 0.3.2, safe_arch 1.2.0, wide 1.7.1 |
-| Apache-2.0 | 15 | ab_glyph 0.2.32, ab_glyph_rasterizer 0.1.10, approx 0.5.1, codespan-reporting 0.13.1, cpal 0.18.2, gethostname 1.1.0, nalgebra 0.35.0, nalgebra-macros 0.3.0, owned_ttf_parser 0.25.1, parry3d 0.31.1, rapier3d 0.36.0, simba 0.10.2, spirv 0.4.0+sdk-1.4.341.0, unicode-general-category 1.1.0, winit 0.30.13 |
+| Apache-2.0 | 16 | ab_glyph 0.2.32, ab_glyph_rasterizer 0.1.10, approx 0.5.1, codespan-reporting 0.13.1, cpal 0.18.2, gethostname 1.1.0, ktx2 0.5.0, nalgebra 0.35.0, nalgebra-macros 0.3.0, owned_ttf_parser 0.25.1, parry3d 0.31.1, rapier3d 0.36.0, simba 0.10.2, spirv 0.4.0+sdk-1.4.341.0, unicode-general-category 1.1.0, winit 0.30.13 |
 | MPL-2.0 | 11 | symphonia 0.6.1, symphonia-bundle-flac 0.6.1, symphonia-bundle-mp3 0.6.1, symphonia-codec-pcm 0.6.1, symphonia-codec-vorbis 0.6.1, symphonia-common 0.6.1, symphonia-core 0.6.1, symphonia-format-ogg 0.6.1, symphonia-format-riff 0.6.1, symphonia-metadata 0.6.1, triple_buffer 9.0.0 |
 | Unlicense OR MIT | 8 | aho-corasick 1.1.5, byteorder 1.5.0, byteorder-lite 0.1.0, memchr 2.8.3, same-file 1.0.6, termcolor 1.4.1, walkdir 2.5.0, winapi-util 0.1.11 |
 | Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT | 6 | linux-raw-sys 0.12.1, linux-raw-sys 0.4.15, rustix 0.38.44, rustix 1.1.5, wasip2 1.0.4+wasi-0.2.12, wit-bindgen 0.57.1 |
@@ -247,6 +252,86 @@ credits its source in a comment.
 | `shaders/post/gtao.wgsl`, `shaders/post/ao_denoise.wgsl` (the raw term's packing) | Ground-truth ambient occlusion: the depth prefilter and its MIP filter, the horizon search with its falloff, the Hilbert-curve R2 noise, the bent normal and the fast arc cosine | XeGTAO (https://github.com/GameTechDev/XeGTAO), `Source/Rendering/Shaders/XeGTAO.hlsli` | Intel Corporation (Filip Strugar), after Jimenez, Wu, Pesce and Jarabo 2016, "Practical Real-Time Strategies for Accurate Indirect Occlusion" | MIT (see [XeGTAO](#xegtao)) |
 | `shaders/lighting/ambient.wgsl` (`gx_caps_intersection`, `gx_specular_occlusion_bent`, `gx_ao_multibounce`) | Cone-cone specular occlusion from a bent normal and the multi-bounce AO fit | Filament (https://github.com/google/filament), `shaders/src/surface_ambient_occlusion.fs` (`sphericalCapsIntersection`, `specularAO_Cones`, `gtaoMultiBounce`) | The Android Open Source Project; the methods by Jimenez et al. 2016 and Oat and Sander 2007 | Apache 2.0 (see [Apache License 2.0](#apache-license-20)) |
 | `shaders/post/easu.wgsl`, `shaders/post/rcas.wgsl`, `src/post/fsr.rs` (the constants) | FSR1 upscaler: edge-adaptive spatial upsampling (EASU) with its 12-tap kernel, direction and length estimate, and robust contrast-adaptive sharpening (RCAS) with its per-channel lobe limiters | AMD FidelityFX Super Resolution 1.0 (https://github.com/GPUOpen-Effects/FidelityFX-FSR), `ffx-fsr/ffx_fsr1.h` (`FsrEasuCon`, `FsrEasuF`, `FsrRcasCon`, `FsrRcasF`) | Advanced Micro Devices, Inc. | MIT (see [FidelityFX FSR1](#fidelityfx-fsr1)) |
+| `shaders/post/taa.wgsl` (`gx_taa_tonemap`, `gx_taa_inverse_tonemap`, `gx_taa_lightness`, `gx_taa_thin_feature`, `gx_taa_lock`, `gx_taa_instability`, the soft rectification), `src/post/taa.rs` (the constants) | TAA history protection: the reversible tonemap the colour box is built in, the thin-feature lock (lightness ridge and 2x2 rejection masks) with its lifetime and shading-change kill, the luma instability over four frames of quantised luma, the rectification undone by lock and instability and scaled by the reactive factor, and the temporal reactive factor of motion (Genex adapts the instability test, the shading luma and the lock trigger) | AMD FidelityFX SDK v1.1.4 (https://github.com/GPUOpen-LibrariesAndSDKs/FidelityFX-SDK), FSR 2.2 `sdk/include/FidelityFX/gpu/fsr2/` (`ffx_fsr2_lock.h`, `ffx_fsr2_accumulate.h`, `ffx_fsr2_postprocess_lock_status.h`, `ffx_fsr2_common.h`) | Advanced Micro Devices, Inc. | MIT (see [FidelityFX SDK](#fidelityfx-sdk)) |
+| `shaders/post/tonemap.wgsl` (`gx_tm_awp`, `gx_tm_agx_punchy`), `src/post/tonemap.rs` (`AgxCurve`, its CPU reference) | AgX punchy: the allenwp tonemapping curve with its CPU-computed toe, slope and shoulder, between the combined Rec. 709 -> Rec. 2020 -> AgX inset and outset matrices; Genex generalises the crossover's output | Godot Engine 4.7.2-stable (https://github.com/godotengine/godot), `servers/rendering/renderer_rd/shaders/effects/tonemap.glsl` (`allenwp_curve`, `tonemap_agx`) and `servers/rendering/storage/environment_storage.cpp` (`environment_get_tonemap_parameters`) | Godot Engine contributors; the curve by Allen Pestaluky (allenwp); the matrices after EaryChow's Blender AgX | MIT (see [Godot Engine](#godot-engine)) |
+| `shaders/post/exposure_adapt.wgsl` (`gx_adapt_tick`, `gx_compensation`), `src/post/exposure.rs` (`adapt_tick`, `curve_compensation`), `src/settings.rs` (`CompensationCurve`) | Hybrid auto exposure adaptation (linear far from the target, exponential within a transition distance) and the exposure compensation curve over the metered EV | Bevy 0.20.0 (https://github.com/bevyengine/bevy), `crates/bevy_post_process/src/auto_exposure/auto_exposure.wesl` and `compensation_curve.rs` | Bevy contributors | MIT OR Apache-2.0, used under Apache 2.0 (see [Apache License 2.0](#apache-license-20)) |
+| `src/settings.rs` (`chromatic_adaptation` and its colour matrices) | White balance as a von Kries chromatic adaptation in CIECAT16 cone space from a temperature and tint, the white point moved along the daylight locus | Filament v1.78.0 (https://github.com/google/filament), `filament/src/details/ColorGrading.cpp` (`adaptationTransform`) and `filament/src/ColorSpaceUtils.h` | The Android Open Source Project | Apache 2.0 (see [Apache License 2.0](#apache-license-20)) |
+| `shaders/post/tonemap.wgsl` (`gx_grade`, `gx_grade_weights`, `gx_grade_lut`), `src/post/grading.rs` (`Grading::grade`, `tetrahedral`, their CPU twins) | Colour grading: per-section (shadows, midtones, highlights) saturation, contrast, gamma, gain and lift blended across the sections' margins; contrast in log space about middle grey and vibrance; a 3D LUT read with tetrahedral interpolation from four texel loads (Genex stores each texel's change from the identity and blends shadows into midtones where Bevy blends them into highlights) | Bevy 0.16.0 (https://github.com/bevyengine/bevy), `crates/bevy_core_pipeline/src/tonemapping/tonemapping_shared.wgsl` (`sectional_color_grading`); Filament v1.78.0 (https://github.com/google/filament), `filament/src/details/ColorGrading.cpp` (`contrast`, `vibrance`); pmndrs/postprocessing (https://github.com/pmndrs/postprocessing), `src/effects/glsl/lut-3d.frag` (`applyLUT`, tetrahedral) | Bevy contributors; The Android Open Source Project; Raoul van Rüschen | MIT OR Apache-2.0, used under Apache 2.0 (Bevy); Apache 2.0 (Filament) (see [Apache License 2.0](#apache-license-20)); Zlib (pmndrs/postprocessing, see [pmndrs/postprocessing](#pmndrspostprocessing)) |
+| `shaders/ibl/sh9.wgsl` (`ibl_sh9_window`, the bisection after the reduction), `src/ibl.rs` (`sh9_window`, `sh9_dering_window`, their CPU twin) | Spherical-harmonic deringing: the sinc^4 window of bands 1 and 2 and the bisection for the weakest cutoff that keeps the reconstruction non-negative (Genex windows only an SH that rings) | Filament v1.78.0 (https://github.com/google/filament), `libs/ibl/src/CubemapSH.cpp` (`sincWindow`, `windowSH`) | The Android Open Source Project; the method by Peter-Pike Sloan ("Deringing Spherical Harmonics", 2017) | Apache 2.0 (see [Apache License 2.0](#apache-license-20)) |
+| `shaders/pbr.wgsl` (`gx_specular_energy`), `shaders/lighting/ambient.wgsl` (`gx_diffuse_normal`) | Multiple-scattering energy compensation of direct specular, `1 + f0 (1 / E - 1)` from the split-sum LUT; the diffuse environment light looked up along the bent normal | Filament v1.78.0 (https://github.com/google/filament), `shaders/src/surface_shading_lit.fs` (`energyCompensation`), `shaders/src/surface_light_indirect.fs` (`diffuseNormal`) | The Android Open Source Project | Apache 2.0 (see [Apache License 2.0](#apache-license-20)) |
+| `shaders/alpha_mask.wgsl` (`gx_alpha_hash2`, `gx_alpha_hash3`, `gx_alpha_hash_threshold`) | Hashed alpha testing: the hash and the two-scale, CDF-remapped alpha threshold (Genex turns it by the frame for TAA and compares the edge's sharpened coverage with it) | three.js 0.185.1, `src/renderers/shaders/ShaderChunk/alphahash_pars_fragment.glsl.js` (`hash2D`, `hash3D`, `getAlphaHashThreshold`) | three.js authors, after Wyman and McGuire 2017, "Hashed Alpha Testing" | MIT (three.js, see [Vendored three.js](#vendored-threejs)) |
+| `shaders/post/sun_mask_denoise.wgsl` (`fs_sun_mask_temporal`, `gx_mask_history`, `gx_mask_depth_tolerance`, `gx_mask_alpha`, `gx_mask_input`, `gx_mask_atrous`), `src/post/sun_mask.rs` (the constants) | The sun-shadow screen mask's denoise: temporal reprojection with the view-alignment-scaled disocclusion test, the neighbourhood clamp, the sample-count damper, the variance boost of a young history and the accumulation schedule; the 3x3 a-trous kernel with the shadow edge-stopping weight (Genex ports it to fragment passes without wave intrinsics or tile bitmasks, for a continuous PCSS visibility: one filter step instead of three, a depth weight instead of the normal's, and the shadow weight over the variance of the accumulated estimate) | AMD FidelityFX Denoiser (https://github.com/GPUOpen-Effects/FidelityFX-Denoiser), `ffx-shadows-dnsr/ffx_denoiser_shadows_tileclassification.h` and `ffx_denoiser_shadows_filter.h` | Advanced Micro Devices, Inc. | MIT (see [FidelityFX Denoiser](#fidelityfx-denoiser)) |
+| `shaders/pbr.wgsl` (`gx_sun_area_direction`) | The sun as a disc for specular: the direction inside the sun's disc closest to the mirror direction | Filament v1.77.3 (https://github.com/google/filament), `shaders/src/surface_light_directional.fs` (`sampleSunAreaLight`) | The Android Open Source Project | Apache 2.0 (see [Apache License 2.0](#apache-license-20)) |
+| `shaders/post/contact_shadow.wgsl` (`gx_contact_edge_fade`, `gx_contact_soft_hit`, the screen-space step count and the per-step tolerance) | Contact shadows: the occlusion faded out across the screen's outer twelfth, the thickness at least the ray's change in view distance per step; the steps set by the depth texels the ray spans on the screen and the soft hit over the back half of the thickness | Filament v1.77.3 (https://github.com/google/filament), `shaders/src/surface_shadowing.fs` (`screenSpaceContactShadow`); Bevy 0.20.0 (https://github.com/bevyengine/bevy), `crates/bevy_pbr/src/ssr/raymarch.wesl` (`depth_ray_march_march`) and `crates/bevy_pbr/src/render/pbr_functions.wesl` (`calculate_contact_shadow`) | The Android Open Source Project; Tomasz Stachowiak and Bevy contributors | Apache 2.0 (Filament); MIT OR Apache-2.0, used under Apache 2.0 (Bevy) (see [Apache License 2.0](#apache-license-20)) |
+| `shaders/screen/ssr_march.wgsl` (`gx_ssr_march_run`, `gx_ssr_march_clip`, `gx_ssr_sample`, `gx_ssr_edge_fade`) and its CPU twin `src/screen_inputs.rs` (`march`) | The screen-space ray march shared by water and screen-space reflections: the ray clipped to the view frustum, a linear march over the pixels it crosses, bisection and a secant step, each sample compared against the bilinear and the nearest depth; the screen-edge fade | Bevy 0.20.0 (https://github.com/bevyengine/bevy), `crates/bevy_pbr/src/ssr/raymarch.wesl` (a port of h3r2tic's `raymarch.hlsl`); Filament v1.77.3 (https://github.com/google/filament), `shaders/src/surface_shadowing.fs` (the edge fade) | Tomasz Stachowiak and Bevy contributors; The Android Open Source Project | MIT OR Apache-2.0, used under Apache 2.0 (Bevy); Apache 2.0 (Filament) (see [Apache License 2.0](#apache-license-20)) |
+| `shaders/forward_env.wgsl` (`gx_probe_parallax`), `src/probes.rs` (`parallax_direction`) | Reflection probes' box projection: where a reflected ray leaves the probe's box, seen from its capture point, with the largest float standing in for an axis the ray never leaves (WGSL has no infinity); Genex projects onto the box grown by the probe's fade and eases the projection in with the probe's weight | Bevy 0.20.0 (https://github.com/bevyengine/bevy), `crates/bevy_pbr/src/light_probe/environment_map.wesl` (`compute_cubemap_sample_dir`) | Bevy contributors | MIT OR Apache-2.0, used under Apache 2.0 (see [Apache License 2.0](#apache-license-20)) |
+| `shaders/forward_env.wgsl` (`gx_volume_irradiance`), `src/irradiance.rs` (`atlas_texel`, `ambient_irradiance`, `grid_irradiance`) | Irradiance volumes' ambient-cube packing and lookup: each cell's six axis-direction texels in an `X x 2Y x 3Z` block (the negative directions in the upper half of y, the axes in thirds of z), the three faces toward the normal read with the sampler's trilinear filter inside their sub-block and weighted by the normal's squared components (Genex packs every volume's block into one atlas, offsets the lookup along the normal, moves it toward the cells that see the point by their reaches and bakes the cells in the scene on the GPU) | Bevy 0.20.0 (https://github.com/bevyengine/bevy), `crates/bevy_pbr/src/light_probe/irradiance_volume.wesl` (`irradiance_volume_light`) and `crates/bevy_pbr/src/light_probe/irradiance_volume.rs` | Bevy contributors | MIT OR Apache-2.0, used under Apache 2.0 (see [Apache License 2.0](#apache-license-20)) |
+| `shaders/lighting/decals.wgsl` (`gx_decals`, `gx_decal_fade`), `src/decals.rs` (`Decal::to_gpu`) | Clustered decals: each decal a box binned like the lights, the fragment's position taken into the box by its world-to-decal transform, its maps sampled at the gradients of that position, faded towards the box's upper and lower faces and on surfaces turned from its face, and blended into the surface's colour, normal, roughness, metallic and occlusion before lighting (Genex keeps the rows in the light-extension table, samples the material size-class arrays at one level per decal and blends overlapping decals order-independently) | Godot Engine 4.7.2-stable (https://github.com/godotengine/godot), `servers/rendering/renderer_rd/shaders/forward_clustered/scene_forward_clustered.glsl` (the decal loop) and `servers/rendering/renderer_rd/shaders/decal_data_inc.glsl` | Godot Engine contributors | MIT (see [Godot Engine](#godot-engine)) |
+| `shaders/part2/particles_draw.wgsl` (`particle_soft`) | Soft particles: the gap between the opaque scene's view depth and the fragment's in world units over the fade distance, through the white paper's symmetric contrast curve of power 2 (Genex reads the view depth at half size, filtered by hand) | three.js r186 (https://github.com/mrdoob/three.js), `examples/jsm/tsl/utils/SoftParticles.js` (`softParticles`, `contrastCurve`) | three.js authors; the method after Tristan Lorach, "Soft Particles" (NVIDIA, 2007) | MIT (three.js, see [Vendored three.js](#vendored-threejs)) |
+| `shaders/part2/particles_sort.wgsl` (`cs_sort_block`, `cs_sort_step`, `cs_sort_inner`), `src/particles.rs` (`sort_steps`, `sort_plan`) | The particles' bitonic sort: each block of pairs sorted in workgroup memory, then for every larger merge its global steps (a mirrored "flip" first, so a count that is not a power of two needs no padding) and the rest of the merge in workgroup memory (Genex sorts (view depth, slot) pairs so ties break by slot, holds 2048 pairs a block where Godot holds 512, and sorts every sorted emitter of a frame in the same dispatches) | Godot Engine 4.7.2-stable (https://github.com/godotengine/godot), `servers/rendering/renderer_rd/shaders/effects/sort.glsl`, itself AMD GPUParticles11 (https://github.com/GPUOpen-LibrariesAndSDKs/GPUParticles11) | Advanced Micro Devices, Inc.; Godot Engine contributors | MIT (see [GPUParticles11](#gpuparticles11) and [Godot Engine](#godot-engine)) |
+| `shaders/post/dof_prepare.wgsl`, `shaders/post/dof_ring.wgsl`, `shaders/post/dof_combine.wgsl` (`fs_dof_combine`), `src/post/dof.rs` (`CocParams`) | Gather depth of field, ring tier: the circle of confusion as a madd on the depth buffer, the half-resolution downsample keeping the smallest CoC, its mips, the min/max CoC tiles and their dilation, the ring gather with foreground (two layers) and background (ring-occlusion merge) buckets and a fast path, the 3x3 median network and the combine (Genex keeps the colour's plain mean, reduces the tiles in two passes, leaves in-focus texels out of the median and does not jitter the gather by a noise) | Filament v1.77.3 (https://github.com/google/filament), `filament/src/materials/dof/` (`dof.mat`, `dofDownsample.mat`, `dofMipmap.mat`, `dofTiles.mat`, `dofDilate.mat`, `dofMedian.mat`, `dofCombine.mat`, `dofUtils.fs`) and `filament/src/PostProcessManager.cpp` (`PostProcessManager::dof`) | The Android Open Source Project; the methods after Jimenez (SIGGRAPH 2014), Abadie ("Life of a Bokeh", SIGGRAPH 2018) and McGuire ("A Fast, Small-Radius GPU Median Filter", 2008) | Apache 2.0 (see [Apache License 2.0](#apache-license-20)) |
+| `shaders/sky/froxel_fog.wgsl` (`cs_froxel_inject`, `cs_froxel_integrate`), `src/froxel.rs` (`HALTON`, `HISTORY_WEIGHT`, `integrate_column`, its CPU twin) | Froxel volumetric fog: each froxel's density and light (the directional light's single shadow tap, the clustered local lights through a Henyey-Greenstein phase) blended with the last frame's volume at a Halton jitter, and the front-to-back, energy-conserving scan of each column (Genex slices the rays logarithmically out to the aerial perspective's range, takes each slice's extinction from the height fog's closed form, holds the fog's largest opacity and folds the aerial perspective in behind the fog) | Godot Engine 4.7.2-stable (https://github.com/godotengine/godot), `servers/rendering/renderer_rd/shaders/environment/volumetric_fog_process.glsl` (`MODE_DENSITY`, `MODE_FOG`, `halton_map`) | Godot Engine contributors; the method after Bart Wronski (2014) and Sébastien Hillaire (2015) | MIT (see [Godot Engine](#godot-engine)) |
+| `shaders/post/dof_circular.wgsl`, `shaders/post/dof_combine.wgsl` (`fs_dof_composite`) | Gather depth of field, circular tier: the single-pass golden-angle gather whose samples behind the centre are limited by its CoC, and the composite by the pixel's or the gathered CoC (Genex bounds the spiral by the tile's CoC and a sample budget and upsamples by CoC likeness) | Godot Engine 4.7.2-stable (https://github.com/godotengine/godot), `servers/rendering/renderer_rd/shaders/effects/bokeh_dof_raster.glsl` (`MODE_BOKEH_CIRCULAR`, `MODE_COMPOSITE_BOKEH`) | Godot Engine contributors; the method after Tuxedo Labs ("Bokeh depth of field in a single pass", 2018) | MIT (see [Godot Engine](#godot-engine)) |
+| `shaders/post/motion_blur_common.wgsl` (`mb_velocity`, `mb_vmax`), `shaders/post/motion_blur_tiles.wgsl`, `shaders/post/motion_blur.wgsl` (`fs_mb_reconstruct`), `src/post/motion_blur.rs` (`MAX_BLUR_HEIGHT_SHARE`, `depth_row`) | Motion blur, reconstruction tier: half the exposure vector in pixels clamped to the largest radius, the longest velocity of each tile and of its 3x3 neighbourhood (centre favoured by 1%), the tile lookup jittered by a quarter tile, and the gather along the neighbourhood's and the pixel's velocities with its depth-softened foreground and background weights, triangular window and centre weight (Genex reduces the tiles in a compute pass, spaces samples a pixel apart without per-pixel noise and reads whole texels) | keijiro/KinoMotion (https://github.com/keijiro/KinoMotion), `Assets/Kino/Motion/Shader/Prefilter.cginc` (`frag_VelocitySetup`, `frag_TileMax*`, `frag_NeighborMax`), `Reconstruction.cginc` (`frag_Reconstruction`, `JitterTile`) and `Common.cginc` (`LinearizeDepth`) | Keijiro Takahashi; the method after McGuire, Hennessy, Bukowski and Osman ("A Reconstruction Filter for Plausible Motion Blur", I3D 2012) | MIT (see [KinoMotion](#kinomotion)) |
+| `shaders/post/motion_blur.wgsl` (`fs_mb_direct`) | Motion blur, direct tier: samples along the pixel's own exposure vector, a nearer sample kept only where its own motion along that direction reaches the pixel, the scene kept below a pixel of motion (Genex compares the sample's exposure with the pixel's, spaces samples a pixel apart without noise and reads whole texels) | Bevy 0.20.0 (https://github.com/bevyengine/bevy), `crates/bevy_post_process/src/motion_blur/motion_blur.wesl` | Bevy contributors | MIT OR Apache-2.0, used under Apache 2.0 (see [Apache License 2.0](#apache-license-20)) |
+| `src/terrain/mod.rs` (`TerrainTree::select`, `TerrainLod`, `TerrainTree::vertex`), `shaders/terrain/terrain_core.wgsl` (`gx_terrain_morph_k`, `gx_terrain_vertex`) | Continuous distance-dependent level of detail for heightmap terrain: the quadtree selection by distance ranges with partial (quarter) nodes, the morph constants and the vertex morph of odd grid vertices onto their even neighbours (Genex selects on the CPU without a frustum and culls per view, floors the ranges so no node is two levels from a neighbour, reads 16-bit heights from a storage table and samples integer positions exactly) | CDLOD (https://github.com/fstrugar/CDLOD), `source/BasicCDLOD/CDLODQuadTree.cpp` (`LODSelect`), `CDLODRenderer.cpp` and the shader's `morphVertex` | Filip Strugar | MIT (see [CDLOD](#cdlod)) |
+| `shaders/terrain/hextile.wgsl` | Hex-tiling: the triangle grid of hexagons, each tile's rotation and offset, its centre, and the luminance-weighted blend of the three tiles' samples (Genex hashes the vertex ids with integers instead of `sin`, shares the tiles between a layer's colour and data textures and turns the data texture's normal back onto the surface) | mmikk/hextile-demo (https://github.com/mmikk/hextile-demo), `hextile-demo/hextiling.h` (`TriangleGrid`, `hash`, `MakeCenST`, `LoadRot2x2`, `hex2colTex`) | Morten S. Mikkelsen ("Practical Real-Time Hex-Tiling", JCGT 11(2) 2022) | MIT (see [hextile-demo](#hextile-demo)) |
+
+### CDLOD
+
+The licence of the CDLOD code the terrain's selection and morph port (table above).
+
+```
+MIT License
+
+Copyright (c) 2010 Filip Strugar
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
+### hextile-demo
+
+The licence of the hex-tiling code the terrain's layers port (table above).
+
+```
+MIT License
+
+Copyright (c) 2022 mmikk
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
 
 ### XeGTAO
 
@@ -296,6 +381,168 @@ OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
 CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 ```
 
+### FidelityFX SDK
+
+The licence of the AMD FidelityFX SDK (FSR 2.2) code the TAA resolve ports (table above).
+
+```
+Copyright (C) 2024 Advanced Micro Devices, Inc.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files(the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and /or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions :
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
+```
+
+### FidelityFX Denoiser
+
+The licence of the AMD FidelityFX Denoiser code the sun-shadow mask's denoise ports (table above).
+
+```
+Copyright (c) 2021 Advanced Micro Devices, Inc. All rights reserved.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
+```
+
+### GPUParticles11
+
+The licence of AMD's GPUParticles11 sort, which Godot Engine carries, that the particles' bitonic
+sort ports (table above).
+
+```
+Copyright (c) 2016 Advanced Micro Devices, Inc. All rights reserved.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
+```
+
+### Godot Engine
+
+The licence of the Godot Engine code the AgX punchy tonemap, the circular depth of field, the clustered decals, the froxel volumetric fog and the particles' bitonic sort port (table above).
+
+```
+Copyright (c) 2014-present Godot Engine contributors (see AUTHORS.md).
+Copyright (c) 2007-2014 Juan Linietsky, Ariel Manzur.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
+### KinoMotion
+
+The licence of the KinoMotion code the motion blur's reconstruction tier ports (table above).
+
+```
+MIT License
+
+Copyright (c) 2016, 2017 Keijiro Takahashi
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
+### pmndrs/postprocessing
+
+The licence of the pmndrs/postprocessing code the grading LUT's tetrahedral interpolation ports
+(table above). The WGSL port is an altered version: it reads changes from the identity and is
+marked as a port in `tonemap.wgsl`.
+
+```
+Copyright © 2015 Raoul van Rüschen
+
+This software is provided 'as-is', without any express or implied warranty. In
+no event will the authors be held liable for any damages arising from the use of
+this software.
+
+Permission is granted to anyone to use this software for any purpose, including
+commercial applications, and to alter it and redistribute it freely, subject to
+the following restrictions:
+
+1. The origin of this software must not be misrepresented; you must not claim
+   that you wrote the original software. If you use this software in a product,
+   an acknowledgment in the product documentation would be appreciated but is
+   not required.
+
+2. Altered source versions must be plainly marked as such, and must not be
+   misrepresented as being the original software.
+
+3. This notice may not be removed or altered from any source distribution.
+```
+
 ## Rust showcase environment map
 
 The Rust renderer's showcase game ships one sample HDR environment map. It is a development and
@@ -330,6 +577,27 @@ its tests never depend on them. Every one is CC0 from Poly Haven; the credits ar
 | `rustic_stone_wall` | the cabin footing and the chimney | https://polyhaven.com/a/rustic_stone_wall (`rustic_stone_wall_diff_1k.jpg`, `rustic_stone_wall_nor_gl_1k.jpg`, `rustic_stone_wall_arm_1k.jpg`, from `https://dl.polyhaven.org/file/ph-assets/`) | Dimitrios Savva, via Poly Haven | CC0 1.0 (Poly Haven's licence, https://polyhaven.com/license); no attribution is required and it is given anyway | 2,779,719 bytes |
 | `kloppenheim_06_puresky` | the golden-hour sky map (B switches to it): image-based light and the backdrop | https://polyhaven.com/a/kloppenheim_06_puresky (`kloppenheim_06_puresky_2k.hdr`, from `https://dl.polyhaven.org/file/ph-assets/`) | Greg Zaal, Jarod Guest, via Poly Haven | CC0 1.0 (Poly Haven's licence, https://polyhaven.com/license); no attribution is required and it is given anyway | 4,434,394 bytes |
 
+Harbour Street, renderer pass 2's urban and interior showcase, fetches its own CC0 scans and sky
+map the same way (`node scripts/showcase-assets.ts fetch --scene harbour-street`, pinned in
+`native/genex-rust/examples/showcase/harbour/assets-manifest.json`); its blockout draws untextured
+stand-ins without them.
+
+| Asset | Used for | Source | Authors | Licence | Size |
+| --- | --- | --- | --- | --- | --- |
+| `asphalt_02` | the street and the crossing, wet after the rain (its roughness lowered in code) | https://polyhaven.com/a/asphalt_02 (`asphalt_02_diff_1k.jpg`, `asphalt_02_nor_gl_1k.jpg`, `asphalt_02_arm_1k.jpg`, from `https://dl.polyhaven.org/file/ph-assets/`) | Rob Tuytel, via Poly Haven | CC0 1.0 (Poly Haven's licence, https://polyhaven.com/license); no attribution is required and it is given anyway | 2,268,599 bytes |
+| `concrete_pavement` | the pavements either side of the street | https://polyhaven.com/a/concrete_pavement (`concrete_pavement_diff_1k.jpg`, `concrete_pavement_nor_gl_1k.jpg`, `concrete_pavement_arm_1k.jpg`, from `https://dl.polyhaven.org/file/ph-assets/`) | Charlotte Baglioni, via Poly Haven | CC0 1.0 (Poly Haven's licence, https://polyhaven.com/license); no attribution is required and it is given anyway | 2,912,926 bytes |
+| `brick_wall_001` | the street facades and the alley walls | https://polyhaven.com/a/brick_wall_001 (`brick_wall_001_diffuse_1k.jpg`, `brick_wall_001_nor_gl_1k.jpg`, `brick_wall_001_arm_1k.jpg`, from `https://dl.polyhaven.org/file/ph-assets/`) | Rob Tuytel, Dimitrios Savva, via Poly Haven | CC0 1.0 (Poly Haven's licence, https://polyhaven.com/license); no attribution is required and it is given anyway | 993,044 bytes |
+| `plastered_wall` | the cafe's front, its inner walls and ceiling | https://polyhaven.com/a/plastered_wall (`plastered_wall_diff_1k.jpg`, `plastered_wall_nor_gl_1k.jpg`, `plastered_wall_arm_1k.jpg`, from `https://dl.polyhaven.org/file/ph-assets/`) | Amal Kumar, via Poly Haven | CC0 1.0 (Poly Haven's licence, https://polyhaven.com/license); no attribution is required and it is given anyway | 2,313,364 bytes |
+| `large_red_bricks` | the cafe's red wall (the interior's colour-bleed source) | https://polyhaven.com/a/large_red_bricks (`large_red_bricks_diff_1k.jpg`, `large_red_bricks_nor_gl_1k.jpg`, `large_red_bricks_arm_1k.jpg`, from `https://dl.polyhaven.org/file/ph-assets/`) | Rob Tuytel, via Poly Haven | CC0 1.0 (Poly Haven's licence, https://polyhaven.com/license); no attribution is required and it is given anyway | 1,712,292 bytes |
+| `herringbone_parquet` | the cafe's polished floor | https://polyhaven.com/a/herringbone_parquet (`herringbone_parquet_diff_1k.jpg`, `herringbone_parquet_nor_gl_1k.jpg`, `herringbone_parquet_arm_1k.jpg`, from `https://dl.polyhaven.org/file/ph-assets/`) | Jenelle van Heerden, Sergej Majboroda, via Poly Haven | CC0 1.0 (Poly Haven's licence, https://polyhaven.com/license); no attribution is required and it is given anyway | 1,757,394 bytes |
+| `painted_metal_shutter` | the closed shops' shutters | https://polyhaven.com/a/painted_metal_shutter (`painted_metal_shutter_diff_1k.jpg`, `painted_metal_shutter_nor_gl_1k.jpg`, `painted_metal_shutter_arm_1k.jpg`, from `https://dl.polyhaven.org/file/ph-assets/`) | Dario Barresi, Rico Cilliers, Charlotte Baglioni, via Poly Haven | CC0 1.0 (Poly Haven's licence, https://polyhaven.com/license); no attribution is required and it is given anyway | 1,964,868 bytes |
+| `dark_wood` | the cafe's tables, chairs, counter, shelves and door, its menu board's frame, the street bench and the alley's crates | https://polyhaven.com/a/dark_wood (`dark_wood_diff_1k.jpg`, `dark_wood_nor_gl_1k.jpg`, `dark_wood_arm_1k.jpg`, from `https://dl.polyhaven.org/file/ph-assets/`) | Dario Barresi, Dimitrios Savva, Rico Cilliers, via Poly Haven | CC0 1.0 (Poly Haven's licence, https://polyhaven.com/license); no attribution is required and it is given anyway | 1,717,893 bytes |
+| `marble_01` | the cafe's counter top and the cup and saucer on the window table | https://polyhaven.com/a/marble_01 (`marble_01_diff_1k.jpg`, `marble_01_nor_gl_1k.jpg`, `marble_01_arm_1k.jpg`, from `https://dl.polyhaven.org/file/ph-assets/`) | Rob Tuytel, via Poly Haven | CC0 1.0 (Poly Haven's licence, https://polyhaven.com/license); no attribution is required and it is given anyway | 469,999 bytes |
+| `metal_plate_02` | the street lamps, the bollards, the window frames, the sign panels, the furniture's legs and the alley's pipes, air conditioners and bin | https://polyhaven.com/a/metal_plate_02 (`metal_plate_02_diff_1k.jpg`, `metal_plate_02_nor_gl_1k.jpg`, `metal_plate_02_arm_1k.jpg`, from `https://dl.polyhaven.org/file/ph-assets/`) | Rob Tuytel, via Poly Haven | CC0 1.0 (Poly Haven's licence, https://polyhaven.com/license); no attribution is required and it is given anyway | 1,885,020 bytes |
+| `granite_tile` | the kerb stones and the cafe's threshold | https://polyhaven.com/a/granite_tile (`granite_tile_diff_1k.jpg`, `granite_tile_nor_gl_1k.jpg`, `granite_tile_arm_1k.jpg`, from `https://dl.polyhaven.org/file/ph-assets/`) | Charlotte Baglioni, via Poly Haven | CC0 1.0 (Poly Haven's licence, https://polyhaven.com/license); no attribution is required and it is given anyway | 1,987,919 bytes |
+| `metal_grate_rusty` | the drains along the kerbs, the manhole covers, the alley's gutter and the air conditioners' grilles | https://polyhaven.com/a/metal_grate_rusty (`metal_grate_rusty_diff_1k.jpg`, `metal_grate_rusty_nor_gl_1k.jpg`, `metal_grate_rusty_arm_1k.jpg`, from `https://dl.polyhaven.org/file/ph-assets/`) | Rob Tuytel, Dimitrios Savva, via Poly Haven | CC0 1.0 (Poly Haven's licence, https://polyhaven.com/license); no attribution is required and it is given anyway | 2,774,295 bytes |
+| `kloppenheim_01_puresky` | the overcast dusk sky map (B switches to it): image-based light and the backdrop | https://polyhaven.com/a/kloppenheim_01_puresky (`kloppenheim_01_puresky_2k.hdr`, from `https://dl.polyhaven.org/file/ph-assets/`) | Greg Zaal, Jarod Guest, via Poly Haven | CC0 1.0 (Poly Haven's licence, https://polyhaven.com/license); no attribution is required and it is given anyway | 3,187,954 bytes |
+
 ## Rust toolchain runtime
 
 Besides its crates (above), a Rust game links what the pinned toolchains compile into every
@@ -358,8 +626,8 @@ not shipped.
 
 ## Asset importer decoders
 
-The Rust · wgpu asset import step (`src/substrate/asset-import/`) runs four WebAssembly modules
-in its own sandbox: three decoders and meshoptimizer's meshlet clusterizer. They are the builds
+The Rust · wgpu asset import step (`src/substrate/asset-import/`) runs five WebAssembly modules
+in its own sandbox: three decoders, meshoptimizer's meshlet clusterizer and its simplifier. They are the builds
 three.js 0.185.1 ships in `examples/jsm/libs`, read from the pinned `three` package (paths below
 are under it). Their licence and notice texts are in the three.js add-on library sections below. The packaged app does not carry the importer yet; when it does,
 this page ships beside the decoders.
@@ -370,6 +638,44 @@ this page ships beside the decoders.
 | `examples/jsm/libs/draco/gltf/` | [Draco](https://github.com/google/draco) 1.5.6 glTF decoder | Apache-2.0 |
 | `examples/jsm/libs/meshopt_decoder.module.js` | [meshoptimizer](https://github.com/zeux/meshoptimizer) 1.1.1 decoder | MIT |
 | `examples/jsm/libs/meshopt_clusterizer.module.js` | [meshoptimizer](https://github.com/zeux/meshoptimizer) meshlet clusterizer (a development build between 1.1.1 and 1.2.0); the importer stores its meshlets in glTF `extras` | MIT |
+| `examples/jsm/libs/meshopt_simplifier.module.js` | [meshoptimizer](https://github.com/zeux/meshoptimizer) simplifier (a development build between 1.1.1 and 1.2.0); the importer stores its levels of detail in glTF `extras` | MIT |
+
+## Asset importer ports
+
+Code of the Rust · wgpu asset import step (`src/substrate/asset-import/`) ported from other
+projects. The test fixture `tests/fixtures/asset-import/quantized.glb` is the output of
+[gltfpack](https://github.com/zeux/meshoptimizer) 1.3.0 (MIT, the meshoptimizer licence below);
+gltfpack itself is not in the repository.
+
+| Genex file | What | Source | Upstream author | Licence |
+| --- | --- | --- | --- | --- |
+| `src/substrate/asset-import/dequantize.ts` | `KHR_mesh_quantization` undone: which attributes become float32 (every one but `JOINTS_n`, morph targets too) and the normalized-integer division with its -1 clamp | glTF-Transform 4.5.1 (https://github.com/donmccurdy/glTF-Transform), `packages/functions/src/dequantize.ts` and `packages/core/src/utils/math-utils.ts` (`decodeNormalizedInt`) | Don McCurdy | MIT (see [glTF-Transform](#gltf-transform)) |
+
+### glTF-Transform
+
+```
+The MIT License (MIT)
+
+Copyright (c) 2024 Don McCurdy
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
 
 ## Components under other terms
 
@@ -1412,7 +1718,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ## Apache License 2.0
 
-Applies to Basis Universal, Draco, Chevrotain, the pdf.js JPEG decoder and the Filament functions the Rust renderer ports ([Rust renderer shader ports](#rust-renderer-shader-ports); Copyright (C) The Android Open Source Project). Text from https://www.apache.org/licenses/LICENSE-2.0.txt:
+Applies to Basis Universal, Draco, Chevrotain, the pdf.js JPEG decoder, the Filament functions the Rust renderer ports (Copyright (C) The Android Open Source Project) and the Bevy auto exposure, contact-shadow, screen-space ray march, reflection-probe box-projection, irradiance-volume lookup and motion-blur functions it ports (Bevy contributors and Tomasz Stachowiak, dual-licensed MIT OR Apache-2.0) ([Rust renderer shader ports](#rust-renderer-shader-ports)). Text from https://www.apache.org/licenses/LICENSE-2.0.txt:
 
 ```
                                  Apache License

@@ -35,6 +35,7 @@ import {
   releasesCapture,
   resizeDue,
   type ShownRun,
+  startingProgress,
   textAction,
 } from "./native-live.ts";
 
@@ -207,13 +208,24 @@ function useEmbedHold(box: RefObject<HTMLDivElement | null>, project: string, re
         })
         .catch(() => {});
     };
+    // The slot's exact device pixels, from the observer's device-pixel box where the browser
+    // reports one: the ring then matches the canvas pixel for pixel (no compositor resample).
+    let device: { width: number; height: number } | undefined;
     schedule.current = () => {
-      measured.current = embedSizeOf(element.getBoundingClientRect(), window.devicePixelRatio);
+      measured.current = embedSizeOf(element.getBoundingClientRect(), window.devicePixelRatio, device);
       if (!frame) frame = requestAnimationFrame(flush);
     };
     const observe = (): void => schedule.current();
-    const observer = new ResizeObserver(observe);
-    observer.observe(element);
+    const observer = new ResizeObserver((entries) => {
+      const box = entries.at(-1)?.devicePixelContentBoxSize?.[0];
+      device = box ? { width: box.inlineSize, height: box.blockSize } : undefined;
+      observe();
+    });
+    try {
+      observer.observe(element, { box: "device-pixel-content-box" });
+    } catch {
+      observer.observe(element);
+    }
     window.addEventListener("resize", observe);
     observe();
     return () => {
@@ -437,6 +449,7 @@ function CanvasCard({
   const { title, detail } = canvasWords(phase, status);
   const actions = canvasActions(phase, status, { popOut });
   const busy = phase === CanvasPhase.Starting;
+  const boot = busy ? startingProgress(status) : null;
   return (
     <div className="absolute inset-0 grid place-items-center overflow-y-auto bg-base/80 p-8">
       <div className="flex max-w-md flex-col items-center gap-3 text-center">
@@ -444,6 +457,18 @@ function CanvasCard({
           {title}
         </span>
         {detail ? <span className="text-xs leading-relaxed text-pretty text-ink-2">{detail}</span> : null}
+        {boot ? (
+          <span
+            aria-hidden="true"
+            data-stage-native-progress=""
+            className="h-1 w-48 overflow-hidden rounded-full bg-ink/10"
+          >
+            <span
+              className="block h-full origin-left rounded-full bg-accent-primary transition-transform duration-200 ease-out"
+              style={{ transform: `scaleX(${boot.fill})` }}
+            />
+          </span>
+        ) : null}
         {status?.problem ? (
           <div className="w-full text-start">
             <TroubleDetails problem={status.problem} installLines={null} />

@@ -36,6 +36,9 @@ pub enum BudgetKind {
     MaterialArrays,
     /// A Level-3 custom pass's own resources (`PassSetup::bytes`).
     Pass,
+    /// A GPU buffer the renderer holds: a frame table, the mesh library, a uniform or a node's own
+    /// (renderer pass 2 A.0, LG-13; `Renderer::buffer_ledger`).
+    Buffers,
 }
 
 /// One registered allocation.
@@ -115,8 +118,8 @@ const SHADOW_SIZE_MIN: u32 = 768;
 const IBL_SIZE_MIN: u32 = 64;
 /// The smallest material size class the ladder halves to.
 const MATERIAL_SIZE_MIN: u32 = 64;
-/// Bloom keeps at least this many mips.
-const BLOOM_MIPS_MIN: u8 = 4;
+/// The lowest chain resolution (top rows) the bloom rung halves to.
+const BLOOM_RESOLUTION_MIN: u16 = 180;
 
 /// A material texture array: square layers of `size_px` (rgba8 with a full mip chain).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -161,7 +164,43 @@ pub struct BudgetInput {
     /// The widest HDR environment map the device keeps (`presets::hdri_map_width`; 0: none
     /// reserved).
     pub environment_map_width: u32,
+    /// The letterbox the window present fills on a Live frame (renderer pass 2, P2-0.9 step B),
+    /// None for a capture or a frame no window shows: its staged image (the HUD paints over it)
+    /// and, when the output is smaller, EASU's image are counted at this size.
+    pub window: Option<(u32, u32)>,
+    /// The GPU buffers the renderer holds, by label (LG-13; `Renderer::buffer_ledger`).
+    pub buffers: Vec<(String, u64)>,
+    /// The bytes of the look's 3D grading LUT the tonemap holds (renderer pass 2 A.2; 0: none;
+    /// the [`GRADING_LUT_LABEL`] entry of `Renderer::buffer_ledger`).
+    pub grading_lut_bytes: u64,
+    /// The bytes the reflection probes hold (renderer pass 2 A.3, `probes::ProbeMaps::bytes`: the
+    /// cube array, the capture's targets and rows; 0: no probe held; the
+    /// [`REFLECTION_PROBES_LABEL`] entry of `Renderer::buffer_ledger`).
+    pub reflection_probe_bytes: u64,
+    /// The bytes the irradiance volumes hold (renderer pass 2 A.4,
+    /// `irradiance::IrradianceMaps::bytes`: the atlas, the staging block and the bake's targets;
+    /// 0: no volume held; the [`IRRADIANCE_VOLUMES_LABEL`] entry of `Renderer::buffer_ledger`).
+    pub irradiance_volume_bytes: u64,
+    /// The bytes the look's depth of field and motion blur take from the target pool (renderer
+    /// pass 2 A.9; 0: the look has neither on; the [`DEPTH_OF_FIELD_LABEL`] and
+    /// [`MOTION_BLUR_LABEL`] entries of `Renderer::buffer_ledger`).
+    pub lens_bytes: [u64; 2],
 }
+
+/// The ledger label of the look's 3D grading LUT ([`BudgetKind::Ibl`]; renderer pass 2 A.2).
+pub const GRADING_LUT_LABEL: &str = "grading-lut";
+/// The ledger label of the reflection probes' cubes and capture targets ([`BudgetKind::Ibl`];
+/// renderer pass 2 A.3).
+pub const REFLECTION_PROBES_LABEL: &str = "reflection-probes";
+/// The ledger label of the irradiance volumes' atlas and bake targets ([`BudgetKind::Ibl`];
+/// renderer pass 2 A.4).
+pub const IRRADIANCE_VOLUMES_LABEL: &str = "irradiance-volumes";
+/// The ledger label of the look's depth-of-field targets ([`BudgetKind::Target`]; renderer pass 2
+/// A.9, graph node 17a).
+pub const DEPTH_OF_FIELD_LABEL: &str = "depth-of-field";
+/// The ledger label of the look's motion-blur targets ([`BudgetKind::Target`]; renderer pass 2
+/// A.9, graph node 17b).
+pub const MOTION_BLUR_LABEL: &str = "motion-blur";
 
 impl BudgetInput {
     /// An input with no materials and no passes.
@@ -177,7 +216,33 @@ impl BudgetInput {
             spot_atlas: false,
             passes: Vec::new(),
             environment_map_width: 0,
+            window: None,
+            buffers: Vec::new(),
+            grading_lut_bytes: 0,
+            reflection_probe_bytes: 0,
+            irradiance_volume_bytes: 0,
+            lens_bytes: [0; 2],
         }
+    }
+
+    /// The input with the [`BudgetKind::Buffers`] entries of `held` (the renderer's buffers), its
+    /// grading LUT ([`GRADING_LUT_LABEL`]), its reflection probes ([`REFLECTION_PROBES_LABEL`]),
+    /// its irradiance volumes ([`IRRADIANCE_VOLUMES_LABEL`]) and the look's lens targets
+    /// ([`DEPTH_OF_FIELD_LABEL`], [`MOTION_BLUR_LABEL`]).
+    pub fn with_buffers(mut self, held: &BudgetLedger) -> BudgetInput {
+        self.buffers = held.entries().iter().filter(|entry| entry.kind == BudgetKind::Buffers).map(|entry| (entry.label.clone(), entry.bytes)).collect();
+        let labelled = |label: &str| held.entries().iter().filter(|entry| entry.label == label).map(|entry| entry.bytes).sum();
+        self.grading_lut_bytes = labelled(GRADING_LUT_LABEL);
+        self.reflection_probe_bytes = labelled(REFLECTION_PROBES_LABEL);
+        self.irradiance_volume_bytes = labelled(IRRADIANCE_VOLUMES_LABEL);
+        self.lens_bytes = [labelled(DEPTH_OF_FIELD_LABEL), labelled(MOTION_BLUR_LABEL)];
+        self
+    }
+
+    /// The input with the window present filling a `letterbox` (a Live frame's), or none.
+    pub fn with_window(mut self, letterbox: Option<(u32, u32)>) -> BudgetInput {
+        self.window = letterbox;
+        self
     }
 
     /// The input with the MSAA colour read after the world pass (`read`) or not.
@@ -310,15 +375,15 @@ impl Shape {
         }
     }
 
-    /// Pixels in the bloom chain (0 when bloom is off).
+    /// Pixels in the bloom chain (0 when bloom is off): sized from the output, the chain the
+    /// renderer allocates ([`crate::post::bloom::chain_sizes`]), whatever the DRS step, and the
+    /// pre-levels a scene more than twice its top's size is halved into first.
     fn bloom_px(&self, quality: &Quality) -> u64 {
-        if !quality.bloom.enabled || quality.bloom.mips == 0 {
-            return 0;
-        }
-        let shift = u32::from(quality.bloom.half_res);
-        (0..u32::from(quality.bloom.mips))
-            .map(|mip| (self.render.0 >> (mip + shift)).max(1) * (self.render.1 >> (mip + shift)).max(1))
-            .sum()
+        let size = |(w, h): (u64, u64)| (u32::try_from(w).unwrap_or(u32::MAX), u32::try_from(h).unwrap_or(u32::MAX));
+        let (render, output) = (size(self.render), size(self.output));
+        let chain = crate::post::bloom::chain_sizes(output, &quality.bloom);
+        let pre = crate::post::bloom::pre_level_sizes(render, output, &quality.bloom);
+        chain.iter().chain(&pre).map(|(w, h)| u64::from(*w) * u64::from(*h)).sum()
     }
 
     /// Bytes of the Hi-Z pyramid (half resolution down to 1 × 1, `r32float`).
@@ -378,6 +443,15 @@ fn environment_map_bytes(quality: &Quality, width: u32) -> Option<u64> {
     (draws && width > 0).then(|| crate::ibl::map_bytes(width, (width / 2).max(1)))
 }
 
+/// The froxel fog's ledger label (renderer pass 2 A.5).
+pub const FROXEL_FOG_LABEL: &str = "froxel-fog";
+
+/// The froxel fog's grid on `quality`'s HDR scene (renderer pass 2 A.5; a look without fog draws
+/// none, which the ledger does not know, so it counts the quality's).
+fn froxel_grid(quality: &Quality) -> Option<crate::froxel::FroxelGrid> {
+    quality.environment.froxel_fog.filter(|_| quality.hdr && quality.fog && crate::froxel::LANDED)
+}
+
 /// The sky LUT bytes: sky-view, transmittance, multi-scattering and (if on) aerial perspective.
 fn sky_bytes(quality: &Quality) -> Option<[u64; 4]> {
     let environment = &quality.environment;
@@ -385,7 +459,8 @@ fn sky_bytes(quality: &Quality) -> Option<[u64; 4]> {
         return None;
     }
     let (w, h) = environment.sky_lut;
-    let aerial = if environment.aerial_perspective { AERIAL_PX * AERIAL_PX * AERIAL_PX * RGBA16F } else { 0 };
+    // Renderer pass 2 SI-04: two halves, the in-scatter and the transmittance per channel.
+    let aerial = if environment.aerial_perspective { AERIAL_PX * AERIAL_PX * AERIAL_PX * u64::from(crate::fog::AIR_HALVES) * RGBA16F } else { 0 };
     Some([
         u64::from(w) * u64::from(h) * RGBA16F,
         SKY_TRANSMITTANCE.0 * SKY_TRANSMITTANCE.1 * RGBA16F,
@@ -408,7 +483,111 @@ pub fn ledger(quality: &Quality, input: &BudgetInput) -> BudgetLedger {
     for (name, bytes) in &input.passes {
         ledger.register(BudgetKind::Pass, name, *bytes);
     }
+    for (label, bytes) in &input.buffers {
+        ledger.register(BudgetKind::Buffers, label, *bytes);
+    }
+    if input.grading_lut_bytes > 0 {
+        ledger.register(BudgetKind::Ibl, GRADING_LUT_LABEL, input.grading_lut_bytes);
+    }
+    if input.reflection_probe_bytes > 0 {
+        ledger.register(BudgetKind::Ibl, REFLECTION_PROBES_LABEL, input.reflection_probe_bytes);
+    }
+    if input.irradiance_volume_bytes > 0 {
+        ledger.register(BudgetKind::Ibl, IRRADIANCE_VOLUMES_LABEL, input.irradiance_volume_bytes);
+    }
+    for (label, bytes) in [DEPTH_OF_FIELD_LABEL, MOTION_BLUR_LABEL].into_iter().zip(input.lens_bytes) {
+        if bytes > 0 {
+            ledger.register(BudgetKind::Target, label, bytes);
+        }
+    }
+    register_window(&mut ledger, input);
     ledger
+}
+
+/// What a frame's buffers hold, in rows (LG-13): what [`buffer_model`] reads.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct BufferCounts {
+    /// Instance-table rows (opaque and transparent).
+    pub instances: u64,
+    /// Each cull view's visible-list region: the plan's visible slots (its opaque rows, and each
+    /// level batch's slots, renderer pass 2 A6.9).
+    pub opaque_instances: u64,
+    /// Transparent draws.
+    pub transparent: u64,
+    /// Active cull views.
+    pub views: u64,
+    /// Opaque batches.
+    pub batches: u64,
+    /// Material-table rows.
+    pub materials: u64,
+    /// Light-table rows.
+    pub lights: u64,
+    /// Bytes of the light extension rows (with the shadowed spots' matrices).
+    pub light_ext_bytes: u64,
+    /// Bytes of the light-bin table (`cluster::bins_bytes`).
+    pub light_bin_bytes: u64,
+    /// Pass-view entries (256 bytes each).
+    pub pass_views: u64,
+    /// Slot-base rows.
+    pub slot_base: u64,
+    /// Whether previous models are written (motion vectors).
+    pub motion: bool,
+    /// The mesh library: vertices, indices and skin vertices.
+    pub vertices: u64,
+    /// Library indices.
+    pub indices: u64,
+    /// Skin-vertex rows.
+    pub skin_vertices: u64,
+}
+
+/// A frame table of `bytes` as allocated: the table rounding (16 bytes, at least 256) grown to
+/// the next power of two (`tables::Table::ensure`).
+pub fn table_bytes(bytes: u64) -> u64 {
+    crate::tables::aligned(bytes).next_power_of_two()
+}
+
+/// Bytes of the renderer's fixed buffers beside the frame tables and the library: the frame
+/// uniforms, cull views, fog and background rows, and the light binning's uniform, bounds rows
+/// and starting axis scratch.
+const FIXED_BUFFER_BYTES: u64 = 4 * 1024 + (crate::cluster::MAX_CLUSTERABLES as u64) * 16 + 32 * 1024;
+
+/// The model of the buffers a frame of `counts` makes the renderer hold (renderer pass 2 A.0,
+/// LG-13): every frame table at its rows' bytes as tables grow, the library as uploaded and the
+/// fixed buffers. A frame drawn after a larger one holds the larger tables (tables never shrink).
+pub fn buffer_model(counts: &BufferCounts) -> u64 {
+    use crate::layout::{DrawIndexedArgs, GpuBatch, GpuInstance, GpuLight, GpuMaterial, GpuMaterialExt, GpuMeshVertex, GpuPrevModel};
+    let rows = |count: u64, stride: usize| table_bytes(count * stride as u64);
+    let visible = counts.views * counts.opaque_instances + counts.transparent;
+    let tables = [
+        rows(counts.instances, size_of::<GpuInstance>()),
+        rows(counts.materials, size_of::<GpuMaterial>()),
+        rows(counts.materials, size_of::<GpuMaterialExt>()),
+        rows(counts.lights, size_of::<GpuLight>()),
+        rows(counts.batches, size_of::<GpuBatch>()),
+        rows(counts.slot_base, 4),
+        rows(visible, 4),
+        rows(counts.views * counts.batches, size_of::<DrawIndexedArgs>()),
+        table_bytes(crate::cull::scratch_bytes(counts.opaque_instances as u32, counts.views as u32)),
+        rows(counts.pass_views.max(1), crate::tables::PASS_VIEW_STRIDE as usize),
+        if counts.motion { rows(counts.instances, size_of::<GpuPrevModel>()) } else { table_bytes(0) },
+        table_bytes(counts.light_ext_bytes),
+        table_bytes(counts.light_bin_bytes),
+    ];
+    let library = [counts.vertices * size_of::<GpuMeshVertex>() as u64, counts.vertices * 4, counts.indices * 4, counts.skin_vertices * 32].map(crate::tables::aligned);
+    tables.iter().chain(&library).sum::<u64>() + FIXED_BUFFER_BYTES
+}
+
+/// The window present's images ([`crate::letterbox::present`]) at the letterbox's size: the staged
+/// `bgra8` image the HUD is painted over, and EASU's `rgb10a2` image when the output is upscaled
+/// into a larger letterbox (the class's cap below the window's pixels).
+fn register_window(ledger: &mut BudgetLedger, input: &BudgetInput) {
+    let Some((width, height)) = input.window else { return };
+    let pixels = u64::from(width) * u64::from(height);
+    ledger.register(BudgetKind::Target, "window-staged", pixels * TEXEL4);
+    let upscaled = width >= input.output.0 && height >= input.output.1 && (width, height) != input.output;
+    if upscaled {
+        ledger.register(BudgetKind::Target, "window-easu", pixels * TEXEL4);
+    }
 }
 
 /// Scene colour, depth, the prepass, the output and the upscale target.
@@ -467,6 +646,11 @@ fn register_post(ledger: &mut BudgetLedger, quality: &Quality, shape: &Shape) {
     if quality.contact_shadows {
         ledger.register(BudgetKind::Target, "contact-shadows", crate::post::contact_shadow::mask_bytes(render));
     }
+    // The sun-shadow mask's raw, two state and mask targets (renderer pass 2, B.7) where its key
+    // lets it run: soft shadows on the HDR scene under TAA.
+    if crate::post::sun_mask::key(quality, quality.hdr, shape.taa).is_some() {
+        ledger.register(BudgetKind::Target, "sun-shadow-mask", crate::post::sun_mask::mask_bytes(render));
+    }
     let bloom = shape.bloom_px(quality);
     if bloom > 0 {
         // The chain is `rgba16float` whatever the scene format: storage-capable in WebGPU core.
@@ -508,6 +692,9 @@ fn register_lighting(ledger: &mut BudgetLedger, quality: &Quality, shape: &Shape
             ledger.register(BudgetKind::Ibl, "aerial", aerial);
         }
     }
+    if let Some(grid) = froxel_grid(quality) {
+        ledger.register(BudgetKind::Ibl, FROXEL_FOG_LABEL, grid.bytes());
+    }
 }
 
 /// One rung of the degrade ladder, in its fixed order ([`DegradeRung::ALL`]).
@@ -520,16 +707,27 @@ pub enum DegradeRung {
     ShadowFormat,
     /// MSAA 4x → no AA (`from`/`to`: samples). Pipeline: boot or explicit only.
     Msaa,
+    /// The sun-shadow screen mask → the forward pass's inline soft shadows (`from`/`to`: 1 on, 0
+    /// off; renderer pass 2, B.7). It is the first resource rung: its 28 bytes a pixel (58 MB at
+    /// 1080p) would otherwise take AO, the shadow and IBL sizes and then TAA from a browser that
+    /// hides `deviceMemory`, and the inline path draws the same shadows with a little more
+    /// still-camera flicker.
+    SunMask,
+    /// The froxel fog → the analytic height fog (`from`/`to`: its slices → 0; renderer pass 2
+    /// A.5). Its four volumes (14 MB at `high`, 29 MB at `ultra`) go right after the sun mask:
+    /// the analytic fog draws the same fog, only without shafts.
+    FroxelFog,
     /// TAA → MSAA 4x where MSAA is transient, else no AA (`from`/`to`: history buffers 2 → 0).
-    /// Pipeline: boot or explicit only. It comes after the resource rungs (AO, bloom mips, spot
+    /// Pipeline: boot or explicit only. It comes after the resource rungs (AO, bloom resolution, spot
     /// shadows, shadow and IBL size; RQ5 review): its history pair is a fraction of what they
     /// free, and on a GPU without transient attachments its fallback is no anti-aliasing at all
     /// (a browser hiding `deviceMemory` keeps TAA at 1080p this way).
     TaaHistory,
     /// AO full → half → off (`from`/`to`: 2 full, 1 half, 0 off).
     Ao,
-    /// Bloom mips −1, down to 4.
-    BloomMips,
+    /// The bloom chain's resolution halves, down to 180 rows (`from`/`to`: its top's rows). Its
+    /// mip count never changes (renderer pass 2, P5).
+    BloomResolution,
     /// Shadowed spots → none (`from`/`to`: spot slots): the spot atlas layer goes before the sun's
     /// cascades are halved for its memory. Taken only for a game that uses shadowed spots (only
     /// then is the layer reserved).
@@ -546,11 +744,13 @@ pub enum DegradeRung {
 
 impl DegradeRung {
     /// The ladder, in order.
-    pub const ALL: [DegradeRung; 10] = [
+    pub const ALL: [DegradeRung; 12] = [
         DegradeRung::ShadowFormat,
         DegradeRung::Msaa,
+        DegradeRung::SunMask,
+        DegradeRung::FroxelFog,
         DegradeRung::Ao,
-        DegradeRung::BloomMips,
+        DegradeRung::BloomResolution,
         DegradeRung::SpotShadows,
         DegradeRung::ShadowSize,
         DegradeRung::IblSize,
@@ -573,8 +773,10 @@ impl DegradeRung {
             DegradeRung::ShadowFormat => "shadow-format",
             DegradeRung::Msaa => "msaa",
             DegradeRung::TaaHistory => "taa-history",
+            DegradeRung::SunMask => "sun-mask",
+            DegradeRung::FroxelFog => "froxel-fog",
             DegradeRung::Ao => "ao",
-            DegradeRung::BloomMips => "bloom-mips",
+            DegradeRung::BloomResolution => "bloom-resolution",
             DegradeRung::SpotShadows => "spot-shadows",
             DegradeRung::ShadowSize => "shadow-size",
             DegradeRung::IblSize => "ibl-size",
@@ -635,8 +837,10 @@ fn step_down(rung: DegradeRung, quality: &mut Quality, materials: &mut [Material
         DegradeRung::ShadowFormat => step_shadow_format(quality),
         DegradeRung::Msaa => step_msaa(quality),
         DegradeRung::TaaHistory => step_taa(quality, transient),
+        DegradeRung::SunMask => step_sun_mask(quality),
+        DegradeRung::FroxelFog => step_froxel_fog(quality),
         DegradeRung::Ao => step_ao(quality),
-        DegradeRung::BloomMips => step_bloom(quality),
+        DegradeRung::BloomResolution => step_bloom(quality),
         DegradeRung::SpotShadows => step_spot_shadows(quality),
         DegradeRung::ShadowSize => step_shadow_size(quality),
         DegradeRung::IblSize => step_ibl(quality),
@@ -674,12 +878,26 @@ fn step_ao(quality: &mut Quality) -> Option<(u32, u32)> {
 }
 
 fn step_bloom(quality: &mut Quality) -> Option<(u32, u32)> {
-    let mips = quality.bloom.mips;
-    if !quality.bloom.enabled || mips <= BLOOM_MIPS_MIN {
+    let resolution = quality.bloom.resolution;
+    if !quality.bloom.enabled || resolution / 2 < BLOOM_RESOLUTION_MIN {
         return None;
     }
-    quality.bloom.mips = mips - 1;
-    Some((u32::from(mips), u32::from(mips - 1)))
+    quality.bloom.resolution = resolution / 2;
+    Some((u32::from(resolution), u32::from(resolution / 2)))
+}
+
+fn step_sun_mask(quality: &mut Quality) -> Option<(u32, u32)> {
+    if !quality.shadows.screen_mask {
+        return None;
+    }
+    quality.shadows.screen_mask = false;
+    Some((1, 0))
+}
+
+fn step_froxel_fog(quality: &mut Quality) -> Option<(u32, u32)> {
+    let grid = quality.environment.froxel_fog?;
+    quality.environment.froxel_fog = None;
+    Some((u32::from(grid.slices), 0))
 }
 
 fn step_spot_shadows(quality: &mut Quality) -> Option<(u32, u32)> {
@@ -935,6 +1153,11 @@ fn lighting_bytes(quality: &Quality, shape: &Shape) -> u64 {
     if let Some([view, _, _, aerial]) = sky_bytes(quality) {
         bytes += 2 * (view + aerial) / u64::from(quality.environment.sky_cadence.max(1));
     }
+    if let Some(grid) = froxel_grid(quality) {
+        // The inject writes a volume and reads the history; the scan reads it and writes the
+        // result's two halves.
+        bytes += grid.froxels() * RGBA16F * (3 + u64::from(crate::fog::AIR_HALVES));
+    }
     bytes
 }
 
@@ -961,7 +1184,9 @@ fn taps_per_pixel(quality: &Quality, shape: &Shape) -> f32 {
         taps += 3.0;
     }
     if let Some([_, _, _, aerial]) = sky_bytes(quality) {
-        taps += 1.0 + if aerial > 0 { 1.0 } else { 0.0 };
+        // The air volume's two halves (SI-04): one tap each.
+        let air = aerial > 0 || froxel_grid(quality).is_some();
+        taps += 1.0 + if air { f32::from(crate::fog::AIR_HALVES as u8) } else { 0.0 };
     }
     if quality.contact_shadows {
         taps += CONTACT_SHADOW_STEPS / 4.0;

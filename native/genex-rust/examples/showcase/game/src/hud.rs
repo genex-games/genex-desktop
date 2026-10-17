@@ -3,7 +3,7 @@
 
 use genex::egui;
 
-use crate::world::{CameraMode, SHOTS, World};
+use crate::world::{CameraMode, World, shot_at};
 
 /// The card's background: the evening's violet, mostly see-through.
 const CARD: egui::Color32 = egui::Color32::from_rgba_premultiplied(20, 16, 30, 150);
@@ -11,7 +11,7 @@ const TITLE: egui::Color32 = egui::Color32::from_rgb(255, 214, 160);
 const BODY: egui::Color32 = egui::Color32::from_rgb(232, 224, 214);
 const HINT: egui::Color32 = egui::Color32::from_rgb(190, 180, 196);
 /// The settings button's label (checks find it in `state().hud.items`).
-pub const SETTINGS_BUTTON: &str = "⚙ Settings";
+pub const SETTINGS_BUTTON: &str = "Settings";
 /// The graphics panel's width, in world pixels.
 const PANEL_WIDTH: f32 = 300.0;
 /// Clear of the screen edges.
@@ -43,7 +43,7 @@ fn card_contents(world: &mut World, ui: &mut egui::Ui) {
     let shot = match world.mode {
         CameraMode::Tour => "Tour".to_owned(),
         CameraMode::Free => "Free camera".to_owned(),
-        CameraMode::Shot(i) => format!("Shot {}: {}", i + 1, SHOTS[i.min(SHOTS.len() - 1)].name),
+        CameraMode::Shot(i) => format!("Shot {}: {}", i + 1, shot_at(i).name),
     };
     ui.label(egui::RichText::new("Lakeside at golden hour").color(TITLE).size(18.0).strong());
     ui.label(egui::RichText::new(format!("{shot} · {}", world.backdrop.label())).color(BODY).size(14.0));
@@ -51,11 +51,11 @@ fn card_contents(world: &mut World, ui: &mut egui::Ui) {
     let hint = if world.mode == CameraMode::Free {
         "WASD move · Q/E down/up · arrows or drag to look · Space tour"
     } else {
-        "1–5 shots · Space tour · F free camera · B sky/HDRI · tap next shot · O settings · H hide"
+        "1–9 shots · Space tour · F free camera · B sky/HDRI · tap next shot · O settings · H hide"
     };
     ui.label(egui::RichText::new(hint).color(HINT).size(12.0));
     ui.add_space(4.0);
-    if ui.button(SETTINGS_BUTTON).clicked() {
+    if genex::render::settings_button(ui, SETTINGS_BUTTON).clicked() {
         world.settings_open = !world.settings_open;
     }
 }

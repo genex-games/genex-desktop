@@ -102,6 +102,10 @@ type Host = {
   manifest: string | null;
   turns: Turn[];
   aborted: Set<string>;
+  /** The held turns, by copy, each ended by its copy's abort (never by a count of event-loop turns). */
+  held: Map<string, () => void>;
+  /** Told each time a turn is held. */
+  onHeld?: () => void;
   /** How many more checkouts into the game folder git refuses, as with another git holding its index. */
   checkoutFails: number;
   /** What a checkout into the game folder writes there, as git would (nothing unless a test says). */
@@ -126,11 +130,32 @@ function git(host: Host, command: string) {
   return ok("");
 }
 
+/** The host aborts the turn in a copy: a turn held there ends. */
+function abortTurn(host: Host, cwd: string): void {
+  host.aborted.add(cwd);
+  host.held.get(cwd)?.();
+  host.held.delete(cwd);
+}
+
+/** Resolves once `count` turns are held, so a close finds every one of them at work. */
+function turnsHeld(host: Host, count: number): Promise<void> {
+  return new Promise((resolve) => {
+    host.onHeld = () => {
+      if (host.held.size >= count) resolve();
+    };
+    host.onHeld();
+  });
+}
+
 /** A sub-agent's turn: its scripted ending, after a tick; a held one ends when its copy's turn is aborted. */
 async function turn(host: Host, params: Record<string, unknown>) {
   const how = host.turns.shift() ?? "ok";
   const cwd = String(params.cwd);
-  for (let i = 0; how === "hangs" && !host.aborted.has(cwd) && i < 200; i++) await tick();
+  if (how === "hangs" && !host.aborted.has(cwd))
+    await new Promise<void>((resolve) => {
+      host.held.set(cwd, resolve);
+      host.onHeld?.();
+    });
   await tick();
   const ok = how === "ok";
   return {
@@ -158,7 +183,7 @@ async function leadOn(options: { offers?: Lead["offers"]; cpp?: Lead["cpp"]; dir
       "artifact.write": () => 1,
       "engine.delegate": (p) => turn(host, p),
       "engine.abort": (p) => {
-        host.aborted.add(String(p.cwd));
+        abortTurn(host, String(p.cwd));
         return { aborted: 1 };
       },
       "run.exec": (p) => git(host, String(p.command)),
@@ -172,6 +197,7 @@ async function leadOn(options: { offers?: Lead["offers"]; cpp?: Lead["cpp"]; dir
     manifest: manifest(),
     turns: [],
     aborted: new Set(),
+    held: new Map(),
     checkoutFails: 0,
   });
   const lead: Lead = {
@@ -202,6 +228,8 @@ async function leadOn(options: { offers?: Lead["offers"]; cpp?: Lead["cpp"]; dir
   return { lead, host, rec, dir };
 }
 
+/** Event-loop turns a loaded CI runner spends in the game folder's reads between two starts. */
+const LOADED_TICKS = 300;
 const KATANA = { kind: "blender_model", title: "Katana", brief: "A katana, 96 cm long, the grip wrapped in red." };
 
 /** Starts one sub-agent and waits until its turn has ended and its delivery is in. */
@@ -879,8 +907,10 @@ describe("the close of a run with sub-agents", () => {
     await deliver(lead);
     host.turns = ["hangs", "hangs"];
     await startAgent(lead, { kind: "sound", title: "Wind", brief: "A low wind." });
+    // A loaded runner: the first turn is held however long the next start takes.
+    for (let i = 0; i < LOADED_TICKS; i++) await tick();
     await startAgent(lead, { ...KATANA, title: "Scabbard" });
-    for (let i = 0; i < 5; i++) await tick();
+    await turnsHeld(host, 2);
     host.tree = [];
     await settleAgents(lead);
     assert.equal(rec.paramsOf("engine.abort").length, 2, "both turns are aborted");
@@ -896,7 +926,7 @@ describe("the close of a run with sub-agents", () => {
     const { lead, host } = await leadOn();
     host.turns = ["hangs"];
     await startAgent(lead, KATANA);
-    for (let i = 0; i < 5; i++) await tick();
+    await turnsHeld(host, 1);
     await settleAgents(lead);
     const [agent] = lead.journal.agents;
     assert.equal(agent?.state, AgentState.Done);
@@ -1169,7 +1199,7 @@ describe("the lead's workers, in Genex's one worker model", () => {
     rec.handle("engine.abort", (p) => {
       calls += 1;
       if (calls === 1) return { aborted: 0 };
-      host.aborted.add(String(p.cwd));
+      abortTurn(host, String(p.cwd));
       return { aborted: 1 };
     });
     const call = leadToolHandler(lead);

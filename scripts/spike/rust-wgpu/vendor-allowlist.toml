@@ -41,7 +41,8 @@ kira = { version = "=0.12.5", default-features = false, features = ["cpal", "mp3
 cpal = { version = "0.18", features = ["wasm-bindgen"] }
 
 # Assets.
-gltf = { version = "=1.4.1", features = ["import", "utils", "names", "extras", "KHR_lights_punctual", "KHR_materials_emissive_strength", "KHR_materials_unlit", "KHR_texture_transform"] }
+gltf = { version = "=1.4.1", features = ["import", "utils", "names", "extras", "extensions", "KHR_lights_punctual", "KHR_materials_emissive_strength", "KHR_materials_unlit", "KHR_texture_transform"] }
+ktx2 = { version = "=0.5.0", default-features = false }
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "hdr", "exr", "dds", "gif", "bmp", "qoi"] }
 
 # Core, protocol, saves (genex-core, genex-studio).

@@ -4,11 +4,11 @@
 //! when the run's policy allows them, and the game's pointer-lock wish is applied before each
 //! frame.
 //!
-//! Frames are paced at the sim rate (RQ0.12): the loop asks for a redraw only once the frame time
-//! it would hand the game is worth a 60 Hz tick ([`TickWake`], a mirror of the runtime's
-//! [`FrameClock`] fed the same frame times) and sleeps until then (`ControlFlow::WaitUntil`), so a
-//! 120 or 144 Hz display neither runs the game's frame nor presents between ticks; the window
-//! keeps its last picture. The first frame, a resize and a resume draw at once.
+//! Frames are paced by the display ([`FrameSchedule`], review F2): a redraw is asked for every
+//! refresh and the surface's Fifo present waits for the display, each frame feeds the game whole
+//! refreshes of the monitor's rate, and the game draws the world only on frames that ticked
+//! (RQ0.12): a 120 or 144 Hz display re-presents the last picture between ticks. The first frame,
+//! a resize and a resume draw at once.
 
 use crate::core::{FrameControl, ShellCore, ShellEvent, ShellGame};
 use crate::gamepad::{GamepadPolicy, Gamepads};
@@ -16,8 +16,8 @@ use crate::headless::{ShellClock, ShellExit, SystemClock};
 use crate::letterbox::Letterbox;
 use crate::mode::windows_forbidden_here;
 use crate::sample::InputSampler;
+use crate::schedule::FrameSchedule;
 use crate::surface::ShellSurface;
-use genex_core::clock::FrameClock;
 use std::fmt;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -112,11 +112,8 @@ struct WindowedApp<G> {
     gamepads: Gamepads,
     pointer_locked: bool,
     clock: SystemClock,
-    last_ms: Option<f64>,
-    /// When the next frame carries a tick.
-    wake: TickWake,
-    /// The next redraw runs a frame whether or not a tick is due (a resize, a new window).
-    forced: bool,
+    /// When frames run and what they feed the game.
+    schedule: FrameSchedule,
     frames: u64,
     options: WindowedOptions,
     error: Option<ShellError>,
@@ -131,6 +128,8 @@ impl<G: ShellGame> WindowedApp<G> {
         match event_loop.create_window(attributes) {
             Ok(window) => {
                 let window = Arc::new(window);
+                self.schedule.set_refresh_ms(monitor_refresh_ms(&window));
+                self.schedule.force();
                 self.core.handle(ShellEvent::Resumed(ShellSurface::new(Arc::clone(&window))));
                 window.request_redraw();
                 self.window = Some(window);
@@ -160,20 +159,16 @@ impl<G: ShellGame> WindowedApp<G> {
         if event_loop.exiting() {
             return;
         }
-        let now = self.clock.now_ms();
-        let frame_ms = self.last_ms.map_or(0.0, |last| now - last);
-        let forced = std::mem::take(&mut self.forced) || self.last_ms.is_none();
-        // A refresh between two ticks (the system's own redraw on a fast display): the window
-        // keeps its last picture and the time carries to the next frame.
-        if !forced && !self.wake.due(frame_ms) {
+        if self.window.is_none() {
             return;
         }
+        // A redraw sooner than half a refresh after the last frame (a surface that does not wait
+        // for the display) runs nothing; the time carries to the next frame.
+        let Some(frame_ms) = self.schedule.redraw(self.clock.now_ms()) else { return };
         self.apply_pointer_lock();
         let Some(window) = self.window.as_ref() else { return };
         let size = window.inner_size();
         let letterbox = Letterbox::fit([size.width as f32, size.height as f32], self.core.game().world_size());
-        self.wake.ran(frame_ms);
-        self.last_ms = Some(now);
         self.frames += 1;
         let mut sample = self.sampler.take(letterbox);
         sample.pads = self.gamepads.poll();
@@ -185,8 +180,10 @@ impl<G: ShellGame> WindowedApp<G> {
     }
 
     fn resized(&mut self) {
-        self.forced = true;
+        self.schedule.force();
         let Some(window) = self.window.as_ref() else { return };
+        // A window moved to another monitor reports a resize or a new scale; its rate may differ.
+        self.schedule.set_refresh_ms(monitor_refresh_ms(window));
         let size = window.inner_size();
         let event = ShellEvent::Resized { size: [size.width, size.height], scale: window.scale_factor() };
         self.core.handle(event);
@@ -213,6 +210,11 @@ impl<G: ShellGame> ApplicationHandler for WindowedApp<G> {
                 }
             }
             WindowEvent::Resized(_) | WindowEvent::ScaleFactorChanged { .. } => self.resized(),
+            WindowEvent::Moved(_) => {
+                if let Some(window) = self.window.as_ref() {
+                    self.schedule.set_refresh_ms(monitor_refresh_ms(window));
+                }
+            }
             WindowEvent::Focused(focused) => {
                 if !focused {
                     self.sampler.focus_lost();
@@ -249,10 +251,7 @@ impl<G: ShellGame> ApplicationHandler for WindowedApp<G> {
             return;
         }
         let Some(window) = self.window.as_ref() else { return };
-        let wait_ms = match self.last_ms {
-            Some(last) if !self.forced => self.wake.until_due_ms(self.clock.now_ms() - last),
-            _ => 0.0,
-        };
+        let wait_ms = self.schedule.wait_ms(self.clock.now_ms());
         if wait_ms > 0.0 {
             event_loop.set_control_flow(ControlFlow::WaitUntil(Instant::now() + Duration::from_secs_f64(wait_ms / 1000.0)));
             return;
@@ -262,35 +261,10 @@ impl<G: ShellGame> ApplicationHandler for WindowedApp<G> {
     }
 }
 
-/// When the next frame is worth drawing (module docs): a mirror of the runtime's live
-/// [`FrameClock`], fed the same frame times the shell hands the game, so a frame is asked for only
-/// once it carries a tick. A mirror that drifts (the runtime reset its clock on a seed) costs at
-/// most one repeat frame, which the game re-presents.
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
-struct TickWake {
-    clock: FrameClock,
-}
-
-impl TickWake {
-    /// Whether a frame `frame_ms` after the last one runs at least one tick.
-    fn due(&self, frame_ms: f64) -> bool {
-        let mut probe = self.clock;
-        probe.advance(frame_ms) > 0
-    }
-
-    /// The frame of `frame_ms` was handed to the game.
-    fn ran(&mut self, frame_ms: f64) {
-        self.clock.advance(frame_ms);
-    }
-
-    /// Milliseconds still to wait, `elapsed_ms` after the last frame, until the next one carries a
-    /// tick (0 once it does).
-    fn until_due_ms(&self, elapsed_ms: f64) -> f64 {
-        if self.due(elapsed_ms) {
-            return 0.0;
-        }
-        (self.clock.step_ms() - self.clock.carry() - elapsed_ms).max(0.0)
-    }
+/// The refresh interval of the monitor `window` is on, in milliseconds, when winit reports one.
+fn monitor_refresh_ms(window: &Window) -> Option<f64> {
+    let millihertz = window.current_monitor()?.refresh_rate_millihertz()?;
+    (millihertz > 0).then(|| 1_000_000.0 / f64::from(millihertz))
 }
 
 /// Lock the pointer: macOS offers only `Locked`, Windows only `Confined`, X11 and Wayland either.
@@ -319,7 +293,7 @@ pub fn run_windowed<G: ShellGame>(game: G, options: WindowedOptions) -> Result<(
     }
     EVENT_LOOP_CREATED.store(true, Ordering::SeqCst);
     let event_loop = EventLoop::new().map_err(|error| ShellError::new(ShellErrorCode::EventLoopFailed, error))?;
-    // The first frame draws at once; from then on `about_to_wait` sleeps until the next tick.
+    // The first frame draws at once; from then on the display paces the redraws.
     event_loop.set_control_flow(ControlFlow::Poll);
     let mut app = WindowedApp {
         core: ShellCore::new(game),
@@ -328,9 +302,7 @@ pub fn run_windowed<G: ShellGame>(game: G, options: WindowedOptions) -> Result<(
         gamepads: Gamepads::open(options.gamepads),
         pointer_locked: false,
         clock: SystemClock::new(),
-        last_ms: None,
-        wake: TickWake::default(),
-        forced: true,
+        schedule: FrameSchedule::default(),
         frames: 0,
         options,
         error: None,
@@ -344,53 +316,4 @@ pub fn run_windowed<G: ShellGame>(game: G, options: WindowedOptions) -> Result<(
     // The window goes before the game, so the game's surface outlives no window.
     app.window = None;
     Ok((app.core.into_game(), exit))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// Frames a display of `hz` hands the game in one second, and the ticks they are worth: each
-    /// refresh asks the wake whether it is due, as `redraw` does.
-    fn one_second(hz: f64) -> (u32, u32) {
-        let (mut wake, mut runtime) = (TickWake::default(), FrameClock::default());
-        let (mut frames, mut ticks, mut last) = (0, 0, 0.0);
-        for refresh in 1..=(hz as u32) {
-            let now = f64::from(refresh) * 1000.0 / hz;
-            if !wake.due(now - last) {
-                continue;
-            }
-            wake.ran(now - last);
-            ticks += runtime.advance(now - last);
-            frames += 1;
-            last = now;
-        }
-        (frames, ticks)
-    }
-
-    #[test]
-    fn a_fast_display_runs_one_frame_per_tick() {
-        for hz in [60.0, 120.0, 144.0, 240.0] {
-            let (frames, ticks) = one_second(hz);
-            assert!((59..=60).contains(&ticks), "{hz} Hz runs the sim at 60 Hz ({ticks})");
-            assert_eq!(frames, ticks, "{hz} Hz: every frame handed to the game carries exactly one tick");
-        }
-    }
-
-    #[test]
-    fn a_slow_display_draws_every_refresh() {
-        let (frames, ticks) = one_second(30.0);
-        assert_eq!(frames, 30);
-        assert_eq!(ticks, 60, "two ticks a frame");
-    }
-
-    #[test]
-    fn the_wait_ends_when_the_next_tick_is_due() {
-        let mut wake = TickWake::default();
-        wake.ran(1000.0 / 60.0 + 4.0);
-        let wait = wake.until_due_ms(2.0);
-        assert!((wait - (1000.0 / 60.0 - 6.0)).abs() < 1e-9, "{wait}");
-        assert!(wake.due(2.0 + wait));
-        assert_eq!(wake.until_due_ms(20.0), 0.0);
-    }
 }

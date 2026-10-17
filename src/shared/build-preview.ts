@@ -1,4 +1,8 @@
 import { type BuildTarget, type GameStack, isBuildTarget, isGameStack } from "./game-project.ts";
+import {
+  type CaptureProvenance as RenderProvenance,
+  isCaptureProvenance as isRenderProvenance,
+} from "./render-quality.ts";
 
 export interface BuildPreviewRequest {
   runId: string;
@@ -16,11 +20,19 @@ export interface BuildIdentity {
   lock: string | null;
 }
 
+/** A capture's size in pixels. */
+export interface CaptureSize {
+  width: number;
+  height: number;
+}
+
 /**
  * Where a saved capture came from, so a frame is never shown as a build it is not: the game's own
  * capture sequence number and pixel digest (a native capture's FNV-1a, recomputed by the host),
- * the camera, the run and the build. Every field is null when the capture path did not know it,
- * as a web capture and an older capture folder do. The capture manifest reuses these fields.
+ * the camera, the run, the build, the settings the game drew it with (`render`: preset, device
+ * class, where the settings came from, scale, settle frames, history reset, exposure) and its size
+ * (`outputSize`). Every field is null when the capture path did not know it, as a web capture and
+ * an older capture folder do. The capture manifest reuses these fields.
  */
 export interface CaptureProvenance {
   seq: number | null;
@@ -28,6 +40,8 @@ export interface CaptureProvenance {
   camera: string | null;
   runId: string | null;
   build: BuildIdentity | null;
+  render: RenderProvenance | null;
+  outputSize: CaptureSize | null;
 }
 
 export interface BuildPreviewFrame {
@@ -115,22 +129,57 @@ function isBuildIdentity(value: unknown): value is BuildIdentity {
 
 const isCount = (value: unknown): value is number => Number.isSafeInteger(value) && Number(value) >= 0;
 
-/** Whether `value` is a `CaptureProvenance` as a capture's sidecar saves it. */
-export function isCaptureProvenance(value: unknown): value is CaptureProvenance {
+/** The largest capture side a saved provenance may name (above any capture a game can take). */
+const CAPTURE_SIDE_MAX = 16384;
+
+const isSide = (value: unknown): value is number =>
+  Number.isSafeInteger(value) && Number(value) >= 1 && Number(value) <= CAPTURE_SIDE_MAX;
+
+/** Whether `value` is a capture size: two whole sides of at least one pixel. */
+function isCaptureSize(value: unknown): value is CaptureSize {
+  return isRecord(value) && isSide(value.width) && isSide(value.height);
+}
+
+/** A saved provenance's fields as an older sidecar may hold them: `render` and `outputSize` absent. */
+type SavedProvenance = Omit<CaptureProvenance, "render" | "outputSize"> &
+  Partial<Pick<CaptureProvenance, "render" | "outputSize">>;
+
+/**
+ * Whether `value` is a `CaptureProvenance` as a capture's sidecar saves it. A sidecar saved before
+ * captures kept their render settings and size has neither field: it reads as unknown (null).
+ */
+export function isCaptureProvenance(value: unknown): value is SavedProvenance {
   if (!isRecord(value)) return false;
   const seq = value.seq === null || isCount(value.seq);
   const build = value.build === null || isBuildIdentity(value.build);
-  return seq && build && isTextOrNull(value.digest) && isTextOrNull(value.camera) && isTextOrNull(value.runId);
+  const render = value.render === undefined || value.render === null || isRenderProvenance(value.render);
+  const size = value.outputSize === undefined || value.outputSize === null || isCaptureSize(value.outputSize);
+  const texts = isTextOrNull(value.digest) && isTextOrNull(value.camera) && isTextOrNull(value.runId);
+  return seq && build && render && size && texts;
 }
 
 /** A build identity with only its own fields. */
 const pickBuild = ({ stack, target, digest, lock }: BuildIdentity): BuildIdentity => ({ stack, target, digest, lock });
 
+/** A capture's render settings with only their own fields (a game's answer may carry more). */
+export const renderProvenanceCopy = (render: RenderProvenance): RenderProvenance => {
+  const { preset, deviceClass, settingsSource, scale, settleFrames, historyReset, exposure } = render;
+  return { preset, deviceClass, settingsSource, scale, settleFrames, historyReset, exposure };
+};
+
 /** A checked copy of a saved provenance, with only its own fields; null for anything else. */
 export function captureProvenanceOf(value: unknown): CaptureProvenance | null {
   if (!isCaptureProvenance(value)) return null;
-  const { seq, digest, camera, runId, build } = value;
-  return { seq, digest, camera, runId, build: build && pickBuild(build) };
+  const { seq, digest, camera, runId, build, render, outputSize } = value;
+  return {
+    seq,
+    digest,
+    camera,
+    runId,
+    build: build && pickBuild(build),
+    render: render ? renderProvenanceCopy(render) : null,
+    outputSize: outputSize ? { width: outputSize.width, height: outputSize.height } : null,
+  };
 }
 
 /** A saved manifest whose own fields checked out; its provenance is checked on its own. */

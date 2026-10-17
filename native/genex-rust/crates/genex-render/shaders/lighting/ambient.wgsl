@@ -1,7 +1,12 @@
 // Lighting chunk: ambient. The frame's flat ambient colour, or the environment's image-based light
-// (RQ2) when a sky or a map lights the scene. Reads the forward bindings `frame`, `env_specular`,
-// `env_sh`, `brdf_lut` and `env_sampler` (the Level-2 v2 material map declares the same names) and
-// the `gx_ambient_occlusion` accessor (shaders/effects.wgsl).
+// (RQ2) when a sky or a map lights the scene. Reads the forward bindings `frame`, `env_sh`,
+// `brdf_lut` and `env_sampler` (the Level-2 v2 material map declares the same names), the
+// environment's prefiltered cubes through the accessors its bindings' file defines
+// (`gx_env_levels`, `gx_env_sky`, `gx_env_light`: shaders/forward_env.wgsl, the v2 prelude's
+// material_v2.wgsl; renderer pass 2 A.3 and A.4: the forward pass's reflection reads the
+// reflection probes around the surface and its diffuse light the irradiance volumes, a v2
+// material's the sky's cube and SH9) and the `gx_ambient_occlusion` accessor
+// (shaders/effects.wgsl).
 //
 // The environment's light is the split sum (Karis 2013) over the bake RQ2.1 writes: SH9 irradiance
 // for the diffuse lobe, the prefiltered specular cube at the surface's roughness mip times the
@@ -14,8 +19,11 @@
 // (high and ultra; never below Lagarde's estimate), else through Lagarde's NdotV/roughness fit
 // (Frostbite 2014). Ambient occlusion
 // darkens indirect light only (this chunk: the flat ambient or the environment), never the sun or
-// local lights, with Jimenez's multi-bounce fit so bright albedo is not over-darkened. A blended
-// surface takes no screen-space occlusion: the AO map holds the opaque surface behind it.
+// local lights, with Jimenez's multi-bounce fit so bright albedo is not over-darkened; where GTAO
+// carries a bent normal the diffuse environment light is looked up along it (SI-06). A blended
+// surface takes no screen-space occlusion: the AO map holds the opaque surface behind it. A
+// material's occlusion map (glTF `occlusionTexture`, P2-0.12 LG-09: the surface chunk's
+// `gx_material_ao`) occludes the same indirect light, the smaller of it and the screen-space AO.
 
 // Whether the environment may light this pipeline's surfaces (`frame.ambient.w` then says whether
 // it does this frame): the forward pass compiles it out of the legacy LDR scene, which the
@@ -28,8 +36,12 @@ fn gx_ambient(s: Surface) -> vec3<f32> {
     if GX_ENVIRONMENT_LIGHT && frame.ambient.w > 0.5 {
         return gx_environment_light(s);
     }
-    // Without an AO term the visibility is 1 and its multi-bounce factor exactly 1 (RX.R1).
+    // Without an AO term the visibility is 1 and its multi-bounce factor exactly 1 (RX.R1); an
+    // occlusion map still darkens it (P2-0.12 LG-09: on presets without AO it is the only AO).
     if !gx_ao_drawn() {
+        if gx_material_ao < 1.0 {
+            return frame.ambient.rgb * s.albedo * gx_ao_multibounce(gx_material_ao, s.albedo);
+        }
         return frame.ambient.rgb * s.albedo;
     }
     let occlusion = gx_surface_occlusion(s).w;
@@ -47,12 +59,14 @@ fn gx_ao_decode(texel: vec4<f32>) -> vec4<f32> {
 }
 
 // The ambient occlusion `s` takes: the accessor's (xyz bent normal, zero when none; w visibility),
-// or none for a blended surface (the AO map holds the opaque surface behind it).
+// or none for a blended surface (the AO map holds the opaque surface behind it); the visibility
+// is at most the occlusion map's (P2-0.12 LG-09, Filament's `min(material AO, SSAO)`).
 fn gx_surface_occlusion(s: Surface) -> vec4<f32> {
     if s.alpha < 1.0 {
-        return vec4<f32>(0.0, 0.0, 0.0, 1.0);
+        return vec4<f32>(0.0, 0.0, 0.0, gx_material_ao);
     }
-    return gx_ambient_occlusion(s.world_pos);
+    let screen = gx_ambient_occlusion(s.world_pos);
+    return vec4<f32>(screen.xyz, min(screen.w, gx_material_ao));
 }
 
 // Jimenez et al. 2016's multi-bounce fit: the light `visibility` lets through plus what bounces
@@ -146,6 +160,23 @@ fn gx_env_irradiance(n: vec3<f32>) -> vec3<f32> {
     return max(e, vec3<f32>(0.0));
 }
 
+// The direction the diffuse environment light is looked up in (SI-06; Filament's
+// `diffuseNormal = shading_bentNormal`): GTAO's bent normal `bent` (zero when the AO term carries
+// none) where it is trusted, faded in over the same occlusion as the specular cone test
+// (GX_BENT_TRUST_OCCLUSION) so the estimate's noise on open ground does not tilt the light, else
+// the shading normal `n`. Sky light then comes from the open part of a crevice, under an overhang
+// or through a room's opening instead of straight through the occluder.
+fn gx_diffuse_normal(n: vec3<f32>, bent: vec3<f32>, visibility: f32) -> vec3<f32> {
+    let trusted = smoothstep(0.0, GX_BENT_TRUST_OCCLUSION, 1.0 - visibility);
+    let mixed = mix(n, bent, trusted);
+    let length_squared = dot(mixed, mixed);
+    let untrusted = trusted <= 0.0 || dot(bent, bent) <= 0.0;
+    if untrusted || length_squared < 1e-6 {
+        return n;
+    }
+    return mixed * inverseSqrt(length_squared);
+}
+
 // The split-sum scale and bias of F0 for a view at `n_dot_v` on a surface of perceptual
 // `roughness`. The LUT holds N.V along x and roughness along y at texel centres, so the bilinear
 // sample at (N.V, roughness) interpolates between them; the 1x1 neutral LUT answers its one texel.
@@ -158,14 +189,14 @@ fn gx_env_dfg(n_dot_v: f32, roughness: f32) -> vec2<f32> {
 // roughnesses a mirror-like surface shows get most of the levels. `ibl::roughness_lod` is the CPU
 // twin.
 fn gx_env_lod(roughness: f32) -> f32 {
-    let last_mip = f32(textureNumLevels(env_specular) - 1u);
+    let last_mip = f32(gx_env_levels() - 1u);
     let r = clamp(roughness, 0.0, 1.0);
     return last_mip * r * (2.0 - r);
 }
 
-// The prefiltered radiance arriving along `dir` for perceptual `roughness`.
+// The sky's prefiltered radiance arriving along `dir` for perceptual `roughness`.
 fn gx_env_specular(dir: vec3<f32>, roughness: f32) -> vec3<f32> {
-    return textureSampleLevel(env_specular, env_sampler, dir, gx_env_lod(roughness)).rgb;
+    return gx_env_sky(dir, gx_env_lod(roughness));
 }
 
 // Where a rough lobe's reflected light mostly comes from: the mirror direction `r` pulled
@@ -207,10 +238,13 @@ fn gx_environment_light(s: Surface) -> vec3<f32> {
     let fms_ems = e_ms * fss_ess * f_avg / (vec3<f32>(1.0) - e_ms * f_avg);
     let k_d = s.albedo * (1.0 - s.metallic) * (vec3<f32>(1.0) - fss_ess - fms_ems);
     let r = reflect(-s.v, s.n);
-    let radiance = gx_env_specular(gx_specular_dominant(s.n, r, s.roughness), s.roughness);
-    let irradiance = gx_env_irradiance(s.n);
     let ao = gx_surface_occlusion(s);
     let occlusion = ao.w;
+    // The reflection probes around the surface where the frame has them, else the sky (A.3); the
+    // irradiance volumes around it, else the sky's SH9 (A.4): one walk of the probe bins.
+    let light = gx_env_light(s.world_pos, gx_specular_dominant(s.n, r, s.roughness), gx_env_lod(s.roughness), gx_diffuse_normal(s.n, ao.xyz, occlusion));
+    let radiance = light.reflection;
+    let irradiance = light.diffuse;
     let ao_lagarde = gx_specular_occlusion(n_dot_v, occlusion, s.roughness);
     var ao_specular = ao_lagarde;
     if dot(ao.xyz, ao.xyz) > 0.0 {

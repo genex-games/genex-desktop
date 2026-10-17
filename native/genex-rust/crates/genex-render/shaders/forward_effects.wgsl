@@ -9,10 +9,9 @@
 @group(0) @binding(15) var<uniform> frame_fog: GxFog;
 @group(0) @binding(16) var ao_map: texture_2d<f32>;
 @group(0) @binding(17) var aerial_perspective: texture_3d<f32>;
+// PCSS's blocker search gathers the shadow map through it (`layout::SHADOW_BLOCKER_SAMPLER`).
+@group(0) @binding(18) var point_sampler: sampler;
 @group(0) @binding(19) var contact_shadow_mask: texture_2d<f32>;
-
-// The volume's slices (fog::AERIAL_SIDE).
-const GX_AERIAL_SIDE: f32 = 32.0;
 
 // Which screen effects the quality draws (the renderer's `SurfaceKey`), one constant each: an
 // accessor whose effect is off answers its neutral value without projecting the position or
@@ -24,6 +23,18 @@ override GX_FOG: bool = true;
 override GX_AERIAL: bool = true;
 
 // Whether this pipeline reads an AO term (`GX_AO`); without one every visibility is 1.
+// The sun chunk's comparison bias for `cascade` (its light depth, NDC): the frame's per-cascade
+// row (`GpuFrame::cascade_bias`).
+fn gx_sun_cascade_bias(cascade: u32) -> f32 {
+    return frame.cascade_bias[cascade];
+}
+
+// The surface chunk's texture mip bias: the pipeline's constant plus the frame's lane
+// (`GpuFrame::texture_lod`, renderer pass 2 P2-0.8b T-06), so it follows the frame's scale.
+fn gx_texture_lod_bias() -> f32 {
+    return GX_TEXTURE_LOD_BIAS + frame.texture_lod.x;
+}
+
 fn gx_ao_drawn() -> bool {
     return GX_AO;
 }
@@ -42,23 +53,19 @@ fn gx_screen_texel(world_pos: vec3<f32>, size: vec2<u32>) -> vec2<i32> {
     return clamp(vec2<i32>(uv * vec2<f32>(size)), vec2<i32>(0), texels - vec2<i32>(1));
 }
 
-// The screen position (0..1, v down) `world_pos` projects to.
-fn gx_screen_uv(world_pos: vec3<f32>) -> vec2<f32> {
-    let clip = frame.view_proj * vec4<f32>(world_pos, 1.0);
-    let ndc = clip.xy / max(abs(clip.w), 1e-6);
-    return clamp(vec2<f32>(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5), vec2<f32>(0.0), vec2<f32>(1.0));
-}
-
 // Ambient occlusion at `world_pos`: xyz the bent normal (zero: none), w the visibility. The term
 // is at the render size (a half-resolution term arrives through the joint-bilateral upsample,
-// post::upsample), so the texel under the pixel is the pixel's own surface's; it is filtered with
-// the environment's clamping sampler all the same, and the neutral texel reads exactly 1 either way.
+// post::upsample), so the fragment reads its own pixel's texel (`gx_sun_context.pixel`, set before
+// shading), as the v2 path does: AO is made from the jittered prepass, and projecting the position
+// through the unjittered `view_proj` landed up to half a pixel off, so a filtered read blended in a
+// different neighbour every frame of the jitter cycle (pass 2, S5). The neutral 1x1 texel reads 1.
 fn gx_ambient_occlusion(world_pos: vec3<f32>) -> vec4<f32> {
     if !gx_ao_drawn() {
         return vec4<f32>(0.0, 0.0, 0.0, 1.0);
     }
-    let texel = textureSampleLevel(ao_map, env_sampler, gx_screen_uv(world_pos), 0.0);
-    return gx_ao_decode(texel);
+    let last = vec2<i32>(textureDimensions(ao_map)) - vec2<i32>(1);
+    let pixel = clamp(vec2<i32>(gx_sun_context.pixel), vec2<i32>(0), last);
+    return gx_ao_decode(textureLoad(ao_map, pixel, 0));
 }
 
 // The sun's screen-space contact shadow at `world_pos` (1: unshadowed): the mask at the render
@@ -70,28 +77,41 @@ fn gx_contact_shadow(world_pos: vec3<f32>) -> f32 {
     return textureLoad(contact_shadow_mask, gx_screen_texel(world_pos, textureDimensions(contact_shadow_mask)), 0).r;
 }
 
-// The aerial-perspective volume's texel at `world_pos`: sampled with the environment's filtering
-// sampler inside half a texel of the edges (so no address mode wraps), and faded to no air in
-// front of the first slice's centre (the air nearer than it is negligible, never a full slice's).
-fn gx_aerial_at(world_pos: vec3<f32>) -> vec4<f32> {
-    let uvw = gx_aerial_froxel(world_pos);
-    let half = 0.5 / GX_AERIAL_SIDE;
-    let held = clamp(uvw, vec3<f32>(half), vec3<f32>(1.0 - half));
-    let air = textureSampleLevel(aerial_perspective, env_sampler, held, 0.0);
-    // Faded towards no air as `in-scatter × f, 1 - (1 - transmittance) × f`: a texel of no air
-    // stays exactly (0, 0, 0, 1), so the colour is untouched bit for bit.
-    let f = clamp(uvw.z / half, 0.0, 1.0);
-    return vec4<f32>(air.rgb * f, 1.0 - (1.0 - air.a) * f);
+// The sun's visibility from the screen mask (renderer pass 2, B.7, SH-04; post::sun_mask) at the
+// pixel (`gx_sun_context.pixel`), or -1 where the frame binds none: the mask shares the
+// contact-shadow slot (r contact, g the sun's visibility) and marks itself with alpha 0, while the
+// neutral white texel and the contact shadows' own `r8unorm` mask read alpha 1. Only a pipeline
+// whose taps turn under TAA asks (`GX_SHADOW_TEMPORAL`): the transparent pipeline and every frame
+// without TAA shade the sun inline. The fragment reads its own pixel's texel, as AO's: read
+// bilinearly where the position projects (with the jitter), the colour box TAA builds from the
+// moving neighbourhood swung on thin shadows, and the still fence flickered four times as much.
+fn gx_sun_screen_shadow(world_pos: vec3<f32>) -> f32 {
+    if !GX_SHADOW_TEMPORAL {
+        return -1.0;
+    }
+    let last = vec2<i32>(textureDimensions(contact_shadow_mask)) - vec2<i32>(1);
+    let texel = textureLoad(contact_shadow_mask, clamp(vec2<i32>(gx_sun_context.pixel), vec2<i32>(0), last), 0);
+    return select(-1.0, texel.g, texel.a < 0.5);
 }
 
-// `color` at `world_pos` seen through the air (the aerial perspective, where the quality draws
-// it) and then the frame's fog (where the quality draws it): `gx_apply_fog_aerial`'s order.
+// The air at `world_pos` (renderer pass 2 SI-04 and A.5): the air volume bound in the aerial slot
+// (node 11's aerial perspective, or on froxel presets the froxel fog with the aerial folded in; no
+// air where neither ran), read with the environment's filtering sampler (`gx_air_sample`).
+fn gx_air_at(world_pos: vec3<f32>) -> GxAir {
+    return gx_air_sample(aerial_perspective, env_sampler, gx_aerial_froxel(world_pos));
+}
+
+// `color` at `world_pos` seen through the air (the aerial perspective or the froxel fog, where the
+// quality draws it) and then the frame's height fog (where the quality draws it and the air does not
+// hold it already): `gx_apply_fog_air`'s order.
 fn gx_forward_fog(color: vec3<f32>, world_pos: vec3<f32>) -> vec3<f32> {
     var seen = color;
+    var air = gx_air_none();
     if GX_AERIAL {
-        seen = gx_apply_aerial(seen, gx_aerial_at(world_pos));
+        air = gx_air_at(world_pos);
+        seen = gx_apply_air(seen, air);
     }
-    if GX_FOG {
+    if GX_FOG && !gx_air_holds_fog(air) {
         seen = gx_apply_fog(seen, world_pos);
     }
     return seen;

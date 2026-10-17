@@ -15,8 +15,11 @@ workspace = true
 # genex-render renderer for captures and, on a Mac, Live's frames through genex-frames. An export
 # is built without it and never links genex-studio (the admission symbol scan proves that).
 [features]
-default = []
+default = ["physics"]
 studio = ["dep:genex-studio", "dep:genex-frames"]
+# Rapier 3D, stepped once per tick (`Sim::physics`). A game with `[physics] enabled = false` in its
+# genex.toml is built without it: about a fifth of a web build's code (renderer pass 2, D11).
+physics = ["dep:rapier3d"]
 
 [dependencies]
 # The clock, rng, input merger, state() snapshot and checksum, and saves are genex-core's
@@ -26,7 +29,7 @@ egui = { workspace = true }
 glam = { workspace = true }
 indexmap = { workspace = true }
 libm = { workspace = true }
-rapier3d = { workspace = true }
+rapier3d = { workspace = true, optional = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 toml = { workspace = true }

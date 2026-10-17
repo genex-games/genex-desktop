@@ -159,8 +159,8 @@ const FLOAT_BYTES = 4;
 const POSITION_FLOATS = 3;
 const U32_BYTES = 4;
 
-/** A primitive's geometry as the clusterizer takes it: tight positions and a triangle list. */
-interface Geometry {
+/** A primitive's geometry as the clusterizer and the simplifier take it: tight positions and a triangle list. */
+export interface Geometry {
   positions: Float32Array;
   indices: Uint32Array;
 }
@@ -226,7 +226,7 @@ function readIndices(json: Json, bin: Uint8Array, primitive: Json, vertexCount: 
 }
 
 /** One primitive's geometry, or null when the runtime would not read it as plain triangles. */
-function readGeometry(json: Json, bin: Uint8Array, primitive: Json): Geometry | null {
+export function readGeometry(json: Json, bin: Uint8Array, primitive: Json): Geometry | null {
   if ((primitive.mode ?? GLTF_TRIANGLES) !== GLTF_TRIANGLES) return null;
   const attributes = isObject(primitive.attributes) ? primitive.attributes : {};
   const positions = readPositions(json, bin, objects(json.accessors)[index(attributes.POSITION) ?? -1]);

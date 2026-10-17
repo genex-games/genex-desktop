@@ -122,8 +122,10 @@ pub enum Tonemapper {
     Aces,
     /// A clamp: no curve.
     None,
-    /// AgX with the "punchy" look (Blender's: power 1.35, saturation 1.4 in AgX's log space):
-    /// AgX's highlights with mid contrast and saturation kept, for saturated lights and emissives.
+    /// AgX with a punchy look: Godot 4.7's AgX (the allenwp curve between Blender AgX's inset and
+    /// outset matrices) at contrast 1.4 with middle grey held where plain AgX draws it, then
+    /// saturation 1.4 about luminance. Deeper contrast and richer lights and emissives than AgX,
+    /// with no exposure shift: scene 0.18 still draws at display middle grey.
     AgxPunchy,
 }
 
@@ -200,11 +202,14 @@ pub enum Metering {
     Center,
     /// The centre spot only.
     Spot,
+    /// Sky-aware: the frame's lower rows weigh more (the top row 1/16 of the bottom's), so an open
+    /// sky above the horizon does not pull the ground it lights into the dark.
+    Ground,
 }
 
 impl Metering {
     /// Every metering.
-    pub const ALL: [Metering; 3] = [Metering::Average, Metering::Center, Metering::Spot];
+    pub const ALL: [Metering; 4] = [Metering::Average, Metering::Center, Metering::Spot, Metering::Ground];
 
     /// The wire spelling.
     pub const fn wire(self) -> &'static str {
@@ -212,6 +217,7 @@ impl Metering {
             Metering::Average => "average",
             Metering::Center => "center",
             Metering::Spot => "spot",
+            Metering::Ground => "ground",
         }
     }
 
@@ -251,10 +257,21 @@ pub struct Look {
     pub adaptation_up: f32,
     /// Auto exposure: EV per second it adapts by when the scene gets brighter (the image darkens).
     pub adaptation_down: f32,
+    /// Auto exposure: within this many EV of the target the adaptation slows exponentially
+    /// instead of stepping at full speed (0: linear all the way), so the small target changes a
+    /// moving camera meters do not make the frame breathe.
+    pub adaptation_transition: f32,
+    /// Auto exposure: EV added to the exposure as a function of the metered scene EV (empty, the
+    /// default, adds nothing). A dusk or night scene keeps its darkness with it, without an EV
+    /// floor of its own.
+    pub compensation_curve: CompensationCurve,
     /// Bloom's optional threshold in pre-exposed scene units, a stylistic choice: 0 (the default)
     /// is threshold-free, every pixel blooms by the energy-conserving blend.
     pub bloom_threshold: f32,
-    /// Bloom's spread: a multiplier on the upsample filter's radius (1 is the default).
+    /// Bloom's spread: how much each wider blur of the chain weighs against the one below it
+    /// (1, the default, weighs every mip alike; 2 doubles each wider mip's share), so a wider
+    /// spread glows further out while the filter stays one texel wide
+    /// ([`crate::post::bloom::mip_weights`]).
     pub bloom_radius: f32,
     /// Ambient occlusion's strength, `0..=1` (GTAO, the one AO algorithm on every preset).
     pub ao_intensity: f32,
@@ -269,6 +286,134 @@ pub struct Look {
     /// leaves the picture unchanged. Art direction for the whole frame (a golden-hour warmth), so
     /// a fog or light tint need not carry it. HDR scene only: the legacy LDR scene has no curve.
     pub white_balance: [f32; 3],
+    /// The look's white balance as a chromatic adaptation, `-1..=1`: positive warms, negative
+    /// cools (0, the default, changes nothing). A von Kries transform in CIECAT16 cone space
+    /// ([`Look::white_balance_matrix`]): neutrals warm while a blue sky stays blue, which
+    /// per-channel gains cannot do.
+    pub temperature: f32,
+    /// The chromatic adaptation's tint, `-1..=1`: positive turns magenta, negative green (0, the
+    /// default, changes nothing).
+    pub tint: f32,
+    /// Colour grading (A.2): parametric knobs on the white-balanced scene before the curve and a
+    /// `.cube` LUT on the display colour after it ([`crate::post::grading::Grading`]; neutral, the
+    /// default, draws nothing). HDR scene only, as the white balance.
+    pub grading: crate::post::grading::Grading,
+    /// Depth of field (A.9): a thin lens focused at a distance, blurring the HDR scene after TAA
+    /// ([`crate::post::dof::DepthOfField`]; off, the default, draws nothing). Settled captures draw
+    /// without it unless the shot asks.
+    pub depth_of_field: crate::post::dof::DepthOfField,
+    /// Motion blur (A.9): the HDR scene blurred along its motion over the shutter's share of the
+    /// frame, after depth of field ([`crate::post::motion_blur::MotionBlur`]; off, the default,
+    /// draws nothing). Settled captures draw without it unless the shot asks.
+    pub motion_blur: crate::post::motion_blur::MotionBlur,
+}
+
+/// Rec. 709 linear rgb to CIE XYZ (columns; Filament v1.78 `ColorSpaceUtils.h` `sRGB_to_XYZ`,
+/// Apache-2.0).
+#[allow(clippy::excessive_precision, reason = "the constants as Filament publishes them")]
+const RGB_TO_XYZ: [[f32; 3]; 3] = [[0.412_456_0, 0.212_673_0, 0.019_333_9], [0.357_576_0, 0.715_152_0, 0.119_192_0], [0.180_438_0, 0.072_175_0, 0.950_304_0]];
+/// CIE XYZ to Rec. 709 linear rgb (columns; Filament's `XYZ_to_sRGB`).
+#[allow(clippy::excessive_precision, reason = "the constants as Filament publishes them")]
+const XYZ_TO_RGB: [[f32; 3]; 3] = [[3.240_454_2, -0.969_266_0, 0.055_643_4], [-1.537_138_5, 1.876_010_8, -0.204_025_9], [-0.498_531_4, 0.041_556_0, 1.057_225_2]];
+/// CIE XYZ to CIECAT16 cone responses (columns; Filament's `XYZ_to_CIECAT16`).
+const XYZ_TO_CAT16: [[f32; 3]; 3] = [[0.401_288, -0.250_268, -0.002_079], [0.650_173, 1.204_414, 0.048_952], [-0.051_461, 0.045_854, 0.953_127]];
+/// CIECAT16 cone responses to CIE XYZ (columns; Filament's `CIECAT16_to_XYZ`).
+const CAT16_TO_XYZ: [[f32; 3]; 3] = [[1.862_068, 0.387_527, -0.015_841], [-1.011_255, 0.621_447, -0.034_123], [0.149_187, -0.008_974, 1.049_964]];
+/// Illuminant D65 in CIECAT16 cone space (Filament's `ILLUMINANT_D65_LMS_CAT16`).
+const D65_CAT16: [f32; 3] = [0.975_533, 1.016_483, 1.084_837];
+/// Illuminant D65's CIE 1931 x chromaticity.
+const D65_X: f32 = 0.31271;
+
+/// `a × b` for column-major 3x3 matrices (`m[column][row]`).
+fn mat3_mul(a: &[[f32; 3]; 3], b: &[[f32; 3]; 3]) -> [[f32; 3]; 3] {
+    std::array::from_fn(|column| std::array::from_fn(|row| (0..3).map(|k| a[k][row] * b[column][k]).sum()))
+}
+
+/// The von Kries chromatic adaptation of `temperature` and `tint` (each `-1..=1`) as one matrix on
+/// Rec. 709 linear rgb: the white point moved along the daylight locus by `temperature` (positive
+/// assumes a bluer light, so the picture warms) and off it by `tint`, adapted to D65 in CIECAT16
+/// cone space. Filament v1.78 `ColorGrading.cpp` `adaptationTransform` (Apache-2.0), in Rec. 709
+/// instead of Rec. 2020.
+pub fn chromatic_adaptation(temperature: f32, tint: f32) -> [[f32; 3]; 3] {
+    let x = D65_X - temperature * if temperature < 0.0 { 0.0214 } else { 0.066 };
+    // The CIE daylight locus y(x), plus the tint.
+    let y = 2.87 * x - 3.0 * x * x - 0.275 + tint * 0.066;
+    let xyz = [x / y.max(1e-5), 1.0, (1.0 - x - y) / y.max(1e-5)];
+    let lms: [f32; 3] = std::array::from_fn(|row| (0..3).map(|k| XYZ_TO_CAT16[k][row] * xyz[k]).sum());
+    let scale = [[D65_CAT16[0] / lms[0], 0.0, 0.0], [0.0, D65_CAT16[1] / lms[1], 0.0], [0.0, 0.0, D65_CAT16[2] / lms[2]]];
+    let to_cone = mat3_mul(&XYZ_TO_CAT16, &RGB_TO_XYZ);
+    let from_cone = mat3_mul(&XYZ_TO_RGB, &CAT16_TO_XYZ);
+    mat3_mul(&from_cone, &mat3_mul(&scale, &to_cone))
+}
+
+/// Most points an auto exposure [`CompensationCurve`] holds.
+pub const COMPENSATION_CURVE_POINTS_MAX: usize = 8;
+/// The largest compensation a [`CompensationCurve`] point adds either way, in EV (the host's
+/// `ev_compensation` limit).
+pub const COMPENSATION_CURVE_EV_LIMIT: f32 = 10.0;
+
+/// Auto exposure's compensation curve ([`Look::compensation_curve`]): the EV added to the
+/// exposure as a piecewise-linear function of the metered scene EV, through up to
+/// [`COMPENSATION_CURVE_POINTS_MAX`] `(metered EV, compensation EV)` points and flat beyond the
+/// first and last. Empty (the default) adds nothing. After Bevy 0.20's
+/// `AutoExposureCompensationCurve` (MIT OR Apache-2.0), as a table instead of a texture.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct CompensationCurve {
+    points: [[f32; 2]; COMPENSATION_CURVE_POINTS_MAX],
+    len: u8,
+}
+
+impl CompensationCurve {
+    /// No compensation.
+    pub const NONE: CompensationCurve = CompensationCurve { points: [[0.0; 2]; COMPENSATION_CURVE_POINTS_MAX], len: 0 };
+
+    /// The curve through `points` (metered EV, compensation EV): sorted by metered EV, a point that
+    /// is not finite or repeats a metered EV left out, metered EVs held to
+    /// ±[`EXPOSURE_EV_LIMIT`] and compensations to ±[`COMPENSATION_CURVE_EV_LIMIT`], and the
+    /// first [`COMPENSATION_CURVE_POINTS_MAX`] of what remains kept.
+    pub fn new(points: &[(f32, f32)]) -> CompensationCurve {
+        let mut kept: Vec<[f32; 2]> = points
+            .iter()
+            .filter(|(ev, compensation)| ev.is_finite() && compensation.is_finite())
+            .map(|&(ev, compensation)| {
+                [ev.clamp(-EXPOSURE_EV_LIMIT, EXPOSURE_EV_LIMIT), compensation.clamp(-COMPENSATION_CURVE_EV_LIMIT, COMPENSATION_CURVE_EV_LIMIT)]
+            })
+            .collect();
+        kept.sort_by(|a, b| a[0].total_cmp(&b[0]));
+        kept.dedup_by(|a, b| a[0] == b[0]);
+        kept.truncate(COMPENSATION_CURVE_POINTS_MAX);
+        let mut curve = CompensationCurve::NONE;
+        curve.points[..kept.len()].copy_from_slice(&kept);
+        curve.len = kept.len() as u8;
+        curve
+    }
+
+    /// Its points, in metered-EV order.
+    pub fn points(&self) -> &[[f32; 2]] {
+        &self.points[..usize::from(self.len)]
+    }
+
+    /// Whether it adds nothing anywhere (no points).
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
+    /// The compensation at metered scene EV `ev` (the adaptation shader's `gx_compensation`,
+    /// expression for expression).
+    pub fn at(&self, ev: f32) -> f32 {
+        let points = self.points();
+        let Some((first, last)) = points.first().zip(points.last()) else { return 0.0 };
+        if ev <= first[0] {
+            return first[1];
+        }
+        if ev >= last[0] {
+            return last[1];
+        }
+        let upper = points.iter().position(|point| ev < point[0]).unwrap_or(points.len() - 1);
+        let (a, b) = (points[upper - 1], points[upper]);
+        let t = (ev - a[0]) / (b[0] - a[0]);
+        a[1] + (b[1] - a[1]) * t
+    }
 }
 
 /// Height and distance fog (a look: the same on every preset). Its in-scatter comes from the
@@ -298,6 +443,10 @@ pub struct Fog {
     pub color: [f32; 3],
     /// Whether the aerial-perspective volume adds the sky's scattering where the quality has it on.
     pub aerial_perspective: bool,
+    /// Whether the fog is drawn as a lit volume where the quality has the froxel fog on (renderer
+    /// pass 2 A.5): the sun's shadows carve shafts out of it and local lights glow in it. Off, the
+    /// fog is the analytic height fog on every preset.
+    pub volumetric: bool,
 }
 
 /// Bloom's default spread.
@@ -340,6 +489,7 @@ const DEFAULT_FOG: Fog = Fog {
     max_opacity: 1.0,
     color: [1.0; 3],
     aerial_perspective: true,
+    volumetric: true,
 };
 
 impl Default for Fog {
@@ -386,6 +536,12 @@ impl Fog {
         self.aerial_perspective = on;
         self
     }
+
+    /// The fog drawn as a lit volume (sun shafts) where the quality has the froxel fog, or not.
+    pub fn with_volumetric(mut self, on: bool) -> Fog {
+        self.volumetric = on;
+        self
+    }
 }
 
 /// `value` within `min..=max`, `fallback` when it is not a number.
@@ -405,6 +561,15 @@ pub const DEFAULT_ADAPTATION_UP: f32 = 1.0;
 /// Auto exposure's default darkening speed (the scene got brighter), in EV per second: fast, so
 /// stepping into sunlight does not leave the picture blown out for long.
 pub const DEFAULT_ADAPTATION_DOWN: f32 = 3.0;
+/// Auto exposure's default exponential transition, in EV (Bevy 0.20's
+/// `exponential_transition_distance`): within it the step is the remaining distance times the
+/// speed over it, so the exposure eases onto a moving target instead of chasing every wobble.
+/// Half an EV, not Bevy's 1.5: it already cuts a wobbling target's effect by three quarters, and a
+/// step into sunlight (+8 EV at the default 3 EV/s) still lands within 1/32 EV in 3 s (1.5 would
+/// leave it 0.28 EV bright).
+pub const DEFAULT_ADAPTATION_TRANSITION: f32 = 0.5;
+/// The widest exponential transition a look may ask for, in EV.
+pub const ADAPTATION_TRANSITION_MAX: f32 = 8.0;
 /// The largest auto exposure limit either way, in EV (`EXPOSURE_EV_LIMIT` on the host).
 pub const EXPOSURE_EV_LIMIT: f32 = 16.0;
 /// The fastest adaptation, in EV per second (`ADAPTATION_SPEED_MAX` on the host).
@@ -431,6 +596,8 @@ const DEFAULT_LOOK: Look = Look {
     ev_max: DEFAULT_EV_MAX,
     adaptation_up: DEFAULT_ADAPTATION_UP,
     adaptation_down: DEFAULT_ADAPTATION_DOWN,
+    adaptation_transition: DEFAULT_ADAPTATION_TRANSITION,
+    compensation_curve: CompensationCurve::NONE,
     bloom_threshold: 0.0,
     bloom_radius: DEFAULT_BLOOM_RADIUS,
     ao_intensity: DEFAULT_AO_INTENSITY,
@@ -438,6 +605,11 @@ const DEFAULT_LOOK: Look = Look {
     fog: DEFAULT_FOG,
     contact_shadow_length: DEFAULT_CONTACT_SHADOW_LENGTH,
     white_balance: [1.0; 3],
+    temperature: 0.0,
+    tint: 0.0,
+    grading: crate::post::grading::Grading::NEUTRAL,
+    depth_of_field: crate::post::dof::DepthOfField::OFF,
+    motion_blur: crate::post::motion_blur::MotionBlur::OFF,
 };
 
 impl Default for Look {
@@ -486,6 +658,58 @@ impl Look {
             return [1.0; 3];
         }
         self.white_balance.map(|gain| gain / luminance)
+    }
+
+    /// The matrix the tonemap applies to the scene's linear rgb before its curve: the chromatic
+    /// adaptation of [`Look::temperature`] and [`Look::tint`] ([`chromatic_adaptation`]) times the
+    /// diagonal of [`Look::white_balance_gains`]. At temperature and tint 0 it is exactly that
+    /// diagonal (the identity for the default look), so every existing look draws as before.
+    pub fn white_balance_matrix(&self) -> crate::post::tonemap::ColorMatrix {
+        let [r, g, b] = self.white_balance_gains();
+        let gains = [[r, 0.0, 0.0], [0.0, g, 0.0], [0.0, 0.0, b]];
+        if self.temperature == 0.0 && self.tint == 0.0 {
+            return gains;
+        }
+        mat3_mul(&chromatic_adaptation(self.temperature, self.tint), &gains)
+    }
+
+    /// The look with a chromatic-adaptation white balance of `temperature` and `tint` (each held
+    /// to `-1..=1`; a value that is not a number is 0).
+    pub fn with_temperature(mut self, temperature: f32, tint: f32) -> Look {
+        self.temperature = held(temperature, 0.0, -1.0, 1.0);
+        self.tint = held(tint, 0.0, -1.0, 1.0);
+        self
+    }
+
+    /// The look with `grading`, each knob held to its range.
+    pub fn with_grading(mut self, grading: crate::post::grading::Grading) -> Look {
+        self.grading = grading.held();
+        self
+    }
+
+    /// The look with `depth_of_field`, each knob held to its range.
+    pub fn with_depth_of_field(mut self, depth_of_field: crate::post::dof::DepthOfField) -> Look {
+        self.depth_of_field = depth_of_field.held();
+        self
+    }
+
+    /// The look with `motion_blur`, its shutter held to its range.
+    pub fn with_motion_blur(mut self, motion_blur: crate::post::motion_blur::MotionBlur) -> Look {
+        self.motion_blur = motion_blur.held();
+        self
+    }
+
+    /// The look adapting exponentially within `transition` EV of its target (held to
+    /// `0..=ADAPTATION_TRANSITION_MAX`; 0 is linear all the way; NaN is the default).
+    pub fn with_adaptation_transition(mut self, transition: f32) -> Look {
+        self.adaptation_transition = held(transition, DEFAULT_ADAPTATION_TRANSITION, 0.0, ADAPTATION_TRANSITION_MAX);
+        self
+    }
+
+    /// The look with auto exposure's compensation `curve`.
+    pub fn with_compensation_curve(mut self, curve: CompensationCurve) -> Look {
+        self.compensation_curve = curve;
+        self
     }
 
     /// The look with `fog`.
@@ -948,8 +1172,30 @@ pub const TAA_ALPHA_MIN_FLOOR: f32 = 0.02;
 /// The extra mip bias materials sample with under TAA, beside `log2(render_scale)`: the jitter
 /// recovers the detail a sharper mip would alias (plan RQ5.2).
 pub const DEFAULT_TAA_LOD_BIAS: f32 = -0.5;
-/// The most negative total texture LOD bias TAA may ask for (beyond it, textures shimmer).
+/// The most negative total texture LOD bias TAA (or FSR1's upscale, [`frame_texture_lod_bias`])
+/// may ask for (beyond it, textures shimmer).
 pub const TAA_LOD_BIAS_MIN: f32 = -2.0;
+
+/// The mip bias material textures sample with on one frame at its `render_scale` (renderer pass
+/// 2, P2-0.8b T-06): TAA's ([`TaaQuality::texture_lod_bias`]) when TAA resolves the frame
+/// (`temporal`), else `log2(scale)` when FSR1's EASU upscales it (`easu`; FSR1 asks for the
+/// negative mip bias `log2(render / display)`, without the temporal upscalers' extra -1, so a
+/// texture is sampled at the mip the display would take), never below [`TAA_LOD_BIAS_MIN`], else
+/// 0. Taken from the frame's own scale, so a dynamic-resolution step moves it.
+pub fn frame_texture_lod_bias(taa: &TaaQuality, temporal: bool, easu: bool, render_scale: f32) -> f32 {
+    if temporal {
+        return taa.texture_lod_bias(render_scale);
+    }
+    if !easu {
+        return 0.0;
+    }
+    libm::log2f(held_render_scale(render_scale)).max(TAA_LOD_BIAS_MIN)
+}
+
+/// `render_scale` held to `RENDER_SCALE_MIN..=1` (NaN: 1), as the mip biases read it.
+fn held_render_scale(render_scale: f32) -> f32 {
+    if render_scale.is_nan() { 1.0 } else { render_scale.clamp(RENDER_SCALE_MIN, 1.0) }
+}
 
 /// TAA's resource knobs (RQ5): equal pipelines whatever their values, so DRS and demotion may
 /// move them. Whether TAA runs at all, and whether RCAS sharpens after it, is
@@ -993,8 +1239,7 @@ impl TaaQuality {
     /// The mip bias materials sample with under TAA at `render_scale`: `log2(scale) + lod_bias`,
     /// never below [`TAA_LOD_BIAS_MIN`] (libm's `log2f`, the same bits on every target).
     pub fn texture_lod_bias(&self, render_scale: f32) -> f32 {
-        let scale = if render_scale.is_nan() { 1.0 } else { render_scale.clamp(RENDER_SCALE_MIN, 1.0) };
-        (libm::log2f(scale) + self.lod_bias).max(TAA_LOD_BIAS_MIN)
+        (libm::log2f(held_render_scale(render_scale)) + self.lod_bias).max(TAA_LOD_BIAS_MIN)
     }
 }
 
@@ -1256,18 +1501,23 @@ pub struct ShadowQuality {
     /// The share of the last cascade's depth range over which the shadows fade out before the
     /// shadow distance, in percent (0: a hard end; at most 50).
     pub fade_percent: u8,
+    /// Whether a soft filter's sun shadows may come from the screen mask where its key lets it
+    /// run (renderer pass 2, B.7; `post::sun_mask::key`). A resource knob: the degrade ladder's
+    /// `sun-mask` rung turns it off, and the forward pass then shades the sun inline.
+    pub screen_mask: bool,
 }
 
-/// Bloom.
+/// Bloom. The chain is sized from the output, never the render size, and keeps one mip count
+/// ([`crate::post::bloom::CHAIN_MIPS`]) on every preset, so its halo is as wide at every preset
+/// and DRS step; a preset or the degrade ladder lowers only its resolution.
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct BloomQuality {
     /// Whether bloom runs.
     pub enabled: bool,
-    /// Mip levels of the chain.
-    pub mips: u8,
-    /// Whether the chain starts at half resolution.
-    pub half_res: bool,
+    /// The chain's top height cap in texels: the chain starts at `min(output height / 2, this)`
+    /// rows (0: no chain).
+    pub resolution: u16,
 }
 
 /// Ambient occlusion's resolution (GTAO).
@@ -1329,6 +1579,29 @@ pub struct EnvironmentQuality {
     pub sky_cadence: u8,
     /// Whether the aerial-perspective volume is used.
     pub aerial_perspective: bool,
+    /// The largest radiance cube (the prefilter's source, `ibl::radiance_side`) in pixels; 0
+    /// keeps it at half the specular side. Phones cap it (`presets::MOBILE_MAX_RADIANCE_PX`).
+    pub radiance_side_max: u32,
+    /// Most reflection probes given a captured cube (renderer pass 2 A.3, `probes`): the first
+    /// this many a frame declares; 0 shades none (the sky alone). A resource knob.
+    pub reflection_probes: u8,
+    /// The largest probe cube side in pixels (`probes::probe_side`: the sky cube's side, at most
+    /// this; 0: no cap). A resource knob.
+    pub probe_side_max: u32,
+    /// Whether a moving sun rebakes the sky's cube whole on every frame it turns past
+    /// `ibl::CONTINUOUS_SUN_DEGREES` (renderer pass 2 A.3, SI-02 step 2: desktop and web `high`
+    /// and `ultra`), instead of over a time-sliced cycle once it turned `sun_rebake_tenths`.
+    pub continuous_sky: bool,
+    /// Most irradiance volumes baked (renderer pass 2 A.4, `irradiance`): the first this many a
+    /// frame declares; 0 bakes none (the sky's SH9 alone). A resource knob.
+    pub irradiance_volumes: u8,
+    /// Whether a volume's lookup hides the cells a point is behind a wall from (eight hand-weighed
+    /// cells, `irradiance::grid_irradiance`) instead of the sampler's three trilinear fetches.
+    pub irradiance_leak_control: bool,
+    /// The froxel fog's grid (renderer pass 2 A.5, [`crate::froxel`]): the height fog lit per
+    /// froxel by the shadowed sun and the binned lights (sun shafts), bound in the aerial volume's
+    /// place; None keeps the analytic fog. Desktop and web `high` and `ultra`. A resource knob.
+    pub froxel_fog: Option<crate::froxel::FroxelGrid>,
 }
 
 /// Local lights.
@@ -1343,6 +1616,10 @@ pub struct LightQuality {
     pub tile_px: u32,
     /// Spot lights with shadow maps.
     pub shadowed_spots: u8,
+    /// Most projected decals drawn (renderer pass 2 A.10, `decals::held_decals`: nearest first,
+    /// the last ones faded towards the cut); 0 draws none. Decals are binned with the lights, so
+    /// only a `clustered` quality draws them.
+    pub decals: u32,
 }
 
 /// A material texture size class (RQ6): the side of the texture arrays a texture is stored in.
@@ -1471,6 +1748,25 @@ pub struct Quality {
     pub occlusion: bool,
     /// Specular anti-aliasing (roughness from normal variance).
     pub specular_aa: bool,
+    /// The material sampler's anisotropic filtering, 1..=16 (`anisotropy_clamp`; P2-0.12 LG-02):
+    /// a resource knob (a new sampler and frame group, no pipeline). 1 is plain trilinear.
+    pub anisotropy: u8,
+    /// The depth-of-field gather where the look turns it on (A.9): Filament's ring gather on
+    /// desktop and web `high` and `ultra`, Godot's circular gather elsewhere. A pipeline knob.
+    pub dof: crate::post::dof::DofTier,
+    /// The motion blur where the look turns it on (A.9): KinoMotion's reconstruction on desktop
+    /// and web `high` and `ultra`, Bevy's direct blur on `low`, `medium` and phones, none on the
+    /// low-tier phone or the legacy renderer. A pipeline knob.
+    pub motion_blur: crate::post::motion_blur::MotionBlurTier,
+    /// The screen inputs Stage B's water and screen-space reflections may ask for (A.6): the
+    /// opaque copy, the previous frame's colour pyramid and the prepass's normal and roughness on
+    /// desktop and web `high` and `ultra`, none elsewhere. A resource knob (targets and passes run
+    /// only for a consumer that asks; the prepass's second target is its consumer's pipeline).
+    pub screen_inputs: crate::screen_inputs::ScreenInputs,
+    /// The terrain's grass (A.8): its density, reach, blade segments and casting. A resource knob
+    /// (uniforms and buffer sizes, never a pipeline); off on `low`, the low phones and the legacy
+    /// renderer.
+    pub grass: crate::foliage::GrassQuality,
 }
 
 impl Quality {
@@ -1497,9 +1793,10 @@ impl Quality {
                 split_percent: 50,
                 blend_percent: 0,
                 fade_percent: 0,
+                screen_mask: true,
             },
             contact_shadows: false,
-            bloom: BloomQuality { enabled: false, mips: 0, half_res: true },
+            bloom: BloomQuality { enabled: false, resolution: 0 },
             ao: AoQuality { resolution: AoResolution::Off, slices: 0, steps: 0, temporal: false },
             fog: false,
             environment: EnvironmentQuality {
@@ -1512,13 +1809,25 @@ impl Quality {
                 sky_lut: (0, 0),
                 sky_cadence: 1,
                 aerial_perspective: false,
+                radiance_side_max: 0,
+                reflection_probes: 0,
+                probe_side_max: 0,
+                continuous_sky: false,
+                irradiance_volumes: 0,
+                irradiance_leak_control: false,
+                froxel_fog: None,
             },
-            lights: LightQuality { cap: MAX_LIGHTS as u32, clustered: false, tile_px: 0, shadowed_spots: 0 },
+            lights: LightQuality { cap: MAX_LIGHTS as u32, clustered: false, tile_px: 0, shadowed_spots: 0, decals: 0 },
             textures: TextureQuality::OFF,
             prepass: false,
             meshlets: false,
             occlusion: false,
             specular_aa: false,
+            anisotropy: 1,
+            dof: crate::post::dof::DofTier::Circular,
+            motion_blur: crate::post::motion_blur::MotionBlurTier::Off,
+            screen_inputs: crate::screen_inputs::ScreenInputs::NONE,
+            grass: crate::foliage::GrassQuality::OFF,
         }
     }
 
@@ -1807,10 +2116,8 @@ pub enum QualityKnob {
     ContactShadows,
     /// [`BloomQuality::enabled`].
     Bloom,
-    /// [`BloomQuality::mips`].
-    BloomMips,
-    /// [`BloomQuality::half_res`].
-    BloomHalfRes,
+    /// [`BloomQuality::resolution`].
+    BloomResolution,
     /// [`AoQuality::resolution`].
     AoResolution,
     /// [`AoQuality::slices`].
@@ -1859,7 +2166,7 @@ pub enum QualityKnob {
 
 impl QualityKnob {
     /// Every knob.
-    pub const ALL: [QualityKnob; 43] = [
+    pub const ALL: [QualityKnob; 42] = [
         QualityKnob::Hdr,
         QualityKnob::Tonemap,
         QualityKnob::Exposure,
@@ -1879,8 +2186,7 @@ impl QualityKnob {
         QualityKnob::ShadowFade,
         QualityKnob::ContactShadows,
         QualityKnob::Bloom,
-        QualityKnob::BloomMips,
-        QualityKnob::BloomHalfRes,
+        QualityKnob::BloomResolution,
         QualityKnob::AoResolution,
         QualityKnob::AoSlices,
         QualityKnob::AoSteps,
@@ -1921,8 +2227,7 @@ impl QualityKnob {
             | QualityKnob::ShadowBlend
             | QualityKnob::ShadowFade
             | QualityKnob::Bloom
-            | QualityKnob::BloomMips
-            | QualityKnob::BloomHalfRes
+            | QualityKnob::BloomResolution
             | QualityKnob::AoResolution
             | QualityKnob::IblCubeSize
             | QualityKnob::IblHdriCubeSize
@@ -2111,7 +2416,7 @@ mod tests {
         smaller.shadows.map_size = 768;
         smaller.shadows.cascades = 1;
         smaller.render_scale = 0.67;
-        smaller.bloom.mips = 4;
+        smaller.bloom.resolution = 270;
         smaller.lights.cap = 64;
         assert!(off.resource_change_only(&smaller), "DRS and demotion knobs never change pipelines");
         let mut taa = off;
@@ -2124,8 +2429,9 @@ mod tests {
         assert_eq!(QualityKnob::AntiAliasing.kind(), KnobKind::Pipeline);
         // RQ2 review: the HDR map's cube, the rebake cadence and the sun's rebake threshold are
         // resource knobs too (16 -> 19); RQ3 review: the shadow distance, split, blend band and end
-        // fade (19 -> 23).
-        assert_eq!(QualityKnob::ALL.iter().filter(|k| k.kind() == KnobKind::Resource).count(), 23);
+        // fade (19 -> 23). P2-0.13 flipped (named in the log): bloom's mips and half-resolution start
+        // are one knob, its chain's resolution (23 -> 22).
+        assert_eq!(QualityKnob::ALL.iter().filter(|k| k.kind() == KnobKind::Resource).count(), 22);
         let mut reach = off;
         (reach.shadows.distance, reach.shadows.split_percent, reach.shadows.blend_percent, reach.shadows.fade_percent) = (120, 80, 10, 10);
         assert!(off.resource_change_only(&reach), "the shadows' reach never changes pipelines");
@@ -2301,6 +2607,18 @@ mod tests {
         assert_eq!(taa.texture_lod_bias(0.1), -1.5, "the scale is held to the class floor");
         assert_eq!(taa.texture_lod_bias(f32::NAN), -0.5);
         assert_eq!(TaaQuality::DEFAULT.with_lod_bias(-2.0).texture_lod_bias(0.5), TAA_LOD_BIAS_MIN);
+    }
+
+    #[test]
+    fn a_frames_texture_lod_bias_is_taas_under_taa_and_the_upscales_under_easu_alone() {
+        let taa = TaaQuality::DEFAULT;
+        assert_eq!(frame_texture_lod_bias(&taa, true, true, 0.5), -1.5, "TAA's, whatever the upscale");
+        assert_eq!(frame_texture_lod_bias(&taa, false, true, 0.5), -1.0, "EASU alone: log2(render / display)");
+        assert_eq!(frame_texture_lod_bias(&taa, false, true, 0.75), libm::log2f(0.75));
+        assert_eq!(frame_texture_lod_bias(&taa, false, false, 0.5), 0.0, "no upscale, no bias");
+        assert_eq!(frame_texture_lod_bias(&taa, false, true, 0.1), libm::log2f(RENDER_SCALE_MIN), "held to the class floor");
+        assert_eq!(frame_texture_lod_bias(&taa, false, true, f32::NAN), 0.0);
+        assert!(frame_texture_lod_bias(&taa, false, true, 0.1) >= TAA_LOD_BIAS_MIN);
     }
 
     #[test]

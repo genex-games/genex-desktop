@@ -39,7 +39,11 @@ feature in `genex.toml` has no web build, so add one only when the brief needs i
 over its code budget (4 MB of gzip unless `genex.toml` `[web] wasm_budget_mb` raises it, at most
 32) still exports but loads slower on phones; raise the budget only for a desktop-first brief.
 Past 32 MB the export is refused `wasm-over-budget`, and a budget outside 1..=32 is refused
-`invalid-web-budget`.
+`invalid-web-budget`. A game that uses no physics sets `[physics] enabled = false`, which leaves
+Rapier (a fifth of the web build) out.
+Every destination shows a loading screen until the first lit frame; never draw your own. Give it
+the game's look in `genex.toml` `[render.loading]` (title, `#rrggbb` background, accent and text, a
+logo under `assets/`), as `docs/GENEX_API.md` (Loading screen) shows.
 When a run answers a refusal code (`gpu-unsupported`, `build-failed`, ...), read it in
 `docs/CONTRACT.md` before changing code.
 
@@ -56,8 +60,8 @@ never the quality.
   device, outside the simulation. Make content cheap at `low` and let presets add to it.
 - **The look.** Frames are HDR. `khronos-neutral` (the default) keeps authored colours;
   `agx-punchy` (this template's) suits bright, high-contrast scenes; plain `agx` greys saturated
-  lights. Use `exposure = "auto"` (with `ev_compensation = 0.5` for a sunlit scene, 1.5 under
-  `agx-punchy`, whose look deepens shadows) when light and shade sit together. Bloom, height fog, ambient occlusion and contact shadows are the look's and
+  lights. Use `exposure = "auto"` (with `ev_compensation = 0.5` for a sunlit scene, under any
+  curve) when light and shade sit together. Bloom, height fog, ambient occlusion and contact shadows are the look's and
   the preset's: set `bloom_*`, `fog_*`, `ao_*` and `contact_shadow_length` in `[render.look]`,
   never as custom passes.
 - **Light with the built-ins.** `frame.sun`, `frame.ambient`, `frame.point_light` and
@@ -69,8 +73,9 @@ never the quality.
   capture after adding an environment.
 - **Prefer built-ins to custom passes.** A custom material or pass is for what they cannot draw,
   written at `api = 2` (linear, pre-exposed colour; a grade of your own goes at `PostHdr`). A
-  Level-3 pass is not fogged, lit by point or spot lights or shadowed yet, and a custom material
-  casts no shadow: keep ground and characters built-in or `api = 2` surfaces. v1 work in the world
+  Level-3 pass is not fogged or lit by point or spot lights yet (it shadows itself from
+  `gx_shadow_map`), and a custom material casts no shadow: keep ground and characters built-in
+  or `api = 2` surfaces. v1 work in the world
   holds the whole frame on the old LDR scene.
 - **Temporal effects.** `high` and `ultra` draw TAA. Draw everything that moves on its own (a
   character, an enemy, a vehicle) under `frame.id(key)` with a key that stays with it, end it with

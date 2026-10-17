@@ -1,5 +1,5 @@
 {
-  "about": "The genex facade's agent-facing vocabularies, held by native/genex-rust/crates/genex/tests/vocabulary.rs (RUNTIME_KEYS, InstallErrorCode, the gpu_pass registration code, the Level-2 calls, which call each [[wgsl]] kind feeds, and the frame calls temporal effects need: draw ids and camera cuts; the environment calls with the wire spellings of its kinds and of `HdriSun`; the local-light and emissive calls of RQ6) and read by tests/conformance/rust-template-docs.test.ts, which checks the template docs name each. Change both sides with this file. Its `meshlets` block is the renderer's `genex_meshlets` glTF extras schema (genex-render's meshlet.rs, the host's src/shared/render-quality.ts), held by vocabulary.rs and tests/conformance/genex-toml.test.ts.",
+  "about": "The genex facade's agent-facing vocabularies, held by native/genex-rust/crates/genex/tests/vocabulary.rs (RUNTIME_KEYS, InstallErrorCode, the gpu_pass registration code, the Level-2 calls, which call each [[wgsl]] kind feeds, and the frame calls temporal effects need: draw ids and camera cuts; the environment calls with the wire spellings of its kinds and of `HdriSun`; the local-light and emissive calls of RQ6; the look's fog calls, A.5's volumetric opt-out among them) and read by tests/conformance/rust-template-docs.test.ts, which checks the template docs name each. Change both sides with this file. Its `meshlets` block is the renderer's `genex_meshlets` glTF extras schema (genex-render's meshlet.rs, the host's src/shared/render-quality.ts), held by vocabulary.rs and tests/conformance/genex-toml.test.ts.",
   "runtimeKeys": [
     "version",
     "contractVersion",
@@ -59,6 +59,61 @@
       ".with_emissive_texture"
     ]
   },
+  "instanceGroups": {
+    "calls": [
+      "InstanceGroup::cubes",
+      "InstanceGroup::spheres",
+      "InstanceGroup::models",
+      "InstanceGroup::models_with",
+      "group.update",
+      "frame.group"
+    ],
+    "refusals": ["too-many-instances", "range-out-of-group"]
+  },
+  "terrain": {
+    "calls": [
+      "Terrain::from_fn",
+      "Terrain::from_heights",
+      "TerrainLayer::textured",
+      "TerrainLayer::flat",
+      ".with_layers",
+      "TerrainTexel::blend",
+      ".with_control",
+      "frame.terrain",
+      "terrain.height",
+      "Grass::meadow",
+      ".with_grass",
+      "Scatter::new",
+      "terrain.scatter"
+    ],
+    "refusals": ["terrain-heights-invalid", "terrain-layers-invalid", "terrain-control-invalid"]
+  },
+  "particles": {
+    "calls": [
+      "Particles::steam",
+      "Particles::rain",
+      "Particles::fountain",
+      ".with_rate",
+      ".with_soft",
+      ".with_sorted",
+      ".with_collision",
+      ".with_flipbook",
+      "frame.particles"
+    ],
+    "refusals": ["particles-count-invalid", "particles-flipbook-invalid"]
+  },
+  "fog": {
+    "calls": [
+      ".fog",
+      "Fog::default",
+      ".with_density",
+      ".with_height",
+      ".with_range",
+      ".with_color",
+      ".with_aerial_perspective",
+      ".with_volumetric"
+    ]
+  },
   "meshlets": {
     "extrasKey": "genex_meshlets",
     "schemaVersion": 1,
@@ -83,5 +138,14 @@
       "meshlets-local-index-out-of-meshlet",
       "meshlets-triangles-differ"
     ]
+  },
+  "lods": {
+    "extrasKey": "genex_lods",
+    "schemaVersion": 1,
+    "maxLevels": 4,
+    "minTriangles": 512,
+    "extrasKeys": ["version", "indices", "levels"],
+    "levelKeys": ["first", "count", "error"],
+    "faults": ["lods-unknown-version", "lods-over-limit", "lods-range-out-of-bounds", "lods-vertex-out-of-mesh", "lods-not-coarser"]
   }
 }

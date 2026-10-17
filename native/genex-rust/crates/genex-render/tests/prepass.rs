@@ -342,7 +342,7 @@ fn metal_custom_geometry_reaches_the_prepass_depth_and_normals_and_keeps_the_wor
     let (image, depth) = frame(&gpu, &mut reference, CullPath::Gpu, &mut NoStage);
     let depth = depth.expect("depth");
     // A cube in front of everything, drawn by the stage only into the prepass.
-    let cube = PrepassDraw { mesh: MeshId::CUBE, model: scaled([0.0, 1.6, 4.0], [0.8; 3]) };
+    let cube = PrepassDraw::still(MeshId::CUBE, scaled([0.0, 1.6, 4.0], [0.8; 3]));
     let mut stage = CustomGeometry(vec![cube]);
     let mut forced = renderer(&gpu, Path::Legacy, false);
     forced.set_prepass_demand(depth_demand());

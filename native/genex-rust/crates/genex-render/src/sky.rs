@@ -384,7 +384,9 @@ fn compute_pipeline(device: &Device, label: &str, module: &ShaderModule, entry_p
         layout: Some(&pipeline_layout),
         module,
         entry_point: Some(entry_point),
-        compilation_options: Default::default(),
+        // A8.6: the aerial and multiscatter scans write their workgroup arrays first; the other
+        // sky kernels have none.
+        compilation_options: crate::compile::written_first(),
         cache: None,
     })
 }
@@ -619,6 +621,12 @@ pub struct SkyState {
     aerial: Option<crate::fog::AerialPerspective>,
     /// Whether node 11 wrote the volume this frame (the forward pass binds it only then).
     aerial_ready: bool,
+    /// The froxel fog (renderer pass 2 A.5, [`crate::froxel`]), made on the first frame that asks
+    /// for it (again when the grid changes).
+    froxels: Option<crate::froxel::FroxelFog>,
+    /// Whether node 11 wrote the froxel fog this frame: it is then bound in the aerial volume's
+    /// place.
+    froxels_ready: bool,
 }
 
 /// What the backdrop of an HDR map needs from the frame: the uploaded map's view and the
@@ -796,14 +804,62 @@ impl SkyState {
         passes
     }
 
-    /// Start a frame: the aerial-perspective volume counts only once node 11 writes it again.
+    /// Start a frame: the aerial-perspective volume and the froxel fog count only once node 11
+    /// writes them again.
     pub fn begin_frame(&mut self) {
         self.aerial_ready = false;
+        self.froxels_ready = false;
     }
 
-    /// The aerial-perspective volume node 11 wrote this frame (None: it did not run).
+    /// The air volume the forward pass binds in its aerial slot this frame: the froxel fog where
+    /// node 11 drew it (the aerial volume folded in), else the aerial-perspective volume where it
+    /// wrote that (None: neither ran).
     pub fn aerial_view(&self) -> Option<&TextureView> {
+        let froxels = self.froxels.as_ref().filter(|_| self.froxels_ready).map(crate::froxel::FroxelFog::view);
+        froxels.or_else(|| self.sky_aerial_view())
+    }
+
+    /// The aerial-perspective volume node 11 wrote this frame, without the froxel fog (None: it did
+    /// not run): what the froxel fog folds in.
+    pub fn sky_aerial_view(&self) -> Option<&TextureView> {
         self.aerial.as_ref().filter(|_| self.aerial_ready).map(crate::fog::AerialPerspective::view)
+    }
+
+    /// Node 11's froxel fog of `grid` for `frame` (renderer pass 2 A.5), after the aerial volume
+    /// (`inputs.aerial`, which it folds in): bound in the aerial slot from now on this frame. The
+    /// compute passes it opened (none when its shaders are refused, logged once).
+    pub fn encode_froxels(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &Queue,
+        encoder: &mut CommandEncoder,
+        (grid, inputs, frame): (crate::froxel::FroxelGrid, &crate::froxel::FroxelInputs<'_>, &crate::froxel::FroxelFrame),
+    ) -> PassCounters {
+        if self.froxels.as_ref().is_none_or(|froxels| froxels.grid() != grid) {
+            match crate::froxel::FroxelFog::new(device, grid) {
+                Ok(froxels) => self.froxels = Some(froxels),
+                Err(error) => {
+                    log::warn!("froxel fog is off: {error}");
+                    self.froxels = None;
+                    return PassCounters::default();
+                }
+            }
+        }
+        let Some(froxels) = self.froxels.as_mut() else { return PassCounters::default() };
+        let passes = froxels.encode(device, queue, encoder, inputs, frame);
+        self.froxels_ready = true;
+        passes
+    }
+
+    /// Bytes the froxel fog holds (0 before a frame drew it).
+    pub fn froxel_bytes(&self) -> u64 {
+        self.froxels.as_ref().map_or(0, crate::froxel::FroxelFog::bytes)
+    }
+
+    /// Release the froxel fog (a quality without it).
+    pub fn release_froxels(&mut self) {
+        self.froxels = None;
+        self.froxels_ready = false;
     }
 
     /// Node 11's aerial-perspective volume for `ctx` (medium and above, where the fog's look allows
@@ -961,6 +1017,22 @@ impl SkyState {
     /// alone: no sun disk (the analytic sun lights the scene directly). False, and nothing
     /// recorded, before the LUTs were first computed.
     pub fn encode_cube(&self, device: &Device, encoder: &mut CommandEncoder, cube: &TextureView, side: u32) -> bool {
+        if !self.has_luts() {
+            return false;
+        }
+        let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor { label: Some("sky cube"), timestamp_writes: None });
+        self.dispatch_cube(device, &mut pass, cube, side)
+    }
+
+    /// Whether the LUTs were computed at least once ([`SkyState::encode_cube`] and
+    /// [`SkyState::dispatch_cube`] record nothing before).
+    pub fn has_luts(&self) -> bool {
+        self.gpu.as_ref().is_some_and(|gpu| gpu.view_key.is_some())
+    }
+
+    /// [`SkyState::encode_cube`] recorded into `pass` (the IBL bake's own pass: its next dispatch may
+    /// read the faces). False, and nothing recorded, before the LUTs were first computed.
+    pub fn dispatch_cube(&self, device: &Device, pass: &mut wgpu::ComputePass<'_>, cube: &TextureView, side: u32) -> bool {
         let Some(gpu) = self.gpu.as_ref().filter(|gpu| gpu.view_key.is_some()) else { return false };
         let group = bind_group(
             device,
@@ -973,7 +1045,6 @@ impl SkyState {
                 (6, wgpu::BindingResource::TextureView(cube)),
             ],
         );
-        let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor { label: Some("sky cube"), timestamp_writes: None });
         pass.set_pipeline(&gpu.cube_pipeline);
         pass.set_bind_group(0, &group, &[]);
         pass.dispatch_workgroups(side.div_ceil(WORKGROUP_SIDE), side.div_ceil(WORKGROUP_SIDE), CUBE_FACES);

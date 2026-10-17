@@ -180,7 +180,18 @@ const PLAIN_MATERIAL: &str = "@fragment\nfn fs_material(in: GxMaterialIn) -> @lo
 #[test]
 fn the_renderer_owned_table_names_webgpu_optional_features_disjoint_from_native_enhanced() {
     let names: Vec<&str> = RENDERER_FEATURES.iter().map(|(_, name)| *name).collect();
-    assert_eq!(names, vec!["timestamp-query", "rg11b10ufloat-renderable", "depth-clip-control"]);
+    // Renderer pass 2 A6.4 flipped: the three texture-compression features joined the table.
+    assert_eq!(
+        names,
+        vec![
+            "timestamp-query",
+            "rg11b10ufloat-renderable",
+            "depth-clip-control",
+            "texture-compression-bc",
+            "texture-compression-astc",
+            "texture-compression-etc2"
+        ]
+    );
     for (feature, name) in RENDERER_FEATURES {
         assert!(Features::all_webgpu_mask().contains(*feature), "{name} is a WebGPU optional feature, so the web may offer it");
         assert!(!NATIVE_ENHANCED_FEATURES.iter().any(|(native, _)| native.intersects(*feature)), "{name} is not native-enhanced");

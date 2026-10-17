@@ -1,11 +1,13 @@
 # The lakeside showcase: a beautiful scene on the current renderer, kept for before/after captures
-# across the renderer follow-up. `game/` is a complete Rust · wgpu game folder (genex.toml, src/,
-# shaders/, assets/, no cargo files) the owner opens in Studio; this crate builds the same sources
-# for the workspace: the windowed `showcase` binary, the `showcase-game` entry exactly as Studio
-# builds it, the `showcase-assets` tool that writes the procedural GLBs, and the capture rows.
+# across the renderer follow-up, and Harbour Street (`harbour/`, renderer pass 2's urban and
+# interior scene, another complete game folder). `game/` is a complete Rust · wgpu game folder
+# (genex.toml, src/, shaders/, assets/, no cargo files) the owner opens in Studio; this crate builds
+# the same sources for the workspace: the windowed `showcase` binary, the `showcase-game` entry
+# exactly as Studio builds it, the `showcase-assets` tool that writes the procedural GLBs, and the
+# capture rows.
 [package]
 name = "showcase"
-description = "The lakeside showcase scene (renderer before/after captures)."
+description = "The showcase scenes, the lakeside and Harbour Street (renderer before/after captures)."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -29,6 +31,17 @@ path = "src/main.rs"
 name = "showcase-game"
 path = "game/src/main.rs"
 
+# Harbour Street (renderer pass 2, A.13): `cargo run -p showcase --bin harbour-street` draws it in a
+# window, its fetched maps read from the asset cache; `harbour-street-game` is its game folder's own
+# entry (harbour/src/main.rs) compiled as Studio's lane compiles it.
+[[bin]]
+name = "harbour-street"
+path = "src/bin/harbour-street.rs"
+
+[[bin]]
+name = "harbour-street-game"
+path = "harbour/src/main.rs"
+
 # Rewrites game/assets/*.glb and the terrain's splat map from the layout (tests/assets.rs holds the
 # files to it); `showcase-assets fetched` packs the CC0 textures `scripts/showcase-assets.ts` fetched
 # (assets-manifest.json) into what the scene reads.
@@ -48,7 +61,7 @@ default = ["studio"]
 studio = ["genex/studio"]
 
 [dependencies]
-genex = { workspace = true }
+genex = { workspace = true, features = ["physics"] }
 # The bench scenes (src/bench) draw through the renderer's own scene: per-draw materials, point
 # lights and skinning the facade does not offer yet.
 genex-render = { workspace = true }

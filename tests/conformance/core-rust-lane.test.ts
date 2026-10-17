@@ -309,6 +309,9 @@ describe("the core's Rust stage: the genex release the shipped lock line pins", 
       renderToml: await templateRenderToml(),
       wgslToml: "",
       wasmBudgetMb: null,
+      // Flipped (renderer pass 2, D11): the stage also hands the lane the game's [render.loading],
+      // null for the template, which styles no loading screen of its own.
+      loading: null,
     });
     assert.match(await readFile(path.join(into, "Cargo.toml"), "utf8"), /^genex = "=0\.1\.0"$/m);
   });
@@ -329,6 +332,26 @@ describe("the core's Rust stage: the genex release the shipped lock line pins", 
     );
     assert.ok(staged.ok, JSON.stringify(staged));
     assert.equal(staged.wasmBudgetMb, 12);
+  });
+
+  it("hands the lane the loading screen a game styles in [render.loading]", async () => {
+    const payload = rustPayloadDir(await shippedResources());
+    const dir = await templateGame();
+    const style = { title: "Harbour Nights", background: "#203040", logo: "ui/logo.png" };
+    const table = Object.entries(style).map(([key, value]) => `${key} = ${JSON.stringify(value)}`);
+    await writeFile(
+      path.join(dir, "genex.toml"),
+      `${await readFile(path.join(dir, "genex.toml"), "utf8")}\n[render.loading]\n${table.join("\n")}\n`,
+    );
+    const into = path.join(await realpath(await tmpDir("core-rust-lane-stage-")), "game.stage");
+    const staged = await shippedRustStage(payload)(
+      { project: "ferris", dir },
+      into,
+      BuildTarget.Web,
+      RustFlavour.Export,
+    );
+    assert.ok(staged.ok, JSON.stringify(staged));
+    assert.deepEqual(staged.loading, style);
   });
 
   const lockLines: ReadonlyArray<readonly [string, Plant]> = [

@@ -6,7 +6,7 @@
 use genex::math::{self, Vec3, vec2, vec3};
 
 use crate::draw::{
-    BEAM, BENCH, CABIN_DEPTH, CABIN_WIDTH, CHIMNEY, CHIMNEY_HEIGHT, DEER_BODY, DEER_HEAD, DOOR, FISHER_JACKET, FISHER_TROUSERS, FOOTING, HULL, LOG_FIREWOOD, LOG_LONG, LOG_RADIUS, LOG_SHORT, PLANKS, PORCH, POST, ROOF, STEP,
+    BEAM, BENCH, CABIN_DEPTH, CABIN_WIDTH, CHIMNEY, CHIMNEY_HEIGHT, DEER_BODY, DEER_HEAD, DOOR, DOOR_HALF_WIDTH, FISHER_JACKET, FISHER_TROUSERS, FLOOR, FOOTING, HULL, LOG_FIREWOOD, LOG_JAMB, LOG_LONG, LOG_RADIUS, LOG_SHORT, PLANKS, PORCH, POST, ROOF, STEP,
     roof_run_drop,
 };
 use crate::layout::DOCK_LENGTH;
@@ -183,7 +183,11 @@ fn loft(mesh: &mut Mesh, stations: &[(Vec3, f32, f32)], around: u32) {
         for a in 0..around {
             let i = base + k * row + a;
             let quad = [i, i + 1, i + row, i + 1, i + row + 1, i + row];
-            let outward = (mesh_point(mesh, quad[1]) - mesh_point(mesh, quad[0])).cross(mesh_point(mesh, quad[2]) - mesh_point(mesh, quad[0])).dot(Vec3::from(mesh.normals[i as usize])) > 0.0;
+            // Judged on both triangles and both rows' normals: next to a pole one triangle has no
+            // area, and judging that one alone turned the tips' faces inwards.
+            let face = |t: &[u32]| (mesh_point(mesh, t[1]) - mesh_point(mesh, t[0])).cross(mesh_point(mesh, t[2]) - mesh_point(mesh, t[0]));
+            let normals = Vec3::from(mesh.normals[i as usize]) + Vec3::from(mesh.normals[(i + row) as usize]);
+            let outward = (face(&quad[..3]) + face(&quad[3..])).dot(normals) > 0.0;
             mesh.indices.extend(if outward { quad } else { [quad[0], quad[2], quad[1], quad[3], quad[5], quad[4]] });
         }
     }
@@ -274,6 +278,8 @@ pub fn assets() -> Vec<(String, Mesh)> {
     let mut out = vec![
         (LOG_LONG.to_owned(), log(CABIN_WIDTH + 0.7, LOG_RADIUS)),
         (LOG_SHORT.to_owned(), log(CABIN_DEPTH + 0.7, LOG_RADIUS)),
+        (LOG_JAMB.to_owned(), log(CABIN_WIDTH * 0.5 + 0.35 - DOOR_HALF_WIDTH, LOG_RADIUS)),
+        (FLOOR.to_owned(), box_at(vec3(CABIN_WIDTH - 0.54, 0.04, CABIN_DEPTH - 0.34), PLANK_METRES, 0.0)),
         (LOG_FIREWOOD.to_owned(), log(1.8, 0.13)),
         (POST.to_owned(), post()),
         (BEAM.to_owned(), box_at(vec3(DOCK_LENGTH, 0.16, 0.14), PLANK_METRES, 0.4)),

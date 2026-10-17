@@ -208,7 +208,8 @@ Every project's Loop is the director's wake loop, in one of two profiles (`LoopP
   `skills/rust-extension-ladder.md`.
 - **Game conformance suite**: the behaviour checks any built Rust game must pass
   (`src/main/core/game-conformance.ts`): every verb, seed determinism (both runs on one build),
-  the capture digest, Live's ring on a Mac (not judged yet: no caller has a frames host), Stop and
+  the capture digest, Live's ring on a Mac (judged only by `npm run conformance:game`, through the
+  built app's frames addon; the app's own callers have no frames host yet), Stop and
   reap, and the renderer's presets and extensions (`src/main/core/game-conformance-render.ts`;
   not judged for a game whose receipt has no `renderSettings`). Agents run it with
   `check_conformance` (`game.conformance`, a host-only `conformance_run` event keyed by build

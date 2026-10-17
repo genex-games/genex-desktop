@@ -53,7 +53,8 @@ pub use winit;
 /// The platform suffix in record names (`pond-600-seed1-cast.ios.json`).
 pub const PLATFORM: &str = "ios";
 
-/// iOS's platform hooks: GCController pads, the thermal state and the refusal screen laid over the
+/// iOS's platform hooks: GCController pads, the thermal state, the display link's refresh interval
+/// and the refusal screen laid over the
 /// window's view without wgpu ([`refusal_layer`]). Gamepad buttons never arrive as key events. iOS 16
 /// devices are WebGPU-class, so on a phone the check is expected to pass (it still runs); the
 /// Simulator's Metal is below core, so a Simulator run shows the refusal screen.
@@ -61,6 +62,7 @@ pub const IOS_HOOKS: PlatformHooks = PlatformHooks {
     pads: game_controller::poll,
     pad_key: |_| None,
     thermal: thermal_state::read,
+    refresh_ms: mobile::shell::display_link_refresh_ms,
     refusal_screen: Some(refusal_layer::draw),
 };
 

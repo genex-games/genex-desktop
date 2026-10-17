@@ -45,10 +45,32 @@ fn vs_clouds(@builtin(vertex_index) i: u32) -> CloudOut {
     return out;
 }
 
+// Where an octave's cells shrink to this share of a pixel's footprint it starts to fade to its
+// mean, and it is gone at twice that: finer noise than a pixel only aliases under TAA's jitter
+// (renderer pass 2, B.7: the far clouds near the horizon popped on a pan).
+const OCTAVE_FADE_START: f32 = 0.25;
+
+// `fbm2` with each octave faded to its mean where it is finer than `footprint` (noise units a pixel
+// spans); exactly `fbm2` where every octave is coarser than the pixel.
+fn fbm2_filtered(p: vec2<f32>, footprint: f32) -> f32 {
+    var sum = 0.0;
+    var amplitude = 0.5;
+    var q = p;
+    var cell = footprint;
+    for (var i = 0; i < 5; i++) {
+        let keep = 1.0 - smoothstep(OCTAVE_FADE_START, OCTAVE_FADE_START * 2.0, cell);
+        sum += amplitude * mix(0.5, noise2(q), keep);
+        q = q * 2.03 + vec2<f32>(17.1, 9.7);
+        cell *= 2.03;
+        amplitude *= 0.5;
+    }
+    return sum / 0.96875;
+}
+
 // Rounded noise for billowing tops: the fbm folded so its puffs are bright in the middle.
-fn cloud_shape(p: vec2<f32>) -> f32 {
-    let base = fbm2(p);
-    let detail = fbm2(p * 3.7 + vec2<f32>(base * 1.3, -base));
+fn cloud_shape(p: vec2<f32>, footprint: f32) -> f32 {
+    let base = fbm2_filtered(p, footprint);
+    let detail = fbm2_filtered(p * 3.7 + vec2<f32>(base * 1.3, -base), footprint * 3.7);
     return base * 0.75 + detail * 0.25;
 }
 
@@ -65,15 +87,17 @@ fn view_ray(ndc: vec2<f32>) -> vec3<f32> {
 @fragment
 fn fs_clouds(in: CloudOut) -> @location(0) vec4<f32> {
     let dir = view_ray(in.ndc);
+    let t = clouds.params.x;
+    let reach = CLOUD_ALTITUDE / max(dir.y, 0.004);
+    let at = (gx_frame.camera_pos.xz + dir.xz * reach + CLOUD_WIND * t) * CLOUD_SCALE;
+    // How much of the layer's noise one pixel spans (taken before any invocation leaves).
+    let footprint = max(length(dpdx(at)), length(dpdy(at)));
     if dir.y <= 0.004 {
         discard;
     }
-    let t = clouds.params.x;
-    let reach = CLOUD_ALTITUDE / dir.y;
-    let at = (gx_frame.camera_pos.xz + dir.xz * reach + CLOUD_WIND * t) * CLOUD_SCALE;
     // Cumulus where the noise rises over the cover, long streaks stretched along the wind.
-    let puffs = smoothstep(1.0 - CLOUD_COVER, 1.0 - CLOUD_COVER + 0.22, cloud_shape(at));
-    let streaks = smoothstep(0.58, 0.8, fbm2(at * vec2<f32>(0.35, 2.4) + vec2<f32>(7.0, 3.0))) * 0.55;
+    let puffs = smoothstep(1.0 - CLOUD_COVER, 1.0 - CLOUD_COVER + 0.22, cloud_shape(at, footprint));
+    let streaks = smoothstep(0.58, 0.8, fbm2_filtered(at * vec2<f32>(0.35, 2.4) + vec2<f32>(7.0, 3.0), footprint * 2.4)) * 0.55;
     let density = max(puffs, streaks);
     // Thin towards the horizon (the layer's far edge is hundreds of kilometres off) and fade in
     // just above it, where the haze takes over.

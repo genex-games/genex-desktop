@@ -6,11 +6,15 @@
 //! visibility by `gx_contact_shadow`, which answers 1 until the forward frame group binds the mask.
 //!
 //! Contact shadows are a high and ultra feature (plan §2.4): the quality only switches them on or
-//! off ([`runs`]), the march always takes [`STEPS`] samples, at half the render size, and the look
-//! sets the ray's length ([`crate::settings::Look::contact_shadow_length`]). They catch what the
-//! cascaded maps miss at small scale: a pebble's or a foot's shadow where it meets the ground,
-//! below a map texel and its bias. Noise along the ray is frame-keyed only under TAA (plan
-//! principle 6): without TAA a frame is the same bits every time. The mask is fragment-written
+//! off ([`runs`]), the march takes one sample per depth texel the ray spans on the screen, at most
+//! [`STEPS`], at half the render size, and the look sets the ray's length
+//! ([`crate::settings::Look::contact_shadow_length`]). They catch what the cascaded maps miss at
+//! small scale: a pebble's or a foot's shadow where it meets the ground, below a map texel and its
+//! bias. A hit is soft within a thickness that grows with the view distance
+//! ([`THICKNESS_PER_DISTANCE`]) and fades out towards the screen's edges, where the depth runs out;
+//! a receiver so far away that the ray is under 16 depth texels long there fades out too, and one
+//! under 8 takes none (P2-0.7). Noise along the ray is frame-keyed only under TAA (plan principle 6): without TAA a
+//! frame is the same bits every time. The mask is fragment-written
 //! `r8unorm` (1 unshadowed; core has no `r8unorm` storage); [`mask_bytes`] is what it holds, for
 //! the budget ledger. It keeps no history.
 //!
@@ -51,10 +55,15 @@ pub const MASK_LABEL: &str = "contact shadows";
 pub const MASK_FULL_LABEL: &str = "contact shadows full";
 /// Every pool label contact shadows may hold (released when they do not run).
 pub const LABELS: [&str; 2] = [MASK_LABEL, MASK_FULL_LABEL];
-/// Samples along each ray (one count for high and ultra: the feature is off below).
+/// The most samples along each ray (one count for high and ultra: the feature is off below); a ray
+/// that spans fewer depth texels on the screen takes one a texel, and at least 4.
 pub const STEPS: u32 = 16;
-/// The depth thickness a sample must be within to occlude, in world units.
+/// The least depth thickness a sample occludes within, in world units.
 pub const THICKNESS: f32 = 0.05;
+/// The thickness per unit of view distance a far sample occludes within (Bend Studio's screen-space
+/// shadows' depth-relative surface thickness): beyond 10 m it outgrows [`THICKNESS`], as a depth
+/// texel's footprint does.
+pub const THICKNESS_PER_DISTANCE: f32 = 0.005;
 /// How far along the ray the march starts, as a fraction of a step (self-shadowing bias).
 pub const START_BIAS: f32 = 0.5;
 /// Cost rows record this many nodes back to back per sample (as AO's: a lone pass after an idle
@@ -74,9 +83,10 @@ pub struct GpuContactShadowParams {
     pub size: [f32; 4],
     /// xyz: the unit direction towards the sun (world space); w: the ray length in world units.
     pub light: [f32; 4],
-    /// x: the depth thickness a hit must be within (world units); y: the start bias; zw: reserved.
+    /// x: the least depth thickness a hit counts within (world units); y: the start bias (steps); z:
+    /// the thickness per unit of view distance; w: reserved.
     pub params: [f32; 4],
-    /// x: steps; y: the frame index (noise only under TAA, else 0); z: 1 under reverse-Z; w: 1
+    /// x: the most steps; y: the frame index (noise only under TAA, else 0); z: 1 under reverse-Z; w: 1
     /// under TAA (the march adds frame-keyed noise to its start).
     pub counts: [u32; 4],
 }
@@ -91,7 +101,7 @@ impl GpuContactShadowParams {
         GpuContactShadowParams {
             size: [w, h, 1.0 / w, 1.0 / h],
             light: [sun.x, sun.y, sun.z, look.contact_shadow_length],
-            params: [THICKNESS, START_BIAS, 0.0, 0.0],
+            params: [THICKNESS, START_BIAS, THICKNESS_PER_DISTANCE, 0.0],
             counts: [STEPS, noise_frame, u32::from(depth_reversed), u32::from(taa)],
         }
     }

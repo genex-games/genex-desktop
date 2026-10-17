@@ -9,6 +9,7 @@
 //! that skip into a failure. With `GENEX_WINDOW_EVIDENCE_DIR` set to an absolute folder each row
 //! also writes its window as a PNG there.
 
+use genex::render::{QualityPreset, RenderConfig};
 use genex::{DesktopShot, DesktopShotError, Value, desktop_shot};
 use std::path::PathBuf;
 
@@ -28,10 +29,34 @@ const EVIDENCE_ENV: &str = "GENEX_WINDOW_EVIDENCE_DIR";
 const POND_TAGS: [&str; 5] = ["ground", "water", "pond", "floaters", "rod"];
 /// The checker is drawn on the unit cube: 12 triangles.
 const CUBE_TRIANGLES: u64 = 12;
+/// The stack the shot's frames run on: a desktop shell runs them on the game's main thread (8 MiB
+/// on macOS). A test thread's default 2 MiB is too small for an unoptimized (debug) build of the
+/// renderer, whose moves are not elided, so `cargo test --workspace` overflowed it.
+const SHELL_STACK_BYTES: usize = 8 * 1024 * 1024;
 
 /// The shot, or None when the host has no GPU (unless one is required).
 fn shot(assets: genex::AssetTable) -> Option<DesktopShot> {
-    match desktop_shot(pond_game::game(), assets, FRAMES, WINDOW) {
+    shot_at(assets, None)
+}
+
+/// The shot with the game's render settings forcing `preset` when one is given.
+fn shot_at(assets: genex::AssetTable, preset: Option<QualityPreset>) -> Option<DesktopShot> {
+    on_shell_stack(move || shot_on_this_thread(assets, preset))
+}
+
+/// `run` on a thread with the shell's stack ([`SHELL_STACK_BYTES`]); its panic is this thread's.
+fn on_shell_stack<T: Send + 'static>(run: impl FnOnce() -> T + Send + 'static) -> T {
+    let thread = std::thread::Builder::new().name("shell-stack".to_owned()).stack_size(SHELL_STACK_BYTES).spawn(run);
+    thread.expect("the shot's thread starts").join().unwrap_or_else(|panic| std::panic::resume_unwind(panic))
+}
+
+/// [`shot_at`] on the calling thread.
+fn shot_on_this_thread(assets: genex::AssetTable, preset: Option<QualityPreset>) -> Option<DesktopShot> {
+    let mut game = pond_game::game();
+    if let Some(preset) = preset {
+        game.render_settings(RenderConfig::new().preset(preset));
+    }
+    match desktop_shot(game, assets, FRAMES, WINDOW) {
         Ok(shot) => Some(shot),
         Err(DesktopShotError::Gpu(error)) if std::env::var(REQUIRE_METAL_ENV).is_ok_and(|v| v == "1") => {
             panic!("{REQUIRE_METAL_ENV}=1 but no GPU: {error}")
@@ -125,19 +150,8 @@ fn metal_an_empty_asset_table_shows_the_checker_and_names_the_missing_models() {
 #[test]
 #[ignore = "needs the host GPU: run with --ignored metal"]
 fn metal_the_pond_at_each_preset_shows_the_pond() {
-    use genex::render::{QualityPreset, RenderConfig};
     for preset in [QualityPreset::Low, QualityPreset::Medium, QualityPreset::High, QualityPreset::Ultra] {
-        let mut game = pond_game::game();
-        game.render_settings(RenderConfig::new().preset(preset));
-        let shot = match desktop_shot(game, pond_game::ASSETS, FRAMES, WINDOW) {
-            Ok(shot) => shot,
-            Err(DesktopShotError::Gpu(error)) if std::env::var(REQUIRE_METAL_ENV).is_ok_and(|v| v == "1") => panic!("{REQUIRE_METAL_ENV}=1 but no GPU: {error}"),
-            Err(DesktopShotError::Gpu(error)) => {
-                eprintln!("skipped: no WebGPU-core adapter ({error})");
-                return;
-            }
-            Err(error) => panic!("the shot failed: {error}"),
-        };
+        let Some(shot) = shot_at(pond_game::ASSETS, Some(preset)) else { return };
         write_evidence(&shot, &format!("pond-window-{}.png", preset.wire()));
         assert_eq!(share(&shot, is_magenta), 0.0, "{}: no magenta checker pixel", preset.wire());
         assert!(share(&shot, is_grass) > MIN_SHARE, "{}: grass is on screen", preset.wire());

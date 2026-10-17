@@ -28,7 +28,9 @@
 //! with one sample ([`ScenePath::taa`]; MSAA is off, `landed_samples`), the frame:
 //! - jitters every camera depth writer by Halton(2, 3) keyed to the frame index
 //!   (`GpuFrame::jitter`, the cull, the shadows and `view_proj` stay unjittered) and samples
-//!   material textures with TAA's LOD bias (`GX_TEXTURE_LOD_BIAS` at the nominal scale);
+//!   material textures with TAA's LOD bias at the frame's scale (`GpuFrame::texture_lod`, a
+//!   uniform: a dynamic-resolution step moves it; renderer pass 2, P2-0.8b T-06, which also gives
+//!   FSR1's upscaled frames without TAA their `log2(render / display)`);
 //! - runs the prepass's motion variant (node 7, [`crate::motion`]: NDC motion and the reactive
 //!   no-history flags, rows matched by draw id or mesh ordinal on the frame's history set), the
 //!   reactive coverage of the transparent draws (15a) and the resolve (17, [`crate::post::taa`]);
@@ -109,6 +111,17 @@
 pub mod live_timing;
 /// The forward pass's RQ4 screen effects: fog row, AO term, contact-shadow mask (RQ4.6).
 mod effects;
+mod froxel_fog;
+/// Graph nodes 17a and 17b: the look's depth of field and motion blur (renderer pass 2 A.9).
+mod lens;
+mod probe_capture;
+mod grass_draw;
+mod terrain_draw;
+mod variants;
+
+pub use grass_draw::GrassStats;
+pub use lens::CaptureLens;
+pub use terrain_draw::TerrainStats;
 
 use wgpu::{
     BindGroup, BindGroupLayout, BindGroupLayoutEntry, BindingType, Buffer, BufferUsages, Device, Queue, RenderPass,
@@ -129,10 +142,9 @@ use crate::hdri::{HdriImage, PreparedMap};
 use crate::hiz::{HizInput, HizNode};
 use crate::ibl::EnvironmentMaps;
 use crate::layout::{
-    DrawIndexedArgs, FRAME_EFFECT_BOUND, FRAME_ENV_BINDINGS, FRAME_LIGHT_BINDINGS, FRAME_MATERIAL_CLASS_BINDINGS, GpuBlitParams, GpuCullViews, GpuFrame,
+    DrawIndexedArgs, FRAME_EFFECT_BOUND, FRAME_ENV_BOUND, FRAME_LIGHT_BINDINGS, FRAME_MATERIAL_CLASS_BINDINGS, GpuCullViews, GpuFrame,
     GpuPassView, MAX_CASCADES, SHADOW_CASCADES,
 };
-use crate::letterbox::letterbox;
 use crate::mesh::{MeshData, Vertex};
 use crate::meshlet::MeshletSet;
 use crate::meshlet_cull::{
@@ -145,7 +157,7 @@ use crate::post::taa::{GpuReactiveJitter, GpuTaaParams, ReactiveEntry, ReactiveN
 use crate::post::tonemap::{MsaaResolve, ResolveNode, TonemapNode, TonemapPass, TonemapSource, f16_to_f32};
 use crate::prepass::{ExtensionDemand, GpuPrepassDraw, PrepassConsumers, PrepassDraw, PrepassInfo};
 use crate::readback::{map_read, map_read_blocking, stage_buffer};
-use crate::scene::{FramePlan, LineVertex, MeshId, MeshLibrary, PlanOptions, Scene, SunLight};
+use crate::scene::{FramePlan, LineVertex, MeshId, MeshLibrary, ModelPart, PlanOptions, Scene, SunLight};
 use crate::shadow::{CascadeDraws, CascadeHistory, CasterDepth, CasterSpec, ShadowMapDesc, ShadowMaps, caster_pipeline};
 use crate::settings::{
     AntiAliasing, Environment, ExposureMode, FrameConfig, LdrReason, Look, Meshlets, Quality, RenderFeature, RenderSettings, SceneFormat, ShadowFilter,
@@ -318,7 +330,6 @@ struct Layouts {
     shadow: BindGroupLayout,
     pass: BindGroupLayout,
     lines: BindGroupLayout,
-    blit: BindGroupLayout,
     /// The prepass's custom-geometry row (`prepass_draw`, group 1 binding 1, dynamic offset).
     prepass_draw: BindGroupLayout,
 }
@@ -362,10 +373,6 @@ struct SurfaceKey {
     /// Whether normal-map mips carry Toksvig's length (`GX_TOKSVIG`: the surface folds it into
     /// roughness).
     toksvig: bool,
-    /// The texture LOD bias's bits (`GX_TEXTURE_LOD_BIAS`, RQ5.2): under TAA on the HDR scene,
-    /// `TaaQuality::texture_lod_bias` of the quality's nominal render scale (a dynamic-resolution
-    /// step keeps the pipelines it has: DRS never compiles), else 0.
-    lod_bias: u32,
     /// Whether the frame's local lights may come binned (`GX_BINNED_LIGHTS`: the quality's
     /// clustered switch). Off, the binned path's code is compiled out of the fragment (RX.R1).
     binned_lights: bool,
@@ -375,6 +382,10 @@ struct SurfaceKey {
     /// The most cascades the quality draws (`GX_SUN_CASCADES`): the sun chunk's cascade choice
     /// never looks past them (RX.R1).
     sun_cascades: u8,
+    /// The least perceptual roughness the surfaces shade with, its bits (`GX_ROUGHNESS_FLOOR`,
+    /// renderer pass 2 P2-0.12 LG-04): Filament's 0.045 on the HDR scene of a desktop, its
+    /// half-precision 0.089 on a phone's, the legacy 0.04 on the LDR scene.
+    roughness_floor: u32,
 }
 
 /// The RQ4 screen effects a quality draws, one pipeline constant each (`GX_AO`,
@@ -414,19 +425,18 @@ impl SurfaceKey {
         effects: EffectKey::NONE,
         texture_classes: false,
         toksvig: false,
-        lod_bias: 0,
         binned_lights: false,
         sun_soft_edges: false,
         sun_cascades: SHADOW_CASCADES as u8,
+        roughness_floor: LEGACY_ROUGHNESS_FLOOR.to_bits(),
     };
 
     /// The key `quality` asks of the HDR scene (`hdr`) or the legacy one, `taa` when TAA resolves
-    /// the frame. The soft filters' pattern turns with the frame, and textures take TAA's LOD
-    /// bias, only when a temporal resolve follows the HDR scene (a TAA quality on a renderer still
-    /// drawing MSAA keeps the static pattern).
+    /// the frame. The soft filters' pattern turns with the frame only when a temporal resolve
+    /// follows the HDR scene (a TAA quality on a renderer still drawing MSAA keeps the static
+    /// pattern). Textures take their LOD bias from the frame (`GpuFrame::texture_lod`, T-06).
     fn of(quality: &Quality, hdr: bool, taa: bool) -> SurfaceKey {
         let temporal = hdr && taa;
-        let lod_bias = if temporal { quality.taa.texture_lod_bias(quality.render_scale) } else { 0.0 };
         SurfaceKey {
             specular_aa: hdr && quality.specular_aa,
             shadow_filter: quality.shadows.filter,
@@ -434,13 +444,41 @@ impl SurfaceKey {
             effects: EffectKey::of(quality),
             texture_classes: false,
             toksvig: false,
-            lod_bias: lod_bias.to_bits(),
             binned_lights: crate::lights::BINNED_SHADING_LANDED && quality.lights.clustered,
             sun_soft_edges: quality.shadows.blend_percent > 0 || quality.shadows.fade_percent > 0,
             sun_cascades: quality.shadows.cascades.clamp(1, MAX_CASCADES as u8),
+            roughness_floor: if hdr { DESKTOP_ROUGHNESS_FLOOR } else { LEGACY_ROUGHNESS_FLOOR }.to_bits(),
         }
     }
+
+    /// This key for a device of `form` (P2-0.12 LG-04): a phone's HDR scene shades with the
+    /// coarser floor of half-precision shading; the legacy scene keeps its own.
+    const fn for_form(self, form: FormFactor) -> SurfaceKey {
+        let hdr_floor = self.roughness_floor == DESKTOP_ROUGHNESS_FLOOR.to_bits();
+        if hdr_floor && matches!(form, FormFactor::Mobile) {
+            return SurfaceKey { roughness_floor: MOBILE_ROUGHNESS_FLOOR.to_bits(), ..self };
+        }
+        self
+    }
+
+    /// This key as the transparent pipeline compiles it: the soft filters' static tap pattern and
+    /// the two-lookup cascade band, never the frame-keyed ones (renderer pass 2, P2-0.2: SH-01,
+    /// T-01 step 1). TAA takes a moving transparent's current sample almost whole (its reactive
+    /// coverage), so the frame-keyed taps and band dither reached the screen unaveraged: the lake's
+    /// shadow edges blinked while the camera moved.
+    const fn blended(self) -> SurfaceKey {
+        SurfaceKey { shadow_temporal: false, ..self }
+    }
 }
+
+/// The legacy LDR scene's roughness floor (the surface chunk's default `GX_ROUGHNESS_FLOOR`).
+const LEGACY_ROUGHNESS_FLOOR: f32 = 0.04;
+/// The HDR scene's roughness floor on a desktop (Filament's fp32 `MIN_PERCEPTUAL_ROUGHNESS`,
+/// `surface_material.fs`, Apache-2.0; P2-0.12 LG-04): a polished surface's GGX peak stays within
+/// what a pixel and the sun's disc resolve.
+const DESKTOP_ROUGHNESS_FLOOR: f32 = 0.045;
+/// The HDR scene's roughness floor on a phone (Filament's half-precision floor, Bevy's too).
+const MOBILE_ROUGHNESS_FLOOR: f32 = 0.089;
 
 /// The depth/normal prepass's pipelines (graph node 7) and the world pass's `Equal`-depth forward
 /// twin, for one scene format and depth convention (made on the first frame that runs the prepass).
@@ -562,7 +600,7 @@ struct Upscale {
 /// regrown, a texture array grown), not every frame.
 #[derive(Clone, PartialEq)]
 struct GroupsKey {
-    buffers: [Buffer; 10],
+    buffers: [Buffer; 9],
     /// The shadow array, then every material texture array ([`Renderer::texture_views`]).
     views: (TextureView, [TextureView; 8]),
     /// The environment maps' generation (the neutral inputs until the bake replaces them).
@@ -570,6 +608,16 @@ struct GroupsKey {
     /// The AO term, the contact-shadow mask and the aerial-perspective volume (the neutral texture
     /// where their nodes do not run).
     effects: [TextureView; 3],
+    /// The material sampler's anisotropy (P2-0.12 LG-02: a quality change replaces the sampler).
+    anisotropy: u16,
+}
+
+impl GroupsKey {
+    /// Whether `other` binds the same tables, shadow and material arrays and sampler: it differs
+    /// at most in the views a node replaces mid-frame (the effect views, the environment).
+    fn same_resources(&self, other: &GroupsKey) -> bool {
+        self.buffers == other.buffers && self.views == other.views && self.anisotropy == other.anisotropy
+    }
 }
 
 /// What the meshlet draw pipelines were made for: the scene's format, depth convention and surface
@@ -654,6 +702,8 @@ struct ReactivePipelines {
 struct MotionPipelines {
     batches: Compiled<RenderPipeline>,
     draws: Compiled<RenderPipeline>,
+    /// The background's motion after the geometry (renderer pass 2, P2-0.8b T-03).
+    background: Compiled<RenderPipeline>,
 }
 
 /// The index of `set` in per-set arrays.
@@ -670,6 +720,8 @@ struct LastFrame {
     batches: u32,
     views: u32,
     skinned_vertices: u32,
+    /// Each view's visible-list region: the plan's visible slots (its opaque rows without levels).
+    opaque_instances: u32,
 }
 
 /// Draws scenes into a world target and reads it back.
@@ -726,6 +778,8 @@ pub struct Renderer {
     /// Frame groups made mid-frame once a node replaced what they bind (AO's alternating history
     /// terms, a new environment bake), the last few kept.
     refreshed_groups: std::cell::RefCell<Vec<(GroupsKey, FrameGroups)>>,
+    /// Graph node 1's staging chunks, reused frame after frame (renderer pass 2, RC-08).
+    upload_arena: std::cell::RefCell<crate::tables::UploadArena>,
     /// How the frame being drawn (then the last one) draws its scene colour.
     path: ScenePath,
     last_path: Option<ScenePath>,
@@ -753,8 +807,9 @@ pub struct Renderer {
     pipelines: Pipelines,
     cull: CullPass,
     skinning: SkinPass,
-    blit_module: ShaderModule,
-    blits: Vec<(TextureFormat, Compiled<RenderPipeline>)>,
+    /// The present into a window's target ([`Renderer::present`]): the world target filtered by
+    /// the ratio, never stretched nearest-texel (renderer pass 2, P2-0.9).
+    window_present: crate::letterbox::present::WindowPresent,
     frame_uniforms: Buffer,
     /// The background triangle's three vertices (clip space, the clear colour as linear light).
     background: Buffer,
@@ -767,12 +822,31 @@ pub struct Renderer {
     shadow_desc: ShadowMapDesc,
     /// What each cascade's map holds across frames (the far-cascade cadence).
     shadow_history: CascadeHistory,
+    /// Live's spot shadow slots across frames (P2-0.4, SH-07: sticky slots, faded hand-overs).
+    spot_slots: crate::spot_shadow::SpotSlots,
     /// The cascades this frame redraws.
     shadow_draws: CascadeDraws,
     /// The shadowed spots' caster pipelines, made on the first frame that draws a spot map.
     spot_shadow: Option<crate::spot_shadow::SpotShadowPipelines>,
+    /// The draw variants' pipelines (P2-0.12: double-sided and alpha-tested batches), made on the
+    /// first frame that draws each.
+    variants: variants::VariantPipelines,
+    /// The terrain (renderer pass 2 A.7, [`Renderer::set_terrain`]) and its pipelines, made on the
+    /// first frame that draws each.
+    terrain: Option<crate::terrain::gpu::TerrainGpu>,
+    terrain_pipelines: terrain_draw::TerrainPipelines,
+    /// The terrain's grass (renderer pass 2 A.8), its pipelines and the time its wind sways at.
+    grass: Option<crate::foliage::gpu::GrassGpu>,
+    grass_pipelines: grass_draw::GrassPipelines,
+    grass_time: grass_draw::GrassTime,
+    /// The look's depth of field and motion blur (graph nodes 17a and 17b, renderer pass 2 A.9).
+    lens: std::cell::RefCell<lens::LensNodes>,
     shadow_sampler: Sampler,
+    /// PCSS's blocker search gathers the shadow map through it (`layout::SHADOW_BLOCKER_SAMPLER`).
+    point_sampler: Sampler,
     texture_sampler: Sampler,
+    /// `texture_sampler`'s anisotropy (the quality's, [`Quality::anisotropy`]).
+    texture_anisotropy: u16,
     /// The material texture arrays of every size class (RQ6.4): made for the quality and device
     /// class in effect when the first texture is added, then kept (a later quality change keeps
     /// what was uploaded; the shaders read each texture's class from its reference). Class 0 is
@@ -782,6 +856,9 @@ pub struct Renderer {
     /// Whether the texture arrays are fixed: a texture was added, or a device-loss replay set
     /// them ([`Renderer::set_texture_arrays`]).
     textures_fixed: bool,
+    /// The family the larger size classes are stored in (renderer pass 2 A6.4; RGBA8 until a
+    /// game's compressed files choose one, [`Renderer::set_texture_family`]).
+    texture_family: crate::texture::TextureFamily,
     /// The game's environment (the flat colour until set).
     environment_choice: Environment,
     /// The environment the frame binds (graph node 11's IBL output; neutral until baked).
@@ -815,6 +892,10 @@ pub struct Renderer {
     hiz_pyramid: Option<HizPyramid>,
     /// What the last frame drew through meshlets.
     last_meshlets: Option<MeshletFrame>,
+    /// The instance table the last upload wrote and the retained spans it holds (A.0b).
+    retained_held: std::cell::RefCell<Option<(Buffer, Vec<crate::retained::RetainedSpan>)>>,
+    /// Bytes of instance rows the last upload wrote.
+    last_instance_bytes: std::cell::Cell<u64>,
     /// The history set the next frames draw on (Live, or a settled capture's; RQ5.6).
     history_set: HistorySet,
     /// Whether a frame index of 0 keeps TAA's and the motion history (a dynamic-resolution step:
@@ -841,10 +922,12 @@ pub struct Renderer {
     /// The camera's reprojection of the frame being drawn (last frame's view_proj × this frame's
     /// inverse; the identity without motion history): TAA's disocclusion test reads it.
     taa_reproject: [f32; 16],
-    /// The coverage the frame's transparent meshes write into TAA's reactive mask
-    /// ([`crate::post::taa::transparent_coverage`]), read before the uploads take the plan's
-    /// previous-model table.
-    transparent_coverage: f32,
+    /// The game's logical world size: the size the renderer was made at ([`Renderer::logical_size`]).
+    logical: (u32, u32),
+    /// The most coverage the frame's transparent meshes write into TAA's reactive mask, each its
+    /// material's alpha below it ([`crate::post::taa::transparent_coverage`]), read before the
+    /// uploads take the plan's previous-model table.
+    transparent_coverage: crate::post::taa::ReactiveCoverage,
 }
 
 fn texture_entry(binding: u32, sample_type: wgpu::TextureSampleType, dimension: wgpu::TextureViewDimension) -> BindGroupLayoutEntry {
@@ -860,24 +943,37 @@ fn sampler_entry(binding: u32, kind: wgpu::SamplerBindingType) -> BindGroupLayou
     BindGroupLayoutEntry { binding, visibility: ShaderStages::FRAGMENT, ty: BindingType::Sampler(kind), count: None }
 }
 
+/// Whether `binned` bins a local light, a decal, a reflection probe or an irradiance volume (graph
+/// node 4 has work).
+fn bins_anything(binned: &crate::lights::BinnedFrame) -> bool {
+    let bins = &binned.bins;
+    !(bins.order.is_empty() && bins.decals.is_empty() && bins.probes.is_empty())
+}
+
 fn bind_group_layout(device: &Device, label: &str, entries: &[BindGroupLayoutEntry]) -> BindGroupLayout {
     device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor { label: Some(label), entries })
 }
 
-/// The frame layout's environment entries ([`FRAME_ENV_BINDINGS`]): each the binding type the
-/// Level-2 v2 material map gives the input of the same name, so the shared lighting chunks see
-/// one type in both.
+/// The frame layout's environment entries ([`FRAME_ENV_BOUND`]): the reflection probes' cube array
+/// and rows (renderer pass 2 A.3, `probes::frame_env_entry`), and each other input under the binding
+/// type the Level-2 v2 material map gives the input of the same name, so the shared lighting
+/// chunks see one type in both.
 fn frame_env_entries() -> impl Iterator<Item = BindGroupLayoutEntry> {
-    FRAME_ENV_BINDINGS.into_iter().filter_map(|(binding, name)| {
+    FRAME_ENV_BOUND.into_iter().filter_map(|(binding, name)| {
+        if let Some(entry) = crate::probes::frame_env_entry(binding, name) {
+            return Some(entry);
+        }
         let row = MATERIAL_V2_BINDINGS.iter().find(|row| row.name == name)?;
         Some(BindGroupLayoutEntry { binding, visibility: ShaderStages::FRAGMENT, ty: row.kind.binding_type(false, row.bytes), count: None })
     })
 }
 
 /// The frame layout's local-light and material-extension tables ([`FRAME_LIGHT_BINDINGS`], RQ6.0):
-/// each the binding type the Level-2 v2 material map gives the table of the same name.
+/// each the binding type the Level-2 v2 material map gives the table of the same name (the one
+/// bin table the type of the v2 map's z-bins, a slice of it; LG-16).
 fn frame_light_entries() -> impl Iterator<Item = BindGroupLayoutEntry> {
     FRAME_LIGHT_BINDINGS.into_iter().filter_map(|(binding, name)| {
+        let name = crate::layout::frame_light_v2_twin(name);
         let row = MATERIAL_V2_BINDINGS.iter().find(|row| row.name == name)?;
         Some(BindGroupLayoutEntry { binding, visibility: ShaderStages::FRAGMENT, ty: row.kind.binding_type(false, row.bytes), count: None })
     })
@@ -925,25 +1021,36 @@ pub fn frame_layout_entries() -> Vec<BindGroupLayoutEntry> {
     .collect()
 }
 
+/// The sun casters' group: the frame, the instance table, the visible list and the slot bases,
+/// then an alpha-tested caster's material inputs (P2-0.12, `shaders/shadow.wgsl`): the material
+/// table and its extension, the colour arrays of every size class and the material sampler.
+fn shadow_layout_entries() -> Vec<BindGroupLayoutEntry> {
+    use wgpu::TextureViewDimension::D2Array;
+    let (vertex, fragment) = (ShaderStages::VERTEX, ShaderStages::FRAGMENT);
+    let color = wgpu::TextureSampleType::Float { filterable: true };
+    let mut entries = vec![uniform(0, false, vertex), storage(1, true, vertex), storage(2, true, vertex), storage(3, true, vertex)];
+    entries.extend([storage(SHADOW_MASK_MATERIALS, true, fragment), storage(SHADOW_MASK_MATERIAL_EXT, true, fragment)]);
+    entries.extend(SHADOW_MASK_COLOR_ARRAYS.map(|binding| texture_entry(binding, color, D2Array)));
+    entries.push(sampler_entry(SHADOW_MASK_SAMPLER, wgpu::SamplerBindingType::Filtering));
+    entries
+}
+
+/// The sun casters' alpha-mask bindings (P2-0.12, `shaders/shadow.wgsl`): the material table, its
+/// extension, the colour arrays of size classes 256, 512, 1024 and 2048, and the material sampler.
+const SHADOW_MASK_MATERIALS: u32 = 4;
+const SHADOW_MASK_MATERIAL_EXT: u32 = 5;
+const SHADOW_MASK_COLOR_ARRAYS: [u32; 4] = [6, 7, 8, 9];
+const SHADOW_MASK_SAMPLER: u32 = 10;
+
 fn layouts(device: &Device) -> Layouts {
-    use wgpu::TextureViewDimension::D2;
     let (vertex, fragment) = (ShaderStages::VERTEX, ShaderStages::FRAGMENT);
     let frame = frame_layout_entries();
     Layouts {
         frame: bind_group_layout(device, "frame", &frame),
-        shadow: bind_group_layout(
-            device,
-            "shadow",
-            &[uniform(0, false, vertex), storage(1, true, vertex), storage(2, true, vertex), storage(3, true, vertex)],
-        ),
+        shadow: bind_group_layout(device, "shadow", &shadow_layout_entries()),
         pass: bind_group_layout(device, "pass view", &[uniform(0, true, vertex)]),
         // The line fragment reads the frame's pre-exposure on the HDR scene.
         lines: bind_group_layout(device, "lines", &[uniform(0, false, vertex | fragment)]),
-        blit: bind_group_layout(
-            device,
-            "blit",
-            &[texture_entry(0, wgpu::TextureSampleType::Float { filterable: false }, D2), uniform(1, false, fragment)],
-        ),
         prepass_draw: bind_group_layout(device, "prepass draw", &[uniform(1, true, vertex)]),
     }
 }
@@ -1038,7 +1145,8 @@ fn mesh_buffers_layout() -> [Option<wgpu::VertexBufferLayout<'static>>; 2] {
 }
 
 /// The scene-colour pipelines drawing into `format` with standard or `reversed` depth, their
-/// surfaces made for `surface` (specular AA on the HDR scene, the sun's shadow filter).
+/// surfaces made for `surface` (specular AA on the HDR scene, the sun's shadow filter; the
+/// transparent pipeline's for [`SurfaceKey::blended`]).
 fn scene_pipelines(device: &Device, layouts: &Layouts, samples: u32, format: TextureFormat, reversed: bool, surface: SurfaceKey) -> Result<ScenePipelines, RenderError> {
     let forward_module = shader(device, "forward", crate::shaders::FORWARD)?;
     let lines_module = shader(device, "lines", crate::shaders::LINES)?;
@@ -1054,7 +1162,8 @@ fn scene_pipelines(device: &Device, layouts: &Layouts, samples: u32, format: Tex
     // The HDR scene's pipelines expose in the shader (`GX_SCENE_HDR`); the legacy scene's encode
     // sRGB with no branch on the frame, so the off path draws exactly as before the follow-up.
     let hdr = [("GX_SCENE_HDR", f64::from(u8::from(reversed)))];
-    let surfaces = surface_constants(reversed, surface);
+    let surfaces = surface_constants(reversed, format, surface);
+    let blended = surface_constants(reversed, format, surface.blended());
     let mesh_spec = |label, fragment, depth_write, blend| PipelineSpec {
         label,
         module: &forward_module,
@@ -1070,7 +1179,7 @@ fn scene_pipelines(device: &Device, layouts: &Layouts, samples: u32, format: Tex
     };
     Ok(ScenePipelines {
         forward: render_pipeline_with(device, &mesh_spec("forward", "fs_main", true, None), &surfaces),
-        blend: render_pipeline_with(device, &mesh_spec("transparent", "fs_blend", false, Some(BLEND_OVER)), &surfaces),
+        blend: render_pipeline_with(device, &mesh_spec("transparent", "fs_blend", false, Some(BLEND_OVER)), &blended),
         lines: render_pipeline_with(
             device,
             &PipelineSpec {
@@ -1147,7 +1256,7 @@ fn forward_equal_pipeline(device: &Device, layouts: &Layouts, format: TextureFor
         samples: 1,
         layout: &layout,
     };
-    Ok(render_pipeline_with(device, &spec, &surface_constants(reversed, surface)))
+    Ok(render_pipeline_with(device, &spec, &surface_constants(reversed, format, surface)))
 }
 
 /// The forward module's pipeline constants: the HDR scene (`reversed` depth) exposes in the shader
@@ -1155,23 +1264,26 @@ fn forward_equal_pipeline(device: &Device, layouts: &Layouts, format: TextureFor
 /// chunk's `GX_SPECULAR_AA`, which only the forward module declares), and the sun chunk filters
 /// its cascades with `surface`'s filter (`GX_SHADOW_FILTER`, [`ShadowFilter::shader_id`]), turning
 /// the soft filters' taps with the frame only under a temporal resolve (`GX_SHADOW_TEMPORAL`);
-/// each RQ4 screen effect is read only when the quality draws it ([`EffectKey`]); under TAA the
-/// material textures sample with its LOD bias (`GX_TEXTURE_LOD_BIAS`). Two constants compile
+/// each RQ4 screen effect is read only when the quality draws it ([`EffectKey`]); the material
+/// textures' LOD bias is the frame's (`GpuFrame::texture_lod`, T-06), never a constant. Two constants compile
 /// out code a frame of the pipeline can never take (RX.R1: the features-off frame should carry no
 /// more than RQ0's): the environment's light only ever lights the HDR scene
 /// (`GX_ENVIRONMENT_LIGHT`), and binned lights only come with the clustered switch
 /// (`GX_BINNED_LIGHTS`). Two more bound the sun chunk by the quality's shadows (pass-1 gate,
 /// owner decision 2026-10-12): its cascade blend band and end fade only where the quality has
 /// them (`GX_SUN_SOFT_EDGES`), its cascade choice only over the quality's cascades
-/// (`GX_SUN_CASCADES`).
-fn surface_constants(reversed: bool, surface: SurfaceKey) -> [(&'static str, f64); 15] {
+/// (`GX_SUN_CASCADES`). An HDR scene stored as `rg11b10ufloat` (`format`) dithers its writes by
+/// half a mantissa step (`GX_SCENE_RG11B10`, renderer pass 2 P2-0.10 C5); every other format writes
+/// as before. The surfaces shade no smoother than the key's roughness floor (`GX_ROUGHNESS_FLOOR`,
+/// P2-0.12 LG-04).
+fn surface_constants(reversed: bool, format: TextureFormat, surface: SurfaceKey) -> [(&'static str, f64); 16] {
     let effects = surface.effects;
     [
+        ("GX_ROUGHNESS_FLOOR", f64::from(f32::from_bits(surface.roughness_floor))),
         ("GX_SUN_SOFT_EDGES", f64::from(u8::from(surface.sun_soft_edges))),
         ("GX_SUN_CASCADES", f64::from(surface.sun_cascades)),
         ("GX_ENVIRONMENT_LIGHT", f64::from(u8::from(reversed))),
         ("GX_BINNED_LIGHTS", f64::from(u8::from(surface.binned_lights))),
-        ("GX_TEXTURE_LOD_BIAS", f64::from(f32::from_bits(surface.lod_bias))),
         ("GX_TEXTURE_CLASSES", f64::from(u8::from(surface.texture_classes))),
         ("GX_TOKSVIG", f64::from(u8::from(surface.toksvig))),
         ("GX_AO", f64::from(u8::from(effects.ao))),
@@ -1179,6 +1291,7 @@ fn surface_constants(reversed: bool, surface: SurfaceKey) -> [(&'static str, f64
         ("GX_FOG", f64::from(u8::from(effects.fog))),
         ("GX_AERIAL", f64::from(u8::from(effects.aerial))),
         ("GX_SCENE_HDR", f64::from(u8::from(reversed))),
+        ("GX_SCENE_RG11B10", f64::from(u8::from(reversed && format == TextureFormat::Rg11b10Ufloat))),
         ("GX_SPECULAR_AA", f64::from(u8::from(reversed && surface.specular_aa))),
         ("GX_SHADOW_FILTER", f64::from(surface.shadow_filter.shader_id())),
         ("GX_SHADOW_TEMPORAL", f64::from(u8::from(surface.shadow_temporal))),
@@ -1231,6 +1344,7 @@ fn motion_pipelines(device: &Device, layouts: &Layouts, node: &MotionNode, rever
     Ok(MotionPipelines {
         batches: node.pipeline(device, &module, crate::motion::VERTEX_ENTRY, &meshes, [&layouts.frame, &layouts.pass], reversed),
         draws: node.pipeline(device, &module, crate::motion::DRAW_VERTEX_ENTRY, &meshes[..1], [&layouts.frame, &layouts.prepass_draw], reversed),
+        background: node.background_pipeline(device, reversed)?,
     })
 }
 
@@ -1314,6 +1428,14 @@ fn pre_exposure(look: &Look, quality: &Quality) -> f32 {
 /// Whether auto exposure reads the resolved HDR scene this frame (its histogram, node 20).
 fn auto_exposure(look: &Look, quality: &Quality) -> bool {
     quality.hdr && quality.exposure && look.exposure == ExposureMode::Auto
+}
+
+/// The background triangle covering the scene with `clear` (sRGB bytes) as linear light.
+fn background_vertices(clear: [u8; 4]) -> [LineVertex; 3] {
+    let [r, g, b, _] = clear.map(|c| exposed(f32::from(c) / 255.0, 1.0));
+    let color = [r, g, b, 1.0];
+    let corners = [[-1.0, -1.0, 0.0], [3.0, -1.0, 0.0], [-1.0, 3.0, 0.0]];
+    corners.map(|position| LineVertex { position, color })
 }
 
 /// The sRGB byte `c` as linear light times `exposure` (a clear colour or line on the HDR path).
@@ -1401,6 +1523,9 @@ pub fn target_catalog(policy: TargetPolicy, samples: u32, hdr: TextureFormat, qu
             descs.push(TargetDesc { usage: desc.usage | crate::prepass::READBACK_USAGE, ..desc });
         }
         descs.extend(crate::post::taa::history_targets(size).map(|desc| TargetDesc { usage: desc.usage | TextureUsages::COPY_SRC, ..desc }));
+        // The resolve's luma and lock side histories (renderer pass 2, P2-0.8a; `TaaNode` makes
+        // them itself, listed here for the layout check).
+        descs.extend(crate::post::taa::side_history_targets(size));
     }
     if quality.upscaler == Upscaler::Fsr1 || quality.anti_aliasing == AntiAliasing::TaaSharpen {
         descs.extend([crate::post::fsr::intermediate_target(size), crate::post::fsr::easu_target(size)]);
@@ -1537,7 +1662,29 @@ fn pooled_targets(pool: &mut TargetPool, device: &Device, output: (u32, u32), re
     })
 }
 
-fn samplers(device: &Device) -> (Sampler, Sampler) {
+/// The shadow comparison sampler, the non-filtering one PCSS's blocker search gathers the shadow
+/// map with (clamped to its edge, as the search's own texel reads were) and the material sampler.
+/// The material textures' sampler: trilinear and repeating, filtered anisotropically up to
+/// `anisotropy` (1..=16; P2-0.12 LG-02, WebGPU core's `maxAnisotropy`, which needs all three
+/// filters linear). Grazing ground and floors keep their detail into the distance instead of
+/// taking the mip of the footprint's long axis.
+fn texture_sampler(device: &Device, anisotropy: u16) -> Sampler {
+    device.create_sampler(&wgpu::SamplerDescriptor {
+        label: Some("textures"),
+        address_mode_u: wgpu::AddressMode::Repeat,
+        address_mode_v: wgpu::AddressMode::Repeat,
+        mag_filter: wgpu::FilterMode::Linear,
+        min_filter: wgpu::FilterMode::Linear,
+        mipmap_filter: wgpu::MipmapFilterMode::Linear,
+        anisotropy_clamp: anisotropy.clamp(1, MAX_ANISOTROPY),
+        ..Default::default()
+    })
+}
+
+/// WebGPU core's largest `maxAnisotropy`.
+const MAX_ANISOTROPY: u16 = 16;
+
+fn samplers(device: &Device) -> (Sampler, Sampler, Sampler) {
     let shadow = device.create_sampler(&wgpu::SamplerDescriptor {
         label: Some("shadow"),
         mag_filter: wgpu::FilterMode::Linear,
@@ -1545,16 +1692,8 @@ fn samplers(device: &Device) -> (Sampler, Sampler) {
         compare: Some(wgpu::CompareFunction::LessEqual),
         ..Default::default()
     });
-    let textures = device.create_sampler(&wgpu::SamplerDescriptor {
-        label: Some("textures"),
-        address_mode_u: wgpu::AddressMode::Repeat,
-        address_mode_v: wgpu::AddressMode::Repeat,
-        mag_filter: wgpu::FilterMode::Linear,
-        min_filter: wgpu::FilterMode::Linear,
-        mipmap_filter: wgpu::MipmapFilterMode::Linear,
-        ..Default::default()
-    });
-    (shadow, textures)
+    let point = device.create_sampler(&wgpu::SamplerDescriptor { label: Some("shadow blockers"), ..Default::default() });
+    (shadow, point, texture_sampler(device, 1))
 }
 
 /// What a [`WorldStage`] draws with inside the world pass.
@@ -1577,10 +1716,9 @@ pub struct WorldPass<'a> {
     pub lights: &'a Buffer,
     /// Each local light's extension row (`light_ext`, RQ6), row for row with `lights`.
     pub light_ext: &'a Buffer,
-    /// The binned path's per-tile light masks (`light_tiles`, RQ6), built for this frame.
-    pub light_tiles: &'a Buffer,
-    /// The binned path's header and z-bins (`light_zbins`, RQ6; a zero header bins no light).
-    pub light_zbins: &'a Buffer,
+    /// The binned path's bin table (`light_bins`, RQ6; pass 2 A.0 LG-16): the header and z-bins
+    /// (a zero header bins no light), then the tile masks, built for this frame.
+    pub light_bins: &'a Buffer,
     /// The sun's cascaded shadow maps (`texture_depth_2d_array`), drawn this frame when shadows are on.
     pub shadow_map: &'a TextureView,
     /// The comparison sampler the forward pass reads the shadow maps with.
@@ -1701,6 +1839,8 @@ pub(crate) struct FramePrep {
     camera: crate::scene::CameraDesc,
     /// The motion prepass's frame row and group 2, on frames writing motion (RQ5.6).
     motion: Option<FrameMotion>,
+    /// The reactive coverage's group 2 over this frame's previous-model table (TAA frames).
+    reactive_group: Option<BindGroup>,
 }
 
 /// One frame's motion prepass inputs: the frame row, the instance draws' group 2 and the meshlet
@@ -1881,8 +2021,9 @@ impl<'a> WorldNodes<'a> {
         match id {
             NodeId::Tables | NodeId::BeforeCull | NodeId::Opaque | NodeId::AfterOpaque | NodeId::Transparent => true,
             NodeId::Skinning => !plan.skin_jobs.is_empty(),
-            // A frame without local lights keeps the zero bin header Uploads wrote.
-            NodeId::LightBinning => plan.binned.as_ref().is_some_and(|binned| !binned.bins.order.is_empty()),
+            // A frame that bins nothing keeps the zero bin header Uploads wrote (renderer pass 2
+            // A.4: reflection probes and irradiance volumes are binned in a frame with no light).
+            NodeId::LightBinning => plan.binned.as_ref().is_some_and(bins_anything),
             NodeId::Prepass => self.prep.prepass.is_some(),
             NodeId::Ao => self.prepass_serves(PrepassConsumers::AO) && self.renderer.frame_ao().is_some(),
             NodeId::ContactShadows => self.prepass_serves(PrepassConsumers::CONTACT_SHADOWS) && plan.cascades.is_some(),
@@ -1893,6 +2034,8 @@ impl<'a> WorldNodes<'a> {
             // The stage's billboards may need it too: the node checks its work as it encodes.
             NodeId::Reactive => self.taa_runs(),
             NodeId::Taa => self.taa_runs(),
+            NodeId::Dof => self.renderer.lens.borrow().draws_dof(),
+            NodeId::MotionBlur => self.renderer.lens.borrow().draws_motion_blur(),
             NodeId::Tonemap => self.renderer.path.hdr,
             NodeId::Environment => self.renderer.path.hdr && self.renderer.environment_choice.lights_scene(),
             NodeId::Sky => self.renderer.path.hdr && self.renderer.sky.borrow().draws_background(),
@@ -1919,7 +2062,10 @@ impl<'a> WorldNodes<'a> {
     fn encode_effect(&mut self, id: NodeId, frame: &mut FrameEncoder) {
         let renderer = self.renderer;
         let Some(views) = self.prepass_views() else { return };
-        let effect = renderer.effect_frame(self.prep, &views);
+        // Renderer pass 2, P2-0.6: AO finds its history along the prepass's motion when the
+        // prepass wrote it this frame (TAA's frames), else through the camera.
+        let motion = self.taa_runs().then(|| self.prepass_motion()).flatten();
+        let effect = renderer.effect_frame(self.prep, &views, motion.as_ref());
         let (device, queue) = (frame.device().clone(), frame.queue().clone());
         let mut effects = renderer.effects.borrow_mut();
         let passes = match id {
@@ -1944,11 +2090,19 @@ impl<'a> WorldNodes<'a> {
         let plan = &self.prep.plan;
         match id {
             NodeId::Tables => {
-                renderer.write_uploads(frame.queue(), &self.prep.uploads, plan);
-                frame.queue().write_buffer(&renderer.fog_row, 0, bytemuck::bytes_of(&renderer.frame_fog()));
+                let fog = renderer.frame_fog();
+                let background = renderer.draws_background().then(|| background_vertices(self.prep.clear));
+                let mut rows: Vec<crate::tables::UploadWrite<'_>> = vec![(&renderer.fog_row, 0, bytemuck::bytes_of(&fog))];
+                if let Some(vertices) = background.as_ref() {
+                    rows.push((&renderer.background, 0, bytemuck::cast_slice(vertices)));
+                }
+                renderer.write_uploads(frame.encoder(), &self.prep.uploads, plan, &rows);
                 renderer.write_meshlets(frame.queue(), self.prep);
-                if renderer.draws_background() {
-                    renderer.write_background(frame.queue(), self.prep.clear);
+                // The terrain's grass (A.8): generated for the camera before the shadows and the
+                // prepass draw it.
+                let grass = renderer.encode_grass(frame.encoder());
+                if grass > 0 {
+                    self.count_compute(frame, grass);
                 }
                 // The frame's first command buffer opens with the armed timer's begin pass.
                 if let Some(timer) = renderer.timer.borrow_mut().as_mut() {
@@ -2019,11 +2173,19 @@ impl<'a> WorldNodes<'a> {
                 drop(sky);
                 self.count_passes(frame, sky_passes);
                 self.count_passes(frame, ibl_passes);
+                // Renderer pass 2 A.3: the reflection probes' captures, lit by the bake just made.
+                let probe_passes = renderer.encode_probes(frame, self.prep);
+                self.count_passes(frame, probe_passes);
+                // Renderer pass 2 A.5: the froxel fog, after the aerial volume it folds in.
+                let froxel_passes = renderer.encode_froxels(frame, self.prep);
+                self.count_passes(frame, froxel_passes);
                 // A new bake or this frame's aerial-perspective volume: the world pass binds them.
                 self.baked_groups = Some(renderer.current_groups());
             }
             NodeId::Reactive => self.encode_reactive(frame, stage),
             NodeId::Taa => self.encode_taa(frame),
+            NodeId::Dof => self.encode_dof(frame),
+            NodeId::MotionBlur => self.encode_motion_blur(frame),
             NodeId::Upscale | NodeId::Tonemap if renderer.path.hdr => {
                 if id == tonemap_node() {
                     self.encode_tonemap(frame);
@@ -2149,12 +2311,16 @@ impl<'a> WorldNodes<'a> {
                     pass.set_bind_group(1, &groups.pass, &[0]);
                     let meshlets = self.prep.meshlets.as_ref().map(|meshlets| &meshlets.frame);
                     renderer.draw_batches(pass, plan, 0, self.counts(0), meshlets, &mut self.stats);
+                    renderer.draw_world_variants(pass, &groups.pass, plan, self.counts(0), &mut self.stats);
                     if let Some(pipeline) = meshlets.and_then(|_| renderer.meshlet_opaque_pipeline())
                         && renderer.draw_meshlets(pass, &groups.frame, &groups.pass, 0, ArgsSlot::All, pipeline)
                     {
                         self.stats.meshlet_draws += 1;
                     }
                 }
+                // The terrain (A.7), after the opaque batches, then its grass (A.8).
+                renderer.draw_terrain(pass, &groups.frame, &groups.pass);
+                renderer.draw_grass(pass, &groups.frame, &groups.pass);
                 if !plan.lines.is_empty() {
                     pass.set_pipeline(&renderer.scene_pipelines().lines);
                     pass.set_bind_group(0, &groups.lines, &[]);
@@ -2349,7 +2515,7 @@ impl Renderer {
         let layouts = layouts(&device);
         let casters = CasterDepth::for_features(device.features());
         let pipelines = pipelines(&device, &layouts, casters)?;
-        let (shadow_sampler, texture_sampler) = samplers(&device);
+        let (shadow_sampler, point_sampler, texture_sampler) = samplers(&device);
         let uniform_buffer = |label, size| buffer(&device, label, size, BufferUsages::UNIFORM | BufferUsages::COPY_DST);
         let mut pool = TargetPool::with_policy(TargetPolicy::for_device(&device));
         let targets = pooled_targets(&mut pool, &device, (width, height), (width, height), samples, &TargetSpec::default())?;
@@ -2378,6 +2544,7 @@ impl Renderer {
             fog_row: uniform_buffer("frame fog", size_of::<crate::fog::GpuFog>() as u64)?,
             fog_backdrop: crate::fog::FogBackdrop::Environment,
             refreshed_groups: std::cell::RefCell::new(Vec::new()),
+            upload_arena: std::cell::RefCell::new(crate::tables::UploadArena::new(&device)),
             path: ScenePath::LEGACY,
             last_path: None,
             timer: std::cell::RefCell::new(None),
@@ -2390,8 +2557,7 @@ impl Renderer {
             mesh_uploads: 0,
             cull: CullPass::new(&device)?,
             skinning: SkinPass::new(&device)?,
-            blit_module: shader(&device, "blit", crate::shaders::BLIT)?,
-            blits: Vec::new(),
+            window_present: crate::letterbox::present::WindowPresent::default(),
             frame_uniforms: uniform_buffer("frame", size_of::<GpuFrame>() as u64)?,
             background: buffer(&device, "background", (3 * size_of::<LineVertex>()) as u64, BufferUsages::VERTEX | BufferUsages::COPY_DST)?,
             cull_views: uniform_buffer("cull views", size_of::<GpuCullViews>() as u64)?,
@@ -2400,12 +2566,23 @@ impl Renderer {
             shadow_maps: ShadowMaps::new(&device),
             shadow_desc: ShadowMapDesc::PLACEHOLDER,
             shadow_history: CascadeHistory::default(),
+            spot_slots: crate::spot_shadow::SpotSlots::default(),
             shadow_draws: CascadeDraws::default(),
             spot_shadow: None,
+            variants: variants::VariantPipelines::default(),
+            terrain: None,
+            terrain_pipelines: terrain_draw::TerrainPipelines::default(),
+            grass: None,
+            grass_pipelines: grass_draw::GrassPipelines::default(),
+            grass_time: grass_draw::GrassTime::default(),
+            lens: std::cell::RefCell::default(),
             shadow_sampler,
+            point_sampler,
             texture_sampler,
+            texture_anisotropy: 1,
             textures: ClassArrays::new(&device, TEXTURE_DEFAULT_CLASS, crate::settings::TextureQuality::OFF),
             textures_fixed: false,
+            texture_family: crate::texture::TextureFamily::Rgba8,
             environment_choice: Environment::Color,
             environment: std::cell::RefCell::new(EnvironmentMaps::new(&device, &gpu.queue)),
             sky: std::cell::RefCell::new(SkyState::new()),
@@ -2421,6 +2598,8 @@ impl Renderer {
             hiz: std::cell::RefCell::new(None),
             hiz_pyramid: None,
             last_meshlets: None,
+            retained_held: std::cell::RefCell::new(None),
+            last_instance_bytes: std::cell::Cell::new(0),
             history_set: HistorySet::Live,
             temporal_kept: false,
             temporal: FrameTemporal::NONE,
@@ -2433,7 +2612,7 @@ impl Renderer {
             temporal_last: [None, None],
             motion_row: None,
             taa_reproject: crate::post::taa::IDENTITY,
-            transparent_coverage: crate::post::taa::TRANSPARENT_COVERAGE,
+            transparent_coverage: crate::post::taa::ReactiveCoverage { cap: crate::post::taa::TRANSPARENT_COVERAGE, by_motion: false },
             library,
             meshlet_game: Meshlets::DEFAULT,
             meshlet_upload_pending: false,
@@ -2443,12 +2622,33 @@ impl Renderer {
             device,
             width,
             height,
+            logical: (width, height),
         })
     }
 
-    /// The world target's size (the output: captures, Live, the HUD).
+    /// The world target's size: the output the next frame draws (Live at the window's pixels, a
+    /// capture at the world size or the size it asked for; [`Renderer::set_output_size`]).
     pub fn size(&self) -> (u32, u32) {
         (self.width, self.height)
+    }
+
+    /// The game's logical world size, the size the renderer was made at: the immediate 2D layer's
+    /// coordinates and the default output (renderer pass 2, P2-0.9 step B).
+    pub fn logical_size(&self) -> (u32, u32) {
+        self.logical
+    }
+
+    /// Draw the next frames at `size` (each side clamped to 64..=4096, as the world target's):
+    /// the world target, the render size the scale steps from, and the ledger follow at the next
+    /// frame; the logical size and everything drawn in it (the 2D layer) stay. Live sets the
+    /// window's pixels, a capture the world size or the size asked for. Refused, keeping the
+    /// output, when the target would break the texture limits.
+    pub fn set_output_size(&mut self, size: (u32, u32)) -> Result<(), RenderError> {
+        let (width, height) = world_size(size.0, size.1);
+        check_texture(width, height, 4)?;
+        self.width = width;
+        self.height = height;
+        Ok(())
     }
 
     /// Draw the scene at `scale` of the output size from the next frame on (clamped to
@@ -2466,6 +2666,12 @@ impl Renderer {
     pub fn set_quality(&mut self, quality: &Quality) {
         self.quality = *quality;
         self.follow_meshlet_setting();
+        let anisotropy = u16::from(quality.anisotropy).clamp(1, MAX_ANISOTROPY);
+        if anisotropy != self.texture_anisotropy {
+            // A resource knob (P2-0.12 LG-02): a new sampler, and the frame groups that bind it.
+            self.texture_sampler = texture_sampler(&self.device, anisotropy);
+            self.texture_anisotropy = anisotropy;
+        }
     }
 
     /// The quality frames draw with.
@@ -2603,17 +2809,22 @@ impl Renderer {
         crate::post::bloom::BloomSettings::new(&self.look, &self.quality.bloom).filter(|_| drawn)
     }
 
-    /// Hand the frame's bloom to the tonemap (its chain's pipelines are made here, never mid-pass).
+    /// Hand the frame's bloom and the look's grading to the tonemap (the bloom chain's pipelines
+    /// and the graded tonemap pipelines are made here, never mid-pass; A.2).
     fn prepare_bloom(&mut self) -> Result<(), RenderError> {
         let bloom = self.frame_bloom();
+        let class = self.class.unwrap_or(DeviceClass::new(self.form, crate::device_class::PerformanceTier::High));
         match self.post.get_mut() {
-            Some((tonemap, _)) => tonemap.set_bloom(&self.device, bloom),
+            Some((tonemap, _)) => {
+                tonemap.set_grading(&self.device, &self.queue, &self.look.grading, class);
+                tonemap.set_bloom(&self.device, bloom)
+            }
             None => Ok(()),
         }
     }
 
     /// What graph nodes 10 and 10a read about the frame `prep` draws over the prepass's `views`.
-    fn effect_frame<'v>(&self, prep: &FramePrep, views: &'v PrepassViews) -> effects::EffectFrame<'v> {
+    fn effect_frame<'v>(&'v self, prep: &FramePrep, views: &'v PrepassViews, motion: Option<&'v TextureView>) -> effects::EffectFrame<'v> {
         let camera = &prep.camera;
         let (eye, target, up) = (glam::Vec3::from(camera.eye), glam::Vec3::from(camera.target), glam::Vec3::from(camera.up));
         let view = glam::camera::rh::view::look_at_mat4(eye, target, up);
@@ -2623,6 +2834,7 @@ impl Renderer {
         effects::EffectFrame {
             depth: &views.depth,
             normals: &views.normals,
+            motion,
             render: self.targets.render_size,
             view,
             proj,
@@ -2631,6 +2843,10 @@ impl Renderer {
             depth_reversed: self.path.depth_reversed,
             taa: self.path.taa,
             generation: self.pool.generation(),
+            frame_uniforms: &self.frame_uniforms,
+            shadow_map: &self.shadow_maps.array,
+            shadow_sampler: &self.shadow_sampler,
+            point_sampler: &self.point_sampler,
         }
     }
 
@@ -2843,6 +3059,17 @@ impl Renderer {
         Ok(rows.as_chunks::<4>().0.iter().map(|texel| [half([texel[0], texel[1]]), half([texel[2], texel[3]])]).collect())
     }
 
+    /// The last frame's TAA reactive mask, top row first (0: history kept, 1: the current sample;
+    /// renderer pass 2, B.7). Refused as [`Renderer::read_motion`].
+    pub fn read_reactive(&self, gpu: &Gpu) -> Result<Vec<f32>, RenderError> {
+        let targets = self.kept_prepass()?;
+        let Some((texture, _)) = targets.reactive.as_ref() else {
+            return Err(crate::readback::capture_failed("the last frame wrote no reactive mask"));
+        };
+        let rows = self.read_texture(gpu, texture, 1, wgpu::TextureAspect::All)?;
+        Ok(rows.iter().map(|texel| f32::from(*texel) / 255.0).collect())
+    }
+
     /// The last frame's prepass targets, when they were kept for a readback.
     fn kept_prepass(&self) -> Result<&PrepassTargets, RenderError> {
         let kept = self.targets.prepass.as_ref().filter(|_| self.last_prepass.is_some() && self.targets.spec.depth_readback);
@@ -2968,8 +3195,15 @@ impl Renderer {
     /// it passes [`crate::meshlet::validate`], else the runtime clusterizer's
     /// ([`MeshLibrary::add_with_meshlets`]).
     pub fn add_meshes_with_meshlets(&mut self, gpu: &Gpu, parts: Vec<(MeshData, Option<MeshletSet>)>) -> Result<Vec<MeshId>, RenderError> {
+        self.add_model_parts(gpu, parts.into_iter().map(|(mesh, meshlets)| ModelPart { mesh, meshlets, lods: None }).collect())
+    }
+
+    /// [`Renderer::add_meshes_with_meshlets`] with each part's levels of detail (a GLB part's
+    /// `genex_lods`, renderer pass 2 A6.9; [`MeshLibrary::add_part`]): the plan draws each
+    /// instance at the level its distance from the camera picks.
+    pub fn add_model_parts(&mut self, gpu: &Gpu, parts: Vec<ModelPart>) -> Result<Vec<MeshId>, RenderError> {
         let mut library = self.library.clone();
-        let ids = parts.into_iter().map(|(mesh, set)| library.add_with_meshlets(mesh, set)).collect::<Result<Vec<MeshId>, RenderError>>()?;
+        let ids = parts.into_iter().map(|part| library.add_part(part)).collect::<Result<Vec<MeshId>, RenderError>>()?;
         self.meshes = mesh_buffers(&gpu.device, &gpu.queue, &library)?;
         self.meshlet_upload_pending = false;
         self.mesh_uploads += 1;
@@ -3001,11 +3235,60 @@ impl Renderer {
     /// ([`ClassArrays::add`]; a [`TextureKind::Normal`] map with Toksvig mips when the quality
     /// says so). The first texture fixes the arrays to the quality and device class in effect.
     pub fn add_texture(&mut self, gpu: &Gpu, data: &TextureData, kind: TextureKind) -> Result<TextureId, RenderError> {
+        self.fix_texture_arrays(&gpu.device);
+        self.textures.add(&gpu.device, &gpu.queue, data, kind)
+    }
+
+    /// Fix the arrays to the quality and device class in effect, on the first texture.
+    fn fix_texture_arrays(&mut self, device: &Device) {
         if !self.textures_fixed {
             let class = self.class.unwrap_or(TEXTURE_DEFAULT_CLASS);
-            self.set_texture_arrays(&gpu.device, class, self.quality.textures);
+            self.set_texture_arrays(device, class, self.quality.textures);
         }
-        self.textures.add(&gpu.device, &gpu.queue, data, kind)
+    }
+
+    /// Store the larger size classes in `family` from the first texture on (renderer pass 2
+    /// A6.4): its compressed files load there ([`Renderer::add_compressed_texture`]) at a quarter
+    /// of RGBA8's bytes, and class 0 (256) stays RGBA8 for images. Refused `texture-invalid` once
+    /// a texture is held (the arrays are kept) or when the device does not sample the family.
+    pub fn set_texture_family(&mut self, gpu: &Gpu, family: crate::texture::TextureFamily) -> Result<(), RenderError> {
+        if !family.usable(gpu.device.features()) {
+            return Err(RenderError::refused(crate::error::RenderCode::TextureInvalid, format!("this device does not sample {family:?} textures")));
+        }
+        if !self.textures.is_empty() {
+            return Err(RenderError::refused(crate::error::RenderCode::TextureInvalid, "the texture family is fixed with the first texture"));
+        }
+        self.texture_family = family;
+        if self.textures_fixed && self.textures.family() != family {
+            self.textures = ClassArrays::with_family(&gpu.device, self.textures.device_class(), self.textures.quality(), family);
+        }
+        Ok(())
+    }
+
+    /// The family the larger size classes are stored in ([`Renderer::set_texture_family`]).
+    pub fn texture_family(&self) -> crate::texture::TextureFamily {
+        self.texture_family
+    }
+
+    /// The compressed families this device samples, best first for its form (renderer pass 2
+    /// A6.4): the families a game's files are looked for in. None while the texture quality in
+    /// effect is off: its one 256 class holds images only.
+    pub fn compressed_families(&self) -> Vec<crate::texture::TextureFamily> {
+        let quality = if self.textures_fixed { self.textures.quality() } else { self.quality.textures };
+        if quality == crate::settings::TextureQuality::OFF {
+            return Vec::new();
+        }
+        let mobile = self.class.is_some_and(|class| class.form == crate::device_class::FormFactor::Mobile);
+        crate::texture::TextureFamily::usable_compressed(self.device.features(), mobile)
+    }
+
+    /// Add a compressed texture in the renderer's family as the next layer of its kind's arrays
+    /// (renderer pass 2 A6.4; [`ClassArrays::add_compressed`]): its stored chain as it is, its top
+    /// levels dropped to the size class it fits. Refused `texture-invalid` for another family,
+    /// another colour space than `kind`'s or a chain under the family's smallest class.
+    pub fn add_compressed_texture(&mut self, gpu: &Gpu, texture: &crate::texture::CompressedTexture, kind: TextureKind) -> Result<TextureId, RenderError> {
+        self.fix_texture_arrays(&gpu.device);
+        self.textures.add_compressed(&gpu.device, &gpu.queue, texture, kind)
     }
 
     /// The device class and texture quality the material arrays are fixed to (None until the
@@ -3021,8 +3304,9 @@ impl Renderer {
         if !self.textures.is_empty() {
             return;
         }
-        if (self.textures.device_class(), self.textures.quality()) != (class, quality) {
-            self.textures = ClassArrays::new(device, class, quality);
+        let held = (self.textures.device_class(), self.textures.quality(), self.textures.family());
+        if held != (class, quality, self.texture_family) {
+            self.textures = ClassArrays::with_family(device, class, quality, self.texture_family);
         }
         self.textures_fixed = true;
     }
@@ -3038,6 +3322,12 @@ impl Renderer {
         self.textures.allocated_bytes()
     }
 
+    /// The bytes the textures in the material arrays take, each in its array's family
+    /// ([`ClassArrays::held_bytes`], renderer pass 2 A6.4).
+    pub fn texture_held_bytes(&self) -> u64 {
+        self.textures.held_bytes()
+    }
+
     /// The surface pipelines' key for `hdr` or the legacy scene: the quality's, with the texture
     /// quality the arrays hold, or before the first texture the one that will fix them (so the
     /// first texture, however large, compiles no pipeline: the class path and Toksvig are known
@@ -3046,7 +3336,7 @@ impl Renderer {
         let textures = if self.textures_fixed { self.textures.quality() } else { self.quality.textures };
         let classes = textures != crate::settings::TextureQuality::OFF;
         let taa = hdr && self.quality.hdr && self.scene_format.is_hdr() && self.taa_drawn();
-        SurfaceKey { texture_classes: classes, toksvig: classes && textures.toksvig, ..SurfaceKey::of(&self.quality, hdr, taa) }
+        SurfaceKey { texture_classes: classes, toksvig: classes && textures.toksvig, ..SurfaceKey::of(&self.quality, hdr, taa) }.for_form(self.form)
     }
 
     /// The meshes this renderer can draw.
@@ -3056,7 +3346,7 @@ impl Renderer {
 
     /// The sun's shadows as Level-2 v2 materials draw them beside the built-in surfaces of a scene
     /// that is HDR (`hdr`) or the legacy one: the quality's filter, its temporal tap pattern (under
-    /// a drawn TAA), cascade blend band and end fade.
+    /// a drawn TAA), cascade blend band and end fade, and the surfaces' roughness floor (P2-0.12).
     pub fn sun_shadow_constants(&self, hdr: bool) -> crate::extension::SunShadowConstants {
         let surface = self.surface_key(hdr);
         let settings = ShadowSettings::from_quality(&self.quality.shadows, 0.0, 0.0);
@@ -3065,6 +3355,7 @@ impl Renderer {
             temporal: surface.shadow_temporal,
             blend_band: settings.blend_band,
             end_fade: settings.end_fade,
+            roughness_floor: f32::from_bits(surface.roughness_floor),
         }
     }
 
@@ -3083,6 +3374,9 @@ impl Renderer {
         let options = PlanOptions { shadows, depth_reversed: scene_path.depth_reversed, sun };
         // Rows' identities across frames only for a frame that writes motion vectors.
         let mut plan = FramePlan::build_with_motion(scene, &self.library, aspect, &options, temporal.motion)?;
+        // Levels of detail by the output's height, not the render size (A6.9): a DRS step moves
+        // no instance to another level.
+        plan.set_lod_height(self.height);
         // The sun's angular radius whatever the shadows (GxFrameV2's `sun_dir.w`): a v2 shader
         // sizing a sun disk or glare from it sees the same sun on every preset and device class.
         plan.frame.sun_dir[3] = sun_radius;
@@ -3123,11 +3417,16 @@ impl Renderer {
         // zw: last frame's (this frame's after a reset), the v2 frame's `prev_jitter`.
         let prev = self.prev_jitter_ndc(temporal);
         plan.frame.jitter = [temporal.jitter_ndc[0], temporal.jitter_ndc[1], prev[0], prev[1]];
+        // T-06: the material textures' mip bias at this frame's scale (TAA's, or FSR1's upscale's
+        // without TAA), a uniform: a dynamic-resolution step moves it without a pipeline.
+        let easu = scene_path.hdr && scene_path.fsr.easu;
+        plan.frame.texture_lod[0] = crate::settings::frame_texture_lod_bias(&self.quality.taa, scene_path.hdr && temporal.taa, easu, self.render_scale);
         let previous_skinned = self.plan_motion(&mut plan, temporal);
-        let uploads = Uploads::new(&mut plan, path)?;
+        let instance_rows = self.instance_rows(&plan);
+        let uploads = Uploads::new(&mut plan, path, instance_rows)?;
         self.tables.ensure(&self.device, &plan, &uploads)?;
         self.keep_previous_skinned(previous_skinned)?;
-        self.last = LastFrame { batches: plan.batches.len() as u32, views: plan.views, skinned_vertices: plan.skinned_vertices };
+        self.last = LastFrame { batches: plan.batches.len() as u32, views: plan.views, skinned_vertices: plan.skinned_vertices, opaque_instances: plan.visible_slots };
         Ok((plan, uploads, environment_sun))
     }
 
@@ -3250,7 +3549,7 @@ impl Renderer {
             self.skinned_prev.written = None;
             self.motion_row = None;
             self.taa_reproject = crate::post::taa::IDENTITY;
-            self.transparent_coverage = crate::post::taa::TRANSPARENT_COVERAGE;
+            self.transparent_coverage = crate::post::taa::ReactiveCoverage { cap: crate::post::taa::TRANSPARENT_COVERAGE, by_motion: false };
             return None;
         }
         let bytes = u64::from(plan.skinned_vertices) * VERTEX_STRIDE;
@@ -3262,8 +3561,12 @@ impl Renderer {
         let row = self.motion_history[set_index(temporal.set)].apply(plan, step);
         self.taa_reproject = crate::post::taa::reprojection(&row.prev_view_proj, &plan.frame.view_proj);
         // Read before the uploads take the previous-model table out of the plan.
-        let prev_view_proj = (!temporal.reset).then_some(&row.prev_view_proj);
-        self.transparent_coverage = crate::post::taa::transparent_coverage(&plan.frame.view_proj, prev_view_proj, &plan.transparent, &plan.prev_models, &plan.transparent_sources);
+        self.transparent_coverage = crate::post::taa::transparent_coverage(&crate::post::taa::TransparentRows {
+            history: !temporal.reset,
+            rows: &plan.transparent,
+            prev_models: &plan.prev_models,
+            sources: &plan.transparent_sources,
+        });
         self.motion_row = Some(row);
         self.skinned_prev.written = Some((temporal.set, bytes));
         previous
@@ -3460,6 +3763,7 @@ impl Renderer {
             // The world pass's statistics count its own draws; the prepass's repeat them.
             let meshlets = prep.meshlets.as_ref().map(|meshlets| &meshlets.frame);
             self.draw_batches(&mut pass, &prep.plan, 0, counts, meshlets, &mut FrameStats::default());
+            self.draw_prepass_variants(&mut pass, &prep.groups.pass, &prep.plan, counts, motion.is_some());
             // Pass 1's meshlets (every visible one without occlusion); node 8 adds pass 2's.
             if let (Some(_), Some(meshlet_pipelines)) = (meshlets, self.meshlet_pipelines()) {
                 let pipeline = self.meshlet_prepass_pipeline(meshlet_pipelines, &mut pass, prep);
@@ -3481,6 +3785,15 @@ impl Renderer {
                 pass.draw_indexed(mesh.first_index..mesh.first_index + mesh.index_count, mesh.base_vertex, 0..1);
                 custom_draws += 1;
             }
+        }
+        // The terrain's depth, normals and motion (A.7), after every other geometry, then its
+        // grass's (A.8).
+        self.draw_terrain_prepass(&mut pass, prep, motion.map(|(group, _, _, _)| group));
+        self.draw_grass_prepass(&mut pass, prep, motion.map(|(group, _, _, _)| group));
+        if let Some((group, motion_pipelines, _, _)) = motion {
+            // T-03: the camera's motion wherever no geometry drew (the sky, its sun disc, the fog
+            // horizon), after every draw of the pass: `Equal` against the cleared far plane.
+            MotionNode::draw_background(&mut pass, &motion_pipelines.background, group);
         }
         Some(PrepassInfo { consumers: plan.consumers, equal_depth: plan.equal, custom_draws, size: self.targets.render_size })
     }
@@ -3555,6 +3868,13 @@ impl Renderer {
         self.scene_pipeline_builds.set(self.scene_pipeline_builds.get() + 1);
     }
 
+    /// Frame bind-group sets the renderer holds: the frame's own and the ones made mid-frame after
+    /// a node replaced a view they bind (diagnostics: each pins the tables, shadow maps, material
+    /// arrays and effect views it binds, outside the target ledger).
+    pub fn frame_group_sets(&self) -> usize {
+        usize::from(self.groups.is_some()) + self.refreshed_groups.borrow().len()
+    }
+
     /// Scene pipeline sets made so far, the HDR and legacy scenes' and the prepass's (diagnostics:
     /// a frame that makes one compiles shaders on the frame thread, a hitch DRS cannot absorb).
     pub fn scene_pipeline_builds(&self) -> u32 {
@@ -3610,10 +3930,11 @@ impl Renderer {
             tonemapper: self.path.tonemapper,
             source_size: targets.render_size,
             target_size,
+            output_size: (self.width, self.height),
             dither: fsr.is_none(),
             frame_index: self.frame_index,
             generation,
-            balance: self.look.white_balance_gains(),
+            balance: self.look.white_balance_matrix(),
         };
         let device = frame.device().clone();
         let queue = frame.queue().clone();
@@ -3724,7 +4045,7 @@ impl Renderer {
         });
         pass.set_pipeline(&reactive.mesh);
         pass.set_bind_group(0, &prep.groups.frame, &[]);
-        pass.set_bind_group(2, reactive.node.jitter_group(), &[]);
+        pass.set_bind_group(2, prep.reactive_group.as_ref().unwrap_or(reactive.node.jitter_group()), &[]);
         pass.set_index_buffer(self.meshes.indices.slice(..), wgpu::IndexFormat::Uint32);
         for (k, source) in plan.transparent_sources.iter().enumerate() {
             let entry = u64::from(plan.views) + k as u64;
@@ -3754,17 +4075,8 @@ impl Renderer {
         self.path.hdr && auto_exposure(&self.look, &self.quality)
     }
 
-    /// The background triangle covering the scene with `clear` (sRGB bytes) as linear light.
-    fn write_background(&self, queue: &Queue, clear: [u8; 4]) {
-        let [r, g, b, _] = clear.map(|c| exposed(f32::from(c) / 255.0, 1.0));
-        let color = [r, g, b, 1.0];
-        let corners = [[-1.0, -1.0, 0.0], [3.0, -1.0, 0.0], [-1.0, 3.0, 0.0]];
-        let vertices = corners.map(|position| LineVertex { position, color });
-        queue.write_buffer(&self.background, 0, bytemuck::cast_slice(&vertices));
-    }
-
-    /// Graph node 4: the binned frame's tile masks and z-bins into `light_tiles` and `light_zbins`
-    /// (the tables the forward pass and v2 materials read). False when the frame bins nothing or
+    /// Graph node 4: the binned frame's tile masks and z-bins into `light_bins` (the table the
+    /// forward pass reads whole and v2 materials as two slices). False when the frame bins nothing or
     /// the node refused its tables, which then keep the zero header Uploads wrote: no local light
     /// is shaded rather than a stale one.
     fn encode_light_bins(&self, frame: &mut FrameEncoder, plan: &FramePlan) -> bool {
@@ -3772,15 +4084,38 @@ impl Renderer {
         let mut node = self.light_bins.borrow_mut();
         let Some(node) = node.as_mut() else { return false };
         let (device, queue) = (frame.device().clone(), frame.queue().clone());
-        let input = crate::cluster::LightBinInput { frame: &binned.bins, tiles: self.tables.light_tiles.get(), zbins: self.tables.light_zbins.get() };
+        let input = crate::cluster::LightBinInput { frame: &binned.bins, bins: self.tables.light_bins.get() };
         node.encode(&device, &queue, frame.encoder(), input).is_ok()
     }
 
-    /// Graph node 1: this frame's frame uniforms, cull views and tables.
-    fn write_uploads(&self, queue: &Queue, uploads: &Uploads, plan: &FramePlan) {
-        queue.write_buffer(&self.frame_uniforms, 0, &uploads.frame);
-        queue.write_buffer(&self.cull_views, 0, &uploads.cull_views);
-        uploads.write(queue, &self.tables, plan);
+    /// Graph node 1: this frame's frame uniforms, cull views and tables, and the frame's own rows
+    /// `frame_rows` (fog, background), from the upload arena as copies at the head of `encoder`, the
+    /// frame's own (RC-08).
+    fn write_uploads(&self, encoder: &mut wgpu::CommandEncoder, uploads: &Uploads, plan: &FramePlan, frame_rows: &[crate::tables::UploadWrite<'_>]) {
+        let mut writes = vec![(&self.frame_uniforms, 0, uploads.frame.as_slice()), (&self.cull_views, 0, uploads.cull_views.as_slice())];
+        writes.extend(uploads.writes(&self.tables, plan));
+        writes.extend_from_slice(frame_rows);
+        self.upload_arena.borrow_mut().upload(encoder, &writes);
+        // The instance table now holds this frame's rows: its retained spans are the next frame's
+        // to compare with (A.0b).
+        *self.retained_held.borrow_mut() = Some((self.tables.instances.get().clone(), plan.retained.clone()));
+        self.last_instance_bytes.set(uploads.instance_bytes());
+    }
+
+    /// The instance-table rows `plan` writes: all of them, less its retained groups' rows the
+    /// table holds unchanged since the last upload into this very table (A.0b).
+    fn instance_rows(&self, plan: &FramePlan) -> Vec<std::ops::Range<usize>> {
+        let bytes = std::mem::size_of_val(plan.instances.as_slice()) as u64;
+        let held = self.retained_held.borrow();
+        let same_table = |(table, _): &&(Buffer, Vec<crate::retained::RetainedSpan>)| self.tables.instances.holds(bytes) && table == self.tables.instances.get();
+        let spans = held.as_ref().filter(same_table).map(|(_, spans)| spans.as_slice());
+        crate::tables::instance_upload_ranges(plan.instances.len(), &plan.retained, spans)
+    }
+
+    /// Bytes of instance rows the last frame wrote (renderer pass 2 A.0b: a static retained
+    /// group's rows are written once).
+    pub fn last_instance_upload_bytes(&self) -> u64 {
+        self.last_instance_bytes.get()
     }
 
     /// Prepare a frame of `scene`: plan and room in the tables, the targets of the current scale
@@ -3791,6 +4126,9 @@ impl Renderer {
         let (device, queue) = (self.device.clone(), self.queue.clone());
         self.upload_meshlets(&device, &queue)?;
         let render = self.render_size();
+        // A frame at another render size than the last keeps the targets it replaces as spares
+        // (RC-10: a dynamic-resolution step going back swaps them in instead of allocating).
+        self.pool.note_render_size(render);
         let scene_path = self.scene_path(render, stage_reason);
         let temporal = self.frame_temporal(&scene_path, stage.demand, render);
         self.temporal = temporal;
@@ -3804,20 +4142,28 @@ impl Renderer {
             self.ensure_prepass(&scene_path, prepass.draws.len(), spec.motion)?;
         }
         self.ensure_temporal(&scene_path)?;
+        self.ensure_variants(&plan, &scene_path, prepass.as_ref(), spec.motion)?;
+        self.prepare_terrain(&plan, &scene_path, prepass.as_ref(), spec.motion)?;
+        self.prepare_grass(&plan, &scene_path, prepass.as_ref(), spec.motion)?;
         self.path = scene_path;
         let meshlets = self.prepare_meshlets(meshlets, prepass.is_some())?;
         let consumers = prepass.as_ref().map_or(PrepassConsumers::NONE, |prepass| prepass.consumers);
         let ao = self.frame_ao().filter(|_| consumers.contains(PrepassConsumers::AO)).map(|settings| settings.quality);
         let contact = consumers.contains(PrepassConsumers::CONTACT_SHADOWS);
-        self.effects.get_mut().prepare(&self.device, &mut self.pool, render, ao.as_ref(), contact)?;
+        // Renderer pass 2, B.7: the sun-shadow mask runs beside the contact shadows where the
+        // quality draws PCSS on the HDR scene under TAA.
+        let sun_mask = crate::post::sun_mask::key(&self.quality, scene_path.hdr, scene_path.taa);
+        self.effects.get_mut().prepare(&self.device, &mut self.pool, render, ao.as_ref(), contact, sun_mask)?;
         self.sky.get_mut().begin_frame();
         self.prepare_bloom()?;
+        self.prepare_lens(&scene_path, prepass.is_some(), spec.motion, lens::frame_proj(&plan, &scene.camera))?;
         let groups = self.ensure_groups();
         if !scene_path.hdr {
             self.ensure_upscale()?;
         }
         let motion = self.motion_row.take().zip(self.motion_group(&spec)).map(|(row, (group, meshlet_group))| FrameMotion { row, group, meshlet_group });
-        Ok(FramePrep { plan, environment_sun, uploads, path, clear: scene.clear, groups, prepass, meshlets, camera: scene.camera, motion })
+        let reactive_group = self.reactive.as_ref().filter(|_| spec.motion).map(|reactive| reactive.node.group(&self.device, self.tables.prev_models.get()));
+        Ok(FramePrep { plan, environment_sun, uploads, path, clear: scene.clear, groups, prepass, meshlets, camera: scene.camera, motion, reactive_group })
     }
 
     /// The part-1 nodes of the frame `prep`.
@@ -3846,6 +4192,11 @@ impl Renderer {
     }
 
     fn encode_cull(&self, encoder: &mut wgpu::CommandEncoder, plan: &FramePlan) {
+        self.encode_cull_timed(encoder, plan, None);
+    }
+
+    /// [`Renderer::encode_cull`] with the cull pass's timestamp writes (a cost row).
+    fn encode_cull_timed(&self, encoder: &mut wgpu::CommandEncoder, plan: &FramePlan, timestamps: Option<wgpu::ComputePassTimestampWrites<'_>>) {
         if plan.batches.is_empty() {
             return;
         }
@@ -3855,8 +4206,9 @@ impl Renderer {
             batches: self.tables.batches.get(),
             visible: self.tables.visible.get(),
             args: self.tables.args.get(),
+            scratch: self.tables.cull_scratch.get(),
         };
-        self.cull.encode(&self.device, encoder, &buffers, plan.batches.len() as u32, plan.views);
+        self.cull.encode(&self.device, encoder, &buffers, plan.visible_slots, plan.views, timestamps);
     }
 
     /// The frame's meshlet candidates (R2), before occlusion is decided: None when the game's
@@ -3962,7 +4314,7 @@ impl Renderer {
             return Ok(());
         }
         let Some(node) = self.meshlet_node.as_ref() else { return Ok(()) };
-        let constants = surface_constants(key.reversed, key.surface);
+        let constants = surface_constants(key.reversed, key.format, key.surface);
         let spec = MeshletPipelineSpec {
             format: key.format,
             samples: key.samples,
@@ -4109,6 +4461,7 @@ impl Renderer {
     /// to Live ([`CascadeHistory`]).
     pub fn reset_shadow_history(&mut self) {
         self.shadow_history.reset();
+        self.spot_slots.reset();
     }
 
     /// Forget the meshlet visibility history: the next frame's cull pass 1 draws nothing and pass
@@ -4131,6 +4484,121 @@ impl Renderer {
         let tables_up = !self.meshlet_upload_pending && !self.library.meshlets().meshlets.is_empty();
         let library = if tables_up { self.meshes.meshlets.bytes() } else { 0 };
         library + self.meshlet_node.as_ref().map_or(0, MeshletCullNode::bytes)
+    }
+
+    /// The GPU buffers this renderer holds now, under [`crate::budget::BudgetKind::Buffers`] by
+    /// label (renderer pass 2 A.0, LG-13): every frame table, the mesh library, the frame's
+    /// uniforms, last frame's skinned vertices and the light binning's and meshlet path's own
+    /// buffers; and the look's grading LUT under [`crate::budget::BudgetKind::Ibl`] (A.2). What
+    /// the budget fit reads beside its targets (`BudgetInput::with_buffers`).
+    pub fn buffer_ledger(&self) -> crate::budget::BudgetLedger {
+        use crate::budget::BudgetKind::Buffers;
+        let mut ledger = crate::budget::BudgetLedger::new();
+        for (label, bytes) in self.tables.held() {
+            ledger.register(Buffers, label, bytes);
+        }
+        let meshes = &self.meshes;
+        let fixed = [
+            ("mesh vertices", &meshes.vertices),
+            ("mesh slots", &meshes.slots),
+            ("mesh indices", &meshes.indices),
+            ("mesh skin", &meshes.skin),
+            ("frame uniforms", &self.frame_uniforms),
+            ("background", &self.background),
+            ("cull views", &self.cull_views),
+            ("fog row", &self.fog_row),
+        ];
+        for (label, buffer) in fixed {
+            ledger.register(Buffers, label, buffer.size());
+        }
+        if let Some(previous) = &self.skinned_prev.buffer {
+            ledger.register(Buffers, "previous skinned vertices", previous.size());
+        }
+        if let Some(node) = self.light_bins.borrow().as_ref() {
+            for (label, bytes) in node.buffers() {
+                ledger.register(Buffers, label, bytes);
+            }
+        }
+        let meshlets = self.meshlet_bytes();
+        if meshlets > 0 {
+            ledger.register(Buffers, "meshlet tables and cull", meshlets);
+        }
+        // The look's 3D grading LUT (A.2), a texture outside the target pool.
+        let lut = self.post.borrow().as_ref().map_or(0, |(tonemap, _)| tonemap.grading_lut_bytes());
+        if lut > 0 {
+            ledger.register(crate::budget::BudgetKind::Ibl, crate::budget::GRADING_LUT_LABEL, lut);
+        }
+        // The terrain's row, maps, rows and grid (A.7).
+        let terrain = self.terrain_bytes();
+        if terrain > 0 {
+            ledger.register(Buffers, crate::terrain::TERRAIN_LEDGER_LABEL, terrain);
+        }
+        // The grass's row, tile regions, counts, arguments and order (A.8).
+        let grass = self.grass_bytes();
+        if grass > 0 {
+            ledger.register(Buffers, crate::foliage::GRASS_LEDGER_LABEL, grass);
+        }
+        // The reflection probes' cubes, capture targets and rows (A.3), outside the target pool.
+        let probes = self.environment.borrow().probes().bytes();
+        if probes > 0 {
+            ledger.register(crate::budget::BudgetKind::Ibl, crate::budget::REFLECTION_PROBES_LABEL, probes);
+        }
+        // The irradiance volumes' atlas, staging block and bake targets (A.4), outside the pool.
+        let volumes = self.environment.borrow().irradiance().bytes();
+        if volumes > 0 {
+            ledger.register(crate::budget::BudgetKind::Ibl, crate::budget::IRRADIANCE_VOLUMES_LABEL, volumes);
+        }
+        // The look's depth of field and motion blur (A.9), pooled targets the quality's ledger
+        // does not know (the look turns them on).
+        for (label, bytes) in [crate::budget::DEPTH_OF_FIELD_LABEL, crate::budget::MOTION_BLUR_LABEL].into_iter().zip(self.lens_bytes()) {
+            if bytes > 0 {
+                ledger.register(crate::budget::BudgetKind::Target, label, bytes);
+            }
+        }
+        ledger
+    }
+
+    /// The budget's model of the buffers drawing `scene` makes this renderer hold
+    /// ([`crate::budget::buffer_model`] of the frame's counts under the current quality; LG-13),
+    /// computed on the CPU without drawing.
+    pub fn buffer_model(&self, scene: &Scene) -> Result<u64, RenderError> {
+        let aspect = self.width as f32 / self.height as f32;
+        let quality = &self.quality.shadows;
+        let shadows = quality.enabled.then(|| ShadowSettings::from_quality(quality, scene.lighting.shadow_distance, self.environment_choice.sun_angular_radius()));
+        let plan = FramePlan::build_with(scene, &self.library, aspect, &PlanOptions { shadows, depth_reversed: false, sun: None })?;
+        let binned = (crate::lights::BINNED_SHADING_LANDED && self.quality.lights.clustered)
+            .then(|| crate::lights::binned_frame(&scene.lighting, &self.quality.lights, &scene.camera, self.render_size()));
+        // The decals (A.10) ride in the `light_ext` table after the lights' rows and every shadowed
+        // spot's matrix slot: the table holds `decals::append_rows` of the lights' bytes.
+        let ext_bytes = |binned: &crate::lights::BinnedFrame| {
+            let lights_bytes = std::mem::size_of_val(binned.ext.as_slice());
+            if binned.decals.is_empty() {
+                return lights_bytes as u64;
+            }
+            let rows_bytes = crate::decals::rows_base(binned.ext.len()) * size_of::<glam::Vec4>();
+            (rows_bytes.max(lights_bytes) + std::mem::size_of_val(binned.decals.as_slice())) as u64
+        };
+        let (lights, light_ext_bytes, light_bin_bytes) = binned.as_ref().map_or((plan.lights.len(), 0, 0), |binned| {
+            (binned.lights.len(), ext_bytes(binned), crate::cluster::bins_bytes(&binned.bins.grid))
+        });
+        let counts = crate::budget::BufferCounts {
+            instances: plan.instances.len() as u64,
+            opaque_instances: u64::from(plan.visible_slots),
+            transparent: plan.transparent.len() as u64,
+            views: u64::from(plan.views),
+            batches: plan.batches.len() as u64,
+            materials: plan.materials.len() as u64,
+            lights: lights as u64,
+            light_ext_bytes,
+            light_bin_bytes: light_bin_bytes.max(u64::from(crate::cluster::LIGHT_TILES_OFFSET_WORDS) * 4 + 4),
+            pass_views: u64::from(plan.views) + plan.transparent.len() as u64,
+            slot_base: plan.slot_base.len() as u64,
+            motion: false,
+            vertices: self.library.vertices().len() as u64,
+            indices: self.library.indices().len() as u64,
+            skin_vertices: self.library.skin().len() as u64,
+        };
+        Ok(crate::budget::buffer_model(&counts))
     }
 
     /// Read the last meshlet frame's cull back (diagnostics and tests): each pass's kept meshlets
@@ -4200,13 +4668,49 @@ impl Renderer {
     pub fn cull_only(&mut self, gpu: &Gpu, scene: &Scene) -> Result<(), RenderError> {
         let scene_path = self.scene_path(self.render_size(), None);
         let (plan, uploads, _) = self.prepare(scene, CullPath::Gpu, &scene_path, &FrameTemporal::NONE)?;
-        self.write_uploads(&gpu.queue, &uploads, &plan);
         let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("cull only") });
+        self.write_uploads(&mut encoder, &uploads, &plan, &[]);
         self.encode_cull(&mut encoder, &plan);
         gpu.queue.submit([encoder.finish()]);
         #[cfg(not(target_arch = "wasm32"))]
         gpu.device.poll(wgpu::PollType::wait_indefinitely()).map_err(|e| crate::readback::capture_failed(e.to_string()))?;
         Ok(())
+    }
+
+    /// The GPU milliseconds of `scene`'s instance cull (graph node 2), one per sample of
+    /// `samples`, from timestamps around its compute pass after one upload of the frame's tables;
+    /// None without `TIMESTAMP_QUERY`. The cull cost rows (renderer pass 2 A.0, LG-06) read it.
+    pub fn cull_gpu_ms(&mut self, gpu: &Gpu, scene: &Scene, samples: u32) -> Result<Option<Vec<f32>>, RenderError> {
+        if !self.device.features().contains(wgpu::Features::TIMESTAMP_QUERY) {
+            return Ok(None);
+        }
+        let scene_path = self.scene_path(self.render_size(), None);
+        let (plan, uploads, _) = self.prepare(scene, CullPath::Gpu, &scene_path, &FrameTemporal::NONE)?;
+        let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("cull cost uploads") });
+        self.write_uploads(&mut encoder, &uploads, &plan, &[]);
+        gpu.queue.submit([encoder.finish()]);
+        let query_set = self.device.create_query_set(&wgpu::QuerySetDescriptor { label: Some("cull cost"), ty: wgpu::QueryType::Timestamp, count: 2 });
+        let resolve = crate::tables::buffer(&self.device, "cull cost resolve", 16, wgpu::BufferUsages::QUERY_RESOLVE | wgpu::BufferUsages::COPY_SRC)?;
+        let period = gpu.queue.get_timestamp_period();
+        let mut costs = Vec::with_capacity(samples as usize);
+        for _ in 0..samples {
+            let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("cull cost") });
+            let stamps = wgpu::ComputePassTimestampWrites { query_set: &query_set, beginning_of_pass_write_index: Some(0), end_of_pass_write_index: Some(1) };
+            self.encode_cull_timed(&mut encoder, &plan, Some(stamps));
+            gpu.queue.submit([encoder.finish()]);
+            // Resolved in a later submission: Metal resolves counter samples without waiting for
+            // the passes that write them (timing.rs).
+            gpu.device.poll(wgpu::PollType::wait_indefinitely()).map_err(|e| crate::readback::capture_failed(e.to_string()))?;
+            let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("cull cost resolve") });
+            encoder.resolve_query_set(&query_set, 0..2, &resolve, 0);
+            gpu.queue.submit([encoder.finish()]);
+            let staging = crate::readback::stage_buffer(gpu, &resolve, 0, 16)?;
+            let ticks: Vec<u64> = bytemuck::pod_collect_to_vec(&crate::readback::map_read_blocking(gpu, &staging, 16)?[..16]);
+            if let Some(ms) = crate::timing::span_ms(ticks[0], ticks[1], period) {
+                costs.push(ms);
+            }
+        }
+        Ok(Some(costs))
     }
 
     /// What the frame bind groups bind right now.
@@ -4221,17 +4725,20 @@ impl Renderer {
                 t.lights.get().clone(),
                 t.pass_views.get().clone(),
                 t.light_ext.get().clone(),
-                t.light_tiles.get().clone(),
-                t.light_zbins.get().clone(),
+                t.light_bins.get().clone(),
                 t.material_ext.get().clone(),
             ],
             views: (self.shadow_maps.array.clone(), self.texture_views()),
             environment: self.environment.borrow().generation(),
             effects: self.effect_views(),
+            anisotropy: self.texture_anisotropy,
         }
     }
 
     /// The frame bind groups, rebuilt only when a table or texture array they bind was replaced.
+    /// A rebuild drops the mid-frame sets bound to what it replaced (renderer pass 2, RC-07: they
+    /// held the old shadow array, material arrays and tables alive outside the ledger until four
+    /// newer sets came); the sets of the same tables and arrays, AO's alternating terms, stay.
     fn ensure_groups(&mut self) -> FrameGroups {
         let key = self.groups_key();
         if let Some((held, groups)) = &self.groups
@@ -4239,6 +4746,7 @@ impl Renderer {
         {
             return groups.clone();
         }
+        self.refreshed_groups.get_mut().retain(|(held, _)| held.same_resources(&key));
         let groups = self.frame_groups();
         self.groups = Some((key, groups.clone()));
         groups
@@ -4293,34 +4801,34 @@ impl Renderer {
             wgpu::BindGroupEntry { binding: 10, resource: wgpu::BindingResource::Sampler(&self.texture_sampler) },
         ];
         entries.extend(
-            FRAME_ENV_BINDINGS.into_iter().filter_map(|(binding, name)| environment.binding(name).map(|resource| wgpu::BindGroupEntry { binding, resource })),
+            FRAME_ENV_BOUND.into_iter().filter_map(|(binding, name)| environment.binding(name).map(|resource| wgpu::BindGroupEntry { binding, resource })),
         );
         let [ao_term, contact_mask, aerial_volume] = self.effect_views();
-        let [(fog, _), (ao, _), (aerial, _), (contact, _)] = FRAME_EFFECT_BOUND;
+        let [(fog, _), (ao, _), (aerial, _), (point, _), (contact, _)] = FRAME_EFFECT_BOUND;
         entries.extend([
             entry(fog, &self.fog_row),
+            wgpu::BindGroupEntry { binding: point, resource: wgpu::BindingResource::Sampler(&self.point_sampler) },
             wgpu::BindGroupEntry { binding: ao, resource: wgpu::BindingResource::TextureView(&ao_term) },
             wgpu::BindGroupEntry { binding: aerial, resource: wgpu::BindingResource::TextureView(&aerial_volume) },
             wgpu::BindGroupEntry { binding: contact, resource: wgpu::BindingResource::TextureView(&contact_mask) },
         ]);
-        let [light_ext, light_tiles, light_zbins, material_ext] = FRAME_LIGHT_BINDINGS.map(|(binding, _)| binding);
-        entries.extend([
-            entry(light_ext, t.light_ext.get()),
-            entry(light_tiles, t.light_tiles.get()),
-            entry(light_zbins, t.light_zbins.get()),
-            entry(material_ext, t.material_ext.get()),
-        ]);
+        let [light_ext, light_bins, material_ext] = FRAME_LIGHT_BINDINGS.map(|(binding, _)| binding);
+        entries.extend([entry(light_ext, t.light_ext.get()), entry(light_bins, t.light_bins.get()), entry(material_ext, t.material_ext.get())]);
         let class_views = MATERIAL_CLASS_ARRAYS.map(|(class, kind)| self.textures.view(class, kind));
         entries.extend(FRAME_MATERIAL_CLASS_BINDINGS.into_iter().zip(class_views).map(|((binding, _), view)| wgpu::BindGroupEntry {
             binding,
             resource: wgpu::BindingResource::TextureView(view),
         }));
         let frame = self.device.create_bind_group(&wgpu::BindGroupDescriptor { label: Some("frame"), layout: &self.layouts.frame, entries: &entries });
-        let shadow = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("shadow"),
-            layout: &self.layouts.shadow,
-            entries: &[entry(0, &self.frame_uniforms), entry(1, t.instances.get()), entry(2, t.visible.get()), entry(3, t.slot_base.get())],
-        });
+        let color_classes = TextureClass::ALL.map(|class| self.textures.view(class, TextureKind::Color));
+        let mut shadow_entries =
+            vec![entry(0, &self.frame_uniforms), entry(1, t.instances.get()), entry(2, t.visible.get()), entry(3, t.slot_base.get())];
+        shadow_entries.extend([entry(SHADOW_MASK_MATERIALS, t.materials.get()), entry(SHADOW_MASK_MATERIAL_EXT, t.material_ext.get())]);
+        shadow_entries.extend(
+            SHADOW_MASK_COLOR_ARRAYS.into_iter().zip(color_classes).map(|(binding, view)| wgpu::BindGroupEntry { binding, resource: wgpu::BindingResource::TextureView(view) }),
+        );
+        shadow_entries.push(wgpu::BindGroupEntry { binding: SHADOW_MASK_SAMPLER, resource: wgpu::BindingResource::Sampler(&self.texture_sampler) });
+        let shadow = self.device.create_bind_group(&wgpu::BindGroupDescriptor { label: Some("shadow"), layout: &self.layouts.shadow, entries: &shadow_entries });
         let pass = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("pass view"),
             layout: &self.layouts.pass,
@@ -4391,9 +4899,10 @@ impl Renderer {
     /// view are skipped (the multi-draw splits around them); the meshlet draw covers them.
     fn draw_batches(&self, pass: &mut RenderPass<'_>, plan: &FramePlan, view: u32, counts: Option<&[u32]>, meshlets: Option<&MeshletFrame>, stats: &mut FrameStats) {
         let total = plan.batches.len() as u32;
+        // The plain batches; the variants' follow (`draw_*_variants`, P2-0.12).
         let sources = [
             (0..plan.static_batches, &self.meshes.vertices, &self.meshes.slots),
-            (plan.static_batches..total, self.tables.skinned.get(), self.tables.skinned_slots.get()),
+            (plan.static_batches..plan.plain_batches, self.tables.skinned.get(), self.tables.skinned_slots.get()),
         ];
         for (range, vertices, slots) in sources {
             if range.is_empty() {
@@ -4425,7 +4934,8 @@ impl Renderer {
     }
 
     /// Grant the frame's shadowed spots (RQ6.5) on the binned path: while the quality draws shadows,
-    /// each slotted spot's map, matrix and cull view after the cascades' (`spot_shadow::grant`);
+    /// each slotted spot's map, matrix and cull view after the cascades', its slot held across Live's
+    /// frames and faded as it changes hands (`spot_shadow::SpotSlots`; a settled capture picks afresh);
     /// otherwise every slot is cleared, so the forward pass reads no map that was not drawn. Makes
     /// the casters' pipelines on the first frame that draws a spot map.
     fn plan_spot_shadows(&mut self, plan: &mut FramePlan) -> Result<(), RenderError> {
@@ -4433,7 +4943,8 @@ impl Renderer {
         let Some(binned) = plan.binned.as_mut() else { return Ok(()) };
         let tile = crate::spot_shadow::tile_side(self.quality.shadows.map_size.max(1));
         let slots = usize::from(self.quality.lights.shadowed_spots);
-        let spots = crate::spot_shadow::grant(binned, self.draws_spot_maps().then_some(tile), slots, eye);
+        let tile = self.draws_spot_maps().then_some(tile);
+        let spots = self.spot_slots.grant(binned, tile, slots, eye, self.frame_index, self.environment_settle);
         if spots.is_empty() {
             return Ok(());
         }
@@ -4501,6 +5012,7 @@ impl Renderer {
             pass.set_bind_group(1, &groups.pass, &[(u64::from(view) * PASS_VIEW_STRIDE) as u32]);
             // The meshlet path never covers a spot's view: its casters draw whole.
             self.draw_batches(&mut pass, plan, view, *counts, None, stats);
+            self.draw_spot_variants(&mut pass, &groups.pass, plan, view, *counts, stats);
         }
     }
 
@@ -4551,6 +5063,10 @@ impl Renderer {
             occlusion_query_set: None,
             multiview_mask: None,
         });
+        // The terrain's casters (A.7) and its grass's (A.8) before the batches' (they bind their
+        // own groups).
+        self.draw_terrain_casters(&mut pass, prep, cascade);
+        self.draw_grass_casters(&mut pass, prep, cascade);
         if plan.batches.is_empty() {
             return;
         }
@@ -4562,6 +5078,7 @@ impl Renderer {
         pass.set_index_buffer(self.meshes.indices.slice(..), wgpu::IndexFormat::Uint32);
         let meshlets = prep.meshlets.as_ref().map(|meshlets| &meshlets.frame);
         self.draw_batches(&mut pass, plan, view, counts, meshlets, stats);
+        self.draw_caster_variants(&mut pass, &groups.pass, (plan, view), self.shadow_desc.format, counts, stats);
         let casters = self.meshlet_pipelines().map(|pipelines| if self.shadow_desc.format == ShadowFormat::Depth16.texture_format() { &pipelines.shadow16 } else { &pipelines.shadow });
         let caster_view = meshlets.is_some_and(|frame| view < frame.views);
         if let (true, Some(casters)) = (caster_view, casters)
@@ -4583,8 +5100,7 @@ impl Renderer {
             materials: self.tables.materials.get(),
             lights: self.tables.lights.get(),
             light_ext: self.tables.light_ext.get(),
-            light_tiles: self.tables.light_tiles.get(),
-            light_zbins: self.tables.light_zbins.get(),
+            light_bins: self.tables.light_bins.get(),
             shadow_map: &self.shadow_maps.array,
             shadow_sampler: &self.shadow_sampler,
             color_textures: self.textures.view(TextureClass::S256, TextureKind::Color),
@@ -4676,16 +5192,24 @@ impl Renderer {
     /// Read the world target back: BGRA, top row first, no swizzle (native; the web awaits
     /// [`Renderer::capture_async`]).
     pub fn capture(&self, gpu: &Gpu) -> Result<Capture, RenderError> {
-        let (staging, padded) = self.stage_capture(gpu, &self.targets.world, self.width, self.height)?;
-        let data = map_read_blocking(gpu, &staging, u64::from(padded) * u64::from(self.height))?;
-        Capture::from_padded_rows(self.width, self.height, padded, &data)
+        let (width, height) = self.drawn_size();
+        let (staging, padded) = self.stage_capture(gpu, &self.targets.world, width, height)?;
+        let data = map_read_blocking(gpu, &staging, u64::from(padded) * u64::from(height))?;
+        Capture::from_padded_rows(width, height, padded, &data)
+    }
+
+    /// The world target's size as the last frame drew it (an output size set since applies from
+    /// the next frame on).
+    fn drawn_size(&self) -> (u32, u32) {
+        (self.targets.world.width(), self.targets.world.height())
     }
 
     /// [`Renderer::capture`] as a future: the browser maps the readback and wakes it.
     pub async fn capture_async(&self, gpu: &Gpu) -> Result<Capture, RenderError> {
-        let (staging, padded) = self.stage_capture(gpu, &self.targets.world, self.width, self.height)?;
-        let data = map_read(gpu, &staging, u64::from(padded) * u64::from(self.height)).await?;
-        Capture::from_padded_rows(self.width, self.height, padded, &data)
+        let (width, height) = self.drawn_size();
+        let (staging, padded) = self.stage_capture(gpu, &self.targets.world, width, height)?;
+        let data = map_read(gpu, &staging, u64::from(padded) * u64::from(height)).await?;
+        Capture::from_padded_rows(width, height, padded, &data)
     }
 
     fn stage_capture(&self, gpu: &Gpu, texture: &Texture, width: u32, height: u32) -> Result<(Buffer, u32), RenderError> {
@@ -4721,6 +5245,17 @@ impl Renderer {
         Ok(bytemuck::pod_collect_to_vec(&map_read_blocking(gpu, &staging, bytes)?))
     }
 
+    /// View `view`'s region of the visible list the last GPU-path frame's cull wrote: one slot per
+    /// opaque instance row, each batch's survivors at the start of its range (the rest unwritten).
+    pub fn read_view_visible(&self, gpu: &Gpu, view: u32) -> Result<Vec<u32>, RenderError> {
+        let bytes = u64::from(self.last.opaque_instances) * 4;
+        if bytes == 0 || view >= self.last.views {
+            return Ok(Vec::new());
+        }
+        let staging = stage_buffer(gpu, self.tables.visible.get(), u64::from(view) * bytes, bytes)?;
+        Ok(bytemuck::pod_collect_to_vec(&map_read_blocking(gpu, &staging, bytes)?))
+    }
+
     /// The vertices the last frame's compute skinning wrote, in job (skinned draw) order.
     pub fn read_skinned_vertices(&self, gpu: &Gpu) -> Result<Vec<Vertex>, RenderError> {
         let bytes = u64::from(self.last.skinned_vertices) * VERTEX_STRIDE;
@@ -4741,79 +5276,13 @@ impl Renderer {
         self.stats.instances
     }
 
-    fn blit_pipeline(&mut self, format: TextureFormat) -> Compiled<RenderPipeline> {
-        if let Some((_, pipeline)) = self.blits.iter().find(|(f, _)| *f == format) {
-            return pipeline.clone();
-        }
-        let layout = pipeline_layout(&self.device, "blit", &[&self.layouts.blit]);
-        let fragment = if format.is_srgb() { "fs_blit_decode" } else { "fs_blit" };
-        let pipeline = render_pipeline(
-            &self.device,
-            &PipelineSpec {
-                label: "blit",
-                module: &self.blit_module,
-                vertex: "vs_blit",
-                fragment: Some(fragment),
-                buffers: &[],
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                depth: None,
-                format,
-                blend: None,
-                samples: 1,
-                layout: &layout,
-            },
-        );
-        self.blits.push((format, pipeline.clone()));
-        pipeline
-    }
-
-    /// Letterbox the world target into `target` (a window surface's view), bars black.
+    /// Letterbox the world target into `target` (a window surface's view), bars black, through the
+    /// window present: FSR1 EASU + RCAS into a larger letterbox, Catmull-Rom into a smaller one,
+    /// texel for texel into one of the world target's own size ([`crate::letterbox::present`]).
+    /// Shells present through `Resilient::present`, which keeps its own across device recoveries.
     pub fn present(&mut self, gpu: &Gpu, target: &TextureView, format: TextureFormat, window: (u32, u32)) {
-        let pipeline = self.blit_pipeline(format);
-        let view = letterbox(window, (self.width, self.height));
-        let params = GpuBlitParams {
-            viewport: [view.x as f32, view.y as f32, view.width as f32, view.height as f32],
-            world: [self.width as f32, self.height as f32, 0.0, 0.0],
-        };
-        let params_buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("blit params"),
-            size: size_of::<GpuBlitParams>() as u64,
-            usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-        gpu.queue.write_buffer(&params_buffer, 0, bytemuck::bytes_of(&params));
-        let group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("blit"),
-            layout: &self.layouts.blit,
-            entries: &[
-                wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(&self.targets.world_view) },
-                entry(1, &params_buffer),
-            ],
-        });
-        let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("present") });
-        {
-            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("present"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: target,
-                    depth_slice: None,
-                    resolve_target: None,
-                    ops: wgpu::Operations { load: wgpu::LoadOp::Clear(wgpu::Color::BLACK), store: wgpu::StoreOp::Store },
-                })],
-                depth_stencil_attachment: None,
-                timestamp_writes: None,
-                occlusion_query_set: None,
-                multiview_mask: None,
-            });
-            if view.width > 0 && view.height > 0 {
-                pass.set_pipeline(&pipeline);
-                pass.set_bind_group(0, &group, &[]);
-                pass.set_viewport(view.x as f32, view.y as f32, view.width as f32, view.height as f32, 0.0, 1.0);
-                pass.set_scissor_rect(view.x, view.y, view.width, view.height);
-                pass.draw(0..3, 0..1);
-            }
-        }
-        gpu.queue.submit([encoder.finish()]);
+        let into = crate::letterbox::present::PresentInto { world: (&self.targets.world_view, self.drawn_size()), target, format, window };
+        self.window_present.present(gpu, &into, None);
     }
 
     /// Present into an offscreen `Bgra8Unorm` window of `window` size and read it back (tests,
@@ -4850,7 +5319,7 @@ mod surface_constants_tests {
 
     /// The value the forward pipeline of `quality` (the legacy scene, no TAA) gives `name`.
     fn constant(quality: &Quality, name: &str) -> f64 {
-        let constants = surface_constants(false, SurfaceKey::of(quality, false, false));
+        let constants = surface_constants(false, WORLD_FORMAT, SurfaceKey::of(quality, false, false));
         constants.iter().find(|(key, _)| *key == name).map(|(_, value)| *value).unwrap_or_else(|| panic!("{name} is a surface constant"))
     }
 
@@ -4876,6 +5345,57 @@ mod surface_constants_tests {
         let mut faded = Quality::off();
         faded.shadows.fade_percent = 15;
         assert_eq!(constant(&faded, "GX_SUN_SOFT_EDGES"), 1.0, "a game's end fade on the legacy cascades is drawn");
+    }
+
+    /// Renderer pass 2, P2-0.2 (SH-01, T-01 step 1): under TAA the opaque pipelines turn the soft
+    /// shadow filters' taps with the frame, but the transparent pipeline compiles the static
+    /// pattern and the two-lookup cascade band (`GX_SHADOW_TEMPORAL` off): a blended pixel TAA does
+    /// not accumulate must carry no frame-keyed noise (the lake's shadows blinked while the camera
+    /// moved). Every other constant is the opaque pipeline's.
+    #[test]
+    fn the_transparent_pipeline_shades_a_static_shadow_kernel_under_taa() {
+        let desktop = DeviceClass::new(FormFactor::Desktop, PerformanceTier::High);
+        for preset in [QualityPreset::Medium, QualityPreset::High, QualityPreset::Ultra] {
+            let quality = preset_quality(preset, desktop);
+            let surface = SurfaceKey::of(&quality, true, true);
+            let value = |constants: &[(&'static str, f64)], name: &str| constants.iter().find(|(key, _)| *key == name).map(|(_, value)| *value);
+            let opaque = surface_constants(true, TextureFormat::Rgba16Float, surface);
+            let blended = surface_constants(true, TextureFormat::Rgba16Float, surface.blended());
+            assert_eq!(value(&opaque, "GX_SHADOW_TEMPORAL"), Some(1.0), "{preset:?}: the opaque surfaces turn with the frame under TAA");
+            assert_eq!(value(&blended, "GX_SHADOW_TEMPORAL"), Some(0.0), "{preset:?}: the transparent surfaces do not");
+            let others = |constants: &[(&'static str, f64)]| constants.iter().filter(|(key, _)| *key != "GX_SHADOW_TEMPORAL").copied().collect::<Vec<_>>();
+            assert_eq!(others(&opaque), others(&blended), "{preset:?}");
+        }
+    }
+
+    /// Renderer pass 2, P2-0.10 (C5): only an HDR scene stored as `rg11b10ufloat` (desktop low and
+    /// phones) dithers its writes by half a mantissa step; the `rgba16float` scene and the legacy
+    /// scene compile the dither out, so their pipelines draw exactly as before.
+    #[test]
+    fn only_the_rg11b10_scene_dithers_its_writes() {
+        let quality = preset_quality(QualityPreset::Low, DeviceClass::new(FormFactor::Mobile, PerformanceTier::High));
+        let surface = SurfaceKey::of(&quality, true, false);
+        let dither = |reversed, format| {
+            let constants = surface_constants(reversed, format, surface);
+            constants.iter().find(|(key, _)| *key == "GX_SCENE_RG11B10").map(|(_, value)| *value)
+        };
+        assert_eq!(dither(true, TextureFormat::Rg11b10Ufloat), Some(1.0), "the rg11b10 HDR scene dithers");
+        assert_eq!(dither(true, TextureFormat::Rgba16Float), Some(0.0), "the rgba16float HDR scene does not");
+        assert_eq!(dither(false, WORLD_FORMAT), Some(0.0), "the legacy scene does not");
+    }
+
+    /// Renderer pass 2, P2-0.12 (LG-04): the HDR scene shades with Filament's roughness floor,
+    /// 0.045 on a desktop and the half-precision 0.089 on a phone; the legacy scene keeps 0.04.
+    #[test]
+    fn phones_shade_with_a_coarser_roughness_floor_than_desktops() {
+        let quality = preset_quality(QualityPreset::High, DeviceClass::new(FormFactor::Desktop, PerformanceTier::High));
+        let floor = |hdr: bool, form| {
+            let constants = surface_constants(hdr, TextureFormat::Rgba16Float, SurfaceKey::of(&quality, hdr, false).for_form(form));
+            constants.iter().find(|(key, _)| *key == "GX_ROUGHNESS_FLOOR").map(|(_, value)| *value as f32)
+        };
+        assert_eq!(floor(true, FormFactor::Desktop), Some(0.045));
+        assert_eq!(floor(true, FormFactor::Mobile), Some(0.089));
+        assert_eq!(floor(false, FormFactor::Mobile), Some(0.04), "the legacy scene draws as before");
     }
 
     /// The legacy key the renderer starts from is the features-off quality's.

@@ -83,12 +83,34 @@ fn the_outdoor_scene_has_terrain_foliage_water_and_a_sky_placeholder() {
     assert!(largest >= 3 * 2 * 128 * 128, "the terrain is coarser than 128x128 cells ({largest} indices)");
 }
 
+/// The most two neighbouring bands of the outdoor sky placeholder may differ by, in sRGB levels on
+/// any channel: a step a flicker map does not draw as an edge.
+const SKY_BAND_STEP_MAX: u8 = 24;
+
+/// G0 visual (2026-10-15): the outdoor scene's sky placeholder drew a hard-edged blue ellipse across
+/// the top of the frame (its zenith band 44-54 levels off the next), which the motion rows' flicker
+/// maps traced as an edge. Neighbouring bands differ by at most [`SKY_BAND_STEP_MAX`].
+#[test]
+fn the_outdoor_sky_placeholder_has_no_hard_band_edges() {
+    let (scene, _) = load(SceneId::Outdoor);
+    let drawn = scene.scene(0);
+    let bands: Vec<[u8; 4]> = drawn.draws.iter().filter(|d| d.model[0] >= 100.0 && d.model[12..15] == drawn.camera.eye).map(|d| d.material.base_color).collect();
+    assert!(bands.len() >= 2, "the sky placeholder's bands: {bands:?}");
+    for pair in bands.windows(2) {
+        let step = (0..3).map(|lane| pair[0][lane].abs_diff(pair[1][lane])).max().unwrap_or(0);
+        assert!(step <= SKY_BAND_STEP_MAX, "neighbouring sky bands {:?} and {:?} differ by {step} levels", pair[0], pair[1]);
+    }
+}
+
 #[test]
 fn the_city_draws_at_least_fifty_thousand_instances_of_many_meshes() {
     let (scene, _) = load(SceneId::City);
     let drawn = scene.scene(0);
-    let meshes: BTreeSet<u32> = drawn.draws.iter().map(|d| d.mesh.raw()).collect();
-    assert!(drawn.draws.len() >= 50_000, "{} instances", drawn.draws.len());
+    // Renderer pass 2 A.0b flipped `draws` -> retained groups: the city's static instances are
+    // retained groups (`mesh_instances` counts both).
+    let meshes: BTreeSet<u32> = drawn.draws.iter().map(|d| d.mesh.raw()).chain(drawn.groups.iter().map(|g| g.group.mesh().raw())).collect();
+    assert!(drawn.mesh_instances() >= 50_000, "{} instances", drawn.mesh_instances());
+    assert!(drawn.groups.len() >= 24, "{} retained groups", drawn.groups.len());
     assert!(meshes.len() >= 24, "{} distinct meshes", meshes.len());
     assert!(drawn.logical_draws() < 1_000, "instances are not grouped into instanced draws ({})", drawn.logical_draws());
 }

@@ -21,8 +21,10 @@
 const SKY_PI: f32 = 3.14159265358979;
 // Samples along each view ray.
 const SKY_VIEW_STEPS: u32 = 30u;
-// Where in a march segment its sample sits (Hillaire's 0.3).
-const SKY_SEGMENT_SAMPLE: f32 = 0.3;
+// Where in a march segment its sample sits: its midpoint (SI-15). Hillaire's sample's 0.3 sits
+// where the air is denser than the segment's mean on a ray climbing out of it, so the sky came out
+// 3 to 7 percent brighter than the converged integral overhead (tests/sky.rs's f64 reference).
+const SKY_SEGMENT_SAMPLE: f32 = 0.5;
 // The camera's height is held between these, km (float precision at the planet's radius, and
 // inside the atmosphere).
 const SKY_MIN_HEIGHT_KM: f32 = 0.001;

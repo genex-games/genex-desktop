@@ -741,7 +741,7 @@ const manifestOf = (fields: Partial<CaptureManifest>): CaptureManifest => ({
   commit: "start",
   edited: true,
   capturedAt: "2026-09-19T17:00:00.000Z",
-  provenance: { seq: null, digest: null, camera: "default", runId: null, build: null },
+  provenance: { seq: null, digest: null, camera: "default", runId: null, build: null, render: null, outputSize: null },
   ...fields,
 });
 

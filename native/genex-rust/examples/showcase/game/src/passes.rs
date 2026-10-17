@@ -1,11 +1,12 @@
 //! The lakeside's custom GPU passes (extension ladder level 3, custom-pass API v2): only what no
-//! built-in draws. The clouds (the physical sky has none) and the grass after the opaque models;
-//! the lake and the light sprites (the fireflies' halos, pollen, glints, smoke and the lights'
-//! pools on the grass) after the transparent ones. Everything
-//! else is the renderer's own: the sky (`frame.environment`, see `draw.rs`), the lanterns and
-//! windows (real lights and emissive materials, `draw.rs`), and the look's height fog, bloom and
-//! tonemap (`showcase.rs`). The look's fog is applied as each built-in surface is shaded and does not
-//! reach geometry a pass draws, so the grass and the lake apply the same fog from the v2 tables'
+//! built-in draws. The clouds (the physical sky has none) after the opaque models; the lake and the
+//! light sprites (the fireflies' halos, pollen, glints, smoke and the lights' pools on the grass)
+//! after the transparent ones. Everything else is the renderer's own: the sky
+//! (`frame.environment`, see `draw.rs`), the meadow (the terrain's grassy layers grow it, renderer
+//! pass 2 A.8, `world::terrain`), the lanterns and windows (real lights and emissive materials,
+//! `draw.rs`), and the look's height fog, bloom and tonemap (`showcase.rs`). The look's fog is
+//! applied as each built-in surface is shaded and does not reach geometry a pass draws, so the lake
+//! applies the same fog from the v2 tables'
 //! fog row themselves (`common.wgsl`'s `look_fog`). Each pass reads the simulation (its tick)
 //! read-only and builds every resource through `PassSetup`. At API v2 every pass draws in the scene
 //! format: linear, pre-exposed radiance on the HDR scene, which the look's tonemapper maps to the
@@ -21,23 +22,16 @@ use crate::layout::{CABIN, CABIN_FLOOR, CABIN_YAW, LAKE_CENTER, LAKE_RADII, heig
 use crate::world::{TICKS_PER_SECOND, World};
 
 const COMMON_WGSL: &str = include_str!("../shaders/common.wgsl");
-const GRASS_WGSL: &str = include_str!("../shaders/grass.wgsl");
 const WATER_WGSL: &str = include_str!("../shaders/water.wgsl");
 const SPRITES_WGSL: &str = include_str!("../shaders/sprites.wgsl");
 const CLOUDS_WGSL: &str = include_str!("../shaders/clouds.wgsl");
 
-/// Vertices of one grass blade (a strip of three segments and a tip).
-const BLADE_VERTICES: u32 = 7;
 /// The custom-pass API every lakeside pass is written against (the v2 tables, the scene format).
 const PASS_API: u32 = 2;
-/// Bytes per grass blade and per sprite in their instance buffers.
-const BLADE_BYTES: u64 = 32;
+/// Bytes per sprite in the sprites' instance buffer.
 const SPRITE_BYTES: u64 = 64;
 /// How strong a firefly's halo is at the peak of its blink.
 const FIREFLY_HALO: f32 = 0.35;
-/// The share of the grass blades drawn where the device draws one or two shadow cascades.
-const GRASS_SHARE_LOW: f32 = 0.35;
-const GRASS_SHARE_MEDIUM: f32 = 0.6;
 /// The most sprites a frame draws.
 const MAX_SPRITES: usize = 1024;
 /// The lake's grid: cells across and along, and bed samples per side.
@@ -57,7 +51,6 @@ const SMOKE_STRENGTH: f32 = 0.45;
 /// Register every pass, in drawing order within each stage.
 pub fn wire(game: &mut Game<World>) {
     game.gpu_pass("clouds", PassStage::AfterOpaque, Clouds::default());
-    game.gpu_pass("grass", PassStage::AfterOpaque, Grass::default());
     game.gpu_pass("lake", PassStage::AfterTransparent, Lake::default());
     game.gpu_pass("lights", PassStage::AfterTransparent, Sprites::default());
 }
@@ -144,6 +137,44 @@ fn world_pipeline(setup: &mut PassSetup<'_>, group: Option<&gpu::BindGroupLayout
     })
 }
 
+/// A pipeline drawing into TAA's motion target or reactive mask (graph node 15a, renderer pass 2
+/// B.7): the tables at group 0 and `group` at 1, one sample, against the prepass depth.
+struct TemporalPipeline<'a> {
+    label: &'a str,
+    module: &'a gpu::ShaderModule,
+    vertex: &'a str,
+    fragment: &'a str,
+    buffers: &'a [Option<gpu::VertexBufferLayout<'a>>],
+    topology: gpu::PrimitiveTopology,
+    target: gpu::ColorTargetState,
+    depth: gpu::DepthStencilState,
+}
+
+fn temporal_pipeline(setup: &mut PassSetup<'_>, group: Option<&gpu::BindGroupLayout>, desc: &TemporalPipeline<'_>) -> gpu::RenderPipeline {
+    let tables = setup.tables_layout();
+    let groups = [Some(tables), group];
+    let count = if group.is_some() { 2 } else { 1 };
+    let layout =
+        setup.create_pipeline_layout(&gpu::PipelineLayoutDescriptor { label: Some(desc.label), bind_group_layouts: &groups[..count], immediate_size: 0 });
+    let targets = [Some(desc.target.clone())];
+    setup.create_render_pipeline(&gpu::RenderPipelineDescriptor {
+        label: Some(desc.label),
+        layout: Some(&layout),
+        vertex: gpu::VertexState { module: desc.module, entry_point: Some(desc.vertex), compilation_options: Default::default(), buffers: desc.buffers },
+        primitive: gpu::PrimitiveState { topology: desc.topology, cull_mode: None, ..Default::default() },
+        depth_stencil: Some(desc.depth.clone()),
+        multisample: setup.temporal_multisample(),
+        fragment: Some(gpu::FragmentState {
+            module: desc.module,
+            entry_point: Some(desc.fragment),
+            compilation_options: Default::default(),
+            targets: &targets,
+        }),
+        multiview_mask: None,
+        cache: None,
+    })
+}
+
 /// Premultiplied alpha: a glow adds (alpha 0), a solid covers.
 const PREMULTIPLIED: gpu::BlendState = gpu::BlendState {
     color: gpu::BlendComponent { src_factor: gpu::BlendFactor::One, dst_factor: gpu::BlendFactor::OneMinusSrcAlpha, operation: gpu::BlendOperation::Add },
@@ -158,81 +189,6 @@ const ALPHA: gpu::BlendState = gpu::BlendState {
 
 fn seconds(tick: u64) -> f32 {
     tick as f32 / TICKS_PER_SECOND
-}
-
-/// The share of the layout's grass blades a frame draws at `quality`: all of them where the sun casts
-/// three or more cascades (desktops at high and above), fewer on the tiers that draw fewer (phones,
-/// `low` and `medium`), so the meadow's cost follows the device as the renderer's own work does.
-pub fn grass_share(quality: &genex::render::Quality) -> f32 {
-    match quality.shadows.cascades {
-        0 | 1 => GRASS_SHARE_LOW,
-        2 => GRASS_SHARE_MEDIUM,
-        _ => 1.0,
-    }
-}
-
-/// The grass: every blade of the layout, instanced.
-#[derive(Default)]
-pub struct Grass {
-    resources: Option<(gpu::Buffer, gpu::Buffer, gpu::BindGroup, gpu::RenderPipeline, u32)>,
-}
-
-impl GpuPass<World> for Grass {
-    fn rebuild(&mut self, setup: &mut PassSetup<'_>) -> Result<(), GpuError> {
-        let blades = &layout().blades;
-        let data: Vec<f32> = blades
-            .iter()
-            .flat_map(|b| [b.root.x, b.root.y, b.root.z, b.yaw, b.height, b.width, b.sun, b.tint])
-            .collect();
-        let instances = setup.create_buffer_init("grass blades", &floats(&data), gpu::BufferUsages::VERTEX)?;
-        let module = shader(setup, "grass", GRASS_WGSL)?;
-        let (buffer, layout, group) = params_group(setup, "grass", 16, &[])?;
-        let attributes = [
-            gpu::VertexAttribute { format: gpu::VertexFormat::Float32x4, offset: 0, shader_location: 0 },
-            gpu::VertexAttribute { format: gpu::VertexFormat::Float32x4, offset: 16, shader_location: 1 },
-        ];
-        let buffers = [Some(gpu::VertexBufferLayout { array_stride: BLADE_BYTES, step_mode: gpu::VertexStepMode::Instance, attributes: &attributes })];
-        let desc = WorldPipeline {
-            label: "grass",
-            module: &module,
-            vertex: "vs_grass",
-            fragment: "fs_grass",
-            buffers: &buffers,
-            topology: gpu::PrimitiveTopology::TriangleStrip,
-            blend: None,
-            depth_write: true,
-        };
-        let pipeline = world_pipeline(setup, Some(&layout), &desc);
-        let count = u32::try_from(blades.len()).unwrap_or(u32::MAX);
-        self.resources = Some((instances, buffer, group, pipeline, count));
-        Ok(())
-    }
-
-    fn run(&mut self, ctx: &mut GpuPassCtx<'_, '_, World>) {
-        let Some((instances, buffer, group, pipeline, count)) = &self.resources else { return };
-        let time = seconds(ctx.sim().world.tick);
-        // Weaker devices draw a share of the meadow (the layout's blades are in random order, so
-        // any first share is spread evenly), each blade wider to keep the cover.
-        let share = grass_share(ctx.quality());
-        let _ = ctx.write_buffer(buffer, 0, &floats(&[time, 1.0 / share.sqrt(), 0.0, 0.0]));
-        let drawn = ((*count as f32) * share) as u32;
-        let Some(draws) = ctx.draws() else { return };
-        draws
-            .set_pipeline(pipeline)
-            .bind_tables(0)
-            .set_bind_group(1, group, &[])
-            .set_vertex_buffer(0, instances, ..)
-            .draw(0..BLADE_VERTICES, 0..drawn);
-    }
-
-    fn api(&self) -> u32 {
-        PASS_API
-    }
-
-    // The environment's light is what the look's fog scatters over the meadow (`look_fog`).
-    fn inputs(&self) -> gpu::RenderInputs {
-        gpu::RenderInputs::ENVIRONMENT
-    }
 }
 
 /// The clouds over the physical sky (`clouds.wgsl`): one full-screen triangle behind the scene.
@@ -382,12 +338,13 @@ impl Sprite {
         Sprite { center, half_width, color, axis: Vec3::ZERO, kind: GLOW, half_height: 0.0 }
     }
 
-    fn push(&self, out: &mut Vec<f32>) {
+    /// Its instance row, with `before` (its centre last frame) for TAA's reactive coverage.
+    fn push(&self, before: Vec3, out: &mut Vec<f32>) {
         let c = self.center;
         let a = self.axis;
         out.extend([c.x, c.y, c.z, self.half_width]);
         out.extend(self.color);
-        out.extend([a.x, a.y, a.z, self.kind, self.half_height, 0.0, 0.0, 0.0]);
+        out.extend([a.x, a.y, a.z, self.kind, self.half_height, before.x, before.y, before.z]);
     }
 }
 
@@ -461,10 +418,20 @@ fn chimney_smoke(sprites: &mut Vec<Sprite>, t: f32) {
 
 /// The light sprites: fireflies, pollen, the ducks' glints, the chimney's smoke and the lanterns'
 /// and windows' pools on the grass (the lanterns and the windows are the scene's own lights and
-/// emissive materials, `draw.rs`, which Level-3 passes do not receive yet).
+/// emissive materials, `draw.rs`, which Level-3 passes do not receive yet). Under TAA a glow draws
+/// its own motion where it owns most of the pixel (`motion_draws`) and a sprite moving against the
+/// scene writes its coverage into the reactive mask elsewhere (`reactive_draws`), so a halo is
+/// neither trailed nor popped by history that belongs to the scene behind it (renderer pass 2, B.7).
 #[derive(Default)]
 pub struct Sprites {
-    resources: Option<(gpu::Buffer, gpu::RenderPipeline)>,
+    resources: Option<SpriteResources>,
+}
+
+struct SpriteResources {
+    instances: gpu::Buffer,
+    pipeline: gpu::RenderPipeline,
+    motion: gpu::RenderPipeline,
+    reactive: gpu::RenderPipeline,
 }
 
 impl GpuPass<World> for Sprites {
@@ -493,23 +460,53 @@ impl GpuPass<World> for Sprites {
             depth_write: false,
         };
         let pipeline = world_pipeline(setup, None, &desc);
-        self.resources = Some((instances, pipeline));
+        let reactive_desc = TemporalPipeline {
+            label: "sprites reactive",
+            module: &module,
+            vertex: "vs_sprite_reactive",
+            fragment: "fs_sprite_reactive",
+            buffers: &buffers,
+            topology: gpu::PrimitiveTopology::TriangleList,
+            target: setup.reactive_target(),
+            depth: setup.temporal_depth(false),
+        };
+        let reactive = temporal_pipeline(setup, None, &reactive_desc);
+        let motion_desc = TemporalPipeline {
+            label: "sprites motion",
+            vertex: "vs_sprite_motion",
+            fragment: "fs_sprite_motion",
+            target: setup.motion_target(),
+            ..reactive_desc
+        };
+        let motion = temporal_pipeline(setup, None, &motion_desc);
+        self.resources = Some(SpriteResources { instances, pipeline, motion, reactive });
         Ok(())
     }
 
     fn run(&mut self, ctx: &mut GpuPassCtx<'_, '_, World>) {
-        let Some((instances, pipeline)) = &self.resources else { return };
-        let list = sprites(seconds(ctx.sim().world.tick));
+        let Some(SpriteResources { instances, pipeline, motion, reactive }) = &self.resources else { return };
+        let tick = ctx.sim().world.tick;
+        let list = sprites(seconds(tick));
+        // The same sprites last frame (every list holds the same sprites in the same order): what
+        // each moved from (itself after a history reset and in a capture).
+        let before = sprites(seconds(tick.saturating_sub(ctx.tick() - ctx.prev_tick())));
         let mut data = Vec::with_capacity(list.len() * 16);
-        for sprite in &list {
-            sprite.push(&mut data);
+        for (i, sprite) in list.iter().enumerate() {
+            sprite.push(before.get(i).map_or(sprite.center, |was| was.center), &mut data);
         }
         if ctx.write_buffer(instances, 0, &floats(&data)).is_err() {
             return;
         }
         let count = u32::try_from(list.len()).unwrap_or(0);
-        let Some(draws) = ctx.draws() else { return };
-        draws.set_pipeline(pipeline).bind_tables(0).set_vertex_buffer(0, instances, ..).draw(0..6, 0..count);
+        if let Some(draws) = ctx.draws() {
+            draws.set_pipeline(pipeline).bind_tables(0).set_vertex_buffer(0, instances, ..).draw(0..6, 0..count);
+        }
+        if let Some(draws) = ctx.motion_draws() {
+            draws.set_pipeline(motion).bind_tables(0).set_vertex_buffer(0, instances, ..).draw(0..6, 0..count);
+        }
+        if let Some(draws) = ctx.reactive_draws() {
+            draws.set_pipeline(reactive).bind_tables(0).set_vertex_buffer(0, instances, ..).draw(0..6, 0..count);
+        }
     }
 
     fn api(&self) -> u32 {

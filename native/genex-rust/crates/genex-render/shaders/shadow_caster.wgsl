@@ -22,6 +22,9 @@ override GX_SHADOW_DEPTH_UNIT: f32 = 0.0;
 // depth change per pixel.
 override GX_SHADOW_BIAS_CONSTANT: f32 = 2.0;
 override GX_SHADOW_BIAS_SLOPE: f32 = 2.0;
+// Whether the casters may fade between LODs, dithered as the forward pass dithers them (the forward
+// pass's `GX_LOD_FADE`); false (the default) casts every row whole.
+override GX_LOD_FADE: bool = false;
 
 struct ShadowCasterOut {
     @builtin(position) clip: vec4<f32>,
@@ -45,8 +48,14 @@ fn gx_shadow_caster(clip: vec4<f32>) -> ShadowCasterOut {
 // depth only).
 @fragment
 fn fs_shadow_caster(in: ShadowCasterOut) -> @builtin(frag_depth) f32 {
-    let z = max(in.light_z, 0.0);
-    let slope = max(abs(dpdx(in.light_z)), abs(dpdy(in.light_z)));
+    return gx_shadow_caster_depth(in.light_z);
+}
+
+// The depth `fs_shadow_caster` writes for a caster at light-space depth `light_z`: clamped onto
+// the near plane, with the casters' constant and slope bias. Call it in uniform control flow.
+fn gx_shadow_caster_depth(light_z: f32) -> f32 {
+    let z = max(light_z, 0.0);
+    let slope = max(abs(dpdx(light_z)), abs(dpdy(light_z)));
     var unit = GX_SHADOW_DEPTH_UNIT;
     if unit <= 0.0 {
         unit = exp2(floor(log2(max(z, 1.0e-30))) - 23.0);

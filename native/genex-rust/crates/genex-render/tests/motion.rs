@@ -18,7 +18,7 @@ use genex_render::Gpu;
 use genex_render::layout::{GpuPrevModel, GpuSkinVertex};
 use genex_render::mesh::MeshData;
 use genex_render::motion::{
-    DrawId, GpuMotionFrame, MOTION_FLAG_MATCHED_BY_ID, MOTION_FLAG_NO_HISTORY, MOTION_FLAG_STILL, MotionFrameInput, MotionHistory, MotionImage, MotionScope, MotionStep, NO_PREV_VERTICES, RowKind,
+    CustomMotion, CustomRow, DrawId, GpuMotionFrame, MOTION_FLAG_MATCHED_BY_ID, MOTION_FLAG_NO_HISTORY, MOTION_FLAG_STILL, MotionFrameInput, MotionHistory, MotionImage, MotionScope, MotionStep, NO_PREV_VERTICES, RowKind,
     motion_gpu_ms, motion_images, motion_of,
 };
 use genex_render::scene::{CameraDesc, FramePlan, Material, MeshId, MeshLibrary, Scene, scaled, translation};
@@ -152,7 +152,85 @@ fn the_first_frame_and_a_reset_have_no_history_and_last_frame_s_camera_is_the_cu
     assert_eq!(cut.prev_models[0].flags[0], MOTION_FLAG_NO_HISTORY | MOTION_FLAG_STILL);
     let jittered = history.apply(&mut plan(&scene, &library), MotionStep { jitter_ndc: [0.25, -0.5], ..MotionStep::default() });
     assert_eq!(jittered.jitter, [0.25, -0.5, 0.0, 0.0]);
-    assert_eq!(size_of::<GpuMotionFrame>(), 80);
+    // Renderer pass 2, P2-0.8b (T-03) flipped 80 -> 144: the camera's reprojection
+    // (`GpuMotionFrame::reproject`), which the background's motion reads.
+    assert_eq!(size_of::<GpuMotionFrame>(), 144);
+}
+
+/// Renderer pass 2, P2-0.8b (T-03): the frame row carries last frame's unjittered view_proj times
+/// this frame's inverse, the matrix the background's motion and TAA's disocclusion test read
+/// (identity for a still camera and after a reset).
+#[test]
+fn the_motion_frame_carries_the_cameras_reprojection() {
+    let library = MeshLibrary::new();
+    let mut history = MotionHistory::new();
+    let looking = |x: f32| scene(CameraDesc::look_at([0.0, 1.0, 6.0], [x, 1.0, 0.0]));
+    let mut first = plan(&looking(0.0), &library);
+    let still = history.apply(&mut first, MotionStep::default());
+    let identity = genex_render::post::taa::IDENTITY;
+    let near = |a: &[f32; 16], b: &[f32; 16]| a.iter().zip(b).all(|(x, y)| (x - y).abs() < 1e-5);
+    assert!(near(&still.reproject, &identity), "no history: {:?}", still.reproject);
+    let mut turned = plan(&looking(0.3), &library);
+    let row = history.apply(&mut turned, MotionStep::default());
+    assert_eq!(row.reproject, genex_render::post::taa::reprojection(&first.frame.view_proj, &turned.frame.view_proj));
+    assert!(!near(&row.reproject, &identity), "a turned camera reprojects");
+    let mut cut = plan(&looking(0.6), &library);
+    let reset = history.apply(&mut cut, MotionStep { reset: true, ..MotionStep::default() });
+    assert!(near(&reset.reproject, &identity), "a cut forgets the camera");
+}
+
+// ---------------------------------------------------------------------------------------------
+// CPU rows: custom draws (renderer pass 2, P2-0.8b: T-04, LG-05)
+
+/// A custom draw of `mesh` at `x` (radius 1), under `id`.
+fn custom_row(id: Option<&str>, mesh: MeshId, x: f32) -> CustomRow {
+    CustomRow { id: id.map(DrawId::from), mesh, model: translation(x, 0.0, 0.0), bounds: [x, 0.0, 0.0, 1.0] }
+}
+
+#[test]
+fn a_custom_draw_takes_last_frame_s_model_by_id_or_mesh_ordinal_and_has_none_unmatched() {
+    let mut motion = CustomMotion::new();
+    let first = [custom_row(Some("mover"), MeshId::CUBE, 0.0), custom_row(None, MeshId::SPHERE, 5.0), custom_row(None, MeshId::SPHERE, 9.0)];
+    let (prevs, prev_seconds) = motion.apply(&first, 1.0);
+    assert!(prevs.iter().all(|prev| !prev.history), "the first frame has no history");
+    assert!(prevs.iter().zip(&first).all(|(prev, row)| prev.model == row.model), "and moves with the camera alone");
+    assert_eq!(prev_seconds, 1.0, "the first frame's previous time is its own");
+    // The id'd cube jumps far (an id match is trusted), the spheres creep and an id-less cube appears.
+    let second = [
+        custom_row(None, MeshId::CUBE, -4.0),
+        custom_row(Some("mover"), MeshId::CUBE, 6.0),
+        custom_row(None, MeshId::SPHERE, 5.2),
+        custom_row(None, MeshId::SPHERE, 9.2),
+    ];
+    let (prevs, prev_seconds) = motion.apply(&second, 1.05);
+    assert_eq!(prev_seconds, 1.0, "last frame's simulated seconds (GxDrawV2 params.z)");
+    assert!(!prevs[0].history, "a new id-less cube has no history");
+    assert_eq!((prevs[1].history, prevs[1].model), (true, first[0].model), "matched by its id");
+    assert_eq!((prevs[2].history, prevs[2].model), (true, first[1].model), "matched by mesh ordinal");
+    assert_eq!((prevs[3].history, prevs[3].model), (true, first[2].model));
+    // The first sphere goes: the second's ordinal now names the first's slot, five radii away.
+    let third = [custom_row(Some("mover"), MeshId::CUBE, 6.0), custom_row(None, MeshId::SPHERE, 9.4)];
+    let (prevs, _) = motion.apply(&third, 1.1);
+    assert_eq!((prevs[0].history, prevs[0].model), (true, second[1].model), "still: last frame's model is its own");
+    assert!(!prevs[1].history, "an ordinal match that jumped has no history");
+    let mut broken = custom_row(Some("mover"), MeshId::CUBE, 6.0);
+    broken.model[12] = f32::NAN;
+    let (prevs, _) = motion.apply(&[broken], 1.15);
+    assert!(!prevs[0].history, "a non-finite transform has no history");
+    motion.reset();
+    let (prevs, prev_seconds) = motion.apply(&third, 2.0);
+    assert!(prevs.iter().all(|prev| !prev.history) && prev_seconds == 2.0, "a reset forgets the draws and the time");
+}
+
+#[test]
+fn a_custom_draw_s_prepass_row_carries_last_frame_s_model_and_its_history() {
+    use genex_render::prepass::{GpuPrepassDraw, PrepassDraw};
+    let moved = PrepassDraw { mesh: MeshId::CUBE, model: translation(1.0, 0.0, 0.0), prev_model: translation(0.5, 0.0, 0.0), history: true };
+    let row = GpuPrepassDraw::of(&moved);
+    assert_eq!((row.prev_model, row.flags), (moved.prev_model, [0; 4]));
+    let fresh = GpuPrepassDraw::of(&PrepassDraw { history: false, ..moved });
+    assert_eq!(fresh.flags[0], MOTION_FLAG_NO_HISTORY, "a draw without history writes the reactive flag");
+    assert_eq!(PrepassDraw::still(MeshId::CUBE, moved.model).prev_model, moved.model);
 }
 
 #[test]
@@ -279,11 +357,51 @@ fn the_motion_frame_and_previous_model_rows_match_the_prepass_shader() {
     };
     assert_eq!(size_of_named("MotionFrame"), size_of::<GpuMotionFrame>());
     assert_eq!(size_of_named("PrevModel"), size_of::<GpuPrevModel>());
+    assert_eq!(size_of_named("PrepassDraw"), size_of::<genex_render::prepass::GpuPrepassDraw>());
     let mut validator = naga::valid::Validator::new(naga::valid::ValidationFlags::all(), naga::valid::Capabilities::empty());
     validator.validate(&module).expect("the motion entry points validate in WebGPU core");
     for entry in ["vs_prepass_motion", "vs_prepass_draw_motion", "fs_prepass_motion"] {
         assert!(module.entry_points.iter().any(|point| point.name == entry), "{entry}");
     }
+    // T-03: the background's module mirrors the frame row too.
+    let background = naga::front::wgsl::parse_str(genex_render::motion::BACKGROUND_MOTION).expect("the background motion parses");
+    let mut layouter = naga::proc::Layouter::default();
+    layouter.update(background.to_ctx()).expect("layout");
+    let (handle, _) = background.types.iter().find(|(_, ty)| ty.name.as_deref() == Some("MotionFrame")).expect("MotionFrame");
+    assert_eq!(layouter[handle].size as usize, size_of::<GpuMotionFrame>());
+    let mut validator = naga::valid::Validator::new(naga::valid::ValidationFlags::all(), naga::valid::Capabilities::empty());
+    validator.validate(&background).expect("the background motion validates in WebGPU core");
+}
+
+/// The locations `entry` (a fragment entry point of `module`) writes.
+fn fragment_output_locations(module: &naga::Module, entry: &str) -> Vec<u32> {
+    let point = module.entry_points.iter().find(|point| point.name == entry).unwrap_or_else(|| panic!("{entry} is declared"));
+    let Some(result) = point.function.result.as_ref() else { return Vec::new() };
+    let binding_location = |binding: Option<&naga::Binding>| match binding {
+        Some(naga::Binding::Location { location, .. }) => Some(*location),
+        _ => None,
+    };
+    if let naga::TypeInner::Struct { members, .. } = &module.types[result.ty].inner {
+        return members.iter().filter_map(|member| binding_location(member.binding.as_ref())).collect();
+    }
+    binding_location(result.binding.as_ref()).into_iter().collect()
+}
+
+#[test]
+fn the_background_motion_pipeline_writes_only_targets_its_fragment_stage_outputs() {
+    // WebGPU (Dawn, Chrome) refuses a colour target with a non-zero write mask and no fragment
+    // output at its location; wgpu's Metal path does not, so the web went black at every TAA preset
+    // (G0 perf-platform: "Invalid RenderPipeline vs_background_motion").
+    let module = naga::front::wgsl::parse_str(genex_render::motion::BACKGROUND_MOTION).expect("the background motion parses");
+    let outputs = fragment_output_locations(&module, genex_render::motion::BACKGROUND_FRAGMENT_ENTRY);
+    let targets = genex_render::motion::background_targets();
+    for (location, target) in targets.iter().enumerate() {
+        let target = target.as_ref().expect("every prepass target is bound");
+        let written = !target.write_mask.is_empty();
+        let output = outputs.contains(&(location as u32));
+        assert_eq!(written, output, "target {location} ({:?}): write mask {:?}, fragment output {output}", target.format, target.write_mask);
+    }
+    assert_eq!(outputs, vec![genex_render::motion::MOTION_LOCATION], "the background writes the motion alone");
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -538,4 +656,55 @@ fn metal_the_motion_pass_adds_at_most_0_1_ms_over_the_prepass_at_1080p() {
         std::fs::write(path, format!("{row}\n")).expect("perf row");
     }
     assert!(median <= MOTION_BUDGET_MS, "the motion pass adds {median:.4} ms over the prepass at 1080p (median of {COST_TRIALS}; budget {MOTION_BUDGET_MS} ms)");
+}
+
+/// Renderer pass 2, P2-0.8b (T-03): a camera turning over a lone cube writes the camera's own
+/// motion at the far plane wherever no geometry drew (the sky reprojects with the turn, as Bevy's
+/// background motion does), the CPU reprojection's to f16 precision, and leaves the reactive mask
+/// at 0 there (the sky keeps its history); the cube's pixels keep their own motion. Before T-03 the
+/// background read zero.
+#[test]
+#[ignore = "GPU: run with -- --ignored metal"]
+fn metal_a_turning_camera_writes_the_camera_s_motion_where_no_geometry_drew() {
+    let Some((_rows, gpu)) = gpu() else { return };
+    let library = MeshLibrary::new();
+    let turned = |yaw: f32| {
+        let ahead = glam::Vec3::new(libm::sinf(yaw), 0.0, -libm::cosf(yaw));
+        let mut scene = scene(CameraDesc::look_at([0.0, 0.0, 6.0], (glam::Vec3::new(0.0, 0.0, 6.0) + ahead).to_array()));
+        scene.draw(MeshId::CUBE, scaled([0.0, 0.0, 0.0], [1.5; 3]), grey());
+        scene
+    };
+    let aspect = WIDTH as f32 / HEIGHT as f32;
+    for reversed in [true, false] {
+        for jitter in [[0.0, 0.0], [0.31, -0.27]] {
+            let frames = [frame(turned(0.0), [0.0; 2], true), frame(turned(0.02), jitter, false)];
+            let images = motion_images(&gpu, &library, SIZE, reversed, &frames).expect("motion");
+            let image = &images[1];
+            write_evidence(&format!("background-turn-{}-{}", if reversed { "rev" } else { "std" }, jitter[0]), image);
+            let jitter_ndc = genex_render::jitter::offset_ndc(jitter, SIZE);
+            let reproject = image.frame.reproject;
+            let far = if reversed { 0.0 } else { 1.0 };
+            let (mut background, mut worst, mut reactive) = (0, 0.0f32, 0.0f32);
+            for (at, depth) in image.depth.iter().enumerate() {
+                if *depth != far {
+                    continue;
+                }
+                background += 1;
+                let (x, y) = ((at % WIDTH as usize) as f32, (at / WIDTH as usize) as f32);
+                let ndc = [(x + 0.5) / WIDTH as f32 * 2.0 - 1.0 - jitter_ndc[0], 1.0 - (y + 0.5) / HEIGHT as f32 * 2.0 - jitter_ndc[1]];
+                let prev = glam::Mat4::from_cols_array(&reproject) * glam::Vec4::new(ndc[0], ndc[1], far, 1.0);
+                let expected = [ndc[0] - prev.x / prev.w, ndc[1] - prev.y / prev.w];
+                let got = image.motion[at];
+                worst = worst.max((got[0] - expected[0]).abs()).max((got[1] - expected[1]).abs());
+                reactive = reactive.max(image.reactive[at]);
+            }
+            let turn_ndc = libm::tanf(0.02) / libm::tanf(CameraDesc::look_at([0.0; 3], [0.0, 0.0, -1.0]).fovy_degrees.to_radians() * 0.5) / aspect;
+            let centre = image.motion[pixel_of(0.0, 0.0)];
+            eprintln!("reversed {reversed} jitter {jitter:?}: {background} background pixels, worst error {worst:.6} NDC (turn about {turn_ndc:.4}), reactive {reactive}, cube centre {centre:?}");
+            assert!(background > (WIDTH * HEIGHT / 2) as usize, "the cube leaves most of the frame to the background ({background})");
+            assert!(worst < REPROJECTION_TOLERANCE, "the background's motion is the camera's reprojection at the far plane (worst {worst} NDC)");
+            assert_eq!(reactive, 0.0, "the background keeps its history");
+            assert!(centre[0].abs() > turn_ndc * 0.5, "the cube's own pixels carry the turn too: {centre:?}");
+        }
+    }
 }

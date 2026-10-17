@@ -26,8 +26,10 @@ const CAMERA_RING: f32 = LAKE_RADIUS * 1.25;
 const PATH_CLEARING: f32 = 9.0;
 /// The sky dome's radius (inside the far plane, past the shadow casters' reach).
 const SKY_RADIUS: f32 = 600.0;
-/// The bands of the sky placeholder: polar angles and sRGB colours, zenith to horizon.
-const SKY_BANDS: [(f32, f32, [u8; 3]); 3] = [(0.0, 0.7, [96, 150, 245]), (0.7, 1.25, [140, 186, 252]), (1.25, 1.75, [196, 220, 255])];
+/// The bands of the sky placeholder: polar angles and sRGB colours, zenith to horizon, each within
+/// a gentle step of the next (G0: a zenith band 44 levels off the next drew a hard-edged ellipse
+/// across the top of the frame). Colours only: the scene's draws and their cost are unchanged.
+const SKY_BANDS: [(f32, f32, [u8; 3]); 3] = [(0.0, 0.7, [150, 190, 246]), (0.7, 1.25, [172, 204, 250]), (1.25, 1.75, [196, 220, 255])];
 
 /// Terrain height at (x, z): hills from two octaves of noise, cut down into the lake basin.
 fn height(x: f32, z: f32) -> f32 {

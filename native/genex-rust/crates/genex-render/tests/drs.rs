@@ -285,7 +285,7 @@ fn a_runtime_demotion_never_changes_the_sample_count_or_pipeline_keys() {
     high.shadows.map_size = 2048;
     high.shadows.filter = ShadowFilter::Pcss;
     high.bloom.enabled = true;
-    high.bloom.mips = 7;
+    high.bloom.resolution = genex_render::post::bloom::CHAIN_RESOLUTION;
     high.ao.resolution = AoResolution::Full;
     high.ao.slices = 3;
     high.ao.temporal = true;

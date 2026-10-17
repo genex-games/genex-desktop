@@ -13,10 +13,19 @@
 //! order ([`lights_at`] is that walk): no per-cluster cap, so no light is ever truncated. The
 //! preset's light cap drops whole lights, farthest first, before binning ([`binned_order`]).
 //!
-//! Tables: `light_tiles` (the masks, tile-major) and `light_zbins` (a [`GpuLightBinParams`]
-//! header of [`LIGHT_BIN_HEADER_WORDS`] words, then [`LIGHT_ZBINS`] packed z-bins), both bound
-//! in the forward frame group and the Level-2 v2 material map under the same names. The local
-//! light table the shading reads holds the lights in binned order ([`LightBinFrame::sorted`]).
+//! Table (renderer pass 2 A.0, LG-16): one `light_bins` buffer holds a [`GpuLightBinParams`]
+//! header of [`LIGHT_BIN_HEADER_WORDS`] words, then [`LIGHT_ZBINS`] packed z-bins per
+//! clusterable kind, then the masks (tile-major) at [`LIGHT_TILES_OFFSET_WORDS`]. The forward
+//! frame group binds it whole as `light_bins`; the Level-2 v2 material map binds its z-bins as
+//! `light_zbins` and its masks as `light_tiles`, two slices of the one buffer, so the v2 map is
+//! unchanged and the forward fragment stage spends one storage buffer on the bins, not two.
+//!
+//! One clusterable index space (LG-16, after Bevy's clusterable objects): lights, then decals,
+//! then probes ([`ClusterKind`]), each kind a contiguous range of sorted indices
+//! (`GpuLightBinParams::ranges`) sorted by its own view depth, with its own z-bins, sharing the
+//! tile masks. A kind's walk is the lights' walk over its own range ([`clusterables_at`]), so
+//! adding decals or probes changes no light's walk. The local light table the shading reads holds
+//! the lights in binned order ([`LightBinFrame::sorted`]).
 //!
 //! Every value is integer or exact on the GPU side: the CPU computes the bounds rows once, so the
 //! GPU masks and z-bins equal [`LightBinFrame::reference_masks`] and
@@ -42,7 +51,7 @@ use crate::tables::{buffer, compute_storage, compute_uniform, entry, pipeline_la
 pub const LANDED: bool = true;
 
 /// The light binning compute shader (graph node 4).
-pub const LIGHT_BIN: &str = concat!(include_str!("../shaders/common.wgsl"), include_str!("../shaders/light_bin.wgsl"));
+pub const LIGHT_BIN: &str = crate::shaders::minify::shipped_wgsl!(concat!(include_str!("../shaders/common.wgsl"), include_str!("../shaders/light_bin.wgsl")));
 /// The axis-mask entry point: one invocation per mask word of each tile column and tile row.
 pub const LIGHT_AXES_ENTRY: &str = "cs_light_axes";
 /// The tile-mask entry point: one invocation per mask word of `light_tiles`.
@@ -52,13 +61,70 @@ pub const LIGHT_BIN_ENTRY: &str = "cs_light_bin";
 pub const LIGHT_ZBIN_ENTRY: &str = "cs_light_zbins";
 /// Invocations per binning workgroup.
 pub const LIGHT_BIN_WORKGROUP: u32 = 64;
-/// Mask words per tile at most (every local light binned).
-pub const LIGHT_BIN_WORDS_MAX: u32 = (MAX_LOCAL_LIGHTS as u32).div_ceil(32);
+/// What a binned object is (LG-16): lights, decals and probes share one binned index space, each
+/// kind a contiguous range of it, in this order.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum ClusterKind {
+    /// A local light (point or spot): the lights' walk ([`lights_at`]).
+    Light,
+    /// A projected decal's box, bounded by its sphere (renderer pass 2 A.10).
+    Decal,
+    /// A reflection probe's or irradiance volume's influence, bounded by its sphere (A.3, A.4).
+    Probe,
+}
+
+impl ClusterKind {
+    /// Every kind, in index-space order.
+    pub const ALL: [ClusterKind; CLUSTER_KINDS] = [ClusterKind::Light, ClusterKind::Decal, ClusterKind::Probe];
+
+    /// The kind's position in the index space and in the z-bin table.
+    pub const fn index(self) -> usize {
+        match self {
+            ClusterKind::Light => 0,
+            ClusterKind::Decal => 1,
+            ClusterKind::Probe => 2,
+        }
+    }
+}
+
+/// Clusterable kinds: each has its own z-bins in the table.
+pub const CLUSTER_KINDS: usize = 3;
+/// Decals binned at most (A.10 sizes its rows within this).
+pub const MAX_BINNED_DECALS: usize = 1024;
+/// Probes binned at most (A.3 reflection probes and A.4 irradiance volumes together).
+pub const MAX_BINNED_PROBES: usize = 64;
+/// Objects of every kind binned at most: the index space's size.
+pub const MAX_CLUSTERABLES: usize = MAX_LOCAL_LIGHTS + MAX_BINNED_DECALS + MAX_BINNED_PROBES;
+/// Mask words per tile at most (every clusterable binned).
+pub const LIGHT_BIN_WORDS_MAX: u32 = (MAX_CLUSTERABLES as u32).div_ceil(32);
+
+/// A decal's or probe's world-space bounding sphere: what binning reads of it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ClusterSphere {
+    /// The centre.
+    pub centre: [f32; 3],
+    /// The radius (a sphere that is not a number, or not above 0, bins nothing; an infinite one
+    /// covers the whole view).
+    pub radius: f32,
+}
+
+/// The decals and probes a frame bins beside its lights (empty until A.10 and A.3/A.4 land).
+#[derive(Clone, Copy, Debug, Default)]
+pub struct ClusterInput<'a> {
+    /// The decals' spheres, at most [`MAX_BINNED_DECALS`] (the rest are not binned).
+    pub decals: &'a [ClusterSphere],
+    /// The probes' spheres, at most [`MAX_BINNED_PROBES`].
+    pub probes: &'a [ClusterSphere],
+}
 
 /// Slices of view depth the z-bins split the lit range into.
 pub const LIGHT_ZBINS: u32 = 64;
-/// Words of the [`GpuLightBinParams`] header at the start of `light_zbins`.
+/// Words of the [`GpuLightBinParams`] header at the start of `light_bins`.
 pub const LIGHT_BIN_HEADER_WORDS: u32 = (size_of::<GpuLightBinParams>() / 4) as u32;
+/// Where the tile masks start in `light_bins`, in words: after the header and every kind's
+/// z-bins, at an offset every core device binds storage at (256 bytes), so the v2 map's
+/// `light_tiles` is a slice of the table.
+pub const LIGHT_TILES_OFFSET_WORDS: u32 = 256;
 /// Bits of a packed z-bin each light index takes: the low half holds the lowest index, the high
 /// half the highest.
 pub const ZBIN_INDEX_BITS: u32 = 16;
@@ -97,8 +163,10 @@ pub const FROXEL_LIST_CAP: u32 = 64;
 /// Bytes of one froxel's list header (offset and count).
 const FROXEL_HEADER_BYTES: u64 = 8;
 
-// Every light index of the sorted list fits a z-bin's half word.
-const _: () = assert!(MAX_LOCAL_LIGHTS < (1 << ZBIN_INDEX_BITS) - 1);
+// Every index of the binned list fits a z-bin's half word.
+const _: () = assert!(MAX_CLUSTERABLES < (1 << ZBIN_INDEX_BITS) - 1);
+// The masks follow the z-bins at a 256-byte (core storage offset) boundary.
+const _: () = assert!(LIGHT_TILES_OFFSET_WORDS as u64 * 4 >= zbin_bytes() && (LIGHT_TILES_OFFSET_WORDS * 4).is_multiple_of(256));
 // The z-bin reduction halves the workgroup down to one invocation.
 const _: () = assert!(LIGHT_BIN_WORKGROUP.is_power_of_two());
 
@@ -120,7 +188,24 @@ pub const fn zbin_range(packed: u32) -> Option<(u32, u32)> {
 /// to the bins, so a depth outside the lit range reads the nearest end bin. The shading computes
 /// the same in WGSL: `min(u32(max((depth - near) * per_depth, 0.0)), bins - 1u)`.
 pub fn zbin_of(params: &GpuLightBinParams, depth: f32) -> u32 {
-    let [bins, _, near, per_depth] = params.depth;
+    zbin_of_kind(params, ClusterKind::Light, depth)
+}
+
+/// The z-bins' depth mapping of `kind` under `params` as f32 bits: (where z-bin 0 starts, z-bins
+/// per unit depth). Each kind bins over its own depth range, so adding decals or probes changes
+/// no light's z-bin.
+pub fn kind_depth(params: &GpuLightBinParams, kind: ClusterKind) -> (u32, u32) {
+    match kind {
+        ClusterKind::Light => (params.depth[2], params.depth[3]),
+        ClusterKind::Decal => (params.kind_depth[0], params.kind_depth[1]),
+        ClusterKind::Probe => (params.kind_depth[2], params.kind_depth[3]),
+    }
+}
+
+/// [`zbin_of`] in `kind`'s own z-bins.
+pub fn zbin_of_kind(params: &GpuLightBinParams, kind: ClusterKind, depth: f32) -> u32 {
+    let bins = params.depth[0];
+    let (near, per_depth) = kind_depth(params, kind);
     let slot = (depth - f32::from_bits(near)) * f32::from_bits(per_depth);
     if slot.is_nan() || slot <= 0.0 {
         return 0;
@@ -179,21 +264,45 @@ impl LightGrid {
         self.axis_words() * 4
     }
 
-    /// The header the dispatch reads and `light_zbins` starts with: z-bins split the view depths
-    /// `near..far` evenly.
+    /// The header the dispatch reads and `light_bins` starts with, for `lights` lights and no
+    /// other kind: z-bins split the view depths `near..far` evenly.
     pub fn params(&self, lights: u32, near: f32, far: f32) -> GpuLightBinParams {
-        let span = far - near;
-        let per_depth = if span.is_finite() && span > 0.0 { LIGHT_ZBINS as f32 / span } else { 0.0 };
+        self.params_of([lights, lights, lights], [(near, far); CLUSTER_KINDS])
+    }
+
+    /// [`LightGrid::params`] of a frame whose kinds end at `ends` (lights, decals, probes), each
+    /// kind's z-bins splitting its own `(near, far)` of `depths` evenly.
+    pub fn params_of(&self, ends: [u32; CLUSTER_KINDS], depths: [(f32, f32); CLUSTER_KINDS]) -> GpuLightBinParams {
+        let mapping = depths.map(|(near, far)| {
+            let span = far - near;
+            let per_depth = if span.is_finite() && span > 0.0 { LIGHT_ZBINS as f32 / span } else { 0.0 };
+            (near.to_bits(), per_depth.to_bits())
+        });
+        let [(near, per_depth), decal, probe] = mapping;
         GpuLightBinParams {
             grid: [self.tiles_x, self.tiles_y, self.words_per_tile, self.tile_px],
-            depth: [LIGHT_ZBINS, lights, near.to_bits(), per_depth.to_bits()],
+            depth: [LIGHT_ZBINS, ends[0], near, per_depth],
+            ranges: [ends[0], ends[1], ends[2], 0],
+            kind_depth: [decal.0, decal.1, probe.0, probe.1],
         }
     }
 }
 
-/// Bytes of `light_zbins`: the header, then every z-bin.
+/// Bytes of the bin header and every kind's z-bins: the start of `light_bins` (the v2 map's
+/// `light_zbins`).
 pub const fn zbin_bytes() -> u64 {
-    (LIGHT_BIN_HEADER_WORDS as u64 + LIGHT_ZBINS as u64) * 4
+    (LIGHT_BIN_HEADER_WORDS as u64 + LIGHT_ZBINS as u64 * CLUSTER_KINDS as u64) * 4
+}
+
+/// Bytes of `light_bins` for `grid`: the header and z-bins, then the masks from
+/// [`LIGHT_TILES_OFFSET_WORDS`].
+pub fn bins_bytes(grid: &LightGrid) -> u64 {
+    u64::from(LIGHT_TILES_OFFSET_WORDS) * 4 + grid.mask_bytes()
+}
+
+/// The index of z-bin `bin` of `kind` in `light_bins`' words.
+pub const fn zbin_word(kind: ClusterKind, bin: u32) -> usize {
+    LIGHT_BIN_HEADER_WORDS as usize + kind.index() * LIGHT_ZBINS as usize + bin as usize
 }
 
 /// Bytes the froxel-list layout binning replaced would take over the same screen tiles
@@ -383,6 +492,21 @@ impl BinCamera {
     /// of the near plane or past the far plane.
     fn reach(&self, light: &GpuLocalLight) -> Option<Reach> {
         let (centre, radius) = bounding_sphere(light)?;
+        self.reach_sphere(centre, radius)
+    }
+
+    /// A decal's or probe's sphere in view space, or `None` when it is not a sphere or lies
+    /// wholly in front of the near plane or past the far plane.
+    fn reach_of(&self, sphere: &ClusterSphere) -> Option<Reach> {
+        let centre = Vec3::from(sphere.centre);
+        if !centre.is_finite() || sphere.radius.is_nan() || sphere.radius <= 0.0 {
+            return None;
+        }
+        self.reach_sphere(centre, sphere.radius)
+    }
+
+    /// The world sphere `centre`/`radius` in view space and its depth extent, when it is seen.
+    fn reach_sphere(&self, centre: Vec3, radius: f32) -> Option<Reach> {
         let centre = self.view.transform_point3(centre);
         let depth = -centre.z;
         let depths = (depth - radius, depth + radius);
@@ -443,13 +567,14 @@ impl BinCamera {
         Some([at(x0, whole[2]), at(y0, whole[3]), at(x1, whole[2]), at(y1, whole[3])])
     }
 
-    /// The bounds row of one sorted light: its tile rectangle and z-bin range under `params`.
-    fn bounds_row(&self, grid: &LightGrid, params: &GpuLightBinParams, reach: &Reach) -> [u32; 4] {
+    /// The bounds row of one sorted object of `kind`: its tile rectangle and the range of its
+    /// kind's z-bins under `params`.
+    fn bounds_row(&self, grid: &LightGrid, params: &GpuLightBinParams, kind: ClusterKind, reach: &Reach) -> [u32; 4] {
         let Some([x0, y0, x1, y1]) = self.tiles(grid, reach) else { return BOUNDS_EMPTY };
         let depth = -reach.centre.z;
         let margin = DEPTH_MARGIN * (depth.abs() + reach.radius) + DEPTH_MARGIN_MIN;
-        let first = zbin_of(params, reach.depths.0 - margin);
-        let last = zbin_of(params, reach.depths.1 + margin).max(first);
+        let first = zbin_of_kind(params, kind, reach.depths.0 - margin);
+        let last = zbin_of_kind(params, kind, reach.depths.1 + margin).max(first);
         [x0 | (y0 << TILE_COORD_BITS), x1 | (y1 << TILE_COORD_BITS), pack_zbin(first, last), 0]
     }
 
@@ -465,20 +590,39 @@ impl BinCamera {
 }
 
 /// One frame's binning, prepared on the CPU: the binned order, the grid, the header and every
-/// sorted light's bounds row. The GPU node turns it into masks and z-bins; the reference methods
+/// sorted object's bounds row. The GPU node turns it into masks and z-bins; the reference methods
 /// compute the same on the CPU.
 #[derive(Clone, Debug, PartialEq)]
 pub struct LightBinFrame {
     /// Rows of the caller's light list in binned order: sorted index `i` is row `order[i]`.
     pub order: Vec<u32>,
+    /// Rows of the caller's decal list in binned order (by view depth): sorted index
+    /// `first_index(Decal) + i` is decal row `decals[i]`.
+    pub decals: Vec<u32>,
+    /// Rows of the caller's probe list in binned order, after the decals.
+    pub probes: Vec<u32>,
     /// The tile grid.
     pub grid: LightGrid,
     /// The dispatch's uniform and `light_zbins`'s header.
     pub params: GpuLightBinParams,
-    /// Per sorted light (`light_bounds`, `vec4<u32>`): x the tile rectangle's minimum and y its
-    /// maximum (tile x in the low 16 bits, y in the high), z the packed z-bin range, w 0.
-    /// [`BOUNDS_EMPTY`] for a light that touches nothing on screen.
+    /// Per sorted object, lights then decals then probes (`light_bounds`, `vec4<u32>`): x the
+    /// tile rectangle's minimum and y its maximum (tile x in the low 16 bits, y in the high), z
+    /// the packed z-bin range of its kind's bins, w 0. [`BOUNDS_EMPTY`] for one that touches
+    /// nothing on screen.
     pub bounds: Vec<[u32; 4]>,
+}
+
+/// Row indices of `spheres` (at most `cap`, the first rows) by view depth of their centres,
+/// nearest first, equal depths (and spheres that are not numbers, last) in row order.
+fn sphere_order(spheres: &[ClusterSphere], cap: usize, camera_pos: [f32; 3], forward: [f32; 3]) -> Vec<u32> {
+    let depth = |sphere: &ClusterSphere| {
+        let [x, y, z] = sphere.centre;
+        let depth = (x - camera_pos[0]) * forward[0] + (y - camera_pos[1]) * forward[1] + (z - camera_pos[2]) * forward[2];
+        if depth.is_nan() { f32::INFINITY } else { depth }
+    };
+    let mut keyed: Vec<(f32, u32)> = spheres.iter().take(cap).enumerate().map(|(row, sphere)| (depth(sphere), row as u32)).collect();
+    keyed.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
+    keyed.into_iter().map(|(_, row)| row).collect()
 }
 
 impl LightBinFrame {
@@ -486,16 +630,34 @@ impl LightBinFrame {
     /// `render`-sized frame under `quality`: at most the preset's cap of lights (farthest dropped
     /// first), its tile size. Deterministic: the same rows, camera and quality give the same frame.
     pub fn prepare(lights: &[GpuLocalLight], camera: &CameraDesc, render: (u32, u32), quality: &LightQuality) -> LightBinFrame {
+        LightBinFrame::prepare_clusterables(lights, &ClusterInput::default(), camera, render, quality)
+    }
+
+    /// [`LightBinFrame::prepare`] with `others`' decals and probes binned into the same index
+    /// space after the lights (LG-16): each kind sorted by its own view depth (at most its cap,
+    /// the first rows), with its own z-bins over one depth range, sharing the tile masks.
+    pub fn prepare_clusterables(lights: &[GpuLocalLight], others: &ClusterInput<'_>, camera: &CameraDesc, render: (u32, u32), quality: &LightQuality) -> LightBinFrame {
         let view = BinCamera::new(camera, render);
         let cap = usize::try_from(quality.cap).unwrap_or(usize::MAX).min(MAX_LOCAL_LIGHTS);
         let order = binned_order(lights, view.eye, view.forward, cap);
-        let reaches: Vec<Option<Reach>> = order.iter().map(|row| view.reach(&lights[*row as usize])).collect();
-        let (near, far) = view.depth_range(&reaches);
-        let count = order.len() as u32;
-        let grid = LightGrid::new(view.render, tile_px(quality), count);
-        let params = grid.params(count, near, far);
-        let bounds = reaches.iter().map(|reach| reach.map_or(BOUNDS_EMPTY, |reach| view.bounds_row(&grid, &params, &reach))).collect();
-        LightBinFrame { order, grid, params, bounds }
+        let decals = sphere_order(others.decals, MAX_BINNED_DECALS, view.eye, view.forward);
+        let probes = sphere_order(others.probes, MAX_BINNED_PROBES, view.eye, view.forward);
+        let kinds: [Vec<Option<Reach>>; CLUSTER_KINDS] = [
+            order.iter().map(|row| view.reach(&lights[*row as usize])).collect(),
+            decals.iter().map(|row| view.reach_of(&others.decals[*row as usize])).collect(),
+            probes.iter().map(|row| view.reach_of(&others.probes[*row as usize])).collect(),
+        ];
+        let light_end = order.len() as u32;
+        let decal_end = light_end + decals.len() as u32;
+        let ends = [light_end, decal_end, decal_end + probes.len() as u32];
+        let grid = LightGrid::new(view.render, tile_px(quality), ends[2]);
+        let params = grid.params_of(ends, kinds.each_ref().map(|reaches| view.depth_range(reaches)));
+        let rows = |kind: ClusterKind| {
+            let view = &view;
+            kinds[kind.index()].iter().map(move |reach| reach.map_or(BOUNDS_EMPTY, |reach| view.bounds_row(&grid, &params, kind, &reach)))
+        };
+        let bounds = ClusterKind::ALL.into_iter().flat_map(rows).collect();
+        LightBinFrame { order, decals, probes, grid, params, bounds }
     }
 
     /// The local-light table the shading reads: `lights` in binned order.
@@ -503,9 +665,14 @@ impl LightBinFrame {
         self.order.iter().map(|row| lights[*row as usize]).collect()
     }
 
-    /// Bytes the bins take: the masks, the z-bin table and the axis-mask scratch.
+    /// The first sorted index of `kind` (its range ends where the next kind's starts).
+    pub fn first_index(&self, kind: ClusterKind) -> u32 {
+        kind_range(&self.params, kind).0
+    }
+
+    /// Bytes the bins take: the bin table (header, z-bins, masks) and the axis-mask scratch.
     pub fn bytes(&self) -> u64 {
-        self.grid.mask_bytes() + zbin_bytes() + self.grid.axis_bytes()
+        bins_bytes(&self.grid) + self.grid.axis_bytes()
     }
 
     /// The masks the GPU writes, by brute force on the CPU: every tile's words, tile-major.
@@ -525,29 +692,52 @@ impl LightBinFrame {
         masks
     }
 
-    /// `light_zbins` as the GPU writes it, on the CPU: the header, then each z-bin's lowest and
-    /// highest sorted index of a light whose z-bin range holds it.
+    /// The start of `light_bins` as the GPU writes it, on the CPU: the header, then per kind each
+    /// z-bin's lowest and highest sorted index of an object of that kind whose z-bin range holds
+    /// it.
     pub fn reference_zbins(&self) -> Vec<u32> {
         let mut table: Vec<u32> = bytemuck::cast_slice(&[self.params]).to_vec();
-        for bin in 0..LIGHT_ZBINS {
-            let touching = self.bounds.iter().enumerate().filter(|(_, row)| zbin_range(row[2]).is_some_and(|(first, last)| first <= bin && bin <= last));
-            let (lowest, highest) = touching.fold((0xFFFF, 0), |(lowest, highest), (index, _)| (lowest.min(index as u32), highest.max(index as u32)));
-            table.push(pack_zbin(lowest, highest));
+        for kind in ClusterKind::ALL {
+            let (start, end) = kind_range(&self.params, kind);
+            let rows = &self.bounds[start as usize..(end as usize).min(self.bounds.len())];
+            for bin in 0..LIGHT_ZBINS {
+                let touching = rows.iter().enumerate().filter(|(_, row)| zbin_range(row[2]).is_some_and(|(first, last)| first <= bin && bin <= last));
+                let fold = |(lowest, highest): (u32, u32), (at, _): (usize, &[u32; 4])| (lowest.min(start + at as u32), highest.max(start + at as u32));
+                let (lowest, highest) = touching.fold((0xFFFF, 0), fold);
+                table.push(pack_zbin(lowest, highest));
+            }
         }
         table
     }
 }
 
+/// The sorted indices `kind` holds under `params`: from the previous kind's end to its own.
+pub fn kind_range(params: &GpuLightBinParams, kind: ClusterKind) -> (u32, u32) {
+    let ends = params.ranges;
+    match kind {
+        ClusterKind::Light => (0, ends[0]),
+        ClusterKind::Decal => (ends[0], ends[1].max(ends[0])),
+        ClusterKind::Probe => (ends[1], ends[2].max(ends[1])),
+    }
+}
+
 /// The sorted light indices a fragment at `pixel` and view `depth` shades, in index order: the
 /// walk the shading does over its tile's mask words intersected with its z-bin's range. `masks`
-/// and `zbins` are the `light_tiles` and `light_zbins` tables (the header is read from `zbins`).
+/// and `zbins` are the two parts of `light_bins` (the v2 map's `light_tiles` and `light_zbins`;
+/// the header is read from `zbins`).
 pub fn lights_at(masks: &[u32], zbins: &[u32], pixel: (u32, u32), depth: f32) -> Vec<u32> {
+    clusterables_at(ClusterKind::Light, masks, zbins, pixel, depth)
+}
+
+/// [`lights_at`] for any clusterable `kind`: the sorted indices of that kind (its own range of the
+/// index space) a fragment at `pixel` and view `depth` reaches, in index order.
+pub fn clusterables_at(kind: ClusterKind, masks: &[u32], zbins: &[u32], pixel: (u32, u32), depth: f32) -> Vec<u32> {
     let mut params = GpuLightBinParams::default();
     bytemuck::cast_slice_mut::<GpuLightBinParams, u32>(std::slice::from_mut(&mut params)).copy_from_slice(&zbins[..LIGHT_BIN_HEADER_WORDS as usize]);
     let [tiles_x, tiles_y, words, tile_px] = params.grid;
     let tile = (pixel.1 / tile_px.max(1)).min(tiles_y.saturating_sub(1)) * tiles_x + (pixel.0 / tile_px.max(1)).min(tiles_x.saturating_sub(1));
-    let bin = zbin_of(&params, depth);
-    let Some((lowest, highest)) = zbin_range(zbins[(LIGHT_BIN_HEADER_WORDS + bin) as usize]) else { return Vec::new() };
+    let bin = zbin_of_kind(&params, kind, depth);
+    let Some((lowest, highest)) = zbins.get(zbin_word(kind, bin)).and_then(|packed| zbin_range(*packed)) else { return Vec::new() };
     let mut lit = Vec::new();
     for word in lowest / 32..=(highest / 32).min(words.saturating_sub(1)) {
         let mut bits = masks[(tile * words + word) as usize];
@@ -568,9 +758,8 @@ pub fn lights_at(masks: &[u32], zbins: &[u32], pixel: (u32, u32), depth: f32) ->
 /// The bind-group binding of each piece (shaders/light_bin.wgsl).
 const PARAMS_BINDING: u32 = 0;
 const BOUNDS_BINDING: u32 = 1;
-const TILES_BINDING: u32 = 2;
-const ZBINS_BINDING: u32 = 3;
-const AXES_BINDING: u32 = 4;
+const BINS_BINDING: u32 = 2;
+const AXES_BINDING: u32 = 3;
 /// Bytes of one bounds row.
 const BOUNDS_ROW_BYTES: u64 = 16;
 /// The axis-mask scratch a node starts with (a 1080p grid of 16-pixel tiles with every light
@@ -584,10 +773,8 @@ pub const COST_BUILDS_PER_SAMPLE: u32 = 64;
 pub struct LightBinInput<'a> {
     /// The frame's prepared binning.
     pub frame: &'a LightBinFrame,
-    /// `light_tiles`: a storage buffer of at least the frame's mask bytes.
-    pub tiles: &'a Buffer,
-    /// `light_zbins`: a storage buffer of at least [`zbin_bytes`].
-    pub zbins: &'a Buffer,
+    /// `light_bins`: a storage buffer of at least [`bins_bytes`] of the frame's grid.
+    pub bins: &'a Buffer,
 }
 
 /// The workgroups `(x, y)` of one dispatch.
@@ -613,7 +800,7 @@ pub struct LightBinNode {
     params: Buffer,
     bounds: Buffer,
     axes: Buffer,
-    cached: Option<(Buffer, Buffer, BindGroup)>,
+    cached: Option<(Buffer, BindGroup)>,
 }
 
 fn compute_pipeline(device: &Device, layout: &BindGroupLayout, module: &wgpu::ShaderModule, entry: &str) -> Compiled<ComputePipeline> {
@@ -622,7 +809,8 @@ fn compute_pipeline(device: &Device, layout: &BindGroupLayout, module: &wgpu::Sh
         layout: Some(&pipeline_layout(device, entry, &[layout])),
         module,
         entry_point: Some(entry),
-        compilation_options: Default::default(),
+        // A8.6: the z-bin kernel writes its workgroup arrays first; the others have none.
+        compilation_options: crate::compile::written_first(),
         cache: None,
     })
 }
@@ -635,8 +823,12 @@ fn check_input(device: &Device, input: &LightBinInput<'_>) -> Result<[Dispatch; 
     let frame = input.frame;
     let rows = frame.bounds.len();
     let grid = &frame.grid;
-    let consistent = rows <= MAX_LOCAL_LIGHTS
-        && frame.params.depth[1] as usize == rows
+    let [light_end, decal_end, probe_end, _] = frame.params.ranges;
+    let ordered = light_end <= decal_end && decal_end <= probe_end && light_end as usize <= MAX_LOCAL_LIGHTS;
+    let consistent = rows <= MAX_CLUSTERABLES
+        && ordered
+        && probe_end as usize == rows
+        && frame.params.depth[1] == light_end
         && frame.params.grid == [grid.tiles_x, grid.tiles_y, grid.words_per_tile, grid.tile_px]
         && grid.words_per_tile >= (rows as u32).div_ceil(32)
         && grid.words_per_tile <= LIGHT_BIN_WORDS_MAX;
@@ -651,8 +843,8 @@ fn check_input(device: &Device, input: &LightBinInput<'_>) -> Result<[Dispatch; 
     let Some(dispatches) = dispatches.filter(|_| wanted <= binding && grid.axis_bytes() <= binding) else {
         return Err(RenderError::refused(RenderCode::BufferTooLarge, format!("light bins: {wanted} mask bytes over a {binding}-byte binding or its dispatch")));
     };
-    if input.tiles.size() < wanted || input.zbins.size() < zbin_bytes() {
-        let detail = format!("light bins: tables of {} and {} bytes for {wanted} and {}", input.tiles.size(), input.zbins.size(), zbin_bytes());
+    if input.bins.size() < bins_bytes(grid) || bins_bytes(grid) > binding {
+        let detail = format!("light bins: a table of {} bytes for {}", input.bins.size(), bins_bytes(grid));
         return Err(RenderError::refused(RenderCode::BufferTooLarge, detail));
     }
     Ok(dispatches)
@@ -663,7 +855,7 @@ fn axes_buffer(device: &Device, bytes: u64) -> Result<Buffer, RenderError> {
 }
 
 impl LightBinNode {
-    /// The build's pipelines, uniform, bounds rows (room for [`MAX_LOCAL_LIGHTS`]) and axis-mask
+    /// The build's pipelines, uniform, bounds rows (room for [`MAX_CLUSTERABLES`]) and axis-mask
     /// scratch (grown when a grid needs more).
     pub fn new(device: &Device) -> Result<LightBinNode, RenderError> {
         let module = crate::shaders::module(device, "light binning", LIGHT_BIN)?;
@@ -672,13 +864,12 @@ impl LightBinNode {
             entries: &[
                 compute_uniform(PARAMS_BINDING),
                 compute_storage(BOUNDS_BINDING, true),
-                compute_storage(TILES_BINDING, false),
-                compute_storage(ZBINS_BINDING, false),
+                compute_storage(BINS_BINDING, false),
                 compute_storage(AXES_BINDING, false),
             ],
         });
         let params = buffer(device, "light binning params", size_of::<GpuLightBinParams>() as u64, BufferUsages::UNIFORM | BufferUsages::COPY_DST)?;
-        let bounds = buffer(device, "light bounds", MAX_LOCAL_LIGHTS as u64 * BOUNDS_ROW_BYTES, BufferUsages::STORAGE | BufferUsages::COPY_DST)?;
+        let bounds = buffer(device, "light bounds", MAX_CLUSTERABLES as u64 * BOUNDS_ROW_BYTES, BufferUsages::STORAGE | BufferUsages::COPY_DST)?;
         Ok(LightBinNode {
             axes_pipeline: compute_pipeline(device, &layout, &module, LIGHT_AXES_ENTRY),
             masks: compute_pipeline(device, &layout, &module, LIGHT_BIN_ENTRY),
@@ -717,7 +908,7 @@ impl LightBinNode {
         if !frame.bounds.is_empty() {
             queue.write_buffer(&self.bounds, 0, bytemuck::cast_slice(&frame.bounds));
         }
-        let group = self.group(device, input.tiles, input.zbins);
+        let group = self.group(device, input.bins);
         let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor { label: Some("light binning"), timestamp_writes });
         pass.set_bind_group(0, &group, &[]);
         // Each dispatch is its own usage scope: the axis masks are written before the tiles read them.
@@ -726,8 +917,13 @@ impl LightBinNode {
         pass.set_pipeline(&self.masks);
         pass.dispatch_workgroups(masks.0, masks.1, 1);
         pass.set_pipeline(&self.zbins);
-        pass.dispatch_workgroups(LIGHT_ZBINS, 1, 1);
+        pass.dispatch_workgroups(LIGHT_ZBINS, CLUSTER_KINDS as u32, 1);
         Ok(())
+    }
+
+    /// The node's own buffers: (label, bytes) of its uniform, bounds rows and axis scratch (LG-13).
+    pub fn buffers(&self) -> [(&'static str, u64); 3] {
+        [("light binning params", self.params.size()), ("light bounds", self.bounds.size()), ("light axis masks", self.axes.size())]
     }
 
     /// Drop the cached bind group (and the tables it holds).
@@ -735,11 +931,10 @@ impl LightBinNode {
         self.cached = None;
     }
 
-    /// The bind group over `tiles` and `zbins`, made when they are not the cached ones.
-    fn group(&mut self, device: &Device, tiles: &Buffer, zbins: &Buffer) -> BindGroup {
-        if let Some((held_tiles, held_zbins, group)) = &self.cached
-            && held_tiles == tiles
-            && held_zbins == zbins
+    /// The bind group over `bins`, made when it is not the cached one.
+    fn group(&mut self, device: &Device, bins: &Buffer) -> BindGroup {
+        if let Some((held, group)) = &self.cached
+            && held == bins
         {
             return group.clone();
         }
@@ -749,12 +944,11 @@ impl LightBinNode {
             entries: &[
                 entry(PARAMS_BINDING, &self.params),
                 entry(BOUNDS_BINDING, &self.bounds),
-                entry(TILES_BINDING, tiles),
-                entry(ZBINS_BINDING, zbins),
+                entry(BINS_BINDING, bins),
                 entry(AXES_BINDING, &self.axes),
             ],
         });
-        self.cached = Some((tiles.clone(), zbins.clone(), group.clone()));
+        self.cached = Some((bins.clone(), group.clone()));
         group
     }
 }
@@ -762,12 +956,12 @@ impl LightBinNode {
 // ---------------------------------------------------------------------------------------------
 // The build on supplied frames (tests, cost rows)
 
-/// One GPU build read back: `light_tiles` and `light_zbins`, word for word.
+/// One GPU build read back: `light_bins`' masks and its header with the z-bins, word for word.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LightBinRead {
-    /// The masks, tile-major.
+    /// The masks, tile-major (from [`LIGHT_TILES_OFFSET_WORDS`]).
     pub masks: Vec<u32>,
-    /// The header, then the z-bins.
+    /// The header, then every kind's z-bins.
     pub zbins: Vec<u32>,
 }
 
@@ -782,8 +976,8 @@ fn poisoned_table(gpu: &Gpu, label: &str, bytes: u64) -> Result<Buffer, RenderEr
     Ok(table)
 }
 
-fn read_words(gpu: &Gpu, table: &Buffer, bytes: u64) -> Result<Vec<u32>, RenderError> {
-    let staging = crate::readback::stage_buffer(gpu, table, 0, bytes)?;
+fn read_words(gpu: &Gpu, table: &Buffer, offset: u64, bytes: u64) -> Result<Vec<u32>, RenderError> {
+    let staging = crate::readback::stage_buffer(gpu, table, offset, bytes)?;
     let data = map_read_blocking(gpu, &staging, bytes)?;
     Ok(bytemuck::pod_collect_to_vec(&data[..bytes as usize]))
 }
@@ -795,17 +989,18 @@ pub fn light_bins_gpu(gpu: &Gpu, frames: &[LightBinFrame]) -> Result<Vec<LightBi
     let device = &gpu.device;
     let mut node = LightBinNode::new(device)?;
     let mut reads = Vec::with_capacity(frames.len());
-    let mut held: Option<(u64, Buffer, Buffer)> = None;
+    let mut held: Option<(u64, Buffer)> = None;
     for frame in frames {
-        let mask_bytes = frame.grid.mask_bytes();
-        if !held.as_ref().is_some_and(|(bytes, ..)| *bytes == mask_bytes) {
-            held = Some((mask_bytes, poisoned_table(gpu, "light tiles", mask_bytes)?, poisoned_table(gpu, "light z-bins", zbin_bytes())?));
+        let bytes = bins_bytes(&frame.grid);
+        if !held.as_ref().is_some_and(|(held, _)| *held == bytes) {
+            held = Some((bytes, poisoned_table(gpu, "light bins", bytes)?));
         }
-        let (_, tiles, zbins) = held.as_ref().ok_or_else(|| capture_failed("light bins: no tables"))?;
+        let (_, bins) = held.as_ref().ok_or_else(|| capture_failed("light bins: no table"))?;
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("light binning") });
-        node.encode(device, &gpu.queue, &mut encoder, LightBinInput { frame, tiles, zbins })?;
+        node.encode(device, &gpu.queue, &mut encoder, LightBinInput { frame, bins })?;
         gpu.queue.submit([encoder.finish()]);
-        reads.push(LightBinRead { masks: read_words(gpu, tiles, mask_bytes)?, zbins: read_words(gpu, zbins, zbin_bytes())? });
+        let masks = read_words(gpu, bins, u64::from(LIGHT_TILES_OFFSET_WORDS) * 4, frame.grid.mask_bytes())?;
+        reads.push(LightBinRead { masks, zbins: read_words(gpu, bins, 0, zbin_bytes())? });
     }
     Ok(reads)
 }
@@ -819,8 +1014,7 @@ pub fn light_bin_gpu_ms(gpu: &Gpu, frame: &LightBinFrame, samples: u32) -> Resul
     if !device.features().contains(wgpu::Features::TIMESTAMP_QUERY) {
         return Ok(None);
     }
-    let tiles = poisoned_table(gpu, "light tiles", frame.grid.mask_bytes())?;
-    let zbins = poisoned_table(gpu, "light z-bins", zbin_bytes())?;
+    let bins = poisoned_table(gpu, "light bins", bins_bytes(&frame.grid))?;
     let mut node = LightBinNode::new(device)?;
     let query_set = device.create_query_set(&wgpu::QuerySetDescriptor { label: Some("light binning cost"), ty: wgpu::QueryType::Timestamp, count: 2 });
     let resolve = buffer(device, "light binning cost resolve", 16, BufferUsages::QUERY_RESOLVE | BufferUsages::COPY_SRC)?;
@@ -835,7 +1029,7 @@ pub fn light_bin_gpu_ms(gpu: &Gpu, frame: &LightBinFrame, samples: u32) -> Resul
                 beginning_of_pass_write_index: first.then_some(0),
                 end_of_pass_write_index: last.then_some(1),
             });
-            node.encode_timed(device, &gpu.queue, &mut encoder, LightBinInput { frame, tiles: &tiles, zbins: &zbins }, stamps)?;
+            node.encode_timed(device, &gpu.queue, &mut encoder, LightBinInput { frame, bins: &bins }, stamps)?;
         }
         gpu.queue.submit([encoder.finish()]);
         // Resolved in a later submission: Metal resolves counter samples without waiting for the
@@ -870,8 +1064,10 @@ mod tests {
         assert_eq!(zbin_range(pack_zbin(0, 0)), Some((0, 0)));
         assert_eq!(zbin_range(ZBIN_EMPTY), None);
         assert_eq!(zbin_range(BOUNDS_EMPTY[2]), None);
-        assert_eq!(LIGHT_BIN_HEADER_WORDS, 8);
-        assert_eq!(zbin_bytes(), (8 + 64) * 4);
+        // Pass 2 A.0 (LG-16) flipped 8 -> 16 header words and (8 + 64) * 4 -> (16 + 3 * 64) * 4
+        // bytes: the kinds' ranges and depth mappings, and z-bins per clusterable kind.
+        assert_eq!(LIGHT_BIN_HEADER_WORDS, 16);
+        assert_eq!(zbin_bytes(), (16 + 3 * 64) * 4);
     }
 
     #[test]

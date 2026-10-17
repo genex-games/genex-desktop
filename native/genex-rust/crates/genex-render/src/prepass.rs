@@ -235,17 +235,30 @@ pub fn drawn_consumers(quality: &Quality, demand: ExtensionDemand) -> PrepassCon
 }
 
 /// One custom-geometry draw the prepass adds to the opaque batches: a library mesh at a model
-/// matrix (a custom material's draw, [`crate::renderer::WorldStage::prepass_draws`]).
+/// matrix (a custom material's draw, [`crate::renderer::WorldStage::prepass_draws`]), with last
+/// frame's model matrix for its motion (renderer pass 2, P2-0.8b T-04).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct PrepassDraw {
     /// The mesh.
     pub mesh: MeshId,
     /// Model matrix, column-major.
     pub model: [f32; 16],
+    /// Last frame's model matrix (this frame's for a draw that stood still or has no history).
+    pub prev_model: [f32; 16],
+    /// Whether the draw has history: matched to last frame's (`crate::motion::CustomMotion`). One
+    /// without writes the no-history flag, so TAA takes the current sample where it lands.
+    pub history: bool,
+}
+
+impl PrepassDraw {
+    /// `mesh` at `model` standing still with its history (a stage whose geometry never moves).
+    pub const fn still(mesh: MeshId, model: [f32; 16]) -> PrepassDraw {
+        PrepassDraw { mesh, model, prev_model: model, history: true }
+    }
 }
 
 /// A custom-geometry draw's uniform row (`PrepassDraw` in shaders/prepass.wgsl), [`DRAW_STRIDE`]
-/// apart: the model matrix and its inverse-transpose.
+/// apart: the model matrix, its inverse-transpose, last frame's model matrix and the motion flags.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct GpuPrepassDraw {
@@ -253,13 +266,18 @@ pub struct GpuPrepassDraw {
     pub model: [f32; 16],
     /// Its inverse-transpose, for normals.
     pub normal: [f32; 16],
+    /// Last frame's model matrix (the motion prepass's previous position, T-04).
+    pub prev_model: [f32; 16],
+    /// x: [`crate::motion::MOTION_FLAG_NO_HISTORY`] for a draw without history; y, z, w: 0.
+    pub flags: [u32; 4],
 }
 
 impl GpuPrepassDraw {
     /// The row of `draw`.
     pub fn of(draw: &PrepassDraw) -> GpuPrepassDraw {
         let normal = crate::instance::instance_row(&draw.model, [0.0; 3], 0.0, 0).normal;
-        GpuPrepassDraw { model: draw.model, normal }
+        let flags = [if draw.history { 0 } else { crate::motion::MOTION_FLAG_NO_HISTORY }, 0, 0, 0];
+        GpuPrepassDraw { model: draw.model, normal, prev_model: draw.prev_model, flags }
     }
 }
 

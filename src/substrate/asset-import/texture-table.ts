@@ -51,6 +51,25 @@ export const BASIS_TRANSCODE_FORMAT = {
   [Rgba8]: 13,
 } as const satisfies Record<TextureCompression, number>;
 
+/**
+ * The Vulkan format of each family's KTX2 files the import step writes (A6.5), sRGB for colour
+ * and linear for data: BC7, ASTC 4x4, ETC2 RGBA8 with EAC alpha, RGBA8 (`VkFormat` values; the
+ * runtime's `read_ktx2` reads exactly these).
+ */
+export const KTX2_VK_FORMAT = {
+  [Bc]: { srgb: 146, linear: 145 },
+  [Astc]: { srgb: 158, linear: 157 },
+  [Etc2]: { srgb: 152, linear: 151 },
+  [Rgba8]: { srgb: 43, linear: 37 },
+} as const satisfies Record<TextureCompression, { srgb: number; linear: number }>;
+
+/** The file a family's KTX2 takes beside its source: `assets/rock.ktx2` → `assets/rock.bc.ktx2`. */
+export function familyFileName(file: string, compression: TextureCompression): string {
+  const dot = file.lastIndexOf(".");
+  const stem = dot > file.lastIndexOf("/") ? file.slice(0, dot) : file;
+  return `${stem}.${compression}.ktx2`;
+}
+
 /** A KTX2 texture's first level transcoded to one family, as the import receipt records it. */
 export interface TranscodedTexture {
   compression: TextureCompression;

@@ -10,8 +10,13 @@
  *
  * The allow-lists are the ones measured on macOS 26.6.2 (Apple M4 Max) for a Metal device, an MSL
  * compile, CoreAudio output and, windowed, an AppKit window with a Metal layer: every name not
- * listed was denied there without breaking any of those. No Metal shader-cache path is granted
- * (not needed to run, and a shared cache must never be).
+ * listed was denied there without breaking any of those. A game whose host-written Info.plist names
+ * a studio bundle id (`games.genex.game.` and 12 hex digits, one per game folder) also gets its own
+ * Metal shader cache (LG-14, owner decision D3): `<DARWIN_USER_CACHE_DIR>/<its id>`, the folder Metal
+ * keys by that id, made by the host and checked to be no link, plus the two metadata reads and the
+ * dirhelper lookup Metal needs to find it (measured on macOS 26, M4 Max: a pipeline the box compiled
+ * cold every run in about 250 ms takes 8-20 ms from the cache). The cache is never shared: no other
+ * game's id and no other application's folder is ever granted.
  */
 import { constants as FS } from "node:fs";
 import { chmod, lstat, mkdir, realpath } from "node:fs/promises";
@@ -19,6 +24,7 @@ import path from "node:path";
 import { errorMessage } from "../shared/errors.ts";
 import {
   type FdGameEnv,
+  NATIVE_BUNDLE_APP,
   NATIVE_FRAMES_SERVICE_PREFIX,
   NativeEnv,
   NativeError,
@@ -26,8 +32,8 @@ import {
   NativeRunMode,
 } from "../shared/native-contract.ts";
 import { openNoFollow } from "./fsx.ts";
-import { bundleExecutable, isRunId, RunDirLayout } from "./native-bundle.ts";
-import { LEAVE_GROUP_SYSCALLS, quote } from "./plugins/native-process.ts";
+import { bundleExecutable, isBundleId, isRunId, RunDirLayout } from "./native-bundle.ts";
+import { darwinUserCacheDir, LEAVE_GROUP_SYSCALLS, quote } from "./plugins/native-process.ts";
 
 const MESSAGE = {
   Unsupported: (mode: string) => `a ${mode} run has no game profile`,
@@ -44,6 +50,7 @@ const MESSAGE = {
   NotARunFolder: (name: string) => `the run's ${name} is not a folder of its own`,
   AlreadyStarted: "this run directory has started a game already",
   Unreadable: (detail: string) => `the run directory cannot be checked: ${detail}`,
+  BadMetalCache: "a game's Metal cache is its own bundle id's folder, directly in the user's cache folder",
 } as const;
 
 /** A refusal for anything about a run the host cannot vouch for. */
@@ -61,17 +68,29 @@ export const GameProfileParam = {
   State: "STATE",
   /** Embedded runs only: the run's own frames service, `NATIVE_FRAMES_SERVICE_PREFIX` + its run id. */
   Frames: "FRAMES",
+  /** The user's cache folder (real path), whose metadata Metal reads to find the game's own cache. */
+  MetalCacheRoot: "METAL_CACHE_ROOT",
+  /** `<METAL_CACHE_ROOT>/<the game's bundle id>`: its own Metal shader cache, readable and writable. */
+  MetalCache: "METAL_CACHE",
 } as const;
 export type GameProfileParam = (typeof GameProfileParam)[keyof typeof GameProfileParam];
 
 /** What one profile is for. The frames service is a `-D` parameter, never part of the text. */
 export interface GameProfileOptions {
   mode: NativeRunMode;
+  /** Whether the run is granted its own Metal shader cache (`METAL_CACHE`, LG-14). */
+  metalCache?: boolean;
 }
 
-/** The values of one run's `-D` parameters: FRAMES only for an embedded run. */
-export type GameProfileValues = Record<Exclude<GameProfileParam, typeof GameProfileParam.Frames>, string> &
-  Partial<Record<typeof GameProfileParam.Frames, string>>;
+/** The parameters a run may go without: FRAMES (embedded runs only) and its Metal cache (LG-14). */
+type OptionalParam =
+  | typeof GameProfileParam.Frames
+  | typeof GameProfileParam.MetalCacheRoot
+  | typeof GameProfileParam.MetalCache;
+
+/** The values of one run's `-D` parameters: FRAMES only for an embedded run, the Metal cache only when granted. */
+export type GameProfileValues = Record<Exclude<GameProfileParam, OptionalParam>, string> &
+  Partial<Record<OptionalParam, string>>;
 
 /** The program that applies a profile to the game it then becomes (exec in place: the game keeps its pid). */
 export const SANDBOX_EXEC = "/usr/bin/sandbox-exec";
@@ -89,6 +108,14 @@ const UNSAFE_IN_PATH = /["\x00-\x1f\x7f]/;
 const ANGLE_PLATFORM = "metal";
 /** The protocol pipe's descriptor: stdio slot 3. */
 const PROTOCOL_FD = "3";
+/** The Mach service that tells a process where its user's cache folder is (Metal asks it for its cache). */
+const DIRHELPER_SERVICE = "com.apple.bsd.dirhelper";
+/** `/var`, the link the user's cache folder is named through (`/var/folders/...`), whose metadata Metal reads. */
+const VAR_LINK = "/var";
+/** The most of a run bundle's Info.plist read for its bundle id (the host writes a few hundred bytes). */
+const INFO_PLIST_MAX_BYTES = 64 * 1024;
+/** The bundle id entry of the Info.plist the host writes (`bundleIdentityEntries`). */
+const PLIST_BUNDLE_ID = /<key>CFBundleIdentifier<\/key>\s*<string>([^<]*)<\/string>/;
 
 /** Apple's OpenGL: its framework and the renderer bundle CGL loads. Unreadable, so no GL context can exist. */
 const OPENGL_FILES = [
@@ -210,10 +237,17 @@ function modeRules(mode: NativeRunMode): ModeRules {
 const param = (name: GameProfileParam) => `(param ${quote(name)})`;
 const filters = (kind: string, values: readonly string[]) => values.map((value) => `(${kind} ${quote(value)})`);
 
+/** The rules a granted Metal cache adds after STATE's: the two metadata reads and its folder (LG-14). */
+const METAL_CACHE_RULES = [
+  `(allow file-read-metadata (literal ${quote(VAR_LINK)}) (literal ${param(GameProfileParam.MetalCacheRoot)}))`,
+  `(allow file-read* file-write* (subpath ${param(GameProfileParam.MetalCache)}))`,
+];
+
 /** The profile text for `options.mode`: the measured allow-list, the OpenGL file deny last. */
 export function gameSandboxProfile(options: GameProfileOptions): string {
   const rules = modeRules(options.mode);
   const reads = ['(literal "/")', '(subpath "/System/Library")', `(subpath ${param(GameProfileParam.Bundle)})`];
+  const services = options.metalCache ? [...rules.services, DIRHELPER_SERVICE] : rules.services;
   return [
     "(version 1)",
     `(deny default (with message ${param(GameProfileParam.RunTag)}))`,
@@ -221,8 +255,9 @@ export function gameSandboxProfile(options: GameProfileOptions): string {
     `(allow sysctl-read ${filters("sysctl-name", rules.sysctls).join(" ")})`,
     `(allow file-read* ${[...reads, ...filters("literal", rules.files)].join(" ")})`,
     `(allow file-read* file-write* (subpath ${param(GameProfileParam.State)}))`,
+    ...(options.metalCache ? METAL_CACHE_RULES : []),
     `(allow iokit-open ${filters("iokit-user-client-class", rules.userClients).join(" ")})`,
-    `(allow mach-lookup ${[...filters("global-name", rules.services), ...rules.serviceParams.map((name) => `(global-name ${param(name)})`)].join(" ")})`,
+    `(allow mach-lookup ${[...filters("global-name", services), ...rules.serviceParams.map((name) => `(global-name ${param(name)})`)].join(" ")})`,
     // Last, so no allow above can reopen Apple's OpenGL (denying cvmsServ alone does not stop it).
     `(deny file-read* ${filters("subpath", OPENGL_FILES).join(" ")})`,
     `(deny syscall-unix (syscall-number ${LEAVE_GROUP_SYSCALLS.join(" ")}))`,
@@ -236,10 +271,35 @@ function isUnder(parent: string, child: string): boolean {
   return child === parent || child.startsWith(`${parent}/`);
 }
 
-/** Whether `value` is a plain absolute POSIX path strictly inside `runDir`: normalized, no quote or control character. */
+/** Whether `value` is a plain absolute POSIX path: normalized, no trailing slash, no quote or control character. */
+function isPlainPath(value: string): boolean {
+  const normal = path.posix.isAbsolute(value) && path.posix.normalize(value) === value && !value.endsWith("/");
+  return normal && !UNSAFE_IN_PATH.test(value);
+}
+
+/** Whether `value` is a plain absolute POSIX path strictly inside `runDir`. */
 function isRunPath(value: string, runDir: string): boolean {
-  const plain = path.posix.isAbsolute(value) && path.posix.normalize(value) === value && !value.endsWith("/");
-  return plain && !UNSAFE_IN_PATH.test(value) && value !== runDir && isUnder(runDir, value);
+  return isPlainPath(value) && value !== runDir && isUnder(runDir, value);
+}
+
+/**
+ * Whether `cache` is a game's own Metal cache in the cache folder `root`: a studio bundle id's
+ * folder directly in it, both plain paths, outside the run directory.
+ */
+function isGameMetalCache(root: string, cache: string, runDir: string): boolean {
+  const plain = isPlainPath(root) && root !== "/" && !isUnder(runDir, root) && !isUnder(root, runDir);
+  return plain && cache === path.posix.join(root, path.posix.basename(cache)) && isBundleId(path.posix.basename(cache));
+}
+
+/** The `-D` arguments of a granted Metal cache (none without one); refuses half a pair or a cache that is not a game's own. */
+function metalCacheDefines(values: GameProfileValues, runDir: string): string[] {
+  const root = values[GameProfileParam.MetalCacheRoot];
+  const cache = values[GameProfileParam.MetalCache];
+  if (root === undefined && cache === undefined) return [];
+  if (root === undefined || cache === undefined || !isGameMetalCache(root, cache, runDir)) {
+    throw refused(MESSAGE.BadMetalCache);
+  }
+  return ["-D", `${GameProfileParam.MetalCacheRoot}=${root}`, "-D", `${GameProfileParam.MetalCache}=${cache}`];
 }
 
 /** The run directory's folder each folder parameter must name exactly. */
@@ -271,8 +331,9 @@ function assertFrames(frames: string | undefined, mode: NativeRunMode | undefine
  * cannot vouch for. Every path is strictly inside `runDir`, BUNDLE is exactly `<runDir>/bundle`
  * and STATE exactly `<runDir>/state`, so the profile grants writes to the run's own folder only.
  * Without `runDir` the bundle's parent is taken for it: BUNDLE must still be named `bundle`, with
- * STATE the `state` folder beside it. FRAMES comes last and only for an embedded `mode`: the
- * frames service of the run `runDir` names.
+ * STATE the `state` folder beside it. A granted Metal cache follows: METAL_CACHE_ROOT and METAL_CACHE,
+ * a studio bundle id's folder directly in the cache root (LG-14). FRAMES comes last and only for an
+ * embedded `mode`: the frames service of the run `runDir` names.
  */
 export function gameProfileDefines(
   values: GameProfileValues,
@@ -294,7 +355,10 @@ export function gameProfileDefines(
     throw new NativeError(NativeRefusal.Unsupported, MESSAGE.ExeOutsideBundle);
   const frames = values[GameProfileParam.Frames];
   assertFrames(frames, mode, path.posix.basename(runDir));
-  const defines = DEFINE_ORDER.flatMap((name) => ["-D", `${name}=${values[name]}`]);
+  const defines = [
+    ...DEFINE_ORDER.flatMap((name) => ["-D", `${name}=${values[name]}`]),
+    ...metalCacheDefines(values, runDir),
+  ];
   return frames === undefined ? defines : [...defines, "-D", `${GameProfileParam.Frames}=${frames}`];
 }
 
@@ -387,25 +451,76 @@ async function writeProfile(file: string, text: string): Promise<void> {
   }
 }
 
+/** A game's own Metal cache: the user's cache folder and `<it>/<the game's bundle id>`, and whether that folder is there yet. */
+interface MetalCache {
+  root: string;
+  dir: string;
+  exists: boolean;
+}
+
+/**
+ * The bundle id the host wrote into the run bundle's Info.plist when it is a studio one (a
+ * game's own), else null: no plist, a link, an oversized file or any other id.
+ */
+async function bundleIdIn(bundle: string): Promise<string | null> {
+  const plist = path.join(bundle, NATIVE_BUNDLE_APP, "Contents", "Info.plist");
+  const handle = await openNoFollow(plist, FS.O_RDONLY).catch(() => null);
+  if (!handle) return null;
+  try {
+    const info = await handle.stat();
+    if (!info.isFile() || info.size > INFO_PLIST_MAX_BYTES) return null;
+    const id = PLIST_BUNDLE_ID.exec(await handle.readFile("utf8"))?.[1] ?? "";
+    return isBundleId(id) ? id : null;
+  } finally {
+    await handle.close();
+  }
+}
+
+/**
+ * The run's own Metal cache, read only (nothing is made here): its bundle's studio id under the
+ * user's cache folder `cacheRoot` resolves to, when that folder is a plain path and the game's
+ * folder in it is absent or a folder of its own. Null (the run starts without a cache) otherwise.
+ */
+async function metalCacheOf(bundle: string, cacheRoot: () => Promise<string | null>): Promise<MetalCache | null> {
+  const id = await bundleIdIn(bundle);
+  const root = id === null ? null : await cacheRoot();
+  if (id === null || root === null || !isPlainPath(root) || root === "/") return null;
+  const dir = path.join(root, id);
+  const info = await lstat(dir).catch((error: NodeJS.ErrnoException) => {
+    if (error.code === "ENOENT") return null;
+    throw error;
+  });
+  if (info === null) return { root, dir, exists: false };
+  return info.isDirectory() && !info.isSymbolicLink() ? { root, dir, exists: true } : null;
+}
+
 /**
  * Checks a start request against the native-runs root, then writes its profile and makes its HOME:
  * the run directory must be `<root>/<runId>` (real, no link), the bundle and state its own
  * folders, the executable inside the bundle. Every check comes before the first write; a refusal
  * is `NativeError(Unsupported)` and leaves the run directory as it was.
  */
-export async function prepareGameLaunch(request: GameLaunchRequest, root: string): Promise<GameLaunch> {
+export async function prepareGameLaunch(
+  request: GameLaunchRequest,
+  root: string,
+  cacheRoot: () => Promise<string | null> = darwinUserCacheDir,
+): Promise<GameLaunch> {
   // A mode without a profile, or a frames service that is not the run's own, is refused before anything is read.
   modeRules(request.mode);
   assertFrames(request.frames, request.mode, request.runId);
   if (!NONCE.test(request.nonce)) throw refused(MESSAGE.BadNonce);
   const run = await checked(() => runFolders(request, root));
   const frames = request.frames === undefined ? {} : { [GameProfileParam.Frames]: request.frames };
+  const cache = await checked(() => metalCacheOf(run.bundle, cacheRoot));
+  const cacheValues =
+    cache === null ? {} : { [GameProfileParam.MetalCacheRoot]: cache.root, [GameProfileParam.MetalCache]: cache.dir };
   const defines = gameProfileDefines(
     {
       [GameProfileParam.RunTag]: `genex-game-${request.runId}`,
       [GameProfileParam.Exe]: run.exe,
       [GameProfileParam.Bundle]: run.bundle,
       [GameProfileParam.State]: run.state,
+      ...cacheValues,
       ...frames,
     },
     run.runDir,
@@ -414,9 +529,11 @@ export async function prepareGameLaunch(request: GameLaunchRequest, root: string
   const home = path.join(run.state, RunDirLayout.Home);
   const makeHome = await checked(() => assertHomeFree(home));
   const profile = path.join(run.runDir, PROFILE_FILE);
-  await checked(() => writeProfile(profile, gameSandboxProfile({ mode: request.mode })));
+  await checked(() => writeProfile(profile, gameSandboxProfile({ mode: request.mode, metalCache: cache !== null })));
   await chmod(run.runDir, 0o700);
   if (makeHome) await mkdir(home, { mode: 0o700 });
+  // The game's own cache folder, host-made and never through a link (`metalCacheOf` saw it absent).
+  if (cache && !cache.exists) await checked(() => mkdir(cache.dir, { mode: 0o700 }));
   return {
     file: SANDBOX_EXEC,
     args: [...defines, "-f", profile, run.exe],

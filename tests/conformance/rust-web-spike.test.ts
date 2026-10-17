@@ -29,6 +29,7 @@ import { promisify } from "node:util";
 import { type Browser, chromium, type Page } from "@playwright/test";
 import { MINUTE_MS, SECOND_MS } from "../../src/shared/duration.ts";
 import { witnessOf } from "../../src/main/harness-rpc/preview.ts";
+import { playwrightHeadlessChromiumOnDisk } from "../helpers/playwright-chromium.ts";
 import { tmpDir } from "../helpers/tmp.ts";
 import { metalRequired } from "../helpers/gpu-games.ts";
 
@@ -114,18 +115,9 @@ const browserSkip = (): string | false => {
   const toolchain = toolchainSkip();
   if (toolchain) return toolchain;
   if (process.env.STUDIO_BROWSER_TESTS !== "1") return "launches Chromium; set STUDIO_BROWSER_TESTS=1 to run";
-  let executable = "";
-  try {
-    executable = chromium.executablePath();
-  } catch {
-    executable = "";
-  }
-  // A headless launch runs Playwright's headless shell, installed beside the full Chromium.
-  const revision = /^(.*[/\\])chromium-(\d+)[/\\]/.exec(executable);
-  const headlessShell = revision ? `${revision[1]}chromium_headless_shell-${revision[2]}` : "";
-  const installed =
-    (executable !== "" && existsSync(executable)) || (headlessShell !== "" && existsSync(headlessShell));
-  return installed ? false : "no Playwright Chromium is installed; this suite never downloads one";
+  return playwrightHeadlessChromiumOnDisk()
+    ? false
+    : "no Playwright Chromium is installed; this suite never downloads one";
 };
 
 /** FNV-1a 64 of bytes, 16 hex digits (the capture digest). */

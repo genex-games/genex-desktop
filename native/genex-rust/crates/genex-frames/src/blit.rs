@@ -121,6 +121,22 @@ impl BottomUpBlit {
         source: &wgpu::TextureView,
         slot: &SlotSurface,
     ) -> Result<(), FramesError> {
+        let submission = self.draw(device, queue, source, slot);
+        device
+            .poll(wgpu::PollType::Wait { submission_index: Some(submission), timeout: Some(GPU_WAIT_TIMEOUT) })
+            .map(|_| ())
+            .map_err(|error| FramesError::new(FramesCode::GpuWaitFailed, error.to_string()))
+    }
+
+    /// Blits `source` into `slot` bottom-up and submits, without waiting for the GPU: the frame is
+    /// in the IOSurface once that submission is done.
+    pub fn draw(
+        &self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        source: &wgpu::TextureView,
+        slot: &SlotSurface,
+    ) -> wgpu::SubmissionIndex {
         let size = slot.texture().size();
         let words: [u32; 4] = [size.width, size.height, 0, 0];
         let bytes: Vec<u8> = words.iter().flat_map(|word| word.to_le_bytes()).collect();
@@ -150,10 +166,6 @@ impl BottomUpBlit {
             pass.set_bind_group(0, &bind_group, &[]);
             pass.draw(0..3, 0..1);
         }
-        let submission = queue.submit([encoder.finish()]);
-        device
-            .poll(wgpu::PollType::Wait { submission_index: Some(submission), timeout: Some(GPU_WAIT_TIMEOUT) })
-            .map(|_| ())
-            .map_err(|error| FramesError::new(FramesCode::GpuWaitFailed, error.to_string()))
+        queue.submit([encoder.finish()])
     }
 }

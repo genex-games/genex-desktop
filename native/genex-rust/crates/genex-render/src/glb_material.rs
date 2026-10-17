@@ -5,9 +5,10 @@
 //! Only what WebGPU core draws today is read: the base-colour factor and texture, the metallic and
 //! roughness factors and their texture, the normal texture and its scale, and emission (RQ6.3: the
 //! emissive factor and texture and `KHR_materials_emissive_strength`, as each part's
-//! [`GlbEmission`]). A texture on another uv set than TEXCOORD_0 is ignored, `OPAQUE` and `MASK`
-//! draw opaque (only `BLEND` keeps the factor's alpha), and occlusion and other extensions wait for
-//! their tiers. An image is read only from
+//! [`GlbEmission`]), and (renderer pass 2, P2-0.12) `MASK` with its `alphaCutoff`, `doubleSided`
+//! and the occlusion texture with its strength. A texture on another uv set than TEXCOORD_0 is
+//! ignored; `OPAQUE` draws opaque, `MASK` keeps the factor's alpha for its alpha test and `BLEND`
+//! for blending. Other extensions wait for their tiers. An image is read only from
 //! a buffer view of the embedded `BIN` chunk, never by URI (no file beside the GLB, no data URI),
 //! and decoded through the PNG and JPEG decoders the glTF loader already links, after its header's
 //! size passed the texture cap. An image that cannot be used fails only its texture: the material
@@ -15,7 +16,9 @@
 
 use crate::caps::check_texture;
 use crate::error::{RenderCode, RenderError};
-use crate::mesh::{MeshData, MeshletMerge, MeshletWarning, for_each_primitive, invalid, open_glb};
+use crate::mesh::glb_material_ext::read_material_ext;
+use crate::mesh::mesh_lod::{LodMerge, read_lod_extras};
+use crate::mesh::{GlbMaterialExt, LodChain, LodWarning, MeshData, MeshletMerge, MeshletWarning, for_each_primitive, invalid, open_glb};
 use crate::meshlet::MeshletSet;
 use crate::pbr::Material;
 use crate::texture::{TextureData, TextureId, TextureKind, linear_to_srgb, srgb_to_linear};
@@ -31,7 +34,7 @@ const JPEG_START: &[u8] = &[0xFF, 0xD8];
 /// index in the file, or the renderer's [`TextureId`] once uploaded.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct GlbMaterial<T = u32> {
-    /// Linear RGBA factor (`baseColorFactor`); alpha is 1 unless the material blends.
+    /// Linear RGBA factor (`baseColorFactor`); alpha is 1 unless the material blends or masks.
     pub base_color: [f32; 4],
     /// Metallic factor, 0..1 (times the metallic-roughness map's blue channel).
     pub metallic: f32,
@@ -45,6 +48,15 @@ pub struct GlbMaterial<T = u32> {
     pub normal_texture: Option<T>,
     /// Metallic-roughness map (linear data): green roughness, blue metallic.
     pub metal_rough_texture: Option<T>,
+    /// `MASK`'s `alphaCutoff` (0.5 by default); `None` for `OPAQUE` and `BLEND` (P2-0.12).
+    pub alpha_cutoff: Option<f32>,
+    /// `doubleSided` (P2-0.12).
+    pub double_sided: bool,
+    /// Ambient-occlusion map (linear data, red channel; often the metallic-roughness map's image:
+    /// an ORM texture) (P2-0.12).
+    pub occlusion_texture: Option<T>,
+    /// `occlusionTexture.strength`, 0..1 (1 by default).
+    pub occlusion_strength: f32,
 }
 
 impl<T: Copy> GlbMaterial<T> {
@@ -56,18 +68,35 @@ impl<T: Copy> GlbMaterial<T> {
             metallic: self.metallic,
             roughness: self.roughness,
             normal_scale: self.normal_scale,
-            base_texture: self.base_texture.and_then(|t| upload(t, TextureKind::Color)),
+            base_texture: self.base_texture.and_then(|t| upload(t, self.base_kind())),
             normal_texture: self.normal_texture.and_then(|t| upload(t, TextureKind::Normal)),
             metal_rough_texture: self.metal_rough_texture.and_then(|t| upload(t, TextureKind::Data)),
+            alpha_cutoff: self.alpha_cutoff,
+            double_sided: self.double_sided,
+            occlusion_texture: self.occlusion_texture.and_then(|t| upload(t, TextureKind::Data)),
+            occlusion_strength: self.occlusion_strength,
         }
     }
 
-    /// Every texture with the array kind its slot samples, base colour first.
-    pub fn textures(&self) -> impl Iterator<Item = (T, TextureKind)> {
+    /// The kind its base colour map uploads as: [`TextureKind::Cutout`] (mips that keep the
+    /// alpha test's coverage) for a masked material, else [`TextureKind::Color`].
+    fn base_kind(&self) -> TextureKind {
+        if self.alpha_cutoff.is_some() { TextureKind::Cutout } else { TextureKind::Color }
+    }
+
+    /// Every texture with the array kind its slot samples, base colour first (an occlusion map
+    /// that is the metallic-roughness map's image is that one upload).
+    pub fn textures(&self) -> impl Iterator<Item = (T, TextureKind)>
+    where
+        T: PartialEq,
+    {
+        let packed = self.occlusion_texture.is_some() && self.occlusion_texture == self.metal_rough_texture;
+        let occlusion = if packed { None } else { self.occlusion_texture };
         let slots = [
-            (self.base_texture, TextureKind::Color),
+            (self.base_texture, self.base_kind()),
             (self.normal_texture, TextureKind::Normal),
             (self.metal_rough_texture, TextureKind::Data),
+            (occlusion, TextureKind::Data),
         ];
         slots.into_iter().filter_map(|(texture, kind)| Some((texture?, kind)))
     }
@@ -87,7 +116,13 @@ impl GlbMaterial<TextureId> {
         if let Some(normal) = self.normal_texture {
             material = material.with_normal_map(normal, self.normal_scale);
         }
-        material
+        if let Some(cutoff) = self.alpha_cutoff {
+            material = material.with_alpha_cutoff(cutoff);
+        }
+        if let Some(occlusion) = self.occlusion_texture {
+            material = material.with_occlusion_texture(occlusion, self.occlusion_strength);
+        }
+        material.with_double_sided(self.double_sided)
     }
 }
 
@@ -136,6 +171,9 @@ pub struct GlbPart {
     /// That material's emission; `None` when it emits nothing (a black emissive factor, a zero
     /// strength, or no material).
     pub emission: Option<GlbEmission>,
+    /// That material's `KHR_materials_*` extensions (A6.1); `None` when it carries none of them
+    /// or there is no material. Read, not yet shaded.
+    pub material_ext: Option<GlbMaterialExt>,
     /// The meshlets its primitives carried (`extras.genex_meshlets`, R2.3), merged and validated
     /// against this part's mesh; `None` when any primitive had none or one was refused (the mesh
     /// is then clustered at runtime). The renderer takes them with
@@ -145,6 +183,18 @@ pub struct GlbPart {
     /// among this part's primitives and the [`crate::meshlet::MeshletFault`]): the mesh then
     /// clusters at runtime, and a loader reports them with the asset's load warnings.
     pub meshlet_warnings: Vec<MeshletWarning>,
+    /// The simplified levels its primitives carried (`extras.genex_lods`, A6.9), merged level by
+    /// level; `None` when any primitive had none or one was refused (the mesh then draws whole).
+    pub lods: Option<LodChain>,
+    /// The typed warnings of the primitives whose `genex_lods` were refused.
+    pub lod_warnings: Vec<LodWarning>,
+}
+
+impl GlbPart {
+    /// The part as the renderer's library takes it: its mesh, meshlets and levels of detail.
+    pub fn into_model_part(self) -> crate::scene::ModelPart {
+        crate::scene::ModelPart { mesh: self.mesh, meshlets: self.meshlets, lods: self.lods }
+    }
 }
 
 /// A GLB as one mesh per material, and the images its materials sample.
@@ -163,37 +213,7 @@ impl GlbModel {
     pub fn from_glb(bytes: &[u8]) -> Result<GlbModel, RenderError> {
         let gltf = open_glb(bytes)?;
         let blob = gltf.blob.as_deref();
-        let mut groups: Vec<(Option<usize>, MeshData, MeshletMerge)> = Vec::new();
-        for_each_primitive(&gltf, &mut |primitive, world| {
-            let key = primitive.material().index();
-            let at = match groups.iter().position(|(known, _, _)| *known == key) {
-                Some(at) => at,
-                None => {
-                    groups.push((key, MeshData::default(), MeshletMerge::default()));
-                    groups.len() - 1
-                }
-            };
-            let (_, mesh, merge) = &mut groups[at];
-            mesh.append_with_meshlets(&gltf, primitive, world, blob, merge)
-        })?;
-        groups.retain(|(_, mesh, _)| !mesh.indices.is_empty());
-        if groups.is_empty() {
-            return Err(invalid("the GLB has no triangles"));
-        }
-        let parts: Vec<GlbPart> = groups
-            .into_iter()
-            .map(|(key, mesh, merge)| {
-                let material = key.and_then(|index| gltf.materials().nth(index));
-                let merged = merge.finish();
-                GlbPart {
-                    mesh,
-                    material: material.as_ref().map(read_material),
-                    emission: material.as_ref().and_then(read_emission),
-                    meshlets: merged.set,
-                    meshlet_warnings: merged.warnings,
-                }
-            })
-            .collect();
+        let parts = glb_parts(&gltf)?;
         let mut images: Vec<Option<Result<TextureData, RenderError>>> = vec![None; gltf.images().len()];
         for (index, _) in parts.iter().flat_map(part_textures) {
             let Some(slot) = images.get_mut(index as usize) else { continue };
@@ -203,6 +223,27 @@ impl GlbModel {
             }
         }
         Ok(GlbModel { parts, images })
+    }
+
+    /// The meshes and meshlets of [`GlbModel::from_glb`]'s parts, in its order, with no image
+    /// decoded: what a renderer replays a model's upload from (review F6).
+    pub fn parts_from_glb(bytes: &[u8]) -> Result<Vec<crate::scene::ModelPart>, RenderError> {
+        let gltf = open_glb(bytes)?;
+        Ok(glb_parts(&gltf)?.into_iter().map(GlbPart::into_model_part).collect())
+    }
+
+    /// The parts as the renderer takes them: each mesh with its meshlets and levels of detail.
+    pub fn model_parts(&self) -> Vec<crate::scene::ModelPart> {
+        self.parts.iter().cloned().map(GlbPart::into_model_part).collect()
+    }
+
+    /// Image `index` of a GLB decoded as [`GlbModel::from_glb`] decodes it (refused
+    /// `texture-invalid` when the GLB names no such image): what a renderer replays the image's
+    /// upload from.
+    pub fn image_from_glb(bytes: &[u8], index: u32) -> Result<TextureData, RenderError> {
+        let gltf = open_glb(bytes)?;
+        let image = gltf.images().nth(index as usize).ok_or_else(|| texture_invalid("the GLB names no such image"))?;
+        embedded_image(&image, gltf.blob.as_deref())
     }
 
     /// The parts, in first-use order of their materials.
@@ -216,6 +257,52 @@ impl GlbModel {
     }
 }
 
+/// The parts of `gltf`: one mesh per material in first-use order, empty parts dropped (refused
+/// `mesh-invalid` with no triangles at all).
+fn glb_parts(gltf: &gltf::Gltf) -> Result<Vec<GlbPart>, RenderError> {
+    let blob = gltf.blob.as_deref();
+    let mut groups: Vec<(Option<usize>, MeshData, MeshletMerge, LodMerge)> = Vec::new();
+    for_each_primitive(gltf, &mut |primitive, world| {
+        let key = primitive.material().index();
+        let at = match groups.iter().position(|(known, ..)| *known == key) {
+            Some(at) => at,
+            None => {
+                groups.push((key, MeshData::default(), MeshletMerge::default(), LodMerge::default()));
+                groups.len() - 1
+            }
+        };
+        let (_, mesh, merge, lods) = &mut groups[at];
+        let base = mesh.vertices.len() as u32;
+        mesh.append_with_meshlets(gltf, primitive, world, blob, merge)?;
+        let vertex_count = mesh.vertices.len() as u32 - base;
+        lods.visit(read_lod_extras(gltf, primitive, blob, vertex_count), world, base);
+        Ok(())
+    })?;
+    groups.retain(|(_, mesh, ..)| !mesh.indices.is_empty());
+    if groups.is_empty() {
+        return Err(invalid("the GLB has no triangles"));
+    }
+    let parts = groups
+        .into_iter()
+        .map(|(key, mesh, merge, lods)| {
+            let material = key.and_then(|index| gltf.materials().nth(index));
+            let merged = merge.finish();
+            let (lods, lod_warnings) = lods.finish();
+            GlbPart {
+                mesh,
+                material: material.as_ref().map(read_material),
+                emission: material.as_ref().and_then(read_emission),
+                material_ext: material.as_ref().and_then(|material| read_material_ext(material, &gltf.document)),
+                meshlets: merged.set,
+                meshlet_warnings: merged.warnings,
+                lods,
+                lod_warnings,
+            }
+        })
+        .collect();
+    Ok(parts)
+}
+
 /// A value in `0..=1`, or `fallback` when it is not finite.
 fn unit(value: f32, fallback: f32) -> f32 {
     if value.is_finite() { value.clamp(0.0, 1.0) } else { fallback }
@@ -226,12 +313,21 @@ fn on_uv0(texture: gltf::Texture<'_>, tex_coord: u32) -> Option<u32> {
     (tex_coord == 0).then(|| texture.source().index() as u32)
 }
 
+/// glTF's `alphaCutoff` when a `MASK` material names none.
+pub const GLTF_DEFAULT_ALPHA_CUTOFF: f32 = 0.5;
+
 fn read_material(material: &gltf::Material<'_>) -> GlbMaterial {
     let pbr = material.pbr_metallic_roughness();
     let mut base_color = pbr.base_color_factor().map(|c| unit(c, 1.0));
-    if material.alpha_mode() != gltf::material::AlphaMode::Blend {
+    let mode = material.alpha_mode();
+    if mode == gltf::material::AlphaMode::Opaque {
         base_color[3] = 1.0;
     }
+    let alpha_cutoff = (mode == gltf::material::AlphaMode::Mask)
+        .then(|| unit(material.alpha_cutoff().unwrap_or(GLTF_DEFAULT_ALPHA_CUTOFF), GLTF_DEFAULT_ALPHA_CUTOFF));
+    let occlusion = material.occlusion_texture();
+    let occlusion_texture = occlusion.as_ref().and_then(|info| on_uv0(info.texture(), info.tex_coord()));
+    let occlusion_strength = occlusion.as_ref().map_or(1.0, |info| unit(info.strength(), 1.0));
     let normal = material.normal_texture();
     let scale = normal.as_ref().map_or(1.0, gltf::material::NormalTexture::scale);
     GlbMaterial {
@@ -242,6 +338,10 @@ fn read_material(material: &gltf::Material<'_>) -> GlbMaterial {
         base_texture: pbr.base_color_texture().and_then(|info| on_uv0(info.texture(), info.tex_coord())),
         normal_texture: normal.and_then(|info| on_uv0(info.texture(), info.tex_coord())),
         metal_rough_texture: pbr.metallic_roughness_texture().and_then(|info| on_uv0(info.texture(), info.tex_coord())),
+        alpha_cutoff,
+        double_sided: material.double_sided(),
+        occlusion_texture,
+        occlusion_strength,
     }
 }
 

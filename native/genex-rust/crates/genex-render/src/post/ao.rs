@@ -30,16 +30,24 @@
 //!   the depth holds (from the depth's screen derivatives; the shading normal where they cross an
 //!   edge), not the smoothed shading normal's.
 //! - **Its own history** (plan G8), never TAA's: the term ping-pongs between [`AO_LABEL`] and
-//!   [`HISTORY_LABEL`] (the same format) and the view-depth chain between [`DEPTH_LABEL`] and
-//!   [`DEPTH_HISTORY_LABEL`], so last frame's term keeps the depth it was made at. History is
-//!   reprojected with this frame's depth through the camera (motion vectors replace the camera
-//!   reprojection when RQ5 lands) and rejected where it falls off screen or where the reprojected
-//!   depth disagrees by more than [`HISTORY_DEPTH_REJECT`]. Noise is keyed to the frame index only
-//!   when that history exists (plan principle 6), otherwise a static per-pixel pattern is used, so
-//!   a frame without history is byte-identical to the next. A history reset (a settled capture, a
-//!   camera cut, a resize) starts it over. A frame that blends history takes every other step of
-//!   each slice ([`FLAG_INTERLEAVE`], the frame index's parity choosing which), so the history
-//!   holds every step while a frame pays for half the horizon search; a reset frame takes them all.
+//!   [`HISTORY_LABEL`] (both [`history_format`], 16-bit float: an 8-bit history at weight 0.9
+//!   cannot move by less than half a level a frame and froze its noise into blotches; pass 2,
+//!   P3/S2) and the view-depth chain between [`DEPTH_LABEL`] and [`DEPTH_HISTORY_LABEL`], so last
+//!   frame's term keeps the depth it was made at. History is found through the prepass's motion
+//!   target where the frame has one ([`AoInput::motion`]: TAA frames), else through the camera, and
+//!   read bilinearly in uv with each of the four texels' depth checked: a texel off screen or whose
+//!   held view depth disagrees with the reprojected one by more than [`HISTORY_DEPTH_REJECT`] drops
+//!   out. What is left is clamped to one standard deviation of this frame's window estimates
+//!   around the term (a 5x5 window with history), so a floor a moving object left keeps none of its
+//!   old occlusion. Noise is keyed to the frame index only when that history exists (plan
+//!   principle 6), otherwise a static per-pixel pattern is used, so a frame without history is
+//!   byte-identical to the next. A history reset (a settled capture, a camera cut, a resize)
+//!   starts it over. Every frame of a temporal quality takes every step of half its slices
+//!   ([`FLAG_INTERLEAVE`]: high's and ultra's one, its angle turned by the frame-keyed noise), so a
+//!   frame pays for about half the horizon search; slices add up (their arcs enter a sum), so the
+//!   history converges to what more slices a frame would draw, where every other step of each
+//!   slice drew it lighter (a slice's horizon is the maximum over its steps; pass 2, P4). A reset
+//!   frame takes the same slices, so it draws what the history converges to.
 //! - All targets are fragment-written: core has no `r8unorm` storage.
 //!
 //! - **Targets from the pool** ([`AoNode::acquire`], RQ4 review): every target above, and at half
@@ -47,7 +55,10 @@
 //!   ([`AO_FULL_LABEL`], [`crate::post::upsample`], guided by the view-depth chain and the prepass
 //!   normals), is allocated by the renderer's target pool, so the ledger holds what AO holds and a
 //!   frame without AO gives it all back. New targets at a new size (a dynamic-resolution step)
-//!   start the history over at the running frame's interleaved cost ([`AoFrameFacts::step_change`]).
+//!   keep the previous size's last term and chain for one frame, which the step frame reads as its
+//!   history in uv (pass 2, RC-05: the step no longer restarts the history and its noise); targets
+//!   remade without one (another shape) start the history over at the running frame's interleaved
+//!   cost ([`AoFrameFacts::step_change`]).
 //!
 //! The renderer records node 10 between the prepass (RQ4.1) and the world pass and binds the
 //! render-size term at the forward frame group's `ao_map` slot (`layout::FRAME_EFFECT_BOUND`,
@@ -80,8 +91,10 @@ pub const BENT_FORMAT: TextureFormat = TextureFormat::Rgba8Unorm;
 /// which the denoise averages by (one slice per pixel measures little of the hemisphere where it
 /// grazes the surface; pass-1 fix gate, visual RED 01).
 pub const RAW_WEIGHTED_FORMAT: TextureFormat = TextureFormat::Rg8Unorm;
-/// AO's own history without a bent normal (the accumulated term at the AO resolution).
-pub const HISTORY_FORMAT: TextureFormat = TextureFormat::R8Unorm;
+/// AO's own history's format without a bent normal (visibility; pass 2, P3/S2).
+pub const HISTORY_FORMAT: TextureFormat = TextureFormat::R16Float;
+/// AO's own history's format with a bent normal (r visibility, gba the bent normal as stored).
+pub const HISTORY_BENT_FORMAT: TextureFormat = TextureFormat::Rgba16Float;
 /// The view-depth chain's format: positive distance in front of the camera, fragment-written
 /// (renderable and unfilterable in core; read with `textureLoad`).
 pub const VIEW_DEPTH_FORMAT: TextureFormat = TextureFormat::R32Float;
@@ -135,10 +148,15 @@ pub const FLAG_BENT_NORMALS: u32 = 1 << 1;
 pub const FLAG_REVERSE_Z: u32 = 1 << 2;
 /// `AoParams::counts.w` flag: the normals target holds view-space normals (world-space otherwise).
 pub const FLAG_VIEW_NORMALS: u32 = 1 << 3;
-/// `AoParams::counts.w` flag: the frame takes every other step of each slice, the frame index's
-/// parity choosing which (a temporal frame that blends history: two frames of it hold every
-/// step, at half the horizon search's cost). A frame without history takes every step.
+/// `AoParams::counts.w` flag: the frame takes every step of half the slices (rounded down, at
+/// least one), their angles turned from frame to frame by the frame-keyed noise: every frame of a
+/// temporal quality, its resets too, so a reset frame draws what the history converges to (XeGTAO's
+/// final power is convex: an estimate of more slices drew darker) at a running frame's cost. A
+/// quality without history takes every slice.
 pub const FLAG_INTERLEAVE: u32 = 1 << 4;
+/// `AoParams::counts.w` flag: the denoise finds history through the prepass's motion target
+/// (bound at its motion binding) instead of the camera alone.
+pub const FLAG_MOTION: u32 = 1 << 5;
 
 /// AO's uniform (`AoParams`).
 #[repr(C)]
@@ -150,7 +168,7 @@ pub struct GpuAoParams {
     pub params: [f32; 4],
     /// x: slices; y: steps per slice; z: the frame index its noise keys to (0 without history);
     /// w: flags ([`FLAG_TEMPORAL`], [`FLAG_BENT_NORMALS`], [`FLAG_REVERSE_Z`], [`FLAG_VIEW_NORMALS`],
-    /// [`FLAG_INTERLEAVE`]).
+    /// [`FLAG_INTERLEAVE`], [`FLAG_MOTION`]).
     pub counts: [u32; 4],
     /// x: the history's blend weight (0 on a history reset); y: the depth difference that rejects
     /// history; z: the denoise window's half width in texels ([`denoise_radius`]); w: its spatial
@@ -171,20 +189,27 @@ impl GpuAoParams {
         let quality = &settings.quality;
         let (w, h) = (size.0.max(1) as f32, size.1.max(1) as f32);
         let blends_history = quality.temporal && !facts.history_reset && !facts.step_change;
-        // A step change takes the running frame's half of the search (its cost), not a reset's.
-        let interleaved = quality.temporal && (blends_history || facts.step_change);
+        // Every frame of a temporal quality takes the same slices a pixel, its resets too: the
+        // final power is convex, so a frame of more slices (less noise) drew darker than the
+        // history converged to (pass 2, P4), and a cut no longer pays for every slice.
+        let interleaved = quality.temporal;
         let flags = [
             (quality.temporal, FLAG_TEMPORAL),
             (quality.bent_normals(), FLAG_BENT_NORMALS),
             (facts.depth_reversed, FLAG_REVERSE_Z),
             (facts.view_normals, FLAG_VIEW_NORMALS),
             (interleaved, FLAG_INTERLEAVE),
+            (facts.motion, FLAG_MOTION),
         ]
         .into_iter()
         .filter(|(on, _)| *on)
         .fold(0, |all, (_, flag)| all | flag);
         let noise_frame = if quality.temporal { (facts.frame_index % u64::from(u32::MAX)) as u32 } else { 0 };
-        let weight = if blends_history { HISTORY_WEIGHT } else { 0.0 };
+        let weight = match (blends_history, facts.history_frames) {
+            (false, _) => 0.0,
+            (true, None) => HISTORY_WEIGHT,
+            (true, Some(frames)) => HISTORY_WEIGHT.min(frames as f32 / (frames as f32 + 1.0)),
+        };
         GpuAoParams {
             size: [w, h, 1.0 / w, 1.0 / h],
             params: [settings.radius, settings.intensity, FALLOFF_FRACTION, settings.thickness],
@@ -259,10 +284,18 @@ pub struct AoFrameFacts {
     pub depth_reversed: bool,
     /// Whether the normals target holds view-space normals (world-space otherwise).
     pub view_normals: bool,
-    /// Whether the targets were made again at a new size this frame (a dynamic-resolution step):
-    /// the history starts over, but the frame keeps the interleaved half of the horizon search a
-    /// running frame takes, so a step down to recover frame time does not cost a full search.
+    /// Whether the targets were made again this frame without a history to carry over (another
+    /// shape): the history starts over, but the frame keeps the interleaved half of the horizon
+    /// search a running frame takes, so a step down to recover frame time does not cost a full
+    /// search. A dynamic-resolution step of the same shape carries the previous size's history
+    /// instead and is a running frame.
     pub step_change: bool,
+    /// Whether the prepass's motion target is bound ([`FLAG_MOTION`]).
+    pub motion: bool,
+    /// Frames the history has blended since it started over, when the node counts them: the
+    /// history's weight follows the running average `n / (n + 1)` up to [`HISTORY_WEIGHT`], so a
+    /// settled capture's frames weigh alike (None: [`HISTORY_WEIGHT`] from the first frame on).
+    pub history_frames: Option<u32>,
 }
 
 /// The frame's AO: the look's radius and intensity at the quality's sampling.
@@ -286,10 +319,10 @@ impl AoSettings {
     }
 }
 
-/// The denoise window's half width in texels under `quality`: 3x3 at full resolution (a texel
-/// covers a quarter of the area, and the full-resolution presets take three slices and keep
-/// history), 5x5 at half resolution with history, 7x7 at half resolution without (as a disc of
-/// 37 texels, ao_denoise.wgsl: the corners' weights are the smallest, and medium's AO stays
+/// The denoise window's half width in texels under `quality`: 5x5 with history (its estimates'
+/// spread bounds the history, and one slice a frame needs that many: ultra's 3x3 skewed it; pass 2,
+/// P2-0.6), 3x3 at full resolution without (a texel covers a quarter of the area), 7x7 at half
+/// resolution without (as a disc of 37 texels, ao_denoise.wgsl: the corners' weights are the smallest, and medium's AO stays
 /// within its 0.6 ms). Each slice's estimate is measured against its own unoccluded arc (gate
 /// finding 03), so open ground carries no slice-angle noise; a crease does, since how much of the
 /// floor a wall's slice sees depends on the slice's angle, and medium's one slice has no frames
@@ -297,8 +330,8 @@ impl AoSettings {
 /// live-app finding 1).
 pub const fn denoise_radius(quality: &AoQuality) -> u8 {
     match (quality.resolution, quality.temporal) {
-        (AoResolution::Full, _) => 1,
         (_, true) => 2,
+        (AoResolution::Full, false) => 1,
         (_, false) => 3,
     }
 }
@@ -329,14 +362,26 @@ pub const fn term_format(quality: &AoQuality) -> TextureFormat {
     if quality.bent_normals() { BENT_FORMAT } else { AO_FORMAT }
 }
 
+/// AO's own history's format under `quality` (the accumulated term at the AO resolution, last
+/// frame's), which the term it ping-pongs with shares: 16-bit float on a temporal quality
+/// ([`HISTORY_FORMAT`], [`HISTORY_BENT_FORMAT`]; pass 2, P3/S2), the term's own without history.
+pub const fn history_format(quality: &AoQuality) -> TextureFormat {
+    match (quality.temporal, quality.bent_normals()) {
+        (false, _) => term_format(quality),
+        (true, true) => HISTORY_BENT_FORMAT,
+        (true, false) => HISTORY_FORMAT,
+    }
+}
+
 /// The raw term's format under `quality`: the bent term's, or visibility with its weight.
 pub const fn raw_format(quality: &AoQuality) -> TextureFormat {
     if quality.bent_normals() { BENT_FORMAT } else { RAW_WEIGHTED_FORMAT }
 }
 
 /// AO's pooled targets at `render` size: the raw and the denoised term and the view-depth chain,
-/// with a temporal quality the history and last frame's chain, and at half resolution the term
-/// upsampled to the render size ([`AO_FULL_LABEL`]); empty when AO is off.
+/// with a temporal quality the history and last frame's chain (the term and the history in
+/// [`history_format`]), and at half resolution the term upsampled to the render size
+/// ([`AO_FULL_LABEL`], in [`term_format`]); empty when AO is off.
 pub fn targets(render: (u32, u32), quality: &AoQuality) -> Vec<TargetDesc> {
     targets_with_usage(render, quality, TextureUsages::empty())
 }
@@ -352,9 +397,10 @@ fn targets_with_usage(render: (u32, u32), quality: &AoQuality, extra_usage: Text
     // A temporal history's pairs are copied aside around a settled capture (`AoNode::stash_live`).
     let copies = if quality.temporal { HISTORY_COPY_USAGE } else { TextureUsages::empty() };
     let (terms, chains) = (AO_USAGE | extra_usage | copies, AO_USAGE | copies);
-    let mut all = vec![target(AO_RAW_LABEL, raw_format(quality), 1, AO_USAGE | extra_usage), target(AO_LABEL, term, 1, terms), target(DEPTH_LABEL, VIEW_DEPTH_FORMAT, mips, chains)];
+    let written = history_format(quality);
+    let mut all = vec![target(AO_RAW_LABEL, raw_format(quality), 1, AO_USAGE | extra_usage), target(AO_LABEL, written, 1, terms), target(DEPTH_LABEL, VIEW_DEPTH_FORMAT, mips, chains)];
     if quality.temporal {
-        all.extend([target(HISTORY_LABEL, term, 1, terms), target(DEPTH_HISTORY_LABEL, VIEW_DEPTH_FORMAT, mips, chains)]);
+        all.extend([target(HISTORY_LABEL, written, 1, terms), target(DEPTH_HISTORY_LABEL, VIEW_DEPTH_FORMAT, mips, chains)]);
     }
     if size != (render.0.max(1), render.1.max(1)) {
         all.push(TargetDesc { size: (render.0.max(1), render.1.max(1)), ..target(AO_FULL_LABEL, term, 1, terms) });
@@ -380,7 +426,8 @@ pub fn depth_mips(size: (u32, u32)) -> u32 {
 fn texel_bytes(format: TextureFormat) -> u64 {
     match format {
         TextureFormat::R8Unorm => 1,
-        TextureFormat::Rg8Unorm => 2,
+        TextureFormat::Rg8Unorm | TextureFormat::R16Float => 2,
+        TextureFormat::Rgba16Float => 8,
         _ => 4,
     }
 }
@@ -394,7 +441,7 @@ fn chain_bytes(size: (u32, u32)) -> u64 {
 /// view-depth chain it is reprojected against, at the AO resolution.
 pub fn history_bytes(render: (u32, u32), quality: &AoQuality) -> u64 {
     match ao_size(render, quality.resolution) {
-        Some((w, h)) if quality.temporal => u64::from(w) * u64::from(h) * texel_bytes(term_format(quality)) + chain_bytes((w, h)),
+        Some((w, h)) if quality.temporal => u64::from(w) * u64::from(h) * texel_bytes(history_format(quality)) + chain_bytes((w, h)),
         _ => 0,
     }
 }
@@ -417,6 +464,7 @@ const DENOISE_PARAMS: u32 = 3;
 const DENOISE_VIEW: u32 = 4;
 const DENOISE_DEPTH_HISTORY: u32 = 5;
 const DENOISE_NORMALS: u32 = 6;
+const DENOISE_MOTION: u32 = 7;
 /// AO cost rows record this many nodes back to back per sample (as bloom's: a lone pass after an
 /// idle wait pays the GPU's wake-up).
 pub const COST_NODES_PER_SAMPLE: u32 = 32;
@@ -435,6 +483,9 @@ pub struct AoInput<'a> {
     pub settings: &'a AoSettings,
     /// Frame index, history reset, depth convention, normals' space.
     pub facts: AoFrameFacts,
+    /// The prepass's motion target (render size, NDC current − previous; None: the frame has none
+    /// and history is found through the camera).
+    pub motion: Option<&'a TextureView>,
     /// The inputs' identity: bind groups are rebuilt when it changes.
     pub generation: u64,
 }
@@ -465,12 +516,14 @@ struct TermPipelines {
 }
 
 /// A target and its view.
+#[derive(Clone)]
 struct Target {
     texture: Texture,
     view: TextureView,
 }
 
 /// A view-depth chain: the texture, a view of every mip (read) and one per mip (written).
+#[derive(Clone)]
 struct Chain {
     texture: Texture,
     all: TextureView,
@@ -544,10 +597,17 @@ pub struct AoNode {
     parity: usize,
     previous: Option<AoCamera>,
     extra_usage: TextureUsages,
-    groups: Option<((u64, u64), Vec<ParityGroups>)>,
+    groups: Option<((u64, u64, bool), Vec<ParityGroups>)>,
     upsample: crate::post::upsample::JointUpsample,
     /// Live's history put aside while a settled capture draws on the node (RQ5 review).
     live_stash: Option<LiveStash>,
+    /// Frames the history has blended since it started over ([`AoFrameFacts::history_frames`]).
+    history_frames: u32,
+    /// The previous size's last term and view-depth chain, kept from a dynamic-resolution step's
+    /// remake until the step frame has read them as its history (pass 2, RC-05).
+    carried: Option<(Target, Chain)>,
+    /// A texel of no motion, bound at the motion binding of frames without a motion target.
+    neutral_motion: TextureView,
 }
 
 /// Live's AO history kept aside while a settled capture runs on the node, so the capture's
@@ -561,6 +621,8 @@ struct LiveStash {
     chain: Texture,
     parity: usize,
     previous: Option<AoCamera>,
+    /// Frames its history had blended.
+    history_frames: u32,
     /// Whether the capture ended and the next Live frame restores it.
     restore: bool,
 }
@@ -724,6 +786,7 @@ impl AoNode {
                     uniform_entry::<GpuAoView>(DENOISE_VIEW),
                     float_entry(DENOISE_DEPTH_HISTORY),
                     float_entry(DENOISE_NORMALS),
+                    float_entry(DENOISE_MOTION),
                 ],
             ),
         };
@@ -750,6 +813,9 @@ impl AoNode {
             groups: None,
             upsample: crate::post::upsample::JointUpsample::new(device)?,
             live_stash: None,
+            history_frames: 0,
+            carried: None,
+            neutral_motion: make_target(device, "ao no motion", (1, 1), crate::motion::MOTION_FORMAT, AO_USAGE).view,
         })
     }
 
@@ -773,7 +839,7 @@ impl AoNode {
         copy_all_mips(&mut encoder, term, &stash_term);
         copy_all_mips(&mut encoder, chain, &stash_chain);
         queue.submit([encoder.finish()]);
-        self.live_stash = Some(LiveStash { shape, term: stash_term, chain: stash_chain, parity: self.parity, previous: self.previous, restore: false });
+        self.live_stash = Some(LiveStash { shape, term: stash_term, chain: stash_chain, parity: self.parity, previous: self.previous, history_frames: self.history_frames, restore: false });
     }
 
     /// The capture is over: the next Live frame takes the stashed history back.
@@ -783,9 +849,13 @@ impl AoNode {
         }
     }
 
-    /// Bytes the Live stash holds (a term and a view-depth chain at AO size), outside the pool.
+    /// Bytes AO holds outside the pool: the Live stash (a term and a view-depth chain at AO size),
+    /// and for the frame after a dynamic-resolution step the previous size's term and chain it
+    /// carries.
     pub fn stash_bytes(&self) -> u64 {
-        self.live_stash.as_ref().map_or(0, |stash| texture_bytes(&stash.term) + texture_bytes(&stash.chain))
+        let stash = self.live_stash.as_ref().map_or(0, |stash| texture_bytes(&stash.term) + texture_bytes(&stash.chain));
+        let carried = self.carried.as_ref().map_or(0, |(term, chain)| texture_bytes(&term.texture) + texture_bytes(&chain.texture));
+        stash + carried
     }
 
     /// Before a Live frame after a capture: copy the stash back into the slot the frame reads as
@@ -803,22 +873,25 @@ impl AoNode {
         copy_all_mips(encoder, &stash.chain, &targets.chains[last].texture);
         self.parity = stash.parity;
         self.previous = stash.previous;
+        self.history_frames = stash.history_frames;
         self.remade = false;
     }
 
     /// Make the pipelines writing a term with (`bent`) or without a bent normal, on first use.
     fn ensure_term_pipelines(&mut self, device: &Device, bent: bool, half: bool) {
         let format = if bent { BENT_FORMAT } else { AO_FORMAT };
+        let history = if bent { HISTORY_BENT_FORMAT } else { HISTORY_FORMAT };
         let raw = if bent { BENT_FORMAT } else { RAW_WEIGHTED_FORMAT };
         let (gtao_layout, denoise_layout) = (&self.gtao_pipeline_layout, &self.denoise_pipeline_layout);
         let (gtao_module, denoise_module) = (&self.gtao_module, &self.denoise_module);
         // Only a half-resolution window weighs normals past a convex edge (ao_denoise.wgsl): the
-        // full-resolution pipelines compile that path out.
+        // full-resolution pipelines compile that path out (ultra's 5x5 window with history reaches
+        // two pixels past an edge; the normals' reads cost 0.23 ms at 1080p, over its budget).
         let convex = [(CONVEX_NORMALS_CONSTANT, if half { 1.0 } else { 0.0 })];
         self.term_pipelines[term_pipelines_slot(bent, half)].get_or_insert_with(|| TermPipelines {
             gtao: screen_pipeline(device, gtao_layout, gtao_module, ("vs_ao", "fs_gtao"), raw),
             denoise: screen_pipeline_with(device, denoise_layout, denoise_module, ("vs_ao_denoise", "fs_ao_denoise"), format, &convex),
-            temporal: screen_pipeline_with(device, denoise_layout, denoise_module, ("vs_ao_denoise", "fs_ao_temporal"), format, &convex),
+            temporal: screen_pipeline_with(device, denoise_layout, denoise_module, ("vs_ao_denoise", "fs_ao_temporal"), history, &convex),
         });
     }
 
@@ -847,6 +920,12 @@ impl AoNode {
         }
         let get = |label: &str| pooled.iter().find(|target| target.desc().label == label);
         let (bent, temporal) = (quality.bent_normals(), quality.temporal);
+        // A new size of the same temporal shape (a dynamic-resolution step): the last term and chain
+        // the old targets wrote stay for the step frame to read in uv (RC-05).
+        self.carried = self.targets.as_ref().filter(|held| held.temporal && temporal && held.bent == bent && held.size != size).map(|held| {
+            let last = 1 - self.parity;
+            (held.terms[last].clone(), held.chains[last].clone())
+        });
         let pairs: &[(&str, &str)] = if temporal { &[(AO_LABEL, DEPTH_LABEL), (HISTORY_LABEL, DEPTH_HISTORY_LABEL)] } else { &[(AO_LABEL, DEPTH_LABEL)] };
         let held = |label| get(label).expect("acquired above");
         let fresh = Targets {
@@ -875,6 +954,7 @@ impl AoNode {
         }
         self.targets = None;
         self.groups = None;
+        self.carried = None;
     }
 
     /// The bind groups of parity `parity` (it writes term and chain `parity` and reads the other
@@ -892,26 +972,35 @@ impl AoNode {
             depth: group("ao depth", &self.layouts.depth, &[params.clone(), view.clone(), texture(GTAO_DEVICE_DEPTH, input.depth)]),
             down: (1..chain.mips.len()).map(|mip| group("ao depth down", &self.layouts.down, &[params.clone(), texture(GTAO_DEPTH_SOURCE, &chain.mips[mip - 1])])).collect(),
             gtao: group("gtao", &self.layouts.gtao, &[texture(GTAO_DEPTH, &chain.all), texture(GTAO_NORMALS, input.normals), params.clone(), view.clone()]),
-            denoise: group(
-                "ao denoise",
-                &self.layouts.denoise,
-                &[
-                    texture(DENOISE_RAW, &targets.raw.view),
-                    texture(DENOISE_HISTORY, history),
-                    texture(DENOISE_DEPTH, &chain.all),
-                    crate::tables::entry(DENOISE_PARAMS, &self.params),
-                    crate::tables::entry(DENOISE_VIEW, &self.view),
-                    texture(DENOISE_DEPTH_HISTORY, &targets.chains[other].all),
-                    texture(DENOISE_NORMALS, input.normals),
-                ],
-            ),
+            denoise: self.denoise_group(device, input, &chain.all, (history, &targets.chains[other].all)),
         }
     }
 
-    /// This frame's bind groups, cached by the input's generation and the targets' identity.
+    /// The denoise's bind group for `input` over this frame's view-depth chain `chain`, reading
+    /// `history` (a term and the view-depth chain it was made at) as last frame's.
+    fn denoise_group(&self, device: &Device, input: &AoInput<'_>, chain: &TextureView, history: (&TextureView, &TextureView)) -> BindGroup {
+        let raw = &self.targets.as_ref().expect("targets are made first").raw.view;
+        device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("ao denoise"),
+            layout: &self.layouts.denoise,
+            entries: &[
+                texture(DENOISE_RAW, raw),
+                texture(DENOISE_HISTORY, history.0),
+                texture(DENOISE_DEPTH, chain),
+                crate::tables::entry(DENOISE_PARAMS, &self.params),
+                crate::tables::entry(DENOISE_VIEW, &self.view),
+                texture(DENOISE_DEPTH_HISTORY, history.1),
+                texture(DENOISE_NORMALS, input.normals),
+                texture(DENOISE_MOTION, input.motion.unwrap_or(&self.neutral_motion)),
+            ],
+        })
+    }
+
+    /// This frame's bind groups, cached by the input's generation, the targets' identity and
+    /// whether a motion target is bound.
     fn bind_groups(&mut self, device: &Device, input: &AoInput<'_>) -> ParityGroups {
         let targets = self.targets.as_ref().expect("targets are made first");
-        let key = (input.generation, targets.id);
+        let key = (input.generation, targets.id, input.motion.is_some());
         if let Some((held, groups)) = &self.groups
             && *held == key
         {
@@ -935,6 +1024,27 @@ impl AoNode {
         self.encode_timed(device, queue, encoder, input, None)
     }
 
+    /// Write the frame's AO rows for `input` at AO size `size`, and hand back the previous size's
+    /// history when this frame is a dynamic-resolution step that carries it (RC-05). New targets
+    /// without one are a step change that starts the history over at the running frame's cost;
+    /// anything else that drops the history is a reset.
+    fn frame_rows(&mut self, queue: &Queue, input: &AoInput<'_>, size: (u32, u32)) -> Option<(Target, Chain)> {
+        let remade = std::mem::take(&mut self.remade);
+        let explicit = input.facts.history_reset || self.previous.is_none();
+        let carried = self.carried.take().filter(|_| remade && !explicit);
+        let step_change = remade && !explicit && carried.is_none();
+        let reset = (remade && carried.is_none()) || explicit;
+        // A settled capture's re-renders weigh alike (G0: with the history's 0.9 from the second
+        // frame on, the first frame's slices held 48% of an 8-frame capture at high, and the
+        // template block's base drew their noise as dark clumps that Live's frames average away).
+        self.history_frames = if reset { 0 } else { self.history_frames.saturating_add(1) };
+        let facts = AoFrameFacts { history_reset: reset && !step_change, step_change, motion: input.motion.is_some(), history_frames: Some(self.history_frames), ..input.facts };
+        queue.write_buffer(&self.params, 0, bytemuck::bytes_of(&GpuAoParams::for_frame(input.settings, size, facts)));
+        let previous = if reset { None } else { self.previous };
+        queue.write_buffer(&self.view, 0, bytemuck::bytes_of(&GpuAoView::new(input.camera, previous).at_render(input.render)));
+        carried
+    }
+
     /// [`AoNode::encode`] with `timestamps` (the query set, and whether this node stamps its first
     /// pass's beginning and its last pass's end): a cost row.
     fn encode_timed(
@@ -955,20 +1065,16 @@ impl AoNode {
         if !input.facts.history_reset {
             self.take_back_live(encoder);
         }
-        // New targets at a new size over a running history are a step change: the history starts
-        // over at the running frame's cost. Anything else that drops the history is a reset.
-        let remade = std::mem::take(&mut self.remade);
-        let explicit = input.facts.history_reset || self.previous.is_none();
-        let step_change = remade && !explicit;
-        let reset = remade || explicit;
-        let facts = AoFrameFacts { history_reset: reset && !step_change, step_change, ..input.facts };
-        queue.write_buffer(&self.params, 0, bytemuck::bytes_of(&GpuAoParams::for_frame(input.settings, size, facts)));
-        let previous = if reset { None } else { self.previous };
-        queue.write_buffer(&self.view, 0, bytemuck::bytes_of(&GpuAoView::new(input.camera, previous).at_render(input.render)));
+        let carried = self.frame_rows(queue, &input, size);
         let bent = quality.bent_normals();
         let half = size != (input.render.0.max(1), input.render.1.max(1));
         self.ensure_term_pipelines(device, bent, half);
-        let groups = self.bind_groups(device, &input);
+        let mut groups = self.bind_groups(device, &input);
+        if let Some((term, chain)) = &carried {
+            // The step frame reads the previous size's last term (in uv) as its history.
+            let written = &self.targets.as_ref().expect("made above").chains[self.parity].all;
+            groups.denoise = self.denoise_group(device, &input, written, (&term.view, &chain.all));
+        }
         let pipelines = self.term_pipelines[term_pipelines_slot(bent, half)].as_ref().expect("made above");
         let targets = self.targets.as_ref().expect("made above");
         let stamp = |first_pass: bool| {
@@ -1036,6 +1142,9 @@ pub struct AoFrame {
     pub camera: AoCamera,
     /// Frame index and history reset (the depth convention and normal space are taken as given).
     pub facts: AoFrameFacts,
+    /// NDC motion per pixel (current − previous, as the prepass's motion target holds it); empty:
+    /// no motion target (AO reprojects through the camera alone).
+    pub motion: Vec<[f32; 2]>,
 }
 
 /// A term read back.
@@ -1081,10 +1190,11 @@ fn fs_upload(@builtin(position) position: vec4<f32>) -> UploadOut {
 }
 ";
 
-/// The prepass's targets holding a CPU-made frame.
+/// The prepass's targets holding a CPU-made frame, with its motion when the frame has one.
 struct PrepassStandIn {
     depth: Target,
     normals: Target,
+    motion: Option<TextureView>,
 }
 
 /// A float texture of `texels` (`T` per texel) to read in the upload pass.
@@ -1147,8 +1257,9 @@ impl Upload {
     /// `frame` in the prepass's targets at `size`.
     fn run(&self, gpu: &Gpu, size: (u32, u32), frame: &AoFrame) -> Result<PrepassStandIn, RenderError> {
         let texels = (size.0 * size.1) as usize;
-        if frame.depth.len() != texels || frame.normals.len() != texels {
-            return Err(capture_failed(format!("{} depths and {} normals for a {}x{} frame", frame.depth.len(), frame.normals.len(), size.0, size.1)));
+        let motion_fits = frame.motion.is_empty() || frame.motion.len() == texels;
+        if frame.depth.len() != texels || frame.normals.len() != texels || !motion_fits {
+            return Err(capture_failed(format!("{} depths, {} normals and {} motions for a {}x{} frame", frame.depth.len(), frame.normals.len(), frame.motion.len(), size.0, size.1)));
         }
         let device = &gpu.device;
         let normals4: Vec<[f32; 4]> = frame.normals.iter().map(|n| [n[0], n[1], n[2], 0.0]).collect();
@@ -1167,6 +1278,7 @@ impl Upload {
         let stand_in = PrepassStandIn {
             depth: make_target(device, depth_desc.label, size, depth_desc.format, depth_desc.usage),
             normals: make_target(device, normals_desc.label, size, normals_desc.format, normals_desc.usage),
+            motion: (!frame.motion.is_empty()).then(|| source_texture(gpu, "ao upload motion", size, TextureFormat::Rg32Float, &frame.motion).create_view(&Default::default())),
         };
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("ao upload") });
         {
@@ -1201,7 +1313,12 @@ fn read_term(gpu: &Gpu, node: &AoNode, render_size: bool) -> Result<AoImage, Ren
     let read = if render_size { node.last_read() } else { node.last_term() };
     let texture = read.ok_or_else(|| capture_failed("AO drew nothing"))?;
     let (width, height) = (texture.width(), texture.height());
-    let bytes_per_texel = if targets.bent { 4 } else { 1 };
+    let channels = if targets.bent { 4 } else { 1 };
+    // A 16-bit float history (the term at the AO resolution on a temporal quality) reads back as
+    // the 8-bit levels an `unorm` term would hold.
+    let format = texture.format();
+    let half = format == HISTORY_FORMAT || format == HISTORY_BENT_FORMAT;
+    let bytes_per_texel = if half { channels * 2 } else { channels };
     let padded = (width * bytes_per_texel).div_ceil(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT) * wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
     let staging = buffer(&gpu.device, "ao readback", u64::from(padded) * u64::from(height), BufferUsages::MAP_READ | BufferUsages::COPY_DST)?;
     let mut encoder = gpu.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("ao readback") });
@@ -1212,10 +1329,17 @@ fn read_term(gpu: &Gpu, node: &AoNode, render_size: bool) -> Result<AoImage, Ren
     );
     gpu.queue.submit([encoder.finish()]);
     let data = map_read_blocking(gpu, &staging, u64::from(padded) * u64::from(height))?;
-    let texel = |x: u32, y: u32| (y * padded + x * bytes_per_texel) as usize;
+    let channel = |x: u32, y: u32, c: u32| {
+        let at = (y * padded + x * bytes_per_texel) as usize;
+        if !half {
+            return data[at + c as usize];
+        }
+        let bits = u16::from_le_bytes([data[at + 2 * c as usize], data[at + 2 * c as usize + 1]]);
+        (crate::post::tonemap::f16_to_f32(bits).clamp(0.0, 1.0) * 255.0).round() as u8
+    };
     let coords: Vec<(u32, u32)> = (0..height).flat_map(|y| (0..width).map(move |x| (x, y))).collect();
-    let visibility = coords.iter().map(|&(x, y)| data[texel(x, y)]).collect();
-    let bent = targets.bent.then(|| coords.iter().map(|&(x, y)| std::array::from_fn(|c| data[texel(x, y) + 1 + c])).collect());
+    let visibility = coords.iter().map(|&(x, y)| channel(x, y, 0)).collect();
+    let bent = targets.bent.then(|| coords.iter().map(|&(x, y)| std::array::from_fn(|c| channel(x, y, 1 + c as u32))).collect());
     Ok(AoImage { size: (width, height), visibility, bent })
 }
 
@@ -1225,23 +1349,33 @@ fn read_term(gpu: &Gpu, node: &AoNode, render_size: bool) -> Result<AoImage, Ren
 /// world-space normals are taken from the first frame's facts. The way to check GTAO, the denoise
 /// and the history on the GPU without the prepass.
 pub fn ao_term_images(gpu: &Gpu, settings: &AoSettings, render: (u32, u32), frames: &[AoFrame]) -> Result<Vec<AoImage>, RenderError> {
-    ao_images(gpu, settings, render, frames, false)
+    let sized: Vec<((u32, u32), &AoFrame)> = frames.iter().map(|frame| (render, frame)).collect();
+    ao_images(gpu, settings, &sized, false)
+}
+
+/// [`ao_term_images`] with each frame at its own render size (a dynamic-resolution step between
+/// two frames remakes AO's targets at the new size, as the renderer's pool does).
+pub fn ao_term_images_sized(gpu: &Gpu, settings: &AoSettings, frames: &[((u32, u32), &AoFrame)]) -> Result<Vec<AoImage>, RenderError> {
+    ao_images(gpu, settings, frames, false)
 }
 
 /// [`ao_term_images`] read at the render size: the term the world pass reads (half-resolution AO
 /// through the joint-bilateral upsample, full-resolution AO as it is).
 pub fn ao_render_images(gpu: &Gpu, settings: &AoSettings, render: (u32, u32), frames: &[AoFrame]) -> Result<Vec<AoImage>, RenderError> {
-    ao_images(gpu, settings, render, frames, true)
+    let sized: Vec<((u32, u32), &AoFrame)> = frames.iter().map(|frame| (render, frame)).collect();
+    ao_images(gpu, settings, &sized, true)
 }
 
-fn ao_images(gpu: &Gpu, settings: &AoSettings, render: (u32, u32), frames: &[AoFrame], render_size: bool) -> Result<Vec<AoImage>, RenderError> {
-    crate::capture::check_capture_size(render.0, render.1)?;
+fn ao_images(gpu: &Gpu, settings: &AoSettings, frames: &[((u32, u32), &AoFrame)], render_size: bool) -> Result<Vec<AoImage>, RenderError> {
+    for (render, _) in frames {
+        crate::capture::check_capture_size(render.0, render.1)?;
+    }
     let device = &gpu.device;
     let upload = Upload::new(device)?;
     let mut node = AoNode::with_usage(device, TextureUsages::COPY_SRC)?;
     let mut pool = crate::target_pool::TargetPool::new();
     let mut images = Vec::with_capacity(frames.len());
-    for (index, frame) in frames.iter().enumerate() {
+    for (index, &(render, frame)) in frames.iter().enumerate() {
         node.acquire(device, &mut pool, render, &settings.quality)?;
         let stand_in = upload.run(gpu, render, frame)?;
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("ao image") });
@@ -1252,6 +1386,7 @@ fn ao_images(gpu: &Gpu, settings: &AoSettings, render: (u32, u32), frames: &[AoF
             camera: frame.camera,
             settings,
             facts: frame.facts,
+            motion: stand_in.motion.as_ref(),
             generation: index as u64,
         };
         node.encode(device, &gpu.queue, &mut encoder, input).ok_or_else(|| capture_failed("AO is off"))?;
@@ -1289,6 +1424,7 @@ pub fn ao_gpu_ms(gpu: &Gpu, settings: &AoSettings, render: (u32, u32), frame: &A
                 camera: frame.camera,
                 settings,
                 facts: frame.facts,
+                motion: stand_in.motion.as_ref(),
                 generation: 0,
             };
             let stamps = (&query_set, run == 0, run + 1 == COST_NODES_PER_SAMPLE);
@@ -1332,8 +1468,13 @@ mod tests {
         let (frame, history) = target_bytes((1920, 1080), &HIGH);
         assert_eq!(frame + history, high.iter().map(TargetDesc::bytes).sum::<u64>(), "the ledger's bytes, split");
         assert_eq!(term_format(&HIGH), BENT_FORMAT, "two slices carry a bent normal");
+        // Pass 2, P3/S2 (flipped from the term's 8 bits): the history and the term it ping-pongs
+        // with are 16-bit float; the term the world pass reads at the render size stays 8-bit.
+        assert_eq!((high[1].format, high[3].format), (history_format(&HIGH), history_format(&HIGH)));
+        assert_eq!(history_format(&HIGH), HISTORY_BENT_FORMAT);
+        assert_eq!(high[5].format, term_format(&HIGH));
         let chain: u64 = [(960, 540), (480, 270), (240, 135), (120, 67), (60, 33)].iter().map(|(w, h)| w * h * 4).sum();
-        assert_eq!(history_bytes((1920, 1080), &HIGH), 960 * 540 * 4 + chain, "last frame's term and view-depth chain");
+        assert_eq!(history_bytes((1920, 1080), &HIGH), 960 * 540 * 8 + chain, "last frame's term and view-depth chain");
         let medium = AoQuality { slices: 1, steps: 4, temporal: false, ..HIGH };
         let medium_targets = targets((1920, 1080), &medium);
         assert_eq!(medium_targets.len(), 4, "no history without a temporal quality (the upsample's term only)");
@@ -1348,18 +1489,35 @@ mod tests {
         let medium = AoQuality { slices: 1, steps: 4, temporal: false, ..HIGH };
         assert_eq!(GpuAoParams::new(&look, &medium, (960, 540), 17, false, true).counts, [1, 4, 0, FLAG_REVERSE_Z]);
         let high = GpuAoParams::new(&look, &HIGH, (960, 540), 17, false, false);
-        assert_eq!(high.counts, [2, 6, 17, FLAG_TEMPORAL | FLAG_BENT_NORMALS | FLAG_INTERLEAVE], "a frame that blends history takes half the steps");
+        assert_eq!(high.counts, [2, 6, 17, FLAG_TEMPORAL | FLAG_BENT_NORMALS | FLAG_INTERLEAVE], "a frame that blends history takes half the slices");
         assert_eq!(high.history[0], HISTORY_WEIGHT);
         let reset = GpuAoParams::new(&look, &HIGH, (960, 540), 17, true, false);
         assert_eq!(reset.history[0], 0.0, "a reset starts the history over");
-        assert_eq!(reset.counts[3], FLAG_TEMPORAL | FLAG_BENT_NORMALS, "and takes every step");
+        // Pass 2, P4 (flipped from every step): a reset takes the running frames' slices.
+        assert_eq!(reset.counts[3], FLAG_TEMPORAL | FLAG_BENT_NORMALS | FLAG_INTERLEAVE, "and the running frames' slices");
         assert_eq!(high.params[..2], [look.ao_radius, look.ao_intensity]);
     }
 
-    /// RQ4 review (performance 5): a dynamic-resolution step remakes AO's targets and starts its
-    /// history over, but takes the running frame's interleaved half of the horizon search, not a
-    /// reset's every step (ultra's reset takes every step of its 3 x 8, over its 1.5 ms budget), so the
-    /// frame right after a step down to recover time does not spike.
+    /// G0 visual (2026-10-15): the history's weight follows the running average from a reset, so a
+    /// settled capture's frames weigh alike, and holds [`HISTORY_WEIGHT`] from the tenth frame on.
+    #[test]
+    fn the_history_weight_is_the_running_average_until_it_reaches_the_live_weight() {
+        let look = Look::default();
+        let settings = AoSettings::new(&look, &HIGH).expect("on");
+        let weight = |frames: Option<u32>| GpuAoParams::for_frame(&settings, (960, 540), AoFrameFacts { frame_index: 17, history_frames: frames, ..AoFrameFacts::default() }).history[0];
+        assert_eq!(weight(Some(0)), 0.0, "nothing behind the first frame");
+        assert_eq!(weight(Some(1)), 0.5);
+        assert_eq!(weight(Some(3)), 0.75);
+        assert_eq!(weight(Some(9)), HISTORY_WEIGHT);
+        assert_eq!(weight(Some(400)), HISTORY_WEIGHT);
+        assert_eq!(weight(None), HISTORY_WEIGHT, "a caller that does not count keeps the Live weight");
+    }
+
+    /// RQ4 review (performance 5): targets remade without a history to carry (another shape; a
+    /// dynamic-resolution step of the same shape carries the previous size's, pass 2 RC-05) start
+    /// the history over at the running frame's interleaved half of the horizon search, so the frame
+    /// right after a step down to recover time does not spike. Since pass 2 (P4) every frame of a
+    /// temporal quality takes it, resets too.
     #[test]
     fn a_step_change_starts_the_history_over_at_the_running_frames_cost() {
         let look = Look::default();
@@ -1367,12 +1525,13 @@ mod tests {
         let step = AoFrameFacts { frame_index: 17, step_change: true, ..AoFrameFacts::default() };
         let row = GpuAoParams::for_frame(&settings, (960, 540), step);
         assert_eq!(row.history[0], 0.0, "no history crosses the step");
-        assert_eq!(row.counts[3] & FLAG_INTERLEAVE, FLAG_INTERLEAVE, "half the steps, as a running frame");
+        assert_eq!(row.counts[3] & FLAG_INTERLEAVE, FLAG_INTERLEAVE, "half the slices, as a running frame");
         let settle = GpuAoParams::for_frame(&settings, (960, 540), AoFrameFacts { frame_index: 17, history_reset: true, ..AoFrameFacts::default() });
-        assert_eq!(settle.counts[3] & FLAG_INTERLEAVE, 0, "a reset (a settled capture, a cut) takes every step");
+        // Pass 2, P4 (flipped): a reset (a settled capture, a cut) takes the running frames' slices.
+        assert_eq!(settle.counts[3] & FLAG_INTERLEAVE, FLAG_INTERLEAVE, "a reset takes the running frames' slices");
         let medium = AoQuality { slices: 1, steps: 4, temporal: false, ..HIGH };
         let still = GpuAoParams::for_frame(&AoSettings::new(&look, &medium).expect("on"), (960, 540), step);
-        assert_eq!(still.counts[3] & FLAG_INTERLEAVE, 0, "without history every frame takes every step");
+        assert_eq!(still.counts[3] & FLAG_INTERLEAVE, 0, "without history every frame takes every slice");
     }
 
     #[test]

@@ -23,7 +23,7 @@ struct AoParams {
     // x: radius (world units); y: intensity; z: falloff (fraction of the radius); w: thickness.
     params: vec4<f32>,
     // x: slices; y: steps per slice; z: the frame index its noise keys to; w: flags (1 temporal,
-    // 2 bent normals, 4 reverse-Z, 8 view-space normals, 16 every other step).
+    // 2 bent normals, 4 reverse-Z, 8 view-space normals, 16 every other slice, 32 motion).
     counts: vec4<u32>,
     // x: the history's blend weight; y: the depth difference that rejects history; z: the denoise
     // window's half width in texels; w: its spatial falloff (sigma, texels).
@@ -69,7 +69,9 @@ const GX_AO_TOO_CLOSE_PIXELS: f32 = 1.3;
 const GX_AO_FADE_PIXELS: f32 = 10.0;
 const GX_AO_MIP_OFFSET: f32 = 3.3;
 // XeGTAO's final power (`FinalValuePower`) at intensity 1, and its floor: applied per pixel before
-// the denoise averages, as XeGTAO does.
+// the denoise averages, as XeGTAO does. The power is convex, so a pixel's estimate raised to it
+// comes out lighter the noisier the estimate is: every frame of a temporal quality takes the same
+// slices a pixel (`gx_ao_frame_slices`), so a reset frame draws what the history converges to.
 const GX_AO_POWER: f32 = 2.2;
 const GX_AO_SLOPE_FUDGE: f32 = 0.05;
 const GX_AO_MIN_VISIBILITY: f32 = 0.03;
@@ -308,14 +310,12 @@ fn gx_ao_sample(distance_at: f32, ray: vec4<f32>, centre_z: f32, slice: GxAoSlic
 // Both sides' horizon cosines along `omega` (pixels per unit of `s`, +omega first) from AO pixel
 // `ao_pos` (NDC `ndc`, view position `centre`), starting at the normal's horizons `low`:
 // `counts.y` steps on each side (XeGTAO's `StepsPerSlice`), both sides of a step sharing its
-// distance and mip. Samples sit on their mip texels' centres; one off screen is skipped. With
-// `GX_AO_FLAG_INTERLEAVE` (a temporal frame that blends history) the frame takes every other step,
-// the frame index's parity choosing which, so two frames of history hold every step.
+// distance and mip. Samples sit on their mip texels' centres; one off screen is skipped. Every
+// step, always: a slice's horizon is the maximum over its steps, so a frame that took every other
+// step drew the slice lighter than the whole (pass 2, P4); a frame that blends history takes every
+// other slice instead (`gx_gtao`).
 fn gx_ao_horizons(ao_pos: vec2<f32>, ndc: vec2<f32>, ray_per_texel: vec4<f32>, centre: vec3<f32>, frame: GxAoSlice, omega: vec2<f32>, low: vec2<f32>, slice: u32, noise: f32, min_s: f32, falloff: vec2<f32>) -> vec2<f32> {
     let steps = gx_ao.counts.y;
-    let interleaved = (gx_ao.counts.w & GX_AO_FLAG_INTERLEAVE) != 0u;
-    let stride = select(1u, 2u, interleaved);
-    let first = select(0u, gx_ao.counts.z & 1u, interleaved);
     let inv_steps = 1.0 / f32(steps);
     let last_mip = f32(textureNumLevels(gx_ao_depth) - 1u);
     let size = vec2<i32>(gx_ao.size.xy);
@@ -331,7 +331,7 @@ fn gx_ao_horizons(ao_pos: vec2<f32>, ndc: vec2<f32>, ray_per_texel: vec4<f32>, c
     // texel `(t + 1) * 2^m - 1` (`fs_ao_depth_down`).
     let first_texel = centre_texel + vec2<f32>(1.0);
     var horizons = low;
-    for (var i = first; i < steps; i += stride) {
+    for (var i = 0u; i < steps; i++) {
         let step_noise = fract(noise + f32(slice + i * steps) * GX_AO_R1);
         // XeGTAO's sample distribution power (2): denser near the pixel.
         let t = (f32(i) + step_noise) * inv_steps;
@@ -421,7 +421,8 @@ fn gx_gtao(ao_pos: vec2<f32>, centre: vec3<f32>, quad: mat2x3<f32>) -> GxAoEstim
     let clip_w = (gx_ao_view.proj * vec4<f32>(centre.x, centre.y, -centre.z, 1.0)).w;
     let screen_radius = effect_radius * 0.5 * gx_ao.size.x * gx_ao_view.proj[0][0] / max(clip_w, 1e-6);
     if screen_radius < GX_AO_TOO_CLOSE_PIXELS {
-        return GxAoEstimate(1.0, 1.0, vec3<f32>(0.0));
+        // Unoccluded: the bent normal is the normal (it carries the weight, `fs_gtao`).
+        return GxAoEstimate(1.0, 1.0, normal);
     }
     let fade = clamp((GX_AO_FADE_PIXELS - screen_radius) / 100.0, 0.0, 1.0) * 0.5;
     // The slices' visible arcs and, beside them, the arcs they would have unoccluded: their ratio is
@@ -438,7 +439,7 @@ fn gx_gtao(ao_pos: vec2<f32>, centre: vec3<f32>, quad: mat2x3<f32>) -> GxAoEstim
     let ndc = gx_ao_ndc(ao_pos);
     let ray_per_texel = gx_ao_ray_per_texel();
     let min_s = GX_AO_TOO_CLOSE_PIXELS / screen_radius;
-    let slices = gx_ao.counts.x;
+    let slices = gx_ao_frame_slices();
     for (var slice = 0u; slice < slices; slice++) {
         let phi = (f32(slice) + noise.x) / f32(slices) * GX_AO_PI;
         let cos_phi = cos(phi);
@@ -488,7 +489,24 @@ fn gx_gtao(ao_pos: vec2<f32>, centre: vec3<f32>, quad: mat2x3<f32>) -> GxAoEstim
         }
     }
     let weight = unoccluded / (f32(slices) * GX_AO_WEIGHT_FULL);
-    return GxAoEstimate(visible / max(unoccluded, 1e-4) + fade / f32(slices), weight, bent);
+    // A bent normal that sums to nothing stands up along the normal (it carries the weight).
+    let bent_or_normal = select(bent, normal, dot(bent, bent) <= 1e-12);
+    return GxAoEstimate(visible / max(unoccluded, 1e-4) + fade / f32(slices), weight, bent_or_normal);
+}
+
+// The slices a frame takes, spread evenly over the half circle from the pixel's noise: all
+// `counts.x` without `GX_AO_FLAG_INTERLEAVE`. With it (every frame of a temporal quality, its
+// resets too) every step of half of them (rounded down, at least one: high's 2 and ultra's 3 take
+// one, within their budgets), and the frame-keyed noise turns their angles from frame to frame. A
+// slice's visibility enters the ratio estimator's sums,
+// which are linear, so frames of fewer slices average to what a frame of every slice draws
+// (Jimenez et al. 2016's temporal rotations; three.js `GTAONode`, MIT), where every other step of
+// each slice drew it lighter (a slice's horizon is the maximum over its steps; pass 2, P4). The
+// angles cover the half circle on every frame, not one half of it each parity: frames that saw
+// alternate halves disagreed in their windows' spread and the history's clamp kept the lighter.
+fn gx_ao_frame_slices() -> u32 {
+    let slices = gx_ao.counts.x;
+    return select(slices, max(slices / 2u, 1u), (gx_ao.counts.w & GX_AO_FLAG_INTERLEAVE) != 0u);
 }
 
 @fragment
@@ -517,7 +535,11 @@ fn fs_gtao(in: AoOut) -> @location(0) vec4<f32> {
         let bent_view = normalize(vec3<f32>(term.bent.x, term.bent.y, -term.bent.z));
         bent_world = normalize((vec4<f32>(bent_view, 0.0) * gx_ao_view.view).xyz);
     }
-    return vec4<f32>(visibility, bent_world * 0.5 + vec3<f32>(0.5));
+    // The bent normal's length is the estimate's weight (the arcs its slices measured), which the
+    // denoise averages by as it does the weighted raw term's: a frame that takes one slice (high's
+    // running frames) measures little of the hemisphere where the slice grazes the surface, and
+    // its estimate counted in full drew the running history lighter than a frame of every slice.
+    return vec4<f32>(visibility, bent_world * clamp(term.weight, GX_AO_WEIGHT_FLOOR, 1.0) * 0.5 + vec3<f32>(0.5));
 }
 
 // Whether GTAO integrates a bent normal (the raw term's gba hold it).

@@ -20,11 +20,13 @@ const GX_SPECULAR_AA_THRESHOLD: f32 = 0.2;
 // a pipeline that does not set it shade the material's own roughness.
 override GX_SPECULAR_AA: bool = false;
 
-// The mip bias material textures sample with (RQ5.2): `TaaQuality::texture_lod_bias` of the
-// render scale while TAA runs (negative: the jitter recovers the detail a sharper mip would alias,
-// and a scene rendered below output size samples the mip the output would), 0 otherwise. A
-// pipeline-overridable constant the renderer sets on the TAA pipeline set (TAA is a pipeline knob);
-// a pipeline that does not set it samples exactly as `textureSample`.
+// The mip bias material textures sample with, `gx_texture_lod_bias()`: in the forward pass the
+// frame's lane (`FrameUniforms::texture_lod.x`, renderer pass 2 P2-0.8b T-06,
+// `settings::frame_texture_lod_bias`: TAA's `log2(scale)` - 0.5, where the jitter recovers the
+// detail a sharper mip would alias, FSR1's upscale's `log2(scale)` without TAA, else 0, at the
+// frame's own scale, so a dynamic-resolution step moves it without a pipeline) plus this
+// pipeline-overridable constant, which the renderer's pipelines leave at 0; the v2 prelude reads
+// the constant alone. At 0 a texture samples exactly as `textureSample`.
 override GX_TEXTURE_LOD_BIAS: f32 = 0.0;
 
 // Whether material textures live in size classes (RQ6.4, texture quality on: the renderer sets it
@@ -36,6 +38,18 @@ override GX_TEXTURE_CLASSES: bool = false;
 // Whether normal-map mips keep their averaged length in alpha (RQ6.4, Toksvig): the surface then
 // widens roughness by the detail a coarse mip averaged away.
 override GX_TOKSVIG: bool = false;
+
+// The least perceptual roughness a forward surface shades with (a pipeline-overridable constant):
+// 0.04 by default, as before the floor was a knob; a class's pipelines may raise it (the sun as a
+// disc on desktop, a coarser floor on phones' half-precision paths).
+override GX_ROUGHNESS_FLOOR: f32 = 0.04;
+
+// The occlusion map's ambient occlusion at the fragment `gx_surface` last built (P2-0.12 LG-09;
+// its strength applied by the caller, which reads the material's extension row): 1 without a map,
+// and for every Level-2 v2 surface (which builds no built-in surface). The ambient chunk takes the
+// smaller of it and the screen-space AO for the diffuse and specular occlusion of indirect light;
+// direct light never reads it.
+var<private> gx_material_ao: f32 = 1.0;
 
 // What the lighting chunks shade.
 struct Surface {
@@ -95,11 +109,12 @@ fn gx_surface(world_pos: vec3<f32>, normal: vec3<f32>, uv: vec2<f32>, tangent: v
     var base_sample: vec4<f32>;
     var normal_sample: vec4<f32>;
     var mr_sample: vec4<f32>;
+    let lod_bias = gx_texture_lod_bias();
     if GX_TEXTURE_CLASSES {
         // One fetch per texture, from its own class's arrays (class 0 included): explicit
         // gradients (taken here, in uniform control flow) carry the bias, so the class branch may
         // diverge; a missing texture fetches nothing.
-        let lod_scale = exp2(GX_TEXTURE_LOD_BIAS);
+        let lod_scale = exp2(lod_bias);
         let uv_dx = dpdx(uv) * lod_scale;
         let uv_dy = dpdy(uv) * lod_scale;
         base_sample = gx_class_texel(true, material.textures.x, uv, uv_dx, uv_dy);
@@ -108,18 +123,19 @@ fn gx_surface(world_pos: vec3<f32>, normal: vec3<f32>, uv: vec2<f32>, tangent: v
     } else {
         // Sampled before any data-dependent branch (implicit derivatives need uniform control
         // flow); a missing texture samples layer 0 and is replaced by its neutral value.
-        base_sample = textureSampleBias(color_textures, texture_sampler, uv, layer(material.textures.x), GX_TEXTURE_LOD_BIAS);
-        normal_sample = textureSampleBias(data_textures, texture_sampler, uv, layer(material.textures.y), GX_TEXTURE_LOD_BIAS);
-        mr_sample = textureSampleBias(data_textures, texture_sampler, uv, layer(material.textures.z), GX_TEXTURE_LOD_BIAS);
+        base_sample = textureSampleBias(color_textures, texture_sampler, uv, layer(material.textures.x), lod_bias);
+        normal_sample = textureSampleBias(data_textures, texture_sampler, uv, layer(material.textures.y), lod_bias);
+        mr_sample = textureSampleBias(data_textures, texture_sampler, uv, layer(material.textures.z), lod_bias);
     }
     let base = material.base_color * select(base_sample, vec4<f32>(1.0), material.textures.x == NO_TEXTURE);
     let mr = select(mr_sample.rgb, vec3<f32>(1.0), material.textures.z == NO_TEXTURE);
+    gx_material_ao = gx_surface_ao(material, mr_sample.r, uv);
     var albedo = base.rgb;
     if material.params.z > 0.5 {
         albedo = checker(world_pos);
     }
     let metallic = clamp(material.params.x * mr.b, 0.0, 1.0);
-    var roughness = clamp(material.params.y * mr.g, 0.04, 1.0);
+    var roughness = clamp(material.params.y * mr.g, GX_ROUGHNESS_FLOOR, 1.0);
     let geometric = normalize(normal);
     var n = geometric;
     if material.textures.y != NO_TEXTURE {
@@ -132,13 +148,33 @@ fn gx_surface(world_pos: vec3<f32>, normal: vec3<f32>, uv: vec2<f32>, tangent: v
         }
     }
     // Derivatives in uniform control flow (after the branches above rejoin), used only when the
-    // pipeline filters specular aliasing on the HDR scene.
-    let n_dx = dpdx(n);
-    let n_dy = dpdy(n);
+    // pipeline filters specular aliasing on the HDR scene. They are the geometric normal's (P2-0.12
+    // C8, Filament's `normalFiltering` over the geometric normal): how the surface itself curves
+    // across the pixel. The normal map's detail is Toksvig's in its mips; its 2x2-quad derivatives
+    // would count it twice and step the roughness per quad.
+    let n_dx = dpdx(geometric);
+    let n_dy = dpdy(geometric);
     if GX_SPECULAR_AA && GX_SCENE_HDR {
         roughness = gx_filtered_roughness(roughness, n_dx, n_dy);
     }
     return Surface(world_pos, geometric, n, vec3<f32>(0.0), albedo, base.a, metallic, roughness);
+}
+
+// The occlusion map's value for `material` at `uv` (P2-0.12 LG-09): 1 without a map; an ORM
+// texture's red from the metallic-roughness texel already fetched (`mr_red`); else one more
+// gradient fetch of its own map, only for such a material.
+fn gx_surface_ao(material: Material, mr_red: f32, uv: vec2<f32>) -> f32 {
+    let lod_scale = exp2(gx_texture_lod_bias());
+    let uv_dx = dpdx(uv) * lod_scale;
+    let uv_dy = dpdy(uv) * lod_scale;
+    let reference = material.textures.w;
+    if reference == NO_TEXTURE {
+        return 1.0;
+    }
+    if reference == material.textures.z {
+        return mr_red;
+    }
+    return gx_class_texel(false, reference, uv, uv_dx, uv_dy).r;
 }
 
 // The radiance a fragment of a material emits (RQ6.3): its extension row's emissive radiance
@@ -148,7 +184,7 @@ fn gx_surface(world_pos: vec3<f32>, normal: vec3<f32>, uv: vec2<f32>, tangent: v
 // uniform control flow: the map's derivatives are taken here, and a material without a map (a
 // draw-uniform branch) samples nothing.
 fn gx_emission(ext: GxMaterialExt, uv: vec2<f32>) -> vec3<f32> {
-    let lod_scale = exp2(GX_TEXTURE_LOD_BIAS);
+    let lod_scale = exp2(gx_texture_lod_bias());
     let uv_dx = dpdx(uv) * lod_scale;
     let uv_dy = dpdy(uv) * lod_scale;
     var map = vec3<f32>(1.0);

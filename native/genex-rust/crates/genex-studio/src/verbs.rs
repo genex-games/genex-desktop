@@ -146,7 +146,8 @@ impl VerbRefusal {
     /// `webCall` answers). A native run never sends it: lines that arrive before `ready` stay
     /// queued and are answered after it, as v1's transport does.
     pub const STARTING: &'static str = "starting";
-    /// A `surface` or `release` argument outside its shape: nothing was made or freed.
+    /// A `surface` or `release` argument outside its shape: nothing was made or freed. Also a
+    /// `capture` `size` outside its shape or a game that draws its world size only: nothing drawn.
     pub const BAD_ARGUMENT: &'static str = "bad-argument";
     /// A `surface` generation no newer than the last one asked for.
     pub const STALE_GENERATION: &'static str = "stale-generation";
@@ -326,6 +327,67 @@ pub trait StudioGame {
     fn capture_provenance(&self) -> Option<Value> {
         None
     }
+    /// Draw the next captures at `size` (`capture`'s `size` argument: the 4K/1440p plan), or at
+    /// the world size again (None). Answers whether the game can: one that draws its world size
+    /// only refuses a size (`bad-argument`).
+    fn set_capture_size(&mut self, size: Option<[u32; 2]>) -> bool {
+        size.is_none()
+    }
+    /// Draw the next captures with what `lens` asks of the look's depth of field and motion blur
+    /// (`capture`'s `lens` argument, renderer pass 2 A.9), or with neither again (the default).
+    /// Answers whether the game can: one without render settings refuses an ask (`bad-argument`).
+    fn set_capture_lens(&mut self, lens: CaptureLens) -> bool {
+        lens == CaptureLens::default()
+    }
+}
+
+/// What `capture`'s `lens` argument asks of the look (`NativeCaptureLens`): neither by default.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct CaptureLens {
+    /// `depthOfField`: draw the look's depth of field.
+    pub depth_of_field: bool,
+    /// `motionBlur`: draw the look's motion blur.
+    pub motion_blur: bool,
+}
+
+/// `capture`'s `lens` argument (`{depthOfField?, motionBlur?}`, booleans): the default when absent
+/// or null, `Err` for anything else (a string, a number, a switch that is not a boolean).
+fn capture_lens(arg: &Value) -> Result<CaptureLens, ()> {
+    let lens = match arg {
+        Value::Object(_) => arg.get(wire::CAPTURE_LENS).unwrap_or(&Value::Null),
+        _ => &Value::Null,
+    };
+    if lens.is_null() {
+        return Ok(CaptureLens::default());
+    }
+    if !matches!(lens, Value::Object(_)) {
+        return Err(());
+    }
+    let switch = |key: &str| match lens.get(key) {
+        None | Some(Value::Null) => Ok(false),
+        Some(Value::Bool(on)) => Ok(*on),
+        Some(_) => Err(()),
+    };
+    Ok(CaptureLens { depth_of_field: switch(wire::LENS_DEPTH_OF_FIELD)?, motion_blur: switch(wire::LENS_MOTION_BLUR)? })
+}
+
+/// `capture`'s `size` argument (`{width, height}`, whole pixels within the world target's limits
+/// and [`CAPTURE_MAX_PX`]): `Ok(None)` when absent or null, `Err` for anything else (a string, a
+/// fraction, a side out of range, a missing side).
+fn capture_size(arg: &Value) -> Result<Option<[u32; 2]>, ()> {
+    let size = match arg {
+        Value::Object(_) => arg.get("size").unwrap_or(&Value::Null),
+        _ => &Value::Null,
+    };
+    if size.is_null() {
+        return Ok(None);
+    }
+    let side = |key: &str| -> Result<u32, ()> {
+        let Some(Value::Number(n)) = size.get(key) else { return Err(()) };
+        let whole = n.fract() == 0.0 && *n >= f64::from(protocol::MIN_WORLD_PX) && *n <= f64::from(CAPTURE_MAX_PX);
+        if whole { Ok(*n as u32) } else { Err(()) }
+    };
+    Ok(Some([side("width")?, side("height")?]))
 }
 
 /// A `renderSettings` change by its wire spellings (what a game's runtime reads it in).
@@ -754,6 +816,12 @@ impl Studio {
         !self.ready && link.send(&protocol::event(Event::STARTING, &Value::object()))
     }
 
+    /// [`Studio::still_starting`] naming where the boot is (`{stage, done?, total?}`), which Live
+    /// shows while it waits (owner decision D11). Nothing once ready: answers whether it was sent.
+    pub fn starting_at(&self, link: &Transport, progress: protocol::BootProgress) -> bool {
+        !self.ready && link.send(&protocol::event(Event::STARTING, &progress.fields()))
+    }
+
     /// Tell the studio the game is about to exit abnormally.
     pub fn send_fatal(link: &Transport, reason: &str) -> bool {
         link.send(&protocol::event(Event::FATAL, &object([("reason", Value::from(reason))])))
@@ -1053,9 +1121,26 @@ impl Studio {
     /// Draw the frame (from `camera` when one is named) and describe it; a native run writes the file.
     fn capture<G: StudioGame>(&mut self, game: &mut G, arg: &Value) -> Answer {
         let camera = argument(arg, "camera");
+        let Ok(size) = capture_size(arg) else { return refuse(VerbRefusal::BAD_ARGUMENT) };
+        let Ok(lens) = capture_lens(arg) else { return refuse(VerbRefusal::BAD_ARGUMENT) };
         if matches!(camera, Value::String(_)) && !self.place(game, camera.as_str()) {
             return refuse(VerbRefusal::UNKNOWN_CAMERA);
         }
+        if !game.set_capture_size(size) {
+            return refuse(VerbRefusal::BAD_ARGUMENT);
+        }
+        if !game.set_capture_lens(lens) {
+            game.set_capture_size(None);
+            return refuse(VerbRefusal::BAD_ARGUMENT);
+        }
+        let answer = self.capture_drawn(game);
+        game.set_capture_size(None);
+        game.set_capture_lens(CaptureLens::default());
+        answer
+    }
+
+    /// `capture` once its arguments are taken: draw, describe, write the file.
+    fn capture_drawn<G: StudioGame>(&mut self, game: &mut G) -> Answer {
         game.render_for_capture();
         let [width, height] = game.world_size();
         let mut result = object([

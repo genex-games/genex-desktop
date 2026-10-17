@@ -21,6 +21,15 @@
 //!   ([`MOTION_FORMAT`], NDC current − previous of the unjittered clip positions, so the jitter is
 //!   removed) and TAA's reactive mask (1 where a row has no history). Rasterization is jittered
 //!   through `gx_clip_position` exactly as the scene's, so depth stays `Equal`-compatible.
+//! - **The background** (renderer pass 2, P2-0.8b T-03; [`MotionNode::background_pipeline`],
+//!   shaders/motion_background.wgsl): after the geometry, one full-screen triangle at the far plane
+//!   tested `Equal` against the cleared depth writes the camera's own motion where nothing was
+//!   drawn ([`GpuMotionFrame::reproject`] at device depth far), so the sky, its sun disc and the
+//!   fog horizon reproject with a turning camera instead of reading zero.
+//! - **Custom draws** (P2-0.8b T-04, LG-05; [`CustomMotion`]): a Level-2 custom draw is keyed by
+//!   its draw id and ordinal within it, else by its mesh and ordinal, and matched against last
+//!   frame's custom draws as instance rows are; the prepass draws it from last frame's model
+//!   ([`crate::prepass::GpuPrepassDraw::prev_model`]) and an unmatched one takes the current sample.
 //!
 //! A camera cut, or any [`crate::settle::HistoryReset`], resets the history
 //! ([`MotionStep::reset`]): every row has no history and the previous camera is the current one.
@@ -87,9 +96,17 @@ pub const VERTEX_ENTRY: &str = "vs_prepass_motion";
 pub const DRAW_VERTEX_ENTRY: &str = "vs_prepass_draw_motion";
 /// The prepass's motion fragment entry point.
 pub const FRAGMENT_ENTRY: &str = "fs_prepass_motion";
+/// The background-motion module (T-03): the camera's motion where no geometry was drawn.
+pub const BACKGROUND_MOTION: &str = crate::shaders::minify::shipped_wgsl!(include_str!("../shaders/motion_background.wgsl"));
+/// Its vertex entry point (one full-screen triangle at the far plane).
+pub const BACKGROUND_VERTEX_ENTRY: &str = "vs_background_motion";
+/// Its fragment entry point (the motion target alone).
+pub const BACKGROUND_FRAGMENT_ENTRY: &str = "fs_background_motion";
 /// The motion prepass's colour targets, in location order: the normals, the motion and TAA's
 /// reactive mask.
 pub const TARGET_FORMATS: [TextureFormat; 3] = [crate::prepass::NORMALS_FORMAT, MOTION_FORMAT, crate::post::taa::REACTIVE_FORMAT];
+/// The motion target's location among [`TARGET_FORMATS`] (the normals share its format).
+pub const MOTION_LOCATION: u32 = 1;
 
 /// The WGSL mirror of [`GpuPrevModel`] (`PrevModel`): the shader that reads the previous-model
 /// table (shaders/prepass.wgsl) declares it, and tests/layout.rs holds both to one size.
@@ -292,6 +309,10 @@ pub struct GpuMotionFrame {
     pub prev_view_proj: [f32; 16],
     /// xy: this frame's jitter in NDC (y up); zw: reserved (0).
     pub jitter: [f32; 4],
+    /// Last frame's unjittered projection × view times this frame's inverse
+    /// ([`crate::post::taa::reprojection`]): an unjittered NDC position (x, y, device depth) to
+    /// last frame's clip space. The background's motion reads it at the far plane (T-03).
+    pub reproject: [f32; 16],
 }
 
 /// Last frame's row of one key.
@@ -390,9 +411,9 @@ impl MotionHistory {
         self.spare = std::mem::replace(&mut self.rows, rows);
         self.spare.clear();
         self.view_proj = Some(plan.frame.view_proj);
-        GpuMotionFrame { prev_view_proj, jitter: [step.jitter_ndc[0], step.jitter_ndc[1], 0.0, 0.0] }
+        let reproject = crate::post::taa::reprojection(&prev_view_proj, &plan.frame.view_proj);
+        GpuMotionFrame { prev_view_proj, jitter: [step.jitter_ndc[0], step.jitter_ndc[1], 0.0, 0.0], reproject }
     }
-
 }
 
 /// The previous-model row of `row` given last frame's row of its key (`prev`): last frame's model
@@ -411,6 +432,99 @@ fn prev_row(prev: Option<&PrevRow>, row: &GpuInstance, motion: &MotionRow, prev_
     let matched = if by_id { MOTION_FLAG_MATCHED_BY_ID } else { 0 };
     let still = if prev.model == row.model && prev_base == NO_PREV_VERTICES { MOTION_FLAG_STILL } else { 0 };
     GpuPrevModel { model: prev.model, flags: [matched | still, prev_base, current_base, 0] }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Custom draws (renderer pass 2, P2-0.8b: T-04, LG-05)
+
+/// Where a custom draw's ordinal counts: under the game's draw id, else among the id-less custom
+/// draws of its mesh.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+enum CustomScope {
+    Id(DrawId),
+    Mesh(MeshId),
+}
+
+/// One custom draw of this frame as [`CustomMotion::apply`] matches it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct CustomRow {
+    /// The draw id current when it was drawn (`frame.id(key)`), if any.
+    pub id: Option<DrawId>,
+    /// Its mesh.
+    pub mesh: MeshId,
+    /// Its model matrix, column-major.
+    pub model: [f32; 16],
+    /// Its world bounding sphere (centre, radius), as an instance row's `bounds`.
+    pub bounds: [f32; 4],
+}
+
+/// A custom draw's last-frame transform: last frame's model when its key matched usably, else its
+/// own with `history` false (TAA then takes the current sample, as for an unmatched instance row).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct CustomPrev {
+    /// Last frame's model matrix (this frame's without history).
+    pub model: [f32; 16],
+    /// Whether the draw was matched (an unmatched one writes the no-history flag).
+    pub history: bool,
+}
+
+/// Last frame's custom draws by key, and the simulated seconds that frame showed: what a frame's
+/// Level-2 custom draws are matched against (T-04). Keys follow [`MotionHistory`]'s rules: a draw
+/// under a draw id is its id and ordinal within it (an id match is trusted, the game's teleport is
+/// a camera cut), an id-less one its mesh and ordinal (an ordinal match whose bounds [`jumped`] or
+/// a non-finite transform has no history). A settled capture re-drawing one frame matches it
+/// against itself: still, at no time step.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct CustomMotion {
+    rows: BTreeMap<(CustomScope, u32), ([f32; 16], [f32; 4])>,
+    seconds: Option<f32>,
+}
+
+impl CustomMotion {
+    /// No history: the first frame's draws all have none.
+    pub fn new() -> CustomMotion {
+        CustomMotion::default()
+    }
+
+    /// Forget every draw and the time.
+    pub fn reset(&mut self) {
+        self.rows.clear();
+        self.seconds = None;
+    }
+
+    /// Match `draws` (this frame's, in draw order) against last frame's and remember them;
+    /// answers each draw's previous transform and last frame's simulated seconds (`seconds`, this
+    /// frame's, on the first frame).
+    pub fn apply(&mut self, draws: &[CustomRow], seconds: f32) -> (Vec<CustomPrev>, f32) {
+        let mut ordinals: BTreeMap<CustomScope, u32> = BTreeMap::new();
+        let mut rows = BTreeMap::new();
+        let prevs = draws
+            .iter()
+            .map(|draw| {
+                let scope = draw.id.map_or(CustomScope::Mesh(draw.mesh), CustomScope::Id);
+                let next = ordinals.entry(scope).or_insert(0);
+                let key = (scope, *next);
+                *next += 1;
+                rows.insert(key, (draw.model, draw.bounds));
+                custom_prev(self.rows.get(&key), draw, matches!(scope, CustomScope::Id(_)))
+            })
+            .collect();
+        self.rows = rows;
+        let prev_seconds = self.seconds.filter(|held| held.is_finite()).unwrap_or(seconds);
+        self.seconds = Some(seconds);
+        (prevs, prev_seconds)
+    }
+}
+
+/// The previous transform of `draw` given last frame's row of its key (`prev`: model, bounds).
+fn custom_prev(prev: Option<&([f32; 16], [f32; 4])>, draw: &CustomRow, by_id: bool) -> CustomPrev {
+    let none = CustomPrev { model: draw.model, history: false };
+    let Some((model, bounds)) = prev else { return none };
+    let finite = draw.model.iter().chain(model).all(|v| v.is_finite());
+    if !finite || (!by_id && jumped(*bounds, draw.bounds)) {
+        return none;
+    }
+    CustomPrev { model: *model, history: true }
 }
 
 /// The NDC position of `world` under `view_proj` (column-major, unjittered): the CPU twin of the
@@ -513,6 +627,57 @@ impl MotionNode {
             cache: None,
         })
     }
+
+    /// The background-motion pipeline (T-03) for a motion prepass of `reversed` depth: group 0 is
+    /// this node's group (its frame row), the three prepass targets with the motion alone written,
+    /// the depth tested `Equal` against the far plane and never written.
+    pub fn background_pipeline(&self, device: &Device, reversed: bool) -> Result<Compiled<RenderPipeline>, RenderError> {
+        let module = crate::shaders::module(device, "background motion", BACKGROUND_MOTION)?;
+        let layout = pipeline_layout(device, "background motion", &[&self.layout]);
+        let targets = background_targets();
+        let constants = [("GX_DEPTH_REVERSED", f64::from(u8::from(reversed)))];
+        let depth = wgpu::DepthStencilState {
+            format: crate::renderer::DEPTH_FORMAT,
+            depth_write_enabled: Some(false),
+            depth_compare: Some(wgpu::CompareFunction::Equal),
+            stencil: wgpu::StencilState::default(),
+            bias: wgpu::DepthBiasState::default(),
+        };
+        let options = wgpu::PipelineCompilationOptions { constants: &constants, ..Default::default() };
+        Ok(crate::compile::render_pipeline(device, &wgpu::RenderPipelineDescriptor {
+            label: Some(BACKGROUND_VERTEX_ENTRY),
+            layout: Some(&layout),
+            vertex: wgpu::VertexState { module: &module, entry_point: Some(BACKGROUND_VERTEX_ENTRY), compilation_options: options.clone(), buffers: &[] },
+            primitive: wgpu::PrimitiveState::default(),
+            depth_stencil: Some(depth),
+            multisample: wgpu::MultisampleState::default(),
+            fragment: Some(wgpu::FragmentState { module: &module, entry_point: Some(BACKGROUND_FRAGMENT_ENTRY), compilation_options: options, targets: &targets }),
+            multiview_mask: None,
+            cache: None,
+        }))
+    }
+
+    /// Draw the background's motion into `pass` (a motion prepass, after its geometry) with
+    /// `pipeline` ([`MotionNode::background_pipeline`]) and this frame's `group`
+    /// ([`MotionNode::group`]): binds it at group 0.
+    pub fn draw_background(pass: &mut wgpu::RenderPass<'_>, pipeline: &RenderPipeline, group: &wgpu::BindGroup) {
+        pass.set_pipeline(pipeline);
+        pass.set_bind_group(0, group, &[]);
+        pass.draw(0..3, 0..1);
+    }
+}
+
+/// The background-motion pipeline's colour targets: the prepass's three, with the motion alone
+/// written (the fragment stage outputs nothing else, and WebGPU refuses a written target without
+/// an output at its location).
+pub fn background_targets() -> [Option<wgpu::ColorTargetState>; 3] {
+    // By location, never by format: the normals are Rg16Float like the motion.
+    let mut location = 0;
+    TARGET_FORMATS.map(|format| {
+        let write_mask = if location == MOTION_LOCATION { wgpu::ColorWrites::ALL } else { wgpu::ColorWrites::empty() };
+        location += 1;
+        Some(wgpu::ColorTargetState { format, blend: None, write_mask })
+    })
 }
 
 /// The prepass's depth test: written, `Less` (standard Z) or `Greater` (reverse-Z).
@@ -633,6 +798,8 @@ struct Bench {
     pass_layout: BindGroupLayout,
     node: MotionNode,
     motion: Compiled<RenderPipeline>,
+    /// The background's motion after the geometry (T-03).
+    background: Compiled<RenderPipeline>,
     prepass: Compiled<RenderPipeline>,
     vertices: Buffer,
     slots: Buffer,
@@ -665,8 +832,9 @@ impl Bench {
         let buffers = mesh_buffers();
         let motion = node.pipeline(device, &module, VERTEX_ENTRY, &buffers, [&frame_layout, &pass_layout], reversed);
         let prepass = plain_prepass(device, &module, &buffers, [&frame_layout, &pass_layout], reversed);
+        let background = node.background_pipeline(device, reversed)?;
         let mesh_usage = BufferUsages::VERTEX | BufferUsages::STORAGE;
-        let pass_view = GpuPassView { view: 0, direct: 0, base: 0, pad: 0 };
+        let pass_view = GpuPassView { view: 0, direct: 0, base: 0, slot_offset: 0 };
         Ok(Bench {
             reversed,
             size,
@@ -679,6 +847,7 @@ impl Bench {
             pass_layout,
             node,
             motion,
+            background,
             prepass,
             skin: SkinPass::new(device)?,
             skinned: SkinnedPair::new(),
@@ -774,6 +943,9 @@ impl Bench {
             pass.set_vertex_buffer(0, streams.0.slice(..));
             pass.set_vertex_buffer(1, streams.1.slice(..));
             pass.draw_indexed(batch.first_index..batch.first_index + batch.index_count, batch.base_vertex, 0..batch.instance_count);
+        }
+        if with_motion {
+            MotionNode::draw_background(&mut pass, &self.background, &frame.groups[2]);
         }
     }
 

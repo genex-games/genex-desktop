@@ -40,8 +40,11 @@ const BUDGET_MS: f32 = 0.3;
 /// Samples the cost row takes.
 const COST_SAMPLES: u32 = 30;
 
-/// The pebble's side and where it sits on the ground (y = 0).
-const PEBBLE: f32 = 0.02;
+/// The pebble's side and where it sits on the ground (y = 0). Since the cascades' light-facing
+/// normal offset (P2-0.3) a 2 cm pebble's shadow reaches its base in the maps (half the light
+/// kept); a 1.2 cm one's still does not, and the march holds it (P2-0.7; the head's half-size mask
+/// lost a third of it).
+const PEBBLE: f32 = 0.012;
 const PEBBLE_AT: Vec3 = Vec3::new(0.0, 0.0, 0.0);
 /// A low sun behind the pebble on the left: its shadow falls towards the camera on the right.
 const SUN: [f32; 3] = [-0.55, 0.35, -0.6];
@@ -302,9 +305,9 @@ fn metal_the_mask_is_the_same_bits_every_frame_without_taa_and_turns_with_the_fr
 fn metal_a_longer_ray_reaches_further_and_the_sky_is_never_shadowed() {
     let _turn = gpu_shared();
     let Some(gpu) = gpu() else { return };
-    // A stone four times the pebble: its shadow is longer than the short ray, and both rays' steps
-    // are finer than it (a fixed step count spreads a long ray thin over a small caster).
-    let (_, depth) = render(&gpu, &pebble_scene(PEBBLE * 4.0), &quality(true));
+    // The pan row's 8 cm stone: its shadow is longer than the short ray, and both rays' steps are
+    // finer than it (a fixed step count spreads a long ray thin over a small caster).
+    let (_, depth) = render(&gpu, &pebble_scene(PAN_STONE), &quality(true));
     let frame = ContactShadowFrame { depth: depth.clone(), camera: march_camera(), facts: facts(0, false) };
     let shadowed = |look: &Look| {
         let mask = contact_shadow_masks(&gpu, look, (WIDTH, HEIGHT), std::slice::from_ref(&frame)).expect("mask").remove(0);
@@ -388,6 +391,292 @@ fn metal_contact_shadows_cost_at_most_0_3_ms_at_1080p_half_res() {
     assert!(p50 <= BUDGET_MS, "contact shadows take {p50:.3} ms at 1080p (budget {BUDGET_MS})");
 }
 
+// ---------------------------------------------------------------------------------------------
+// Ray-cast scenes (P2-0.7): depth for any camera, sub-pixel jitter included
+
+/// A box standing on the ground: its centre and half extents.
+#[derive(Clone, Copy, Debug)]
+struct Block {
+    centre: Vec3,
+    half: Vec3,
+}
+
+impl Block {
+    /// A cube of `side` resting on the ground at `at` (y ignored).
+    fn resting(at: Vec3, side: f32) -> Block {
+        Block { centre: Vec3::new(at.x, side * 0.5, at.z), half: Vec3::splat(side * 0.5) }
+    }
+
+    /// The nearest positive distance along `dir` from `origin` into the box (slab test).
+    fn hit(&self, origin: Vec3, dir: Vec3) -> Option<f32> {
+        let inv = dir.recip();
+        let a = (self.centre - self.half - origin) * inv;
+        let b = (self.centre + self.half - origin) * inv;
+        let (near, far) = (a.min(b).max_element(), a.max(b).min_element());
+        (far >= near.max(0.0)).then_some(near.max(0.0))
+    }
+}
+
+/// The nearest distance along `dir` from `origin` to the ground (y = 0) or one of `blocks`.
+fn nearest_hit(origin: Vec3, dir: Vec3, blocks: &[Block]) -> Option<f32> {
+    let ground = (dir.y < 0.0).then(|| -origin.y / dir.y);
+    blocks.iter().filter_map(|b| b.hit(origin, dir)).chain(ground).min_by(f32::total_cmp)
+}
+
+/// A perspective camera at `eye` looking at `target` on a `size` frame, as the HDR path draws it
+/// (reverse-Z, the scene camera's planes), its projection moved by `jitter` render pixels (y down).
+fn cast_camera(eye: Vec3, target: Vec3, size: (u32, u32), jitter: [f32; 2]) -> ContactShadowCamera {
+    let desc = camera();
+    let view = glam::camera::rh::view::look_at_mat4(eye, target, Vec3::Y);
+    let proj = glam::camera::rh::proj::directx::perspective(desc.fovy_degrees.to_radians(), size.0 as f32 / size.1 as f32, desc.far, desc.near);
+    let shift = Mat4::from_translation(Vec3::new(jitter[0] * 2.0 / size.0 as f32, -jitter[1] * 2.0 / size.1 as f32, 0.0));
+    ContactShadowCamera { view, proj: shift * proj }
+}
+
+/// The device depth (reverse-Z, 0 for nothing) of the ground and `blocks` through `camera` at the
+/// centre of every pixel of a `size` frame, top row first: a prepass depth without the renderer.
+fn cast_depth(camera: &ContactShadowCamera, size: (u32, u32), blocks: &[Block]) -> Vec<f32> {
+    let view_proj = camera.proj * camera.view;
+    let inverse = view_proj.inverse();
+    let eye = camera.view.inverse().w_axis.truncate();
+    let depth_at = |x: u32, y: u32| {
+        let ndc = Vec3::new((x as f32 + 0.5) / size.0 as f32 * 2.0 - 1.0, 1.0 - (y as f32 + 0.5) / size.1 as f32 * 2.0, 0.5);
+        let dir = (inverse.project_point3(ndc) - eye).normalize();
+        nearest_hit(eye, dir, blocks).map_or(0.0, |t| view_proj.project_point3(eye + dir * t).z)
+    };
+    (0..size.1).flat_map(|y| (0..size.0).map(move |x| (x, y))).map(|(x, y)| depth_at(x, y)).collect()
+}
+
+/// Whether ground point `p` is in `block`'s shadow robustly: the ray towards the sun meets the
+/// block shrunk by `margin` within `reach` (so ground within `margin` of `p` is shadowed too).
+fn deep_in_shadow(p: Vec3, block: &Block, margin: f32, reach: f32) -> bool {
+    let core = Block { half: block.half - Vec3::splat(margin), ..*block };
+    core.hit(p, Vec3::from(SUN).normalize()).is_some_and(|t| t <= reach)
+}
+
+/// The mask texel ground point `p` falls in through `camera` (None off the mask or behind).
+fn mask_texel(camera: &ContactShadowCamera, mask: (u32, u32), p: Vec3) -> Option<(u32, u32)> {
+    let clip = camera.proj * camera.view * p.extend(1.0);
+    let (u, v) = (clip.x / clip.w * 0.5 + 0.5, 0.5 - clip.y / clip.w * 0.5);
+    let inside = clip.w > 0.0 && (0.0..1.0).contains(&u) && (0.0..1.0).contains(&v);
+    inside.then_some(((u * mask.0 as f32) as u32, (v * mask.1 as f32) as u32))
+}
+
+/// Ground points on a `step` grid within `radius` of `block` that lie deep in its contact shadow
+/// (within `reach` of it along the sun) and that `camera` sees (not hidden by the block).
+fn shadow_points(block: &Block, camera: &ContactShadowCamera, step: f32, radius: f32, reach: f32) -> Vec<Vec3> {
+    let eye = camera.view.inverse().w_axis.truncate();
+    let n = (radius / step) as i32;
+    let grid = (-n..=n).flat_map(|i| (-n..=n).map(move |j| Vec3::new(block.centre.x + i as f32 * step, 0.0, block.centre.z + j as f32 * step)));
+    grid.filter(|p| deep_in_shadow(*p, block, 0.005, reach))
+        .filter(|p| {
+            let to = *p - eye;
+            nearest_hit(eye, to.normalize(), std::slice::from_ref(block)).is_none_or(|t| t >= to.length() - 1e-3)
+        })
+        .collect()
+}
+
+#[test]
+fn the_ray_cast_depth_matches_the_projection_of_the_ground_and_the_block() {
+    let size = (64, 36);
+    let block = Block::resting(Vec3::ZERO, 0.08);
+    let camera = cast_camera(EYE, TARGET, size, [0.0, 0.0]);
+    let depth = cast_depth(&camera, size, &[block]);
+    // The block's top centre and an open ground point each read their own depth (reverse-Z depth
+    // is inversely proportional to view distance: within a pixel's reach of it).
+    for p in [Vec3::new(0.0, 0.08, 0.0), OPEN] {
+        let (x, y) = mask_texel(&camera, size, p).expect("on screen");
+        let expected = (camera.proj * camera.view).project_point3(p).z;
+        let ratio = depth[(y * size.0 + x) as usize] / expected;
+        assert!((ratio - 1.0).abs() < 0.05, "{p}: depth {ratio} of its own");
+    }
+    assert!(depth.iter().all(|d| (0.0..=1.0).contains(d)));
+    let points = shadow_points(&block, &camera, 0.004, 0.25, 0.1);
+    assert!(points.len() > 20 && points.iter().all(|p| deep_in_shadow(*p, &block, 0.0, 0.25)));
+}
+
+/// GA (renderer pass 2): open ground with nothing on it casts no contact shadow onto itself, at the
+/// screen's border too. A border texel's neighbour beyond the screen read as the texel itself (the
+/// clamped read), its slope came out zero and with it the tolerance that keeps a slanted surface
+/// from shadowing itself: Lakeside's dolly darkened the frame's left column by half for one frame
+/// (the shadows-on run 20 against the shadows-off run's 41).
+#[test]
+#[ignore = "needs a GPU: run with --ignored metal"]
+fn metal_open_ground_casts_no_contact_shadow_on_itself_at_the_screen_border() {
+    let _turn = gpu_shared();
+    let Some(gpu) = gpu() else { return };
+    let look = Look::default().with_contact_shadow_length(FAR_RAY);
+    let camera = cast_camera(FAR_EYE, FAR_CRATE, FAR_SIZE, [0.0, 0.0]);
+    let depth = cast_depth(&camera, FAR_SIZE, &[]);
+    // Low suns from either side and behind, each under TAA's noise for a few frames.
+    let suns = [[-0.55, 0.12, -0.6], [0.55, 0.12, -0.6], [0.1, 0.12, 0.9]];
+    let frames: Vec<_> = suns
+        .iter()
+        .flat_map(|sun| (0..4u64).map(move |f| (*sun, f)))
+        .map(|(sun_dir, frame_index)| ContactShadowFrame { depth: depth.clone(), camera, facts: ContactShadowFacts { sun_dir, frame_index, taa: true, depth_reversed: true } })
+        .collect();
+    let masks = contact_shadow_masks(&gpu, &look, FAR_SIZE, &frames).expect("masks");
+    let (width, height) = masks[0].size;
+    let border = |x: u32, y: u32| x == 0 || y == 0 || x + 1 == width || y + 1 == height;
+    let mut worst = (1.0f32, 0usize, 0u32, 0u32, false);
+    for (k, mask) in masks.iter().enumerate() {
+        for y in 0..height {
+            for x in 0..width {
+                let v = mask.at(x, y);
+                if v < worst.0 {
+                    worst = (v, k, x, y, border(x, y));
+                }
+            }
+        }
+    }
+    write_evidence("open-ground-border.bgra", &mask_bgra(&masks[worst.1]));
+    let (visibility, frame, x, y, on_border) = worst;
+    assert!(visibility >= 0.99, "open ground shadows itself: visibility {visibility:.3} at mask texel ({x}, {y}) (border {on_border}) in frame {frame} of {}", masks.len());
+}
+
+/// The pan row's render size and frames.
+const PAN_SIZE: (u32, u32) = (512, 288);
+const PAN_FRAMES: u32 = 128;
+/// The stone the pan row leaves behind: 8 cm, its contact shadow inside the default ray.
+const PAN_STONE: f32 = 0.08;
+/// The most a deep-shadow ground point's mask may change from one pan frame to the next, per mask
+/// texel the point moved (at least one; P2-0.7: no pop at the screen border): about twice the edge
+/// fade's steepest slope (2 across its band of a twelfth of the screen, 0.094 a texel of 256), as
+/// hits land on whole depth texels. The head popped from shadowed to lit in one frame.
+const PAN_STEP_PER_TEXEL_MAX: f32 = 0.2;
+
+/// The camera of pan frame `frame`: moved right along its own axis by 1.5 mm a frame (under one
+/// mask texel at the stone), so the stone, a quarter of the way in from the left, leaves the
+/// screen's left edge while the shadow it casts towards the camera (to its right) is still on it.
+fn pan_camera(frame: u32) -> ContactShadowCamera {
+    let right = (TARGET - EYE).cross(Vec3::Y).normalize();
+    let shift = right * (0.05 + 0.0015 * frame as f32);
+    cast_camera(EYE + shift, TARGET + shift, PAN_SIZE, [0.0, 0.0])
+}
+
+#[test]
+#[ignore = "needs a GPU: run with --ignored metal"]
+fn metal_a_pan_fades_contact_shadows_out_at_the_screen_border_without_a_pop() {
+    let _turn = gpu_shared();
+    let Some(gpu) = gpu() else { return };
+    let stone = Block::resting(Vec3::ZERO, PAN_STONE);
+    let look = Look::default();
+    // Ground deep in the stone's contact shadow, well within the fully shadowed half of the ray.
+    let points = shadow_points(&stone, &pan_camera(0), 0.003, 0.2, look.contact_shadow_length * 0.4);
+    assert!(points.len() > 30, "{} points", points.len());
+    let frames: Vec<_> = (0..PAN_FRAMES).map(|f| ContactShadowFrame { depth: cast_depth(&pan_camera(f), PAN_SIZE, &[stone]), camera: pan_camera(f), facts: facts(0, false) }).collect();
+    let masks = contact_shadow_masks(&gpu, &look, PAN_SIZE, &frames).expect("masks");
+    let size = masks[0].size;
+    // The stone leaves the screen during the pan, while some of its shadow is still on it.
+    let stone_on = |f: u32| mask_texel(&pan_camera(f), size, stone.centre).is_some();
+    assert!(stone_on(0) && !stone_on(PAN_FRAMES - 1), "the stone leaves the screen");
+    let texel = |f: u32, p: Vec3| mask_texel(&pan_camera(f), size, p).filter(|(x, _)| *x >= 1);
+    let visible = |f: u32, p: Vec3| texel(f, p).map(|(x, y)| masks[f as usize].at(x, y));
+    // Each tracked step: (change per texel moved, frame, point).
+    let steps: Vec<(f32, u32, Vec3)> = points
+        .iter()
+        .flat_map(|p| (1..PAN_FRAMES).map(move |f| (f, *p)))
+        .filter_map(|(f, p)| {
+            let (Some(a), Some(b)) = (texel(f - 1, p), texel(f, p)) else { return None };
+            let moved = (a.0.abs_diff(b.0) + a.1.abs_diff(b.1)).max(1) as f32;
+            Some(((masks[f as usize].at(b.0, b.1) - masks[f as usize - 1].at(a.0, a.1)).abs() / moved, f, p))
+        })
+        .collect();
+    assert!(steps.len() > points.len() * 8, "points stay on screen while the stone leaves ({})", steps.len());
+    let (worst, frame, point) = steps.iter().copied().fold((0.0, 0, Vec3::ZERO), |held, step| if step.0 > held.0 { step } else { held });
+    let means: String = (0..PAN_FRAMES)
+        .map(|f| {
+            let on: Vec<f32> = points.iter().filter_map(|p| visible(f, *p)).collect();
+            format!("{f} stone_on={} points_on={} mean_visibility={:.3}\n", stone_on(f), on.len(), on.iter().sum::<f32>() / on.len().max(1) as f32)
+        })
+        .collect();
+    let series: Vec<String> = (0..PAN_FRAMES).map(|f| format!("{f}:{:?}:{:.3}", texel(f, point), visible(f, point).unwrap_or(-1.0))).collect();
+    write_evidence("pan-border.txt", format!("worst step {worst:.3} a texel at frame {frame} point {point}\nworst point: {}\n{means}", series.join(" ")).as_bytes());
+    for f in [0, frame.saturating_sub(1), frame] {
+        write_evidence(&format!("pan-{f}.bgra"), &mask_bgra(&masks[f as usize]));
+    }
+    assert!(worst <= PAN_STEP_PER_TEXEL_MAX, "a shadowed ground point pops by {worst:.3} a texel at pan frame {frame} ({point})");
+}
+
+/// The jitter row: a 1 m crate 20 m from a camera 25 degrees above the ground, at the render size
+/// where one mask texel spans about 5.5 cm across there (more than the 5 cm fixed thickness) and
+/// 13 cm along the ground, under a 1 m ray.
+const FAR_SIZE: (u32, u32) = (1024, 576);
+const FAR_EYE: Vec3 = Vec3::new(3.0, 8.5, 6.0);
+const FAR_CRATE: Vec3 = Vec3::new(0.0, 0.0, -12.0);
+const FAR_CRATE_SIDE: f32 = 1.0;
+const FAR_RAY: f32 = 1.0;
+/// TAA's cycle length the row jitters over.
+const FAR_FRAMES: u64 = 8;
+/// How far (world units) a ground receiver must be inside the crate's contact shadow, or outside
+/// its reach, to be judged: texels nearer the shadow's edge may go either way.
+const FAR_MARGIN: f32 = 0.05;
+/// What the crate's contact shadow must hold in every jitter frame: the mean darkness of the ground
+/// deep in it, how much that mean may move between frames, and the mean darkness it may put on
+/// open ground near the crate (the head's binary, fixed-thickness hit loses the far shadow and
+/// toggles with the jitter).
+const FAR_DARKNESS_MIN: f32 = 0.6;
+const FAR_DARKNESS_SPREAD_MAX: f32 = 0.1;
+const FAR_FALSE_MAX: f32 = 0.05;
+
+/// The ground point the march rebuilds for mask texel (`x`, `y`): the depth texel under the mask
+/// texel's centre (`gx_contact_texel_centre`), or None when that texel shows the crate or nothing.
+fn far_receiver(camera: &ContactShadowCamera, mask: (u32, u32), x: u32, y: u32, blocks: &[Block]) -> Option<Vec3> {
+    let inverse = (camera.proj * camera.view).inverse();
+    let eye = camera.view.inverse().w_axis.truncate();
+    let (px, py) = (2 * x + 1, 2 * y + 1);
+    let ndc = Vec3::new((px as f32 + 0.5) / (2 * mask.0) as f32 * 2.0 - 1.0, 1.0 - (py as f32 + 0.5) / (2 * mask.1) as f32 * 2.0, 0.5);
+    let dir = (inverse.project_point3(ndc) - eye).normalize();
+    let p = eye + dir * nearest_hit(eye, dir, blocks)?;
+    (p.y.abs() < 1e-3).then_some(p)
+}
+
+/// One jitter frame's judgement: (mean darkness deep in the shadow, mean darkness on open ground
+/// near the crate, texels judged deep).
+fn far_judge(mask: &MaskImage, camera: &ContactShadowCamera, block: &Block) -> (f32, f32, usize) {
+    let sun = Vec3::from(SUN).normalize();
+    let wide = Block { half: block.half + Vec3::splat(FAR_MARGIN), ..*block };
+    let (mut deep, mut open) = (Vec::new(), Vec::new());
+    for y in 0..mask.size.1 {
+        for x in 0..mask.size.0 {
+            let Some(p) = far_receiver(camera, mask.size, x, y, std::slice::from_ref(block)) else { continue };
+            let darkness = 1.0 - mask.at(x, y);
+            if deep_in_shadow(p, block, FAR_MARGIN, FAR_RAY * 0.4) {
+                deep.push(darkness);
+            } else if (p - block.centre).length() < 2.0 && wide.hit(p, sun).is_none_or(|t| t > FAR_RAY) {
+                open.push(darkness);
+            }
+        }
+    }
+    let mean = |v: &[f32]| v.iter().sum::<f32>() / v.len().max(1) as f32;
+    (mean(&deep), mean(&open), deep.len())
+}
+
+#[test]
+#[ignore = "needs a GPU: run with --ignored metal"]
+fn metal_a_far_crates_contact_shadow_holds_under_sub_pixel_jitter() {
+    let _turn = gpu_shared();
+    let Some(gpu) = gpu() else { return };
+    let block = Block::resting(FAR_CRATE, FAR_CRATE_SIDE);
+    let target = FAR_CRATE + Vec3::new(0.0, 0.5, 0.0);
+    let look = Look::default().with_contact_shadow_length(FAR_RAY);
+    let jitter = |f: u64| genex_render::jitter::offset_px(f, genex_render::settings::JitterCycle::default());
+    let cameras: Vec<_> = (0..FAR_FRAMES).map(|f| cast_camera(FAR_EYE, target, FAR_SIZE, jitter(f))).collect();
+    let frames: Vec<_> = cameras.iter().map(|c| ContactShadowFrame { depth: cast_depth(c, FAR_SIZE, &[block]), camera: *c, facts: facts(0, false) }).collect();
+    let masks = contact_shadow_masks(&gpu, &look, FAR_SIZE, &frames).expect("masks");
+    let judged: Vec<_> = masks.iter().zip(&cameras).map(|(m, c)| far_judge(m, c, &block)).collect();
+    write_evidence("far-jitter-0.bgra", &mask_bgra(&masks[0]));
+    let log: String = judged.iter().enumerate().map(|(f, (d, o, n))| format!("{f} deep_texels={n} darkness={d:.3} open_darkness={o:.3}\n")).collect();
+    write_evidence("far-jitter.txt", log.as_bytes());
+    assert!(judged.iter().all(|(_, _, n)| *n > 40), "the crate casts a judged contact shadow\n{log}");
+    let darkest = judged.iter().map(|j| j.0).fold(0.0, f32::max);
+    let faintest = judged.iter().map(|j| j.0).fold(1.0, f32::min);
+    let falsest = judged.iter().map(|j| j.1).fold(0.0, f32::max);
+    assert!(faintest >= FAR_DARKNESS_MIN, "the far crate's contact shadow is too faint: darkness {faintest:.3}\n{log}");
+    assert!(darkest - faintest <= FAR_DARKNESS_SPREAD_MAX, "the far crate's contact shadow moves with the jitter: {faintest:.3}..{darkest:.3}\n{log}");
+    assert!(falsest <= FAR_FALSE_MAX, "open ground near the far crate is shadowed: {falsest:.3}\n{log}");
+}
+
 /// The pebble scene's prepass depth at `size`.
 fn render_scene_depth(gpu: &Gpu, size: (u32, u32)) -> (Mat4, Vec<f32>) {
     let mut renderer = Renderer::new(gpu, size.0, size.1).expect("renderer");
@@ -399,4 +688,3 @@ fn render_scene_depth(gpu: &Gpu, size: (u32, u32)) -> (Mat4, Vec<f32>) {
     let aspect = size.0 as f32 / size.1 as f32;
     (camera().projection(aspect, true), renderer.read_prepass_depth(gpu).expect("prepass depth"))
 }
-

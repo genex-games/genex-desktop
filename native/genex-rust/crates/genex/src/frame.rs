@@ -389,6 +389,104 @@ pub struct Lights {
     /// with the `clustered` feature switched off only the point lights light the scene). The
     /// preset caps how many local lights a frame lights, nearest first.
     pub spots: Vec<SpotLight>,
+    /// Reflection probes in call order (renderer pass 2 A.3): the first the device's quality gives
+    /// a cube to reflect their box's own surroundings; the rest reflect the sky.
+    pub reflection_probes: Vec<ReflectionProbe>,
+    /// Irradiance volumes in call order (renderer pass 2 A.4): the first the device's quality bakes
+    /// light their box's surfaces with the scene's own bounced light; the rest take the sky's.
+    pub irradiance_volumes: Vec<IrradianceVolume>,
+}
+
+/// An irradiance volume: an axis-aligned box of the world (a room, a courtyard, a stretch of
+/// street) whose surfaces take their diffuse ambient light from a grid of cells baked in the scene
+/// instead of the sky: a white floor beside a sunlit red wall turns pink, and a closed room is not
+/// lit by the sky through its walls (a cell behind a wall lends a surface no light). The grid is
+/// baked a few cells a frame (again when the sky changes or the box or its cells change), so a
+/// volume suits a static room or street; a moving object is not seen in it until a rebake. It
+/// lights only scenes the sky or an HDR map lights.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct IrradianceVolume {
+    /// The box's least corner.
+    pub min: Vec3,
+    /// The box's greatest corner.
+    pub max: Vec3,
+    /// Cells along x, y and z (each 1 to 32, at most 4096 in all; their centres split the box
+    /// evenly).
+    pub cells: [u32; 3],
+    /// How far past the box's faces its light fades into the sky's (0: a hard edge).
+    pub blend: f32,
+    /// The multiplier of its light (1: as baked).
+    pub intensity: f32,
+}
+
+impl IrradianceVolume {
+    /// A volume over the box `min..max` with a cell about every metre, fading out over a tenth of
+    /// its smallest side, at full intensity.
+    pub fn new(min: Vec3, max: Vec3) -> IrradianceVolume {
+        let cells = genex_render::irradiance::IrradianceVolume::new(min.to_array(), max.to_array()).cells;
+        let smallest = (max - min).abs().min_element();
+        IrradianceVolume { min, max, cells, blend: 0.1 * smallest, intensity: 1.0 }
+    }
+
+    /// The volume with `cells` cells along x, y and z (finer cells follow smaller rooms and thinner
+    /// walls; each cell costs six small captures of the scene to bake).
+    pub fn with_cells(self, cells: [u32; 3]) -> IrradianceVolume {
+        IrradianceVolume { cells, ..self }
+    }
+
+    /// The volume fading out over `blend` units past its faces.
+    pub fn with_blend(self, blend: f32) -> IrradianceVolume {
+        IrradianceVolume { blend, ..self }
+    }
+
+    /// The volume's light times `intensity`.
+    pub fn with_intensity(self, intensity: f32) -> IrradianceVolume {
+        IrradianceVolume { intensity, ..self }
+    }
+}
+
+/// A reflection probe: an axis-aligned box of the world (a room's inside: its floor, walls and
+/// ceiling are the box's faces) whose glossy surfaces reflect a cube captured inside it instead of
+/// the sky, seen where the walls stand (box projection) and blended into the sky and the next probe
+/// over `blend` units past its faces. The cube is captured from the scene once (again when the sky changes or the probe moves),
+/// so a probe suits a static room or street; a moving object is not seen in it until a recapture.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ReflectionProbe {
+    /// The box's least corner (the room's floor and walls).
+    pub min: Vec3,
+    /// The box's greatest corner (its ceiling and walls).
+    pub max: Vec3,
+    /// Where the cube is captured from (held inside the box).
+    pub capture: Vec3,
+    /// How far past the box's faces its reflection fades out (0: a hard edge).
+    pub blend: f32,
+    /// The multiplier of its reflection (1: as captured).
+    pub intensity: f32,
+}
+
+impl ReflectionProbe {
+    /// A probe over the box `min..max`, captured from its centre, fading out over a tenth of its
+    /// smallest side, at full intensity.
+    pub fn new(min: Vec3, max: Vec3) -> ReflectionProbe {
+        let smallest = (max - min).abs().min_element();
+        ReflectionProbe { min, max, capture: (min + max) * 0.5, blend: 0.1 * smallest, intensity: 1.0 }
+    }
+
+    /// The probe captured from `capture` (a point inside the box with a view of the room: eye
+    /// height, away from the walls).
+    pub fn with_capture(self, capture: Vec3) -> ReflectionProbe {
+        ReflectionProbe { capture, ..self }
+    }
+
+    /// The probe fading out over `blend` units past its faces.
+    pub fn with_blend(self, blend: f32) -> ReflectionProbe {
+        ReflectionProbe { blend, ..self }
+    }
+
+    /// The probe's reflection times `intensity`.
+    pub fn with_intensity(self, intensity: f32) -> ReflectionProbe {
+        ReflectionProbe { intensity, ..self }
+    }
 }
 
 /// One logical draw, as [`Frame::draws`] reads it back.
@@ -448,6 +546,12 @@ pub enum Shape {
         to: Vec3,
         /// Its colour.
         color: Color,
+    },
+    /// A retained instance group: its shape at every transform (renderer pass 2 A.0b).
+    #[non_exhaustive]
+    Group {
+        /// The group.
+        group: crate::group::InstanceGroup,
     },
 }
 
@@ -524,6 +628,9 @@ pub struct Frame {
     clear: Color,
     lights: Lights,
     environment: Option<Environment>,
+    terrain: Option<crate::terrain::Terrain>,
+    decals: Vec<crate::decal::Decal>,
+    particles: Vec<crate::particles::Particles>,
 }
 
 impl Default for Frame {
@@ -539,6 +646,9 @@ impl Default for Frame {
             clear: Color::BACKGROUND,
             lights: Lights::default(),
             environment: None,
+            terrain: None,
+            decals: Vec::new(),
+            particles: Vec::new(),
         }
     }
 }
@@ -619,6 +729,12 @@ impl Frame {
         self.push(Shape::Sphere { center, radius, material: material.clone() })
     }
 
+    /// Draw a retained instance group ([`crate::InstanceGroup`]): its shape at every transform,
+    /// one logical draw. Its rows are computed and uploaded once, not every frame.
+    pub fn group(&mut self, group: &crate::group::InstanceGroup) -> &mut Self {
+        self.push(Shape::Group { group: group.clone() })
+    }
+
     /// Light the frame with a sun shining from `direction` (towards the sun): it replaces the
     /// default sun and casts the shadows. Intensity 0 turns the sun off. Not a draw.
     pub fn sun(&mut self, direction: Vec3, color: Color, intensity: f32) -> &mut Self {
@@ -642,6 +758,33 @@ impl Frame {
     /// default cone (20 degrees at full strength, dark past 30). Not a draw.
     pub fn spot_light(&mut self, position: Vec3, direction: Vec3, range: f32, color: Color, intensity: f32) -> &mut Self {
         self.spot_light_with(&SpotLight::new(position, direction, range, color, intensity))
+    }
+
+    /// Add a reflection probe (renderer pass 2 A.3): glossy surfaces inside its box reflect its
+    /// surroundings instead of the sky. Not a draw.
+    pub fn reflection_probe(&mut self, probe: &ReflectionProbe) -> &mut Self {
+        self.lights.reflection_probes.push(*probe);
+        self
+    }
+
+    /// Add an irradiance volume (renderer pass 2 A.4): surfaces inside its box take their diffuse
+    /// ambient light from the scene around them instead of the sky. Not a draw.
+    pub fn irradiance_volume(&mut self, volume: &IrradianceVolume) -> &mut Self {
+        self.lights.irradiance_volumes.push(*volume);
+        self
+    }
+
+    /// Add a projected decal (renderer pass 2 A.10, [`crate::Decal`]): every surface inside its box
+    /// takes its texture before lighting. Not a draw; the device's quality draws the nearest 64
+    /// (16 on phones), fading the farthest kept ones out.
+    pub fn decal(&mut self, decal: &crate::decal::Decal) -> &mut Self {
+        self.decals.push(decal.clone());
+        self
+    }
+
+    /// The decals declared so far, in call order ([`Frame::decal`]).
+    pub fn decals(&self) -> &[crate::decal::Decal] {
+        &self.decals
     }
 
     /// Add `light`, a [`SpotLight`] with its own cone or a shadow map. Not a draw.
@@ -684,6 +827,37 @@ impl Frame {
     /// The environment this frame declared ([`Frame::environment`]); None draws the flat colour.
     pub fn declared_environment(&self) -> Option<&Environment> {
         self.environment.as_ref()
+    }
+
+    /// Draw `terrain` ([`crate::Terrain`]): one logical draw. A frame draws one terrain (a second
+    /// call replaces the first).
+    pub fn terrain(&mut self, terrain: &crate::terrain::Terrain) -> &mut Self {
+        if self.terrain.is_none() {
+            self.count();
+        }
+        self.terrain = Some(terrain.clone());
+        self
+    }
+
+    /// The terrain this frame draws ([`Frame::terrain`]), if any.
+    pub fn drawn_terrain(&self) -> Option<&crate::terrain::Terrain> {
+        self.terrain.as_ref()
+    }
+
+    /// Draw `particles` ([`crate::Particles`]) as they are at the tick this frame is drawn at:
+    /// one logical draw. An emitter is drawn once a frame (a second call is ignored); emitters
+    /// draw in call order after the transparent draws.
+    pub fn particles(&mut self, particles: &crate::particles::Particles) -> &mut Self {
+        if !self.particles.contains(particles) {
+            self.count();
+            self.particles.push(particles.clone());
+        }
+        self
+    }
+
+    /// The emitters this frame draws ([`Frame::particles`]), in call order.
+    pub fn drawn_particles(&self) -> &[crate::particles::Particles] {
+        &self.particles
     }
 
     /// Draw a line segment.

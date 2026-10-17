@@ -198,7 +198,7 @@ fn studio_shot_as(name: &str, drawn_as: DrawnAs) -> Option<(Capture, genex_rende
     }
     let stopped = presenter.take_pass_refusals();
     assert!(stopped.is_empty(), "{name}: every pass draws on the HDR scene: {stopped:?}");
-    // The terrain material (Level 2) is admitted: a refused one draws the checker.
+    // Every Level-2 source is admitted: a refused one draws the checker.
     let extensions = runtime.state()["volatile"]["extensions"].clone();
     let refused: Vec<&genex::Value> = extensions.as_array().into_iter().flatten().filter(|row| !row["code"].is_null()).collect();
     assert!(refused.is_empty(), "{name}: every Level-2 source is admitted: {refused:?}");
@@ -575,6 +575,9 @@ fn metal_live_taa_frames_leave_no_trails_against_a_settled_capture() {
     for name in ["forest", "closeup", "wide"] {
         let Ok(mut presenter) = Presenter::open(showcase_game::showcase::WORLD_SIZE, showcase_game::assets()) else { return };
         let mut runtime = lakeside_at(SHOT_TICK - LIVE_TICKS);
+        // Live paints the HUD over the window after the upscale, never into the world target this
+        // reads, while a settled capture carries it: neither draws one here.
+        runtime.sim_mut().world.hud_hidden = true;
         assert!(presenter.install_for(&mut runtime).is_empty());
         presenter.draw_view(&mut runtime, View::Named(name)).expect("a view").expect("drawn");
         let reference_class = DeviceClass::new(FormFactor::Desktop, PerformanceTier::High);
@@ -597,8 +600,8 @@ fn metal_live_taa_frames_leave_no_trails_against_a_settled_capture() {
         let (w, h) = (live.width() as usize, live.height() as usize);
         // A trail is a filled blob: a tile most of whose pixels depart from the settled picture.
         // Edges differ sparsely (Live's longer history against the capture's one jitter cycle, the
-        // grass a Level-3 pass sways with no motion of its own), so each 8 x 8 tile is read at its
-        // 25th-percentile difference: a trail lifts it, a few edge pixels do not.
+        // grass a Level-3 pass sways and draws its own motion for), so each 8 x 8 tile is read at
+        // its 25th-percentile difference: a trail lifts it, a few edge pixels do not.
         let tile_quartile = |(tx, ty): (usize, usize)| {
             let mut tile: Vec<u8> = (0..8).flat_map(|y| (0..8).map(move |x| (x, y))).map(|(x, y)| diffs[(ty * 8 + y) * w + tx * 8 + x]).collect();
             tile.sort_unstable();
@@ -654,6 +657,62 @@ fn metal_final_column_shots_at_high_and_ultra() {
     let record = format!("{{\"column\": \"{column}\", \"tick\": {SHOT_TICK}, \"scene\": {scene}, \"rows\": [{}]}}\n", rows.join(",\n"));
     std::fs::write(dir.join(format!("{column}-looks.json")), &record).expect("looks");
     println!("{record}");
+}
+
+/// Pass 1's mean chroma (`LookStats::chroma`) of the golden-hour shots at `high`, measured on the
+/// pass-1 head (565a01d4) with the fetched textures by the G0 look area (2026-10-14).
+const PASS1_CHROMA: [(&str, f64); 3] = [("wide", 24.6), ("forest", 27.8), ("cabin", 22.4)];
+/// How far over pass 1's chroma a shot may go.
+const CHROMA_OVER_PASS1_MAX: f64 = 1.10;
+
+/// G0 look (2026-10-14): with AgX punchy's saturation (P2-0.10) on the scene's warm white balance,
+/// the golden hour read over-saturated and yellow (grass and canopy acid yellow-green, an orange
+/// glare on the dock): mean chroma 24.6 -> 32.1 on the wide shot, 27.8 -> 34.6 on the forest and
+/// 22.4 -> 28.2 on the cabin, at the same mean luma. At `high` each shot stays within
+/// [`CHROMA_OVER_PASS1_MAX`] of pass 1's chroma.
+#[test]
+#[ignore = "needs a GPU: run with --ignored metal"]
+fn metal_the_golden_hour_keeps_pass_one_s_saturation() {
+    if gpu().is_none() {
+        return;
+    }
+    let mut problems = Vec::new();
+    for (name, pass1) in PASS1_CHROMA {
+        let (capture, _) = studio_shot_as(name, DrawnAs::Preset(QualityPreset::High)).expect("a presenter");
+        let chroma = LookStats::of(&capture).chroma;
+        eprintln!("{name} at high: chroma {chroma:.1} against pass 1's {pass1}");
+        if chroma > pass1 * CHROMA_OVER_PASS1_MAX {
+            problems.push(format!("{name}: chroma {chroma:.1} against pass 1's {pass1}"));
+        }
+    }
+    assert!(problems.is_empty(), "{problems:#?}");
+}
+
+/// How far a golden-hour shot's mean hue may sit from pass 1's ([`ART_COLOUR`], recorded on the
+/// pass-1 head), in degrees.
+const GOLDEN_HUE_DEGREES: f64 = 2.0;
+
+/// G0 look leftovers (2026-10-15): with chroma back near pass 1, the golden hour still read
+/// yellow-orange against pass 1 (acid-yellow sunlit meadow, an orange-washed log wall). The mean
+/// colour's hue sat 2.7-4.6 degrees yellower on every shot (wide 39.2 against 35.2, cabin 39.2
+/// against 34.6 at 1440p): the white balance lost pass 1's red with the green, so sunlit greens
+/// turned yellow. At `high` each shot's hue stays within [`GOLDEN_HUE_DEGREES`] of pass 1's.
+#[test]
+#[ignore = "needs a GPU: run with --ignored metal"]
+fn metal_the_golden_hour_keeps_pass_one_s_hue() {
+    if gpu().is_none() {
+        return;
+    }
+    let mut problems = Vec::new();
+    for (name, _, pass1) in ART_COLOUR {
+        let (capture, _) = studio_shot_as(name, DrawnAs::Preset(QualityPreset::High)).expect("a presenter");
+        let hue = LookStats::of(&capture).hue;
+        eprintln!("{name} at high: hue {hue:.1} against pass 1's {pass1}");
+        if (hue - pass1).abs() > GOLDEN_HUE_DEGREES {
+            problems.push(format!("{name}: hue {hue:.1} against pass 1's {pass1}"));
+        }
+    }
+    assert!(problems.is_empty(), "{problems:#?}");
 }
 
 /// The cabin shot's chimney smoke: the columns it rises through and the rows read (below the top
@@ -802,8 +861,10 @@ fn studio_shot_with(name: &str, change: genex::render::RenderChange) -> Option<C
 }
 
 /// The wide shot's far forest (the pines and broadleaves on the far hill), and the luma (0..255) a
-/// pixel there passes only as a specular glint blown to white.
-const FAR_FOREST: (std::ops::Range<u32>, std::ops::Range<u32>) = (900..1160, 100..260);
+/// pixel there passes only as a specular glint blown to white. Rows start at 120: above that the
+/// sky shows between the tree tops, and since the Level-3 passes get the frame's camera (renderer
+/// pass 2 B.7) its clouds sit in the world there with tops brighter than the glint luma.
+const FAR_FOREST: (std::ops::Range<u32>, std::ops::Range<u32>) = (900..1160, 120..260);
 const GLINT_LUMA: f64 = 230.0;
 /// The most of the far forest that may be glints: none settle under TAA (0.18% at high before),
 /// and a preset without TAA shades sub-pixel leaves once per pixel, where every glint stays (gate

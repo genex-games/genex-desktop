@@ -113,20 +113,23 @@ impl StressId {
         }
     }
 
-    /// The lowest scene EV auto exposure meters the scene at (`Look::ev_min`), where the scene
-    /// sets its own: the plaza is a lamp-lit dusk, and an exposure free to lift it lifted it to a
-    /// pink-white day in which its light pools barely read (pass-1 gate finding 04). Held at
-    /// [`DUSK_EV_MIN`], the exposure adds at most the look's compensation to the plaza.
-    pub const fn ev_min(self) -> Option<f32> {
+    /// Auto exposure's compensation curve (`Look::compensation_curve`, `(metered EV, compensation
+    /// EV)` points) where the scene sets its own: the plaza is a lamp-lit dusk, and an exposure
+    /// free to lift it to middle grey lifted it to a pink-white day in which its light pools barely
+    /// read (pass-1 gate finding 04). [`DUSK_EXPOSURE_CURVE`] keeps a dark scene dark, as any
+    /// game's look can, instead of a floor on the metered EV.
+    pub const fn exposure_curve(self) -> Option<&'static [(f32, f32)]> {
         match self {
-            StressId::Plaza => Some(DUSK_EV_MIN),
+            StressId::Plaza => Some(&DUSK_EXPOSURE_CURVE),
             StressId::Forest | StressId::Occlusion => None,
         }
     }
 }
 
-/// The lowest scene EV a dusk scene is metered at: EV 0, an exposure of 1 before compensation.
-pub const DUSK_EV_MIN: f32 = 0.0;
+/// A dusk's compensation curve: a scene metered below EV 0 is lifted towards middle grey by only
+/// a quarter of its darkness (metered EV -4 draws 3 EV under middle grey, -8 draws 6 under), and
+/// daylight is untouched.
+pub const DUSK_EXPOSURE_CURVE: [(f32, f32); 2] = [(-8.0, -6.0), (0.0, 0.0)];
 
 /// A loaded stress scene: what it draws at a frame of its path.
 pub trait StressScene {

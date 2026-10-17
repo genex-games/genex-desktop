@@ -115,6 +115,98 @@ fn hostile_glb_inputs_are_refused_mesh_invalid() {
     }
 }
 
+/// A one-triangle GLB whose accessors take the given component type, type and `normalized` flag
+/// (position, normal, uv, then indices); every view holds 64 zero bytes, enough for any layout.
+fn glb_with_layouts(layouts: [(u32, &str, bool); 4]) -> Vec<u8> {
+    let accessors: Vec<Value> = layouts
+        .iter()
+        .enumerate()
+        .map(|(view, (component, kind, normalized))| {
+            let mut accessor = json!({"bufferView": view, "componentType": component, "count": 3, "type": kind});
+            if *normalized {
+                accessor["normalized"] = json!(true);
+            }
+            if view == 0 {
+                accessor["min"] = json!([0, 0, 0]);
+                accessor["max"] = json!([1, 1, 1]);
+            }
+            accessor
+        })
+        .collect();
+    let views: Vec<Value> = (0..4).map(|at| json!({"buffer": 0, "byteOffset": at * 64, "byteLength": 64})).collect();
+    let document = json!({
+        "bufferViews": views,
+        "accessors": accessors,
+        "meshes": [{"primitives": [{"attributes": {"POSITION": 0, "NORMAL": 1, "TEXCOORD_0": 2}, "indices": 3}]}],
+        "nodes": [{"mesh": 0}], "scenes": [{"nodes": [0]}], "scene": 0
+    });
+    glb_of(document, vec![0u8; 256])
+}
+
+/// Component types (glTF accessor `componentType`).
+const BYTE: u32 = 5120;
+const UNSIGNED_BYTE: u32 = 5121;
+const SHORT: u32 = 5122;
+const UNSIGNED_SHORT: u32 = 5123;
+const UNSIGNED_INT: u32 = 5125;
+const FLOAT: u32 = 5126;
+
+#[test]
+fn accessor_layouts_the_reader_would_misread_or_panic_on_are_refused_mesh_invalid_naming_the_attribute() {
+    // gltf-rs #478: the reader trusts the accessor's layout. A quantized attribute
+    // (KHR_mesh_quantization) is the import step's to dequantize; here it is refused, never read.
+    let plain = [(FLOAT, "VEC3", false), (FLOAT, "VEC3", false), (FLOAT, "VEC2", false), (UNSIGNED_SHORT, "SCALAR", false)];
+    let rows: [(&str, usize, (u32, &str, bool)); 7] = [
+        ("POSITION", 0, (UNSIGNED_SHORT, "VEC3", false)),
+        ("POSITION", 0, (FLOAT, "VEC2", false)),
+        ("NORMAL", 1, (BYTE, "VEC3", true)),
+        ("TEXCOORD_0", 2, (SHORT, "VEC2", false)),
+        ("TEXCOORD_0", 2, (UNSIGNED_INT, "VEC2", false)),
+        ("TEXCOORD_0", 2, (UNSIGNED_SHORT, "VEC2", false)),
+        ("indices", 3, (FLOAT, "SCALAR", false)),
+    ];
+    assert!(MeshData::from_glb(&glb_with_layouts(plain)).is_ok(), "the float layout loads");
+    for (name, at, layout) in rows {
+        let mut layouts = plain;
+        layouts[at] = layout;
+        let what = format!("{name} as {layout:?}");
+        let error = MeshData::from_glb(&glb_with_layouts(layouts)).expect_err(&what);
+        assert_eq!(error.code(), RenderCode::MeshInvalid, "{what}");
+        assert!(error.to_string().contains(name), "{what}: {error}");
+    }
+    let mut normalized_uv = plain;
+    normalized_uv[2] = (UNSIGNED_BYTE, "VEC2", true);
+    assert!(MeshData::from_glb(&glb_with_layouts(normalized_uv)).is_ok(), "core glTF's normalized u8 uvs load");
+}
+
+/// The repository's asset-import fixtures.
+fn import_fixture(name: &str) -> Vec<u8> {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../../tests/fixtures/asset-import").join(name);
+    std::fs::read(&path).unwrap_or_else(|error| panic!("{}: {error}", path.display()))
+}
+
+#[test]
+fn gltfpacks_quantized_suzanne_loads_once_the_import_step_dequantized_it() {
+    // `quantized.glb` is gltfpack 1.3.0's output; `quantized.plain.glb` is the import step's
+    // (`tests/conformance/rust-assets.test.ts` holds it to `normalizeGltf`).
+    let error = MeshData::from_glb(&import_fixture("quantized.glb")).expect_err("the runtime does not read KHR_mesh_quantization");
+    assert_eq!(error.code(), RenderCode::MeshInvalid);
+    let mesh = MeshData::from_glb(&import_fixture("quantized.plain.glb")).expect("the dequantized GLB loads");
+    assert_eq!(mesh.indices.len(), 968 * 3);
+    let (min, max) = mesh.vertices.iter().fold(([f32::MAX; 3], [f32::MIN; 3]), |(lo, hi), v| {
+        (std::array::from_fn(|c| lo[c].min(v.position[c])), std::array::from_fn(|c| hi[c].max(v.position[c])))
+    });
+    // Blender's Suzanne: ±1.367 wide, 0.984 tall above and below her centre, placed by the node's scale.
+    for (c, (lo, hi)) in [(-1.367, 1.367), (-0.984, 0.984), (-0.852, 0.852)].into_iter().enumerate() {
+        assert!((min[c] - lo).abs() < 2e-3 && (max[c] - hi).abs() < 2e-3, "axis {c}: {min:?} {max:?}");
+    }
+    let model = GlbModel::from_glb(&import_fixture("quantized.plain.glb")).expect("its material and texture load");
+    let [part] = model.parts() else { panic!("one material, one part") };
+    let texture = part.material.and_then(|m| m.base_texture).expect("a base-colour texture");
+    assert!(matches!(model.image(texture), Some(Ok(_))), "the embedded checker decodes");
+    assert!(part.mesh.vertices.iter().all(|v| v.uv.iter().all(|t| (-0.01..=1.01).contains(t))), "uvs in 0..1 once the transform is baked");
+}
+
 // ---------------------------------------------------------------------------------------------
 // GLB materials and embedded textures (RQ1.4)
 
@@ -293,6 +385,10 @@ fn a_glb_with_a_red_base_colour_and_a_metallic_roughness_texture_yields_that_mat
             base_texture: None,
             normal_texture: None,
             metal_rough_texture: Some(0),
+            alpha_cutoff: None,
+            double_sided: false,
+            occlusion_texture: None,
+            occlusion_strength: 1.0,
         }
     );
     let texture = model.image(0).expect("image 0 is used").as_ref().expect("the PNG decodes");

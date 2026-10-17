@@ -309,6 +309,15 @@ impl FrameHistory {
         self.frame_index == 0
     }
 
+    /// Whether the frame starts the renderer's own histories over (AO's, the shadow cadence's,
+    /// the meshlet visibility's): a reset TAA's rule also starts over on
+    /// ([`crate::post::taa::resets_history`]). A dynamic-resolution step keeps them (pass 2,
+    /// RC-05): AO reads the previous size's history in uv, and neither the shadow maps nor the
+    /// meshlet visibility depend on the render size.
+    pub fn drops_history(&self) -> bool {
+        self.history_reset() && self.reset.is_none_or(crate::post::taa::resets_history)
+    }
+
     /// The re-render of a settled capture: its index from an empty Capture history.
     pub fn settled(frame: SettleFrame) -> FrameHistory {
         let reset = (frame.index == 0).then_some(HistoryReset::Capture);

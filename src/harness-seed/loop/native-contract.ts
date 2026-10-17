@@ -407,6 +407,8 @@ export { NativeRefusal, TargetRefusal };
 export const NATIVE_CAPTURE_FORMAT = "bgra8";
 /** The longest side a capture may have. */
 export const NATIVE_CAPTURE_MAX_PX = 4096;
+/** The shortest side a capture may be asked to draw at: the world target's smallest. */
+export const NATIVE_CAPTURE_MIN_PX = 64;
 /** The most bytes one capture may take. */
 export const NATIVE_CAPTURE_MAX_BYTES = NATIVE_CAPTURE_MAX_PX * NATIVE_CAPTURE_MAX_PX * 4;
 /** One protocol line, in either direction, may not exceed this. */
@@ -564,6 +566,10 @@ export const RendererFeature = {
   TimestampQuery: "timestamp-query",
   Rg11b10UfloatRenderable: "rg11b10ufloat-renderable",
   DepthClipControl: "depth-clip-control",
+  /** Compressed material textures (BC7, ASTC 4x4, ETC2 RGBA8). */
+  TextureCompressionBc: "texture-compression-bc",
+  TextureCompressionAstc: "texture-compression-astc",
+  TextureCompressionEtc2: "texture-compression-etc2",
 } as const;
 export type RendererFeature = (typeof RendererFeature)[keyof typeof RendererFeature];
 
@@ -705,12 +711,27 @@ export interface NativeCaptureReply {
   render?: CaptureProvenance;
 }
 
+/**
+ * What a capture asks of the look's lens (a Rust · wgpu game): its depth of field and motion blur,
+ * neither by default, so a capture is a still of the held frame.
+ */
+export interface NativeCaptureLens {
+  depthOfField?: boolean;
+  motionBlur?: boolean;
+}
+
+/** A size a capture is asked to draw at, in whole pixels (a Rust · wgpu game). */
+export interface NativeCaptureSize {
+  width: number;
+  height: number;
+}
+
 /** Per-op arguments; ops absent take none. */
 export interface NativeOpArgs {
   [NativeOp.Seed]: { seed: number };
   [NativeOp.Step]: { ms: number };
   [NativeOp.Input]: { actions: NativeInputAction[] };
-  [NativeOp.Capture]: { camera?: string };
+  [NativeOp.Capture]: { camera?: string; size?: NativeCaptureSize; lens?: NativeCaptureLens };
   [NativeOp.DebugCamera]: { camera: string | null };
   [NativeOp.Demo]: { name: string };
   [NativeOp.Audio]: { muted: boolean };

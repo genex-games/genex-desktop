@@ -10,9 +10,10 @@
  */
 import assert from "node:assert/strict";
 import { execFile, spawn } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import { once } from "node:events";
 import { existsSync } from "node:fs";
-import { lstat, mkdir, readdir, readFile, readlink, realpath, writeFile } from "node:fs/promises";
+import { lstat, mkdir, readdir, readFile, readlink, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -33,6 +34,7 @@ import {
   prepareGameLaunch,
   SANDBOX_EXEC,
 } from "../../src/substrate/game-sandbox-profile.ts";
+import { bundleIdentityEntries, plistDocument } from "../../src/substrate/native-bundle.ts";
 import { type GameChild, ProcessSandbox } from "../../src/substrate/spawn.ts";
 import {
   type DenyLogSource,
@@ -50,6 +52,7 @@ import {
   withRules,
 } from "../../scripts/spike/rust-wgpu/seatbelt-measure.ts";
 import { MINUTE_MS } from "../../src/shared/duration.ts";
+import { darwinUserCacheDir } from "../../src/substrate/plugins/native-process.ts";
 import { buildProbe, macClang, macClangSkip, type ProbeRunDir, probePipe, probeRunDir } from "../helpers/macho.ts";
 import { buildPond, HEADLESS_EXECUTABLE } from "../helpers/rust-pond-binary.ts";
 import { tmpDir } from "../helpers/tmp.ts";
@@ -368,53 +371,182 @@ describe("an embedded run's FRAMES parameter", () => {
 });
 
 /**
+ * LG-14 (owner decision D3, 2026-10-14): a game's own Metal shader cache. Metal keys its cache by
+ * the process's bundle identifier under the user's cache folder (`DARWIN_USER_CACHE_DIR/<id>`); a
+ * game's id is the studio's own (`games.genex.game.` and 12 hex digits, one per game folder), read
+ * from the host-written Info.plist, so a game reaches its own cache and never another's. Without a
+ * cache the profile is the measured text above, rule for rule.
+ */
+const GAME_ID = "games.genex.game.0123456789ab";
+const CACHE_ROOT = "/private/var/folders/0_/abc/C";
+/** The rules a granted cache adds, as measured on macOS 26 (M4 Max): its folder, the two metadata reads and dirhelper. */
+const CACHE_RULES = [
+  '(allow file-read-metadata (literal "/var") (literal (param "METAL_CACHE_ROOT")))',
+  '(allow file-read* file-write* (subpath (param "METAL_CACHE")))',
+];
+
+describe("a game's own Metal shader cache in its profile (LG-14)", () => {
+  for (const mode of [NativeRunMode.Headless, NativeRunMode.Window, NativeRunMode.Embedded]) {
+    it(`${mode}: a granted cache adds exactly its folder, two metadata reads and dirhelper, by parameter`, () => {
+      const plain = lines(gameSandboxProfile({ mode }));
+      const cached = lines(gameSandboxProfile({ mode, metalCache: true }));
+      const added = cached.filter((line) => !plain.includes(line));
+      const lookups = (rules: string[]) => rules.find((line) => line.startsWith("(allow mach-lookup")) ?? "";
+      assert.deepEqual(
+        added.filter((line) => !line.startsWith("(allow mach-lookup")),
+        CACHE_RULES,
+      );
+      const params = (rule: string) => [...rule.matchAll(/\(global-name \(param "([^"]*)"\)\)/g)].map((m) => m[1]);
+      assert.deepEqual(allowedServices(lookups(cached)), [
+        ...allowedServices(lookups(plain)),
+        "com.apple.bsd.dirhelper",
+      ]);
+      assert.deepEqual(params(lookups(cached)), params(lookups(plain)), "the parameter services stay last, unchanged");
+      assert.deepEqual(
+        plain.filter((line) => !cached.includes(line)),
+        [lookups(plain)],
+        "nothing else changes",
+      );
+      assert.ok(!cached.join("\n").includes(CACHE_ROOT) && !cached.join("\n").includes(GAME_ID), "no path spliced");
+      const writes = allows(cached.join("\n")).filter((line) => line.includes("file-write"));
+      assert.deepEqual(writes, [
+        '(allow file-read* file-write* (subpath (param "STATE")))',
+        '(allow file-read* file-write* (subpath (param "METAL_CACHE")))',
+      ]);
+    });
+  }
+});
+
+describe("a game's own Metal shader cache's -D parameters (LG-14)", () => {
+  const runDir = "/runs/0123456789abcdef";
+  const good: GameProfileValues = {
+    [GameProfileParam.RunTag]: "genex-game-0123456789abcdef",
+    [GameProfileParam.Exe]: `${runDir}/bundle/Game.app/Contents/MacOS/game`,
+    [GameProfileParam.Bundle]: `${runDir}/bundle`,
+    [GameProfileParam.State]: `${runDir}/state`,
+  };
+  const cache = {
+    [GameProfileParam.MetalCacheRoot]: CACHE_ROOT,
+    [GameProfileParam.MetalCache]: `${CACHE_ROOT}/${GAME_ID}`,
+  };
+
+  it("passes the cache as -D METAL_CACHE_ROOT and METAL_CACHE after STATE and before FRAMES", () => {
+    const frames = framesOf("0123456789abcdef");
+    assert.deepEqual(
+      gameProfileDefines({ ...good, ...cache, [GameProfileParam.Frames]: frames }, runDir, NativeRunMode.Embedded),
+      [
+        ...gameProfileDefines(good, runDir),
+        "-D",
+        `METAL_CACHE_ROOT=${CACHE_ROOT}`,
+        "-D",
+        `METAL_CACHE=${CACHE_ROOT}/${GAME_ID}`,
+        "-D",
+        `FRAMES=${frames}`,
+      ],
+    );
+  });
+
+  const hostile: Array<[string, Partial<GameProfileValues>]> = [
+    ["a cache without its root", { [GameProfileParam.MetalCache]: `${CACHE_ROOT}/${GAME_ID}` }],
+    ["a root without its cache", { [GameProfileParam.MetalCacheRoot]: CACHE_ROOT }],
+    ["another app's cache", { ...cache, [GameProfileParam.MetalCache]: `${CACHE_ROOT}/com.apple.Safari` }],
+    ["Studio's own cache", { ...cache, [GameProfileParam.MetalCache]: `${CACHE_ROOT}/games.genex.desktop` }],
+    ["the whole cache root", { ...cache, [GameProfileParam.MetalCache]: CACHE_ROOT }],
+    [
+      "an id with an upper-case digit",
+      { ...cache, [GameProfileParam.MetalCache]: `${CACHE_ROOT}/games.genex.game.0123456789aB` },
+    ],
+    [
+      "a folder inside the game's cache",
+      { ...cache, [GameProfileParam.MetalCache]: `${CACHE_ROOT}/${GAME_ID}/com.apple.metal` },
+    ],
+    ["a cache under another root", { ...cache, [GameProfileParam.MetalCache]: `/Users/someone/${GAME_ID}` }],
+    ["a path climbing out", { ...cache, [GameProfileParam.MetalCache]: `${CACHE_ROOT}/x/../${GAME_ID}` }],
+    ["a relative root", { [GameProfileParam.MetalCacheRoot]: "C", [GameProfileParam.MetalCache]: `C/${GAME_ID}` }],
+    ["the file system root", { [GameProfileParam.MetalCacheRoot]: "/", [GameProfileParam.MetalCache]: `/${GAME_ID}` }],
+    [
+      "a quote in the root",
+      { [GameProfileParam.MetalCacheRoot]: '/var/C"', [GameProfileParam.MetalCache]: `/var/C"/${GAME_ID}` },
+    ],
+    [
+      "a newline in the root",
+      {
+        [GameProfileParam.MetalCacheRoot]: "/var/C\n(allow default)",
+        [GameProfileParam.MetalCache]: `/var/C\n(allow default)/${GAME_ID}`,
+      },
+    ],
+    [
+      "a cache inside the run dir",
+      {
+        [GameProfileParam.MetalCacheRoot]: `${runDir}/state`,
+        [GameProfileParam.MetalCache]: `${runDir}/state/${GAME_ID}`,
+      },
+    ],
+  ];
+  for (const [name, patch] of hostile) {
+    it(`refuses ${name}`, () => {
+      assert.throws(() => gameProfileDefines({ ...good, ...patch }, runDir), refusedUnsupported);
+    });
+  }
+});
+
+/** Writes the run bundle's Info.plist as assembly does, naming `bundleId`. */
+async function writeInfoPlist(bundle: string, bundleId: string): Promise<string> {
+  const plist = path.join(bundle, "Game.app", "Contents", "Info.plist");
+  await mkdir(path.dirname(plist), { recursive: true });
+  await writeFile(plist, plistDocument(bundleIdentityEntries(bundleId, "Pong")));
+  return plist;
+}
+
+/** A game box over a fresh native-runs root (POSIX paths). */
+async function gameBox() {
+  const base = await tmpDir("game-frames-box-");
+  const runs = path.join(base, "native-runs");
+  await mkdir(runs, { mode: 0o700 });
+  const box = await ProcessSandbox.create({
+    writableRoots: [],
+    scratchDir: path.join(base, "scratch"),
+    secretPaths: [],
+    enabled: false,
+    platform: StudioPlatform.Mac,
+    nativeRunsRoot: runs,
+  });
+  after(() => box.dispose());
+  return { base, runs, box };
+}
+
+async function standIn(runs: string, runId = "0123456789abcdef") {
+  const runDir = path.join(runs, runId);
+  const bundle = path.join(runDir, "bundle");
+  const exe = path.join(bundle, "Game.app", "Contents", "MacOS", "game");
+  const state = path.join(runDir, "state");
+  await mkdir(path.dirname(exe), { recursive: true });
+  await mkdir(state);
+  await writeFile(exe, '#!/bin/sh\ntouch "$GENEX_STATE_DIR/started"\n', { mode: 0o755 });
+  return { runId, runDir, bundle, exe, state, nonce: "a1b2c3d4" };
+}
+
+/** Every entry under `dir` with a file's bytes and a link's target: what a refusal leaves as it was. */
+async function tree(dir: string): Promise<string[]> {
+  const listed: string[] = [];
+  for (const entry of await readdir(dir, { recursive: true, withFileTypes: true })) {
+    const full = path.join(entry.parentPath, entry.name);
+    const info = await lstat(full);
+    let what = "/";
+    if (info.isSymbolicLink()) what = `-> ${await readlink(full)}`;
+    else if (info.isFile()) what = await readFile(full, "utf8");
+    listed.push(`${path.relative(dir, full)} ${what}`);
+  }
+  return listed.sort();
+}
+
+/**
  * `spawnGame` with a frames service: only an embedded run names one, and only its own. A refused
  * request writes no profile, makes no HOME and starts nothing (the stand-in would leave a marker).
  */
 describe("ProcessSandbox.spawnGame and the frames service", {
   skip: process.platform === "win32" && "POSIX paths",
 }, () => {
-  async function gameBox() {
-    const base = await tmpDir("game-frames-box-");
-    const runs = path.join(base, "native-runs");
-    await mkdir(runs, { mode: 0o700 });
-    const box = await ProcessSandbox.create({
-      writableRoots: [],
-      scratchDir: path.join(base, "scratch"),
-      secretPaths: [],
-      enabled: false,
-      platform: StudioPlatform.Mac,
-      nativeRunsRoot: runs,
-    });
-    after(() => box.dispose());
-    return { base, runs, box };
-  }
-
-  async function standIn(runs: string, runId = "0123456789abcdef") {
-    const runDir = path.join(runs, runId);
-    const bundle = path.join(runDir, "bundle");
-    const exe = path.join(bundle, "Game.app", "Contents", "MacOS", "game");
-    const state = path.join(runDir, "state");
-    await mkdir(path.dirname(exe), { recursive: true });
-    await mkdir(state);
-    await writeFile(exe, '#!/bin/sh\ntouch "$GENEX_STATE_DIR/started"\n', { mode: 0o755 });
-    return { runId, runDir, bundle, exe, state, nonce: "a1b2c3d4" };
-  }
-
-  /** Every entry under `dir` with a file's bytes and a link's target: what a refusal leaves as it was. */
-  async function tree(dir: string): Promise<string[]> {
-    const listed: string[] = [];
-    for (const entry of await readdir(dir, { recursive: true, withFileTypes: true })) {
-      const full = path.join(entry.parentPath, entry.name);
-      const info = await lstat(full);
-      let what = "/";
-      if (info.isSymbolicLink()) what = `-> ${await readlink(full)}`;
-      else if (info.isFile()) what = await readFile(full, "utf8");
-      listed.push(`${path.relative(dir, full)} ${what}`);
-    }
-    return listed.sort();
-  }
-
   for (const row of hostileFrames("0123456789abcdef")) {
     it(`refuses ${row.name}, writing and starting nothing`, async () => {
       const { base, runs, box } = await gameBox();
@@ -445,6 +577,135 @@ describe("ProcessSandbox.spawnGame and the frames service", {
     assert.ok(!(NativeEnv.FramesService in windowLaunch.env), "no frames service outside an embedded run");
     assert.ok(!windowLaunch.args.some((arg) => arg.startsWith("FRAMES=")));
   });
+});
+
+/** A cache root folder of its own (real path) and a resolver that names it. */
+async function cacheRootIn(base: string): Promise<{ root: string; resolve: () => Promise<string | null> }> {
+  const root = path.join(await realpath(base), "C");
+  await mkdir(root, { mode: 0o700 });
+  return { root, resolve: async () => root };
+}
+
+const cacheDefines = (args: string[]) => args.filter((arg) => arg.startsWith("METAL_CACHE"));
+
+/** Runs that start without a cache: the plain profile, no parameter, nothing made or changed in the cache root. */
+const uncached: Array<{
+  name: string;
+  arrange: (run: { bundle: string }, root: string, base: string) => Promise<void>;
+  resolve?: (root: string) => Promise<string | null>;
+}> = [
+  { name: "a bundle without an Info.plist", arrange: async () => {} },
+  {
+    name: "an Info.plist naming another app",
+    arrange: async (run) => void (await writeInfoPlist(run.bundle, "com.apple.Safari")),
+  },
+  {
+    name: "an Info.plist naming Studio",
+    arrange: async (run) => void (await writeInfoPlist(run.bundle, "games.genex.desktop")),
+  },
+  {
+    name: "an Info.plist that is a link to another game's",
+    arrange: async (run, _root, base) => {
+      const elsewhere = await writeInfoPlist(path.join(base, "elsewhere"), GAME_ID);
+      const plist = path.join(run.bundle, "Game.app", "Contents", "Info.plist");
+      await mkdir(path.dirname(plist), { recursive: true });
+      await symlink(elsewhere, plist);
+    },
+  },
+  {
+    name: "a cache folder that is a link to another folder",
+    arrange: async (run, root, base) => {
+      await writeInfoPlist(run.bundle, GAME_ID);
+      await mkdir(path.join(base, "victim"));
+      await symlink(path.join(base, "victim"), path.join(root, GAME_ID));
+    },
+  },
+  {
+    name: "a cache folder that is a file",
+    arrange: async (run, root) => {
+      await writeInfoPlist(run.bundle, GAME_ID);
+      await writeFile(path.join(root, GAME_ID), "not a folder");
+    },
+  },
+  {
+    name: "an unknown cache root",
+    arrange: async (run) => void (await writeInfoPlist(run.bundle, GAME_ID)),
+    resolve: async () => null,
+  },
+  {
+    name: "a relative cache root",
+    arrange: async (run) => void (await writeInfoPlist(run.bundle, GAME_ID)),
+    resolve: async () => "C",
+  },
+  {
+    name: "a cache root with a quote",
+    arrange: async (run) => void (await writeInfoPlist(run.bundle, GAME_ID)),
+    resolve: async (root) => `${root}"`,
+  },
+];
+
+/**
+ * `prepareGameLaunch` and a game's own Metal cache (LG-14): granted only for a bundle whose
+ * host-written Info.plist names a studio id, made by the host (0700) and never through a link; any
+ * other run starts with the plain profile and leaves the cache root as it was.
+ */
+describe("prepareGameLaunch and a game's own Metal cache (LG-14)", {
+  skip: process.platform === "win32" && "POSIX paths",
+}, () => {
+  it("a bundle naming the game's own id gets its own cache folder (0700), both parameters and the cache rules (LG-14)", async () => {
+    const { base, runs } = await gameBox();
+    const run = await standIn(runs);
+    await writeInfoPlist(run.bundle, GAME_ID);
+    const { root, resolve } = await cacheRootIn(base);
+    const launch = await prepareGameLaunch(
+      { ...run, mode: NativeRunMode.Embedded, frames: framesOf(run.runId) },
+      runs,
+      resolve,
+    );
+    assert.deepEqual(cacheDefines(launch.args), [
+      `METAL_CACHE_ROOT=${root}`,
+      `METAL_CACHE=${path.join(root, GAME_ID)}`,
+    ]);
+    const folder = await lstat(path.join(root, GAME_ID));
+    assert.ok(folder.isDirectory() && !folder.isSymbolicLink());
+    assert.equal(folder.mode & 0o777, 0o700);
+    assert.equal(
+      await readFile(path.join(run.runDir, "profile.sb"), "utf8"),
+      gameSandboxProfile({ mode: NativeRunMode.Embedded, metalCache: true }),
+    );
+  });
+
+  it("a game's cache folder from an earlier run is kept as it was", async () => {
+    const { base, runs } = await gameBox();
+    const run = await standIn(runs);
+    await writeInfoPlist(run.bundle, GAME_ID);
+    const { root, resolve } = await cacheRootIn(base);
+    await mkdir(path.join(root, GAME_ID, "com.apple.metal"), { recursive: true, mode: 0o700 });
+    await writeFile(path.join(root, GAME_ID, "com.apple.metal", "functions.data"), "warm");
+    const before = await tree(root);
+    const launch = await prepareGameLaunch({ ...run, mode: NativeRunMode.Window }, runs, resolve);
+    assert.equal(cacheDefines(launch.args).length, 2);
+    assert.deepEqual(await tree(root), before);
+  });
+
+  for (const row of uncached) {
+    it(`starts without a cache for ${row.name}, making and changing nothing in the cache root`, async () => {
+      const { base, runs } = await gameBox();
+      const run = await standIn(runs);
+      const { root } = await cacheRootIn(base);
+      await row.arrange(run, root, base);
+      const before = await tree(base);
+      const resolve = row.resolve ?? (async (at: string) => at);
+      const launch = await prepareGameLaunch({ ...run, mode: NativeRunMode.Headless }, runs, () => resolve(root));
+      assert.deepEqual(cacheDefines(launch.args), []);
+      assert.equal(await readFile(path.join(run.runDir, "profile.sb"), "utf8"), headless());
+      const after = (await tree(base)).filter((entry) => !entry.startsWith(path.relative(base, run.runDir)));
+      assert.deepEqual(
+        after,
+        before.filter((entry) => !entry.startsWith(path.relative(base, run.runDir))),
+      );
+    });
+  }
 });
 
 /**
@@ -726,6 +987,50 @@ describe("a game under the final profiles (darwin)", { skip: macClangSkip() }, (
     assert.equal((await ask(`lookup ${framesOf(run.runId)}`)).lookup, BOOTSTRAP_UNKNOWN_SERVICE);
     assert.equal((await ask(`lookup ${framesOf(OTHER_RUN)}`)).lookup, BOOTSTRAP_NOT_PRIVILEGED);
     await quit(child, ask);
+  });
+
+  /**
+   * LG-14 (owner decision D3): a game's second run makes its pipeline from its own Metal cache
+   * (measured on an M4 Max: about 250 ms a cold pipeline in the box without one, 8-20 ms warm with
+   * it), and the game writes neither another game's cache nor the cache root. The ids are fresh ones
+   * this row removes again.
+   */
+  it("a game's second run compiles from its own Metal cache and reaches no other game's", {
+    timeout: 120_000,
+  }, async (t) => {
+    if (!(await metalOrSkip(t))) return;
+    const cacheRoot = await darwinUserCacheDir();
+    assert.ok(cacheRoot, "the user's cache folder resolves");
+    const ids = [0, 1].map(() => `games.genex.game.${randomBytes(6).toString("hex")}`);
+    const [own = "", other = ""] = ids;
+    t.after(() => Promise.all(ids.map((id) => rm(path.join(cacheRoot, id), { recursive: true, force: true }))));
+    await mkdir(path.join(cacheRoot, other), { mode: 0o700 });
+    const times: number[] = [];
+    for (const pass of ["cold", "warm"]) {
+      const run = await probeRunDir(runs, probe);
+      await writeInfoPlist(run.bundle, own);
+      const child = await sandbox.spawnGame({
+        ...run,
+        mode: NativeRunMode.Embedded,
+        nonce: "a1b2c3d4",
+        frames: framesOf(run.runId),
+      });
+      const { ask } = probePipe(child.fd3);
+      const made = await ask("metalpipe");
+      assert.equal(made.pipeline, true, pass);
+      times.push(Number(made.ms));
+      for (const outside of [path.join(cacheRoot, other, "planted"), path.join(cacheRoot, "planted")])
+        assert.deepEqual(await ask(`write ${outside}`), { write: EPERM }, outside);
+      await quit(child, ask);
+    }
+    t.diagnostic(`pipeline in the box: cold ${times[0]} ms, warm ${times[1]} ms`);
+    const cached = await readdir(path.join(cacheRoot, own, "com.apple.metal"), { recursive: true });
+    assert.ok(
+      cached.some((name) => name.endsWith("functions.data")),
+      `the game's own cache holds its functions: ${cached.join(", ")}`,
+    );
+    assert.deepEqual(await readdir(path.join(cacheRoot, other)), [], "the other game's cache is untouched");
+    assert.ok((times[1] ?? Infinity) < (times[0] ?? 0), `warm ${times[1]} ms is faster than cold ${times[0]} ms`);
   });
 
   /**

@@ -45,6 +45,7 @@ import {
   NativeBackend,
   NativeEnv,
   NativeError,
+  type NativeEmbedSize,
   NativeEvent,
   NativeFramesCode,
   NativeInputKind,
@@ -55,6 +56,8 @@ import {
   parseNativeEmbedSize,
   parseDestinationCheck,
   parseNativeCapabilityReceipt,
+  BootStage,
+  NATIVE_BOOT_COUNT_MAX,
   parseNativeEvent,
   parseNativeInput,
   nativeCustomPasses,
@@ -268,6 +271,36 @@ describe("events are checked and copied", () => {
       { ...ready, event: "Ready" },
     ])
       assert.equal(parseNativeEvent(bad), null, JSON.stringify(bad));
+  });
+
+  // Renderer pass 2 (owner decision D11): a boot step names where the boot is, so Live shows real
+  // progress; a progress it cannot read is dropped, never the event (its deadline still counts).
+  it("a starting event carries where the boot is, and a malformed progress is dropped, never the event", () => {
+    const starting = { event: NativeEvent.Starting };
+    assert.deepEqual(parseNativeEvent(starting), starting);
+    assert.deepEqual(parseNativeEvent({ ...starting, stage: BootStage.Pipelines, done: 12, total: 40 }), {
+      ...starting,
+      progress: { stage: BootStage.Pipelines, done: 12, total: 40 },
+    });
+    assert.deepEqual(parseNativeEvent({ ...starting, stage: BootStage.Device }), {
+      ...starting,
+      progress: { stage: BootStage.Device, done: null, total: null },
+    });
+    assert.deepEqual(parseNativeEvent({ ...starting, stage: "warp-drive", done: 1, total: 2 }), starting);
+    assert.deepEqual(parseNativeEvent({ ...starting, stage: 7 }), starting);
+    for (const [done, total] of [
+      [-1, 40],
+      [41, 40],
+      [1.5, 40],
+      ["12", 40],
+      [1, NATIVE_BOOT_COUNT_MAX + 1],
+    ]) {
+      assert.deepEqual(
+        parseNativeEvent({ ...starting, stage: BootStage.Pipelines, done, total }),
+        { ...starting, progress: { stage: BootStage.Pipelines, done: null, total: null } },
+        `${done} of ${total}`,
+      );
+    }
   });
 
   it("a focus event is forwarded, and a malformed one is refused", () => {
@@ -553,6 +586,16 @@ describe("Live's embedded size", () => {
     ["dpr Infinity", { width: 800, height: 600, dpr: Number.POSITIVE_INFINITY }],
     ["no dpr", { width: 800, height: 600 }],
     ["no height", { width: 800, dpr: 1 }],
+    ["device pixels as text", { width: 800, height: 600, dpr: 2, device: "1600x1200" }],
+    ["fractional device pixels", { width: 800, height: 600, dpr: 2, device: { width: 1600.5, height: 1200 } }],
+    ["zero device pixels", { width: 800, height: 600, dpr: 2, device: { width: 0, height: 1200 } }],
+    ["NaN device pixels", { width: 800, height: 600, dpr: 2, device: { width: Number.NaN, height: 1200 } }],
+    ["a missing device side", { width: 800, height: 600, dpr: 2, device: { width: 1600 } }],
+    ["device pixels far from the CSS size", { width: 800, height: 600, dpr: 2, device: { width: 1e6, height: 1200 } }],
+    [
+      "device pixels a few pixels off the CSS size",
+      { width: 800, height: 600, dpr: 2, device: { width: 1603, height: 1200 } },
+    ],
     ["null", null],
     ["an array", [800, 600, 2]],
     ["a string", "800x600"],
@@ -578,13 +621,30 @@ describe("Live's embedded size", () => {
     });
   });
 
-  const rings: Array<[string, { width: number; height: number; dpr: number }, { width: number; height: number }]> = [
+  it("accepts the canvas's device pixels within one CSS pixel of its CSS size, as a fresh copy", () => {
+    const device = { width: 1625, height: 915 };
+    const parsed = parseNativeEmbedSize({ width: 813, height: 458, dpr: 2, device });
+    assert.deepEqual(parsed, { width: 813, height: 458, dpr: 2, device });
+    assert.notEqual(parsed?.device, device);
+  });
+
+  const rings: Array<[string, NativeEmbedSize, { width: number; height: number }]> = [
     ["device pixels of a Retina canvas", { width: 800, height: 600, dpr: 2 }, { width: 1600, height: 1200 }],
     ["a fractional dpr rounds", { width: 333, height: 201, dpr: 1.5 }, { width: 500, height: 302 }],
     ["one pixel", { width: 1, height: 1, dpr: 1 }, { width: 1, height: 1 }],
     ["a square past the side cap halves", { width: 4096, height: 4096, dpr: 2 }, { width: 4096, height: 4096 }],
     ["a wide strip keeps its aspect", { width: 4000, height: 1000, dpr: 2 }, { width: 4096, height: 1024 }],
     ["a thin strip never reaches zero", { width: 4096, height: 1, dpr: 4 }, { width: 4096, height: 1 }],
+    [
+      "the canvas's device pixels when it reports them",
+      { width: 813, height: 458, dpr: 2, device: { width: 1625, height: 915 } },
+      { width: 1625, height: 915 },
+    ],
+    [
+      "device pixels past the side cap keep the cap and the aspect",
+      { width: 4000, height: 1000, dpr: 2, device: { width: 7999, height: 2000 } },
+      { width: 4096, height: 1024 },
+    ],
   ];
   for (const [label, size, expected] of rings)
     it(`rings: ${label}`, () => {
@@ -652,6 +712,7 @@ describe("the frames addon's refusals", () => {
 const WIRE = JSON.parse(readFileSync(new URL("../fixtures/native-wire-v2.json", import.meta.url), "utf8")) as {
   protocol: { v1: number; current: number };
   inputKind: { touch: string };
+  bootStages: string[];
   touchPhases: string[];
   lifecycle: string[];
   wgpuBackends: string[];
@@ -981,5 +1042,11 @@ describe("contract v2: ready carries the capability receipt", () => {
     const parsed = parseNativeEvent(v3);
     assert.ok(parsed && parsed.event === NativeEvent.Ready);
     assert.equal(isNativeProtocolVersion(parsed.protocol), false);
+  });
+});
+
+describe("the boot's stages are the wire's", () => {
+  it("names every stage genex-studio's `starting` and the web shell's progress carry, in boot order", () => {
+    assert.deepEqual(Object.values(BootStage), WIRE.bootStages);
   });
 });

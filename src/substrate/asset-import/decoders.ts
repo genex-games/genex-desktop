@@ -1,6 +1,7 @@
 /**
  * The WebAssembly decoders the importer runs: the Basis Universal transcoder, Draco's glTF decoder,
- * meshoptimizer's decoder and its meshlet clusterizer, the builds the pinned `three` package ships. Each is loaded from
+ * meshoptimizer's decoder, its meshlet clusterizer and its simplifier (import-time LODs), the
+ * builds the pinned `three` package ships. Each is loaded from
  * its file with its WebAssembly handed over as bytes, so nothing is fetched. The importer runs
  * them inside its own sandbox (no network, writes only its job folder).
  *
@@ -23,6 +24,7 @@ export const ImportDecoder = {
   Draco: "draco",
   Meshopt: "meshopt",
   MeshoptClusterizer: "meshopt-clusterizer",
+  MeshoptSimplifier: "meshopt-simplifier",
 } as const;
 export type ImportDecoder = (typeof ImportDecoder)[keyof typeof ImportDecoder];
 
@@ -53,6 +55,11 @@ export const IMPORT_DECODERS = {
   },
   [ImportDecoder.MeshoptClusterizer]: {
     files: ["examples/jsm/libs/meshopt_clusterizer.module.js"],
+    upstream: "https://github.com/zeux/meshoptimizer",
+    license: "MIT",
+  },
+  [ImportDecoder.MeshoptSimplifier]: {
+    files: ["examples/jsm/libs/meshopt_simplifier.module.js"],
     upstream: "https://github.com/zeux/meshoptimizer",
     license: "MIT",
   },
@@ -251,4 +258,31 @@ export async function meshoptClusterizer(): Promise<MeshoptClusterizerModule> {
   };
   await MeshoptClusterizer.ready;
   return MeshoptClusterizer;
+}
+
+/** The parts of meshoptimizer's simplifier module the importer calls. */
+export interface MeshoptSimplifierModule {
+  ready: Promise<void>;
+  supported: boolean;
+  /** Simplified indices and the result's error relative to the mesh's extent. */
+  simplify(
+    indices: Uint32Array,
+    vertexPositions: Float32Array,
+    vertexPositionsStride: number,
+    targetIndexCount: number,
+    targetError: number,
+    flags?: readonly string[],
+  ): [Uint32Array, number];
+  /** The factor that turns a relative error into an object-space distance. */
+  getScale(vertexPositions: Float32Array, vertexPositionsStride: number): number;
+}
+
+/** meshoptimizer's simplifier, ready. */
+export async function meshoptSimplifier(): Promise<MeshoptSimplifierModule> {
+  const [file] = IMPORT_DECODERS[ImportDecoder.MeshoptSimplifier].files;
+  const { MeshoptSimplifier } = (await import(pathToFileURL(decoderFile(file)).href)) as {
+    MeshoptSimplifier: MeshoptSimplifierModule;
+  };
+  await MeshoptSimplifier.ready;
+  return MeshoptSimplifier;
 }

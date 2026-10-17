@@ -28,6 +28,8 @@ glam = { workspace = true }
 log = { workspace = true }
 thiserror = { workspace = true }
 gltf = { workspace = true }
+# KTX2 textures in fixed GPU formats (BC7, ASTC 4x4, ETC2): the container read and checked here.
+ktx2 = { workspace = true }
 # Every CPU transcendental that reaches a capture (sphere mesh, sRGB curve, cascades, mips) is
 # libm's, the same bits on every target (clippy.toml).
 libm = { workspace = true }
@@ -46,3 +48,6 @@ serde_json = { workspace = true }
 # with (HLSL SM 5.1 for FXC, MSL, SPIR-V). Features of the already vendored naga, test builds only:
 # no crate is added and the shipped renderer's naga stays `wgsl-in` (crate-policy unchanged).
 naga = { workspace = true, features = ["hlsl-out", "msl-out", "spv-out"] }
+# tests/uploads.rs counts the driver buffers a frame makes (RC-08): wgpu's internal counters,
+# test builds only (no crate is added; the shipped renderer keeps them compiled out).
+wgpu = { workspace = true, features = ["counters"] }
