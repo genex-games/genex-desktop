@@ -106,7 +106,7 @@ A failure says why; Settings then adds the vendor's install guide.
 
 ## OpenRouter and OpenCode
 
-Both are metered (`billing: "metered"` in `shared/providers.ts`): every token is paid to someone,
+OpenRouter, OpenCode and Pi are metered (`billing: "metered"` in `shared/providers.ts`): every token is paid to someone,
 so `EngineRegistry` never offers one as a fallback or a first ready engine, and the sign-in gate's
 local finish and the reference judge never pick one. Only the person's explicit pick runs on them.
 
@@ -144,6 +144,11 @@ OpenCode lists every OpenAI model even on a ChatGPT sign-in, where OpenAI refuse
 Codex is signed in the picker starts OpenCode's GPT models with the ones Codex lists
 (`runnableModels` in `renderer/model-lineup.ts`). Recorded streams:
 `tests/fixtures/transcripts/opencode-*` (OpenCode 1.18).
+
+**Pi** ([pi.ts](../src/substrate/engines/pi.ts)) delegates via `pi --mode json` (resume
+`--session-id`): the coding agent, not the `pi-ai` HTTP client. Sign in opens its TUI for `/login`;
+studio never reads `~/.pi`. Ready once `--list-models` lists a model. Sessions use
+`ProcessSandbox` (`ownHome`: `~/.pi`). No installer. Streams: `tests/fixtures/transcripts/pi-*`.
 
 Residual risk: the CLI must read its sign-ins and its bash tool shares its sandbox, so an OpenCode
 session can read OpenCode's own `auth.json`, and its commands can reach the provider host the session

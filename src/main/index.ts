@@ -455,7 +455,7 @@ app.on("accessibility-support-changed", (_event, enabled) => {
 let liveThreadStatus: ThreadStatusMap = {};
 /** An eval-lane launch's view of the core's UI events (it digests the game its chat seeds); null otherwise. */
 let evalLaneUiTap: ((event: UiEvent) => void) | null = null;
-const { codexLogin, claudeLogin, openCodeLogin } = createLoginControllers({
+const { codexLogin, claudeLogin, openCodeLogin, piLogin } = createLoginControllers({
   terminals,
   openExternal: (url) => shell.openExternal(url),
   subscription,
@@ -463,6 +463,10 @@ const { codexLogin, claudeLogin, openCodeLogin } = createLoginControllers({
   onOpenCodeSignedIn: async () => {
     if (core?.engines.has(EngineId.OpenCode)) await core.engines.get(EngineId.OpenCode).refreshModels?.(true);
     pushUiEvent({ type: UiEvent.EnginesChanged, payload: { engine: EngineId.OpenCode } });
+  },
+  onPiSignedIn: async () => {
+    if (core?.engines.has(EngineId.Pi)) await core.engines.get(EngineId.Pi).refreshModels?.(true);
+    pushUiEvent({ type: UiEvent.EnginesChanged, payload: { engine: EngineId.Pi } });
   },
   showCodexState: (state) => {
     preview?.setOccluded(state.visible);
@@ -1116,6 +1120,7 @@ function registerIpc(studio: StudioCore): void {
     claudeLogin,
     codexLogin,
     openCodeLogin,
+    piLogin,
     subscription,
     pushUiEvent,
     busy: () => keepAwake.held || (core?.budget.userInFlight ?? 0) > 0,

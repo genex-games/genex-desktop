@@ -73,7 +73,15 @@ describe("engines", () => {
     assert.deepEqual(
       PROVIDERS.map((provider) => provider.id),
       // Flipped (OpenCode, OpenRouter): the metered providers follow the local ones.
-      [EngineId.ClaudeCode, EngineId.Codex, EngineId.Bonsai, EngineId.Ollama, EngineId.OpenCode, EngineId.OpenRouter],
+      [
+        EngineId.ClaudeCode,
+        EngineId.Codex,
+        EngineId.Bonsai,
+        EngineId.Ollama,
+        EngineId.OpenCode,
+        EngineId.OpenRouter,
+        EngineId.Pi,
+      ],
     );
   });
 

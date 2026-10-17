@@ -84,7 +84,7 @@ Studio's app-wide assistant uses `complete` without tools; game chats and builds
 existing session/coordinator paths.
 
 The same director, worker, integration, preview and judging code runs for Bonsai sessions.
-Model roles accept Bonsai, Claude Code, Codex, OpenCode and OpenRouter as orchestrator/worker/judge
+Model roles accept Bonsai, Claude Code, Codex, OpenCode, Pi and OpenRouter as orchestrator/worker/judge
 providers; engine/model pairs remain together. OpenRouter runs these same local sessions under its
 own engine id (`LocalSessions` `engine` option), with each model's catalog context. A single-model pick fills all roles; explicit crosses win.
 Existing saved subscription roles keep their version and choices. Session-capable local

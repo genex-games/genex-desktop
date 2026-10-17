@@ -16,7 +16,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { CliInstallProblem } from "../shared/cli-install.ts";
-import type { CodingProvider } from "../shared/coding-cli.ts";
+import type { CodingProvider, InstallableCodingProvider } from "../shared/coding-cli.ts";
 import { MINUTE_MS, SECOND_MS } from "../shared/duration.ts";
 import { EngineId } from "../shared/providers.ts";
 import { childEnv } from "./child-env.ts";
@@ -66,7 +66,7 @@ const INSTALLERS = {
     set: {},
     vendor: "opencode",
   },
-} as const satisfies Record<CodingProvider, Installer>;
+} as const satisfies Record<InstallableCodingProvider, Installer>;
 
 /** Why an installer cannot be looked up; the renderer never sees this, main refuses first. */
 const MESSAGE = {
@@ -168,7 +168,7 @@ export async function installCodingCli(
 
 function installerOf(provider: CodingProvider): Installer {
   if (!Object.hasOwn(INSTALLERS, provider)) throw new Error(MESSAGE.unknownProvider(String(provider)));
-  return INSTALLERS[provider];
+  return INSTALLERS[provider as InstallableCodingProvider];
 }
 
 /** The installer's text, whole, from an HTTPS answer; anything else is a failed download. */

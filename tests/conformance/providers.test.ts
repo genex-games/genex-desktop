@@ -76,6 +76,7 @@ describe("provider table", () => {
     assert.equal(loginKind("codex"), "console");
     assert.equal(loginKind("ollama"), "none");
     assert.equal(loginKind("opencode"), "cli", "OpenCode runs its own sign-in in the terminal");
+    assert.equal(loginKind("pi"), "cli", "Pi's TUI /login runs in the terminal");
     assert.equal(loginKind("openrouter"), "none", "OpenRouter's key is pasted in Settings");
     assert.equal(loginKind("gemini-cli"), "none");
     assert.equal(providerInfo("gemini-cli"), undefined);
@@ -91,8 +92,9 @@ describe("provider table", () => {
       ollama: "local",
       opencode: "metered",
       openrouter: "metered",
+      pi: "metered",
     });
-    for (const id of ["openrouter", "opencode"]) assert.equal(isMetered(id), true, id);
+    for (const id of ["openrouter", "opencode", "pi"]) assert.equal(isMetered(id), true, id);
     for (const id of ["bonsai", "ollama"]) assert.equal(isLocalEngine(id), true, id);
     for (const id of ["claude-code", "codex", "gemini-cli", "constructor", null, undefined]) {
       assert.equal(isMetered(id), false, String(id));

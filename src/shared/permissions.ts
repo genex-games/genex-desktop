@@ -74,8 +74,9 @@ interface EnginePermissions {
  * which asks before each edit or command; its commands always run in the studio's sandbox, so it
  * has no Bypass. Codex (`codex exec`) cannot ask mid-turn: Auto keeps its sandbox, Plan only reads,
  * Bypass drops its sandbox. OpenRouter's tools run in the studio's own session loop, as Bonsai's do.
- * OpenCode (`opencode run`) cannot ask mid-turn and always runs in the studio's sandbox: Auto, or Plan
- * (read only). Any other engine (Ollama, whose tools run in the harness, or one added later) keeps its
+ * OpenCode (`opencode run`) and Pi (`pi --mode json`) cannot ask mid-turn and always run in the
+ * studio's sandbox: Auto, or Plan (read only). Any other engine (Ollama, whose tools run in the
+ * harness, or one added later) keeps its
  * own sandboxed contract, which is Auto.
  */
 const ENGINE_PERMISSIONS: Readonly<Record<string, EnginePermissions>> = {
@@ -93,6 +94,10 @@ const ENGINE_PERMISSIONS: Readonly<Record<string, EnginePermissions>> = {
     withheld: UnavailableModeReason.AlwaysSandboxed,
   },
   [EngineId.OpenCode]: {
+    modes: [PermissionMode.Auto, PermissionMode.Plan],
+    withheld: UnavailableModeReason.CannotAsk,
+  },
+  [EngineId.Pi]: {
     modes: [PermissionMode.Auto, PermissionMode.Plan],
     withheld: UnavailableModeReason.CannotAsk,
   },
