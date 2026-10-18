@@ -243,6 +243,24 @@ fn metal_a_caster_between_the_sun_and_a_leaf_shadows_the_light_through_it() {
     assert!(shaded_rim > open_rim * 0.8, "the rim outside its shadow keeps its light ({shaded_rim} vs {open_rim})");
 }
 
+/// A glTF leaf's `KHR_materials_diffuse_transmission` (imported by `GlbMaterialExt::subsurface`:
+/// the back Lambert lobe alone, no Filament scatter) shines through its unlit face in its green.
+#[test]
+#[ignore = "GPU: run with -- --ignored metal"]
+fn metal_a_glb_leaf_with_diffuse_transmission_shines_through_its_unlit_face() {
+    use genex_render::mesh::{DEFAULT_IOR, GlbDiffuseTransmission, GlbMaterialExt};
+    let Some(gpu) = gpu() else { return };
+    let transmission = GlbDiffuseTransmission { factor: 0.6, texture: None, color: [1.0; 3], color_texture: None };
+    let ext = GlbMaterialExt { ior: DEFAULT_IOR, specular: None, clearcoat: None, sheen: None, transmission: None, volume: None, anisotropy: None, diffuse_transmission: Some(transmission) };
+    let imported = ext.subsurface().expect("diffuse transmission above 0 lets light through");
+    let plain = radiance(&gpu, &leaf_scene(leaf(), true, false), "glb-leaf-plain");
+    let lit = radiance(&gpu, &leaf_scene(leaf().with_subsurface(imported), true, false), "glb-leaf-backlit");
+    let (dark, glow) = (luminance(mean(&plain, leaf_rim)), luminance(mean(&lit, leaf_rim)));
+    assert!(glow > 0.05 && glow > dark * 10.0, "the imported leaf lets the sun through ({glow} vs {dark})");
+    let through = mean(&lit, leaf_rim);
+    assert!(through[1] > through[0] && through[1] > through[2], "in the base colour's green: {through:?}");
+}
+
 /// A sphere of radius 0.5 at the origin lit from +x: its left half is the shadow side.
 fn sphere_scene(material: Material) -> Scene {
     let mut scene = sunlit([1.0, 0.0, 0.15]);

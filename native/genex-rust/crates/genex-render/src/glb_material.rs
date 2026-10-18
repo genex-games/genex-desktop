@@ -21,6 +21,7 @@ use crate::mesh::mesh_lod::{LodMerge, read_lod_extras};
 use crate::mesh::{GlbMaterialExt, LodChain, LodWarning, MeshData, MeshletMerge, MeshletWarning, for_each_primitive, invalid, open_glb};
 use crate::meshlet::MeshletSet;
 use crate::pbr::Material;
+use crate::subsurface::Subsurface;
 use crate::texture::{TextureData, TextureId, TextureKind, linear_to_srgb, srgb_to_linear};
 
 /// The PNG file signature.
@@ -57,6 +58,9 @@ pub struct GlbMaterial<T = u32> {
     pub occlusion_texture: Option<T>,
     /// `occlusionTexture.strength`, 0..1 (1 by default).
     pub occlusion_strength: f32,
+    /// How it lets light through: `KHR_materials_diffuse_transmission` as the subsurface chunk
+    /// shades it ([`GlbMaterialExt::subsurface`], renderer pass 2 B.1); `None` is opaque to light.
+    pub subsurface: Option<Subsurface>,
 }
 
 impl<T: Copy> GlbMaterial<T> {
@@ -75,6 +79,7 @@ impl<T: Copy> GlbMaterial<T> {
             double_sided: self.double_sided,
             occlusion_texture: self.occlusion_texture.and_then(|t| upload(t, TextureKind::Data)),
             occlusion_strength: self.occlusion_strength,
+            subsurface: self.subsurface,
         }
     }
 
@@ -121,6 +126,9 @@ impl GlbMaterial<TextureId> {
         }
         if let Some(occlusion) = self.occlusion_texture {
             material = material.with_occlusion_texture(occlusion, self.occlusion_strength);
+        }
+        if let Some(subsurface) = self.subsurface {
+            material = material.with_subsurface(subsurface);
         }
         material.with_double_sided(self.double_sided)
     }
@@ -288,11 +296,13 @@ fn glb_parts(gltf: &gltf::Gltf) -> Result<Vec<GlbPart>, RenderError> {
             let material = key.and_then(|index| gltf.materials().nth(index));
             let merged = merge.finish();
             let (lods, lod_warnings) = lods.finish();
+            let material_ext = material.as_ref().and_then(|material| read_material_ext(material, &gltf.document));
+            let subsurface = material_ext.as_ref().and_then(GlbMaterialExt::subsurface);
             GlbPart {
                 mesh,
-                material: material.as_ref().map(read_material),
+                material: material.as_ref().map(|material| GlbMaterial { subsurface, ..read_material(material) }),
                 emission: material.as_ref().and_then(read_emission),
-                material_ext: material.as_ref().and_then(|material| read_material_ext(material, &gltf.document)),
+                material_ext,
                 meshlets: merged.set,
                 meshlet_warnings: merged.warnings,
                 lods,
@@ -342,6 +352,7 @@ fn read_material(material: &gltf::Material<'_>) -> GlbMaterial {
         double_sided: material.double_sided(),
         occlusion_texture,
         occlusion_strength,
+        subsurface: None,
     }
 }
 

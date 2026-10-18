@@ -20,7 +20,7 @@ pub use glb_material::{GLTF_DEFAULT_ALPHA_CUTOFF, GlbEmission, GlbMaterial, GlbM
 // The material extensions (A6.1) live beside the material loader that reads them.
 #[path = "glb_material_ext.rs"]
 mod glb_material_ext;
-pub use glb_material_ext::{DEFAULT_IOR, GlbAnisotropy, GlbClearcoat, GlbMaterialExt, GlbSheen, GlbSpecular, GlbTexture, GlbVolume};
+pub use glb_material_ext::{DEFAULT_IOR, GlbAnisotropy, GlbClearcoat, GlbDiffuseTransmission, GlbMaterialExt, GlbSheen, GlbSpecular, GlbTexture, GlbVolume};
 // Import-time LODs (A6.9) are read beside the meshlet extras they sit next to.
 #[path = "mesh_lod.rs"]
 mod mesh_lod;

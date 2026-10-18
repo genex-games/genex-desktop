@@ -193,7 +193,9 @@ pine needles and other dense thin cards glow too brightly with it, so keep them 
 `Subsurface::new(color, thickness)` (linear colour 0..1, thickness 0..1, 1 lets nothing through),
 `.with_transmission(share)`, `.with_power(p)` and `.with_depth(metres)` (how far light travels
 inside it: a leaf's millimetres, a candle's centimetre). The sun's light through it is shadowed by
-whatever stands between it and the sun.
+whatever stands between it and the sun. A model whose glTF material carries
+`KHR_materials_diffuse_transmission` lets light through the same way with no call (its factor, in
+the base colour).
 
 A room's polished floor reflects the sky until it has a reflection probe:
 `frame.reflection_probe(&ReflectionProbe::new(min, max).with_capture(eye).with_blend(0.4))`

@@ -113,8 +113,13 @@ about the view-to-light axis, in the scatter colour) plus Bevy v0.20's back Lamb
 base colour. Both are lit through one point-sampled gather of the sun's cascade: how far along the
 light the fragment lies behind the stored casters, past a slope tolerance, attenuated as
 `exp(-distance / depth)`, so a thin leaf passes its back-light, a thick candle only its rim, and a
-caster between the surface and the sun shadows the light through it. Local lights and the
-environment add no subsurface term yet. Fixtures and the 1080p timing row: `tests/subsurface.rs`.
+caster between the surface and the sun shadows the light through it. Local lights add the same
+lobes without the gather (a spot's shadow map multiplies them); the environment adds no subsurface
+term yet. A GLB material's `KHR_materials_diffuse_transmission` imports as a `Subsurface`
+(`GlbMaterialExt::subsurface`, applied by `GlbMaterial::to_material`): the back lobe at its factor in
+the base colour, as Bevy imports it, no scatter, its depth `KHR_materials_volume`'s attenuation
+distance, else its thickness, else a leaf's; the colour factor and the textures are read, not
+shaded. Fixtures and the 1080p timing row: `tests/subsurface.rs`.
 
 ## Reflection probes
 
@@ -160,7 +165,9 @@ through the sampler's trilinear filter; with `irradiance_leak_control` (desktop 
 position first moves along each axis toward the side whose cell sees the point (its reach that way
 against the point's distance), so a cell behind a wall lends no light. Level-2 v2 materials take
 the sky's SH9. The ledger's `irradiance-volumes` row counts the atlas, the staging block and the
-bake's targets.
+bake's targets. The volumes are not updated by traced rays: DDGI with software rays measured about 11 ms
+on an integrated GPU for its cheapest update (budget 2 ms), so it is not built; `tests/ddgi.rs`
+holds that measurement and turns red if software rays get cheap enough to revisit it.
 
 ## Night sky and sky media
 

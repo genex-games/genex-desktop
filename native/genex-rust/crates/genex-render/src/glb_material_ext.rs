@@ -1,5 +1,6 @@
 //! A GLB material's `KHR_materials_*` extensions (renderer pass 2, A6.1): `ior`, `specular`,
-//! `clearcoat`, `sheen`, `transmission`, `volume` and `anisotropy`, read from the material's raw
+//! `clearcoat`, `sheen`, `transmission`, `volume`, `anisotropy` and (B.1) `diffuse_transmission`,
+//! read from the material's raw
 //! extension JSON (`gltf`'s `extensions` feature, as Bevy's `bevy_gltf` reads clearcoat,
 //! anisotropy and specular, which `gltf` 1.4.1 does not type). `emissive_strength` is
 //! [`crate::mesh::GlbEmission`]'s.
@@ -8,8 +9,11 @@
 //! that is not one (a string, a non-finite number, the wrong length), and is clamped into its range
 //! otherwise; nothing here refuses a model. A texture is named by the image its texture samples,
 //! and only on TEXCOORD_0, the one uv set a vertex carries. Shading these terms is the materials
-//! tier's: until then they ride along on each [`crate::mesh::GlbPart`].
+//! tier's: until then they ride along on each [`crate::mesh::GlbPart`]. The one shaded today is
+//! diffuse transmission: [`GlbMaterialExt::subsurface`] turns it into the material's
+//! [`Subsurface`] (renderer pass 2 B.1), which [`crate::mesh::GlbMaterial::to_material`] applies.
 
+use crate::subsurface::{DEFAULT_SUBSURFACE_POWER, Subsurface};
 use gltf::json::Value;
 
 const IOR: &str = "KHR_materials_ior";
@@ -19,8 +23,9 @@ const SHEEN: &str = "KHR_materials_sheen";
 const TRANSMISSION: &str = "KHR_materials_transmission";
 const VOLUME: &str = "KHR_materials_volume";
 const ANISOTROPY: &str = "KHR_materials_anisotropy";
+const DIFFUSE_TRANSMISSION: &str = "KHR_materials_diffuse_transmission";
 /// The extensions this module reads: a material carrying none of them has no row.
-const READ: [&str; 7] = [IOR, SPECULAR, CLEARCOAT, SHEEN, TRANSMISSION, VOLUME, ANISOTROPY];
+const READ: [&str; 8] = [IOR, SPECULAR, CLEARCOAT, SHEEN, TRANSMISSION, VOLUME, ANISOTROPY, DIFFUSE_TRANSMISSION];
 /// glTF's default index of refraction (and `KHR_materials_ior`'s).
 pub const DEFAULT_IOR: f32 = 1.5;
 
@@ -96,6 +101,19 @@ pub struct GlbAnisotropy {
     pub texture: Option<GlbTexture>,
 }
 
+/// `KHR_materials_diffuse_transmission`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct GlbDiffuseTransmission {
+    /// `diffuseTransmissionFactor`, 0..=1 (default 0: none).
+    pub factor: f32,
+    /// `diffuseTransmissionTexture` (alpha channel).
+    pub texture: Option<GlbTexture>,
+    /// `diffuseTransmissionColorFactor`, linear rgb 0..=1 (default white).
+    pub color: [f32; 3],
+    /// `diffuseTransmissionColorTexture` (sRGB).
+    pub color_texture: Option<GlbTexture>,
+}
+
 /// The `KHR_materials_*` extensions of one material; each `None` when the material does not carry it.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct GlbMaterialExt {
@@ -113,6 +131,23 @@ pub struct GlbMaterialExt {
     pub volume: Option<GlbVolume>,
     /// `KHR_materials_anisotropy`.
     pub anisotropy: Option<GlbAnisotropy>,
+    /// `KHR_materials_diffuse_transmission` (renderer pass 2 B.1).
+    pub diffuse_transmission: Option<GlbDiffuseTransmission>,
+}
+
+impl GlbMaterialExt {
+    /// How the material lets light through, when it carries diffuse transmission above 0: the
+    /// subsurface chunk's back Lambert lobe at the factor, in the base colour (Bevy v0.20's glTF
+    /// import, MIT OR Apache-2.0, reads the factor the same way; the colour factor and both
+    /// textures ride along unshaded), and no Filament scatter (glTF defines none). The light
+    /// crossing the material falls to 1/e over `KHR_materials_volume`'s attenuation distance,
+    /// else its thickness, else a thin leaf's depth (thin-walled).
+    pub fn subsurface(&self) -> Option<Subsurface> {
+        let transmission = self.diffuse_transmission.map(|d| d.factor).filter(|factor| *factor > 0.0)?;
+        let volume = self.volume.map(|v| [v.attenuation_distance, v.thickness]).unwrap_or([f32::INFINITY, 0.0]);
+        let depth = volume.into_iter().find(|d| d.is_finite() && *d > 0.0).unwrap_or(Subsurface::LEAF.depth);
+        Some(Subsurface { color: [0.0; 3], thickness: 1.0, power: DEFAULT_SUBSURFACE_POWER, transmission, depth })
+    }
 }
 
 /// One extension's JSON object and the document its textures resolve in.
@@ -190,6 +225,12 @@ pub(crate) fn read_material_ext(material: &gltf::Material<'_>, document: &gltf::
             strength: e.number("anisotropyStrength", 0.0, 0.0, 1.0),
             rotation: finite(e.object.get("anisotropyRotation")).unwrap_or(0.0),
             texture: e.texture("anisotropyTexture"),
+        }),
+        diffuse_transmission: read(DIFFUSE_TRANSMISSION).map(|e| GlbDiffuseTransmission {
+            factor: e.number("diffuseTransmissionFactor", 0.0, 0.0, 1.0),
+            texture: e.texture("diffuseTransmissionTexture"),
+            color: e.rgb("diffuseTransmissionColorFactor", 1.0, 0.0, 1.0),
+            color_texture: e.texture("diffuseTransmissionColorTexture"),
         }),
     })
 }

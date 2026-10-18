@@ -3,7 +3,7 @@
 //! its range whatever the file says, and textures named by their image only on TEXCOORD_0. The
 //! shading of these terms is the materials tier's; the values ride along on each part.
 
-use genex_render::mesh::{GlbAnisotropy, GlbClearcoat, GlbMaterialExt, GlbModel, GlbSheen, GlbSpecular, GlbTexture, GlbVolume};
+use genex_render::mesh::{GlbAnisotropy, GlbClearcoat, GlbDiffuseTransmission, GlbMaterialExt, GlbModel, GlbSheen, GlbSpecular, GlbTexture, GlbVolume};
 use serde_json::{Value, json};
 
 /// A one-triangle GLB with one primitive per material (in order) and `images` texture slots, each
@@ -148,4 +148,64 @@ fn hostile_extension_values_fall_back_or_clamp_and_never_refuse_the_model() {
     let second = found[1].expect("ior 0 is an extension row");
     assert_eq!(second.ior, 0.0, "glTF lets ior be 0 (a perfect reflector's)");
     assert_eq!(second.volume, None, "an extension that is not an object is absent");
+}
+
+/// The material a GLB's only part draws with (no textures uploaded).
+fn drawn(materials: Value) -> genex_render::pbr::Material {
+    let model = GlbModel::from_glb(&glb(materials, 0)).expect("a valid GLB");
+    let material = model.parts()[0].material.expect("a material");
+    material.map_textures(|_, _| None::<genex_render::texture::TextureId>).to_material([255; 4])
+}
+
+/// Renderer pass 2 B.1 (open item): a GLB leaf carrying `KHR_materials_diffuse_transmission` draws
+/// with the subsurface chunk's back Lambert lobe at its factor (Bevy's import: the factor, in the
+/// base colour), measured over `KHR_materials_volume`'s attenuation distance, else its thickness,
+/// else a thin leaf's depth; no Filament scatter (glTF defines none). Without the extension, or at a
+/// factor of 0, the material stays opaque to light.
+#[test]
+fn a_glb_material_with_diffuse_transmission_draws_with_the_subsurface_chunk() {
+    use genex_render::subsurface::{DEFAULT_SUBSURFACE_POWER, Subsurface};
+    let thin = drawn(json!([{"extensions": {"KHR_materials_diffuse_transmission": {"diffuseTransmissionFactor": 0.6}}}]));
+    let want = Subsurface { color: [0.0; 3], thickness: 1.0, power: DEFAULT_SUBSURFACE_POWER, transmission: 0.6, depth: Subsurface::LEAF.depth };
+    assert_eq!(thin.subsurface, Some(want));
+    let with_volume = |volume: Value| {
+        drawn(json!([{"extensions": {"KHR_materials_diffuse_transmission": {"diffuseTransmissionFactor": 0.4}, "KHR_materials_volume": volume}}])).subsurface.map(|s| s.depth)
+    };
+    assert_eq!(with_volume(json!({"thicknessFactor": 0.05, "attenuationDistance": 0.02})), Some(0.02), "the attenuation distance first");
+    assert_eq!(with_volume(json!({"thicknessFactor": 0.05})), Some(0.05), "else the thickness");
+    assert_eq!(with_volume(json!({})), Some(Subsurface::LEAF.depth), "thin-walled: a leaf's depth");
+    let off = [
+        json!([{"pbrMetallicRoughness": {"baseColorFactor": [0.2, 0.5, 0.1, 1]}}]),
+        json!([{"extensions": {"KHR_materials_diffuse_transmission": {}}}]),
+        json!([{"extensions": {"KHR_materials_diffuse_transmission": {"diffuseTransmissionFactor": "x"}}}]),
+        json!([{"extensions": {"KHR_materials_diffuse_transmission": "not an object"}}]),
+    ];
+    for materials in off {
+        assert_eq!(drawn(materials.clone()).subsurface, None, "{materials}");
+    }
+}
+
+#[test]
+fn diffuse_transmission_is_read_with_its_defaults_and_hostile_values_held_in_range() {
+    let materials = json!([
+        {"extensions": {"KHR_materials_diffuse_transmission": {
+            "diffuseTransmissionFactor": 0.7, "diffuseTransmissionTexture": {"index": 0},
+            "diffuseTransmissionColorFactor": [0.9, 0.8, 0.2], "diffuseTransmissionColorTexture": {"index": 1}
+        }}},
+        {"extensions": {"KHR_materials_diffuse_transmission": {}}},
+        {"extensions": {"KHR_materials_diffuse_transmission": {
+            "diffuseTransmissionFactor": 3.0, "diffuseTransmissionColorFactor": [2.0, "x", -1.0],
+            "diffuseTransmissionTexture": {"index": 0, "texCoord": 1}, "diffuseTransmissionColorTexture": {"index": 9}
+        }}}
+    ]);
+    let found = ext_of(materials, 2);
+    let image = |texture: u32| Some(GlbTexture { image: 1 - texture });
+    let read = |i: usize| found[i].expect("an extension row").diffuse_transmission;
+    assert_eq!(read(0), Some(GlbDiffuseTransmission { factor: 0.7, texture: image(0), color: [0.9, 0.8, 0.2], color_texture: image(1) }));
+    assert_eq!(read(1), Some(GlbDiffuseTransmission { factor: 0.0, texture: None, color: [1.0; 3], color_texture: None }), "the specification's defaults");
+    assert_eq!(
+        read(2),
+        Some(GlbDiffuseTransmission { factor: 1.0, texture: None, color: [1.0, 1.0, 0.0], color_texture: None }),
+        "clamped, defaulted per channel, another uv set and a missing texture ignored"
+    );
 }

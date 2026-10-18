@@ -389,6 +389,7 @@ fn a_glb_with_a_red_base_colour_and_a_metallic_roughness_texture_yields_that_mat
             double_sided: false,
             occlusion_texture: None,
             occlusion_strength: 1.0,
+            subsurface: None,
         }
     );
     let texture = model.image(0).expect("image 0 is used").as_ref().expect("the PNG decodes");
