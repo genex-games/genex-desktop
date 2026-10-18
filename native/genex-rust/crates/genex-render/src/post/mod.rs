@@ -18,6 +18,8 @@ pub mod upsample;
 pub mod sun_mask;
 /// TAA and its reactive coverage (graph nodes 17 and 15a): RQ5.0 contract, RQ5.2.
 pub mod taa;
+/// TAA upscaling at output size (renderer pass 2, B.8: SGSR2's two passes with FSR2's Lanczos).
+pub mod taau;
 /// The FSR1 upscaler, EASU + RCAS (graph node 22): RQ5.0 contract, RQ5.3.
 pub mod fsr;
 /// Colour grading in the tonemap: parametric knobs and a `.cube` LUT (A.2).

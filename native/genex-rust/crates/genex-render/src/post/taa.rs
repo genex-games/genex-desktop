@@ -1051,11 +1051,12 @@ fn fs_depth(@builtin(position) clip: vec4<f32>) -> @builtin(frag_depth) f32 {
 }
 ";
 
-struct ImageInputs {
-    scene: TextureView,
-    depth: TextureView,
-    motion: Option<TextureView>,
-    reactive: Option<TextureView>,
+/// An image-level frame's inputs on the GPU (also the upscale's, [`crate::post::taau`]).
+pub(crate) struct ImageInputs {
+    pub(crate) scene: TextureView,
+    pub(crate) depth: TextureView,
+    pub(crate) motion: Option<TextureView>,
+    pub(crate) reactive: Option<TextureView>,
 }
 
 fn check_len<T>(what: &str, texels: &[T], size: (u32, u32), optional: bool) -> Result<(), RenderError> {
@@ -1066,7 +1067,7 @@ fn check_len<T>(what: &str, texels: &[T], size: (u32, u32), optional: bool) -> R
     Err(capture_failed(format!("{} {what} texels for a {}x{} image", texels.len(), size.0, size.1)))
 }
 
-fn image_inputs(gpu: &Gpu, size: (u32, u32), frame: &TaaFrameImage) -> Result<ImageInputs, RenderError> {
+pub(crate) fn image_inputs(gpu: &Gpu, size: (u32, u32), frame: &TaaFrameImage) -> Result<ImageInputs, RenderError> {
     check_len("scene", &frame.scene, size, false)?;
     check_len("depth", &frame.depth, size, false)?;
     check_len("motion", &frame.motion, size, true)?;

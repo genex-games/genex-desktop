@@ -254,6 +254,7 @@ credits its source in a comment.
 | `shaders/lighting/ambient.wgsl` (`gx_caps_intersection`, `gx_specular_occlusion_bent`, `gx_ao_multibounce`) | Cone-cone specular occlusion from a bent normal and the multi-bounce AO fit | Filament (https://github.com/google/filament), `shaders/src/surface_ambient_occlusion.fs` (`sphericalCapsIntersection`, `specularAO_Cones`, `gtaoMultiBounce`) | The Android Open Source Project; the methods by Jimenez et al. 2016 and Oat and Sander 2007 | Apache 2.0 (see [Apache License 2.0](#apache-license-20)) |
 | `shaders/post/easu.wgsl`, `shaders/post/rcas.wgsl`, `src/post/fsr.rs` (the constants) | FSR1 upscaler: edge-adaptive spatial upsampling (EASU) with its 12-tap kernel, direction and length estimate, and robust contrast-adaptive sharpening (RCAS) with its per-channel lobe limiters | AMD FidelityFX Super Resolution 1.0 (https://github.com/GPUOpen-Effects/FidelityFX-FSR), `ffx-fsr/ffx_fsr1.h` (`FsrEasuCon`, `FsrEasuF`, `FsrRcasCon`, `FsrRcasF`) | Advanced Micro Devices, Inc. | MIT (see [FidelityFX FSR1](#fidelityfx-fsr1)) |
 | `shaders/post/taa.wgsl` (`gx_taa_tonemap`, `gx_taa_inverse_tonemap`, `gx_taa_lightness`, `gx_taa_thin_feature`, `gx_taa_lock`, `gx_taa_instability`, the soft rectification), `src/post/taa.rs` (the constants) | TAA history protection: the reversible tonemap the colour box is built in, the thin-feature lock (lightness ridge and 2x2 rejection masks) with its lifetime and shading-change kill, the luma instability over four frames of quantised luma, the rectification undone by lock and instability and scaled by the reactive factor, and the temporal reactive factor of motion (Genex adapts the instability test, the shading luma and the lock trigger) | AMD FidelityFX SDK v1.1.4 (https://github.com/GPUOpen-LibrariesAndSDKs/FidelityFX-SDK), FSR 2.2 `sdk/include/FidelityFX/gpu/fsr2/` (`ffx_fsr2_lock.h`, `ffx_fsr2_accumulate.h`, `ffx_fsr2_postprocess_lock_status.h`, `ffx_fsr2_common.h`) | Advanced Micro Devices, Inc. | MIT (see [FidelityFX SDK](#fidelityfx-sdk)) |
+| `shaders/post/taau.wgsl` (`fs_taau_convert`, `fs_taau`, `gx_taau_reconstruct`, `gx_taau_lanczos2_sq`), `src/post/taau.rs` (`jitter_phases`, `kernel_bias`, `texture_lod_bias`, the constants) | TAA upscaling at output size: the two fragment passes (a render-size convert of dilated motion and a depth clip, then an output-size upscale of the nearest jittered sample and its four edge neighbours with a box clamp and an accumulation capped under motion), FSR2's Lanczos-2 approximation from the squared distance with its deringing, its kernel bias and fresh-pixel bias, its jitter phase count `ceil(8 · ratio²)` and its mip bias `log2(render / display) − 1` (Genex keeps its own depth-key disocclusion and luma weighting, carries the accumulated sample weight in the history's alpha, and sharpens the kernel by a third instead of running RCAS) | Snapdragon Game Super Resolution v2 (https://github.com/SnapdragonGameStudios/snapdragon-gsr), `sgsr/v2/include/glsl_2_pass_fs/sgsr2_convert.fs` and `sgsr2_upscale.fs`; AMD FidelityFX SDK v1.1.4 (https://github.com/GPUOpen-LibrariesAndSDKs/FidelityFX-SDK), FSR 2.2 `ffx_fsr2_upsample.h`, `ffx_fsr2_common.h` and its README | Qualcomm Innovation Center, Inc.; Advanced Micro Devices, Inc. | BSD-3-Clause (see [Snapdragon Game Super Resolution](#snapdragon-game-super-resolution)); MIT (see [FidelityFX SDK](#fidelityfx-sdk)) |
 | `shaders/post/tonemap.wgsl` (`gx_tm_awp`, `gx_tm_agx_punchy`), `src/post/tonemap.rs` (`AgxCurve`, its CPU reference) | AgX punchy: the allenwp tonemapping curve with its CPU-computed toe, slope and shoulder, between the combined Rec. 709 -> Rec. 2020 -> AgX inset and outset matrices; Genex generalises the crossover's output | Godot Engine 4.7.2-stable (https://github.com/godotengine/godot), `servers/rendering/renderer_rd/shaders/effects/tonemap.glsl` (`allenwp_curve`, `tonemap_agx`) and `servers/rendering/storage/environment_storage.cpp` (`environment_get_tonemap_parameters`) | Godot Engine contributors; the curve by Allen Pestaluky (allenwp); the matrices after EaryChow's Blender AgX | MIT (see [Godot Engine](#godot-engine)) |
 | `shaders/post/exposure_adapt.wgsl` (`gx_adapt_tick`, `gx_compensation`), `src/post/exposure.rs` (`adapt_tick`, `curve_compensation`), `src/settings.rs` (`CompensationCurve`) | Hybrid auto exposure adaptation (linear far from the target, exponential within a transition distance) and the exposure compensation curve over the metered EV | Bevy 0.20.0 (https://github.com/bevyengine/bevy), `crates/bevy_post_process/src/auto_exposure/auto_exposure.wesl` and `compensation_curve.rs` | Bevy contributors | MIT OR Apache-2.0, used under Apache 2.0 (see [Apache License 2.0](#apache-license-20)) |
 | `src/settings.rs` (`chromatic_adaptation` and its colour matrices) | White balance as a von Kries chromatic adaptation in CIECAT16 cone space from a temperature and tint, the white point moved along the daylight locus | Filament v1.78.0 (https://github.com/google/filament), `filament/src/details/ColorGrading.cpp` (`adaptationTransform`) and `filament/src/ColorSpaceUtils.h` | The Android Open Source Project | Apache 2.0 (see [Apache License 2.0](#apache-license-20)) |
@@ -407,6 +408,43 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
+```
+
+### Snapdragon Game Super Resolution
+
+The licence of the Qualcomm Snapdragon Game Super Resolution v2 code the TAA upscale ports (table
+above).
+
+```
+Copyright (c) 2023, Qualcomm Innovation Center, Inc. All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+
+1. Redistributions of source code must retain the above copyright notice,
+   this list of conditions and the following disclaimer.
+
+2. Redistributions in binary form must reproduce the above copyright notice,
+   this list of conditions and the following disclaimer in the documentation
+   and/or other materials provided with the distribution.
+
+3. Neither the name of the copyright holder nor the names of its contributors
+   may be used to endorse or promote products derived from this software
+   without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
+LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+POSSIBILITY OF SUCH DAMAGE.
+
+SPDX-License-Identifier: BSD-3-Clause
 ```
 
 ### FidelityFX Denoiser

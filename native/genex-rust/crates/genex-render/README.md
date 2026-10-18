@@ -401,6 +401,19 @@ binding 19 beside the contact shadow (r contact, g sun visibility, alpha 0 marks
 takes no new binding. Transparent surfaces, frames without TAA and phones shade the sun inline. A
 capture starts its history over and Live takes its own back afterwards.
 
+## TAA upscaling
+
+`post::taau` (renderer pass 2, B.8) is TAA at output size for frames drawn below it: a render-size
+convert pass (dilated motion, the depth-key disocclusion, reactive coverage) and an output-size
+upscale pass that weights the nearest jittered sample and its four neighbours by FSR2's Lanczos-2
+and accumulates them into an `rgba16float` history at output size whose alpha carries the
+accumulated sample weight (after Snapdragon GSR v2's two fragment passes, BSD-3-Clause, and FSR2,
+MIT). Its jitter cycle is `ceil(8 · (output / render)²)` phases (`taau::jitter_phases`) and its
+material mip bias `log2(render / output) − 1` (`taau::texture_lod_bias`). Fragment only, so it fits
+WebGPU core. `tests/taau.rs` holds it to native sharpness from 0.67 (still and a slow pan), to no
+trail behind a moving object, to determinism and to its 4K cost (0.6 ms). The node is not yet in
+the frame graph: until it is, DRS on `high` and `ultra` still runs TAA at render size and EASU.
+
 ## Output size and window present
 
 A renderer is made at the game's logical `world_size` (`Renderer::logical_size`: the 2D layer's

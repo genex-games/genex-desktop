@@ -241,6 +241,13 @@
     "subsurface"
    ],
    "budgetMs": 0.1
+  },
+  {
+   "id": "taau",
+   "features": [
+    "taau"
+   ],
+   "budgetMs": 0.15
   }
  ]
 }
