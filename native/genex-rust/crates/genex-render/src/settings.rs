@@ -1831,6 +1831,10 @@ pub struct Quality {
     /// desktop and web `high` and `ultra`, none elsewhere. A resource knob (targets and passes run
     /// only for a consumer that asks; the prepass's second target is its consumer's pipeline).
     pub screen_inputs: crate::screen_inputs::ScreenInputs,
+    /// The Hi-Z screen-space reflections (B.9): on desktop `high` and `ultra` (more steps), off
+    /// elsewhere and on phones. A resource knob (a uniform); a frame traces only with TAA's colour
+    /// pyramid on the HDR scene (`ssr::frame_ssr`).
+    pub ssr: crate::ssr::SsrQuality,
     /// The terrain's grass (A.8): its density, reach, blade segments and casting. A resource knob
     /// (uniforms and buffer sizes, never a pipeline); off on `low`, the low phones and the legacy
     /// renderer.
@@ -1896,6 +1900,7 @@ impl Quality {
             dof: crate::post::dof::DofTier::Circular,
             motion_blur: crate::post::motion_blur::MotionBlurTier::Off,
             screen_inputs: crate::screen_inputs::ScreenInputs::NONE,
+            ssr: crate::ssr::SsrQuality::OFF,
             grass: crate::foliage::GrassQuality::OFF,
         }
     }

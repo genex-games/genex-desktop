@@ -138,6 +138,7 @@ pub mod terrain;
 /// Screen inputs (renderer pass 2 A.6): the opaque copy, the previous frame's colour pyramid, the
 /// prepass's normal and roughness, the screen reflections' slot and the shared SSR march helper.
 pub mod screen_inputs;
+pub mod ssr;
 /// Lake water (renderer pass 2 B.3): a water rectangle's own pipeline over the screen inputs,
 /// refracted, absorbed, foamed at the shore and reflected, with its own motion key for TAA.
 pub mod water;

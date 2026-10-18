@@ -429,14 +429,14 @@ fn fs_hiz_upload(@builtin(position) position: vec4<f32>) -> @builtin(frag_depth)
 }
 ";
 
-/// The upload pass: plain depths into a prepass-format depth target.
-struct DepthUpload {
+/// The upload pass: plain depths into a prepass-format depth target (also B.9's bench, `ssr`).
+pub(crate) struct DepthUpload {
     layout: BindGroupLayout,
     pipeline: Compiled<wgpu::RenderPipeline>,
 }
 
 impl DepthUpload {
-    fn new(device: &Device) -> Result<DepthUpload, RenderError> {
+    pub(crate) fn new(device: &Device) -> Result<DepthUpload, RenderError> {
         let module = crate::shaders::module(device, "hi-z upload", UPLOAD_WGSL)?;
         let source = wgpu::BindingType::Texture {
             sample_type: wgpu::TextureSampleType::Float { filterable: false },
@@ -466,7 +466,7 @@ impl DepthUpload {
     }
 
     /// A prepass-format depth target holding `depths` (`render`, row by row).
-    fn run(&self, gpu: &Gpu, render: (u32, u32), depths: &[f32]) -> Result<Texture, RenderError> {
+    pub(crate) fn run(&self, gpu: &Gpu, render: (u32, u32), depths: &[f32]) -> Result<Texture, RenderError> {
         crate::capture::check_capture_size(render.0, render.1)?;
         let [desc, _] = crate::prepass::targets(render);
         let depth = gpu.device.create_texture(&wgpu::TextureDescriptor {

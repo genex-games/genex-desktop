@@ -236,6 +236,26 @@
    "budgetMs": 1.0
   },
   {
+   "id": "ssr-high",
+   "features": [
+    "ssr"
+   ],
+   "shapes": {
+    "ssr": "high"
+   },
+   "budgetMs": 1.0
+  },
+  {
+   "id": "ssr-ultra",
+   "features": [
+    "ssr"
+   ],
+   "shapes": {
+    "ssr": "ultra"
+   },
+   "budgetMs": 1.5
+  },
+  {
    "id": "subsurface",
    "features": [
     "subsurface"

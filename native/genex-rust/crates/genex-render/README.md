@@ -284,6 +284,34 @@ every target is pooled under its own ledger row.
   texel (`prepass normal roughness`), for the prepass to write on SSR presets.
 - Binding 30 of the forward frame group (`FRAME_REFLECTIONS_BINDING`) is reserved for the screen
   reflections (rgb, a confidence): the stage's 16th sampled texture of 16 once B.9 binds it.
+- `shaders/screen/normal_roughness_unpack.wgsl` is the readers' half of the packing (the code range
+  and `gx_unpack_normal`, `gx_unpack_roughness`), which B.9's passes include alone.
+
+## Screen-space reflections
+
+`src/ssr.rs` (B.9) traces what a smooth surface reflects of the screen: Godot 4.7.2's Hi-Z
+screen-space reflections, ported. `Quality::ssr` turns them on at desktop `high` (48 Hi-Z steps a
+ray) and `ultra` (64), off on phones and lower presets; `frame_ssr` traces only with TAA's colour
+pyramid on the HDR scene (`SsrQuality::asks` is A.6's `ScreenInputs::SSR`). `SsrNode::encode`
+records three compute passes:
+
+- a nearest-depth Hi-Z (`ssr hi-z`): graph node 8's build with the opposite reduction
+  (`hiz_reduce`), half the render size down to 1 x 1;
+- the trace (`ssr trace`, `rgba16float`, half size): parametric-t Hi-Z tracing, the
+  geometric-normal bias, the hit validated by depth tolerance, facing and the screen margin, faded
+  in over the first texels and out by a smoothstep from 0.4 of the screen. It reads the previous
+  frame's colour pyramid at the reprojected hit, at the mip the roughness cone spans (Godot's `r8`
+  mip image and its filter pass are gone: `r8` is no core storage format). Surfaces at perceptual
+  roughness 0.7 and above, and the sky, are not traced;
+- the resolve (`screen reflections`, `rgba16float`, render size): Godot's bilateral upsample by
+  depth, normal and roughness. rgb is the reflected radiance times the confidence, a the
+  confidence: the texture for forward binding 30.
+
+`shaders/screen/ssr_apply.wgsl` (`gx_ssr_apply`) is the forward pass's hand-over: the probe or sky
+radiance times one minus the confidence plus the screen's, so where both agree nothing changes
+with the confidence. `twin` in the module is the CPU twin of the trace and the resolve
+(`tests/ssr.rs` holds the GPU equal to it). The frame hook (the node after the prepass, binding 30
+in the forward pass) is not in this build yet: no frame records the passes.
 
 ## Lake water
 

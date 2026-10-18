@@ -43,8 +43,10 @@ use crate::target_pool::TargetDesc;
 
 /// The march helper chunk (include after `common.wgsl`, which holds `gx_view_distance`).
 pub const SSR_MARCH: &str = include_str!("../shaders/screen/ssr_march.wgsl");
-/// The normal and roughness packing chunk (include after `effects.wgsl`).
-pub const NORMAL_ROUGHNESS: &str = include_str!("../shaders/screen/normal_roughness.wgsl");
+/// The normal and roughness packing chunk with its readers' half (include after `effects.wgsl`).
+pub const NORMAL_ROUGHNESS: &str = concat!(include_str!("../shaders/screen/normal_roughness_unpack.wgsl"), include_str!("../shaders/screen/normal_roughness.wgsl"));
+/// The readers' half alone: the unpacking a pass that only reads the texel includes (B.9).
+pub const NORMAL_ROUGHNESS_UNPACK: &str = include_str!("../shaders/screen/normal_roughness_unpack.wgsl");
 /// The colour pyramid's pass.
 pub const HISTORY_PYRAMID: &str = crate::shaders::minify::shipped_wgsl!(include_str!("../shaders/screen/history_pyramid.wgsl"));
 /// The pyramid's compute entry point (one dispatch a mip).

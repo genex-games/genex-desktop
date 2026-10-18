@@ -307,6 +307,9 @@ pub const SHADERS: &[(&str, &str)] = &[
     ("irradiance-passes", crate::irradiance::IRRADIANCE_PASSES),
     // Renderer pass 2 A.6: the previous frame's colour pyramid.
     ("history-pyramid", crate::screen_inputs::HISTORY_PYRAMID),
+    // Renderer pass 2 B.9: the Hi-Z screen-space reflections' trace and resolve.
+    ("ssr-trace", crate::ssr::SSR_TRACE),
+    ("ssr-resolve", crate::ssr::SSR_RESOLVE),
     // Renderer pass 2 B.3: lake water.
     ("water", crate::water::WATER),
 ];

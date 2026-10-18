@@ -405,6 +405,8 @@ fn high_row(quality: &mut Quality) {
     quality.motion_blur = MotionBlurTier::Reconstruction;
     // A.6: the screen inputs Stage B's water and screen-space reflections read (ultra inherits them).
     quality.screen_inputs = ScreenInputs::ALL;
+    // B.9: Hi-Z screen-space reflections over those inputs (ultra takes more steps).
+    quality.ssr = crate::ssr::SsrQuality::HIGH;
     with_geometry_features(quality);
 }
 
@@ -429,6 +431,7 @@ fn ultra_row(quality: &mut Quality, form: FormFactor) {
     // raised ultra's AO budget to 1.5 ms (2026-10-12; plan §2.5 had 1.2) rather than halve the steps.
     quality.ao = AoQuality { resolution: AoResolution::Full, slices: 3, steps: 8, temporal: true };
     quality.lights = lights(1024, 16, 4);
+    quality.ssr = crate::ssr::SsrQuality::ULTRA;
 }
 
 /// Medium and up: the depth/normal prepass may run for its consumers (AO, contact shadows, the
@@ -614,6 +617,8 @@ fn apply_mobile_caps(quality: &mut Quality, preset: QualityPreset, class: Device
     quality.ao_method = AoMethod::Horizons;
     // No screen inputs on phones (B.3's water reflects the probes or the sky there).
     quality.screen_inputs = ScreenInputs::NONE;
+    // Nor screen-space reflections (B.9): the probes or the sky reflect on phones.
+    quality.ssr = crate::ssr::SsrQuality::OFF;
     // A.8: grass on the high phones at `high` and `ultra` only, at a capped density (overdraw is a
     // tile GPU's cost); none elsewhere on phones.
     let phone_grass = class.tier >= PerformanceTier::High && preset >= QualityPreset::High;
