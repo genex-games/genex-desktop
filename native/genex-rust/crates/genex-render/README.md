@@ -341,16 +341,24 @@ every target is pooled under its own ledger row.
 screen-space reflections, ported. `Quality::ssr` turns them on at desktop `high` (48 Hi-Z steps a
 ray) and `ultra` (64), off on phones and lower presets; `frame_ssr` traces only with TAA's colour
 pyramid on the HDR scene (`SsrQuality::asks` is A.6's `ScreenInputs::SSR`). `SsrNode::encode`
-records three compute passes:
+records five compute passes:
 
 - a nearest-depth Hi-Z (`ssr hi-z`): graph node 8's build with the opposite reduction
   (`hiz_reduce`), half the render size down to 1 x 1;
 - the trace (`ssr trace`, `rgba16float`, half size): parametric-t Hi-Z tracing, the
   geometric-normal bias, the hit validated by depth tolerance, facing and the screen margin, faded
   in over the first texels and out by a smoothstep from 0.4 of the screen. It reads the previous
-  frame's colour pyramid at the reprojected hit, at the mip the roughness cone spans (Godot's `r8`
-  mip image and its filter pass are gone: `r8` is no core storage format). Surfaces at perceptual
-  roughness 0.7 and above, and the sky, are not traced;
+  frame's colour pyramid at the reprojected hit, at the mip that spans the GGX lobe's spread there:
+  Uludag's cone for the lobe's Phong power, times the hit's distance from the surface, projected at
+  the hit's depth (Godot's `r8` mip image and its filter pass are gone: `r8` is no core storage
+  format). A reflection keeps its full strength up to perceptual roughness 0.3
+  (`ROUGHNESS_FADE_START`) and fades by a smoothstep to nothing at 0.7 (`ROUGHNESS_CUTOFF`), where
+  the probes take over alone; surfaces from 0.7, and the sky, are not traced;
+- the blur (`cs_ssr_blur_x` into the reflections' texture as scratch, then `cs_ssr_blur_y` back
+  into the trace; not in Godot): a separable bilateral Gaussian over the trace, up to four texels
+  each side on a surface from roughness 0.3 and nothing on a mirror, so the edge of a hole where a
+  ray found nothing (a thin table top, a pendant bulb: the probes show there) spreads like the
+  lobe on a rough floor instead of drawing a half-size staircase;
 - the resolve (`screen reflections`, `rgba16float`, render size): Godot's bilateral upsample by
   depth, normal and roughness. rgb is the reflected radiance times the confidence, a the
   confidence: the texture for forward binding 30.

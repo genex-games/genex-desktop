@@ -365,6 +365,160 @@ fn the_twin_does_not_trace_rough_surfaces_or_the_sky() {
     }
 }
 
+/// The mean validity of the trace texels whose road pixel mirrors the wall, on a street whose road
+/// has perceptual `roughness`.
+fn wall_reflection_validity(roughness: f32) -> f32 {
+    let render = (160, 90);
+    let street = Street { road_roughness: roughness, ..Street::NEON };
+    let frame = frame(street, render);
+    let bench = bench(&frame, uv_history(render, 4), SsrQuality::HIGH);
+    let inputs = twin_inputs(&bench);
+    let screen = screen(&bench, &inputs);
+    let trace = hiz::base_size(render);
+    let (mut sum, mut count) = (0.0, 0);
+    for y in 0..trace.1 {
+        for x in 0..trace.0 {
+            let Hit::Road(p) = frame.hits[(y * 2 * render.0 + x * 2) as usize] else { continue };
+            let incoming = (p - EYE).normalize();
+            if !matches!(street.cast(p, Vec3::new(incoming.x, -incoming.y, incoming.z)), Hit::Wall(_)) {
+                continue;
+            }
+            sum += decode(screen.trace((x as i32, y as i32))).0;
+            count += 1;
+        }
+    }
+    assert!(count > 500, "{count} road texels mirror the wall");
+    sum / count as f32
+}
+
+/// A road's screen reflection gives way to the probes as its roughness rises: a mirror's in full
+/// up to `ssr::ROUGHNESS_FADE_START`, less at every rougher step, and almost nothing just below the
+/// cutoff, where nothing is traced. A trace at full strength up to the cutoff drew a seam where a
+/// scan's roughness crosses it and made a waxed floor (0.41) mirror the room like standing water
+/// (look pass, final shots: the cabin's floor and table).
+#[test]
+fn a_rough_surface_hands_its_reflection_to_the_probes_without_a_step() {
+    let mirror = wall_reflection_validity(0.04);
+    assert!(mirror > 0.5, "a mirror road reflects the wall surely ({mirror:.3})");
+    let steps = [0.1, 0.2, ssr::ROUGHNESS_FADE_START, 0.4, 0.5, 0.6, 0.66, ssr::ROUGHNESS_CUTOFF - 0.01];
+    let mut last = mirror;
+    for roughness in steps {
+        let validity = wall_reflection_validity(roughness);
+        println!("{{\"row\":\"ssr-roughness-fade\",\"roughness\":{roughness:.3},\"validity\":{validity:.4}}}");
+        if roughness <= ssr::ROUGHNESS_FADE_START {
+            assert!(validity >= mirror * 0.95, "{roughness}: {validity:.3} against the mirror's {mirror:.3}");
+        }
+        assert!(validity <= last + 1e-3, "{roughness}: {validity:.3} rose from {last:.3}");
+        last = validity;
+    }
+    assert!(last <= mirror * 0.05, "just below the cutoff the screen still holds {last:.3} of a mirror's {mirror:.3}: a seam");
+}
+
+/// The trace row whose middle texel's road pixel mirrors the middle of the sign, at `render`.
+fn neon_mirror_row(render: (u32, u32)) -> u32 {
+    let frame = frame(Street::NEON, render);
+    let trace = hiz::base_size(render);
+    let middle = Vec2::new((NEON_X.0 + NEON_X.1) * 0.5, (NEON_Y.0 + NEON_Y.1) * 0.5);
+    let miss = |y: u32| {
+        let Hit::Road(p) = frame.hits[(y * 2 * render.0 + render.0 / 2) as usize] else { return f32::INFINITY };
+        let incoming = (p - EYE).normalize();
+        match Street::NEON.cast(p, Vec3::new(incoming.x, -incoming.y, incoming.z)) {
+            Hit::Wall(q) => (q.y - middle.y).abs(),
+            _ => f32::INFINITY,
+        }
+    };
+    (0..trace.1).min_by(|a, b| miss(*a).total_cmp(&miss(*b))).expect("a row")
+}
+
+/// The trace texels' reflected red along row `y` of a street whose road has `roughness`, and the
+/// GGX lobe's half width (half maximum) there in trace texels: the angle the lobe spreads the
+/// sign's light over from the wall, seen from the eye along the reflected path.
+fn neon_row(roughness: f32, render: (u32, u32), y: u32) -> (Vec<f32>, f32) {
+    let street = Street { road_roughness: roughness, ..Street::NEON };
+    let frame = frame(street, render);
+    let bench = bench(&frame, street_history(street, render, 7), SsrQuality::HIGH);
+    let inputs = twin_inputs(&bench);
+    let screen = screen(&bench, &inputs);
+    let trace = hiz::base_size(render);
+    let profile = (0..trace.0).map(|x| decode(screen.trace((x as i32, y as i32))).1.x).collect();
+    let Hit::Road(p) = frame.hits[(y * 2 * render.0 + render.0 / 2) as usize] else { panic!("row {y} is not road") };
+    let incoming = (p - EYE).normalize();
+    let Hit::Wall(q) = street.cast(p, Vec3::new(incoming.x, -incoming.y, incoming.z)) else { panic!("row {y} does not mirror the wall") };
+    let alpha = roughness * roughness;
+    let lobe = 2.0 * libm::atanf(alpha * libm::sqrtf(core::f32::consts::SQRT_2 - 1.0));
+    let (to_wall, path) = ((q - p).length(), (p - EYE).length() + (q - p).length());
+    let angle = libm::atanf(to_wall * libm::tanf(lobe) / path);
+    let fov_x = 2.0 * libm::atanf(libm::tanf(FOV_Y_DEG.to_radians() * 0.5) * render.0 as f32 / render.1 as f32);
+    (profile, angle / fov_x * trace.0 as f32)
+}
+
+/// The 10 % to 90 % width (trace texels) of the sign's left edge in `profile`, between the wall's
+/// level left of it (the least reflected red, texels without a reflection left out) and the sign's
+/// peak.
+fn edge_width(profile: &[f32]) -> f32 {
+    let peak_at = profile.iter().enumerate().fold(0, |best, (i, v)| if *v > profile[best] { i } else { best });
+    let floor = profile[..peak_at].iter().copied().filter(|v| *v > 0.0).fold(f32::INFINITY, f32::min);
+    let peak = profile[peak_at];
+    let crossing = |share: f32| {
+        let level = floor + (peak - floor) * share;
+        (0..peak_at).rev().find(|&i| profile[i] <= level).map_or(0.0, |i| i as f32 + (level - profile[i]) / (profile[i + 1] - profile[i]).max(1e-6))
+    };
+    crossing(0.9) - crossing(0.1)
+}
+
+/// A rough reflection is as blurred as its lobe: the sign's edge in a road of roughness 0.45 spreads
+/// over at least the GGX lobe's half width and at most four of them, while a mirror's stays within
+/// three texels. The trace read a mip a sixteenth of its cone's radius, so a waxed floor and the
+/// café's parquet mirrored chairs and lamps sharply (look pass, final shots).
+#[test]
+fn a_rough_reflection_is_as_blurred_as_its_lobe() {
+    let render = (320, 180);
+    let row = neon_mirror_row(render);
+    let (mirror, _) = neon_row(0.04, render, row);
+    let mirror_edge = edge_width(&mirror);
+    let (rough, lobe) = neon_row(0.45, render, row);
+    let rough_edge = edge_width(&rough);
+    println!("{{\"row\":\"ssr-rough-blur\",\"trace_row\":{row},\"mirror_edge\":{mirror_edge:.2},\"rough_edge\":{rough_edge:.2},\"lobe_half_width\":{lobe:.2}}}");
+    assert!(mirror_edge <= 3.0, "a mirror's edge spreads over {mirror_edge:.2} texels");
+    assert!(rough_edge >= lobe, "a 0.45 road spreads the edge over {rough_edge:.2} texels, under the lobe's {lobe:.2}");
+    assert!(rough_edge <= lobe * 4.0, "a 0.45 road spreads the edge over {rough_edge:.2} texels, past four lobes ({lobe:.2})");
+}
+
+/// The widest step of the trace's validity along row `y` across the hard edge it was given at
+/// trace column `edge` (sure on its left, none on its right), after `ssr::twin::Screen::blur`, on a
+/// road of `roughness`; and how many texels the edge spreads over (validity between 0.1 and 0.9).
+fn blurred_hole_edge(roughness: f32, y: u32) -> (f32, usize) {
+    let render = (320, 180);
+    let street = Street { road_roughness: roughness, ..Street::NEON };
+    let frame = frame(street, render);
+    let bench = bench(&frame, uv_history(render, 4), SsrQuality::HIGH);
+    let inputs = twin_inputs(&bench);
+    let screen = screen(&bench, &inputs);
+    let trace = hiz::base_size(render);
+    let edge = trace.0 / 2;
+    let hard: Vec<Vec4> = (0..trace.1).flat_map(|_| (0..trace.0).map(move |x| if x < edge { Vec4::new(0.25, 0.25, 0.25, 1.0) } else { Vec4::ZERO })).collect();
+    let soft = screen.blur(&hard);
+    let row: Vec<f32> = (0..trace.0).map(|x| soft[(y * trace.0 + x) as usize].w).collect();
+    let step = row.windows(2).map(|w| (w[0] - w[1]).abs()).fold(0.0, f32::max);
+    (step, row.iter().filter(|v| **v > 0.1 && **v < 0.9).count())
+}
+
+/// A rough surface's reflection has no hard hole: where a ray finds nothing (a thin table top it
+/// passed behind, a pendant bulb) the probes show through, and the blur after the trace spreads
+/// that hole's edge over the lobe's texels on a rough road, while a mirror keeps it hard. The café's
+/// satin parquet drew each table and bulb as a hard-edged staircase in its reflection (look pass,
+/// lane SSR, 4K 1:1 crop).
+#[test]
+fn a_rough_surface_reflection_has_no_hard_hole_edge() {
+    let row = 70;
+    let (rough_step, rough_spread) = blurred_hole_edge(0.4, row);
+    let (mirror_step, mirror_spread) = blurred_hole_edge(0.04, row);
+    println!("{{\"row\":\"ssr-hole-edge\",\"rough\":[{rough_step:.3},{rough_spread}],\"mirror\":[{mirror_step:.3},{mirror_spread}]}}");
+    assert!(rough_step <= 0.3, "a 0.4 road's hole edge steps by {rough_step:.3} between neighbours");
+    assert!(rough_spread >= 3, "a 0.4 road's hole edge spreads over {rough_spread} texels");
+    assert!(mirror_step >= 0.9, "a mirror's hole edge stays hard ({mirror_step:.3})");
+}
+
 #[test]
 fn a_ray_that_leaves_the_screen_has_no_validity() {
     // A wall with no top: the road reflects it everywhere, so only rays that leave through the top
@@ -507,7 +661,8 @@ fn metal_the_trace_finds_what_its_cpu_twin_finds() {
     let bench = bench(&frame, uv_history(render, 5), SsrQuality::HIGH);
     let out = ssr::ssr_run(&gpu, &bench).expect("ssr");
     let inputs = twin_inputs(&bench);
-    let twin = screen(&bench, &inputs).trace_all();
+    let screen = screen(&bench, &inputs);
+    let twin = screen.blur(&screen.trace_all());
     let trace = hiz::base_size(render);
     let (mut sure, mut agree, mut worst_validity) = (0, 0, 0.0f32);
     for (gpu_texel, twin_texel) in out.trace.iter().zip(&twin) {
@@ -525,6 +680,32 @@ fn metal_the_trace_finds_what_its_cpu_twin_finds() {
     perf_line(&format!("{{\"row\":\"ssr-gpu-vs-twin\",\"traced\":{sure},\"agree\":{agree},\"share\":{share:.4},\"worst_validity\":{worst_validity:.4}}}"));
     assert!(sure > 2000, "{sure} traced texels");
     assert!(share >= 0.99, "{agree} of {sure} agree (validity within 0.02, the hit within 1 trace px)");
+}
+
+/// The GPU blurs a rough reflection as its twin does (the trace's mip, then the blur after it): the
+/// sign's edge in a road of roughness 0.45 spreads over the twin's width (within a texel and a
+/// tenth), so the frame's floors blur by their lobes (look pass, lane SSR: the twin row alone did
+/// not hold the shader's mip).
+#[test]
+#[ignore = "needs a GPU: GENEX_REQUIRE_METAL=1 cargo test --test ssr -- --ignored metal"]
+fn metal_a_rough_reflection_is_as_blurred_as_its_twin() {
+    let Some(gpu) = gpu() else { return };
+    let render = (320, 180);
+    let row = neon_mirror_row(render);
+    let street = Street { road_roughness: 0.45, ..Street::NEON };
+    let frame = frame(street, render);
+    let bench = bench(&frame, street_history(street, render, 7), SsrQuality::HIGH);
+    let out = ssr::ssr_run(&gpu, &bench).expect("ssr");
+    let trace = hiz::base_size(render);
+    let gpu_row: Vec<f32> = (0..trace.0).map(|x| decode(Vec4::from(out.trace[(row * trace.0 + x) as usize])).1.x).collect();
+    let inputs = twin_inputs(&bench);
+    let screen = screen(&bench, &inputs);
+    let blurred = screen.blur(&screen.trace_all());
+    let twin_row: Vec<f32> = (0..trace.0).map(|x| decode(blurred[(row * trace.0 + x) as usize]).1.x).collect();
+    let (_, lobe) = neon_row(0.45, render, row);
+    let (gpu_edge, twin_edge) = (edge_width(&gpu_row), edge_width(&twin_row));
+    perf_line(&format!("{{\"row\":\"ssr-gpu-rough-blur\",\"gpu_edge\":{gpu_edge:.2},\"twin_edge\":{twin_edge:.2},\"lobe_half_width\":{lobe:.2}}}"));
+    assert!((gpu_edge - twin_edge).abs() <= 1.0 + twin_edge * 0.1, "the GPU spreads the edge over {gpu_edge:.2} texels, its twin over {twin_edge:.2}");
 }
 
 #[test]

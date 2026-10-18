@@ -10,8 +10,13 @@
 //!   `screen_space_reflection.glsl` (MIT): Hi-Z tracing with parametric t, the geometric-normal
 //!   bias, FidelityFX SSSR's hit validation, the screen-margin and distance fades; the reflected
 //!   colour is last frame's colour pyramid (A.6) at the hit's reprojected point, at the mip the
-//!   roughness cone spans. Godot's push constants are a uniform ([`GpuSsrParams`]) and its `r8`
-//!   mip-level image (no core storage format) is gone: the trace samples that mip itself.
+//!   GGX lobe spans at the hit (Uludag's cone, projected at the hit's depth), its strength faded
+//!   from roughness [`ROUGHNESS_FADE_START`] to nothing at [`ROUGHNESS_CUTOFF`]. Godot's push
+//!   constants are a uniform ([`GpuSsrParams`]) and its `r8` mip-level image (no core storage
+//!   format) is gone: the trace samples that mip itself.
+//! - **The blur** ([`BLUR_ENTRIES`], in the resolve's module): a separable bilateral Gaussian over
+//!   the trace whose width follows the roughness, so a rough surface's hole edges (where a ray
+//!   found nothing) spread as its lobe does; a mirror's stay hard.
 //! - **The resolve** ([`SSR_RESOLVE`]): Godot's bilateral upsample to the render size, its tone map
 //!   undone. The result ([`REFLECTIONS_LABEL`], `rgba16float`) is the forward pass's
 //!   `screen_reflections` at [`crate::screen_inputs::FRAME_REFLECTIONS_BINDING`] (owner decision D1:
@@ -23,7 +28,7 @@
 //!
 //! On desktop `high` and `ultra` ([`SsrQuality`], `Quality::ssr`) with TAA (the colour pyramid is
 //! TAA's output) on the HDR scene; off on phones, the web and every lower preset. [`twin`] is the
-//! CPU twin of the trace and the resolve, texel for texel.
+//! CPU twin of the trace, the blur and the resolve, texel for texel.
 
 use glam::{Mat4, Vec2, Vec3, Vec4};
 use wgpu::{BindGroup, BindGroupLayout, Buffer, BufferUsages, CommandEncoder, ComputePipeline, Device, Queue, Sampler, Texture, TextureFormat, TextureUsages, TextureView};
@@ -36,7 +41,7 @@ use crate::settings::Quality;
 use crate::tables::{buffer, pipeline_layout};
 use crate::target_pool::TargetDesc;
 
-/// The parameters chunk both passes include.
+/// The parameters chunk every pass includes.
 pub const SSR_PARAMS: &str = include_str!("../shaders/screen/ssr_params.wgsl");
 /// The trace pass (half the render size).
 pub const SSR_TRACE: &str = crate::shaders::minify::shipped_wgsl!(concat!(
@@ -58,6 +63,11 @@ pub const SSR_APPLY: &str = include_str!("../shaders/screen/ssr_apply.wgsl");
 pub const TRACE_ENTRY: &str = "cs_ssr_trace";
 /// The resolve's entry point.
 pub const RESOLVE_ENTRY: &str = "cs_ssr_resolve";
+/// The blur's entry points (in the resolve's module, on its bindings): along x, then along y.
+pub const BLUR_ENTRIES: [&str; 2] = ["cs_ssr_blur_x", "cs_ssr_blur_y"];
+/// The blur's reach: taps each side of a trace texel on a surface as rough as
+/// [`ROUGHNESS_FADE_START`] (`SSR_BLUR_TAPS` in ssr_resolve.wgsl).
+pub const BLUR_TAPS: i32 = 4;
 /// Both passes' workgroup side (8 x 8 invocations).
 pub const SSR_WORKGROUP: u32 = 8;
 
@@ -90,6 +100,10 @@ pub const STEPS_ULTRA: u32 = 64;
 pub const DEPTH_TOLERANCE: f32 = 0.2;
 /// The perceptual roughness from which nothing is traced (Godot's 0.7): the probes reflect it.
 pub const ROUGHNESS_CUTOFF: f32 = 0.7;
+/// The perceptual roughness from which a screen reflection fades towards the probes, by a
+/// smoothstep to nothing at [`ROUGHNESS_CUTOFF`] (no step where a scan's roughness crosses it),
+/// and to which the blur after the trace widens ([`BLUR_TAPS`]).
+pub const ROUGHNESS_FADE_START: f32 = 0.3;
 /// The ray's screen length (uv units) from which a reflection fades out, by a smoothstep to nothing
 /// at a full-screen ray. Godot's `pow(1 - len, 2)` halves a reflection that crosses a third of the
 /// screen (a street's length from a wet road to a sign), and a smaller exponent meets zero at an
@@ -185,7 +199,7 @@ pub struct GpuSsrParams {
     pub knobs: [u32; 4],
     /// Depth tolerance, fade-out start, curve fade-in, roughness cutoff.
     pub tune: [f32; 4],
-    /// The colour pyramid's last mip, radiance scale, unused, unused.
+    /// The colour pyramid's last mip, radiance scale, roughness fade start, unused.
     pub extra: [f32; 4],
 }
 
@@ -219,7 +233,7 @@ pub fn params(camera: &SsrCamera, quality: SsrQuality, render: (u32, u32), pyram
         size: [trace.0, trace.1, render.0, render.1],
         knobs: [quality.steps, crate::hiz::mip_count(trace), u32::from(camera.reversed), u32::from(camera.orthographic)],
         tune: [DEPTH_TOLERANCE, FADE_START, CURVE_FADE_IN, ROUGHNESS_CUTOFF],
-        extra: [pyramid_mips.saturating_sub(1) as f32, radiance_scale, 0.0, 0.0],
+        extra: [pyramid_mips.saturating_sub(1) as f32, radiance_scale, ROUGHNESS_FADE_START, 0.0],
     }
 }
 
@@ -301,9 +315,10 @@ pub struct SsrNode {
     resolve_layout: BindGroupLayout,
     trace: Compiled<ComputePipeline>,
     resolve: Compiled<ComputePipeline>,
+    blur: [Compiled<ComputePipeline>; 2],
     params: Buffer,
     sampler: Sampler,
-    cached: Option<(SsrKey, [BindGroup; 2])>,
+    cached: Option<(SsrKey, [BindGroup; 4])>,
 }
 
 fn compute_entry(binding: u32, ty: wgpu::BindingType) -> wgpu::BindGroupLayoutEntry {
@@ -393,6 +408,7 @@ impl SsrNode {
             hiz: HizNode::new(device)?,
             trace: pipeline(device, &trace_layout, &trace_module, TRACE_ENTRY),
             resolve: pipeline(device, &resolve_layout, &resolve_module, RESOLVE_ENTRY),
+            blur: BLUR_ENTRIES.map(|entry| pipeline(device, &resolve_layout, &resolve_module, entry)),
             trace_layout,
             resolve_layout,
             params,
@@ -424,6 +440,13 @@ impl SsrNode {
         pass.set_bind_group(0, &groups[0], &[]);
         pass.dispatch_workgroups(trace.0.div_ceil(SSR_WORKGROUP), trace.1.div_ceil(SSR_WORKGROUP), 1);
         drop(pass);
+        // The blur: along x into the reflections' texture as scratch, along y back into the trace.
+        for (pipeline, group) in self.blur.iter().zip(&groups[2..]) {
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor { label: Some("ssr blur"), timestamp_writes: None });
+            pass.set_pipeline(pipeline);
+            pass.set_bind_group(0, group, &[]);
+            pass.dispatch_workgroups(trace.0.div_ceil(SSR_WORKGROUP), trace.1.div_ceil(SSR_WORKGROUP), 1);
+        }
         let timestamp_writes = stamp(stamps.and_then(|s| s.end), true);
         let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor { label: Some("ssr resolve"), timestamp_writes });
         pass.set_pipeline(&self.resolve);
@@ -438,6 +461,14 @@ impl SsrNode {
         self.hiz.release();
     }
 
+    /// A bind group of the resolve's layout reading `from` (binding 4) and writing `to`: the
+    /// resolve's, and each pass of the blur's.
+    fn resolve_group(&self, device: &Device, label: &str, hiz: &TextureView, input: &SsrInput<'_>, from: &TextureView, to: &TextureView) -> BindGroup {
+        let mut entries = shared_group_entries(&self.params, hiz, input, 5, to);
+        entries.push(wgpu::BindGroupEntry { binding: 4, resource: wgpu::BindingResource::TextureView(from) });
+        device.create_bind_group(&wgpu::BindGroupDescriptor { label: Some(label), layout: &self.resolve_layout, entries: &entries })
+    }
+
     fn prepare(&mut self, device: &Device, input: &SsrInput<'_>) {
         if self.cached.as_ref().is_some_and(|(key, _)| key.matches(input)) {
             return;
@@ -449,11 +480,12 @@ impl SsrNode {
         let mut trace_entries = shared_group_entries(&self.params, &hiz, input, 6, &trace);
         trace_entries.push(wgpu::BindGroupEntry { binding: 4, resource: view(input.history) });
         trace_entries.push(wgpu::BindGroupEntry { binding: 5, resource: wgpu::BindingResource::Sampler(&self.sampler) });
-        let mut resolve_entries = shared_group_entries(&self.params, &hiz, input, 5, &reflections);
-        resolve_entries.push(wgpu::BindGroupEntry { binding: 4, resource: view(&trace) });
+        let resolve_group = |label: &str, from: &TextureView, to: &TextureView| self.resolve_group(device, label, &hiz, input, from, to);
         let groups = [
             device.create_bind_group(&wgpu::BindGroupDescriptor { label: Some("ssr trace"), layout: &self.trace_layout, entries: &trace_entries }),
-            device.create_bind_group(&wgpu::BindGroupDescriptor { label: Some("ssr resolve"), layout: &self.resolve_layout, entries: &resolve_entries }),
+            resolve_group("ssr resolve", &trace, &reflections),
+            resolve_group("ssr blur x", &trace, &reflections),
+            resolve_group("ssr blur y", &reflections, &trace),
         ];
         self.cached = Some((SsrKey::of(input), groups));
     }
@@ -866,17 +898,21 @@ pub mod twin {
             validity * fade * margin_blend
         }
 
-        fn mip(&self, roughness: f32, ray_len: f32) -> f32 {
-            let mut mip = 0.0;
-            if roughness > 0.001 {
-                let cone_angle = roughness.min(0.999) * core::f32::consts::PI * 0.5;
-                let a = 2.0 * libm::tanf(cone_angle) * ray_len;
-                let h = ray_len;
-                let blur_radius = (a * ((a * a + 4.0 * h * h).sqrt() - a)) / (4.0 * h).max(1e-8);
-                let size = self.trace_size();
-                mip = libm::log2f(blur_radius * size.x.max(size.y) / 16.0 + 1.0).clamp(0.0, self.params.extra[0]);
+        fn mip(&self, roughness: f32, origin: Vec3, at: Vec3, ray_len: f32) -> f32 {
+            if roughness <= 0.001 {
+                return 0.0;
             }
+            let to = self.view_pos(at);
+            let spread = (to - self.view_pos(origin)).length() * libm::tanf(cone_angle(roughness));
+            let proj = mat(&self.params.proj);
+            let clip_w = (proj * to.extend(1.0)).w;
+            let radius = spread * proj.x_axis.x * 0.5 * self.trace_size().x / clip_w.max(1e-6);
+            let mip = libm::log2f(radius + 1.0).clamp(0.0, self.params.extra[0]);
             mip * libm::powf((1.25 - ray_len).clamp(0.0, 1.0), 0.2)
+        }
+
+        fn roughness_fade(&self, roughness: f32) -> f32 {
+            1.0 - smoothstep(self.params.extra[2], self.params.tune[3], roughness)
         }
 
         fn reproject(&self, at: Vec3) -> Vec2 {
@@ -901,15 +937,60 @@ pub mod twin {
             let t = self.walk(&ray);
             let at = ray.origin + ray.dir * t;
             let reprojected = self.reproject(at);
-            let validity = self.validity(&ray, t, reprojected);
+            let validity = self.validity(&ray, t, reprojected) * self.roughness_fade(surface.w);
             if validity.is_nan() || validity <= 0.0 {
                 return Vec4::ZERO;
             }
-            let mip = self.mip(surface.w, (ray.dir.truncate() * t).length());
+            let mip = self.mip(surface.w, ray.origin, at, (ray.dir.truncate() * t).length());
             let radiance = self.sample_history(reprojected, mip).truncate() * self.params.extra[1];
             let color = radiance.extend(1.0) * validity;
             let rgb = color.truncate() / (1.0 + color.truncate().dot(LUMA));
             rgb.extend(color.w)
+        }
+
+        /// The blur between the trace and the resolve (`cs_ssr_blur_x`, then `cs_ssr_blur_y`) over
+        /// `traced`, the trace's texels row by row.
+        pub fn blur(&self, traced: &[Vec4]) -> Vec<Vec4> {
+            let along_x = self.blur_pass(traced, (1, 0));
+            self.blur_pass(&along_x, (0, 1))
+        }
+
+        fn blur_pass(&self, traced: &[Vec4], axis: (i32, i32)) -> Vec<Vec4> {
+            let (w, h) = (self.params.size[0] as i32, self.params.size[1] as i32);
+            let at = |cell: (i32, i32)| traced[(cell.1 * w + cell.0) as usize];
+            let surface = |cell: (i32, i32)| {
+                let (rw, rh) = self.render();
+                self.surface[((cell.1 * 2).min(rh - 1) * rw + (cell.0 * 2).min(rw - 1)) as usize]
+            };
+            let mut out = Vec::with_capacity(traced.len());
+            for y in 0..h {
+                for x in 0..w {
+                    let centre = surface((x, y));
+                    let sigma = super::BLUR_TAPS as f32 * 0.5 * smoothstep(0.0, self.params.extra[2], centre.w);
+                    if sigma < 0.25 || centre.w >= self.params.tune[3] {
+                        out.push(at((x, y)));
+                        continue;
+                    }
+                    let depth = self.hiz[0].at(x as u32, y as u32);
+                    let (mut sum, mut total) = (at((x, y)), 1.0);
+                    let taps = (libm::ceilf(sigma * 2.0) as i32).min(super::BLUR_TAPS);
+                    for i in 1..=taps {
+                        let gauss = libm::expf(-(i * i) as f32 / (2.0 * sigma * sigma));
+                        for side in [-1, 1] {
+                            let cell = ((x + axis.0 * i * side).clamp(0, w - 1), (y + axis.1 * i * side).clamp(0, h - 1));
+                            let sample = surface(cell);
+                            let weight_depth = libm::expf(-(depth - self.hiz[0].at(cell.0 as u32, cell.1 as u32)).abs() * DEPTH_FACTOR);
+                            let weight_normal = libm::expf(-(1.0 - centre.truncate().dot(sample.truncate())).clamp(0.0, 1.0) * NORMAL_FACTOR);
+                            let weight_roughness = libm::expf(-(centre.w - sample.w).abs() * ROUGHNESS_FACTOR);
+                            let weight = gauss * weight_depth * weight_normal * weight_roughness;
+                            sum += at(cell) * weight;
+                            total += weight;
+                        }
+                    }
+                    out.push(sum / total);
+                }
+            }
+            out
         }
 
         /// Every trace texel, row by row.
@@ -953,6 +1034,13 @@ pub mod twin {
             let weight_roughness = libm::expf(-(surface.w - sample.w).abs() * ROUGHNESS_FACTOR);
             (cell, weight_depth * weight_normal * weight_roughness)
         }
+    }
+
+    /// `ssr_cone_angle`: the half angle of the cone holding a GGX lobe of perceptual `roughness`.
+    fn cone_angle(roughness: f32) -> f32 {
+        let alpha = (roughness * roughness).max(1e-3);
+        let power = 2.0 / (alpha * alpha) - 2.0;
+        libm::acosf(libm::powf(0.244, 1.0 / (power + 1.0)))
     }
 
     fn reflect(d: Vec3, n: Vec3) -> Vec3 {

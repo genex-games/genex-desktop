@@ -55,9 +55,11 @@ impl Default for NightWeather {
 
 /// The night's street: it rained again, so the asphalt's and the pavement's scanned roughness are
 /// lowered further than the dusk's (0.55 and 0.8): the lamps, the festoons and the neon draw long
-/// highlights down the wet road.
+/// highlights down the wet road. The slabs hold a film of water (about 0.3 scanned): the screen's
+/// reflections keep their full strength below 0.3 and fade towards the probes by 0.7, so a damp
+/// 0.48 drew the alley's neon at a third of it (look pass, lane SSR).
 const SOAKED_ASPHALT: f32 = 0.3;
-const SOAKED_PAVING: f32 = 0.55;
+const SOAKED_PAVING: f32 = 0.35;
 
 /// The street's surfaces at night ([`SOAKED_ASPHALT`], [`SOAKED_PAVING`]).
 #[derive(Clone, Debug)]

@@ -18,6 +18,6 @@ struct SsrParams {
     // w: the roughness from which nothing is traced.
     tune: vec4<f32>,
     // x: the colour pyramid's last mip; y: radiance scale (last frame's colour to this frame's);
-    // zw: unused.
+    // z: the roughness from which a reflection fades towards the cutoff; w: unused.
     extra: vec4<f32>,
 }

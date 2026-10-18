@@ -209,6 +209,16 @@ fn scanned(name: &str, untextured: Color, roughness: f32) -> Material {
     scanned_tinted(name, Color::WHITE, untextured, roughness)
 }
 
+/// [`scanned`] at one `roughness` in place of the scan's: its colour map and its normal map at
+/// [`VARNISHED_GRAIN`], without its occlusion-roughness-metal map.
+fn scanned_varnished(name: &str, untextured: Color, roughness: f32) -> Material {
+    Material::color(Color::WHITE)
+        .with_untextured_color(untextured)
+        .with_roughness(roughness)
+        .with_base_texture(&format!("fetched/{name}-albedo.jpg"))
+        .with_normal_texture(&format!("fetched/{name}-normal.jpg"), VARNISHED_GRAIN)
+}
+
 /// [`scanned`] with the scan's colour multiplied by `tint` (the street furniture's paint over the
 /// metal scan).
 fn scanned_tinted(name: &str, tint: Color, untextured: Color, roughness: f32) -> Material {
@@ -257,8 +267,13 @@ impl Default for Surfaces {
 
 /// The street's surface wet after the rain: the scan's roughness lowered.
 const WET: f32 = 0.55;
-/// The café's polished parquet.
-const POLISHED: f32 = 0.4;
+/// The café's varnished parquet: a dry, satin floor whose reflections blur, scanned or not. The
+/// scan's own roughness (about 0.1) times any factor stays a mirror, so the floor shades with this
+/// one (look pass, final shots: the parquet mirrored the room like standing water).
+const VARNISHED: f32 = 0.35;
+/// The varnish fills the parquet's grain: its normal map at this strength (at full strength each
+/// groove bent the floor's reflection into a rippled patch).
+const VARNISHED_GRAIN: f32 = 0.35;
 /// The café's lacquered furniture and its honed marble: the scans' roughness lowered.
 const LACQUERED: f32 = 0.7;
 const HONED: f32 = 0.5;
@@ -281,7 +296,7 @@ impl Surfaces {
             brick: scanned("brick", BRICK, 1.0),
             plaster: scanned("plaster", PLASTER, 1.0),
             red_brick: scanned("red-brick", RED_BRICK, 1.0),
-            parquet: scanned("parquet", PARQUET, POLISHED),
+            parquet: scanned_varnished("parquet", PARQUET, VARNISHED),
             shutter: scanned("shutter", SHUTTER, 1.0),
             granite: scanned("granite", GRANITE, 1.0),
             mass: Material::color(MASS).with_roughness(0.9),

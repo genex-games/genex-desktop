@@ -180,7 +180,7 @@
     {
       "id": "herringbone_parquet",
       "kind": "texture",
-      "use": "the cafe's polished floor",
+      "use": "the cafe's varnished floor",
       "output": "parquet",
       "source": "Poly Haven",
       "page": "https://polyhaven.com/a/herringbone_parquet",
@@ -202,13 +202,6 @@
           "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/herringbone_parquet/herringbone_parquet_nor_gl_1k.jpg",
           "bytes": 373438,
           "sha256": "af6a822100fd6369bb75e43bb764f4a71ca41f521538ac796e92e681e3ad38f5"
-        },
-        {
-          "map": "arm",
-          "name": "herringbone_parquet_arm_1k.jpg",
-          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/herringbone_parquet/herringbone_parquet_arm_1k.jpg",
-          "bytes": 554910,
-          "sha256": "64ded181ebe84df02998929e95b5a9a4b613f268a5355f7ef56cd91da879b207"
         }
       ]
     },

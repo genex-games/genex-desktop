@@ -72,3 +72,67 @@ fn cs_ssr_resolve(@builtin(global_invocation_id) id: vec3<u32>) {
     }
     textureStore(ssr_out, pixel, result);
 }
+
+// The blur between the trace and the resolve (not in the source; CPU twin `ssr::twin::Screen::blur`):
+// a separable bilateral Gaussian over the half-size trace, as wide as `SSR_BLUR_TAPS` texels each
+// side on a surface as rough as `extra.z` and narrowing to nothing on a mirror. Where a ray finds
+// nothing (a thin table top it passed behind, a pendant bulb) the probes show through; a rough
+// surface's lobe spreads that hole's edge, which the trace drew as hard as a mirror's (a staircase
+// at the trace's half size). Run along x from the trace into the reflections' texture (as scratch,
+// the trace's size in its corner), then along y back into the trace, before the resolve.
+const SSR_BLUR_TAPS: i32 = 4;
+
+// The bilateral weight of the trace texel at `cell` against the centre's depth, normal and
+// roughness: the resolve's weights.
+fn ssr_blur_weight(depth: f32, normal: vec3<f32>, roughness: f32, cell: vec2<i32>) -> f32 {
+    let full_last = vec2<i32>(ssr.size.zw) - vec2<i32>(1);
+    let texel = textureLoad(ssr_normal_roughness, min(cell * 2, full_last), 0);
+    let weight_depth = exp(-abs(depth - textureLoad(ssr_hiz, cell, 0).x) * SSR_DEPTH_FACTOR);
+    let weight_normal = exp(-saturate(1.0 - dot(normal, gx_unpack_normal(texel))) * SSR_NORMAL_FACTOR);
+    let weight_roughness = exp(-abs(roughness - gx_unpack_roughness(texel)) * SSR_ROUGHNESS_FACTOR);
+    return weight_depth * weight_normal * weight_roughness;
+}
+
+fn ssr_blur(id: vec2<u32>, axis: vec2<i32>) {
+    if any(id >= ssr.size.xy) {
+        return;
+    }
+    let pixel = vec2<i32>(id);
+    let centre = textureLoad(ssr_trace, pixel, 0);
+    let full_last = vec2<i32>(ssr.size.zw) - vec2<i32>(1);
+    let texel = textureLoad(ssr_normal_roughness, min(pixel * 2, full_last), 0);
+    let roughness = gx_unpack_roughness(texel);
+    let sigma = f32(SSR_BLUR_TAPS) * 0.5 * smoothstep(0.0, ssr.extra.z, roughness);
+    // A mirror keeps its texel; a surface from the cutoff was not traced (nothing to spread).
+    if sigma < 0.25 || roughness >= ssr.tune.w {
+        textureStore(ssr_out, pixel, centre);
+        return;
+    }
+    let normal = gx_unpack_normal(texel);
+    let depth = textureLoad(ssr_hiz, pixel, 0).x;
+    let last = vec2<i32>(ssr.size.xy) - vec2<i32>(1);
+    var sum = centre;
+    var total = 1.0;
+    // Two sigmas each side: a smoother surface pays for fewer taps.
+    let taps = min(i32(ceil(sigma * 2.0)), SSR_BLUR_TAPS);
+    for (var i = 1; i <= taps; i++) {
+        let gauss = exp(-f32(i * i) / (2.0 * sigma * sigma));
+        for (var side = -1; side <= 1; side += 2) {
+            let cell = clamp(pixel + axis * i * side, vec2<i32>(0), last);
+            let weight = gauss * ssr_blur_weight(depth, normal, roughness, cell);
+            sum += textureLoad(ssr_trace, cell, 0) * weight;
+            total += weight;
+        }
+    }
+    textureStore(ssr_out, pixel, sum / total);
+}
+
+@compute @workgroup_size(8, 8, 1)
+fn cs_ssr_blur_x(@builtin(global_invocation_id) id: vec3<u32>) {
+    ssr_blur(id.xy, vec2<i32>(1, 0));
+}
+
+@compute @workgroup_size(8, 8, 1)
+fn cs_ssr_blur_y(@builtin(global_invocation_id) id: vec3<u32>) {
+    ssr_blur(id.xy, vec2<i32>(0, 1));
+}

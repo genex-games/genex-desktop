@@ -205,19 +205,38 @@ fn ssr_validity(ray: SsrRay, t: f32, reprojected: vec2<f32>) -> f32 {
     return validity * fade * margin_blend;
 }
 
-// The colour pyramid's mip for a cone of `roughness` over `ray_len` (the source's sphere fit),
-// faded near the ray's end.
-fn ssr_mip(roughness: f32, ray_len: f32) -> f32 {
-    var mip = 0.0;
-    if roughness > 0.001 {
-        let cone_angle = min(roughness, 0.999) * SSR_PI * 0.5;
-        let a = 2.0 * tan(cone_angle) * ray_len;
-        let h = ray_len;
-        let blur_radius = (a * (sqrt(a * a + 4.0 * h * h) - a)) / max(4.0 * h, 1e-8);
-        let size = ssr_trace_size();
-        mip = clamp(log2(blur_radius * max(size.x, size.y) / 16.0 + 1.0), 0.0, ssr.extra.x);
+// The half angle of the cone that holds a GGX lobe of perceptual `roughness`: the lobe's Phong
+// power (2 / alpha^2 - 2) and Uludag's cone for it (GPU Pro 5, 2014: acos(0.244^(1 / (power + 1)))).
+// The source's roughness * pi / 2 is several times wider, which its mip then took a sixteenth of.
+fn ssr_cone_angle(roughness: f32) -> f32 {
+    let alpha = max(roughness * roughness, 1e-3);
+    let power = 2.0 / (alpha * alpha) - 2.0;
+    return acos(pow(0.244, 1.0 / (power + 1.0)));
+}
+
+// The colour pyramid's mip for the lobe of `roughness` on a ray from screen point `origin` to `at`
+// (uv, Godot z): the lobe's spread at the hit (its distance from the surface times the cone's
+// tangent) projected at the hit's depth, in trace texels (a mip-k texel spans 2^k of them); faded
+// near the ray's end. The source's cone over the ray's screen length shrank a ray that runs away
+// from the camera, a floor's, to a fraction of its spread.
+fn ssr_mip(roughness: f32, origin: vec3<f32>, at: vec3<f32>, ray_len: f32) -> f32 {
+    if roughness <= 0.001 {
+        return 0.0;
     }
+    let to = ssr_view_pos(at);
+    let spread = length(to - ssr_view_pos(origin)) * tan(ssr_cone_angle(roughness));
+    let clip_w = (ssr.proj * vec4<f32>(to, 1.0)).w;
+    let radius = spread * ssr.proj[0][0] * 0.5 * ssr_trace_size().x / max(clip_w, 1e-6);
+    let mip = clamp(log2(radius + 1.0), 0.0, ssr.extra.x);
     return mip * pow(saturate(1.25 - ray_len), 0.2);
+}
+
+// How much of a screen reflection a surface of perceptual `roughness` keeps: all of it up to
+// `extra.z`, then a smoothstep to nothing at the cutoff (`tune.w`), where the probes take over
+// alone. A cut at the cutoff drew a seam where a scan's roughness crosses it, and a rough floor
+// mirrored the room at full strength.
+fn ssr_roughness_fade(roughness: f32) -> f32 {
+    return 1.0 - smoothstep(ssr.extra.z, ssr.tune.w, roughness);
 }
 
 // Mip `level` (1 and up) of the colour pyramid at `uv` through a cubic B-spline, in four bilinear
@@ -331,9 +350,9 @@ fn cs_ssr_trace(@builtin(global_invocation_id) id: vec3<u32>) {
         let t = ssr_walk(ray);
         let at = ray.origin + ray.dir * t;
         let reprojected = ssr_reproject(at);
-        let validity = ssr_validity(ray, t, reprojected);
+        let validity = ssr_validity(ray, t, reprojected) * ssr_roughness_fade(surface.w);
         if validity > 0.0 {
-            let mip = ssr_mip(surface.w, length(ray.dir.xy * t));
+            let mip = ssr_mip(surface.w, ray.origin, at, length(ray.dir.xy * t));
             let radiance = ssr_history_at(reprojected, mip) * ssr.extra.y;
             color = vec4<f32>(radiance, 1.0) * validity;
             // Tone mapped for the resolve's filter across samples of very different luminance.
