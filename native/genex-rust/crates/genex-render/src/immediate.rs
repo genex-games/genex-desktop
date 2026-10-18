@@ -1165,6 +1165,7 @@ impl FrameRenderer {
         self.materials.set_pipeline_facts(gpu, facts)?;
         // HDR scenes draw reversed depth; the legacy LDR scene standard Z.
         self.materials.set_sun_shadows(self.renderer.sun_shadow_constants(facts.depth_reversed));
+        self.materials.set_ao_gi(self.renderer.ao_gi(facts.depth_reversed));
         self.posts.set_pipeline_facts(gpu, facts)?;
         self.particles.set_scene(&gpu.device, facts.scene_format, facts.depth_reversed);
         Ok(())

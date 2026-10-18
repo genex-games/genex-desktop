@@ -70,13 +70,21 @@ fn gx_screen_texel(world_pos: vec3<f32>, size: vec2<u32>) -> vec2<i32> {
 // shading), as the v2 path does: AO is made from the jittered prepass, and projecting the position
 // through the unjittered `view_proj` landed up to half a pixel off, so a filtered read blended in a
 // different neighbour every frame of the jitter cycle (pass 2, S5). The neutral 1x1 texel reads 1.
+// Under `GX_AO_GI` xyz is the screen-space GI's light instead (`gx_ao_decode_gi`): the renderer
+// hands AO the previous frame's lit scene as it was stored, pre-exposed, so the light is brought
+// back to the scene's units by this frame's pre-exposure (`cascade_splits.z`, as output.wgsl
+// applies it).
 fn gx_ambient_occlusion(world_pos: vec3<f32>) -> vec4<f32> {
     if !gx_ao_drawn() {
         return vec4<f32>(0.0, 0.0, 0.0, 1.0);
     }
     let last = vec2<i32>(textureDimensions(ao_map)) - vec2<i32>(1);
     let pixel = clamp(vec2<i32>(gx_sun_context.pixel), vec2<i32>(0), last);
-    return gx_ao_decode(textureLoad(ao_map, pixel, 0));
+    let texel = textureLoad(ao_map, pixel, 0);
+    if GX_AO_GI {
+        return gx_ao_decode_gi(texel, 1.0 / max(frame.cascade_splits.z, 1e-6));
+    }
+    return gx_ao_decode(texel);
 }
 
 // The sun's screen-space contact shadow at `world_pos` (1: unshadowed): the mask at the render

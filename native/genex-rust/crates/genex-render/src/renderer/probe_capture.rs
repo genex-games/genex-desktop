@@ -205,7 +205,7 @@ impl Renderer {
         let key = SurfaceKey {
             shadow_filter: ShadowFilter::Pcf3x3,
             shadow_temporal: false,
-            effects: EffectKey { ao: false, contact_shadows: false, fog: self.surface_key(true).effects.fog, aerial: false },
+            effects: EffectKey { ao: false, ao_gi: false, contact_shadows: false, fog: self.surface_key(true).effects.fog, aerial: false },
             binned_lights: false,
             sun_soft_edges: false,
             sun_cascades: 1,

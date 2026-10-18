@@ -756,7 +756,8 @@ character or prop drawn only with `frame.custom` stands without one. Write new s
 `api = 2`: a v2 material's `fs_material(in: GxMaterialInV2)` builds a surface with
 `gx_surface_v2(..)` and returns `vec4(gx_shade_pbr(surface) + gx_expose(glow), 1.0)`, so the
 renderer's sun, shadows (the preset's filter, cascade blend and end fade, the sun's contact
-shadows), lights, environment (`frame.environment`), ambient occlusion (with its bent normal),
+shadows), lights, environment (`frame.environment`), ambient occlusion (with its bent normal, or
+on desktop `ultra` its screen-space bounce light),
 the aerial perspective and fog reach it as they reach a built-in surface, on the HDR and the LDR
 scene alike (`gx_expose` holds even a blinding emissive
 under the scene's limit). `gx_surface_v2` takes no derivatives, so it does not filter a shiny

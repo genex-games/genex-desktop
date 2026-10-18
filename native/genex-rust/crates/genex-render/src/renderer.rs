@@ -408,6 +408,9 @@ struct SurfaceKey {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct EffectKey {
     ao: bool,
+    /// Whether AO's term carries screen-space GI (`GX_AO_GI`, renderer pass 2 B.4): an
+    /// `AoMethod::BitmaskGi` quality that draws AO.
+    ao_gi: bool,
     contact_shadows: bool,
     fog: bool,
     aerial: bool,
@@ -415,7 +418,7 @@ struct EffectKey {
 
 impl EffectKey {
     /// None drawn: the legacy scene's.
-    const NONE: EffectKey = EffectKey { ao: false, contact_shadows: false, fog: false, aerial: false };
+    const NONE: EffectKey = EffectKey { ao: false, ao_gi: false, contact_shadows: false, fog: false, aerial: false };
 
     /// What `quality` draws: AO, contact shadows and the height fog by their switches, the aerial
     /// perspective where the environment computes the volume (medium and up, whatever the fog
@@ -424,6 +427,7 @@ impl EffectKey {
         let drawn = |feature| crate::graph::feature_drawn(quality, feature);
         EffectKey {
             ao: drawn(RenderFeature::Ao),
+            ao_gi: drawn(RenderFeature::Ao) && quality.ao_method.gi(),
             contact_shadows: drawn(RenderFeature::ContactShadows),
             fog: drawn(RenderFeature::Fog),
             aerial: crate::fog::LANDED && quality.environment.aerial_perspective,
@@ -1302,7 +1306,7 @@ fn forward_equal_pipeline(device: &Device, layouts: &Layouts, format: TextureFor
 /// half a mantissa step (`GX_SCENE_RG11B10`, renderer pass 2 P2-0.10 C5); every other format writes
 /// as before. The surfaces shade no smoother than the key's roughness floor (`GX_ROUGHNESS_FLOOR`,
 /// P2-0.12 LG-04).
-fn surface_constants(reversed: bool, format: TextureFormat, surface: SurfaceKey) -> [(&'static str, f64); 16] {
+fn surface_constants(reversed: bool, format: TextureFormat, surface: SurfaceKey) -> [(&'static str, f64); 18] {
     let effects = surface.effects;
     [
         ("GX_ROUGHNESS_FLOOR", f64::from(f32::from_bits(surface.roughness_floor))),
@@ -1313,6 +1317,7 @@ fn surface_constants(reversed: bool, format: TextureFormat, surface: SurfaceKey)
         ("GX_TEXTURE_CLASSES", f64::from(u8::from(surface.texture_classes))),
         ("GX_TOKSVIG", f64::from(u8::from(surface.toksvig))),
         ("GX_AO", f64::from(u8::from(effects.ao))),
+        ("GX_AO_GI", f64::from(u8::from(effects.ao_gi))),
         ("GX_CONTACT_SHADOWS", f64::from(u8::from(effects.contact_shadows))),
         ("GX_FOG", f64::from(u8::from(effects.fog))),
         ("GX_AERIAL", f64::from(u8::from(effects.aerial))),
@@ -2868,8 +2873,23 @@ impl Renderer {
         if scene.hdr && self.environment_lights() { crate::fog::FogBackdrop::Environment } else { crate::fog::FogBackdrop::Flat(clear) }
     }
 
+    /// The light the frame's screen-space GI gathers and what its texels are multiplied by.
+    fn ao_light(&self) -> Option<(TextureView, f32)> {
+        // Renderer pass 2 B.4 (look-integration L2): the previous frame's lit scene, TAA's (or the
+        // upscale's) last resolve on this frame's history set, pre-exposed as it was stored (the
+        // forward pass divides the GI by its own pre-exposure, so the scale is 1). None after a
+        // history reset (a cut, a settled capture's first frame) or without TAA: no light.
+        if !self.path.hdr || self.temporal.reset || !self.temporal.taa {
+            return None;
+        }
+        let histories = self.taa.borrow();
+        let texture = histories.as_ref()?.last_resolve(self.temporal.set)?;
+        Some((texture.create_view(&wgpu::TextureViewDescriptor::default()), 1.0))
+    }
+
     /// The AO frames draw with: the look's radius and intensity at the quality's sampling and method
-    /// (the visibility bitmask at desktop high and ultra; None: AO off, or not landed).
+    /// (the visibility bitmask with screen-space GI at desktop high and ultra; None: AO off, or not
+    /// landed).
     fn frame_ao(&self) -> Option<crate::post::ao::AoSettings> {
         crate::post::ao::AoSettings::of(&self.look, &self.quality).filter(|_| crate::post::ao::LANDED)
     }
@@ -3414,6 +3434,12 @@ impl Renderer {
     /// The meshes this renderer can draw.
     pub fn library(&self) -> &MeshLibrary {
         &self.library
+    }
+
+    /// Whether the AO term the surfaces of a scene that is HDR (`hdr`) or the legacy one read
+    /// carries screen-space GI (`GX_AO_GI`, renderer pass 2 B.4): Level-2 v2 materials read it so.
+    pub fn ao_gi(&self, hdr: bool) -> bool {
+        self.surface_key(hdr).effects.ao_gi
     }
 
     /// The sun's shadows as Level-2 v2 materials draw them beside the built-in surfaces of a scene
@@ -4289,12 +4315,16 @@ impl Renderer {
         self.path = scene_path;
         let meshlets = self.prepare_meshlets(meshlets, prepass.is_some())?;
         let consumers = prepass.as_ref().map_or(PrepassConsumers::NONE, |prepass| prepass.consumers);
-        let ao = self.frame_ao().filter(|_| consumers.contains(PrepassConsumers::AO)).map(|settings| settings.quality);
+        let ao = self.frame_ao().filter(|_| consumers.contains(PrepassConsumers::AO));
         let contact = consumers.contains(PrepassConsumers::CONTACT_SHADOWS);
         // Renderer pass 2, B.7: the sun-shadow mask runs beside the contact shadows where the
         // quality draws PCSS on the HDR scene under TAA.
         let sun_mask = crate::post::sun_mask::key(&self.quality, scene_path.hdr, scene_path.taa);
-        self.effects.get_mut().prepare(&self.device, &mut self.pool, render, ao.as_ref(), contact, sun_mask)?;
+        self.effects.get_mut().prepare_with_ao(&self.device, &mut self.pool, render, ao.as_ref(), contact, sun_mask)?;
+        // B.4: the light screen-space GI gathers, the previous frame's resolve as TAA stored it.
+        let light = self.ao_light();
+        self.effects.get_mut().set_ao_light(light);
+        self.prepare_ssr(&scene_path, prepass.is_some(), spec.motion)?;
         self.sky.get_mut().begin_frame();
         self.prepare_bloom()?;
         self.prepare_lens(&scene_path, prepass.is_some(), spec.motion, lens::frame_proj(&plan, &scene.camera))?;

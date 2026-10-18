@@ -400,8 +400,8 @@ fn high_row(quality: &mut Quality) {
     quality.contact_shadows = true;
     quality.bloom = BloomQuality { enabled: true, resolution: CHAIN_RESOLUTION };
     quality.ao = AoQuality { resolution: AoResolution::Half, slices: 2, steps: 6, temporal: true };
-    // B.4: the visibility bitmask (no halo behind thin objects; ultra inherits it). Medium keeps
-    // XeGTAO's horizons within its 0.6 ms.
+    // B.4: the visibility bitmask (no halo behind thin objects; ultra adds its GI). Medium keeps
+    // XeGTAO's horizons within its 0.6 ms; phones keep them too (`apply_mobile_caps`).
     quality.ao_method = AoMethod::Bitmask;
     quality.lights = lights(1024, 16, 2);
     // Filament's ring gather (A.9; ultra inherits it): the look's switch decides whether it runs.
@@ -437,6 +437,11 @@ fn ultra_row(quality: &mut Quality, form: FormFactor) {
     // slice) costs about a fifth more a step: 3 x 8 measured 1.38 ms (M4 Max, 1080p), so the owner
     // raised ultra's AO budget to 1.5 ms (2026-10-12; plan §2.5 had 1.2) rather than halve the steps.
     quality.ao = AoQuality { resolution: AoResolution::Full, slices: 3, steps: 8, temporal: true };
+    // B.4's screen-space GI, the light of what the bitmask hides (look integration). Not at high:
+    // its terms hold the light (`ao::target_bytes_shaped`), +18.4 MB at 1440p, and desktop-high's
+    // default with its texture arrays would pass its 512 MiB budget (553.7 MB); like D16, a preset
+    // fits its budget by its defaults, not by a larger budget.
+    quality.ao_method = AoMethod::BitmaskGi;
     quality.lights = lights(1024, 16, 4);
     quality.ssr = crate::ssr::SsrQuality::ULTRA;
 }
@@ -623,7 +628,8 @@ fn apply_mobile_caps(quality: &mut Quality, preset: QualityPreset, class: Device
     quality.dof = DofTier::Circular;
     // Phones blur in one pass, and the low-tier phone not at all (the plan's "off on mobile-low").
     quality.motion_blur = if class.tier == PerformanceTier::Low { MotionBlurTier::Off } else { MotionBlurTier::Direct };
-    // Phones keep XeGTAO's horizons: the bitmask's cost on a phone is unmeasured (B.4).
+    // Phones keep XeGTAO's horizons: the bitmask's and its GI's cost on a phone is unmeasured
+    // (B.4; owner decision D16: what cannot be shown to fit is off on phones).
     quality.ao_method = AoMethod::Horizons;
     // No screen inputs on phones (B.3's water reflects the probes or the sky there).
     quality.screen_inputs = ScreenInputs::NONE;

@@ -311,9 +311,19 @@ fn gx_ao_drawn() -> bool {
     return true;
 }
 
-// Ambient occlusion at `world_pos`: xyz the bent normal (zero: none), w the visibility.
+// Whether the AO term carries screen-space GI (renderer pass 2 B.4; the forward pass's constant,
+// which the renderer hands v2 pipelines through `extension::ExtensionRegistry::set_ao_gi`).
+override GX_AO_GI: bool = false;
+
+// Ambient occlusion at `world_pos`: xyz the bent normal (zero: none; under `GX_AO_GI` the
+// screen-space GI's light), w the visibility.
 fn gx_ambient_occlusion(world_pos: vec3<f32>) -> vec4<f32> {
-    return gx_ao_decode(textureLoad(ao_map, gx_screen_texel_v2(world_pos, textureDimensions(ao_map)), 0));
+    let texel = textureLoad(ao_map, gx_screen_texel_v2(world_pos, textureDimensions(ao_map)), 0);
+    if GX_AO_GI {
+        // Pre-exposed light, as the forward pass reads it (forward_effects.wgsl).
+        return gx_ao_decode_gi(texel, frame.inv_pre_exposure);
+    }
+    return gx_ao_decode(texel);
 }
 
 // The sun's visibility from the screen mask (renderer pass 2, B.7): none for a v2 material (-1),

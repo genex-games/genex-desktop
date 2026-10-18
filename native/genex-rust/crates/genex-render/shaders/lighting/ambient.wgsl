@@ -25,6 +25,11 @@
 // surface takes no screen-space occlusion: the AO map holds the opaque surface behind it. A
 // material's occlusion map (glTF `occlusionTexture`, P2-0.12 LG-09: the surface chunk's
 // `gx_material_ao`) occludes the same indirect light, the smaller of it and the screen-space AO.
+// Where the term carries screen-space GI (renderer pass 2 B.4, `GX_AO_GI`: the accessor's xyz is
+// then that light, and there is no bent normal), the light the occluded directions send is added
+// to the opaque surface's diffuse indirect light with the environment's diffuse weight (a white
+// rug beside a red brick wall turns red by it), and the multi-bounce fit, which stands in for that
+// bounce, is left out.
 
 // Whether the environment may light this pipeline's surfaces (`frame.ambient.w` then says whether
 // it does this frame): the forward pass compiles it out of the legacy LDR scene, which the
@@ -45,8 +50,12 @@ fn gx_ambient(s: Surface) -> vec3<f32> {
         }
         return frame.ambient.rgb * s.albedo;
     }
-    let occlusion = gx_surface_occlusion(s).w;
-    return frame.ambient.rgb * s.albedo * gx_ao_multibounce(occlusion, s.albedo);
+    let ao = gx_surface_occlusion(s);
+    if GX_AO_GI {
+        // The GI is the bounce the multi-bounce fit stands in for (B.4): the visibility as it is.
+        return frame.ambient.rgb * s.albedo * ao.w + s.albedo * ao.xyz;
+    }
+    return frame.ambient.rgb * s.albedo * gx_ao_multibounce(ao.w, s.albedo);
 }
 
 // An AO term's texel decoded (`post::ao`'s encoding): xyz the world-space bent normal (zero when the
@@ -57,6 +66,12 @@ fn gx_ao_decode(texel: vec4<f32>) -> vec4<f32> {
     let length_squared = dot(bent, bent);
     let present = length_squared > 0.25 && length_squared < 2.0;
     return vec4<f32>(select(vec3<f32>(0.0), bent * inverseSqrt(max(length_squared, 1e-8)), present), texel.r);
+}
+
+// A GI term's texel decoded (`post::ao::GI_FORMAT`, B.4): xyz the light the occluded directions
+// send (never negative) times `scale` (to the scene's units), w the visibility (r).
+fn gx_ao_decode_gi(texel: vec4<f32>, scale: f32) -> vec4<f32> {
+    return vec4<f32>(max(texel.gba, vec3<f32>(0.0)) * scale, texel.r);
 }
 
 // The ambient occlusion `s` takes: the accessor's (xyz bent normal, zero when none; w visibility),
@@ -239,7 +254,9 @@ fn gx_environment_light(s: Surface) -> vec3<f32> {
     let fms_ems = e_ms * fss_ess * f_avg / (vec3<f32>(1.0) - e_ms * f_avg);
     let k_d = s.albedo * (1.0 - s.metallic) * (vec3<f32>(1.0) - fss_ess - fms_ems);
     let r = reflect(-s.v, s.n);
-    let ao = gx_surface_occlusion(s);
+    let term = gx_surface_occlusion(s);
+    // Under `GX_AO_GI` the term's xyz is the GI's light and it has no bent normal (B.4).
+    let ao = vec4<f32>(select(term.xyz, vec3<f32>(0.0), GX_AO_GI), term.w);
     let occlusion = ao.w;
     // The reflection probes around the surface where the frame has them, else the sky (A.3); the
     // irradiance volumes around it, else the sky's SH9 (A.4): one walk of the probe bins.
@@ -263,5 +280,11 @@ fn gx_environment_light(s: Surface) -> vec3<f32> {
     }
     let specular_visibility = gx_horizon_fade(r, s.geometric) * ao_specular;
     let specular = fss_ess * radiance * specular_visibility;
+    if GX_AO_GI {
+        // The GI is the bounce Jimenez's multi-bounce fit stands in for (B.4), so the sky's light
+        // takes the visibility as it is and the GI adds what the occluders send: both would count
+        // the bounce twice.
+        return specular + (fms_ems + k_d) * (irradiance * occlusion + term.xyz);
+    }
     return specular + (fms_ems + k_d) * irradiance * gx_ao_multibounce(occlusion, s.albedo * (1.0 - s.metallic));
 }

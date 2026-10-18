@@ -1524,6 +1524,9 @@ pub struct CustomMaterials {
     /// The sun's shadow constants v2 pipelines are built with (the renderer's filter, temporal
     /// pattern, blend band and end fade).
     sun_shadows: SunShadowConstants,
+    /// Whether the AO term v2 pipelines read carries screen-space GI (`GX_AO_GI`, renderer pass 2
+    /// B.4): the forward pass's constant, so a custom surface reads the term as the built-in one.
+    ao_gi: bool,
 }
 
 /// The sun's shadows as v2 materials draw them, made pipeline constants of the v2 prelude's sun
@@ -1567,6 +1570,9 @@ impl SunShadowConstants {
     }
 }
 
+/// The v2 material prelude's switch for an AO term that carries screen-space GI (material_v2.wgsl).
+const AO_GI_CONSTANT: &str = "GX_AO_GI";
+
 /// The far plane's index among `cull::frustum_planes`' six, and the plane every point is inside of:
 /// the Level-2 draws' cull keeps no far plane (LG-20).
 const FAR_PLANE: usize = 5;
@@ -1606,6 +1612,7 @@ impl CustomMaterials {
             keep_frame_v2: false,
             frame_v2_due: false,
             sun_shadows: SunShadowConstants::LEGACY,
+            ao_gi: false,
         }
     }
 
@@ -1711,8 +1718,9 @@ impl CustomMaterials {
         let buffers = [Some(wgpu::VertexBufferLayout { array_stride: VERTEX_STRIDE, step_mode: wgpu::VertexStepMode::Vertex, attributes: &MATERIAL_ATTRIBUTES })];
         let targets = [Some(wgpu::ColorTargetState { format: self.facts.scene_format, blend: None, write_mask: wgpu::ColorWrites::ALL })];
         // Only the v2 prelude holds the sun chunk (v1 sources declare none of the constants).
-        let sun = self.sun_shadows.constants();
-        let constants: &[(&str, f64)] = if api == ABI_V1 { &[] } else { &sun };
+        let [a, b, c, d, e, f] = self.sun_shadows.constants();
+        let v2 = [a, b, c, d, e, f, (AO_GI_CONSTANT, f64::from(u8::from(self.ao_gi)))];
+        let constants: &[(&str, f64)] = if api == ABI_V1 { &[] } else { &v2 };
         let options = wgpu::PipelineCompilationOptions { constants, ..Default::default() };
         crate::compile::render_pipeline_checked(device, &wgpu::RenderPipelineDescriptor {
             label: Some("custom material"),
@@ -1769,6 +1777,28 @@ impl CustomMaterials {
             return false;
         }
         self.sun_shadows = sun;
+        self.rebuild_v2()
+    }
+
+    /// Build the v2 pipelines reading the AO term as one with screen-space GI (`on`, the
+    /// renderer's `GX_AO_GI`; renderer pass 2 B.4) or without from now on. Answers whether
+    /// anything was rebuilt.
+    pub fn set_ao_gi(&mut self, on: bool) -> bool {
+        if on == self.ao_gi {
+            return false;
+        }
+        self.ao_gi = on;
+        self.rebuild_v2()
+    }
+
+    /// Whether v2 pipelines read the AO term as one with screen-space GI.
+    pub fn ao_gi(&self) -> bool {
+        self.ao_gi
+    }
+
+    /// Every v2 material's pipeline built again with the current constants. Answers whether any
+    /// was.
+    fn rebuild_v2(&mut self) -> bool {
         let rebuilt: Vec<(usize, CheckedPipeline)> = self
             .materials
             .iter()

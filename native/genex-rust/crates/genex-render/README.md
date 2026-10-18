@@ -73,18 +73,31 @@ Node 10 (`post::ao`) runs one horizon search, `shaders/post/gtao.wgsl`, in one o
   between its front face and a point `BITMASK_THICKNESS_PER_RADIUS` of the radius behind it, so a
   post, a trunk or an arm no longer darkens a halo on the ground or wall behind it. The open arc
   uses XeGTAO's cosine weighting, so solid creases stay as dark, and the bent normal comes from the
-  open run around the view vector. The presets ask for it at desktop and web `high` and `ultra`
-  (the renderer's `frame_ao` takes `AoSettings::of`); phones and `medium` keep the horizons. The
+  open run around the view vector. The renderer's `frame_ao` takes `AoSettings::of`; phones and
+  `medium` keep the horizons (owner decision D16 for phones). The
   thickness (0.125 m at the default radius) keeps a block's base darkening smooth in settled
   captures (template row `metal_the_blocks_base_darkens_smoothly_in_settled_captures_at_every_preset`).
 - `BitmaskGi`: the bitmask plus one bounce of screen-space light. The sectors a sample hides first
   send the previous frame's light at that sample (`AoInput::light`: a texture and its scale to scene
   units, reprojected through last frame's camera). The term is `GI_FORMAT` (`rgba16float`: r
-  visibility, gba the light as a share of the hemisphere) and carries no bent normal.
+  visibility, gba the light as a share of the hemisphere) and carries no bent normal. The presets
+  ask for it at desktop `ultra` (look integration); `high` keeps the bitmask alone, because the GI's
+  terms (+18.4 MB at 1440p) take desktop-high's default past its 512 MiB budget. The screen effects
+  (`renderer/effects.rs`) take GI targets through `prepare_with_ao` and the light through
+  `set_ao_light`: the previous frame's resolve as TAA stored it, pre-exposed, at scale 1. Where the
+  targets were taken without GI, a GI quality draws the bitmask alone. The forward pass, terrain,
+  grass and Level-2 v2 materials read the term under the `GX_AO_GI` constant (`ambient.wgsl`
+  `gx_ao_decode_gi`): the light divided by the frame's pre-exposure, times the surface's diffuse
+  weight, is added to an opaque surface's diffuse indirect light, and no bent normal is read. A frame
+  whose AO does not run binds a texel of visibility 1 and no light. The GI's reach is AO's radius
+  (0.5 m by default), so it reads as bounce in corners and at contact: the Harbour café's rug row
+  (`harbour_shots.rs`) holds it at least as red as A.4's irradiance volume alone.
 
 `GX_AO_BITMASK` and `GX_AO_GI` are pipeline-overridable constants, so the horizons' pipelines
 compile as before. Rows: `tests/ao.rs` (`metal_bitmask_*`: a post's halo against a ray-cast ground
-truth, the log wall, open ground, a red box's bleed onto the floor, the cost at 1080p).
+truth, the log wall, open ground, a red box's bleed onto the floor, a new light on unchanged inputs,
+the forward pass's GI consumer, the cost at 1080p) and `tests/extension_v2.rs` (a v2 material
+reading GI where AO does not run).
 
 ## Materials: alpha masks, double-sided, occlusion
 

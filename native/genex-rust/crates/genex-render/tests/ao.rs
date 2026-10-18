@@ -169,16 +169,22 @@ fn every_ao_preset_runs_gtao_and_off_runs_nothing() {
     }
 }
 
-/// B.4: the presets draw the visibility bitmask at desktop `high` and `ultra` and XeGTAO's
-/// horizons at `medium` and on every phone class.
+/// B.4: the presets draw the visibility bitmask at desktop `high` and with screen-space GI at
+/// `ultra` (look integration; the bitmask alone before, and `high` keeps it alone within its
+/// memory budget) and XeGTAO's horizons at `medium` and on every phone class (owner decision D16:
+/// the GI's cost on a phone is unmeasured).
 #[test]
-fn the_presets_draw_the_bitmask_at_high_and_ultra_on_desktops_only() {
+fn the_presets_draw_ssgi_on_the_bitmask_at_ultra_on_desktops_only() {
     let look = Look::default();
     for class in DeviceClass::ALL {
         for preset in [QualityPreset::Medium, QualityPreset::High, QualityPreset::Ultra] {
             let quality = preset_quality(preset, class);
             let desktop_high = class.form == genex_render::device_class::FormFactor::Desktop && preset >= QualityPreset::High;
-            let expected = if desktop_high { AoMethod::Bitmask } else { AoMethod::Horizons };
+            let expected = match (desktop_high, preset) {
+                (true, QualityPreset::Ultra) => AoMethod::BitmaskGi,
+                (true, _) => AoMethod::Bitmask,
+                _ => AoMethod::Horizons,
+            };
             assert_eq!(quality.ao_method, expected, "{class:?} {}", preset.wire());
             if let Some(settings) = AoSettings::of(&look, &quality) {
                 assert_eq!(settings.method, expected);
@@ -1696,4 +1702,194 @@ fn metal_bitmask_gi_leaves_no_red_trail_when_the_box_goes() {
     let residue = (left[0] - left[1]) / red_before.max(1e-6);
     eprintln!("floor where the box stood: red {red_before:.4} with it, {left:.4?} {GI_TRAIL_AFTER} frames after it went (red residue {residue:.3})");
     assert!(residue <= GI_TRAIL_RESIDUE_MAX, "the floor keeps {residue:.3} of the box's red {GI_TRAIL_AFTER} frames after it went");
+}
+
+/// Frames the box's light is white for after it was red, before the light-switch row reads, and
+/// the least share of the white light alone's gather (its green) the floor then holds: the
+/// temporal blend (`HISTORY_WEIGHT` 0.9) takes 1 - 0.9^12 = 72% of a new light in that time.
+const GI_SWITCH_AFTER: u64 = 12;
+const GI_SWITCH_SHARE_MIN: f32 = 0.5;
+
+/// Look-integration L2 (B.4 on the frame): the renderer hands AO the previous frame's lit scene,
+/// which is TAA's other history slot every frame while the depth and normals keep their pooled
+/// targets (the same generation). Here the box stays and only its light turns from red to white:
+/// within [`GI_SWITCH_AFTER`] frames the floor in front of it gathers the white light. AO's bind
+/// groups were cached without the light, so it kept gathering the first frame's red for good.
+#[test]
+#[ignore = "GPU: run with -- --ignored metal"]
+fn metal_bitmask_gi_gathers_each_frames_light_on_unchanged_inputs() {
+    let Some(gpu) = gpu() else { return };
+    let size = (WIDTH * 2, HEIGHT * 2);
+    let gi = settings(quality(QualityPreset::High)).with_method(AoMethod::BitmaskGi);
+    let frames: Vec<AoFrame> = (0..GI_TRAIL_BEFORE + GI_SWITCH_AFTER).map(|i| corner_frame(EYE, true, facts(i, i == 0), size)).collect();
+    let (red, white) = (corner_light(&frames[0], size, true), corner_light(&frames[0], size, false));
+    let lights: Vec<Vec<[f32; 4]>> = (0..frames.len()).map(|i| if (i as u64) < GI_TRAIL_BEFORE { red.clone() } else { white.clone() }).collect();
+    let in_front = |image: &AoImage| floor_light(image, &frames[0], size, (-0.35, 0.35), (-0.75, -0.55));
+    let switched = in_front(&ao::ao_gi_images(&gpu, &gi, size, &frames, &lights).expect("GI").pop().expect("a term"));
+    let white_alone = in_front(&ao::ao_gi_images(&gpu, &gi, size, &frames, std::slice::from_ref(&white)).expect("GI").pop().expect("a term"));
+    let share = switched[1] / white_alone[1].max(1e-6);
+    eprintln!("floor in front of the box {GI_SWITCH_AFTER} frames after its light turned white: {switched:.4?}, under the white light alone {white_alone:.4?} (green share {share:.3})");
+    assert!(share >= GI_SWITCH_SHARE_MIN, "the floor holds {share:.3} of the white light's gather {GI_SWITCH_AFTER} frames after the light turned white");
+}
+
+/// The forward shader's AO accessor and environment light over one AO texel bound at binding 16
+/// (`texel`, rgba16float) on a frame of `pre_exposure`, under the pipeline constants `constants`:
+/// per surface row (normal; view with roughness in w; albedo with metallic in w; alpha in x) the
+/// environment light it reflects and the accessor's answer. A black specular sky, a zero BRDF LUT
+/// and a uniform SH9 sky of irradiance `sky` leave the diffuse light alone.
+fn forward_gi_probe(gpu: &Gpu, (texel, pre_exposure, sky): ([f32; 4], f32, f32), constants: &[(&str, f64)], surfaces: &[[[f32; 4]; 4]]) -> Vec<([f32; 3], [f32; 4])> {
+    use wgpu::util::DeviceExt;
+    let base = genex_render::shaders::FORWARD;
+    // A compute probe has no light bins: the environment is the sky's layer and the sky's SH9.
+    let walk = "fn gx_env_light(world_pos: vec3<f32>, dir: vec3<f32>, lod: f32, n: vec3<f32>) -> GxEnvLight {";
+    let patched = base.replacen(walk, "fn gx_env_light_binned(world_pos: vec3<f32>, dir: vec3<f32>, lod: f32, n: vec3<f32>) -> GxEnvLight {", 1);
+    assert_ne!(patched, base, "the forward text no longer walks the environment here");
+    let source = format!(
+        "{patched}\n{}",
+        r"
+@group(0) @binding(20) var<storage, read_write> probe_rows: array<vec4<f32>>;
+
+fn gx_env_light(world_pos: vec3<f32>, dir: vec3<f32>, lod: f32, n: vec3<f32>) -> GxEnvLight {
+    return GxEnvLight(gx_env_sky(dir, lod), gx_env_irradiance(n));
+}
+
+@compute @workgroup_size(1)
+fn cs_gi(@builtin(workgroup_id) id: vec3<u32>) {
+    let at = id.x * 4u;
+    let n = normalize(probe_rows[at].xyz);
+    let material = probe_rows[at + 2u];
+    let s = Surface(vec3<f32>(0.0), n, n, normalize(probe_rows[at + 1u].xyz), material.rgb, probe_rows[at + 3u].x, material.w, probe_rows[at + 1u].w);
+    let accessor = gx_ambient_occlusion(vec3<f32>(0.0));
+    probe_rows[at + 3u] = vec4<f32>(gx_environment_light(s), 1.0);
+    probe_rows[at] = accessor;
+}
+"
+    );
+    let device = &gpu.device;
+    let module = device.create_shader_module(wgpu::ShaderModuleDescriptor { label: Some("gi probe"), source: wgpu::ShaderSource::Wgsl(source.into()) });
+    let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+        label: Some("gi probe"),
+        layout: None,
+        module: &module,
+        entry_point: Some("cs_gi"),
+        compilation_options: wgpu::PipelineCompilationOptions { constants, ..Default::default() },
+        cache: None,
+    });
+    let texture = |label, format, layers, data: &[u8]| {
+        let size = wgpu::Extent3d { width: 1, height: 1, depth_or_array_layers: layers };
+        let texture = device.create_texture(&wgpu::TextureDescriptor { label: Some(label), size, mip_level_count: 1, sample_count: 1, dimension: wgpu::TextureDimension::D2, format, usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST, view_formats: &[] });
+        if !data.is_empty() {
+            gpu.queue.write_texture(texture.as_image_copy(), data, wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(8), rows_per_image: Some(1) }, size);
+        }
+        texture
+    };
+    let halves: Vec<u8> = texel.iter().flat_map(|v| genex_render::post::tonemap::f32_to_f16(*v).to_le_bytes()).collect();
+    let term = texture("gi probe term", wgpu::TextureFormat::Rgba16Float, 1, &halves).create_view(&Default::default());
+    let lut = texture("gi probe lut", wgpu::TextureFormat::Rgba16Float, 1, &[]).create_view(&Default::default());
+    let cube = texture("gi probe sky", wgpu::TextureFormat::Rgba16Float, 6, &[]).create_view(&wgpu::TextureViewDescriptor { dimension: Some(wgpu::TextureViewDimension::CubeArray), array_layer_count: Some(6), ..Default::default() });
+    let sampler = device.create_sampler(&wgpu::SamplerDescriptor { mag_filter: wgpu::FilterMode::Linear, min_filter: wgpu::FilterMode::Linear, ..Default::default() });
+    let frame = genex_render::layout::GpuFrame { cascade_splits: [0.0, 0.0, pre_exposure, 0.0], ..Default::default() };
+    let frame = device.create_buffer_init(&wgpu::util::BufferInitDescriptor { label: Some("gi probe frame"), contents: bytemuck::bytes_of(&frame), usage: wgpu::BufferUsages::UNIFORM });
+    let sh = device.create_buffer_init(&wgpu::util::BufferInitDescriptor { label: Some("gi probe sh"), contents: bytemuck::bytes_of(&uniform_sky(sky)), usage: wgpu::BufferUsages::UNIFORM });
+    let rows: Vec<[f32; 4]> = surfaces.iter().flatten().copied().collect();
+    let storage = device.create_buffer_init(&wgpu::util::BufferInitDescriptor { label: Some("gi probe rows"), contents: bytemuck::cast_slice(&rows), usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC });
+    let entries = [
+        wgpu::BindGroupEntry { binding: 0, resource: frame.as_entire_binding() },
+        wgpu::BindGroupEntry { binding: 11, resource: wgpu::BindingResource::TextureView(&cube) },
+        wgpu::BindGroupEntry { binding: 12, resource: sh.as_entire_binding() },
+        wgpu::BindGroupEntry { binding: 13, resource: wgpu::BindingResource::TextureView(&lut) },
+        wgpu::BindGroupEntry { binding: 14, resource: wgpu::BindingResource::Sampler(&sampler) },
+        wgpu::BindGroupEntry { binding: 16, resource: wgpu::BindingResource::TextureView(&term) },
+        wgpu::BindGroupEntry { binding: 20, resource: storage.as_entire_binding() },
+    ];
+    let group = device.create_bind_group(&wgpu::BindGroupDescriptor { label: Some("gi probe"), layout: &pipeline.get_bind_group_layout(0), entries: &entries });
+    let bytes = (rows.len() * 16) as u64;
+    let staging = device.create_buffer(&wgpu::BufferDescriptor { label: Some("gi probe readback"), size: bytes, usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ, mapped_at_creation: false });
+    let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("gi probe") });
+    {
+        let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor { label: Some("gi probe"), timestamp_writes: None });
+        pass.set_pipeline(&pipeline);
+        pass.set_bind_group(0, &group, &[]);
+        pass.dispatch_workgroups(surfaces.len() as u32, 1, 1);
+    }
+    encoder.copy_buffer_to_buffer(&storage, 0, &staging, 0, bytes);
+    gpu.queue.submit([encoder.finish()]);
+    staging.slice(..).map_async(wgpu::MapMode::Read, |result| result.expect("mapped"));
+    let _ = device.poll(wgpu::PollType::wait_indefinitely());
+    let out: Vec<[f32; 4]> = bytemuck::cast_slice::<u8, [f32; 4]>(&staging.slice(..).get_mapped_range().expect("mapped range")).to_vec();
+    out.chunks(4).map(|row| ([row[3][0], row[3][1], row[3][2]], row[0])).collect()
+}
+
+/// SH9 coefficients of a uniform sky whose cosine-weighted irradiance (as `gx_env_irradiance`
+/// reads it) is `irradiance` in every direction.
+fn uniform_sky(irradiance: f32) -> genex_render::abi::GxEnvSh {
+    let mut sh = genex_render::abi::GxEnvSh::default();
+    sh.coefficients[0] = [irradiance / 0.282_095, irradiance / 0.282_095, irradiance / 0.282_095, 0.0];
+    sh
+}
+
+/// A GI term's texel for the consumer rows: visibility 0.5 and a warm light that read as a bent
+/// normal (its length lies inside `gx_ao_decode`'s band) would tilt the sky light.
+const GI_TEXEL: [f32; 4] = [0.5, 0.2, 0.1, 0.05];
+/// How far the probe's light may sit from albedo times the GI (half-float texel, f32 shading).
+const GI_CONSUMER_TOLERANCE: f32 = 2e-3;
+/// The probe frame's pre-exposure: the term's light is pre-exposed, as TAA's history stores it.
+const GI_PROBE_EXPOSURE: f32 = 2.0;
+
+/// Look-integration L2 (B.4 consumer): under `GX_AO_GI` the forward pass reads the AO term's gba
+/// as the GI's light, never as a bent normal, brings it to the scene's units by the frame's
+/// pre-exposure (the light it gathered was stored pre-exposed) and adds albedo times it to an
+/// opaque surface's diffuse indirect light (with the environment's diffuse weight); a blended
+/// surface takes none, and without the constant the same texel adds nothing.
+#[test]
+#[ignore = "GPU: run with -- --ignored metal"]
+fn metal_the_forward_pass_adds_the_gi_terms_light_to_diffuse_indirect_light() {
+    let Some(gpu) = gpu() else { return };
+    let albedo = [0.8, 0.6, 0.4];
+    let surface = |alpha: f32| [[0.0, 1.0, 0.0, 0.0], [0.0, 0.6, 0.8, 0.7], [albedo[0], albedo[1], albedo[2], 0.0], [alpha, 0.0, 0.0, 0.0]];
+    let gi_on = [("GX_SCENE_HDR", 1.0), ("GX_AO_GI", 1.0)];
+    let on = forward_gi_probe(&gpu, (GI_TEXEL, GI_PROBE_EXPOSURE, 0.0), &gi_on, &[surface(1.0), surface(0.5)]);
+    let off = forward_gi_probe(&gpu, (GI_TEXEL, GI_PROBE_EXPOSURE, 0.0), &[("GX_SCENE_HDR", 1.0)], &[surface(1.0)]);
+    let gi = [GI_TEXEL[1], GI_TEXEL[2], GI_TEXEL[3]].map(|light| light / GI_PROBE_EXPOSURE);
+    eprintln!("GI on: opaque {:?} (accessor {:?}), blended {:?}; GI off: opaque {:?} (accessor {:?})", on[0].0, on[0].1, on[1].0, off[0].0, off[0].1);
+    let mut problems = Vec::new();
+    for c in 0..3 {
+        let want = albedo[c] * gi[c];
+        if (on[0].0[c] - want).abs() > GI_CONSUMER_TOLERANCE {
+            problems.push(format!("opaque channel {c}: {} against albedo x GI {want}", on[0].0[c]));
+        }
+        if (on[0].1[c] - gi[c]).abs() > GI_CONSUMER_TOLERANCE {
+            problems.push(format!("accessor channel {c}: {} against the GI {}", on[0].1[c], gi[c]));
+        }
+        if on[1].0[c].abs() > GI_CONSUMER_TOLERANCE || off[0].0[c].abs() > GI_CONSUMER_TOLERANCE {
+            problems.push(format!("channel {c}: blended {} and GI off {} take light", on[1].0[c], off[0].0[c]));
+        }
+    }
+    if (on[0].1[3] - GI_TEXEL[0]).abs() > GI_CONSUMER_TOLERANCE {
+        problems.push(format!("the visibility reads {} against {}", on[0].1[3], GI_TEXEL[0]));
+    }
+    assert!(problems.is_empty(), "{problems:#?}");
+}
+
+/// Look-integration L2 (B.4 consumer): where the term carries the GI's light, the sky's diffuse
+/// light is occluded by the visibility as it is, without Jimenez's multi-bounce fit: the fit stands
+/// in for the light nearby surfaces bounce, which the GI now adds itself, so keeping both counted
+/// the bounce twice. Without the constant the fit stays.
+#[test]
+#[ignore = "GPU: run with -- --ignored metal"]
+fn metal_with_gi_the_sky_light_is_occluded_without_the_multi_bounce_fit() {
+    let Some(gpu) = gpu() else { return };
+    let albedo = [0.8, 0.6, 0.4];
+    let surface = [[0.0, 1.0, 0.0, 0.0], [0.0, 0.6, 0.8, 0.7], [albedo[0], albedo[1], albedo[2], 0.0], [1.0, 0.0, 0.0, 0.0]];
+    let visibility = 0.5;
+    let gi_on = [("GX_SCENE_HDR", 1.0), ("GX_AO_GI", 1.0)];
+    let on = forward_gi_probe(&gpu, ([visibility, 0.0, 0.0, 0.0], 1.0, 1.0), &gi_on, &[surface]);
+    // The same visibility as a term without GI (an r8 texel reads gba (0, 0, 1): no bent normal).
+    let off = forward_gi_probe(&gpu, ([visibility, 0.0, 0.0, 1.0], 1.0, 1.0), &[("GX_SCENE_HDR", 1.0)], &[surface]);
+    eprintln!("sky light at visibility {visibility}: with GI {:?}, without {:?}", on[0].0, off[0].0);
+    for (c, ((with, without), albedo)) in on[0].0.iter().zip(off[0].0).zip(albedo).enumerate() {
+        let want = albedo * visibility;
+        assert!((with - want).abs() <= GI_CONSUMER_TOLERANCE, "channel {c}: {with} against albedo x visibility {want}");
+        assert!(without > want + GI_CONSUMER_TOLERANCE, "channel {c}: without GI the fit lifts {without} over {want}");
+    }
 }

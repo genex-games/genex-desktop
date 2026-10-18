@@ -550,6 +550,19 @@ impl TaaHistories {
         Ok(())
     }
 
+    /// `set`'s last resolve: the upscale's output when the set resolved by it last, else TAA's
+    /// (None before its first). What the next frame's screen-space GI gathers (B.4).
+    pub(crate) fn last_resolve(&self, set: HistorySet) -> Option<&wgpu::Texture> {
+        let index = set_slot(set);
+        if self.upscaled_last[index] == Some(true) {
+            return self.upscale[index].as_ref()?.written_texture();
+        }
+        match set {
+            HistorySet::Live => self.live.written_texture(),
+            HistorySet::Capture => self.capture.as_ref()?.written_texture(),
+        }
+    }
+
     /// `set`'s history texture of `slot` (None before its first resolve).
     pub(crate) fn written_texture(&self, set: HistorySet, slot: usize) -> Option<&wgpu::Texture> {
         match set {

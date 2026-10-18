@@ -5,6 +5,8 @@
 // The accessors the lighting chunks call are declared by each prelude that concatenates them:
 // `gx_fog() -> GxFog`, `gx_ambient_occlusion(world_pos) -> vec4<f32>` (xyz: the bent normal, zero
 // when none; w: visibility, 1 unoccluded) and `gx_contact_shadow(world_pos) -> f32` (1 unshadowed).
+// Each also declares `override GX_AO_GI: bool`: when true, the AO accessor's xyz is the
+// screen-space GI's light (renderer pass 2 B.4) and the term carries no bent normal.
 // The forward pass's are shaders/forward_effects.wgsl, the Level-2 v2 material prelude's are in
 // part2/material_v2.wgsl. A producer that is off or has not landed reads as its neutral value.
 

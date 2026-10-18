@@ -130,7 +130,8 @@ fn metal_every_harbour_shot_is_drawn_the_same_twice_exposed_and_written_as_a_png
 }
 
 /// Plan A.4's acceptance on Harbour Street: the white rug beside the café's red brick takes at
-/// least this many times the chroma it has under the sky's SH9 alone. The café is lit by warm
+/// least this many times the chroma it has under the sky's SH9 alone, with B.4's screen-space GI
+/// as without it. The café is lit by warm
 /// lamps, so the rug's colour is first white-balanced by its own far end (its strip farthest from
 /// the brick, under the same lamps): what is left is the colour the brick bounces onto it.
 const RUG_BLEED_RATIO_MIN: f64 = 2.0;
@@ -175,7 +176,10 @@ fn rug_strip(capture: &Capture, view_proj: genex::math::Mat4, x: (f32, f32)) -> 
 fn metal_the_cafe_rug_beside_the_red_brick_takes_its_colour() {
     // The café's shot at tick 600 drawn through the frame renderer (settled, the untextured
     // stand-ins) at desktop high, with the café's irradiance volume and with none baked; the rug's
-    // strip nearest the brick white-balanced by its strip farthest from it.
+    // strip nearest the brick white-balanced by its strip farthest from it. A.4's two frames draw
+    // the bitmask AO without screen-space GI; the third is desktop high with B.4's GI (as ultra
+    // ships it; look integration), and holds A.4's bleed: the GI reaches AO's 0.5 m only and takes the
+    // multi-bounce fit's place, so it keeps the volume's red rather than adding to it.
     use genex_platform_web::{MeshCache, to_scene};
     use genex_render::device_class::DeviceClass;
     use genex_render::presets::preset_quality;
@@ -186,12 +190,15 @@ fn metal_the_cafe_rug_beside_the_red_brick_takes_its_colour() {
     let camera = runtime.camera(View::Named("cafe")).expect("the café's camera");
     let frame = runtime.frame(View::Named("cafe")).expect("the café's frame");
     let class = DeviceClass::from_wire("desktop-high").expect("class");
-    let with = preset_quality(QualityPreset::High, class);
+    let mut ssgi = preset_quality(QualityPreset::High, class);
+    ssgi.ao_method = genex_render::settings::AoMethod::BitmaskGi;
+    let mut with = ssgi;
+    with.ao_method = genex_render::settings::AoMethod::Bitmask;
     let mut without = with;
     without.environment.irradiance_volumes = 0;
     let (near, far) = ((BLEED_FLOOR.min.x, BLEED_FLOOR.min.x + 0.8), (BLEED_FLOOR.max.x - 0.8, BLEED_FLOOR.max.x));
     let mut bleeds = Vec::new();
-    for (name, quality) in [("sh9", without), ("volume", with)] {
+    for (name, quality) in [("sh9", without), ("volume", with), ("ssgi", ssgi)] {
         let capture = support::game_capture(&gpu, class, Some(&quality), &Look::default(), &|on| {
             let mut meshes = MeshCache::default();
             meshes.load(&frame, harbour_assets(), |mesh| on.renderer.add_mesh(on.gpu, mesh));
@@ -206,8 +213,17 @@ fn metal_the_cafe_rug_beside_the_red_brick_takes_its_colour() {
         bleeds.push(balanced);
     }
     let ratio = chroma(bleeds[1]) / chroma(bleeds[0]).max(1e-9);
-    println!("{{\"row\":\"harbour-cafe-rug-bleed\",\"adapter\":\"{}\",\"sh9Chroma\":{:.5},\"volumeChroma\":{:.5},\"ratio\":{ratio:.3}}}", gpu.receipt().adapter, chroma(bleeds[0]), chroma(bleeds[1]));
+    let gi_ratio = chroma(bleeds[2]) / chroma(bleeds[0]).max(1e-9);
+    println!(
+        "{{\"row\":\"harbour-cafe-rug-bleed\",\"adapter\":\"{}\",\"sh9Chroma\":{:.5},\"volumeChroma\":{:.5},\"ssgiChroma\":{:.5},\"ratio\":{ratio:.3},\"ssgiRatio\":{gi_ratio:.3}}}",
+        gpu.receipt().adapter,
+        chroma(bleeds[0]),
+        chroma(bleeds[1]),
+        chroma(bleeds[2])
+    );
     let red = |rgb: [f64; 3]| rgb[0] / (rgb[0] + rgb[1] + rgb[2]);
     assert!(red(bleeds[1]) > red(bleeds[0]), "the rug turns toward the brick's red by it: {:?} -> {:?}", bleeds[0], bleeds[1]);
     assert!(ratio >= RUG_BLEED_RATIO_MIN, "the rug's chroma by the red brick is {ratio:.2}x the SH9's (at least {RUG_BLEED_RATIO_MIN}x)");
+    assert!(red(bleeds[2]) > red(bleeds[0]), "with B.4's GI the rug still turns toward the brick's red: {:?} -> {:?}", bleeds[0], bleeds[2]);
+    assert!(gi_ratio >= RUG_BLEED_RATIO_MIN, "with B.4's GI the rug's chroma by the red brick is {gi_ratio:.2}x the SH9's (at least {RUG_BLEED_RATIO_MIN}x)");
 }

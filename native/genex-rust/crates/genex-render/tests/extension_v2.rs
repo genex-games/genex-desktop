@@ -377,6 +377,25 @@ fn metal_golden_a_v2_material_shaded_by_gx_shade_pbr_renders() {
     check_golden_in("extension-v2", "material", &capture);
 }
 
+/// Look-integration L2 (B.4): a v2 material built to read the AO term as one with screen-space GI
+/// (`GX_AO_GI`, the renderer's own switch) draws the same picture on a frame whose AO does not run:
+/// the term bound there reads as full visibility and no light (a white texel read as GI lit every
+/// custom surface with its own albedo).
+#[test]
+#[ignore = "needs a GPU: run with --ignored metal"]
+fn metal_a_v2_material_reading_ssgi_draws_the_same_picture_where_ao_does_not_run() {
+    let Some(gpu) = gpu() else { return };
+    let mut renderer = Renderer::new(&gpu, WIDTH, HEIGHT).expect("renderer");
+    let mut materials = CustomMaterials::new(&gpu.device, core(), renderer.sample_count());
+    let shaded = materials.add_api(&gpu, ABI_V2, SHADED_V2, &shaded_uniforms(), &[]).expect("a v2 material");
+    let without = draw_with(&gpu, &mut renderer, &mut materials, &walled_scene(), &[centre_draw(shaded)]);
+    assert!(materials.set_ao_gi(true), "the v2 pipelines are built again");
+    assert!(!materials.set_ao_gi(true), "and only once");
+    let with = draw_with(&gpu, &mut renderer, &mut materials, &walled_scene(), &[centre_draw(shaded)]);
+    assert_eq!(pixel(&with, 72, 34), pixel(&without, 72, 34), "the lit face reads no GI light where AO does not run");
+    assert_eq!(with.digest(), without.digest(), "the same picture");
+}
+
 #[test]
 #[ignore = "needs a GPU: run with --ignored metal"]
 fn metal_a_v1_material_in_an_hdr_frame_degrades_to_ldr_and_renders_its_v1_golden() {

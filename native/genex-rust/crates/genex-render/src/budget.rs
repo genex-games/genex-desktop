@@ -651,7 +651,7 @@ fn register_post(ledger: &mut BudgetLedger, quality: &Quality, shape: &Shape) {
     // the history and the render-size upsample; the half-size mask and its upsample).
     let render = (shape.render.0 as u32, shape.render.1 as u32);
     if shape.ao_size(quality).is_some() {
-        let (frame, history) = crate::post::ao::target_bytes(render, &quality.ao);
+        let (frame, history) = crate::post::ao::target_bytes_shaped(render, &quality.ao, quality.ao_method.gi());
         ledger.register(BudgetKind::Target, "ao", frame);
         if history > 0 {
             ledger.register(BudgetKind::History, "ao-history", history);

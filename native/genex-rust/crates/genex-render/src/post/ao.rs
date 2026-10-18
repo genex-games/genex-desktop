@@ -472,7 +472,13 @@ fn targets_with_usage(render: (u32, u32), quality: &AoQuality, gi: bool, extra_u
 /// The bytes of AO's targets at `render` size under `quality` (the pool's ledger entries), split
 /// into the frame's own and the history it keeps.
 pub fn target_bytes(render: (u32, u32), quality: &AoQuality) -> (u64, u64) {
-    targets(render, quality).iter().fold((0, 0), |(frame, history), desc| match desc.label {
+    target_bytes_shaped(render, quality, false)
+}
+
+/// [`target_bytes`] for terms that hold screen-space GI (`gi`, [`GI_FORMAT`]) or not: what
+/// [`AoNode::acquire_shaped`] takes.
+pub fn target_bytes_shaped(render: (u32, u32), quality: &AoQuality, gi: bool) -> (u64, u64) {
+    targets_with_usage(render, quality, gi, TextureUsages::empty()).iter().fold((0, 0), |(frame, history), desc| match desc.label {
         HISTORY_LABEL | DEPTH_HISTORY_LABEL => (frame, history + desc.bytes()),
         _ => (frame + desc.bytes(), history),
     })
@@ -664,9 +670,10 @@ struct Layouts {
     denoise: BindGroupLayout,
 }
 
-/// What the node's bind groups are cached by: the input's generation, the targets' identity, and
-/// whether a motion target and a light are bound.
-type GroupsKey = (u64, u64, (bool, bool));
+/// What the node's bind groups are cached by: the input's generation, the targets' identity,
+/// whether a motion target is bound, and the light bound (look-integration L2: the renderer hands
+/// over TAA's other history slot every frame while the pooled inputs keep their generation).
+type GroupsKey = (u64, u64, bool, Option<TextureView>);
 
 /// AO (graph node 10): the view-depth chain, GTAO into the raw term, then the bilateral denoise
 /// (and the temporal blend) into the term. Holds its pipelines, targets, history parity and last
@@ -1015,7 +1022,8 @@ impl AoNode {
         self.acquire_shaped(device, pool, render, &settings.quality, settings.method.gi())
     }
 
-    fn acquire_shaped(&mut self, device: &Device, pool: &mut crate::target_pool::TargetPool, render: (u32, u32), quality: &AoQuality, gi: bool) -> Result<(), RenderError> {
+    /// [`AoNode::acquire`] with terms for screen-space GI ([`GI_FORMAT`]) when `gi`.
+    pub fn acquire_shaped(&mut self, device: &Device, pool: &mut crate::target_pool::TargetPool, render: (u32, u32), quality: &AoQuality, gi: bool) -> Result<(), RenderError> {
         let descs = targets_with_usage(render, quality, gi, self.extra_usage);
         let Some(size) = ao_size(render, quality.resolution) else {
             self.release(pool);
@@ -1118,11 +1126,11 @@ impl AoNode {
         })
     }
 
-    /// This frame's bind groups, cached by the input's generation, the targets' identity and
-    /// whether a motion target and a light are bound.
+    /// This frame's bind groups, cached by the input's generation, the targets' identity, whether
+    /// a motion target is bound and the light bound.
     fn bind_groups(&mut self, device: &Device, input: &AoInput<'_>) -> ParityGroups {
         let targets = self.targets.as_ref().expect("targets are made first");
-        let key = (input.generation, targets.id, (input.motion.is_some(), input.light.is_some()));
+        let key = (input.generation, targets.id, input.motion.is_some(), input.light.map(|light| light.view.clone()));
         if let Some((held, groups)) = &self.groups
             && *held == key
         {
@@ -1533,9 +1541,17 @@ fn ao_images(gpu: &Gpu, settings: &AoSettings, frames: &[((u32, u32), &AoFrame)]
         Some((render, _)) => lights.iter().map(|texels| source_texture(gpu, "ao light", *render, TextureFormat::Rgba32Float, texels).create_view(&Default::default())).collect(),
         None => Vec::new(),
     };
+    // A frame of the same size, depth, normals and motion as the one before keeps its stand-ins
+    // and their generation, as a renderer's pooled inputs do from frame to frame (the camera and
+    // the light may still change).
+    let mut held: Option<(&AoFrame, (u32, u32), PrepassStandIn, u64)> = None;
     for (index, &(render, frame)) in frames.iter().enumerate() {
         node.acquire_for(device, &mut pool, render, settings)?;
-        let stand_in = upload.run(gpu, render, frame)?;
+        let repeated = held.as_ref().is_some_and(|(before, size, _, _)| *size == render && same_inputs(before, frame));
+        if !repeated {
+            held = Some((frame, render, upload.run(gpu, render, frame)?, index as u64));
+        }
+        let (_, _, stand_in, generation) = held.as_ref().expect("held above");
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("ao image") });
         let input = AoInput {
             depth: &stand_in.depth.view,
@@ -1545,7 +1561,7 @@ fn ao_images(gpu: &Gpu, settings: &AoSettings, frames: &[((u32, u32), &AoFrame)]
             settings,
             facts: frame.facts,
             motion: stand_in.motion.as_ref(),
-            generation: index as u64,
+            generation: *generation,
             light: light_views.get(index.min(light_views.len().saturating_sub(1))).map(|view| AoLight { view, scale: 1.0 }),
         };
         node.encode(device, &gpu.queue, &mut encoder, input).ok_or_else(|| capture_failed("AO is off"))?;
@@ -1553,6 +1569,11 @@ fn ao_images(gpu: &Gpu, settings: &AoSettings, frames: &[((u32, u32), &AoFrame)]
         images.push(read_term(gpu, &node, render_size)?);
     }
     Ok(images)
+}
+
+/// Whether frames `a` and `b` upload the same depth, normals and motion.
+fn same_inputs(a: &AoFrame, b: &AoFrame) -> bool {
+    a.depth == b.depth && a.normals == b.normals && a.motion == b.motion
 }
 
 /// The GPU milliseconds of AO (GTAO plus the denoise) over `frame` at `render` size under

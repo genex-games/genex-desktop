@@ -15,6 +15,14 @@
 //!   the texture bound at binding 19 instead of the contact mask (r contact, g the sun, a 0). Its
 //!   history resets and is stashed for captures with AO's.
 //!
+//! - **Screen-space GI** (renderer pass 2 B.4, look-integration L2): on `AoMethod::BitmaskGi`
+//!   qualities AO's term also carries the light its occluded directions send, gathered from the
+//!   previous frame's lit scene the renderer hands over ([`ScreenEffects::set_ao_light`]); its
+//!   targets are taken by [`ScreenEffects::prepare_with_ao`]. Where they are not, the frame draws the
+//!   bitmask without GI. A frame whose AO
+//!   does not run binds a texel of full visibility and no light (`neutral_ao`), which reads as the
+//!   white texel did for a term without GI.
+//!
 //! Both nodes bring their half-resolution result to the render size with the joint-bilateral
 //! upsample (post::upsample) and take every target from the renderer's target pool
 //! ([`ScreenEffects::prepare`]), so the ledger holds what they hold and a frame that does not run
@@ -26,7 +34,7 @@ use wgpu::{Buffer, BufferUsages, CommandEncoder, Device, Queue, Sampler, Texture
 
 use crate::abi::GxFrameV2;
 use crate::error::RenderError;
-use crate::post::ao::{AoCamera, AoFrameFacts, AoInput, AoNode, AoSettings, depth_mips};
+use crate::post::ao::{AoCamera, AoFrameFacts, AoInput, AoLight, AoMethod, AoNode, AoSettings, depth_mips};
 use crate::settings::AoQuality;
 use crate::target_pool::TargetPool;
 use crate::post::contact_shadow::{ContactShadowCamera, ContactShadowFacts, ContactShadowInput, ContactShadowNode};
@@ -71,6 +79,9 @@ pub(super) struct EffectFrame<'a> {
 pub(super) struct ScreenEffects {
     /// The 1x1 white texture bound where an effect does not run.
     neutral: TextureView,
+    /// The 1x1 texel bound where AO does not run: visibility 1, no bent normal and no GI light
+    /// (r 1, gba 0).
+    neutral_ao: TextureView,
     /// The 1x1x1 aerial-perspective volume bound where node 11 did not write one: no in-scatter,
     /// full transmittance (`gx_apply_aerial` leaves the colour as it is).
     neutral_volume: TextureView,
@@ -89,12 +100,22 @@ pub(super) struct ScreenEffects {
     contact_view: Option<TextureView>,
     /// Whether AO's history starts over at its next frame.
     ao_reset: bool,
+    /// Whether AO's targets were taken for screen-space GI ([`ScreenEffects::prepare_with_ao`]).
+    ao_gi: bool,
+    /// The previous frame's lit scene the GI gathers and what its texels are multiplied by to
+    /// reach the scene's units ([`ScreenEffects::set_ao_light`]).
+    ao_light: Option<(TextureView, f32)>,
 }
 
 /// A 1x1 white `rgba8unorm` texture: visibility 1 with no bent normal, an unshadowed mask texel.
 fn neutral_white(device: &Device, queue: &Queue) -> TextureView {
+    neutral_texel(device, queue, "screen effect (neutral)", [u8::MAX; 4])
+}
+
+/// A 1x1 `rgba8unorm` texture holding `texel`.
+fn neutral_texel(device: &Device, queue: &Queue, label: &str, texel: [u8; 4]) -> TextureView {
     let texture = device.create_texture(&wgpu::TextureDescriptor {
-        label: Some("screen effect (neutral)"),
+        label: Some(label),
         size: wgpu::Extent3d { width: 1, height: 1, depth_or_array_layers: 1 },
         mip_level_count: 1,
         sample_count: 1,
@@ -105,7 +126,7 @@ fn neutral_white(device: &Device, queue: &Queue) -> TextureView {
     });
     queue.write_texture(
         texture.as_image_copy(),
-        &[u8::MAX; 4],
+        &texel,
         wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(4), rows_per_image: Some(1) },
         wgpu::Extent3d { width: 1, height: 1, depth_or_array_layers: 1 },
     );
@@ -153,6 +174,7 @@ impl ScreenEffects {
         let usage = BufferUsages::UNIFORM | BufferUsages::COPY_DST;
         Ok(ScreenEffects {
             neutral: neutral_white(device, queue),
+            neutral_ao: neutral_texel(device, queue, "ambient occlusion (neutral)", [u8::MAX, 0, 0, 0]),
             neutral_volume: neutral_volume(device, queue),
             neutral_cube: neutral_cube(device),
             march_frame: buffer(device, "contact shadow frame", size_of::<GxFrameV2>() as u64, usage)?,
@@ -163,6 +185,8 @@ impl ScreenEffects {
             ao_view: None,
             contact_view: None,
             ao_reset: false,
+            ao_gi: false,
+            ao_light: None,
         })
     }
 
@@ -170,22 +194,44 @@ impl ScreenEffects {
     /// frame runs (AO under `ao`, contact shadows when `contact`, the sun-shadow mask beside them
     /// under `sun_mask`) made now with their targets taken from `pool` (so the ledger holds them).
     /// A node that does not run gives its targets back: the ledger counts them freed, and they are.
-    pub(super) fn prepare(&mut self, device: &Device, pool: &mut TargetPool, render: (u32, u32), ao: Option<&AoQuality>, contact: bool, sun_mask: Option<SunMaskKey>) -> Result<(), RenderError> {
+    /// On a [`AoMethod::BitmaskGi`] quality AO's targets hold screen-space GI, so the frame draws it
+    /// (with the light of [`ScreenEffects::set_ao_light`]) and the forward pass reads the term with
+    /// `GX_AO_GI` (look-integration L2).
+    pub(super) fn prepare_with_ao(&mut self, device: &Device, pool: &mut TargetPool, render: (u32, u32), ao: Option<&AoSettings>, contact: bool, sun_mask: Option<SunMaskKey>) -> Result<(), RenderError> {
+        self.prepare_ao(device, pool, render, ao.map(|settings| (&settings.quality, settings.method.gi())))?;
+        self.prepare_effects(device, pool, render, contact, sun_mask)
+    }
+
+    /// The light the next frame's screen-space GI gathers: the previous frame's lit scene
+    /// (TAA's resolve) and what its texels are multiplied by: 1 for a light stored pre-exposed, as
+    /// TAA's resolve is, since the forward pass divides the GI by its own pre-exposure
+    /// (`GX_AO_GI`); None gathers black. Set every frame before node 10.
+    pub(super) fn set_ao_light(&mut self, light: Option<(TextureView, f32)>) {
+        self.ao_light = light;
+    }
+
+    /// AO's part of the frame's preparation: its node made and its targets taken under `ao` (the
+    /// quality and whether they hold screen-space GI), given back without.
+    fn prepare_ao(&mut self, device: &Device, pool: &mut TargetPool, render: (u32, u32), ao: Option<(&AoQuality, bool)>) -> Result<(), RenderError> {
         self.ao_view = None;
-        self.contact_view = None;
-        match ao {
-            Some(quality) => {
-                if self.ao.is_none() {
-                    self.ao = Some(AoNode::new(device)?);
-                }
-                self.ao.as_mut().expect("made above").acquire(device, pool, render, quality)?;
-            }
+        self.ao_gi = ao.is_some_and(|(_, gi)| gi);
+        let Some((quality, gi)) = ao else {
             // The node drops its views as the pool releases the targets.
-            None => match self.ao.as_mut() {
+            match self.ao.as_mut() {
                 Some(node) => node.release(pool),
                 None => crate::post::ao::LABELS.iter().for_each(|label| pool.release(label)),
-            },
+            }
+            return Ok(());
+        };
+        if self.ao.is_none() {
+            self.ao = Some(AoNode::new(device)?);
         }
+        self.ao.as_mut().expect("made above").acquire_shaped(device, pool, render, quality, gi)
+    }
+
+    /// The contact shadows' and the sun-shadow mask's part of the frame's preparation.
+    fn prepare_effects(&mut self, device: &Device, pool: &mut TargetPool, render: (u32, u32), contact: bool, sun_mask: Option<SunMaskKey>) -> Result<(), RenderError> {
+        self.contact_view = None;
         if contact {
             if self.contact.is_none() {
                 self.contact = Some(ContactShadowNode::new(device)?);
@@ -230,7 +276,7 @@ impl ScreenEffects {
     /// The AO term and the contact-shadow mask the world pass binds now (the neutral texture for a
     /// node that did not run).
     pub(super) fn views(&self) -> [TextureView; 2] {
-        [self.ao_view.as_ref().unwrap_or(&self.neutral).clone(), self.contact_view.as_ref().unwrap_or(&self.neutral).clone()]
+        [self.ao_view.as_ref().unwrap_or(&self.neutral_ao).clone(), self.contact_view.as_ref().unwrap_or(&self.neutral).clone()]
     }
 
     /// AO's history starts over at its next frame, and the sun-shadow mask's with it.
@@ -269,11 +315,17 @@ impl ScreenEffects {
     }
 
     /// Graph node 10: AO of `settings` for `frame`. The render passes it opened (0: none).
+    /// Screen-space GI runs only on targets taken for it ([`ScreenEffects::prepare_with_ao`]);
+    /// otherwise a GI quality draws the bitmask alone.
     pub(super) fn encode_ao(&mut self, device: &Device, queue: &Queue, encoder: &mut CommandEncoder, frame: &EffectFrame<'_>, settings: &AoSettings) -> u32 {
         let Some(node) = self.ao.as_mut() else { return 0 };
         if std::mem::take(&mut self.ao_reset) {
             node.reset_history();
         }
+        let gi = settings.method.gi() && self.ao_gi;
+        let drawn = if settings.method.gi() && !gi { settings.with_method(AoMethod::Bitmask) } else { *settings };
+        let settings = &drawn;
+        let light = self.ao_light.as_ref().filter(|_| gi).map(|(view, scale)| AoLight { view, scale: *scale });
         let facts = AoFrameFacts { frame_index: frame.frame_index, depth_reversed: frame.depth_reversed, ..AoFrameFacts::default() };
         let input = AoInput {
             depth: frame.depth,
@@ -284,7 +336,7 @@ impl ScreenEffects {
             facts,
             motion: frame.motion,
             generation: frame.generation,
-            light: None,
+            light,
         };
         let Some(output) = node.encode(device, queue, encoder, input) else { return 0 };
         self.ao_view = Some(output.view);
