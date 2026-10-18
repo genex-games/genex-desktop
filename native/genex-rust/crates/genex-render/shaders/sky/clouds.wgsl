@@ -35,7 +35,7 @@ struct CloudParams {
     layer: vec4<f32>,
     // xy: the weather offset (km); z: the camera's height (km); w: the sky's radiance multiplier.
     offset: vec4<f32>,
-    // xyz: towards the sun.
+    // xyz: towards the light (the sun, or the moon on a moonlit night); w: 1 for the moon.
     sun_dir: vec4<f32>,
     // rgb: the sun's illuminance outside the atmosphere.
     sun_illuminance: vec4<f32>,
@@ -58,9 +58,15 @@ const CLOUD_START_MAX_KM: f32 = 160.0;
 const CLOUD_SPAN_MAX_KM: f32 = 16.0;
 // The ray ends once less than this of the sky behind is left.
 const CLOUD_OPAQUE: f32 = 0.01;
-// The march towards the sun covers this much of the layer's thickness, at most this many km.
+// The march towards the sun covers this much of the layer's thickness (at most this many km)
+// along the vertical, so as far again along a slanting sun as the slant asks, up to the grazing
+// reach: a low sun reaches a cloud's base only through kilometres of it, so the bases of the clouds
+// overhead stay in their own shade at golden hour instead of glowing orange through (look lane SKY).
 const CLOUD_LIGHT_SHARE: f32 = 0.6;
 const CLOUD_LIGHT_MAX_KM: f32 = 2.0;
+const CLOUD_LIGHT_GRAZING_KM: f32 = 10.0;
+// The sine of the sun's elevation the slant is read at, at least (about 6 degrees).
+const CLOUD_LIGHT_SLANT_MIN: f32 = 0.1;
 // Wrenninge's octaves: each scatters this share as much, through this share of the optical depth,
 // with this share of the phase's asymmetry.
 const CLOUD_OCTAVES: u32 = 4u;
@@ -153,7 +159,8 @@ fn cloud_fraction(p: vec3<f32>) -> f32 {
 // The optical depth from `p` towards the sun through the layer.
 fn cloud_light_depth(p: vec3<f32>, sun: vec3<f32>) -> f32 {
     let steps = max(params.steps.y, 1u);
-    let reach = min((params.layer.y - params.layer.x) * CLOUD_LIGHT_SHARE, CLOUD_LIGHT_MAX_KM);
+    let vertical = min((params.layer.y - params.layer.x) * CLOUD_LIGHT_SHARE, CLOUD_LIGHT_MAX_KM);
+    let reach = min(vertical / max(abs(sun.y), CLOUD_LIGHT_SLANT_MIN), CLOUD_LIGHT_GRAZING_KM);
     let n = f32(steps);
     var depth = 0.0;
     var travelled = 0.0;
@@ -199,20 +206,41 @@ fn cloud_sunlight(p: vec3<f32>, sun: vec3<f32>) -> vec3<f32> {
         let closest = r * sqrt(max(1.0 - mu * mu, 0.0)) - atmosphere.radii.x;
         lit = smoothstep(-CLOUD_EARTH_SHADOW_KM, CLOUD_EARTH_SHADOW_KM, closest);
     }
-    return params.sun_illuminance.rgb * cloud_transmittance(r - atmosphere.radii.x, mu) * lit;
+    return params.sun_illuminance.rgb * cloud_air_tint(cloud_transmittance(r - atmosphere.radii.x, mu)) * lit;
 }
 
-// The sky's light the layer sits in: the sky-view LUT straight up and around the horizon.
-fn cloud_ambient() -> vec3<f32> {
-    let size = vec2<f32>(textureDimensions(sky_view));
-    let zenith_v = 0.5 / size.y;
-    let horizon_v = 0.5 - 0.5 / size.y;
-    var sum = textureSampleLevel(sky_view, lut_sampler, vec2<f32>(0.5, zenith_v), 0.0).rgb * 2.0;
-    for (var i = 0u; i < 3u; i++) {
-        let u = (f32(i) * 0.5 * (size.x - 1.0) + 0.5) / size.x;
-        sum += textureSampleLevel(sky_view, lut_sampler, vec2<f32>(u, horizon_v), 0.0).rgb;
+// The air's transmittance `t` as the clouds take it: by the sun as it is; by the moon its luminance
+// alone, so moonlit clouds keep the moon's own tint (night vision sees no warm cast: a low moon's
+// reddened light drew them sepia; look lane SKY).
+fn cloud_air_tint(t: vec3<f32>) -> vec3<f32> {
+    if params.sun_dir.w > 0.5 {
+        return vec3<f32>(dot(t, CLOUD_LUMINANCE));
     }
-    return sum / 5.0;
+    return t;
+}
+
+// The sky's light the layer sits in: the sky-view LUT's cosine-weighted mean over the sky above
+// (the zenith and rings at CLOUD_AMBIENT_RINGS elevations, CLOUD_AMBIENT_AZIMUTHS round each). Three
+// horizon samples weighed like the zenith let the low sun's glow light the whole deck at golden
+// hour, flat orange, and dyed the environment's ambient (look lane SKY).
+const CLOUD_AMBIENT_AZIMUTHS: u32 = 8u;
+const CLOUD_AMBIENT_RINGS: vec3<f32> = vec3<f32>(0.2618, 0.6981, 1.1345);
+fn cloud_ambient(sun: vec3<f32>, height: f32) -> vec3<f32> {
+    // The zenith's weight: a cap a ring's spacing wide, cos(theta) sin(theta) near 0 integrated.
+    var sum = cloud_sky(vec3<f32>(0.0, 1.0, 0.0), sun, height) * 0.1;
+    var weight = 0.1;
+    for (var ring = 0u; ring < 3u; ring++) {
+        let elevation = CLOUD_AMBIENT_RINGS[ring];
+        // cos(zenith) sin(zenith) of the ring, shared by its samples.
+        let share = sin(elevation) * cos(elevation) / f32(CLOUD_AMBIENT_AZIMUTHS);
+        for (var i = 0u; i < CLOUD_AMBIENT_AZIMUTHS; i++) {
+            let azimuth = (f32(i) + 0.5) / f32(CLOUD_AMBIENT_AZIMUTHS) * 2.0 * GX_CLOUD_PI;
+            let dir = vec3<f32>(cos(elevation) * cos(azimuth), sin(elevation), cos(elevation) * sin(azimuth));
+            sum += cloud_sky(dir, sun, height) * share;
+            weight += share;
+        }
+    }
+    return sum / weight;
 }
 
 // Interleaved gradient noise (Jimenez 2014) of a texel: where along its first step its march starts.
@@ -243,7 +271,7 @@ fn cloud_march(dir: vec3<f32>, texel: vec2<u32>) -> vec4<f32> {
     // Away from the sun, the powder term darkens the clouds' thin edges (Schneider 2015): from the
     // sample's own density, at most half.
     let powder_share = 0.25 - 0.25 * cos_theta;
-    let ambient = cloud_ambient();
+    let ambient = cloud_ambient(sun, height);
     let intensity = params.offset.w;
     var light = vec3<f32>(0.0);
     var through = 1.0;
@@ -280,11 +308,22 @@ fn cloud_march(dir: vec3<f32>, texel: vec2<u32>) -> vec4<f32> {
     // mean depth.
     let mean = camera + dir * (depth_sum / depth_weight);
     let mean_r = length(mean);
-    let air = min(cloud_transmittance(height, dir.y) / max(cloud_transmittance(mean_r - bottom, dot(mean / mean_r, dir)), vec3<f32>(1e-6)), vec3<f32>(1.0));
+    let air = cloud_air_tint(min(cloud_transmittance(height, dir.y) / max(cloud_transmittance(mean_r - bottom, dot(mean / mean_r, dir)), vec3<f32>(1e-6)), vec3<f32>(1.0)));
     // The sky in front of the clouds: what the air up to them scatters, the sky-view LUT's share
     // the clouds hide (the composite multiplies the whole sky by `through`).
     let front = cloud_sky(dir, sun, height) * (vec3<f32>(1.0) - air) * (1.0 - through);
-    return vec4<f32>(light * air + front, through);
+    return vec4<f32>(cloud_moonlit(light) * air + front, through);
+}
+
+// The clouds' own light `light` as night vision takes it under the moon: its luminance in the
+// moon's light's colour (the game's tint), so the moonlit sky's reddened glow round a low moon
+// lights them neutral, not sepia (look lane SKY). By the sun, as it is.
+fn cloud_moonlit(light: vec3<f32>) -> vec3<f32> {
+    if params.sun_dir.w <= 0.5 {
+        return light;
+    }
+    let moon = params.sun_illuminance.rgb;
+    return dot(light, CLOUD_LUMINANCE) * moon / max(dot(moon, CLOUD_LUMINANCE), 1e-12);
 }
 
 // The sky-view LUT along unit `dir` with the sun towards unit `sun` at `height` km (sky_draw.wgsl's

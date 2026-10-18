@@ -5,7 +5,7 @@
 use genex::egui;
 use genex::math::{self, Vec3, vec3};
 use genex::prelude::*;
-use genex::render::{Bloom, Environment, Exposure, Fog, HdriEnvironment, HdriSun, QualityPreset, RenderConfig, ShadowConfig, ShadowFilter, SkyParams, Tonemap};
+use genex::render::{Bloom, Clouds, Environment, Exposure, Fog, HdriEnvironment, HdriSun, QualityPreset, RenderConfig, ShadowConfig, ShadowFilter, SkyParams, Tonemap};
 
 use crate::street::{self, Surfaces};
 
@@ -38,6 +38,12 @@ const SKY_INTENSITY: f32 = 0.7;
 const SKY_SUN_DEGREES: f32 = 0.5;
 /// The ground the physical sky sees below the horizon (linear rgb): wet asphalt.
 const SKY_GROUND: [f32; 3] = [0.05, 0.05, 0.055];
+/// The physical sky's clouds (renderer pass 2 B.5, drawn from desktop medium up; phones and low
+/// draw none, D16): the rain's clouds breaking up over the roofs after the shower.
+const SKY_CLOUD_COVERAGE: f32 = 0.5;
+/// Where the clouds' weather is shifted to (km): a gap over the street's far end, where the night's
+/// moon stands 15 degrees up (unshifted, a cloud hid it; any shift of 2 to 16 km along z clears it).
+const SKY_CLOUD_OFFSET_KM: [f32; 2] = [0.0, 4.0];
 /// The fetched overcast dusk map (CC0, Poly Haven `kloppenheim_01_puresky`; assets-manifest.json).
 pub const DUSK_HDRI: &str = "fetched/dusk-sky.hdr";
 /// The dusk map's light against the street's sun (the map is lit as it is, its own sun off, so the
@@ -133,7 +139,13 @@ impl Backdrop {
     /// The environment a frame declares for it.
     pub fn environment(self) -> Environment {
         match self {
-            Backdrop::Sky => Environment::Sky(SkyParams::default().with_intensity(SKY_INTENSITY).with_sun_angular_radius_degrees(SKY_SUN_DEGREES).with_ground_albedo(SKY_GROUND)),
+            Backdrop::Sky => Environment::Sky(
+                SkyParams::default()
+                    .with_intensity(SKY_INTENSITY)
+                    .with_sun_angular_radius_degrees(SKY_SUN_DEGREES)
+                    .with_ground_albedo(SKY_GROUND)
+                    .with_clouds(Some(Clouds::default().with_coverage(SKY_CLOUD_COVERAGE).with_offset(SKY_CLOUD_OFFSET_KM))),
+            ),
             Backdrop::Dusk => Environment::Hdri(HdriEnvironment::new(DUSK_HDRI).with_intensity(DUSK_INTENSITY).with_sun(HdriSun::Off)),
         }
     }

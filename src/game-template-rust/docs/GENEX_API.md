@@ -262,8 +262,8 @@ with an `.exposure_curve(..)` (Grading and the lens) keeps the night darker than
 .with_rayleigh(..).with_mie(..).with_absorption(..).with_planet(..)` any other. Clouds:
 `.with_clouds(Some(Clouds::default().with_coverage(0.5)))` (`use genex::render::Clouds;`;
 `.with_layer(base_km, thickness_km)`, `.with_density(..)`, `.with_offset([x_km, z_km])` to let them
-drift) adds a layer of cumulus lit by the sun through the air, drawn in the sky and seen by
-reflections and the ambient light, on desktop `medium` and up; `low` and phones show a clear sky.
+drift) adds cumulus lit by the sun (by night, the moon), drawn in the sky and seen by reflections
+and the ambient light, on desktop `medium` and up; `low` and phones show a clear sky.
 `Environment::hdri("env/sky.hdr")` lights the scene with an equirectangular
 Radiance `.hdr` under `assets/` (`HdriEnvironment::new(path).with_rotation_degrees(90.0)
 .with_intensity(0.5)`, inside `Environment::Hdri(..)`) and is drawn behind it. By default

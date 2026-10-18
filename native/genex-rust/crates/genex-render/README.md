@@ -211,9 +211,16 @@ the air in front of the clouds from the transmittance and sky-view LUTs) without
 each texel starts at a fixed interleaved gradient noise of its position. Amortised: while the sun or
 the camera's height or the layer (a drifting offset) moves, each frame marches one texel of every
 4x4 block (8x8 on ultra); a settled capture, the first frame or a sun that jumps 2 degrees marches
-it whole. `tests/clouds.rs` holds the
+it whole. The clouds' ambient is the sky-view LUT's cosine-weighted mean over the sky (the zenith
+and three rings), and the march towards a low sun reaches as far through the layer as the slant
+asks (up to 10 km), so golden-hour bases overhead stay in their own shade instead of glowing flat
+orange and dyeing the environment's ambient. On a night the moon outshines the set sun
+(`night_sky::ground_light`), the moon lights the clouds with the moonlit sky-view LUT as their
+ambient, and their light takes the moon's tint at its luminance (no warm cast from the low moon's
+reddened light). The clouds light the scene's shade through the environment, so a heavy
+golden-hour layer still warms it (the showcase Lakeside keeps 0.35 cover). `tests/clouds.rs` holds the
 budget (1.0 ms a frame on high, march and composite), the sun-disc and cloud reprojection row under
-a turning camera and the cloud-edge flicker row.
+a turning camera, the cloud-edge flicker row, the moonlit-night row and the golden-hour ambient row.
 
 ## Fog, aerial perspective and froxel fog
 

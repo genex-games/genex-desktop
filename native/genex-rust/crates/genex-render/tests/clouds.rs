@@ -582,3 +582,91 @@ fn metal_evidence_frames_of_the_clouds() {
         }
     }
 }
+
+/// The lowest elevation the night row reads clouds at, degrees: the shots look over the treeline,
+/// and below it the clouds are mostly the hazy sky in front of them.
+const NIGHT_ROW_ELEVATION_DEGREES: f32 = 10.0;
+
+/// The mean light, rgb, of a `width`-wide panorama's cloud texels (behind more than half a cloud)
+/// at least [`NIGHT_ROW_ELEVATION_DEGREES`] up (`sky/clouds_map.wgsl`'s rows: the zenith first,
+/// elevation a right angle times (t + t^2) / 2 of t = 1 - v).
+fn mean_cloud_light(panorama: &[[f32; 4]], width: usize) -> [f32; 3] {
+    let rows = panorama.len() / width;
+    let high = |at: usize| {
+        let up = 1.0 - ((at / width) as f32 + 0.5) / rows as f32;
+        (0.25 * std::f32::consts::PI * (up + up * up)).to_degrees() >= NIGHT_ROW_ELEVATION_DEGREES
+    };
+    let clouds: Vec<&[f32; 4]> = panorama.iter().enumerate().filter(|(at, t)| t[3] < 0.5 && high(*at)).map(|(_, t)| t).collect();
+    let n = clouds.len().max(1) as f32;
+    [0, 1, 2].map(|c| clouds.iter().map(|t| t[c]).sum::<f32>() / n)
+}
+
+/// Look lane SKY (after GB): on a moonlit night the clouds are lit by the moon, as the ground is
+/// (`night_sky::ground_light`: the brighter of the sun and the moon), not left to the twilight
+/// under the horizon: they read moonlit and neutral against the moonlit sky instead of dark,
+/// warm shapes hiding the stars. The Lakeside's night: the sun 7 degrees under the horizon, the
+/// full moon 7 degrees up opposite it, cooled ([0.55, 0.72, 1.0]) at 0.012 of the sun's light.
+#[test]
+#[ignore = "needs a GPU: run with --ignored metal"]
+fn metal_a_moonlit_nights_clouds_are_lit_by_the_moon_and_neutral() {
+    let Some(gpu) = gpu() else { return };
+    let quality = environment(QualityPreset::High);
+    let sun = towards(-7.0, 270.0);
+    let moon = genex_render::night_sky::Moon::new(towards(7.0, 90.0)).with_moonlight(0.012).with_tint([0.55, 0.72, 1.0]);
+    let night = |moon: Option<genex_render::night_sky::Moon>| {
+        let sky = cloudy().with_moon(moon).with_stars(4e-5);
+        let mut state = SkyState::new();
+        state.set_environment(&Environment::Sky(sky));
+        encode_sky(&gpu, &mut state, &sky, &quality, sky_frame(sun, 0), true);
+        mean_cloud_light(&state.read_clouds(&gpu).expect("panorama"), quality.clouds.expect("clouds on high").panorama.0 as usize)
+    };
+    let moonless = night(None);
+    let moonlit = night(Some(moon));
+    let lum = |rgb: [f32; 3]| 0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2];
+    let lift = lum(moonlit) / lum(moonless).max(1e-9);
+    let warmth = moonlit[0] / moonlit[2].max(1e-9);
+    eprintln!("night clouds: moonless {moonless:?}, moonlit {moonlit:?}, lift {lift:.2}x, red over blue {warmth:.3}");
+    assert!(lift >= 2.0, "the moon lights the clouds: {lift:.2}x the moonless night's");
+    assert!(warmth <= 1.0, "moonlit clouds are neutral or cool, never warm (red over blue {warmth:.3})");
+}
+
+/// The golden-hour layer the row reads (the Lakeside's coverage).
+const GOLDEN_COVERAGE: f32 = 0.4;
+/// The warmest the golden-hour sky overhead may read with the clouds (the +Y face's red over blue:
+/// grey or cooler, never orange), and the most they may brighten it.
+const GOLDEN_RED_OVER_BLUE_MAX: f32 = 1.0;
+const GOLDEN_BRIGHTENING_MAX: f32 = 2.0;
+
+/// Look lane SKY: at golden hour a cumulus overhead is seen from below, from its base, which the
+/// low sun reaches only through kilometres of cloud: it reads grey to rose in the sky's light,
+/// orange only at the edges towards the sun. The march's light reach towards a grazing sun was
+/// held to 2 km, so the low sun lit the bases through and the whole deck glowed flat orange (B.5's
+/// own look note): in the environment cube it dyed the Lakeside's ambient light, and the golden
+/// meadow turned orange-brown (D13: the meadow keeps its green). The cause was the march's
+/// ambient term: three horizon samples weighed like the zenith let the low sun's glow light every
+/// cloud. The cube's +Y face with the layer reads grey or cooler and at most twice as bright.
+#[test]
+#[ignore = "needs a GPU: run with --ignored metal"]
+fn metal_golden_hour_clouds_overhead_do_not_dye_the_ambient_orange() {
+    let Some(gpu) = gpu() else { return };
+    let quality = environment(QualityPreset::High);
+    let sun = towards(7.0, 15.0);
+    let side = 64;
+    let face = (side * side) as usize;
+    let up = |sky: SkyParams| {
+        let mut state = SkyState::new();
+        state.set_environment(&Environment::Sky(sky));
+        encode_sky(&gpu, &mut state, &sky, &quality, sky_frame(sun, 0), true);
+        let texels = bake_cube(&gpu, &state, side);
+        let n = face as f32;
+        [0, 1, 2].map(|c| texels[2 * face..3 * face].iter().map(|t| t[c]).sum::<f32>() / n)
+    };
+    let clear = up(SkyParams::default());
+    let cloudy = up(SkyParams::default().with_clouds(Some(Clouds::default().with_coverage(GOLDEN_COVERAGE))));
+    let lum = |rgb: [f32; 3]| 0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2];
+    let warmth = |rgb: [f32; 3]| rgb[0] / rgb[2].max(1e-9);
+    let (red_over_blue, brightening) = (warmth(cloudy), lum(cloudy) / lum(clear).max(1e-9));
+    eprintln!("golden hour +Y: clear {clear:?} (red over blue {:.2}), cloudy {cloudy:?} (red over blue {red_over_blue:.2}); brightening {brightening:.2}x", warmth(clear));
+    assert!(red_over_blue <= GOLDEN_RED_OVER_BLUE_MAX, "the clouds overhead dye the ambient orange: red over blue {red_over_blue:.2} (at most {GOLDEN_RED_OVER_BLUE_MAX})");
+    assert!(brightening <= GOLDEN_BRIGHTENING_MAX, "the clouds overhead brighten the ambient {brightening:.2}x (at most {GOLDEN_BRIGHTENING_MAX})");
+}

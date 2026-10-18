@@ -3,7 +3,7 @@
 
 use genex::math::{self, Vec3, vec3};
 use genex::prelude::*;
-use genex::render::{Environment, HdriEnvironment, SkyParams};
+use genex::render::{Clouds, Environment, HdriEnvironment, SkyParams};
 use genex::{Gfx, Model, Terrain, TerrainLayer};
 
 use crate::layout::{TreeLod, layout, tree_asset};
@@ -166,6 +166,16 @@ pub const SKY_INTENSITY: f32 = 0.8;
 pub const SKY_SUN_DEGREES: f32 = 0.6;
 /// The ground the physical sky sees below the horizon (linear rgb): the meadow's olive.
 pub const SKY_GROUND: [f32; 3] = [0.16, 0.15, 0.08];
+/// The physical sky's clouds (renderer pass 2 B.5, drawn from desktop medium up; phones and low
+/// draw none, D16): a few fair-weather cumulus over the lake, thinner than the renderer's default.
+/// The clouds light the scene's ambient through the environment cube: at 0.4 they warmed the
+/// golden meadow on the wide shot's left by 13 levels (D13 keeps it); at 0.3 hardly a cloud shows.
+pub const SKY_CLOUD_COVERAGE: f32 = 0.35;
+
+/// The physical sky's layer of clouds ([`SKY_CLOUD_COVERAGE`]).
+pub fn sky_clouds() -> Clouds {
+    Clouds::default().with_coverage(SKY_CLOUD_COVERAGE)
+}
 /// The clear map's light against the lakeside's sun: its midday sky is far brighter than the
 /// golden-hour scene was lit for.
 pub const HDRI_INTENSITY: f32 = 0.25;
@@ -189,7 +199,11 @@ impl Backdrop {
     pub fn environment(self) -> Environment {
         match self {
             Backdrop::Sky => Environment::Sky(
-                SkyParams::default().with_intensity(SKY_INTENSITY).with_sun_angular_radius_degrees(SKY_SUN_DEGREES).with_ground_albedo(SKY_GROUND),
+                SkyParams::default()
+                    .with_intensity(SKY_INTENSITY)
+                    .with_sun_angular_radius_degrees(SKY_SUN_DEGREES)
+                    .with_ground_albedo(SKY_GROUND)
+                    .with_clouds(Some(sky_clouds())),
             ),
             Backdrop::Golden => Environment::Hdri(HdriEnvironment::new(GOLDEN_HDRI).with_intensity(GOLDEN_INTENSITY).with_rotation_degrees(GOLDEN_ROTATION_DEGREES)),
             Backdrop::Map => Environment::Hdri(HdriEnvironment::new(HDRI).with_intensity(HDRI_INTENSITY)),

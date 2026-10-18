@@ -191,7 +191,15 @@ fn seconds(tick: u64) -> f32 {
     tick as f32 / TICKS_PER_SECOND
 }
 
-/// The clouds over the physical sky (`clouds.wgsl`): one full-screen triangle behind the scene.
+/// Whether the renderer's own cloud panorama (renderer pass 2 B.5, `world::sky_clouds`) draws
+/// behind the scene: the physical sky at a quality that marches it (desktop medium and up). There
+/// the lakeside's flat layer stands aside; on phones and low it still draws.
+pub fn renderer_draws_clouds(backdrop: crate::world::Backdrop, environment: &genex::render::EnvironmentQuality) -> bool {
+    backdrop == crate::world::Backdrop::Sky && environment.sky && environment.clouds.is_some()
+}
+
+/// The clouds over the physical sky (`clouds.wgsl`): one full-screen triangle behind the scene
+/// where the renderer's panorama does not draw ([`renderer_draws_clouds`]).
 #[derive(Default)]
 pub struct Clouds {
     resources: Option<(gpu::Buffer, gpu::BindGroup, gpu::RenderPipeline)>,
@@ -217,6 +225,9 @@ impl GpuPass<World> for Clouds {
     }
 
     fn run(&mut self, ctx: &mut GpuPassCtx<'_, '_, World>) {
+        if renderer_draws_clouds(ctx.sim().world.backdrop, &ctx.quality().environment) {
+            return;
+        }
         let Some((buffer, group, pipeline)) = &self.resources else { return };
         let time = seconds(ctx.sim().world.tick);
         let _ = ctx.write_buffer(buffer, 0, &floats(&[time, 0.0, 0.0, 0.0]));

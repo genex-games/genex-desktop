@@ -404,6 +404,14 @@ pub fn atmosphere(sky: &SkyParams, quality: &EnvironmentQuality, frame: &SkyFram
     }
 }
 
+/// Whether `sky`'s clouds are lit by its moon this `frame`: the moon outshines the sun at the
+/// ground ([`crate::night_sky::ground_light`] picks it).
+fn clouds_moonlit(sky: &SkyParams, frame: &SkyFrame) -> bool {
+    let Some(moon) = sky.moon.as_ref() else { return false };
+    let (light, _) = crate::night_sky::ground_light(sky, frame.camera_height_km, frame.sun_dir, frame.sun_illuminance);
+    light == moon.direction && light != frame.sun_dir
+}
+
 /// The sky-view kernel's atmosphere row for the moonlit sky (B.2): `atmosphere` with the moon of
 /// `sky` as its light, the moon's light outside the atmosphere
 /// ([`crate::night_sky::moon_light`]) for `frame`'s sun.
@@ -1275,8 +1283,18 @@ impl SkyState {
             }
             gpu.rebind_draw(device);
         }
-        let inputs = crate::clouds::CloudInputs { atmosphere: &gpu.atmosphere, transmittance: &gpu.transmittance.view, sky_view: &gpu.sky_view.view, sampler: &gpu.sampler };
-        let frame = crate::clouds::CloudFrame { clouds: clouds.validated(), atmosphere: atmosphere(refresh.sky, refresh.quality, &refresh.frame), force: refresh.force };
+        let sunlit = atmosphere(refresh.sky, refresh.quality, &refresh.frame);
+        // The clouds are lit as the ground is (`night_sky::ground_light`): on a night the moon
+        // outshines the sun under the horizon, by the moon and the moonlit sky, so they read
+        // moonlit and neutral instead of dark shapes lit warm by the twilight (look lane SKY).
+        let moonlit = gpu.moon.is_some() && clouds_moonlit(refresh.sky, &refresh.frame);
+        let moon_view = gpu.moon.as_ref().map(|(lut, _)| &lut.view).filter(|_| moonlit);
+        let (lit, sky_view) = match moon_view {
+            Some(view) => (moon_atmosphere(&sunlit, refresh.sky, &refresh.frame), view),
+            None => (sunlit, &gpu.sky_view.view),
+        };
+        let inputs = crate::clouds::CloudInputs { atmosphere: &gpu.atmosphere, transmittance: &gpu.transmittance.view, sky_view, sampler: &gpu.sampler };
+        let frame = crate::clouds::CloudFrame { clouds: clouds.validated(), atmosphere: lit, force: refresh.force, moonlit: moon_view.is_some() };
         let panorama = gpu.clouds.as_mut().expect("made above");
         let Some(whole) = panorama.encode(device, queue, encoder, (&inputs, &frame), refresh.timestamp_writes) else { return PassCounters::default() };
         self.clouds_texels = panorama.texels_written();

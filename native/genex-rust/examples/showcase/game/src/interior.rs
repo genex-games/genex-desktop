@@ -17,8 +17,17 @@ use crate::world::World;
 /// faces, the floor and the ridge.
 const ROOM_HALF_WIDTH: f32 = CABIN_WIDTH * 0.5 - 0.1 - LOG_RADIUS;
 const ROOM_HALF_DEPTH: f32 = CABIN_DEPTH * 0.5 - LOG_RADIUS;
-/// How far up the probe's and the volume's box reaches: under the ridge.
+/// How far up the probe's box reaches: under the ridge.
 const ROOM_TOP: f32 = WALL_HEIGHT + 1.2;
+/// How far up the volume's box reaches: under the roof's underside where it comes lowest over the
+/// box, at the eaves (the walls' top: the box bounds the yawed room on the world's axes, so its
+/// corners reach past the walls under the eaves). A volume up under the ridge stood out over the
+/// roof's slopes: its top cells there, outside the room, saw the sunlit roof from above and lent it
+/// the room's dim bounce, a staircase of shade across the golden-wide shot's roof, and one to under
+/// the roof at the side walls still darkened the eaves at its corners (look lane SKY). The room's
+/// gable above takes the sky's diffuse light, as the doorway lets it in; the probe's reflections
+/// keep the whole room.
+const VOLUME_TOP: f32 = WALL_HEIGHT - 0.1;
 /// How far past the box's faces the probe and the volume fade out: about the logs' thickness, so
 /// the yard outside keeps the sky's light.
 const ROOM_BLEND: f32 = 0.35;
@@ -64,13 +73,23 @@ const HEARTH_FACE: f32 = -CABIN_WIDTH * 0.5 + 0.9 + 0.475;
 const HEARTH_Z: f32 = -0.9;
 
 /// The room's box in the world: the cabin's yawed room bounded on the world's axes (the probe and
-/// the volume are axis-aligned boxes), from the floor to under the ridge.
+/// the volume are axis-aligned boxes), from the floor to under the ridge (the probe's).
 pub fn room_box() -> (Vec3, Vec3) {
+    room_box_to(ROOM_TOP)
+}
+
+/// The irradiance volume's box: the room's, from the floor to under the eaves ([`VOLUME_TOP`]).
+pub fn volume_box() -> (Vec3, Vec3) {
+    room_box_to(VOLUME_TOP)
+}
+
+/// The room's box from the floor to `top` over it.
+fn room_box_to(top: f32) -> (Vec3, Vec3) {
     let c = cabin_frame();
     let corners = [(-1.0, -1.0), (1.0, -1.0), (-1.0, 1.0), (1.0, 1.0)].map(|(sx, sz)| c.point(vec3(sx * ROOM_HALF_WIDTH, 0.0, sz * ROOM_HALF_DEPTH)));
     let min = corners.iter().fold(Vec3::splat(f32::MAX), |least, p| least.min(*p));
     let max = corners.iter().fold(Vec3::splat(f32::MIN), |most, p| most.max(*p));
-    (vec3(min.x, c.origin.y, min.z), vec3(max.x, c.origin.y + ROOM_TOP, max.z))
+    (vec3(min.x, c.origin.y, min.z), vec3(max.x, c.origin.y + top, max.z))
 }
 
 /// How bright the hearth burns at `t` (about 1): two slow swells and a quick lick.
@@ -84,6 +103,7 @@ pub fn room(world: &World, frame: &mut Frame, t: f32) {
     let c = cabin_frame();
     let (min, max) = room_box();
     frame.reflection_probe(&ReflectionProbe::new(min, max).with_capture(c.point(PROBE_CAPTURE)).with_blend(ROOM_BLEND));
+    let (min, max) = volume_box();
     frame.irradiance_volume(&IrradianceVolume::new(min, max).with_blend(ROOM_BLEND).with_intensity(ROOM_BOUNCE));
     let surfaces = &world.models.surfaces;
     c.model(frame, &world.models.parts.floor, vec3(0.0, 0.02, 0.0), Quat::IDENTITY, Vec3::ONE, &surfaces.floor);

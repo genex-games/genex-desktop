@@ -38,8 +38,10 @@ pub const EXPOSURE_CURVE: [(f32, f32); 2] = [(-10.0, -4.0), (-4.0, 0.0)];
 
 /// The night's weather colours: the dusk's drizzle and steam are the light the picture shows, so
 /// against the night's darker street they drew as a glowing white column and a bright veil; at
-/// night they take about half the dusk's light.
-pub const NIGHT_WEATHER: WeatherColors = WeatherColors { rain: Color::rgba(42, 46, 56, 40), steam_start: Color::rgba(28, 29, 33, 22), steam_end: Color::rgba(24, 25, 29, 0) };
+/// night the drizzle takes about half the dusk's light and the steam about a third, thinner, so
+/// its puffs stacked over the dark road stay a faint wisp instead of a pale glowing column (at half
+/// the dusk's light it lifted the plume 24 levels; look lane SKY).
+pub const NIGHT_WEATHER: WeatherColors = WeatherColors { rain: Color::rgba(42, 46, 56, 40), steam_start: Color::rgba(20, 20, 23, 12), steam_end: Color::rgba(17, 17, 20, 0) };
 
 /// The street's steam and drizzle in the night's colours ([`NIGHT_WEATHER`]).
 #[derive(Clone, Debug)]

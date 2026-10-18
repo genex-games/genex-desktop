@@ -207,7 +207,7 @@ pub struct GpuClouds {
     pub layer: [f32; 4],
     /// xy: the weather offset (km); z: the camera's height (km); w: the sky's radiance multiplier.
     pub offset: [f32; 4],
-    /// xyz: towards the sun; w: unused.
+    /// xyz: towards the light (the sun, or the moon on a moonlit night); w: 1 for the moon.
     pub sun_dir: [f32; 4],
     /// rgb: the sun's illuminance outside the atmosphere; w: unused.
     pub sun_illuminance: [f32; 4],
@@ -249,6 +249,7 @@ struct CloudKey {
     camera_height_km: f32,
     intensity: f32,
     medium: [u32; 4],
+    moonlit: bool,
 }
 
 /// The angle between unit vectors `a` and `b`, in degrees.
@@ -277,6 +278,10 @@ pub struct CloudFrame {
     pub atmosphere: crate::layout::GpuSkyAtmosphere,
     /// March every texel (a settled capture).
     pub force: bool,
+    /// The light is the moon's (`atmosphere` is the moonlit sky's row): the air's reddening of its
+    /// light is taken as its luminance alone, so the clouds keep the moon's own tint (night vision
+    /// sees no warm cast in moonlight; a low moon's reddened light drew them sepia).
+    pub moonlit: bool,
 }
 
 /// What the march reads from the sky: its atmosphere row, its transmittance and sky-view LUTs and
@@ -527,6 +532,7 @@ impl CloudPanorama {
             camera_height_km: a.ground_albedo[3],
             intensity: a.sun_illuminance[3],
             medium: bytemuck::cast([a.radii[0], a.radii[1], a.mie[0], a.rayleigh[2]]),
+            moonlit: frame.moonlit,
         };
         let held = self.held.replace(key);
         let jumped = held.is_some_and(|held| degrees_between(held.sun_dir, key.sun_dir) > SUN_JUMP_DEGREES);
@@ -576,7 +582,7 @@ impl CloudPanorama {
         let params = GpuClouds {
             layer: [clouds.base_km, clouds.base_km + clouds.thickness_km, clouds.coverage, clouds.density],
             offset: [clouds.offset_km[0], clouds.offset_km[1], a.ground_albedo[3], a.sun_illuminance[3]],
-            sun_dir: [a.sun_dir[0], a.sun_dir[1], a.sun_dir[2], 0.0],
+            sun_dir: [a.sun_dir[0], a.sun_dir[1], a.sun_dir[2], if frame.moonlit { 1.0 } else { 0.0 }],
             sun_illuminance: [a.sun_illuminance[0], a.sun_illuminance[1], a.sun_illuminance[2], 0.0],
             slice: [slice.0, slice.1, block, 0],
             steps: [self.grid.steps, self.grid.light_steps, 0, 0],
