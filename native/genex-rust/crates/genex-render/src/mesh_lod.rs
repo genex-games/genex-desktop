@@ -19,6 +19,13 @@
 //! it, seen from the camera ([`lod_keeps`], `gx_cull_lod_keeps` in `shaders/cull.wgsl`). Every
 //! view (the shadow cascades and spots too) draws an instance at the camera's level, so an
 //! object never shadows itself with another shape.
+//!
+//! **The fade band (game systems LOD-01).** [`lod_band`] (WGSL `gx_lod_band`) widens the switch
+//! into a stateless band: while a level's projected error is within the last `beta` of the
+//! threshold it fades in and the finer level fades out, both within the threshold. A level's
+//! batch gets a fade twin ([`fade_batch_lod`], [`LOD_FADE_TAG`]) and [`lod_band_keep`] keeps each
+//! (instance, level) pair in exactly one of them, with the slot's signed fade value. A band of 0
+//! is today's hard switch bit for bit; the cull adopts the band in LOD-03.
 
 use glam::{Mat3, Mat4};
 
@@ -30,7 +37,7 @@ pub const LOD_SCHEMA_VERSION: u32 = 1;
 pub const LOD_MAX_LEVELS: u32 = 4;
 /// The fewest triangles a GLB needs before the import step simplifies it.
 pub const LOD_MIN_TRIANGLES: u32 = 512;
-/// [`select_lod`] in WGSL (`gx_lod_select`), for the cull to include.
+/// [`select_lod`] and [`lod_band`] in WGSL (`gx_lod_select`, `gx_lod_band`), for the cull to include.
 pub const LOD_SELECT_WGSL: &str = include_str!("../shaders/geometry/lod_select.wgsl");
 /// The error a drawn level may show, in output pixels.
 pub const LOD_THRESHOLD_PX: f32 = 1.0;
@@ -39,6 +46,14 @@ pub const LOD_THRESHOLD_PX: f32 = 1.0;
 pub const LOD_NOMINAL_HEIGHT: u32 = 1080;
 /// The bit of a batch's LOD tag marking a batch that draws one level of a chain.
 const LOD_TAG: u32 = 1 << 31;
+/// The bit of a batch's LOD tag marking a fade batch: the twin of a level's batch that holds the
+/// instances fading in or out of that level ([`fade_batch_lod`], [`lod_band_keep`]).
+pub const LOD_FADE_TAG: u32 = 1 << 30;
+/// The fade value of an instance drawn whole (the per-slot fade table's convention).
+const WHOLE: f32 = 1.0;
+/// A band's share is a whole number of these steps (`gx_lod_band` spells it out as 1024.0): exact
+/// products decide it, so the CPU and every GPU agree ([`lod_band`]).
+const LOD_FADE_STEPS: f32 = 1024.0;
 /// The tag's bits holding the batch's level (0 the mesh itself).
 const LOD_LEVEL_MASK: u32 = 0xF;
 /// Where the chain's length (levels past the mesh) sits in the tag.
@@ -178,6 +193,141 @@ pub fn select_lod(errors: &[f32], distance: f32, pixels_per_unit: f32, threshold
     picked
 }
 
+/// The levels an instance draws under a fade band ([`lod_band`]): `level` is the one
+/// [`select_lod`] picks (with the bias), drawn with `share` of its pixels. A share of 1 is the
+/// level whole; below 1, level `level - 1` (finer, and within the threshold too) draws the
+/// other `1 - share`, fading out while `level` fades in.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct LodBand {
+    /// The coarsest level within the threshold (0 the mesh itself).
+    pub level: u32,
+    /// Its share of the instance's pixels, in [0, 1].
+    pub share: f32,
+}
+
+impl LodBand {
+    /// The mesh itself, whole: the answer to every input that is not a usable band.
+    pub const MESH: LodBand = LodBand { level: 0, share: WHOLE };
+}
+
+/// Whether `value` is above zero (false for NaN).
+fn positive(value: f32) -> bool {
+    value > 0.0
+}
+
+/// Whether a bias and a band can be used: a finite positive bias, a band in [0, 1].
+fn band_inputs_usable(bias: f32, beta: f32) -> bool {
+    positive(bias) && bias <= f32::MAX && (0.0..=1.0).contains(&beta)
+}
+
+/// The fade band (game systems LOD-01; kansei's stateless crossfade): the level [`select_lod`]
+/// picks with each error scaled by `bias` (2 holds every level twice as far), and while its
+/// projected error is within the last `beta` of the threshold (`(1 - beta) * threshold <
+/// error_px <= threshold`), the share it draws, `(budget - error_px) / (beta * budget)` rounded
+/// down to a 1024th, rising from 0 to 1 with distance. Both levels drawn in a band fit the
+/// threshold, so a band costs overdraw, never a visible error. A `beta` of 0 is [`select_lod`]
+/// bit for bit; a distance that is not positive, a bias that is not finite and positive or a band
+/// outside [0, 1] (NaN included) draw the mesh itself whole. Every decision is a comparison of
+/// correctly rounded two-operand products, the expressions those of `gx_lod_band`.
+pub fn lod_band(errors: &[f32], distance: f32, pixels_per_unit: f32, threshold_px: f32, bias: f32, beta: f32) -> LodBand {
+    if !positive(distance) || !band_inputs_usable(bias, beta) {
+        return LodBand::MESH;
+    }
+    let budget = threshold_px * distance;
+    // One two-operand product per error: a GPU compiler may hoist `pixels_per_unit * bias` out of
+    // the loop (Metal does), so the twins both do. A bias of 1 leaves `error * pixels_per_unit`.
+    let scale = pixels_per_unit * bias;
+    let (mut level, mut fit) = (0, 0.0);
+    for (at, error) in errors.iter().take(LOD_MAX_LEVELS as usize).enumerate() {
+        let projected = error * scale;
+        if projected <= budget {
+            (level, fit) = (at as u32 + 1, projected);
+        }
+    }
+    // An infinite budget (an infinite distance) leaves no band: the coarsest level is whole.
+    let whole = level == 0 || budget > f32::MAX || fit <= (1.0 - beta) * budget;
+    if whole {
+        return LodBand { level, share: WHOLE };
+    }
+    let steps = band_steps(budget - fit, beta * budget);
+    if steps >= LOD_FADE_STEPS {
+        return LodBand { level, share: WHOLE };
+    }
+    LodBand { level, share: steps * (1.0 / LOD_FADE_STEPS) }
+}
+
+/// The share `fade / width` (both positive) in whole steps of `1 / LOD_FADE_STEPS`, rounded down:
+/// the most steps with `steps * width <= fade * LOD_FADE_STEPS`, two correctly rounded products.
+/// The division only guesses (a GPU's is not correctly rounded: Metal's fast math is a reciprocal
+/// 1 ULP off), and the guess is within one step of the answer, which the comparisons then fix,
+/// so every GPU lands on the CPU's step. `gx_lod_band` writes the same expressions.
+fn band_steps(fade: f32, width: f32) -> f32 {
+    let scaled = fade * LOD_FADE_STEPS;
+    let mut steps = (fade / width * LOD_FADE_STEPS).floor().clamp(0.0, LOD_FADE_STEPS);
+    let next = steps + 1.0;
+    if steps < LOD_FADE_STEPS && next * width <= scaled {
+        steps = next;
+    }
+    if steps > 0.0 && steps * width > scaled {
+        steps -= 1.0;
+    }
+    steps
+}
+
+/// The LOD row of the fade twin of level `level`'s batch: [`batch_lod`] with [`LOD_FADE_TAG`].
+pub fn fade_batch_lod(level: u32, errors: &[f32], radius: f32) -> [u32; 3] {
+    let [tag, low, high] = batch_lod(level, errors, radius);
+    [tag | LOD_FADE_TAG, low, high]
+}
+
+/// A chain's errors scaled by an instance's radius, the chain's length and the instance's
+/// distance from the camera to its bounding sphere: what [`lod_keeps`] and [`lod_band_keep`]
+/// measure.
+fn instance_chain(lod: [u32; 3], bounds: [f32; 4], view: [f32; 4]) -> ([f32; 4], usize, f32) {
+    let levels = ((lod[0] >> LOD_LEVELS_SHIFT) & LOD_LEVEL_MASK).min(LOD_MAX_LEVELS) as usize;
+    let halves = [lod[1] & 0xFFFF, lod[1] >> 16, lod[2] & 0xFFFF, lod[2] >> 16];
+    let errors = halves.map(|bits| f16_value(bits as u16) * bounds[3]);
+    let offset = [bounds[0] - view[0], bounds[1] - view[1], bounds[2] - view[2]];
+    let distance = (offset[0] * offset[0] + offset[1] * offset[1] + offset[2] * offset[2]).sqrt() - bounds[3];
+    (errors, levels, distance)
+}
+
+/// An instance's band from the camera; levels off (`view.w` not positive) or a radius that is
+/// not positive draw the mesh itself whole.
+fn instance_band(lod: [u32; 3], bounds: [f32; 4], view: [f32; 4], bias: f32, beta: f32) -> LodBand {
+    if !positive(view[3]) || !positive(bounds[3]) {
+        return LodBand::MESH;
+    }
+    let (errors, levels, distance) = instance_chain(lod, bounds, view);
+    lod_band(&errors[..levels], distance, view[3], 1.0, bias, beta)
+}
+
+/// [`lod_keeps`] under a fade band of `beta` with the row's `bias`: whether the cull keeps an
+/// instance in a batch, and the fade value its slot gets (kansei's signed convention). A batch
+/// without levels keeps every instance whole (1). A level's batch keeps the instances whole at
+/// that level; its fade twin ([`LOD_FADE_TAG`]) keeps those fading in to it (`-share`: draw the
+/// pixels whose dither threshold is at least `1 - share`) or out of it to the next coarser level
+/// (`1 - share`: draw those below it), so each (instance, level) pair is kept by one batch and
+/// every pixel by one of the two levels. The cull's twin is LOD-03's.
+pub fn lod_band_keep(lod: [u32; 3], bounds: [f32; 4], view: [f32; 4], bias: f32, beta: f32) -> Option<f32> {
+    if lod[0] & LOD_TAG == 0 {
+        return Some(WHOLE);
+    }
+    let level = lod[0] & LOD_LEVEL_MASK;
+    let fade = lod[0] & LOD_FADE_TAG != 0;
+    let band = instance_band(lod, bounds, view, bias, beta);
+    if band.share >= WHOLE {
+        return (!fade && level == band.level).then_some(WHOLE);
+    }
+    if !fade {
+        return None;
+    }
+    if level == band.level {
+        return Some(-band.share);
+    }
+    (level + 1 == band.level).then_some(WHOLE - band.share)
+}
+
 /// The LOD row (`GpuBatch::lod`) of a batch drawing level `level` (0 the mesh itself) of a chain
 /// whose levels have `errors` (object space, at most [`LOD_MAX_LEVELS`]) on a mesh of bounding
 /// radius `radius`: x the tag (the batch's level and the chain's length), y and z the errors
@@ -194,22 +344,24 @@ pub fn batch_lod(level: u32, errors: &[f32], radius: f32) -> [u32; 3] {
 /// under the frame's LOD `view` (camera position xyz; w the output's pixels a world unit at
 /// distance 1 over [`LOD_THRESHOLD_PX`], 0 when levels are off, as under an orthographic camera):
 /// a batch without levels keeps every instance, a level's batch only the instances
-/// [`select_lod`] gives that level, seen from the camera's distance to the bounding sphere. The
-/// cull's `gx_cull_lod_keeps`, expression for expression.
+/// [`select_lod`] gives that level, seen from the camera's distance to the bounding sphere, and a
+/// fade batch ([`LOD_FADE_TAG`]) none (no band here: [`lod_band_keep`] with a band of 0, for a
+/// positive radius). The cull's `gx_cull_lod_keeps`, expression for expression; no plan writes a
+/// fade batch until the cull takes the band (LOD-03), so the cull has no fade branch yet.
 pub fn lod_keeps(lod: [u32; 3], bounds: [f32; 4], view: [f32; 4]) -> bool {
     if lod[0] & LOD_TAG == 0 {
         return true;
     }
+    // A fade batch draws only inside a band, and this rule has none (`lod_band_keep` does).
+    if lod[0] & LOD_FADE_TAG != 0 {
+        return false;
+    }
     let level = lod[0] & LOD_LEVEL_MASK;
     // Not positive (NaN included): levels are off, as `!(lod.w > 0.0)` in the cull.
-    if view[3].partial_cmp(&0.0) != Some(std::cmp::Ordering::Greater) {
+    if !positive(view[3]) {
         return level == 0;
     }
-    let levels = ((lod[0] >> LOD_LEVELS_SHIFT) & LOD_LEVEL_MASK).min(LOD_MAX_LEVELS) as usize;
-    let halves = [lod[1] & 0xFFFF, lod[1] >> 16, lod[2] & 0xFFFF, lod[2] >> 16];
-    let errors = halves.map(|bits| f16_value(bits as u16) * bounds[3]);
-    let offset = [bounds[0] - view[0], bounds[1] - view[1], bounds[2] - view[2]];
-    let distance = (offset[0] * offset[0] + offset[1] * offset[1] + offset[2] * offset[2]).sqrt() - bounds[3];
+    let (errors, levels, distance) = instance_chain(lod, bounds, view);
     select_lod(&errors[..levels], distance, view[3], 1.0) == level
 }
 

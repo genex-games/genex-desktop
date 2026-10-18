@@ -98,6 +98,8 @@ fn gx_cull_batch_of(row: u32) -> u32 {
 
 // The LOD tag's bit marking a batch that draws one level of a chain (mesh_lod.rs LOD_TAG).
 const GX_LOD_TAG: u32 = 0x80000000u;
+// A fade batch's bit (mesh_lod.rs LOD_FADE_TAG): without a band it keeps nothing.
+const GX_LOD_FADE_TAG: u32 = 0x40000000u;
 
 // The value of the non-negative, finite half float `bits` (mesh_lod.rs `f16_value`, exact):
 // decoded by hand, since naga counts `unpack2x16float` outside WebGPU core.
@@ -116,6 +118,9 @@ fn gx_cull_half(bits: u32) -> f32 {
 fn gx_cull_lod_keeps(batch: Batch, bounds: vec4<f32>) -> bool {
     if (batch.lod & GX_LOD_TAG) == 0u {
         return true;
+    }
+    if (batch.lod & GX_LOD_FADE_TAG) != 0u {
+        return false;
     }
     let level = batch.lod & 15u;
     if !(views.lod.w > 0.0) {
