@@ -283,6 +283,43 @@ phones or the legacy renderer. The ledger's `grass` buffers row holds its region
 terrain's chosen layers at a loading point with the same global cell hashing: the same instances for
 any area that covers them, cut by slope, leaned with the ground on request and capped evenly by a
 hashed priority. The game draws them through an instance group.
+
+## Colour grading
+
+`Look::grading` (`post::grading`) grades inside the tonemap (node 21), with no pass of its own:
+Bevy's sectional knobs (saturation, contrast, gamma, gain, lift for shadows, midtones and
+highlights) on the white-balanced scene colour before the curve, contrast turning about middle
+grey in log space as Filament's does, then an optional Adobe `.cube` LUT on the encoded display
+colour before the dither (pmndrs/postprocessing's tetrahedral interpolation). The GPU holds each
+LUT texel's change from the identity, so an identity LUT draws the ungraded picture byte for
+byte; the upload is resampled to the class's side (`lut_side_max`: 65 desktops, 33 high phones,
+25 mid, 16 low). `tests/grading.rs` holds the shader to its CPU twin.
+
+## Depth of field and motion blur
+
+The look's `depth_of_field` and `motion_blur` (`post::dof`, `post::motion_blur`) are switches a
+game turns on; both are off by default (owner decision D10) and the preset only picks the tier
+(`Quality::dof`, `Quality::motion_blur`). They run after TAA (nodes 17a and 17b) and before
+`post-hdr`, so TAA's history never sees them and bloom and the exposure see the blurred scene, and
+only on frames with the depth prepass (motion blur also needs its motion). Depth of field: Filament's
+ring gather on desktop and web `high` and `ultra`, Godot's circular gather on `low`, `medium` and
+phones. Motion blur: KinoMotion's reconstruction filter on desktop and web `high` and `ultra`,
+Bevy's single pass on `low`, `medium` and phones, none on low-tier phones. Neither draws noise, so
+a still camera draws the same picture every frame. A settled capture draws without them unless its
+shot asks (`Renderer::set_capture_lens`, the Studio capture's `lens` argument). They take no
+forward binding (`renderer/lens.rs` holds their targets).
+
+## Sun-shadow mask
+
+On desktop `high` and `ultra` under TAA with PCSS (`post::sun_mask`, node 10a after the contact
+shadows), the sun's soft-shadow visibility is made once per pixel from the prepass, accumulated
+by its own temporal filter along the prepass's motion and filtered edge-aware (a port of the
+FidelityFX Shadow Denoiser in fragment passes), then read by the forward pass instead of
+evaluating PCSS inline, so soft shadow edges hold still on a still camera and on pans. It rides
+binding 19 beside the contact shadow (r contact, g sun visibility, alpha 0 marks the mask), so it
+takes no new binding. Transparent surfaces, frames without TAA and phones shade the sun inline. A
+capture starts its history over and Live takes its own back afterwards.
+
 ## Output size and window present
 
 A renderer is made at the game's logical `world_size` (`Renderer::logical_size`: the 2D layer's

@@ -331,6 +331,11 @@ const MOBILE_ANISOTROPY: u8 = 4;
 /// draws the same halo, on a chain under two thirds of a desktop's rows (renderer pass 2, P5:
 /// presets and classes lower the chain's resolution, never its mip count).
 pub const MOBILE_BLOOM_RESOLUTION: u16 = 360;
+/// The least RCAS softness (in stops) a phone's upscale sharpens with at any preset: EASU from
+/// 0.6-0.75 of the output and RCAS's default 0.2 stops sharpened a far deck's sub-pixel plank seams
+/// into a dot pattern (Lakeside dock on mobile-mid, 1.06% of the far deck; GA leftovers). At TAA's
+/// own sharpen's softness the seams stay lines (0.42%), the picture otherwise the same.
+pub const MOBILE_RCAS_SHARPNESS: f32 = TAA_SHARPEN_RCAS_SHARPNESS;
 const MOBILE_LOW_ANISOTROPY: u8 = 2;
 
 fn low_row(quality: &mut Quality, form: FormFactor) {
@@ -559,6 +564,7 @@ fn apply_mobile_caps(quality: &mut Quality, preset: QualityPreset, class: Device
     // its cost on the Mac mobile proxy is in the showcase's `metal_mobile_proxy` row). EASU and
     // RCAS run only while the render size differs from the output.
     quality.upscaler = Upscaler::Fsr1;
+    quality.rcas = quality.rcas.with_sharpness(quality.rcas.sharpness.max(MOBILE_RCAS_SHARPNESS));
     quality.bloom.resolution = quality.bloom.resolution.min(MOBILE_BLOOM_RESOLUTION);
     let anisotropy = if class.tier == PerformanceTier::Low { MOBILE_LOW_ANISOTROPY } else { MOBILE_ANISOTROPY };
     quality.anisotropy = quality.anisotropy.min(anisotropy);

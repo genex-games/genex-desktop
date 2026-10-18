@@ -11,13 +11,13 @@ use genex_render::budget::{
 };
 use genex_render::device_class::{DeviceClass, DeviceFacts, FormFactor, PerformanceTier, TargetOs, WebHints};
 use genex_render::presets::{
-    ANDROID_REFERENCE, ClassOverride, DESKTOP_REFERENCE, IPHONE_REFERENCE, LAPTOP_REFERENCE, MOBILE_MAX_RADIANCE_PX, OFF_RENDER_PASSES, RenderOverrides,
+    ANDROID_REFERENCE, ClassOverride, DESKTOP_REFERENCE, IPHONE_REFERENCE, LAPTOP_REFERENCE, MOBILE_MAX_RADIANCE_PX, MOBILE_RCAS_SHARPNESS, OFF_RENDER_PASSES, RenderOverrides,
     SHADOW_MAP_MAX_PX, SHADOW_MAP_MIN_PX, ShadowOverride, WEB_REFERENCE, class_budget_bytes, class_defaults, default_preset, drs_step_sizes, hdri_map_width, preset_quality, profile, reference_resolution,
     on_ldr_scene, render_pass_budget, resolve, scene_format, with_world_samples, work_limits,
 };
 use genex_render::graph::{feature_landed, not_landed};
 use genex_render::settings::{
-    AntiAliasing, AoResolution, KnobKind, PresetChoice, Quality, QualityKnob, QualityPreset, RenderFeature, RenderSettings,
+    AntiAliasing, AoResolution, DEFAULT_RCAS_SHARPNESS, KnobKind, PresetChoice, Quality, QualityKnob, QualityPreset, RenderFeature, RenderSettings,
     SceneFormat, ShadowFilter, ShadowFormat, Upscaler,
 };
 use wgpu::{Backend, DeviceType, Features};
@@ -184,6 +184,20 @@ fn every_phone_class_upscales_with_easu_and_rcas_at_every_preset() {
     }
     assert_eq!(preset_quality(QualityPreset::Low, class("desktop-low")).upscaler, Upscaler::Bilinear, "desktops keep low's bilinear");
     assert_eq!(preset_quality(QualityPreset::Medium, class("desktop-mid")).upscaler, Upscaler::Fsr1);
+}
+
+/// GA leftovers (far dock specks): a phone's EASU + RCAS sharpens no harder than
+/// `MOBILE_RCAS_SHARPNESS` stops at any preset; desktops keep their table's sharpness.
+#[test]
+fn every_phone_class_sharpens_its_upscale_no_harder_than_the_phone_softness() {
+    for class in mobile_classes() {
+        for preset in QualityPreset::ALL {
+            let sharpness = preset_quality(preset, class).rcas.sharpness;
+            assert!(sharpness >= MOBILE_RCAS_SHARPNESS, "{} {}: RCAS {sharpness} stops is sharper than {MOBILE_RCAS_SHARPNESS}", class.wire(), preset.wire());
+        }
+    }
+    let desktop = class("desktop-high");
+    assert_eq!(preset_quality(QualityPreset::Medium, desktop).rcas.sharpness, DEFAULT_RCAS_SHARPNESS, "desktops keep RCAS's default");
 }
 
 /// RQ4 review: the tile cap keys on the samples the world pass draws, not the AA asked for: until
