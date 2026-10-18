@@ -261,6 +261,34 @@ every target is pooled under its own ledger row.
 - Binding 30 of the forward frame group (`FRAME_REFLECTIONS_BINDING`) is reserved for the screen
   reflections (rgb, a confidence): the stage's 16th sampled texture of 16 once B.9 binds it.
 
+## Lake water
+
+`src/water.rs` (`shaders/water/water.wgsl`) draws a flat water rectangle (`WaterBody`: centre, half
+extents, `WaterMaterial`) with its own pipeline and layout, so it spends none of the forward
+stage's sampled textures: group 0 the frame uniforms, group 1 a uniform (`GpuWater`), the opaque
+copy, the scene depth without the water, the environment cube array and the previous frame's
+colour pyramid. `WaterNode::draw_colour` composes the surface over the scene:
+
+- the path the view ray travels under water (the depth's bed distance minus the surface's) sets a
+  Beer-Lambert transmittance per channel (`transmittance`) and the water body's in-scattered light
+  fills what it took (ideas from bevy-aqua-fft and bevy_water);
+- with the opaque copy (`WaterPath::Refracted`) the bed is sampled through the ripples' offset,
+  which grows from nothing at the shoreline and is dropped where it would land on something in
+  front of the water; without it (`WaterPath::Blended`: phones, MSAA presets, the legacy scene)
+  the surface blends premultiplied over the scene, unrefracted;
+- Schlick's Fresnel (F0 0.02) mixes in the reflection: the SSR helper's march over the colour
+  pyramid on desktop and web `high` and `ultra`, the environment's sky layer elsewhere and always
+  on phones (`reflection_source`); a capped sun glint keeps a ripple facing the sun from becoming
+  a firefly;
+- shore foam (`shore_foam`, the idea of GodotOceanWaves) covers water shallower than the
+  material's width, broken up by a value noise.
+
+`WaterNode::draw_motion` then writes the surface's own motion (reactive 0) and depth into the
+motion prepass's targets, so TAA reprojects a water pixel by the water's motion, not the bed's,
+and keeps its history. The node's twins and GPU rows are in `tests/water.rs`; its budget is 1.0 ms
+at a 1080p render (`WATER_MS_MAX`). The frame does not record the node yet: the renderer's
+opaque-copy hook and the scene's water draw are the next step.
+
 ## Terrain
 
 `Renderer::set_terrain` (`terrain::TerrainDesc`; the facade's `Terrain` and `frame.terrain`) holds

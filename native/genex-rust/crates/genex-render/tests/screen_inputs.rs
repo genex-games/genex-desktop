@@ -450,9 +450,13 @@ fn the_pyramid_adds_little_to_a_web_build_and_the_chunks_ship_only_with_their_co
     assert!(minified <= PYRAMID_WEB_BYTES_MAX, "{minified} bytes");
     // The march and packing chunks are no renderer shader of their own: a consumer's module
     // includes them (water, B.9, the prepass's SSR entry points), so they cost a web build nothing
-    // until one does.
+    // until one does, and a module that includes one calls it (B.3's water calls the march).
     for (name, source) in genex_render::shaders::SHADERS {
-        assert!(!source.contains("fn gx_ssr_march_run") && !source.contains("fn gx_pack_normal_roughness"), "{name} includes a chunk no pass calls yet");
+        for chunk in ["gx_ssr_march_run", "gx_pack_normal_roughness"] {
+            let defined = source.contains(&format!("fn {chunk}("));
+            let called = source.matches(&format!("{chunk}(")).count() > 1;
+            assert!(!defined || called, "{name} includes {chunk} and never calls it");
+        }
     }
 }
 

@@ -209,6 +209,13 @@
    "budgetMs": 0.5
   },
   {
+   "id": "water",
+   "features": [
+    "water"
+   ],
+   "budgetMs": 1.0
+  },
+  {
    "id": "subsurface",
    "features": [
     "subsurface"

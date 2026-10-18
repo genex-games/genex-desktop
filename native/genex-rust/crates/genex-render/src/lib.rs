@@ -138,6 +138,9 @@ pub mod terrain;
 /// Screen inputs (renderer pass 2 A.6): the opaque copy, the previous frame's colour pyramid, the
 /// prepass's normal and roughness, the screen reflections' slot and the shared SSR march helper.
 pub mod screen_inputs;
+/// Lake water (renderer pass 2 B.3): a water rectangle's own pipeline over the screen inputs,
+/// refracted, absorbed, foamed at the shore and reflected, with its own motion key for TAA.
+pub mod water;
 /// Foliage (renderer pass 2 A.8): GPU-generated grass on the terrain's grassy layers, in the
 /// shared wind, lit through the forward chunks with diffuse transmission.
 pub mod foliage;
