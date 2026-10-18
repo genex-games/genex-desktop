@@ -111,6 +111,9 @@ pub use genex_render::settings::{Environment, EnvironmentKind, HdriEnvironment, 
 /// ([`SkyParams::with_moon`]), the stars ([`SkyParams::with_stars`]) and the air the sky is made of
 /// ([`SkyMedium::earth`], [`SkyMedium::mars`] or your own, [`SkyParams::with_medium`]).
 pub use genex_render::settings::{Moon, SkyMedium};
+/// A layer of clouds in the physical sky (renderer pass 2 B.5, [`SkyParams::with_clouds`]): its
+/// coverage, base and thickness, density and drift, drawn on desktop `medium` and up.
+pub use genex_render::settings::Clouds;
 /// Height and distance fog matched to the sky (RQ4): a look, the same on every preset, set with
 /// [`RenderConfig::fog`] or `genex.toml` `[render.look]`'s `fog_*` keys. Off at the default density 0.
 pub use genex_render::settings::Fog;

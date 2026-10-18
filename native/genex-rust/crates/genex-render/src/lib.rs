@@ -126,6 +126,8 @@ pub mod ibl;
 pub mod sky;
 /// The sky's night (renderer pass 2 B.2): the moon, the moonlit sky and the stars.
 pub mod night_sky;
+/// Renderer pass 2 B.5: the cloud panorama seen from the ground.
+pub mod clouds;
 /// HDR environment maps from a game's assets: the Radiance `.hdr` decoder and its caps.
 pub mod hdri;
 /// Reflection probes (renderer pass 2 A.3): box-projected local cubes captured in the scene.

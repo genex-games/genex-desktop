@@ -14,6 +14,10 @@
 // the moon as its light (`cs_sky_view` over another atmosphere row), and `cs_sky_cube` adds it and
 // the stars to the cube at night, so reflections and the night's ambient see them; the moon's disk
 // stays out of the cube as the sun's does (the moon is then the analytic light).
+//
+// The clouds (renderer pass 2 B.5): `cs_sky_cube` reads the cloud panorama over the sky above the
+// horizon (sky/clouds_map.wgsl), so reflections and the ambient light see the clouds; without a
+// layer the panorama is one clear texel and the cube is as before.
 
 @group(0) @binding(0) var<uniform> atmosphere: SkyAtmosphere;
 @group(0) @binding(1) var transmittance: texture_2d<f32>;
@@ -24,6 +28,8 @@
 @group(0) @binding(6) var cube_out: texture_storage_2d_array<rgba16float, write>;
 @group(0) @binding(7) var<uniform> night: NightSky;
 @group(0) @binding(8) var moon_view_in: texture_2d<f32>;
+@group(0) @binding(9) var cloud_panorama: texture_2d<f32>;
+@group(0) @binding(10) var cloud_sampler: sampler;
 
 const SKY_PI: f32 = 3.14159265358979;
 // Samples along each view ray.
@@ -264,6 +270,9 @@ fn cs_sky_cube(@builtin(global_invocation_id) id: vec3<u32>) {
     let height = sky_view_height();
     var radiance = textureSampleLevel(sky_view_in, lut_sampler, sky_view_uv(dir, sun, height), 0.0).rgb;
     radiance += sky_night(dir, sun, height, SKY_PI / (2.0 * f32(side)));
+    if dir.y > 0.0 {
+        radiance = gx_clouds_over(radiance, textureSampleLevel(cloud_panorama, cloud_sampler, gx_cloud_uv(dir), 0.0));
+    }
     textureStore(cube_out, vec2<i32>(id.xy), i32(id.z), vec4<f32>(radiance, 1.0));
 }
 

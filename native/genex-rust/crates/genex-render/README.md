@@ -175,6 +175,24 @@ and the stars, so reflections and the ambient see them (the disk stays out, as t
 it outshines the setting sun. The air is data (`sky::SkyMedium`: Earth's by default, `mars()`, or
 any planet, Rayleigh, Mie and absorbing layer). No forward binding.
 
+## Cloud panorama
+
+`src/clouds.rs` and `shaders/sky/clouds.wgsl` (renderer pass 2 B.5): `SkyParams::with_clouds` adds a
+layer of cumulus that a compute kernel marches into a panorama of the sky above the horizon
+(`EnvironmentQuality::clouds`: 1024 x 256 on medium, 2048 x 512 on high, 4096 x 1024 on ultra; none
+on low and phones). The sky's background and `cs_sky_cube` read it over the sky-view LUT
+(`sky/clouds_map.wgsl`), so the sun's disk hides behind the clouds and reflections and the ambient
+light see them; no forward binding. The noise (a Perlin-Worley shape volume, a Worley detail volume
+and a weather field, after sebh's TileableVolumeNoise) is made once on the GPU; the march follows
+takram's three-clouds (multiple-scattering octaves, a dual-lobe phase, the sky's light as ambient,
+the air in front of the clouds from the transmittance and sky-view LUTs) without its STBN texture:
+each texel starts at a fixed interleaved gradient noise of its position. Amortised: while the sun or
+the camera's height or the layer (a drifting offset) moves, each frame marches one texel of every
+4x4 block (8x8 on ultra); a settled capture, the first frame or a sun that jumps 2 degrees marches
+it whole. `tests/clouds.rs` holds the
+budget (1.0 ms a frame on high, march and composite), the sun-disc and cloud reprojection row under
+a turning camera and the cloud-edge flicker row.
+
 ## Fog, aerial perspective and froxel fog
 
 `Look::fog` (`settings::Fog`) is a height and distance fog lit by the environment: the sky's

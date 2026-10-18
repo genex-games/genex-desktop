@@ -612,11 +612,23 @@ struct SkyGpu {
     /// its LUT and pass, made the first night a moon gives light.
     moon_atmosphere: Buffer,
     moon: Option<(Lut, BindGroup)>,
+    /// The cloud panorama (B.5, [`crate::clouds`]), made the first frame a layer is marched; the
+    /// clear panorama the composites bind without one; the sampler they read either with.
+    clouds: Option<crate::clouds::CloudPanorama>,
+    clear_clouds: (Texture, TextureView),
+    cloud_sampler: Sampler,
 }
 
 /// The background's bind group: `[frame, atmosphere, night]` uniforms, the sky-view LUT, the
-/// transmittance LUT, the moonlit LUT and the sampler.
-fn draw_bind_group(device: &Device, layout: &BindGroupLayout, uniforms: [&Buffer; 3], sky_view: &Lut, transmittance: &Lut, moon: &Lut, sampler: &Sampler) -> BindGroup {
+/// transmittance LUT, the moonlit LUT, the sampler, and the cloud panorama with its sampler (B.5).
+fn draw_bind_group(
+    device: &Device,
+    layout: &BindGroupLayout,
+    uniforms: [&Buffer; 3],
+    (sky_view, transmittance, moon): (&Lut, &Lut, &Lut),
+    sampler: &Sampler,
+    (clouds, cloud_sampler): (&TextureView, &Sampler),
+) -> BindGroup {
     let [frame, atmosphere, night] = uniforms;
     bind_group(
         device,
@@ -630,12 +642,14 @@ fn draw_bind_group(device: &Device, layout: &BindGroupLayout, uniforms: [&Buffer
             (4, wgpu::BindingResource::Sampler(sampler)),
             (5, night.as_entire_binding()),
             (6, view(moon)),
+            (7, wgpu::BindingResource::TextureView(clouds)),
+            (8, wgpu::BindingResource::Sampler(cloud_sampler)),
         ],
     )
 }
 
 impl SkyGpu {
-    fn new(device: &Device, quality: &EnvironmentQuality) -> Result<SkyGpu, RenderError> {
+    fn new(device: &Device, queue: &Queue, quality: &EnvironmentQuality) -> Result<SkyGpu, RenderError> {
         let view_size = quality.sky_lut;
         let descs = target_descs(quality);
         let [transmittance, multiscatter, sky_view] = [&descs[0], &descs[1], &descs[2]].map(|desc| Lut::new(device, desc));
@@ -713,6 +727,8 @@ impl SkyGpu {
                 storage_entry(6, wgpu::TextureViewDimension::D2Array),
                 uniform_entry(7, compute),
                 texture_entry(8, compute),
+                texture_entry(9, compute),
+                sampler_entry(10, compute),
             ],
         );
         let cube_pipeline = compute_pipeline(device, "sky cube", &sky_view_module, "cs_sky_cube", &cube_layout);
@@ -729,10 +745,21 @@ impl SkyGpu {
                 sampler_entry(4, fragment),
                 uniform_entry(5, fragment),
                 texture_entry(6, fragment),
+                texture_entry(7, fragment),
+                sampler_entry(8, fragment),
             ],
         );
+        let clear_clouds = crate::clouds::clear_panorama(device, queue);
+        let cloud_sampler = crate::clouds::panorama_sampler(device);
         // No moon yet: the sky-view LUT stands in for the moonlit one (never sampled).
-        let draw_group = draw_bind_group(device, &draw_layout, [&frame, &atmosphere, &night], &sky_view, &transmittance, &sky_view, &sampler);
+        let draw_group = draw_bind_group(
+            device,
+            &draw_layout,
+            [&frame, &atmosphere, &night],
+            (&sky_view, &transmittance, &sky_view),
+            &sampler,
+            (&clear_clouds.1, &cloud_sampler),
+        );
         let draw_module = crate::shaders::module(device, "sky draw", crate::shaders::SKY_DRAW)?;
         Ok(SkyGpu {
             view_size,
@@ -758,7 +785,15 @@ impl SkyGpu {
             night_key: None,
             moon_atmosphere,
             moon: None,
+            clouds: None,
+            clear_clouds,
+            cloud_sampler,
         })
+    }
+
+    /// The cloud panorama the composites read (the clear one without a layer).
+    fn clouds_view(&self) -> &TextureView {
+        self.clouds.as_ref().map_or(&self.clear_clouds.1, crate::clouds::CloudPanorama::view)
     }
 
     /// The moonlit sky's LUT (its view, or the sky-view LUT's before a moon gave light).
@@ -769,7 +804,14 @@ impl SkyGpu {
     /// The background's bind group over the current LUTs.
     fn rebind_draw(&mut self, device: &Device) {
         let moon = self.moon_view();
-        self.draw_group = draw_bind_group(device, &self.draw_layout, [&self.frame, &self.atmosphere, &self.night], &self.sky_view, &self.transmittance, moon, &self.sampler);
+        self.draw_group = draw_bind_group(
+            device,
+            &self.draw_layout,
+            [&self.frame, &self.atmosphere, &self.night],
+            (&self.sky_view, &self.transmittance, moon),
+            &self.sampler,
+            (self.clouds_view(), &self.cloud_sampler),
+        );
     }
 
     /// The moonlit sky's LUT and pass at the sky-view size (made again on a resize), the
@@ -873,6 +915,8 @@ pub struct SkyState {
     /// Whether node 11 wrote the froxel fog this frame: it is then bound in the aerial volume's
     /// place.
     froxels_ready: bool,
+    /// Texels the cloud panorama's last frame marched (B.5; 0: none).
+    clouds_texels: u64,
 }
 
 /// What the backdrop of an HDR map needs from the frame: the uploaded map's view and the
@@ -1043,6 +1087,8 @@ impl SkyState {
         let queue = frame.queue().clone();
         let refresh = LutRefresh::new(sky, ctx.quality, sky_frame).forced(ctx.settle);
         let mut passes = self.encode_luts(ctx.device, &queue, frame.encoder(), refresh);
+        // B.5: the cloud panorama, after the LUTs it reads.
+        passes.compute += self.encode_clouds(ctx.device, &queue, frame.encoder(), LutRefresh::new(sky, ctx.quality, sky_frame).forced(ctx.settle)).compute;
         self.prepared = ctx.quality.sky && self.prepare_draw(ctx.device, &queue, sky, ctx);
         if ctx.aerial {
             passes.compute += self.encode_aerial(frame, &queue, sky, ctx);
@@ -1162,7 +1208,7 @@ impl SkyState {
     /// changed and it is due ([`lut_due`], or `refresh.force`). One compute pass when anything is
     /// refreshed (timestamped with `refresh.timestamp_writes`).
     pub fn encode_luts(&mut self, device: &Device, queue: &Queue, encoder: &mut CommandEncoder, refresh: LutRefresh<'_>) -> PassCounters {
-        let Some(gpu) = self.gpu_for(device, refresh.quality) else { return PassCounters::default() };
+        let Some(gpu) = self.gpu_for(device, queue, refresh.quality) else { return PassCounters::default() };
         let atmosphere = atmosphere(refresh.sky, refresh.quality, &refresh.frame);
         let night = crate::night_sky::gpu_night(refresh.sky, refresh.frame.sun_dir);
         let (statics, view) = (static_key(&atmosphere), view_key(&atmosphere));
@@ -1201,11 +1247,70 @@ impl SkyState {
         PassCounters { compute: 1, ..PassCounters::default() }
     }
 
+    /// The cloud panorama for `refresh` (renderer pass 2 B.5, [`crate::clouds`]): where the sky has a
+    /// layer and the quality a panorama, after [`SkyState::encode_luts`] (it reads their LUTs), the
+    /// whole panorama, an amortised slice of it, or nothing when nothing moved. One compute pass when
+    /// anything is marched (timestamped with `refresh.timestamp_writes`). A whole march, or the last
+    /// slice of a pass, is a new sky ([`SkyState::generation`]). Without a layer the panorama is
+    /// released.
+    pub fn encode_clouds(&mut self, device: &Device, queue: &Queue, encoder: &mut CommandEncoder, refresh: LutRefresh<'_>) -> PassCounters {
+        self.clouds_texels = 0;
+        let wanted = refresh.sky.clouds.zip(refresh.quality.clouds).filter(|_| crate::clouds::LANDED);
+        let Some(gpu) = self.gpu.as_mut().filter(|gpu| gpu.view_key.is_some()) else { return PassCounters::default() };
+        let Some((clouds, grid)) = wanted else {
+            if gpu.clouds.take().is_some() {
+                gpu.rebind_draw(device);
+            }
+            return PassCounters::default();
+        };
+        if gpu.clouds.as_ref().is_none_or(|panorama| panorama.grid() != grid) {
+            match crate::clouds::CloudPanorama::new(device, grid) {
+                Ok(panorama) => gpu.clouds = Some(panorama),
+                Err(error) => {
+                    log::warn!("the cloud panorama is off: {error}");
+                    gpu.clouds = None;
+                    gpu.rebind_draw(device);
+                    return PassCounters::default();
+                }
+            }
+            gpu.rebind_draw(device);
+        }
+        let inputs = crate::clouds::CloudInputs { atmosphere: &gpu.atmosphere, transmittance: &gpu.transmittance.view, sky_view: &gpu.sky_view.view, sampler: &gpu.sampler };
+        let frame = crate::clouds::CloudFrame { clouds: clouds.validated(), atmosphere: atmosphere(refresh.sky, refresh.quality, &refresh.frame), force: refresh.force };
+        let panorama = gpu.clouds.as_mut().expect("made above");
+        let Some(whole) = panorama.encode(device, queue, encoder, (&inputs, &frame), refresh.timestamp_writes) else { return PassCounters::default() };
+        self.clouds_texels = panorama.texels_written();
+        if whole {
+            self.generation += 1;
+        }
+        PassCounters { compute: 1, ..PassCounters::default() }
+    }
+
+    /// Texels the last [`SkyState::encode_clouds`] marched (0: none).
+    pub fn clouds_texels_written(&self) -> u64 {
+        self.clouds_texels
+    }
+
+    /// Bytes the cloud panorama and its noise hold (0 without one).
+    pub fn clouds_bytes(&self) -> u64 {
+        self.gpu.as_ref().and_then(|gpu| gpu.clouds.as_ref()).map_or(0, crate::clouds::CloudPanorama::bytes)
+    }
+
+    /// Read the cloud panorama back as linear rgba, rows top first (the zenith's first; diagnostics
+    /// and tests; native only, after the queue's work so far).
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn read_clouds(&self, gpu: &crate::gpu::Gpu) -> Result<Vec<[f32; 4]>, RenderError> {
+        let Some(panorama) = self.gpu.as_ref().and_then(|sky| sky.clouds.as_ref()) else { return Err(crate::readback::capture_failed("the sky has no cloud panorama")) };
+        let bytes = read_rgba16f(gpu, panorama.texture())?;
+        let half = |pair: &[u8; 2]| crate::post::tonemap::f16_to_f32(u16::from_le_bytes(*pair));
+        Ok(bytes.as_chunks::<8>().0.iter().map(|texel| [0, 2, 4, 6].map(|at| half(&[texel[at], texel[at + 1]]))).collect())
+    }
+
     /// The sky's resources at `quality`'s sky-view size (the sky-view LUT made again when the size
     /// changes, nothing else). None
     /// with the sky-view size zero, or when its shaders were refused (logged: the background then
     /// stays the clear colour).
-    fn gpu_for(&mut self, device: &Device, quality: &EnvironmentQuality) -> Option<&mut SkyGpu> {
+    fn gpu_for(&mut self, device: &Device, queue: &Queue, quality: &EnvironmentQuality) -> Option<&mut SkyGpu> {
         let (width, height) = quality.sky_lut;
         if width == 0 || height == 0 {
             return None;
@@ -1215,7 +1320,7 @@ impl SkyState {
         }
         if self.gpu.is_none() {
             self.builds += 1;
-            self.gpu = match SkyGpu::new(device, quality) {
+            self.gpu = match SkyGpu::new(device, queue, quality) {
                 Ok(gpu) => Some(gpu),
                 Err(error) => {
                     log::warn!("the physical sky is off: {error}");
@@ -1307,6 +1412,8 @@ impl SkyState {
                 (6, wgpu::BindingResource::TextureView(cube)),
                 (7, gpu.night.as_entire_binding()),
                 (8, wgpu::BindingResource::TextureView(&gpu.moon_view().view)),
+                (9, wgpu::BindingResource::TextureView(gpu.clouds_view())),
+                (10, wgpu::BindingResource::Sampler(&gpu.cloud_sampler)),
             ],
         );
         pass.set_pipeline(&gpu.cube_pipeline);
@@ -1392,17 +1499,41 @@ const BACKGROUND_SUN: f32 = 2.5;
 /// [`BACKGROUND_WARMUP`] untimed ones; sorted. None without timestamp queries.
 #[cfg(not(target_arch = "wasm32"))]
 pub fn background_gpu_ms(gpu: &crate::gpu::Gpu, sky: &SkyParams, quality: &EnvironmentQuality, sun_dir: [f32; 3], size: (u32, u32), frames: usize) -> Result<Option<Vec<f64>>, RenderError> {
-    if !gpu.device.features().contains(wgpu::Features::TIMESTAMP_QUERY) {
+    let times = background_gpu_ms_interleaved(gpu, &[(*sky, sun_dir)], quality, size, frames)?;
+    Ok(times.and_then(|mut times| times.pop()))
+}
+
+/// [`background_gpu_ms`] for each of `skies` (a sky and its sun), their draws interleaved frame by
+/// frame (renderer pass 2 B.5: a shared GPU's load then weighs on every sky alike, so their
+/// differences are the skies' own). Each sky's times sorted, in `skies`' order. None without
+/// timestamp queries.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn background_gpu_ms_interleaved(
+    gpu: &crate::gpu::Gpu,
+    skies: &[(SkyParams, [f32; 3])],
+    quality: &EnvironmentQuality,
+    size: (u32, u32),
+    frames: usize,
+) -> Result<Option<Vec<Vec<f64>>>, RenderError> {
+    if !gpu.device.features().contains(wgpu::Features::TIMESTAMP_QUERY) || skies.is_empty() {
         return Ok(None);
     }
     let (device, queue) = (&gpu.device, &gpu.queue);
-    let environment = Environment::Sky(*sky);
-    let mut state = SkyState::new();
-    state.set_environment(&environment);
-    let frame = SkyFrame { sun_dir, sun_illuminance: [BACKGROUND_SUN; 3], camera_height_km: camera_height_km(1.5), frame_index: 0 };
-    let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("sky background cost") });
-    state.encode_luts(device, queue, &mut encoder, LutRefresh::new(sky, quality, frame).forced(true));
-    queue.submit([encoder.finish()]);
+    let frame = |sun_dir| SkyFrame { sun_dir, sun_illuminance: [BACKGROUND_SUN; 3], camera_height_km: camera_height_km(1.5), frame_index: 0 };
+    let mut states: Vec<SkyState> = skies
+        .iter()
+        .map(|(sky, sun_dir)| {
+            let frame = frame(*sun_dir);
+            let mut state = SkyState::new();
+            state.set_environment(&Environment::Sky(*sky));
+            let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("sky background cost") });
+            state.encode_luts(device, queue, &mut encoder, LutRefresh::new(sky, quality, frame).forced(true));
+            // B.5: a sky with clouds draws over its panorama.
+            state.encode_clouds(device, queue, &mut encoder, LutRefresh::new(sky, quality, frame).forced(true));
+            queue.submit([encoder.finish()]);
+            state
+        })
+        .collect();
     let target = |label, format, usage| {
         device.create_texture(&wgpu::TextureDescriptor {
             label: Some(label),
@@ -1420,34 +1551,38 @@ pub fn background_gpu_ms(gpu: &crate::gpu::Gpu, sky: &SkyParams, quality: &Envir
     let eye = glam::Vec3::new(0.0, 1.5, 0.0);
     let projection = glam::camera::rh::proj::directx::perspective_infinite_reverse(60f32.to_radians(), size.0 as f32 / size.1 as f32, 0.1);
     let view_proj = projection * glam::camera::rh::view::look_at_mat4(eye, glam::Vec3::new(0.0, 4.0, -8.0), glam::Vec3::Y);
-    let ctx = EnvironmentFrame {
-        device,
-        environment: &environment,
-        quality,
-        frame_index: 0,
-        settle: false,
-        sun_dir,
-        sun_color: [BACKGROUND_SUN; 3],
-        camera_pos: eye.to_array(),
-        view_proj: view_proj.to_cols_array(),
-        pre_exposure: 1.0,
-        scene_format: TextureFormat::Rgba16Float,
-        samples: 1,
-        depth_reversed: true,
-        fog: crate::fog::GpuFog::default(),
-        aerial: false,
-    };
-    state.prepared = state.prepare_draw(device, queue, sky, &ctx);
-    if !state.prepared {
-        return Ok(None);
+    for (state, (sky, sun_dir)) in states.iter_mut().zip(skies) {
+        let environment = Environment::Sky(*sky);
+        let ctx = EnvironmentFrame {
+            device,
+            environment: &environment,
+            quality,
+            frame_index: 0,
+            settle: false,
+            sun_dir: *sun_dir,
+            sun_color: [BACKGROUND_SUN; 3],
+            camera_pos: eye.to_array(),
+            view_proj: view_proj.to_cols_array(),
+            pre_exposure: 1.0,
+            scene_format: TextureFormat::Rgba16Float,
+            samples: 1,
+            depth_reversed: true,
+            fog: crate::fog::GpuFog::default(),
+            aerial: false,
+        };
+        state.prepared = state.prepare_draw(device, queue, sky, &ctx);
+        if !state.prepared {
+            return Ok(None);
+        }
     }
     let total = BACKGROUND_WARMUP + frames;
-    let stamps = 2 * total as u32;
+    let stamps = 2 * (total * states.len()) as u32;
     let bytes = u64::from(stamps) * 8;
     let queries = device.create_query_set(&wgpu::QuerySetDescriptor { label: Some("sky background cost"), ty: wgpu::QueryType::Timestamp, count: stamps });
     let resolve = crate::tables::buffer(device, "sky background cost", bytes, BufferUsages::QUERY_RESOLVE | BufferUsages::COPY_SRC)?;
     let read = crate::tables::buffer(device, "sky background cost read", bytes, BufferUsages::MAP_READ | BufferUsages::COPY_DST)?;
-    for run in 0..total as u32 {
+    for run in 0..(total * states.len()) as u32 {
+        let state = &states[run as usize % states.len()];
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("sky background cost") });
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("sky background cost"),
@@ -1478,8 +1613,14 @@ pub fn background_gpu_ms(gpu: &crate::gpu::Gpu, sky: &SkyParams, quality: &Envir
     let data = crate::readback::map_read_blocking(gpu, &read, bytes)?;
     let period = f64::from(queue.get_timestamp_period());
     let ticks: Vec<u64> = data.as_chunks::<8>().0.iter().map(|b| u64::from_le_bytes(*b)).collect();
-    let mut times: Vec<f64> = ticks.as_chunks::<2>().0[BACKGROUND_WARMUP..].iter().map(|[begin, end]| end.saturating_sub(*begin) as f64 * period / 1.0e6).collect();
-    times.sort_by(f64::total_cmp);
+    let pairs = ticks.as_chunks::<2>().0;
+    let times = (0..states.len())
+        .map(|k| {
+            let mut times: Vec<f64> = pairs.iter().skip(k).step_by(states.len()).skip(BACKGROUND_WARMUP).map(|[begin, end]| end.saturating_sub(*begin) as f64 * period / 1.0e6).collect();
+            times.sort_by(f64::total_cmp);
+            times
+        })
+        .collect();
     Ok(Some(times))
 }
 

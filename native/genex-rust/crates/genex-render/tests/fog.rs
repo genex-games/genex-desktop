@@ -1060,6 +1060,9 @@ fn render_sky(gpu: &Gpu, fixture: &SkyFixture, frame: &GxFrameV2, side: u32) -> 
     let frame = buffer_with(gpu, "fog sky frame", wgpu::BufferUsages::UNIFORM, frame.as_bytes());
     // The day (renderer pass 2 B.2's night row zero: no moon, no stars, the moonlit LUT unread).
     let night = buffer_with(gpu, "fog sky night", wgpu::BufferUsages::UNIFORM, bytemuck::bytes_of(&genex_render::night_sky::GpuNightSky::default()));
+    // No clouds (renderer pass 2 B.5): the clear panorama, which leaves the sky as it is.
+    let (_clear_texture, clear_clouds) = genex_render::clouds::clear_panorama(&gpu.device, &gpu.queue);
+    let cloud_sampler = genex_render::clouds::panorama_sampler(&gpu.device);
     let group = gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("fog sky draw"),
         layout: &pipeline.get_bind_group_layout(0),
@@ -1071,6 +1074,8 @@ fn render_sky(gpu: &Gpu, fixture: &SkyFixture, frame: &GxFrameV2, side: u32) -> 
             wgpu::BindGroupEntry { binding: 4, resource: wgpu::BindingResource::Sampler(&fixture.sampler) },
             wgpu::BindGroupEntry { binding: 5, resource: night.as_entire_binding() },
             wgpu::BindGroupEntry { binding: 6, resource: wgpu::BindingResource::TextureView(&fixture.sky_view) },
+            wgpu::BindGroupEntry { binding: 7, resource: wgpu::BindingResource::TextureView(&clear_clouds) },
+            wgpu::BindGroupEntry { binding: 8, resource: wgpu::BindingResource::Sampler(&cloud_sampler) },
         ],
     });
     let target = gpu.device.create_texture(&wgpu::TextureDescriptor {

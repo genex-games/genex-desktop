@@ -22,6 +22,11 @@
 // disk lit by the sun (a Lommel-Seeliger sphere, so the full moon is evenly bright, with earthshine
 // on its dark side and faint maria), and hashed stars a pixel wide, both through the atmosphere.
 // By day nothing of the night draws but a moon the game placed.
+//
+// The clouds (renderer pass 2 B.5, `clouds.rs`): the cloud panorama (sky/clouds_map.wgsl's mapping)
+// over everything above the horizon, the sun and moon disks and the stars included, under the fog.
+// Without a layer the panorama is one clear texel (no light, the whole sky behind): the sky draws
+// as before, byte for byte.
 
 struct SkyOut {
     @builtin(position) position: vec4<f32>,
@@ -35,6 +40,8 @@ struct SkyOut {
 @group(0) @binding(4) var lut_sampler: sampler;
 @group(0) @binding(5) var<uniform> night: NightSky;
 @group(0) @binding(6) var moon_view: texture_2d<f32>;
+@group(0) @binding(7) var cloud_panorama: texture_2d<f32>;
+@group(0) @binding(8) var cloud_sampler: sampler;
 
 const SKY_PI: f32 = 3.14159265358979;
 // The camera's height is held between these, km (sky_view.wgsl's).
@@ -221,8 +228,16 @@ fn fs_sky(in: SkyOut) -> @location(0) vec4<f32> {
     let sun = normalize(frame.sun_dir.xyz);
     let height = sky_view_height();
     let sky = sky_lut(dir, sun, height) + sky_sun_disk(dir, sun, height) + sky_moon_disk(dir, sun, height, footprint);
-    let radiance = sky_fogged(sky + sky_starlight(dir, sun, height, footprint), dir, sun, height);
+    let radiance = sky_fogged(sky_clouded(sky + sky_starlight(dir, sun, height, footprint), dir), dir, sun, height);
     return vec4<f32>(min(radiance * frame.pre_exposure, vec3<f32>(SKY_RADIANCE_MAX)), 1.0);
+}
+
+// `radiance` along unit `dir` behind the cloud panorama (B.5): above the horizon only.
+fn sky_clouded(radiance: vec3<f32>, dir: vec3<f32>) -> vec3<f32> {
+    if dir.y <= 0.0 {
+        return radiance;
+    }
+    return gx_clouds_over(radiance, textureSampleLevel(cloud_panorama, cloud_sampler, gx_cloud_uv(dir), 0.0));
 }
 
 // The sky-view LUT along unit `dir` with the sun towards unit `sun` at `height` km, plus the

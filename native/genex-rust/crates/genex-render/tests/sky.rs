@@ -1472,14 +1472,15 @@ fn metal_the_night_sky_fits_the_sky_budget() {
     let night_luts = p(&time_refreshes_of(&gpu, &high, false, true, TIMED_RUNS));
     let day_luts = p(&time_refreshes_of(&gpu, &high, false, false, TIMED_RUNS));
     let moon = genex_render::settings::Moon::new(towards(30.0, 0.0));
-    let draw = |sky: &SkyParams, sun: [f32; 3]| {
-        let times = genex_render::sky::background_gpu_ms(&gpu, sky, &high, sun, (1920, 1080), TIMED_RUNS).expect("drawn").expect("timestamps");
-        p(&times)
-    };
-    // Interleaved trials (a day, then a night, again), each pair's own difference, the median of
-    // them gated: other work on a shared GPU moves both of a pair alike.
+    // Trials of the day's and the night's draws interleaved frame by frame (B.5's interleaved cost
+    // helper: other work on a shared GPU then weighs on both alike), each trial's own difference,
+    // the median of them gated.
+    let skies = [(SkyParams::default(), towards(40.0, 180.0)), (SkyParams::default().with_moon(Some(moon)), night_sun())];
     let mut pairs: Vec<([f64; 2], [f64; 2])> = (0..TIMED_TRIALS)
-        .map(|_| (draw(&SkyParams::default(), towards(40.0, 180.0)), draw(&SkyParams::default().with_moon(Some(moon)), night_sun())))
+        .map(|_| {
+            let times = genex_render::sky::background_gpu_ms_interleaved(&gpu, &skies, &high, (1920, 1080), TIMED_RUNS).expect("drawn").expect("timestamps");
+            (p(&times[0]), p(&times[1]))
+        })
         .collect();
     pairs.sort_by(|a, b| (a.1[0] - a.0[0]).total_cmp(&(b.1[0] - b.0[0])));
     let (day_draw, night_draw) = pairs[pairs.len() / 2];

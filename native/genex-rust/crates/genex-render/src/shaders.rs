@@ -184,9 +184,11 @@ pub const SKY_TRANSMITTANCE: &str = shipped_wgsl!(concat!(include_str!("../shade
 /// The physical sky's multiple-scattering LUT (compute).
 pub const SKY_MULTISCATTER: &str = shipped_wgsl!(concat!(include_str!("../shaders/common.wgsl"), include_str!("../shaders/sky/multiscatter.wgsl")));
 /// The physical sky's sky-view LUT (compute, on the preset's cadence).
-pub const SKY_VIEW: &str = shipped_wgsl!(concat!(include_str!("../shaders/common.wgsl"), include_str!("../shaders/sky/sky_view.wgsl")));
+pub const SKY_VIEW: &str =
+    shipped_wgsl!(concat!(include_str!("../shaders/common.wgsl"), include_str!("../shaders/sky/clouds_map.wgsl"), include_str!("../shaders/sky/sky_view.wgsl")));
 /// The sky background and sun disk at the far plane (graph node 13, inside the world pass).
-pub const SKY_DRAW: &str = shipped_wgsl!(concat!(include_str!("../shaders/common.wgsl"), include_str!("../shaders/sky/sky_draw.wgsl")));
+pub const SKY_DRAW: &str =
+    shipped_wgsl!(concat!(include_str!("../shaders/common.wgsl"), include_str!("../shaders/sky/clouds_map.wgsl"), include_str!("../shaders/sky/sky_draw.wgsl")));
 /// An HDR map behind the scene at the far plane (graph node 13 under an HDR environment).
 pub const IBL_BACKDROP: &str = shipped_wgsl!(concat!(include_str!("../shaders/common.wgsl"), include_str!("../shaders/ibl/backdrop.wgsl")));
 
@@ -268,6 +270,9 @@ pub const SHADERS: &[(&str, &str)] = &[
     ("sky-multiscatter", SKY_MULTISCATTER),
     ("sky-view", SKY_VIEW),
     ("sky-draw", SKY_DRAW),
+    // Renderer pass 2 B.5: the cloud panorama's march and its noise.
+    ("clouds", crate::clouds::CLOUDS),
+    ("cloud-noise", crate::clouds::CLOUD_NOISE),
     ("ibl-backdrop", IBL_BACKDROP),
     ("prepass", PREPASS),
     ("bloom-down", BLOOM_DOWN),

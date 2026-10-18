@@ -298,6 +298,7 @@ fn environment(cube_size: u32, sky_lut: (u32, u32), cadence: u8, sun_rebake_tent
         irradiance_volumes: 0,
         irradiance_leak_control: true,
         froxel_fog: None,
+        clouds: None,
     }
 }
 
@@ -371,6 +372,8 @@ fn medium_row(quality: &mut Quality) {
     quality.anisotropy = MEDIUM_ANISOTROPY;
     quality.exposure_input_divisor = 8;
     quality.environment = environment(128, (96, 54), 4, 10, true);
+    // B.5: the cloud panorama from medium up (low draws a clear sky).
+    quality.environment.clouds = Some(crate::clouds::MEDIUM_GRID);
     quality.environment.reflection_probes = PROBES_PER_PRESET[1];
     quality.environment.irradiance_volumes = VOLUMES_PER_PRESET[1];
     quality.shadows = shadows(2, 1536, ShadowFilter::Pcf3x3, ShadowFormat::Depth32, &MEDIUM_REACH);
@@ -392,6 +395,7 @@ fn high_row(quality: &mut Quality) {
     quality.environment.continuous_sky = true;
     // A.5: the froxel fog (sun shafts); medium keeps the analytic fog and the aerial volume.
     quality.environment.froxel_fog = Some(crate::froxel::HIGH_GRID);
+    quality.environment.clouds = Some(crate::clouds::HIGH_GRID);
     quality.shadows = shadows(3, 2048, ShadowFilter::PcssLite, ShadowFormat::Depth32, &HIGH_REACH);
     quality.contact_shadows = true;
     quality.bloom = BloomQuality { enabled: true, resolution: CHAIN_RESOLUTION };
@@ -423,6 +427,7 @@ fn ultra_row(quality: &mut Quality, form: FormFactor) {
     quality.environment.reflection_probes = PROBES_PER_PRESET[3];
     quality.environment.irradiance_volumes = VOLUMES_PER_PRESET[3];
     quality.environment.froxel_fog = Some(crate::froxel::ULTRA_GRID);
+    quality.environment.clouds = Some(crate::clouds::ULTRA_GRID);
     let map_size = if form == FormFactor::Desktop { 4096 } else { 2048 };
     quality.shadows = shadows(4, map_size, ShadowFilter::Pcss, ShadowFormat::Depth32, &ULTRA_REACH);
     // Three slices of eight steps at full resolution with history. The unbiased estimate (gate
@@ -609,6 +614,9 @@ fn apply_mobile_caps(quality: &mut Quality, preset: QualityPreset, class: Device
     // A.5: phones keep the analytic fog until the froxel fog is measured on them (mobile-high only,
     // behind that measurement).
     quality.environment.froxel_fog = None;
+    // B.5: no cloud panorama on phones until it is measured on them (mobile-high only, behind that
+    // measurement; owner decision D16: a feature that cannot be shown to fit is off on phones).
+    quality.environment.clouds = None;
     // Ten passes of Filament's ring gather are a desktop's: phones take Godot's circular gather.
     quality.dof = DofTier::Circular;
     // Phones blur in one pass, and the low-tier phone not at all (the plan's "off on mobile-low").

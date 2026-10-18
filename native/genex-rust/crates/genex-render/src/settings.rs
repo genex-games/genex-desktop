@@ -821,12 +821,17 @@ pub struct SkyParams {
     pub moon: Option<Moon>,
     /// The star field's mean radiance at night, scene units (renderer pass 2 B.2; 0: none).
     pub stars: f32,
+    /// A layer of clouds (renderer pass 2 B.5; none by default): drawn where the quality marches
+    /// a panorama ([`EnvironmentQuality::clouds`]).
+    pub clouds: Option<Clouds>,
 }
 
 /// The sky's air (renderer pass 2 B.2): see [`crate::sky::SkyMedium`].
 pub use crate::sky::SkyMedium;
 /// A moon in the sky (renderer pass 2 B.2): see [`crate::night_sky::Moon`].
 pub use crate::night_sky::Moon;
+/// A layer of clouds in the sky (renderer pass 2 B.5): see [`crate::clouds::Clouds`].
+pub use crate::clouds::Clouds;
 
 /// The default sky, as a constant ([`SkyParams::default`]).
 const DEFAULT_SKY: SkyParams = SkyParams {
@@ -836,6 +841,7 @@ const DEFAULT_SKY: SkyParams = SkyParams {
     medium: SkyMedium::EARTH,
     moon: None,
     stars: crate::night_sky::DEFAULT_STARS,
+    clouds: None,
 };
 
 impl Default for SkyParams {
@@ -879,6 +885,13 @@ impl SkyParams {
     /// `0..=night_sky::STARS_MAX`).
     pub fn with_stars(mut self, stars: f32) -> SkyParams {
         self.stars = crate::night_sky::star_radiance(stars);
+        self
+    }
+
+    /// The sky with a layer of `clouds` (None: a clear sky; held to what the march takes,
+    /// [`Clouds::validated`]).
+    pub fn with_clouds(mut self, clouds: Option<Clouds>) -> SkyParams {
+        self.clouds = clouds.map(Clouds::validated);
         self
     }
 }
@@ -1666,6 +1679,9 @@ pub struct EnvironmentQuality {
     /// froxel by the shadowed sun and the binned lights (sun shafts), bound in the aerial volume's
     /// place; None keeps the analytic fog. Desktop and web `high` and `ultra`. A resource knob.
     pub froxel_fog: Option<crate::froxel::FroxelGrid>,
+    /// The cloud panorama a sky's layer is marched into (renderer pass 2 B.5, [`crate::clouds`]):
+    /// desktop and web `medium` and up; None draws no clouds. A resource knob.
+    pub clouds: Option<crate::clouds::CloudGrid>,
 }
 
 /// Local lights.
@@ -1889,6 +1905,7 @@ impl Quality {
                 irradiance_volumes: 0,
                 irradiance_leak_control: false,
                 froxel_fog: None,
+                clouds: None,
             },
             lights: LightQuality { cap: MAX_LIGHTS as u32, clustered: false, tile_px: 0, shadowed_spots: 0, decals: 0 },
             textures: TextureQuality::OFF,

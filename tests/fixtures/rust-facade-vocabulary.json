@@ -151,6 +151,9 @@
   "subsurface": {
     "calls": [".with_subsurface", "Subsurface::new", ".with_transmission"]
   },
+  "clouds": {
+    "calls": [".with_clouds", "Clouds::default", ".with_coverage", ".with_layer", ".with_density", ".with_offset"]
+  },
   "meshlets": {
     "extrasKey": "genex_meshlets",
     "schemaVersion": 1,

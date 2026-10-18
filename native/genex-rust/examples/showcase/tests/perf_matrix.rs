@@ -199,7 +199,8 @@ impl Applied {
             .map(RenderFeature::wire)
             .collect();
         let hdr = path.is_some_and(|path| path.hdr);
-        let content = Content { terrain: renderer.terrain_stats().is_some(), grass: renderer.grass_stats().is_some(), ..content };
+        let clouds = matches!(renderer.environment(), genex_render::settings::Environment::Sky(sky) if sky.clouds.is_some());
+        let content = Content { terrain: renderer.terrain_stats().is_some(), grass: renderer.grass_stats().is_some(), clouds, ..content };
         let stage_a = stage_a_drawn(&self.quality, renderer.look(), hdr && taa, content);
         drawn.extend(stage_a.iter().map(|(feature, _)| *feature));
         for (feature, shape) in stage_a.into_iter().filter_map(|(feature, shape)| shape.map(|shape| (feature, shape))) {
@@ -232,10 +233,12 @@ struct Content {
     reflection_probes: usize,
     irradiance_volumes: usize,
     decals: usize,
+    /// The game's sky carries a cloud layer (renderer pass 2 B.5).
+    clouds: bool,
 }
 
-/// The Stage A features `quality` draws under `look` on `content` (`taa_hdr`: the frame is the
-/// HDR scene TAA resolves, where the sun mask runs), named as `tests/fixtures/render-perf/
+/// The Stage A features (and B.5's clouds) `quality` draws under `look` on `content` (`taa_hdr`: the
+/// frame is the HDR scene TAA resolves, where the sun mask runs), named as `tests/fixtures/render-perf/
 /// budgets.json` names them, each with the shape its budget is keyed by. GPU particles have a
 /// budget but no matrix scene declares any.
 fn stage_a_drawn(quality: &Quality, look: &Look, taa_hdr: bool, content: Content) -> Vec<(&'static str, Option<&'static str>)> {
@@ -261,6 +264,7 @@ fn stage_a_drawn(quality: &Quality, look: &Look, taa_hdr: bool, content: Content
         ("motion-blur", look.motion_blur.enabled && quality.motion_blur != MotionBlurTier::Off, None),
         ("decals", quality.lights.decals > 0 && content.decals > 0, None),
         ("sun-mask", genex_render::post::sun_mask::key(quality, taa_hdr, taa_hdr).is_some(), None),
+        ("clouds", genex_render::clouds::LANDED && content.clouds && quality.hdr && environment.clouds.is_some(), None),
     ];
     rows.into_iter().filter(|(_, on, _)| *on).map(|(feature, _, shape)| (feature, shape)).collect()
 }
@@ -1777,6 +1781,20 @@ fn a_profile_requests_its_presets_features_and_off_requests_only_the_legacy_shad
     assert_eq!(ultra["class"], "desktop-ultra");
     assert!(ultra["featuresRequested"].as_array().is_some_and(|features| !features.is_empty()), "ultra requests no feature");
     assert_eq!(ultra["wired"], RENDERER_CONSUMES_QUALITY);
+}
+
+#[test]
+fn a_sky_with_clouds_is_charged_the_cloud_budget_where_the_preset_marches_them() {
+    let clouded = Content { clouds: true, ..Content::default() };
+    let charged = |class: DeviceClass, preset: QualityPreset, content: Content| {
+        stage_a_drawn(&preset_quality(preset, class), &Look::default(), true, content).iter().any(|(feature, _)| *feature == "clouds")
+    };
+    let desktop = DeviceClass::new(FormFactor::Desktop, PerformanceTier::High);
+    assert!(charged(desktop, QualityPreset::High, clouded), "desktop high marches the cloud panorama");
+    assert!(!charged(desktop, QualityPreset::High, Content::default()), "a sky without a layer draws no clouds");
+    assert!(!charged(desktop, QualityPreset::Low, clouded), "low marches no panorama");
+    let phone = DeviceClass::new(FormFactor::Mobile, PerformanceTier::High);
+    assert!(!charged(phone, QualityPreset::High, clouded), "phones march no clouds (D16)");
 }
 
 #[test]

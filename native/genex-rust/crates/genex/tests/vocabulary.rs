@@ -225,6 +225,15 @@ fn the_grading_and_lens_calls_are_the_fixtures_and_each_is_a_call_of_the_facade(
 }
 
 #[test]
+fn the_cloud_calls_are_the_fixture_s_and_each_is_a_call_of_the_facade() {
+    use genex::render::{Clouds, Environment, SkyParams};
+    assert_eq!(pinned_calls(&fixture(), "clouds"), [".with_clouds", "Clouds::default", ".with_coverage", ".with_layer", ".with_density", ".with_offset"]);
+    let clouds = Clouds::default().with_coverage(0.5).with_layer(1.5, 2.5).with_density(1.0).with_offset([0.0, 0.0]);
+    let mut frame = Frame::new(Color::BLACK);
+    frame.environment(Environment::Sky(SkyParams::default().with_clouds(Some(clouds))));
+}
+
+#[test]
 fn the_night_sky_and_subsurface_calls_are_the_fixtures_and_each_is_a_call_of_the_facade() {
     use genex::Subsurface;
     use genex::render::{Environment, Moon, SkyMedium, SkyParams};
