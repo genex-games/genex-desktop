@@ -214,11 +214,16 @@ impl Applied {
 }
 
 /// The shape AO is drawn in, as the budgets name it (`tests/fixtures/render-perf/budgets.json`:
-/// GTAO's budget is per resolution): `half`, `full`, or `off`.
+/// GTAO's budget is per resolution and method): `half`, `full`, `bitmask-half`, `bitmask-full`
+/// (renderer pass 2 B.4: the visibility bitmask on desktop `high` and `ultra`), or `off`.
 fn ao_shape(quality: &Quality) -> &'static str {
-    match quality.ao.resolution {
-        genex_render::settings::AoResolution::Half => "half",
-        genex_render::settings::AoResolution::Full => "full",
+    use genex_render::settings::{AoMethod, AoResolution};
+    let bitmask = quality.ao_method != AoMethod::Horizons;
+    match (quality.ao.resolution, bitmask) {
+        (AoResolution::Half, false) => "half",
+        (AoResolution::Full, false) => "full",
+        (AoResolution::Half, true) => "bitmask-half",
+        (AoResolution::Full, true) => "bitmask-full",
         _ => "off",
     }
 }

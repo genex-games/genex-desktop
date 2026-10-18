@@ -487,7 +487,8 @@ fn metal_the_wide_shot_at_each_dynamic_resolution_step_is_written_as_a_png() {
 
 // RQ5 review: the legacy DRS row draws through the renderer-core `Stage` (no FSR1): its pictures
 // were byte-identical before and after RQ5.6. This row takes desktop-high's steps through the
-// presenter at the high preset, so TAA, then EASU and RCAS, draw on the lakeside.
+// presenter at the high preset, so TAA, then EASU and RCAS, draw on the lakeside (TAAU at output size
+// below scale 1 since renderer pass 2 B.8).
 #[test]
 #[ignore = "needs a GPU: run with --ignored metal"]
 fn metal_the_wide_shot_at_each_desktop_high_step_draws_fsr1_through_the_presenter() {
@@ -502,7 +503,10 @@ fn metal_the_wide_shot_at_each_desktop_high_step_draws_fsr1_through_the_presente
     for scale in steps {
         let (capture, path) = studio_shot_as("wide", DrawnAs::Locked(QualityPreset::High, *scale)).expect("a presenter");
         assert!(path.taa, "{scale}: high resolves TAA: {path:?}");
-        assert_eq!(path.fsr.easu, *scale < 1.0, "{scale}: EASU runs below scale 1: {path:?}");
+        // Renderer pass 2 B.8 flipped (named in the log): below scale 1 high resolves TAA at output
+        // size (TAAU), so EASU no longer runs after it (it asserted `fsr.easu == scale < 1`).
+        assert_eq!(path.taau, *scale < 1.0, "{scale}: TAAU resolves at output size below scale 1: {path:?}");
+        assert!(!path.fsr.easu, "{scale}: no EASU after TAAU: {path:?}");
         write_png(&dir.join(format!("drs-wide-fsr-{scale:.2}.png")), &capture);
         rows.push(format!("{{\"scale\": {scale}, \"digest\": \"{:016x}\", \"grain\": {:.3}}}", capture.digest(), grain(&capture)));
     }

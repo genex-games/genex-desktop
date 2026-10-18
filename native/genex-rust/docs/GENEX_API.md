@@ -359,7 +359,8 @@ up to 2 GiB).
 | `ultra` | TAA, RCAS | 4 | on | full size | on | 1024 (4) |
 
 Every preset draws HDR, image-based lighting, the sky and fog; below a render scale of 1 it
-upscales (EASU with RCAS, bilinear on a desktop's `low`). Phones are capped whatever the preset:
+upscales (TAA at output size on `high` and `ultra` without lens effects or `post-hdr` passes,
+else EASU with RCAS; bilinear on a desktop's `low`). Phones are capped whatever the preset:
 256 lights, at most one shadowed spot, TAA only on `mobile-high` at `high` and up, and no AO or contact
 shadows while the world pass is multisampled.
 
@@ -388,7 +389,7 @@ Each feature has a switch; off is its cheaper variant, never a refusal:
 | `ibl`, `sky` | environment lighting, the physical sky | flat `frame.ambient`, the clear colour |
 | `shadows`, `contact-shadows`, `spot-shadows` | sun cascades, screen-space contact, spot maps | that shadow |
 | `bloom`, `ao`, `fog` | the look's effects | none of it |
-| `taa`, `upscaler` | TAA with RCAS; EASU below scale 1 | MSAA; bilinear |
+| `taa`, `upscaler` | TAA with RCAS; below scale 1 TAA at output size or EASU | MSAA; bilinear |
 | `clustered` | tile-binned point and spot lights | a per-pixel loop over the nearest 8 (4 on phones) |
 | `prepass` | depth, normals, motion for AO, contact shadows, TAA and Level-2/3 inputs | those fall back |
 | `meshlets`, `occlusion` | clustered big meshes, Hi-Z culling (off on every preset) | the instance path |

@@ -68,6 +68,8 @@ struct TaaParams {
 
 // `post::taa::TaaFlags::CLIP`: rectify the history against the neighbourhood's colour box.
 const GX_TAA_FLAG_CLIP: u32 = 1u;
+// `post::taa::HANDBACK_FLAG`: the history is TAA upscaling's last output (alpha a weight).
+const GX_TAA_FLAG_HANDBACK: u32 = 128u;
 // `post::taa::JITTER_CYCLE_SHIFT`: where `counts.w` keeps the jitter cycle's frames.
 const GX_TAA_JITTER_CYCLE_SHIFT: u32 = 8u;
 // `post::taa::VARIANCE_GAMMA`: the box's half-size in standard deviations.
@@ -582,7 +584,8 @@ fn fs_taa(in: TaaOut) -> TaaTargets {
     // at high against 0.013%).
     let ratio = camera.x / max(n.key, 1e-20);
     let prev_hi = n.key_hi * select(ratio, 1.0, n.key <= 0.0);
-    let disoccluded = history_key > prev_hi * (1.0 + tolerance) + 1e-6;
+    let handback = (gx_taa.counts.w & GX_TAA_FLAG_HANDBACK) != 0u;
+    let disoccluded = !handback && history_key > prev_hi * (1.0 + tolerance) + 1e-6;
     let reset = gx_taa.counts.y == 1u;
     let rejected = offscreen || disoccluded;
     let fresh = reset || rejected;

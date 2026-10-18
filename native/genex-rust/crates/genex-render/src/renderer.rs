@@ -119,6 +119,7 @@ mod grass_draw;
 mod shadow_cache_draw;
 mod terrain_draw;
 mod variants;
+mod water_draw;
 
 pub use grass_draw::GrassStats;
 pub use lens::CaptureLens;
@@ -155,6 +156,7 @@ use crate::meshlet_cull::{
 use crate::motion::{GpuMotionFrame, MotionHistory, MotionNode, MotionStep};
 use crate::post::fsr::{FsrNode, FsrPass, FsrPasses};
 use crate::post::taa::{GpuReactiveJitter, GpuTaaParams, ReactiveEntry, ReactiveNode, TaaInput};
+use crate::post::taau::{GpuTaauParams, TaauInput};
 use crate::post::tonemap::{MsaaResolve, ResolveNode, TonemapNode, TonemapPass, TonemapSource, f16_to_f32};
 use crate::prepass::{ExtensionDemand, GpuPrepassDraw, PrepassConsumers, PrepassDraw, PrepassInfo};
 use crate::readback::{map_read, map_read_blocking, stage_buffer};
@@ -235,6 +237,11 @@ pub struct ScenePath {
     /// Which FSR1 passes upscale and sharpen the tonemapped scene (node 22; none: the tonemap
     /// writes the world target itself, bilinear-fused below scale 1 on `low`).
     pub fsr: FsrPasses,
+    /// Whether TAA resolved at output size (renderer pass 2 B.8, `post::taau`): a TAA frame below
+    /// scale 1 on a quality with `taau` and nothing reading the scene at render size before the
+    /// tonemap (no `post-hdr` pass, depth of field or motion blur). The tonemap then reads the
+    /// output-size history and EASU does not run.
+    pub taau: bool,
 }
 
 impl ScenePath {
@@ -251,6 +258,7 @@ impl ScenePath {
         pre_exposure: 1.0,
         taa: false,
         fsr: FsrPasses { easu: false, rcas: false },
+        taau: false,
     };
 
     /// Whether FSR1 runs after the tonemap (into the world target from its intermediate).
@@ -916,6 +924,8 @@ pub struct Renderer {
     skinned_prev: SkinnedPrevious,
     /// TAA's histories, Live's and a capture's own (graph node 17), made on the first TAA frame.
     taa: std::cell::RefCell<Option<TaaHistories>>,
+    /// The water's node and opaque copy (graph node 16a, B.3), made on the first frame with water.
+    water: std::cell::RefCell<Option<water_draw::WaterHook>>,
     /// TAA's reactive coverage (graph node 15a), made on the first TAA frame.
     reactive: Option<ReactivePipelines>,
     /// The FSR1 upscaler (graph node 22), made on the first HDR frame whose quality asks for it.
@@ -1479,6 +1489,8 @@ struct TargetSpec {
     motion: bool,
     /// The FSR1 passes the frame runs (their intermediates are acquired).
     fsr: FsrPasses,
+    /// Whether TAA resolves at output size (B.8): RCAS's intermediate is then at output size.
+    taau: bool,
 }
 
 /// Usages of the HDR scene colour: drawn, read by the tonemap, read back by a test, and written
@@ -1631,7 +1643,9 @@ fn pooled_targets(pool: &mut TargetPool, device: &Device, output: (u32, u32), re
         }
         None
     };
-    let (fsr_input, fsr_easu) = fsr_targets(pool, device, render, output, spec.fsr)?;
+    // Under TAA upscaling (B.8) the tonemap writes RCAS's intermediate at output size.
+    let tonemapped = if spec.taau { output } else { render };
+    let (fsr_input, fsr_easu) = fsr_targets(pool, device, tonemapped, output, spec.fsr)?;
     // The `Equal` world pass draws against the prepass depth: it needs no depth of its own.
     let (depth_texture, depth_view, transient) = match &prepass {
         Some(prepass) if spec.equal_depth => {
@@ -1846,6 +1860,8 @@ pub(crate) struct FramePrep {
     motion: Option<FrameMotion>,
     /// The reactive coverage's group 2 over this frame's previous-model table (TAA frames).
     reactive_group: Option<BindGroup>,
+    /// The scene's water (graph node 16a, B.3).
+    water: Option<crate::scene::SceneWater>,
 }
 
 /// One frame's motion prepass inputs: the frame row, the instance draws' group 2 and the meshlet
@@ -1900,8 +1916,12 @@ const fn input_generation(pool: u64, taa_slot: Option<usize>) -> u64 {
         Some(slot) => 1 + slot as u64,
         None => 0,
     };
-    pool.wrapping_mul(4).wrapping_add(tag)
+    pool.wrapping_mul(8).wrapping_add(tag)
 }
+
+/// The slot numbers TAA upscaling's history takes in [`TaaResolved::slot`] (B.8: after TAA's two,
+/// so a tonemap or bloom bind group made for one never serves the other).
+const UPSCALE_SLOT_BASE: usize = 2;
 
 /// The node that tonemaps: [`NodeId::Tonemap`] once the graph runs it, until then the upscale's
 /// row (node 22, the next landed pass node after the nodes that read the HDR scene).
@@ -1975,7 +1995,8 @@ impl<'a> WorldNodes<'a> {
     }
 
     /// Graph node 17: TAA resolves the jittered scene with the prepass's depth, motion and reactive
-    /// mask into its history set's next slot.
+    /// mask into its history set's next slot: at render size, or at output size when the frame
+    /// upscales (B.8, `post::taau`: a convert pass at render size and the upscale).
     fn encode_taa(&mut self, frame: &mut FrameEncoder) {
         let renderer = self.renderer;
         let (Some(scene), Some(prepass)) = (renderer.targets.scene_view.as_ref(), renderer.targets.prepass.as_ref()) else { return };
@@ -1983,15 +2004,23 @@ impl<'a> WorldNodes<'a> {
         let Some(histories) = histories.as_mut() else { return };
         let (device, queue) = (frame.device().clone(), frame.queue().clone());
         let temporal = renderer.temporal;
+        let upscaled = renderer.path.taau;
+        if histories.resolve_by(&device, &queue, temporal.set, upscaled).is_err() {
+            return;
+        }
+        let (depth, render) = (&prepass.depth_view, renderer.targets.render_size);
+        let motion = prepass.motion.as_ref().map(|(_, view)| view);
+        let reactive = prepass.reactive.as_ref().map(|(_, view)| view);
+        if upscaled {
+            let Ok(node) = histories.upscale_on(&device, &queue, temporal.set) else { return };
+            let input = TaauInput { scene, depth, motion, reactive, render, output: (renderer.width, renderer.height), row: renderer.taau_row() };
+            let output = node.encode(&device, &queue, frame.encoder(), input);
+            self.taa = Some(TaaResolved { view: output.view, slot: UPSCALE_SLOT_BASE + output.slot });
+            self.count_render(frame, 2);
+            return;
+        }
         let Ok(node) = histories.node_on(&device, &queue, temporal.set) else { return };
-        let input = TaaInput {
-            scene,
-            depth: &prepass.depth_view,
-            motion: prepass.motion.as_ref().map(|(_, view)| view),
-            reactive: prepass.reactive.as_ref().map(|(_, view)| view),
-            render: renderer.targets.render_size,
-            row: renderer.taa_row(),
-        };
+        let input = TaaInput { scene, depth, motion, reactive, render, row: renderer.taa_row() };
         let output = node.encode(&device, &queue, frame.encoder(), input);
         self.taa = Some(TaaResolved { view: output.view, slot: output.slot });
         self.count_render(frame, 1);
@@ -2039,6 +2068,7 @@ impl<'a> WorldNodes<'a> {
             // The stage's billboards may need it too: the node checks its work as it encodes.
             NodeId::Reactive => self.taa_runs(),
             NodeId::Taa => self.taa_runs(),
+            NodeId::Water => self.renderer.water_runs(self.prep),
             NodeId::Dof => self.renderer.lens.borrow().draws_dof(),
             NodeId::MotionBlur => self.renderer.lens.borrow().draws_motion_blur(),
             NodeId::Tonemap => self.renderer.path.hdr,
@@ -2186,7 +2216,18 @@ impl<'a> WorldNodes<'a> {
                 self.baked_groups = Some(renderer.current_groups());
             }
             NodeId::Reactive => self.encode_reactive(frame, stage),
-            NodeId::Taa => self.encode_taa(frame),
+            NodeId::Water => {
+                let passes = renderer.encode_water(frame, self.prep);
+                self.count_render(frame, passes);
+            }
+            NodeId::Taa => {
+                self.encode_taa(frame);
+                // B.3: the colour pyramid the next frame's water marches.
+                if let Some(view) = self.taa.as_ref().map(|taa| taa.view.clone()) {
+                    let passes = renderer.encode_water_pyramid(frame, self.prep, &view);
+                    self.count_compute(frame, passes);
+                }
+            }
             NodeId::Dof => self.encode_dof(frame),
             NodeId::MotionBlur => self.encode_motion_blur(frame),
             NodeId::Upscale | NodeId::Tonemap if renderer.path.hdr => {
@@ -2611,6 +2652,7 @@ impl Renderer {
             motion_node: None,
             skinned_prev: SkinnedPrevious::default(),
             taa: std::cell::RefCell::new(None),
+            water: std::cell::RefCell::new(None),
             reactive: None,
             fsr: std::cell::RefCell::new(None),
             temporal_last: [None, None],
@@ -2800,10 +2842,10 @@ impl Renderer {
         if scene.hdr && self.environment_lights() { crate::fog::FogBackdrop::Environment } else { crate::fog::FogBackdrop::Flat(clear) }
     }
 
-    /// The AO frames draw with: the look's radius and intensity at the quality's sampling (None:
-    /// AO off, or not landed).
+    /// The AO frames draw with: the look's radius and intensity at the quality's sampling and method
+    /// (the visibility bitmask at desktop high and ultra; None: AO off, or not landed).
     fn frame_ao(&self) -> Option<crate::post::ao::AoSettings> {
-        crate::post::ao::AoSettings::new(&self.look, &self.quality.ao).filter(|_| crate::post::ao::LANDED)
+        crate::post::ao::AoSettings::of(&self.look, &self.quality).filter(|_| crate::post::ao::LANDED)
     }
 
     /// The bloom the frame's tonemap draws: the look's with the quality's chain on the HDR scene
@@ -3424,7 +3466,11 @@ impl Renderer {
         // T-06: the material textures' mip bias at this frame's scale (TAA's, or FSR1's upscale's
         // without TAA), a uniform: a dynamic-resolution step moves it without a pipeline.
         let easu = scene_path.hdr && scene_path.fsr.easu;
-        plan.frame.texture_lod[0] = crate::settings::frame_texture_lod_bias(&self.quality.taa, scene_path.hdr && temporal.taa, easu, self.render_scale);
+        plan.frame.texture_lod[0] = if scene_path.hdr && scene_path.taau {
+            crate::post::taau::frame_texture_lod_bias(&self.quality.taa, true, self.render_scale)
+        } else {
+            crate::settings::frame_texture_lod_bias(&self.quality.taa, scene_path.hdr && temporal.taa, easu, self.render_scale)
+        };
         let previous_skinned = self.plan_motion(&mut plan, temporal);
         let instance_rows = self.instance_rows(&plan);
         let uploads = Uploads::new(&mut plan, path, instance_rows)?;
@@ -3495,14 +3541,18 @@ impl Renderer {
         let resolve = (self.samples > 1).then(|| self.resolve_override.unwrap_or(by_device));
         let weighted = resolve == Some(MsaaResolve::Weighted);
         let output = (self.width, self.height);
-        let upscaled = render != output;
-        let fsr = if crate::post::fsr::LANDED { crate::post::fsr::passes(&self.quality, render, output) } else { FsrPasses::default() };
+        let taa = self.taa_drawn();
+        let taau = taa && self.taau_drawn(render, output);
+        // Under TAA upscaling the scene reaches the tonemap at output size: no EASU, and only
+        // ultra's RCAS (TaaSharpen) runs, as it does at scale 1.
+        let tonemapped = if taau { output } else { render };
+        let upscaled = tonemapped != output;
+        let fsr = if crate::post::fsr::LANDED { crate::post::fsr::passes(&self.quality, tonemapped, output) } else { FsrPasses::default() };
         let fsr_runs = fsr.easu || fsr.rcas;
         // The tonemap's own sharpened stretch stands in for FSR1 only where it has not landed.
         let sharpened = upscaled && self.quality.upscaler != Upscaler::Bilinear && !fsr_runs;
         let readers = self.hdr_readers || auto_exposure(&self.look, &self.quality);
         let resolve_pass = weighted && (readers || sharpened);
-        let taa = self.taa_drawn();
         ScenePath {
             hdr: true,
             format: self.hdr_scene_format(),
@@ -3515,7 +3565,41 @@ impl Renderer {
             pre_exposure: pre_exposure(&self.look, &self.quality),
             taa,
             fsr,
+            taau,
         }
+    }
+
+    /// Whether a TAA frame at `render` into `output` resolves at output size (B.8): the quality
+    /// asks, the frame upscales and nothing reads the HDR scene at render size before the
+    /// tonemap. A `post-hdr` pass or the look's depth of field or motion blur keeps TAA at render
+    /// size followed by EASU (those nodes run at render size).
+    fn taau_drawn(&self, render: (u32, u32), output: (u32, u32)) -> bool {
+        let scene_read = self.hdr_readers || self.lens_may_draw();
+        self.quality.taau && crate::post::taau::upscales(render, output) && !scene_read
+    }
+
+    /// Whether the look's depth of field or motion blur may draw on a Live frame under this
+    /// quality (`dof::frame_settings`, `motion_blur::frame_settings` without the frame's camera).
+    fn lens_may_draw(&self) -> bool {
+        let (dof, blur) = (self.look.depth_of_field.held(), self.look.motion_blur.held());
+        let dof_on = crate::post::dof::LANDED && dof.enabled && dof.coc_scale > 0.0;
+        let blur_tier = self.quality.motion_blur != crate::post::motion_blur::MotionBlurTier::Off;
+        let blur_on = crate::post::motion_blur::LANDED && blur.enabled && blur.shutter > 0.0 && blur_tier;
+        dof_on || blur_on
+    }
+
+    /// The size of the HDR scene the nodes after TAA read (exposure, bloom, the tonemap): the
+    /// output size when TAA upscales (B.8), else the render size.
+    pub(crate) fn hdr_scene_size(&self) -> (u32, u32) {
+        if self.path.hdr && self.path.taau { (self.width, self.height) } else { self.targets.render_size }
+    }
+
+    /// The re-renders a settled capture's TAA upscale needs at the next frame's sizes (B.8: one
+    /// cycle of its phases, `taau::settle_frames`); 0 when the next frame does not upscale.
+    pub fn upscale_settle_frames(&self) -> u32 {
+        let (render, output) = (self.render_size(), (self.width, self.height));
+        let path = self.scene_path(render, None);
+        if path.hdr && path.taau { crate::post::taau::settle_frames(render, output, self.quality.taa.jitter_cycle) } else { 0 }
     }
 
     /// Whether TAA resolves the HDR scene under the quality (RQ5.6): its switch on in this build,
@@ -3535,7 +3619,13 @@ impl Renderer {
         let motion_input = demand.custom_inputs.contains(RenderInputs::MOTION) || demand.extension_inputs.contains(RenderInputs::MOTION);
         let motion = crate::motion::LANDED && NodeId::Prepass.landed() && (path.taa || motion_input);
         let (jitter_px, jitter_ndc) = if path.taa {
-            let px = crate::jitter::offset_px(self.frame_index, self.quality.taa.jitter_cycle);
+            // TAA upscaling's cycle grows with the ratio squared (B.8); TAA's own at scale 1.
+            let cycle = self.quality.taa.jitter_cycle;
+            let px = if path.taau {
+                crate::post::taau::frame_jitter(self.frame_index, render, (self.width, self.height), cycle)
+            } else {
+                crate::jitter::offset_px(self.frame_index, cycle)
+            };
             (px, crate::jitter::offset_ndc(px, render))
         } else {
             (crate::jitter::NO_JITTER, crate::jitter::NO_JITTER)
@@ -3643,6 +3733,7 @@ impl Renderer {
             equal_depth: prepass.is_some_and(|prepass| prepass.equal),
             motion: temporal.motion && prepass.is_some(),
             fsr: if path.hdr { path.fsr } else { FsrPasses::default() },
+            taau: path.hdr && path.taau,
         }
     }
 
@@ -3921,8 +4012,9 @@ impl Renderer {
         };
         let Some(input) = input else { return 0 };
         let fsr = targets.fsr_input.as_ref().filter(|_| self.path.fsr_runs());
+        let scene_size = self.hdr_scene_size();
         let (target, format, target_size) = match fsr {
-            Some(view) => (view, crate::post::fsr::INTERMEDIATE_FORMAT, targets.render_size),
+            Some(view) => (view, crate::post::fsr::INTERMEDIATE_FORMAT, scene_size),
             None => (&targets.world_view, WORLD_FORMAT, (self.width, self.height)),
         };
         let mut post = self.post.borrow_mut();
@@ -3933,7 +4025,7 @@ impl Renderer {
             target,
             format,
             tonemapper: self.path.tonemapper,
-            source_size: targets.render_size,
+            source_size: scene_size,
             target_size,
             output_size: (self.width, self.height),
             dither: fsr.is_none(),
@@ -3961,7 +4053,7 @@ impl Renderer {
             easu: targets.fsr_easu.as_ref().unwrap_or(input),
             target: &targets.world_view,
             format: WORLD_FORMAT,
-            render_size: targets.render_size,
+            render_size: self.hdr_scene_size(),
             output_size: (self.width, self.height),
             rcas: passes.rcas.then_some(&self.quality.rcas),
             dither: true,
@@ -3989,6 +4081,20 @@ impl Renderer {
     /// history is rescaled by (manual exposure's now over then; 1 under auto exposure, whose GPU
     /// value moves by a small step per tick) and whether history starts over.
     fn taa_row(&self) -> GpuTaaParams {
+        let (config, prev_jitter, ratio) = self.taa_inputs();
+        GpuTaaParams::new(&self.quality.taa, &config, prev_jitter, ratio).with_reproject(self.taa_reproject)
+    }
+
+    /// TAA upscaling's row for the frame being drawn (B.8): [`Renderer::taa_row`]'s inputs at the
+    /// render and output sizes.
+    fn taau_row(&self) -> GpuTaauParams {
+        let (config, prev_jitter, ratio) = self.taa_inputs();
+        GpuTaauParams::new(&self.quality.taa, &config, prev_jitter, ratio).with_reproject(self.taa_reproject)
+    }
+
+    /// What TAA's and the upscale's rows are made of: the frame's config, last frame's jitter and
+    /// the exposure ratio.
+    fn taa_inputs(&self) -> (FrameConfig, [f32; 2], f32) {
         let temporal = self.temporal;
         let last = self.temporal_last[set_index(temporal.set)].filter(|_| !temporal.reset);
         let prev_jitter = last.map_or(temporal.jitter_px, |last| last.jitter_px);
@@ -4010,7 +4116,7 @@ impl Renderer {
             settle: None,
             jitter: temporal.jitter_px,
         };
-        GpuTaaParams::new(&self.quality.taa, &config, prev_jitter, ratio).with_reproject(self.taa_reproject)
+        (config, prev_jitter, ratio)
     }
 
     /// Copy TAA's resolve in history `slot` into the 1x HDR `scene` (for `post-hdr` passes):
@@ -4172,7 +4278,7 @@ impl Renderer {
         }
         let motion = self.motion_row.take().zip(self.motion_group(&spec)).map(|(row, (group, meshlet_group))| FrameMotion { row, group, meshlet_group });
         let reactive_group = self.reactive.as_ref().filter(|_| spec.motion).map(|reactive| reactive.node.group(&self.device, self.tables.prev_models.get()));
-        Ok(FramePrep { plan, environment_sun, uploads, path, clear: scene.clear, groups, prepass, meshlets, camera: scene.camera, motion, reactive_group })
+        Ok(FramePrep { plan, environment_sun, uploads, path, clear: scene.clear, groups, prepass, meshlets, camera: scene.camera, motion, reactive_group, water: scene.water })
     }
 
     /// The part-1 nodes of the frame `prep`.

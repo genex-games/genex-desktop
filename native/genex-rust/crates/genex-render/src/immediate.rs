@@ -754,7 +754,7 @@ impl FrameNodesOf<'_> {
         let Some(scene) = self.world.resolved_hdr_scene(frame) else { return };
         let input = ExposureInput {
             scene: &scene,
-            scene_size: self.world.renderer().render_size(),
+            scene_size: self.world.renderer().hdr_scene_size(),
             look: &exposure.look,
             quality: &exposure.quality,
             ticks: exposure.ticks,
@@ -1442,7 +1442,10 @@ impl FrameRenderer {
     /// [`FrameRenderer::settle_frames`] for a frame whose game passes change the HDR scene before
     /// it is metered (`graded`: a Level-3 `post-hdr` pass runs; [`crate::settle::settle_plan_graded`]).
     pub fn settle_frames_graded(&self, graded: bool) -> u32 {
-        crate::settle::settle_plan_graded(self.renderer.quality(), self.renderer.look(), self.hdr_session(), graded).frames
+        let frames = crate::settle::settle_plan_graded(self.renderer.quality(), self.renderer.look(), self.hdr_session(), graded).frames;
+        // TAA upscaling settles over its own (longer) jitter cycle below scale 1 (B.8), within the
+        // wire's cap (18 phases at 0.67 settle 16).
+        frames.max(self.renderer.upscale_settle_frames().min(crate::settle::SETTLE_FRAMES_MAX))
     }
 
     /// Draw the next frames as the `frames` re-renders of a settled capture of one Sim state, on

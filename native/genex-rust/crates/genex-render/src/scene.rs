@@ -514,6 +514,15 @@ pub struct LineVertex {
     pub color: [f32; 4],
 }
 
+/// A frame's water (renderer pass 2 B.3): one body and the water's clock.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SceneWater {
+    /// The rectangle drawn and how it looks.
+    pub body: crate::water::WaterBody,
+    /// The water's clock, seconds (the simulation's, so a capture is the same every time).
+    pub time: f32,
+}
+
 /// A frame to draw.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Scene {
@@ -531,6 +540,8 @@ pub struct Scene {
     pub lines: Vec<LineVertex>,
     /// Retained instance groups drawn, in order (renderer pass 2 A.0b).
     pub groups: Vec<GroupDraw>,
+    /// The water drawn over the opaque scene (renderer pass 2 B.3; None: no water).
+    pub water: Option<SceneWater>,
     logical_draws: u32,
     /// The draw id later draws carry ([`Scene::set_id`]).
     id: Option<DrawId>,
@@ -547,6 +558,7 @@ impl Scene {
             skinned: Vec::new(),
             lines: Vec::new(),
             groups: Vec::new(),
+            water: None,
             logical_draws: 0,
             id: None,
         }

@@ -72,9 +72,10 @@ Node 10 (`post::ao`) runs one horizon search, `shaders/post/gtao.wgsl`, in one o
   between its front face and a point `BITMASK_THICKNESS_PER_RADIUS` of the radius behind it, so a
   post, a trunk or an arm no longer darkens a halo on the ground or wall behind it. The open arc
   uses XeGTAO's cosine weighting, so solid creases stay as dark, and the bent normal comes from the
-  open run around the view vector. The presets ask for it at desktop and web `high` and `ultra`;
-  phones and `medium` keep the horizons. Until
-  the renderer's `frame_ao` takes `AoSettings::of`, its frames draw the horizons at every preset.
+  open run around the view vector. The presets ask for it at desktop and web `high` and `ultra`
+  (the renderer's `frame_ao` takes `AoSettings::of`); phones and `medium` keep the horizons. The
+  thickness (0.125 m at the default radius) keeps a block's base darkening smooth in settled
+  captures (template row `metal_the_blocks_base_darkens_smoothly_in_settled_captures_at_every_preset`).
 - `BitmaskGi`: the bitmask plus one bounce of screen-space light. The sectors a sample hides first
   send the previous frame's light at that sample (`AoInput::light`: a texture and its scale to scene
   units, reprojected through last frame's camera). The term is `GI_FORMAT` (`rgba16float`: r
@@ -378,6 +379,20 @@ and keeps its history. The node's twins and GPU rows are in `tests/water.rs` (th
 `tests/water_reflect.rs`); its budget is 1.0 ms
 at a 1080p render (`WATER_MS_MAX`).
 
+On the frame it is graph node 16a (`NodeId::Water`, `src/renderer/water_draw.rs`): a scene's
+`Scene::water` (`SceneWater`: the body and the water's clock) draws after the world pass and its
+resolve, in a pass of its own over the 1x HDR scene, depth-tested against the prepass depth held
+read-only (the depth its shader samples). Where the preset allows the opaque copy (desktop and web
+`high` and `ultra`) the scene is copied first and refracted; elsewhere the water blends over it,
+and on the desktop weighted-resolve path (MSAA `medium`) it is not drawn yet. On frames writing
+motion the motion key follows in its own pass (its group binds a 1 x 1 depth: the pass writes the
+prepass depth the colour pass sampled). It reflects the probes over it (`GpuWaterReflect`) and,
+where the preset holds the history pyramid, the screen: after node 17 a frame with water builds the
+colour pyramid of TAA's resolve (A.6's `PyramidNode`), and the next frame's water marches it (only
+a frame that follows it on the same history set and size). Still to come: the transparents drawn
+after the water (a split world pass), the weighted-resolve path, and the facade's water.
+`tests/frame_hooks.rs` holds the frame row.
+
 ## Ocean
 
 `src/ocean.rs` is the optional open-sea tier, on for desktop `high` and `ultra` (`ocean::enabled`;
@@ -508,8 +523,19 @@ accumulated sample weight (after Snapdragon GSR v2's two fragment passes, BSD-3-
 MIT). Its jitter cycle is `ceil(8 · (output / render)²)` phases (`taau::jitter_phases`) and its
 material mip bias `log2(render / output) − 1` (`taau::texture_lod_bias`). Fragment only, so it fits
 WebGPU core. `tests/taau.rs` holds it to native sharpness from 0.67 (still and a slow pan), to no
-trail behind a moving object, to determinism and to its 4K cost (0.6 ms). The node is not yet in
-the frame graph: until it is, DRS on `high` and `ultra` still runs TAA at render size and EASU.
+trail behind a moving object, to determinism and to its 4K cost (0.6 ms).
+
+On the frame it is graph node 17 under `Quality::taau` (`high` and `ultra`): a TAA frame below scale 1
+(`ScenePath::taau`) resolves into the upscale's output-size history (kept per history set in
+`settle::TaaHistories`; a step below scale 1 hands TAA's last resolve over to it, whose alpha is the
+depth key the convert's disocclusion test reads, so the step keeps the history; a step back to
+scale 1 starts TAA over), the jitter
+and mip bias follow `taau::frame_jitter` and `taau::frame_texture_lod_bias`, exposure, bloom and the
+tonemap read the scene at output size (`Renderer::hdr_scene_size`), EASU does not run (ultra's RCAS
+does, at output size) and a settled capture re-renders one cycle of its phases (within the wire's
+16). A frame whose depth of field, motion blur or `post-hdr` passes read the scene at render size
+keeps TAA at render size and EASU. At scale 1 nothing changes. `tests/frame_hooks.rs` holds 4K from
+0.67 within 10% of native 4K's sharpness (TAA then EASU kept 0.89 of it).
 
 ## Output size and window present
 

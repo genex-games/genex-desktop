@@ -81,6 +81,10 @@ pub const MOVING_PX: f32 = 0.1;
 /// A reconstruction whose Lanczos weights sum below this takes its nearest sample
 /// (`GX_TAAU_LEAST_SAMPLE_WEIGHT`).
 pub const LEAST_SAMPLE_WEIGHT: f32 = 0.05;
+/// The row flag (`counts.w` bit 7, beside `TaaFlags`; `GX_TAAU_FLAG_HANDOVER`) of the first upscale
+/// after TAA resolved at render size: the history is TAA's last resolve, whose alpha is the depth
+/// key the convert's disocclusion test reads, and its weight is the floor's whole memory.
+pub const HANDOVER_FLAG: u32 = 1 << 7;
 /// Resolves per cost sample.
 pub const COST_RESOLVES_PER_SAMPLE: u32 = 32;
 
@@ -298,6 +302,8 @@ pub struct TaauNode {
     histories: [Option<Target>; 2],
     written: Option<usize>,
     frames: u32,
+    /// TAA's last resolve, handed over for the next upscale ([`TaauNode::hand_over`]).
+    handover: Option<TextureView>,
     extra_usage: TextureUsages,
 }
 
@@ -469,6 +475,7 @@ impl TaauNode {
             histories: [None, None],
             written: None,
             frames: 0,
+            handover: None,
             extra_usage,
         })
     }
@@ -476,6 +483,16 @@ impl TaauNode {
     /// Forget the history: the next upscale starts over.
     pub fn reset(&mut self) {
         self.written = None;
+        self.handover = None;
+    }
+
+    /// Continue from TAA's last resolve `history` (rgb the radiance, alpha the 3x3's farthest
+    /// depth key, at any size): the next upscale reads it as its history and as last frame's
+    /// depth keys instead of starting over, so a dynamic-resolution step below scale 1 keeps
+    /// the picture's history (renderer pass 2 wave 2: RC-05's row read a 1.96-level jump in an AO
+    /// crease at the switch). A reset drops it.
+    pub fn hand_over(&mut self, history: TextureView) {
+        self.handover = Some(history);
     }
 
     /// The bytes both pairs hold now.
@@ -511,15 +528,24 @@ impl TaauNode {
         TaauNode::slot(&mut self.converts, device, &convert_targets(input.render)[write], TextureUsages::empty());
         // A history of another output size (a resize) cannot be reprojected in uv: start over.
         let read_size_ok = self.histories[read].as_ref().is_some_and(|t| t.size == sized(input.output));
-        let fresh = self.written.is_none() || !read_size_ok || (made_history && self.histories[read].is_none());
+        let handover = self.handover.take().filter(|_| !input.row.resets());
+        let fresh = handover.is_none() && (self.written.is_none() || !read_size_ok || (made_history && self.histories[read].is_none()));
         self.written = Some(write);
         let reset = fresh || input.row.resets();
         self.frames = if reset { 0 } else { self.frames.saturating_add(1) };
         let mut row = if reset { input.row.reset() } else { input.row };
         row.counts[0] = self.frames;
+        if handover.is_some() {
+            row.counts[3] |= HANDOVER_FLAG;
+        }
         queue.write_buffer(&self.params, 0, bytemuck::bytes_of(&row));
-        let prev_convert = if reset { &self.neutral_convert } else { self.converts[read].as_ref().map_or(&self.neutral_convert, |t| &t.view) };
-        let prev_history = if reset { &self.neutral_history } else { self.histories[read].as_ref().map_or(&self.neutral_history, |t| &t.view) };
+        let kept_convert = self.converts[read].as_ref().map_or(&self.neutral_convert, |t| &t.view);
+        let kept_history = self.histories[read].as_ref().map_or(&self.neutral_history, |t| &t.view);
+        let (prev_convert, prev_history) = match &handover {
+            _ if reset => (&self.neutral_convert, &self.neutral_history),
+            Some(taa) => (taa, taa),
+            None => (kept_convert, kept_history),
+        };
         let convert_view = &self.converts[write].as_ref().expect("made above").view;
         let history_view = self.histories[write].as_ref().expect("made above").view.clone();
         let convert_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -556,7 +582,7 @@ impl TaauNode {
         self.histories.get(slot)?.as_ref().map(|t| &t.texture)
     }
 
-    fn written_texture(&self) -> Option<&Texture> {
+    pub(crate) fn written_texture(&self) -> Option<&Texture> {
         self.slot_texture(self.written?)
     }
 }

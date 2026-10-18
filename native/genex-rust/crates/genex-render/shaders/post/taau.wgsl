@@ -58,6 +58,8 @@ struct TaauParams {
 
 // `post::taa::TaaFlags::CLIP`.
 const GX_TAAU_FLAG_CLIP: u32 = 1u;
+// `post::taau::HANDOVER_FLAG`: the history is TAA's last resolve (alpha its depth key).
+const GX_TAAU_FLAG_HANDOVER: u32 = 128u;
 // `post::taa::VARIANCE_GAMMA`: the moving box's half-size in standard deviations.
 const GX_TAAU_VARIANCE_GAMMA: f32 = 1.25;
 // Luminance up to which samples blend with equal weight (pre-exposed display range).
@@ -292,7 +294,10 @@ fn fs_taau(in: TaauOut) -> @location(0) vec4<f32> {
     // pan's sharpness without it.
     let sampled = textureSampleLevel(gx_history, gx_linear, prev_uv, 0.0);
     var history = gx_taau_sane(sampled.rgb * gx_taau.params.y);
-    let accumulated = max(sampled.a, 0.0) * (1.0 - floor_weight);
+    // TAA's resolve handed over carries its depth key in alpha: it counts as the floor's whole
+    // memory (TAA held its history at alpha_min).
+    let handover = (gx_taau.counts.w & GX_TAAU_FLAG_HANDOVER) != 0u;
+    let accumulated = select(max(sampled.a, 0.0), 1.0 / max(gx_taau.params.x, 1e-3), handover) * (1.0 - floor_weight);
     let motion_px = length(motion * 0.5 * gx_taau.render.xy);
     if (gx_taau.counts.w & GX_TAAU_FLAG_CLIP) != 0u {
         // A still pixel clips to the taps' range alone: the render taps are coarser than the

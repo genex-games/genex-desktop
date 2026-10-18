@@ -192,6 +192,12 @@ pub const MOTION_REACTIVE: f32 = 0.4;
 pub const JITTER_CYCLE_SHIFT: u32 = 8;
 /// The flag bits of [`GpuTaaParams::counts`] w.
 const FLAG_BITS: u32 = (1 << JITTER_CYCLE_SHIFT) - 1;
+/// The row flag (`counts.w` bit 7; `GX_TAA_FLAG_HANDBACK`) of the first resolve after TAA
+/// upscaling (renderer pass 2 wave 2): the history is the upscale's last output at this size,
+/// whose alpha is an accumulated weight, not a depth key, so the disocclusion test skips it once.
+pub const HANDBACK_FLAG: u32 = 1 << 7;
+/// The frames a handed-back history counts as (the accumulation at its floor at once).
+const HANDBACK_FRAMES: u32 = 1024;
 /// The rejected-pixel filter's falloff `k` (`GX_TAA_FILTER_FALLOFF`): each tap of the 3x3
 /// neighbourhood weighs `exp(-k d²)` at `d` render pixels from the unjittered pixel centre.
 pub const FILTER_FALLOFF: f32 = 2.29;
@@ -634,6 +640,8 @@ pub struct TaaNode {
     neutral_lock: TextureView,
     history: Option<History>,
     extra_usage: TextureUsages,
+    /// The upscale's last output, handed back for the next resolve ([`TaaNode::hand_back`]).
+    handback: Option<TextureView>,
 }
 
 fn fragment_entry(binding: u32, ty: wgpu::BindingType) -> wgpu::BindGroupLayoutEntry {
@@ -757,6 +765,7 @@ impl TaaNode {
             neutral_lock: neutral_texture(device, queue, "taa no lock", LOCK_FORMAT, &[0u8; 4]),
             history: None,
             extra_usage,
+            handback: None,
         })
     }
 
@@ -765,6 +774,15 @@ impl TaaNode {
         if let Some(history) = &mut self.history {
             history.written = None;
         }
+        self.handback = None;
+    }
+
+    /// Continue from TAA upscaling's last output `history` (renderer pass 2 B.8, at this resolve's
+    /// size): the next resolve reads it as its history, at the accumulation's floor and without the
+    /// disocclusion test (its alpha is a weight), so a dynamic-resolution step back to scale 1
+    /// keeps the picture's history. The luma and lock histories start empty. A reset drops it.
+    pub(crate) fn hand_back(&mut self, history: TextureView) {
+        self.handback = Some(history);
     }
 
     /// The bytes the history pair and its side histories hold now (the ledger counts them with
@@ -803,16 +821,30 @@ impl TaaNode {
         let read = self.history.as_ref().and_then(|history| history.written).unwrap_or(1);
         let write = 1 - read;
         let neutral = [self.neutral_history.clone(), self.neutral_luma.clone(), self.neutral_lock.clone()];
+        let handback = self.handback.take().filter(|_| !input.row.resets());
         let history = self.history(device, input.render, write);
-        let fresh = history.written.is_none() || history.slots[read].is_none();
+        let fresh = handback.is_none() && (history.written.is_none() || history.slots[read].is_none());
         history.written = Some(write);
-        let [read_view, read_luma, read_lock] = history.slots[read].as_ref().map_or(neutral, |slot| [slot.view.clone(), slot.luma.clone(), slot.lock.clone()]);
+        let [read_view, read_luma, read_lock] = match &handback {
+            Some(view) => {
+                let [_, luma, lock] = neutral;
+                [view.clone(), luma, lock]
+            }
+            None => history.slots[read].as_ref().map_or(neutral, |slot| [slot.view.clone(), slot.luma.clone(), slot.lock.clone()]),
+        };
         let written = history.slots[write].as_ref().expect("made above");
         let (write_view, write_luma, write_lock) = (written.view.clone(), written.luma.clone(), written.lock.clone());
         let reset = fresh || input.row.resets();
-        history.frames = if reset { 0 } else { history.frames.saturating_add(1) };
+        history.frames = match handback {
+            _ if reset => 0,
+            Some(_) => HANDBACK_FRAMES,
+            None => history.frames.saturating_add(1),
+        };
         let mut row = if reset { input.row.reset() } else { input.row };
         row.counts[0] = history.frames;
+        if handback.is_some() {
+            row.counts[3] |= HANDBACK_FLAG;
+        }
         queue.write_buffer(&self.params, 0, bytemuck::bytes_of(&row));
         let motion = input.motion.unwrap_or(&self.neutral_motion);
         let reactive = input.reactive.unwrap_or(&self.neutral_reactive);
@@ -853,7 +885,7 @@ impl TaaNode {
         TaaOutput { view: write_view, reset: row.resets(), slot: write }
     }
 
-    fn written_texture(&self) -> Option<&Texture> {
+    pub(crate) fn written_texture(&self) -> Option<&Texture> {
         let history = self.history.as_ref()?;
         history.slots[history.written?].as_ref().map(|slot| &slot.texture)
     }

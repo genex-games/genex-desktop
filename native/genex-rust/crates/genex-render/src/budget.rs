@@ -328,6 +328,9 @@ struct Shape {
     taa: bool,
     depth_consumers: bool,
     upscale: bool,
+    /// Whether TAA resolves at output size below scale 1 (B.8, `post::taau`): its history then
+    /// takes the output size and EASU's output is not held.
+    taau: bool,
     /// Whether the MSAA colour is read after the world pass (never transient then).
     msaa_read: bool,
     /// Whether the spot atlas layer is held and drawn: the game uses shadowed spots and the
@@ -345,6 +348,8 @@ impl Shape {
         // TAA's scene is `rgba16float` whatever the class's format (its history's, so a resolve
         // copies into it for `post-hdr` passes: `Renderer::hdr_scene_format`).
         let texel = if taa && quality.hdr && input.scene_format.is_hdr() { RGBA16F } else { scene_texel(quality, input.scene_format) };
+        let upscale = quality.hdr && quality.upscaler == Upscaler::Fsr1 && (rw, rh) != input.output;
+        let taau = taa && quality.hdr && quality.taau && crate::post::taau::upscales((rw, rh), input.output);
         Shape {
             render: (u64::from(rw), u64::from(rh)),
             output: (u64::from(input.output.0), u64::from(input.output.1)),
@@ -352,7 +357,8 @@ impl Shape {
             samples: u64::from(landed_samples(quality.anti_aliasing)),
             taa,
             depth_consumers,
-            upscale: quality.hdr && quality.upscaler == Upscaler::Fsr1 && (rw, rh) != input.output,
+            upscale: upscale && !taau,
+            taau,
             msaa_read: quality.hdr && input.msaa_read,
             spot_atlas: spot_atlas_held(quality, input.spot_atlas),
         }
@@ -619,15 +625,23 @@ fn register_scene(ledger: &mut BudgetLedger, quality: &Quality, shape: &Shape, t
     }
     // FSR1's tonemapped `rgb10a2unorm` intermediate at render size (EASU's output is "upscale").
     if quality.hdr && (shape.upscale || quality.anti_aliasing == AntiAliasing::TaaSharpen) && feature_landed(RenderFeature::Upscaler) {
-        ledger.register(BudgetKind::Target, "fsr-input", shape.render_px() * TEXEL4);
+        // Under TAA upscaling the tonemap writes RCAS's input at output size.
+        let px = if shape.taau { shape.output_px() } else { shape.render_px() };
+        ledger.register(BudgetKind::Target, "fsr-input", px * TEXEL4);
     }
 }
 
 /// TAA, AO, bloom, exposure.
 fn register_post(ledger: &mut BudgetLedger, quality: &Quality, shape: &Shape) {
     let r = shape.render_px();
-    if shape.taa {
+    if shape.taau {
+        // B.8: the history pair at output size and the convert pair at render size.
+        let size = |(w, h): (u64, u64)| (w as u32, h as u32);
+        ledger.register(BudgetKind::History, "taa-history", crate::post::taau::bytes(size(shape.render), size(shape.output)));
+    } else if shape.taa {
         ledger.register(BudgetKind::History, "taa-history", r * RGBA16F * 2);
+    }
+    if shape.taa {
         ledger.register(BudgetKind::Target, "motion", r * TEXEL4);
         // The `r8unorm` reactive mask (the prepass's no-history flags, the transparents' coverage).
         ledger.register(BudgetKind::Target, "taa-reactive", r);

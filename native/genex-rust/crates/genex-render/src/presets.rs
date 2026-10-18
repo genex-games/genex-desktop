@@ -411,6 +411,8 @@ fn high_row(quality: &mut Quality) {
     quality.screen_inputs = ScreenInputs::ALL;
     // B.9: Hi-Z screen-space reflections over those inputs (ultra takes more steps).
     quality.ssr = crate::ssr::SsrQuality::HIGH;
+    // B.8: below scale 1 TAA resolves at output size (ultra inherits it).
+    quality.taau = true;
     with_geometry_features(quality);
 }
 

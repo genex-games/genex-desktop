@@ -141,11 +141,13 @@ pub const THICKNESS: f32 = 0.0;
 /// The visibility bitmask's object thickness as a share of the AO radius (`AoParams::params.w`
 /// under [`AoMethod::Bitmask`] is this times the radius, world units): how deep behind its front
 /// face a depth sample hides the hemisphere. Bevy 0.20 holds 0.25 m and Filament 0.5 m whatever the
-/// radius; at the default radius (0.5 m) this is 0.1 m. B.4's rows chose it: a 6 cm post's halo on
-/// the ground behind it within 0.014 of the ray-cast ground truth (0.25 m left 0.06), and the log
-/// wall's grooves within 0.034 (tests/ao.rs). It scales with the radius, so a game that scales its
-/// world and its AO radius keeps the same look.
-pub const BITMASK_THICKNESS_PER_RADIUS: f32 = 0.2;
+/// radius; at the default radius (0.5 m) this is 0.125 m. Rows that chose it: a 6 cm post's halo on
+/// the ground behind it within 0.03 of the ray-cast ground truth (0.25 m left 0.06), the log wall's
+/// grooves within 0.03 (tests/ao.rs), and the template block's base darkening without a rim in
+/// settled captures (renderer pass 2 wave 2: at 0.1 m the floor's thin slabs left gaps up the wall,
+/// so the occlusion bunched at the base: 16-36% of the columns fell by a cliff, now 8-12%). It
+/// scales with the radius, so a game that scales its world and its AO radius keeps the same look.
+pub const BITMASK_THICKNESS_PER_RADIUS: f32 = 0.25;
 /// The horizon search's pipeline-overridable switch to the visibility bitmask (gtao.wgsl).
 const BITMASK_CONSTANT: &str = "GX_AO_BITMASK";
 /// The history's blend weight once it holds a frame.

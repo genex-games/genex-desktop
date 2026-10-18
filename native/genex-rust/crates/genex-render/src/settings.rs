@@ -1851,6 +1851,11 @@ pub struct Quality {
     /// elsewhere and on phones. A resource knob (a uniform); a frame traces only with TAA's colour
     /// pyramid on the HDR scene (`ssr::frame_ssr`).
     pub ssr: crate::ssr::SsrQuality,
+    /// TAA upscaling at output size (renderer pass 2 B.8, `post::taau`): below a render scale of 1
+    /// a TAA frame resolves into an output-size history instead of TAA at render size followed by
+    /// EASU. On at `high` and `ultra` (phones too: the person picked high); off elsewhere. A
+    /// resource knob: a frame at scale 1 resolves by TAA as before.
+    pub taau: bool,
     /// The terrain's grass (A.8): its density, reach, blade segments and casting. A resource knob
     /// (uniforms and buffer sizes, never a pipeline); off on `low`, the low phones and the legacy
     /// renderer.
@@ -1918,6 +1923,7 @@ impl Quality {
             motion_blur: crate::post::motion_blur::MotionBlurTier::Off,
             screen_inputs: crate::screen_inputs::ScreenInputs::NONE,
             ssr: crate::ssr::SsrQuality::OFF,
+            taau: false,
             grass: crate::foliage::GrassQuality::OFF,
         }
     }

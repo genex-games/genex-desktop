@@ -18,7 +18,8 @@ const WIDTH: u32 = 128;
 const HEIGHT: u32 = 72;
 
 /// The plan's table (§2.2), in frame order.
-const PLAN_ORDER: [&str; 29] = [
+// Renderer pass 2 wave 2 flipped: the water (16a) after the resolve (29 -> 30 rows).
+const PLAN_ORDER: [&str; 30] = [
     "tables",
     "before-cull",
     "skinning",
@@ -37,6 +38,7 @@ const PLAN_ORDER: [&str; 29] = [
     "transparent",
     "reactive",
     "resolve",
+    "water",
     "taa",
     "dof",
     "motion-blur",
@@ -58,7 +60,8 @@ const PLAN_ORDER: [&str; 29] = [
 // RQ6.7 flipped: light binning (node 4) is landed (23 -> 24 rows).
 // RQ5.6 flipped: TAA's reactive coverage (15a) and resolve (17) are landed (24 -> 26 rows).
 // Renderer pass 2 A.9 flipped: depth of field (17a) and motion blur (17b) are landed (26 -> 28 rows).
-const LANDED: [NodeId; 28] = [
+// Renderer pass 2 wave 2 flipped: the water (16a) is landed (28 -> 29 rows).
+const LANDED: [NodeId; 29] = [
     NodeId::Tables,
     NodeId::BeforeCull,
     NodeId::Skinning,
@@ -77,6 +80,7 @@ const LANDED: [NodeId; 28] = [
     NodeId::Transparent,
     NodeId::Reactive,
     NodeId::Resolve,
+    NodeId::Water,
     NodeId::Taa,
     NodeId::Dof,
     NodeId::MotionBlur,

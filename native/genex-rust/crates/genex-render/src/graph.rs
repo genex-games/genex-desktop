@@ -93,6 +93,8 @@ pub enum NodeId {
     Reactive,
     /// 16: MSAA resolve.
     Resolve,
+    /// 16a: the water over the 1x scene, refracting an opaque copy (renderer pass 2 B.3).
+    Water,
     /// 17: TAA (RQ5).
     Taa,
     /// 17a: the look's depth of field (renderer pass 2 A.9).
@@ -196,6 +198,7 @@ impl NodeId {
                     | NodeId::AfterOpaque
                     | NodeId::Transparent
                     | NodeId::Resolve
+                    | NodeId::Water
                     | NodeId::PostHdr
                     | NodeId::Exposure
                     | NodeId::Tonemap
@@ -216,7 +219,7 @@ impl NodeId {
             NodeId::Cull => &[Target::IndirectArgs],
             NodeId::Shadows => &[Target::ShadowMaps],
             NodeId::Opaque | NodeId::AfterOpaque | NodeId::Transparent => &[Target::SceneMsaa, Target::SceneDepth],
-            NodeId::Resolve | NodeId::PostHdr => &[Target::SceneColor],
+            NodeId::Resolve | NodeId::PostHdr | NodeId::Water => &[Target::SceneColor],
             NodeId::Exposure => &[Target::Exposure],
             NodeId::Tonemap | NodeId::Upscale | NodeId::Post | NodeId::Hud => &[Target::World],
             NodeId::Prepass if crate::prepass::LANDED && crate::motion::LANDED => &[Target::SceneDepth, Target::Normals, Target::Motion],
@@ -259,6 +262,8 @@ pub fn quality_allows(id: NodeId, quality: &Quality) -> bool {
         NodeId::Bloom => quality.bloom.enabled,
         NodeId::Exposure => quality.hdr && quality.exposure,
         NodeId::Tonemap => quality.hdr,
+        // The water samples the prepass depth on the HDR scene.
+        NodeId::Water => quality.hdr && quality.prepass,
         _ => true,
     }
 }
@@ -333,6 +338,7 @@ pub const FRAME_GRAPH: &[NodeSpec] = &[
     node(NodeId::Transparent, NodeKind::InPass, "transparent"),
     node(NodeId::Reactive, NodeKind::Pass, "reactive"),
     node(NodeId::Resolve, NodeKind::InPass, "resolve"),
+    node(NodeId::Water, NodeKind::Pass, "water"),
     node(NodeId::Taa, NodeKind::Pass, "taa"),
     node(NodeId::Dof, NodeKind::Pass, "dof"),
     node(NodeId::MotionBlur, NodeKind::Pass, "motion-blur"),
@@ -670,6 +676,8 @@ mod tests {
             NodeId::Tonemap,
             NodeId::Environment,
             NodeId::Sky,
+            // Renderer pass 2 wave 2: the water samples the prepass depth on the HDR scene.
+            NodeId::Water,
         ];
         for row in FRAME_GRAPH.iter().filter(|row| row.id.landed()) {
             let allowed = quality_allows(row.id, &off);
