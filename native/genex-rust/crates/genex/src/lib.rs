@@ -25,7 +25,7 @@
 //! (genex-platform-desktop: a window, or headless with `--headless` / `GENEX_HEADLESS=1`). A web
 //! build names genex-platform-web `genex`, whose `install` hands the game to the page; the
 //! phones' shells are their own crates.
-//! `docs/GENEX_API.md` is the full contract.
+//! `docs/GENEX_API.md` and its topic pages in `docs/api/` are the full contract.
 
 mod camera;
 mod ctx;

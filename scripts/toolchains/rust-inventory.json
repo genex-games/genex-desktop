@@ -1,5 +1,5 @@
 {
-  "about": "Every build script, proc macro and non-source file (binary or executable) in the vendored crate set, by vendored folder. Reviewed by a person; written by `node scripts/toolchains/rust-vendor.ts inventory`; `check` fails on any entry missing here (plan: vendored-set policy).",
+  "about": "Every build script, proc macro and non-source file (binary or executable) in the vendored crate set, by vendored folder, and the reviewed genex release (`release`: the genex version and the release tree's digest). Reviewed by a person; written by `node scripts/toolchains/rust-release.ts inventory` (`rust-vendor.ts check` holds the installed tree to `crates`; `rust-release.ts cut` holds the release tree to all of it).",
   "crates": {
     "ahash-0.8.12": {
       "buildScript": "build.rs"
@@ -662,6 +662,14 @@
     },
     "zmij-1.0.23": {
       "buildScript": "build.rs"
+    }
+  },
+  "release": {
+    "genex": "0.1.0",
+    "tree": {
+      "sha256": "e88c7d6182173283e6dee5e713f74d0f9f415e0ed488c1f9fa4139936c8b38e7",
+      "files": 24880,
+      "bytes": 678029776
     }
   }
 }

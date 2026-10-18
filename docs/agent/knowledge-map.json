@@ -588,7 +588,12 @@
         "tests/conformance/rust-performance.test.ts",
         "tests/fixtures/bench-scene/**"
       ],
-      "documents": ["native/genex-rust/README.md", "native/genex-rust/docs/GENEX_API.md", "docs/agent/native-games.md"],
+      "documents": [
+        "native/genex-rust/README.md",
+        "native/genex-rust/docs/GENEX_API.md",
+        "native/genex-rust/docs/api/",
+        "docs/agent/native-games.md"
+      ],
       "commands": ["check:static", "test", "test:rust-spike"]
     },
     {

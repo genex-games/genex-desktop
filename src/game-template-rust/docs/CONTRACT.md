@@ -1,6 +1,6 @@
 # The studio contract (Rust · wgpu)
 
-What the studio relies on in this folder. `docs/GENEX_API.md` is the API the game's code is
+What the studio relies on in this folder. `docs/GENEX_API.md` and its topic pages in `docs/api/` are the API the game's code is
 written against; this page says which file is whose.
 
 | File | What it is |
@@ -12,6 +12,7 @@ written against; this page says which file is whose.
 | `assets/` | Models, textures and sounds the game loads, committed with it. |
 | `web/shell.html` | The studio's page around the browser build. Not edited by the game. |
 | `docs/GENEX_API.md` | The facade's reference, read-only. |
+| `docs/api/` | The reference's topic pages, read-only. |
 | `engine/` | Only after the person ejected the engine: the game's own copy of the genex crates, the entry owner's code. The studio writes its `Cargo.toml` files (so its build scripts never build, trusted or not) and the `[engine]` row of `genex.toml`; a build whose row differs from the person's eject is refused `engine-unrecorded`. |
 
 A facet's only change to `src/main.rs` is inside the FACET WIRING block:

@@ -74,7 +74,7 @@ files inside `harness-seed/`, `game-template/`, `game-template-cpp/` or `game-te
   is its only build input: the host writes the cargo manifest, lock and configuration, so the
   template ships none. `src/main.rs`
   keeps one `FACET WIRING` block before `genex::install` for the union merge.
-  Keep `docs/GENEX_API.md` byte-equal to `native/genex-rust/docs/GENEX_API.md`; `CLAUDE.md`,
+  Keep `docs/GENEX_API.md` and `docs/api/` byte-equal to `native/genex-rust/docs/`; `CLAUDE.md`,
   `CLAUDE.own.md`, `NOTES*.md` and `docs/CONTRACT.md` are payload.
 - `tests/conformance/rust-template.test.ts` copies, creates and type-checks it under the pinned
   sysroot; the crates it builds against are `native/genex-rust/` (cargo only through

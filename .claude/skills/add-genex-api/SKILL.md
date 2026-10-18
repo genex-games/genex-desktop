@@ -24,9 +24,10 @@ the API.
    vendored tree goes into `scripts/spike/rust-wgpu/vendor-allowlist.toml` first, then
    `scripts/toolchains/rust-vendor.ts check` must still pass (no build script, proc macro or
    GL backend crate without a reviewed `rust-inventory.json` row).
-3. **Reference page** - `native/genex-rust/docs/GENEX_API.md` and its byte-equal copy
-   `src/game-template-rust/docs/GENEX_API.md` (`rust-template-docs.test.ts` fails when they
-   differ). Write it for the game's agent: what to call, what is refused, how determinism holds.
+3. **Reference page** - the area's topic page `native/genex-rust/docs/api/<topic>.md` (a new
+   page also gets a row in the `## Topics` table of the index `native/genex-rust/docs/GENEX_API.md`),
+   with byte-equal copies under `src/game-template-rust/docs/` (`rust-template-docs.test.ts` fails
+   when they differ or a page is unlisted). Write it for the game's agent: what to call, what is refused, how determinism holds.
 4. **Vocabularies** - a runtime key, install refusal or registration refusal is pinned in
    `tests/fixtures/rust-facade-vocabulary.json` and held by
    `native/genex-rust/crates/genex/tests/vocabulary.rs` on the Rust side and by

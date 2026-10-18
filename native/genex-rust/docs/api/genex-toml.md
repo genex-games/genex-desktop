@@ -6,7 +6,7 @@ title = "Pond"            # required
 world_size = [960, 540]   # optional, each side 64..=4096
 save_name = "pond"        # optional: letters, digits, space, _ - .
 
-[crates]                  # optional: the reviewed allowlist (noise, fastrand), or a crate the
+[crates]                  # optional: the reviewed allowlist (noise, fastrand, pathfinding), or a crate the
 noise = "0.9"             # person approved through request_crate, pinned exactly: tidy = "=1.0.0"
 
 [[crate_request]]         # optional: asks the person for a crate, as request_crate does
