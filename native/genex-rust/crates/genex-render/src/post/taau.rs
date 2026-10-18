@@ -81,6 +81,11 @@ pub const MOVING_PX: f32 = 0.1;
 /// A reconstruction whose Lanczos weights sum below this takes its nearest sample
 /// (`GX_TAAU_LEAST_SAMPLE_WEIGHT`).
 pub const LEAST_SAMPLE_WEIGHT: f32 = 0.05;
+/// How far the colour box's clip moved the history (in the box's half-extents, times this) for the
+/// reconstruction to take the fresh pixel's wider kernel whole (`GX_TAAU_SHADING_CHANGE_GAIN`):
+/// the water's caustics and glints change every frame, and their samples through the kernel at
+/// rest landed as render-pixel blocks and hard pixel clusters at scale 0.67 (D22).
+pub const SHADING_CHANGE_GAIN: f32 = 2.0;
 /// The row flag (`counts.w` bit 7, beside `TaaFlags`; `GX_TAAU_FLAG_HANDOVER`) of the first upscale
 /// after TAA resolved at render size: the history is TAA's last resolve, whose alpha is the depth
 /// key the convert's disocclusion test reads, and its weight is the floor's whole memory.

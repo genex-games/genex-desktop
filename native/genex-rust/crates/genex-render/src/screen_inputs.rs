@@ -209,11 +209,12 @@ pub fn encode_opaque_copy(encoder: &mut CommandEncoder, scene: &Texture, opaque:
 /// What one pyramid build reads and writes.
 #[derive(Clone, Copy, Debug)]
 pub struct PyramidInput<'a> {
-    /// TAA's resolved output at render size (filterable).
+    /// TAA's resolved output (filterable): at render size, or at output size when TAA upscales
+    /// (B.8), which mip 0 reads by its own uv.
     pub source: &'a TextureView,
     /// The pyramid: a texture of [`targets`]' pyramid row for `render`.
     pub pyramid: &'a Texture,
-    /// The render size (the source's).
+    /// The render size (the pyramid's; the source's unless TAA upscales).
     pub render: (u32, u32),
 }
 

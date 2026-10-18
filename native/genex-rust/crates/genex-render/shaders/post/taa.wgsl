@@ -106,6 +106,8 @@ const GX_TAA_NOISE_BOX_FLOOR: f32 = 0.01;
 const GX_TAA_SETTLED_OWN_MOTION_PX: vec2<f32> = vec2<f32>(0.15, 0.5);
 const GX_TAA_NOISE_RESET_OWN_MOTION_PX: f32 = 0.3;
 const GX_TAA_NOISE_REACTIVE_CUT: f32 = 8.0;
+// `post::taa::NOISE_GROWTH_MOTION_PX`: the (dilated) motion over which the box's growth fades out.
+const GX_TAA_NOISE_GROWTH_MOTION_PX: vec2<f32> = vec2<f32>(0.5, 1.5);
 // `post::taa::NOISE_HOLD_REACH`: history this many growths outside the box (the first to the
 // second) is clipped without the growth.
 const GX_TAA_NOISE_HOLD_REACH: vec2<f32> = vec2<f32>(2.0, 4.0);
@@ -558,7 +560,14 @@ fn fs_taa(in: TaaOut) -> TaaTargets {
     // a creep: there it fed back on itself frame after frame and an edge's history rang (B.7: the
     // bench-outdoor lake box flickered on 323 pixels creeping against 21 still at high).
     let sharpen = GX_TAA_HISTORY_SHARPEN * resampled.between * smoothstep(GX_TAA_SHARPEN_MOTION_PX.x, GX_TAA_SHARPEN_MOTION_PX.y, motion_px);
-    let sharpened = history_sample.rgb + sharpen * (history_sample.rgb - resampled.around);
+    // In the box's reversibly tonemapped space (D22): in linear radiance a bulb's or a lantern
+    // glass's highlight beside a dark texel drove the sharpening of its neighbour down to the
+    // footprint's darkest, a dark fringe around every bright light in a pan.
+    let history_t = gx_taa_tonemap(gx_taa_sane(history_sample.rgb));
+    let around_t = gx_taa_tonemap(gx_taa_sane(resampled.around));
+    let sharpened_t = clamp(history_t + sharpen * (history_t - around_t), vec3<f32>(0.0), vec3<f32>(1.0 - GX_TAA_TONEMAP_EPSILON));
+    // A still pixel (no sharpening) keeps its history bit for bit.
+    let sharpened = select(history_sample.rgb, gx_taa_inverse_tonemap(sharpened_t), sharpen > 0.0);
     let history_rgb = clamp(sharpened, resampled.footprint_lo, resampled.footprint_hi) * gx_taa.params.y;
     // A still pixel (a still camera on a still surface) averages over twice as many frames: its
     // jittered sample of a sub-pixel edge (a grass blade, a far tree tip against the sky) moves the
@@ -616,8 +625,8 @@ fn fs_taa(in: TaaOut) -> TaaTargets {
     // closest surface, as the dilation reads it) and no reactive coverage. A surface moving over
     // the pixel, or a history reset, clears its noise, and history far outside the
     // grown box (a whole surface gone, not a detail the jitter missed) is clipped as before.
-    let history_t = gx_taa_ycocg(gx_taa_tonemap(gx_taa_sane(history_rgb)));
-    let kept = gx_taa_clip(history_t, colour_box.lo, colour_box.hi);
+    let history_box = gx_taa_ycocg(gx_taa_tonemap(gx_taa_sane(history_rgb)));
+    let kept = gx_taa_clip(history_box, colour_box.lo, colour_box.hi);
     let noise_now = abs(gx_taa_ycocg(gx_taa_tonemap(n.current)).x - kept.x);
     let prev_noise = select(prev_lock.w, 0.0, fresh);
     let noise = mix(prev_noise, noise_now, GX_TAA_NOISE_RATE);
@@ -626,9 +635,12 @@ fn fs_taa(in: TaaOut) -> TaaTargets {
     let unmoved = 1.0 - smoothstep(GX_TAA_SETTLED_OWN_MOTION_PX.x, GX_TAA_SETTLED_OWN_MOTION_PX.y, own_px);
     // Only once the accumulation sits at its floor (Live): a capture's settling cycle keeps the
     // plain box, so a settled capture is the jitter cycle's mean as before.
-    let settled = unmoved * (1.0 - saturate(reactive * GX_TAA_NOISE_REACTIVE_CUT)) * select(0.0, 1.0, at_floor);
+    // D22: and not under a pan, where the growth held one surface's history over a noisy
+    // neighbour's (a post's edge over the water's bands).
+    let still = 1.0 - smoothstep(GX_TAA_NOISE_GROWTH_MOTION_PX.x, GX_TAA_NOISE_GROWTH_MOTION_PX.y, motion_px);
+    let settled = unmoved * still * (1.0 - saturate(reactive * GX_TAA_NOISE_REACTIVE_CUT)) * select(0.0, 1.0, at_floor);
     let growth = (GX_TAA_NOISE_BOX_SCALE * prev_noise + GX_TAA_NOISE_BOX_FLOOR) * settled;
-    let excursion = abs(history_t.x - kept.x);
+    let excursion = abs(history_box.x - kept.x);
     let holds = 1.0 - smoothstep(GX_TAA_NOISE_HOLD_REACH.x * growth, GX_TAA_NOISE_HOLD_REACH.y * growth, excursion);
     let grow = vec3<f32>(growth * holds);
     colour_box.lo -= grow;

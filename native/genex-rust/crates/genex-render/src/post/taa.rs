@@ -155,6 +155,12 @@ pub const SETTLED_OWN_MOTION_PX: [f32; 2] = [0.15, 0.5];
 /// The motion of its own (render pixels a frame) that clears a pixel's temporal noise
 /// (`GX_TAA_NOISE_RESET_OWN_MOTION_PX`): a surface moving over it says nothing about its noise.
 pub const NOISE_RESET_OWN_MOTION_PX: f32 = 0.3;
+/// The motion (render pixels a frame, the dilated motion: the camera's or the surface's) over which
+/// the colour box's growth fades out, gone at the second (`GX_TAA_NOISE_GROWTH_MOTION_PX`). The
+/// growth keeps a still or creeping camera's sub-pixel detail; under a pan it held a surface's
+/// history over its noisy neighbour (D22: a lantern post's edge sawtoothed by the water's bright
+/// bands, the fishing line and the string lights' wire dashed or gone).
+pub const NOISE_GROWTH_MOTION_PX: [f32; 2] = [0.5, 1.5];
 /// How fast reactive coverage takes the colour box's growth away (`GX_TAA_NOISE_REACTIVE_CUT`):
 /// none from an eighth of coverage.
 pub const NOISE_REACTIVE_CUT: f32 = 8.0;

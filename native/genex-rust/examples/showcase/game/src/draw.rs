@@ -101,13 +101,16 @@ const STRAW: Color = Color::rgb(204, 172, 108);
 /// The fisher's line: clear nylon, lit by the scene (a pale thread in the sun, dark at night).
 const LINE: Color = Color::rgb(168, 170, 162);
 /// The line's radius, m, and the least radius (pixels, at the world's reference height) it is drawn
-/// with, as the fireflies' bodies: a thread finer than a pixel would break into dashes under the
-/// jitter; at a pixel or so TAA resolves it into a smooth line (D22: no staircase on thin lines).
+/// with, as the fireflies' bodies: a thread finer than a pixel breaks into dashes under the jitter
+/// and while the camera moves (D22: half a reference pixel, a quarter's line was dashed in 1440p
+/// pans at scale 1); a pixel wide at the reference height, a render pixel or more at 1440p and 4K
+/// from scale 0.67, it is whole in every frame and TAA resolves it into a smooth line.
 const LINE_RADIUS: f32 = 0.0008;
-const LINE_LEAST_RADIUS_PX: f32 = 0.25;
+const LINE_LEAST_RADIUS_PX: f32 = 0.5;
 /// The most a segment may grow to keep that least radius: farther away the eye sees no line (it
-/// would be a rope a pixel wide), so the segment is not drawn.
-const LINE_GROW_MAX: f32 = 12.0;
+/// would be a rope a pixel wide), so the segment is not drawn. Twice the quarter-pixel line's 12,
+/// so the line reaches as far over the lake as it did.
+const LINE_GROW_MAX: f32 = 24.0;
 /// How far the line sags under the straight run from the rod's tip to the bobber at its middle, m,
 /// and the segments it hangs in.
 const LINE_SAG: f32 = 0.1;

@@ -318,7 +318,10 @@ sorted, soft, colliding rain streaks at 2560 x 1440 `high` add at most 0.5 ms on
 read from the screen, and the ray march they share. `Quality::screen_inputs` allows them on desktop
 and web `high` and `ultra` (none on phones or below `high`); `frame_inputs` gives a frame only what
 a consumer asks for, none on the legacy LDR scene, no colour pyramid without TAA and no opaque
-copy of a multisampled world pass. The lake water and the screen-space reflections ask for them;
+copy of a multisampled world pass. The colour pyramid keeps the render size's even under TAA
+upscaling, whose resolve is at output size: its first mip reads that resolve by its own uv, so the
+whole picture lands in it (a render-size uv read only its top-left corner, and the reflections
+vanished at scale 0.67). The lake water and the screen-space reflections ask for them;
 every target is pooled under its own ledger row.
 
 - `shaders/screen/ssr_march.wgsl` is a chunk, not a pass: `gx_ssr_march_world` (or
@@ -597,10 +600,15 @@ convert pass (dilated motion, the depth-key disocclusion, reactive coverage) and
 upscale pass that weights the nearest jittered sample and its four neighbours by FSR2's Lanczos-2
 and accumulates them into an `rgba16float` history at output size whose alpha carries the
 accumulated sample weight (after Snapdragon GSR v2's two fragment passes, BSD-3-Clause, and FSR2,
-MIT). Its jitter cycle is `ceil(8 · (output / render)²)` phases (`taau::jitter_phases`) and its
-material mip bias `log2(render / output) − 1` (`taau::texture_lod_bias`). Fragment only, so it fits
-WebGPU core. `tests/taau.rs` holds it to native sharpness from 0.67 (still and a slow pan), to no
-trail behind a moving object, to determinism and to its 4K cost (0.6 ms).
+MIT). The history is clipped to the full 3x3's colour box (the five taps' box left a diagonal
+edge's history clipped to one side, a render-pixel staircase), and where the clip moves it (the
+water's caustics and glints, which change every frame) the reconstruction leans to the fresh
+pixel's wider kernel by as much (`taau::SHADING_CHANGE_GAIN`, as FSR2 lerps its kernel bias by its
+reactive factor), so those samples land smooth instead of as render-pixel blocks (D22). Its
+jitter cycle is `ceil(8 · (output / render)²)` phases (`taau::jitter_phases`) and its material mip
+bias `log2(render / output) − 1` (`taau::texture_lod_bias`). Fragment only, so it fits WebGPU core.
+`tests/taau.rs` holds it to native sharpness from 0.67 (still and a slow pan), to no trail behind a
+moving object, to determinism and to its 4K cost (0.6 ms).
 
 On the frame it is graph node 17 under `Quality::taau` (`high` and `ultra`): a TAA frame below scale 1
 (`ScenePath::taau`) resolves into the upscale's output-size history (kept per history set in

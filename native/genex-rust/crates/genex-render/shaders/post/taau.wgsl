@@ -14,8 +14,15 @@
 // - upscale (`fs_taau`, output size): the render sample nearest the output pixel's centre and its
 //   four edge neighbours (SGSR2's five taps), each weighted by Lanczos-2 of its jittered distance to
 //   that centre in render pixels times the kernel bias (`post::taau::kernel_bias`), deringed to the
-//   taps' range; the history (rgba16float at output size: rgb the radiance, a the accumulated sample
-//   weight) read bilinearly at the motion's previous position and clipped to the taps' box (linear
+//   taps' range; the four diagonal neighbours join the colour box (FSR2's 3x3: the five taps' box
+//   clipped a diagonal edge's history to one side, a render-pixel staircase, D22) and the wider
+//   kernel below (the sharp kernel's negative lobe over them, deringed to the 3x3, frayed the
+//   edges). Where the clip moved the history (its shading changed: the water's caustics and
+//   glints, a reactive or disoccluded pixel) the reconstruction leans to the fresh pixel's wider
+//   kernel by as much (FSR2 lerps its kernel bias by its reactive factor), so a frame's samples
+//   the history cannot keep land smooth, not as render-pixel blocks; the history (rgba16float at
+//   output size: rgb the radiance, a the accumulated sample weight) read bilinearly at the
+//   motion's previous position and clipped to the taps' box (linear
 //   radiance, SGSR2: mean ± gamma σ inside min/max; gamma wide at rest, 1.25 from a render pixel of
 //   motion). The history's weight grows by each frame's Lanczos weight up to 1 / alpha_min (to
 //   GX_TAAU_MOVING_WEIGHT_MAX under motion, as SGSR2 caps it; twice that at rest), and the current sample blends in by
@@ -82,6 +89,11 @@ const GX_TAAU_STILL_ALPHA_SHARE: f32 = 0.5;
 // `post::taau::LEAST_SAMPLE_WEIGHT`: a reconstruction whose Lanczos weights sum below this takes
 // the nearest sample instead (all its taps fell on the kernel's negative lobe or its tail).
 const GX_TAAU_LEAST_SAMPLE_WEIGHT: f32 = 0.05;
+// `post::taau::SHADING_CHANGE_GAIN`: how far (in the box's half-extents, times this) the clip
+// moved the history for the reconstruction to take the fresh pixel's kernel whole.
+const GX_TAAU_SHADING_CHANGE_GAIN: f32 = 2.0;
+// The taps of the 3x3 box.
+const GX_TAAU_TAPS: f32 = 9.0;
 
 struct TaauOut {
     @builtin(position) clip: vec4<f32>,
@@ -193,9 +205,12 @@ fn fs_taau_convert(in: TaauOut) -> @location(0) vec4<f32> {
 // Upscale (output size)
 
 struct Reconstruction {
-    // The Lanczos-weighted current colour (deringed) and the weights' sum.
+    // The Lanczos-weighted current colour (deringed) and the weights' sum, with the kernel at rest
+    // and with the fresh pixel's (wider) kernel.
     colour: vec3<f32>,
     weight: f32,
+    wide_colour: vec3<f32>,
+    wide_weight: f32,
     // The taps' colour box: mean, deviation, min and max.
     mean: vec3<f32>,
     sigma: vec3<f32>,
@@ -206,17 +221,29 @@ struct Reconstruction {
 // The running sums of the reconstruction's taps.
 struct Taps {
     sum: vec4<f32>,
+    wide: vec4<f32>,
+    // The five taps' range (the sharp reconstruction's deringing).
+    lo5: vec3<f32>,
+    hi5: vec3<f32>,
     moments: vec3<f32>,
     squares: vec3<f32>,
     lo: vec3<f32>,
     hi: vec3<f32>,
 }
 
-// One tap: the render sample at `at`, `d` render pixels from the output pixel's centre.
-fn gx_taau_tap(taps: ptr<function, Taps>, at: vec2<i32>, d: vec2<f32>, bias2: f32) -> vec3<f32> {
+// One tap: the render sample at `at`, `d` render pixels from the output pixel's centre, under the
+// squared kernel biases `bias2` (x at rest or fresh, y the fresh pixel's); `edge`: one of the five
+// taps of the sharp reconstruction (a diagonal one is not).
+fn gx_taau_tap(taps: ptr<function, Taps>, at: vec2<i32>, d: vec2<f32>, bias2: vec2<f32>, edge: bool) -> vec3<f32> {
     let rgb = gx_taau_sane(textureLoad(gx_scene, at, 0).rgb);
-    let w = gx_taau_lanczos2_sq(dot(d, d) * bias2);
+    let w = select(0.0, gx_taau_lanczos2_sq(dot(d, d) * bias2.x), edge);
+    let wide = gx_taau_lanczos2_sq(dot(d, d) * bias2.y);
     (*taps).sum += vec4<f32>(rgb * w, w);
+    (*taps).wide += vec4<f32>(rgb * wide, wide);
+    if edge {
+        (*taps).lo5 = min((*taps).lo5, rgb);
+        (*taps).hi5 = max((*taps).hi5, rgb);
+    }
     (*taps).moments += rgb;
     (*taps).squares += rgb * rgb;
     (*taps).lo = min((*taps).lo, rgb);
@@ -225,31 +252,41 @@ fn gx_taau_tap(taps: ptr<function, Taps>, at: vec2<i32>, d: vec2<f32>, bias2: f3
 }
 
 // The render sample nearest the output pixel's centre `centre` (render pixels) at `base`, and its
-// four edge neighbours (SGSR2's five taps), each at its jittered position (render pixel i shows
-// the scene at i + 0.5 - jitter), with kernel bias `bias`. The box is in linear radiance (SGSR2).
-fn gx_taau_reconstruct(base: vec2<i32>, centre: vec2<f32>, bias: f32) -> Reconstruction {
+// eight neighbours (FSR2's 3x3), each at its jittered position (render pixel i shows the scene at
+// i + 0.5 - jitter), with kernel bias `bias` and the fresh pixel's `wide`. The box is in linear
+// radiance (SGSR2).
+fn gx_taau_reconstruct(base: vec2<i32>, centre: vec2<f32>, bias: f32, wide: f32) -> Reconstruction {
     let last = vec2<i32>(gx_taau.render.xy) - vec2<i32>(1);
     let lo_at = max(base - vec2<i32>(1), vec2<i32>(0));
     let hi_at = min(base + vec2<i32>(1), last);
     let d = vec2<f32>(base) + 0.5 - gx_taau.jitter.xy - centre;
-    let bias2 = bias * bias;
+    let bias2 = vec2<f32>(bias * bias, wide * wide);
     var taps: Taps;
     taps.lo = vec3<f32>(GX_TAAU_RADIANCE_MAX);
     taps.hi = vec3<f32>(0.0);
-    let nearest = gx_taau_tap(&taps, base, d, bias2);
-    gx_taau_tap(&taps, vec2<i32>(lo_at.x, base.y), d - vec2<f32>(1.0, 0.0), bias2);
-    gx_taau_tap(&taps, vec2<i32>(hi_at.x, base.y), d + vec2<f32>(1.0, 0.0), bias2);
-    gx_taau_tap(&taps, vec2<i32>(base.x, lo_at.y), d - vec2<f32>(0.0, 1.0), bias2);
-    gx_taau_tap(&taps, vec2<i32>(base.x, hi_at.y), d + vec2<f32>(0.0, 1.0), bias2);
+    taps.lo5 = taps.lo;
+    taps.hi5 = taps.hi;
+    let nearest = gx_taau_tap(&taps, base, d, bias2, true);
+    gx_taau_tap(&taps, vec2<i32>(lo_at.x, base.y), d - vec2<f32>(1.0, 0.0), bias2, true);
+    gx_taau_tap(&taps, vec2<i32>(hi_at.x, base.y), d + vec2<f32>(1.0, 0.0), bias2, true);
+    gx_taau_tap(&taps, vec2<i32>(base.x, lo_at.y), d - vec2<f32>(0.0, 1.0), bias2, true);
+    gx_taau_tap(&taps, vec2<i32>(base.x, hi_at.y), d + vec2<f32>(0.0, 1.0), bias2, true);
+    gx_taau_tap(&taps, lo_at, d - vec2<f32>(1.0, 1.0), bias2, false);
+    gx_taau_tap(&taps, vec2<i32>(hi_at.x, lo_at.y), d + vec2<f32>(1.0, -1.0), bias2, false);
+    gx_taau_tap(&taps, vec2<i32>(lo_at.x, hi_at.y), d + vec2<f32>(-1.0, 1.0), bias2, false);
+    gx_taau_tap(&taps, hi_at, d + vec2<f32>(1.0, 1.0), bias2, false);
     var r: Reconstruction;
-    r.mean = taps.moments * 0.2;
-    r.sigma = sqrt(max(taps.squares * 0.2 - r.mean * r.mean, vec3<f32>(0.0)));
+    r.mean = taps.moments / GX_TAAU_TAPS;
+    r.sigma = sqrt(max(taps.squares / GX_TAAU_TAPS - r.mean * r.mean, vec3<f32>(0.0)));
     r.lo = taps.lo;
     r.hi = taps.hi;
     r.weight = taps.sum.a;
     // Deringing (FSR2): the negative lobes may not take the reconstruction outside its taps.
-    let reconstructed = clamp(taps.sum.rgb / max(taps.sum.a, 1e-6), taps.lo, taps.hi);
+    let reconstructed = clamp(taps.sum.rgb / max(taps.sum.a, 1e-6), taps.lo5, taps.hi5);
     r.colour = select(reconstructed, nearest, taps.sum.a < GX_TAAU_LEAST_SAMPLE_WEIGHT);
+    r.wide_weight = taps.wide.a;
+    let wide_reconstructed = clamp(taps.wide.rgb / max(taps.wide.a, 1e-6), taps.lo, taps.hi);
+    r.wide_colour = select(wide_reconstructed, nearest, taps.wide.a < GX_TAAU_LEAST_SAMPLE_WEIGHT);
     return r;
 }
 
@@ -284,8 +321,8 @@ fn fs_taau(in: TaauOut) -> @location(0) vec4<f32> {
     let floor_weight = convert.z;
     let fresh = reset || offscreen || floor_weight >= 1.0;
     let bias = select(gx_taau.kernel.x, gx_taau.kernel.y, fresh);
-    let r = gx_taau_reconstruct(base, centre, bias);
-    let current = r.colour;
+    let r = gx_taau_reconstruct(base, centre, bias, gx_taau.kernel.y);
+    var current = r.colour;
     if fresh {
         // A fresh pixel takes the current frame whole; its weight starts from its own samples.
         return vec4<f32>(current, max(r.weight, GX_TAAU_LEAST_SAMPLE_WEIGHT));
@@ -299,6 +336,7 @@ fn fs_taau(in: TaauOut) -> @location(0) vec4<f32> {
     let handover = (gx_taau.counts.w & GX_TAAU_FLAG_HANDOVER) != 0u;
     let accumulated = select(max(sampled.a, 0.0), 1.0 / max(gx_taau.params.x, 1e-3), handover) * (1.0 - floor_weight);
     let motion_px = length(motion * 0.5 * gx_taau.render.xy);
+    var sample_weight = max(r.weight, 0.0);
     if (gx_taau.counts.w & GX_TAAU_FLAG_CLIP) != 0u {
         // A still pixel clips to the taps' range alone: the render taps are coarser than the
         // output's detail, and a variance box over them clipped the detail the jitter cycle built
@@ -307,7 +345,16 @@ fn fs_taau(in: TaauOut) -> @location(0) vec4<f32> {
         let gamma = mix(GX_TAAU_STILL_GAMMA, GX_TAAU_VARIANCE_GAMMA, saturate(motion_px / GX_TAAU_BOX_MOTION_PX));
         let lo = max(r.lo, r.mean - gamma * r.sigma);
         let hi = min(r.hi, r.mean + gamma * r.sigma);
-        history = gx_taau_sane(gx_taau_clip(history, lo, hi));
+        let clipped = gx_taau_sane(gx_taau_clip(history, lo, hi));
+        // D22: how far the clip moved the history, in the box's half-extents: a shading change the
+        // history cannot keep, whose samples the fresh pixel's kernel reconstructs.
+        let extent = max(0.5 * (hi - lo), vec3<f32>(1e-4));
+        let moved = abs(clipped - history) / extent;
+        let change = saturate(max(moved.x, max(moved.y, moved.z)) * GX_TAAU_SHADING_CHANGE_GAIN);
+        let shading = max(change, floor_weight);
+        current = mix(r.colour, r.wide_colour, shading);
+        sample_weight = mix(max(r.weight, 0.0), max(r.wide_weight, 0.0), shading);
+        history = clipped;
     }
     // The history's weight: each frame adds its samples' Lanczos weight, up to 1 / alpha_min (less
     // per pixel of motion, as TAA's current weight), and to GX_TAAU_MOVING_WEIGHT_MAX on a moving
@@ -318,7 +365,6 @@ fn fs_taau(in: TaauOut) -> @location(0) vec4<f32> {
     // memory flickered (B.8's still row: 0.80% of pixels at alpha_min, 0.33% at half of it).
     let floor = gx_taau.params.x * select(1.0, GX_TAAU_STILL_ALPHA_SHARE, motion_px < GX_TAAU_STILL_MOTION_PX);
     let least = clamp(floor + motion_px * gx_taau.params.w, floor, 1.0);
-    let sample_weight = max(r.weight, 0.0);
     let most = mix(1.0 / least, GX_TAAU_MOVING_WEIGHT_MAX, saturate(motion_px / GX_TAAU_MOVING_PX));
     let total = min(accumulated + sample_weight, most);
     let alpha = select(1.0, clamp(sample_weight / total, 0.0, 1.0), total > 1e-6);

@@ -257,3 +257,70 @@ fn metal_the_reflections_cost_fits_their_budget_and_add_no_flicker_on_the_wet_st
     }
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
+
+/// The render scale a dynamic-resolution step lands on where TAA upscales (B.8).
+const TAAU_SCALE: f32 = 0.67;
+/// The least share of the scale-1 reflected pixels the scaled frame keeps: reflections must not
+/// come and go with the scale steps.
+const SCALED_REFLECTED_SHARE_MIN: f64 = 0.6;
+
+/// Harbour's `shot` drawn settled at `size` under `quality` at render `scale`, and whether TAA
+/// upscaled it.
+fn harbour_settled(gpu: &genex_render::Gpu, runtime: &mut Runtime<World>, shot: &str, size: [u32; 2], quality: &genex_render::settings::Quality, scale: f32) -> (Capture, bool) {
+    let (mut frames, drawn) = harbour_stage(gpu, runtime, shot, size, quality);
+    frames.renderer_mut().set_render_scale(scale);
+    let settle = frames.settle_frames();
+    frames.render_settled(gpu, &drawn, genex_render::CullPath::Gpu, None, settle).expect("settled frame");
+    let taau = frames.renderer().last_scene().is_some_and(|path| path.taau);
+    (frames.capture(gpu).expect("capture"), taau)
+}
+
+/// The ground pixels of a `size` frame of `shot` that `with` lights by [`REFLECTED_LEVELS`] over
+/// `without`.
+fn reflected_pixels(runtime: &mut Runtime<World>, shot: &str, size: [u32; 2], without: &Capture, with: &Capture) -> usize {
+    use genex_platform_web::{MeshCache, to_scene};
+    let camera = runtime.camera(View::Named(shot)).expect("the shot's camera");
+    let frame = runtime.frame(View::Named(shot)).expect("the shot's frame");
+    let eye = showcase_game::harbour::SHOTS.iter().find(|s| s.name == shot).expect("a Harbour shot").eye;
+    let view_proj = to_scene(&frame, &camera, &MeshCache::default()).camera.view_proj(size[0] as f32 / size[1] as f32);
+    let (dark, lit) = (lumas(without), lumas(with));
+    (0..dark.len()).filter(|i| lit[*i] - dark[*i] >= REFLECTED_LEVELS && looks_at_ground(view_proj, eye, (size[0], size[1]), *i as u32 % size[0], *i as u32 / size[0])).count()
+}
+
+#[test]
+#[ignore = "real GPU: run with --ignored metal"]
+fn metal_the_reflections_stay_when_taa_upscales_from_a_lower_render_scale() {
+    use genex_render::device_class::DeviceClass;
+    use genex_render::presets::preset_quality;
+    use genex_render::settings::QualityPreset;
+    use genex_render::ssr::SsrQuality;
+    let Some(gpu) = gpu() else { return };
+    if !genex_render::ssr::LANDED {
+        return;
+    }
+    let class = DeviceClass::from_wire("desktop-high").expect("class");
+    let mut runtime = harbour_at_night();
+    let size = [1920, 1080];
+    let mut failures = Vec::new();
+    for preset in [QualityPreset::High, QualityPreset::Ultra] {
+        let on = preset_quality(preset, class);
+        let mut off = on;
+        off.ssr = SsrQuality::OFF;
+        for shot in SHOTS {
+            let mut counts = Vec::new();
+            for scale in [1.0, TAAU_SCALE] {
+                let (without, _) = harbour_settled(&gpu, &mut runtime, shot, size, &off, scale);
+                let (with, taau) = harbour_settled(&gpu, &mut runtime, shot, size, &on, scale);
+                write_png(&out_dir().join(format!("harbour-ssr-{shot}-{}-s{scale:.2}.png", preset.wire())), &with);
+                assert_eq!(taau, scale < 1.0, "{shot} {preset:?} at scale {scale}: TAA upscales exactly below scale 1");
+                counts.push(reflected_pixels(&mut runtime, shot, size, &without, &with));
+            }
+            let (full, scaled) = (counts[0], counts[1]);
+            println!("{{\"row\":\"ssr-scaled\",\"preset\":\"{}\",\"shot\":\"{shot}\",\"reflectedS1\":{full},\"reflectedS067\":{scaled}}}", preset.wire());
+            if (scaled as f64) < full as f64 * SCALED_REFLECTED_SHARE_MIN || scaled < REFLECTED_PIXELS_MIN {
+                failures.push(format!("{shot} {preset:?}: {scaled} reflected ground pixels at scale {TAAU_SCALE} against {full} at scale 1"));
+            }
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
