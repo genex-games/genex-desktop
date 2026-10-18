@@ -203,11 +203,12 @@ signed in the picker starts OpenCode's GPT models with the ones Codex lists (`ru
 (OpenCode 1.18 and 2.0.20).
 
 **Pi** ([pi.ts](../src/substrate/engines/pi.ts)) is the Pi coding agent (`pi --mode json`, resume
-`--session-id`), not the `pi-ai` HTTP client. Sign in opens its TUI for `/login` with extensions
-off; studio never reads `~/.pi`. Ready once `--list-models` lists a model. Sessions run in
-`ProcessSandbox` (`ownHome`: `~/.pi`) with `--no-extensions`; `auth.json` and the extensions folder
-are not writable. No in-app installer; Account can run `pi update`. Streams:
-`tests/fixtures/transcripts/pi-*`.
+`--session-id`), not the `pi-ai` HTTP client. Sign in and `--list-models` run with
+`--no-extensions --offline`; studio never reads `~/.pi`. Ready once `--list-models` lists a model.
+Sessions run in `ProcessSandbox` (`ownHome`: `~/.pi`) with `--no-extensions`. `~/.pi` stays
+read-only except `agent/sessions` and `agent/auth.json.lock`. An expired sign-in, or a refresh that
+cannot rewrite `auth.json`, says to sign in again. An unknown provider reaches only its `models.json` host. No in-app installer; Account can
+run `pi update`. Streams: `tests/fixtures/transcripts/pi-*`.
 
 ## Your own model server
 

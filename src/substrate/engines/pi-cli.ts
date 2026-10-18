@@ -3,6 +3,8 @@
  * prints, and the hosts those providers answer on (for the sandbox). The studio never reads Pi's
  * credentials; a listing is how it knows a sign-in can run.
  */
+import { readFile } from "node:fs/promises";
+import path from "node:path";
 import { CatalogError } from "./model-catalog.ts";
 import type { EngineModel } from "./types.ts";
 import { ModelCatalogProblemCode } from "../../shared/model-catalog.ts";
@@ -22,8 +24,8 @@ const THINKING_EFFORTS: readonly string[] = [
   ReasoningEffort.Max,
 ];
 /**
- * Where a built-in provider answers. An unknown id still reaches these hosts so Copilot, ChatGPT
- * sign-in and custom models are not cut off; a dotted id is treated as a hostname of its own.
+ * Where a built-in provider answers. An unknown id reaches only the https host in its
+ * `models.json` / `models-store.json` `baseUrl` — never every known host.
  */
 const PROVIDER_HOSTS: Readonly<Record<string, readonly string[]>> = {
   openai: ["api.openai.com", "chatgpt.com", "auth.openai.com"],
@@ -47,13 +49,64 @@ const PROVIDER_HOSTS: Readonly<Record<string, readonly string[]>> = {
   cursor: ["api2.cursor.sh", "www.cursor.com"],
   openrouter: ["openrouter.ai"],
 };
-const KNOWN_HOSTS: readonly string[] = [...new Set(Object.values(PROVIDER_HOSTS).flat())];
 
-function hostsFor(provider: string): string[] {
+/** List-models and `/login`: no extensions, no automatic catalog/package fetch. */
+export const PI_DISCOVERY_ARGS = ["--no-extensions", "--offline"] as const;
+/** `pi --list-models` as the studio runs it. */
+export const PI_LIST_MODELS_ARGS = ["--list-models", ...PI_DISCOVERY_ARGS] as const;
+
+function hostsFor(provider: string, extra: readonly string[] | undefined): string[] {
   const known = PROVIDER_HOSTS[provider];
-  if (known) return [...known];
+  const listed = extra ?? [];
+  if (known) return [...new Set([...known, ...listed])];
+  if (listed.length) return [...listed];
   if (provider.includes(".")) return [provider];
-  return [...KNOWN_HOSTS];
+  return [];
+}
+
+/** https hostnames from Pi's models store. Never follows `!command` keys. */
+export function hostsFromPiModelsJson(text: string): Record<string, string[]> {
+  let data: unknown;
+  try {
+    data = JSON.parse(text);
+  } catch {
+    return {};
+  }
+  if (!data || typeof data !== "object" || Array.isArray(data)) return {};
+  const out: Record<string, string[]> = {};
+  for (const [provider, entry] of Object.entries(data)) {
+    const hosts = new Set<string>();
+    collectHttpsHosts(entry, hosts);
+    if (hosts.size) out[provider] = [...hosts];
+  }
+  return out;
+}
+
+function collectHttpsHosts(value: unknown, hosts: Set<string>): void {
+  if (typeof value === "string") {
+    const host = httpsHost(value);
+    if (host) hosts.add(host);
+    return;
+  }
+  if (!value || typeof value !== "object") return;
+  if (Array.isArray(value)) {
+    for (const item of value) collectHttpsHosts(item, hosts);
+    return;
+  }
+  for (const [key, item] of Object.entries(value)) {
+    if (key.startsWith("!")) continue;
+    collectHttpsHosts(item, hosts);
+  }
+}
+
+function httpsHost(value: string): string | null {
+  if (!value.startsWith("https://")) return null;
+  try {
+    const host = new URL(value).hostname;
+    return host || null;
+  } catch {
+    return null;
+  }
 }
 
 const MESSAGE = {
@@ -83,7 +136,7 @@ export function parseTokenCount(value: string): number | undefined {
 }
 
 /** `pi --list-models`: a table of provider, model, context, max-out, thinking and images. */
-export function parsePiModels(stdout: string): PiModel[] {
+export function parsePiModels(stdout: string, extraHosts?: Record<string, readonly string[]>): PiModel[] {
   const text = stdout.trim();
   if (!text) return [];
   if (/^error\b/i.test(text)) throw new CatalogError(ModelCatalogProblemCode.Malformed, MESSAGE.Malformed);
@@ -109,8 +162,24 @@ export function parsePiModels(stdout: string): PiModel[] {
         ...(thinks ? { efforts: [...THINKING_EFFORTS], defaultEffort: ReasoningEffort.Medium } : {}),
         note: provider,
       },
-      hosts: hostsFor(provider),
+      hosts: hostsFor(provider, extraHosts?.[provider]),
     });
   }
   return models;
+}
+
+const STORE_FILES = ["models-store.json", "models.json"] as const;
+
+/** Hosts named in Pi's own model store. Never reads `auth.json`. */
+export async function readPiProviderHosts(home: string): Promise<Record<string, string[]>> {
+  const agent = path.join(home, ".pi", "agent");
+  const merged: Record<string, string[]> = {};
+  for (const file of STORE_FILES) {
+    const text = await readFile(path.join(agent, file), "utf8").catch(() => "");
+    if (!text) continue;
+    for (const [provider, hosts] of Object.entries(hostsFromPiModelsJson(text))) {
+      merged[provider] = [...new Set([...(merged[provider] ?? []), ...hosts])];
+    }
+  }
+  return merged;
 }

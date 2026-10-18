@@ -8,6 +8,7 @@ import { UiEvent } from "../shared/ui-events.ts";
 import { findClaudeBinary } from "../substrate/engines/claude-cli.ts";
 import { requireCodingCli } from "../substrate/engines/external-cli.ts";
 import { openCodeSignInArgs } from "../substrate/engines/opencode-cli.ts";
+import { PI_DISCOVERY_ARGS } from "../substrate/engines/pi-cli.ts";
 import { childEnv } from "../substrate/child-env.ts";
 import type { ClaudeLoginState } from "../shared/claude-login.ts";
 import type { CodexLoginState } from "../shared/codex-login.ts";
@@ -165,7 +166,7 @@ export function createLoginControllers({
       if (!cli) return { started: false, missingCli: true };
       terminals.open({
         file: cli.path,
-        args: ["--no-extensions"],
+        args: [...PI_DISCOVERY_ARGS],
         cwd: os.tmpdir(),
         // Interactive TUI so the person can `/login`. Pi keeps what it is given; the studio
         // rereads the models Pi can run once the terminal closes.

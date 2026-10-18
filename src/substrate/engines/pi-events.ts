@@ -17,6 +17,7 @@ export const PiEvent = {
   ToolStart: "tool_execution_start",
   ToolEnd: "tool_execution_end",
   AutoRetryEnd: "auto_retry_end",
+  AgentEnd: "agent_end",
 } as const;
 export type PiEvent = (typeof PiEvent)[keyof typeof PiEvent];
 
@@ -46,6 +47,12 @@ export interface Translated {
   usage?: Partial<Usage>;
   text?: string;
   failure?: { message: string; status: number | null };
+  /** A failure to keep until `agent_end` with `willRetry: false`. */
+  pendingFailure?: { message: string; status: number | null };
+  /** A successful retry or reply: drop a held failure. */
+  clearFailure?: boolean;
+  /** Apply a held failure now (`agent_end` will not retry). */
+  confirmPending?: boolean;
   turns?: number;
 }
 
@@ -84,6 +91,8 @@ export function translatePiEvent(event: Record_): Translated {
       return toolEnd(event);
     case PiEvent.AutoRetryEnd:
       return autoRetryEnd(event);
+    case PiEvent.AgentEnd:
+      return agentEnd(event);
     default:
       return { events: [] };
   }
@@ -99,11 +108,7 @@ function messageUpdate(event: Record_): Translated {
   const latestUsage = usageOf(record(event.usage));
   if (nested.type === "error") {
     const message = String(nested.error ?? nested.reason ?? "Pi stopped") || "Pi stopped";
-    return {
-      events: [{ type: DelegateEventType.Result, payload: { subtype: "error", result: message } }],
-      failure: { message, status: statusIn(message) },
-      latestUsage,
-    };
+    return { events: [], pendingFailure: { message, status: statusIn(message) }, latestUsage };
   }
   if (nested.type !== "text_delta") return { events: [], latestUsage };
   const words = String(nested.delta ?? "");
@@ -120,25 +125,26 @@ function messageEnd(event: Record_): Translated {
   const usage = usageOf(record(message.usage)) ?? usageOf(record(event.usage));
   const stop = String(message.stopReason ?? "");
   if (FAILED_STOP.has(stop)) {
-    const words = String(message.errorMessage ?? message.error ?? (textOf(message.content) || "Pi stopped"));
-    return {
-      events: [{ type: DelegateEventType.Result, payload: { subtype: "error", result: words } }],
-      failure: { message: words, status: statusIn(words) },
-      usage,
-    };
+    const words = String(message.errorMessage ?? message.error ?? textOf(message.content)).trim() || "Pi stopped";
+    return { events: [], pendingFailure: { message: words, status: statusIn(words) }, usage };
   }
   const words = textOf(message.content).trim();
-  if (!words) return { events: [], usage };
-  return { events: [assistant([{ type: "text", text: words }])], text: words, turns: 1, usage };
+  if (!words) return { events: [], usage, clearFailure: true };
+  return { events: [assistant([{ type: "text", text: words }])], text: words, turns: 1, usage, clearFailure: true };
 }
 
 function autoRetryEnd(event: Record_): Translated {
-  if (event.success !== false) return { events: [] };
+  if (event.success !== false) return { events: [], clearFailure: true };
   const message = String(event.finalError ?? event.errorMessage ?? "Pi stopped") || "Pi stopped";
   return {
     events: [{ type: DelegateEventType.Result, payload: { subtype: "error", result: message } }],
     failure: { message, status: statusIn(message) },
   };
+}
+
+function agentEnd(event: Record_): Translated {
+  if (event.willRetry === true) return { events: [] };
+  return { events: [], confirmPending: true };
 }
 
 function toolStart(event: Record_): Translated {

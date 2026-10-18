@@ -18,7 +18,7 @@ import { lockUnowned, ownershipBriefing, releaseLocks, releaseStaleLocks, type L
 import { StudioBridge, answerBridgeCall, bridgeTools } from "./studio-bridge.ts";
 import { writeDelegateStills } from "./codex.ts";
 import { JUDGE_RULES, offLimitsNote, planModeNote, readOnlyNote } from "./codex-prompts.ts";
-import { parsePiModels } from "./pi-cli.ts";
+import { parsePiModels, PI_LIST_MODELS_ARGS, readPiProviderHosts } from "./pi-cli.ts";
 import { parsePiLine, translatePiEvent, type Translated } from "./pi-events.ts";
 import {
   type CompleteRequest,
@@ -67,6 +67,7 @@ const MESSAGE = {
   InstallRemedy: "Install Pi from Settings › Model Providers.",
   NoModels: "Pi has no model it can run yet.",
   SignInRemedy: "Sign in to a provider with Pi from Settings › Model Providers.",
+  SignInAgain: "Sign in to Pi again from Settings › Model Providers.",
   Ready: (version: string | undefined, count: number) => `Pi ${version ?? ""}, ${count} model(s)`.trim(),
   NoCompact: "Pi compacts its own sessions",
   NoTools: "Pi's one-shot answers take no studio tools",
@@ -108,6 +109,7 @@ interface PiRun {
   failure: { message: string; status: number | null } | null;
   deadlineHit: boolean;
   pendingUsage: Partial<Usage> | undefined;
+  pendingFailure: { message: string; status: number | null } | undefined;
 }
 
 /** The sandbox a session runs in: the folder it works in, Pi's own home, and nothing it must not read. */
@@ -122,16 +124,25 @@ export function piSandbox(input: {
 }): SandboxOptions {
   const home = input.home ?? os.homedir();
   const piHome = path.join(home, ".pi");
+  const agent = path.join(piHome, "agent");
   return {
-    writableRoots: [input.runDir, ...input.gitDirs],
+    writableRoots: [input.runDir, ...input.gitDirs, path.join(agent, "sessions"), path.join(agent, "auth.json.lock")],
     scratchDir: input.scratchDir,
     secretPaths: input.secretPaths,
     ownHome: [piHome],
-    // The CLI must read its sign-ins; the session must not overwrite them or plant extensions
-    // that later run unsandboxed in the TUI `/login`.
+    // The CLI must read its sign-ins; everything else under ~/.pi stays read-only so a session
+    // cannot plant settings, packages or !command keys that later run unsandboxed.
     denyWrite: [
-      path.join(piHome, "agent", "auth.json"),
-      path.join(piHome, "agent", "extensions"),
+      path.join(agent, "auth.json"),
+      path.join(agent, "settings.json"),
+      path.join(agent, "models.json"),
+      path.join(agent, "models-store.json"),
+      path.join(agent, "mcp.json"),
+      path.join(agent, "extensions"),
+      path.join(agent, "skills"),
+      path.join(agent, "npm"),
+      path.join(agent, "agents"),
+      path.join(piHome, "context-mode"),
       path.join(input.gameDir, ".pi"),
     ],
     ...(input.toolPath ? { toolPath: input.toolPath } : {}),
@@ -329,7 +340,8 @@ export class PiEngine implements Engine {
     binary: string | undefined,
   ): Promise<{ models: EngineModel[]; source: typeof ModelCatalogSource.Provider }> {
     const stdout = this.#listModels ? await this.#listModels() : await listPiModels(binary);
-    const listed = parsePiModels(stdout);
+    const extra = await readPiProviderHosts(os.homedir()).catch(() => ({}));
+    const listed = parsePiModels(stdout, extra);
     this.#hosts = new Map(listed.map((model) => [model.row.id, model.hosts]));
     this.#signedIn = listed.length > 0;
     return { models: listed.map((model) => model.row), source: ModelCatalogSource.Provider };
@@ -440,6 +452,8 @@ export class PiEngine implements Engine {
       return metered(partialDelegateResult(this.id, interruption(request.signal?.aborted), partial()));
     if (err instanceof EngineError && err.kind !== EngineFailureKind.Other) throw err;
     const message = err instanceof Error ? err.message : String(err);
+    const mapped = failureError(this.id, { message, status: null });
+    if (mapped.kind !== EngineFailureKind.Other) throw mapped;
     return metered(partialDelegateResult(this.id, { stopReason: StopReason.Error, errorText: message }, partial()));
   }
 
@@ -474,6 +488,7 @@ function newRun(engine: string, sessionId: string | undefined): PiRun {
     failure: null,
     deadlineHit: false,
     pendingUsage: undefined,
+    pendingFailure: undefined,
   };
 }
 
@@ -494,7 +509,15 @@ function refusedModelText(
   return MESSAGE.ModelRefused(model, failure.message);
 }
 
+function needsPiSignIn(failure: { message: string; status: number | null }): boolean {
+  if (failure.status === 401) return true;
+  return /token expired|unauthori[sz]ed|not signed in|credential store modify|EPERM:.*auth\.json/i.test(
+    failure.message,
+  );
+}
+
 function failureError(engine: string, failure: { message: string; status: number | null }): EngineError {
+  if (needsPiSignIn(failure)) return new EngineError(EngineFailureKind.Auth, engine, MESSAGE.SignInAgain);
   if (failure.status !== null) return classifyHttpFailure(engine, failure.status, failure.message);
   return new EngineError(EngineFailureKind.Other, engine, failure.message);
 }
@@ -508,14 +531,24 @@ const SUMMED_USAGE = [
   "cost_usd",
 ] as const;
 
-function applyTranslated(request: Pick<DelegateRequest, "onEvent">, run: PiRun, translated: Translated): void {
-  if (translated.sessionId) run.sessionId = translated.sessionId;
-  for (const event of translated.events)
-    request.onEvent?.(event as Parameters<NonNullable<DelegateRequest["onEvent"]>>[0]);
-  if (translated.text) run.summary = translated.text;
-  if (translated.turns) run.turns += translated.turns;
-  if (translated.failure && (!run.failure || translated.failure.message !== "Pi stopped"))
-    run.failure = translated.failure;
+function keepFailure(
+  current: { message: string; status: number | null } | null | undefined,
+  next: { message: string; status: number | null },
+): { message: string; status: number | null } {
+  return current && next.message === "Pi stopped" ? current : next;
+}
+
+function applyFailure(run: PiRun, translated: Translated): void {
+  if (translated.clearFailure) {
+    run.pendingFailure = undefined;
+    run.failure = null;
+  }
+  if (translated.pendingFailure) run.pendingFailure = keepFailure(run.pendingFailure, translated.pendingFailure);
+  if (translated.confirmPending && run.pendingFailure && !run.failure) run.failure = run.pendingFailure;
+  if (translated.failure) run.failure = keepFailure(run.failure, translated.failure);
+}
+
+function applyUsage(run: PiRun, translated: Translated): void {
   if (translated.latestUsage) run.pendingUsage = translated.latestUsage;
   const closing = Boolean(translated.usage) || Boolean(translated.turns) || Boolean(translated.failure);
   if (!closing) return;
@@ -525,6 +558,16 @@ function applyTranslated(request: Pick<DelegateRequest, "onEvent">, run: PiRun, 
     const value = usage?.[key];
     if (typeof value === "number") run.usage[key] = (run.usage[key] ?? 0) + value;
   }
+}
+
+function applyTranslated(request: Pick<DelegateRequest, "onEvent">, run: PiRun, translated: Translated): void {
+  if (translated.sessionId) run.sessionId = translated.sessionId;
+  for (const event of translated.events)
+    request.onEvent?.(event as Parameters<NonNullable<DelegateRequest["onEvent"]>>[0]);
+  if (translated.text) run.summary = translated.text;
+  if (translated.turns) run.turns += translated.turns;
+  applyFailure(run, translated);
+  applyUsage(run, translated);
 }
 
 function partialState(
@@ -599,7 +642,7 @@ async function defaultResolveCli(): Promise<{ ready: boolean; path?: string; ver
 async function listPiModels(binary: string | undefined): Promise<string> {
   if (!binary) return "";
   const env = childEnv(process.env, { base: "contractor", vendor: "pi" });
-  const result = await runCommand(binary, ["--list-models"], {
+  const result = await runCommand(binary, [...PI_LIST_MODELS_ARGS], {
     env,
     timeoutMs: Math.max(MODELS_TIMEOUT_MS, CATALOG_DEADLINE_MS),
   });

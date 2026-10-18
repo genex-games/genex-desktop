@@ -11,7 +11,7 @@ import { writeFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, it } from "node:test";
 import { PiEngine, type PiExec, type PiInvocation, piSandbox } from "../../src/substrate/engines/pi.ts";
-import { parsePiModels } from "../../src/substrate/engines/pi-cli.ts";
+import { hostsFromPiModelsJson, parsePiModels } from "../../src/substrate/engines/pi-cli.ts";
 import { translatePiEvent } from "../../src/substrate/engines/pi-events.ts";
 import { EngineError, type DelegateEvent } from "../../src/substrate/engines/types.ts";
 import { PermissionMode } from "../../src/shared/permissions.ts";
@@ -72,7 +72,25 @@ describe("Pi's model list", () => {
     assert.equal(gpt?.row.supportsThinking, false);
     assert.deepEqual(gpt?.hosts, ["api.openai.com", "chatgpt.com", "auth.openai.com"]);
     assert.ok(listed[2]?.hosts.includes("api.github.com"), "Copilot reaches GitHub");
-    assert.ok(listed[3]?.hosts.length, "an unknown provider still reaches known API hosts");
+    assert.deepEqual(listed[3]?.hosts, [], "an unknown provider gets no wildcard hosts");
+    const withStore = parsePiModels(await fixture("pi-models.txt"), {
+      acme: ["api.acme.test"],
+    });
+    assert.deepEqual(withStore[3]?.hosts, ["api.acme.test"], "a custom provider reaches only its models.json host");
+    assert.ok(!withStore[3]?.hosts.includes("*.amazonaws.com"));
+  });
+
+  it("takes an unknown provider's hosts only from models.json https baseUrl", () => {
+    const hosts = hostsFromPiModelsJson(
+      JSON.stringify({
+        acme: { models: [{ baseUrl: "https://api.acme.test/v1?key=secret" }] },
+        openai: { models: [{ baseUrl: "https://api.openai.com/v1" }] },
+        local: { models: [{ baseUrl: "http://127.0.0.1:1234" }, { apiKey: "!echo stolen" }] },
+      }),
+    );
+    assert.deepEqual(hosts.acme, ["api.acme.test"]);
+    assert.deepEqual(hosts.openai, ["api.openai.com"]);
+    assert.equal(hosts.local, undefined);
   });
 
   it("skips the header and refuses a listing that is not one", () => {
@@ -162,6 +180,8 @@ describe("Pi's sessions", () => {
     const first = seen[0];
     assert.ok(first);
     assert.deepEqual(first.argv.slice(0, 2), ["--mode", "json"]);
+    assert.ok(first.argv.includes("--no-extensions"));
+    assert.ok(!first.argv.includes("--offline"), "a session still needs the model host");
     assert.ok(first.argv.includes("--session-id"));
     assert.ok(first.argv.includes("--model"));
     assert.equal(first.argv[first.argv.indexOf("--model") + 1], "anthropic/claude-sonnet-4");
@@ -223,17 +243,30 @@ describe("Pi's sandbox", () => {
       home: "/Users/dev",
     });
     assert.ok(sandbox.writableRoots.includes("/game"));
+    assert.ok(
+      sandbox.writableRoots.includes(path.join("/Users/dev", ".pi", "agent", "sessions")),
+      "a session may write its own transcripts",
+    );
+    assert.ok(
+      sandbox.writableRoots.includes(path.join("/Users/dev", ".pi", "agent", "auth.json.lock")),
+      "Pi creates a lock folder even to read auth.json",
+    );
     assert.ok(sandbox.ownHome?.some((home) => home.endsWith(".pi") || home.includes(`${path.sep}.pi`)));
     assert.ok(sandbox.secretPaths.includes("/secrets"));
     const denied = sandbox.denyWrite ?? [];
-    assert.ok(
-      denied.some((p) => p.endsWith(`${path.sep}auth.json`)),
-      "a session cannot write Pi's tokens",
-    );
-    assert.ok(
-      denied.some((p) => p.endsWith(`${path.sep}extensions`)),
-      "a session cannot plant extensions that later run unsandboxed",
-    );
+    for (const leaf of [
+      "auth.json",
+      "settings.json",
+      "models.json",
+      "models-store.json",
+      "extensions",
+      "skills",
+      "npm",
+    ])
+      assert.ok(
+        denied.some((p) => p.endsWith(`${path.sep}${leaf}`)),
+        `a session cannot plant ${leaf} that later runs unsandboxed`,
+      );
     assert.ok(
       denied.some((p) => p === path.join("/game", ".pi")),
       "a game's own .pi folder is not the session's to plant",
@@ -269,6 +302,52 @@ describe("Pi's JSON stream", () => {
     await assert.rejects(
       engine.delegate({ cwd, prompt: "Hi", onEvent: () => {} }),
       (err: unknown) => err instanceof EngineError && err.kind === "rate_limit",
+    );
+  });
+
+  it("a retry that succeeds after message_end error is a success, not a leftover failure", async () => {
+    const cwd = await game();
+    const stream = await events("pi-retry.jsonl");
+    const mirrored: DelegateEvent[] = [];
+    const { engine } = await engineWith(() => replay(stream));
+    const result = await engine.delegate({ cwd, prompt: "Hi", onEvent: (event) => mirrored.push(event) });
+    assert.equal(result.ok, true);
+    assert.equal(result.summary, "Hello after retry.");
+    assert.ok(
+      !mirrored.some((event) => event.type === "result" && (event.payload as { subtype?: string }).subtype === "error"),
+    );
+  });
+
+  it("an expired sign-in says to sign in to Pi again", async () => {
+    const cwd = await game();
+    const stream = await events("pi-expired.jsonl");
+    const { engine } = await engineWith(() => replay(stream));
+    await assert.rejects(
+      engine.delegate({ cwd, prompt: "Hi", onEvent: () => {} }),
+      (err: unknown) => err instanceof EngineError && err.kind === "auth" && /sign in to Pi again/i.test(err.message),
+    );
+  });
+
+  it("a read-only auth.json that cannot refresh says to sign in to Pi again", async () => {
+    const cwd = await game();
+    const stream = await events("pi-eperm.jsonl");
+    const { engine } = await engineWith(() => replay(stream));
+    await assert.rejects(
+      engine.delegate({ cwd, prompt: "Hi", onEvent: () => {} }),
+      (err: unknown) => err instanceof EngineError && err.kind === "auth" && /sign in to Pi again/i.test(err.message),
+    );
+  });
+
+  it("Pi dying because auth.json cannot be written says to sign in again", async () => {
+    const cwd = await game();
+    const { engine } = await engineWith(async function* () {
+      throw new Error(
+        "Credential store modify failed for openai: EPERM: operation not permitted, open '/Users/dev/.pi/agent/auth.json'",
+      );
+    });
+    await assert.rejects(
+      engine.delegate({ cwd, prompt: "Hi", onEvent: () => {} }),
+      (err: unknown) => err instanceof EngineError && err.kind === "auth" && /sign in to Pi again/i.test(err.message),
     );
   });
 

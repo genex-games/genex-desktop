@@ -540,7 +540,8 @@ async function externalExecutables(
  */
 function belongsToStudioOrGame(candidate: string, target: string, roots: string[], manual: boolean): boolean {
   const slashed = target.replaceAll("\\", "/");
-  const dependency = !manual && slashed.includes("/node_modules/") && !/\/(?:lib|share)\/node_modules\//.test(slashed);
+  const dependency =
+    !manual && slashed.includes("/node_modules/") && !/\/(?:lib|share|install\/global)\/node_modules\//.test(slashed);
   const insideExcluded = roots.some((root) => within(target, root) || within(candidate, root));
   const packaged = /(?:app\.asar(?:\.unpacked)?|claude-agent-sdk-[^/]+)\//.test(slashed);
   return dependency || insideExcluded || packaged;
