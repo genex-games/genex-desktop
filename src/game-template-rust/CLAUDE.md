@@ -1,7 +1,8 @@
 This is a Rust game on the studio's `genex` runtime (wgpu on WebGPU core, Rapier 3D physics, egui
 for UI) for the destinations in `studio.json`: desktop, phones and the web, from one source.
-`docs/GENEX_API.md` is the whole API it is written against, and `docs/CONTRACT.md` says which
-file is whose, which verbs the studio drives the game with and which refusals a run can meet.
+`docs/GENEX_API.md` indexes the whole API it is written against (each topic is a page in
+`docs/api/`), and `docs/CONTRACT.md` says which file is whose, which verbs the studio drives the
+game with and which refusals a run can meet.
 
 1. **Read `.studio/BRIEF.md` first when it exists.**
 2. **Keep the studio contract.** `src/main.rs` ends `main` with `genex::install(game);`. A facet
@@ -13,7 +14,7 @@ file is whose, which verbs the studio drives the game with and which refusals a 
    reviewed list. A crate off that list is asked for with the `request_crate` tool (one exact
    version, and why); only the person approves it, and once approved it is named in `[crates]` at
    `=<version>`. Never add cargo files, build scripts, `unsafe`, or renderer internals, and never
-   edit `docs/GENEX_API.md` or `web/shell.html`.
+   edit `docs/GENEX_API.md`, `docs/api/` or `web/shell.html`.
 4. **One screen, one input path, phone first.** Draw all UI with egui in `on_ui` (the HUD is egui
    too). Read input only from `ctx` inside the hooks (`ctx.keys`, `ctx.touches`, `ctx.pointer`,
    `ctx.look`, `ctx.pads`, `ctx.text`). Touch is a first-class input: the mouse's first button
@@ -43,14 +44,14 @@ Past 32 MB the export is refused `wasm-over-budget`, and a budget outside 1..=32
 Rapier (a fifth of the web build) out.
 Every destination shows a loading screen until the first lit frame; never draw your own. Give it
 the game's look in `genex.toml` `[render.loading]` (title, `#rrggbb` background, accent and text, a
-logo under `assets/`), as `docs/GENEX_API.md` (Loading screen) shows.
+logo under `assets/`), as `docs/api/loading-screen.md` shows.
 When a run answers a refusal code (`gpu-unsupported`, `build-failed`, ...), read it in
 `docs/CONTRACT.md` before changing code.
 
 ## Rendering
 
 The game runs on devices from a high-end desktop to an older phone and a browser, and the
-renderer picks each device's quality itself (`docs/GENEX_API.md`, Rendering): you state the look,
+renderer picks each device's quality itself (`docs/api/rendering.md`): you state the look,
 never the quality.
 
 - **Presets, not numbers.** Never hard-code `ultra`, a resolution or a render scale, and never
@@ -86,7 +87,7 @@ never the quality.
   `RenderConfig::shadows_at(QualityPreset::High, ShadowConfig::new().cascades(4))` and size the
   reach to the world with `[render.shadows] distance`.
 - **Meshlets and occlusion** are off on every preset because they measured slower; opt in per
-  class only on the game's own measurement (`docs/GENEX_API.md`, Big meshes).
+  class only on the game's own measurement (`docs/api/meshlets.md`).
 - **Test as a phone.** Call `renderSettings` with `{set: {deviceClass: "mobile-mid"}}`, then
   `{set: {preset: "low"}}`, look at a capture each time and keep the game readable and playable
   at both before calling it done. A change holds for the session, so give the game's own back:
@@ -96,8 +97,8 @@ never the quality.
 ## World look
 
 The renderer lights, fogs and reflects the world itself; build its look from the built-ins in this
-order and look at a capture after each step (`docs/GENEX_API.md`: Lighting, materials and
-environment; Grading and the lens).
+order and look at a capture after each step (`docs/api/lighting.md`, then
+`docs/api/grading.md`).
 
 - **Sky and sun first.** `frame.environment(Environment::sky())` with a white sun whose elevation
   is the time of day. For night keep the sun and let it set: the stars come out, and
@@ -132,7 +133,7 @@ the sandbox.
 1. **Your own modules**: any safe Rust in `src/game.rs`, `src/facets/` and modules beside them,
    against the genex API and the reviewed crates.
 2. **WGSL**: a `[[wgsl]]` source in `genex.toml`, checked by naga against WebGPU core.
-3. **Custom GPU passes**: `game.gpu_pass(..)` through `genex::gpu` (`docs/GENEX_API.md`).
+3. **Custom GPU passes**: `game.gpu_pass(..)` through `genex::gpu` (`docs/api/gpu-passes.md`).
 4. **Crate requests**: the `request_crate` tool; only the person approves.
 5. **Eject**: only the person copies the engine into this folder's `engine/`, and only the person
    sets the game's trust flag for `unsafe` and build scripts, both in Studio's window. You may
