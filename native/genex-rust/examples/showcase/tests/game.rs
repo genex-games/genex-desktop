@@ -82,6 +82,7 @@ fn only_the_passes_built_ins_cannot_draw_are_registered_and_all_at_api_2() {
     // physical sky has no clouds).
     let expected = [
         ("clouds", PassStage::AfterOpaque),
+        // The lake where the renderer draws no water (MSAA presets; `Water::drawn_at`).
         ("lake", PassStage::AfterTransparent),
         ("lights", PassStage::AfterTransparent),
     ];

@@ -335,7 +335,7 @@ keep the real sun's size.
 
 ## Rendering
 
-One game runs on desktops, phones and browsers, so the renderer adapts at runtime and a game
+One game runs on desktops, phones and browsers, so the renderer adapts and a game
 states only what is its own. A **look** is the game's art direction
 and is the same on every device. A **quality** belongs to the device: a preset (`auto`, `low`,
 `medium`, `high`, `ultra`), one switch per feature, a render scale and a frame-rate target. The

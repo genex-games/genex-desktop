@@ -431,8 +431,10 @@ On the frame it is graph node 16a (`NodeId::Water`, `src/renderer/water_draw.rs`
 `Scene::water` (`SceneWater`: the body and the water's clock) draws after the world pass and its
 resolve, in a pass of its own over the 1x HDR scene, depth-tested against the prepass depth held
 read-only (the depth its shader samples). Where the preset allows the opaque copy (desktop and web
-`high` and `ultra`) the scene is copied first and refracted; elsewhere the water blends over it,
-and on the desktop weighted-resolve path (MSAA `medium`) it is not drawn yet. On frames writing
+`high` and `ultra`) the scene is copied first and refracted; elsewhere the water blends over it.
+It runs only where `water::drawn_at` says (the HDR scene under TAA with the prepass), so a game
+knows where to stand in for it: an MSAA world pass (desktop `low` and `medium`, the phones'
+defaults) draws none yet, and the showcase Lakeside draws its own lake pass there. On frames writing
 motion the motion key follows in its own pass (its group binds a 1 x 1 depth: the pass writes the
 prepass depth the colour pass sampled). It reflects the probes over it (`GpuWaterReflect`) and,
 where the preset holds the history pyramid, the screen: after node 17 a frame with water builds the

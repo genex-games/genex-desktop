@@ -278,8 +278,9 @@ fn pond(water: bool) -> Scene {
 }
 
 /// B.3 on the frame (graph node 16a): a scene's water draws over the opaque scene in its own pass
-/// after the world pass, refracting an opaque copy where the preset holds the screen inputs and
-/// blended elsewhere, and a scene without water draws exactly as before.
+/// after the world pass (its transparent draws follow in a second one), refracting an opaque copy
+/// where the preset holds the screen inputs and blended elsewhere, and a scene without water draws
+/// exactly as before.
 #[test]
 #[ignore = "needs a GPU: run with --ignored metal"]
 fn metal_a_scenes_water_draws_on_the_frame() {
@@ -302,8 +303,78 @@ fn metal_a_scenes_water_draws_on_the_frame() {
         eprintln!("{label}: the water changes {share:.3} of the frame; world passes {dry_passes:?} -> {wet_passes:?}");
         write_evidence(&format!("pond-{label}"), &wet, size);
         assert!(share > 0.2, "{label}: the lake covers much of the frame, {share:.3} changed");
-        assert_eq!(dry_passes, wet_passes, "{label}: the water draws in its own pass, the world pass is one");
+        // Look integration: the transparent draws follow the water in a second world pass.
+        assert_eq!((dry_passes, wet_passes), (Some(1), Some(2)), "{label}: the water draws in its own pass between the world pass and its transparent half");
     }
+}
+
+/// Look integration: a game that stands in for the water where the renderer draws none (the
+/// Lakeside's own lake pass on MSAA presets) asks `water::drawn_at`, so it must say exactly where
+/// node 16a runs: at every preset of every device class, a pond with water records the water's
+/// passes over the same pond without it exactly when `drawn_at` says so.
+#[test]
+#[ignore = "needs a GPU: run with --ignored metal"]
+fn metal_the_water_draws_exactly_where_drawn_at_says() {
+    use genex_render::presets::preset_quality;
+    use genex_render::settings::QualityPreset;
+    let Some(gpu) = gpu() else { return };
+    let size = (320, 180);
+    let mut wrong = Vec::new();
+    for class in DeviceClass::ALL {
+        for preset in [QualityPreset::Low, QualityPreset::Medium, QualityPreset::High, QualityPreset::Ultra] {
+            let quality = preset_quality(preset, class);
+            let passes = |water: bool| {
+                let options = RenderOptions { msaa: genex_render::renderer::landed_samples(quality.anti_aliasing) > 1 };
+                let mut renderer = Renderer::with_options(&gpu, size.0, size.1, options).expect("renderer");
+                renderer.set_scene_format(SceneFormat::Rgba16Float);
+                renderer.set_device_class(class);
+                renderer.set_quality(&quality);
+                draw(&gpu, &mut renderer, &pond(water), 3);
+                renderer.last_stats().render_passes
+            };
+            let drawn = passes(true) > passes(false);
+            if drawn != genex_render::water::drawn_at(&quality) {
+                wrong.push(format!("{} {}: water drawn {drawn}", class.wire(), preset.wire()));
+            }
+        }
+    }
+    assert!(wrong.is_empty(), "{wrong:#?}");
+}
+
+/// Look integration (lane W's cross-lane finding): the transparent draws and the stage's blended
+/// work draw after the water, so a glass cube hovering over the lake shows over it instead of
+/// being painted over by node 16a (the Lakeside's duck glints and firefly halos).
+#[test]
+#[ignore = "needs a GPU: run with --ignored metal"]
+fn metal_a_transparent_over_the_lake_draws_over_the_water() {
+    let Some(gpu) = gpu() else { return };
+    let size = (480, 270);
+    let glass = |scene: &mut Scene| {
+        let cube = glam::Mat4::from_translation(glam::Vec3::new(0.4, 0.6, 0.8)) * glam::Mat4::from_scale(glam::Vec3::splat(0.8));
+        scene.draw(MeshId::CUBE, cube.to_cols_array(), Material::color([255, 230, 40, 250]));
+    };
+    let frame = |water: bool, with_glass: bool| {
+        let mut scene = pond(water);
+        if with_glass {
+            glass(&mut scene);
+        }
+        let mut renderer = renderer(&gpu, &taa_quality(true), size, 1.0);
+        draw(&gpu, &mut renderer, &scene, 8)
+    };
+    let pixels = |bgra: &[u8]| bgra.as_chunks::<4>().0.to_vec();
+    let differ = |p: &[u8; 4], q: &[u8; 4], by: u8| p.iter().zip(q.iter()).any(|(x, y)| x.abs_diff(*y) > by);
+    let (dry, dry_glass) = (pixels(&frame(false, false)), pixels(&frame(false, true)));
+    let wet_glass = frame(true, true);
+    write_evidence("glass-over-lake", &wet_glass, size);
+    let wet_glass = pixels(&wet_glass);
+    // The cube's pixels: where it changes the dry frame. Nearly opaque, it should look the same
+    // over the lake as over the floor.
+    let cube: Vec<usize> = (0..dry.len()).filter(|&k| differ(&dry[k], &dry_glass[k], 24)).collect();
+    let same = cube.iter().filter(|&&k| !differ(&wet_glass[k], &dry_glass[k], 16)).count();
+    let share = same as f32 / cube.len().max(1) as f32;
+    eprintln!("the glass cube covers {} pixels; {share:.3} of them look the same over the lake", cube.len());
+    assert!(cube.len() > 1500, "the glass cube shows over the floor: {} pixels", cube.len());
+    assert!(share >= 0.8, "the glass cube draws over the lake, not under it: {share:.3} of its pixels unchanged");
 }
 
 /// T-01 step 3 on the frame: under TAA a camera sliding sideways moves the water's pixels by the

@@ -1,5 +1,6 @@
 //! The lakeside's custom GPU passes (extension ladder level 3, custom-pass API v2): only what no
-//! built-in draws. The clouds (the physical sky has none) after the opaque models; the lake and the
+//! built-in draws. The clouds (where the renderer's panorama does not draw) after the opaque
+//! models; the lake (where the renderer draws no water: `draw.rs` declares `frame.water`) and the
 //! light sprites (the fireflies' halos, pollen, glints, smoke and the lights' pools on the grass)
 //! after the transparent ones. Everything else is the renderer's own: the sky
 //! (`frame.environment`, see `draw.rs`), the meadow (the terrain's grassy layers grow it, renderer
@@ -252,7 +253,8 @@ fn lake_bounds() -> [f32; 4] {
     [min.x, min.y, half.x * 2.0, half.y * 2.0]
 }
 
-/// The lake.
+/// The lake where the renderer draws no water (an MSAA preset: `low`, `medium`, the phones'
+/// defaults); elsewhere `draw.rs`'s `frame.water` is the lake ([`genex::render::Water::drawn_at`]).
 #[derive(Default)]
 pub struct Lake {
     resources: Option<(gpu::Buffer, gpu::BindGroup, gpu::RenderPipeline)>,
@@ -301,6 +303,9 @@ impl GpuPass<World> for Lake {
     }
 
     fn run(&mut self, ctx: &mut GpuPassCtx<'_, '_, World>) {
+        if genex::render::Water::drawn_at(ctx.quality()) {
+            return;
+        }
         let Some((buffer, group, pipeline)) = &self.resources else { return };
         let time = seconds(ctx.sim().world.tick);
         let _ = ctx.write_buffer(buffer, 0, &floats(&[time, 0.0, 0.0, 0.0]));

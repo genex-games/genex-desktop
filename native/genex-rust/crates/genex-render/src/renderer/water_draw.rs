@@ -49,13 +49,23 @@ struct WaterPyramid {
 }
 
 impl Renderer {
-    /// Whether node 16a draws the scene's water this frame: the frame has water, draws the HDR
-    /// scene into a 1x target (not the desktop weighted resolve's samples) and ran the prepass,
+    /// Whether node 16a draws the scene's water this frame: the frame has water, its quality is one
+    /// [`crate::water::drawn_at`] names (so a game knows where to stand in for it), it draws the
+    /// HDR scene into a 1x target (not the desktop weighted resolve's samples) and ran the prepass,
     /// whose depth the water samples and tests against.
     pub(super) fn water_runs(&self, prep: &FramePrep) -> bool {
         let targets = &self.targets;
         let inputs = targets.scene_texture.is_some() && targets.prepass.is_some() && prep.prepass.is_some();
-        prep.water.is_some() && self.path.hdr && !targets.spec.msaa_read && inputs
+        let path = self.path.hdr && !targets.spec.msaa_read && crate::water::drawn_at(&self.quality);
+        prep.water.is_some() && path && inputs
+    }
+
+    /// Whether this frame's transparent draws and the stage's blended work wait for node 16a and
+    /// draw over the water in a second world pass (look integration: a glint or a halo over the
+    /// lake is not painted over by it): a water frame without MSAA. That pass tests against the
+    /// prepass depth, which holds the water's own depth by then.
+    pub(super) fn transparents_after_water(&self, prep: &FramePrep) -> bool {
+        self.water_runs(prep) && self.targets.msaa_view.is_none()
     }
 
     /// Node 16a: the opaque copy (where the preset allows it) and the water's colour pass; the

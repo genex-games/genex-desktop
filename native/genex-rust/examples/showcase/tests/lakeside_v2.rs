@@ -62,8 +62,9 @@ fn the_cabin_s_room_has_a_probe_a_volume_and_lamplight_inside() {
     let frame = runtime.frame(View::Game).expect("a frame");
     let lights = frame.lights();
     let holds = |min: Vec3, max: Vec3| ROOM_CENTRE.cmpge(min).all() && ROOM_CENTRE.cmple(max).all() && min.y >= FLOOR - 0.5 && max.y <= FLOOR + 4.6;
-    let probe = lights.reflection_probes.first().expect("a reflection probe (A.3)");
-    assert!(holds(probe.min, probe.max), "the probe's box holds the room: {probe:?}");
+    // The lake's probe (look lane W) is the frame's other one: the room's is the one holding it.
+    let probe = lights.reflection_probes.iter().find(|probe| holds(probe.min, probe.max));
+    let probe = probe.unwrap_or_else(|| panic!("a reflection probe (A.3) whose box holds the room: {:?}", lights.reflection_probes));
     assert!(probe.capture.cmpge(probe.min).all() && probe.capture.cmple(probe.max).all(), "captured inside its box");
     let volume = lights.irradiance_volumes.first().expect("an irradiance volume (A.4)");
     assert!(holds(volume.min, volume.max), "the volume's box holds the room: {volume:?}");

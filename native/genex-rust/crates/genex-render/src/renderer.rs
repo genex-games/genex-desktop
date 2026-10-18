@@ -20,7 +20,9 @@
 //! 6. one world pass hosting the in-pass nodes `opaque` (the opaque batches through the camera
 //!    view's arguments, one `multi_draw_indexed_indirect` per vertex source, then lines),
 //!    `after-opaque`, `transparent` (back to front as direct draws, then the stage's blended work)
-//!    and `resolve` (the MSAA colour resolved into the scene colour and discarded);
+//!    and `resolve` (the MSAA colour resolved into the scene colour and discarded); on a frame
+//!    with water and no MSAA, `transparent` waits for node 16a and draws in a second world pass
+//!    over the water (look integration);
 //! 7. `upscale`: below a render scale of 1 the world pass drew into step-sized targets, and a
 //!    bilinear pass stretches the scene over the world target.
 //!
@@ -2246,6 +2248,9 @@ impl<'a> WorldNodes<'a> {
             NodeId::Water => {
                 let passes = renderer.encode_water(frame, self.prep);
                 self.count_render(frame, passes);
+                if renderer.transparents_after_water(self.prep) {
+                    self.encode_after_water(frame, stage);
+                }
             }
             NodeId::Taa => {
                 self.encode_taa(frame);
@@ -2361,6 +2366,42 @@ impl<'a> WorldNodes<'a> {
         pass
     }
 
+    /// Graph node 15 on a water frame (look integration): the world pass again after node 16a,
+    /// loading the scene it drew over, so the transparent draws and the stage's blended work (the
+    /// Lakeside's duck glints and firefly halos) draw over the water, not under it. They test
+    /// against the prepass depth, where the water's motion pass wrote the surface (a tile GPU's
+    /// world depth never left tile memory).
+    fn encode_after_water(&mut self, frame: &mut FrameEncoder, stage: &dyn WorldStage) {
+        let renderer = self.renderer;
+        let targets = &renderer.targets;
+        let (Some(scene), Some(prepass)) = (targets.scene_view.as_ref(), targets.prepass.as_ref()) else { return };
+        let groups = self.world_groups().clone();
+        if let Some(world) = self.world.as_mut() {
+            world.passes += 1;
+        }
+        self.count_render(frame, 1);
+        let mut pass = frame.encoder().begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("world after water"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: scene,
+                depth_slice: None,
+                resolve_target: None,
+                ops: wgpu::Operations { load: wgpu::LoadOp::Load, store: wgpu::StoreOp::Store },
+            })],
+            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                view: &prepass.depth_view,
+                depth_ops: Some(wgpu::Operations { load: wgpu::LoadOp::Load, store: wgpu::StoreOp::Store }),
+                stencil_ops: None,
+            }),
+            timestamp_writes: None,
+            occlusion_query_set: None,
+            multiview_mask: None,
+        });
+        pass.set_index_buffer(renderer.meshes.indices.slice(..), wgpu::IndexFormat::Uint32);
+        renderer.draw_transparent(&mut pass, &groups, &self.prep.plan, &mut self.stats);
+        stage.blended(&mut pass, &renderer.world_pass());
+    }
+
     /// The frame groups the world pass binds: the frame's own, or those made after graph node 11.
     fn world_groups(&self) -> &FrameGroups {
         self.baked_groups.as_ref().unwrap_or(&self.prep.groups)
@@ -2404,6 +2445,8 @@ impl<'a> WorldNodes<'a> {
             }
             NodeId::Sky => renderer.sky.borrow().draw_background(pass),
             NodeId::AfterOpaque => stage.opaque(pass, &renderer.world_pass()),
+            // On a water frame they draw after node 16a instead (`encode_after_water`).
+            NodeId::Transparent if renderer.transparents_after_water(self.prep) => {}
             NodeId::Transparent => {
                 renderer.draw_transparent(pass, &groups, plan, &mut self.stats);
                 stage.blended(pass, &renderer.world_pass());
