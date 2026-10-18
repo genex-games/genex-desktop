@@ -51,6 +51,7 @@ out/
 *.mobileprovision
 *.pfx
 
-# The lakeside showcase's fetched CC0 assets (`node scripts/showcase-assets.ts fetch --install`):
-# a local copy for a Studio run, never committed (assets-manifest.json pins them).
+# The showcase scenes' fetched CC0 assets (`node scripts/showcase-assets.ts fetch [--scene …] --install`):
+# a local copy for a Studio run, never committed (each scene's assets-manifest.json pins them).
 /native/genex-rust/examples/showcase/game/assets/fetched/
+/native/genex-rust/examples/showcase/harbour/assets/fetched/

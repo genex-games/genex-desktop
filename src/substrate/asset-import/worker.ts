@@ -16,6 +16,7 @@ import {
   type ImportJobFile,
   ImportJobLayout,
   type ImportReceiptEntry,
+  familyOutput,
   parseImportJob,
 } from "./job.ts";
 
@@ -46,11 +47,19 @@ async function importOne(jobDir: string, job: ImportJob, file: ImportJobFile): P
     };
   }
   await writeFile(path.join(jobDir, file.output), result.bytes, { flag: "wx" });
+  const families = [];
+  for (const family of result.families ?? []) {
+    const output = familyOutput(file.index, family.compression);
+    await writeFile(path.join(jobDir, output), family.bytes, { flag: "wx" });
+    families.push({ compression: family.compression, output });
+  }
   return {
     index: file.index,
     ok: true,
     output: file.output,
     ...(result.textures ? { textures: result.textures } : {}),
+    ...(result.families ? { families } : {}),
+    ...(result.familiesSkipped ? { familiesSkipped: result.familiesSkipped } : {}),
   };
 }
 

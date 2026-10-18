@@ -16,6 +16,8 @@
  *   setsid         {"setsid":errno}                  0 when setsid() succeeded
  *   setpgid        {"setpgid":errno}                 0 when setpgid(0, 0) succeeded
  *   metal          {"device":b,"msl":b}              a Metal device, and a tiny MSL compile on it
+ *   metalpipe      {"pipeline":b,"ms":n}             an MSL compile and a compute pipeline made from it,
+ *                                                    timed (a warm Metal shader cache makes it faster)
  *   cgl            {"cgl":b}                         an Apple OpenGL context compiled a shader
  *   lookup <name>  {"lookup":kern_return}            bootstrap_look_up of a Mach service
  *   hid            {"hid":IOReturn,"devices":n}      IOHIDManagerOpen matching gamepads only
@@ -43,6 +45,7 @@
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
+#include <time.h>
 #include <unistd.h>
 
 extern char **environ;
@@ -185,6 +188,47 @@ static void probe_metal(void) {
   reply(json);
 }
 
+/* A kernel heavy enough that its pipeline compile is measurable (tens of milliseconds cold). */
+static const char *const PIPELINE_MSL =
+    "#include <metal_stdlib>\nusing namespace metal;\n"
+    "static float4 step4(float4 v, float k) { return fma(sin(v * k), cos(v.yzwx + k), sqrt(abs(v.wxyz) + k)); }\n"
+    "kernel void heavy(device float4 *out [[buffer(0)]], uint i [[thread_position_in_grid]]) {\n"
+    "  float4 v = float4(float(i), 1.0, 2.0, 3.0);\n"
+    "  for (int a = 0; a < 6; a++) { v = step4(v, 0.5 + float(a));\n"
+    "    if (v.x > v.y) { v = step4(v.yzwx, 1.5); } else { v = step4(v.zwxy, 2.5); }\n"
+    "    v = step4(v, 3.0) * step4(v.wzyx, 4.0) + step4(v.xxyy, 5.0); }\n"
+    "  out[i] = v; }\n";
+
+static double now_ms(void) {
+  struct timespec at;
+  clock_gettime(CLOCK_MONOTONIC, &at);
+  return (double)at.tv_sec * 1000.0 + (double)at.tv_nsec / 1e6;
+}
+
+static void probe_metal_pipeline(void) {
+  void *pool = objc_autoreleasePoolPush();
+  double start = now_ms();
+  id device = MTLCreateSystemDefaultDevice();
+  id pipeline = NULL;
+  if (device) {
+    id source = ((id (*)(Class, SEL, const char *))objc_msgSend)(objc_getClass("NSString"),
+                                                                 sel_registerName("stringWithUTF8String:"), PIPELINE_MSL);
+    id name = ((id (*)(Class, SEL, const char *))objc_msgSend)(objc_getClass("NSString"),
+                                                               sel_registerName("stringWithUTF8String:"), "heavy");
+    id error = NULL;
+    id library = ((id (*)(id, SEL, id, id, id *))objc_msgSend)(
+        device, sel_registerName("newLibraryWithSource:options:error:"), source, NULL, &error);
+    id function = library ? ((id (*)(id, SEL, id))objc_msgSend)(library, sel_registerName("newFunctionWithName:"), name) : NULL;
+    if (function)
+      pipeline = ((id (*)(id, SEL, id, id *))objc_msgSend)(
+          device, sel_registerName("newComputePipelineStateWithFunction:error:"), function, &error);
+  }
+  char json[96];
+  snprintf(json, sizeof json, "{\"pipeline\":%s,\"ms\":%.1f}", pipeline ? "true" : "false", now_ms() - start);
+  objc_autoreleasePoolPop(pool);
+  reply(json);
+}
+
 typedef CGLError (*ChoosePixelFormat)(const CGLPixelFormatAttribute *, CGLPixelFormatObj *, GLint *);
 typedef CGLError (*CreateContext)(CGLPixelFormatObj, CGLContextObj, CGLContextObj *);
 typedef CGLError (*SetCurrentContext)(CGLContextObj);
@@ -278,6 +322,7 @@ static void run(char *line) {
   else if (!strcmp(line, "setsid")) probe_setsid();
   else if (!strcmp(line, "setpgid")) probe_setpgid();
   else if (!strcmp(line, "metal")) probe_metal();
+  else if (!strcmp(line, "metalpipe")) probe_metal_pipeline();
   else if (!strcmp(line, "cgl")) probe_cgl();
   else if (!strcmp(line, "lookup")) probe_lookup(rest);
   else if (!strcmp(line, "hid")) probe_hid();

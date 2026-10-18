@@ -1,6 +1,6 @@
 # The lakeside showcase's own sources (examples/showcase/game/src/) built as the lane builds a game
 # for the web: `genex` is genex-platform-web, as the host-written manifest of a web build names it,
-# so the showcase's `genex::install(game)` hands the game, its four custom GPU passes, its terrain material and its sky included, to
+# so the showcase's `genex::install(game)` hands the game, its four custom GPU passes, its terrain and its sky included, to
 # the web shell. `scripts/spike/rust-wgpu/web-showcase.sh` packages it with its staged assets and
 # tests/conformance/rust-web-render.test.ts opens it in Chromium (Lakeside on Web Live); a native
 # build of it is the facade's own `install`.
@@ -18,5 +18,11 @@ repository.workspace = true
 name = "showcase-web"
 path = "../showcase/game/src/main.rs"
 
+# As a game's genex.toml `[physics] enabled` does: `--no-default-features` builds it without Rapier
+# (the size rows of renderer pass 2, D11).
+[features]
+default = ["physics"]
+physics = ["genex/physics"]
+
 [dependencies]
-genex = { package = "genex-platform-web", path = "../../crates/genex-platform-web" }
+genex = { package = "genex-platform-web", path = "../../crates/genex-platform-web", default-features = false }

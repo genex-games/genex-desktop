@@ -16,7 +16,18 @@ use crate::meshlet::{
 // The GLB material loader lives beside the mesh loader it shares the primitive walk with.
 #[path = "glb_material.rs"]
 mod glb_material;
-pub use glb_material::{GlbEmission, GlbMaterial, GlbModel, GlbPart, decode_image};
+pub use glb_material::{GLTF_DEFAULT_ALPHA_CUTOFF, GlbEmission, GlbMaterial, GlbModel, GlbPart, decode_image};
+// The material extensions (A6.1) live beside the material loader that reads them.
+#[path = "glb_material_ext.rs"]
+mod glb_material_ext;
+pub use glb_material_ext::{DEFAULT_IOR, GlbAnisotropy, GlbClearcoat, GlbDiffuseTransmission, GlbMaterialExt, GlbSheen, GlbSpecular, GlbTexture, GlbVolume};
+// Import-time LODs (A6.9) are read beside the meshlet extras they sit next to.
+#[path = "mesh_lod.rs"]
+mod mesh_lod;
+pub use mesh_lod::{
+    LOD_MAX_LEVELS, LOD_MIN_TRIANGLES, LOD_NOMINAL_HEIGHT, LOD_SCHEMA_VERSION, LOD_SELECT_WGSL, LOD_THRESHOLD_PX, LODS_EXTRAS_KEY, LodChain, LodExtrasKey,
+    LodFault, LodLevel, LodLevelKey, LodWarning, batch_lod, lod_keeps, select_lod,
+};
 
 /// One vertex as the vertex buffer holds it (`MeshVertex` in the skinning shader).
 #[repr(C)]
@@ -419,12 +430,69 @@ fn visit_node(
     node.children().try_for_each(|child| visit_node(&child, world, visit))
 }
 
+/// One accessor layout the `gltf` reader decodes: component type, element type, `normalized`.
+type AccessorLayout = (gltf::accessor::DataType, gltf::accessor::Dimensions, bool);
+
+/// The layouts core glTF 2.0 gives each attribute this loader and the skin loader read: anything
+/// else (a `KHR_mesh_quantization` attribute, which the import step dequantizes, or a damaged
+/// file) would be misread or panic inside the reader (gltf-rs #478), so it is refused first.
+fn allowed_layouts(semantic: &gltf::Semantic) -> &'static [AccessorLayout] {
+    use gltf::Semantic;
+    use gltf::accessor::{DataType::*, Dimensions::*};
+    const VEC3: &[AccessorLayout] = &[(F32, Vec3, false)];
+    const TANGENT: &[AccessorLayout] = &[(F32, Vec4, false)];
+    const UV: &[AccessorLayout] = &[(F32, Vec2, false), (U8, Vec2, true), (U16, Vec2, true)];
+    const JOINTS: &[AccessorLayout] = &[(U8, Vec4, false), (U16, Vec4, false)];
+    const WEIGHTS: &[AccessorLayout] = &[(F32, Vec4, false), (U8, Vec4, true), (U16, Vec4, true)];
+    match semantic {
+        Semantic::Positions | Semantic::Normals => VEC3,
+        Semantic::Tangents => TANGENT,
+        Semantic::TexCoords(_) => UV,
+        Semantic::Joints(_) => JOINTS,
+        Semantic::Weights(_) => WEIGHTS,
+        _ => &[],
+    }
+}
+
+/// Refused `mesh-invalid` unless `primitive`'s `semantic` attribute, when present, has a layout
+/// [`allowed_layouts`] lists.
+pub(crate) fn check_attribute_layout(primitive: &gltf::Primitive<'_>, semantic: &gltf::Semantic) -> Result<(), RenderError> {
+    let Some(accessor) = primitive.get(semantic) else { return Ok(()) };
+    let layout = (accessor.data_type(), accessor.dimensions(), accessor.normalized());
+    if allowed_layouts(semantic).contains(&layout) {
+        return Ok(());
+    }
+    Err(invalid(format!(
+        "{} is {:?} {:?}{}: not a layout glTF gives it (a quantized mesh is dequantized at import)",
+        semantic.to_string(),
+        layout.0,
+        layout.1,
+        if layout.2 { " normalized" } else { "" }
+    )))
+}
+
+/// The indices' layout: one unsigned integer each.
+fn check_index_layout(primitive: &gltf::Primitive<'_>) -> Result<(), RenderError> {
+    use gltf::accessor::DataType;
+    let Some(accessor) = primitive.indices() else { return Ok(()) };
+    let unsigned = matches!(accessor.data_type(), DataType::U8 | DataType::U16 | DataType::U32);
+    if unsigned && accessor.dimensions() == gltf::accessor::Dimensions::Scalar && !accessor.normalized() {
+        return Ok(());
+    }
+    Err(invalid(format!("indices are {:?} {:?}: not a layout glTF gives them", accessor.data_type(), accessor.dimensions())))
+}
+
 /// One triangle primitive's vertices in its own space and its indices from 0: POSITION required,
 /// NORMAL from the faces when absent, TEXCOORD_0 zero when absent, TANGENT from the uvs when absent.
+/// Each is read only after its layout is one glTF gives it ([`check_attribute_layout`]).
 pub(crate) fn read_primitive(primitive: &gltf::Primitive<'_>, blob: Option<&[u8]>) -> Result<(Vec<Vertex>, Vec<u32>), RenderError> {
     if primitive.mode() != gltf::mesh::Mode::Triangles {
         return Err(invalid(format!("primitive mode {:?} is not triangles", primitive.mode())));
     }
+    for semantic in [gltf::Semantic::Positions, gltf::Semantic::Normals, gltf::Semantic::TexCoords(0), gltf::Semantic::Tangents] {
+        check_attribute_layout(primitive, &semantic)?;
+    }
+    check_index_layout(primitive)?;
     let reader = primitive.reader(|_| blob);
     let positions: Vec<[f32; 3]> = reader.read_positions().ok_or_else(|| invalid("a primitive has no readable POSITION"))?.collect();
     let count = positions.len() as u32;

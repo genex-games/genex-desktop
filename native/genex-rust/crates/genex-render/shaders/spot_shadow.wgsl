@@ -27,7 +27,7 @@ fn gx_spot_matrix(slot: u32) -> mat4x4<f32> {
 
 @vertex
 fn vs_spot_shadow(@location(0) position: vec3<f32>, @location(4) slot: u32, @builtin(instance_index) instance: u32) -> SpotShadowOut {
-    let row = instances[visible[visible_row(pass_view.view, 0u, 0u, slot_base[slot], instance, frame.counts.w)]];
+    let row = instances[visible[visible_row(pass_view.view, 0u, 0u, slot_base[slot + pass_view.slot_offset], instance, frame.counts.w)]];
     // The pass view is the spot's cull view: after the camera and the drawn cascades.
     let spot = pass_view.view - 1u - frame.shadow_counts.x;
     var out: SpotShadowOut;

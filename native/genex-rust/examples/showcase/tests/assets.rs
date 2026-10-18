@@ -1,5 +1,5 @@
-//! The committed GLBs and the splat map are exactly what the generator writes, every GLB loads in
-//! the renderer, the CC0 HDR map decodes, the terrain material is admitted, the fetched golden map
+//! The committed GLBs are exactly what the generator writes, every GLB loads in the renderer, the
+//! CC0 HDR map decodes, the terrain's control map names the layout's layers, the fetched golden map
 //! (when cached) is turned to the lakeside's sun, and the faceted meshes face outwards.
 
 use genex_render::mesh::MeshData;
@@ -15,7 +15,7 @@ fn the_committed_glbs_are_the_generators_output() {
         assert!(on_disk == bytes, "{name} differs from the generator: run the showcase-assets binary");
     }
     let generated = assets().iter().filter(|(name, _)| !name.contains('/')).count();
-    assert_eq!(generated, all_assets().len(), "game/assets holds exactly the generated GLBs and splat map");
+    assert_eq!(generated, all_assets().len(), "game/assets holds exactly the generated GLBs");
 }
 
 #[test]
@@ -44,14 +44,18 @@ fn faceted_spheres_face_outwards() {
     }
 }
 
-/// The terrain material is admitted at material API v2 in WebGPU core (a refused source would
-/// draw the terrain as the magenta checker), and binds the three textures it is handed.
+/// The control map's texels name only the terrain's six layers and blend the two that cover most
+/// of the ground: the path is soil, the deep lake bed is the bed layer, a steep hillside is rock.
 #[test]
-fn the_terrain_material_is_admitted_in_webgpu_core_with_its_three_textures() {
-    use genex_render::extension::{ExtensionContext, ExtensionKind, validate_api};
-    let source = std::fs::read_to_string(format!("{}/game/{}", env!("CARGO_MANIFEST_DIR"), showcase_game::world::TERRAIN_WGSL)).expect("the terrain source");
-    let admitted = validate_api(ExtensionKind::Material, 2, &source, &ExtensionContext::core()).unwrap_or_else(|error| panic!("{error}"));
-    assert_eq!(admitted.game_textures(), 3);
+fn the_control_map_names_the_layer_the_layout_puts_there() {
+    use showcase_game::layout::{CABIN, LAKE_CENTER, PATH, TERRAIN_LAYERS, terrain_texel};
+    let (_, control) = showcase_game::layout::terrain_ground();
+    assert!(control.iter().all(|texel| (texel.control().base() as usize) < TERRAIN_LAYERS && (texel.control().overlay() as usize) < TERRAIN_LAYERS));
+    let (soil, bed) = (2, 5);
+    assert_eq!(terrain_texel(PATH[2].x, PATH[2].y).control().base(), soil, "the path");
+    assert_eq!(terrain_texel(CABIN.x + 3.0, CABIN.y).control().base(), soil, "the yard");
+    assert_eq!(terrain_texel(LAKE_CENTER.x, LAKE_CENTER.y).control().base(), bed, "the middle of the lake");
+    assert_eq!(terrain_texel(LAKE_CENTER.x, LAKE_CENTER.y).control().wetness(), 255, "under the water: wet");
 }
 
 /// The fetched golden-hour map (when the asset cache holds it) is turned so its sun, which becomes
@@ -117,4 +121,37 @@ fn the_rowboat_floats_dry_with_its_bottom_boards_over_the_water() {
         }
     }
     assert!(wet.is_empty(), "{} spots inside the hull lie under the water's reach {reach:.3}, e.g. {:?}", wet.len(), &wet[..wet.len().min(4)]);
+}
+
+/// Every generated mesh's triangles wind counter-clockwise seen from where its vertex normals
+/// point (the renderer culls back faces). The tube builder wound clockwise, so the logs, the posts,
+/// the branches and the limbs drew inside out: from the cabin's room a log wall showed only its
+/// far halves (Lakeside v2 interior, renderer pass 2).
+#[test]
+fn every_generated_triangle_winds_towards_its_normals() {
+    use genex::math::Vec3;
+    use showcase_game::meshgen::{Mesh, tube};
+    let mut sample = Mesh::default();
+    tube(&mut sample, &[(Vec3::ZERO, 0.3), (Vec3::new(2.0, 0.5, 0.0), 0.2), (Vec3::new(3.0, 2.0, 1.0), 0.1)], 9, 1.0, 1.0);
+    // The leaf cards are two-sided by construction (each card in both windings), so they are left out.
+    let solid = |(name, _): &(String, Mesh)| !name.contains("foliage");
+    let meshes = showcase_game::trees::assets().into_iter().chain(showcase_game::props::assets()).filter(solid).chain([("tube".to_owned(), sample)]);
+    let mut wrong = Vec::new();
+    for (name, mesh) in meshes {
+        let at = |i: u32| Vec3::from(mesh.positions[i as usize]);
+        let normal = |i: u32| Vec3::from(mesh.normals[i as usize]);
+        let (mut inward, mut faces) = (0, 0);
+        for tri in mesh.indices.chunks(3) {
+            let face = (at(tri[1]) - at(tri[0])).cross(at(tri[2]) - at(tri[0]));
+            if face.length_squared() < 1e-12 {
+                continue;
+            }
+            faces += 1;
+            inward += usize::from(face.dot(normal(tri[0]) + normal(tri[1]) + normal(tri[2])) < 0.0);
+        }
+        if inward * 1000 > faces {
+            wrong.push(format!("{name}: {inward} of {faces} faces wind away from their normals"));
+        }
+    }
+    assert!(wrong.is_empty(), "{wrong:#?}");
 }

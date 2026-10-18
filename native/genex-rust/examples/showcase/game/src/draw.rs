@@ -6,15 +6,17 @@
 //! where it does not. The lanterns and the cabin's windows are real lights: emissive glass and
 //! panes (which the look's bloom spreads), a flickering point light in each lantern and a spot
 //! light shining out of each window onto the porch and the yard; the fireflies are emissive too.
-//! Every animation derives from the world's tick, never a clock.
+//! The lake is the renderer's water (renderer pass 2 B.3, `frame.water`). Every animation derives
+//! from the world's tick, never a clock.
 
 use genex::math::{self, FRAC_PI_2, Quat, Vec3, vec3};
 use genex::prelude::*;
-use genex::render::SpotLight;
-use genex::{Assets, Model};
+use genex::render::{ReflectionProbe, SpotLight, Water};
+use genex::{Assets, InstanceGroup, Model, Scatter, Subsurface, Terrain};
 
 use crate::layout::{
-    CABIN, CABIN_FLOOR, CABIN_YAW, DOCK_DECK, DOCK_LENGTH, Dock, Rock, Tree, TreeKind, TreeLod, WATER_LEVEL, height, layout, mix, smoothstep,
+    CABIN, CABIN_FLOOR, CABIN_YAW, DOCK_DECK, DOCK_LENGTH, Dock, LAKE_CENTER, LAKE_RADII, Rock, Tree, TreeKind, TreeLod, WATER_LEVEL, height, layout, mix,
+    smoothstep,
 };
 use crate::world::{TreeMeshes, World};
 
@@ -39,6 +41,19 @@ const GOLDEN: [Color; 3] = [Color::rgb(190, 128, 40), Color::rgb(176, 92, 34), C
 /// pixel, where nothing filters its highlight but TAA; at 0.62 the low sun's glints blew out to
 /// white sparkles on every preset without TAA (pass-1 gate findings 04 and 08).
 const LEAF_ROUGHNESS: f32 = 0.85;
+
+/// The scatter's terrain layers (`layout::TERRAIN_LAYERS` order): the soil and the sand.
+const SOIL_LAYER: u8 = 2;
+const SAND_LAYER: u8 = 3;
+/// Pebbles a square metre of beach and stones a square metre of path, and the most of each.
+const PEBBLE_DENSITY: f32 = 0.5;
+const PEBBLES_MAX: usize = 360;
+const STONE_DENSITY: f32 = 0.12;
+const STONES_MAX: usize = 150;
+
+/// The room's waxed floor: the planks' roughness times this, so the hearth and the doorway's
+/// sunlight sheen on it through the room's reflection probe.
+const FLOOR_ROUGHNESS: f32 = 0.62;
 
 /// The untextured stand-ins of the fetched textures (sRGB), and how rough each surface is.
 const BARK: Color = Color::rgb(84, 64, 48);
@@ -73,12 +88,33 @@ const WINDOW_LIGHT_DIP: f32 = 0.45;
 const FIREFLY_GLOW: f32 = 14.0;
 const FIREFLY: Color = Color::rgb(196, 255, 92);
 const FIREFLY_RADIUS: f32 = 0.022;
+/// The least radius (pixels, at the world's reference height) a firefly's body is drawn with: a
+/// far one grows to it and dims by the area it gained, so its light is kept (renderer pass 2, B.7:
+/// a body smaller than a pixel was a bright point the jitter hit in some frames only, and each hit
+/// popped for one frame on the Lakeside's orbits and dollies).
+const FIREFLY_LEAST_RADIUS_PX: f32 = 1.0;
 const HULL_TINT: Color = Color::rgb(108, 60, 40);
 const JACKET: Color = Color::rgb(64, 94, 146);
 const TROUSERS: Color = Color::rgb(72, 68, 62);
 const SKIN: Color = Color::rgb(226, 182, 142);
 const STRAW: Color = Color::rgb(204, 172, 108);
-const LINE: Color = Color::rgb(236, 232, 220);
+/// The fisher's line: clear nylon, lit by the scene (a pale thread in the sun, dark at night).
+const LINE: Color = Color::rgb(168, 170, 162);
+/// The line's radius, m, and the least radius (pixels, at the world's reference height) it is drawn
+/// with, as the fireflies' bodies: a thread finer than a pixel breaks into dashes under the jitter
+/// and while the camera moves (D22: half a reference pixel, a quarter's line was dashed in 1440p
+/// pans at scale 1); a pixel wide at the reference height, a render pixel or more at 1440p and 4K
+/// from scale 0.67, it is whole in every frame and TAA resolves it into a smooth line.
+const LINE_RADIUS: f32 = 0.0008;
+const LINE_LEAST_RADIUS_PX: f32 = 0.5;
+/// The most a segment may grow to keep that least radius: farther away the eye sees no line (it
+/// would be a rope a pixel wide), so the segment is not drawn. Twice the quarter-pixel line's 12,
+/// so the line reaches as far over the lake as it did.
+const LINE_GROW_MAX: f32 = 24.0;
+/// How far the line sags under the straight run from the rod's tip to the bobber at its middle, m,
+/// and the segments it hangs in.
+const LINE_SAG: f32 = 0.1;
+const LINE_SEGMENTS: u32 = 8;
 const BOBBER: Color = Color::rgb(220, 46, 40);
 const DEER: Color = Color::rgb(126, 86, 56);
 /// The deer's neck swing about x: down to the grass, and up to look around (radians).
@@ -106,6 +142,14 @@ const CHIMNEY_FOOT: f32 = -0.51;
 
 /// A wall log along the front and back (`props.rs` writes every part mesh).
 pub const LOG_LONG: &str = "part-log-long.glb";
+/// A front wall log beside the doorway: from a corner to the door's jamb.
+pub const LOG_JAMB: &str = "part-log-jamb.glb";
+/// The cabin room's plank floor.
+pub const FLOOR: &str = "part-floor.glb";
+/// The doorway's half width: the door's own and a finger of play.
+pub const DOOR_HALF_WIDTH: f32 = 0.55;
+/// The doorway's height: the door's own.
+pub const DOOR_HEIGHT: f32 = 2.0;
 /// A wall log along the sides (squeezed for the gables).
 pub const LOG_SHORT: &str = "part-log-short.glb";
 /// A log of the woodpile.
@@ -159,6 +203,9 @@ pub fn roof_run_drop() -> (f32, f32) {
 #[derive(Clone, Debug, Default)]
 pub struct Parts {
     log_long: Model,
+    log_jamb: Model,
+    /// The room's plank floor ([`FLOOR`]).
+    pub(crate) floor: Model,
     log_short: Model,
     firewood: Model,
     post: Model,
@@ -167,7 +214,8 @@ pub struct Parts {
     step: Model,
     bench: Model,
     door: Model,
-    roof: Model,
+    /// One roof panel ([`ROOF`]): the room's ceiling boards are drawn with it too.
+    pub(crate) roof: Model,
     footing: Model,
     chimney: Model,
     planks: Vec<Model>,
@@ -183,6 +231,8 @@ impl Parts {
     pub fn load(assets: &Assets) -> Parts {
         Parts {
             log_long: assets.model(LOG_LONG),
+            log_jamb: assets.model(LOG_JAMB),
+            floor: assets.model(FLOOR),
             log_short: assets.model(LOG_SHORT),
             firewood: assets.model(LOG_FIREWOOD),
             post: assets.model(POST),
@@ -221,13 +271,15 @@ pub struct Surfaces {
     bark: Material,
     pine_bark: Material,
     rock: Material,
-    planks: Material,
+    pub(crate) planks: Material,
+    /// The room's floor: the planks, worn smooth and waxed.
+    pub(crate) floor: Material,
     logs: Material,
     roof: Material,
-    stone: Material,
+    pub(crate) stone: Material,
     door: Material,
     trim: Material,
-    iron: Material,
+    pub(crate) iron: Material,
     leaves: Vec<Material>,
     golden: Vec<Material>,
     needles: Vec<Material>,
@@ -243,20 +295,24 @@ pub struct Surfaces {
 impl Surfaces {
     /// The surfaces.
     pub fn new() -> Surfaces {
-        let foliage = |colors: &[Color; 3]| colors.iter().map(|c| Material::color(*c).with_roughness(LEAF_ROUGHNESS)).collect();
+        let foliage = |colors: &[Color; 3]| colors.iter().map(|c| Material::color(*c).with_roughness(LEAF_ROUGHNESS)).collect::<Vec<_>>();
+        // Broad leaves let the sun through (renderer pass 2 B.1): a crown with the sun behind it
+        // glows. Needles are thick and waxy, so the pines stay opaque.
+        let thin = |colors: &[Color; 3]| foliage(colors).into_iter().map(|m| m.with_subsurface(Subsurface::LEAF)).collect();
         Surfaces {
             bark: scanned("bark", BARK, 1.0, 1.0),
             pine_bark: scanned("pine-bark", PINE_BARK, 1.0, 1.0),
             rock: scanned("rock", ROCK, 1.0, 1.2),
             planks: scanned("planks", PLANK, 1.0, 1.0),
+            floor: scanned("planks", PLANK, FLOOR_ROUGHNESS, 1.0),
             logs: scanned("logs", LOG, 1.0, 1.0),
             roof: scanned("roof", SLATE, 1.0, 1.0),
             stone: scanned("stone", STONE, 1.0, 1.2),
             door: scanned("planks", DOOR_TINT, 1.0, 1.0),
             trim: Material::color(TRIM).with_roughness(0.7),
             iron: Material::color(IRON).with_metallic(0.85).with_roughness(0.45),
-            leaves: foliage(&LEAVES),
-            golden: foliage(&GOLDEN),
+            leaves: thin(&LEAVES),
+            golden: thin(&GOLDEN),
             needles: foliage(&PINES),
             mullion: Material::color(WINDOW_MULLION).with_roughness(0.8),
             hull: scanned("planks", HULL_TINT, 1.0, 1.0),
@@ -271,9 +327,9 @@ impl Surfaces {
 
 /// A local frame (a cabin, a dock, an animal): parts are placed in it and drawn in the world.
 #[derive(Clone, Copy)]
-struct Local {
-    origin: Vec3,
-    rotation: Quat,
+pub(crate) struct Local {
+    pub(crate) origin: Vec3,
+    pub(crate) rotation: Quat,
 }
 
 impl Local {
@@ -281,7 +337,8 @@ impl Local {
         Local { origin, rotation: Quat::from_rotation_y(yaw) }
     }
 
-    fn point(&self, p: Vec3) -> Vec3 {
+    /// `p` in this frame, in the world.
+    pub(crate) fn point(&self, p: Vec3) -> Vec3 {
         self.origin + self.rotation * p
     }
 
@@ -296,12 +353,12 @@ impl Local {
     }
 
     /// A box of `size` centred at `at`, of `material`.
-    fn cube_with(&self, frame: &mut Frame, at: Vec3, size: Vec3, material: &Material) {
+    pub(crate) fn cube_with(&self, frame: &mut Frame, at: Vec3, size: Vec3, material: &Material) {
         frame.cube_with(self.part(at, Quat::IDENTITY, size), material);
     }
 
     /// `model` at `at`, turned by `rotation`, scaled by `scale`, of `material`.
-    fn model(&self, frame: &mut Frame, model: &Model, at: Vec3, rotation: Quat, scale: Vec3, material: &Material) {
+    pub(crate) fn model(&self, frame: &mut Frame, model: &Model, at: Vec3, rotation: Quat, scale: Vec3, material: &Material) {
         frame.model_with(model, self.part(at, rotation, scale), material);
     }
 
@@ -343,21 +400,80 @@ pub fn draw(world: &World, frame: &mut Frame, camera: &Camera) {
         frame.camera_cut();
     }
     frame.clear(HORIZON);
-    frame.sun(crate::layout::SUN_DIR, SUN_COLOR, SUN_INTENSITY).ambient(AMBIENT_COLOR, AMBIENT_INTENSITY);
-    frame.environment(world.backdrop.environment());
+    frame.sun(world.time.sun_dir(), SUN_COLOR, SUN_INTENSITY).ambient(AMBIENT_COLOR, world.time.ambient(AMBIENT_INTENSITY));
+    frame.environment(world.time.environment(world.backdrop.environment()));
     terrain(world, frame);
+    lake(frame);
     trees(world, frame, camera.position, t);
     rocks(world, frame);
-    cabin(world, frame);
-    dock(world, frame, t);
+    cabin(world, frame, t);
+    dock(world, frame, camera, t);
     lanterns(world, frame, t);
-    fireflies(frame, t);
+    fireflies(frame, camera, t);
     animals(world, frame, t);
 }
 
 fn terrain(world: &World, frame: &mut Frame) {
     frame.tag("terrain");
-    frame.custom(&world.models.terrain, Transform::IDENTITY, &world.models.terrain_material, Color::WHITE);
+    if let Some(ground) = &world.models.terrain {
+        frame.terrain(ground);
+    }
+}
+
+/// How far past the lake's radii the water's rectangle reaches (the shoreline wobbles outwards;
+/// the ground above the water level hides the rest).
+const LAKE_MARGIN: f32 = 1.35;
+/// The lake's water: a humic forest lake, its tannins taking blue first and red next (pure water's
+/// own red loss), so the sandy bed shows olive-amber through the shallows and the deep water is a
+/// dark tea-brown under the reflections, never a tropical turquoise (per metre, linear).
+const LAKE_ABSORPTION: [f32; 3] = [0.6, 0.45, 1.1];
+/// The light the lake's body scatters back: a dark olive-brown albedo (linear).
+const LAKE_SCATTER: [f32; 3] = [0.012, 0.014, 0.006];
+/// A thin lap of foam along the shore, metres of water under the surface.
+const LAKE_FOAM_M: f32 = 0.025;
+/// A calm evening lake: small ripples and a near-mirror reflection.
+const LAKE_RIPPLE: f32 = 0.035;
+const LAKE_ROUGHNESS: f32 = 0.07;
+
+/// The lake: the renderer's water (renderer pass 2 B.3) over the lake's bounds at the water level.
+/// The terrain above the level hides it, so its shoreline is where the ground meets the water, and
+/// the shore foam follows the shallows there.
+pub fn lake_water() -> Water {
+    let half = LAKE_RADII * LAKE_MARGIN;
+    Water::lake(vec3(LAKE_CENTER.x, WATER_LEVEL, LAKE_CENTER.y), half)
+        .with_absorption(LAKE_ABSORPTION)
+        .with_scatter(LAKE_SCATTER)
+        .with_foam(LAKE_FOAM_M)
+        .with_ripple(LAKE_RIPPLE, LAKE_ROUGHNESS)
+}
+
+/// The reflection probe over the lake: a box over the water and its shores, captured from above
+/// open water, so the water (and the dock, the boat and the beach in it) reflects the woods
+/// around the lake where the screen's reflection misses, not the open sky.
+const LAKE_PROBE_HEIGHT: f32 = 1.5;
+/// Where the probe captures from, against the lake's centre (x, z), m: out in the open water,
+/// about 15 m from the dock's end. From the lake's middle it stood under 5 m from the fisher, so
+/// the box projection magnified his rod across the near water as a dark squiggle at dusk and a
+/// lantern-lit orange one at night (look fix WATER).
+const LAKE_PROBE_OFFSET: [f32; 2] = [9.0, 5.0];
+/// How far the probe's box reaches below and above the water level, and its fade past its faces, m.
+const LAKE_PROBE_DEPTH: f32 = 4.0;
+const LAKE_PROBE_TOP: f32 = 10.0;
+const LAKE_PROBE_BLEND: f32 = 4.0;
+
+/// The lake's reflection probe ([`LAKE_PROBE_HEIGHT`]).
+pub fn lake_probe() -> ReflectionProbe {
+    let half = LAKE_RADII * LAKE_MARGIN;
+    let min = vec3(LAKE_CENTER.x - half.x, WATER_LEVEL - LAKE_PROBE_DEPTH, LAKE_CENTER.y - half.y);
+    let max = vec3(LAKE_CENTER.x + half.x, WATER_LEVEL + LAKE_PROBE_TOP, LAKE_CENTER.y + half.y);
+    let capture = vec3(LAKE_CENTER.x + LAKE_PROBE_OFFSET[0], WATER_LEVEL + LAKE_PROBE_HEIGHT, LAKE_CENTER.y + LAKE_PROBE_OFFSET[1]);
+    ReflectionProbe::new(min, max).with_capture(capture).with_blend(LAKE_PROBE_BLEND)
+}
+
+fn lake(frame: &mut Frame) {
+    frame.tag("lake");
+    frame.water(&lake_water());
+    frame.reflection_probe(&lake_probe());
 }
 
 fn pick_in<T>(items: &[T], tint: f32) -> &T {
@@ -394,10 +510,46 @@ fn rocks(world: &World, frame: &mut Frame) {
         let transform = Transform { translation: center, rotation: Quat::from_rotation_y(yaw), scale: size };
         frame.model_with(&world.models.rock[variant as usize % world.models.rock.len()], transform, &world.models.surfaces.rock);
     }
+    frame.tag("stones");
+    for group in &world.models.stones {
+        frame.group(group);
+    }
+}
+
+/// The scattered stones (renderer pass 2 A.8 scatter, Lakeside v2): pebbles on the beach (the
+/// sand layer above the lake bed) and stones along the path and the yard (the soil layer), on
+/// flat-enough ground, leaning with it, squashed and sunk a little. Each kind is split over the
+/// rock variants by its order, one retained instance group each (D4: uploaded once).
+pub(crate) fn stone_groups(ground: &Terrain, rock: &[Model], surfaces: &Surfaces) -> Vec<InstanceGroup> {
+    use crate::layout::TERRAIN_HALF;
+    let corner = math::vec2(TERRAIN_HALF, TERRAIN_HALF);
+    let kinds = [
+        (Scatter::new(PEBBLE_DENSITY, &[SAND_LAYER]).with_scale(0.07, 0.16).on_flat_ground(0.8).following_ground(0.8).with_seed(11).with_cap(PEBBLES_MAX), 0.5),
+        (Scatter::new(STONE_DENSITY, &[SOIL_LAYER]).with_scale(0.09, 0.22).on_flat_ground(0.85).following_ground(0.7).with_seed(23).with_cap(STONES_MAX), 0.6),
+    ];
+    let mut groups = Vec::new();
+    for (rule, squash) in kinds {
+        let placed = ground.scatter(&rule, -corner, corner);
+        for (variant, model) in rock.iter().enumerate() {
+            let transforms: Vec<Transform> = placed
+                .iter()
+                .skip(variant)
+                .step_by(rock.len())
+                .map(|t| {
+                    let scale = t.scale * vec3(1.0, squash, 1.0);
+                    Transform { translation: t.translation - Vec3::Y * scale.y * 0.25, rotation: t.rotation, scale }
+                })
+                .collect();
+            if let Ok(group) = InstanceGroup::models_with(model, transforms, &surfaces.rock) {
+                groups.push(group);
+            }
+        }
+    }
+    groups
 }
 
 /// The cabin's frame: on its yard, its front (+z) facing across the lake.
-fn cabin_frame() -> Local {
+pub(crate) fn cabin_frame() -> Local {
     Local::new(vec3(CABIN.x, CABIN_FLOOR, CABIN.y), CABIN_YAW)
 }
 
@@ -406,7 +558,7 @@ fn along_z() -> Quat {
     Quat::from_rotation_y(-FRAC_PI_2)
 }
 
-fn cabin(world: &World, frame: &mut Frame) {
+fn cabin(world: &World, frame: &mut Frame, t: f32) {
     frame.tag("cabin");
     let c = cabin_frame();
     let (parts, surfaces) = (&world.models.parts, &world.models.surfaces);
@@ -417,8 +569,10 @@ fn cabin(world: &World, frame: &mut Frame) {
     c.model(frame, &parts.step, vec3(0.0, -0.3, hd + 2.25), Quat::IDENTITY, Vec3::ONE, &surfaces.planks);
     log_walls(frame, &c, parts, &surfaces.logs);
     roof(frame, &c, parts, surfaces);
-    // Door, the lit windows, chimney.
-    c.model(frame, &parts.door, vec3(0.0, 1.0, hd + 0.16), Quat::IDENTITY, Vec3::ONE, &surfaces.door);
+    // The door, open: hinged at the doorway's left jamb (from outside) and swung into the room
+    // against it, so the low sun reaches the floor; then the lit windows and the chimney.
+    let door = vec3(-DOOR_HALF_WIDTH + 0.06, DOOR_HEIGHT * 0.5, hd - LOG_RADIUS - 0.525);
+    c.model(frame, &parts.door, door, Quat::from_rotation_y(FRAC_PI_2), Vec3::ONE, &surfaces.door);
     for x in [-2.0, 2.0] {
         c.cube_with(frame, vec3(x, 1.45, hd + 0.17), vec3(1.15, 1.1, 0.05), &surfaces.trim);
         window(frame, &c, vec3(x, 1.45, hd + 0.2), 1.0, &surfaces.mullion);
@@ -434,6 +588,7 @@ fn cabin(world: &World, frame: &mut Frame) {
     for (x, y) in [(0.0, 0.0), (0.3, 0.0), (0.6, 0.0), (0.15, 0.26), (0.45, 0.26), (0.3, 0.52)] {
         c.model(frame, &parts.firewood, vec3(hw + 0.45 + x, 0.13 + y, -1.6), along_z(), Vec3::ONE, &surfaces.logs);
     }
+    crate::interior::room(world, frame, t);
 }
 
 /// The interlocking log walls: front and back logs along x, side logs along z half a log higher,
@@ -443,8 +598,14 @@ fn log_walls(frame: &mut Frame, c: &Local, parts: &Parts, logs: &Material) {
     let courses = (WALL_HEIGHT / (LOG_RADIUS * 2.0)) as u32;
     for i in 0..courses {
         let y = LOG_RADIUS + i as f32 * LOG_RADIUS * 2.0;
-        for z in [-hd, hd] {
-            c.model(frame, &parts.log_long, vec3(-hw - 0.35, y, z), Quat::IDENTITY, Vec3::ONE, logs);
+        c.model(frame, &parts.log_long, vec3(-hw - 0.35, y, -hd), Quat::IDENTITY, Vec3::ONE, logs);
+        // The front's logs below the door's head stop at its jambs (the doorway).
+        if y + LOG_RADIUS <= DOOR_HEIGHT + 0.05 {
+            for x in [-hw - 0.35, DOOR_HALF_WIDTH] {
+                c.model(frame, &parts.log_jamb, vec3(x, y, hd), Quat::IDENTITY, Vec3::ONE, logs);
+            }
+        } else {
+            c.model(frame, &parts.log_long, vec3(-hw - 0.35, y, hd), Quat::IDENTITY, Vec3::ONE, logs);
         }
         for x in [-hw + 0.1, hw - 0.1] {
             c.model(frame, &parts.log_short, vec3(x, y + LOG_RADIUS, -hd - 0.35), along_z(), Vec3::ONE, logs);
@@ -490,7 +651,7 @@ fn roof(frame: &mut Frame, c: &Local, parts: &Parts, surfaces: &Surfaces) {
     c.model(frame, &parts.log_long, vec3(-CABIN_WIDTH * 0.5 - 0.7, WALL_HEIGHT + RIDGE_RISE + 0.18, 0.0), Quat::IDENTITY, vec3(1.2, 0.9, 0.9), &surfaces.logs);
 }
 
-fn dock(world: &World, frame: &mut Frame, t: f32) {
+fn dock(world: &World, frame: &mut Frame, camera: &Camera, t: f32) {
     frame.tag("dock");
     let dock = &layout().dock;
     let d = Local::new(dock.at(0.0, 0.0), dock.yaw());
@@ -517,7 +678,7 @@ fn dock(world: &World, frame: &mut Frame, t: f32) {
         d.post(frame, &parts.post, vec3(x, -2.6, DOCK_LENGTH - 0.2), vec3(x, 1.0, DOCK_LENGTH - 0.2), 0.08, &surfaces.logs);
     }
     boat(world, frame, dock, t);
-    fisher(world, frame, dock, t);
+    fisher(world, frame, camera, dock, t);
 }
 
 fn boat(world: &World, frame: &mut Frame, dock: &Dock, t: f32) {
@@ -537,7 +698,7 @@ fn boat(world: &World, frame: &mut Frame, dock: &Dock, t: f32) {
     frame.end_id();
 }
 
-fn fisher(world: &World, frame: &mut Frame, dock: &Dock, t: f32) {
+fn fisher(world: &World, frame: &mut Frame, camera: &Camera, dock: &Dock, t: f32) {
     let f = Local::new(dock.at(DOCK_LENGTH - 0.45, 0.25), dock.yaw());
     let (sphere, cylinder, parts, surfaces) = (&world.models.sphere, &world.models.cylinder, &world.models.parts, &world.models.surfaces);
     frame.id("fisher");
@@ -555,9 +716,30 @@ fn fisher(world: &World, frame: &mut Frame, dock: &Dock, t: f32) {
     let tip = hands + vec3(0.25, 1.5 + nod, 2.0);
     f.rod(frame, cylinder, hands, tip, 0.018, Color::rgb(60, 44, 32));
     let bobber = f.point(vec3(0.6, 0.0, 4.6)) * vec3(1.0, 0.0, 1.0) + vec3(0.0, WATER_LEVEL + 0.02 + 0.015 * math::sin(t * 2.0), 0.0);
-    frame.line(f.point(tip), bobber, LINE);
+    fishing_line(frame, cylinder, camera, f.point(tip), bobber);
     frame.sphere(bobber, 0.055, BOBBER);
     frame.end_id();
+}
+
+/// The fisher's line from the rod's `tip` to the `bobber`, sagging, in thin cylinders: geometry, so
+/// it is in the prepass's depth (the lake's water neither draws over it nor refracts it from the
+/// opaque copy, which drew a saturated zigzag across the lake as an immediate line did) and lit by
+/// the scene; each segment at least [`LINE_LEAST_RADIUS_PX`] wide where `camera` sees it, and none
+/// past [`LINE_GROW_MAX`].
+fn fishing_line(frame: &mut Frame, cylinder: &Model, camera: &Camera, tip: Vec3, bobber: Vec3) {
+    let forward = (camera.target - camera.position).normalize_or_zero();
+    // Pixels a metre spans one metre in front of the camera, at the reference height.
+    let focal_px = crate::showcase::WORLD_SIZE[1] as f32 * 0.5 / math::tan(camera.fovy.to_radians() * 0.5);
+    let at = |s: f32| tip.lerp(bobber, s) - Vec3::Y * (LINE_SAG * 4.0 * s * (1.0 - s));
+    let world = Local::new(Vec3::ZERO, 0.0);
+    for i in 0..LINE_SEGMENTS {
+        let (from, to) = (at(i as f32 / LINE_SEGMENTS as f32), at((i + 1) as f32 / LINE_SEGMENTS as f32));
+        let depth = ((from + to) * 0.5 - camera.position).dot(forward).max(0.1);
+        let grow = (LINE_LEAST_RADIUS_PX * depth / (LINE_RADIUS * focal_px)).max(1.0);
+        if grow <= LINE_GROW_MAX {
+            world.rod(frame, cylinder, from, to, LINE_RADIUS * grow, LINE);
+        }
+    }
 }
 
 /// How bright a lantern's flame is at `t`: a flicker of its own around 1 (its position phases it).
@@ -601,16 +783,26 @@ pub fn firefly(index: usize, home: Vec3, t: f32) -> (Vec3, f32) {
     (home + wander, blink * blink * blink)
 }
 
-/// The fireflies: tiny emissive bodies the look's bloom haloes, each as bright as its blink.
-fn fireflies(frame: &mut Frame, t: f32) {
+/// The fireflies: tiny emissive bodies the look's bloom haloes, each as bright as its blink. Each
+/// draws under its own id: a firefly that blinks out is skipped, so by draw order alone the ones
+/// after it would take another's last position as their own and TAA would follow the wrong motion
+/// (G0: a dark-cored trail behind the forest shot's fireflies in Live).
+fn fireflies(frame: &mut Frame, camera: &Camera, t: f32) {
     frame.tag("fireflies");
+    let forward = (camera.target - camera.position).normalize_or_zero();
+    // Pixels a metre spans one metre in front of the camera, at the reference height.
+    let focal_px = crate::showcase::WORLD_SIZE[1] as f32 * 0.5 / math::tan(camera.fovy.to_radians() * 0.5);
     for (i, home) in layout().fireflies.iter().enumerate() {
         let (at, lit) = firefly(i, *home, t);
         if lit < 0.02 {
             continue;
         }
-        frame.sphere_with(at, FIREFLY_RADIUS, &Material::emissive(FIREFLY, FIREFLY_GLOW * lit));
+        let depth = (at - camera.position).dot(forward).max(FIREFLY_RADIUS);
+        let grow = (FIREFLY_LEAST_RADIUS_PX * depth / (FIREFLY_RADIUS * focal_px)).max(1.0);
+        frame.id(&format!("firefly-{i}"));
+        frame.sphere_with(at, FIREFLY_RADIUS * grow, &Material::emissive(FIREFLY, FIREFLY_GLOW * lit / (grow * grow)));
     }
+    frame.end_id();
 }
 
 /// Where duck `i` swims at `t`: slow loops on the lake. Answers its position and heading.

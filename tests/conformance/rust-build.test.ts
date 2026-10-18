@@ -635,6 +635,19 @@ describe("the Rust lane builds behind the seam", { skip: SKIP_ON_WINDOWS }, () =
     assert.deepEqual(outcome.rust?.diagnostics, []);
   });
 
+  it("names the signal that stopped a step that printed nothing (G0: a Windows build killed under a full disk said nothing)", async () => {
+    const parent = await realpath(await tmpDir("rust-cargo-killed-"));
+    const open = openSandboxes();
+    const onBuild = "kill -KILL $$";
+    const { builds } = await lane(parent, open.sandbox, { stub: { onBuild } });
+    const outcome = await builds.ensure(gameOf(await rustGame(parent)), BuildTarget.Mac, CppBuildPurpose.Live);
+    assert.equal(outcome.ok, false);
+    assert.equal(outcome.problem?.reason, BuildProblemCode.CommandFailed);
+    assert.equal(outcome.problem?.code, null);
+    assert.equal(outcome.problem?.lines.length, 1, JSON.stringify(outcome.problem?.lines));
+    assert.match(outcome.problem?.lines[0] ?? "", /SIGKILL/);
+  });
+
   it("writes a receipt with each step's timing and the compiler's identity", async () => {
     const parent = await realpath(await tmpDir("rust-receipt-"));
     const open = openSandboxes();

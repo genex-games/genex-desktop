@@ -89,6 +89,8 @@ type Script = (
 function loopEngine(rig: Rig, scripts: { lead: Script[]; worker: Script }) {
   const requests: Array<{ seat: Seat; request: DelegateRequest }> = [];
   let leadTurns = 0;
+  /** Each lead turn's script: the run can close before the lead's last tool answer lands. */
+  const leads: Array<Promise<void> | undefined> = [];
   rig.core.engines.register({
     id: ENGINE,
     label: ENGINE,
@@ -111,7 +113,11 @@ function loopEngine(rig: Rig, scripts: { lead: Script[]; worker: Script }) {
         if (!onLiveTool) throw new Error(`no live tools on this ${seat} turn`);
         return text(await onLiveTool(name, args));
       };
-      if (seat === Seat.Lead) await scripts.lead[leadTurns++]?.(request, call);
+      if (seat === Seat.Lead) {
+        const turn = scripts.lead[leadTurns++]?.(request, call);
+        leads.push(turn);
+        await turn;
+      }
       if (seat === Seat.Worker) await scripts.worker(request, call);
       const sessionId = request.resume ?? (seat === Seat.Worker ? `worker-${requests.length}` : "chat-session");
       return {
@@ -127,7 +133,12 @@ function loopEngine(rig: Rig, scripts: { lead: Script[]; worker: Script }) {
       };
     },
   } as never);
-  return { requests, seat: (seat: Seat) => requests.filter((r) => r.seat === seat).map((r) => r.request) };
+  return {
+    requests,
+    seat: (seat: Seat) => requests.filter((r) => r.seat === seat).map((r) => r.request),
+    /** Once every lead turn begun so far has had its tools answered. */
+    leadsAnswered: () => Promise.all(leads).then(() => {}),
+  };
 }
 
 /** A rig whose game is a copy of one project fixture, opened as the person opens a folder, with its chat. */
@@ -294,6 +305,8 @@ async function toyLoop(plugin: { dir: string; id: string; rename: (tool: string)
   );
   const steps2 = customEvents(events, "finish_check").map((check) => check.step);
   assert.ok(steps2.includes("accepted"), steps2.join(", "));
+  // The close is logged before the finish tool's answer reaches the lead (GA round 2: '' once in a full run).
+  await engine.leadsAnswered();
   assert.match(answers.finish ?? "", /Accepted/);
   return { rig, game, engine, events };
 }
@@ -357,6 +370,7 @@ describe("a Loop on a project with no plugin, through the real studio", () => {
     assert.equal(await realpath(reader.cwd), game.dir, "a reader works in place");
     assert.match(answers.saved ?? "", /Door/);
     assert.ok(customEvents(events, "finish_check").some((check) => check.step === "accepted"));
+    await engine.leadsAnswered();
     assert.match(answers.finish ?? "", /Accepted/);
   });
 });

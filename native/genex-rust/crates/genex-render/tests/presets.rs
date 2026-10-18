@@ -11,13 +11,13 @@ use genex_render::budget::{
 };
 use genex_render::device_class::{DeviceClass, DeviceFacts, FormFactor, PerformanceTier, TargetOs, WebHints};
 use genex_render::presets::{
-    ANDROID_REFERENCE, ClassOverride, DESKTOP_REFERENCE, IPHONE_REFERENCE, LAPTOP_REFERENCE, OFF_RENDER_PASSES, RenderOverrides,
+    ANDROID_REFERENCE, ClassOverride, DESKTOP_REFERENCE, IPHONE_REFERENCE, LAPTOP_REFERENCE, MOBILE_MAX_RADIANCE_PX, MOBILE_RCAS_SHARPNESS, OFF_RENDER_PASSES, RenderOverrides,
     SHADOW_MAP_MAX_PX, SHADOW_MAP_MIN_PX, ShadowOverride, WEB_REFERENCE, class_budget_bytes, class_defaults, default_preset, drs_step_sizes, hdri_map_width, preset_quality, profile, reference_resolution,
     on_ldr_scene, render_pass_budget, resolve, scene_format, with_world_samples, work_limits,
 };
 use genex_render::graph::{feature_landed, not_landed};
 use genex_render::settings::{
-    AntiAliasing, AoResolution, KnobKind, PresetChoice, Quality, QualityKnob, QualityPreset, RenderFeature, RenderSettings,
+    AntiAliasing, AoResolution, DEFAULT_RCAS_SHARPNESS, KnobKind, PresetChoice, Quality, QualityKnob, QualityPreset, RenderFeature, RenderSettings,
     SceneFormat, ShadowFilter, ShadowFormat, Upscaler,
 };
 use wgpu::{Backend, DeviceType, Features};
@@ -122,8 +122,10 @@ fn the_preset_table_rows() {
     assert_eq!(cubes, [(64, 64), (128, 128), (256, 256), (256, 512)], "ultra bakes an HDR map at 512 (plan §2.4)");
     let pacing: Vec<(u8, u16)> = [low, medium, high, ultra].iter().map(|q| (q.environment.rebake_cadence, q.environment.sun_rebake_tenths)).collect();
     assert_eq!(pacing, [(8, 20), (4, 10), (1, 5), (1, 5)], "a rebake's step cadence and the sun's turn (tenths of a degree) per preset");
-    let bloom: Vec<(bool, u8)> = [low, medium, high, ultra].iter().map(|q| (q.bloom.enabled, q.bloom.mips)).collect();
-    assert_eq!(bloom, [(false, 0), (true, 5), (true, 6), (true, 7)]);
+    // P2-0.13 flipped (was 0, 5, 6 and 7 mips; named in the log): every preset's chain is the same
+    // output-sized one, so the halo is as wide on each (renderer pass 2, P5); low's is off.
+    let bloom: Vec<(bool, u16)> = [low, medium, high, ultra].iter().map(|q| (q.bloom.enabled, q.bloom.resolution)).collect();
+    assert_eq!(bloom, [(false, 540), (true, 540), (true, 540), (true, 540)]);
     let ao: Vec<(AoResolution, u8, bool)> = [low, medium, high, ultra].iter().map(|q| (q.ao.resolution, q.ao.slices, q.ao.temporal)).collect();
     assert_eq!(ao, [(AoResolution::Off, 0, false), (AoResolution::Half, 1, false), (AoResolution::Half, 2, true), (AoResolution::Full, 3, true)]);
     let lights: Vec<(u32, u32, u8)> = [low, medium, high, ultra].iter().map(|q| (q.lights.cap, q.lights.tile_px, q.lights.shadowed_spots)).collect();
@@ -151,7 +153,8 @@ fn mobile_caps_never_yield_pcss_or_full_resolution_ao() {
             assert_ne!(quality.ao.resolution, AoResolution::Full, "{at}: no full-resolution AO");
             assert!(quality.shadows.cascades <= 2 && quality.shadows.map_size <= 1536, "{at}: at most 2 x 1536");
             assert_eq!(quality.shadows.format, ShadowFormat::Depth16, "{at}");
-            assert!(quality.bloom.mips <= 5, "{at}: bloom at most 5 mips");
+            // P2-0.13 flipped (was at most 5 mips): one chain resolution on every phone preset.
+            assert_eq!(quality.bloom.resolution, genex_render::presets::MOBILE_BLOOM_RESOLUTION, "{at}: the phones' bloom chain");
             assert!(!quality.meshlets, "{at}: meshlets off by default");
             let taa_allowed = class.tier == PerformanceTier::High && preset >= QualityPreset::High;
             assert_eq!(quality.anti_aliasing.temporal(), taa_allowed, "{at}: TAA only on mobile-high at high");
@@ -181,6 +184,20 @@ fn every_phone_class_upscales_with_easu_and_rcas_at_every_preset() {
     }
     assert_eq!(preset_quality(QualityPreset::Low, class("desktop-low")).upscaler, Upscaler::Bilinear, "desktops keep low's bilinear");
     assert_eq!(preset_quality(QualityPreset::Medium, class("desktop-mid")).upscaler, Upscaler::Fsr1);
+}
+
+/// GA leftovers (far dock specks): a phone's EASU + RCAS sharpens no harder than
+/// `MOBILE_RCAS_SHARPNESS` stops at any preset; desktops keep their table's sharpness.
+#[test]
+fn every_phone_class_sharpens_its_upscale_no_harder_than_the_phone_softness() {
+    for class in mobile_classes() {
+        for preset in QualityPreset::ALL {
+            let sharpness = preset_quality(preset, class).rcas.sharpness;
+            assert!(sharpness >= MOBILE_RCAS_SHARPNESS, "{} {}: RCAS {sharpness} stops is sharper than {MOBILE_RCAS_SHARPNESS}", class.wire(), preset.wire());
+        }
+    }
+    let desktop = class("desktop-high");
+    assert_eq!(preset_quality(QualityPreset::Medium, desktop).rcas.sharpness, DEFAULT_RCAS_SHARPNESS, "desktops keep RCAS's default");
 }
 
 /// RQ4 review: the tile cap keys on the samples the world pass draws, not the AA asked for: until
@@ -645,17 +662,52 @@ fn the_ledger_gives_fixed_byte_totals_at_the_reference_resolutions() {
         // Pass-1 fix gate (visual RED 01) flips desktop-mid medium (named in the log): one slice's
         // raw AO term carries its weight beside its visibility (`ao::RAW_WEIGHTED_FORMAT`,
         // `rg8unorm`), +518_400 bytes at 960 x 540 (was 174_077_208). Phone mediums draw no AO.
-        ("desktop-high", QualityPreset::High, (2560, 1440), false, 262_529_924),
-        ("desktop-mid", QualityPreset::Medium, (1920, 1080), false, 174_595_608),
-        ("desktop-ultra", QualityPreset::Ultra, (2560, 1440), false, 568_435_172),
-        ("desktop-low", QualityPreset::Low, (1920, 1080), false, 67_314_108),
-        ("desktop-high", QualityPreset::High, (1920, 1080), false, 173_703_564),
-        ("mobile-high", QualityPreset::Medium, (786, 1704), true, 30_934_388),
-        ("mobile-mid", QualityPreset::Low, (824, 1830), true, 20_721_524),
-        ("mobile-mid", QualityPreset::Low, (1080, 2400), true, 33_284_588),
-        ("mobile-mid", QualityPreset::High, (1179, 2556), true, 57_138_492),
-        ("mobile-mid", QualityPreset::High, (1179, 2556), false, 100_363_068),
-        ("mobile-low", QualityPreset::Low, (824, 1830), true, 18_334_948),
+        // Pass 2 P2-0.6 (P3/S2) flips the temporal-AO rows (named in the log): AO's history and the
+        // term it ping-pongs with are `rgba16float`, 4 more bytes a texel each at the AO size:
+        // desktop-high +7_372_800 at 1440p (was 262_529_924) and +4_147_200 at 1080p (was
+        // 173_703_564), desktop-ultra +29_491_200 (was 568_435_172).
+        // Pass 2 P2-0.11 (SI-01, SI-02) flips every row (named in the log): the radiance cube the
+        // prefilter reads is half the specular side, uncapped (was 32 px), one cube shared by both
+        // sets (was one per set), plus the sky's 16 px SH9 source: high and the phones' high
+        // (256 px cubes) +929_808 (desktop-high was 269_902_724 at 1440p and 177_850_764 at 1080p,
+        // mobile-mid high 57_138_492 and 100_363_068), medium (128) +143_376 (desktop-mid was
+        // 174_595_608, mobile-high medium 30_934_388), low (64) -53_232 (desktop-low was
+        // 67_314_108, mobile-mid low 20_721_524 and 33_284_588, mobile-low 18_334_948), ultra
+        // (a 512 px map cube) +4_075_536 (was 597_926_372). The phones' radiance cube is capped at
+        // 64 px (`MOBILE_MAX_RADIANCE_PX`), so mobile-mid's high rows take +143_376, not +929_808,
+        // and the row without transient MSAA keeps its 96 MiB budget.
+        // Pass 2 P2-0.13 (P5) flips the bloom rows (named in the log): the chain is sized from the
+        // output, `min(output height / 2, 540)` rows (360 on phones) with seven mips down to 8 rows,
+        // never the render size, and a scene more than twice the top's height is first filtered into
+        // a pre-level at twice the top's size: desktop-high and desktop-ultra at 1440p +12_289_120 /
+        // +12_287_360 (a 960 x 540 chain and its 1920 x 1080 pre-level for a 1280 x 720 chain; was
+        // 270_832_532 / 602_001_908), desktop-mid medium +4_800 (seven mips for five; was
+        // 174_738_984), desktop-high at 1080p +960 (seven for six; was 178_780_572), mobile-high
+        // medium +549_544 (was 31_077_764) and mobile-mid high -1_043_696 (was 57_281_868 and
+        // 100_506_444; a 166 x 360 chain and its 332 x 720 pre-level). The low rows draw no bloom.
+        // Pass 2 B.7 flips the high and ultra rows (named in the log): the sun-shadow screen mask's
+        // raw, two state and mask targets, 28 bytes a render pixel: +103_219_200 at 1440p (was
+        // 283_121_652 and 614_289_268) and +58_060_800 at 1080p (was 178_781_532).
+        // Pass 2 A.5 flips the rows with the aerial volume and the high and ultra rows (named in the
+        // log): the aerial volume holds its transmittance per channel behind its in-scatter (SI-04,
+        // 32 x 32 x 64, +262_144 on every medium, high and ultra row), and the froxel fog's four
+        // volumes (high 112 x 63 x 64: +14_450_688; ultra 160 x 90 x 64: +29_491_200). Was
+        // 386_340_852, 174_743_784, 717_508_468, 236_842_332, 31_627_308, 56_238_172 and
+        // 99_462_748.
+        // The look pass's SSGI (B.4, `AoMethod::BitmaskGi` at desktop ultra) flips the ultra row
+        // (named in the log): AO's targets hold the gathered light beside visibility
+        // (`ao::target_bytes_shaped`, as the pool allocates them): +14_745_600 (was 747_261_812).
+        ("desktop-high", QualityPreset::High, (2560, 1440), false, 401_053_684),
+        ("desktop-mid", QualityPreset::Medium, (1920, 1080), false, 175_005_928),
+        ("desktop-ultra", QualityPreset::Ultra, (2560, 1440), false, 762_007_412),
+        ("desktop-low", QualityPreset::Low, (1920, 1080), false, 67_260_876),
+        ("desktop-high", QualityPreset::High, (1920, 1080), false, 251_555_164),
+        ("mobile-high", QualityPreset::Medium, (786, 1704), true, 31_889_452),
+        ("mobile-mid", QualityPreset::Low, (824, 1830), true, 20_668_292),
+        ("mobile-mid", QualityPreset::Low, (1080, 2400), true, 33_231_356),
+        ("mobile-mid", QualityPreset::High, (1179, 2556), true, 56_500_316),
+        ("mobile-mid", QualityPreset::High, (1179, 2556), false, 99_724_892),
+        ("mobile-low", QualityPreset::Low, (824, 1830), true, 18_281_716),
     ];
     for (wire, preset, output, transient, bytes) in rows {
         let quality = preset_quality(preset, class(wire));
@@ -721,13 +773,20 @@ fn mobile_mid_high_on_an_iphone_panel_degrades_in_the_documented_order_to_fit_96
     // spot and bins at most 256 lights in 32 px tiles (`presets::cap_lights`); same steps.
     // RQ5.6 flipped (was 121_640_380 and 89_912_700 fitted): FSR1's intermediate at render size
     // (789 x 1712 rgb10a2unorm, 5_403_072 bytes); same steps.
-    assert_eq!(total(&quality, &at), 127_043_452, "over the 96 MB class budget");
+    // P2-0.11 flipped (was 127_043_452 and 95_315_772 fitted; named in the log): the shared
+    // radiance cube, capped at 64 px on phones, and the sky's SH9 source; same steps.
+    // P2-0.13 flipped (was 127_186_828; named in the log): the bloom chain is sized from the
+    // output (a 166 x 360 top on this portrait panel, seven mips for five, and its 332 x 720
+    // pre-level), and its rung halves that resolution (was bloom mips 5 -> 4).
+    // Pass 2 A.5 flipped (was 126_143_132 and 92_316_700 fitted; named in the log): +262_144, the
+    // aerial volume's transmittance half (SI-04); same steps.
+    assert_eq!(total(&quality, &at), 126_405_276, "over the 96 MB class budget");
     let fitted = fit(&quality, &at, class_defaults(mobile_mid).budget_bytes, DegradeMode::Boot);
     let step = |rung, from, to| DegradeStep { rung, from, to };
     assert_eq!(
         fitted.steps,
         vec![
-            step(DegradeRung::BloomMips, 5, 4),
+            step(DegradeRung::BloomResolution, 360, 180),
             step(DegradeRung::ShadowSize, 1536, 768),
             step(DegradeRung::IblSize, 256, 128),
             step(DegradeRung::IblSize, 128, 64),
@@ -736,10 +795,42 @@ fn mobile_mid_high_on_an_iphone_panel_degrades_in_the_documented_order_to_fit_96
         "transient MSAA saves nothing to drop, AO is already off: bloom, shadows, IBL, materials"
     );
     assert!(fitted.fits);
-    assert_eq!(fitted.total_bytes, 95_315_772);
+    assert_eq!(fitted.total_bytes, 92_578_844, "P2-0.13 flipped (was 95_262_540): the output-sized chain, then its rung");
     assert_eq!(fitted.materials, vec![MaterialClass { size_px: 256, layers: 64 }, MaterialClass { size_px: 256, layers: 16 }]);
     assert_eq!(fitted.quality.anti_aliasing, AntiAliasing::Msaa4, "tile MSAA kept");
     assert_eq!(fitted.quality.shadows.cascades, 2, "cascades come last and were not needed");
+}
+
+/// P2-0.11 (SI-01) integration: mobile-mid at high (not its class default) without transient MSAA
+/// held 99.7% of its 96 MiB budget; the half-side radiance cube passed it by 629_580 bytes and its
+/// boot ladder gave up MSAA. A phone caps its radiance cube ([`MOBILE_MAX_RADIANCE_PX`]), so it
+/// fits with no step.
+#[test]
+fn mobile_mid_high_without_transient_msaa_fits_96_mib_without_a_step() {
+    let mobile_mid = class("mobile-mid");
+    let quality = preset_quality(QualityPreset::High, mobile_mid);
+    let at = input(&quality, mobile_mid, (1179, 2556), false);
+    let budget = class_defaults(mobile_mid).budget_bytes;
+    assert!(total(&quality, &at) <= budget, "{} over {budget}", total(&quality, &at));
+    let fitted = fit(&quality, &at, budget, DegradeMode::Boot);
+    assert!(fitted.fits);
+    assert_eq!(fitted.steps, vec![], "no step");
+}
+
+/// Each phone class's radiance cube (the prefilter's source) is at most
+/// [`MOBILE_MAX_RADIANCE_PX`] at every preset; a desktop's is half its specular side.
+#[test]
+fn a_phones_radiance_cube_is_capped_and_a_desktops_is_half_its_specular_side() {
+    for class in DeviceClass::ALL {
+        for preset in QualityPreset::ALL {
+            let quality = preset_quality(preset, class);
+            let descs = genex_render::ibl::target_descs(&quality.environment);
+            let [specular, radiance, _] = descs.as_slice() else { continue };
+            let half = specular.size.0 / 2;
+            let expected = if class.form == FormFactor::Mobile { half.min(MOBILE_MAX_RADIANCE_PX) } else { half };
+            assert_eq!(radiance.size.0, expected, "{} {}", class.wire(), preset.wire());
+        }
+    }
 }
 
 #[test]
@@ -770,10 +861,17 @@ fn boot_degrades_drop_msaa_first_when_it_saves_memory() {
     // FSR1's intermediate at render size (2176 x 1224 rgb10a2unorm at scale 0.85).
     // Pass-1 fix gate (visual RED 01) flipped (was 184_232_248): + 665_856 bytes, medium's raw AO
     // term in `rg8unorm` with its weight (1088 x 612); after the MSAA rung too (was 99_002_680).
-    assert_eq!(total(&quality, &at), 184_898_104);
+    // P2-0.11 flipped (was 184_898_104 and 99_668_536; named in the log): + 143_376 bytes, the
+    // shared 64 px radiance cube of medium's 128 px specular cube and the sky's SH9 source.
+    // P2-0.13 flipped (was 185_041_480; named in the log): +15_022_112 bytes, the bloom chain sized
+    // from the 1440p output (960 x 540, seven mips) and its 1920 x 1080 pre-level for the render
+    // size's (1088 x 612, five).
+    // Pass 2 A.5 flipped (was 200_063_592 and 114_834_024; named in the log): +262_144, the aerial
+    // volume's transmittance half (SI-04).
+    assert_eq!(total(&quality, &at), 200_325_736);
     let fitted = fit(&quality, &at, 128 * MIB, DegradeMode::Boot);
     assert_eq!(fitted.steps, vec![DegradeStep { rung: DegradeRung::Msaa, from: 4, to: 1 }]);
-    assert_eq!((fitted.total_bytes, fitted.quality.anti_aliasing), (99_668_536, AntiAliasing::Off));
+    assert_eq!((fitted.total_bytes, fitted.quality.anti_aliasing), (115_096_168, AntiAliasing::Off));
 }
 
 #[test]
@@ -783,8 +881,10 @@ fn the_ladder_order_is_fixed_and_a_runtime_degrade_skips_the_pipeline_rungs() {
         [
             DegradeRung::ShadowFormat,
             DegradeRung::Msaa,
+            DegradeRung::SunMask,
+            DegradeRung::FroxelFog,
             DegradeRung::Ao,
-            DegradeRung::BloomMips,
+            DegradeRung::BloomResolution,
             DegradeRung::SpotShadows,
             DegradeRung::ShadowSize,
             DegradeRung::IblSize,
@@ -815,32 +915,47 @@ fn the_ladder_order_is_fixed_and_a_runtime_degrade_skips_the_pipeline_rungs() {
     // of spot maps). RQ5 review flipped (named in the log): the TAA history rung comes after the
     // resource rungs, so ultra keeps TAA and the ladder takes bloom's mips and one shadow-size
     // step instead (it was [shadow-format, taa-history, ao, ao] at 258_537_444 bytes, no AA).
+    // Pass 2 B.7 flipped (named in the log): ultra's sun-shadow screen mask (28 bytes a pixel,
+    // 103_219_200 at 1440p) is given up first among the resource rungs, then the same steps to the
+    // same total (it was [shadow-format, ao, ao, bloom-resolution, shadow-size]). Pass 2 A.5
+    // flipped (named in the log): ultra's froxel fog (29_491_200 bytes) is given up right after the
+    // mask, then the same steps (it was [shadow-format, sun-mask, ao, ao, bloom-resolution,
+    // shadow-size]).
     assert_eq!(
         boot.steps,
         vec![
             step(DegradeRung::ShadowFormat, 32, 16),
+            step(DegradeRung::SunMask, 1, 0),
+            step(DegradeRung::FroxelFog, 64, 0),
             step(DegradeRung::Ao, 2, 1),
             step(DegradeRung::Ao, 1, 0),
-            step(DegradeRung::BloomMips, 7, 6),
-            step(DegradeRung::BloomMips, 6, 5),
-            step(DegradeRung::BloomMips, 5, 4),
+            step(DegradeRung::BloomResolution, 540, 270),
             step(DegradeRung::ShadowSize, 4096, 2048),
         ]
     );
-    assert_eq!(boot.total_bytes, 249_996_548, "ultra's 512 px HDR map cube, two sets (RQ2 review)");
+    // P2-0.11 flipped (was 249_996_548; named in the log): + 4_075_536 bytes, the shared 256 px
+    // radiance cube of the 512 px map cube and the sky's SH9 source; same steps.
+    // P2-0.13 flipped (was 254_072_084 after three bloom-mips steps; named in the log): the chain is
+    // sized from the 1440p output with its pre-level, and its rung halves the resolution once (540
+    // -> 270 rows).
+    // Pass 2 A.5 flipped (was 249_808_244; named in the log): +262_144, the aerial volume's
+    // transmittance half (SI-04); the froxel fog's volumes are given up.
+    assert_eq!(boot.total_bytes, 250_070_388, "ultra's 512 px HDR map cube, two sets (RQ2 review)");
     assert!(boot.quality.anti_aliasing.temporal(), "ultra keeps TAA");
     // At runtime the shadow format and TAA rungs are closed: the resource rungs step after the
     // boot ladder's. RQ5.6 flipped (named in the log): TAA draws one sample, not MSAA 4x, so the
     // frame fits once the shadow maps are halved twice (it stepped every resource rung down to
     // one cascade and stayed over budget at 270_566_532 bytes).
     let runtime = fit(&ultra, &at, 256 * MIB, DegradeMode::Runtime);
-    assert_eq!(runtime.steps[..2], boot.steps[1..3], "the boot ladder without its pipeline rungs, then further");
+    // Pass 2 B.7 flipped (named in the log): the sun-mask rung is a resource rung, so the runtime
+    // ladder takes it too (it compared steps[..2] with the boot's [1..3]).
+    // Pass 2 A.5 flipped (named in the log): the froxel-fog rung is a resource rung too (it compared
+    // steps[..3] with the boot's [1..4]).
+    assert_eq!(runtime.steps[..4], boot.steps[1..5], "the boot ladder without its pipeline rungs, then further");
     assert_eq!(
-        runtime.steps[2..],
+        runtime.steps[4..],
         [
-            step(DegradeRung::BloomMips, 7, 6),
-            step(DegradeRung::BloomMips, 6, 5),
-            step(DegradeRung::BloomMips, 5, 4),
+            step(DegradeRung::BloomResolution, 540, 270),
             step(DegradeRung::ShadowSize, 4096, 2048),
             step(DegradeRung::ShadowSize, 2048, 1024),
         ]
@@ -849,7 +964,11 @@ fn the_ladder_order_is_fixed_and_a_runtime_degrade_skips_the_pipeline_rungs() {
     // spot atlas layer at the cascades' side, halved with them down to 768 px. RQ6 review flipped
     // (was 272_925_828): no spot atlas for a game without shadowed spots. RQ5.6 flipped (was
     // 270_566_532, over budget): one TAA sample, so the frame fits.
-    assert_eq!((runtime.total_bytes, runtime.fits), (233_219_332, true));
+    // P2-0.11 flipped (was 233_219_332; named in the log): + 4_075_536 bytes, as the boot total.
+    // P2-0.13 flipped (was 237_294_868 after three bloom-mips steps; named in the log): one bloom
+    // resolution step on the output-sized chain.
+    // Pass 2 A.5 flipped (was 233_031_028; named in the log): +262_144, as the boot total.
+    assert_eq!((runtime.total_bytes, runtime.fits), (233_293_172, true));
     // A game that uses shadowed spots reserves the atlas, and its own rung gives the spots up
     // before the sun's cascades are halved for their memory.
     let spotted = at.clone().with_spot_atlas(true);
@@ -996,8 +1115,7 @@ fn knob_differs(knob: QualityKnob, a: &Quality, b: &Quality) -> bool {
         QualityKnob::ShadowFade => a.shadows.fade_percent != b.shadows.fade_percent,
         QualityKnob::ContactShadows => a.contact_shadows != b.contact_shadows,
         QualityKnob::Bloom => a.bloom.enabled != b.bloom.enabled,
-        QualityKnob::BloomMips => a.bloom.mips != b.bloom.mips,
-        QualityKnob::BloomHalfRes => a.bloom.half_res != b.bloom.half_res,
+        QualityKnob::BloomResolution => a.bloom.resolution != b.bloom.resolution,
         QualityKnob::AoResolution => a.ao.resolution != b.ao.resolution,
         QualityKnob::AoSlices => a.ao.slices != b.ao.slices,
         QualityKnob::AoSteps => a.ao.steps != b.ao.steps,
@@ -1040,10 +1158,10 @@ fn accounted_by(knob: QualityKnob) -> &'static [&'static str] {
         QualityKnob::ShadowFormat | QualityKnob::ShadowCadence => &[],
         // The RQ3 review draws each preset's shadow distance, split, cascade blend band and end fade.
         QualityKnob::ShadowDistance | QualityKnob::ShadowSplit | QualityKnob::ShadowBlend | QualityKnob::ShadowFade => &[],
-        // RQ4.6 draws contact shadows, bloom (its mips and half-resolution start), AO (resolution,
+        // RQ4.6 draws contact shadows, bloom (its chain's resolution), AO (resolution,
         // slices, steps, history) and fog.
         QualityKnob::ContactShadows => &[],
-        QualityKnob::Bloom | QualityKnob::BloomMips | QualityKnob::BloomHalfRes => &[],
+        QualityKnob::Bloom | QualityKnob::BloomResolution => &[],
         QualityKnob::AoResolution | QualityKnob::AoSlices | QualityKnob::AoSteps | QualityKnob::AoTemporal => &[],
         QualityKnob::Fog => &[],
         // RQ2 draws IBL (the cube sizes size the bake, the cadence and the sun's threshold pace its
@@ -1311,4 +1429,46 @@ fn a_class_override_sets_taas_knobs_on_its_class() {
     assert_eq!(profile(&facts, desktop, &RenderOverrides::default(), None).quality.taa.jitter_cycle, JitterCycle::Eight, "high's own cycle");
     let other = profile(&facts, class("desktop-mid"), &game, None);
     assert_eq!(other.quality.taa, TaaQuality::DEFAULT, "only that class");
+}
+
+/// Renderer pass 2, P2-0.9 step B (F1/RC-03): a Live frame's window present holds a staged image
+/// at the letterbox's size (the HUD is painted over it) and, when the class's cap keeps the
+/// output below the letterbox, EASU's image too; the ledger counts both. A capture (no window)
+/// counts neither.
+#[test]
+fn the_ledger_counts_the_window_present_s_images_at_the_letterbox_size() {
+    let ultra = class("desktop-ultra");
+    let quality = preset_quality(QualityPreset::Ultra, ultra);
+    let base = input(&quality, ultra, DESKTOP_REFERENCE, false);
+    let capture = total(&quality, &base);
+    let native = total(&quality, &base.clone().with_window(Some(DESKTOP_REFERENCE)));
+    assert_eq!(native - capture, 2560 * 1440 * 4, "the staged image at the output's own size");
+    let upscaled = total(&quality, &base.with_window(Some((3840, 2160))));
+    assert_eq!(upscaled - capture, 3840 * 2160 * 4 * 2, "the staged image and EASU's at 4K");
+}
+
+/// The 4K/1440p plan's ledger rows (acceptance of P2-0.9): ultra drawn at 3840x2160 (a 4K
+/// capture) fits the Mac's 2 GiB budget without a degrade step, and so does Live on a 4K window
+/// (the output capped at the class's 2560x1440 reference, the window present's images at 4K);
+/// high at 1440p fits 1 GiB.
+#[test]
+fn ultra_at_4k_fits_two_gib_and_high_at_1440p_fits_one() {
+    const GIB: u64 = 1024 * MIB;
+    let ultra = class("desktop-ultra");
+    let quality = preset_quality(QualityPreset::Ultra, ultra);
+    let at_4k = input(&quality, ultra, (3840, 2160), false).with_environment_map(hdri_map_width(ultra));
+    let live_4k = input(&quality, ultra, DESKTOP_REFERENCE, false).with_environment_map(hdri_map_width(ultra)).with_window(Some((3840, 2160)));
+    for (row, at) in [("4K capture", &at_4k), ("Live on a 4K window", &live_4k)] {
+        let bytes = total(&quality, at);
+        eprintln!("ROW ultra {row}: {} MiB of {} MiB", bytes / MIB, 2 * GIB / MIB);
+        assert!(bytes <= 2 * GIB, "ultra {row}: {bytes} over 2 GiB");
+        let fitted = fit(&quality, at, 2 * GIB, DegradeMode::Boot);
+        assert!(fitted.steps.is_empty(), "ultra {row} steps down: {:?}", fitted.steps);
+    }
+    let high = class("desktop-high");
+    let quality = preset_quality(QualityPreset::High, high);
+    let at_1440p = input(&quality, high, (2560, 1440), false).with_environment_map(hdri_map_width(high)).with_window(Some((2560, 1440)));
+    let bytes = total(&quality, &at_1440p);
+    eprintln!("ROW high 1440p: {} MiB of {} MiB", bytes / MIB, GIB / MIB);
+    assert!(bytes <= GIB, "high 1440p: {bytes} over 1 GiB");
 }

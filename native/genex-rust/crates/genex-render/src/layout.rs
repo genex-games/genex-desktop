@@ -25,8 +25,9 @@ pub const MAX_SHADOWED_SPOTS: usize = 4;
 pub const MAX_VIEWS: usize = 1 + MAX_CASCADES + MAX_SHADOWED_SPOTS;
 /// The non-filtering sampler PCSS's blocker search gathers the shadow map with (RQ3.2), as
 /// (forward frame binding, WGSL name): the RQ4 `point_sampler` slot of
-/// [`FRAME_EFFECT_BINDINGS`], which the Level-2 v2 material map binds under the same name.
-/// WebGPU core samples a depth texture only with a comparison or a non-filtering sampler.
+/// [`FRAME_EFFECT_BINDINGS`], which the forward frame binds ([`FRAME_EFFECT_BOUND`], renderer
+/// pass 2 P2-0.3) and the Level-2 v2 material map binds under the same name. WebGPU core samples
+/// a depth texture only with a comparison or a non-filtering sampler.
 pub const SHADOW_BLOCKER_SAMPLER: (u32, &str) = (18, "point_sampler");
 /// The texture index that names no texture (`NO_TEXTURE` in the shaders).
 pub const NO_TEXTURE: u32 = u32::MAX;
@@ -115,6 +116,16 @@ pub struct GpuFrame {
     /// a history reset; the v2 frame's `prev_jitter`, RQ5 review). `view_proj` stays unjittered,
     /// so motion vectors, the fog and the cull read the camera as it is.
     pub jitter: [f32; 4],
+    /// Each cascade's comparison bias in its own light depth (NDC), the sun chunk's
+    /// `gx_sun_cascade_bias` (`Cascades::comparison_bias`): one world-space bias over each
+    /// cascade's depth range (renderer pass 2, P2-0.3); the legacy fit's lanes are the shared
+    /// `shadow::DEPTH_BIAS`, as is `shadow_params.x` but on `depth32float` maps (cascade 0's there).
+    pub cascade_bias: [f32; 4],
+    /// x: the mip bias material textures sample with this frame
+    /// ([`crate::settings::frame_texture_lod_bias`]: TAA's, FSR1's upscale's, else 0; renderer pass
+    /// 2, P2-0.8b T-06), added to the pipeline's `GX_TEXTURE_LOD_BIAS` by `gx_texture_lod_bias`;
+    /// a uniform, so a dynamic-resolution step moves it without a pipeline. y, z, w: reserved (0).
+    pub texture_lod: [f32; 4],
 }
 
 /// One point light in the light table (`Light`).
@@ -155,13 +166,18 @@ pub struct GpuLightExt {
     /// ([`LIGHT_KIND_POINT`], [`LIGHT_KIND_SPOT`]); z: the shadow slot (0 to
     /// [`MAX_SHADOWED_SPOTS`] - 1, [`NO_SHADOW_SLOT`] without a shadow map; its layer of the
     /// shared shadow array is the spot atlas after the drawn cascades, its tile the slot's,
-    /// `spot_shadow::tile_rect`); w: reserved (0).
+    /// `spot_shadow::tile_rect`); w: how far the spot's shadow has faded out as its slot changes
+    /// hands, 0 (whole, [`SPOT_SHADOW_UNFADED`]) to 1 (none): every row writes 0 until spot slots
+    /// fade, and the shading reads it from then on.
     pub params: [f32; 4],
 }
 
+/// The shadow fade of a spot whose shadow is whole (`GpuLightExt::params.w`).
+pub const SPOT_SHADOW_UNFADED: f32 = 0.0;
+
 impl GpuLightExt {
     /// The extension row of a point light: no cone, no shadow map.
-    pub const POINT: GpuLightExt = GpuLightExt { spot: [0.0, 0.0, 0.0, -1.0], params: [-1.0, LIGHT_KIND_POINT, NO_SHADOW_SLOT, 0.0] };
+    pub const POINT: GpuLightExt = GpuLightExt { spot: [0.0, 0.0, 0.0, -1.0], params: [-1.0, LIGHT_KIND_POINT, NO_SHADOW_SLOT, SPOT_SHADOW_UNFADED] };
 }
 
 /// One local light as the CPU builds it (RQ6.0): the light-table row and its extension row. It is
@@ -178,20 +194,27 @@ pub struct GpuLocalLight {
 /// A material row's extension (RQ6.0): the Level-2 v2 `GxMaterialExt`, parallel to the material
 /// table at the same row, so [`GpuMaterial`] (and the frozen v1 `GxMaterial`) keeps its 48 bytes.
 /// The renderer's forward pass and v2 materials read one table: `emissive` is the emissive
-/// radiance (linear rgb, scene units, its strength folded in; a: reserved) and `params` holds the
-/// emissive texture: x its layer (-1: none), y its size class, z flag bits
-/// ([`MATERIAL_EXT_FLAG_*`](MATERIAL_EXT_FLAG_EMISSIVE)), w reserved; all f32, exact as small
-/// integers.
+/// radiance (linear rgb, scene units, its strength folded in; a: the occlusion map's strength,
+/// P2-0.12) and `params` holds the emissive texture: x its layer (-1: none), y its size class, z
+/// flag bits ([`MATERIAL_EXT_FLAG_*`](MATERIAL_EXT_FLAG_EMISSIVE)), w the alpha cutoff (P2-0.12; 0:
+/// not alpha-tested); all f32, exact as small integers. `subsurface` and `transmission` (renderer
+/// pass 2 B.1) hold a [`crate::subsurface::Subsurface`] ([`crate::subsurface::Subsurface::rows`]);
+/// a material that lets no light through keeps thickness 1 and the rest 0.
 pub type GpuMaterialExt = crate::abi::GxMaterialExt;
 
 /// [`GpuMaterialExt`] flag: the material emits light (its emissive radiance is not 0 or it has
 /// an emissive texture).
 pub const MATERIAL_EXT_FLAG_EMISSIVE: u32 = 1;
+/// [`GpuMaterialExt`] flag: the material lets light through (renderer pass 2 B.1): its
+/// `subsurface` and `transmission` rows hold a [`crate::subsurface::Subsurface`] and the forward
+/// pass runs the subsurface chunk for it.
+pub const MATERIAL_EXT_FLAG_SUBSURFACE: u32 = 2;
 /// The emissive texture layer of a material without one ([`GpuMaterialExt`] `params.x`).
 pub const MATERIAL_EXT_NO_TEXTURE: f32 = -1.0;
 
 /// The extension row of a material that emits nothing: what every row holds until RQ6.3 fills it.
-pub const MATERIAL_EXT_NONE: GpuMaterialExt = GpuMaterialExt { emissive: [0.0; 4], params: [MATERIAL_EXT_NO_TEXTURE, 0.0, 0.0, 0.0] };
+pub const MATERIAL_EXT_NONE: GpuMaterialExt =
+    GpuMaterialExt { emissive: [0.0; 4], params: [MATERIAL_EXT_NO_TEXTURE, 0.0, 0.0, 0.0], subsurface: [0.0, 0.0, 0.0, 1.0], transmission: [0.0; 4] };
 
 /// One instance in the instance table (`Instance`).
 #[repr(C)]
@@ -217,8 +240,9 @@ pub struct GpuMaterial {
     pub base_color: [f32; 4],
     /// x: metallic, y: roughness, z: 1 for the missing-asset checker, w: normal-map scale.
     pub params: [f32; 4],
-    /// Texture-array layers: x base colour (sRGB array), y normal map, z metallic-roughness (data
-    /// array), w unused; [`NO_TEXTURE`] when absent.
+    /// Texture-array layers: x base colour (sRGB array), y normal map, z metallic-roughness, w
+    /// ambient occlusion (data array; P2-0.12, equal to z for an ORM texture); [`NO_TEXTURE`] when
+    /// absent.
     pub textures: [u32; 4],
 }
 
@@ -226,7 +250,10 @@ pub struct GpuMaterial {
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Pod, Zeroable)]
 pub struct GpuBatch {
-    /// First instance-table row of the batch.
+    /// The batch's first slot in each view's region of the visible list: its instances' survivors
+    /// fill the slots from here. The instance-table row of its first instance, unless a mesh with
+    /// levels comes before it (renderer pass 2 A6.9: a level's batch has slots of its own over
+    /// its mesh's rows, `first_row`).
     pub first_instance: u32,
     /// Rows in the batch.
     pub instance_count: u32,
@@ -236,8 +263,12 @@ pub struct GpuBatch {
     pub first_index: u32,
     /// Base vertex of the mesh in its vertex buffer (the library, or the skinned output).
     pub base_vertex: i32,
-    /// Padding to 32 bytes.
-    pub pad: [u32; 3],
+    /// First instance-table row of the batch (A6.9: every level's batch of a mesh holds its rows).
+    pub first_row: u32,
+    /// The batch's level of detail (renderer pass 2 A6.9, [`crate::mesh::batch_lod`]): x the tag
+    /// (0: the mesh has no levels; else the batch's level and the chain's length), y and z the
+    /// chain's errors over the mesh's bounding radius as half-float pairs.
+    pub lod: [u32; 3],
 }
 
 /// The per-pass dynamic uniform (`PassView`). WebGPU core has no `first_instance` in indirect
@@ -254,8 +285,10 @@ pub struct GpuPassView {
     pub direct: u32,
     /// The visible-list row of a direct (transparent) draw.
     pub base: u32,
-    /// Padding to 16 bytes.
-    pub pad: u32,
+    /// Where the drawn variant's region of the slot-base table starts (renderer pass 2, P2-0.12):
+    /// 0 for the plain batches, `variant index × FramePlan::slot_count` on the other variants'
+    /// rows (`tables::variant_pass_entry`).
+    pub slot_offset: u32,
 }
 
 /// What the cull pass reads about its views (`CullViews`).
@@ -264,10 +297,17 @@ pub struct GpuPassView {
 pub struct GpuCullViews {
     /// Inward frustum planes of each view, normalized; views past the active ones are 0.
     pub planes: [[[f32; 4]; 6]; MAX_VIEWS],
-    /// x: visible-list rows per view (the opaque instance count); y: batches; z: active views (the
+    /// x: visible-list slots per view (the opaque instance count, plus the level batches' slots,
+    /// renderer pass 2 A6.9); y: batches; z: active views (the
     /// cull dispatches this many); w: the views the frame holds (bit `v`: a far cascade off its
     /// cadence keeps last frame's map, so the cull and the meshlet cull skip it).
     pub params: [u32; 4],
+    /// The levels of detail's view (renderer pass 2 A6.9, [`crate::mesh::lod_keeps`]): the camera
+    /// position xyz; w the output's pixels a world unit at distance 1 over the error threshold
+    /// (0: levels off, every instance at its mesh itself).
+    pub lod: [f32; 4],
+    /// x: 1 when a batch draws a level (the cull looks each row's batch up only then); y, z, w: 0.
+    pub lod_params: [u32; 4],
 }
 
 /// `draw_indexed_indirect` arguments as the cull pass writes them (`DrawIndexedArgs`), tightly
@@ -406,6 +446,21 @@ pub struct GpuSkyAtmosphere {
 /// identity), so the picture is the flat-ambient one.
 pub const FRAME_ENV_BINDINGS: [(u32, &str); 4] = [(11, "env_specular"), (12, "env_sh"), (13, "brdf_lut"), (14, "env_sampler")];
 
+/// What the forward frame group binds for the environment, as (binding, name of
+/// `ibl::EnvironmentMaps::binding`): [`FRAME_ENV_BINDINGS`] with binding 11 the reflection probes'
+/// cube array (renderer pass 2 A.3: its layer 0 the sky's cube, the v2 map keeps the cube), the
+/// probes' rows at binding 22 (`probes::FRAME_PROBE_BINDINGS`) and the irradiance volumes' atlas at
+/// binding 32 (A.4, `irradiance::FRAME_IRRADIANCE_BINDINGS`; the forward stage's 15th sampled
+/// texture of 16, owner decision D1).
+pub const FRAME_ENV_BOUND: [(u32, &str); 6] = [
+    (11, crate::probes::ENV_PROBES),
+    (12, "env_sh"),
+    (13, "brdf_lut"),
+    (14, "env_sampler"),
+    (22, crate::probes::ENV_PROBE_ROWS),
+    (32, crate::irradiance::ENV_IRRADIANCE),
+];
+
 /// The forward frame group's slots reserved for the RQ4 screen effects (RQ4.0), as (binding, WGSL
 /// name): the fog row (`GxFog`), ambient occlusion, the aerial-perspective volume and the
 /// non-filtering sampler they are read with (the Level-2 v2 material map's names and types), and
@@ -416,24 +471,39 @@ pub const FRAME_EFFECT_BINDINGS: [(u32, &str); 5] =
     [(15, "frame_fog"), (16, "ao_map"), (17, "aerial_perspective"), (18, "point_sampler"), (19, "contact_shadow_mask")];
 
 /// The effect slots of [`FRAME_EFFECT_BINDINGS`] the forward frame group binds (RQ4.6): the fog
-/// row, the AO term, the aerial-perspective volume and the contact-shadow mask. The volume is read
-/// with the environment's filtering sampler, so `point_sampler` stays free.
-pub const FRAME_EFFECT_BOUND: [(u32, &str); 4] = [(15, "frame_fog"), (16, "ao_map"), (17, "aerial_perspective"), (19, "contact_shadow_mask")];
+/// row, the AO term, the aerial-perspective volume, the non-filtering sampler PCSS's blocker
+/// search gathers the shadow map with ([`SHADOW_BLOCKER_SAMPLER`], renderer pass 2 P2-0.3) and
+/// the contact-shadow mask. The volume is read with the environment's filtering sampler.
+pub const FRAME_EFFECT_BOUND: [(u32, &str); 5] =
+    [(15, "frame_fog"), (16, "ao_map"), (17, "aerial_perspective"), SHADOW_BLOCKER_SAMPLER, (19, "contact_shadow_mask")];
 
 /// The forward frame group's local-light and material-extension tables (RQ6.0), as (binding, WGSL
-/// name): the names and types the Level-2 v2 material map gives them, so the shared lighting
-/// chunks read one set of names in the forward pass and in `gx_shade_pbr`. The renderer binds
-/// them from the first frame (each a table that is at least one row, zero until its producer
-/// lands: no light is binned and no material emits); the forward pass declares one once its
-/// work package reads it.
-pub const FRAME_LIGHT_BINDINGS: [(u32, &str); 4] = [(20, "light_ext"), (21, "light_tiles"), (22, "light_zbins"), (23, "material_ext")];
+/// name): the types the Level-2 v2 material map gives them ([`frame_light_v2_twin`]). The
+/// renderer binds them from the first frame (each a table that is at least one row, zero until
+/// its producer lands: no light is binned and no material emits). Renderer pass 2 A.0 (LG-16)
+/// merged the tile masks into the z-bin table: `light_bins` holds the bin header and every
+/// clusterable kind's z-bins, then the tile masks at `cluster::LIGHT_TILES_OFFSET_WORDS`, so the
+/// forward fragment stage reads five storage buffers and binding 22 is free. The shared lighting
+/// chunks read the bins through `gx_light_bin_word` and `gx_light_tile_word`.
+pub const FRAME_LIGHT_BINDINGS: [(u32, &str); 3] = [(20, "light_ext"), (21, FRAME_LIGHT_BINS), (23, "material_ext")];
+
+/// The forward pass's one light-bin table (LG-16): the v2 map binds its z-bins (`light_zbins`,
+/// from offset 0) and its tile masks (`light_tiles`, from `cluster::LIGHT_TILES_OFFSET_WORDS`) as
+/// two slices of the same buffer, so a v2 material's map is unchanged.
+pub const FRAME_LIGHT_BINS: &str = "light_bins";
+
+/// The Level-2 v2 map row whose binding type the forward light binding `name` takes: its own, or
+/// for [`FRAME_LIGHT_BINS`] the z-bins' (both read-only `array<u32>` storage).
+pub fn frame_light_v2_twin(name: &str) -> &str {
+    if name == FRAME_LIGHT_BINS { "light_zbins" } else { name }
+}
 
 /// The forward frame group's texture arrays of the larger material size classes (RQ6.0), as
 /// (binding, WGSL name), colour then data per class of [`TEXTURE_SIZE_CLASSES`] past class 0
 /// (whose arrays are bindings 8 and 9). Each is a filterable `texture_2d_array<f32>`, a 1 × 1
 /// placeholder until its class holds a texture (RQ6.4, sampled since RQ6.7 through the surface
 /// chunk's `gx_class_texel`); the forward fragment stage stays within
-/// `abi::FORWARD_FRAGMENT_TEXTURES_MAX` (14 of core's 16) with every RQ4 effect slot bound too.
+/// `abi::FORWARD_FRAGMENT_TEXTURES_MAX` (16 of core's 16 since A.4) with every RQ4 effect slot bound too.
 pub const FRAME_MATERIAL_CLASS_BINDINGS: [(u32, &str); 6] = [
     (24, "color_textures_512"),
     (25, "data_textures_512"),
@@ -442,6 +512,18 @@ pub const FRAME_MATERIAL_CLASS_BINDINGS: [(u32, &str); 6] = [
     (28, "color_textures_2048"),
     (29, "data_textures_2048"),
 ];
+
+/// The forward frame group's instance fade table (renderer pass 2, LOD crossfade), as (binding,
+/// WGSL name): one f32 per instance-table row, parallel to the instance table so the frozen v1 rows
+/// keep their 160 bytes; [`INSTANCE_FADE_WHOLE`] for a row drawn whole, 0..1 for a row fading in or
+/// out (its fragments dithered away, shadow casters included). Reserved, not bound: the forward,
+/// prepass and caster pipelines declare it (behind `GX_LOD_FADE`) once the crossfade lands; it
+/// sits past binding 30, which the screen reflections take.
+pub const FRAME_INSTANCE_FADE_BINDING: (u32, &str) = (31, "instance_fade");
+/// An instance row's fade when it is drawn whole (`GX_INSTANCE_FADE_WHOLE`).
+pub const INSTANCE_FADE_WHOLE: f32 = 1.0;
+/// Bytes of one instance fade row.
+pub const INSTANCE_FADE_BYTES: u64 = 4;
 
 /// One meshlet of the library's meshlet table (`Meshlet`, R2): at most
 /// [`crate::meshlet::MESHLET_MAX_VERTICES`] vertices and [`crate::meshlet::MESHLET_MAX_TRIANGLES`]
@@ -536,7 +618,7 @@ pub struct GpuPrevModel {
 }
 
 /// What the light binning writes and the shading reads about the bins (`LightBinParams`, RQ6.0):
-/// the light binning dispatch's uniform, and the header of the `light_zbins` table (its first
+/// the light binning dispatch's uniform, and the header of the `light_bins` table (its first
 /// [`crate::cluster::LIGHT_BIN_HEADER_WORDS`] words), so the forward pass and the Level-2 v2
 /// prelude find the grid without another binding. All `u32`: the two depths are f32 bits.
 #[repr(C)]
@@ -548,6 +630,13 @@ pub struct GpuLightBinParams {
     /// x: z-bins; y: lights binned (the depth-sorted list's length); z: the view depth where
     /// z-bin 0 starts (f32 bits); w: z-bins per unit of view depth (f32 bits).
     pub depth: [u32; 4],
+    /// The clusterable kinds' index ranges in the binned list (renderer pass 2 A.0, LG-16): x the
+    /// end of the lights (= `depth.y`), y the end of the decals, z the end of the probes (every
+    /// object binned); w reserved (0). Kind `k` holds indices from the previous end to its own.
+    pub ranges: [u32; 4],
+    /// The decals' and probes' own z-bin depth mappings (f32 bits; the lights' is `depth.zw`):
+    /// x, y where the decals' z-bin 0 starts and their z-bins per unit depth; z, w the probes'.
+    pub kind_depth: [u32; 4],
 }
 
 /// The bind group the meshlet draw's vertex pulling reads (R2.0): group 2, after the frame (0)
@@ -638,9 +727,11 @@ pub const GPU_STRUCTS: &[GpuStructLayout] = &[
     layout_of::<GpuHizParams>("HizParams"),
     layout_of::<GpuPrevModel>("PrevModel"),
     layout_of::<crate::post::taa::GpuTaaParams>("TaaParams"),
+    layout_of::<crate::post::taa::GpuReactiveJitter>("ReactiveJitter"),
     layout_of::<crate::post::fsr::GpuEasuParams>("EasuParams"),
     layout_of::<crate::post::fsr::GpuRcasParams>("RcasParams"),
     layout_of::<GpuLightExt>("LightExt"),
     layout_of::<GpuMaterialExt>("GxMaterialExt"),
     layout_of::<GpuLightBinParams>("LightBinParams"),
+    layout_of::<crate::post::tonemap::GpuTonemapParams>("GxTonemapParams"),
 ];

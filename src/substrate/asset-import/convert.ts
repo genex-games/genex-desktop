@@ -5,10 +5,20 @@
  */
 import type { BuildTarget } from "../../shared/game-project.ts";
 import { meshToGlb } from "./glb.ts";
-import { GltfImportError, normalizeGltf } from "./gltf-decompress.ts";
+import { normalizeGltf } from "./gltf-decompress.ts";
+import { GltfImportError } from "./gltf-json.ts";
 import { checkRadiance, HdrError } from "./hdr.ts";
 import { AssetImportRefusal, ImportConverter } from "./import-plan.ts";
-import { isBasisKtx2, Ktx2Error, readKtx2Header, transcodeKtx2 } from "./ktx2.ts";
+import {
+  isBasisKtx2,
+  Ktx2Error,
+  type Ktx2FamilyFile,
+  type Ktx2FamilySkip,
+  readKtx2Header,
+  transcodeKtx2,
+  transcodeKtx2Families,
+} from "./ktx2.ts";
+import { addLodExtras } from "./lods.ts";
 import { addMeshletExtras } from "./meshlets.ts";
 import { MeshFormatError, objToMesh } from "./obj.ts";
 import { plyToMesh, stlToMesh } from "./stl-ply.ts";
@@ -32,7 +42,15 @@ export interface ConvertInput {
 
 /** What a step wrote, or why it refused. */
 export type ConvertResult =
-  | { ok: true; bytes: Uint8Array; textures?: TranscodedTexture[] }
+  | {
+      ok: true;
+      bytes: Uint8Array;
+      textures?: TranscodedTexture[];
+      /** A Basis KTX2's fixed-format file per family (A6.5). */
+      families?: Ktx2FamilyFile[];
+      /** Why a Basis KTX2 got no per-family files. */
+      familiesSkipped?: Ktx2FamilySkip;
+    }
   | { ok: false; refusal: AssetImportRefusal; detail: string };
 
 const MESSAGE = {
@@ -42,14 +60,20 @@ const MESSAGE = {
 
 const refused = (refusal: AssetImportRefusal, detail: string): ConvertResult => ({ ok: false, refusal, detail });
 
-/** A KTX2 texture checked against every family its game's destinations may pick; the file is kept. */
+/**
+ * A KTX2 texture checked against every family its game's destinations may pick, and transcoded
+ * into each family's file when it is square with its whole chain; the file itself is kept.
+ */
 async function checkKtx2(input: ConvertInput): Promise<ConvertResult> {
   const header = readKtx2Header(input.bytes);
   if (!header) return refused(AssetImportRefusal.Malformed, MESSAGE.NotKtx2);
   // A KTX2 in a fixed GPU format has nothing to transcode: the runtime loads it where the device has that format.
   if (!isBasisKtx2(header)) return { ok: true, bytes: input.bytes, textures: [] };
-  const textures = await transcodeKtx2(input.bytes, texturesForTargets(input.targets));
-  return { ok: true, bytes: input.bytes, textures };
+  const families = texturesForTargets(input.targets);
+  const textures = await transcodeKtx2(input.bytes, families);
+  const transcoded = await transcodeKtx2Families(input.bytes, families);
+  const extra = "files" in transcoded ? { families: transcoded.files } : { familiesSkipped: transcoded.skipped };
+  return { ok: true, bytes: input.bytes, textures, ...extra };
 }
 
 /** A Radiance map checked against the renderer's caps; the file is kept. */
@@ -58,10 +82,14 @@ function checkHdr(input: ConvertInput): ConvertResult {
   return { ok: true, bytes: input.bytes };
 }
 
-/** A GLB the runtime loads, with import-time meshlets when it is big enough (R2.3); never a refusal. */
+/**
+ * A GLB the runtime loads, with import-time meshlets (R2.3) and LODs (A6.9) when it is big enough
+ * for each; never a refusal.
+ */
 async function withMeshlets(glb: Uint8Array, input: ConvertInput): Promise<ConvertResult> {
   const minTriangles = input.meshletMinTriangles;
-  const { bytes } = await addMeshletExtras(glb, minTriangles === undefined ? {} : { minTriangles });
+  const { bytes: clustered } = await addMeshletExtras(glb, minTriangles === undefined ? {} : { minTriangles });
+  const { bytes } = await addLodExtras(clustered);
   return { ok: true, bytes };
 }
 

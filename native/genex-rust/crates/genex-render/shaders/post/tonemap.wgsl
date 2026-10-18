@@ -5,13 +5,20 @@
 //
 // The curve is the pipeline's `GX_TONEMAPPER` override, `Tonemapper::shader_id`: 0 Khronos PBR
 // Neutral (the legacy-preserving default), 1 AgX, 2 Hill's ACES fit, 3 none (a clamp, encoded
-// as the legacy forward shader encodes), 4 AgX with the punchy look (Wrensch's `agxLook`,
-// Blender's "Punchy": power 1.35 and saturation 1.4 in AgX's log space). tests/layout.rs emits every value
-// through HLSL, MSL and SPIR-V. The curves are ported from three.js 0.185's tonemapping shader chunk
-// (MIT, Copyright 2010-2026 three.js authors): Khronos PBR Neutral (Khronos Group, Emmett Lalish),
-// AgX (Troy Sobotka; the minimal fit of Benjamin Wrensch, iolite; Filament's Rec. 2020 port) and
-// Stephen Hill's ACES fit (ACES RRT + ODT, with three's 1 / 0.6 brighter-viewing scale). Every
-// curve's output is dithered, `none` too: an HDR scene through a clamp bands like any other.
+// as the legacy forward shader encodes), 4 AgX punchy. tests/layout.rs emits every value through
+// HLSL, MSL and SPIR-V. Curves 0-2 are ported from three.js 0.185's tonemapping shader chunk (MIT,
+// Copyright 2010-2026 three.js authors): Khronos PBR Neutral (Khronos Group, Emmett Lalish), AgX
+// (Troy Sobotka; the minimal fit of Benjamin Wrensch, iolite; Filament's Rec. 2020 port) and
+// Stephen Hill's ACES fit (ACES RRT + ODT, with three's 1 / 0.6 brighter-viewing scale). Punchy is
+// Godot 4.7.2's AgX (MIT, Copyright 2014-present Godot Engine contributors; `tonemap.glsl`
+// `allenwp_curve` and `tonemap_agx`): Allen Pestaluky's curve, a power toe and a Reinhard-like
+// shoulder meeting at scene 0.18, between the combined Rec. 709 -> Rec. 2020 -> AgX inset matrix
+// and the outset -> Rec. 709 one (EaryChow's Blender AgX matrices). Its contrast is 1.4 and its
+// toe, slope and shoulder are computed on the CPU (`gx_tm.curve`, `post::tonemap::AgxCurve`); the
+// crossover maps to the display grey plain AgX draws 0.18 at (Godot maps it to 0.18 itself), so
+// the look deepens contrast about middle grey and never shifts the exposure. Saturation 1.4 about
+// luminance follows the curve. Every curve's output is dithered, `none` too: an HDR scene through a
+// clamp bands like any other.
 //
 // Entry points, one per way the scene reaches the curve:
 // - fs_tonemap: the 1x scene, one texel per pixel (scale 1);
@@ -28,13 +35,24 @@
 // beside it (a lantern's frame against its glass).
 //
 // Bloom (RQ4.2) composites before the curve in every entry point: `mix(scene, bloom, intensity)`
-// with the chain's top (bloom_down/bloom_up.wgsl, every mip's blur summed) scaled by 1 / mips, so
-// the frame keeps its energy. Intensity 0 (no bloom: a neutral black texture is bound) skips it,
+// with the chain's top (bloom_down/bloom_up.wgsl, every mip's blur weighed by the look's spread,
+// weights that sum to 1), so the frame keeps its energy. Intensity 0 (no bloom: a neutral black texture is bound) skips it,
 // so the picture is byte for byte the bloom-free one. Under a look's stylistic threshold the chain
 // holds only the over-threshold part, so that part is traded for the glow and the rest is kept:
 // `scene + (bloom - part(scene)) * intensity` (a lerp would darken everything below it).
+//
+// Grading (A.2, `post::grading`) is the pipeline's `GX_GRADING` override, `ShaderGrading`'s bits:
+// 1 the parametric knobs on the white-balanced scene before the curve (`gx_grade`: Bevy 0.16's
+// `sectional_color_grading`, MIT OR Apache-2.0, Copyright Bevy contributors, with contrast in log
+// space about middle grey and vibrance after Filament's `ColorGrading.cpp`, Apache-2.0, Copyright
+// The Android Open Source Project), 2 the display LUT on the encoded colour after the curve and
+// before the dither (`gx_grade_lut`: pmndrs/postprocessing's tetrahedral `lut-3d.frag`, Zlib,
+// Copyright Raoul van Rüschen). 0, the default, compiles neither: the picture is the one before
+// grading, byte for byte. The LUT texel holds its change from the identity, so an identity LUT
+// adds 0 and changes nothing either.
 
 override GX_TONEMAPPER: u32 = 0u;
+override GX_GRADING: u32 = 0u;
 
 struct GxTonemapParams {
     // xy: the source's size in texels (the render size); zw: 1 / it.
@@ -42,14 +60,28 @@ struct GxTonemapParams {
     // xy: the target's size in pixels; zw: 1 / it.
     output: vec4<f32>,
     // x: the dither amplitude in encoded units (0: none); y: the sharpness (0..1); z: bloom's
-    // intensity (0: no bloom); w: the bloom chain's scale (1 / mips).
+    // intensity (0: no bloom); w: the bloom chain's scale (1: its weights sum to 1).
     shape: vec4<f32>,
     // x: the frame index the dither is keyed to.
     frame: vec4<u32>,
     // x: bloom's stylistic threshold (0: none, the lerp); y: its soft knee as a fraction of it.
     bloom: vec4<f32>,
-    // xyz: the look's white-balance gains (luminance-normalised; 1 each leaves the scene as it is).
-    balance: vec4<f32>,
+    // The look's white balance on linear rgb (`GpuTonemapParams::balance`): a CIECAT16 chromatic
+    // adaptation times the diagonal of its luminance-normalised gains (identity leaves the scene
+    // as it is).
+    balance: mat3x3<f32>,
+    // AgX punchy's curve (`AgxCurve`): x contrast, y the toe's a, z the shoulder's slope, w its w.
+    curve: vec4<f32>,
+    // Grading (`Grading::rows`): x contrast, y saturation, z vibrance, w the LUT's intensity.
+    grade: vec4<f32>,
+    // xy: the midtones' level range; z: the LUT's side.
+    grade_range: vec4<f32>,
+    // Each section's knob: x shadows, y midtones, z highlights.
+    section_saturation: vec4<f32>,
+    section_contrast: vec4<f32>,
+    section_gamma: vec4<f32>,
+    section_gain: vec4<f32>,
+    section_lift: vec4<f32>,
 }
 
 @group(0) @binding(0) var gx_hdr_scene: texture_2d<f32>;
@@ -58,6 +90,9 @@ struct GxTonemapParams {
 @group(0) @binding(3) var gx_hdr_msaa: texture_multisampled_2d<f32>;
 // The bloom chain's top (`post::bloom::TONEMAP_BLOOM_BINDING`), read through the filtering sampler.
 @group(0) @binding(4) var gx_bloom_chain: texture_2d<f32>;
+// The grading LUT's change from the identity per texel (`post::grading::GRADING_LUT_BINDING`);
+// a neutral 1x1x1 texel when the look has none.
+@group(0) @binding(5) var gx_grading_lut: texture_3d<f32>;
 
 // RCAS's lobe limit (0.25 - 1/16): the sharpen never inverts a neighbourhood.
 const GX_TM_LOBE_LIMIT: f32 = 0.1875;
@@ -70,6 +105,18 @@ const GX_TM_RADIANCE_MAX: f32 = 64512.0;
 // Khronos PBR Neutral: where highlight compression starts, and how far compressed highlights desaturate.
 const GX_NEUTRAL_START: f32 = 0.76;
 const GX_NEUTRAL_DESATURATION: f32 = 0.15;
+// AgX punchy (`post::tonemap`'s AGX_CROSSOVER, AGX_GREY_OUT, AGX_PUNCHY_SATURATION): the scene
+// value the toe and the shoulder meet at, the display value it maps to (plain AgX's grey), and the
+// saturation about luminance after the curve.
+const GX_AWP_CROSSOVER: f32 = 0.18;
+const GX_AWP_GREY_OUT: f32 = 0.2145;
+const GX_AWP_SATURATION: f32 = 1.4;
+// Grading (`post::grading`): middle grey, half the blend between sections (Bevy's LEVEL_MARGIN),
+// the darkest value the log-space contrast reads, vibrance's steepness (Filament's).
+const GX_GRADE_GREY: f32 = 0.18;
+const GX_GRADE_MARGIN: f32 = 0.1;
+const GX_GRADE_FLOOR: f32 = 1e-10;
+const GX_GRADE_VIBRANCE_STEEPNESS: f32 = 3.0;
 
 struct GxTonemapOut {
     @builtin(position) clip: vec4<f32>,
@@ -102,13 +149,42 @@ fn gx_tm_agx_contrast(x: vec3<f32>) -> vec3<f32> {
     return 15.5 * x4 * x2 - 40.14 * x4 * x + 31.96 * x4 - 6.868 * x2 * x + 0.4298 * x2 + 0.1191 * x - 0.00232;
 }
 
-// AgX's punchy look: slope 1, offset 0, power 1.35 per channel, saturation 1.4 about luma.
-fn gx_tm_agx_punchy(c: vec3<f32>) -> vec3<f32> {
-    let luma = dot(c, vec3<f32>(0.2126, 0.7152, 0.0722));
-    return luma + 1.4 * (pow(max(c, vec3<f32>(0.0)), vec3<f32>(1.35)) - luma);
+// Godot's `allenwp_curve` (MIT): a sigmoid power toe below the crossover, a Reinhard-like
+// shoulder above it reaching display white at the curve's white, generalised to a crossover that
+// maps to GX_AWP_GREY_OUT instead of itself (the CPU solves the toe for it).
+fn gx_tm_awp(x: vec3<f32>) -> vec3<f32> {
+    let shoulder_max = 1.0 - GX_AWP_GREY_OUT;
+    let s = x - GX_AWP_CROSSOVER;
+    let slope_s = gx_tm.curve.z * s;
+    let shoulder = slope_s * (1.0 + s / gx_tm.curve.w) / (1.0 + slope_s / shoulder_max) + GX_AWP_GREY_OUT;
+    let t = pow(x, vec3<f32>(gx_tm.curve.x));
+    let toe = t / (t + gx_tm.curve.y);
+    return select(shoulder, toe, x < vec3<f32>(GX_AWP_CROSSOVER));
 }
 
-fn gx_tm_agx(color: vec3<f32>, punchy: bool) -> vec3<f32> {
+// Godot's `tonemap_agx` (MIT): the combined Rec. 709 -> Rec. 2020 -> AgX inset matrix, the curve,
+// a clip at white and the combined outset -> Rec. 709 matrix; then the punchy saturation, on
+// display-encoded values (gamma 2.2) as pass 1's punchy saturated the sigmoid's output: on
+// display-linear values it pushed a sunlit blade's small blue channel to 0 (acid yellow grass).
+fn gx_tm_agx_punchy(color: vec3<f32>) -> vec3<f32> {
+    let inset = mat3x3<f32>(
+        vec3<f32>(0.544814746488245, 0.140416948464053, 0.0888104196149096),
+        vec3<f32>(0.373787398372697, 0.754137554567394, 0.178871756420858),
+        vec3<f32>(0.0813978551390581, 0.105445496968552, 0.732317823964232)
+    );
+    let outset = mat3x3<f32>(
+        vec3<f32>(1.96488741169489, -0.299313364904742, -0.164352742528393),
+        vec3<f32>(-0.855988495690215, 1.32639796461980, -0.238183969428088),
+        vec3<f32>(-0.108898916004672, -0.0270845997150571, 1.40253671195648)
+    );
+    let c = outset * min(gx_tm_awp(inset * color), vec3<f32>(1.0));
+    let e = pow(max(c, vec3<f32>(0.0)), vec3<f32>(1.0 / 2.2));
+    let luma = dot(e, vec3<f32>(0.2126, 0.7152, 0.0722));
+    let saturated = clamp(luma + GX_AWP_SATURATION * (e - luma), vec3<f32>(0.0), vec3<f32>(1.0));
+    return pow(saturated, vec3<f32>(2.2));
+}
+
+fn gx_tm_agx(color: vec3<f32>) -> vec3<f32> {
     let srgb_to_rec2020 = mat3x3<f32>(vec3<f32>(0.6274, 0.0691, 0.0164), vec3<f32>(0.3293, 0.9195, 0.0880), vec3<f32>(0.0433, 0.0113, 0.8956));
     let rec2020_to_srgb = mat3x3<f32>(vec3<f32>(1.6605, -0.1246, -0.0182), vec3<f32>(-0.5876, 1.1329, -0.1006), vec3<f32>(-0.0728, -0.0083, 1.1187));
     let inset = mat3x3<f32>(
@@ -125,9 +201,6 @@ fn gx_tm_agx(color: vec3<f32>, punchy: bool) -> vec3<f32> {
     c = max(c, vec3<f32>(1e-10));
     c = clamp((log2(c) - GX_AGX_MIN_EV) / (GX_AGX_MAX_EV - GX_AGX_MIN_EV), vec3<f32>(0.0), vec3<f32>(1.0));
     c = gx_tm_agx_contrast(c);
-    if punchy {
-        c = gx_tm_agx_punchy(c);
-    }
     c = outset * c;
     c = pow(max(c, vec3<f32>(0.0)), vec3<f32>(2.2));
     return clamp(rec2020_to_srgb * c, vec3<f32>(0.0), vec3<f32>(1.0));
@@ -147,12 +220,88 @@ fn gx_tm_neutral(color: vec3<f32>) -> vec3<f32> {
     return clamp(mix(c * (new_peak / peak), vec3<f32>(new_peak), g), vec3<f32>(0.0), vec3<f32>(1.0));
 }
 
-// The look's curve: pre-exposed linear radiance, white-balanced by the look's gains, to
-// display-linear colour in [0, 1].
+// The section weights of `level` (shadows, midtones, highlights; they sum to 1): Blender's
+// cut-offs, blended GX_GRADE_MARGIN either side of each (shadows into midtones, where Bevy's
+// `levels.z` blends them into the highlights).
+fn gx_grade_weights(level: f32) -> vec3<f32> {
+    let into_mid = clamp((level - gx_tm.grade_range.x) / (2.0 * GX_GRADE_MARGIN) + 0.5, 0.0, 1.0);
+    let into_high = clamp((level - gx_tm.grade_range.y) / (2.0 * GX_GRADE_MARGIN) + 0.5, 0.0, 1.0);
+    return vec3<f32>(1.0 - into_mid, into_mid - into_high, into_high);
+}
+
+// The parametric grading of a white-balanced scene colour (`Grading::grade`): saturation, contrast
+// in log space about middle grey, the ASC CDL (gain, lift, gamma) and vibrance, each knob the
+// section-weighted mix of the shadows', midtones' and highlights'.
+fn gx_grade(color: vec3<f32>) -> vec3<f32> {
+    let w = gx_grade_weights((color.r + color.g + color.b) / 3.0);
+    let saturation = dot(w, gx_tm.section_saturation.xyz) * gx_tm.grade.y;
+    let contrast = dot(w, gx_tm.section_contrast.xyz) * gx_tm.grade.x;
+    let gamma = dot(w, gx_tm.section_gamma.xyz);
+    let gain = dot(w, gx_tm.section_gain.xyz);
+    let lift = dot(w, gx_tm.section_lift.xyz);
+    let luma = gx_tm_luma(color);
+    var c = luma + saturation * (color - luma);
+    // A knob left at its neutral value on every section costs nothing (`gx_tm` is uniform, so the
+    // branches are too): the log and power steps are most of the grading's time.
+    if contrast != 1.0 {
+        c = GX_GRADE_GREY * exp2(log2(max(c, vec3<f32>(GX_GRADE_FLOOR)) / GX_GRADE_GREY) * contrast);
+    }
+    c = c * gain + lift;
+    if any(gx_tm.section_gamma.xyz != vec3<f32>(1.0)) {
+        c = sign(c) * pow(abs(c), vec3<f32>(1.0 / gamma));
+    }
+    if gx_tm.grade.z != 1.0 {
+        // Filament's vibrance: saturation weighted by how far red does not already lead.
+        let red_excess = c.r - max(c.g, c.b);
+        let s = (gx_tm.grade.z - 1.0) / (1.0 + exp(-red_excess * GX_GRADE_VIBRANCE_STEEPNESS)) + 1.0;
+        c = (1.0 - s) * gx_tm_luma(c) + s * c;
+    }
+    return clamp(c, vec3<f32>(0.0), vec3<f32>(GX_TM_RADIANCE_MAX));
+}
+
+// The grading LUT over an encoded display colour (`LutUpload::apply`): pmndrs/postprocessing's
+// tetrahedral interpolation (Zlib), the cell's corner, one step along the largest fraction, one
+// more along the second and the far corner, weighted barycentrically from four loads (a hardware
+// trilinear filter quantizes its fractions to 8 bits); the cell is picked without branches here.
+// The texels hold the change from the identity: the colour plus the change at the LUT's intensity
+// (the target clamps it).
+fn gx_grade_lut(encoded: vec3<f32>) -> vec3<f32> {
+    let side = gx_tm.grade_range.z;
+    let grid = clamp(encoded, vec3<f32>(0.0), vec3<f32>(1.0)) * (side - 1.0);
+    let base = min(floor(grid), vec3<f32>(side - 2.0));
+    let f = grid - base;
+    // The tetrahedron without branches: the largest fraction's axis (ties to red, then green) and
+    // the smallest's (ties to blue, then green); the walk goes along the largest, then along every
+    // axis but the smallest, then to the far corner. The same cells as pmndrs' six branches.
+    let x_largest = f.r >= f.g && f.r >= f.b;
+    let y_largest = !x_largest && f.g >= f.b;
+    let largest = vec3<f32>(f32(x_largest), f32(y_largest), f32(!x_largest && !y_largest));
+    let z_smallest = f.b <= f.r && f.b <= f.g;
+    let y_smallest = !z_smallest && f.g <= f.r;
+    let smallest = vec3<f32>(f32(!z_smallest && !y_smallest), f32(y_smallest), f32(z_smallest));
+    let high = dot(f, largest);
+    let low = dot(f, smallest);
+    let mid = f.r + f.g + f.b - high - low;
+    let corner = vec3<i32>(base);
+    let change = (1.0 - high) * textureLoad(gx_grading_lut, corner, 0).rgb
+        + (high - mid) * textureLoad(gx_grading_lut, corner + vec3<i32>(largest), 0).rgb
+        + (mid - low) * textureLoad(gx_grading_lut, corner + vec3<i32>(1.0 - smallest), 0).rgb
+        + low * textureLoad(gx_grading_lut, corner + vec3<i32>(1), 0).rgb;
+    return encoded + change * gx_tm.grade.w;
+}
+
+// The look's curve: pre-exposed linear radiance, white-balanced by the look's matrix and graded,
+// to display-linear colour in [0, 1].
 fn gx_tonemap_curve(color: vec3<f32>) -> vec3<f32> {
-    let c = min(max(color * gx_tm.balance.rgb, vec3<f32>(0.0)), vec3<f32>(GX_TM_RADIANCE_MAX));
-    if GX_TONEMAPPER == 1u || GX_TONEMAPPER == 4u {
-        return gx_tm_agx(c, GX_TONEMAPPER == 4u);
+    var c = min(max(gx_tm.balance * color, vec3<f32>(0.0)), vec3<f32>(GX_TM_RADIANCE_MAX));
+    if (GX_GRADING & 1u) != 0u {
+        c = gx_grade(c);
+    }
+    if GX_TONEMAPPER == 1u {
+        return gx_tm_agx(c);
+    }
+    if GX_TONEMAPPER == 4u {
+        return gx_tm_agx_punchy(c);
     }
     if GX_TONEMAPPER == 2u {
         return gx_tm_aces(c);
@@ -205,6 +354,9 @@ fn gx_tm_bloom(hdr: vec3<f32>, uv: vec2<f32>) -> vec3<f32> {
 // composited, dithered when the pass asks.
 fn gx_tm_display(hdr: vec3<f32>, pixel: vec2<f32>, uv: vec2<f32>) -> vec4<f32> {
     var encoded = gx_tm_encode(gx_tonemap_curve(gx_tm_bloom(hdr, uv)));
+    if (GX_GRADING & 2u) != 0u {
+        encoded = gx_grade_lut(encoded);
+    }
     if gx_tm.shape.x > 0.0 {
         encoded += (gx_tm_noise(floor(pixel), gx_tm.frame.x) * 2.0 - 1.0) * gx_tm.shape.x;
     }
@@ -303,6 +455,9 @@ fn fs_tonemap_sharpen(in: GxTonemapOut) -> @location(0) vec4<f32> {
     let hit_max = (vec3<f32>(1.0) - max(hi, e)) / min(4.0 * lo - 4.0, vec3<f32>(-1.0e-5));
     let lobe = max(-GX_TM_LOBE_LIMIT, min(gx_tm_max3(max(-hit_min, hit_max)), 0.0)) * gx_tm.shape.y;
     var encoded = clamp((lobe * (b + d + f + h) + e) / (4.0 * lobe + 1.0), vec3<f32>(0.0), vec3<f32>(1.0));
+    if (GX_GRADING & 2u) != 0u {
+        encoded = gx_grade_lut(encoded);
+    }
     if gx_tm.shape.x > 0.0 {
         encoded += (gx_tm_noise(floor(in.clip.xy), gx_tm.frame.x) * 2.0 - 1.0) * gx_tm.shape.x;
     }

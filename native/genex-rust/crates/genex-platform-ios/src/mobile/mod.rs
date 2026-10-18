@@ -18,18 +18,22 @@
 //! - [`keyboard`]: the soft keyboard's typing through genex-hud's bridge.
 //! - [`orientation`]: rotation under one world size (Q5).
 //! - [`thermal`]: frame pacing from the thermal state.
+//! - [`frame_time`]: what a display frame feeds the live clock (whole refreshes).
+//! - [`recovery`]: when a lost GPU device is re-created.
 //! - [`records`]: the self-test record, the typed `gpu-unsupported` record and the lifecycle log.
 //! - [`selftest`]: the game's self-test run once on the device's GPU before live play.
 //! - [`shell`]: the winit + wgpu loop (WebGPU-core adapter check, surface per `resumed`, present).
 
 pub mod admit;
 pub mod audio;
+pub mod frame_time;
 pub mod gamepad;
 pub mod keyboard;
 pub mod lifecycle;
 pub mod orientation;
 pub mod present;
 pub mod records;
+pub mod recovery;
 pub mod refusal;
 pub mod safe_area;
 pub mod selftest;

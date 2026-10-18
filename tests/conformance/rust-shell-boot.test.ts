@@ -15,7 +15,6 @@
  * `STUDIO_BROWSER_TESTS=1` and a Chromium already installed; nothing is downloaded.
  */
 import assert from "node:assert/strict";
-import { existsSync } from "node:fs";
 import { lstat, mkdir, readFile, writeFile } from "node:fs/promises";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
@@ -25,6 +24,7 @@ import { fileURLToPath } from "node:url";
 import { type Browser, chromium } from "@playwright/test";
 import { webShellPage } from "../../src/main/rust-build-web.ts";
 import { SECOND_MS } from "../../src/shared/duration.ts";
+import { playwrightHeadlessChromiumOnDisk } from "../helpers/playwright-chromium.ts";
 import { tmpDir } from "../helpers/tmp.ts";
 
 const REPO = fileURLToPath(new URL("../..", import.meta.url));
@@ -72,17 +72,9 @@ const BROKEN: ReadonlyArray<{ name: string; module: string | null; reason: RegEx
 
 const browserSkip = (): string | false => {
   if (process.env.STUDIO_BROWSER_TESTS !== "1") return "launches Chromium; set STUDIO_BROWSER_TESTS=1 to run";
-  let executable = "";
-  try {
-    executable = chromium.executablePath();
-  } catch {
-    executable = "";
-  }
-  const revision = /^(.*[/\\])chromium-(\d+)[/\\]/.exec(executable);
-  const headlessShell = revision ? `${revision[1]}chromium_headless_shell-${revision[2]}` : "";
-  const installed =
-    (executable !== "" && existsSync(executable)) || (headlessShell !== "" && existsSync(headlessShell));
-  return installed ? false : "no Playwright Chromium is installed; this suite never downloads one";
+  return playwrightHeadlessChromiumOnDisk()
+    ? false
+    : "no Playwright Chromium is installed; this suite never downloads one";
 };
 
 /** A static server over `root`: any regular file under it (never through a link), 404 otherwise; every path asked is recorded. */
@@ -240,9 +232,9 @@ async function bootServed(browser: Browser, row: AssetRow) {
   }
 }
 
-/** The paths a page may ask for: the page, its module, the asset map and files under `assets/`. */
+/** The paths a page may ask for: the page, its module and wasm, the asset map and files under `assets/`. */
 const insideTheGame = (request: string) =>
-  ["/index.html", "/game.js", "/assets.json"].includes(request) || request.startsWith("/assets/");
+  ["/index.html", "/game.js", "/game_bg.wasm", "/assets.json"].includes(request) || request.startsWith("/assets/");
 
 describe("the Rust web shell loads the game's staged assets before the first frame", { skip: browserSkip() }, () => {
   let browser: Browser;
@@ -433,7 +425,8 @@ describe("the Rust web shell maps a click through the letterbox the presenter dr
           assert.deepEqual(inputs, [], "a click on a bar reaches the game as nothing");
           return;
         }
-        assert.equal(inputs.length, 1, JSON.stringify(inputs));
+        // The press carries the pointer and holds Mouse1; the release lets it go (P2-0.15, review F9).
+        assert.equal(inputs.length, 2, JSON.stringify(inputs));
         const pointer = inputs[0]?.pointer;
         assert.ok(pointer, "the click carries a pointer");
         assert.ok(Math.abs(pointer.x - row.world.x) < 0.003, `x ${pointer.x} vs ${row.world.x}`);
@@ -606,6 +599,66 @@ describe("the Rust web shell sizes its canvas to the page, whenever the page get
       served.close();
     }
   });
+
+  // Renderer pass 2 (TS-F3): a canvas whose CSS side is fractional (a flex slot, a zoomed page)
+  // covers a device-pixel box its rounded CSS side times the ratio misses by a pixel, and the
+  // compositor then resampled every frame of the game.
+  it("backs a canvas of fractional CSS size with exactly its device-pixel box", async () => {
+    const root = await tmpDir("rust-shell-device-pixels-");
+    await mkdir(root, { recursive: true });
+    await writeFile(path.join(root, "index.html"), webShellPage(await readFile(SHELL, "utf8"), "Device pixels"));
+    await writeFile(path.join(root, "assets.json"), JSON.stringify({ version: 1, files: [] }));
+    await writeFile(path.join(root, "game.js"), HELD_BOOT_MODULE);
+    const served = await serve(root);
+    // Headless Chromium's emulated ratios leave the device-pixel box in CSS pixels, so the row runs
+    // at 1 and makes the box miss the rounded CSS size with a sub-pixel offset and width instead.
+    const context = await browser.newContext({ viewport: { width: 800, height: 450 }, deviceScaleFactor: 1 });
+    try {
+      const page = await context.newPage();
+      await page.addInitScript(CORE_ADAPTER);
+      await page.goto(`${served.origin}/index.html?paused`);
+      await page.waitForFunction(
+        () => typeof (window as unknown as { __releaseBoot?: unknown }).__releaseBoot === "function",
+        null,
+        { timeout: BOOT_TIMEOUT_MS },
+      );
+      await page.addStyleTag({
+        content: "#game { margin: 0.3px 0 0 0.3px; width: 640.4px !important; height: 360.4px !important; }",
+      });
+      await page.evaluate(() => (window as unknown as { __releaseBoot: () => void }).__releaseBoot());
+      await page.waitForFunction(
+        (running) => (window as unknown as ShellWindow).GenexShell?.status.state === running,
+        ShellState.Running,
+        { timeout: BOOT_TIMEOUT_MS },
+      );
+      await page.evaluate(() => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done))));
+      const seen = await page.evaluate(
+        () =>
+          new Promise<{ backing: number[]; box: number[]; css: number[] }>((done) => {
+            const canvas = document.getElementById("game") as HTMLCanvasElement;
+            const observer = new ResizeObserver((entries) => {
+              observer.disconnect();
+              const box = entries[0].devicePixelContentBoxSize[0];
+              const css = [
+                Math.round(canvas.clientWidth * devicePixelRatio),
+                Math.round(canvas.clientHeight * devicePixelRatio),
+              ];
+              done({ backing: [canvas.width, canvas.height], box: [box.inlineSize, box.blockSize], css });
+            });
+            observer.observe(canvas, { box: "device-pixel-content-box" });
+          }),
+      );
+      assert.notDeepEqual(
+        seen.css,
+        seen.box,
+        `the row needs a CSS size whose rounding misses the box: ${JSON.stringify(seen)}`,
+      );
+      assert.deepEqual(seen.backing, seen.box, `the drawing buffer is the device-pixel box: ${JSON.stringify(seen)}`);
+    } finally {
+      await context.close();
+      served.close();
+    }
+  });
 });
 
 // ── the shell's display frames on a jittery browser clock ──
@@ -730,4 +783,190 @@ describe("the Rust web shell paces the sim on the display's own refresh", { skip
       }
     });
   }
+});
+
+// ── a lost device and the page's input (renderer pass 2, P2-0.15: review F4, F9) ──
+
+/** The frame the stand-in game's device is lost on. */
+const LOST_AT_FRAME = 5;
+
+/**
+ * A booting stand-in that records every `input` verb, holds one save not yet flushed, and from
+ * `window.__lostAt` animation frames on refuses its frame as the module refuses a lost device:
+ * an Error whose `code` is `device-lost`.
+ */
+const INPUT_MODULE = [
+  "window.__inputs = [];",
+  "window.__flushed = [];",
+  "window.__frames = 0;",
+  "let pending = [['slot.sav', new Uint8Array([1, 2, 3])]];",
+  "export default async function init() {}",
+  'export function studio_saves_database() { return "genex-shell-input-test"; }',
+  "export function studio_saves_preload() {}",
+  "export function studio_saves_unavailable() {}",
+  'export function studio_saves_status() { return "{}"; }',
+  "export function studio_saves_pending() { return pending.length; }",
+  "export function studio_saves_take() { const taken = pending; pending = []; return taken; }",
+  "export function studio_saves_flushed(error, names) { window.__flushed.push({ error, names }); }",
+  "export function studio_assets_plan() { return []; }",
+  "export function studio_assets_preload() {}",
+  "export async function studio_boot() { return JSON.stringify({ ok: true, receipt: {}, world: [960, 540] }); }",
+  'export function studio_call(op, arg) { if (op === "input") window.__inputs.push(JSON.parse(arg)); return JSON.stringify({ id: null, ok: true, op, result: {} }); }',
+  "export function studio_frame() {",
+  "  window.__frames += 1;",
+  "  if (window.__lostAt && window.__frames >= window.__lostAt) {",
+  '    throw Object.assign(new Error("device-lost: the GPU device was lost"), { code: "device-lost" });',
+  "  }",
+  "  return 0;",
+  "}",
+  "",
+].join("\n");
+
+interface InputWindow {
+  __inputs: Array<Record<string, unknown>>;
+  __flushed: Array<{ error: string | null; names: string[] }>;
+  __lostAt?: number;
+}
+
+describe("the Rust web shell's input and a lost device", { skip: browserSkip() }, () => {
+  let browser: Browser;
+  let root: string;
+  let served: { origin: string; requests: string[]; close: () => void };
+  before(async () => {
+    browser = await chromium.launch({ headless: true });
+    root = await tmpDir("rust-shell-input-");
+    await mkdir(root, { recursive: true });
+    await writeFile(path.join(root, "index.html"), webShellPage(await readFile(SHELL, "utf8"), "Input"));
+    await writeFile(path.join(root, "assets.json"), JSON.stringify({ version: 1, files: [] }));
+    await writeFile(path.join(root, "game.js"), INPUT_MODULE);
+    served = await serve(root);
+  });
+  after(async () => {
+    served?.close();
+    await browser?.close();
+  });
+
+  /** A booted page of the stand-in game, at a 16:9 viewport, its pads stubbed by `pads` (an init script). */
+  async function booted(pads = "") {
+    const context = await browser.newContext({ viewport: { width: 640, height: 360 }, deviceScaleFactor: 1 });
+    const page = await context.newPage();
+    await page.addInitScript(CORE_ADAPTER);
+    if (pads) await page.addInitScript(pads);
+    await page.goto(`${served.origin}/index.html?paused`);
+    await page.waitForFunction(
+      (running) => (window as unknown as ShellWindow).GenexShell?.status.state === running,
+      ShellState.Running,
+      { timeout: BOOT_TIMEOUT_MS },
+    );
+    const inputs = () => page.evaluate(() => (window as unknown as InputWindow).__inputs.splice(0));
+    return { context, page, inputs };
+  }
+
+  // Review F4: a lost device froze the canvas while the page said `running`, and nothing was saved.
+  it("a frame refused device-lost flushes the saves and shows the card with that code", async () => {
+    const { context, page } = await booted();
+    try {
+      await page.evaluate((at) => {
+        (window as unknown as InputWindow).__lostAt = (window as unknown as { __frames: number }).__frames + at;
+      }, LOST_AT_FRAME);
+      await page.waitForFunction(
+        (failed) => (window as unknown as ShellWindow).GenexShell.status.state === failed,
+        ShellState.Failed,
+        { timeout: BOOT_TIMEOUT_MS },
+      );
+      const status = await page.evaluate(() => (window as unknown as ShellWindow).GenexShell.status);
+      assert.equal(status.code, "device-lost", JSON.stringify(status));
+      await page.waitForFunction(() => (window as unknown as InputWindow).__flushed.length > 0, null, {
+        timeout: BOOT_TIMEOUT_MS,
+      });
+      const flushed = await page.evaluate(() => (window as unknown as InputWindow).__flushed);
+      assert.deepEqual(flushed[0]?.names, ["slot.sav"], "the pending save was written before the card");
+      const card = page.locator('#unsupported [data-genex-card="failed"]');
+      await card.waitFor({ state: "visible", timeout: BOOT_TIMEOUT_MS });
+      assert.equal(await card.locator("[data-genex-code]").textContent(), "device-lost");
+    } finally {
+      await context.close();
+    }
+  });
+
+  // Review F9: a key held when focus left stayed held forever (its keyup went elsewhere).
+  it("keys held when the canvas loses focus are released", async () => {
+    const { context, page, inputs } = await booted();
+    try {
+      await page.mouse.click(320, 180);
+      await inputs();
+      await page.keyboard.down("KeyW");
+      await page.keyboard.down("ShiftLeft");
+      await page.evaluate(() => document.getElementById("game")?.blur());
+      const sent = await inputs();
+      const released = sent.filter((input) => Array.isArray(input.up)).flatMap((input) => input.up as string[]);
+      assert.deepEqual([...released].sort(), ["KeyW", "ShiftLeft"], JSON.stringify(sent));
+      await page.evaluate(() => window.dispatchEvent(new Event("blur")));
+      assert.deepEqual(await inputs(), [], "nothing is held any more: nothing to release");
+    } finally {
+      await context.close();
+    }
+  });
+
+  it("a drag holds Mouse1, sends the movement as look and lets go; a click no tick saw is a tap", async () => {
+    const { context, page, inputs } = await booted();
+    try {
+      await page.mouse.move(320, 180);
+      await page.mouse.down();
+      await page.mouse.move(330, 175);
+      await page.mouse.up();
+      const drag = await inputs();
+      assert.deepEqual(drag[0]?.down, ["Mouse1"], JSON.stringify(drag));
+      assert.ok(drag[0]?.pointer, "the press carries the pointer");
+      const looks = drag.filter((input) => input.look).map((input) => input.look as { x: number; y: number });
+      const total = looks.reduce((sum, look) => ({ x: sum.x + look.x, y: sum.y + look.y }), { x: 0, y: 0 });
+      assert.deepEqual(total, { x: 10, y: -5 }, JSON.stringify(drag));
+      const last = drag.at(-1);
+      assert.deepEqual(last?.up, ["Mouse1"]);
+      assert.deepEqual(last?.tap, ["Mouse1"], "the paused stand-in ran no tick: the click is a tap too");
+      await page.mouse.move(400, 200);
+      assert.deepEqual(await inputs(), [], "a move with no button held and no lock is no look");
+    } finally {
+      await context.close();
+    }
+  });
+
+  it("the wheel reaches the game in pixels", async () => {
+    const { context, page, inputs } = await booted();
+    try {
+      await page.mouse.move(320, 180);
+      await page.mouse.wheel(0, 120);
+      await page.waitForFunction(() => (window as unknown as InputWindow).__inputs.length > 0, null, {
+        timeout: BOOT_TIMEOUT_MS,
+      });
+      assert.deepEqual(await inputs(), [{ wheel: { x: 0, y: 120 } }]);
+    } finally {
+      await context.close();
+    }
+  });
+
+  it("a real gamepad is sent in the standard order when it changes, and once more when it goes", async () => {
+    const pads = `{
+      window.__pad = { index: 0, connected: true, buttons: [{ value: 0, pressed: false }, { value: 1, pressed: true }], axes: [0.5, -1] };
+      navigator.getGamepads = () => [window.__pad];
+    }`;
+    const { context, page, inputs } = await booted(pads);
+    try {
+      await page.waitForFunction(() => (window as unknown as InputWindow).__inputs.length > 0, null, {
+        timeout: BOOT_TIMEOUT_MS,
+      });
+      assert.deepEqual(await inputs(), [{ pads: [{ index: 0, connected: true, buttons: [0, 1], axes: [0.5, -1] }] }]);
+      await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+      assert.deepEqual(await inputs(), [], "an unchanged pad is not sent again");
+      await page.evaluate(() => {
+        (window as unknown as { __pad: unknown }).__pad = null;
+      });
+      await page.waitForFunction(() => (window as unknown as InputWindow).__inputs.length > 0, null, {
+        timeout: BOOT_TIMEOUT_MS,
+      });
+      assert.deepEqual(await inputs(), [{ pads: [{ index: 0, connected: false }] }]);
+    } finally {
+      await context.close();
+    }
+  });
 });

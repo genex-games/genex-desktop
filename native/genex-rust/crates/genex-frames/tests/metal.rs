@@ -241,3 +241,82 @@ fn metal_a_frame_without_a_ring_is_refused_no_ring() {
     assert_eq!(refused.err().map(|e| e.code), Some(genex_frames::FramesCode::NoRing));
     assert!(port.is_empty());
 }
+
+/// Side of the textures the busy-GPU stand-in copies between.
+const BUSY_SIDE: u32 = 4096;
+/// Copies in one busy-GPU submission (each moves 128 MiB).
+const BUSY_COPIES: u32 = 60;
+/// How long a row polls for a submitted frame to be sent.
+const SENT_WITHIN: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// A game frame's GPU work as queue order sees it: many large copies submitted before the blit.
+fn busy_gpu(gpu: &MetalGpu) {
+    let texture = |label| {
+        gpu.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some(label),
+            size: wgpu::Extent3d { width: BUSY_SIDE, height: BUSY_SIDE, depth_or_array_layers: 1 },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba16Float,
+            usage: wgpu::TextureUsages::COPY_SRC | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        })
+    };
+    let (from, to) = (texture("busy from"), texture("busy to"));
+    let mut encoder = gpu.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("busy") });
+    for _ in 0..BUSY_COPIES {
+        let size = wgpu::Extent3d { width: BUSY_SIDE, height: BUSY_SIDE, depth_or_array_layers: 1 };
+        encoder.copy_texture_to_texture(from.as_image_copy(), to.as_image_copy(), size);
+    }
+    gpu.queue.submit([encoder.finish()]);
+}
+
+/// Review F8: the Live ring's send waited on the GPU for every frame (queue order made it wait for
+/// the game's whole frame too), so CPU and GPU never overlapped in Studio's Live view. A submitted
+/// frame returns at once and goes out on a later poll, once the GPU finished it; until then no
+/// other frame is submitted.
+#[test]
+fn metal_a_submitted_frame_returns_before_the_gpu_finishes_and_is_sent_on_a_later_poll() {
+    let Some(gpu) = gpu() else { return };
+    let (port, connection) = OwnPort::new();
+    let mut sender = FrameSender::new(&gpu.device, connection);
+    sender.set_ring(&gpu.device, RingSpec::new(5, WIDTH, HEIGHT, 3).expect("ring")).expect("ring made");
+    // Warm both paths' pipelines and the busy textures' allocation once.
+    busy_gpu(&gpu);
+    sender.present(&gpu.device, &gpu.queue, &source(&gpu, WIDTH, HEIGHT, 1)).expect("sent").expect("free");
+    let _ = port.receive();
+    assert!(sender.release(5, 0));
+
+    busy_gpu(&gpu);
+    let from = std::time::Instant::now();
+    sender.present(&gpu.device, &gpu.queue, &source(&gpu, WIDTH, HEIGHT, 2)).expect("sent").expect("free");
+    let waited = from.elapsed();
+    let _ = port.receive();
+    assert!(sender.release(5, 1));
+
+    busy_gpu(&gpu);
+    let from = std::time::Instant::now();
+    let submitted = sender.submit(&gpu.device, &gpu.queue, &source(&gpu, WIDTH, HEIGHT, 3)).expect("submitted");
+    let returned = from.elapsed();
+    eprintln!("present waited {waited:?} on a busy GPU; submit returned in {returned:?}");
+    assert_eq!(submitted, Some(3), "the frame's sequence number");
+    assert!(returned * 4 < waited, "submit returned in {returned:?}, present waited {waited:?}");
+    let again = sender.submit(&gpu.device, &gpu.queue, &source(&gpu, WIDTH, HEIGHT, 9)).expect("no error");
+    assert_eq!(again, None, "one frame in flight at a time");
+    let sent = loop {
+        if let Some(sent) = sender.poll_sent(&gpu.device).expect("polled") {
+            break sent;
+        }
+        assert!(from.elapsed() < SENT_WITHIN, "the frame went out once the GPU finished it");
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    };
+    assert_eq!((sent.slot, sent.seq), (2, 3));
+    let (message, surface) = port.receive();
+    let payload = message.payload;
+    let (slot, seq) = (payload.slot, payload.seq);
+    assert_eq!((slot, seq), (2, 3));
+    assert_bottom_up(&surface, WIDTH, HEIGHT, 3);
+    assert_eq!(sender.held_mask(), 0b100, "held once the host has it");
+    assert_eq!(sender.poll_sent(&gpu.device).expect("polled"), None, "nothing more in flight");
+}

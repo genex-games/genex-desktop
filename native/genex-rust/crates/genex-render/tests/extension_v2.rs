@@ -122,7 +122,7 @@ fn base_scene() -> Scene {
 
 /// The custom-material row's draw: a 1.5 m cube in the middle, half behind a wall.
 fn centre_draw(material: genex_render::extension::CustomMaterialId) -> CustomDraw {
-    CustomDraw { mesh: MeshId::CUBE, model: scaled([0.0, 0.75, 1.0], [1.5, 1.5, 1.5]), material, tint: [240, 240, 240, 255] }
+    CustomDraw { id: None, mesh: MeshId::CUBE, model: scaled([0.0, 0.75, 1.0], [1.5, 1.5, 1.5]), material, tint: [240, 240, 240, 255] }
 }
 
 /// The base frame with the custom-material row's wall in front of the centre cube's left half.
@@ -375,6 +375,25 @@ fn metal_golden_a_v2_material_shaded_by_gx_shade_pbr_renders() {
     assert!(lit[2] > lit[0] && lit[2] > 60, "the orange cube is lit where it faces the camera (BGRA {lit:?})");
     assert_ne!(pixel(&capture, 72, 34), pixel(&capture, 72, 22), "the top and the front face are shaded apart");
     check_golden_in("extension-v2", "material", &capture);
+}
+
+/// Look-integration L2 (B.4): a v2 material built to read the AO term as one with screen-space GI
+/// (`GX_AO_GI`, the renderer's own switch) draws the same picture on a frame whose AO does not run:
+/// the term bound there reads as full visibility and no light (a white texel read as GI lit every
+/// custom surface with its own albedo).
+#[test]
+#[ignore = "needs a GPU: run with --ignored metal"]
+fn metal_a_v2_material_reading_ssgi_draws_the_same_picture_where_ao_does_not_run() {
+    let Some(gpu) = gpu() else { return };
+    let mut renderer = Renderer::new(&gpu, WIDTH, HEIGHT).expect("renderer");
+    let mut materials = CustomMaterials::new(&gpu.device, core(), renderer.sample_count());
+    let shaded = materials.add_api(&gpu, ABI_V2, SHADED_V2, &shaded_uniforms(), &[]).expect("a v2 material");
+    let without = draw_with(&gpu, &mut renderer, &mut materials, &walled_scene(), &[centre_draw(shaded)]);
+    assert!(materials.set_ao_gi(true), "the v2 pipelines are built again");
+    assert!(!materials.set_ao_gi(true), "and only once");
+    let with = draw_with(&gpu, &mut renderer, &mut materials, &walled_scene(), &[centre_draw(shaded)]);
+    assert_eq!(pixel(&with, 72, 34), pixel(&without, 72, 34), "the lit face reads no GI light where AO does not run");
+    assert_eq!(with.digest(), without.digest(), "the same picture");
 }
 
 #[test]
@@ -807,7 +826,7 @@ fn metal_a_v2_material_through_gx_shade_pbr_is_fogged_as_the_built_in_surface() 
         let mut materials = CustomMaterials::new(&gpu.device, core(), renderer.sample_count());
         let pbr = materials.add_api(&gpu, ABI_V2, PBR_FOGGED_V2, &pbr_uniforms(metallic, roughness), &[]).expect("a v2 fogged material");
         materials.set_environment(Some(views.clone()));
-        let draw = CustomDraw { mesh: MeshId::SPHERE, model: sphere_model(), material: pbr, tint: SPHERE_TINT };
+        let draw = CustomDraw { id: None, mesh: MeshId::SPHERE, model: sphere_model(), material: pbr, tint: SPHERE_TINT };
         hdr_scene_with(&gpu, &mut renderer, &mut materials, &sphere_backdrop(), &[draw])
     };
     let (clear, foggy) = (built_in(Fog::default()), built_in(fog));
@@ -989,7 +1008,7 @@ fn metal_a_v2_material_under_an_hdri_shades_like_the_built_in_surface_and_unlike
             let mut materials = CustomMaterials::new(&gpu.device, core(), renderer.sample_count());
             let pbr = materials.add_api(&gpu, ABI_V2, PBR_V2, &pbr_uniforms(metallic, roughness), &[]).expect("a v2 material");
             materials.set_environment(environment_views);
-            let draw = CustomDraw { mesh: MeshId::SPHERE, model: sphere_model(), material: pbr, tint: SPHERE_TINT };
+            let draw = CustomDraw { id: None, mesh: MeshId::SPHERE, model: sphere_model(), material: pbr, tint: SPHERE_TINT };
             hdr_scene_with(&gpu, &mut renderer, &mut materials, &sphere_backdrop(), &[draw])
         };
         let disk = lit_disk(&built_in);
@@ -1339,7 +1358,7 @@ fn metal_a_v2_material_filters_specular_aliasing_as_the_built_in_surface_does_wh
         let mut materials = CustomMaterials::new(&gpu.device, core(), renderer.sample_count());
         let pbr = materials.add_api(&gpu, ABI_V2, source, &pbr_uniforms(metallic, roughness), &[]).expect("a v2 material");
         materials.set_environment(Some(views.clone()));
-        let draw = CustomDraw { mesh: MeshId::SPHERE, model: sphere_model(), material: pbr, tint: SPHERE_TINT };
+        let draw = CustomDraw { id: None, mesh: MeshId::SPHERE, model: sphere_model(), material: pbr, tint: SPHERE_TINT };
         hdr_scene_with(&gpu, &mut renderer, &mut materials, &sphere_backdrop(), &[draw])
     };
     let disk = lit_disk(&built_in);
@@ -1493,8 +1512,11 @@ fn metal_a_v2_material_under_the_physical_sky_is_hazed_as_the_built_in_surface()
     write_capture_evidence("v2-aerial-clear", &clear);
     let pixels = (SHADOW_ROW_SIZE.0 * SHADOW_ROW_SIZE.1) as usize;
     let differing = |a: &Capture, b: &Capture, by: u8| a.bgra().chunks(4).zip(b.bgra().chunks(4)).filter(|(x, y)| x.iter().zip(y.iter()).take(3).any(|(p, q)| p.abs_diff(*q) > by)).count();
-    let (hazed, apart) = (differing(&built_in, &clear, 1), differing(&built_in, &custom, 1));
-    eprintln!("far ground: the air moves {hazed} of {pixels} pixels by more than a level; the v2 ground differs from the built-in in {apart}");
+    // Any level counts (renderer pass 2 SI-04 flipped this from "more than a level"): with the air's
+    // transmittance per channel the warm ground's red is no longer dimmed by the blue channel's
+    // extinction, so the haze over it is the sky's blue in-scatter alone, one level at 2 km.
+    let (hazed, apart) = (differing(&built_in, &clear, 0), differing(&built_in, &custom, 0));
+    eprintln!("far ground: the air moves {hazed} of {pixels} pixels; the v2 ground differs from the built-in in {apart}");
     assert!(hazed > 1000, "the aerial perspective hazes the far ground ({hazed} pixels)");
     assert!(apart * 20 <= hazed, "the v2 ground is hazed otherwise than the built-in one in {apart} pixels ({hazed} hazed)");
 }
@@ -1797,4 +1819,77 @@ fn metal_a_v2_post_pass_reads_the_frames_jitter() {
     let [b, g, r, _] = pixel(&shot, WIDTH / 2, HEIGHT / 2);
     let expected = |jitter: f32| ((0.5 + jitter * 32.0) * 255.0).round() as i32;
     assert!((i32::from(r) - expected(FRAME_JITTER[0])).abs() <= 1 && (i32::from(g) - expected(FRAME_JITTER[1])).abs() <= 1, "rgb {r} {g} {b}");
+}
+
+// ---------------------------------------------------------------------------------------------
+// Renderer pass 2, P2-0.14 (RC-01, RC-16 row 1): the hdr and ldr post stages each write their own
+// rows. Both stages' rows used to be written into one buffer by `queue.write_buffer` before the
+// frame's one submission, so the ldr stage's (the output's size) overwrote the hdr stage's (the
+// render size): below scale 1 an hdr pass sampled a cropped scene.
+
+#[test]
+#[ignore = "needs a GPU: run with --ignored metal"]
+fn metal_an_hdr_post_pass_keeps_its_render_size_rows_when_an_ldr_pass_runs_in_the_frame() {
+    let Some(gpu) = gpu() else { return };
+    let mut images = Vec::new();
+    for with_ldr in [false, true] {
+        let mut frames = ibl_frame_renderer(&gpu, &genex_render::settings::Environment::Color, None);
+        frames.renderer_mut().set_render_scale(0.5);
+        let uv = frames.add_post_pass_api(&gpu, ABI_V2, PostStage::Hdr, UV_V2, &[], &[]).expect("a v2 hdr post writing gx_scene_uv");
+        let identity = frames.add_post_pass_api(&gpu, ABI_V1, PostStage::Ldr, IDENTITY_V1, &[], &[]).expect("a v1 ldr identity post");
+        let mut frame = base_frame();
+        frame.post_pass(uv);
+        if with_ldr {
+            frame.post_pass(identity);
+        }
+        frames.render(&gpu, &frame, CullPath::Gpu, None).expect("frame");
+        assert_eq!(frames.renderer().render_size(), (WIDTH / 2, HEIGHT / 2), "drawn at scale 0.5");
+        images.push(frames.capture(&gpu).expect("capture"));
+    }
+    let (alone, beside_ldr) = (&images[0], &images[1]);
+    let worst = alone.bgra().chunks(4).zip(beside_ldr.bgra().chunks(4)).map(|(a, b)| a[..3].iter().zip(&b[..3]).map(|(x, y)| x.abs_diff(*y)).max().unwrap_or(0)).max().unwrap_or(0);
+    let corner = |capture: &Capture| pixel(capture, WIDTH - 2, HEIGHT - 2);
+    assert!(worst <= 1, "the hdr pass beside an ldr pass reads other rows: worst channel {worst}, far corner {:?} against {:?} alone", corner(beside_ldr), corner(alone));
+}
+
+// ---------------------------------------------------------------------------------------------
+// Renderer pass 2, P2-0.14 (RC-04, RC-16 row 3): a Level-2 pipeline compiles inside error scopes,
+// so a source naga accepts but the pipeline cannot take is a typed refusal, never a panic of the
+// device's uncaptured-error handler on a compile thread raised again at the first draw.
+
+/// v2 material that naga accepts: an unsigned colour, which the float scene target cannot take
+/// (the pipeline fails, not the source).
+const UNSIGNED_MATERIAL_V2: &str = "
+@fragment
+fn fs_material(in: GxMaterialInV2) -> @location(0) vec4<u32> {
+    return vec4<u32>(1u, 2u, 3u, 4u);
+}
+";
+
+/// v2 post pass with the same unsigned output.
+const UNSIGNED_POST_V2: &str = "
+@fragment
+fn fs_post(in: GxPostInV2) -> @location(0) vec4<u32> {
+    return vec4<u32>(1u, 2u, 3u, 4u);
+}
+";
+
+#[test]
+#[ignore = "needs a GPU: run with --ignored metal"]
+fn metal_a_level_2_source_whose_pipeline_fails_after_naga_accepts_it_is_refused_typed() {
+    let Some(gpu) = gpu() else { return };
+    let mut renderer = Renderer::new(&gpu, WIDTH, HEIGHT).expect("renderer");
+    validate_api(ExtensionKind::Material, ABI_V2, UNSIGNED_MATERIAL_V2, &core()).expect("naga accepts the material");
+    validate_api(ExtensionKind::PostPass, ABI_V2, UNSIGNED_POST_V2, &core()).expect("naga accepts the post pass");
+    let mut materials = CustomMaterials::new(&gpu.device, core(), renderer.sample_count());
+    let error = materials.add_api(&gpu, ABI_V2, UNSIGNED_MATERIAL_V2, &[], &[]).expect_err("the material's pipeline fails");
+    assert_eq!(fault(&error), Some(ExtensionFault::Invalid), "a typed refusal: {error}");
+    let mut posts = PostPasses::new(&gpu.device, core()).expect("posts");
+    let error = posts.add_api(&gpu, ABI_V2, PostStage::Ldr, UNSIGNED_POST_V2, &[], &[]).expect_err("the post pass's pipeline fails");
+    assert_eq!(fault(&error), Some(ExtensionFault::Invalid), "a typed refusal: {error}");
+    // Nothing was admitted: the renderer and both registries keep drawing.
+    assert!(materials.is_empty() && posts.is_empty());
+    let shaded = materials.add_api(&gpu, ABI_V2, SHADED_V2, &shaded_uniforms(), &[]).expect("a good material after the refusal");
+    let frame = draw_with(&gpu, &mut renderer, &mut materials, &walled_scene(), &[centre_draw(shaded)]);
+    assert_eq!((frame.width(), frame.height()), (WIDTH, HEIGHT));
 }

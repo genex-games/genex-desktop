@@ -41,12 +41,16 @@ pub mod mesh;
 pub mod scene;
 /// Instance-table rows.
 pub mod instance;
+/// Retained static instance groups (renderer pass 2 A.0b; owner decision D4).
+pub mod retained;
 /// The storage-buffer tables and per-frame uploads.
 pub mod tables;
 /// The compute frustum cull and its CPU reference.
 pub mod cull;
 /// Metallic-roughness materials (lights moved to [`lights`], re-exported here).
 pub mod pbr;
+/// Per-pixel subsurface scattering and diffuse transmission (renderer pass 2 B.1).
+pub mod subsurface;
 /// Two-cascade sun shadows.
 pub mod shadow;
 /// Skinned glTF and compute skinning.
@@ -84,6 +88,8 @@ pub mod pacing;
 pub mod world_text;
 /// Custom GPU passes (extension ladder level 3, M2.19): raw wgpu work registered into the frame.
 pub mod custom_pass;
+/// The shared wind field vertex animation evaluates at two times for its motion (pass 2, B.7).
+pub mod wind;
 
 // --- Renderer follow-up (RQ0.1 registers every RQ0 module, so wave-1 work never edits this file).
 // Settings and the frozen ABI are registry files: each tier's contracts WP appends to them ---
@@ -118,8 +124,32 @@ pub mod settle;
 pub mod ibl;
 /// The physical sky (Hillaire) on every preset: its LUTs and the background.
 pub mod sky;
+/// The sky's night (renderer pass 2 B.2): the moon, the moonlit sky and the stars.
+pub mod night_sky;
+/// Renderer pass 2 B.5: the cloud panorama seen from the ground.
+pub mod clouds;
 /// HDR environment maps from a game's assets: the Radiance `.hdr` decoder and its caps.
 pub mod hdri;
+/// Reflection probes (renderer pass 2 A.3): box-projected local cubes captured in the scene.
+pub mod probes;
+/// Irradiance volumes (renderer pass 2 A.4): grids of ambient cubes baked in the scene.
+pub mod irradiance;
+/// Heightmap terrain (renderer pass 2 A.7): CDLOD selection and morph over a quantized height
+/// field, its own pipelines, and splat materials from a control map.
+pub mod terrain;
+/// Screen inputs (renderer pass 2 A.6): the opaque copy, the previous frame's colour pyramid, the
+/// prepass's normal and roughness, the screen reflections' slot and the shared SSR march helper.
+pub mod screen_inputs;
+pub mod ssr;
+/// Lake water (renderer pass 2 B.3): a water rectangle's own pipeline over the screen inputs,
+/// refracted, absorbed, foamed at the shore and reflected, with its own motion key for TAA.
+pub mod water;
+/// The ocean tier (renderer pass 2 B.10): an FFT wave patch simulated on the GPU, its surface's own
+/// pipeline, and the deterministic CPU twin gameplay reads.
+pub mod ocean;
+/// Foliage (renderer pass 2 A.8): GPU-generated grass on the terrain's grassy layers, in the
+/// shared wind, lit through the forward chunks with diffuse transmission.
+pub mod foliage;
 
 // --- RQ4: the depth/normal prepass, bloom, GTAO, fog, contact shadows (RQ4.0 registers every RQ4
 // module; bloom, AO and contact shadows are `post` nodes) ---
@@ -127,6 +157,9 @@ pub mod hdri;
 pub mod prepass;
 /// Height and distance fog matched to the sky: its GPU row and CPU reference.
 pub mod fog;
+/// Froxel volumetric fog and sun shafts (renderer pass 2 A.5): the height fog as a lit volume on
+/// `high` and `ultra`, bound in the aerial perspective's place.
+pub mod froxel;
 
 // --- RQ5: motion vectors, TAA, the FSR1 upscaler (RQ5.0 registers every RQ5 module; TAA and the
 // upscaler are `post` nodes, `post::taa` and `post::fsr`, whose shaders their modules hold until
@@ -155,6 +188,10 @@ pub mod lights;
 pub mod cluster;
 /// Shadowed spot lights: tiles of one atlas layer of the shared shadow array (RQ6.5).
 pub mod spot_shadow;
+/// Cached static shadows plus a dynamic overlay, per cascade and spot layer (renderer pass 2, B.6).
+pub mod shadow_cache;
+/// Clustered decals (renderer pass 2 A.10): projected boxes binned with the lights.
+pub mod decals;
 
 pub use caps::{BUFFER_MAX_BYTES, CAPTURE_MAX_BYTES, TEXTURE_MAX_BYTES, UPLOAD_MAX_BYTES_PER_FRAME, WGSL_MAX_BYTES};
 pub use error::{ExtensionFault, RenderCode, RenderError, UnsupportedReason};

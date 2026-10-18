@@ -10,7 +10,10 @@ its builds; product behavior is in [Builds and Live](../product/builds-live.md).
 Seatbelt profile measured on macOS 26 (`gameSandboxProfile`): deny by default, `process-exec` of the
 bundle's executable only (no fork; `setsid`/`setpgid` denied by syscall), reads of the system, the
 bundle and `state/` (its only writable folder), Metal and audio, no network, and file-read denies on
-`OpenGL.framework` and `AppleMetalOpenGLRenderer.bundle`. The headless profile (agents, Live's
+`OpenGL.framework` and `AppleMetalOpenGLRenderer.bundle`. A run whose host-written Info.plist names
+a studio bundle id also reads and writes its own Metal shader cache, `<DARWIN_USER_CACHE_DIR>/<id>`
+(host-made, never a link, never another game's; plus `dirhelper` and two metadata reads), so its
+pipelines compile warm from the second run. The headless profile (agents, Live's
 embedded runs) has no WindowServer; an embedded run adds `IOSurfaceRootUserClient` and a lookup of
 its own frames service. The windowed one keeps `com.apple.view-bridge` denied; the port folds repeated stderr lines into one.
 `admitMacBundle` ([`native-bundle.ts`](../../src/substrate/native-bundle.ts)) reads the Mach-O
@@ -90,7 +93,8 @@ Mac Play, agent runs and embedding use `NativeRuns`: prepare, `spawnGame`, nonce
 `NativeGamePort`. Stop requests quit, then TERM/KILL; boot sweeps orphans; app death kills registered
 groups. A v2 game that misses a step or capture deadline, or goes silent owing one, is killed
 `gpu-hang`; one that restores a lost GPU device gets a new Live ring generation. Captures carry
-provenance (seq, digest, camera, run, build), saved as `<label>.provenance.json`; builder captures add `c<N>_<camera>.manifest.json` (run, worker, commit, build); a failed one `c<N>.refused.json`; links refused (`confinedCaptureDir`). Sessions clone Emscripten caches under `<scratch>/cpp-sessions/<game>/`.
+provenance (seq, digest, camera, run, build, the `render` settings the game answered with and the
+capture's `outputSize`; null where the path did not know them), saved as `<label>.provenance.json`; builder captures add `c<N>_<camera>.manifest.json` (run, worker, commit, build); a failed one `c<N>.refused.json`; links refused (`confinedCaptureDir`). Sessions clone Emscripten caches under `<scratch>/cpp-sessions/<game>/`.
 
 **Toolchain store.** Each compiled stack keeps its own current lock in one store
 (`LOCK_FILE_OF_STACK`). Locks made current are recorded (`lock-records/`), so a game keeps

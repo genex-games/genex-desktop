@@ -53,6 +53,12 @@ impl ModelSource for WebModels {
         let layered = Layered { compiled: self.compiled, fetched: &self.fetched };
         layered.asset(path).map(<[u8]>::to_vec)
     }
+
+    /// The compiled table's bytes (they come first, as [`Layered`] serves them): a fetched file
+    /// is not the program's for its whole life, so its decoded upload is kept.
+    fn static_bytes(&self, path: &str) -> Option<&'static [u8]> {
+        self.compiled.iter().find(|(known, _)| *known == path).map(|(_, bytes)| *bytes)
+    }
 }
 
 /// Which model paths have meshes in the renderer's library (refused ones included), as the

@@ -30,13 +30,18 @@
  * [render.look]             # the game's look, the same on every preset and device
  * tonemapper = "agx-punchy" # khronos-neutral (default) | agx | agx-punchy | aces | none
  * exposure = "auto"         # manual (default) | auto
- * metering = "center"       # average | center | spot
+ * metering = "center"       # average | center | spot | ground
  * ev_compensation = -0.5    # within ±10
  * bloom_intensity = 0.04    # 0..=1
  * ev_min = -6               # auto exposure's metered EV range, within ±16 (default -8..=8)
  * ev_max = 8
  * adaptation_speed_up = 1   # EV per second, 0 < speed <= 20 (defaults 1 and 3)
  * adaptation_speed_down = 3
+ *
+ * [render.loading]          # the loading screen until the first lit frame (`shared/loading-style.ts`)
+ * title = "Harbour Nights"  # default: [game] title; 1..=60 characters
+ * background = "#1b2233"    # sRGB #rrggbb; accent (spinner, bar) and text likewise
+ * logo = "ui/logo.png"      # a PNG, JPEG or WebP under assets/
  *
  * [render.class.mobile-mid] # quality on one device class (`DeviceClass`)
  * preset = "low"
@@ -49,6 +54,9 @@
  *
  * [web]                     # optional: the browser build's code budget, in MB of gzip
  * wasm_budget_mb = 8        # 1..=32 (default 4): past it an export warns, past 32 it is refused
+ *
+ * [physics]                 # optional: a game without physics leaves Rapier out of its build
+ * enabled = false           # default true
  *
  * [engine]                  # written by the host alone when the person ejects the engine (level 5)
  * ejected_from = "0.1.0"    # the genex release copied into `engine/`; the build links that fork
@@ -72,6 +80,7 @@
 import { lstat, realpath } from "node:fs/promises";
 import path from "node:path";
 import { isWebWasmBudgetMb } from "../shared/game-export-contract.ts";
+import { LoadingKey, type LoadingStyle, loadingStyleProblem } from "../shared/loading-style.ts";
 import { BuildTarget } from "../shared/game-project.ts";
 import {
   NATIVE_EXTENSION_API_VERSION,
@@ -177,6 +186,8 @@ export const GenexTomlCode = {
   InvalidRenderLook: "invalid-render-look",
   /** A `[render.shadows]` value outside its range (`SHADOW_DISTANCE_MIN..=SHADOW_DISTANCE_MAX`, `0..=SHADOW_BLEND_BAND_MAX`). */
   InvalidRenderShadows: "invalid-render-shadows",
+  /** A `[render.loading]` value that breaks its rule (`shared/loading-style.ts`). */
+  InvalidRenderLoading: "invalid-render-loading",
   /** A `[web] wasm_budget_mb` outside `WEB_WASM_BUDGET_MIN_MB..=WEB_WASM_CEILING_MB`. */
   InvalidWebBudget: "invalid-web-budget",
 } as const;
@@ -268,6 +279,11 @@ export interface GenexToml {
   render?: RenderToml | null;
   /** `[web] wasm_budget_mb`: the browser build's code budget in MB of gzip; null (or absent) when it names none. */
   wasmBudgetMb?: number | null;
+  /**
+   * `[physics] enabled`: false links the facade without Rapier (its `physics` feature), about a
+   * fifth of a web build's code; absent or true keeps it (renderer pass 2, owner decision D11).
+   */
+  physics?: boolean;
 }
 
 /** A refusal with its typed code and a short detail naming the offending value (never a host path). */
@@ -409,7 +425,7 @@ function withoutEngineSection(text: string): string {
 
 // ── Schema ──────────────────────────────────────────────────────────────────────────────────────
 
-const TOP_KEYS = ["game", "crates", "crate_request", "wgsl", "gpu", "engine", "render", "web"] as const;
+const TOP_KEYS = ["game", "crates", "crate_request", "wgsl", "gpu", "engine", "render", "web", "physics"] as const;
 const ENGINE_KEYS = ["ejected_from"] as const;
 /** The `[engine]` section header the host writes and removes. */
 const ENGINE_HEADER = "[engine]";
@@ -424,12 +440,15 @@ const WGSL_KEYS = ["path", "kind", "api"] as const;
 /** The extension API a `[[wgsl]]` row that names none is written against. */
 const DEFAULT_WGSL_API = 1;
 const RENDER_KEYS: readonly string[] = Object.values(RenderTomlKey);
+const LOADING_KEYS: readonly LoadingKey[] = Object.values(LoadingKey);
 const LOOK_KEYS: readonly string[] = Object.values(LookKey);
 const SHADOW_KEYS: readonly string[] = Object.values(ShadowTomlKey);
 const GPU_KEYS = ["native_features"] as const;
 /** `[web]`'s keys (genex's `WebSection`). */
 const WebKey = { WasmBudgetMb: "wasm_budget_mb" } as const;
 const WEB_KEYS: readonly string[] = Object.values(WebKey);
+const PhysicsKey = { Enabled: "enabled" } as const;
+const PHYSICS_KEYS: readonly string[] = Object.values(PhysicsKey);
 const WGSL_KINDS: readonly string[] = Object.values(WgslKind);
 const NATIVE_FEATURES: readonly string[] = Object.values(NativeEnhancedFeature);
 
@@ -476,6 +495,8 @@ interface RawRender {
   look: RawLook;
   classes: RawClass[];
   shadows: RawShadows | null;
+  /** `[render.loading]`'s strings by key, not yet checked; null when the file has none. */
+  loading: LoadingStyle | null;
 }
 
 /** Thrown inside {@link shapeManifest} for a value of the wrong shape. */
@@ -499,6 +520,7 @@ function shapeManifest(document: TomlTable): Shaped {
       engine: engineRow(document.engine),
       render: null,
       wasmBudgetMb: webBudget(document.web),
+      physics: physicsEnabled(document.physics),
     };
     return { ok: true, manifest, featureNames, render };
   } catch (error) {
@@ -595,7 +617,20 @@ function renderTable(value: TomlValue | undefined): RawRender | null {
     look: renderLook(render.look),
     classes,
     shadows: renderShadows(render.shadows),
+    loading: renderLoading(render.loading),
   };
+}
+
+/** `[render.loading]`: each key a string, or null when the file has none. */
+function renderLoading(value: TomlValue | undefined): LoadingStyle | null {
+  if (value === undefined) return null;
+  const loading = table(value, "[render.loading]");
+  onlyKeys(loading, LOADING_KEYS, "[render.loading]");
+  const style: LoadingStyle = {};
+  for (const key of LOADING_KEYS) {
+    if (loading[key] !== undefined) style[key] = string(loading[key], `render.loading.${key}`);
+  }
+  return style;
 }
 
 /** `[render.shadows]`: a whole distance and a decimal blend band, or null when the file has none. */
@@ -693,6 +728,17 @@ function webBudget(value: TomlValue | undefined): number | null {
   onlyKeys(web, WEB_KEYS, "[web]");
   const budget = web[WebKey.WasmBudgetMb];
   return budget === undefined ? null : integer(budget, `web.${WebKey.WasmBudgetMb}`);
+}
+
+/** `[physics] enabled`, true when the file has no table or the table no key. */
+function physicsEnabled(value: TomlValue | undefined): boolean {
+  if (value === undefined) return true;
+  const physics = table(value, "[physics]");
+  onlyKeys(physics, PHYSICS_KEYS, "[physics]");
+  const enabled = physics[PhysicsKey.Enabled];
+  if (enabled === undefined) return true;
+  if (typeof enabled !== "boolean") throw new ShapeError(`physics.${PhysicsKey.Enabled} must be true or false`);
+  return enabled;
 }
 
 function gpuFeatures(value: TomlValue | undefined): readonly string[] {
@@ -816,7 +862,22 @@ function renderOf(raw: RawRender): RenderToml {
     classes[name] = classOf(row);
   }
   const shadows = raw.shadows === null ? undefined : shadowsOf(raw.shadows);
-  return { formFactors, preset, look, classes, ...(shadows === undefined ? {} : { shadows }) };
+  const loading = raw.loading === null ? undefined : loadingOf(raw.loading);
+  return {
+    formFactors,
+    preset,
+    look,
+    classes,
+    ...(shadows === undefined ? {} : { shadows }),
+    ...(loading === undefined ? {} : { loading }),
+  };
+}
+
+/** `[render.loading]` with every key it sets within its rule. */
+function loadingOf(style: LoadingStyle): LoadingStyle {
+  const problem = loadingStyleProblem(style);
+  if (problem === null) return style;
+  return renderRefused(GenexTomlCode.InvalidRenderLoading, `${problem} ${JSON.stringify(style[problem])}`);
 }
 
 /** `[render.shadows]`'s values held to their ranges. */
@@ -979,6 +1040,12 @@ function shadowLines({ distance, blendBand }: RenderShadows): string[] {
   return [`[render.${RenderTomlKey.Shadows}]`, ...assignments(keys)];
 }
 
+/** The `[render.loading]` table's lines. */
+function loadingLines(style: LoadingStyle): string[] {
+  const keys = LOADING_KEYS.map((key) => [key, style[key] === undefined ? undefined : tomlString(style[key])] as const);
+  return [`[render.${RenderTomlKey.Loading}]`, ...assignments(keys)];
+}
+
 /** The RQ4 effect keys of `look` as `key = value` entries (unset ones left out). */
 function effectLines(look: RenderLook): ReadonlyArray<readonly [string, string | undefined]> {
   const float = (value: number | undefined) => (value === undefined ? undefined : tomlFloat(value));
@@ -1035,6 +1102,7 @@ export function renderTomlFragment(render: RenderToml): string {
     lines.push(...classLines(name, quality));
   }
   if (render.shadows !== undefined) lines.push(...shadowLines(render.shadows));
+  if (render.loading !== undefined) lines.push(...loadingLines(render.loading));
   return `${lines.join("\n")}\n`;
 }
 

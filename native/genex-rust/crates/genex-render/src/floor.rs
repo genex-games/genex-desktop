@@ -48,6 +48,10 @@ pub const RENDERER_FEATURES: &[(Features, &str)] = &[
     (Features::TIMESTAMP_QUERY, "timestamp-query"),
     (Features::RG11B10UFLOAT_RENDERABLE, "rg11b10ufloat-renderable"),
     (Features::DEPTH_CLIP_CONTROL, "depth-clip-control"),
+    // Compressed material textures (renderer pass 2, A6.4): `texture::TextureFamily`.
+    (Features::TEXTURE_COMPRESSION_BC, "texture-compression-bc"),
+    (Features::TEXTURE_COMPRESSION_ASTC, "texture-compression-astc"),
+    (Features::TEXTURE_COMPRESSION_ETC2, "texture-compression-etc2"),
 ];
 
 /// The renderer-owned features among `offered` (what the device is opened with besides the
@@ -194,8 +198,13 @@ pub fn receipt(facts: &AdapterFacts) -> CapabilityReceipt {
 /// The features a device is requested with: the game's declared native-enhanced ones plus the
 /// renderer-owned ones `offered` has.
 pub fn requested_features(declared: Features, offered: Features) -> Features {
-    declared | renderer_features(offered)
+    declared | renderer_features(offered) | (offered & UNLISTED_RENDERER_FEATURES)
 }
+
+/// Renderer-owned features the device is opened with where offered but the receipt does not list
+/// (its `rendererFeatures` are a wire vocabulary): `PIPELINE_CACHE` (Vulkan only), the pipeline
+/// cache the compile pool keeps in the game's saves (renderer pass 2, RC-09). It only accelerates.
+pub const UNLISTED_RENDERER_FEATURES: Features = Features::PIPELINE_CACHE;
 
 /// Check the floor, then open a device with core limits and the renderer-owned features offered.
 pub fn open_device<A: GpuAdapter>(adapter: &A) -> Result<(A::Device, CapabilityReceipt), RenderError> {

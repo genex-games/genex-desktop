@@ -1,7 +1,9 @@
 // Lighting chunk: local lights. Reads the forward bindings `frame` (`counts.x` lights) and
 // `lights`; the binned walk also reads the binned tables and the sun chunk's fragment context
 // (`gx_sun_context.pixel`, the render-target pixel), and a shadowed spot (RQ6.5) `shadow_map`,
-// `shadow_sampler` and the sun chunk's `gx_sun_cascades`.
+// `shadow_sampler` and the sun chunk's `gx_sun_cascades`. Both paths add the light a translucent
+// surface lets through (the subsurface chunk's `gx_subsurface_local`, renderer pass 2 B.1) when the
+// fragment entry handed it one.
 //
 // Two paths (RQ6.2):
 // - legacy (the `off` preset and the `clustered` switch off, `lights::legacy_lights`): every light
@@ -94,7 +96,13 @@ fn gx_local_light(s: Surface, light: Light, ext: LightExt) -> vec3<f32> {
     if attenuation <= 0.0 {
         return vec3<f32>(0.0);
     }
-    return shade(s.n, s.v, l, light.color.rgb * attenuation, s.albedo, s.metallic, s.roughness);
+    let radiance = light.color.rgb * attenuation;
+    let reflected = shade(s.n, s.v, l, radiance, s.albedo, s.metallic, s.roughness);
+    // The light let through a translucent surface (renderer pass 2 B.1; 0 for every other one).
+    if gx_subsurface_active {
+        return reflected + gx_subsurface_local(s, l, radiance);
+    }
+    return reflected;
 }
 
 // The tile of the binning grid (`LightBinParams::grid`) render-target pixel `pixel` falls in.
@@ -130,10 +138,11 @@ fn gx_light_word_bits(word: u32, lowest: u32, highest: u32) -> u32 {
 // with its z-bin's index range, in light-index order (`cluster::lights_at`). The tile comes from
 // the sun chunk's fragment context (the pixel), the z-bin from the view depth.
 fn gx_binned_local_lights(color: vec3<f32>, s: Surface) -> vec3<f32> {
-    let grid = vec4<u32>(light_zbins[0], light_zbins[1], light_zbins[2], light_zbins[3]);
-    let depth = vec4<u32>(light_zbins[4], light_zbins[5], light_zbins[6], light_zbins[7]);
+    let grid = vec4<u32>(gx_light_bin_word(0u), gx_light_bin_word(1u), gx_light_bin_word(2u), gx_light_bin_word(3u));
+    let depth = vec4<u32>(gx_light_bin_word(4u), gx_light_bin_word(5u), gx_light_bin_word(6u), gx_light_bin_word(7u));
     let view_depth = dot(s.world_pos - frame.camera_pos.xyz, frame.camera_forward.xyz);
-    let zbin = light_zbins[GX_LIGHT_BIN_HEADER_WORDS + gx_light_zbin(view_depth, depth)];
+    // The lights are kind 0 of the binned index space (pass 2 A.0, LG-16): their z-bins come first.
+    let zbin = gx_light_bin_word(GX_LIGHT_BIN_HEADER_WORDS + gx_light_zbin(view_depth, depth));
     let lowest = zbin & 0xffffu;
     let highest = zbin >> GX_ZBIN_INDEX_BITS;
     var lit = color;
@@ -142,16 +151,17 @@ fn gx_binned_local_lights(color: vec3<f32>, s: Surface) -> vec3<f32> {
     }
     let base = gx_light_tile(gx_sun_context.pixel, grid) * grid.z;
     for (var word = lowest / 32u; word <= highest / 32u; word++) {
-        var bits = light_tiles[base + word] & gx_light_word_bits(word, lowest, highest);
+        var bits = gx_light_tile_word(base + word) & gx_light_word_bits(word, lowest, highest);
         while bits != 0u {
             let i = word * 32u + firstTrailingBit(bits);
             bits &= bits - 1u;
             let ext = LightExt(light_ext[i * GX_LIGHT_EXT_VEC4S], light_ext[i * GX_LIGHT_EXT_VEC4S + 1u]);
             var light = gx_local_light(s, lights[i], ext);
             // A spot holding a shadow slot, where it reaches: through its map (the BRDF is linear
-            // in the light's radiance).
+            // in the light's radiance), faded out by `params.w` while the slot changes hands
+            // (`spot_shadow::SpotSlots`; 0, whole, leaves the map's value bit for bit).
             if ext.params.z >= 0.0 && any(light > vec3<f32>(0.0)) {
-                light *= gx_spot_shadow(s, lights[i], u32(ext.params.z));
+                light *= mix(gx_spot_shadow(s, lights[i], u32(ext.params.z)), 1.0, ext.params.w);
             }
             lit += light;
         }
@@ -169,7 +179,7 @@ override GX_BINNED_LIGHTS: bool = true;
 // quality): every light of the light table in table order, with the range falloff of before RQ6,
 // a spot's through its smooth cone (`light_ext`'s row for row extension; never shadowed).
 fn gx_local_lights(color: vec3<f32>, s: Surface) -> vec3<f32> {
-    if GX_BINNED_LIGHTS && light_zbins[5] != 0u {
+    if GX_BINNED_LIGHTS && gx_light_bin_word(5u) != 0u {
         return gx_binned_local_lights(color, s);
     }
     var lit = color;
@@ -182,13 +192,17 @@ fn gx_local_lights(color: vec3<f32>, s: Surface) -> vec3<f32> {
         // Only a table holding a spot reads the extension rows (the legacy frame's bin header
         // word 4, `cluster::LEGACY_SPOTS_WORD`; uniform), so a frame of point lights loops exactly
         // as before RQ6.
-        if light_zbins[4] != 0u {
+        if gx_light_bin_word(4u) != 0u {
             let ext = LightExt(light_ext[i * GX_LIGHT_EXT_VEC4S], light_ext[i * GX_LIGHT_EXT_VEC4S + 1u]);
             if ext.params.y == f32(GX_LIGHT_SPOT) {
                 radiance *= gx_spot_cone(ext, to_light / distance);
             }
         }
         lit += shade(s.n, s.v, to_light / distance, radiance, s.albedo, s.metallic, s.roughness);
+        // The light let through a translucent surface (renderer pass 2 B.1).
+        if gx_subsurface_active {
+            lit += gx_subsurface_local(s, to_light / distance, radiance);
+        }
     }
     return lit;
 }

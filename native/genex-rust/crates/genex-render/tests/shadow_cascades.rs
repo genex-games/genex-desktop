@@ -17,7 +17,7 @@ use genex_render::cull::in_frustum;
 use genex_render::layout::{MAX_CASCADES, SHADOW_CASCADES};
 use genex_render::scene::{CameraDesc, FramePlan, Material, MeshId, MeshLibrary, PlanOptions, Scene, scaled, translation};
 use genex_render::settings::{Quality, SceneFormat, ShadowFilter, ShadowFormat, ShadowSettings, SkyParams};
-use genex_render::shadow::{CASTER_REACH, CascadeHistory, Cascades, SHADOW_MAP_PX, ShadowMapDesc, cascades, fit, keeps_legacy_fit, split_depths};
+use genex_render::shadow::{CASTER_REACH, CascadeHistory, Cascades, DEPTH_BIAS, SHADOW_MAP_PX, ShadowMapDesc, cascades, fit, keeps_legacy_fit, split_depths};
 use genex_render::{CullPath, Gpu, Renderer};
 use glam::{Mat4, Vec3, Vec4};
 
@@ -173,12 +173,22 @@ fn ground_bounds() -> Vec<[f32; 4]> {
     bounds
 }
 
+/// [`settings`] drawn into `depth16unorm` maps (low and the phones): the receiver-tight fit.
+fn depth16(count: u8, map_px: u32) -> ShadowSettings {
+    let mut settings = settings(count, map_px);
+    settings.format = ShadowFormat::Depth16;
+    settings
+}
+
+/// Renderer pass 2, P2-0.3 (SH-06) flipped this row to `depth16unorm` maps (named in the PR): only
+/// they hug their receivers for precision; a `depth32float` cascade spans its slice sphere
+/// ([`a_depth32_cascades_light_depth_spans_its_sphere_whatever_the_receivers`]).
 #[test]
 fn the_light_depth_hugs_the_receivers_inside_each_cascade() {
     let camera = camera();
     let bounds = ground_bounds();
     for count in 1..=MAX_CASCADES as u8 {
-        let settings = settings(count, 2048);
+        let settings = depth16(count, 2048);
         let open = fit(&camera, ASPECT, SUN, &settings, std::iter::empty());
         let tight = fit(&camera, ASPECT, SUN, &settings, bounds.iter().copied());
         let legacy = cascades(&camera, ASPECT, SUN, DISTANCE);
@@ -220,6 +230,151 @@ fn a_caster_nearer_the_sun_than_the_near_plane_stays_in_the_cascade_cull_view() 
             assert!(!in_frustum(&set.planes[c], [aside.x, aside.y, aside.z, 0.1]), "{name} cascade {c}: the sides still cull");
         }
     }
+}
+
+/// Every tight fit under test (1 to 4 cascades, both depth formats, two map sizes) around `bounds`.
+fn tight_fits(camera: &CameraDesc, bounds: &[[f32; 4]]) -> Vec<(String, ShadowSettings, Cascades)> {
+    let mut sets = Vec::new();
+    for count in 1..=MAX_CASCADES as u8 {
+        for map_px in [1536, 2048] {
+            for (format, settings) in [("depth32", settings(count, map_px)), ("depth16", depth16(count, map_px))] {
+                sets.push((format!("{count}x{map_px} {format}"), settings, fit(camera, ASPECT, SUN, &settings, bounds.iter().copied())));
+            }
+        }
+    }
+    sets
+}
+
+/// Renderer pass 2, P2-0.3 (S1, SH-06): each cascade's comparison bias is one world-space bias
+/// over its own light depth, `DEPTH_BIAS` of its map's width: the shared NDC bias was a share of
+/// whatever depth the receivers spanned, so its world size followed the bounds touching the cascade.
+/// The legacy fit keeps the shared `DEPTH_BIAS` bit for bit.
+#[test]
+fn each_cascades_comparison_bias_is_one_world_bias_over_its_depth_range() {
+    let camera = camera();
+    for (name, _, set) in tight_fits(&camera, &ground_bounds()) {
+        for c in 0..set.count() {
+            let width = set.texel_world[c] * set.map_px as f32;
+            let world = set.comparison_bias()[c] * set.depth_range[c];
+            let want = DEPTH_BIAS * width;
+            assert!((world - want).abs() <= 1e-4 * want, "{name} cascade {c}: the comparison bias is {world} m, want {want} m");
+            assert_eq!(set.depth_bias_world()[c], world, "{name} cascade {c}: the world bias is the comparison bias over the range");
+        }
+    }
+    let legacy = cascades(&camera, ASPECT, SUN, DISTANCE);
+    assert_eq!(legacy.comparison_bias(), [DEPTH_BIAS; MAX_CASCADES], "the legacy fit compares with the shared bias");
+}
+
+/// Renderer pass 2, P2-0.3 (SH-06, review S1's failure case): a tall caster whose bounds start to
+/// touch a receiver-tight cascade changes its light depth, and the world bias holds: the crate's
+/// contact gap no longer jumps by four as the camera moves 10 cm.
+#[test]
+fn a_tall_caster_touching_a_tight_cascade_keeps_its_world_bias() {
+    let camera = camera();
+    let ground = ground_bounds();
+    let mut with_tree = ground.clone();
+    with_tree.push([4.0, 10.0, -2.0, 10.5]);
+    for count in 1..=MAX_CASCADES as u8 {
+        let settings = depth16(count, 2048);
+        let before = fit(&camera, ASPECT, SUN, &settings, ground.iter().copied());
+        let after = fit(&camera, ASPECT, SUN, &settings, with_tree.iter().copied());
+        assert_ne!(before.depth_range[0], after.depth_range[0], "{count}: the tree reaches cascade 0's light depth");
+        for c in 0..usize::from(count) {
+            let (was, now) = (before.depth_bias_world()[c], after.depth_bias_world()[c]);
+            assert!((was - now).abs() <= 1e-4 * was, "{count}: cascade {c}'s world bias moved from {was} m to {now} m");
+        }
+    }
+}
+
+/// Renderer pass 2, P2-0.3 (SH-06): a `depth32float` cascade's light depth spans its slice sphere
+/// whatever the receivers, so its depth, its comparison bias and PCSS's reach no longer follow the
+/// bounds that touch the cascade (a tree entering it moved them in one frame). `depth32float` needs
+/// no receiver-tight fit for precision.
+#[test]
+fn a_depth32_cascades_light_depth_spans_its_sphere_whatever_the_receivers() {
+    let camera = camera();
+    let mut with_tree = ground_bounds();
+    with_tree.push([4.0, 10.0, -2.0, 10.5]);
+    for count in 1..=MAX_CASCADES as u8 {
+        for map_px in [1536, 2048] {
+            let settings = settings(count, map_px);
+            let open = fit(&camera, ASPECT, SUN, &settings, std::iter::empty());
+            for bounds in [ground_bounds(), with_tree.clone()] {
+                let tight = fit(&camera, ASPECT, SUN, &settings, bounds.into_iter());
+                assert_eq!(open.depth_range, tight.depth_range, "{count} x {map_px}: the light depth ignores the receivers");
+                assert_eq!(open.view_proj, tight.view_proj, "{count} x {map_px}: so does the whole matrix");
+            }
+            for c in 0..usize::from(count) {
+                let view_proj = Mat4::from_cols_array(&open.view_proj[c]);
+                for corner in open.slice_corners[c] {
+                    let z = (view_proj * Vec3::from(corner).extend(1.0)).z;
+                    assert!((0.0..=1.0).contains(&z), "{count} x {map_px}: cascade {c} holds its slice ({z})");
+                }
+            }
+        }
+    }
+}
+
+/// Renderer pass 2, P2-0.3 (SH-05): each tight cascade's map holds its slice sphere with the
+/// filter's reach to spare on every side: the kernel (PCSS's 16 texels), the normal offset and a
+/// texel for the snap. The one texel of margin let PCSS and the offsets read the clamped edge
+/// texels at the far corners of each slice.
+#[test]
+fn each_cascades_map_holds_its_slice_with_the_filters_reach_to_spare() {
+    let camera = camera();
+    for (filter, texels) in [
+        (ShadowFilter::Hardware2x2, 3.5),
+        (ShadowFilter::Pcf3x3, 4.5),
+        (ShadowFilter::Pcf5x5, 5.5),
+        (ShadowFilter::PcssLite, 19.5),
+        (ShadowFilter::Pcss, 19.5),
+    ] {
+        for count in 1..=MAX_CASCADES as u8 {
+            for map_px in [512, 2048, 4096] {
+                let mut settings = settings(count, map_px);
+                settings.filter = filter;
+                let set = fit(&camera, ASPECT, SUN, &settings, std::iter::empty());
+                let inside = 1.0 - 2.0 * texels / map_px as f32 + 1e-4;
+                for c in 0..usize::from(count) {
+                    let view_proj = Mat4::from_cols_array(&set.view_proj[c]);
+                    for corner in set.slice_corners[c] {
+                        let at = view_proj * Vec3::from(corner).extend(1.0);
+                        assert!(
+                            at.x.abs() <= inside && at.y.abs() <= inside,
+                            "{filter:?} {count} x {map_px}: cascade {c}'s slice corner reaches {:.5} of the map, past {texels} texels from its edge",
+                            at.x.abs().max(at.y.abs())
+                        );
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Renderer pass 2, P2-0.3: the frame carries each cascade's comparison bias, and the shared
+/// `shadow_params.x` that the v1 prefix, the Level-2 v2 prelude and custom passes read is the
+/// first cascade's on `depth32float` maps (whose light depths span one multiple of their map widths,
+/// so it is every cascade's world bias); `DEPTH_BIAS` otherwise, as before. A held cascade keeps
+/// the bias its map was drawn with.
+#[test]
+fn the_frame_carries_each_cascades_bias_and_the_shared_one() {
+    for (settings, shared_is_first) in [(settings(4, 2048), true), (depth16(2, 1536), false), (ShadowSettings::legacy(DISTANCE), false)] {
+        let plan = cadence_plan(0, settings);
+        let set = plan.cascades.as_ref().expect("cascades");
+        assert_eq!(plan.frame.cascade_bias, set.comparison_bias(), "{settings:?}");
+        let shared = if shared_is_first { set.comparison_bias()[0] } else { DEPTH_BIAS };
+        assert_eq!(plan.frame.shadow_params[0], shared, "{settings:?}");
+    }
+    let mut shadows = depth16(2, SHADOW_MAP_PX);
+    shadows.far_cadence = 2;
+    let mut history = CascadeHistory::default();
+    let mut first = cadence_plan(0, shadows);
+    history.advance(&mut first, 0, false);
+    let drawn = first.frame.cascade_bias[1];
+    let mut held = cadence_plan(1, shadows);
+    assert!(!history.advance(&mut held, 1, false).draws(1), "the far cascade is held");
+    assert_eq!(held.frame.cascade_bias[1], drawn, "a held cascade compares with its map's bias");
+    assert_eq!(held.cascades.as_ref().expect("cascades").comparison_bias()[1], drawn);
 }
 
 #[test]
@@ -965,4 +1120,91 @@ fn metal_four_2048_cascades_fit_their_share_of_the_shadow_budget_at_1080p() {
         eprintln!("attempt {attempt} missed: {missed:?}");
     }
     panic!("every one of {COST_ATTEMPTS} measurements missed a budget; the last: {missed:#?}");
+}
+
+// ---------------------------------------------------------------------------------------------
+// Renderer pass 2, P2-0.4 (RC-06): a held far cascade keeps only what stood still
+
+/// The sun shadows of the phone class at high (two Depth16 cascades, the far one every 2nd frame).
+fn phone_shadows() -> ShadowSettings {
+    use genex_render::device_class::{DeviceClass, FormFactor, PerformanceTier};
+    use genex_render::presets::preset_quality;
+    use genex_render::settings::QualityPreset;
+    let quality = preset_quality(QualityPreset::High, DeviceClass::new(FormFactor::Mobile, PerformanceTier::High));
+    ShadowSettings::from_quality(&quality.shadows, DISTANCE, SkyParams::default().sun_angular_radius)
+}
+
+/// How the RC-06 caster moves from frame to frame.
+#[derive(Clone, Copy, Debug)]
+enum Motion {
+    /// It stands still.
+    Still,
+    /// It walks 0.3 m a frame sideways (a character).
+    Walks,
+    /// It sways a third of a milliradian a frame about its base (a tree in the wind: a few
+    /// millimetres at its top).
+    Sways,
+}
+
+/// The cadence scene with its camera still and one opaque 0.8 m cube in the far cascade (28 m out)
+/// moving as `motion` says by frame `frame`, drawn as `mesh`.
+fn moving_plan(frame: u64, shadows: ShadowSettings, motion: Motion, mesh: MeshId) -> FramePlan {
+    let mut scene = cadence_scene(0.0);
+    let (x, lean) = match motion {
+        Motion::Still => (0.0, 0.0),
+        Motion::Walks => (frame as f32 * 0.3, 0.0),
+        Motion::Sways => (0.0, frame as f32 * 3.3e-4),
+    };
+    let model = Mat4::from_translation(Vec3::new(x - 1.0, 0.4, -28.0)) * Mat4::from_rotation_x(lean) * Mat4::from_scale(Vec3::splat(0.8));
+    // Opaque, so it casts (the cadence scene's own rows are translucent and draw no shadow).
+    scene.draw(mesh, model.to_cols_array(), Material::color([200, 200, 200, 255]));
+    let options = PlanOptions { shadows: Some(shadows), depth_reversed: false, sun: None };
+    FramePlan::build_with(&scene, &MeshLibrary::new(), ASPECT, &options).expect("plan")
+}
+
+/// Whether the RC-06 caster (the plan's one opaque row) is inside cascade `c`'s cull view.
+fn caster_in(plan: &FramePlan, c: usize) -> bool {
+    assert_eq!(plan.opaque_instances, 1, "the caster is the one opaque row");
+    in_frustum(&plan.cascades.as_ref().expect("cascades").planes[c], plan.instances[0].bounds)
+}
+
+/// RC-06: on a phone class the far cascade is drawn every 2nd frame; a character walking inside it
+/// was held with the rest of the map, so its shadow moved at 30 Hz and doubled against the near
+/// cascade's at the seam. A held cascade now redraws on every frame something inside it moved by
+/// half a texel.
+#[test]
+fn on_a_phone_a_far_cascade_redraws_every_frame_a_caster_inside_it_moves() {
+    let shadows = phone_shadows();
+    assert_eq!((shadows.cascades, shadows.far_cadence), (2, 2), "the phone class holds its far cascade");
+    let mut history = CascadeHistory::default();
+    for frame in 0..8u64 {
+        let mut plan = moving_plan(frame, shadows, Motion::Walks, MeshId::CUBE);
+        assert!(caster_in(&plan, 1) && !caster_in(&plan, 0), "frame {frame}: the caster stands in the far cascade only");
+        let draws = history.advance(&mut plan, frame, false);
+        assert!(draws.draws(0) && draws.draws(1), "frame {frame}: the far cascade redraws while its caster moves (no 30 Hz shadow)");
+    }
+}
+
+/// RC-06's other half: a far cascade whose casters stand still, or sway by far less than a texel a
+/// frame, keeps its cadence; one whose caster changes its mesh in place (a level of detail
+/// switching) redraws once.
+#[test]
+fn a_far_cascade_keeps_its_cadence_while_nothing_inside_it_moves() {
+    let shadows = phone_shadows();
+    for motion in [Motion::Still, Motion::Sways] {
+        let mut history = CascadeHistory::default();
+        for frame in 0..8u64 {
+            let mut plan = moving_plan(frame, shadows, motion, MeshId::CUBE);
+            let draws = history.advance(&mut plan, frame, false);
+            assert_eq!(draws.draws(1), frame % 2 == 0, "{motion:?}, frame {frame}: the far cascade keeps its cadence");
+        }
+    }
+    let mut history = CascadeHistory::default();
+    for frame in 0..8u64 {
+        let mesh = if frame < 3 { MeshId::CUBE } else { MeshId::SPHERE };
+        let mut plan = moving_plan(frame, shadows, Motion::Still, mesh);
+        let draws = history.advance(&mut plan, frame, false);
+        let swapped = frame == 3;
+        assert_eq!(draws.draws(1), frame % 2 == 0 || swapped, "frame {frame}: a mesh swapped in the far cascade redraws it once");
+    }
 }

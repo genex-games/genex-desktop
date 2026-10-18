@@ -3,10 +3,22 @@
 //! writes is charged against the per-frame upload budget before the first write, so a refused
 //! frame leaves the GPU untouched (the world target keeps the previous frame).
 //!
-//! Visible list: one region of `opaque_instances` rows per cull view, then one row per transparent
+//! Visible list: one region of `visible_slots` per cull view (the opaque rows, and each level
+//! batch's slots, renderer pass 2 A6.9), then one row per transparent
 //! draw. Indirect arguments: `batches` per view, tightly packed. Pass views: one 256-byte dynamic
 //! uniform per cull view, then one per transparent draw. Previous models (RQ5): one row per
 //! instance row, at the same index, filled only while motion vectors are drawn.
+//!
+//! Uploads (renderer pass 2, RC-08): graph node 1's writes come from one [`UploadArena`], whose
+//! mapped staging chunks are kept and reused, recorded as copies at the head of the frame's own
+//! command encoder, ahead of everything the frame records after node 1 (every submission of the
+//! frame's work goes through that encoder, which is submitted before any other node's own).
+//! `queue.write_buffer` made a staging buffer per call in wgpu-core and freed it after the GPU used
+//! it (16 a frame on a lit scene; 0.34 ms of CPU a frame against 0.08 ms for a 3 MB frame of 17
+//! writes on an M4 Max). G0 (2026-10-15): submitted as a command buffer of their own ahead of the
+//! frame's, the copies cost the features-off frame 0.025-0.045 ms of GPU time (bench-outdoor and
+//! stress-forest at 1080p, median of 5 interleaved runs against `queue.write_buffer`'s 0.574 and
+//! 0.903 ms), which `queue.write_buffer` puts in the frame's own submission.
 
 use wgpu::{BindGroupLayout, BindGroupLayoutEntry, BindingType, Buffer, BufferBindingType, BufferUsages, Device, ShaderStages};
 
@@ -95,6 +107,49 @@ pub(crate) fn buffer(device: &Device, label: &str, size: u64, usage: BufferUsage
     Ok(device.create_buffer(&wgpu::BufferDescriptor { label: Some(label), size, usage, mapped_at_creation: false }))
 }
 
+/// The upload arena's staging chunk: writes smaller than this share chunks, a larger one gets a
+/// chunk of its own size (kept and reused by the next frame that writes as much).
+const UPLOAD_CHUNK_BYTES: u64 = 1 << 20;
+
+/// One write a frame uploads: `bytes` into `target` at `offset` (both multiples of 4, as every
+/// table row and offset is).
+pub(crate) type UploadWrite<'a> = (&'a Buffer, u64, &'a [u8]);
+
+/// The per-frame upload arena (RC-08): [`wgpu::util::StagingBelt`]'s mapped chunks, reused once
+/// the GPU has copied out of them. Its chunks stay allocated (at most the upload budget per frame
+/// in flight).
+pub(crate) struct UploadArena {
+    belt: wgpu::util::StagingBelt,
+}
+
+impl UploadArena {
+    pub(crate) fn new(device: &Device) -> UploadArena {
+        UploadArena { belt: wgpu::util::StagingBelt::new(device.clone(), UPLOAD_CHUNK_BYTES) }
+    }
+
+    /// Record `writes` (empty ones skipped) as copies from the arena into `encoder` (the frame's
+    /// own, before anything that reads them); its chunks come back once that encoder is submitted.
+    /// Nothing is recorded when every write is empty.
+    pub(crate) fn upload(&mut self, encoder: &mut wgpu::CommandEncoder, writes: &[UploadWrite<'_>]) {
+        if writes.iter().all(|(_, _, bytes)| bytes.is_empty()) {
+            return;
+        }
+        for (target, offset, bytes) in writes {
+            let Some(size) = wgpu::BufferSize::new(copy_size(bytes.len())) else { continue };
+            let mut view = self.belt.write_buffer(encoder, target, *offset, size);
+            view.slice(..bytes.len()).copy_from_slice(bytes);
+            let pad = view.len() - bytes.len();
+            view.slice(bytes.len()..).copy_from_slice(&[0; 4][..pad]);
+        }
+        self.belt.finish_and_recall_on_submit(encoder);
+    }
+}
+
+/// `len` bytes rounded up to wgpu's copy alignment (4).
+fn copy_size(len: usize) -> u64 {
+    (len as u64).next_multiple_of(wgpu::COPY_BUFFER_ALIGNMENT)
+}
+
 /// The smallest table: one row of the largest table struct (an `Instance`, 160 bytes) fits, so
 /// an empty table still binds where a shader expects at least one element.
 const TABLE_MIN_BYTES: u64 = 256;
@@ -131,6 +186,11 @@ impl Table {
         self.buffer.as_ref().is_some_and(|b| b.size() >= aligned(bytes))
     }
 
+    /// The table's label and the bytes its buffer holds (None before it is first ensured).
+    pub(crate) fn held(&self) -> Option<(&'static str, u64)> {
+        self.buffer.as_ref().map(|buffer| (self.label, buffer.size()))
+    }
+
     /// The buffer (present once [`Table::ensure`] ran).
     pub(crate) fn get(&self) -> &Buffer {
         // Every table is ensured before a frame binds it; `expect` would be a renderer bug.
@@ -147,6 +207,8 @@ pub(crate) struct Tables {
     pub slot_base: Table,
     pub visible: Table,
     pub args: Table,
+    /// The instance cull's survivor bits and block prefixes (LG-06; `cull::scratch_bytes`).
+    pub cull_scratch: Table,
     pub pass_views: Table,
     pub lines: Table,
     pub joints: Table,
@@ -158,10 +220,10 @@ pub(crate) struct Tables {
     /// Each local light's extension row, then the shadowed spots' matrices (`light_ext`, RQ6; on
     /// the legacy loop each light-table row's extension).
     pub light_ext: Table,
-    /// The per-tile light masks (`light_tiles`, RQ6; built by graph node 4 on a binned frame).
-    pub light_tiles: Table,
-    /// The light-bin header and z-bins (`light_zbins`, RQ6; a zero header bins no light).
-    pub light_zbins: Table,
+    /// The light bins (`light_bins`, RQ6; pass 2 A.0 LG-16): the header and every clusterable
+    /// kind's z-bins (a zero header bins no light), then the per-tile masks from
+    /// `cluster::LIGHT_TILES_OFFSET_WORDS` (built by graph node 4 on a binned frame).
+    pub light_bins: Table,
     /// Each material row's extension (`material_ext`, RQ6.3: its emission), parallel to `materials`.
     pub material_ext: Table,
 }
@@ -175,8 +237,10 @@ impl Tables {
             lights: Table::new("lights", storage),
             batches: Table::new("batches", storage),
             slot_base: Table::new("slot base", storage),
-            visible: Table::new("visible", storage),
+            // COPY_SRC: the cull rows read a view's region back (`Renderer::read_view_visible`).
+            visible: Table::new("visible", storage | BufferUsages::COPY_SRC),
             args: Table::new("indirect args", storage | BufferUsages::INDIRECT | BufferUsages::COPY_SRC),
+            cull_scratch: Table::new("cull scratch", BufferUsages::STORAGE),
             pass_views: Table::new("pass views", BufferUsages::UNIFORM | BufferUsages::COPY_DST),
             lines: Table::new("lines", BufferUsages::VERTEX | BufferUsages::COPY_DST),
             joints: Table::new("joints", storage),
@@ -185,15 +249,41 @@ impl Tables {
             skinned_slots: Table::new("skinned slots", BufferUsages::STORAGE | BufferUsages::VERTEX),
             prev_models: Table::new("previous models", storage),
             light_ext: Table::new("light extensions", storage),
-            light_tiles: Table::new("light tiles", storage),
-            light_zbins: Table::new("light z-bins", storage),
+            light_bins: Table::new("light bins", storage),
             material_ext: Table::new("material extensions", storage),
         }
     }
 
+    /// Every ensured table's label and held bytes (LG-13: the ledger's frame-table entries).
+    pub(crate) fn held(&self) -> Vec<(&'static str, u64)> {
+        [
+            &self.instances,
+            &self.materials,
+            &self.lights,
+            &self.batches,
+            &self.slot_base,
+            &self.visible,
+            &self.args,
+            &self.cull_scratch,
+            &self.pass_views,
+            &self.lines,
+            &self.joints,
+            &self.skin_jobs,
+            &self.skinned,
+            &self.skinned_slots,
+            &self.prev_models,
+            &self.light_ext,
+            &self.light_bins,
+            &self.material_ext,
+        ]
+        .into_iter()
+        .filter_map(Table::held)
+        .collect()
+    }
+
     /// Make room for `uploads` (and the GPU-written tables of `plan`).
     pub(crate) fn ensure(&mut self, device: &Device, plan: &FramePlan, uploads: &Uploads) -> Result<(), RenderError> {
-        let visible_rows = u64::from(plan.views) * u64::from(plan.opaque_instances) + plan.transparent.len() as u64;
+        let visible_rows = u64::from(plan.views) * u64::from(plan.visible_slots) + plan.transparent.len() as u64;
         let sizes = [
             (&mut self.instances, bytes_of_rows(&plan.instances)),
             (&mut self.materials, bytes_of_rows(&plan.materials)),
@@ -203,6 +293,7 @@ impl Tables {
             (&mut self.slot_base, bytes_of_rows(&plan.slot_base)),
             (&mut self.visible, visible_rows * 4),
             (&mut self.args, u64::from(plan.views) * plan.batches.len() as u64 * ARGS_STRIDE),
+            (&mut self.cull_scratch, crate::cull::scratch_bytes(plan.visible_slots, plan.views)),
             (&mut self.pass_views, uploads.pass_views.len() as u64),
             (&mut self.lines, bytes_of_rows(&plan.lines)),
             (&mut self.joints, bytes_of_rows(&plan.joints)),
@@ -210,11 +301,10 @@ impl Tables {
             (&mut self.skinned, u64::from(plan.skinned_vertices) * VERTEX_STRIDE),
             (&mut self.skinned_slots, u64::from(plan.skinned_vertices) * 4),
             (&mut self.prev_models, std::mem::size_of_val(uploads.prev_models.as_slice()) as u64),
-            // The RQ6 tables bind from the first frame (forward frame bindings 20-23); the binned
-            // light tables hold rows only on a binned frame (RQ6.2), else a zero bin header.
+            // The RQ6 tables bind from the first frame (forward frame bindings 20, 21 and 23); the
+            // bin table holds masks only on a binned frame (RQ6.2), else a zero bin header.
             (&mut self.light_ext, uploads.light_ext.len() as u64),
-            (&mut self.light_tiles, light_tile_bytes(plan, uploads)),
-            (&mut self.light_zbins, crate::cluster::zbin_bytes()),
+            (&mut self.light_bins, light_bin_bytes(plan, uploads)),
         ];
         for (table, bytes) in sizes {
             table.ensure(device, bytes)?;
@@ -225,9 +315,10 @@ impl Tables {
 
 /// What one frame writes to the GPU, charged against the upload budget before anything is written.
 pub(crate) struct Uploads {
-    /// The binned path's extension rows, tile masks and bins (RQ6.2). Graph node 4 builds the masks
-    /// and bins on the GPU (RQ6.7), so the CPU writes no masks and a zero bin header, which node 4
-    /// overwrites; a frame that bins nothing keeps the zero header and loops the legacy table.
+    /// The binned path's extension rows, tile masks and bins (RQ6.2), the last two written into
+    /// `light_bins` (masks at the tiles' offset, header and z-bins at 0). Graph node 4 builds the
+    /// masks and bins on the GPU (RQ6.7), so the CPU writes no masks and a zero bin header, which
+    /// node 4 overwrites; a frame that bins nothing keeps the zero header and loops the legacy table.
     pub light_ext: Vec<u8>,
     pub light_tiles: Vec<u8>,
     pub light_zbins: Vec<u8>,
@@ -242,6 +333,46 @@ pub(crate) struct Uploads {
     pub visible: Vec<u8>,
     pub visible_offset: u64,
     pub cpu_culls: Vec<CpuCull>,
+    /// The instance-table rows this frame writes (renderer pass 2 A.0b): every row, less the
+    /// retained groups' rows the table already holds as they were ([`instance_upload_ranges`]).
+    pub instance_rows: Vec<std::ops::Range<usize>>,
+}
+
+/// The instance-table rows a frame of `rows` rows whose retained groups lie at `spans` writes when
+/// the table holds `held`, the spans of the last upload into it (None: a new or grown table, or
+/// none held): every row but each held span's unchanged rows (renderer pass 2 A.0b, dirty-range
+/// uploads). Ascending, disjoint, non-empty.
+pub fn instance_upload_ranges(rows: usize, spans: &[crate::retained::RetainedSpan], held: Option<&[crate::retained::RetainedSpan]>) -> Vec<std::ops::Range<usize>> {
+    let every_row = std::iter::once(0..rows).filter(|all| !all.is_empty());
+    let Some(held) = held else { return every_row.collect() };
+    // Looked up by group id (a sorted list: no hashing order anywhere near the frame).
+    let mut by_group: Vec<(u64, &crate::retained::RetainedSpan)> = held.iter().map(|span| (span.group.id(), span)).collect();
+    by_group.sort_by_key(|(id, _)| *id);
+    let last_of = |id: u64| by_group.binary_search_by_key(&id, |(held, _)| *held).ok().map(|at| by_group[at].1);
+    // The kept (not written) row ranges, ascending: spans are laid out in row order.
+    let mut kept: Vec<std::ops::Range<usize>> = Vec::new();
+    for span in spans {
+        let Some(last) = last_of(span.group.id()) else { continue };
+        let changed = span.changed_since(last);
+        let first = span.first_row as usize;
+        let end = first + span.rows as usize;
+        let (changed_start, changed_end) = (first + changed.start as usize, first + changed.end as usize);
+        let pieces = if changed.is_empty() { [first..end, end..end] } else { [first..changed_start, changed_end..end] };
+        kept.extend(pieces.into_iter().filter(|piece| !piece.is_empty() && piece.end <= rows));
+    }
+    kept.sort_by_key(|range| range.start);
+    let mut written = Vec::new();
+    let mut at = 0;
+    for range in kept {
+        if range.start > at {
+            written.push(at..range.start);
+        }
+        at = at.max(range.end);
+    }
+    if at < rows {
+        written.push(at..rows);
+    }
+    written
 }
 
 /// The plan's own rows as the tables hold them, in [`Uploads::write`]'s order: written from the
@@ -292,16 +423,42 @@ fn cpu_light_zbins(plan: &FramePlan) -> Vec<u8> {
     }
 }
 
-/// The bytes `light_tiles` needs: the binned frame's masks (written by node 4 or the CPU).
-fn light_tile_bytes(plan: &FramePlan, uploads: &Uploads) -> u64 {
-    plan.binned.as_ref().map_or(0, |binned| binned.bins.grid.mask_bytes()).max(uploads.light_tiles.len() as u64)
+/// Where the masks start in `light_bins`, in bytes.
+const LIGHT_TILES_OFFSET_BYTES: u64 = crate::cluster::LIGHT_TILES_OFFSET_WORDS as u64 * 4;
+
+/// The bytes `light_bins` needs: the header and z-bins, then the binned frame's masks (written by
+/// node 4 or the CPU) from [`LIGHT_TILES_OFFSET_BYTES`]; at least one mask word, so the v2 map's
+/// `light_tiles` slice is never empty.
+fn light_bin_bytes(plan: &FramePlan, uploads: &Uploads) -> u64 {
+    let masks = plan.binned.as_ref().map_or(0, |binned| binned.bins.grid.mask_bytes()).max(uploads.light_tiles.len() as u64);
+    LIGHT_TILES_OFFSET_BYTES + masks.max(4)
+}
+
+/// The v2 map's two slices of `light_bins` (LG-16): (`light_zbins`, `light_tiles`).
+pub(crate) fn light_bin_slices(bins: &Buffer) -> (wgpu::BufferBinding<'_>, wgpu::BufferBinding<'_>) {
+    let zbins = wgpu::BufferBinding { buffer: bins, offset: 0, size: wgpu::BufferSize::new(crate::cluster::zbin_bytes()) };
+    let tiles = wgpu::BufferBinding { buffer: bins, offset: LIGHT_TILES_OFFSET_BYTES, size: None };
+    (zbins, tiles)
+}
+
+/// The pass-view entry of view `view`'s rows for draw variant `variant` (P2-0.12): the plain
+/// variant's is the view's own entry; the others follow the transparent draws' entries, one block
+/// of the plan's views per variant after plain, present only when the plan draws a variant.
+pub fn variant_pass_entry(plan: &FramePlan, view: u32, variant: usize) -> u64 {
+    if variant == 0 {
+        return u64::from(view);
+    }
+    u64::from(plan.views) + plan.transparent.len() as u64 + (variant as u64 - 1) * u64::from(plan.views) + u64::from(view)
 }
 
 fn pass_views(plan: &FramePlan) -> Vec<u8> {
-    let transparent_base = plan.views * plan.opaque_instances;
-    let views = (0..plan.views).map(|view| GpuPassView { view, direct: 0, base: 0, pad: 0 });
-    let glass = (0..plan.transparent.len() as u32).map(|k| GpuPassView { view: 0, direct: 1, base: transparent_base + k, pad: 0 });
-    let entries: Vec<GpuPassView> = views.chain(glass).collect();
+    let transparent_base = plan.views * plan.visible_slots;
+    let views = (0..plan.views).map(|view| GpuPassView { view, direct: 0, base: 0, slot_offset: 0 });
+    let glass = (0..plan.transparent.len() as u32).map(|k| GpuPassView { view: 0, direct: 1, base: transparent_base + k, slot_offset: 0 });
+    // Each non-plain variant's rows read its region of the slot-base table (P2-0.12).
+    let varied = if plan.variants.is_empty() { 0..0 } else { 1..crate::scene::DRAW_VARIANTS as u32 };
+    let variants = varied.flat_map(|variant| (0..plan.views).map(move |view| GpuPassView { view, direct: 0, base: 0, slot_offset: variant * plan.slot_count }));
+    let entries: Vec<GpuPassView> = views.chain(glass).chain(variants).collect();
     let mut bytes = vec![0u8; entries.len().max(1) * PASS_VIEW_STRIDE as usize];
     for (i, entry) in entries.iter().enumerate() {
         let at = i * PASS_VIEW_STRIDE as usize;
@@ -320,33 +477,42 @@ fn visible_rows(plan: &FramePlan, path: CullPath) -> (Vec<u8>, u64, Vec<CpuCull>
     rows.extend(&plan.transparent);
     let offset = match path {
         CullPath::Cpu => 0,
-        CullPath::Gpu => u64::from(plan.views) * u64::from(plan.opaque_instances) * 4,
+        CullPath::Gpu => u64::from(plan.views) * u64::from(plan.visible_slots) * 4,
     };
     (bytemuck::cast_slice(&rows).to_vec(), offset, cpu_culls)
 }
 
 impl Uploads {
-    pub(crate) fn new(plan: &mut FramePlan, path: CullPath) -> Result<Uploads, RenderError> {
+    pub(crate) fn new(plan: &mut FramePlan, path: CullPath, instance_rows: Vec<std::ops::Range<usize>>) -> Result<Uploads, RenderError> {
         let (visible, visible_offset, cpu_culls) = visible_rows(plan, path);
         let uploads = Uploads {
             frame: bytemuck::bytes_of::<GpuFrame>(&plan.frame).to_vec(),
             cull_views: bytemuck::bytes_of::<GpuCullViews>(&plan.cull_views).to_vec(),
             pass_views: pass_views(plan),
             prev_models: std::mem::take(&mut plan.prev_models),
-            light_ext: plan.binned.as_ref().map_or_else(|| bytemuck::cast_slice(&plan.legacy_ext).to_vec(), |b| crate::spot_shadow::light_ext_bytes(&b.ext, &plan.spot_shadows)),
+            // The binned path's decal rows (renderer pass 2 A.10) follow the lights' and the spots'.
+            light_ext: plan.binned.as_ref().map_or_else(
+                || bytemuck::cast_slice(&plan.legacy_ext).to_vec(),
+                |b| crate::decals::append_rows(crate::spot_shadow::light_ext_bytes(&b.ext, &plan.spot_shadows), b.ext.len(), &b.decals),
+            ),
             light_tiles: cpu_light_tiles(plan),
             light_zbins: cpu_light_zbins(plan),
             visible,
             visible_offset,
             cpu_culls,
+            instance_rows,
         };
         let mut budget = UploadBudget::new();
         for bytes in uploads.all() {
             budget.charge(bytes.len() as u64)?;
         }
-        for bytes in plan_rows(plan) {
+        // The instance rows charge only what is written (A.0b: retained rows already held cost 0).
+        let [_, other_rows @ ..] = plan_rows(plan);
+        for bytes in other_rows {
             budget.charge(bytes.len() as u64)?;
         }
+        let written: usize = uploads.instance_rows.iter().map(ExactSizeIterator::len).sum();
+        budget.charge((written * size_of::<crate::layout::GpuInstance>()) as u64)?;
         budget.charge(std::mem::size_of_val(uploads.prev_models.as_slice()) as u64)?;
         Ok(uploads)
     }
@@ -356,35 +522,36 @@ impl Uploads {
         [&self.light_ext, &self.light_tiles, &self.light_zbins, &self.frame, &self.cull_views, &self.pass_views, &self.visible]
     }
 
-    /// Write every table this frame fills from the CPU: `plan`'s rows straight from the plan (the
-    /// one these uploads were made of), the rest from here.
-    pub(crate) fn write(&self, queue: &wgpu::Queue, tables: &Tables, plan: &FramePlan) {
-        let [instances, materials, material_ext, lights, batches, slot_base, lines, joints, skin_jobs] = plan_rows(plan);
-        let writes = [
-            (&tables.instances, instances),
-            (&tables.materials, materials),
-            (&tables.material_ext, material_ext),
-            (&tables.lights, lights),
-            (&tables.batches, batches),
-            (&tables.slot_base, slot_base),
-            (&tables.pass_views, self.pass_views.as_slice()),
-            (&tables.lines, lines),
-            (&tables.joints, joints),
-            (&tables.skin_jobs, skin_jobs),
-            (&tables.light_ext, self.light_ext.as_slice()),
-            (&tables.light_tiles, self.light_tiles.as_slice()),
-            (&tables.light_zbins, self.light_zbins.as_slice()),
+    /// Every table write this frame makes from the CPU, for the upload arena: `plan`'s rows straight
+    /// from the plan (the one these uploads were made of), the rest from here.
+    pub(crate) fn writes<'a>(&'a self, tables: &'a Tables, plan: &'a FramePlan) -> Vec<UploadWrite<'a>> {
+        let [_, materials, material_ext, lights, batches, slot_base, lines, joints, skin_jobs] = plan_rows(plan);
+        let row = size_of::<crate::layout::GpuInstance>();
+        let instance_writes = self.instance_rows.iter().map(|range| {
+            let bytes: &[u8] = bytemuck::cast_slice(&plan.instances[range.clone()]);
+            (tables.instances.get(), (range.start * row) as u64, bytes)
+        });
+        let rest = [
+            (tables.materials.get(), 0, materials),
+            (tables.material_ext.get(), 0, material_ext),
+            (tables.lights.get(), 0, lights),
+            (tables.batches.get(), 0, batches),
+            (tables.slot_base.get(), 0, slot_base),
+            (tables.pass_views.get(), 0, self.pass_views.as_slice()),
+            (tables.lines.get(), 0, lines),
+            (tables.joints.get(), 0, joints),
+            (tables.skin_jobs.get(), 0, skin_jobs),
+            (tables.light_ext.get(), 0, self.light_ext.as_slice()),
+            (tables.light_bins.get(), LIGHT_TILES_OFFSET_BYTES, self.light_tiles.as_slice()),
+            (tables.light_bins.get(), 0, self.light_zbins.as_slice()),
+            (tables.prev_models.get(), 0, bytemuck::cast_slice(&self.prev_models)),
+            (tables.visible.get(), self.visible_offset, self.visible.as_slice()),
         ];
-        for (table, bytes) in writes {
-            if !bytes.is_empty() {
-                queue.write_buffer(table.get(), 0, bytes);
-            }
-        }
-        if !self.prev_models.is_empty() {
-            queue.write_buffer(tables.prev_models.get(), 0, bytemuck::cast_slice(&self.prev_models));
-        }
-        if !self.visible.is_empty() {
-            queue.write_buffer(tables.visible.get(), self.visible_offset, &self.visible);
-        }
+        instance_writes.chain(rest).collect()
+    }
+
+    /// Bytes of instance rows this frame writes (A.0b).
+    pub(crate) fn instance_bytes(&self) -> u64 {
+        (self.instance_rows.iter().map(ExactSizeIterator::len).sum::<usize>() * size_of::<crate::layout::GpuInstance>()) as u64
     }
 }

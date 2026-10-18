@@ -182,11 +182,13 @@ describe("R2.3 import-time clusters", () => {
       "1800 + 1800 triangles reach 2048",
     );
     const one = glbOf(grid(30));
-    assert.deepEqual(await importGlb(one), one, "1800 alone does not");
+    // Renderer pass 2 A6.9 flipped: the import step now adds LODs (512 triangles and up), so the
+    // GLB is no longer byte-identical; it still carries no meshlets.
+    assert.equal(extrasOf(readGlb(await importGlb(one)).json), undefined, "1800 alone does not");
     const lowered = await importGlb(one, { meshletMinTriangles: 128 });
     assert.ok(extrasOf(readGlb(lowered).json), "a game's lower threshold clusters it");
     const raised = glbOf(grid(40));
-    assert.deepEqual(await importGlb(raised, { meshletMinTriangles: 1_000_000 }), raised);
+    assert.equal(extrasOf(readGlb(await importGlb(raised, { meshletMinTriangles: 1_000_000 })).json), undefined);
   });
 
   it("a GLB the clusterizer cannot read the geometry of is delivered unchanged, never refused", async () => {

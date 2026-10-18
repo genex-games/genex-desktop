@@ -499,3 +499,175 @@ fn metal_a_post_pass_scratch_copy_counts_in_the_held_bytes() {
     let scratch = u64::from(WIDTH) * u64::from(HEIGHT) * 8;
     assert_eq!(renderer.held_bytes(), pooled + scratch, "the hdr-stage pass's rgba16float copy of the scene is held");
 }
+
+// ---------------------------------------------------------------------------------------------
+// Renderer pass 2, P2-0.14 (RC-02, RC-16 row 2; LG-08/S9).
+
+/// A `before-cull` pass that records nothing: its stage alone used to submit the frame's v1/v2
+/// refresh ahead of the frame encoder that copies the adapted exposure into the frame uniforms.
+#[derive(Default)]
+struct Idle;
+
+impl CustomPass for Idle {
+    fn rebuild(&mut self, _setup: &mut PassSetup<'_>) -> Result<(), RenderError> {
+        Ok(())
+    }
+
+    fn encode(&mut self, _frame: &mut PassFrame<'_>) {}
+
+    fn api(&self) -> u32 {
+        2
+    }
+}
+
+/// v2 `post-hdr`: `gx_frame.pre_exposure` in green over the scene's first 2 x 2 texels (the
+/// metering barely sees them).
+const PRE_EXPOSURE_V2: &str = "
+@group(0) @binding(0) var<uniform> gx_frame: GxFrameV2;
+
+struct VsOut { @builtin(position) position: vec4<f32> }
+
+@vertex
+fn vs_main(@builtin(vertex_index) i: u32) -> VsOut {
+    let uv = vec2<f32>(f32((i << 1u) & 2u), f32(i & 2u));
+    var out: VsOut;
+    out.position = vec4<f32>(uv * 2.0 - 1.0, 0.0, 1.0);
+    return out;
+}
+
+@fragment
+fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
+    if in.position.x > 2.0 || in.position.y > 2.0 {
+        discard;
+    }
+    return vec4<f32>(0.0, gx_frame.pre_exposure, 0.0, 1.0);
+}
+";
+
+/// A v2 `post-hdr` pass drawing [`PRE_EXPOSURE_V2`] into the scene it is handed.
+#[derive(Default)]
+struct PreExposureProbe {
+    pipeline: Option<wgpu::RenderPipeline>,
+}
+
+impl CustomPass for PreExposureProbe {
+    fn rebuild(&mut self, setup: &mut PassSetup<'_>) -> Result<(), RenderError> {
+        let module = setup.create_shader("pre-exposure probe", PRE_EXPOSURE_V2)?;
+        let layout = setup.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("pre-exposure probe"),
+            bind_group_layouts: &[Some(setup.tables_layout())],
+            immediate_size: 0,
+        });
+        let targets = [Some(wgpu::ColorTargetState { format: setup.world_format(), blend: None, write_mask: wgpu::ColorWrites::ALL })];
+        self.pipeline = Some(setup.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("pre-exposure probe"),
+            layout: Some(&layout),
+            vertex: wgpu::VertexState { module: &module, entry_point: Some("vs_main"), compilation_options: Default::default(), buffers: &[] },
+            primitive: wgpu::PrimitiveState::default(),
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState::default(),
+            fragment: Some(wgpu::FragmentState { module: &module, entry_point: Some("fs_main"), compilation_options: Default::default(), targets: &targets }),
+            multiview_mask: None,
+            cache: None,
+        }));
+        Ok(())
+    }
+
+    fn encode(&mut self, frame: &mut PassFrame<'_>) {
+        let Some(pipeline) = self.pipeline.clone() else { return };
+        let tables = frame.tables().clone();
+        let Some(view) = frame.world_view().cloned() else { return };
+        let Some(encoder) = frame.encoder() else { return };
+        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("pre-exposure probe"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: &view,
+                depth_slice: None,
+                resolve_target: None,
+                ops: wgpu::Operations { load: wgpu::LoadOp::Load, store: wgpu::StoreOp::Store },
+            })],
+            ..Default::default()
+        });
+        pass.set_pipeline(&pipeline);
+        pass.set_bind_group(0, &tables, &[]);
+        pass.draw(0..3, 0..1);
+    }
+
+    fn api(&self) -> u32 {
+        2
+    }
+}
+
+/// The `gx_frame.pre_exposure` a v2 `post-hdr` pass reads after `ticks` frames of a scene under a
+/// blinding sun with auto exposure, with or without a `before-cull` pass registered.
+fn pre_exposure_seen(gpu: &Gpu, before_cull: bool, ticks: u64) -> f32 {
+    let mut renderer = auto_exposed(gpu);
+    let mut passes = CustomPasses::new(gpu, renderer.renderer(), wgpu::Features::empty());
+    let (mut probe, mut idle) = (PreExposureProbe::default(), Idle);
+    passes.register(gpu, "probe", PassStage::PostHdr, &mut probe).expect("a v2 post-hdr probe");
+    if before_cull {
+        passes.register(gpu, "idle", PassStage::BeforeCull, &mut idle).expect("a v2 before-cull pass");
+    }
+    let facts = renderer.pipeline_facts(passes.ldr_reason());
+    let mut frame = ImmediateFrame::new(camera(), [128, 128, 128, 255]);
+    frame.mesh(MeshId::CUBE, scaled([0.0, -0.05, 0.0], [8.0, 0.1, 8.0]), Material::color([110, 110, 120, 255]));
+    frame.lighting_mut().sun_intensity = 60.0;
+    {
+        let mut list: Vec<&mut dyn CustomPass> = if before_cull { vec![&mut probe, &mut idle] } else { vec![&mut probe] };
+        passes.set_pipeline_facts(gpu, &mut list[..], facts).expect("facts");
+    }
+    passes.set_render_size(renderer.renderer().render_size());
+    for tick in 1..=ticks {
+        frame.set_tick(tick);
+        let mut list: Vec<&mut dyn CustomPass> = if before_cull { vec![&mut probe, &mut idle] } else { vec![&mut probe] };
+        let mut run = passes.frame(gpu, &mut list[..], tick).expect("frame passes");
+        renderer.render_with(gpu, &frame, CullPath::Gpu, None, &mut run).expect("frame");
+        drop(run);
+    }
+    assert!(passes.refusals().is_empty(), "{:?}", passes.refusals());
+    renderer.renderer().read_scene(gpu).expect("the HDR scene")[0][1]
+}
+
+#[test]
+#[ignore = "needs a GPU: run with --ignored metal"]
+fn metal_a_before_cull_pass_leaves_v2_passes_the_adapted_pre_exposure() {
+    let Some(gpu) = gpu() else { return };
+    let alone = pre_exposure_seen(&gpu, false, 60);
+    assert!(alone > 0.0 && alone < 0.5, "auto exposure adapted down under the blinding sun: {alone}");
+    let beside_before_cull = pre_exposure_seen(&gpu, true, 60);
+    assert!(
+        (beside_before_cull - alone).abs() <= alone * 0.01,
+        "a before-cull pass gave the v2 frame pre-exposure {beside_before_cull} against {alone} without it (the CPU's 1.0 is the refresh read before the exposure copy)"
+    );
+}
+
+#[test]
+#[ignore = "needs a GPU: run with --ignored metal"]
+fn metal_particles_draw_under_a_camera_looking_straight_down() {
+    let Some(gpu) = gpu() else { return };
+    let mut renderer = hdr_renderer(&gpu);
+    let emitter = renderer.add_emitter(&gpu, EmitterDesc::fountain([0.0, 0.5, 0.0], 7)).expect("emitter");
+    // A top-down camera whose up is the world's -z: forward is straight down the world's y axis.
+    let mut camera = CameraDesc::look_at([0.0, 9.0, 0.0], [0.0, 0.0, 0.0]);
+    camera.up = [0.0, 0.0, -1.0];
+    let ground = |camera: CameraDesc, particles: bool| {
+        let mut frame = ImmediateFrame::new(camera, [20, 24, 32, 255]);
+        frame.mesh(MeshId::CUBE, scaled([0.0, -0.05, 0.0], [8.0, 0.1, 8.0]), Material::color([110, 110, 120, 255]));
+        if particles {
+            frame.particles(emitter, 30);
+        }
+        frame
+    };
+    let plain = draw(&gpu, &mut renderer, &ground(camera, false));
+    let with_particles = draw(&gpu, &mut renderer, &ground(camera, true));
+    // Pixels a billboard covers (more than the frame-keyed dither moves).
+    let covered = |a: &Capture, b: &Capture| a.bgra().chunks(4).zip(b.bgra().chunks(4)).filter(|(x, y)| (0..3).any(|c| x[c].abs_diff(y[c]) > 8)).count();
+    let changed = covered(&plain, &with_particles);
+    // The same fountain from a camera a little off the vertical, where the old basis held.
+    camera.eye = [0.0, 9.0, 0.9];
+    let tilted = draw(&gpu, &mut renderer, &ground(camera, true));
+    let tilted_plain = draw(&gpu, &mut renderer, &ground(camera, false));
+    let tilted_changed = covered(&tilted_plain, &tilted);
+    eprintln!("straight down: {changed} pixels changed; tilted: {tilted_changed}");
+    assert!(tilted_changed > 20 && changed * 2 > tilted_changed, "the fountain's billboards draw seen from straight above ({changed} pixels changed, {tilted_changed} from a tilted camera)");
+}

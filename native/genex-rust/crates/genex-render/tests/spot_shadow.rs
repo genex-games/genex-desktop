@@ -615,3 +615,79 @@ fn metal_two_shadowed_spots_fit_their_budget_at_1080p() {
     }
     assert!(added.1 <= TWO_SPOTS_BUDGET_MS, "two shadowed spots add {added:?} ms (p50, p95) at 1080p");
 }
+
+// ---------------------------------------------------------------------------------------------
+// Renderer pass 2, P2-0.4 (SH-07, LG-01): spot shadow slots change hands without a pop
+
+/// The corridor row: four shadow-asking spots 6 m apart along x, each with a cube 1 m towards the
+/// camera under it, and the camera walking past them at [`CORRIDOR_STEP_M`] a frame.
+const CORRIDOR_SPOTS: [f32; 4] = [-9.0, -3.0, 3.0, 9.0];
+const CORRIDOR_RANGE_M: f32 = 5.0;
+const CORRIDOR_STEP_M: f32 = 0.2;
+const CORRIDOR_FRAMES: u64 = 120;
+/// Frames the corridor's camera then stands still at the end of its walk.
+const CORRIDOR_SETTLE_FRAMES: u64 = 60;
+/// The most a floor point's shadow (its radiance over the unshadowed frame's) may change from one
+/// frame to the next: a slot changing hands at once moves it by about 0.9.
+const CORRIDOR_STEP_MAX: f32 = 0.15;
+
+/// The corridor at camera position `x` (walking along +x, looking down the corridor's middle).
+fn corridor_scene(x: f32) -> Scene {
+    let camera = CameraDesc::look_at([x, 12.0, 18.0], [x * 0.3, 0.0, 0.0]);
+    let spots = CORRIDOR_SPOTS.iter().map(|sx| SpotLight { range: CORRIDOR_RANGE_M, ..down_spot([*sx, 4.0, 0.0], true) }).collect();
+    let occluders: Vec<([f32; 3], f32)> = CORRIDOR_SPOTS.iter().map(|sx| ([*sx, 2.0, 1.0], 0.8)).collect();
+    ground_scene(camera, spots, &occluders)
+}
+
+/// Each corridor spot's floor point behind its cube.
+fn corridor_points() -> Vec<[f32; 3]> {
+    CORRIDOR_SPOTS.iter().map(|sx| floor_shadow([*sx, 4.0, 0.0], [*sx, 2.0, 1.0])).collect()
+}
+
+/// LG-01's row: on high (two slots) the camera walks past four shadowed spots, so the two nearest
+/// change as it goes. Each spot's shadow behind its cube (radiance over the unshadowed frame's)
+/// moves by at most [`CORRIDOR_STEP_MAX`] a frame (no shadow appears or vanishes at once), and
+/// after the walk the two spots nearest the camera hold the slots.
+#[test]
+#[ignore = "GPU: run with -- --ignored metal"]
+fn metal_spot_shadows_fade_as_their_slots_change_hands_along_a_corridor() {
+    let _row = gpu_row();
+    let Some(gpu) = gpu() else { return };
+    let size = (256, 144);
+    let points = corridor_points();
+    let mut lit = spot_renderer(&gpu, size, 0);
+    let mut shadowed = spot_renderer(&gpu, size, 2);
+    let mut last: Option<Vec<f32>> = None;
+    let (mut worst, mut worst_at) = (0.0f32, (0, 0));
+    for frame in 0..CORRIDOR_FRAMES + CORRIDOR_SETTLE_FRAMES {
+        let x = -12.0 + CORRIDOR_STEP_M * frame.min(CORRIDOR_FRAMES) as f32;
+        let scene = corridor_scene(x);
+        for point in &points {
+            let clip = scene.camera.view_proj(size.0 as f32 / size.1 as f32) * Vec3::from(*point).extend(1.0);
+            let ndc = clip.truncate() / clip.w;
+            assert!(ndc.x.abs() < 0.95 && ndc.y.abs() < 0.95, "frame {frame}: {point:?} is in view");
+        }
+        // The frame index advances as Live's does (index 0 starts every history over).
+        lit.set_frame_index(frame + 1);
+        shadowed.set_frame_index(frame + 1);
+        let (_, open) = draw(&gpu, &mut lit, &scene, CullPath::Gpu);
+        let (_, dark) = draw(&gpu, &mut shadowed, &scene, CullPath::Gpu);
+        let shares: Vec<f32> = points
+            .iter()
+            .map(|point| radiance_at(&dark, &scene.camera, size, *point) / radiance_at(&open, &scene.camera, size, *point).max(1e-6))
+            .collect();
+        if let Some(previous) = &last {
+            for (k, (now, was)) in shares.iter().zip(previous).enumerate() {
+                if (now - was).abs() > worst {
+                    (worst, worst_at) = ((now - was).abs(), (frame, k));
+                }
+            }
+        }
+        last = Some(shares);
+    }
+    let end = last.expect("frames");
+    eprintln!("{{\"row\":\"p2-0.4-corridor\",\"worstStep\":{worst:.4},\"worstFrame\":{},\"worstSpot\":{},\"endShares\":{end:?}}}", worst_at.0, worst_at.1);
+    assert!(worst <= CORRIDOR_STEP_MAX, "spot {}'s shadow changes by {worst:.3} at frame {}: a slot changed hands at once", worst_at.1, worst_at.0);
+    assert!(end[2] < SHADOWED_SHARE && end[3] < SHADOWED_SHARE, "the two spots nearest the camera hold the slots after the walk: {end:?}");
+    assert!(end[0] > 1.0 - OPEN_FLOOR_TOLERANCE && end[1] > 1.0 - OPEN_FLOOR_TOLERANCE, "the far spots are unshadowed: {end:?}");
+}

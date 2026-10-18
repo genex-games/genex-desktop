@@ -6,7 +6,7 @@
 //!   GENEX_REQUIRE_METAL=1 node scripts/toolchains/rust-env.ts -- cargo test -p showcase --release \
 //!     --offline --locked --test perf_matrix -- --ignored metal --nocapture
 //!
-//! Scenes: the five lakeside shots (fixed cameras, one simulation tick per frame from tick 600, drawn
+//! Scenes: the nine lakeside shots (pass 1's five and Lakeside v2's four; fixed cameras, one simulation tick per frame from tick 600, drawn
 //! as the studio draws them), the three bench scenes along their camera paths, and the two stress
 //! scenes ([`showcase_game::stress`]: 1,024 point lights over a plaza; a 1.5 M triangle forest).
 //! Profiles: `off` (today's renderer) and the four presets as the host's device class resolves them.
@@ -41,7 +41,7 @@ use genex_render::device_class::{DeviceClass, FormFactor, PerformanceTier, Targe
 use genex_render::presets::{class_defaults, default_preset, preset_quality, reference_resolution, scene_format};
 use genex_render::renderer::FrameStats;
 use genex_render::scene::{FramePlan, MeshLibrary, MeshletState, Scene};
-use genex_render::settings::{AntiAliasing, ExposureMode, Look, Quality, QualityPreset, RenderFeature, Tonemapper};
+use genex_render::settings::{AntiAliasing, CompensationCurve, ExposureMode, Look, Quality, QualityPreset, RenderFeature, Tonemapper};
 use genex_render::{RenderOptions, Renderer};
 use genex_render::meshlet_cull::CullPass;
 use showcase_game::bench::SceneId;
@@ -184,12 +184,12 @@ impl Applied {
     /// [`Applied::json`] with what `renderer`'s last frame drew (RQ5 review: the row reported the
     /// quality's switches, so a TAA ask drawn as MSAA read as TAA): the world pass's samples, and
     /// `taa` and `upscaler` from the frame's path.
-    fn drawn_json(&self, renderer: &Renderer) -> Value {
+    fn drawn_json(&self, renderer: &Renderer, content: Content) -> Value {
         let mut value = self.json();
         let path = renderer.last_scene();
         let taa = path.is_some_and(|path| path.taa);
         let upscaled = path.is_some_and(|path| path.fsr.easu || path.fsr.rcas);
-        let drawn: Vec<&str> = RenderFeature::ALL
+        let mut drawn: Vec<&str> = RenderFeature::ALL
             .into_iter()
             .filter(|feature| match feature {
                 RenderFeature::Taa => taa,
@@ -198,6 +198,14 @@ impl Applied {
             })
             .map(RenderFeature::wire)
             .collect();
+        let hdr = path.is_some_and(|path| path.hdr);
+        let clouds = matches!(renderer.environment(), genex_render::settings::Environment::Sky(sky) if sky.clouds.is_some());
+        let content = Content { terrain: renderer.terrain_stats().is_some(), grass: renderer.grass_stats().is_some(), clouds, ..content };
+        let stage_a = stage_a_drawn(&self.quality, renderer.look(), hdr && taa, content);
+        drawn.extend(stage_a.iter().map(|(feature, _)| *feature));
+        for (feature, shape) in stage_a.into_iter().filter_map(|(feature, shape)| shape.map(|shape| (feature, shape))) {
+            value["featureShapes"][feature] = json!(shape);
+        }
         value["featuresDrawn"] = json!(drawn);
         value["samples"] = json!(renderer.sample_count());
         value["scenePath"] = json!({ "taa": taa, "easu": path.is_some_and(|path| path.fsr.easu), "rcas": path.is_some_and(|path| path.fsr.rcas) });
@@ -206,13 +214,67 @@ impl Applied {
 }
 
 /// The shape AO is drawn in, as the budgets name it (`tests/fixtures/render-perf/budgets.json`:
-/// GTAO's budget is per resolution): `half`, `full`, or `off`.
+/// GTAO's budget is per resolution and method): `half`, `full`, `bitmask-half`, `bitmask-full`
+/// (renderer pass 2 B.4: the visibility bitmask on desktop `high` and `ultra`), or `off`.
 fn ao_shape(quality: &Quality) -> &'static str {
-    match quality.ao.resolution {
-        genex_render::settings::AoResolution::Half => "half",
-        genex_render::settings::AoResolution::Full => "full",
+    use genex_render::settings::{AoMethod, AoResolution};
+    let bitmask = quality.ao_method != AoMethod::Horizons;
+    match (quality.ao.resolution, bitmask) {
+        (AoResolution::Half, false) => "half",
+        (AoResolution::Full, false) => "full",
+        (AoResolution::Half, true) => "bitmask-half",
+        (AoResolution::Full, true) => "bitmask-full",
         _ => "off",
     }
+}
+
+/// What a scene declares that a Stage A feature draws for (owner decision D17: a row is charged
+/// a feature's budget only when its frames draw it). The terrain and the grass are read off the
+/// renderer; the rest from the frame a subject drew.
+#[derive(Clone, Copy, Debug, Default)]
+struct Content {
+    terrain: bool,
+    grass: bool,
+    reflection_probes: usize,
+    irradiance_volumes: usize,
+    decals: usize,
+    /// The game's sky carries a cloud layer (renderer pass 2 B.5).
+    clouds: bool,
+}
+
+/// The Stage A features (and B.5's clouds, B.9's screen-space reflections) `quality` draws under `look` on `content` (`taa_hdr`: the
+/// frame is the HDR scene TAA resolves, where the sun mask runs), named as `tests/fixtures/render-perf/
+/// budgets.json` names them, each with the shape its budget is keyed by. GPU particles have a
+/// budget but no matrix scene declares any.
+fn stage_a_drawn(quality: &Quality, look: &Look, taa_hdr: bool, content: Content) -> Vec<(&'static str, Option<&'static str>)> {
+    use genex_render::post::dof::DofTier;
+    use genex_render::post::motion_blur::MotionBlurTier;
+    let environment = &quality.environment;
+    let froxel = environment.froxel_fog.filter(|_| quality.fog).map(|grid| if grid == genex_render::froxel::ULTRA_GRID { "ultra" } else { "high" });
+    let dof = match quality.dof {
+        _ if !look.depth_of_field.enabled => None,
+        DofTier::Ring => Some("ring"),
+        DofTier::Circular => Some("circular"),
+        _ => None,
+    };
+    // B.9 traces at desktop high (48 steps) and ultra (64), on the HDR scene TAA resolves.
+    let ssr = if quality.ssr == genex_render::ssr::SsrQuality::ULTRA { "ultra" } else { "high" };
+    let rows = [
+        ("grading", look.grading != genex_render::post::grading::Grading::NEUTRAL, None),
+        ("reflection-probes", environment.ibl && environment.reflection_probes > 0 && content.reflection_probes > 0, None),
+        ("irradiance-volumes", environment.irradiance_volumes > 0 && content.irradiance_volumes > 0, None),
+        ("froxel-fog", froxel.is_some(), froxel),
+        ("screen-inputs", !quality.screen_inputs.is_empty(), None),
+        ("terrain", content.terrain, None),
+        ("grass", content.grass && quality.grass != genex_render::foliage::GrassQuality::OFF, None),
+        ("dof", dof.is_some(), dof),
+        ("motion-blur", look.motion_blur.enabled && quality.motion_blur != MotionBlurTier::Off, None),
+        ("decals", quality.lights.decals > 0 && content.decals > 0, None),
+        ("sun-mask", genex_render::post::sun_mask::key(quality, taa_hdr, taa_hdr).is_some(), None),
+        ("clouds", genex_render::clouds::LANDED && content.clouds && quality.hdr && environment.clouds.is_some(), None),
+        ("ssr", genex_render::ssr::LANDED && taa_hdr && quality.ssr.enabled, Some(ssr)),
+    ];
+    rows.into_iter().filter(|(_, on, _)| *on).map(|(feature, _, shape)| (feature, shape)).collect()
 }
 
 /// The sun shadows' shape as a row records it, so a profile drawing other cascades than `off`'s
@@ -257,16 +319,14 @@ fn lakeside_look() -> Look {
     look
 }
 
-/// The look a capture of `cell` draws with: the lakeside's, with the scene's own floor on what
-/// auto exposure meters where it sets one (the dusk plaza, `StressId::ev_min`).
+/// The look a capture of `cell` draws with: the lakeside's, with the scene's own exposure
+/// compensation curve where it sets one (the dusk plaza, `StressId::exposure_curve`).
 fn scene_look(cell: Cell) -> Look {
-    let mut look = lakeside_look();
-    if let Cell::Stress(id) = cell
-        && let Some(ev_min) = id.ev_min()
-    {
-        look.ev_min = ev_min;
+    let look = lakeside_look();
+    match cell {
+        Cell::Stress(id) => id.exposure_curve().map_or(look, |points| look.with_compensation_curve(CompensationCurve::new(points))),
+        _ => look,
     }
-    look
 }
 
 /// GPU timestamps around a frame: a stamped dispatch first in the frame's first encoder and a
@@ -411,6 +471,10 @@ trait Subject {
     fn scene_at(&self, _frame: u32) -> Option<Scene> {
         None
     }
+    /// What the scene declares for the Stage A features (none but the lakeside's do).
+    fn content(&mut self) -> Content {
+        Content::default()
+    }
 }
 
 /// A lakeside shot, or the tour: the simulation advances one tick per frame.
@@ -437,18 +501,29 @@ impl Subject for LakesideSubject {
     fn renderer(&mut self) -> &mut Renderer {
         &mut self.stage.renderer
     }
+
+    fn content(&mut self) -> Content {
+        let Some(frame) = self.runtime.frame(View::Named(self.view)) else { return Content::default() };
+        let lights = frame.lights();
+        Content { reflection_probes: lights.reflection_probes.len(), irradiance_volumes: lights.irradiance_volumes.len(), decals: frame.decals().len(), ..Content::default() }
+    }
 }
+
+/// A scene at a frame index as drawn at a quality.
+type SceneAt = Box<dyn Fn(u32, &Quality) -> Scene>;
 
 /// A scene that is a function of the frame index.
 struct IndexedSubject {
     renderer: Renderer,
-    scene: Box<dyn Fn(u32) -> Scene>,
+    /// The scene at a frame index as drawn at the renderer's quality (a bench scene draws its
+    /// fallback for content the quality lacks: `BenchScene::scene_for`).
+    scene: SceneAt,
     facts: Value,
 }
 
 impl Subject for IndexedSubject {
     fn frame(&mut self, gpu: &Gpu, frame: u32, stamps: Option<&Stamps>) {
-        let drawn = (self.scene)(frame);
+        let drawn = (self.scene)(frame, self.renderer.quality());
         support::render_marked(&mut self.renderer, gpu, &drawn, &mut |encoder| {
             if let Some(stamps) = stamps {
                 stamps.start(encoder);
@@ -468,7 +543,7 @@ impl Subject for IndexedSubject {
     }
 
     fn scene_at(&self, frame: u32) -> Option<Scene> {
-        Some((self.scene)(frame))
+        Some((self.scene)(frame, self.renderer.quality()))
     }
 }
 
@@ -483,7 +558,8 @@ enum Cell {
 impl Cell {
     /// The scenes in report order.
     fn all() -> Vec<Cell> {
-        let mut cells: Vec<Cell> = SHOTS.iter().map(|shot| Cell::Lakeside(shot.name)).collect();
+        // Every named shot: pass 1's five and Lakeside v2's four (the D7 whole-frame rows).
+        let mut cells: Vec<Cell> = showcase_game::world::named_shots().map(|shot| Cell::Lakeside(shot.name)).collect();
         cells.extend(SceneId::ALL.into_iter().map(Cell::Bench));
         cells.extend(StressId::ALL.into_iter().map(Cell::Stress));
         cells
@@ -505,12 +581,12 @@ impl Cell {
     }
 
     /// The scene on a fresh renderer of `size` built with `options`.
-    /// A bench or stress cell's scene at `frame`, its meshes loaded into `meshes` (the lakeside
-    /// draws through its runtime and has none).
-    fn scene(self, meshes: &mut OnGpu<'_>, frame: u32) -> Scene {
+    /// A bench or stress cell's scene at `frame` as drawn at `quality`, its meshes loaded into
+    /// `meshes` (the lakeside draws through its runtime and has none).
+    fn scene(self, meshes: &mut OnGpu<'_>, frame: u32, quality: &Quality) -> Scene {
         match self {
             Cell::Lakeside(shot) => panic!("the lakeside's {shot} shot draws through its runtime"),
-            Cell::Bench(id) => showcase_game::bench::load(id, meshes).expect("the scene's meshes load").scene(frame),
+            Cell::Bench(id) => showcase_game::bench::load(id, meshes).expect("the scene's meshes load").scene_for(frame, quality),
             Cell::Stress(id) => stress::load(id, meshes).expect("the stress scene's meshes load").scene(frame),
         }
     }
@@ -524,13 +600,13 @@ impl Cell {
             }
             Cell::Bench(id) => {
                 let (renderer, scene) = support::bench_stage_with(gpu, id, size, options);
-                Box::new(IndexedSubject { renderer, scene: Box::new(move |frame| scene.scene(frame)), facts: Value::Null })
+                Box::new(IndexedSubject { renderer, scene: Box::new(move |frame, quality| scene.scene_for(frame, quality)), facts: Value::Null })
             }
             Cell::Stress(id) => {
                 let mut renderer = Renderer::with_options(gpu, size[0], size[1], options).expect("renderer");
                 let scene = stress::load(id, &mut OnGpu { renderer: &mut renderer, gpu }).expect("the stress scene's meshes load");
                 let facts = stress_facts(&*scene);
-                Box::new(IndexedSubject { renderer, scene: Box::new(move |frame| scene.scene(frame)), facts })
+                Box::new(IndexedSubject { renderer, scene: Box::new(move |frame, _| scene.scene(frame)), facts })
             }
         }
     }
@@ -568,6 +644,8 @@ const NODES_REASON: &str = "renderer-timer-not-wired: the renderer takes a GpuTi
 
 /// One matrix row.
 fn row(cell: Cell, size: [u32; 2], applied: &Applied, mut samples: Samples, subject: &mut dyn Subject) -> Value {
+    let content = subject.content();
+    let applied_json = applied.drawn_json(subject.renderer(), content);
     json!({
         "row": cell.name(),
         "profile": applied.profile.name(),
@@ -581,7 +659,7 @@ fn row(cell: Cell, size: [u32; 2], applied: &Applied, mut samples: Samples, subj
         "nodesReason": NODES_REASON,
         "stats": stats_json(subject.renderer().last_stats()),
         "scene": subject.facts(),
-        "applied": applied.drawn_json(subject.renderer()),
+        "applied": applied_json,
     })
 }
 
@@ -682,6 +760,67 @@ fn metal_matrix_scenes_by_profiles_by_sizes() {
     let record = merge(head.json, rows, Vec::new());
     write_record(&out_path("matrix", &head.sha, "GENEX_PERF_OUT"), &record);
     println!("{record:#}");
+}
+
+/// Owner decision D7 (2026-10-14): a whole frame within 16.7 ms GPU p95 at desktop-high's high at
+/// 1440p output and at ultra at 4K output on the reference M4 Max, both allowed dynamic resolution.
+const D7_FRAME_BUDGET_MS: f64 = 16.7;
+/// D7's outputs and presets, and whether a row over the budget fails the gate: high at 1440p
+/// (gated), ultra at 4K (owner decision D15, 2026-10-18: measured and reported, the AAA quality bar
+/// comes first, so a miss is not a failure).
+const D7_ROWS: [([u32; 2], QualityPreset, bool); 2] = [([2560, 1440], QualityPreset::High, true), ([3840, 2160], QualityPreset::Ultra, false)];
+
+/// D7 (G0 perf-platform, 2026-10-15): at 1440p high and 4K ultra every scene's whole frame fits
+/// [`D7_FRAME_BUDGET_MS`] at scale 1 or at one of the class's dynamic-resolution steps (the highest
+/// that fits is the one DRS settles on). The matrix measured scale 1 alone, where stress-forest's 4K
+/// ultra frame is 17.4 ms. Under D15 a 4K ultra miss is reported, not failed. `GENEX_PERF_OUT`
+/// receives the record (default `perf/d7-<sha>.json`).
+#[test]
+#[ignore = "needs a GPU: run with --ignored metal"]
+fn metal_d7_whole_frames_fit_at_1440p_high_and_4k_ultra_with_dynamic_resolution() {
+    let Some((gpu, timestamp_problem)) = open() else { return };
+    let Some(stamps) = timestamp_problem.is_none().then(|| Stamps::new(&gpu)) else {
+        eprintln!("skipped: no timestamp queries");
+        return;
+    };
+    let (warmup, frames) = (env_u32("GENEX_PERF_WARMUP", DEFAULT_WARMUP), env_u32("GENEX_PERF_FRAMES", DEFAULT_FRAMES).max(1));
+    let class = classify(gpu.device_facts());
+    let steps: Vec<f32> = class_defaults(class).drs_steps.iter().rev().copied().collect();
+    let (mut rows, mut problems) = (Vec::new(), Vec::new());
+    for (size, preset, gated) in D7_ROWS {
+        for cell in Cell::all().into_iter().filter(|cell| kept(&cell.name())) {
+            let mut measured = Vec::new();
+            let mut fits = None;
+            for scale in &steps {
+                let hundredths = (scale * 100.0).round() as u16;
+                let profile = if hundredths >= 100 { Profile::Preset(preset) } else { Profile::Scaled(preset, hundredths) };
+                let mut subject = cell.build(&gpu, size, profile_options(profile, class));
+                apply_profile(subject.renderer(), profile, class);
+                let mut samples = measure(&gpu, Some(&stamps), warmup, frames, subject.as_mut());
+                let p = p95(&mut samples.gpu);
+                measured.push(json!({ "scale": scale, "gpuP95Ms": p }));
+                if p <= D7_FRAME_BUDGET_MS {
+                    fits = Some(*scale);
+                    break;
+                }
+            }
+            let name = cell.name();
+            eprintln!("D7 {name} {} {size:?}: fits at {fits:?} ({measured:?})", preset.wire());
+            rows.push(json!({ "row": name, "preset": preset.wire(), "size": size, "fitsAtScale": fits, "gated": gated, "steps": measured }));
+            let over = format!("{name} at {} {size:?} is over {D7_FRAME_BUDGET_MS} ms at every DRS step", preset.wire());
+            match (fits, gated) {
+                (Some(_), _) => {}
+                (None, true) => problems.push(over),
+                // D15: reported in the record and the log, not a failure.
+                (None, false) => eprintln!("D7 reported (D15, not gated): {over}"),
+            }
+        }
+    }
+    let method = json!({ "warmupFrames": warmup, "measuredFrames": frames, "statistic": "GPU timestamp p95, scale 1 then each DRS step down until one fits", "budgetMs": D7_FRAME_BUDGET_MS, "drsSteps": steps });
+    let head = header(&gpu, &timestamp_problem, "render-perf-d7", method);
+    let record = merge(head.json, rows, Vec::new());
+    write_record(&out_path("d7", &head.sha, "GENEX_PERF_OUT"), &record);
+    assert!(problems.is_empty(), "{problems:#?}");
 }
 
 /// The presenter-path row's limit: Live frames through `Presenter::draw_view` (render settings,
@@ -1029,7 +1168,8 @@ fn metal_final_bench_and_stress_captures_at_each_preset() {
         let mut off_luma = None;
         for profile in profiles {
             let quality = profile.preset().map(|preset| preset_quality(preset, class));
-            let load = |meshes: &mut OnGpu<'_>| cell.scene(meshes, *frame);
+            let drawn_at = quality.unwrap_or_else(Quality::off);
+            let load = |meshes: &mut OnGpu<'_>| cell.scene(meshes, *frame, &drawn_at);
             let frames = support::game_frames(&gpu, class, quality.as_ref(), &scene_look(*cell), &load);
             let applied = Applied { profile, class, quality: quality.unwrap_or_else(Quality::off) };
             let settle = frames.settle_frames();
@@ -1050,7 +1190,7 @@ fn metal_final_bench_and_stress_captures_at_each_preset() {
                 Some(_) => {}
             }
             support::write_png(&dir.join(format!("{name}.png")), &capture);
-            let mut row = applied.drawn_json(frames.renderer());
+            let mut row = applied.drawn_json(frames.renderer(), Content::default());
             row["scene"] = json!(cell.name());
             row["shot"] = json!(shot);
             row["settleFrames"] = json!(settle);
@@ -1317,7 +1457,7 @@ struct PathRepeat {
 fn stress_subject(gpu: &Gpu, id: StressId, size: [u32; 2], samples: WorldSamples) -> Box<dyn Subject> {
     let mut renderer = Renderer::with_options(gpu, size[0], size[1], RenderOptions { msaa: samples == WorldSamples::Preset }).expect("renderer");
     let scene = stress::load(id, &mut OnGpu { renderer: &mut renderer, gpu }).expect("the stress scene's meshes load");
-    Box::new(IndexedSubject { renderer, scene: Box::new(move |frame| scene.scene(frame)), facts: Value::Null })
+    Box::new(IndexedSubject { renderer, scene: Box::new(move |frame, _| scene.scene(frame)), facts: Value::Null })
 }
 
 /// `class`'s `preset` quality with `path`'s two switches, over a one-sample world pass when
@@ -1624,10 +1764,22 @@ fn the_asset_table_is_read_once_so_a_frame_does_not_read_or_leak_the_glbs_again(
 }
 
 #[test]
-fn the_matrix_names_eleven_scenes_and_five_profiles() {
+fn the_matrix_names_fifteen_scenes_and_five_profiles() {
+    // Nine Lakeside shots (pass 1's five and Lakeside v2's four), three bench and three stress scenes.
     let names: Vec<String> = Cell::all().into_iter().map(Cell::name).collect();
-    assert_eq!(names.len(), 11, "{names:?}");
-    for want in ["lakeside-wide", "lakeside-closeup", "bench-materials", "bench-outdoor", "bench-city", "stress-plaza", "stress-forest", "stress-occlusion"] {
+    assert_eq!(names.len(), 15, "{names:?}");
+    let lakeside = [
+        "lakeside-wide",
+        "lakeside-dock",
+        "lakeside-cabin",
+        "lakeside-forest",
+        "lakeside-closeup",
+        "lakeside-golden-wide",
+        "lakeside-shore",
+        "lakeside-forest-floor",
+        "lakeside-cabin-interior",
+    ];
+    for want in lakeside.into_iter().chain(["bench-materials", "bench-outdoor", "bench-city", "stress-plaza", "stress-forest", "stress-occlusion"]) {
         assert!(names.iter().any(|n| n == want), "no {want} in {names:?}");
     }
     let all: Vec<String> = DEFAULT_PROFILES.split(',').filter_map(Profile::from_name).map(Profile::name).collect();
@@ -1650,6 +1802,20 @@ fn a_profile_requests_its_presets_features_and_off_requests_only_the_legacy_shad
     assert_eq!(ultra["class"], "desktop-ultra");
     assert!(ultra["featuresRequested"].as_array().is_some_and(|features| !features.is_empty()), "ultra requests no feature");
     assert_eq!(ultra["wired"], RENDERER_CONSUMES_QUALITY);
+}
+
+#[test]
+fn a_sky_with_clouds_is_charged_the_cloud_budget_where_the_preset_marches_them() {
+    let clouded = Content { clouds: true, ..Content::default() };
+    let charged = |class: DeviceClass, preset: QualityPreset, content: Content| {
+        stage_a_drawn(&preset_quality(preset, class), &Look::default(), true, content).iter().any(|(feature, _)| *feature == "clouds")
+    };
+    let desktop = DeviceClass::new(FormFactor::Desktop, PerformanceTier::High);
+    assert!(charged(desktop, QualityPreset::High, clouded), "desktop high marches the cloud panorama");
+    assert!(!charged(desktop, QualityPreset::High, Content::default()), "a sky without a layer draws no clouds");
+    assert!(!charged(desktop, QualityPreset::Low, clouded), "low marches no panorama");
+    let phone = DeviceClass::new(FormFactor::Mobile, PerformanceTier::High);
+    assert!(!charged(phone, QualityPreset::High, clouded), "phones march no clouds (D16)");
 }
 
 #[test]
@@ -1767,4 +1933,76 @@ fn the_overhead_gate_holds_a_meshlet_path_to_five_percent_on_an_immediate_mode_g
     slower_cpu.cpu_p95_ms = 1.3;
     let ratio = compare(&instance, &slower_cpu, GeometryPath::Meshlets).cpu_p95_ratio.expect("a ratio");
     assert!((ratio - 1.3).abs() < 1e-9, "{ratio}");
+}
+
+/// Interleaved runs of each side in the indirect-validation A/B.
+const INDIRECT_AB_RUNS: u32 = 3;
+
+/// The median of `values` (nearest rank).
+fn median(values: &mut [f64]) -> f64 {
+    values.sort_by(f64::total_cmp);
+    values[values.len() / 2]
+}
+
+/// Renderer pass 2 (prior art's "measure first"): what wgpu's indirect-call validation costs on
+/// this adapter. The same scenes at high, 1280x720, on a device with the validation (every game's)
+/// and one without it (`Gpu::headless_without_indirect_validation`, measurement only), interleaved
+/// [`INDIRECT_AB_RUNS`] times; the record keeps each side's median of the per-run p50s (GPU stamps
+/// and whole frame). A record, not a gate: the validation stays on until the renderer proves its
+/// indirect arguments in range.
+#[test]
+#[ignore = "needs a GPU: run with --ignored metal"]
+fn metal_indirect_validation_cost_is_recorded() {
+    let Some((gpu, timestamp_problem)) = open() else { return };
+    let Ok(unvalidated) = Gpu::headless_without_indirect_validation(gpu.device_facts().features & wgpu::Features::TIMESTAMP_QUERY) else { return };
+    let (warmup, frames) = (env_u32("GENEX_PERF_WARMUP", DEFAULT_WARMUP), env_u32("GENEX_PERF_FRAMES", DEFAULT_FRAMES).max(1));
+    let class = classify(gpu.device_facts());
+    let profile = Profile::Preset(QualityPreset::High);
+    let size = [1280, 720];
+    let cells = [Cell::Lakeside("wide"), Cell::Bench(SceneId::City), Cell::Stress(StressId::Forest)];
+    let mut rows = Vec::new();
+    for cell in cells.into_iter().filter(|cell| kept(&cell.name())) {
+        let mut sides: [(Vec<f64>, Vec<f64>); 2] = Default::default();
+        for _ in 0..INDIRECT_AB_RUNS {
+            for (side, device) in [&gpu, &unvalidated].into_iter().enumerate() {
+                let stamps = timestamp_problem.is_none().then(|| Stamps::new(device));
+                let mut subject = cell.build(device, size, profile_options(profile, class));
+                apply_profile(subject.renderer(), profile, class);
+                let mut samples = measure(device, stamps.as_ref(), warmup, frames, subject.as_mut());
+                if !samples.gpu.is_empty() {
+                    sides[side].0.push(percentile_of(&mut samples.gpu, 0.5));
+                }
+                sides[side].1.push(percentile_of(&mut samples.frame, 0.5));
+            }
+        }
+        let [(mut gpu_on, mut frame_on), (mut gpu_off, mut frame_off)] = sides;
+        let gpu_ms = |values: &mut Vec<f64>| if values.is_empty() { Value::Null } else { json!(median(values)) };
+        let row = json!({
+            "row": cell.name(),
+            "profile": profile.name(),
+            "size": size,
+            "runs": INDIRECT_AB_RUNS,
+            "validated": { "gpuP50Ms": gpu_ms(&mut gpu_on), "frameP50Ms": median(&mut frame_on) },
+            "unvalidated": { "gpuP50Ms": gpu_ms(&mut gpu_off), "frameP50Ms": median(&mut frame_off) },
+        });
+        eprintln!("{row}");
+        rows.push(row);
+    }
+    let method = json!({
+        "warmupFrames": warmup,
+        "measuredFrames": frames,
+        "runs": INDIRECT_AB_RUNS,
+        "statistic": "median over interleaved runs of each run's nearest-rank p50",
+        "sides": "validated: InstanceFlags::VALIDATION_INDIRECT_CALL (every game's device); unvalidated: the flag cleared (measurement only)",
+    });
+    let head = header(&gpu, &timestamp_problem, "render-indirect-validation", method);
+    let record = merge(head.json, rows, Vec::new());
+    write_record(&out_path("indirect-validation", &head.sha, "GENEX_PERF_OUT"), &record);
+    println!("{record:#}");
+}
+
+/// The value at fraction `p` of `values` (nearest rank), sorting them.
+fn percentile_of(values: &mut [f64], p: f64) -> f64 {
+    values.sort_by(f64::total_cmp);
+    support::percentile(values, p)
 }

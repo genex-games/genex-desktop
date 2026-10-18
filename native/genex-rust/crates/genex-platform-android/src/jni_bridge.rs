@@ -2,8 +2,8 @@
 //! framework classes. For the NativeActivity candidate (no Java code of its own) that includes the
 //! display cutout GameActivity hands over natively (`Activity.getWindow().getDecorView()
 //! .getRootWindowInsets().getDisplayCutout()`, API 28+); for both candidates, the audio focus
-//! (`AudioManager.requestAudioFocus`) and the thermal status (`PowerManager
-//! .getCurrentThermalStatus`). A missing object or a Java exception answers `None`, never a panic.
+//! (`AudioManager.requestAudioFocus`), the thermal status (`PowerManager
+//! .getCurrentThermalStatus`) and the display's refresh rate (`Display.getRefreshRate`). A missing object or a Java exception answers `None`, never a panic.
 
 #[cfg(feature = "native-activity")]
 use crate::SafeArea;
@@ -123,5 +123,15 @@ pub fn thermal_status() -> Option<i32> {
         let name = env.new_string(POWER_SERVICE).ok()?;
         let manager = object(env, activity, "getSystemService", "(Ljava/lang/String;)Ljava/lang/Object;", &[JValue::Object(&name)])?;
         call(env, &manager, "getCurrentThermalStatus", "()I", &[])?.i().ok()
+    })
+}
+
+/// The display's refresh rate in Hz (`getWindowManager().getDefaultDisplay().getRefreshRate()`,
+/// API 1; the rate the panel runs now, after the shell's frame-rate vote), or `None`.
+pub fn display_refresh_hz() -> Option<f32> {
+    with_activity(|env, activity| {
+        let manager = object(env, activity, "getWindowManager", "()Landroid/view/WindowManager;", &[])?;
+        let display = object(env, &manager, "getDefaultDisplay", "()Landroid/view/Display;", &[])?;
+        call(env, &display, "getRefreshRate", "()F", &[])?.f().ok()
     })
 }

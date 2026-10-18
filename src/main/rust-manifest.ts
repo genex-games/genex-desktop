@@ -74,6 +74,12 @@ export type RustFlavour = (typeof RustFlavour)[keyof typeof RustFlavour];
 
 /** The facade feature the dev flavour turns on. */
 const STUDIO_FEATURE = "studio";
+/**
+ * The crate the facade's default `physics` feature links (genex's and genex-platform-web's): a
+ * game with `[physics] enabled = false` links the facade without default features, and its lock
+ * leaves this crate's edge out, as cargo's resolve of that manifest does.
+ */
+const PHYSICS_CRATE = "rapier3d";
 /** The name every game's code calls the facade by (`genex::install`, `genex::prelude`). */
 const FACADE_NAME = "genex";
 
@@ -199,7 +205,7 @@ export function cargoManifest(
   const dependencies = [genex, ...manifest.crates].sort((a, b) => compareText(a.name, b.name));
   const line = (dependency: { name: string; version: string }) =>
     dependency === genex
-      ? facadeLine(genex.version, flavour, facade)
+      ? facadeLine(genex.version, flavour, facade, manifest.physics ?? true)
       : `${dependency.name} = ${quote(dependency.version)}`;
   return [
     "# Written by Genex from genex.toml before every build: a game folder holds no cargo manifest.",
@@ -238,12 +244,28 @@ function forkPatch(fork: EngineFork | null): string[] {
  * The `genex = …` line: the facade at the pinned version, with its `studio` feature in the dev
  * flavour, or the web shell's crate under the facade's name for a web build.
  */
-function facadeLine(version: string, flavour: RustFlavour, facade: RustFacadePackage): string {
+function facadeLine(version: string, flavour: RustFlavour, facade: RustFacadePackage, physics: boolean): string {
+  const noDefaults = physics ? "" : ", default-features = false";
   if (facade !== RustFacadePackage.Native)
-    return `${FACADE_NAME} = { package = ${quote(facade)}, version = ${quote(version)} }`;
+    return `${FACADE_NAME} = { package = ${quote(facade)}, version = ${quote(version)}${noDefaults} }`;
   if (flavour === RustFlavour.Dev)
-    return `${FACADE_NAME} = { version = ${quote(version)}, features = [${quote(STUDIO_FEATURE)}] }`;
-  return `${FACADE_NAME} = ${quote(version)}`;
+    return `${FACADE_NAME} = { version = ${quote(version)}${noDefaults}, features = [${quote(STUDIO_FEATURE)}] }`;
+  return physics
+    ? `${FACADE_NAME} = ${quote(version)}`
+    : `${FACADE_NAME} = { version = ${quote(version)}${noDefaults} }`;
+}
+
+/**
+ * The lock line's packages as a game without physics resolves them: every edge to Rapier left out
+ * (the facade's `physics` feature, and genex-render's layout check, which a game never turns on),
+ * so the closure drops Rapier and every crate only it reaches.
+ */
+function withoutPhysics(packages: readonly LockPackage[]): LockPackage[] {
+  const physicsEdge = (entry: string) => entry === PHYSICS_CRATE || entry.startsWith(`${PHYSICS_CRATE} `);
+  return packages.map((found) => ({
+    ...found,
+    dependencies: found.dependencies.filter((entry) => !physicsEdge(entry)),
+  }));
 }
 
 /** A game's lock and its sha256, or why the lock line cannot give one. */
@@ -261,7 +283,8 @@ export function gameCargoLock(
   pinnedGenex(version);
   const read = readLock(pins.baseLock);
   if (read === null) return lockRefusal(RustManifestCode.LockUnreadable, "the store's lock line");
-  const packages = fork === null ? read : read.map((found) => asForked(found, fork));
+  const linked = fork === null ? read : read.map((found) => asForked(found, fork));
+  const packages = manifest.physics === false ? withoutPhysics(linked) : linked;
   const facade = pins.facade ?? RustFacadePackage.Native;
   const genex = packages.find((found) => found.name === facade && found.version === version);
   if (genex === undefined) return lockRefusal(RustManifestCode.GenexNotInLock, `${facade} ${version}`);

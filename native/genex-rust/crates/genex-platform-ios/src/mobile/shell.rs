@@ -45,12 +45,14 @@
 
 use crate::mobile::admit::{Admission, ShellAdapter, admit};
 use crate::mobile::audio::{AudioGate, AudioPlatform};
+use crate::mobile::frame_time::FrameTimes;
 use crate::mobile::gamepad::{PadChange, PhoneButton, PhonePads, controller_id};
 use crate::mobile::keyboard::{KeyNews, TypingFeed, key_news};
 use crate::mobile::lifecycle::{Lifecycle, Phase};
 use crate::mobile::orientation::{RotationWatch, world_fill};
 use crate::mobile::present::{Presentation, SafePresenter};
 use crate::mobile::records::Records;
+use crate::mobile::recovery::{LossStep, Recovery};
 use crate::mobile::refusal::{self, RefusalImage, RefusalLines, lines_for};
 use crate::mobile::safe_area::SafeArea;
 use crate::mobile::selftest::{self, run_and_record};
@@ -58,14 +60,15 @@ use crate::mobile::thermal::{Pacer, Thermal, ThermalWatch};
 use crate::mobile::touch::{TouchEvent, TouchTracker};
 use genex::present::Presenter;
 use genex::{Input, json};
-use genex_hud::{ImeBridge, KeyboardCall, TextAction};
+use genex_hud::{ImeBridge, KeyboardCall, LoadingLook, LoadingScreen, TextAction};
 use genex_platform_web::selftest::SelfTestPlan;
 use genex_platform_web::{AssetTable, GameHandle, MeshCache};
+use genex_render::compile::{CompileTally, compile_tally};
 use genex_render::gpu::core_instance;
 use genex_render::pacing::{FrameAction, FrameGate, MOBILE_PREFERRED_HZ};
 use genex_render::{Gpu, RenderCode, RenderError, UnsupportedReason};
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use winit::application::ApplicationHandler;
 use winit::event::{DeviceId, ElementState, Ime, KeyEvent, TouchPhase, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
@@ -74,6 +77,8 @@ use winit::window::{Window, WindowId};
 
 /// Frames presented in flight at most.
 const MAX_FRAME_LATENCY: u32 = 2;
+/// How often the platform's refresh report is read again (a vote or a power mode may change it).
+const REFRESH_READ_EVERY: Duration = Duration::from_secs(1);
 
 /// What only a platform knows, as plain functions so the shell stays one type on every phone.
 #[derive(Clone, Copy, Debug)]
@@ -85,6 +90,10 @@ pub struct PlatformHooks {
     pub pad_key: fn(&NativeKeyCode) -> Option<PhoneButton>,
     /// The platform's thermal state, when it can say.
     pub thermal: fn() -> Option<Thermal>,
+    /// The display's refresh interval in milliseconds, when the platform reports one (iOS's display
+    /// link, Android's display); read at most once a second. None: the frames' own intervals are
+    /// measured ([`FrameTimes`]).
+    pub refresh_ms: fn() -> Option<f64>,
     /// Draw the refusal screen into the window without wgpu; answers whether it is showing (the
     /// loop then stays up to keep it on screen). `None`: the loop exits after the record.
     pub refusal_screen: Option<fn(&Window, &RefusalImage) -> bool>,
@@ -93,7 +102,7 @@ pub struct PlatformHooks {
 impl PlatformHooks {
     /// No platform news (host builds and tests).
     pub const NONE: PlatformHooks =
-        PlatformHooks { pads: |_| {}, pad_key: |_| None, thermal: || None, refusal_screen: None };
+        PlatformHooks { pads: |_| {}, pad_key: |_| None, thermal: || None, refresh_ms: || None, refusal_screen: None };
 }
 
 /// What the shell runs.
@@ -144,9 +153,19 @@ impl Device {
     }
 }
 
-/// A phone re-creates a lost device with a new surface (`resumed`), never inside a frame.
-fn no_reopen() -> Result<Gpu, RenderError> {
-    Err(RenderError::refused(RenderCode::DeviceLost, "the phone shell re-creates a lost device with its next surface"))
+/// A new device after a loss (review F4): the shell's own instance's high-performance adapter,
+/// admitted against WebGPU core and the game's declared features as the first one was (any
+/// surface the instance makes can present from it). A refusal leaves the device lost; the shell
+/// tries again ([`Recovery`]).
+fn reopen(instance: &wgpu::Instance) -> Result<Gpu, RenderError> {
+    let declared = genex::gpu::declared_native_features()?;
+    let options = wgpu::RequestAdapterOptions { power_preference: wgpu::PowerPreference::HighPerformance, ..Default::default() };
+    let adapter = pollster::block_on(instance.request_adapter(&options))
+        .map_err(|error| RenderError::refused(RenderCode::DeviceLost, format!("no adapter after the loss: {error}")))?;
+    match admit(&ShellAdapter(adapter), declared) {
+        Admission::Play(gpu) => Ok(gpu),
+        Admission::RefusalScreen(error) | Admission::Failed(error) => Err(error),
+    }
 }
 
 fn log_refusal(line: &str) {
@@ -181,14 +200,28 @@ struct App {
     window: Option<Arc<Window>>,
     device: Option<Device>,
     live: Option<Live>,
-    last_frame: Option<Instant>,
+    /// What each display frame feeds the live clock: whole refreshes (review F2).
+    frame_times: FrameTimes,
+    /// When the platform's refresh report was last read.
+    refresh_read: Option<Instant>,
     /// Which display frames render the world and which re-present it (RQ0.12).
     gate: FrameGate,
     /// The display's preferred-rate request, kept while it applies.
     rate_vote: Option<preferred_rate::Vote>,
     /// Whether the current surface has presented a rendered world yet (logged once per surface).
     presented: bool,
+    /// When a lost device is re-created (review F4).
+    recovery: Recovery,
+    /// The loading screen while the boot's warm-up compiles the first frame's pipelines (D11).
+    loading: Option<Loading>,
     outcome: ShellOutcome,
+}
+
+/// The loading screen a phone shows, its look, and the compile pool's counts when the boot began.
+struct Loading {
+    screen: LoadingScreen,
+    look: LoadingLook,
+    base: CompileTally,
 }
 
 /// A surface format the world target can be blitted to without a second gamma curve.
@@ -240,10 +273,13 @@ pub fn frame_presented_event(rendered: u64, window: (u32, u32)) -> serde_json::V
     json!({ "event": "frame-presented", "rendered": rendered, "window": [window.0, window.1] })
 }
 
-/// genex's presenter on an admitted GPU, its models from the game's compiled `assets`.
-fn device_on(gpu: Gpu, world: [u32; 2], assets: AssetTable) -> Result<Device, RenderError> {
+/// genex's presenter on an admitted GPU, its models from the game's compiled `assets`; after a
+/// loss it opens a new device from `instance` ([`reopen`]).
+fn device_on(gpu: Gpu, world: [u32; 2], assets: AssetTable, instance: &wgpu::Instance) -> Result<Device, RenderError> {
     let declared = genex::gpu::declared_native_features()?;
-    let presenter = Presenter::with_gpu(gpu, world, declared, Box::new(no_reopen), Box::new(assets), log_refusal)?;
+    let instance = instance.clone();
+    let open = move || reopen(&instance);
+    let presenter = Presenter::with_gpu(gpu, world, declared, Box::new(open), Box::new(assets), log_refusal)?;
     Ok(Device { presenter })
 }
 
@@ -358,6 +394,48 @@ impl App {
         self.game.seed(self.config.plan.seed);
         self.game.start();
         self.gate.reset_history();
+        self.begin_loading();
+    }
+
+    /// Warm the first frame's pipelines off the frame thread and show the loading screen until
+    /// they are compiled, instead of a frozen first frame (renderer pass 2, owner decision D11).
+    fn begin_loading(&mut self) {
+        let Some(device) = self.device.as_mut() else { return };
+        let base = compile_tally();
+        device.presenter.set_off_thread_changes(true);
+        self.game.warm_boot(&mut device.presenter);
+        if device.presenter.boot_warming() {
+            let look = genex::loading::look_from_build(&self.game.title());
+            self.loading = Some(Loading { screen: LoadingScreen::new(), look, base });
+            self.log(json!({ "event": "loading" }));
+        }
+    }
+
+    /// Whether the loading screen is still up: painted and presented this frame when it is.
+    fn loading_frame(&mut self, frame_ms: f64) -> bool {
+        let warming = self.device.as_ref().is_some_and(|device| device.presenter.boot_warming());
+        if !warming {
+            if self.loading.take().is_some() {
+                self.log(json!({ "event": "loaded" }));
+            }
+            return false;
+        }
+        let (Some(device), Some(live), Some(loading)) = (self.device.as_mut(), self.live.as_ref(), self.loading.as_mut()) else {
+            return self.loading.is_some();
+        };
+        let texture = match live.surface.get_current_texture() {
+            wgpu::CurrentSurfaceTexture::Success(texture) | wgpu::CurrentSurfaceTexture::Suboptimal(texture) => texture,
+            _ => return true,
+        };
+        loading.screen.advance((frame_ms / 1000.0) as f32);
+        let progress = genex::loading::compiling(compile_tally().since(loading.base));
+        let view = texture.texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let size = [live.config.width, live.config.height];
+        let ratio = self.window.as_ref().map_or(1.0, |window| window.scale_factor());
+        let gpu = device.gpu();
+        loading.screen.paint(&gpu.device, &gpu.queue, &view, live.config.format, size, genex_hud::pixels_per_point(ratio), &loading.look, &progress);
+        gpu.queue.present(texture);
+        true
     }
 
     /// Ask the display for [`MOBILE_PREFERRED_HZ`] (once per surface on Android, once per run on
@@ -381,7 +459,7 @@ impl App {
         };
         if self.device.is_none() {
             let opened = match open_gpu(&self.instance, &surface) {
-                Admission::Play(gpu) => device_on(gpu, self.game.world_size(), self.config.assets),
+                Admission::Play(gpu) => device_on(gpu, self.game.world_size(), self.config.assets, &self.instance),
                 Admission::RefusalScreen(error) | Admission::Failed(error) => Err(error),
             };
             match opened {
@@ -551,13 +629,21 @@ impl App {
         }
         self.take_platform_news();
         let now = Instant::now();
-        let frame_ms = self.last_frame.map_or(0.0, |last| now.duration_since(last).as_secs_f64() * 1000.0);
-        self.last_frame = Some(now);
+        self.read_refresh(now);
+        let frame = self.frame_times.frame(now);
+        // Until the warm-up compiled the first frame's pipelines the phone shows the loading
+        // screen: the game neither ticks nor draws, so nothing of it runs unseen.
+        if self.loading.is_some() && self.loading_frame(frame.display_ms) {
+            return;
+        }
         // Dynamic resolution reads display intervals, drawn or not (tickless frames are re-presented).
         if let Some(device) = self.device.as_mut() {
-            device.presenter.note_display_frame(frame_ms);
+            device.presenter.note_display_frame(frame.display_ms);
         }
-        let ticks = self.typing.live_frame(&mut self.ime, self.game.as_mut(), frame_ms);
+        let ticks = self.typing.live_frame(&mut self.ime, self.game.as_mut(), frame.fed_ms);
+        if !self.device_usable() {
+            return;
+        }
         let presentable = self.device.is_some() && self.live.is_some() && self.presentation.is_some();
         if !presentable {
             return;
@@ -567,6 +653,50 @@ impl App {
             return;
         }
         self.present();
+    }
+
+    /// Whether the device can draw this frame. A lost one is re-created ([`Recovery`]: at once,
+    /// then once a second): the game keeps its state, every upload is replayed, and the surface is
+    /// made again on the new device from the next redraw; until then nothing is drawn or presented.
+    fn device_usable(&mut self) -> bool {
+        let Some(lost) = self.device.as_ref().map(|device| device.presenter.resilient.is_lost()) else { return true };
+        let now_ms = self.clock.elapsed().as_secs_f64() * 1000.0;
+        match self.recovery.step(lost, now_ms) {
+            LossStep::Healthy => return true,
+            LossStep::Wait => return false,
+            LossStep::Recover => {}
+        }
+        if self.recovery.tries() == 1 {
+            self.log(json!({ "event": "device-lost" }));
+        }
+        let Some(device) = self.device.as_mut() else { return true };
+        match self.game.recover(&mut device.presenter) {
+            Ok(true) => {
+                self.log(json!({ "event": "device-recovered", "tries": self.recovery.tries() }));
+                self.recovery.recovered();
+                // The surface, its configuration and the safe-area copy were made on the lost device.
+                self.live = None;
+                self.presenter = SafePresenter::default();
+                self.gate.mark_stale();
+                if let Some(window) = &self.window {
+                    window.request_redraw();
+                }
+            }
+            Ok(false) => {}
+            Err(error) => {
+                self.log(json!({ "event": "device-recover-failed", "code": error.code().wire(), "tries": self.recovery.tries() }));
+            }
+        }
+        false
+    }
+
+    /// Read the platform's refresh report again when a second has passed (or none was read yet).
+    fn read_refresh(&mut self, now: Instant) {
+        if self.refresh_read.is_some_and(|at| now.duration_since(at) < REFRESH_READ_EVERY) {
+            return;
+        }
+        self.refresh_read = Some(now);
+        self.frame_times.set_refresh_ms((self.config.hooks.refresh_ms)());
     }
 
     /// Render the game's view into the world target through the presenter (a Live frame: the
@@ -604,7 +734,7 @@ impl App {
                 return;
             }
         };
-        self.presenter.present(&mut device.presenter.resilient, &texture.texture, live.config.format, &presentation);
+        self.presenter.present(&mut device.presenter, &texture.texture, live.config.format, &presentation);
         device.gpu().queue.present(texture);
         let rendered = self.gate.tally().rendered;
         if !self.presented && rendered > 0 {
@@ -621,7 +751,8 @@ impl ApplicationHandler for App {
         self.log(json!({ "event": "resumed", "resumes": self.lifecycle.resumes() }));
         self.audio.resumed((self.config.audio.acquire)());
         self.log(self.audio.event());
-        self.last_frame = None;
+        self.frame_times.reset();
+        self.refresh_read = None;
         self.pacer.reset();
         if self.refused.is_some() {
             // The refusal screen again, into the window the platform handed back.
@@ -697,10 +828,13 @@ pub fn run_on(event_loop: EventLoop<()>, game: Box<dyn GameHandle>, config: Shel
         window: None,
         device: None,
         live: None,
-        last_frame: None,
+        frame_times: FrameTimes::default(),
+        refresh_read: None,
         gate: FrameGate::default(),
         rate_vote: None,
         presented: false,
+        recovery: Recovery::default(),
+        loading: None,
         outcome: ShellOutcome::Ran,
     };
     if let Err(error) = event_loop.run_app(&mut app) {
@@ -711,6 +845,12 @@ pub fn run_on(event_loop: EventLoop<()>, game: Box<dyn GameHandle>, config: Shel
     app.outcome
 }
 
+/// The display's refresh interval iOS's voting display link last reported, in milliseconds; None
+/// before it ticked and on every other platform (the iOS hooks' `refresh_ms`).
+pub fn display_link_refresh_ms() -> Option<f64> {
+    preferred_rate::refresh_ms()
+}
+
 /// Asking the display for a preferred refresh rate (RQ0.12): [`request`] answers a [`Vote`] to keep
 /// while it applies, or None where the platform cannot take it (Android 10, a host build).
 mod preferred_rate {
@@ -719,18 +859,23 @@ mod preferred_rate {
     #[cfg(not(any(target_os = "ios", target_os = "android")))]
     pub use host::{Vote, request};
     #[cfg(target_os = "ios")]
-    pub use ios::{Vote, request};
+    pub use ios::{Vote, refresh_ms, request};
 
-    /// iOS: a display link whose callback does nothing votes for the rate with its frame-rate range
-    /// (iOS 15+; the lane's floor is 16). ProMotion panels then refresh at the rate the game ticks.
+    /// iOS: a display link votes for the rate with its frame-rate range (iOS 15+; the lane's floor
+    /// is 16), so ProMotion panels refresh at the rate the game ticks; its callback records the
+    /// display's refresh interval (`targetTimestamp - timestamp`) for the frame pacer (review F2).
     #[cfg(target_os = "ios")]
     mod ios {
         use objc2::rc::Retained;
-        use objc2::runtime::{AnyObject, NSObject};
+        use objc2::runtime::NSObject;
         use objc2::{AnyThread, define_class, msg_send, sel};
         use objc2_foundation::{NSRunLoop, NSRunLoopCommonModes};
         use objc2_quartz_core::{CADisplayLink, CAFrameRateRange};
+        use std::sync::atomic::{AtomicU64, Ordering};
         use winit::window::Window;
+
+        /// The last refresh interval the link reported, in milliseconds as f64 bits (0: none yet).
+        static REFRESH_MS_BITS: AtomicU64 = AtomicU64::new(0);
 
         define_class!(
             // SAFETY: NSObject has no subclassing requirements; the class has no ivars and no Drop.
@@ -739,11 +884,22 @@ mod preferred_rate {
             struct Voter;
 
             impl Voter {
-                /// The display link's callback: nothing to do, the link only votes for a rate.
+                /// The display link's callback: the refresh interval it is about to show.
                 #[unsafe(method(tick:))]
-                fn tick(&self, _link: &AnyObject) {}
+                fn tick(&self, link: &CADisplayLink) {
+                    let interval_ms = (link.targetTimestamp() - link.timestamp()) * 1000.0;
+                    if interval_ms.is_finite() && interval_ms > 0.0 {
+                        REFRESH_MS_BITS.store(interval_ms.to_bits(), Ordering::Relaxed);
+                    }
+                }
             }
         );
+
+        /// The display's refresh interval the voting link last reported, in milliseconds.
+        pub fn refresh_ms() -> Option<f64> {
+            let bits = REFRESH_MS_BITS.load(Ordering::Relaxed);
+            (bits != 0).then(|| f64::from_bits(bits))
+        }
 
         /// The voting display link, invalidated (taken off the run loop) when dropped.
         pub struct Vote(Retained<CADisplayLink>);
@@ -821,6 +977,13 @@ mod preferred_rate {
         }
     }
 
+    /// No display link outside iOS: the frames' intervals are measured (Android reads its display
+    /// through the JNI bridge).
+    #[cfg(not(target_os = "ios"))]
+    pub fn refresh_ms() -> Option<f64> {
+        None
+    }
+
     /// A host build (tests, lint): no display to ask.
     #[cfg(not(any(target_os = "ios", target_os = "android")))]
     mod host {
@@ -862,6 +1025,39 @@ mod tests {
         assert_eq!(event["event"], "frame-presented", "the wire name the CI smoke reads (MobileLifecycleEvent.FramePresented)");
         assert_eq!(event["rendered"], 1);
         assert_eq!(event["window"], json!([640, 320]));
+    }
+
+    /// Review F4: a phone whose GPU reset (Vulkan's VK_ERROR_DEVICE_LOST on Adreno or Mali) gets a
+    /// new device with every mesh replayed, keeping the game where it was, instead of ticking on
+    /// and presenting undefined surface content until it is killed.
+    #[test]
+    #[ignore = "needs the host GPU: run with --ignored metal"]
+    fn metal_a_phone_presenter_recovers_a_lost_device() {
+        use genex::prelude::*;
+        let declared = genex::gpu::declared_native_features().expect("declared features");
+        let gpu = match Gpu::headless_with(declared) {
+            Ok(gpu) => gpu,
+            Err(error) if std::env::var("GENEX_REQUIRE_METAL").is_ok_and(|v| v == "1") => panic!("no GPU: {error}"),
+            Err(error) => {
+                eprintln!("skipped: no WebGPU-core adapter ({error})");
+                return;
+            }
+        };
+        let mut game = Game::new(()).world_size(96, 64);
+        game.on_draw(|_, frame, _| {
+            frame.cube(Transform::IDENTITY, Color::RED);
+        });
+        let mut runtime: Box<dyn GameHandle> = Box::new(genex::Runtime::new(game).expect("installs"));
+        let mut device = device_on(gpu, runtime.world_size(), &[], &core_instance()).expect("a presenter");
+        runtime.start();
+        runtime.advance_live(1000.0 / 60.0);
+        assert!(matches!(runtime.draw(&mut device.presenter, None), Some(Ok(_))), "the first frame draws");
+        let tick = runtime.tick();
+        device.presenter.resilient.force_device_loss();
+        assert!(matches!(runtime.draw(&mut device.presenter, None), Some(Err(_))), "a lost device draws nothing");
+        assert_eq!(runtime.recover(&mut device.presenter).map_err(|error| error.to_string()), Ok(true), "a new device");
+        assert!(matches!(runtime.draw(&mut device.presenter, None), Some(Ok(_))), "the frame after draws again");
+        assert_eq!(runtime.tick(), tick, "the game is where it was");
     }
 
     #[test]

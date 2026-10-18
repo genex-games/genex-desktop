@@ -2,7 +2,9 @@
 //! [`DeviceWatch`] marks the device lost from wgpu's device-lost callback; while it is lost every
 //! frame and capture answers the typed `device-lost` refusal and nothing touches the device. The
 //! [`Resilient`] renderer keeps a CPU cache of everything it uploaded (meshes, skinned meshes,
-//! textures, custom materials, post passes, emitters, in the order they were added), so
+//! textures, custom materials, post passes, emitters, in the order they were added; a model or
+//! texture decoded from bytes the program holds for its whole life keeps only how to decode it
+//! again, [`Resilient::add_meshes_from`], so a game's compiled assets are not resident twice), so
 //! [`Resilient::recover`] re-creates the adapter and device, rebuilds the renderer and replays the
 //! cache: every id is the same and the next frame draws the identical image. Each recovery bumps
 //! [`Resilient::generation`], the ring generation the Live sender re-announces.
@@ -19,7 +21,10 @@
 //! while this one keeps drawing; [`Resilient::adopt`] then replays what was uploaded meanwhile and
 //! swaps it in. With [`Resilient::set_keep_spare`] the renderer a swap or a rebuild replaced is kept
 //! as the spare for its options, so going back (a capture's pinned profile and Live again) swaps
-//! instead of compiling every pipeline again.
+//! instead of compiling every pipeline again. A spare that was the renderer in use comes back with
+//! its temporal history when at most [`SPARE_HISTORY_FRAMES_MAX`] frames were drawn while it was
+//! out (a capture's settle: Live's TAA, temporal AO and exposure go on where they were, review
+//! F5); any other renderer swapped in starts its history over.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -35,16 +40,17 @@ use crate::extension::{CustomMaterialId, PostPassId, PostStage};
 use crate::settle::HistoryReset;
 use crate::gpu::Gpu;
 use crate::immediate::{FrameReport, FrameRenderer, ImmediateFrame};
+use crate::letterbox::present::{PresentInto, WindowPresent};
 use crate::mesh::MeshData;
 use crate::meshlet::MeshletSet;
 use crate::overlay::OverlayPainter;
-use crate::particles::{EmitterDesc, EmitterId};
+use crate::particles::{EmitterDesc, EmitterId, ParticleAtlas, ParticleAtlasId};
 use crate::renderer::RenderOptions;
 use crate::settings::Meshlets;
-use crate::scene::MeshId;
+use crate::scene::{MeshId, ModelPart};
 use crate::skin::{SkinId, SkinnedMeshData};
 use crate::tables::CullPath;
-use crate::texture::{TextureData, TextureId, TextureKind};
+use crate::texture::{CompressedTexture, TextureData, TextureFamily, TextureId, TextureKind};
 
 /// Whether a device has been lost, set from wgpu's device-lost callback.
 #[derive(Clone, Debug)]
@@ -90,17 +96,41 @@ fn device_lost() -> RenderError {
     RenderError::refused(RenderCode::DeviceLost, "the GPU device was lost; it is being re-created")
 }
 
+/// Every part of one model with the meshlets and levels of detail each brought, as
+/// [`Resilient::add_model_parts`] takes them.
+pub type ModelParts = Vec<ModelPart>;
+
+/// Where a model's parts come back from for a replay: decoded again from bytes that live as long
+/// as the program (a game's compiled asset table), so no CPU copy is kept (review F6). A replay may
+/// run on the thread that warms a renderer ([`RendererPlan::build`]).
+pub type PartsSource = Arc<dyn Fn() -> Result<ModelParts, RenderError> + Send + Sync>;
+/// Where a texture comes back from for a replay, as [`PartsSource`].
+pub type TextureSource = Arc<dyn Fn() -> Result<TextureData, RenderError> + Send + Sync>;
+/// Where a compressed texture comes back from for a replay (renderer pass 2 A6.4), as
+/// [`PartsSource`].
+pub type CompressedSource = Arc<dyn Fn() -> Result<CompressedTexture, RenderError> + Send + Sync>;
+
 /// One upload, kept to replay after a loss.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 enum Upload {
     Mesh(MeshData),
     /// Every part of one model with the meshlets each brought, replayed as one upload.
-    Meshes(Vec<(MeshData, Option<MeshletSet>)>),
+    Meshes(ModelParts),
+    /// [`Upload::Meshes`] decoded again from its source at each replay.
+    MeshesFrom(PartsSource),
     Skinned(SkinnedMeshData),
     Texture(TextureData, TextureKind),
+    /// [`Upload::Texture`] decoded again from its source at each replay.
+    TextureFrom(TextureSource, TextureKind),
+    /// A compressed texture in the renderer's family (A6.4), kept.
+    Compressed(CompressedTexture, TextureKind),
+    /// [`Upload::Compressed`] read again from its source at each replay.
+    CompressedFrom(CompressedSource, TextureKind),
     Material(Extension),
     PostPass(PostStage, Extension),
     Emitter(EmitterDesc),
+    /// A flipbook atlas (renderer pass 2 A.11), kept.
+    ParticleAtlas(ParticleAtlas),
 }
 
 /// A Level-2 source as it was admitted: its API, WGSL, uniform bytes and game textures.
@@ -116,7 +146,74 @@ impl Extension {
     fn new(api: u32, wgsl: &str, uniforms: &[u8], textures: &[TextureData]) -> Extension {
         Extension { api, wgsl: wgsl.to_owned(), uniforms: uniforms.to_vec(), textures: textures.to_vec() }
     }
+
+    fn bytes(&self) -> u64 {
+        let textures: u64 = self.textures.iter().map(texture_bytes).sum();
+        (self.wgsl.len() + self.uniforms.len()) as u64 + textures
+    }
 }
+
+/// The CPU bytes a kept mesh holds.
+fn mesh_bytes(mesh: &MeshData) -> u64 {
+    (std::mem::size_of_val(mesh.vertices.as_slice()) + std::mem::size_of_val(mesh.indices.as_slice())) as u64
+}
+
+/// The CPU bytes a kept meshlet set holds.
+fn meshlet_bytes(set: &MeshletSet) -> u64 {
+    (std::mem::size_of_val(set.meshlets.as_slice()) + std::mem::size_of_val(set.vertices.as_slice()) + std::mem::size_of_val(set.triangles.as_slice())) as u64
+}
+
+/// The CPU bytes a kept model part holds: its mesh, meshlets and levels' indices.
+fn part_bytes(part: &ModelPart) -> u64 {
+    let levels = part.lods.as_ref().map_or(0, |chain| chain.levels.iter().map(|level| std::mem::size_of_val(level.indices.as_slice()) as u64).sum());
+    mesh_bytes(&part.mesh) + part.meshlets.as_ref().map_or(0, meshlet_bytes) + levels
+}
+
+/// The CPU bytes a kept texture holds.
+fn texture_bytes(data: &TextureData) -> u64 {
+    data.rgba().len() as u64
+}
+
+impl Upload {
+    /// The CPU bytes this upload keeps for a replay.
+    fn kept_bytes(&self) -> u64 {
+        match self {
+            Upload::Mesh(mesh) => mesh_bytes(mesh),
+            Upload::Meshes(parts) => parts.iter().map(part_bytes).sum(),
+            Upload::Skinned(data) => mesh_bytes(&data.mesh) + std::mem::size_of_val(data.skin.as_slice()) as u64,
+            Upload::Texture(data, _) => texture_bytes(data),
+            Upload::Material(kept) | Upload::PostPass(_, kept) => kept.bytes(),
+            Upload::Emitter(_) => std::mem::size_of::<EmitterDesc>() as u64,
+            Upload::ParticleAtlas(atlas) => texture_bytes(&atlas.image),
+            Upload::Compressed(texture, _) => texture.levels().iter().map(|level| level.len() as u64).sum(),
+            Upload::MeshesFrom(_) | Upload::TextureFrom(..) | Upload::CompressedFrom(..) => 0,
+        }
+    }
+}
+
+impl std::fmt::Debug for Upload {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Upload::Mesh(mesh) => f.debug_tuple("Mesh").field(mesh).finish(),
+            Upload::Meshes(parts) => f.debug_tuple("Meshes").field(&parts.len()).finish(),
+            Upload::MeshesFrom(_) => f.write_str("MeshesFrom"),
+            Upload::Skinned(_) => f.write_str("Skinned"),
+            Upload::Texture(data, kind) => f.debug_tuple("Texture").field(&(data.width(), data.height())).field(kind).finish(),
+            Upload::TextureFrom(_, kind) => f.debug_tuple("TextureFrom").field(kind).finish(),
+            Upload::Compressed(texture, kind) => f.debug_tuple("Compressed").field(&(texture.family(), texture.side())).field(kind).finish(),
+            Upload::CompressedFrom(_, kind) => f.debug_tuple("CompressedFrom").field(kind).finish(),
+            Upload::Material(_) => f.write_str("Material"),
+            Upload::PostPass(stage, _) => f.debug_tuple("PostPass").field(stage).finish(),
+            Upload::Emitter(desc) => f.debug_tuple("Emitter").field(desc).finish(),
+            Upload::ParticleAtlas(atlas) => f.debug_tuple("ParticleAtlas").field(&(atlas.image.width(), atlas.image.height(), atlas.columns, atlas.rows)).finish(),
+        }
+    }
+}
+
+/// A spare that was the renderer in use keeps its history when at most this many frames were
+/// drawn while it was out (a capture's settle and the frames around it); after more, its history
+/// is too old and starts over.
+pub const SPARE_HISTORY_FRAMES_MAX: u64 = 64;
 
 /// Opens a fresh device (natively `Gpu::headless` or the shell's surface-compatible opener).
 pub type GpuOpener = Box<dyn FnMut() -> Result<Gpu, RenderError>>;
@@ -126,6 +223,8 @@ struct Spare {
     options: RenderOptions,
     renderer: FrameRenderer,
     replayed: usize,
+    /// The frames drawn when it stopped being the renderer in use; None for one that never was.
+    out_since: Option<u64>,
 }
 
 /// What another thread needs to build a renderer for `options` on this device (see the module
@@ -137,6 +236,7 @@ pub struct RendererPlan {
     declared: wgpu::Features,
     meshlets: Meshlets,
     texture_arrays: Option<(DeviceClass, TextureQuality)>,
+    texture_family: TextureFamily,
     uploads: Vec<Arc<Upload>>,
     generation: u32,
 }
@@ -157,13 +257,14 @@ impl RendererPlan {
         let (width, height) = self.size;
         let mut renderer = FrameRenderer::with_native_features(&self.gpu, width, height, self.options, self.declared)?;
         renderer.renderer_mut().set_meshlets(&self.gpu, self.meshlets)?;
+        set_family(&mut renderer, &self.gpu, self.texture_family)?;
         if let Some((class, quality)) = self.texture_arrays {
             renderer.renderer_mut().set_texture_arrays(&self.gpu.device, class, quality);
         }
         for upload in &self.uploads {
             replay(&mut renderer, &self.gpu, upload)?;
         }
-        Ok(Prepared { renderer, options: self.options, replayed: self.uploads.len(), generation: self.generation })
+        Ok(Prepared { renderer, options: self.options, replayed: self.uploads.len(), generation: self.generation, keeps_history: false })
     }
 }
 
@@ -173,6 +274,8 @@ pub struct Prepared {
     options: RenderOptions,
     replayed: usize,
     generation: u32,
+    /// It was the renderer in use a moment ago (a spare swapped back): its history goes on.
+    keeps_history: bool,
 }
 
 impl Prepared {
@@ -206,6 +309,10 @@ pub struct Resilient {
     keep_spare: bool,
     /// The renderer kept for other options, when one is.
     spare: Option<Spare>,
+    /// The window present's pipelines and letterbox-sized images, on this device.
+    window: WindowPresent,
+    /// Frames drawn, by whichever renderer was in use.
+    frames: u64,
 }
 
 impl Resilient {
@@ -232,6 +339,8 @@ impl Resilient {
             builds: 1,
             keep_spare: false,
             spare: None,
+            window: WindowPresent::default(),
+            frames: 0,
         })
     }
 
@@ -259,6 +368,14 @@ impl Resilient {
     /// Whether the device is lost.
     pub fn is_lost(&self) -> bool {
         self.watch.is_lost()
+    }
+
+    /// The CPU bytes kept to replay the uploads after a loss or onto a rebuilt renderer: what a
+    /// game's procedural meshes, decoded files and Level-2 sources hold in RAM (wasm memory on the
+    /// web) beside their GPU copies. Uploads with a source ([`Resilient::add_meshes_from`],
+    /// [`Resilient::add_texture_from`]) keep none.
+    pub fn kept_bytes(&self) -> u64 {
+        self.uploads.iter().map(|upload| upload.kept_bytes()).sum()
     }
 
     /// Recoveries so far: the Live ring generation to announce.
@@ -306,7 +423,20 @@ impl Resilient {
     /// [`Resilient::add_meshes`] with the meshlets each part brought (a GLB part's
     /// `genex_meshlets`), kept for replay with them.
     pub fn add_meshes_with_meshlets(&mut self, parts: Vec<(MeshData, Option<MeshletSet>)>) -> Result<Vec<MeshId>, RenderError> {
-        self.upload(Upload::Meshes(parts.clone()), |r, gpu| r.add_meshes_with_meshlets(gpu, parts))
+        self.add_model_parts(parts.into_iter().map(|(mesh, meshlets)| ModelPart { mesh, meshlets, lods: None }).collect())
+    }
+
+    /// [`Resilient::add_meshes_with_meshlets`] with each part's levels of detail (renderer pass 2
+    /// A6.9), kept for replay with them.
+    pub fn add_model_parts(&mut self, parts: ModelParts) -> Result<Vec<MeshId>, RenderError> {
+        self.upload(Upload::Meshes(parts.clone()), |r, gpu| r.add_model_parts(gpu, parts))
+    }
+
+    /// [`Resilient::add_meshes_with_meshlets`] for parts that `source` decodes again (bytes the
+    /// program holds for its whole life, a game's compiled assets): nothing is kept, and a replay
+    /// takes the parts from `source`.
+    pub fn add_meshes_from(&mut self, parts: ModelParts, source: PartsSource) -> Result<Vec<MeshId>, RenderError> {
+        self.upload(Upload::MeshesFrom(source), |r, gpu| r.add_model_parts(gpu, parts))
     }
 
     /// Cluster the game's meshes by `meshlets` from now on ([`crate::Renderer::set_meshlets`]);
@@ -326,6 +456,29 @@ impl Resilient {
     /// Add a texture (kept for replay).
     pub fn add_texture(&mut self, data: &TextureData, kind: TextureKind) -> Result<TextureId, RenderError> {
         self.upload(Upload::Texture(data.clone(), kind), |r, gpu| r.add_texture(gpu, data, kind))
+    }
+
+    /// [`Resilient::add_texture`] for a texture that `source` decodes again (as
+    /// [`Resilient::add_meshes_from`]): nothing is kept.
+    pub fn add_texture_from(&mut self, data: &TextureData, kind: TextureKind, source: TextureSource) -> Result<TextureId, RenderError> {
+        self.upload(Upload::TextureFrom(source, kind), |r, gpu| r.add_texture(gpu, data, kind))
+    }
+
+    /// Store the larger size classes in `family` (renderer pass 2 A6.4,
+    /// [`crate::Renderer::set_texture_family`]); a rebuilt renderer takes it before its replay.
+    pub fn set_texture_family(&mut self, family: TextureFamily) -> Result<(), RenderError> {
+        self.healthy()?;
+        self.renderer.renderer_mut().set_texture_family(&self.gpu, family).map_err(|e| self.lost_or(e))
+    }
+
+    /// Add a compressed texture in the renderer's family (A6.4, kept for replay).
+    pub fn add_compressed_texture(&mut self, texture: &CompressedTexture, kind: TextureKind) -> Result<TextureId, RenderError> {
+        self.upload(Upload::Compressed(texture.clone(), kind), |r, gpu| r.add_compressed_texture(gpu, texture, kind))
+    }
+
+    /// [`Resilient::add_compressed_texture`] for a file `source` reads again: nothing is kept.
+    pub fn add_compressed_texture_from(&mut self, texture: &CompressedTexture, kind: TextureKind, source: CompressedSource) -> Result<TextureId, RenderError> {
+        self.upload(Upload::CompressedFrom(source, kind), |r, gpu| r.add_compressed_texture(gpu, texture, kind))
     }
 
     /// Admit a custom material (kept for replay).
@@ -355,6 +508,12 @@ impl Resilient {
         self.upload(Upload::Emitter(desc), |r, gpu| r.add_emitter(gpu, desc))
     }
 
+    /// Add a flipbook atlas (kept for replay).
+    pub fn add_particle_atlas(&mut self, atlas: ParticleAtlas) -> Result<ParticleAtlasId, RenderError> {
+        let kept = atlas.clone();
+        self.upload(Upload::ParticleAtlas(kept), |r, gpu| r.add_particle_atlas(gpu, &atlas))
+    }
+
     /// Draw `frame`; `device-lost` while the device is lost.
     pub fn render(&mut self, frame: &ImmediateFrame, path: CullPath, overlay: Option<&mut dyn OverlayPainter>) -> Result<FrameReport, RenderError> {
         self.render_with(frame, path, overlay, &mut NoCustom)
@@ -371,6 +530,7 @@ impl Resilient {
         custom: &mut dyn CustomStage,
     ) -> Result<FrameReport, RenderError> {
         self.healthy()?;
+        self.frames += 1;
         let report = self.renderer.render_with(&self.gpu, frame, path, overlay, custom);
         report.map_err(|e| self.lost_or(e))
     }
@@ -391,12 +551,24 @@ impl Resilient {
     }
 
     /// Letterbox the world target into `target` (`window` pixels of `format`): Live's ring and a
-    /// window's frame; nothing is drawn while the device is lost.
+    /// window's frame, upscaled with FSR1 into a larger letterbox and filtered into a smaller one
+    /// ([`crate::letterbox::present`]); nothing is drawn while the device is lost.
     pub fn present(&mut self, target: &wgpu::TextureView, format: wgpu::TextureFormat, window: (u32, u32)) {
+        self.present_with(target, format, window, None);
+    }
+
+    /// [`Resilient::present`], then `overlay` (the HUD) painted over the letterbox at the window's
+    /// pixels, after the upscale. Answers the overlay's draws (0 while the device is lost).
+    pub fn present_with(&mut self, target: &wgpu::TextureView, format: wgpu::TextureFormat, window: (u32, u32), overlay: Option<&mut dyn OverlayPainter>) -> u32 {
         if self.watch.is_lost() {
-            return;
+            return 0;
         }
-        self.renderer.renderer_mut().present(&self.gpu, target, format, window);
+        let renderer = self.renderer.renderer();
+        // The world target as the last frame drew it: an output size set since applies from the
+        // next frame on (renderer pass 2, P2-0.9 step B).
+        let world = renderer.world_texture();
+        let into = PresentInto { world: (renderer.world_view(), (world.width(), world.height())), target, format, window };
+        self.window.present(&self.gpu, &into, overlay)
     }
 
     /// Replace a custom material's uniforms (the replay keeps the new ones).
@@ -425,8 +597,9 @@ impl Resilient {
         }
         self.healthy()?;
         if let Some(spare) = self.spare.take_if(|spare| spare.options == options) {
+            let keeps_history = self.history_kept(&spare);
             let Spare { renderer, replayed, .. } = spare;
-            self.swap_in(Prepared { renderer, options, replayed, generation: self.generation })?;
+            self.swap_in(Prepared { renderer, options, replayed, generation: self.generation, keeps_history })?;
             return Ok(true);
         }
         let prepared = self.plan(options).build()?;
@@ -454,13 +627,23 @@ impl Resilient {
         self.spare.as_ref().map(|spare| (spare.options, &spare.renderer))
     }
 
+    /// Let the spare go (answers whether one was kept): a warm-up about to build a new renderer
+    /// from a plan releases it first, so the renderer in use and the one warmed are the only two
+    /// sets of render targets held at once (GB live-app round 1: a Live preset cycle held three
+    /// and Studio's memory cap stopped the game).
+    pub fn release_spare(&mut self) -> bool {
+        self.spare.take().is_some()
+    }
+
     /// The spare built for `options`, brought up to date with every upload, to warm on another
     /// thread and [`Resilient::adopt`] (None when there is none for those options).
     pub fn take_spare(&mut self, options: RenderOptions) -> Result<Option<Prepared>, RenderError> {
         self.healthy()?;
-        let Some(Spare { mut renderer, replayed, .. }) = self.spare.take_if(|spare| spare.options == options) else { return Ok(None) };
+        let Some(spare) = self.spare.take_if(|spare| spare.options == options) else { return Ok(None) };
+        let keeps_history = self.history_kept(&spare);
+        let Spare { mut renderer, replayed, .. } = spare;
         self.catch_up(&mut renderer, replayed)?;
-        Ok(Some(Prepared { renderer, options, replayed: self.uploads.len(), generation: self.generation }))
+        Ok(Some(Prepared { renderer, options, replayed: self.uploads.len(), generation: self.generation, keeps_history }))
     }
 
     /// What another thread needs to build a renderer for `options` (see the module docs).
@@ -472,6 +655,7 @@ impl Resilient {
             declared: self.declared,
             meshlets: self.meshlets,
             texture_arrays: self.renderer.renderer().texture_arrays(),
+            texture_family: self.renderer.renderer().texture_family(),
             uploads: self.uploads.clone(),
             generation: self.generation,
         }
@@ -497,7 +681,7 @@ impl Resilient {
         let usable = self.keep_spare && prepared.options != self.options && prepared.generation == self.generation;
         if usable {
             let Prepared { renderer, options, replayed, .. } = prepared;
-            self.spare = Some(Spare { options, renderer, replayed });
+            self.spare = Some(Spare { options, renderer, replayed, out_since: None });
         }
         usable
     }
@@ -506,18 +690,26 @@ impl Resilient {
     /// uniforms and meshlet setting); the one it replaces becomes the spare when spares are kept
     /// and its options differ.
     fn swap_in(&mut self, prepared: Prepared) -> Result<(), RenderError> {
-        let Prepared { mut renderer, options, replayed, .. } = prepared;
+        let Prepared { mut renderer, options, replayed, keeps_history, .. } = prepared;
         self.catch_up(&mut renderer, replayed)?;
-        renderer.reset_history(HistoryReset::Settings);
+        if !keeps_history {
+            renderer.reset_history(HistoryReset::Settings);
+        }
         let replaced = std::mem::replace(&mut self.renderer, renderer);
         let replaced_options = std::mem::replace(&mut self.options, options);
         if self.spare.as_ref().is_some_and(|spare| spare.options == options) {
             self.spare = None;
         }
         if self.keep_spare && replaced_options != options {
-            self.spare = Some(Spare { options: replaced_options, renderer: replaced, replayed: self.uploads.len() });
+            self.spare = Some(Spare { options: replaced_options, renderer: replaced, replayed: self.uploads.len(), out_since: Some(self.frames) });
         }
         Ok(())
+    }
+
+    /// Whether `spare` comes back with its history: it was the renderer in use, and at most
+    /// [`SPARE_HISTORY_FRAMES_MAX`] frames were drawn since.
+    fn history_kept(&self, spare: &Spare) -> bool {
+        spare.out_since.is_some_and(|at| self.frames.saturating_sub(at) <= SPARE_HISTORY_FRAMES_MAX)
     }
 
     /// Bring `renderer`, which holds the first `replayed` uploads, up to date: the later uploads
@@ -555,6 +747,7 @@ impl Resilient {
         // The setting first, so every replayed mesh is clustered once, by it.
         renderer.renderer_mut().set_meshlets(&gpu, self.meshlets)?;
         // The lost device's texture arrays, so every replayed texture keeps its class and layer.
+        set_family(&mut renderer, &gpu, self.renderer.renderer().texture_family())?;
         if let Some((class, quality)) = self.renderer.renderer().texture_arrays() {
             renderer.renderer_mut().set_texture_arrays(&gpu.device, class, quality);
         }
@@ -563,8 +756,9 @@ impl Resilient {
         }
         // A new device starts every history over (auto exposure adapts at once).
         renderer.reset_history(HistoryReset::DeviceRecreated);
-        // A spare was made on the lost device.
+        // A spare and the window present were made on the lost device.
         self.spare = None;
+        self.window = WindowPresent::default();
         self.watch = DeviceWatch::attach(&gpu);
         self.renderer = renderer;
         self.gpu = gpu;
@@ -574,14 +768,28 @@ impl Resilient {
     }
 }
 
+/// A rebuilt renderer takes the family its compressed textures were stored in (A6.4) before any
+/// upload is replayed; RGBA8, the default, needs nothing.
+fn set_family(renderer: &mut FrameRenderer, gpu: &Gpu, family: TextureFamily) -> Result<(), RenderError> {
+    if family == TextureFamily::Rgba8 {
+        return Ok(());
+    }
+    renderer.renderer_mut().set_texture_family(gpu, family)
+}
+
 fn replay(renderer: &mut FrameRenderer, gpu: &Gpu, upload: &Upload) -> Result<(), RenderError> {
     match upload {
         Upload::Mesh(mesh) => renderer.add_mesh(gpu, mesh.clone()).map(drop),
-        Upload::Meshes(parts) => renderer.add_meshes_with_meshlets(gpu, parts.clone()).map(drop),
+        Upload::Meshes(parts) => renderer.add_model_parts(gpu, parts.clone()).map(drop),
+        Upload::MeshesFrom(source) => renderer.add_model_parts(gpu, source()?).map(drop),
         Upload::Skinned(data) => renderer.add_skinned_mesh(gpu, data).map(drop),
         Upload::Texture(data, kind) => renderer.add_texture(gpu, data, *kind).map(drop),
+        Upload::TextureFrom(source, kind) => renderer.add_texture(gpu, &source()?, *kind).map(drop),
+        Upload::Compressed(texture, kind) => renderer.add_compressed_texture(gpu, texture, *kind).map(drop),
+        Upload::CompressedFrom(source, kind) => renderer.add_compressed_texture(gpu, &source()?, *kind).map(drop),
         Upload::Material(kept) => renderer.add_material_api(gpu, kept.api, &kept.wgsl, &kept.uniforms, &kept.textures).map(drop),
         Upload::PostPass(stage, kept) => renderer.add_post_pass_api(gpu, kept.api, *stage, &kept.wgsl, &kept.uniforms, &kept.textures).map(drop),
         Upload::Emitter(desc) => renderer.add_emitter(gpu, *desc).map(drop),
+        Upload::ParticleAtlas(atlas) => renderer.add_particle_atlas(gpu, atlas).map(drop),
     }
 }

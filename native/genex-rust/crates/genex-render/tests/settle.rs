@@ -454,6 +454,48 @@ fn metal_a_capture_leaves_the_next_live_frame_as_it_would_be_on_an_adapting_scen
     assert!((mean_level(&shot) - mean_level(&later)).abs() <= CONVERGED_MEAN_LEVELS, "the capture shows the settled exposure");
 }
 
+/// A Live frame with nothing to meter: a black clear and no draws (what a native boot can draw
+/// before its scene shows), at `tick`.
+fn black(tick: u64) -> ImmediateFrame {
+    let mut frame = ImmediateFrame::new(CameraDesc::look_at([0.0, 7.0, 1.5], [0.0, 0.0, 0.0]), [0, 0, 0, 255]);
+    frame.lighting_mut().sun_intensity = 0.0;
+    frame.set_tick(tick);
+    frame
+}
+
+// GB live-app round 1: Native Live's first visible frame showed the Lakeside at about 38% of its
+// settled brightness, ramping up over 3.5 s at the default 1 EV/s. The boot drew black frames
+// first (now under the first-frame veil); the first of them took Live's instant adaptation and
+// counted nothing, so the lit frames after it adapted from the start state. Live's instant
+// adaptation waits for a frame that counts something.
+#[test]
+#[ignore = "needs a GPU: run with --ignored metal"]
+fn metal_a_live_start_whose_first_frames_are_black_snaps_on_its_first_lit_frame() {
+    let Some(gpu) = gpu() else { return };
+    // The default brightening speed: a missed snap is still far off a few frames later.
+    let look = auto_look(1.0);
+    let mut lit_first = hdr_renderer(&gpu, look);
+    let mut black_first = hdr_renderer(&gpu, look);
+    for tick in 1..=2 {
+        black_first.render(&gpu, &black(tick), CullPath::Gpu, None).expect("black boot frame");
+    }
+    let mut pairs = Vec::new();
+    for tick in 3..=5 {
+        let reference = live_frame(&mut lit_first, &gpu, &scene(12.0, tick));
+        let after_black = live_frame(&mut black_first, &gpu, &scene(12.0, tick));
+        pairs.push((tick, mean_level(&reference), mean_level(&after_black)));
+    }
+    eprintln!("lit first / black first (tick, mean, mean): {pairs:?}");
+    // The first lit frame is drawn at the start exposure either way; from the second on both show
+    // the snapped exposure.
+    for (tick, reference, after_black) in pairs.into_iter().skip(1) {
+        assert!(
+            (reference - after_black).abs() <= CONVERGED_MEAN_LEVELS,
+            "tick {tick}: after black boot frames {after_black:.2}, lit from the start {reference:.2}"
+        );
+    }
+}
+
 /// Print `row` and append it to `GENEX_PERF_OUT` when set.
 fn perf_row(row: &str) {
     use std::io::Write;

@@ -43,6 +43,13 @@ import {
   FOG_HEIGHT_FALLOFF_MAX,
   FormFactor,
   LookKey,
+  LOD_MAX_LEVELS,
+  LOD_MIN_TRIANGLES,
+  LOD_SCHEMA_VERSION,
+  LodExtrasKey,
+  LodFault,
+  LodLevelKey,
+  LODS_EXTRAS_KEY,
   MESHLET_MAX_TRIANGLES,
   MESHLET_MAX_VERTICES,
   MESHLET_MIN_TRIANGLES_DEFAULT,
@@ -607,6 +614,23 @@ describe("the genex_meshlets glTF extras schema is the renderer's", () => {
       minTrianglesDefault: MESHLET_MIN_TRIANGLES_DEFAULT,
       extrasKeys: Object.values(MeshletExtrasKey),
       faults: Object.values(MeshletFault),
+    });
+  });
+});
+
+describe("the genex_lods glTF extras schema is the renderer's", () => {
+  it("names the key, limits, members and faults genex-render's mesh_lod.rs pins", async () => {
+    const facade = JSON.parse(
+      await readFile(path.join(ROOT, "tests", "fixtures", "rust-facade-vocabulary.json"), "utf8"),
+    ) as { lods: Record<string, unknown> };
+    assert.deepEqual(facade.lods, {
+      extrasKey: LODS_EXTRAS_KEY,
+      schemaVersion: LOD_SCHEMA_VERSION,
+      maxLevels: LOD_MAX_LEVELS,
+      minTriangles: LOD_MIN_TRIANGLES,
+      extrasKeys: Object.values(LodExtrasKey),
+      levelKeys: Object.values(LodLevelKey),
+      faults: Object.values(LodFault),
     });
   });
 });

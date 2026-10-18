@@ -558,8 +558,9 @@ export async function runGameConformance(
   results.set(ConformanceCheck.Verbs, await judged(ConformanceCheck.Verbs, () => checkVerbs(first.port, seed)));
   results.set(ConformanceCheck.CaptureDigest, await judged(ConformanceCheck.CaptureDigest, () => checkCapture(first)));
   // Extensions first: its as-booted look at the custom passes comes before any preset was set.
-  results.set(ConformanceCheck.RenderExtensions, await checkRenderExtensions(first.port));
-  const presets = await checkRenderPresets(first.port);
+  const clock = { now: () => deps.now(), sleep: processDeps(deps).sleep };
+  results.set(ConformanceCheck.RenderExtensions, await checkRenderExtensions(first.port, clock));
+  const presets = await checkRenderPresets(first.port, clock);
   const stops = [await stopAndReap(deps, first)];
   const second = await tryLaunch(deps);
   const runB = second instanceof CheckFailure ? second : await trySeededRun(second.port, seed, demo);

@@ -12,8 +12,13 @@
 //! land on top. A feature that does not fit is switched off or made cheaper, never refused.
 
 use crate::device_class::{DeviceClass, DeviceFacts, FormFactor, PerformanceTier, TargetOs};
+use crate::post::bloom::CHAIN_RESOLUTION;
+use crate::post::dof::DofTier;
+use crate::foliage::GrassQuality;
+use crate::post::motion_blur::MotionBlurTier;
+use crate::screen_inputs::ScreenInputs;
 use crate::settings::{
-    AntiAliasing, AoQuality, AoResolution, BloomQuality, EnvironmentQuality, JitterCycle, LightQuality, PresetChoice, Quality, QualityPreset,
+    AntiAliasing, AoMethod, AoQuality, AoResolution, BloomQuality, EnvironmentQuality, JitterCycle, LightQuality, PresetChoice, Quality, QualityPreset,
     MAX_CASCADES, RENDER_SCALE_MIN, RenderFeature, RenderSettings, SHADOW_BLEND_BAND_MAX, SHADOW_DISTANCE_MAX_M, SHADOW_DISTANCE_MIN_M,
     SceneFormat, ShadowFilter, ShadowFormat, ShadowQuality, TAA_SHARPEN_RCAS_SHARPNESS, TaaQuality, Upscaler,
 };
@@ -98,6 +103,29 @@ pub const OFF_RENDER_PASSES: u32 = 4;
 pub const ULTRA_HDRI_CUBE_PX: u32 = 512;
 /// The largest specular cube a phone bakes, whatever the preset.
 pub const MOBILE_MAX_CUBE_PX: u32 = 256;
+/// The largest radiance cube (the prefilter's source, `ibl::radiance_side`) a phone bakes: a
+/// quarter of its largest specular cube. Half the side (desktop) cost mobile-mid's high row
+/// 930 KB, past its 96 MiB budget without transient MSAA; a quarter costs 180 KB over the 32 px
+/// cube it replaced (renderer pass 2, P2-0.11).
+pub const MOBILE_MAX_RADIANCE_PX: u32 = 64;
+/// The largest reflection-probe cube a desktop or browser captures (renderer pass 2 A.3,
+/// `probes::probe_side`: the sky cube's side, at most this): ultra's 512 px HDRI cube is the sky's
+/// alone; a probe there holds a 256 px cube (4.2 MB with its mips).
+pub const PROBE_SIDE_MAX_PX: u32 = 256;
+/// The largest reflection-probe cube a phone captures (1.05 MB with its mips).
+pub const MOBILE_PROBE_SIDE_MAX_PX: u32 = 128;
+/// Reflection probes given a cube per desktop preset (low, medium, high and ultra).
+pub const PROBES_PER_PRESET: [u8; 4] = [4, 8, 16, 16];
+/// The most reflection probes a phone of each tier (low, mid, high, ultra) gives a cube, whatever
+/// the preset asks (plan A.3: 2 on mobile-low, 4 on mobile-mid).
+pub const MOBILE_PROBES_PER_TIER: [u8; 4] = [2, 4, 8, 8];
+/// Irradiance volumes baked per desktop and browser preset (low, medium, high and ultra; renderer
+/// pass 2 A.4: medium and up).
+pub const VOLUMES_PER_PRESET: [u8; 4] = [0, 4, 8, 8];
+/// The most irradiance volumes a phone of each tier (low, mid, high, ultra) bakes at `high` and
+/// `ultra` (plan A.4: none on mobile-low, which keeps the sky's SH9; D16: none at a phone's
+/// `medium` or `low`).
+pub const MOBILE_VOLUMES_PER_TIER: [u8; 4] = [0, 2, 4, 4];
 /// The most local lights a phone bins (`LightQuality::cap`), whatever the preset asks.
 pub const MOBILE_MAX_LIGHTS: u32 = 256;
 /// The smallest binning tile a phone uses, in pixels (fewer tiles to bin and walk).
@@ -230,12 +258,22 @@ fn table_quality(preset: QualityPreset, form: FormFactor) -> Quality {
     quality.fog = true;
     quality.lights.clustered = true;
     quality.upscaler = if preset == QualityPreset::Low { Upscaler::Bilinear } else { Upscaler::Fsr1 };
+    // Bevy's one-pass blur (A.9); high and ultra take KinoMotion's reconstruction. The look's
+    // switch decides whether either runs.
+    quality.motion_blur = MotionBlurTier::Direct;
     match preset {
         QualityPreset::Low => low_row(&mut quality, form),
         QualityPreset::Medium => medium_row(&mut quality),
         QualityPreset::High => high_row(&mut quality),
         QualityPreset::Ultra => ultra_row(&mut quality, form),
     }
+    // A.8: the terrain's grass (phones' caps lower it, `apply_mobile_caps`).
+    quality.grass = match preset {
+        QualityPreset::Low => GrassQuality::OFF,
+        QualityPreset::Medium => GrassQuality::MEDIUM,
+        QualityPreset::High => GrassQuality::HIGH,
+        QualityPreset::Ultra => GrassQuality::ULTRA,
+    };
     quality
 }
 
@@ -253,6 +291,14 @@ fn environment(cube_size: u32, sky_lut: (u32, u32), cadence: u8, sun_rebake_tent
         sky_lut,
         sky_cadence: cadence,
         aerial_perspective,
+        radiance_side_max: 0,
+        reflection_probes: 0,
+        probe_side_max: PROBE_SIDE_MAX_PX,
+        continuous_sky: false,
+        irradiance_volumes: 0,
+        irradiance_leak_control: true,
+        froxel_fog: None,
+        clouds: None,
     }
 }
 
@@ -268,17 +314,38 @@ fn shadows(cascades: u8, map_size: u32, filter: ShadowFilter, format: ShadowForm
         split_percent: reach.split_percent,
         blend_percent: reach.blend_percent,
         fade_percent: reach.fade_percent,
+        screen_mask: true,
     }
 }
 
 fn lights(cap: u32, tile_px: u32, shadowed_spots: u8) -> LightQuality {
-    LightQuality { cap, clustered: true, tile_px, shadowed_spots }
+    LightQuality { cap, clustered: true, tile_px, shadowed_spots, decals: crate::decals::DESKTOP_DECALS }
 }
+
+/// The material sampler's anisotropy per preset and class (P2-0.12 LG-02): desktop high and ultra
+/// 16, medium 8, low 4; phones at most 4, the low-tier phone 2 (its bandwidth). A resource knob.
+const HIGH_ANISOTROPY: u8 = 16;
+const MEDIUM_ANISOTROPY: u8 = 8;
+const LOW_ANISOTROPY: u8 = 4;
+const MOBILE_ANISOTROPY: u8 = 4;
+/// The bloom chain's top height cap on phones (`min(output height / 2, this)`): every phone preset
+/// draws the same halo, on a chain under two thirds of a desktop's rows (renderer pass 2, P5:
+/// presets and classes lower the chain's resolution, never its mip count).
+pub const MOBILE_BLOOM_RESOLUTION: u16 = 360;
+/// The least RCAS softness (in stops) a phone's upscale sharpens with at any preset: EASU from
+/// 0.6-0.75 of the output and RCAS's default 0.2 stops sharpened a far deck's sub-pixel plank seams
+/// into a dot pattern (Lakeside dock on mobile-mid, 1.06% of the far deck; GA leftovers). At TAA's
+/// own sharpen's softness the seams stay lines (0.42%), the picture otherwise the same.
+pub const MOBILE_RCAS_SHARPNESS: f32 = TAA_SHARPEN_RCAS_SHARPNESS;
+const MOBILE_LOW_ANISOTROPY: u8 = 2;
 
 fn low_row(quality: &mut Quality, form: FormFactor) {
     quality.anti_aliasing = AntiAliasing::Msaa4;
+    quality.anisotropy = LOW_ANISOTROPY;
     quality.exposure_input_divisor = 16;
     quality.environment = environment(64, (64, 36), 8, 20, false);
+    quality.environment.reflection_probes = PROBES_PER_PRESET[0];
+    quality.environment.irradiance_volumes = VOLUMES_PER_PRESET[0];
     // Two cascades (pass-1 gate findings 01, 01b and 02): one 1024 px cascade over 50 units has
     // 8 cm texels under a 45° camera (9 cm for a phone's 768 px over 40), so a figure's legs
     // washed out of its shadow, which stood 30 px off the feet, and a block's shadow lost a wedge
@@ -294,17 +361,23 @@ fn low_row(quality: &mut Quality, form: FormFactor) {
         FormFactor::Mobile => (ShadowFilter::Hardware2x2, MOBILE_LOW_PRESET_SHADOW_MAP_PX),
     };
     quality.shadows = shadows(2, map_size, filter, ShadowFormat::Depth16, &LOW_REACH);
-    quality.bloom = BloomQuality { enabled: false, mips: 0, half_res: true };
+    // Off, at the chain every preset draws: a game that switches bloom on gets the same halo.
+    quality.bloom = BloomQuality { enabled: false, resolution: CHAIN_RESOLUTION };
     quality.ao = AoQuality { resolution: AoResolution::Off, slices: 0, steps: 0, temporal: false };
     quality.lights = lights(64, 32, 0);
 }
 
 fn medium_row(quality: &mut Quality) {
     quality.anti_aliasing = AntiAliasing::Msaa4;
+    quality.anisotropy = MEDIUM_ANISOTROPY;
     quality.exposure_input_divisor = 8;
     quality.environment = environment(128, (96, 54), 4, 10, true);
+    // B.5: the cloud panorama from medium up (low draws a clear sky).
+    quality.environment.clouds = Some(crate::clouds::MEDIUM_GRID);
+    quality.environment.reflection_probes = PROBES_PER_PRESET[1];
+    quality.environment.irradiance_volumes = VOLUMES_PER_PRESET[1];
     quality.shadows = shadows(2, 1536, ShadowFilter::Pcf3x3, ShadowFormat::Depth32, &MEDIUM_REACH);
-    quality.bloom = BloomQuality { enabled: true, mips: 5, half_res: true };
+    quality.bloom = BloomQuality { enabled: true, resolution: CHAIN_RESOLUTION };
     quality.ao = AoQuality { resolution: AoResolution::Half, slices: 1, steps: 4, temporal: false };
     quality.lights = lights(256, 32, 0);
     with_geometry_features(quality);
@@ -312,13 +385,34 @@ fn medium_row(quality: &mut Quality) {
 
 fn high_row(quality: &mut Quality) {
     quality.anti_aliasing = AntiAliasing::Taa;
+    quality.anisotropy = HIGH_ANISOTROPY;
     quality.exposure_input_divisor = 4;
     quality.environment = environment(256, (192, 108), 1, 5, true);
+    quality.environment.reflection_probes = PROBES_PER_PRESET[2];
+    quality.environment.irradiance_volumes = VOLUMES_PER_PRESET[2];
+    // SI-02 step 2: a moving sun's cube follows it every frame (a whole rebake at the continuous
+    // sample count; phones keep the time-sliced cycle).
+    quality.environment.continuous_sky = true;
+    // A.5: the froxel fog (sun shafts); medium keeps the analytic fog and the aerial volume.
+    quality.environment.froxel_fog = Some(crate::froxel::HIGH_GRID);
+    quality.environment.clouds = Some(crate::clouds::HIGH_GRID);
     quality.shadows = shadows(3, 2048, ShadowFilter::PcssLite, ShadowFormat::Depth32, &HIGH_REACH);
     quality.contact_shadows = true;
-    quality.bloom = BloomQuality { enabled: true, mips: 6, half_res: true };
+    quality.bloom = BloomQuality { enabled: true, resolution: CHAIN_RESOLUTION };
     quality.ao = AoQuality { resolution: AoResolution::Half, slices: 2, steps: 6, temporal: true };
+    // B.4: the visibility bitmask (no halo behind thin objects; ultra adds its GI). Medium keeps
+    // XeGTAO's horizons within its 0.6 ms; phones keep them too (`apply_mobile_caps`).
+    quality.ao_method = AoMethod::Bitmask;
     quality.lights = lights(1024, 16, 2);
+    // Filament's ring gather (A.9; ultra inherits it): the look's switch decides whether it runs.
+    quality.dof = DofTier::Ring;
+    quality.motion_blur = MotionBlurTier::Reconstruction;
+    // A.6: the screen inputs Stage B's water and screen-space reflections read (ultra inherits them).
+    quality.screen_inputs = ScreenInputs::ALL;
+    // B.9: Hi-Z screen-space reflections over those inputs (ultra takes more steps).
+    quality.ssr = crate::ssr::SsrQuality::HIGH;
+    // B.8: below scale 1 TAA resolves at output size (ultra inherits it).
+    quality.taau = true;
     with_geometry_features(quality);
 }
 
@@ -332,15 +426,24 @@ fn ultra_row(quality: &mut Quality, form: FormFactor) {
     quality.taa = quality.taa.with_jitter_cycle(JitterCycle::Sixteen);
     // An HDR map's detail is worth a 512 px cube on ultra (plan §2.4); the smooth sky is not.
     quality.environment.hdri_cube_size = ULTRA_HDRI_CUBE_PX;
+    quality.environment.reflection_probes = PROBES_PER_PRESET[3];
+    quality.environment.irradiance_volumes = VOLUMES_PER_PRESET[3];
+    quality.environment.froxel_fog = Some(crate::froxel::ULTRA_GRID);
+    quality.environment.clouds = Some(crate::clouds::ULTRA_GRID);
     let map_size = if form == FormFactor::Desktop { 4096 } else { 2048 };
     quality.shadows = shadows(4, map_size, ShadowFilter::Pcss, ShadowFormat::Depth32, &ULTRA_REACH);
-    quality.bloom.mips = 7;
     // Three slices of eight steps at full resolution with history. The unbiased estimate (gate
     // finding 03: each slice measured against its unoccluded arc, every sample slid back onto its
     // slice) costs about a fifth more a step: 3 x 8 measured 1.38 ms (M4 Max, 1080p), so the owner
     // raised ultra's AO budget to 1.5 ms (2026-10-12; plan §2.5 had 1.2) rather than halve the steps.
     quality.ao = AoQuality { resolution: AoResolution::Full, slices: 3, steps: 8, temporal: true };
+    // B.4's screen-space GI, the light of what the bitmask hides (look integration). Not at high:
+    // its terms hold the light (`ao::target_bytes_shaped`), +18.4 MB at 1440p, and desktop-high's
+    // default with its texture arrays would pass its 512 MiB budget (553.7 MB); like D16, a preset
+    // fits its budget by its defaults, not by a larger budget.
+    quality.ao_method = AoMethod::BitmaskGi;
     quality.lights = lights(1024, 16, 4);
+    quality.ssr = crate::ssr::SsrQuality::ULTRA;
 }
 
 /// Medium and up: the depth/normal prepass may run for its consumers (AO, contact shadows, the
@@ -450,8 +553,9 @@ pub fn cap_shadows(shadows: &mut ShadowQuality, class: DeviceClass) {
 /// The local-light caps of `class` (plan §2.4, RQ6 review), for any preset and any request: with
 /// the `clustered` switch off the per-pixel loop shades at most [`UNCLUSTERED_MAX_LIGHTS`] lights
 /// ([`MOBILE_UNCLUSTERED_MAX_LIGHTS`] on a phone); phones bin at most [`MOBILE_MAX_LIGHTS`] lights
-/// in tiles of at least [`MOBILE_MIN_LIGHT_TILE_PX`], and shade one shadowed spot on the high and
-/// ultra phone classes, none below. Desktops keep the preset's binned caps. The legacy renderer's
+/// in tiles of at least [`MOBILE_MIN_LIGHT_TILE_PX`], shade one shadowed spot on the high and
+/// ultra phone classes, none below, and draw at most `decals::MOBILE_DECALS` decals (renderer
+/// pass 2 A.10). Desktops keep the preset's binned caps. The legacy renderer's
 /// `Quality::off` is never capped here.
 pub fn cap_lights(lights: &mut LightQuality, class: DeviceClass) {
     let mobile = class.form == FormFactor::Mobile;
@@ -468,6 +572,7 @@ pub fn cap_lights(lights: &mut LightQuality, class: DeviceClass) {
     }
     let spots = if class.tier >= PerformanceTier::High { 1 } else { 0 };
     lights.shadowed_spots = lights.shadowed_spots.min(spots);
+    lights.decals = lights.decals.min(crate::decals::MOBILE_DECALS);
 }
 
 /// Mobile and tile caps (plan §2.4), for any preset on a mobile class.
@@ -477,7 +582,10 @@ fn apply_mobile_caps(quality: &mut Quality, preset: QualityPreset, class: Device
     // its cost on the Mac mobile proxy is in the showcase's `metal_mobile_proxy` row). EASU and
     // RCAS run only while the render size differs from the output.
     quality.upscaler = Upscaler::Fsr1;
-    quality.bloom.mips = quality.bloom.mips.min(5);
+    quality.rcas = quality.rcas.with_sharpness(quality.rcas.sharpness.max(MOBILE_RCAS_SHARPNESS));
+    quality.bloom.resolution = quality.bloom.resolution.min(MOBILE_BLOOM_RESOLUTION);
+    let anisotropy = if class.tier == PerformanceTier::Low { MOBILE_LOW_ANISOTROPY } else { MOBILE_ANISOTROPY };
+    quality.anisotropy = quality.anisotropy.min(anisotropy);
     let taa_allowed = class.tier >= PerformanceTier::High && preset >= QualityPreset::High;
     if quality.anti_aliasing.temporal() && !taa_allowed {
         quality.anti_aliasing = AntiAliasing::Msaa4;
@@ -497,6 +605,40 @@ fn apply_mobile_caps(quality: &mut Quality, preset: QualityPreset, class: Device
     }
     quality.environment.cube_size = quality.environment.cube_size.min(MOBILE_MAX_CUBE_PX);
     quality.environment.hdri_cube_size = quality.environment.hdri_cube_size.min(MOBILE_MAX_CUBE_PX);
+    quality.environment.radiance_side_max = MOBILE_MAX_RADIANCE_PX;
+    let tier_probes = MOBILE_PROBES_PER_TIER[PerformanceTier::ALL.iter().position(|tier| *tier == class.tier).unwrap_or(0)];
+    quality.environment.reflection_probes = quality.environment.reflection_probes.min(tier_probes);
+    quality.environment.probe_side_max = MOBILE_PROBE_SIDE_MAX_PX;
+    quality.environment.continuous_sky = false;
+    // A.4: phones read a volume's ambient cube in three trilinear fetches, no leak control. Owner
+    // decision D16: the bake's time slice alone measured +1.9 ms on the mobile-high proxy (an
+    // eighth of the frame is 2.083 ms), so a phone bakes volumes only at `high` and `ultra`, a
+    // person's or game's choice; its own preset (medium or low) keeps the sky's SH9.
+    let tier_volumes = MOBILE_VOLUMES_PER_TIER[PerformanceTier::ALL.iter().position(|tier| *tier == class.tier).unwrap_or(0)];
+    let phone_volumes = if preset >= QualityPreset::High { tier_volumes } else { 0 };
+    quality.environment.irradiance_volumes = quality.environment.irradiance_volumes.min(phone_volumes);
+    quality.environment.irradiance_leak_control = false;
+    // A.5: phones keep the analytic fog until the froxel fog is measured on them (mobile-high only,
+    // behind that measurement).
+    quality.environment.froxel_fog = None;
+    // B.5: no cloud panorama on phones until it is measured on them (mobile-high only, behind that
+    // measurement; owner decision D16: a feature that cannot be shown to fit is off on phones).
+    quality.environment.clouds = None;
+    // Ten passes of Filament's ring gather are a desktop's: phones take Godot's circular gather.
+    quality.dof = DofTier::Circular;
+    // Phones blur in one pass, and the low-tier phone not at all (the plan's "off on mobile-low").
+    quality.motion_blur = if class.tier == PerformanceTier::Low { MotionBlurTier::Off } else { MotionBlurTier::Direct };
+    // Phones keep XeGTAO's horizons: the bitmask's and its GI's cost on a phone is unmeasured
+    // (B.4; owner decision D16: what cannot be shown to fit is off on phones).
+    quality.ao_method = AoMethod::Horizons;
+    // No screen inputs on phones (B.3's water reflects the probes or the sky there).
+    quality.screen_inputs = ScreenInputs::NONE;
+    // Nor screen-space reflections (B.9): the probes or the sky reflect on phones.
+    quality.ssr = crate::ssr::SsrQuality::OFF;
+    // A.8: grass on the high phones at `high` and `ultra` only, at a capped density (overdraw is a
+    // tile GPU's cost); none elsewhere on phones.
+    let phone_grass = class.tier >= PerformanceTier::High && preset >= QualityPreset::High;
+    quality.grass = if phone_grass { GrassQuality::MOBILE } else { GrassQuality::OFF };
 }
 
 /// The widest HDR environment map `class` keeps on the GPU (an equirect `width × width / 2`

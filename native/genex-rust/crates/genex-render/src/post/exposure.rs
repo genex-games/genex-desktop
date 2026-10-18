@@ -11,8 +11,12 @@
 //!
 //! The scene holds pre-exposed radiance (`radiance × pre_exposure`, where `pre_exposure` is the
 //! state's `exposure` when the frame began), so the histogram divides it back out. One sample per
-//! `exposure_input_divisor`² texel cell (its centre texel, `textureLoad`: no sampler, any float
-//! scene format) is weighted by the look's [`Metering`] and counted into the bin of its scene EV,
+//! `exposure_input_divisor`² texel cell, the mean radiance of the cell's centred block of at most
+//! [`CELL_SIDE_MAX`]² texels (every texel of a 4² or 8² cell, the centre 8² of a 16² cell), read as
+//! one bilinear tap at the shared corner of each 2² of it (4 taps on high, 16 on medium and low;
+//! the HDR scene formats filter in WebGPU core), so a lantern or a glint counts wherever it falls in
+//! its cell instead of only on the centre texel, and a panning camera meters a steady EV (P2-0.10,
+//! C3). It is weighted by the look's [`Metering`] at the cell's centre and counted into the bin of its scene EV,
 //! `log2(luminance / 0.18)`, over the look's `ev_min..ev_max` (1/8 EV per bin at the default
 //! limits; values outside land in the edge bins, whose centres lie half a bin inside the limits;
 //! black, NaN and infinite samples are not counted). Counting uses workgroup `u32` atomics
@@ -20,16 +24,23 @@
 //! order; the adaptation reduces them with exact integer prefix sums and a fixed-order tree sum
 //! (no invocation loops over the bins). The metered EV is the mean of the bin centres between the
 //! [`EXPOSURE_LOW_PERCENTILE`] and [`EXPOSURE_HIGH_PERCENTILE`] of the weighted samples, clamped to
-//! `ev_min..=ev_max`; a frame with no counted sample keeps the last target.
+//! `ev_min..=ev_max`. The target the exposure adapts towards is that EV minus the look's
+//! [`crate::settings::CompensationCurve`] at it ([`aim_ev`]); a frame with no counted sample keeps
+//! the last target.
 //!
 //! # Adaptation
 //!
-//! The adapted EV moves towards the metered one by at most `adaptation_up` (the image brightens)
-//! or `adaptation_down` (the image darkens) EV per simulated second, `speed / 60` per tick times
-//! the ticks the rendered frame ran ([`crate::pacing::FrameGate`]), so a 120 Hz display adapts as
-//! a 60 Hz one does and a frame with no tick does not adapt. It lands exactly on the target once
-//! within one step. Instant mode (settled captures, history resets, a new history) sets it to the
-//! target at once. The exposure is `2^(ev_compensation - ev)`: a scene twice as bright meters
+//! The adapted EV moves towards the target by at most `adaptation_up` (the image brightens) or
+//! `adaptation_down` (the image darkens) EV per simulated second, one step of `speed / 60` for each
+//! tick the rendered frame ran ([`crate::pacing::FrameGate`]), so a 120 Hz or a 30 Hz display adapts
+//! as a 60 Hz one does and a frame with no tick does not adapt. Within the look's
+//! `adaptation_transition` EV of the target the step is the remaining distance times
+//! `speed / transition` (Bevy 0.20's hybrid adaptation, `auto_exposure.wesl`, MIT OR Apache-2.0):
+//! linear far away, exponential near, so the small target changes of a moving camera no longer make
+//! the frame breathe. It snaps onto the target once within [`ADAPT_SNAP_EV`]. Instant mode (settled
+//! captures, history resets, a new history) sets it to the target at once; a frame that counts
+//! nothing (a black boot frame) keeps the exposure and leaves instant mode to the next frame that
+//! does. The exposure is `2^(ev_compensation - ev)`: a scene twice as bright meters
 //! 1 EV higher and is drawn at half the exposure. A change of `ΔEV` therefore settles within
 //! [`ticks_to_adapt`] ticks.
 //!
@@ -63,6 +74,17 @@ use crate::layout::GpuExposureState;
 use crate::settings::{EXPOSURE_HISTOGRAM_BINS, ExposureMode, Look, Metering, Quality};
 use crate::tables::{buffer, compute_storage, compute_uniform, entry, pipeline_layout};
 
+/// The widest side of the texel block one histogram sample averages (a 16² cell meters its centre
+/// 8²).
+pub const CELL_SIDE_MAX: u32 = 8;
+/// The adapted EV snaps onto the target once this close (a settled exposure is a fixed point).
+pub const ADAPT_SNAP_EV: f32 = 1.0e-4;
+/// The most simulated ticks one frame adapts by (ten seconds: a frame after a longer stall lands
+/// where ten seconds would have taken it).
+pub const ADAPT_TICKS_PER_FRAME_MAX: u32 = 600;
+/// The most ticks [`ticks_to_adapt`] simulates before it calls a change one that never settles.
+const ADAPT_TICKS_MAX: u32 = 1_000_000;
+
 /// The scene luminance auto exposure draws at exposure 1 (EV 0): middle grey.
 pub const EXPOSURE_KEY_LUMINANCE: f32 = 0.18;
 /// The share of the darkest weighted samples the metered mean leaves out.
@@ -89,6 +111,8 @@ pub const METERING_WEIGHT_MAX: u32 = 16;
 pub const SPOT_RADIUS: f32 = 0.2;
 /// [`GpuExposureState::flags`] and [`GpuExposureParams::control`] `w`: adapt instantly.
 pub const EXPOSURE_FLAG_INSTANT: u32 = 1;
+/// The histogram's bilinear sampler binding (clamped to the edge: the edge texel repeats).
+pub const HISTOGRAM_SAMPLER_BINDING: u32 = 4;
 /// Bytes of the histogram buffer.
 pub const HISTOGRAM_BYTES: u64 = EXPOSURE_HISTOGRAM_BINS as u64 * 4;
 
@@ -98,13 +122,17 @@ pub const HISTOGRAM_BYTES: u64 = EXPOSURE_HISTOGRAM_BINS as u64 * 4;
 pub struct GpuExposureParams {
     /// x: the EV of bin 0's lower edge; y: bins per EV; z, w: the low and high percentiles.
     pub histogram: [f32; 4],
-    /// x: `ev_min`; y: `ev_max`; z: `ev_compensation`; w: unused.
+    /// x: `ev_min`; y: `ev_max`; z: `ev_compensation`; w: the compensation curve's points.
     pub limits: [f32; 4],
-    /// x: EV per tick while the image brightens; y: EV per tick while it darkens; z, w: unused.
+    /// x: EV per tick while the image brightens; y: EV per tick while it darkens; z: the
+    /// exponential transition in EV (0: linear); w: unused.
     pub speed: [f32; 4],
     /// x: input divisor; y: metering id ([`metering_id`]); z: ticks this frame; w: flags
     /// ([`EXPOSURE_FLAG_INSTANT`]).
     pub control: [u32; 4],
+    /// The look's compensation curve ([`crate::settings::CompensationCurve`]): its points as
+    /// (metered EV, compensation EV) pairs, two a row (xy, zw), in EV order; `limits.w` is how many.
+    pub curve: [[f32; 4]; 4],
 }
 
 /// The exposure a frame's scene is written with and its inverse (`PreExposure` in
@@ -152,6 +180,7 @@ pub const fn metering_id(metering: Metering) -> u32 {
         Metering::Average => 0,
         Metering::Center => 1,
         Metering::Spot => 2,
+        Metering::Ground => 3,
     }
 }
 
@@ -161,11 +190,18 @@ impl GpuExposureParams {
     pub fn new(look: &Look, divisor: u8, ticks: u32, instant: bool) -> GpuExposureParams {
         let span = (look.ev_max - look.ev_min).max(HISTOGRAM_EV_SPAN_MIN);
         let flags = if instant { EXPOSURE_FLAG_INSTANT } else { 0 };
+        let points = look.compensation_curve.points();
+        let mut curve = [[0.0; 4]; 4];
+        for (i, point) in points.iter().enumerate() {
+            curve[i / 2][(i % 2) * 2] = point[0];
+            curve[i / 2][(i % 2) * 2 + 1] = point[1];
+        }
         GpuExposureParams {
             histogram: [look.ev_min, EXPOSURE_HISTOGRAM_BINS as f32 / span, EXPOSURE_LOW_PERCENTILE, EXPOSURE_HIGH_PERCENTILE],
-            limits: [look.ev_min, look.ev_max, look.ev_compensation, 0.0],
-            speed: [look.adaptation_up / TICKS_PER_SECOND, look.adaptation_down / TICKS_PER_SECOND, 0.0, 0.0],
+            limits: [look.ev_min, look.ev_max, look.ev_compensation, points.len() as f32],
+            speed: [look.adaptation_up / TICKS_PER_SECOND, look.adaptation_down / TICKS_PER_SECOND, look.adaptation_transition, 0.0],
             control: [u32::from(divisor.max(1)), metering_id(look.metering), ticks, flags],
+            curve,
         }
     }
 
@@ -176,9 +212,10 @@ impl GpuExposureParams {
 }
 
 /// Simulated ticks auto exposure needs to move `delta_ev` (positive: the scene got brighter) at
-/// `look`'s speeds: the documented settle time of a change, `ceil(|ΔEV| × 60 / speed)` plus one
-/// tick, because the f32 sum of the per-tick steps can fall a few ulps short of the target on the
-/// last full step. `u32::MAX` when the speed is 0 (it never adapts).
+/// `look`'s speeds and transition, landing exactly on the target: the documented settle time of a
+/// change, counted by stepping [`adapt_ev`] itself (about `(|ΔEV| - transition) × 60 / speed` linear
+/// ticks, then `ln(transition / ADAPT_SNAP_EV) × 60 × transition / speed` exponential ones).
+/// `u32::MAX` when the speed is 0 (it never adapts).
 pub fn ticks_to_adapt(delta_ev: f32, look: &Look) -> u32 {
     let speed = if delta_ev > 0.0 { look.adaptation_down } else { look.adaptation_up };
     if delta_ev == 0.0 {
@@ -187,7 +224,14 @@ pub fn ticks_to_adapt(delta_ev: f32, look: &Look) -> u32 {
     if speed <= 0.0 {
         return u32::MAX;
     }
-    libm::ceilf(delta_ev.abs() * TICKS_PER_SECOND / speed) as u32 + 1
+    let tick = GpuExposureParams::new(look, 1, 1, false);
+    let mut ev = 0.0;
+    let mut ticks = 0;
+    while ev != delta_ev && ticks < ADAPT_TICKS_MAX {
+        ev = adapt_ev(ev, delta_ev, &tick);
+        ticks += 1;
+    }
+    if ev == delta_ev { ticks } else { u32::MAX }
 }
 
 /// The exposure multiplier of adapted scene EV `ev`: `2^(compensation - ev)`.
@@ -214,7 +258,7 @@ pub fn histogram_bin(luminance: f32, params: &GpuExposureParams) -> Option<u32> 
     Some(at.clamp(0.0, (EXPOSURE_HISTOGRAM_BINS - 1) as f32) as u32)
 }
 
-/// The weight of a sample at `uv` (0..1 over the scene) under metering `id`.
+/// The weight of a sample at `uv` (0..1 over the scene, y down) under metering `id`.
 pub fn metering_weight(id: u32, uv: [f32; 2]) -> u32 {
     let d = [uv[0] * 2.0 - 1.0, uv[1] * 2.0 - 1.0];
     let r2 = (d[0] * d[0] + d[1] * d[1]) * 0.5;
@@ -222,6 +266,7 @@ pub fn metering_weight(id: u32, uv: [f32; 2]) -> u32 {
         1 => 1 + libm::floorf(15.0 * (1.0 - r2).max(0.0)) as u32,
         2 if r2 <= SPOT_RADIUS * SPOT_RADIUS => METERING_WEIGHT_MAX,
         2 => 0,
+        3 => 1 + libm::floorf(15.0 * uv[1].clamp(0.0, 1.0)) as u32,
         _ => METERING_WEIGHT_MAX,
     }
 }
@@ -231,10 +276,34 @@ pub fn input_cells(size: (u32, u32), divisor: u32) -> (u32, u32) {
     (size.0.div_ceil(divisor.max(1)), size.1.div_ceil(divisor.max(1)))
 }
 
-/// The scene texel cell `(x, y)` samples: its centre, clamped into the scene.
+/// The scene texel at cell `(x, y)`'s centre, clamped into the scene: where its metering weight is
+/// taken.
 pub fn cell_texel(cell: (u32, u32), size: (u32, u32), divisor: u32) -> (u32, u32) {
     let half = divisor / 2;
     ((cell.0 * divisor + half).min(size.0.saturating_sub(1)), (cell.1 * divisor + half).min(size.1.saturating_sub(1)))
+}
+
+/// The mean of cell `(x, y)`'s centred block of `min(divisor, CELL_SIDE_MAX)`² texels of `scene`
+/// (row-major, `size`), each texel clamped into the scene, in the shader's order: each 2² averaged
+/// (the bilinear tap at its shared corner), the taps summed row by row. The GPU's filter weights
+/// are exact at a corner; its filtering precision may differ in the last bits.
+pub fn cell_mean(scene: &[[f32; 3]], size: (u32, u32), cell: (u32, u32), divisor: u32) -> [f32; 3] {
+    let side = divisor.clamp(1, CELL_SIDE_MAX);
+    let extent = side.min(2);
+    let taps = side / extent;
+    let start = (cell.0 * divisor + (divisor - side) / 2, cell.1 * divisor + (divisor - side) / 2);
+    let texel = |x: u32, y: u32| scene[(y.min(size.1.saturating_sub(1)) * size.0 + x.min(size.0.saturating_sub(1))) as usize];
+    let mut sum = [0.0f32; 3];
+    for ty in 0..taps {
+        for tx in 0..taps {
+            let (x, y) = (start.0 + tx * extent, start.1 + ty * extent);
+            let block = [texel(x, y), texel(x + extent - 1, y), texel(x, y + extent - 1), texel(x + extent - 1, y + extent - 1)];
+            let tap: [f32; 3] = std::array::from_fn(|c| (block[0][c] + block[1][c] + block[2][c] + block[3][c]) * 0.25);
+            sum = [sum[0] + tap[0], sum[1] + tap[1], sum[2] + tap[2]];
+        }
+    }
+    let count = (taps * taps) as f32;
+    sum.map(|c| c / count)
 }
 
 /// The histogram the GPU counts over `scene` (row-major linear rgb, pre-exposed by
@@ -247,7 +316,7 @@ pub fn cpu_histogram(scene: &[[f32; 3]], size: (u32, u32), pre_exposure: f32, pa
     for cy in 0..rows {
         for cx in 0..cols {
             let (x, y) = cell_texel((cx, cy), size, divisor);
-            let texel = scene[(y * size.0 + x) as usize];
+            let texel = cell_mean(scene, size, (cx, cy), divisor);
             let uv = [(x as f32 + 0.5) / size.0 as f32, (y as f32 + 0.5) / size.1 as f32];
             let weight = metering_weight(params.control[1], uv);
             if let Some(bin) = histogram_bin(luminance(texel) * inv_exposure, params) {
@@ -292,14 +361,58 @@ pub fn meter_ev(bins: &[u32; 128], params: &GpuExposureParams) -> Option<f32> {
     Some((kept[0] / kept[1]).max(params.limits[0]).min(params.limits[1]))
 }
 
-/// The adapted EV one frame after `ev` with target `target`, under `params` (ticks, speeds, instant).
+/// The compensation of `params`' curve at metered scene EV `ev` (the adaptation shader's
+/// `gx_compensation`: [`crate::settings::CompensationCurve::at`] over the uniform's rows).
+pub fn curve_compensation(ev: f32, params: &GpuExposureParams) -> f32 {
+    let count = params.limits[3] as usize;
+    let point = |i: usize| [params.curve[i / 2][(i % 2) * 2], params.curve[i / 2][(i % 2) * 2 + 1]];
+    if count == 0 {
+        return 0.0;
+    }
+    let (first, last) = (point(0), point(count - 1));
+    if ev <= first[0] {
+        return first[1];
+    }
+    if ev >= last[0] {
+        return last[1];
+    }
+    let upper = (1..count).find(|&i| ev < point(i)[0]).unwrap_or(count - 1);
+    let (a, b) = (point(upper - 1), point(upper));
+    a[1] + (b[1] - a[1]) * ((ev - a[0]) / (b[0] - a[0]))
+}
+
+/// The EV the exposure aims at for metered scene EV `metered` under `params`: the metered EV less
+/// the compensation curve's EV at it, so the exposure `2^(ev_compensation - ev)` adds that
+/// compensation once adapted.
+pub fn aim_ev(metered: f32, params: &GpuExposureParams) -> f32 {
+    metered - curve_compensation(metered, params)
+}
+
+/// The adapted EV one frame after `ev` with target `target`, under `params` (ticks, speeds,
+/// transition, instant): one [`adapt_tick`] per simulated tick the frame ran (at most
+/// [`ADAPT_TICKS_PER_FRAME_MAX`]), so a 30 Hz device adapts as a 60 Hz one does.
 pub fn adapt_ev(ev: f32, target: f32, params: &GpuExposureParams) -> f32 {
     if params.control[3] & EXPOSURE_FLAG_INSTANT != 0 {
         return target;
     }
-    let ticks = params.control[2] as f32;
-    let (up, down) = (params.speed[0] * ticks, params.speed[1] * ticks);
-    ev + (target - ev).max(-up).min(down)
+    let ticks = params.control[2].min(ADAPT_TICKS_PER_FRAME_MAX);
+    (0..ticks).fold(ev, |ev, _| adapt_tick(ev, target, params))
+}
+
+/// One simulated tick's step from `ev` towards `target`: linear (`speed` EV a tick) beyond the
+/// transition, `distance × speed / transition` within it, snapped onto the target within
+/// [`ADAPT_SNAP_EV`].
+pub fn adapt_tick(ev: f32, target: f32, params: &GpuExposureParams) -> f32 {
+    let (up, down) = (params.speed[0], params.speed[1]);
+    let delta = target - ev;
+    let transition = params.speed[2];
+    let step = match (transition > 0.0, delta > 0.0) {
+        (false, _) => delta.max(-up).min(down),
+        (true, true) => down.min(delta * down / transition),
+        (true, false) => (-up).max(delta * up / transition),
+    };
+    let next = ev + step;
+    if (target - next).abs() < ADAPT_SNAP_EV { target } else { next }
 }
 
 // --- GPU ---
@@ -424,6 +537,8 @@ pub struct ExposurePass {
     adapt_layout: BindGroupLayout,
     histogram: Compiled<ComputePipeline>,
     adapt: Compiled<ComputePipeline>,
+    /// The cell mean's bilinear sampler, clamped to the edge.
+    sampler: wgpu::Sampler,
 }
 
 fn scene_texture_entry(binding: u32) -> wgpu::BindGroupLayoutEntry {
@@ -431,8 +546,9 @@ fn scene_texture_entry(binding: u32) -> wgpu::BindGroupLayoutEntry {
         binding,
         visibility: wgpu::ShaderStages::COMPUTE,
         ty: wgpu::BindingType::Texture {
-            // Unfilterable: `textureLoad` only, so any float scene format binds.
-            sample_type: wgpu::TextureSampleType::Float { filterable: false },
+            // Filterable: the cell mean reads bilinear taps (rgba16float and rg11b10ufloat filter
+            // in core).
+            sample_type: wgpu::TextureSampleType::Float { filterable: true },
             view_dimension: wgpu::TextureViewDimension::D2,
             multisampled: false,
         },
@@ -448,7 +564,8 @@ fn compute_pipeline(device: &Device, label: &str, source: &str, entry_point: &st
         layout: Some(&pipeline_layout),
         module: &module,
         entry_point: Some(entry_point),
-        compilation_options: Default::default(),
+        // A8.6: the histogram and the adaptation write their workgroup arrays first.
+        compilation_options: crate::compile::written_first(),
         cache: None,
     }))
 }
@@ -458,7 +575,18 @@ impl ExposurePass {
     pub fn new(device: &Device) -> Result<ExposurePass, RenderError> {
         let histogram_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("exposure histogram"),
-            entries: &[scene_texture_entry(0), compute_storage(1, false), compute_uniform(2), compute_storage(3, true)],
+            entries: &[
+                scene_texture_entry(0),
+                compute_storage(1, false),
+                compute_uniform(2),
+                compute_storage(3, true),
+                wgpu::BindGroupLayoutEntry {
+                    binding: HISTOGRAM_SAMPLER_BINDING,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+            ],
         });
         let adapt_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("exposure adapt"),
@@ -467,7 +595,13 @@ impl ExposurePass {
         let histogram =
             compute_pipeline(device, "exposure histogram", crate::shaders::EXPOSURE_HISTOGRAM, "cs_exposure_histogram", &histogram_layout)?;
         let adapt = compute_pipeline(device, "exposure adapt", crate::shaders::EXPOSURE_ADAPT, "cs_exposure_adapt", &adapt_layout)?;
-        Ok(ExposurePass { histogram_layout, adapt_layout, histogram, adapt })
+        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("exposure cells"),
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            ..Default::default()
+        });
+        Ok(ExposurePass { histogram_layout, adapt_layout, histogram, adapt, sampler })
     }
 
     /// Encode the node: a fixed exposure writes the state when it changed; auto exposure clears the
@@ -510,6 +644,7 @@ impl ExposurePass {
                         entry(1, &history.histogram),
                         entry(2, &history.params),
                         entry(3, &history.state),
+                        wgpu::BindGroupEntry { binding: HISTOGRAM_SAMPLER_BINDING, resource: wgpu::BindingResource::Sampler(&self.sampler) },
                     ],
                 });
                 history.histogram_group = Some((scene.clone(), group.clone()));

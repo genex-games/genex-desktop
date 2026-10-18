@@ -39,6 +39,12 @@ impl ModelSource for FileSource {
         let root = self.root.as_ref().filter(|_| is_safe_asset_path(path))?;
         std::fs::read(root.join(path)).ok()
     }
+
+    /// The compiled table's bytes only: a file under the asset folder may change, so its decoded
+    /// upload is kept.
+    fn static_bytes(&self, path: &str) -> Option<&'static [u8]> {
+        self.table.static_bytes(path)
+    }
 }
 
 /// A native refusal goes to stderr, prefixed as the runtime's other lines are.
@@ -87,7 +93,7 @@ fn asset_root() -> Option<PathBuf> {
 }
 
 impl Presenter {
-    /// Open the GPU headless with the game's declared features and a world target of `size`;
+    /// Open the GPU headless with the game's declared features for a logical world of `size`;
     /// models come from `assets`, then this process's asset folder ([`asset_root`]).
     pub fn open(size: [u32; 2], assets: AssetTable) -> Result<Presenter, RenderError> {
         Presenter::open_with_root(size, assets, asset_root())

@@ -1,6 +1,6 @@
 //! Writes the lakeside's procedural assets into `game/assets/` (run after a layout or mesh change;
 //! `tests/assets.rs` fails until the files match the generator).
-//! `showcase-assets fetched <raw> <out> <manifest>` processes the fetched CC0 maps instead
+//! `showcase-assets fetched <raw> <out> <manifest>` processes a scene's fetched CC0 maps instead
 //! (`scripts/showcase-assets.ts` runs it).
 
 fn main() {

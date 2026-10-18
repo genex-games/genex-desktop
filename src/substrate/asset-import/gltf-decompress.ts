@@ -2,8 +2,10 @@
  * A glTF the Rust runtime can read as delivered: the runtime's `gltf` 1.4.1 has no Draco or
  * meshopt decoder, so a GLB whose meshes use `KHR_draco_mesh_compression` or
  * `EXT_meshopt_compression` is written back with plain buffer views (one binary chunk, every view
- * re-laid out). Anything else the file requires must be an extension the runtime reads, or the
- * file is refused. A `.gltf` (JSON with external buffers) is checked, never rewritten.
+ * re-laid out), and a GLB using `KHR_mesh_quantization` (gltfpack's default) is then written back
+ * with float attributes (`dequantize.ts`). Anything else the file requires must be an extension
+ * the runtime reads, or the file is refused. A `.gltf` (JSON with external buffers) is checked,
+ * never rewritten.
  */
 import { AssetImportRefusal } from "./import-plan.ts";
 import {
@@ -16,11 +18,27 @@ import {
   writeGlb,
 } from "./glb.ts";
 import { type DracoDecoder, type DracoModule, dracoDecoder, meshoptDecoder } from "./decoders.ts";
+import { dequantizeGlb, MESH_QUANTIZATION, usesMeshQuantization } from "./dequantize.ts";
+import {
+  dropExtension,
+  extension,
+  GltfImportError,
+  index,
+  isObject,
+  type Json,
+  malformed,
+  objects,
+  remapViews,
+  strings,
+  withoutExtensions,
+} from "./gltf-json.ts";
 
 const DRACO = "KHR_draco_mesh_compression";
 const MESHOPT = ["EXT_meshopt_compression", "KHR_meshopt_compression"] as const;
-/** The extensions the import step removes by decoding them. */
-const DECODED: ReadonlySet<string> = new Set([DRACO, ...MESHOPT]);
+/** The compression extensions the import step removes by decoding them. */
+const DECOMPRESSED: ReadonlySet<string> = new Set([DRACO, ...MESHOPT]);
+/** Every extension the import step removes: the compressions, and quantization (`dequantize.ts`). */
+const DECODED: ReadonlySet<string> = new Set([...DECOMPRESSED, MESH_QUANTIZATION]);
 /**
  * The extensions `genex-assets` reads (the `gltf` features the workspace enables) and the ones a
  * renderer may ignore: a file may *require* only these.
@@ -31,42 +49,6 @@ export const RUNTIME_GLTF_EXTENSIONS: ReadonlySet<string> = new Set([
   "KHR_materials_unlit",
   "KHR_texture_transform",
 ]);
-
-/** Why a glTF was refused, with the import step's code. */
-export class GltfImportError extends Error {
-  readonly code: AssetImportRefusal;
-  constructor(code: AssetImportRefusal, message: string) {
-    super(message);
-    this.name = "GltfImportError";
-    this.code = code;
-  }
-}
-
-const malformed = (message: string) => new GltfImportError(AssetImportRefusal.Malformed, message);
-
-type Json = Record<string, unknown>;
-const isObject = (value: unknown): value is Json =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
-const objects = (value: unknown): Json[] => (Array.isArray(value) ? value.filter(isObject) : []);
-const strings = (value: unknown): string[] =>
-  Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
-const index = (value: unknown): number | null =>
-  Number.isSafeInteger(value) && (value as number) >= 0 ? (value as number) : null;
-
-/** The extension object `name` on `owner`, or null. */
-function extension(owner: Json, name: string): Json | null {
-  const extensions = owner.extensions;
-  if (!isObject(extensions)) return null;
-  const found = extensions[name];
-  return isObject(found) ? found : null;
-}
-
-function dropExtension(owner: Json, name: string): void {
-  const extensions = owner.extensions;
-  if (!isObject(extensions)) return;
-  delete extensions[name];
-  if (!Object.keys(extensions).length) delete owner.extensions;
-}
 
 /** Refuse a file that still requires an extension the runtime does not read. */
 function checkRequired(json: Json, decoded: boolean): void {
@@ -221,21 +203,6 @@ function dracoPrimitives(json: Json): Array<{ primitive: Json; compressed: Json 
   );
 }
 
-/** Point every `bufferView` reference at its new index. */
-function remapViews(json: Json, moved: Map<number, number>): void {
-  const remap = (owner: Json | undefined) => {
-    const at = owner ? index(owner.bufferView) : null;
-    if (owner && at !== null && moved.has(at)) owner.bufferView = moved.get(at);
-  };
-  for (const accessor of objects(json.accessors)) {
-    remap(accessor);
-    const sparse = isObject(accessor.sparse) ? accessor.sparse : undefined;
-    remap(isObject(sparse?.indices) ? sparse.indices : undefined);
-    remap(isObject(sparse?.values) ? sparse.values : undefined);
-  }
-  for (const image of objects(json.images)) remap(image);
-}
-
 /** A GLB with Draco or meshopt data, written back with plain views in one binary chunk. */
 async function rewriteGlb(json: Json, bin: Uint8Array): Promise<Uint8Array> {
   const views = await viewData(json, bufferData(json, bin));
@@ -267,27 +234,19 @@ async function rewriteGlb(json: Json, bin: Uint8Array): Promise<Uint8Array> {
   return writeGlb(finishJson(json, out, data.byteLength), data);
 }
 
-/** The document with the decoded extensions gone and one buffer, the binary chunk. */
+/** The document with the decompressed extensions gone and one buffer, the binary chunk. */
 function finishJson(json: Json, out: BinWriter, byteLength: number): GltfJson {
-  const keep = (names: unknown) => strings(names).filter((name) => !DECODED.has(name));
-  const used = keep(json.extensionsUsed);
-  const required = keep(json.extensionsRequired);
-  const rest: Json = { ...json, bufferViews: out.views, buffers: [{ byteLength }] };
-  delete rest.extensionsUsed;
-  delete rest.extensionsRequired;
-  return {
-    ...rest,
-    ...(used.length ? { extensionsUsed: used } : {}),
-    ...(required.length ? { extensionsRequired: required } : {}),
-  };
+  return withoutExtensions({ ...json, bufferViews: out.views, buffers: [{ byteLength }] }, (name) =>
+    DECOMPRESSED.has(name),
+  ) as GltfJson;
 }
 
-/** Whether `json` uses an extension the import step decodes. */
-const needsDecoding = (json: Json) => strings(json.extensionsUsed).some((name) => DECODED.has(name));
+/** Whether `json` uses a compression the import step decodes. */
+const needsDecompressing = (json: Json) => strings(json.extensionsUsed).some((name) => DECOMPRESSED.has(name));
 
 /**
  * The form of a glTF file the runtime loads: a GLB with Draco or meshopt data rewritten plain,
- * any other file unchanged. Throws {@link GltfImportError} when it is damaged, or requires an
+ * then a quantized one with float attributes, any other file unchanged. Throws {@link GltfImportError} when it is damaged, or requires an
  * extension the runtime does not read; a compressed `.gltf` is refused (deliver it as GLB).
  */
 export async function normalizeGltf(bytes: Uint8Array, ext: string): Promise<Uint8Array> {
@@ -303,8 +262,11 @@ export async function normalizeGltf(bytes: Uint8Array, ext: string): Promise<Uin
     throw malformed(error instanceof Error ? error.message : "not a GLB");
   }
   checkRequired(parts.json, true);
-  if (!needsDecoding(parts.json)) return bytes;
-  return await rewriteGlb(structuredClone(parts.json), parts.bin);
+  const quantized = usesMeshQuantization(parts.json);
+  const plain = needsDecompressing(parts.json) ? await rewriteGlb(structuredClone(parts.json), parts.bin) : bytes;
+  if (!quantized) return plain;
+  const decompressed = plain === bytes ? parts : readGlb(plain);
+  return dequantizeGlb(structuredClone(decompressed.json), decompressed.bin);
 }
 
 function parseJson(bytes: Uint8Array): Json {

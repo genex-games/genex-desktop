@@ -394,3 +394,205 @@ fn metal_a_dynamic_resolution_step_keeps_taa_history_instead_of_resetting_it() {
     assert!(converged > reset + 20, "the settled edges are anti-aliased ({converged} against {reset})");
     assert!(kept * 2 > converged, "the first frame after the step keeps the history's edges: {kept} of {converged}");
 }
+
+// ---------------------------------------------------------------------------------------------
+// Renderer pass 2, P2-0.1 (T-12 (c) and (d)): what TAA does to the sky on a turning camera and to a
+// moving Level-2 custom draw. Both are red-first rows for later packages: the sky has no motion of
+// its own (T-03: the resolve reprojects a depth-0 pixel by nothing), and a custom draw keeps no
+// previous model (T-04: `GpuPrepassDraw` has no `prev_model`).
+
+/// The sky row's frame: wide enough that the sun disc spans a few pixels.
+const SKY_SIZE: (u32, u32) = (320, 180);
+/// The sky row's field of view (degrees) and the sun's elevation (degrees) ahead of the camera.
+const SKY_FOVY_DEGREES: f32 = 20.0;
+const SKY_SUN_ELEVATION_DEGREES: f32 = 4.0;
+/// How far the camera turns each frame (pixels at the screen's centre) and for how many frames.
+const SKY_TURN_PX: f32 = 2.0;
+const SKY_TURN_FRAMES: u64 = 24;
+/// The most the sun disc's centroid may stand from where a fresh frame of the last camera draws
+/// it (P2-0.8: the sky-rotation centroid error is under 1 px).
+const SUN_CENTROID_ERROR_PX_MAX: f32 = 1.0;
+/// How far the sky's motion may stand from the camera's turn, as a share of it.
+const SKY_MOTION_SHARE_MAX: f32 = 0.25;
+/// A pixel is the sun's when its luma reaches this share of the fresh frame's brightest.
+const SUN_DISC_SHARE: f32 = 0.92;
+
+/// The HDR scene with the physical sky (no IBL), manual exposure and TAA.
+fn sky_taa_quality() -> Quality {
+    let mut quality = taa_quality();
+    let class = DeviceClass::new(FormFactor::Desktop, PerformanceTier::High);
+    quality.environment = genex_render::presets::preset_quality(genex_render::settings::QualityPreset::High, class).environment;
+    quality.environment.sky = true;
+    quality.environment.ibl = false;
+    quality
+}
+
+/// A renderer drawing the physical sky with TAA.
+fn sky_renderer(gpu: &Gpu) -> Renderer {
+    let mut renderer = renderer(gpu, &sky_taa_quality(), SKY_SIZE);
+    let mut look = genex_render::settings::Look::default();
+    look.exposure = genex_render::settings::ExposureMode::Manual;
+    renderer.set_look(look);
+    renderer.set_environment(&genex_render::settings::Environment::sky());
+    renderer
+}
+
+/// The low sun ahead over a grey ground, the camera turned `yaw` radians from looking at it.
+fn sky_scene(yaw: f32) -> Scene {
+    let e = SKY_SUN_ELEVATION_DEGREES.to_radians();
+    let eye = glam::Vec3::new(0.0, 1.6, 0.0);
+    let ahead = glam::Vec3::new(libm::sinf(yaw), libm::sinf(e), -libm::cosf(yaw));
+    let mut camera = CameraDesc::look_at(eye.to_array(), (eye + ahead * 10.0).to_array());
+    camera.fovy_degrees = SKY_FOVY_DEGREES;
+    let mut scene = Scene::new(camera, CLEAR);
+    scene.lighting.sun_dir = [0.0, libm::sinf(e), -libm::cosf(e)];
+    scene.draw(MeshId::CUBE, genex_render::scene::scaled([0.0, -0.1, 0.0], [400.0, 0.2, 400.0]), Material::color([150, 150, 150, 255]));
+    scene
+}
+
+/// The luma-weighted centroid (x, y) of the pixels at or above `floor` luma, and how many there are.
+fn bright_centroid(capture: &Capture, floor: f32) -> ([f32; 2], usize) {
+    let width = capture.width() as usize;
+    let mut sum = [0.0f32; 3];
+    let mut count = 0;
+    for (i, luma) in lumas(capture).into_iter().enumerate() {
+        if luma >= floor {
+            let weight = luma - floor + 1.0;
+            sum[0] += weight * (i % width) as f32;
+            sum[1] += weight * (i / width) as f32;
+            sum[2] += weight;
+            count += 1;
+        }
+    }
+    ([sum[0] / sum[2].max(f32::MIN_POSITIVE), sum[1] / sum[2].max(f32::MIN_POSITIVE)], count)
+}
+
+/// T-12 (c), T-03: the camera turns past the low sun 2 px a frame under TAA; the sun disc's
+/// centroid in the last frame stands within a pixel of where a fresh frame (no history) of the same
+/// camera draws it, and the motion target moves the sky with the turn (a depth-0 pixel reprojected
+/// at the far plane; clouds, B.5, need it: the colour clamp alone keeps a lone disc in place).
+#[test]
+#[ignore = "needs a GPU: run with --ignored metal"]
+fn metal_a_turning_camera_keeps_the_sun_disc_where_a_fresh_frame_draws_it() {
+    let Some(gpu) = gpu() else { return };
+    let step = SKY_TURN_PX * 2.0 * libm::tanf(SKY_FOVY_DEGREES.to_radians() * 0.5) / SKY_SIZE.1 as f32;
+    // From a little left of the sun to a little right of it, so the disc crosses the frame's middle.
+    let yaw = |frame: u64| (frame as f32 - SKY_TURN_FRAMES as f32 * 0.5) * step;
+    let mut turning = sky_renderer(&gpu);
+    turning.set_depth_readback(true);
+    let mut last = None;
+    for frame in 0..SKY_TURN_FRAMES {
+        last = Some(draw(&gpu, &mut turning, &sky_scene(yaw(frame)), frame..frame + 1));
+    }
+    let turned = last.expect("drawn");
+    // The sky's own motion: a sky pixel (the top row's middle) moves as the camera turns, a turn of
+    // `step` radians shifting it tan(step) / (tan(fovy / 2) * aspect) in NDC x.
+    let motion = turning.read_motion(&gpu).expect("motion kept");
+    let sky_motion = motion[(SKY_SIZE.0 / 2) as usize];
+    let aspect = SKY_SIZE.0 as f32 / SKY_SIZE.1 as f32;
+    let expected = libm::tanf(step) / (libm::tanf(SKY_FOVY_DEGREES.to_radians() * 0.5) * aspect);
+    let mut fresh = sky_renderer(&gpu);
+    let reference = draw(&gpu, &mut fresh, &sky_scene(yaw(SKY_TURN_FRAMES - 1)), 0..1);
+    write_evidence("sky-turned", &turned);
+    write_evidence("sky-fresh", &reference);
+    let floor = lumas(&reference).into_iter().fold(0.0f32, f32::max) * SUN_DISC_SHARE;
+    let (fresh_at, fresh_pixels) = bright_centroid(&reference, floor);
+    let (turned_at, turned_pixels) = bright_centroid(&turned, floor);
+    assert!(fresh_pixels > 0, "the fresh frame draws the sun disc");
+    let (dx, dy) = (turned_at[0] - fresh_at[0], turned_at[1] - fresh_at[1]);
+    let error = libm::sqrtf(dx * dx + dy * dy);
+    eprintln!("sun disc: fresh {fresh_at:?} ({fresh_pixels} px), turned {turned_at:?} ({turned_pixels} px), error {error:.2} px; sky motion {sky_motion:?}, expected x of about {expected:.5}");
+    assert!(error < SUN_CENTROID_ERROR_PX_MAX, "the turning camera's sun disc stands {error:.2} px from a fresh frame's ({turned_at:?} against {fresh_at:?})");
+    let carried = sky_motion[0].abs();
+    assert!((carried - expected).abs() < expected * SKY_MOTION_SHARE_MAX, "the sky moves {sky_motion:?} as the camera turns, not about {expected:.5} in x");
+}
+
+/// The default v2 material's fragment: the tint, shaded like a built-in surface.
+const SHADED_V2: &str = "
+@fragment
+fn fs_material(in: GxMaterialInV2) -> @location(0) vec4<f32> {
+    let s = gx_surface_v2(in.world_position, in.normal, in.tint.rgb, 0.0, 0.55);
+    return vec4<f32>(gx_shade_pbr(s), 1.0);
+}
+";
+
+/// T-12 (d), T-04: a Level-2 custom draw (a v2 material's cube) crossing the frame fast under TAA
+/// leaves no trail behind it, as the built-in named cube does
+/// (`metal_a_fast_moving_named_cube_leaves_no_trail_under_taa`), and the motion target carries its
+/// own motion: TAA reprojects it instead of leaning on the colour clamp (which hides the trail
+/// against a flat background, not over a textured one).
+#[test]
+#[ignore = "needs a GPU: run with --ignored metal"]
+fn metal_a_fast_moving_custom_draw_leaves_no_trail_under_taa() {
+    use genex_render::extension::{CustomDraw, CustomMaterials, ExtensionContext, FrameFacts};
+    let Some(gpu) = gpu() else { return };
+    let draw_at = |renderer: &mut Renderer, materials: &mut CustomMaterials, material, x: f32, index: u64| {
+        renderer.set_frame_index(index);
+        // The pipelines and facts follow the HDR scene the frame draws (the frame renderer's way).
+        let path = renderer.next_scene(None);
+        materials
+            .set_pipeline_facts(&gpu, genex_render::custom_pass::PipelineFacts::for_scene(&path, renderer.sample_count()))
+            .expect("pipelines follow the HDR scene");
+        let facts = FrameFacts {
+            depth_reversed: path.depth_reversed,
+            scene_ldr: false,
+            pre_exposure: path.pre_exposure,
+            ..FrameFacts::new(renderer.size(), renderer.render_size())
+        };
+        materials.set_frame_facts(facts.with_camera(camera()));
+        let draw = CustomDraw { id: None, mesh: MeshId::CUBE, model: cube_at(x), material, tint: [235, 235, 235, 255] };
+        materials.prepare(&gpu, &[draw], 0.0, renderer.library()).expect("the draw is admitted");
+        let mut scene = Scene::new(camera(), CLEAR);
+        scene.lighting.sun_dir = glam::Vec3::new(-0.4, 0.6, 0.7).normalize().to_array();
+        renderer.render_staged(&gpu, &scene, CullPath::Gpu, materials).expect("frame");
+        renderer.capture(&gpu).expect("capture")
+    };
+    let positions: Vec<f32> = (0..10).map(|i| -1.2 + 0.18 * i as f32).collect();
+    let mut taa = renderer(&gpu, &taa_quality(), (WIDTH, HEIGHT));
+    taa.set_depth_readback(true);
+    let mut materials = CustomMaterials::new(&gpu.device, ExtensionContext::core(), taa.sample_count());
+    let material = materials.add_api(&gpu, genex_render::abi::ABI_V2, SHADED_V2, &[], &[]).expect("a v2 material");
+    let mut moving = None;
+    for (index, x) in positions.iter().enumerate() {
+        moving = Some(draw_at(&mut taa, &mut materials, material, *x, index as u64));
+    }
+    let moving = moving.expect("drawn");
+    let last = *positions.last().expect("a position");
+    // The motion target carries the custom cube's own motion at its centre, as it does a named
+    // cube's (`metal_the_frame_paths_motion_target_carries_a_named_cubes_motion`).
+    let motion = taa.read_motion(&gpu).expect("motion kept");
+    let view_proj = camera().view_proj_reversed(WIDTH as f32 / HEIGHT as f32);
+    let centre = view_proj * glam::Vec4::new(last, 0.0, 0.0, 1.0);
+    let (cx, cy) = (((centre.x / centre.w + 1.0) * 0.5 * WIDTH as f32) as u32, ((1.0 - centre.y / centre.w) * 0.5 * HEIGHT as f32) as u32);
+    let cols = view_proj.to_cols_array();
+    let expected = genex_render::motion::motion_of(&cols, &cols, [last, 0.0, 0.0], [last - 0.18, 0.0, 0.0]);
+    let carried = motion[(cy * WIDTH + cx) as usize];
+    eprintln!("custom cube centre ({cx}, {cy}) motion {carried:?}, expected about {expected:?}");
+    let mut fresh = renderer(&gpu, &taa_quality(), (WIDTH, HEIGHT));
+    let mut fresh_materials = CustomMaterials::new(&gpu.device, ExtensionContext::core(), fresh.sample_count());
+    let fresh_material = fresh_materials.add_api(&gpu, genex_render::abi::ABI_V2, SHADED_V2, &[], &[]).expect("a v2 material");
+    let reference = draw_at(&mut fresh, &mut fresh_materials, fresh_material, last, 0);
+    write_evidence("custom-moving", &moving);
+    write_evidence("custom-moving-reference", &reference);
+    let (w, h) = (WIDTH as i64, HEIGHT as i64);
+    let clear: [u8; 3] = std::array::from_fn(|lane| reference.bgra()[lane]);
+    let background = |capture: &Capture, x: i64, y: i64| {
+        let at = ((y * w + x) * 4) as usize;
+        (0..3).all(|lane| capture.bgra()[at + lane].abs_diff(clear[lane]) <= 6)
+    };
+    let clear_of_cube = |x: i64, y: i64| (-3..=3).all(|dy| (-3..=3).all(|dx| {
+        let (nx, ny) = (x + dx, y + dy);
+        !(0..w).contains(&nx) || !(0..h).contains(&ny) || background(&reference, nx, ny)
+    }));
+    let reference_cube = (0..h).flat_map(|y| (0..w).map(move |x| (x, y))).filter(|&(x, y)| !background(&reference, x, y)).count();
+    assert!(reference_cube > 200, "the fresh frame draws the custom cube ({reference_cube} pixels)");
+    let trail: Vec<(i64, i64)> = (0..h).flat_map(|y| (0..w).map(move |x| (x, y))).filter(|&(x, y)| clear_of_cube(x, y) && !background(&moving, x, y)).collect();
+    eprintln!("custom draw trail pixels: {} {:?}", trail.len(), &trail[..trail.len().min(8)]);
+    assert!(trail.is_empty(), "{} background pixels behind the custom cube still show it: {:?}", trail.len(), &trail[..trail.len().min(8)]);
+    let off = (carried[0] - expected[0]).abs().max((carried[1] - expected[1]).abs());
+    assert!(off < expected[0].abs() * CUSTOM_MOTION_SHARE_MAX, "the custom cube's pixels carry motion {carried:?}, not its own {expected:?}");
+}
+
+/// How far the custom cube's motion may stand from its own, as a share of it (a cube's centre
+/// pixel sees a point a little off the centre, on its turned face).
+const CUSTOM_MOTION_SHARE_MAX: f32 = 0.25;

@@ -515,6 +515,35 @@ describe("Rust manifest: host-written, no host path, deterministic lock", () => 
     assert.doesNotMatch(mac.cargoLock ?? "", /name = "genex-platform-web"/);
   });
 
+  // Renderer pass 2 (owner decision D11): a game without physics opts out of Rapier, about a fifth
+  // of a web build's code. The facade is linked without its default `physics` feature, and the lock
+  // drops rapier3d and every crate only it reaches, as cargo's own resolve does (--locked holds).
+  it("a game that opts out of physics links the facade without it, and its lock drops Rapier's closure", async () => {
+    const workspaceLock = await readFile(path.join(ROOT, "native", "genex-rust", "Cargo.lock"), "utf8");
+    const pins = { genexVersion: GENEX_VERSION, baseLock: workspaceLock };
+    const without = await makeGame({ "genex.toml": '[game]\ntitle = "Puzzle"\n\n[physics]\nenabled = false\n' });
+    const web = staged(
+      await stageRustGame({ source: without, stage: await stagePath(), target: BuildTarget.Web, pins }),
+    );
+    assert.match(
+      web.cargoToml,
+      /\ngenex = \{ package = "genex-platform-web", version = "=0\.1\.0", default-features = false \}\n/,
+    );
+    const mac = staged(
+      await stageRustGame({ source: without, stage: await stagePath(), target: BuildTarget.Mac, pins }),
+    );
+    assert.match(mac.cargoToml, /\ngenex = \{ version = "=0\.1\.0", default-features = false \}\n/);
+    for (const lock of [web.cargoLock ?? "", mac.cargoLock ?? ""]) {
+      assert.doesNotMatch(lock, /\nname = "rapier3d"\n/);
+      assert.doesNotMatch(lock, /\nname = "parry3d"\n/);
+      assert.match(lock, /\nname = "genex"\n/);
+    }
+    const withPhysics = staged(
+      await stageRustGame({ source: await makeGame(), stage: await stagePath(), target: BuildTarget.Web, pins }),
+    );
+    assert.match(withPhysics.cargoLock ?? "", /\nname = "rapier3d"\n/, "a game that says nothing keeps physics");
+  });
+
   it("refuses a lock line without the pinned genex or an allowlisted crate", () => {
     const parsed = parseGenexToml('[game]\ntitle = "Pond"\n[crates]\nfastrand = "3"\n');
     assert.ok(parsed.ok);

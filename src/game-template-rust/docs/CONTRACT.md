@@ -42,7 +42,7 @@ one and cannot add one. A verb the game does not know answers `unknown-op`.
 | `step` | Run `max(1, round(ms / 16.667))` ticks, at most 36,000, and answer the frame, the simulated time, the ticks run and the draw calls. |
 | `state` | Every probe plus the runtime's own keys (`frame`, `checksum`, `held`, `hud`, `__render`, ...), and on phones the app `lifecycle` and the `safeArea`. |
 | `input` | Inject a list of `actions`: keys, pointer, look, wheel, `text`, `gamepad` state or `touch` fingers; edges fire on the next tick. |
-| `capture` | Render a view of the world target (BGRA, the HUD painted in) into the run's `state/captures/` and answer its size and digest, and, once the game serves `renderSettings`, the `render` settings it was drawn with (preset, device class, where the settings came from, scale, settle frames). A frame that could not be drawn is refused with the renderer's code (`device-lost`, `upload-budget`, ...), never answered with an older picture. |
+| `capture` | Render a view of the world target (BGRA, the HUD painted in) into the run's `state/captures/` and answer its size and digest, and, once the game serves `renderSettings`, the `render` settings it was drawn with (preset, device class, where the settings came from, scale, settle frames). A frame that could not be drawn is refused with the renderer's code (`device-lost`, `upload-budget`, ...), never answered with an older picture. An optional `size` (`{width, height}`, whole pixels, each side 64 to 4096) draws it natively at that size; one outside that shape is refused `bad-argument`. An optional `lens` (`{depthOfField?, motionBlur?}`, booleans) draws the look's depth of field and motion blur, which a capture otherwise leaves out; another shape, or an ask a game without render settings cannot draw, is refused `bad-argument`. |
 | `debugCamera` | Switch to a named camera or eye, or back to the game's own. |
 | `cameras` | The registered camera names. |
 | `eyes` | The registered eye names. |
@@ -56,7 +56,7 @@ one and cannot add one. A verb the game does not know answers `unknown-op`.
 | `visible` | Show or hide a window run. |
 | `surface` | Embedded runs: create the shared-image ring Live draws from. |
 | `release` | Embedded runs: give a finished frame slot back to the game. |
-| `renderSettings` | Read the renderer's quality, or change it with `{set: {preset, deviceClass, features, renderScaleLock, frameBudgetMs}}`: a preset, an emulated device class (to see the game "as a phone"), feature switches, a render-scale lock and the frame time dynamic resolution holds (1-100 ms), for this session only. A game advertises it in its `ready` receipt (`renderSettingsApi`); until then it answers `unavailable`. An unknown preset, class or feature answers `unknown-preset`, `unknown-device-class` or `unknown-render-feature`; a budget outside its range answers `invalid-frame-budget`. |
+| `renderSettings` | Read the renderer's quality, or change it with `{set: {preset, deviceClass, features, renderScaleLock, frameBudgetMs}}`: a preset, an emulated device class (to see the game "as a phone"), feature switches, a render-scale lock and the frame time dynamic resolution holds (1-100 ms), for this session only. A game advertises it in its `ready` receipt (`renderSettingsApi`); until then it answers `unavailable`. An unknown preset, class or feature answers `unknown-preset`, `unknown-device-class` or `unknown-render-feature`; a scale lock outside 0.5 to 1 answers `invalid-render-scale` and a budget outside its range `invalid-frame-budget`; a member of the wrong type answers `bad-argument`. A change holds for the rest of the session: `{set: {preset: null, deviceClass: null, features: null, renderScaleLock: null, frameBudgetMs: null}}` gives the game's own settings back. |
 
 What the renderer runs with is in `state().volatile.render` (device class, preset, scale, feature
 switches, `degraded` reasons, GPU and CPU milliseconds): outside the checksum and never compared.
@@ -116,7 +116,7 @@ data, never prose to match: read the code, then read the run's `problem`.
 | Code | Meaning |
 | --- | --- |
 | `gpu-unsupported` | No adapter on a WebGPU-core backend, or one below the core limits: a native run ends with `fatal` of this reason. On the web, the designed "this game needs WebGPU" page. |
-| `device-lost` | The GPU device was lost; the run re-creates it, and `capture` answers this meanwhile. Retry. |
+| `device-lost` | The GPU device was lost; the run re-creates it, and `capture` answers this meanwhile. Retry. A web page cannot re-create it: it flushes the saves and shows a card with this code (`GenexShell.status.state` is `failed`). |
 | `gpu-hang` | A `step` or `capture` passed its deadline; the host took it for a GPU hang and ended the run. Known gap: on a Mac the system's GPU watchdog can end a frame stuck in a looping shader before that deadline, and such a frame is answered blank instead of refused. A capture that is suddenly black after a slow `ready` or `capture` points at a shader that never finishes. |
 | `native-feature-missing` | The game declares a native-enhanced feature the device does not offer: the run ends with `fatal` of this reason (the device is opened with exactly the declared features). |
 | `native-features-web` | A web build of a game that declares native-enhanced features: the web has none. |

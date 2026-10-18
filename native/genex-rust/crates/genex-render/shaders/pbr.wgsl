@@ -3,6 +3,14 @@
 // integrates; the legacy scene keeps Smith-Schlick. Which scene a fragment draws is the including
 // module's `gx_scene_shades_hdr()`: the forward pipeline's `GX_SCENE_HDR` constant, a v2
 // material's frame (`scene_ldr`), so `gx_shade_pbr` shades like a built-in surface.
+//
+// The HDR scene's direct specular takes multiple-scattering energy compensation (SI-07, S8,
+// LG-03; Filament's `energyCompensation = 1 + f0 (1 / E - 1)`, Apache-2.0), with E the
+// single-scatter lobe's directional albedo `dfg.x + dfg.y` from the BRDF LUT the ambient chunk
+// reads (`gx_env_dfg`), so a rough metal reflects the sun and the lamps with the energy the
+// environment's split sum gives it. The LUT tap is taken once per surface (`gx_specular_energy`
+// keeps it across the lights of one fragment); under the neutral LUT (no environment bake) E is 1
+// and nothing changes.
 
 const PI: f32 = 3.14159265;
 
@@ -33,6 +41,46 @@ fn fresnel_schlick(cos_theta: f32, f0: vec3<f32>) -> vec3<f32> {
     return f0 + (vec3<f32>(1.0) - f0) * pow(clamp(1.0 - cos_theta, 0.0, 1.0), 5.0);
 }
 
+// The last surface whose directional albedo was looked up: its N.V and roughness, and E.
+var<private> gx_energy_key: vec2<f32> = vec2<f32>(-1.0, -1.0);
+var<private> gx_energy_albedo: f32 = 1.0;
+
+// The multiple-scattering compensation of a specular lobe of perceptual `roughness` seen at
+// `n_dot_v` with reflectance `f0`: `1 + f0 (1 / E - 1)`, E looked up once per surface.
+fn gx_specular_energy(f0: vec3<f32>, n_dot_v: f32, roughness: f32) -> vec3<f32> {
+    let key = vec2<f32>(n_dot_v, roughness);
+    if any(key != gx_energy_key) {
+        let dfg = gx_env_dfg(n_dot_v, roughness);
+        gx_energy_albedo = dfg.x + dfg.y;
+        gx_energy_key = key;
+    }
+    return vec3<f32>(1.0) + f0 * (1.0 / max(gx_energy_albedo, 1e-4) - 1.0);
+}
+
+// The direction the sun lights `n` seen from `v` along, the sun a disc of `angular_radius`
+// (radians) around the unit direction `l` (renderer pass 2, P2-0.12 LG-04; Filament's
+// `sampleSunAreaLight`, Apache-2.0): the direction inside the disc closest to the mirror direction,
+// which is the mirror direction itself when it falls inside. A smooth surface then reflects the
+// sun's whole disc, a glint a few pixels wide, instead of a delta light's one-pixel spike that
+// sparkles under TAA's jitter. `l` itself for a point sun.
+fn gx_sun_area_direction(l: vec3<f32>, angular_radius: f32, n: vec3<f32>, v: vec3<f32>) -> vec3<f32> {
+    if angular_radius <= 0.0 {
+        return l;
+    }
+    let r = reflect(-v, n);
+    let l_dot_r = dot(l, r);
+    let d = cos(angular_radius);
+    if l_dot_r >= d {
+        return r;
+    }
+    let s = r - l_dot_r * l;
+    let s_length = length(s);
+    if s_length <= 1.0e-6 {
+        return l;
+    }
+    return normalize(l * d + (s / s_length) * sin(angular_radius));
+}
+
 fn shade(n: vec3<f32>, v: vec3<f32>, l: vec3<f32>, radiance: vec3<f32>, albedo: vec3<f32>, metallic: f32, roughness: f32) -> vec3<f32> {
     let n_dot_l = max(dot(n, l), 0.0);
     if n_dot_l <= 0.0 {
@@ -45,7 +93,8 @@ fn shade(n: vec3<f32>, v: vec3<f32>, l: vec3<f32>, radiance: vec3<f32>, albedo: 
     var specular = distribution_ggx(max(dot(n, h), 0.0), roughness) * geometry_smith(n_dot_v, n_dot_l, roughness) * f
         / (4.0 * n_dot_v * n_dot_l);
     if gx_scene_shades_hdr() {
-        specular = distribution_ggx(max(dot(n, h), 0.0), roughness) * visibility_smith_correlated(n_dot_v, n_dot_l, roughness) * f;
+        specular = distribution_ggx(max(dot(n, h), 0.0), roughness) * visibility_smith_correlated(n_dot_v, n_dot_l, roughness) * f
+            * gx_specular_energy(f0, n_dot_v, roughness);
     }
     let diffuse = (vec3<f32>(1.0) - f) * (1.0 - metallic) * albedo / PI;
     return (diffuse + specular) * radiance * n_dot_l;

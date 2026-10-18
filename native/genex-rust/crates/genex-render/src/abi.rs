@@ -457,7 +457,7 @@ impl GxFrameV2 {
     }
 }
 
-/// One v2 custom draw (`GxDrawV2`, group 1): its matrices this and last frame, its tint and
+/// One v2 custom draw (`GxDrawV2`, a row of group 1's `gx_draws`): its matrices this and last frame, its tint and
 /// per-draw parameters.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Pod, Zeroable)]
@@ -466,11 +466,14 @@ pub struct GxDrawV2 {
     pub model: [f32; 16],
     /// Inverse-transpose of the model matrix (normals).
     pub normal: [f32; 16],
-    /// Last frame's model matrix (motion vectors; this frame's on a history reset).
+    /// Last frame's model matrix (motion vectors): the draw's matched by its draw id, else by its
+    /// mesh and ordinal (renderer pass 2, P2-0.8b T-04); this frame's for a draw without history.
     pub prev_model: [f32; 16],
     /// The draw's tint, linear rgb and alpha (v1's was sRGB-encoded).
     pub tint: [f32; 4],
-    /// x: simulated seconds; y: the draw's index in the frame; z, w: reserved.
+    /// x: simulated seconds; y: the draw's index in the frame; z: last frame's simulated seconds
+    /// (`prev_time`, T-04: a vertex animation evaluates itself at both for its motion; x on the
+    /// first frame); w: reserved.
     pub params: [f32; 4],
 }
 
@@ -520,10 +523,16 @@ pub struct GxEnvSh {
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Pod, Zeroable)]
 pub struct GxMaterialExt {
-    /// Emissive radiance (linear rgb, scene units); a: reserved.
+    /// Emissive radiance (linear rgb, scene units); a: the occlusion map's strength.
     pub emissive: [f32; 4],
-    /// Reserved for later material inputs.
+    /// x: the emissive map's layer (-1 none), y: its size class, z: flag bits, w: the alpha cutoff.
     pub params: [f32; 4],
+    /// Subsurface scattering (renderer pass 2 B.1): rgb the scatter colour (linear), a the
+    /// thickness (`0..=1`; 1 scatters nothing).
+    pub subsurface: [f32; 4],
+    /// x: the forward-scatter power, y: the diffuse transmission share, z: the scattering depth in
+    /// world units, w: reserved (renderer pass 2 B.1).
+    pub transmission: [f32; 4],
 }
 
 /// A v2 struct's Rust layout and the WGSL struct it mirrors, member for member.
@@ -587,7 +596,7 @@ pub const V2_STRUCTS: &[V2Struct] = &[
         shader: "material-v2-sample",
         rust_size: size_of::<GxMaterialExt>(),
         rust_align: align_of::<GxMaterialExt>(),
-        fields: fields!(GxMaterialExt: emissive, params),
+        fields: fields!(GxMaterialExt: emissive, params, subsurface, transmission),
     },
 ];
 
@@ -724,8 +733,9 @@ pub const L2_V2_SAMPLERS_MAX: u32 = 16;
 /// Storage buffers a Level-2 v2 stage binds at most, core's 8.
 pub const L2_V2_STORAGE_BUFFERS_MAX: u32 = 8;
 /// Sampled textures the renderer's own forward fragment stage binds at most (its material arrays
-/// included), of core's 16.
-pub const FORWARD_FRAGMENT_TEXTURES_MAX: u32 = 14;
+/// included): all of core's 16 since renderer pass 2 A.4 (owner decision D1: the irradiance
+/// volumes' atlas takes the 15th, A.6's screen reflections the 16th; it was 14 with two spare).
+pub const FORWARD_FRAGMENT_TEXTURES_MAX: u32 = 16;
 /// Texture arrays the forward pass may bind beyond group 0's two (the six material texture size
 /// classes, `layout::FRAME_MATERIAL_CLASS_BINDINGS`); the slot a seventh would have taken went to
 /// the v2 map's contact-shadow mask (RQ4 review).
@@ -757,7 +767,9 @@ pub const MATERIAL_V2_BINDINGS: &[V2Binding] = &[
     // The sun's contact-shadow mask (RQ4 review; render size, 1 = unshadowed): appended, so a
     // source that does not declare it builds against the map as before.
     bind(0, 19, "contact_shadow_mask", BindingKind::Texture2d, FRAGMENT, Neutral::One),
-    V2Binding { dynamic: true, ..buffer(1, 0, "gx_draw", BindingKind::Uniform, BOTH, size_of::<GxDrawV2>()) },
+    // The frame's draw rows (renderer pass 2 A.0, LG-20 step 3): the instances of a (material,
+    // mesh) pair are one call, each reading its row; `gx_draw` is the fragment's own row.
+    buffer(1, 0, "gx_draws", BindingKind::Storage, BOTH, size_of::<GxDrawV2>()),
 ];
 
 /// The v2 post-pass map (`gfx.post_pass` at api 2; `shaders/part2/post_v2.wgsl`). Group 1 is

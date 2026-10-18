@@ -8,14 +8,34 @@
 // The convention `ibl::sh9_eval` holds on the CPU: each coefficient is the radiance's projection on
 // the real SH basis (`ibl::sh9_basis`) times the cosine lobe's `A_l / pi` (`ibl::SH9_LOBE`), so
 // evaluating the basis at a normal gives the radiance a white Lambertian surface there reflects.
+//
+// Deringing (SI-05; Sloan, "Deringing Spherical Harmonics", 2017; Filament's auto-windowing,
+// Apache-2.0): a bright compact source left in a map rings the 9 coefficients negative on the side
+// away from it, where the shading's clamp then shows black. After the reduction every lane takes
+// the minimum of the SH over its share of `SH9_MIN_POINTS` fixed directions (the centres of an
+// 8 x 8 grid on each face); when it is negative, a fixed bisection finds the weakest sinc^4 window
+// (cutoff between `SH9_WINDOW_MIN` and `SH9_WINDOW_MAX` bands) that makes it non-negative there,
+// and bands 1 and 2 are scaled by it. An SH that is non-negative already is stored as projected.
+// `ibl::sh9_dering_window` is the CPU twin.
 
 const SH9_THREADS: u32 = 64u;
+// The directions the minimum is taken over (`ibl::sh9_min_directions`): 6 faces x 8 x 8.
+const SH9_MIN_GRID: u32 = 8u;
+const SH9_MIN_POINTS: u32 = 384u;
+// The window's cutoff range in bands and its bisection steps (`ibl::SH9_WINDOW_*`).
+const SH9_WINDOW_MIN: f32 = 3.0;
+const SH9_WINDOW_MAX: f32 = 13.0;
+const SH9_WINDOW_STEPS: u32 = 16u;
+const SH9_PI: f32 = 3.14159265358979;
 
 @group(0) @binding(0) var<uniform> bake: IblBake;
 @group(0) @binding(1) var source_faces: texture_2d_array<f32>;
 @group(0) @binding(3) var<storage, read_write> sh_out: array<vec4<f32>, 9>;
 
 var<workgroup> partial: array<array<vec4<f32>, 9>, SH9_THREADS>;
+var<workgroup> lowest: array<f32, SH9_THREADS>;
+// The projection's least value, read back uniform: whether the bisection runs at all.
+var<workgroup> ringing: f32;
 
 // The world direction through texel coordinate `uv` (0..1, v down) of cube face `face`.
 fn ibl_cube_direction(face: u32, uv: vec2<f32>) -> vec3<f32> {
@@ -62,6 +82,47 @@ fn ibl_sh9_lobe(i: u32) -> f32 {
     return 0.25;
 }
 
+// Sloan's sinc^4 window of band `band` (1 or 2) for a cutoff of `cutoff` bands (`ibl::sh9_window`).
+fn ibl_sh9_window(band: u32, cutoff: f32) -> f32 {
+    let x = SH9_PI * f32(band) / cutoff;
+    let sinc = sin(x) / x;
+    return sinc * sinc * sinc * sinc;
+}
+
+// The SH `sh` at unit `d` per channel, bands 1 and 2 scaled by `window` (`ibl::sh9_windowed`).
+fn ibl_sh9_windowed(sh: array<vec3<f32>, 9>, d: vec3<f32>, window: vec2<f32>) -> vec3<f32> {
+    var value = sh[0] * ibl_sh9_basis(d, 0u);
+    for (var i = 1u; i < 9u; i++) {
+        value += sh[i] * (ibl_sh9_basis(d, i) * select(window.y, window.x, i < 4u));
+    }
+    return value;
+}
+
+// The least value of `sh` windowed by `window` over every lane's share of the directions and every
+// channel, the same in every lane (a fixed tree in workgroup memory, as the projection's).
+fn ibl_sh9_workgroup_min(lane: u32, sh: array<vec3<f32>, 9>, window: vec2<f32>) -> f32 {
+    var least = 3.0e38;
+    for (var point = lane; point < SH9_MIN_POINTS; point += SH9_THREADS) {
+        let face = point / (SH9_MIN_GRID * SH9_MIN_GRID);
+        let x = point % SH9_MIN_GRID;
+        let y = (point / SH9_MIN_GRID) % SH9_MIN_GRID;
+        let d = ibl_cube_direction(face, (vec2<f32>(f32(x), f32(y)) + 0.5) / f32(SH9_MIN_GRID));
+        let value = ibl_sh9_windowed(sh, d, window);
+        least = min(least, min(value.x, min(value.y, value.z)));
+    }
+    lowest[lane] = least;
+    workgroupBarrier();
+    for (var stride = SH9_THREADS / 2u; stride > 0u; stride >>= 1u) {
+        if lane < stride {
+            lowest[lane] = min(lowest[lane], lowest[lane + stride]);
+        }
+        workgroupBarrier();
+    }
+    let result = lowest[0];
+    workgroupBarrier();
+    return result;
+}
+
 @compute @workgroup_size(SH9_THREADS, 1, 1)
 fn cs_sh9(@builtin(local_invocation_index) lane: u32) {
     let side = textureDimensions(source_faces).x;
@@ -98,9 +159,34 @@ fn cs_sh9(@builtin(local_invocation_index) lane: u32) {
         }
         workgroupBarrier();
     }
+    var sh: array<vec3<f32>, 9>;
+    for (var i = 0u; i < 9u; i++) {
+        sh[i] = partial[0][i].rgb * ibl_sh9_lobe(i);
+    }
+    let projected = ibl_sh9_workgroup_min(lane, sh, vec2<f32>(1.0));
+    if lane == 0u {
+        ringing = projected;
+    }
+    // An SH that is non-negative already (a sky, any smooth map) skips the bisection.
+    var window = vec2<f32>(1.0);
+    if workgroupUniformLoad(&ringing) < 0.0 {
+        var low = SH9_WINDOW_MIN;
+        var high = SH9_WINDOW_MAX;
+        for (var step = 0u; step < SH9_WINDOW_STEPS; step++) {
+            let middle = 0.5 * (low + high);
+            let least = ibl_sh9_workgroup_min(lane, sh, vec2<f32>(ibl_sh9_window(1u, middle), ibl_sh9_window(2u, middle)));
+            if least < 0.0 {
+                high = middle;
+            } else {
+                low = middle;
+            }
+        }
+        window = vec2<f32>(ibl_sh9_window(1u, low), ibl_sh9_window(2u, low));
+    }
     if lane == 0u {
         for (var i = 0u; i < 9u; i++) {
-            sh_out[i] = vec4<f32>(partial[0][i].rgb * ibl_sh9_lobe(i), 0.0);
+            let factor = select(select(window.y, window.x, i < 4u), 1.0, i == 0u);
+            sh_out[i] = vec4<f32>(sh[i] * factor, 0.0);
         }
     }
 }

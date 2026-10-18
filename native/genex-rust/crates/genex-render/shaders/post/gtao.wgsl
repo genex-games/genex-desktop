@@ -23,11 +23,14 @@ struct AoParams {
     // x: radius (world units); y: intensity; z: falloff (fraction of the radius); w: thickness.
     params: vec4<f32>,
     // x: slices; y: steps per slice; z: the frame index its noise keys to; w: flags (1 temporal,
-    // 2 bent normals, 4 reverse-Z, 8 view-space normals, 16 every other step).
+    // 2 bent normals, 4 reverse-Z, 8 view-space normals, 16 every other slice, 32 motion).
     counts: vec4<u32>,
     // x: the history's blend weight; y: the depth difference that rejects history; z: the denoise
     // window's half width in texels; w: its spatial falloff (sigma, texels).
     history: vec4<f32>,
+    // Screen-space GI (`GX_AO_GI`): x what the light texture's texels are multiplied by (to the
+    // scene's own units); y the GI's strength; zw unused.
+    gi: vec4<f32>,
 }
 
 // Mirrors `post::ao::GpuAoView`.
@@ -54,6 +57,8 @@ struct AoView {
 // The chain's sources: the prepass depth (mip 0) and the mip above (the others).
 @group(0) @binding(4) var gx_device_depth: texture_depth_2d;
 @group(0) @binding(5) var gx_ao_depth_source: texture_2d<f32>;
+// The light the GI gathers (`GX_AO_GI`): the previous frame's lit scene (a black texel without GI).
+@group(0) @binding(6) var gx_ao_light: texture_2d<f32>;
 
 const GX_AO_PI: f32 = 3.14159265358979;
 const GX_AO_HALF_PI: f32 = 1.57079632679490;
@@ -69,7 +74,9 @@ const GX_AO_TOO_CLOSE_PIXELS: f32 = 1.3;
 const GX_AO_FADE_PIXELS: f32 = 10.0;
 const GX_AO_MIP_OFFSET: f32 = 3.3;
 // XeGTAO's final power (`FinalValuePower`) at intensity 1, and its floor: applied per pixel before
-// the denoise averages, as XeGTAO does.
+// the denoise averages, as XeGTAO does. The power is convex, so a pixel's estimate raised to it
+// comes out lighter the noisier the estimate is: every frame of a temporal quality takes the same
+// slices a pixel (`gx_ao_frame_slices`), so a reset frame draws what the history converges to.
 const GX_AO_POWER: f32 = 2.2;
 const GX_AO_SLOPE_FUDGE: f32 = 0.05;
 const GX_AO_MIN_VISIBILITY: f32 = 0.03;
@@ -308,14 +315,12 @@ fn gx_ao_sample(distance_at: f32, ray: vec4<f32>, centre_z: f32, slice: GxAoSlic
 // Both sides' horizon cosines along `omega` (pixels per unit of `s`, +omega first) from AO pixel
 // `ao_pos` (NDC `ndc`, view position `centre`), starting at the normal's horizons `low`:
 // `counts.y` steps on each side (XeGTAO's `StepsPerSlice`), both sides of a step sharing its
-// distance and mip. Samples sit on their mip texels' centres; one off screen is skipped. With
-// `GX_AO_FLAG_INTERLEAVE` (a temporal frame that blends history) the frame takes every other step,
-// the frame index's parity choosing which, so two frames of history hold every step.
+// distance and mip. Samples sit on their mip texels' centres; one off screen is skipped. Every
+// step, always: a slice's horizon is the maximum over its steps, so a frame that took every other
+// step drew the slice lighter than the whole (pass 2, P4); a frame that blends history takes every
+// other slice instead (`gx_gtao`).
 fn gx_ao_horizons(ao_pos: vec2<f32>, ndc: vec2<f32>, ray_per_texel: vec4<f32>, centre: vec3<f32>, frame: GxAoSlice, omega: vec2<f32>, low: vec2<f32>, slice: u32, noise: f32, min_s: f32, falloff: vec2<f32>) -> vec2<f32> {
     let steps = gx_ao.counts.y;
-    let interleaved = (gx_ao.counts.w & GX_AO_FLAG_INTERLEAVE) != 0u;
-    let stride = select(1u, 2u, interleaved);
-    let first = select(0u, gx_ao.counts.z & 1u, interleaved);
     let inv_steps = 1.0 / f32(steps);
     let last_mip = f32(textureNumLevels(gx_ao_depth) - 1u);
     let size = vec2<i32>(gx_ao.size.xy);
@@ -331,7 +336,7 @@ fn gx_ao_horizons(ao_pos: vec2<f32>, ndc: vec2<f32>, ray_per_texel: vec4<f32>, c
     // texel `(t + 1) * 2^m - 1` (`fs_ao_depth_down`).
     let first_texel = centre_texel + vec2<f32>(1.0);
     var horizons = low;
-    for (var i = first; i < steps; i += stride) {
+    for (var i = 0u; i < steps; i++) {
         let step_noise = fract(noise + f32(slice + i * steps) * GX_AO_R1);
         // XeGTAO's sample distribution power (2): denser near the pixel.
         let t = (f32(i) + step_noise) * inv_steps;
@@ -400,6 +405,8 @@ struct GxAoEstimate {
     weight: f32,
     // The bent normal in XeGTAO's view space (zero without bent normals).
     bent: vec3<f32>,
+    // The light the hidden sectors send (`GX_AO_GI`), as a share of the unoccluded arcs.
+    light: vec3<f32>,
 }
 
 // The raw estimate at AO pixel `ao_pos` (view position `centre`, whose screen derivatives are
@@ -421,7 +428,8 @@ fn gx_gtao(ao_pos: vec2<f32>, centre: vec3<f32>, quad: mat2x3<f32>) -> GxAoEstim
     let clip_w = (gx_ao_view.proj * vec4<f32>(centre.x, centre.y, -centre.z, 1.0)).w;
     let screen_radius = effect_radius * 0.5 * gx_ao.size.x * gx_ao_view.proj[0][0] / max(clip_w, 1e-6);
     if screen_radius < GX_AO_TOO_CLOSE_PIXELS {
-        return GxAoEstimate(1.0, 1.0, vec3<f32>(0.0));
+        // Unoccluded: the bent normal is the normal (it carries the weight, `fs_gtao`).
+        return GxAoEstimate(1.0, 1.0, normal, vec3<f32>(0.0));
     }
     let fade = clamp((GX_AO_FADE_PIXELS - screen_radius) / 100.0, 0.0, 1.0) * 0.5;
     // The slices' visible arcs and, beside them, the arcs they would have unoccluded: their ratio is
@@ -434,11 +442,12 @@ fn gx_gtao(ao_pos: vec2<f32>, centre: vec3<f32>, quad: mat2x3<f32>) -> GxAoEstim
     var visible = 0.0;
     var unoccluded = 0.0;
     var bent = vec3<f32>(0.0);
+    var light = vec3<f32>(0.0);
     let noise = gx_ao_noise(vec2<u32>(ao_pos));
     let ndc = gx_ao_ndc(ao_pos);
     let ray_per_texel = gx_ao_ray_per_texel();
     let min_s = GX_AO_TOO_CLOSE_PIXELS / screen_radius;
-    let slices = gx_ao.counts.x;
+    let slices = gx_ao_frame_slices();
     for (var slice = 0u; slice < slices; slice++) {
         let phi = (f32(slice) + noise.x) / f32(slices) * GX_AO_PI;
         let cos_phi = cos(phi);
@@ -461,6 +470,17 @@ fn gx_gtao(ao_pos: vec2<f32>, centre: vec3<f32>, quad: mat2x3<f32>) -> GxAoEstim
         let across = normalize(ortho);
         let slide = gx_ao_slide(geometric, axis);
         let frame = GxAoSlice(axis, across, view_vec, vec2<f32>(dot(slide, across), dot(slide, view_vec)));
+        if GX_AO_BITMASK {
+            let gather = gx_ao_bitmask(ao_pos, ndc, ray_per_texel, centre, frame, omega, vec3<f32>(n, cos_n, sin_n), slice, noise.y, min_s, falloff);
+            let open = gx_ao_open(gather.mask, n, cos_n, sin_n);
+            light += gather.light * projected_length;
+            visible += projected_length * open.arc;
+            unoccluded += projected_length * (cos_n + n * sin_n);
+            if gx_ao_bent() {
+                bent += gx_ao_slice_bent(open.horizons, n, cos_n, sin_n, direction, view_vec) * projected_length;
+            }
+            continue;
+        }
         let horizons = gx_ao_horizons(ao_pos, ndc, ray_per_texel, centre, frame, omega, vec2<f32>(-sin_n, sin_n), slice, noise.y, min_s, falloff);
         let h0 = n + clamp(-gx_ao_fast_acos(horizons.y) - n, -GX_AO_HALF_PI, GX_AO_HALF_PI);
         let h1 = n + clamp(gx_ao_fast_acos(horizons.x) - n, -GX_AO_HALF_PI, GX_AO_HALF_PI);
@@ -488,7 +508,217 @@ fn gx_gtao(ao_pos: vec2<f32>, centre: vec3<f32>, quad: mat2x3<f32>) -> GxAoEstim
         }
     }
     let weight = unoccluded / (f32(slices) * GX_AO_WEIGHT_FULL);
-    return GxAoEstimate(visible / max(unoccluded, 1e-4) + fade / f32(slices), weight, bent);
+    // A bent normal that sums to nothing stands up along the normal (it carries the weight).
+    let bent_or_normal = select(bent, normal, dot(bent, bent) <= 1e-12);
+    return GxAoEstimate(visible / max(unoccluded, 1e-4) + fade / f32(slices), weight, bent_or_normal, light / max(unoccluded, 1e-4));
+}
+
+// ---------------------------------------------------------------------------------------------
+// The visibility bitmask (pass 2 B.4, prior-art P7; Therrien et al. 2023, "Screen Space Indirect
+// Lighting with Visibility Bitmask", ideas only; the sector update after three.js r186
+// `SSGINode.js`, MIT, a port of SSRT3, and Bevy 0.20 `ssao.wesl`, MIT OR Apache-2.0).
+//
+// XeGTAO takes every depth sample for an infinitely thick wall: a pole, a trunk or an arm in
+// front of a surface raised its horizon over the whole radius and drew a dark halo around the
+// object that slid with parallax. With `GX_AO_BITMASK` each slice keeps 32 sectors over the
+// normal's half circle instead (sector k covers the angles `n - pi/2 + pi * [k, k + 1] / 32` from
+// the view vector), and a sample hides only the sectors between its front face and a point
+// `params.w` (`post::ao::BITMASK_THICKNESS_PER_RADIUS` of the radius) behind it. What the slice sees is the cosine-weighted
+// arc of its open sectors (the same integrand as XeGTAO's arcs, so a solid occluder darkens as
+// GTAO does and the ratio estimator, the final power and the denoise are unchanged), and its bent
+// normal is XeGTAO's closed form over the open run around the view vector.
+override GX_AO_BITMASK: bool = false;
+// Screen-space GI on the bitmask (pass 2 B.4, prior-art B1.2; after three.js r186 `SSGINode.js`,
+// MIT, a port of SSRT3): every sector a sample hides first sends the light the previous frame drew
+// at that sample (`gx_ao_light`, reprojected), weighted by the sector's cosine-weighted arc, so a
+// red wall beside a white floor tints the floor's indirect light. The term then holds visibility in
+// r and that light in gba (`post::ao::GI_FORMAT`); it has no bent normal.
+override GX_AO_GI: bool = false;
+// Sectors per slice (one u32).
+const GX_AO_SECTORS: f32 = 32.0;
+// How far (in sectors) a sample's arc is narrowed before it is rounded out to whole sectors: a
+// sample on the centre's tangent plane (open flat ground) marks no sector beside the tangent.
+const GX_AO_SECTOR_EPSILON: f32 = 1e-3;
+
+// The slid sample `gx_ao_sample` measures, in the slice's own coordinates: x across the screen
+// (the +omega side positive), y towards the camera.
+fn gx_ao_slice_point(distance_at: f32, ray: vec4<f32>, centre_z: f32, slice: GxAoSlice) -> vec2<f32> {
+    let aimed = vec3<f32>(distance_at * ray.xy + ray.zw, distance_at - centre_z);
+    let off_slice = dot(aimed, slice.axis);
+    return vec2<f32>(dot(aimed, slice.across) - off_slice * slice.slide.x, dot(aimed, slice.view_vec) - off_slice * slice.slide.y);
+}
+
+// The sectors a sample at slice point `p` hides on side `side` (1 the +omega side) of a slice whose
+// normal lies at angle `n` from the view vector: those between its front face and the point the
+// object's thickness behind it, both pulled towards the side's tangent `low` (a cosine) by
+// XeGTAO's falloff, so a sample beyond the radius hides nothing.
+fn gx_ao_sample_sectors(p: vec2<f32>, side: f32, n: f32, low: f32, falloff: vec2<f32>) -> u32 {
+    if p.x * side <= 0.0 {
+        return 0u;
+    }
+    let front_length = length(p);
+    let weight = clamp(front_length * falloff.x + falloff.y, 0.0, 1.0);
+    // Beyond the radius a sample hides nothing (both its angles fall back to the tangent).
+    if weight <= 0.0 {
+        return 0u;
+    }
+    let back = vec2<f32>(p.x, p.y - gx_ao.params.w);
+    let front = side * gx_ao_fast_acos(mix(low, p.y / max(front_length, 1e-6), weight));
+    let behind = side * gx_ao_fast_acos(mix(low, back.y / max(length(back), 1e-6), weight));
+    let start = (min(front, behind) - n) / GX_AO_PI + 0.5;
+    let stop = (max(front, behind) - n) / GX_AO_PI + 0.5;
+    let first = u32(clamp(floor(start * GX_AO_SECTORS + GX_AO_SECTOR_EPSILON), 0.0, GX_AO_SECTORS));
+    let end = u32(clamp(ceil(stop * GX_AO_SECTORS - GX_AO_SECTOR_EPSILON), 0.0, GX_AO_SECTORS));
+    return insertBits(0u, 0xffffffffu, first, select(0u, end - first, end > first));
+}
+
+// A slice's hidden sectors and, with `GX_AO_GI`, the light they send (unnormalized arcs).
+struct GxAoGather {
+    mask: u32,
+    light: vec3<f32>,
+}
+
+// The light the previous frame drew at view position `p` (XeGTAO's space), in the scene's units:
+// reprojected through last frame's camera; black off its screen.
+fn gx_ao_light_at(p: vec3<f32>) -> vec3<f32> {
+    let clip = gx_ao_view.prev_proj * gx_ao_view.prev_view_from_view * vec4<f32>(p.x, p.y, -p.z, 1.0);
+    if clip.w <= 0.0 {
+        return vec3<f32>(0.0);
+    }
+    let uv = vec2<f32>(clip.x / clip.w * 0.5 + 0.5, 0.5 - clip.y / clip.w * 0.5);
+    if any(uv < vec2<f32>(0.0)) || any(uv >= vec2<f32>(1.0)) {
+        return vec3<f32>(0.0);
+    }
+    let size = vec2<i32>(textureDimensions(gx_ao_light));
+    let texel = min(vec2<i32>(uv * vec2<f32>(size)), size - vec2<i32>(1));
+    return max(textureLoad(gx_ao_light, texel, 0).rgb, vec3<f32>(0.0)) * gx_ao.gi.x;
+}
+
+// A slice's hidden sectors from AO pixel `ao_pos`: the steps and samples of `gx_ao_horizons`
+// (same distances, mips and slide), each sample hiding its sectors (`gx_ao_sample_sectors`), and
+// with `GX_AO_GI` the light of the sectors each sample hides first. `normal` holds the normal's
+// angle `n` in the slice and its cosine and sine.
+fn gx_ao_bitmask(ao_pos: vec2<f32>, ndc: vec2<f32>, ray_per_texel: vec4<f32>, centre: vec3<f32>, frame: GxAoSlice, omega: vec2<f32>, normal: vec3<f32>, slice: u32, noise: f32, min_s: f32, falloff: vec2<f32>) -> GxAoGather {
+    let steps = gx_ao.counts.y;
+    let inv_steps = 1.0 / f32(steps);
+    let last_mip = f32(textureNumLevels(gx_ao_depth) - 1u);
+    let size = vec2<i32>(gx_ao.size.xy);
+    let mip_bias = log2(length(omega)) - GX_AO_MIP_OFFSET;
+    let origin = vec2<i32>(ao_pos);
+    let ray = gx_ao_ray(ndc) - vec4<f32>(0.0, 0.0, centre.xy);
+    let first_texel = vec2<f32>(origin) + vec2<f32>(1.0);
+    var mask = 0u;
+    var light = vec3<f32>(0.0);
+    for (var i = 0u; i < steps; i++) {
+        let step_noise = fract(noise + f32(slice + i * steps) * GX_AO_R1);
+        let t = (f32(i) + step_noise) * inv_steps;
+        let s = t * t + min_s;
+        let px_step = vec2<i32>(round(s * omega));
+        let mip = u32(round(clamp(log2(s) + mip_bias, 0.0, last_mip)));
+        let last = max(size >> vec2<u32>(mip), vec2<i32>(1)) - vec2<i32>(1);
+        let scale = f32(1u << mip);
+        for (var side = 0u; side < 2u; side++) {
+            let towards = 1.0 - 2.0 * f32(side);
+            let aimed = origin + px_step * i32(towards);
+            let texel = min(max(aimed, vec2<i32>(0)) >> vec2<u32>(mip), last);
+            let distance_at = textureLoad(gx_ao_depth, texel, i32(mip)).r;
+            if distance_at >= GX_AO_SKY_DEPTH || !gx_ao_on_screen(aimed, size) {
+                continue;
+            }
+            let at = (vec2<f32>(texel) + vec2<f32>(1.0)) * scale - first_texel;
+            let sample_ray = ray + ray_per_texel * at.xyxy;
+            let p = gx_ao_slice_point(distance_at, sample_ray, centre.z, frame);
+            // The side's tangent: cos(n + pi/2) on the +omega side, cos(n - pi/2) on the other.
+            let sectors = gx_ao_sample_sectors(p, towards, normal.x, select(normal.z, -normal.z, side == 0u), falloff);
+            let fresh = sectors & ~mask;
+            if GX_AO_GI && fresh != 0u {
+                let position = vec3<f32>(distance_at * sample_ray.xy + sample_ray.zw + centre.xy, distance_at);
+                light += gx_ao_light_at(position) * gx_ao_hidden_arc(fresh, normal.x, normal.y, normal.z);
+            }
+            mask |= sectors;
+        }
+    }
+    return GxAoGather(mask, light);
+}
+
+// The angle from the view vector of sector boundary `k` of a slice whose normal is at angle `n`.
+fn gx_ao_sector_angle(k: u32, n: f32) -> f32 {
+    return n - GX_AO_HALF_PI + GX_AO_PI * f32(k) / GX_AO_SECTORS;
+}
+
+// The cosine-weighted arc from the view vector to angle `h` (signed: negative below it), the
+// antiderivative of XeGTAO's integrand `cos(t - n) |sin t|`: XeGTAO's arc between its horizons is
+// `gx_ao_arc_to(h1) - gx_ao_arc_to(h0)`.
+fn gx_ao_arc_to(h: f32, n: f32, cos_n: f32, sin_n: f32) -> f32 {
+    let arc = (cos_n + 2.0 * h * sin_n - cos(2.0 * h - n)) * 0.25;
+    return select(-arc, arc, h >= 0.0);
+}
+
+// The cosine-weighted arc of the sectors `mask` holds, run by run, for a slice whose normal is at
+// angle `n`.
+fn gx_ao_hidden_arc(mask: u32, n: f32, cos_n: f32, sin_n: f32) -> f32 {
+    var hidden = 0.0;
+    var rest = mask;
+    // At most 16 runs fit 32 sectors.
+    for (var run = 0u; run < 16u && rest != 0u; run++) {
+        let first = countTrailingZeros(rest);
+        let count = countTrailingZeros(~(rest >> first));
+        hidden += gx_ao_arc_to(gx_ao_sector_angle(first + count, n), n, cos_n, sin_n) - gx_ao_arc_to(gx_ao_sector_angle(first, n), n, cos_n, sin_n);
+        rest &= ~insertBits(0u, 0xffffffffu, first, count);
+    }
+    return hidden;
+}
+
+// What a slice's open sectors see (`gx_ao_open`): the cosine-weighted arc, and the horizons of the
+// open run around the view vector (the bent normal's).
+struct GxAoOpen {
+    arc: f32,
+    horizons: vec2<f32>,
+}
+
+// The open arc of `mask` (its unoccluded arc less each hidden run's) and the open run around the
+// view vector, for a slice whose normal is at angle `n`.
+fn gx_ao_open(mask: u32, n: f32, cos_n: f32, sin_n: f32) -> GxAoOpen {
+    let hidden = gx_ao_hidden_arc(mask, n, cos_n, sin_n);
+    let view_sector = u32(clamp(floor((0.5 - n / GX_AO_PI) * GX_AO_SECTORS), 0.0, GX_AO_SECTORS - 1.0));
+    let below = mask & (0xffffffffu >> (31u - view_sector));
+    let lowest = select(0u, firstLeadingBit(below) + 1u, below != 0u);
+    let highest = max(view_sector + min(countTrailingZeros(mask >> view_sector), 32u - view_sector), lowest);
+    let horizons = vec2<f32>(gx_ao_sector_angle(lowest, n), gx_ao_sector_angle(highest, n));
+    return GxAoOpen(max(cos_n + n * sin_n - hidden, 0.0), horizons);
+}
+
+// A slice's bent normal (XeGTAO's closed form, unnormalized, in XeGTAO's view space) between
+// `horizons` (below and above the view vector) for a slice of screen `direction` whose normal is at
+// angle `n`.
+fn gx_ao_slice_bent(horizons: vec2<f32>, n: f32, cos_n: f32, sin_n: f32, direction: vec3<f32>, view_vec: vec3<f32>) -> vec3<f32> {
+    let sh = sin(horizons);
+    let ch = cos(horizons);
+    let s3 = sh * (3.0 - 4.0 * sh * sh);
+    let c3 = ch * (4.0 * ch * ch - 3.0);
+    let sin_h_n = sh * cos_n - ch * sin_n;
+    let sin_3h_n = s3 * cos_n - c3 * sin_n;
+    let sin_hpn = sh * cos_n + ch * sin_n;
+    let cos_3h_n = c3 * cos_n + s3 * sin_n;
+    let cos_hpn = ch * cos_n - sh * sin_n;
+    let t0 = (6.0 * (sin_h_n.x + sin_h_n.y) - (sin_3h_n.x + sin_3h_n.y) + 16.0 * sin_n - 3.0 * (sin_hpn.x + sin_hpn.y)) / 12.0;
+    let t1 = (-(cos_3h_n.x + cos_3h_n.y) + 8.0 * cos_n - 3.0 * (cos_hpn.x + cos_hpn.y)) / 12.0;
+    return gx_ao_rotate(vec3<f32>(direction.x * t0, direction.y * t0, -t1), vec3<f32>(0.0, 0.0, -1.0), view_vec);
+}
+
+// The slices a frame takes, spread evenly over the half circle from the pixel's noise: all
+// `counts.x` without `GX_AO_FLAG_INTERLEAVE`. With it (every frame of a temporal quality, its
+// resets too) every step of half of them (rounded down, at least one: high's 2 and ultra's 3 take
+// one, within their budgets), and the frame-keyed noise turns their angles from frame to frame. A
+// slice's visibility enters the ratio estimator's sums,
+// which are linear, so frames of fewer slices average to what a frame of every slice draws
+// (Jimenez et al. 2016's temporal rotations; three.js `GTAONode`, MIT), where every other step of
+// each slice drew it lighter (a slice's horizon is the maximum over its steps; pass 2, P4). The
+// angles cover the half circle on every frame, not one half of it each parity: frames that saw
+// alternate halves disagreed in their windows' spread and the history's clamp kept the lighter.
+fn gx_ao_frame_slices() -> u32 {
+    let slices = gx_ao.counts.x;
+    return select(slices, max(slices / 2u, 1u), (gx_ao.counts.w & GX_AO_FLAG_INTERLEAVE) != 0u);
 }
 
 @fragment
@@ -501,11 +731,18 @@ fn fs_gtao(in: AoOut) -> @location(0) vec4<f32> {
     let centre = gx_ao_view_position(ao_pos, min(depth, GX_AO_FINITE_DEPTH));
     let quad = mat2x3<f32>(dpdxFine(centre), dpdyFine(centre));
     if depth >= GX_AO_SKY_DEPTH {
+        if GX_AO_GI {
+            return vec4<f32>(1.0 / GX_AO_RAW_SCALE, 0.0, 0.0, 0.0);
+        }
         // The sky: unoccluded, no bent normal (or a full weight); the denoise never reads it.
         return vec4<f32>(1.0 / GX_AO_RAW_SCALE, select(1.0, 0.5, gx_ao_bent()), 0.5, 0.5);
     }
     let term = gx_gtao(ao_pos, centre, quad);
     let visibility = clamp(max(pow(max(term.visibility, 0.0), GX_AO_POWER * gx_ao.params.y), GX_AO_MIN_VISIBILITY) / GX_AO_RAW_SCALE, 0.0, 1.0);
+    if GX_AO_GI {
+        // The GI's raw term (`post::ao::GI_FORMAT`): visibility, then the gathered light.
+        return vec4<f32>(visibility, term.light * gx_ao.gi.y);
+    }
     if !gx_ao_bent() {
         // The raw term without a bent normal (`post::ao::RAW_WEIGHTED_FORMAT`) carries the
         // estimate's weight for the denoise to average by.
@@ -517,7 +754,11 @@ fn fs_gtao(in: AoOut) -> @location(0) vec4<f32> {
         let bent_view = normalize(vec3<f32>(term.bent.x, term.bent.y, -term.bent.z));
         bent_world = normalize((vec4<f32>(bent_view, 0.0) * gx_ao_view.view).xyz);
     }
-    return vec4<f32>(visibility, bent_world * 0.5 + vec3<f32>(0.5));
+    // The bent normal's length is the estimate's weight (the arcs its slices measured), which the
+    // denoise averages by as it does the weighted raw term's: a frame that takes one slice (high's
+    // running frames) measures little of the hemisphere where the slice grazes the surface, and
+    // its estimate counted in full drew the running history lighter than a frame of every slice.
+    return vec4<f32>(visibility, bent_world * clamp(term.weight, GX_AO_WEIGHT_FLOOR, 1.0) * 0.5 + vec3<f32>(0.5));
 }
 
 // Whether GTAO integrates a bent normal (the raw term's gba hold it).

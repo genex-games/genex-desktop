@@ -13,29 +13,24 @@ import http from "node:http";
 import type { AddressInfo } from "node:net";
 import path from "node:path";
 import { after, before, describe, it } from "node:test";
-import { chromium } from "@playwright/test";
 import { runFullProbe } from "../../scripts/evals/prober/full-probe.ts";
 import { probeLockPath } from "../../scripts/evals/prober/lock.ts";
 import { CheckResult, ProbeRow, RendererMode } from "../../scripts/evals/vocabulary.ts";
+import { playwrightHeadlessChromiumOnDisk } from "../helpers/playwright-chromium.ts";
 import { tmpDir } from "../helpers/tmp.ts";
 
 /** Why this file skips. */
 const SkipReason = {
   NotOptedIn: "launches Chromium; set STUDIO_BROWSER_TESTS=1 to run",
   NoChromium:
-    "no Chromium build matching the installed Playwright is on disk (Playwright 1.63 expects chromium-1243); this suite never downloads one",
+    "no Chromium build matching the installed Playwright is on disk (Playwright 1.63 expects chromium-1243 or its headless shell); this suite never downloads one",
 } as const;
 type SkipReason = (typeof SkipReason)[keyof typeof SkipReason];
 
+/** The prober runs in software mode, a headless launch the headless shell alone serves. */
 function skipReason(): SkipReason | false {
   if (process.env.STUDIO_BROWSER_TESTS !== "1") return SkipReason.NotOptedIn;
-  let executable = "";
-  try {
-    executable = chromium.executablePath();
-  } catch {
-    executable = "";
-  }
-  return executable && fs.existsSync(executable) ? false : SkipReason.NoChromium;
+  return playwrightHeadlessChromiumOnDisk() ? false : SkipReason.NoChromium;
 }
 
 const GAME_DIR = path.resolve(import.meta.dirname, "../fixtures/evals/prober/game");

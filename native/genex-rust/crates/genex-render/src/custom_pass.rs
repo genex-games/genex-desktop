@@ -28,9 +28,15 @@
 //! **Motion (RQ5).** Once the prepass writes motion, the frame hands its target over before the
 //! `after-prepass` stage ([`CustomStage::prepass_motion`]) and the same encoder stages bind it as
 //! `gx_motion` and through [`PassFrame::prepass_motion`]: `rg16float` NDC motion, current minus
-//! previous with the jitter removed. Geometry a pass draws in the world has no motion of its own
-//! (the prepass never sees it): its pixels keep the motion of what the prepass drew there, so TAA
-//! may trail a fast-moving in-world pass draw; keep such geometry slow, or draw it at `post-hdr`.
+//! previous with the jitter removed. Geometry a pass draws in the world is not in the prepass, so
+//! by itself its pixels keep the motion of what the prepass drew there. On TAA frames an in-world
+//! pass gives TAA its own (renderer pass 2, B.7): [`PassFrame::motion_draws`] draw the motion of
+//! what it moves (a vertex animation evaluated at this tick and at [`PassFrame::prev_tick`], say
+//! with the shared wind, [`crate::wind`]) into the motion target, and [`PassFrame::reactive_draws`]
+//! draw the coverage of blended work moving over a background whose motion it does not share (a
+//! glow sprite) into the reactive mask. Both replay in graph node 15a against the prepass depth,
+//! after the world pass and before the resolve ([`CustomStage::temporal_motion`], the stage's
+//! [`WorldStage::reactive`]); they are recorded, checked and proven with the pass's world draws.
 //!
 //! Each stage is a node of the frame graph ([`PassStage::node`], [`crate::graph`]): the registry's
 //! [`PassRun`] is the [`WorldStage`] the renderer's nodes hand the frame's encoder (`before-cull`),
@@ -114,6 +120,12 @@
 //! ([`CustomPasses::take_pending`], a capture or the boot), and a pass whose scope reports an error
 //! is refused `gpu-pass-invalid` from then on. Until an in-world pass's first proof has resolved
 //! clean its draws stay out of the world pass, so a pass that was never valid cannot poison it.
+//! After that a frame's draws are replayed while their own proof is pending only when an earlier
+//! clean proof covers each of them (the same pipeline and vertex slots, slices at least as large,
+//! ranges ending no later; [`WorldDraws`] checks the rest on the CPU as it records): a pass whose
+//! draws grow past what was proven waits for its proof, because one invalid command in the world
+//! pass loses the browser's whole frame (RC-11). Bind groups are not compared: a pass may make
+//! them per frame, and their contents are not visible here.
 
 use std::future::Future;
 use std::ops::{Bound, Range, RangeBounds};
@@ -212,10 +224,13 @@ struct GxMaterial {
 /// texture_depth_2d_array` and `@binding(10) var gx_shadow_sampler: sampler_comparison` (the sun's
 /// shadow cascades, always bound: compare a point's depth in `GxFrameV2::cascade_view_proj[c]`,
 /// offset along its normal by `cascade_offsets[c]`, less `shadow_params.x`; a frame without sun
-/// shadows binds a lit map and says so in `cascade_splits.w`). The names of the common structs
-/// and functions are reserved.
+/// shadows binds a lit map and says so in `cascade_splits.w`). The shared wind (`gx_wind`,
+/// [`crate::wind`]) is declared too, so a vertex animation sways with the scene's and can evaluate
+/// itself at [`PassFrame::prev_tick`] for its motion. The names of the common structs and functions
+/// are reserved.
 pub const TABLES_V2_WGSL: &str = concat!(
     include_str!("../shaders/common.wgsl"),
+    include_str!("../shaders/wind.wgsl"),
     "
 // genex custom-pass tables, API v2: the v1 rows under their v1 names.
 alias GxInstance = Instance;
@@ -775,6 +790,8 @@ struct Parked {
     index: usize,
     kind: ScopeKind,
     future: ScopeFuture,
+    /// What a clean answer proves of an in-world pass's draws (empty for the other kinds).
+    proves: Vec<DrawFact>,
 }
 
 /// The scopes a registry had parked ([`CustomPasses::take_pending`]), to await where waiting is
@@ -800,7 +817,7 @@ impl PendingScopes {
         let mut answers = Vec::with_capacity(self.scopes.len());
         for parked in self.scopes {
             let error = parked.future.await;
-            answers.push((parked.index, parked.kind, error.map(|error| error.to_string())));
+            answers.push(Answer { index: parked.index, kind: parked.kind, error: error.map(|error| error.to_string()), proves: parked.proves });
         }
         SettledScopes { epoch: self.epoch, answers }
     }
@@ -809,7 +826,16 @@ impl PendingScopes {
 /// The answers of awaited scopes, for [`CustomPasses::apply_settled`].
 pub struct SettledScopes {
     epoch: u32,
-    answers: Vec<(usize, ScopeKind, Option<String>)>,
+    answers: Vec<Answer>,
+}
+
+/// One scope's answer for the pass at `index`: the error it caught, if any, and what a clean
+/// answer proves of the pass's draws.
+struct Answer {
+    index: usize,
+    kind: ScopeKind,
+    error: Option<String>,
+    proves: Vec<DrawFact>,
 }
 
 /// The tables bind group's layout (API v1): the frame uniforms, then the instance and material
@@ -982,6 +1008,41 @@ impl<'a> PassSetup<'a> {
         wgpu::MultisampleState { count: self.samples(), ..Default::default() }
     }
 
+    /// The colour target of a pipeline drawing into TAA's motion target
+    /// ([`PassFrame::motion_draws`]): [`crate::motion::MOTION_FORMAT`], written whole.
+    pub fn motion_target(&self) -> wgpu::ColorTargetState {
+        wgpu::ColorTargetState { format: crate::motion::MOTION_FORMAT, blend: None, write_mask: wgpu::ColorWrites::ALL }
+    }
+
+    /// The colour target of a pipeline drawing into TAA's reactive mask
+    /// ([`PassFrame::reactive_draws`]): [`crate::post::taa::REACTIVE_FORMAT`], max-blended, so the
+    /// renderer's own coverage and the prepass's no-history flags stay where they are higher.
+    pub fn reactive_target(&self) -> wgpu::ColorTargetState {
+        let max = wgpu::BlendComponent { src_factor: wgpu::BlendFactor::One, dst_factor: wgpu::BlendFactor::One, operation: wgpu::BlendOperation::Max };
+        let blend = wgpu::BlendState { color: max, alpha: max };
+        wgpu::ColorTargetState { format: crate::post::taa::REACTIVE_FORMAT, blend: Some(blend), write_mask: wgpu::ColorWrites::RED }
+    }
+
+    /// The depth test of a pipeline drawing TAA's motion or reactive draws against the prepass
+    /// depth: nearer or equal passes (`LessEqual`, `GreaterEqual` under reversed depth), so geometry
+    /// the world pass already wrote into a shared depth passes again; `write` only for motion draws
+    /// (the reactive coverage reads the depth only).
+    pub fn temporal_depth(&self, write: bool) -> wgpu::DepthStencilState {
+        let compare = if self.facts.depth_reversed { wgpu::CompareFunction::GreaterEqual } else { wgpu::CompareFunction::LessEqual };
+        wgpu::DepthStencilState {
+            format: DEPTH_FORMAT,
+            depth_write_enabled: Some(write),
+            depth_compare: Some(compare),
+            stencil: wgpu::StencilState::default(),
+            bias: wgpu::DepthBiasState::default(),
+        }
+    }
+
+    /// The multisample state of a motion or reactive pipeline: one sample (TAA frames draw no MSAA).
+    pub fn temporal_multisample(&self) -> wgpu::MultisampleState {
+        wgpu::MultisampleState::default()
+    }
+
     /// The layout of the frame's tables bind group ([`PassFrame::tables`]): [`TABLES_WGSL`]'s for
     /// an API v1 pass, [`TABLES_V2_WGSL`]'s ([`TABLES_V2_BINDINGS`]) for v2.
     pub fn tables_layout(&self) -> &'a BindGroupLayout {
@@ -1116,30 +1177,118 @@ fn byte_range(range: impl RangeBounds<u64>, size: u64) -> Option<(u64, u64)> {
     (start <= end && end <= size).then(|| (start, end - start))
 }
 
+/// Bytes of one indirect draw's arguments (`draw_indirect`: vertex count, instance count, first
+/// vertex, first instance).
+const DRAW_INDIRECT_BYTES: u64 = 16;
+/// Bytes of one indexed indirect draw's arguments (index count, instance count, first index, base
+/// vertex, first instance).
+const DRAW_INDEXED_INDIRECT_BYTES: u64 = 20;
+/// The alignment WebGPU asks of vertex-buffer and indirect offsets.
+const COMMAND_OFFSET_ALIGNMENT: u64 = 4;
+/// The most proven draw facts an in-world pass keeps (the oldest go first).
+const PROVEN_FACTS_MAX: usize = 64;
+/// Bind group indices a pass may set: the device is opened with WebGPU core's limits
+/// ([`crate::floor::core_limits`]).
+const BIND_GROUPS_MAX: u32 = wgpu::Limits::defaults().max_bind_groups;
+/// Vertex buffer slots a pass may set, as [`BIND_GROUPS_MAX`].
+const VERTEX_SLOTS_MAX: u32 = wgpu::Limits::defaults().max_vertex_buffers;
+
+/// The kind of one recorded draw, as a proven fact compares it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum DrawKind {
+    Direct,
+    Indexed,
+    Indirect,
+    IndexedIndirect,
+}
+
+/// What one draw of a clean proof shows WebGPU accepts (RC-11): with `pipeline` and the vertex
+/// slices `slots` bound, `vertices` and `instances` (the ranges' ends) fit every buffer the
+/// pipeline reads. A later draw on the same pipeline and slots, with slices at least as large and
+/// ranges ending no later, fits too: the pipeline fixes the strides. Bind groups and indirect
+/// arguments are not compared (wgpu validates indirect counts on the GPU; a bind group's
+/// contents are not visible here).
+#[derive(Clone, Debug, PartialEq)]
+struct DrawFact {
+    pipeline: wgpu::RenderPipeline,
+    kind: DrawKind,
+    /// (slot, bytes) of every vertex slice bound, by slot.
+    slots: Vec<(u32, u64)>,
+    vertices: u32,
+    instances: u32,
+}
+
+impl DrawFact {
+    /// Whether `proven` shows this draw fits.
+    fn within(&self, proven: &DrawFact) -> bool {
+        let same_slots = self.slots.len() == proven.slots.len()
+            && self.slots.iter().zip(&proven.slots).all(|((slot, bytes), (proven_slot, proven_bytes))| slot == proven_slot && bytes >= proven_bytes);
+        self.pipeline == proven.pipeline && self.kind == proven.kind && same_slots && self.vertices <= proven.vertices && self.instances <= proven.instances
+    }
+}
+
+/// Whether every draw of `facts` is shown to fit by one of `proven` (no draw at all is covered).
+fn covered(facts: &[DrawFact], proven: &[DrawFact]) -> bool {
+    facts.iter().all(|fact| proven.iter().any(|known| fact.within(known)))
+}
+
+/// Add `facts` to `proven`, each once, keeping the newest [`PROVEN_FACTS_MAX`].
+fn remember(proven: &mut Vec<DrawFact>, facts: Vec<DrawFact>) {
+    for fact in facts {
+        if !proven.contains(&fact) {
+            proven.push(fact);
+        }
+    }
+    let over = proven.len().saturating_sub(PROVEN_FACTS_MAX);
+    proven.drain(..over);
+}
+
+/// The render-pass state a recording has set so far: what each draw is checked and described by.
+#[derive(Debug, Default)]
+struct DrawState {
+    pipeline: Option<wgpu::RenderPipeline>,
+    slots: Vec<(u32, u64)>,
+    /// The index slice bound: its format and bytes.
+    index: Option<(wgpu::IndexFormat, u64)>,
+}
+
 /// What an in-world pass draws: the commands of a render pass, recorded, validated and replayed
 /// inside the world pass (its colour, depth and samples; see [`PassSetup::world_depth`] and
 /// [`PassSetup::world_multisample`]). Each pass starts from no pipeline and no bindings of its
 /// own choosing: bind everything it draws with.
+///
+/// What the CPU can check is checked as it is recorded, and a command that fails refuses the pass
+/// (`gpu-pass-invalid`) before anything is replayed: a slice outside its buffer, a buffer without
+/// the usage its command needs, a misaligned offset, an inverted range, an indexed draw past its
+/// index slice (or with none of its own bound) and indirect arguments past their buffer.
 #[derive(Debug)]
 pub struct WorldDraws {
     tables: BindGroup,
     commands: Vec<DrawCommand>,
     fault: Option<String>,
+    state: DrawState,
+    /// Every draw recorded, as a proof would show it fits; None when a draw had no pipeline.
+    facts: Option<Vec<DrawFact>>,
 }
 
 impl WorldDraws {
     fn new(tables: BindGroup) -> WorldDraws {
-        WorldDraws { tables, commands: Vec::new(), fault: None }
+        WorldDraws { tables, commands: Vec::new(), fault: None, state: DrawState::default(), facts: Some(Vec::new()) }
     }
 
     /// Draw with `pipeline`.
     pub fn set_pipeline(&mut self, pipeline: &wgpu::RenderPipeline) -> &mut Self {
+        self.state.pipeline = Some(pipeline.clone());
         self.commands.push(DrawCommand::Pipeline(pipeline.clone()));
         self
     }
 
     /// Bind `group` at `index` with its dynamic `offsets`.
     pub fn set_bind_group(&mut self, index: u32, group: &BindGroup, offsets: &[u32]) -> &mut Self {
+        if index >= BIND_GROUPS_MAX {
+            self.fault(|| format!("bind group index {index}, past the {BIND_GROUPS_MAX} a pipeline has"));
+            return self;
+        }
         self.commands.push(DrawCommand::BindGroup(index, group.clone(), offsets.to_vec()));
         self
     }
@@ -1150,17 +1299,91 @@ impl WorldDraws {
         self.set_bind_group(index, &tables, &[])
     }
 
+    /// Keep the first fault: the one the refusal names.
+    fn fault(&mut self, what: impl FnOnce() -> String) {
+        self.fault.get_or_insert_with(what);
+    }
+
     fn slice_of(&mut self, buffer: &Buffer, range: impl RangeBounds<u64>) -> Option<(u64, u64)> {
         let slice = byte_range(range, buffer.size());
         if slice.is_none() {
-            self.fault.get_or_insert_with(|| format!("a slice outside a {}-byte buffer", buffer.size()));
+            self.fault(|| format!("a slice outside a {}-byte buffer", buffer.size()));
         }
         slice
     }
 
+    /// Whether `buffer` has `usage` (a fault naming `what` otherwise).
+    fn has_usage(&mut self, buffer: &Buffer, usage: BufferUsages, what: &str) -> bool {
+        let has = buffer.usage().contains(usage);
+        if !has {
+            self.fault(|| format!("a {what} buffer without {usage:?} usage"));
+        }
+        has
+    }
+
+    /// Whether `offset` is a multiple of `alignment` (a fault naming `what` otherwise).
+    fn aligned(&mut self, offset: u64, alignment: u64, what: &str) -> bool {
+        let aligned = offset.is_multiple_of(alignment);
+        if !aligned {
+            self.fault(|| format!("a {what} offset of {offset} bytes, not a multiple of {alignment}"));
+        }
+        aligned
+    }
+
+    /// Whether `ranges` all run forwards (a fault otherwise).
+    fn forwards(&mut self, ranges: &[&Range<u32>]) -> bool {
+        let forwards = ranges.iter().all(|range| range.start <= range.end);
+        if !forwards {
+            self.fault(|| "a draw range that ends before it starts".to_owned());
+        }
+        forwards
+    }
+
+    /// Note a draw of `kind` reading `vertices` and `instances` (the ranges' ends) for the proof.
+    fn note(&mut self, kind: DrawKind, vertices: u32, instances: u32) {
+        let fact = self.state.pipeline.clone().map(|pipeline| DrawFact { pipeline, kind, slots: self.state.slots.clone(), vertices, instances });
+        match (fact, self.facts.as_mut()) {
+            (Some(fact), Some(facts)) => facts.push(fact),
+            // A draw with no pipeline of the pass's own is never shown to fit by another frame.
+            _ => self.facts = None,
+        }
+    }
+
+    /// The index slice an indexed draw reads, or None (a fault) when the pass bound none.
+    fn index_slice(&mut self) -> Option<(wgpu::IndexFormat, u64)> {
+        let index = self.state.index;
+        if index.is_none() {
+            self.fault(|| "an indexed draw with no index buffer of its own".to_owned());
+        }
+        index
+    }
+
+    /// Whether `bytes` of indirect arguments at `offset` of `buffer` fit (a fault otherwise).
+    fn indirect_fits(&mut self, buffer: &Buffer, offset: u64, bytes: u64) -> bool {
+        if !self.has_usage(buffer, BufferUsages::INDIRECT, "indirect") || !self.aligned(offset, COMMAND_OFFSET_ALIGNMENT, "indirect") {
+            return false;
+        }
+        let fits = offset.checked_add(bytes).is_some_and(|end| end <= buffer.size());
+        if !fits {
+            self.fault(|| format!("indirect arguments at {offset} past the end of a {}-byte buffer", buffer.size()));
+        }
+        fits
+    }
+
     /// Read vertex buffer `slot` from `range` of `buffer`.
     pub fn set_vertex_buffer(&mut self, slot: u32, buffer: &Buffer, range: impl RangeBounds<u64>) -> &mut Self {
-        if let Some((offset, size)) = self.slice_of(buffer, range) {
+        if slot >= VERTEX_SLOTS_MAX {
+            self.fault(|| format!("vertex buffer slot {slot}, past the {VERTEX_SLOTS_MAX} a pipeline has"));
+            return self;
+        }
+        if !self.has_usage(buffer, BufferUsages::VERTEX, "vertex") {
+            return self;
+        }
+        let Some((offset, size)) = self.slice_of(buffer, range) else { return self };
+        if self.aligned(offset, COMMAND_OFFSET_ALIGNMENT, "vertex") {
+            self.state.slots.retain(|(known, _)| *known != slot);
+            self.state.slots.push((slot, size));
+            self.state.slots.sort_unstable();
             self.commands.push(DrawCommand::Vertex(slot, buffer.clone(), offset, size));
         }
         self
@@ -1168,7 +1391,12 @@ impl WorldDraws {
 
     /// Read indices of `format` from `range` of `buffer`.
     pub fn set_index_buffer(&mut self, buffer: &Buffer, format: wgpu::IndexFormat, range: impl RangeBounds<u64>) -> &mut Self {
-        if let Some((offset, size)) = self.slice_of(buffer, range) {
+        if !self.has_usage(buffer, BufferUsages::INDEX, "index") {
+            return self;
+        }
+        let Some((offset, size)) = self.slice_of(buffer, range) else { return self };
+        if self.aligned(offset, u64::from(format.byte_size()), "index") {
+            self.state.index = Some((format, size));
             self.commands.push(DrawCommand::Index(buffer.clone(), format, offset, size));
         }
         self
@@ -1176,25 +1404,45 @@ impl WorldDraws {
 
     /// Draw `vertices` of `instances`.
     pub fn draw(&mut self, vertices: Range<u32>, instances: Range<u32>) -> &mut Self {
-        self.commands.push(DrawCommand::Draw(vertices, instances));
+        if self.forwards(&[&vertices, &instances]) {
+            self.note(DrawKind::Direct, vertices.end, instances.end);
+            self.commands.push(DrawCommand::Draw(vertices, instances));
+        }
         self
     }
 
     /// Draw `indices` from `base_vertex` of `instances`.
     pub fn draw_indexed(&mut self, indices: Range<u32>, base_vertex: i32, instances: Range<u32>) -> &mut Self {
+        if !self.forwards(&[&indices, &instances]) {
+            return self;
+        }
+        let Some((format, bytes)) = self.index_slice() else { return self };
+        let held = bytes / u64::from(format.byte_size());
+        if u64::from(indices.end) > held {
+            self.fault(|| format!("an indexed draw to index {} of a slice holding {held}", indices.end));
+            return self;
+        }
+        // Vertex-rate buffers are not range-checked for an indexed draw (WebGPU): only instances count.
+        self.note(DrawKind::Indexed, 0, instances.end);
         self.commands.push(DrawCommand::DrawIndexed(indices, base_vertex, instances));
         self
     }
 
     /// Draw from the arguments at `offset` of `buffer`.
     pub fn draw_indirect(&mut self, buffer: &Buffer, offset: u64) -> &mut Self {
-        self.commands.push(DrawCommand::DrawIndirect(buffer.clone(), offset));
+        if self.indirect_fits(buffer, offset, DRAW_INDIRECT_BYTES) {
+            self.note(DrawKind::Indirect, 0, 0);
+            self.commands.push(DrawCommand::DrawIndirect(buffer.clone(), offset));
+        }
         self
     }
 
     /// Draw indexed from the arguments at `offset` of `buffer`.
     pub fn draw_indexed_indirect(&mut self, buffer: &Buffer, offset: u64) -> &mut Self {
-        self.commands.push(DrawCommand::DrawIndexedIndirect(buffer.clone(), offset));
+        if self.index_slice().is_some() && self.indirect_fits(buffer, offset, DRAW_INDEXED_INDIRECT_BYTES) {
+            self.note(DrawKind::IndexedIndirect, 0, 0);
+            self.commands.push(DrawCommand::DrawIndexedIndirect(buffer.clone(), offset));
+        }
         self
     }
 
@@ -1241,9 +1489,19 @@ pub struct PassFrame<'f> {
     budget: &'f mut UploadBudget,
     encoder: Option<&'f mut CommandEncoder>,
     draws: Option<&'f mut WorldDraws>,
+    /// The in-world stages' draws into TAA's motion target and reactive mask (graph node 15a), on
+    /// frames whose prepass writes motion.
+    temporal: Option<TemporalDraws<'f>>,
     world: Option<(&'f Texture, &'f TextureView)>,
     prepass: Option<&'f PrepassViews>,
     motion: Option<&'f TextureView>,
+}
+
+/// The draws an in-world pass records for TAA (graph node 15a; [`PassFrame::motion_draws`],
+/// [`PassFrame::reactive_draws`]).
+struct TemporalDraws<'f> {
+    motion: &'f mut WorldDraws,
+    reactive: &'f mut WorldDraws,
 }
 
 impl PassFrame<'_> {
@@ -1260,6 +1518,14 @@ impl PassFrame<'_> {
     /// The simulation tick this frame shows (never the wall clock).
     pub fn tick(&self) -> u64 {
         self.tick
+    }
+
+    /// The tick the frame before this one showed on the same history: what a vertex animation
+    /// evaluates itself at a second time for its motion ([`PassFrame::motion_draws`]). This
+    /// frame's tick on a history reset and in a capture's re-renders of one tick (no motion of its
+    /// own), so a settled capture draws the same picture with or without it.
+    pub fn prev_tick(&self) -> u64 {
+        self.tick.saturating_sub(self.history.ticks_back)
     }
 
     /// The world target's size in pixels (the output size).
@@ -1323,6 +1589,33 @@ impl PassFrame<'_> {
         self.draws.as_deref_mut()
     }
 
+    /// What an in-world pass draws into TAA's motion target (renderer pass 2, B.7), on frames
+    /// whose prepass writes motion (TAA); None at other stages and on other frames. Geometry the
+    /// pass moves itself (a vertex animation, an instance it moves) draws its motion here, so TAA
+    /// reprojects it instead of trailing it: [`crate::motion::MOTION_FORMAT`] NDC motion, this
+    /// frame's position minus last frame's, both through the unjittered matrices
+    /// (`gx_frame.unjittered_view_proj` and `gx_frame.prev_view_proj`), rasterised through the
+    /// jittered `gx_frame.view_proj` as the world draw was. Replayed after the world pass, before
+    /// the reactive coverage (graph node 15a), against the prepass depth with
+    /// [`PassSetup::motion_target`], [`PassSetup::temporal_depth`] and
+    /// [`PassSetup::temporal_multisample`]; writing depth there adds the geometry to the depth TAA
+    /// dilates and tests disocclusion with. Without it a pass's pixels keep the motion of what the
+    /// prepass drew behind them.
+    pub fn motion_draws(&mut self) -> Option<&mut WorldDraws> {
+        self.temporal.as_mut().map(|temporal| &mut *temporal.motion)
+    }
+
+    /// What an in-world pass draws into TAA's reactive mask (renderer pass 2, B.7), on frames whose
+    /// prepass writes motion: 0 keeps a pixel's history, 1 takes the current sample. Blended work
+    /// that moves over a background whose motion it does not share (a glow sprite, a puff of
+    /// smoke) writes how much of the pixel it owns, so TAA neither trails nor pops it; still work
+    /// writes nothing and accumulates. Replayed inside node 15a's coverage pass after the
+    /// renderer's own, against the prepass depth read-only, with [`PassSetup::reactive_target`]
+    /// (max-blended), [`PassSetup::temporal_depth`]`(false)` and [`PassSetup::temporal_multisample`].
+    pub fn reactive_draws(&mut self) -> Option<&mut WorldDraws> {
+        self.temporal.as_mut().map(|temporal| &mut *temporal.reactive)
+    }
+
     /// The colour target of an encoder stage: the resolved world target at `post` (`Bgra8Unorm`,
     /// the frame captures read), the scene colour at `post-hdr`; a copy source and a render
     /// attachment. None at the other stages.
@@ -1377,6 +1670,9 @@ impl PassFrame<'_> {
 struct History {
     frame_index: u64,
     settle: Option<(u32, u32)>,
+    /// Sim ticks back to the frame drawn before this one on the same history (0 on a history
+    /// reset and in a capture's re-renders of one tick): [`PassFrame::prev_tick`].
+    ticks_back: u64,
 }
 
 /// The temporal history Live frames and captures are keyed to.
@@ -1386,6 +1682,8 @@ struct HistoryClock {
     origin: Option<u64>,
     /// While capturing: the next settle re-render's index and the re-renders in all.
     capture: Option<(u32, u32)>,
+    /// The tick Live's last frame showed (a capture leaves it as it was).
+    last: Option<u64>,
 }
 
 impl HistoryClock {
@@ -1396,13 +1694,15 @@ impl HistoryClock {
         if let Some((index, count)) = self.capture.as_mut() {
             let settle = ((*index).min(count.saturating_sub(1)), *count);
             *index = index.saturating_add(1);
-            return History { frame_index: u64::from(settle.0), settle: Some(settle) };
+            return History { frame_index: u64::from(settle.0), settle: Some(settle), ticks_back: 0 };
         }
         let origin = match self.origin {
             Some(origin) if origin <= tick => origin,
             _ => *self.origin.insert(tick),
         };
-        History { frame_index: tick - origin, settle: None }
+        let frame_index = tick - origin;
+        let last = self.last.replace(tick).filter(|last| *last <= tick && frame_index > 0);
+        History { frame_index, settle: None, ticks_back: last.map_or(0, |last| tick - last) }
     }
 }
 
@@ -1420,6 +1720,9 @@ struct Entry {
     /// Whether one of its in-world proofs resolved clean on this device (deferred scopes keep its
     /// draws out of the world pass until then).
     proven: bool,
+    /// The draws its clean proofs showed fit (RC-11): while a later proof is pending, a frame's
+    /// draws are replayed only when these cover every one of them.
+    proven_draws: Vec<DrawFact>,
 }
 
 /// The passes one renderer runs: their names, stages, bytes and refusals, and the tables layout
@@ -1443,6 +1746,9 @@ pub struct CustomPasses {
     refusals: Vec<RenderError>,
     /// The throwaway attachments in-world draws are validated against (world formats and samples).
     proving: Option<(TextureView, TextureView)>,
+    /// The throwaway single-sampled attachments motion and reactive draws are validated against
+    /// (the motion format, the reactive mask's, the depth).
+    temporal_proving: Option<(TextureView, TextureView, TextureView)>,
     /// The v1 frame uniforms the tables bind.
     compat: CompatFrame,
     /// The v2 tables' layout, frame bytes and neutral inputs, once a v2 pass registers.
@@ -1473,6 +1779,7 @@ impl CustomPasses {
             entries: Vec::new(),
             refusals: Vec::new(),
             proving: None,
+            temporal_proving: None,
             compat: CompatFrame::new(&gpu.device),
             v2: None,
             environment: None,
@@ -1616,7 +1923,8 @@ impl CustomPasses {
             match poll_once(&mut scope.future) {
                 Poll::Ready(error) => {
                     answered += 1;
-                    let _ = self.answer(scope.index, scope.kind, error.map(|error| error.to_string()));
+                    let answer = Answer { index: scope.index, kind: scope.kind, error: error.map(|error| error.to_string()), proves: scope.proves };
+                    let _ = self.answer(answer);
                 }
                 Poll::Pending => self.parked.push(scope),
             }
@@ -1641,8 +1949,8 @@ impl CustomPasses {
             return false;
         }
         let mut changed = false;
-        for (index, kind, error) in settled.answers {
-            changed |= self.answer(index, kind, error);
+        for answer in settled.answers {
+            changed |= self.answer(answer);
         }
         changed
     }
@@ -1650,11 +1958,13 @@ impl CustomPasses {
     /// One scope's answer for the pass at `index`: a clean proof admits its draws, an error refuses
     /// it (once: a pass already stopped keeps its first refusal). Answers whether it changed what
     /// the frame draws (a first proof, or a refusal).
-    fn answer(&mut self, index: usize, kind: ScopeKind, error: Option<String>) -> bool {
+    fn answer(&mut self, answer: Answer) -> bool {
+        let Answer { index, kind, error, proves } = answer;
         let Some(entry) = self.entries.get_mut(index) else { return false };
         let Some(error) = error else {
             let first_proof = kind == ScopeKind::Draws && !entry.proven;
             entry.proven |= first_proof;
+            remember(&mut entry.proven_draws, proves);
             return first_proof && entry.enabled;
         };
         if !entry.enabled {
@@ -1673,7 +1983,12 @@ impl CustomPasses {
     }
 
     fn park(&mut self, index: usize, kind: ScopeKind, future: ScopeFuture) {
-        self.parked.push(Parked { epoch: self.epoch, index, kind, future });
+        self.park_proving(index, kind, future, Vec::new());
+    }
+
+    /// [`CustomPasses::park`] for a scope whose clean answer proves `proves` of the pass's draws.
+    fn park_proving(&mut self, index: usize, kind: ScopeKind, future: ScopeFuture, proves: Vec<DrawFact>) {
+        self.parked.push(Parked { epoch: self.epoch, index, kind, future, proves });
     }
 
     /// Register every running pass's bytes in `ledger` (kind [`BudgetKind::Pass`], by name).
@@ -1815,7 +2130,7 @@ impl CustomPasses {
         }
         let (bytes, pending) = self.build(gpu, name, stage, pass, RebuildReason::Install)?;
         let (api, inputs) = (pass.api(), pass.inputs());
-        self.entries.push(Entry { name: name.to_owned(), stage, api, inputs, bytes, enabled: true, refused: None, proven: false });
+        self.entries.push(Entry { name: name.to_owned(), stage, api, inputs, bytes, enabled: true, refused: None, proven: false, proven_draws: Vec::new() });
         if let Some(scope) = pending {
             self.park(self.entries.len() - 1, ScopeKind::Rebuild, scope);
         }
@@ -1852,7 +2167,9 @@ impl CustomPasses {
             }
         }
         self.proving = None;
+        self.temporal_proving = None;
         self.history.origin = None;
+        self.history.last = None;
         self.epoch = self.epoch.wrapping_add(1);
         self.parked.clear();
         let mut first = None;
@@ -1862,6 +2179,7 @@ impl CustomPasses {
                 continue;
             }
             self.entries[index].proven = false;
+            self.entries[index].proven_draws.clear();
             match self.build(gpu, &name, stage, &mut **pass, reason) {
                 Ok((bytes, pending)) => {
                     self.entries[index].bytes = bytes;
@@ -1901,6 +2219,8 @@ impl CustomPasses {
             tables_v2_prepass: None,
             environment_group: None,
             draws: Vec::new(),
+            temporal: Vec::new(),
+            built_for_scene: false,
             budget: UploadBudget::new(),
         })
     }
@@ -1925,6 +2245,11 @@ pub struct StageFrame {
     pub history: FrameHistory,
     /// The look's EV compensation (0 with the exposure switch off or on the legacy scene).
     pub ev_compensation: f32,
+    /// The frame's camera: the v2 tables' `view`, `proj`, `inv_view_proj`, `unjittered_view_proj`
+    /// and `prev_view_proj` come from it (renderer pass 2, B.7: before, a frame renderer never
+    /// handed it over, so they were identity and zero rows unless a caller set
+    /// [`CustomPasses::set_camera`]).
+    pub camera: crate::scene::CameraDesc,
 }
 
 /// The custom work of one frame: compute before the cull, draws inside the world pass and post
@@ -1949,6 +2274,12 @@ pub trait CustomStage: WorldStage {
     /// pass): v2 passes bind it in their tables (`gx_env_specular`, `gx_env_sh`) and as
     /// [`PassFrame::environment`] from now on.
     fn environment(&mut self, _environment: &EnvironmentViews) {}
+    /// Graph node 15a, ahead of the reactive coverage: draw the in-world passes' motion draws
+    /// ([`PassFrame::motion_draws`]) into the frame's `motion` target against the prepass `depth`
+    /// (both at render size, single-sampled), on `encoder`. False when nothing was drawn.
+    fn temporal_motion(&self, _encoder: &mut CommandEncoder, _motion: &TextureView, _depth: &TextureView) -> bool {
+        false
+    }
     /// Run the `post-hdr` stage over the scene colour (the world target on the legacy LDR scene),
     /// ahead of the 2D primitives, post passes and `post` stage.
     fn post_hdr(&mut self, _scene: &Texture, _view: &TextureView) {}
@@ -2007,6 +2338,11 @@ pub struct PassRun<'a, 'p> {
     /// This frame's environment group (v2 passes), once a pass asked for it.
     environment_group: Option<BindGroup>,
     draws: Vec<(PassStage, WorldDraws)>,
+    /// The in-world passes' motion and reactive draws, for graph node 15a.
+    temporal: Vec<(WorldDraws, WorldDraws)>,
+    /// Whether this frame's draws were built for the world pass's scene (the facts handed over
+    /// match it); the temporal draws replay only then, as the world draws do.
+    built_for_scene: bool,
     budget: UploadBudget,
 }
 
@@ -2201,6 +2537,7 @@ impl PassRun<'_, '_> {
                     budget: &mut self.budget,
                     encoder: Some(&mut encoder),
                     draws: None,
+                    temporal: None,
                     world,
                     prepass: prepass.as_ref(),
                     motion: motion.as_ref(),
@@ -2227,68 +2564,109 @@ impl PassRun<'_, '_> {
         }
     }
 
-    /// Record the in-world passes and keep the draws that validate, for the world pass to replay.
+    /// Record the in-world passes and keep the draws that validate, for the world pass to replay
+    /// (and their motion and reactive draws, for graph node 15a, on frames writing motion).
     fn record_draws(&mut self, samples: u32) {
         for stage in [PassStage::AfterOpaque, PassStage::AfterTransparent] {
             for (index, name) in self.at(stage) {
-                let Some(tables) = self.tables_of(index, stage) else { continue };
-                let tables = &tables;
-                let environment = self.environment_of(index);
-                let device = self.device.clone();
-                let mut draws = WorldDraws::new(tables.clone());
-                let (_, encoded) = scoped(&device, || {
-                    let mut frame = PassFrame {
-                        name: &name,
-                        stage,
-                        depth_reversed: self.registry.facts.depth_reversed,
-                        tick: self.tick,
-                        world_size: self.registry.world_size,
-                        render_size: self.registry.render_size,
-                        history: self.history,
-                        quality: &self.registry.quality,
-                        device: &device,
-                        queue: &self.queue,
-                        tables,
-                        environment: environment.as_ref(),
-                        budget: &mut self.budget,
-                        encoder: None,
-                        draws: Some(&mut draws),
-                        world: None,
-                        prepass: None,
-                        motion: None,
-                    };
-                    self.passes[index].encode(&mut frame);
-                });
-                if let Some(fault) = draws.fault.take() {
-                    self.refuse(index, invalid(&name, fault));
-                    continue;
-                }
-                let proving = self.proving(samples);
-                let (_, proved) = scoped(&device, || prove(&device, &name, &draws, &proving));
-                match judge(self.registry.mode, either(encoded, proved)) {
-                    Verdict::Failed(error) => {
-                        self.refuse(index, invalid(&name, format!("wgpu refused its {}: {error}", ScopeKind::Draws.what())));
-                    }
-                    Verdict::Clean => {
-                        self.registry.entries[index].proven = true;
-                        self.keep_draws(stage, draws);
-                    }
-                    Verdict::Pending(scope) => {
-                        self.registry.park(index, ScopeKind::Draws, scope);
-                        // On probation until one proof resolves clean: never replayed before that.
-                        if self.registry.entries[index].proven {
-                            self.keep_draws(stage, draws);
-                        }
-                    }
+                self.record_pass(index, &name, stage, samples);
+            }
+        }
+    }
+
+    /// Record the in-world pass at `index`, prove what it drew and keep it (see the module docs).
+    fn record_pass(&mut self, index: usize, name: &str, stage: PassStage, samples: u32) {
+        let Some(tables) = self.tables_of(index, stage) else { return };
+        let environment = self.environment_of(index);
+        let device = self.device.clone();
+        let mut recorded = Recorded::new(&tables);
+        let temporal = self.motion.is_some();
+        let (_, encoded) = scoped(&device, || {
+            let mut frame = PassFrame {
+                name,
+                stage,
+                depth_reversed: self.registry.facts.depth_reversed,
+                tick: self.tick,
+                world_size: self.registry.world_size,
+                render_size: self.registry.render_size,
+                history: self.history,
+                quality: &self.registry.quality,
+                device: &device,
+                queue: &self.queue,
+                tables: &tables,
+                environment: environment.as_ref(),
+                budget: &mut self.budget,
+                encoder: None,
+                draws: Some(&mut recorded.world),
+                temporal: temporal.then_some(TemporalDraws { motion: &mut recorded.motion, reactive: &mut recorded.reactive }),
+                world: None,
+                prepass: None,
+                motion: None,
+            };
+            self.passes[index].encode(&mut frame);
+        });
+        if let Some(fault) = recorded.fault() {
+            self.refuse(index, invalid(name, fault));
+            return;
+        }
+        let proving = self.proving(samples);
+        let temporal_proving = (!recorded.temporal_is_empty()).then(|| self.temporal_proving());
+        let (_, proved) = scoped(&device, || {
+            prove(&device, name, &recorded.world, &proving, true);
+            if let Some((motion, reactive, depth)) = &temporal_proving {
+                prove(&device, name, &recorded.motion, &(motion.clone(), depth.clone()), true);
+                prove(&device, name, &recorded.reactive, &(reactive.clone(), depth.clone()), false);
+            }
+        });
+        let facts = recorded.facts();
+        match judge(self.registry.mode, either(encoded, proved)) {
+            Verdict::Failed(error) => {
+                self.refuse(index, invalid(name, format!("wgpu refused its {}: {error}", ScopeKind::Draws.what())));
+            }
+            Verdict::Clean => {
+                let entry = &mut self.registry.entries[index];
+                entry.proven = true;
+                remember(&mut entry.proven_draws, facts.unwrap_or_default());
+                self.keep_draws(stage, recorded);
+            }
+            Verdict::Pending(scope) => {
+                let entry = &self.registry.entries[index];
+                // On probation until one proof resolves clean, and afterwards held out of the
+                // world pass while it draws beyond what its clean proofs showed fits (RC-11: on
+                // the web an invalid command there loses the whole frame). Its motion and reactive
+                // draws are proven with it, their facts after the world draws'.
+                let replays = entry.proven && facts.as_deref().is_some_and(|facts| covered(facts, &entry.proven_draws));
+                self.registry.park_proving(index, ScopeKind::Draws, scope, facts.unwrap_or_default());
+                if replays {
+                    self.keep_draws(stage, recorded);
                 }
             }
         }
     }
 
-    fn keep_draws(&mut self, stage: PassStage, draws: WorldDraws) {
-        if !draws.is_empty() {
-            self.draws.push((stage, draws));
+    fn keep_draws(&mut self, stage: PassStage, recorded: Recorded) {
+        let Recorded { world, motion, reactive } = recorded;
+        if !world.is_empty() {
+            self.draws.push((stage, world));
         }
+        if !motion.is_empty() || !reactive.is_empty() {
+            self.temporal.push((motion, reactive));
+        }
+    }
+
+    /// The throwaway single-sampled attachments motion and reactive draws are proven on: the
+    /// motion target's format, the reactive mask's and the depth, made once per device.
+    fn temporal_proving(&mut self) -> (TextureView, TextureView, TextureView) {
+        if let Some(views) = &self.registry.temporal_proving {
+            return views.clone();
+        }
+        let views = (
+            proving_attachment(&self.device, "custom pass proving motion", crate::motion::MOTION_FORMAT, 1),
+            proving_attachment(&self.device, "custom pass proving reactive", crate::post::taa::REACTIVE_FORMAT, 1),
+            proving_attachment(&self.device, "custom pass proving temporal depth", DEPTH_FORMAT, 1),
+        );
+        self.registry.temporal_proving = Some(views.clone());
+        views
     }
 
     /// The throwaway attachments for `samples`, made once per device.
@@ -2296,21 +2674,11 @@ impl PassRun<'_, '_> {
         if let Some(views) = &self.registry.proving {
             return views.clone();
         }
-        let attachment = |label, format| {
-            let texture = self.device.create_texture(&wgpu::TextureDescriptor {
-                label: Some(label),
-                size: wgpu::Extent3d { width: 1, height: 1, depth_or_array_layers: 1 },
-                mip_level_count: 1,
-                sample_count: samples,
-                dimension: wgpu::TextureDimension::D2,
-                format,
-                usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-                view_formats: &[],
-            });
-            texture.create_view(&wgpu::TextureViewDescriptor::default())
-        };
         let scene_format = self.registry.facts.scene_format;
-        let views = (attachment("custom pass proving colour", scene_format), attachment("custom pass proving depth", DEPTH_FORMAT));
+        let views = (
+            proving_attachment(&self.device, "custom pass proving colour", scene_format, samples),
+            proving_attachment(&self.device, "custom pass proving depth", DEPTH_FORMAT, samples),
+        );
         self.registry.proving = Some(views.clone());
         views
     }
@@ -2338,8 +2706,60 @@ impl PassRun<'_, '_> {
 /// Replay `draws` into a pass on the throwaway attachments `proving` (the world pass's formats and
 /// samples) and finish it, never submitted: wgpu reports any invalid command here, not in the
 /// world pass.
-fn prove(device: &Device, name: &str, draws: &WorldDraws, proving: &(TextureView, TextureView)) {
+/// A throwaway 1x1 attachment of `format` and `samples` that draws are proven on.
+fn proving_attachment(device: &Device, label: &str, format: TextureFormat, samples: u32) -> TextureView {
+    let texture = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some(label),
+        size: wgpu::Extent3d { width: 1, height: 1, depth_or_array_layers: 1 },
+        mip_level_count: 1,
+        sample_count: samples,
+        dimension: wgpu::TextureDimension::D2,
+        format,
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+        view_formats: &[],
+    });
+    texture.create_view(&wgpu::TextureViewDescriptor::default())
+}
+
+/// What one in-world pass recorded in a frame: its world draws, and its motion and reactive draws
+/// for graph node 15a ([`PassFrame::motion_draws`], [`PassFrame::reactive_draws`]).
+struct Recorded {
+    world: WorldDraws,
+    motion: WorldDraws,
+    reactive: WorldDraws,
+}
+
+impl Recorded {
+    fn new(tables: &BindGroup) -> Recorded {
+        Recorded { world: WorldDraws::new(tables.clone()), motion: WorldDraws::new(tables.clone()), reactive: WorldDraws::new(tables.clone()) }
+    }
+
+    /// The first fault of any of the three, the world draws' first.
+    fn fault(&mut self) -> Option<String> {
+        self.world.fault.take().or_else(|| self.motion.fault.take()).or_else(|| self.reactive.fault.take())
+    }
+
+    fn temporal_is_empty(&self) -> bool {
+        self.motion.is_empty() && self.reactive.is_empty()
+    }
+
+    /// Every draw recorded, world draws first, as a proof shows it fits; None when one had no
+    /// pipeline of the pass's own.
+    fn facts(&mut self) -> Option<Vec<DrawFact>> {
+        let mut facts = self.world.facts.take()?;
+        facts.extend(self.motion.facts.take()?);
+        facts.extend(self.reactive.facts.take()?);
+        Some(facts)
+    }
+}
+
+/// Replay `draws` into a pass on the throwaway attachments `proving` (the formats and samples of
+/// the pass they are replayed into; the depth written when `depth_writes`, else read-only, as
+/// node 15a's coverage pass binds it) and finish it, never submitted: wgpu reports any invalid
+/// command here, not in the frame.
+fn prove(device: &Device, name: &str, draws: &WorldDraws, proving: &(TextureView, TextureView), depth_writes: bool) {
     let (color, depth) = proving;
+    let depth_ops = depth_writes.then_some(wgpu::Operations { load: wgpu::LoadOp::Clear(1.0), store: wgpu::StoreOp::Discard });
     let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some(name) });
     {
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -2350,11 +2770,7 @@ fn prove(device: &Device, name: &str, draws: &WorldDraws, proving: &(TextureView
                 resolve_target: None,
                 ops: wgpu::Operations { load: wgpu::LoadOp::Clear(wgpu::Color::BLACK), store: wgpu::StoreOp::Discard },
             })],
-            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                view: depth,
-                depth_ops: Some(wgpu::Operations { load: wgpu::LoadOp::Clear(1.0), store: wgpu::StoreOp::Discard }),
-                stencil_ops: None,
-            }),
+            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment { view: depth, depth_ops, stencil_ops: None }),
             timestamp_writes: None,
             occlusion_query_set: None,
             multiview_mask: None,
@@ -2376,6 +2792,8 @@ impl WorldStage for PassRun<'_, '_> {
         self.refresh_compat(encoder, world);
         self.tables_for(world);
         self.tables_v2_for(world);
+        let facts = &self.registry.facts;
+        self.built_for_scene = (facts.scene_format, facts.depth_reversed) == (world.scene_format, world.depth_reversed);
         self.record_draws(world.samples);
     }
 
@@ -2389,6 +2807,19 @@ impl WorldStage for PassRun<'_, '_> {
 
     fn ldr_reason(&self) -> Option<LdrReason> {
         self.registry.ldr_reason()
+    }
+
+    fn reactive_draws(&self) -> bool {
+        self.built_for_scene && self.temporal.iter().any(|(_, reactive)| !reactive.is_empty())
+    }
+
+    fn reactive(&self, pass: &mut wgpu::RenderPass<'_>, _node: &crate::post::taa::ReactiveNode) {
+        if !self.built_for_scene {
+            return;
+        }
+        for (_, reactive) in &self.temporal {
+            reactive.replay(pass);
+        }
     }
 }
 
@@ -2408,13 +2839,46 @@ impl CustomStage for PassRun<'_, '_> {
 
     fn begin_frame(&mut self, frame: &StageFrame) {
         let settle = frame.history.settle.map(|settle| (settle.index, settle.count));
-        self.history = History { frame_index: frame.history.frame_index, settle };
+        // A frame drawn on its history after another shows `ticks` more ticks than that one (none
+        // in a capture, which re-renders one tick).
+        let continued = !frame.history.history_reset() && settle.is_none();
+        let ticks_back = if continued { u64::from(frame.history.ticks) } else { 0 };
+        self.history = History { frame_index: frame.history.frame_index, settle, ticks_back };
         self.ev_compensation = frame.ev_compensation;
+        self.registry.camera = Some(frame.camera);
     }
 
     fn prepass_motion(&mut self, motion: &TextureView) {
         self.motion = Some(motion.clone());
         self.tables_v2_prepass = None;
+    }
+
+    fn temporal_motion(&self, encoder: &mut CommandEncoder, motion: &TextureView, depth: &TextureView) -> bool {
+        let mut draws = self.temporal.iter().map(|(motion, _)| motion).filter(|draws| !draws.is_empty()).peekable();
+        if !self.built_for_scene || draws.peek().is_none() {
+            return false;
+        }
+        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("level-3 motion"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: motion,
+                depth_slice: None,
+                resolve_target: None,
+                ops: wgpu::Operations { load: wgpu::LoadOp::Load, store: wgpu::StoreOp::Store },
+            })],
+            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                view: depth,
+                depth_ops: Some(wgpu::Operations { load: wgpu::LoadOp::Load, store: wgpu::StoreOp::Store }),
+                stencil_ops: None,
+            }),
+            timestamp_writes: None,
+            occlusion_query_set: None,
+            multiview_mask: None,
+        });
+        for draws in draws {
+            draws.replay(&mut pass);
+        }
+        true
     }
 
     fn after_prepass(&mut self, prepass: &PrepassViews) {
@@ -2487,10 +2951,11 @@ mod tests {
         };
         let (fresh, _) = capture_after(0);
         let (long, resumed) = capture_after(240);
-        assert_eq!(fresh, History { frame_index: 0, settle: Some((0, 1)) });
+        assert_eq!(fresh, History { frame_index: 0, settle: Some((0, 1)), ticks_back: 0 });
         assert_eq!(long, fresh, "a capture after 240 Live frames sees the same empty history");
-        assert_eq!(resumed, History { frame_index: 241, settle: None }, "Live's own history resumes after the capture");
-        let mut settling = HistoryClock { origin: Some(3), capture: Some((0, 3)) };
+        // Live last showed tick 249; the capture drew 250 on its own history.
+        assert_eq!(resumed, History { frame_index: 241, settle: None, ticks_back: 2 }, "Live's own history resumes after the capture");
+        let mut settling = HistoryClock { origin: Some(3), capture: Some((0, 3)), last: None };
         let indices: Vec<History> = (0..4).map(|_| settling.at(9)).collect();
         assert_eq!(
             indices.iter().map(|history| history.settle).collect::<Vec<_>>(),
@@ -2498,5 +2963,17 @@ mod tests {
             "each settle re-render has its index, never past the last"
         );
         assert_eq!(indices[0].frame_index, 0, "history_reset on the first re-render");
+    }
+
+    #[test]
+    fn a_frame_s_previous_tick_is_the_last_live_frame_s_and_its_own_after_a_reset_or_in_a_capture() {
+        let mut clock = HistoryClock::default();
+        let ticks_back: Vec<u64> = [10, 11, 13, 13].into_iter().map(|tick| clock.at(tick).ticks_back).collect();
+        assert_eq!(ticks_back, vec![0, 1, 2, 0], "a first frame has none; skipped ticks count; a tick shown twice moved nothing");
+        clock.capture = Some((0, 2));
+        assert_eq!((clock.at(13).ticks_back, clock.at(13).ticks_back), (0, 0), "a capture re-renders one tick");
+        clock.capture = None;
+        assert_eq!(clock.at(14).ticks_back, 1, "Live resumes from its own last frame after a capture");
+        assert_eq!(clock.at(5).ticks_back, 0, "a tick going back starts the history over");
     }
 }

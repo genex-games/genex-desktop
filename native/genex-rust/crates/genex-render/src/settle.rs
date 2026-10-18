@@ -70,6 +70,7 @@ use crate::graph::feature_drawn;
 use crate::post::ao::AoSettings;
 use crate::post::exposure::{ExposureHistory, ExposurePass};
 use crate::post::taa::{TaaNode, resets_history};
+use crate::post::taau::TaauNode;
 use crate::scene::CameraDesc;
 use crate::settings::{ExposureMode, JitterCycle, Look, Quality, RenderFeature};
 
@@ -309,6 +310,15 @@ impl FrameHistory {
         self.frame_index == 0
     }
 
+    /// Whether the frame starts the renderer's own histories over (AO's, the shadow cadence's,
+    /// the meshlet visibility's): a reset TAA's rule also starts over on
+    /// ([`crate::post::taa::resets_history`]). A dynamic-resolution step keeps them (pass 2,
+    /// RC-05): AO reads the previous size's history in uv, and neither the shadow maps nor the
+    /// meshlet visibility depend on the render size.
+    pub fn drops_history(&self) -> bool {
+        self.history_reset() && self.reset.is_none_or(crate::post::taa::resets_history)
+    }
+
     /// The re-render of a settled capture: its index from an empty Capture history.
     pub fn settled(frame: SettleFrame) -> FrameHistory {
         let reset = (frame.index == 0).then_some(HistoryReset::Capture);
@@ -455,6 +465,20 @@ impl SettleHooks for ExposureHistories {
 pub struct TaaHistories {
     live: TaaNode,
     capture: Option<TaaNode>,
+    /// TAA upscaling's nodes (renderer pass 2 B.8: the resolve at output size below a render
+    /// scale of 1), Live's and a capture's, each made on its set's first upscaled frame.
+    upscale: [Option<TaauNode>; 2],
+    /// Whether each set's last resolve was the upscale's: a frame that resolves the other way
+    /// starts both of the set's histories over (the way it left was not kept up meanwhile).
+    upscaled_last: [Option<bool>; 2],
+}
+
+/// The index of `set` in [`TaaHistories`]' per-set rows.
+const fn set_slot(set: HistorySet) -> usize {
+    match set {
+        HistorySet::Live => 0,
+        HistorySet::Capture => 1,
+    }
 }
 
 impl TaaHistories {
@@ -466,7 +490,7 @@ impl TaaHistories {
     /// [`TaaHistories::new`] on the renderer's device: histories it can copy a resolve out of
     /// (into the 1x scene, for `post-hdr` passes).
     pub(crate) fn on_device(device: &wgpu::Device, queue: &wgpu::Queue) -> Result<TaaHistories, RenderError> {
-        Ok(TaaHistories { live: TaaNode::with_usage(device, queue, wgpu::TextureUsages::COPY_SRC)?, capture: None })
+        Ok(TaaHistories { live: TaaNode::with_usage(device, queue, wgpu::TextureUsages::COPY_SRC)?, capture: None, upscale: [None, None], upscaled_last: [None, None] })
     }
 
     /// [`TaaHistories::node`] on the renderer's device.
@@ -480,6 +504,65 @@ impl TaaHistories {
         Ok(self.capture.as_mut().expect("made above"))
     }
 
+    /// `set`'s upscale node (B.8), made on its first use (starting from an empty history).
+    pub(crate) fn upscale_on(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, set: HistorySet) -> Result<&mut TaauNode, RenderError> {
+        let slot = &mut self.upscale[set_slot(set)];
+        if slot.is_none() {
+            *slot = Some(TaauNode::new(device, queue)?);
+        }
+        Ok(slot.as_mut().expect("made above"))
+    }
+
+    /// Note that `set` resolves this frame by the upscale (`upscaled`, made on `device` if need be)
+    /// or by TAA at render size. Going to the upscale hands TAA's last resolve over to it
+    /// ([`TaauNode::hand_over`]: a dynamic-resolution step below scale 1 keeps the history); going
+    /// back hands the upscale's last output to TAA ([`TaaNode::hand_back`]: its luma and lock
+    /// histories start empty).
+    pub(crate) fn resolve_by(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, set: HistorySet, upscaled: bool) -> Result<(), RenderError> {
+        let index = set_slot(set);
+        let last = self.upscaled_last[index].replace(upscaled);
+        match last {
+            Some(false) if upscaled => {
+                let taa = match set {
+                    HistorySet::Live => Some(&self.live),
+                    HistorySet::Capture => self.capture.as_ref(),
+                };
+                let resolve = taa.and_then(TaaNode::written_texture).map(|texture| texture.create_view(&wgpu::TextureViewDescriptor::default()));
+                self.reset_set(set);
+                if let Some(view) = resolve {
+                    self.upscale_on(device, queue, set)?.hand_over(view);
+                }
+            }
+            Some(true) if !upscaled => {
+                let output = self.upscale[index].as_ref().and_then(TaauNode::written_texture);
+                let resolve = output.map(|texture| texture.create_view(&wgpu::TextureViewDescriptor::default()));
+                self.reset_set(set);
+                let taa = match set {
+                    HistorySet::Live => Some(&mut self.live),
+                    HistorySet::Capture => self.capture.as_mut(),
+                };
+                if let (Some(taa), Some(view)) = (taa, resolve) {
+                    taa.hand_back(view);
+                }
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    /// `set`'s last resolve: the upscale's output when the set resolved by it last, else TAA's
+    /// (None before its first). What the next frame's screen-space GI gathers (B.4).
+    pub(crate) fn last_resolve(&self, set: HistorySet) -> Option<&wgpu::Texture> {
+        let index = set_slot(set);
+        if self.upscaled_last[index] == Some(true) {
+            return self.upscale[index].as_ref()?.written_texture();
+        }
+        match set {
+            HistorySet::Live => self.live.written_texture(),
+            HistorySet::Capture => self.capture.as_ref()?.written_texture(),
+        }
+    }
+
     /// `set`'s history texture of `slot` (None before its first resolve).
     pub(crate) fn written_texture(&self, set: HistorySet, slot: usize) -> Option<&wgpu::Texture> {
         match set {
@@ -490,6 +573,9 @@ impl TaaHistories {
 
     /// Start `set`'s history over (the next resolve takes the current sample whole).
     pub(crate) fn reset_set(&mut self, set: HistorySet) {
+        if let Some(upscale) = self.upscale[set_slot(set)].as_mut() {
+            upscale.reset();
+        }
         match set {
             HistorySet::Live => self.live.reset(),
             HistorySet::Capture => {
@@ -516,21 +602,27 @@ impl TaaHistories {
     /// it again.
     pub fn release_capture(&mut self) {
         self.capture = None;
+        self.upscale[set_slot(HistorySet::Capture)] = None;
+        self.upscaled_last[set_slot(HistorySet::Capture)] = None;
     }
 
     /// The bytes both history pairs hold now (the ledger's TAA row).
     pub fn history_bytes(&self) -> u64 {
-        self.live.history_bytes() + self.capture.as_ref().map_or(0, TaaNode::history_bytes)
+        let upscale: u64 = self.upscale.iter().flatten().map(TaauNode::history_bytes).sum();
+        self.live.history_bytes() + self.capture.as_ref().map_or(0, TaaNode::history_bytes) + upscale
     }
 }
 
 impl SettleHooks for TaaHistories {
     fn settle_reset(&mut self, gpu: &Gpu, set: HistorySet, reason: HistoryReset) -> Result<(), RenderError> {
         match set {
-            HistorySet::Live if resets_history(reason) => self.live.reset(),
+            HistorySet::Live if resets_history(reason) => self.reset_set(set),
             HistorySet::Live => {}
             // Every capture resolves from an empty history, never from the last capture's.
-            HistorySet::Capture => self.capture_node(gpu)?.reset(),
+            HistorySet::Capture => {
+                self.capture_node(gpu)?;
+                self.reset_set(set);
+            }
         }
         Ok(())
     }

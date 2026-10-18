@@ -11,7 +11,7 @@ use genex_core::json::{self, Value};
 use genex_core::protocol::{Answer, Dispatcher};
 use genex_core::session::StepResult;
 use genex_studio::{
-    CAPTURE_MAX_PX, CAPTURES_KEPT, CaptureFault, Injection, Op, Pixels, Studio, StudioGame, VerbRefusal,
+    CAPTURE_MAX_PX, CAPTURES_KEPT, CaptureFault, CaptureLens, Injection, Op, Pixels, Studio, StudioGame, VerbRefusal,
 };
 
 /// A game that records what the studio asked of it.
@@ -29,6 +29,13 @@ struct Double {
     injected: Vec<Injection>,
     muted: Option<bool>,
     quits: u32,
+    /// Whether the game draws captures at a size asked for (a Rust game), and what it was asked.
+    sizes_taken: bool,
+    capture_sizes: Vec<Option<[u32; 2]>>,
+    /// Whether the game draws the look's lens on a capture that asks (a Rust game with render
+    /// settings), and what each capture asked.
+    lenses_taken: bool,
+    capture_lenses: Vec<CaptureLens>,
 }
 
 impl Double {
@@ -122,6 +129,14 @@ impl StudioGame for Double {
     }
     fn request_quit(&mut self) {
         self.quits += 1;
+    }
+    fn set_capture_size(&mut self, size: Option<[u32; 2]>) -> bool {
+        self.capture_sizes.push(size);
+        self.sizes_taken || size.is_none()
+    }
+    fn set_capture_lens(&mut self, lens: CaptureLens) -> bool {
+        self.capture_lenses.push(lens);
+        self.lenses_taken || lens == CaptureLens::default()
     }
 }
 
@@ -582,4 +597,92 @@ fn render_settings_is_served_everywhere_and_answers_a_typed_unavailable_until_a_
         assert_eq!(refusal(&mut studio, &mut game, &shapeless), "bad-argument");
     }
     assert!(game.untouched());
+}
+
+/// Renderer pass 2, P2-0.9 step B (`capture --size`, the 4K/1440p plan): the game draws the capture
+/// at the size asked for, the reply carries the size it read back, and the next capture is at the
+/// world size again.
+#[test]
+fn a_capture_at_a_size_asks_the_game_for_it_and_gives_the_world_size_back() {
+    let state = StateDir::new();
+    let mut studio = ready_studio(&state.root());
+    let mut game = Double { sizes_taken: true, ..Double::with_pixels(64, 64) };
+    let answer = result(&mut studio, &mut game, r#"{"id":1,"op":"capture","arg":{"size":{"width":2560,"height":1440}}}"#);
+    assert_eq!(game.capture_sizes, vec![Some([2560, 1440]), None], "asked, then given back");
+    assert_eq!((answer["width"].as_f64(), answer["height"].as_f64()), (64.0, 64.0), "the size read back, not the size asked");
+    assert_eq!(game.renders, 1);
+    let named = result(&mut studio, &mut game, r#"{"id":2,"op":"capture","arg":{"camera":"top","size":null}}"#);
+    assert_eq!(named["camera"].as_str(), "top");
+    assert_eq!(game.capture_sizes[2..], [None, None], "a null size is the world size");
+}
+
+/// Renderer pass 2 A.9 (`capture`'s `lens`): a capture asks the game for the look's depth of field
+/// and motion blur, and the next capture asks for neither again.
+#[test]
+fn a_capture_asking_for_the_lens_hands_it_to_the_game_and_takes_it_back() {
+    let state = StateDir::new();
+    let mut studio = ready_studio(&state.root());
+    let mut game = Double { lenses_taken: true, ..Double::with_pixels(4, 2) };
+    result(&mut studio, &mut game, r#"{"id":1,"op":"capture","arg":{"lens":{"depthOfField":true,"motionBlur":false}}}"#);
+    let asked = CaptureLens { depth_of_field: true, motion_blur: false };
+    assert_eq!(game.capture_lenses, vec![asked, CaptureLens::default()], "asked, then given back");
+    result(&mut studio, &mut game, r#"{"id":2,"op":"capture","arg":{"lens":{"motionBlur":true}}}"#);
+    assert_eq!(game.capture_lenses[2], CaptureLens { depth_of_field: false, motion_blur: true }, "a missing switch is off");
+    result(&mut studio, &mut game, r#"{"id":3,"op":"capture","arg":{"lens":null}}"#);
+    assert_eq!(game.capture_lenses[4], CaptureLens::default(), "a null lens asks for neither");
+    assert_eq!(game.renders, 3);
+}
+
+/// A `lens` outside its shape, or one a game without render settings is asked for, is refused
+/// `bad-argument`: nothing is drawn or written and no sequence number is taken.
+#[test]
+fn hostile_capture_lenses_are_refused_and_draw_nothing() {
+    let rows = [
+        ("a string", r#""dof""#, true),
+        ("a boolean", r#"true"#, true),
+        ("an array", r#"["depthOfField"]"#, true),
+        ("a switch as a string", r#"{"depthOfField":"true"}"#, true),
+        ("a switch as a number", r#"{"motionBlur":1}"#, true),
+        ("a game without render settings", r#"{"depthOfField":true}"#, false),
+    ];
+    for (name, lens, taken) in rows {
+        let state = StateDir::new();
+        let mut studio = ready_studio(&state.root());
+        let mut game = Double { lenses_taken: taken, ..Double::with_pixels(4, 2) };
+        let line = format!(r#"{{"id":1,"op":"capture","arg":{{"lens":{lens}}}}}"#);
+        assert_eq!(refusal(&mut studio, &mut game, &line), VerbRefusal::BAD_ARGUMENT, "{name}");
+        assert_eq!(game.renders, 0, "{name}: nothing drawn");
+        assert!(state.captures().is_empty(), "{name}: nothing written");
+        let good = result(&mut studio, &mut game, r#"{"id":2,"op":"capture"}"#);
+        assert_eq!(good["seq"], Value::from(1), "{name}: the refusal took no sequence number");
+    }
+}
+
+/// A `size` outside its shape, or one a game that draws its world size only is asked for, is
+/// refused `bad-argument`: nothing is drawn or written and no sequence number is taken.
+#[test]
+fn hostile_capture_sizes_are_refused_and_draw_nothing() {
+    let rows = [
+        ("a string", r#"{"width":"2560","height":1440}"#, true),
+        ("a fraction", r#"{"width":2560.5,"height":1440}"#, true),
+        ("under the smallest target", r#"{"width":63,"height":1440}"#, true),
+        ("over the capture cap", r#"{"width":4097,"height":1440}"#, true),
+        ("negative", r#"{"width":-2560,"height":1440}"#, true),
+        ("a missing side", r#"{"width":2560}"#, true),
+        ("an array", r#"[2560,1440]"#, true),
+        ("a WxH string", r#""2560x1440""#, true),
+        ("infinite", r#"{"width":1e999,"height":1440}"#, true),
+        ("a world-size-only game", r#"{"width":2560,"height":1440}"#, false),
+    ];
+    for (name, size, taken) in rows {
+        let state = StateDir::new();
+        let mut studio = ready_studio(&state.root());
+        let mut game = Double { sizes_taken: taken, ..Double::with_pixels(4, 2) };
+        let line = format!(r#"{{"id":1,"op":"capture","arg":{{"size":{size}}}}}"#);
+        assert_eq!(refusal(&mut studio, &mut game, &line), VerbRefusal::BAD_ARGUMENT, "{name}");
+        assert_eq!(game.renders, 0, "{name}: nothing drawn");
+        assert!(state.captures().is_empty(), "{name}: nothing written");
+        let good = result(&mut studio, &mut game, r#"{"id":2,"op":"capture"}"#);
+        assert_eq!(good["seq"], Value::from(1), "{name}: the refusal took no sequence number");
+    }
 }

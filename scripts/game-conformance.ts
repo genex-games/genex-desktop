@@ -21,8 +21,10 @@
  * ProcessSandbox, with the developer's rights: so the script runs only the fixture and the
  * developer's own builds. Any other executable (the lane's `out/game` of a generated game, a download)
  * is refused unless `--unsandboxed` says the developer accepts running it unconfined, and then a
- * warning is printed. Live's ring needs the frames host and is reported `unavailable` here (a
- * follow-up). Each failing or unavailable check is printed with its typed problem's words.
+ * warning is printed. On a Mac a built game's Live ring is watched through the frames host on the
+ * built app's addon (`dist/resources`, from `npm run build`; `scripts/game-conformance-ring.ts`);
+ * without that addon, and for the fixture, it is `unavailable`. Each failing or unavailable check
+ * is printed with its typed problem's words.
  *
  * Exit status: 0 when no check failed, 1 when one did, 2 for a usage error, a missing game or an
  * executable outside the developer's builds without `--unsandboxed`.
@@ -46,10 +48,11 @@ import {
   type GameConformanceReport,
 } from "../src/shared/game-conformance.ts";
 import { BuildTarget } from "../src/shared/game-project.ts";
-import { NativeRunMode, type NativeTimers } from "../src/shared/native-contract.ts";
+import { NativeEnv, NativeRunMode, type NativeTimers } from "../src/shared/native-contract.ts";
 import { type GenexToml, readGenexToml, renderTomlFragment } from "../src/substrate/genex-toml.ts";
 import { NativeGamePort } from "../src/substrate/native-game-port.ts";
 import type { GameChild, GameExit } from "../src/substrate/spawn.ts";
+import { scriptRingProbe } from "./game-conformance-ring.ts";
 
 const REPO = fileURLToPath(new URL("..", import.meta.url));
 /** The fixture kit whose game this script can run with nothing built. */
@@ -68,6 +71,8 @@ const DEVELOPER_TARGETS = [SHARED_TARGET, path.join(REPO, "target")];
 /** Where a game folder's dev flavour is staged as a crate (ignored by Git). */
 const STAGED_BUILDS = path.join(REPO, ".studio-dev", "conformance-builds");
 const RUST_ENV = path.join(REPO, "scripts", "toolchains", "rust-env.ts");
+/** The built app's resources (`npm run build`): the Live ring's frames addon is `native/genex-frames.node` in it. */
+const BUILT_RESOURCES = path.join(REPO, "dist", "resources");
 const FACADE = path.join(REPO, "native", "genex-rust", "crates", "genex");
 const WORKSPACE_LOCK = path.join(REPO, "native", "genex-rust", "Cargo.lock");
 /** What a Rust · wgpu game folder holds: the manifest and the entry. */
@@ -293,8 +298,11 @@ function isRepositoryGame(folder: string): boolean {
   return isInside(repo, folder) && !isInside(path.join(repo, ".studio-dev"), folder);
 }
 
-/** Starts the game once on fd 3, in a group of its own, with only the studio's variables; ready or rejects. */
-async function launch(command: GameCommand, scratches: string[]): Promise<ConformanceLaunch> {
+/**
+ * Starts the game once on fd 3, in a group of its own, with only the studio's variables; ready or
+ * rejects. `framesService` names the Live ring's channel for the ring's own run.
+ */
+async function launch(command: GameCommand, scratches: string[], framesService?: string): Promise<ConformanceLaunch> {
   const scratch = await realpath(await mkdtemp(path.join(os.tmpdir(), "genex-conformance-")));
   scratches.push(scratch);
   const stateDir = path.join(scratch, "state");
@@ -303,6 +311,7 @@ async function launch(command: GameCommand, scratches: string[]): Promise<Confor
   const nonce = Buffer.from(crypto.getRandomValues(new Uint8Array(NONCE_BYTES))).toString("hex");
   // A built game folder reads its genex.toml, shaders and assets from the folder (the dev fallback).
   const gameDir = command.gameDir ? { [MANIFEST_DIR_ENV]: command.gameDir } : {};
+  const frames = framesService ? { [NativeEnv.FramesService]: framesService } : {};
   const proc = spawn(command.file, command.args, {
     stdio: ["ignore", "pipe", "pipe", "pipe"],
     detached: true,
@@ -314,6 +323,7 @@ async function launch(command: GameCommand, scratches: string[]): Promise<Confor
       HOME: home,
       GENEX_HEADLESS: "1",
       ...gameDir,
+      ...frames,
     },
   });
   const exited = new Promise<GameExit>((resolve) => proc.once("exit", (code, signal) => resolve({ code, signal })));
@@ -425,9 +435,15 @@ async function main(): Promise<number> {
   }
   const { command, seed } = ask;
   const scratches: string[] = [];
+  // The fixture's stub game has no ring; a built game's ring is watched on a Mac.
+  const ringLaunch = (service: string) => launch(command, scratches, service);
+  const watchRing = process.platform === "darwin" && !command.fixture;
+  const liveRing = watchRing
+    ? scriptRingProbe(BUILT_RESOURCES, TIMERS, ringLaunch, (line) => console.error(line))
+    : null;
   try {
     const report = await runGameConformance(
-      { launch: () => launch(command, scratches), platform: process.platform, now: () => Date.now(), liveRing: null },
+      { launch: () => launch(command, scratches), platform: process.platform, now: () => Date.now(), liveRing },
       { project: ask.game, target: ask.target, demo: ask.demo, ...(seed === undefined ? {} : { seed }) },
     );
     if (ask.json) console.log(JSON.stringify(report, null, 2));

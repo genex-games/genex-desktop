@@ -53,17 +53,31 @@ pub const ACTIVITY: &str = if cfg!(feature = "game-activity") { "game-activity" 
 /// The platform suffix in record names (`pond-600-seed1-cast.android.json`).
 pub const PLATFORM: &str = "android";
 
-/// Android's platform hooks: gamepad buttons from key events, the thermal status, and on a device
+/// Android's platform hooks: gamepad buttons from key events, the thermal status, the display's
+/// refresh interval, and on a device
 /// the refusal screen blitted without wgpu. Pads are not polled (they arrive as events).
 pub const ANDROID_HOOKS: PlatformHooks = PlatformHooks {
     pads: |_| {},
     pad_key: gamepad::pad_key,
     thermal: thermal::read,
+    refresh_ms: display_refresh_ms,
     #[cfg(target_os = "android")]
     refusal_screen: Some(refusal_blit::draw),
     #[cfg(not(target_os = "android"))]
     refusal_screen: None,
 };
+
+/// The display's refresh interval in milliseconds (`Display.getRefreshRate`, through the JNI bridge).
+#[cfg(target_os = "android")]
+fn display_refresh_ms() -> Option<f64> {
+    jni_bridge::display_refresh_hz().filter(|hz| hz.is_finite() && *hz > 0.0).map(|hz| 1000.0 / f64::from(hz))
+}
+
+/// No display to read off a device: the shell measures the frames' intervals.
+#[cfg(not(target_os = "android"))]
+fn display_refresh_ms() -> Option<f64> {
+    None
+}
 
 #[cfg(target_os = "android")]
 mod entry {

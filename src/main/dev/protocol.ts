@@ -6,6 +6,7 @@
 import { z } from "zod";
 import { DeviceClass, QualityPreset, RenderFeature } from "../../shared/render-quality.ts";
 import { SECOND_MS } from "../../shared/duration.ts";
+import { NATIVE_CAPTURE_MAX_PX, NATIVE_CAPTURE_MIN_PX } from "../../shared/native-contract.ts";
 
 const GRAPH_DRAG_MIN_MS = 100;
 const GRAPH_DRAG_MAX_MS = 5 * SECOND_MS;
@@ -120,6 +121,9 @@ const name = z
   .string()
   .regex(/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,95}$/)
   .refine((s) => !s.includes(".."));
+/** A native capture's `--size WxH` (the 4K/1440p capture plan): whole pixels, each side 64..4096. */
+const captureSide = z.number().int().min(NATIVE_CAPTURE_MIN_PX).max(NATIVE_CAPTURE_MAX_PX);
+const captureSize = z.object({ width: captureSide, height: captureSide }).strict();
 const target = { selector, scope: selector.optional() };
 const key = {
   surface,
@@ -145,9 +149,10 @@ const input = z.discriminatedUnion("type", [
       x: z.number().optional(),
       y: z.number().optional(),
       button: z.enum(["left", "right", "middle"]).optional(),
+      px: z.boolean().optional(),
     })
     .strict(),
-  z.object({ type: z.literal("move"), x: z.number(), y: z.number() }).strict(),
+  z.object({ type: z.literal("move"), x: z.number(), y: z.number(), px: z.boolean().optional() }).strict(),
   z
     .object({ type: z.literal("look"), dx: z.number().min(-2000).max(2000), dy: z.number().min(-2000).max(2000) })
     .strict(),
@@ -199,7 +204,12 @@ export const operationSchema = z.discriminatedUnion("method", [
   operation(DevMethod.FixtureGraph, { action: z.enum(GraphFixtureAction) }),
   operation(DevMethod.GameState, { surface: gameSurface }),
   operation(DevMethod.GameRenderSettings, { surface: gameSurface, set: renderSettingsSet.optional() }),
-  operation(DevMethod.Capture, { surface, name, frame: z.enum(NativeCaptureFrame).optional() }),
+  operation(DevMethod.Capture, {
+    surface,
+    name,
+    frame: z.enum(NativeCaptureFrame).optional(),
+    size: captureSize.optional(),
+  }),
   operation(DevMethod.Logs, {
     surface: z.enum(DevLogSurface),
     cursor: z.number().int().min(0).default(0),

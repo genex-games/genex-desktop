@@ -16,7 +16,7 @@ use std::path::{Path, PathBuf};
 use genex_render::Gpu;
 use genex_render::capture::Capture;
 use genex_render::device_class::DeviceClass;
-use genex_render::post::bloom::{BloomImage, BloomSettings, COST_CHAINS_PER_SAMPLE, MIPS_MAX, bloom_chain_image, bloom_chain_image_msaa, bloom_gpu_ms};
+use genex_render::post::bloom::{BloomImage, BloomSettings, CHAIN_MIPS, CHAIN_RESOLUTION, COST_CHAINS_PER_SAMPLE, bloom_chain_image, bloom_chain_image_msaa, bloom_gpu_ms};
 use genex_render::post::tonemap::{bloom_image, tonemap_image};
 use genex_render::presets::preset_quality;
 use genex_render::settings::{BloomQuality, Look, Quality, QualityPreset, Tonemapper};
@@ -37,26 +37,25 @@ const COST_FRAMES: u32 = 60;
 // ---------------------------------------------------------------------------------------------
 // CPU rows
 
-fn chain(mips: u8, half_res: bool) -> BloomQuality {
+fn chain(resolution: u16) -> BloomQuality {
     let mut quality = Quality::off().bloom;
     quality.enabled = true;
-    quality.mips = mips;
-    quality.half_res = half_res;
+    quality.resolution = resolution;
     quality
 }
 
-fn settings(intensity: f32, mips: u8) -> BloomSettings {
-    BloomSettings::new(&Look::default().with_bloom(intensity, 0.0, 1.0), &chain(mips, true)).expect("bloom on")
+fn settings(intensity: f32, spread: f32) -> BloomSettings {
+    BloomSettings::new(&Look::default().with_bloom(intensity, 0.0, spread), &chain(CHAIN_RESOLUTION)).expect("bloom on")
 }
 
 #[test]
-fn bloom_is_drawn_only_when_on_with_mips_and_intensity() {
+fn bloom_is_drawn_only_when_on_with_a_resolution_and_intensity() {
     let look = Look::default();
     assert_eq!(BloomSettings::new(&look, &Quality::off().bloom), None, "the off preset draws no bloom");
-    assert_eq!(BloomSettings::new(&look, &chain(0, true)), None, "no mips, no chain");
-    assert_eq!(BloomSettings::new(&look.with_bloom(0.0, 0.0, 1.0), &chain(5, true)), None, "intensity 0 composites nothing");
-    let on = BloomSettings::new(&look, &chain(6, true)).expect("on");
-    assert_eq!((on.intensity, on.threshold, on.radius, on.quality.mips), (0.04, 0.0, 1.0, 6), "threshold-free, energy-conserving default");
+    assert_eq!(BloomSettings::new(&look, &chain(0)), None, "no resolution, no chain");
+    assert_eq!(BloomSettings::new(&look.with_bloom(0.0, 0.0, 1.0), &chain(CHAIN_RESOLUTION)), None, "intensity 0 composites nothing");
+    let on = BloomSettings::new(&look, &chain(CHAIN_RESOLUTION)).expect("on");
+    assert_eq!((on.intensity, on.threshold, on.radius, on.quality.resolution), (0.04, 0.0, 1.0, CHAIN_RESOLUTION), "threshold-free, energy-conserving default");
     for preset in [QualityPreset::Medium, QualityPreset::High, QualityPreset::Ultra] {
         let quality = preset_quality(preset, DeviceClass::ALL[0]);
         assert!(BloomSettings::new(&look, &quality.bloom).is_some(), "{preset:?} draws bloom");
@@ -165,11 +164,11 @@ fn emitter_scene() -> Vec<[f32; 4]> {
 fn metal_a_single_bright_texel_spreads_symmetrically() {
     let Some(gpu) = gpu() else { return };
     let size = (64, 64);
-    let settings = settings(1.0, 5);
+    let settings = settings(1.0, 1.0);
     // A block centred on (32, 32): a texel corner on every mip of the half-resolution chain, so
     // the spread must mirror exactly about it.
     let block = image(size, 0.0, |x, y| if (31.0..33.0).contains(&x) && (31.0..33.0).contains(&y) { [1.0; 3] } else { [0.0; 3] });
-    let BloomImage { size: (w, h), texels: bloom } = bloom_chain_image(&gpu, &settings, size, &block).expect("chain");
+    let BloomImage { size: (w, h), texels: bloom } = bloom_chain_image(&gpu, &settings, size, size, &block).expect("chain");
     assert_eq!((w, h), (32, 32));
     let at = |x: u32, y: u32| luma(&bloom[(y * w + x) as usize]);
     let peak = at(15, 15);
@@ -188,7 +187,7 @@ fn metal_a_single_bright_texel_spreads_symmetrically() {
     // centre where the edge clamps them): the spread's centroid stays on the texel and it is round.
     let size = (512, 512);
     let texel = image(size, 0.0, |x, y| if x as u32 == 229 && y as u32 == 277 { [1.0; 3] } else { [0.0; 3] });
-    let BloomImage { size: (w, _), texels: bloom } = bloom_chain_image(&gpu, &settings, size, &texel).expect("chain");
+    let BloomImage { size: (w, _), texels: bloom } = bloom_chain_image(&gpu, &settings, size, size, &texel).expect("chain");
     let total: f64 = bloom.iter().map(luma).sum();
     let moment = |axis: fn(u32, u32) -> f64| bloom.iter().enumerate().map(|(i, t)| luma(t) * axis(i as u32 % w, i as u32 / w)).sum::<f64>() / total;
     // Chain texel centres in full-resolution pixels.
@@ -214,20 +213,22 @@ fn metal_scene_plus_bloom_in_lerp_mode_conserves_energy_within_two_percent() {
         [lamp + glow + ramp, lamp * 0.8 + glow * 0.6 + ramp, lamp * 0.6 + glow * 0.3 + ramp]
     });
     let scene_mean = mean_luma(&scene);
-    for mips in [5, 6, MIPS_MAX] {
-        let bloom = bloom_chain_image(&gpu, &settings(1.0, mips), size, &scene).expect("chain").texels;
+    // P2-0.13 flipped (was 5, 6 and 7 mips): the chain's depth is fixed; its spread's weights
+    // must keep the energy as the mip counts did.
+    for spread in [0.5, 1.0, 2.0] {
+        let bloom = bloom_chain_image(&gpu, &settings(1.0, spread), size, size, &scene).expect("chain").texels;
         let bloom_mean = mean_luma(&bloom);
         let drift = (bloom_mean / scene_mean - 1.0).abs();
-        assert!(drift < ENERGY_TOLERANCE, "{mips} mips: bloom mean {bloom_mean} against the scene's {scene_mean} ({:.2}%)", drift * 100.0);
+        assert!(drift < ENERGY_TOLERANCE, "spread {spread}: bloom mean {bloom_mean} against the scene's {scene_mean} ({:.2}%)", drift * 100.0);
         // The lerp at any intensity keeps the frame's energy: (1 - t) E + t E'.
         for t in [0.04f64, 0.3, 1.0] {
             let composite = (1.0 - t) * scene_mean + t * bloom_mean;
-            assert!((composite / scene_mean - 1.0).abs() < ENERGY_TOLERANCE, "{mips} mips at {t}");
+            assert!((composite / scene_mean - 1.0).abs() < ENERGY_TOLERANCE, "spread {spread} at {t}");
         }
     }
     // Karis's weight takes energy from a lone firefly on purpose: it must not flicker the glow.
     let firefly = image(size, 0.0, |x, y| if x as u32 == 140 && y as u32 == 100 { [5000.0; 3] } else { [0.0; 3] });
-    let bloom = bloom_chain_image(&gpu, &settings(1.0, 6), size, &firefly).expect("chain").texels;
+    let bloom = bloom_chain_image(&gpu, &settings(1.0, 1.0), size, size, &firefly).expect("chain").texels;
     assert!(mean_luma(&bloom) < mean_luma(&firefly) * 0.25, "a firefly's bloom is held down");
     assert!(bloom.iter().all(|t| t.iter().all(|c| c.is_finite())), "no inf or NaN in the chain");
 }
@@ -237,13 +238,18 @@ fn metal_scene_plus_bloom_in_lerp_mode_conserves_energy_within_two_percent() {
 fn metal_the_msaa_first_downsample_blooms_a_flat_field_into_itself() {
     let Some(gpu) = gpu() else { return };
     // The desktop MSAA path: the chain reads the samples the tonemap resolves in its own pass.
+    // P2-0.13 flipped (was 1 and 5 mips): the chain at twice the scene's size (a bilinear 2x2) and
+    // at four times it (a 4K output's, the area filter), each spread.
     let color = [0.75, 0.5, 0.25, 1.0];
-    for mips in [1, 5] {
-        let bloom = bloom_chain_image_msaa(&gpu, &settings(1.0, mips), (64, 36), 4, color).expect("msaa chain");
-        assert_eq!(bloom.size, (32, 18));
-        for texel in &bloom.texels {
-            for c in 0..3 {
-                assert!((f64::from(texel[c]) - color[c]).abs() < 2e-3, "{mips} mips: {texel:?} against {color:?}");
+    for (resolution, top) in [(CHAIN_RESOLUTION, (32, 18)), (9, (16, 9))] {
+        for spread in [1.0, 3.0] {
+            let settings = BloomSettings::new(&Look::default().with_bloom(1.0, 0.0, spread), &chain(resolution)).expect("bloom on");
+            let bloom = bloom_chain_image_msaa(&gpu, &settings, (64, 36), 4, color).expect("msaa chain");
+            assert_eq!(bloom.size, top);
+            for texel in &bloom.texels {
+                for c in 0..3 {
+                    assert!((f64::from(texel[c]) - color[c]).abs() < 2e-3, "a {top:?} chain, spread {spread}: {texel:?} against {color:?}");
+                }
             }
         }
     }
@@ -315,13 +321,13 @@ fn metal_a_stylistic_threshold_spreads_only_what_is_above_it_and_keeps_the_rest(
 
 #[test]
 #[ignore = "GPU: run with -- --ignored metal"]
-fn metal_bloom_seven_mips_at_1080p_holds_its_budget() {
+fn metal_bloom_at_1080p_holds_its_budget() {
     let Some(gpu) = gpu() else { return };
     let render = (1920, 1080);
     let ultra = preset_quality(QualityPreset::Ultra, DeviceClass::ALL[0]);
-    assert_eq!(ultra.bloom.mips, MIPS_MAX, "ultra draws the full chain");
+    assert_eq!(genex_render::post::bloom::chain_sizes(render, &ultra.bloom).len(), usize::from(CHAIN_MIPS), "ultra draws the full chain");
     let settings = BloomSettings::new(&Look::default(), &ultra.bloom).expect("ultra draws bloom");
-    let Some(mut costs) = bloom_gpu_ms(&gpu, &settings, render, COST_FRAMES).expect("timed") else {
+    let Some(mut costs) = bloom_gpu_ms(&gpu, &settings, render, render, COST_FRAMES).expect("timed") else {
         eprintln!("skipped: the device has no TIMESTAMP_QUERY");
         return;
     };
@@ -331,17 +337,297 @@ fn metal_bloom_seven_mips_at_1080p_holds_its_budget() {
     let (p50, p95) = (p(0.5), p(0.95));
     if let Ok(path) = std::env::var("GENEX_PERF_OUT") {
         let row = format!(
-            "{{\"row\":\"bloom\",\"render\":[{},{}],\"mips\":{},\"half_res\":{},\"samples\":{},\"chains_per_sample\":{COST_CHAINS_PER_SAMPLE},\"gpu_ms_p50\":{p50},\"gpu_ms_p95\":{p95},\"budget_ms\":{BLOOM_BUDGET_MS},\"backend\":\"{}\",\"adapter\":\"{}\"}}\n",
+            "{{\"row\":\"bloom\",\"render\":[{},{}],\"mips\":{CHAIN_MIPS},\"resolution\":{},\"samples\":{},\"chains_per_sample\":{COST_CHAINS_PER_SAMPLE},\"gpu_ms_p50\":{p50},\"gpu_ms_p95\":{p95},\"budget_ms\":{BLOOM_BUDGET_MS},\"backend\":\"{}\",\"adapter\":\"{}\"}}\n",
             render.0,
             render.1,
-            settings.quality.mips,
-            settings.quality.half_res,
+            settings.quality.resolution,
             costs.len(),
             gpu.receipt().backend,
             gpu.receipt().adapter
         );
         std::fs::write(path, row).expect("perf row");
     }
-    eprintln!("bloom 7 mips 1080p: p50 {p50:.3} ms, p95 {p95:.3} ms (mean of {COST_CHAINS_PER_SAMPLE} chains a sample)");
+    eprintln!("bloom 1080p: p50 {p50:.3} ms, p95 {p95:.3} ms (mean of {COST_CHAINS_PER_SAMPLE} chains a sample)");
     assert!(p50 <= BLOOM_BUDGET_MS, "bloom p50 {p50} ms over the {BLOOM_BUDGET_MS} ms budget");
+}
+
+// ---------------------------------------------------------------------------------------------
+// Renderer pass 2, P2-0.13 (P5, P6): the chain is sized from the output, not the render size, and
+// keeps one mip count on every preset; spread is per-mip weights, the tent stays at one texel.
+
+/// How far a halo's width may move across presets and DRS steps (the WP's acceptance).
+const HALO_TOLERANCE: f64 = 0.05;
+/// How far a spread may move the bloom image's energy from spread 1's.
+const SPREAD_ENERGY_TOLERANCE: f64 = 0.005;
+/// The bloom budget at every D7 output (plan §2.5 and D7), GPU ms.
+const BLOOM_OUTPUT_BUDGET_MS: f32 = 0.4;
+
+/// Desktop presets that draw bloom and every class's presets, each resolved for `class`.
+fn bloom_presets(class: DeviceClass) -> Vec<(QualityPreset, BloomQuality)> {
+    [QualityPreset::Low, QualityPreset::Medium, QualityPreset::High, QualityPreset::Ultra]
+        .into_iter()
+        .map(|preset| (preset, preset_quality(preset, class).bloom))
+        .filter(|(_, bloom)| BloomSettings::new(&Look::default(), bloom).is_some())
+        .collect()
+}
+
+#[test]
+fn the_chain_is_sized_from_the_output_with_one_mip_count_on_every_preset() {
+    for output in [(1280, 720), (1920, 1080), (2560, 1440), (3840, 2160)] {
+        for class in DeviceClass::ALL {
+            let presets = bloom_presets(class);
+            let Some((_, first)) = presets.first() else { continue };
+            let chain = genex_render::post::bloom::chain_sizes(output, first);
+            for (preset, bloom) in &presets {
+                assert_eq!(genex_render::post::bloom::chain_sizes(output, bloom), chain, "{} {preset:?} at {output:?}: the same chain as every other preset", class.wire());
+            }
+            let top = chain[0];
+            assert!(top.1 <= 540 && top.1 <= output.1 / 2, "{} at {output:?}: the chain's top {top:?} is at most min(h / 2, 540) rows", class.wire());
+            let aspect = |(w, h): (u32, u32)| f64::from(w) / f64::from(h);
+            assert!((aspect(top) / aspect(output) - 1.0).abs() < 0.01, "{} at {output:?}: the top {top:?} keeps the output's aspect", class.wire());
+        }
+    }
+}
+
+#[test]
+fn spread_is_per_mip_weights_that_keep_the_energy() {
+    let n = 7;
+    let equal = genex_render::post::bloom::mip_weights(1.0, n);
+    assert_eq!(equal.len(), n);
+    assert!(equal.iter().all(|w| (w - 1.0 / n as f32).abs() < 1e-6), "spread 1 weighs every mip alike: {equal:?}");
+    for spread in [0.25, 0.5, 1.4, 2.0, 4.0] {
+        let weights = genex_render::post::bloom::mip_weights(spread, n);
+        let sum: f32 = weights.iter().sum();
+        assert!((sum - 1.0).abs() < 1e-5, "spread {spread}: the weights sum to 1 ({sum})");
+        let rising = weights.windows(2).all(|pair| if spread > 1.0 { pair[1] > pair[0] } else { pair[1] < pair[0] });
+        assert!(rising, "spread {spread}: a wider spread weighs the wider mips more ({weights:?})");
+    }
+}
+
+#[test]
+fn the_budget_ledger_counts_the_output_sized_chain_at_every_drs_step() {
+    use genex_render::budget::{BudgetInput, ledger};
+    use genex_render::settings::SceneFormat;
+    let output = (1920, 1080);
+    let ultra = preset_quality(QualityPreset::Ultra, DeviceClass::ALL[0]);
+    let bytes = |scale: f32| {
+        let input = BudgetInput::new(output, scale, SceneFormat::Rgba16Float, false);
+        ledger(&ultra, &input).entries().iter().filter(|entry| entry.label == "bloom").map(|entry| entry.bytes).sum::<u64>()
+    };
+    let chain = genex_render::post::bloom::chain_bytes(output, &ultra.bloom);
+    for scale in [1.0, 0.75, 0.6] {
+        assert_eq!(bytes(scale), chain, "scale {scale}: the ledger holds the chain the renderer allocates");
+    }
+}
+
+/// A `size` scene holding a small round emitter of fixed size and place on the screen: a Gaussian
+/// `sigma` output pixels wide at uv `centre`, `peak` radiance, sampled at each scene texel's centre
+/// (so every render size holds the same picture).
+fn screen_emitter(render: (u32, u32), output: (u32, u32), centre: (f64, f64), sigma: f64, peak: f32) -> Vec<[f32; 4]> {
+    let to_output = (f64::from(output.0) / f64::from(render.0), f64::from(output.1) / f64::from(render.1));
+    image(render, 0.0, |x, y| {
+        let (ox, oy) = (f64::from(x) * to_output.0, f64::from(y) * to_output.1);
+        let (cx, cy) = (centre.0 * f64::from(output.0), centre.1 * f64::from(output.1));
+        let v = peak * libm::exp(-(sq(ox - cx) + sq(oy - cy)) / (2.0 * sq(sigma))) as f32;
+        [v, v, v]
+    })
+}
+
+/// A bloom image's halo around uv `centre`, in output pixels: the full width at half maximum of
+/// its horizontal profile through the centre (bilinear), and the radius holding half its energy.
+#[derive(Clone, Copy, Debug)]
+struct Halo {
+    fwhm: f64,
+    r50: f64,
+}
+
+fn halo(image: &BloomImage, output: (u32, u32), centre: (f64, f64)) -> Halo {
+    let (w, h) = image.size;
+    let px = (f64::from(output.0) / f64::from(w), f64::from(output.1) / f64::from(h));
+    let at = |x: f64, y: f64| {
+        // Bilinear between texel centres, clamped at the edge.
+        let (fx, fy) = ((x - 0.5).clamp(0.0, f64::from(w - 1)), (y - 0.5).clamp(0.0, f64::from(h - 1)));
+        let (x0, y0) = (fx.floor() as u32, fy.floor() as u32);
+        let (x1, y1) = ((x0 + 1).min(w - 1), (y0 + 1).min(h - 1));
+        let (tx, ty) = (fx - f64::from(x0), fy - f64::from(y0));
+        let t = |x: u32, y: u32| luma(&image.texels[(y * w + x) as usize]);
+        (t(x0, y0) * (1.0 - tx) + t(x1, y0) * tx) * (1.0 - ty) + (t(x0, y1) * (1.0 - tx) + t(x1, y1) * tx) * ty
+    };
+    let (cx, cy) = (centre.0 * f64::from(w), centre.1 * f64::from(h));
+    let peak = at(cx, cy);
+    let step = 0.01;
+    let edge = |dir: f64| {
+        let mut d = 0.0;
+        while at(cx + dir * d, cy) > peak * 0.5 && d < f64::from(w) {
+            d += step;
+        }
+        d
+    };
+    let fwhm = (edge(1.0) + edge(-1.0)) * px.0;
+    let mut texels: Vec<(f64, f64)> = (0..h)
+        .flat_map(|y| (0..w).map(move |x| (x, y)))
+        .map(|(x, y)| {
+            let (dx, dy) = ((f64::from(x) + 0.5 - cx) * px.0, (f64::from(y) + 0.5 - cy) * px.1);
+            ((sq(dx) + sq(dy)).sqrt(), luma(&image.texels[(y * w + x) as usize]))
+        })
+        .collect();
+    texels.sort_by(|a, b| a.0.total_cmp(&b.0));
+    let total: f64 = texels.iter().map(|(_, v)| v).sum();
+    let mut held = 0.0;
+    let r50 = texels.iter().find(|(_, v)| {
+        held += v;
+        held >= total * 0.5
+    });
+    Halo { fwhm, r50: r50.map_or(0.0, |(r, _)| *r) }
+}
+
+#[test]
+#[ignore = "GPU: run with -- --ignored metal"]
+fn metal_a_point_emitters_halo_is_as_wide_on_every_preset_and_drs_step() {
+    let Some(gpu) = gpu() else { return };
+    let centre = (0.41, 0.47);
+    let mut report = String::new();
+    let mut failures = Vec::new();
+    for (class, output, scales) in [
+        (DeviceClass::ALL[0], (1920, 1080), [1.0, 0.6]),
+        (DeviceClass::ALL[1], (2560, 1440), [1.0, 0.6]),
+        (DeviceClass::ALL[4], (2532, 1170), [0.75, 0.6]),
+    ] {
+        let mut reference: Option<Halo> = None;
+        for (preset, quality) in bloom_presets(class).into_iter().rev() {
+            let settings = BloomSettings::new(&Look::default(), &quality).expect("bloom on");
+            for scale in scales {
+                let render = genex_render::presets::step_size(output, scale);
+                let scene = screen_emitter(render, output, centre, 2.0, 20.0);
+                let image = bloom_chain_image(&gpu, &settings, render, output, &scene).expect("chain");
+                let measured = halo(&image, output, centre);
+                let base = *reference.get_or_insert(measured);
+                let (dw, dr) = (measured.fwhm / base.fwhm - 1.0, measured.r50 / base.r50 - 1.0);
+                let line = format!("{} {preset:?} scale {scale} render {render:?}: fwhm {:.2} px ({:+.1}%), r50 {:.1} px ({:+.1}%)", class.wire(), measured.fwhm, dw * 100.0, measured.r50, dr * 100.0);
+                report.push_str(&line);
+                report.push('\n');
+                if dw.abs() > HALO_TOLERANCE || dr.abs() > HALO_TOLERANCE {
+                    failures.push(line);
+                }
+            }
+        }
+    }
+    eprintln!("{report}");
+    if let Ok(dir) = std::env::var("GENEX_RENDER_EVIDENCE_DIR") {
+        let _ = std::fs::create_dir_all(&dir);
+        std::fs::write(PathBuf::from(dir).join("halo-widths.txt"), &report).expect("evidence");
+    }
+    assert!(failures.is_empty(), "halo wider or narrower than the class's first preset at scale 1 by more than {}%:\n{}", HALO_TOLERANCE * 100.0, failures.join("\n"));
+}
+
+#[test]
+#[ignore = "GPU: run with -- --ignored metal"]
+fn metal_a_wide_spread_glows_smoothly_without_a_lattice() {
+    let Some(gpu) = gpu() else { return };
+    let size = (512, 512);
+    let centre = (0.5 + 0.3 / 512.0, 0.5 + 0.7 / 512.0);
+    let high = preset_quality(QualityPreset::High, DeviceClass::ALL[0]);
+    let scene = screen_emitter(size, size, centre, 1.0, 20.0);
+    for spread in [2.0, 3.0, 4.0] {
+        let settings = BloomSettings::new(&Look::default().with_bloom(1.0, 0.0, spread), &high.bloom).expect("bloom on");
+        let image = bloom_chain_image(&gpu, &settings, size, size, &scene).expect("chain");
+        let (w, h) = image.size;
+        let (cx, cy) = (centre.0 * f64::from(w), centre.1 * f64::from(h));
+        let at = |x: f64, y: f64| {
+            let (ix, iy) = ((x.floor() as u32).min(w - 1), (y.floor() as u32).min(h - 1));
+            luma(&image.texels[(iy * w + ix) as usize])
+        };
+        // Walking out from the emitter along each of eight directions, the glow never rises again
+        // (a sparse tent rings: each mip's copies sit its tap spacing apart).
+        let mut rises = 0;
+        let mut worst = 0.0f64;
+        for k in 0..8 {
+            let angle = f64::from(k) * std::f64::consts::FRAC_PI_4;
+            let (dx, dy) = (angle.cos(), angle.sin());
+            let mut last = at(cx, cy);
+            for step in 1..200 {
+                let r = f64::from(step) * 0.5;
+                let v = at(cx + dx * r, cy + dy * r);
+                if v > last * 1.02 + 1e-9 {
+                    rises += 1;
+                    worst = worst.max(v / last - 1.0);
+                }
+                last = v;
+            }
+        }
+        assert_eq!(rises, 0, "spread {spread}: the glow rises {rises} times walking outwards (worst +{:.1}%)", worst * 100.0);
+        // Round: at each radius the diagonal holds what the axis holds.
+        for r in [6.0, 12.0, 24.0, 48.0] {
+            let axis = (at(cx + r, cy) + at(cx - r, cy) + at(cx, cy + r) + at(cx, cy - r)) / 4.0;
+            let d = r * std::f64::consts::FRAC_1_SQRT_2;
+            let diagonal = (at(cx + d, cy + d) + at(cx - d, cy + d) + at(cx + d, cy - d) + at(cx - d, cy - d)) / 4.0;
+            assert!((diagonal / axis - 1.0).abs() < 0.2, "spread {spread} at {r} texels: diagonal {diagonal} against axis {axis} (a star)");
+        }
+    }
+}
+
+#[test]
+#[ignore = "GPU: run with -- --ignored metal"]
+fn metal_spread_widens_the_halo_and_keeps_the_energy() {
+    let Some(gpu) = gpu() else { return };
+    let size = (512, 512);
+    let centre = (0.5, 0.5);
+    let high = preset_quality(QualityPreset::High, DeviceClass::ALL[0]);
+    // A soft lamp: no lone texel for Karis's weight to hold down.
+    let scene = screen_emitter(size, size, centre, 6.0, 2.0);
+    let scene_mean = mean_luma(&scene);
+    let measure = |spread: f32| {
+        let settings = BloomSettings::new(&Look::default().with_bloom(1.0, 0.0, spread), &high.bloom).expect("bloom on");
+        let image = bloom_chain_image(&gpu, &settings, size, size, &scene).expect("chain");
+        (halo(&image, size, centre), mean_luma(&image.texels) / scene_mean)
+    };
+    // Karis's weight holds a bright lamp's energy down alike at every spread; the spread itself
+    // moves none of it.
+    let (_, reference) = measure(1.0);
+    let mut last = 0.0;
+    let mut report = String::new();
+    for spread in [0.25, 0.5, 1.0, 1.4, 2.0, 4.0] {
+        let (measured, energy) = measure(spread);
+        let line = format!("spread {spread}: fwhm {:.2} px, r50 {:.2} px, energy {energy:.4}", measured.fwhm, measured.r50);
+        eprintln!("{line}");
+        report.push_str(&line);
+        report.push('\n');
+        assert!(measured.r50 > last, "spread {spread}: r50 {} not wider than the narrower spread's {last}", measured.r50);
+        last = measured.r50;
+        assert!((energy / reference - 1.0).abs() < SPREAD_ENERGY_TOLERANCE, "spread {spread}: energy {energy:.4} against {reference:.4} at spread 1");
+    }
+    if let Ok(dir) = std::env::var("GENEX_RENDER_EVIDENCE_DIR") {
+        let _ = std::fs::create_dir_all(&dir);
+        std::fs::write(PathBuf::from(dir).join("spread-widths.txt"), &report).expect("evidence");
+    }
+}
+
+#[test]
+#[ignore = "GPU: run with -- --ignored metal"]
+fn metal_bloom_holds_its_budget_at_every_output_and_drs_step() {
+    let Some(gpu) = gpu() else { return };
+    let ultra = preset_quality(QualityPreset::Ultra, DeviceClass::ALL[0]);
+    let settings = BloomSettings::new(&Look::default(), &ultra.bloom).expect("ultra draws bloom");
+    let mut report = String::new();
+    let mut over = Vec::new();
+    for (output, scale) in [((1920, 1080), 1.0), ((1920, 1080), 0.6), ((2560, 1440), 1.0), ((3840, 2160), 1.0), ((3840, 2160), 0.6)] {
+        let render = genex_render::presets::step_size(output, scale);
+        let Some(mut costs) = bloom_gpu_ms(&gpu, &settings, render, output, COST_FRAMES).expect("timed") else {
+            eprintln!("skipped: the device has no TIMESTAMP_QUERY");
+            return;
+        };
+        costs.sort_by(f32::total_cmp);
+        let p = |q: f32| costs[((costs.len() - 1) as f32 * q).round() as usize];
+        let line = format!("output {output:?} render {render:?}: p50 {:.3} ms, p95 {:.3} ms, min {:.3} ms", p(0.5), p(0.95), p(0.0));
+        report.push_str(&line);
+        report.push('\n');
+        if p(0.5) > BLOOM_OUTPUT_BUDGET_MS {
+            over.push(line);
+        }
+    }
+    eprintln!("{report}");
+    if let Ok(path) = std::env::var("GENEX_PERF_OUT") {
+        std::fs::write(format!("{path}.outputs.txt"), &report).expect("perf rows");
+    }
+    assert!(over.is_empty(), "bloom over {BLOOM_OUTPUT_BUDGET_MS} ms:\n{}", over.join("\n"));
 }

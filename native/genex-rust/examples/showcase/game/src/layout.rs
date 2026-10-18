@@ -36,8 +36,8 @@ pub const PATH_HALF_WIDTH: f32 = 1.05;
 pub const DOCK_DECK: f32 = 0.55;
 /// The dock's length out over the water.
 pub const DOCK_LENGTH: f32 = 12.0;
-/// Grass blade candidates the layout scatters (the meadow keeps most near the viewpoints).
-const BLADE_CANDIDATES: u32 = 480_000;
+/// Grass blade candidates the layout scattered before A.8 (their randoms are still drawn).
+const OLD_BLADE_CANDIDATES: u32 = 480_000;
 /// Tree candidates the forest mask filters.
 const TREE_CANDIDATES: u32 = 2_600;
 /// Fireflies and drifting pollen motes.
@@ -69,31 +69,6 @@ pub const CLEARINGS: [(f32, f32, f32); 8] = [
     (-30.0, -2.0, 7.0),
     (-21.0, -2.0, 6.0),
 ];
-
-/// What the terrain is made of at a point (the grass grows on the grassy ones; the terrain
-/// material blends its layers from the splat map, `meshgen::splat_weights`).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub enum Surface {
-    /// The lake bed below the water.
-    Bed,
-    /// The beach ring around the lake.
-    Sand,
-    /// Steep slopes.
-    Rock,
-    /// Shaded, lush grass.
-    GrassDark,
-    /// Ordinary meadow grass.
-    GrassMid,
-    /// Dry, golden grass.
-    GrassDry,
-}
-
-impl Surface {
-    /// Whether grass grows on it.
-    pub const fn grassy(self) -> bool {
-        matches!(self, Surface::GrassDark | Surface::GrassMid | Surface::GrassDry)
-    }
-}
 
 /// A tree's species.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -167,16 +142,6 @@ pub struct Tree {
     pub tint: f32,
 }
 
-impl Tree {
-    /// The canopy's centre and radius, for shadows and for keeping grass and motes clear.
-    pub fn canopy(&self) -> (Vec3, f32) {
-        match self.kind {
-            TreeKind::Pine => (self.base + vec3(0.0, 4.2 * self.scale, 0.0), 1.9 * self.scale),
-            TreeKind::Round | TreeKind::Golden => (self.base + vec3(0.0, 4.6 * self.scale, 0.0), 2.4 * self.scale),
-        }
-    }
-}
-
 /// One rock.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Rock {
@@ -189,23 +154,6 @@ pub struct Rock {
     /// Which mesh variant it uses (0..3).
     pub variant: u32,
     /// Its colour variation, 0..1.
-    pub tint: f32,
-}
-
-/// One grass blade, as the grass pass's instance buffer holds it.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct Blade {
-    /// Its root.
-    pub root: Vec3,
-    /// Its turn about +y.
-    pub yaw: f32,
-    /// Its height.
-    pub height: f32,
-    /// Its width at the root.
-    pub width: f32,
-    /// How much sun reaches it (0 in a tree's or the cabin's shadow, 1 in the open).
-    pub sun: f32,
-    /// Its colour variation, 0..1; above 0.965 it carries a flower (`grass.wgsl`).
     pub tint: f32,
 }
 
@@ -239,8 +187,6 @@ pub struct Layout {
     pub trees: Vec<Tree>,
     /// The rocks.
     pub rocks: Vec<Rock>,
-    /// The grass blades.
-    pub blades: Vec<Blade>,
     /// The lanterns' light positions.
     pub lanterns: Vec<Vec3>,
     /// The fireflies' home points.
@@ -366,12 +312,6 @@ pub fn yard_radius(angle: f32) -> f32 {
     5.4 + 0.5 * math::sin(3.0 * angle + 0.7) + 0.35 * math::sin(5.0 * angle + 2.0)
 }
 
-/// Whether (x, z) is worn bare: on the path or in the cabin's yard (the terrain's soil layer).
-pub fn worn(x: f32, z: f32) -> bool {
-    let d = vec2(x, z) - CABIN;
-    path_distance(x, z) < path_half_width(x, z) || d.length() < yard_radius(math::atan2(d.y, d.x))
-}
-
 /// Distance from (x, z) to the cabin's centre.
 pub fn cabin_distance(x: f32, z: f32) -> f32 {
     (vec2(x, z) - CABIN).length()
@@ -399,33 +339,77 @@ pub fn height(x: f32, z: f32) -> f32 {
     h - 0.14 * (1.0 - smoothstep(0.6, 2.2, path_distance(x, z)))
 }
 
+/// How much of each terrain layer covers (x, z): soil (the path and the yard), sand (the beach and
+/// the lake bed), rock (steep slopes) and the meadow's dryness (0 lush to 1 golden); grass is what
+/// the other layers leave. Each 0..1, soft-edged, from the layout's own functions.
+pub fn splat_weights(x: f32, z: f32) -> [f32; 4] {
+    let p = vec2(x, z);
+    let edge = 0.25 * (value_noise(p * 1.7, 21) - 0.5);
+    let path = 1.0 - smoothstep(-0.25, 0.3, path_distance(x, z) - path_half_width(x, z) + edge);
+    let d = p - CABIN;
+    let yard = 1.0 - smoothstep(-0.6, 0.4, d.length() - yard_radius(math::atan2(d.y, d.x)) + edge * 2.0);
+    let soil = path.max(yard);
+    let h = height(x, z);
+    let shore = (1.0 - smoothstep(0.02, 0.22, h - WATER_LEVEL + edge * 0.4)) * (1.0 - smoothstep(1.15, 1.3, lake_radius(x, z)));
+    let grassy_bank = smoothstep(0.62, 0.74, value_noise(p * 0.12, 9)) * smoothstep(-0.25, 0.0, h - WATER_LEVEL);
+    let sand = (shore * (1.0 - grassy_bank)).max(1.0 - smoothstep(-0.35, -0.1, h - WATER_LEVEL));
+    let steep = smoothstep(0.93, 0.84, normal(x, z).y) * smoothstep(2.0, 3.5, h);
+    let patch = fbm(p * 0.045, 3, 7) + 0.18 * (value_noise(p * 0.35, 8) - 0.5);
+    let dry = smoothstep(0.38, 0.66, patch);
+    [soil, sand * (1.0 - soil), steep * (1.0 - soil), dry]
+}
+
+/// Metres between the terrain's height samples (renderer pass 2 A.7: the built-in terrain's
+/// height field, a finer grid than the 0.75 m mesh it replaced).
+pub const TERRAIN_SPACING: f32 = 0.5;
+/// Height samples a side: `-TERRAIN_HALF..=TERRAIN_HALF` every [`TERRAIN_SPACING`].
+pub const TERRAIN_SAMPLES: u32 = 385;
+
+/// The terrain's layers in control-map order (`world::terrain` makes them): lush grass, dry grass,
+/// soil, sand, rock and the lake bed (the sand under the water, darkened with depth).
+pub const TERRAIN_LAYERS: usize = 6;
+
+/// What the terrain is made of at (x, z) as one control texel: the two layers that cover most of
+/// it (the second's share of the pair as the blend) and how wet it is beside the water.
+pub fn terrain_texel(x: f32, z: f32) -> genex::TerrainTexel {
+    let [soil, sand, rock, dry] = splat_weights(x, z);
+    let h = height(x, z);
+    let grass = (1.0 - soil - sand - rock).max(0.0);
+    let bed = 1.0 - smoothstep(WATER_LEVEL - 1.4, WATER_LEVEL - 0.1, h);
+    let weights = [grass * (1.0 - dry), grass * dry, soil, sand * (1.0 - bed), rock, sand * bed];
+    let mut order: [usize; TERRAIN_LAYERS] = [0, 1, 2, 3, 4, 5];
+    // The heaviest two, ties to the earlier layer (a fixed order: the same texel on every target).
+    order.sort_by(|a, b| weights[*b].total_cmp(&weights[*a]).then(a.cmp(b)));
+    let (first, second) = (order[0], order[1]);
+    let pair = weights[first] + weights[second];
+    let amount = if pair > 0.0 { weights[second] / pair } else { 0.0 };
+    let wet = 1.0 - smoothstep(WATER_LEVEL + 0.02, WATER_LEVEL + 0.35, h);
+    genex::TerrainTexel::blend(first as u8, second as u8, amount).with_wetness(wet)
+}
+
+/// The terrain's heights and control map over `-TERRAIN_HALF..=TERRAIN_HALF`, computed once per
+/// process (the layout never changes).
+pub fn terrain_ground() -> &'static (Vec<f32>, Vec<genex::TerrainTexel>) {
+    static GROUND: OnceLock<(Vec<f32>, Vec<genex::TerrainTexel>)> = OnceLock::new();
+    GROUND.get_or_init(|| {
+        let n = TERRAIN_SAMPLES;
+        let at = |k: u32| -TERRAIN_HALF + k as f32 * TERRAIN_SPACING;
+        let mut heights = Vec::with_capacity((n * n) as usize);
+        let mut control = Vec::with_capacity((n * n) as usize);
+        for j in 0..n {
+            for i in 0..n {
+                heights.push(height(at(i), at(j)));
+                control.push(terrain_texel(at(i), at(j)));
+            }
+        }
+        (heights, control)
+    })
+}
+
 /// The terrain's unit normal at (x, z).
 pub fn normal(x: f32, z: f32) -> Vec3 {
     let e = 0.35;
     vec3(height(x - e, z) - height(x + e, z), 2.0 * e, height(x, z - e) - height(x, z + e)).normalize()
-}
-
-/// What the terrain is made of at (x, z).
-pub fn surface(x: f32, z: f32) -> Surface {
-    let h = height(x, z);
-    if h < WATER_LEVEL - 0.08 {
-        return Surface::Bed;
-    }
-    let grassy_bank = value_noise(vec2(x, z) * 0.12, 9) > 0.68;
-    if h < WATER_LEVEL + 0.05 && lake_radius(x, z) < 1.2 && !grassy_bank {
-        return Surface::Sand;
-    }
-    if h > 3.0 && normal(x, z).y < 0.9 {
-        return Surface::Rock;
-    }
-    let patch = fbm(vec2(x, z) * 0.045, 3, 7) + 0.18 * (value_noise(vec2(x, z) * 0.35, 8) - 0.5);
-    if patch < 0.42 {
-        Surface::GrassDark
-    } else if patch < 0.6 {
-        Surface::GrassMid
-    } else {
-        Surface::GrassDry
-    }
 }
 
 /// Whether (x, z) is kept clear of trees, rocks and props: the lake and its beach, the path, the
@@ -447,11 +431,11 @@ impl Layout {
         let dock = dock();
         let trees = trees(&mut rng);
         let rocks = rocks(&mut rng);
-        let blades = blades(&mut rng, &trees);
+        skip_old_blades(&mut rng);
         let lanterns = lanterns(&dock);
         let fireflies = fireflies(&mut rng, &trees);
         let motes = motes(&mut rng);
-        Layout { trees, rocks, blades, lanterns, fireflies, motes, dock }
+        Layout { trees, rocks, lanterns, fireflies, motes, dock }
     }
 }
 
@@ -539,81 +523,13 @@ fn rocks(rng: &mut Pcg32) -> Vec<Rock> {
     rocks
 }
 
-/// Grid cell size and cells per side for finding the trees whose shadow may reach a point.
-const SHADE_CELL: f32 = 8.0;
-const SHADE_CELLS: usize = 24;
-
-/// The trees' canopy shadows on the ground along the renderer's sun, bucketed on a grid.
-struct Shade {
-    /// Per cell: each shadow's centre (x, z) and radius.
-    cells: Vec<Vec<(Vec2, f32)>>,
-    along: Vec2,
-}
-
-impl Shade {
-    fn new(trees: &[Tree]) -> Shade {
-        let sun = SUN_DIR.normalize();
-        let along = vec2(sun.x, sun.z) / sun.y;
-        let mut cells = vec![Vec::new(); SHADE_CELLS * SHADE_CELLS];
-        for tree in trees {
-            let (center, radius) = tree.canopy();
-            // Cast onto the ground at the trunk's foot: close enough for the grass around it.
-            let shadow = vec2(center.x, center.z) - along * (center.y - tree.base.y);
-            if let Some(cell) = Shade::cell(shadow) {
-                cells[cell].push((shadow, radius));
-            }
-        }
-        Shade { cells, along }
+/// The randoms the layout drew for its grass blades before the meadow became the renderer's
+/// (renderer pass 2 A.8: the terrain's grassy layers grow it, `world::terrain`): still drawn, seven
+/// a candidate, so the lanterns, fireflies and motes keep their places.
+fn skip_old_blades(rng: &mut Pcg32) {
+    for _ in 0..OLD_BLADE_CANDIDATES * 7 {
+        rng.unit();
     }
-
-    fn cell(p: Vec2) -> Option<usize> {
-        let i = ((p.x + TERRAIN_HALF) / SHADE_CELL).floor();
-        let j = ((p.y + TERRAIN_HALF) / SHADE_CELL).floor();
-        let inside = (0.0..SHADE_CELLS as f32).contains(&i) && (0.0..SHADE_CELLS as f32).contains(&j);
-        inside.then(|| j as usize * SHADE_CELLS + i as usize)
-    }
-
-    /// How much sun reaches ground point `p` (0 in a canopy's or the cabin's shadow, 1 in the open).
-    fn sunlight(&self, p: Vec3) -> f32 {
-        let here = vec2(p.x, p.z);
-        let mut light: f32 = 1.0;
-        for dj in -1..=1 {
-            for di in -1..=1 {
-                let Some(cell) = Shade::cell(here + vec2(di as f32, dj as f32) * SHADE_CELL) else { continue };
-                for &(shadow, radius) in &self.cells[cell] {
-                    light = light.min(smoothstep(radius * 0.55, radius * 1.05, (here - shadow).length()));
-                }
-            }
-        }
-        let cabin_shadow = CABIN - self.along * 2.6;
-        light.min(smoothstep(3.0, 4.6, (here - cabin_shadow).length()))
-    }
-}
-
-fn blades(rng: &mut Pcg32, trees: &[Tree]) -> Vec<Blade> {
-    let shade = Shade::new(trees);
-    let mut blades = Vec::new();
-    for _ in 0..BLADE_CANDIDATES {
-        let x = rng.range_f32(-62.0, 44.0);
-        let z = rng.range_f32(-48.0, 46.0);
-        let (yaw, tall, wide, tint, keep) = (rng.range_f32(0.0, math::TAU), rng.unit(), rng.unit(), rng.unit(), rng.unit());
-        // Dense near the viewpoints; thin far away (the pass fades blades out with distance anyway).
-        let near = CLEARINGS.iter().map(|&(cx, cz, _)| 1.0 - smoothstep(8.0, 34.0, (vec2(x, z) - vec2(cx, cz)).length())).fold(0.0, f32::max);
-        if keep > 0.12 + 0.88 * near || worn(x, z) {
-            continue;
-        }
-        let surface = surface(x, z);
-        let edge = path_distance(x, z) < path_half_width(x, z) + 0.6;
-        if !surface.grassy() {
-            continue;
-        }
-        let dry = surface == Surface::GrassDry;
-        let height = if edge { 0.08 + 0.12 * tall } else { 0.14 + 0.28 * tall * tall + if dry { 0.18 } else { 0.0 } };
-        let root = vec3(x, self::height(x, z) - 0.03, z);
-        let tint = if dry { 0.5 + 0.5 * tint } else { tint };
-        blades.push(Blade { root, yaw, height, width: 0.028 + 0.026 * wide, sun: shade.sunlight(root), tint });
-    }
-    blades
 }
 
 fn lanterns(dock: &Dock) -> Vec<Vec3> {
@@ -677,6 +593,7 @@ mod tests {
     fn the_lake_holds_water_and_the_cabin_stands_on_dry_ground() {
         assert!(height(LAKE_CENTER.x, LAKE_CENTER.y) < WATER_LEVEL - 1.5);
         assert!(height(CABIN.x, CABIN.y) > WATER_LEVEL + 1.0);
-        assert_eq!(surface(LAKE_CENTER.x, LAKE_CENTER.y), Surface::Bed);
+        // The lake's middle is the terrain's lake-bed layer (the last of `TERRAIN_LAYERS`).
+        assert_eq!(usize::from(terrain_texel(LAKE_CENTER.x, LAKE_CENTER.y).control().base()), TERRAIN_LAYERS - 1);
     }
 }

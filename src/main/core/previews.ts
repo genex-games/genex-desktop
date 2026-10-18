@@ -406,7 +406,15 @@ function unservedUrl(p: { project: string; entry?: string | undefined }): string
 const BUILD_FAILED_NOTE = { loadError: true, buildFailed: true } as const;
 
 /** Where a capture's frame came from when the port does not say (a web page): every field unknown. */
-const UNKNOWN_PROVENANCE: CaptureProvenance = { seq: null, digest: null, camera: null, runId: null, build: null };
+const UNKNOWN_PROVENANCE: CaptureProvenance = {
+  seq: null,
+  digest: null,
+  camera: null,
+  runId: null,
+  build: null,
+  render: null,
+  outputSize: null,
+};
 
 /** Whose capture it is and what it renders: the manifest's fields the capture itself knows. */
 type CaptureSource = Pick<CaptureManifest, "runId" | "workerId" | "commit" | "edited">;

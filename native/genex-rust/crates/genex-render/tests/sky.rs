@@ -499,6 +499,12 @@ fn metal_evidence_frames_of_the_sky_through_the_day() {
 /// does not help on Metal: compute passes overlap, so the refresh's timestamps took in the load's
 /// tail, 0.31 ms for the 64x36 LUT; RQ2 review.)
 fn time_refreshes(gpu: &Gpu, quality: &EnvironmentQuality, refresh_all: bool, runs: usize) -> Vec<f64> {
+    time_refreshes_of(gpu, quality, refresh_all, false, runs)
+}
+
+/// [`time_refreshes`], at night under a full moon when `night` (B.2: the moonlit sky-view LUT is
+/// computed beside the sun's).
+fn time_refreshes_of(gpu: &Gpu, quality: &EnvironmentQuality, refresh_all: bool, night: bool, runs: usize) -> Vec<f64> {
     let total = TIMING_WARMUP + runs;
     let stamps_count = 2 * total as u32;
     let bytes = u64::from(stamps_count) * 8;
@@ -523,7 +529,10 @@ fn time_refreshes(gpu: &Gpu, quality: &EnvironmentQuality, refresh_all: bool, ru
         if refresh_all {
             sky = sky.with_ground_albedo([0.2 + 0.001 * run as f32, 0.3, 0.3]);
         }
-        let sun = sun_at(20.0 + 0.1 * run as f32);
+        let sun = if night { sun_at(-20.0 - 0.1 * run as f32) } else { sun_at(20.0 + 0.1 * run as f32) };
+        if night {
+            sky = sky.with_moon(Some(genex_render::settings::Moon::new(sun.map(|c| -c))));
+        }
         let first = 2 * run as u32;
         let mut encoder = gpu.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("sky timing") });
         let writes = wgpu::ComputePassTimestampWrites { query_set: &queries, beginning_of_pass_write_index: Some(first), end_of_pass_write_index: Some(first + 1) };
@@ -801,4 +810,692 @@ fn metal_under_auto_exposure_the_sky_is_exposed_as_the_geometry_is() {
     assert!(exposure < 0.5, "the bright scene meters down: exposure {exposure}");
     let (manual, auto) = (manual_sky / manual_ground, auto_sky / auto_ground);
     assert!((auto / manual - 1.0).abs() < 0.03, "sky over ground: {auto} under auto exposure, {manual} under manual (exposure {exposure})");
+}
+
+// ---------------------------------------------------------------------------------------------
+// Pass 2 P2-0.11 (SI-15): an f64 reference for the sky-view LUT
+
+/// The atmosphere a LUT was computed from, in f64 (km): the medium of `sky_view.wgsl`.
+struct ReferenceSky {
+    bottom: f64,
+    top: f64,
+    rayleigh: [f64; 3],
+    rayleigh_falloff: f64,
+    mie_scattering: f64,
+    mie_extinction: f64,
+    mie_g: f64,
+    mie_falloff: f64,
+    ozone: [f64; 3],
+    ozone_centre: f64,
+    ozone_width: f64,
+    ground_albedo: [f64; 3],
+    multiscatter_factor: f64,
+    /// The transmittance to the top, by height (rows) and zenith cosine (columns).
+    transmittance: Vec<[f64; 3]>,
+    /// All scattering orders past the first per unit illuminance, by height and sun cosine.
+    multiscatter: Vec<[f64; 3]>,
+}
+
+/// Rows and columns of the reference's transmittance table.
+const REFERENCE_T_HEIGHTS: usize = 256;
+const REFERENCE_T_COSINES: usize = 1024;
+/// Midpoint steps of one transmittance integral.
+const REFERENCE_T_STEPS: usize = 400;
+/// Side of the reference's multiple-scattering table, its gathering directions per side and
+/// steps per gathering ray.
+const REFERENCE_MS_SIDE: usize = 32;
+const REFERENCE_MS_DIRECTIONS: usize = 16;
+const REFERENCE_MS_STEPS: usize = 100;
+/// Steps along a view ray (quadratic spacing, midpoints).
+const REFERENCE_VIEW_STEPS: usize = 2000;
+
+struct Medium {
+    rayleigh: [f64; 3],
+    mie: f64,
+    extinction: [f64; 3],
+}
+
+fn dot3(a: [f64; 3], b: [f64; 3]) -> f64 {
+    a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
+}
+
+fn length3(a: [f64; 3]) -> f64 {
+    dot3(a, a).sqrt()
+}
+
+impl ReferenceSky {
+    fn new(row: &genex_render::layout::GpuSkyAtmosphere) -> ReferenceSky {
+        let f = |v: f32| f64::from(v);
+        let mut sky = ReferenceSky {
+            bottom: f(row.radii[0]),
+            top: f(row.radii[1]),
+            rayleigh: [0, 1, 2].map(|c| f(row.rayleigh[c])),
+            rayleigh_falloff: f(row.rayleigh[3]),
+            mie_scattering: f(row.mie[0]),
+            mie_extinction: f(row.mie[1]),
+            mie_g: f(row.mie[2]),
+            mie_falloff: f(row.mie[3]),
+            ozone: [0, 1, 2].map(|c| f(row.ozone[c])),
+            ozone_centre: f(row.radii[2]),
+            ozone_width: f(row.radii[3]),
+            ground_albedo: [0, 1, 2].map(|c| f(row.ground_albedo[c])),
+            multiscatter_factor: f(row.ozone[3]),
+            transmittance: Vec::new(),
+            multiscatter: Vec::new(),
+        };
+        sky.transmittance = (0..REFERENCE_T_HEIGHTS * REFERENCE_T_COSINES)
+            .map(|index| {
+                let height = (sky.top - sky.bottom) * (index / REFERENCE_T_COSINES) as f64 / (REFERENCE_T_HEIGHTS - 1) as f64;
+                let mu = -1.0 + 2.0 * (index % REFERENCE_T_COSINES) as f64 / (REFERENCE_T_COSINES - 1) as f64;
+                sky.transmittance_exact(height, mu)
+            })
+            .collect();
+        sky.multiscatter = (0..REFERENCE_MS_SIDE * REFERENCE_MS_SIDE)
+            .map(|index| {
+                let height = (sky.top - sky.bottom) * (index / REFERENCE_MS_SIDE) as f64 / (REFERENCE_MS_SIDE - 1) as f64;
+                let sun_cos = -1.0 + 2.0 * (index % REFERENCE_MS_SIDE) as f64 / (REFERENCE_MS_SIDE - 1) as f64;
+                sky.multiscatter_exact(height.clamp(0.01, sky.top - sky.bottom - 0.01), sun_cos)
+            })
+            .collect();
+        sky
+    }
+
+    fn medium(&self, height: f64) -> Medium {
+        let rayleigh_density = (-height * self.rayleigh_falloff).exp();
+        let mie_density = (-height * self.mie_falloff).exp();
+        let ozone = (1.0 - (height - self.ozone_centre).abs() / (0.5 * self.ozone_width)).max(0.0);
+        let rayleigh = self.rayleigh.map(|s| s * rayleigh_density);
+        Medium {
+            rayleigh,
+            mie: self.mie_scattering * mie_density,
+            extinction: [0, 1, 2].map(|c| rayleigh[c] + self.mie_extinction * mie_density + self.ozone[c] * ozone),
+        }
+    }
+
+    /// The distance along unit `dir` from `origin` to the ground, None when it misses.
+    fn ground_distance(&self, origin: [f64; 3], dir: [f64; 3]) -> Option<f64> {
+        let b = dot3(origin, dir);
+        let c = dot3(origin, origin) - self.bottom * self.bottom;
+        let discriminant = b * b - c;
+        (b <= 0.0 && discriminant >= 0.0).then(|| (-b - discriminant.sqrt()).max(0.0))
+    }
+
+    /// The distance along unit `dir` from `origin` inside the atmosphere to its top.
+    fn top_distance(&self, origin: [f64; 3], dir: [f64; 3]) -> f64 {
+        let b = dot3(origin, dir);
+        let c = dot3(origin, origin) - self.top * self.top;
+        (-b + (b * b - c).max(0.0).sqrt()).max(0.0)
+    }
+
+    /// The transmittance from `height` along zenith cosine `mu` to the top, by a midpoint integral.
+    fn transmittance_exact(&self, height: f64, mu: f64) -> [f64; 3] {
+        let origin = [0.0, self.bottom + height, 0.0];
+        let dir = [(1.0 - mu * mu).max(0.0).sqrt(), mu, 0.0];
+        let reach = self.top_distance(origin, dir);
+        let dt = reach / REFERENCE_T_STEPS as f64;
+        let mut depth = [0.0; 3];
+        for i in 0..REFERENCE_T_STEPS {
+            let t = (i as f64 + 0.5) * dt;
+            let p = [dir[0] * t, origin[1] + dir[1] * t, 0.0];
+            let medium = self.medium((length3(p) - self.bottom).max(0.0));
+            for (total, extinction) in depth.iter_mut().zip(medium.extinction) {
+                *total += extinction * dt;
+            }
+        }
+        depth.map(|d| (-d).exp())
+    }
+
+    /// The tabled transmittance (bilinear in height and cosine).
+    fn transmittance(&self, height: f64, mu: f64) -> [f64; 3] {
+        let y = (height / (self.top - self.bottom)).clamp(0.0, 1.0) * (REFERENCE_T_HEIGHTS - 1) as f64;
+        let x = ((mu + 1.0) * 0.5).clamp(0.0, 1.0) * (REFERENCE_T_COSINES - 1) as f64;
+        bilinear(&self.transmittance, REFERENCE_T_COSINES, REFERENCE_T_HEIGHTS, x, y)
+    }
+
+    /// The tabled multiple scattering (bilinear in height and sun cosine).
+    fn multiscatter(&self, height: f64, sun_cos: f64) -> [f64; 3] {
+        let y = (height / (self.top - self.bottom)).clamp(0.0, 1.0) * (REFERENCE_MS_SIDE - 1) as f64;
+        let x = ((sun_cos + 1.0) * 0.5).clamp(0.0, 1.0) * (REFERENCE_MS_SIDE - 1) as f64;
+        bilinear(&self.multiscatter, REFERENCE_MS_SIDE, REFERENCE_MS_SIDE, x, y)
+    }
+
+    /// Hillaire's isotropic multiple-scattering estimate at `height` with the sun at `sun_cos`: the
+    /// second order gathered over the sphere with the lit ground, summed over every order as
+    /// 1 / (1 - f_ms), times the multiple-scattering factor.
+    fn multiscatter_exact(&self, height: f64, sun_cos: f64) -> [f64; 3] {
+        let origin = [0.0, self.bottom + height, 0.0];
+        let sun = [(1.0 - sun_cos * sun_cos).max(0.0).sqrt(), sun_cos, 0.0];
+        let isotropic = 1.0 / (4.0 * core::f64::consts::PI);
+        let (mut light, mut transfer) = ([0.0; 3], [0.0; 3]);
+        let n = REFERENCE_MS_DIRECTIONS;
+        for k in 0..n * n {
+            let azimuth = 2.0 * core::f64::consts::PI * ((k % n) as f64 + 0.5) / n as f64;
+            let cos_polar = 1.0 - 2.0 * ((k / n) as f64 + 0.5) / n as f64;
+            let sin_polar = (1.0 - cos_polar * cos_polar).max(0.0).sqrt();
+            let dir = [azimuth.cos() * sin_polar, cos_polar, azimuth.sin() * sin_polar];
+            let ground = self.ground_distance(origin, dir);
+            let reach = ground.unwrap_or_else(|| self.top_distance(origin, dir));
+            let mut throughput = [1.0_f64; 3];
+            for i in 0..REFERENCE_MS_STEPS {
+                let (t0, t1) = (reach * i as f64 / REFERENCE_MS_STEPS as f64, reach * (i + 1) as f64 / REFERENCE_MS_STEPS as f64);
+                let dt = t1 - t0;
+                let p = [0, 1, 2].map(|c| origin[c] + (t0 + 0.5 * dt) * dir[c]);
+                let r = length3(p);
+                let sample_height = (r - self.bottom).max(0.0);
+                let medium = self.medium(sample_height);
+                let lit = if self.ground_distance(p, sun).is_some() { 0.0 } else { 1.0 };
+                let sun_t = self.transmittance(sample_height, dot3(sun, p) / r);
+                for c in 0..3 {
+                    let scattering = medium.rayleigh[c] + medium.mie;
+                    let step = (-medium.extinction[c] * dt).exp();
+                    let integral = (1.0 - step) / medium.extinction[c].max(1e-12);
+                    light[c] += throughput[c] * lit * sun_t[c] * scattering * isotropic * integral;
+                    transfer[c] += throughput[c] * scattering * integral;
+                    throughput[c] *= step;
+                }
+            }
+            if let Some(t) = ground {
+                let p = [0, 1, 2].map(|c| origin[c] + t * dir[c]);
+                let mu = dot3(sun, p) / length3(p);
+                let sun_t = self.transmittance(0.0, mu);
+                for c in 0..3 {
+                    light[c] += throughput[c] * sun_t[c] * mu.max(0.0) * self.ground_albedo[c] / core::f64::consts::PI;
+                }
+            }
+        }
+        let count = (n * n) as f64;
+        [0, 1, 2].map(|c| light[c] / count / (1.0 - transfer[c] / count).max(1e-4) * self.multiscatter_factor)
+    }
+
+    /// The radiance per unit sun illuminance reaching a camera `height` km up along unit `dir`
+    /// with the sun towards unit `sun`, the disk excluded (`sky_integrate`, integrated finely).
+    fn radiance(&self, height: f64, dir: [f64; 3], sun: [f64; 3]) -> [f64; 3] {
+        let origin = [0.0, self.bottom + height, 0.0];
+        let ground = self.ground_distance(origin, dir);
+        let reach = ground.unwrap_or_else(|| self.top_distance(origin, dir)).min(9000.0);
+        let cos_theta = dot3(dir, sun);
+        let rayleigh_phase = 3.0 / (16.0 * core::f64::consts::PI) * (1.0 + cos_theta * cos_theta);
+        let g = self.mie_g;
+        let mie_phase = 3.0 / (8.0 * core::f64::consts::PI) * (1.0 - g * g) / (2.0 + g * g) * (1.0 + cos_theta * cos_theta) / (1.0 + g * g - 2.0 * g * cos_theta).max(1e-12).powf(1.5);
+        let (mut radiance, mut throughput) = ([0.0; 3], [1.0_f64; 3]);
+        let steps = REFERENCE_VIEW_STEPS as f64;
+        for i in 0..REFERENCE_VIEW_STEPS {
+            let (t0, t1) = (reach * (i as f64 / steps).powi(2), reach * ((i + 1) as f64 / steps).powi(2));
+            let dt = t1 - t0;
+            let p = [0, 1, 2].map(|c| origin[c] + (t0 + 0.5 * dt) * dir[c]);
+            let r = length3(p);
+            let sample_height = (r - self.bottom).max(0.0);
+            let sun_cos = dot3(sun, p) / r;
+            let medium = self.medium(sample_height);
+            let lit = if self.ground_distance(p, sun).is_some() { 0.0 } else { 1.0 };
+            let sun_t = self.transmittance(sample_height, sun_cos);
+            let multiple = self.multiscatter(sample_height, sun_cos);
+            for c in 0..3 {
+                let single = lit * sun_t[c] * (medium.rayleigh[c] * rayleigh_phase + medium.mie * mie_phase);
+                let source = single + multiple[c] * (medium.rayleigh[c] + medium.mie);
+                let step = (-medium.extinction[c] * dt).exp();
+                radiance[c] += throughput[c] * source * (1.0 - step) / medium.extinction[c].max(1e-12);
+                throughput[c] *= step;
+            }
+        }
+        if let Some(t) = ground {
+            let p = [0, 1, 2].map(|c| origin[c] + t * dir[c]);
+            let mu = dot3(sun, p) / length3(p);
+            let sun_t = self.transmittance(0.0, mu);
+            for c in 0..3 {
+                radiance[c] += throughput[c] * sun_t[c] * mu.max(0.0) * self.ground_albedo[c] / core::f64::consts::PI;
+            }
+        }
+        radiance
+    }
+}
+
+/// `table` (`width` × `height`, rows of `width`) at fractional texel `(x, y)`, bilinear.
+fn bilinear(table: &[[f64; 3]], width: usize, height: usize, x: f64, y: f64) -> [f64; 3] {
+    let (x0, y0) = ((x.floor() as usize).min(width - 1), (y.floor() as usize).min(height - 1));
+    let (x1, y1) = ((x0 + 1).min(width - 1), (y0 + 1).min(height - 1));
+    let (fx, fy) = (x - x0 as f64, y - y0 as f64);
+    let at = |x: usize, y: usize| table[y * width + x];
+    [0, 1, 2].map(|c| {
+        let top = at(x0, y0)[c] * (1.0 - fx) + at(x1, y0)[c] * fx;
+        let bottom = at(x0, y1)[c] * (1.0 - fx) + at(x1, y1)[c] * fx;
+        top * (1.0 - fy) + bottom * fy
+    })
+}
+
+/// The view direction and sun of sky-view texel `(x, y)` of a `width` × `height` LUT at `height_km`
+/// for a sun at zenith cosine `sun_cos` (`cs_sky_view`'s parameterisation).
+fn sky_view_texel_rays(sky: &ReferenceSky, (x, y): (u32, u32), (width, height): (u32, u32), height_km: f64, sun_cos: f64) -> ([f64; 3], [f64; 3]) {
+    let unit = [f64::from(x) / f64::from(width.max(2) - 1), f64::from(y) / f64::from(height.max(2) - 1)];
+    let tangent = (height_km * (2.0 * sky.bottom + height_km)).sqrt();
+    let beta = (tangent / (sky.bottom + height_km)).clamp(-1.0, 1.0).acos();
+    let horizon = core::f64::consts::PI - beta;
+    let zenith = if unit[1] < 0.5 {
+        let coord = 1.0 - 2.0 * unit[1];
+        horizon * (1.0 - coord * coord)
+    } else {
+        let coord = unit[1] * 2.0 - 1.0;
+        horizon + beta * coord * coord
+    };
+    let light_view_cos = 1.0 - 2.0 * unit[0] * unit[0];
+    let dir = [zenith.sin() * light_view_cos, zenith.cos(), zenith.sin() * (1.0 - light_view_cos * light_view_cos).max(0.0).sqrt()];
+    let sun = [(1.0 - sun_cos * sun_cos).max(0.0).sqrt(), sun_cos, 0.0];
+    (dir, sun)
+}
+
+/// A compared sky-view texel: where, the LUT's value and the reference's.
+type Compared = ((u32, u32), [f32; 4], [f64; 3]);
+
+/// The share by which a sky-view LUT texel may differ from the f64 reference (SI-15).
+const SKY_VIEW_REFERENCE_TOLERANCE: f64 = 0.03;
+/// The share of the brightest reference value a dimmer channel's error is measured against.
+const SKY_VIEW_DIM_FLOOR: f64 = 0.01;
+
+#[test]
+#[ignore = "needs a GPU: run with --ignored metal"]
+fn metal_the_sky_view_lut_holds_the_f64_reference_within_three_percent() {
+    // SI-15: the sky's rows were qualitative only ("bluer overhead", "reddens"). The sky-view LUT
+    // (30 steps over LUT transmittance and multiple scattering) against Hillaire's integral in f64
+    // (2000 steps, transmittance and multiple scattering integrated finely), at a high noon-ish
+    // sun and a low one, over the sky, at the horizon band's edges and below it.
+    let Some(gpu) = gpu() else { return };
+    let quality = environment(QualityPreset::High);
+    let params = SkyParams::default();
+    let mut failures = Vec::new();
+    let mut worst = 0.0_f64;
+    for elevation in [45.0_f32, 5.0] {
+        let sun_dir = sun_at(elevation);
+        let state = baked_sky(&gpu, &params, &quality, sun_dir);
+        let row = genex_render::sky::atmosphere(&params, &quality, &frame(sun_dir, 0));
+        let reference = ReferenceSky::new(&row);
+        let (width, height) = state.lut_size(SkyLut::SkyView).expect("made");
+        let texels = state.read_lut(&gpu, SkyLut::SkyView).expect("read");
+        let height_km = f64::from(row.ground_albedo[3]).clamp(0.001, reference.top - reference.bottom - 0.01);
+        let scale = [0, 1, 2].map(|c| f64::from(row.sun_illuminance[c] * row.sun_illuminance[3]));
+        let rows = [0, height / 8, height / 4, height * 3 / 8, height / 2 - 3, height / 2 + 3, height * 5 / 8, height * 7 / 8, height - 1];
+        let columns = [0, width / 4, width / 2, width * 3 / 4, width - 1];
+        let compared: Vec<Compared> = rows
+            .iter()
+            .flat_map(|y| columns.map(|x| (x, *y)))
+            .map(|(x, y)| {
+                let (dir, sun) = sky_view_texel_rays(&reference, (x, y), (width, height), height_km, f64::from(sun_dir[1]));
+                let want = reference.radiance(height_km, dir, sun);
+                ((x, y), texels[(y * width + x) as usize], [0, 1, 2].map(|c| want[c] * scale[c]))
+            })
+            .collect();
+        // A channel far dimmer than the sky (the ground at a low sun) is held to a share of the
+        // brightest reference value instead of its own.
+        let floor = SKY_VIEW_DIM_FLOOR * compared.iter().flat_map(|(_, _, want)| *want).fold(0.0, f64::max);
+        for ((x, y), got, want) in compared {
+            for c in 0..3 {
+                let error = (f64::from(got[c]) - want[c]).abs() / want[c].max(floor);
+                worst = worst.max(error);
+                if error > SKY_VIEW_REFERENCE_TOLERANCE {
+                    failures.push(format!("sun {elevation} texel ({x}, {y}) channel {c}: LUT {} reference {:.5} ({:.1}%)", got[c], want[c], 100.0 * error));
+                }
+            }
+        }
+    }
+    eprintln!("sky-view LUT against the f64 reference: worst {:.2}%; {} texel channels over {:.0}%", 100.0 * worst, failures.len(), 100.0 * SKY_VIEW_REFERENCE_TOLERANCE);
+    for failure in &failures {
+        eprintln!("  {failure}");
+    }
+    assert!(failures.is_empty(), "{} sky-view texel channels are over the tolerance", failures.len());
+}
+
+// ---------------------------------------------------------------------------------------------
+// Renderer pass 2 B.2: the night sky (stars, a moon with its phase, the moonlit sky) and
+// data-driven media
+
+/// Towards `elevation` degrees up at `azimuth` degrees from -Z (the cameras' forward) towards +X.
+fn towards(elevation: f32, azimuth: f32) -> [f32; 3] {
+    let (e, a) = (elevation.to_radians(), azimuth.to_radians());
+    [libm::cosf(e) * libm::sinf(a), libm::sinf(e), -libm::cosf(e) * libm::cosf(a)]
+}
+
+/// A night: the sun 30 degrees under the horizon behind the camera.
+fn night_sun() -> [f32; 3] {
+    towards(-30.0, 180.0)
+}
+
+/// `sky` drawn at `width`x`height` over the sky scene's ground with the sun towards `sun`, at a
+/// manual `ev`, the AgX curve.
+fn night_frame(gpu: &Gpu, (width, height): (u32, u32), sky: SkyParams, sun: [f32; 3], ev: f32) -> Capture {
+    let mut renderer = Renderer::new(gpu, width, height).expect("renderer");
+    renderer.set_scene_format(SceneFormat::Rgba16Float);
+    renderer.set_quality(&sky_quality(QualityPreset::High));
+    let mut look = Look::default();
+    look.tonemapper = Tonemapper::Agx;
+    look.exposure = ExposureMode::Manual;
+    look.ev_compensation = ev;
+    renderer.set_look(look);
+    renderer.set_environment(&Environment::Sky(sky));
+    let mut scene = sky_scene(0.0);
+    scene.lighting.sun_dir = sun;
+    renderer.render(gpu, &scene, CullPath::Gpu).expect("frame");
+    renderer.capture(gpu).expect("capture")
+}
+
+fn pixel_sum(capture: &Capture, x: u32, y: u32) -> u32 {
+    pixel(capture, x, y).iter().map(|c| u32::from(*c)).sum()
+}
+
+/// Sky pixels (in rows `rows`) brighter than every one of their eight neighbours by `margin` (sum
+/// of channels): points of light.
+fn points_of_light(capture: &Capture, rows: std::ops::Range<u32>, margin: u32) -> usize {
+    let mut count = 0;
+    for y in rows.start.max(1)..rows.end.min(capture.height() - 1) {
+        for x in 1..capture.width() - 1 {
+            let centre = pixel_sum(capture, x, y);
+            let around = [(-1, -1), (0, -1), (1, -1), (-1, 0), (1, 0), (-1, 1), (0, 1), (1, 1)]
+                .iter()
+                .map(|(dx, dy)| pixel_sum(capture, x.wrapping_add_signed(*dx), y.wrapping_add_signed(*dy)))
+                .max()
+                .unwrap_or(0);
+            if centre >= around + margin {
+                count += 1;
+            }
+        }
+    }
+    count
+}
+
+fn write_named_evidence(name: &str, capture: &Capture) {
+    if let Ok(dir) = std::env::var("GENEX_RENDER_EVIDENCE_DIR") {
+        let dir = PathBuf::from(dir);
+        let _ = std::fs::create_dir_all(&dir);
+        std::fs::write(dir.join(format!("{name}-{}x{}.bgra", capture.width(), capture.height())), capture.bgra()).expect("evidence");
+    }
+}
+
+#[test]
+#[ignore = "needs a GPU: run with --ignored metal"]
+fn metal_the_night_sky_draws_stars_and_a_moon_and_the_day_sky_neither() {
+    let Some(gpu) = gpu() else { return };
+    let size = (640, 360);
+    // A full moon ahead, 18 degrees up (the sun under the horizon behind the camera).
+    let moon = genex_render::settings::Moon::new(towards(18.0, 10.0)).with_angular_radius_degrees(1.0);
+    let night = night_frame(&gpu, size, SkyParams::default().with_moon(Some(moon)), night_sun(), 7.0);
+    write_named_evidence("b2-night", &night);
+    let stars = points_of_light(&night, 0..size.1 / 3, 24);
+    eprintln!("night: {stars} points of light in the upper third");
+    assert!(stars >= 20, "a starry night: {stars} points of light in the upper third");
+    // The moon is the brightest thing in the sky, ahead and up.
+    let (mut best, mut at) = (0, (0, 0));
+    for y in 0..size.1 / 2 {
+        for x in 0..size.0 {
+            let sum = pixel_sum(&night, x, y);
+            if sum > best {
+                (best, at) = (sum, (x, y));
+            }
+        }
+    }
+    assert!(best >= 3 * 200, "the full moon is bright at night: {best} at {at:?}");
+    assert!(at.0 > size.0 / 2 && at.0 < size.0 / 2 + 80, "the moon is ahead, a little right: {at:?}");
+    // Without stars or a moon the same night is an even dark sky.
+    let empty = night_frame(&gpu, size, SkyParams::default().with_stars(0.0), night_sun(), 7.0);
+    assert_eq!(points_of_light(&empty, 0..size.1 / 3, 24), 0, "no stars, no points of light");
+    // By day nothing of the night draws: the default stars change no byte.
+    let day = night_frame(&gpu, size, SkyParams::default(), towards(40.0, 180.0), 0.0);
+    let day_without = night_frame(&gpu, size, SkyParams::default().with_stars(0.0), towards(40.0, 180.0), 0.0);
+    assert!(day.bgra() == day_without.bgra(), "stars never draw by day");
+}
+
+#[test]
+#[ignore = "needs a GPU: run with --ignored metal"]
+fn metal_the_moon_s_lit_side_faces_the_sun() {
+    let Some(gpu) = gpu() else { return };
+    let size = (640, 360);
+    // A big moon straight ahead, the sun under the horizon off to the right: a half moon lit on
+    // its right.
+    let moon = genex_render::settings::Moon::new(towards(15.0, 0.0)).with_angular_radius_degrees(3.0);
+    let sun = towards(-20.0, 90.0);
+    let frame = night_frame(&gpu, size, SkyParams::default().with_moon(Some(moon)).with_stars(0.0), sun, 6.0);
+    write_named_evidence("b2-half-moon", &frame);
+    let (mut best, mut at) = (0, (0, 0));
+    for y in 0..size.1 / 2 {
+        for x in 0..size.0 {
+            let sum = pixel_sum(&frame, x, y);
+            if sum > best {
+                (best, at) = (sum, (x, y));
+            }
+        }
+    }
+    // The disk is about 36 pixels across, centred at the middle column.
+    let (centre_x, y) = (size.0 / 2, at.1);
+    let (left, right) = (pixel_sum(&frame, centre_x - 10, y), pixel_sum(&frame, centre_x + 10, y));
+    eprintln!("half moon: brightest {best} at {at:?}, left {left}, right {right}");
+    assert!(at.0 > centre_x, "the brightest part of the disk faces the sun: {at:?}");
+    assert!(right > left + 60, "the lit side is the sun's: right {right} against left {left}");
+    assert!(left > 0, "earthshine: the dark side is not black: {left}");
+}
+
+#[test]
+#[ignore = "needs a GPU: run with --ignored metal"]
+fn metal_the_env_cube_at_night_holds_the_moonlit_sky_and_the_stars_but_no_moon_disk() {
+    let Some(gpu) = gpu() else { return };
+    let quality = environment(QualityPreset::High);
+    let face_mean = |cube: &[[f32; 4]], face: usize| {
+        let texels = &cube[face * 64 * 64..(face + 1) * 64 * 64];
+        texels.iter().map(|t| luminance(*t)).sum::<f32>() / texels.len() as f32
+    };
+    let dark = SkyParams::default().with_stars(0.0);
+    let dark_cube = bake_cube(&gpu, &baked_sky(&gpu, &dark, &quality, night_sun()), 64);
+    let moon = genex_render::settings::Moon::new(towards(30.0, 0.0));
+    let moonlit = SkyParams::default().with_moon(Some(moon)).with_stars(0.0);
+    let moonlit_cube = bake_cube(&gpu, &baked_sky(&gpu, &moonlit, &quality, night_sun()), 64);
+    let starry = SkyParams::default();
+    let starry_cube = bake_cube(&gpu, &baked_sky(&gpu, &starry, &quality, night_sun()), 64);
+    let (dark_up, moonlit_up, starry_up) = (face_mean(&dark_cube, 2), face_mean(&moonlit_cube, 2), face_mean(&starry_cube, 2));
+    eprintln!("cube +Y mean: dark {dark_up}, moonlit {moonlit_up}, starry {starry_up}");
+    assert!(moonlit_up > 10.0 * dark_up.max(1e-9) && moonlit_up > 1e-5, "the moonlit sky lights the cube: {moonlit_up} against {dark_up}");
+    assert!(starry_up > dark_up + 0.5 * genex_render::night_sky::DEFAULT_STARS, "the stars reach the cube: {starry_up} against {dark_up}");
+    // The disk is the analytic light's (as the sun's): the cube holds the sky it lights, not it.
+    let moonlit_max = moonlit_cube.iter().map(|t| luminance(*t)).fold(0.0f32, f32::max);
+    let disk = genex_render::night_sky::MOON_ALBEDO * SUN / std::f32::consts::PI;
+    assert!(moonlit_max < 0.1 * disk, "no moon disk in the cube: max {moonlit_max} against the disk's {disk}");
+}
+
+#[test]
+#[ignore = "needs a GPU: run with --ignored metal"]
+fn metal_a_mars_medium_turns_the_noon_sky_butterscotch() {
+    let Some(gpu) = gpu() else { return };
+    let quality = environment(QualityPreset::High);
+    let zenith = |sky: &SkyParams| {
+        let state = baked_sky(&gpu, sky, &quality, sun_at(60.0));
+        let lut = state.read_lut(&gpu, SkyLut::SkyView).expect("read");
+        let (width, _) = state.lut_size(SkyLut::SkyView).expect("made");
+        row_mean(&lut, width, 1, 0..width)
+    };
+    let earth = zenith(&SkyParams::default());
+    let mars = zenith(&SkyParams::default().with_medium(genex_render::settings::SkyMedium::mars()));
+    eprintln!("zenith: earth {earth:?}, mars {mars:?}");
+    assert!(earth[2] > earth[0], "Earth's zenith is blue: {earth:?}");
+    assert!(mars[0] > mars[2] && mars[1] > mars[2], "Mars's zenith is butterscotch: {mars:?}");
+}
+
+#[test]
+fn the_night_sky_s_uniform_has_one_layout_in_every_sky_shader() {
+    use naga::proc::Layouter;
+    for (name, source) in [("sky-draw", genex_render::shaders::SKY_DRAW), ("sky-view", genex_render::shaders::SKY_VIEW)] {
+        let module = naga::front::wgsl::parse_str(source).unwrap_or_else(|error| panic!("{name}: {}", error.emit_to_string(source)));
+        let mut layouter = Layouter::default();
+        layouter.update(module.to_ctx()).expect("layout");
+        let (handle, _) = module.types.iter().find(|(_, ty)| ty.name.as_deref() == Some("NightSky")).unwrap_or_else(|| panic!("{name} declares NightSky"));
+        assert_eq!(layouter[handle].size as usize, size_of::<genex_render::night_sky::GpuNightSky>(), "NightSky in {name}");
+    }
+}
+
+#[test]
+fn the_ground_light_hands_over_from_the_sun_to_the_moon_without_a_jump() {
+    use genex_render::night_sky::ground_light;
+    let luminance3 = |c: [f32; 3]| 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
+    let sky = SkyParams::default();
+    let moon_sky = |sun: [f32; 3]| sky.with_moon(Some(genex_render::settings::Moon::new(sun.map(|c| -c))));
+    // The sun from 10 degrees up to 20 under, in 0.05 degree steps, a full moon opposite it. The
+    // sun's own light falls steeply as its disk sets (physical: the sky's light carries the dusk);
+    // the hand-over adds no step of its own and leaves the moon's light as the floor.
+    let start = luminance3(ground_light(&moon_sky(towards(10.0, 0.0)), 0.002, towards(10.0, 0.0), [SUN; 3]).1);
+    let mut previous = start;
+    let mut worst_step = 0.0f32;
+    let mut handed_over = false;
+    for step in 1..=600 {
+        let sun = towards(10.0 - step as f32 * 0.05, 0.0);
+        let (dir, color) = ground_light(&moon_sky(sun), 0.002, sun, [SUN; 3]);
+        let light = luminance3(color);
+        assert!(light > 0.0, "a full moon keeps the night lit at step {step}");
+        handed_over |= dir != sun;
+        worst_step = worst_step.max((light - previous).abs() / start);
+        previous = light;
+    }
+    assert!(handed_over, "the moon lights the ground once the sun is down");
+    assert!(worst_step < 0.02, "the light never jumps: worst step {worst_step} of the 10-degree sun's");
+    let full_moon = genex_render::night_sky::DEFAULT_MOONLIGHT * SUN;
+    assert!(previous > 0.3 * full_moon && previous < full_moon, "the moon's light through the air is the night's floor: {previous} against {full_moon}");
+    let (_, without) = ground_light(&sky, 0.002, towards(-20.0, 0.0), [SUN; 3]);
+    assert_eq!(without, [0.0; 3], "no moon: the night is dark");
+    let (dir, day) = ground_light(&moon_sky(towards(40.0, 0.0)), 0.002, towards(40.0, 0.0), [SUN; 3]);
+    let sun_alone = genex_render::sky::sun_transmittance(0.002, towards(40.0, 0.0), sky.sun_angular_radius).map(|t| t * SUN);
+    assert_eq!((dir, day), (towards(40.0, 0.0), sun_alone), "by day the sun, exactly as before");
+}
+
+#[test]
+fn earth_as_a_medium_is_the_atmosphere_row_bit_for_bit() {
+    let mut quality = Quality::off().environment;
+    quality.sky = true;
+    quality.sky_lut = (96, 54);
+    let row = genex_render::sky::atmosphere(&SkyParams::default(), &quality, &frame(sun_at(30.0), 0));
+    let explicit = genex_render::sky::atmosphere(&SkyParams::default().with_medium(genex_render::settings::SkyMedium::earth()), &quality, &frame(sun_at(30.0), 0));
+    assert_eq!(bytemuck::bytes_of(&row), bytemuck::bytes_of(&explicit));
+    assert_eq!(row.rayleigh, [5.802e-3, 13.558e-3, 33.1e-3, 1.0 / 8.0], "Earth's Rayleigh term as before");
+    assert_eq!(row.mie, [3.996e-3, 4.440e-3, 0.8, 1.0 / 1.2], "Earth's Mie term as before");
+    let mars = genex_render::sky::atmosphere(&SkyParams::default().with_medium(genex_render::settings::SkyMedium::mars()), &quality, &frame(sun_at(30.0), 0));
+    assert!(mars.radii[0] < 4000.0 && mars.mie[0] > 5.0 * row.mie[0], "Mars: a smaller planet, a dustier sky");
+    let hostile = genex_render::settings::SkyMedium::earth().with_planet(f32::NAN, -5.0).with_mie(3.996e-3, 0.0, 1.0, 1.2);
+    let held = SkyParams::default().with_medium(hostile).medium;
+    assert_eq!(held.planet_radius_km, genex_render::sky::EARTH_RADIUS_KM, "NaN: Earth's");
+    assert!(held.mie_extinction >= held.mie_scattering && held.mie_asymmetry < 1.0 && held.atmosphere_height_km >= 1.0, "held to what the LUTs take: {held:?}");
+}
+
+/// The displayed frame's mean linear luminance (sRGB decoded).
+fn displayed_luminance(capture: &Capture) -> f64 {
+    mean_look(capture).0
+}
+
+#[test]
+#[ignore = "needs a GPU: run with --ignored metal"]
+fn metal_a_day_to_night_sweep_under_auto_exposure_has_no_jump_and_ends_moonlit_and_dark() {
+    use genex_render::settings::{CompensationCurve, Moon};
+    let Some(gpu) = gpu() else { return };
+    let (width, height) = (160, 90);
+    let mut renderer = Renderer::new(&gpu, width, height).expect("renderer");
+    renderer.set_scene_format(SceneFormat::Rgba16Float);
+    let mut quality = sky_quality(QualityPreset::High);
+    quality.environment.ibl = true;
+    renderer.set_quality(&quality);
+    let mut look = Look::default();
+    look.tonemapper = Tonemapper::Agx;
+    look.exposure = ExposureMode::Auto;
+    // C4: a night meters several stops down and keeps part of its darkness.
+    look.compensation_curve = CompensationCurve::new(&[(-8.0, -3.0), (-2.0, -1.0), (2.0, 0.0)]);
+    renderer.set_look(look);
+    let mut means = Vec::new();
+    let mut day = 0.0;
+    // The sun from 12 degrees up to 12 under at a game's pace (a 12-minute day: 0.5 degrees a
+    // second, 1/60 s a frame), a full moon opposite it, then the night held while the exposure
+    // settles.
+    let sweep: Vec<f32> = (0..=2880).map(|step| 12.0 - step as f32 * (0.5 / 60.0)).chain(std::iter::repeat_n(-12.0, 300)).collect();
+    for (frame_index, elevation) in sweep.iter().enumerate() {
+        let sun = towards(*elevation, 0.0);
+        let sky = SkyParams::default().with_moon(Some(Moon::new(sun.map(|c| -c))));
+        renderer.set_environment(&Environment::Sky(sky));
+        let mut scene = sky_scene(0.0);
+        scene.lighting.sun_dir = sun;
+        renderer.render(&gpu, &scene, CullPath::Gpu).expect("frame");
+        let capture = renderer.capture(&gpu).expect("capture");
+        let mean = displayed_luminance(&capture);
+        if frame_index == 0 {
+            day = mean;
+        }
+        if frame_index == sweep.len() - 1 {
+            write_named_evidence("b2-sweep-night", &capture);
+        }
+        means.push(mean);
+    }
+    let worst = means.windows(2).map(|pair| (pair[1].max(1e-6) / pair[0].max(1e-6)).log2().abs()).fold(0.0f64, f64::max);
+    let night = *means.last().expect("frames");
+    eprintln!("sweep: day {day}, night {night}, worst step {worst} EV");
+    assert!(worst < 0.1, "no exposure jump through the sweep: worst {worst} EV in one frame");
+    assert!(night < 0.5 * day, "the night stays darker than the day: {night} against {day}");
+}
+
+#[test]
+#[ignore = "needs a GPU: run with --ignored metal"]
+fn metal_the_moon_lights_the_night_ground() {
+    // The renderer lights the surfaces with `night_sky::ground_light` (the sun, or once it has set
+    // the moon): a full moon 40 degrees up lights the grey ground as its light through the air
+    // says, the moonlit sky's ambient aside.
+    use genex_render::settings::Moon;
+    let Some(gpu) = gpu() else { return };
+    let ground = |sky: SkyParams| {
+        let mut renderer = Renderer::new(&gpu, WIDTH, HEIGHT).expect("renderer");
+        renderer.set_scene_format(SceneFormat::Rgba16Float);
+        renderer.set_quality(&sky_quality(QualityPreset::High));
+        renderer.set_environment(&Environment::Sky(sky));
+        let mut scene = sky_scene(0.0);
+        scene.lighting.sun_dir = night_sun();
+        renderer.render(&gpu, &scene, CullPath::Gpu).expect("frame");
+        let hdr = renderer.read_scene(&gpu).expect("the HDR scene");
+        luminance(hdr[((HEIGHT - 4) * WIDTH + WIDTH - 4) as usize])
+    };
+    let moon = Moon::new(towards(40.0, 0.0));
+    let lit = ground(SkyParams::default().with_moon(Some(moon)));
+    let dark = ground(SkyParams::default());
+    let (_, light) = genex_render::night_sky::ground_light(&SkyParams::default().with_moon(Some(moon)), 0.0015, night_sun(), [SUN; 3]);
+    // The ground's grey (150 of 255 in sRGB) under the light at 40 degrees, Lambert.
+    let albedo = 0.3049;
+    let expected = (0.2126 * light[0] + 0.7152 * light[1] + 0.0722 * light[2]) * libm::sinf(40f32.to_radians()) * albedo / std::f32::consts::PI;
+    eprintln!("night ground: moonlit {lit}, moonless {dark}, the moon's direct light alone {expected}");
+    assert!(lit - dark > 0.5 * expected, "the moon lights the ground directly: {lit} over {dark}, expected about {expected} more");
+}
+
+/// B.2's night may cost the background this much more than the day's at 1080p (stars and the moon
+/// per pixel), M4 Max.
+const NIGHT_DRAW_EXTRA_BUDGET_MS: f64 = 0.1;
+
+#[test]
+#[ignore = "needs a GPU: run with --ignored metal"]
+fn metal_the_night_sky_fits_the_sky_budget() {
+    let Some(gpu) = gpu_with(wgpu::Features::TIMESTAMP_QUERY) else { return };
+    let high = environment(QualityPreset::High);
+    let p = |times: &[f64]| [percentile(times, 0.5), percentile(times, 0.95)];
+    let night_luts = p(&time_refreshes_of(&gpu, &high, false, true, TIMED_RUNS));
+    let day_luts = p(&time_refreshes_of(&gpu, &high, false, false, TIMED_RUNS));
+    let moon = genex_render::settings::Moon::new(towards(30.0, 0.0));
+    // Trials of the day's and the night's draws interleaved frame by frame (B.5's interleaved cost
+    // helper: other work on a shared GPU then weighs on both alike), each trial's own difference,
+    // the median of them gated.
+    let skies = [(SkyParams::default(), towards(40.0, 180.0)), (SkyParams::default().with_moon(Some(moon)), night_sun())];
+    let mut pairs: Vec<([f64; 2], [f64; 2])> = (0..TIMED_TRIALS)
+        .map(|_| {
+            let times = genex_render::sky::background_gpu_ms_interleaved(&gpu, &skies, &high, (1920, 1080), TIMED_RUNS).expect("drawn").expect("timestamps");
+            (p(&times[0]), p(&times[1]))
+        })
+        .collect();
+    pairs.sort_by(|a, b| (a.1[0] - a.0[0]).total_cmp(&(b.1[0] - b.0[0])));
+    let (day_draw, night_draw) = pairs[pairs.len() / 2];
+    let row = serde_json::json!({
+        "row": "sky-night",
+        "adapter": gpu.adapter().get_info().name,
+        "runs": TIMED_RUNS,
+        "luts_ms": { "day": day_luts, "night": night_luts },
+        "background_1080p_ms": { "day": day_draw, "night": night_draw },
+        "budget_ms": { "luts_p95": HIGH_BUDGET_MS, "night_background_extra": NIGHT_DRAW_EXTRA_BUDGET_MS },
+    });
+    eprintln!("{row}");
+    if let Ok(path) = std::env::var("GENEX_PERF_OUT") {
+        std::fs::write(path, format!("{row}\n")).expect("perf row");
+    }
+    assert!(night_luts[1] <= HIGH_BUDGET_MS, "the night's LUTs (the moonlit one too) p95 {:.4} ms", night_luts[1]);
+    assert!(night_draw[0] <= day_draw[0] + NIGHT_DRAW_EXTRA_BUDGET_MS, "the night's background p50 {:.4} ms against the day's {:.4}", night_draw[0], day_draw[0]);
 }

@@ -11,30 +11,79 @@ struct SpriteIn {
     @location(1) color: vec4<f32>,
     // xyz: the quad's normal for a quad fixed in the world (zero faces the camera); w: kind.
     @location(2) axis_kind: vec4<f32>,
-    // x: half height (0: as wide as high).
+    // x: half height (0: as wide as high); yzw: the centre last frame (TAA's reactive coverage).
     @location(3) extra: vec4<f32>,
 }
 
 struct SpriteOut {
     @builtin(position) clip: vec4<f32>,
+    // The quad's position in units of the sprite's half width (beyond 1 where a glow's quad grew
+    // to hold its band-limited light).
     @location(0) uv: vec2<f32>,
     @location(1) @interpolate(flat) color: vec4<f32>,
     @location(2) @interpolate(flat) kind: f32,
+    // A glow's pixel footprint as a variance in its quad's units (`glow_blur`); 0 for the others.
+    @location(3) @interpolate(flat) blur: f32,
+    // The cosine between the view ray to the sprite's centre and the direction to the sun.
+    @location(4) @interpolate(flat) sun_cos: f32,
 }
 
 @group(0) @binding(0) var<uniform> gx_frame: GxFrameV2;
 
 // How fast a smoke puff thins from its centre (exp(-r² × this) over the quad's unit radius).
 const SMOKE_FALLOFF: f32 = 2.5;
-// How much of a puff's light comes from the sky above it; the rest from the low sun's side.
+// How much of a puff's sky light comes from the sky above it; the rest from the low sun's side.
 const SMOKE_SKY_SHARE: f32 = 0.7;
+// Wood smoke's phase: fine particles scatter the sun mostly forwards (Henyey-Greenstein), so a
+// puff between the camera and a low sun glows and one beside it is lit softly.
+const SMOKE_PHASE_G: f32 = 0.4;
+// How much of the sun a puff's own body takes out of its light at its centre (self-shadowing).
+const SMOKE_SELF_SHADOW: f32 = 0.4;
+// The share of the sun's light that reaches a puff through the rest of the plume (the sprites draw
+// each puff alone, so the plume's own shade is folded in here): with all of it, the plume between
+// the camera and the low sun glowed as a white beam over the dark trees (pass-1 gate finding 09).
+const SMOKE_SUN_SHARE: f32 = 0.3;
 
 const KIND_GLOW: f32 = 0.0;
+// A glow's light is band-limited to the pixel grid (renderer pass 2, B.7): each of its Gaussian
+// terms is widened by a Gaussian of this many pixels (about a pixel's own footprint) and dimmed by
+// as much, so its energy is kept. A far firefly or a mote of pollen smaller than a pixel then
+// covers about a pixel steadily instead of a sub-pixel point the jitter hits in some frames only
+// (each such hit popped for one frame on the Lakeside's pans, orbits and dollies).
+const GLOW_PIXEL_SIGMA_PX: f32 = 0.5;
+// The glow's two Gaussian terms, exp(-r^2 x falloff) x weight over its quad's unit radius: the
+// soft halo and the bright core.
+const GLOW_HALO: vec2<f32> = vec2<f32>(5.0, 0.55);
+const GLOW_CORE: vec2<f32> = vec2<f32>(60.0, 1.6);
+
+// The variance (quad units squared) a glow of `half_width_px` pixels is widened by.
+fn glow_blur(half_width_px: f32) -> f32 {
+    let sigma = GLOW_PIXEL_SIGMA_PX / max(half_width_px, 1e-3);
+    return sigma * sigma;
+}
+
+// How far the quad reaches, in units of the half width, so the widened halo is cut where the
+// sharp one was (at its unit radius).
+fn glow_reach(blur: f32) -> f32 {
+    return sqrt(1.0 + blur * 2.0 * GLOW_HALO.x);
+}
+
+// One Gaussian term (x: falloff, y: weight) at squared radius `r2`, widened by variance `blur`.
+fn glow_term(term: vec2<f32>, r2: f32, blur: f32) -> f32 {
+    let variance = 0.5 / term.x;
+    let widened = variance + blur;
+    return term.y * (variance / widened) * exp(-r2 * 0.5 / widened);
+}
+
+// A glow's light at squared radius `r2` (quad units), band-limited by `blur`.
+fn glow_light(r2: f32, blur: f32) -> f32 {
+    return glow_term(GLOW_HALO, r2, blur) + glow_term(GLOW_CORE, r2, blur);
+}
 const KIND_SMOKE: f32 = 2.0;
 const KIND_POOL: f32 = 3.0;
 
-@vertex
-fn vs_sprite(@builtin(vertex_index) i: u32, sprite: SpriteIn) -> SpriteOut {
+// Corner `i` of `sprite`'s quad in the world.
+fn sprite_corner(i: u32, sprite: SpriteIn) -> vec3<f32> {
     let corners = array<vec2<f32>, 6>(vec2<f32>(-1.0, -1.0), vec2<f32>(1.0, -1.0), vec2<f32>(1.0, 1.0), vec2<f32>(-1.0, -1.0), vec2<f32>(1.0, 1.0), vec2<f32>(-1.0, 1.0));
     let uv = corners[i];
     var right: vec3<f32>;
@@ -49,28 +98,63 @@ fn vs_sprite(@builtin(vertex_index) i: u32, sprite: SpriteIn) -> SpriteOut {
         right = normalize(cross(helper, axis));
         up = cross(axis, right);
     }
-    let half_width = sprite.center_size.w;
-    let half_height = select(sprite.extra.x, half_width, sprite.extra.x <= 0.0);
-    let world = sprite.center_size.xyz + right * uv.x * half_width + up * uv.y * half_height;
+    let reach = sprite_reach(sprite);
+    let half_width = sprite.center_size.w * reach;
+    let half_height = select(sprite.extra.x, sprite.center_size.w, sprite.extra.x <= 0.0) * reach;
+    return sprite.center_size.xyz + right * uv.x * half_width + up * uv.y * half_height;
+}
+
+// A glow's footprint variance (`glow_blur`); 0 for smoke and pools, whose light is soft already.
+fn sprite_blur(sprite: SpriteIn) -> f32 {
+    if sprite.axis_kind.w != KIND_GLOW {
+        return 0.0;
+    }
+    return glow_blur(half_width_px(sprite.center_size.xyz, sprite.center_size.w));
+}
+
+// How far the sprite's quad reaches, in units of its half width.
+fn sprite_reach(sprite: SpriteIn) -> f32 {
+    return glow_reach(sprite_blur(sprite));
+}
+
+fn sprite_out(i: u32, sprite: SpriteIn) -> SpriteOut {
+    let corners = array<vec2<f32>, 6>(vec2<f32>(-1.0, -1.0), vec2<f32>(1.0, -1.0), vec2<f32>(1.0, 1.0), vec2<f32>(-1.0, -1.0), vec2<f32>(1.0, 1.0), vec2<f32>(-1.0, 1.0));
     var out: SpriteOut;
-    out.clip = gx_frame.view_proj * vec4<f32>(world, 1.0);
-    out.uv = uv;
+    out.clip = gx_frame.view_proj * vec4<f32>(sprite_corner(i, sprite), 1.0);
+    out.uv = corners[i] * sprite_reach(sprite);
     out.color = sprite.color;
     out.kind = sprite.axis_kind.w;
+    out.blur = sprite_blur(sprite);
+    out.sun_cos = dot(normalize(sprite.center_size.xyz - gx_frame.camera_pos.xyz), normalize(gx_frame.sun_dir.xyz));
     return out;
 }
 
-// The light smoke of colour `albedo` scatters: under the environment (the physical sky or a map)
-// what a surface of that colour facing the sky and the sun reflects, so the smoke sits in the
-// sky's light rather than glowing over it; on the flat colour (and the legacy scene) the painted
-// colour as it is.
-fn smoke_light(albedo: vec3<f32>) -> vec3<f32> {
+@vertex
+fn vs_sprite(@builtin(vertex_index) i: u32, sprite: SpriteIn) -> SpriteOut {
+    return sprite_out(i, sprite);
+}
+
+// The Henyey-Greenstein phase of asymmetry `g` at `cos_theta` (per steradian).
+fn smoke_phase(cos_theta: f32, g: f32) -> f32 {
+    let g2 = g * g;
+    let denominator = max(1.0 + g2 - 2.0 * g * cos_theta, 1e-4);
+    return (1.0 - g2) / (4.0 * PI * denominator * sqrt(denominator));
+}
+
+// The light smoke of single-scattering albedo `albedo` scatters towards the camera: under the
+// environment (the physical sky or a map) the sky's light it sits in (the environment's irradiance
+// above it and towards the low sun) plus the sun's (or the moon's) light through its forward phase
+// at `sun_cos`, less what the puff's own `body` shades; on the flat colour (and the legacy scene)
+// the painted colour as it is. Lit by the sky alone it drew as a dark grey column against the blue
+// dusk (look fix lane SKY).
+fn smoke_light(albedo: vec3<f32>, sun_cos: f32, body: f32) -> vec3<f32> {
     if !environment_lights() {
         return albedo;
     }
     let sky = sh9_irradiance(gx_env_sh, vec3<f32>(0.0, 1.0, 0.0));
     let sun_side = sh9_irradiance(gx_env_sh, normalize(GLOW_DIR));
-    return albedo * mix(sun_side, sky, SMOKE_SKY_SHARE);
+    let sun = gx_frame.sun_color.rgb * (smoke_phase(sun_cos, SMOKE_PHASE_G) * SMOKE_SUN_SHARE * (1.0 - SMOKE_SELF_SHADOW * body));
+    return albedo * (mix(sun_side, sky, SMOKE_SKY_SHARE) + sun);
 }
 
 @fragment
@@ -82,14 +166,156 @@ fn fs_sprite(in: SpriteOut) -> @location(0) vec4<f32> {
         // wisp with no edge (pass-1 gate finding 09: hard-edged puffs stacked into a white beam).
         let body = exp(-r2 * SMOKE_FALLOFF) * (1.0 - smoothstep(0.5, 1.0, sqrt(r2)));
         let a = body * in.color.a * (0.6 + 0.4 * n);
-        return vec4<f32>(scene_rgb(smoke_light(in.color.rgb)) * a, a);
+        return vec4<f32>(scene_rgb(smoke_light(in.color.rgb, in.sun_cos, body)) * a, a);
     }
-    if r2 > 1.0 {
+    let reach = glow_reach(in.blur);
+    if r2 > reach * reach {
         discard;
     }
-    var light = exp(-r2 * 5.0) * 0.55 + exp(-r2 * 60.0) * 1.6;
+    var light = glow_light(r2, in.blur);
     if in.kind == KIND_POOL {
         light = (1.0 - smoothstep(0.0, 1.0, sqrt(r2))) * 0.6;
     }
     return vec4<f32>(scene_rgb(in.color.rgb * in.color.a * light * glow_gain()), 0.0);
+}
+
+// --- TAA's reactive coverage (renderer pass 2, B.7) -------------------------------------------
+// A sprite moving through the scene does not share the motion of what lies behind it, so TAA would
+// reproject its last position's history and trail or pop it (the fireflies' halos on an orbit or a
+// dolly). Where it moved on screen against the scene behind it since last frame it writes how much
+// of the pixel it owns into the reactive mask, from none below REACTIVE_STILL_PX to all of it at a
+// pixel a frame. The scene behind is taken at infinity in the sprite's direction, so a camera
+// turning about its eye (which moves every depth alike) asks for none, and a sprite whose glow is
+// smaller than REACTIVE_SIZE_PX on screen writes none either: its jittered current sample is a
+// sub-pixel spot that comes and goes (a mote taken whole popped on every pan). A still sprite
+// under a still camera writes none, so a settled capture is unchanged.
+
+// The motion against the scene (pixels a frame) below which a sprite writes no coverage.
+const REACTIVE_STILL_PX: f32 = 0.05;
+// The glow's on-screen half width (pixels) from which a sprite writes its coverage whole.
+const REACTIVE_SIZE_PX: f32 = 4.0;
+// How much coverage a glow's light writes per unit of its strongest channel.
+const REACTIVE_GLOW_GAIN: f32 = 2.5;
+// The most coverage a sprite writes (FSR2's guidance: a tenth of the history stays).
+const REACTIVE_MAX: f32 = 0.9;
+
+// The NDC of world point `p` (w 1) or direction `p` (w 0) through `m`; far off for a point behind it.
+fn ndc_of(m: mat4x4<f32>, p: vec4<f32>) -> vec2<f32> {
+    let clip = m * p;
+    if clip.w <= 1e-6 {
+        return vec2<f32>(1e6);
+    }
+    return clip.xy / clip.w;
+}
+
+// How far (pixels) a sprite now at `now` and last frame at `before` moved on screen against the
+// scene at infinity behind it, through last frame's camera and this frame's (both unjittered).
+fn parallax_px(now: vec3<f32>, before: vec3<f32>) -> f32 {
+    let moved = ndc_of(gx_frame.unjittered_view_proj, vec4<f32>(now, 1.0)) - ndc_of(gx_frame.prev_view_proj, vec4<f32>(before, 1.0));
+    let away = vec4<f32>(normalize(now - gx_frame.camera_pos.xyz), 0.0);
+    let behind = ndc_of(gx_frame.unjittered_view_proj, away) - ndc_of(gx_frame.prev_view_proj, away);
+    return length((moved - behind) * 0.5 * gx_frame.render_size);
+}
+
+// The half width (pixels) of a camera-facing sprite of `half_width` metres at `center`.
+fn half_width_px(center: vec3<f32>, half_width: f32) -> f32 {
+    let depth = max(dot(center - gx_frame.camera_pos.xyz, gx_frame.camera_forward.xyz), 1e-3);
+    return half_width / depth * gx_frame.proj[1][1] * 0.5 * gx_frame.render_size.y;
+}
+
+struct SpriteReactiveOut {
+    @builtin(position) clip: vec4<f32>,
+    @location(0) uv: vec2<f32>,
+    @location(1) @interpolate(flat) color: vec4<f32>,
+    @location(2) @interpolate(flat) kind: f32,
+    // The share of its coverage the sprite writes, by how far its centre moved on screen.
+    @location(3) @interpolate(flat) share: f32,
+    @location(4) @interpolate(flat) blur: f32,
+}
+
+@vertex
+fn vs_sprite_reactive(@builtin(vertex_index) i: u32, sprite: SpriteIn) -> SpriteReactiveOut {
+    let base = sprite_out(i, sprite);
+    var out: SpriteReactiveOut;
+    out.clip = base.clip;
+    out.uv = base.uv;
+    out.color = base.color;
+    out.kind = base.kind;
+    out.blur = base.blur;
+    let moved = parallax_px(sprite.center_size.xyz, sprite.extra.yzw);
+    let size = half_width_px(sprite.center_size.xyz, sprite.center_size.w);
+    out.share = saturate((moved - REACTIVE_STILL_PX) / (1.0 - REACTIVE_STILL_PX)) * smoothstep(REACTIVE_SIZE_PX * 0.5, REACTIVE_SIZE_PX, size);
+    return out;
+}
+
+// How much of a pixel a glow owns at `uv` on its quad (footprint `blur`): its light over its
+// strongest channel.
+fn glow_cover(uv: vec2<f32>, color: vec4<f32>, blur: f32) -> f32 {
+    let light = glow_light(dot(uv, uv), blur);
+    return max(color.r, max(color.g, color.b)) * color.a * light * REACTIVE_GLOW_GAIN;
+}
+
+@fragment
+fn fs_sprite_reactive(in: SpriteReactiveOut) -> @location(0) vec4<f32> {
+    let r2 = dot(in.uv, in.uv);
+    let reach = glow_reach(in.blur);
+    if in.share <= 0.0 || in.kind == KIND_POOL || r2 > reach * reach {
+        discard;
+    }
+    var cover: f32;
+    if in.kind == KIND_SMOKE {
+        let body = exp(-r2 * SMOKE_FALLOFF) * (1.0 - smoothstep(0.5, 1.0, sqrt(r2)));
+        cover = body * in.color.a;
+    } else {
+        cover = glow_cover(in.uv, in.color, in.blur);
+        // Where the glow draws its own motion (`fs_sprite_motion`) its history follows it.
+        if cover >= GLOW_MOTION_COVER {
+            discard;
+        }
+    }
+    return vec4<f32>(min(cover, REACTIVE_MAX) * in.share, 0.0, 0.0, 1.0);
+}
+
+// --- The glows' own motion (renderer pass 2, B.7) ----------------------------------------------
+// Wherever a glow shows (a firefly's halo near the camera, its faint ring included) it draws its
+// own motion into TAA's motion target, so its history is fetched from where it was last frame
+// instead of from the scene behind it. A dolly carried a near firefly across the screen faster
+// than any reactive coverage could hide (one-frame discs and rings along its path).
+
+// The glow coverage from which a glow writes its motion (below it, its reactive coverage).
+const GLOW_MOTION_COVER: f32 = 0.002;
+
+struct SpriteMotionOut {
+    @builtin(position) clip: vec4<f32>,
+    @location(0) uv: vec2<f32>,
+    @location(1) @interpolate(flat) color: vec4<f32>,
+    @location(2) @interpolate(flat) kind: f32,
+    // The centre's NDC motion, this frame's position minus last frame's (unjittered cameras).
+    @location(3) @interpolate(flat) motion: vec2<f32>,
+    @location(4) @interpolate(flat) blur: f32,
+}
+
+@vertex
+fn vs_sprite_motion(@builtin(vertex_index) i: u32, sprite: SpriteIn) -> SpriteMotionOut {
+    let base = sprite_out(i, sprite);
+    var out: SpriteMotionOut;
+    out.clip = base.clip;
+    out.uv = base.uv;
+    out.color = base.color;
+    out.kind = base.kind;
+    out.blur = base.blur;
+    let now = ndc_of(gx_frame.unjittered_view_proj, vec4<f32>(sprite.center_size.xyz, 1.0));
+    let before = ndc_of(gx_frame.prev_view_proj, vec4<f32>(sprite.extra.yzw, 1.0));
+    // A centre behind either camera has no reprojection: no motion (the renderer's rule).
+    out.motion = select(now - before, vec2<f32>(0.0), any(abs(now) > vec2<f32>(1e5)) || any(abs(before) > vec2<f32>(1e5)));
+    return out;
+}
+
+@fragment
+fn fs_sprite_motion(in: SpriteMotionOut) -> @location(0) vec4<f32> {
+    let reach = glow_reach(in.blur);
+    if in.kind != KIND_GLOW || dot(in.uv, in.uv) > reach * reach || glow_cover(in.uv, in.color, in.blur) < GLOW_MOTION_COVER {
+        discard;
+    }
+    return vec4<f32>(in.motion, 0.0, 0.0);
 }

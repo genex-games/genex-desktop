@@ -14,7 +14,19 @@ pub mod ao;
 pub mod contact_shadow;
 /// The joint-bilateral upsample of half-resolution AO and contact shadows (RQ4 review).
 pub mod upsample;
+/// The sun-shadow screen mask with its own temporal and spatial filter (renderer pass 2, B.7).
+pub mod sun_mask;
 /// TAA and its reactive coverage (graph nodes 17 and 15a): RQ5.0 contract, RQ5.2.
 pub mod taa;
+/// TAA upscaling at output size (renderer pass 2, B.8: SGSR2's two passes with FSR2's Lanczos).
+pub mod taau;
 /// The FSR1 upscaler, EASU + RCAS (graph node 22): RQ5.0 contract, RQ5.3.
 pub mod fsr;
+/// Colour grading in the tonemap: parametric knobs and a `.cube` LUT (A.2).
+pub mod grading;
+/// Gather depth of field between TAA (node 17) and `post-hdr` (node 18): Filament's ring tier and
+/// Godot's circular tier (A.9).
+pub mod dof;
+/// Motion blur after depth of field, before `post-hdr` (node 18): KinoMotion's reconstruction tier
+/// and Bevy's direct tier (A.9).
+pub mod motion_blur;

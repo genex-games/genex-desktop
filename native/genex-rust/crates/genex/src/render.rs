@@ -83,6 +83,21 @@ pub use genex_render::settings::{
 /// TAA's resource knobs in a [`Quality`] (`quality.taa`: the jitter cycle, the accumulation floor
 /// and the texture LOD bias; RQ5). Whether TAA runs is [`AntiAliasing`] and the `taa` switch.
 pub use genex_render::settings::{JitterCycle, TaaQuality};
+/// The look's colour grading (A.2, [`RenderConfig::grading`]): contrast about middle grey,
+/// saturation, vibrance, per-section lift, gamma and gain, and a display LUT read from a `.cube`
+/// ([`GradingLut::parse_cube`], then [`GradingLut::intern`]).
+pub use genex_render::post::grading::{Grading, GradingLut, GradingLutError, GradingSection};
+/// The look's depth of field (A.9, [`RenderConfig::depth_of_field`]): a thin lens focused at a
+/// distance through an f-number, off by default. The preset picks the gather
+/// ([`DofTier`]: the ring at desktop high and ultra, the circular gather elsewhere).
+pub use genex_render::post::dof::{DepthOfField, DofTier};
+/// The look's motion blur (A.9, [`RenderConfig::motion_blur`]): the shutter open for a share of
+/// each frame, off by default (owner decision D10). The preset picks the tier
+/// ([`MotionBlurTier`]: the reconstruction at desktop high and ultra, none on low phones).
+pub use genex_render::post::motion_blur::{MotionBlur, MotionBlurTier};
+/// What a settled capture's shot asks of the look's lens (the capture verb's `lens`): neither by
+/// default, so a capture is a still of the held frame.
+pub use genex_render::renderer::CaptureLens;
 /// The key [`crate::Frame::id`] names a moving draw with across frames (a string or an integer),
 /// so its motion vectors find where it was last frame under TAA.
 pub use genex_render::motion::DrawId;
@@ -92,12 +107,25 @@ use genex_render::settings::{ADAPTATION_SPEED_MAX, EXPOSURE_EV_LIMIT, TextureQua
 /// ([`HdriEnvironment`], its sun handled by [`HdriSun`]). The same on every preset and device;
 /// presets only size the bake and the sky's LUTs ([`EnvironmentQuality`]).
 pub use genex_render::settings::{Environment, EnvironmentKind, HdriEnvironment, HdriSun, SkyParams};
+/// The physical sky's night and air (renderer pass 2 B.2): a [`Moon`] lit by the sun with its phase
+/// ([`SkyParams::with_moon`]), the stars ([`SkyParams::with_stars`]) and the air the sky is made of
+/// ([`SkyMedium::earth`], [`SkyMedium::mars`] or your own, [`SkyParams::with_medium`]).
+pub use genex_render::settings::{Moon, SkyMedium};
+/// A layer of clouds in the physical sky (renderer pass 2 B.5, [`SkyParams::with_clouds`]): its
+/// coverage, base and thickness, density and drift, drawn on desktop `medium` and up.
+pub use genex_render::settings::Clouds;
 /// Height and distance fog matched to the sky (RQ4): a look, the same on every preset, set with
 /// [`RenderConfig::fog`] or `genex.toml` `[render.look]`'s `fog_*` keys. Off at the default density 0.
 pub use genex_render::settings::Fog;
 /// A spot light with its own cone or a shadow map ([`crate::Frame::spot_light_with`], RQ6), and the
-/// cone [`crate::Frame::spot_light`] gives one by default.
-pub use crate::frame::{DEFAULT_SPOT_INNER_DEGREES, DEFAULT_SPOT_OUTER_DEGREES, SpotLight};
+/// cone [`crate::Frame::spot_light`] gives one by default; a reflection probe
+/// ([`crate::Frame::reflection_probe`], A.3) and an irradiance volume
+/// ([`crate::Frame::irradiance_volume`], A.4).
+pub use crate::frame::{DEFAULT_SPOT_INNER_DEGREES, DEFAULT_SPOT_OUTER_DEGREES, IrradianceVolume, ReflectionProbe, SpotLight};
+/// A projected decal ([`crate::Frame::decal`], renderer pass 2 A.10) and its boxes' default depths.
+pub use crate::decal::{DEFAULT_GROUND_DEPTH, DEFAULT_WALL_DEPTH, Decal};
+/// Lake water (renderer pass 2 B.3): a water rectangle drawn with [`crate::Frame::water`].
+pub use crate::water::{WATER_ABSORPTION_MAX, WATER_FOAM_MAX, WATER_REFRACTION_MAX, WATER_RIPPLE_MAX, Water};
 
 /// The tonemapper of a game's look: how the HDR scene becomes display colour.
 /// [`Tonemap::KhronosNeutral`] (the default) keeps authored colours as they are up to the
@@ -380,15 +408,17 @@ impl Exposure {
 ///
 /// Bloom is threshold-free and energy-conserving: the tonemap blends the scene towards its own
 /// blur by `intensity`, so bright things glow and nothing is added. A `threshold` above 0 is a
-/// stylistic choice (only what is brighter than it, in pre-exposed scene units, glows). Presets
-/// change only the blur chain's mips, never the look.
+/// stylistic choice (only what is brighter than it, in pre-exposed scene units, glows). The blur
+/// chain is sized from the output, so its glow is as wide on every preset and render scale; a
+/// phone or a tight memory budget draws it at a lower resolution, never a different look.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Bloom {
     /// The blend weight, `0..=1` (0.04 by default; 0 draws no bloom).
     pub intensity: f32,
     /// The stylistic threshold in pre-exposed scene units, `0..=16` (0, the default: none).
     pub threshold: f32,
-    /// The spread, a multiplier on the blur's radius, `0.25..=4` (1 by default).
+    /// The spread, `0.25..=4` (1 by default): how much the wider blurs weigh against the narrower
+    /// ones, so above 1 the glow reaches further and below 1 it hugs the light.
     pub radius: f32,
 }
 
@@ -415,7 +445,7 @@ impl Bloom {
         Bloom { threshold, ..self }
     }
 
-    /// The bloom spread by `radius` (a multiplier on the blur's radius).
+    /// The bloom spread by `radius` (above 1 the glow reaches further, below 1 it hugs the light).
     pub fn radius(self, radius: f32) -> Bloom {
         Bloom { radius, ..self }
     }
@@ -495,9 +525,57 @@ impl RenderConfig {
         self
     }
 
+    /// The config with its look's white balance as a chromatic adaptation: `temperature` warms
+    /// (positive) or cools (negative) and `tint` turns magenta (positive) or green, each within
+    /// `-1..=1` (0 leaves the picture unchanged). Unlike gains it keeps saturated colours' hues: a
+    /// warm grade warms the neutrals while a blue sky stays blue. It composes with
+    /// [`RenderConfig::white_balance`].
+    pub fn temperature(mut self, temperature: f32, tint: f32) -> RenderConfig {
+        self.look = self.look.with_temperature(temperature, tint);
+        self
+    }
+
+    /// The config with its look's colour grading, each knob held to its range (the neutral
+    /// default changes nothing). The knobs grade the HDR scene before the tonemapper (contrast
+    /// turns about middle grey, so it never shifts the exposure); a LUT grades the display colour
+    /// after it: `RenderConfig::new().grading(Grading::NEUTRAL.with_contrast(1.15).with_lut(lut, 0.8))`
+    /// with `let lut = GradingLut::parse_cube(include_str!("../assets/looks/warm.cube"))?.intern()?;`.
+    pub fn grading(mut self, grading: Grading) -> RenderConfig {
+        self.look = self.look.with_grading(grading);
+        self
+    }
+
+    /// The config with auto exposure's compensation curve: `(metered EV, compensation EV)` points,
+    /// piecewise linear between them and flat beyond the ends (at most 8; a point that is not a
+    /// number is left out). A scene metered dark can stay dark: `[(-4.0, -2.0), (0.0, 0.0)]` keeps
+    /// a dusk at EV -3 1.5 EV under middle grey and leaves daylight alone. Empty (the default)
+    /// adds nothing.
+    pub fn exposure_curve(mut self, points: &[(f32, f32)]) -> RenderConfig {
+        self.look = self.look.with_compensation_curve(genex_render::settings::CompensationCurve::new(points));
+        self
+    }
+
     /// The config with `bloom` as its look's bloom ([`Bloom::apply_to`]).
     pub fn bloom(mut self, bloom: Bloom) -> RenderConfig {
         self.look = bloom.apply_to(self.look);
+        self
+    }
+
+    /// The config with its look's depth of field, each knob held to its range:
+    /// `RenderConfig::new().depth_of_field(DepthOfField::focused(3.0, 2.0))` keeps three metres
+    /// sharp at f/2. It draws after TAA on frames with the depth prepass (medium and up), never
+    /// on a settled capture unless the shot asks ([`CaptureLens`]). Off by default.
+    pub fn depth_of_field(mut self, depth_of_field: DepthOfField) -> RenderConfig {
+        self.look = self.look.with_depth_of_field(depth_of_field);
+        self
+    }
+
+    /// The config with its look's motion blur: `RenderConfig::new().motion_blur(MotionBlur::shutter(0.5))`
+    /// blurs what moved by half its motion each frame (a 180-degree shutter). It draws after TAA
+    /// and depth of field on frames that write motion (TAA's), at the preset's tier, never on a
+    /// settled capture unless the shot asks ([`CaptureLens`]). Off by default.
+    pub fn motion_blur(mut self, motion_blur: MotionBlur) -> RenderConfig {
+        self.look = self.look.with_motion_blur(motion_blur);
         self
     }
 
@@ -848,7 +926,14 @@ fn rungs_of(steps: &[genex_render::budget::DegradeStep]) -> Vec<DegradeRung> {
 /// resolution and the frame-time window.
 pub struct RenderControl {
     config: RenderConfig,
+    /// The game's logical world size: the session's material arrays are fitted at it.
+    world: (u32, u32),
+    /// The size Live frames draw at (the window's pixels capped by the class, else the world).
     output: (u32, u32),
+    /// The letterbox the window present fills on Live frames, when a window is known.
+    window: Option<(u32, u32)>,
+    /// The size captures draw at when one was asked for (`capture --size`), else the world.
+    capture_output: Option<(u32, u32)>,
     facts: DeviceFacts,
     probed: bool,
     calibration: Option<ScoreLevel>,
@@ -870,6 +955,9 @@ pub struct RenderControl {
     /// Whether the renderer holds the spot atlas layer (the game asked for a shadowed spot under a
     /// quality that draws them, `Renderer::uses_shadowed_spots`): the budget counts it from then on.
     spot_atlas: bool,
+    /// The GPU buffers the renderer held after its last Live frame (`Renderer::buffer_ledger`,
+    /// renderer pass 2 A.0 LG-13): the device's own budget counts them at its next fit.
+    buffers: genex_render::budget::BudgetLedger,
     /// The session's material arrays ([`RenderControl::texture_arrays`]), resolved with the rest.
     textures: (DeviceClass, TextureQuality),
     /// Explicit settings changes so far (the probe, a saved choice loaded, the person's panel, the
@@ -936,11 +1024,21 @@ fn unprobed_facts() -> DeviceFacts {
 /// finding 02: counted as memory, mobile-low's MSAA was the first rung its 48 MB budget gave up,
 /// so captures "as mobile-low" drew no anti-aliasing at all and EASU turned the far dock deck's
 /// aliased seams into a regular dot pattern.
+///
+/// A desktop-high or desktop-ultra capture is the plan's reference Mac
+/// ([`CAPTURE_DESKTOP_GPU_MEMORY_BYTES`]: the 2 GiB desktop cap), so its 1440p and 4K captures
+/// draw their preset's own settings. G0 look: fitted to desktop-high's 512 MiB, 4K captures drew
+/// no AA, no AO and 768 shadow maps, and 1440p ultra drew less than high.
 fn capture_facts(class: DeviceClass) -> DeviceFacts {
     let mut facts = DeviceFacts::new(TargetOs::Linux, wgpu::Backend::Noop, wgpu::DeviceType::Other);
     facts.transient_saves_memory = Some(class.form == FormFactor::Mobile);
-    facts
+    let reference_desktop = class.form == FormFactor::Desktop && matches!(class.tier, PerformanceTier::High | PerformanceTier::Ultra);
+    facts.with_gpu_visible_memory(reference_desktop.then_some(CAPTURE_DESKTOP_GPU_MEMORY_BYTES))
 }
+
+/// The GPU-visible memory of a desktop-high or desktop-ultra capture's reference device: the
+/// memory whose share is the desktop cap ([`genex_render::presets::class_budget_bytes`]).
+const CAPTURE_DESKTOP_GPU_MEMORY_BYTES: u64 = genex_render::presets::DESKTOP_BUDGET_MEMORY_CAP_BYTES * genex_render::presets::DESKTOP_BUDGET_MEMORY_DIVISOR;
 
 /// The material texture arrays `textures` reserves on `class` (`texture::material_arrays`): none
 /// with texture quality off, whose single 256 class grows with the game's textures.
@@ -949,6 +1047,14 @@ fn texture_arrays(class: DeviceClass, textures: TextureQuality) -> Vec<MaterialC
         return Vec::new();
     }
     material_arrays(class, textures)
+}
+
+/// The surface a budget is fitted for: the output drawn and the window present's letterbox (Live
+/// only, renderer pass 2, P2-0.9 step B).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct BudgetSurface {
+    output: (u32, u32),
+    window: Option<(u32, u32)>,
 }
 
 /// What the budget is fitted at for `profile` on `facts`: the class's scene format, whether its
@@ -963,16 +1069,21 @@ fn budget_input(output: (u32, u32), scale: f32, facts: &DeviceFacts, profile: &R
 }
 
 impl RenderControl {
-    /// The settings of a game with `config` and a world target of `output`, before the probe (an
-    /// unknown adapter of this build's destination).
-    pub fn new(config: RenderConfig, output: (u32, u32)) -> RenderControl {
+    /// The settings of a game with `config` and a logical world of `world`, before the probe (an
+    /// unknown adapter of this build's destination). Live and captures draw at the world size
+    /// until the presenter says otherwise ([`RenderControl::set_live_output`],
+    /// [`RenderControl::set_capture_size`]).
+    pub fn new(config: RenderConfig, world: (u32, u32)) -> RenderControl {
         let facts = unprobed_facts();
         let class = classify(&facts);
         let live = Resolved { profile: profile(&facts, class, &config.quality, None), quality: Quality::off(), budget_rungs: Vec::new() };
         let mut control = RenderControl {
             drs: controller(class, live.profile.preset, 1.0, 1.0, live.profile.target_fps),
             config,
-            output,
+            world,
+            output: world,
+            window: None,
+            capture_output: None,
             facts,
             probed: false,
             calibration: None,
@@ -989,6 +1100,7 @@ impl RenderControl {
             pipeline_deferred: false,
             ldr_reason: None,
             spot_atlas: false,
+            buffers: genex_render::budget::BudgetLedger::new(),
             textures: (class, TextureQuality::OFF),
             generation: 0,
             world_samples: None,
@@ -1024,6 +1136,52 @@ impl RenderControl {
     /// The device's facts (an unknown adapter before the probe).
     pub fn facts(&self) -> &DeviceFacts {
         &self.facts
+    }
+
+    /// Live frames draw at `output` (the window's pixels, capped by the class's reference
+    /// resolution) into a window present filling `window` (renderer pass 2, P2-0.9 step B): the
+    /// budget, its ceiling and dynamic resolution's upscale cost are fitted at them again when
+    /// either changes. Captures never move with them. A refit whose quality draws another sample
+    /// count is a pipeline change (GA round 2: the web canvas's first output dropped MSAA for the
+    /// budget while the world pass kept its 4 samples, deferred until a settings change).
+    pub fn set_live_output(&mut self, output: (u32, u32), window: Option<(u32, u32)>) {
+        if (output, window) == (self.output, self.window) {
+            return;
+        }
+        let samples = |control: &RenderControl| genex_render::renderer::landed_samples(control.live.quality.anti_aliasing);
+        let before = samples(self);
+        self.output = output;
+        self.window = window;
+        self.resolve();
+        if samples(self) != before {
+            self.generation += 1;
+        }
+    }
+
+    /// The size Live frames draw at (the world size until [`RenderControl::set_live_output`]).
+    pub fn live_output(&self) -> (u32, u32) {
+        self.output
+    }
+
+    /// Captures draw at `size` from now on (`capture --size`, the 4K/1440p plan), or at the world
+    /// size again (None): the pinned profile is fitted to the class budget at that size.
+    pub fn set_capture_size(&mut self, size: Option<(u32, u32)>) {
+        self.capture_output = size;
+    }
+
+    /// The size captures draw at: the size asked for, else the world size.
+    pub fn capture_output(&self) -> (u32, u32) {
+        self.capture_output.unwrap_or(self.world)
+    }
+
+    /// What Live frames are fitted at.
+    fn live_surface(&self) -> BudgetSurface {
+        BudgetSurface { output: self.output, window: self.window }
+    }
+
+    /// What captures are fitted at: their own size, no window.
+    fn capture_surface(&self) -> BudgetSurface {
+        BudgetSurface { output: self.capture_output(), window: None }
     }
 
     /// The reference class the host recorded for this adapter (captures; None:
@@ -1078,7 +1236,7 @@ impl RenderControl {
         let class = self.detected_class();
         let profile = profile(&self.facts, class, &self.config.quality, None);
         let reserved = texture_arrays(class, profile.quality.textures);
-        let input = budget_input(self.output, profile.quality.render_scale, &self.facts, &profile).with_materials(reserved.clone());
+        let input = budget_input(self.world, profile.quality.render_scale, &self.facts, &profile).with_materials(reserved.clone());
         let fitted = fit(&profile.quality, &input, profile.budget_bytes, DegradeMode::Boot);
         (class, fitted_textures(profile.quality.textures, &reserved, &fitted.materials))
     }
@@ -1089,10 +1247,11 @@ impl RenderControl {
     /// degraded (they are fixed); a profile for another class (the verb's emulation, a capture's
     /// reference class) reserves the arrays that class would hold, which the material rung may
     /// shrink, as that device's budget would.
-    fn budget_for(&self, profile: &RenderProfile, scale: f32, facts: &DeviceFacts, own: bool) -> (BudgetInput, Vec<MaterialClass>) {
+    fn budget_for(&self, profile: &RenderProfile, scale: f32, facts: &DeviceFacts, own: bool, surface: BudgetSurface) -> (BudgetInput, Vec<MaterialClass>) {
         // Captures never count the spot atlas: it appears with the first frame that asks for a
         // shadowed spot, and a capture's settings must not depend on what was drawn before it.
-        let input = budget_input(self.output, scale, facts, profile).with_spot_atlas(own && self.spot_atlas);
+        let held = if own { self.buffers.clone() } else { genex_render::budget::BudgetLedger::new() };
+        let input = budget_input(surface.output, scale, facts, profile).with_spot_atlas(own && self.spot_atlas).with_window(surface.window).with_buffers(&held);
         let (class, textures) = self.textures;
         if own && profile.class == class {
             return (input.with_fixed_materials(texture_arrays(class, textures)), Vec::new());
@@ -1105,8 +1264,8 @@ impl RenderControl {
     /// the device's own Live profile, see [`RenderControl::budget_for`]). On the device its
     /// texture quality is the session's arrays' ([`RenderControl::texture_arrays`]); elsewhere the
     /// size classes that survived the material rung.
-    fn fitted(&self, profile: RenderProfile, facts: &DeviceFacts, own: bool) -> Resolved {
-        let (input, reserved) = self.budget_for(&profile, profile.quality.render_scale, facts, own);
+    fn fitted(&self, profile: RenderProfile, facts: &DeviceFacts, own: bool, surface: BudgetSurface) -> Resolved {
+        let (input, reserved) = self.budget_for(&profile, profile.quality.render_scale, facts, own, surface);
         let fitted = fit(&profile.quality, &input, profile.budget_bytes, DegradeMode::Boot);
         let mut quality = fitted.quality;
         quality.textures = if input.materials_fixed {
@@ -1128,8 +1287,15 @@ impl RenderControl {
         let nominal = live.quality.render_scale;
         let steps = ScaleSteps::table(class_defaults(class).drs_steps, nominal);
         let own = self.live_is_own();
-        let fits = |scale: &f32| ledger(&live.quality, &self.budget_for(&live.profile, *scale, &self.facts, own).0).total() <= live.profile.budget_bytes;
+        let surface = self.live_surface();
+        let fits = |scale: &f32| ledger(&live.quality, &self.budget_for(&live.profile, *scale, &self.facts, own, surface).0).total() <= live.profile.budget_bytes;
         steps.steps().iter().copied().filter(|scale| *scale > nominal).take_while(fits).last().unwrap_or(nominal)
+    }
+
+    /// The GPU buffers the renderer holds now (LG-13): counted by the device's own budget from its
+    /// next fit (a settings change, a resize, the spot atlas), never refitting on its own.
+    pub fn note_buffers(&mut self, held: genex_render::budget::BudgetLedger) {
+        self.buffers = held;
     }
 
     /// Whether the renderer holds the spot atlas layer (`Renderer::uses_shadowed_spots`, sticky):
@@ -1146,7 +1312,7 @@ impl RenderControl {
         self.textures = self.session_textures();
         let class = self.live_class();
         let top = self.verb_layer(&self.person, class);
-        let live = self.fitted(profile(&self.facts, class, &self.config.quality, Some(&top)), &self.facts, self.live_is_own());
+        let live = self.fitted(profile(&self.facts, class, &self.config.quality, Some(&top)), &self.facts, self.live_is_own(), self.live_surface());
         let ceiling = self.budget_ceiling(class, &live);
         let thermal = self.drs.sustained();
         // FSR1's passes run at the output size below scale 1 (RCAS alone at 1 under TAA's
@@ -1168,7 +1334,7 @@ impl RenderControl {
         let class = self.capture_class();
         let top = self.verb_layer(&ClassOverride::default(), class);
         let facts = capture_facts(class);
-        let resolved = self.fitted(profile(&facts, class, &self.config.quality, Some(&top)), &facts, false);
+        let resolved = self.fitted(profile(&facts, class, &self.config.quality, Some(&top)), &facts, false, self.capture_surface());
         let game_preset = self.config.quality.preset.is_some() || self.config.quality.class(class).is_some_and(|t| t.preset.is_some());
         let source = match (self.verb.is_empty(), game_preset) {
             (false, _) => SettingsSource::Verb,
@@ -1422,7 +1588,7 @@ impl RenderControl {
         let drawn = |preset: QualityPreset| {
             let person = ClassOverride { preset: Some(preset), ..self.person.clone() };
             let top = self.verb_layer(&person, class);
-            let fitted = self.fitted(profile(&self.facts, class, &self.config.quality, Some(&top)), &self.facts, own);
+            let fitted = self.fitted(profile(&self.facts, class, &self.config.quality, Some(&top)), &self.facts, own, self.live_surface());
             RenderControl::switches(&fitted.quality).into_iter().filter(|(_, on)| *on).map(|(feature, _)| feature).collect::<Vec<_>>()
         };
         let mut offered = Vec::new();
@@ -1597,6 +1763,24 @@ fn person_after(control: &RenderControl, change: genex_hud::PanelChange, shown: 
         genex_hud::PanelChange::Reset => person = ClassOverride::default(),
     }
     person
+}
+
+/// The button that opens a game's settings: a drawn gear and `label` (checks find the button by
+/// it), a large tap target (the HUD's fonts have no emoji, so a gear glyph would draw a box).
+/// `clicked()` toggles the panel.
+///
+/// ```
+/// # use genex::prelude::*;
+/// # #[derive(Default)] struct World { menu: bool }
+/// # let mut game = Game::new(World::default());
+/// game.on_ui(|sim, ui, _| {
+///     if genex::render::settings_button(ui, "Settings").clicked() {
+///         sim.world.menu = !sim.world.menu;
+///     }
+/// });
+/// ```
+pub fn settings_button(ui: &mut egui::Ui, label: &str) -> egui::Response {
+    genex_hud::settings_button(ui, label)
 }
 
 /// The in-game graphics settings panel, for a game's `on_ui` hook: the quality preset, the render
@@ -1895,6 +2079,29 @@ mod tests {
         assert_eq!(offered, [QualityPreset::Low, QualityPreset::Medium]);
     }
 
+    /// GA round 2 (live-app finding 2): Web Live booted at the world size, where medium's MSAA fit
+    /// the browser's budget; the canvas then reported its 2000x1226 output, the refit dropped MSAA
+    /// (`budget: msaa`), but the world pass kept the 4 samples its first frame was built with
+    /// (`pipeline-change-deferred: anti-aliasing`) until a settings change, while dynamic resolution
+    /// sat at its floor. A new output whose fitted quality draws another sample count is a
+    /// pipeline change; one that keeps it is not.
+    #[test]
+    fn a_new_live_output_whose_budget_changes_the_world_pass_samples_is_a_pipeline_change() {
+        let hints = json!({"maxTouchPoints": 0, "coarsePointer": false, "shortSideCssPx": 1080, "deviceMemoryGb": 8, "uaMobile": false});
+        let web = DeviceFacts::new(TargetOs::Web, wgpu::Backend::BrowserWebGpu, wgpu::DeviceType::Other)
+            .with_web(web_hints_from_json(&hints).expect("hints"));
+        let mut browser = RenderControl::new(RenderConfig::new(), (960, 540));
+        browser.probe(web, None);
+        let samples = |control: &RenderControl| genex_render::renderer::landed_samples(control.live_asked().quality.anti_aliasing);
+        let (before, generation) = (samples(&browser), browser.pipeline_generation());
+        browser.set_live_output((2000, 1226), None);
+        assert_ne!(samples(&browser), before, "the premise: the budget at the canvas's output draws another sample count");
+        assert!(browser.pipeline_generation() > generation, "the world pass is rebuilt for the samples the budget left");
+        let generation = browser.pipeline_generation();
+        browser.set_live_output((2004, 1228), None);
+        assert_eq!(browser.pipeline_generation(), generation, "an output that keeps the samples rebuilds nothing");
+    }
+
     /// A Mac probed with `memory` bytes of GPU-visible memory (None: the platform did not say),
     /// drawing a world target of `output`.
     fn mac_with_memory(output: (u32, u32), memory: Option<u64>) -> RenderControl {
@@ -1933,6 +2140,69 @@ mod tests {
         assert_eq!(mac.live.profile.budget_bytes, 2 * GIB, "an eighth of 27 GB, at most 2 GiB");
     }
 
+    /// Renderer pass 2, P2-0.9 step B (F1/RC-03): Live is fitted at the output it draws (the
+    /// window's pixels, its window present's images counted) and captures at their own size, so a
+    /// window never changes a capture's settings. A small Mac fits high at the 960x540 world without
+    /// a step but not at a 3024x1964 Retina window, whose ledger is the larger one.
+    #[test]
+    fn live_is_fitted_at_the_window_s_output_and_captures_at_their_own_size() {
+        let world = (960, 540);
+        let mut mac = mac_with_memory(world, Some(SMALL_MAC_MEMORY));
+        drawn_at(&mut mac, QualityPreset::High);
+        let own = mac.live_is_own();
+        let at = |mac: &RenderControl| ledger(&mac.live.quality, &mac.budget_for(&mac.live.profile, 1.0, &mac.facts, own, mac.live_surface()).0).total();
+        let small = at(&mac);
+        let capture = mac.capture_frame();
+        assert_eq!(mac.live_output(), world, "Live draws the world size until a window is known");
+        let retina = (3024, 1964);
+        mac.set_live_output(retina, Some(retina));
+        assert_eq!(mac.live_output(), retina);
+        assert!(at(&mac) > small, "the ledger counts the window's output: {} vs {small}", at(&mac));
+        assert_eq!(mac.capture_frame().0.quality, capture.0.quality, "a window never reaches a capture's settings");
+        assert_eq!(mac.capture_output(), world, "captures draw at the world size");
+        mac.set_capture_size(Some((3840, 2160)));
+        assert_eq!(mac.capture_output(), (3840, 2160), "or at the size asked for");
+        mac.set_capture_size(None);
+        assert_eq!(mac.capture_output(), world);
+    }
+
+    /// G0 look (2026-10-14): captures at 2560x1440 and 3840x2160 were fitted to desktop-high's
+    /// 512 MiB, so 4K high and ultra drew no AA, no AO and 768 shadow maps, and 1440p ultra drew
+    /// less than high (AO off, 270-row bloom). A capture at either size draws its preset's own
+    /// settings, the ones it draws at the world size, and ultra keeps everything high draws.
+    #[test]
+    fn captures_at_1440p_and_4k_draw_their_preset_s_own_settings_and_ultra_keeps_all_of_high() {
+        let mut mac = mac_with_memory((1280, 720), Some(SMALL_MAC_MEMORY));
+        let capture_at = |mac: &mut RenderControl, preset: QualityPreset, size: Option<(u32, u32)>| {
+            mac.apply(&RenderChange { preset: Some(Some(PresetChoice::Preset(preset))), ..RenderChange::default() });
+            mac.set_capture_size(size);
+            mac.capture_frame().0.quality
+        };
+        for size in [(2560, 1440), (3840, 2160)] {
+            let mut drawn = Vec::new();
+            for preset in [QualityPreset::High, QualityPreset::Ultra] {
+                let reference = capture_at(&mut mac, preset, None);
+                let quality = capture_at(&mut mac, preset, Some(size));
+                assert!(quality.anti_aliasing.temporal(), "{preset:?} at {size:?} keeps TAA: {:?}", quality.anti_aliasing);
+                assert_eq!(quality.ao.resolution, reference.ao.resolution, "{preset:?} at {size:?} keeps its AO");
+                assert_eq!(quality.shadows, reference.shadows, "{preset:?} at {size:?} keeps its shadow maps");
+                assert_eq!(quality.bloom, reference.bloom, "{preset:?} at {size:?} keeps its bloom");
+                drawn.push(quality);
+            }
+            let (high, ultra) = (&drawn[0], &drawn[1]);
+            assert!(ao_rank(ultra.ao.resolution) >= ao_rank(high.ao.resolution), "{size:?}: ultra's AO {:?} under high's {:?}", ultra.ao.resolution, high.ao.resolution);
+            assert!(ultra.shadows.map_size >= high.shadows.map_size && ultra.bloom.resolution >= high.bloom.resolution, "{size:?}: ultra draws less than high");
+        }
+    }
+
+    fn ao_rank(resolution: AoResolution) -> u8 {
+        match resolution {
+            AoResolution::Full => 2,
+            AoResolution::Half => 1,
+            _ => 0,
+        }
+    }
+
     /// The ledger and probe rows of a Mac at [`MAC_OUTPUTS`] with a large, a small and an unknown
     /// GPU-visible memory (printed for the evidence with `--nocapture`).
     #[test]
@@ -1944,7 +2214,7 @@ mod tests {
                 for preset in QualityPreset::ALL {
                     let features = drawn_at(&mut mac, preset);
                     let own = mac.live_is_own();
-                    let total = ledger(&mac.live.quality, &mac.budget_for(&mac.live.profile, mac.live.quality.render_scale, &mac.facts, own).0).total();
+                    let total = ledger(&mac.live.quality, &mac.budget_for(&mac.live.profile, mac.live.quality.render_scale, &mac.facts, own, mac.live_surface()).0).total();
                     let rungs: Vec<_> = mac.live.budget_rungs.iter().map(|rung| rung.wire()).collect();
                     eprintln!(
                         "ROW memory={label} output={output:?} preset={} budget={} MiB ledger={} MiB ao={} degraded={rungs:?}",

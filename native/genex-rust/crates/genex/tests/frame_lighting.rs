@@ -29,6 +29,35 @@ fn a_frame_with_no_lighting_calls_draws_today_s_lighting() {
 }
 
 #[test]
+fn reflection_probes_reach_the_scene_s_lighting_in_call_order_and_are_not_draws() {
+    let mut frame = Frame::default();
+    let room = genex::ReflectionProbe::new(Vec3::new(-6.0, 0.15, 7.8), Vec3::new(6.0, 3.6, 15.8)).with_capture(Vec3::new(0.0, 1.6, 12.0)).with_blend(0.4);
+    frame.reflection_probe(&room);
+    frame.reflection_probe(&genex::ReflectionProbe::new(Vec3::ZERO, Vec3::ONE).with_intensity(0.5));
+    assert_eq!(frame.draw_calls(), 0, "probes are not draws");
+    let probes = scene_of(&frame).lighting.reflection_probes;
+    assert_eq!(probes.len(), 2);
+    assert_eq!((probes[0].min, probes[0].max, probes[0].capture, probes[0].blend), ([-6.0, 0.15, 7.8], [6.0, 3.6, 15.8], [0.0, 1.6, 12.0], 0.4));
+    assert_eq!((probes[1].capture, probes[1].intensity), ([0.5; 3], 0.5));
+    assert!(scene_of(&Frame::default()).lighting.reflection_probes.is_empty(), "none by default");
+}
+
+#[test]
+fn irradiance_volumes_reach_the_scene_s_lighting_in_call_order_and_are_not_draws() {
+    let mut frame = Frame::default();
+    let room = genex::IrradianceVolume::new(Vec3::new(-6.0, 0.15, 7.8), Vec3::new(6.0, 3.6, 15.8)).with_blend(0.4);
+    assert_eq!(room.cells, [12, 4, 8], "a cell about every metre");
+    frame.irradiance_volume(&room);
+    frame.irradiance_volume(&genex::IrradianceVolume::new(Vec3::ZERO, Vec3::ONE).with_cells([2, 3, 4]).with_intensity(0.5));
+    assert_eq!(frame.draw_calls(), 0, "volumes are not draws");
+    let volumes = scene_of(&frame).lighting.irradiance_volumes;
+    assert_eq!(volumes.len(), 2);
+    assert_eq!((volumes[0].min, volumes[0].max, volumes[0].cells, volumes[0].blend), ([-6.0, 0.15, 7.8], [6.0, 3.6, 15.8], [12, 4, 8], 0.4));
+    assert_eq!((volumes[1].cells, volumes[1].intensity), ([2, 3, 4], 0.5));
+    assert!(scene_of(&Frame::default()).lighting.irradiance_volumes.is_empty(), "none by default");
+}
+
+#[test]
 fn a_sun_call_reaches_the_scene_s_lighting() {
     let mut frame = Frame::default();
     frame.sun(Vec3::new(0.0, 1.0, -1.0), Color::rgb(255, 200, 150), 4.0);
@@ -546,4 +575,22 @@ mod gpu {
         assert!(over.len() <= OUTLIER_PIXELS, "{} pixels of the v2 material differ from the built-in surface under the spot: {:?}", over.len(), &over[..over.len().min(8)]);
         let _ = std::fs::remove_dir_all(&root);
     }
+}
+
+// Subsurface scattering and diffuse transmission (renderer pass 2 B.1)
+
+#[test]
+fn a_translucent_material_reaches_the_draw_and_an_opaque_one_lets_nothing_through() {
+    use genex::Subsurface;
+    let wax = Material::color(Color::rgb(235, 225, 205)).with_subsurface(Subsurface::WAX);
+    let leaf = Material::color(Color::rgb(90, 150, 50)).with_subsurface(Subsurface::LEAF.with_transmission(0.4));
+    let mut frame = Frame::default();
+    frame.sphere_with(Vec3::ZERO, 0.05, &wax);
+    frame.cube_with(Transform::IDENTITY, &leaf);
+    frame.cube(Transform::IDENTITY, Color::RED);
+    let scene = scene_of(&frame);
+    assert_eq!(scene.draws[0].material.subsurface, Some(Subsurface::WAX), "the wax's scattering reaches its draw");
+    assert_eq!(scene.draws[1].material.subsurface.map(|s| s.transmission), Some(0.4));
+    assert_eq!(scene.draws[2].material.subsurface, None, "a draw that names no scattering lets nothing through");
+    assert_eq!(wax.subsurface(), Some(Subsurface::WAX));
 }

@@ -39,10 +39,15 @@ import {
   parseImportReceipt,
 } from "../substrate/asset-import/job.ts";
 import { looksLikeRadiance } from "../substrate/asset-import/hdr.ts";
-import { readKtx2Header } from "../substrate/asset-import/ktx2.ts";
+import { type Ktx2FamilySkip, readKtx2Header } from "../substrate/asset-import/ktx2.ts";
 import { objMaterialLibrary } from "../substrate/asset-import/obj.ts";
 import { readGameAsset } from "../substrate/asset-import/safe-asset.ts";
-import type { TranscodedTexture } from "../substrate/asset-import/texture-table.ts";
+import {
+  familyFileName,
+  KTX2_VK_FORMAT,
+  type TextureCompression,
+  type TranscodedTexture,
+} from "../substrate/asset-import/texture-table.ts";
 import type { RunRequest, RunResult, SandboxOptions, SandboxPolicy } from "../substrate/spawn.ts";
 import { shellQuote } from "../substrate/shell-quote.ts";
 
@@ -122,6 +127,10 @@ export interface ImportedAsset {
   refusal?: AssetImportRefusal;
   output?: ImportOutput;
   textures?: TranscodedTexture[];
+  /** A Basis KTX2's fixed-format file per family (A6.5), each named `<stem>.<family>.ktx2` beside it. */
+  families?: ImportOutput[];
+  /** Why a Basis KTX2 got no per-family files. */
+  familiesSkipped?: Ktx2FamilySkip;
 }
 
 /** One import's outcome, file by file, in request order. */
@@ -303,6 +312,47 @@ async function admitOutput(jobDir: string, planned: Planned, source: string): Pr
   return { path: file, file: outputName(source, planned.step.output), bytes: bytes.byteLength, sha256: sha256(bytes) };
 }
 
+/** A regular file in `out/` (never a link) within the output cap, read; or null. */
+async function readOutputFile(file: string): Promise<Uint8Array | null> {
+  const info = await lstat(file).catch(() => null);
+  if (!info?.isFile() || info.size > IMPORT_OUTPUT_MAX_BYTES) return null;
+  return await readRegularFile(file, IMPORT_OUTPUT_MAX_BYTES).catch(() => null);
+}
+
+/** One family's KTX2 as the host admits it: a KTX2 in that family's own fixed format, plain levels. */
+async function admitFamily(
+  jobDir: string,
+  family: { compression: TextureCompression; output: string },
+  source: string,
+): Promise<ImportOutput | null> {
+  const file = path.join(jobDir, ...family.output.split("/"));
+  const bytes = await readOutputFile(file);
+  const header = bytes ? readKtx2Header(bytes) : null;
+  const formats: readonly number[] = Object.values(KTX2_VK_FORMAT[family.compression]);
+  if (!bytes || !header || !formats.includes(header.vkFormat) || header.supercompression !== 0) return null;
+  return {
+    path: file,
+    file: familyFileName(source, family.compression),
+    bytes: bytes.byteLength,
+    sha256: sha256(bytes),
+  };
+}
+
+/** Every family file of a receipt line admitted, or null when any one is not. */
+async function admitFamilies(
+  jobDir: string,
+  line: Extract<ImportReceipt["files"][number], { ok: true }>,
+  source: string,
+): Promise<ImportOutput[] | null> {
+  const admitted: ImportOutput[] = [];
+  for (const family of line.families ?? []) {
+    const output = await admitFamily(jobDir, family, source);
+    if (!output) return null;
+    admitted.push(output);
+  }
+  return admitted;
+}
+
 /** The receipt, or null when there is none the host accepts. */
 async function readReceipt(file: string): Promise<ImportReceipt | null> {
   const bytes = await readRegularFile(file, RECEIPT_MAX_BYTES).catch(() => null);
@@ -314,6 +364,29 @@ async function readReceipt(file: string): Promise<ImportReceipt | null> {
   }
 }
 
+/** What one planned file's receipt line comes to: its admitted outputs, or how it failed. */
+async function admitLine(
+  jobDir: string,
+  item: Planned,
+  entry: ImportedAsset,
+  line: ImportReceipt["files"][number] | undefined,
+): Promise<Partial<ImportedAsset>> {
+  const failed = { action: ImportAction.Refuse, refusal: AssetImportRefusal.ImporterFailed };
+  if (!line) return failed;
+  if (!line.ok) return { action: ImportAction.Refuse, refusal: line.refusal };
+  const output = line.output === item.job.output ? await admitOutput(jobDir, item, entry.file) : null;
+  if (!output) return failed;
+  const families =
+    item.step.converter === ImportConverter.Ktx2Check ? await admitFamilies(jobDir, line, entry.file) : [];
+  if (!families) return failed;
+  return {
+    output,
+    ...(line.textures ? { textures: line.textures } : {}),
+    ...(line.families ? { families } : {}),
+    ...(line.familiesSkipped ? { familiesSkipped: line.familiesSkipped } : {}),
+  };
+}
+
 /** Each planned file's outcome from the receipt, every output checked. */
 async function admit(
   jobDir: string,
@@ -321,23 +394,11 @@ async function admit(
   planned: readonly Planned[],
   results: ImportedAsset[],
 ): Promise<void> {
-  const failed = (entry: ImportedAsset) =>
-    Object.assign(entry, { action: ImportAction.Refuse, refusal: AssetImportRefusal.ImporterFailed });
   for (const item of planned) {
     const entry = results[item.at];
     if (!entry) continue;
     const line = receipt?.files.find((file) => file.index === item.job.index);
-    if (!line) {
-      failed(entry);
-      continue;
-    }
-    if (!line.ok) {
-      Object.assign(entry, { action: ImportAction.Refuse, refusal: line.refusal });
-      continue;
-    }
-    const output = line.output === item.job.output ? await admitOutput(jobDir, item, entry.file) : null;
-    if (!output) failed(entry);
-    else Object.assign(entry, { output, ...(line.textures ? { textures: line.textures } : {}) });
+    Object.assign(entry, await admitLine(jobDir, item, entry, line));
   }
 }
 

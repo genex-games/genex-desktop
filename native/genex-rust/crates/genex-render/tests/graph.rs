@@ -18,7 +18,10 @@ const WIDTH: u32 = 128;
 const HEIGHT: u32 = 72;
 
 /// The plan's table (§2.2), in frame order.
-const PLAN_ORDER: [&str; 27] = [
+// Renderer pass 2 wave 2 flipped: the water (16a) after the resolve (29 -> 30 rows).
+// Renderer pass 2 look pass flipped: the screen-space reflections (10b, B.9) after the contact
+// shadows (30 -> 31 rows).
+const PLAN_ORDER: [&str; 31] = [
     "tables",
     "before-cull",
     "skinning",
@@ -30,6 +33,7 @@ const PLAN_ORDER: [&str; 27] = [
     "after-prepass",
     "ao",
     "contact-shadows",
+    "ssr",
     "environment",
     "opaque",
     "sky",
@@ -37,7 +41,10 @@ const PLAN_ORDER: [&str; 27] = [
     "transparent",
     "reactive",
     "resolve",
+    "water",
     "taa",
+    "dof",
+    "motion-blur",
     "post-hdr",
     "bloom",
     "exposure",
@@ -55,7 +62,10 @@ const PLAN_ORDER: [&str; 27] = [
 /// row (19, its chain recorded by the tonemap).
 // RQ6.7 flipped: light binning (node 4) is landed (23 -> 24 rows).
 // RQ5.6 flipped: TAA's reactive coverage (15a) and resolve (17) are landed (24 -> 26 rows).
-const LANDED: [NodeId; 26] = [
+// Renderer pass 2 A.9 flipped: depth of field (17a) and motion blur (17b) are landed (26 -> 28 rows).
+// Renderer pass 2 wave 2 flipped: the water (16a) is landed (28 -> 29 rows).
+// Renderer pass 2 look pass flipped: the screen-space reflections (10b, B.9) are landed (29 -> 30 rows).
+const LANDED: [NodeId; 30] = [
     NodeId::Tables,
     NodeId::BeforeCull,
     NodeId::Skinning,
@@ -67,6 +77,7 @@ const LANDED: [NodeId; 26] = [
     NodeId::AfterPrepass,
     NodeId::Ao,
     NodeId::ContactShadows,
+    NodeId::Ssr,
     NodeId::Environment,
     NodeId::Opaque,
     NodeId::Sky,
@@ -74,7 +85,10 @@ const LANDED: [NodeId; 26] = [
     NodeId::Transparent,
     NodeId::Reactive,
     NodeId::Resolve,
+    NodeId::Water,
     NodeId::Taa,
+    NodeId::Dof,
+    NodeId::MotionBlur,
     NodeId::PostHdr,
     NodeId::Bloom,
     NodeId::Exposure,

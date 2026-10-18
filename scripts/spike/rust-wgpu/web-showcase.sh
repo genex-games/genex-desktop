@@ -2,12 +2,16 @@
 # Renderer follow-up (RQ0.3): build the lakeside showcase for the web, packaged as the lane serves
 # a web build, so Lakeside's six custom GPU passes run in a browser (Web Live parity).
 #
-#   bash scripts/spike/rust-wgpu/web-showcase.sh [--debug] [--out <dir>]
+#   bash scripts/spike/rust-wgpu/web-showcase.sh [--debug] [--out <dir>] [--print-cargo]
 #
 # 1. cargo builds `showcase-web` (examples/showcase-web: the showcase's game/src/main.rs with
 #    `genex` = genex-platform-web, as the host-written web manifest names it) for
-#    wasm32-unknown-unknown, release unless --debug, through the repo's rust env helper (the pinned
-#    toolchain, the vendored crates, offline and locked).
+#    wasm32-unknown-unknown, release unless --debug, in the repo's rust env helper's environment
+#    (the pinned toolchain, the vendored crates, offline and locked). A release build takes the
+#    lane's export size profile (`RUST_WEB_EXPORT_PROFILE_SETTINGS` in src/main/rust-build-web.ts,
+#    as `--config` settings, which the helper itself refuses), so the gzip size it reports is the
+#    size a web export of the showcase ships (renderer pass 2, A.12). `--print-cargo` prints the
+#    cargo arguments one per line and exits without building.
 # 2. The lane's own packaging (`packageWeb` in src/main/rust-build-web.ts) runs the pinned
 #    wasm-bindgen and, for a release build, wasm-opt, and writes the template shell as index.html
 #    with its receipt (size.json).
@@ -32,9 +36,11 @@ GAME="$REPO/native/genex-rust/examples/showcase/game"
 
 profile=release
 out=""
+print_cargo=0
 while [ $# -gt 0 ]; do
   case $1 in
     --debug) profile=debug ;;
+    --print-cargo) print_cargo=1 ;;
     --out)
       [ $# -ge 2 ] || { echo "web-showcase.sh: --out needs a folder" >&2; exit 2; }
       out=$2
@@ -46,12 +52,28 @@ while [ $# -gt 0 ]; do
 done
 [ -n "$out" ] || out="$TARGET_DIR/genex-web/showcase"
 
-cargo_args=(build -p showcase-web --bin showcase-web --target "$WASM_TARGET" --offline --locked)
-[ "$profile" = release ] && cargo_args+=(--release)
+cargo_args=(build --manifest-path "$REPO/native/genex-rust/Cargo.toml" -p showcase-web --bin showcase-web --target "$WASM_TARGET" --offline --locked)
+if [ "$profile" = release ]; then
+  cargo_args+=(--release)
+  # The lane's export size profile, read from the lane's own module (one setting per line).
+  while IFS= read -r setting; do
+    cargo_args+=(--config "$setting")
+  done < <(node --input-type=module -e "
+    const web = await import(process.argv[1]);
+    for (const setting of web.RUST_WEB_EXPORT_PROFILE_SETTINGS) console.log(setting);
+  " "$(node -e 'console.log(require("node:url").pathToFileURL(process.argv[1]).href)' "$REPO/src/main/rust-build-web.ts")")
+fi
+if [ "$print_cargo" = 1 ]; then
+  printf '%s\n' "${cargo_args[@]}"
+  exit 0
+fi
 # The game's [[wgsl]] rows, compiled in as the lane compiles them (GENEX_WGSL_TOML), so the web
-# build admits its Level-2 terrain material at the api its row declares.
+# build admits its Level-2 materials at the api each row declares.
 wgsl_toml="$(awk '/^\[\[wgsl\]\]/ { keep = 1 } /^\[[^[]/ { keep = 0 } keep' "$GAME/genex.toml")"
-GENEX_WGSL_TOML="$wgsl_toml" CARGO_TARGET_DIR="$TARGET_DIR" node "$RUST_ENV" -- cargo "${cargo_args[@]}"
+(
+  eval "$(CARGO_TARGET_DIR="$TARGET_DIR" node "$RUST_ENV" --print-env)"
+  GENEX_WGSL_TOML="$wgsl_toml" cargo "${cargo_args[@]}"
+)
 
 wasm="$TARGET_DIR/$WASM_TARGET/$profile/showcase-web.wasm"
 [ -f "$wasm" ] || { echo "web-showcase.sh: cargo produced no $wasm" >&2; exit 1; }

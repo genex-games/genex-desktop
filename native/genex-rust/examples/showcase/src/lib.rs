@@ -1,14 +1,22 @@
-//! The lakeside showcase for the workspace: the game folder's modules (`game/src/`, compiled here as
-//! they are in Studio), its assets read from `game/assets/`, and the procedural mesh generator that
-//! wrote them. The scene itself is documented in `game/src/main.rs`. [`bench`] holds the renderer
-//! bench scenes the follow-up measures beside it (drawn through genex-render directly).
+//! The showcase scenes for the workspace: the lakeside's game folder modules (`game/src/`, compiled
+//! here as they are in Studio), its assets read from `game/assets/`, and the procedural mesh
+//! generator that wrote them (the scene is documented in `game/src/main.rs`); Harbour Street's game
+//! folder modules ([`harbour`] and [`street`], from `harbour/src/`; renderer pass 2's urban and
+//! interior scene, documented in `harbour/src/main.rs`). [`bench`] holds the renderer bench scenes
+//! the follow-up measures beside them (drawn through genex-render directly).
 
 pub mod bench;
+#[path = "../game/src/daylight.rs"]
+pub mod daylight;
 #[path = "../game/src/draw.rs"]
 pub mod draw;
 pub mod fetched;
+#[path = "../harbour/src/harbour.rs"]
+pub mod harbour;
 #[path = "../game/src/hud.rs"]
 pub mod hud;
+#[path = "../game/src/interior.rs"]
+pub mod interior;
 #[path = "../game/src/layout.rs"]
 pub mod layout;
 pub mod meshgen;
@@ -18,6 +26,10 @@ pub mod props;
 #[path = "../game/src/showcase.rs"]
 pub mod showcase;
 pub mod stress;
+#[path = "../harbour/src/nightfall.rs"]
+pub mod nightfall;
+#[path = "../harbour/src/street.rs"]
+pub mod street;
 pub mod trees;
 #[path = "../game/src/world.rs"]
 pub mod world;
@@ -75,6 +87,41 @@ fn read_folder(dir: &str, prefix: &str, extensions: &[&str], files: &mut Vec<(&'
         let Ok(bytes) = std::fs::read(format!("{dir}/{name}")) else { continue };
         files.push((Box::leak(path.into_boxed_str()), Box::leak(bytes.into_boxed_slice())));
     }
+}
+
+/// Harbour Street's game folder (renderer pass 2, A.13): its `genex.toml` declares no WGSL.
+pub const HARBOUR_GAME_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/harbour");
+
+/// Harbour Street's assets (`harbour/assets/`: its own decal textures under `decals/`).
+pub const HARBOUR_ASSETS_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/harbour/assets");
+
+/// Harbour Street's fetched assets' processed folder (`scripts/showcase-assets.ts fetch --scene
+/// harbour-street` writes it), read as `fetched/<name>` unless `GENEX_SHOWCASE_FETCHED=0`.
+pub const HARBOUR_FETCHED_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../../../.studio-dev/assets-cache/harbour-street/assets/fetched");
+
+/// Harbour Street with every hook registered.
+pub fn harbour_game() -> Game<harbour::World> {
+    let mut game = harbour::new_game();
+    harbour::wire(&mut game);
+    game
+}
+
+/// Harbour Street's fetched CC0 maps and sky map ([`HARBOUR_FETCHED_DIR`], or
+/// `harbour/assets/fetched/` where `--install` put them) as `fetched/...`, read once and kept for
+/// the process as [`assets`] is.
+pub fn harbour_assets() -> AssetTable {
+    static TABLE: OnceLock<AssetTable> = OnceLock::new();
+    TABLE.get_or_init(|| {
+        let mut files: Vec<(&'static str, &'static [u8])> = Vec::new();
+        // Its own decal textures (renderer pass 2 A.10: posters, grime, puddles), always read.
+        read_folder(&format!("{HARBOUR_ASSETS_DIR}/decals"), "decals/", &[".png"], &mut files);
+        if reads_fetched() {
+            let fetched = [".jpg", ".png", ".hdr"];
+            read_folder(&format!("{HARBOUR_ASSETS_DIR}/fetched"), "fetched/", &fetched, &mut files);
+            read_folder(HARBOUR_FETCHED_DIR, "fetched/", &fetched, &mut files);
+        }
+        Box::leak(files.into_boxed_slice())
+    })
 }
 
 fn read_assets() -> AssetTable {

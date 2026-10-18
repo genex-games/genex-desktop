@@ -344,7 +344,10 @@ fn metal_a_white_furnace_reflects_the_whole_environment_at_every_roughness() {
 }
 
 /// The sun is not counted twice: the furnace with the analytic sun on is the furnace without it
-/// plus the sun alone (no environment light), pixel for pixel in linear light.
+/// plus the sun alone (no environment light), pixel for pixel in linear light. P2-0.11 (SI-07)
+/// flips the sun alone's environment (named in the log): it was the flat colour, whose neutral BRDF
+/// LUT leaves direct light single-scatter; a furnace of no light binds the LUT as the furnace does,
+/// so both shade the sun with the same energy compensation.
 #[test]
 #[ignore = "needs a GPU: run with --ignored metal"]
 fn metal_the_furnace_with_the_sun_is_the_furnace_plus_the_sun_alone() {
@@ -356,7 +359,8 @@ fn metal_the_furnace_with_the_sun_is_the_furnace_plus_the_sun_alone() {
     let mut furnace = furnace_renderer(&gpu);
     let without = scene_radiance(&mut furnace, &gpu, &sphere_scene(material, 0.0));
     let with = scene_radiance(&mut furnace, &gpu, &sphere_scene(material, 2.0));
-    let mut alone = renderer(&gpu, WIDTH, HEIGHT, &ibl_quality(QualityPreset::High, false), &Environment::Color);
+    let mut alone = renderer(&gpu, WIDTH, HEIGHT, &ibl_quality(QualityPreset::High, false), &furnace_environment());
+    alone.set_environment_map(&gpu, &constant_map(0.0)).expect("map");
     let sun = scene_radiance(&mut alone, &gpu, &sphere_scene(material, 2.0));
     let mut worst = 0.0f32;
     for ((w, a), s) in with.iter().zip(&without).zip(&sun) {
@@ -497,8 +501,11 @@ const FLICKER_SPHERE: f32 = 1.2;
 const FLICKER_REGION_PX: f32 = 36.0;
 /// The second camera position's jitter, in pixels to the right.
 const FLICKER_JITTER_PX: f32 = 0.5;
-/// With specular AA on, the frame flickers at most this share of the flicker it shows off.
-const FLICKER_SHARE: f32 = 0.6;
+/// With specular AA on, the frame flickers at most this share of the flicker it shows off. 0.8
+/// since renderer pass 2 P2-0.12 (C8; was 0.6): specular AA filters the geometric normal's
+/// variance as Filament does, and the normal map's detail is its mips' (Toksvig), so a magnified
+/// bumpy map is steadied by the sphere's curvature alone (0.37 against 0.48 off).
+const FLICKER_SHARE: f32 = 0.8;
 /// The flicker off must reach this share for the row to measure anything.
 const FLICKER_FLOOR: f32 = 0.2;
 /// The normal map's bump period in texels, and its size.
@@ -977,4 +984,94 @@ fn project_to(frame: &Capture, p: [f32; 3], target: [f32; 3]) -> (u32, u32) {
     let x = (dot(d, right) / half_width * 0.5 + 0.5) * frame.width() as f32;
     let y = (0.5 - dot(d, up) / half_height * 0.5) * frame.height() as f32;
     (x as u32, y as u32)
+}
+
+// ---------------------------------------------------------------------------------------------
+// Pass 2 P2-0.11 rows
+
+/// How far the sunlit centre of a rough white metal may be from its single-scatter brightness
+/// times `1 / E` (SI-07), as a share.
+const COMPENSATION_SHARE: f32 = 0.02;
+
+#[test]
+#[ignore = "needs a GPU: run with --ignored metal"]
+fn metal_a_rough_metal_sphere_in_the_sun_is_brighter_by_its_energy_compensation() {
+    // SI-07, S8, LG-03: direct specular had no multiple-scattering compensation, so a rough metal
+    // under the sun lost what its single-scatter lobe does not reflect (E), while the same metal
+    // under the sky's split sum kept it. With an environment bound (its BRDF LUT), the sun's
+    // specular is times 1 + f0 (1 / E - 1): for white metal (f0 = 1), 1 / E. The flat-colour
+    // environment binds the neutral LUT and keeps the single-scatter picture.
+    let Some(gpu) = gpu() else { return };
+    if !ibl_landed() {
+        return;
+    }
+    let roughness = 0.8;
+    let material = Material::color([255, 255, 255, 255]).with_pbr(1.0, roughness);
+    let mut scene = sphere_scene(material, 2.0);
+    // The sun behind the camera: the sphere's centre faces both (N = V = L).
+    scene.lighting.sun_dir = [0.0, 0.0, 1.0];
+    scene.lighting.shadows = false;
+    let mut compensated = renderer(&gpu, WIDTH, HEIGHT, &ibl_quality(QualityPreset::High, false), &furnace_environment());
+    compensated.set_environment_map(&gpu, &constant_map(0.0)).expect("map");
+    let with = scene_radiance(&mut compensated, &gpu, &scene);
+    let mut single = renderer(&gpu, WIDTH, HEIGHT, &ibl_quality(QualityPreset::High, false), &Environment::Color);
+    let without = scene_radiance(&mut single, &gpu, &scene);
+    let centre = ((HEIGHT / 2) * WIDTH + WIDTH / 2) as usize;
+    let ratio = with[centre][1] / without[centre][1];
+    // The LUT's last texel centre along N.V (1 - 0.5 / 128) at the sphere's roughness.
+    let [scale, bias] = genex_render::ibl::brdf_lut_reference(1.0 - 0.5 / f64::from(genex_render::ibl::BRDF_LUT_SIZE), f64::from(roughness), 4096);
+    let expected = (1.0 / (scale + bias)) as f32;
+    eprintln!("rough white metal in the sun: centre {} with the LUT, {} single-scatter: ratio {ratio:.4}, 1 / E {expected:.4}", with[centre][1], without[centre][1]);
+    assert!(without[centre][1] > 0.05, "the sun lights the centre: {:?}", without[centre]);
+    assert!((ratio - expected).abs() <= COMPENSATION_SHARE * expected, "the centre is {ratio:.4} times brighter, 1 / E is {expected:.4}");
+}
+
+/// The smallest share of the floor roughness's peak a polished sphere's reflection of a small sun
+/// keeps at roughness 0.0625 (SI-01: a lobe blurred 3 to 6 times its width spread it thin).
+const POLISHED_PEAK_SHARE: f32 = 0.3;
+/// The share of a reflection's peak a pixel must reach to count in its glow.
+const SUN_GLOW_SHARE: f32 = 0.01;
+/// The most pixels of the 640 x 360 frame a polished sphere's reflection of the 1.5-degree sun may
+/// glow over (above [`SUN_GLOW_SHARE`] of its peak): 116 when its lobe was read from a 32 px
+/// radiance cube, 69 from one at half the specular side.
+const POLISHED_GLOW_PIXELS: usize = 90;
+
+#[test]
+#[ignore = "needs a GPU: run with --ignored metal"]
+fn metal_a_polished_sphere_reflects_a_small_sun_with_a_sharp_edge() {
+    // SI-01 acceptance: a polished metal sphere (roughness 0.0625) under a map with a 1.5-degree
+    // sun kept in it shows the sun as a small bright reflection with a sharp edge, close to the
+    // floor roughness's mirror, not a dim smear. Evidence: `ibl-polished-sun-640x360.bgra`.
+    let Some(gpu) = gpu() else { return };
+    if !ibl_landed() {
+        return;
+    }
+    let sun = {
+        let d = [0.25_f32, 0.45, 1.0];
+        let length = (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt();
+        d.map(|c| c / length)
+    };
+    let map = map_with_sun(sun, 3000.0);
+    let environment = Environment::Hdri(HdriEnvironment::new("env/sun.hdr").with_sun(HdriSun::Off));
+    let (width, height) = (640, 360);
+    let peak_and_core = |roughness: f32, name: &str| {
+        let mut lit = renderer(&gpu, width, height, &ibl_quality(QualityPreset::High, false), &environment);
+        lit.set_environment_map(&gpu, &map).expect("map");
+        let mut scene = sphere_scene(Material::color([235, 235, 235, 255]).with_pbr(1.0, roughness), 0.0);
+        scene.lighting.shadows = false;
+        let texels = scene_radiance(&mut lit, &gpu, &scene);
+        let frame = lit.capture(&gpu).expect("capture");
+        write_evidence(name, &frame);
+        let peak = texels.iter().map(|t| t[1]).fold(0.0_f32, f32::max);
+        let core = texels.iter().filter(|t| t[1] > 0.5 * peak).count();
+        let glow = texels.iter().filter(|t| t[1] > SUN_GLOW_SHARE * peak).count();
+        (peak, core, glow)
+    };
+    let (mirror_peak, mirror_core, mirror_glow) = peak_and_core(0.0, "ibl-mirror-sun");
+    let (polished_peak, polished_core, polished_glow) = peak_and_core(0.0625, "ibl-polished-sun");
+    eprintln!(
+        "small sun on a metal sphere: floor roughness peak {mirror_peak:.1} ({mirror_core} px over half, {mirror_glow} over {SUN_GLOW_SHARE}), 0.0625 peak {polished_peak:.1} ({polished_core} px over half, {polished_glow} over {SUN_GLOW_SHARE})"
+    );
+    assert!(polished_peak >= POLISHED_PEAK_SHARE * mirror_peak, "the polished reflection's peak {polished_peak} against the mirror's {mirror_peak}");
+    assert!(polished_glow <= POLISHED_GLOW_PIXELS, "the polished reflection glows over {polished_glow} pixels (the mirror's over {mirror_glow})");
 }

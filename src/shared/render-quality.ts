@@ -17,6 +17,8 @@
  * here and in those copies together; a value is never renamed.
  */
 
+import type { LoadingStyle } from "./loading-style.ts";
+
 /** A quality preset: what a device class defaults to, or what the person or a game picks. Wire values. */
 export const QualityPreset = {
   /** The device class's own default (the probe decides). Never an effective preset. */
@@ -137,11 +139,12 @@ export const ExposureMode = {
 } as const;
 export type ExposureMode = (typeof ExposureMode)[keyof typeof ExposureMode];
 
-/** Where auto exposure looks. Wire values. */
+/** Where auto exposure looks (`ground`: sky-aware, the lower rows weigh more). Wire values. */
 export const Metering = {
   Average: "average",
   Center: "center",
   Spot: "spot",
+  Ground: "ground",
 } as const;
 export type Metering = (typeof Metering)[keyof typeof Metering];
 
@@ -196,6 +199,8 @@ export const RenderTomlKey = {
   Look: "look",
   Class: "class",
   Shadows: "shadows",
+  /** The loading screen (`shared/loading-style.ts`). */
+  Loading: "loading",
 } as const;
 export type RenderTomlKey = (typeof RenderTomlKey)[keyof typeof RenderTomlKey];
 
@@ -234,6 +239,10 @@ export const RendererFeature = {
   TimestampQuery: "timestamp-query",
   Rg11b10UfloatRenderable: "rg11b10ufloat-renderable",
   DepthClipControl: "depth-clip-control",
+  /** Compressed material textures (BC7, ASTC 4x4, ETC2 RGBA8). */
+  TextureCompressionBc: "texture-compression-bc",
+  TextureCompressionAstc: "texture-compression-astc",
+  TextureCompressionEtc2: "texture-compression-etc2",
 } as const;
 export type RendererFeature = (typeof RendererFeature)[keyof typeof RendererFeature];
 
@@ -359,6 +368,42 @@ export const MeshletFault = {
 } as const;
 export type MeshletFault = (typeof MeshletFault)[keyof typeof MeshletFault];
 
+// ── LODs (renderer pass 2, A6.9): the `genex_lods` glTF extras the importer writes and the renderer reads ──
+
+/** The member of a glTF primitive's `extras` holding its simplified levels: never an extension. */
+export const LODS_EXTRAS_KEY = "genex_lods";
+/** The `genex_lods` schema version the renderer reads; another version is ignored (the mesh draws whole). */
+export const LOD_SCHEMA_VERSION = 1;
+/** Most levels past the primitive's own triangles. */
+export const LOD_MAX_LEVELS = 4;
+/** The fewest triangles a GLB needs to get import-time levels. */
+export const LOD_MIN_TRIANGLES = 512;
+
+/**
+ * The members of the `genex_lods` extras object: the schema version, the bufferView of every
+ * level's triangle list (little-endian `u32` primitive vertex indices, level after level) and the
+ * levels, coarser and coarser. Wire values.
+ */
+export const LodExtrasKey = { Version: "version", Indices: "indices", Levels: "levels" } as const;
+export type LodExtrasKey = (typeof LodExtrasKey)[keyof typeof LodExtrasKey];
+
+/**
+ * The members of one level: its first index in the view, its index count, and its simplification
+ * error, an object-space distance (meshoptimizer's relative error times the mesh's extent). Wire values.
+ */
+export const LodLevelKey = { First: "first", Count: "count", Error: "error" } as const;
+export type LodLevelKey = (typeof LodLevelKey)[keyof typeof LodLevelKey];
+
+/** Why the renderer drops a primitive's `genex_lods` (the mesh then draws whole): the typed warning. Wire values. */
+export const LodFault = {
+  UnknownVersion: "lods-unknown-version",
+  OverLimit: "lods-over-limit",
+  RangeOutOfBounds: "lods-range-out-of-bounds",
+  VertexOutOfMesh: "lods-vertex-out-of-mesh",
+  NotCoarser: "lods-not-coarser",
+} as const;
+export type LodFault = (typeof LodFault)[keyof typeof LodFault];
+
 // ── genex.toml's [render] ───────────────────────────────────────────────────────────────────────
 
 /** A game's look from `[render.look]`; a key left out keeps the facade's default. */
@@ -416,6 +461,8 @@ export interface RenderToml {
   classes: Partial<Record<DeviceClass, RenderClassOverride>>;
   /** `[render.shadows]`: the sun's shadows on every preset (a key left out keeps each preset's own). */
   shadows?: RenderShadows;
+  /** `[render.loading]`: the loading screen every destination shows (a key left out takes the default). */
+  loading?: LoadingStyle;
 }
 
 /** `genex.toml`'s `[render.shadows]`, held to each device class's caps (a phone reaches 40 units at most). */

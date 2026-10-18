@@ -218,6 +218,49 @@ fn tonemap_and_exposure_round_trip_through_render_settings_and_the_toml_look() {
 }
 
 #[test]
+fn a_look_takes_a_temperature_and_an_exposure_curve_that_an_exposure_keeps() {
+    use genex::render::{Exposure, Look, Metering};
+    let config = RenderConfig::new().exposure(Exposure::auto().metering(Metering::Ground)).temperature(0.4, -0.1).exposure_curve(&[(0.0, 0.0), (-4.0, -2.0)]);
+    let look = config.look;
+    assert_eq!((look.temperature, look.tint, look.metering), (0.4, -0.1, Metering::Ground));
+    assert_eq!((look.compensation_curve.at(-2.0), look.compensation_curve.at(5.0)), (-1.0, 0.0), "linear between the points, flat beyond");
+    assert_ne!(look.white_balance_matrix(), Look::default().white_balance_matrix(), "the temperature reaches the tonemap's matrix");
+    let wild = RenderConfig::new().temperature(9.0, f32::NAN).exposure_curve(&[(f32::NAN, 1.0)]).look;
+    assert_eq!((wild.temperature, wild.tint), (1.0, 0.0), "held to -1..=1; not a number is 0");
+    assert!(wild.compensation_curve.is_empty(), "a point that is not a number is left out");
+    let later = RenderConfig::new().exposure_curve(&[(-4.0, -2.0)]).temperature(-0.5, 0.0).exposure(Exposure::auto().compensation(0.5)).look;
+    assert_eq!((later.compensation_curve.points().len(), later.temperature), (1, -0.5), "an exposure set afterwards keeps both");
+    let from_toml = RenderConfig::from_toml("[render.look]\nexposure = \"auto\"\nmetering = \"ground\"\n").expect("a [render.look] fragment");
+    assert_eq!(from_toml.look.metering, Metering::Ground, "genex.toml spells the sky-aware metering `ground`");
+}
+
+#[test]
+fn a_look_takes_a_grading_held_to_its_ranges_and_a_cube_lut() {
+    use genex::render::{Grading, GradingLut, GradingSection, Look};
+    let cube = "LUT_3D_SIZE 2\n0 0 0\n1 0 0\n0 1 0\n1 1 0\n0 0 1\n1 0 1\n0 1 1\n1 1 1\n";
+    let lut = GradingLut::parse_cube(cube).expect("a .cube").intern().expect("interned");
+    let warm = Grading { shadows: GradingSection { gain: 1.1, ..GradingSection::NEUTRAL }, ..Grading::NEUTRAL };
+    let look = RenderConfig::new().grading(warm.with_contrast(1.2).with_lut(lut, 0.5)).look;
+    assert_eq!((look.grading.contrast, look.grading.shadows.gain, look.grading.lut_intensity), (1.2, 1.1, 0.5));
+    assert!(look.grading.lut.is_some_and(|held| std::ptr::eq(held, lut)), "the look holds the interned LUT");
+    let wild = RenderConfig::new().grading(Grading { contrast: f32::NAN, saturation: 9.0, ..Grading::NEUTRAL }).look.grading;
+    assert_eq!((wild.contrast, wild.saturation), (1.0, 2.0), "held to 0..=2; not a number is neutral");
+    assert_eq!(RenderConfig::new().look.grading, Look::default().grading, "the default config grades nothing");
+}
+
+#[test]
+fn a_look_takes_depth_of_field_and_motion_blur_off_by_default() {
+    use genex::render::{CaptureLens, DepthOfField, Look, MotionBlur};
+    let look = RenderConfig::new().depth_of_field(DepthOfField::focused(3.0, 2.0)).motion_blur(MotionBlur::shutter(0.5)).look;
+    assert_eq!(look.depth_of_field, DepthOfField::focused(3.0, 2.0));
+    assert_eq!(look.motion_blur, MotionBlur::shutter(0.5));
+    let defaults = RenderConfig::new().look;
+    assert!(!defaults.depth_of_field.enabled && !defaults.motion_blur.enabled, "both are off by default (D10 for motion blur)");
+    assert_eq!((defaults.depth_of_field, defaults.motion_blur), (Look::default().depth_of_field, Look::default().motion_blur));
+    assert_eq!(CaptureLens::default(), CaptureLens { depth_of_field: false, motion_blur: false }, "a capture asks for neither");
+}
+
+#[test]
 fn the_facade_default_is_hdr_with_the_legacy_preserving_look() {
     use genex::render::{ExposureMode, Look, Tonemap};
     let control = control(RenderConfig::new());
@@ -462,6 +505,33 @@ fn thermal_load_holds_mobile_mid_at_its_sustained_rate_until_a_cool_spell() {
 
 type ShadowRow = (u8, u32, ShadowFilter, ShadowFormat, u8);
 
+/// The conformance suite's `render-presets` temporal case (`game-conformance-render.ts`
+/// `checkSwitchesDrawn`) on a real fork build (look measure 2026-10-18: "mobile-high (temporal): ao
+/// was switched on, but the drawn frame has it off and degraded does not name it"): each phone
+/// class on its own preset with TAA, AO and exposure switched on, after the presenter rebuilt the
+/// world pass for what Live asks, reports every switch drawn or names it in `degraded`.
+#[test]
+fn a_phone_with_the_temporal_switches_on_draws_each_or_names_it_in_degraded() {
+    let temporal = [RenderFeature::Taa, RenderFeature::Ao, RenderFeature::Exposure];
+    for wire in ["mobile-high", "mobile-mid", "mobile-low"] {
+        let mut phone = control(RenderConfig::new());
+        let change = RenderChange {
+            device_class: Some(Some(class(wire))),
+            preset: Some(Some(PresetChoice::Auto)),
+            features: temporal.iter().map(|feature| (*feature, true)).collect(),
+            ..RenderChange::default()
+        };
+        phone.apply(&change);
+        phone.note_world_samples(genex_render::renderer::landed_samples(phone.live_asked().quality.anti_aliasing));
+        let status = phone.status();
+        for feature in temporal {
+            let drawn = status.features.contains(&(feature, true));
+            let named = status.degraded.iter().any(|degrade| degrade.subject.as_deref() == Some(feature.wire()));
+            assert!(drawn || named, "{wire} (temporal): {} switched on is neither drawn nor degraded: {status:?}", feature.wire());
+        }
+    }
+}
+
 fn shadow_row(control: &RenderControl) -> ShadowRow {
     let shadows = control.live_frame().quality.shadows;
     (shadows.cascades, shadows.map_size, shadows.filter, shadows.format, shadows.far_cadence)
@@ -657,6 +727,7 @@ mod metal {
     use genex::gpu::{GpuError, GpuPass, GpuPassCtx, PassSetup, PassStage};
     use genex::present::Presenter;
     use genex::View;
+    use genex_render::drs::{CALM_FRACTION, MAX_SCALE_STEPS, RISE_AFTER_FRAMES, RISE_BACKOFF_MAX_FRAMES};
 
     fn required() -> bool {
         std::env::var("GENEX_REQUIRE_METAL").is_ok_and(|value| value == "1")
@@ -1190,6 +1261,42 @@ fn fs(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
     /// frames each, with room for a rise undone by another program's GPU work.
     const RISE_FRAMES_MAX: u32 = 1200;
 
+    /// What `frames` Live frames gave the controller: the landed GPU times over `over_ms`, and
+    /// the calm runs it could rise on (each [`RISE_AFTER_FRAMES`] frames in a row under
+    /// [`CALM_FRACTION`] of `target_ms`), with `stop` ending the frames early.
+    struct Landed {
+        frames: u32,
+        over: u32,
+        calm_runs: u32,
+    }
+
+    fn landed_frames(presenter: &mut Presenter, runtime: &mut Runtime<Scene>, frames: u32, (target_ms, over_ms): (f32, f32), stop: &dyn Fn() -> bool) -> Landed {
+        let mut landed = Landed { frames: 0, over: 0, calm_runs: 0 };
+        let mut calm = 0;
+        while landed.frames < frames && !stop() {
+            live_frame(presenter, runtime);
+            landed.frames += 1;
+            let Some(ms) = runtime.render().borrow().last_gpu_ms() else { continue };
+            landed.over += u32::from(ms > over_ms);
+            calm = if ms < target_ms * CALM_FRACTION { calm + 1 } else { 0 };
+            if calm == RISE_AFTER_FRAMES {
+                landed.calm_runs += 1;
+                calm = 0;
+            }
+        }
+        landed
+    }
+
+    /// G0 round 2: these rows read the GPU's own timestamps, and another program's GPU work
+    /// lands in them too (Apple's timestamps span the queue's wall time). At host load 32 to 146
+    /// the rise after the load was gone never came (the light frames never stayed calm for
+    /// [`RISE_AFTER_FRAMES`]) and frames inside the class's time crossed it. A row whose frames
+    /// did not give the controller its premise fails naming the busy host, not dynamic
+    /// resolution: the gate reads that as not measured.
+    fn busy_host(what: &str, landed: &Landed) -> String {
+        format!("premise not met, the host's GPU is busy: {what} ({} of {} frames over, {} calm runs)", landed.over, landed.frames, landed.calm_runs)
+    }
+
     /// The wall clock, as the native presenter's own (`present::default_clock`).
     #[allow(clippy::disallowed_types, reason = "the row's rise phase times frames as Live does")]
     fn wall_clock() -> genex_render::timing::Clock {
@@ -1255,13 +1362,16 @@ fn fs(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
             // its span as the CPU's, as in Live, and does not undo a rise.
             presenter.set_clock(wall_clock());
             iterations.set(64);
-            let mut frames = 0;
-            while handle.borrow().status().scale < nominal && frames < RISE_FRAMES_MAX {
-                live_frame(&mut presenter, &mut runtime);
-                frames += 1;
-            }
+            let gpu_target = handle.borrow().gpu_target_ms();
+            let below_nominal = || handle.borrow().status().scale < nominal;
+            let landed = landed_frames(&mut presenter, &mut runtime, RISE_FRAMES_MAX, (gpu_target, gpu_target), &|| !below_nominal());
             let back = handle.borrow().status().scale;
-            eprintln!("{preset_choice:?}: the load gone, scale {back} after {frames} frames");
+            eprintln!("{preset_choice:?}: the load gone, scale {back} after {} frames ({} calm runs)", landed.frames, landed.calm_runs);
+            // Each step up waits for one calm run, or up to RISE_BACKOFF_MAX_FRAMES after a rise
+            // was undone: fewer runs than that for every step a class has was not the
+            // controller's premise.
+            let runs_needed = (MAX_SCALE_STEPS as u32 - 1) * (RISE_BACKOFF_MAX_FRAMES / RISE_AFTER_FRAMES);
+            assert!(back == nominal || landed.calm_runs >= runs_needed, "{preset_choice:?}: {}", busy_host("the light frames never stayed calm", &landed));
             assert_eq!(back, nominal, "{preset_choice:?}: frames under the budget give the nominal scale back");
         }
     }
@@ -1292,22 +1402,39 @@ fn fs(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
         let handle = runtime.render();
         let class_target = handle.borrow().gpu_target_ms();
         // Calibrate a load of about 40% of the class's target at full scale (held while measuring).
+        // G0 leftovers: under another process's 4K captures the first calibration read the shared
+        // GPU's queue as load (light frames near the class's time), so the row failed its premise
+        // and never reached dynamic resolution. It calibrates up to CALIBRATIONS times; a host
+        // whose GPU never gave the premise fails naming the busy host, not dynamic resolution.
+        const CALIBRATIONS: usize = 4;
         handle.borrow_mut().apply(&RenderChange { render_scale_lock: Some(Some(1.0)), ..RenderChange::default() });
-        let light = measured_ms(&mut presenter, &mut runtime, 15);
-        iterations.set(1024);
-        let heavier = measured_ms(&mut presenter, &mut runtime, 15);
-        let per_iteration = ((heavier - light) / 960.0).max(1.0e-6);
-        iterations.set((64.0 + (0.4 * class_target - light) / per_iteration).clamp(64.0, 1.0e6) as u32);
-        let loaded = measured_ms(&mut presenter, &mut runtime, 15);
-        let budget = (loaded / 2.0).max(genex::render::FRAME_BUDGET_MS_MIN);
-        eprintln!("class target {class_target:.2} ms; load {loaded:.2} ms at scale 1; budget {budget:.2} ms");
-        assert!(loaded < class_target * 0.8 && loaded > budget * 1.5, "the premise: inside the class's time, over the budget");
+        let mut tries = Vec::new();
+        let (loaded, budget) = loop {
+            iterations.set(64);
+            let light = measured_ms(&mut presenter, &mut runtime, 15);
+            iterations.set(1024);
+            let heavier = measured_ms(&mut presenter, &mut runtime, 15);
+            let per_iteration = ((heavier - light) / 960.0).max(1.0e-6);
+            iterations.set((64.0 + (0.4 * class_target - light) / per_iteration).clamp(64.0, 1.0e6) as u32);
+            let loaded = measured_ms(&mut presenter, &mut runtime, 15);
+            let budget = (loaded / 2.0).max(genex::render::FRAME_BUDGET_MS_MIN);
+            eprintln!("class target {class_target:.2} ms; light {light:.2} ms; load {loaded:.2} ms at scale 1; budget {budget:.2} ms");
+            tries.push(format!("light {light:.2}, load {loaded:.2}"));
+            if loaded < class_target * 0.8 && loaded > budget * 1.5 {
+                break (loaded, budget);
+            }
+            assert!(
+                tries.len() < CALIBRATIONS,
+                "the premise (a load inside the class's {class_target:.2} ms, over the budget) never held in {CALIBRATIONS} calibrations ({tries:?} ms): the host's GPU is busy, not dynamic resolution"
+            );
+        };
+        eprintln!("calibrated in {} tries: load {loaded:.2} ms, budget {budget:.2} ms", tries.len());
         // The class's own target keeps the full scale under this load.
         handle.borrow_mut().apply(&RenderChange { render_scale_lock: Some(None), ..RenderChange::default() });
-        for _ in 0..60 {
-            live_frame(&mut presenter, &mut runtime);
-        }
-        assert_eq!(handle.borrow().status().scale, 1.0, "frames inside the class's time keep scale 1");
+        let inside = landed_frames(&mut presenter, &mut runtime, 60, (class_target, class_target), &|| false);
+        let kept = handle.borrow().status().scale;
+        assert!(kept == 1.0 || inside.over == 0, "{}", busy_host("frames of the class's time crossed it", &inside));
+        assert_eq!(kept, 1.0, "frames inside the class's time keep scale 1");
         let held = handle.borrow_mut().apply(&RenderChange { frame_budget_ms: Some(Some(budget)), ..RenderChange::default() });
         assert_eq!(held.frame_budget_ms, Some(budget));
         for _ in 0..60 {
@@ -1318,9 +1445,9 @@ fn fs(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
         assert!(stepped < 1.0, "the verb's budget steps the scale down");
         handle.borrow_mut().apply(&RenderChange { frame_budget_ms: Some(None), ..RenderChange::default() });
         assert_eq!(handle.borrow().gpu_target_ms(), class_target, "null gives the class's target back");
-        for _ in 0..60 {
-            live_frame(&mut presenter, &mut runtime);
-        }
-        assert_eq!(handle.borrow().status().scale, 1.0, "and the full scale");
+        let released = landed_frames(&mut presenter, &mut runtime, 60, (class_target, class_target), &|| false);
+        let full = handle.borrow().status().scale;
+        assert!(full == 1.0 || released.over == 0, "{}", busy_host("frames of the class's time crossed it", &released));
+        assert_eq!(full, 1.0, "and the full scale");
     }
 }

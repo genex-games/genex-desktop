@@ -19,7 +19,7 @@ use genex_render::Gpu;
 use genex_render::abi::GxFrameV2;
 use genex_render::fog::{
     FogBackdrop, gpu_fog_over,
-    AERIAL_RANGE, AERIAL_SIDE, AerialInputs, AerialPerspective, GpuFog, SKY_REACH, aerial_slice_coordinate, aerial_slice_distance, apply_aerial, blend,
+    AERIAL_DEPTH, AERIAL_RANGE, AERIAL_SIDE, AerialInputs, AerialPerspective, GpuFog, SKY_REACH, aerial_slice_coordinate, aerial_slice_distance, apply_aerial, apply_air, blend,
     horizon_direction, inscatter_env, inscatter_flat, opacity, opacity_of, optical_depth, optical_depth_along, sun_phase, sun_up,
 };
 use genex_render::graph::FrameEncoder;
@@ -283,6 +283,9 @@ fn cube_radiance(d: [f32; 3]) -> [f32; 3] {
 /// A synthetic environment cube (16 texels a side, three mips) and its sampler.
 struct TestCube {
     view: wgpu::TextureView,
+    /// The same six layers as a one-cube array: what the forward text binds at 11 (renderer pass 2
+    /// A.3: the reflection probes' cube array, layer 0 the sky's).
+    array: wgpu::TextureView,
     sampler: wgpu::Sampler,
 }
 
@@ -325,6 +328,7 @@ fn synthetic_cube_of(gpu: &Gpu, side: u32, radiance: impl Fn([f32; 3]) -> [f32; 
     }
     TestCube {
         view: texture.create_view(&wgpu::TextureViewDescriptor { dimension: Some(wgpu::TextureViewDimension::Cube), ..Default::default() }),
+        array: texture.create_view(&wgpu::TextureViewDescriptor { dimension: Some(wgpu::TextureViewDimension::CubeArray), ..Default::default() }),
         sampler: gpu.device.create_sampler(&wgpu::SamplerDescriptor { mag_filter: wgpu::FilterMode::Linear, min_filter: wgpu::FilterMode::Linear, mipmap_filter: wgpu::MipmapFilterMode::Linear, ..Default::default() }),
     }
 }
@@ -403,11 +407,12 @@ fn chunk_through(gpu: &Gpu, source: Source, frame: &GpuFrame, fog: &GpuFog, cube
     let uniform = wgpu::BufferUsages::UNIFORM;
     let sampler = wgpu::BindingResource::Sampler(&cube.sampler);
     let view = wgpu::BindingResource::TextureView(&cube.view);
+    let array = wgpu::BindingResource::TextureView(&cube.array);
     match source {
         Source::Forward => {
             let frame = buffer_with(gpu, "fog frame", uniform, bytemuck::bytes_of(frame));
             let row = buffer_with(gpu, "fog row", uniform, bytemuck::bytes_of(fog));
-            run_probe(gpu, &forward_probe_source(), 20, &[(0, frame.as_entire_binding()), (11, view), (14, sampler), (15, row.as_entire_binding())], rows)
+            run_probe(gpu, &forward_probe_source(), 20, &[(0, frame.as_entire_binding()), (11, array), (14, sampler), (15, row.as_entire_binding())], rows)
         }
         Source::V2 => {
             let mut v2 = GxFrameV2::from_frame(frame);
@@ -572,18 +577,72 @@ fn the_sun_lobe_peaks_towards_the_sun_and_sets_with_it() {
 
 /// Pass-1 gate finding 06 (an orange haze band over the treeline against a pale sky): the frame's
 /// sun colour is already the sun as it reaches the ground (under the sky, through the atmosphere's
-/// transmittance LUT; under a map, its analytic sun), so the fog's forward lobe takes it as it is.
-/// Reddening it a second time by an analytic air mass turned a low sun's lobe deep orange.
+/// transmittance LUT; under a map, its analytic sun), so the fog's forward lobe takes its hue as it
+/// is. Reddening it a second time by an analytic air mass turned a low sun's lobe deep orange.
+/// Owner decision D13 flipped this row's exact-colour assertion (the lobe's colour was the sun's):
+/// the lobe is the sun's colour moved a third of the way to its luminance, so its hue is the sun's
+/// and only its saturation drops.
 #[test]
-fn the_sun_lobe_takes_the_suns_colour_as_it_reaches_the_ground() {
+fn the_sun_lobe_takes_the_suns_hue_as_it_reaches_the_ground() {
     let fog = fog_row(Fog::default().with_density(0.1));
     let sun = [0.0, 0.12, -0.992_774];
     let sun_color = [2.0, 1.4, 0.8];
     let lobe = inscatter_env(&fog, [0.0; 3], sun, sun, sun_color);
-    for channel in 1..3 {
-        let (got, want) = (lobe[channel] / lobe[0], sun_color[channel] / sun_color[0]);
-        assert!((got - want).abs() < 1e-5, "channel {channel}: the lobe's {got} of red, the sun's {want}");
+    let (lobe_hue, sun_hue) = ((lobe[1] - lobe[2]) / (lobe[0] - lobe[2]), (sun_color[1] - sun_color[2]) / (sun_color[0] - sun_color[2]));
+    assert!((lobe_hue - sun_hue).abs() < 1e-5, "the lobe's hue {lobe_hue}, the sun's {sun_hue}");
+    assert!(lobe[0] > lobe[1] && lobe[1] > lobe[2], "still the low sun's warm colour: {lobe:?}");
+}
+
+/// Owner decision D13 (golden hour, look call 1): the warm, low-contrast veil the fog scatters
+/// towards a low sun is cut by a third in strength and in warmth, so the Lakeside wide shot's
+/// sun-side meadow keeps its green and its texture: the sun's lobe (its share of the sun's
+/// radiance, 1/2 in pass 1, is 1/3; its colour a third of the way from the sun's to the sun's
+/// luminance) and the sun's aureole the sky read carries onto rays looking down at the ground.
+#[test]
+fn d13_the_golden_hour_veil_is_a_third_weaker_and_a_third_less_warm() {
+    let luminance = |c: [f32; 3]| 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
+    let warmth = |c: [f32; 3]| (c[0] - c[2]) / luminance(c);
+    let fog = fog_row(Fog::default().with_density(0.1));
+    let sun_color = [2.0, 1.4, 0.8];
+    for (sun, dir) in [([0.0, 0.12, -0.992_774], [0.0, 0.12, -0.992_774]), ([0.0, 0.05, -0.998_75], [0.6, 0.0, -0.8]), ([0.3, 0.4, -0.866], [0.0, -0.1, -0.995])] {
+        let cos_theta = sun[0] * dir[0] + sun[1] * dir[1] + sun[2] * dir[2];
+        let pass1 = [0, 1, 2].map(|c| fog.color[c] * sun_color[c] * 0.5 * sun_phase(cos_theta) * sun_up(sun[1]));
+        let lobe = inscatter_env(&fog, [0.0; 3], dir, sun, sun_color);
+        let strength = luminance(lobe) / luminance(pass1);
+        assert!((strength - 2.0 / 3.0).abs() < 1e-4, "sun {sun:?}, ray {dir:?}: the lobe is {strength} of pass 1's, wanted 2/3");
+        let warmer = warmth(lobe) / warmth(pass1);
+        assert!((warmer - 2.0 / 3.0).abs() < 1e-4, "sun {sun:?}, ray {dir:?}: the lobe's warmth is {warmer} of pass 1's, wanted 2/3");
     }
+    // The sky's light is read at the horizon in the ray's azimuth whatever its slope: a ray looking
+    // down at the ground towards a low sun read the sun's aureole as if it looked at the horizon.
+    // The aureole the read sees beyond the ray's own angle to the sun is cut, in strength and in
+    // warmth: about a third for a ray 25 degrees down into the sun's azimuth, nothing along the
+    // horizon (the forest at eye level, the fogged horizon the sky background meets) and next to
+    // nothing at right angles or away from the sun.
+    let warm_sky = [1.6, 1.0, 0.5];
+    // A sun on the read's own slope, so the read faces it exactly.
+    let sun = horizon_direction([0.794, 0.122, 0.596]);
+    let sky_only = |dir: [f32; 3]| {
+        let lobe = inscatter_env(&fog, [0.0; 3], dir, sun, sun_color);
+        let both = inscatter_env(&fog, warm_sky, dir, sun, sun_color);
+        [0, 1, 2].map(|c| both[c] - lobe[c])
+    };
+    let along = sky_only(sun);
+    assert!(along.iter().zip(warm_sky).all(|(got, want)| (got - want).abs() < 1e-5), "along the horizon: {along:?}");
+    let (down, flat) = (25.0_f32.to_radians(), (sun[0] * sun[0] + sun[2] * sun[2]).sqrt());
+    let looking_down = [sun[0] / flat * libm::cosf(down), -libm::sinf(down), sun[2] / flat * libm::cosf(down)];
+    let cut = genex_render::fog::sun_side_cut(sun, looking_down, sun);
+    assert!((0.25..0.4).contains(&cut), "about a third 25 degrees down: {cut}");
+    let veiled = sky_only(looking_down);
+    assert!((luminance(veiled) / luminance(warm_sky) - (1.0 - cut)).abs() < 1e-3, "25 degrees down: {veiled:?}");
+    assert!((warmth(veiled) / warmth(warm_sky) - (1.0 - cut)).abs() < 1e-3, "25 degrees down: {veiled:?}");
+    let across = [-sun[2] / flat, -libm::sinf(down), sun[0] / flat];
+    let kept = sky_only(across);
+    assert!(luminance(kept) / luminance(warm_sky) > 0.98, "at right angles: {kept:?}");
+    let behind = sky_only([-sun[0], -libm::sinf(down), -sun[2]]);
+    assert!(luminance(behind) / luminance(warm_sky) > 0.99, "away from the sun: {behind:?}");
+    let set = inscatter_env(&fog, [0.3, 0.4, 0.5], [0.0, 0.0, -1.0], [0.0, -0.2, -0.98], sun_color);
+    assert_eq!(set, [0.3, 0.4, 0.5].map(|c| c * fog.color[0]), "a set sun cuts nothing");
 }
 
 #[test]
@@ -780,16 +839,38 @@ fn draw_fogged_particle(gpu: &Gpu, draw: &ParticleDraw<'_>, frame: &GpuFrame, fo
         gpu.queue.write_texture(texture.as_image_copy(), &[0, 0, 0, 0, 0, 0, one[0], one[1]], wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(8), rows_per_image: Some(1) }, size);
         texture.create_view(&wgpu::TextureViewDescriptor { dimension: Some(wgpu::TextureViewDimension::D3), ..Default::default() })
     };
+    // The particles' own inputs (renderer pass 2 A.11), neutral: no surface behind (no soft
+    // fade), a hard round dot of no rotation, a white flipbook.
+    let texel = |label: &str, format: wgpu::TextureFormat, bytes: &[u8]| {
+        let size = wgpu::Extent3d { width: 1, height: 1, depth_or_array_layers: 1 };
+        let texture = gpu.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some(label),
+            size,
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        gpu.queue.write_texture(texture.as_image_copy(), bytes, wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(bytes.len() as u32), rows_per_image: Some(1) }, size);
+        texture.create_view(&wgpu::TextureViewDescriptor::default())
+    };
+    // The derived layout asks a filterable texture: half floats' largest (65504 m) is no surface
+    // here (the renderer binds its r32float view depth through its own layout).
+    let no_surface = texel("particle no surface", wgpu::TextureFormat::R16Float, &0x7bffu16.to_le_bytes());
+    let white = texel("particle white", wgpu::TextureFormat::Rgba8UnormSrgb, &[255; 4]);
+    let emitter = buffer_with(gpu, "particle emitter", uniform, bytemuck::bytes_of(&genex_render::particles::GpuEmitter::default()));
+    let shapes = buffer_with(gpu, "particle shapes", wgpu::BufferUsages::STORAGE, bytemuck::bytes_of(&genex_render::particles::GpuParticleShape::default()));
     let mut entries = vec![
         wgpu::BindGroupEntry { binding: 0, resource: frame.as_entire_binding() },
         wgpu::BindGroupEntry { binding: 1, resource: fog.as_entire_binding() },
         wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::TextureView(&cube.view) },
         wgpu::BindGroupEntry { binding: 3, resource: wgpu::BindingResource::Sampler(&cube.sampler) },
+        wgpu::BindGroupEntry { binding: 5, resource: wgpu::BindingResource::TextureView(&no_surface) },
     ];
-    // Only the HDR entry reads the aerial perspective (the layout is the entry points' own).
-    if fragment == "fs_particle_hdr_fogged" {
-        entries.push(wgpu::BindGroupEntry { binding: 4, resource: wgpu::BindingResource::TextureView(&no_air) });
-    }
+    // The vertex stage reads the aerial perspective for both entries (renderer pass 2 A.11).
+    entries.push(wgpu::BindGroupEntry { binding: 4, resource: wgpu::BindingResource::TextureView(&no_air) });
     let group0 = gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("particle frame"),
         layout: &pipeline.get_bind_group_layout(0),
@@ -798,7 +879,13 @@ fn draw_fogged_particle(gpu: &Gpu, draw: &ParticleDraw<'_>, frame: &GpuFrame, fo
     let group1 = gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("particle rows"),
         layout: &pipeline.get_bind_group_layout(1),
-        entries: &[wgpu::BindGroupEntry { binding: 0, resource: particles.as_entire_binding() }],
+        entries: &[
+            wgpu::BindGroupEntry { binding: 0, resource: particles.as_entire_binding() },
+            wgpu::BindGroupEntry { binding: 1, resource: emitter.as_entire_binding() },
+            wgpu::BindGroupEntry { binding: 2, resource: shapes.as_entire_binding() },
+            wgpu::BindGroupEntry { binding: 3, resource: wgpu::BindingResource::TextureView(&white) },
+            wgpu::BindGroupEntry { binding: 4, resource: wgpu::BindingResource::Sampler(&cube.sampler) },
+        ],
     });
     let target = gpu.device.create_texture(&wgpu::TextureDescriptor {
         label: Some("particle target"),
@@ -971,6 +1058,11 @@ fn render_sky(gpu: &Gpu, fixture: &SkyFixture, frame: &GxFrameV2, side: u32) -> 
         cache: None,
     });
     let frame = buffer_with(gpu, "fog sky frame", wgpu::BufferUsages::UNIFORM, frame.as_bytes());
+    // The day (renderer pass 2 B.2's night row zero: no moon, no stars, the moonlit LUT unread).
+    let night = buffer_with(gpu, "fog sky night", wgpu::BufferUsages::UNIFORM, bytemuck::bytes_of(&genex_render::night_sky::GpuNightSky::default()));
+    // No clouds (renderer pass 2 B.5): the clear panorama, which leaves the sky as it is.
+    let (_clear_texture, clear_clouds) = genex_render::clouds::clear_panorama(&gpu.device, &gpu.queue);
+    let cloud_sampler = genex_render::clouds::panorama_sampler(&gpu.device);
     let group = gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("fog sky draw"),
         layout: &pipeline.get_bind_group_layout(0),
@@ -980,6 +1072,10 @@ fn render_sky(gpu: &Gpu, fixture: &SkyFixture, frame: &GxFrameV2, side: u32) -> 
             wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::TextureView(&fixture.sky_view) },
             wgpu::BindGroupEntry { binding: 3, resource: wgpu::BindingResource::TextureView(&fixture.transmittance) },
             wgpu::BindGroupEntry { binding: 4, resource: wgpu::BindingResource::Sampler(&fixture.sampler) },
+            wgpu::BindGroupEntry { binding: 5, resource: night.as_entire_binding() },
+            wgpu::BindGroupEntry { binding: 6, resource: wgpu::BindingResource::TextureView(&fixture.sky_view) },
+            wgpu::BindGroupEntry { binding: 7, resource: wgpu::BindingResource::TextureView(&clear_clouds) },
+            wgpu::BindGroupEntry { binding: 8, resource: wgpu::BindingResource::Sampler(&cloud_sampler) },
         ],
     });
     let target = gpu.device.create_texture(&wgpu::TextureDescriptor {
@@ -1060,15 +1156,23 @@ fn metal_the_fog_at_the_horizon_is_the_sky_view_colour() {
     write_evidence_radiance("sky-wholly-fogged-61", SKY_SIDE, &fogged, 2.0);
     let centre = SKY_SIDE / 2;
     // The fog's colour is the sky-view LUT's colour just over the horizon's edge (the fixed
-    // slope): the background's pixels there, between the two rows that straddle that slope.
+    // slope): the background's pixels there, between the two rows that straddle that slope; plus
+    // the sun's forward lobe along each pixel's ray (SI-03: as fogged geometry's in-scatter).
     let row = (1.0 - genex_render::fog::HORIZON_SLOPE / libm::tanf(30.0_f32.to_radians())) / 2.0 * SKY_SIDE as f32 - 0.5;
     let (above, fraction) = (row.floor() as u32, row - row.floor());
     let (a, b) = (sky_pixel(&clear, centre, above), sky_pixel(&clear, centre, above + 1));
     let lut = [0, 1, 2].map(|c| a[c] * (1.0 - fraction) + b[c] * fraction);
-    relative_close("horizon", sky_pixel(&fogged, centre, SKY_SIDE / 2), lut, 1e-2);
-    // Every ray of the column reads the same horizon colour: the fog is the one colour, up and down.
+    let sun = sun_behind(30.0);
+    let ground_sun = sky_ground_sun(sun);
+    let lobe = |y: u32| inscatter_env(&thick, [0.0; 3], sky_pixel_ray(centre, y), sun, ground_sun);
+    let horizon_lobe = lobe(SKY_SIDE / 2);
+    relative_close("horizon", sky_pixel(&fogged, centre, SKY_SIDE / 2), [0, 1, 2].map(|c| lut[c] + horizon_lobe[c]), 1e-2);
+    // Every ray of the column reads the same horizon colour (the fog is the one colour, up and
+    // down) plus the sun's lobe along its own ray.
+    let horizon = [0, 1, 2].map(|c| sky_pixel(&fogged, centre, SKY_SIDE / 2)[c] - horizon_lobe[c]);
     for row in 0..SKY_SIDE {
-        relative_close(&format!("row {row}"), sky_pixel(&fogged, centre, row), sky_pixel(&fogged, centre, SKY_SIDE / 2), 2e-3);
+        let want = [0, 1, 2].map(|c| horizon[c] + lobe(row)[c]);
+        relative_close(&format!("row {row}"), sky_pixel(&fogged, centre, row), want, 2e-3);
     }
     let (zenith, horizon) = (sky_pixel(&clear, centre, 0), sky_pixel(&clear, centre, SKY_SIDE / 2));
     // The sky is not one colour without the fog: it is bluer overhead than at the horizon.
@@ -1104,6 +1208,71 @@ fn metal_the_sky_background_blends_into_the_fog_by_the_closed_form_and_a_zero_de
     assert!(b > 0.0 && r / b > 1.0, "a warm fog over a blue horizon: {r} vs {b}");
 }
 
+/// The sun of [`sky_fixture`] (illuminance [`SKY_FIXTURE_SUN`]) towards unit `sun` as it reaches a
+/// camera 2 m up: the forward frame's sun under the sky.
+fn sky_ground_sun(sun: [f32; 3]) -> [f32; 3] {
+    sky::sun_transmittance(0.002, sun, SkyParams::default().sun_angular_radius).map(|t| t * SKY_FIXTURE_SUN)
+}
+
+/// The sun's illuminance [`sky_fixture`] and [`sky_frame_with`] use.
+const SKY_FIXTURE_SUN: f32 = 2.5;
+
+/// The unit view direction through the centre of pixel `(x, y)` of [`render_sky`]'s target under
+/// the camera at [`SKY_EYE`] looking at [`SKY_TARGET`].
+fn sky_pixel_ray(x: u32, y: u32) -> [f32; 3] {
+    let (_, inverse) = camera_matrices(SKY_EYE, SKY_TARGET, 1.0);
+    let (u, v) = ((x as f32 + 0.5) / SKY_SIDE as f32, (y as f32 + 0.5) / SKY_SIDE as f32);
+    let point = inverse.project_point3(glam::Vec3::new(u * 2.0 - 1.0, 1.0 - v * 2.0, 0.0));
+    (point - glam::Vec3::from(SKY_EYE)).normalize().to_array()
+}
+
+/// How far fully fogged geometry towards a low sun may be from the fogged sky behind it, per
+/// channel share (SI-03; the forward fog's horizon is the baked cube's, the sky's the LUT's).
+const TOWARDS_SUN_FOG_TOLERANCE: f32 = 0.03;
+
+#[test]
+#[ignore = "needs a WebGPU-core adapter; run with --ignored metal"]
+fn metal_fog_towards_a_low_sun_is_one_colour_on_geometry_and_on_the_sky() {
+    // SI-03: fogged geometry took the sun's forward lobe and the fogged sky behind it did not, so
+    // distant silhouettes glowed against a darker sky towards a low sun (Lakeside's 7 degrees).
+    // Looking along the horizon towards the sun's azimuth, a wall deep in the fog and the sky
+    // around it show one colour.
+    let Some(gpu) = gpu() else { return };
+    let mut failures = Vec::new();
+    for elevation in [7.0_f32, 20.0] {
+        let e = elevation.to_radians();
+        let sun = [0.0, libm::sinf(e), -libm::cosf(e)];
+        let fixture = sky_fixture(&gpu, sun, 0.002);
+        let cube = baked_sky_cube(&gpu, sun);
+        let fog = fog_row(Fog::default().with_density(1.0).with_height(0.0, 0.0).with_range(0.0, 1.0));
+        let fogged = render_sky(&gpu, &fixture, &sky_draw_frame(&fixture, SKY_EYE, SKY_TARGET, &fog), SKY_SIDE);
+        write_evidence_radiance(&format!("sky-fogged-towards-sun-{elevation}"), SKY_SIDE, &fogged, 1.0);
+        let ground_sun = sky_ground_sun(sun);
+        let frame = GpuFrame {
+            camera_pos: [SKY_EYE[0], SKY_EYE[1], SKY_EYE[2], 1.0],
+            sun_dir: [sun[0], sun[1], sun[2], 0.0],
+            sun_color: [ground_sun[0], ground_sun[1], ground_sun[2], 0.0],
+            ..sky_frame()
+        };
+        for (x, y) in [(SKY_SIDE / 2, SKY_SIDE / 2), (SKY_SIDE / 2 + 8, SKY_SIDE / 2), (SKY_SIDE / 2, SKY_SIDE / 2 - 6)] {
+            let dir = sky_pixel_ray(x, y);
+            let world = [0, 1, 2].map(|k| SKY_EYE[k] + 5000.0 * dir[k]);
+            let rows = [Row { mode: 0.0, color: [0.0; 3], world }];
+            let geometry = chunk_through(&gpu, Source::Forward, &frame, &fog, &cube, &rows)[0];
+            let sky = sky_pixel(&fogged, x, y);
+            let lobe = inscatter_env(&fog, [0.0; 3], dir, sun, ground_sun);
+            eprintln!("sun {elevation} deg, pixel ({x}, {y}): fogged geometry {geometry:?}, fogged sky {sky:?} (the sun's lobe {lobe:?})");
+            for c in 0..3 {
+                let error = (geometry[c] - sky[c]).abs() / sky[c];
+                if error > TOWARDS_SUN_FOG_TOLERANCE {
+                    failures.push(format!("sun {elevation} pixel ({x}, {y}) channel {c}: geometry {} sky {} ({:.1}%)", geometry[c], sky[c], 100.0 * error));
+                }
+            }
+        }
+    }
+    assert!(failures.is_empty(), "fog towards the sun differs on geometry and on the sky: {failures:?}");
+}
+
 /// How far the forward fog's horizon colour (the baked sky cube towards the horizon at the fog's
 /// roughness, at the fixed horizon slope) may be from the sky-view colour the background shows
 /// there (the exact horizon row), per channel share.
@@ -1131,6 +1300,7 @@ fn baked_sky_cube(gpu: &Gpu, sun_dir: [f32; 3]) -> TestCube {
     let texture = maps.specular_texture().expect("baked cube");
     TestCube {
         view: texture.create_view(&wgpu::TextureViewDescriptor { dimension: Some(wgpu::TextureViewDimension::Cube), array_layer_count: Some(6), ..Default::default() }),
+        array: texture.create_view(&wgpu::TextureViewDescriptor { dimension: Some(wgpu::TextureViewDimension::CubeArray), array_layer_count: Some(6), ..Default::default() }),
         sampler: gpu.device.create_sampler(&wgpu::SamplerDescriptor { mag_filter: wgpu::FilterMode::Linear, min_filter: wgpu::FilterMode::Linear, mipmap_filter: wgpu::MipmapFilterMode::Linear, ..Default::default() }),
     }
 }
@@ -1176,7 +1346,7 @@ fn aerial_volume(gpu: &Gpu, fixture: &SkyFixture) -> Vec<[f32; 4]> {
     let passes = aerial.encode(&gpu.device, &mut encoder, &inputs, None);
     assert_eq!((passes.compute, passes.render), (1, 0));
     gpu.queue.submit([encoder.finish()]);
-    read_texture(gpu, aerial.texture(), (AERIAL_SIDE, AERIAL_SIDE, AERIAL_SIDE), wgpu::TextureFormat::Rgba16Float)
+    read_texture(gpu, aerial.texture(), (AERIAL_SIDE, AERIAL_SIDE, AERIAL_DEPTH), wgpu::TextureFormat::Rgba16Float)
 }
 
 fn aerial_texel(volume: &[[f32; 4]], x: u32, y: u32, z: u32) -> [f32; 4] {
@@ -1244,6 +1414,60 @@ fn luminance(c: [f32; 3]) -> f32 {
     0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]
 }
 
+/// The per-channel transmittance from the camera to `distance_km` along `dir` (the same midpoint
+/// integral as [`numeric_transmittance`], channel by channel).
+fn numeric_transmittance_rgb(atmosphere: &GpuSkyAtmosphere, camera_km: f64, dir: [f32; 3], distance_km: f64) -> [f64; 3] {
+    const STEPS: usize = 20_000;
+    let bottom = f64::from(atmosphere.radii[0]);
+    let d = dir.map(f64::from);
+    let end = distance_km.min(ray_reach(atmosphere, camera_km, dir));
+    let h = end / STEPS as f64;
+    let mut depth = [0.0_f64; 3];
+    for i in 0..STEPS {
+        let t = (i as f64 + 0.5) * h;
+        let p = [t * d[0], bottom + camera_km + t * d[1], t * d[2]];
+        let height = (p[0] * p[0] + p[1] * p[1] + p[2] * p[2]).sqrt() - bottom;
+        let e = extinction(atmosphere, height.max(0.0));
+        for c in 0..3 {
+            depth[c] += e[c] * h;
+        }
+    }
+    depth.map(|d| (-d).exp())
+}
+
+/// The volume's transmittance (rgb) at column `(x, y)`, slice `slice`: the back half of the split
+/// layout (renderer pass 2 SI-04, `fog::AERIAL_DEPTH`), slice for slice behind the in-scatter.
+fn aerial_transmittance(volume: &[[f32; 4]], x: u32, y: u32, slice: u32) -> [f32; 3] {
+    let texel = aerial_texel(volume, x, y, AERIAL_SIDE + slice);
+    [texel[0], texel[1], texel[2]]
+}
+
+#[test]
+#[ignore = "needs a WebGPU-core adapter; run with --ignored metal"]
+fn metal_the_aerial_volume_s_transmittance_is_per_channel() {
+    // Renderer pass 2 SI-04: Rayleigh extinction is strongly chromatic (at 30 km the exact
+    // transmittance is about (0.84, 0.66, 0.37)), so the volume holds it per channel; a grey mean
+    // leaves far geometry blue-grey instead of warm at a low sun.
+    let Some(gpu) = gpu() else { return };
+    let fixture = sky_fixture(&gpu, sun_behind(40.0), 0.002);
+    let volume = aerial_volume(&gpu, &fixture);
+    for (x, y) in [(16, 16), (16, 8), (4, 12), (27, 10), (16, 24), (2, 29)] {
+        let dir = aerial_ray(x, y);
+        for slice in [0, 8, 15, 23, 27, 31] {
+            let distance_km = f64::from(aerial_slice_distance((slice as f32 + 0.5) / AERIAL_SIDE as f32)) / 1000.0;
+            let want = numeric_transmittance_rgb(&fixture.atmosphere_row, 0.002, dir, distance_km);
+            let got = aerial_transmittance(&volume, x, y, slice);
+            for c in 0..3 {
+                let error = (f64::from(got[c]) - want[c]).abs();
+                assert!(error <= 3e-3, "column ({x}, {y}) slice {slice} at {distance_km:.3} km channel {c}: volume {:.5}, integral {:.5}", got[c], want[c]);
+            }
+        }
+    }
+    // Far along a horizontal ray blue is dimmed more than red.
+    let far = aerial_transmittance(&volume, 16, 16, AERIAL_SIDE - 1);
+    assert!(far[0] > far[2] * 1.2, "chromatic: {far:?}");
+}
+
 #[test]
 #[ignore = "needs a WebGPU-core adapter; run with --ignored metal"]
 fn metal_the_aerial_volume_s_transmittance_is_the_atmosphere_s_beer_lambert_integral() {
@@ -1255,13 +1479,14 @@ fn metal_the_aerial_volume_s_transmittance_is_the_atmosphere_s_beer_lambert_inte
         for slice in [0, 3, 8, 15, 23, 31] {
             let distance_km = f64::from(aerial_slice_distance((slice as f32 + 0.5) / AERIAL_SIDE as f32)) / 1000.0;
             let want = numeric_transmittance(&fixture.atmosphere_row, 0.002, dir, distance_km);
-            let got = f64::from(aerial_texel(&volume, x, y, slice)[3]);
+            // The back half's alpha: the mean of its per-channel transmittance (SI-04).
+            let got = f64::from(aerial_texel(&volume, x, y, AERIAL_SIDE + slice)[3]);
             assert!((got - want).abs() <= 3e-3, "column ({x}, {y}) slice {slice} at {distance_km:.3} km: volume {got:.5}, integral {want:.5}");
         }
     }
     // Near the camera the air is clear, and far along a horizontal ray it is not.
-    assert!(aerial_texel(&volume, 16, 16, 0)[3] > 0.999);
-    assert!(aerial_texel(&volume, 16, 16, 31)[3] < aerial_texel(&volume, 16, 16, 16)[3]);
+    assert!(aerial_texel(&volume, 16, 16, AERIAL_SIDE)[3] > 0.999);
+    assert!(aerial_texel(&volume, 16, 16, AERIAL_SIDE + 31)[3] < aerial_texel(&volume, 16, 16, AERIAL_SIDE + 16)[3]);
 }
 
 #[test]
@@ -1286,7 +1511,8 @@ fn metal_the_aerial_volume_s_inscatter_grows_with_distance_is_blue_by_day_and_fo
     for slice in 0..AERIAL_SIDE {
         let t = aerial_texel(&volume, 16, 16, slice);
         let y = luminance([t[0], t[1], t[2]]);
-        assert!(y >= last - 1e-6 && t[0] >= 0.0 && t[3] <= 1.0, "slice {slice}: {t:?} after {last}");
+        // The in-scatter half's alpha: 0, the aerial volume holds no height fog.
+        assert!(y >= last - 1e-6 && t[0] >= 0.0 && t[3] == 0.0, "slice {slice}: {t:?} after {last}");
         last = y;
     }
     let far = aerial_texel(&volume, 16, 16, 31);
@@ -1316,8 +1542,8 @@ fn metal_two_aerial_volumes_are_byte_identical() {
 }
 
 /// The v2 prelude with a probe that finds the volume's coordinate of a world position with
-/// `gx_aerial_froxel` (the coordinate comes back in the world slot), reads the volume and applies it with
-/// `gx_apply_fog_aerial` to a mid grey (the fog off).
+/// `gx_aerial_froxel` (the coordinate comes back in the world slot), reads the volume with
+/// `gx_air_sample` and applies it with `gx_apply_fog_air` to a mid grey (the fog off).
 fn aerial_probe_source() -> String {
     format!(
         "{}\n{}",
@@ -1336,8 +1562,8 @@ fn cs_fog_probe(@builtin(global_invocation_id) id: vec3<u32>) {
     if spot.w > 0.5 {
         uvw = gx_aerial_froxel(spot.xyz);
     }
-    let aerial = textureSampleLevel(aerial_perspective, point_sampler, uvw, 0.0);
-    probe_rows[at] = vec4<f32>(gx_apply_fog_aerial(vec3<f32>(0.5), spot.xyz, aerial), 1.0);
+    let air = gx_air_sample(aerial_perspective, point_sampler, uvw);
+    probe_rows[at] = vec4<f32>(gx_apply_fog_air(vec3<f32>(0.5), spot.xyz, air), 1.0);
     if spot.w > 0.5 {
         probe_rows[at + 1u] = vec4<f32>(uvw, 1.0);
     }
@@ -1358,7 +1584,12 @@ fn metal_the_chunk_finds_a_slice_by_its_distance_and_applies_it() {
     let mut encoder = gpu.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("fog aerial") });
     aerial.encode(&gpu.device, &mut encoder, &inputs, None);
     gpu.queue.submit([encoder.finish()]);
-    let volume = read_texture(&gpu, aerial.texture(), (AERIAL_SIDE, AERIAL_SIDE, AERIAL_SIDE), wgpu::TextureFormat::Rgba16Float);
+    let volume = read_texture(&gpu, aerial.texture(), (AERIAL_SIDE, AERIAL_SIDE, AERIAL_DEPTH), wgpu::TextureFormat::Rgba16Float);
+    // The air the chunk applies at texel (x, y, z): the in-scatter in front, the transmittance behind.
+    let applied = |x: u32, y: u32, z: u32| {
+        let (front, back) = (aerial_texel(&volume, x, y, z), aerial_texel(&volume, x, y, AERIAL_SIDE + z));
+        apply_air([0.5; 3], [front[0], front[1], front[2]], [back[0], back[1], back[2]])
+    };
     let sampler = gpu.device.create_sampler(&wgpu::SamplerDescriptor { mag_filter: wgpu::FilterMode::Linear, min_filter: wgpu::FilterMode::Linear, ..Default::default() });
     let texels = [(16, 16, 0), (16, 16, 9), (16, 16, 31), (5, 20, 17), (27, 3, 24)];
     // The chunk's fog reads the environment cube too (it binds even with the fog off).
@@ -1380,7 +1611,7 @@ fn metal_the_chunk_finds_a_slice_by_its_distance_and_applies_it() {
         })
         .collect();
     for ((x, y, z), got) in texels.iter().zip(run_probe(&gpu, &aerial_probe_source(), 30, &bindings, &by_coordinate)) {
-        assert_close(&format!("texel ({x}, {y}, {z})"), got, apply_aerial([0.5; 3], aerial_texel(&volume, *x, *y, *z)), 2e-3);
+        assert_close(&format!("texel ({x}, {y}, {z})"), got, applied(*x, *y, *z), 2e-3);
     }
     // The point a slice's texel stands for, seen through the frame's projection: the chunk's own
     // coordinate finds that texel again, and the CPU twin agrees.
@@ -1398,7 +1629,7 @@ fn metal_the_chunk_finds_a_slice_by_its_distance_and_applies_it() {
         assert_close(&format!("froxel ({x}, {y}, {z})"), [coordinate[0], coordinate[1], coordinate[2]], want, 2e-3);
         let cpu = genex_render::fog::aerial_froxel(&frame_v2.view_proj, AERIAL_EYE, row.world);
         assert_close(&format!("cpu froxel ({x}, {y}, {z})"), cpu, want, 2e-3);
-        assert_close(&format!("applied ({x}, {y}, {z})"), [color[0], color[1], color[2]], apply_aerial([0.5; 3], aerial_texel(&volume, *x, *y, *z)), 4e-3);
+        assert_close(&format!("applied ({x}, {y}, {z})"), [color[0], color[1], color[2]], applied(*x, *y, *z), 4e-3);
     }
 }
 
@@ -1457,7 +1688,7 @@ fn shot_posts(origin: vec3<f32>, dir: vec3<f32>) -> ShotHit {
 // to blue under the flat colour.
 fn shot_sky(dir: vec3<f32>) -> vec3<f32> {
     if frame.ambient.w > 0.5 {
-        return textureSampleLevel(env_specular, env_sampler, dir, 0.0).rgb;
+        return gx_env_sky(dir, 0.0);
     }
     return mix(test_fog.color.rgb, vec3<f32>(0.25, 0.45, 0.9), clamp(dir.y * 1.5, 0.0, 1.0));
 }
@@ -1593,7 +1824,7 @@ fn shot_group(gpu: &Gpu, pipeline: &wgpu::ComputePipeline, shot: &Shot, cube: &T
         layout: &pipeline.get_bind_group_layout(0),
         entries: &[
             wgpu::BindGroupEntry { binding: 0, resource: frame.as_entire_binding() },
-            wgpu::BindGroupEntry { binding: 11, resource: wgpu::BindingResource::TextureView(&cube.view) },
+            wgpu::BindGroupEntry { binding: 11, resource: wgpu::BindingResource::TextureView(&cube.array) },
             wgpu::BindGroupEntry { binding: 14, resource: wgpu::BindingResource::Sampler(&cube.sampler) },
             wgpu::BindGroupEntry { binding: 15, resource: fog.as_entire_binding() },
             wgpu::BindGroupEntry { binding: 21, resource: pixels.as_entire_binding() },

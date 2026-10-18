@@ -1,8 +1,10 @@
-// Aerial perspective (graph node 11, RQ4.3; Hillaire's camera-space volume): 32³ froxels from the
-// camera out along the view frustum. Texel (x, y, z) holds what the air between the camera and the
-// point `AERIAL_RANGE × w²` world units away along pixel (x, y)'s ray does to the light behind it:
-// rgb the sky's in-scatter along that stretch, a the mean transmittance (the fog chunk's
-// `gx_apply_aerial` is `color × a + rgb`). One workgroup per pixel column marches the sky model's
+// Aerial perspective (graph node 11, RQ4.3; Hillaire's camera-space volume): 32 x 32 froxels by 32
+// slices from the camera out along the view frustum, in two halves (renderer pass 2 SI-04). Texel
+// (x, y, z) holds what the air between the camera and the point at slice coordinate w = (z + 0.5)
+// / 32 along pixel (x, y)'s ray (`aerial_slice_km`, the fog chunk's `gx_air_slice` inverted) does to
+// the light behind it: rgb the sky's in-scatter along that stretch (a 0: no height fog in it), and
+// texel (x, y, z + 32) its transmittance per channel (the fog chunk's `gx_apply_air` is
+// `color × transmittance + in-scatter`). One workgroup per pixel column marches the sky model's
 // single scattering (the sky-view LUT's own integral, sky_view.wgsl) with the multiple-scattering
 // LUT's second-order term, a thread per slice, and accumulates through the slices with a prefix
 // scan. It runs on medium and above, where the fog's look allows it; `rgba16float` write-only
@@ -19,8 +21,10 @@
 @group(0) @binding(5) var aerial_out: texture_storage_3d<rgba16float, write>;
 
 const SKY_PI: f32 = 3.14159265358979;
-// The farthest slice, world units (the fog chunk's GX_FOG_AERIAL_RANGE), and world units per km.
+// The farthest slice, world units (the fog chunk's GX_FOG_AERIAL_RANGE), where its slices turn
+// from even to logarithmic steps (GX_AIR_NEAR), and world units per km.
 const AERIAL_RANGE: f32 = 32000.0;
+const AERIAL_NEAR: f32 = 4.0;
 const AERIAL_UNITS_PER_KM: f32 = 1000.0;
 // Marching steps inside each slice.
 const AERIAL_SLICE_STEPS: u32 = 4u;
@@ -112,10 +116,11 @@ fn sky_view_height() -> f32 {
     return clamp(atmosphere.ground_albedo.w, SKY_MIN_HEIGHT_KM, atmosphere.radii.y - atmosphere.radii.x - SKY_TOP_MARGIN_KM);
 }
 
-// The distance (km) along a slice's ray at slice centre `w` (0..1): the fog chunk's
-// `gx_aerial_uvw` inverted.
+// The distance (km) along a slice's ray at slice coordinate `w` (0..1): the fog chunk's
+// `gx_air_slice` inverted (fog.rs `aerial_slice_distance`).
 fn aerial_slice_km(w: f32) -> f32 {
-    return AERIAL_RANGE * w * w / AERIAL_UNITS_PER_KM;
+    let span = log2(1.0 + AERIAL_RANGE / AERIAL_NEAR);
+    return AERIAL_NEAR * (exp2(clamp(w, 0.0, 1.0) * span) - 1.0) / AERIAL_UNITS_PER_KM;
 }
 
 // Each workgroup is one pixel column: its 32 threads march one slice each (the slices' segments
@@ -189,5 +194,9 @@ fn cs_aerial_perspective(@builtin(workgroup_id) group: vec3<u32>, @builtin(local
 
     let scale = atmosphere.sun_illuminance.rgb * atmosphere.sun_illuminance.w;
     let total = scan_transmittance[slice];
-    textureStore(aerial_out, vec3<i32>(vec2<i32>(group.xy), i32(slice)), vec4<f32>(scan_radiance[slice] * scale, (total.x + total.y + total.z) / 3.0));
+    let column = vec2<i32>(group.xy);
+    // In-scatter in front (alpha 0: the height fog is not in it), the transmittance per channel
+    // behind (alpha its mean, for a reader of the grey form).
+    textureStore(aerial_out, vec3<i32>(column, i32(slice)), vec4<f32>(scan_radiance[slice] * scale, 0.0));
+    textureStore(aerial_out, vec3<i32>(column, i32(slice + AERIAL_SLICES)), vec4<f32>(total, (total.x + total.y + total.z) / 3.0));
 }

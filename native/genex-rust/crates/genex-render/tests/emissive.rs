@@ -367,8 +367,7 @@ fn scene_radiance(gpu: &Gpu, scene: &Scene) -> Vec<[f32; 4]> {
 fn bloom() -> BloomSettings {
     let mut quality = Quality::off().bloom;
     quality.enabled = true;
-    quality.mips = 6;
-    quality.half_res = true;
+    quality.resolution = genex_render::post::bloom::CHAIN_RESOLUTION;
     BloomSettings::new(&Look::default().with_bloom(0.2, 0.0, 1.0), &quality).expect("bloom on")
 }
 

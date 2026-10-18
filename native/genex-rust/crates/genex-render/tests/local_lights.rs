@@ -237,7 +237,9 @@ fn every_light_the_window_lets_reach_a_fragment_is_in_its_walk_and_the_bins_cull
     let camera = probe_camera();
     let frame = binned_frame(&scattered(PAIR_LIGHTS, 6.0, 11), &all_lights(PROBE_TILE_PX, 0), &camera, PROBE_SIZE);
     let tables = tables(&frame);
-    assert_eq!(tables.zbins.len(), (LIGHT_BIN_HEADER_WORDS + LIGHT_ZBINS) as usize);
+    // Pass 2 A.0 (LG-16) flipped HEADER + ZBINS -> HEADER + ZBINS x kinds: each clusterable kind
+    // (lights, decals, probes) has its own z-bins.
+    assert_eq!(tables.zbins.len(), (LIGHT_BIN_HEADER_WORDS + LIGHT_ZBINS * genex_render::cluster::CLUSTER_KINDS as u32) as usize);
     assert_eq!(frame.bins.params.depth[1], PAIR_LIGHTS as u32);
     let samples = ground_samples(&camera, PROBE_SIZE, 3);
     let (mut walked, mut reached) = (0usize, 0usize);
@@ -419,6 +421,30 @@ struct ProbeRow {
     cone: f32,
 }
 
+/// The split-sum identity LUT (one texel: scale 1, bias 0) and a filtering sampler at the forward
+/// bindings 13 and 14: the direct specular's energy compensation reads them (P2-0.11, SI-07), and
+/// under the identity it changes nothing.
+fn identity_brdf_lut(gpu: &Gpu) -> (wgpu::TextureView, wgpu::Sampler) {
+    use wgpu::util::DeviceExt;
+    let texture = gpu.device.create_texture_with_data(
+        &gpu.queue,
+        &wgpu::TextureDescriptor {
+            label: Some("identity brdf lut"),
+            size: wgpu::Extent3d { width: 1, height: 1, depth_or_array_layers: 1 },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        },
+        wgpu::util::TextureDataOrder::LayerMajor,
+        &[255, 0, 0, 255],
+    );
+    let sampler = gpu.device.create_sampler(&wgpu::SamplerDescriptor { mag_filter: wgpu::FilterMode::Linear, min_filter: wgpu::FilterMode::Linear, ..Default::default() });
+    (texture.create_view(&wgpu::TextureViewDescriptor::default()), sampler)
+}
+
 /// Run the probe over `samples` with a binned frame's `tables`.
 fn run_probe(gpu: &Gpu, tables: &Tables, samples: &[([f32; 3], [f32; 2], f32)]) -> Vec<ProbeRow> {
     let source = format!("{}\n{PROBE_WGSL}", genex_render::shaders::FORWARD);
@@ -442,7 +468,12 @@ fn run_probe(gpu: &Gpu, tables: &Tables, samples: &[([f32; 3], [f32; 2], f32)]) 
         storage(gpu, "probe tiles", bytemuck::cast_slice(&tables.masks)),
         storage(gpu, "probe zbins", bytemuck::cast_slice(&tables.zbins)),
     ];
-    let mut entries = vec![wgpu::BindGroupEntry { binding: 40, resource: probe.as_entire_binding() }];
+    let (lut, sampler) = identity_brdf_lut(gpu);
+    let mut entries = vec![
+        wgpu::BindGroupEntry { binding: 40, resource: probe.as_entire_binding() },
+        wgpu::BindGroupEntry { binding: 13, resource: wgpu::BindingResource::TextureView(&lut) },
+        wgpu::BindGroupEntry { binding: 14, resource: wgpu::BindingResource::Sampler(&sampler) },
+    ];
     entries.extend(buffers.iter().enumerate().map(|(i, buffer)| wgpu::BindGroupEntry { binding: 41 + i as u32, resource: buffer.as_entire_binding() }));
     let group = gpu.device.create_bind_group(&wgpu::BindGroupDescriptor { label: Some("local lights probe"), layout: &pipeline.get_bind_group_layout(0), entries: &entries });
     let mut encoder = gpu.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("local lights probe") });
@@ -635,8 +666,11 @@ fn metal_1024_lights_shade_a_1080p_screen_within_the_main_pass_budget() {
         storage(&gpu, "stress zbins", bytemuck::cast_slice(&frame.zbins)),
         storage(&gpu, "stress camera", bytemuck::cast_slice(&camera_rows)),
     ];
-    let entries: Vec<wgpu::BindGroupEntry<'_>> =
+    let (lut, sampler) = identity_brdf_lut(&gpu);
+    let mut entries: Vec<wgpu::BindGroupEntry<'_>> =
         buffers.iter().enumerate().map(|(i, buffer)| wgpu::BindGroupEntry { binding: 41 + i as u32, resource: buffer.as_entire_binding() }).collect();
+    entries.push(wgpu::BindGroupEntry { binding: 13, resource: wgpu::BindingResource::TextureView(&lut) });
+    entries.push(wgpu::BindGroupEntry { binding: 14, resource: wgpu::BindingResource::Sampler(&sampler) });
     let group = device.create_bind_group(&wgpu::BindGroupDescriptor { label: Some("local lights stress"), layout: &pipeline.get_bind_group_layout(0), entries: &entries });
     let target = device.create_texture(&wgpu::TextureDescriptor {
         label: Some("local lights stress target"),

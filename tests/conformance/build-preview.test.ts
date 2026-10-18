@@ -9,7 +9,12 @@ import {
   writeCaptureManifest,
   writeCaptureRefusal,
 } from "../../src/substrate/build-preview.ts";
-import { CAPTURE_MANIFEST_VERSION, type CaptureManifest, CaptureRefusal } from "../../src/shared/build-preview.ts";
+import {
+  CAPTURE_MANIFEST_VERSION,
+  type CaptureManifest,
+  CaptureRefusal,
+  captureProvenanceOf,
+} from "../../src/shared/build-preview.ts";
 import { BuildTarget, GameStack } from "../../src/shared/game-project.ts";
 test("saved capture lookup chooses newest capture, prefers default camera, and contains paths", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "build-preview-"));
@@ -58,7 +63,12 @@ test("a saved capture's provenance sidecar reaches the frame; a hostile one is l
     };
     const sidecar = path.join(dir, "c3_default.provenance.json");
     await writeFile(sidecar, JSON.stringify(provenance));
-    assert.deepEqual((await latestBuildPreview(root, request))?.provenance, provenance);
+    // A sidecar saved before captures kept their render settings and size reads them as null.
+    assert.deepEqual((await latestBuildPreview(root, request))?.provenance, {
+      ...provenance,
+      render: null,
+      outputSize: null,
+    });
 
     const hostile: Array<[string, () => Promise<void>]> = [
       ["not JSON", () => writeFile(sidecar, "{")],
@@ -120,6 +130,8 @@ test("a capture's manifest round-trips beside its frame; a folder without one st
         camera: "default",
         runId: "native-run-1",
         build: { stack: GameStack.RustWgpu, target: BuildTarget.Mac, digest: "b".repeat(64), lock: "c".repeat(64) },
+        render: null,
+        outputSize: null,
       },
     };
     const written = await writeCaptureManifest(frame, manifest);
@@ -176,8 +188,17 @@ const savedManifest = (fields: Partial<CaptureManifest> = {}): CaptureManifest =
   commit: null,
   edited: null,
   capturedAt: "2026-10-08T00:00:00.000Z",
-  provenance: { seq: null, digest: null, camera: "default", runId: null, build: null },
+  provenance: { seq: null, digest: null, camera: "default", runId: null, build: null, render: null, outputSize: null },
   ...fields,
+});
+
+test("a sidecar saved before captures kept their settings and size reads them as unknown; a bad one is refused", () => {
+  const older = { seq: 3, digest: "a".repeat(16), camera: "default", runId: null, build: null };
+  assert.deepEqual(captureProvenanceOf(older), { ...older, render: null, outputSize: null });
+  for (const outputSize of [{ width: 0, height: 2 }, { width: 2.5, height: 2 }, { width: 2 }, "1280x720"]) {
+    assert.equal(captureProvenanceOf({ ...older, outputSize }), null, JSON.stringify(outputSize));
+  }
+  assert.equal(captureProvenanceOf({ ...older, render: { preset: "low" } }), null, "a render record out of its shape");
 });
 
 test("a frame or manifest linked in from another worker's folder is not this one's", async () => {

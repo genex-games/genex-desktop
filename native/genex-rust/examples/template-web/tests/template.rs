@@ -105,7 +105,9 @@ fn the_template_reads_its_genex_toml_look_agx_punchy_with_auto_exposure() {
     let runtime = started();
     let look = runtime.render().borrow().look();
     assert_eq!((look.tonemapper, look.exposure), (Tonemap::AgxPunchy, ExposureMode::Auto));
-    assert_eq!(look.ev_compensation, 1.5);
+    // P2-0.10 flipped 1.5 to 0.5: punchy keeps middle grey, so the template keeps only the sunlit
+    // scene's half EV.
+    assert_eq!(look.ev_compensation, 0.5);
 }
 
 #[test]
@@ -538,6 +540,23 @@ fn live_block(presenter: &mut genex::present::Presenter, preset: QualityPreset, 
     (capture.bgra().to_vec(), [capture.width(), capture.height()])
 }
 
+/// The template's block in a settled capture at `preset` at tick `start` (`features` switched as
+/// given), drawn at [`LIVE_SIZE`]: what Studio's capture and the owner's sheets show.
+fn settled_block(presenter: &mut genex::present::Presenter, preset: QualityPreset, start: f64, features: &[(genex::render::RenderFeature, bool)]) -> (Vec<u8>, [u32; 2]) {
+    let mut runtime = started();
+    runtime.step(FIXED_STEP_MS * start);
+    assert!(presenter.install_for(&mut runtime).is_empty());
+    presenter.set_capturing(true);
+    // The first frame attaches the game's render settings.
+    presenter.draw_view(&mut runtime, View::Game).expect("a view").expect("drawn");
+    let change = RenderChange { preset: Some(Some(PresetChoice::Preset(preset))), features: features.to_vec(), reset_features: true, ..RenderChange::default() };
+    presenter.render_settings().expect("the game's settings attached").borrow_mut().apply(&change);
+    presenter.draw_view(&mut runtime, View::Game).expect("a view").expect("drawn");
+    let capture = presenter.resilient.capture().expect("capture");
+    presenter.set_capturing(false);
+    (capture.bgra().to_vec(), [capture.width(), capture.height()])
+}
+
 /// Rows above the block's base (each column's lowest block pixel) the base band spans at
 /// [`LIVE_SIZE`]: about a fifth of the block's height, where its AO darkening lies.
 const BASE_BAND_ROWS: u32 = 40;
@@ -593,6 +612,67 @@ const BASE_DEPARTURE_MAX: f32 = 0.013;
 /// the block's corners counts 0-10%).
 const BASE_CLIFF: f32 = 0.15;
 const BASE_CLIFF_SHARE_MAX: f32 = 0.15;
+
+/// How much more a settled capture's base band may depart from its rows than Live's (and the
+/// departure under which either counts as smooth): the capture is about as smooth as Live (red
+/// at 8315e9a5: high 2.08x and ultra 1.59x Live at the first pose, with a cliff in 6-7% of the
+/// columns, the clumps; with AO's running-average history 1.27x and 1.04x, no cliff).
+const SETTLED_OVER_LIVE_MAX: f32 = 1.5;
+const SMOOTH_DEPARTURE: f32 = 0.004;
+
+/// G0 visual (2026-10-15): the settled capture at high drew dark clumps along the block's base
+/// (template/contact/block-high-t8.png) that Live's 90 frames average away: a capture settles over
+/// one jitter cycle (8 frames at high), and AO's history weight held the first frame's two slices
+/// at 48% of the result. A settled capture's base band darkens as smoothly as Live's (within
+/// [`SETTLED_OVER_LIVE_MAX`]) and within the Live row's bounds, at every preset and both poses.
+#[test]
+#[ignore = "needs a GPU: run with --ignored metal"]
+fn metal_the_blocks_base_darkens_smoothly_in_settled_captures_at_every_preset() {
+    use genex::present::Presenter;
+    use genex::render::RenderFeature;
+    let require = std::env::var("GENEX_REQUIRE_METAL").is_ok_and(|v| v == "1");
+    let mut presenter = match Presenter::open(LIVE_SIZE, &[]) {
+        Ok(presenter) => presenter,
+        Err(error) if require => panic!("GENEX_REQUIRE_METAL=1 and no WebGPU-core adapter: {error}"),
+        Err(error) => return eprintln!("skipped: no WebGPU-core adapter ({error})"),
+    };
+    let dir = out_dir().join("settled-block");
+    std::fs::create_dir_all(&dir).expect("the settled-block folder");
+    let unoccluded = [RenderFeature::ContactShadows, RenderFeature::Ao].map(|feature| (feature, false));
+    let presets = [QualityPreset::Low, QualityPreset::Medium, QualityPreset::High, QualityPreset::Ultra];
+    // Live's departures first, on the same presenter before any capture (the Live row's frames).
+    let mut live_departures = Vec::new();
+    for start in LIVE_START_TICKS {
+        for preset in presets {
+            let (live, size) = live_block(&mut presenter, preset, start, &[]);
+            let (live_reference, _) = live_block(&mut presenter, preset, start, &unoccluded);
+            live_departures.push(base_band(&live, &live_reference, size, BASE_CLIFF).0);
+        }
+    }
+    let mut live_departures = live_departures.into_iter();
+    let mut problems = Vec::new();
+    for start in LIVE_START_TICKS {
+        for preset in presets {
+            let live_departure = live_departures.next().expect("a Live departure per row");
+            let (capture, size) = settled_block(&mut presenter, preset, start, &[]);
+            let (reference, _) = settled_block(&mut presenter, preset, start, &unoccluded);
+            let label = format!("{}-t{start}", preset.wire());
+            write_png(&dir.join(format!("settled-{label}.png")), &capture, size);
+            let (departure, cliffs) = base_band(&capture, &reference, size, BASE_CLIFF);
+            eprintln!("settled {label}: the base band departs {departure:.4} from its rows (Live {live_departure:.4}), {:.1}% of its columns fall by a cliff", cliffs * 100.0);
+            if departure > SMOOTH_DEPARTURE.max(live_departure * SETTLED_OVER_LIVE_MAX) {
+                problems.push(format!("settled {label}: the base band departs {departure:.4} from its rows against Live's {live_departure:.4} (blotches)"));
+            }
+            if departure > BASE_DEPARTURE_MAX {
+                problems.push(format!("settled {label}: the base band departs {departure:.4} from its rows (blotches)"));
+            }
+            if cliffs > BASE_CLIFF_SHARE_MAX {
+                problems.push(format!("settled {label}: {:.1}% of the base band's columns fall by a cliff (a dark rim)", cliffs * 100.0));
+            }
+        }
+    }
+    assert!(problems.is_empty(), "{problems:#?}");
+}
 
 /// Pass-1 fix gate, live-app findings 1 and 2: in Studio's Live panel the turning block's base
 /// drew drip-like dark blotches at medium (one slice of half-resolution GTAO under a 5x5 window)

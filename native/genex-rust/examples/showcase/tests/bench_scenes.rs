@@ -76,19 +76,65 @@ fn the_outdoor_scene_has_terrain_foliage_water_and_a_sky_placeholder() {
     let drawn = scene.scene(0);
     let foliage = drawn.draws.iter().filter(|d| !d.material.is_transparent()).count();
     assert!(foliage >= 5_000, "{foliage} opaque draws: too little foliage");
-    assert!(transparent_draws(&drawn) >= 1, "no water");
+    // Renderer pass 2 B.3: the lake is the renderer's water (`Scene::water`), not a transparent sheet.
+    let water = drawn.water.expect("no water");
+    assert_eq!(water.body.centre[1], 0.0, "the water lies at sea level");
+    assert_eq!(transparent_draws(&drawn), 0, "the lake is not a transparent draw");
     let sky = drawn.draws.iter().filter(|d| d.model[0] >= 100.0 && d.model[12..15] == drawn.camera.eye).count();
     assert!(sky >= 1, "no sky placeholder around the camera");
     let largest = drawn.draws.iter().filter_map(|d| library.entry(d.mesh)).map(|e| e.index_count).max().unwrap_or(0);
     assert!(largest >= 3 * 2 * 128 * 128, "the terrain is coarser than 128x128 cells ({largest} indices)");
 }
 
+/// The most two neighbouring bands of the outdoor sky placeholder may differ by, in sRGB levels on
+/// any channel: a step a flicker map does not draw as an edge.
+const SKY_BAND_STEP_MAX: u8 = 24;
+
+/// G0 visual (2026-10-15): the outdoor scene's sky placeholder drew a hard-edged blue ellipse across
+/// the top of the frame (its zenith band 44-54 levels off the next), which the motion rows' flicker
+/// maps traced as an edge. Neighbouring bands differ by at most [`SKY_BAND_STEP_MAX`].
+#[test]
+fn the_outdoor_sky_placeholder_has_no_hard_band_edges() {
+    let (scene, _) = load(SceneId::Outdoor);
+    let drawn = scene.scene(0);
+    let bands: Vec<[u8; 4]> = drawn.draws.iter().filter(|d| d.model[0] >= 100.0 && d.model[12..15] == drawn.camera.eye).map(|d| d.material.base_color).collect();
+    assert!(bands.len() >= 2, "the sky placeholder's bands: {bands:?}");
+    for pair in bands.windows(2) {
+        let step = (0..3).map(|lane| pair[0][lane].abs_diff(pair[1][lane])).max().unwrap_or(0);
+        assert!(step <= SKY_BAND_STEP_MAX, "neighbouring sky bands {:?} and {:?} differ by {step} levels", pair[0], pair[1]);
+    }
+}
+
+/// Look-integration fix (2026-10-19): since bench-outdoor's lake became the renderer's water
+/// (B.3), which the renderer draws only under TAA with the prepass (`water::drawn_at`), the MSAA
+/// presets drew no lake at all, and the T-12 pan row compared TAA's lake against MSAA's bare basin
+/// (medium's 16 px pan popped 8,000 fewer pixels). At every desktop preset the outdoor scene has a
+/// lake: the renderer's water where it draws water, else the blended sheet it drew before.
+#[test]
+fn the_outdoor_lake_is_drawn_at_every_preset() {
+    use genex_render::device_class::{DeviceClass, FormFactor, PerformanceTier};
+    use genex_render::presets::preset_quality;
+    use genex_render::settings::QualityPreset;
+    let (scene, _) = load(SceneId::Outdoor);
+    let class = DeviceClass::new(FormFactor::Desktop, PerformanceTier::High);
+    for preset in [QualityPreset::Low, QualityPreset::Medium, QualityPreset::High, QualityPreset::Ultra] {
+        let quality = preset_quality(preset, class);
+        let drawn = scene.scene_for(0, &quality);
+        let renderer_water = genex_render::water::drawn_at(&quality);
+        assert_eq!(drawn.water.is_some(), renderer_water, "{preset:?}: the renderer's water exactly where it draws water");
+        assert_eq!(transparent_draws(&drawn), usize::from(!renderer_water), "{preset:?}: the blended sheet exactly where it does not");
+    }
+}
+
 #[test]
 fn the_city_draws_at_least_fifty_thousand_instances_of_many_meshes() {
     let (scene, _) = load(SceneId::City);
     let drawn = scene.scene(0);
-    let meshes: BTreeSet<u32> = drawn.draws.iter().map(|d| d.mesh.raw()).collect();
-    assert!(drawn.draws.len() >= 50_000, "{} instances", drawn.draws.len());
+    // Renderer pass 2 A.0b flipped `draws` -> retained groups: the city's static instances are
+    // retained groups (`mesh_instances` counts both).
+    let meshes: BTreeSet<u32> = drawn.draws.iter().map(|d| d.mesh.raw()).chain(drawn.groups.iter().map(|g| g.group.mesh().raw())).collect();
+    assert!(drawn.mesh_instances() >= 50_000, "{} instances", drawn.mesh_instances());
+    assert!(drawn.groups.len() >= 24, "{} retained groups", drawn.groups.len());
     assert!(meshes.len() >= 24, "{} distinct meshes", meshes.len());
     assert!(drawn.logical_draws() < 1_000, "instances are not grouped into instanced draws ({})", drawn.logical_draws());
 }

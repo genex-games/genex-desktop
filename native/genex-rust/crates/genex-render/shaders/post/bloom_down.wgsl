@@ -1,5 +1,11 @@
 // Bloom's downsample (graph node 19, RQ4.2): one mip of the chain from the one above it, starting
-// from the pre-exposed HDR scene. Threshold-free by default: every pixel blooms by the
+// from the pre-exposed HDR scene. The chain is sized from the output (renderer pass 2, P5), so the
+// first downsample reads a scene of any render size by uv, its taps half a chain texel apart
+// (`source.zw`, `post::bloom::first_tap_step`): its footprint on screen does not follow a DRS step.
+// A scene more than twice the chain's size (1440p and up at scale 1, a phone's tall scene) is first
+// filtered into a pre-level at twice the chain top's size (fs_bloom_prefilter*), so the first
+// downsample never reads a scene more than twice its size and no texel falls between its taps (a
+// small light would blink as it moved). Threshold-free by default: every pixel blooms by the
 // energy-conserving blend in the tonemap (`mix(scene, bloom, intensity)`); a look's optional
 // threshold is a soft knee on the first downsample only. Written by a fragment pass into
 // `rgba16float`, never storage, so tile GPUs keep each mip in tile memory.
@@ -9,16 +15,18 @@
 // centre box weighted 0.5 and the four corner boxes 0.125. On the first downsample each tap is
 // also weighted by 1 / (1 + luma) and the sum normalized (Karis's average, per tap: a per-box
 // weight cannot hold down a texel under the centre tap, which every corner box shares), so a single
-// blinding texel does not flicker the glow from frame to frame. The multisampled entry (fs_bloom_down_msaa) reads the samples of
-// the desktop MSAA scene the tonemap resolves in its own pass: the 2x2 texel footprint, each texel
-// the mean of its samples, Karis-weighted the same way.
+// blinding texel does not flicker the glow from frame to frame. The multisampled entry
+// (fs_bloom_down_msaa) reads the samples of the desktop MSAA scene the tonemap resolves in its own
+// pass: the bilinear footprint of the chain texel's centre on the scene, each texel the mean of its
+// samples, Karis-weighted the same way.
 
 // Mirrors `post::bloom::GpuBloomParams`.
 struct BloomParams {
-    // xy: the source mip's size in texels; zw: 1 / it.
+    // xy: the source's size in texels; zw: the filter's tap spacing in uv (half a chain texel on
+    // the first downsample, `post::bloom::first_tap_step`; one source texel after it).
     source: vec4<f32>,
-    // x: intensity; y: threshold (0: none); z: the spread (radius multiplier); w: the threshold's
-    // soft knee as a fraction of it (`post::bloom::THRESHOLD_KNEE`).
+    // x: intensity; y: threshold (0: none); z: reserved; w: the threshold's soft knee as a fraction
+    // of it (`post::bloom::THRESHOLD_KNEE`).
     shape: vec4<f32>,
     // x: the mip written; y: mips in the chain; z: 1 on the first downsample (Karis, threshold); w: reserved.
     mip: vec4<u32>,
@@ -139,4 +147,112 @@ fn fs_bloom_down_msaa(in: BloomOut) -> @location(0) vec4<f32> {
     let w = bilinear * vec4<f32>(gx_bloom_karis(t00), gx_bloom_karis(t10), gx_bloom_karis(t01), gx_bloom_karis(t11));
     let mean = (t00 * w.x + t10 * w.y + t01 * w.z + t11 * w.w) / max(w.x + w.y + w.z + w.w, 1e-6);
     return vec4<f32>(gx_bloom_threshold(mean), 1.0);
+}
+
+// The pre-level (a scene more than twice the chain top's size): one level at twice the top's
+// size, each texel the Karis-weighted mean of the scene texels under it. Up to twice its size
+// (`footprint`, source texels per pre-level texel, at most 2: 1440p and 4K at scale 1) the four
+// texels around its centre bilinearly, whose tents leave no texel between neighbours; above it (a
+// phone's tall scene over its small chain) an area filter over every texel the footprint covers.
+// `source.zw` is 1 / the pre-level's size here.
+
+// Texels a side the area filter reads at most (a footprint of up to four texels).
+const GX_BLOOM_AREA_TEXELS: i32 = 6;
+
+fn gx_bloom_pre_footprint() -> vec2<f32> {
+    return gx_bloom.source.xy * gx_bloom.source.zw;
+}
+
+// The bilinear texels and weights of `uv` on the source: the first texel, then the four weights.
+fn gx_bloom_bilinear_at(uv: vec2<f32>) -> vec4<f32> {
+    let p = uv * gx_bloom.source.xy - 0.5;
+    let f = p - floor(p);
+    return vec4<f32>((1.0 - f.x) * (1.0 - f.y), f.x * (1.0 - f.y), (1.0 - f.x) * f.y, f.x * f.y);
+}
+
+fn gx_bloom_bilinear_base(uv: vec2<f32>) -> vec2<i32> {
+    return vec2<i32>(floor(uv * gx_bloom.source.xy - 0.5));
+}
+
+// The share of texel `texel` the footprint `half_size` around `centre` covers.
+fn gx_bloom_cover(texel: vec2<i32>, centre: vec2<f32>, half_size: vec2<f32>) -> f32 {
+    let cell = vec2<f32>(texel);
+    let cover = max(min(cell + 1.0, centre + half_size) - max(cell, centre - half_size), vec2<f32>(0.0));
+    return cover.x * cover.y;
+}
+
+// The area filter's first texel and texels a side.
+fn gx_bloom_area_span(uv: vec2<f32>) -> vec4<i32> {
+    let centre = uv * gx_bloom.source.xy;
+    let half_size = gx_bloom_pre_footprint() * 0.5;
+    let first = vec2<i32>(floor(centre - half_size));
+    let span = min(vec2<i32>(ceil(centre + half_size)) - first, vec2<i32>(GX_BLOOM_AREA_TEXELS));
+    return vec4<i32>(first, span);
+}
+
+fn gx_bloom_scene_texel(texel: vec2<i32>) -> vec3<f32> {
+    let last = vec2<i32>(gx_bloom.source.xy) - 1;
+    return gx_bloom_sane(textureLoad(gx_bloom_source, clamp(texel, vec2<i32>(0), last), 0).rgb);
+}
+
+@fragment
+fn fs_bloom_prefilter(in: BloomOut) -> @location(0) vec4<f32> {
+    var sum = vec3<f32>(0.0);
+    var total = 0.0;
+    if all(gx_bloom_pre_footprint() <= vec2<f32>(2.0)) {
+        let base = gx_bloom_bilinear_base(in.uv);
+        let w = gx_bloom_bilinear_at(in.uv);
+        let at = array<vec2<i32>, 4>(base, base + vec2<i32>(1, 0), base + vec2<i32>(0, 1), base + vec2<i32>(1, 1));
+        for (var i = 0; i < 4; i++) {
+            let c = gx_bloom_scene_texel(at[i]);
+            let weight = w[i] * gx_bloom_karis(c);
+            sum += c * weight;
+            total += weight;
+        }
+        return vec4<f32>(sum / max(total, 1e-6), 1.0);
+    }
+    let span = gx_bloom_area_span(in.uv);
+    let centre = in.uv * gx_bloom.source.xy;
+    let half_size = gx_bloom_pre_footprint() * 0.5;
+    for (var y = 0; y < span.w; y++) {
+        for (var x = 0; x < span.z; x++) {
+            let texel = span.xy + vec2<i32>(x, y);
+            let c = gx_bloom_scene_texel(texel);
+            let weight = gx_bloom_cover(texel, centre, half_size) * gx_bloom_karis(c);
+            sum += c * weight;
+            total += weight;
+        }
+    }
+    return vec4<f32>(sum / max(total, 1e-6), 1.0);
+}
+
+@fragment
+fn fs_bloom_prefilter_msaa(in: BloomOut) -> @location(0) vec4<f32> {
+    var sum = vec3<f32>(0.0);
+    var total = 0.0;
+    if all(gx_bloom_pre_footprint() <= vec2<f32>(2.0)) {
+        let base = gx_bloom_bilinear_base(in.uv);
+        let w = gx_bloom_bilinear_at(in.uv);
+        let at = array<vec2<i32>, 4>(base, base + vec2<i32>(1, 0), base + vec2<i32>(0, 1), base + vec2<i32>(1, 1));
+        for (var i = 0; i < 4; i++) {
+            let c = gx_bloom_msaa_texel(at[i]);
+            let weight = w[i] * gx_bloom_karis(c);
+            sum += c * weight;
+            total += weight;
+        }
+        return vec4<f32>(sum / max(total, 1e-6), 1.0);
+    }
+    let span = gx_bloom_area_span(in.uv);
+    let centre = in.uv * gx_bloom.source.xy;
+    let half_size = gx_bloom_pre_footprint() * 0.5;
+    for (var y = 0; y < span.w; y++) {
+        for (var x = 0; x < span.z; x++) {
+            let texel = span.xy + vec2<i32>(x, y);
+            let c = gx_bloom_msaa_texel(texel);
+            let weight = gx_bloom_cover(texel, centre, half_size) * gx_bloom_karis(c);
+            sum += c * weight;
+            total += weight;
+        }
+    }
+    return vec4<f32>(sum / max(total, 1e-6), 1.0);
 }

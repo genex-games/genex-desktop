@@ -20,7 +20,11 @@
     { "name": "a raised web budget", "text": "[web]\nwasm_budget_mb = 8\n" },
     { "name": "the web budget at its 32 MB ceiling", "text": "[web]\nwasm_budget_mb = 32\n" },
     { "name": "the smallest web budget", "text": "[web]\nwasm_budget_mb = 1\n" },
-    { "name": "an empty [web]", "text": "[web]\n" }
+    { "name": "an empty [web]", "text": "[web]\n" },
+    { "name": "a styled loading screen", "text": "[render.loading]\ntitle = \"Harbour Nights\"\nbackground = \"#1b2233\"\naccent = \"#7FB2EC\"\ntext = \"#eceae4\"\nlogo = \"ui/logo.png\"\n" },
+    { "name": "a loading screen with only a colour", "text": "[render.loading]\nbackground = \"#000000\"\n" },
+    { "name": "a game without physics", "text": "[physics]\nenabled = false\n" },
+    { "name": "an empty [physics]", "text": "[physics]\n" }
   ],
   "hostile": [
     { "name": "an unknown preset", "text": "[render]\npreset = \"insane\"\n", "code": "invalid-render-preset" },
@@ -66,7 +70,21 @@
     { "name": "a negative web budget", "text": "[web]\nwasm_budget_mb = -4\n", "code": "invalid-web-budget" },
     { "name": "a fractional web budget", "text": "[web]\nwasm_budget_mb = 6.5\n", "code": "manifest-syntax" },
     { "name": "a web budget as a string", "text": "[web]\nwasm_budget_mb = \"8\"\n", "code": "manifest-syntax" },
-    { "name": "an unknown key in [web]", "text": "[web]\nbudget = 8\n", "code": "manifest-syntax" }
+    { "name": "an unknown key in [web]", "text": "[web]\nbudget = 8\n", "code": "manifest-syntax" },
+    { "name": "a loading colour by name", "text": "[render.loading]\naccent = \"red\"\n", "code": "invalid-render-loading" },
+    { "name": "a short loading colour", "text": "[render.loading]\nbackground = \"#abc\"\n", "code": "invalid-render-loading" },
+    { "name": "a loading colour that closes the page's style", "text": "[render.loading]\ntext = \"#000;}</style>\"\n", "code": "invalid-render-loading" },
+    { "name": "a logo outside assets/", "text": "[render.loading]\nlogo = \"../index.html.png\"\n", "code": "invalid-render-loading" },
+    { "name": "a logo by absolute path", "text": "[render.loading]\nlogo = \"/etc/logo.png\"\n", "code": "invalid-render-loading" },
+    { "name": "a logo that is not an image", "text": "[render.loading]\nlogo = \"ui/logo.svg\"\n", "code": "invalid-render-loading" },
+    { "name": "a logo with a quote", "text": "[render.loading]\nlogo = \"a\\\".png\"\n", "code": "invalid-render-loading" },
+    { "name": "a blank loading title", "text": "[render.loading]\ntitle = \"   \"\n", "code": "invalid-render-loading" },
+    { "name": "a loading title past 60 characters", "text": "[render.loading]\ntitle = \"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\"\n", "code": "invalid-render-loading" },
+    { "name": "a loading title with a control character", "text": "[render.loading]\ntitle = \"a\\u0007b\"\n", "code": "invalid-render-loading" },
+    { "name": "an unknown loading key", "text": "[render.loading]\nfont = \"serif\"\n", "code": "manifest-syntax" },
+    { "name": "a loading colour that is not a string", "text": "[render.loading]\naccent = 3\n", "code": "manifest-syntax" },
+    { "name": "physics switched by a string", "text": "[physics]\nenabled = \"no\"\n", "code": "manifest-syntax" },
+    { "name": "an unknown key in [physics]", "text": "[physics]\ngravity = 9.8\n", "code": "manifest-syntax" }
   ],
   "fragments": {
     "about": "What the build lane compiles in for the documented table followed by these [[wgsl]] rows: GENEX_RENDER_TOML (the host's renderTomlFragment) and GENEX_WGSL_TOML (wgslTomlFragment). genex's RenderConfig::from_toml and its [[wgsl]] reader read them back as the same settings and rows (tests/render_settings.rs).",

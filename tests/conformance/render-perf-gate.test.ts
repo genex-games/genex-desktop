@@ -181,6 +181,31 @@ describe("render perf informational scenes", () => {
   });
 });
 
+describe("render perf Lakeside v2 scenes", () => {
+  it("reports the Lakeside v2 shots' off rows as information too", async () => {
+    // Renderer pass 2 (plan section 6): the four shots Lakeside v2 adds draw content no baseline
+    // commit has, so a slower off row is never a regression.
+    const base = await fixture("baseline.json");
+    for (const name of ["lakeside-golden-wide", "lakeside-shore", "lakeside-forest-floor", "lakeside-cabin-interior"]) {
+      const named = (record: PerfRecord, factor: number) => {
+        const copy = structuredClone(record);
+        const extra = structuredClone(copy.rows.filter((r) => r.row === "bench-outdoor" && r.profile === "off"));
+        for (const row of extra) {
+          row.row = name;
+          if (row.gpuMs) row.gpuMs.p95 *= factor;
+        }
+        copy.rows.push(...extra);
+        return copy;
+      };
+      const comparison = compareRecords(named(base, 1), named(await fixture("candidate-same.json"), 1.88), {
+        minFrames: MIN_GATE_FRAMES,
+      });
+      assert.equal(verdictOf(comparison, name, "off", 1080), RowVerdict.Info, name);
+      assert.equal(comparison.passed, true, name);
+    }
+  });
+});
+
 describe("render perf run merge", () => {
   it("takes the median p95 of each row over the runs", async () => {
     const base = await fixture("baseline.json");
@@ -398,6 +423,14 @@ describe("render perf feature costs", () => {
     assert.deepEqual(full?.budgetEntries, ["hdr-tonemap", "bloom", "ao-full"]);
     // Owner decision 2026-10-12: ultra's full-resolution AO (3 slices x 8 steps) has 1.5 ms (was 1.2).
     assert.ok(Math.abs((full?.budgetMs ?? 0) - (0.3 + 0.4 + 1.5)) < 1e-9);
+    // Renderer pass 2 B.4: high's visibility-bitmask AO (half resolution) has 1.0 ms, ultra's
+    // (full) keeps the full-resolution 1.5.
+    const bitmask = await highWithAo("bitmask-half");
+    assert.deepEqual(bitmask?.budgetEntries, ["hdr-tonemap", "bloom", "ao-bitmask-half"]);
+    assert.ok(Math.abs((bitmask?.budgetMs ?? 0) - (0.3 + 0.4 + 1.0)) < 1e-9);
+    const bitmaskFull = await highWithAo("bitmask-full");
+    assert.deepEqual(bitmaskFull?.budgetEntries, ["hdr-tonemap", "bloom", "ao-bitmask-full"]);
+    assert.ok(Math.abs((bitmaskFull?.budgetMs ?? 0) - (0.3 + 0.4 + 1.5)) < 1e-9);
   });
 
   it("lists the switched-on features of a row", async () => {
@@ -415,6 +448,53 @@ describe("render perf feature costs", () => {
     assert.equal(high.wired, true);
     assert.deepEqual(high.budgetEntries, [], "hdr and tonemap were asked for, not drawn");
     assert.equal(high.withinBudget, null);
+  });
+});
+
+describe("render perf Stage A feature costs", () => {
+  it("holds each Stage A feature a row draws to its plan section 4 budget (owner decision D17)", async () => {
+    // GA round 2: the Lakeside v2 ultra rows read +6.0 and +6.3 ms against 5.5 because the budgets
+    // knew only pass 1's features, while those rows also draw the terrain, grass, probes, volumes,
+    // froxel fog, screen inputs and the sun mask.
+    const budgets = JSON.parse(await readFile(path.join(FIXTURES, "budgets.json"), "utf8"));
+    const tierA = [
+      "terrain",
+      "grass",
+      "reflection-probes",
+      "irradiance-volumes",
+      "froxel-fog",
+      "screen-inputs",
+      "sun-mask",
+    ];
+    const withTierA = async (froxel: string) => {
+      const record = await fixture("baseline.json");
+      for (const row of record.rows.filter((r) => r.applied && (r.profile ?? "off") !== "off")) {
+        if (!row.applied) continue;
+        row.applied.featuresDrawn = [...switchedOn(row), ...tierA];
+        row.applied.featureShapes = { "froxel-fog": froxel };
+      }
+      return featureCosts(record, budgets).find((c) => c.row === "bench-outdoor" && c.profile === "high");
+    };
+    const high = await withTierA("high");
+    assert.deepEqual(high?.budgetEntries, [
+      "hdr-tonemap",
+      "bloom",
+      "reflection-probes",
+      "irradiance-volumes",
+      "froxel-fog-high",
+      "screen-inputs",
+      "terrain",
+      "grass",
+      "sun-mask",
+    ]);
+    assert.ok(Math.abs((high?.budgetMs ?? 0) - (0.3 + 0.4 + 0.3 + 0.2 + 0.8 + 0.1 + 0.8 + 1.5 + 0.5)) < 1e-9);
+    const ultra = await withTierA("ultra");
+    assert.ok(ultra?.budgetEntries.includes("froxel-fog-ultra"), "the ultra grid has its own 1.2 ms");
+    assert.ok(!ultra?.budgetEntries.includes("froxel-fog-high"));
+    const ids = new Set(budgets.entries.map((e: { id: string }) => e.id));
+    for (const id of ["grading", "dof-ring", "dof-circular", "motion-blur", "decals", "particles"]) {
+      assert.ok(ids.has(id), `${id} has its plan section 4 budget`);
+    }
   });
 });
 

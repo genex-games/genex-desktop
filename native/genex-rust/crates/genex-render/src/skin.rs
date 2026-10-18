@@ -17,7 +17,7 @@ use wgpu::{BindGroupLayout, Buffer, ComputePipeline, Device};
 
 use crate::error::RenderError;
 use crate::layout::GpuSkinVertex;
-use crate::mesh::{MeshData, Vertex, invalid, open_glb, read_primitive};
+use crate::mesh::{MeshData, Vertex, check_attribute_layout, invalid, open_glb, read_primitive};
 use crate::scene::MeshId;
 
 /// Joints one skin may have (the joint table holds every skinned draw's matrices).
@@ -261,6 +261,9 @@ fn read_skinned_mesh(gltf_mesh: &gltf::Mesh<'_>, blob: Option<&[u8]>, joint_coun
     let mut skin = Vec::new();
     for primitive in gltf_mesh.primitives() {
         let (vertices, indices) = read_primitive(&primitive, blob)?;
+        for semantic in [gltf::Semantic::Joints(0), gltf::Semantic::Weights(0)] {
+            check_attribute_layout(&primitive, &semantic)?;
+        }
         let reader = primitive.reader(|_| blob);
         let joints: Vec<[u16; 4]> = reader.read_joints(0).ok_or_else(|| invalid("a skinned primitive has no JOINTS_0"))?.into_u16().collect();
         let weights: Vec<[f32; 4]> = reader.read_weights(0).ok_or_else(|| invalid("a skinned primitive has no WEIGHTS_0"))?.into_f32().collect();

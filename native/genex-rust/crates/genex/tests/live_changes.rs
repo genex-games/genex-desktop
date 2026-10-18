@@ -42,7 +42,12 @@ fn required() -> bool {
 
 /// A studio-style presenter: settings changes are warmed off the frame thread.
 fn presenter() -> Option<Presenter> {
-    match Presenter::open([160, 90], &[]) {
+    presenter_at([160, 90])
+}
+
+/// [`presenter`] for a world of `size`.
+fn presenter_at(size: [u32; 2]) -> Option<Presenter> {
+    match Presenter::open(size, &[]) {
         Ok(mut presenter) => {
             presenter.set_off_thread_changes(true);
             Some(presenter)
@@ -59,7 +64,11 @@ fn presenter() -> Option<Presenter> {
 struct Scene;
 
 fn scene_game() -> Game<Scene> {
-    let mut game = Game::new(Scene).world_size(160, 90).background(Color::rgb(30, 40, 60));
+    scene_game_at([160, 90])
+}
+
+fn scene_game_at([width, height]: [u32; 2]) -> Game<Scene> {
+    let mut game = Game::new(Scene).world_size(width, height).background(Color::rgb(30, 40, 60));
     game.camera(|_| Camera::look_at(vec3(3.0, 3.0, 6.0), Vec3::ZERO));
     game.on_draw(|_, frame, _| {
         frame.cube(Transform::from_xyz(0.0, 0.5, 0.0), Color::RED);
@@ -134,6 +143,41 @@ fn metal_a_live_preset_change_keeps_drawing_the_old_preset_while_the_new_one_com
     assert!(took < NO_WAIT, "going back waited {took:?}");
     assert!(drawn == (true, 1) || drawn == (false, 4), "a compiled preset was drawn: {drawn:?}");
     live_until(&mut presenter, &mut runtime, (true, 1));
+}
+
+/// The most renderers a 4K presenter holds while a change warms: the one in use and the one warmed.
+const RENDERERS_WHILE_WARMING_MAX: usize = 2;
+/// The world the memory row draws: a 4K Live view, where each renderer holds about a GiB.
+const LARGE_WORLD: [u32; 2] = [3840, 2160];
+
+// GB live-app round 1: the native Lakeside was killed by Studio's 4 GiB memory cap during a Live
+// preset cycle (low, medium, high, ultra, auto). After medium the spare holds medium's MSAA
+// renderer; ultra then warmed a new renderer from a plan beside the one in use and that spare,
+// three full sets of render targets at once. (A small view keeps its spare: the paused-capture row.)
+#[test]
+#[ignore = "needs the host GPU: run with --ignored metal"]
+fn metal_a_4k_preset_cycle_never_holds_more_than_two_renderers_while_one_warms() {
+    let _gpu = gpu_rows();
+    let Some(mut presenter) = presenter_at(LARGE_WORLD) else { return };
+    let mut runtime = Runtime::new(scene_game_at(LARGE_WORLD)).expect("installs");
+    for _ in 0..3 {
+        live(&mut presenter, &mut runtime);
+    }
+    let mut most = presenter.renderers_held();
+    let warm_running = |presenter: &Presenter| presenter.renderers_held() > 1 + usize::from(presenter.resilient.spare().is_some());
+    for (preset, drawn) in [(QualityPreset::Medium, (false, 4)), (QualityPreset::High, (true, 1)), (QualityPreset::Ultra, (true, 1))] {
+        runtime.render().borrow_mut().set_person(person_preset(preset));
+        let from = Instant::now();
+        // Every warm-up the change starts (Live's, then a capture spare's) has landed.
+        while from.elapsed() < WARM_LANDS || warm_running(&presenter) || drawn_aa(&presenter) != drawn {
+            assert!(from.elapsed() < ARRIVES_WITHIN, "{preset:?} arrives once the pool runs");
+            live(&mut presenter, &mut runtime);
+            most = most.max(presenter.renderers_held());
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        eprintln!("{preset:?}: in use holds {} MiB, spare {:?}", presenter.resilient.renderer().held_bytes() >> 20, presenter.resilient.spare().map(|(_, spare)| spare.held_bytes() >> 20));
+    }
+    assert!(most <= RENDERERS_WHILE_WARMING_MAX, "the cycle held {most} renderers at once");
 }
 
 #[test]

@@ -119,6 +119,10 @@ function boundStudio(html: string, exports: Record<string, unknown>): Record<str
     location: { search: "" },
     console: { log() {}, warn() {}, error() {} },
     URLSearchParams,
+    // The boot's watchdog and progress timers (owner decision D11's loading screen): never fired
+    // here, so the stalled boot neither keeps the process alive nor reaches the card after the row.
+    setTimeout: () => 0,
+    clearTimeout() {},
   };
   page.window = page;
   const context = vm.createContext(page);

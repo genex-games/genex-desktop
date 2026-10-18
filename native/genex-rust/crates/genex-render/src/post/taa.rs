@@ -7,31 +7,49 @@
 //! The resolve (shaders/post/taa.wgsl), per pixel of the jittered HDR scene at render size:
 //! - **dilation:** the motion vector of the closest depth in the 3x3 neighbourhood, so an edge
 //!   reprojects with the object in front of it;
-//! - **history:** Catmull-Rom (five bilinear taps) at `uv - motion`, rescaled by exposure now /
-//!   exposure then ([`GpuTaaParams::params`] y), so an exposure change never resets it;
-//! - **variance clipping:** the history is clipped towards the neighbourhood's YCoCg mean, inside
-//!   mean ± [`VARIANCE_GAMMA`] σ intersected with the neighbourhood's min/max ([`TaaFlags::CLIP`]);
+//! - **history:** Catmull-Rom (five bilinear taps) at `uv - motion`, sharpened by
+//!   [`HISTORY_SHARPEN`] under motion and held inside the four texels around the sample (B.7),
+//!   rescaled by exposure now / exposure then ([`GpuTaaParams::params`] y), so an exposure change
+//!   never resets it;
+//! - **rectification** (renderer pass 2, P2-0.8a: S10 and T-02, after FidelityFX FSR 2.2, MIT): the
+//!   neighbourhood's colour box is built in reversibly tonemapped space `c / (1 + max3(c))`, YCoCg:
+//!   mean ± [`VARIANCE_GAMMA`] σ inside the neighbourhood's min/max ([`TaaFlags::CLIP`]), so one
+//!   bright pixel no longer stretches it over everything beside a highlight. History outside the
+//!   box is clipped towards it softly: the clip is undone by how much the pixel is **locked**
+//!   (FSR 2.2's thin-feature confidence: a lightness ridge no 2x2 block of similar neighbours
+//!   explains; or an oscillation; held for a jitter cycle in the [`LOCK_FORMAT`] side history) or
+//!   **luma-unstable** (its quantised luma over the last four frames, the [`LUMA_HISTORY_FORMAT`]
+//!   side history, rose and fell), scaled by `1 - sqrt(reactive)` (motion counts as reactive up to
+//!   [`MOTION_REACTIVE`]). A sub-pixel feature the jitter
+//!   shows in some frames only keeps its history instead of being clipped away on the frames that
+//!   miss it. On a settled pixel (no motion of its own, no reactive coverage) the box also grows by
+//!   the pixel's temporal noise and a floor ([`NOISE_BOX_SCALE`], renderer pass 2, B.7);
 //! - **rejection:** off-screen history, depth disocclusion and the reactive mask take the current
 //!   frame filtered around the unjittered pixel centre (a 3x3 Gaussian over the jittered taps,
 //!   [`FILTER_FALLOFF`]), so a rejected region neither aliases nor wobbles by the jitter; motion
-//!   raises the current weight by [`MOTION_REJECTION_PER_PX`] per pixel. Disocclusion compares the
-//!   history's depth key with the key the surface had last frame if it stayed put: the camera's
-//!   own motion ([`GpuTaaParams::reproject`], last frame's view_proj × this frame's inverse) scales
-//!   the neighbourhood's key range, outside which by [`DISOCCLUSION_TOLERANCE`] the pixel is
-//!   disoccluded. A camera dollying or turning keeps the history of every static surface (RQ5
-//!   review: compared with the current keys, a 6 m/s dolly threw away the ground's history
-//!   within about 2 m);
+//!   raises the current weight by [`MOTION_REJECTION_PER_PX`] per pixel. Disocclusion: the history's
+//!   depth key (last frame's farthest surface in the 3x3) lies nearer, by more than
+//!   [`DISOCCLUSION_TOLERANCE`], than the closest key the neighbourhood had last frame if it stayed
+//!   put (the camera's own motion, [`GpuTaaParams::reproject`], last frame's view_proj × this
+//!   frame's inverse, scales it): what stood in front went away. A camera dollying or turning keeps
+//!   the history of every static surface (RQ5 review: compared with the current keys, a 6 m/s
+//!   dolly threw away the ground's history within about 2 m), and a sub-pixel feature the jitter
+//!   shows in some frames only is never a disocclusion (P2-0.8a: the history carried the centre's
+//!   key, and the range was tested both ways, so such features vanished and the far tree line
+//!   flickered). A surface that came in front is left to the colour box;
 //! - **accumulation:** `max(1 / (n + 1), alpha_min)` after the history's reset (n frames since;
 //!   the floor is [`STILL_ALPHA_SHARE`] of `alpha_min` on a pixel moving under
 //!   [`STILL_MOTION_PX`]), blended with weights `1 / (1 + max(luma - 1, 0))` in pre-exposed space,
 //!   so highlights cannot flicker and display-range values average exactly (a box filter over the
-//!   jitter cycle). Still transparents under a still camera write no reactive coverage
-//!   ([`transparent_coverage`]), so they accumulate too.
+//!   jitter cycle). Still transparents write no reactive coverage, under a moving camera too, and
+//!   moving ones their alpha capped at [`TRANSPARENT_COVERAGE`] ([`transparent_coverage`]), so
+//!   still ones accumulate too.
 //!
-//! The resolved colour is the history written this frame (rgb), and its alpha carries the pixel's
-//! depth key (`d` under reverse-Z, `1 - d` under standard Z: both proportional to 1 / view depth),
-//! which the next frame's disocclusion test reads. Readers downstream of TAA (L3 `post-hdr`,
-//! bloom, exposure, the tonemap) read `.rgb`.
+//! The resolved colour is the history written this frame (rgb), and its alpha carries the 3x3
+//! neighbourhood's farthest depth key (`d` under reverse-Z, `1 - d` under standard Z: both
+//! proportional to 1 / view depth), which the next frame's disocclusion test reads. Readers
+//! downstream of TAA (L3 `post-hdr`, bloom, exposure, the tonemap) read `.rgb`. The luma and lock
+//! side histories ping-pong with it, made and read at the same size.
 //!
 //! TAA is a pipeline knob ([`crate::settings::AntiAliasing`]: MSAA is off while it runs); its
 //! jitter cycle, accumulation floor and LOD bias are resource knobs
@@ -69,6 +87,22 @@ pub const HISTORY_USAGE: TextureUsages = TextureUsages::RENDER_ATTACHMENT.union(
 pub const HISTORY_LABELS: [&str; 2] = ["taa history a", "taa history b"];
 /// Bytes of one history texel.
 pub const HISTORY_TEXEL_BYTES: u64 = 8;
+/// The luma side history (T-02): the last four frames' quantised box-centre luma, x the newest
+/// (FSR 2.2's luma history, for its luma instability).
+pub const LUMA_HISTORY_FORMAT: TextureFormat = TextureFormat::Rgba8Unorm;
+/// The lock side history (T-02): x the lock's remaining lifetime / 2 (0..2 jitter cycles' worth),
+/// y the shading luma it was locked at (FSR 2.2's lock status), z how recently the pixel moved (1
+/// at a render pixel of motion, falling to 0 over a jitter cycle: a pixel an object just passed
+/// over is not protected), w its temporal noise (renderer pass 2, B.7: a running mean, at
+/// [`NOISE_RATE`], of how far its raw sample strayed from the history the colour box keeps, in
+/// tonemapped luma; cleared where a surface moves over the pixel, [`NOISE_RESET_OWN_MOTION_PX`]).
+pub const LOCK_FORMAT: TextureFormat = TextureFormat::Rgba8Unorm;
+/// The luma side history's labels, a pair like the colour history's.
+pub const LUMA_HISTORY_LABELS: [&str; 2] = ["taa luma history a", "taa luma history b"];
+/// The lock side history's labels.
+pub const LOCK_LABELS: [&str; 2] = ["taa lock a", "taa lock b"];
+/// Bytes of one texel of both side histories.
+pub const SIDE_TEXEL_BYTES: u64 = 4 + 4;
 /// The reactive mask's format (1: the current sample wins), fragment-written.
 pub const REACTIVE_FORMAT: TextureFormat = TextureFormat::R8Unorm;
 /// The reactive mask's usages.
@@ -82,15 +116,108 @@ pub const REACTIVE_LABEL: &str = "taa reactive";
 pub const DISOCCLUSION_TOLERANCE: f32 = 0.05;
 /// The current sample's extra weight per render pixel of motion (fully current at 100 px).
 pub const MOTION_REJECTION_PER_PX: f32 = 0.01;
-/// The variance clip's box: the neighbourhood's mean ± this many standard deviations (YCoCg),
-/// intersected with its min/max (`GX_TAA_VARIANCE_GAMMA` in taa.wgsl).
+/// How much the history sample is sharpened against its four outer Catmull-Rom taps where it fell
+/// halfway between texel centres on both axes (`GX_TAA_HISTORY_SHARPEN`; none on a texel centre,
+/// so a still camera's history is untouched). Every frame of motion resamples the history, and a
+/// fractional resample loses high frequencies the next one loses again: G0 (2026-10-15), panned at
+/// 1 and 4 px a frame bench-outdoor kept 49% and 57% of its still sharpness at high. At 0.2 it keeps
+/// 100% and 86% (ultra 102% and 89%) with the 1 px pan's flicker 0.061% -> 0.066%; 0.3 overshot
+/// at 1 px (122%), the feedback sharpening every frame of the history's memory. Renderer pass 2,
+/// B.7: the resample and the sharpened history are held inside the four history texels around the
+/// sample (Catmull-Rom's overshoot and the sharpening rang on sub-pixel detail into one-frame
+/// pops), and the colour box grows on settled pixels ([`NOISE_BOX_SCALE`]), so less of the
+/// sharpening is clipped away: 0.15 keeps 90% and 98% (ultra 94% and 111%).
+pub const HISTORY_SHARPEN: f32 = 0.15;
+/// The motion (render pixels a frame) over which the history's sharpening fades in, from none
+/// under the first (`GX_TAA_SHARPEN_MOTION_PX`): under a creep the sharpening fed back on itself
+/// every frame and an edge's history rang (B.7: bench-outdoor's lake box flickered on 323 pixels
+/// creeping a fiftieth of a pixel a frame against 21 still at high; 0 against 0 without it).
+pub const SHARPEN_MOTION_PX: [f32; 2] = [0.05, 0.2];
+/// How fast a pixel's temporal noise (the lock history's w, [`LOCK_FORMAT`]) follows this frame's,
+/// a running mean (`GX_TAA_NOISE_RATE`).
+pub const NOISE_RATE: f32 = 0.15;
+/// How far a settled pixel's colour box grows by its temporal noise (`GX_TAA_NOISE_BOX_SCALE`),
+/// and the growth it always has (`GX_TAA_NOISE_BOX_FLOOR`, tonemapped YCoCg): a sub-pixel detail
+/// the jitter hits in some frames only (a far tree tip against the sky, a sparkle in a canopy) was
+/// clipped out of its history on every frame the jitter missed it and came back on the next hit,
+/// a one-frame pop on every Lakeside path (B.7: pan, orbit and dolly worst 14, 13 and 39 popped
+/// pixels a frame at high against 1, 2 and 2); and a sharp shadow mask's texel clipped back and
+/// forth by a few levels under a still camera (the fence row: 0.0004% of pixels a frame at high
+/// against medium's none, now none).
+pub const NOISE_BOX_SCALE: f32 = 3.0;
+/// See [`NOISE_BOX_SCALE`].
+pub const NOISE_BOX_FLOOR: f32 = 0.01;
+/// The motion of its own (render pixels a frame, beyond the camera's at the closest surface) over
+/// which a pixel stops counting as settled, fully at the second (`GX_TAA_SETTLED_OWN_MOTION_PX`):
+/// a swaying tree is settled, a near grass blade swaying across the ground is not, so the history
+/// it leaves behind is clipped (the Live-TAA trails row).
+pub const SETTLED_OWN_MOTION_PX: [f32; 2] = [0.15, 0.5];
+/// The motion of its own (render pixels a frame) that clears a pixel's temporal noise
+/// (`GX_TAA_NOISE_RESET_OWN_MOTION_PX`): a surface moving over it says nothing about its noise.
+pub const NOISE_RESET_OWN_MOTION_PX: f32 = 0.3;
+/// The motion (render pixels a frame, the dilated motion: the camera's or the surface's) over which
+/// the colour box's growth fades out, gone at the second (`GX_TAA_NOISE_GROWTH_MOTION_PX`). The
+/// growth keeps a still or creeping camera's sub-pixel detail; under a pan it held a surface's
+/// history over its noisy neighbour (D22: a lantern post's edge sawtoothed by the water's bright
+/// bands, the fishing line and the string lights' wire dashed or gone).
+pub const NOISE_GROWTH_MOTION_PX: [f32; 2] = [0.5, 1.5];
+/// How fast reactive coverage takes the colour box's growth away (`GX_TAA_NOISE_REACTIVE_CUT`):
+/// none from an eighth of coverage.
+pub const NOISE_REACTIVE_CUT: f32 = 8.0;
+/// History this many growths outside the colour box, fading from the first to the second, is
+/// clipped without the growth (`GX_TAA_NOISE_HOLD_REACH`): a whole surface gone (a moved object's
+/// edge, an object without motion vectors) is no detail the jitter missed. A history reset
+/// clears the noise too: measured against the stale history of a reset frame, a cube's first
+/// outline was held as a faint ring after it moved away (tests/taa_frame.rs).
+pub const NOISE_HOLD_REACH: [f32; 2] = [2.0, 4.0];
+/// The colour box: the neighbourhood's mean ± this many standard deviations (tonemapped YCoCg),
+/// intersected with its min/max (`GX_TAA_VARIANCE_GAMMA` in taa.wgsl). FSR 2.2 weighs its samples
+/// `exp(-(2..3) d²)` by their distance from the unjittered centre at one deviation; measured here
+/// (P2-0.8a), that box clipped static edges within the first jitter cycle (edge error against the
+/// cycle's even mean 0.075 at 1.0 weighted, 0.018 at 1.0 unweighted, 0.004 at 1.25 unweighted), so
+/// a settled capture would alias, and the box stays unweighted at 1.25.
 pub const VARIANCE_GAMMA: f32 = 1.25;
+/// Two neighbours' lock lumas are similar within this ratio of their perceived lightness: FSR 2.2's
+/// 1.05 on lightness^(1/6) (`ffx_fsr2_lock.h`), to the sixth (`GX_TAA_LOCK_SIMILAR_RATIO`).
+pub const LOCK_SIMILAR_RATIO: f32 = 1.340_095_6;
+/// A lock whose shading luma changed by more than this share (1 - min/max) dies, and the change
+/// raises the reactive factor (FSR 2.2's UpdateLockStatus; `GX_TAA_LOCK_SHADING_CHANGE`).
+pub const LOCK_SHADING_CHANGE: f32 = 0.1;
+/// The luma deviation at which the colour box (or the swing of the last five frames' box-centre
+/// luma) counts as wide enough for luma instability (FSR 2.2: `pow(saturate(sigma / 0.1), 6)`;
+/// `GX_TAA_INSTABILITY_BOX_SIGMA`).
+pub const INSTABILITY_BOX_SIGMA: f32 = 0.1;
+/// The reactive factor a pixel moving a render pixel or more a frame (its own motion or the
+/// camera's, the sky included) counts as for its lock and luma instability, reached linearly from
+/// still (FSR 2.2's ComputeTemporalReactiveFactor; `GX_TAA_MOTION_REACTIVE`). Without it a lock
+/// or an oscillation held smeared history through a pan: bench-outdoor at 4 px a frame streaked
+/// the trees across the sky (P2-0.8a).
+pub const MOTION_REACTIVE: f32 = 0.4;
+/// Where [`GpuTaaParams::counts`] w keeps the jitter cycle's frames (bits 8..15; the flags hold
+/// bits 0..7): a lock lives one cycle of frames.
+pub const JITTER_CYCLE_SHIFT: u32 = 8;
+/// The flag bits of [`GpuTaaParams::counts`] w.
+const FLAG_BITS: u32 = (1 << JITTER_CYCLE_SHIFT) - 1;
+/// The row flag (`counts.w` bit 7; `GX_TAA_FLAG_HANDBACK`) of the first resolve after TAA
+/// upscaling (renderer pass 2 wave 2): the history is the upscale's last output at this size,
+/// whose alpha is an accumulated weight, not a depth key, so the disocclusion test skips it once.
+pub const HANDBACK_FLAG: u32 = 1 << 7;
+/// The frames a handed-back history counts as (the accumulation at its floor at once).
+const HANDBACK_FRAMES: u32 = 1024;
 /// The rejected-pixel filter's falloff `k` (`GX_TAA_FILTER_FALLOFF`): each tap of the 3x3
 /// neighbourhood weighs `exp(-k d²)` at `d` render pixels from the unjittered pixel centre.
 pub const FILTER_FALLOFF: f32 = 2.29;
+/// The wider falloff a pixel whose history lies off the screen takes its current frame with
+/// (`GX_TAA_EDGE_FILTER_FALLOFF`; renderer pass 2, B.7): what enters at the frame's edge has no
+/// history, and its sharp first sample was a one-frame pop beside the softer resolve of the next
+/// frame (a dark mote entering the Lakeside orbit's right edge). Disoccluded pixels keep
+/// [`FILTER_FALLOFF`].
+pub const EDGE_FILTER_FALLOFF: f32 = 0.8;
 /// The motion (render pixels, the 3x3 neighbourhood's closest surface's) under which a pixel
-/// stands still (`GX_TAA_STILL_MOTION_PX` in taa.wgsl): a still camera on a still surface.
-pub const STILL_MOTION_PX: f32 = 0.01;
+/// stands still (`GX_TAA_STILL_MOTION_PX` in taa.wgsl): a still camera on a still surface, or a
+/// creep (B.7: a fiftieth of a pixel a frame took twice the still floor's current weight, and the
+/// jitter's edge noise with it, at 0.01).
+pub const STILL_MOTION_PX: f32 = 0.05;
 /// A still pixel's accumulation floor as a share of `alpha_min` (`GX_TAA_STILL_ALPHA_SHARE`): it
 /// averages over twice as many frames, so a sub-pixel edge's jittered sample moves its history by
 /// half as much each frame (pass-1 gate finding 04: grass tufts and far tree tips against the sky
@@ -104,9 +231,10 @@ pub const IDENTITY: [f32; 16] = [1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.
 pub struct TaaFlags(u32);
 
 impl TaaFlags {
-    /// No clipping: history is only rejected (tests and debugging).
+    /// No rectification: history is only rejected (tests and debugging).
     pub const NONE: TaaFlags = TaaFlags(0);
-    /// YCoCg variance clipping of the history (always on in the renderer).
+    /// The history's rectification against the colour box, with the locks and the luma
+    /// instability (always on in the renderer).
     pub const CLIP: TaaFlags = TaaFlags(1);
 
     /// The bits the shader reads.
@@ -116,19 +244,27 @@ impl TaaFlags {
 }
 
 /// The resolve (graph node 17): a full-screen fragment pass.
-pub const TAA: &str = include_str!("../../shaders/post/taa.wgsl");
+pub const TAA: &str = crate::shaders::minify::shipped_wgsl!(include_str!("../../shaders/post/taa.wgsl"));
 /// The reactive coverage (graph node 15a): the transparent draws as coverage.
-pub const REACTIVE: &str = concat!(
+pub const REACTIVE: &str = crate::shaders::minify::shipped_wgsl!(concat!(
     include_str!("../../shaders/common.wgsl"),
     include_str!("../../shaders/clip_position.wgsl"),
+    // Mirrors `layout::GpuPrevModel` (`motion::PREV_MODEL_WGSL`, held to it by tests/layout.rs).
+    "
+struct PrevModel {
+    model: mat4x4<f32>,
+    flags: vec4<u32>,
+}
+",
     include_str!("../../shaders/post/reactive.wgsl")
-);
-/// The particles' reactive coverage: their billboards (`particles_draw.wgsl`'s shape, its
-/// `particles_drawn` binding unchanged) as soft coverage into the same mask, jittered like the
-/// mesh entry ([`REACTIVE`]).
-pub const REACTIVE_PARTICLES: &str = concat!(
+));
+/// The particles' reactive coverage: their billboards (`particle_billboard.wgsl`, the draw's own
+/// quads: turned, or stretched along the motion as rain is; renderer pass 2 A.11) as soft coverage
+/// into the same mask, jittered like the mesh entry ([`REACTIVE`]).
+pub const REACTIVE_PARTICLES: &str = crate::shaders::minify::shipped_wgsl!(concat!(
     include_str!("../../shaders/common.wgsl"),
     include_str!("../../shaders/part2/particle.wgsl"),
+    include_str!("../../shaders/part2/particle_billboard.wgsl"),
     include_str!("../../shaders/clip_position.wgsl"),
     "
 // The particles' reactive coverage (graph node 15a; RQ5.2): each billboard's soft dot as coverage,
@@ -139,6 +275,9 @@ pub const REACTIVE_PARTICLES: &str = concat!(
 struct ReactiveJitter {
     // xy: this frame's jitter in NDC (y up); z: the coverage of a transparent mesh; w: reserved.
     ndc: vec4<f32>,
+    // xy: the render size; z: the motion (px) below which a mesh writes none; w: 1 when a mesh's
+    // coverage follows its motion (particles take theirs whole).
+    motion: vec4<f32>,
 }
 @group(2) @binding(0) var<uniform> gx_reactive_jitter: ReactiveJitter;
 
@@ -150,16 +289,9 @@ struct ReactiveParticleOut {
 
 @vertex
 fn vs_reactive_particle(@builtin(vertex_index) vertex: u32, @builtin(instance_index) instance: u32) -> ReactiveParticleOut {
-    let corners = array<vec2<f32>, 6>(
-        vec2<f32>(-1.0, -1.0), vec2<f32>(1.0, -1.0), vec2<f32>(1.0, 1.0),
-        vec2<f32>(-1.0, -1.0), vec2<f32>(1.0, 1.0), vec2<f32>(-1.0, 1.0),
-    );
     let p = particles_drawn[instance];
-    let corner = corners[vertex];
-    let forward = normalize(frame.camera_forward.xyz);
-    let right = normalize(cross(forward, vec3<f32>(0.0, 1.0, 0.0)));
-    let up = cross(right, forward);
-    let world = p.position_size.xyz + (right * corner.x + up * corner.y) * (p.position_size.w * 0.5);
+    let corner = particle_quad_corner(vertex);
+    let world = particle_corner_world(p, particle_shapes_drawn[instance], corner);
     let clip = gx_clip_position(frame.view_proj, vec4<f32>(world, 1.0), gx_reactive_jitter.ndc.xy);
     return ReactiveParticleOut(clip, corner, p.color.a);
 }
@@ -170,36 +302,82 @@ fn fs_reactive_particle(in: ReactiveParticleOut) -> @location(0) vec4<f32> {
     return vec4<f32>(in.alpha * fade, 0.0, 0.0, 1.0);
 }
 "
-);
+));
 
-/// The coverage a transparent mesh writes into the reactive mask: whole, so a moving transparent
-/// never smears (its edges are not temporally anti-aliased; FSR2's mask makes the same trade).
-pub const TRANSPARENT_COVERAGE: f32 = 1.0;
-/// The coverage the transparent meshes write on a frame where the camera and every one of them
-/// stood still since the last ([`transparent_coverage`]): none, so they accumulate and clip as
-/// opaque surfaces do. Whole coverage there took the current sample every frame, and a reactive
-/// pixel's current sample moves with the jitter wherever an edge crosses it: a still lake's shore
-/// and the trees standing in it flickered by more than 3 levels frame to frame (pass-1 gate
-/// finding 04: about 60% of a still camera's flickering pixels at high). The core materials draw
-/// no time-driven change, so a still transparent draw looks the same next frame.
+/// The most coverage a transparent mesh writes into the reactive mask where it needs any: its
+/// material's alpha, capped here, so a moving transparent keeps at least a tenth of its history
+/// (renderer pass 2, P2-0.2, T-01 step 2; FSR2's reactive-mask guidance: write alpha, clamped to
+/// about 0.9, since a reactive value near 1 never resolves well). It was whole coverage: the
+/// current sample every frame, with no anti-aliasing of the edges.
+pub const TRANSPARENT_COVERAGE: f32 = 0.9;
+/// The coverage the transparent meshes write on a frame where every one of them stood still since
+/// the last ([`transparent_coverage`]): none, so they accumulate and clip as opaque surfaces do,
+/// whether the camera moved or not (the camera's reprojection holds for a still surface). Whole
+/// coverage there took the current sample every frame, and a reactive pixel's current sample moves
+/// with the jitter wherever an edge crosses it: a still lake's shore and the trees standing in it
+/// flickered by more than 3 levels frame to frame (pass-1 gate finding 04: about 60% of a still
+/// camera's flickering pixels at high), and while the camera moved the lake's shadows showed every
+/// frame's raw noise (pass 2, T-01: its box 179 pixels still, 4,724 creeping at high). The core
+/// materials draw no time-driven change, so a still transparent draw looks the same next frame.
 pub const SETTLED_TRANSPARENT_COVERAGE: f32 = 0.0;
 
-/// The coverage this frame's transparent meshes write into the reactive mask:
-/// [`SETTLED_TRANSPARENT_COVERAGE`] when the camera (`view_proj` against last frame's
-/// `prev_view_proj`, both unjittered) and every transparent row (`transparent`, rows of
-/// `prev_models`, drawn from `sources`) stood still, else [`TRANSPARENT_COVERAGE`]. A row stands
-/// still when its model matched last frame's (`MOTION_FLAG_STILL` without
-/// `MOTION_FLAG_NO_HISTORY`) and it is not skinned (its vertices may move under a still model).
-pub fn transparent_coverage(view_proj: &[f32; 16], prev_view_proj: Option<&[f32; 16]>, transparent: &[u32], prev_models: &[crate::layout::GpuPrevModel], sources: &[crate::scene::DrawSource]) -> f32 {
-    let camera_still = prev_view_proj == Some(view_proj);
-    let row_still = |row: &u32| {
-        prev_models.get(*row as usize).is_some_and(|prev| {
-            let flags = prev.flags[0];
-            flags & crate::motion::MOTION_FLAG_STILL != 0 && flags & crate::motion::MOTION_FLAG_NO_HISTORY == 0
-        })
-    };
-    let settled = camera_still && transparent.iter().all(row_still) && sources.iter().all(|source| !source.skinned);
-    if settled { SETTLED_TRANSPARENT_COVERAGE } else { TRANSPARENT_COVERAGE }
+/// How far (render pixels a frame) a moved transparent must move under a pixel for it to write the
+/// whole of [`ReactiveCoverage::cap`]; a slower one writes its share of it above
+/// [`REACTIVE_STILL_MOTION_PX`] (shaders/post/reactive.wgsl).
+pub const REACTIVE_FULL_MOTION_PX: f32 = 1.0;
+/// The motion (render pixels a frame) below which a moved transparent writes no coverage: less
+/// than the history's own bilinear reprojection moves a value, so TAA keeps it as a still one.
+pub const REACTIVE_STILL_MOTION_PX: f32 = 1.0 / 32.0;
+
+/// What this frame's transparent meshes write into the reactive mask at most, each its material's
+/// alpha below it ([`transparent_coverage`]).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ReactiveCoverage {
+    /// The most coverage a transparent mesh writes.
+    pub cap: f32,
+    /// Whether a mesh writes its share of the cap by how far its surface moved under each pixel
+    /// since last frame (its model against last frame's, through this frame's camera), whole from
+    /// [`REACTIVE_FULL_MOTION_PX`]: when every row has last frame's model and none is skinned.
+    pub by_motion: bool,
+}
+
+/// This frame's transparent rows and their previous-model entries.
+#[derive(Clone, Copy, Debug)]
+pub struct TransparentRows<'a> {
+    /// Whether the frame has last frame's history.
+    pub history: bool,
+    /// The transparent rows (indices into `prev_models`).
+    pub rows: &'a [u32],
+    /// Last frame's model of every row and its motion flags.
+    pub prev_models: &'a [crate::layout::GpuPrevModel],
+    /// The draws the transparent rows come from.
+    pub sources: &'a [crate::scene::DrawSource],
+}
+
+/// The coverage this frame's transparent meshes write into the reactive mask: a cap of
+/// [`SETTLED_TRANSPARENT_COVERAGE`] when the frame has last frame's history and every transparent
+/// row stood still (its model matched last frame's: `MOTION_FLAG_STILL` without
+/// `MOTION_FLAG_NO_HISTORY`, and it is not skinned: its vertices may move under a still model),
+/// else [`TRANSPARENT_COVERAGE`]; scaled by each pixel's motion ([`ReactiveCoverage::by_motion`])
+/// unless the frame has no history, a row has none (or the table does not hold it) or a draw is
+/// skinned. The camera's motion does not count. G0 (2026-10-15): a lake drifting a tenth of a
+/// millimetre a frame (a hundredth of a pixel) wrote the whole cap, so its flat water showed every
+/// frame's jittered sample: 602 flickering pixels in the lake box against none still at high.
+pub fn transparent_coverage(frame: &TransparentRows<'_>) -> ReactiveCoverage {
+    let whole = ReactiveCoverage { cap: TRANSPARENT_COVERAGE, by_motion: false };
+    if !frame.history || frame.sources.iter().any(|source| source.skinned) {
+        return whole;
+    }
+    let mut moved = false;
+    for row in frame.rows {
+        let Some(prev) = frame.prev_models.get(*row as usize) else { return whole };
+        let flags = prev.flags[0];
+        if flags & crate::motion::MOTION_FLAG_NO_HISTORY != 0 {
+            return whole;
+        }
+        moved |= flags & crate::motion::MOTION_FLAG_STILL == 0;
+    }
+    if moved { ReactiveCoverage { cap: TRANSPARENT_COVERAGE, by_motion: true } } else { ReactiveCoverage { cap: SETTLED_TRANSPARENT_COVERAGE, by_motion: false } }
 }
 
 const SCENE_BINDING: u32 = 0;
@@ -209,6 +387,8 @@ const MOTION_BINDING: u32 = 3;
 const REACTIVE_BINDING: u32 = 4;
 const SAMPLER_BINDING: u32 = 5;
 const PARAMS_BINDING: u32 = 6;
+const LUMA_HISTORY_BINDING: u32 = 7;
+const LOCK_BINDING: u32 = 8;
 
 /// The resolve's uniform (`TaaParams`).
 #[repr(C)]
@@ -224,7 +404,8 @@ pub struct GpuTaaParams {
     pub params: [f32; 4],
     /// x: frames since the history's reset (n, saturating; the node writes its own count, so a
     /// frame index restarted by a dynamic-resolution step does not restart the accumulation); y: 1
-    /// when this frame resets it; z: 1 under reverse-Z; w: [`TaaFlags`] bits.
+    /// when this frame resets it; z: 1 under reverse-Z; w: [`TaaFlags`] bits in bits 0..7 and the
+    /// jitter cycle's frames from [`JITTER_CYCLE_SHIFT`].
     pub counts: [u32; 4],
     /// Last frame's unjittered view_proj × this frame's unjittered inverse, column-major: where a
     /// pixel's NDC point (x, y, device depth) sat in last frame's clip space ([`IDENTITY`] for a
@@ -243,7 +424,7 @@ impl GpuTaaParams {
             size: [w, h, 1.0 / w, 1.0 / h],
             jitter: [config.jitter[0], config.jitter[1], prev_jitter[0], prev_jitter[1]],
             params: [taa.alpha_min, ratio, DISOCCLUSION_TOLERANCE, MOTION_REJECTION_PER_PX],
-            counts: [frames, u32::from(config.history_reset), u32::from(config.depth_reversed), TaaFlags::CLIP.bits()],
+            counts: [frames, u32::from(config.history_reset), u32::from(config.depth_reversed), TaaFlags::CLIP.bits() | taa.jitter_cycle.frames() << JITTER_CYCLE_SHIFT],
             reproject: IDENTITY,
         }
     }
@@ -258,10 +439,15 @@ impl GpuTaaParams {
         self
     }
 
-    /// The row with `flags` instead.
+    /// The row with `flags` instead (the jitter cycle kept).
     pub const fn with_flags(mut self, flags: TaaFlags) -> GpuTaaParams {
-        self.counts[3] = flags.bits();
+        self.counts[3] = (self.counts[3] & !FLAG_BITS) | flags.bits();
         self
+    }
+
+    /// The jitter cycle's frames the row carries (a lock lives that many frames).
+    pub const fn jitter_cycle_frames(&self) -> u32 {
+        self.counts[3] >> JITTER_CYCLE_SHIFT
     }
 
     /// The row starting history over: frame 0, the reset bit set, the previous jitter this one's.
@@ -283,23 +469,38 @@ impl GpuTaaParams {
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Pod, Zeroable)]
 pub struct GpuReactiveJitter {
-    /// xy: this frame's jitter in NDC (y up, [`crate::jitter::offset_ndc`]); z: a transparent
-    /// mesh's coverage ([`TRANSPARENT_COVERAGE`]); w: reserved.
+    /// xy: this frame's jitter in NDC (y up, [`crate::jitter::offset_ndc`]); z: the most coverage
+    /// a transparent mesh writes (its material's alpha below it; [`ReactiveCoverage::cap`]); w:
+    /// reserved.
     pub ndc: [f32; 4],
+    /// xy: the render size in pixels; z: [`REACTIVE_STILL_MOTION_PX`]; w: 1 when a mesh writes its
+    /// share of the cap by its motion under the pixel ([`ReactiveCoverage::by_motion`]), else 0
+    /// (the share reaches all of it at [`REACTIVE_FULL_MOTION_PX`]).
+    pub motion: [f32; 4],
 }
 
 impl GpuReactiveJitter {
     /// The row for a frame jittered by `jitter_px` (render pixels, y down) at `render` size.
     pub fn new(jitter_px: [f32; 2], render: (u32, u32)) -> GpuReactiveJitter {
         let [x, y] = crate::jitter::offset_ndc(jitter_px, render);
-        GpuReactiveJitter { ndc: [x, y, TRANSPARENT_COVERAGE, 0.0] }
+        let motion = [render.0 as f32, render.1 as f32, REACTIVE_STILL_MOTION_PX, 0.0];
+        GpuReactiveJitter { ndc: [x, y, TRANSPARENT_COVERAGE, 0.0], motion }
     }
 
     /// This row with the transparent meshes writing `coverage` ([`transparent_coverage`]).
-    pub fn with_coverage(self, coverage: f32) -> GpuReactiveJitter {
+    pub fn with_coverage(self, coverage: ReactiveCoverage) -> GpuReactiveJitter {
         let [x, y, _, w] = self.ndc;
-        GpuReactiveJitter { ndc: [x, y, coverage, w] }
+        let [width, height, per_px, _] = self.motion;
+        GpuReactiveJitter { ndc: [x, y, coverage.cap, w], motion: [width, height, per_px, f32::from(u8::from(coverage.by_motion))] }
     }
+}
+
+fn reactive_group(device: &Device, layout: &BindGroupLayout, jitter: &Buffer, prev_models: &Buffer) -> wgpu::BindGroup {
+    device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("taa reactive jitter"),
+        layout,
+        entries: &[wgpu::BindGroupEntry { binding: 0, resource: jitter.as_entire_binding() }, wgpu::BindGroupEntry { binding: 1, resource: prev_models.as_entire_binding() }],
+    })
 }
 
 /// Last frame's unjittered `prev_view_proj` × the inverse of this frame's `view_proj` (both
@@ -359,11 +560,20 @@ pub fn reactive_target(render: (u32, u32)) -> TargetDesc {
     TargetDesc { label: REACTIVE_LABEL, format: REACTIVE_FORMAT, usage: REACTIVE_USAGE, samples: 1, size: render_size(render), mips: 1, srgb_view: false }
 }
 
-/// What TAA holds at `render` size, for the budget ledger: the history pair and the mask.
+/// The side histories' pairs at `render` size (the luma history's, then the lock's): the resolve
+/// makes them beside its colour history, so only the layout check reads these.
+pub fn side_history_targets(render: (u32, u32)) -> [TargetDesc; 4] {
+    let size = render_size(render);
+    let desc = |label, format| TargetDesc { label, format, usage: HISTORY_USAGE, samples: 1, size, mips: 1, srgb_view: false };
+    [desc(LUMA_HISTORY_LABELS[0], LUMA_HISTORY_FORMAT), desc(LUMA_HISTORY_LABELS[1], LUMA_HISTORY_FORMAT), desc(LOCK_LABELS[0], LOCK_FORMAT), desc(LOCK_LABELS[1], LOCK_FORMAT)]
+}
+
+/// What TAA holds at `render` size, for the budget ledger: the colour history pair, its side
+/// histories and the mask.
 pub fn bytes(render: (u32, u32)) -> u64 {
     let (w, h) = render_size(render);
     let texels = u64::from(w) * u64::from(h);
-    2 * texels * HISTORY_TEXEL_BYTES + texels
+    2 * texels * (HISTORY_TEXEL_BYTES + SIDE_TEXEL_BYTES) + texels
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -397,11 +607,14 @@ pub struct TaaOutput {
     pub slot: usize,
 }
 
-/// One history slot: a texture at the render size it was written at.
+/// One history slot: the colour history and its luma and lock side histories, at the render size
+/// they were written at.
 struct Slot {
     size: (u32, u32),
     texture: Texture,
     view: TextureView,
+    luma: TextureView,
+    lock: TextureView,
 }
 
 struct History {
@@ -426,10 +639,15 @@ pub struct TaaNode {
     params: Buffer,
     neutral_motion: TextureView,
     neutral_reactive: TextureView,
-    /// The history a fresh resolve binds (it reads it with weight 0): one black texel.
+    /// The history a fresh resolve binds (it reads it with weight 0): one black texel; and the
+    /// side histories' (no luma, no lock).
     neutral_history: TextureView,
+    neutral_luma: TextureView,
+    neutral_lock: TextureView,
     history: Option<History>,
     extra_usage: TextureUsages,
+    /// The upscale's last output, handed back for the next resolve ([`TaaNode::hand_back`]).
+    handback: Option<TextureView>,
 }
 
 fn fragment_entry(binding: u32, ty: wgpu::BindingType) -> wgpu::BindGroupLayoutEntry {
@@ -461,21 +679,28 @@ fn neutral_texture(gpu_device: &Device, queue: &Queue, label: &str, format: Text
     texture.create_view(&Default::default())
 }
 
-/// History slot `index` of the pair at `size`, carrying `extra_usage` beside the history's own.
-fn history_slot(device: &Device, index: usize, size: (u32, u32), extra_usage: TextureUsages) -> Slot {
-    let desc = &history_targets(size)[index];
-    let texture = device.create_texture(&wgpu::TextureDescriptor {
+fn slot_texture(device: &Device, desc: &TargetDesc, extra_usage: TextureUsages) -> Texture {
+    device.create_texture(&wgpu::TextureDescriptor {
         label: Some(desc.label),
-        size: wgpu::Extent3d { width: size.0, height: size.1, depth_or_array_layers: 1 },
+        size: wgpu::Extent3d { width: desc.size.0, height: desc.size.1, depth_or_array_layers: 1 },
         mip_level_count: 1,
         sample_count: 1,
         dimension: wgpu::TextureDimension::D2,
         format: desc.format,
         usage: desc.usage | extra_usage,
         view_formats: &[],
-    });
+    })
+}
+
+/// History slot `index` of the pair at `size`, its colour carrying `extra_usage` beside the
+/// history's own.
+fn history_slot(device: &Device, index: usize, size: (u32, u32), extra_usage: TextureUsages) -> Slot {
+    let texture = slot_texture(device, &history_targets(size)[index], extra_usage);
     let view = texture.create_view(&Default::default());
-    Slot { size, texture, view }
+    let side = side_history_targets(size);
+    let luma = slot_texture(device, &side[index], TextureUsages::empty()).create_view(&Default::default());
+    let lock = slot_texture(device, &side[2 + index], TextureUsages::empty()).create_view(&Default::default());
+    Slot { size, texture, view, luma, lock }
 }
 
 impl TaaNode {
@@ -500,6 +725,8 @@ impl TaaNode {
                 float_texture(REACTIVE_BINDING),
                 fragment_entry(SAMPLER_BINDING, wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering)),
                 fragment_entry(PARAMS_BINDING, wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Uniform, has_dynamic_offset: false, min_binding_size: params_size }),
+                float_texture(LUMA_HISTORY_BINDING),
+                float_texture(LOCK_BINDING),
             ],
         });
         let pipeline_layout = pipeline_layout(device, "taa", &[&layout]);
@@ -514,7 +741,11 @@ impl TaaNode {
                 module: &module,
                 entry_point: Some("fs_taa"),
                 compilation_options: Default::default(),
-                targets: &[Some(wgpu::ColorTargetState { format: HISTORY_FORMAT, blend: None, write_mask: wgpu::ColorWrites::ALL })],
+                targets: &[
+                    Some(wgpu::ColorTargetState { format: HISTORY_FORMAT, blend: None, write_mask: wgpu::ColorWrites::ALL }),
+                    Some(wgpu::ColorTargetState { format: LUMA_HISTORY_FORMAT, blend: None, write_mask: wgpu::ColorWrites::ALL }),
+                    Some(wgpu::ColorTargetState { format: LOCK_FORMAT, blend: None, write_mask: wgpu::ColorWrites::ALL }),
+                ],
             }),
             multiview_mask: None,
             cache: None,
@@ -536,8 +767,11 @@ impl TaaNode {
             neutral_motion: neutral_texture(device, queue, "taa no motion", crate::motion::MOTION_FORMAT, &zero_motion),
             neutral_reactive: neutral_texture(device, queue, "taa no reactive", REACTIVE_FORMAT, &[0u8; 4][..1]),
             neutral_history: neutral_texture(device, queue, "taa no history", HISTORY_FORMAT, &[0u8; 8]),
+            neutral_luma: neutral_texture(device, queue, "taa no luma history", LUMA_HISTORY_FORMAT, &[0u8; 4]),
+            neutral_lock: neutral_texture(device, queue, "taa no lock", LOCK_FORMAT, &[0u8; 4]),
             history: None,
             extra_usage,
+            handback: None,
         })
     }
 
@@ -546,12 +780,22 @@ impl TaaNode {
         if let Some(history) = &mut self.history {
             history.written = None;
         }
+        self.handback = None;
     }
 
-    /// The bytes the history pair holds now (the ledger counts it with [`bytes`]).
+    /// Continue from TAA upscaling's last output `history` (renderer pass 2 B.8, at this resolve's
+    /// size): the next resolve reads it as its history, at the accumulation's floor and without the
+    /// disocclusion test (its alpha is a weight), so a dynamic-resolution step back to scale 1
+    /// keeps the picture's history. The luma and lock histories start empty. A reset drops it.
+    pub(crate) fn hand_back(&mut self, history: TextureView) {
+        self.handback = Some(history);
+    }
+
+    /// The bytes the history pair and its side histories hold now (the ledger counts them with
+    /// [`bytes`]).
     pub fn history_bytes(&self) -> u64 {
         let slots = self.history.as_ref().map_or(&[None, None], |history| &history.slots);
-        slots.iter().flatten().map(|slot| u64::from(slot.size.0) * u64::from(slot.size.1) * HISTORY_TEXEL_BYTES).sum()
+        slots.iter().flatten().map(|slot| u64::from(slot.size.0) * u64::from(slot.size.1) * (HISTORY_TEXEL_BYTES + SIDE_TEXEL_BYTES)).sum()
     }
 
     /// The history with slot `write` at `render` size (remade when its size differs: a
@@ -582,16 +826,31 @@ impl TaaNode {
     ) -> TaaOutput {
         let read = self.history.as_ref().and_then(|history| history.written).unwrap_or(1);
         let write = 1 - read;
-        let neutral = self.neutral_history.clone();
+        let neutral = [self.neutral_history.clone(), self.neutral_luma.clone(), self.neutral_lock.clone()];
+        let handback = self.handback.take().filter(|_| !input.row.resets());
         let history = self.history(device, input.render, write);
-        let fresh = history.written.is_none() || history.slots[read].is_none();
+        let fresh = handback.is_none() && (history.written.is_none() || history.slots[read].is_none());
         history.written = Some(write);
-        let read_view = history.slots[read].as_ref().map_or(neutral, |slot| slot.view.clone());
-        let write_view = history.slots[write].as_ref().expect("made above").view.clone();
+        let [read_view, read_luma, read_lock] = match &handback {
+            Some(view) => {
+                let [_, luma, lock] = neutral;
+                [view.clone(), luma, lock]
+            }
+            None => history.slots[read].as_ref().map_or(neutral, |slot| [slot.view.clone(), slot.luma.clone(), slot.lock.clone()]),
+        };
+        let written = history.slots[write].as_ref().expect("made above");
+        let (write_view, write_luma, write_lock) = (written.view.clone(), written.luma.clone(), written.lock.clone());
         let reset = fresh || input.row.resets();
-        history.frames = if reset { 0 } else { history.frames.saturating_add(1) };
+        history.frames = match handback {
+            _ if reset => 0,
+            Some(_) => HANDBACK_FRAMES,
+            None => history.frames.saturating_add(1),
+        };
         let mut row = if reset { input.row.reset() } else { input.row };
         row.counts[0] = history.frames;
+        if handback.is_some() {
+            row.counts[3] |= HANDBACK_FLAG;
+        }
         queue.write_buffer(&self.params, 0, bytemuck::bytes_of(&row));
         let motion = input.motion.unwrap_or(&self.neutral_motion);
         let reactive = input.reactive.unwrap_or(&self.neutral_reactive);
@@ -606,18 +865,22 @@ impl TaaNode {
                 wgpu::BindGroupEntry { binding: REACTIVE_BINDING, resource: wgpu::BindingResource::TextureView(reactive) },
                 wgpu::BindGroupEntry { binding: SAMPLER_BINDING, resource: wgpu::BindingResource::Sampler(&self.sampler) },
                 wgpu::BindGroupEntry { binding: PARAMS_BINDING, resource: self.params.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: LUMA_HISTORY_BINDING, resource: wgpu::BindingResource::TextureView(&read_luma) },
+                wgpu::BindGroupEntry { binding: LOCK_BINDING, resource: wgpu::BindingResource::TextureView(&read_lock) },
             ],
         });
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("taa resolve"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &write_view,
-                    depth_slice: None,
-                    resolve_target: None,
-                    // Every texel is written: nothing to load (free on tile GPUs).
-                    ops: wgpu::Operations { load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT), store: wgpu::StoreOp::Store },
-                })],
+                // Every texel of each is written: nothing to load (free on tile GPUs).
+                color_attachments: &[&write_view, &write_luma, &write_lock].map(|view| {
+                    Some(wgpu::RenderPassColorAttachment {
+                        view,
+                        depth_slice: None,
+                        resolve_target: None,
+                        ops: wgpu::Operations { load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT), store: wgpu::StoreOp::Store },
+                    })
+                }),
                 timestamp_writes,
                 ..Default::default()
             });
@@ -628,7 +891,7 @@ impl TaaNode {
         TaaOutput { view: write_view, reset: row.resets(), slot: write }
     }
 
-    fn written_texture(&self) -> Option<&Texture> {
+    pub(crate) fn written_texture(&self) -> Option<&Texture> {
         let history = self.history.as_ref()?;
         history.slots[history.written?].as_ref().map(|slot| &slot.texture)
     }
@@ -659,6 +922,7 @@ pub enum ReactiveEntry {
 pub struct ReactiveNode {
     jitter_layout: BindGroupLayout,
     jitter: Buffer,
+    /// Group 2 over the jitter row and a one-row previous-model table (it holds that table).
     group: wgpu::BindGroup,
 }
 
@@ -670,24 +934,31 @@ pub const REACTIVE_BLEND: wgpu::BlendState = wgpu::BlendState {
 };
 
 impl ReactiveNode {
-    /// The node and its jitter row (group 2 of both entry points).
+    /// The node, its jitter row and its group 2 (both entry points): the row and the frame's
+    /// previous-model table (the mesh entry's vertex stage reads last frame's model of its row).
     pub fn new(device: &Device) -> Result<ReactiveNode, RenderError> {
         let size = wgpu::BufferSize::new(size_of::<GpuReactiveJitter>() as u64);
+        let prev_size = wgpu::BufferSize::new(size_of::<crate::layout::GpuPrevModel>() as u64);
         let jitter_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("taa reactive jitter"),
-            entries: &[wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
-                ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Uniform, has_dynamic_offset: false, min_binding_size: size },
-                count: None,
-            }],
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+                    ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Uniform, has_dynamic_offset: false, min_binding_size: size },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::VERTEX,
+                    ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Storage { read_only: true }, has_dynamic_offset: false, min_binding_size: prev_size },
+                    count: None,
+                },
+            ],
         });
         let jitter = buffer(device, "taa reactive jitter", size_of::<GpuReactiveJitter>() as u64, BufferUsages::UNIFORM | BufferUsages::COPY_DST)?;
-        let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("taa reactive jitter"),
-            layout: &jitter_layout,
-            entries: &[wgpu::BindGroupEntry { binding: 0, resource: jitter.as_entire_binding() }],
-        });
+        let empty = buffer(device, "taa reactive no previous models", size_of::<crate::layout::GpuPrevModel>() as u64, BufferUsages::STORAGE)?;
+        let group = reactive_group(device, &jitter_layout, &jitter, &empty);
         Ok(ReactiveNode { jitter_layout, jitter, group })
     }
 
@@ -696,9 +967,15 @@ impl ReactiveNode {
         &self.jitter_layout
     }
 
-    /// The jitter row's bind group (group 2).
+    /// Group 2 over the jitter row and a one-row previous-model table (particles, which read no
+    /// model, and a frame without the table: its row then writes no motion share).
     pub fn jitter_group(&self) -> &wgpu::BindGroup {
         &self.group
+    }
+
+    /// Group 2 over the jitter row and this frame's previous-model table `prev_models`.
+    pub fn group(&self, device: &Device, prev_models: &Buffer) -> wgpu::BindGroup {
+        reactive_group(device, &self.jitter_layout, &self.jitter, prev_models)
     }
 
     /// Write this frame's jitter row.
@@ -812,11 +1089,12 @@ fn fs_depth(@builtin(position) clip: vec4<f32>) -> @builtin(frag_depth) f32 {
 }
 ";
 
-struct ImageInputs {
-    scene: TextureView,
-    depth: TextureView,
-    motion: Option<TextureView>,
-    reactive: Option<TextureView>,
+/// An image-level frame's inputs on the GPU (also the upscale's, [`crate::post::taau`]).
+pub(crate) struct ImageInputs {
+    pub(crate) scene: TextureView,
+    pub(crate) depth: TextureView,
+    pub(crate) motion: Option<TextureView>,
+    pub(crate) reactive: Option<TextureView>,
 }
 
 fn check_len<T>(what: &str, texels: &[T], size: (u32, u32), optional: bool) -> Result<(), RenderError> {
@@ -827,7 +1105,7 @@ fn check_len<T>(what: &str, texels: &[T], size: (u32, u32), optional: bool) -> R
     Err(capture_failed(format!("{} {what} texels for a {}x{} image", texels.len(), size.0, size.1)))
 }
 
-fn image_inputs(gpu: &Gpu, size: (u32, u32), frame: &TaaFrameImage) -> Result<ImageInputs, RenderError> {
+pub(crate) fn image_inputs(gpu: &Gpu, size: (u32, u32), frame: &TaaFrameImage) -> Result<ImageInputs, RenderError> {
     check_len("scene", &frame.scene, size, false)?;
     check_len("depth", &frame.depth, size, false)?;
     check_len("motion", &frame.motion, size, true)?;
@@ -1021,10 +1299,17 @@ mod tests {
         assert_eq!(row.size, [200.0, 100.0, 0.005, 0.01]);
         assert_eq!(row.jitter, [0.0, 0.0, 0.25, -0.25], "no jitter until TAA lands");
         assert_eq!(row.params, [TaaQuality::DEFAULT.alpha_min, 1.0, DISOCCLUSION_TOLERANCE, MOTION_REJECTION_PER_PX]);
-        // RQ5.2 flipped counts.w from reserved (0) to the clip flag, on by default.
-        assert_eq!(row.counts, [3, 0, 0, TaaFlags::CLIP.bits()]);
+        // RQ5.2 flipped counts.w from reserved (0) to the clip flag, on by default. Renderer pass 2
+        // (P2-0.8a) flipped it again (named in the log): the jitter cycle's frames ride above the
+        // flags, so a lock lives one cycle.
+        let cycle = TaaQuality::DEFAULT.jitter_cycle.frames();
+        assert_eq!(row.counts, [3, 0, 0, TaaFlags::CLIP.bits() | cycle << JITTER_CYCLE_SHIFT]);
+        assert_eq!(row.jitter_cycle_frames(), cycle);
         assert_eq!(GpuTaaParams::new(&TaaQuality::DEFAULT, &config, [0.0; 2], 2.0).params[1], 2.0);
-        assert_eq!(row.with_flags(TaaFlags::NONE).counts[3], 0);
+        let none = row.with_flags(TaaFlags::NONE);
+        assert_eq!((none.counts[3] & FLAG_BITS, none.jitter_cycle_frames()), (0, cycle), "flags change, the cycle stays");
+        let sixteen = TaaQuality::DEFAULT.with_jitter_cycle(crate::settings::JitterCycle::Sixteen);
+        assert_eq!(GpuTaaParams::new(&sixteen, &config, [0.0; 2], 1.0).jitter_cycle_frames(), 16);
     }
 
     #[test]
@@ -1067,33 +1352,47 @@ mod tests {
         crate::scene::DrawSource { skinned, first_index: 0, index_count: 3, base_vertex: 0 }
     }
 
+    /// Renderer pass 2, P2-0.2 (T-01 step 2) flipped "the camera moved" (named in the log): a
+    /// still transparent row under a moving camera keeps its history (the camera's reprojection
+    /// holds for it), so it writes no coverage; it wrote whole coverage, and the lake's shadows
+    /// showed every frame's raw noise while the camera moved (lake box 179 -> 4,724 pixels at high).
+    /// Where coverage is needed, it is at most [`TRANSPARENT_COVERAGE`] (0.9, FSR2's reactive cap).
     #[test]
-    fn still_transparents_under_a_still_camera_write_no_reactive_coverage() {
+    fn still_transparents_write_no_reactive_coverage_while_the_camera_moves() {
         use crate::motion::{MOTION_FLAG_NO_HISTORY, MOTION_FLAG_STILL};
-        let camera = IDENTITY;
-        let mut moved_camera = IDENTITY;
-        moved_camera[12] = 0.01;
         let prev_models = [prev(0), prev(MOTION_FLAG_STILL), prev(MOTION_FLAG_STILL | MOTION_FLAG_NO_HISTORY), prev(MOTION_FLAG_STILL)];
-        let coverage = |prev_view_proj: Option<&[f32; 16]>, rows: &[u32], skinned: bool| {
+        let coverage = |history: bool, rows: &[u32], skinned: bool| {
             let sources: Vec<_> = rows.iter().map(|_| source(skinned)).collect();
-            transparent_coverage(&camera, prev_view_proj, rows, &prev_models, &sources)
+            transparent_coverage(&TransparentRows { history, rows, prev_models: &prev_models, sources: &sources })
         };
-        assert_eq!(coverage(Some(&camera), &[1, 3], false), SETTLED_TRANSPARENT_COVERAGE, "still rows under a still camera");
-        assert_eq!(coverage(Some(&camera), &[], false), SETTLED_TRANSPARENT_COVERAGE, "no transparent rows");
-        assert_eq!(coverage(Some(&moved_camera), &[1, 3], false), TRANSPARENT_COVERAGE, "the camera moved");
-        assert_eq!(coverage(None, &[1, 3], false), TRANSPARENT_COVERAGE, "no last frame");
-        assert_eq!(coverage(Some(&camera), &[1, 0], false), TRANSPARENT_COVERAGE, "a row moved");
-        assert_eq!(coverage(Some(&camera), &[1, 2], false), TRANSPARENT_COVERAGE, "a row without history");
-        assert_eq!(coverage(Some(&camera), &[1, 9], false), TRANSPARENT_COVERAGE, "a row the table does not hold");
-        assert_eq!(coverage(Some(&camera), &[1, 3], true), TRANSPARENT_COVERAGE, "a skinned row");
-        assert_eq!(GpuReactiveJitter::new([0.5, 0.25], (100, 50)).with_coverage(0.0).ndc, [0.01, -0.01, 0.0, 0.0]);
+        let settled = ReactiveCoverage { cap: SETTLED_TRANSPARENT_COVERAGE, by_motion: false };
+        let whole = ReactiveCoverage { cap: TRANSPARENT_COVERAGE, by_motion: false };
+        assert_eq!(coverage(true, &[1, 3], false), settled, "still rows, whether the camera moved or not");
+        assert_eq!(coverage(true, &[], false), settled, "no transparent rows");
+        assert_eq!(coverage(false, &[1, 3], false), whole, "no last frame");
+        assert_eq!(coverage(true, &[1, 0], false), ReactiveCoverage { cap: TRANSPARENT_COVERAGE, by_motion: true }, "a row moved: its share by its motion");
+        assert_eq!(coverage(true, &[1, 2], false), whole, "a row without history");
+        assert_eq!(coverage(true, &[1, 9], false), whole, "a row the table does not hold");
+        assert_eq!(coverage(true, &[1, 3], true), whole, "a skinned row");
+        // A reactive transparent keeps a tenth of its history at least.
+        const { assert!(TRANSPARENT_COVERAGE <= 0.9 && TRANSPARENT_COVERAGE > SETTLED_TRANSPARENT_COVERAGE) };
+        assert_eq!(GpuReactiveJitter::new([0.5, 0.25], (100, 50)).with_coverage(settled).ndc, [0.01, -0.01, 0.0, 0.0]);
+        let moving = GpuReactiveJitter::new([0.5, 0.25], (100, 50)).with_coverage(coverage(true, &[0], false));
+        assert_eq!(moving.motion, [100.0, 50.0, REACTIVE_STILL_MOTION_PX, 1.0]);
     }
 
+    /// Renderer pass 2 (P2-0.8a) flipped the ledger (named in the log): each history slot also
+    /// holds its rgba8 luma and lock side histories, 8 bytes a texel.
     #[test]
-    fn the_history_is_a_pair_and_the_ledger_counts_it_with_the_mask() {
+    fn the_history_is_a_pair_and_the_ledger_counts_it_with_its_side_histories_and_the_mask() {
         let [a, b] = history_targets((4, 2));
         assert_ne!(a.label, b.label);
         assert_eq!(reactive_target((0, 0)).size, (1, 1));
-        assert_eq!(bytes((4, 2)), 2 * 8 * 8 + 8);
+        assert_eq!(bytes((4, 2)), 2 * 8 * (8 + 4 + 4) + 8);
+        let side = side_history_targets((4, 2));
+        assert_eq!(side.map(|desc| desc.format), [LUMA_HISTORY_FORMAT, LUMA_HISTORY_FORMAT, LOCK_FORMAT, LOCK_FORMAT]);
+        let labels: std::collections::BTreeSet<_> = side.iter().chain(&[a, b]).map(|desc| desc.label).collect();
+        assert_eq!(labels.len(), 6, "every slot is its own target");
+        assert!(side.iter().all(|desc| desc.size == (4, 2) && desc.usage == HISTORY_USAGE));
     }
 }

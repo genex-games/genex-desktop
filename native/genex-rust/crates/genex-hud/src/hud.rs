@@ -57,6 +57,7 @@ impl Default for Hud {
 
 fn fresh_context() -> egui::Context {
     let ctx = egui::Context::default();
+    crate::fonts::install_fonts(&ctx);
     ctx.options_mut(|options| options.max_passes = PASSES_PER_TICK);
     // The AccessKit tree is how widgets are recorded into hud.items.
     ctx.enable_accesskit();

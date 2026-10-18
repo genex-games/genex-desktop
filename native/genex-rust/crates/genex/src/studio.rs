@@ -34,6 +34,7 @@
 )]
 
 mod live;
+mod pace;
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -45,6 +46,7 @@ use crate::runtime::{Runtime, View};
 use genex_core::clock::FpsMeter;
 use genex_core::json::Value;
 use genex_core::paths::process_env;
+use genex_core::protocol::{BootProgress, BootStage};
 use genex_core::session::{FrameTiming, StepResult, Timings};
 use genex_render::{GpuCounters, RenderCode, RenderError};
 use genex_studio::verbs::{SpelledAnswer, SpelledChange, capture_provenance_value, render_answer_value, render_status_value, spell_change};
@@ -55,9 +57,15 @@ use genex_studio::{
 };
 use crate::present::Presenter;
 use live::{Live, Presented};
+use pace::{DueFrame, StudioPace};
 
 /// One live frame at 60 Hz.
 const FRAME: Duration = Duration::from_micros(16_667);
+/// While a Live frame waits for the GPU, the loop looks again this soon to send it.
+const LIVE_SEND_POLL: Duration = Duration::from_millis(1);
+/// While the boot's warm-up compiles, how often Live is told how far it is (each also gives the
+/// ready deadline again, up to the host's cap).
+const BOOT_PROGRESS_EVERY: Duration = Duration::from_millis(100);
 /// The graphics path `ready` names when the adapter's backend is not a WebGPU-core one.
 const BACKEND_UNKNOWN: &str = "unknown";
 /// Exit code when the GPU or the world target could not be opened.
@@ -213,17 +221,18 @@ impl<W: Default + 'static> StudioRun<'_, W> {
         }
     }
 
-    /// One live frame of `interval_ms`: its ticks, then a draw when the world moved.
-    fn live_frame(&mut self, interval_ms: f64) {
+    /// One live frame: the ticks its paced time is worth, then a draw when the world moved; the
+    /// timings keep the frame's wall-clock interval.
+    fn live_frame(&mut self, frame: DueFrame) {
         self.fps.frame(self.born.elapsed().as_secs_f64() * 1000.0);
         let ticked_from = Instant::now();
-        let ticks = self.game.advance_live(interval_ms);
+        let ticks = self.game.advance_live(frame.fed_ms);
         let ticked = Instant::now();
         if ticks > 0 {
             self.render();
         }
         let update_ms = (ticked - ticked_from).as_secs_f64() * 1000.0;
-        self.timing.record(interval_ms, update_ms, ticked.elapsed().as_secs_f64() * 1000.0);
+        self.timing.record(frame.interval_ms, update_ms, ticked.elapsed().as_secs_f64() * 1000.0);
     }
 
     /// After a device loss, between the studio's requests: a new device, every mesh replayed, the
@@ -366,6 +375,14 @@ impl<W: Default + 'static> StudioGame for StudioRun<'_, W> {
     fn capture_provenance(&self) -> Option<Value> {
         provenance_value(&self.presenter.capture_render()?)
     }
+    fn set_capture_size(&mut self, size: Option<[u32; 2]>) -> bool {
+        self.presenter.set_capture_size(size.map(|[width, height]| (width, height)));
+        true
+    }
+    fn set_capture_lens(&mut self, lens: genex_studio::CaptureLens) -> bool {
+        self.presenter.set_capture_lens(crate::render::CaptureLens { depth_of_field: lens.depth_of_field, motion_blur: lens.motion_blur });
+        true
+    }
     fn render_settings(&mut self, change: Option<&RenderSettingsChange>) -> Result<Value, RenderSettingsRefusal> {
         let handle = self.game.render();
         let answer = match change {
@@ -391,6 +408,8 @@ impl<W: Default + 'static> StudioGame for StudioRun<'_, W> {
         cfg!(target_os = "macos")
     }
     fn make_ring(&mut self, ring: &SurfaceArgs) -> Result<(), RingFault> {
+        // Live's HUD is tessellated for the new ring from the next frame on.
+        self.presenter.set_window_size((ring.width, ring.height));
         self.live.make_ring(&self.presenter, ring)
     }
     fn release_slot(&mut self, generation: u32, slot: u32) {
@@ -398,13 +417,14 @@ impl<W: Default + 'static> StudioGame for StudioRun<'_, W> {
     }
 }
 
-/// The live loop: serve the studio, re-create a lost device, run the frame, send it to Live, pace
-/// to 60 Hz waking for the studio's next request; returns once `quit` or the studio's end of file
-/// asked the game to close.
+/// The live loop: serve the studio, re-create a lost device, run the frame when its deadline came
+/// ([`StudioPace`]: absolute 60 Hz deadlines, whole frames fed to the clock), hand it to Live
+/// (sent once the GPU finished it, without waiting: the loop looks again every millisecond while
+/// one is in flight), and wait for the next deadline, waking for the studio's next request;
+/// returns once `quit` or the studio's end of file asked the game to close.
 fn run<W: Default + 'static>(studio: &mut Studio, link: &Transport, game: &mut StudioRun<'_, W>) {
-    let mut last: Option<Instant> = None;
+    let mut pace = StudioPace::new(FRAME);
     loop {
-        let start = Instant::now();
         studio.serve(link, game);
         if studio.closing() {
             return;
@@ -412,31 +432,45 @@ fn run<W: Default + 'static>(studio: &mut Studio, link: &Transport, game: &mut S
         if game.presenter.resilient.is_lost() && game.recover() {
             studio.device_restored(link);
         }
-        let interval = last.map_or(0.0, |at| (start - at).as_secs_f64() * 1000.0);
-        last = Some(start);
-        game.live_frame(interval);
+        if let Some(frame) = pace.due(Instant::now()) {
+            game.live_frame(frame);
+        }
         if game.live.present(&mut game.presenter, game.visible) == Presented::Gone {
             studio.end_ring();
         }
-        link.wait(FRAME.saturating_sub(start.elapsed()));
+        let wait = pace.wait(Instant::now());
+        link.wait(if game.live.in_flight() { wait.min(LIVE_SEND_POLL) } else { wait });
     }
 }
 
 /// The studio run over `runtime` on an opened `presenter`: its custom passes registered (a
 /// refused one stays out of every frame and is listed with its code), then its first frame;
-/// `starting` tells the studio each boot step finished.
+/// `starting` tells the studio each boot step finished and where the boot is (owner decision D11:
+/// the pipelines n of m while the warm-up compiles them, then the first frame).
 fn studio_run<'a, W: Default + 'static>(
     runtime: &'a mut Runtime<W>,
     mut presenter: Presenter,
     live: Live,
-    starting: &dyn Fn(),
+    starting: &dyn Fn(BootProgress),
 ) -> StudioRun<'a, W> {
+    let compiled_before = genex_render::compile::compile_tally();
+    let compiling = || {
+        let tally = genex_render::compile::compile_tally().since(compiled_before);
+        BootProgress::counted(BootStage::Pipelines, tally.finished as u64, tally.submitted as u64)
+    };
     // The first frame's pipelines compile on another thread while the passes install here (a boot
     // under load used to spend both one after the other before `ready`, pass-1 gate).
+    starting(BootProgress::at(BootStage::Assets));
     presenter.warm_boot(runtime);
-    starting();
+    starting(compiling());
     let refused = crate::gpu::host::install(runtime, &mut presenter.passes, presenter.resilient.gpu());
-    starting();
+    starting(compiling());
+    // Live shows how far the compiles are while the warm-up runs, instead of one long wait.
+    while presenter.boot_warming() {
+        std::thread::sleep(BOOT_PROGRESS_EVERY);
+        starting(compiling());
+    }
+    starting(BootProgress::at(BootStage::Frame));
     let install_refused = refused
         .into_iter()
         .map(|(name, error)| {
@@ -483,12 +517,12 @@ pub(crate) fn serve<W: Default + 'static>(runtime: &mut Runtime<W>, assets: Asse
     presenter.set_off_thread_changes(true);
     // Each finished boot step gives the studio's ready deadline again (contract v2 `starting`): a
     // heavy game under load keeps its start while every step progresses (pass-1 gate).
-    let starting = || {
-        studio.still_starting(&link);
+    let starting = |progress: BootProgress| {
+        studio.starting_at(&link, progress);
     };
-    starting();
+    starting(BootProgress::at(BootStage::Device));
     boot_render(runtime, &presenter, env(REFERENCE_CLASS_ENV).as_deref());
-    starting();
+    starting(BootProgress::at(BootStage::Device));
     let mut game = studio_run(runtime, presenter, Live::from_env(&env), &starting);
     let info = game.ready_info();
     studio.announce_ready(&link, &info);
@@ -562,6 +596,12 @@ mod metal {
     use crate::prelude::*;
     use genex_core::json;
 
+    /// One whole live frame, as the loop's pace feeds it.
+    fn one_frame() -> DueFrame {
+        let ms = FRAME.as_secs_f64() * 1000.0;
+        DueFrame { interval_ms: ms, fed_ms: ms }
+    }
+
     #[derive(Default)]
     struct World {
         shop: bool,
@@ -615,7 +655,7 @@ mod metal {
     fn run_of(game: Game<World>) -> Option<StudioRun<'static, World>> {
         let presenter = presenter(required())?;
         let runtime = Box::leak(Box::new(Runtime::new(game).expect("installs")));
-        Some(studio_run(runtime, presenter, Live::from_env(&|_| None), &|| {}))
+        Some(studio_run(runtime, presenter, Live::from_env(&|_| None), &|_| {}))
     }
 
     fn call(studio: &mut Studio, run: &mut StudioRun<'static, World>, op: &str, arg: &str) -> json::Value {
@@ -634,6 +674,32 @@ mod metal {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).expect("scratch");
         dir
+    }
+
+    /// Owner decision D11: a studio boot names its stages and counts the warm-up's pipelines n of
+    /// m, so Live shows real progress instead of one long wait. Other rows compile alongside on the
+    /// shared pool, so the counts are read as bounds.
+    #[test]
+    #[ignore = "needs the host GPU: run with --ignored metal"]
+    fn metal_a_studio_boot_names_its_stages_and_counts_its_pipelines() {
+        let Some(mut presenter) = presenter(required()) else { return };
+        presenter.set_off_thread_changes(true);
+        let runtime = Box::leak(Box::new(Runtime::new(game(Projection::Perspective, 6.0)).expect("installs")));
+        let seen = std::cell::RefCell::new(Vec::new());
+        let _run = studio_run(runtime, presenter, Live::from_env(&|_| None), &|progress| seen.borrow_mut().push(progress));
+        let seen = seen.into_inner();
+        let mut stages: Vec<BootStage> = Vec::new();
+        for progress in &seen {
+            if !stages.contains(&progress.stage) {
+                stages.push(progress.stage);
+            }
+        }
+        assert_eq!(stages, [BootStage::Assets, BootStage::Pipelines, BootStage::Frame], "{seen:?}");
+        let counted: Vec<(u64, u64)> = seen.iter().filter_map(|progress| progress.done.zip(progress.total)).collect();
+        let (done, total) = counted.last().copied().expect("the pipelines were counted");
+        assert!(total > 0, "the warm-up handed its pipelines to the pool: {seen:?}");
+        assert!(counted.iter().all(|(done, total)| done <= total), "never more done than asked: {counted:?}");
+        assert!(done > 0, "the compiles were seen finishing: {counted:?}");
     }
 
     #[test]
@@ -746,7 +812,7 @@ mod metal {
         assert_eq!(render["historyReset"], json::Value::Bool(true));
         assert_eq!(render["exposure"].as_str(), "instant");
         for _ in 0..12 {
-            run.live_frame(FRAME.as_secs_f64() * 1000.0);
+            run.live_frame(one_frame());
             run.render();
             let _ = run.presenter.gpu().device.poll(wgpu::PollType::wait_indefinitely());
         }
@@ -783,7 +849,7 @@ mod metal {
         use genex_render::settings::Tonemapper;
         let Some(mut run) = run_of(game(Projection::Perspective, 6.0)) else { return };
         let mut studio = studio(&scratch("hdr-live"));
-        run.live_frame(FRAME.as_secs_f64() * 1000.0);
+        run.live_frame(one_frame());
         run.render();
         let live = last_scene(&run);
         assert!(live.hdr && live.depth_reversed, "a facade game draws the HDR scene: {live:?}");
@@ -803,7 +869,7 @@ mod metal {
         halo.gpu_pass("halo", PassStage::AfterOpaque, V1InWorld);
         let Some(mut run) = run_of(halo) else { return };
         let mut studio = studio(&scratch("hdr-v1"));
-        run.live_frame(FRAME.as_secs_f64() * 1000.0);
+        run.live_frame(one_frame());
         run.render();
         let live = last_scene(&run);
         assert!(!live.hdr && !live.depth_reversed, "a v1 in-world pass keeps the legacy scene: {live:?}");
@@ -836,7 +902,7 @@ mod metal {
         assert_eq!(render["historyReset"], json::Value::Bool(true));
         assert_eq!(render["exposure"].as_str(), "instant");
         for _ in 0..30 {
-            run.live_frame(FRAME.as_secs_f64() * 1000.0);
+            run.live_frame(one_frame());
         }
         let index = run.presenter.resilient.renderer().frame_index();
         assert!(index > 0, "Live frames advanced Live's history");

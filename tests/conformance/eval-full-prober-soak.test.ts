@@ -214,6 +214,23 @@ describe("l1.survives_5min", () => {
     assert.match(row.detail, /probe budget/);
   });
 
+  it("A SHORTER SOAK with a climbing heap is unknown: a heap read over less than the specified soak is no leak verdict", () => {
+    const climbing = {
+      available: true,
+      samples: Array.from({ length: 100 }, (_, i) => ({ t: i * 300, used: 10e6 + i * 230e3 })),
+      note: "",
+    };
+    const row = survivesRow(run({ ranMs: 30 * SECOND_MS }), heapGrowth(climbing), null);
+    assert.equal(row.result, CheckResult.Unknown);
+    assert.match(row.detail, /soak ran 30s/);
+    assert.match(row.detail, /KB\/s/);
+    assert.equal(
+      survivesRow(run({ ranMs: 30 * SECOND_MS, crashed: true, crashReason: "x" }), heapGrowth(climbing), null).result,
+      CheckResult.Fail,
+      "a crash fails a soak of any length",
+    );
+  });
+
   it("a crash fails; no soak at all is unknown", () => {
     assert.equal(
       survivesRow(run({ crashed: true, crashReason: "x" }), heapGrowth(steady), null).result,

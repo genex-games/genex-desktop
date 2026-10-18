@@ -31,6 +31,7 @@ mod headless;
 mod letterbox;
 mod mode;
 mod sample;
+mod schedule;
 mod surface;
 mod touch;
 mod windowed;

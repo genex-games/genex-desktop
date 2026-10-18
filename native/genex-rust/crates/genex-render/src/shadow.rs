@@ -10,11 +10,15 @@
 //!   light depth that reaches [`CASTER_REACH`] towards the sun. Today's goldens hold its bits.
 //! - [`fit`], the fit every other [`ShadowSettings`] gets: an analytic slice sphere (the same
 //!   radius, bit for bit, however the camera turns), the settings' cascade count, map size and
-//!   split, and a **receiver-tight** light depth: only the depth span of the geometry inside the
-//!   cascade's sphere, so `depth16unorm` keeps its precision. The normal offset is a fixed number
-//!   of each cascade's texels ([`Cascades::normal_offsets`]); the comparison's one NDC bias
-//!   ([`DEPTH_BIAS`]) is a share of each cascade's own light depth ([`Cascades::depth_bias_world`])
-//!   and the casters' slope-scaled bias is per texel of slope.
+//!   split, its map widened past the sphere by the filter's reach ([`edge_texels`]), and a light
+//!   depth by format. A `depth16unorm` cascade is **receiver-tight**: only the depth span of the
+//!   geometry inside the cascade's sphere, so it keeps its precision. A `depth32float` cascade
+//!   spans its sphere whatever the receivers (renderer pass 2, P2-0.3, SH-06), so its depth never
+//!   follows the bounds touching it; casters nearer the sun are pancaked. The normal offset is a fixed
+//!   number of each cascade's texels ([`Cascades::normal_offsets`]); the comparison bias is one
+//!   world-space bias per cascade, [`DEPTH_BIAS`] of its map's width, over its own light depth
+//!   ([`Cascades::comparison_bias`], P2-0.3, S1/SH-06), and the casters' slope-scaled bias is per
+//!   texel of slope.
 //!
 //! Both **pancake**: casters nearer the sun than a cascade's near plane are not culled (the near
 //! cull plane is open) and land on the near plane, so they still shadow everything behind them.
@@ -25,7 +29,10 @@
 //!
 //! [`CascadeHistory`] applies the far-cascade cadence: a cascade that is not redrawn this frame
 //! keeps last frame's map and matrix, unless that map no longer covers its fresh slice or its
-//! receivers' light depth (a camera cut, a vertical jump). It holds Live frames' maps only: a
+//! receivers' light depth (a camera cut, a vertical jump), or a caster inside it moved by
+//! [`CASTER_HOLD_TEXELS`] of its texels, came, went, changed its mesh or is skinned (renderer pass
+//! 2, P2-0.4, RC-06: a held map keeps only what stood still, so a moving caster's shadow never
+//! steps at half rate or doubles at the seam). It holds Live frames' maps only: a
 //! settled capture's re-renders redraw every cascade, and the history starts over after them and
 //! on a history reset ([`CascadeHistory::reset`]). [`ShadowMaps`] holds the depth array the
 //! settings size.
@@ -36,10 +43,10 @@ use crate::compile::Compiled;
 use glam::{Mat4, Vec3, Vec4Swizzles};
 use wgpu::{Device, Features, RenderPipeline, ShaderModule, Texture, TextureFormat, TextureView};
 
-use crate::cull::frustum_planes;
-use crate::layout::{GpuFrame, MAX_CASCADES, SHADOW_CASCADES};
+use crate::cull::{frustum_planes, in_frustum};
+use crate::layout::{GpuBatch, GpuFrame, GpuInstance, MAX_CASCADES, SHADOW_CASCADES};
 use crate::scene::{CameraDesc, FramePlan};
-use crate::settings::{DEFAULT_SHADOW_SPLIT_LAMBDA, ShadowFormat, ShadowSettings};
+use crate::settings::{DEFAULT_SHADOW_SPLIT_LAMBDA, ShadowFilter, ShadowFormat, ShadowSettings};
 
 /// Each legacy cascade's shadow map side, in texels.
 pub const SHADOW_MAP_PX: u32 = 1024;
@@ -48,6 +55,17 @@ pub const SHADOW_FORMAT: TextureFormat = TextureFormat::Depth32Float;
 /// How far towards the sun, beyond a cascade's slice, the legacy fit's light depth reaches.
 /// Casters beyond it still shadow: they are pancaked onto the near plane.
 pub const CASTER_REACH: f32 = 60.0;
+/// The texels of a shadow map's square the sun chunk's lookups may read past the texel a lookup
+/// lands on (sun.wgsl): the hardware tap and 3x3 PCF one, 5x5 PCF two, PCSS its 16-texel kernel,
+/// each plus the bilinear neighbour.
+const HARDWARE_REACH_TEXELS: f32 = 1.0;
+const PCF3_REACH_TEXELS: f32 = 2.0;
+const PCF5_REACH_TEXELS: f32 = 3.0;
+const PCSS_REACH_TEXELS: f32 = 17.0;
+/// Texels a cascade's map moves by as it snaps to whole texels, at most (half), rounded up.
+const SNAP_TEXELS: f32 = 1.0;
+/// The largest share of a map's side its edges may take ([`edge_texels`] on a tiny map).
+const EDGE_SHARE_MAX: f32 = 0.25;
 /// Normal offset in shadow texels (pulls the lookup off the surface against acne).
 const NORMAL_OFFSET_TEXELS: f32 = 1.5;
 /// Constant depth bias in the comparison (the pipeline adds a slope-scaled one).
@@ -75,7 +93,7 @@ pub(crate) const CASTER_CONSTANT_BIAS: i32 = 2;
 /// The casters' slope-scaled depth bias (against acne on sloped receivers).
 pub(crate) const CASTER_SLOPE_BIAS: f32 = 2.0;
 /// The depth resolution of a `depth16unorm` map (`r` of the constant bias).
-const DEPTH16_UNIT: f64 = 1.0 / 65536.0;
+pub(crate) const DEPTH16_UNIT: f64 = 1.0 / 65536.0;
 
 /// How a caster pipeline lands casters nearer the sun than the cascade's near plane on it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -143,6 +161,20 @@ pub(crate) fn caster_pipeline(device: &Device, spec: &CasterSpec<'_>) -> Compile
     })
 }
 
+/// The texels each side of a tight cascade's map beyond its slice sphere for `filter` (renderer
+/// pass 2, P2-0.3, SH-05): the filter's reach, the normal offset and the snap, so no lookup into
+/// the slice reads a clamped edge texel (MJP's `SetupShadows.hlsl` pads by its kernel the same way).
+/// The legacy fit keeps its one texel.
+pub fn edge_texels(filter: ShadowFilter) -> f32 {
+    let reach = match filter {
+        ShadowFilter::Hardware2x2 => HARDWARE_REACH_TEXELS,
+        ShadowFilter::Pcf3x3 => PCF3_REACH_TEXELS,
+        ShadowFilter::Pcf5x5 => PCF5_REACH_TEXELS,
+        ShadowFilter::PcssLite | ShadowFilter::Pcss => PCSS_REACH_TEXELS,
+    };
+    reach + NORMAL_OFFSET_TEXELS + SNAP_TEXELS
+}
+
 /// The cascades of one frame. Lanes past [`Cascades::count`] are 0 (a split of 0 ends the run).
 #[derive(Clone, Debug, PartialEq)]
 pub struct Cascades {
@@ -158,6 +190,14 @@ pub struct Cascades {
     pub texel_world: [f32; MAX_CASCADES],
     /// Each cascade's light depth range (far minus near plane) in world units.
     pub depth_range: [f32; MAX_CASCADES],
+    /// Each cascade's comparison bias in its own light depth (NDC): [`DEPTH_BIAS`] on the legacy
+    /// fit, one world-space bias over the light depth otherwise ([`Cascades::comparison_bias`]).
+    pub bias: [f32; MAX_CASCADES],
+    /// The one comparison bias (NDC) of the frame's `shadow_params.x`, which the v1 prefix, the
+    /// Level-2 v2 prelude and custom passes read for every cascade: cascade 0's on `depth32float`
+    /// maps (each spans one multiple of its map's width, so it is every cascade's world bias),
+    /// [`DEPTH_BIAS`] otherwise.
+    pub shared_bias: f32,
     /// Each cascade's map side in texels.
     pub map_px: u32,
 }
@@ -171,6 +211,9 @@ impl Cascades {
             slice_corners: [[[0.0; 3]; 8]; MAX_CASCADES],
             texel_world: [0.0; MAX_CASCADES],
             depth_range: [0.0; MAX_CASCADES],
+            // Every lane, drawn or not: a lookup past the drawn cascades compares as it always did.
+            bias: [DEPTH_BIAS; MAX_CASCADES],
+            shared_bias: DEPTH_BIAS,
             map_px,
         }
     }
@@ -185,10 +228,19 @@ impl Cascades {
         self.texel_world.map(|texel| texel * NORMAL_OFFSET_TEXELS)
     }
 
-    /// The constant depth bias [`DEPTH_BIAS`] of each cascade in world units: its light depth
-    /// range times the NDC bias, 0 past the drawn cascades.
+    /// Each cascade's comparison bias in world units along the light: its NDC bias times its light
+    /// depth range, 0 past the drawn cascades.
     pub fn depth_bias_world(&self) -> [f32; MAX_CASCADES] {
-        self.depth_range.map(|range| range * DEPTH_BIAS)
+        std::array::from_fn(|c| self.bias[c] * self.depth_range[c])
+    }
+
+    /// Each cascade's comparison bias in its own light depth (NDC), the frame's `cascade_bias`
+    /// (renderer pass 2, P2-0.3, S1/SH-06): one world-space bias, [`DEPTH_BIAS`] of the map's
+    /// width, over each tight cascade's light depth, so its world size no longer follows the
+    /// bounds that touch the cascade; the legacy fit's [`DEPTH_BIAS`] in every lane. A held
+    /// cascade keeps the bias its map was drawn with.
+    pub fn comparison_bias(&self) -> [f32; MAX_CASCADES] {
+        self.bias
     }
 
     /// Where each cascade starts blending into the next (the reference of the sun chunk's band):
@@ -280,6 +332,8 @@ struct Fitted {
     view_proj: Mat4,
     texel: f32,
     depth_range: f32,
+    /// The comparison bias in its light depth (NDC).
+    bias: f32,
 }
 
 /// The legacy light frustum: a sphere around the slice's corners, the light depth reaching
@@ -294,7 +348,7 @@ fn legacy_light(corners: &[[f32; 3]; 8], sun: Vec3) -> Fitted {
     let extent = radius * (1.0 + 2.0 / SHADOW_MAP_PX as f32);
     let proj = glam::camera::rh::proj::directx::orthographic(-extent, extent, -extent, extent, 0.0, depth);
     let proj = snapped(proj, view, SHADOW_MAP_PX);
-    Fitted { view_proj: proj * view, texel: 2.0 * extent / SHADOW_MAP_PX as f32, depth_range: depth }
+    Fitted { view_proj: proj * view, texel: 2.0 * extent / SHADOW_MAP_PX as f32, depth_range: depth, bias: DEPTH_BIAS }
 }
 
 /// The smallest sphere around the camera slice from view depth `near` to `far`, analytically:
@@ -331,20 +385,28 @@ fn receiver_span(bounds: impl Iterator<Item = [f32; 4]>, center: Vec3, radius: f
     span
 }
 
-/// The receiver-tight light frustum of a cascade at `map_px`: the slice sphere's extent, the light
-/// depth the geometry inside the sphere spans (its whole diameter without any), a margin each side,
-/// rounded out to whole texels.
-fn tight_light(center: Vec3, radius: f32, sun: Vec3, map_px: u32, bounds: impl Iterator<Item = [f32; 4]>) -> Fitted {
-    let extent = radius * (1.0 + 2.0 / map_px as f32);
-    let texel = 2.0 * extent / map_px as f32;
-    let (lo, hi) = receiver_span(bounds, center, radius, sun).unwrap_or((0.0, 2.0 * radius));
+/// The light frustum of a tight cascade at `map_px` drawn by `settings`: the slice sphere's extent
+/// plus [`edge_texels`] each side, and a light depth by format, a margin each side, rounded out to
+/// whole texels. A `depth16unorm` cascade spans the light depth of the geometry inside the sphere
+/// (its whole diameter without any); a `depth32float` one spans the sphere's diameter whatever the
+/// receivers. Its comparison bias is [`DEPTH_BIAS`] of the map's width over that depth.
+fn tight_light(center: Vec3, radius: f32, sun: Vec3, map_px: u32, settings: &ShadowSettings, bounds: impl Iterator<Item = [f32; 4]>) -> Fitted {
+    let side = map_px as f32;
+    let edge = edge_texels(settings.filter).min(EDGE_SHARE_MAX * side);
+    let extent = radius * side / (side - 2.0 * edge);
+    let width = 2.0 * extent;
+    let texel = width / side;
+    let (lo, hi) = match settings.format {
+        ShadowFormat::Depth32 => (0.0, 2.0 * radius),
+        ShadowFormat::Depth16 => receiver_span(bounds, center, radius, sun).unwrap_or((0.0, 2.0 * radius)),
+    };
     let margin = DEPTH_MARGIN_TEXELS * texel;
     let near = libm::floorf((lo - margin) / texel) * texel;
     let far = libm::ceilf((hi + margin) / texel) * texel;
     let far = far.max(near + MIN_DEPTH_TEXELS * texel);
     let view = light_view(center + sun * radius, center, sun);
     let proj = glam::camera::rh::proj::directx::orthographic(-extent, extent, -extent, extent, near, far);
-    Fitted { view_proj: snapped(proj, view, map_px) * view, texel, depth_range: far - near }
+    Fitted { view_proj: snapped(proj, view, map_px) * view, texel, depth_range: far - near, bias: DEPTH_BIAS * width / (far - near) }
 }
 
 /// Record cascade `c` of `set`: its frustum, its open-near cull planes and its slice.
@@ -356,6 +418,7 @@ fn place(set: &mut Cascades, c: usize, fitted: &Fitted, corners: [[f32; 3]; 8]) 
     set.slice_corners[c] = corners;
     set.texel_world[c] = fitted.texel;
     set.depth_range[c] = fitted.depth_range;
+    set.bias[c] = fitted.bias;
 }
 
 /// The legacy two cascades for `camera` on a target of `aspect`, the sun towards `sun_dir`,
@@ -404,8 +467,11 @@ where
     for c in 0..count {
         let end = set.splits[c];
         let (center, radius) = slice_sphere(camera, aspect, begin, end);
-        place(&mut set, c, &tight_light(center, radius, sun, map_px, bounds.clone()), slice_corners(camera, aspect, begin, end));
+        place(&mut set, c, &tight_light(center, radius, sun, map_px, settings, bounds.clone()), slice_corners(camera, aspect, begin, end));
         begin = end;
+    }
+    if settings.format == ShadowFormat::Depth32 {
+        set.shared_bias = set.bias[0];
     }
     set
 }
@@ -437,43 +503,84 @@ struct MapKey {
     format: ShadowFormat,
 }
 
+/// How far, in its cascade's texels, a caster may have moved since a held map was drawn: a held
+/// map is redrawn once any caster inside it moved farther (RC-06). Half a texel is below what the
+/// map resolves, so a swaying tree (a few millimetres a frame) keeps the cadence while a walking
+/// character redraws it.
+pub const CASTER_HOLD_TEXELS: f32 = 0.5;
+
+/// One opaque caster as a cascade's map drew it ([`Casters::inside`]).
+#[derive(Clone, Debug, PartialEq)]
+struct CasterRow {
+    /// Its material row and mesh (its index range and base vertex).
+    key: [u32; 4],
+    /// Its model matrix, column-major.
+    model: [f32; 16],
+    /// How far its mesh reaches from its origin in object units (world reach over the smallest
+    /// axis scale), so a change of the matrix's linear part moves no point farther than its norm
+    /// times this.
+    reach: f32,
+}
+
+/// What stood in a cascade's cull view when its map was drawn, row for row: `None` when a skinned
+/// caster did (its vertices move under a still model), so the map is never held.
+type CasterSet = Option<Vec<CasterRow>>;
+
 /// The far-cascade cadence across frames: what each cascade's map holds, so a cascade that is not
-/// redrawn keeps last frame's matrix with its map ([`ShadowSettings::cascade_redrawn`]).
+/// redrawn keeps last frame's matrix with its map ([`ShadowSettings::cascade_redrawn`]) while
+/// nothing inside it moved since it was drawn.
 #[derive(Clone, Debug, Default)]
 pub struct CascadeHistory {
-    held: Option<(MapKey, Cascades)>,
+    held: Option<(MapKey, Cascades, [CasterSet; MAX_CASCADES])>,
 }
 
 impl CascadeHistory {
     /// Plan frame `frame_index`'s cascade draws on `plan`: the cascades its settings redraw (every
     /// one when `settled`, on the first frame and after the count, size or format changed) keep
     /// the plan's fresh fit, and so does a cascade whose held map no longer covers its fresh slice
-    /// (a camera cut or a jump); every other one is given back the matrix, texel and normal offset
-    /// its map was drawn with, in the plan's cascades and frame uniforms. Without shadows the
-    /// history resets.
+    /// (a camera cut or a jump) or whose casters changed since its map was drawn (one moved, swapped
+    /// its mesh or is skinned: RC-06); every other one is given back the matrix, texel and normal
+    /// offset its map was drawn with, in the plan's cascades and frame uniforms. Without shadows
+    /// the history resets.
     pub fn advance(&mut self, plan: &mut FramePlan, frame_index: u64, settled: bool) -> CascadeDraws {
-        let (Some(fresh), Some(settings)) = (plan.cascades.as_mut(), plan.shadows.as_ref()) else {
+        let FramePlan { cascades, shadows, frame, instances, batches, static_batches, .. } = plan;
+        let (Some(fresh), Some(settings)) = (cascades.as_mut(), shadows.as_ref()) else {
             self.held = None;
             return CascadeDraws::default();
         };
+        let casters = Casters { instances, batches, static_batches: *static_batches };
+        // Only a cadence holds a map, so only a cadence needs to know what stood in it.
+        let cadence = settings.far_cadence > 1;
         let key = MapKey { count: fresh.count(), map_px: fresh.map_px, asked: (settings.cascades, settings.map_px), format: settings.format };
-        let held = self.held.take().filter(|(was, _)| *was == key);
+        let mut held = self.held.take().filter(|(was, _, _)| *was == key);
         let mut draws = CascadeDraws::default();
+        let mut drawn: [CasterSet; MAX_CASCADES] = std::array::from_fn(|_| None);
         for c in 0..key.count {
             let margin = DEPTH_MARGIN_TEXELS * fresh.texel_world[c];
-            let redraw = settings.cascade_redrawn(c as u8, frame_index, settled)
-                || !held.as_ref().is_some_and(|(_, old)| covers(&old.view_proj[c], &fresh.view_proj[c], &fresh.slice_corners[c], margin));
-            draws.redraw[c] = redraw;
-            if let (false, Some((_, old))) = (redraw, held.as_ref()) {
-                fresh.view_proj[c] = old.view_proj[c];
-                fresh.planes[c] = old.planes[c];
-                fresh.texel_world[c] = old.texel_world[c];
-                fresh.depth_range[c] = old.depth_range[c];
-                hold_frame(&mut plan.frame, c, old);
-            }
+            let hold = match held.as_mut() {
+                Some((_, old, sets)) if !settings.cascade_redrawn(c as u8, frame_index, settled) => {
+                    let covered = covers(&old.view_proj[c], &fresh.view_proj[c], &fresh.slice_corners[c], margin);
+                    let tolerance = CASTER_HOLD_TEXELS * old.texel_world[c];
+                    let still = covered && sets[c].as_ref().is_some_and(|set| casters.still(set, &old.planes[c], tolerance));
+                    still.then_some((&*old, &mut sets[c]))
+                }
+                _ => None,
+            };
+            draws.redraw[c] = hold.is_none();
+            let Some((old, set)) = hold else {
+                drawn[c] = if cadence && c > 0 { casters.inside(&fresh.planes[c]) } else { None };
+                continue;
+            };
+            drawn[c] = set.take();
+            fresh.view_proj[c] = old.view_proj[c];
+            fresh.planes[c] = old.planes[c];
+            fresh.texel_world[c] = old.texel_world[c];
+            fresh.depth_range[c] = old.depth_range[c];
+            fresh.bias[c] = old.bias[c];
+            hold_frame(frame, c, old);
         }
         // A settled capture's maps are the capture's: Live starts over after it.
-        self.held = (!settled).then(|| (key, fresh.clone()));
+        self.held = (!settled).then(|| (key, fresh.clone(), drawn));
         draws
     }
 
@@ -482,6 +589,70 @@ impl CascadeHistory {
     pub fn reset(&mut self) {
         self.held = None;
     }
+}
+
+/// A frame's opaque casters: its instance rows by batch, the skinned batches after the library's.
+struct Casters<'a> {
+    instances: &'a [GpuInstance],
+    batches: &'a [GpuBatch],
+    static_batches: u32,
+}
+
+impl Casters<'_> {
+    /// The opaque casters inside the cull view `planes` (the rows whose bounds it holds), in row
+    /// order; `None` when a skinned row is among them.
+    fn inside(&self, planes: &[[f32; 4]; 6]) -> CasterSet {
+        let mut set = Vec::new();
+        for (b, batch) in self.batches.iter().enumerate() {
+            let first = batch.first_instance as usize;
+            let rows = self.instances.get(first..first + batch.instance_count as usize).unwrap_or(&[]);
+            for row in rows.iter().filter(|row| in_frustum(planes, row.bounds)) {
+                if b as u32 >= self.static_batches {
+                    return None;
+                }
+                let key = [row.material, batch.first_index, batch.index_count, batch.base_vertex as u32];
+                set.push(CasterRow { key, model: row.model, reach: object_reach(row) });
+            }
+        }
+        Some(set)
+    }
+
+    /// Whether the casters inside `planes` are `drawn`'s, row for row, each moved by at most
+    /// `tolerance` world units (no caster came, went, changed its mesh or material, or is skinned).
+    fn still(&self, drawn: &[CasterRow], planes: &[[f32; 4]; 6], tolerance: f32) -> bool {
+        let Some(now) = self.inside(planes) else { return false };
+        now.len() == drawn.len() && now.iter().zip(drawn).all(|(now, was)| now.key == was.key && moved(was, now) <= tolerance)
+    }
+}
+
+/// How far any point of `row`'s mesh lies from its origin, in object units: its world bounding
+/// sphere's reach from the model's translation over the smallest axis scale of its linear part.
+fn object_reach(row: &GpuInstance) -> f32 {
+    let m = Mat4::from_cols_array(&row.model);
+    let origin = m.w_axis.xyz();
+    let scale = m.x_axis.xyz().length().min(m.y_axis.xyz().length()).min(m.z_axis.xyz().length());
+    (Vec3::from_slice(&row.bounds[..3]).distance(origin) + row.bounds[3]) / scale.max(f32::MIN_POSITIVE)
+}
+
+/// The farthest any point of a caster moved between `was` and `now`: its translation's change plus
+/// its linear part's change (Frobenius norm, which bounds the spectral one) times its reach.
+fn moved(was: &CasterRow, now: &CasterRow) -> f32 {
+    // The Euclidean norm of the change of `columns`' xyz (the translation, or the linear part's
+    // Frobenius norm).
+    let change = |columns: &[usize]| {
+        let squared: f32 = columns
+            .iter()
+            .flat_map(|column| column * 4..column * 4 + 3)
+            .map(|i| {
+                let delta = now.model[i] - was.model[i];
+                delta * delta
+            })
+            .sum();
+        squared.sqrt()
+    };
+    let moved = change(&[3]) + change(&[0, 1, 2]) * now.reach.max(was.reach);
+    // A matrix that is not a number moved as far as can be.
+    if moved.is_nan() { f32::INFINITY } else { moved }
 }
 
 /// Whether the map drawn through `held` still shades the cascade `fresh` fits: every corner of
@@ -510,6 +681,7 @@ fn hold_frame(frame: &mut GpuFrame, c: usize, old: &Cascades) {
     frame.cascade_matrices[c] = old.view_proj[c];
     frame.cascade_texels[c] = old.texel_world[c];
     frame.cascade_offsets[c] = offset;
+    frame.cascade_bias[c] = old.comparison_bias()[c];
     if c < SHADOW_CASCADES {
         frame.cascade_view_proj[c] = old.view_proj[c];
         frame.shadow_params[1 + c] = offset;
@@ -556,7 +728,7 @@ impl ShadowMapDesc {
 /// The cascades' depth targets: one array of layers, a view per layer to draw into and an array
 /// view to sample.
 pub(crate) struct ShadowMaps {
-    _texture: Texture,
+    pub(crate) texture: Texture,
     pub(crate) layers: Vec<TextureView>,
     pub(crate) array: TextureView,
 }
@@ -577,7 +749,8 @@ impl ShadowMaps {
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
             format: desc.format,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            // COPY_DST: a cached layer is the static casters' copy (B.6, `shadow_cache`).
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
             view_formats: &[],
         });
         let layers = (0..desc.layers)
@@ -594,6 +767,6 @@ impl ShadowMaps {
             dimension: Some(wgpu::TextureViewDimension::D2Array),
             ..Default::default()
         });
-        ShadowMaps { _texture: texture, layers, array }
+        ShadowMaps { texture, layers, array }
     }
 }

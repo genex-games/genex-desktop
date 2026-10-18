@@ -56,9 +56,9 @@ pub const EASU_LABEL: &str = "fsr easu";
 pub const INTERMEDIATE_TEXEL_BYTES: u64 = 4;
 
 /// EASU (a full-screen fragment pass).
-pub const EASU: &str = include_str!("../../shaders/post/easu.wgsl");
+pub const EASU: &str = crate::shaders::minify::shipped_wgsl!(include_str!("../../shaders/post/easu.wgsl"));
 /// RCAS and the final dither (a full-screen fragment pass).
-pub const RCAS: &str = include_str!("../../shaders/post/rcas.wgsl");
+pub const RCAS: &str = crate::shaders::minify::shipped_wgsl!(include_str!("../../shaders/post/rcas.wgsl"));
 
 /// EASU's uniform (`EasuParams`): AMD's four constant vectors (`FsrEasuCon`) as floats.
 #[repr(C)]

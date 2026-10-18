@@ -1203,6 +1203,9 @@ describe("the C++ · raylib contract (shared/game-project.ts, game-targets.ts, n
       // the lane's naga step); the harness reads a parsed receipt only.
       "NATIVE_RECEIPT_MAX_BYTES",
       "NATIVE_WGSL_MAX_BYTES",
+      // A starting game's boot progress is read by the host for Live's card alone; the harness
+      // never parses game events.
+      "NATIVE_BOOT_COUNT_MAX",
     ]);
     const shared = Object.entries(native).filter(
       ([name, value]) => /^(NATIVE|MAC)_/.test(name) && typeof value !== "object" && !hostOnly.has(name),

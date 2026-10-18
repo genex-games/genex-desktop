@@ -16,7 +16,7 @@ use std::path::{Path, PathBuf};
 
 use genex_render::capture::Capture;
 use genex_render::device_class::DeviceClass;
-use genex_render::post::ao::{self, AoCamera, AoFrame, AoFrameFacts, AoImage, AoSettings, GpuAoParams, GpuAoView, ao_gpu_ms, ao_term_images};
+use genex_render::post::ao::{self, AoCamera, AoFrame, AoFrameFacts, AoImage, AoMethod, AoSettings, GpuAoParams, GpuAoView, ao_gpu_ms, ao_term_images};
 use genex_render::presets::preset_quality;
 use genex_render::scene::{CameraDesc, Material, MeshId, Scene, scaled};
 use genex_render::settings::{AoQuality, AoResolution, Look, Quality, QualityPreset};
@@ -113,7 +113,7 @@ fn corner_frame(eye: Vec3, with_box: bool, facts: AoFrameFacts, size: (u32, u32)
             }
         }
     }
-    AoFrame { depth, normals, camera, facts }
+    AoFrame { depth, normals, camera, facts, motion: Vec::new() }
 }
 
 fn facts(frame_index: u64, history_reset: bool) -> AoFrameFacts {
@@ -166,6 +166,32 @@ fn every_ao_preset_runs_gtao_and_off_runs_nothing() {
     assert_eq!((ultra.resolution, ultra.slices, ultra.temporal, ultra.bent_normals()), (AoResolution::Full, 3, true, true));
     for quality in [medium, high, ultra] {
         assert!(AoSettings::new(&look, &quality).is_some());
+    }
+}
+
+/// B.4: the presets draw the visibility bitmask at desktop `high` and with screen-space GI at
+/// `ultra` (look integration; the bitmask alone before, and `high` keeps it alone within its
+/// memory budget) and XeGTAO's horizons at `medium` and on every phone class (owner decision D16:
+/// the GI's cost on a phone is unmeasured).
+#[test]
+fn the_presets_draw_ssgi_on_the_bitmask_at_ultra_on_desktops_only() {
+    let look = Look::default();
+    for class in DeviceClass::ALL {
+        for preset in [QualityPreset::Medium, QualityPreset::High, QualityPreset::Ultra] {
+            let quality = preset_quality(preset, class);
+            let desktop_high = class.form == genex_render::device_class::FormFactor::Desktop && preset >= QualityPreset::High;
+            let expected = match (desktop_high, preset) {
+                (true, QualityPreset::Ultra) => AoMethod::BitmaskGi,
+                (true, _) => AoMethod::Bitmask,
+                _ => AoMethod::Horizons,
+            };
+            assert_eq!(quality.ao_method, expected, "{class:?} {}", preset.wire());
+            if let Some(settings) = AoSettings::of(&look, &quality) {
+                assert_eq!(settings.method, expected);
+                let thickness = if desktop_high { ao::BITMASK_THICKNESS_PER_RADIUS * look.ao_radius } else { ao::THICKNESS };
+                assert_eq!(settings.thickness, thickness);
+            }
+        }
     }
 }
 
@@ -257,6 +283,12 @@ fn check_golden(name: &str, image: &AoImage) {
 
 fn run(gpu: &Gpu, settings: &AoSettings, frames: &[AoFrame]) -> Vec<AoImage> {
     ao_term_images(gpu, settings, (WIDTH, HEIGHT), frames).expect("AO runs")
+}
+
+/// `frame` alone at render size `size` as a history reset (its own noise key).
+fn run_at(gpu: &Gpu, settings: &AoSettings, size: (u32, u32), frame: &AoFrame) -> AoImage {
+    let fresh = AoFrame { facts: AoFrameFacts { history_reset: true, ..frame.facts }, ..frame.clone() };
+    ao_term_images(gpu, settings, size, std::slice::from_ref(&fresh)).expect("AO runs").remove(0)
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -363,7 +395,7 @@ fn metal_history_is_rejected_where_the_reprojected_depth_disagrees() {
     // The same frame after an all-sky one: its history is rejected everywhere, so the frame is its
     // own estimate (the same steps: a frame that blends history takes every other one).
     let texels = without.depth.len();
-    let sky = AoFrame { depth: vec![0.0; texels], normals: vec![[0.0, 1.0, 0.0]; texels], camera: without.camera, facts: facts(20, true) };
+    let sky = AoFrame { depth: vec![0.0; texels], normals: vec![[0.0, 1.0, 0.0]; texels], camera: without.camera, facts: facts(20, true), motion: Vec::new() };
     let fresh = run(&gpu, &settings, &[sky, without.clone()]).remove(1);
     // Low on the box's front face: dark in the box's term; once the box is gone the floor behind it
     // shows there, a view distance more than `HISTORY_DEPTH_REJECT` away. (Lower still, at the very
@@ -464,12 +496,18 @@ fn metal_ao_off_draws_the_pre_ao_golden_byte_for_byte() {
 }
 
 /// One cost row: AO under `quality` on the corner scene seen from `eye` at 1080p, p50 and p95 GPU ms
-/// (None without `TIMESTAMP_QUERY`). `reset` makes every frame a history reset (every step, no
-/// history read); otherwise the frames blend history as a running game's do.
+/// (None without `TIMESTAMP_QUERY`). `reset` makes every frame a history reset (no history read;
+/// since pass 2 P4 the running frames' slices); otherwise the frames blend history as a running
+/// game's do.
 fn cost(gpu: &Gpu, quality: AoQuality, eye: Vec3, reset: bool) -> Option<(f32, f32)> {
+    cost_of(gpu, &settings(quality), eye, reset)
+}
+
+/// [`cost`] of `settings`.
+fn cost_of(gpu: &Gpu, settings: &AoSettings, eye: Vec3, reset: bool) -> Option<(f32, f32)> {
     let render = (1920, 1080);
     let frame = corner_frame(eye, true, facts(1, reset), render);
-    let mut costs = ao_gpu_ms(gpu, &settings(quality), render, &frame, COST_SAMPLES).expect("cost")?;
+    let mut costs = ao_gpu_ms(gpu, settings, render, &frame, COST_SAMPLES).expect("cost")?;
     costs.sort_by(f32::total_cmp);
     Some((costs[costs.len() / 2], costs[(costs.len() * 95 / 100).min(costs.len() - 1)]))
 }
@@ -488,9 +526,10 @@ fn metal_ao_costs_within_its_budget_at_1080p() {
         ("high", quality(QualityPreset::High), EYE, false, HALF_BUDGET_MS, true),
         ("ultra", quality(QualityPreset::Ultra), EYE, false, FULL_BUDGET_MS, true),
         ("ultra-far", quality(QualityPreset::Ultra), FAR_EYE, false, FULL_BUDGET_MS, true),
-        // A history reset (a settled capture's first frame, a camera cut) takes every step of
-        // ultra's 3 x 8: recorded, not asserted (one frame, not the running cost).
-        ("ultra-reset", quality(QualityPreset::Ultra), EYE, true, FULL_BUDGET_MS, false),
+        // A history reset (a settled capture's first frame, a camera cut) took every slice of
+        // ultra's 3 x 8 (1.9 ms) and was only recorded; since pass 2 (P4, flipped to asserted) it
+        // takes the running frames' slices and holds the budget too.
+        ("ultra-reset", quality(QualityPreset::Ultra), EYE, true, FULL_BUDGET_MS, true),
     ];
     for (name, quality, eye, reset, budget, asserted) in cases {
         let Some((p50, p95)) = cost(&gpu, quality, eye, reset) else {
@@ -558,7 +597,7 @@ fn step_frame(eye: Vec3, size: (u32, u32)) -> AoFrame {
             }
         }
     }
-    AoFrame { depth, normals, camera, facts: facts(0, true) }
+    AoFrame { depth, normals, camera, facts: facts(0, true), motion: Vec::new() }
 }
 
 /// The column of the step's face on row `y` of `frame`: the first floor pixel right of the slab.
@@ -600,7 +639,7 @@ fn bilinear(image: &AoImage, render: (u32, u32)) -> AoImage {
             (top * (1.0 - fy) + bottom * fy).round() as u8
         })
         .collect();
-    AoImage { size: render, visibility, bent: None }
+    AoImage { size: render, visibility, bent: None, light: None }
 }
 
 /// How `image`'s crease reaches past `reference`'s: the worst row on the floor side, the rows
@@ -632,9 +671,11 @@ fn metal_half_resolution_ao_keeps_a_thin_steps_crease_within_two_pixels_of_full_
     let frame = step_frame(eye, (WIDTH, HEIGHT));
     // A full-resolution term at three slices of eight steps (the finest sampling the node takes;
     // ultra's preset took it until gate finding 03 moved ultra to four steps a slice) and high's
-    // half-resolution one, each a reset frame (every step, no history: a settled capture's).
+    // half-resolution one, each a reset frame (no history: a settled capture's first). The
+    // reference takes every slice (without history: a temporal quality's frames take half).
     let mut full = quality(QualityPreset::Ultra);
     full.steps = ao::STEPS_MAX;
+    full.temporal = false;
     let half = quality(QualityPreset::High);
     let reference = ao::ao_render_images(&gpu, &settings(full), (WIDTH, HEIGHT), std::slice::from_ref(&frame)).expect("full").remove(0);
     let upsampled = ao::ao_render_images(&gpu, &settings(half), (WIDTH, HEIGHT), std::slice::from_ref(&frame)).expect("half").remove(0);
@@ -713,7 +754,7 @@ fn open_ground_frame(size: (u32, u32), frame_index: u64) -> AoFrame {
             normals.push([0.0, 1.0, 0.0]);
         }
     }
-    AoFrame { depth, normals, camera, facts: AoFrameFacts { frame_index, history_reset: frame_index == 0, depth_reversed: true, ..AoFrameFacts::default() } }
+    AoFrame { depth, normals, camera, facts: AoFrameFacts { frame_index, history_reset: frame_index == 0, depth_reversed: true, ..AoFrameFacts::default() }, motion: Vec::new() }
 }
 
 /// The first render row of `frame` whose every texel is ground.
@@ -850,7 +891,7 @@ fn log_wall_frame(size: (u32, u32)) -> (AoFrame, Vec<Option<LogHit>>) {
             }
         }
     }
-    (AoFrame { depth, normals, camera, facts: facts(0, true) }, hits)
+    (AoFrame { depth, normals, camera, facts: facts(0, true), motion: Vec::new() }, hits)
 }
 
 /// The cosine-weighted share of the hemisphere around `n` at `p` that no other log hides within
@@ -901,5 +942,954 @@ fn metal_gtao_on_a_log_wall_matches_the_ray_cast_ground_truth() {
         let (gtao, truth) = (gtao / count as f32, truth / count as f32);
         eprintln!("{}: GTAO {gtao:.3}, ground truth {truth:.3} over {count} pixels", preset.wire());
         assert!((gtao - truth).abs() <= 0.08, "{}: GTAO {gtao:.3} against the ground truth {truth:.3}", preset.wire());
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Renderer pass 2, P2-0.6: AO's own history (P3/S2 precision, fetch, motion and clamp; P4 slices
+// instead of steps; RC-05 a dynamic-resolution step keeps it)
+
+/// The most a floor's AO may still differ from its converged value three frames after a turning
+/// box stopped, mean over the floor the box's occlusion swept in its last turning frames
+/// (P2-0.6: "less than 2% luma residue after 3 frames").
+const TRAIL_RESIDUE_MAX: f32 = 0.02;
+/// The turning frames whose poses make the swept floor: the last ones before the box stopped
+/// (older poses' occlusion has faded from any history by then).
+const TRAIL_POSES: u64 = 5;
+/// Frames the box turns for, degrees a frame, and the frames after it stops before the row reads.
+const TURN_FRAMES: u64 = 20;
+const TURN_DEGREES_PER_FRAME: f32 = 5.0;
+const STOPPED_FRAMES: u64 = 3;
+/// Frames the converged references take.
+const CONVERGE_FRAMES: u64 = 128;
+/// A floor texel belongs to the swept floor when one of the box's last poses darkened it this far
+/// below its converged value at the box's last pose.
+const SWEPT_DARKENING: f32 = 0.05;
+/// The turning box: its centre on the floor (its bottom on y = 0) and half extent.
+const TURN_CENTRE: Vec3 = Vec3::new(0.0, 0.35, -0.4);
+const TURN_HALF: f32 = 0.35;
+
+/// What a pixel of the turning-box scene shows.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Shows {
+    Sky,
+    Floor,
+    Box,
+}
+
+/// The ray's nearest hit with the turning box at `degrees` about +Y, and its world normal.
+fn hit_turned_box(origin: Vec3, dir: Vec3, degrees: f32) -> Option<(f32, Vec3)> {
+    let turn = glam::Quat::from_rotation_y(degrees.to_radians());
+    let (o, d) = (turn.inverse() * (origin - TURN_CENTRE), turn.inverse() * dir);
+    let (mut near, mut far, mut normal) = (f32::NEG_INFINITY, f32::INFINITY, Vec3::ZERO);
+    for axis in 0..3 {
+        let inv = 1.0 / d[axis];
+        let (a, b) = ((-TURN_HALF - o[axis]) * inv, (TURN_HALF - o[axis]) * inv);
+        let (t0, t1) = if a < b { (a, b) } else { (b, a) };
+        if t0 > near {
+            near = t0;
+            normal = Vec3::ZERO;
+            normal[axis] = -d[axis].signum();
+        }
+        far = far.min(t1);
+    }
+    (near <= far && near > 0.0).then_some((near, turn * normal))
+}
+
+/// The turning-box scene (a floor and the box at `degrees`) from [`EYE`] at render size, with the
+/// motion the prepass would write (the box turned by `step` degrees since last frame; the camera is
+/// still) and what each pixel shows.
+fn turning_frame(degrees: f32, step: f32, facts: AoFrameFacts, size: (u32, u32)) -> (AoFrame, Vec<Shows>) {
+    let camera = camera(EYE);
+    let camera = AoCamera { proj: glam::camera::rh::proj::directx::perspective(50f32.to_radians(), size.0 as f32 / size.1 as f32, 100.0, 0.1), ..camera };
+    let view_proj = camera.proj * camera.view;
+    let inverse = view_proj.inverse();
+    let ndc_of = |p: Vec3| {
+        let clip = view_proj * p.extend(1.0);
+        glam::Vec2::new(clip.x / clip.w, clip.y / clip.w)
+    };
+    let (mut depth, mut normals, mut motion, mut shows) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+    for y in 0..size.1 {
+        for x in 0..size.0 {
+            let ndc = Vec4::new((x as f32 + 0.5) / size.0 as f32 * 2.0 - 1.0, 1.0 - (y as f32 + 0.5) / size.1 as f32 * 2.0, 0.5, 1.0);
+            let far = inverse * ndc;
+            let dir = (far.truncate() / far.w - EYE).normalize();
+            let floor = (dir.y < 0.0).then(|| -EYE.y / dir.y);
+            let on_box = hit_turned_box(EYE, dir, degrees).filter(|(t, _)| floor.is_none_or(|f| *t < f));
+            let (t, n, kind) = match (on_box, floor) {
+                (Some((t, n)), _) => (t, n, Shows::Box),
+                (None, Some(t)) => (t, Vec3::Y, Shows::Floor),
+                (None, None) => (0.0, Vec3::Y, Shows::Sky),
+            };
+            shows.push(kind);
+            normals.push(n.to_array());
+            if kind == Shows::Sky {
+                depth.push(0.0);
+                motion.push([0.0, 0.0]);
+                continue;
+            }
+            let p = EYE + dir * t;
+            let clip = view_proj * p.extend(1.0);
+            depth.push(clip.z / clip.w);
+            let before = if kind == Shows::Box { TURN_CENTRE + glam::Quat::from_rotation_y((-step).to_radians()) * (p - TURN_CENTRE) } else { p };
+            motion.push((ndc_of(p) - ndc_of(before)).to_array());
+        }
+    }
+    (AoFrame { depth, normals, camera, facts, motion }, shows)
+}
+
+/// What render pixel stands for AO texel `texel` of an AO image of `ao` size at `render` size (the
+/// one under its centre).
+fn render_pixel(texel: (u32, u32), ao: (u32, u32), render: (u32, u32)) -> (u32, u32) {
+    let block = ((render.0 / ao.0).max(1), (render.1 / ao.1).max(1));
+    ((texel.0 * block.0 + block.0 / 2).min(render.0 - 1), (texel.1 * block.1 + block.1 / 2).min(render.1 - 1))
+}
+
+/// The turning box's AO trail at `preset`, with or without the prepass's motion: the mean residue
+/// over the swept floor (converged minus the frame three frames after the box stopped), the worst
+/// 3x3 window of it, and the swept floor's texels.
+fn turning_trail(gpu: &Gpu, preset: QualityPreset, with_motion: bool) -> (f32, f32, usize) {
+    let size = (WIDTH, HEIGHT);
+    let settings = settings(quality(preset));
+    let last = TURN_FRAMES as f32 * TURN_DEGREES_PER_FRAME;
+    let strip = |(frame, shows): (AoFrame, Vec<Shows>)| (if with_motion { frame } else { AoFrame { motion: Vec::new(), ..frame } }, shows);
+    // The box turns, then stands still at its last pose.
+    let mut turning: Vec<AoFrame> = (0..=TURN_FRAMES).map(|i| strip(turning_frame(i as f32 * TURN_DEGREES_PER_FRAME, TURN_DEGREES_PER_FRAME, facts(i, i == 0), size)).0).collect();
+    turning.extend((1..=STOPPED_FRAMES).map(|i| strip(turning_frame(last, 0.0, facts(TURN_FRAMES + i, false), size)).0));
+    let after = run(gpu, &settings, &turning).pop().expect("a term");
+    // The same last pose, converged from a reset.
+    let shows = turning_frame(last, 0.0, facts(0, true), size).1;
+    let converging: Vec<AoFrame> = (0..CONVERGE_FRAMES).map(|i| turning_frame(last, 0.0, facts(i, i == 0), size).0).collect();
+    let converged = run(gpu, &settings, &converging).pop().expect("a term");
+    write_evidence(&format!("turning-{}-{}-after", preset.wire(), if with_motion { "motion" } else { "camera" }), &grey(&after));
+    write_evidence(&format!("turning-{}-converged", preset.wire()), &grey(&converged));
+    // Where the box's last poses darkened the floor: each pose's own reset frame.
+    let poses: Vec<AoImage> = (TURN_FRAMES - TRAIL_POSES..TURN_FRAMES).map(|i| run(gpu, &settings, std::slice::from_ref(&turning_frame(i as f32 * TURN_DEGREES_PER_FRAME, 0.0, facts(0, true), size).0)).remove(0)).collect();
+    let ao = after.size;
+    let floor = |x: u32, y: u32| {
+        let (px, py) = render_pixel((x, y), ao, size);
+        shows[(py * size.0 + px) as usize] == Shows::Floor
+    };
+    let swept: Vec<(u32, u32)> = (1..ao.1 - 1)
+        .flat_map(|y| (1..ao.0 - 1).map(move |x| (x, y)))
+        .filter(|&(x, y)| floor(x, y) && poses.iter().any(|pose| pose.at(x, y) < converged.at(x, y) - SWEPT_DARKENING))
+        .collect();
+    let residue = |x: u32, y: u32| converged.at(x, y) - after.at(x, y);
+    let mean = swept.iter().map(|&(x, y)| residue(x, y)).sum::<f32>() / swept.len().max(1) as f32;
+    let worst = swept.iter().map(|&(x, y)| (y - 1..=y + 1).flat_map(|wy| (x - 1..=x + 1).map(move |wx| (wx, wy))).map(|(wx, wy)| residue(wx, wy)).sum::<f32>() / 9.0).fold(0.0, f32::max);
+    (mean, worst, swept.len())
+}
+
+/// P2-0.6 (P3/S2): AO's own history read nearest, reprojected through the camera alone and never
+/// clamped kept a moving object's old occlusion on the floor it left: the floor keeps its depth, so
+/// its history passed the depth test and faded as 0.9^n (a dark trail about 0.35 s long behind the
+/// template's turning cube). A box turning on the floor, then still: three frames after it stops,
+/// the floor its occlusion swept is within [`TRAIL_RESIDUE_MAX`] of the converged term, with the
+/// prepass's motion (TAA frames) and without it (camera reprojection).
+#[test]
+#[ignore = "GPU: run with -- --ignored metal"]
+fn metal_a_turning_box_leaves_no_ao_trail_on_the_floor() {
+    let Some(gpu) = gpu() else { return };
+    let mut problems = Vec::new();
+    for preset in [QualityPreset::High, QualityPreset::Ultra] {
+        for with_motion in [true, false] {
+            let (mean, worst, texels) = turning_trail(&gpu, preset, with_motion);
+            let source = if with_motion { "motion" } else { "camera" };
+            eprintln!("{} ({source}): swept floor {texels} texels, residue mean {mean:.4}, worst 3x3 {worst:.4}", preset.wire());
+            assert!(texels > 20, "{}: the box sweeps the floor ({texels} texels)", preset.wire());
+            if mean.abs() > TRAIL_RESIDUE_MAX {
+                problems.push(format!("{} ({source}): the floor keeps {mean:.4} of the box's old occlusion (worst 3x3 {worst:.4})", preset.wire()));
+            }
+        }
+    }
+    assert!(problems.is_empty(), "{problems:#?}");
+}
+
+/// Crease windows of the corner scene: the floor-wall crease and the box's front crease.
+fn crease_means(frame: &AoFrame, image: &AoImage) -> [f32; 2] {
+    let wall = ao_pixel(frame, image.size, Vec3::new(1.8, 0.02, WALL_Z + 0.02));
+    let front = ao_pixel(frame, image.size, Vec3::new(0.0, 0.02, BOX_MAX.z + 0.02));
+    [window_mean(image, wall, 1), window_mean(image, front, 1)]
+}
+
+/// How far a running history's crease may sit from reset frames' (every slice and step at once),
+/// each over the frames it averages: about two levels.
+const RUNNING_CREASE_DRIFT_MAX: f32 = 0.008;
+/// Frames each side of the comparison averages (reset frames on as many noise keys).
+const DRIFT_FRAMES: u64 = 64;
+
+/// The crease means of `images`, averaged.
+fn mean_creases(frame: &AoFrame, images: &[AoImage]) -> [f32; 2] {
+    std::array::from_fn(|c| images.iter().map(|image| crease_means(frame, image)[c]).sum::<f32>() / images.len() as f32)
+}
+
+/// P2-0.6 (P4): a frame that blends history took every other step of each slice, and a slice's
+/// horizon is the maximum over its steps, so each half saw a lower horizon than the whole: the
+/// running history was lighter than the reset frame (darkening on a cut, then relaxing lighter).
+/// Every frame now takes every step of fewer slices, resets too (XeGTAO's final power is convex,
+/// so an estimate of more slices draws darker), and the history adds no bias of its own (its
+/// bilinear read at the texels' own positions, its clamp): on a still corner the running
+/// history's creases, mean of its last [`DRIFT_FRAMES`] frames, sit within
+/// [`RUNNING_CREASE_DRIFT_MAX`] of reset frames' (on as many noise keys) at high and ultra.
+#[test]
+#[ignore = "GPU: run with -- --ignored metal"]
+fn metal_a_running_ao_history_is_as_dark_as_a_reset_frame() {
+    let Some(gpu) = gpu() else { return };
+    let size = (WIDTH, HEIGHT);
+    let frames: Vec<AoFrame> = (0..CONVERGE_FRAMES).map(|i| corner_frame(EYE, true, facts(i, i == 0), size)).collect();
+    let mut problems = Vec::new();
+    for preset in [QualityPreset::High, QualityPreset::Ultra] {
+        let settings = settings(quality(preset));
+        let images = run(&gpu, &settings, &frames);
+        let resets: Vec<AoImage> = (0..DRIFT_FRAMES).map(|i| run(&gpu, &settings, std::slice::from_ref(&corner_frame(EYE, true, facts(i, true), size))).remove(0)).collect();
+        let reset = mean_creases(&frames[0], &resets);
+        let running = mean_creases(&frames[0], &images[images.len() - DRIFT_FRAMES as usize..]);
+        eprintln!("{}: creases reset {reset:?}, running {running:?}", preset.wire());
+        for c in 0..2 {
+            if (running[c] - reset[c]).abs() > RUNNING_CREASE_DRIFT_MAX {
+                problems.push(format!("{} crease {c}: running {:.4} against the reset frame's {:.4}", preset.wire(), running[c], reset[c]));
+            }
+        }
+    }
+    assert!(problems.is_empty(), "{problems:#?}");
+}
+
+/// The most a dynamic-resolution step frame's crease noise may be, as a share of a fresh frame's at
+/// the new size (no history, what the step drew before), each against the new size's converged
+/// term (RMS over the crease's 5x5 texels, the mean offset taken out).
+const STEP_NOISE_SHARE_MAX: f32 = 0.6;
+
+/// The RMS of `image` against `converged` over the 5x5 texels around `at`, their mean offset taken out.
+fn crease_noise(image: &AoImage, converged: &AoImage, at: (u32, u32)) -> f32 {
+    let diffs: Vec<f32> = (at.1 - 2..=at.1 + 2).flat_map(|y| (at.0 - 2..=at.0 + 2).map(move |x| (x, y))).map(|(x, y)| image.at(x, y) - converged.at(x, y)).collect();
+    let mean = diffs.iter().sum::<f32>() / diffs.len() as f32;
+    (diffs.iter().map(|d| (d - mean) * (d - mean)).sum::<f32>() / diffs.len() as f32).sqrt()
+}
+
+/// P2-0.6 (RC-05): a dynamic-resolution step remade AO's targets at the new size and started its
+/// history over, so for the frames it needs to converge the term showed its raw per-frame noise:
+/// contact areas darkened and lightened at every DRS step (every 0.5-4 s under borderline load).
+/// AO keeps the previous size's history for the step frame and reads it in uv: at high and ultra,
+/// on a render-size step from 256x144 to 224x126, the step frame's creases carry at most
+/// [`STEP_NOISE_SHARE_MAX`] of a fresh frame's noise against the new size's converged term.
+#[test]
+#[ignore = "GPU: run with -- --ignored metal"]
+fn metal_a_dynamic_resolution_step_keeps_ao_history() {
+    let Some(gpu) = gpu() else { return };
+    let (before, after) = ((WIDTH, HEIGHT), (224, 126));
+    let mut frames: Vec<((u32, u32), AoFrame)> = (0..CONVERGE_FRAMES).map(|i| (before, corner_frame(EYE, true, facts(i, i == 0), before))).collect();
+    frames.extend((0..4).map(|i| (after, corner_frame(EYE, true, facts(CONVERGE_FRAMES + i, false), after))));
+    let sized: Vec<((u32, u32), &AoFrame)> = frames.iter().map(|(size, frame)| (*size, frame)).collect();
+    let step = CONVERGE_FRAMES as usize;
+    let converging: Vec<AoFrame> = (0..CONVERGE_FRAMES).map(|i| corner_frame(EYE, true, facts(i, i == 0), after)).collect();
+    let mut problems = Vec::new();
+    for preset in [QualityPreset::High, QualityPreset::Ultra] {
+        let settings = settings(quality(preset));
+        let images = ao::ao_term_images_sized(&gpu, &settings, &sized).expect("AO");
+        let converged_after = ao::ao_term_images(&gpu, &settings, after, &converging).expect("AO").pop().expect("a term");
+        let fresh = run_at(&gpu, &settings, after, &frames[step].1);
+        write_evidence(&format!("scale-step-{}-before", preset.wire()), &grey(&images[step - 1]));
+        write_evidence(&format!("scale-step-{}-at", preset.wire()), &grey(&images[step]));
+        for (c, world) in [Vec3::new(1.8, 0.02, WALL_Z + 0.02), Vec3::new(0.0, 0.02, BOX_MAX.z + 0.02)].into_iter().enumerate() {
+            let at = ao_pixel(&frames[step].1, images[step].size, world);
+            let (carried, restarted) = (crease_noise(&images[step], &converged_after, at), crease_noise(&fresh, &converged_after, at));
+            eprintln!("{} crease {c}: noise at the step {carried:.4}, a fresh frame's {restarted:.4}", preset.wire());
+            if carried > restarted * STEP_NOISE_SHARE_MAX {
+                problems.push(format!("{} crease {c}: noise at the step {carried:.4}, a fresh frame's {restarted:.4}", preset.wire()));
+            }
+        }
+    }
+    assert!(problems.is_empty(), "{problems:#?}");
+}
+
+/// P2-0.6 (P3/S2): AO's own history is 16-bit float (8 bits at weight 0.9 cannot move by less than
+/// half a level a frame, so it froze within 5/255 of the true value: fixed blotches on a still
+/// camera). The term the history ping-pongs with is the same format; the term brought to the render
+/// size for the world pass stays 8-bit.
+#[test]
+fn ao_history_is_sixteen_bit_float() {
+    use genex_render::target_pool::TargetDesc;
+    use wgpu::TextureFormat;
+    for preset in [QualityPreset::High, QualityPreset::Ultra] {
+        let quality = quality(preset);
+        assert_eq!(ao::history_format(&quality), TextureFormat::Rgba16Float, "{}: visibility and the bent normal", preset.wire());
+        let targets = ao::targets((1920, 1080), &quality);
+        let format = |label: &str| targets.iter().find(|t| t.label == label).map(|t| t.format);
+        assert_eq!(format(ao::AO_LABEL), Some(TextureFormat::Rgba16Float), "{}: the term the history ping-pongs with", preset.wire());
+        assert_eq!(format(ao::HISTORY_LABEL), Some(TextureFormat::Rgba16Float));
+        if let Some(full) = format(ao::AO_FULL_LABEL) {
+            assert_eq!(full, ao::term_format(&quality), "{}: the world pass's term stays 8-bit", preset.wire());
+        }
+        let (frame, history) = ao::target_bytes((1920, 1080), &quality);
+        assert_eq!(frame + history, targets.iter().map(TargetDesc::bytes).sum::<u64>());
+    }
+    let mut one_slice = quality(QualityPreset::Medium);
+    one_slice.temporal = true;
+    assert_eq!(ao::history_format(&one_slice), TextureFormat::R16Float, "visibility alone");
+    assert_eq!(ao::history_format(&quality(QualityPreset::Medium)), ao::term_format(&quality(QualityPreset::Medium)), "no history: the term's own");
+}
+
+/// Pass 2, RC-05: which resets start the renderer's own histories (AO's, the shadow cadence's, the
+/// meshlet visibility's) over: every reason TAA's rule starts over on, never a dynamic-resolution
+/// step (whose frame restarts the index all the same).
+#[test]
+fn a_scale_step_keeps_the_renderers_own_histories() {
+    use genex_render::settle::{FrameHistory, HistoryReset, HistorySet};
+    let at = |frame_index: u64, reset: Option<HistoryReset>| FrameHistory { set: HistorySet::Live, frame_index, ticks: 1, reset, settle: None };
+    assert!(!at(0, Some(HistoryReset::ScaleStep)).drops_history(), "a dynamic-resolution step keeps them");
+    for reason in [HistoryReset::CameraCut, HistoryReset::Resize, HistoryReset::Settings, HistoryReset::DeviceRecreated, HistoryReset::Rewind, HistoryReset::Capture] {
+        assert!(at(0, Some(reason)).drops_history(), "{reason:?} starts them over");
+    }
+    assert!(at(0, None).drops_history(), "a first frame has none to keep");
+    assert!(!at(5, None).drops_history(), "a running frame keeps them");
+}
+
+/// The Live renderer's output size for the scale-step row.
+const STEP_OUTPUT: (u32, u32) = (256, 144);
+/// Live frames before the step, the frames before it the row reads, and the frames after it the
+/// row reads (recorded: the new size's AO settles over them).
+const STEP_WARM_FRAMES: u64 = 40;
+const STEP_BEFORE_FRAMES: usize = 10;
+const STEP_AFTER_FRAMES: u64 = 30;
+/// The most the step frame may move the crease's luma (0..255) through AO (the change with AO on
+/// less the same step's change with AO off, from the mean of the frames before the step): "a DRS
+/// step does not visibly reset AO (luma change at the step frame below 1 level)".
+const STEP_AO_LUMA_MAX: f64 = 1.0;
+
+/// A floor and a cube lit by ambient light alone (AO is what darkens the crease at its foot).
+fn ambient_cube_frame(tick: u64) -> genex_render::immediate::ImmediateFrame {
+    use genex_render::immediate::ImmediateFrame;
+    use genex_render::scene::translation;
+    let mut frame = ImmediateFrame::new(CameraDesc::look_at([0.0, 1.6, 3.0], [0.0, 0.3, 0.0]), [40, 50, 70, 255]);
+    let lighting = frame.lighting_mut();
+    lighting.sun_intensity = 0.0;
+    lighting.ambient = [255, 255, 255];
+    lighting.ambient_intensity = 1.0;
+    frame.cube(translation(0.0, 0.5, 0.0), [200, 200, 200, 255]);
+    frame.cube(scaled([0.0, -0.1, 0.0], [12.0, 0.2, 10.0]), [200, 200, 200, 255]);
+    frame.set_tick(tick);
+    frame
+}
+
+/// Mean luma (0..255) of the 7x7 window around `at`.
+fn window_luma(capture: &Capture, at: (u32, u32)) -> f64 {
+    let bgra = capture.bgra();
+    let (mut sum, mut count) = (0.0, 0);
+    for y in at.1 - 3..=at.1 + 3 {
+        for x in at.0 - 3..=at.0 + 3 {
+            let i = ((y * capture.width() + x) * 4) as usize;
+            sum += 0.0722 * f64::from(bgra[i]) + 0.7152 * f64::from(bgra[i + 1]) + 0.2126 * f64::from(bgra[i + 2]);
+            count += 1;
+        }
+    }
+    sum / f64::from(count)
+}
+
+/// Live frames of the ambient cube at the high preset, AO `on`, stepping the render scale from 1
+/// to 0.75 after [`STEP_WARM_FRAMES`]: the crease's luma on the last [`STEP_BEFORE_FRAMES`] frames
+/// before the step and on each frame from it on.
+fn crease_lumas_across_a_step(gpu: &Gpu, on: bool) -> (Vec<f64>, Vec<f64>) {
+    use genex_render::device_class::{FormFactor, PerformanceTier};
+    use genex_render::immediate::ImmediateFrame;
+    use genex_render::settings::SceneFormat;
+    use genex_render::{FrameRenderer, RenderOptions};
+    let class = DeviceClass::new(FormFactor::Desktop, PerformanceTier::Ultra);
+    let mut quality = preset_quality(QualityPreset::High, class);
+    if !on {
+        quality.ao.resolution = AoResolution::Off;
+    }
+    let options = RenderOptions { msaa: genex_render::renderer::landed_samples(quality.anti_aliasing) > 1 };
+    let mut frames = FrameRenderer::new(gpu, STEP_OUTPUT.0, STEP_OUTPUT.1, options).expect("renderer");
+    let part1 = frames.renderer_mut();
+    part1.set_scene_format(SceneFormat::Rgba16Float);
+    part1.set_device_class(class);
+    part1.set_quality(&quality);
+    let crease = {
+        let probe = ambient_cube_frame(0);
+        let camera = probe.scene().camera;
+        let view = glam::camera::rh::view::look_at_mat4(Vec3::from(camera.eye), Vec3::from(camera.target), Vec3::from(camera.up));
+        let proj = glam::camera::rh::proj::directx::perspective(camera.fovy_degrees.to_radians(), STEP_OUTPUT.0 as f32 / STEP_OUTPUT.1 as f32, 100.0, 0.1);
+        let clip = proj * view * Vec4::new(0.0, 0.04, 0.56, 1.0);
+        (((clip.x / clip.w * 0.5 + 0.5) * STEP_OUTPUT.0 as f32) as u32, ((0.5 - clip.y / clip.w * 0.5) * STEP_OUTPUT.1 as f32) as u32)
+    };
+    let live = |frames: &mut FrameRenderer, tick: u64| {
+        let frame: ImmediateFrame = ambient_cube_frame(tick);
+        frames.render(gpu, &frame, CullPath::Gpu, None).expect("a Live frame");
+        window_luma(&frames.capture(gpu).expect("capture"), crease)
+    };
+    let all: Vec<f64> = (0..STEP_WARM_FRAMES).map(|tick| live(&mut frames, tick)).collect();
+    frames.renderer_mut().set_render_scale(0.75);
+    let after = (0..STEP_AFTER_FRAMES).map(|i| live(&mut frames, STEP_WARM_FRAMES + i)).collect();
+    (all[all.len() - STEP_BEFORE_FRAMES..].to_vec(), after)
+}
+
+/// Pass 2, RC-05 (end to end): every dynamic-resolution step reset AO's history (and the meshlet
+/// visibility and the shadow cadence), so AO's noise burst at each step under borderline load:
+/// contact areas blinked every 0.5-4 s. Live frames at the high preset stepping the render scale
+/// from 1 to 0.75: what AO changes in the crease at the cube's foot on the step frame (the change
+/// with AO on less the same step's change with AO off, each from the mean of the frames before the
+/// step) stays within [`STEP_AO_LUMA_MAX`] levels. The frames after it are recorded: the new size
+/// draws AO from fewer pixels and settles where it does.
+#[test]
+#[ignore = "GPU: run with -- --ignored metal"]
+fn metal_a_render_scale_step_does_not_reset_ao_in_live_frames() {
+    let Some(gpu) = gpu() else { return };
+    let mean = |values: &[f64]| values.iter().sum::<f64>() / values.len() as f64;
+    let (on_before, on_after) = crease_lumas_across_a_step(&gpu, true);
+    let (off_before, off_after) = crease_lumas_across_a_step(&gpu, false);
+    let (on_was, off_was) = (mean(&on_before), mean(&off_before));
+    let changes: Vec<f64> = on_after.iter().zip(&off_after).map(|(on, off)| (on - on_was) - (off - off_was)).collect();
+    let settled = mean(&changes[changes.len() - 10..]);
+    let noise = on_before.iter().map(|l| (l - on_was).abs()).fold(0.0_f64, f64::max);
+    eprintln!("crease luma: AO on {on_before:.2?} -> {on_after:.2?}; off {off_was:.2} -> {off_after:.2?}");
+    eprintln!("AO's change {changes:.2?}, settled {settled:.2}, running noise before the step {noise:.2}");
+    assert!(on_was + 3.0 < off_was, "AO darkens the crease ({on_was:.2} with, {off_was:.2} without)");
+    assert!(changes[0].abs() <= STEP_AO_LUMA_MAX, "the step frame moves the crease by {:.2} levels through AO ({changes:.2?})", changes[0]);
+}
+
+// ---------------------------------------------------------------------------------------------
+// Renderer pass 2, B.4 (prior-art P7): the visibility bitmask. A thin pole stands in front of a
+// wall; XeGTAO takes it for a wall of infinite thickness and darkens a halo on the wall around it
+
+/// The pole scene's render size and eye: open ground seen from eye height, a thin post standing
+/// on it.
+const POLE_SIZE: (u32, u32) = (384, 216);
+const POLE_EYE: Vec3 = Vec3::new(0.0, 1.6, 2.0);
+const POLE_LOOK_AT: Vec3 = Vec3::new(0.0, 0.2, -1.0);
+/// The post: square, this half wide, standing at this z (x = 0), this tall.
+const POLE_HALF: f32 = 0.03;
+const POLE_Z: f32 = -1.0;
+const POLE_HEIGHT: f32 = 2.0;
+/// The ground band the row reads: behind the post (further from the eye), within this reach of
+/// its axis in x and z (metres), where XeGTAO's samples on the post's front face (nearer the
+/// camera) raise the ground's horizon.
+const POLE_BEHIND: (f32, f32) = (0.06, 0.45);
+const POLE_ACROSS: f32 = 0.3;
+/// The most the band's mean visibility may lie below the ray-cast ground truth (a halo is the
+/// ground drawn darker than the post hides it).
+const POLE_HALO_MAX: f32 = 0.03;
+/// The most the bitmask's log wall may differ from its ground truth (the horizons' row's bound).
+const LOG_WALL_TRUTH_MAX: f32 = 0.08;
+
+/// The ray's nearest hit with the axis-aligned box `min`..`max`, and its normal.
+fn hit_aabb(origin: Vec3, dir: Vec3, min: Vec3, max: Vec3) -> Option<(f32, Vec3)> {
+    let (mut near, mut far, mut normal) = (f32::NEG_INFINITY, f32::INFINITY, Vec3::ZERO);
+    for axis in 0..3 {
+        let inv = 1.0 / dir[axis];
+        let (a, b) = ((min[axis] - origin[axis]) * inv, (max[axis] - origin[axis]) * inv);
+        let (t0, t1) = if a < b { (a, b) } else { (b, a) };
+        if t0 > near {
+            near = t0;
+            normal = Vec3::ZERO;
+            normal[axis] = -dir[axis].signum();
+        }
+        far = far.min(t1);
+    }
+    (near <= far && near > 0.0).then_some((near, normal))
+}
+
+/// The nearest hit of the pole scene (the ground, the post) and its normal.
+fn hit_pole_scene(origin: Vec3, dir: Vec3) -> Option<(f32, Vec3)> {
+    let (min, max) = (Vec3::new(-POLE_HALF, 0.0, POLE_Z - POLE_HALF), Vec3::new(POLE_HALF, POLE_HEIGHT, POLE_Z + POLE_HALF));
+    let ground = (dir.y < 0.0).then(|| (-origin.y / dir.y, Vec3::Y));
+    [ground, hit_aabb(origin, dir, min, max)].into_iter().flatten().filter(|(t, _)| *t > 1e-4).min_by(|a, b| a.0.total_cmp(&b.0))
+}
+
+/// The pole scene from [`POLE_EYE`] at `size`: device depth, normals, and each pixel's surface.
+fn pole_frame(size: (u32, u32)) -> (AoFrame, Vec<Option<(Vec3, Vec3)>>) {
+    let camera = AoCamera {
+        view: glam::camera::rh::view::look_at_mat4(POLE_EYE, POLE_LOOK_AT, Vec3::Y),
+        proj: glam::camera::rh::proj::directx::perspective(50f32.to_radians(), size.0 as f32 / size.1 as f32, 100.0, 0.1),
+    };
+    let inverse = (camera.proj * camera.view).inverse();
+    let (mut depth, mut normals, mut hits) = (Vec::new(), Vec::new(), Vec::new());
+    for y in 0..size.1 {
+        for x in 0..size.0 {
+            let ndc = Vec4::new((x as f32 + 0.5) / size.0 as f32 * 2.0 - 1.0, 1.0 - (y as f32 + 0.5) / size.1 as f32 * 2.0, 0.5, 1.0);
+            let far = inverse * ndc;
+            let dir = (far.truncate() / far.w - POLE_EYE).normalize();
+            let Some((t, n)) = hit_pole_scene(POLE_EYE, dir) else {
+                depth.push(0.0);
+                normals.push([0.0, 1.0, 0.0]);
+                hits.push(None);
+                continue;
+            };
+            let p = POLE_EYE + dir * t;
+            let clip = camera.proj * camera.view * p.extend(1.0);
+            depth.push(clip.z / clip.w);
+            normals.push(n.to_array());
+            hits.push(Some((p, n)));
+        }
+    }
+    (AoFrame { depth, normals, camera, facts: facts(0, true), motion: Vec::new() }, hits)
+}
+
+/// The ground truth of what AO estimates at ground point `p` for AO radius `radius`: one less the
+/// cosine-weighted mean of XeGTAO's falloff over the hemisphere's rays (1 for a hit within
+/// [`ao::FALLOFF_FRACTION`]'s start, falling to 0 at the effect radius; 0 for a miss).
+fn pole_ground_truth(p: Vec3, radius: f32) -> f32 {
+    let reach = radius * 1.457;
+    let (from, range) = (reach * (1.0 - ao::FALLOFF_FRACTION), reach * ao::FALLOFF_FRACTION);
+    let (n, tangent, bitangent) = (Vec3::Y, Vec3::X, Vec3::Z);
+    let hidden: f32 = (0..GROUND_TRUTH_RAYS)
+        .map(|i| {
+            let u = (i as f32 + 0.5) / GROUND_TRUTH_RAYS as f32;
+            let v = (i.reverse_bits() as f64 / 4_294_967_296.0) as f32;
+            let (r, phi) = (u.sqrt(), std::f32::consts::TAU * v);
+            let dir = (tangent * r * libm::cosf(phi) + bitangent * r * libm::sinf(phi) + n * (1.0 - u).sqrt()).normalize();
+            hit_pole_scene(p + n * 1e-3, dir).map_or(0.0, |(t, _)| (1.0 - (t - from) / range).clamp(0.0, 1.0))
+        })
+        .sum();
+    1.0 - hidden / GROUND_TRUTH_RAYS as f32
+}
+
+/// The pole scene's ground band behind the post under `settings`: (the AO term's mean, the ground
+/// truth's mean) over every [`GROUND_TRUTH_STRIDE`]th band pixel, at render size.
+fn pole_band(gpu: &Gpu, settings: &AoSettings, name: &str) -> (f32, f32) {
+    let (frame, hits) = pole_frame(POLE_SIZE);
+    let image = ao::ao_render_images(gpu, settings, POLE_SIZE, std::slice::from_ref(&frame)).expect("AO").remove(0);
+    write_evidence(name, &grey(&image));
+    let (mut term, mut truth, mut count) = (0.0, 0.0, 0);
+    for (index, hit) in hits.iter().enumerate() {
+        let Some((p, n)) = hit else { continue };
+        let behind = POLE_Z - p.z;
+        let on_band = n.y > 0.5 && (POLE_BEHIND.0..POLE_BEHIND.1).contains(&behind) && p.x.abs() < POLE_ACROSS;
+        if !on_band || !(index as u32).is_multiple_of(GROUND_TRUTH_STRIDE) {
+            continue;
+        }
+        term += image.at(index as u32 % POLE_SIZE.0, index as u32 / POLE_SIZE.0);
+        truth += pole_ground_truth(*p, settings.radius);
+        count += 1;
+    }
+    assert!(count > 50, "the band holds {count} sampled pixels");
+    (term / count as f32, truth / count as f32)
+}
+
+/// The AO settings the bitmask rows draw: the preset's sampling at the plain power, by the
+/// visibility bitmask.
+fn bitmask_settings(preset: QualityPreset) -> AoSettings {
+    AoSettings { intensity: PLAIN_INTENSITY, ..settings(quality(preset)) }.with_method(AoMethod::Bitmask)
+}
+
+/// B.4 (prior-art P7, "no halo behind thin objects"): a 6 cm post standing on open ground hides a
+/// little of the ground's sky behind it. XeGTAO takes the post's front face (nearer the camera)
+/// for a wall of infinite thickness and darkens the ground behind it, a halo that slides with
+/// parallax; the bitmask draws that ground no more than [`POLE_HALO_MAX`] below the ray-cast
+/// ground truth (XeGTAO's falloff, the same radius) at medium, high and ultra. The horizons are
+/// logged beside it.
+#[test]
+#[ignore = "GPU: run with -- --ignored metal"]
+fn metal_bitmask_ao_draws_no_halo_on_the_ground_behind_a_thin_post() {
+    let Some(gpu) = gpu() else { return };
+    let mut problems = Vec::new();
+    for preset in [QualityPreset::Medium, QualityPreset::High, QualityPreset::Ultra] {
+        let horizons = AoSettings { intensity: PLAIN_INTENSITY, ..settings(quality(preset)) };
+        let (gtao, _) = pole_band(&gpu, &horizons, &format!("pole-horizons-{}", preset.wire()));
+        let (bitmask, truth) = pole_band(&gpu, &bitmask_settings(preset), &format!("pole-bitmask-{}", preset.wire()));
+        eprintln!("{}: ground behind the post: horizons {gtao:.3}, bitmask {bitmask:.3}, ground truth {truth:.3}", preset.wire());
+        if truth - bitmask > POLE_HALO_MAX {
+            problems.push(format!("{}: bitmask {bitmask:.3} against the ground truth {truth:.3} (horizons {gtao:.3})", preset.wire()));
+        }
+    }
+    assert!(problems.is_empty(), "{problems:#?}");
+}
+
+/// B.4: contact creases stay. The bitmask on the log wall agrees with the ray-cast ground truth as
+/// the horizons do (the logs' grooves hide about a fifth of the sky).
+#[test]
+#[ignore = "GPU: run with -- --ignored metal"]
+fn metal_bitmask_ao_on_a_log_wall_matches_the_ray_cast_ground_truth() {
+    let Some(gpu) = gpu() else { return };
+    let (frame, hits) = log_wall_frame(LOG_WALL_SIZE);
+    let mut problems = Vec::new();
+    for preset in [QualityPreset::Medium, QualityPreset::High, QualityPreset::Ultra] {
+        let settings = AoSettings { radius: LOG_WALL_RADIUS, ..bitmask_settings(preset) };
+        let image = ao::ao_render_images(&gpu, &settings, LOG_WALL_SIZE, std::slice::from_ref(&frame)).expect("AO").remove(0);
+        write_evidence(&format!("log-wall-bitmask-{}", preset.wire()), &grey(&image));
+        let (mut term, mut truth, mut count) = (0.0, 0.0, 0);
+        for (index, hit) in hits.iter().enumerate() {
+            let Some((p, n, log)) = hit else { continue };
+            let x = index as u32 % LOG_WALL_SIZE.0;
+            if !(2..LOG_COURSES - 2).contains(log) || !(index as u32).is_multiple_of(GROUND_TRUTH_STRIDE) || !(64..LOG_WALL_SIZE.0 - 64).contains(&x) {
+                continue;
+            }
+            term += image.at(x, index as u32 / LOG_WALL_SIZE.0);
+            truth += ground_truth_visibility(*p, *n, LOG_WALL_RADIUS * 1.457);
+            count += 1;
+        }
+        let (term, truth) = (term / count as f32, truth / count as f32);
+        eprintln!("{}: bitmask {term:.3}, ground truth {truth:.3} over {count} pixels", preset.wire());
+        if (term - truth).abs() > LOG_WALL_TRUTH_MAX {
+            problems.push(format!("{}: bitmask {term:.3} against the ground truth {truth:.3}", preset.wire()));
+        }
+    }
+    assert!(problems.is_empty(), "{problems:#?}");
+}
+
+/// B.4: open flat ground stays flat under the bitmask (a sample on the tangent plane hides no
+/// sector), at every AO preset.
+#[test]
+#[ignore = "GPU: run with -- --ignored metal"]
+fn metal_bitmask_ao_reads_open_flat_ground_flat() {
+    let Some(gpu) = gpu() else { return };
+    let frames: Vec<AoFrame> = (0..8).map(|i| open_ground_frame(GROUND_SIZE, i)).collect();
+    let top = first_ground_row(&frames[0], GROUND_SIZE) + GROUND_ROWS_BELOW_HORIZON;
+    let mut problems = Vec::new();
+    for preset in [QualityPreset::Medium, QualityPreset::High, QualityPreset::Ultra] {
+        let quality = quality(preset);
+        let used = if quality.temporal { &frames[..] } else { &frames[..1] };
+        let image = ao::ao_render_images(&gpu, &settings(quality).with_method(AoMethod::Bitmask), GROUND_SIZE, used).expect("AO").pop().expect("a term");
+        let texels: Vec<f32> = (top..GROUND_SIZE.1).flat_map(|y| (0..GROUND_SIZE.0).map(move |x| (x, y))).map(|(x, y)| image.at(x, y)).collect();
+        let mean = texels.iter().sum::<f32>() / texels.len() as f32;
+        let lowest = texels.iter().copied().fold(1.0, f32::min);
+        eprintln!("{}: bitmask open ground mean {mean:.4}, lowest {lowest:.3}", preset.wire());
+        if lowest < GROUND_LOWEST {
+            problems.push(format!("{}: open ground's lowest {lowest:.3}", preset.wire()));
+        }
+    }
+    assert!(problems.is_empty(), "{problems:#?}");
+}
+
+/// B.4's budget for AO at high with the bitmask (TIER-AB plan §5: "<= 1.0 ms at high", 1080p).
+const BITMASK_HIGH_BUDGET_MS: f32 = 1.0;
+
+/// B.4: the bitmask's and the GI's cost at 1080p beside the horizons' on the same frames, medium
+/// to ultra (recorded), with high within [`BITMASK_HIGH_BUDGET_MS`] (asserted, both).
+#[test]
+#[ignore = "GPU: run with -- --ignored metal"]
+fn metal_bitmask_ao_costs_within_its_budget_at_1080p() {
+    let Some(gpu) = gpu() else { return };
+    let mut rows = Vec::new();
+    for preset in [QualityPreset::Medium, QualityPreset::High, QualityPreset::Ultra] {
+        let horizons = settings(quality(preset));
+        let (Some((h50, h95)), Some((b50, b95))) = (cost_of(&gpu, &horizons, EYE, false), cost_of(&gpu, &horizons.with_method(AoMethod::Bitmask), EYE, false)) else {
+            eprintln!("skipped: no TIMESTAMP_QUERY");
+            return;
+        };
+        let (g50, g95) = cost_of(&gpu, &horizons.with_method(AoMethod::BitmaskGi), EYE, false).expect("timestamps");
+        eprintln!("ao {} 1080p: horizons p50 {h50:.3} p95 {h95:.3} ms, bitmask p50 {b50:.3} p95 {b95:.3} ms, bitmask GI p50 {g50:.3} p95 {g95:.3} ms", preset.wire());
+        rows.push(serde_json::json!({ "preset": preset.wire(), "horizons_p50_ms": h50, "horizons_p95_ms": h95, "bitmask_p50_ms": b50, "bitmask_p95_ms": b95, "gi_p50_ms": g50, "gi_p95_ms": g95 }));
+        if preset == QualityPreset::High {
+            assert!(b50 <= BITMASK_HIGH_BUDGET_MS, "bitmask AO at high costs {b50} ms at 1080p, over {BITMASK_HIGH_BUDGET_MS} ms");
+            assert!(g50 <= BITMASK_HIGH_BUDGET_MS, "bitmask GI at high costs {g50} ms at 1080p, over {BITMASK_HIGH_BUDGET_MS} ms");
+        }
+    }
+    if let Ok(path) = std::env::var("GENEX_PERF_OUT") {
+        let report = serde_json::json!({ "row": "ao-bitmask-cost", "adapter": gpu.receipt().adapter, "samples": COST_SAMPLES, "rows": rows });
+        std::fs::write(path, serde_json::to_string_pretty(&report).expect("json")).expect("perf written");
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Renderer pass 2, B.4 (prior-art B1.2): screen-space GI on the bitmask. The corner scene's box is
+// red, the floor and the wall white: the floor in front of the box takes its red, the floor by the
+// wall takes white.
+
+/// The light the corner scene's previous frame drew: the box red, the floor and wall white, the
+/// sky black (linear, the scene's units).
+const GI_RED: [f32; 4] = [1.0, 0.05, 0.05, 1.0];
+const GI_WHITE: [f32; 4] = [0.5, 0.5, 0.5, 1.0];
+/// The least chroma `(r - g) / (r + g)` of the light the floor in front of the red box gathers,
+/// and the least light (r) there; the most chroma by the white wall away from the box.
+const GI_RED_CHROMA_MIN: f32 = 0.5;
+const GI_RED_LIGHT_MIN: f32 = 0.01;
+const GI_WHITE_CHROMA_MAX: f32 = 0.1;
+/// The most the GI term's visibility may differ from the bitmask's own (the same search).
+const GI_VISIBILITY_MAX: f32 = 0.02;
+
+/// The corner scene's light at render size: what each pixel shows, lit (the box red when
+/// `with_box`).
+fn corner_light(frame: &AoFrame, size: (u32, u32), with_box: bool) -> Vec<[f32; 4]> {
+    let inverse = (frame.camera.proj * frame.camera.view).inverse();
+    let eye = frame.camera.view.inverse().w_axis.truncate();
+    (0..size.1)
+        .flat_map(|y| (0..size.0).map(move |x| (x, y)))
+        .map(|(x, y)| {
+            let index = (y * size.0 + x) as usize;
+            if frame.depth[index] <= 0.0 {
+                return [0.0; 4];
+            }
+            let ndc = Vec4::new((x as f32 + 0.5) / size.0 as f32 * 2.0 - 1.0, 1.0 - (y as f32 + 0.5) / size.1 as f32 * 2.0, frame.depth[index], 1.0);
+            let world = inverse * ndc;
+            let p = world.truncate() / world.w;
+            let on_box = with_box && (BOX_MIN - Vec3::splat(1e-3)).cmple(p).all() && p.cmple(BOX_MAX + Vec3::splat(1e-3)).all() && p.distance(eye) > 0.0;
+            if on_box { GI_RED } else { GI_WHITE }
+        })
+        .collect()
+}
+
+/// The mean GI light over the floor points `xs` x `zs` (world), at render size.
+fn floor_light(image: &AoImage, frame: &AoFrame, size: (u32, u32), xs: (f32, f32), zs: (f32, f32)) -> [f32; 3] {
+    let mut sum = [0.0; 3];
+    let mut count = 0.0;
+    for i in 0..8 {
+        for j in 0..8 {
+            let world = Vec3::new(xs.0 + (xs.1 - xs.0) * i as f32 / 7.0, 0.0, zs.0 + (zs.1 - zs.0) * j as f32 / 7.0);
+            let (x, y) = ao_pixel(frame, size, world);
+            let light = image.light_at(x, y);
+            (0..3).for_each(|c| sum[c] += light[c]);
+            count += 1.0;
+        }
+    }
+    sum.map(|v| v / count)
+}
+
+fn chroma(light: [f32; 3]) -> f32 {
+    (light[0] - light[1]) / (light[0] + light[1]).max(1e-6)
+}
+
+/// B.4 (B1.2 SSGI, "colour bleed consistent with A.4"): at high and ultra the floor in front of the
+/// red box gathers red light and the floor by the white wall white, and the term's visibility is
+/// the bitmask's own.
+#[test]
+#[ignore = "GPU: run with -- --ignored metal"]
+fn metal_bitmask_gi_bleeds_the_red_box_onto_the_floor_in_front_of_it() {
+    let Some(gpu) = gpu() else { return };
+    let size = (WIDTH * 2, HEIGHT * 2);
+    let frames: Vec<AoFrame> = (0..4).map(|i| corner_frame(EYE, true, facts(i, i == 0), size)).collect();
+    let light = corner_light(&frames[0], size, true);
+    let mut problems = Vec::new();
+    for preset in [QualityPreset::High, QualityPreset::Ultra] {
+        let gi = settings(quality(preset)).with_method(AoMethod::BitmaskGi);
+        let image = ao::ao_gi_images(&gpu, &gi, size, &frames, std::slice::from_ref(&light)).expect("GI").pop().expect("a term");
+        let bitmask = ao::ao_render_images(&gpu, &gi.with_method(AoMethod::Bitmask), size, &frames).expect("AO").pop().expect("a term");
+        write_evidence(&format!("gi-visibility-{}", preset.wire()), &grey(&image));
+        let red = floor_light(&image, &frames[0], size, (-0.35, 0.35), (-0.75, -0.55));
+        let white = floor_light(&image, &frames[0], size, (1.3, 2.0), (-1.85, -1.65));
+        let open = floor_light(&image, &frames[0], size, (1.3, 2.0), (0.6, 1.0));
+        let visibility_gap = image.visibility.iter().zip(&bitmask.visibility).map(|(a, b)| f32::from(a.abs_diff(*b)) / 255.0).sum::<f32>() / image.visibility.len() as f32;
+        eprintln!("{}: floor by the red box {red:.4?} (chroma {:.3}), by the white wall {white:.4?} (chroma {:.3}), open floor {open:.4?}; visibility vs bitmask {visibility_gap:.4}", preset.wire(), chroma(red), chroma(white));
+        if chroma(red) < GI_RED_CHROMA_MIN || red[0] < GI_RED_LIGHT_MIN {
+            problems.push(format!("{}: the floor by the red box gathers {red:?}", preset.wire()));
+        }
+        if chroma(white).abs() > GI_WHITE_CHROMA_MAX || white[0] <= open[0] {
+            problems.push(format!("{}: the floor by the white wall gathers {white:?} (open floor {open:?})", preset.wire()));
+        }
+        if visibility_gap > GI_VISIBILITY_MAX {
+            problems.push(format!("{}: the GI term's visibility differs from the bitmask's by {visibility_gap:.4}", preset.wire()));
+        }
+    }
+    assert!(problems.is_empty(), "{problems:#?}");
+}
+
+/// Frames the red box stands before it goes, and frames after, before the GI-trail row reads.
+const GI_TRAIL_BEFORE: u64 = 12;
+const GI_TRAIL_AFTER: u64 = 3;
+/// The most red the floor where the box stood may still gather [`GI_TRAIL_AFTER`] frames after it
+/// went (its share of what the box sent).
+const GI_TRAIL_RESIDUE_MAX: f32 = 0.1;
+
+/// B.4 (SSGI's own history): when the red box goes, the floor in front of it stops gathering red
+/// within [`GI_TRAIL_AFTER`] frames. The floor's depth does not change, so the history's depth test
+/// keeps it; the history's light is held to the window's own estimates.
+#[test]
+#[ignore = "GPU: run with -- --ignored metal"]
+fn metal_bitmask_gi_leaves_no_red_trail_when_the_box_goes() {
+    let Some(gpu) = gpu() else { return };
+    let size = (WIDTH * 2, HEIGHT * 2);
+    let gi = settings(quality(QualityPreset::High)).with_method(AoMethod::BitmaskGi);
+    let with_box: Vec<AoFrame> = (0..GI_TRAIL_BEFORE).map(|i| corner_frame(EYE, true, facts(i, i == 0), size)).collect();
+    let light = corner_light(&with_box[0], size, true);
+    let before = ao::ao_gi_images(&gpu, &gi, size, &with_box, std::slice::from_ref(&light)).expect("GI").pop().expect("a term");
+    let red_before = floor_light(&before, &with_box[0], size, (-0.35, 0.35), (-0.75, -0.55))[0];
+    let mut frames = with_box.clone();
+    frames.extend((GI_TRAIL_BEFORE..GI_TRAIL_BEFORE + GI_TRAIL_AFTER).map(|i| corner_frame(EYE, false, facts(i, false), size)));
+    // The box's frames see its red, the frames after it white floor and wall.
+    let empty_light = corner_light(&frames[frames.len() - 1], size, false);
+    let lights: Vec<Vec<[f32; 4]>> = (0..frames.len()).map(|i| if (i as u64) < GI_TRAIL_BEFORE { light.clone() } else { empty_light.clone() }).collect();
+    let after = ao::ao_gi_images(&gpu, &gi, size, &frames, &lights).expect("GI").pop().expect("a term");
+    let left = floor_light(&after, &frames[0], size, (-0.35, 0.35), (-0.75, -0.55));
+    let residue = (left[0] - left[1]) / red_before.max(1e-6);
+    eprintln!("floor where the box stood: red {red_before:.4} with it, {left:.4?} {GI_TRAIL_AFTER} frames after it went (red residue {residue:.3})");
+    assert!(residue <= GI_TRAIL_RESIDUE_MAX, "the floor keeps {residue:.3} of the box's red {GI_TRAIL_AFTER} frames after it went");
+}
+
+/// Frames the box's light is white for after it was red, before the light-switch row reads, and
+/// the least share of the white light alone's gather (its green) the floor then holds: the
+/// temporal blend (`HISTORY_WEIGHT` 0.9) takes 1 - 0.9^12 = 72% of a new light in that time.
+const GI_SWITCH_AFTER: u64 = 12;
+const GI_SWITCH_SHARE_MIN: f32 = 0.5;
+
+/// Look-integration L2 (B.4 on the frame): the renderer hands AO the previous frame's lit scene,
+/// which is TAA's other history slot every frame while the depth and normals keep their pooled
+/// targets (the same generation). Here the box stays and only its light turns from red to white:
+/// within [`GI_SWITCH_AFTER`] frames the floor in front of it gathers the white light. AO's bind
+/// groups were cached without the light, so it kept gathering the first frame's red for good.
+#[test]
+#[ignore = "GPU: run with -- --ignored metal"]
+fn metal_bitmask_gi_gathers_each_frames_light_on_unchanged_inputs() {
+    let Some(gpu) = gpu() else { return };
+    let size = (WIDTH * 2, HEIGHT * 2);
+    let gi = settings(quality(QualityPreset::High)).with_method(AoMethod::BitmaskGi);
+    let frames: Vec<AoFrame> = (0..GI_TRAIL_BEFORE + GI_SWITCH_AFTER).map(|i| corner_frame(EYE, true, facts(i, i == 0), size)).collect();
+    let (red, white) = (corner_light(&frames[0], size, true), corner_light(&frames[0], size, false));
+    let lights: Vec<Vec<[f32; 4]>> = (0..frames.len()).map(|i| if (i as u64) < GI_TRAIL_BEFORE { red.clone() } else { white.clone() }).collect();
+    let in_front = |image: &AoImage| floor_light(image, &frames[0], size, (-0.35, 0.35), (-0.75, -0.55));
+    let switched = in_front(&ao::ao_gi_images(&gpu, &gi, size, &frames, &lights).expect("GI").pop().expect("a term"));
+    let white_alone = in_front(&ao::ao_gi_images(&gpu, &gi, size, &frames, std::slice::from_ref(&white)).expect("GI").pop().expect("a term"));
+    let share = switched[1] / white_alone[1].max(1e-6);
+    eprintln!("floor in front of the box {GI_SWITCH_AFTER} frames after its light turned white: {switched:.4?}, under the white light alone {white_alone:.4?} (green share {share:.3})");
+    assert!(share >= GI_SWITCH_SHARE_MIN, "the floor holds {share:.3} of the white light's gather {GI_SWITCH_AFTER} frames after the light turned white");
+}
+
+/// The forward shader's AO accessor and environment light over one AO texel bound at binding 16
+/// (`texel`, rgba16float) on a frame of `pre_exposure`, under the pipeline constants `constants`:
+/// per surface row (normal; view with roughness in w; albedo with metallic in w; alpha in x) the
+/// environment light it reflects and the accessor's answer. A black specular sky, a zero BRDF LUT
+/// and a uniform SH9 sky of irradiance `sky` leave the diffuse light alone.
+fn forward_gi_probe(gpu: &Gpu, (texel, pre_exposure, sky): ([f32; 4], f32, f32), constants: &[(&str, f64)], surfaces: &[[[f32; 4]; 4]]) -> Vec<([f32; 3], [f32; 4])> {
+    use wgpu::util::DeviceExt;
+    let base = genex_render::shaders::FORWARD;
+    // A compute probe has no light bins: the environment is the sky's layer and the sky's SH9.
+    let walk = "fn gx_env_light(world_pos: vec3<f32>, dir: vec3<f32>, lod: f32, n: vec3<f32>) -> GxEnvLight {";
+    let patched = base.replacen(walk, "fn gx_env_light_binned(world_pos: vec3<f32>, dir: vec3<f32>, lod: f32, n: vec3<f32>) -> GxEnvLight {", 1);
+    assert_ne!(patched, base, "the forward text no longer walks the environment here");
+    let source = format!(
+        "{patched}\n{}",
+        r"
+@group(0) @binding(20) var<storage, read_write> probe_rows: array<vec4<f32>>;
+
+fn gx_env_light(world_pos: vec3<f32>, dir: vec3<f32>, lod: f32, n: vec3<f32>) -> GxEnvLight {
+    return GxEnvLight(gx_env_sky(dir, lod), gx_env_irradiance(n));
+}
+
+@compute @workgroup_size(1)
+fn cs_gi(@builtin(workgroup_id) id: vec3<u32>) {
+    let at = id.x * 4u;
+    let n = normalize(probe_rows[at].xyz);
+    let material = probe_rows[at + 2u];
+    let s = Surface(vec3<f32>(0.0), n, n, normalize(probe_rows[at + 1u].xyz), material.rgb, probe_rows[at + 3u].x, material.w, probe_rows[at + 1u].w);
+    let accessor = gx_ambient_occlusion(vec3<f32>(0.0));
+    probe_rows[at + 3u] = vec4<f32>(gx_environment_light(s), 1.0);
+    probe_rows[at] = accessor;
+}
+"
+    );
+    let device = &gpu.device;
+    let module = device.create_shader_module(wgpu::ShaderModuleDescriptor { label: Some("gi probe"), source: wgpu::ShaderSource::Wgsl(source.into()) });
+    let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+        label: Some("gi probe"),
+        layout: None,
+        module: &module,
+        entry_point: Some("cs_gi"),
+        compilation_options: wgpu::PipelineCompilationOptions { constants, ..Default::default() },
+        cache: None,
+    });
+    let texture = |label, format, layers, data: &[u8]| {
+        let size = wgpu::Extent3d { width: 1, height: 1, depth_or_array_layers: layers };
+        let texture = device.create_texture(&wgpu::TextureDescriptor { label: Some(label), size, mip_level_count: 1, sample_count: 1, dimension: wgpu::TextureDimension::D2, format, usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST, view_formats: &[] });
+        if !data.is_empty() {
+            gpu.queue.write_texture(texture.as_image_copy(), data, wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(8), rows_per_image: Some(1) }, size);
+        }
+        texture
+    };
+    let halves: Vec<u8> = texel.iter().flat_map(|v| genex_render::post::tonemap::f32_to_f16(*v).to_le_bytes()).collect();
+    let term = texture("gi probe term", wgpu::TextureFormat::Rgba16Float, 1, &halves).create_view(&Default::default());
+    let lut = texture("gi probe lut", wgpu::TextureFormat::Rgba16Float, 1, &[]).create_view(&Default::default());
+    let cube = texture("gi probe sky", wgpu::TextureFormat::Rgba16Float, 6, &[]).create_view(&wgpu::TextureViewDescriptor { dimension: Some(wgpu::TextureViewDimension::CubeArray), array_layer_count: Some(6), ..Default::default() });
+    let sampler = device.create_sampler(&wgpu::SamplerDescriptor { mag_filter: wgpu::FilterMode::Linear, min_filter: wgpu::FilterMode::Linear, ..Default::default() });
+    let frame = genex_render::layout::GpuFrame { cascade_splits: [0.0, 0.0, pre_exposure, 0.0], ..Default::default() };
+    let frame = device.create_buffer_init(&wgpu::util::BufferInitDescriptor { label: Some("gi probe frame"), contents: bytemuck::bytes_of(&frame), usage: wgpu::BufferUsages::UNIFORM });
+    let sh = device.create_buffer_init(&wgpu::util::BufferInitDescriptor { label: Some("gi probe sh"), contents: bytemuck::bytes_of(&uniform_sky(sky)), usage: wgpu::BufferUsages::UNIFORM });
+    let rows: Vec<[f32; 4]> = surfaces.iter().flatten().copied().collect();
+    let storage = device.create_buffer_init(&wgpu::util::BufferInitDescriptor { label: Some("gi probe rows"), contents: bytemuck::cast_slice(&rows), usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC });
+    let entries = [
+        wgpu::BindGroupEntry { binding: 0, resource: frame.as_entire_binding() },
+        wgpu::BindGroupEntry { binding: 11, resource: wgpu::BindingResource::TextureView(&cube) },
+        wgpu::BindGroupEntry { binding: 12, resource: sh.as_entire_binding() },
+        wgpu::BindGroupEntry { binding: 13, resource: wgpu::BindingResource::TextureView(&lut) },
+        wgpu::BindGroupEntry { binding: 14, resource: wgpu::BindingResource::Sampler(&sampler) },
+        wgpu::BindGroupEntry { binding: 16, resource: wgpu::BindingResource::TextureView(&term) },
+        wgpu::BindGroupEntry { binding: 20, resource: storage.as_entire_binding() },
+    ];
+    let group = device.create_bind_group(&wgpu::BindGroupDescriptor { label: Some("gi probe"), layout: &pipeline.get_bind_group_layout(0), entries: &entries });
+    let bytes = (rows.len() * 16) as u64;
+    let staging = device.create_buffer(&wgpu::BufferDescriptor { label: Some("gi probe readback"), size: bytes, usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ, mapped_at_creation: false });
+    let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("gi probe") });
+    {
+        let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor { label: Some("gi probe"), timestamp_writes: None });
+        pass.set_pipeline(&pipeline);
+        pass.set_bind_group(0, &group, &[]);
+        pass.dispatch_workgroups(surfaces.len() as u32, 1, 1);
+    }
+    encoder.copy_buffer_to_buffer(&storage, 0, &staging, 0, bytes);
+    gpu.queue.submit([encoder.finish()]);
+    staging.slice(..).map_async(wgpu::MapMode::Read, |result| result.expect("mapped"));
+    let _ = device.poll(wgpu::PollType::wait_indefinitely());
+    let out: Vec<[f32; 4]> = bytemuck::cast_slice::<u8, [f32; 4]>(&staging.slice(..).get_mapped_range().expect("mapped range")).to_vec();
+    out.chunks(4).map(|row| ([row[3][0], row[3][1], row[3][2]], row[0])).collect()
+}
+
+/// SH9 coefficients of a uniform sky whose cosine-weighted irradiance (as `gx_env_irradiance`
+/// reads it) is `irradiance` in every direction.
+fn uniform_sky(irradiance: f32) -> genex_render::abi::GxEnvSh {
+    let mut sh = genex_render::abi::GxEnvSh::default();
+    sh.coefficients[0] = [irradiance / 0.282_095, irradiance / 0.282_095, irradiance / 0.282_095, 0.0];
+    sh
+}
+
+/// A GI term's texel for the consumer rows: visibility 0.5 and a warm light that read as a bent
+/// normal (its length lies inside `gx_ao_decode`'s band) would tilt the sky light.
+const GI_TEXEL: [f32; 4] = [0.5, 0.2, 0.1, 0.05];
+/// How far the probe's light may sit from albedo times the GI (half-float texel, f32 shading).
+const GI_CONSUMER_TOLERANCE: f32 = 2e-3;
+/// The probe frame's pre-exposure: the term's light is pre-exposed, as TAA's history stores it.
+const GI_PROBE_EXPOSURE: f32 = 2.0;
+
+/// Look-integration L2 (B.4 consumer): under `GX_AO_GI` the forward pass reads the AO term's gba
+/// as the GI's light, never as a bent normal, brings it to the scene's units by the frame's
+/// pre-exposure (the light it gathered was stored pre-exposed) and adds albedo times it to an
+/// opaque surface's diffuse indirect light (with the environment's diffuse weight); a blended
+/// surface takes none, and without the constant the same texel adds nothing.
+#[test]
+#[ignore = "GPU: run with -- --ignored metal"]
+fn metal_the_forward_pass_adds_the_gi_terms_light_to_diffuse_indirect_light() {
+    let Some(gpu) = gpu() else { return };
+    let albedo = [0.8, 0.6, 0.4];
+    let surface = |alpha: f32| [[0.0, 1.0, 0.0, 0.0], [0.0, 0.6, 0.8, 0.7], [albedo[0], albedo[1], albedo[2], 0.0], [alpha, 0.0, 0.0, 0.0]];
+    let gi_on = [("GX_SCENE_HDR", 1.0), ("GX_AO_GI", 1.0)];
+    let on = forward_gi_probe(&gpu, (GI_TEXEL, GI_PROBE_EXPOSURE, 0.0), &gi_on, &[surface(1.0), surface(0.5)]);
+    let off = forward_gi_probe(&gpu, (GI_TEXEL, GI_PROBE_EXPOSURE, 0.0), &[("GX_SCENE_HDR", 1.0)], &[surface(1.0)]);
+    let gi = [GI_TEXEL[1], GI_TEXEL[2], GI_TEXEL[3]].map(|light| light / GI_PROBE_EXPOSURE);
+    eprintln!("GI on: opaque {:?} (accessor {:?}), blended {:?}; GI off: opaque {:?} (accessor {:?})", on[0].0, on[0].1, on[1].0, off[0].0, off[0].1);
+    let mut problems = Vec::new();
+    for c in 0..3 {
+        let want = albedo[c] * gi[c];
+        if (on[0].0[c] - want).abs() > GI_CONSUMER_TOLERANCE {
+            problems.push(format!("opaque channel {c}: {} against albedo x GI {want}", on[0].0[c]));
+        }
+        if (on[0].1[c] - gi[c]).abs() > GI_CONSUMER_TOLERANCE {
+            problems.push(format!("accessor channel {c}: {} against the GI {}", on[0].1[c], gi[c]));
+        }
+        if on[1].0[c].abs() > GI_CONSUMER_TOLERANCE || off[0].0[c].abs() > GI_CONSUMER_TOLERANCE {
+            problems.push(format!("channel {c}: blended {} and GI off {} take light", on[1].0[c], off[0].0[c]));
+        }
+    }
+    if (on[0].1[3] - GI_TEXEL[0]).abs() > GI_CONSUMER_TOLERANCE {
+        problems.push(format!("the visibility reads {} against {}", on[0].1[3], GI_TEXEL[0]));
+    }
+    assert!(problems.is_empty(), "{problems:#?}");
+}
+
+/// Look-integration L2 (B.4 consumer): where the term carries the GI's light, the sky's diffuse
+/// light is occluded by the visibility as it is, without Jimenez's multi-bounce fit: the fit stands
+/// in for the light nearby surfaces bounce, which the GI now adds itself, so keeping both counted
+/// the bounce twice. Without the constant the fit stays.
+#[test]
+#[ignore = "GPU: run with -- --ignored metal"]
+fn metal_with_gi_the_sky_light_is_occluded_without_the_multi_bounce_fit() {
+    let Some(gpu) = gpu() else { return };
+    let albedo = [0.8, 0.6, 0.4];
+    let surface = [[0.0, 1.0, 0.0, 0.0], [0.0, 0.6, 0.8, 0.7], [albedo[0], albedo[1], albedo[2], 0.0], [1.0, 0.0, 0.0, 0.0]];
+    let visibility = 0.5;
+    let gi_on = [("GX_SCENE_HDR", 1.0), ("GX_AO_GI", 1.0)];
+    let on = forward_gi_probe(&gpu, ([visibility, 0.0, 0.0, 0.0], 1.0, 1.0), &gi_on, &[surface]);
+    // The same visibility as a term without GI (an r8 texel reads gba (0, 0, 1): no bent normal).
+    let off = forward_gi_probe(&gpu, ([visibility, 0.0, 0.0, 1.0], 1.0, 1.0), &[("GX_SCENE_HDR", 1.0)], &[surface]);
+    eprintln!("sky light at visibility {visibility}: with GI {:?}, without {:?}", on[0].0, off[0].0);
+    for (c, ((with, without), albedo)) in on[0].0.iter().zip(off[0].0).zip(albedo).enumerate() {
+        let want = albedo * visibility;
+        assert!((with - want).abs() <= GI_CONSUMER_TOLERANCE, "channel {c}: {with} against albedo x visibility {want}");
+        assert!(without > want + GI_CONSUMER_TOLERANCE, "channel {c}: without GI the fit lifts {without} over {want}");
     }
 }

@@ -1,15 +1,17 @@
-// Bloom's upsample (graph node 19, RQ4.2): a 3x3 tent over the smaller mip, its radius scaled by
-// the look's spread, added onto the mip above (the pipeline's additive blend over `Load`), from
-// the smallest mip back up to the chain's top. Mip 0 ends holding the sum of every mip's blur; the
-// tonemap divides it by the mip count (`GxTonemapParams::shape.w`) and composites
-// `mix(scene, bloom, intensity)`, so the bloom image keeps the scene's mean radiance.
+// Bloom's upsample (graph node 19, RQ4.2; renderer pass 2, P6): a 3x3 tent one texel wide over
+// the smaller mip, blended into the mip above by the pass's blend constant
+// (`(1 - f) mip + f tent`, `post::bloom::blend_factors`), from the smallest mip back up to the
+// chain's top. Mip 0 ends holding every mip's blur weighed by the look's spread
+// (`post::bloom::mip_weights`, weights that sum to 1), so the bloom image keeps the scene's mean
+// radiance and the tonemap composites `mix(scene, bloom, intensity)`. The tent never widens: a
+// spread that spaced its taps further apart drew a lattice of copies around a small light.
 
 // Mirrors `post::bloom::GpuBloomParams`.
 struct BloomParams {
-    // xy: the source mip's size in texels; zw: 1 / it.
+    // xy: the source's size in texels; zw: the filter's tap spacing in uv (one source texel here).
     source: vec4<f32>,
-    // x: intensity; y: threshold (0: none); z: the spread (radius multiplier); w: the threshold's
-    // soft knee as a fraction of it (`post::bloom::THRESHOLD_KNEE`).
+    // x: intensity; y: threshold (0: none); z: reserved; w: the threshold's soft knee as a
+    // fraction of it (`post::bloom::THRESHOLD_KNEE`).
     shape: vec4<f32>,
     // x: the mip written; y: mips in the chain; z: 1 on the first downsample (Karis, threshold); w: reserved.
     mip: vec4<u32>,
@@ -35,7 +37,7 @@ fn vs_bloom(@builtin(vertex_index) index: u32) -> BloomOut {
 
 @fragment
 fn fs_bloom_up(in: BloomOut) -> @location(0) vec4<f32> {
-    let radius = gx_bloom.source.zw * gx_bloom.shape.z;
+    let radius = gx_bloom.source.zw;
     var sum = vec3<f32>(0.0);
     for (var y = -1; y <= 1; y++) {
         for (var x = -1; x <= 1; x++) {

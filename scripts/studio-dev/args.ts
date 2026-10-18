@@ -1,6 +1,6 @@
 import { DevMethod, operationSchema, type Operation } from "../../src/main/dev/protocol.ts";
 export const USAGE =
-  "Usage: studio:dev -- fixtures | builds [--prune] | start|status|stop|restart|clean|shell|capture|snapshot|logs|runs|ui|diagnostics --profile SLUG; start --providers live --fresh-machine meets the app as a new Mac account, shell opens that account's terminal; capture/logs take --surface desktop|game|native (a native capture takes --frame pinned|live); ui/diagnostics take --request FILE, --request - (stdin) or --json '{\"method\":...}'";
+  "Usage: studio:dev -- fixtures | builds [--prune] | start|status|stop|restart|clean|shell|capture|snapshot|logs|runs|ui|diagnostics --profile SLUG; start --providers live --fresh-machine meets the app as a new Mac account, shell opens that account's terminal; capture/logs take --surface desktop|game|native (a native capture takes --frame pinned|live, and a pinned one --size WxH); ui/diagnostics take --request FILE, --request - (stdin) or --json '{\"method\":...}'";
 export const COMMANDS = [
   "fixtures",
   "builds",
@@ -63,6 +63,12 @@ function flagsOf(args: string[]): Flags {
   return { get, int };
 }
 
+/** `--size WxH` as `{width, height}`; anything else is passed on for the schema to refuse. */
+function captureSize(value: string | undefined): unknown {
+  const match = value?.match(/^(\d+)x(\d+)$/);
+  return match ? { width: Number(match[1]), height: Number(match[2]) } : value;
+}
+
 /** `{ [key]: value }` when the flag was given, else nothing. */
 const given = <T>(key: string, value: T | undefined) => (value === undefined ? {} : { [key]: value });
 
@@ -75,6 +81,7 @@ const INLINE_OPERATIONS: Partial<Record<StudioDevCommand, (flags: Flags, now: nu
         surface: flags.get("surface") ?? "desktop",
         name: flags.get("name") ?? `capture-${now}`,
         ...given("frame", flags.get("frame")),
+        ...given("size", captureSize(flags.get("size"))),
       },
     }),
   snapshot: (flags) =>

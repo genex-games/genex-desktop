@@ -1,11 +1,12 @@
 //! The lakeside's rules headless (no GPU): it replays from a seed, its shots are named cameras,
-//! only the passes no built-in draws are registered, all at custom-pass API v2, the terrain is its
-//! Level-2 material, its look (fog included) is its own, the grass follows the device's tier, and
+//! only the passes no built-in draws are registered, all at custom-pass API v2, the ground is the
+//! built-in terrain with its grassy layers' grass, the lake is the renderer's water (its own pass
+//! where the renderer draws none), its look (fog included) is its own, and
 //! the camera keys switch between the tour, a shot and free flight.
 
 use genex::gpu::PassStage;
 use genex::{FIXED_STEP_MS, Input, Key, Runtime, View, json};
-use showcase_game::world::{SHOTS, World};
+use showcase_game::world::{SHOTS, World, named_shots};
 use showcase_game::{assets, game};
 
 fn runtime() -> Runtime<World> {
@@ -36,12 +37,39 @@ fn ten_seconds_replay_to_the_same_checksum_and_probes() {
 fn every_shot_is_a_named_camera_and_draws_the_scene() {
     let mut runtime = runtime();
     run(&mut runtime, 60);
-    assert_eq!(runtime.cameras(), SHOTS.iter().map(|shot| shot.name.to_owned()).collect::<Vec<_>>());
-    for shot in SHOTS {
+    assert_eq!(runtime.cameras(), named_shots().map(|shot| shot.name.to_owned()).collect::<Vec<_>>());
+    for shot in named_shots() {
         let camera = runtime.camera(View::Named(shot.name)).expect("the shot");
         assert_eq!(camera.position, shot.eye());
         let frame = runtime.frame(View::Named(shot.name)).expect("its frame");
         assert!(frame.draw_calls() > 500, "{}: {} draws", shot.name, frame.draw_calls());
+    }
+}
+
+/// Renderer pass 2 B.3 on the showcase: every shot's lake is the renderer's water at the water
+/// level, its rectangle covering the whole lake (every point inside the shoreline), so the water,
+/// its refraction, foam and reflections are the built-in node's, not a game pass.
+#[test]
+fn every_shot_draws_the_lake_as_the_renderers_water_over_the_whole_lake() {
+    use showcase_game::layout::{LAKE_CENTER, LAKE_RADII, WATER_LEVEL, lake_radius};
+    let mut runtime = runtime();
+    run(&mut runtime, 60);
+    for shot in named_shots() {
+        let frame = runtime.frame(View::Named(shot.name)).expect("its frame");
+        let water = frame.drawn_water().unwrap_or_else(|| panic!("{}: the lake is drawn with frame.water", shot.name));
+        assert_eq!(water.centre.y, WATER_LEVEL, "{}: at the water level", shot.name);
+        let reach = LAKE_RADII * 2.0;
+        for i in 0..=80 {
+            for j in 0..=80 {
+                let x = LAKE_CENTER.x - reach.x + 2.0 * reach.x * i as f32 / 80.0;
+                let z = LAKE_CENTER.y - reach.y + 2.0 * reach.y * j as f32 / 80.0;
+                if lake_radius(x, z) >= 1.0 {
+                    continue;
+                }
+                let inside = (x - water.centre.x).abs() <= water.half_extent.x && (z - water.centre.z).abs() <= water.half_extent.y;
+                assert!(inside, "{}: the lake at ({x}, {z}) lies under the water's rectangle", shot.name);
+            }
+        }
     }
 }
 
@@ -54,7 +82,7 @@ fn only_the_passes_built_ins_cannot_draw_are_registered_and_all_at_api_2() {
     // physical sky has no clouds).
     let expected = [
         ("clouds", PassStage::AfterOpaque),
-        ("grass", PassStage::AfterOpaque),
+        // The lake where the renderer draws no water (MSAA presets; `Water::drawn_at`).
         ("lake", PassStage::AfterTransparent),
         ("lights", PassStage::AfterTransparent),
     ];
@@ -116,30 +144,42 @@ fn the_lakeside_is_lit_by_the_physical_sky_and_b_steps_through_the_golden_map_an
 }
 
 #[test]
-fn the_terrain_is_one_draw_of_its_level_2_material_with_the_splat_map_and_the_fetched_atlases() {
-    use showcase_game::world::TERRAIN_WGSL;
+fn the_ground_is_the_built_in_terrain_with_six_fetched_layers_over_the_layouts_heights() {
+    use showcase_game::layout::{TERRAIN_HALF, TERRAIN_LAYERS, TERRAIN_SAMPLES, TERRAIN_SPACING, height};
     let mut runtime = runtime();
     run(&mut runtime, 10);
     let frame = runtime.frame(View::Game).expect("its frame");
-    let terrain: Vec<_> = frame.custom_draws().iter().filter(|draw| draw.material.path() == TERRAIN_WGSL).collect();
-    assert_eq!(terrain.len(), 1, "the whole terrain is one draw");
-    assert!(terrain[0].material.refusal().is_none(), "the terrain material is admitted: {:?}", terrain[0].material.refusal());
-    let requested = runtime.state()["assets"].clone();
-    for texture in ["terrain-splat.png", "fetched/terrain-albedo.png", "fetched/terrain-detail.png"] {
-        assert!(requested.as_array().is_some_and(|paths| paths.iter().any(|path| path == texture)), "{texture} is asked for: {requested}");
+    let ground = frame.drawn_terrain().expect("the frame draws the terrain");
+    assert_eq!(frame.tags().get("terrain"), Some(&1), "the whole terrain is one draw");
+    assert!(frame.custom_draws().iter().all(|draw| !draw.material.path().contains("terrain")), "no Level-2 terrain material is left");
+    assert_eq!(ground.heights().samples(), (TERRAIN_SAMPLES, TERRAIN_SAMPLES));
+    assert_eq!((TERRAIN_SAMPLES - 1) as f32 * TERRAIN_SPACING, 2.0 * TERRAIN_HALF, "the samples span the layout");
+    // The drawn heights are the layout's, within a quantization step, between samples too.
+    let (_, step) = ground.heights().quantization();
+    for (x, z) in [(-30.0, 12.0), (6.0, 2.0), (-9.0, -21.0), (80.0, -60.0)] {
+        let sampled = |x: f32, z: f32| height((x / TERRAIN_SPACING).round() * TERRAIN_SPACING, (z / TERRAIN_SPACING).round() * TERRAIN_SPACING);
+        assert!((ground.height(x, z) - sampled(x, z)).abs() <= step, "({x}, {z})");
+    }
+    assert_eq!(ground.layers().len(), TERRAIN_LAYERS);
+    assert_eq!(ground.control().len(), (TERRAIN_SAMPLES * TERRAIN_SAMPLES) as usize);
+    let named: Vec<&str> = ground.layers().iter().flat_map(|layer| [layer.albedo(), layer.data()]).flatten().collect();
+    for output in showcase_game::fetched::TERRAIN_LAYERS {
+        assert!(named.contains(&format!("fetched/{}", showcase_game::fetched::layer_file(output)).as_str()), "{output}'s base colour: {named:?}");
+        assert!(named.contains(&format!("fetched/{}", showcase_game::fetched::data_file(output)).as_str()), "{output}'s data: {named:?}");
     }
 }
 
+// Renderer pass 2 A.8: the meadow is the terrain's own grass, grown on its two grassy layers (the
+// renderer's preset decides how much of it a device draws), not a Level-3 pass.
 #[test]
-fn the_grass_draws_all_its_blades_on_strong_tiers_and_fewer_on_weaker_ones() {
-    use genex::render::{DeviceClass, FormFactor, PerformanceTier, QualityPreset, preset_quality};
-    use showcase_game::passes::grass_share;
-    let desktop = DeviceClass::new(FormFactor::Desktop, PerformanceTier::High);
-    let phone = DeviceClass::new(FormFactor::Mobile, PerformanceTier::Mid);
-    let share = |class: DeviceClass, preset: QualityPreset| grass_share(&preset_quality(preset, class));
-    assert_eq!(share(desktop, QualityPreset::High), 1.0);
-    assert!(share(phone, QualityPreset::Medium) < 1.0, "a phone draws a share of the meadow");
-    assert!(share(desktop, QualityPreset::Low) <= share(desktop, QualityPreset::Medium), "lower tiers never draw more");
+fn the_meadow_grows_on_the_terrains_grassy_layers() {
+    let terrain = showcase_game::world::terrain();
+    let grassy: Vec<bool> = terrain.layers().iter().map(|layer| layer.grass().is_some()).collect();
+    assert_eq!(grassy, [true, true, false, false, false, false], "lush and dry grass; soil, sand, rock and the lake bed bare");
+    let lush = showcase_game::world::lush_grass().render_layer();
+    let dry = showcase_game::world::dry_grass().render_layer();
+    assert!(lush.usable() && dry.usable());
+    assert!(dry.dry_share > lush.dry_share && dry.height[1] > lush.height[1], "the dry meadow is taller and golder");
 }
 
 /// The settings panel's switches header (genex-hud's settings panel), shown only while it is open.

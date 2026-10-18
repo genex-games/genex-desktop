@@ -7,6 +7,7 @@
  * conformance tests hold them without one.
  */
 import {
+  BootStage,
   NATIVE_FRAME_SIDE_MAX,
   NATIVE_GAMEPAD_AXES_MAX,
   NATIVE_GAMEPAD_BUTTONS_MAX,
@@ -18,11 +19,13 @@ import {
   type NativeFrameMeta,
   type NativeGamepadAction,
   type NativeInputAction,
+  NativeCanvasPhase,
   NativeInputKind,
   NativeRefusal,
   NativeRunState,
   type NativeRunStatus,
   type NativeTextAction,
+  deviceSideFits,
   ringSizeFor,
 } from "../../../shared/native-contract.ts";
 import { NATIVE_WORDS } from "../../words.ts";
@@ -33,16 +36,36 @@ const DPR_MAX = 4;
 
 const clamp = (value: number, low: number, high: number): number => Math.min(high, Math.max(low, value));
 
-/** The size Live's canvas asks the game for: the slot's whole CSS pixels and the screen's ratio; null while it has no area. */
-export function embedSizeOf(rect: { width: number; height: number }, dpr: number): NativeEmbedSize | null {
+/**
+ * The size Live's canvas asks the game for: the slot's whole CSS pixels and the screen's ratio,
+ * with the slot's exact `device` pixels (`devicePixelContentBoxSize`) when the browser reported
+ * them and they still cover the CSS size (a report from before a resize is left out); null while
+ * the slot has no area.
+ */
+export function embedSizeOf(
+  rect: { width: number; height: number },
+  dpr: number,
+  device?: { width: number; height: number },
+): NativeEmbedSize | null {
   const width = Math.round(rect.width);
   const height = Math.round(rect.height);
   if (!(width >= 1 && height >= 1)) return null;
-  return {
+  const size = {
     width: Math.min(width, NATIVE_FRAME_SIDE_MAX),
     height: Math.min(height, NATIVE_FRAME_SIDE_MAX),
     dpr: Number.isFinite(dpr) ? clamp(dpr, DPR_MIN, DPR_MAX) : DPR_MIN,
   };
+  if (!device || !coversSlot(device, size)) return size;
+  return { ...size, device: { width: device.width, height: device.height } };
+}
+
+/** Whether `device` pixels are a whole-pixel box that covers `size`'s CSS sides at its ratio. */
+function coversSlot(device: { width: number; height: number }, size: NativeEmbedSize): boolean {
+  const whole =
+    Number.isInteger(device.width) && Number.isInteger(device.height) && device.width >= 1 && device.height >= 1;
+  return (
+    whole && deviceSideFits(device.width, size.width, size.dpr) && deviceSideFits(device.height, size.height, size.dpr)
+  );
 }
 
 /** The canvas's backing store before the first frame says otherwise: the ring the game makes for `size`. */
@@ -102,6 +125,8 @@ export interface FrameGate {
   /** Paint `meta`'s frame now, synchronously, unless it is not the shown run's or one is being drawn. */
   draw(meta: NativeFrameMeta, shown: ShownRun | null, paint: () => void): FrameVerdict;
   counts(): { drawn: number; dropped: number };
+  /** The run whose frame was painted last, or null before the first. */
+  drawnRun(): string | null;
 }
 
 /** A gate with nothing drawn yet. A paint that throws frees the gate before the error goes on. */
@@ -109,6 +134,7 @@ export function createFrameGate(): FrameGate {
   let busy = false;
   let drawn = 0;
   let dropped = 0;
+  let drawnRun: string | null = null;
   return {
     draw(meta, shown, paint) {
       const verdict = busy ? FrameVerdict.Busy : FrameVerdict.Draw;
@@ -121,12 +147,14 @@ export function createFrameGate(): FrameGate {
       try {
         drawn += 1;
         paint();
+        drawnRun = meta.runId;
       } finally {
         busy = false;
       }
       return outcome;
     },
     counts: () => ({ drawn, dropped }),
+    drawnRun: () => drawnRun,
   };
 }
 
@@ -283,26 +311,17 @@ export function padChanges(
 /** The size to send the game after a frame's observations, or null when it already has `measured` (or nothing was measured). */
 export function resizeDue(sent: NativeEmbedSize | null, measured: NativeEmbedSize | null): NativeEmbedSize | null {
   if (!measured) return null;
-  const same = sent?.width === measured.width && sent.height === measured.height && sent.dpr === measured.dpr;
+  const sameDevice = sent?.device?.width === measured.device?.width && sent?.device?.height === measured.device?.height;
+  const same =
+    sent?.width === measured.width && sent.height === measured.height && sent.dpr === measured.dpr && sameDevice;
   return same ? null : measured;
 }
 
 // ── what the canvas says ────────────────────────────────────────────────────────────────────
 
-/** Where Live's canvas stands. Wire values of `data-stage-native-canvas`. */
-export const CanvasPhase = {
-  /** Building, checking or starting the Mac build, or waiting for the host's answer. */
-  Starting: "starting",
-  /** The game runs (or waits, paused, while Live is hidden): its frames are drawn. */
-  Playing: "playing",
-  Refused: "refused",
-  Ended: "ended",
-  /** The embed call itself failed. */
-  Failed: "failed",
-  /** No WebGL2 to draw frames with. */
-  CantDraw: "cant-draw",
-} as const;
-export type CanvasPhase = (typeof CanvasPhase)[keyof typeof CanvasPhase];
+/** Where Live's canvas stands. Wire values of `data-stage-native-canvas` (shared with the dev control). */
+export const CanvasPhase = NativeCanvasPhase;
+export type CanvasPhase = NativeCanvasPhase;
 
 /** The canvas card's buttons. Wire values of `data-stage-native-canvas-action` (the window card owns `data-stage-native-action`). */
 export const CanvasAction = {
@@ -327,6 +346,14 @@ export function canvasPhase(status: NativeRunStatus | null, failed: boolean, can
   if (status.state === NativeRunState.Refused) return CanvasPhase.Refused;
   if (ENDED.has(status.state)) return CanvasPhase.Ended;
   return PLAYING.has(status.state) ? CanvasPhase.Playing : CanvasPhase.Starting;
+}
+
+/**
+ * Whether a playing canvas still waits for the shown run's first frame (`drawnRun` is the run the
+ * canvas drew last): until then it keeps the starting card's words over an empty canvas, never black.
+ */
+export function awaitsFirstFrame(phase: CanvasPhase, status: NativeRunStatus | null, drawnRun: string | null): boolean {
+  return phase === CanvasPhase.Playing && status !== null && status.runId !== drawnRun;
 }
 
 /** Refusals no new embedded run gets past: the canvas offers Pop out alone. */
@@ -398,6 +425,28 @@ function endedWords(status: NativeRunStatus | null): { title: string; detail: st
   return { title: NATIVE_WORDS.state[state], detail: state === NativeRunState.Killed ? killedWords(status) : null };
 }
 
+/** Where each counted stage's share of the bar starts and ends (the web shell's spans, from the device on). */
+const BOOT_SPAN: Partial<Record<BootStage, readonly [number, number]>> = {
+  [BootStage.Assets]: [0.05, 0.15],
+  [BootStage.Device]: [0.15, 0.2],
+  [BootStage.Pipelines]: [0.2, 0.95],
+  [BootStage.Frame]: [0.95, 1],
+};
+
+/**
+ * Where a starting game's boot is, as the card shows it: the stage in words (with its count) and
+ * the bar's fill; null when the game named no stage (an older game, or not started yet).
+ */
+export function startingProgress(status: NativeRunStatus | null): { words: string; fill: number } | null {
+  const progress = status?.progress;
+  if (!progress) return null;
+  const { stage, done, total } = progress;
+  const counted = done !== null && total !== null && total > 0;
+  const words = counted ? NATIVE_WORDS.boot.counted(stage, done, total) : NATIVE_WORDS.boot.stage[stage];
+  const [from, to] = BOOT_SPAN[stage] ?? [0, 0];
+  return { words, fill: from + (to - from) * (counted ? done / total : 0) };
+}
+
 /** What the canvas says over the game for `phase`: nothing extra while it plays. */
 export function canvasWords(
   phase: CanvasPhase,
@@ -415,6 +464,9 @@ export function canvasWords(
     case CanvasPhase.Playing:
       return { title: NATIVE_WORDS.title, detail: null };
     default:
-      return { title: NATIVE_WORDS.state[status?.state ?? NativeRunState.Starting], detail: null };
+      return {
+        title: NATIVE_WORDS.state[status?.state ?? NativeRunState.Starting],
+        detail: startingProgress(status)?.words ?? null,
+      };
   }
 }

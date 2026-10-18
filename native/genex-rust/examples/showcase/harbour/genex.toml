@@ -1,0 +1,12 @@
+# Harbour Street: the urban and interior showcase (renderer pass 2, A.13), a Rust · wgpu game the
+# owner opens in Studio (Home, Open a folder…). This is its blockout, built from what the renderer
+# already draws and nothing else: the facade's boxes and spheres with PBR materials, the sun, the
+# physical sky (or a fetched dusk sky map), 200+ binned point and spot lights, emissive neon and
+# bulbs, blended glass, and the look (AgX, auto exposure, height fog, bloom, AO, PCSS). No custom
+# pass and no WGSL. Photo-scanned CC0 textures and the sky map are fetched by
+# `node scripts/showcase-assets.ts fetch --scene harbour-street` (assets-manifest.json); without
+# them the blockout draws its untextured stand-ins.
+[game]
+title = "Harbour Street"
+world_size = [1280, 720]
+save_name = "harbour-street"

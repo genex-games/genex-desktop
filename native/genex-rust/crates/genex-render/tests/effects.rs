@@ -68,13 +68,18 @@ fn scene() -> Scene {
     scene
 }
 
+/// The contact-shadow ray the scene's look casts: contact shadows fade out where the ray is under
+/// 16 depth texels long at the receiver (P2-0.7), and at 256x144 the default 25 cm ray is 6 texels
+/// long at the pebble 7 m away; 60 cm is 15.
+const CONTACT_RAY: f32 = 0.6;
+
 /// One frame of [`scene`] under `quality`, with `fog` as the look's, from a fresh renderer.
 fn frame(gpu: &Gpu, quality: &Quality, fog: Fog) -> Capture {
     let mut renderer = Renderer::with_options(gpu, WIDTH, HEIGHT, RenderOptions::default()).expect("renderer");
     renderer.set_scene_format(SceneFormat::Rgba16Float);
     renderer.set_device_class(DeviceClass::new(FormFactor::Desktop, PerformanceTier::Ultra));
     renderer.set_quality(quality);
-    renderer.set_look(renderer.look().with_fog(fog));
+    renderer.set_look(renderer.look().with_fog(fog).with_contact_shadow_length(CONTACT_RAY));
     renderer.set_environment(&Environment::sky());
     renderer.render(gpu, &scene(), CullPath::Gpu).expect("frame");
     renderer.capture(gpu).expect("capture")
@@ -137,7 +142,10 @@ fn metal_every_rq4_effect_a_preset_asks_for_is_drawn_by_the_renderer() {
     write_evidence("no-bloom", &no_bloom);
     let changed = all.bgra().chunks(4).zip(no_bloom.bgra().chunks(4)).filter(|(a, b)| a != b).count();
     eprintln!("bloom changes {changed} pixels");
-    assert!(changed as u32 > WIDTH * HEIGHT / 4, "bloom changes the frame ({changed} pixels)");
+    // P2-0.13 flipped (was a quarter of the frame; named in the log): the chain is sized from the
+    // output and ends at its first level of 8 rows (four levels over this 144-row frame), so the
+    // glow stays around the sphere as at 1080p instead of washing the small frame with its mean.
+    assert!(changed as u32 > WIDTH * HEIGHT / 6, "bloom changes the frame ({changed} pixels)");
 
     // Fog: uniform distance fog takes the far ground towards its colour, the near box less.
     let fog = Fog::default().with_density(0.08).with_height(0.0, 0.0).with_color([0.9, 0.92, 0.95]);
@@ -343,4 +351,37 @@ fn metal_the_pool_ledger_holds_what_ao_and_contact_shadows_allocate_and_the_budg
             assert_eq!(held_ao + held_contact, 0, "low draws neither: their targets are given back");
         }
     }
+}
+
+/// Renderer pass 2, P2-0.14 (RC-07, RC-16 row 5): a reshape (here the sun's shadow maps, a resource
+/// knob a demotion steps) leaves no frame bind-group set pinning what it replaced. The mid-frame
+/// sets AO's alternating terms make used to stay cached beside the new ones, each holding the old
+/// shadow array, material arrays and tables alive outside the ledger, until four newer sets came.
+#[test]
+#[ignore = "needs a GPU: run with --ignored metal"]
+fn metal_a_shadow_reshape_keeps_no_frame_groups_of_the_maps_it_replaced() {
+    let Some(gpu) = gpu() else { return };
+    let renderer_at = |quality: &Quality| {
+        let mut renderer = Renderer::with_options(&gpu, WIDTH, HEIGHT, RenderOptions::default()).expect("renderer");
+        renderer.set_scene_format(SceneFormat::Rgba16Float);
+        renderer.set_device_class(DeviceClass::new(FormFactor::Desktop, PerformanceTier::Ultra));
+        renderer.set_quality(quality);
+        renderer.set_environment(&Environment::sky());
+        renderer
+    };
+    let mut smaller = high();
+    smaller.shadows.map_size /= 2;
+    let mut fresh = renderer_at(&smaller);
+    fresh.render(&gpu, &scene(), CullPath::Gpu).expect("frame");
+    let one_frame = fresh.frame_group_sets();
+    let mut reshaped = renderer_at(&high());
+    for _ in 0..4 {
+        reshaped.render(&gpu, &scene(), CullPath::Gpu).expect("frame");
+    }
+    let before = reshaped.frame_group_sets();
+    assert!(before > one_frame, "AO's alternating terms keep mid-frame sets ({before} against {one_frame} after one frame)");
+    reshaped.set_quality(&smaller);
+    reshaped.render(&gpu, &scene(), CullPath::Gpu).expect("frame");
+    let after = reshaped.frame_group_sets();
+    assert!(after <= one_frame, "{after} frame group sets held after the reshape, against {one_frame} for a renderer made at the new size: the old maps' sets survive");
 }

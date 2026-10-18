@@ -17,6 +17,7 @@ import { type CppBuildInput, CppBuildPurpose, CppBuilds, refusalProblem } from "
 import { BuildTarget, GameStack } from "../../src/shared/game-project.ts";
 import type { BuildIdentity } from "../../src/shared/build-preview.ts";
 import {
+  BootStage,
   GameBoxProblem,
   NATIVE_CALL_TIMEOUT_MS,
   NATIVE_GAME_MEMORY_MAX_BYTES,
@@ -98,6 +99,8 @@ interface Behaviour {
   exitBeforeReady?: { code: number | null; signal: NodeJS.Signals | null };
   /** Fields its `ready` states over the protocol 1 defaults (a Rust game's protocol 2 and receipt). */
   ready?: Record<string, unknown>;
+  /** Events it sends before its `ready` (a Rust game's `starting` steps). */
+  beforeReady?: ReadonlyArray<Record<string, unknown>>;
   /** What its `state` answers in place of `{tick: 1}` (a protocol 2 game's lifecycle and safe area). */
   state?: Record<string, unknown>;
   /**
@@ -208,7 +211,8 @@ function scriptedGame(request: GameSpawnRequest, pid: number, behaviour: Behavio
   const early = behaviour.exitBeforeReady;
   if (early) setImmediate(() => reap(early));
   else
-    setImmediate(() =>
+    setImmediate(() => {
+      for (const event of behaviour.beforeReady ?? []) send(event);
       send({
         event: NativeEvent.Ready,
         nonce: request.nonce,
@@ -219,8 +223,8 @@ function scriptedGame(request: GameSpawnRequest, pid: number, behaviour: Behavio
         size: { width: 320, height: 180 },
         seed: 0,
         ...behaviour.ready,
-      }),
-    );
+      });
+    });
   return { child, signals, ops, send, stderr, reap, finishStep };
 }
 
@@ -461,13 +465,21 @@ describe("how a run ends on its own", () => {
     assert.deepEqual(r.games[0]?.signals, ["SIGKILL"]);
   });
 
-  it("a game over the memory cap is killed memory-cap", async () => {
-    const r = await registry({ sampleFootprint: async () => NATIVE_GAME_MEMORY_MAX_BYTES + 1 });
+  it("a game over the memory cap is killed memory-cap, and the kill is logged with the footprint it measured", async () => {
+    const lines: string[] = [];
+    const r = await registry({
+      sampleFootprint: async () => NATIVE_GAME_MEMORY_MAX_BYTES + 1,
+      log: (line) => void lines.push(line),
+    });
     await started(r, request("pong", NativeRunMode.Headless));
     await r.clock.advance(NATIVE_HEARTBEAT_MS * 2);
     const last = r.statuses.at(-1);
     assert.equal(last?.state, NativeRunState.Killed);
     assert.equal(last?.refusal, NativeRefusal.MemoryCap);
+    const killed = lines.filter((line) => line.includes(NativeRefusal.MemoryCap));
+    assert.equal(killed.length, 1, `one line names the kill: ${JSON.stringify(lines)}`);
+    assert.ok(killed[0]?.includes(last?.runId ?? "no run"), "the line names the run");
+    assert.match(killed[0] ?? "", /4096\.0 MiB/, "the line names the footprint it measured");
   });
 
   /** /proc/<pid>/status as Linux writes it, with the game's own anonymous and shared-memory pages. */
@@ -972,6 +984,23 @@ describe("what a run reports", () => {
     assert.deepEqual(heard, [[NativeRunMode.Window, true]]);
   });
 
+  // Owner decision D11: Live's card shows where a starting game's boot is; the ready clears it.
+  it("a starting game's progress is on its status until its ready", async () => {
+    const steps = [
+      { event: NativeEvent.Starting, stage: BootStage.Device },
+      { event: NativeEvent.Starting, stage: BootStage.Pipelines, done: 12, total: 40 },
+    ];
+    const r = await registry({}, { beforeReady: steps });
+    await started(r, request("pond", NativeRunMode.Headless));
+    const progress = r.statuses.map((status) => status.progress ?? null).filter((seen) => seen !== null);
+    assert.deepEqual(progress, [
+      { stage: BootStage.Device, done: null, total: null },
+      { stage: BootStage.Pipelines, done: 12, total: 40 },
+    ]);
+    const ready = r.statuses.find((status) => status.state === NativeRunState.Ready);
+    assert.equal(ready?.progress ?? null, null, "the ready clears it");
+  });
+
   it("onStatus hears every change native.status announces; a listener that throws stops nothing", async () => {
     const lines: string[] = [];
     const r = await registry({ log: (line) => void lines.push(line) });
@@ -1383,6 +1412,9 @@ describe("a GPU that hangs, a device that comes back, and where a capture came f
       camera: "default",
       runId: run.status.runId,
       build,
+      // TS-F1: the capture names its output size; this reply carries no render settings.
+      render: null,
+      outputSize: { width: 2, height: 2 },
     });
     await r.runs.stop(run.status.runId);
   });

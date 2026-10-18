@@ -11,6 +11,7 @@
  */
 import { BuildTarget } from "../../shared/game-project.ts";
 import { type AssetImportRefusal, ImportConverter, isAssetImportRefusal } from "./import-plan.ts";
+import { Ktx2FamilySkip } from "./ktx2.ts";
 import { TextureCompression, type TranscodedTexture } from "./texture-table.ts";
 
 /** The job folder's fixed names. Wire values between host and importer: never rename one. */
@@ -51,9 +52,22 @@ export interface ImportJob {
   files: ImportJobFile[];
 }
 
+/** A Basis KTX2's file for one family (A6.5), `out/<index>.<family>.ktx2`. */
+export interface ImportFamilyOutput {
+  compression: TextureCompression;
+  output: string;
+}
+
 /** One file's line in the receipt. */
 export type ImportReceiptEntry =
-  | { index: number; ok: true; output: string; textures?: TranscodedTexture[] }
+  | {
+      index: number;
+      ok: true;
+      output: string;
+      textures?: TranscodedTexture[];
+      families?: ImportFamilyOutput[];
+      familiesSkipped?: Ktx2FamilySkip;
+    }
   | { index: number; ok: false; refusal: AssetImportRefusal; detail: string };
 
 /** `out/receipt.json`. */
@@ -72,6 +86,12 @@ const TARGETS: readonly unknown[] = Object.values(BuildTarget);
 const FAMILIES: readonly string[] = Object.values(TextureCompression);
 /** `in/3.obj`, `out/3.glb`: a folder, an index, an extension of letters and digits. */
 const JOB_FILE = /^(in|out)\/(\d+)\.([a-z0-9]{1,8})$/;
+
+const SKIPS: readonly string[] = Object.values(Ktx2FamilySkip);
+
+/** Where the importer writes file `index`'s KTX2 for `compression`. */
+export const familyOutput = (index: number, compression: TextureCompression) =>
+  `${ImportJobLayout.Out}/${index}.${compression}.ktx2`;
 
 /** Whether `rel` is `<folder>/<index>.<ext>` for exactly this folder and index. */
 export function isJobFile(rel: unknown, folder: "in" | "out", at: number): rel is string {
@@ -119,6 +139,38 @@ function parseTexture(value: unknown): TranscodedTexture | null {
   return valid ? { compression: compression as TextureCompression, format, bytes, sha256 } : null;
 }
 
+/** A line's family files: each named for its index and a family of its own, or null. */
+function parseFamilies(value: unknown, index: number): ImportFamilyOutput[] | null {
+  if (!Array.isArray(value)) return null;
+  const families = value.map((item): ImportFamilyOutput | null => {
+    if (!isObject(item) || typeof item.compression !== "string" || !FAMILIES.includes(item.compression)) return null;
+    const compression = item.compression as TextureCompression;
+    return item.output === familyOutput(index, compression) ? { compression, output: item.output } : null;
+  });
+  const distinct = new Set(families.map((family) => family?.compression)).size === families.length;
+  return distinct && families.every((family) => family !== null) ? (families as ImportFamilyOutput[]) : null;
+}
+
+/** A line's optional texture fields (`textures`, `families`, `familiesSkipped`), or null when one is bad. */
+function parseTextureFields(value: Json, index: number): Partial<Extract<ImportReceiptEntry, { ok: true }>> | null {
+  const fields: Partial<Extract<ImportReceiptEntry, { ok: true }>> = {};
+  if (value.textures !== undefined) {
+    const textures = Array.isArray(value.textures) ? value.textures.map(parseTexture) : [null];
+    if (textures.some((texture) => texture === null)) return null;
+    fields.textures = textures as TranscodedTexture[];
+  }
+  if (value.families !== undefined) {
+    const families = parseFamilies(value.families, index);
+    if (!families) return null;
+    fields.families = families;
+  }
+  if (value.familiesSkipped !== undefined) {
+    if (typeof value.familiesSkipped !== "string" || !SKIPS.includes(value.familiesSkipped)) return null;
+    fields.familiesSkipped = value.familiesSkipped as Ktx2FamilySkip;
+  }
+  return fields;
+}
+
 function parseEntry(value: unknown): ImportReceiptEntry | null {
   if (!isObject(value) || !isIndex(value.index)) return null;
   if (value.ok === false) {
@@ -127,11 +179,8 @@ function parseEntry(value: unknown): ImportReceiptEntry | null {
     return { index: value.index, ok: false, refusal: value.refusal, detail };
   }
   if (value.ok !== true || !isJobFile(value.output, "out", value.index)) return null;
-  if (value.textures === undefined) return { index: value.index, ok: true, output: value.output };
-  if (!Array.isArray(value.textures)) return null;
-  const textures = value.textures.map(parseTexture);
-  if (textures.some((texture) => texture === null)) return null;
-  return { index: value.index, ok: true, output: value.output, textures: textures as TranscodedTexture[] };
+  const fields = parseTextureFields(value, value.index);
+  return fields ? { index: value.index, ok: true, output: value.output, ...fields } : null;
 }
 
 /** A receipt as the host reads it: entries it cannot read are dropped (their files count as failed). */

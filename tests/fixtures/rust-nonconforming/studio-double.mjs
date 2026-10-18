@@ -41,7 +41,11 @@
 //   render-ignores-features  `renderSettings` takes the preset and class but ignores the feature
 //                        switches: its answer and status list none of them, and nothing is degraded for them;
 //   render-extension-refused  `volatile.extensions` lists the `glow` material (Level-2, api 2), refused
-//                        (`wgsl-too-large`) after the first switch to the ultra preset.
+//                        (`wgsl-too-large`) after the first switch to the ultra preset;
+//   render-lags-change   a slow Live frame: after a change the drawn frame keeps the switches it had
+//                        (`degraded` names `pipeline-change-deferred`) until a few `step`s land it, and
+//                        neither a capture nor a read lands it. It conforms;
+//   render-never-lands   as render-lags-change, but no number of `step`s lands a change.
 import { spawn } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
 import net from "node:net";
@@ -70,6 +74,8 @@ export const Defect = {
   RenderBlankPhoneDefault: "render-blank-phone-default",
   RenderIgnoresFeatures: "render-ignores-features",
   RenderExtensionRefused: "render-extension-refused",
+  RenderLagsChange: "render-lags-change",
+  RenderNeverLands: "render-never-lands",
 };
 
 /** The device class this double's probe finds, and the preset each class defaults to. */
@@ -93,6 +99,10 @@ const V2_ONLY_APIS = { extensionApi: 2, customPassApi: 2, extensionApis: [2], cu
 const HALO = { name: "halo", stage: "after-opaque" };
 /** The double's one Level-2 source: a v2 material. */
 const GLOW = { path: "shaders/glow.wgsl", kind: "material", api: 2 };
+/** How many `step`s the lags-change defect draws the switches it had for after a change. */
+const LAG_STEPS = 3;
+/** What the lags-change defect's `degraded` names while a change has not landed (genex's deferral). */
+const CHANGE_DEFERRED = { reason: "pipeline-change-deferred", subject: "anti-aliasing" };
 /** The emulated class the blank-phone-default defect draws flat without switches. */
 const BLANK_PHONE_CLASS = "mobile-low";
 
@@ -153,6 +163,10 @@ export function serveStudioGame({ defect = null, renderSettings = false } = {}) 
   const pipe = new net.Socket({ fd: 3, readable: true, writable: true });
   const sim = { seed: 1, tick: 0, running: false, salt: "", camera: "default", muted: false };
   const render = { requested: "auto", deviceClass: null, features: {}, lock: null, verb: false, haloRefused: false, glowRefused: false };
+  // The switches the last drawn frame has, and the steps until a change lands (the lags-change defect).
+  const drawn = { features: {}, lagging: 0 };
+  const lags = defect === Defect.RenderLagsChange || defect === Defect.RenderNeverLands;
+  const drawnFeatures = () => (lags ? drawn.features : render.features);
   const classNow = () => render.deviceClass ?? DETECTED_CLASS;
   const presetNow = () => (render.requested === "auto" ? CLASS_DEFAULT_PRESET[classNow()] : render.requested);
   /** The class and preset captures are drawn with: the reference class until the verb sets something. */
@@ -228,7 +242,8 @@ export function serveStudioGame({ defect = null, renderSettings = false } = {}) 
     const preset = defect === Defect.RenderUnnamed ? (presetNow() === "low" ? "high" : "low") : presetNow();
     // The halo pass is v1 and in the world, so the frame stays LDR: a typed degrade, never a refusal.
     const degraded = [{ reason: "custom-pass-v1-in-world", subject: HALO.name }];
-    const status = { deviceClass: classNow(), preset, scale: 1, features: { ...render.features }, degraded, gpuMs: null, cpuMs: null };
+    if (drawn.lagging > 0) degraded.push(CHANGE_DEFERRED);
+    const status = { deviceClass: classNow(), preset, scale: 1, features: { ...drawnFeatures() }, degraded, gpuMs: null, cpuMs: null };
     if (defect === Defect.RenderNoPreset) delete status.preset;
     return status;
   }
@@ -264,6 +279,7 @@ export function serveStudioGame({ defect = null, renderSettings = false } = {}) 
     if (change.preset !== undefined || change.deviceClass !== undefined) render.verb = render.requested !== "auto" || render.deviceClass !== null;
     if (defect === Defect.RenderPassRefused && presetNow() === "ultra") render.haloRefused = true;
     if (defect === Defect.RenderExtensionRefused && presetNow() === "ultra") render.glowRefused = true;
+    if (lags && arg?.set !== undefined) drawn.lagging = defect === Defect.RenderNeverLands ? Number.POSITIVE_INFINITY : LAG_STEPS;
     const answer = settingsAnswer();
     // The ignores-set defect answers what was asked, then keeps what it had.
     if (defect === Defect.RenderIgnoresSet) Object.assign(render, before);
@@ -306,6 +322,8 @@ export function serveStudioGame({ defect = null, renderSettings = false } = {}) 
     step: (id, op, arg) => {
       const ticks = Math.min(STEP_TICKS_MAX, Math.max(1, Math.round(Number(arg?.ms ?? TICK_MS) / TICK_MS)));
       advance(ticks);
+      drawn.lagging = Math.max(0, drawn.lagging - 1);
+      if (drawn.lagging === 0) drawn.features = { ...render.features };
       ok(id, op, { frame: sim.tick, simulatedMs: sim.tick * TICK_MS, steppedFrames: ticks, drawCalls: 1 });
     },
     state,

@@ -87,3 +87,26 @@ impl FacetRegistration {
         FacetRegistration { type_id: TypeId::of::<T>(), type_name: type_name::<T>(), construct: construct::<T> }
     }
 }
+
+/// Renderer pass 2 (owner decision D11): a game whose genex.toml turns physics off is built
+/// without Rapier; its simulation carries the empty stand-in and ticks as before.
+#[cfg(all(test, not(feature = "physics")))]
+mod without_physics {
+    use crate::prelude::*;
+
+    #[test]
+    fn a_game_without_physics_carries_the_empty_world_and_still_ticks() {
+        #[derive(Default)]
+        struct World {
+            ticks: u32,
+        }
+        let mut game = Game::new(World::default());
+        game.on_update(|sim, _| sim.world.ticks += 1);
+        let mut runtime = crate::Runtime::new(game).expect("installs");
+        runtime.start();
+        let ticks = runtime.advance_live(1000.0 / 60.0 * 3.0);
+        assert!(ticks >= 2, "the game ticked: {ticks}");
+        assert_eq!(runtime.sim().world.ticks, ticks);
+        assert_eq!(runtime.sim().physics, PhysicsWorld, "the empty stand-in, never Rapier's");
+    }
+}

@@ -449,6 +449,37 @@ describe("the Rust runtime over fd 3: verbs", { ...NEEDS, timeout: SUITE_TIMEOUT
     assert.equal(run.port.failure, null);
   });
 
+  // GA round 2: a held key on a native run went down and up in one tick (the runtime leaves timed
+  // actions to the host, which sent them on as they were). The port now plays the hold itself.
+  it("a hold through the port keeps its key down on a live run for the hold's ticks, not one", async () => {
+    const run = await startRun();
+    await run.port.ready();
+    const before = Number((await stateOf(run)).x);
+    await run.port.input([{ type: "hold", keys: ["KeyD"], ms: 500 }]);
+    const moved = Number((await stateOf(run)).x) - before;
+    // 500 ms is 30 ticks at 60 Hz; a third of them leaves room for a loaded machine, one tick is the defect.
+    assert.ok(moved >= 10, `KeyD was held for ${moved} ticks`);
+    assert.equal(run.port.failure, null);
+  });
+
+  it("a positioned click through the port reaches an egui button on a live run, and one beside it does not", async () => {
+    const run = await startRun();
+    await run.port.ready();
+    // The fixture's Shop button covers world pixels (8, 8) to (48, 28) of its 96 x 64 world.
+    const shop = { x: 28 / 96, y: 18 / 64 };
+    await run.port.input([
+      { type: "tap", keys: ["KeyH"] },
+      { type: "wait", ms: 100 },
+      { type: "click", ...shop },
+      { type: "wait", ms: 100 },
+      { type: "click", x: 0.75, y: 0.75 },
+      { type: "wait", ms: 100 },
+    ]);
+    const state = await stateOf(run);
+    assert.deepEqual((state.hud as { items: string[] }).items, ["Shop"]);
+    assert.equal(state.shopClicks, 1, "the click on the button, not the one on the scene");
+  });
+
   it("answers an op it does not serve with unknown-op and the ops a native run serves", async () => {
     const run = await startRaw();
     const reply = await run.ask({ op: "teleport" });

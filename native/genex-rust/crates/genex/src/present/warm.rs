@@ -32,6 +32,12 @@ use super::{Presenter, set_choice};
 use crate::render::{FrameChoice, RenderHandle};
 use crate::runtime::{Runtime, View};
 
+/// The most GPU memory (each renderer's `held_bytes`) the renderer in use, the spare and a renderer
+/// being built from a plan may hold together; past it the spare is let go before the build. A 4K
+/// ultra renderer holds about 1.2 GiB, so three of them beside a game's own memory crossed Studio's
+/// 4 GiB cap (GB live-app round 1).
+const WARM_HELD_BYTES_MAX: u64 = 1 << 30;
+
 /// What a warmed renderer is for once it is back.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum WarmFor {
@@ -108,7 +114,7 @@ pub(super) fn start(purpose: WarmFor, source: WarmSource, gpu: Gpu, choice: Fram
         };
         let renderer = prepared.renderer_mut();
         light.apply(renderer.renderer_mut(), &gpu);
-        set_choice(renderer.renderer_mut(), &choice, class);
+        set_choice(renderer, &choice, class);
         if purpose == WarmFor::Spare {
             // Drawn as a capture is: settled on the capture's history, then read back.
             let frames = renderer.settle_frames_graded(false);
@@ -205,11 +211,7 @@ impl Presenter {
         let gpu = self.resilient.gpu().share();
         if holding {
             let (choice, class, samples) = self.live_wanted(handle);
-            let options = options_for(samples);
-            let source = match self.resilient.take_spare(options) {
-                Ok(Some(spare)) => WarmSource::Spare(Box::new(spare)),
-                _ => WarmSource::Plan(Box::new(self.resilient.plan(options))),
-            };
+            let source = self.warm_source(options_for(samples));
             let generation = handle.borrow().pipeline_generation();
             self.warming = start(WarmFor::Live { generation }, source, gpu, choice, class, frame);
             if self.warming.is_none() {
@@ -225,13 +227,26 @@ impl Presenter {
         self.spare_checked = Some(generation);
         if self.capture_needs_spare(handle) {
             let (choice, class, samples) = self.capture_wanted(handle);
-            let options = options_for(samples);
-            let source = match self.resilient.take_spare(options) {
-                Ok(Some(spare)) => WarmSource::Spare(Box::new(spare)),
-                _ => WarmSource::Plan(Box::new(self.resilient.plan(options))),
-            };
+            let source = self.warm_source(options_for(samples));
             self.warming = start(WarmFor::Spare, source, gpu, choice, class, frame);
         }
+    }
+
+    /// Where a warm-up for `options` starts: the spare built for them, else a new renderer from a
+    /// plan. That renderer holds about what the one in use holds, so when the two with the spare
+    /// would hold more than [`WARM_HELD_BYTES_MAX`] the spare is let go first (GB live-app round 1:
+    /// a Live preset cycle in Studio held three renderers' targets and the memory cap stopped the
+    /// game).
+    fn warm_source(&mut self, options: RenderOptions) -> WarmSource {
+        if let Ok(Some(spare)) = self.resilient.take_spare(options) {
+            return WarmSource::Spare(Box::new(spare));
+        }
+        let in_use = self.resilient.renderer().held_bytes();
+        let spare = self.resilient.spare().map_or(0, |(_, renderer)| renderer.held_bytes());
+        if spare > 0 && in_use.saturating_mul(2).saturating_add(spare) > WARM_HELD_BYTES_MAX {
+            self.resilient.release_spare();
+        }
+        WarmSource::Plan(Box::new(self.resilient.plan(options)))
     }
 
     /// A renderer whose warm-up finished (or Live's, waited for when `wait_for_live`): Live's

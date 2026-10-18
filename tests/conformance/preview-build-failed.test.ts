@@ -182,7 +182,7 @@ test("a builder's capture saves a manifest beside each frame; a capture whose bu
       commit: head,
       edited: false,
       capturedAt: null,
-      provenance: { seq: null, digest: null, camera: null, runId: null, build: null },
+      provenance: { seq: null, digest: null, camera: null, runId: null, build: null, render: null, outputSize: null },
       refused: CaptureRefusal.BuildFailed,
     },
   );
@@ -223,6 +223,8 @@ test("a web capture's manifest names the build it shows and the camera it placed
         camera: "default",
         runId: null,
         build: { stack: GameStack.ThreeJs, target: BuildTarget.Web, digest: null, lock: null },
+        render: null,
+        outputSize: null,
       },
     },
   );

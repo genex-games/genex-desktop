@@ -1,0 +1,53 @@
+{
+  "id": "rust.rooms-probes-decals",
+  "runtime": "rust-wgpu",
+  "title": "Rooms in Rust: a reflection probe and an irradiance volume per room, decals for what lies on a surface",
+  "tags": [
+    "room",
+    "rooms",
+    "interior",
+    "indoor",
+    "hall",
+    "courtyard",
+    "reflection",
+    "reflections",
+    "probe",
+    "irradiance",
+    "bounce",
+    "ambient",
+    "glossy",
+    "floor",
+    "decal",
+    "decals",
+    "poster",
+    "puddle",
+    "grime",
+    "rust",
+    "wgpu",
+    "genex"
+  ],
+  "checkClass": "stats",
+  "kind": "technique",
+  "pack": "rust",
+  "note": "Over each room, hall or courtyard declare frame.reflection_probe and frame.irradiance_volume on the same box every frame, so its floor reflects the room and its walls bounce their colour; posters, puddles and grime are frame.decal, never thin boxes.",
+  "intent": "Indoors the sky is the wrong light: a polished floor reflects the sky and a white floor beside a sunlit red wall stays white until the room has its own. Over each room, hall or courtyard declare, every frame, frame.reflection_probe(&ReflectionProbe::new(min, max).with_capture(eye).with_blend(0.4)) and frame.irradiance_volume(&IrradianceVolume::new(min, max).with_blend(0.3)) on the same axis-aligned box from floor to ceiling, the capture point at eye height inside it. Both are baked from the scene the first frame they appear and again when the sky, the box or its capture point changes, so objects that move later are not in them; overlapping boxes share their light, so no seam shows at a doorway. Give open ground neither: the sky is its reflection and its ambient already. The device's quality decides how many probes get a cube and how many volumes bake (phones bake volumes only at high and ultra), and the rest take the sky's light, so declare the rooms the camera is in or near first. Lay posters, puddles, grime and stains with frame.decal(&Decal::on_wall(center, facing, width, height)) or Decal::on_ground(center, width, length) and a base texture whose alpha is the shape, never as thin boxes that fight the wall for depth; a puddle is a dark ground decal with .with_roughness(0.04) and .with_flatten(1.0). Check a capture from inside each room at high and as mobile-mid: the floor shows the room, the walls' colour reaches the floor, and nothing floats off a wall.",
+  "sketch": "use genex::prelude::*;\nuse genex::render::{Decal, IrradianceVolume, ReflectionProbe};\n\nfn draw(world: &World, frame: &mut Frame) {\n    for room in &world.rooms {\n        // One box per room, floor to ceiling, declared every frame: the cube and the grid bake once.\n        let eye = vec3((room.min.x + room.max.x) * 0.5, room.min.y + 1.6, (room.min.z + room.max.z) * 0.5);\n        frame.reflection_probe(&ReflectionProbe::new(room.min, room.max).with_capture(eye).with_blend(0.4));\n        frame.irradiance_volume(&IrradianceVolume::new(room.min, room.max).with_blend(0.3));\n    }\n    frame.tag(\"poster\");\n    frame.decal(&Decal::on_wall(world.poster_at, vec3(0.0, 0.0, 1.0), 0.8, 1.2).with_base_texture(\"decals/poster.png\"));\n    frame.tag(\"puddle\");\n    frame.decal(\n        &Decal::on_ground(world.puddle_at, 1.6, 1.0)\n            .with_base_texture(\"decals/puddle.png\")\n            .with_color(Color::rgb(40, 40, 45))\n            .with_roughness(0.04)\n            .with_flatten(1.0),\n    );\n}\n",
+  "port": "The facet that owns the level's layout owns its rooms' boxes and declares a probe and a volume for each; a facet that dresses a room adds its decals and tags them.",
+  "evidence": [
+    {
+      "source": "src/game-template-rust/docs/GENEX_API.md (Lighting, materials and environment)",
+      "note": "ReflectionProbe and IrradianceVolume over a room's box, baked when they first appear, blended past the box; the device's quality decides how many; decals on walls and ground instead of thin boxes."
+    },
+    {
+      "source": "src/game-template-rust/CLAUDE.md (World look)",
+      "note": "Each room gets a probe and a volume; open ground needs neither; posters, puddles and grime are decals."
+    }
+  ],
+  "stats": {
+    "applied": 0,
+    "wins": 0,
+    "losses": 0
+  },
+  "status": "candidate",
+  "origin": "seed"
+}
