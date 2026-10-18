@@ -627,6 +627,14 @@ impl Resilient {
         self.spare.as_ref().map(|spare| (spare.options, &spare.renderer))
     }
 
+    /// Let the spare go (answers whether one was kept): a warm-up about to build a new renderer
+    /// from a plan releases it first, so the renderer in use and the one warmed are the only two
+    /// sets of render targets held at once (GB live-app round 1: a Live preset cycle held three
+    /// and Studio's memory cap stopped the game).
+    pub fn release_spare(&mut self) -> bool {
+        self.spare.take().is_some()
+    }
+
     /// The spare built for `options`, brought up to date with every upload, to warm on another
     /// thread and [`Resilient::adopt`] (None when there is none for those options).
     pub fn take_spare(&mut self, options: RenderOptions) -> Result<Option<Prepared>, RenderError> {

@@ -757,13 +757,16 @@ fn metal_matrix_scenes_by_profiles_by_sizes() {
 /// Owner decision D7 (2026-10-14): a whole frame within 16.7 ms GPU p95 at desktop-high's high at
 /// 1440p output and at ultra at 4K output on the reference M4 Max, both allowed dynamic resolution.
 const D7_FRAME_BUDGET_MS: f64 = 16.7;
-/// D7's outputs and presets: high at 1440p, ultra at 4K.
-const D7_ROWS: [([u32; 2], QualityPreset); 2] = [([2560, 1440], QualityPreset::High), ([3840, 2160], QualityPreset::Ultra)];
+/// D7's outputs and presets, and whether a row over the budget fails the gate: high at 1440p
+/// (gated), ultra at 4K (owner decision D15, 2026-10-18: measured and reported, the AAA quality bar
+/// comes first, so a miss is not a failure).
+const D7_ROWS: [([u32; 2], QualityPreset, bool); 2] = [([2560, 1440], QualityPreset::High, true), ([3840, 2160], QualityPreset::Ultra, false)];
 
 /// D7 (G0 perf-platform, 2026-10-15): at 1440p high and 4K ultra every scene's whole frame fits
 /// [`D7_FRAME_BUDGET_MS`] at scale 1 or at one of the class's dynamic-resolution steps (the highest
 /// that fits is the one DRS settles on). The matrix measured scale 1 alone, where stress-forest's 4K
-/// ultra frame is 17.4 ms. `GENEX_PERF_OUT` receives the record (default `perf/d7-<sha>.json`).
+/// ultra frame is 17.4 ms. Under D15 a 4K ultra miss is reported, not failed. `GENEX_PERF_OUT`
+/// receives the record (default `perf/d7-<sha>.json`).
 #[test]
 #[ignore = "needs a GPU: run with --ignored metal"]
 fn metal_d7_whole_frames_fit_at_1440p_high_and_4k_ultra_with_dynamic_resolution() {
@@ -776,7 +779,7 @@ fn metal_d7_whole_frames_fit_at_1440p_high_and_4k_ultra_with_dynamic_resolution(
     let class = classify(gpu.device_facts());
     let steps: Vec<f32> = class_defaults(class).drs_steps.iter().rev().copied().collect();
     let (mut rows, mut problems) = (Vec::new(), Vec::new());
-    for (size, preset) in D7_ROWS {
+    for (size, preset, gated) in D7_ROWS {
         for cell in Cell::all().into_iter().filter(|cell| kept(&cell.name())) {
             let mut measured = Vec::new();
             let mut fits = None;
@@ -795,9 +798,13 @@ fn metal_d7_whole_frames_fit_at_1440p_high_and_4k_ultra_with_dynamic_resolution(
             }
             let name = cell.name();
             eprintln!("D7 {name} {} {size:?}: fits at {fits:?} ({measured:?})", preset.wire());
-            rows.push(json!({ "row": name, "preset": preset.wire(), "size": size, "fitsAtScale": fits, "steps": measured }));
-            if fits.is_none() {
-                problems.push(format!("{name} at {} {size:?} is over {D7_FRAME_BUDGET_MS} ms at every DRS step", preset.wire()));
+            rows.push(json!({ "row": name, "preset": preset.wire(), "size": size, "fitsAtScale": fits, "gated": gated, "steps": measured }));
+            let over = format!("{name} at {} {size:?} is over {D7_FRAME_BUDGET_MS} ms at every DRS step", preset.wire());
+            match (fits, gated) {
+                (Some(_), _) => {}
+                (None, true) => problems.push(over),
+                // D15: reported in the record and the log, not a failure.
+                (None, false) => eprintln!("D7 reported (D15, not gated): {over}"),
             }
         }
     }

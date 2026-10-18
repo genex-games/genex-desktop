@@ -73,7 +73,9 @@
 //! native only): after an explicit change Live keeps drawing the settings it drew last while
 //! another thread builds and warms the new configuration's renderer (`warm.rs`), which is then
 //! swapped in, and the renderer it replaced is kept as the spare for its samples; a capture's
-//! pinned profile is warmed as that spare too. The frame thread never compiles a whole new
+//! pinned profile is warmed as that spare too. A warm-up that builds a new renderer lets the spare
+//! go first when the three would hold more than a GiB of targets ([`Presenter::renderers_held`]).
+//! The frame thread never compiles a whole new
 //! configuration, so the studio's verbs and heartbeat are answered throughout.
 //!
 //! Host glue for the platform shells, not game API: a game never holds a renderer.
@@ -989,6 +991,18 @@ impl Presenter {
         self.start_boot_warm(runtime);
         #[cfg(target_arch = "wasm32")]
         let _ = runtime;
+    }
+
+    /// The renderers this presenter holds now: the one in use, the spare when one is kept, and the
+    /// one a warm-up is building (each holds a full set of render targets; GB live-app round 1: a
+    /// Live preset cycle under Studio's memory cap held three).
+    pub fn renderers_held(&self) -> usize {
+        let spare = usize::from(self.resilient.spare().is_some());
+        #[cfg(not(target_arch = "wasm32"))]
+        let warming = usize::from(self.warming.is_some());
+        #[cfg(target_arch = "wasm32")]
+        let warming = 0;
+        1 + spare + warming
     }
 
     /// Whether the boot's warm-up ([`Presenter::warm_boot`]) is still compiling the first Live

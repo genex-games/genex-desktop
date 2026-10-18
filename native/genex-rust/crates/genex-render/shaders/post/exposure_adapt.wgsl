@@ -16,7 +16,7 @@ struct ExposureState {
     exposure: f32,
     ev: f32,
     target_ev: f32,
-    // Bit 0: adapt instantly (set for a new history; cleared here).
+    // Bit 0: adapt instantly (set for a new history; cleared here once a frame counted something).
     flags: u32,
 }
 
@@ -151,13 +151,21 @@ fn cs_exposure_adapt(@builtin(local_invocation_index) bin: u32) {
         return;
     }
     let kept = gx_sums[0];
+    let counted = total > 0.0 && kept.y > 0.0;
+    let instant = ((gx_exposure.flags | gx_params.control.w) & GX_EXPOSURE_INSTANT) != 0u;
+    if instant && !counted {
+        // Nothing to meter (a black frame a boot draws before its scene shows): keep the exposure
+        // and leave the instant adaptation to the first frame that counts something (GB live-app
+        // round 1: Native Live then adapted from the start state at 1 EV/s for 3.5 s).
+        gx_exposure.flags = GX_EXPOSURE_INSTANT;
+        return;
+    }
     // Nothing counted (or nothing kept): hold the last target.
     var target_ev = gx_exposure.target_ev;
-    if total > 0.0 && kept.y > 0.0 {
+    if counted {
         let metered = min(max(kept.x / kept.y, gx_params.limits.x), gx_params.limits.y);
         target_ev = metered - gx_compensation(metered);
     }
-    let instant = ((gx_exposure.flags | gx_params.control.w) & GX_EXPOSURE_INSTANT) != 0u;
     var ev = target_ev;
     if !instant {
         ev = gx_adapt(gx_exposure.ev, target_ev);

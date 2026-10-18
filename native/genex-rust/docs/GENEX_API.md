@@ -439,7 +439,8 @@ on its own with `frame.id(key)` (a string or integer that stays with the object)
 `frame.end_id()` or the next id; unnamed draws match by order within their mesh, which suits still
 scenery. Call
 `frame.camera_cut()` on the frame a shot changes (respawn, cutscene, teleport), never every frame:
-TAA, auto exposure and AO history start over. A camera that jumps on its own is a cut already.
+TAA, auto exposure and AO history start over (auto exposure snaps on the first frame that shows
+anything lit). A camera that jumps on its own is a cut already.
 Shaders under TAA: see Custom materials and post passes.
 
 Extensions get every new input through versioned layouts. Write sources and passes at `api = 2`:

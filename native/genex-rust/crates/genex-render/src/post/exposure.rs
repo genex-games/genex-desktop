@@ -38,7 +38,9 @@
 //! `speed / transition` (Bevy 0.20's hybrid adaptation, `auto_exposure.wesl`, MIT OR Apache-2.0):
 //! linear far away, exponential near, so the small target changes of a moving camera no longer make
 //! the frame breathe. It snaps onto the target once within [`ADAPT_SNAP_EV`]. Instant mode (settled
-//! captures, history resets, a new history) sets it to the target at once. The exposure is `2^(ev_compensation - ev)`: a scene twice as bright meters
+//! captures, history resets, a new history) sets it to the target at once; a frame that counts
+//! nothing (a black boot frame) keeps the exposure and leaves instant mode to the next frame that
+//! does. The exposure is `2^(ev_compensation - ev)`: a scene twice as bright meters
 //! 1 EV higher and is drawn at half the exposure. A change of `ΔEV` therefore settles within
 //! [`ticks_to_adapt`] ticks.
 //!
