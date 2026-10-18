@@ -76,7 +76,10 @@ fn the_outdoor_scene_has_terrain_foliage_water_and_a_sky_placeholder() {
     let drawn = scene.scene(0);
     let foliage = drawn.draws.iter().filter(|d| !d.material.is_transparent()).count();
     assert!(foliage >= 5_000, "{foliage} opaque draws: too little foliage");
-    assert!(transparent_draws(&drawn) >= 1, "no water");
+    // Renderer pass 2 B.3: the lake is the renderer's water (`Scene::water`), not a transparent sheet.
+    let water = drawn.water.expect("no water");
+    assert_eq!(water.body.centre[1], 0.0, "the water lies at sea level");
+    assert_eq!(transparent_draws(&drawn), 0, "the lake is not a transparent draw");
     let sky = drawn.draws.iter().filter(|d| d.model[0] >= 100.0 && d.model[12..15] == drawn.camera.eye).count();
     assert!(sky >= 1, "no sky placeholder around the camera");
     let largest = drawn.draws.iter().filter_map(|d| library.entry(d.mesh)).map(|e| e.index_count).max().unwrap_or(0);

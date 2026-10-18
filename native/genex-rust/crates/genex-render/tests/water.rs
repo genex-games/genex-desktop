@@ -11,6 +11,7 @@
 //! `GENEX_PERF_OUT` receives the cost row as a JSON line.
 
 use genex_render::Gpu;
+use genex_render::fog::GpuFog;
 use genex_render::device_class::{DeviceClass, FormFactor, PerformanceTier};
 use genex_render::layout::GpuFrame;
 use genex_render::presets::preset_quality;
@@ -65,6 +66,10 @@ fn shore_foam_covers_the_shoreline_and_is_gone_past_its_width() {
     assert_eq!(shore_foam(width, width, 1.0), 0.0, "past the width no foam, whatever the noise");
     assert_eq!(shore_foam(0.0, 0.0, 1.0), 0.0, "a material without foam has none");
     assert!(shore_foam(0.0, width, 1.0) >= shore_foam(0.0, width, 0.0), "the noise breaks it up, never adds past the shallow cover");
+    // Look-integration lane W (2026-10-18): on the Lakeside the waterline drew an unbroken white
+    // line; where the noise is low the shoreline now has no foam at all.
+    assert_eq!(shore_foam(0.0, width, 0.0), 0.0, "the noise leaves gaps in the waterline's foam");
+    assert!(shore_foam(0.0, width, 0.15) == 0.0 && shore_foam(0.0, width, 0.9) == 1.0, "patches: none at low noise, full cover at high");
 }
 
 #[test]
@@ -349,11 +354,13 @@ struct Setup {
     reflection: ReflectionSource,
     stripes: bool,
     size: (u32, u32),
+    /// The look's height fog the frame draws with (none by default).
+    fog: GpuFog,
 }
 
 impl Setup {
     fn still(path: WaterPath) -> Setup {
-        Setup { camera: camera(eye(), SIZE), material: still_lake(), path, reflection: ReflectionSource::Environment, stripes: false, size: SIZE }
+        Setup { camera: camera(eye(), SIZE), material: still_lake(), path, reflection: ReflectionSource::Environment, stripes: false, size: SIZE, fog: GpuFog::default() }
     }
 }
 
@@ -388,6 +395,7 @@ fn scene(gpu: &Gpu, setup: &Setup) -> Scene {
         path: setup.path,
         reflection: setup.reflection,
         depth_reversed: true,
+        fog: setup.fog,
     });
     let refracting = setup.path == WaterPath::Refracted;
     node.prepare(device, &gpu.queue, &row, &WaterInput { frame: &frame, opaque: refracting.then_some(&opaque), depth: &sampled_depth, env: &env, history: None });
@@ -536,6 +544,52 @@ fn luma(c: [f32; 4]) -> f32 {
     0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]
 }
 
+/// The distance from the camera to the water's surface along pixel (x, y)'s ray, where the ray meets
+/// the lake ([`ray`]'s water).
+fn surface_reach(camera: &Camera, size: (u32, u32), x: u32, y: u32) -> Option<f32> {
+    ray(camera, size, x, y)?;
+    let ndc = Vec4::new((x as f32 + 0.5) / size.0 as f32 * 2.0 - 1.0, 1.0 - (y as f32 + 0.5) / size.1 as f32 * 2.0, 0.5, 1.0);
+    let far = camera.view_proj.inverse() * ndc;
+    let dir = (far.truncate() / far.w - camera.eye).normalize();
+    Some(-camera.eye.y / dir.y)
+}
+
+/// Look-integration lane W: the look's height fog reaches the water's own surface, as it reaches
+/// every built-in surface (the Lakeside's lake sat unfogged in the hazed meadow). A uniform fog
+/// (no height falloff) whose tint is pure red: green and blue are the unfogged water's times
+/// `1 - opacity` (`1 - exp(-density x reach)`) exactly on the refracted path (opaque over the copy;
+/// the blended path's scene behind is fogged by its own pass), and red gains the in-scatter.
+#[test]
+#[ignore = "needs a GPU: run with --ignored metal"]
+fn metal_the_looks_height_fog_reaches_the_waters_surface() {
+    let Some(gpu) = gpu() else { return };
+    const DENSITY: f32 = 0.04;
+    {
+        let water_path = WaterPath::Refracted;
+        let plain = Setup::still(water_path);
+        let fogged = Setup { fog: GpuFog { color: [1.0, 0.0, 0.0, DENSITY], params: [0.0, 0.0, 0.0, 1.0] }, ..Setup::still(water_path) };
+        let (a, b) = (draw(&gpu, &plain), draw(&gpu, &fogged));
+        write_ppm(&format!("water-fog-{water_path:?}"), &b, SIZE);
+        let (mut compared, mut worst, mut redder) = (0, 0.0f32, 0.0f32);
+        for y in 0..SIZE.1 {
+            for x in 0..SIZE.0 {
+                let Some(reach) = surface_reach(&plain.camera, SIZE, x, y) else { continue };
+                let i = (y * SIZE.0 + x) as usize;
+                let keep = libm::expf(-DENSITY * reach);
+                for (fogged, plain) in b.rgba[i][1..3].iter().zip(&a.rgba[i][1..3]) {
+                    worst = worst.max((fogged - plain * keep).abs() * 255.0);
+                }
+                redder += b.rgba[i][0] - a.rgba[i][0] * keep;
+                compared += 1;
+            }
+        }
+        eprintln!("{water_path:?}: {compared} water pixels, green/blue worst {worst:.2} levels from the twin, red in-scatter mean {:.3}", redder / compared.max(1) as f32);
+        assert!(compared > (SIZE.0 * SIZE.1 / 4) as usize, "the lake covers the picture's lower part");
+        assert!(worst <= TWIN_LEVELS, "{water_path:?}: green or blue {worst:.2} levels from `unfogged x (1 - opacity)`");
+        assert!(redder / compared as f32 > 0.02, "{water_path:?}: the fog's red in-scatter is added");
+    }
+}
+
 /// B.3: shore foam brightens the water at its shoreline and leaves deeper water as it was.
 #[test]
 #[ignore = "needs a GPU: run with --ignored metal"]
@@ -620,6 +674,7 @@ fn metal_the_water_writes_its_own_motion_for_taa() {
         path: WaterPath::Refracted,
         reflection: ReflectionSource::Environment,
         depth_reversed: true,
+        fog: GpuFog::default(),
     });
     node.prepare(&gpu.device, &gpu.queue, &row, &WaterInput { frame: &scene.frame, opaque: Some(&opaque), depth: &sampled, env: &env, history: None });
     let [normals, motion_format, reactive] = genex_render::motion::TARGET_FORMATS;

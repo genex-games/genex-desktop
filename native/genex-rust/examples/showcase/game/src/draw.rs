@@ -6,15 +6,17 @@
 //! where it does not. The lanterns and the cabin's windows are real lights: emissive glass and
 //! panes (which the look's bloom spreads), a flickering point light in each lantern and a spot
 //! light shining out of each window onto the porch and the yard; the fireflies are emissive too.
-//! Every animation derives from the world's tick, never a clock.
+//! The lake is the renderer's water (renderer pass 2 B.3, `frame.water`). Every animation derives
+//! from the world's tick, never a clock.
 
 use genex::math::{self, FRAC_PI_2, Quat, Vec3, vec3};
 use genex::prelude::*;
-use genex::render::SpotLight;
+use genex::render::{ReflectionProbe, SpotLight, Water};
 use genex::{Assets, InstanceGroup, Model, Scatter, Subsurface, Terrain};
 
 use crate::layout::{
-    CABIN, CABIN_FLOOR, CABIN_YAW, DOCK_DECK, DOCK_LENGTH, Dock, Rock, Tree, TreeKind, TreeLod, WATER_LEVEL, height, layout, mix, smoothstep,
+    CABIN, CABIN_FLOOR, CABIN_YAW, DOCK_DECK, DOCK_LENGTH, Dock, LAKE_CENTER, LAKE_RADII, Rock, Tree, TreeKind, TreeLod, WATER_LEVEL, height, layout, mix,
+    smoothstep,
 };
 use crate::world::{TreeMeshes, World};
 
@@ -385,6 +387,7 @@ pub fn draw(world: &World, frame: &mut Frame, camera: &Camera) {
     frame.sun(world.time.sun_dir(), SUN_COLOR, SUN_INTENSITY).ambient(AMBIENT_COLOR, world.time.ambient(AMBIENT_INTENSITY));
     frame.environment(world.time.environment(world.backdrop.environment()));
     terrain(world, frame);
+    lake(frame);
     trees(world, frame, camera.position, t);
     rocks(world, frame);
     cabin(world, frame, t);
@@ -399,6 +402,56 @@ fn terrain(world: &World, frame: &mut Frame) {
     if let Some(ground) = &world.models.terrain {
         frame.terrain(ground);
     }
+}
+
+/// How far past the lake's radii the water's rectangle reaches (the shoreline wobbles outwards;
+/// the ground above the water level hides the rest).
+const LAKE_MARGIN: f32 = 1.35;
+/// The lake's water: a peaty forest lake, red gone within a metre and green within a few, so the
+/// sandy bed shows only in the shallows and the deep water is a dark teal (per metre, linear).
+const LAKE_ABSORPTION: [f32; 3] = [0.9, 0.32, 0.22];
+/// The light the lake's body scatters back: a dark teal albedo (linear).
+const LAKE_SCATTER: [f32; 3] = [0.010, 0.045, 0.040];
+/// A thin lap of foam along the shore, metres of water under the surface.
+const LAKE_FOAM_M: f32 = 0.025;
+/// A calm evening lake: small ripples and a near-mirror reflection.
+const LAKE_RIPPLE: f32 = 0.035;
+const LAKE_ROUGHNESS: f32 = 0.07;
+
+/// The lake: the renderer's water (renderer pass 2 B.3) over the lake's bounds at the water level.
+/// The terrain above the level hides it, so its shoreline is where the ground meets the water, and
+/// the shore foam follows the shallows there.
+pub fn lake_water() -> Water {
+    let half = LAKE_RADII * LAKE_MARGIN;
+    Water::lake(vec3(LAKE_CENTER.x, WATER_LEVEL, LAKE_CENTER.y), half)
+        .with_absorption(LAKE_ABSORPTION)
+        .with_scatter(LAKE_SCATTER)
+        .with_foam(LAKE_FOAM_M)
+        .with_ripple(LAKE_RIPPLE, LAKE_ROUGHNESS)
+}
+
+/// The reflection probe over the lake: a box over the water and its shores, captured from above
+/// the lake's middle, so the water (and the dock, the boat and the beach in it) reflects the woods
+/// around the lake where the screen's reflection misses, not the open sky.
+const LAKE_PROBE_HEIGHT: f32 = 1.5;
+/// How far the probe's box reaches below and above the water level, and its fade past its faces, m.
+const LAKE_PROBE_DEPTH: f32 = 4.0;
+const LAKE_PROBE_TOP: f32 = 10.0;
+const LAKE_PROBE_BLEND: f32 = 4.0;
+
+/// The lake's reflection probe ([`LAKE_PROBE_HEIGHT`]).
+pub fn lake_probe() -> ReflectionProbe {
+    let half = LAKE_RADII * LAKE_MARGIN;
+    let min = vec3(LAKE_CENTER.x - half.x, WATER_LEVEL - LAKE_PROBE_DEPTH, LAKE_CENTER.y - half.y);
+    let max = vec3(LAKE_CENTER.x + half.x, WATER_LEVEL + LAKE_PROBE_TOP, LAKE_CENTER.y + half.y);
+    let capture = vec3(LAKE_CENTER.x, WATER_LEVEL + LAKE_PROBE_HEIGHT, LAKE_CENTER.y);
+    ReflectionProbe::new(min, max).with_capture(capture).with_blend(LAKE_PROBE_BLEND)
+}
+
+fn lake(frame: &mut Frame) {
+    frame.tag("lake");
+    frame.water(&lake_water());
+    frame.reflection_probe(&lake_probe());
 }
 
 fn pick_in<T>(items: &[T], tint: f32) -> &T {

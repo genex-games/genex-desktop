@@ -1,15 +1,17 @@
 //! The outdoor scene: rolling terrain 200 m across (160 × 160 cells) around a lake basin, pines,
-//! broadleaf trees, rocks and grass tufts scattered by noise (about 12,000 instances), the water as
-//! one transparent sheet at sea level, and an opaque three-band sky dome riding with the camera as the placeholder for
-//! the physical sky (RQ2). The camera loops along the shore.
+//! broadleaf trees, rocks and grass tufts scattered by noise (about 12,000 instances), the water
+//! (the renderer's lake water, renderer pass 2 B.3: `Scene::water` at sea level over the whole
+//! terrain, the ground above it hiding it), and an opaque three-band sky dome riding with the
+//! camera as the placeholder for the physical sky (RQ2). The camera loops along the shore.
 
 use genex::math::{self, Vec2, Vec3, vec2, vec3};
 use genex_render::RenderError;
 use genex_render::mesh::MeshData;
-use genex_render::scene::{Lighting, Material, MeshId, Scene};
+use genex_render::scene::{Lighting, Material, MeshId, Scene, SceneWater};
+use genex_render::water::{WaterBody, WaterMaterial};
 
 use super::geometry::{broadleaf, dome_band, from_mesh, grass_tuft, heightfield};
-use super::{BenchScene, Meshes, SceneId, camera, on_circle, path_fraction, placed};
+use super::{BenchScene, Meshes, SceneId, camera, on_circle, path_fraction, placed, seconds};
 use crate::layout::{fbm, hash2, smoothstep};
 use crate::meshgen;
 
@@ -104,7 +106,6 @@ fn scatter(kind: &Kind) -> Vec<([f32; 16], u32)> {
 
 pub(super) struct Outdoor {
     terrain: MeshId,
-    water: MeshId,
     sky: [MeshId; 3],
     /// Each instanced group: mesh, material and models.
     groups: Vec<(MeshId, Material, Vec<[f32; 16]>)>,
@@ -113,7 +114,6 @@ pub(super) struct Outdoor {
 impl Outdoor {
     pub(super) fn load(meshes: &mut dyn Meshes) -> Result<Outdoor, RenderError> {
         let terrain = meshes.add(heightfield(CELLS, HALF, height))?;
-        let water = meshes.add(heightfield(8, HALF, |_, _| 0.0))?;
         let sky = [meshes.add(dome_band(SKY_BANDS[0].0, SKY_BANDS[0].1, 48))?, meshes.add(dome_band(SKY_BANDS[1].0, SKY_BANDS[1].1, 48))?, meshes.add(dome_band(SKY_BANDS[2].0, SKY_BANDS[2].1, 48))?];
         let mut groups = Vec::new();
         for kind in &KINDS {
@@ -125,7 +125,7 @@ impl Outdoor {
                 groups.push((mesh, material, models));
             }
         }
-        Ok(Outdoor { terrain, water, sky, groups })
+        Ok(Outdoor { terrain, sky, groups })
     }
 
     fn lighting() -> Lighting {
@@ -162,7 +162,10 @@ impl BenchScene for Outdoor {
         for (mesh, material, models) in &self.groups {
             scene.draw_instanced(*mesh, models, *material);
         }
-        scene.draw(self.water, placed(Vec3::ZERO, 0.0, Vec3::ONE), Material::color([46, 92, 118, 168]).with_pbr(0.0, 0.06));
+        // The lake: the renderer's water at sea level over the whole terrain (the basin's ground
+        // above it hides it), its ripples on the path's clock.
+        let body = WaterBody { centre: [0.0, 0.0, 0.0], half_extent: [HALF, HALF], material: WaterMaterial::LAKE };
+        scene.water = Some(SceneWater { body, time: seconds(frame) });
         scene
     }
 }

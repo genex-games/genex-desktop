@@ -44,6 +44,9 @@ struct Water {
     // x: 1 when the opaque copy is bound (refraction; else blended); y: 1 when the screen
     // reflections march (the history pyramid is bound); z: 1 when depth is reversed; w: unused.
     flags: vec4<u32>,
+    // The look's height fog over the surface (`GxFog`'s color and params; density 0: none).
+    fog_color: vec4<f32>,
+    fog_params: vec4<f32>,
 }
 
 @group(0) @binding(0) var<uniform> frame: FrameUniforms;
@@ -71,6 +74,9 @@ const GX_WATER_GLINT_MAX: f32 = 4.0;
 // The foam's albedo and its noise's cell size, m.
 const GX_WATER_FOAM_ALBEDO: f32 = 0.75;
 const GX_WATER_FOAM_CELL_M: f32 = 0.35;
+// The noise's gain and offset in the foam's cover (`water::FOAM_BREAKUP`): no foam below a noise of
+// about 0.33, full cover above about 0.64.
+const GX_WATER_FOAM_BREAKUP: vec2<f32> = vec2<f32>(3.2, 1.05);
 
 struct WaterOut {
     @builtin(position) @invariant clip: vec4<f32>,
@@ -167,13 +173,14 @@ fn gx_water_transmittance(absorption: vec3<f32>, path: f32) -> vec3<f32> {
 }
 
 // The shore foam's cover at `depth_below` metres of water under the surface, `width` its width
-// and `noise` (0..1) its breakup.
+// and `noise` (0..1) its breakup: where the noise is low the waterline has none, so the foam laps
+// the shore in patches rather than drawing an unbroken white line along it.
 fn gx_water_shore_foam(depth_below: f32, width: f32, noise: f32) -> f32 {
     if width <= 0.0 {
         return 0.0;
     }
     let shallow = 1.0 - smoothstep(0.0, width, depth_below);
-    return saturate(shallow * (0.55 + 0.9 * noise) - 0.25);
+    return saturate(shallow * (GX_WATER_FOAM_BREAKUP.x * noise - GX_WATER_FOAM_BREAKUP.y));
 }
 
 fn gx_water_hash(p: vec2<f32>) -> f32 {
@@ -206,6 +213,41 @@ fn gx_water_bed_distance(pixel: vec2<i32>) -> f32 {
 // The pre-exposure the scene is written with (1 on the legacy scene).
 fn gx_water_exposure() -> f32 {
     return select(frame.cascade_splits.z, 1.0, frame.cascade_splits.z <= 0.0);
+}
+
+// The fog chunk's accessors (lighting/fog.wgsl is concatenated ahead of this file): the frame's fog
+// row, the sky through layer 0 of the environment's cube array and its level for a roughness (the
+// froxel fog's, sky/froxel_fog.wgsl).
+const GX_ENVIRONMENT_LIGHT: bool = true;
+
+fn gx_fog() -> GxFog {
+    return GxFog(water.fog_color, water.fog_params);
+}
+
+fn gx_env_sky(dir: vec3<f32>, lod: f32) -> vec3<f32> {
+    return textureSampleLevel(water_env, water_sampler, dir, 0, lod).rgb;
+}
+
+fn gx_env_lod(roughness: f32) -> f32 {
+    let last_mip = f32(textureNumLevels(water_env) - 1u);
+    let r = clamp(roughness, 0.0, 1.0);
+    return last_mip * r * (2.0 - r);
+}
+
+// The surface's pre-exposed `colour` (its coverage `alpha`) seen through the look's height fog
+// between the camera and `world` (`gx_apply_fog`'s terms, the in-scatter at the scene's `exposure`).
+// Premultiplied, the in-scatter scales with the coverage: the scene behind the blended water was
+// fogged by its own pass.
+fn gx_water_fogged(colour: vec3<f32>, alpha: f32, world: vec3<f32>, exposure: f32) -> vec3<f32> {
+    let fog = gx_fog();
+    let origin = frame.camera_pos.xyz;
+    let reach = length(world - origin);
+    if fog.color.a <= 0.0 || reach <= 0.0 {
+        return colour;
+    }
+    let dir = (world - origin) / reach;
+    let opacity = gx_fog_opacity(fog, gx_fog_optical_depth(fog, origin, dir, reach));
+    return colour * (1.0 - opacity) + gx_fog_inscatter(fog, dir) * (exposure * opacity * alpha);
 }
 
 // The reflection (`gx_water_reflection`: the screen, the probes and the sky) is in
@@ -268,7 +310,8 @@ fn fs_water(in: WaterOut) -> @location(0) vec4<f32> {
     let alpha = select(opacity, 1.0, refracting);
     let surface_colour = body * (1.0 - fresnel) + reflection * fresnel + glint;
     let surface_alpha = alpha * (1.0 - fresnel) + fresnel;
-    return vec4<f32>(mix(surface_colour, foam_light, foam), mix(surface_alpha, 1.0, foam));
+    let covered = mix(surface_alpha, 1.0, foam);
+    return vec4<f32>(gx_water_fogged(mix(surface_colour, foam_light, foam), covered, in.world, exposure), covered);
 }
 
 struct WaterMotion {

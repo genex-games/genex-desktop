@@ -402,6 +402,13 @@ impl ImmediateFrame {
         self
     }
 
+    /// Draw `water` over the opaque scene this frame (renderer pass 2 B.3, graph node 16a), or
+    /// none.
+    pub fn set_water(&mut self, water: Option<crate::scene::SceneWater>) -> &mut Self {
+        self.scene.water = water;
+        self
+    }
+
     /// The 3D scene so far.
     pub fn scene(&self) -> &Scene {
         &self.scene

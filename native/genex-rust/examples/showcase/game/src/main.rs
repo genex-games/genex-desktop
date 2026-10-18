@@ -6,7 +6,8 @@
 //! look (AgX, auto exposure, height fog, bloom, AO, contact shadows), the built-in terrain (six PBR
 //! layers blended per pixel by a control map and their heights, with continuous levels of detail,
 //! the meadow's GPU grass grown on its grassy layers and stones scattered on its beach and path)
-//! and three custom GPU passes for what no built-in draws (clouds, lake, light sprites). The
+//! the lake (the renderer's water: refraction, absorption, shore foam and reflections) and three
+//! custom GPU passes for what no built-in draws (clouds, the lake on MSAA presets, light sprites). The
 //! cabin is a room: its door stands open on a lamplit interior with a hearth and chinked log
 //! walls, lit inside by a reflection probe and an irradiance volume. A slow tour flies through pass 1's five named shots;
 //! four more (a wide golden hour, the shore, the forest floor and the cabin's room) are held by

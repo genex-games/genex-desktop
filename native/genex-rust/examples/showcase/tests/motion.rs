@@ -1011,8 +1011,9 @@ fn bench_frames(gpu: &Gpu, class: DeviceClass, quality: &Quality, step: f32) -> 
     bench_frames_drifting(gpu, class, quality, step, 0.0)
 }
 
-/// [`bench_frames`] with every transparent draw (the lake) also moved `drift` world units along x a
-/// frame: a moving transparent, which TAA's reactive mask marks.
+/// [`bench_frames`] with the lake (the scene's water, renderer pass 2 B.3, and any transparent draw)
+/// also moved `drift` world units along x a frame: moving water, whose own motion key TAA
+/// reprojects by.
 fn bench_frames_drifting(gpu: &Gpu, class: DeviceClass, quality: &Quality, step: f32, drift: f32) -> Vec<Capture> {
     bench_frames_moving(gpu, class, quality, step, drift).0
 }
@@ -1044,6 +1045,9 @@ fn bench_frames_moving(gpu: &Gpu, class: DeviceClass, quality: &Quality, step: f
         drawn.camera.target = (Vec3::from(drawn.camera.target) + offset).to_array();
         for draw in drawn.draws.iter_mut().filter(|draw| draw.material.is_transparent()) {
             draw.model[12] += drift * k as f32;
+        }
+        if let Some(water) = drawn.water.as_mut() {
+            water.body.centre[0] += drift * k as f32;
         }
         let mut frame = ImmediateFrame::from_scene(drawn);
         frame.set_tick(u64::from(k));

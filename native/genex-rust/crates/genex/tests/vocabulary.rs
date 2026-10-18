@@ -234,6 +234,26 @@ fn the_cloud_calls_are_the_fixture_s_and_each_is_a_call_of_the_facade() {
 }
 
 #[test]
+fn the_water_calls_are_the_fixture_s_and_each_is_a_call_of_the_facade() {
+    use genex::render::Water;
+    assert_eq!(pinned_calls(&fixture(), "water"), ["frame.water", "Water::lake", ".with_absorption", ".with_scatter", ".with_foam", ".with_ripple", ".with_refraction", "Water::drawn_at"]);
+    let lake = Water::lake(genex::glam::Vec3::ZERO, genex::glam::Vec2::new(10.0, 8.0))
+        .with_absorption([0.45, 0.09, 0.06])
+        .with_scatter([0.02, 0.09, 0.08])
+        .with_foam(0.12)
+        .with_ripple(0.08, 0.08)
+        .with_refraction(0.02);
+    let mut frame = Frame::new(Color::BLACK);
+    frame.water(&lake);
+    assert_eq!(frame.drawn_water(), Some(&lake));
+    // Where the renderer draws no water (an MSAA preset) a game may draw its own.
+    let class = genex_render::device_class::DeviceClass::from_wire("desktop-high").expect("class");
+    let preset = |preset| genex_render::presets::preset_quality(preset, class);
+    assert!(Water::drawn_at(&preset(genex::render::QualityPreset::High)));
+    assert!(!Water::drawn_at(&preset(genex::render::QualityPreset::Medium)));
+}
+
+#[test]
 fn the_night_sky_and_subsurface_calls_are_the_fixtures_and_each_is_a_call_of_the_facade() {
     use genex::Subsurface;
     use genex::render::{Environment, Moon, SkyMedium, SkyParams};

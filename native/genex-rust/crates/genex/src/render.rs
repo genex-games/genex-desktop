@@ -124,6 +124,8 @@ pub use genex_render::settings::Fog;
 pub use crate::frame::{DEFAULT_SPOT_INNER_DEGREES, DEFAULT_SPOT_OUTER_DEGREES, IrradianceVolume, ReflectionProbe, SpotLight};
 /// A projected decal ([`crate::Frame::decal`], renderer pass 2 A.10) and its boxes' default depths.
 pub use crate::decal::{DEFAULT_GROUND_DEPTH, DEFAULT_WALL_DEPTH, Decal};
+/// Lake water (renderer pass 2 B.3): a water rectangle drawn with [`crate::Frame::water`].
+pub use crate::water::{WATER_ABSORPTION_MAX, WATER_FOAM_MAX, WATER_REFRACTION_MAX, WATER_RIPPLE_MAX, Water};
 
 /// The tonemapper of a game's look: how the HDR scene becomes display colour.
 /// [`Tonemap::KhronosNeutral`] (the default) keeps authored colours as they are up to the

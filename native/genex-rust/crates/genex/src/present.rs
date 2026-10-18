@@ -1232,6 +1232,8 @@ impl Presenter {
         let (mut immediate, mut drawn) = self.immediate(frame, camera);
         // The tick's simulated seconds (`gx_draw.params.x`, `gx_post.params.x`), never wall time.
         immediate.set_seconds((tick as f64 * FIXED_STEP_MS / 1000.0) as f32);
+        // The frame's water on the same clock (renderer pass 2 B.3).
+        immediate.set_water(water_of(frame, tick));
         self.sync_passes(passes);
         immediate.set_tick(tick);
         // Each emitter as it is at the frame's tick (a refused one is skipped).
@@ -2222,12 +2224,22 @@ fn push_group(sink: &mut impl WorldSink, assets: &AssetCache, missing: &mut Vec<
     }
 }
 
+/// The water `frame` draws ([`Frame::water`], renderer pass 2 B.3) as the renderer takes it, its
+/// ripples and foam at `tick`'s simulated seconds (never wall time, so a capture is the same every
+/// time); None without one.
+pub fn water_of(frame: &Frame, tick: u64) -> Option<genex_render::scene::SceneWater> {
+    let body = frame.drawn_water()?.body()?;
+    Some(genex_render::scene::SceneWater { body, time: (tick as f64 * FIXED_STEP_MS / 1000.0) as f32 })
+}
+
 /// The renderer's scene for `frame` drawn from `camera` with what `assets` loaded: its lights,
 /// then its shapes in draw order. The presenter writes its frame with the same writer, so a shell
 /// drawing this scene draws what the presenter draws.
 pub fn to_scene(frame: &Frame, camera: &Camera, assets: &AssetCache) -> Scene {
     let mut scene = Scene::new(camera_desc(camera), rgba(frame.clear_color()));
     write_world(&mut scene, frame, assets, &mut Drawn::default());
+    // A scene bridge has no tick: its water stands at its clock's start.
+    scene.water = water_of(frame, 0);
     scene
 }
 

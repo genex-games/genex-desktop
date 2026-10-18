@@ -1,6 +1,7 @@
 //! The lakeside's rules headless (no GPU): it replays from a seed, its shots are named cameras,
 //! only the passes no built-in draws are registered, all at custom-pass API v2, the ground is the
-//! built-in terrain with its grassy layers' grass, its look (fog included) is its own, and
+//! built-in terrain with its grassy layers' grass, the lake is the renderer's water (its own pass
+//! where the renderer draws none), its look (fog included) is its own, and
 //! the camera keys switch between the tour, a shot and free flight.
 
 use genex::gpu::PassStage;
@@ -42,6 +43,33 @@ fn every_shot_is_a_named_camera_and_draws_the_scene() {
         assert_eq!(camera.position, shot.eye());
         let frame = runtime.frame(View::Named(shot.name)).expect("its frame");
         assert!(frame.draw_calls() > 500, "{}: {} draws", shot.name, frame.draw_calls());
+    }
+}
+
+/// Renderer pass 2 B.3 on the showcase: every shot's lake is the renderer's water at the water
+/// level, its rectangle covering the whole lake (every point inside the shoreline), so the water,
+/// its refraction, foam and reflections are the built-in node's, not a game pass.
+#[test]
+fn every_shot_draws_the_lake_as_the_renderers_water_over_the_whole_lake() {
+    use showcase_game::layout::{LAKE_CENTER, LAKE_RADII, WATER_LEVEL, lake_radius};
+    let mut runtime = runtime();
+    run(&mut runtime, 60);
+    for shot in named_shots() {
+        let frame = runtime.frame(View::Named(shot.name)).expect("its frame");
+        let water = frame.drawn_water().unwrap_or_else(|| panic!("{}: the lake is drawn with frame.water", shot.name));
+        assert_eq!(water.centre.y, WATER_LEVEL, "{}: at the water level", shot.name);
+        let reach = LAKE_RADII * 2.0;
+        for i in 0..=80 {
+            for j in 0..=80 {
+                let x = LAKE_CENTER.x - reach.x + 2.0 * reach.x * i as f32 / 80.0;
+                let z = LAKE_CENTER.y - reach.y + 2.0 * reach.y * j as f32 / 80.0;
+                if lake_radius(x, z) >= 1.0 {
+                    continue;
+                }
+                let inside = (x - water.centre.x).abs() <= water.half_extent.x && (z - water.centre.z).abs() <= water.half_extent.y;
+                assert!(inside, "{}: the lake at ({x}, {z}) lies under the water's rectangle", shot.name);
+            }
+        }
     }
 }
 

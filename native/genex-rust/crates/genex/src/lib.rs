@@ -49,6 +49,7 @@ mod runtime;
 mod sim;
 mod particles;
 mod terrain;
+mod water;
 #[cfg(all(feature = "studio", not(target_arch = "wasm32")))]
 mod studio;
 /// The one presenter every shell draws with (native and web): host glue, not game API.

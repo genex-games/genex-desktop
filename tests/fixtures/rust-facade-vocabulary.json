@@ -154,6 +154,9 @@
   "clouds": {
     "calls": [".with_clouds", "Clouds::default", ".with_coverage", ".with_layer", ".with_density", ".with_offset"]
   },
+  "water": {
+    "calls": ["frame.water", "Water::lake", ".with_absorption", ".with_scatter", ".with_foam", ".with_ripple", ".with_refraction", "Water::drawn_at"]
+  },
   "meshlets": {
     "extrasKey": "genex_meshlets",
     "schemaVersion": 1,

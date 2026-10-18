@@ -645,6 +645,7 @@ pub struct Frame {
     lights: Lights,
     environment: Option<Environment>,
     terrain: Option<crate::terrain::Terrain>,
+    water: Option<crate::water::Water>,
     decals: Vec<crate::decal::Decal>,
     particles: Vec<crate::particles::Particles>,
 }
@@ -663,6 +664,7 @@ impl Default for Frame {
             lights: Lights::default(),
             environment: None,
             terrain: None,
+            water: None,
             decals: Vec::new(),
             particles: Vec::new(),
         }
@@ -858,6 +860,26 @@ impl Frame {
     /// The terrain this frame draws ([`Frame::terrain`]), if any.
     pub fn drawn_terrain(&self) -> Option<&crate::terrain::Terrain> {
         self.terrain.as_ref()
+    }
+
+    /// Draw `water` ([`crate::render::Water`], renderer pass 2 B.3) over the opaque scene: one
+    /// logical draw. A frame draws one water (a second call replaces the first); a rectangle that
+    /// cannot be drawn (a centre that is not finite, a half extent that is not a positive size) is
+    /// ignored. Its ripples and foam run on the simulation's clock.
+    pub fn water(&mut self, water: &crate::water::Water) -> &mut Self {
+        if water.body().is_none() {
+            return self;
+        }
+        if self.water.is_none() {
+            self.count();
+        }
+        self.water = Some(*water);
+        self
+    }
+
+    /// The water this frame draws ([`Frame::water`]), if any.
+    pub fn drawn_water(&self) -> Option<&crate::water::Water> {
+        self.water.as_ref()
     }
 
     /// Draw `particles` ([`crate::Particles`]) as they are at the tick this frame is drawn at:

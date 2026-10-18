@@ -422,7 +422,7 @@ fn stage(gpu: &Gpu, shot: &Shot<'_>, size: (u32, u32)) -> Staged {
     let formats = WaterFormats { colour: COLOUR, depth: DEPTH, depth_reversed: true, colour_writes_depth: false };
     let mut node = WaterNode::new(device, formats).expect("the water node");
     let body = WaterBody { material: shot.material, ..lake() };
-    let row = GpuWater::new(&WaterFrame { body, proj, prev_view_proj: view_proj, render: size, time: 0.0, env_mips: 1, path: WaterPath::Blended, reflection: shot.reflection, depth_reversed: true });
+    let row = GpuWater::new(&WaterFrame { body, proj, prev_view_proj: view_proj, render: size, time: 0.0, env_mips: 1, path: WaterPath::Blended, reflection: shot.reflection, depth_reversed: true, fog: genex_render::fog::GpuFog::default() });
     node.set_reflection(&gpu.queue, &shot.reflect);
     node.prepare(device, &gpu.queue, &row, &WaterInput { frame: &frame, opaque: None, depth: &sampled, env: &env, history: shot.history });
     Staged { node, colour, world, _inputs: (frame, env, sampled) }

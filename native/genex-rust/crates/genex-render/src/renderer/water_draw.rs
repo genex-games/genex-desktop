@@ -107,6 +107,7 @@ impl Renderer {
             path: crate::water::path(inputs),
             reflection: crate::water::reflection_source(&self.quality, class, inputs),
             depth_reversed: self.path.depth_reversed,
+            fog: self.frame_fog(),
         });
         let reflect = GpuWaterReflect::new(&WaterReflectFrame {
             body: &water.body,

@@ -17,6 +17,9 @@
 //!   frame's colour pyramid at the hit's reprojected point and re-exposed (desktop and web `high`
 //!   and `ultra`), and the reflection probes over the water with the sky layer filling what they
 //!   leave elsewhere and on every other class (phones never march: plan B.3, "no SSR on phones").
+//! - **Fog**: the look's height fog between the camera and the surface (`lighting/fog.wgsl`'s
+//!   `gx_apply_fog` terms over the frame's fog row, [`WaterFrame::fog`]), as every built-in surface
+//!   takes it; the froxel and aerial volumes are not read (the analytic fog stands in for them).
 //! - **TAA's key** ([`WaterNode::draw_motion`], `fs_water_motion`): after the colour pass the
 //!   surface writes its own motion and depth into the motion prepass's targets (reactive 0), so
 //!   TAA reprojects a water pixel by the water's motion rather than the bed's and keeps its
@@ -38,10 +41,12 @@ use crate::settings::Quality;
 
 pub mod reflect;
 
-/// The water's shader: the common structs, the clip position, the SSR helper, the water, then its
-/// reflection ([`reflect`]).
+/// The water's shader: the common structs, the fog's lighting chunk (the look's height fog over the
+/// surface), the clip position, the SSR helper, the water, then its reflection ([`reflect`]).
 pub const WATER: &str = crate::shaders::minify::shipped_wgsl!(concat!(
     include_str!("../shaders/common.wgsl"),
+    include_str!("../shaders/effects.wgsl"),
+    include_str!("../shaders/lighting/fog.wgsl"),
     include_str!("../shaders/clip_position.wgsl"),
     include_str!("../shaders/screen/ssr_march.wgsl"),
     include_str!("../shaders/water/water.wgsl"),
@@ -135,6 +140,15 @@ pub const fn path(inputs: ScreenInputs) -> WaterPath {
     if inputs.opaque_copy { WaterPath::Refracted } else { WaterPath::Blended }
 }
 
+/// Whether the renderer draws a scene's water at `quality` (graph node 16a): the HDR scene under
+/// TAA with the prepass, whose depth the water tests and samples. An MSAA world pass (desktop
+/// `low` and `medium`, the phones' defaults) draws none yet, so a game may draw its own water
+/// there (the showcase Lakeside's lake pass).
+pub fn drawn_at(quality: &Quality) -> bool {
+    let temporal = quality.anti_aliasing.temporal() && crate::post::taa::LANDED;
+    quality.hdr && quality.prepass && temporal
+}
+
 /// Where a frame drawn at `quality` on `class` with `inputs` reflects from: the screen on desktop
 /// and web classes whose frame holds the history pyramid, the environment on phones always.
 pub fn reflection_source(quality: &Quality, class: DeviceClass, inputs: ScreenInputs) -> ReflectionSource {
@@ -166,6 +180,10 @@ fn smoothstep(edge0: f32, edge1: f32, x: f32) -> f32 {
     t * t * (3.0 - 2.0 * t)
 }
 
+/// The noise's gain and offset in the shore foam's cover (`GX_WATER_FOAM_BREAKUP`): where the
+/// noise is low the waterline has no foam, so it laps the shore in patches, not an unbroken line.
+pub const FOAM_BREAKUP: [f32; 2] = [3.2, 1.05];
+
 /// The shore foam's cover at `depth_below` metres of water under the surface, `width` its width
 /// and `noise` (0..1) its breakup (`gx_water_shore_foam`).
 pub fn shore_foam(depth_below: f32, width: f32, noise: f32) -> f32 {
@@ -173,7 +191,7 @@ pub fn shore_foam(depth_below: f32, width: f32, noise: f32) -> f32 {
         return 0.0;
     }
     let shallow = 1.0 - smoothstep(0.0, width, depth_below);
-    (shallow * (0.55 + 0.9 * noise) - 0.25).clamp(0.0, 1.0)
+    (shallow * (FOAM_BREAKUP[0] * noise - FOAM_BREAKUP[1])).clamp(0.0, 1.0)
 }
 
 /// The refraction's offset scale at `path` metres of water (0 at the shoreline, 1 from
@@ -204,6 +222,10 @@ pub struct GpuWater {
     pub viewport: [f32; 4],
     /// x: refracting (opaque copy bound); y: marching screen reflections; z: depth reversed.
     pub flags: [u32; 4],
+    /// The look's height fog over the surface (`crate::fog::GpuFog`): rgb its tint, a its density.
+    pub fog_color: [f32; 4],
+    /// x: height falloff; y: base height; z: start distance; w: largest opacity.
+    pub fog_params: [f32; 4],
 }
 
 /// What one frame's water row is made of.
@@ -227,6 +249,8 @@ pub struct WaterFrame {
     pub reflection: ReflectionSource,
     /// Whether depth is reversed (the HDR path).
     pub depth_reversed: bool,
+    /// The fog row the frame's surfaces draw with (`Renderer::frame_fog`; density 0: none).
+    pub fog: crate::fog::GpuFog,
 }
 
 impl GpuWater {
@@ -245,6 +269,8 @@ impl GpuWater {
             surface: [m.roughness, m.ripple, frame.time, frame.env_mips as f32],
             viewport: [w, h, 1.0 / w, 1.0 / h],
             flags: [u32::from(frame.path == WaterPath::Refracted), u32::from(frame.reflection == ReflectionSource::ScreenThenEnvironment), u32::from(frame.depth_reversed), 0],
+            fog_color: frame.fog.color,
+            fog_params: frame.fog.params,
         }
     }
 }
