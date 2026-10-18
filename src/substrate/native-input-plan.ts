@@ -25,6 +25,19 @@ function holdMs(ms: number | undefined): number {
 
 const pause = (ms: number): NativeInputStep => ({ waitMs: ms });
 
+/** Whether a coordinate is a fraction of the frame (0..1), as the web preview reads one. */
+const isFraction = (value: number): boolean => value >= 0 && value <= 1;
+
+/**
+ * Whether a position is in pixels: `px` says so, or a coordinate falls outside 0..1, as
+ * `pointInView` reads it on the web. The runtime clamps an unmarked position to 0..1, so without
+ * the mark a pixel click would land on the frame's edge.
+ */
+const inPixels = (px: boolean | undefined, ...coordinates: number[]): boolean =>
+  px === true || !coordinates.every(isFraction);
+
+const pixelMark = (pixels: boolean) => (pixels ? { px: true as const } : {});
+
 function holdSteps(action: ActionOf<"hold">): NativeInputStep[] {
   return [
     { send: [{ type: "down", keys: action.keys }] },
@@ -40,7 +53,8 @@ function along(action: ActionOf<"drag">, i: number): { x: number; y: number } {
 }
 
 function dragSteps(action: ActionOf<"drag">): NativeInputStep[] {
-  const px = action.px === true ? { px: true } : {};
+  // One mark for the whole glide: a drag with either end in pixels is in pixels.
+  const px = pixelMark(inPixels(action.px, action.fromX, action.fromY, action.x, action.y));
   const button = action.button === undefined ? {} : { button: action.button };
   const steps: NativeInputStep[] = [
     { send: [{ type: "move", x: action.fromX, y: action.fromY, ...px }] },
@@ -59,10 +73,16 @@ function clickSteps(action: ActionOf<"click">): NativeInputStep[] | null {
   if (action.x === undefined || action.y === undefined) return null;
   const { x, y, px, ...press } = action;
   return [
-    { send: [{ type: "move", x, y, ...(px === true ? { px: true } : {}) }] },
+    { send: [{ type: "move", x, y, ...pixelMark(inPixels(px, x, y)) }] },
     pause(NATIVE_INPUT_TICK_MS),
     { send: [{ ...press, type: "click" }] },
   ];
+}
+
+/** A move the runtime takes as is, marked `px` when its position is in pixels. */
+function asSent(action: NativeInputAction): NativeInputAction {
+  if (action.type !== "move" || !inPixels(action.px, action.x, action.y)) return action;
+  return { ...action, px: true };
 }
 
 /** The steps a timed or positioned action expands into, or null for one the runtime takes as is. */
@@ -95,7 +115,7 @@ export function planNativeInput(actions: readonly NativeInputAction[]): NativeIn
   for (const action of actions) {
     const expanded = expand(action);
     if (!expanded) {
-      batch.push(action);
+      batch.push(asSent(action));
       continue;
     }
     flush();

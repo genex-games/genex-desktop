@@ -149,9 +149,10 @@ const input = z.discriminatedUnion("type", [
       x: z.number().optional(),
       y: z.number().optional(),
       button: z.enum(["left", "right", "middle"]).optional(),
+      px: z.boolean().optional(),
     })
     .strict(),
-  z.object({ type: z.literal("move"), x: z.number(), y: z.number() }).strict(),
+  z.object({ type: z.literal("move"), x: z.number(), y: z.number(), px: z.boolean().optional() }).strict(),
   z
     .object({ type: z.literal("look"), dx: z.number().min(-2000).max(2000), dy: z.number().min(-2000).max(2000) })
     .strict(),

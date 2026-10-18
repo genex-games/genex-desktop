@@ -457,7 +457,8 @@ The request union/runtime validator is src/main/dev/protocol.ts. Operations are 
 snapshot (desktop, scope/limit), click (selector/scope), type (plus text/replace), key
 (surface/key/code/modifiers), select (selector/scope/value), scroll (surface/deltas/target),
 game.input (existing bounded action union; on a native run the host plays `hold`, `wait`, `drag`
-and a positioned `click` as timed messages, as the web preview does), game.state and game.renderSettings (the game's verb,
+and a positioned `click` as timed messages, as the web preview does, and a position with `px` or a
+coordinate outside 0..1 is pixels, on a native run Live's own pixels), game.state and game.renderSettings (the game's verb,
 with an optional `set`) (each with an optional `surface`: `game`, the default, or `native` for the
 open game's native run), window.resize, capture (`--surface native` takes `--frame pinned`, the
 run's own capture profile, drawn at `--size WxH` when given (64 to 4096 a side; a C++ game, which

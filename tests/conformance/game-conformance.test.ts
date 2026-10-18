@@ -22,6 +22,7 @@ import { existsSync } from "node:fs";
 import { mkdir, readdir, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { Duplex } from "node:stream";
+import { setTimeout as sleep } from "node:timers/promises";
 import { after, describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import {
@@ -450,6 +451,32 @@ describe("render-presets over a game that serves renderSettings", {
       byCheck(report, ConformanceCheck.RenderPresets).detail ?? "",
       /^mobile-high \(temporal\): exposure was switched on, but the drawn frame has it off/,
     );
+  });
+
+  it("a game whose Live frame lands a settings change a few steps later (pipeline-change-deferred until then) is green: the suite waits for each change to land", async () => {
+    const report = await run("render-lags-change");
+    const expected = CONFORMANCE_CHECKS.map((check) => cleanVerdict(check, true));
+    assert.deepEqual(verdicts(report), expected, JSON.stringify(report.checks));
+    assert.equal(report.passed, true);
+  });
+
+  it("a game whose settings change never lands fails render-presets with verb-invalid at its first case, within the wait's deadline", async () => {
+    // The suite's clock runs a thousand times the wall clock, so the wait's deadline passes in moments.
+    const started = Date.now();
+    const fast = () => started + (Date.now() - started) * 1000;
+    const report = await runGameConformance(
+      {
+        launch: () => launchScript(DOUBLE, RENDER_DOUBLE_ARGS("render-never-lands")),
+        platform: "linux",
+        now: fast,
+        sleep: (ms) => sleep(ms / 1000),
+      },
+      { project: "pond", target: BuildTarget.Mac },
+    );
+    const presets = byCheck(report, ConformanceCheck.RenderPresets);
+    assert.equal(presets.outcome, ConformanceOutcome.Fail, JSON.stringify(report.checks));
+    assert.equal(presets.code, ConformanceProblem.VerbInvalid);
+    assert.match(presets.detail ?? "", /^low: the drawn frame still holds the settings before the change/);
   });
 
   it("a game whose captures follow a per-boot calibration fails render-presets with capture-unpinned", async () => {

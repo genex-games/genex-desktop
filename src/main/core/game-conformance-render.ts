@@ -22,6 +22,10 @@
  *   fallback only where the receipt still serves that v1 API). The status's whole shape is
  *   `render-presets`' to judge, so one defect fails one row.
  *
+ * After each change both walks step the game until the drawn frame has it (Live keeps drawing the
+ * settings it had, naming `pipeline-change-deferred`, while a new pipeline warms), so captures and
+ * status reads judge the settings asked, not the last ones; a change still deferred after
+ * {@link CHANGE_LANDS_MS} fails the case with `verb-invalid`.
  * Each check gives the game's own settings back when it ends, whatever happened.
  */
 import {
@@ -57,6 +61,7 @@ import {
   type RenderStatus,
   SettingsSource,
 } from "../../shared/render-quality.ts";
+import { MINUTE_MS, SECOND_MS } from "../../shared/duration.ts";
 import { isEffectivelyBlack } from "../../substrate/pixel-stats.ts";
 import type { ConformancePort } from "./game-conformance.ts";
 import { always, CheckFailure, judged, result, verb } from "./game-conformance-verdict.ts";
@@ -73,6 +78,10 @@ const HUE_MIN_STRENGTH = 0.25;
 const TURN_DEG = 360;
 /** The API version (extension and custom pass) whose fallbacks a receipt must still serve to report them. */
 const LEGACY_API = 1;
+/** The longest a settings change may take to reach the drawn frame (a pipeline warming on a slow Live frame). */
+export const CHANGE_LANDS_MS = MINUTE_MS;
+/** The sim time each wait for a change steps, and the wall time between its polls. */
+const CHANGE_POLL_MS = 100;
 
 const MESSAGE = {
   unsupported: "the game's receipt does not advertise renderSettings",
@@ -102,12 +111,20 @@ const MESSAGE = {
   extensionsShape: (label: string) => `${label}: state().volatile.extensions is outside its shape`,
   featureNotDrawn: (label: string, feature: RenderFeature) =>
     `${label}: ${feature} was switched on, but the drawn frame has it off and degraded does not name it`,
+  notLanded: (label: string) =>
+    `${label}: the drawn frame still holds the settings before the change (pipeline-change-deferred) after ${CHANGE_LANDS_MS / SECOND_MS} s`,
   untypedDegrade: (label: string, reason: string) => `${label}: degraded names ${reason}, which is no typed reason`,
   degrade: (label: string, degrade: RenderDegrade) =>
     `${label}: degraded names ${degrade.reason}${degrade.subject ? ` (${degrade.subject})` : ""}, which the receipt does not allow`,
   /** The label of the observation before any settings change. */
   asBooted: "as booted",
 } as const;
+
+/** The wall clock the waits for a change read, injected. */
+export interface RenderClock {
+  now(): number;
+  sleep(ms: number): Promise<void>;
+}
 
 /** One settings the renderer checks put the game under, and what its answer must name. */
 interface RenderCase {
@@ -227,6 +244,26 @@ async function applyRenderCase(port: ConformancePort, each: RenderCase): Promise
   return answer;
 }
 
+/** Whether the last drawn frame still holds the settings before a change (`pipeline-change-deferred`). */
+const changeDeferred = (status: RenderStatus | null): boolean =>
+  status?.degraded.some((entry) => entry.reason === DegradeReason.PipelineChangeDeferred) === true;
+
+/**
+ * Steps the game until its drawn frame has the change `label` sent; a change still deferred after
+ * {@link CHANGE_LANDS_MS} fails the case. Live draws on the wall clock, so each poll steps the sim
+ * and waits.
+ */
+async function untilChangeLands(port: ConformancePort, clock: RenderClock, label: string): Promise<void> {
+  const deadline = clock.now() + CHANGE_LANDS_MS;
+  while (clock.now() < deadline) {
+    const state = await verb(NativeOp.State, () => port.call(NativeOp.State), always);
+    if (!changeDeferred(nativeRenderStatus(state))) return;
+    await verb(NativeOp.Step, () => port.call(NativeOp.Step, { ms: CHANGE_POLL_MS }), always);
+    await clock.sleep(CHANGE_POLL_MS);
+  }
+  throw new CheckFailure(ConformanceProblem.VerbInvalid, MESSAGE.notLanded(label));
+}
+
 /** A `renderSettings` without `set` must read back the settings the change answered. */
 async function checkRoundTrip(port: ConformancePort, label: string, answer: RenderSettingsAnswer): Promise<void> {
   const read = await verb(NativeOp.RenderSettings, () => port.call(NativeOp.RenderSettings, {}), always);
@@ -328,10 +365,11 @@ export function lookProblem(low: PixelStats, high: PixelStats): string | null {
 }
 
 /** Every `render-presets` case in order (the first to fail ends the walk), then the look check. */
-async function walkPresets(port: ConformancePort): Promise<void> {
+async function walkPresets(port: ConformancePort, clock: RenderClock): Promise<void> {
   const looks = new Map<string, PixelStats>();
   for (const each of PRESET_CASES) {
     const answer = await applyRenderCase(port, each);
+    await untilChangeLands(port, clock, each.label);
     await checkRoundTrip(port, each.label, answer);
     await checkRenderNamed(port, each.label, answer);
     looks.set(each.label, await checkRenderCaptured(port, each.label));
@@ -347,10 +385,10 @@ async function walkPresets(port: ConformancePort): Promise<void> {
  * `render-presets` over one run, before the cold boots are compared (see {@link judgeColdBoots}):
  * `unavailable` (`render-settings-unsupported`) for a game whose receipt does not advertise the verb.
  */
-export async function checkRenderPresets(port: ConformancePort): Promise<ConformanceCheckResult> {
+export async function checkRenderPresets(port: ConformancePort, clock: RenderClock): Promise<ConformanceCheckResult> {
   const check = ConformanceCheck.RenderPresets;
   if ((await renderReceipt(port)) === null) return unsupported(check);
-  const judgement = await judged(check, () => walkPresets(port));
+  const judgement = await judged(check, () => walkPresets(port, clock));
   await restore(port);
   return judgement;
 }
@@ -501,10 +539,15 @@ async function checkExtensionsHold(
 }
 
 /** As booted, then every `render-extensions` case drawn once; the first to fail ends the walk. */
-async function walkExtensions(port: ConformancePort, receipt: NativeCapabilityReceipt): Promise<void> {
+async function walkExtensions(
+  port: ConformancePort,
+  receipt: NativeCapabilityReceipt,
+  clock: RenderClock,
+): Promise<void> {
   await checkExtensionsHold(port, receipt, MESSAGE.asBooted);
   for (const each of EXTENSION_CASES) {
     await verb(NativeOp.RenderSettings, () => port.call(NativeOp.RenderSettings, { set: each.change }), always);
+    await untilChangeLands(port, clock, each.label);
     // A capture draws the frame under the new settings, so a pass the switch broke reports it now.
     await verb(NativeOp.Capture, () => port.call(NativeOp.Capture, {}), always);
     await checkExtensionsHold(port, receipt, each.label);
@@ -515,11 +558,14 @@ async function walkExtensions(port: ConformancePort, receipt: NativeCapabilityRe
  * `render-extensions`: `unavailable` (`render-settings-unsupported`) for a game whose receipt does not
  * advertise the verb; otherwise its custom passes and degrades hold under every case.
  */
-export async function checkRenderExtensions(port: ConformancePort): Promise<ConformanceCheckResult> {
+export async function checkRenderExtensions(
+  port: ConformancePort,
+  clock: RenderClock,
+): Promise<ConformanceCheckResult> {
   const check = ConformanceCheck.RenderExtensions;
   const receipt = await renderReceipt(port);
   if (receipt === null) return unsupported(check);
-  const judgement = await judged(check, () => walkExtensions(port, receipt));
+  const judgement = await judged(check, () => walkExtensions(port, receipt, clock));
   await restore(port);
   return judgement;
 }

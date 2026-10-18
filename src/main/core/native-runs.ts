@@ -73,12 +73,18 @@ import { processStartedAt } from "../native-supervisor-logic.ts";
 
 const run = promisify(execFile);
 
+/** Bytes in a MiB, for the memory lines. */
+const MIB_BYTES = 1024 ** 2;
+const mib = (bytes: number): string => (bytes / MIB_BYTES).toFixed(1);
+
 const MESSAGE = {
   notReaped: (runId: string, pid: number) => `native run ${runId}: pid ${pid} was not reaped after SIGKILL`,
   notSupervised: (runId: string, error: string) => `native run ${runId}: the supervisor was not told of it: ${error}`,
   killFailed: (runId: string, pid: number, error: string) => `native run ${runId}: signalling ${pid} failed: ${error}`,
   pidfile: (runId: string, error: string) => `native run ${runId}: its pidfile was not written: ${error}`,
   sweep: (dir: string, error: string) => `native runs: ${dir} was not removed: ${error}`,
+  overMemory: (runId: string, bytes: number) =>
+    `native run ${runId}: footprint ${mib(bytes)} MiB is over the ${mib(NATIVE_GAME_MEMORY_MAX_BYTES)} MiB cap; killed ${NativeRefusal.MemoryCap}`,
   stopped: "the run was stopped before it was ready",
   listener: (error: string) => `native runs: a status listener threw: ${error}`,
   cannotEmbed: (refusal: NativeRefusal) => `Live cannot show a Mac build here (${refusal})`,
@@ -972,7 +978,11 @@ export class NativeRuns implements NativeRunsHost {
       if (!port || !child || entry.finished || entry.stopAsked) return;
       const bytes = await sampler(child.pid).catch(() => null);
       if (entry.finished || entry.stopAsked) return;
-      if (bytes !== null && bytes > NATIVE_GAME_MEMORY_MAX_BYTES) return port.kill(NativeRefusal.MemoryCap);
+      if (bytes !== null && bytes > NATIVE_GAME_MEMORY_MAX_BYTES) {
+        // The person sees the reason on the card; the log keeps what was measured, for a kill nobody watched.
+        this.#log(MESSAGE.overMemory(entry.status.runId, bytes));
+        return port.kill(NativeRefusal.MemoryCap);
+      }
       entry.timers.memory = timers.setTimeout(() => void sample(), MEMORY_SAMPLE_MS);
     };
     entry.timers.memory = timers.setTimeout(() => void sample(), MEMORY_SAMPLE_MS);

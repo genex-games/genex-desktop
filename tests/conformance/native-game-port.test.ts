@@ -751,6 +751,31 @@ describe("what the port does not do", () => {
     );
   });
 
+  it("a position outside 0..1 without px is pixels, as the web preview reads it: it travels with px, and fractions stay fractions", async () => {
+    const r = await rig();
+    const game = inputGame(r);
+    const played = r.port.input([
+      { type: "click", x: 130, y: 236 },
+      { type: "move", x: 0.5, y: 2 },
+      { type: "move", x: 0.25, y: 0.75 },
+      { type: "drag", fromX: 10, fromY: 0.5, x: 0.5, y: 0.5 },
+    ]);
+    await game.run(400, 1);
+    await played;
+    const sent = game.sent.map((message) => message.actions);
+    assert.deepEqual(sent.slice(0, 3), [
+      [{ type: "move", x: 130, y: 236, px: true }],
+      [{ type: "click" }],
+      [
+        { type: "move", x: 0.5, y: 2, px: true },
+        { type: "move", x: 0.25, y: 0.75 },
+      ],
+    ]);
+    const glide = sent.slice(3).flat() as Array<{ type: string; px?: boolean }>;
+    const moves = glide.filter((action) => action.type === "move");
+    assert.ok(moves.length > 1 && moves.every((action) => action.px === true), "a drag in pixels glides in pixels");
+  });
+
   it("input outside its shape is refused before anything is sent", async () => {
     const r = await rig();
     await assert.rejects(r.port.input([{ type: "move", x: Number.NaN, y: 1 }]));

@@ -159,6 +159,17 @@ test("closed controller schema rejects privileged fields, eval, unbounded work a
     assert.equal(operationSchema.safeParse(value).success, false);
   assert.equal(operationSchema.safeParse({ method: "click", params: { selector: "button" } }).success, true);
 });
+
+test("game.input takes px on a click and a move, as the preview's action union does", () => {
+  const actions = [
+    { type: "move", x: 130, y: 236, px: true },
+    { type: "click", x: 0.5, y: 0.5, px: true, button: "left" },
+  ];
+  const parsed = operationSchema.safeParse({ method: "game.input", params: { surface: "native", actions } });
+  assert.equal(parsed.success, true, parsed.success ? "" : parsed.error.message);
+  const notFlag = { type: "move", x: 1, y: 1, px: "yes" };
+  assert.equal(operationSchema.safeParse({ method: "game.input", params: { actions: [notFlag] } }).success, false);
+});
 test("build publication refuses inputs changed during build and never publishes a ready manifest", async (t) => {
   const { sourceIdentity, publishBuild } = await import("../../scripts/studio-dev/files.mjs");
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "dev-build-")));

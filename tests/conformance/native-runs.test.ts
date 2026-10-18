@@ -465,13 +465,21 @@ describe("how a run ends on its own", () => {
     assert.deepEqual(r.games[0]?.signals, ["SIGKILL"]);
   });
 
-  it("a game over the memory cap is killed memory-cap", async () => {
-    const r = await registry({ sampleFootprint: async () => NATIVE_GAME_MEMORY_MAX_BYTES + 1 });
+  it("a game over the memory cap is killed memory-cap, and the kill is logged with the footprint it measured", async () => {
+    const lines: string[] = [];
+    const r = await registry({
+      sampleFootprint: async () => NATIVE_GAME_MEMORY_MAX_BYTES + 1,
+      log: (line) => void lines.push(line),
+    });
     await started(r, request("pong", NativeRunMode.Headless));
     await r.clock.advance(NATIVE_HEARTBEAT_MS * 2);
     const last = r.statuses.at(-1);
     assert.equal(last?.state, NativeRunState.Killed);
     assert.equal(last?.refusal, NativeRefusal.MemoryCap);
+    const killed = lines.filter((line) => line.includes(NativeRefusal.MemoryCap));
+    assert.equal(killed.length, 1, `one line names the kill: ${JSON.stringify(lines)}`);
+    assert.ok(killed[0]?.includes(last?.runId ?? "no run"), "the line names the run");
+    assert.match(killed[0] ?? "", /4096\.0 MiB/, "the line names the footprint it measured");
   });
 
   /** /proc/<pid>/status as Linux writes it, with the game's own anonymous and shared-memory pages. */
