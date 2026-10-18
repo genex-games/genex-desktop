@@ -105,6 +105,27 @@ fn the_outdoor_sky_placeholder_has_no_hard_band_edges() {
     }
 }
 
+/// Look-integration fix (2026-10-19): since bench-outdoor's lake became the renderer's water
+/// (B.3), which the renderer draws only under TAA with the prepass (`water::drawn_at`), the MSAA
+/// presets drew no lake at all, and the T-12 pan row compared TAA's lake against MSAA's bare basin
+/// (medium's 16 px pan popped 8,000 fewer pixels). At every desktop preset the outdoor scene has a
+/// lake: the renderer's water where it draws water, else the blended sheet it drew before.
+#[test]
+fn the_outdoor_lake_is_drawn_at_every_preset() {
+    use genex_render::device_class::{DeviceClass, FormFactor, PerformanceTier};
+    use genex_render::presets::preset_quality;
+    use genex_render::settings::QualityPreset;
+    let (scene, _) = load(SceneId::Outdoor);
+    let class = DeviceClass::new(FormFactor::Desktop, PerformanceTier::High);
+    for preset in [QualityPreset::Low, QualityPreset::Medium, QualityPreset::High, QualityPreset::Ultra] {
+        let quality = preset_quality(preset, class);
+        let drawn = scene.scene_for(0, &quality);
+        let renderer_water = genex_render::water::drawn_at(&quality);
+        assert_eq!(drawn.water.is_some(), renderer_water, "{preset:?}: the renderer's water exactly where it draws water");
+        assert_eq!(transparent_draws(&drawn), usize::from(!renderer_water), "{preset:?}: the blended sheet exactly where it does not");
+    }
+}
+
 #[test]
 fn the_city_draws_at_least_fifty_thousand_instances_of_many_meshes() {
     let (scene, _) = load(SceneId::City);

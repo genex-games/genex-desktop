@@ -185,6 +185,12 @@ fn studio_shot(name: &str) -> Option<(Capture, genex_render::renderer::ScenePath
 /// [`studio_shot`] drawn `drawn_as`: the change applies as the `renderSettings` verb applies it,
 /// after a first capture attaches the game's settings.
 fn studio_shot_as(name: &str, drawn_as: DrawnAs) -> Option<(Capture, genex_render::renderer::ScenePath)> {
+    studio_shots_as(name, drawn_as, false).map(|(capture, path, _)| (capture, path))
+}
+
+/// [`studio_shot_as`], and with `without_passes` the same frame drawn again without the game's
+/// custom passes (the presenter's diagnostic switch: no smoke, sprites, flat clouds or game lake).
+fn studio_shots_as(name: &str, drawn_as: DrawnAs, without_passes: bool) -> Option<(Capture, genex_render::renderer::ScenePath, Option<Capture>)> {
     use genex::present::Presenter;
     let mut presenter = Presenter::open(showcase_game::showcase::WORLD_SIZE, showcase_game::assets()).ok()?;
     let mut runtime = lakeside_at_shot_tick();
@@ -203,7 +209,14 @@ fn studio_shot_as(name: &str, drawn_as: DrawnAs) -> Option<(Capture, genex_rende
     let refused: Vec<&genex::Value> = extensions.as_array().into_iter().flatten().filter(|row| !row["code"].is_null()).collect();
     assert!(refused.is_empty(), "{name}: every Level-2 source is admitted: {refused:?}");
     let path = presenter.resilient.renderer().renderer().last_scene().expect("a frame");
-    Some((presenter.resilient.capture().expect("capture"), path))
+    let capture = presenter.resilient.capture().expect("capture");
+    if !without_passes {
+        return Some((capture, path, None));
+    }
+    presenter.set_custom_passes_enabled(false);
+    presenter.draw_view(&mut runtime, View::Named(name)).expect("a view").expect("drawn");
+    let plain = presenter.resilient.capture().expect("capture");
+    Some((capture, path, Some(plain)))
 }
 
 /// What a picture looks like, in numbers: mean linear luminance, the mean colour's hue in degrees,
@@ -668,12 +681,24 @@ fn metal_final_column_shots_at_high_and_ultra() {
 const PASS1_CHROMA: [(&str, f64); 3] = [("wide", 24.6), ("forest", 27.8), ("cabin", 22.4)];
 /// How far over pass 1's chroma a shot may go.
 const CHROMA_OVER_PASS1_MAX: f64 = 1.10;
+/// Owner decision D20 (2026-10-18): the golden-hour look the renderer's clouds bring (B.5, on from
+/// desktop medium up: `world::sky_clouds`) is kept, so a shot whose colour the clouds moved is held
+/// to that look instead of pass 1's, by the same tolerance. Measured at `high` on 237781a7 (the
+/// look integration's head). The cabin's chroma was 23.6 before the clouds (ga/tests-r2), 27.0 with
+/// the first clouds and 27.6 with the look lane SKY's cumulus and cirrus: the clouds' warm sky light.
+const D20_CHROMA: [(&str, f64); 1] = [("cabin", 27.6)];
+
+/// The chroma a golden-hour shot is held to: D20's where the clouds moved it, else pass 1's.
+fn golden_chroma(name: &str, pass1: f64) -> (f64, &'static str) {
+    D20_CHROMA.iter().find(|(shot, _)| *shot == name).map_or((pass1, "pass 1"), |(_, chroma)| (*chroma, "D20"))
+}
 
 /// G0 look (2026-10-14): with AgX punchy's saturation (P2-0.10) on the scene's warm white balance,
 /// the golden hour read over-saturated and yellow (grass and canopy acid yellow-green, an orange
 /// glare on the dock): mean chroma 24.6 -> 32.1 on the wide shot, 27.8 -> 34.6 on the forest and
 /// 22.4 -> 28.2 on the cabin, at the same mean luma. At `high` each shot stays within
-/// [`CHROMA_OVER_PASS1_MAX`] of pass 1's chroma.
+/// [`CHROMA_OVER_PASS1_MAX`] of pass 1's chroma, or of D20's ([`D20_CHROMA`]) where the clouds
+/// moved it.
 #[test]
 #[ignore = "needs a GPU: run with --ignored metal"]
 fn metal_the_golden_hour_keeps_pass_one_s_saturation() {
@@ -684,9 +709,10 @@ fn metal_the_golden_hour_keeps_pass_one_s_saturation() {
     for (name, pass1) in PASS1_CHROMA {
         let (capture, _) = studio_shot_as(name, DrawnAs::Preset(QualityPreset::High)).expect("a presenter");
         let chroma = LookStats::of(&capture).chroma;
-        eprintln!("{name} at high: chroma {chroma:.1} against pass 1's {pass1}");
-        if chroma > pass1 * CHROMA_OVER_PASS1_MAX {
-            problems.push(format!("{name}: chroma {chroma:.1} against pass 1's {pass1}"));
+        let (held, source) = golden_chroma(name, pass1);
+        eprintln!("{name} at high: chroma {chroma:.1} against {source}'s {held} (pass 1's {pass1})");
+        if chroma > held * CHROMA_OVER_PASS1_MAX {
+            problems.push(format!("{name}: chroma {chroma:.1} against {source}'s {held}"));
         }
     }
     assert!(problems.is_empty(), "{problems:#?}");
@@ -695,12 +721,20 @@ fn metal_the_golden_hour_keeps_pass_one_s_saturation() {
 /// How far a golden-hour shot's mean hue may sit from pass 1's ([`ART_COLOUR`], recorded on the
 /// pass-1 head), in degrees.
 const GOLDEN_HUE_DEGREES: f64 = 2.0;
+/// Owner decision D20 (as [`D20_CHROMA`]): the shots whose hue the clouds moved out of pass 1's
+/// tolerance, held to the clouds' look measured at `high` on 237781a7. Before the clouds (ga/tests-r2)
+/// the dock read 28.4 and the cabin 32.1, both within [`GOLDEN_HUE_DEGREES`] of pass 1; with them
+/// 30.4 and 30.6 (the dock is mostly the lake, which the look pass also made the owner's forest
+/// lake). The forest (31.9) and the closeup (41.1) were already off pass 1's before the clouds: not
+/// D20's, they stay held to pass 1.
+const D20_HUE: [(&str, f64); 2] = [("dock", 30.4), ("cabin", 30.6)];
 
 /// G0 look leftovers (2026-10-15): with chroma back near pass 1, the golden hour still read
 /// yellow-orange against pass 1 (acid-yellow sunlit meadow, an orange-washed log wall). The mean
 /// colour's hue sat 2.7-4.6 degrees yellower on every shot (wide 39.2 against 35.2, cabin 39.2
 /// against 34.6 at 1440p): the white balance lost pass 1's red with the green, so sunlit greens
-/// turned yellow. At `high` each shot's hue stays within [`GOLDEN_HUE_DEGREES`] of pass 1's.
+/// turned yellow. At `high` each shot's hue stays within [`GOLDEN_HUE_DEGREES`] of pass 1's, or of
+/// D20's ([`D20_HUE`]) where the clouds moved it.
 #[test]
 #[ignore = "needs a GPU: run with --ignored metal"]
 fn metal_the_golden_hour_keeps_pass_one_s_hue() {
@@ -711,9 +745,10 @@ fn metal_the_golden_hour_keeps_pass_one_s_hue() {
     for (name, _, pass1) in ART_COLOUR {
         let (capture, _) = studio_shot_as(name, DrawnAs::Preset(QualityPreset::High)).expect("a presenter");
         let hue = LookStats::of(&capture).hue;
-        eprintln!("{name} at high: hue {hue:.1} against pass 1's {pass1}");
-        if (hue - pass1).abs() > GOLDEN_HUE_DEGREES {
-            problems.push(format!("{name}: hue {hue:.1} against pass 1's {pass1}"));
+        let (held, source) = D20_HUE.iter().find(|(shot, _)| *shot == name).map_or((pass1, "pass 1"), |(_, hue)| (*hue, "D20"));
+        eprintln!("{name} at high: hue {hue:.1} against {source}'s {held} (pass 1's {pass1})");
+        if (hue - held).abs() > GOLDEN_HUE_DEGREES {
+            problems.push(format!("{name}: hue {hue:.1} against {source}'s {held}"));
         }
     }
     assert!(problems.is_empty(), "{problems:#?}");
@@ -724,10 +759,10 @@ fn metal_the_golden_hour_keeps_pass_one_s_hue() {
 const SMOKE_COLUMNS: std::ops::Range<u32> = 490..580;
 const SMOKE_ROWS: [u32; 4] = [20, 40, 60, 100];
 const SKY_BESIDE_PX: u32 = 45;
-/// The most a smoke pixel may stand over the brighter of the sky either side of it on its row, in
-/// luma levels. Smoke lit by the sky and the low sun sits in the sky's light: a thin wisp over a
-/// deep-blue patch reads a little lighter than it (about 16 levels here), never as a light source
-/// (gate finding 09: a white beam 53 levels over the sky at medium, high and ultra).
+/// The most a smoke pixel may stand over the sky behind it (the same frame without the game's
+/// passes), in luma levels. Smoke lit by the sky and the low sun sits in the sky's light: a thin
+/// wisp over a deep-blue patch reads a little lighter than it (about 16 levels here), never as a
+/// light source (gate finding 09: a white beam 53 levels over the sky at medium, high and ultra).
 const SMOKE_OVER_SKY_MAX: f64 = 20.0;
 
 /// The luma (0..255) of `capture` at (x, y).
@@ -737,7 +772,8 @@ fn luma_at(capture: &Capture, x: u32, y: u32) -> f64 {
     0.2126 * f64::from(p[2]) + 0.7152 * f64::from(p[1]) + 0.0722 * f64::from(p[0])
 }
 
-/// How far the smoke stands over the brighter of the sky beside it, worst pixel.
+/// How far the smoke stands over the brighter of the sky beside it, worst pixel (the row's first
+/// reading, recorded: a cloud behind the smoke reads as smoke here).
 fn smoke_over_sky(capture: &Capture) -> f64 {
     let mut worst = f64::MIN;
     for y in SMOKE_ROWS {
@@ -749,8 +785,24 @@ fn smoke_over_sky(capture: &Capture) -> f64 {
     worst
 }
 
+/// How far the smoke in `drawn` stands over the same pixels of `plain` (the frame without the
+/// game's passes: the sky or the cloud behind the smoke), worst pixel.
+fn smoke_over_background(drawn: &Capture, plain: &Capture) -> f64 {
+    let mut worst = f64::MIN;
+    for y in SMOKE_ROWS {
+        for x in SMOKE_COLUMNS {
+            worst = worst.max(luma_at(drawn, x, y) - luma_at(plain, x, y));
+        }
+    }
+    worst
+}
+
 /// Gate finding 09: the chimney smoke drew as an opaque, hard-edged white beam that read as a
-/// spotlight. At every HDR preset the smoke stays about as bright as the sky it rises into.
+/// spotlight. At every HDR preset the smoke stays about as bright as the sky it rises into: over
+/// the frame drawn without it. Look-integration fix (2026-10-19): the renderer's clouds (B.5, D20)
+/// put a sunlit cumulus behind the chimney, and the row's first reading (the brighter of the sky
+/// 45 px either side) measured that cloud: the frame without the smoke read about as far over its
+/// sides as the frame with it, and the smoke's albedo hardly moved it.
 #[test]
 #[ignore = "needs a GPU: run with --ignored metal"]
 fn metal_the_chimney_smoke_is_no_brighter_than_the_sky_it_rises_into() {
@@ -760,12 +812,14 @@ fn metal_the_chimney_smoke_is_no_brighter_than_the_sky_it_rises_into() {
     let dir = out_dir();
     let mut problems = Vec::new();
     for preset in [QualityPreset::Medium, QualityPreset::High, QualityPreset::Ultra] {
-        let Some((capture, _)) = studio_shot_as("cabin", DrawnAs::Preset(preset)) else { return };
+        let Some((capture, _, Some(plain))) = studio_shots_as("cabin", DrawnAs::Preset(preset), true) else { return };
         write_png(&dir.join(format!("smoke-cabin-{}.png", preset.wire())), &capture);
-        let over = smoke_over_sky(&capture);
-        eprintln!("{}: the smoke stands {over:.1} levels over the sky", preset.wire());
+        write_png(&dir.join(format!("smoke-cabin-{}-passes-off.png", preset.wire())), &plain);
+        let over = smoke_over_background(&capture, &plain);
+        let (beside, beside_plain) = (smoke_over_sky(&capture), smoke_over_sky(&plain));
+        eprintln!("{}: the smoke stands {over:.1} levels over the sky behind it (the first reading: {beside:.1} over the sky beside it, {beside_plain:.1} without the smoke)", preset.wire());
         if over > SMOKE_OVER_SKY_MAX {
-            problems.push(format!("{}: the smoke stands {over:.1} levels over the sky beside it", preset.wire()));
+            problems.push(format!("{}: the smoke stands {over:.1} levels over the sky behind it", preset.wire()));
         }
     }
     assert!(problems.is_empty(), "{problems:#?}");

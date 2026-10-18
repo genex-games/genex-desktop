@@ -54,6 +54,12 @@ pub trait BenchScene {
     fn id(&self) -> SceneId;
     /// The frame to draw at `frame` (any index; the path loops every [`PATH_FRAMES`]).
     fn scene(&self, frame: u32) -> Scene;
+    /// [`BenchScene::scene`] as drawn at `quality`: a scene whose content needs a feature the
+    /// quality lacks draws its fallback (bench-outdoor's lake where the renderer draws no water).
+    fn scene_for(&self, frame: u32, quality: &genex_render::settings::Quality) -> Scene {
+        let _ = quality;
+        self.scene(frame)
+    }
 }
 
 /// The bench scenes.
