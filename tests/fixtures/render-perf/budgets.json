@@ -78,6 +78,26 @@
    "budgetMs": 1.5
   },
   {
+   "id": "ao-bitmask-half",
+   "features": [
+    "ao"
+   ],
+   "shapes": {
+    "ao": "bitmask-half"
+   },
+   "budgetMs": 1.0
+  },
+  {
+   "id": "ao-bitmask-full",
+   "features": [
+    "ao"
+   ],
+   "shapes": {
+    "ao": "bitmask-full"
+   },
+   "budgetMs": 1.5
+  },
+  {
    "id": "taa",
    "features": [
     "taa"

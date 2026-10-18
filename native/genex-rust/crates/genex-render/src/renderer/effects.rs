@@ -284,6 +284,7 @@ impl ScreenEffects {
             facts,
             motion: frame.motion,
             generation: frame.generation,
+            light: None,
         };
         let Some(output) = node.encode(device, queue, encoder, input) else { return 0 };
         self.ao_view = Some(output.view);

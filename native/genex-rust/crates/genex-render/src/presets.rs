@@ -18,7 +18,7 @@ use crate::foliage::GrassQuality;
 use crate::post::motion_blur::MotionBlurTier;
 use crate::screen_inputs::ScreenInputs;
 use crate::settings::{
-    AntiAliasing, AoQuality, AoResolution, BloomQuality, EnvironmentQuality, JitterCycle, LightQuality, PresetChoice, Quality, QualityPreset,
+    AntiAliasing, AoMethod, AoQuality, AoResolution, BloomQuality, EnvironmentQuality, JitterCycle, LightQuality, PresetChoice, Quality, QualityPreset,
     MAX_CASCADES, RENDER_SCALE_MIN, RenderFeature, RenderSettings, SHADOW_BLEND_BAND_MAX, SHADOW_DISTANCE_MAX_M, SHADOW_DISTANCE_MIN_M,
     SceneFormat, ShadowFilter, ShadowFormat, ShadowQuality, TAA_SHARPEN_RCAS_SHARPNESS, TaaQuality, Upscaler,
 };
@@ -396,6 +396,9 @@ fn high_row(quality: &mut Quality) {
     quality.contact_shadows = true;
     quality.bloom = BloomQuality { enabled: true, resolution: CHAIN_RESOLUTION };
     quality.ao = AoQuality { resolution: AoResolution::Half, slices: 2, steps: 6, temporal: true };
+    // B.4: the visibility bitmask (no halo behind thin objects; ultra inherits it). Medium keeps
+    // XeGTAO's horizons within its 0.6 ms.
+    quality.ao_method = AoMethod::Bitmask;
     quality.lights = lights(1024, 16, 2);
     // Filament's ring gather (A.9; ultra inherits it): the look's switch decides whether it runs.
     quality.dof = DofTier::Ring;
@@ -607,6 +610,8 @@ fn apply_mobile_caps(quality: &mut Quality, preset: QualityPreset, class: Device
     quality.dof = DofTier::Circular;
     // Phones blur in one pass, and the low-tier phone not at all (the plan's "off on mobile-low").
     quality.motion_blur = if class.tier == PerformanceTier::Low { MotionBlurTier::Off } else { MotionBlurTier::Direct };
+    // Phones keep XeGTAO's horizons: the bitmask's cost on a phone is unmeasured (B.4).
+    quality.ao_method = AoMethod::Horizons;
     // No screen inputs on phones (B.3's water reflects the probes or the sky there).
     quality.screen_inputs = ScreenInputs::NONE;
     // A.8: grass on the high phones at `high` and `ultra` only, at a capped density (overdraw is a

@@ -1566,6 +1566,37 @@ pub enum AoResolution {
     Full,
 }
 
+/// How AO's horizon search turns its depth samples into occlusion (renderer pass 2 B.4;
+/// `post::ao`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum AoMethod {
+    /// XeGTAO's horizons: every sample is a wall of infinite thickness (thin objects in front of
+    /// a surface darken a halo around them).
+    #[default]
+    Horizons,
+    /// The visibility bitmask (Therrien et al. 2023; `GX_AO_BITMASK` in gtao.wgsl): 32 sectors a
+    /// slice, each sample hiding only the sectors its thickness
+    /// (`post::ao::BITMASK_THICKNESS_PER_RADIUS`) spans.
+    Bitmask,
+    /// The bitmask with screen-space GI (`GX_AO_GI`; three.js `SSGINode`, MIT): the sectors a
+    /// sample hides send the light the previous frame drew there (`post::ao::AoLight`). The term
+    /// is `post::ao::GI_FORMAT` and carries no bent normal (the lighting falls back to Lagarde's
+    /// specular occlusion).
+    BitmaskGi,
+}
+
+impl AoMethod {
+    /// Whether the term carries screen-space GI.
+    pub const fn gi(self) -> bool {
+        matches!(self, AoMethod::BitmaskGi)
+    }
+
+    /// Whether the search is the visibility bitmask.
+    pub const fn bitmask(self) -> bool {
+        !matches!(self, AoMethod::Horizons)
+    }
+}
+
 /// Ambient occlusion.
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -1762,6 +1793,10 @@ pub struct Quality {
     pub bloom: BloomQuality,
     /// Ambient occlusion.
     pub ao: AoQuality,
+    /// How AO's horizon search turns depth into occlusion (renderer pass 2 B.4): the visibility
+    /// bitmask on desktop and web `high` and `ultra` (no halo behind thin objects), XeGTAO's
+    /// horizons elsewhere and on phones.
+    pub ao_method: AoMethod,
     /// Height and distance fog.
     pub fog: bool,
     /// IBL and sky.
@@ -1831,6 +1866,7 @@ impl Quality {
             contact_shadows: false,
             bloom: BloomQuality { enabled: false, resolution: 0 },
             ao: AoQuality { resolution: AoResolution::Off, slices: 0, steps: 0, temporal: false },
+            ao_method: AoMethod::Horizons,
             fog: false,
             environment: EnvironmentQuality {
                 ibl: false,

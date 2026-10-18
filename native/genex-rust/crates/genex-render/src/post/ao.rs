@@ -91,6 +91,12 @@ pub const BENT_FORMAT: TextureFormat = TextureFormat::Rgba8Unorm;
 /// which the denoise averages by (one slice per pixel measures little of the hemisphere where it
 /// grazes the surface; pass-1 fix gate, visual RED 01).
 pub const RAW_WEIGHTED_FORMAT: TextureFormat = TextureFormat::Rg8Unorm;
+/// The term's format with screen-space GI ([`AoMethod::BitmaskGi`]; pass 2 B.4): r visibility, gba
+/// the light the hidden sectors send, in the scene's units (16-bit float: light is HDR). Its raw
+/// term and history share it. Visibility stays in r, so every reader that samples `.r` reads it.
+pub const GI_FORMAT: TextureFormat = TextureFormat::Rgba16Float;
+/// The GI's default strength (`AoParams::gi.y`).
+pub const GI_STRENGTH: f32 = 1.0;
 /// AO's own history's format without a bent normal (visibility; pass 2, P3/S2).
 pub const HISTORY_FORMAT: TextureFormat = TextureFormat::R16Float;
 /// AO's own history's format with a bent normal (r visibility, gba the bent normal as stored).
@@ -132,6 +138,16 @@ pub const FALLOFF_FRACTION: f32 = 0.615;
 /// much a sample's depth offset from the centre counts beyond its true length, so thin geometry
 /// falls off sooner than a wall. XeGTAO's default, 0: plain distance (the heightfield assumption).
 pub const THICKNESS: f32 = 0.0;
+/// The visibility bitmask's object thickness as a share of the AO radius (`AoParams::params.w`
+/// under [`AoMethod::Bitmask`] is this times the radius, world units): how deep behind its front
+/// face a depth sample hides the hemisphere. Bevy 0.20 holds 0.25 m and Filament 0.5 m whatever the
+/// radius; at the default radius (0.5 m) this is 0.1 m. B.4's rows chose it: a 6 cm post's halo on
+/// the ground behind it within 0.014 of the ray-cast ground truth (0.25 m left 0.06), and the log
+/// wall's grooves within 0.034 (tests/ao.rs). It scales with the radius, so a game that scales its
+/// world and its AO radius keeps the same look.
+pub const BITMASK_THICKNESS_PER_RADIUS: f32 = 0.2;
+/// The horizon search's pipeline-overridable switch to the visibility bitmask (gtao.wgsl).
+const BITMASK_CONSTANT: &str = "GX_AO_BITMASK";
 /// The history's blend weight once it holds a frame.
 pub const HISTORY_WEIGHT: f32 = 0.9;
 /// The relative view-depth difference beyond which reprojected history is rejected.
@@ -157,6 +173,10 @@ pub const FLAG_INTERLEAVE: u32 = 1 << 4;
 /// `AoParams::counts.w` flag: the denoise finds history through the prepass's motion target
 /// (bound at its motion binding) instead of the camera alone.
 pub const FLAG_MOTION: u32 = 1 << 5;
+/// `AoParams::counts.w` flag: the term carries screen-space GI in gba ([`GI_FORMAT`]).
+pub const FLAG_GI: u32 = 1 << 6;
+/// The horizon search's pipeline-overridable switch to screen-space GI (gtao.wgsl).
+const GI_CONSTANT: &str = "GX_AO_GI";
 
 /// AO's uniform (`AoParams`).
 #[repr(C)]
@@ -174,13 +194,16 @@ pub struct GpuAoParams {
     /// history; z: the denoise window's half width in texels ([`denoise_radius`]); w: its spatial
     /// falloff in texels ([`denoise_sigma`]).
     pub history: [f32; 4],
+    /// Screen-space GI ([`FLAG_GI`]): x what the light texture's texels are multiplied by (to the
+    /// scene's own units; [`AoLight::scale`]), y the GI's strength ([`GI_STRENGTH`]); zw unused.
+    pub gi: [f32; 4],
 }
 
 impl GpuAoParams {
     /// The row for AO at `size` under `look` and `quality`, on frame `frame_index` (noise keys to it
     /// only with a history), `history_reset` and `depth_reversed` as the frame has them.
     pub fn new(look: &Look, quality: &AoQuality, size: (u32, u32), frame_index: u64, history_reset: bool, depth_reversed: bool) -> GpuAoParams {
-        let settings = AoSettings { radius: look.ao_radius, intensity: look.ao_intensity, thickness: THICKNESS, quality: *quality };
+        let settings = AoSettings { radius: look.ao_radius, intensity: look.ao_intensity, thickness: THICKNESS, quality: *quality, method: AoMethod::Horizons };
         GpuAoParams::for_frame(&settings, size, AoFrameFacts { frame_index, history_reset, depth_reversed, ..AoFrameFacts::default() })
     }
 
@@ -193,9 +216,11 @@ impl GpuAoParams {
         // final power is convex, so a frame of more slices (less noise) drew darker than the
         // history converged to (pass 2, P4), and a cut no longer pays for every slice.
         let interleaved = quality.temporal;
+        let gi = settings.method.gi();
         let flags = [
             (quality.temporal, FLAG_TEMPORAL),
-            (quality.bent_normals(), FLAG_BENT_NORMALS),
+            (quality.bent_normals() && !gi, FLAG_BENT_NORMALS),
+            (gi, FLAG_GI),
             (facts.depth_reversed, FLAG_REVERSE_Z),
             (facts.view_normals, FLAG_VIEW_NORMALS),
             (interleaved, FLAG_INTERLEAVE),
@@ -215,6 +240,7 @@ impl GpuAoParams {
             params: [settings.radius, settings.intensity, FALLOFF_FRACTION, settings.thickness],
             counts: [u32::from(quality.slices.clamp(1, SLICES_MAX)), u32::from(quality.steps.clamp(1, STEPS_MAX)), noise_frame, flags],
             history: [weight, HISTORY_DEPTH_REJECT, f32::from(denoise_radius(quality)), denoise_sigma(quality)],
+            gi: [1.0, GI_STRENGTH, 0.0, 0.0],
         }
     }
 }
@@ -298,6 +324,9 @@ pub struct AoFrameFacts {
     pub history_frames: Option<u32>,
 }
 
+/// How the horizon search turns depth into occlusion (the quality's vocabulary).
+pub use crate::settings::AoMethod;
+
 /// The frame's AO: the look's radius and intensity at the quality's sampling.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct AoSettings {
@@ -309,13 +338,31 @@ pub struct AoSettings {
     pub thickness: f32,
     /// Resolution, slices, steps and history.
     pub quality: AoQuality,
+    /// Horizons or the visibility bitmask ([`AoMethod::Horizons`] by default).
+    pub method: AoMethod,
 }
 
 impl AoSettings {
     /// The AO a frame draws under `look` and `quality`; None when AO is off or has no strength.
     pub fn new(look: &Look, quality: &AoQuality) -> Option<AoSettings> {
         let on = quality.resolution != AoResolution::Off && quality.slices > 0 && quality.steps > 0 && look.ao_intensity > 0.0;
-        on.then_some(AoSettings { radius: look.ao_radius, intensity: look.ao_intensity, thickness: THICKNESS, quality: *quality })
+        on.then_some(AoSettings { radius: look.ao_radius, intensity: look.ao_intensity, thickness: THICKNESS, quality: *quality, method: AoMethod::Horizons })
+    }
+
+    /// The AO a frame of `quality` draws under `look`: [`AoSettings::new`] by the quality's method
+    /// ([`Quality::ao_method`](crate::settings::Quality::ao_method)).
+    pub fn of(look: &Look, quality: &crate::settings::Quality) -> Option<AoSettings> {
+        AoSettings::new(look, &quality.ao).map(|settings| settings.with_method(quality.ao_method))
+    }
+
+    /// These settings drawn with `method`, at its own thickness ([`THICKNESS`] for the horizons,
+    /// [`BITMASK_THICKNESS_PER_RADIUS`] of the radius for the bitmask).
+    pub fn with_method(self, method: AoMethod) -> AoSettings {
+        let thickness = match method {
+            AoMethod::Horizons => THICKNESS,
+            AoMethod::Bitmask | AoMethod::BitmaskGi => BITMASK_THICKNESS_PER_RADIUS * self.radius,
+        };
+        AoSettings { method, thickness, ..self }
     }
 }
 
@@ -383,22 +430,34 @@ pub const fn raw_format(quality: &AoQuality) -> TextureFormat {
 /// [`history_format`]), and at half resolution the term upsampled to the render size
 /// ([`AO_FULL_LABEL`], in [`term_format`]); empty when AO is off.
 pub fn targets(render: (u32, u32), quality: &AoQuality) -> Vec<TargetDesc> {
-    targets_with_usage(render, quality, TextureUsages::empty())
+    targets_with_usage(render, quality, false, TextureUsages::empty())
 }
 
-/// [`targets`] with the terms also carrying `extra_usage` (a readback's `COPY_SRC`).
-fn targets_with_usage(render: (u32, u32), quality: &AoQuality, extra_usage: TextureUsages) -> Vec<TargetDesc> {
+/// [`targets`] for `settings`: with screen-space GI ([`AoMethod::BitmaskGi`]) every term is
+/// [`GI_FORMAT`].
+pub fn targets_for(render: (u32, u32), settings: &AoSettings) -> Vec<TargetDesc> {
+    targets_with_usage(render, &settings.quality, settings.method.gi(), TextureUsages::empty())
+}
+
+/// The raw term's, the written term's (and history's) and the render-size term's formats under
+/// `quality`, with screen-space GI (`gi`) or not.
+const fn formats(quality: &AoQuality, gi: bool) -> (TextureFormat, TextureFormat, TextureFormat) {
+    if gi { (GI_FORMAT, GI_FORMAT, GI_FORMAT) } else { (raw_format(quality), history_format(quality), term_format(quality)) }
+}
+
+/// [`targets`] with screen-space GI (`gi`) or not, the terms also carrying `extra_usage` (a
+/// readback's `COPY_SRC`).
+fn targets_with_usage(render: (u32, u32), quality: &AoQuality, gi: bool, extra_usage: TextureUsages) -> Vec<TargetDesc> {
     let Some(size) = ao_size(render, quality.resolution) else {
         return Vec::new();
     };
     let target = |label, format, mips, usage| TargetDesc { label, format, usage, samples: 1, size, mips, srgb_view: false };
-    let term = term_format(quality);
+    let (raw, written, term) = formats(quality, gi);
     let mips = depth_mips(size);
     // A temporal history's pairs are copied aside around a settled capture (`AoNode::stash_live`).
     let copies = if quality.temporal { HISTORY_COPY_USAGE } else { TextureUsages::empty() };
     let (terms, chains) = (AO_USAGE | extra_usage | copies, AO_USAGE | copies);
-    let written = history_format(quality);
-    let mut all = vec![target(AO_RAW_LABEL, raw_format(quality), 1, AO_USAGE | extra_usage), target(AO_LABEL, written, 1, terms), target(DEPTH_LABEL, VIEW_DEPTH_FORMAT, mips, chains)];
+    let mut all = vec![target(AO_RAW_LABEL, raw, 1, AO_USAGE | extra_usage), target(AO_LABEL, written, 1, terms), target(DEPTH_LABEL, VIEW_DEPTH_FORMAT, mips, chains)];
     if quality.temporal {
         all.extend([target(HISTORY_LABEL, written, 1, terms), target(DEPTH_HISTORY_LABEL, VIEW_DEPTH_FORMAT, mips, chains)]);
     }
@@ -456,6 +515,7 @@ const GTAO_PARAMS: u32 = 2;
 const GTAO_VIEW: u32 = 3;
 const GTAO_DEVICE_DEPTH: u32 = 4;
 const GTAO_DEPTH_SOURCE: u32 = 5;
+const GTAO_LIGHT: u32 = 6;
 /// The bindings of ao_denoise.wgsl's group 0.
 const DENOISE_RAW: u32 = 0;
 const DENOISE_HISTORY: u32 = 1;
@@ -488,6 +548,19 @@ pub struct AoInput<'a> {
     pub motion: Option<&'a TextureView>,
     /// The inputs' identity: bind groups are rebuilt when it changes.
     pub generation: u64,
+    /// The light screen-space GI gathers ([`AoMethod::BitmaskGi`]; None: black, no GI).
+    pub light: Option<AoLight<'a>>,
+}
+
+/// The light screen-space GI gathers: the previous frame's lit scene (the colour pyramid's top or
+/// the opaque copy, `crate::screen_inputs`), reprojected through last frame's camera.
+#[derive(Clone, Copy)]
+pub struct AoLight<'a> {
+    /// The texture (any size, filterable or not: read with `textureLoad`).
+    pub view: &'a TextureView,
+    /// What its texels are multiplied by to reach the scene's own units (1 / the exposure it was
+    /// drawn with, when it holds pre-exposed light).
+    pub scale: f32,
 }
 
 /// The term the lighting reads.
@@ -497,6 +570,8 @@ pub struct AoOutput {
     pub view: TextureView,
     /// Whether it carries a bent normal.
     pub bent_normals: bool,
+    /// Whether it carries screen-space GI in gba ([`GI_FORMAT`]).
+    pub gi: bool,
 }
 
 /// The pipelines writing one term format.
@@ -504,10 +579,22 @@ pub struct AoOutput {
 /// (`GX_AO_CONVEX_NORMALS` in ao_denoise.wgsl).
 const CONVEX_NORMALS_CONSTANT: &str = "GX_AO_CONVEX_NORMALS";
 
-/// The slot of [`AoNode`]'s term pipelines with or without a bent normal, at half resolution or not.
-const fn term_pipelines_slot(bent: bool, half: bool) -> usize {
-    (bent as usize) * 2 + half as usize
+/// What a term holds besides visibility: nothing, a bent normal or screen-space GI.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct TermShape {
+    bent: bool,
+    gi: bool,
 }
+
+/// The slot of [`AoNode`]'s term pipelines for `shape`, at half resolution or not, by horizons or
+/// the visibility bitmask.
+const fn term_pipelines_slot(shape: TermShape, half: bool, bitmask: bool) -> usize {
+    let kind = if shape.gi { 2 } else { shape.bent as usize };
+    kind * 4 + (bitmask as usize) * 2 + half as usize
+}
+
+/// How many term pipeline slots [`term_pipelines_slot`] spans.
+const TERM_PIPELINE_SLOTS: usize = 12;
 
 struct TermPipelines {
     gtao: Compiled<RenderPipeline>,
@@ -536,6 +623,7 @@ struct Chain {
 struct Targets {
     size: (u32, u32),
     bent: bool,
+    gi: bool,
     temporal: bool,
     raw: Target,
     terms: Vec<Target>,
@@ -574,6 +662,10 @@ struct Layouts {
     denoise: BindGroupLayout,
 }
 
+/// What the node's bind groups are cached by: the input's generation, the targets' identity, and
+/// whether a motion target and a light are bound.
+type GroupsKey = (u64, u64, (bool, bool));
+
 /// AO (graph node 10): the view-depth chain, GTAO into the raw term, then the bilateral denoise
 /// (and the temporal blend) into the term. Holds its pipelines, targets, history parity and last
 /// frame's camera.
@@ -585,8 +677,9 @@ pub struct AoNode {
     denoise_pipeline_layout: PipelineLayout,
     depth_pipeline: Compiled<RenderPipeline>,
     down_pipeline: Compiled<RenderPipeline>,
-    /// By [`term_pipelines_slot`]: with or without a bent normal, at half or full resolution.
-    term_pipelines: [Option<TermPipelines>; 4],
+    /// By [`term_pipelines_slot`]: with or without a bent normal, at half or full resolution, by
+    /// horizons or the bitmask.
+    term_pipelines: [Option<TermPipelines>; TERM_PIPELINE_SLOTS],
     params: Buffer,
     view: Buffer,
     targets: Option<Targets>,
@@ -597,7 +690,7 @@ pub struct AoNode {
     parity: usize,
     previous: Option<AoCamera>,
     extra_usage: TextureUsages,
-    groups: Option<((u64, u64, bool), Vec<ParityGroups>)>,
+    groups: Option<(GroupsKey, Vec<ParityGroups>)>,
     upsample: crate::post::upsample::JointUpsample,
     /// Live's history put aside while a settled capture draws on the node (RQ5 review).
     live_stash: Option<LiveStash>,
@@ -608,6 +701,8 @@ pub struct AoNode {
     carried: Option<(Target, Chain)>,
     /// A texel of no motion, bound at the motion binding of frames without a motion target.
     neutral_motion: TextureView,
+    /// A black texel, bound at the GI's light binding of frames without one.
+    neutral_light: TextureView,
 }
 
 /// Live's AO history kept aside while a settled capture runs on the node, so the capture's
@@ -615,8 +710,8 @@ pub struct AoNode {
 /// reads, the parity and the camera, copied out at the capture's start
 /// ([`AoNode::stash_live`]) and back before the next Live frame ([`AoNode::restore_live`]).
 struct LiveStash {
-    /// The targets' shape it was taken at: AO size, bent normals, temporal.
-    shape: ((u32, u32), bool, bool),
+    /// The targets' shape it was taken at: AO size, bent normals, temporal, GI.
+    shape: ((u32, u32), bool, bool, bool),
     term: Texture,
     chain: Texture,
     parity: usize,
@@ -772,7 +867,7 @@ impl AoNode {
         let params = uniform_entry::<GpuAoParams>(GTAO_PARAMS);
         let view = uniform_entry::<GpuAoView>(GTAO_VIEW);
         let layouts = Layouts {
-            gtao: layout(device, "gtao", &[float_entry(GTAO_DEPTH), float_entry(GTAO_NORMALS), params, view]),
+            gtao: layout(device, "gtao", &[float_entry(GTAO_DEPTH), float_entry(GTAO_NORMALS), params, view, float_entry(GTAO_LIGHT)]),
             depth: layout(device, "ao depth", &[params, view, depth_entry(GTAO_DEVICE_DEPTH)]),
             down: layout(device, "ao depth down", &[params, float_entry(GTAO_DEPTH_SOURCE)]),
             denoise: layout(
@@ -803,7 +898,7 @@ impl AoNode {
             gtao_module,
             denoise_module,
             layouts,
-            term_pipelines: [None, None, None, None],
+            term_pipelines: Default::default(),
             targets: None,
             next_id: 1,
             remade: false,
@@ -816,6 +911,7 @@ impl AoNode {
             history_frames: 0,
             carried: None,
             neutral_motion: make_target(device, "ao no motion", (1, 1), crate::motion::MOTION_FORMAT, AO_USAGE).view,
+            neutral_light: make_target(device, "ao no light", (1, 1), GI_FORMAT, AO_USAGE).view,
         })
     }
 
@@ -827,7 +923,7 @@ impl AoNode {
             self.live_stash = None;
             return;
         };
-        let shape = (targets.size, targets.bent, targets.temporal);
+        let shape = (targets.size, targets.bent, targets.temporal, targets.gi);
         let last = 1 - self.parity;
         let (term, chain) = (&targets.terms[last].texture, &targets.chains[last].texture);
         let fits = self.live_stash.as_ref().is_some_and(|stash| stash.shape == shape);
@@ -865,7 +961,7 @@ impl AoNode {
         let Some(stash) = self.live_stash.as_mut().filter(|stash| stash.restore) else { return };
         stash.restore = false;
         let Some(targets) = self.targets.as_ref() else { return };
-        if (targets.size, targets.bent, targets.temporal) != stash.shape {
+        if (targets.size, targets.bent, targets.temporal, targets.gi) != stash.shape {
             return;
         }
         let last = 1 - stash.parity;
@@ -877,19 +973,28 @@ impl AoNode {
         self.remade = false;
     }
 
-    /// Make the pipelines writing a term with (`bent`) or without a bent normal, on first use.
-    fn ensure_term_pipelines(&mut self, device: &Device, bent: bool, half: bool) {
-        let format = if bent { BENT_FORMAT } else { AO_FORMAT };
-        let history = if bent { HISTORY_BENT_FORMAT } else { HISTORY_FORMAT };
-        let raw = if bent { BENT_FORMAT } else { RAW_WEIGHTED_FORMAT };
+    /// Make the pipelines writing a term with (`bent`) or without a bent normal, by horizons or the
+    /// visibility bitmask (`bitmask`), on first use.
+    fn ensure_term_pipelines(&mut self, device: &Device, shape: TermShape, half: bool, bitmask: bool) {
+        let (format, history, raw) = match (shape.gi, shape.bent) {
+            (true, _) => (GI_FORMAT, GI_FORMAT, GI_FORMAT),
+            (false, true) => (BENT_FORMAT, HISTORY_BENT_FORMAT, BENT_FORMAT),
+            (false, false) => (AO_FORMAT, HISTORY_FORMAT, RAW_WEIGHTED_FORMAT),
+        };
         let (gtao_layout, denoise_layout) = (&self.gtao_pipeline_layout, &self.denoise_pipeline_layout);
         let (gtao_module, denoise_module) = (&self.gtao_module, &self.denoise_module);
         // Only a half-resolution window weighs normals past a convex edge (ao_denoise.wgsl): the
         // full-resolution pipelines compile that path out (ultra's 5x5 window with history reaches
         // two pixels past an edge; the normals' reads cost 0.23 ms at 1080p, over its budget).
         let convex = [(CONVEX_NORMALS_CONSTANT, if half { 1.0 } else { 0.0 })];
-        self.term_pipelines[term_pipelines_slot(bent, half)].get_or_insert_with(|| TermPipelines {
-            gtao: screen_pipeline(device, gtao_layout, gtao_module, ("vs_ao", "fs_gtao"), raw),
+        // The horizons' pipeline keeps the shader's default (no constant), so it compiles as before.
+        let method: &[(&str, f64)] = match (bitmask, shape.gi) {
+            (_, true) => &[(BITMASK_CONSTANT, 1.0), (GI_CONSTANT, 1.0)],
+            (true, false) => &[(BITMASK_CONSTANT, 1.0)],
+            (false, false) => &[],
+        };
+        self.term_pipelines[term_pipelines_slot(shape, half, bitmask)].get_or_insert_with(|| TermPipelines {
+            gtao: screen_pipeline_with(device, gtao_layout, gtao_module, ("vs_ao", "fs_gtao"), raw, method),
             denoise: screen_pipeline_with(device, denoise_layout, denoise_module, ("vs_ao_denoise", "fs_ao_denoise"), format, &convex),
             temporal: screen_pipeline_with(device, denoise_layout, denoise_module, ("vs_ao_denoise", "fs_ao_temporal"), history, &convex),
         });
@@ -899,7 +1004,17 @@ impl AoNode {
     /// so the ledger holds them, and kept while their descriptors hold); a label the shape does not
     /// use is released. New textures (a step change, another quality) start the history over.
     pub fn acquire(&mut self, device: &Device, pool: &mut crate::target_pool::TargetPool, render: (u32, u32), quality: &AoQuality) -> Result<(), RenderError> {
-        let descs = targets_with_usage(render, quality, self.extra_usage);
+        self.acquire_shaped(device, pool, render, quality, false)
+    }
+
+    /// [`AoNode::acquire`] for `settings`: screen-space GI ([`AoMethod::BitmaskGi`]) takes
+    /// [`GI_FORMAT`] terms.
+    pub fn acquire_for(&mut self, device: &Device, pool: &mut crate::target_pool::TargetPool, render: (u32, u32), settings: &AoSettings) -> Result<(), RenderError> {
+        self.acquire_shaped(device, pool, render, &settings.quality, settings.method.gi())
+    }
+
+    fn acquire_shaped(&mut self, device: &Device, pool: &mut crate::target_pool::TargetPool, render: (u32, u32), quality: &AoQuality, gi: bool) -> Result<(), RenderError> {
+        let descs = targets_with_usage(render, quality, gi, self.extra_usage);
         let Some(size) = ao_size(render, quality.resolution) else {
             self.release(pool);
             return Ok(());
@@ -919,10 +1034,10 @@ impl AoNode {
             return Ok(());
         }
         let get = |label: &str| pooled.iter().find(|target| target.desc().label == label);
-        let (bent, temporal) = (quality.bent_normals(), quality.temporal);
+        let (bent, temporal) = (quality.bent_normals() && !gi, quality.temporal);
         // A new size of the same temporal shape (a dynamic-resolution step): the last term and chain
         // the old targets wrote stay for the step frame to read in uv (RC-05).
-        self.carried = self.targets.as_ref().filter(|held| held.temporal && temporal && held.bent == bent && held.size != size).map(|held| {
+        self.carried = self.targets.as_ref().filter(|held| held.temporal && temporal && held.bent == bent && held.gi == gi && held.size != size).map(|held| {
             let last = 1 - self.parity;
             (held.terms[last].clone(), held.chains[last].clone())
         });
@@ -931,6 +1046,7 @@ impl AoNode {
         let fresh = Targets {
             size,
             bent,
+            gi,
             temporal,
             raw: pooled_target(held(AO_RAW_LABEL)),
             terms: pairs.iter().map(|(term, _)| pooled_target(held(term))).collect(),
@@ -971,7 +1087,11 @@ impl AoNode {
         ParityGroups {
             depth: group("ao depth", &self.layouts.depth, &[params.clone(), view.clone(), texture(GTAO_DEVICE_DEPTH, input.depth)]),
             down: (1..chain.mips.len()).map(|mip| group("ao depth down", &self.layouts.down, &[params.clone(), texture(GTAO_DEPTH_SOURCE, &chain.mips[mip - 1])])).collect(),
-            gtao: group("gtao", &self.layouts.gtao, &[texture(GTAO_DEPTH, &chain.all), texture(GTAO_NORMALS, input.normals), params.clone(), view.clone()]),
+            gtao: group(
+                "gtao",
+                &self.layouts.gtao,
+                &[texture(GTAO_DEPTH, &chain.all), texture(GTAO_NORMALS, input.normals), params.clone(), view.clone(), texture(GTAO_LIGHT, input.light.map_or(&self.neutral_light, |light| light.view))],
+            ),
             denoise: self.denoise_group(device, input, &chain.all, (history, &targets.chains[other].all)),
         }
     }
@@ -997,10 +1117,10 @@ impl AoNode {
     }
 
     /// This frame's bind groups, cached by the input's generation, the targets' identity and
-    /// whether a motion target is bound.
+    /// whether a motion target and a light are bound.
     fn bind_groups(&mut self, device: &Device, input: &AoInput<'_>) -> ParityGroups {
         let targets = self.targets.as_ref().expect("targets are made first");
-        let key = (input.generation, targets.id, input.motion.is_some());
+        let key = (input.generation, targets.id, (input.motion.is_some(), input.light.is_some()));
         if let Some((held, groups)) = &self.groups
             && *held == key
         {
@@ -1039,7 +1159,9 @@ impl AoNode {
         // template block's base drew their noise as dark clumps that Live's frames average away).
         self.history_frames = if reset { 0 } else { self.history_frames.saturating_add(1) };
         let facts = AoFrameFacts { history_reset: reset && !step_change, step_change, motion: input.motion.is_some(), history_frames: Some(self.history_frames), ..input.facts };
-        queue.write_buffer(&self.params, 0, bytemuck::bytes_of(&GpuAoParams::for_frame(input.settings, size, facts)));
+        let mut row = GpuAoParams::for_frame(input.settings, size, facts);
+        row.gi[0] = input.light.map_or(0.0, |light| light.scale);
+        queue.write_buffer(&self.params, 0, bytemuck::bytes_of(&row));
         let previous = if reset { None } else { self.previous };
         queue.write_buffer(&self.view, 0, bytemuck::bytes_of(&GpuAoView::new(input.camera, previous).at_render(input.render)));
         carried
@@ -1057,8 +1179,9 @@ impl AoNode {
     ) -> Option<AoOutput> {
         let quality = input.settings.quality;
         let size = ao_size(input.render, quality.resolution)?;
-        let shape = (size, quality.bent_normals(), quality.temporal);
-        if self.targets.as_ref().is_none_or(|t| (t.size, t.bent, t.temporal) != shape) {
+        let gi = input.settings.method.gi();
+        let shape = (size, quality.bent_normals() && !gi, quality.temporal, gi);
+        if self.targets.as_ref().is_none_or(|t| (t.size, t.bent, t.temporal, t.gi) != shape) {
             // Targets come from the pool (`acquire`) before the frame; none for this shape.
             return None;
         }
@@ -1066,16 +1189,18 @@ impl AoNode {
             self.take_back_live(encoder);
         }
         let carried = self.frame_rows(queue, &input, size);
-        let bent = quality.bent_normals();
+        let bent = shape.1;
+        let term_shape = TermShape { bent, gi };
         let half = size != (input.render.0.max(1), input.render.1.max(1));
-        self.ensure_term_pipelines(device, bent, half);
+        let bitmask = input.settings.method.bitmask();
+        self.ensure_term_pipelines(device, term_shape, half, bitmask);
         let mut groups = self.bind_groups(device, &input);
         if let Some((term, chain)) = &carried {
             // The step frame reads the previous size's last term (in uv) as its history.
             let written = &self.targets.as_ref().expect("made above").chains[self.parity].all;
             groups.denoise = self.denoise_group(device, &input, written, (&term.view, &chain.all));
         }
-        let pipelines = self.term_pipelines[term_pipelines_slot(bent, half)].as_ref().expect("made above");
+        let pipelines = self.term_pipelines[term_pipelines_slot(term_shape, half, bitmask)].as_ref().expect("made above");
         let targets = self.targets.as_ref().expect("made above");
         let stamp = |first_pass: bool| {
             let (query_set, first, last) = timestamps?;
@@ -1093,14 +1218,14 @@ impl AoNode {
         let upsampled = targets.full.is_some();
         screen_pass(encoder, "ao denoise", &term.view, if upsampled { None } else { stamp(false) }, denoise, &groups.denoise);
         let term_view = term.view.clone();
-        let mut output = AoOutput { view: term_view.clone(), bent_normals: bent };
+        let mut output = AoOutput { view: term_view.clone(), bent_normals: bent, gi };
         if let Some(full) = &targets.full {
             let full_view = full.view.clone();
             let key = (input.generation.wrapping_mul(1 << 20).wrapping_add(targets.id), self.parity as u64);
             let params = crate::post::upsample::GpuUpsampleParams::new(size, input.render, input.camera.proj, input.facts.depth_reversed);
             let guide = targets.chains[self.parity].mips[0].clone();
             let upsample = crate::post::upsample::UpsampleInput { low: &term_view, depth: input.depth, normals: Some(input.normals), target: &full_view, guide: Some(&guide), params, key };
-            self.upsample.encode_timed(device, queue, encoder, upsample, term_format(&quality), stamp(false));
+            self.upsample.encode_timed(device, queue, encoder, upsample, formats(&quality, gi).2, stamp(false));
             output.view = full_view;
         }
         if self.targets.as_ref().is_some_and(|t| t.temporal) {
@@ -1156,12 +1281,19 @@ pub struct AoImage {
     pub visibility: Vec<u8>,
     /// The bent normal per texel as stored (`n * 0.5 + 0.5` in 0..255), when the term has one.
     pub bent: Option<Vec<[u8; 3]>>,
+    /// The screen-space GI's light per texel as stored (16-bit float bits), when the term has it.
+    pub light: Option<Vec<[u16; 3]>>,
 }
 
 impl AoImage {
     /// Visibility at texel (`x`, `y`) in 0..1.
     pub fn at(&self, x: u32, y: u32) -> f32 {
         f32::from(self.visibility[(y * self.size.0 + x) as usize]) / 255.0
+    }
+
+    /// The GI's light at texel (`x`, `y`) (black without GI).
+    pub fn light_at(&self, x: u32, y: u32) -> [f32; 3] {
+        self.light.as_ref().map_or([0.0; 3], |light| light[(y * self.size.0 + x) as usize].map(crate::post::tonemap::f16_to_f32))
     }
 }
 
@@ -1313,11 +1445,11 @@ fn read_term(gpu: &Gpu, node: &AoNode, render_size: bool) -> Result<AoImage, Ren
     let read = if render_size { node.last_read() } else { node.last_term() };
     let texture = read.ok_or_else(|| capture_failed("AO drew nothing"))?;
     let (width, height) = (texture.width(), texture.height());
-    let channels = if targets.bent { 4 } else { 1 };
+    let channels = if targets.bent || targets.gi { 4 } else { 1 };
     // A 16-bit float history (the term at the AO resolution on a temporal quality) reads back as
     // the 8-bit levels an `unorm` term would hold.
     let format = texture.format();
-    let half = format == HISTORY_FORMAT || format == HISTORY_BENT_FORMAT;
+    let half = format == HISTORY_FORMAT || format == HISTORY_BENT_FORMAT || format == GI_FORMAT;
     let bytes_per_texel = if half { channels * 2 } else { channels };
     let padded = (width * bytes_per_texel).div_ceil(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT) * wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
     let staging = buffer(&gpu.device, "ao readback", u64::from(padded) * u64::from(height), BufferUsages::MAP_READ | BufferUsages::COPY_DST)?;
@@ -1340,7 +1472,12 @@ fn read_term(gpu: &Gpu, node: &AoNode, render_size: bool) -> Result<AoImage, Ren
     let coords: Vec<(u32, u32)> = (0..height).flat_map(|y| (0..width).map(move |x| (x, y))).collect();
     let visibility = coords.iter().map(|&(x, y)| channel(x, y, 0)).collect();
     let bent = targets.bent.then(|| coords.iter().map(|&(x, y)| std::array::from_fn(|c| channel(x, y, 1 + c as u32))).collect());
-    Ok(AoImage { size: (width, height), visibility, bent })
+    let bits = |x: u32, y: u32, c: u32| {
+        let at = (y * padded + x * bytes_per_texel + 2 * c) as usize;
+        u16::from_le_bytes([data[at], data[at + 1]])
+    };
+    let light = targets.gi.then(|| coords.iter().map(|&(x, y)| std::array::from_fn(|c| bits(x, y, 1 + c as u32))).collect());
+    Ok(AoImage { size: (width, height), visibility, bent, light })
 }
 
 /// The terms AO makes for `frames` in order (one node, so history carries from frame to frame)
@@ -1350,23 +1487,38 @@ fn read_term(gpu: &Gpu, node: &AoNode, render_size: bool) -> Result<AoImage, Ren
 /// and the history on the GPU without the prepass.
 pub fn ao_term_images(gpu: &Gpu, settings: &AoSettings, render: (u32, u32), frames: &[AoFrame]) -> Result<Vec<AoImage>, RenderError> {
     let sized: Vec<((u32, u32), &AoFrame)> = frames.iter().map(|frame| (render, frame)).collect();
-    ao_images(gpu, settings, &sized, false)
+    ao_images(gpu, settings, &sized, false, &[])
+}
+
+/// [`ao_render_images`] with the light screen-space GI gathers ([`AoMethod::BitmaskGi`]): each of
+/// `lights` holds a previous frame's lit scene, one linear rgba texel per render pixel, row by row;
+/// one for every frame, or one a frame.
+pub fn ao_gi_images(gpu: &Gpu, settings: &AoSettings, render: (u32, u32), frames: &[AoFrame], lights: &[Vec<[f32; 4]>]) -> Result<Vec<AoImage>, RenderError> {
+    let texels = (render.0 * render.1) as usize;
+    if lights.is_empty() || (lights.len() != 1 && lights.len() != frames.len()) || lights.iter().any(|light| light.len() != texels) {
+        return Err(capture_failed(format!("{} lights for {} frames of {}x{}", lights.len(), frames.len(), render.0, render.1)));
+    }
+    let sized: Vec<((u32, u32), &AoFrame)> = frames.iter().map(|frame| (render, frame)).collect();
+    ao_images(gpu, settings, &sized, true, lights)
 }
 
 /// [`ao_term_images`] with each frame at its own render size (a dynamic-resolution step between
 /// two frames remakes AO's targets at the new size, as the renderer's pool does).
 pub fn ao_term_images_sized(gpu: &Gpu, settings: &AoSettings, frames: &[((u32, u32), &AoFrame)]) -> Result<Vec<AoImage>, RenderError> {
-    ao_images(gpu, settings, frames, false)
+    ao_images(gpu, settings, frames, false, &[])
 }
 
 /// [`ao_term_images`] read at the render size: the term the world pass reads (half-resolution AO
 /// through the joint-bilateral upsample, full-resolution AO as it is).
 pub fn ao_render_images(gpu: &Gpu, settings: &AoSettings, render: (u32, u32), frames: &[AoFrame]) -> Result<Vec<AoImage>, RenderError> {
     let sized: Vec<((u32, u32), &AoFrame)> = frames.iter().map(|frame| (render, frame)).collect();
-    ao_images(gpu, settings, &sized, true)
+    ao_images(gpu, settings, &sized, true, &[])
 }
 
-fn ao_images(gpu: &Gpu, settings: &AoSettings, frames: &[((u32, u32), &AoFrame)], render_size: bool) -> Result<Vec<AoImage>, RenderError> {
+/// The terms for `frames` (each at its render size), read at the render size or the AO
+/// resolution, each frame gathering the light of `lights` (none, one for every frame or one a
+/// frame; all at the first frame's render size).
+fn ao_images(gpu: &Gpu, settings: &AoSettings, frames: &[((u32, u32), &AoFrame)], render_size: bool, lights: &[Vec<[f32; 4]>]) -> Result<Vec<AoImage>, RenderError> {
     for (render, _) in frames {
         crate::capture::check_capture_size(render.0, render.1)?;
     }
@@ -1375,8 +1527,12 @@ fn ao_images(gpu: &Gpu, settings: &AoSettings, frames: &[((u32, u32), &AoFrame)]
     let mut node = AoNode::with_usage(device, TextureUsages::COPY_SRC)?;
     let mut pool = crate::target_pool::TargetPool::new();
     let mut images = Vec::with_capacity(frames.len());
+    let light_views: Vec<TextureView> = match frames.first() {
+        Some((render, _)) => lights.iter().map(|texels| source_texture(gpu, "ao light", *render, TextureFormat::Rgba32Float, texels).create_view(&Default::default())).collect(),
+        None => Vec::new(),
+    };
     for (index, &(render, frame)) in frames.iter().enumerate() {
-        node.acquire(device, &mut pool, render, &settings.quality)?;
+        node.acquire_for(device, &mut pool, render, settings)?;
         let stand_in = upload.run(gpu, render, frame)?;
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("ao image") });
         let input = AoInput {
@@ -1388,6 +1544,7 @@ fn ao_images(gpu: &Gpu, settings: &AoSettings, frames: &[((u32, u32), &AoFrame)]
             facts: frame.facts,
             motion: stand_in.motion.as_ref(),
             generation: index as u64,
+            light: light_views.get(index.min(light_views.len().saturating_sub(1))).map(|view| AoLight { view, scale: 1.0 }),
         };
         node.encode(device, &gpu.queue, &mut encoder, input).ok_or_else(|| capture_failed("AO is off"))?;
         gpu.queue.submit([encoder.finish()]);
@@ -1409,7 +1566,7 @@ pub fn ao_gpu_ms(gpu: &Gpu, settings: &AoSettings, render: (u32, u32), frame: &A
     let stand_in = Upload::new(device)?.run(gpu, render, frame)?;
     let mut node = AoNode::new(device)?;
     let mut pool = crate::target_pool::TargetPool::new();
-    node.acquire(device, &mut pool, render, &settings.quality)?;
+    node.acquire_for(device, &mut pool, render, settings)?;
     let query_set = device.create_query_set(&wgpu::QuerySetDescriptor { label: Some("ao cost"), ty: wgpu::QueryType::Timestamp, count: 2 });
     let resolve = buffer(device, "ao cost resolve", 16, BufferUsages::QUERY_RESOLVE | BufferUsages::COPY_SRC)?;
     let period = gpu.queue.get_timestamp_period();
@@ -1426,6 +1583,7 @@ pub fn ao_gpu_ms(gpu: &Gpu, settings: &AoSettings, render: (u32, u32), frame: &A
                 facts: frame.facts,
                 motion: stand_in.motion.as_ref(),
                 generation: 0,
+                light: None,
             };
             let stamps = (&query_set, run == 0, run + 1 == COST_NODES_PER_SAMPLE);
             node.encode_timed(device, &gpu.queue, &mut encoder, input, Some(stamps));

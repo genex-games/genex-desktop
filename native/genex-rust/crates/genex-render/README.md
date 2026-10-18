@@ -60,6 +60,30 @@ renderer enables it. In-pass nodes draw inside one world pass.
 The HDR path draws camera views reverse-Z (`Greater`, cleared to 0) on `Depth32Float`; the
 legacy path keeps standard Z. `GxFrameV2` and `GxPostV2` expose `depth_reversed`.
 
+## Ambient occlusion: horizons, the visibility bitmask, screen-space GI
+
+Node 10 (`post::ao`) runs one horizon search, `shaders/post/gtao.wgsl`, in one of three methods
+(`settings::AoMethod`, chosen per frame through `AoSettings::with_method`; `AoSettings::of` takes
+`Quality::ao_method`):
+
+- `Horizons`: XeGTAO (Intel, MIT). Every depth sample is a wall of infinite thickness.
+- `Bitmask`: the visibility bitmask (pass 2 B.4, after Therrien et al. 2023, Bevy 0.20 `ssao.wesl`
+  and three.js r186 `SSGINode`). Each slice keeps 32 sectors and a sample hides only the sectors
+  between its front face and a point `BITMASK_THICKNESS_PER_RADIUS` of the radius behind it, so a
+  post, a trunk or an arm no longer darkens a halo on the ground or wall behind it. The open arc
+  uses XeGTAO's cosine weighting, so solid creases stay as dark, and the bent normal comes from the
+  open run around the view vector. The presets ask for it at desktop and web `high` and `ultra`;
+  phones and `medium` keep the horizons. Until
+  the renderer's `frame_ao` takes `AoSettings::of`, its frames draw the horizons at every preset.
+- `BitmaskGi`: the bitmask plus one bounce of screen-space light. The sectors a sample hides first
+  send the previous frame's light at that sample (`AoInput::light`: a texture and its scale to scene
+  units, reprojected through last frame's camera). The term is `GI_FORMAT` (`rgba16float`: r
+  visibility, gba the light as a share of the hemisphere) and carries no bent normal.
+
+`GX_AO_BITMASK` and `GX_AO_GI` are pipeline-overridable constants, so the horizons' pipelines
+compile as before. Rows: `tests/ao.rs` (`metal_bitmask_*`: a post's halo against a ray-cast ground
+truth, the log wall, open ground, a red box's bleed onto the floor, the cost at 1080p).
+
 ## Materials: alpha masks, double-sided, occlusion
 
 A glTF `MASK` material keeps its alpha factor and `alphaCutoff`, `doubleSided` and the occlusion

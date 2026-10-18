@@ -423,6 +423,14 @@ describe("render perf feature costs", () => {
     assert.deepEqual(full?.budgetEntries, ["hdr-tonemap", "bloom", "ao-full"]);
     // Owner decision 2026-10-12: ultra's full-resolution AO (3 slices x 8 steps) has 1.5 ms (was 1.2).
     assert.ok(Math.abs((full?.budgetMs ?? 0) - (0.3 + 0.4 + 1.5)) < 1e-9);
+    // Renderer pass 2 B.4: high's visibility-bitmask AO (half resolution) has 1.0 ms, ultra's
+    // (full) keeps the full-resolution 1.5.
+    const bitmask = await highWithAo("bitmask-half");
+    assert.deepEqual(bitmask?.budgetEntries, ["hdr-tonemap", "bloom", "ao-bitmask-half"]);
+    assert.ok(Math.abs((bitmask?.budgetMs ?? 0) - (0.3 + 0.4 + 1.0)) < 1e-9);
+    const bitmaskFull = await highWithAo("bitmask-full");
+    assert.deepEqual(bitmaskFull?.budgetEntries, ["hdr-tonemap", "bloom", "ao-bitmask-full"]);
+    assert.ok(Math.abs((bitmaskFull?.budgetMs ?? 0) - (0.3 + 0.4 + 1.5)) < 1e-9);
   });
 
   it("lists the switched-on features of a row", async () => {

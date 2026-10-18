@@ -102,7 +102,7 @@ const GOLDEN: [(&str, usize); 34] = [
     ("SkyAtmosphere", 144),
     ("GxFog", 32),
     ("BloomParams", 48),
-    ("AoParams", 64),
+    ("AoParams", 80),
     ("ContactShadowParams", 64),
     ("Meshlet", 48),
     ("MeshletInstance", 16),

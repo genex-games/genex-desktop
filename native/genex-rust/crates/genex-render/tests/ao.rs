@@ -16,7 +16,7 @@ use std::path::{Path, PathBuf};
 
 use genex_render::capture::Capture;
 use genex_render::device_class::DeviceClass;
-use genex_render::post::ao::{self, AoCamera, AoFrame, AoFrameFacts, AoImage, AoSettings, GpuAoParams, GpuAoView, ao_gpu_ms, ao_term_images};
+use genex_render::post::ao::{self, AoCamera, AoFrame, AoFrameFacts, AoImage, AoMethod, AoSettings, GpuAoParams, GpuAoView, ao_gpu_ms, ao_term_images};
 use genex_render::presets::preset_quality;
 use genex_render::scene::{CameraDesc, Material, MeshId, Scene, scaled};
 use genex_render::settings::{AoQuality, AoResolution, Look, Quality, QualityPreset};
@@ -166,6 +166,26 @@ fn every_ao_preset_runs_gtao_and_off_runs_nothing() {
     assert_eq!((ultra.resolution, ultra.slices, ultra.temporal, ultra.bent_normals()), (AoResolution::Full, 3, true, true));
     for quality in [medium, high, ultra] {
         assert!(AoSettings::new(&look, &quality).is_some());
+    }
+}
+
+/// B.4: the presets draw the visibility bitmask at desktop `high` and `ultra` and XeGTAO's
+/// horizons at `medium` and on every phone class.
+#[test]
+fn the_presets_draw_the_bitmask_at_high_and_ultra_on_desktops_only() {
+    let look = Look::default();
+    for class in DeviceClass::ALL {
+        for preset in [QualityPreset::Medium, QualityPreset::High, QualityPreset::Ultra] {
+            let quality = preset_quality(preset, class);
+            let desktop_high = class.form == genex_render::device_class::FormFactor::Desktop && preset >= QualityPreset::High;
+            let expected = if desktop_high { AoMethod::Bitmask } else { AoMethod::Horizons };
+            assert_eq!(quality.ao_method, expected, "{class:?} {}", preset.wire());
+            if let Some(settings) = AoSettings::of(&look, &quality) {
+                assert_eq!(settings.method, expected);
+                let thickness = if desktop_high { ao::BITMASK_THICKNESS_PER_RADIUS * look.ao_radius } else { ao::THICKNESS };
+                assert_eq!(settings.thickness, thickness);
+            }
+        }
     }
 }
 
@@ -474,9 +494,14 @@ fn metal_ao_off_draws_the_pre_ao_golden_byte_for_byte() {
 /// since pass 2 P4 the running frames' slices); otherwise the frames blend history as a running
 /// game's do.
 fn cost(gpu: &Gpu, quality: AoQuality, eye: Vec3, reset: bool) -> Option<(f32, f32)> {
+    cost_of(gpu, &settings(quality), eye, reset)
+}
+
+/// [`cost`] of `settings`.
+fn cost_of(gpu: &Gpu, settings: &AoSettings, eye: Vec3, reset: bool) -> Option<(f32, f32)> {
     let render = (1920, 1080);
     let frame = corner_frame(eye, true, facts(1, reset), render);
-    let mut costs = ao_gpu_ms(gpu, &settings(quality), render, &frame, COST_SAMPLES).expect("cost")?;
+    let mut costs = ao_gpu_ms(gpu, settings, render, &frame, COST_SAMPLES).expect("cost")?;
     costs.sort_by(f32::total_cmp);
     Some((costs[costs.len() / 2], costs[(costs.len() * 95 / 100).min(costs.len() - 1)]))
 }
@@ -608,7 +633,7 @@ fn bilinear(image: &AoImage, render: (u32, u32)) -> AoImage {
             (top * (1.0 - fy) + bottom * fy).round() as u8
         })
         .collect();
-    AoImage { size: render, visibility, bent: None }
+    AoImage { size: render, visibility, bent: None, light: None }
 }
 
 /// How `image`'s crease reaches past `reference`'s: the worst row on the floor side, the rows
@@ -1314,4 +1339,361 @@ fn metal_a_render_scale_step_does_not_reset_ao_in_live_frames() {
     eprintln!("AO's change {changes:.2?}, settled {settled:.2}, running noise before the step {noise:.2}");
     assert!(on_was + 3.0 < off_was, "AO darkens the crease ({on_was:.2} with, {off_was:.2} without)");
     assert!(changes[0].abs() <= STEP_AO_LUMA_MAX, "the step frame moves the crease by {:.2} levels through AO ({changes:.2?})", changes[0]);
+}
+
+// ---------------------------------------------------------------------------------------------
+// Renderer pass 2, B.4 (prior-art P7): the visibility bitmask. A thin pole stands in front of a
+// wall; XeGTAO takes it for a wall of infinite thickness and darkens a halo on the wall around it
+
+/// The pole scene's render size and eye: open ground seen from eye height, a thin post standing
+/// on it.
+const POLE_SIZE: (u32, u32) = (384, 216);
+const POLE_EYE: Vec3 = Vec3::new(0.0, 1.6, 2.0);
+const POLE_LOOK_AT: Vec3 = Vec3::new(0.0, 0.2, -1.0);
+/// The post: square, this half wide, standing at this z (x = 0), this tall.
+const POLE_HALF: f32 = 0.03;
+const POLE_Z: f32 = -1.0;
+const POLE_HEIGHT: f32 = 2.0;
+/// The ground band the row reads: behind the post (further from the eye), within this reach of
+/// its axis in x and z (metres), where XeGTAO's samples on the post's front face (nearer the
+/// camera) raise the ground's horizon.
+const POLE_BEHIND: (f32, f32) = (0.06, 0.45);
+const POLE_ACROSS: f32 = 0.3;
+/// The most the band's mean visibility may lie below the ray-cast ground truth (a halo is the
+/// ground drawn darker than the post hides it).
+const POLE_HALO_MAX: f32 = 0.03;
+/// The most the bitmask's log wall may differ from its ground truth (the horizons' row's bound).
+const LOG_WALL_TRUTH_MAX: f32 = 0.08;
+
+/// The ray's nearest hit with the axis-aligned box `min`..`max`, and its normal.
+fn hit_aabb(origin: Vec3, dir: Vec3, min: Vec3, max: Vec3) -> Option<(f32, Vec3)> {
+    let (mut near, mut far, mut normal) = (f32::NEG_INFINITY, f32::INFINITY, Vec3::ZERO);
+    for axis in 0..3 {
+        let inv = 1.0 / dir[axis];
+        let (a, b) = ((min[axis] - origin[axis]) * inv, (max[axis] - origin[axis]) * inv);
+        let (t0, t1) = if a < b { (a, b) } else { (b, a) };
+        if t0 > near {
+            near = t0;
+            normal = Vec3::ZERO;
+            normal[axis] = -dir[axis].signum();
+        }
+        far = far.min(t1);
+    }
+    (near <= far && near > 0.0).then_some((near, normal))
+}
+
+/// The nearest hit of the pole scene (the ground, the post) and its normal.
+fn hit_pole_scene(origin: Vec3, dir: Vec3) -> Option<(f32, Vec3)> {
+    let (min, max) = (Vec3::new(-POLE_HALF, 0.0, POLE_Z - POLE_HALF), Vec3::new(POLE_HALF, POLE_HEIGHT, POLE_Z + POLE_HALF));
+    let ground = (dir.y < 0.0).then(|| (-origin.y / dir.y, Vec3::Y));
+    [ground, hit_aabb(origin, dir, min, max)].into_iter().flatten().filter(|(t, _)| *t > 1e-4).min_by(|a, b| a.0.total_cmp(&b.0))
+}
+
+/// The pole scene from [`POLE_EYE`] at `size`: device depth, normals, and each pixel's surface.
+fn pole_frame(size: (u32, u32)) -> (AoFrame, Vec<Option<(Vec3, Vec3)>>) {
+    let camera = AoCamera {
+        view: glam::camera::rh::view::look_at_mat4(POLE_EYE, POLE_LOOK_AT, Vec3::Y),
+        proj: glam::camera::rh::proj::directx::perspective(50f32.to_radians(), size.0 as f32 / size.1 as f32, 100.0, 0.1),
+    };
+    let inverse = (camera.proj * camera.view).inverse();
+    let (mut depth, mut normals, mut hits) = (Vec::new(), Vec::new(), Vec::new());
+    for y in 0..size.1 {
+        for x in 0..size.0 {
+            let ndc = Vec4::new((x as f32 + 0.5) / size.0 as f32 * 2.0 - 1.0, 1.0 - (y as f32 + 0.5) / size.1 as f32 * 2.0, 0.5, 1.0);
+            let far = inverse * ndc;
+            let dir = (far.truncate() / far.w - POLE_EYE).normalize();
+            let Some((t, n)) = hit_pole_scene(POLE_EYE, dir) else {
+                depth.push(0.0);
+                normals.push([0.0, 1.0, 0.0]);
+                hits.push(None);
+                continue;
+            };
+            let p = POLE_EYE + dir * t;
+            let clip = camera.proj * camera.view * p.extend(1.0);
+            depth.push(clip.z / clip.w);
+            normals.push(n.to_array());
+            hits.push(Some((p, n)));
+        }
+    }
+    (AoFrame { depth, normals, camera, facts: facts(0, true), motion: Vec::new() }, hits)
+}
+
+/// The ground truth of what AO estimates at ground point `p` for AO radius `radius`: one less the
+/// cosine-weighted mean of XeGTAO's falloff over the hemisphere's rays (1 for a hit within
+/// [`ao::FALLOFF_FRACTION`]'s start, falling to 0 at the effect radius; 0 for a miss).
+fn pole_ground_truth(p: Vec3, radius: f32) -> f32 {
+    let reach = radius * 1.457;
+    let (from, range) = (reach * (1.0 - ao::FALLOFF_FRACTION), reach * ao::FALLOFF_FRACTION);
+    let (n, tangent, bitangent) = (Vec3::Y, Vec3::X, Vec3::Z);
+    let hidden: f32 = (0..GROUND_TRUTH_RAYS)
+        .map(|i| {
+            let u = (i as f32 + 0.5) / GROUND_TRUTH_RAYS as f32;
+            let v = (i.reverse_bits() as f64 / 4_294_967_296.0) as f32;
+            let (r, phi) = (u.sqrt(), std::f32::consts::TAU * v);
+            let dir = (tangent * r * libm::cosf(phi) + bitangent * r * libm::sinf(phi) + n * (1.0 - u).sqrt()).normalize();
+            hit_pole_scene(p + n * 1e-3, dir).map_or(0.0, |(t, _)| (1.0 - (t - from) / range).clamp(0.0, 1.0))
+        })
+        .sum();
+    1.0 - hidden / GROUND_TRUTH_RAYS as f32
+}
+
+/// The pole scene's ground band behind the post under `settings`: (the AO term's mean, the ground
+/// truth's mean) over every [`GROUND_TRUTH_STRIDE`]th band pixel, at render size.
+fn pole_band(gpu: &Gpu, settings: &AoSettings, name: &str) -> (f32, f32) {
+    let (frame, hits) = pole_frame(POLE_SIZE);
+    let image = ao::ao_render_images(gpu, settings, POLE_SIZE, std::slice::from_ref(&frame)).expect("AO").remove(0);
+    write_evidence(name, &grey(&image));
+    let (mut term, mut truth, mut count) = (0.0, 0.0, 0);
+    for (index, hit) in hits.iter().enumerate() {
+        let Some((p, n)) = hit else { continue };
+        let behind = POLE_Z - p.z;
+        let on_band = n.y > 0.5 && (POLE_BEHIND.0..POLE_BEHIND.1).contains(&behind) && p.x.abs() < POLE_ACROSS;
+        if !on_band || !(index as u32).is_multiple_of(GROUND_TRUTH_STRIDE) {
+            continue;
+        }
+        term += image.at(index as u32 % POLE_SIZE.0, index as u32 / POLE_SIZE.0);
+        truth += pole_ground_truth(*p, settings.radius);
+        count += 1;
+    }
+    assert!(count > 50, "the band holds {count} sampled pixels");
+    (term / count as f32, truth / count as f32)
+}
+
+/// The AO settings the bitmask rows draw: the preset's sampling at the plain power, by the
+/// visibility bitmask.
+fn bitmask_settings(preset: QualityPreset) -> AoSettings {
+    AoSettings { intensity: PLAIN_INTENSITY, ..settings(quality(preset)) }.with_method(AoMethod::Bitmask)
+}
+
+/// B.4 (prior-art P7, "no halo behind thin objects"): a 6 cm post standing on open ground hides a
+/// little of the ground's sky behind it. XeGTAO takes the post's front face (nearer the camera)
+/// for a wall of infinite thickness and darkens the ground behind it, a halo that slides with
+/// parallax; the bitmask draws that ground no more than [`POLE_HALO_MAX`] below the ray-cast
+/// ground truth (XeGTAO's falloff, the same radius) at medium, high and ultra. The horizons are
+/// logged beside it.
+#[test]
+#[ignore = "GPU: run with -- --ignored metal"]
+fn metal_bitmask_ao_draws_no_halo_on_the_ground_behind_a_thin_post() {
+    let Some(gpu) = gpu() else { return };
+    let mut problems = Vec::new();
+    for preset in [QualityPreset::Medium, QualityPreset::High, QualityPreset::Ultra] {
+        let horizons = AoSettings { intensity: PLAIN_INTENSITY, ..settings(quality(preset)) };
+        let (gtao, _) = pole_band(&gpu, &horizons, &format!("pole-horizons-{}", preset.wire()));
+        let (bitmask, truth) = pole_band(&gpu, &bitmask_settings(preset), &format!("pole-bitmask-{}", preset.wire()));
+        eprintln!("{}: ground behind the post: horizons {gtao:.3}, bitmask {bitmask:.3}, ground truth {truth:.3}", preset.wire());
+        if truth - bitmask > POLE_HALO_MAX {
+            problems.push(format!("{}: bitmask {bitmask:.3} against the ground truth {truth:.3} (horizons {gtao:.3})", preset.wire()));
+        }
+    }
+    assert!(problems.is_empty(), "{problems:#?}");
+}
+
+/// B.4: contact creases stay. The bitmask on the log wall agrees with the ray-cast ground truth as
+/// the horizons do (the logs' grooves hide about a fifth of the sky).
+#[test]
+#[ignore = "GPU: run with -- --ignored metal"]
+fn metal_bitmask_ao_on_a_log_wall_matches_the_ray_cast_ground_truth() {
+    let Some(gpu) = gpu() else { return };
+    let (frame, hits) = log_wall_frame(LOG_WALL_SIZE);
+    let mut problems = Vec::new();
+    for preset in [QualityPreset::Medium, QualityPreset::High, QualityPreset::Ultra] {
+        let settings = AoSettings { radius: LOG_WALL_RADIUS, ..bitmask_settings(preset) };
+        let image = ao::ao_render_images(&gpu, &settings, LOG_WALL_SIZE, std::slice::from_ref(&frame)).expect("AO").remove(0);
+        write_evidence(&format!("log-wall-bitmask-{}", preset.wire()), &grey(&image));
+        let (mut term, mut truth, mut count) = (0.0, 0.0, 0);
+        for (index, hit) in hits.iter().enumerate() {
+            let Some((p, n, log)) = hit else { continue };
+            let x = index as u32 % LOG_WALL_SIZE.0;
+            if !(2..LOG_COURSES - 2).contains(log) || !(index as u32).is_multiple_of(GROUND_TRUTH_STRIDE) || !(64..LOG_WALL_SIZE.0 - 64).contains(&x) {
+                continue;
+            }
+            term += image.at(x, index as u32 / LOG_WALL_SIZE.0);
+            truth += ground_truth_visibility(*p, *n, LOG_WALL_RADIUS * 1.457);
+            count += 1;
+        }
+        let (term, truth) = (term / count as f32, truth / count as f32);
+        eprintln!("{}: bitmask {term:.3}, ground truth {truth:.3} over {count} pixels", preset.wire());
+        if (term - truth).abs() > LOG_WALL_TRUTH_MAX {
+            problems.push(format!("{}: bitmask {term:.3} against the ground truth {truth:.3}", preset.wire()));
+        }
+    }
+    assert!(problems.is_empty(), "{problems:#?}");
+}
+
+/// B.4: open flat ground stays flat under the bitmask (a sample on the tangent plane hides no
+/// sector), at every AO preset.
+#[test]
+#[ignore = "GPU: run with -- --ignored metal"]
+fn metal_bitmask_ao_reads_open_flat_ground_flat() {
+    let Some(gpu) = gpu() else { return };
+    let frames: Vec<AoFrame> = (0..8).map(|i| open_ground_frame(GROUND_SIZE, i)).collect();
+    let top = first_ground_row(&frames[0], GROUND_SIZE) + GROUND_ROWS_BELOW_HORIZON;
+    let mut problems = Vec::new();
+    for preset in [QualityPreset::Medium, QualityPreset::High, QualityPreset::Ultra] {
+        let quality = quality(preset);
+        let used = if quality.temporal { &frames[..] } else { &frames[..1] };
+        let image = ao::ao_render_images(&gpu, &settings(quality).with_method(AoMethod::Bitmask), GROUND_SIZE, used).expect("AO").pop().expect("a term");
+        let texels: Vec<f32> = (top..GROUND_SIZE.1).flat_map(|y| (0..GROUND_SIZE.0).map(move |x| (x, y))).map(|(x, y)| image.at(x, y)).collect();
+        let mean = texels.iter().sum::<f32>() / texels.len() as f32;
+        let lowest = texels.iter().copied().fold(1.0, f32::min);
+        eprintln!("{}: bitmask open ground mean {mean:.4}, lowest {lowest:.3}", preset.wire());
+        if lowest < GROUND_LOWEST {
+            problems.push(format!("{}: open ground's lowest {lowest:.3}", preset.wire()));
+        }
+    }
+    assert!(problems.is_empty(), "{problems:#?}");
+}
+
+/// B.4's budget for AO at high with the bitmask (TIER-AB plan §5: "<= 1.0 ms at high", 1080p).
+const BITMASK_HIGH_BUDGET_MS: f32 = 1.0;
+
+/// B.4: the bitmask's and the GI's cost at 1080p beside the horizons' on the same frames, medium
+/// to ultra (recorded), with high within [`BITMASK_HIGH_BUDGET_MS`] (asserted, both).
+#[test]
+#[ignore = "GPU: run with -- --ignored metal"]
+fn metal_bitmask_ao_costs_within_its_budget_at_1080p() {
+    let Some(gpu) = gpu() else { return };
+    let mut rows = Vec::new();
+    for preset in [QualityPreset::Medium, QualityPreset::High, QualityPreset::Ultra] {
+        let horizons = settings(quality(preset));
+        let (Some((h50, h95)), Some((b50, b95))) = (cost_of(&gpu, &horizons, EYE, false), cost_of(&gpu, &horizons.with_method(AoMethod::Bitmask), EYE, false)) else {
+            eprintln!("skipped: no TIMESTAMP_QUERY");
+            return;
+        };
+        let (g50, g95) = cost_of(&gpu, &horizons.with_method(AoMethod::BitmaskGi), EYE, false).expect("timestamps");
+        eprintln!("ao {} 1080p: horizons p50 {h50:.3} p95 {h95:.3} ms, bitmask p50 {b50:.3} p95 {b95:.3} ms, bitmask GI p50 {g50:.3} p95 {g95:.3} ms", preset.wire());
+        rows.push(serde_json::json!({ "preset": preset.wire(), "horizons_p50_ms": h50, "horizons_p95_ms": h95, "bitmask_p50_ms": b50, "bitmask_p95_ms": b95, "gi_p50_ms": g50, "gi_p95_ms": g95 }));
+        if preset == QualityPreset::High {
+            assert!(b50 <= BITMASK_HIGH_BUDGET_MS, "bitmask AO at high costs {b50} ms at 1080p, over {BITMASK_HIGH_BUDGET_MS} ms");
+            assert!(g50 <= BITMASK_HIGH_BUDGET_MS, "bitmask GI at high costs {g50} ms at 1080p, over {BITMASK_HIGH_BUDGET_MS} ms");
+        }
+    }
+    if let Ok(path) = std::env::var("GENEX_PERF_OUT") {
+        let report = serde_json::json!({ "row": "ao-bitmask-cost", "adapter": gpu.receipt().adapter, "samples": COST_SAMPLES, "rows": rows });
+        std::fs::write(path, serde_json::to_string_pretty(&report).expect("json")).expect("perf written");
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Renderer pass 2, B.4 (prior-art B1.2): screen-space GI on the bitmask. The corner scene's box is
+// red, the floor and the wall white: the floor in front of the box takes its red, the floor by the
+// wall takes white.
+
+/// The light the corner scene's previous frame drew: the box red, the floor and wall white, the
+/// sky black (linear, the scene's units).
+const GI_RED: [f32; 4] = [1.0, 0.05, 0.05, 1.0];
+const GI_WHITE: [f32; 4] = [0.5, 0.5, 0.5, 1.0];
+/// The least chroma `(r - g) / (r + g)` of the light the floor in front of the red box gathers,
+/// and the least light (r) there; the most chroma by the white wall away from the box.
+const GI_RED_CHROMA_MIN: f32 = 0.5;
+const GI_RED_LIGHT_MIN: f32 = 0.01;
+const GI_WHITE_CHROMA_MAX: f32 = 0.1;
+/// The most the GI term's visibility may differ from the bitmask's own (the same search).
+const GI_VISIBILITY_MAX: f32 = 0.02;
+
+/// The corner scene's light at render size: what each pixel shows, lit (the box red when
+/// `with_box`).
+fn corner_light(frame: &AoFrame, size: (u32, u32), with_box: bool) -> Vec<[f32; 4]> {
+    let inverse = (frame.camera.proj * frame.camera.view).inverse();
+    let eye = frame.camera.view.inverse().w_axis.truncate();
+    (0..size.1)
+        .flat_map(|y| (0..size.0).map(move |x| (x, y)))
+        .map(|(x, y)| {
+            let index = (y * size.0 + x) as usize;
+            if frame.depth[index] <= 0.0 {
+                return [0.0; 4];
+            }
+            let ndc = Vec4::new((x as f32 + 0.5) / size.0 as f32 * 2.0 - 1.0, 1.0 - (y as f32 + 0.5) / size.1 as f32 * 2.0, frame.depth[index], 1.0);
+            let world = inverse * ndc;
+            let p = world.truncate() / world.w;
+            let on_box = with_box && (BOX_MIN - Vec3::splat(1e-3)).cmple(p).all() && p.cmple(BOX_MAX + Vec3::splat(1e-3)).all() && p.distance(eye) > 0.0;
+            if on_box { GI_RED } else { GI_WHITE }
+        })
+        .collect()
+}
+
+/// The mean GI light over the floor points `xs` x `zs` (world), at render size.
+fn floor_light(image: &AoImage, frame: &AoFrame, size: (u32, u32), xs: (f32, f32), zs: (f32, f32)) -> [f32; 3] {
+    let mut sum = [0.0; 3];
+    let mut count = 0.0;
+    for i in 0..8 {
+        for j in 0..8 {
+            let world = Vec3::new(xs.0 + (xs.1 - xs.0) * i as f32 / 7.0, 0.0, zs.0 + (zs.1 - zs.0) * j as f32 / 7.0);
+            let (x, y) = ao_pixel(frame, size, world);
+            let light = image.light_at(x, y);
+            (0..3).for_each(|c| sum[c] += light[c]);
+            count += 1.0;
+        }
+    }
+    sum.map(|v| v / count)
+}
+
+fn chroma(light: [f32; 3]) -> f32 {
+    (light[0] - light[1]) / (light[0] + light[1]).max(1e-6)
+}
+
+/// B.4 (B1.2 SSGI, "colour bleed consistent with A.4"): at high and ultra the floor in front of the
+/// red box gathers red light and the floor by the white wall white, and the term's visibility is
+/// the bitmask's own.
+#[test]
+#[ignore = "GPU: run with -- --ignored metal"]
+fn metal_bitmask_gi_bleeds_the_red_box_onto_the_floor_in_front_of_it() {
+    let Some(gpu) = gpu() else { return };
+    let size = (WIDTH * 2, HEIGHT * 2);
+    let frames: Vec<AoFrame> = (0..4).map(|i| corner_frame(EYE, true, facts(i, i == 0), size)).collect();
+    let light = corner_light(&frames[0], size, true);
+    let mut problems = Vec::new();
+    for preset in [QualityPreset::High, QualityPreset::Ultra] {
+        let gi = settings(quality(preset)).with_method(AoMethod::BitmaskGi);
+        let image = ao::ao_gi_images(&gpu, &gi, size, &frames, std::slice::from_ref(&light)).expect("GI").pop().expect("a term");
+        let bitmask = ao::ao_render_images(&gpu, &gi.with_method(AoMethod::Bitmask), size, &frames).expect("AO").pop().expect("a term");
+        write_evidence(&format!("gi-visibility-{}", preset.wire()), &grey(&image));
+        let red = floor_light(&image, &frames[0], size, (-0.35, 0.35), (-0.75, -0.55));
+        let white = floor_light(&image, &frames[0], size, (1.3, 2.0), (-1.85, -1.65));
+        let open = floor_light(&image, &frames[0], size, (1.3, 2.0), (0.6, 1.0));
+        let visibility_gap = image.visibility.iter().zip(&bitmask.visibility).map(|(a, b)| f32::from(a.abs_diff(*b)) / 255.0).sum::<f32>() / image.visibility.len() as f32;
+        eprintln!("{}: floor by the red box {red:.4?} (chroma {:.3}), by the white wall {white:.4?} (chroma {:.3}), open floor {open:.4?}; visibility vs bitmask {visibility_gap:.4}", preset.wire(), chroma(red), chroma(white));
+        if chroma(red) < GI_RED_CHROMA_MIN || red[0] < GI_RED_LIGHT_MIN {
+            problems.push(format!("{}: the floor by the red box gathers {red:?}", preset.wire()));
+        }
+        if chroma(white).abs() > GI_WHITE_CHROMA_MAX || white[0] <= open[0] {
+            problems.push(format!("{}: the floor by the white wall gathers {white:?} (open floor {open:?})", preset.wire()));
+        }
+        if visibility_gap > GI_VISIBILITY_MAX {
+            problems.push(format!("{}: the GI term's visibility differs from the bitmask's by {visibility_gap:.4}", preset.wire()));
+        }
+    }
+    assert!(problems.is_empty(), "{problems:#?}");
+}
+
+/// Frames the red box stands before it goes, and frames after, before the GI-trail row reads.
+const GI_TRAIL_BEFORE: u64 = 12;
+const GI_TRAIL_AFTER: u64 = 3;
+/// The most red the floor where the box stood may still gather [`GI_TRAIL_AFTER`] frames after it
+/// went (its share of what the box sent).
+const GI_TRAIL_RESIDUE_MAX: f32 = 0.1;
+
+/// B.4 (SSGI's own history): when the red box goes, the floor in front of it stops gathering red
+/// within [`GI_TRAIL_AFTER`] frames. The floor's depth does not change, so the history's depth test
+/// keeps it; the history's light is held to the window's own estimates.
+#[test]
+#[ignore = "GPU: run with -- --ignored metal"]
+fn metal_bitmask_gi_leaves_no_red_trail_when_the_box_goes() {
+    let Some(gpu) = gpu() else { return };
+    let size = (WIDTH * 2, HEIGHT * 2);
+    let gi = settings(quality(QualityPreset::High)).with_method(AoMethod::BitmaskGi);
+    let with_box: Vec<AoFrame> = (0..GI_TRAIL_BEFORE).map(|i| corner_frame(EYE, true, facts(i, i == 0), size)).collect();
+    let light = corner_light(&with_box[0], size, true);
+    let before = ao::ao_gi_images(&gpu, &gi, size, &with_box, std::slice::from_ref(&light)).expect("GI").pop().expect("a term");
+    let red_before = floor_light(&before, &with_box[0], size, (-0.35, 0.35), (-0.75, -0.55))[0];
+    let mut frames = with_box.clone();
+    frames.extend((GI_TRAIL_BEFORE..GI_TRAIL_BEFORE + GI_TRAIL_AFTER).map(|i| corner_frame(EYE, false, facts(i, false), size)));
+    // The box's frames see its red, the frames after it white floor and wall.
+    let empty_light = corner_light(&frames[frames.len() - 1], size, false);
+    let lights: Vec<Vec<[f32; 4]>> = (0..frames.len()).map(|i| if (i as u64) < GI_TRAIL_BEFORE { light.clone() } else { empty_light.clone() }).collect();
+    let after = ao::ao_gi_images(&gpu, &gi, size, &frames, &lights).expect("GI").pop().expect("a term");
+    let left = floor_light(&after, &frames[0], size, (-0.35, 0.35), (-0.75, -0.55));
+    let residue = (left[0] - left[1]) / red_before.max(1e-6);
+    eprintln!("floor where the box stood: red {red_before:.4} with it, {left:.4?} {GI_TRAIL_AFTER} frames after it went (red residue {residue:.3})");
+    assert!(residue <= GI_TRAIL_RESIDUE_MAX, "the floor keeps {residue:.3} of the box's red {GI_TRAIL_AFTER} frames after it went");
 }

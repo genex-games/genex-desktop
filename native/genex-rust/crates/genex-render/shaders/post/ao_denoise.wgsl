@@ -28,6 +28,8 @@ struct AoParams {
     // x: the history's blend weight; y: the depth difference that rejects history; z: the denoise
     // window's half width in texels; w: its spatial falloff (sigma, texels).
     history: vec4<f32>,
+    // Screen-space GI (gtao.wgsl): x the light's scale; y its strength; zw unused.
+    gi: vec4<f32>,
 }
 
 // Mirrors `post::ao::GpuAoView`.
@@ -83,6 +85,9 @@ override GX_AO_CONVEX_NORMALS: bool = true;
 const GX_AO_NORMAL_FLOOR: f32 = 0.001;
 const GX_AO_FLAG_BENT: u32 = 2u;
 const GX_AO_FLAG_MOTION: u32 = 32u;
+// The term carries screen-space GI (`post::ao::FLAG_GI`): gba the gathered light, averaged and
+// blended linearly (no bent normal).
+const GX_AO_FLAG_GI: u32 = 64u;
 // The least weight an estimate counts with (gtao.wgsl's `GX_AO_WEIGHT_FLOOR`, one 8-bit level).
 const GX_AO_WEIGHT_FLOOR: f32 = 0.00392156862745098;
 // The bilinear weight of the history's texels below which no history is read (every texel near
@@ -179,11 +184,15 @@ fn gx_ao_slope(before: f32, after: f32) -> f32 {
 struct GxAoWindow {
     term: vec4<f32>,
     range: vec2<f32>,
+    // With GI, the least and the most light the window's estimates gathered (each channel): the
+    // history's light is held within them (`fs_ao_temporal`).
+    light_low: vec3<f32>,
+    light_high: vec3<f32>,
 }
 
 fn gx_ao_denoised(texel: vec2<i32>, centre: vec4<f32>) -> GxAoWindow {
     if centre.w == 0.0 {
-        return GxAoWindow(vec4<f32>(0.0, 0.0, 0.0, 1.0), vec2<f32>(1.0));
+        return GxAoWindow(vec4<f32>(0.0, 0.0, 0.0, 1.0), vec2<f32>(1.0), vec3<f32>(0.0), vec3<f32>(0.0));
     }
     let size = vec2<i32>(gx_ao.size.xy);
     let inverse = 1.0 / max(-centre.z, 1e-6);
@@ -200,6 +209,10 @@ fn gx_ao_denoised(texel: vec2<i32>, centre: vec4<f32>) -> GxAoWindow {
     var visibility_squared = 0.0;
     var bent = vec3<f32>(0.0);
     let bent_term = (gx_ao.counts.w & GX_AO_FLAG_BENT) != 0u;
+    let gi_term = gx_ao_gi();
+    var light = vec3<f32>(0.0);
+    var light_low = vec3<f32>(3.0e38);
+    var light_high = vec3<f32>(0.0);
     let radius = i32(gx_ao.history.z);
     let sigma = max(gx_ao.history.w, 0.5);
     // exp(-d² / (2 sigma²)) as exp2(d² * spatial).
@@ -243,12 +256,18 @@ fn gx_ao_denoised(texel: vec2<i32>, centre: vec4<f32>) -> GxAoWindow {
             // it measured, so it averages the visible arcs over the unoccluded ones of every
             // slice it holds (the ratio estimator over the window). With bent normals the weight
             // is the raw bent normal's length (gtao.wgsl): a running frame at high takes one slice.
-            let estimate = select(raw.g, max(raw_bent_length, GX_AO_WEIGHT_FLOOR), bent_term);
+            // The GI's raw term has no room for the weight: its estimates count alike.
+            let estimate = select(select(raw.g, max(raw_bent_length, GX_AO_WEIGHT_FLOOR), bent_term), 1.0, gi_term);
             let weight = exp2(distance_squared * spatial) * depth_weight * agreement * estimate;
             let estimate_visibility = raw.r * GX_AO_RAW_SCALE;
             visibility += estimate_visibility * weight;
             visibility_squared += estimate_visibility * estimate_visibility * weight;
             bent += raw_bent / max(raw_bent_length, 1e-6) * weight;
+            light += raw.gba * weight;
+            if gi_term && weight > 0.0 {
+                light_low = min(light_low, raw.gba);
+                light_high = max(light_high, raw.gba);
+            }
             weight_sum += weight;
         }
     }
@@ -257,14 +276,26 @@ fn gx_ao_denoised(texel: vec2<i32>, centre: vec4<f32>) -> GxAoWindow {
     if bent_term && dot(bent, bent) > 1e-8 {
         bent_normal = normalize(bent);
     }
+    if gi_term {
+        bent_normal = light / max(weight_sum, 1e-6);
+    }
     let term = clamp(mean, 0.0, 1.0);
     let spread = sqrt(max(visibility_squared / max(weight_sum, 1e-6) - mean * mean, 0.0));
-    return GxAoWindow(vec4<f32>(bent_normal, term), vec2<f32>(term - spread, term + spread));
+    return GxAoWindow(vec4<f32>(bent_normal, term), vec2<f32>(term - spread, term + spread), min(light_low, light_high), light_high);
 }
 
-// The stored form of `term` (xyz bent normal, w visibility): r visibility, gba the bent normal.
+// The stored form of `term` (xyz bent normal, w visibility): r visibility, gba the bent normal;
+// with GI, gba the light as it is.
 fn gx_ao_encode(term: vec4<f32>) -> vec4<f32> {
+    if gx_ao_gi() {
+        return vec4<f32>(term.w, term.xyz);
+    }
     return vec4<f32>(term.w, term.xyz * 0.5 + vec3<f32>(0.5));
+}
+
+// Whether the term carries screen-space GI in gba (`GX_AO_FLAG_GI`).
+fn gx_ao_gi() -> bool {
+    return (gx_ao.counts.w & GX_AO_FLAG_GI) != 0u;
 }
 
 @fragment
@@ -337,7 +368,7 @@ fn gx_ao_held(texel: vec2<i32>, centre: vec4<f32>) -> GxAoHistory {
     }
     let stored = sum / weight_sum;
     let bent = select(vec3<f32>(0.0), stored.gba * 2.0 - vec3<f32>(1.0), (gx_ao.counts.w & GX_AO_FLAG_BENT) != 0u);
-    return GxAoHistory(vec4<f32>(bent, stored.r), gx_ao.history.x);
+    return GxAoHistory(vec4<f32>(select(bent, stored.gba, gx_ao_gi()), stored.r), gx_ao.history.x);
 }
 
 @fragment
@@ -356,6 +387,14 @@ fn fs_ao_temporal(in: AoOut) -> @location(0) vec4<f32> {
         // its creases darker than its frames average.
         let held = clamp(history.term.w, window.range.x, window.range.y);
         term.w = mix(term.w, held, history.weight);
+        if gx_ao_gi() {
+            // The light blends as it is, held within what the window's own estimates gathered: a
+            // floor whose depth stays when the red box in front of it goes keeps its history
+            // through the depth test, and its red faded only by the weight (two thirds of it three
+            // frames later).
+            let held_light = clamp(history.term.xyz, window.light_low, window.light_high);
+            return gx_ao_encode(vec4<f32>(mix(term.xyz, held_light, history.weight), term.w));
+        }
         if dot(term.xyz, term.xyz) > 0.0 && dot(history.term.xyz, history.term.xyz) > 0.0 {
             let blended = mix(term.xyz, history.term.xyz, history.weight);
             term = vec4<f32>(select(term.xyz, normalize(blended), dot(blended, blended) > 1e-8), term.w);
