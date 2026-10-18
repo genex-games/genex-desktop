@@ -36,6 +36,7 @@ import {
   QualityPreset,
   RenderFeature,
   RenderInput,
+  RenderSettingsRefusal,
   RenderTomlKey,
   ShadowTomlKey,
   Tonemapper,
@@ -93,7 +94,51 @@ const FACADE = JSON.parse(
   terrain: { calls: string[]; refusals: string[] };
   particles: { calls: string[]; refusals: string[] };
   fog: { calls: string[] };
+  probes: { calls: string[] };
+  decals: { calls: string[] };
+  grading: { calls: string[] };
+  lens: { calls: string[] };
+  nightSky: { calls: string[] };
+  subsurface: { calls: string[] };
 };
+
+/** Every call group the fixture pins (a top-level entry with a `calls` list), by its key. */
+function pinnedCallGroups(): Array<[string, string[]]> {
+  return Object.entries(FACADE as Record<string, unknown>).flatMap(([key, entry]) => {
+    const calls = (entry as { calls?: unknown } | null)?.calls;
+    return Array.isArray(calls) ? [[key, calls as string[]] as [string, string[]]] : [];
+  });
+}
+
+/**
+ * The world's look an in-app agent builds from the built-ins, as the template guide points at it:
+ * one entry call of each fixture group the guide must name (a probe and a volume per room, the
+ * decals, the air, the grade, the lens and the night sky).
+ */
+const WORLD_LOOK_ENTRY_CALLS = [
+  "frame.reflection_probe",
+  "frame.irradiance_volume",
+  "frame.decal",
+  "Fog::default",
+  ".with_volumetric",
+  ".grading",
+  ".temperature",
+  ".depth_of_field",
+  ".with_moon",
+  ".with_subsurface",
+] as const;
+
+/** The most words the template guide's `## World look` rules may take: rules, with the reference holding the how. */
+const GUIDE_WORLD_LOOK_WORDS_MAX = 320;
+
+/**
+ * What the seed's Rust recipes must sketch, as calls, so a facet that fails a look check is
+ * handed the built-in that fixes it: rooms lit by their own probe and volume, and the air and grade.
+ */
+const RECIPE_SKETCH_CALLS = [
+  ["frame.reflection_probe", "frame.irradiance_volume"],
+  ["Fog::default", ".with_moon", ".grading", ".exposure_curve"],
+] as const;
 
 /** The seed's recipes, whose `evidence` cites sections of the reference. */
 const RECIPES = path.join(REPO, "src", "harness-seed", "library", "recipes");
@@ -201,6 +246,16 @@ describe("CONTRACT.md names the contract's vocabulary", () => {
     assert.equal(new Set(named).size, named.length, "a refusal is listed twice");
   });
 
+  it("names every code the renderSettings verb answers a refused argument with", () => {
+    const row = section(contract(), "Host verbs")
+      .split("\n")
+      .find((line) => line.startsWith("| `renderSettings` |"));
+    assert.ok(row, "a renderSettings row");
+    const named = new Set(ticked(row));
+    for (const code of [...values(RenderSettingsRefusal), NativeOpError.BadArgument])
+      assert.ok(named.has(code), `the renderSettings row does not name ${code}`);
+  });
+
   it("states the destinations' one GPU floor and its tiers", () => {
     const text = contract();
     for (const tier of values(NativeGpuTier)) assert.ok(text.includes(`\`${tier}\``), `tier ${tier} is not named`);
@@ -280,6 +335,16 @@ describe("GENEX_API.md is the facade's reference", () => {
   it("teaches every fog call, the volumetric opt-out among them", () => {
     const text = api();
     for (const call of FACADE.fog.calls) assert.ok(text.includes(`${call}(`), `GENEX_API.md teaches ${call}(..)`);
+  });
+
+  it("teaches every call of every group the fixture pins, each as a call", () => {
+    const text = api();
+    const groups = pinnedCallGroups();
+    assert.ok(groups.length >= 12, groups.map(([key]) => key).join(", "));
+    const missing = groups.flatMap(([key, calls]) =>
+      calls.filter((call) => !text.includes(`${call}(`)).map((call) => `${key}: ${call}(..)`),
+    );
+    assert.deepEqual(missing, []);
   });
 
   it("teaches every local-light and emission call, and the template points at them", () => {
@@ -363,6 +428,61 @@ describe("the template guide's rendering rules", () => {
     assert.match(rules(), /never[^.\n]*\bultra\b/i, "the rules forbid a fixed ultra");
     assert.match(rules(), /built-in/i, "the rules prefer the built-ins to a custom pass");
     assert.match(rules(), /api = 2/, "the rules write sources at v2");
+  });
+
+  it("give the game's own settings back after testing as a phone, every member with null", () => {
+    const reset = /\{set: \{((?:\w+: null(?:, )?)+)\}\}/.exec(rules())?.[1] ?? "";
+    const given = reset.split(",").map((pair) => pair.split(":")[0]?.trim());
+    assert.deepEqual(new Set(given), new Set(RENDER_SETTINGS_MEMBERS), "the reset names every member");
+  });
+});
+
+describe("the template guide's world-look rules", () => {
+  const rules = () => section(read("CLAUDE.md"), "World look");
+
+  it(`stay rules: at most ${GUIDE_WORLD_LOOK_WORDS_MAX} words, and the reference holds the how`, () => {
+    assert.ok(wordCount(rules()) <= GUIDE_WORLD_LOOK_WORDS_MAX, `${wordCount(rules())} words`);
+    assert.ok(rules().includes("docs/GENEX_API.md"), "the rules point at the reference");
+  });
+
+  it("point at the built-ins a world's look is made of, each a call the fixture pins", () => {
+    const pinned = new Set(pinnedCallGroups().flatMap(([, calls]) => calls));
+    const text = rules();
+    for (const call of WORLD_LOOK_ENTRY_CALLS) {
+      assert.ok(pinned.has(call), `${call} is a pinned facade call`);
+      assert.ok(text.includes(`${call}(`), `the world-look rules do not name ${call}(..)`);
+    }
+  });
+
+  it("tell an agent to light each room with its own probe and volume and to grade last", () => {
+    assert.match(rules(), /each room/i, "a probe and a volume per room");
+    assert.match(rules(), /grade[^.\n]*last|last[^.\n]*grade/i, "the grade comes last");
+  });
+});
+
+describe("the seed's Rust recipes sketch the world's look with pinned calls", () => {
+  const rustRecipes = () =>
+    readdirSync(RECIPES)
+      .filter((name) => name.startsWith("rust.") && name.endsWith(".json"))
+      .map(
+        (name) =>
+          JSON.parse(readFileSync(path.join(RECIPES, name), "utf8")) as { id: string; sketch: string; intent: string },
+      );
+
+  it("has a recipe whose sketch calls each set of built-ins together", () => {
+    const recipes = rustRecipes();
+    for (const calls of RECIPE_SKETCH_CALLS) {
+      const found = recipes.find((recipe) => calls.every((call) => recipe.sketch.includes(`${call}(`)));
+      assert.ok(found, `no Rust recipe sketches ${calls.join(", ")} together`);
+    }
+  });
+
+  it("names in its intent only pinned world-look calls the reference teaches", () => {
+    const pinned = pinnedCallGroups().flatMap(([, calls]) => calls);
+    const text = api();
+    for (const recipe of rustRecipes())
+      for (const call of pinned.filter((name) => recipe.intent.includes(`${name}(`)))
+        assert.ok(text.includes(`${call}(`), `${recipe.id} names ${call}(..), which GENEX_API.md does not teach`);
   });
 });
 

@@ -1,0 +1,58 @@
+{
+  "id": "rust.sky-air-grade",
+  "runtime": "rust-wgpu",
+  "title": "Sky, night, fog and grade in Rust: a setting sun, the moon, the look's fog, the grade last",
+  "tags": [
+    "sky",
+    "night",
+    "moon",
+    "stars",
+    "dusk",
+    "sunset",
+    "golden",
+    "fog",
+    "mist",
+    "haze",
+    "atmosphere",
+    "volumetric",
+    "shafts",
+    "grade",
+    "grading",
+    "colour",
+    "color",
+    "lut",
+    "warm",
+    "exposure",
+    "rust",
+    "wgpu",
+    "genex"
+  ],
+  "checkClass": "stats",
+  "kind": "technique",
+  "pack": "rust",
+  "note": "Under Environment::sky the time of day is the white sun's elevation and night is that sun set with a moon; depth and mist are the look's fog; the grade comes last, in code on top of genex.toml's look via RenderConfig::from_build.",
+  "intent": "Build the outdoor look in order and capture after each step. Sky and sun: frame.environment(Environment::Sky(SkyParams::default()..)) with a white frame.sun whose elevation is the time of day (5 to 12 degrees up is a golden hour); for night keep the sun's intensity and let it go below the horizon, the stars come out (.with_stars) and .with_moon(Some(Moon::new(direction))) put opposite the sun is a full moon that lights the ground. Exposure: exposure = \"auto\" with ev_compensation = 0.5 in [render.look], and .exposure_curve(&[(-8.0, -6.0), (0.0, 0.0)]) so the night stays darker than the day instead of being metered up to grey. Air: depth, haze and mist are the look's fog, Fog::default().with_density(0.02).with_height(0.3, 0.0), never stacked transparent planes; on high and ultra it is a lit volume with sun shafts (.with_volumetric(false) keeps the plain height fog), so check that the near ground keeps its colour. Grade last and only for taste: .grading(Grading::NEUTRAL.with_vibrance(1.1)) or .temperature(0.3, 0.0) for warmth, never to fix light. A config set in code replaces [render], so start it from RenderConfig::from_build() to keep the toml's look and per-class wishes. Check a capture at noon, at dusk and at night, at high and as mobile-mid.",
+  "sketch": "# genex.toml\n[render.look]\ntonemapper = \"agx-punchy\"\nexposure = \"auto\"\nev_compensation = 0.5\n\n// src/main.rs\nuse genex::render::{Fog, Grading, RenderConfig};\ngame.render_settings(\n    RenderConfig::from_build() // keeps genex.toml's [render]\n        .fog(Fog::default().with_density(0.02).with_height(0.3, 0.0))\n        .exposure_curve(&[(-8.0, -6.0), (0.0, 0.0)]) // the night stays darker than the day\n        .grading(Grading::NEUTRAL.with_vibrance(1.1)), // last, for taste\n);\n\n// src/game.rs\nuse genex::render::{Environment, Moon, SkyParams};\n\nfn draw(world: &World, frame: &mut Frame) {\n    let sun = world.sun_direction; // towards the sun; below the horizon at night\n    let moon = Moon::new([-sun.x, -sun.y, -sun.z]); // opposite the sun: a full moon\n    frame.sun(sun, Color::WHITE, 3.0); // white: the sky colours it\n    frame.environment(Environment::Sky(SkyParams::default().with_moon(Some(moon))));\n}\n",
+  "port": "The facet that owns the time of day owns frame.sun, frame.environment and the moon; the facet that owns the options or the game's setup owns the one game.render_settings call.",
+  "evidence": [
+    {
+      "source": "src/game-template-rust/docs/GENEX_API.md (Lighting, materials and environment)",
+      "note": "The sun's elevation under the physical sky, the stars and the moon at night, the fog lit as a volume on high and ultra."
+    },
+    {
+      "source": "src/game-template-rust/docs/GENEX_API.md (Grading and the lens)",
+      "note": "Grade last; RenderConfig::from_build keeps [render]; exposure_curve keeps a dusk dark."
+    },
+    {
+      "source": "src/game-template-rust/CLAUDE.md (World look)",
+      "note": "Sky and sun first, the air is the look's fog, grade last."
+    }
+  ],
+  "stats": {
+    "applied": 0,
+    "wins": 0,
+    "losses": 0
+  },
+  "status": "candidate",
+  "origin": "seed"
+}

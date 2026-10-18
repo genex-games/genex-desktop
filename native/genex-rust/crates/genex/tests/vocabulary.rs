@@ -173,3 +173,71 @@ fn the_terrain_calls_and_refusals_are_the_fixtures() {
     let refusals = TerrainErrorCode::ALL.map(TerrainErrorCode::wire);
     assert_eq!(names(&pinned["terrain"]["refusals"]), refusals);
 }
+
+/// The calls the fixture pins under `key`, checked against the names a chain below calls.
+fn pinned_calls<'a>(pinned: &'a serde_json::Value, key: &str) -> Vec<&'a str> {
+    names(&pinned[key]["calls"])
+}
+
+#[test]
+fn the_probe_and_decal_calls_are_the_fixtures_and_each_is_a_call_of_the_facade() {
+    use genex::render::{Decal, IrradianceVolume, ReflectionProbe};
+    let pinned = fixture();
+    assert_eq!(
+        pinned_calls(&pinned, "probes"),
+        ["frame.reflection_probe", "ReflectionProbe::new", ".with_capture", ".with_blend", "frame.irradiance_volume", "IrradianceVolume::new", ".with_cells"]
+    );
+    assert_eq!(pinned_calls(&pinned, "decals"), ["frame.decal", "Decal::on_wall", "Decal::on_ground", ".with_opacity", ".with_flatten", ".rotated"]);
+    // Every pinned name is a real call, chained as GENEX_API.md teaches it.
+    let (min, max) = (vec3(-4.0, 0.0, -4.0), vec3(4.0, 3.0, 4.0));
+    let mut frame = Frame::new(Color::BLACK);
+    frame
+        .reflection_probe(&ReflectionProbe::new(min, max).with_capture(vec3(0.0, 1.6, 0.0)).with_blend(0.4))
+        .irradiance_volume(&IrradianceVolume::new(min, max).with_cells([8, 3, 8]).with_blend(0.3))
+        .decal(&Decal::on_wall(vec3(0.0, 1.5, -4.0), vec3(0.0, 0.0, 1.0), 1.0, 1.4).with_opacity(0.9))
+        .decal(&Decal::on_ground(vec3(1.0, 0.0, 1.0), 2.0, 1.5).with_flatten(1.0).rotated(0.3));
+    assert_eq!(frame.decals().len(), 2);
+}
+
+#[test]
+fn the_grading_and_lens_calls_are_the_fixtures_and_each_is_a_call_of_the_facade() {
+    use genex::render::{DepthOfField, Grading, GradingLut, GradingSection, MotionBlur, RenderConfig};
+    let pinned = fixture();
+    assert_eq!(
+        pinned_calls(&pinned, "grading"),
+        ["RenderConfig::from_build", ".grading", ".with_contrast", ".with_saturation", ".with_vibrance", ".with_lut", "GradingLut::parse_cube", ".temperature", ".white_balance", ".exposure_curve"]
+    );
+    assert_eq!(pinned_calls(&pinned, "lens"), [".depth_of_field", "DepthOfField::focused", ".motion_blur", "MotionBlur::shutter"]);
+    let cube = GradingLut::identity(2).expect("an identity LUT").to_cube("identity");
+    let lut = GradingLut::parse_cube(&cube).expect("a .cube LUT").intern().expect("an interned LUT");
+    let grading = Grading::NEUTRAL.with_contrast(1.1).with_saturation(0.95).with_vibrance(1.1).with_lut(lut, 0.5);
+    // A section's lift, gamma and gain are fields, as GENEX_API.md (Grading and the lens) sets them.
+    let sections = Grading { shadows: GradingSection { lift: -0.01, ..GradingSection::NEUTRAL }, ..grading };
+    assert!(sections.shadows.lift < 0.0);
+    // A grade added in code keeps the genex.toml look: it starts from the [render] the build compiled in.
+    let _config = RenderConfig::from_build()
+        .grading(grading)
+        .temperature(0.2, 0.0)
+        .white_balance([1.0, 0.95, 0.9])
+        .exposure_curve(&[(-8.0, -6.0), (0.0, 0.0)])
+        .depth_of_field(DepthOfField::focused(3.0, 2.0))
+        .motion_blur(MotionBlur::shutter(0.5));
+}
+
+#[test]
+fn the_night_sky_and_subsurface_calls_are_the_fixtures_and_each_is_a_call_of_the_facade() {
+    use genex::Subsurface;
+    use genex::render::{Environment, Moon, SkyMedium, SkyParams};
+    let pinned = fixture();
+    assert_eq!(
+        pinned_calls(&pinned, "nightSky"),
+        [".with_stars", ".with_moon", "Moon::new", ".with_moonlight", ".with_medium", "SkyMedium::mars", "SkyMedium::earth"]
+    );
+    assert_eq!(pinned_calls(&pinned, "subsurface"), [".with_subsurface", "Subsurface::new", ".with_transmission"]);
+    let sky = SkyParams::default().with_stars(2e-5).with_moon(Some(Moon::new([-0.3, 0.6, 0.7]).with_moonlight(0.004))).with_medium(SkyMedium::mars());
+    let _earth = SkyParams::default().with_medium(SkyMedium::earth());
+    let mut frame = Frame::new(Color::BLACK);
+    frame.environment(Environment::Sky(sky));
+    let leaf = Material::color(Color::rgb(60, 110, 30)).with_subsurface(Subsurface::new([0.2, 0.3, 0.05], 0.15).with_transmission(0.6));
+    assert!(leaf.subsurface().is_some());
+}

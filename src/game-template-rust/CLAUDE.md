@@ -89,8 +89,38 @@ never the quality.
   class only on the game's own measurement (`docs/GENEX_API.md`, Big meshes).
 - **Test as a phone.** Call `renderSettings` with `{set: {deviceClass: "mobile-mid"}}`, then
   `{set: {preset: "low"}}`, look at a capture each time and keep the game readable and playable
-  at both before calling it done. `state().volatile.render.degraded` names, by typed reason, what
-  a device gave up.
+  at both before calling it done. A change holds for the session, so give the game's own back:
+  `{set: {preset: null, deviceClass: null, features: null, renderScaleLock: null, frameBudgetMs: null}}`.
+  `state().volatile.render.degraded` names what a device gave up.
+
+## World look
+
+The renderer lights, fogs and reflects the world itself; build its look from the built-ins in this
+order and look at a capture after each step (`docs/GENEX_API.md`: Lighting, materials and
+environment; Grading and the lens).
+
+- **Sky and sun first.** `frame.environment(Environment::sky())` with a white sun whose elevation
+  is the time of day. For night keep the sun and let it set: the stars come out, and
+  `SkyParams::default().with_moon(Some(Moon::new(direction)))` lights the ground. Clouds are
+  `.with_clouds(Some(Clouds::default().with_coverage(0.5)))`, never sky-dome textures.
+- **Each room gets a probe and a volume.** Over each room, hall or courtyard declare
+  `frame.reflection_probe(&ReflectionProbe::new(min, max).with_capture(eye))` and
+  `frame.irradiance_volume(&IrradianceVolume::new(min, max))` on the same box, every frame, so its
+  floor reflects the room and its walls bounce their colour. Open ground needs neither.
+- **Surfaces.** Posters, puddles and grime are `frame.decal(&Decal::on_wall(..))` or
+  `Decal::on_ground(..)`, never thin boxes; leaves, wax and skin take
+  `.with_subsurface(Subsurface::LEAF)` (or `WAX`, `SKIN`).
+- **Air.** Depth and mist are the look's fog: `fog_*` in `[render.look]`, or
+  `RenderConfig::from_build().fog(Fog::default().with_density(0.02))`; `high` and `ultra` light it as a
+  volume with sun shafts (`.with_volumetric(false)` keeps the plain height fog). The near ground
+  keeps its colour; never stack transparent planes for haze.
+- **Grade last.** Exposure first, then the grade in code on top of `genex.toml`'s look:
+  `game.render_settings(RenderConfig::from_build().grading(Grading::NEUTRAL.with_vibrance(1.1)))`
+  (`RenderConfig::new()` would drop `[render]`), `.temperature(0.3, 0.0)` for warmth, a `.cube`
+  LUT only for a strong look. A grade never fixes light: a dark room needs a light, a probe or a
+  volume.
+- **Lens off in play.** `.depth_of_field(..)` and `.motion_blur(..)` suit cutscenes, photo modes
+  and racers, never where the person steers.
 
 ## Extension ladder
 

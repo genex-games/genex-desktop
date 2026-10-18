@@ -188,7 +188,8 @@ above it the look's bloom haloes it; `.with_emissive_texture(path)` masks it). E
 the picture, not other surfaces: pair a lantern's glowing glass with a `frame.point_light`, a lit
 window with a `frame.spot_light` shining out of it. A surface that lets light through takes
 `.with_subsurface(Subsurface::WAX)` (`use genex::Subsurface;`): `WAX` glows warm past its shadow
-line, `SKIN` scatters red into it, `LEAF` shines when the sun is behind it; tune one with
+line, `SKIN` scatters red into it, `LEAF` shines when the sun is behind it (give it to broad leaves;
+pine needles and other dense thin cards glow too brightly with it, so keep them opaque); tune one with
 `Subsurface::new(color, thickness)` (linear colour 0..1, thickness 0..1, 1 lets nothing through),
 `.with_transmission(share)`, `.with_power(p)` and `.with_depth(metres)` (how far light travels
 inside it: a leaf's millimetres, a candle's centimetre). The sun's light through it is shadowed by
@@ -254,7 +255,7 @@ down (`.with_stars(2e-5)` is their default brightness, 0 for none), and a moon,
 share of the sun's light, `.with_tint(..)`, `.with_earthshine(..)`, `.with_angular_radius_degrees(..)`),
 is lit by that sun with its phase: put it opposite the sun for a full moon. Once the sun has set the
 moon lights the ground and the sky, and reflections see the stars and the moonlit sky. Auto exposure
-with a `compensation_curve` keeps the night darker than the day. The air itself is data:
+with an `.exposure_curve(..)` (Grading and the lens) keeps the night darker than the day. The air itself is data:
 `.with_medium(SkyMedium::mars())` gives a dusty butterscotch sky, and `SkyMedium::earth()
 .with_rayleigh(..).with_mie(..).with_absorption(..).with_planet(..)` any other.
 `Environment::hdri("env/sky.hdr")` lights the scene with an equirectangular
@@ -277,7 +278,12 @@ The air between is the look's fog, off by default: `[render.look]`'s `fog_*` key
 .with_color([1.0, 1.0, 1.0]))` (`use genex::render::Fog;`). Its in-scatter is the environment's
 horizon light tinted by the colour; under the sky `.with_aerial_perspective(false)` drops the air's
 own scattering. On desktop and web `high` and `ultra` the fog is a lit volume with sun shafts;
-`.with_volumetric(false)` keeps the plain height fog there too.
+`.with_volumetric(false)` keeps the plain height fog there too. In the volume the sun's shadows
+carve shafts (through a canopy, between buildings, in at a window) and point and spot lights glow
+in it, so a street lamp in a misty night needs no glow sprite; elsewhere the same fog is drawn
+without them. Fog gives depth: keep it thin outdoors, shape a valley's mist with the height
+falloff rather than more density, and check in a capture that the near ground keeps its colour.
+Never fake haze with stacked transparent planes.
 
 Sun shadows are a row of the preset table, per device class, drawn as listed (the switch is `shadows`; `genex.toml`'s `[render.shadows]` sets `distance` and `blend_band` on every preset):
 
@@ -364,12 +370,9 @@ for a sunlit scene; keep `manual` for flat, stylized colour. Keep dusk dark with
 `[render.look]` is equal on every preset: `bloom_intensity` (default 0.04, threshold-free),
 `bloom_threshold`, `bloom_radius` (the glow's spread); fog lit by the sky, off at `fog_density` 0, shaped by
 `fog_height_falloff`, `fog_base_height`, `fog_start`, `fog_max_opacity`, `fog_color` and
-`fog_aerial_perspective`; `ao_intensity`, `ao_radius`; `contact_shadow_length`. Warm the
-frame in code with `.temperature(0.3, 0.0)` or `.white_balance([1.0, 0.85, 0.65])`, not `fog_color`. In code:
-`RenderConfig::new().tonemap(Tonemap::KhronosNeutral).exposure(Exposure::auto().compensation(0.5)).grading(Grading::NEUTRAL.with_contrast(1.15))`
-(`genex::render`; contrast turns about middle grey; `.with_lut(GradingLut::parse_cube(text)?.intern()?, 0.8)` adds a `.cube` LUT).
-Depth of field and motion blur are off by default: `.depth_of_field(DepthOfField::focused(3.0, 2.0))`,
-`.motion_blur(MotionBlur::shutter(0.5))`; a capture draws them when its `lens` asks.
+`fog_aerial_perspective`; `ao_intensity`, `ao_radius`; `contact_shadow_length`. In code:
+`RenderConfig::new().tonemap(Tonemap::KhronosNeutral).exposure(Exposure::auto().compensation(0.5))`
+(`genex::render`). The grade, white balance and lens are code only: see Grading and the lens.
 
 Each feature has a switch; off is its cheaper variant, never a refusal:
 
@@ -416,8 +419,8 @@ bloom = false               # any switch above
 ```
 
 The build lane compiles `[render]` into every destination. In code,
-`game.render_settings(RenderConfig::new().preset(QualityPreset::Medium))` (then `[render]` is not
-read). Give the person the last word: call
+`game.render_settings(RenderConfig::new().preset(QualityPreset::Medium))` replaces `[render]`;
+`RenderConfig::from_build()` starts from it instead. Give the person the last word: call
 `genex::render::settings_panel(ui)` from `on_ui` (an options menu); it shows the detected class, a
 row of presets (none drawing less than the one below), the render scale and a
 switch per feature (Tab, Space). A preset change rebuilds the renderer for its anti-aliasing (a short
@@ -464,6 +467,42 @@ Rules for agents:
   must read as the same game; `{set: {features: {hdr: false}}}` compares the look against the
   old LDR scene. `{set: {preset: null, features: null, deviceClass: null,
   renderScaleLock: null, frameBudgetMs: null}}` gives the game's own settings back.
+
+## Grading and the lens
+
+Grade last. Build a scene's look in this order and check a capture after each step: the
+environment and the sun's elevation, the local lights, a reflection probe and an irradiance volume
+for each room or courtyard, the fog, the exposure (auto, with its curve), and only then the grade.
+A grade never fixes light: a dark room wants a light, a probe or a volume, not lift; a grey
+meadow wants less fog, not saturation.
+
+The grade is code only (`use genex::render::{Grading, GradingLut, RenderConfig};`). A config
+set in code replaces `genex.toml`'s `[render]`, so start from the one the build compiled in and
+the toml's look, fog and per-class wishes stay: `game.render_settings(RenderConfig::from_build()
+.grading(Grading::NEUTRAL.with_contrast(1.1).with_saturation(0.95).with_vibrance(1.1)))`.
+Each knob is held to `0..=2` and 1 changes nothing. The knobs grade the HDR scene before the
+tonemapper: contrast turns about middle grey, so it never moves the exposure;
+`.with_vibrance(..)` saturates most the colours whose red does not already lead (skin and warm
+light keep their tone), the gentler first reach for a dull scene; `.with_saturation(..)` turns
+every colour alike. Per section (`shadows`, `midtones`, `highlights`, Blender's cut-offs), lift, gamma and gain are fields:
+`Grading { shadows: GradingSection { lift: -0.01, ..GradingSection::NEUTRAL }, ..Grading::NEUTRAL }`.
+A display LUT grades after the tonemapper: `.with_lut(GradingLut::parse_cube(include_str!(
+"../assets/looks/warm.cube"))?.intern()?, 0.8)` (a `.cube` file, its intensity `0..=1`). Warm or
+cool the frame with `.temperature(0.3, 0.0)` (temperature and tint, each `-1..=1`;
+neutrals warm while a blue sky stays blue) or `.white_balance([1.0, 0.85, 0.65])` (linear gains
+that keep the brightness), never with `fog_color`. Keep a dusk dark under auto exposure with
+`.exposure_curve(&[(-8.0, -6.0), (0.0, 0.0)])` (metered EV, EV added; at most 8 points). The grade,
+white balance and curve are the look: the same on every preset and device.
+
+The lens is off by default and is the look's too:
+`.depth_of_field(DepthOfField::focused(3.0, 2.0))` keeps three metres sharp at f/2 (a cutscene, a
+photo mode, an inspected object), and `.motion_blur(MotionBlur::shutter(0.5))` blurs what moved by
+half its motion each frame (a 180-degree shutter; a racer or a fast camera). Depth of field draws
+on frames with the depth prepass, `medium` and up (a ring gather on desktop and web `high` and
+`ultra`, a cheaper circular one elsewhere and on phones); motion blur draws on frames under TAA
+(a reconstruction on `high` and `ultra`, one pass on phones, none on the low phones). Leave both
+off for play the person steers: they hide detail and some people find them uncomfortable. A
+capture leaves them out unless its `lens` asks.
 
 ## Loading screen
 
