@@ -150,9 +150,18 @@ ndk-context = "0.1.1"
 jni = "0.21.1"
 android_logger = "0.15.1"
 
-# The initial game allowlist (plan "Agent policy"): `fastrand` seeded from ctx.rng only.
+# Game systems: the mesh arena's allocator (renderer), the runtime MikkTSpace tangent fallback and
+# genex-anim's Delaunay triangulation. Unused until the work packages that adopt them, so the lock
+# does not name them yet.
+offset-allocator = "=0.2.0"
+bevy_mikktspace = "=1.0.0"
+spade = "2.15.1"
+
+# The initial game allowlist (plan "Agent policy"): `fastrand` seeded from ctx.rng only, and
+# `pathfinding` (generic graph search over a game's own graphs).
 noise = "0.9.0"
 fastrand = "2.5.0"
+pathfinding = "4.16.0"
 
 # Tests.
 trybuild = "1.0.121"

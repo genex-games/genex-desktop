@@ -79,9 +79,18 @@ ndk-context = "0.1"
 jni = "0.21"
 android_logger = "0.15"
 
-# The initial game allowlist (plan: facade re-exports plus a short reviewed list).
+# Game systems (animation, streaming, navigation, LOD): the renderer's mesh arena allocator
+# (`offset-allocator`, which brings `nonmax`), the runtime MikkTSpace tangent fallback and
+# genex-anim's Delaunay triangulation (`spade`, already in the lock through parry).
+offset-allocator = "=0.2.0"
+bevy_mikktspace = "=1.0.0"
+spade = "2.15"
+
+# The initial game allowlist (plan: facade re-exports plus a short reviewed list), with
+# `pathfinding` (generic graph search) added for the game systems.
 noise = "0.9"
 fastrand = "2"
+pathfinding = "4.16"
 
 # Test-only crates the workspace's dev-dependencies use.
 trybuild = "1"

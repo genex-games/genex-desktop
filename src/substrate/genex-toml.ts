@@ -211,7 +211,7 @@ export type WgslKind = (typeof WgslKind)[keyof typeof WgslKind];
 export const RUST_ENGINE_FOLDER = "engine";
 
 /** Extra crates a game may name without a person's approval: genex's `GAME_CRATE_ALLOWLIST`. */
-export const GAME_CRATE_ALLOWLIST: readonly string[] = Object.freeze(["fastrand", "noise"]);
+export const GAME_CRATE_ALLOWLIST: readonly string[] = Object.freeze(["fastrand", "noise", "pathfinding"]);
 
 /** The world target when `world_size` is absent. */
 const DEFAULT_WORLD_SIZE = [960, 540] as const;

@@ -251,7 +251,12 @@ describe("genex.toml: the schema", () => {
 
   it("decodes string escapes and keeps the allowlist the runtime keeps", () => {
     assert.equal(accepted('[game]\ntitle = "Pond \\u00e9 \\"deep\\""\n').title, 'Pond é "deep"');
-    assert.deepEqual([...GAME_CRATE_ALLOWLIST].sort(), ["fastrand", "noise"]);
+    assert.deepEqual([...GAME_CRATE_ALLOWLIST].sort(), ["fastrand", "noise", "pathfinding"]);
+  });
+
+  it("admits pathfinding at a version requirement without a person's approval, like noise", () => {
+    const manifest = accepted(`${GAME}[crates]\npathfinding = "4.16"\n`);
+    assert.deepEqual(manifest.crates, [{ name: "pathfinding", version: "4.16" }]);
   });
 
   for (const [name, text, code] of hostile) {

@@ -1,5 +1,5 @@
 {
-  "about": "Every build script, proc macro and non-source file (binary or executable) in the vendored crate set, by vendored folder, and the reviewed genex release (`release`: the genex version and the release tree's digest). Reviewed by a person; written by `node scripts/toolchains/rust-release.ts inventory` (`rust-vendor.ts check` holds the installed tree to `crates`; `rust-release.ts cut` holds the release tree to all of it).",
+  "about": "Every build script, proc macro and non-source file (binary or executable) in the vendored crate set, by vendored folder. Reviewed by a person; written by `node scripts/toolchains/rust-vendor.ts inventory`; `check` fails on any entry missing here (plan: vendored-set policy).",
   "crates": {
     "ahash-0.8.12": {
       "buildScript": "build.rs"
@@ -68,6 +68,9 @@
     },
     "crunchy-0.2.4": {
       "buildScript": "build.rs"
+    },
+    "deprecate-until-1.0.0": {
+      "procMacro": true
     },
     "document-features-0.2.12": {
       "procMacro": true
@@ -245,6 +248,9 @@
     },
     "pastey-0.2.3": {
       "procMacro": true
+    },
+    "pathfinding-4.16.0": {
+      "nonSource": ["tests/check-msrv-consistency.sh"]
     },
     "pin-project-internal-1.1.13": {
       "procMacro": true
@@ -656,14 +662,6 @@
     },
     "zmij-1.0.23": {
       "buildScript": "build.rs"
-    }
-  },
-  "release": {
-    "genex": "0.1.0",
-    "tree": {
-      "sha256": "4f650094d3346cc1042756adedeb8ab6f83c7d0df73c4a93a88b5ea6fe930a07",
-      "files": 24733,
-      "bytes": 677040354
     }
   }
 }
