@@ -109,17 +109,22 @@ export { RUST_ENGINE_FOLDER };
 /**
  * The genex crates an eject copies into `engine/` and the manifest points at the fork, in the
  * order they are patched. Each is safe Rust with no build script, so the fork builds under the
- * lane's unchanged policy (`-F unsafe_code`, no build scripts) with the trust flag off.
+ * lane's unchanged policy (`-F unsafe_code`, no build scripts) with the trust flag off. The
+ * animation, navigation and streaming crates are the facade's own dependencies, so they fork with
+ * it; a release that does not carry one yet is skipped like any absent crate.
  */
 export const RUST_ENGINE_CRATES: readonly string[] = Object.freeze([
   "genex",
+  "genex-anim",
   "genex-assets",
   "genex-audio",
   "genex-core",
   "genex-hud",
+  "genex-nav",
   "genex-platform-desktop",
   "genex-platform-web",
   "genex-render",
+  "genex-stream",
 ]);
 
 /**

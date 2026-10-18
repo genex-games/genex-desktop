@@ -75,6 +75,9 @@ const ENGINE_CRATES = [
   "genex-gpu-memory",
   "genex-assets",
   "genex-audio",
+  "genex-anim",
+  "genex-nav",
+  "genex-stream",
   "genex",
 ] as const;
 

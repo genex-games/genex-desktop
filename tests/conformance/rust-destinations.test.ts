@@ -38,8 +38,13 @@ const ENGINE = [
   "genex-gpu-memory",
   "genex-assets",
   "genex-audio",
+  "genex-anim",
+  "genex-nav",
+  "genex-stream",
   "genex",
 ];
+/** The game-systems crates (EP-0b): every destination compiles them, since the facade re-exports them. */
+const GAME_SYSTEMS_CRATES = ["genex-anim", "genex-nav", "genex-stream"];
 
 const EXPECTED_ROWS: Record<string, string[]> = {
   [DestinationTriple.MacArm]: [...ENGINE, "genex-platform-desktop", "genex-studio"],
@@ -100,6 +105,14 @@ describe("rust-destinations plan", () => {
       DestinationTriple.Windows,
       DestinationTriple.Linux,
     ]);
+  });
+
+  it("compiles the game-systems crates on every destination, and --crates names each", () => {
+    for (const row of planRows())
+      for (const name of GAME_SYSTEMS_CRATES) assert.ok(row.crates.includes(name), `${row.triple} lacks ${name}`);
+    const rows = planRows(GAME_SYSTEMS_CRATES);
+    assert.equal(rows.length, 7);
+    for (const row of rows) assert.deepEqual(row.crates, GAME_SYSTEMS_CRATES, row.triple);
   });
 
   it("narrows every row to --crates and drops rows left empty", () => {

@@ -297,8 +297,58 @@ export const NativeOp = {
   Release: "release",
   /** Read or change the renderer's quality (preset, emulated device class, feature switches, scale lock). */
   RenderSettings: "renderSettings",
+  /** Run one registered bake (`{kind, name}`) into `state/bakes/<kind>/<name>`: a build step's, never an agent's. */
+  BakeAssets: "bakeAssets",
+  /** Swap named asset files in a running dev game (`{files: [{path, digest}]}`) without a rebuild. */
+  ReloadAssets: "reloadAssets",
 } as const;
 export type NativeOp = (typeof NativeOp)[keyof typeof NativeOp];
+
+/** What a `bakeAssets` bakes. Wire values: never rename one. */
+export const BakeKind = { Nav: "nav", Impostor: "impostor" } as const;
+export type BakeKind = (typeof BakeKind)[keyof typeof BakeKind];
+
+/** The most bytes one bake's output may hold. */
+export const NATIVE_BAKE_MAX_BYTES = 256 * 1024 * 1024;
+/** The most files one `reloadAssets` names. */
+export const NATIVE_RELOAD_FILES_MAX = 256;
+
+/** A bake's name is one path segment: lowercase letters, digits, `-` and `_`, at most 64, never a dot. */
+const BAKE_NAME = /^[a-z0-9][a-z0-9_-]{0,63}$/;
+
+/** Whether `value` is a bake name (a file in `state/bakes/<kind>/` that can never climb out). */
+export function isBakeName(value: unknown): value is string {
+  return typeof value === "string" && BAKE_NAME.test(value);
+}
+
+/** Why `reloadAssets` refused one file. Wire values: never rename one. */
+export const ReloadRefusal = {
+  UnsafePath: "unsafe-path",
+  DigestMismatch: "digest-mismatch",
+  Missing: "missing",
+} as const;
+export type ReloadRefusal = (typeof ReloadRefusal)[keyof typeof ReloadRefusal];
+
+/** One file a `reloadAssets` names, with the FNV-1a 64 digest of its new bytes. */
+export interface NativeReloadFile {
+  path: string;
+  digest: string;
+}
+
+/** What `reloadAssets` answers. */
+export interface NativeReloadAnswer {
+  reloaded: string[];
+  refused: Array<{ path: string; code: ReloadRefusal }>;
+  pending: number;
+}
+
+/** What `bakeAssets` answers: the bake it ran, and the size and digest of the file it wrote. */
+export interface NativeBakeReply {
+  kind: BakeKind;
+  name: string;
+  bytes: number;
+  digest: string;
+}
 
 /** The events a native game sends on its own. Wire values. */
 export const NativeEvent = {
@@ -739,6 +789,8 @@ export interface NativeOpArgs {
   [NativeOp.Surface]: { w: number; h: number; dpr: number; slots: number; generation: number };
   [NativeOp.Release]: { slot: number; generation: number };
   [NativeOp.RenderSettings]: { set?: RenderSettingsChange };
+  [NativeOp.BakeAssets]: { kind: BakeKind; name: string };
+  [NativeOp.ReloadAssets]: { files: NativeReloadFile[] };
 }
 
 /** Per-op results, as the host checks every reply against them. Fields beyond these are ignored. */
@@ -764,6 +816,8 @@ export interface NativeOpResults {
   [NativeOp.Surface]: { generation: number; width: number; height: number; slots: number };
   [NativeOp.Release]: Record<string, never>;
   [NativeOp.RenderSettings]: RenderSettingsAnswer;
+  [NativeOp.BakeAssets]: NativeBakeReply;
+  [NativeOp.ReloadAssets]: NativeReloadAnswer;
 }
 
 /** Names a list answer may carry, and how long each may be. */
@@ -827,6 +881,25 @@ const isCaptureProvenance = (value: unknown): boolean =>
   typeof value.historyReset === "boolean" &&
   isOneOf(CaptureExposure, value.exposure);
 
+const isReloadRefused = (value: unknown): boolean =>
+  isRecord(value) && isText(value.path) && isOneOf(ReloadRefusal, value.code);
+const isBakeReply = (value: unknown): boolean =>
+  isRecord(value) &&
+  isOneOf(BakeKind, value.kind) &&
+  isBakeName(value.name) &&
+  isCount(value.bytes) &&
+  value.bytes <= NATIVE_BAKE_MAX_BYTES &&
+  typeof value.digest === "string" &&
+  DIGEST.test(value.digest);
+const isReloadAnswer = (value: unknown): boolean =>
+  isRecord(value) &&
+  isNames(value.reloaded) &&
+  value.reloaded.length <= NATIVE_RELOAD_FILES_MAX &&
+  Array.isArray(value.refused) &&
+  value.refused.length <= NATIVE_RELOAD_FILES_MAX &&
+  value.refused.every(isReloadRefused) &&
+  isCount(value.pending);
+
 /** One validator per op. */
 const RESULT_CHECKS: { readonly [K in keyof NativeOpResults]: (value: unknown) => boolean } = {
   [NativeOp.Seed]: (value) => isRecord(value) && isFiniteNumber(value.seed) && value.paused === true,
@@ -877,6 +950,8 @@ const RESULT_CHECKS: { readonly [K in keyof NativeOpResults]: (value: unknown) =
     Number(value.slots) <= NATIVE_FRAME_SLOTS,
   [NativeOp.Release]: isRecord,
   [NativeOp.RenderSettings]: isRenderSettingsAnswer,
+  [NativeOp.BakeAssets]: isBakeReply,
+  [NativeOp.ReloadAssets]: isReloadAnswer,
 };
 
 const LIFECYCLES: ReadonlySet<string> = new Set<NativeLifecycle>(Object.values(NativeLifecycle));

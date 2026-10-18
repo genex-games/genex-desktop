@@ -55,6 +55,7 @@ export type ConvertResult =
 
 const MESSAGE = {
   NoAudioEncoder: "no Ogg encoder in the toolchain store yet",
+  StepNotServed: "this import step is declared but not served yet",
   NotKtx2: "not a KTX2 file",
 } as const;
 
@@ -117,6 +118,9 @@ async function run(input: ConvertInput): Promise<ConvertResult> {
     case ImportConverter.AudioToOgg:
       // TODO(M2.3): an Ogg encoder as a pinned store tool; until then Opus and AAC are refused, typed.
       return refused(AssetImportRefusal.ConverterMissing, MESSAGE.NoAudioEncoder);
+    case ImportConverter.TextureEncode:
+    case ImportConverter.GlbTextures:
+      return refused(AssetImportRefusal.ConverterMissing, MESSAGE.StepNotServed);
   }
 }
 

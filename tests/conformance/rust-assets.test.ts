@@ -21,6 +21,7 @@ import {
   AssetImportRefusal,
   ImportAction,
   ImportConverter,
+  isAssetImportRefusal,
   planImport,
 } from "../../src/substrate/asset-import/import-plan.ts";
 import { Ktx2FamilySkip, transcodeKtx2 } from "../../src/substrate/asset-import/ktx2.ts";
@@ -365,6 +366,24 @@ describe("converters", () => {
       targets: [BuildTarget.Mac],
     });
     assert.equal(!result.ok && result.refusal, AssetImportRefusal.ConverterMissing);
+  });
+
+  it("texture encoding and GLB image sidecars are declared but not served yet: refused converter-missing, and no plan picks them", async () => {
+    for (const converter of [ImportConverter.TextureEncode, ImportConverter.GlbTextures]) {
+      const result = await convertAsset({
+        converter,
+        ext: "png",
+        name: "bark",
+        bytes: new Uint8Array([0x89, 0x50, 0x4e, 0x47]),
+        targets: [BuildTarget.Mac],
+      });
+      assert.equal(!result.ok && result.refusal, AssetImportRefusal.ConverterMissing, converter);
+    }
+    for (const file of ["assets/bark.png", "assets/bark.jpg", "assets/ship.glb"])
+      for (const converter of [ImportConverter.TextureEncode, ImportConverter.GlbTextures])
+        assert.notEqual(planImport(GameStack.RustWgpu, file).converter, converter, file);
+    assert.equal(AssetImportRefusal.ValidationFailed, "validation-failed");
+    assert.equal(isAssetImportRefusal(AssetImportRefusal.ValidationFailed), true);
   });
 });
 

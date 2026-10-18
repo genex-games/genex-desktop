@@ -47,6 +47,17 @@ export const ImportConverter = {
   Ktx2Check: "ktx2-check",
   /** A Radiance `.hdr` environment map, its header and size checked against the renderer's caps and kept as it is. */
   HdrCheck: "hdr-check",
+  /**
+   * A PNG or JPEG texture whose usage resolved (colour, data or normal), encoded to KTX2 per family
+   * beside it. Declared ahead of the step: no plan picks it yet, and a job naming it is refused
+   * `converter-missing`.
+   */
+  TextureEncode: "texture-encode",
+  /**
+   * A GLB's embedded images written out as per-family KTX2 sidecars named in its
+   * `asset.extras.genex_textures`. Declared ahead of the step, like `texture-encode`.
+   */
+  GlbTextures: "glb-textures",
 } as const;
 export type ImportConverter = (typeof ImportConverter)[keyof typeof ImportConverter];
 
@@ -77,6 +88,8 @@ export const AssetImportRefusal = {
   ConverterMissing: "converter-missing",
   /** The importer failed, timed out, or answered something the host does not accept. */
   ImporterFailed: "importer-failed",
+  /** The glTF validator found an error in the file: the first codes it named are in the detail. */
+  ValidationFailed: "validation-failed",
 } as const;
 export type AssetImportRefusal = (typeof AssetImportRefusal)[keyof typeof AssetImportRefusal];
 

@@ -68,6 +68,11 @@ import {
   receiptExtensionApis,
   receiptServesRenderSettings,
   ringSizeFor,
+  BakeKind,
+  isBakeName,
+  NATIVE_BAKE_MAX_BYTES,
+  NATIVE_RELOAD_FILES_MAX,
+  ReloadRefusal,
 } from "../../src/shared/native-contract.ts";
 import { parseRenderSettingsAnswer } from "../../src/shared/render-quality.ts";
 import { ReadyPhase, ReadyVia, TouchPhase } from "../../src/shared/preview-contract.ts";
@@ -222,6 +227,34 @@ const RESULTS: { [K in keyof NativeOpResults]: { good: unknown[]; bad: unknown[]
       },
     ],
   },
+  [NativeOp.BakeAssets]: {
+    good: [
+      { kind: BakeKind.Nav, name: "market", bytes: 4096, digest: "0123456789abcdef" },
+      { kind: BakeKind.Impostor, name: "oak_2", bytes: 0, digest: "fedcba9876543210" },
+    ],
+    bad: [
+      { kind: "terrain", name: "market", bytes: 4096, digest: "0123456789abcdef" },
+      { kind: BakeKind.Nav, name: "../market", bytes: 4096, digest: "0123456789abcdef" },
+      { kind: BakeKind.Nav, name: "market", bytes: -1, digest: "0123456789abcdef" },
+      { kind: BakeKind.Nav, name: "market", bytes: NATIVE_BAKE_MAX_BYTES + 1, digest: "0123456789abcdef" },
+      { kind: BakeKind.Nav, name: "market", bytes: 1.5, digest: "0123456789abcdef" },
+      { kind: BakeKind.Nav, name: "market", bytes: 4096, digest: "XYZ" },
+      { kind: BakeKind.Nav, name: "market", bytes: 4096 },
+    ],
+  },
+  [NativeOp.ReloadAssets]: {
+    good: [
+      { reloaded: ["textures/bark.png"], refused: [], pending: 0 },
+      { reloaded: [], refused: [{ path: "../x.png", code: ReloadRefusal.UnsafePath }], pending: 2 },
+    ],
+    bad: [
+      { reloaded: [], refused: [{ path: "x.png", code: "gone" }], pending: 0 },
+      { reloaded: [1], refused: [], pending: 0 },
+      { reloaded: [], refused: [], pending: -1 },
+      { reloaded: [], refused: [] },
+      { reloaded: Array(NATIVE_RELOAD_FILES_MAX + 1).fill("a.png"), refused: [], pending: 0 },
+    ],
+  },
 };
 
 describe("every op's reply is checked against its own shape", () => {
@@ -238,6 +271,40 @@ describe("every op's reply is checked against its own shape", () => {
     assert.equal(isNativeResult("eval" as keyof NativeOpResults, {}), false);
     for (const op of Object.values(NativeOp)) assert.equal(isNativeOp(op), true, op);
     for (const op of ["eval", "", 1, null, "__proto__"]) assert.equal(isNativeOp(op), false, String(op));
+  });
+});
+
+describe("a bake's name is one plain path segment (bakeAssets)", () => {
+  it("takes lowercase letters, digits, - and _ up to 64 characters, starting with a letter or digit", () => {
+    for (const name of ["market", "level-1_a", "0", "x".repeat(64)]) assert.equal(isBakeName(name), true, name);
+  });
+
+  it("refuses every hostile shape a path parameter meets", () => {
+    const hostile: unknown[] = [
+      "",
+      ".",
+      "..",
+      "../x",
+      "a/../../x",
+      "/etc/hosts",
+      "a/b",
+      "a\\b",
+      "C:x",
+      "a\0b",
+      ".hidden",
+      "-lead",
+      "_lead",
+      "Nav",
+      "café",
+      "x".repeat(65),
+      " market",
+      "market\n",
+      1,
+      null,
+      undefined,
+      ["market"],
+    ];
+    for (const name of hostile) assert.equal(isBakeName(name), false, JSON.stringify(name));
   });
 });
 

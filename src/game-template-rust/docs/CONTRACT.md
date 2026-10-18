@@ -58,6 +58,8 @@ one and cannot add one. A verb the game does not know answers `unknown-op`.
 | `surface` | Embedded runs: create the shared-image ring Live draws from. |
 | `release` | Embedded runs: give a finished frame slot back to the game. |
 | `renderSettings` | Read the renderer's quality, or change it with `{set: {preset, deviceClass, features, renderScaleLock, frameBudgetMs}}`: a preset, an emulated device class (to see the game "as a phone"), feature switches, a render-scale lock and the frame time dynamic resolution holds (1-100 ms), for this session only. A game advertises it in its `ready` receipt (`renderSettingsApi`); until then it answers `unavailable`. An unknown preset, class or feature answers `unknown-preset`, `unknown-device-class` or `unknown-render-feature`; a scale lock outside 0.5 to 1 answers `invalid-render-scale` and a budget outside its range `invalid-frame-budget`; a member of the wrong type answers `bad-argument`. A change holds for the rest of the session: `{set: {preset: null, deviceClass: null, features: null, renderScaleLock: null, frameBudgetMs: null}}` gives the game's own settings back. |
+| `bakeAssets` | Run one bake the game registered, `{kind, name}` with kind `nav` or `impostor` and a name of lowercase letters, digits, `-` and `_` (at most 64), into the run's `state/bakes/<kind>/<name>`, and answer the bake with its `bytes` and `digest`. The studio's build sends it to a headless run after a dev build; a game never calls it and an agent cannot send it. The output goes to the build's stage and the studio's cache, never into the game folder. A build that serves no bakes yet answers `unavailable`, and an export answers `unknown-op`. |
+| `reloadAssets` | Swap asset files in a running dev game without a rebuild: `{files: [{path, digest}]}`, at most 256, each re-read on the next frame. Answers the `reloaded` paths, the `refused` ones with a code (`unsafe-path`, `digest-mismatch`, `missing`) and how many reloads are still `pending`; a settled capture waits for 0. A game still applying an earlier reload answers `busy`, a build that does not serve it yet `unavailable`, and an export `unknown-op`. |
 
 What the renderer runs with is in `state().volatile.render` (device class, preset, scale, feature
 switches, `degraded` reasons, GPU and CPU milliseconds): outside the checksum and never compared.
@@ -130,4 +132,5 @@ data, never prose to match: read the code, then read the run's `problem`.
 | `unresponsive` | The game stopped answering verbs. A verb asked while the game starts waits for its `ready`. |
 | `memory-cap` | The game passed its memory cap. |
 | `unknown-op` | The game has no such verb. |
-| `unavailable` | The game knows the verb but this build cannot serve it yet (`renderSettings` before the renderer's settings). |
+| `unavailable` | The game knows the verb but this build cannot serve it yet (`renderSettings` before the renderer's settings, `bakeAssets` and `reloadAssets` before their runtime lands). |
+| `busy` | The game is still applying an earlier `reloadAssets`: the studio asks again once it settles. |
