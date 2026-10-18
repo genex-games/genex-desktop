@@ -903,6 +903,14 @@ impl Frame {
         self.push(Shape::Line { from, to, color })
     }
 
+    /// Draw `nav` as `debug` asks (polygons, links, agents' paths) as line segments.
+    pub fn nav_debug(&mut self, nav: &crate::nav::Nav, debug: crate::nav::NavDebug) -> &mut Self {
+        for [from, to] in genex_nav::debug::segments(nav, debug) {
+            self.line(from, to, Color::GREEN);
+        }
+        self
+    }
+
     /// Draw `mesh` (a [`Model`], [`CustomMesh::Cube`] or [`CustomMesh::Sphere`]) under
     /// `transform` with a custom material (`gfx.material`), tinted `tint`: one logical draw.
     pub fn custom(&mut self, mesh: impl Into<CustomMesh>, transform: Transform, material: &CustomMaterial, tint: Color) -> &mut Self {

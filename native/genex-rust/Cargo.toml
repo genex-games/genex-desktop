@@ -23,6 +23,10 @@ members = [
   "crates/genex-gpu-memory",
   "crates/genex-assets",
   "crates/genex-audio",
+  # Game systems (EP-0a1): animation, navigation and world streaming, below the facade.
+  "crates/genex-anim",
+  "crates/genex-nav",
+  "crates/genex-stream",
   "crates/genex-platform-desktop",
   "crates/genex-platform-web",
   "crates/genex-platform-ios",
@@ -64,6 +68,10 @@ genex-frames = { path = "crates/genex-frames", version = "0.1.0" }
 genex-gpu-memory = { path = "crates/genex-gpu-memory", version = "0.1.0" }
 genex-assets = { path = "crates/genex-assets", version = "0.1.0" }
 genex-audio = { path = "crates/genex-audio", version = "0.1.0" }
+# Each without Rapier: the facade's `physics` feature turns theirs on.
+genex-anim = { path = "crates/genex-anim", version = "0.1.0" }
+genex-nav = { path = "crates/genex-nav", version = "0.1.0" }
+genex-stream = { path = "crates/genex-stream", version = "0.1.0" }
 genex-platform-desktop = { path = "crates/genex-platform-desktop", version = "0.1.0" }
 # Without its default `physics` too: the phone shells reach the facade through it and must not turn
 # Rapier on for a game that turned it off (a web game's manifest names the crate itself).

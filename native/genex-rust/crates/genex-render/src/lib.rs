@@ -193,6 +193,28 @@ pub mod shadow_cache;
 /// Clustered decals (renderer pass 2 A.10): projected boxes binned with the lights.
 pub mod decals;
 
+// --- Game systems (EP-0a1 registers every game-systems module, so lanes only fill bodies) ---
+/// The mesh arena: sub-allocated mesh buffers with incremental uploads.
+pub mod mesh_arena;
+/// The job pool: priority, cancel and a per-frame finish budget.
+pub mod jobs;
+/// The soft upload queue held to a per-frame byte budget.
+pub mod upload_queue;
+/// Per-instance LOD rows: band, fade and far-field thinning.
+pub mod lod_rows;
+/// Octahedral impostors: mapping, atlas, bake and draw.
+pub mod impostor;
+/// Texture mip streaming.
+pub mod texture_stream;
+/// Vertex-shader skinning for far characters.
+pub mod skin_vertex;
+/// Skinned levels of detail.
+pub mod skinned_lod;
+/// The vertex-animation-texture crowd path (optional).
+pub mod vat;
+/// Runtime LOD generation for meshes without imported levels.
+pub mod mesh_lod_runtime;
+
 pub use caps::{BUFFER_MAX_BYTES, CAPTURE_MAX_BYTES, TEXTURE_MAX_BYTES, UPLOAD_MAX_BYTES_PER_FRAME, WGSL_MAX_BYTES};
 pub use error::{ExtensionFault, RenderCode, RenderError, UnsupportedReason};
 pub use abi::{CUSTOM_PASS_API_VERSION, CUSTOM_PASS_APIS, EXTENSION_API_VERSION, EXTENSION_APIS};

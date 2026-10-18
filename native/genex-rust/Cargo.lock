@@ -1005,11 +1005,14 @@ name = "genex"
 version = "0.1.0"
 dependencies = [
  "egui",
+ "genex-anim",
  "genex-core",
  "genex-frames",
  "genex-hud",
+ "genex-nav",
  "genex-platform-desktop",
  "genex-render",
+ "genex-stream",
  "genex-studio",
  "glam 0.33.12",
  "indexmap",
@@ -1020,6 +1023,15 @@ dependencies = [
  "toml",
  "trybuild",
  "wgpu",
+]
+
+[[package]]
+name = "genex-anim"
+version = "0.1.0"
+dependencies = [
+ "genex-core",
+ "glam 0.33.12",
+ "rapier3d",
 ]
 
 [[package]]
@@ -1088,6 +1100,15 @@ dependencies = [
  "genex-core",
  "genex-platform-desktop",
  "wgpu",
+]
+
+[[package]]
+name = "genex-nav"
+version = "0.1.0"
+dependencies = [
+ "genex-core",
+ "glam 0.33.12",
+ "rapier3d",
 ]
 
 [[package]]
@@ -1178,6 +1199,15 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.21",
  "wgpu",
+]
+
+[[package]]
+name = "genex-stream"
+version = "0.1.0"
+dependencies = [
+ "genex-core",
+ "glam 0.33.12",
+ "rapier3d",
 ]
 
 [[package]]

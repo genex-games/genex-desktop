@@ -27,7 +27,10 @@
 //! phones' shells are their own crates.
 //! `docs/GENEX_API.md` and its topic pages in `docs/api/` are the full contract.
 
+mod animation;
 mod camera;
+#[cfg(feature = "physics")]
+mod character;
 mod ctx;
 mod decal;
 mod extend;
@@ -42,19 +45,32 @@ pub mod loading;
 pub mod manifest;
 mod map;
 pub mod math;
+/// Navigation: genex-nav's surface, the nav `sim.nav` holds and `game.navigation` registers.
+pub mod nav;
+mod nav_bake;
+mod node_anim;
 /// How a game is drawn on each device: look, quality presets, device classes, the settings panel.
 pub mod render;
 mod rng;
 mod runtime;
+#[cfg(feature = "physics")]
+mod ragdoll;
 mod sim;
 mod particles;
+mod stream;
+mod stream_groups;
+mod stream_source;
+mod stream_tick;
 mod terrain;
+mod terrain_tiles;
 mod water;
 #[cfg(all(feature = "studio", not(target_arch = "wasm32")))]
 mod studio;
 /// The one presenter every shell draws with (native and web): host glue, not game API.
 #[doc(hidden)]
 pub mod present;
+/// The presenter's streamed view set (display state only).
+mod present_stream;
 /// The native presenter's headless device and model files.
 #[cfg(not(target_arch = "wasm32"))]
 mod present_files;
@@ -81,7 +97,10 @@ pub use genex_render::subsurface::Subsurface;
 pub use gfx::{AssetTable, Assets, Gfx, Model};
 pub use input::Input;
 pub use map::{DeterministicState, Map, Set};
-pub use rng::Pcg32;
+pub use rng::{GameRng, Pcg32};
+/// A grid cell on the ground plane: the one key streaming and navigation share.
+pub use genex_core::cell::CellId;
+pub use stream::{CellBuild, CellInputs, STREAM_CELL_SIZE_MAX, STREAM_CELL_SIZE_MIN, StreamErrorCode, StreamTicket, Streaming};
 pub use runtime::{
     DEFAULT_SEED, DemoDriver, FIXED_STEP_MS, InstallError, InstallErrorCode, MAX_STEP_TICKS,
     RUNTIME_KEYS, Runtime, StepResult, UnknownName, View, step_ticks,
@@ -130,7 +149,8 @@ pub mod prelude {
 /// It first checks the registrations and panics with a typed code ([`InstallErrorCode`]) when
 /// they are inconsistent: a second `camera` or `player` without `.camera_override()` /
 /// `.player_override()`, duplicate or runtime-key probe names, duplicate camera, eye or demo
-/// names, an empty name, a facet state type registered twice, or a world size outside 64..=4096.
+/// names, an empty name, a facet state type registered twice, a world size outside 64..=4096, a
+/// second `game.streaming` or a streaming cell size outside its caps.
 /// Then it hands the game to the platform shell and returns when a native window closes.
 pub fn install<W: Default + 'static>(game: Game<W>) {
     install_with_assets(game, &[]);

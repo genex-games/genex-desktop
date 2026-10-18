@@ -82,6 +82,7 @@
 //!
 //! [`FrameRenderer`]: genex_render::FrameRenderer
 
+mod characters;
 mod hud_history;
 #[cfg(not(target_arch = "wasm32"))]
 mod warm;

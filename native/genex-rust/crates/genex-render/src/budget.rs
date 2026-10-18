@@ -39,6 +39,15 @@ pub enum BudgetKind {
     /// A GPU buffer the renderer holds: a frame table, the mesh library, a uniform or a node's own
     /// (renderer pass 2 A.0, LG-13; `Renderer::buffer_ledger`).
     Buffers,
+    /// Meshes streaming made resident: evictable, held to the class's view-set budget (game
+    /// systems; registered from STR-6 on).
+    StreamedMeshes,
+    /// Texture levels streaming made resident: evictable (STR-17).
+    StreamedTextures,
+    /// Terrain tiles streaming made resident: evictable (STR-21).
+    StreamedTerrain,
+    /// Impostor atlases (LOD-12): resident globally per species.
+    Impostors,
 }
 
 /// One registered allocation.

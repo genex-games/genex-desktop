@@ -30,6 +30,8 @@
 //!   weight and height (Mishkinis 2013), with a broad macro variation and per-texel wetness.
 
 /// The terrain's GPU resources, pipelines and draws.
+/// The tile atlas a streamed world's terrain draws from (game systems STR-21).
+pub mod atlas;
 pub mod gpu;
 
 use crate::device_class::FormFactor;

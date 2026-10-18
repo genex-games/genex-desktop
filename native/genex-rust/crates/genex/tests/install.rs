@@ -126,3 +126,59 @@ fn with(register: impl FnOnce(&mut Game<World>)) -> Game<World> {
     register(&mut game);
     game
 }
+
+// Game systems EP-0a1: streaming registers once, with a cell size inside the caps; its runtime key
+// `__stream` is display only, so a probe named `stream` keeps working and no checksum moves.
+
+#[test]
+#[should_panic(expected = "duplicate-streaming")]
+fn install_panics_on_a_second_streaming_registration() {
+    let mut game = game();
+    game.streaming(genex::Streaming::grid(64.0));
+    game.streaming(genex::Streaming::grid(64.0));
+    genex::install(game);
+}
+
+#[test]
+fn a_cell_size_outside_the_caps_is_refused_streaming_invalid() {
+    for cell in [4.0, 0.0, -64.0, f32::NAN, f32::INFINITY, genex::STREAM_CELL_SIZE_MAX * 2.0] {
+        let error = Runtime::new(with(|g| _ = g.streaming(genex::Streaming::grid(cell)))).err();
+        let error = error.unwrap_or_else(|| panic!("cell size {cell} installed"));
+        assert_eq!(error.code(), InstallErrorCode::StreamingInvalid, "cell size {cell}");
+        assert!(error.to_string().starts_with("streaming-invalid"), "{error}");
+    }
+    for cell in [genex::STREAM_CELL_SIZE_MIN, 64.0, genex::STREAM_CELL_SIZE_MAX] {
+        assert!(Runtime::new(with(|g| _ = g.streaming(genex::Streaming::grid(cell)))).is_ok(), "cell size {cell}");
+    }
+}
+
+fn counting(game: &mut Game<World>) {
+    game.on_update(|sim, ctx| sim.world.x += ctx.rng.unit());
+    game.probe("stream", |sim| json!(sim.world.x));
+}
+
+#[test]
+fn a_probe_named_stream_still_installs_with_an_unchanged_checksum() {
+    let mut plain = Runtime::new(with(counting)).expect("a probe named stream installs");
+    let mut streaming = Runtime::new(with(|g| {
+        counting(g);
+        g.streaming(genex::Streaming::grid(64.0));
+    }))
+    .expect("a streaming game with a probe named stream installs");
+    for runtime in [&mut plain, &mut streaming] {
+        runtime.seed(7);
+        runtime.step(1000.0);
+    }
+    assert_eq!(streaming.checksum(), plain.checksum(), "__stream never enters the checksum");
+    let state = streaming.state();
+    assert_eq!(state["stream"], plain.state()["stream"], "the game's probe keeps its key");
+    assert_eq!(state["__stream"]["active"], json!(0), "{state}");
+    assert!(state["__stream"]["cells"].is_string(), "{state}");
+}
+
+#[test]
+fn a_game_without_streaming_has_no_stream_key() {
+    let mut runtime = Runtime::new(with(counting)).expect("installs");
+    runtime.step(100.0);
+    assert!(runtime.state().get("__stream").is_none(), "{}", runtime.state());
+}

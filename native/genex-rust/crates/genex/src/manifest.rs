@@ -159,6 +159,22 @@ pub const TERRAIN_CALLS: [&str; 13] = [
 /// renderer pass 2 A.5's opt-out of the lit volume on `high` and `ultra` (`.with_volumetric(..)`).
 pub const FOG_CALLS: [&str; 8] =
     [".fog", "Fog::default", ".with_density", ".with_height", ".with_range", ".with_color", ".with_aerial_perspective", ".with_volumetric"];
+/// Game systems (EP-0a1): the call and refusal blocks of the five areas, empty until each area's
+/// work package pins what works (`tests/fixtures/rust-facade-vocabulary.json` holds the same).
+/// The animation calls of the facade.
+pub const ANIMATION_CALLS: [&str; 0] = [];
+/// The streaming calls of the facade.
+pub const STREAM_CALLS: [&str; 0] = [];
+/// The navigation calls of the facade.
+pub const NAV_CALLS: [&str; 0] = [];
+/// The sim-side asset read calls of the facade.
+pub const ASSET_CALLS: [&str; 0] = [];
+/// The sim-side asset read refusals (`AssetErrorCode` once SF-1a lands).
+pub const ASSET_REFUSALS: [&str; 0] = [];
+/// The level-of-detail calls of the facade.
+pub const LOD_CALLS: [&str; 0] = [];
+/// The level-of-detail refusals (`__render.lodRefused` codes).
+pub const LOD_REFUSALS: [&str; 0] = [];
 /// The `[[wgsl]] api` versions the facade has defined; the runtime admits those genex-render
 /// serves (`EXTENSION_APIS`; `extension-api-unavailable` for the rest).
 pub const WGSL_EXTENSION_APIS: [i64; 2] = [1, 2];

@@ -87,8 +87,10 @@ so a draw that needs the time reads a tick the world keeps from `on_update` (`ct
   the checksum (use it for anything that is not a function of the seed and the input).
 - **State keys.** `state()` owns `version`, `contractVersion`, `seed`, `frame`, `simulatedMs`,
   `running`, `fps`, `held`, `pointerLock`, `hud`, `camera`, `error`, `player`, `volatile`,
-  `__render`, `assets` and `checksum`. `hud.items` lists the label of every egui widget the last
-  tick drew, in drawing order, so a check can find a widget by its label.
+  `__render`, `assets` and `checksum`, and `__stream` while `game.streaming` is registered
+  (display only and never in the checksum, so a probe may be named `stream`). `hud.items` lists
+  the label of every egui widget the last tick drew, in drawing order, so a check can find a
+  widget by its label.
 - **Demos.** A demo scripts what a generic walk cannot reach (a state behind a menu, a long
   chain of inputs). Its driver offers `sim()`, `sim_mut()`, `inject(input)`, `advance_ms(ms)`
   and `save(file, bytes)`, and the value it returns is the demo's answer (a check captures the
@@ -100,9 +102,10 @@ so a draw that needs the time reads a tick the world keeps from `on_update` (`ct
 - **Install refusals.** `install` checks the registrations and panics with one typed code before
   anything runs: `duplicate-camera`, `duplicate-player`, `duplicate-probe`, `reserved-probe`
   (a probe named like a `state()` key), `duplicate-camera-name`, `duplicate-eye`,
-  `duplicate-demo`, `invalid-name`, `duplicate-facet-state` (one state type registered twice)
-  and `invalid-world-size`. `game.gpu_pass` panics `gpu-pass-invalid` as it is registered: an
-  empty, overlong or repeated pass name, or one pass over the cap.
+  `duplicate-demo`, `invalid-name`, `duplicate-facet-state` (one state type registered twice),
+  `invalid-world-size`, `duplicate-streaming` (a second `game.streaming`) and `streaming-invalid`
+  (a cell size outside 8..=1024 metres). `game.gpu_pass` panics `gpu-pass-invalid` as it is
+  registered: an empty, overlong or repeated pass name, or one pass over the cap.
 
 ## Verbs
 

@@ -66,7 +66,7 @@ const BUILD_IDENTITY: GameIdentity<'static> = GameIdentity {
 };
 
 /// The keys `state()` owns; a probe may never use one as its name.
-pub const RUNTIME_KEYS: [&str; 17] = [
+pub const RUNTIME_KEYS: [&str; 18] = [
     "version",
     "contractVersion",
     "seed",
@@ -82,6 +82,8 @@ pub const RUNTIME_KEYS: [&str; 17] = [
     "player",
     "volatile",
     "__render",
+    // Display only, and only while streaming is registered: never in the checksum.
+    "__stream",
     "assets",
     "checksum",
 ];
@@ -116,11 +118,16 @@ pub enum InstallErrorCode {
     DuplicateFacetState,
     /// A world size side outside `64..=4096` (genex-core's `MIN_WORLD_PX..=MAX_WORLD_PX`).
     InvalidWorldSize,
+    /// A second `game.streaming`.
+    DuplicateStreaming,
+    /// A streaming registration outside its caps (a cell size outside
+    /// `STREAM_CELL_SIZE_MIN..=STREAM_CELL_SIZE_MAX`).
+    StreamingInvalid,
 }
 
 impl InstallErrorCode {
     /// Every code, in declaration order.
-    pub const ALL: [InstallErrorCode; 10] = [
+    pub const ALL: [InstallErrorCode; 12] = [
         InstallErrorCode::DuplicateCamera,
         InstallErrorCode::DuplicatePlayer,
         InstallErrorCode::DuplicateProbe,
@@ -131,6 +138,8 @@ impl InstallErrorCode {
         InstallErrorCode::InvalidName,
         InstallErrorCode::DuplicateFacetState,
         InstallErrorCode::InvalidWorldSize,
+        InstallErrorCode::DuplicateStreaming,
+        InstallErrorCode::StreamingInvalid,
     ];
 
     /// The typed code's wire spelling.
@@ -146,6 +155,8 @@ impl InstallErrorCode {
             InstallErrorCode::InvalidName => "invalid-name",
             InstallErrorCode::DuplicateFacetState => "duplicate-facet-state",
             InstallErrorCode::InvalidWorldSize => "invalid-world-size",
+            InstallErrorCode::DuplicateStreaming => "duplicate-streaming",
+            InstallErrorCode::StreamingInvalid => "streaming-invalid",
         }
     }
 }
@@ -515,6 +526,9 @@ impl<W> Runtime<W> {
             volatile.set(name, CoreValue::from(&value));
         }
         state.set(session::VOLATILE_KEY, volatile);
+        if !self.game.streaming.is_empty() {
+            state.set(crate::stream::RUNTIME_KEY, crate::stream::runtime_value());
+        }
         state
     }
 
@@ -686,7 +700,7 @@ fn saves_of(save_name: Option<&str>) -> Saves {
 }
 
 fn fresh_sim<W>(world: W, game: &Game<W>) -> Sim<W> {
-    Sim { world, physics: fresh_physics(), facets: FacetState::fresh(&game.facets) }
+    Sim { world, physics: fresh_physics(), facets: FacetState::fresh(&game.facets), nav: crate::nav::fresh(game.navigation.as_ref()) }
 }
 
 /// An empty physics world stepping at the fixed tick.
@@ -783,6 +797,7 @@ fn validate<W>(game: &Game<W>) -> Result<(), InstallError> {
     check_names(cameras, InstallErrorCode::DuplicateCameraName, &[DEFAULT_CAMERA])?;
     check_names(game.eyes.iter().map(|c| c.name.as_str()), InstallErrorCode::DuplicateEye, &[])?;
     check_names(game.demos.iter().map(|c| c.name.as_str()), InstallErrorCode::DuplicateDemo, &[])?;
+    check_streaming(&game.streaming)?;
     let mut facets = Set::default();
     for facet in &game.facets {
         if !facets.insert(facet.type_id) {
@@ -798,6 +813,24 @@ fn check_world_size(size: [u32; 2]) -> Result<(), InstallError> {
     }
     let detail = format!("{}x{} ({MIN_WORLD_PX}..={MAX_WORLD_PX})", size[0], size[1]);
     Err(InstallError::new(InstallErrorCode::InvalidWorldSize, detail))
+}
+
+fn check_streaming(registrations: &[crate::stream::Streaming]) -> Result<(), InstallError> {
+    if registrations.len() > 1 {
+        return Err(InstallError::new(InstallErrorCode::DuplicateStreaming, "game.streaming is registered once"));
+    }
+    match registrations.iter().find(|streaming| !streaming.valid()) {
+        Some(streaming) => {
+            let detail = format!(
+                "cell size {} ({}..={})",
+                streaming.cell_size(),
+                crate::stream::STREAM_CELL_SIZE_MIN,
+                crate::stream::STREAM_CELL_SIZE_MAX
+            );
+            Err(InstallError::new(InstallErrorCode::StreamingInvalid, detail))
+        }
+        None => Ok(()),
+    }
 }
 
 fn check_single<F>(registrations: &[Single<F>], code: InstallErrorCode, detail: &str) -> Result<(), InstallError> {

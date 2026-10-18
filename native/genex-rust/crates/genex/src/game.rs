@@ -56,6 +56,12 @@ pub struct Game<W> {
     pub(crate) probes: Vec<Probe<W>>,
     pub(crate) demos: Vec<Named<DemoHook<W>>>,
     pub(crate) facets: Vec<FacetRegistration>,
+    /// `game.streaming` registrations (install refuses a second one).
+    pub(crate) streaming: Vec<crate::stream::Streaming>,
+    /// `game.cell_content` builders, in registration order.
+    pub(crate) cell_contents: Vec<crate::stream::CellContent>,
+    /// `game.navigation`: the nav every seed rebuilds `sim.nav` for.
+    pub(crate) navigation: Option<crate::nav::NavConfig>,
     /// Custom GPU passes (`game.gpu_pass`, extension ladder level 3, M2.19).
     pub(crate) gpu_passes: Vec<crate::gpu::GpuPassEntry<W>>,
     /// The game's render look and quality (`game.render_settings`, the `[render]` layer).
@@ -114,6 +120,9 @@ impl<W: Default + 'static> Game<W> {
             probes: Vec::new(),
             demos: Vec::new(),
             facets: Vec::new(),
+            streaming: Vec::new(),
+            cell_contents: Vec::new(),
+            navigation: None,
             gpu_passes: Vec::new(),
             render: crate::render::RenderConfig::from_build(),
             wgsl: crate::extend::WgslSetup::default(),
@@ -257,6 +266,32 @@ impl<W: Default + 'static> Game<W> {
     /// rebuilds it from `T::default()`.
     pub fn facet_state<T: Default + 'static>(&mut self) -> &mut Self {
         self.facets.push(FacetRegistration::of::<T>());
+        self
+    }
+
+    /// Stream the world in cells (registered once; `install` refuses a second registration
+    /// `duplicate-streaming` and a cell size outside the caps `streaming-invalid`). While it is
+    /// registered `state()` carries the display-only key `__stream`.
+    pub fn streaming(&mut self, streaming: crate::stream::Streaming) -> &mut Self {
+        self.streaming.push(streaming);
+        self
+    }
+
+    /// Build a streamed cell's content: `builder` runs for every cell entering the sim set, and
+    /// what each builder records is merged in cell order. Facets may each register one, run in
+    /// registration order.
+    pub fn cell_content<T: 'static, F>(&mut self, builder: F) -> &mut Self
+    where
+        F: Fn(crate::CellId, &crate::stream::CellInputs) -> crate::stream::CellBuild<T> + Send + Sync + 'static,
+    {
+        self.cell_contents.push(crate::stream::CellContent::new(builder));
+        self
+    }
+
+    /// Give the world a navigation mesh walkers of `config` use: every seed rebuilds `sim.nav`
+    /// for it (the runtime owns the nav, as it owns physics).
+    pub fn navigation(&mut self, config: crate::nav::NavConfig) -> &mut Self {
+        self.navigation = Some(config);
         self
     }
 }
