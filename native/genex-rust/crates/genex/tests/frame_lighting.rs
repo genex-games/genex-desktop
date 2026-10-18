@@ -576,3 +576,21 @@ mod gpu {
         let _ = std::fs::remove_dir_all(&root);
     }
 }
+
+// Subsurface scattering and diffuse transmission (renderer pass 2 B.1)
+
+#[test]
+fn a_translucent_material_reaches_the_draw_and_an_opaque_one_lets_nothing_through() {
+    use genex::Subsurface;
+    let wax = Material::color(Color::rgb(235, 225, 205)).with_subsurface(Subsurface::WAX);
+    let leaf = Material::color(Color::rgb(90, 150, 50)).with_subsurface(Subsurface::LEAF.with_transmission(0.4));
+    let mut frame = Frame::default();
+    frame.sphere_with(Vec3::ZERO, 0.05, &wax);
+    frame.cube_with(Transform::IDENTITY, &leaf);
+    frame.cube(Transform::IDENTITY, Color::RED);
+    let scene = scene_of(&frame);
+    assert_eq!(scene.draws[0].material.subsurface, Some(Subsurface::WAX), "the wax's scattering reaches its draw");
+    assert_eq!(scene.draws[1].material.subsurface.map(|s| s.transmission), Some(0.4));
+    assert_eq!(scene.draws[2].material.subsurface, None, "a draw that names no scattering lets nothing through");
+    assert_eq!(wax.subsurface(), Some(Subsurface::WAX));
+}

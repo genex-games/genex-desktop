@@ -8,7 +8,8 @@
 //! radiance 1 at EV 0 is the legacy path's white), added after lighting and before fog, then
 //! pre-exposed with it, so auto exposure meters it and bloom spreads it.
 
-use crate::layout::{GpuMaterial, GpuMaterialExt, MATERIAL_EXT_FLAG_EMISSIVE, MATERIAL_EXT_NO_TEXTURE, NO_TEXTURE};
+use crate::layout::{GpuMaterial, GpuMaterialExt, MATERIAL_EXT_FLAG_EMISSIVE, MATERIAL_EXT_FLAG_SUBSURFACE, MATERIAL_EXT_NO_TEXTURE, NO_TEXTURE};
+use crate::subsurface::Subsurface;
 use crate::texture::{TextureId, TextureKind};
 
 pub use crate::lights::{DEFAULT_SHADOW_DISTANCE, LightKind, Lighting, PointLight, SpotLight, light_table};
@@ -53,6 +54,9 @@ pub struct Material {
     pub occlusion_texture: Option<TextureId>,
     /// How strongly the occlusion map darkens (`occlusionTexture.strength`, 0..1; 1 by default).
     pub occlusion_strength: f32,
+    /// How it lets light through (renderer pass 2 B.1): wax, skin, leaves. `None` (the default)
+    /// is opaque to light, shaded exactly as before.
+    pub subsurface: Option<Subsurface>,
 }
 
 impl Material {
@@ -74,6 +78,7 @@ impl Material {
             double_sided: false,
             occlusion_texture: None,
             occlusion_strength: 1.0,
+            subsurface: None,
         }
     }
 
@@ -131,6 +136,16 @@ impl Material {
         Material { occlusion_texture: Some(texture), occlusion_strength: strength, ..self }
     }
 
+    /// This material letting light through as `subsurface` describes (renderer pass 2 B.1).
+    pub fn with_subsurface(self, subsurface: Subsurface) -> Material {
+        Material { subsurface: Some(subsurface), ..self }
+    }
+
+    /// Its scattering when it lets any light through ([`Subsurface::is_visible`]), sanitized.
+    fn visible_subsurface(&self) -> Option<Subsurface> {
+        self.subsurface.filter(|s| s.is_visible()).map(Subsurface::sanitized)
+    }
+
     /// Which batches and pipelines its draws take (P2-0.12): plain, double-sided, alpha-tested or
     /// both.
     pub fn draw_variant(&self) -> crate::scene::DrawVariant {
@@ -184,6 +199,7 @@ impl Material {
             cutoff: self.alpha_cutoff.map(|_| self.cutoff().to_bits()),
             double_sided: self.double_sided,
             occlusion: self.occlusion_reference().map(|reference| (reference, self.occlusion_strength().to_bits())),
+            subsurface: self.visible_subsurface().map(Subsurface::key),
         }
     }
 
@@ -196,14 +212,21 @@ impl Material {
 
     /// The material-extension row ([`GpuMaterialExt`], parallel to [`Material::to_gpu`]'s row):
     /// the emitted radiance, the emissive map's layer and its size class, the occlusion map's
-    /// strength (`emissive.w`) and the alpha cutoff (`params.w`; P2-0.12). A material that emits
-    /// nothing, has no occlusion map and is not alpha-tested has
-    /// [`crate::layout::MATERIAL_EXT_NONE`]'s row.
+    /// strength (`emissive.w`), the alpha cutoff (`params.w`; P2-0.12) and the scattering
+    /// (`subsurface`, `transmission`; renderer pass 2 B.1), each part's flag in `params.z`. A
+    /// material that emits nothing, has no occlusion map, is not alpha-tested and lets no light
+    /// through has [`crate::layout::MATERIAL_EXT_NONE`]'s row.
     pub fn to_gpu_ext(self) -> GpuMaterialExt {
         let occlusion = self.occlusion_reference().map_or(0.0, |_| self.occlusion_strength());
         let mut row = crate::layout::MATERIAL_EXT_NONE;
         row.emissive[3] = occlusion;
         row.params[3] = self.cutoff();
+        let mut flags = 0;
+        if let Some(subsurface) = self.visible_subsurface() {
+            (row.subsurface, row.transmission) = subsurface.rows();
+            flags |= MATERIAL_EXT_FLAG_SUBSURFACE;
+        }
+        row.params[2] = flags as f32;
         if !self.is_emissive() {
             return row;
         }
@@ -212,7 +235,8 @@ impl Material {
             .emissive_layer()
             .and_then(crate::layout::texture_ref_parts)
             .map_or((MATERIAL_EXT_NO_TEXTURE, 0.0), |(class, layer)| (layer as f32, class as f32));
-        GpuMaterialExt { emissive: [r, g, b, occlusion], params: [layer, class, MATERIAL_EXT_FLAG_EMISSIVE as f32, row.params[3]] }
+        let flags = flags | MATERIAL_EXT_FLAG_EMISSIVE;
+        GpuMaterialExt { emissive: [r, g, b, occlusion], params: [layer, class, flags as f32, row.params[3]], ..row }
     }
 
     /// The material-table row: each slot's texture reference (`layout::texture_ref`, its size
@@ -253,6 +277,8 @@ pub(crate) struct MaterialKey {
     double_sided: bool,
     /// The occlusion map's reference and strength bits.
     occlusion: Option<(u32, u32)>,
+    /// The scattering's bits (renderer pass 2 B.1), when it lets light through.
+    subsurface: Option<[u32; 7]>,
 }
 
 /// `value`, or 0 when it is negative or not finite.

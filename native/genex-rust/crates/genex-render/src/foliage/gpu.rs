@@ -31,6 +31,7 @@ pub const GRASS: &str = crate::shaders::minify::shipped_wgsl!(concat!(
     include_str!("../../shaders/lighting/decals.wgsl"),
     include_str!("../../shaders/lighting/ambient.wgsl"),
     include_str!("../../shaders/lighting/sun.wgsl"),
+    include_str!("../../shaders/lighting/subsurface.wgsl"),
     include_str!("../../shaders/lighting/local_lights.wgsl"),
     include_str!("../../shaders/lighting/fog.wgsl"),
     include_str!("../../shaders/lighting/output.wgsl"),

@@ -49,6 +49,8 @@ pub mod tables;
 pub mod cull;
 /// Metallic-roughness materials (lights moved to [`lights`], re-exported here).
 pub mod pbr;
+/// Per-pixel subsurface scattering and diffuse transmission (renderer pass 2 B.1).
+pub mod subsurface;
 /// Two-cascade sun shadows.
 pub mod shadow;
 /// Skinned glTF and compute skinning.

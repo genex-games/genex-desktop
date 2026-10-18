@@ -1,7 +1,9 @@
 // Lighting chunk: local lights. Reads the forward bindings `frame` (`counts.x` lights) and
 // `lights`; the binned walk also reads the binned tables and the sun chunk's fragment context
 // (`gx_sun_context.pixel`, the render-target pixel), and a shadowed spot (RQ6.5) `shadow_map`,
-// `shadow_sampler` and the sun chunk's `gx_sun_cascades`.
+// `shadow_sampler` and the sun chunk's `gx_sun_cascades`. Both paths add the light a translucent
+// surface lets through (the subsurface chunk's `gx_subsurface_local`, renderer pass 2 B.1) when the
+// fragment entry handed it one.
 //
 // Two paths (RQ6.2):
 // - legacy (the `off` preset and the `clustered` switch off, `lights::legacy_lights`): every light
@@ -94,7 +96,13 @@ fn gx_local_light(s: Surface, light: Light, ext: LightExt) -> vec3<f32> {
     if attenuation <= 0.0 {
         return vec3<f32>(0.0);
     }
-    return shade(s.n, s.v, l, light.color.rgb * attenuation, s.albedo, s.metallic, s.roughness);
+    let radiance = light.color.rgb * attenuation;
+    let reflected = shade(s.n, s.v, l, radiance, s.albedo, s.metallic, s.roughness);
+    // The light let through a translucent surface (renderer pass 2 B.1; 0 for every other one).
+    if gx_subsurface_active {
+        return reflected + gx_subsurface_local(s, l, radiance);
+    }
+    return reflected;
 }
 
 // The tile of the binning grid (`LightBinParams::grid`) render-target pixel `pixel` falls in.
@@ -191,6 +199,10 @@ fn gx_local_lights(color: vec3<f32>, s: Surface) -> vec3<f32> {
             }
         }
         lit += shade(s.n, s.v, to_light / distance, radiance, s.albedo, s.metallic, s.roughness);
+        // The light let through a translucent surface (renderer pass 2 B.1).
+        if gx_subsurface_active {
+            lit += gx_subsurface_local(s, to_light / distance, radiance);
+        }
     }
     return lit;
 }

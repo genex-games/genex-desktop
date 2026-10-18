@@ -11,7 +11,7 @@
 use genex::math::{self, FRAC_PI_2, Quat, Vec3, vec3};
 use genex::prelude::*;
 use genex::render::SpotLight;
-use genex::{Assets, InstanceGroup, Model, Scatter, Terrain};
+use genex::{Assets, InstanceGroup, Model, Scatter, Subsurface, Terrain};
 
 use crate::layout::{
     CABIN, CABIN_FLOOR, CABIN_YAW, DOCK_DECK, DOCK_LENGTH, Dock, Rock, Tree, TreeKind, TreeLod, WATER_LEVEL, height, layout, mix, smoothstep,
@@ -277,7 +277,10 @@ pub struct Surfaces {
 impl Surfaces {
     /// The surfaces.
     pub fn new() -> Surfaces {
-        let foliage = |colors: &[Color; 3]| colors.iter().map(|c| Material::color(*c).with_roughness(LEAF_ROUGHNESS)).collect();
+        let foliage = |colors: &[Color; 3]| colors.iter().map(|c| Material::color(*c).with_roughness(LEAF_ROUGHNESS)).collect::<Vec<_>>();
+        // Broad leaves let the sun through (renderer pass 2 B.1): a crown with the sun behind it
+        // glows. Needles are thick and waxy, so the pines stay opaque.
+        let thin = |colors: &[Color; 3]| foliage(colors).into_iter().map(|m| m.with_subsurface(Subsurface::LEAF)).collect();
         Surfaces {
             bark: scanned("bark", BARK, 1.0, 1.0),
             pine_bark: scanned("pine-bark", PINE_BARK, 1.0, 1.0),
@@ -290,8 +293,8 @@ impl Surfaces {
             door: scanned("planks", DOOR_TINT, 1.0, 1.0),
             trim: Material::color(TRIM).with_roughness(0.7),
             iron: Material::color(IRON).with_metallic(0.85).with_roughness(0.45),
-            leaves: foliage(&LEAVES),
-            golden: foliage(&GOLDEN),
+            leaves: thin(&LEAVES),
+            golden: thin(&GOLDEN),
             needles: foliage(&PINES),
             mullion: Material::color(WINDOW_MULLION).with_roughness(0.8),
             hull: scanned("planks", HULL_TINT, 1.0, 1.0),

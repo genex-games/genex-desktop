@@ -168,6 +168,7 @@ pub struct Material {
     metal_rough_texture: Option<Arc<str>>,
     emissive_texture: Option<Arc<str>>,
     untextured_color: Option<Color>,
+    subsurface: Option<crate::Subsurface>,
 }
 
 impl Default for Material {
@@ -186,6 +187,7 @@ impl Default for Material {
             metal_rough_texture: None,
             emissive_texture: None,
             untextured_color: None,
+            subsurface: None,
         }
     }
 }
@@ -214,6 +216,20 @@ impl Material {
     /// (set it with [`Material::with_emissive`]: black emits nothing whatever the texture).
     pub fn with_emissive_texture(self, path: &str) -> Material {
         Material { emissive_texture: Some(Arc::from(path)), ..self }
+    }
+
+    /// This material letting light through (renderer pass 2 B.1): wax glowing past its shadow
+    /// line ([`Subsurface::WAX`](crate::Subsurface::WAX)), skin scattering red
+    /// ([`Subsurface::SKIN`](crate::Subsurface::SKIN)), a leaf shining with the sun behind it
+    /// ([`Subsurface::LEAF`](crate::Subsurface::LEAF)). The light through is shadowed by what lies
+    /// between the surface and the sun, so a leaf behind another leaf stays dark.
+    pub fn with_subsurface(self, subsurface: crate::Subsurface) -> Material {
+        Material { subsurface: Some(subsurface), ..self }
+    }
+
+    /// How it lets light through ([`Material::with_subsurface`]); `None` is opaque to light.
+    pub fn subsurface(&self) -> Option<crate::Subsurface> {
+        self.subsurface
     }
 
     /// This material with another metallic factor (0..1).

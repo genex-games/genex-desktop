@@ -197,17 +197,24 @@ pub struct GpuLocalLight {
 /// radiance (linear rgb, scene units, its strength folded in; a: the occlusion map's strength,
 /// P2-0.12) and `params` holds the emissive texture: x its layer (-1: none), y its size class, z
 /// flag bits ([`MATERIAL_EXT_FLAG_*`](MATERIAL_EXT_FLAG_EMISSIVE)), w the alpha cutoff (P2-0.12; 0:
-/// not alpha-tested); all f32, exact as small integers.
+/// not alpha-tested); all f32, exact as small integers. `subsurface` and `transmission` (renderer
+/// pass 2 B.1) hold a [`crate::subsurface::Subsurface`] ([`crate::subsurface::Subsurface::rows`]);
+/// a material that lets no light through keeps thickness 1 and the rest 0.
 pub type GpuMaterialExt = crate::abi::GxMaterialExt;
 
 /// [`GpuMaterialExt`] flag: the material emits light (its emissive radiance is not 0 or it has
 /// an emissive texture).
 pub const MATERIAL_EXT_FLAG_EMISSIVE: u32 = 1;
+/// [`GpuMaterialExt`] flag: the material lets light through (renderer pass 2 B.1): its
+/// `subsurface` and `transmission` rows hold a [`crate::subsurface::Subsurface`] and the forward
+/// pass runs the subsurface chunk for it.
+pub const MATERIAL_EXT_FLAG_SUBSURFACE: u32 = 2;
 /// The emissive texture layer of a material without one ([`GpuMaterialExt`] `params.x`).
 pub const MATERIAL_EXT_NO_TEXTURE: f32 = -1.0;
 
 /// The extension row of a material that emits nothing: what every row holds until RQ6.3 fills it.
-pub const MATERIAL_EXT_NONE: GpuMaterialExt = GpuMaterialExt { emissive: [0.0; 4], params: [MATERIAL_EXT_NO_TEXTURE, 0.0, 0.0, 0.0] };
+pub const MATERIAL_EXT_NONE: GpuMaterialExt =
+    GpuMaterialExt { emissive: [0.0; 4], params: [MATERIAL_EXT_NO_TEXTURE, 0.0, 0.0, 0.0], subsurface: [0.0, 0.0, 0.0, 1.0], transmission: [0.0; 4] };
 
 /// One instance in the instance table (`Instance`).
 #[repr(C)]

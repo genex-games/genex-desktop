@@ -90,7 +90,8 @@ fn gx_scene_shades_hdr() -> bool {
     return GX_SCENE_HDR;
 }
 
-// Linear rgb and alpha of a fragment: ambient, then the sun, then the local lights, then the
+// Linear rgb and alpha of a fragment: ambient, then the sun (and the sun's light through a
+// translucent material, B.1), then the local lights, then the
 // material's emission (RQ6.3), through the air (aerial perspective) and the fog.
 // Metal compiles with fast math, so the chunks keep the evaluation order of the shader before the
 // split (the view vector and the sun direction made here, the sun term added here): the legacy
@@ -127,8 +128,14 @@ fn surface(in: VsOut, front: bool) -> vec4<f32> {
     if GX_SCENE_HDR {
         sun = gx_sun_area_direction(sun, frame.sun_dir.w, s.n, s.v);
     }
+    // A translucent material's light through it (renderer pass 2 B.1): the sun's here, the local
+    // lights' in their walk; a draw-uniform branch, so every other material shades as before.
+    gx_subsurface_begin(ext);
     var color = gx_ambient(s);
     color += gx_sun(s, sun);
+    if gx_subsurface_active {
+        color += gx_subsurface_sun(s, ext, sun);
+    }
     color = gx_local_lights(color, s);
     color += gx_emission(ext, in.uv);
     color = gx_forward_fog(color, s.world_pos);

@@ -74,6 +74,9 @@ pub use group::{GroupShape, INSTANCE_GROUP_MAX, InstanceGroup, InstanceGroupErro
 pub use terrain::{GRASS_DENSITY_MAX, GRASS_HEIGHT_MAX, Grass, Scatter, TERRAIN_LAYER_MAX, TERRAIN_SAMPLES_MAX, Terrain, TerrainError, TerrainErrorCode, TerrainLayer, TerrainTexel};
 /// The look a terrain's layers share (macro variation, wetness, the height blend's depth).
 pub use genex_render::terrain::TerrainLook;
+/// How a material lets light through: subsurface scattering and diffuse transmission
+/// ([`Material::with_subsurface`]; renderer pass 2 B.1).
+pub use genex_render::subsurface::Subsurface;
 pub use gfx::{AssetTable, Assets, Gfx, Model};
 pub use input::Input;
 pub use map::{DeterministicState, Map, Set};

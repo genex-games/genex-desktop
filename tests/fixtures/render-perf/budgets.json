@@ -207,6 +207,13 @@
     "sun-mask"
    ],
    "budgetMs": 0.5
+  },
+  {
+   "id": "subsurface",
+   "features": [
+    "subsurface"
+   ],
+   "budgetMs": 0.1
   }
  ]
 }

@@ -186,7 +186,13 @@ surface glows with `Material::emissive(color, strength)` or
 `.with_emissive(color, strength)` (strength in a light's units: 1 is white lit to radiance 1,
 above it the look's bloom haloes it; `.with_emissive_texture(path)` masks it). Emission lights
 the picture, not other surfaces: pair a lantern's glowing glass with a `frame.point_light`, a lit
-window with a `frame.spot_light` shining out of it.
+window with a `frame.spot_light` shining out of it. A surface that lets light through takes
+`.with_subsurface(Subsurface::WAX)` (`use genex::Subsurface;`): `WAX` glows warm past its shadow
+line, `SKIN` scatters red into it, `LEAF` shines when the sun is behind it; tune one with
+`Subsurface::new(color, thickness)` (linear colour 0..1, thickness 0..1, 1 lets nothing through),
+`.with_transmission(share)`, `.with_power(p)` and `.with_depth(metres)` (how far light travels
+inside it: a leaf's millimetres, a candle's centimetre). The sun's light through it is shadowed by
+whatever stands between it and the sun.
 
 A room's polished floor reflects the sky until it has a reflection probe:
 `frame.reflection_probe(&ReflectionProbe::new(min, max).with_capture(eye).with_blend(0.4))`

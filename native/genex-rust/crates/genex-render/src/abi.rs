@@ -523,10 +523,16 @@ pub struct GxEnvSh {
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Pod, Zeroable)]
 pub struct GxMaterialExt {
-    /// Emissive radiance (linear rgb, scene units); a: reserved.
+    /// Emissive radiance (linear rgb, scene units); a: the occlusion map's strength.
     pub emissive: [f32; 4],
-    /// Reserved for later material inputs.
+    /// x: the emissive map's layer (-1 none), y: its size class, z: flag bits, w: the alpha cutoff.
     pub params: [f32; 4],
+    /// Subsurface scattering (renderer pass 2 B.1): rgb the scatter colour (linear), a the
+    /// thickness (`0..=1`; 1 scatters nothing).
+    pub subsurface: [f32; 4],
+    /// x: the forward-scatter power, y: the diffuse transmission share, z: the scattering depth in
+    /// world units, w: reserved (renderer pass 2 B.1).
+    pub transmission: [f32; 4],
 }
 
 /// A v2 struct's Rust layout and the WGSL struct it mirrors, member for member.
@@ -590,7 +596,7 @@ pub const V2_STRUCTS: &[V2Struct] = &[
         shader: "material-v2-sample",
         rust_size: size_of::<GxMaterialExt>(),
         rust_align: align_of::<GxMaterialExt>(),
-        fields: fields!(GxMaterialExt: emissive, params),
+        fields: fields!(GxMaterialExt: emissive, params, subsurface, transmission),
     },
 ];
 

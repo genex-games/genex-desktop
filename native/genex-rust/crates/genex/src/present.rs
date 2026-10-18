@@ -1946,6 +1946,7 @@ fn surface(material: &crate::Material, tint: Color, assets: &AssetCache) -> Mate
     }
     surface = surface.with_emissive(rgb(material.emissive), intensity(material.emissive_strength));
     surface.emissive_texture = texture(material.emissive_texture(), TextureKind::Color);
+    surface.subsurface = material.subsurface();
     surface
 }
 

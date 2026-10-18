@@ -405,6 +405,12 @@ struct GxMaterialExt {
     // x: emissive map layer (-1 none), y: its size class, z: flags, w: the alpha cutoff (P2-0.12;
     // 0: not alpha-tested).
     params: vec4<f32>,
+    // Subsurface scattering (renderer pass 2 B.1): rgb the scatter colour (linear), a the
+    // thickness (0..1; 1 scatters nothing). Read only under the subsurface flag.
+    subsurface: vec4<f32>,
+    // x: the forward-scatter power, y: the diffuse transmission share, z: the scattering depth in
+    // world units, w: reserved (B.1).
+    transmission: vec4<f32>,
 }
 
 // The view distance of a depth-buffer value under projection `proj` (perspective or

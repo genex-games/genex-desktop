@@ -119,7 +119,9 @@ const GOLDEN: [(&str, usize); 34] = [
     ("EasuParams", 64),
     ("RcasParams", 32),
     ("LightExt", 32),
-    ("GxMaterialExt", 32),
+    // Renderer pass 2 B.1 flipped 32 -> 64: the subsurface scatter colour and thickness, and the
+    // forward-scatter power, diffuse transmission and scattering depth (two rows).
+    ("GxMaterialExt", 64),
     // Renderer pass 2 A.0 (LG-16) flipped 32 -> 64: the clusterable kinds' index ranges and the
     // decals' and probes' own depth mappings (lights, decals and probes share one index space).
     ("LightBinParams", 64),

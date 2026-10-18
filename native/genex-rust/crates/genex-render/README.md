@@ -76,6 +76,22 @@ the smaller of it and the screen-space AO on indirect light only. The material s
 anisotropically by preset (`Quality::anisotropy`: 16 on high and ultra, 8 medium, 4 low and
 phones, 2 on low-tier phones). Spot casters still draw a variant whole.
 
+## Subsurface scattering and diffuse transmission
+
+`Material::with_subsurface(Subsurface)` (`src/subsurface.rs`, renderer pass 2 B.1; presets `WAX`,
+`SKIN`, `LEAF`) writes the scatter colour, thickness, forward-scatter power, diffuse transmission
+and scattering depth into the material-extension row (`GxMaterialExt.subsurface` and
+`.transmission`, 64 bytes a row; no binding) with the `MATERIAL_EXT_FLAG_SUBSURFACE` flag. The
+lighting chunk `shaders/lighting/subsurface.wgsl` runs after the sun for a flagged material only (a
+draw-uniform branch; every other material shades byte for byte as before), in the forward pass and
+the Level-2 v2 prelude: Filament v1.77.3's subsurface model (wrapped back scatter, forward scatter
+about the view-to-light axis, in the scatter colour) plus Bevy v0.20's back Lambert lobe in the
+base colour. Both are lit through one point-sampled gather of the sun's cascade: how far along the
+light the fragment lies behind the stored casters, past a slope tolerance, attenuated as
+`exp(-distance / depth)`, so a thin leaf passes its back-light, a thick candle only its rim, and a
+caster between the surface and the sun shadows the light through it. Local lights and the
+environment add no subsurface term yet. Fixtures and the 1080p timing row: `tests/subsurface.rs`.
+
 ## Reflection probes
 
 `Lighting::reflection_probes` (`probes::ReflectionProbe`; the facade's `frame.reflection_probe`)
