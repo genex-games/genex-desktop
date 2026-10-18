@@ -2,7 +2,8 @@
 //! wide shot's sun-side meadow keeps its green and its texture under the fog's sun lobe, while the
 //! wide shot's left side and the forest shot keep their look. Each region is measured against the
 //! numbers the same capture gave before D13 (the lobe at half the sun's radiance and the sun's own
-//! colour), recorded below.
+//! colour), recorded below. With the sky's clouds on, owner decision D20 keeps only the sun-side
+//! check: the clouds' sky light may warm the other regions.
 //!
 //! The rows are `#[ignore]`d and named `metal`:
 //!
@@ -193,11 +194,16 @@ fn metal_the_sun_side_meadow_keeps_its_green_and_texture_under_the_golden_hour_h
     if meadow_veil > MEADOW_VEIL_SHARE_MAX * BEFORE_D13_MEADOW_VEIL {
         failures.push(format!("sun-side meadow: veil {meadow_veil:.5} from {BEFORE_D13_MEADOW_VEIL}, wanted at most x{MEADOW_VEIL_SHARE_MAX}"));
     }
+    // D20: the clouds' sky light warms the regions D13 kept, and the owner keeps that look.
+    let clouds_on = showcase_game::world::sky_clouds().coverage > 0.0;
     for ((name, after), (_, before)) in now.iter().zip(BEFORE_D13) {
         if *name == "sun-side meadow" {
             if after.texture < MEADOW_TEXTURE_GAIN_MIN * before.texture {
                 failures.push(format!("{name}: texture {:.3} from {:.3}, wanted x{MEADOW_TEXTURE_GAIN_MIN}", after.texture, before.texture));
             }
+            continue;
+        }
+        if clouds_on {
             continue;
         }
         let moved = (0..3).map(|c| (after.mean[c] - before.mean[c]).abs()).fold(0.0, f64::max);
