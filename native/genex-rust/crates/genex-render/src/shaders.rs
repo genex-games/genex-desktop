@@ -317,6 +317,9 @@ pub const SHADERS: &[(&str, &str)] = &[
     ("ssr-resolve", crate::ssr::SSR_RESOLVE),
     // Renderer pass 2 B.3: lake water.
     ("water", crate::water::WATER),
+    // Renderer pass 2 B.10: the ocean tier's simulation (spectrum, Stockham FFT, resolve) and surface.
+    ("ocean-fft", crate::ocean::OCEAN_FFT),
+    ("ocean", crate::ocean::OCEAN),
 ];
 
 /// A shader module from WGSL checked against [`crate::WGSL_MAX_BYTES`].

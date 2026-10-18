@@ -359,6 +359,38 @@ and keeps its history. The node's twins and GPU rows are in `tests/water.rs`; it
 at a 1080p render (`WATER_MS_MAX`). The frame does not record the node yet: the renderer's
 opaque-copy hook and the scene's water draw are the next step.
 
+## Ocean
+
+`src/ocean.rs` is the optional open-sea tier, on for desktop `high` and `ultra` (`ocean::enabled`;
+phones are unverified and off). An `OceanSpectrum` (patch size, wind speed and direction,
+significant wave height, choppiness, seed) gives a directional Phillips spectrum whose Gaussian
+draws are hashed from the seed, so its initial table is the same on every machine and is uploaded
+once. `OceanNode::simulate` records one compute pass (`shaders/ocean/ocean_fft.wgsl`) that turns the
+spectrum to the frame's time, runs a 256-point radix-2 Stockham inverse FFT along the rows and then
+the columns (one 256-invocation workgroup per row, 8 KB of workgroup memory), and resolves a
+displacement map (choppy x and z, height, the Jacobian) and a slope map, both `rgba16float`, 256 a
+side. Every wave's frequency is a multiple of 2π/`REPEAT_S`, so the sea loops every 200 s and a
+long session keeps its precision. The method is Tessendorf's; the Stockham passes follow the idea
+of bevy-aqua-fft (no source copied).
+
+`OceanNode::draw` (`shaders/ocean/ocean.wgsl`) draws a camera-centred grid whose spacing grows
+with distance, displaced by the maps. Its own layout binds four sampled textures (the two maps,
+the scene depth without the sea and the environment cube array), none of the forward stage's. It
+shades with Schlick's Fresnel between the sky layer and the water body's in-scattered light, a
+capped sun glint, light through crests that face away from the sun, foam where the waves fold and
+along the coast, and Beer-Lambert absorption to the bed, blended premultiplied over the scene. Far
+away the slopes fade to flat and the roughness rises, so the far sea neither aliases nor sparkles.
+`OceanNode::encode_motion` then writes the displaced surface's own motion under the camera
+(reactive 0) and its depth into the motion prepass's targets, as the lake does, so TAA reprojects a
+sea pixel by the sea.
+
+`OceanTwin` is the deterministic CPU twin: the same spectrum, dispersion and Stockham passes in f32
+with libm. `OceanTwin::surface(t).height_at(x, z)` gives gameplay the height of the waves the
+picture shows, choppy displacement included, and two runs read the same bits. `tests/ocean.rs`
+holds the twin's rows, the GPU maps against the twin, a coast shot and the cost. The budget is
+2.0 ms for the simulation and the surface together (`OCEAN_MS_MAX`). The frame does not record the
+node yet; the scene's sea and the renderer's node 11 and 15 hooks are the next step.
+
 ## Terrain
 
 `Renderer::set_terrain` (`terrain::TerrainDesc`; the facade's `Terrain` and `frame.terrain`) holds

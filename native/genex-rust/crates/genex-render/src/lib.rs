@@ -144,6 +144,9 @@ pub mod ssr;
 /// Lake water (renderer pass 2 B.3): a water rectangle's own pipeline over the screen inputs,
 /// refracted, absorbed, foamed at the shore and reflected, with its own motion key for TAA.
 pub mod water;
+/// The ocean tier (renderer pass 2 B.10): an FFT wave patch simulated on the GPU, its surface's own
+/// pipeline, and the deterministic CPU twin gameplay reads.
+pub mod ocean;
 /// Foliage (renderer pass 2 A.8): GPU-generated grass on the terrain's grassy layers, in the
 /// shared wind, lit through the forward chunks with diffuse transmission.
 pub mod foliage;

@@ -244,6 +244,7 @@ pub const WORKGROUP_AUDIT: &[(&str, &str)] = &[
     ("grass-gen", "cs_grass_tiles and cs_grass_scan store every lane's gx_grass_scan[lane] before the scan's first barrier; cs_grass_pack declares none it reads"),
     ("irradiance-passes", "cs_irradiance_reduce: each of the 64 lanes stores lane_light[lane][a] and lane_reach[lane][a] for all six directions before the reduction's first barrier"),
     ("particles-sort", "cs_sort_block and cs_sort_inner: each of the 256 lanes stores all eight of its sort_lds slots (a pair past the count as the last key) before the first barrier; cs_sort_step declares none"),
+    ("ocean-fft", "cs_ocean_fft_rows and cs_ocean_fft_columns: each of the 256 lanes stores gx_ocean_a[lane] before the first barrier, and every Stockham pass writes the whole ping-pong row it reads next before a barrier; cs_ocean_spectrum and cs_ocean_resolve read none"),
 ];
 
 /// Compilation options for a kernel in [`WORKGROUP_AUDIT`]: no workgroup zeroing on native, where

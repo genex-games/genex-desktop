@@ -236,6 +236,13 @@
    "budgetMs": 1.0
   },
   {
+   "id": "ocean",
+   "features": [
+    "ocean"
+   ],
+   "budgetMs": 2.0
+  },
+  {
    "id": "ssr-high",
    "features": [
     "ssr"
