@@ -19,16 +19,23 @@
  *   the workspace's scene reads. `--install` also copies them into the scene's game folder
  *   (`assets/fetched/`, ignored by Git) for a Studio run.
  *
- * A manifest URL must be https on an allowlisted CC0 host and a file name a plain name; a refusal
- * is one line on stderr, `genex-showcase-assets-refusal: {"code":…,"detail":…}`, and exit 78. No
+ * The fetch rules (https on an allowlisted CC0 host, CC0 only, plain names, size and sha256, the
+ * rename into place) are `src/substrate/cc0-fetch.ts`'s; a refusal is one line on stderr, `genex-showcase-assets-refusal: {"code":…,"detail":…}`, and exit 78. No
  * scene depends on these files: without them it draws its procedural fallback.
  */
 import { spawnSync } from "node:child_process";
-import { createHash } from "node:crypto";
-import { existsSync } from "node:fs";
-import { cp, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { cp, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  Cc0Error,
+  Cc0Refusal,
+  cachedPath,
+  checkManifest,
+  fetchFile,
+  httpsDownload,
+  type Manifest,
+} from "../src/substrate/cc0-fetch.ts";
 
 const REPO = fileURLToPath(new URL("..", import.meta.url));
 const SHOWCASE = path.join(REPO, "native", "genex-rust", "examples", "showcase");
@@ -67,157 +74,34 @@ export const SCENES: Readonly<Record<ShowcaseScene, SceneFolders>> = {
 };
 const REFUSAL_PREFIX = "genex-showcase-assets-refusal: ";
 const REFUSAL_EXIT = 78;
-/** The hosts a manifest URL may name: Poly Haven's and ambientCG's official download servers. */
-export const ALLOWED_HOSTS: ReadonlySet<string> = new Set(["dl.polyhaven.org", "ambientcg.com"]);
-/** The only licence a fetched asset may carry. */
-export const CC0 = "CC0-1.0";
-/** A plain file or folder name: no separators, no `.` or `..`, no leading dot. */
-const PLAIN_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
-const SHA256_HEX = /^[0-9a-f]{64}$/;
+/** The name every download sends (Poly Haven's API terms ask each client to name its software). */
+const USER_AGENT = "genex-showcase-assets";
 
-/** Why the fetch refused. Wire values: tests match them. */
+export {
+  ALLOWED_HOSTS,
+  CC0,
+  Cc0Error as AssetError,
+  cachedPath,
+  checkedUrl,
+  checkManifest,
+  fetchFile,
+  type Manifest,
+  type ManifestAsset,
+  type ManifestFile,
+  sha256,
+  verified,
+} from "../src/substrate/cc0-fetch.ts";
+
+/** Why the fetch refused: the CC0 fetch's refusals plus the command's own. Wire values: tests match them. */
 export const AssetRefusal = {
   Usage: "usage",
-  ManifestInvalid: "manifest-invalid",
-  HostNotAllowed: "host-not-allowed",
-  NotCc0: "licence-not-cc0",
-  UnsafeName: "unsafe-name",
-  Unpinned: "unpinned",
-  DownloadFailed: "download-failed",
-  SizeMismatch: "size-mismatch",
-  HashMismatch: "hash-mismatch",
+  ...Cc0Refusal,
   ProcessFailed: "process-failed",
 } as const;
 export type AssetRefusal = (typeof AssetRefusal)[keyof typeof AssetRefusal];
 
-/** A refusal with its typed code. */
-export class AssetError extends Error {
-  readonly code: AssetRefusal;
-  constructor(code: AssetRefusal, detail: string) {
-    super(detail);
-    this.code = code;
-  }
-}
-
-/** One file of an asset: a map of a texture set, or the sky map. */
-export type ManifestFile = { map: string; name: string; url: string; bytes: number; sha256: string | null };
-/** One fetched asset. */
-export type ManifestAsset = { id: string; kind: string; licence: string; files: ManifestFile[] };
-/** The manifest (only the fields the fetch reads are typed). */
-export type Manifest = { assets: ManifestAsset[] };
-
-/** `url` if it is https on an allowlisted host, else a refusal. */
-export function checkedUrl(url: string): URL {
-  let parsed: URL;
-  try {
-    parsed = new URL(url);
-  } catch {
-    throw new AssetError(AssetRefusal.ManifestInvalid, `not a URL: ${url}`);
-  }
-  const plainHttps =
-    parsed.protocol === "https:" && parsed.username === "" && parsed.password === "" && parsed.port === "";
-  if (!plainHttps || !ALLOWED_HOSTS.has(parsed.hostname)) {
-    throw new AssetError(AssetRefusal.HostNotAllowed, url);
-  }
-  return parsed;
-}
-
-function checkedName(name: string): string {
-  if (!PLAIN_NAME.test(name) || name.includes("..")) {
-    throw new AssetError(AssetRefusal.UnsafeName, name);
-  }
-  return name;
-}
-
-function checkFile(file: ManifestFile): void {
-  checkedName(file.name);
-  checkedUrl(file.url);
-  const pinned = file.sha256 === null || SHA256_HEX.test(file.sha256);
-  if (!Number.isSafeInteger(file.bytes) || file.bytes <= 0 || !pinned) {
-    throw new AssetError(AssetRefusal.ManifestInvalid, `${file.name}: bytes or sha256`);
-  }
-}
-
-/** Check every asset of `manifest` (names, hosts, licence, sizes, digests) before anything runs. */
-export function checkManifest(manifest: Manifest): void {
-  if (!Array.isArray(manifest.assets) || manifest.assets.length === 0) {
-    throw new AssetError(AssetRefusal.ManifestInvalid, "no assets");
-  }
-  for (const asset of manifest.assets) {
-    checkedName(asset.id);
-    if (asset.licence !== CC0) {
-      throw new AssetError(AssetRefusal.NotCc0, `${asset.id}: ${asset.licence}`);
-    }
-    for (const file of asset.files) {
-      checkFile(file);
-    }
-  }
-}
-
-/** The sha256 of `bytes`, lowercase hex. */
-export function sha256(bytes: Uint8Array): string {
-  return createHash("sha256").update(bytes).digest("hex");
-}
-
-/**
- * `bytes` checked against `file`: its size, and its sha256 against the pin (or recorded into
- * `file` when `pin` allows and none is pinned yet). Answers the digest; a refusal otherwise.
- */
-export function verified(file: ManifestFile, bytes: Uint8Array, pin: boolean): string {
-  if (bytes.byteLength !== file.bytes) {
-    throw new AssetError(AssetRefusal.SizeMismatch, `${file.name}: ${bytes.byteLength} bytes, manifest ${file.bytes}`);
-  }
-  const digest = sha256(bytes);
-  if (file.sha256 === null && !pin) {
-    throw new AssetError(AssetRefusal.Unpinned, `${file.name}: run with --pin to record ${digest}`);
-  }
-  if (file.sha256 !== null && file.sha256 !== digest) {
-    throw new AssetError(AssetRefusal.HashMismatch, `${file.name}: ${digest}, pinned ${file.sha256}`);
-  }
-  return digest;
-}
-
-/** Where `file` of `asset` is cached under `raw`. */
-export function cachedPath(raw: string, asset: ManifestAsset, file: ManifestFile): string {
-  return path.join(raw, checkedName(asset.id), checkedName(file.name));
-}
-
-/** Whether `target` already holds `file`'s pinned bytes. */
-async function alreadyCached(target: string, file: ManifestFile): Promise<boolean> {
-  if (file.sha256 === null || !existsSync(target)) {
-    return false;
-  }
-  return sha256(await readFile(target)) === file.sha256;
-}
-
-/** Download `file` into `target` (verified, written beside it, renamed into place). */
-export async function fetchFile(
-  file: ManifestFile,
-  target: string,
-  pin: boolean,
-  download: (url: URL) => Promise<Uint8Array>,
-): Promise<void> {
-  if (await alreadyCached(target, file)) {
-    return;
-  }
-  const bytes = await download(checkedUrl(file.url));
-  file.sha256 = verified(file, bytes, pin);
-  await mkdir(path.dirname(target), { recursive: true });
-  const partial = `${target}.partial`;
-  try {
-    await writeFile(partial, bytes);
-    await rename(partial, target);
-  } finally {
-    await rm(partial, { force: true });
-  }
-}
-
-async function httpsDownload(url: URL): Promise<Uint8Array> {
-  const response = await fetch(url, { redirect: "error", headers: { "user-agent": "genex-showcase-assets" } });
-  if (!response.ok) {
-    throw new AssetError(AssetRefusal.DownloadFailed, `${url.href}: HTTP ${response.status}`);
-  }
-  return new Uint8Array(await response.arrayBuffer());
+function download(url: URL, maxBytes: number): Promise<Uint8Array> {
+  return httpsDownload(url, maxBytes, USER_AGENT);
 }
 
 function processFetched(raw: string, out: string, manifest: string): void {
@@ -238,7 +122,7 @@ function processFetched(raw: string, out: string, manifest: string): void {
     stdio: "inherit",
   });
   if (run.status !== 0) {
-    throw new AssetError(AssetRefusal.ProcessFailed, `showcase-assets fetched exited ${run.status}`);
+    throw new Cc0Error(AssetRefusal.ProcessFailed, `showcase-assets fetched exited ${run.status}`);
   }
 }
 
@@ -256,7 +140,7 @@ function isScene(value: string | undefined): value is ShowcaseScene {
 export function parseArgs(argv: readonly string[]): FetchOptions {
   const [command, ...flags] = argv;
   if (command !== "fetch") {
-    throw new AssetError(AssetRefusal.Usage, USAGE);
+    throw new Cc0Error(AssetRefusal.Usage, USAGE);
   }
   const options: FetchOptions = { scene: ShowcaseScene.Lakeside, pin: false, install: false };
   for (let index = 0; index < flags.length; index += 1) {
@@ -267,7 +151,7 @@ export function parseArgs(argv: readonly string[]): FetchOptions {
     }
     const scene = flags[index + 1];
     if (flag !== SCENE_FLAG || !isScene(scene)) {
-      throw new AssetError(AssetRefusal.Usage, USAGE);
+      throw new Cc0Error(AssetRefusal.Usage, USAGE);
     }
     options.scene = scene;
     index += 1;
@@ -283,7 +167,7 @@ async function fetchAll(options: FetchOptions): Promise<void> {
   const before = JSON.stringify(manifest);
   for (const asset of manifest.assets) {
     for (const file of asset.files) {
-      await fetchFile(file, cachedPath(raw, asset, file), options.pin, httpsDownload);
+      await fetchFile(file, cachedPath(raw, asset, file), options.pin, download);
       process.stdout.write(`${asset.id}/${file.name}: ${file.sha256}\n`);
     }
   }
@@ -304,7 +188,7 @@ async function main(argv: string[]): Promise<void> {
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   main(process.argv.slice(2)).catch((error: unknown) => {
-    const code = error instanceof AssetError ? error.code : AssetRefusal.DownloadFailed;
+    const code = error instanceof Cc0Error ? error.code : AssetRefusal.DownloadFailed;
     const detail = error instanceof Error ? error.message : String(error);
     process.stderr.write(`${REFUSAL_PREFIX}${JSON.stringify({ code, detail })}\n`);
     process.exit(REFUSAL_EXIT);

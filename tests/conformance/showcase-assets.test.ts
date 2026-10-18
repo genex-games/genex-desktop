@@ -6,6 +6,7 @@
  * byte never reaches the cache. The network is a stub here.
  */
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { readdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
@@ -28,6 +29,9 @@ import {
   sha256,
 } from "../../scripts/showcase-assets.ts";
 import { tmpDir } from "../helpers/tmp.ts";
+
+const SCRIPT = path.join(import.meta.dirname, "..", "..", "scripts", "showcase-assets.ts");
+const USAGE = "node scripts/showcase-assets.ts fetch [--scene lakeside|harbour-street] [--pin] [--install]";
 
 const BYTES = new TextEncoder().encode("a CC0 texture");
 const GOOD_URL = "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/dirt/dirt_diff_1k.jpg";
@@ -116,6 +120,37 @@ describe("the command line", () => {
       assert.equal(
         refusal(() => parseArgs(argv)),
         AssetRefusal.Usage,
+      );
+    });
+  }
+});
+
+describe("the command's refusals", () => {
+  it("keeps every refusal's wire spelling", () => {
+    const spelled = [
+      "usage",
+      "manifest-invalid",
+      "host-not-allowed",
+      "licence-not-cc0",
+      "unsafe-name",
+      "unpinned",
+      "download-failed",
+      "size-mismatch",
+      "hash-mismatch",
+      "process-failed",
+    ];
+    const values: readonly string[] = Object.values(AssetRefusal);
+    for (const code of spelled) assert.ok(values.includes(code), code);
+  });
+
+  for (const argv of [["download"], ["fetch", "--scene", "moon-base"]]) {
+    it(`prints one refusal line and exits 78 for ${argv.join(" ")}`, () => {
+      const run = spawnSync(process.execPath, [SCRIPT, ...argv], { encoding: "utf8" });
+      assert.equal(run.status, 78);
+      assert.equal(run.stdout, "");
+      assert.equal(
+        run.stderr,
+        `genex-showcase-assets-refusal: ${JSON.stringify({ code: AssetRefusal.Usage, detail: USAGE })}\n`,
       );
     });
   }
