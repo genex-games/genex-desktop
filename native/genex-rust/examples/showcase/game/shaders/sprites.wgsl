@@ -24,14 +24,25 @@ struct SpriteOut {
     @location(2) @interpolate(flat) kind: f32,
     // A glow's pixel footprint as a variance in its quad's units (`glow_blur`); 0 for the others.
     @location(3) @interpolate(flat) blur: f32,
+    // The cosine between the view ray to the sprite's centre and the direction to the sun.
+    @location(4) @interpolate(flat) sun_cos: f32,
 }
 
 @group(0) @binding(0) var<uniform> gx_frame: GxFrameV2;
 
 // How fast a smoke puff thins from its centre (exp(-r² × this) over the quad's unit radius).
 const SMOKE_FALLOFF: f32 = 2.5;
-// How much of a puff's light comes from the sky above it; the rest from the low sun's side.
+// How much of a puff's sky light comes from the sky above it; the rest from the low sun's side.
 const SMOKE_SKY_SHARE: f32 = 0.7;
+// Wood smoke's phase: fine particles scatter the sun mostly forwards (Henyey-Greenstein), so a
+// puff between the camera and a low sun glows and one beside it is lit softly.
+const SMOKE_PHASE_G: f32 = 0.4;
+// How much of the sun a puff's own body takes out of its light at its centre (self-shadowing).
+const SMOKE_SELF_SHADOW: f32 = 0.4;
+// The share of the sun's light that reaches a puff through the rest of the plume (the sprites draw
+// each puff alone, so the plume's own shade is folded in here): with all of it, the plume between
+// the camera and the low sun glowed as a white beam over the dark trees (pass-1 gate finding 09).
+const SMOKE_SUN_SHARE: f32 = 0.3;
 
 const KIND_GLOW: f32 = 0.0;
 // A glow's light is band-limited to the pixel grid (renderer pass 2, B.7): each of its Gaussian
@@ -114,6 +125,7 @@ fn sprite_out(i: u32, sprite: SpriteIn) -> SpriteOut {
     out.color = sprite.color;
     out.kind = sprite.axis_kind.w;
     out.blur = sprite_blur(sprite);
+    out.sun_cos = dot(normalize(sprite.center_size.xyz - gx_frame.camera_pos.xyz), normalize(gx_frame.sun_dir.xyz));
     return out;
 }
 
@@ -122,17 +134,27 @@ fn vs_sprite(@builtin(vertex_index) i: u32, sprite: SpriteIn) -> SpriteOut {
     return sprite_out(i, sprite);
 }
 
-// The light smoke of colour `albedo` scatters: under the environment (the physical sky or a map)
-// what a surface of that colour facing the sky and the sun reflects, so the smoke sits in the
-// sky's light rather than glowing over it; on the flat colour (and the legacy scene) the painted
-// colour as it is.
-fn smoke_light(albedo: vec3<f32>) -> vec3<f32> {
+// The Henyey-Greenstein phase of asymmetry `g` at `cos_theta` (per steradian).
+fn smoke_phase(cos_theta: f32, g: f32) -> f32 {
+    let g2 = g * g;
+    let denominator = max(1.0 + g2 - 2.0 * g * cos_theta, 1e-4);
+    return (1.0 - g2) / (4.0 * PI * denominator * sqrt(denominator));
+}
+
+// The light smoke of single-scattering albedo `albedo` scatters towards the camera: under the
+// environment (the physical sky or a map) the sky's light it sits in (the environment's irradiance
+// above it and towards the low sun) plus the sun's (or the moon's) light through its forward phase
+// at `sun_cos`, less what the puff's own `body` shades; on the flat colour (and the legacy scene)
+// the painted colour as it is. Lit by the sky alone it drew as a dark grey column against the blue
+// dusk (look fix lane SKY).
+fn smoke_light(albedo: vec3<f32>, sun_cos: f32, body: f32) -> vec3<f32> {
     if !environment_lights() {
         return albedo;
     }
     let sky = sh9_irradiance(gx_env_sh, vec3<f32>(0.0, 1.0, 0.0));
     let sun_side = sh9_irradiance(gx_env_sh, normalize(GLOW_DIR));
-    return albedo * mix(sun_side, sky, SMOKE_SKY_SHARE);
+    let sun = gx_frame.sun_color.rgb * (smoke_phase(sun_cos, SMOKE_PHASE_G) * SMOKE_SUN_SHARE * (1.0 - SMOKE_SELF_SHADOW * body));
+    return albedo * (mix(sun_side, sky, SMOKE_SKY_SHARE) + sun);
 }
 
 @fragment
@@ -144,7 +166,7 @@ fn fs_sprite(in: SpriteOut) -> @location(0) vec4<f32> {
         // wisp with no edge (pass-1 gate finding 09: hard-edged puffs stacked into a white beam).
         let body = exp(-r2 * SMOKE_FALLOFF) * (1.0 - smoothstep(0.5, 1.0, sqrt(r2)));
         let a = body * in.color.a * (0.6 + 0.4 * n);
-        return vec4<f32>(scene_rgb(smoke_light(in.color.rgb)) * a, a);
+        return vec4<f32>(scene_rgb(smoke_light(in.color.rgb, in.sun_cos, body)) * a, a);
     }
     let reach = glow_reach(in.blur);
     if r2 > reach * reach {

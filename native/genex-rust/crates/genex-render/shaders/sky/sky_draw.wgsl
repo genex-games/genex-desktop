@@ -237,7 +237,7 @@ fn sky_clouded(radiance: vec3<f32>, dir: vec3<f32>) -> vec3<f32> {
     if dir.y <= 0.0 {
         return radiance;
     }
-    return gx_clouds_over(radiance, textureSampleLevel(cloud_panorama, cloud_sampler, gx_cloud_uv(dir), 0.0));
+    return gx_clouds_over(radiance, gx_clouds_at(cloud_panorama, cloud_sampler, dir));
 }
 
 // The sky-view LUT along unit `dir` with the sun towards unit `sun` at `height` km, plus the

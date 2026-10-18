@@ -31,3 +31,19 @@ fn gx_cloud_dir(uv: vec2<f32>) -> vec3<f32> {
 fn gx_clouds_over(sky: vec3<f32>, clouds: vec4<f32>) -> vec3<f32> {
     return sky * clouds.a + clouds.rgb;
 }
+
+// The panorama along unit `dir` (dir.y >= 0), filtered [1, 2, 1] / 4 over a texel either side each
+// way: four bilinear taps half a texel off. Each texel's march starts at its own interleaved
+// gradient offset (fixed, so amortising cannot flicker), and at ultra's three pixels a texel on a
+// 4K frame the bare texels showed that dither as a cross-hatch along the clouds' edges (look fix
+// lane SKY); a texel's neighbours hold offsets spread over the whole step, so the filter averages
+// the dither out (about a sixth of it is left) at the cost of a texel's softness.
+fn gx_clouds_at(panorama: texture_2d<f32>, panorama_sampler: sampler, dir: vec3<f32>) -> vec4<f32> {
+    let uv = gx_cloud_uv(dir);
+    let half_texel = 0.5 / vec2<f32>(textureDimensions(panorama));
+    var sum = textureSampleLevel(panorama, panorama_sampler, uv + vec2<f32>(-half_texel.x, -half_texel.y), 0.0);
+    sum += textureSampleLevel(panorama, panorama_sampler, uv + vec2<f32>(half_texel.x, -half_texel.y), 0.0);
+    sum += textureSampleLevel(panorama, panorama_sampler, uv + vec2<f32>(-half_texel.x, half_texel.y), 0.0);
+    sum += textureSampleLevel(panorama, panorama_sampler, uv + vec2<f32>(half_texel.x, half_texel.y), 0.0);
+    return sum * 0.25;
+}

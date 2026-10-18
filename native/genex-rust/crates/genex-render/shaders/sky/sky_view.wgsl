@@ -271,7 +271,7 @@ fn cs_sky_cube(@builtin(global_invocation_id) id: vec3<u32>) {
     var radiance = textureSampleLevel(sky_view_in, lut_sampler, sky_view_uv(dir, sun, height), 0.0).rgb;
     radiance += sky_night(dir, sun, height, SKY_PI / (2.0 * f32(side)));
     if dir.y > 0.0 {
-        radiance = gx_clouds_over(radiance, textureSampleLevel(cloud_panorama, cloud_sampler, gx_cloud_uv(dir), 0.0));
+        radiance = gx_clouds_over(radiance, gx_clouds_at(cloud_panorama, cloud_sampler, dir));
     }
     textureStore(cube_out, vec2<i32>(id.xy), i32(id.z), vec4<f32>(radiance, 1.0));
 }

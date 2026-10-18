@@ -169,12 +169,16 @@ pub const SKY_GROUND: [f32; 3] = [0.16, 0.15, 0.08];
 /// The physical sky's clouds (renderer pass 2 B.5, drawn from desktop medium up; phones and low
 /// draw none, D16): a few fair-weather cumulus over the lake, thinner than the renderer's default.
 /// The clouds light the scene's ambient through the environment cube: at 0.4 they warmed the
-/// golden meadow on the wide shot's left by 13 levels (D13 keeps it); at 0.3 hardly a cloud shows.
-pub const SKY_CLOUD_COVERAGE: f32 = 0.35;
+/// golden meadow on the wide shot's left by 13 levels (owner decision D20 keeps that warmth); at
+/// 0.3 hardly a cloud shows.
+pub const SKY_CLOUD_COVERAGE: f32 = 0.4;
+/// The cirrus sheet above them: the streaky deck the low sun lights gold, which the game's flat
+/// clouds drew before the renderer's took over (look fix lane SKY).
+pub const SKY_CIRRUS: f32 = 0.6;
 
-/// The physical sky's layer of clouds ([`SKY_CLOUD_COVERAGE`]).
+/// The physical sky's layer of clouds ([`SKY_CLOUD_COVERAGE`], [`SKY_CIRRUS`]).
 pub fn sky_clouds() -> Clouds {
-    Clouds::default().with_coverage(SKY_CLOUD_COVERAGE)
+    Clouds::default().with_coverage(SKY_CLOUD_COVERAGE).with_cirrus(SKY_CIRRUS)
 }
 /// The clear map's light against the lakeside's sun: its midday sky is far brighter than the
 /// golden-hour scene was lit for.

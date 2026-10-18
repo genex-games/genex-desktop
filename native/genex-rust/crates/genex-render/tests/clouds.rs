@@ -166,6 +166,9 @@ fn a_cloud_layer_is_held_to_what_the_kernel_takes() {
     let thin = Clouds::default().with_layer(-3.0, 0.0);
     assert!(thin.base_km > 0.0 && thin.thickness_km > 0.0, "a layer keeps a base above the ground and a thickness: {thin:?}");
     assert!(Clouds::default().with_density(f32::NAN).density.is_finite(), "a NaN density is refused");
+    assert_eq!(Clouds::default().cirrus, 0.0, "the default layer has no cirrus");
+    assert_eq!(Clouds::default().with_cirrus(2.0).cirrus, 1.0);
+    assert_eq!(Clouds::default().with_cirrus(f32::NAN).cirrus, 0.0, "a NaN cirrus takes the default's");
     assert_eq!(SkyParams::default().clouds, None, "the default sky has no clouds (every sky golden holds)");
 }
 
@@ -579,6 +582,11 @@ fn metal_evidence_frames_of_the_clouds() {
             renderer.render(&gpu, &sky_scene(sun, pitch, 60.0), CullPath::Gpu).expect("frame");
             let capture = renderer.capture(&gpu).expect("capture");
             write_evidence(&format!("{name}-{preset:?}"), &capture);
+            // The Lakeside's sky: its fair-weather cumulus under a cirrus sheet.
+            let lakeside = SkyParams::default().with_clouds(Some(Clouds::default().with_coverage(CIRRUS_ROW_COVERAGE).with_cirrus(CIRRUS_ROW_SHEET)));
+            let mut renderer = sky_renderer(&gpu, preset, size, lakeside, environment(preset).clouds);
+            renderer.render(&gpu, &sky_scene(sun, pitch, 60.0), CullPath::Gpu).expect("frame");
+            write_evidence(&format!("{name}-cirrus-{preset:?}"), &renderer.capture(&gpu).expect("capture"));
         }
     }
 }
@@ -669,4 +677,113 @@ fn metal_golden_hour_clouds_overhead_do_not_dye_the_ambient_orange() {
     eprintln!("golden hour +Y: clear {clear:?} (red over blue {:.2}), cloudy {cloudy:?} (red over blue {red_over_blue:.2}); brightening {brightening:.2}x", warmth(clear));
     assert!(red_over_blue <= GOLDEN_RED_OVER_BLUE_MAX, "the clouds overhead dye the ambient orange: red over blue {red_over_blue:.2} (at most {GOLDEN_RED_OVER_BLUE_MAX})");
     assert!(brightening <= GOLDEN_BRIGHTENING_MAX, "the clouds overhead brighten the ambient {brightening:.2}x (at most {GOLDEN_BRIGHTENING_MAX})");
+}
+
+/// The 4K frame the dither row reads: ultra's panorama at its 1:1 output.
+const DITHER_SIZE: (u32, u32) = (3840, 2160);
+/// The most texel-scale noise a cloudy 4K sky may hold over the clear sky's, in levels: the mean,
+/// over the sky, of each pixel's luma step from the mean of its 3 x 3 neighbourhood (a soft cloud
+/// edge is smooth at that scale; the march's dither is not), and the same at the 99.9th percentile.
+const DITHER_MEAN_OVER_CLEAR_MAX: f32 = 0.15;
+const DITHER_P999_MAX: f32 = 2.0;
+
+/// Each sky pixel's luma step (levels) from the mean of its 3 x 3 neighbourhood, over the top
+/// `rows` rows of a `width`-wide frame, sorted.
+fn texel_noise(values: &[f32], width: usize, rows: usize) -> Vec<f32> {
+    let mut steps = Vec::with_capacity(width * rows);
+    for y in 1..rows - 1 {
+        for x in 1..width - 1 {
+            let mut sum = 0.0;
+            for dy in 0..3 {
+                for dx in 0..3 {
+                    sum += values[(y + dy - 1) * width + x + dx - 1];
+                }
+            }
+            steps.push((values[y * width + x] - sum / 9.0).abs());
+        }
+    }
+    steps.sort_by(f32::total_cmp);
+    steps
+}
+
+/// Look fix lane SKY (after the final shots): at 4K 1:1 the clouds' edges showed the march's
+/// start-offset dither as a cross-hatch (each panorama texel's interleaved-gradient offset,
+/// magnified three pixels a texel). The cloudy 4K sky on ultra holds no more texel-scale noise
+/// than the clear sky's plus [`DITHER_MEAN_OVER_CLEAR_MAX`] levels on average, and its worst
+/// thousandth stays under [`DITHER_P999_MAX`] levels, at golden hour and in the afternoon.
+#[test]
+#[ignore = "needs a GPU: run with --ignored metal"]
+fn metal_cloud_edges_show_no_march_dither_at_4k() {
+    let Some(gpu) = gpu() else { return };
+    let ultra = environment(QualityPreset::Ultra).clouds;
+    let mut problems = Vec::new();
+    for (name, sun, pitch) in [("golden-hour", towards(7.0, 15.0), 12.0), ("afternoon", towards(25.0, -35.0), 14.0)] {
+        let scene = sky_scene(sun, pitch, 60.0);
+        let draw = |sky: SkyParams| {
+            let mut renderer = sky_renderer(&gpu, QualityPreset::Ultra, DITHER_SIZE, sky, ultra);
+            renderer.render(&gpu, &scene, CullPath::Gpu).expect("frame");
+            renderer.capture(&gpu).expect("capture")
+        };
+        let (clear, cloudy_frame) = (draw(SkyParams::default()), draw(cloudy()));
+        write_evidence(&format!("dither-{name}"), &cloudy_frame);
+        let (width, rows) = (DITHER_SIZE.0 as usize, DITHER_SIZE.1 as usize * 3 / 5);
+        let mean = |steps: &[f32]| steps.iter().sum::<f32>() / steps.len().max(1) as f32;
+        let (clear_steps, cloudy_steps) = (texel_noise(&lumas(&clear), width, rows), texel_noise(&lumas(&cloudy_frame), width, rows));
+        let (clear_mean, cloudy_mean) = (mean(&clear_steps), mean(&cloudy_steps));
+        let p999 = cloudy_steps[cloudy_steps.len() * 999 / 1000];
+        eprintln!("{name}: texel-scale noise clear {clear_mean:.3}, cloudy {cloudy_mean:.3} levels; cloudy p99.9 {p999:.2} (clear {:.2})", clear_steps[clear_steps.len() * 999 / 1000]);
+        if cloudy_mean > clear_mean + DITHER_MEAN_OVER_CLEAR_MAX || p999 > DITHER_P999_MAX {
+            problems.push(format!("{name}: texel-scale noise {cloudy_mean:.3} against the clear sky's {clear_mean:.3}, p99.9 {p999:.2} levels"));
+        }
+    }
+    assert!(problems.is_empty(), "{problems:#?}");
+}
+
+/// The cirrus row's cumulus coverage (the Lakeside's) and its sheet.
+const CIRRUS_ROW_COVERAGE: f32 = 0.35;
+const CIRRUS_ROW_SHEET: f32 = 0.6;
+/// The share of the clear gaps (no cumulus, at least 15 degrees up) the sheet covers (dims the sky
+/// behind by 3% or more), at least and at most: streaks, not an overcast.
+const CIRRUS_GAP_SHARE: std::ops::RangeInclusive<f32> = 0.15..=0.8;
+/// The sheet is thin: what it leaves of the sky behind, on average where it covers.
+const CIRRUS_THROUGH_MIN: f32 = 0.4;
+
+/// Look fix lane SKY (after the final shots): the Lakeside's dusk lost GB's streaky cirrus deck
+/// when the renderer's cumulus replaced the game's flat clouds. A layer with cirrus draws a thin
+/// sheet of streaks above the cumulus: in the gaps between the cumulus at golden hour it covers
+/// [`CIRRUS_GAP_SHARE`] of the sky, leaves at least [`CIRRUS_THROUGH_MIN`] of it behind on
+/// average, and lights it (the streaks add light where they dim the sky); a layer without cirrus
+/// leaves the gaps clear.
+#[test]
+#[ignore = "needs a GPU: run with --ignored metal"]
+fn metal_a_cirrus_sheet_streaks_the_sky_above_the_cumulus() {
+    let Some(gpu) = gpu() else { return };
+    let quality = environment(QualityPreset::High);
+    let width = quality.clouds.expect("clouds on high").panorama.0 as usize;
+    let sun = towards(7.0, 15.0);
+    let panorama = |cirrus: f32| {
+        let sky = SkyParams::default().with_clouds(Some(Clouds::default().with_coverage(CIRRUS_ROW_COVERAGE).with_cirrus(cirrus)));
+        let mut state = SkyState::new();
+        state.set_environment(&Environment::Sky(sky));
+        encode_sky(&gpu, &mut state, &sky, &quality, sky_frame(sun, 0), true);
+        state.read_clouds(&gpu).expect("panorama")
+    };
+    let (bare, sheet) = (panorama(0.0), panorama(CIRRUS_ROW_SHEET));
+    let rows = bare.len() / width;
+    let up = |at: usize| {
+        let t = 1.0 - ((at / width) as f32 + 0.5) / rows as f32;
+        (0.25 * std::f32::consts::PI * (t + t * t)).to_degrees() >= 15.0
+    };
+    let gaps: Vec<usize> = (0..bare.len()).filter(|at| up(*at) && bare[*at][3] >= 0.999).collect();
+    assert!(gaps.len() > width, "the cumulus leaves gaps ({})", gaps.len());
+    let covered: Vec<usize> = gaps.iter().copied().filter(|at| sheet[*at][3] <= 0.97).collect();
+    let share = covered.len() as f32 / gaps.len() as f32;
+    let n = covered.len().max(1) as f32;
+    let through = covered.iter().map(|at| sheet[*at][3]).sum::<f32>() / n;
+    let light = covered.iter().map(|at| luminance(sheet[*at])).sum::<f32>() / n;
+    let bare_light = gaps.iter().map(|at| luminance(bare[*at])).sum::<f32>() / gaps.len() as f32;
+    eprintln!("cirrus: {share:.3} of {} gap texels covered, mean through {through:.3}, light {light:.4} (bare {bare_light:.4})", gaps.len());
+    assert!(CIRRUS_GAP_SHARE.contains(&share), "the sheet covers {share:.3} of the gaps (wanted {CIRRUS_GAP_SHARE:?})");
+    assert!(through >= CIRRUS_THROUGH_MIN, "the sheet is thin: {through:.3} of the sky left behind (at least {CIRRUS_THROUGH_MIN})");
+    assert!(light > 2.0 * bare_light.max(1e-6), "the streaks are lit: {light:.4} against the bare gaps' {bare_light:.4}");
 }

@@ -208,19 +208,25 @@ light see them; no forward binding. The noise (a Perlin-Worley shape volume, a W
 and a weather field, after sebh's TileableVolumeNoise) is made once on the GPU; the march follows
 takram's three-clouds (multiple-scattering octaves, a dual-lobe phase, the sky's light as ambient,
 the air in front of the clouds from the transmittance and sky-view LUTs) without its STBN texture:
-each texel starts at a fixed interleaved gradient noise of its position. Amortised: while the sun or
-the camera's height or the layer (a drifting offset) moves, each frame marches one texel of every
-4x4 block (8x8 on ultra); a settled capture, the first frame or a sun that jumps 2 degrees marches
-it whole. The clouds' ambient is the sky-view LUT's cosine-weighted mean over the sky (the zenith
-and three rings), and the march towards a low sun reaches as far through the layer as the slant
-asks (up to 10 km), so golden-hour bases overhead stay in their own shade instead of glowing flat
-orange and dyeing the environment's ambient. On a night the moon outshines the set sun
+each texel starts at a fixed 2 x 2 Bayer quarter of its first step plus an interleaved gradient
+noise of its position, and both composites read the panorama through `gx_clouds_at`, a [1, 2, 1] / 4
+filter over a texel either side, which cancels the Bayer part of that dither (at 4K the bare texels
+showed it as a cross-hatch along the clouds' edges). `Clouds::with_cirrus` adds a thin sheet of
+cirrus streaks 8 km up, in patches, singly scattering the sun through the air (the planet's shadow
+included) over a forward phase, composited behind the cumulus in the same march. Amortised: while
+the sun or the camera's height or the layer (a drifting offset) moves, each frame marches one texel
+of every 4x4 block (8x8 on ultra); a settled capture, the first frame or a sun that jumps 2 degrees
+marches it whole. The clouds' ambient is the sky-view LUT's cosine-weighted mean over the sky (the
+zenith and three rings), and the march towards a low sun reaches as far through the layer as the
+slant asks (up to 10 km), so golden-hour bases overhead stay in their own shade instead of glowing
+flat orange and dyeing the environment's ambient. On a night the moon outshines the set sun
 (`night_sky::ground_light`), the moon lights the clouds with the moonlit sky-view LUT as their
 ambient, and their light takes the moon's tint at its luminance (no warm cast from the low moon's
-reddened light). The clouds light the scene's shade through the environment, so a heavy
-golden-hour layer still warms it (the showcase Lakeside keeps 0.35 cover). `tests/clouds.rs` holds the
-budget (1.0 ms a frame on high, march and composite), the sun-disc and cloud reprojection row under
-a turning camera, the cloud-edge flicker row, the moonlit-night row and the golden-hour ambient row.
+reddened light). The clouds light the scene's shade through the environment, so a heavy golden-hour
+layer still warms it (the showcase Lakeside keeps 0.4 cover under 0.6 cirrus). `tests/clouds.rs`
+holds the budget (1.0 ms a frame on high, march and composite), the sun-disc and cloud reprojection
+row under a turning camera, the cloud-edge flicker row, the moonlit-night row, the golden-hour
+ambient row, the 4K dither row and the cirrus row.
 
 ## Fog, aerial perspective and froxel fog
 

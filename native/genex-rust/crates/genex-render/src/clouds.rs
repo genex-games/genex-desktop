@@ -96,6 +96,9 @@ pub struct Clouds {
     /// Where the weather field is shifted to over the ground (x and z, km): a game moves it to let
     /// the clouds drift (each change marches the panorama again, amortised).
     pub offset_km: [f32; 2],
+    /// How much of the sky a thin sheet of cirrus streaks high above the layer covers, 0 (none,
+    /// the default) to 1: ice cloud the low sun lights gold and pink, the deck of a fair evening.
+    pub cirrus: f32,
 }
 
 /// The default layer, as a constant ([`Clouds::default`]).
@@ -105,6 +108,7 @@ const DEFAULT_CLOUDS: Clouds = Clouds {
     thickness_km: DEFAULT_THICKNESS_KM,
     density: DEFAULT_DENSITY,
     offset_km: [0.0, 0.0],
+    cirrus: 0.0,
 };
 
 impl Default for Clouds {
@@ -128,6 +132,7 @@ impl Clouds {
             thickness_km: held(self.thickness_km, default.thickness_km, THICKNESS_MIN_KM, THICKNESS_MAX_KM),
             density: held(self.density, default.density, 0.0, DENSITY_MAX),
             offset_km: self.offset_km.map(|o| held(o, 0.0, -OFFSET_MAX_KM, OFFSET_MAX_KM)),
+            cirrus: held(self.cirrus, default.cirrus, 0.0, 1.0),
         }
     }
 
@@ -147,6 +152,12 @@ impl Clouds {
     /// The layer with its extinction times `density`.
     pub fn with_density(mut self, density: f32) -> Clouds {
         self.density = density;
+        self.validated()
+    }
+
+    /// The layer with a sheet of cirrus covering `cirrus` of the sky (0 none to 1) above it.
+    pub fn with_cirrus(mut self, cirrus: f32) -> Clouds {
+        self.cirrus = cirrus;
         self.validated()
     }
 
@@ -209,7 +220,7 @@ pub struct GpuClouds {
     pub offset: [f32; 4],
     /// xyz: towards the light (the sun, or the moon on a moonlit night); w: 1 for the moon.
     pub sun_dir: [f32; 4],
-    /// rgb: the sun's illuminance outside the atmosphere; w: unused.
+    /// rgb: the sun's illuminance outside the atmosphere; w: the cirrus sheet's coverage.
     pub sun_illuminance: [f32; 4],
     /// x, y: the slice's texel in each block (0 for a whole march); z: the block's side (1: whole);
     /// w: unused.
@@ -583,7 +594,7 @@ impl CloudPanorama {
             layer: [clouds.base_km, clouds.base_km + clouds.thickness_km, clouds.coverage, clouds.density],
             offset: [clouds.offset_km[0], clouds.offset_km[1], a.ground_albedo[3], a.sun_illuminance[3]],
             sun_dir: [a.sun_dir[0], a.sun_dir[1], a.sun_dir[2], if frame.moonlit { 1.0 } else { 0.0 }],
-            sun_illuminance: [a.sun_illuminance[0], a.sun_illuminance[1], a.sun_illuminance[2], 0.0],
+            sun_illuminance: [a.sun_illuminance[0], a.sun_illuminance[1], a.sun_illuminance[2], clouds.cirrus],
             slice: [slice.0, slice.1, block, 0],
             steps: [self.grid.steps, self.grid.light_steps, 0, 0],
         };

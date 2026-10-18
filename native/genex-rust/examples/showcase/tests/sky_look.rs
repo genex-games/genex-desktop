@@ -160,3 +160,56 @@ fn metal_the_night_steam_is_a_faint_wisp_not_a_bright_column() {
     assert!(lift >= NIGHT_STEAM_LIFT_MIN, "the steam still shows as a wisp, lighter than the road, never a dark smudge (lift {lift:.1})");
     assert!(lift <= NIGHT_STEAM_LIFT_MAX, "the night's steam lifts its column {lift:.1} levels (at most {NIGHT_STEAM_LIFT_MAX})");
 }
+
+/// The Lakeside's shore shot at 1440p (dusk, ultra): the chimney's smoke column, rows read up it
+/// (pixels; below them the treetops reach the sky beside it) and the columns it rises through, and
+/// the sky either side of it (columns).
+const SMOKE_ROWS: std::ops::Range<usize> = 220..380;
+const SMOKE_COLUMNS: std::ops::Range<usize> = 960..1120;
+const SKY_LEFT: std::ops::Range<usize> = 900..940;
+const SKY_RIGHT: std::ops::Range<usize> = 1140..1180;
+/// The most the smoke may darken the sky beside it (levels, the darkest pixel on a row against the
+/// sky's mean on that row): wood smoke the low sun and the sky light is pale and translucent.
+const SMOKE_DARKER_MAX: f64 = 12.0;
+/// The least it must show (the largest step from the sky on any row, either way).
+const SMOKE_SHOWS_MIN: f64 = 3.0;
+
+/// The luma (0..255) of `capture` at (x, y).
+fn luma_at(capture: &Capture, x: usize, y: usize) -> f64 {
+    let i = (y * capture.width() as usize + x) * 4;
+    let p = &capture.bgra()[i..i + 4];
+    0.2126 * f64::from(p[2]) + 0.7152 * f64::from(p[1]) + 0.0722 * f64::from(p[0])
+}
+
+/// Look fix lane SKY (after the final shots): the cabin's chimney smoke drew as a dark grey column
+/// against the blue dusk sky on the shore shot (it had hidden in GB's bright cirrus), its
+/// reflection a dark streak in the lake. Smoke is lit by the sun through it and by the sky: on
+/// every row of its column it darkens the sky beside it by at most [`SMOKE_DARKER_MAX`] levels,
+/// and it still shows ([`SMOKE_SHOWS_MIN`]).
+#[test]
+#[ignore = "needs a GPU: run with --ignored metal"]
+fn metal_the_chimney_smoke_is_pale_not_a_dark_column_against_the_dusk_sky() {
+    if gpu().is_none() {
+        return;
+    }
+    let mut runtime = Runtime::new(showcase_game::game()).expect("the lakeside installs");
+    runtime.seed(1);
+    runtime.start();
+    runtime.inject(Input::key_tap(Key::KeyH));
+    runtime.step(f64::from(SHOT_TICK) * FIXED_STEP_MS);
+    let presenter = Presenter::open(showcase_game::showcase::WORLD_SIZE, showcase_game::assets()).expect("presenter");
+    let capture = settled(presenter, runtime, "shore", QualityPreset::Ultra, (2560, 1440));
+    write_png(&out_dir().join("smoke-shore-ultra-2560x1440.png"), &capture);
+    let (mut darker, mut shows) = (f64::MIN, 0.0f64);
+    for y in SMOKE_ROWS.step_by(10) {
+        let beside: Vec<f64> = SKY_LEFT.chain(SKY_RIGHT).map(|x| luma_at(&capture, x, y)).collect();
+        let sky = beside.iter().sum::<f64>() / beside.len() as f64;
+        let column: Vec<f64> = SMOKE_COLUMNS.map(|x| luma_at(&capture, x, y) - sky).collect();
+        let (low, high) = column.iter().fold((f64::MAX, f64::MIN), |(lo, hi), d| (lo.min(*d), hi.max(*d)));
+        darker = darker.max(-low);
+        shows = shows.max(-low).max(high);
+    }
+    eprintln!("chimney smoke on the shore shot: darkens the sky by {darker:.1} levels at most, shows by {shows:.1}");
+    assert!(darker <= SMOKE_DARKER_MAX, "the smoke darkens the dusk sky by {darker:.1} levels (at most {SMOKE_DARKER_MAX})");
+    assert!(shows >= SMOKE_SHOWS_MIN, "the smoke still shows ({shows:.1} levels)");
+}

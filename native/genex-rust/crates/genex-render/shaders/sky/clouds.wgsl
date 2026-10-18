@@ -16,8 +16,9 @@
 //   clouds (the transmittance LUT's ratio) dims their light, and the sky's light in front of them
 //   (the sky-view LUT along the ray, the share the air there scatters) is added to it, so the
 //   composite multiplies the sky behind (and the sun's disk) by the clouds' transmittance alone.
-// Each texel starts its march at an interleaved gradient noise of its own position, fixed over
-// time (never takram's STBN texture): a texel marched again under the same sun writes the same value.
+// Each texel starts its march at a 2 x 2 Bayer quarter plus an interleaved gradient noise of its own
+// position, fixed over time (never takram's STBN texture): a texel marched again under the same sun
+// writes the same value.
 
 @group(0) @binding(0) var<uniform> atmosphere: SkyAtmosphere;
 @group(0) @binding(1) var<uniform> params: CloudParams;
@@ -46,9 +47,11 @@ struct CloudParams {
 }
 
 // The noise's periods over the world, km: the shape, the erosion and the weather field.
-const CLOUD_SHAPE_KM: f32 = 9.0;
-const CLOUD_DETAIL_KM: f32 = 1.3;
+const CLOUD_SHAPE_KM: f32 = 6.0;
+const CLOUD_DETAIL_KM: f32 = 0.8;
 const CLOUD_WEATHER_KM: f32 = 24.0;
+// How deep the detail volume erodes the shape's edges (share of the density it cuts at most).
+const CLOUD_EROSION: f32 = 0.5;
 // Extinction at density 1 and full cloud, per km (cumulus: about 0.03 to 0.1 per metre).
 const CLOUD_EXTINCTION_PER_KM: f32 = 20.0;
 // The share of extinction that scatters (water droplets barely absorb).
@@ -145,7 +148,7 @@ fn cloud_density(p: vec3<f32>, fraction: f32, eroded: bool) -> f32 {
         let detail = textureSampleLevel(detail_noise, noise_sampler, at / CLOUD_DETAIL_KM, 0.0);
         let erosion = detail.r * 0.625 + detail.g * 0.25 + detail.b * 0.125;
         let wisps = mix(erosion, 1.0 - erosion, clamp(fraction * 5.0, 0.0, 1.0));
-        density = clamp(cloud_remap(density, wisps * 0.35, 1.0, 0.0, 1.0), 0.0, 1.0);
+        density = clamp(cloud_remap(density, wisps * CLOUD_EROSION, 1.0, 0.0, 1.0), 0.0, 1.0);
     }
     return density * params.layer.w;
 }
@@ -243,15 +246,27 @@ fn cloud_ambient(sun: vec3<f32>, height: f32) -> vec3<f32> {
     return sum / weight;
 }
 
-// Interleaved gradient noise (Jimenez 2014) of a texel: where along its first step its march starts.
+// Where along its first step a texel's march starts: a quarter of the step from the texel's place in
+// a 2 x 2 Bayer block, plus an interleaved gradient noise (Jimenez 2014) of its position within that
+// quarter. The composite filters the panorama [1, 2, 1] / 4 each way (`gx_clouds_at`), which weighs
+// the four places of any 2 x 2 block alike, so the Bayer part of the dither cancels there and only
+// the noise inside each quarter is left (look fix lane SKY: a bare noise over the whole step showed
+// as a cross-hatch along the clouds' edges at 4K).
 fn cloud_start(texel: vec2<u32>) -> f32 {
     let p = vec2<f32>(texel);
-    return fract(52.9829189 * fract(dot(p, vec2<f32>(0.06711056, 0.00583715))));
+    let bayer = f32(((texel.x & 1u) ^ (texel.y & 1u)) * 2u + (texel.y & 1u));
+    return (bayer + fract(52.9829189 * fract(dot(p, vec2<f32>(0.06711056, 0.00583715))))) * 0.25;
 }
 
-// The clouds along unit `dir` from the camera: rgb their light as it reaches it plus the sky's in
-// front of them, a their transmittance (gx_clouds_over).
+// The clouds along unit `dir` from the camera: the cumulus layer, then the cirrus sheet above it
+// seen through what the layer leaves (`cloud_cirrus`); rgb their light as it reaches the camera
+// plus the sky's in front of them, a their transmittance (gx_clouds_over).
 fn cloud_march(dir: vec3<f32>, texel: vec2<u32>) -> vec4<f32> {
+    return cloud_cirrus(dir, cloud_cumulus(dir, texel));
+}
+
+// The cumulus layer along unit `dir` (`cloud_march`'s terms).
+fn cloud_cumulus(dir: vec3<f32>, texel: vec2<u32>) -> vec4<f32> {
     let bottom = atmosphere.radii.x;
     let height = max(params.offset.z, 0.0);
     if dir.y < 0.0 || height >= params.layer.y {
@@ -313,6 +328,70 @@ fn cloud_march(dir: vec3<f32>, texel: vec2<u32>) -> vec4<f32> {
     // the clouds hide (the composite multiplies the whole sky by `through`).
     let front = cloud_sky(dir, sun, height) * (vec3<f32>(1.0) - air) * (1.0 - through);
     return vec4<f32>(cloud_moonlit(light) * air + front, through);
+}
+
+// The cirrus sheet (look fix lane SKY: the Lakeside's dusk had lost the game's streaky cirrus deck
+// when the renderer's cumulus replaced its flat clouds): a sheet of ice cloud CIRRUS_HEIGHT_KM up,
+// its cover the weather field read in streaks CIRRUS_STREAK_KM long and wide along CIRRUS_WIND
+// in patches CIRRUS_PATCH_KM across,
+// optically thin (CIRRUS_DEPTH at full cover straight up, more along a slant), single scattering of
+// the sun through the air (the planet's shadow included, so it glows pink after the sun has set
+// on the ground) over a mostly forward phase, plus the sky's light.
+const CIRRUS_HEIGHT_KM: f32 = 8.0;
+const CIRRUS_STREAK_KM: vec2<f32> = vec2<f32>(40.0, 9.0);
+const CIRRUS_PATCH_KM: f32 = 70.0;
+// The view's rise (sine of elevation) over which the streaks' fine octave fades in.
+const CIRRUS_FINE_FADE: vec2<f32> = vec2<f32>(0.05, 0.3);
+const CIRRUS_WIND: vec2<f32> = vec2<f32>(0.8, 0.6);
+const CIRRUS_DEPTH: f32 = 0.6;
+const CIRRUS_SOFT: f32 = 0.4;
+const CIRRUS_SLANT_MIN: f32 = 0.1;
+const CIRRUS_FORWARD_G: f32 = 0.6;
+const CIRRUS_BACK_G: f32 = -0.2;
+const CIRRUS_FORWARD_WEIGHT: f32 = 0.7;
+
+// The sheet's cover (0..1) over a ground position (km, the layer's offset added), along unit
+// `dir`: patches of the weather field CIRRUS_PATCH_KM across hold the sheet, and within them the
+// field read in streaks; the streaks' fine octave fades towards the horizon, where a panorama texel
+// spans kilometres of them (it aliased into a comb there).
+fn cirrus_density(ground: vec2<f32>, dir: vec3<f32>) -> f32 {
+    let along = dot(ground, CIRRUS_WIND) / CIRRUS_STREAK_KM.x;
+    let across = dot(ground, vec2<f32>(-CIRRUS_WIND.y, CIRRUS_WIND.x)) / CIRRUS_STREAK_KM.y;
+    let q = vec2<f32>(along, across);
+    let patches = textureSampleLevel(weather, noise_sampler, ground / CIRRUS_PATCH_KM + vec2<f32>(0.5, 0.25), 0.0).r;
+    let fine = smoothstep(CIRRUS_FINE_FADE.x, CIRRUS_FINE_FADE.y, dir.y);
+    var f = textureSampleLevel(weather, noise_sampler, q, 0.0).r * 0.7;
+    f += (textureSampleLevel(weather, noise_sampler, q * vec2<f32>(2.3, 1.7) + vec2<f32>(0.31, 0.17), 0.0).g - 0.5) * 0.3 * fine;
+    let threshold = 1.0 - params.sun_illuminance.w;
+    return smoothstep(threshold, threshold + CIRRUS_SOFT, f * 0.6 + patches * 0.4);
+}
+
+// `under` (the cumulus along unit `dir`) with the cirrus sheet behind it: the sheet's light and
+// the sky in front of it reach the camera through what the cumulus leaves.
+fn cloud_cirrus(dir: vec3<f32>, under: vec4<f32>) -> vec4<f32> {
+    let height = max(params.offset.z, 0.0);
+    let cover = params.sun_illuminance.w;
+    if cover <= 0.0 || dir.y <= 0.0 || under.a <= 0.0 || height >= CIRRUS_HEIGHT_KM {
+        return under;
+    }
+    let bottom = atmosphere.radii.x;
+    let camera = vec3<f32>(0.0, bottom + height, 0.0);
+    let p = camera + dir * cloud_exit(camera, dir, bottom + CIRRUS_HEIGHT_KM);
+    let density = cirrus_density(p.xz + params.offset.xy, dir);
+    if density <= 0.0 {
+        return under;
+    }
+    let r = length(p);
+    let slant = max(dot(p / r, dir), CIRRUS_SLANT_MIN);
+    let through = exp(-density * CIRRUS_DEPTH / slant);
+    let sun = normalize(params.sun_dir.xyz);
+    let cos_theta = dot(dir, sun);
+    let phase = mix(cloud_hg(cos_theta, CIRRUS_BACK_G), cloud_hg(cos_theta, CIRRUS_FORWARD_G), CIRRUS_FORWARD_WEIGHT);
+    let source = cloud_sunlight(p, sun) * (phase * params.offset.w) + cloud_ambient(sun, height);
+    let light = cloud_moonlit(source * (CLOUD_ALBEDO * (1.0 - through)));
+    let air = cloud_air_tint(min(cloud_transmittance(height, dir.y) / max(cloud_transmittance(r - bottom, dot(p / r, dir)), vec3<f32>(1e-6)), vec3<f32>(1.0)));
+    let front = cloud_sky(dir, sun, height) * (vec3<f32>(1.0) - air) * (1.0 - through);
+    return vec4<f32>(under.rgb + under.a * (light * air + front), under.a * through);
 }
 
 // The clouds' own light `light` as night vision takes it under the moon: its luminance in the

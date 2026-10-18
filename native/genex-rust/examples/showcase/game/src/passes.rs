@@ -43,11 +43,13 @@ const WATER_MARGIN: f32 = 1.35;
 /// Chimney smoke puffs alive at once, and the seconds each lives.
 const SMOKE_PUFFS: u32 = 18;
 const SMOKE_LIFE: f32 = 9.0;
-/// Wood smoke's colour: a warm grey a little darker than the sky that lights it, so it reads as a
-/// soft wisp against the evening sky (it was painted near white and glowed as a beam on the HDR scene).
-const SMOKE_ALBEDO: [f32; 3] = [0.5, 0.47, 0.45];
-/// A young puff's opacity at its centre (it thins as it ages and spreads).
-const SMOKE_STRENGTH: f32 = 0.45;
+/// Wood smoke's single-scattering albedo: its fine particles scatter far more than they absorb, a
+/// little more in the blue. The sprite shader lights it by the sky and by the sun through its
+/// forward phase (`smoke_light`); at 0.5 lit by the sky alone it drew as a dark grey column against
+/// the dusk sky (look fix lane SKY).
+const SMOKE_ALBEDO: [f32; 3] = [0.82, 0.83, 0.86];
+/// A young puff's opacity at its centre (it thins as it ages and spreads): a stove's thin smoke.
+const SMOKE_STRENGTH: f32 = 0.35;
 
 /// Register every pass, in drawing order within each stage.
 pub fn wire(game: &mut Game<World>) {
