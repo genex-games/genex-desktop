@@ -505,6 +505,33 @@ fn thermal_load_holds_mobile_mid_at_its_sustained_rate_until_a_cool_spell() {
 
 type ShadowRow = (u8, u32, ShadowFilter, ShadowFormat, u8);
 
+/// The conformance suite's `render-presets` temporal case (`game-conformance-render.ts`
+/// `checkSwitchesDrawn`) on a real fork build (look measure 2026-10-18: "mobile-high (temporal): ao
+/// was switched on, but the drawn frame has it off and degraded does not name it"): each phone
+/// class on its own preset with TAA, AO and exposure switched on, after the presenter rebuilt the
+/// world pass for what Live asks, reports every switch drawn or names it in `degraded`.
+#[test]
+fn a_phone_with_the_temporal_switches_on_draws_each_or_names_it_in_degraded() {
+    let temporal = [RenderFeature::Taa, RenderFeature::Ao, RenderFeature::Exposure];
+    for wire in ["mobile-high", "mobile-mid", "mobile-low"] {
+        let mut phone = control(RenderConfig::new());
+        let change = RenderChange {
+            device_class: Some(Some(class(wire))),
+            preset: Some(Some(PresetChoice::Auto)),
+            features: temporal.iter().map(|feature| (*feature, true)).collect(),
+            ..RenderChange::default()
+        };
+        phone.apply(&change);
+        phone.note_world_samples(genex_render::renderer::landed_samples(phone.live_asked().quality.anti_aliasing));
+        let status = phone.status();
+        for feature in temporal {
+            let drawn = status.features.contains(&(feature, true));
+            let named = status.degraded.iter().any(|degrade| degrade.subject.as_deref() == Some(feature.wire()));
+            assert!(drawn || named, "{wire} (temporal): {} switched on is neither drawn nor degraded: {status:?}", feature.wire());
+        }
+    }
+}
+
 fn shadow_row(control: &RenderControl) -> ShadowRow {
     let shadows = control.live_frame().quality.shadows;
     (shadows.cascades, shadows.map_size, shadows.filter, shadows.format, shadows.far_cadence)

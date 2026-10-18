@@ -967,7 +967,9 @@ fn auto_pre_exposure(work: &ExposureFrame<'_>) -> Option<Buffer> {
 /// Draws [`ImmediateFrame`]s: the part-1 [`Renderer`] plus the 2D batch, custom materials, post
 /// passes, particles and the HUD stage, with the extension context the game declared.
 pub struct FrameRenderer {
-    renderer: Renderer,
+    /// Boxed: the renderer is about 42 KB, and a debug build copies it through every `?` and
+    /// move between here and the presenter, which overflowed a 2 MiB test thread.
+    renderer: Box<Renderer>,
     context: ExtensionContext,
     quads: QuadPass,
     materials: CustomMaterials,
@@ -1007,7 +1009,7 @@ impl FrameRenderer {
     pub fn with_native_features(gpu: &Gpu, width: u32, height: u32, options: RenderOptions, declared: Features) -> Result<FrameRenderer, RenderError> {
         let context = ExtensionContext::for_gpu(gpu, declared);
         context.check_device()?;
-        let renderer = Renderer::with_options(gpu, width, height, options)?;
+        let renderer = Box::new(Renderer::with_options(gpu, width, height, options)?);
         let samples = renderer.sample_count();
         let device = &gpu.device;
         Ok(FrameRenderer {

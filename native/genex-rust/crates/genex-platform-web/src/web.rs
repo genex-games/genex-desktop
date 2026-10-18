@@ -80,6 +80,7 @@ use genex_render::texture::{TextureData, TextureKind};
 use genex_render::device_class::DeviceClass;
 use genex_render::post::grading::{Grading, GradingLut, GradingLutError};
 use genex_render::presets::preset_quality;
+use genex_render::renderer::ScenePath;
 use genex_render::settings::{
     AntiAliasing, Environment, ExposureMode, Fog, Look, Quality, QualityPreset, RenderFeature, SceneFormat, ShadowFilter, ShadowFormat, TextureClass,
 };
@@ -596,7 +597,7 @@ const CHECK_EFFECT_PRESETS: [(QualityPreset, &str); 4] =
 /// screen-effect constants, and a v2 material binding the effects (AO, contact mask, aerial
 /// volume). The second frame takes AO's history path.
 fn effects_variant(gpu: &Gpu, preset: QualityPreset, class: DeviceClass) -> Result<(), RenderError> {
-    effects_at(gpu, preset, class, 1.0, None)
+    effects_at(gpu, preset, class, 1.0, None).map(drop)
 }
 
 /// The graded variants (renderer pass 2 A.2): desktop-high's medium and the low phone's own preset
@@ -615,21 +616,47 @@ const CHECK_GRADING_CONTRAST: f32 = 1.15;
 fn grading_variant(gpu: &Gpu, preset: QualityPreset, class: DeviceClass) -> Result<(), RenderError> {
     let refused = |error: GradingLutError| RenderError::refused(RenderCode::DeviceFailed, error.to_string());
     let lut = GradingLut::identity(CHECK_GRADING_LUT_SIDE).and_then(GradingLut::intern).map_err(refused)?;
-    effects_at(gpu, preset, class, 1.0, Some(Grading::NEUTRAL.with_contrast(CHECK_GRADING_CONTRAST).with_lut(lut, 1.0)))
+    effects_at(gpu, preset, class, 1.0, Some(Grading::NEUTRAL.with_contrast(CHECK_GRADING_CONTRAST).with_lut(lut, 1.0))).map(drop)
 }
 
-/// The presets the check draws below scale 1 (RQ5 review): the high phone's medium at its nominal
-/// 0.75 (EASU and RCAS after MSAA, the iPhone class's default) and the high desktop's high at its
-/// lowest dynamic-resolution step (TAA, then EASU and RCAS), so FSR1's pipelines and their
-/// `rgb10a2unorm` intermediates are created on the browser's device.
-const CHECK_UPSCALE_PRESETS: [(QualityPreset, &str, f32); 2] = [(QualityPreset::Medium, "mobile-high", 0.75), (QualityPreset::High, "desktop-high", 0.67)];
-
-/// [`effects_variant`] at render `scale`; an error when FSR1's upscale did not run below 1.
-fn upscale_variant(gpu: &Gpu, preset: QualityPreset, class: DeviceClass, scale: f32) -> Result<(), RenderError> {
-    effects_at(gpu, preset, class, scale, None)
+/// The upscaler a below-scale-1 variant must draw.
+#[derive(Clone, Copy, Debug)]
+enum CheckUpscaler {
+    /// FSR1: EASU then RCAS (the MSAA presets).
+    Fsr1,
+    /// TAAU (renderer pass 2 B.8): the temporal presets reconstruct to output size in the TAA
+    /// resolve, with no EASU after it.
+    Taau,
 }
 
-fn effects_at(gpu: &Gpu, preset: QualityPreset, class: DeviceClass, scale: f32, grading: Option<Grading>) -> Result<(), RenderError> {
+impl CheckUpscaler {
+    /// Whether the frame drawn along `path` took this upscaler.
+    fn drew(self, path: &ScenePath) -> bool {
+        match self {
+            CheckUpscaler::Fsr1 => path.fsr.easu && path.fsr.rcas && !path.taau,
+            CheckUpscaler::Taau => path.taau && !path.fsr.easu,
+        }
+    }
+}
+
+/// The presets the check draws below scale 1 (RQ5 review, B.8): the high phone's medium at its
+/// nominal 0.75 (EASU and RCAS after MSAA, the iPhone class's default) and the high desktop's high
+/// at its lowest dynamic-resolution step (TAAU), so FSR1's pipelines with their `rgb10a2unorm`
+/// intermediates and TAAU's output-size history are created on the browser's device.
+const CHECK_UPSCALE_PRESETS: [(QualityPreset, &str, f32, CheckUpscaler); 2] =
+    [(QualityPreset::Medium, "mobile-high", 0.75, CheckUpscaler::Fsr1), (QualityPreset::High, "desktop-high", 0.67, CheckUpscaler::Taau)];
+
+/// [`effects_variant`] at render `scale`; an error when `upscaler` did not draw the frame.
+fn upscale_variant(gpu: &Gpu, preset: QualityPreset, class: DeviceClass, scale: f32, upscaler: CheckUpscaler) -> Result<(), RenderError> {
+    let path = effects_at(gpu, preset, class, scale, None)?;
+    if path.is_some_and(|path| upscaler.drew(&path)) {
+        return Ok(());
+    }
+    Err(RenderError::refused(RenderCode::DeviceFailed, format!("{upscaler:?} did not upscale at scale {scale}: {path:?}")))
+}
+
+/// Two frames of `preset` on `class` at render `scale`; the scene path the last one took.
+fn effects_at(gpu: &Gpu, preset: QualityPreset, class: DeviceClass, scale: f32, grading: Option<Grading>) -> Result<Option<ScenePath>, RenderError> {
     let quality = preset_quality(preset, class);
     let msaa = genex_render::renderer::landed_samples(quality.anti_aliasing) > 1;
     let mut renderer = FrameRenderer::new(gpu, CHECK_SIZE, CHECK_SIZE, RenderOptions { msaa })?;
@@ -649,11 +676,7 @@ fn effects_at(gpu: &Gpu, preset: QualityPreset, class: DeviceClass, scale: f32, 
         frame.set_tick(tick);
         renderer.render(gpu, &frame, CullPath::Gpu, None)?;
     }
-    let path = renderer.renderer().last_scene();
-    if scale < 1.0 && !path.is_some_and(|path| path.fsr.easu && path.fsr.rcas) {
-        return Err(RenderError::refused(RenderCode::DeviceFailed, format!("FSR1 did not upscale below scale 1: {path:?}")));
-    }
-    Ok(())
+    Ok(renderer.renderer().last_scene())
 }
 
 /// Quads per side of the check's dense mesh: 48 x 48 quads, 4608 triangles, past the meshlet
@@ -897,10 +920,10 @@ fn pipeline_variants(gpu: &Gpu, inject_invalid: bool) -> Vec<(String, VariantSco
         let Some(class) = DeviceClass::from_wire(wire) else { continue };
         variants.push(variant(gpu, name.to_owned(), |gpu| grading_variant(gpu, preset, class)));
     }
-    for (preset, wire, scale) in CHECK_UPSCALE_PRESETS {
+    for (preset, wire, scale, upscaler) in CHECK_UPSCALE_PRESETS {
         let Some(class) = DeviceClass::from_wire(wire) else { continue };
         let name = format!("upscale-{}-{wire}", preset.wire());
-        variants.push(variant(gpu, name, |gpu| upscale_variant(gpu, preset, class, scale)));
+        variants.push(variant(gpu, name, |gpu| upscale_variant(gpu, preset, class, scale, upscaler)));
     }
     for occlusion in [false, true] {
         let name = format!("meshlets-{}", if occlusion { "occlusion" } else { "msaa" });

@@ -3,9 +3,11 @@
  * (`scripts/spike/rust-wgpu/web-showcase.sh`: `examples/showcase-web`, packaged by the lane's
  * `packageWeb` with its staged assets) runs in Chromium's WebGPU on the one presenter native runs
  * draw with (genex's `present.rs`): its three Level-3 custom passes (what no built-in draws: the
- * clouds, the lake, the light sprites; its meadow is the terrain's own grass since renderer pass 2
- * A.8) are installed at `studio_boot`,
- * listed in `state().volatile.customPasses` with no refusal, and change the picture; `state()`
+ * clouds and the lake where the renderer draws neither, the light sprites; its meadow is the
+ * terrain's own grass since renderer pass 2 A.8, its lake the renderer's water at the temporal
+ * presets since B.3 and its clouds the renderer's panorama since B.5) are installed at
+ * `studio_boot`, listed in `state().volatile.customPasses` with no refusal, and change the picture
+ * where they draw; `state()`
  * carries the frame meter (`fps`) and the presenter's per-tag triangles; and every renderer
  * pipeline variant is created on the browser's device under error scopes, which report an
  * injected invalid variant.
@@ -26,6 +28,8 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { type Browser, type BrowserContext, chromium, type Page } from "@playwright/test";
 import { MINUTE_MS, SECOND_MS } from "../../src/shared/duration.ts";
+import { NativeOp } from "../../src/shared/native-contract.ts";
+import { type EffectivePreset, QualityPreset } from "../../src/shared/render-quality.ts";
 import { playwrightHeadlessChromiumOnDisk } from "../helpers/playwright-chromium.ts";
 import { tmpDir } from "../helpers/tmp.ts";
 
@@ -48,10 +52,17 @@ const PASSES = [
   { name: "lake", stage: "after-transparent" },
   { name: "lights", stage: "after-transparent" },
 ] as const;
-/** The shot the A/B is taken from, and its meadow and lake in world pixels (x0, y0, x1, y1). */
+/** The shot the A/B is taken from, and its meadow, lake and sky in world pixels (x0, y0, x1, y1). */
 const SHOT = "wide";
 const MEADOW = { x0: 900, y0: 420, x1: 1240, y1: 700 };
 const LAKE = { x0: 420, y0: 330, x1: 860, y1: 520 };
+/** A strip of sky above the tree line, right of the HUD panel. */
+const SKY = { x0: 560, y0: 0, x1: 1000, y1: 20 };
+/**
+ * The preset the Level-3 lake and clouds draw at: `low` draws no water and no cloud panorama
+ * (`passes.rs` `renderer_draws_clouds`, `Water::drawn_at`), so the lakeside's own passes draw both.
+ */
+const PASSES_DRAW_PRESET: EffectivePreset = QualityPreset.Low;
 /** A pixel differs when a colour channel moved more than this; a region changes past this share. */
 const CHANNEL_STEP = 8;
 const REGION_CHANGED_SHARE = 0.05;
@@ -71,8 +82,8 @@ const MESHLET_VARIANTS: readonly string[] = [
   "lights-hdr",
   "lights-ldr",
   "textures-classes",
-  // RQ5 review: FSR1 below scale 1 (the iPhone class's medium at 0.75, desktop-high's high at its
-  // lowest step after TAA) and the RQ5 shader modules.
+  // RQ5 review and B.8: below scale 1, FSR1 on the iPhone class's medium at 0.75 and TAAU on
+  // desktop-high's high at its lowest step, and the RQ5 shader modules.
   "upscale-medium-mobile-high",
   "upscale-high-desktop-high",
   // Renderer pass 2 A.2: the tonemap's graded pipelines and 3D LUT binding on desktop and on the
@@ -187,6 +198,7 @@ interface RawCapture {
 }
 
 interface ShowcaseModule {
+  studio_call(op: string, arg: string): string;
   studio_capture(): Promise<{ width: number; height: number; digest: string; bgra: Uint8Array }>;
   studio_custom_passes(enabled: boolean): void;
   studio_pipeline_check(injectInvalid: boolean): Promise<string>;
@@ -257,6 +269,34 @@ async function keepEvidence(name: string, dataUrl: unknown): Promise<void> {
   await writeFile(path.join(dir, `${name}.png`), Buffer.from(base64, "base64"));
 }
 
+/** Set the shell's preset through the module's one verb export (the shell binds no page verb for it). */
+async function renderPreset(page: Page, preset: EffectivePreset): Promise<void> {
+  const reply = await page.evaluate(
+    ([op, arg]) => JSON.parse((window as unknown as ShellWindow).GenexShell.module.studio_call(op, arg)),
+    [NativeOp.RenderSettings, JSON.stringify({ set: { preset } })] as const,
+  );
+  assert.equal(reply.ok, true, `renderSettings refused: ${JSON.stringify(reply)}`);
+  assert.equal(reply.result.preset, preset);
+}
+
+/**
+ * The current shot with the custom passes on, then off, then on again: the share of the meadow, the
+ * lake and the sky the passes change, once the passes are shown to draw one tick identically back on.
+ */
+async function passesAb(page: Page, evidence: string): Promise<{ meadow: number; lake: number; sky: number }> {
+  await keepEvidence(evidence, await verb(page, "capture", SHOT));
+  const drawn = await rawCapture(page);
+  await page.evaluate(() => (window as unknown as ShellWindow).GenexShell.module.studio_custom_passes(false));
+  await keepEvidence(`${evidence}-passes-off`, await verb(page, "capture", SHOT));
+  const plain = await rawCapture(page);
+  await page.evaluate(() => (window as unknown as ShellWindow).GenexShell.module.studio_custom_passes(true));
+  const again = await rawCapture(page);
+  assert.deepEqual([drawn.width, drawn.height], [WORLD.width, WORLD.height]);
+  assert.equal(again.digest, drawn.digest, "the passes draw the same tick identically once back on");
+  const [a, b] = [drawn, plain].map((c) => new Uint8Array(Buffer.from(c.base64, "base64")));
+  return { meadow: changedShare(a, b, MEADOW), lake: changedShare(a, b, LAKE), sky: changedShare(a, b, SKY) };
+}
+
 describe("Lakeside on the web: the shared presenter runs Level-3 passes in Chromium's WebGPU", {
   skip: browserSkip(),
 }, () => {
@@ -308,26 +348,29 @@ describe("Lakeside on the web: the shared presenter runs Level-3 passes in Chrom
     await context.close();
   });
 
-  it("draws clouds, lake and sprites over the built-in scene: > 5% of the meadow and the lake differ from the passes off", {
+  it("draws the lake and clouds where the renderer does not (> 5% of each at low) and leaves the renderer's own lake, clouds and meadow alone", {
     timeout: 2 * BOOT_TIMEOUT_MS,
   }, async () => {
     const { context, page } = await openShell(browser, showcase.origin, true);
     await verb(page, "step", 500);
     assert.ok(await verb(page, "debugCamera", SHOT), `the ${SHOT} shot`);
-    await keepEvidence("web-lakeside-wide", await verb(page, "capture", SHOT));
-    const drawn = await rawCapture(page);
-    await page.evaluate(() => (window as unknown as ShellWindow).GenexShell.module.studio_custom_passes(false));
-    await keepEvidence("web-lakeside-wide-passes-off", await verb(page, "capture", SHOT));
-    const plain = await rawCapture(page);
-    await page.evaluate(() => (window as unknown as ShellWindow).GenexShell.module.studio_custom_passes(true));
-    const again = await rawCapture(page);
-    assert.deepEqual([drawn.width, drawn.height], [WORLD.width, WORLD.height]);
-    const [a, b] = [drawn, plain].map((c) => new Uint8Array(Buffer.from(c.base64, "base64")));
-    const meadow = changedShare(a, b, MEADOW);
-    const lake = changedShare(a, b, LAKE);
-    assert.ok(meadow > REGION_CHANGED_SHARE, `meadow changed ${(meadow * 100).toFixed(1)}%`);
-    assert.ok(lake > REGION_CHANGED_SHARE, `lake changed ${(lake * 100).toFixed(1)}%`);
-    assert.equal(again.digest, drawn.digest, "the passes draw the same tick identically once back on");
+    // The shell's own preset: the renderer's water is the lake and the terrain's grass the meadow,
+    // so switching the passes off changes neither (only the light sprites over them).
+    const own = await passesAb(page, "web-lakeside-wide");
+    assert.ok(
+      own.meadow <= REGION_CHANGED_SHARE,
+      `meadow changed ${(own.meadow * 100).toFixed(1)}% at the shell's preset`,
+    );
+    assert.ok(own.lake <= REGION_CHANGED_SHARE, `the renderer's lake changed ${(own.lake * 100).toFixed(1)}%`);
+    assert.ok(own.sky <= REGION_CHANGED_SHARE, `the renderer's clouds changed ${(own.sky * 100).toFixed(1)}%`);
+    // `low`: the renderer draws no water and no cloud panorama, so the lakeside's Level-3 passes do.
+    await renderPreset(page, PASSES_DRAW_PRESET);
+    const low = await passesAb(page, `web-lakeside-wide-${PASSES_DRAW_PRESET}`);
+    assert.ok(low.lake > REGION_CHANGED_SHARE, `lake changed ${(low.lake * 100).toFixed(1)}% at ${PASSES_DRAW_PRESET}`);
+    assert.ok(
+      low.sky > REGION_CHANGED_SHARE,
+      `clouds changed ${(low.sky * 100).toFixed(1)}% of the sky at ${PASSES_DRAW_PRESET}`,
+    );
     await context.close();
   });
 
