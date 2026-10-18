@@ -14,9 +14,11 @@
 //   the pass blends over the scene instead (premultiplied alpha), unrefracted;
 // - the scene depth (the prepass's, the water not in it): the bed's distance, so the path length,
 //   the shore foam and the refraction's guard against sampling something in front of the water;
-// - the environment cube array's sky layer (node 11): the reflection on every class;
+// - the environment cube array (node 11): the probes over the water and the sky layer, the
+//   reflection on every class (binding 6 holds the probes' rows, water_reflect.wgsl);
 // - the previous frame's colour pyramid (after node 17): the screen-space reflection where the
-//   SSR helper's march hits, on presets with the history pyramid (desktop and web high and ultra).
+//   SSR helper's march hits, reprojected and re-exposed, on presets with the history pyramid
+//   (desktop and web high and ultra).
 //
 // TAA: `fs_water_motion` writes the surface's own motion (and, through the pipeline's depth
 // state, its depth) into the motion prepass's targets after the colour pass, so TAA reprojects
@@ -91,17 +93,65 @@ fn vs_water(@builtin(vertex_index) vertex: u32) -> WaterOut {
     return out;
 }
 
-// The surface normal: four directional ripples (their slopes summed), tilted by `strength`.
-fn gx_water_normal(xz: vec2<f32>, t: f32, strength: f32) -> vec3<f32> {
+// The ripples' spatial frequencies, rad/m (their slopes' amplitudes 1 / (i + 1);
+// `water::reflect::RIPPLE_FREQUENCIES`).
+const GX_WATER_RIPPLE_FREQS: vec4<f32> = vec4<f32>(1.7, 2.9, 4.3, 6.1);
+// A ripple fades out as the pixel's footprint grows from this share of its wavelength to the next
+// (half: the Nyquist limit), its slopes' variance moving into the roughness
+// (`water::reflect::ripple_weight`).
+const GX_WATER_RIPPLE_FADE: vec2<f32> = vec2<f32>(0.25, 0.5);
+// Specular anti-aliasing (`water::reflect::SPECULAR_AA_VARIANCE`, `SPECULAR_AA_MAX`): the screen
+// variance of the pixel's filter and the most its normal's spread may add to alpha squared
+// (the kernel of Tokuyoshi and Kaplanyan, "Improved Geometric Specular Antialiasing", 2019, at
+// the paper's values; no source copied).
+const GX_WATER_SAA_VARIANCE: f32 = 0.25;
+const GX_WATER_SAA_MAX: f32 = 0.18;
+
+// The surface at a water point: its normal and the perceptual roughness it reflects with.
+struct GxWaterSurface {
+    n: vec3<f32>,
+    roughness: f32,
+}
+
+// The pixel's footprint on the water at `world`, m: its longer side (along the view at grazing).
+// Called from the fragment's uniform control flow (screen derivatives).
+fn gx_water_footprint(world: vec3<f32>) -> f32 {
+    return max(length(dpdx(world.xz)), length(dpdy(world.xz)));
+}
+
+// The surface (`water::reflect::ripple_roughness`, `specular_aa`): four directional ripples
+// (their slopes summed), tilted by `strength`, each faded out where it is finer than the pixel's
+// `footprint` can hold (it would alias into sparkle under TAA's jitter), its slopes' variance
+// added to the GGX alpha squared so the reflection widens instead (the idea of LEAN and Toksvig
+// mapping; no source copied); then the normal's spread over the pixel (its screen derivatives)
+// added too: a ripple the pixel does resolve still turns the reflected ray across metres of a far
+// wall within it. Called from the fragment's uniform control flow.
+fn gx_water_surface(xz: vec2<f32>, t: f32, strength: f32, roughness: f32, footprint: f32) -> GxWaterSurface {
     let dirs = array<vec2<f32>, 4>(vec2(0.8, 0.6), vec2(-0.6, 0.8), vec2(0.96, -0.28), vec2(-0.28, -0.96));
-    let freqs = vec4<f32>(1.7, 2.9, 4.3, 6.1);
     let speeds = vec4<f32>(0.9, 1.3, 1.7, 2.3);
     var slope = vec2<f32>(0.0);
+    var lost = 0.0;
     for (var i = 0u; i < 4u; i += 1u) {
-        let phase = dot(dirs[i], xz) * freqs[i] + t * speeds[i];
-        slope += dirs[i] * cos(phase) / f32(i + 1u);
+        let freq = GX_WATER_RIPPLE_FREQS[i];
+        let weight = 1.0 - smoothstep(GX_WATER_RIPPLE_FADE.x, GX_WATER_RIPPLE_FADE.y, footprint * freq / 6.2831853);
+        let amplitude = 1.0 / f32(i + 1u);
+        let phase = dot(dirs[i], xz) * freq + t * speeds[i];
+        slope += dirs[i] * cos(phase) * amplitude * weight;
+        lost += (1.0 - weight * weight) * amplitude * amplitude;
     }
-    return normalize(vec3<f32>(-slope.x * strength, 1.0, -slope.y * strength));
+    let n = normalize(vec3<f32>(-slope.x * strength, 1.0, -slope.y * strength));
+    let dx = dpdx(n);
+    let dy = dpdy(n);
+    let kernel = min(2.0 * GX_WATER_SAA_VARIANCE * (dot(dx, dx) + dot(dy, dy)), GX_WATER_SAA_MAX);
+    let alpha = roughness * roughness;
+    let alpha2 = min(alpha * alpha + lost * strength * strength * 0.5 + kernel, 1.0);
+    return GxWaterSurface(n, sqrt(sqrt(alpha2)));
+}
+
+// The sun glint's specular power for perceptual `roughness` (`water::reflect::glint_power`).
+fn gx_water_glint_power(roughness: f32) -> f32 {
+    let alpha = roughness * roughness;
+    return min(GX_WATER_GLINT_POWER, 2.0 / max(alpha * alpha, 1e-6) - 2.0);
 }
 
 // Schlick's Fresnel of water at `cos_theta` (the view and the normal).
@@ -158,32 +208,16 @@ fn gx_water_exposure() -> f32 {
     return select(frame.cascade_splits.z, 1.0, frame.cascade_splits.z <= 0.0);
 }
 
-// The reflected radiance along `r` (pre-exposed): the screen's where the march hits, the sky
-// layer of the environment elsewhere and at the screen's edge.
-fn gx_water_reflection(world: vec3<f32>, r: vec3<f32>, exposure: f32) -> vec3<f32> {
-    let lod = water.surface.x * max(water.surface.w - 1.0, 0.0);
-    let sky = textureSampleLevel(water_env, water_sampler, r, 0, lod).rgb * exposure;
-    if water.flags.y != 1u {
-        return sky;
-    }
-    var march = gx_ssr_march_world(frame.view_proj, water.proj, water.flags.z, world, r);
-    march.linear_steps = GX_WATER_SSR_STEPS;
-    march.bisection_steps = GX_WATER_SSR_BISECTIONS;
-    march.thickness = GX_WATER_SSR_THICKNESS_M;
-    let hit = gx_ssr_march_run(water_depth, march);
-    if hit.hit == 0u {
-        return sky;
-    }
-    let screen = textureSampleLevel(water_history, water_sampler, hit.uv, 0.0).rgb;
-    return mix(sky, screen, gx_ssr_edge_fade(hit.uv));
-}
+// The reflection (`gx_water_reflection`: the screen, the probes and the sky) is in
+// water/water_reflect.wgsl, included after this file (`water::reflect`).
 
 @fragment
 fn fs_water(in: WaterOut) -> @location(0) vec4<f32> {
     let exposure = gx_water_exposure();
     let to_eye = frame.camera_pos.xyz - in.world;
     let v = normalize(to_eye);
-    let n = gx_water_normal(in.world.xz, water.surface.z, water.surface.y);
+    let ripples = gx_water_surface(in.world.xz, water.surface.z, water.surface.y, water.surface.x, gx_water_footprint(in.world));
+    let n = ripples.n;
     let pixel = vec2<i32>(in.clip.xy);
     let uv = in.clip.xy * water.viewport.zw;
     // The view ray's metres under water per metre of view distance past the surface.
@@ -216,8 +250,13 @@ fn fs_water(in: WaterOut) -> @location(0) vec4<f32> {
     let fresnel = gx_water_fresnel(dot(n, v));
     var r = reflect(-v, n);
     r.y = abs(r.y);
-    let reflection = gx_water_reflection(in.world, r, exposure);
-    let glint = frame.sun_color.rgb * exposure * min(pow(max(dot(r, frame.sun_dir.xyz), 0.0), GX_WATER_GLINT_POWER) * fresnel * GX_WATER_GLINT_POWER * 0.02, GX_WATER_GLINT_MAX);
+    let reflection = gx_water_reflection(in.world, r, ripples.roughness, exposure);
+    // The glint's lobe as wide as the surface's roughness with the sub-pixel ripples folded in
+    // (Blinn-Phong's power for a GGX alpha: 2 / alpha^2 - 2), at most GX_WATER_GLINT_POWER, its
+    // peak scaled with the power so a wider lobe is dimmer, not brighter
+    // (`water::reflect::glint_power`).
+    let glint_power = gx_water_glint_power(ripples.roughness);
+    let glint = frame.sun_color.rgb * exposure * min(pow(max(dot(r, frame.sun_dir.xyz), 0.0), glint_power) * fresnel * glint_power * 0.02, GX_WATER_GLINT_MAX);
 
     let below = path * abs(v.y);
     let foam = gx_water_shore_foam(below, water.scatter.w, gx_water_noise(in.world.xz / GX_WATER_FOAM_CELL_M + vec2<f32>(water.surface.z * 0.15, 0.0)));

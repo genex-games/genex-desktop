@@ -12,18 +12,20 @@
 //!   bevy_water's deep and shallow colours, both MIT OR Apache-2.0; no source copied).
 //! - **Shore foam** ([`shore_foam`]): foam where the water under the surface is shallower than the
 //!   material's width, broken up by a value noise (the idea of GodotOceanWaves' foam, MIT).
-//! - **Reflections** ([`reflection_source`]): Schlick's Fresnel ([`fresnel`], F0 0.02) mixes in
-//!   the screen's reflection where the SSR helper's march hits the previous frame's colour pyramid
-//!   (desktop and web `high` and `ultra`), and the environment's sky layer elsewhere and on every
-//!   other class (phones never march: plan B.3, "no SSR on phones").
+//! - **Reflections** ([`reflection_source`], [`reflect`]): Schlick's Fresnel ([`fresnel`], F0 0.02)
+//!   mixes in the screen's reflection where the SSR helper's march hits, read from the previous
+//!   frame's colour pyramid at the hit's reprojected point and re-exposed (desktop and web `high`
+//!   and `ultra`), and the reflection probes over the water with the sky layer filling what they
+//!   leave elsewhere and on every other class (phones never march: plan B.3, "no SSR on phones").
 //! - **TAA's key** ([`WaterNode::draw_motion`], `fs_water_motion`): after the colour pass the
 //!   surface writes its own motion and depth into the motion prepass's targets (reactive 0), so
 //!   TAA reprojects a water pixel by the water's motion rather than the bed's and keeps its
 //!   history (the lake was a blended mesh TAA marked reactive: T-01 step 3).
 //!
 //! The pipeline has its own layout (group 0 the renderer's frame uniforms, group 1 the water's: a
-//! uniform and four sampled textures), so it spends none of the forward stage's sixteen sampled
-//! textures (plan section 2, D1). Its budget is [`WATER_MS_MAX`] at a 1080p render.
+//! uniform, four sampled textures and the reflection's uniform), so it spends none of the forward
+//! stage's sixteen sampled textures (plan section 2, D1). Its budget is [`WATER_MS_MAX`] at a
+//! 1080p render.
 
 use bytemuck::{Pod, Zeroable};
 use wgpu::{BindGroup, BindGroupLayout, Buffer, Device, Queue, RenderPass, RenderPipeline, Sampler, TextureFormat, TextureView};
@@ -34,12 +36,16 @@ use crate::error::RenderError;
 use crate::screen_inputs::ScreenInputs;
 use crate::settings::Quality;
 
-/// The water's shader: the common structs, the clip position, the SSR helper, then the water.
+pub mod reflect;
+
+/// The water's shader: the common structs, the clip position, the SSR helper, the water, then its
+/// reflection ([`reflect`]).
 pub const WATER: &str = crate::shaders::minify::shipped_wgsl!(concat!(
     include_str!("../shaders/common.wgsl"),
     include_str!("../shaders/clip_position.wgsl"),
     include_str!("../shaders/screen/ssr_march.wgsl"),
-    include_str!("../shaders/water/water.wgsl")
+    include_str!("../shaders/water/water.wgsl"),
+    include_str!("../shaders/water/water_reflect.wgsl")
 ));
 /// The vertex entry point (six vertices: the rectangle's two triangles).
 pub const VERTEX_ENTRY: &str = "vs_water";
@@ -114,7 +120,7 @@ pub enum WaterPath {
 pub enum ReflectionSource {
     /// The SSR helper's march over the previous frame's colour, the environment where it misses.
     ScreenThenEnvironment,
-    /// The environment's sky layer (reflection probes and IBL).
+    /// The reflection probes over the water, the environment's sky layer filling what they leave.
     Environment,
 }
 
@@ -279,6 +285,7 @@ pub struct WaterNode {
     colour: Compiled<RenderPipeline>,
     motion: Compiled<RenderPipeline>,
     uniform: Buffer,
+    reflect: Buffer,
     sampler: Sampler,
     neutral: TextureView,
     groups: Option<(BindGroup, BindGroup)>,
@@ -309,6 +316,7 @@ fn water_layout(device: &Device) -> BindGroupLayout {
             texture_entry(3, float, wgpu::TextureViewDimension::CubeArray),
             texture_entry(4, float, d2),
             wgpu::BindGroupLayoutEntry { binding: 5, visibility: wgpu::ShaderStages::FRAGMENT, ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering), count: None },
+            uniform_entry(6, wgpu::ShaderStages::FRAGMENT),
         ],
     })
 }
@@ -366,6 +374,10 @@ impl WaterNode {
         let colour = pipeline(device, &pipeline_layout, &module, formats, false);
         let motion = pipeline(device, &pipeline_layout, &module, formats, true);
         let uniform = crate::tables::buffer(device, "water row", size_of::<GpuWater>() as u64, wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST)?;
+        let reflect = wgpu::util::DeviceExt::create_buffer_init(
+            device,
+            &wgpu::util::BufferInitDescriptor { label: Some("water reflect"), contents: bytemuck::bytes_of(&reflect::GpuWaterReflect::NONE), usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST },
+        );
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("water sampler"),
             mag_filter: wgpu::FilterMode::Linear,
@@ -385,7 +397,14 @@ impl WaterNode {
                 view_formats: &[],
             })
             .create_view(&wgpu::TextureViewDescriptor::default());
-        Ok(WaterNode { layout, frame_layout, colour, motion, uniform, sampler, neutral, groups: None })
+        Ok(WaterNode { layout, frame_layout, colour, motion, uniform, reflect, sampler, neutral, groups: None })
+    }
+
+    /// Write this frame's reflection row ([`reflect::GpuWaterReflect::new`]: the reprojection to
+    /// the colour pyramid, its exposure ratio and the probes over the water). A node never given
+    /// one draws with [`reflect::GpuWaterReflect::NONE`].
+    pub fn set_reflection(&self, queue: &Queue, row: &reflect::GpuWaterReflect) {
+        queue.write_buffer(&self.reflect, 0, bytemuck::bytes_of(row));
     }
 
     /// Write `row` and bind `input` for this frame's draws.
@@ -406,6 +425,7 @@ impl WaterNode {
                 wgpu::BindGroupEntry { binding: 3, resource: wgpu::BindingResource::TextureView(input.env) },
                 wgpu::BindGroupEntry { binding: 4, resource: wgpu::BindingResource::TextureView(input.history.unwrap_or(&self.neutral)) },
                 wgpu::BindGroupEntry { binding: 5, resource: wgpu::BindingResource::Sampler(&self.sampler) },
+                wgpu::BindGroupEntry { binding: 6, resource: self.reflect.as_entire_binding() },
             ],
         });
         self.groups = Some((frame, group));

@@ -50,8 +50,13 @@ fn proj(size: (u32, u32)) -> Mat4 {
 }
 
 fn view() -> Mat4 {
+    view_from(EYE)
+}
+
+/// The street camera's view from `eye` (the same direction from anywhere: a pan moves the eye).
+fn view_from(eye: Vec3) -> Mat4 {
     let forward = Vec3::new(0.0, libm::sinf(TILT_DEG.to_radians()), -libm::cosf(TILT_DEG.to_radians()));
-    glam::camera::rh::view::look_to_mat4(EYE, forward, Vec3::Y)
+    glam::camera::rh::view::look_to_mat4(eye, forward, Vec3::Y)
 }
 
 fn camera(size: (u32, u32)) -> SsrCamera {
@@ -76,10 +81,12 @@ struct Street {
     wall_top: f32,
     /// One colour for everything (the seam row's uniform world), or the street's own colours.
     uniform: Option<Vec3>,
+    /// The road's perceptual roughness (wet asphalt's by default).
+    road_roughness: f32,
 }
 
 impl Street {
-    const NEON: Street = Street { wall_top: 6.0, uniform: None };
+    const NEON: Street = Street { wall_top: 6.0, uniform: None, road_roughness: WET_ROAD_ROUGHNESS };
 
     fn cast(&self, origin: Vec3, dir: Vec3) -> Hit {
         let t_road = if dir.y < 0.0 { -origin.y / dir.y } else { f32::INFINITY };
@@ -110,10 +117,15 @@ fn in_neon(p: Vec3, inset: f32) -> bool {
 
 /// The world ray through screen point `uv` (y down).
 fn eye_ray(size: (u32, u32), uv: Vec2) -> Vec3 {
-    let inv = (proj(size) * view()).inverse();
+    eye_ray_from(EYE, size, uv)
+}
+
+/// The world ray from `eye` through screen point `uv` (y down).
+fn eye_ray_from(eye: Vec3, size: (u32, u32), uv: Vec2) -> Vec3 {
+    let inv = (proj(size) * view_from(eye)).inverse();
     let ndc = Vec2::new(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0);
     let far = inv * Vec4::new(ndc.x, ndc.y, 0.5, 1.0);
-    ((far.truncate() / far.w) - EYE).normalize()
+    ((far.truncate() / far.w) - eye).normalize()
 }
 
 fn pixel_uv(p: (u32, u32), size: (u32, u32)) -> Vec2 {
@@ -129,13 +141,21 @@ struct Frame {
 }
 
 fn frame(street: Street, render: (u32, u32)) -> Frame {
+    jittered_frame(street, render, Vec2::ZERO)
+}
+
+/// [`frame`] with every pixel sampled `jitter` render pixels off its centre (x right, y down): the
+/// prepass of a TAA frame, whose depth and normals are drawn jittered while the trace's camera is
+/// not.
+fn jittered_frame(street: Street, render: (u32, u32), jitter: Vec2) -> Frame {
     let view_proj = proj(render) * view();
     let mut out = Frame { render, depths: Vec::new(), surface: Vec::new(), hits: Vec::new() };
+    let offset = jitter / Vec2::new(render.0 as f32, render.1 as f32);
     for y in 0..render.1 {
         for x in 0..render.0 {
-            let hit = street.cast(EYE, eye_ray(render, pixel_uv((x, y), render)));
+            let hit = street.cast(EYE, eye_ray(render, pixel_uv((x, y), render) + offset));
             let (depth, texel) = match hit {
-                Hit::Road(p) => (device_depth(view_proj, p), pack_normal_roughness([0.0, 1.0, 0.0], WET_ROAD_ROUGHNESS)),
+                Hit::Road(p) => (device_depth(view_proj, p), pack_normal_roughness([0.0, 1.0, 0.0], street.road_roughness)),
                 Hit::Wall(p) => (device_depth(view_proj, p), pack_normal_roughness([0.0, 0.0, 1.0], WALL_ROUGHNESS)),
                 Hit::Sky => (0.0, pack_normal_roughness([0.0, 0.0, 1.0], 1.0)),
             };
@@ -155,11 +175,16 @@ fn device_depth(view_proj: Mat4, p: Vec3) -> f32 {
 /// A colour pyramid (half the render size, `mips` mips) of the street's colours, each mip ray cast
 /// at its own texel centres (the history a static camera's TAA converged on).
 fn street_history(street: Street, render: (u32, u32), mips: u32) -> Vec<ssr::HistoryMip> {
+    street_history_from(EYE, street, render, mips)
+}
+
+/// [`street_history`] seen from `eye` (last frame's, before a pan).
+fn street_history_from(eye: Vec3, street: Street, render: (u32, u32), mips: u32) -> Vec<ssr::HistoryMip> {
     let base = hiz::base_size(render);
     (0..mips)
         .map(|mip| {
             let size = hiz::level_size(base, mip);
-            let texels = (0..size.1).flat_map(|y| (0..size.0).map(move |x| (x, y))).map(|p| street.color(street.cast(EYE, eye_ray(render, pixel_uv(p, size)))).extend(1.0).to_array()).collect();
+            let texels = (0..size.1).flat_map(|y| (0..size.0).map(move |x| (x, y))).map(|p| street.color(street.cast(eye, eye_ray_from(eye, render, pixel_uv(p, size)))).extend(1.0).to_array()).collect();
             (size, texels)
         })
         .collect()
@@ -345,7 +370,7 @@ fn a_ray_that_leaves_the_screen_has_no_validity() {
     // A wall with no top: the road reflects it everywhere, so only rays that leave through the top
     // edge miss. Looking straight down the road from very low, rays leave the top for the far road.
     let render = (160, 90);
-    let street = Street { wall_top: 0.5, uniform: None };
+    let street = Street { wall_top: 0.5, uniform: None, road_roughness: WET_ROAD_ROUGHNESS };
     let frame = frame(street, render);
     let bench = bench(&frame, uv_history(render, 4), SsrQuality::HIGH);
     let inputs = twin_inputs(&bench);
@@ -501,7 +526,7 @@ fn metal_the_fade_to_the_probes_has_no_seam() {
     let Some(gpu) = gpu() else { return };
     let render = (640, 360);
     let color = Vec3::new(0.4, 0.3, 0.2);
-    let street = Street { wall_top: f32::INFINITY, uniform: Some(color) };
+    let street = Street { wall_top: f32::INFINITY, uniform: Some(color), road_roughness: WET_ROAD_ROUGHNESS };
     let frame = frame(street, render);
     let bench = bench(&frame, street_history(street, render, 5), SsrQuality::HIGH);
     let out = ssr::ssr_run(&gpu, &bench).expect("ssr");
@@ -533,6 +558,159 @@ fn metal_the_fade_to_the_probes_has_no_seam() {
     assert!(faded > 1000, "{faded} pixels fade between screen and probes");
     assert!(worst <= 0.01, "the hand-over moves a uniform world by {worst}");
     assert!(worst_step <= 0.1, "the confidence steps by {worst_step} between neighbouring road pixels");
+}
+
+/// What a reflection may swing by over TAA's jitter cycle where the mirror image is flat (the
+/// sign's or the wall's interior): its confidence (a hit flipping to a miss sparkles) and its
+/// luminance (relative). TAA averages what is left; a swing past these is a flicker it shows.
+const JITTER_CONFIDENCE_SWING_MAX: f32 = 0.2;
+const JITTER_LUMA_SWING_MAX: f32 = 0.1;
+/// The share of interior pixels allowed past either swing.
+const JITTER_FLICKER_SHARE_MAX: f32 = 0.01;
+
+/// B.9 follow-up: the wet road's reflection holds still under TAA's sub-pixel jitter. The prepass
+/// is drawn at each of the eight Halton offsets (the trace's camera unjittered, as the renderer
+/// hands it), and every road pixel whose mirror lands inside the sign or the plain wall (a quarter
+/// metre from any edge) must keep its confidence and luminance over the cycle: a hit that flips
+/// to a miss under a sub-pixel move is the sparkle TAA cannot settle.
+#[test]
+#[ignore = "needs a GPU: GENEX_REQUIRE_METAL=1 cargo test --test ssr -- --ignored metal"]
+fn metal_the_wet_road_reflection_holds_still_under_taa_jitter() {
+    let Some(gpu) = gpu() else { return };
+    for road_roughness in JITTER_ROAD_ROUGHNESS {
+        jitter_row(&gpu, Street { road_roughness, ..Street::NEON });
+    }
+}
+
+/// The road roughnesses the jitter row traces: a puddle's film, wet asphalt, and asphalt after the
+/// rain (Harbour Street's scan at dusk: a wide cone, the trace's hardest case for hit flips).
+const JITTER_ROAD_ROUGHNESS: [f32; 3] = [0.04, WET_ROAD_ROUGHNESS, 0.45];
+
+fn jitter_row(gpu: &Gpu, street: Street) {
+    let render = (640, 360);
+    let history = street_history(street, render, 5);
+    let cycle = genex_render::settings::JitterCycle::Eight;
+    let frames: Vec<(Frame, Vec<[f32; 4]>)> = (0..u64::from(cycle.frames()))
+        .map(|index| {
+            let jitter = Vec2::from(genex_render::jitter::offset_px(index, cycle));
+            let frame = jittered_frame(street, render, jitter);
+            let out = ssr::ssr_run(gpu, &bench(&frame, history.clone(), SsrQuality::HIGH)).expect("ssr");
+            (frame, out.reflections)
+        })
+        .collect();
+    let still = frame(street, render);
+    let (mut interior, mut flicker, mut worst_confidence, mut luma_swings) = (0usize, 0usize, 0.0f32, Vec::new());
+    for index in 0..(render.0 * render.1) as usize {
+        let Hit::Road(p) = still.hits[index] else { continue };
+        let incoming = (p - EYE).normalize();
+        let Hit::Wall(q) = Street::NEON.cast(p, Vec3::new(incoming.x, -incoming.y, incoming.z)) else { continue };
+        let near_sign_edge = in_neon(q, -0.25) && !in_neon(q, 0.25);
+        let near_wall_top = q.y > Street::NEON.wall_top - 0.25;
+        // Every jittered sample of the pixel must still be road (the road's far edge moves too).
+        let road_in_all = frames.iter().all(|(frame, _)| matches!(frame.hits[index], Hit::Road(_)));
+        if near_sign_edge || near_wall_top || !road_in_all {
+            continue;
+        }
+        let texels: Vec<Vec4> = frames.iter().map(|(_, reflections)| Vec4::from(reflections[index])).collect();
+        let (low, high) = texels.iter().fold((f32::MAX, f32::MIN), |(lo, hi), t| (lo.min(t.w), hi.max(t.w)));
+        let lumas: Vec<f32> = texels.iter().map(|t| (t.truncate() / t.w.max(1e-4)).dot(LUMA)).collect();
+        let (luma_low, luma_high) = lumas.iter().fold((f32::MAX, f32::MIN), |(lo, hi), l| (lo.min(*l), hi.max(*l)));
+        let luma_swing = if high >= 0.5 { (luma_high - luma_low) / luma_high.max(1e-4) } else { 0.0 };
+        interior += 1;
+        worst_confidence = worst_confidence.max(high - low);
+        luma_swings.push(luma_swing);
+        flicker += usize::from(high - low > JITTER_CONFIDENCE_SWING_MAX || luma_swing > JITTER_LUMA_SWING_MAX);
+    }
+    luma_swings.sort_by(f32::total_cmp);
+    let luma_p99 = luma_swings.get(luma_swings.len() * 99 / 100).copied().unwrap_or(0.0);
+    let share = flicker as f32 / interior.max(1) as f32;
+    perf_line(&format!(
+        "{{\"row\":\"ssr-jitter-flicker\",\"road_roughness\":{},\"render\":[{},{}],\"interior\":{interior},\"flicker\":{flicker},\"share\":{share:.5},\"worst_confidence_swing\":{worst_confidence:.4},\"luma_swing_p99\":{luma_p99:.4}}}",
+        street.road_roughness, render.0, render.1
+    ));
+    assert!(interior > 20_000, "{interior} road pixels mirror a flat part of the wall");
+    assert!(share <= JITTER_FLICKER_SHARE_MAX, "roughness {}: {flicker} of {interior} road pixels flicker over the jitter cycle (worst confidence swing {worst_confidence})", street.road_roughness);
+}
+
+/// How far the camera moved sideways since the colour pyramid was written in the pan rows, m per
+/// frame (a walk, a run and a fast strafe at 60 Hz).
+const PAN_STEPS_M: [f32; 3] = [0.025, 0.1, 0.4];
+/// The wall's code: x across [-10, 10] m in red, y across the wall's height in green, blue a half.
+const CODE_X: (f32, f32) = (-10.0, 10.0);
+
+/// A colour pyramid seen from `eye` whose colour names the wall point it shows (`CODE_X`, green
+/// the height over the wall's), black elsewhere: a reflection's colour says which wall point it
+/// reflects.
+fn wall_code_history(eye: Vec3, render: (u32, u32), mips: u32) -> Vec<ssr::HistoryMip> {
+    let base = hiz::base_size(render);
+    let street = Street::NEON;
+    (0..mips)
+        .map(|mip| {
+            let size = hiz::level_size(base, mip);
+            let texels = (0..size.1)
+                .flat_map(|y| (0..size.0).map(move |x| (x, y)))
+                .map(|p| match street.cast(eye, eye_ray_from(eye, render, pixel_uv(p, size))) {
+                    Hit::Wall(q) => [(q.x - CODE_X.0) / (CODE_X.1 - CODE_X.0), q.y / street.wall_top, 0.5, 1.0],
+                    _ => [0.0, 0.0, 0.0, 1.0],
+                })
+                .collect();
+            (size, texels)
+        })
+        .collect()
+}
+
+/// B.9 follow-up: the wet road's reflection does not swim on a pan. The pyramid is last frame's,
+/// seen from where the camera stood before a sideways step, and its colour names the wall point it
+/// shows; the trace reprojects each hit into it (`GpuSsrParams::reprojection`), so every road pixel
+/// mirroring the wall must still read the wall point its mirror ray meets. Without the
+/// reprojection (`prev_view_proj` this frame's) the reflection slides by the step.
+#[test]
+#[ignore = "needs a GPU: GENEX_REQUIRE_METAL=1 cargo test --test ssr -- --ignored metal"]
+fn metal_the_wet_road_reflection_does_not_swim_on_a_pan() {
+    let Some(gpu) = gpu() else { return };
+    let render = (640, 360);
+    let frame = frame(Street::NEON, render);
+    let mirrored: Vec<(usize, Vec3)> = frame
+        .hits
+        .iter()
+        .enumerate()
+        .filter_map(|(index, hit)| {
+            let Hit::Road(p) = *hit else { return None };
+            let incoming = (p - EYE).normalize();
+            let Hit::Wall(q) = Street::NEON.cast(p, Vec3::new(incoming.x, -incoming.y, incoming.z)) else { return None };
+            let inside = q.x > CODE_X.0 + 0.5 && q.x < CODE_X.1 - 0.5 && q.y > 0.5 && q.y < Street::NEON.wall_top - 0.5;
+            inside.then_some((index, q))
+        })
+        .collect();
+    let slide = |out: &ssr::SsrBenchOut| {
+        let mut errors: Vec<f32> = mirrored
+            .iter()
+            .filter_map(|(index, q)| {
+                let t = Vec4::from(out.reflections[*index]);
+                (t.w >= 0.5).then(|| {
+                    let code = t.truncate() / t.w;
+                    Vec2::new(CODE_X.0 + code.x * (CODE_X.1 - CODE_X.0), code.y * Street::NEON.wall_top).distance(Vec2::new(q.x, q.y))
+                })
+            })
+            .collect();
+        errors.sort_by(f32::total_cmp);
+        let at = |share: usize| errors.get(errors.len() * share / 100).copied().unwrap_or(f32::MAX);
+        (errors.len(), at(50), at(95))
+    };
+    for step in PAN_STEPS_M {
+        let before = EYE - Vec3::new(step, 0.0, 0.0);
+        let mut moved = bench(&frame, wall_code_history(before, render, 5), SsrQuality::HIGH);
+        let reprojected = SsrCamera { prev_view_proj: proj(render) * view_from(before), ..camera(render) };
+        moved.params = ssr::params(&reprojected, SsrQuality::HIGH, render, 5, 1.0);
+        let (count, median, p95) = slide(&ssr::ssr_run(&gpu, &moved).expect("ssr"));
+        moved.params = ssr::params(&camera(render), SsrQuality::HIGH, render, 5, 1.0);
+        let (_, unprojected_median, _) = slide(&ssr::ssr_run(&gpu, &moved).expect("ssr"));
+        perf_line(&format!(
+            "{{\"row\":\"ssr-pan\",\"step_m\":{step},\"reflecting\":{count},\"slide_median_m\":{median:.4},\"slide_p95_m\":{p95:.4},\"without_reprojection_median_m\":{unprojected_median:.4}}}"
+        ));
+        assert!(count as f32 >= mirrored.len() as f32 * 0.8 && count > 20_000, "{count} of {} wall-mirroring road pixels reflect", mirrored.len());
+        assert!(median <= 0.05 && p95 <= 0.15, "a {step} m pan slid the reflection: median {median} m, p95 {p95} m");
+    }
 }
 
 /// Cost samples per row (the row reports their median) and the warm-up samples dropped first.

@@ -335,7 +335,8 @@ records three compute passes:
 `shaders/screen/ssr_apply.wgsl` (`gx_ssr_apply`) is the forward pass's hand-over: the probe or sky
 radiance times one minus the confidence plus the screen's, so where both agree nothing changes
 with the confidence. `twin` in the module is the CPU twin of the trace and the resolve
-(`tests/ssr.rs` holds the GPU equal to it). The frame hook (the node after the prepass, binding 30
+(`tests/ssr.rs` holds the GPU equal to it, and holds the wet road's reflection still over TAA's
+eight jitter offsets and in place on a pan). The frame hook (the node after the prepass, binding 30
 in the forward pass) is not in this build yet: no frame records the passes.
 
 ## Lake water
@@ -353,18 +354,29 @@ colour pyramid. `WaterNode::draw_colour` composes the surface over the scene:
   which grows from nothing at the shoreline and is dropped where it would land on something in
   front of the water; without it (`WaterPath::Blended`: phones, MSAA presets, the legacy scene)
   the surface blends premultiplied over the scene, unrefracted;
-- Schlick's Fresnel (F0 0.02) mixes in the reflection: the SSR helper's march over the colour
-  pyramid on desktop and web `high` and `ultra`, the environment's sky layer elsewhere and always
-  on phones (`reflection_source`); a capped sun glint keeps a ripple facing the sun from becoming
-  a firefly;
+- Schlick's Fresnel (F0 0.02) mixes in the reflection (`water::reflect`,
+  `shaders/water/water_reflect.wgsl`): on desktop and web `high` and `ultra` the SSR helper's march
+  finds the reflected surface in this frame's depth and reads last frame's colour pyramid at the
+  hit's reprojected point, re-exposed by this frame's exposure over the pyramid's and at the mip
+  the roughness cone spans; where it misses, and always on phones (`reflection_source`), up to four
+  reflection probes over the water (`probes_for`, a uniform at group 1 binding 6, no storage
+  buffer) box-projected and blended as the forward pass blends them, the sky layer filling what
+  they leave. `WaterNode::set_reflection` takes the frame's row (`GpuWaterReflect::new`); a node
+  never given one reads the pyramid as it is and the sky alone. A capped sun glint keeps a ripple
+  facing the sun from becoming a firefly;
+- the ripples a pixel's footprint on the water cannot hold (finer than half their wavelength) fade
+  out of the normal, and their slopes' variance and the normal's spread over the pixel widen the
+  roughness instead (`gx_water_surface`; `ripple_roughness`, `specular_aa` are the twins), and the
+  sun glint's lobe widens with that roughness (`glint_power`, dimmer as it widens), so a rippled
+  lake does not sparkle under TAA's jitter;
 - shore foam (`shore_foam`, the idea of GodotOceanWaves) covers water shallower than the
   material's width, broken up by a value noise.
 
 `WaterNode::draw_motion` then writes the surface's own motion (reactive 0) and depth into the
 motion prepass's targets, so TAA reprojects a water pixel by the water's motion, not the bed's,
-and keeps its history. The node's twins and GPU rows are in `tests/water.rs`; its budget is 1.0 ms
-at a 1080p render (`WATER_MS_MAX`). The frame does not record the node yet: the renderer's
-opaque-copy hook and the scene's water draw are the next step.
+and keeps its history. The node's twins and GPU rows are in `tests/water.rs` (the reflection's in
+`tests/water_reflect.rs`); its budget is 1.0 ms
+at a 1080p render (`WATER_MS_MAX`).
 
 ## Ocean
 

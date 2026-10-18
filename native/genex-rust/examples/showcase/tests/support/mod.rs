@@ -271,7 +271,13 @@ pub fn lakeside_at(tick: u32) -> Runtime<World> {
 /// `look` under `quality` (`None`: the legacy renderer, `off`), auto exposure metered and settled
 /// (the bench rows drew through `Renderer::render`, which runs no exposure node: pass-1 gate
 /// finding 07's near-black forest was never exposed).
-pub fn game_capture(gpu: &Gpu, class: genex_render::device_class::DeviceClass, quality: Option<&genex_render::settings::Quality>, look: &genex_render::settings::Look, load: &dyn Fn(&mut OnGpu<'_>) -> Scene) -> Capture {
+pub fn game_capture(
+    gpu: &Gpu,
+    class: genex_render::device_class::DeviceClass,
+    quality: Option<&genex_render::settings::Quality>,
+    look: &genex_render::settings::Look,
+    load: &dyn Fn(&mut OnGpu<'_>) -> Scene,
+) -> Capture {
     game_frames(gpu, class, quality, look, load).capture(gpu).expect("capture")
 }
 
@@ -298,4 +304,3 @@ pub fn game_frames(
     frames.render_settled(gpu, &genex_render::immediate::ImmediateFrame::from_scene(scene), CullPath::Gpu, None, settle).expect("settled frame");
     frames
 }
-

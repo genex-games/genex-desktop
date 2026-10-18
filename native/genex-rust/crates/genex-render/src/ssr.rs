@@ -72,6 +72,12 @@ pub const TRACE_FORMAT: TextureFormat = TextureFormat::Rgba16Float;
 /// The usages of the trace and the reflections: written as storage, read as textures.
 pub const SSR_USAGE: TextureUsages = TextureUsages::STORAGE_BINDING.union(TextureUsages::TEXTURE_BINDING);
 
+/// Whether the renderer records the reflections (graph node 14b after the prepass) and the forward
+/// pass reads them at binding 30. False until the frame hook lands: a frame with `Quality::ssr` on
+/// draws exactly what it draws with it off (`examples/showcase/tests/harbour_ssr.rs` holds both
+/// sides; the hook flips this).
+pub const LANDED: bool = false;
+
 /// The plan's cost at desktop `high` (half-size trace, Hi-Z, resolve), in milliseconds.
 pub const SSR_MS_MAX_HIGH: f32 = 1.0;
 /// The plan's cost at desktop `ultra`, in milliseconds.

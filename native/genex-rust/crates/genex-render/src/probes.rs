@@ -899,6 +899,13 @@ impl ProbeMaps {
         &self.rows
     }
 
+    /// The rows last written to [`ProbeMaps::rows`] (binned order; irradiance volumes' rows among
+    /// them carry a negative layer): what a pass outside the forward stage reads the probes from
+    /// (the water's reflection, `water::reflect::probes_for`).
+    pub fn frame_rows(&self) -> &[GpuProbeRow] {
+        &self.written_rows
+    }
+
     /// The probe array, once probes are held (the sky in layer 0, probe slot `s` in layer `s + 1`).
     pub fn array(&self) -> Option<&Texture> {
         self.gpu.as_ref().map(|gpu| &gpu.array)
