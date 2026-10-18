@@ -14,8 +14,11 @@
 //!   `GENEX_SECTION7_OUT` (default `pass2/captures/latest` in the evidence folder), each taken
 //!   twice in one process and required to draw one picture; a pair that differs is written beside
 //!   it (`-again.png`) and named when the row fails, after every still is written.
-//!   `GENEX_SECTION7_SIZES` (`2560x1440`) and `GENEX_SECTION7_SHOTS` (`cabin-interior,cafe`) narrow
-//!   it. Crops and A/B sheets are cut from these PNGs (ffmpeg).
+//!   `GENEX_SECTION7_SIZES` (`2560x1440`), `GENEX_SECTION7_SHOTS` (`cabin-interior,cafe`) and
+//!   `GENEX_SECTION7_PRESETS` (`ultra`) narrow it; `GENEX_SECTION7_TIMES` (`dusk,night,day`; default
+//!   `dusk`, the scenes' own) captures each scene's times of day (renderer pass 2 B.12, N), a time
+//!   other than dusk written as `<shot>-<time>-<preset>-<W>x<H>.png`. Crops and A/B sheets are cut
+//!   from these PNGs (ffmpeg).
 //! - Every capture here hides the scene's HUD (H) before its first tick: a still is the picture,
 //!   never the card over it (GA1 look review).
 
@@ -80,27 +83,48 @@ impl Scene {
     }
 }
 
-/// `runtime` at tick 600 from seed 1, its HUD hidden (H, tapped before the first tick).
-fn at_shot_tick<W: Default + 'static>(mut runtime: Runtime<W>) -> Runtime<W> {
+/// The scenes' times of day by their labels, in N's order from the default (both scenes share
+/// the labels and the order).
+const TIMES: [&str; 3] = ["dusk", "night", "day"];
+
+/// `runtime` at tick 600 from seed 1, its HUD hidden (H, tapped before the first tick) and N
+/// tapped once a tick from the first `n_taps` times (the time of day; none keeps the scene's own,
+/// on the same ticks as before).
+fn at_shot_tick<W: Default + 'static>(mut runtime: Runtime<W>, n_taps: u32) -> Runtime<W> {
     runtime.seed(1);
     runtime.start();
     runtime.inject(Input::key_tap(Key::KeyH));
-    runtime.step(f64::from(SHOT_TICK) * FIXED_STEP_MS);
+    for _ in 0..n_taps {
+        runtime.inject(Input::key_tap(Key::KeyN));
+        runtime.step(FIXED_STEP_MS);
+    }
+    runtime.step(f64::from(SHOT_TICK - n_taps) * FIXED_STEP_MS);
     runtime
+}
+
+/// N taps that reach `time` from the scenes' own.
+fn taps_to(time: &str) -> u32 {
+    TIMES.iter().position(|known| *known == time).expect("a time of day: dusk, night or day") as u32
 }
 
 /// `shot` of `scene` at tick 600 with its HUD hidden, captured the way the Studio captures it at
 /// `preset` and `size`.
 fn capture(scene: Scene, shot: &str, preset: QualityPreset, size: (u32, u32)) -> Option<Capture> {
+    capture_at(scene, shot, TIMES[0], preset, size)
+}
+
+/// [`capture`] at the time of day `time`.
+fn capture_at(scene: Scene, shot: &str, time: &str, preset: QualityPreset, size: (u32, u32)) -> Option<Capture> {
+    let taps = taps_to(time);
     match scene {
         Scene::Lakeside => {
             let presenter = Presenter::open(showcase_game::showcase::WORLD_SIZE, showcase_game::assets()).ok()?;
-            let runtime = at_shot_tick(Runtime::new(showcase_game::game()).expect("installs"));
+            let runtime = at_shot_tick(Runtime::new(showcase_game::game()).expect("installs"), taps);
             Some(settled(presenter, runtime, shot, preset, size))
         }
         Scene::Harbour => {
             let presenter = Presenter::open(showcase_game::harbour::WORLD_SIZE, showcase_game::harbour_assets()).ok()?;
-            let runtime = at_shot_tick(Runtime::new(showcase_game::harbour_game()).expect("installs"));
+            let runtime = at_shot_tick(Runtime::new(showcase_game::harbour_game()).expect("installs"), taps);
             Some(settled(presenter, runtime, shot, preset, size))
         }
     }
@@ -281,23 +305,32 @@ fn metal_section7_stills_are_written_at_1440p_and_4k() {
     let root = std::env::var_os(OUT_ENV).map_or_else(|| support::evidence_dir("pass2/captures/latest"), PathBuf::from);
     let sizes: Vec<(u32, u32)> = narrowed("GENEX_SECTION7_SIZES").map_or_else(|| SIZES.to_vec(), |list| list.iter().map(|size| parse_size(size)).collect());
     let only = narrowed("GENEX_SECTION7_SHOTS");
+    let presets: Vec<QualityPreset> =
+        narrowed("GENEX_SECTION7_PRESETS").map_or_else(|| PRESETS.to_vec(), |list| list.iter().map(|wire| QualityPreset::from_wire(wire).expect("a preset")).collect());
+    let times = narrowed("GENEX_SECTION7_TIMES").unwrap_or_else(|| vec![TIMES[0].to_owned()]);
     let mut rows = Vec::new();
     let mut problems = Vec::new();
     for scene in [Scene::Lakeside, Scene::Harbour] {
         let dir = root.join(scene.wire());
         std::fs::create_dir_all(&dir).expect("the stills folder");
         for shot in scene.shots().into_iter().filter(|shot| only.as_ref().is_none_or(|only| only.iter().any(|name| name == shot))) {
-            for preset in PRESETS {
-                for &(w, h) in &sizes {
-                    let first = capture(scene, shot, preset, (w, h)).expect("a presenter");
-                    let again = capture(scene, shot, preset, (w, h)).expect("a second presenter");
-                    write_png(&dir.join(format!("{shot}-{}-{w}x{h}.png", preset.wire())), &first);
-                    if again.digest() != first.digest() {
-                        write_png(&dir.join(format!("{shot}-{}-{w}x{h}-again.png", preset.wire())), &again);
-                        problems.push(format!("{} {shot} {} {w}x{h}: two settled captures differ: {}", scene.wire(), preset.wire(), difference(&first, &again)));
-                    }
-                    rows.push(format!("{{\"scene\": \"{}\", \"shot\": \"{shot}\", \"preset\": \"{}\", \"size\": [{w}, {h}], \"digest\": \"{:016x}\"}}", scene.wire(), preset.wire(), first.digest()));
+            let cells = times.iter().flat_map(|time| presets.iter().map(move |preset| (time, *preset)));
+            let cells: Vec<(&String, QualityPreset, (u32, u32))> = cells.flat_map(|(time, preset)| sizes.iter().map(move |size| (time, preset, *size))).collect();
+            for (time, preset, (w, h)) in cells {
+                let first = capture_at(scene, shot, time, preset, (w, h)).expect("a presenter");
+                let again = capture_at(scene, shot, time, preset, (w, h)).expect("a second presenter");
+                let stem = if time == TIMES[0] { format!("{shot}-{}-{w}x{h}", preset.wire()) } else { format!("{shot}-{time}-{}-{w}x{h}", preset.wire()) };
+                write_png(&dir.join(format!("{stem}.png")), &first);
+                if again.digest() != first.digest() {
+                    write_png(&dir.join(format!("{stem}-again.png")), &again);
+                    problems.push(format!("{} {stem}: two settled captures differ: {}", scene.wire(), difference(&first, &again)));
                 }
+                rows.push(format!(
+                    "{{\"scene\": \"{}\", \"shot\": \"{shot}\", \"time\": \"{time}\", \"preset\": \"{}\", \"size\": [{w}, {h}], \"digest\": \"{:016x}\"}}",
+                    scene.wire(),
+                    preset.wire(),
+                    first.digest()
+                ));
             }
         }
     }

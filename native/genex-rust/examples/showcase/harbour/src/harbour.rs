@@ -189,12 +189,18 @@ pub struct World {
     pub hud_area: Option<[f32; 4]>,
     /// What lights the street besides the sun (B).
     pub backdrop: Backdrop,
+    /// The time of day: the dusk, the night or the clear day (N).
+    pub time: crate::nightfall::TimeOfDay,
     /// The tick whose frame starts a new shot because a key moved the camera there.
     pub cut_at: Option<u64>,
     /// The surfaces the draw hook uses.
     pub surfaces: Surfaces,
     /// The steam and the drizzle (the same emitters every seed).
     pub weather: street::Weather,
+    /// The same steam and drizzle at night, darker (renderer pass 2 B.12).
+    pub night_weather: crate::nightfall::NightWeather,
+    /// The surfaces at night, the street soaked (renderer pass 2 B.12).
+    pub night_surfaces: crate::nightfall::NightSurfaces,
 }
 
 impl World {
@@ -244,7 +250,7 @@ fn fly(free: &mut FreeCam, ctx: &Ctx<'_>) {
 }
 
 /// One tick: the clock, the camera keys (1–5 a shot, Space the tour, F the free camera, H the HUD,
-/// O the graphics panel), the sky (B) and the free camera's flight.
+/// O the graphics panel), the sky (B), the time of day (N) and the free camera's flight.
 pub fn update(world: &mut World, ctx: &Ctx<'_>) {
     world.tick = ctx.tick + 1;
     let before = world.mode;
@@ -268,6 +274,9 @@ pub fn update(world: &mut World, ctx: &Ctx<'_>) {
     }
     if ctx.keys.pressed(Key::KeyB) {
         world.backdrop = world.backdrop.next();
+    }
+    if ctx.keys.pressed(Key::KeyN) {
+        world.time = world.time.next();
     }
     if world.mode != before && world.mode != CameraMode::Free {
         world.cut_at = Some(world.tick);
@@ -314,7 +323,13 @@ fn card_contents(world: &mut World, ui: &mut egui::Ui) {
         CameraMode::Shot(i) => format!("Shot {}: {}", i + 1, SHOTS[i.min(SHOTS.len() - 1)].name),
     };
     ui.label(egui::RichText::new("Harbour Street at dusk").color(TITLE).size(18.0).strong());
-    ui.label(egui::RichText::new(format!("{shot} · {}", world.backdrop.label())).color(BODY).size(14.0));
+    // The dusk's card is the one the Studio's digests were recorded with; another time of day is
+    // named after the backdrop.
+    let time = match world.time {
+        crate::nightfall::TimeOfDay::Dusk => String::new(),
+        time => format!(" · {} (N)", time.label()),
+    };
+    ui.label(egui::RichText::new(format!("{shot} · {}{time}", world.backdrop.label())).color(BODY).size(14.0));
     ui.add_space(4.0);
     let hint = if world.mode == CameraMode::Free {
         "WASD move · Q/E down/up · arrows or drag to look · Space tour"
@@ -334,7 +349,7 @@ pub fn look_fog() -> Fog {
 }
 
 /// Harbour Street's render choices: AgX punchy with auto exposure keyed low for dusk
-/// ([`DUSK_KEY_EV`]), the damp air's fog, soft bloom for the neon, and the sun's shadows at their
+/// ([`DUSK_KEY_EV`]; the night kept dark, [`crate::nightfall::EXPOSURE_CURVE`]), the damp air's fog, soft bloom for the neon, and the sun's shadows at their
 /// best where the device allows (four cascades over the street, PCSS-lite at `high`, full PCSS at
 /// `ultra`).
 pub fn render_config() -> RenderConfig {
@@ -342,6 +357,7 @@ pub fn render_config() -> RenderConfig {
     RenderConfig::new()
         .tonemap(Tonemap::AgxPunchy)
         .exposure(Exposure::auto().compensation(DUSK_KEY_EV))
+        .exposure_curve(&crate::nightfall::EXPOSURE_CURVE)
         .fog(look_fog())
         .bloom(Bloom::new(BLOOM_INTENSITY).radius(BLOOM_RADIUS))
         .shadows_at(QualityPreset::High, shadows.filter(ShadowFilter::PcssLite))
@@ -364,7 +380,7 @@ pub fn wire(game: &mut Game<World>) {
     for shot in SHOTS {
         game.named_camera(shot.name, move |_| shot.camera());
     }
-    game.probe("view", |sim| json!({ "mode": sim.world.mode.label(), "tick": sim.world.tick, "backdrop": sim.world.backdrop.label() }));
+    game.probe("view", |sim| json!({ "mode": sim.world.mode.label(), "tick": sim.world.tick, "backdrop": sim.world.backdrop.label(), "time": sim.world.time.label() }));
     game.probe("where", |sim| street::where_probe(sim.world.camera().position));
     game.probe("scene", |_| street::scene_probe());
 }

@@ -340,6 +340,8 @@ pub struct World {
     pub hud_area: Option<[f32; 4]>,
     /// What lights the scene besides the sun and draws behind it (B).
     pub backdrop: Backdrop,
+    /// The time of day: the golden hour, the moonlit night or the clear day (N).
+    pub time: crate::daylight::TimeOfDay,
     /// The model handles.
     pub models: Models,
     /// The tick whose frame starts a new shot: a key or a tap moved the camera somewhere else at
@@ -409,8 +411,8 @@ fn tapped_scene(world: &World, ctx: &Ctx<'_>) -> bool {
 }
 
 /// One tick: the clock, the camera keys (1–9 a shot, Space the tour, F the free camera, H the HUD,
-/// O the graphics panel; a tap on the scene steps to the next shot), the backdrop (B) and the free
-/// camera's flight.
+/// O the graphics panel; a tap on the scene steps to the next shot), the backdrop (B), the time of
+/// day (N) and the free camera's flight.
 pub fn update(world: &mut World, ctx: &Ctx<'_>) {
     world.tick = ctx.tick + 1;
     let before = world.mode;
@@ -434,6 +436,9 @@ pub fn update(world: &mut World, ctx: &Ctx<'_>) {
     }
     if ctx.keys.pressed(Key::KeyB) {
         world.backdrop = world.backdrop.next();
+    }
+    if ctx.keys.pressed(Key::KeyN) {
+        world.time = world.time.next();
     }
     if tapped_scene(world, ctx) && world.mode != CameraMode::Free {
         world.mode = match world.mode {

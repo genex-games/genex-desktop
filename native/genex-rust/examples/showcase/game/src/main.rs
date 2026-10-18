@@ -10,9 +10,11 @@
 //! cabin is a room: its door stands open on a lamplit interior with a hearth and chinked log
 //! walls, lit inside by a reflection probe and an irradiance volume. A slow tour flies through pass 1's five named shots;
 //! four more (a wide golden hour, the shore, the forest floor and the cabin's room) are held by
-//! 6–9. 1–9 hold a shot, F flies a free camera, B steps through the skies, O opens the graphics
+//! 6–9. 1–9 hold a shot, F flies a free camera, B steps through the skies, N through the time of
+//! day (the golden hour, a moonlit night under the stars, a clear day), O opens the graphics
 //! settings (also the HUD's settings button), H hides the HUD.
 
+mod daylight;
 mod draw;
 mod hud;
 mod interior;

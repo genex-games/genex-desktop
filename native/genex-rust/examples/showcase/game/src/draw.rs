@@ -382,8 +382,8 @@ pub fn draw(world: &World, frame: &mut Frame, camera: &Camera) {
         frame.camera_cut();
     }
     frame.clear(HORIZON);
-    frame.sun(crate::layout::SUN_DIR, SUN_COLOR, SUN_INTENSITY).ambient(AMBIENT_COLOR, AMBIENT_INTENSITY);
-    frame.environment(world.backdrop.environment());
+    frame.sun(world.time.sun_dir(), SUN_COLOR, SUN_INTENSITY).ambient(AMBIENT_COLOR, world.time.ambient(AMBIENT_INTENSITY));
+    frame.environment(world.time.environment(world.backdrop.environment()));
     terrain(world, frame);
     trees(world, frame, camera.position, t);
     rocks(world, frame);

@@ -46,7 +46,13 @@ fn card_contents(world: &mut World, ui: &mut egui::Ui) {
         CameraMode::Shot(i) => format!("Shot {}: {}", i + 1, shot_at(i).name),
     };
     ui.label(egui::RichText::new("Lakeside at golden hour").color(TITLE).size(18.0).strong());
-    ui.label(egui::RichText::new(format!("{shot} · {}", world.backdrop.label())).color(BODY).size(14.0));
+    // The golden hour's card is the one the Studio's digests were recorded with; another time of
+    // day is named after the backdrop.
+    let time = match world.time {
+        crate::daylight::TimeOfDay::Dusk => String::new(),
+        time => format!(" · {} (N)", time.label()),
+    };
+    ui.label(egui::RichText::new(format!("{shot} · {}{time}", world.backdrop.label())).color(BODY).size(14.0));
     ui.add_space(4.0);
     let hint = if world.mode == CameraMode::Free {
         "WASD move · Q/E down/up · arrows or drag to look · Space tour"

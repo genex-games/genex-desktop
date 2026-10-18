@@ -6,6 +6,8 @@
 //! the follow-up measures beside them (drawn through genex-render directly).
 
 pub mod bench;
+#[path = "../game/src/daylight.rs"]
+pub mod daylight;
 #[path = "../game/src/draw.rs"]
 pub mod draw;
 pub mod fetched;
@@ -24,6 +26,8 @@ pub mod props;
 #[path = "../game/src/showcase.rs"]
 pub mod showcase;
 pub mod stress;
+#[path = "../harbour/src/nightfall.rs"]
+pub mod nightfall;
 #[path = "../harbour/src/street.rs"]
 pub mod street;
 pub mod trees;

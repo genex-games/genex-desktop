@@ -157,8 +157,10 @@ const PENDANT_LIGHT: f32 = 1.8;
 const PENDANT_RANGE: f32 = 5.5;
 const PENDANT_HEIGHT: f32 = 2.6;
 
-/// The lit shop windows (facade, span) and their glow and light.
-const SHOP_GLOW: f32 = 0.45;
+/// The lit shop windows (facade, span) and their glow and light. The glow is the shop's lit back
+/// wall behind its shelves: at 0.45 a window drew as a blank white panel at dusk and at night
+/// (GA look; renderer pass 2 B.12).
+const SHOP_GLOW: f32 = 0.16;
 const SHOP: Color = Color::rgb(255, 222, 180);
 const SHOP_LIGHT: f32 = 1.6;
 const SHOP_RANGE: f32 = 6.0;
@@ -261,12 +263,21 @@ const POLISHED: f32 = 0.4;
 const LACQUERED: f32 = 0.7;
 const HONED: f32 = 0.5;
 
+/// The pavement's slabs damp after the rain: the scan's roughness lowered.
+const DAMP: f32 = 0.8;
+
 impl Surfaces {
-    /// The surfaces.
+    /// The surfaces, the street wet and the pavements damp after the rain.
     pub fn new() -> Surfaces {
+        Surfaces::soaked(WET, DAMP)
+    }
+
+    /// The surfaces with the asphalt's and the pavement's scanned roughness times `asphalt` and
+    /// `paving` (renderer pass 2 B.12: the night's street is wetter).
+    pub fn soaked(asphalt: f32, paving: f32) -> Surfaces {
         Surfaces {
-            asphalt: scanned("asphalt", ASPHALT, WET),
-            paving: scanned("pavement", PAVING, 0.8),
+            asphalt: scanned("asphalt", ASPHALT, asphalt),
+            paving: scanned("pavement", PAVING, paving),
             brick: scanned("brick", BRICK, 1.0),
             plaster: scanned("plaster", PLASTER, 1.0),
             red_brick: scanned("red-brick", RED_BRICK, 1.0),
@@ -402,9 +413,9 @@ pub fn draw(world: &World, frame: &mut Frame) {
     }
     let t = world.seconds();
     frame.clear(DUSK);
-    frame.sun(SUN_DIR, SUN_COLOR, SUN_INTENSITY).ambient(AMBIENT_COLOR, AMBIENT_INTENSITY);
-    frame.environment(world.backdrop.environment());
-    let s = &world.surfaces;
+    frame.sun(world.time.sun_dir(), SUN_COLOR, SUN_INTENSITY).ambient(AMBIENT_COLOR, world.time.ambient(AMBIENT_INTENSITY));
+    frame.environment(world.time.environment(world.backdrop.environment()));
+    let s = world.time.surfaces(world);
     ground(frame, s);
     buildings(frame, s);
     shops(frame, s);
@@ -419,7 +430,7 @@ pub fn draw(world: &World, frame: &mut Frame) {
     drains(frame, s);
     awnings(frame, s);
     alley(frame, s);
-    weather(frame, &world.weather);
+    weather(frame, world.time.weather(world));
 }
 
 fn ground(frame: &mut Frame, s: &Surfaces) {
@@ -502,9 +513,44 @@ fn shops(frame: &mut Frame, s: &Surfaces) {
         let size = vec3(face.span.1 - face.span.0, face.rise.1 - face.rise.0, SKIN);
         let rise = (face.rise.0 + face.rise.1) * 0.5;
         frame.cube_with(Transform { translation: face.point(middle, rise, 0.04), rotation: face.turn(), scale: size }, &display);
+        shop_goods(frame, s, face);
         frame.cube_with(Transform { translation: face.point(middle, rise, 0.12), rotation: face.turn(), scale: vec3(size.x, size.y, 0.02) }, &s.glass);
         frame.cube_with(Transform { translation: face.point(middle, face.rise.1 + 0.06, 0.1), rotation: face.turn(), scale: vec3(size.x + 0.2, 0.12, 0.16) }, &s.metal);
         frame.point_light(face.point(middle, 1.8, 0.9), SHOP_RANGE, SHOP, SHOP_LIGHT);
+    }
+}
+
+/// Shelves across a lit shop window and goods on them, between its lit back and its glass:
+/// [`SHOP_SHELVES`] rows from this high, this far apart, each holding a box about every
+/// [`SHOP_GOODS_PITCH`] metres, its height picked from [`SHOP_GOODS_HEIGHTS`] by its place.
+const SHOP_SHELVES: usize = 3;
+const SHOP_SHELF_FIRST: f32 = 0.55;
+const SHOP_SHELF_STEP: f32 = 0.68;
+const SHOP_GOODS_PITCH: f32 = 0.42;
+const SHOP_GOODS_HEIGHTS: [f32; 4] = [0.22, 0.34, 0.16, 0.28];
+/// How far in front of the window's wall the shelves and goods stand, and their depth (the lit
+/// back is at 0.04, the glass at 0.12).
+const SHOP_GOODS_LIFT: f32 = 0.08;
+const SHOP_GOODS_DEPTH: f32 = 0.04;
+
+/// A lit shop window's shelves and goods ([`SHOP_SHELVES`]): dark silhouettes and colours against
+/// its lit back, so the window reads as a shop.
+fn shop_goods(frame: &mut Frame, s: &Surfaces, face: Face) {
+    let (from, to) = (face.span.0 + 0.2, face.span.1 - 0.2);
+    let goods = [&s.canvas[0], &s.terracotta, &s.bottles[0], &s.canvas[1], &s.slate, &s.bottles[2]];
+    let per_shelf = ((to - from) / SHOP_GOODS_PITCH) as usize;
+    for shelf in 0..SHOP_SHELVES {
+        let y = face.rise.0 + SHOP_SHELF_FIRST + shelf as f32 * SHOP_SHELF_STEP;
+        let board = Transform { translation: face.point((from + to) * 0.5, y, SHOP_GOODS_LIFT), rotation: face.turn(), scale: vec3(to - from, 0.03, SHOP_GOODS_DEPTH) };
+        frame.cube_with(board, &s.metal);
+        for i in 0..per_shelf {
+            let pick = i * 7 + shelf * 3;
+            let height = SHOP_GOODS_HEIGHTS[pick % SHOP_GOODS_HEIGHTS.len()];
+            let along = from + (i as f32 + 0.5) * SHOP_GOODS_PITCH;
+            let at = face.point(along, y + 0.015 + height * 0.5, SHOP_GOODS_LIFT);
+            let scale = vec3(SHOP_GOODS_PITCH * 0.6, height, SHOP_GOODS_DEPTH * 0.8);
+            frame.cube_with(Transform { translation: at, rotation: face.turn(), scale }, goods[pick % goods.len()]);
+        }
     }
 }
 
@@ -1135,13 +1181,36 @@ pub struct Weather {
     pub rain: Vec<Particles>,
 }
 
+/// The weather's colours: the drizzle's streaks, and the steam from birth to death. A particle's
+/// colour is the light the picture shows (after the exposure), so a darker scene asks for darker
+/// weather (renderer pass 2 B.12: the night's).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct WeatherColors {
+    /// The drizzle's streaks.
+    pub rain: Color,
+    /// The steam at birth.
+    pub steam_start: Color,
+    /// The steam at death.
+    pub steam_end: Color,
+}
+
+/// The dusk's weather colours.
+pub const DUSK_WEATHER: WeatherColors = WeatherColors { rain: RAIN_COLOR, steam_start: STEAM_START, steam_end: STEAM_END };
+
 impl Default for Weather {
     fn default() -> Weather {
+        Weather::colored(DUSK_WEATHER)
+    }
+}
+
+impl Weather {
+    /// The street's steam and drizzle in `colors` (the same emitters, spawns and seeds).
+    pub fn colored(colors: WeatherColors) -> Weather {
         let steam = MANHOLES
             .iter()
             .zip(1u32..)
             .map(|(&(x, z), seed)| {
-                let plume = Particles::steam(vec3(x, 0.02, z)).with_look(STEAM_SIZE, STEAM_GROWTH, STEAM_START, STEAM_END).with_seed(seed);
+                let plume = Particles::steam(vec3(x, 0.02, z)).with_look(STEAM_SIZE, STEAM_GROWTH, colors.steam_start, colors.steam_end).with_seed(seed);
                 plume.with_rate(STEAM_PER_TICK, STEAM_LIFE_TICKS).unwrap_or(plume)
             })
             .collect();
@@ -1156,7 +1225,7 @@ impl Default for Weather {
             .into_iter()
             .zip(11u32..)
             .map(|((top, extent, per_tick), seed)| {
-                let over = Particles::rain(top, extent).with_look(RAIN_WIDTH, 1.0, RAIN_COLOR, RAIN_COLOR).with_seed(seed);
+                let over = Particles::rain(top, extent).with_look(RAIN_WIDTH, 1.0, colors.rain, colors.rain).with_seed(seed);
                 over.with_rate(per_tick, RAIN_LIFE_TICKS).unwrap_or(over)
             })
             .collect();

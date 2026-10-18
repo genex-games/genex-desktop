@@ -7,10 +7,11 @@
 //! This is the blockout of renderer pass 2's urban showcase: Tier A and B features (reflection
 //! probes, the irradiance grid, froxel fog, decals, particles, SSR) dress it as they land. A tour
 //! holds each of the five named shots and cuts to the next; 1–5 hold a shot, F flies a free camera,
-//! B switches the sky, O opens the graphics settings (also the HUD's settings button), H hides the
-//! HUD.
+//! B switches the sky, N steps through the time of day (the dusk, the night, a clear day), O opens
+//! the graphics settings (also the HUD's settings button), H hides the HUD.
 
 mod harbour;
+mod nightfall;
 mod street;
 
 fn main() {

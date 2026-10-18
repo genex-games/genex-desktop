@@ -65,7 +65,8 @@ pub const WORLD_SIZE: [u32; 2] = [1280, 720];
 
 /// The lakeside's render choices: AgX with its punchy look (the filmic roll-off keeps the low sun,
 /// the lanterns and the fireflies from clipping while the golden colours stay rich), auto
-/// exposure, the height fog under a warm white balance, soft bloom, light ambient occlusion and
+/// exposure (a moonlit night kept a night, [`crate::daylight::EXPOSURE_CURVE`]), the height fog
+/// under a warm white balance, soft bloom, light ambient occlusion and
 /// contact shadows, and the sun's shadows at their best where the device allows: four cascades
 /// reaching the far woods, PCSS-lite at `high` and full PCSS at `ultra` (phones and weak
 /// desktops are held to their caps).
@@ -74,6 +75,7 @@ pub fn render_config() -> RenderConfig {
     let mut config = RenderConfig::new()
         .tonemap(Tonemap::AgxPunchy)
         .exposure(Exposure::auto().compensation(LOOK_EV_COMPENSATION))
+        .exposure_curve(&crate::daylight::EXPOSURE_CURVE)
         .fog(look_fog())
         .white_balance(WHITE_BALANCE)
         .bloom(Bloom::new(BLOOM_INTENSITY).radius(BLOOM_RADIUS))
@@ -102,7 +104,7 @@ pub fn wire(game: &mut Game<World>) {
     for shot in named_shots() {
         game.named_camera(shot.name, move |_| shot.camera());
     }
-    game.probe("view", |sim| json!({ "mode": sim.world.mode.label(), "tick": sim.world.tick, "backdrop": sim.world.backdrop.label() }));
+    game.probe("view", |sim| json!({ "mode": sim.world.mode.label(), "tick": sim.world.tick, "backdrop": sim.world.backdrop.label(), "time": sim.world.time.label() }));
     game.probe("scene", |_| scene_probe());
     passes::wire(game);
 }
