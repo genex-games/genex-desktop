@@ -28,6 +28,8 @@ pub use mesh_lod::{
     LOD_MAX_LEVELS, LOD_MIN_TRIANGLES, LOD_NOMINAL_HEIGHT, LOD_SCHEMA_VERSION, LOD_SELECT_WGSL, LOD_THRESHOLD_PX, LODS_EXTRAS_KEY, LodChain, LodExtrasKey,
     LodFault, LodLevel, LodLevelKey, LodWarning, batch_lod, lod_keeps, select_lod,
 };
+// The LOD fade band (game systems LOD-01).
+pub use mesh_lod::{LOD_FADE_TAG, LodBand, fade_batch_lod, lod_band, lod_band_keep};
 
 /// One vertex as the vertex buffer holds it (`MeshVertex` in the skinning shader).
 #[repr(C)]
