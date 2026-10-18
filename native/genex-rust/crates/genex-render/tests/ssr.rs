@@ -392,6 +392,46 @@ fn a_ray_that_leaves_the_screen_has_no_validity() {
     assert!(sky_rays > 100, "{sky_rays} road texels reflect the sky");
 }
 
+/// The most a bright texel's glow may differ along an axis and along a diagonal at the same
+/// distance, as a share of its peak (a round spread; bilinear taps of a coarse mip spread it as a
+/// square, measured 0.086).
+const GLOW_ANISOTROPY_MAX: f32 = 0.04;
+
+/// A rough reflection of a small bright light (one texel of a coarse mip of the colour pyramid)
+/// spreads as a round glow: the trace reads mip 1 and up with a cubic B-spline. Night shots showed
+/// a soft square around each reflected pendant bulb (look pass, lane R).
+#[test]
+fn a_rough_reflection_spreads_a_small_light_round_not_square() {
+    let sizes = [(64u32, 64u32), (32, 32), (16, 16)];
+    let history: Vec<ssr::twin::Mip> = sizes
+        .iter()
+        .enumerate()
+        .map(|(mip, &(w, h))| {
+            let mut texels = vec![Vec4::ZERO; (w * h) as usize];
+            if mip == 2 {
+                texels[(8 * w + 8) as usize] = Vec4::ONE;
+            }
+            ((w, h), texels)
+        })
+        .collect();
+    let centre = Vec2::splat(8.5 / 16.0);
+    let at = |dx: f32, dy: f32| ssr::twin::sample_pyramid(&history, centre + Vec2::new(dx, dy) / 16.0, 2.0).x;
+    let peak = at(0.0, 0.0);
+    let worst = (1..=25)
+        .map(|i| {
+            let r = i as f32 * 0.1;
+            let d = r * std::f32::consts::FRAC_1_SQRT_2;
+            (at(r, 0.0) - at(d, d)).abs() / peak
+        })
+        .fold(0.0f32, f32::max);
+    assert!(peak > 0.0, "the light is seen at its own texel");
+    assert!(worst <= GLOW_ANISOTROPY_MAX, "the glow differs by {worst:.3} of its peak between an axis and a diagonal");
+    // Mip 0 stays bilinear: a mirror keeps its sharpness.
+    let sharp: Vec<ssr::twin::Mip> = vec![((4, 4), (0..16).map(|i| Vec4::splat(i as f32)).collect())];
+    let texel = |x: u32, y: u32| Vec2::new((x as f32 + 0.5) / 4.0, (y as f32 + 0.5) / 4.0);
+    assert_eq!(ssr::twin::sample_pyramid(&sharp, texel(1, 2), 0.0), Vec4::splat(9.0), "a mirror reads its texel");
+}
+
 #[test]
 fn the_hand_over_to_the_probes_has_no_seam() {
     // Where the probe's radiance is the screen's, the sum is that radiance at every confidence.

@@ -328,7 +328,8 @@ impl Renderer {
             wgpu::BindGroupEntry { binding: 10, resource: wgpu::BindingResource::Sampler(&self.texture_sampler) },
         ];
         entries.extend(FRAME_ENV_BOUND.into_iter().filter_map(|(binding, name)| environment.binding(name).map(|resource| wgpu::BindGroupEntry { binding, resource })));
-        let [ao_term, contact_mask, aerial_volume] = self.effect_views();
+        // A capture reads no screen reflection (its pipelines' `GX_SSR` is off): the zero texel.
+        let [ao_term, contact_mask, aerial_volume, _] = self.effect_views();
         let [(fog, _), (ao, _), (aerial, _), (point, _), (contact, _)] = FRAME_EFFECT_BOUND;
         entries.extend([
             entry(fog, &self.fog_row),
@@ -341,6 +342,8 @@ impl Renderer {
         entries.extend([entry(light_ext, t.light_ext.get()), entry(light_bins, t.light_bins.get()), entry(material_ext, t.material_ext.get())]);
         let class_views = MATERIAL_CLASS_ARRAYS.map(|(class, kind)| self.textures.view(class, kind));
         entries.extend(FRAME_MATERIAL_CLASS_BINDINGS.into_iter().zip(class_views).map(|((binding, _), view)| wgpu::BindGroupEntry { binding, resource: wgpu::BindingResource::TextureView(view) }));
+        let neutral = self.ssr.borrow().neutral().clone();
+        entries.push(wgpu::BindGroupEntry { binding: crate::screen_inputs::FRAME_REFLECTIONS_BINDING.0, resource: wgpu::BindingResource::TextureView(&neutral) });
         self.device.create_bind_group(&wgpu::BindGroupDescriptor { label: Some("probe capture frame"), layout: &self.layouts.frame, entries: &entries })
     }
 

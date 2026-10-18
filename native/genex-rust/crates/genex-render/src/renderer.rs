@@ -117,6 +117,7 @@ mod lens;
 mod probe_capture;
 mod grass_draw;
 mod shadow_cache_draw;
+mod ssr_draw;
 mod terrain_draw;
 mod variants;
 mod water_draw;
@@ -397,6 +398,9 @@ struct SurfaceKey {
     /// renderer pass 2 P2-0.12 LG-04): Filament's 0.045 on the HDR scene of a desktop, its
     /// half-precision 0.089 on a phone's, the legacy 0.04 on the LDR scene.
     roughness_floor: u32,
+    /// Whether the opaque surfaces read the screen reflections at binding 30 (`GX_SSR`, renderer
+    /// pass 2 B.9: `ssr::frame_ssr` qualities under TAA); never the transparent pipeline.
+    ssr: bool,
 }
 
 /// The RQ4 screen effects a quality draws, one pipeline constant each (`GX_AO`,
@@ -440,6 +444,7 @@ impl SurfaceKey {
         sun_soft_edges: false,
         sun_cascades: SHADOW_CASCADES as u8,
         roughness_floor: LEGACY_ROUGHNESS_FLOOR.to_bits(),
+        ssr: false,
     };
 
     /// The key `quality` asks of the HDR scene (`hdr`) or the legacy one, `taa` when TAA resolves
@@ -459,6 +464,7 @@ impl SurfaceKey {
             sun_soft_edges: quality.shadows.blend_percent > 0 || quality.shadows.fade_percent > 0,
             sun_cascades: quality.shadows.cascades.clamp(1, MAX_CASCADES as u8),
             roughness_floor: if hdr { DESKTOP_ROUGHNESS_FLOOR } else { LEGACY_ROUGHNESS_FLOOR }.to_bits(),
+            ssr: temporal && crate::ssr::LANDED && crate::ssr::frame_ssr(quality, hdr),
         }
     }
 
@@ -477,8 +483,9 @@ impl SurfaceKey {
     /// T-01 step 1). TAA takes a moving transparent's current sample almost whole (its reactive
     /// coverage), so the frame-keyed taps and band dither reached the screen unaveraged: the lake's
     /// shadow edges blinked while the camera moved.
+    /// A transparent pixel's screen reflection is the opaque surface's behind it: it reads none.
     const fn blended(self) -> SurfaceKey {
-        SurfaceKey { shadow_temporal: false, ..self }
+        SurfaceKey { shadow_temporal: false, ssr: false, ..self }
     }
 }
 
@@ -616,9 +623,9 @@ struct GroupsKey {
     views: (TextureView, [TextureView; 8]),
     /// The environment maps' generation (the neutral inputs until the bake replaces them).
     environment: u64,
-    /// The AO term, the contact-shadow mask and the aerial-perspective volume (the neutral texture
-    /// where their nodes do not run).
-    effects: [TextureView; 3],
+    /// The AO term, the contact-shadow mask, the aerial-perspective volume and the screen
+    /// reflections (the neutral texture where their nodes do not run).
+    effects: [TextureView; 4],
     /// The material sampler's anisotropy (P2-0.12 LG-02: a quality change replaces the sampler).
     anisotropy: u16,
 }
@@ -781,6 +788,8 @@ pub struct Renderer {
     post: std::cell::RefCell<Option<(TonemapNode, ResolveNode)>>,
     /// The forward pass's screen effects (AO, contact shadows; graph nodes 10 and 10a).
     effects: std::cell::RefCell<effects::ScreenEffects>,
+    /// The screen-space reflections (graph node 10b, renderer pass 2 B.9) and forward binding 30.
+    ssr: std::cell::RefCell<ssr_draw::SsrHook>,
     /// The frame's fog row (`GxFog` at the forward frame group's `frame_fog`; particles read it too).
     fog_row: Buffer,
     /// What the last planned frame's fog scatters in front of: its environment, or the flat clear
@@ -1033,6 +1042,8 @@ pub fn frame_layout_entries() -> Vec<BindGroupLayoutEntry> {
     .chain(frame_effect_entries())
     .chain(frame_light_entries())
     .chain(classes)
+    // Renderer pass 2 B.9: the screen reflections, the stage's 16th sampled texture (D1).
+    .chain([texture_entry(crate::screen_inputs::FRAME_REFLECTIONS_BINDING.0, color, wgpu::TextureViewDimension::D2)])
     .collect()
 }
 
@@ -1310,6 +1321,7 @@ fn surface_constants(reversed: bool, format: TextureFormat, surface: SurfaceKey)
         ("GX_SPECULAR_AA", f64::from(u8::from(reversed && surface.specular_aa))),
         ("GX_SHADOW_FILTER", f64::from(surface.shadow_filter.shader_id())),
         ("GX_SHADOW_TEMPORAL", f64::from(u8::from(surface.shadow_temporal))),
+        ("GX_SSR", f64::from(u8::from(surface.ssr))),
     ]
 }
 
@@ -2061,6 +2073,7 @@ impl<'a> WorldNodes<'a> {
             NodeId::Prepass => self.prep.prepass.is_some(),
             NodeId::Ao => self.prepass_serves(PrepassConsumers::AO) && self.renderer.frame_ao().is_some(),
             NodeId::ContactShadows => self.prepass_serves(PrepassConsumers::CONTACT_SHADOWS) && plan.cascades.is_some(),
+            NodeId::Ssr => self.taa_runs() && self.renderer.ssr_runs(),
             NodeId::Occlusion => self.prep.meshlets.as_ref().is_some_and(|meshlets| meshlets.frame.occlusion),
             NodeId::Cull => self.prep.path == CullPath::Gpu && !plan.batches.is_empty(),
             NodeId::Shadows => plan.cascades.is_some() || !plan.spot_shadows.is_empty(),
@@ -2177,6 +2190,15 @@ impl<'a> WorldNodes<'a> {
                 }
             }
             NodeId::Ao | NodeId::ContactShadows => self.encode_effect(id, frame),
+            NodeId::Ssr => {
+                let (render, compute) = renderer.encode_ssr(frame, self.prep, self.counts(0));
+                self.count_render(frame, render);
+                self.count_compute(frame, compute);
+                if compute > 0 {
+                    // The world pass binds the reflections at 30.
+                    self.baked_groups = Some(renderer.current_groups());
+                }
+            }
             NodeId::Shadows => {
                 // A far cascade off its cadence keeps last frame's map: no pass.
                 let mut drawn = 0;
@@ -2222,9 +2244,12 @@ impl<'a> WorldNodes<'a> {
             }
             NodeId::Taa => {
                 self.encode_taa(frame);
-                // B.3: the colour pyramid the next frame's water marches.
+                // B.3: the colour pyramid the next frame's water marches; B.9: the one its
+                // screen-space reflections read.
                 if let Some(view) = self.taa.as_ref().map(|taa| taa.view.clone()) {
                     let passes = renderer.encode_water_pyramid(frame, self.prep, &view);
+                    self.count_compute(frame, passes);
+                    let passes = renderer.encode_ssr_pyramid(frame, &view);
                     self.count_compute(frame, passes);
                 }
             }
@@ -2585,6 +2610,7 @@ impl Renderer {
             last_prepass: None,
             post: std::cell::RefCell::new(None),
             effects: std::cell::RefCell::new(effects::ScreenEffects::new(&device, &gpu.queue)?),
+            ssr: std::cell::RefCell::new(ssr_draw::SsrHook::new(&device, &gpu.queue)),
             fog_row: uniform_buffer("frame fog", size_of::<crate::fog::GpuFog>() as u64)?,
             fog_backdrop: crate::fog::FogBackdrop::Environment,
             refreshed_groups: std::cell::RefCell::new(Vec::new()),
@@ -4872,13 +4898,14 @@ impl Renderer {
         groups
     }
 
-    /// The screen effects' views bound now: the AO term, the contact-shadow mask and the
-    /// aerial-perspective volume node 11 wrote this frame (each neutral where its node did not run).
-    fn effect_views(&self) -> [TextureView; 3] {
+    /// The screen effects' views bound now: the AO term, the contact-shadow mask, the
+    /// aerial-perspective volume node 11 wrote this frame and the screen reflections node 10b wrote
+    /// (each neutral where its node did not run).
+    fn effect_views(&self) -> [TextureView; 4] {
         let effects = self.effects.borrow();
         let [ao, contact] = effects.views();
         let aerial = self.sky.borrow().aerial_view().cloned().unwrap_or_else(|| effects.neutral_volume().clone());
-        [ao, contact, aerial]
+        [ao, contact, aerial, self.ssr.borrow().view()]
     }
 
     /// The frame groups for what is bound right now, made mid-frame after a node replaced a view
@@ -4923,7 +4950,7 @@ impl Renderer {
         entries.extend(
             FRAME_ENV_BOUND.into_iter().filter_map(|(binding, name)| environment.binding(name).map(|resource| wgpu::BindGroupEntry { binding, resource })),
         );
-        let [ao_term, contact_mask, aerial_volume] = self.effect_views();
+        let [ao_term, contact_mask, aerial_volume, reflections] = self.effect_views();
         let [(fog, _), (ao, _), (aerial, _), (point, _), (contact, _)] = FRAME_EFFECT_BOUND;
         entries.extend([
             entry(fog, &self.fog_row),
@@ -4939,6 +4966,8 @@ impl Renderer {
             binding,
             resource: wgpu::BindingResource::TextureView(view),
         }));
+        let reflections_binding = crate::screen_inputs::FRAME_REFLECTIONS_BINDING.0;
+        entries.push(wgpu::BindGroupEntry { binding: reflections_binding, resource: wgpu::BindingResource::TextureView(&reflections) });
         let frame = self.device.create_bind_group(&wgpu::BindGroupDescriptor { label: Some("frame"), layout: &self.layouts.frame, entries: &entries });
         let color_classes = TextureClass::ALL.map(|class| self.textures.view(class, TextureKind::Color));
         let mut shadow_entries =
@@ -5223,7 +5252,7 @@ impl Renderer {
     }
 
     fn world_pass(&self) -> WorldPass<'_> {
-        let [ao_term, contact_mask, aerial] = self.effect_views();
+        let [ao_term, contact_mask, aerial, _] = self.effect_views();
         WorldPass {
             frame_uniforms: &self.frame_uniforms,
             vertices: &self.meshes.vertices,
@@ -5497,9 +5526,31 @@ mod surface_constants_tests {
             let blended = surface_constants(true, TextureFormat::Rgba16Float, surface.blended());
             assert_eq!(value(&opaque, "GX_SHADOW_TEMPORAL"), Some(1.0), "{preset:?}: the opaque surfaces turn with the frame under TAA");
             assert_eq!(value(&blended, "GX_SHADOW_TEMPORAL"), Some(0.0), "{preset:?}: the transparent surfaces do not");
-            let others = |constants: &[(&'static str, f64)]| constants.iter().filter(|(key, _)| *key != "GX_SHADOW_TEMPORAL").copied().collect::<Vec<_>>();
+            // The look pass (B.9's frame hook) added `GX_SSR`, which differs too: below.
+            let frame_keyed = ["GX_SHADOW_TEMPORAL", "GX_SSR"];
+            let others = |constants: &[(&'static str, f64)]| constants.iter().filter(|(key, _)| !frame_keyed.contains(key)).copied().collect::<Vec<_>>();
             assert_eq!(others(&opaque), others(&blended), "{preset:?}");
         }
+    }
+
+    /// Renderer pass 2 B.9's frame hook: the opaque surfaces of a quality that traces screen-space
+    /// reflections under TAA read them at binding 30 (`GX_SSR`); the transparent pipeline never
+    /// does (its pixel's reflection is the opaque surface's behind it), nor a quality that traces
+    /// none, nor a frame without TAA (the pyramid is TAA's output).
+    #[test]
+    fn only_the_opaque_surfaces_of_a_tracing_quality_read_the_screen_reflections() {
+        let desktop = DeviceClass::new(FormFactor::Desktop, PerformanceTier::High);
+        let value = |surface: SurfaceKey| surface_constants(true, TextureFormat::Rgba16Float, surface).iter().find(|(key, _)| *key == "GX_SSR").map(|(_, value)| *value);
+        for preset in [QualityPreset::Low, QualityPreset::Medium, QualityPreset::High, QualityPreset::Ultra] {
+            let quality = preset_quality(preset, desktop);
+            let traces = crate::ssr::LANDED && quality.ssr.enabled;
+            let surface = SurfaceKey::of(&quality, true, true);
+            assert_eq!(value(surface), Some(f64::from(u8::from(traces))), "{preset:?}: the opaque surfaces");
+            assert_eq!(value(surface.blended()), Some(0.0), "{preset:?}: the transparent surfaces");
+            assert_eq!(value(SurfaceKey::of(&quality, true, false)), Some(0.0), "{preset:?}: without TAA");
+        }
+        assert!(crate::ssr::LANDED && preset_quality(QualityPreset::High, desktop).ssr.enabled, "desktop high traces");
+        assert_eq!(value(SurfaceKey::LEGACY), Some(0.0), "the legacy scene");
     }
 
     /// Renderer pass 2, P2-0.10 (C5): only an HDR scene stored as `rg11b10ufloat` (desktop low and

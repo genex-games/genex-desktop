@@ -158,7 +158,8 @@ fn the_forward_shader_reads_the_atlas_within_the_forward_stage_budget() {
     assert_eq!(genex_render::irradiance::FRAME_IRRADIANCE_BINDINGS, [(32, "env_irradiance")]);
     let (storage, textures) = fragment_counts(&module, &info, "fs_main");
     assert_eq!(storage, 6, "the volumes' rows share the probes' table: {storage} of 8");
-    assert_eq!(textures, 15, "the atlas is the forward stage's 15th sampled texture");
+    // The look pass's screen reflections (B.9, binding 30) are the 16th, after the atlas.
+    assert_eq!(textures, 16, "the atlas is one of the forward stage's 16 sampled textures");
     assert!(textures <= genex_render::abi::FORWARD_FRAGMENT_TEXTURES_MAX && genex_render::abi::FORWARD_FRAGMENT_TEXTURES_MAX <= 16);
     // A capture compiles the volumes out with the probes.
     let constants: naga::back::PipelineConstants = [("GX_PROBES".to_owned(), 0.0)].into_iter().collect();

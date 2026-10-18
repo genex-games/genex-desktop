@@ -642,8 +642,9 @@ fn the_forward_frame_group_stays_within_webgpu_core_per_stage_limits() {
         (counts.uniform_buffers, counts.storage_buffers, counts.sampled_textures, counts.samplers),
         // Renderer pass 2 A.3 flipped 8 -> 9 storage buffers: the reflection probes' rows. A.4
         // flipped the sampled textures from the cap then (14) to 15 of the cap now (16): the
-        // irradiance volumes' atlas at binding 32.
-        (4, 9, 15, 4),
+        // irradiance volumes' atlas at binding 32. The look pass (B.9's frame hook) flipped them
+        // 15 -> 16, all of the cap: the screen reflections at binding 30.
+        (4, 9, 16, 4),
         "{counts:?}"
     );
     // WebGPU's limits are per stage: the fragment stage reads five tables (materials, lights, the
@@ -1568,9 +1569,10 @@ fn the_forward_frame_layout_with_every_reserved_slot_fits_webgpu_core() {
     // perspective, contact shadows; shadow comparison, texture, environment and point samplers.
     // Renderer pass 2 A.4 flipped the sampled textures 14 -> 15 (the irradiance volumes' atlas)
     // and the headroom row: under owner decision D1 the forward stage may use all of core's 16.
+    // The look pass (B.9's frame hook) flipped them 15 -> 16: the screen reflections at binding 30.
     assert_eq!(
         (fragment.uniform_buffers, fragment.storage_buffers, fragment.sampled_textures, fragment.samplers),
-        (3, 6, 15, 4),
+        (3, 6, 16, 4),
         "{fragment:?}"
     );
     assert!(fragment.sampled_textures <= FORWARD_FRAGMENT_TEXTURES_MAX);

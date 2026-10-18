@@ -115,8 +115,9 @@ fn the_forward_shader_with_probes_stays_within_the_forward_stage_budget() {
     let (storage, textures) = fragment_counts(&module, &info, "fs_main");
     assert_eq!(storage, 6, "one storage buffer more than A.0's five (the rows): {storage} of 8");
     // Renderer pass 2 A.4 flipped 14 (the cap then) -> 15: the irradiance volumes' atlas; the
-    // probes' cube array still takes the sky cube's slot.
-    assert_eq!(textures, 15, "no sampled texture more for the probes: the array takes the cube's slot");
+    // probes' cube array still takes the sky cube's slot. The look pass flipped 15 -> 16: B.9's
+    // screen reflections at binding 30.
+    assert_eq!(textures, 16, "no sampled texture more for the probes: the array takes the cube's slot");
     assert!(textures <= genex_render::abi::FORWARD_FRAGMENT_TEXTURES_MAX);
     // The capture's pipelines compile the probes out.
     let constants: naga::back::PipelineConstants = [("GX_PROBES".to_owned(), 0.0)].into_iter().collect();

@@ -21,18 +21,18 @@
 //!   opaque copy.
 //! - **The prepass's normal and roughness** ([`NORMAL_ROUGHNESS_FORMAT`],
 //!   `normal_roughness.wgsl`): the normal-mapped world normal (two 12-bit octahedral coordinates in
-//!   rgb) and the perceptual roughness (a), one `rgba8unorm` texel a pixel, written by the prepass
-//!   on SSR presets beside its vertex normals ([`pack_normal_roughness`] is the twin).
+//!   rgb) and the perceptual roughness (a), one `rgba8unorm` texel a pixel, written by B.9's surface
+//!   pass over the prepass depth ([`pack_normal_roughness`] is the twin).
 //! - **The depth and its Hi-Z**: the prepass depth and graph node 8's pyramid as they are; B.9
 //!   builds its own chain of the closest depth (node 8 keeps the farthest).
 //! - **The screen reflections' slot** ([`FRAME_REFLECTIONS_BINDING`]): forward frame-group binding
 //!   30 (rgb reflected radiance, a confidence), the forward stage's 16th sampled texture of 16
-//!   (owner decision D1), reserved here and bound by B.9.
+//!   (owner decision D1), named here and bound by B.9.
 //!
 //! The inputs run on desktop and web `high` and `ultra` ([`ScreenInputs`], `Quality::screen_inputs`)
 //! and only for a consumer that asks for them ([`frame_inputs`]: plan principle 3, pay for what
-//! you use). Every target is pooled under its own label, so the budget ledger counts it. The node
-//! adds no binding to the forward stage until B.9 binds the reflections at 30.
+//! you use). Every target is pooled under its own label, so the budget ledger counts it. The
+//! forward stage binds the reflections at 30 (B.9, a zero texel on frames that trace none).
 
 use wgpu::{BindGroup, CommandEncoder, ComputePipeline, Device, Sampler, Texture, TextureFormat, TextureUsages, TextureView};
 

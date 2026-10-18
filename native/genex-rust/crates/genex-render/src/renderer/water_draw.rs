@@ -79,10 +79,12 @@ impl Renderer {
         // No history pyramid on the frame yet: the reflection is the environment's.
         let asked = crate::screen_inputs::frame_inputs(&self.quality, self.path.hdr, crate::water::asked_inputs());
         let copied = asked.opaque_copy && hook.copy_opaque(&device, frame.encoder(), scene_texture, render);
-        // Last frame's pyramid, when this frame follows it on the same history and size.
+        // Last frame's pyramid, when this frame follows it on the same history and size: the
+        // screen-space reflections' on a frame that traces them (B.9 builds it), else the water's.
         let temporal = self.temporal;
         let follows = |p: &&WaterPyramid| p.render == render && p.set == temporal.set && p.frame.wrapping_add(1) == self.frame_index && !temporal.reset;
-        let pyramid = hook.pyramid.as_ref().filter(follows).filter(|_| asked.history_pyramid);
+        let own = || hook.pyramid.as_ref().filter(follows).map(|p| (p.view.clone(), p.pre_exposure));
+        let pyramid = self.ssr_history().or_else(own).filter(|_| asked.history_pyramid);
         let inputs = ScreenInputs { opaque_copy: copied, history_pyramid: pyramid.is_some(), ..asked };
         let class = self.class.unwrap_or(DeviceClass::new(self.form, PerformanceTier::High));
         let environment = self.environment.borrow();
@@ -110,11 +112,11 @@ impl Renderer {
             body: &water.body,
             view_proj,
             prev_view_proj,
-            radiance_scale: pyramid.map_or(1.0, |p| self.path.pre_exposure / p.pre_exposure.max(f32::MIN_POSITIVE)),
+            radiance_scale: pyramid.as_ref().map_or(1.0, |(_, pre_exposure)| self.path.pre_exposure / pre_exposure.max(f32::MIN_POSITIVE)),
             probes: environment.probes().frame_rows(),
         });
         hook.node.set_reflection(&queue, &reflect);
-        let history = pyramid.map(|p| p.view.clone());
+        let history = pyramid.map(|(view, _)| view);
         let opaque = hook.opaque.as_ref().filter(|_| copied).map(|(_, view)| view);
         hook.node.prepare(&device, &queue, &row, &WaterInput { frame: &self.frame_uniforms, opaque, depth: &prepass.depth_view, env, history: history.as_ref() });
         let mut pass = frame.encoder().begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -144,7 +146,12 @@ impl Renderer {
     /// compute passes it opened.
     pub(super) fn encode_water_pyramid(&self, frame: &mut FrameEncoder, prep: &FramePrep, source: &TextureView) -> u32 {
         let asked = crate::screen_inputs::frame_inputs(&self.quality, self.path.hdr, crate::water::asked_inputs());
-        if !(asked.history_pyramid && self.water_runs(prep)) {
+        // A frame that traces screen-space reflections builds the one pyramid both read (B.9).
+        let shared = self.ssr_traces();
+        if shared && let Some(hook) = self.water.borrow_mut().as_mut() {
+            hook.pyramid = None;
+        }
+        if !(asked.history_pyramid && self.water_runs(prep)) || shared {
             return 0;
         }
         let mut slot = self.water.borrow_mut();

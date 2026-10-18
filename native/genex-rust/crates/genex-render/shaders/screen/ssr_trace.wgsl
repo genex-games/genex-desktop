@@ -1,4 +1,4 @@
-// Hi-Z screen-space reflections, the trace (renderer pass 2 B.9; graph node 14b on desktop and web
+// Hi-Z screen-space reflections, the trace (renderer pass 2 B.9; graph node 10b on desktop and web
 // `high` and `ultra`). A port of Godot 4.7.2 `screen_space_reflection.glsl` (MIT, © Godot Engine
 // contributors and Juan Linietsky, Ariel Manzur): Hi-Z tracing with parametric t (hacksoflife,
 // 2020), the geometric-normal bias (habr 744336) and FidelityFX SSSR's hit validation, at half the
@@ -220,6 +220,58 @@ fn ssr_mip(roughness: f32, ray_len: f32) -> f32 {
     return mip * pow(saturate(1.25 - ray_len), 0.2);
 }
 
+// Mip `level` (1 and up) of the colour pyramid at `uv` through a cubic B-spline, in four bilinear
+// taps (Sigg and Hadwiger 2005, GPU Gems 2 ch. 20; clamp-to-edge through the sampler): a rough
+// reflection of a small bright light spreads round, where bilinear taps of a coarse mip spread it
+// as a square. The CPU twin is `ssr::twin::sample_pyramid`.
+fn ssr_history_bspline(uv: vec2<f32>, level: f32) -> vec3<f32> {
+    let size = vec2<f32>(textureDimensions(ssr_history, i32(level)));
+    let p = uv * size - vec2<f32>(0.5);
+    let base = floor(p);
+    let f = p - base;
+    let f2 = f * f;
+    let f3 = f2 * f;
+    let one = vec2<f32>(1.0) - f;
+    let w0 = one * one * one / 6.0;
+    let w1 = (vec2<f32>(4.0) - 6.0 * f2 + 3.0 * f3) / 6.0;
+    let w2 = (vec2<f32>(1.0) + 3.0 * f + 3.0 * f2 - 3.0 * f3) / 6.0;
+    let w3 = f3 / 6.0;
+    let g0 = w0 + w1;
+    let g1 = w2 + w3;
+    // Each tap between two texel centres, where bilinear filtering weighs them as the spline does.
+    let t0 = (base - vec2<f32>(0.5) + w1 / g0) / size;
+    let t1 = (base + vec2<f32>(1.5) + w3 / g1) / size;
+    let top = g0.x * ssr_history_tap(vec2<f32>(t0.x, t0.y), level) + g1.x * ssr_history_tap(vec2<f32>(t1.x, t0.y), level);
+    let bottom = g0.x * ssr_history_tap(vec2<f32>(t0.x, t1.y), level) + g1.x * ssr_history_tap(vec2<f32>(t1.x, t1.y), level);
+    return g0.y * top + g1.y * bottom;
+}
+
+// One bilinear tap of mip `level` at `uv`.
+fn ssr_history_tap(uv: vec2<f32>, level: f32) -> vec3<f32> {
+    return textureSampleLevel(ssr_history, ssr_sampler, uv, level).rgb;
+}
+
+// The colour pyramid at `uv` and fractional `mip`: two levels blended, mip 0 bilinear (a mirror
+// keeps its sharpness), every coarser one a cubic B-spline (`ssr_history_bspline`).
+fn ssr_history_at(uv: vec2<f32>, mip: f32) -> vec3<f32> {
+    let last = ssr.extra.x;
+    let lower = min(floor(max(mip, 0.0)), last);
+    let upper = min(lower + 1.0, last);
+    let f = mip - lower;
+    let a = ssr_history_level(uv, lower);
+    if f <= 0.0 || upper == lower {
+        return a;
+    }
+    return mix(a, ssr_history_level(uv, upper), f);
+}
+
+fn ssr_history_level(uv: vec2<f32>, level: f32) -> vec3<f32> {
+    if level < 0.5 {
+        return textureSampleLevel(ssr_history, ssr_sampler, uv, 0.0).rgb;
+    }
+    return ssr_history_bspline(uv, level);
+}
+
 // Last frame's uv of screen point `at`.
 fn ssr_reproject(at: vec3<f32>) -> vec2<f32> {
     let clip = ssr.reprojection * vec4<f32>(at.x * 2.0 - 1.0, 1.0 - at.y * 2.0, ssr_z(at.z), 1.0);
@@ -282,7 +334,7 @@ fn cs_ssr_trace(@builtin(global_invocation_id) id: vec3<u32>) {
         let validity = ssr_validity(ray, t, reprojected);
         if validity > 0.0 {
             let mip = ssr_mip(surface.w, length(ray.dir.xy * t));
-            let radiance = textureSampleLevel(ssr_history, ssr_sampler, reprojected, mip).rgb * ssr.extra.y;
+            let radiance = ssr_history_at(reprojected, mip) * ssr.extra.y;
             color = vec4<f32>(radiance, 1.0) * validity;
             // Tone mapped for the resolve's filter across samples of very different luminance.
             color = vec4<f32>(color.rgb / (1.0 + dot(color.rgb, SSR_LUMA)), color.a);

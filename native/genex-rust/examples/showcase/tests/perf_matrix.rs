@@ -242,7 +242,7 @@ struct Content {
     clouds: bool,
 }
 
-/// The Stage A features (and B.5's clouds) `quality` draws under `look` on `content` (`taa_hdr`: the
+/// The Stage A features (and B.5's clouds, B.9's screen-space reflections) `quality` draws under `look` on `content` (`taa_hdr`: the
 /// frame is the HDR scene TAA resolves, where the sun mask runs), named as `tests/fixtures/render-perf/
 /// budgets.json` names them, each with the shape its budget is keyed by. GPU particles have a
 /// budget but no matrix scene declares any.
@@ -257,6 +257,8 @@ fn stage_a_drawn(quality: &Quality, look: &Look, taa_hdr: bool, content: Content
         DofTier::Circular => Some("circular"),
         _ => None,
     };
+    // B.9 traces at desktop high (48 steps) and ultra (64), on the HDR scene TAA resolves.
+    let ssr = if quality.ssr == genex_render::ssr::SsrQuality::ULTRA { "ultra" } else { "high" };
     let rows = [
         ("grading", look.grading != genex_render::post::grading::Grading::NEUTRAL, None),
         ("reflection-probes", environment.ibl && environment.reflection_probes > 0 && content.reflection_probes > 0, None),
@@ -270,6 +272,7 @@ fn stage_a_drawn(quality: &Quality, look: &Look, taa_hdr: bool, content: Content
         ("decals", quality.lights.decals > 0 && content.decals > 0, None),
         ("sun-mask", genex_render::post::sun_mask::key(quality, taa_hdr, taa_hdr).is_some(), None),
         ("clouds", genex_render::clouds::LANDED && content.clouds && quality.hdr && environment.clouds.is_some(), None),
+        ("ssr", genex_render::ssr::LANDED && taa_hdr && quality.ssr.enabled, Some(ssr)),
     ];
     rows.into_iter().filter(|(_, on, _)| *on).map(|(feature, _, shape)| (feature, shape)).collect()
 }

@@ -32,8 +32,9 @@ pub const LIGHTING_CHUNKS: &[(&str, &str)] = &[
 
 /// Forward metallic-roughness shading (opaque and blended) through the visible list: the common
 /// structs, the invariant clip position and the RQ4 effect declarations, the frame's environment
-/// bindings, the BRDF, the lighting chunks, the forward pass's effect accessors, then the forward
-/// entry points.
+/// bindings, the BRDF, the screen reflections' hand-over and the lighting chunks, the forward
+/// pass's effect accessors, then the forward entry points and the screen-space reflections'
+/// surface pass (renderer pass 2 B.9: A.6's normal and roughness packing and `fs_ssr_surface`).
 pub const FORWARD: &str = shipped_wgsl!(concat!(
     include_str!("../shaders/common.wgsl"),
     include_str!("../shaders/clip_position.wgsl"),
@@ -42,6 +43,7 @@ pub const FORWARD: &str = shipped_wgsl!(concat!(
     include_str!("../shaders/pbr.wgsl"),
     include_str!("../shaders/lighting/surface.wgsl"),
     include_str!("../shaders/lighting/decals.wgsl"),
+    include_str!("../shaders/screen/ssr_apply.wgsl"),
     include_str!("../shaders/lighting/ambient.wgsl"),
     include_str!("../shaders/lighting/sun.wgsl"),
     include_str!("../shaders/lighting/subsurface.wgsl"),
@@ -50,7 +52,10 @@ pub const FORWARD: &str = shipped_wgsl!(concat!(
     include_str!("../shaders/lighting/output.wgsl"),
     include_str!("../shaders/forward_effects.wgsl"),
     include_str!("../shaders/alpha_mask.wgsl"),
-    include_str!("../shaders/forward.wgsl")
+    include_str!("../shaders/forward.wgsl"),
+    include_str!("../shaders/screen/normal_roughness_unpack.wgsl"),
+    include_str!("../shaders/screen/normal_roughness.wgsl"),
+    include_str!("../shaders/screen/ssr_surface.wgsl")
 ));
 /// Depth-only shadow casters through a cascade's visible list.
 pub const SHADOW: &str = shipped_wgsl!(concat!(
@@ -112,6 +117,7 @@ pub const MATERIAL_V2_PRELUDE: &str = concat!(
     include_str!("../shaders/pbr.wgsl"),
     include_str!("../shaders/lighting/surface.wgsl"),
     include_str!("../shaders/lighting/decals.wgsl"),
+    include_str!("../shaders/screen/ssr_apply.wgsl"),
     include_str!("../shaders/lighting/ambient.wgsl"),
     include_str!("../shaders/lighting/sun.wgsl"),
     include_str!("../shaders/lighting/subsurface.wgsl"),
@@ -131,6 +137,7 @@ pub const MATERIAL_V2_SAMPLE: &str = shipped_wgsl!(concat!(
     include_str!("../shaders/pbr.wgsl"),
     include_str!("../shaders/lighting/surface.wgsl"),
     include_str!("../shaders/lighting/decals.wgsl"),
+    include_str!("../shaders/screen/ssr_apply.wgsl"),
     include_str!("../shaders/lighting/ambient.wgsl"),
     include_str!("../shaders/lighting/sun.wgsl"),
     include_str!("../shaders/lighting/subsurface.wgsl"),

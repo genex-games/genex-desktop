@@ -5,8 +5,9 @@
 // (`gx_env_levels`, `gx_env_sky`, `gx_env_light`: shaders/forward_env.wgsl, the v2 prelude's
 // material_v2.wgsl; renderer pass 2 A.3 and A.4: the forward pass's reflection reads the
 // reflection probes around the surface and its diffuse light the irradiance volumes, a v2
-// material's the sky's cube and SH9) and the `gx_ambient_occlusion` accessor
-// (shaders/effects.wgsl).
+// material's the sky's cube and SH9), the `gx_ambient_occlusion` accessor
+// (shaders/effects.wgsl) and the screen reflection of shaders/screen/ssr_apply.wgsl, included
+// ahead of this chunk (renderer pass 2 B.9).
 //
 // The environment's light is the split sum (Karis 2013) over the bake RQ2.1 writes: SH9 irradiance
 // for the diffuse lobe, the prefiltered specular cube at the surface's roughness mip times the
@@ -243,7 +244,12 @@ fn gx_environment_light(s: Surface) -> vec3<f32> {
     // The reflection probes around the surface where the frame has them, else the sky (A.3); the
     // irradiance volumes around it, else the sky's SH9 (A.4): one walk of the probe bins.
     let light = gx_env_light(s.world_pos, gx_specular_dominant(s.n, r, s.roughness), gx_env_lod(s.roughness), gx_diffuse_normal(s.n, ao.xyz, occlusion));
-    let radiance = light.reflection;
+    // The screen's reflection laid over the probes' where the trace found one (renderer pass 2
+    // B.9, ssr_apply.wgsl); a fragment without one keeps the environment's radiance as it was.
+    var radiance = light.reflection;
+    if gx_screen_reflection.a > 0.0 {
+        radiance = gx_ssr_apply(radiance, gx_screen_reflection);
+    }
     let irradiance = light.diffuse;
     let ao_lagarde = gx_specular_occlusion(n_dot_v, occlusion, s.roughness);
     var ao_specular = ao_lagarde;

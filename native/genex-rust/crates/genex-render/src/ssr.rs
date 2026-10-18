@@ -72,11 +72,10 @@ pub const TRACE_FORMAT: TextureFormat = TextureFormat::Rgba16Float;
 /// The usages of the trace and the reflections: written as storage, read as textures.
 pub const SSR_USAGE: TextureUsages = TextureUsages::STORAGE_BINDING.union(TextureUsages::TEXTURE_BINDING);
 
-/// Whether the renderer records the reflections (graph node 14b after the prepass) and the forward
-/// pass reads them at binding 30. False until the frame hook lands: a frame with `Quality::ssr` on
-/// draws exactly what it draws with it off (`examples/showcase/tests/harbour_ssr.rs` holds both
-/// sides; the hook flips this).
-pub const LANDED: bool = false;
+/// Whether the renderer records the reflections (graph node 10b after the prepass and its
+/// contact shadows, `renderer/ssr_draw.rs`) and the forward pass reads them at binding 30
+/// (`examples/showcase/tests/harbour_ssr.rs` holds Harbour Street's wet asphalt reflecting the neon).
+pub const LANDED: bool = true;
 
 /// The plan's cost at desktop `high` (half-size trace, Hi-Z, resolve), in milliseconds.
 pub const SSR_MS_MAX_HIGH: f32 = 1.0;
@@ -294,7 +293,7 @@ pub struct SsrStamps<'a> {
     pub end: Option<u32>,
 }
 
-/// The reflections' passes (graph node 14b): the nearest-depth Hi-Z build, the trace and the
+/// The reflections' passes (graph node 10b): the nearest-depth Hi-Z build, the trace and the
 /// resolve, with their parameters and the bind groups of the current input.
 pub struct SsrNode {
     hiz: HizNode,
@@ -886,17 +885,9 @@ pub mod twin {
             Vec2::new(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5)
         }
 
-        /// The colour pyramid at `uv`, trilinear with clamp-to-edge (the trace's sampler).
+        /// The colour pyramid at `uv` and `mip`, as the trace reads it ([`sample_pyramid`]).
         pub fn sample_history(&self, uv: Vec2, mip: f32) -> Vec4 {
-            let last = self.history.len().saturating_sub(1);
-            let lower = (mip.floor().max(0.0) as usize).min(last);
-            let upper = (lower + 1).min(last);
-            let f = mip - lower as f32;
-            let a = bilinear(&self.history[lower], uv);
-            if f <= 0.0 || upper == lower {
-                return a;
-            }
-            a.lerp(bilinear(&self.history[upper], uv), f)
+            sample_pyramid(self.history, uv, mip)
         }
 
         /// The trace's texel at `pixel`: rgb the tone-mapped colour times the validity, a the validity.
@@ -966,6 +957,49 @@ pub mod twin {
 
     fn reflect(d: Vec3, n: Vec3) -> Vec3 {
         d - 2.0 * n.dot(d) * n
+    }
+
+    /// The colour pyramid `history` at `uv` and fractional `mip`, as `ssr_history_at` reads it:
+    /// two levels blended, mip 0 bilinear (a mirror keeps its sharpness), every coarser level a
+    /// cubic B-spline (`bspline`), so a bright texel spreads round, not square; clamp-to-edge.
+    pub fn sample_pyramid(history: &[Mip], uv: Vec2, mip: f32) -> Vec4 {
+        let last = history.len().saturating_sub(1);
+        let lower = (mip.floor().max(0.0) as usize).min(last);
+        let upper = (lower + 1).min(last);
+        let f = mip - lower as f32;
+        let a = level_sample(history, lower, uv);
+        if f <= 0.0 || upper == lower {
+            return a;
+        }
+        a.lerp(level_sample(history, upper, uv), f)
+    }
+
+    fn level_sample(history: &[Mip], level: usize, uv: Vec2) -> Vec4 {
+        if level == 0 { bilinear(&history[0], uv) } else { bspline(&history[level], uv) }
+    }
+
+    /// The cubic B-spline weights of the four texels around a sample `f` past the second's centre.
+    fn bspline_weights(f: f32) -> [f32; 4] {
+        let (f2, f3) = (f * f, f * f * f);
+        [(1.0 - f) * (1.0 - f) * (1.0 - f) / 6.0, (4.0 - 6.0 * f2 + 3.0 * f3) / 6.0, (1.0 + 3.0 * f + 3.0 * f2 - 3.0 * f3) / 6.0, f3 / 6.0]
+    }
+
+    /// `level` at `uv` through a cubic B-spline over its 4 x 4 texels, clamp-to-edge (the GPU takes
+    /// it in four bilinear taps, `ssr_history_bspline`).
+    fn bspline(level: &Mip, uv: Vec2) -> Vec4 {
+        let ((w, h), texels) = level;
+        let p = uv * Vec2::new(*w as f32, *h as f32) - Vec2::splat(0.5);
+        let base = p.floor();
+        let (wx, wy) = (bspline_weights(p.x - base.x), bspline_weights(p.y - base.y));
+        let mut sum = Vec4::ZERO;
+        for (j, weight_y) in wy.iter().enumerate() {
+            let y = (base.y as i32 + j as i32 - 1).clamp(0, *h as i32 - 1) as u32;
+            for (i, weight_x) in wx.iter().enumerate() {
+                let x = (base.x as i32 + i as i32 - 1).clamp(0, *w as i32 - 1) as u32;
+                sum += texels[(y * w + x) as usize] * (weight_x * weight_y);
+            }
+        }
+        sum
     }
 
     fn bilinear(level: &Mip, uv: Vec2) -> Vec4 {

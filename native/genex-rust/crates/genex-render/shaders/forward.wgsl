@@ -124,6 +124,9 @@ fn surface(in: VsOut, front: bool) -> vec4<f32> {
     if GX_PROBES {
         s = gx_decals(s, world_dx, world_dy);
     }
+    // The screen's reflection at this pixel (renderer pass 2 B.9), laid over the probes' by the
+    // ambient chunk.
+    gx_screen_reflection = gx_screen_reflection_at();
     var sun = normalize(frame.sun_dir.xyz);
     if GX_SCENE_HDR {
         sun = gx_sun_area_direction(sun, frame.sun_dir.w, s.n, s.v);

@@ -79,6 +79,9 @@ pub enum NodeId {
     Ao,
     /// 10a: contact shadows (RQ4).
     ContactShadows,
+    /// 10b: screen-space reflections (renderer pass 2 B.9): the surface pass, the nearest-depth
+    /// Hi-Z, the trace and the resolve.
+    Ssr,
     /// 11: sky LUTs, aerial perspective and the environment bake (RQ2).
     Environment,
     /// 12: the opaque batches.
@@ -165,6 +168,9 @@ pub enum Target {
     TaaHistory,
     /// The per-tile light masks and the light-bin header and z-bins (RQ6).
     LightBins,
+    /// The screen-space reflections (`rgba16float`, render size; renderer pass 2 B.9) with their
+    /// surface target, nearest-depth Hi-Z and half-size trace.
+    ScreenReflections,
 }
 
 impl NodeId {
@@ -181,6 +187,7 @@ impl NodeId {
             NodeId::AfterPrepass => crate::prepass::LANDED && crate::custom_pass::AFTER_PREPASS_SERVED,
             NodeId::Ao => crate::post::ao::LANDED,
             NodeId::ContactShadows => crate::post::contact_shadow::LANDED,
+            NodeId::Ssr => crate::ssr::LANDED,
             NodeId::Bloom => crate::post::bloom::LANDED,
             NodeId::Occlusion => crate::meshlet_cull::occlusion_landed(),
             NodeId::Reactive | NodeId::Taa => crate::post::taa::LANDED,
@@ -232,6 +239,7 @@ impl NodeId {
             NodeId::AfterPrepass if crate::prepass::LANDED && crate::custom_pass::AFTER_PREPASS_SERVED => &[Target::PassOwned],
             NodeId::Ao if crate::post::ao::LANDED => &[Target::AmbientOcclusion],
             NodeId::ContactShadows if crate::post::contact_shadow::LANDED => &[Target::ContactShadowMask],
+            NodeId::Ssr if crate::ssr::LANDED => &[Target::ScreenReflections],
             NodeId::Bloom if crate::post::bloom::LANDED => &[Target::BloomChain],
             NodeId::Occlusion if crate::meshlet_cull::occlusion_landed() => {
                 &[Target::HiZ, Target::MeshletVisibility, Target::MeshletDraws, Target::SceneDepth, Target::Normals]
@@ -254,6 +262,7 @@ pub fn quality_allows(id: NodeId, quality: &Quality) -> bool {
         NodeId::Occlusion => quality.occlusion,
         NodeId::Ao => quality.ao.resolution != AoResolution::Off,
         NodeId::ContactShadows => quality.contact_shadows,
+        NodeId::Ssr => quality.hdr && quality.ssr.enabled,
         NodeId::Environment => quality.environment.ibl || quality.environment.sky,
         NodeId::Sky => quality.environment.sky,
         NodeId::Reactive | NodeId::Taa => quality.anti_aliasing.temporal(),
@@ -331,6 +340,7 @@ pub const FRAME_GRAPH: &[NodeSpec] = &[
     node(NodeId::AfterPrepass, NodeKind::Pass, "after-prepass"),
     node(NodeId::Ao, NodeKind::Pass, "ao"),
     node(NodeId::ContactShadows, NodeKind::Pass, "contact-shadows"),
+    node(NodeId::Ssr, NodeKind::Pass, "ssr"),
     node(NodeId::Environment, NodeKind::Compute, "environment"),
     node(NodeId::Opaque, NodeKind::InPass, "opaque"),
     node(NodeId::Sky, NodeKind::InPass, "sky"),
@@ -671,6 +681,8 @@ mod tests {
             NodeId::Occlusion,
             NodeId::Ao,
             NodeId::ContactShadows,
+            // Renderer pass 2 look pass: the screen-space reflections are the HDR scene's.
+            NodeId::Ssr,
             NodeId::Bloom,
             NodeId::Exposure,
             NodeId::Tonemap,

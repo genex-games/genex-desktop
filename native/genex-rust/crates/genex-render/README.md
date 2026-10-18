@@ -50,6 +50,7 @@ renderer enables it. In-pass nodes draw inside one world pass.
 | 8 | occlusion: Hi-Z build, meshlet cull pass 2, prepass part 2 | compute + pass |
 | 9 | Level-3 `after-prepass` | pass |
 | 10, 10a | ambient occlusion; contact shadows, then the sun-shadow mask (`post::sun_mask`) | pass |
+| 10b | screen-space reflections: the surface pass, Hi-Z, trace and resolve (`renderer/ssr_draw.rs`) | pass + compute |
 | 11 | environment: sky LUTs and aerial perspective, IBL bake, irradiance-volume bakes, reflection-probe captures, froxel fog | compute + pass |
 | 12-15 | opaque, sky, Level-2 materials and `after-opaque`, transparent | in the world pass |
 | 15a, 16, 17 | Level-3 in-world passes' own motion, reactive mask, MSAA resolve, TAA | pass |
@@ -291,7 +292,7 @@ sorted, soft, colliding rain streaks at 2560 x 1440 `high` add at most 0.5 ms on
 read from the screen, and the ray march they share. `Quality::screen_inputs` allows them on desktop
 and web `high` and `ultra` (none on phones or below `high`); `frame_inputs` gives a frame only what
 a consumer asks for, none on the legacy LDR scene, no colour pyramid without TAA and no opaque
-copy of a multisampled world pass. No consumer asks in this build, so no frame records them yet;
+copy of a multisampled world pass. The lake water and the screen-space reflections ask for them;
 every target is pooled under its own ledger row.
 
 - `shaders/screen/ssr_march.wgsl` is a chunk, not a pass: `gx_ssr_march_world` (or
@@ -307,9 +308,10 @@ every target is pooled under its own ledger row.
   five-tap tent in one compute pass: the previous frame's colour for rough reflections.
 - `shaders/screen/normal_roughness.wgsl` packs a normal-mapped normal (two 12-bit octahedral
   coordinates in rgb, within 0.06 degrees) and the perceptual roughness into one `rgba8unorm`
-  texel (`prepass normal roughness`), for the prepass to write on SSR presets.
-- Binding 30 of the forward frame group (`FRAME_REFLECTIONS_BINDING`) is reserved for the screen
-  reflections (rgb, a confidence): the stage's 16th sampled texture of 16 once B.9 binds it.
+  texel (`prepass normal roughness`), which the screen-space reflections' surface pass writes.
+- Binding 30 of the forward frame group (`FRAME_REFLECTIONS_BINDING`) holds the screen
+  reflections (rgb, a confidence): the stage's 16th sampled texture of 16 (owner decision D1), a
+  zero texel on frames that trace none.
 - `shaders/screen/normal_roughness_unpack.wgsl` is the readers' half of the packing (the code range
   and `gx_unpack_normal`, `gx_unpack_roughness`), which B.9's passes include alone.
 
@@ -337,8 +339,33 @@ records three compute passes:
 radiance times one minus the confidence plus the screen's, so where both agree nothing changes
 with the confidence. `twin` in the module is the CPU twin of the trace and the resolve
 (`tests/ssr.rs` holds the GPU equal to it, and holds the wet road's reflection still over TAA's
-eight jitter offsets and in place on a pan). The frame hook (the node after the prepass, binding 30
-in the forward pass) is not in this build yet: no frame records the passes.
+eight jitter offsets and in place on a pan).
+
+On the frame (`src/renderer/ssr_draw.rs`, graph node 10b `ssr`, after the contact shadows) a
+frame of the HDR scene under TAA whose quality traces runs, once the previous frame left its
+colour pyramid on the same history and size:
+
+- the surface pass (`shaders/screen/ssr_surface.wgsl`, `fs_ssr_surface` in the forward module):
+  the opaque plain batches drawn again `Equal` over the prepass depth with the forward vertex
+  shader, writing the normal and roughness the forward pass shades with (normal maps, specular
+  AA, the decals' wet patches: Harbour's puddles are decals at roughness 0.04 over the asphalt).
+  The prepass itself keeps its vertex normals. Variants, meshlets, the terrain, grass and custom
+  geometry keep the cleared texel (fully rough), so the probes reflect them;
+- `SsrNode::encode` with the jitter-free camera, last frame's view-projection along TAA's
+  reprojection row and the exposure ratio between the frames;
+- after TAA, `PyramidNode` over TAA's output: the next frame's reflected colour. The water reads
+  the same pyramid on such a frame and builds none of its own.
+
+The forward pass's opaque pipelines read binding 30 at the fragment's pixel (`GX_SSR`,
+`gx_screen_reflection_at`) and the ambient chunk lays it over the probes' radiance; the
+transparent pipeline and Level-2 materials never read it. `examples/showcase/tests/harbour_ssr.rs`
+holds Harbour Street at night: the wet asphalt reflects the neon and the café, nothing off the
+ground changes, the cost against `budgets.json`'s `ssr-high` and `ssr-ultra`, and no added flicker
+over a still camera. The trace reads the pyramid's mip 0 bilinear (a mirror stays sharp) and every
+coarser mip through a cubic B-spline in four bilinear taps, so a rough reflection of a small bright
+light spreads round rather than as a square (`tests/ssr.rs`, its twin `twin::sample_pyramid`).
+Known limit: a ray passing behind a thin object (a pendant bulb) is not validated and shows the
+probes there.
 
 ## Lake water
 

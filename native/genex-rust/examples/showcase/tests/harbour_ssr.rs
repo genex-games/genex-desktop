@@ -12,6 +12,14 @@
 //! Until the frame records the reflections (`genex_render::ssr::LANDED` false) the row holds the
 //! other side: turning `ssr` on changes no pixel.
 //!
+//! The cost row draws the `puddle` shot on two renderers, one tracing and one not, frame for frame
+//! interleaved, each timed by its own frame timer (Live's), and charges the GPU difference (the surface pass, the Hi-Z, the trace, the resolve,
+//! the pyramid and the forward pass's read) to `tests/fixtures/render-perf/budgets.json`'s `ssr-high`
+//! at 1080p (the table's resolution) and 1440p `high`, and `ssr-ultra` at 4K `ultra` (D15: over
+//! budget at 4K ultra is reported, not refused). Over a still camera's last [`FLICKER_FRAMES`] it
+//! also compares each ground pixel's luma swing with and without the reflections: they may add no
+//! more than [`FLICKER_LEVELS_MAX`] at the 99th percentile.
+//!
 //! The rows are `#[ignore]`d and named `metal`:
 //!
 //!   GENEX_REQUIRE_METAL=1 node scripts/toolchains/rust-env.ts -- cargo test -p showcase --release \
@@ -23,6 +31,7 @@ mod support;
 
 use genex::{FIXED_STEP_MS, Runtime, View};
 use genex_render::capture::Capture;
+use genex_render::immediate::ImmediateFrame;
 use showcase_game::harbour::World;
 use showcase_game::{harbour_assets, harbour_game};
 use support::{SHOT_TICK, gpu, out_dir, write_png};
@@ -120,6 +129,130 @@ fn metal_at_night_the_wet_asphalt_reflects_the_neon_and_nothing_else_changes() {
         }
         if off_share > OFF_GROUND_SHARE_MAX {
             failures.push(format!("{shot}: {:.1}% of the changed pixels are off the ground", off_share * 100.0));
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+/// Frames each renderer draws before the measured ones (TAA's history, the pyramid, pipelines).
+const COST_WARMUP: u32 = 24;
+/// Measured frames per renderer, interleaved frame for frame.
+const COST_FRAMES: u32 = 48;
+/// The last frames of a still camera whose ground pixels the flicker row compares (one TAA jitter
+/// cycle of eight).
+const FLICKER_FRAMES: u32 = 8;
+/// The most the reflections may add to a ground pixel's p99 luma swing over those frames (0..255).
+const FLICKER_LEVELS_MAX: f64 = 3.0;
+
+/// A frame renderer of `size` drawing Harbour's `shot` under `quality` as Live draws it (its
+/// history kept frame to frame), and the frame it draws.
+fn harbour_stage(gpu: &genex_render::Gpu, runtime: &mut Runtime<World>, shot: &str, size: [u32; 2], quality: &genex_render::settings::Quality) -> (genex_render::FrameRenderer, ImmediateFrame) {
+    use genex_platform_web::{MeshCache, to_scene};
+    use genex_render::device_class::DeviceClass;
+    let class = DeviceClass::from_wire("desktop-high").expect("class");
+    let options = genex_render::RenderOptions { msaa: false };
+    let mut frames = genex_render::FrameRenderer::new(gpu, size[0], size[1], options).expect("frame renderer");
+    let renderer = frames.renderer_mut();
+    let camera = runtime.camera(View::Named(shot)).expect("the shot's camera");
+    let frame = runtime.frame(View::Named(shot)).expect("the shot's frame");
+    let mut meshes = MeshCache::default();
+    meshes.load(&frame, harbour_assets(), |mesh| renderer.add_mesh(gpu, mesh));
+    renderer.set_environment(&frame.declared_environment().cloned().unwrap_or(genex_render::settings::Environment::Color));
+    let rg11b10 = renderer.device_features().contains(wgpu::Features::RG11B10UFLOAT_RENDERABLE);
+    renderer.set_quality(quality);
+    renderer.set_scene_format(genex_render::presets::scene_format(class, rg11b10));
+    renderer.set_device_class(class);
+    let scene = to_scene(&frame, &camera, &meshes);
+    (frames, ImmediateFrame::from_scene(scene))
+}
+
+/// The median of `values`.
+fn median(values: &mut [f64]) -> f64 {
+    values.sort_by(f64::total_cmp);
+    support::percentile(values, 0.5)
+}
+
+/// Each pixel's encoded luma swing (largest minus smallest) over `frames`, for the pixels `keep`
+/// selects (by index), sorted.
+fn swings(frames: &[Vec<f64>], keep: &dyn Fn(usize) -> bool) -> Vec<f64> {
+    let pixels = frames[0].len();
+    let mut out: Vec<f64> = (0..pixels)
+        .filter(|i| keep(*i))
+        .map(|i| {
+            let (lo, hi) = frames.iter().fold((f64::MAX, f64::MIN), |(lo, hi), f| (lo.min(f[i]), hi.max(f[i])));
+            hi - lo
+        })
+        .collect();
+    out.sort_by(f64::total_cmp);
+    out
+}
+
+#[test]
+#[ignore = "real GPU: run with --ignored metal"]
+fn metal_the_reflections_cost_fits_their_budget_and_add_no_flicker_on_the_wet_street() {
+    use genex_render::device_class::DeviceClass;
+    use genex_render::presets::preset_quality;
+    use genex_render::settings::QualityPreset;
+    use genex_render::ssr::{SSR_MS_MAX_HIGH, SSR_MS_MAX_ULTRA, SsrQuality};
+    let Some(gpu) = support::admit(genex_render::Gpu::headless_with(wgpu::Features::TIMESTAMP_QUERY)) else { return };
+    let class = DeviceClass::from_wire("desktop-high").expect("class");
+    let mut runtime = harbour_at_night();
+    let shot = "puddle";
+    let eye = showcase_game::harbour::SHOTS.iter().find(|s| s.name == shot).expect("a Harbour shot").eye;
+    let rows = [("ssr-high", QualityPreset::High, [1920, 1080], SSR_MS_MAX_HIGH), ("ssr-high", QualityPreset::High, [2560, 1440], SSR_MS_MAX_HIGH), ("ssr-ultra", QualityPreset::Ultra, [3840, 2160], SSR_MS_MAX_ULTRA)];
+    let mut failures = Vec::new();
+    for (budget, preset, size, budget_ms) in rows {
+        let on = preset_quality(preset, class);
+        assert!(on.ssr.enabled, "{preset:?} traces");
+        let mut off = on;
+        off.ssr = SsrQuality::OFF;
+        let (mut traced, drawn) = harbour_stage(&gpu, &mut runtime, shot, size, &on);
+        let (mut plain, _) = harbour_stage(&gpu, &mut runtime, shot, size, &off);
+        let view_proj = drawn.scene().camera.view_proj(size[0] as f32 / size[1] as f32);
+        let (mut with, mut without) = (Vec::new(), Vec::new());
+        let (mut lit, mut unlit) = (Vec::new(), Vec::new());
+        let total = COST_WARMUP + COST_FRAMES;
+        for frame in 0..total {
+            for (side, frames, times, lumas_kept) in [("on", &mut traced, &mut with, &mut lit), ("off", &mut plain, &mut without, &mut unlit)] {
+                // The renderer's own frame timer (Live's): its times land two or three frames later.
+                let landed = frames.renderer_mut().arm_frame_timer(&gpu.queue).expect("the device offers timestamps");
+                frames.render(&gpu, &drawn, genex_render::CullPath::Gpu, None).expect("frame");
+                frames.renderer_mut().finish_frame_timer();
+                gpu.device.poll(wgpu::PollType::wait_indefinitely()).expect("the frame finished");
+                if frame >= COST_WARMUP {
+                    times.extend(landed.into_iter().map(f64::from));
+                }
+                if frame >= total - FLICKER_FRAMES && size == [1920, 1080] {
+                    let capture = frames.capture(&gpu).expect("capture");
+                    lumas_kept.push(lumas(&capture));
+                    if frame + 1 == total {
+                        write_png(&out_dir().join(format!("harbour-ssr-cost-{shot}-{side}.png")), &capture);
+                    }
+                }
+            }
+        }
+        assert!(with.len() * 2 >= COST_FRAMES as usize && without.len() * 2 >= COST_FRAMES as usize, "{budget}: most measured frames landed a GPU time");
+        assert!(with.iter().chain(&without).all(|ms| *ms > 0.0), "{budget}: every landed GPU time is a time");
+        let (cost_on, cost_off) = (median(&mut with), median(&mut without));
+        let cost = cost_on - cost_off;
+        println!(
+            "{{\"row\":\"ssr-cost\",\"budget\":\"{budget}\",\"preset\":\"{preset:?}\",\"size\":[{},{}],\"onMs\":{cost_on:.3},\"offMs\":{cost_off:.3},\"ssrMs\":{cost:.3},\"budgetMs\":{budget_ms}}}",
+            size[0], size[1]
+        );
+        // D15: 4K ultra over its budget is acceptable (AAA first); it is reported above.
+        if cost > f64::from(budget_ms) && preset != QualityPreset::Ultra {
+            failures.push(format!("{budget} at {}x{}: {cost:.3} ms over {budget_ms} ms", size[0], size[1]));
+        }
+        if lit.is_empty() {
+            continue;
+        }
+        let ground = |i: usize| looks_at_ground(view_proj, eye, (size[0], size[1]), i as u32 % size[0], i as u32 / size[0]);
+        let (with_swing, without_swing) = (swings(&lit, &ground), swings(&unlit, &ground));
+        let p99 = |sorted: &[f64]| support::percentile(sorted, 0.99);
+        let (p99_on, p99_off) = (p99(&with_swing), p99(&without_swing));
+        println!("{{\"row\":\"ssr-flicker\",\"shot\":\"{shot}\",\"groundPixels\":{},\"p99On\":{p99_on:.2},\"p99Off\":{p99_off:.2},\"p50On\":{:.2},\"p50Off\":{:.2}}}", with_swing.len(), support::percentile(&with_swing, 0.5), support::percentile(&without_swing, 0.5));
+        if p99_on > p99_off + FLICKER_LEVELS_MAX {
+            failures.push(format!("{shot}: the reflections swing the wet ground by {p99_on:.2} levels at p99 over {FLICKER_FRAMES} still frames, {p99_off:.2} without"));
         }
     }
     assert!(failures.is_empty(), "{}", failures.join("\n"));

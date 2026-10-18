@@ -12,6 +12,10 @@
 // PCSS's blocker search gathers the shadow map through it (`layout::SHADOW_BLOCKER_SAMPLER`).
 @group(0) @binding(18) var point_sampler: sampler;
 @group(0) @binding(19) var contact_shadow_mask: texture_2d<f32>;
+// The screen-space reflections (renderer pass 2 B.9, `screen_inputs::FRAME_REFLECTIONS_BINDING`,
+// the stage's 16th sampled texture, owner decision D1): rgb the reflected radiance times its
+// confidence, a the confidence, at the render size; a zero texel on frames that trace none.
+@group(0) @binding(30) var screen_reflections: texture_2d<f32>;
 
 // Which screen effects the quality draws (the renderer's `SurfaceKey`), one constant each: an
 // accessor whose effect is off answers its neutral value without projecting the position or
@@ -21,6 +25,13 @@ override GX_AO: bool = true;
 override GX_CONTACT_SHADOWS: bool = true;
 override GX_FOG: bool = true;
 override GX_AERIAL: bool = true;
+// Whether the pipeline reads the screen reflections (`ssr::frame_ssr` presets on the opaque HDR
+// scene; never the transparent pipeline, whose pixel's reflection is the surface's behind it).
+override GX_SSR: bool = false;
+// Whether the AO term carries screen-space GI (renderer pass 2 B.4, `AoMethod::BitmaskGi`): r the
+// visibility, gba the light the occluded directions send (`post::ao::GI_FORMAT`), no bent normal.
+// Off (the default) the term's gba is a bent normal or nothing, read as before.
+override GX_AO_GI: bool = false;
 
 // Whether this pipeline reads an AO term (`GX_AO`); without one every visibility is 1.
 // The sun chunk's comparison bias for `cascade` (its light depth, NDC): the frame's per-cascade
@@ -92,6 +103,17 @@ fn gx_sun_screen_shadow(world_pos: vec3<f32>) -> f32 {
     let last = vec2<i32>(textureDimensions(contact_shadow_mask)) - vec2<i32>(1);
     let texel = textureLoad(contact_shadow_mask, clamp(vec2<i32>(gx_sun_context.pixel), vec2<i32>(0), last), 0);
     return select(-1.0, texel.g, texel.a < 0.5);
+}
+
+// The screen reflection at the fragment's pixel (`gx_sun_context.pixel`, set before shading), as
+// AO's term is read: the trace ran on this frame's prepass, so the pixel's own texel is the
+// surface's. Zero (the environment alone) where the pipeline does not read it.
+fn gx_screen_reflection_at() -> vec4<f32> {
+    if !GX_SSR {
+        return vec4<f32>(0.0);
+    }
+    let last = vec2<i32>(textureDimensions(screen_reflections)) - vec2<i32>(1);
+    return textureLoad(screen_reflections, clamp(vec2<i32>(gx_sun_context.pixel), vec2<i32>(0), last), 0);
 }
 
 // The air at `world_pos` (renderer pass 2 SI-04 and A.5): the air volume bound in the aerial slot

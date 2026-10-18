@@ -27,6 +27,7 @@ pub const TERRAIN: &str = crate::shaders::minify::shipped_wgsl!(concat!(
     include_str!("../../shaders/pbr.wgsl"),
     include_str!("../../shaders/lighting/surface.wgsl"),
     include_str!("../../shaders/lighting/decals.wgsl"),
+    include_str!("../../shaders/screen/ssr_apply.wgsl"),
     include_str!("../../shaders/lighting/ambient.wgsl"),
     include_str!("../../shaders/lighting/sun.wgsl"),
     include_str!("../../shaders/lighting/subsurface.wgsl"),

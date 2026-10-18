@@ -141,10 +141,14 @@ fn the_screen_reflections_slot_is_binding_30_and_fits_the_forward_stage() {
     assert!(!taken.contains(&slot), "binding 30 is free in the frame group: {taken:?}");
     let forward = parse("forward", genex_render::shaders::FORWARD);
     let group_zero = |binding: &Option<naga::ResourceBinding>| binding.as_ref().is_some_and(|b| b.group == 0);
-    assert!(!forward.global_variables.iter().any(|(_, g)| g.binding.as_ref().is_some_and(|b| b.group == 0 && b.binding == slot)), "the forward pass does not declare binding 30 yet");
+    // The look pass (B.9's frame hook) flipped this row: the forward pass declares binding 30 (it
+    // asserted "not yet") and holds 16 of 16 sampled textures (it asserted 15 and room for one).
+    let declared = forward.global_variables.iter().find(|(_, g)| g.binding.as_ref().is_some_and(|b| b.group == 0 && b.binding == slot));
+    let declared = declared.unwrap_or_else(|| panic!("the forward pass declares binding 30"));
+    assert_eq!(declared.1.name.as_deref(), Some(name));
+    assert!(matches!(forward.types[declared.1.ty].inner, naga::TypeInner::Image { .. }), "binding 30 is a texture");
     let textures = forward.global_variables.iter().filter(|(_, g)| group_zero(&g.binding) && matches!(forward.types[g.ty].inner, naga::TypeInner::Image { .. })).count() as u32;
-    assert!(textures < FORWARD_FRAGMENT_TEXTURES_MAX, "the reflections take the stage's last sampled texture: {textures} today");
-    assert_eq!(textures + 1, FORWARD_FRAGMENT_TEXTURES_MAX, "D1: 16 of 16 once B.9 binds them");
+    assert_eq!(textures, FORWARD_FRAGMENT_TEXTURES_MAX, "D1: the reflections take the stage's 16th sampled texture of 16");
 }
 
 // ---------------------------------------------------------------------------------------------
