@@ -10,8 +10,13 @@
 //!   ray travels under water (the scene depth's bed distance minus the surface's), filled by the
 //!   water body's in-scattered sky and sun light (the ideas of bevy-aqua-fft's colour model and
 //!   bevy_water's deep and shallow colours, both MIT OR Apache-2.0; no source copied).
-//! - **Shore foam** ([`shore_foam`]): foam where the water under the surface is shallower than the
-//!   material's width, broken up by a value noise (the idea of GodotOceanWaves' foam, MIT).
+//! - **Shore foam** ([`shore_foam`], [`foam_visible`]): a lace of foam where the water under the
+//!   surface is shallower than the material's width, feathered to it, broken up by a value noise
+//!   (the idea of GodotOceanWaves' foam, MIT) and at most [`FOAM_COVER_MAX`] of the water; gone
+//!   where its band is under a pixel or the view grazes the water.
+//! - **Light**: the water body and its foam scatter the light the scene is lit by: the
+//!   environment's sky (layer 0 at its widest level, from above) where the environment lights the
+//!   scene, the flat ambient only where it does not, and the sun over the water.
 //! - **Reflections** ([`reflection_source`], [`reflect`]): Schlick's Fresnel ([`fresnel`], F0 0.02)
 //!   mixes in the screen's reflection where the SSR helper's march hits, read from the previous
 //!   frame's colour pyramid at the hit's reprojected point and re-exposed (desktop and web `high`
@@ -180,9 +185,10 @@ fn smoothstep(edge0: f32, edge1: f32, x: f32) -> f32 {
     t * t * (3.0 - 2.0 * t)
 }
 
-/// The noise's gain and offset in the shore foam's cover (`GX_WATER_FOAM_BREAKUP`): where the
-/// noise is low the waterline has no foam, so it laps the shore in patches, not an unbroken line.
-pub const FOAM_BREAKUP: [f32; 2] = [3.2, 1.05];
+/// The noise range over which the shore foam's lace goes from none to its most
+/// (`GX_WATER_FOAM_BREAKUP`): where the noise is low the waterline has no foam, so it laps the shore
+/// in patches, not an unbroken line.
+pub const FOAM_BREAKUP: [f32; 2] = [0.33, 0.8];
 
 /// The shore foam's cover at `depth_below` metres of water under the surface, `width` its width
 /// and `noise` (0..1) its breakup (`gx_water_shore_foam`).
@@ -191,7 +197,25 @@ pub fn shore_foam(depth_below: f32, width: f32, noise: f32) -> f32 {
         return 0.0;
     }
     let shallow = 1.0 - smoothstep(0.0, width, depth_below);
-    (shallow * (FOAM_BREAKUP[0] * noise - FOAM_BREAKUP[1])).clamp(0.0, 1.0)
+    FOAM_COVER_MAX * shallow * shallow * smoothstep(FOAM_BREAKUP[0], FOAM_BREAKUP[1], noise)
+}
+
+/// The most of the water the shore foam covers (`GX_WATER_FOAM_COVER_MAX`): lace over the shallows,
+/// never an opaque ribbon (look fix WATER: the Lakeside's waterline drew hard, flat ribbons).
+pub const FOAM_COVER_MAX: f32 = 0.55;
+/// The foam band's width on the screen, pixels, over which a pixel goes from showing none of it to
+/// all of it (`GX_WATER_FOAM_BAND_PX`): a band about a pixel wide drew a bright rim around the
+/// whole lake in the wide shots and rings round the dock's posts.
+pub const FOAM_BAND_PX: [f32; 2] = [1.5, 4.0];
+/// The view's steepness (the cosine between the view ray and the vertical) over which the foam
+/// fades in from grazing (`GX_WATER_FOAM_GRAZING`).
+pub const FOAM_GRAZING: [f32; 2] = [0.05, 0.25];
+
+/// How much of the shore foam a pixel shows (`gx_water_foam_visible`): `band_px` the foam band's
+/// width on the screen (its width over the screen derivative of the depth under the surface) and
+/// `cos_view` how steeply the view meets the water.
+pub fn foam_visible(band_px: f32, cos_view: f32) -> f32 {
+    smoothstep(FOAM_BAND_PX[0], FOAM_BAND_PX[1], band_px) * smoothstep(FOAM_GRAZING[0], FOAM_GRAZING[1], cos_view)
 }
 
 /// The refraction's offset scale at `path` metres of water (0 at the shoreline, 1 from

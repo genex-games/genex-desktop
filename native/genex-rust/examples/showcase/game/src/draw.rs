@@ -98,7 +98,20 @@ const JACKET: Color = Color::rgb(64, 94, 146);
 const TROUSERS: Color = Color::rgb(72, 68, 62);
 const SKIN: Color = Color::rgb(226, 182, 142);
 const STRAW: Color = Color::rgb(204, 172, 108);
-const LINE: Color = Color::rgb(236, 232, 220);
+/// The fisher's line: clear nylon, lit by the scene (a pale thread in the sun, dark at night).
+const LINE: Color = Color::rgb(168, 170, 162);
+/// The line's radius, m, and the least radius (pixels, at the world's reference height) it is drawn
+/// with, as the fireflies' bodies: a thread finer than a pixel would break into dashes under the
+/// jitter; at a pixel or so TAA resolves it into a smooth line (D22: no staircase on thin lines).
+const LINE_RADIUS: f32 = 0.0008;
+const LINE_LEAST_RADIUS_PX: f32 = 0.25;
+/// The most a segment may grow to keep that least radius: farther away the eye sees no line (it
+/// would be a rope a pixel wide), so the segment is not drawn.
+const LINE_GROW_MAX: f32 = 12.0;
+/// How far the line sags under the straight run from the rod's tip to the bobber at its middle, m,
+/// and the segments it hangs in.
+const LINE_SAG: f32 = 0.1;
+const LINE_SEGMENTS: u32 = 8;
 const BOBBER: Color = Color::rgb(220, 46, 40);
 const DEER: Color = Color::rgb(126, 86, 56);
 /// The deer's neck swing about x: down to the grass, and up to look around (radians).
@@ -391,7 +404,7 @@ pub fn draw(world: &World, frame: &mut Frame, camera: &Camera) {
     trees(world, frame, camera.position, t);
     rocks(world, frame);
     cabin(world, frame, t);
-    dock(world, frame, t);
+    dock(world, frame, camera, t);
     lanterns(world, frame, t);
     fireflies(frame, camera, t);
     animals(world, frame, t);
@@ -407,11 +420,12 @@ fn terrain(world: &World, frame: &mut Frame) {
 /// How far past the lake's radii the water's rectangle reaches (the shoreline wobbles outwards;
 /// the ground above the water level hides the rest).
 const LAKE_MARGIN: f32 = 1.35;
-/// The lake's water: a peaty forest lake, red gone within a metre and green within a few, so the
-/// sandy bed shows only in the shallows and the deep water is a dark teal (per metre, linear).
-const LAKE_ABSORPTION: [f32; 3] = [0.9, 0.32, 0.22];
-/// The light the lake's body scatters back: a dark teal albedo (linear).
-const LAKE_SCATTER: [f32; 3] = [0.010, 0.045, 0.040];
+/// The lake's water: a humic forest lake, its tannins taking blue first and red next (pure water's
+/// own red loss), so the sandy bed shows olive-amber through the shallows and the deep water is a
+/// dark tea-brown under the reflections, never a tropical turquoise (per metre, linear).
+const LAKE_ABSORPTION: [f32; 3] = [0.6, 0.45, 1.1];
+/// The light the lake's body scatters back: a dark olive-brown albedo (linear).
+const LAKE_SCATTER: [f32; 3] = [0.012, 0.014, 0.006];
 /// A thin lap of foam along the shore, metres of water under the surface.
 const LAKE_FOAM_M: f32 = 0.025;
 /// A calm evening lake: small ripples and a near-mirror reflection.
@@ -431,9 +445,14 @@ pub fn lake_water() -> Water {
 }
 
 /// The reflection probe over the lake: a box over the water and its shores, captured from above
-/// the lake's middle, so the water (and the dock, the boat and the beach in it) reflects the woods
+/// open water, so the water (and the dock, the boat and the beach in it) reflects the woods
 /// around the lake where the screen's reflection misses, not the open sky.
 const LAKE_PROBE_HEIGHT: f32 = 1.5;
+/// Where the probe captures from, against the lake's centre (x, z), m: out in the open water,
+/// about 15 m from the dock's end. From the lake's middle it stood under 5 m from the fisher, so
+/// the box projection magnified his rod across the near water as a dark squiggle at dusk and a
+/// lantern-lit orange one at night (look fix WATER).
+const LAKE_PROBE_OFFSET: [f32; 2] = [9.0, 5.0];
 /// How far the probe's box reaches below and above the water level, and its fade past its faces, m.
 const LAKE_PROBE_DEPTH: f32 = 4.0;
 const LAKE_PROBE_TOP: f32 = 10.0;
@@ -444,7 +463,7 @@ pub fn lake_probe() -> ReflectionProbe {
     let half = LAKE_RADII * LAKE_MARGIN;
     let min = vec3(LAKE_CENTER.x - half.x, WATER_LEVEL - LAKE_PROBE_DEPTH, LAKE_CENTER.y - half.y);
     let max = vec3(LAKE_CENTER.x + half.x, WATER_LEVEL + LAKE_PROBE_TOP, LAKE_CENTER.y + half.y);
-    let capture = vec3(LAKE_CENTER.x, WATER_LEVEL + LAKE_PROBE_HEIGHT, LAKE_CENTER.y);
+    let capture = vec3(LAKE_CENTER.x + LAKE_PROBE_OFFSET[0], WATER_LEVEL + LAKE_PROBE_HEIGHT, LAKE_CENTER.y + LAKE_PROBE_OFFSET[1]);
     ReflectionProbe::new(min, max).with_capture(capture).with_blend(LAKE_PROBE_BLEND)
 }
 
@@ -629,7 +648,7 @@ fn roof(frame: &mut Frame, c: &Local, parts: &Parts, surfaces: &Surfaces) {
     c.model(frame, &parts.log_long, vec3(-CABIN_WIDTH * 0.5 - 0.7, WALL_HEIGHT + RIDGE_RISE + 0.18, 0.0), Quat::IDENTITY, vec3(1.2, 0.9, 0.9), &surfaces.logs);
 }
 
-fn dock(world: &World, frame: &mut Frame, t: f32) {
+fn dock(world: &World, frame: &mut Frame, camera: &Camera, t: f32) {
     frame.tag("dock");
     let dock = &layout().dock;
     let d = Local::new(dock.at(0.0, 0.0), dock.yaw());
@@ -656,7 +675,7 @@ fn dock(world: &World, frame: &mut Frame, t: f32) {
         d.post(frame, &parts.post, vec3(x, -2.6, DOCK_LENGTH - 0.2), vec3(x, 1.0, DOCK_LENGTH - 0.2), 0.08, &surfaces.logs);
     }
     boat(world, frame, dock, t);
-    fisher(world, frame, dock, t);
+    fisher(world, frame, camera, dock, t);
 }
 
 fn boat(world: &World, frame: &mut Frame, dock: &Dock, t: f32) {
@@ -676,7 +695,7 @@ fn boat(world: &World, frame: &mut Frame, dock: &Dock, t: f32) {
     frame.end_id();
 }
 
-fn fisher(world: &World, frame: &mut Frame, dock: &Dock, t: f32) {
+fn fisher(world: &World, frame: &mut Frame, camera: &Camera, dock: &Dock, t: f32) {
     let f = Local::new(dock.at(DOCK_LENGTH - 0.45, 0.25), dock.yaw());
     let (sphere, cylinder, parts, surfaces) = (&world.models.sphere, &world.models.cylinder, &world.models.parts, &world.models.surfaces);
     frame.id("fisher");
@@ -694,9 +713,30 @@ fn fisher(world: &World, frame: &mut Frame, dock: &Dock, t: f32) {
     let tip = hands + vec3(0.25, 1.5 + nod, 2.0);
     f.rod(frame, cylinder, hands, tip, 0.018, Color::rgb(60, 44, 32));
     let bobber = f.point(vec3(0.6, 0.0, 4.6)) * vec3(1.0, 0.0, 1.0) + vec3(0.0, WATER_LEVEL + 0.02 + 0.015 * math::sin(t * 2.0), 0.0);
-    frame.line(f.point(tip), bobber, LINE);
+    fishing_line(frame, cylinder, camera, f.point(tip), bobber);
     frame.sphere(bobber, 0.055, BOBBER);
     frame.end_id();
+}
+
+/// The fisher's line from the rod's `tip` to the `bobber`, sagging, in thin cylinders: geometry, so
+/// it is in the prepass's depth (the lake's water neither draws over it nor refracts it from the
+/// opaque copy, which drew a saturated zigzag across the lake as an immediate line did) and lit by
+/// the scene; each segment at least [`LINE_LEAST_RADIUS_PX`] wide where `camera` sees it, and none
+/// past [`LINE_GROW_MAX`].
+fn fishing_line(frame: &mut Frame, cylinder: &Model, camera: &Camera, tip: Vec3, bobber: Vec3) {
+    let forward = (camera.target - camera.position).normalize_or_zero();
+    // Pixels a metre spans one metre in front of the camera, at the reference height.
+    let focal_px = crate::showcase::WORLD_SIZE[1] as f32 * 0.5 / math::tan(camera.fovy.to_radians() * 0.5);
+    let at = |s: f32| tip.lerp(bobber, s) - Vec3::Y * (LINE_SAG * 4.0 * s * (1.0 - s));
+    let world = Local::new(Vec3::ZERO, 0.0);
+    for i in 0..LINE_SEGMENTS {
+        let (from, to) = (at(i as f32 / LINE_SEGMENTS as f32), at((i + 1) as f32 / LINE_SEGMENTS as f32));
+        let depth = ((from + to) * 0.5 - camera.position).dot(forward).max(0.1);
+        let grow = (LINE_LEAST_RADIUS_PX * depth / (LINE_RADIUS * focal_px)).max(1.0);
+        if grow <= LINE_GROW_MAX {
+            world.rod(frame, cylinder, from, to, LINE_RADIUS * grow, LINE);
+        }
+    }
 }
 
 /// How bright a lantern's flame is at `t`: a flicker of its own around 1 (its position phases it).

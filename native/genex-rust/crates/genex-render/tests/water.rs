@@ -19,7 +19,7 @@ use genex_render::screen_inputs::{ScreenInputs, frame_inputs};
 use genex_render::settings::QualityPreset;
 use genex_render::water::{
     F0, GpuWater, ReflectionSource, SAMPLED_TEXTURES, STORAGE_BUFFERS, WATER, WATER_MS_MAX, WaterBody, WaterFormats, WaterFrame, WaterInput, WaterMaterial, WaterNode, WaterPath, asked_inputs,
-    fresnel, opacity, path, reflection_source, refraction_ramp, shore_foam, transmittance,
+    FOAM_COVER_MAX, foam_visible, fresnel, opacity, path, reflection_source, refraction_ramp, shore_foam, transmittance,
 };
 use glam::{Mat4, Vec3, Vec4};
 
@@ -62,14 +62,37 @@ fn the_surface_reflects_two_percent_head_on_and_everything_at_grazing() {
 #[test]
 fn shore_foam_covers_the_shoreline_and_is_gone_past_its_width() {
     let width = WaterMaterial::LAKE.foam_width;
-    assert!(shore_foam(0.0, width, 0.5) > 0.5, "the waterline foams");
+    assert!(shore_foam(0.0, width, 0.7) > 0.3, "the waterline foams");
     assert_eq!(shore_foam(width, width, 1.0), 0.0, "past the width no foam, whatever the noise");
     assert_eq!(shore_foam(0.0, 0.0, 1.0), 0.0, "a material without foam has none");
     assert!(shore_foam(0.0, width, 1.0) >= shore_foam(0.0, width, 0.0), "the noise breaks it up, never adds past the shallow cover");
     // Look-integration lane W (2026-10-18): on the Lakeside the waterline drew an unbroken white
     // line; where the noise is low the shoreline now has no foam at all.
     assert_eq!(shore_foam(0.0, width, 0.0), 0.0, "the noise leaves gaps in the waterline's foam");
-    assert!(shore_foam(0.0, width, 0.15) == 0.0 && shore_foam(0.0, width, 0.9) == 1.0, "patches: none at low noise, full cover at high");
+    // Look fix WATER (2026-10-18): the foam drew hard, flat ribbons along the Lakeside's waterline.
+    // It is lace now: at most FOAM_COVER_MAX of the water under it even where the noise is
+    // highest (was full cover at noise 0.9), feathered to its width (a quarter of the waterline's
+    // at half the width, was the same full cover).
+    assert_eq!(shore_foam(0.0, width, 0.15), 0.0, "none at low noise");
+    assert!(shore_foam(0.0, width, 1.0) <= FOAM_COVER_MAX && FOAM_COVER_MAX < 0.75, "lace, never an opaque ribbon");
+    assert!(shore_foam(0.5 * width, width, 1.0) <= 0.3 * shore_foam(0.0, width, 1.0) + 1e-6, "feathered towards its width");
+}
+
+/// Look fix WATER (2026-10-18): the foam a pixel shows. A band thinner than about a pixel (the wide
+/// shots' 1-2 px bright rim around the whole lake, the rings on the dock's posts) and foam seen at
+/// grazing (the hard ribbons on the shore shot) fade out; a band several pixels wide seen from
+/// above keeps all of it.
+#[test]
+fn foam_fades_where_its_band_is_under_a_pixel_and_at_grazing() {
+    assert_eq!(foam_visible(1.0, 1.0), 0.0, "a one-pixel band draws no rim");
+    assert_eq!(foam_visible(6.0, 1.0), 1.0, "a wide band seen from above keeps its foam");
+    assert_eq!(foam_visible(6.0, 0.03), 0.0, "grazing: none");
+    let mut last = 0.0;
+    for k in 0..=40 {
+        let v = foam_visible(k as f32 * 0.25, 0.5);
+        assert!(v >= last && (0.0..=1.0).contains(&v), "grows with the band's width");
+        last = v;
+    }
 }
 
 #[test]
@@ -184,6 +207,8 @@ const BED_SLOPE: f32 = 0.3;
 const BED: [f32; 3] = [0.6, 0.5, 0.4];
 const SKY: [f32; 3] = [0.3, 0.5, 0.8];
 const AMBIENT: [f32; 3] = [0.5, 0.6, 0.7];
+/// A moonlit night's sky: far darker than the flat ambient.
+const NIGHT_SKY: [f32; 3] = [0.01, 0.015, 0.03];
 /// What a GPU pixel may differ from its twin by, 8-bit levels (quantisation, the depth's precision).
 const TWIN_LEVELS: f32 = 3.0;
 /// The longest underwater path a pixel is compared at, metres (beyond it the view ray grazes the
@@ -212,12 +237,12 @@ fn eye() -> Vec3 {
     Vec3::new(3.0, 5.0, -8.0)
 }
 
-fn frame_row(camera: &Camera) -> GpuFrame {
+fn frame_row(camera: &Camera, env_lit: bool) -> GpuFrame {
     let mut frame = GpuFrame { view_proj: camera.view_proj.to_cols_array(), ..GpuFrame::default() };
     frame.camera_pos = [camera.eye.x, camera.eye.y, camera.eye.z, 1.0];
     frame.camera_forward = [camera.forward.x, camera.forward.y, camera.forward.z, 0.0];
     frame.sun_dir = [0.0, 1.0, 0.0, 0.0];
-    frame.ambient = [AMBIENT[0], AMBIENT[1], AMBIENT[2], 1.0];
+    frame.ambient = [AMBIENT[0], AMBIENT[1], AMBIENT[2], if env_lit { 1.0 } else { 0.0 }];
     frame.cascade_splits = [0.0, 0.0, 1.0, 0.0];
     frame
 }
@@ -247,8 +272,8 @@ fn unorm(c: [f32; 3]) -> [u8; 4] {
     [(c[0] * 255.0).round() as u8, (c[1] * 255.0).round() as u8, (c[2] * 255.0).round() as u8, 255]
 }
 
-/// The environment: a one-texel cube array of six sky faces.
-fn sky_cube(gpu: &Gpu) -> wgpu::TextureView {
+/// The environment: a one-texel cube array of six `sky` faces.
+fn sky_cube(gpu: &Gpu, sky: [f32; 3]) -> wgpu::TextureView {
     let texture = gpu.device.create_texture(&wgpu::TextureDescriptor {
         label: Some("sky"),
         size: wgpu::Extent3d { width: 1, height: 1, depth_or_array_layers: 6 },
@@ -259,7 +284,7 @@ fn sky_cube(gpu: &Gpu) -> wgpu::TextureView {
         usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
         view_formats: &[],
     });
-    let texels: Vec<u8> = (0..6).flat_map(|_| unorm(SKY)).collect();
+    let texels: Vec<u8> = (0..6).flat_map(|_| unorm(sky)).collect();
     gpu.queue.write_texture(
         texture.as_image_copy(),
         &texels,
@@ -356,11 +381,22 @@ struct Setup {
     size: (u32, u32),
     /// The look's height fog the frame draws with (none by default).
     fog: GpuFog,
+    /// The sky the environment holds (`SKY` by default).
+    sky: [f32; 3],
+    /// Whether the environment lights the scene (`frame.ambient.w` 1, the default) or the flat
+    /// ambient does.
+    env_lit: bool,
 }
 
 impl Setup {
     fn still(path: WaterPath) -> Setup {
-        Setup { camera: camera(eye(), SIZE), material: still_lake(), path, reflection: ReflectionSource::Environment, stripes: false, size: SIZE, fog: GpuFog::default() }
+        Setup { camera: camera(eye(), SIZE), material: still_lake(), path, reflection: ReflectionSource::Environment, stripes: false, size: SIZE, fog: GpuFog::default(), sky: SKY, env_lit: true }
+    }
+
+    /// The light the water body scatters (no sun in these rows): the environment's sky where it
+    /// lights the scene, the flat ambient otherwise.
+    fn light(&self) -> [f32; 3] {
+        if self.env_lit { self.sky } else { AMBIENT }
     }
 }
 
@@ -381,8 +417,8 @@ fn scene(gpu: &Gpu, setup: &Setup) -> Scene {
     draw_bed(gpu, &setup.camera, &world_depth);
     let colour = bed_picture(gpu, setup.size, setup.stripes);
     let opaque = bed_picture(gpu, setup.size, setup.stripes).create_view(&Default::default());
-    let env = sky_cube(gpu);
-    let frame = device.create_buffer_init(&wgpu::util::BufferInitDescriptor { label: Some("frame"), contents: bytemuck::bytes_of(&frame_row(&setup.camera)), usage: wgpu::BufferUsages::UNIFORM });
+    let env = sky_cube(gpu, setup.sky);
+    let frame = device.create_buffer_init(&wgpu::util::BufferInitDescriptor { label: Some("frame"), contents: bytemuck::bytes_of(&frame_row(&setup.camera, setup.env_lit)), usage: wgpu::BufferUsages::UNIFORM });
     let formats = WaterFormats { colour: COLOUR, depth: DEPTH, depth_reversed: true, colour_writes_depth: false };
     let mut node = WaterNode::new(device, formats).expect("the water node");
     let row = GpuWater::new(&WaterFrame {
@@ -473,20 +509,21 @@ fn ray(camera: &Camera, size: (u32, u32), x: u32, y: u32) -> Option<Ray> {
 }
 
 /// The refracted path's twin of a still lake (no ripples, foam or offset): the bed behind,
-/// absorbed and filled by the in-scattered ambient, then the sky mixed in by Fresnel.
-fn twin_refracted(material: &WaterMaterial, ray: &Ray) -> [f32; 3] {
+/// absorbed and filled by the water body's in-scattered `light` (the scene's: the environment's
+/// sky where it lights the scene), then the `sky` mixed in by Fresnel.
+fn twin_refracted(material: &WaterMaterial, ray: &Ray, light: [f32; 3], sky: [f32; 3]) -> [f32; 3] {
     let t = transmittance(material.absorption, ray.path);
     let f = fresnel(ray.view.y);
-    std::array::from_fn(|c| (BED[c] * t[c] + material.scatter[c] * AMBIENT[c] * (1.0 - t[c])) * (1.0 - f) + SKY[c] * f)
+    std::array::from_fn(|c| (BED[c] * t[c] + material.scatter[c] * light[c] * (1.0 - t[c])) * (1.0 - f) + sky[c] * f)
 }
 
 /// The blended path's twin: no bed term in the water's colour; the scene behind passes through
 /// the premultiplied blend by the mean transmittance.
-fn twin_blended(material: &WaterMaterial, ray: &Ray) -> [f32; 3] {
+fn twin_blended(material: &WaterMaterial, ray: &Ray, light: [f32; 3], sky: [f32; 3]) -> [f32; 3] {
     let t = transmittance(material.absorption, ray.path);
     let f = fresnel(ray.view.y);
     let alpha = opacity(material.absorption, ray.path) * (1.0 - f) + f;
-    std::array::from_fn(|c| material.scatter[c] * AMBIENT[c] * (1.0 - t[c]) * (1.0 - f) + SKY[c] * f + BED[c] * (1.0 - alpha))
+    std::array::from_fn(|c| material.scatter[c] * light[c] * (1.0 - t[c]) * (1.0 - f) + sky[c] * f + BED[c] * (1.0 - alpha))
 }
 
 fn compare(drawn: &Drawn, setup: &Setup, twin: impl Fn(&Ray) -> [f32; 3]) -> (usize, f32) {
@@ -520,13 +557,79 @@ fn compare(drawn: &Drawn, setup: &Setup, twin: impl Fn(&Ray) -> [f32; 3]) -> (us
 #[ignore = "needs a GPU: run with --ignored metal"]
 fn metal_a_still_lake_absorbs_and_reflects_as_its_twins_say_on_both_paths() {
     let Some(gpu) = gpu() else { return };
-    for (water_path, twin) in [(WaterPath::Refracted, twin_refracted as fn(&WaterMaterial, &Ray) -> [f32; 3]), (WaterPath::Blended, twin_blended)] {
+    for (water_path, twin) in [(WaterPath::Refracted, twin_refracted as fn(&WaterMaterial, &Ray, [f32; 3], [f32; 3]) -> [f32; 3]), (WaterPath::Blended, twin_blended)] {
         let setup = Setup::still(water_path);
         let drawn = draw(&gpu, &setup);
-        let (compared, worst) = compare(&drawn, &setup, |ray| twin(&setup.material, ray));
+        let (compared, worst) = compare(&drawn, &setup, |ray| twin(&setup.material, ray, setup.light(), setup.sky));
         eprintln!("{water_path:?}: {compared} water pixels, worst {worst:.2} levels");
         assert!(compared > (SIZE.0 * SIZE.1 / 4) as usize, "the lake covers the picture's lower part");
         assert!(worst <= TWIN_LEVELS, "{water_path:?}: a pixel {worst:.2} levels from its twin");
+    }
+}
+
+/// Look fix WATER (2026-10-18): the water's body takes the light the scene is lit by. Where the
+/// environment lights the scene (`frame.ambient.w` 1) the forward pass never reads the flat
+/// ambient, but the water's in-scatter and foam did: on the Lakeside at night (flat fill about
+/// 100x the moonlit sky) the lake glowed teal beside a black meadow. Under a dark night sky and a
+/// bright flat ambient the lake matches its twins lit by the sky; with the flat ambient lighting
+/// the scene (`frame.ambient.w` 0) it still takes that.
+#[test]
+#[ignore = "needs a GPU: run with --ignored metal"]
+fn metal_the_water_body_takes_the_environments_light_where_it_lights_the_scene() {
+    let Some(gpu) = gpu() else { return };
+    let night = Setup { sky: NIGHT_SKY, ..Setup::still(WaterPath::Refracted) };
+    let flat = Setup { sky: NIGHT_SKY, env_lit: false, ..Setup::still(WaterPath::Refracted) };
+    for (name, setup) in [("night", night), ("flat", flat)] {
+        let drawn = draw(&gpu, &setup);
+        write_ppm(&format!("water-light-{name}"), &drawn, SIZE);
+        let (compared, worst) = compare(&drawn, &setup, |ray| twin_refracted(&setup.material, ray, setup.light(), setup.sky));
+        eprintln!("{name}: {compared} water pixels, worst {worst:.2} levels");
+        assert!(compared > (SIZE.0 * SIZE.1 / 4) as usize, "the lake covers the picture's lower part");
+        assert!(worst <= TWIN_LEVELS, "{name}: a pixel {worst:.2} levels from its twin lit by {:?}", setup.light());
+    }
+}
+
+/// Look fix WATER (2026-10-18): the shore foam is lit by the scene's light (under a dark night sky
+/// it brightens nothing, where the flat ambient's lilac lit it white; over this row's constant,
+/// bright bed it may only darken), and seen at grazing from a low camera it is gone (the shore
+/// shot's hard ribbons; the wide shots' bright rim).
+#[test]
+#[ignore = "needs a GPU: run with --ignored metal"]
+fn metal_the_shore_foam_is_lit_by_the_scene_and_gone_at_grazing() {
+    let Some(gpu) = gpu() else { return };
+    let foamy = WaterMaterial { foam_width: 0.4, ..still_lake() };
+    // A grazing view: under 0.05 of the view ray's length is vertical.
+    const GRAZING: f32 = 0.05;
+    // Each row: its setup, the steepest view it looks at and whether a darkening counts.
+    struct FoamRow {
+        name: &'static str,
+        make: fn() -> Setup,
+        steepest: f32,
+        both_ways: bool,
+    }
+    let rows = [
+        FoamRow { name: "night", make: || Setup { sky: NIGHT_SKY, ..Setup::still(WaterPath::Refracted) }, steepest: 1.0, both_ways: false },
+        FoamRow { name: "grazing", make: || Setup { camera: camera(Vec3::new(3.0, 0.45, -8.0), SIZE), ..Setup::still(WaterPath::Refracted) }, steepest: GRAZING, both_ways: true },
+    ];
+    for FoamRow { name, make, steepest, both_ways } in rows {
+        let (plain, foam) = (make(), Setup { material: foamy, ..make() });
+        let (a, b) = (draw(&gpu, &plain), draw(&gpu, &foam));
+        write_ppm(&format!("water-foam-{name}"), &b, SIZE);
+        let (mut lift, mut n) = (0.0f32, 0);
+        for y in 0..SIZE.1 {
+            for x in 0..SIZE.0 {
+                let Some(ray) = ray(&plain.camera, SIZE, x, y) else { continue };
+                if ray.below < 0.2 && ray.view.y < steepest {
+                    let i = (y * SIZE.0 + x) as usize;
+                    let change = (luma(b.rgba[i]) - luma(a.rgba[i])) * 255.0;
+                    lift = lift.max(if both_ways { change.abs() } else { change });
+                    n += 1;
+                }
+            }
+        }
+        eprintln!("{name}: shoreline foam lift at most {lift:.2} levels over {n} pixels");
+        assert!(n > 0, "{name}: the picture holds the shoreline");
+        assert!(lift <= 1.0, "{name}: the foam lifts the shoreline by {lift:.2} levels");
     }
 }
 
@@ -663,7 +766,7 @@ fn metal_the_water_writes_its_own_motion_for_taa() {
     let opaque = bed_picture(&gpu, SIZE, false).create_view(&Default::default());
     let sampled = texture(&gpu, SIZE, DEPTH, wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING).create_view(&Default::default());
     draw_bed(&gpu, &setup.camera, &sampled);
-    let env = sky_cube(&gpu);
+    let env = sky_cube(&gpu, SKY);
     let row = GpuWater::new(&WaterFrame {
         body: body(setup.material),
         proj: setup.camera.proj,

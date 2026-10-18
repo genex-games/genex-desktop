@@ -397,7 +397,11 @@ colour pyramid. `WaterNode::draw_colour` composes the surface over the scene:
 
 - the path the view ray travels under water (the depth's bed distance minus the surface's) sets a
   Beer-Lambert transmittance per channel (`transmittance`) and the water body's in-scattered light
-  fills what it took (ideas from bevy-aqua-fft and bevy_water);
+  fills what it took (ideas from bevy-aqua-fft and bevy_water); the body and its foam are lit by
+  the scene's light: the environment's sky (layer 0 at its widest level, from above) where the
+  environment lights the scene, the flat ambient only where it does not, and the sun over the water
+  (the flat fill is never read by the forward pass under the environment, and at a moonlit night it
+  is about 100 times the sky);
 - with the opaque copy (`WaterPath::Refracted`) the bed is sampled through the ripples' offset,
   which grows from nothing at the shoreline and is dropped where it would land on something in
   front of the water; without it (`WaterPath::Blended`: phones, MSAA presets, the legacy scene)
@@ -417,9 +421,12 @@ colour pyramid. `WaterNode::draw_colour` composes the surface over the scene:
   roughness instead (`gx_water_surface`; `ripple_roughness`, `specular_aa` are the twins), and the
   sun glint's lobe widens with that roughness (`glint_power`, dimmer as it widens), so a rippled
   lake does not sparkle under TAA's jitter;
-- shore foam (`shore_foam`, the idea of GodotOceanWaves) covers water shallower than the
-  material's width, broken up by a value noise into patches (`FOAM_BREAKUP`: none where the noise
-  is low), so the waterline is not one unbroken white line.
+- shore foam (`shore_foam`, the idea of GodotOceanWaves) is a lace over water shallower than the
+  material's width: feathered to it, broken up by two octaves of value noise into patches
+  (`FOAM_BREAKUP`: none where the noise is low) and at most `FOAM_COVER_MAX` of the water, so the
+  waterline is neither one unbroken white line nor a flat ribbon; a pixel shows none of it where the
+  band is about a pixel wide or narrower on the screen or the view grazes the water
+  (`foam_visible`: no bright rim round a far lake, no rings round posts).
 
 `WaterNode::draw_motion` then writes the surface's own motion (reactive 0) and depth into the
 motion prepass's targets, so TAA reprojects a water pixel by the water's motion, not the bed's,

@@ -74,9 +74,14 @@ const GX_WATER_GLINT_MAX: f32 = 4.0;
 // The foam's albedo and its noise's cell size, m.
 const GX_WATER_FOAM_ALBEDO: f32 = 0.75;
 const GX_WATER_FOAM_CELL_M: f32 = 0.35;
-// The noise's gain and offset in the foam's cover (`water::FOAM_BREAKUP`): no foam below a noise of
-// about 0.33, full cover above about 0.64.
-const GX_WATER_FOAM_BREAKUP: vec2<f32> = vec2<f32>(3.2, 1.05);
+// The noise range over which the foam's lace goes from none to its most (`water::FOAM_BREAKUP`).
+const GX_WATER_FOAM_BREAKUP: vec2<f32> = vec2<f32>(0.33, 0.8);
+// The most of the water the foam covers (`water::FOAM_COVER_MAX`): lace, never an opaque ribbon.
+const GX_WATER_FOAM_COVER_MAX: f32 = 0.55;
+// The foam band's screen width, px, from showing none of it to all (`water::FOAM_BAND_PX`), and the
+// view's steepness it fades in over from grazing (`water::FOAM_GRAZING`).
+const GX_WATER_FOAM_BAND_PX: vec2<f32> = vec2<f32>(1.5, 4.0);
+const GX_WATER_FOAM_GRAZING: vec2<f32> = vec2<f32>(0.05, 0.25);
 
 struct WaterOut {
     @builtin(position) @invariant clip: vec4<f32>,
@@ -174,13 +179,34 @@ fn gx_water_transmittance(absorption: vec3<f32>, path: f32) -> vec3<f32> {
 
 // The shore foam's cover at `depth_below` metres of water under the surface, `width` its width
 // and `noise` (0..1) its breakup: where the noise is low the waterline has none, so the foam laps
-// the shore in patches rather than drawing an unbroken white line along it.
+// the shore in patches rather than drawing an unbroken white line along it; feathered to its width
+// and at most GX_WATER_FOAM_COVER_MAX of the water, a lace rather than a flat ribbon.
 fn gx_water_shore_foam(depth_below: f32, width: f32, noise: f32) -> f32 {
     if width <= 0.0 {
         return 0.0;
     }
     let shallow = 1.0 - smoothstep(0.0, width, depth_below);
-    return saturate(shallow * (GX_WATER_FOAM_BREAKUP.x * noise - GX_WATER_FOAM_BREAKUP.y));
+    return GX_WATER_FOAM_COVER_MAX * shallow * shallow * smoothstep(GX_WATER_FOAM_BREAKUP.x, GX_WATER_FOAM_BREAKUP.y, noise);
+}
+
+// How much of the foam a pixel shows (`water::foam_visible`): none where its band is about a pixel
+// wide or narrower (`band_px`: a bright rim round the whole lake in a wide shot, rings round posts)
+// or where the view grazes the water (`cos_view`).
+fn gx_water_foam_visible(band_px: f32, cos_view: f32) -> f32 {
+    return smoothstep(GX_WATER_FOAM_BAND_PX.x, GX_WATER_FOAM_BAND_PX.y, band_px) * smoothstep(GX_WATER_FOAM_GRAZING.x, GX_WATER_FOAM_GRAZING.y, cos_view);
+}
+
+// The light the water body and its foam scatter, pre-exposed: the sky's where the environment
+// lights the scene (layer 0 of the cube array at its widest level, from above: the forward pass
+// never reads the flat ambient then, which at the Lakeside's night is about 100x the moonlit sky),
+// the flat ambient where it does not, and the sun over the water.
+fn gx_water_light(exposure: f32) -> vec3<f32> {
+    let sun = frame.sun_color.rgb * max(frame.sun_dir.y, 0.0);
+    var sky = frame.ambient.rgb;
+    if frame.ambient.w > 0.5 {
+        sky = gx_env_sky(vec3<f32>(0.0, 1.0, 0.0), f32(textureNumLevels(water_env) - 1u));
+    }
+    return (sky + sun) * exposure;
 }
 
 fn gx_water_hash(p: vec2<f32>) -> f32 {
@@ -284,9 +310,8 @@ fn fs_water(in: WaterOut) -> @location(0) vec4<f32> {
     let transmittance = gx_water_transmittance(water.absorption.rgb, path);
     let opacity = 1.0 - dot(transmittance, vec3<f32>(1.0 / 3.0));
 
-    // The light the water body scatters back: the sky's ambient and the sun over the water.
-    let sun = frame.sun_color.rgb * max(frame.sun_dir.y, 0.0);
-    let lit = (frame.ambient.rgb + sun) * exposure;
+    // The light the water body scatters back: the scene's sky light and the sun over the water.
+    let lit = gx_water_light(exposure);
     let inscatter = water.scatter.rgb * lit * (vec3<f32>(1.0) - transmittance);
 
     let fresnel = gx_water_fresnel(dot(n, v));
@@ -300,8 +325,15 @@ fn fs_water(in: WaterOut) -> @location(0) vec4<f32> {
     let glint_power = gx_water_glint_power(ripples.roughness);
     let glint = frame.sun_color.rgb * exposure * min(pow(max(dot(r, frame.sun_dir.xyz), 0.0), glint_power) * fresnel * glint_power * 0.02, GX_WATER_GLINT_MAX);
 
-    let below = path * abs(v.y);
-    let foam = gx_water_shore_foam(below, water.scatter.w, gx_water_noise(in.world.xz / GX_WATER_FOAM_CELL_M + vec2<f32>(water.surface.z * 0.15, 0.0)));
+    // The foam: by the water under the surface along the straight ray (refraction would tear its
+    // band), two octaves of noise for its lace, faded where the band's screen width (its width over
+    // the depth's screen derivative) is a pixel or less and at grazing.
+    let below = straight * abs(v.y);
+    let band_px = water.scatter.w / max(fwidth(below), 1e-6);
+    let drift = vec2<f32>(water.surface.z * 0.15, 0.0);
+    let cell = in.world.xz / GX_WATER_FOAM_CELL_M;
+    let lace = 0.65 * gx_water_noise(cell + drift) + 0.35 * gx_water_noise(cell * 2.7 - drift * 1.6 + vec2<f32>(17.3, 5.1));
+    let foam = gx_water_shore_foam(below, water.scatter.w, lace) * gx_water_foam_visible(band_px, abs(v.y));
     let foam_light = lit * GX_WATER_FOAM_ALBEDO;
 
     // Refracting: an opaque surface over the copy. Blending: premultiplied over the scene, which

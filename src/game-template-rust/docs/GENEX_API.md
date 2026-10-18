@@ -712,23 +712,26 @@ is behind it and reflects the screen. An MSAA preset (`low`, `medium`, the phone
 no water yet: where `Water::drawn_at(ctx.quality())` is false, draw your own in a level-3 pass.
 The look's height fog covers it as it covers the ground. Where the screen has no reflection it
 reflects the reflection probes over it and the sky, so give a lake a `frame.reflection_probe(..)`
-over it and its shores to see the woods in it. Its ripples and foam run on the simulation's clock,
+over it and its shores to see the woods in it, captured from open water: what stands near the
+capture point (a dock, a fisher's rod) is magnified across the reflection. Its ripples and foam run
+on the simulation's clock,
 so a capture of a tick is the same every time.
 
 ```rust
 // on_draw:
 frame.water(
     &Water::lake(vec3(6.0, 0.0, 2.0), vec2(28.0, 20.0))
-        .with_absorption([0.9, 0.32, 0.22])
-        .with_scatter([0.01, 0.045, 0.04])
+        .with_absorption([0.6, 0.45, 1.1])
+        .with_scatter([0.012, 0.014, 0.006])
         .with_foam(0.025)
         .with_ripple(0.035, 0.07)
         .with_refraction(0.02),
 );
 ```
 
-`.with_absorption(per_metre)` (linear rgb, red first for fresh water; at most
-`WATER_ABSORPTION_MAX`), `.with_scatter(albedo)` (the body's colour, linear, 0..1),
+`.with_absorption(per_metre)` (linear rgb, red first for clear fresh water, blue first for a
+peaty forest lake like the one above; at most `WATER_ABSORPTION_MAX`), `.with_scatter(albedo)`
+(the body's colour, linear, 0..1, lit by the scene's sky and sun, so it darkens at night),
 `.with_foam(width)` (metres of water under the surface the foam reaches; 0: none),
 `.with_ripple(strength, roughness)` and `.with_refraction(offset)` (a fraction of the screen, at
 most `WATER_REFRACTION_MAX`) change the default clear lake; a value out of range is held to its
