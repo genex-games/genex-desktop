@@ -458,15 +458,17 @@ read-only (the depth its shader samples). Where the preset allows the opaque cop
 `high` and `ultra`) the scene is copied first and refracted; elsewhere the water blends over it.
 It runs only where `water::drawn_at` says (the HDR scene under TAA with the prepass), so a game
 knows where to stand in for it: an MSAA world pass (desktop `low` and `medium`, the phones'
-defaults) draws none yet, and the showcase Lakeside draws its own lake pass there. On frames writing
-motion the motion key follows in its own pass (its group binds a 1 x 1 depth: the pass writes the
-prepass depth the colour pass sampled). It reflects the probes over it (`GpuWaterReflect`) and,
-where the preset holds the history pyramid, the screen: after node 17 a frame with water builds the
-colour pyramid of TAA's resolve (A.6's `PyramidNode`), and the next frame's water marches it (only
-a frame that follows it on the same history set and size). A game draws one with `frame.water`
-(`genex::render::Water`), which reaches the scene on the simulation's clock
-(`genex::present::water_of`); the Lakeside's lake and bench-outdoor's are drawn this way. The look's height fog covers its surface (`lighting/fog.wgsl` over the frame's fog row,
-`WaterFrame::fog`; the froxel and aerial volumes are not read). On a water frame without MSAA the
+defaults) draws none yet, and there the showcase Lakeside draws its own lake pass and bench-outdoor
+the blended sheet it drew before (`BenchScene::scene_for`). On frames writing motion the motion key
+follows in its own pass (its group binds a 1 x 1 depth: the pass writes the prepass depth the colour
+pass sampled). It reflects the probes over it (`GpuWaterReflect`) and, where the preset holds the
+history pyramid, the screen: after node 17 a frame with water builds the colour pyramid of TAA's
+resolve (A.6's `PyramidNode`), and the next frame's water marches it (only a frame that follows it
+on the same history set and size). A game draws one with `frame.water` (`genex::render::Water`),
+which reaches the scene on the simulation's clock (`genex::present::water_of`); the Lakeside's lake
+and bench-outdoor's are drawn this way. The look's height fog covers its surface
+(`lighting/fog.wgsl` over the frame's fog row, `WaterFrame::fog`; the froxel and aerial volumes are
+not read). On a water frame without MSAA the
 transparent draws and the stage's blended work (graph node 15, Level-3 `after-transparent`
 sprites) wait for the water and draw in a second world pass over the scene, depth-tested against
 the prepass depth the motion pass wrote the surface into, so a glint or a halo over the lake is

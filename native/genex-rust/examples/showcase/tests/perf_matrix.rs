@@ -509,16 +509,21 @@ impl Subject for LakesideSubject {
     }
 }
 
+/// A scene at a frame index as drawn at a quality.
+type SceneAt = Box<dyn Fn(u32, &Quality) -> Scene>;
+
 /// A scene that is a function of the frame index.
 struct IndexedSubject {
     renderer: Renderer,
-    scene: Box<dyn Fn(u32) -> Scene>,
+    /// The scene at a frame index as drawn at the renderer's quality (a bench scene draws its
+    /// fallback for content the quality lacks: `BenchScene::scene_for`).
+    scene: SceneAt,
     facts: Value,
 }
 
 impl Subject for IndexedSubject {
     fn frame(&mut self, gpu: &Gpu, frame: u32, stamps: Option<&Stamps>) {
-        let drawn = (self.scene)(frame);
+        let drawn = (self.scene)(frame, self.renderer.quality());
         support::render_marked(&mut self.renderer, gpu, &drawn, &mut |encoder| {
             if let Some(stamps) = stamps {
                 stamps.start(encoder);
@@ -538,7 +543,7 @@ impl Subject for IndexedSubject {
     }
 
     fn scene_at(&self, frame: u32) -> Option<Scene> {
-        Some((self.scene)(frame))
+        Some((self.scene)(frame, self.renderer.quality()))
     }
 }
 
@@ -576,12 +581,12 @@ impl Cell {
     }
 
     /// The scene on a fresh renderer of `size` built with `options`.
-    /// A bench or stress cell's scene at `frame`, its meshes loaded into `meshes` (the lakeside
-    /// draws through its runtime and has none).
-    fn scene(self, meshes: &mut OnGpu<'_>, frame: u32) -> Scene {
+    /// A bench or stress cell's scene at `frame` as drawn at `quality`, its meshes loaded into
+    /// `meshes` (the lakeside draws through its runtime and has none).
+    fn scene(self, meshes: &mut OnGpu<'_>, frame: u32, quality: &Quality) -> Scene {
         match self {
             Cell::Lakeside(shot) => panic!("the lakeside's {shot} shot draws through its runtime"),
-            Cell::Bench(id) => showcase_game::bench::load(id, meshes).expect("the scene's meshes load").scene(frame),
+            Cell::Bench(id) => showcase_game::bench::load(id, meshes).expect("the scene's meshes load").scene_for(frame, quality),
             Cell::Stress(id) => stress::load(id, meshes).expect("the stress scene's meshes load").scene(frame),
         }
     }
@@ -595,13 +600,13 @@ impl Cell {
             }
             Cell::Bench(id) => {
                 let (renderer, scene) = support::bench_stage_with(gpu, id, size, options);
-                Box::new(IndexedSubject { renderer, scene: Box::new(move |frame| scene.scene(frame)), facts: Value::Null })
+                Box::new(IndexedSubject { renderer, scene: Box::new(move |frame, quality| scene.scene_for(frame, quality)), facts: Value::Null })
             }
             Cell::Stress(id) => {
                 let mut renderer = Renderer::with_options(gpu, size[0], size[1], options).expect("renderer");
                 let scene = stress::load(id, &mut OnGpu { renderer: &mut renderer, gpu }).expect("the stress scene's meshes load");
                 let facts = stress_facts(&*scene);
-                Box::new(IndexedSubject { renderer, scene: Box::new(move |frame| scene.scene(frame)), facts })
+                Box::new(IndexedSubject { renderer, scene: Box::new(move |frame, _| scene.scene(frame)), facts })
             }
         }
     }
@@ -1163,7 +1168,8 @@ fn metal_final_bench_and_stress_captures_at_each_preset() {
         let mut off_luma = None;
         for profile in profiles {
             let quality = profile.preset().map(|preset| preset_quality(preset, class));
-            let load = |meshes: &mut OnGpu<'_>| cell.scene(meshes, *frame);
+            let drawn_at = quality.unwrap_or_else(Quality::off);
+            let load = |meshes: &mut OnGpu<'_>| cell.scene(meshes, *frame, &drawn_at);
             let frames = support::game_frames(&gpu, class, quality.as_ref(), &scene_look(*cell), &load);
             let applied = Applied { profile, class, quality: quality.unwrap_or_else(Quality::off) };
             let settle = frames.settle_frames();
@@ -1451,7 +1457,7 @@ struct PathRepeat {
 fn stress_subject(gpu: &Gpu, id: StressId, size: [u32; 2], samples: WorldSamples) -> Box<dyn Subject> {
     let mut renderer = Renderer::with_options(gpu, size[0], size[1], RenderOptions { msaa: samples == WorldSamples::Preset }).expect("renderer");
     let scene = stress::load(id, &mut OnGpu { renderer: &mut renderer, gpu }).expect("the stress scene's meshes load");
-    Box::new(IndexedSubject { renderer, scene: Box::new(move |frame| scene.scene(frame)), facts: Value::Null })
+    Box::new(IndexedSubject { renderer, scene: Box::new(move |frame, _| scene.scene(frame)), facts: Value::Null })
 }
 
 /// `class`'s `preset` quality with `path`'s two switches, over a one-sample world pass when
