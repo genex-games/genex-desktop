@@ -102,6 +102,14 @@ pub(super) struct VariantPipelines {
     casters: [Option<[Compiled<RenderPipeline>; 2]>; DRAW_VARIANTS],
 }
 
+impl VariantPipelines {
+    /// Variant `variant`'s sun caster pipeline into a `depth16unorm` (`depth16`) or `depth32float`
+    /// map, once made (the static shadow cache's passes, B.6).
+    pub(super) fn caster(&self, variant: usize, depth16: bool) -> Option<&RenderPipeline> {
+        self.casters.get(variant)?.as_ref().map(|casters| &*casters[usize::from(depth16)])
+    }
+}
+
 /// The parts of a variant pipeline the variants choose.
 struct VariantSpec<'a> {
     label: &'a str,

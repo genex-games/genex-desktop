@@ -116,6 +116,7 @@ mod froxel_fog;
 mod lens;
 mod probe_capture;
 mod grass_draw;
+mod shadow_cache_draw;
 mod terrain_draw;
 mod variants;
 
@@ -304,6 +305,8 @@ pub struct FrameStats {
     pub meshlet_draws: u32,
     /// Whether two-pass Hi-Z occlusion ran.
     pub occlusion: bool,
+    /// Shadow layers drawn from the static cache with the dynamic overlay (renderer pass 2, B.6).
+    pub shadow_layers_cached: u32,
 }
 
 /// How the last frame's world pass was set up (graph nodes 12-16).
@@ -828,6 +831,8 @@ pub struct Renderer {
     shadow_draws: CascadeDraws,
     /// The shadowed spots' caster pipelines, made on the first frame that draws a spot map.
     spot_shadow: Option<crate::spot_shadow::SpotShadowPipelines>,
+    /// The static shadow cache (renderer pass 2, B.6): its plan across frames and its depth array.
+    shadow_cache: crate::shadow_cache::ShadowCacheState,
     /// The draw variants' pipelines (P2-0.12: double-sided and alpha-tested batches), made on the
     /// first frame that draws each.
     variants: variants::VariantPipelines,
@@ -2146,16 +2151,14 @@ impl<'a> WorldNodes<'a> {
                 // A far cascade off its cadence keeps last frame's map: no pass.
                 let mut drawn = 0;
                 for cascade in (0..plan.cascades_drawn()).filter(|c| renderer.shadow_draws.draws(*c)) {
-                    renderer.encode_shadow(frame.encoder(), self.prep, cascade, self.counts(1 + cascade), &mut self.stats);
-                    drawn += 1;
+                    drawn += renderer.encode_shadow_layer(frame.encoder(), self.prep, cascade, self.counts(1 + cascade), &mut self.stats);
                 }
                 // Every shadowed spot's tile of the atlas layer, in one pass.
                 if !plan.spot_shadows.is_empty() {
                     let cascades = plan.cascades_drawn() as u32;
                     let counts: Vec<Option<&[u32]>> =
                         plan.spot_shadows.iter().map(|spot| self.counts(crate::spot_shadow::spot_view(cascades, spot.slot) as usize)).collect();
-                    renderer.encode_spot_shadows(frame.encoder(), self.prep, &counts, &mut self.stats);
-                    drawn += 1;
+                    drawn += renderer.encode_spot_layer(frame.encoder(), self.prep, &counts, &mut self.stats);
                 }
                 self.count_render(frame, drawn);
             }
@@ -2569,6 +2572,7 @@ impl Renderer {
             spot_slots: crate::spot_shadow::SpotSlots::default(),
             shadow_draws: CascadeDraws::default(),
             spot_shadow: None,
+            shadow_cache: crate::shadow_cache::ShadowCacheState::default(),
             variants: variants::VariantPipelines::default(),
             terrain: None,
             terrain_pipelines: terrain_draw::TerrainPipelines::default(),
@@ -4135,6 +4139,10 @@ impl Renderer {
         self.temporal = temporal;
         let (plan, uploads, environment_sun) = self.prepare(scene, path, &scene_path, &temporal)?;
         let meshlets = self.plan_meshlets(&plan, path);
+        // B.6: only Live frames on the GPU cull path without meshlets draw from the shadow cache.
+        let live = !self.environment_settle && path == CullPath::Gpu && meshlets.is_none();
+        let array = self.form == FormFactor::Desktop && self.shadow_desc.bytes() <= crate::shadow_cache::CACHE_ARRAY_MAX_BYTES;
+        self.shadow_cache.prepare(&self.device, &plan, &self.shadow_draws, self.shadow_desc, (live, self.terrain.is_some(), array));
         let prepass = self.prepass_plan(stage, meshlets.is_some(), plan.cascades.is_some(), &temporal);
         let spec = self.target_spec(&scene_path, prepass.as_ref(), &temporal);
         self.targets = pooled_targets(&mut self.pool, &self.device, (self.width, self.height), render, self.samples, &spec)?;
@@ -4528,6 +4536,11 @@ impl Renderer {
         let lut = self.post.borrow().as_ref().map_or(0, |(tonemap, _)| tonemap.grading_lut_bytes());
         if lut > 0 {
             ledger.register(crate::budget::BudgetKind::Ibl, crate::budget::GRADING_LUT_LABEL, lut);
+        }
+        // The static shadow cache's depth array (B.6), held once a desktop layer reads it.
+        let cache = self.shadow_cache.bytes();
+        if cache > 0 {
+            ledger.register(Buffers, crate::shadow_cache::SHADOW_CACHE_LEDGER_LABEL, cache);
         }
         // The terrain's row, maps, rows and grid (A.7).
         let terrain = self.terrain_bytes();
@@ -5048,6 +5061,20 @@ impl Renderer {
     /// sun shadows).
     pub fn shadow_maps(&self) -> ShadowMapDesc {
         self.shadow_desc
+    }
+
+    /// Switch the static shadow cache on or off (renderer pass 2, B.6; on by default on every
+    /// class): off draws every caster into every shadow layer every frame.
+    pub fn set_static_shadow_cache(&mut self, enabled: bool) {
+        self.shadow_cache.cache.set_enabled(enabled);
+        if !enabled {
+            self.shadow_cache.maps = None;
+        }
+    }
+
+    /// Bytes the static shadow cache's depth array holds (0 until a Live frame caches a layer).
+    pub fn static_shadow_cache_bytes(&self) -> u64 {
+        self.shadow_cache.bytes()
     }
 
     fn encode_shadow(&self, encoder: &mut wgpu::CommandEncoder, prep: &FramePrep, cascade: usize, counts: Option<&[u32]>, stats: &mut FrameStats) {

@@ -182,6 +182,8 @@ pub mod lights;
 pub mod cluster;
 /// Shadowed spot lights: tiles of one atlas layer of the shared shadow array (RQ6.5).
 pub mod spot_shadow;
+/// Cached static shadows plus a dynamic overlay, per cascade and spot layer (renderer pass 2, B.6).
+pub mod shadow_cache;
 /// Clustered decals (renderer pass 2 A.10): projected boxes binned with the lights.
 pub mod decals;
 

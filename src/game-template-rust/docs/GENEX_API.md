@@ -297,7 +297,12 @@ comes from a screen mask that averages PCSS over frames and filters it edge-awar
 holds still on a pan; transparent surfaces filter inline. Phones are held to 2 cascades of at
 most 1536 px, no PCSS, 16-bit depth and 40 units, and the far cascade redraws every second frame
 (and on every frame something in it moves, so a walking character's shadow never steps at half
-rate); the weakest phone class draws 512 px cascades. The low desktop tier also draws 16-bit depth with the far cascade every second frame. A request never passes a class's caps, so one config is right
+rate); the weakest phone class draws 512 px cascades. A Live frame does not redraw a shadow map
+whose objects all stood still for a few frames (a mesh counts as still when every instance does);
+on desktop up to `high`'s maps it also keeps a copy of the still objects and redraws only what
+moves over it. So a large still world costs little shadow time: a spot light's map stays cached
+however the camera moves, the sun's while the camera stands still. A mesh with some instances
+moving is drawn every frame, so give a moving prop its own mesh to keep the rest cached. The low desktop tier also draws 16-bit depth with the far cascade every second frame. A request never passes a class's caps, so one config is right
 on every device. To ask for more at one preset, from code:
 `RenderConfig::new().shadows_at(QualityPreset::High, ShadowConfig::new().cascades(4))`
 (`genex::render::ShadowConfig`: `.cascades(1..=4)`, `.map_size(512..=4096)`,

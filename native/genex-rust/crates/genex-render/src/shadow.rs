@@ -728,7 +728,7 @@ impl ShadowMapDesc {
 /// The cascades' depth targets: one array of layers, a view per layer to draw into and an array
 /// view to sample.
 pub(crate) struct ShadowMaps {
-    _texture: Texture,
+    pub(crate) texture: Texture,
     pub(crate) layers: Vec<TextureView>,
     pub(crate) array: TextureView,
 }
@@ -749,7 +749,8 @@ impl ShadowMaps {
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
             format: desc.format,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            // COPY_DST: a cached layer is the static casters' copy (B.6, `shadow_cache`).
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
             view_formats: &[],
         });
         let layers = (0..desc.layers)
@@ -766,6 +767,6 @@ impl ShadowMaps {
             dimension: Some(wgpu::TextureViewDimension::D2Array),
             ..Default::default()
         });
-        ShadowMaps { _texture: texture, layers, array }
+        ShadowMaps { texture, layers, array }
     }
 }
