@@ -804,8 +804,8 @@ impl HdriSun {
     }
 }
 
-/// The physical sky's parameters (Hillaire's model with Earth's atmosphere; the sun's direction
-/// and colour are the scene's sun).
+/// The physical sky's parameters (Hillaire's model, Earth's atmosphere unless the medium says
+/// otherwise; the sun's direction and colour are the scene's sun).
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct SkyParams {
@@ -815,13 +815,27 @@ pub struct SkyParams {
     pub sun_angular_radius: f32,
     /// A multiplier on the sky's radiance.
     pub intensity: f32,
+    /// The air the sky is made of (renderer pass 2 B.2; Earth's by default).
+    pub medium: SkyMedium,
+    /// A moon (renderer pass 2 B.2; none by default).
+    pub moon: Option<Moon>,
+    /// The star field's mean radiance at night, scene units (renderer pass 2 B.2; 0: none).
+    pub stars: f32,
 }
+
+/// The sky's air (renderer pass 2 B.2): see [`crate::sky::SkyMedium`].
+pub use crate::sky::SkyMedium;
+/// A moon in the sky (renderer pass 2 B.2): see [`crate::night_sky::Moon`].
+pub use crate::night_sky::Moon;
 
 /// The default sky, as a constant ([`SkyParams::default`]).
 const DEFAULT_SKY: SkyParams = SkyParams {
     ground_albedo: [DEFAULT_GROUND_ALBEDO; 3],
     sun_angular_radius: DEFAULT_SUN_ANGULAR_RADIUS_DEG * core::f32::consts::PI / 180.0,
     intensity: 1.0,
+    medium: SkyMedium::EARTH,
+    moon: None,
+    stars: crate::night_sky::DEFAULT_STARS,
 };
 
 impl Default for SkyParams {
@@ -846,6 +860,25 @@ impl SkyParams {
     /// The sky with its radiance times `intensity` (clamped to `0..=ENVIRONMENT_INTENSITY_MAX`).
     pub fn with_intensity(mut self, intensity: f32) -> SkyParams {
         self.intensity = environment_intensity(intensity);
+        self
+    }
+
+    /// The sky made of `medium` (held to what the LUTs take, [`SkyMedium::validated`]).
+    pub fn with_medium(mut self, medium: SkyMedium) -> SkyParams {
+        self.medium = medium.validated();
+        self
+    }
+
+    /// The sky with `moon` (None: no moon).
+    pub fn with_moon(mut self, moon: Option<Moon>) -> SkyParams {
+        self.moon = moon;
+        self
+    }
+
+    /// The sky with a star field of mean radiance `stars` at night (0: none; clamped to
+    /// `0..=night_sky::STARS_MAX`).
+    pub fn with_stars(mut self, stars: f32) -> SkyParams {
+        self.stars = crate::night_sky::star_radiance(stars);
         self
     }
 }

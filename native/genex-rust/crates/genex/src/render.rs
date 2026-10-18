@@ -107,6 +107,10 @@ use genex_render::settings::{ADAPTATION_SPEED_MAX, EXPOSURE_EV_LIMIT, TextureQua
 /// ([`HdriEnvironment`], its sun handled by [`HdriSun`]). The same on every preset and device;
 /// presets only size the bake and the sky's LUTs ([`EnvironmentQuality`]).
 pub use genex_render::settings::{Environment, EnvironmentKind, HdriEnvironment, HdriSun, SkyParams};
+/// The physical sky's night and air (renderer pass 2 B.2): a [`Moon`] lit by the sun with its phase
+/// ([`SkyParams::with_moon`]), the stars ([`SkyParams::with_stars`]) and the air the sky is made of
+/// ([`SkyMedium::earth`], [`SkyMedium::mars`] or your own, [`SkyParams::with_medium`]).
+pub use genex_render::settings::{Moon, SkyMedium};
 /// Height and distance fog matched to the sky (RQ4): a look, the same on every preset, set with
 /// [`RenderConfig::fog`] or `genex.toml` `[render.look]`'s `fog_*` keys. Off at the default density 0.
 pub use genex_render::settings::Fog;

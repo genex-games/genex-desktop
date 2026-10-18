@@ -1058,6 +1058,8 @@ fn render_sky(gpu: &Gpu, fixture: &SkyFixture, frame: &GxFrameV2, side: u32) -> 
         cache: None,
     });
     let frame = buffer_with(gpu, "fog sky frame", wgpu::BufferUsages::UNIFORM, frame.as_bytes());
+    // The day (renderer pass 2 B.2's night row zero: no moon, no stars, the moonlit LUT unread).
+    let night = buffer_with(gpu, "fog sky night", wgpu::BufferUsages::UNIFORM, bytemuck::bytes_of(&genex_render::night_sky::GpuNightSky::default()));
     let group = gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("fog sky draw"),
         layout: &pipeline.get_bind_group_layout(0),
@@ -1067,6 +1069,8 @@ fn render_sky(gpu: &Gpu, fixture: &SkyFixture, frame: &GxFrameV2, side: u32) -> 
             wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::TextureView(&fixture.sky_view) },
             wgpu::BindGroupEntry { binding: 3, resource: wgpu::BindingResource::TextureView(&fixture.transmittance) },
             wgpu::BindGroupEntry { binding: 4, resource: wgpu::BindingResource::Sampler(&fixture.sampler) },
+            wgpu::BindGroupEntry { binding: 5, resource: night.as_entire_binding() },
+            wgpu::BindGroupEntry { binding: 6, resource: wgpu::BindingResource::TextureView(&fixture.sky_view) },
         ],
     });
     let target = gpu.device.create_texture(&wgpu::TextureDescriptor {

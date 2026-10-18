@@ -138,6 +138,19 @@ against the point's distance), so a cell behind a wall lends no light. Level-2 v
 the sky's SH9. The ledger's `irradiance-volumes` row counts the atlas, the staging block and the
 bake's targets.
 
+## Night sky and sky media
+
+`src/night_sky.rs` and `shaders/sky/`: as the sun sets (`night_sky::night_factor`, exactly 0 with
+the sun up, so day frames do not change) the background draws hashed stars (one at most per cell
+of a 128 x 128 grid on each cube face, a power-law brightness, each a Gaussian at least a pixel
+wide, no catalogue) and a `Moon` lit by the sun with its phase (a Lommel-Seeliger disk with
+earthshine and maria). The moonlit sky is the sky-view kernel run again with the moon as its light
+into a second LUT, made the first moonlit night and computed only at night; `cs_sky_cube` adds it
+and the stars, so reflections and the ambient see them (the disk stays out, as the sun's).
+`night_sky::ground_light` is the light the ground takes under the sky: the sun, or the moon once
+it outshines the setting sun. The air is data (`sky::SkyMedium`: Earth's by default, `mars()`, or
+any planet, Rayleigh, Mie and absorbing layer). No forward binding.
+
 ## Fog, aerial perspective and froxel fog
 
 `Look::fog` (`settings::Fog`) is a height and distance fog lit by the environment: the sky's

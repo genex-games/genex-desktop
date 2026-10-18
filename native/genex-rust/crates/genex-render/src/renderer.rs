@@ -3446,15 +3446,16 @@ impl Renderer {
     }
 
     /// The sun that lights the scene's surfaces when the environment changes it from the scene's
-    /// own (None: the scene's sun stands): an HDR map's analytic sun, or under the sky the
-    /// sun through the atmosphere ([`crate::sky::sun_transmittance`] at the camera's height), so the
-    /// ground is lit by the light the sky is coloured by.
+    /// own (None: the scene's sun stands): an HDR map's analytic sun, or under the sky the brighter
+    /// of the sun and the moon through the sky's medium at the camera's height
+    /// ([`crate::night_sky::ground_light`], renderer pass 2 B.2), so the ground is lit by the light
+    /// the sky is coloured by, and by the moon once the sun has set.
     fn ground_sun(&self, scene: &Scene, (dir, color): EnvironmentSun) -> Option<SunLight> {
         match &self.environment_choice {
             Environment::Sky(sky) => {
                 let height = crate::sky::camera_height_km(scene.camera.eye[1]);
-                let through = crate::sky::sun_transmittance(height, dir, sky.sun_angular_radius);
-                Some(SunLight { dir, color: [0, 1, 2].map(|c| color[c] * through[c]) })
+                let (dir, color) = crate::night_sky::ground_light(sky, height, dir, color);
+                Some(SunLight { dir, color })
             }
             Environment::Hdri(hdri) => self.environment.borrow().analytic_sun(hdri).map(|(dir, color)| SunLight { dir, color }),
             _ => None,

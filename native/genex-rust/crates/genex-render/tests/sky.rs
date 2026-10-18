@@ -499,6 +499,12 @@ fn metal_evidence_frames_of_the_sky_through_the_day() {
 /// does not help on Metal: compute passes overlap, so the refresh's timestamps took in the load's
 /// tail, 0.31 ms for the 64x36 LUT; RQ2 review.)
 fn time_refreshes(gpu: &Gpu, quality: &EnvironmentQuality, refresh_all: bool, runs: usize) -> Vec<f64> {
+    time_refreshes_of(gpu, quality, refresh_all, false, runs)
+}
+
+/// [`time_refreshes`], at night under a full moon when `night` (B.2: the moonlit sky-view LUT is
+/// computed beside the sun's).
+fn time_refreshes_of(gpu: &Gpu, quality: &EnvironmentQuality, refresh_all: bool, night: bool, runs: usize) -> Vec<f64> {
     let total = TIMING_WARMUP + runs;
     let stamps_count = 2 * total as u32;
     let bytes = u64::from(stamps_count) * 8;
@@ -523,7 +529,10 @@ fn time_refreshes(gpu: &Gpu, quality: &EnvironmentQuality, refresh_all: bool, ru
         if refresh_all {
             sky = sky.with_ground_albedo([0.2 + 0.001 * run as f32, 0.3, 0.3]);
         }
-        let sun = sun_at(20.0 + 0.1 * run as f32);
+        let sun = if night { sun_at(-20.0 - 0.1 * run as f32) } else { sun_at(20.0 + 0.1 * run as f32) };
+        if night {
+            sky = sky.with_moon(Some(genex_render::settings::Moon::new(sun.map(|c| -c))));
+        }
         let first = 2 * run as u32;
         let mut encoder = gpu.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("sky timing") });
         let writes = wgpu::ComputePassTimestampWrites { query_set: &queries, beginning_of_pass_write_index: Some(first), end_of_pass_write_index: Some(first + 1) };
@@ -1132,4 +1141,360 @@ fn metal_the_sky_view_lut_holds_the_f64_reference_within_three_percent() {
         eprintln!("  {failure}");
     }
     assert!(failures.is_empty(), "{} sky-view texel channels are over the tolerance", failures.len());
+}
+
+// ---------------------------------------------------------------------------------------------
+// Renderer pass 2 B.2: the night sky (stars, a moon with its phase, the moonlit sky) and
+// data-driven media
+
+/// Towards `elevation` degrees up at `azimuth` degrees from -Z (the cameras' forward) towards +X.
+fn towards(elevation: f32, azimuth: f32) -> [f32; 3] {
+    let (e, a) = (elevation.to_radians(), azimuth.to_radians());
+    [libm::cosf(e) * libm::sinf(a), libm::sinf(e), -libm::cosf(e) * libm::cosf(a)]
+}
+
+/// A night: the sun 30 degrees under the horizon behind the camera.
+fn night_sun() -> [f32; 3] {
+    towards(-30.0, 180.0)
+}
+
+/// `sky` drawn at `width`x`height` over the sky scene's ground with the sun towards `sun`, at a
+/// manual `ev`, the AgX curve.
+fn night_frame(gpu: &Gpu, (width, height): (u32, u32), sky: SkyParams, sun: [f32; 3], ev: f32) -> Capture {
+    let mut renderer = Renderer::new(gpu, width, height).expect("renderer");
+    renderer.set_scene_format(SceneFormat::Rgba16Float);
+    renderer.set_quality(&sky_quality(QualityPreset::High));
+    let mut look = Look::default();
+    look.tonemapper = Tonemapper::Agx;
+    look.exposure = ExposureMode::Manual;
+    look.ev_compensation = ev;
+    renderer.set_look(look);
+    renderer.set_environment(&Environment::Sky(sky));
+    let mut scene = sky_scene(0.0);
+    scene.lighting.sun_dir = sun;
+    renderer.render(gpu, &scene, CullPath::Gpu).expect("frame");
+    renderer.capture(gpu).expect("capture")
+}
+
+fn pixel_sum(capture: &Capture, x: u32, y: u32) -> u32 {
+    pixel(capture, x, y).iter().map(|c| u32::from(*c)).sum()
+}
+
+/// Sky pixels (in rows `rows`) brighter than every one of their eight neighbours by `margin` (sum
+/// of channels): points of light.
+fn points_of_light(capture: &Capture, rows: std::ops::Range<u32>, margin: u32) -> usize {
+    let mut count = 0;
+    for y in rows.start.max(1)..rows.end.min(capture.height() - 1) {
+        for x in 1..capture.width() - 1 {
+            let centre = pixel_sum(capture, x, y);
+            let around = [(-1, -1), (0, -1), (1, -1), (-1, 0), (1, 0), (-1, 1), (0, 1), (1, 1)]
+                .iter()
+                .map(|(dx, dy)| pixel_sum(capture, x.wrapping_add_signed(*dx), y.wrapping_add_signed(*dy)))
+                .max()
+                .unwrap_or(0);
+            if centre >= around + margin {
+                count += 1;
+            }
+        }
+    }
+    count
+}
+
+fn write_named_evidence(name: &str, capture: &Capture) {
+    if let Ok(dir) = std::env::var("GENEX_RENDER_EVIDENCE_DIR") {
+        let dir = PathBuf::from(dir);
+        let _ = std::fs::create_dir_all(&dir);
+        std::fs::write(dir.join(format!("{name}-{}x{}.bgra", capture.width(), capture.height())), capture.bgra()).expect("evidence");
+    }
+}
+
+#[test]
+#[ignore = "needs a GPU: run with --ignored metal"]
+fn metal_the_night_sky_draws_stars_and_a_moon_and_the_day_sky_neither() {
+    let Some(gpu) = gpu() else { return };
+    let size = (640, 360);
+    // A full moon ahead, 18 degrees up (the sun under the horizon behind the camera).
+    let moon = genex_render::settings::Moon::new(towards(18.0, 10.0)).with_angular_radius_degrees(1.0);
+    let night = night_frame(&gpu, size, SkyParams::default().with_moon(Some(moon)), night_sun(), 7.0);
+    write_named_evidence("b2-night", &night);
+    let stars = points_of_light(&night, 0..size.1 / 3, 24);
+    eprintln!("night: {stars} points of light in the upper third");
+    assert!(stars >= 20, "a starry night: {stars} points of light in the upper third");
+    // The moon is the brightest thing in the sky, ahead and up.
+    let (mut best, mut at) = (0, (0, 0));
+    for y in 0..size.1 / 2 {
+        for x in 0..size.0 {
+            let sum = pixel_sum(&night, x, y);
+            if sum > best {
+                (best, at) = (sum, (x, y));
+            }
+        }
+    }
+    assert!(best >= 3 * 200, "the full moon is bright at night: {best} at {at:?}");
+    assert!(at.0 > size.0 / 2 && at.0 < size.0 / 2 + 80, "the moon is ahead, a little right: {at:?}");
+    // Without stars or a moon the same night is an even dark sky.
+    let empty = night_frame(&gpu, size, SkyParams::default().with_stars(0.0), night_sun(), 7.0);
+    assert_eq!(points_of_light(&empty, 0..size.1 / 3, 24), 0, "no stars, no points of light");
+    // By day nothing of the night draws: the default stars change no byte.
+    let day = night_frame(&gpu, size, SkyParams::default(), towards(40.0, 180.0), 0.0);
+    let day_without = night_frame(&gpu, size, SkyParams::default().with_stars(0.0), towards(40.0, 180.0), 0.0);
+    assert!(day.bgra() == day_without.bgra(), "stars never draw by day");
+}
+
+#[test]
+#[ignore = "needs a GPU: run with --ignored metal"]
+fn metal_the_moon_s_lit_side_faces_the_sun() {
+    let Some(gpu) = gpu() else { return };
+    let size = (640, 360);
+    // A big moon straight ahead, the sun under the horizon off to the right: a half moon lit on
+    // its right.
+    let moon = genex_render::settings::Moon::new(towards(15.0, 0.0)).with_angular_radius_degrees(3.0);
+    let sun = towards(-20.0, 90.0);
+    let frame = night_frame(&gpu, size, SkyParams::default().with_moon(Some(moon)).with_stars(0.0), sun, 6.0);
+    write_named_evidence("b2-half-moon", &frame);
+    let (mut best, mut at) = (0, (0, 0));
+    for y in 0..size.1 / 2 {
+        for x in 0..size.0 {
+            let sum = pixel_sum(&frame, x, y);
+            if sum > best {
+                (best, at) = (sum, (x, y));
+            }
+        }
+    }
+    // The disk is about 36 pixels across, centred at the middle column.
+    let (centre_x, y) = (size.0 / 2, at.1);
+    let (left, right) = (pixel_sum(&frame, centre_x - 10, y), pixel_sum(&frame, centre_x + 10, y));
+    eprintln!("half moon: brightest {best} at {at:?}, left {left}, right {right}");
+    assert!(at.0 > centre_x, "the brightest part of the disk faces the sun: {at:?}");
+    assert!(right > left + 60, "the lit side is the sun's: right {right} against left {left}");
+    assert!(left > 0, "earthshine: the dark side is not black: {left}");
+}
+
+#[test]
+#[ignore = "needs a GPU: run with --ignored metal"]
+fn metal_the_env_cube_at_night_holds_the_moonlit_sky_and_the_stars_but_no_moon_disk() {
+    let Some(gpu) = gpu() else { return };
+    let quality = environment(QualityPreset::High);
+    let face_mean = |cube: &[[f32; 4]], face: usize| {
+        let texels = &cube[face * 64 * 64..(face + 1) * 64 * 64];
+        texels.iter().map(|t| luminance(*t)).sum::<f32>() / texels.len() as f32
+    };
+    let dark = SkyParams::default().with_stars(0.0);
+    let dark_cube = bake_cube(&gpu, &baked_sky(&gpu, &dark, &quality, night_sun()), 64);
+    let moon = genex_render::settings::Moon::new(towards(30.0, 0.0));
+    let moonlit = SkyParams::default().with_moon(Some(moon)).with_stars(0.0);
+    let moonlit_cube = bake_cube(&gpu, &baked_sky(&gpu, &moonlit, &quality, night_sun()), 64);
+    let starry = SkyParams::default();
+    let starry_cube = bake_cube(&gpu, &baked_sky(&gpu, &starry, &quality, night_sun()), 64);
+    let (dark_up, moonlit_up, starry_up) = (face_mean(&dark_cube, 2), face_mean(&moonlit_cube, 2), face_mean(&starry_cube, 2));
+    eprintln!("cube +Y mean: dark {dark_up}, moonlit {moonlit_up}, starry {starry_up}");
+    assert!(moonlit_up > 10.0 * dark_up.max(1e-9) && moonlit_up > 1e-5, "the moonlit sky lights the cube: {moonlit_up} against {dark_up}");
+    assert!(starry_up > dark_up + 0.5 * genex_render::night_sky::DEFAULT_STARS, "the stars reach the cube: {starry_up} against {dark_up}");
+    // The disk is the analytic light's (as the sun's): the cube holds the sky it lights, not it.
+    let moonlit_max = moonlit_cube.iter().map(|t| luminance(*t)).fold(0.0f32, f32::max);
+    let disk = genex_render::night_sky::MOON_ALBEDO * SUN / std::f32::consts::PI;
+    assert!(moonlit_max < 0.1 * disk, "no moon disk in the cube: max {moonlit_max} against the disk's {disk}");
+}
+
+#[test]
+#[ignore = "needs a GPU: run with --ignored metal"]
+fn metal_a_mars_medium_turns_the_noon_sky_butterscotch() {
+    let Some(gpu) = gpu() else { return };
+    let quality = environment(QualityPreset::High);
+    let zenith = |sky: &SkyParams| {
+        let state = baked_sky(&gpu, sky, &quality, sun_at(60.0));
+        let lut = state.read_lut(&gpu, SkyLut::SkyView).expect("read");
+        let (width, _) = state.lut_size(SkyLut::SkyView).expect("made");
+        row_mean(&lut, width, 1, 0..width)
+    };
+    let earth = zenith(&SkyParams::default());
+    let mars = zenith(&SkyParams::default().with_medium(genex_render::settings::SkyMedium::mars()));
+    eprintln!("zenith: earth {earth:?}, mars {mars:?}");
+    assert!(earth[2] > earth[0], "Earth's zenith is blue: {earth:?}");
+    assert!(mars[0] > mars[2] && mars[1] > mars[2], "Mars's zenith is butterscotch: {mars:?}");
+}
+
+#[test]
+fn the_night_sky_s_uniform_has_one_layout_in_every_sky_shader() {
+    use naga::proc::Layouter;
+    for (name, source) in [("sky-draw", genex_render::shaders::SKY_DRAW), ("sky-view", genex_render::shaders::SKY_VIEW)] {
+        let module = naga::front::wgsl::parse_str(source).unwrap_or_else(|error| panic!("{name}: {}", error.emit_to_string(source)));
+        let mut layouter = Layouter::default();
+        layouter.update(module.to_ctx()).expect("layout");
+        let (handle, _) = module.types.iter().find(|(_, ty)| ty.name.as_deref() == Some("NightSky")).unwrap_or_else(|| panic!("{name} declares NightSky"));
+        assert_eq!(layouter[handle].size as usize, size_of::<genex_render::night_sky::GpuNightSky>(), "NightSky in {name}");
+    }
+}
+
+#[test]
+fn the_ground_light_hands_over_from_the_sun_to_the_moon_without_a_jump() {
+    use genex_render::night_sky::ground_light;
+    let luminance3 = |c: [f32; 3]| 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
+    let sky = SkyParams::default();
+    let moon_sky = |sun: [f32; 3]| sky.with_moon(Some(genex_render::settings::Moon::new(sun.map(|c| -c))));
+    // The sun from 10 degrees up to 20 under, in 0.05 degree steps, a full moon opposite it. The
+    // sun's own light falls steeply as its disk sets (physical: the sky's light carries the dusk);
+    // the hand-over adds no step of its own and leaves the moon's light as the floor.
+    let start = luminance3(ground_light(&moon_sky(towards(10.0, 0.0)), 0.002, towards(10.0, 0.0), [SUN; 3]).1);
+    let mut previous = start;
+    let mut worst_step = 0.0f32;
+    let mut handed_over = false;
+    for step in 1..=600 {
+        let sun = towards(10.0 - step as f32 * 0.05, 0.0);
+        let (dir, color) = ground_light(&moon_sky(sun), 0.002, sun, [SUN; 3]);
+        let light = luminance3(color);
+        assert!(light > 0.0, "a full moon keeps the night lit at step {step}");
+        handed_over |= dir != sun;
+        worst_step = worst_step.max((light - previous).abs() / start);
+        previous = light;
+    }
+    assert!(handed_over, "the moon lights the ground once the sun is down");
+    assert!(worst_step < 0.02, "the light never jumps: worst step {worst_step} of the 10-degree sun's");
+    let full_moon = genex_render::night_sky::DEFAULT_MOONLIGHT * SUN;
+    assert!(previous > 0.3 * full_moon && previous < full_moon, "the moon's light through the air is the night's floor: {previous} against {full_moon}");
+    let (_, without) = ground_light(&sky, 0.002, towards(-20.0, 0.0), [SUN; 3]);
+    assert_eq!(without, [0.0; 3], "no moon: the night is dark");
+    let (dir, day) = ground_light(&moon_sky(towards(40.0, 0.0)), 0.002, towards(40.0, 0.0), [SUN; 3]);
+    let sun_alone = genex_render::sky::sun_transmittance(0.002, towards(40.0, 0.0), sky.sun_angular_radius).map(|t| t * SUN);
+    assert_eq!((dir, day), (towards(40.0, 0.0), sun_alone), "by day the sun, exactly as before");
+}
+
+#[test]
+fn earth_as_a_medium_is_the_atmosphere_row_bit_for_bit() {
+    let mut quality = Quality::off().environment;
+    quality.sky = true;
+    quality.sky_lut = (96, 54);
+    let row = genex_render::sky::atmosphere(&SkyParams::default(), &quality, &frame(sun_at(30.0), 0));
+    let explicit = genex_render::sky::atmosphere(&SkyParams::default().with_medium(genex_render::settings::SkyMedium::earth()), &quality, &frame(sun_at(30.0), 0));
+    assert_eq!(bytemuck::bytes_of(&row), bytemuck::bytes_of(&explicit));
+    assert_eq!(row.rayleigh, [5.802e-3, 13.558e-3, 33.1e-3, 1.0 / 8.0], "Earth's Rayleigh term as before");
+    assert_eq!(row.mie, [3.996e-3, 4.440e-3, 0.8, 1.0 / 1.2], "Earth's Mie term as before");
+    let mars = genex_render::sky::atmosphere(&SkyParams::default().with_medium(genex_render::settings::SkyMedium::mars()), &quality, &frame(sun_at(30.0), 0));
+    assert!(mars.radii[0] < 4000.0 && mars.mie[0] > 5.0 * row.mie[0], "Mars: a smaller planet, a dustier sky");
+    let hostile = genex_render::settings::SkyMedium::earth().with_planet(f32::NAN, -5.0).with_mie(3.996e-3, 0.0, 1.0, 1.2);
+    let held = SkyParams::default().with_medium(hostile).medium;
+    assert_eq!(held.planet_radius_km, genex_render::sky::EARTH_RADIUS_KM, "NaN: Earth's");
+    assert!(held.mie_extinction >= held.mie_scattering && held.mie_asymmetry < 1.0 && held.atmosphere_height_km >= 1.0, "held to what the LUTs take: {held:?}");
+}
+
+/// The displayed frame's mean linear luminance (sRGB decoded).
+fn displayed_luminance(capture: &Capture) -> f64 {
+    mean_look(capture).0
+}
+
+#[test]
+#[ignore = "needs a GPU: run with --ignored metal"]
+fn metal_a_day_to_night_sweep_under_auto_exposure_has_no_jump_and_ends_moonlit_and_dark() {
+    use genex_render::settings::{CompensationCurve, Moon};
+    let Some(gpu) = gpu() else { return };
+    let (width, height) = (160, 90);
+    let mut renderer = Renderer::new(&gpu, width, height).expect("renderer");
+    renderer.set_scene_format(SceneFormat::Rgba16Float);
+    let mut quality = sky_quality(QualityPreset::High);
+    quality.environment.ibl = true;
+    renderer.set_quality(&quality);
+    let mut look = Look::default();
+    look.tonemapper = Tonemapper::Agx;
+    look.exposure = ExposureMode::Auto;
+    // C4: a night meters several stops down and keeps part of its darkness.
+    look.compensation_curve = CompensationCurve::new(&[(-8.0, -3.0), (-2.0, -1.0), (2.0, 0.0)]);
+    renderer.set_look(look);
+    let mut means = Vec::new();
+    let mut day = 0.0;
+    // The sun from 12 degrees up to 12 under at a game's pace (a 12-minute day: 0.5 degrees a
+    // second, 1/60 s a frame), a full moon opposite it, then the night held while the exposure
+    // settles.
+    let sweep: Vec<f32> = (0..=2880).map(|step| 12.0 - step as f32 * (0.5 / 60.0)).chain(std::iter::repeat_n(-12.0, 300)).collect();
+    for (frame_index, elevation) in sweep.iter().enumerate() {
+        let sun = towards(*elevation, 0.0);
+        let sky = SkyParams::default().with_moon(Some(Moon::new(sun.map(|c| -c))));
+        renderer.set_environment(&Environment::Sky(sky));
+        let mut scene = sky_scene(0.0);
+        scene.lighting.sun_dir = sun;
+        renderer.render(&gpu, &scene, CullPath::Gpu).expect("frame");
+        let capture = renderer.capture(&gpu).expect("capture");
+        let mean = displayed_luminance(&capture);
+        if frame_index == 0 {
+            day = mean;
+        }
+        if frame_index == sweep.len() - 1 {
+            write_named_evidence("b2-sweep-night", &capture);
+        }
+        means.push(mean);
+    }
+    let worst = means.windows(2).map(|pair| (pair[1].max(1e-6) / pair[0].max(1e-6)).log2().abs()).fold(0.0f64, f64::max);
+    let night = *means.last().expect("frames");
+    eprintln!("sweep: day {day}, night {night}, worst step {worst} EV");
+    assert!(worst < 0.1, "no exposure jump through the sweep: worst {worst} EV in one frame");
+    assert!(night < 0.5 * day, "the night stays darker than the day: {night} against {day}");
+}
+
+#[test]
+#[ignore = "needs a GPU: run with --ignored metal"]
+fn metal_the_moon_lights_the_night_ground() {
+    // The renderer lights the surfaces with `night_sky::ground_light` (the sun, or once it has set
+    // the moon): a full moon 40 degrees up lights the grey ground as its light through the air
+    // says, the moonlit sky's ambient aside.
+    use genex_render::settings::Moon;
+    let Some(gpu) = gpu() else { return };
+    let ground = |sky: SkyParams| {
+        let mut renderer = Renderer::new(&gpu, WIDTH, HEIGHT).expect("renderer");
+        renderer.set_scene_format(SceneFormat::Rgba16Float);
+        renderer.set_quality(&sky_quality(QualityPreset::High));
+        renderer.set_environment(&Environment::Sky(sky));
+        let mut scene = sky_scene(0.0);
+        scene.lighting.sun_dir = night_sun();
+        renderer.render(&gpu, &scene, CullPath::Gpu).expect("frame");
+        let hdr = renderer.read_scene(&gpu).expect("the HDR scene");
+        luminance(hdr[((HEIGHT - 4) * WIDTH + WIDTH - 4) as usize])
+    };
+    let moon = Moon::new(towards(40.0, 0.0));
+    let lit = ground(SkyParams::default().with_moon(Some(moon)));
+    let dark = ground(SkyParams::default());
+    let (_, light) = genex_render::night_sky::ground_light(&SkyParams::default().with_moon(Some(moon)), 0.0015, night_sun(), [SUN; 3]);
+    // The ground's grey (150 of 255 in sRGB) under the light at 40 degrees, Lambert.
+    let albedo = 0.3049;
+    let expected = (0.2126 * light[0] + 0.7152 * light[1] + 0.0722 * light[2]) * libm::sinf(40f32.to_radians()) * albedo / std::f32::consts::PI;
+    eprintln!("night ground: moonlit {lit}, moonless {dark}, the moon's direct light alone {expected}");
+    assert!(lit - dark > 0.5 * expected, "the moon lights the ground directly: {lit} over {dark}, expected about {expected} more");
+}
+
+/// B.2's night may cost the background this much more than the day's at 1080p (stars and the moon
+/// per pixel), M4 Max.
+const NIGHT_DRAW_EXTRA_BUDGET_MS: f64 = 0.1;
+
+#[test]
+#[ignore = "needs a GPU: run with --ignored metal"]
+fn metal_the_night_sky_fits_the_sky_budget() {
+    let Some(gpu) = gpu_with(wgpu::Features::TIMESTAMP_QUERY) else { return };
+    let high = environment(QualityPreset::High);
+    let p = |times: &[f64]| [percentile(times, 0.5), percentile(times, 0.95)];
+    let night_luts = p(&time_refreshes_of(&gpu, &high, false, true, TIMED_RUNS));
+    let day_luts = p(&time_refreshes_of(&gpu, &high, false, false, TIMED_RUNS));
+    let moon = genex_render::settings::Moon::new(towards(30.0, 0.0));
+    let draw = |sky: &SkyParams, sun: [f32; 3]| {
+        let times = genex_render::sky::background_gpu_ms(&gpu, sky, &high, sun, (1920, 1080), TIMED_RUNS).expect("drawn").expect("timestamps");
+        p(&times)
+    };
+    // Interleaved trials (a day, then a night, again), each pair's own difference, the median of
+    // them gated: other work on a shared GPU moves both of a pair alike.
+    let mut pairs: Vec<([f64; 2], [f64; 2])> = (0..TIMED_TRIALS)
+        .map(|_| (draw(&SkyParams::default(), towards(40.0, 180.0)), draw(&SkyParams::default().with_moon(Some(moon)), night_sun())))
+        .collect();
+    pairs.sort_by(|a, b| (a.1[0] - a.0[0]).total_cmp(&(b.1[0] - b.0[0])));
+    let (day_draw, night_draw) = pairs[pairs.len() / 2];
+    let row = serde_json::json!({
+        "row": "sky-night",
+        "adapter": gpu.adapter().get_info().name,
+        "runs": TIMED_RUNS,
+        "luts_ms": { "day": day_luts, "night": night_luts },
+        "background_1080p_ms": { "day": day_draw, "night": night_draw },
+        "budget_ms": { "luts_p95": HIGH_BUDGET_MS, "night_background_extra": NIGHT_DRAW_EXTRA_BUDGET_MS },
+    });
+    eprintln!("{row}");
+    if let Ok(path) = std::env::var("GENEX_PERF_OUT") {
+        std::fs::write(path, format!("{row}\n")).expect("perf row");
+    }
+    assert!(night_luts[1] <= HIGH_BUDGET_MS, "the night's LUTs (the moonlit one too) p95 {:.4} ms", night_luts[1]);
+    assert!(night_draw[0] <= day_draw[0] + NIGHT_DRAW_EXTRA_BUDGET_MS, "the night's background p50 {:.4} ms against the day's {:.4}", night_draw[0], day_draw[0]);
 }

@@ -248,7 +248,16 @@ lights the scene beyond its lights and is drawn behind it, the same on every dev
 outside the atmosphere: give it a white colour and let its elevation do the rest. The sky and the
 surfaces both see it through the atmosphere, so a sun 5 to 12 degrees up gives a golden hour (sky
 and ground warm alike), a lower one a sunset, and one below the horizon a dusk that no longer
-lights the ground. `Environment::hdri("env/sky.hdr")` lights the scene with an equirectangular
+lights the ground. Keep the sun's intensity at night and let it set: the stars come out as it goes
+down (`.with_stars(2e-5)` is their default brightness, 0 for none), and a moon,
+`.with_moon(Some(Moon::new(direction)))` (`use genex::render::Moon;`; `.with_moonlight(0.004)`, its
+share of the sun's light, `.with_tint(..)`, `.with_earthshine(..)`, `.with_angular_radius_degrees(..)`),
+is lit by that sun with its phase: put it opposite the sun for a full moon. Once the sun has set the
+moon lights the ground and the sky, and reflections see the stars and the moonlit sky. Auto exposure
+with a `compensation_curve` keeps the night darker than the day. The air itself is data:
+`.with_medium(SkyMedium::mars())` gives a dusty butterscotch sky, and `SkyMedium::earth()
+.with_rayleigh(..).with_mie(..).with_absorption(..).with_planet(..)` any other.
+`Environment::hdri("env/sky.hdr")` lights the scene with an equirectangular
 Radiance `.hdr` under `assets/` (`HdriEnvironment::new(path).with_rotation_degrees(90.0)
 .with_intensity(0.5)`, inside `Environment::Hdri(..)`) and is drawn behind it. By default
 (`HdriSun::Analytic`) the map's sun becomes the frame's sun: it is clamped out of the map's light

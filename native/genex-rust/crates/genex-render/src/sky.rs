@@ -73,6 +73,163 @@ const OZONE_CENTRE_KM: f32 = 25.0;
 const OZONE_WIDTH_KM: f32 = 30.0;
 /// The multiple-scattering contribution's factor (1: physical).
 const MULTISCATTER_FACTOR: f32 = 1.0;
+/// The thinnest atmosphere and the smallest planet a medium may describe, in km (the LUTs'
+/// parameterisation needs a shell), and the largest planet.
+const MEDIUM_THICKNESS_MIN_KM: f32 = 1.0;
+const MEDIUM_RADIUS_MIN_KM: f32 = 10.0;
+const MEDIUM_RADIUS_MAX_KM: f32 = 100_000.0;
+/// The largest scattering or absorption coefficient a medium may take, per km.
+const MEDIUM_COEFFICIENT_MAX: f32 = 10.0;
+/// The largest Mie asymmetry (Cornette-Shanks is singular at 1).
+const MEDIUM_ASYMMETRY_MAX: f32 = 0.99;
+
+/// The air of the physical sky (renderer pass 2 B.2, after Bevy 0.20's `ScatteringMedium`, MIT OR
+/// Apache-2.0, as values in Hillaire's three terms instead of baked density and scattering LUTs):
+/// the planet, a Rayleigh-like term with its own colour, a Mie-like term (haze or dust) with a
+/// forward lobe, and an absorbing layer (ozone, or coloured dust), all per kilometre at the
+/// ground with exponential or tent profiles. [`SkyMedium::EARTH`] is the default; [`SkyMedium::mars`]
+/// is a thin dusty sky. The LUT kernels read every value from the atmosphere row, so a medium is
+/// data, not code.
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SkyMedium {
+    /// The planet's radius, in km.
+    pub planet_radius_km: f32,
+    /// The atmosphere's thickness above the ground, in km.
+    pub atmosphere_height_km: f32,
+    /// The Rayleigh-like term's scattering at the ground, per km (rgb).
+    pub rayleigh_scattering: [f32; 3],
+    /// Its scale height (density `exp(-h / H)`), in km.
+    pub rayleigh_scale_height_km: f32,
+    /// The Mie-like term's scattering at the ground, per km.
+    pub mie_scattering: f32,
+    /// Its extinction at the ground (scattering plus absorption), per km.
+    pub mie_extinction: f32,
+    /// Its phase function's asymmetry `g` (Cornette-Shanks), `0..1`.
+    pub mie_asymmetry: f32,
+    /// Its scale height, in km.
+    pub mie_scale_height_km: f32,
+    /// The absorbing layer's absorption at its peak, per km (rgb).
+    pub absorption: [f32; 3],
+    /// The height of the layer's peak, in km.
+    pub absorption_centre_km: f32,
+    /// The layer's width (a tent falling to 0 half of it either side of the peak), in km.
+    pub absorption_width_km: f32,
+}
+
+impl SkyMedium {
+    /// Earth's atmosphere (Hillaire 2020's constants): the default.
+    pub const EARTH: SkyMedium = SkyMedium {
+        planet_radius_km: EARTH_RADIUS_KM,
+        atmosphere_height_km: ATMOSPHERE_TOP_KM - EARTH_RADIUS_KM,
+        rayleigh_scattering: RAYLEIGH_SCATTERING,
+        rayleigh_scale_height_km: 8.0,
+        mie_scattering: MIE_SCATTERING,
+        mie_extinction: MIE_EXTINCTION,
+        mie_asymmetry: MIE_G,
+        mie_scale_height_km: 1.2,
+        absorption: OZONE_ABSORPTION,
+        absorption_centre_km: OZONE_CENTRE_KM,
+        absorption_width_km: OZONE_WIDTH_KM,
+    };
+
+    /// Earth's atmosphere.
+    pub fn earth() -> SkyMedium {
+        SkyMedium::EARTH
+    }
+
+    /// A Mars-like sky: a thin CO2 atmosphere (Rayleigh about a hundredth of Earth's) over a smaller
+    /// planet, lit mostly by grey forward-scattering dust in a deep layer whose blue-absorbing tent
+    /// turns the noon sky butterscotch and leaves a cooler glow around a low sun. Values chosen to
+    /// look the part from published descriptions, not fitted to measurements.
+    pub fn mars() -> SkyMedium {
+        SkyMedium {
+            planet_radius_km: 3389.5,
+            atmosphere_height_km: 80.0,
+            rayleigh_scattering: [0.0198e-3, 0.0136e-3, 0.0057e-3],
+            rayleigh_scale_height_km: 11.1,
+            mie_scattering: 0.030,
+            mie_extinction: 0.033,
+            mie_asymmetry: 0.65,
+            mie_scale_height_km: 11.0,
+            absorption: [0.0015, 0.0055, 0.0125],
+            absorption_centre_km: 0.0,
+            absorption_width_km: 40.0,
+        }
+    }
+
+    /// The medium with every value held to what the LUTs can take: finite, coefficients
+    /// `0..=10` per km, Mie extinction at least its scattering, `g` in `0..=0.99`, scale heights and
+    /// the atmosphere at least 1 km thick, the planet 10 to 100,000 km in radius. Anything not a
+    /// number takes Earth's value.
+    pub fn validated(self) -> SkyMedium {
+        let earth = SkyMedium::EARTH;
+        let clamp = |value: f32, fallback: f32, low: f32, high: f32| if value.is_finite() { value.clamp(low, high) } else { fallback };
+        let coefficient = |value: f32, fallback: f32| clamp(value, fallback, 0.0, MEDIUM_COEFFICIENT_MAX);
+        let mie_scattering = coefficient(self.mie_scattering, earth.mie_scattering);
+        SkyMedium {
+            planet_radius_km: clamp(self.planet_radius_km, earth.planet_radius_km, MEDIUM_RADIUS_MIN_KM, MEDIUM_RADIUS_MAX_KM),
+            atmosphere_height_km: clamp(self.atmosphere_height_km, earth.atmosphere_height_km, MEDIUM_THICKNESS_MIN_KM, MEDIUM_RADIUS_MAX_KM),
+            rayleigh_scattering: [0, 1, 2].map(|c| coefficient(self.rayleigh_scattering[c], earth.rayleigh_scattering[c])),
+            rayleigh_scale_height_km: clamp(self.rayleigh_scale_height_km, earth.rayleigh_scale_height_km, MEDIUM_THICKNESS_MIN_KM, MEDIUM_RADIUS_MAX_KM),
+            mie_scattering,
+            mie_extinction: coefficient(self.mie_extinction, earth.mie_extinction).max(mie_scattering),
+            mie_asymmetry: clamp(self.mie_asymmetry, earth.mie_asymmetry, 0.0, MEDIUM_ASYMMETRY_MAX),
+            mie_scale_height_km: clamp(self.mie_scale_height_km, earth.mie_scale_height_km, MEDIUM_THICKNESS_MIN_KM, MEDIUM_RADIUS_MAX_KM),
+            absorption: [0, 1, 2].map(|c| coefficient(self.absorption[c], earth.absorption[c])),
+            absorption_centre_km: clamp(self.absorption_centre_km, earth.absorption_centre_km, 0.0, MEDIUM_RADIUS_MAX_KM),
+            absorption_width_km: clamp(self.absorption_width_km, earth.absorption_width_km, MEDIUM_THICKNESS_MIN_KM, MEDIUM_RADIUS_MAX_KM),
+        }
+    }
+
+    /// The medium on a planet `radius_km` in radius under an atmosphere `height_km` thick.
+    pub fn with_planet(mut self, radius_km: f32, height_km: f32) -> SkyMedium {
+        (self.planet_radius_km, self.atmosphere_height_km) = (radius_km, height_km);
+        self.validated()
+    }
+
+    /// The medium with a Rayleigh-like term of `scattering` per km (rgb) at the ground, thinning
+    /// over `scale_height_km`.
+    pub fn with_rayleigh(mut self, scattering: [f32; 3], scale_height_km: f32) -> SkyMedium {
+        (self.rayleigh_scattering, self.rayleigh_scale_height_km) = (scattering, scale_height_km);
+        self.validated()
+    }
+
+    /// The medium with a Mie-like term (haze, dust) of `scattering` and `extinction` per km at the
+    /// ground, phase asymmetry `asymmetry`, thinning over `scale_height_km`.
+    pub fn with_mie(mut self, scattering: f32, extinction: f32, asymmetry: f32, scale_height_km: f32) -> SkyMedium {
+        (self.mie_scattering, self.mie_extinction, self.mie_asymmetry, self.mie_scale_height_km) = (scattering, extinction, asymmetry, scale_height_km);
+        self.validated()
+    }
+
+    /// The medium with an absorbing layer of `absorption` per km (rgb) at its peak `centre_km` up,
+    /// `width_km` wide.
+    pub fn with_absorption(mut self, absorption: [f32; 3], centre_km: f32, width_km: f32) -> SkyMedium {
+        (self.absorption, self.absorption_centre_km, self.absorption_width_km) = (absorption, centre_km, width_km);
+        self.validated()
+    }
+
+    /// The atmosphere's top, as a radius in km.
+    pub fn top_km(&self) -> f32 {
+        self.planet_radius_km + self.atmosphere_height_km
+    }
+
+    /// Rayleigh's density falloff (1 / scale height), Earth's bit for bit.
+    fn rayleigh_falloff(&self) -> f32 {
+        if *self == SkyMedium::EARTH { RAYLEIGH_FALLOFF } else { 1.0 / self.rayleigh_scale_height_km }
+    }
+
+    /// Mie's density falloff (1 / scale height), Earth's bit for bit.
+    fn mie_falloff(&self) -> f32 {
+        if *self == SkyMedium::EARTH { MIE_FALLOFF } else { 1.0 / self.mie_scale_height_km }
+    }
+}
+
+impl Default for SkyMedium {
+    fn default() -> Self {
+        SkyMedium::EARTH
+    }
+}
 /// Scene units (metres) per kilometre: the camera's height enters the atmosphere in km.
 const SCENE_UNITS_PER_KM: f32 = 1000.0;
 
@@ -87,6 +244,9 @@ const DEPTH_FORMAT: TextureFormat = crate::renderer::DEPTH_FORMAT;
 const TRANSMITTANCE_LABEL: &str = "sky transmittance";
 const MULTISCATTER_LABEL: &str = "sky multiscatter";
 const SKY_VIEW_LABEL: &str = "sky view";
+/// The moonlit sky-view LUT's label (B.2: made the first night a moon gives light, outside the
+/// pool, the sky-view LUT's size).
+const MOON_VIEW_LABEL: &str = "sky moon view";
 
 /// Whether the sky LUTs refresh at `frame_index` on a `cadence` (every that many frames; frame 0
 /// of a history always does, so a reset or a capture starts from fresh LUTs).
@@ -105,12 +265,12 @@ pub fn camera_height_km(camera_y: f32) -> f32 {
 /// `transmittance.wgsl`).
 const TRANSMITTANCE_STEPS: u32 = 40;
 
-/// Extinction per km at `height` km above the ground (`sky_extinction`).
-fn extinction(height: f32) -> [f32; 3] {
-    let rayleigh = libm::expf(-height * RAYLEIGH_FALLOFF);
-    let mie = MIE_EXTINCTION * libm::expf(-height * MIE_FALLOFF);
-    let ozone = (1.0 - (height - OZONE_CENTRE_KM).abs() / (0.5 * OZONE_WIDTH_KM)).max(0.0);
-    [0, 1, 2].map(|c| RAYLEIGH_SCATTERING[c] * rayleigh + mie + OZONE_ABSORPTION[c] * ozone)
+/// Extinction per km at `height` km above the ground in `medium` (`sky_extinction`).
+fn extinction(medium: &SkyMedium, height: f32) -> [f32; 3] {
+    let rayleigh = libm::expf(-height * medium.rayleigh_falloff());
+    let mie = medium.mie_extinction * libm::expf(-height * medium.mie_falloff());
+    let layer = (1.0 - (height - medium.absorption_centre_km).abs() / (0.5 * medium.absorption_width_km)).max(0.0);
+    [0, 1, 2].map(|c| medium.rayleigh_scattering[c] * rayleigh + mie + medium.absorption[c] * layer)
 }
 
 /// The sun's light that reaches a camera `camera_height_km` above the ground, as a fraction per
@@ -118,17 +278,24 @@ fn extinction(height: f32) -> [f32; 3] {
 /// `angular_radius` radians wide: Earth's atmosphere's transmittance along the path to its top (the
 /// transmittance LUT's integral, here exactly on the CPU), times the part of the disk above the
 /// planet's horizon (so a setting sun fades instead of switching off). What the renderer
-/// multiplies the scene's sun by under the sky.
+/// multiplies the scene's sun by under the sky ([`sun_transmittance_in`] for another medium).
 pub fn sun_transmittance(camera_height_km: f32, sun_dir: [f32; 3], angular_radius: f32) -> [f32; 3] {
+    sun_transmittance_in(&SkyMedium::EARTH, camera_height_km, sun_dir, angular_radius)
+}
+
+/// [`sun_transmittance`] through `medium` (renderer pass 2 B.2): also the moon's light on its way
+/// down ([`crate::night_sky::ground_light`]).
+pub fn sun_transmittance_in(medium: &SkyMedium, camera_height_km: f32, sun_dir: [f32; 3], angular_radius: f32) -> [f32; 3] {
     let length = libm::sqrtf(sun_dir.iter().map(|c| c * c).sum());
     if !length.is_finite() || length <= 0.0 {
         return [1.0; 3];
     }
     let mu = (sun_dir[1] / length).clamp(-1.0, 1.0);
-    let height = camera_height_km.clamp(0.0, ATMOSPHERE_TOP_KM - EARTH_RADIUS_KM);
-    let r = EARTH_RADIUS_KM + height;
+    let (bottom, top) = (medium.planet_radius_km, medium.top_km());
+    let height = camera_height_km.clamp(0.0, top - bottom);
+    let r = bottom + height;
     // The disk above the horizon: the horizon's elevation is -acos(R / r) below the camera.
-    let horizon = -libm::acosf((EARTH_RADIUS_KM / r).min(1.0));
+    let horizon = -libm::acosf((bottom / r).min(1.0));
     let elevation = libm::asinf(mu);
     let radius = angular_radius.max(1e-4);
     let visible = ((elevation - horizon + radius) / (2.0 * radius)).clamp(0.0, 1.0);
@@ -137,7 +304,6 @@ pub fn sun_transmittance(camera_height_km: f32, sun_dir: [f32; 3], angular_radiu
     }
     // Along the ray to the top of the atmosphere: for a disk partly below the horizon, the light
     // that reaches the camera grazes it.
-    let top = ATMOSPHERE_TOP_KM;
     let ray_mu = mu.max(libm::sinf(horizon));
     let discriminant = (top - r) * (top + r) + r * r * ray_mu * ray_mu;
     let distance = (-r * ray_mu + libm::sqrtf(discriminant.max(0.0))).max(0.0);
@@ -146,7 +312,7 @@ pub fn sun_transmittance(camera_height_km: f32, sun_dir: [f32; 3], angular_radiu
     for i in 0..TRANSMITTANCE_STEPS {
         let t = (i as f32 + 0.5) * step;
         let radius = libm::sqrtf(r * r + t * t + 2.0 * r * ray_mu * t);
-        let sigma = extinction((radius - EARTH_RADIUS_KM).max(0.0));
+        let sigma = extinction(medium, (radius - bottom).max(0.0));
         for c in 0..3 {
             depth[c] += sigma[c] * step;
         }
@@ -214,26 +380,38 @@ impl<'a> LutRefresh<'a> {
     }
 }
 
-/// Earth's atmosphere under `sky` for one frame, at the LUT sizes of `quality`.
+/// The atmosphere of `sky` (its medium, [`SkyMedium::validated`]) for one frame, at the LUT sizes
+/// of `quality`.
 pub fn atmosphere(sky: &SkyParams, quality: &EnvironmentQuality, frame: &SkyFrame) -> GpuSkyAtmosphere {
+    let medium = sky.medium.validated();
     let [sx, sy, sz] = frame.sun_dir;
     let [ir, ig, ib] = frame.sun_illuminance;
     let [ar, ag, ab] = sky.ground_albedo;
-    let [rr, rg, rb] = RAYLEIGH_SCATTERING;
-    let [or, og, ob] = OZONE_ABSORPTION;
+    let [rr, rg, rb] = medium.rayleigh_scattering;
+    let [or, og, ob] = medium.absorption;
     let aerial = if quality.aerial_perspective { 32 } else { 0 };
     GpuSkyAtmosphere {
         sun_dir: [sx, sy, sz, sky.sun_angular_radius],
         sun_illuminance: [ir, ig, ib, sky.intensity],
         ground_albedo: [ar, ag, ab, frame.camera_height_km.max(0.0)],
-        radii: [EARTH_RADIUS_KM, ATMOSPHERE_TOP_KM, OZONE_CENTRE_KM, OZONE_WIDTH_KM],
-        rayleigh: [rr, rg, rb, RAYLEIGH_FALLOFF],
-        mie: [MIE_SCATTERING, MIE_EXTINCTION, MIE_G, MIE_FALLOFF],
+        radii: [medium.planet_radius_km, medium.top_km(), medium.absorption_centre_km, medium.absorption_width_km],
+        rayleigh: [rr, rg, rb, medium.rayleigh_falloff()],
+        mie: [medium.mie_scattering, medium.mie_extinction, medium.mie_asymmetry, medium.mie_falloff()],
         ozone: [or, og, ob, MULTISCATTER_FACTOR],
         luts: [TRANSMITTANCE_LUT.0, TRANSMITTANCE_LUT.1, quality.sky_lut.0, quality.sky_lut.1],
         // The frame index's low 32 bits: its residue modulo every power-of-two cadence is kept.
         params: [MULTISCATTER_LUT, aerial, (frame.frame_index & u64::from(u32::MAX)) as u32, 0],
     }
+}
+
+/// The sky-view kernel's atmosphere row for the moonlit sky (B.2): `atmosphere` with the moon of
+/// `sky` as its light, the moon's light outside the atmosphere
+/// ([`crate::night_sky::moon_light`]) for `frame`'s sun.
+fn moon_atmosphere(atmosphere: &GpuSkyAtmosphere, sky: &SkyParams, frame: &SkyFrame) -> GpuSkyAtmosphere {
+    let Some(moon) = sky.moon.as_ref() else { return *atmosphere };
+    let [x, y, z] = moon.direction;
+    let [r, g, b] = crate::night_sky::moon_light(moon, frame.sun_dir, frame.sun_illuminance);
+    GpuSkyAtmosphere { sun_dir: [x, y, z, moon.angular_radius], sun_illuminance: [r, g, b, atmosphere.sun_illuminance[3]], ..*atmosphere }
 }
 
 /// What the sky-view LUT is a function of: everything but the frame index.
@@ -427,6 +605,33 @@ struct SkyGpu {
     static_key: Option<GpuSkyAtmosphere>,
     /// What the sky-view LUT holds ([`view_key`]).
     view_key: Option<GpuSkyAtmosphere>,
+    /// The night's uniform (B.2, [`crate::night_sky::GpuNightSky`]) and what it last held.
+    night: Buffer,
+    night_key: Option<crate::night_sky::GpuNightSky>,
+    /// The moonlit sky (B.2): the sky-view kernel's atmosphere row with the moon as its light, and
+    /// its LUT and pass, made the first night a moon gives light.
+    moon_atmosphere: Buffer,
+    moon: Option<(Lut, BindGroup)>,
+}
+
+/// The background's bind group: `[frame, atmosphere, night]` uniforms, the sky-view LUT, the
+/// transmittance LUT, the moonlit LUT and the sampler.
+fn draw_bind_group(device: &Device, layout: &BindGroupLayout, uniforms: [&Buffer; 3], sky_view: &Lut, transmittance: &Lut, moon: &Lut, sampler: &Sampler) -> BindGroup {
+    let [frame, atmosphere, night] = uniforms;
+    bind_group(
+        device,
+        "sky draw",
+        layout,
+        &[
+            (0, frame.as_entire_binding()),
+            (1, atmosphere.as_entire_binding()),
+            (2, view(sky_view)),
+            (3, view(transmittance)),
+            (4, wgpu::BindingResource::Sampler(sampler)),
+            (5, night.as_entire_binding()),
+            (6, view(moon)),
+        ],
+    )
 }
 
 impl SkyGpu {
@@ -439,6 +644,8 @@ impl SkyGpu {
         };
         let atmosphere = uniform("sky atmosphere", size_of::<GpuSkyAtmosphere>() as u64);
         let frame = uniform("sky frame", size_of::<GxFrameV2>() as u64);
+        let night = uniform("sky night", size_of::<crate::night_sky::GpuNightSky>() as u64);
+        let moon_atmosphere = uniform("sky moon atmosphere", size_of::<GpuSkyAtmosphere>() as u64);
         // Clamped: the sky-view LUT spans half the azimuth (the sky is symmetric about the sun).
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("sky luts"),
@@ -498,7 +705,15 @@ impl SkyGpu {
         let cube_layout = layout(
             device,
             "sky cube",
-            &[uniform_entry(0, compute), sampler_entry(3, compute), texture_entry(5, compute), storage_entry(6, wgpu::TextureViewDimension::D2Array)],
+            &[
+                uniform_entry(0, compute),
+                texture_entry(1, compute),
+                sampler_entry(3, compute),
+                texture_entry(5, compute),
+                storage_entry(6, wgpu::TextureViewDimension::D2Array),
+                uniform_entry(7, compute),
+                texture_entry(8, compute),
+            ],
         );
         let cube_pipeline = compute_pipeline(device, "sky cube", &sky_view_module, "cs_sky_cube", &cube_layout);
 
@@ -512,20 +727,12 @@ impl SkyGpu {
                 texture_entry(2, fragment),
                 texture_entry(3, fragment),
                 sampler_entry(4, fragment),
+                uniform_entry(5, fragment),
+                texture_entry(6, fragment),
             ],
         );
-        let draw_group = bind_group(
-            device,
-            "sky draw",
-            &draw_layout,
-            &[
-                (0, frame.as_entire_binding()),
-                (1, atmosphere_res()),
-                (2, view(&sky_view)),
-                (3, view(&transmittance)),
-                (4, wgpu::BindingResource::Sampler(&sampler)),
-            ],
-        );
+        // No moon yet: the sky-view LUT stands in for the moonlit one (never sampled).
+        let draw_group = draw_bind_group(device, &draw_layout, [&frame, &atmosphere, &night], &sky_view, &transmittance, &sky_view, &sampler);
         let draw_module = crate::shaders::module(device, "sky draw", crate::shaders::SKY_DRAW)?;
         Ok(SkyGpu {
             view_size,
@@ -547,7 +754,54 @@ impl SkyGpu {
             draw: None,
             static_key: None,
             view_key: None,
+            night,
+            night_key: None,
+            moon_atmosphere,
+            moon: None,
         })
+    }
+
+    /// The moonlit sky's LUT (its view, or the sky-view LUT's before a moon gave light).
+    fn moon_view(&self) -> &Lut {
+        self.moon.as_ref().map_or(&self.sky_view, |(lut, _)| lut)
+    }
+
+    /// The background's bind group over the current LUTs.
+    fn rebind_draw(&mut self, device: &Device) {
+        let moon = self.moon_view();
+        self.draw_group = draw_bind_group(device, &self.draw_layout, [&self.frame, &self.atmosphere, &self.night], &self.sky_view, &self.transmittance, moon, &self.sampler);
+    }
+
+    /// The moonlit sky's LUT and pass at the sky-view size (made again on a resize), the
+    /// background rebound to it.
+    fn ensure_moon(&mut self, device: &Device) {
+        if self.moon.as_ref().is_some_and(|(lut, _)| lut.size() == self.view_size) {
+            return;
+        }
+        let desc = TargetDesc {
+            label: MOON_VIEW_LABEL,
+            format: LUT_FORMAT,
+            usage: TextureUsages::STORAGE_BINDING | TextureUsages::TEXTURE_BINDING,
+            samples: 1,
+            size: self.view_size,
+            mips: 1,
+            srgb_view: false,
+        };
+        let lut = Lut::new(device, &desc);
+        let group = bind_group(
+            device,
+            "sky moon view",
+            &self.sky_view_layout,
+            &[
+                (0, self.moon_atmosphere.as_entire_binding()),
+                (1, view(&self.transmittance)),
+                (2, view(&self.multiscatter)),
+                (3, wgpu::BindingResource::Sampler(&self.sampler)),
+                (4, view(&lut)),
+            ],
+        );
+        self.moon = Some((lut, group));
+        self.rebind_draw(device);
     }
 
     /// The sky-view LUT at `quality`'s size (a dynamic-resolution step changed it): only that LUT
@@ -571,18 +825,10 @@ impl SkyGpu {
                 (4, view(&self.sky_view)),
             ],
         );
-        self.draw_group = bind_group(
-            device,
-            "sky draw",
-            &self.draw_layout,
-            &[
-                (0, self.frame.as_entire_binding()),
-                (1, self.atmosphere.as_entire_binding()),
-                (2, view(&self.sky_view)),
-                (3, view(&self.transmittance)),
-                (4, wgpu::BindingResource::Sampler(&self.sampler)),
-            ],
-        );
+        // The moonlit LUT is made again at the new size the next night.
+        self.moon = None;
+        self.night_key = None;
+        self.rebind_draw(device);
     }
 
     /// The background pipeline for `key`, made when the world pass's format first changes to it.
@@ -918,14 +1164,22 @@ impl SkyState {
     pub fn encode_luts(&mut self, device: &Device, queue: &Queue, encoder: &mut CommandEncoder, refresh: LutRefresh<'_>) -> PassCounters {
         let Some(gpu) = self.gpu_for(device, refresh.quality) else { return PassCounters::default() };
         let atmosphere = atmosphere(refresh.sky, refresh.quality, &refresh.frame);
+        let night = crate::night_sky::gpu_night(refresh.sky, refresh.frame.sun_dir);
         let (statics, view) = (static_key(&atmosphere), view_key(&atmosphere));
         let static_stale = !same_key(gpu.static_key.as_ref(), &statics);
-        let view_stale = !same_key(gpu.view_key.as_ref(), &view);
+        let view_stale = !same_key(gpu.view_key.as_ref(), &view) || gpu.night_key != Some(night);
         let due = refresh.force || gpu.view_key.is_none() || lut_due(refresh.frame.frame_index, refresh.quality.sky_cadence);
         if !static_stale && !(view_stale && due) {
             return PassCounters::default();
         }
+        // The moonlit sky (B.2): only on a night a moon gives light.
+        let moonlit = night.moon[2] > 0.0;
+        if moonlit {
+            gpu.ensure_moon(device);
+            queue.write_buffer(&gpu.moon_atmosphere, 0, bytes_of(&moon_atmosphere(&atmosphere, refresh.sky, &refresh.frame)));
+        }
         queue.write_buffer(&gpu.atmosphere, 0, bytes_of(&atmosphere));
+        queue.write_buffer(&gpu.night, 0, bytes_of(&night));
         let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor { label: Some("sky luts"), timestamp_writes: refresh.timestamp_writes });
         // Each dispatch is its own usage scope: a LUT written by one is sampled by the next.
         if static_stale {
@@ -933,9 +1187,16 @@ impl SkyState {
             gpu.multiscatter_pass.dispatch(&mut pass, gpu.multiscatter.size());
         }
         gpu.sky_view_pass.dispatch(&mut pass, gpu.sky_view.size());
+        if let Some((lut, group)) = gpu.moon.as_ref().filter(|_| moonlit) {
+            let (width, height) = lut.size();
+            pass.set_pipeline(&gpu.sky_view_pass.pipeline);
+            pass.set_bind_group(0, group, &[]);
+            pass.dispatch_workgroups(width.div_ceil(WORKGROUP_SIDE), height.div_ceil(WORKGROUP_SIDE), 1);
+        }
         drop(pass);
         gpu.static_key = Some(statics);
         gpu.view_key = Some(view);
+        gpu.night_key = Some(night);
         self.generation += 1;
         PassCounters { compute: 1, ..PassCounters::default() }
     }
@@ -1040,9 +1301,12 @@ impl SkyState {
             &gpu.cube_layout,
             &[
                 (0, gpu.atmosphere.as_entire_binding()),
+                (1, view(&gpu.transmittance)),
                 (3, wgpu::BindingResource::Sampler(&gpu.sampler)),
                 (5, wgpu::BindingResource::TextureView(&gpu.sky_view.view)),
                 (6, wgpu::BindingResource::TextureView(cube)),
+                (7, gpu.night.as_entire_binding()),
+                (8, wgpu::BindingResource::TextureView(&gpu.moon_view().view)),
             ],
         );
         pass.set_pipeline(&gpu.cube_pipeline);
@@ -1113,6 +1377,110 @@ fn read_rgba16f(gpu: &crate::gpu::Gpu, texture: &Texture) -> Result<Vec<u8>, Ren
     gpu.queue.submit([encoder.finish()]);
     let data = crate::readback::map_read_blocking(gpu, &staging, bytes)?;
     Ok(data.chunks(padded as usize).flat_map(|row| row[..tight as usize].to_vec()).collect())
+}
+
+/// Untimed draws before a background cost row's timed ones (pipelines made, the GPU's clocks up).
+#[cfg(not(target_arch = "wasm32"))]
+const BACKGROUND_WARMUP: usize = 8;
+/// The sun's illuminance a background cost row draws with (the default sun).
+#[cfg(not(target_arch = "wasm32"))]
+const BACKGROUND_SUN: f32 = 2.5;
+
+/// GPU milliseconds of the sky's background (node 13) drawn `frames` times at `size` for `sky` with
+/// the sun towards `sun_dir` (renderer pass 2 B.2's cost row: the night's stars and moon are drawn
+/// per pixel), each draw its own timestamped render pass over a cleared reverse-Z depth, after
+/// [`BACKGROUND_WARMUP`] untimed ones; sorted. None without timestamp queries.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn background_gpu_ms(gpu: &crate::gpu::Gpu, sky: &SkyParams, quality: &EnvironmentQuality, sun_dir: [f32; 3], size: (u32, u32), frames: usize) -> Result<Option<Vec<f64>>, RenderError> {
+    if !gpu.device.features().contains(wgpu::Features::TIMESTAMP_QUERY) {
+        return Ok(None);
+    }
+    let (device, queue) = (&gpu.device, &gpu.queue);
+    let environment = Environment::Sky(*sky);
+    let mut state = SkyState::new();
+    state.set_environment(&environment);
+    let frame = SkyFrame { sun_dir, sun_illuminance: [BACKGROUND_SUN; 3], camera_height_km: camera_height_km(1.5), frame_index: 0 };
+    let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("sky background cost") });
+    state.encode_luts(device, queue, &mut encoder, LutRefresh::new(sky, quality, frame).forced(true));
+    queue.submit([encoder.finish()]);
+    let target = |label, format, usage| {
+        device.create_texture(&wgpu::TextureDescriptor {
+            label: Some(label),
+            size: wgpu::Extent3d { width: size.0, height: size.1, depth_or_array_layers: 1 },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format,
+            usage,
+            view_formats: &[],
+        })
+    };
+    let colour = target("sky background cost", TextureFormat::Rgba16Float, TextureUsages::RENDER_ATTACHMENT).create_view(&wgpu::TextureViewDescriptor::default());
+    let depth = target("sky background cost depth", DEPTH_FORMAT, TextureUsages::RENDER_ATTACHMENT).create_view(&wgpu::TextureViewDescriptor::default());
+    let eye = glam::Vec3::new(0.0, 1.5, 0.0);
+    let projection = glam::camera::rh::proj::directx::perspective_infinite_reverse(60f32.to_radians(), size.0 as f32 / size.1 as f32, 0.1);
+    let view_proj = projection * glam::camera::rh::view::look_at_mat4(eye, glam::Vec3::new(0.0, 4.0, -8.0), glam::Vec3::Y);
+    let ctx = EnvironmentFrame {
+        device,
+        environment: &environment,
+        quality,
+        frame_index: 0,
+        settle: false,
+        sun_dir,
+        sun_color: [BACKGROUND_SUN; 3],
+        camera_pos: eye.to_array(),
+        view_proj: view_proj.to_cols_array(),
+        pre_exposure: 1.0,
+        scene_format: TextureFormat::Rgba16Float,
+        samples: 1,
+        depth_reversed: true,
+        fog: crate::fog::GpuFog::default(),
+        aerial: false,
+    };
+    state.prepared = state.prepare_draw(device, queue, sky, &ctx);
+    if !state.prepared {
+        return Ok(None);
+    }
+    let total = BACKGROUND_WARMUP + frames;
+    let stamps = 2 * total as u32;
+    let bytes = u64::from(stamps) * 8;
+    let queries = device.create_query_set(&wgpu::QuerySetDescriptor { label: Some("sky background cost"), ty: wgpu::QueryType::Timestamp, count: stamps });
+    let resolve = crate::tables::buffer(device, "sky background cost", bytes, BufferUsages::QUERY_RESOLVE | BufferUsages::COPY_SRC)?;
+    let read = crate::tables::buffer(device, "sky background cost read", bytes, BufferUsages::MAP_READ | BufferUsages::COPY_DST)?;
+    for run in 0..total as u32 {
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("sky background cost") });
+        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("sky background cost"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: &colour,
+                depth_slice: None,
+                resolve_target: None,
+                ops: wgpu::Operations { load: wgpu::LoadOp::Clear(wgpu::Color::BLACK), store: wgpu::StoreOp::Store },
+            })],
+            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                view: &depth,
+                depth_ops: Some(wgpu::Operations { load: wgpu::LoadOp::Clear(0.0), store: wgpu::StoreOp::Discard }),
+                stencil_ops: None,
+            }),
+            timestamp_writes: Some(wgpu::RenderPassTimestampWrites { query_set: &queries, beginning_of_pass_write_index: Some(2 * run), end_of_pass_write_index: Some(2 * run + 1) }),
+            occlusion_query_set: None,
+            multiview_mask: None,
+        });
+        state.draw_background(&mut pass);
+        drop(pass);
+        queue.submit([encoder.finish()]);
+    }
+    device.poll(wgpu::PollType::wait_indefinitely()).map_err(|error| crate::readback::capture_failed(error.to_string()))?;
+    let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("sky background cost resolve") });
+    encoder.resolve_query_set(&queries, 0..stamps, &resolve, 0);
+    encoder.copy_buffer_to_buffer(&resolve, 0, &read, 0, bytes);
+    queue.submit([encoder.finish()]);
+    let data = crate::readback::map_read_blocking(gpu, &read, bytes)?;
+    let period = f64::from(queue.get_timestamp_period());
+    let ticks: Vec<u64> = data.as_chunks::<8>().0.iter().map(|b| u64::from_le_bytes(*b)).collect();
+    let mut times: Vec<f64> = ticks.as_chunks::<2>().0[BACKGROUND_WARMUP..].iter().map(|[begin, end]| end.saturating_sub(*begin) as f64 * period / 1.0e6).collect();
+    times.sort_by(f64::total_cmp);
+    Ok(Some(times))
 }
 
 #[cfg(test)]
