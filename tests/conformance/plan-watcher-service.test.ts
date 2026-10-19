@@ -325,6 +325,62 @@ describe("the Genex player sign-in", () => {
     assert.equal(await credential.read(), null);
   });
 
+  it("a secret store that will not keep the credential ends the sign-in, and nothing is left unhandled", async () => {
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown) => unhandled.push(reason);
+    process.on("unhandledRejection", onUnhandled);
+    try {
+      const locked = {
+        ...memoryKeyStore(),
+        write: async () => {
+          throw new Error("secret storage is locked");
+        },
+      };
+      const { watcher, fire, lines } = await rig(
+        { credential: locked },
+        {
+          "/api/cli/device/poll": () => ({ status: 200, body: { status: "approved", scope: "player", token: TOKEN } }),
+        },
+      );
+      await watcher.start();
+      await watcher.signIn();
+      await fire();
+      await new Promise((resolve) => setImmediate(resolve));
+      assert.equal((await watcher.view()).signIn, AiWatcherSignIn.SignedOut);
+      assert.ok(
+        lines.some((line) => /could not be kept/.test(line)),
+        lines.join(" | "),
+      );
+      assert.deepEqual(unhandled, []);
+    } finally {
+      process.off("unhandledRejection", onUnhandled);
+    }
+  });
+
+  it("a Settings notice that throws stops nothing", async () => {
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown) => unhandled.push(reason);
+    process.on("unhandledRejection", onUnhandled);
+    try {
+      const { watcher, credential, fire, held } = await rig({
+        notify: () => {
+          throw new Error("no window");
+        },
+      });
+      await credential.write(stored());
+      await watcher.start();
+      await watcher.setEnabled(true).catch(() => {});
+      watcher.building(true);
+      await fire();
+      await new Promise((resolve) => setImmediate(resolve));
+      assert.deepEqual(unhandled, []);
+      assert.equal(held.due(), 1, "the next pass is still scheduled");
+      await watcher.stop();
+    } finally {
+      process.off("unhandledRejection", onUnhandled);
+    }
+  });
+
   it("a credential from another genex.games, or one that expired, reads as signed out", () => {
     assert.equal(readPlayerCredential(stored("https://api.dev.genex.games"), API, START), null);
     assert.equal(readPlayerCredential(stored(API, new Date(START - 1).toISOString()), API, START), null);

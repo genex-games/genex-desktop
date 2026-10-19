@@ -323,9 +323,11 @@ function schedule(core: WatcherCore, ms: number): void {
 function kick(core: WatcherCore): void {
   if (!active(core) || core.running) return;
   clearTimer(core);
-  core.running = runPass(core).finally(() => {
-    core.running = null;
-  });
+  core.running = runPass(core)
+    .catch(() => core.deps.log("player: a pass ended unexpectedly"))
+    .finally(() => {
+      core.running = null;
+    });
 }
 
 async function runPass(core: WatcherCore): Promise<void> {
@@ -393,9 +395,11 @@ function schedulePoll(core: WatcherCore): void {
   if (!pending) return;
   core.pollTimer = core.deps.timers.setTimeout(() => {
     core.pollTimer = null;
-    core.polling = pollOnce(core).finally(() => {
-      core.polling = null;
-    });
+    core.polling = pollOnce(core)
+      .catch(() => core.deps.log("player: a sign-in poll ended unexpectedly"))
+      .finally(() => {
+        core.polling = null;
+      });
   }, pending.intervalMs);
 }
 
@@ -411,13 +415,21 @@ async function pollOnce(core: WatcherCore): Promise<void> {
     return;
   }
   core.pending = null;
-  if (answer.poll === SignInPoll.Approved) {
-    await core.deps.credential.write(writePlayerCredential(answer.credential));
-    Object.assign(core, { credential: answer.credential, ended: false, fatal: null, session: null });
-    core.deps.log("player: signed in");
-  }
+  if (answer.poll === SignInPoll.Approved) await keep(core, answer.credential);
   await tell(core);
   kick(core);
+}
+
+/** Keep an approved credential; a secret store that refuses it leaves the watcher signed out. */
+async function keep(core: WatcherCore, credential: PlayerCredential): Promise<void> {
+  try {
+    await core.deps.credential.write(writePlayerCredential(credential));
+  } catch {
+    core.deps.log("player: the credential could not be kept (the secret store refused it)");
+    return;
+  }
+  Object.assign(core, { credential, ended: false, fatal: null, session: null });
+  core.deps.log("player: signed in");
 }
 
 async function signIn(core: WatcherCore): Promise<void> {
@@ -471,12 +483,16 @@ async function viewOf(core: WatcherCore): Promise<AiWatcherView> {
   };
 }
 
-/** Tell Settings when what it shows changed. */
+/** Tell Settings when what it shows changed; a notice that cannot be delivered stops nothing. */
 async function tell(core: WatcherCore): Promise<void> {
-  const shown = JSON.stringify(await viewOf(core));
-  if (shown === core.told) return;
-  core.told = shown;
-  core.deps.notify();
+  try {
+    const shown = JSON.stringify(await viewOf(core));
+    if (shown === core.told) return;
+    core.told = shown;
+    core.deps.notify();
+  } catch {
+    core.deps.log("player: Settings could not be told");
+  }
 }
 
 // ── the watcher ──────────────────────────────────────────────────────────────────────────────
