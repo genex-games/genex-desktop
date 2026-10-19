@@ -5796,20 +5796,32 @@ mod metal {
             return;
         };
         assert!(first.is_empty(), "nothing has landed before the first frame");
+        // A twin renderer never armed draws the same frames: the count of passes a frame opens
+        // depends on the frame (B.6's static shadow cache holds the still cascades after
+        // `STILL_FRAMES` frames, so a later frame of this still scene draws only the world pass),
+        // never on the timer.
+        let mut twin = Renderer::new(&gpu, 128, 72).expect("twin renderer");
+        let twin_frame = |twin: &mut Renderer| {
+            twin.render(&gpu, &scene(), CullPath::Gpu).expect("twin frame");
+            twin.last_stats().render_passes
+        };
         renderer.render(&gpu, &scene(), CullPath::Gpu).expect("frame");
         renderer.finish_frame_timer();
+        assert_eq!(renderer.last_stats().render_passes, 3, "two cascades and the world pass");
+        assert_eq!(twin_frame(&mut twin), 3, "the twin's first frame draws two cascades and the world pass");
         let mut landed = Vec::new();
-        for _ in 0..8 {
+        for frame in 1..9 {
             let _ = gpu.device.poll(wgpu::PollType::wait_indefinitely());
             landed.extend(renderer.arm_frame_timer(&gpu.queue).unwrap_or_default());
             renderer.render(&gpu, &scene(), CullPath::Gpu).expect("frame");
             renderer.finish_frame_timer();
+            assert_eq!(renderer.last_stats().render_passes, twin_frame(&mut twin), "armed frame {frame}: the timer adds no renderer pass");
         }
         assert!(!landed.is_empty(), "armed frames land their GPU time within a few frames");
         assert!(landed.iter().all(|ms| ms.is_finite() && *ms > 0.0 && *ms < 1000.0), "{landed:?}");
         // A capture (unarmed) between Live frames records no begin pass and lands nothing.
         renderer.render(&gpu, &scene(), CullPath::Gpu).expect("an unarmed frame");
-        assert_eq!(renderer.last_stats().render_passes, 3, "the timer adds no renderer pass");
+        assert_eq!(renderer.last_stats().render_passes, twin_frame(&mut twin), "the timer adds no renderer pass");
     }
 
     /// The RQ3 review's canopy: a 44 x 4 m plate 3 m up reaching towards a low sun, crossing the
