@@ -95,8 +95,8 @@ pub use genex_render::terrain::TerrainLook;
 /// ([`Material::with_subsurface`]; renderer pass 2 B.1).
 pub use genex_render::subsurface::Subsurface;
 pub use gfx::{
-    ASSET_READ_MAX_BYTES, AssetBytes, AssetError, AssetErrorCode, AssetGroup, AssetGroups, AssetInfo, AssetSource, AssetTable, Assets, Gfx, Model,
-    ModelTriangles,
+    ASSET_READ_MAX_BYTES, AssetBytes, AssetError, AssetErrorCode, AssetGroup, AssetGroups, AssetInfo, AssetSource, AssetTable, Assets, CharacterAsset, Gfx,
+    Model, ModelTriangles,
 };
 /// A native destination's asset files (the compiled table, then `assets/` by real path): host glue.
 #[cfg(not(target_arch = "wasm32"))]

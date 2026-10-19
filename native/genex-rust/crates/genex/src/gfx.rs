@@ -19,10 +19,18 @@
 //! in `on_reset` only (`not-at-reset`), and only for assets of the boot and sim groups
 //! (`not-preloaded` for a streamed or named one). The bytes are part of the build, so the same seed
 //! gives the same checksum everywhere; a re-seed reuses what the first one read.
+//!
+//! `gfx.character(path)` reads a rigged GLB the same way and hands it to genex-anim's importer
+//! (behind genex-core's GLB guard); the rig is kept in an `Arc` cache across seeds, so a re-seed
+//! neither reads nor parses again. Every refusal, the read's included, is
+//! `animation-asset-invalid`.
 
 use std::cell::{Cell, RefCell};
 use std::sync::Arc;
 
+use genex_anim::import::{Rig, import_rig};
+use genex_anim::skeleton::Skeleton;
+use genex_anim::AnimationError;
 use genex_core::paths::is_safe_asset_path;
 use genex_core::saves::Saves;
 use serde_json::Value;
@@ -323,12 +331,39 @@ impl AssetSource for AssetTable {
 /// A game with no assets compiled in and none on disk (a test's runtime).
 pub(crate) const NO_ASSETS: AssetTable = &[];
 
-/// What the asset folder remembers across seeds: each read's bytes and each model's triangles, so
-/// a re-seed never reads or parses again (they are a pure function of the build's files).
+/// A rigged GLB loaded at reset (`gfx.character(path)`): genex-anim's rig of its first skinned
+/// mesh node, shared by `Arc` (cloning is cheap; every seed gets the one parse).
+#[derive(Clone, Debug, PartialEq)]
+pub struct CharacterAsset {
+    path: Arc<str>,
+    rig: Arc<Rig>,
+}
+
+impl CharacterAsset {
+    /// The path under `assets/` it was loaded from.
+    pub fn path(&self) -> &str {
+        &self.path
+    }
+
+    /// Joints in its skeleton.
+    pub fn joint_count(&self) -> usize {
+        self.rig.skeleton().joint_count()
+    }
+
+    /// Its skeleton: joint names, parents and rest pose.
+    pub fn skeleton(&self) -> &Skeleton {
+        self.rig.skeleton()
+    }
+}
+
+/// What the asset folder remembers across seeds: each read's bytes, each model's triangles and
+/// each character's rig (or why it was refused), so a re-seed never reads or parses again (they
+/// are a pure function of the build's files).
 #[derive(Default)]
 struct Reads {
     bytes: Map<String, AssetBytes>,
     triangles: Map<String, Arc<ModelTriangles>>,
+    rigs: Map<String, Result<Arc<Rig>, AnimationError>>,
 }
 
 /// The game's `assets/` folder.
@@ -420,6 +455,18 @@ impl Assets {
         Ok(triangles)
     }
 
+    /// The rig of the GLB at `assets/<path>`, read as [`Assets::bytes`] reads (in `on_reset`, boot
+    /// and sim groups only) and imported once per build file, its refusal included.
+    fn rig(&self, path: &str) -> Result<Arc<Rig>, AnimationError> {
+        let bytes = self.bytes(path).map_err(|error| AnimationError::asset_invalid(format!("{path}: {error}")))?;
+        if let Some(known) = self.reads.borrow().rigs.get(path) {
+            return known.clone();
+        }
+        let rig = import_rig(&bytes).map(Arc::new).map_err(|error| AnimationError { code: error.code, detail: format!("{path}: {}", error.detail) });
+        self.reads.borrow_mut().rigs.insert(path.to_owned(), rig.clone());
+        rig
+    }
+
     /// What the build records for `assets/<path>` (its size and group), without reading it into
     /// the sim; None for an unsafe path or an asset the build does not have.
     pub fn info(&self, path: &str) -> Option<AssetInfo> {
@@ -484,6 +531,17 @@ impl Gfx {
     pub(crate) fn new(world_size: [u32; 2], saves: Saves, wgsl: WgslSetup, source: Box<dyn AssetSource>) -> Gfx {
         let assets = Assets::with_source(source);
         Gfx { assets, world_size, saves, extensions: Extensions::new(wgsl), textured: RefCell::new(Vec::new()) }
+    }
+
+    /// The rigged GLB at `assets/<path>` as a [`CharacterAsset`], in `on_reset` (an asset of the
+    /// boot or sim group, as [`Assets::bytes`] reads). The rig is parsed once per build file and
+    /// shared across seeds. Refused `animation-asset-invalid`: an unsafe path, a file the build
+    /// does not have or cannot read now, or one that is not a GLB with a usable skin (no skinned
+    /// mesh node, more than 256 joints, a broken node tree, a non-finite transform). A refusal
+    /// never crashes; the model handle of the same path draws the checker.
+    pub fn character(&self, path: &str) -> Result<CharacterAsset, AnimationError> {
+        let rig = self.assets.rig(path)?;
+        Ok(CharacterAsset { path: Arc::from(path), rig })
     }
 
     /// A texture handle for a v2 material or post pass (`gfx.texture(path)`, [`Assets::texture`]).
