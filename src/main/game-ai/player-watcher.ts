@@ -98,7 +98,7 @@ export interface PlanWatcherDeps {
   label: string;
   /** The person's home folder, which every job's box denies reading. */
   home: string;
-  /** The studio's environment, filtered for each CLI (`runnerEnv`). */
+  /** The studio's environment, for a CLI whose discovery named none of its own; filtered for each CLI (`runnerEnv`). */
   env: Readonly<Record<string, string | undefined>>;
   /** The secret holding the player credential (`GENEX_PLAYER_CREDENTIAL_SECRET`). */
   credential: ApiKeyStore;
@@ -109,8 +109,8 @@ export interface PlanWatcherDeps {
   /** A folder inside the home folder the probe's canary is written to. */
   canaryDir: string;
   sandbox: RunnerSandboxFactory;
-  /** The CLI as this Mac has it installed, or null. */
-  findBinary(runner: AiWatcherRunner): Promise<string | null>;
+  /** The CLI as this Mac has it installed, with the environment it was found with (its toolchain's PATH), or null. */
+  findCli(runner: AiWatcherRunner): Promise<FoundCli | null>;
   /** Whether Codex is signed in to a ChatGPT plan outside any box (to tell "held" from "not set up"). */
   codexSignedIn(): Promise<boolean>;
   /** A plan's windows, as Settings → Usage reads them. */
@@ -128,6 +128,12 @@ export interface PlanWatcherDeps {
   timers: WatcherTimers;
   fetch: typeof fetch;
   random(): number;
+}
+
+/** A CLI as discovery found it. */
+export interface FoundCli {
+  binary: string;
+  env: Readonly<Record<string, string | undefined>>;
 }
 
 /** The switch file as the watcher writes it. */
@@ -163,6 +169,8 @@ interface WatcherCore {
   pollTimer: unknown;
   polling: Promise<void> | null;
   probes: Map<string, Probe>;
+  /** Each advertised CLI's own environment, from its discovery. */
+  cliEnv: Map<AiWatcherRunner, Readonly<Record<string, string | undefined>>>;
   /** The last view Settings was told about, to notify on change only. */
   told: string;
 }
@@ -203,7 +211,11 @@ function load(core: WatcherCore): Promise<void> {
 // ── the CLIs this Mac answers with ───────────────────────────────────────────────────────────
 
 /** A CLI's probe, trusted for a while once it passed; a failed one is taken again at the next refresh. */
-async function probed(core: WatcherCore, install: RunnerInstall): Promise<RunnerProbeResult> {
+async function probed(
+  core: WatcherCore,
+  install: RunnerInstall,
+  env: Readonly<Record<string, string | undefined>>,
+): Promise<RunnerProbeResult> {
   const key = `${install.runner}\u0000${install.binary}`;
   const now = core.deps.clock.now();
   const kept = core.probes.get(key);
@@ -213,7 +225,7 @@ async function probed(core: WatcherCore, install: RunnerInstall): Promise<Runner
     sandbox: deps.sandbox,
     tmpRoot: deps.tmpRoot,
     home: deps.home,
-    parentEnv: deps.env,
+    parentEnv: env,
     canaryDir: deps.canaryDir,
   });
   core.probes.set(key, { result, at: now });
@@ -226,10 +238,11 @@ async function detectRunners(core: WatcherCore): Promise<WatcherRunners> {
   const installs: RunnerInstall[] = [];
   let codexHeld = false;
   for (const runner of [AiWatcherRunner.Claude, AiWatcherRunner.Codex]) {
-    const binary = await core.deps.findBinary(runner).catch(() => null);
-    if (!binary) continue;
-    const install = await runnerInstall(runner, binary, core.deps.env, core.deps.home);
-    if ((await probed(core, install)).ok) installs.push(install);
+    const found = await core.deps.findCli(runner).catch(() => null);
+    if (!found) continue;
+    const install = await runnerInstall(runner, found.binary, found.env, core.deps.home);
+    core.cliEnv.set(runner, found.env);
+    if ((await probed(core, install, found.env)).ok) installs.push(install);
     else if (runner === AiWatcherRunner.Codex) codexHeld = await core.deps.codexSignedIn().catch(() => false);
   }
   return { installs, codexHeld };
@@ -252,7 +265,13 @@ function newSession(core: WatcherCore, credential: PlayerCredential): WatcherSes
     watcherId: core.settings.watcherId,
     runners: () => detectRunners(core),
     runJob: (job, run) =>
-      runJob(job, { ...run, sandbox: deps.sandbox, tmpRoot: deps.tmpRoot, home: deps.home, parentEnv: deps.env }),
+      runJob(job, {
+        ...run,
+        sandbox: deps.sandbox,
+        tmpRoot: deps.tmpRoot,
+        home: deps.home,
+        parentEnv: core.cliEnv.get(run.install.runner) ?? deps.env,
+      }),
     planUsage: (runner) => deps.planUsage(runner),
     keepForBuildingPercent: () => deps.keepForBuildingPercent(),
     log: (line) => deps.log(line),
@@ -482,6 +501,7 @@ export function createPlanWatcher(deps: PlanWatcherDeps) {
     pollTimer: null,
     polling: null,
     probes: new Map(),
+    cliEnv: new Map(),
     told: "",
   };
   const view = () => viewOf(core);

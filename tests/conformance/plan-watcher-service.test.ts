@@ -30,6 +30,8 @@ const API = "https://api.genex.games";
 const WEB = "https://genex.games";
 const START = Date.UTC(2026, 9, 20, 12, 0, 0);
 const TOKEN = "player_token_0123456789abcdef";
+/** The environment discovery found a CLI with: its own PATH, and a key the studio's shell exported. */
+const CLI_ENV = { PATH: "/opt/cli-toolchain/bin", ANTHROPIC_API_KEY: "sk-ant-leak" };
 
 const temps: string[] = [];
 after(async () => {
@@ -143,7 +145,7 @@ async function rig(over: Partial<PlanWatcherDeps> = {}, routes: Record<string, (
     tmpRoot: path.join(dir, "tmp"),
     canaryDir: path.join(dir, "canary"),
     sandbox: async () => assert.fail("no box is made: no CLI is found"),
-    findBinary: async () => null,
+    findCli: async () => null,
     codexSignedIn: async () => false,
     planUsage: async () => null,
     keepForBuildingPercent: async () => 50,
@@ -355,7 +357,7 @@ describe("the passes it drives", () => {
 
   it("yields while a build runs: presence only, nothing listed", async () => {
     const { watcher, credential, genex, fire } = await rig({
-      findBinary: async (runner) => (runner === AiWatcherRunner.Claude ? "/opt/claude" : null),
+      findCli: async (runner) => (runner === AiWatcherRunner.Claude ? { binary: "/opt/claude", env: CLI_ENV } : null),
       sandbox: passingProbe(),
     });
     await credential.write(stored());
@@ -422,7 +424,7 @@ describe("the passes it drives", () => {
 
   it("a nudge runs the next pass now; stop leaves nothing scheduled", async () => {
     const { watcher, credential, genex, fire, held } = await rig({
-      findBinary: async (runner) => (runner === AiWatcherRunner.Claude ? "/opt/claude" : null),
+      findCli: async (runner) => (runner === AiWatcherRunner.Claude ? { binary: "/opt/claude", env: CLI_ENV } : null),
       sandbox: passingProbe(),
     });
     await credential.write(stored());
@@ -481,8 +483,10 @@ function passingProbe(): RunnerSandboxFactory {
 describe("what it answers with", () => {
   it("advertises Claude Code once its probe passes, and holds Codex when its read-deny check fails", async () => {
     // Codex's box is the one with no home of its own opened: there the canary reads.
+    const boxEnvs: Array<Record<string, string>> = [];
     const factory: RunnerSandboxFactory = async (box) => ({
       run: async (request) => {
+        boxEnvs.push(request.env ?? {});
         const auth = request.command.includes("auth");
         const codexBox = box.ownHome.length === 0;
         return {
@@ -501,7 +505,10 @@ describe("what it answers with", () => {
       dispose: async () => {},
     });
     const { watcher, credential, genex, fire } = await rig({
-      findBinary: async (runner) => (runner === AiWatcherRunner.Claude ? "/opt/claude" : "/opt/codex"),
+      findCli: async (runner) => ({
+        binary: runner === AiWatcherRunner.Claude ? "/opt/claude" : "/opt/codex",
+        env: CLI_ENV,
+      }),
       codexSignedIn: async () => true,
       sandbox: factory,
     });
@@ -512,6 +519,11 @@ describe("what it answers with", () => {
     const view = await watcher.view();
     assert.deepEqual(view.runners, [AiWatcherRunner.Claude]);
     assert.equal(view.codexHeld, true);
+    assert.ok(boxEnvs.length > 0);
+    for (const env of boxEnvs) {
+      assert.equal(env.PATH, CLI_ENV.PATH, "each CLI runs with the PATH it was found with");
+      assert.equal(env.ANTHROPIC_API_KEY, undefined);
+    }
     const beat = genex.seen.find((call) => call.route.endsWith("/heartbeat"));
     assert.deepEqual((beat?.body as { runners: string[] } | undefined)?.runners, ["claude"]);
     await watcher.stop();
