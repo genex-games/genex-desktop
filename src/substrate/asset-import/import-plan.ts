@@ -1,9 +1,10 @@
 /**
  * What the studio's import step does with one asset of a game, decided host-side before anything
  * runs: keep it as it is, normalize it (a glTF the Rust runtime cannot read as delivered, a KTX2
- * texture checked against every destination, a Radiance `.hdr` checked against the renderer's caps), convert it (OBJ, STL and PLY to GLB; Opus and AAC
- * to OGG), refuse it with a typed code, or skip it (a format the studio does not know stays
- * metadata). The format table (`shared/game-assets.ts`) is the one source of what each stack
+ * texture checked against every destination, a Radiance `.hdr` checked against the renderer's caps,
+ * a PNG or JPEG whose usage resolved encoded to KTX2 per texture family beside it), convert it
+ * (OBJ, STL and PLY to GLB; Opus and AAC to OGG), refuse it with a typed code, or skip it (a
+ * format the studio does not know stays metadata). The format table (`shared/game-assets.ts`) is the one source of what each stack
  * loads; this module only maps its rows to steps. Plan "Game services", M2.7.
  */
 import {
@@ -15,6 +16,7 @@ import {
   stackAssetSupport,
 } from "../../shared/game-assets.ts";
 import { GameStack } from "../../shared/game-project.ts";
+import type { TextureUsage } from "./basis-encoder.ts";
 
 /** What the import step does with a file. Wire values in the importer's job and receipt: never rename one. */
 export const ImportAction = {
@@ -49,8 +51,7 @@ export const ImportConverter = {
   HdrCheck: "hdr-check",
   /**
    * A PNG or JPEG texture whose usage resolved (colour, data or normal), encoded to KTX2 per family
-   * beside it. Declared ahead of the step: no plan picks it yet, and a job naming it is refused
-   * `converter-missing`.
+   * beside it (`texture-encode.ts`); the image itself is kept as the fallback.
    */
   TextureEncode: "texture-encode",
   /**
@@ -122,16 +123,27 @@ const RUST_STEPS: Readonly<Record<string, { converter: ImportConverter; output: 
 });
 
 /**
+ * The raster textures the importer decodes and encodes (fast-png, jpeg-js and the Basis encoder's
+ * own readers). A WebP has no decoder in the importer, so it ships as its source.
+ */
+const ENCODED_TEXTURE_EXTENSIONS: ReadonlySet<string> = new Set(["png", "jpg", "jpeg"]);
+
+/**
  * The step a game of `stack` takes for `rel` (a posix path under the game folder). Only a Rust
  * game runs the importer; raylib and Three.js games keep what their stack loads. An MTL is
- * consumed by the OBJ that names it, so on its own it is kept.
+ * consumed by the OBJ that names it, so on its own it is kept. A PNG or JPEG is encoded only when
+ * its `usage` resolved (`texture-usage.ts`); with none it is kept and ships as its source.
  */
-export function planImport(stack: GameStack, rel: string): ImportStep {
+export function planImport(stack: GameStack, rel: string, usage?: TextureUsage | null): ImportStep {
   if (!assetFormat(rel)) return { action: ImportAction.Skip };
   const refusal = stackAcceptsAsset(stack, rel);
   if (refusal) return { action: ImportAction.Refuse, refusal };
   if (stack !== GameStack.RustWgpu) return { action: ImportAction.Keep };
   const ext = assetExtension(rel);
+  if (ENCODED_TEXTURE_EXTENSIONS.has(ext)) {
+    if (!usage) return { action: ImportAction.Keep };
+    return { action: ImportAction.Normalize, converter: ImportConverter.TextureEncode, output: ext };
+  }
   const step = Object.hasOwn(RUST_STEPS, ext) ? RUST_STEPS[ext] : undefined;
   if (!step) return { action: ImportAction.Keep };
   const converts = stackAssetSupport(stack, rel) === AssetSupport.Converts;

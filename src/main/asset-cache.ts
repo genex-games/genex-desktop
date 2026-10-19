@@ -31,6 +31,7 @@ import { IMPORT_JOB_VERSION, type ImportIssue, parseIssues } from "../substrate/
 import { Ktx2FamilySkip } from "../substrate/asset-import/ktx2.ts";
 import { objMaterialLibrary } from "../substrate/asset-import/obj.ts";
 import { readGameAsset } from "../substrate/asset-import/safe-asset.ts";
+import { type EncodedTexture, parseEncodedTexture } from "../substrate/asset-import/texture-encode.ts";
 import {
   familyFileName,
   TextureCompression,
@@ -462,6 +463,8 @@ interface CachedLine {
   familiesSkipped?: Ktx2FamilySkip;
   /** The validator's warnings about the source, so a hit reports what the import found. */
   issues?: ImportIssue[];
+  /** An encoded loose texture's record (C-12). */
+  texture?: EncodedTexture;
 }
 
 /** A guard for one vocabulary's values. */
@@ -496,17 +499,20 @@ function parseFamilies(value: unknown, files: number): NonNullable<CachedLine["f
 
 /** The optional fields of an output line, checked; null when one is malformed. */
 function parseOutputFields(meta: Record<string, unknown>, files: number): Partial<CachedLine> | null {
-  const { families, textures, familiesSkipped, issues } = meta;
+  const { families, textures, familiesSkipped, issues, texture } = meta;
   const parsedFamilies = families === undefined ? undefined : parseFamilies(families, files);
   const parsedIssues = issues === undefined ? undefined : parseIssues(issues);
+  const encoded = texture === undefined ? undefined : parseEncodedTexture(texture);
   const texturesValid = textures === undefined || (Array.isArray(textures) && textures.every(isTexture));
   const skipValid = familiesSkipped === undefined || isSkip(familiesSkipped);
-  if (parsedFamilies === null || parsedIssues === null || !texturesValid || !skipValid) return null;
+  const parsedValid = parsedFamilies !== null && parsedIssues !== null && encoded !== null;
+  if (!parsedValid || !texturesValid || !skipValid) return null;
   return {
     ...(parsedFamilies ? { families: parsedFamilies } : {}),
     ...(Array.isArray(textures) ? { textures: textures.filter(isTexture) } : {}),
     ...(isSkip(familiesSkipped) ? { familiesSkipped } : {}),
     ...(parsedIssues?.length ? { issues: parsedIssues } : {}),
+    ...(encoded ? { texture: encoded } : {}),
   };
 }
 
@@ -554,6 +560,7 @@ function fromLine(file: string, step: ImporterStep, line: CachedLine, entry: Cac
     ...(families ? { families: families as ImportOutput[] } : {}),
     ...(line.familiesSkipped ? { familiesSkipped: line.familiesSkipped } : {}),
     ...(line.issues ? { issues: line.issues } : {}),
+    ...(line.texture ? { texture: line.texture } : {}),
   };
 }
 
@@ -579,6 +586,7 @@ function toLine(imported: ImportedAsset): { files: CacheFileInput[]; meta: Cache
     ...(imported.textures ? { textures: imported.textures } : {}),
     ...(imported.familiesSkipped ? { familiesSkipped: imported.familiesSkipped } : {}),
     ...(imported.issues?.length ? { issues: imported.issues } : {}),
+    ...(imported.texture ? { texture: imported.texture } : {}),
   };
   const files = [output, ...families].map((item) => ({ path: item.path, sha256: item.sha256 }));
   return { files, meta };
@@ -613,7 +621,8 @@ async function resolveFile(
   file: string,
   held: Array<() => void>,
 ): Promise<Resolved> {
-  const step = planImport(request.stack, file);
+  const usage = request.usages?.get(file);
+  const step = planImport(request.stack, file, usage);
   if (!runsImporter(step))
     return { done: { file, action: step.action, ...(step.refusal ? { refusal: step.refusal } : {}) } };
   const read = await readGameAsset(request.gameRoot, file, IMPORT_INPUT_MAX_BYTES);
@@ -623,7 +632,8 @@ async function resolveFile(
     source: sha256(read.bytes),
     converter: step.converter,
     name: path.posix.basename(file, path.posix.extname(file)),
-    settings: request.settingsFor?.(file) ?? {},
+    // An encoded texture's usage is part of what it reads: a new usage re-imports it.
+    settings: request.settingsFor?.(file) ?? (step.converter === ImportConverter.TextureEncode ? { usage } : {}),
     jobVersion: IMPORT_JOB_VERSION,
     tools: request.tools,
     deps: step.converter === ImportConverter.ObjToGlb ? await objDeps(request.gameRoot, file, read.bytes) : {},

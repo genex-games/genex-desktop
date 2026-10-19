@@ -248,6 +248,43 @@ pub fn class_budget_bytes(class: DeviceClass, facts: &DeviceFacts) -> u64 {
     }
 }
 
+/// Streamed upload bytes a desktop frame may write, by tier: ultra, high, mid, low.
+pub const STREAM_UPLOAD_DESKTOP_BYTES: [u64; 4] = [24 * MIB, 16 * MIB, 8 * MIB, 6 * MIB];
+/// Streamed upload bytes a phone frame may write, by tier: high (and ultra), mid, low.
+pub const STREAM_UPLOAD_PHONE_BYTES: [u64; 3] = [4 * MIB, 3 * MIB, 2 * MIB];
+/// Streamed upload bytes a browser frame may write at most, whatever its class.
+pub const STREAM_UPLOAD_WEB_BYTES: u64 = 8 * MIB;
+
+/// What a frame may spend on streamed work (game systems STR-5): the soft upload queue's bytes
+/// ([`crate::upload_queue::UploadQueue::drain`]) and the frame thread's finishing milliseconds
+/// ([`crate::jobs::finish_budget_ms`]). Both are soft: an asset larger than the bytes still goes,
+/// alone in its frame. The hard per-frame table cap, [`crate::caps::UPLOAD_MAX_BYTES_PER_FRAME`],
+/// is a separate refusal and does not move.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct StreamBudget {
+    /// Streamed upload bytes per frame.
+    pub upload_bytes: u64,
+    /// Milliseconds of frame-thread finishing per frame.
+    pub finish_ms: f64,
+}
+
+/// The stream budget of `class` on `os`: the class's row; on the web at most
+/// [`STREAM_UPLOAD_WEB_BYTES`] (a phone browser keeps its smaller phone row). `mobile-ultra` takes
+/// `mobile-high`'s.
+pub fn stream_budget(class: DeviceClass, os: TargetOs) -> StreamBudget {
+    let row = match (class.form, class.tier) {
+        (FormFactor::Desktop, PerformanceTier::Ultra) => STREAM_UPLOAD_DESKTOP_BYTES[0],
+        (FormFactor::Desktop, PerformanceTier::High) => STREAM_UPLOAD_DESKTOP_BYTES[1],
+        (FormFactor::Desktop, PerformanceTier::Mid) => STREAM_UPLOAD_DESKTOP_BYTES[2],
+        (FormFactor::Desktop, PerformanceTier::Low) => STREAM_UPLOAD_DESKTOP_BYTES[3],
+        (FormFactor::Mobile, PerformanceTier::Ultra | PerformanceTier::High) => STREAM_UPLOAD_PHONE_BYTES[0],
+        (FormFactor::Mobile, PerformanceTier::Mid) => STREAM_UPLOAD_PHONE_BYTES[1],
+        (FormFactor::Mobile, PerformanceTier::Low) => STREAM_UPLOAD_PHONE_BYTES[2],
+    };
+    let upload_bytes = if os == TargetOs::Web { row.min(STREAM_UPLOAD_WEB_BYTES) } else { row };
+    StreamBudget { upload_bytes, finish_ms: crate::jobs::finish_budget_ms(class) }
+}
+
 /// The preset table (plan §2.4), before caps.
 fn table_quality(preset: QualityPreset, form: FormFactor) -> Quality {
     let mut quality = Quality::off();

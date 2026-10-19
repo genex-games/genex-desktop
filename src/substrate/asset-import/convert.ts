@@ -4,6 +4,7 @@
  * nothing here touches the file system beyond the decoders' own files.
  */
 import type { BuildTarget } from "../../shared/game-project.ts";
+import type { TextureUsage } from "./basis-encoder.ts";
 import { meshToGlb } from "./glb.ts";
 import { importGltf } from "./gltf-decompress.ts";
 import { GltfImportError } from "./gltf-json.ts";
@@ -22,6 +23,7 @@ import { addLodExtras } from "./lods.ts";
 import { addMeshletExtras } from "./meshlets.ts";
 import { MeshFormatError, objToMesh } from "./obj.ts";
 import { plyToMesh, stlToMesh } from "./stl-ply.ts";
+import { type EncodedTexture, encodeTexture, requireUsage, TextureDecodeError } from "./texture-encode.ts";
 import { type TranscodedTexture, texturesForTargets } from "./texture-table.ts";
 import type { GltfIssue } from "./validate.ts";
 
@@ -39,6 +41,8 @@ export interface ConvertInput {
   targets: readonly BuildTarget[];
   /** The fewest triangles a GLB needs to get import-time meshlets; the renderer's default when absent. */
   meshletMinTriangles?: number;
+  /** A `texture-encode` file's resolved usage (`texture-usage.ts`). */
+  usage?: TextureUsage;
 }
 
 /** What a step wrote, or why it refused. */
@@ -53,6 +57,8 @@ export type ConvertResult =
       familiesSkipped?: Ktx2FamilySkip;
       /** The glTF validator's warnings about the input (`validate.ts`). */
       issues?: GltfIssue[];
+      /** An encoded loose texture's usage, source size and class (C-12). */
+      texture?: EncodedTexture;
     }
   | { ok: false; refusal: AssetImportRefusal; detail: string };
 
@@ -78,6 +84,16 @@ async function checkKtx2(input: ConvertInput): Promise<ConvertResult> {
   const transcoded = await transcodeKtx2Families(input.bytes, families);
   const extra = "files" in transcoded ? { families: transcoded.files } : { familiesSkipped: transcoded.skipped };
   return { ok: true, bytes: input.bytes, textures, ...extra };
+}
+
+/** A loose PNG or JPEG encoded per family for its usage (C-12); the image itself is kept as the fallback. */
+async function encodeLoose(input: ConvertInput): Promise<ConvertResult> {
+  const { files, texture } = await encodeTexture(
+    input.bytes,
+    requireUsage(input.usage),
+    texturesForTargets(input.targets),
+  );
+  return { ok: true, bytes: input.bytes, families: files, texture };
 }
 
 /** A Radiance map checked against the renderer's caps; the file is kept. */
@@ -123,6 +139,7 @@ async function run(input: ConvertInput): Promise<ConvertResult> {
       // TODO(M2.3): an Ogg encoder as a pinned store tool; until then Opus and AAC are refused, typed.
       return refused(AssetImportRefusal.ConverterMissing, MESSAGE.NoAudioEncoder);
     case ImportConverter.TextureEncode:
+      return await encodeLoose(input);
     case ImportConverter.GlbTextures:
       return refused(AssetImportRefusal.ConverterMissing, MESSAGE.StepNotServed);
   }
@@ -135,6 +152,7 @@ export async function convertAsset(input: ConvertInput): Promise<ConvertResult> 
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
     if (error instanceof GltfImportError) return refused(error.code, detail);
+    if (error instanceof TextureDecodeError) return refused(error.refusal, detail);
     if (
       error instanceof MeshFormatError ||
       error instanceof Ktx2Error ||

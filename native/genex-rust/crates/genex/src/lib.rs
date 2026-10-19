@@ -102,6 +102,14 @@ pub use gfx::{
 #[cfg(not(target_arch = "wasm32"))]
 #[doc(hidden)]
 pub use present_files::AssetFiles;
+/// Async asset reads for the streamed view set (a range or a whole file, answered at a later poll):
+/// host glue.
+#[doc(hidden)]
+pub use stream_source::{AsyncSource, StreamAnswer, StreamBytes, StreamRequest};
+/// The native async source: the compiled table, then `assets/` by real path on the job pool.
+#[cfg(not(target_arch = "wasm32"))]
+#[doc(hidden)]
+pub use stream_source::StreamFiles;
 pub use input::Input;
 pub use map::{DeterministicState, Map, Set};
 pub use rng::{GameRng, Pcg32};
