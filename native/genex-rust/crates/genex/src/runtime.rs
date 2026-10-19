@@ -23,6 +23,7 @@ use crate::game::{Game, Single};
 use crate::gfx::{AssetSource, Gfx};
 use crate::input::{Input, Merger, TickInput};
 use crate::map::Set;
+use crate::present::{AssetIssue, TextureFact};
 use crate::rng::Pcg32;
 use crate::sim::{FacetState, Sim};
 use genex_core::clock::FrameClock;
@@ -51,6 +52,10 @@ const MAX_NAME_CHARS: usize = 64;
 const DEFAULT_CAMERA: &str = "default";
 /// `state().__render`'s list of the models drawn as the missing-asset checker.
 const MISSING_MODELS_KEY: &str = "missingModels";
+/// `state().__render`'s textures the last frame bound, by path (C-11).
+const TEXTURES_KEY: &str = "textures";
+/// `state().__render`'s asset issues of the last frame (C-11).
+const ASSET_ISSUES_KEY: &str = "assetIssues";
 /// The game's name and bundle id as the build lane names them (`GENEX_GAME_NAME`,
 /// `GENEX_BUNDLE_ID` at compile time, as the C++ lane's `-D` defines); an exported app saves
 /// under them unless the game set its own `save_name`.
@@ -234,6 +239,10 @@ struct Tally {
     tags: Vec<(String, u32, u32)>,
     /// Models the renderer drew as the missing-asset checker, in first-draw order.
     missing_models: Vec<String>,
+    /// The textures the renderer bound, one per path in first-bound order (C-11).
+    textures: Vec<TextureFact>,
+    /// What those textures tell an agent to fix (C-11).
+    asset_issues: Vec<AssetIssue>,
 }
 
 /// The simulation and clock state the hooks run against.
@@ -574,7 +583,8 @@ impl<W> Runtime<W> {
 
     /// The last frame's tally as `__render`: `{drawCalls, triangles, tags: {tag: {drawCalls,
     /// triangles}}, exact: false}` (`studio.cpp` `tallyJson`), plus `missingModels` (the model
-    /// paths drawn as the magenta checker) only when there are some.
+    /// paths drawn as the magenta checker), `textures` (`{path: {kind, family}}`) and
+    /// `assetIssues` (`[{path, code}]`), each only when there are some.
     fn render_value(&self) -> CoreValue {
         let tally = &self.core.tally;
         let mut tags = CoreValue::object();
@@ -593,6 +603,25 @@ impl<W> Runtime<W> {
             let missing = tally.missing_models.iter().map(|path| CoreValue::from(path.as_str())).collect();
             render.set(MISSING_MODELS_KEY, CoreValue::Array(missing));
         }
+        if !tally.textures.is_empty() {
+            let mut textures = CoreValue::object();
+            for fact in &tally.textures {
+                let mut entry = CoreValue::object();
+                entry.set("kind", CoreValue::from(fact.usage()));
+                entry.set("family", CoreValue::from(fact.origin.wire()));
+                textures.set(fact.path.as_str(), entry);
+            }
+            render.set(TEXTURES_KEY, textures);
+        }
+        if !tally.asset_issues.is_empty() {
+            let issues = tally.asset_issues.iter().map(|issue| {
+                let mut entry = CoreValue::object();
+                entry.set("path", CoreValue::from(issue.path.as_str()));
+                entry.set("code", CoreValue::from(issue.code.wire()));
+                entry
+            });
+            render.set(ASSET_ISSUES_KEY, CoreValue::Array(issues.collect()));
+        }
         render
     }
 
@@ -609,6 +638,13 @@ impl<W> Runtime<W> {
     /// the game's assets, or refused): `state().__render.missingModels`, absent when empty.
     pub fn note_missing_models(&mut self, paths: &[String]) {
         self.core.tally.missing_models = paths.to_vec();
+    }
+
+    /// The textures the renderer bound in the frame last drawn and the issues they raise (C-11):
+    /// `state().__render.textures` and `.assetIssues`, each absent when empty. Display only.
+    pub fn note_texture_facts(&mut self, textures: &[TextureFact], issues: &[AssetIssue]) {
+        self.core.tally.textures = textures.to_vec();
+        self.core.tally.asset_issues = issues.to_vec();
     }
 
     fn core_probes(&self) -> CoreValue {
@@ -638,7 +674,7 @@ impl<W> Runtime<W> {
         // Each custom GPU pass is one logical draw of every frame (M2.19).
         let custom = crate::gpu::tally(&self.game.gpu_passes, &mut tags);
         let draw_calls = frame.draw_calls() + custom;
-        self.core.tally = Tally { draw_calls, triangles: 0, tags, missing_models: Vec::new() };
+        self.core.tally = Tally { draw_calls, triangles: 0, tags, ..Tally::default() };
         Some(frame)
     }
 
