@@ -10,16 +10,21 @@ pub enum AnimationErrorCode {
     /// [`crate::skeleton::MAX_JOINTS`] joints, a node with two parents, a cycle, a joint outside
     /// the scene, an accessor past its data, or a non-finite transform (AN-1).
     AssetInvalid,
+    /// An animation graph that cannot run: no layer, a layer with no state, a transition across
+    /// layers, a name used twice, a handle of another graph, a NaN or negative blend time, a NaN
+    /// threshold, or more than a cap (AN-5, `graph.rs`).
+    GraphInvalid,
 }
 
 impl AnimationErrorCode {
     /// Every code, in declaration order.
-    pub const ALL: [AnimationErrorCode; 1] = [AnimationErrorCode::AssetInvalid];
+    pub const ALL: [AnimationErrorCode; 2] = [AnimationErrorCode::AssetInvalid, AnimationErrorCode::GraphInvalid];
 
     /// The code's wire spelling.
     pub const fn wire(self) -> &'static str {
         match self {
             AnimationErrorCode::AssetInvalid => "animation-asset-invalid",
+            AnimationErrorCode::GraphInvalid => "animation-graph-invalid",
         }
     }
 }
@@ -37,6 +42,11 @@ impl AnimationError {
     /// An `animation-asset-invalid` refusal.
     pub fn asset_invalid(detail: impl Into<String>) -> AnimationError {
         AnimationError { code: AnimationErrorCode::AssetInvalid, detail: detail.into() }
+    }
+
+    /// An `animation-graph-invalid` refusal.
+    pub fn graph_invalid(detail: impl Into<String>) -> AnimationError {
+        AnimationError { code: AnimationErrorCode::GraphInvalid, detail: detail.into() }
     }
 }
 
