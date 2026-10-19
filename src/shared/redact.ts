@@ -91,8 +91,11 @@ export function containsSecret(text: string): boolean {
   return redactSecrets(text) !== text;
 }
 
-/** An email address: a local part, an `@` and a dotted domain. */
-const EMAIL = /[\w.+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+/g;
+/**
+ * An email address: a local part, an `@` and a dotted domain. A match starts only where a run of
+ * local-part characters starts, so a long run with no `@` is read once, not once per character.
+ */
+const EMAIL = /(?<![\w.+-])[\w.+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+/g;
 /**
  * A phone number: an optional `+` and country code, then at least nine digits in groups split by
  * spaces, dots, dashes or brackets. Shorter runs (a score, a year, a time) stay readable.

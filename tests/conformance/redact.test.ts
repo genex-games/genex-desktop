@@ -13,6 +13,7 @@ import {
   containsSecret,
   credentialEnvValues,
   isCredentialName,
+  redactContacts,
   redactDeep,
   redactSecrets,
   redactTokens,
@@ -304,6 +305,28 @@ describe("the redactor for everything Studio persists or hands to another agent 
       ["aws-FAKE-secret-env", "genex-FAKE-env-value", "sk-FAKE-openai-env", "sk-ant-oat01-FAKE-env"].sort(),
     );
   });
+});
+
+describe("contact redaction on a long run of word characters (a Report's 128 KiB prompt)", () => {
+  it("stays linear: a megabyte with no address is read in one pass", () => {
+    const text = `${"x".repeat(1024 * 1024)} write to mira@example.com`;
+    const started = performance.now();
+    const out = redactContacts(text);
+    // A pattern that retries the whole run from every character takes minutes here.
+    assert.ok(performance.now() - started < 2000, "contact redaction is linear in its input");
+    assert.equal(out.endsWith("write to [redacted]"), true);
+  });
+
+  const rows: Array<[string, string, string]> = [
+    ["an address in a sentence", "mail mira.k+games@example.co.uk now", "mail [redacted] now"],
+    ["an address after punctuation", "(mira@example.com)", "([redacted])"],
+    ["two addresses", "a@b.io, c@d.io", "[redacted], [redacted]"],
+    ["a handle with no domain", "@mira said hi", "@mira said hi"],
+  ];
+  for (const [name, text, expected] of rows)
+    it(`redacts ${name} as before`, () => {
+      assert.equal(redactContacts(text), expected);
+    });
 });
 
 describe("errorMessage: the words of whatever was thrown", () => {
