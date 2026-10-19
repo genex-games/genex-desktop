@@ -190,6 +190,12 @@ export const AiReplayAnswers = {
   Tape: "tape",
   /** No answer at all: every call is refused `ai_off`, as when the person turns AI off (`ai.handles-no-answer`). */
   None: "none",
+  /**
+   * The worst answers the game's shapes allow: every call answered with a value its schema admits at
+   * its bounds — the largest and smallest numbers in turn, the longest strings, the fullest lists, the
+   * last enum word — so a replay shows whether the game clamps what a model may say (`ai.output-clamped`).
+   */
+  Edge: "edge",
 } as const;
 export type AiReplayAnswers = (typeof AiReplayAnswers)[keyof typeof AiReplayAnswers];
 

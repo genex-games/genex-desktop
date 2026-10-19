@@ -14,7 +14,8 @@
  */
 import { shortSha } from "../git.ts";
 import { Side } from "../judge.ts";
-import { GameTrait, isGameKind, KIND_NAMES, normalizePlayScript } from "../kinds.ts";
+import { aiRequirementOf, GameTrait, isGameKind, KIND_NAMES, normalizePlayScript } from "../kinds.ts";
+import { AiRequirement } from "../ai-contract.ts";
 import { isRunning, WorkerMode } from "../outcomes.ts";
 import { parsePlanSteering } from "../replan.ts";
 import { allowedFile, mechanicalReview } from "../review.ts";
@@ -264,6 +265,7 @@ function scenarios(value: unknown): string[] {
 function planGame(
   kind: unknown,
   play_script: unknown,
+  ai: unknown = null,
 ): { game: AnyRecord | null; error?: undefined } | { error: string } {
   const kindName = String(kind ?? "").trim();
   const quoted = kindName.slice(0, KIND_QUOTED);
@@ -271,12 +273,22 @@ function planGame(
     return {
       error: `plan: kind "${quoted}" is not a kind — name one of ${KIND_NAMES.join(", ")}`,
     };
+  const aiWord = String(ai ?? "").trim();
+  const requirement = aiRequirementOf(aiWord);
+  if (aiWord && !requirement)
+    return {
+      error: `plan: ai "${aiWord.slice(0, KIND_QUOTED)}" is not a requirement — name ${Object.values(AiRequirement).join(" or ")}`,
+    };
   const parsedScript = parseJson(play_script);
   if (parsedScript?.__error) return { error: `plan: play_script ${parsedScript.__error}` };
   const playScript = normalizePlayScript(parsedScript);
-  if (!kindName && !playScript) return { game: null };
+  if (!kindName && !playScript && !requirement) return { game: null };
   return {
-    game: normalizeGameTraits({ ...(kindName ? { kind: kindName } : {}), ...(playScript ? { playScript } : {}) }),
+    game: normalizeGameTraits({
+      ...(kindName ? { kind: kindName } : {}),
+      ...(playScript ? { playScript } : {}),
+      ...(requirement ? { ai: requirement } : {}),
+    }),
   };
 }
 
@@ -344,6 +356,7 @@ export function compilePlan({
   risks = "",
   kind = "",
   play_script = null,
+  ai = null,
   contract = null,
   vision = null,
   cut = null,
@@ -355,6 +368,8 @@ export function compilePlan({
   risks?: unknown;
   kind?: string;
   play_script?: unknown;
+  /** Whether the game uses play-time AI: `ai` (it cannot run without it) or `optional` (`ai-contract.ts` AiRequirement). */
+  ai?: unknown;
   /** The module contract (module-contract.ts): who owns which module and what it exposes. */
   contract?: unknown;
   /** The vision (vision.ts): what the world grows toward — scale, the far view, set-pieces, headroom. */
@@ -367,7 +382,7 @@ export function compilePlan({
   const text = String(summary ?? "").trim();
   if (!text)
     return { error: "plan: summary is what this run is for, in two or three sentences the user would understand" };
-  const declared = planGame(kind, play_script);
+  const declared = planGame(kind, play_script, ai);
   if (declared.error !== undefined) return { error: declared.error };
   const named = planParts(workers);
   if (named.error !== undefined) return { error: named.error };
@@ -615,6 +630,8 @@ export interface WorkerSpecInput {
   milestones?: unknown[];
   traits?: string[];
   kind?: string | null;
+  /** The run's play-time AI (`GameTraits.ai`): the entry owner's board then carries the AI checks. */
+  ai?: string | null;
   /** Which critic reviews this part (`place` or `screen`); absent, its kind's. */
   critic?: string | null;
   ownsMain?: boolean;
@@ -639,6 +656,7 @@ function withDeclaredGame<S extends FacetSpec>(
   {
     kind,
     traits,
+    ai,
     ownsMain,
     screen,
     keepsFrontEnd,
@@ -646,6 +664,7 @@ function withDeclaredGame<S extends FacetSpec>(
   }: {
     kind: string | null;
     traits: string[];
+    ai: AiRequirement | null;
     ownsMain: boolean;
     screen: boolean;
     keepsFrontEnd: boolean;
@@ -653,8 +672,8 @@ function withDeclaredGame<S extends FacetSpec>(
   },
 ): S {
   const kindName = isGameKind(kind) ? kind : null;
-  if (!kindName && !traits.length) return spec;
-  const declared: AnyRecord = { ...(kindName ? { kind: kindName } : {}) };
+  if (!kindName && !traits.length && !ai) return spec;
+  const declared: AnyRecord = { ...(kindName ? { kind: kindName } : {}), ...(ai ? { ai } : {}) };
   for (const trait of Object.values(GameTrait)) if (traits.includes(trait)) declared[trait] = true;
   const game = normalizeGameTraits(declared);
   return withHarnessChecks(spec, { ownsMain, game, screen, keepsFrontEnd, drawsHud });
@@ -708,6 +727,7 @@ export function compileWorkerSpec(
     milestones = [],
     traits = [],
     kind = null,
+    ai = null,
     critic = null,
     ownsMain = true,
     setup = null,
@@ -727,7 +747,15 @@ export function compileWorkerSpec(
     { id, title: title || id, intent: brief, owns, identity, cameras, checks, done, milestones: rungs, budgetShare: 0 },
     index,
   );
-  spec = withDeclaredGame(spec, { kind, traits, ownsMain, screen, keepsFrontEnd: setup?.begin === false, drawsHud });
+  spec = withDeclaredGame(spec, {
+    kind,
+    traits,
+    ai: aiRequirementOf(ai),
+    ownsMain,
+    screen,
+    keepsFrontEnd: setup?.begin === false,
+    drawsHud,
+  });
   const expr = setupVerifyExpr(setup?.verify);
   if (expr) spec = withRequestedStateCheck(spec, { expr, note: setup?.note ?? "" });
   // Before validation: a screen part's board may be mostly vision (spec.ts visionHeavy).

@@ -2245,6 +2245,8 @@ async function reportLook(look: Look): Promise<LookEnd> {
       // What the game declares vs what the cap left out — so a check can tell "not registered"
       // (the builder's defect) from "not run" (nobody looked).
       registeredDemos: look.registeredDemos,
+      // The build this pass looked at: what the play-time AI checks replay (ai-checks.ts).
+      build: { project: look.run.project, root: look.root ?? null },
       registeredCameras: look.registeredCameras ?? null,
       skippedDemos,
       // How many unnamed demos the look ran at most — only when it left some out.

@@ -1201,6 +1201,7 @@ function compileContract(loopRun: LoopRun, worker: Worker, parsed: WorkerArgs, a
       milestones: parsed.ladder,
       traits: list(args.traits),
       kind: workerKind,
+      ai: loopRun.run.game?.ai ?? null,
       critic,
       ownsMain: worker.ownsMain,
       setup: worker.setup,

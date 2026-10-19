@@ -869,8 +869,8 @@ export interface HarnessHostApi {
   /** A game's saved playtests. */
   "ai.tapes": { params: { project: string; root?: string | null }; result: AiTapeSummary[] };
   /**
-   * Replay a demo under each seed — on its tape, or with no answer at all (`answers: "none"`):
-   * whether the frames match, and what the tape lacked.
+   * Replay a demo under each seed — on its tape, with no answer at all (`answers: "none"`) or with
+   * the worst answers its shapes allow (`answers: "edge"`): whether the frames match, and what the tape lacked.
    */
   "ai.replay": {
     params: { project: string; demo: string; seeds: number[]; root?: string | null; answers?: AiReplayAnswers | null };
@@ -1196,7 +1196,7 @@ export const HARNESS_PARAM_SCHEMAS = {
     demo: z.string().regex(TAPE_NAME_RE),
     seeds: z.array(aiSeed).min(1).max(AI_REPLAY_MAX_SEEDS),
     root: optionalText,
-    answers: z.enum([AiReplayAnswers.Tape, AiReplayAnswers.None]).nullish(),
+    answers: z.enum([AiReplayAnswers.Tape, AiReplayAnswers.None, AiReplayAnswers.Edge]).nullish(),
   }),
   "ai.record": z.object({ project, demo: z.string().regex(TAPE_NAME_RE), seed: aiSeed, root: optionalText }),
   "ai.bench": z.object({

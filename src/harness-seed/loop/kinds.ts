@@ -28,6 +28,7 @@ import { CONTROL_EXERCISE, type PlayAction } from "./play-script.ts";
 import { SECOND_MS } from "./time.ts";
 import { isPlainRecord } from "./json.ts";
 import { MAX_ACTION_MS, MAX_PLAY_SCRIPT } from "./config.ts";
+import { AiRequirement } from "./ai-contract.ts";
 import type { AnyRecord, HarnessCtx } from "../types/harness.d.ts";
 import type { GameImageRead } from "../types/host-api.d.ts";
 
@@ -91,7 +92,22 @@ export interface GameTraits {
   playScript: PlayAction[] | null;
   /** The keys that take a game with no `__studio.begin()` from its title into play; absent when none were declared. */
   start?: { keys: string[] };
+  /**
+   * The game uses play-time AI (`genex-ai`): `ai` when it cannot run without it, `optional` when it
+   * plays on without an answer. Absent when nothing declared it. It puts the AI checks on the entry
+   * owner's board and hands every builder the AI method (`ai-game.ts`).
+   */
+  ai?: AiRequirement;
 }
+
+/** A declared AI requirement, read only from its typed word; anything else is no declaration. */
+export function aiRequirementOf(raw: unknown): AiRequirement | null {
+  return isAiRequirement(raw) ? raw : null;
+}
+
+/** Whether a value is one of the AI requirement words. */
+const isAiRequirement = (raw: unknown): raw is AiRequirement =>
+  Object.values(AiRequirement).some((word) => word === raw);
 
 /** One of the two input checks: the state paths it reads, its expression and its note. */
 export interface InputProbe {
@@ -249,6 +265,7 @@ export function normalizeGameTraits(raw: AnyRecord | null | undefined): GameTrai
   const base = kind ? GAME_KINDS[kind]!.traits : { hud: false, mouseLook: false, keyboardMove: false };
   const flag = (value: unknown, fallback: boolean): boolean => (typeof value === "boolean" ? value : fallback);
   const start = startOf(raw?.start);
+  const ai = aiRequirementOf(raw?.ai);
   return {
     kind,
     hud: flag(raw?.hud ?? raw?.ui, base.hud),
@@ -257,6 +274,7 @@ export function normalizeGameTraits(raw: AnyRecord | null | undefined): GameTrai
     playScript: normalizePlayScript(raw?.playScript ?? raw?.play),
     // Only when declared: a game that says nothing keeps exactly the traits it always had.
     ...(start ? { start } : {}),
+    ...(ai ? { ai } : {}),
   };
 }
 
@@ -573,9 +591,9 @@ export async function readDeclaredGame(ctx: HarnessCtx, project: string): Promis
   return declaresSomething(game) ? game : null;
 }
 
-/** Whether a game block says anything studio.json keeps: a kind, a play script or start keys. */
+/** Whether a game block says anything studio.json keeps: a kind, a play script, start keys or its AI. */
 function declaresSomething(traits: GameTraits): boolean {
-  return Boolean(traits.kind || traits.playScript || traits.start);
+  return Boolean(traits.kind || traits.playScript || traits.start || traits.ai);
 }
 
 /**
@@ -602,6 +620,7 @@ export async function writeDeclaredGame(
     keyboardMove: traits.keyboardMove,
     ...(traits.playScript ? { playScript: traits.playScript } : {}),
     ...(traits.start ? { start: traits.start } : {}),
+    ...(traits.ai ? { ai: traits.ai } : {}),
     declaredBy: String(from).slice(0, DECLARED_BY_CHARS),
   };
   const current = meta.json.game;
