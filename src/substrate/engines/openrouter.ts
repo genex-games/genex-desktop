@@ -35,7 +35,7 @@ import {
   type PiStreamFn,
   streamHttpStatus,
 } from "./pi-completions.ts";
-import { gameCallSchema, gameResponseFormat, isGameCall, objectRoot } from "./game-calls.ts";
+import { GAME_CONNECT_TIMEOUT_MS, gameCallSchema, gameResponseFormat, isGameCall, objectRoot } from "./game-calls.ts";
 import { CATALOG_DEADLINE_MS, CatalogError, ModelCatalog } from "./model-catalog.ts";
 import { LocalSessions } from "./local-session.ts";
 import { CompletionStop, DEFAULT_COMPACTION_PERCENT, STOPPED_BY_USER } from "./common.ts";
@@ -527,21 +527,25 @@ export class OpenRouterEngine implements Engine {
     }
   }
 
-  /** pi-ai's options for one completion: transport, ceiling, reply cap, effort and the body edit. */
+  /**
+   * pi-ai's options for one completion: transport, ceiling, reply cap, effort and the body edit. A
+   * game's call gives up on a connection OpenRouter does not take within a few seconds.
+   */
   #streamOptions(
     request: CompleteRequest,
     row: EngineModel,
     maxTokens: number,
     schema: AiOutputSchema | null,
   ): Record<string, unknown> {
+    const game = isGameCall(request);
     return {
-      fetch: longHaulFetch(request.signal),
+      fetch: longHaulFetch(request.signal, game ? { connectTimeoutMs: GAME_CONNECT_TIMEOUT_MS } : {}),
       timeoutMs: Math.min(request.timeoutMs ?? this.#timeoutMs, this.#timeoutMs),
       maxTokens,
       ...(request.signal ? { signal: request.signal } : {}),
       ...(row.supportsThinking && request.effort ? { reasoningEffort: openRouterEffort(request.effort) } : {}),
       // A game's call places its one cache mark itself (`systemCacheMark`), not pi-ai's three.
-      ...(isGameCall(request) ? { cacheRetention: "none" } : {}),
+      ...(game ? { cacheRetention: "none" } : {}),
       ...onPayload(gamePayloadEdit(request, row, schema)),
     };
   }

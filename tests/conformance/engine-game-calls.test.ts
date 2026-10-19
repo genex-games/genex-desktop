@@ -12,8 +12,9 @@
  */
 import assert from "node:assert/strict";
 import { createServer, type Server } from "node:http";
-import type { AddressInfo } from "node:net";
-import { mkdir, mkdtemp, readdir, rm, stat, writeFile } from "node:fs/promises";
+import { type AddressInfo, createServer as createTcpServer, type Socket } from "node:net";
+import { performance } from "node:perf_hooks";
+import { mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { after, describe, it } from "node:test";
@@ -25,12 +26,16 @@ import { BonsaiRuntime } from "../../src/substrate/bonsai/runtime.ts";
 import { BONSAI_MODELS } from "../../src/substrate/bonsai/manifest.ts";
 import { ClaudeCodeEngine } from "../../src/substrate/engines/claude-code.ts";
 import { CodexEngine, type CodexExec } from "../../src/substrate/engines/codex.ts";
+import { OpenCodeEngine, type OpenCodeInvocation } from "../../src/substrate/engines/opencode.ts";
 import {
+  answersGameCalls,
   GAME_CALL_CWD,
+  GAME_CONNECT_TIMEOUT_MS,
   GAME_REPLY_SCHEMA_NAME,
   gameResponseFormat,
   strictSchemaFits,
 } from "../../src/substrate/engines/game-calls.ts";
+import { longHaulFetch } from "../../src/substrate/engines/pi-completions.ts";
 import {
   type CompleteRequest,
   CompletePurpose,
@@ -38,6 +43,9 @@ import {
   type ToolDefinition,
 } from "../../src/substrate/engines/types.ts";
 import { EngineFailureKind } from "../../src/shared/engine-requests.ts";
+import { EngineId } from "../../src/shared/providers.ts";
+import { ReasoningEffort } from "../../src/shared/model-preferences.ts";
+import { SECOND_MS } from "../../src/shared/duration.ts";
 import { memoryKeyStore } from "../../src/substrate/provider-keys.ts";
 import { memoryServerSettings } from "../../src/substrate/local-server/settings.ts";
 import { GOOD_KEY, startFakeOpenRouter, type FakeOpenRouter } from "../helpers/fake-openrouter.ts";
@@ -191,6 +199,23 @@ describe("a game reply's structured output", () => {
     });
   });
 
+  it("is answered by every engine whose tools can all be taken away, and never by Codex", () => {
+    const table: Array<{ engine: string; answers: boolean }> = [
+      { engine: EngineId.Bonsai, answers: true },
+      { engine: EngineId.Ollama, answers: true },
+      { engine: EngineId.LocalServer, answers: true },
+      { engine: EngineId.OpenRouter, answers: true },
+      { engine: EngineId.OpenCode, answers: true },
+      { engine: EngineId.ClaudeCode, answers: true },
+      { engine: EngineId.Codex, answers: false },
+      { engine: "fixture", answers: false },
+      { engine: "", answers: false },
+      { engine: "__proto__", answers: false },
+      { engine: "CLAUDE-CODE", answers: false },
+    ];
+    for (const row of table) assert.equal(answersGameCalls(row.engine), row.answers, row.engine);
+  });
+
   it("runs Claude Code's game calls in a neutral folder of the OS's temp, never the judge's", () => {
     assert.equal(path.dirname(GAME_CALL_CWD), os.tmpdir());
     assert.equal(path.basename(GAME_CALL_CWD), "studio-game-calls");
@@ -240,6 +265,27 @@ describe("a game's call on Ollama", () => {
     await engine.complete({ model: "gemma4:12b", systemPrompt: SYSTEM, messages: [{ role: "user", content: "hi" }] });
     const [body] = chatBodies(server.requests) as Array<Record<string, unknown>>;
     assert.equal(body?.response_format, undefined);
+  });
+
+  it("answers without thinking on a thinking model unless the door names an effort", async () => {
+    const table: Array<{ effort: string | undefined; sent: string; why: string }> = [
+      { effort: undefined, sent: "none", why: "thinking would spend the game's small output budget" },
+      { effort: ReasoningEffort.None, sent: "none", why: "none is no thinking, never the deepest" },
+      { effort: ReasoningEffort.Medium, sent: "medium", why: "the door asked for it" },
+    ];
+    for (const row of table) {
+      const { server, engine } = await ollama(["completion", "thinking"]);
+      await engine.complete(gameCall({ model: "gemma4:12b", ...(row.effort ? { effort: row.effort } : {}) }));
+      const [body] = chatBodies(server.requests) as Array<Record<string, unknown>>;
+      assert.equal(body?.reasoning_effort, row.sent, row.why);
+    }
+  });
+
+  it("leaves a build's thinking to the model, as before", async () => {
+    const { server, engine } = await ollama(["completion", "thinking"]);
+    await engine.complete({ model: "gemma4:12b", messages: [{ role: "user", content: "hi" }] });
+    const [body] = chatBodies(server.requests) as Array<Record<string, unknown>>;
+    assert.equal(body?.reasoning_effort, undefined);
   });
 
   it("refuses a hostile call before Ollama is asked to generate", async () => {
@@ -488,6 +534,32 @@ describe("a game's call on OpenRouter", () => {
     assert.deepEqual(user?.content, [{ type: "text", text: "hi", cache_control: { type: "ephemeral" } }]);
   });
 
+  it("gives up on a host that will not connect within the game's connect timeout", async () => {
+    assert.equal(GAME_CONNECT_TIMEOUT_MS, 3 * SECOND_MS);
+    // A host that takes the TCP connection and never answers the TLS handshake: the connection
+    // never completes, so only a connect timeout ends the wait.
+    const sockets = new Set<Socket>();
+    const silent = createTcpServer((socket) => {
+      sockets.add(socket);
+      socket.on("error", () => {});
+    });
+    await new Promise<void>((resolve) => silent.listen(0, "127.0.0.1", resolve));
+    closers.push(
+      () =>
+        new Promise<void>((resolve) => {
+          for (const socket of sockets) socket.destroy();
+          silent.close(() => resolve());
+        }),
+    );
+    const url = `https://127.0.0.1:${(silent.address() as AddressInfo).port}/api/v1/chat/completions`;
+    const started = performance.now();
+    await assert.rejects(
+      longHaulFetch(undefined, { connectTimeoutMs: 100 })(url, { method: "POST", body: "{}" }),
+      (err: unknown) => (err as { cause?: { code?: string } }).cause?.code === "UND_ERR_CONNECT_TIMEOUT",
+    );
+    assert.ok(performance.now() - started < 5 * SECOND_MS, "the wait ends at the connect timeout");
+  });
+
   it("refuses a hostile call before OpenRouter is asked to generate", async () => {
     for (const { name, request } of HOSTILE_CALLS) {
       const { server, engine } = await openRouter();
@@ -629,5 +701,57 @@ describe("a game's call on Codex", () => {
       (name) => !tmpBefore.includes(name) && name.startsWith("studio-judge-"),
     );
     assert.deepEqual(made, [], "no judge folder is made");
+  });
+});
+
+// ── OpenCode ───────────────────────────────────────────────────────────────────────────────
+
+const OPENCODE_MODELS = path.join(import.meta.dirname, "..", "fixtures", "transcripts", "opencode-models-1.18.txt");
+
+/** An OpenCode engine whose one-shot sessions answer a scripted reply, recording each invocation. */
+async function openCode() {
+  const root = await tmpDir("game-opencode-");
+  const seen: OpenCodeInvocation[] = [];
+  const engine = new OpenCodeEngine({
+    scratchRoot: path.join(root, "scratch"),
+    protectedPaths: [path.join(root, "secrets")],
+    execFn: (invocation) => {
+      seen.push(invocation);
+      return (async function* () {
+        yield { type: "text", sessionID: "ses_g", part: { type: "text", text: '{"mood":"calm","line":"No."}' } };
+      })();
+    },
+    resolveCli: async () => ({ ready: true, path: "/usr/local/bin/opencode", version: "1.18.34", detail: "ok" }),
+    listModels: () => readFile(OPENCODE_MODELS, "utf8"),
+  });
+  return { engine, seen };
+}
+
+describe("a game's call on OpenCode", () => {
+  it("is the game's own words with no judge's rules, in a session with every tool denied", async () => {
+    const { engine, seen } = await openCode();
+    const answer = await engine.complete(gameCall({ model: "opencode/big-pickle" }));
+    assert.equal(answer.message.content, '{"mood":"calm","line":"No."}');
+    const [invocation] = seen;
+    assert.equal(invocation?.prompt, [SYSTEM, `USER:\n${PROMPT}`].join("\n\n"));
+    assert.equal(invocation?.argv.includes("--file"), false, "no picture is attached");
+    const config = JSON.parse(invocation?.env.OPENCODE_CONFIG_CONTENT ?? "{}");
+    for (const tool of ["edit", "bash", "read", "glob", "grep", "list", "webfetch", "websearch", "skill"])
+      assert.equal(config.permission[tool], "deny", tool);
+    assert.equal(config.mcp, undefined, "no MCP server");
+  });
+
+  it("keeps the judge's rules for a verdict", async () => {
+    const { engine, seen } = await openCode();
+    await engine.complete({ systemPrompt: "RUBRIC", messages: [{ role: "user", content: "is it lit?" }] });
+    assert.match(seen[0]?.prompt ?? "", /^RUBRIC\n\nUSER:\nis it lit\?\n\n\S/);
+  });
+
+  it("refuses a hostile call before a session is started", async () => {
+    for (const { name, request } of HOSTILE_CALLS) {
+      const { engine, seen } = await openCode();
+      await assert.rejects(engine.complete({ ...request, model: "opencode/big-pickle" }), refused("opencode"), name);
+      assert.deepEqual(seen, [], `${name}: no session`);
+    }
   });
 });
