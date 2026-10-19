@@ -1,11 +1,11 @@
 # The game's manifest: the only build input this folder declares. The studio reads it as data and
 # writes the cargo manifest and lock itself, so there is no Cargo.toml here. Optional sections
 # (`world_size`, `save_name`, `[crates]` from the reviewed list, `[[wgsl]]` extension sources and
-# `[gpu] native_features`) are listed in docs/GENEX_API.md; any other key is refused.
+# `[gpu] native_features`) are listed in docs/api/genex-toml.md; any other key is refused.
 [game]
 title = "__GAME_TITLE__"
 
-# How the game is drawn (docs/GENEX_API.md, Rendering). The quality is the device's: desktops and
+# How the game is drawn (docs/api/rendering.md). The quality is the device's: desktops and
 # phones each start on their own class's preset and the person can change it in the settings
 # panel. The look is the game's, the same on every device: a filmic curve with auto exposure and a
 # light ground haze that fades the far floor into the horizon (thin enough to leave the near scene clear).

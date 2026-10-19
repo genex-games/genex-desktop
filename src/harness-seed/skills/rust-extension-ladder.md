@@ -47,8 +47,8 @@ loosens the sandbox.
   of your own, before the tonemap) or `Post`; a level-2 post pass runs on the display-ready frame
   after it. v1 work keeps running, but a v1 pass in the world or a v1 material holds the whole
   frame on the old LDR scene (listed in `degraded`). Under TAA a pass keys per-pixel noise to
-  `frame_index` and projects markers with `unjittered_view_proj`; the details are under Custom
-  materials and post passes in `docs/GENEX_API.md`.
+  `frame_index` and projects markers with `unjittered_view_proj`; the details are in
+  `docs/api/custom-materials.md`.
 - After an eject the renderer is in `engine/genex-render` with its own `README.md`, and the
   conformance suite's two renderer rows, `render-presets` (every preset and the phone classes,
   one look on all, pinned captures) and `render-extensions` (no refused custom pass), run with
