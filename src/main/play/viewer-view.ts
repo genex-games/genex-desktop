@@ -261,13 +261,14 @@ function hearMic(contents: WebContents, mine: () => boolean, hear: (report: Play
 function hearAi(
   contents: WebContents,
   mine: () => boolean,
-  bridge: GameAiPlayBridge | null,
+  ai: { bridge: GameAiPlayBridge | null; offline: boolean },
   game: () => Promise<PlayAiGame | null>,
 ): void {
   const port = playAiPort({
-    bridge,
+    bridge: ai.bridge,
     game,
     pageUrl: () => (contents.isDestroyed() ? "" : contents.getURL()),
+    navigable: (url) => playNavigationAllowed(url, ai.offline),
     live: () => mine() && !contents.isDestroyed(),
     channel: String(contents.id),
     send: {
@@ -286,7 +287,7 @@ function hearAi(
     port.input({ type: input.type, keyCode: "keyCode" in input ? String(input.keyCode) : undefined });
   });
   contents.on("did-start-navigation", (details) => {
-    if (details.isMainFrame && !details.isSameDocument) port.navigating();
+    if (details.isMainFrame && !details.isSameDocument) port.navigating(details.url);
   });
   contents.on("did-navigate", () => {
     notes.reset();
@@ -401,7 +402,7 @@ function gameView(win: BrowserWindow, deps: PlayViewDeps, events: ViewerEvents, 
     const mine = () => current === view;
     micGates.set(contents, micGate());
     hearMic(contents, mine, events.mic);
-    hearAi(contents, mine, deps.ai ?? null, events.aiGame);
+    hearAi(contents, mine, { bridge: deps.ai ?? null, offline: deps.offline !== null }, events.aiGame);
     hearPointer(contents, mine, events.pointer);
     guardNavigation(contents, deps.offline !== null, deps.openExternal);
     contents.on("did-finish-load", () => mine() && events.loaded());

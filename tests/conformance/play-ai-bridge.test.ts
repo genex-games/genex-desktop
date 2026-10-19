@@ -10,6 +10,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { setImmediate as tick } from "node:timers/promises";
+import vm from "node:vm";
 import {
   createGameAiPlayBridge,
   PLAY_AI_GESTURE_MS,
@@ -70,6 +71,10 @@ const GAME: PlayAiGame = { projectId: "cm-crowns", title: "Crowns of 1444", addr
 const KEY = playGameKey(GAME.projectId);
 const TOP = { url: `${GAME_ORIGIN}/`, top: true };
 const CONFIRM: GenexDesktopConfirmRequest = { kind: GenexConfirmKind.Grant, id: "grant_123" };
+/** Another Genex game's address: the page may go there. */
+const NEXT_GAME = "https://other-game.genex.technology/";
+/** A link the viewer sends to the browser instead: the page never goes there. */
+const OUTSIDE = "https://example.com/";
 
 const call = (ticket = "ticket-0001", over: Partial<AiCallRequest> = {}): AiCallRequest => ({
   v: GAME_AI_WIRE_VERSION,
@@ -194,6 +199,7 @@ function portRig(
     bridge: options.bridge === null ? null : bridge,
     game: async () => (options.game === undefined ? GAME : options.game),
     pageUrl: () => page,
+    navigable: (url) => url !== OUTSIDE,
     live: () => live,
     channel: "41",
     send: { reply: (reply) => replies.push(reply), delta: (delta) => deltas.push(delta) },
@@ -414,7 +420,7 @@ describe("Play AI: the port across navigations", () => {
     await tick();
     speak("Hel");
     speak("Hello");
-    port.navigating();
+    port.navigating(NEXT_GAME);
     speak("Hello there");
     port.navigated();
     speak("Hello there!");
@@ -432,7 +438,7 @@ describe("Play AI: the port across navigations", () => {
 
   it("a page on its way out is not heard; one whose navigation went nowhere is heard again", async () => {
     const { port, replies, handled, abandoned } = portRig();
-    port.navigating();
+    port.navigating(NEXT_GAME);
     await port.request(TOP, hello(1), false);
     assert.deepEqual([replies, handled], [[], []]);
     port.stayed();
@@ -440,11 +446,38 @@ describe("Play AI: the port across navigations", () => {
     assert.equal(replies[0]?.id, 2);
     assert.deepEqual(abandoned, ["41"]);
   });
+});
+
+describe("Play AI: the port as its page moves on", () => {
+  it("a link the viewer sends to the browser instead abandons nothing: the page stays and is answered", async () => {
+    const gate = deferred<void>();
+    let asked = 0;
+    const answers: FakeAnswers = {
+      [AiBridgeOp.Hello]: async () => {
+        // The first hello waits for the test; the page's next one is answered at once.
+        asked += 1;
+        if (asked === 1) await gate.promise;
+        return { v: GAME_AI_WIRE_VERSION, on: true };
+      },
+    };
+    const { port, replies, abandoned } = portRig({ answers });
+    const running = port.request(TOP, hello(1), false);
+    await tick();
+    port.navigating(OUTSIDE);
+    await port.request(TOP, hello(2), false);
+    gate.resolve();
+    await running;
+    assert.deepEqual(abandoned, []);
+    assert.deepEqual(
+      replies.map((reply) => reply.id),
+      [2, 1],
+    );
+  });
 
   it("a gesture does not survive a navigation", async () => {
     const { port, replies, handled, click } = portRig();
     click();
-    port.navigating();
+    port.navigating(NEXT_GAME);
     port.navigated();
     await port.request(TOP, { id: 1, op: AiBridgeOp.BudgetRequest, body: GRANT_BODY }, true);
     assert.deepEqual(replies[0]?.body, { view: null, code: AiErrorCode.NoGesture });
@@ -854,6 +887,30 @@ describe("Play AI: the game's page", () => {
     assert.equal(
       installPlayAi(() => {}, words, scope),
       null,
+    );
+  });
+});
+
+describe("Play AI: the game's page, as the preload puts it there", () => {
+  it("runs whole in a page that shares nothing with the app, as the preload serializes it", async () => {
+    const errors: unknown[][] = [];
+    const page = vm.createContext({ console: { error: (...args: unknown[]) => errors.push(args) } });
+    const install: typeof installPlayAi = vm.runInContext(`(${installPlayAi.toString()})`, page);
+    const sent: unknown[] = [];
+    const { words } = pageRig();
+    const control = install((envelope) => sent.push(envelope), words);
+    assert.ok(control);
+    const bridge = genexDesktopBridgeOf(page);
+    assert.ok(bridge);
+    const answer = bridge.confirm(CONFIRM);
+    control.reply({ id: 1, op: PlayBridgeOp.GenexConfirm, body: { approved: true } });
+    control.blocked({ code: AiErrorCode.DirectBlocked, vendor: AiVendor.Groq, host: "api.groq.com" });
+    // The page's own objects come from its realm: compared by their JSON.
+    assert.equal(JSON.stringify(sent), JSON.stringify([{ id: 1, op: PlayBridgeOp.GenexConfirm, body: CONFIRM }]));
+    assert.deepEqual(await answer, { approved: true });
+    assert.equal(
+      JSON.stringify(errors),
+      JSON.stringify([[AiErrorCode.DirectBlocked, "use genex-ai", "api.groq.com", "groq"]]),
     );
   });
 

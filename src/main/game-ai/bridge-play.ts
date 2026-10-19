@@ -199,6 +199,11 @@ export interface PlayAiPortDeps {
   game(): Promise<PlayAiGame | null>;
   /** The address the view's top frame shows now. */
   pageUrl(): string;
+  /**
+   * Whether the view's top frame may go to `url` (`play/game-address.ts`): a link it may not is
+   * sent to the browser instead, and the page stays.
+   */
+  navigable(url: string): boolean;
   /** The view is still the viewer's and not destroyed. */
   live(): boolean;
   /** The view's own id (`webContents.id`): what the bridge abandons. */
@@ -278,8 +283,12 @@ export function playAiPort(deps: PlayAiPortDeps) {
       if (!GESTURE_INPUTS.has(input.type) || INERT_KEYS.has(input.keyCode ?? "")) return;
       lastGesture = deps.clock.now();
     },
-    /** The top frame started for another document: its calls abort and its cards close. */
-    navigating(): void {
+    /**
+     * The top frame started for another document at `url`: its calls abort and its cards close.
+     * A link the viewer sends to the browser instead leaves the page, and its calls, as they are.
+     */
+    navigating(url: string): void {
+      if (!deps.navigable(url)) return;
       leaving = true;
       deps.bridge?.abandon(deps.channel);
     },
