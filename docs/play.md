@@ -129,6 +129,33 @@ What Play sends is in [PRIVACY](../PRIVACY.md#play).
   game takes the row. A failure is a toast, and Play comes back for a person still with it. A remix
   keeps its scripts off until a build fails and the person trusts it: the stage's Run setup scripts.
 
+## Play-time AI on this Mac
+
+A game asks for text or schema-checked JSON at play time through `genex-ai`; main answers every call
+in `src/main/game-ai/service.ts`, from a caller it derives itself (the frame, the partition or the
+process), in one order: read → route → reserve → queue → door → validate → settle.
+
+- Refusals before anything is reserved have no side effect: a schema outside the dialect, a ticket
+  already running, AI off, a first use of the person's plan or money with no yes, or a door that is
+  not legal, verified, unlocked or ready here (`shared/game-ai-route.ts`).
+- Genex picks the model (the last one the game used, the maker's pick, the person's best that fits —
+  free, then plan, then paid — then Genex credits). A free, ready model on this Mac starts with no
+  tap; a plan or money is used only after one card's yes per game and door (`approvals.ts`: one
+  pending card per game, five minutes, a cooldown after a decline, no commit in its first 600 ms,
+  the `approve-paid` / `approve-plan` native step first). A payer change forgets that yes.
+- Grants live in `userData/game-ai/grants.json` (`budgets.ts`), out of reach of every agent process.
+  A call reserves its worst case on disk before dispatch; it settles at the billed cost, and a reply
+  the game could not use costs nothing, its one repair included. Per-door terms hold calls at once,
+  a minute and a day (the plan: one at a time, 50 a day, resting past the share each plan keeps for
+  building); the person's daily alert pauses a game, and their OpenRouter monthly limit holds the key.
+- The queue puts builds first; Stop, a page going away or a payer change aborts calls at once.
+  Text other players will see is moderated before it is answered. `ledger.jsonl` keeps ids, counts
+  and money per call, never text, each also a `CustomEvent.GameAiCall`.
+- Doors (`doors/`): this Mac's installed models (never a download), OpenCode, the person's
+  OpenRouter key (fully priced models only), the Claude plan (Claude Code only, Create on one's own
+  game), the development lane on genex.games, a saved playtest (`<game>/ai/tapes/`, replayed by key
+  and occurrence, never verified) and the fixture a fixture profile answers with.
+
 ## Where to work
 
 `src/renderer/play/`, `src/renderer/state/play.ts` and `people.ts`, `src/renderer/avatars/`,
