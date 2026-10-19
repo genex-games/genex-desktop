@@ -178,6 +178,8 @@ jobs:
         run: npm run test:packaged
       - name: Packaged terminal
         run: node tests/e2e/run-terminal-packaged.mjs
+      # No heavy-profile first start, as Windows has: macOS's sandbox compiles its rules without
+      # visiting the profile's files, and starts as fast on 300,000 of them (windows-sandbox.md).
       - name: Artifact provenance
         env:
           RELEASE_SIGNED: ${{ steps.keychain.outputs.signed }}
@@ -309,6 +311,13 @@ jobs:
         run: |
           node tests/e2e/run-terminal-packaged.mjs
           node tests/e2e/run-electron-e2e.mjs --packaged
+      # A person's profile holds hundreds of thousands of files and srt-win's deny stamp walks them all
+      # (the profile is `.ssh`'s parent); the runner's is nearly empty. Seed a heavy one, then time the
+      # packaged first start on it: a start that fails or runs past its budget keeps Windows out.
+      - name: Heavy user profile
+        run: node scripts/ci-heavy-profile.mjs
+      - name: Packaged first start on the heavy profile
+        run: node tests/e2e/run-sandbox-start-packaged.mjs
       - name: Artifact provenance
         env:
           RELEASE_SIGNED: ${{ steps.winsign.outputs.signed }}

@@ -2087,6 +2087,10 @@ async function runSmokeLaunch(started: StartedStudio): Promise<number> {
     const { runTerminalAcceptance } = await import("./smoke/terminal-acceptance.ts");
     return stopAfter(started.core, runTerminalAcceptance(terminals, started.window, smokeUserData));
   }
+  if (hasFlag(StudioFlag.SandboxStartSmoke)) {
+    const { runSandboxStartAcceptance } = await import("./smoke/sandbox-start.ts");
+    return stopAfter(started.core, runSandboxStartAcceptance(started.core));
+  }
   const providerRoot = flagValue(StudioFlag.ProviderAcceptance);
   if (providerRoot) {
     const { runProviderAcceptance } = await import("./smoke/provider-acceptance.ts");

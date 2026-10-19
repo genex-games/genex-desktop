@@ -108,6 +108,15 @@ jobs:
         env:
           STUDIO_WINDOWS_BUNDLED_GIT_ONLY: "1"
         run: node tests/e2e/run-electron-e2e.mjs --packaged
+      # A person's profile holds hundreds of thousands of files and srt-win's deny stamp walks them all
+      # (the profile is `.ssh`'s parent); the runner's is nearly empty. Seed a heavy one, then time the
+      # packaged first start on it. macOS's sandbox never visits the profile's files (windows-sandbox.md).
+      - name: Heavy user profile
+        if: ${{ !cancelled() && runner.os == 'Windows' }}
+        run: node scripts/ci-heavy-profile.mjs
+      - name: Packaged first start on the heavy profile
+        if: ${{ !cancelled() && runner.os == 'Windows' }}
+        run: node tests/e2e/run-sandbox-start-packaged.mjs
       - name: Package sizes
         if: always()
         run: find out/make -type f -exec ls -l {} \; || true
