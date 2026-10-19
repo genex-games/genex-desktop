@@ -78,7 +78,8 @@ fn an_empty_map_plans_nothing_and_a_malformed_one_is_refused() {
         b"",
         b"not json",
         br#"{"files":[]}"#,
-        br#"{"version":2,"files":[]}"#,
+        // Flipped by SF-2: version 2 is the map format with groups and ranges; 3 is not one yet.
+        br#"{"version":3,"files":[]}"#,
         br#"{"version":1,"files":{}}"#,
         br#"[]"#,
     ];
