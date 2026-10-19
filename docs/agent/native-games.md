@@ -90,6 +90,11 @@ is encoded once to UASTC and gets the same per-family KTX2 beside it, the image 
 ([`texture-encode.ts`](../../src/substrate/asset-import/texture-encode.ts)); a non-square or
 non-power-of-two one is first resampled into its square power-of-two class, and the row's
 `texture` records the class (issue `resampled`).
+A GLB's embedded PNG and JPEG images get the same encode as the last pass of its step: each once per
+usage its material slots give it, written beside the GLB as `<model>.t<image>[.<usage>].<family>.ktx2`
+and named in its `asset.extras.genex_textures`
+([`glb-textures.ts`](../../src/substrate/asset-import/glb-textures.ts)); the embedded image stays as
+the fallback, and an image it cannot encode keeps loading from the GLB.
 Every glTF first passes the Khronos validator ([`validate.ts`](../../src/substrate/asset-import/validate.ts),
 before any decoder): an error refuses it `validation-failed`, severity decided by issue code.
 A refused file leaves the build, and so does an output whose name another staged file holds

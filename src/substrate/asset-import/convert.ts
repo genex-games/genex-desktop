@@ -5,7 +5,8 @@
  */
 import type { BuildTarget } from "../../shared/game-project.ts";
 import type { TextureUsage } from "./basis-encoder.ts";
-import { meshToGlb } from "./glb.ts";
+import { GlbError, meshToGlb } from "./glb.ts";
+import { addGlbTextures, type GlbTextureSidecar } from "./glb-textures.ts";
 import { importGltf } from "./gltf-decompress.ts";
 import { GltfImportError } from "./gltf-json.ts";
 import { type ImportSizes, inspectGlb } from "./inspect.ts";
@@ -65,12 +66,13 @@ export type ConvertResult =
       sizes?: ImportSizes;
       /** An encoded loose texture's usage, source size and class (C-12). */
       texture?: EncodedTexture;
+      /** A GLB's embedded images as per-family KTX2 sidecars, named in its `genex_textures` (C-13). */
+      sidecars?: GlbTextureSidecar[];
     }
   | { ok: false; refusal: AssetImportRefusal; detail: string };
 
 const MESSAGE = {
   NoAudioEncoder: "no Ogg encoder in the toolchain store yet",
-  StepNotServed: "this import step is declared but not served yet",
   NotKtx2: "not a KTX2 file",
 } as const;
 
@@ -139,6 +141,18 @@ async function meshSteps(glb: Uint8Array, input: ConvertInput): Promise<ConvertR
   return { ok: true, bytes, ...(sizes ? { sizes } : {}) };
 }
 
+/**
+ * A GLB step's output with its embedded images written out as per-family sidecars (C-13): the last
+ * pass, since it only adds `asset.extras.genex_textures` to the JSON. A GLB with none is kept as it is.
+ */
+async function withGlbTextures(result: ConvertResult, input: ConvertInput): Promise<ConvertResult> {
+  if (!result.ok) return result;
+  const textures = await addGlbTextures(result.bytes, input.name, texturesForTargets(input.targets));
+  if (!textures.encoded) return result;
+  const sizes = inspectGlb(textures.bytes);
+  return { ...result, bytes: textures.bytes, sidecars: textures.sidecars, ...(sizes ? { sizes } : {}) };
+}
+
 const decoder = new TextDecoder();
 
 /** The step's output bytes; throws the converters' own errors. */
@@ -154,7 +168,8 @@ async function run(input: ConvertInput): Promise<ConvertResult> {
       return await meshSteps(meshToGlb(plyToMesh(input.bytes, input.name)), input);
     case ImportConverter.GltfDecompress: {
       const { bytes, issues } = await importGltf(input.bytes, input.ext);
-      const result: ConvertResult = input.ext === "glb" ? await meshSteps(bytes, input) : { ok: true, bytes };
+      const result: ConvertResult =
+        input.ext === "glb" ? await withGlbTextures(await meshSteps(bytes, input), input) : { ok: true, bytes };
       return result.ok && issues.length ? { ...result, issues } : result;
     }
     case ImportConverter.Ktx2Check:
@@ -167,7 +182,7 @@ async function run(input: ConvertInput): Promise<ConvertResult> {
     case ImportConverter.TextureEncode:
       return await encodeLoose(input);
     case ImportConverter.GlbTextures:
-      return refused(AssetImportRefusal.ConverterMissing, MESSAGE.StepNotServed);
+      return await withGlbTextures({ ok: true, bytes: input.bytes }, input);
   }
 }
 
@@ -181,6 +196,7 @@ export async function convertAsset(input: ConvertInput): Promise<ConvertResult> 
     if (error instanceof TextureDecodeError) return refused(error.refusal, detail);
     if (
       error instanceof MeshFormatError ||
+      error instanceof GlbError ||
       error instanceof Ktx2Error ||
       error instanceof HdrError ||
       error instanceof SyntaxError

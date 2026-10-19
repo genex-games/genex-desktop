@@ -60,8 +60,11 @@ import {
 
 /** The default size cap; a smaller one is set where disk is short. */
 export const ASSET_CACHE_DEFAULT_CAP_BYTES = 4 * 1024 * 1024 * 1024;
-/** The entry format this host writes and reads; another version is a miss. */
-export const ASSET_CACHE_VERSION = 1;
+/**
+ * The entry format this host writes and reads; another version is a miss. 2: a GLB's import also
+ * writes its embedded images' sidecars (C-13), so an entry from before misses and imports again.
+ */
+export const ASSET_CACHE_VERSION = 2;
 /** The largest entry receipt read back. */
 const RECEIPT_MAX_BYTES = 1024 * 1024;
 /** A staging folder no commit of this process owns, older than this, is a dead commit's. */

@@ -39,3 +39,28 @@ Reads follow one rule on every destination (desktop, web, phones):
 
 Each refusal is an `AssetError` with `.code()` (`AssetErrorCode`, its wire spelling from
 `.code().wire()`) and `.detail()` for a log line.
+
+## Characters
+
+A rigged GLB loads at reset the same way, as a `CharacterAsset`: its skeleton, parsed once and
+shared by every seed.
+
+```rust
+game.on_reset(|sim, _seed, _rng, gfx| {
+    match gfx.character("characters/hero.glb") {
+        Ok(hero) => sim.world.hero = Some(hero),
+        Err(error) => sim.world.note = error.code.wire().to_owned(),
+    }
+});
+```
+
+- `gfx.character(path)` answers the rig of the file's first skinned mesh node. It reads as
+  `gfx.assets().bytes(path)` reads (in `on_reset`, boot and sim groups only) and lists the path in
+  `state().assets`.
+- `.joint_count()` and `.skeleton()` (joint names, parents, rest pose) describe it; `.path()` is
+  the file it came from. Cloning one is cheap.
+- Every refusal is `animation-asset-invalid` (`error.code.wire()`, with `error.detail` for a log
+  line): an unsafe path, a file the build does not have or that ships in a streamed or named
+  group, or a file that is not a GLB with a usable skin (no skinned mesh node, more than 256
+  joints, a node with two parents, a cycle, a non-finite transform). Nothing crashes, and the
+  same path drawn with `frame.model` shows the checker.

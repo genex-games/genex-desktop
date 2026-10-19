@@ -295,9 +295,9 @@
     "parts": "3f47250589b84e25"
   },
   "tests/fixtures/asset-import/lods-sphere.glb": {
-    "mesh": "7f16292d5efe3496",
+    "mesh": "7efa32aa800693bb",
     "skinned": "refused mesh-invalid",
-    "parts": "8e69e194699da49b"
+    "parts": "09b3674cb800ddfb"
   },
   "tests/fixtures/asset-import/quantized.glb": {
     "mesh": "refused mesh-invalid",
@@ -308,6 +308,16 @@
     "mesh": "ca18e7477d180885",
     "skinned": "refused mesh-invalid",
     "parts": "907902a58585c571"
+  },
+  "tests/fixtures/asset-import/tangents-mirrored.glb": {
+    "mesh": "644a8858a43984cd",
+    "skinned": "refused mesh-invalid",
+    "parts": "c2685711f8246e3f"
+  },
+  "tests/fixtures/asset-import/tangents-mirrored.imported.glb": {
+    "mesh": "fc2005a0faaf7b38",
+    "skinned": "refused mesh-invalid",
+    "parts": "8c4bff8c3a44a01c"
   },
   "tests/fixtures/asset-previews/animated.glb": {
     "mesh": "3b61fbc8f94a9665",

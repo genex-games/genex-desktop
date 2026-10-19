@@ -7,11 +7,20 @@
  */
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
+import { mkdir, readdir, readFile, realpath, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { describe, it } from "node:test";
+import { after, describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import { encode as encodePng } from "fast-png";
+import { importWithCache, openAssetCache } from "../../src/main/asset-cache.ts";
+import {
+  type ImportSandbox,
+  importRustAssets,
+  importStagedAssets,
+  type RustAssetImportDeps,
+} from "../../src/main/rust-assets.ts";
 import { MINUTE_MS } from "../../src/shared/duration.ts";
+import { BuildTarget, GameStack } from "../../src/shared/game-project.ts";
 import {
   BASIS_ENCODER,
   type BasisEncoderModule,
@@ -32,9 +41,12 @@ import {
   parseGlbTextures,
 } from "../../src/substrate/asset-import/glb-textures.ts";
 import { IMPORT_JOB_VERSION, parseImportReceipt } from "../../src/substrate/asset-import/job.ts";
+import { ImportConverter } from "../../src/substrate/asset-import/import-plan.ts";
 import { readKtx2Header } from "../../src/substrate/asset-import/ktx2.ts";
 import { KTX2_VK_FORMAT, TextureCompression } from "../../src/substrate/asset-import/texture-table.ts";
 import { validateGltf } from "../../src/substrate/asset-import/validate.ts";
+import { ProcessSandbox } from "../../src/substrate/spawn.ts";
+import { tmpDir } from "../helpers/tmp.ts";
 
 const REPO = fileURLToPath(new URL("../../", import.meta.url));
 const ENCODER_DIR = path.join(REPO, ".studio-dev", "tools", `basis-encoder-${BASIS_ENCODER.version}`);
@@ -450,5 +462,96 @@ describe("sidecar names the host accepts from an importer's receipt", () => {
       "assets/m/rock.t1.bc.ktx2",
     ])
       assert.equal(glbTextureFamilyOf("assets/m/crate.glb", other), null, other);
+  });
+});
+
+/** Every sandbox the importer asked for, the real ProcessSandbox underneath. */
+function importerSandboxes(): RustAssetImportDeps["sandboxFor"] {
+  return async (options): Promise<ImportSandbox> => {
+    const sandbox = await ProcessSandbox.create(options);
+    return { run: (request) => sandbox.run(request), dispose: () => sandbox.dispose() };
+  };
+}
+
+after(async () => {
+  const { SandboxManager } = await import("@anthropic-ai/sandbox-runtime");
+  await SandboxManager.reset();
+});
+
+const SKIP_STAGE = process.platform !== "darwin" ? "the importer's Seatbelt sandbox is macOS's" : SKIP_UNFETCHED;
+const CRATE_SIDECARS = ["crate.t0", "crate.t1", "crate.t2"].flatMap((stem) =>
+  DESKTOP_FAMILIES.map((family) => `${stem}.${family}.ktx2`),
+);
+
+describe("the build lane's import step over a stage with a textured GLB", { skip: SKIP_STAGE }, () => {
+  it("writes the GLB's image sidecars beside it, and the staged GLB names them", {
+    timeout: ENCODE_ROW_MS,
+  }, async () => {
+    const parent = await realpath(await tmpDir("rust-glb-textures-stage-"));
+    const stage = path.join(parent, "stage");
+    await mkdir(path.join(stage, "assets", "models"), { recursive: true });
+    await writeFile(path.join(stage, "genex.toml"), '[game]\ntitle = "Game"\n');
+    await writeFile(path.join(stage, "assets", "models", "crate.glb"), crate());
+    const deps = { jobsRoot: path.join(parent, "jobs"), sandboxFor: importerSandboxes(), secretPaths: [] };
+    const report = await importStagedAssets(deps, { stage, target: BuildTarget.Mac });
+    assert.deepEqual(
+      (await readdir(path.join(stage, "assets", "models"))).sort(),
+      ["crate.glb", ...CRATE_SIDECARS].sort(),
+    );
+    const row = report?.files.find((file) => file.file === "assets/models/crate.glb");
+    assert.equal(row?.converter, ImportConverter.GltfDecompress);
+    assert.equal(row?.refusal, undefined);
+    assert.deepEqual(
+      row?.families?.map((family) => family.file),
+      CRATE_SIDECARS.map((name) => `assets/models/${name}`),
+    );
+    const staged = new Uint8Array(await readFile(path.join(stage, "assets", "models", "crate.glb")));
+    assert.deepEqual(
+      parseGlbTextures(readGlb(staged).json)?.map(({ stem }) => stem),
+      ["crate.t0", "crate.t1", "crate.t2"],
+    );
+    assert.deepEqual(await validateGltf(staged, "glb"), []);
+    for (const name of CRATE_SIDECARS) {
+      const header = readKtx2Header(new Uint8Array(await readFile(path.join(stage, "assets", "models", name))));
+      const family = name.split(".").at(-2) as TextureCompression;
+      const space = name.startsWith("crate.t0.") ? "srgb" : "linear";
+      assert.equal(header?.vkFormat, KTX2_VK_FORMAT[family][space], name);
+    }
+  });
+});
+
+describe("the import cache serves a GLB's sidecars (C-3)", { skip: SKIP_STAGE }, () => {
+  it("an unchanged GLB runs no job the second time and places the same sidecars", {
+    timeout: ENCODE_ROW_MS,
+  }, async () => {
+    const parent = await realpath(await tmpDir("rust-glb-textures-cache-"));
+    const game = path.join(parent, "game");
+    await mkdir(path.join(game, "assets"), { recursive: true });
+    await writeFile(path.join(game, "assets", "crate.glb"), crate());
+    const cache = openAssetCache({ root: path.join(parent, "cache") });
+    const deps = { jobsRoot: path.join(parent, "jobs"), sandboxFor: importerSandboxes(), secretPaths: [] };
+    let jobs = 0;
+    const run: typeof importRustAssets = async (d, r) => {
+      jobs += 1;
+      return await importRustAssets(d, r);
+    };
+    const request = {
+      gameRoot: game,
+      stack: GameStack.RustWgpu,
+      files: ["assets/crate.glb"],
+      targets: [BuildTarget.Mac],
+      tools: { basisu: BASIS_ENCODER.files[1].sha256 },
+    };
+    const first = await importWithCache(cache, deps, request, run);
+    first.release();
+    const second = await importWithCache(cache, deps, request, run);
+    second.release();
+    assert.deepEqual([first.misses, second.misses, second.hits, jobs], [1, 0, 1, 1]);
+    const facts = (result: typeof first) => result.files[0]?.families?.map(({ file, sha256 }) => [file, sha256]);
+    assert.deepEqual(facts(second), facts(first));
+    assert.deepEqual(
+      facts(first)?.map(([file]) => file),
+      CRATE_SIDECARS.map((name) => `assets/${name}`),
+    );
   });
 });

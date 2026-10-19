@@ -30,6 +30,7 @@ pub mod input_rapier;
 
 pub use config::NavConfig;
 pub use debug::NavDebug;
-pub use error::NavErrorCode;
+pub use error::{NavError, NavErrorCode};
 pub use ids::{AgentId, NavBodyId, NavLinkId, NavObstacleId};
+pub use input::{NavArea, NavInput};
 pub use world::Nav;

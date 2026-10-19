@@ -196,6 +196,17 @@ fn the_game_systems_blocks_are_the_fixtures() {
     }
 }
 
+#[test]
+fn the_render_facts_are_the_fixtures() {
+    use genex::present::{AssetIssueCode, TextureOrigin};
+    use genex_render::texture::TextureFamily;
+    let pinned = fixture();
+    assert_eq!(names(&pinned["runtimeRender"]["keys"]), ["textures", "assetIssues"]);
+    assert_eq!(names(&pinned["runtimeRender"]["issueCodes"]), AssetIssueCode::ALL.map(AssetIssueCode::wire));
+    let families: Vec<&str> = TextureFamily::ALL.into_iter().map(|family| TextureOrigin::Family(family).wire()).chain([TextureOrigin::Source.wire()]).collect();
+    assert_eq!(names(&pinned["runtimeRender"]["families"]), families);
+}
+
 /// The calls the fixture pins under `key`, checked against the names a chain below calls.
 fn pinned_calls<'a>(pinned: &'a serde_json::Value, key: &str) -> Vec<&'a str> {
     names(&pinned[key]["calls"])

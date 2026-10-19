@@ -94,6 +94,13 @@ import {
   withEngineRow,
 } from "../../src/substrate/genex-toml.ts";
 import { TextureUsage } from "../../src/substrate/asset-import/basis-encoder.ts";
+import {
+  GLB_TEXTURE_STEM_MAX_CHARS,
+  GLB_TEXTURES_EXTRAS_KEY,
+  GLB_TEXTURES_SCHEMA_VERSION,
+  GlbTextureImageKey,
+  GlbTexturesKey,
+} from "../../src/substrate/asset-import/glb-textures.ts";
 import { tmpDir } from "../helpers/tmp.ts";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
@@ -682,6 +689,22 @@ describe("the genex_lods glTF extras schema is the renderer's", () => {
       extrasKeys: Object.values(LodExtrasKey),
       levelKeys: Object.values(LodLevelKey),
       faults: Object.values(LodFault),
+    });
+  });
+});
+
+describe("the genex_textures glTF extras schema is the importer's", () => {
+  it("names the key, version, members, kinds and stem cap glb-textures.ts writes", async () => {
+    const facade = JSON.parse(
+      await readFile(path.join(ROOT, "tests", "fixtures", "rust-facade-vocabulary.json"), "utf8"),
+    ) as { textures: Record<string, unknown> };
+    assert.deepEqual(facade.textures, {
+      extrasKey: GLB_TEXTURES_EXTRAS_KEY,
+      schemaVersion: GLB_TEXTURES_SCHEMA_VERSION,
+      extrasKeys: Object.values(GlbTexturesKey),
+      imageKeys: Object.values(GlbTextureImageKey),
+      kinds: Object.values(TextureUsage),
+      stemMaxChars: GLB_TEXTURE_STEM_MAX_CHARS,
     });
   });
 });
