@@ -11,6 +11,7 @@
  */
 import { BuildTarget } from "../../shared/game-project.ts";
 import type { TextureUsage } from "./basis-encoder.ts";
+import { isGlbTextureStem } from "./glb-textures.ts";
 import { type AssetImportRefusal, ImportConverter, isAssetImportRefusal } from "./import-plan.ts";
 import { type ImportSizes, parseImportSizes } from "./inspect.ts";
 import { Ktx2FamilySkip } from "./ktx2.ts";
@@ -70,10 +71,16 @@ export interface ImportJob {
   files: ImportJobFile[];
 }
 
-/** A Basis KTX2's file for one family (A6.5), `out/<index>.<family>.ktx2`. */
+/**
+ * A Basis KTX2's file for one family (A6.5), `out/<index>.<family>.ktx2`; or a GLB image sidecar's
+ * (C-13), `out/<index>.s<n>.<family>.ktx2` for the line's n-th stem, named `<stem>.<family>.ktx2`
+ * beside the GLB.
+ */
 export interface ImportFamilyOutput {
   compression: TextureCompression;
   output: string;
+  /** A GLB image sidecar's stem (`glb-textures.ts`); absent for the file's own family files. */
+  stem?: string;
 }
 
 /** One file's line in the receipt. */
@@ -115,6 +122,10 @@ const SKIPS: readonly string[] = Object.values(Ktx2FamilySkip);
 /** Where the importer writes file `index`'s KTX2 for `compression`. */
 export const familyOutput = (index: number, compression: TextureCompression) =>
   `${ImportJobLayout.Out}/${index}.${compression}.ktx2`;
+
+/** Where the importer writes file `index`'s `sidecar`-th GLB image sidecar (in stem order) for `compression`. */
+export const sidecarOutput = (index: number, sidecar: number, compression: TextureCompression) =>
+  `${ImportJobLayout.Out}/${index}.s${sidecar}.${compression}.ktx2`;
 
 /** Whether `rel` is `<folder>/<index>.<ext>` for exactly this folder and index. */
 export function isJobFile(rel: unknown, folder: "in" | "out", at: number): rel is string {
@@ -171,15 +182,26 @@ function parseTexture(value: unknown): TranscodedTexture | null {
   return valid ? { compression: compression as TextureCompression, format, bytes, sha256 } : null;
 }
 
-/** A line's family files: each named for its index and a family of its own, or null. */
+/** One family file of a line, named for its index, family and (a sidecar's) stem order; or null. */
+function parseFamily(item: unknown, index: number, stems: string[]): ImportFamilyOutput | null {
+  if (!isObject(item) || typeof item.compression !== "string" || !FAMILIES.includes(item.compression)) return null;
+  const compression = item.compression as TextureCompression;
+  if (item.stem === undefined) {
+    return item.output === familyOutput(index, compression) ? { compression, output: item.output } : null;
+  }
+  if (!isGlbTextureStem(item.stem)) return null;
+  if (!stems.includes(item.stem)) stems.push(item.stem);
+  const output = sidecarOutput(index, stems.indexOf(item.stem), compression);
+  return item.output === output ? { compression, output, stem: item.stem } : null;
+}
+
+/** A line's family files: each named for its index and a (stem and) family of its own, or null. */
 function parseFamilies(value: unknown, index: number): ImportFamilyOutput[] | null {
   if (!Array.isArray(value)) return null;
-  const families = value.map((item): ImportFamilyOutput | null => {
-    if (!isObject(item) || typeof item.compression !== "string" || !FAMILIES.includes(item.compression)) return null;
-    const compression = item.compression as TextureCompression;
-    return item.output === familyOutput(index, compression) ? { compression, output: item.output } : null;
-  });
-  const distinct = new Set(families.map((family) => family?.compression)).size === families.length;
+  const stems: string[] = [];
+  const families = value.map((item) => parseFamily(item, index, stems));
+  const distinct =
+    new Set(families.map((family) => `${family?.stem ?? ""}:${family?.compression}`)).size === families.length;
   return distinct && families.every((family) => family !== null) ? (families as ImportFamilyOutput[]) : null;
 }
 

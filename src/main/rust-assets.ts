@@ -43,6 +43,7 @@ import {
   type ImportReceipt,
   parseImportReceipt,
 } from "../substrate/asset-import/job.ts";
+import { glbTextureFileName, isGlbTextureStemOf } from "../substrate/asset-import/glb-textures.ts";
 import { looksLikeRadiance } from "../substrate/asset-import/hdr.ts";
 import { type Ktx2FamilySkip, readKtx2Header } from "../substrate/asset-import/ktx2.ts";
 import { objMaterialLibrary } from "../substrate/asset-import/obj.ts";
@@ -85,8 +86,13 @@ const KEPT_INPUT_STEPS: ReadonlySet<ImportConverter> = new Set([
   ImportConverter.HdrCheck,
   ImportConverter.TextureEncode,
 ]);
-/** The steps that write per-family KTX2 files beside their output. */
-const FAMILY_STEPS: ReadonlySet<ImportConverter> = new Set([ImportConverter.Ktx2Check, ImportConverter.TextureEncode]);
+/** The steps that write per-family KTX2 files beside their output (a GLB's: its image sidecars, C-13). */
+const FAMILY_STEPS: ReadonlySet<ImportConverter> = new Set([
+  ImportConverter.Ktx2Check,
+  ImportConverter.TextureEncode,
+  ImportConverter.GltfDecompress,
+  ImportConverter.GlbTextures,
+]);
 
 /** What every admitted output must start with, by output extension. */
 const OGG_MAGIC = [0x4f, 0x67, 0x67, 0x53] as const;
@@ -369,9 +375,15 @@ async function readOutputFile(file: string): Promise<Uint8Array | null> {
 /** One family's KTX2 as the host admits it: a KTX2 in that family's own fixed format, plain levels. */
 async function admitFamily(
   jobDir: string,
-  family: { compression: TextureCompression; output: string },
+  family: { compression: TextureCompression; output: string; stem?: string },
   source: string,
 ): Promise<ImportOutput | null> {
+  // A GLB image sidecar's stem is the importer's word: it must name a file of this GLB's own beside it.
+  if (family.stem !== undefined && !isGlbTextureStemOf(source, family.stem)) return null;
+  const name =
+    family.stem === undefined
+      ? familyFileName(source, family.compression)
+      : glbTextureFileName(source, family.stem, family.compression);
   const file = path.join(jobDir, ...family.output.split("/"));
   const bytes = await readOutputFile(file);
   const header = bytes ? readKtx2Header(bytes) : null;
@@ -379,7 +391,7 @@ async function admitFamily(
   if (!bytes || !header || !formats.includes(header.vkFormat) || header.supercompression !== 0) return null;
   return {
     path: file,
-    file: familyFileName(source, family.compression),
+    file: name,
     bytes: bytes.byteLength,
     sha256: sha256(bytes),
   };
