@@ -93,6 +93,7 @@ import {
   wgslTomlFragment,
   withEngineRow,
 } from "../../src/substrate/genex-toml.ts";
+import { TextureUsage } from "../../src/substrate/asset-import/basis-encoder.ts";
 import { tmpDir } from "../helpers/tmp.ts";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
@@ -262,6 +263,51 @@ describe("genex.toml: the schema", () => {
   for (const [name, text, code] of hostile) {
     it(`refuses ${name} with ${code}`, () => {
       assert.equal(refusedCode(parseGenexToml(text)), code);
+    });
+  }
+});
+
+/** A `[[texture]]` row (C-10): a loose texture's usage, for what no material slot can tell. */
+const textureRow = (file: string, usage: string) => `[[texture]]\npath = "${file}"\nusage = "${usage}"\n`;
+
+describe("genex.toml: [[texture]] rows declare a loose texture's usage (C-10)", () => {
+  it("reads each row as a path under assets/ and a usage, in file order, and none when the file has none", () => {
+    const manifest = accepted(
+      `${GAME}${textureRow("textures/flow.png", "data")}${textureRow("ui/badge.webp", "color")}${textureRow("rock_n.jpg", "normal")}`,
+    );
+    assert.deepEqual(manifest.textures, [
+      { path: "textures/flow.png", usage: TextureUsage.Data },
+      { path: "ui/badge.webp", usage: TextureUsage.Color },
+      { path: "rock_n.jpg", usage: TextureUsage.Normal },
+    ]);
+    assert.deepEqual(accepted(GAME).textures, []);
+  });
+
+  const refused: Array<[string, string, string]> = [
+    ["a usage outside color, data and normal", textureRow("bark.png", "albedo"), GenexTomlCode.InvalidTextureUsage],
+    ["a usage in another case", textureRow("bark.png", "Normal"), GenexTomlCode.InvalidTextureUsage],
+    ["an empty usage", textureRow("bark.png", ""), GenexTomlCode.InvalidTextureUsage],
+    ["a path that climbs out of assets/", textureRow("../index.png", "color"), GenexTomlCode.InvalidTextureUsage],
+    ["a path climbing midway", textureRow("a/../../b.png", "color"), GenexTomlCode.InvalidTextureUsage],
+    ["an absolute path", textureRow("/etc/x.png", "color"), GenexTomlCode.InvalidTextureUsage],
+    ["a backslash path", textureRow("a\\\\b.png", "color"), GenexTomlCode.InvalidTextureUsage],
+    ["a path with an empty segment", textureRow("a//b.png", "color"), GenexTomlCode.InvalidTextureUsage],
+    ["a texture already encoded (KTX2)", textureRow("bark.ktx2", "color"), GenexTomlCode.InvalidTextureUsage],
+    ["a path that is not an image", textureRow("notes.txt", "data"), GenexTomlCode.InvalidTextureUsage],
+    [
+      "the same path twice, even with one usage",
+      `${textureRow("bark.png", "color")}${textureRow("bark.png", "color")}`,
+      GenexTomlCode.InvalidTextureUsage,
+    ],
+    ["a row without a usage", '[[texture]]\npath = "bark.png"\n', GenexTomlCode.Syntax],
+    ["a row without a path", '[[texture]]\nusage = "color"\n', GenexTomlCode.Syntax],
+    ["a usage of the wrong type", '[[texture]]\npath = "bark.png"\nusage = 1\n', GenexTomlCode.Syntax],
+    ["an unknown key in a row", `${textureRow("bark.png", "color")}srgb = true\n`, GenexTomlCode.Syntax],
+    ["[texture] as a single table", '[texture]\npath = "bark.png"\nusage = "color"\n', GenexTomlCode.Syntax],
+  ];
+  for (const [name, row, code] of refused) {
+    it(`refuses ${name} with ${code}`, () => {
+      assert.equal(refusedCode(parseGenexToml(`${GAME}${row}`)), code);
     });
   }
 });

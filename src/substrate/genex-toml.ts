@@ -58,6 +58,10 @@
  * [physics]                 # optional: a game without physics leaves Rapier out of its build
  * enabled = false           # default true
  *
+ * [[texture]]               # optional: a loose texture's usage, where no material slot tells it
+ * path = "textures/flow.png"   # under assets/: a PNG, JPEG or WebP (`isTextureRowPath`)
+ * usage = "data"            # color | data | normal (`asset-import/texture-usage.ts`)
+ *
  * [engine]                  # written by the host alone when the person ejects the engine (level 5)
  * ejected_from = "0.1.0"    # the genex release copied into `engine/`; the build links that fork
  * ```
@@ -128,6 +132,7 @@ import {
   RenderTomlKey,
   WGSL_EXTENSION_APIS,
 } from "../shared/render-quality.ts";
+import { isTextureRowPath, isTextureUsage, type TextureRow } from "./asset-import/texture-usage.ts";
 import { readRegularFile } from "./fsx.ts";
 import { isInside } from "./paths.ts";
 import { GENEX_MANIFEST } from "./project-shape.ts";
@@ -190,6 +195,11 @@ export const GenexTomlCode = {
   InvalidRenderLoading: "invalid-render-loading",
   /** A `[web] wasm_budget_mb` outside `WEB_WASM_BUDGET_MIN_MB..=WEB_WASM_CEILING_MB`. */
   InvalidWebBudget: "invalid-web-budget",
+  /**
+   * A `[[texture]]` row whose usage is not `color`, `data` or `normal`, whose path is not a safe
+   * path under `assets/` to a PNG, JPEG or WebP, or whose path another row already names.
+   */
+  InvalidTextureUsage: "invalid-texture-usage",
 } as const;
 export type GenexTomlCode = (typeof GenexTomlCode)[keyof typeof GenexTomlCode];
 
@@ -284,6 +294,8 @@ export interface GenexToml {
    * fifth of a web build's code; absent or true keeps it (renderer pass 2, owner decision D11).
    */
   physics?: boolean;
+  /** `[[texture]]` rows in file order: loose textures' usages (C-10); absent from a manifest built by hand. */
+  textures?: readonly TextureRow[];
 }
 
 /** A refusal with its typed code and a short detail naming the offending value (never a host path). */
@@ -334,7 +346,9 @@ export function parseGenexToml(text: string): GenexTomlResult {
     checkEngine(shaped.manifest) ??
     checkWeb(shaped.manifest);
   if (checked) return checked;
-  const featured = checkFeatures(shaped.manifest, shaped.featureNames);
+  const textures = checkTextures(shaped.rawTextures);
+  if (!textures.ok) return textures;
+  const featured = checkFeatures({ ...shaped.manifest, textures: textures.rows }, shaped.featureNames);
   if (!featured.ok || shaped.render === null) return featured;
   const render = checkRender(shaped.render);
   return render.ok ? { ok: true, manifest: { ...featured.manifest, render: render.render } } : render;
@@ -425,7 +439,18 @@ function withoutEngineSection(text: string): string {
 
 // ── Schema ──────────────────────────────────────────────────────────────────────────────────────
 
-const TOP_KEYS = ["game", "crates", "crate_request", "wgsl", "gpu", "engine", "render", "web", "physics"] as const;
+const TOP_KEYS = [
+  "game",
+  "crates",
+  "crate_request",
+  "wgsl",
+  "gpu",
+  "engine",
+  "render",
+  "web",
+  "physics",
+  "texture",
+] as const;
 const ENGINE_KEYS = ["ejected_from"] as const;
 /** The `[engine]` section header the host writes and removes. */
 const ENGINE_HEADER = "[engine]";
@@ -449,6 +474,9 @@ const WebKey = { WasmBudgetMb: "wasm_budget_mb" } as const;
 const WEB_KEYS: readonly string[] = Object.values(WebKey);
 const PhysicsKey = { Enabled: "enabled" } as const;
 const PHYSICS_KEYS: readonly string[] = Object.values(PhysicsKey);
+/** A `[[texture]]` row's keys (genex's `TextureRow`). */
+const TextureKey = { Path: "path", Usage: "usage" } as const;
+const TEXTURE_KEYS: readonly string[] = Object.values(TextureKey);
 const WGSL_KINDS: readonly string[] = Object.values(WgslKind);
 const NATIVE_FEATURES: readonly string[] = Object.values(NativeEnhancedFeature);
 
@@ -460,8 +488,20 @@ const isNativeFeature = (value: string): value is NativeEnhancedFeature => NATIV
  * {@link checkFeatures}, the `[render]` values by {@link checkRender}.
  */
 type Shaped =
-  | { ok: true; manifest: GenexToml; featureNames: readonly string[]; render: RawRender | null }
+  | {
+      ok: true;
+      manifest: GenexToml;
+      featureNames: readonly string[];
+      render: RawRender | null;
+      rawTextures: readonly RawTexture[];
+    }
   | GenexTomlRefusal;
+
+/** One `[[texture]]` row of the right shape: two strings, not yet checked. */
+interface RawTexture {
+  path: string;
+  usage: string;
+}
 
 /** One `[render.class.<class>]` of the right shape: its name and values not yet checked. */
 interface RawClass {
@@ -509,6 +549,7 @@ function shapeManifest(document: TomlTable): Shaped {
     onlyKeys(game, GAME_KEYS, "[game]");
     const featureNames = gpuFeatures(document.gpu);
     const render = renderTable(document.render);
+    const rawTextures = textureRows(document.texture);
     const manifest: GenexToml = {
       title: string(game.title, "game.title"),
       worldSize: worldSize(game.world_size),
@@ -522,7 +563,7 @@ function shapeManifest(document: TomlTable): Shaped {
       wasmBudgetMb: webBudget(document.web),
       physics: physicsEnabled(document.physics),
     };
-    return { ok: true, manifest, featureNames, render };
+    return { ok: true, manifest, featureNames, render, rawTextures };
   } catch (error) {
     if (error instanceof ShapeError) return refuse(GenexTomlCode.Syntax, error.message);
     throw error;
@@ -599,6 +640,20 @@ function wgslSources(value: TomlValue | undefined): WgslSource[] {
     if (!isWgslKind(kind)) throw new ShapeError(`unknown wgsl.kind "${kind}"`);
     const api = source.api === undefined ? DEFAULT_WGSL_API : integer(source.api, "wgsl.api");
     return { path: string(source.path, "wgsl.path"), kind, api };
+  });
+}
+
+/** `[[texture]]` rows as two strings each, in file order (their values are {@link checkTextures}'s). */
+function textureRows(value: TomlValue | undefined): RawTexture[] {
+  if (value === undefined) return [];
+  if (!Array.isArray(value) || !value.every(isTable)) throw new ShapeError("[[texture]] must be an array of tables");
+  return value.map((entry) => {
+    const row = table(entry, "[[texture]]");
+    onlyKeys(row, TEXTURE_KEYS, "[[texture]]");
+    return {
+      path: string(row[TextureKey.Path], `texture.${TextureKey.Path}`),
+      usage: string(row[TextureKey.Usage], `texture.${TextureKey.Usage}`),
+    };
   });
 }
 
@@ -748,6 +803,19 @@ function gpuFeatures(value: TomlValue | undefined): readonly string[] {
   const features = gpu.native_features ?? [];
   if (!Array.isArray(features)) throw new ShapeError("gpu.native_features must be an array of strings");
   return features.map((feature) => string(feature, "gpu.native_features"));
+}
+
+/** Each `[[texture]]` row names a usage of the vocabulary and an encodable image under `assets/`, and no path twice. */
+function checkTextures(rows: readonly RawTexture[]): { ok: true; rows: TextureRow[] } | GenexTomlRefusal {
+  const seen = new Set<string>();
+  const checked: TextureRow[] = [];
+  for (const { path: file, usage } of rows) {
+    if (!isTextureUsage(usage)) return refuse(GenexTomlCode.InvalidTextureUsage, `${file} usage ${usage}`);
+    if (!isTextureRowPath(file) || seen.has(file)) return refuse(GenexTomlCode.InvalidTextureUsage, file);
+    seen.add(file);
+    checked.push({ path: file, usage });
+  }
+  return { ok: true, rows: checked };
 }
 
 /** A web budget the game names is a whole number of MB from the minimum to the ceiling. */
