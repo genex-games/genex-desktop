@@ -660,6 +660,24 @@ A part also carries its material's `KHR_materials_*` extensions (`GlbPart::mater
 defaults and clamped into range, textures named by their image on TEXCOORD_0. They are read, not
 yet shaded: no GPU row carries them.
 
+### The mesh arena: adding and removing meshes
+
+The library (`MeshLibrary`) is the CPU mirror of the mesh arena (`src/mesh_arena.rs`): one GPU
+buffer each for vertices, slots, indices, skin rows and the three meshlet tables. The library
+places every mesh with a `RowAllocator` per stream (best fit over freed ranges, else the end; with
+no removals meshes pack back to back in add order). An add writes only that mesh's rows. A full
+stream is remade at twice its size, and the GPU copies the live prefix. No stream passes the
+128 MiB storage binding (`buffer-too-large`). On WebGPU and phones, a growth that would hold more
+than 256 MiB at once (old and new buffers) is refused `stream-arena-full`.
+
+`Renderer::remove_mesh` removes a mesh and its levels of detail. Their rows go to the next mesh
+that fits, and the slot is reused with its generation moved on. A skinned mesh and the built-in
+cube and sphere are refused `mesh-invalid`. A `MeshId` carries its slot's generation, so the old id
+names nothing: a draw of it is skipped and counted (`FrameStats::stale_rows`), never drawn as the
+slot's new mesh. An id the library never handed out still refuses the frame. `Resilient` logs each
+removal and drops an upload's data once all its meshes are removed. A replay then holds those
+slots empty and frees them at the removal, so every id comes back the same.
+
 ### Compressed material textures
 
 `src/texture_ktx2.rs` reads a KTX2 file in one fixed GPU format with the `ktx2` crate:

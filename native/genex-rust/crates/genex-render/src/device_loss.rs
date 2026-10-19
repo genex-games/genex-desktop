@@ -9,6 +9,12 @@
 //! cache: every id is the same and the next frame draws the identical image. Each recovery bumps
 //! [`Resilient::generation`], the ring generation the Live sender re-announces.
 //!
+//! A mesh removed with [`Resilient::remove_mesh`] (game systems STR-2) is replayed as its removal:
+//! the cache logs the ids each removal freed, and once every mesh of an upload is gone the upload
+//! keeps no data, only how many slots it held. A replay holds those slots empty and frees them
+//! where the removal was, so every live id, every removed id's generation and every slot a later
+//! mesh reused come back the same.
+//!
 //! The facade's studio presenter draws through a [`Resilient`]: a frame or capture on a lost
 //! device answers `device-lost` (the `capture` verb's refusal), and the studio loop calls
 //! [`Resilient::recover`] between requests, rebuilds the game's custom passes on the new device and
@@ -26,6 +32,7 @@
 //! out (a capture's settle: Live's TAA, temporal AO and exposure go on where they were, review
 //! F5); any other renderer swapped in starts its history over.
 
+use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -131,6 +138,11 @@ enum Upload {
     Emitter(EmitterDesc),
     /// A flipbook atlas (renderer pass 2 A.11), kept.
     ParticleAtlas(ParticleAtlas),
+    /// A mesh upload whose meshes were all removed (STR-2): only the slots it held (its parts and
+    /// their levels), held empty at a replay so the ids after it come back the same.
+    Vacant(u32),
+    /// A removal (STR-2): every id it freed, the mesh's first, freed again at a replay.
+    Removed(Vec<MeshId>),
 }
 
 /// A Level-2 source as it was admitted: its API, WGSL, uniform bytes and game textures.
@@ -186,7 +198,8 @@ impl Upload {
             Upload::Emitter(_) => std::mem::size_of::<EmitterDesc>() as u64,
             Upload::ParticleAtlas(atlas) => texture_bytes(&atlas.image),
             Upload::Compressed(texture, _) => texture.levels().iter().map(|level| level.len() as u64).sum(),
-            Upload::MeshesFrom(_) | Upload::TextureFrom(..) | Upload::CompressedFrom(..) => 0,
+            Upload::Removed(ids) => std::mem::size_of_val(ids.as_slice()) as u64,
+            Upload::MeshesFrom(_) | Upload::TextureFrom(..) | Upload::CompressedFrom(..) | Upload::Vacant(_) => 0,
         }
     }
 }
@@ -206,6 +219,8 @@ impl std::fmt::Debug for Upload {
             Upload::PostPass(stage, _) => f.debug_tuple("PostPass").field(stage).finish(),
             Upload::Emitter(desc) => f.debug_tuple("Emitter").field(desc).finish(),
             Upload::ParticleAtlas(atlas) => f.debug_tuple("ParticleAtlas").field(&(atlas.image.width(), atlas.image.height(), atlas.columns, atlas.rows)).finish(),
+            Upload::Vacant(slots) => f.debug_tuple("Vacant").field(slots).finish(),
+            Upload::Removed(ids) => f.debug_tuple("Removed").field(&ids.len()).finish(),
         }
     }
 }
@@ -313,6 +328,16 @@ pub struct Resilient {
     window: WindowPresent,
     /// Frames drawn, by whichever renderer was in use.
     frames: u64,
+    /// Every live mesh slot (parts and their levels) and the upload that made it (STR-2).
+    mesh_upload: BTreeMap<MeshId, usize>,
+    /// Per mesh upload still in the cache: the slots it held and how many are live.
+    upload_slots: BTreeMap<usize, (u32, u32)>,
+}
+
+/// The slots `ids` (a mesh upload's parts) hold in `renderer`: each part, then its levels.
+fn held_slots(renderer: &FrameRenderer, ids: &[MeshId]) -> Vec<MeshId> {
+    let library = renderer.renderer().library();
+    ids.iter().flat_map(|id| std::iter::once(*id).chain(library.lods(*id).map(|lods| lods.levels.clone()).unwrap_or_default())).collect()
 }
 
 impl Resilient {
@@ -341,6 +366,8 @@ impl Resilient {
             spare: None,
             window: WindowPresent::default(),
             frames: 0,
+            mesh_upload: BTreeMap::new(),
+            upload_slots: BTreeMap::new(),
         })
     }
 
@@ -412,7 +439,37 @@ impl Resilient {
 
     /// Add a mesh (kept for replay).
     pub fn add_mesh(&mut self, mesh: MeshData) -> Result<MeshId, RenderError> {
-        self.upload(Upload::Mesh(mesh.clone()), |r, gpu| r.add_mesh(gpu, mesh))
+        let id = self.upload(Upload::Mesh(mesh.clone()), |r, gpu| r.add_mesh(gpu, mesh))?;
+        self.note_mesh_upload(&[id]);
+        Ok(id)
+    }
+
+    /// Remember which upload (the last one) made the slots of `ids`, for [`Resilient::remove_mesh`].
+    fn note_mesh_upload(&mut self, ids: &[MeshId]) {
+        let at = self.uploads.len() - 1;
+        let slots = held_slots(&self.renderer, ids);
+        let held = slots.len() as u32;
+        self.mesh_upload.extend(slots.into_iter().map(|slot| (slot, at)));
+        self.upload_slots.insert(at, (held, held));
+    }
+
+    /// Remove mesh `id` and its levels ([`crate::Renderer::remove_mesh`], STR-2), logged for
+    /// replay: the cache drops the upload's data once all its meshes are removed, and a replay
+    /// keeps every id. Answers every id freed; `device-lost` while the device is lost.
+    pub fn remove_mesh(&mut self, id: MeshId) -> Result<Vec<MeshId>, RenderError> {
+        self.healthy()?;
+        let freed = self.renderer.renderer_mut().remove_mesh(id).map_err(|e| self.lost_or(e))?;
+        for slot in &freed {
+            let Some(at) = self.mesh_upload.remove(slot) else { continue };
+            let Some((held, live)) = self.upload_slots.get_mut(&at) else { continue };
+            *live -= 1;
+            if *live == 0 {
+                self.uploads[at] = Arc::new(Upload::Vacant(*held));
+                self.upload_slots.remove(&at);
+            }
+        }
+        self.uploads.push(Arc::new(Upload::Removed(freed.clone())));
+        Ok(freed)
     }
 
     /// Add every part of one model with one library upload (kept for replay as one).
@@ -429,14 +486,18 @@ impl Resilient {
     /// [`Resilient::add_meshes_with_meshlets`] with each part's levels of detail (renderer pass 2
     /// A6.9), kept for replay with them.
     pub fn add_model_parts(&mut self, parts: ModelParts) -> Result<Vec<MeshId>, RenderError> {
-        self.upload(Upload::Meshes(parts.clone()), |r, gpu| r.add_model_parts(gpu, parts))
+        let ids = self.upload(Upload::Meshes(parts.clone()), |r, gpu| r.add_model_parts(gpu, parts))?;
+        self.note_mesh_upload(&ids);
+        Ok(ids)
     }
 
     /// [`Resilient::add_meshes_with_meshlets`] for parts that `source` decodes again (bytes the
     /// program holds for its whole life, a game's compiled assets): nothing is kept, and a replay
     /// takes the parts from `source`.
     pub fn add_meshes_from(&mut self, parts: ModelParts, source: PartsSource) -> Result<Vec<MeshId>, RenderError> {
-        self.upload(Upload::MeshesFrom(source), |r, gpu| r.add_model_parts(gpu, parts))
+        let ids = self.upload(Upload::MeshesFrom(source), |r, gpu| r.add_model_parts(gpu, parts))?;
+        self.note_mesh_upload(&ids);
+        Ok(ids)
     }
 
     /// Cluster the game's meshes by `meshlets` from now on ([`crate::Renderer::set_meshlets`]);
@@ -791,5 +852,17 @@ fn replay(renderer: &mut FrameRenderer, gpu: &Gpu, upload: &Upload) -> Result<()
         Upload::PostPass(stage, kept) => renderer.add_post_pass_api(gpu, kept.api, *stage, &kept.wgsl, &kept.uniforms, &kept.textures).map(drop),
         Upload::Emitter(desc) => renderer.add_emitter(gpu, *desc).map(drop),
         Upload::ParticleAtlas(atlas) => renderer.add_particle_atlas(gpu, atlas).map(drop),
+        Upload::Vacant(slots) => {
+            for _ in 0..*slots {
+                renderer.renderer_mut().hold_mesh_slot();
+            }
+            Ok(())
+        }
+        Upload::Removed(ids) => {
+            for id in ids {
+                renderer.renderer_mut().vacate_mesh(*id);
+            }
+            Ok(())
+        }
     }
 }

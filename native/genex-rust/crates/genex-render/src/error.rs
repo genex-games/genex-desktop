@@ -40,6 +40,10 @@ pub enum RenderCode {
     /// validation caught an error inside it (`NativeRefusal.GpuPassInvalid`). The detail names the
     /// pass.
     GpuPassInvalid,
+    /// Growing the mesh arena would hold more than its peak limit at once (WebGPU and phones:
+    /// [`crate::mesh_arena::ARENA_PEAK_MAX_BYTES_CONSTRAINED`]); nothing was made or written, and
+    /// the caller evicts first (game systems STR-2).
+    StreamArenaFull,
 }
 
 impl RenderCode {
@@ -60,6 +64,7 @@ impl RenderCode {
             RenderCode::DeviceLost => "device-lost",
             RenderCode::NativeFeatureMissing => "native-feature-missing",
             RenderCode::GpuPassInvalid => "gpu-pass-invalid",
+            RenderCode::StreamArenaFull => "stream-arena-full",
         }
     }
 }

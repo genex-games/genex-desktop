@@ -151,7 +151,7 @@ use crate::layout::{
     GpuPassView, MAX_CASCADES, SHADOW_CASCADES,
 };
 use crate::mesh::{MeshData, Vertex};
-use crate::mesh_arena::{ArenaSources, ArenaStream, MeshArena, QueueDevice};
+use crate::mesh_arena::{ARENA_PEAK_MAX_BYTES_CONSTRAINED, ArenaSources, ArenaStream, MeshArena, QueueDevice};
 use crate::meshlet::MeshletSet;
 use crate::meshlet_cull::{
     ArgsSlot, CullExternals, CullPass as MeshletPass, HistoryUse, MeshletBuffers, MeshletCullNode, MeshletDrawLayouts, MeshletFrame, MeshletPipelineSpec, MeshletPipelines,
@@ -319,6 +319,12 @@ pub struct FrameStats {
     pub occlusion: bool,
     /// Shadow layers drawn from the static cache with the dynamic overlay (renderer pass 2, B.6).
     pub shadow_layers_cached: u32,
+    /// Instance rows skipped because their mesh was removed (game systems STR-2,
+    /// [`crate::scene::FramePlan::stale_rows`]).
+    pub stale_rows: u32,
+    /// Times the mesh arena grew while the frame was planned and its graph ran: always 0, since
+    /// growth is queue work between frames (STR-2's "no growth inside a pass" row reads it).
+    pub arena_grows: u32,
 }
 
 /// How the last frame's world pass was set up (graph nodes 12-16).
@@ -829,8 +835,11 @@ pub struct Renderer {
     /// The queue the next frame uploads re-clustered meshlet buffers on.
     queue: Queue,
     meshes: MeshBuffers,
-    /// The library's streams on the GPU, each written only where the library grew (STR-1).
+    /// The library's streams on the GPU, each written only where the library changed (STR-1,
+    /// STR-2).
     mesh_arena: MeshArena<Buffer>,
+    /// The arena's growths when the frame being drawn began ([`FrameStats::arena_grows`]).
+    frame_arena_grows: u64,
     /// Times a model's rows went up to the mesh arena (one per add).
     mesh_uploads: u64,
     layouts: Layouts,
@@ -1426,12 +1435,17 @@ fn mesh_buffers(arena: &MeshArena<Buffer>) -> MeshBuffers {
     }
 }
 
-/// The library's streams on the GPU, written whole (the renderer's first library).
+/// The library's streams on the GPU, written whole (the renderer's first library). On WebGPU and
+/// phones a growth whose old and new buffers together would pass
+/// [`ARENA_PEAK_MAX_BYTES_CONSTRAINED`] is refused `stream-arena-full` (STR-2).
 fn mesh_arena(device: &Device, queue: &Queue, library: &MeshLibrary) -> Result<MeshArena<Buffer>, RenderError> {
     let mut arena_device = QueueDevice::new(device, queue);
     let arena = MeshArena::new(&mut arena_device, &ArenaSources::of(library, true));
     arena_device.finish();
-    arena
+    let mut arena = arena?;
+    let constrained = cfg!(any(target_arch = "wasm32", target_os = "ios", target_os = "android"));
+    arena.set_peak_limit(constrained.then_some(ARENA_PEAK_MAX_BYTES_CONSTRAINED));
+    Ok(arena)
 }
 
 /// The sample count `options` gets on this device: 4 when both target formats take it.
@@ -2586,6 +2600,7 @@ fn frame_stats(plan: &FramePlan) -> FrameStats {
         batches: plan.batches.len() as u32,
         views: plan.views,
         skin_jobs: plan.skin_jobs.len() as u32,
+        stale_rows: plan.stale_rows,
         ..FrameStats::default()
     }
 }
@@ -2685,6 +2700,7 @@ impl Renderer {
             last_world: None,
             meshes,
             mesh_arena: arena,
+            frame_arena_grows: 0,
             mesh_uploads: 0,
             cull: CullPass::new(&device)?,
             skinning: SkinPass::new(&device)?,
@@ -3358,16 +3374,38 @@ impl Renderer {
         Ok(ids)
     }
 
-    /// Write the rows the library gained into the mesh arena (its meshlet tables only while they
-    /// are up: tables that are down go up whole when a frame draws meshlets).
+    /// Write the rows the library gained, and the freed rows it filled again, into the mesh arena
+    /// (its meshlet tables only while they are up: tables that are down go up whole when a frame
+    /// draws meshlets). Growth copies and writes are queue work ahead of the next frame's
+    /// submission, so a frame never sees a half-grown arena (STR-2).
     fn sync_meshes(&mut self, device: &Device, queue: &Queue) -> Result<(), RenderError> {
+        let rewrites = self.library.take_rewrites();
         let mut arena_device = QueueDevice::new(device, queue);
-        let synced = self.mesh_arena.sync(&mut arena_device, &ArenaSources::of(&self.library, !self.meshlet_upload_pending));
+        let sources = ArenaSources::of(&self.library, !self.meshlet_upload_pending);
+        let synced = self.mesh_arena.sync_with(&mut arena_device, &sources, &rewrites);
         arena_device.finish();
         synced?;
         self.meshes = mesh_buffers(&self.mesh_arena);
         self.mesh_uploads += 1;
         Ok(())
+    }
+
+    /// Remove mesh `id` and its levels of detail ([`MeshLibrary::remove`], game systems STR-2):
+    /// their rows go to the next mesh that fits, nothing is uploaded, and a later draw of `id` is
+    /// skipped and counted ([`FrameStats::stale_rows`]). Refused `mesh-invalid` for an id that
+    /// names no mesh, a level, a skinned mesh or a built-in primitive. Answers every id freed.
+    pub fn remove_mesh(&mut self, id: MeshId) -> Result<Vec<MeshId>, RenderError> {
+        self.library.remove(id)
+    }
+
+    /// Free slot `id` whatever it holds (a replay's removal, [`MeshLibrary::vacate`]).
+    pub(crate) fn vacate_mesh(&mut self, id: MeshId) -> bool {
+        self.library.vacate(id)
+    }
+
+    /// Hold the next mesh slot with no rows (a replay of an upload whose meshes were all removed).
+    pub(crate) fn hold_mesh_slot(&mut self) -> MeshId {
+        self.library.hold_slot()
     }
 
     /// Replace the arena's meshlet tables with the library's (`up`) or give them back.
@@ -4366,6 +4404,7 @@ impl Renderer {
     /// frame LDR) besides the renderer's own and what the frame's stages ask of the depth/normal
     /// prepass. Nothing reaches the GPU queue yet.
     pub(crate) fn begin_frame_prepass(&mut self, scene: &Scene, path: CullPath, stage_reason: Option<LdrReason>, stage: StagePrepass) -> Result<FramePrep, RenderError> {
+        self.frame_arena_grows = self.mesh_arena.stats().grows;
         let (device, queue) = (self.device.clone(), self.queue.clone());
         self.upload_meshlets(&device, &queue)?;
         let render = self.render_size();
@@ -4435,6 +4474,7 @@ impl Renderer {
             self.temporal_last[set_index(self.temporal.set)] = Some(last);
         }
         self.stats = done.stats;
+        self.stats.arena_grows = (self.mesh_arena.stats().grows - self.frame_arena_grows) as u32;
         self.last_world = done.world;
         self.last_prepass = done.prepass;
         self.last_cpu = prep.uploads.cpu_culls.into_iter().next();
