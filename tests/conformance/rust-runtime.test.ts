@@ -115,6 +115,8 @@ const NATIVE_OPS = [
   NativeOp.Visible,
 ] as const;
 const EMBED_OPS = process.platform === "darwin" ? [NativeOp.Surface, NativeOp.Release] : [];
+/** The asset tools a native run knows and answers `unavailable` until their runtime lands (`Op::ASSET_TOOLS`). */
+const ASSET_TOOL_OPS = [NativeOp.BakeAssets, NativeOp.ReloadAssets] as const;
 
 function needsGame(): { skip?: string } {
   if (process.platform === "win32") return { skip: "not run: fd 3 and process groups are POSIX" };
@@ -484,7 +486,7 @@ describe("the Rust runtime over fd 3: verbs", { ...NEEDS, timeout: SUITE_TIMEOUT
     const run = await startRaw();
     const reply = await run.ask({ op: "teleport" });
     assert.equal(reply.error, NativeOpError.UnknownOp);
-    assert.deepEqual(reply.available, [...NATIVE_OPS, ...EMBED_OPS].sort());
+    assert.deepEqual(reply.available, [...NATIVE_OPS, ...EMBED_OPS, ...ASSET_TOOL_OPS].sort());
     const timed = await run.ask({ op: NativeOp.Input, arg: { actions: [{ type: "hold", keys: ["KeyD"], ms: 100 }] } });
     assert.deepEqual(timed.result, { held: [], ignored: 1 }, "a timed action is the host's to expand");
   });
