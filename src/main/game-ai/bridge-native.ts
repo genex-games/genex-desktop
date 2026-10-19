@@ -23,7 +23,7 @@ import {
   PLAY_AI_MAX_IN_FLIGHT,
   type PlayAiLine,
   PlayAiOp,
-  type PlayAiOpArgs,
+  type PlayAiOutgoing,
   type PlayHello,
   takesAiOp,
 } from "../../shared/play-protocol.ts";
@@ -194,7 +194,7 @@ interface Pending {
 }
 
 /** One AI op to write to a game: an answer by its rid, or a streamed answer's text so far. */
-export type AiOutgoing = { [O in PlayAiOp]: { op: O; args: PlayAiOpArgs[O] } }[PlayAiOp];
+export type AiOutgoing = PlayAiOutgoing;
 type Outgoing = AiOutgoing;
 
 /** The bridge's state: unanswered lines in arrival order, and refusals not yet written. */

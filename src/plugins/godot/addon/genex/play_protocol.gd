@@ -5,6 +5,9 @@
 # Requests arrive as JSON lines on stdin and every reply is one JSON line on stdout; logs go to stderr.
 # Time runs in physics ticks at the game's fixed rate: while paused (SceneTree.paused) nothing
 # moves, input waits for the next tick, and `step` runs whole ticks.
+# A game that uses play-time AI (the GenexAI autoload, genex_ai.gd) declares the `ai` capability:
+# its `ai` lines go out through here, and the studio's `ai.reply` and `ai.delta` ops come back in
+# order with every other op, so an answer lands before the step it was sent ahead of.
 extends Node
 
 const PROTOCOL := 3
@@ -14,6 +17,8 @@ const MAX_TYPE_CHARS := 2000
 const MAX_STATE_NODES := 4000
 const WHEEL_UNIT := 120.0
 const CORE_OPS := ["hello", "screenshot", "pointer", "key", "type", "look", "wheel", "act", "pause", "play", "step", "reset", "state", "quit"]
+const AI_NODE := "/root/GenexAI"
+const AI_OPS := ["ai.reply", "ai.delta"]
 const BUTTONS := {"left": MOUSE_BUTTON_LEFT, "middle": MOUSE_BUTTON_MIDDLE, "right": MOUSE_BUTTON_RIGHT}
 const NAMED_CODES := {
 	"Space": KEY_SPACE, "Enter": KEY_ENTER, "Escape": KEY_ESCAPE, "Tab": KEY_TAB, "Backspace": KEY_BACKSPACE,
@@ -113,6 +118,9 @@ func _handle_line(line: String) -> void:
 		return
 	var id = request.id
 	var op = request.get("op")
+	if typeof(op) == TYPE_STRING and op in AI_OPS and _ai() != null:
+		_handle_ai(id, op, request)
+		return
 	if typeof(op) != TYPE_STRING or not (op in CORE_OPS):
 		_fail(id, str(op) if typeof(op) == TYPE_STRING else "", "unknown-op", "Not an op of this game.", {"available": CORE_OPS})
 		return
@@ -126,6 +134,30 @@ func _handle_line(line: String) -> void:
 		return
 	var result = await call("_op_" + op, request)
 	_reply(id, op, result)
+
+
+# The studio's answer to one of the game's `ai` lines, or a streamed answer's text, handed to GenexAI.
+func _handle_ai(id, op: String, request: Dictionary) -> void:
+	if typeof(request.get("rid")) != TYPE_STRING:
+		_fail(id, op, "bad-args", "rid is the ai line's own id.")
+		return
+	var taken: bool = _ai().call("take_studio_op", op, request)
+	_reply(id, op, {"taken": taken})
+
+
+## Whether this game speaks the protocol on this run (started with --play-protocol).
+func speaks_protocol() -> bool:
+	return _reader != null
+
+
+## One `ai` line from GenexAI, id-less, on stdout like every reply.
+func emit_ai(line: Dictionary) -> void:
+	_emit(line)
+
+
+# The GenexAI autoload when the game has one; its methods are called by name, as the game's own are.
+func _ai() -> Node:
+	return get_node_or_null(AI_NODE)
 
 
 # --- Ticks: input given at a tick's start, the clock held between steps. ---
@@ -170,7 +202,7 @@ func _op_hello(_r: Dictionary) -> Dictionary:
 		"build": {"id": "godot-%s" % Engine.get_version_info().string},
 		"capabilities": {
 			"pointer": "absolute", "clock": "step-locked", "state": "game", "seed": true,
-			"actions": actions, "screenshot": ["jpeg", "png"],
+			"actions": actions, "screenshot": ["jpeg", "png"], "ai": _ai() != null,
 		},
 		"ops": [],
 		"unsupported": [] if not actions.is_empty() else ["act"],
@@ -290,6 +322,8 @@ func _op_reset(r: Dictionary) -> Dictionary:
 	_clear_echo()
 	_pointer = Vector2.ZERO
 	seed(int(r.seed))
+	if _ai() != null:
+		_ai().call("forget_run")
 	get_tree().reload_current_scene()
 	await get_tree().process_frame
 	await get_tree().process_frame
@@ -312,8 +346,16 @@ func _op_state(_r: Dictionary) -> Dictionary:
 		"game": game,
 		"checksum": JSON.stringify(simulation).md5_text(),
 		"input": _echo.duplicate(true),
-		"volatile": {"fps": Engine.get_frames_per_second(), "frames": Engine.get_process_frames()},
+		"volatile": _volatile(),
 	}
+
+
+# What changes between two runs of the same seed: the frame rate, the frame count, the AI lines' rids.
+func _volatile() -> Dictionary:
+	var volatile := {"fps": Engine.get_frames_per_second(), "frames": Engine.get_process_frames()}
+	if _ai() != null:
+		volatile["ai"] = _ai().call("echo")
+	return volatile
 
 
 func _op_quit(_r: Dictionary) -> Dictionary:
