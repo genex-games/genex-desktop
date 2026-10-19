@@ -157,6 +157,8 @@ export interface GameAiGrants {
   stopDoor(door: AiDoor): Promise<AiGameKey[]>;
   /** The person already agreed to this door for this game (first-use consent per game and door); a payer change forgets it. */
   consented(game: AiGameKey, door: AiDoor): boolean;
+  /** AI is turned off for this game: on its grant, or by the person before it held one. */
+  isOff(game: AiGameKey): boolean;
   list(): AiGrantRecord[];
   /** What the game may see of its grant. */
   view(grant: AiGrantRecord): AiBudgetView;
