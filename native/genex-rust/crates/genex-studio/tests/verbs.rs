@@ -203,7 +203,7 @@ fn names(value: &Value) -> Vec<String> {
 /// genex-core's dispatcher with every op this studio answers, each answering `{}`.
 fn core_dispatcher() -> Dispatcher {
     let mut calls = Dispatcher::default();
-    for op in Op::ALL {
+    for op in Op::ALL.iter().chain(&Op::ASSET_TOOLS) {
         calls.on(op, |_| Answer::Result(Value::object()));
     }
     calls
@@ -247,9 +247,25 @@ fn an_unknown_op_names_every_op_sorted() {
     let mut game = Double::default();
     let reply = reply(&mut studio, &mut game, r#"{"id":3,"op":"surface"}"#);
     assert_eq!(reply["error"].as_str(), "unknown-op");
-    let mut sorted: Vec<String> = Op::ALL.iter().map(|op| (*op).to_owned()).collect();
+    // Game systems GF flipped: a native (dev) run also lists the asset tools it knows.
+    let mut sorted: Vec<String> = Op::ALL.iter().chain(&Op::ASSET_TOOLS).map(|op| (*op).to_owned()).collect();
     sorted.sort();
     assert_eq!(names(&reply["available"]), sorted);
+}
+
+#[test]
+fn a_native_run_knows_the_asset_tools_and_answers_them_unavailable_until_their_runtime_lands() {
+    let mut studio = ready_studio("");
+    let mut game = Double::default();
+    for (op, arg) in [(Op::BAKE_ASSETS, r#"{"kind":"nav","name":"main"}"#), (Op::RELOAD_ASSETS, r#"{"files":[]}"#)] {
+        let line = format!(r#"{{"id":8,"op":"{op}","arg":{arg}}}"#);
+        assert_eq!(refusal(&mut studio, &mut game, &line), "unavailable", "{op}");
+        // The web flavour serves an export too, which answers them unknown-op (CONTRACT.md).
+        let mut web = Studio::web();
+        web.mark_ready();
+        assert_eq!(refusal(&mut web, &mut game, &line), "unknown-op", "{op} on the web");
+    }
+    assert!(game.untouched());
 }
 
 #[test]

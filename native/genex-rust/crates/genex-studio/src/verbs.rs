@@ -80,6 +80,14 @@ impl Op {
     pub const RELEASE: &'static str = wire::OP_RELEASE;
     /// Read or change the renderer's quality (every flavour; `unavailable` until a game serves it).
     pub const RENDER_SETTINGS: &'static str = wire::OP_RENDER_SETTINGS;
+    /// Run one bake the game registered (dev flavour; NAV-14 and LOD-23 serve it).
+    pub const BAKE_ASSETS: &'static str = wire::OP_BAKE_ASSETS;
+    /// Swap changed asset files in a running dev game (dev flavour; C-18 serves it).
+    pub const RELOAD_ASSETS: &'static str = wire::OP_RELOAD_ASSETS;
+    /// The asset tools a native run (only the dev flavour links the studio natively) knows and
+    /// answers `unavailable` until their runtime lands; the web flavour, which an export serves too,
+    /// answers them `unknown-op` and never lists them (CONTRACT.md).
+    pub const ASSET_TOOLS: [&'static str; 2] = [Op::BAKE_ASSETS, Op::RELOAD_ASSETS];
     /// The ops only a game that can embed in Live serves; any other answers them `unknown-op`
     /// and never lists them, which the host reads as a game made before embedding.
     pub const EMBEDDING: [&'static str; 2] = [Op::SURFACE, Op::RELEASE];
@@ -155,6 +163,9 @@ impl VerbRefusal {
     pub const NO_FRAMES_SERVICE: &'static str = "no-frames-service";
     /// The ring's surfaces or their GPU bindings could not be made; no ring until the next `surface`.
     pub const SURFACE_FAILED: &'static str = "surface-failed";
+    /// A verb the game knows but this build cannot serve yet ([`Op::ASSET_TOOLS`] before their
+    /// runtime lands); the spelling `renderSettings` shares.
+    pub const UNAVAILABLE: &'static str = RenderSettingsRefusal::Unavailable.wire();
 }
 
 /// Why a game could not make the ring `surface` asked for.
@@ -926,6 +937,9 @@ impl Studio {
         if self.files && game.embeddable() {
             ops.extend(Op::EMBEDDING);
         }
+        if self.files {
+            ops.extend(Op::ASSET_TOOLS);
+        }
         ops
     }
 
@@ -955,6 +969,7 @@ impl Studio {
                 Answer::Result(object([("visible", Value::from(visible))]))
             }
             Op::RENDER_SETTINGS => Studio::render_settings(game, arg),
+            Op::BAKE_ASSETS | Op::RELOAD_ASSETS => refuse(VerbRefusal::UNAVAILABLE),
             // `handle` routes only the ops in this flavour's set here.
             _ => refuse(Refusal::UNKNOWN_OP),
         }
