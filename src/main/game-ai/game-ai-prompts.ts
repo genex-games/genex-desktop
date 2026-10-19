@@ -4,7 +4,7 @@
  * blocks, which no block a player writes can close. The one repair turn says only what was wrong
  * with the last answer. Prompts live here, beside the broker, so no door spells one of its own.
  */
-import { AiOp } from "../../shared/game-ai.ts";
+import { type AiCallRequest, AiOp, utf8Bytes } from "../../shared/game-ai.ts";
 import { AiOutputProblem, canonicalJson } from "../../shared/game-ai-schema.ts";
 import type { Message } from "../../shared/event-log.ts";
 import type { AiDoorRequest } from "./types.ts";
@@ -50,7 +50,10 @@ export const fencedText = (text: string): string => text.replace(FENCE_TAG, "‹
 
 /** The system text of a call: the preamble, the op's rule, the schema, then the game's own system text. */
 export function gameSystemPrompt(call: AiDoorRequest): string {
-  const { request } = call;
+  return systemTextOf(call.request);
+}
+
+function systemTextOf(request: AiCallRequest): string {
   const parts: string[] = [HOST_PREAMBLE, OP_RULE[request.op]];
   if (request.schema !== null) parts.push(MESSAGE.schema(request.schema));
   if (request.system) parts.push(request.system);
@@ -58,17 +61,27 @@ export function gameSystemPrompt(call: AiDoorRequest): string {
 }
 
 /** The game's prompt, its memory and the player's fenced fields, as the user turn. */
-function userTurn(call: AiDoorRequest): string {
-  const { request } = call;
+function userTurnOf(request: AiCallRequest): string {
   const parts = [request.prompt];
   if (request.memory) parts.push(MESSAGE.memory(request.memory));
   for (const [name, text] of Object.entries(request.untrusted)) parts.push(MESSAGE.untrusted(name, fencedText(text)));
   return parts.join("\n\n");
 }
 
+/**
+ * The fewest UTF-8 bytes a token takes, as a ceiling's divisor: English runs near four bytes a token,
+ * other scripts fewer, so two holds most text without reserving four times the real cost.
+ */
+const BYTES_PER_TOKEN_FLOOR = 2;
+
+/** How many tokens a call's framed prompt may take, at most: what a door's worst case and routing read. */
+export function promptTokensOf(request: AiCallRequest): number {
+  return Math.ceil(utf8Bytes(`${systemTextOf(request)}${userTurnOf(request)}`) / BYTES_PER_TOKEN_FLOOR);
+}
+
 /** A call as a chat: the user turn, and on the repair the failed answer and what was wrong with it. */
 export function gameMessages(call: AiDoorRequest): Message[] {
-  const messages: Message[] = [{ role: "user", content: userTurn(call) }];
+  const messages: Message[] = [{ role: "user", content: userTurnOf(call.request) }];
   if (!call.repair) return messages;
   messages.push({ role: "assistant", content: call.repair.previous });
   messages.push({ role: "user", content: call.repair.problem });

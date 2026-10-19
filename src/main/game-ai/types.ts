@@ -210,6 +210,8 @@ export interface GameAiDoorImpl {
   /** Worst-case cost of a call, in USD micros, from its prompt and output budget. */
   worstCaseMicros(request: AiCallRequest, model: AiModelRef): number;
   run(call: AiDoorRequest, signal: AbortSignal, onDelta?: (text: string) => void): Promise<AiDoorAnswer>;
+  /** On a plan: the share of its current window used (0–100) and when it resets; absent on every other door. */
+  usage?(): Promise<{ usedPercent: number; resetsAt: string | null } | null>;
 }
 
 // ── the ledger, the cache and the tapes ────────────────────────────────────────────────────
