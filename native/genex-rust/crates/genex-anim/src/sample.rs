@@ -62,7 +62,12 @@ impl SampleCursor {
 /// `[0, duration]` for [`Wrap::Clamp`]. A NaN time, any time in a clip of no duration, and an
 /// infinite time in a loop give 0.
 pub fn clip_time(clip: &Clip, time: f32, wrap: Wrap) -> f32 {
-    let duration = clip.duration();
+    wrap_time(clip.duration(), time, wrap)
+}
+
+/// `time` as a time inside a clip of `duration`, by [`clip_time`]'s rule (compacted clips share
+/// it).
+pub fn wrap_time(duration: f32, time: f32, wrap: Wrap) -> f32 {
     if time.is_nan() || duration <= 0.0 {
         return 0.0;
     }
