@@ -10,12 +10,23 @@ import type { ModelRig } from "../../shared/model-rig.ts";
 import { assertRelativePath, isBelow } from "../../substrate/paths.ts";
 import {
   genexJobDir,
+  importedFacts,
+  plannedImportFacts,
   reconcileGeneratedAssets,
   joinProjectAssets,
   readGenexJobs,
   walkGameAssets,
 } from "../game-assets.ts";
-import type { ProjectAssets } from "../../shared/game-assets.ts";
+import {
+  AssetImportStatus,
+  type ProjectAsset,
+  type ProjectAssetImport,
+  type ProjectAssets,
+} from "../../shared/game-assets.ts";
+import { type AssetCache, cachedImporter } from "../asset-cache.ts";
+import type { ImportedAsset, RustAssetImportDeps, StageFileImport } from "../rust-assets.ts";
+import { BuildTarget, GameStack, stackOf } from "../../shared/game-project.ts";
+import { readProjectShape } from "../../substrate/project-shape.ts";
 import { type AssetCall, assetCallJobs } from "./asset-calls.ts";
 import { type AssetFolder, assetFoldersFor, DEFAULT_ASSET_FOLDERS } from "../../shared/project-workspace.ts";
 import path from "node:path";
@@ -66,6 +77,61 @@ export interface SavedReference {
   created: boolean;
 }
 
+/**
+ * The delivery-time import (C-5): a Rust game's files imported through the build lane's import
+ * cache, so `assets.inventory` can say what the import step does with each and the first build
+ * after a delivery finds the outputs ready.
+ */
+export interface DeliveryImports {
+  /** Import `files` (posix, under `gameRoot`) into the cache; each file's outcome, outputs left in the cache. `signal` ends a job in flight. */
+  run(gameRoot: string, files: readonly string[], signal?: AbortSignal): Promise<ImportedAsset[]>;
+}
+
+/** What an `AssetService` reaches beyond the core: the delivery-time import, absent where nothing imports (fixtures). */
+export interface AssetServiceOptions {
+  imports?: DeliveryImports;
+}
+
+/** The desktop destination this host builds: its texture families are what a delivery's import keys on. */
+const HOST_DESKTOP_TARGET: Partial<Record<NodeJS.Platform, BuildTarget>> = {
+  darwin: BuildTarget.Mac,
+  win32: BuildTarget.Windows,
+  linux: BuildTarget.Linux,
+};
+
+/** The destination a delivery's import keys on: this host's desktop build, the one Studio runs first. */
+export function hostDesktopTarget(platform: NodeJS.Platform = process.platform): BuildTarget {
+  return HOST_DESKTOP_TARGET[platform] ?? BuildTarget.Mac;
+}
+
+/**
+ * Delivery imports through `cache`, keyed as the build lane's stage step keys a build for
+ * `target` (`cachedImporter`), so that build looks the outputs up instead of importing them.
+ */
+export function cacheWarmer(
+  cache: AssetCache,
+  deps: RustAssetImportDeps,
+  target: BuildTarget,
+  importFile: StageFileImport = cachedImporter(cache),
+): DeliveryImports {
+  return {
+    run: async (gameRoot, files, signal) => {
+      const request = { gameRoot, stack: GameStack.RustWgpu, files, targets: [target], ...(signal ? { signal } : {}) };
+      const held = await importFile(deps, request);
+      await held.release();
+      return held.files;
+    },
+  };
+}
+
+/** One file's import facts and the version (`<bytes>:<mtime>`) they describe. */
+interface KnownImport {
+  stamp: string;
+  facts: ProjectAssetImport;
+}
+
+const importStamp = (bytes: number, mtime: string) => `${bytes}:${mtime}`;
+
 /** A run id as a folder name: no separators, no leading dot. */
 const RUN_ID = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 
@@ -99,17 +165,29 @@ export class AssetService {
   readonly #now: () => number;
   /** The calls making an asset right now, which the plugin tools note (`asset-calls.ts`). */
   readonly #calls: ReadonlyMap<string, AssetCall>;
+  /** The delivery-time import, when this core imports. */
+  readonly #imports: DeliveryImports | undefined;
+  /** Each game's import facts by file, for the version of the file they describe. */
+  readonly #known = new Map<string, Map<string, KnownImport>>();
+  /** Each game's import chain: one import at a time per game, in order. */
+  readonly #importing = new Map<string, Promise<void>>();
+  /** Ends the delivery imports when the core stops. */
+  readonly #stopped = new AbortController();
+  /** Files queued or importing (`<project>\0<file>`), so a poll does not queue them twice. */
+  readonly #queued = new Set<string>();
 
   constructor(
     core: StudioCore,
     runGit: typeof git = git,
     now: () => number = Date.now,
     calls: ReadonlyMap<string, AssetCall> = new Map(),
+    options: AssetServiceOptions = {},
   ) {
     this.#core = core;
     this.#git = runGit;
     this.#now = now;
     this.#calls = calls;
+    this.#imports = options.imports;
   }
 
   /**
@@ -275,7 +353,117 @@ export class AssetService {
       checkpoints,
     );
     inventory.jobs = [...(inventory.jobs ?? []), ...assetCallJobs(this.#calls, project)];
+    await this.#joinImportFacts(project, dir, inventory.assets);
     return inventory;
+  }
+
+  /**
+   * Import these delivered (or checkpointed) files of a Rust game now, into the import cache,
+   * and keep what the import found for `assets.inventory`. Other stacks, files outside `assets/`,
+   * formats the importer does not run on and names that are not regular files inside the game are
+   * left alone. One import runs at a time per game; it answers once this one has.
+   */
+  async warmImports(project: string, files: readonly string[]): Promise<void> {
+    if (!this.#imports || this.#stopped.signal.aborted) return;
+    const wanted = [...new Set(files)].filter((file) => {
+      const planned = typeof file === "string" ? plannedImportFacts(file) : null;
+      return planned?.status === AssetImportStatus.Pending && !this.#queued.has(`${project}\0${file}`);
+    });
+    if (!wanted.length) return await this.importsSettled(project);
+    for (const file of wanted) this.#queued.add(`${project}\0${file}`);
+    const previous = this.#importing.get(project) ?? Promise.resolve();
+    const next = previous
+      .then(() => this.#importNow(project, wanted))
+      .catch((error: unknown) => {
+        this.#core.options.onLog?.(`[assets] delivery import failed for ${project}: ${String(error)}`, "stderr");
+      })
+      .finally(() => {
+        for (const file of wanted) this.#queued.delete(`${project}\0${file}`);
+      });
+    this.#importing.set(project, next);
+    await next;
+  }
+
+  /** Answers once every import queued for `project` so far has finished. */
+  async importsSettled(project: string): Promise<void> {
+    let chain = this.#importing.get(project);
+    while (chain) {
+      await chain;
+      const after = this.#importing.get(project);
+      chain = after === chain ? undefined : after;
+    }
+  }
+
+  /** Stop every delivery import: a job in flight is ended, and none starts after. Answers once they have. */
+  async stopImports(): Promise<void> {
+    this.#stopped.abort();
+    await Promise.all([...this.#importing.keys()].map((project) => this.importsSettled(project)));
+  }
+
+  /** A game's stack, by its shape; a folder that cannot be read is a Three.js game, which imports nothing. */
+  #stackOf(dir: string): Promise<GameStack> {
+    return readProjectShape(dir).then(stackOf, () => GameStack.ThreeJs);
+  }
+
+  /** The files that are regular files inside the game (never links, never outside it), with their version stamps. */
+  async #stamped(root: string, files: readonly string[]): Promise<Array<{ file: string; stamp: string }>> {
+    const stamped: Array<{ file: string; stamp: string }> = [];
+    for (const file of files) {
+      try {
+        assertRelativePath(file);
+      } catch {
+        continue;
+      }
+      const target = path.join(root, ...file.split("/"));
+      const st = await lstat(target).catch(() => null);
+      if (!st?.isFile() || (await realpath(target).catch(() => null)) !== target) continue;
+      stamped.push({ file, stamp: importStamp(st.size, new Date(st.mtimeMs).toISOString()) });
+    }
+    return stamped;
+  }
+
+  /** One import of `files` through the delivery import, its outcomes kept by file and version. */
+  async #importNow(project: string, files: readonly string[]): Promise<void> {
+    const imports = this.#imports;
+    const dir = this.#core.games.dirFor(project);
+    if (!imports || (await this.#stackOf(dir)) !== GameStack.RustWgpu) return;
+    const root = await realpath(dir);
+    const stamped = await this.#stamped(root, files);
+    if (!stamped.length) return;
+    const signal = this.#stopped.signal;
+    const outcomes = await imports.run(
+      root,
+      stamped.map((item) => item.file),
+      signal,
+    );
+    if (signal.aborted) return;
+    const known = this.#known.get(project) ?? new Map<string, KnownImport>();
+    this.#known.set(project, known);
+    for (const item of stamped) {
+      const outcome = outcomes.find((imported) => imported.file === item.file);
+      if (outcome) known.set(item.file, { stamp: item.stamp, facts: importedFacts(outcome) });
+    }
+  }
+
+  /**
+   * Each of a Rust game's assets with what its import step does with it: its plan, or for a file
+   * the importer runs on, what the import of this version found. A file not imported yet is
+   * `pending`, and its import starts in the background (one per file and version).
+   */
+  async #joinImportFacts(project: string, dir: string, assets: ProjectAsset[]): Promise<void> {
+    if (!this.#imports || (await this.#stackOf(dir)) !== GameStack.RustWgpu) return;
+    const known = this.#known.get(project);
+    const pending: string[] = [];
+    for (const asset of assets) {
+      const planned = plannedImportFacts(asset.file);
+      if (!planned) continue;
+      const kept = known?.get(asset.file);
+      const current = kept?.stamp === importStamp(asset.bytes, asset.mtime);
+      const waits = planned.status === AssetImportStatus.Pending;
+      asset.import = waits && current && kept ? kept.facts : planned;
+      if (waits && !current) pending.push(asset.file);
+    }
+    if (pending.length) void this.warmImports(project, pending);
   }
 
   /**

@@ -81,7 +81,12 @@ Every glTF first passes the Khronos validator ([`validate.ts`](../../src/substra
 before any decoder): an error refuses it `validation-failed`, severity decided by issue code.
 A refused file leaves the build, and so does an output whose name another staged file holds
 (`name-taken`). The receipt's `assets` lists each file's action and refusal. A game with nothing
-to import starts no sandbox. `writeOutput` then packages the stage per destination
+to import starts no sandbox. Each file is looked up first in the content-addressed import cache
+([`asset-cache.ts`](../../src/main/asset-cache.ts), `layout.assetCache`, `cachedImporter`), and a
+delivery into a Rust game imports its files into that cache at once, keyed for this host's desktop
+build (`warmImports` in [`core/assets.ts`](../../src/main/core/assets.ts)), so that build runs no job
+for them. `assets.inventory` gives each `assets/` file's `import`: `pending` until its version is
+imported (a read starts it), `ready` with validator `issues`, or `refused` with its `refusal`. `writeOutput` then packages the stage per destination
 (`packageAssets` in [`rust-package-assets.ts`](../../src/main/rust-package-assets.ts),
 `DESTINATION_PACKAGES`): family files only for the families the destination picks (desktops BC,
 iOS ASTC, Android ASTC and ETC2, the web all three), never RGBA8; a phone drops a source image its

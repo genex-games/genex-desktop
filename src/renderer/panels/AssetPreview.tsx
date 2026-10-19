@@ -7,14 +7,14 @@ import type { JSX, MouseEvent, RefObject } from "react";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Pause, Play } from "lucide-react";
 import { assetPreviewMode } from "../../shared/asset-preview.ts";
-import type { ProjectAsset } from "../../shared/game-assets.ts";
+import { AssetImportStatus, type ProjectAsset } from "../../shared/game-assets.ts";
 import type { createAssetViewer } from "../asset-model-viewer.js";
 import { previewBytes } from "../asset-bytes.ts";
 import { clipTitles } from "../asset-names.ts";
 import { Lightbox } from "../ui/Lightbox.tsx";
 import { prefersReducedMotion } from "../ui/media-queries.ts";
 import { hostPlatform } from "../platform.ts";
-import { ASSET_WORDS, fileManagerWords } from "../words.ts";
+import { ASSET_IMPORT_WORDS, ASSET_WORDS, fileManagerWords } from "../words.ts";
 
 /** How much of a text file the preview decodes. */
 const TEXT_PREVIEW_BYTES = 256 * 1024;
@@ -304,6 +304,14 @@ function AnimationBar({ source }: { source: Source }): JSX.Element {
   );
 }
 
+/** What a Rust game's import step has to say about the file: not imported yet, refused, or warned about; nothing when it is simply ready. */
+function importNote(facts: ProjectAsset["import"]): string | null {
+  if (!facts) return null;
+  if (facts.status === AssetImportStatus.Pending) return ASSET_IMPORT_WORDS[AssetImportStatus.Pending];
+  if (facts.refusal) return ASSET_IMPORT_WORDS.refused[facts.refusal];
+  return facts.issues?.length ? ASSET_IMPORT_WORDS.warnings(facts.issues.length) : null;
+}
+
 export function AssetPreview({
   project,
   asset,
@@ -327,6 +335,7 @@ export function AssetPreview({
   const loading = !ready && !error && mode !== "unsupported";
   const animated = source.animations.length > 0;
   const name = asset.file.split("/").pop() ?? "Asset preview";
+  const note = importNote(asset.import);
   return (
     <Lightbox
       title={name}
@@ -350,6 +359,14 @@ export function AssetPreview({
           </p>
         )}
         {model && shown && animated && <AnimationBar source={source} />}
+        {note && (
+          <p
+            data-asset-import={asset.import?.status}
+            className="pointer-events-none absolute top-5 left-5 z-10 max-w-sm rounded-[10px] bg-popover px-3 py-1.5 text-body-sm text-ink-2 shadow-overlay"
+          >
+            {note}
+          </p>
+        )}
         {loading && (
           <div
             role="status"

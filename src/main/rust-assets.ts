@@ -35,6 +35,7 @@ import {
 } from "../substrate/asset-import/import-plan.ts";
 import {
   IMPORT_JOB_VERSION,
+  type ImportIssue,
   type ImportJob,
   type ImportJobFile,
   ImportJobLayout,
@@ -153,6 +154,8 @@ export interface ImportedAsset {
   families?: ImportOutput[];
   /** Why a Basis KTX2 got no per-family files. */
   familiesSkipped?: Ktx2FamilySkip;
+  /** The glTF validator's warnings about the input (the receipt's, checked by `parseIssues`). */
+  issues?: ImportIssue[];
 }
 
 /** One import's outcome, file by file, in request order. */
@@ -409,6 +412,7 @@ async function admitLine(
     ...(line.textures ? { textures: line.textures } : {}),
     ...(line.families ? { families } : {}),
     ...(line.familiesSkipped ? { familiesSkipped: line.familiesSkipped } : {}),
+    ...(line.issues?.length ? { issues: line.issues } : {}),
   };
 }
 
@@ -504,11 +508,32 @@ export interface RustStageImportRequest {
   signal?: AbortSignal;
 }
 
-/** How the stage step runs: its concurrency and clock. */
+/** Some files imported, their outputs readable until `release` (which also removes any job folder). */
+export interface HeldImport {
+  files: ImportedAsset[];
+  release(): Promise<void>;
+}
+
+/**
+ * How the stage step imports one file: a plain importer job by default ({@link plainFileImport}),
+ * the content-addressed cache in the app (`cachedImporter` in `asset-cache.ts`), so a file a
+ * delivery already imported runs no job.
+ */
+export type StageFileImport = (deps: RustAssetImportDeps, request: RustAssetImportRequest) => Promise<HeldImport>;
+
+/** One importer job per call, its folder removed on release. */
+export const plainFileImport: StageFileImport = async (deps, request) => {
+  const job = await importRustAssets(deps, request);
+  return { files: job.files, release: () => rm(job.jobDir, { recursive: true, force: true }) };
+};
+
+/** How the stage step runs: its concurrency, clock and per-file import. */
 export interface RustStageImportOptions {
   /** Jobs at once, clamped to 1..{@link IMPORT_JOBS_MAX} (default the max). */
   jobs?: number;
   now?: () => number;
+  /** Default {@link plainFileImport}. */
+  importFile?: StageFileImport;
 }
 
 /** The build lane's import step (`RustBuildsOptions.importAssets`): the report, or null once Stop came. */
@@ -535,11 +560,12 @@ async function stagedAssets(stage: string, rel = STAGE_ASSETS_DIR): Promise<stri
 /** Every file planned; the importable ones run as per-file jobs, `jobs` at once. Null once Stop came. */
 async function importEach(
   deps: RustAssetImportDeps,
-  request: RustStageImportRequest,
+  request: RustStageImportRequest & RustStageImportOptions,
   files: readonly string[],
   jobs: number,
-  jobDirs: string[],
+  releases: Array<() => Promise<void>>,
 ): Promise<ImportedAsset[] | null> {
+  const importFile = request.importFile ?? plainFileImport;
   const results: ImportedAsset[] = [];
   const queue: number[] = [];
   for (const [at, file] of files.entries()) {
@@ -552,14 +578,14 @@ async function importEach(
   const worker = async () => {
     for (let at = queue[next++]; at !== undefined && !request.signal?.aborted; at = queue[next++]) {
       const file = files[at] ?? "";
-      const one = await importRustAssets(deps, {
+      const one = await importFile(deps, {
         gameRoot: request.stage,
         stack: GameStack.RustWgpu,
         files: [file],
         targets,
         ...(request.signal ? { signal: request.signal } : {}),
       });
-      jobDirs.push(one.jobDir);
+      releases.push(one.release);
       const failed = { file, action: ImportAction.Refuse, refusal: AssetImportRefusal.ImporterFailed };
       results[at] = one.files[0] ?? failed;
     }
@@ -654,7 +680,8 @@ async function placeAll(
  * The build lane's import step over a staged copy (C-2): every regular file of the stage's
  * `assets/` planned for `target`, the importable ones run as sandboxed per-file jobs, and what was
  * admitted placed back into the stage (see {@link placeAll}). No sandbox starts when no file runs
- * the importer. The job folders are removed before it answers. Null once the build's Stop came.
+ * the importer, nor for a file `importFile` finds in the cache. Each import is released (its job
+ * folder removed, its cache entry free to evict) before it answers. Null once the build's Stop came.
  */
 export async function importStagedAssets(
   deps: RustAssetImportDeps,
@@ -665,14 +692,14 @@ export async function importStagedAssets(
   const started = now();
   const jobs = importJobs(request.jobs);
   const sources = await stagedAssets(request.stage);
-  const jobDirs: string[] = [];
+  const releases: Array<() => Promise<void>> = [];
   try {
-    const results = await importEach(deps, request, sources, jobs, jobDirs);
+    const results = await importEach(deps, request, sources, jobs, releases);
     if (!results) return null;
     const files = await placeAll(request.stage, sources, results);
     return { jobs, ms: Math.max(0, now() - started), files };
   } finally {
-    await Promise.all(jobDirs.map((dir) => rm(dir, { recursive: true, force: true })));
+    await Promise.all(releases.map((release) => release()));
   }
 }
 

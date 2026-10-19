@@ -24,14 +24,20 @@ import { genexRef } from "../shared/genex-ref.ts";
 import { isImageFile } from "../substrate/game-workspace.ts";
 import {
   type AssetAvailability,
+  AssetImportStatus,
   type AssetKind,
   type AssetSource,
   assetExtension,
   assetKind,
   isMediaFile,
   type ProjectAsset,
+  type ProjectAssetImport,
   type ProjectAssets,
 } from "../shared/game-assets.ts";
+import { type ImportIssue as ProjectImportIssue, ImportIssueCode } from "../shared/asset-db.ts";
+import { GameStack } from "../shared/game-project.ts";
+import { ImportAction, planImport, runsImporter } from "../substrate/asset-import/import-plan.ts";
+import type { ImportIssue as ValidatorIssue } from "../substrate/asset-import/job.ts";
 import { type AssetFolder, DEFAULT_ASSET_FOLDERS, wholeFolderEnters } from "../shared/project-workspace.ts";
 import type { EventEnvelope } from "../substrate/types.ts";
 import { CustomEvent } from "../shared/custom-events.ts";
@@ -666,6 +672,38 @@ export async function readContainedImage(
 
 /** Re-exported so callers that only touch this module keep one import. */
 export type { AssetKind, ProjectAsset, ProjectAssets };
+
+/** The folder a Rust game's import step reads (the build stages and imports only `assets/`). */
+const RUST_IMPORT_FOLDER = "assets/";
+
+/**
+ * What a Rust game's import step plans for `file`, as inventory facts (C-5): none for a file
+ * outside `assets/` or in a format it does not know, the stack's refusal, `ready` for a file kept
+ * as it is, and `pending` for one the importer runs on until its import says more.
+ */
+export function plannedImportFacts(file: string): ProjectAssetImport | null {
+  if (!file.startsWith(RUST_IMPORT_FOLDER)) return null;
+  const step = planImport(GameStack.RustWgpu, file);
+  if (step.action === ImportAction.Skip) return null;
+  if (step.refusal) return { status: AssetImportStatus.Refused, refusal: step.refusal };
+  return { status: runsImporter(step) ? AssetImportStatus.Pending : AssetImportStatus.Ready };
+}
+
+/** A validator warning as an inventory issue: its code and the JSON pointer it names, never its message. */
+function validationIssue(issue: ValidatorIssue): ProjectImportIssue {
+  const detail = issue.pointer ? `${issue.code} ${issue.pointer}` : issue.code;
+  return { code: ImportIssueCode.ValidationWarning, detail };
+}
+
+/** One file's import outcome as inventory facts: its refusal, or `ready` with the validator's warnings. */
+export function importedFacts(outcome: {
+  refusal?: ProjectAssetImport["refusal"];
+  issues?: readonly ValidatorIssue[];
+}): ProjectAssetImport {
+  if (outcome.refusal) return { status: AssetImportStatus.Refused, refusal: outcome.refusal };
+  const issues = (outcome.issues ?? []).map(validationIssue);
+  return { status: AssetImportStatus.Ready, ...(issues.length ? { issues } : {}) };
+}
 
 /** Retained originals remain discoverable when a worker moved or removed its delivered copy.
  * Hash joins preserve provenance for renamed local files. No remote call or generation is made.

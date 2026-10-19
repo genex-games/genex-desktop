@@ -27,7 +27,7 @@ import {
   planImport,
   runsImporter,
 } from "../substrate/asset-import/import-plan.ts";
-import { IMPORT_JOB_VERSION } from "../substrate/asset-import/job.ts";
+import { IMPORT_JOB_VERSION, type ImportIssue, parseIssues } from "../substrate/asset-import/job.ts";
 import { Ktx2FamilySkip } from "../substrate/asset-import/ktx2.ts";
 import { objMaterialLibrary } from "../substrate/asset-import/obj.ts";
 import { readGameAsset } from "../substrate/asset-import/safe-asset.ts";
@@ -39,6 +39,7 @@ import {
 } from "../substrate/asset-import/texture-table.ts";
 import { canonicalJson } from "../substrate/toolchain-store/genex-cmake.ts";
 import {
+  type HeldImport,
   IMPORT_INPUT_MAX_BYTES,
   IMPORT_OUTPUT_MAX_BYTES,
   type ImportedAsset,
@@ -47,6 +48,7 @@ import {
   type RustAssetImportDeps,
   type RustAssetImportRequest,
   type RustAssetImportResult,
+  type StageFileImport,
 } from "./rust-assets.ts";
 
 /** The default size cap; a smaller one is set where disk is short. */
@@ -458,6 +460,8 @@ interface CachedLine {
   families?: { slot: number; compression: TextureCompression }[];
   textures?: TranscodedTexture[];
   familiesSkipped?: Ktx2FamilySkip;
+  /** The validator's warnings about the source, so a hit reports what the import found. */
+  issues?: ImportIssue[];
 }
 
 /** A guard for one vocabulary's values. */
@@ -492,15 +496,17 @@ function parseFamilies(value: unknown, files: number): NonNullable<CachedLine["f
 
 /** The optional fields of an output line, checked; null when one is malformed. */
 function parseOutputFields(meta: Record<string, unknown>, files: number): Partial<CachedLine> | null {
-  const { families, textures, familiesSkipped } = meta;
+  const { families, textures, familiesSkipped, issues } = meta;
   const parsedFamilies = families === undefined ? undefined : parseFamilies(families, files);
+  const parsedIssues = issues === undefined ? undefined : parseIssues(issues);
   const texturesValid = textures === undefined || (Array.isArray(textures) && textures.every(isTexture));
   const skipValid = familiesSkipped === undefined || isSkip(familiesSkipped);
-  if (parsedFamilies === null || !texturesValid || !skipValid) return null;
+  if (parsedFamilies === null || parsedIssues === null || !texturesValid || !skipValid) return null;
   return {
     ...(parsedFamilies ? { families: parsedFamilies } : {}),
     ...(Array.isArray(textures) ? { textures: textures.filter(isTexture) } : {}),
     ...(isSkip(familiesSkipped) ? { familiesSkipped } : {}),
+    ...(parsedIssues?.length ? { issues: parsedIssues } : {}),
   };
 }
 
@@ -547,6 +553,7 @@ function fromLine(file: string, step: ImporterStep, line: CachedLine, entry: Cac
     ...(line.textures ? { textures: line.textures } : {}),
     ...(families ? { families: families as ImportOutput[] } : {}),
     ...(line.familiesSkipped ? { familiesSkipped: line.familiesSkipped } : {}),
+    ...(line.issues ? { issues: line.issues } : {}),
   };
 }
 
@@ -571,6 +578,7 @@ function toLine(imported: ImportedAsset): { files: CacheFileInput[]; meta: Cache
     ...(imported.families ? { families: familyLines } : {}),
     ...(imported.textures ? { textures: imported.textures } : {}),
     ...(imported.familiesSkipped ? { familiesSkipped: imported.familiesSkipped } : {}),
+    ...(imported.issues?.length ? { issues: imported.issues } : {}),
   };
   const files = [output, ...families].map((item) => ({ path: item.path, sha256: item.sha256 }));
   return { files, meta };
@@ -692,4 +700,36 @@ export async function importWithCache(
     release();
     throw error;
   }
+}
+
+/** What a cached import keys on beyond the files: the tool digests and settings (see {@link CachedImportRequest}). */
+export interface CachedImporterOptions {
+  tools?: Readonly<Record<string, string>>;
+  settingsFor?(file: string): unknown;
+  /** The importer job a miss runs; `importRustAssets` by default. */
+  run?: typeof importRustAssets;
+}
+
+/**
+ * Imports through `cache` for the build lane's stage step (`RustStageImportOptions.importFile`)
+ * and for a delivery's import (C-5), so both key every file alike and a build after a delivery
+ * finds its outputs ready. Releasing frees the holds and removes the miss job's folder.
+ */
+export function cachedImporter(cache: AssetCache, options: CachedImporterOptions = {}): StageFileImport {
+  return async (deps, request): Promise<HeldImport> => {
+    const cached: CachedImportRequest = {
+      ...request,
+      tools: options.tools ?? {},
+      ...(options.settingsFor ? { settingsFor: options.settingsFor } : {}),
+    };
+    const result = await importWithCache(cache, deps, cached, options.run);
+    const jobDir = result.job?.jobDir;
+    return {
+      files: result.files,
+      release: async () => {
+        result.release();
+        if (jobDir) await rm(jobDir, { recursive: true, force: true });
+      },
+    };
+  };
 }

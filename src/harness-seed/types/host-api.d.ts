@@ -534,6 +534,33 @@ export type AssetKind = "image" | "model" | "audio" | "video" | "other";
 export type AssetSource = "genex" | "blender" | "imported" | (string & {});
 // ↑ src/shared/game-assets.ts
 
+export type AssetImportStatus = 'pending' | 'ready' | 'refused';
+// ↑ src/shared/game-assets.ts
+
+export type AssetImportRefusal = 'unsupported-by-raylib' | 'unsupported-by-rust' | 'unsafe-path' | 'escapes-game' | 'missing' | 'not-regular-file' | 'too-large' | 'malformed' | 'unsupported-extension' | 'converter-missing' | 'importer-failed' | 'validation-failed';
+// ↑ src/shared/game-assets.ts
+
+export type ImportIssueCode = 'lock-edited' | 'usage-unknown' | 'usage-conflict' | 'resampled' | 'validation-warning';
+// ↑ src/shared/asset-db.ts
+
+/** One issue on a lock row. */
+export interface ImportIssue {
+  code: ImportIssueCode;
+  /** Which part of the file (a validator code, a material slot); never the meaning. */
+  detail?: string;
+}
+// ↑ src/shared/asset-db.ts
+
+/** A Rust game's file as its import step sees it (`ProjectAsset.import`). */
+export interface ProjectAssetImport {
+  status: AssetImportStatus;
+  /** Set when `status` is `refused`. */
+  refusal?: AssetImportRefusal;
+  /** What the import noticed without refusing the file: glTF validator warnings (`validation-warning`, detail `<CODE> <pointer>`). */
+  issues?: ImportIssue[];
+}
+// ↑ src/shared/game-assets.ts
+
 export interface ProjectAsset {
   availability?: AssetAvailability;
   /** Host-issued reference for a retained original; never an arbitrary root. */
@@ -564,6 +591,12 @@ export interface ProjectAsset {
   runId?: string;
   facetId?: string;
   iteration?: number;
+  /**
+   * What a Rust game's import step does with the file, found when it was delivered (or first
+   * listed) and imported into the import cache ahead of any build. Absent for a file the import
+   * step does not know and for every other stack's game.
+   */
+  import?: ProjectAssetImport;
 }
 // ↑ src/shared/game-assets.ts
 
@@ -973,7 +1006,7 @@ export type ModelCatalogState = 'ready' | 'loading' | 'stale' | 'unavailable';
 export type ModelCatalogSource = 'provider' | 'cache';
 // ↑ src/shared/model-catalog.ts
 
-export type ModelCatalogProblemCode = 'provider' | 'timeout' | 'unsupported' | 'malformed';
+export type ModelCatalogProblemCode = 'malformed' | 'provider' | 'timeout' | 'unsupported';
 // ↑ src/shared/model-catalog.ts
 
 /** Serializable catalog progress for Settings and the model picker. */
@@ -1564,7 +1597,7 @@ export interface StartHeldInPlan {
 }
 // ↑ src/shared/project-tools.ts
 
-export type ContractWord = 'loaded' | 'attached' | 'missing';
+export type ContractWord = 'missing' | 'loaded' | 'attached';
 // ↑ src/shared/game-project.ts
 
 export type GameValidationCode = 'kind-unsupported' | 'engine-export' | 'missing-file' | 'no-contract' | 'native-missing-cmake' | 'native-missing-main' | 'native-contract-removed' | 'native-needs-genex-cmake' | 'stack-contradicts-kind' | 'rust-own-build-input';
@@ -1812,7 +1845,7 @@ export interface PreviewPortStatus {
 export type ReadyVia = 'shim' | 'contract' | 'none';
 // ↑ src/shared/preview-contract.ts
 
-export type ReadyPhase = 'failed' | 'ready' | 'boot' | 'unknown';
+export type ReadyPhase = 'ready' | 'failed' | 'boot' | 'unknown';
 // ↑ src/shared/preview-contract.ts
 
 /** What the studio waited for, and what it got. `preview.ready` answers with exactly this. */
@@ -1959,7 +1992,7 @@ export interface NativeAdmissionFacts {
 }
 // ↑ src/shared/native-contract.ts
 
-export type NativeRunState = 'stopped' | 'ready' | 'building' | 'killed' | 'crashed' | 'admitting' | 'starting' | 'paused' | 'stopping' | 'refused';
+export type NativeRunState = 'ready' | 'refused' | 'stopped' | 'building' | 'killed' | 'crashed' | 'admitting' | 'starting' | 'paused' | 'stopping';
 // ↑ src/shared/native-contract.ts
 
 export type NativeRunMode = 'window' | 'headless' | 'embedded';
@@ -2120,7 +2153,7 @@ export interface CrateRequestParams {
 }
 // ↑ src/shared/crate-requests.ts
 
-export type CrateRequestState = 'refused' | 'pending' | 'approved' | 'vendored';
+export type CrateRequestState = 'pending' | 'refused' | 'approved' | 'vendored';
 // ↑ src/shared/crate-requests.ts
 
 export type CrateRefusal = 'crate-declined' | 'crate-not-found' | 'crate-yanked' | 'crate-advisory' | 'crate-licence' | 'crate-unvetted' | 'crate-build-script' | 'crate-proc-macro' | 'crate-duplicate-version' | 'crate-overlay-tampered' | 'crate-engine-internal' | 'crate-banned' | 'crate-policy-tampered' | 'crate-checker-unavailable' | 'crate-check-failed';
