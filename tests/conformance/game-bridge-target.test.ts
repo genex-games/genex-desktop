@@ -9,7 +9,7 @@ import { spawn } from "node:child_process";
 import { chmod, mkdir, readFile, readdir, realpath, symlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { after, describe, it } from "node:test";
-import { setTimeout as sleep } from "node:timers/promises";
+import { setImmediate as setImmediatePromise, setTimeout as sleep } from "node:timers/promises";
 import {
   ClockLevel,
   ComputerPacing,
@@ -18,8 +18,11 @@ import {
   StateLevel,
   TargetRuntime,
 } from "../../src/shared/computer-target.ts";
+import { AiBridgeOp, GAME_AI_WIRE_VERSION } from "../../src/shared/game-ai.ts";
 import {
   PLAY_MAX_STEP_MS,
+  type PlayAiLine,
+  PlayAiOp,
   PlayErrorCode,
   PlayFailure,
   type PlayHello,
@@ -43,6 +46,7 @@ import {
 } from "../../src/substrate/play-protocol-client.ts";
 import { MAX_HOLD_KEY_MS } from "../../src/substrate/preview-input.ts";
 import { ProcessSandbox, shellQuote } from "../../src/substrate/spawn.ts";
+import { fixtureNativeHost } from "../helpers/ai-fixture-service.ts";
 import { running } from "../helpers/processes.ts";
 import { tmpDir } from "../helpers/tmp.ts";
 
@@ -70,6 +74,7 @@ const HELLO: PlayHello = {
 /** A client that records every op (and the deadline it was given) and answers each with `answer`'s value, or its rejection. */
 function recordingClient(answer: (op: string, args: Record<string, unknown>) => unknown = () => ({})) {
   const calls: Array<[string, Record<string, unknown>]> = [];
+  const heard: { listener: ((line: PlayAiLine) => void) | null } = { listener: null };
   const deadlines: Array<[string, number | undefined]> = [];
   const send = async (op: string, args: Record<string, unknown>, timeoutMs?: number) => {
     calls.push([op, { ...args }]);
@@ -83,10 +88,13 @@ function recordingClient(answer: (op: string, args: Record<string, unknown>) => 
     exited: false,
     call: (op, args, options) => send(op, { ...args }, options?.timeoutMs),
     send: (op, args, options) => send(op, args, options?.timeoutMs),
+    hearAi: (listener) => {
+      heard.listener = listener;
+    },
     close: () => {},
     stderrTail: () => [],
   };
-  return { client, calls, deadlines };
+  return { client, calls, deadlines, heard };
 }
 
 /** A target over a recording client, with sleeps recorded instead of slept. */
@@ -297,6 +305,71 @@ describe("game bridge target — the studio's input as protocol ops", () => {
   it("refuses a screenshot answer with no picture", async () => {
     const { target } = recordedTarget(() => ({ format: "gif", data: "x", width: 1, height: 1 }));
     await assert.rejects(target.screenshot({ quality: 70, surface: CaptureSurface.Auto }), PlayProtocolError);
+  });
+});
+
+describe("game bridge target — play-time AI", () => {
+  const AI_HELLO: PlayHello = { ...HELLO, capabilities: { ...HELLO.capabilities, ai: true } };
+  const helloLine = (rid: string): PlayAiLine => ({ rid, op: AiBridgeOp.Hello, body: null });
+
+  it("gives a game whose hello declared no ai no bridge, and listens to none of its lines", () => {
+    const { client, heard } = recordingClient();
+    const target = gameBridgeTarget(client, HELLO, { ai: fixtureNativeHost("recorded").host });
+    assert.equal(target.ai, null);
+    assert.equal(heard.listener, null);
+  });
+
+  it("answers a game that declared ai where no AI is wired ai_off at once, so it plays its fallbacks", async () => {
+    const { client, calls, heard } = recordingClient();
+    const target = gameBridgeTarget(client, AI_HELLO);
+    assert.ok(target.ai);
+    heard.listener?.(helloLine("rid-00001"));
+    await setImmediatePromise();
+    assert.deepEqual(calls, [[PlayAiOp.Reply, { rid: "rid-00001", reply: { v: GAME_AI_WIRE_VERSION, on: false } }]]);
+  });
+
+  it("delivers what settled while the clock was held before the step it waited for, never between steps", async () => {
+    const fixture = fixtureNativeHost("recorded");
+    const { client, calls, heard } = recordingClient((op) => (op === PlayOp.Step ? { simulatedMs: 16 } : {}));
+    const target = gameBridgeTarget(client, AI_HELLO, { ai: fixture.host });
+    await target.clock?.pause();
+    heard.listener?.(helloLine("rid-00001"));
+    await setImmediatePromise();
+    await setImmediatePromise();
+    assert.deepEqual(
+      calls.map(([op]) => op),
+      [PlayOp.Pause],
+      "nothing is written while the clock is held",
+    );
+    await target.clock?.step?.(16);
+    assert.deepEqual(
+      calls.map(([op]) => op),
+      [PlayOp.Pause, PlayAiOp.Reply, PlayOp.Step],
+    );
+  });
+
+  it("delivers what settled at once when the clock starts running again", async () => {
+    const fixture = fixtureNativeHost("recorded");
+    const { client, calls, heard } = recordingClient();
+    const target = gameBridgeTarget(client, AI_HELLO, { ai: fixture.host });
+    await target.clock?.pause();
+    heard.listener?.(helloLine("rid-00001"));
+    await setImmediatePromise();
+    await setImmediatePromise();
+    await target.clock?.start();
+    assert.deepEqual(
+      calls.map(([op]) => op),
+      [PlayOp.Pause, PlayOp.Play, PlayAiOp.Reply],
+    );
+  });
+
+  it("names the process's channel on its caller, as main derives it, never the game", async () => {
+    const fixture = fixtureNativeHost("recorded");
+    const { client, heard } = recordingClient();
+    gameBridgeTarget(client, AI_HELLO, { ai: fixture.host }, { cwd: "/games/recorded", channel: "native:4242" });
+    heard.listener?.(helloLine("rid-00001"));
+    await setImmediatePromise();
+    assert.equal(fixture.asked[0]?.caller.channel, "native:4242");
   });
 });
 

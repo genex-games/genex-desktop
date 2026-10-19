@@ -9,11 +9,26 @@
  *
  * The game's stderr is read for as long as it runs, so a game that logs a lot never blocks on a
  * full pipe; its last lines are kept in a bounded tail and named in every failure sentence.
+ *
+ * A game that uses play-time AI prints id-less `ai` lines (docs/play-protocol.md, "Play-time AI").
+ * They reach a listener only once one is set (`hearAi`, by a target whose game declared
+ * `capabilities.ai`), only after ready, only within their own line cap and only as the shared
+ * reader reads them; every other one is logged and dropped.
  */
 import type { ChildProcess } from "node:child_process";
 import type { Readable, Writable } from "node:stream";
 import { SECOND_MS } from "../shared/duration.ts";
-import { PlayErrorCode, PlayEvent, PlayFailure, type PlayOp, type PlayRequestArgs } from "../shared/play-protocol.ts";
+import { errorMessage } from "../shared/errors.ts";
+import {
+  PLAY_AI_MAX_LINE_CHARS,
+  type PlayAiLine,
+  PlayErrorCode,
+  PlayEvent,
+  PlayFailure,
+  type PlayOp,
+  type PlayRequestArgs,
+  readPlayAiLine,
+} from "../shared/play-protocol.ts";
 
 /** How long a process may take to print its ready line. */
 export const PLAY_READY_TIMEOUT_MS = 20 * SECOND_MS;
@@ -85,6 +100,8 @@ export interface PlayClient {
   call<O extends PlayOp>(op: O, args: PlayRequestArgs[O], options?: { timeoutMs?: number }): Promise<unknown>;
   /** Any op by name — a game-specific one `hello` listed — with its arguments. */
   send(op: string, args: Record<string, unknown>, options?: { timeoutMs?: number }): Promise<unknown>;
+  /** Hand each `ai` line the game prints from now on to `listener`, read; null drops them again. */
+  hearAi(listener: ((line: PlayAiLine) => void) | null): void;
   /** Stop writing to the process: its stdin is ended. */
   close(): void;
   /** The last lines the game wrote to stderr, oldest first, each cut to a readable length. */
@@ -100,6 +117,10 @@ const MESSAGE = {
   refused: (op: string, why: string) => `${op} refused: ${why}`,
   badReply: (op: string) => `${op} got a reply the studio cannot read`,
   dropped: (why: string, line: string) => `[play] dropped ${why}: ${line.slice(0, LOGGED_LINE_CHARS)}`,
+  aiUnheard: "an ai line nobody listens for (the game declared no ai)",
+  aiOversize: `an ai line longer than ${PLAY_AI_MAX_LINE_CHARS} characters`,
+  aiUnread: "an ai line the studio cannot read",
+  aiListenerFailed: (why: string) => `[play] the ai listener failed: ${why}`,
   withTail: (sentence: string, lines: string[]) =>
     lines.length ? `${sentence} — the game's last stderr lines: ${lines.join(" | ")}` : sentence,
 } as const;
@@ -205,6 +226,8 @@ interface Wire {
   pending: Map<number, Pending>;
   handshake: Handshake | null;
   exited: boolean;
+  /** Who hears the game's `ai` lines; null drops them. */
+  ai: ((line: PlayAiLine) => void) | null;
   log: (line: string) => void;
   /** A failure sentence with the game's last stderr lines after it. */
   told: (sentence: string) => string;
@@ -236,9 +259,35 @@ function settleReply(wire: Wire, message: Record<string, unknown>, line: string)
   else call.reject(refusalOf(call.op, message));
 }
 
-/** An id-less line: the handshake's ready or fatal, or an event that is only logged. */
+/** Why an `ai` line after ready goes to no listener, or null when it goes to the one there is. */
+function aiDropReason(wire: Wire, line: string): string | null {
+  if (!wire.ai) return MESSAGE.aiUnheard;
+  return line.length > PLAY_AI_MAX_LINE_CHARS ? MESSAGE.aiOversize : null;
+}
+
+/** An `ai` line after ready: to the listener, read, or dropped with why. A listener's failure stays here. */
+function handleAi(wire: Wire, message: Record<string, unknown>, line: string): void {
+  const listener = wire.ai;
+  const why = aiDropReason(wire, line);
+  const read = why === null ? readPlayAiLine(message) : null;
+  if (!listener || !read) {
+    wire.log(MESSAGE.dropped(why ?? MESSAGE.aiUnread, line));
+    return;
+  }
+  try {
+    listener(read);
+  } catch (error) {
+    wire.log(MESSAGE.aiListenerFailed(errorMessage(error)));
+  }
+}
+
+/** An id-less line: the handshake's ready or fatal, an `ai` line, or an event that is only logged. */
 function handleEvent(wire: Wire, message: Record<string, unknown>, line: string): void {
   const handshake = wire.handshake;
+  if (!handshake && message.event === PlayEvent.Ai) {
+    handleAi(wire, message, line);
+    return;
+  }
   const ready = message.event === PlayEvent.Ready;
   const fatal = message.event === PlayEvent.Fatal;
   if (!handshake || !(ready || fatal)) {
@@ -338,6 +387,7 @@ export async function openPlayClient(streams: PlayStreams, options: PlayClientOp
     pending: new Map(),
     handshake: null,
     exited: false,
+    ai: null,
     log: options.log ?? (() => {}),
     told: (sentence) => MESSAGE.withTail(sentence, tail()),
   };
@@ -372,6 +422,9 @@ export async function openPlayClient(streams: PlayStreams, options: PlayClientOp
     },
     call: (op, args, callOptions) => call(op, { ...args }, callOptions?.timeoutMs),
     send: (op, args, callOptions) => call(op, args, callOptions?.timeoutMs),
+    hearAi: (listener) => {
+      wire.ai = listener;
+    },
     close: () => {
       streams.writable.end();
     },

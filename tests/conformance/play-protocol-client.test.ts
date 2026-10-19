@@ -6,7 +6,15 @@
 import assert from "node:assert/strict";
 import { PassThrough } from "node:stream";
 import { describe, it } from "node:test";
-import { PlayErrorCode, PlayFailure, PlayOp } from "../../src/shared/play-protocol.ts";
+import { AiBridgeOp } from "../../src/shared/game-ai.ts";
+import {
+  PLAY_AI_MAX_LINE_CHARS,
+  type PlayAiLine,
+  PlayErrorCode,
+  PlayEvent,
+  PlayFailure,
+  PlayOp,
+} from "../../src/shared/play-protocol.ts";
 import {
   MAX_PLAY_LINE_CHARS,
   type PlayDeadlines,
@@ -311,5 +319,85 @@ describe("play protocol client — the game's stderr", () => {
     const error = await failure(call);
     assert.equal(error.code, PlayFailure.Timeout);
     assert.match(error.message, /compiling shaders \(4\/900\)/);
+  });
+});
+
+describe("play protocol client — the game's ai lines", () => {
+  const AI_HELLO = { event: PlayEvent.Ai, rid: "rid-00001", op: AiBridgeOp.Hello, body: null };
+
+  it("hands a listener each ai line the game prints, read, with its rid", async () => {
+    const { client, engine } = await readyClient();
+    const heard: PlayAiLine[] = [];
+    client.hearAi((line) => heard.push(line));
+    engine.reply(AI_HELLO);
+    await settle();
+    assert.deepEqual(heard, [{ rid: "rid-00001", op: AiBridgeOp.Hello, body: null }]);
+  });
+
+  it("drops ai lines while nobody listens: a game that declared no ai is ignored", async () => {
+    const { client, engine } = await readyClient();
+    engine.reply(AI_HELLO);
+    await settle();
+    const heard: PlayAiLine[] = [];
+    client.hearAi((line) => heard.push(line));
+    client.hearAi(null);
+    engine.reply(AI_HELLO);
+    await settle();
+    assert.deepEqual(heard, []);
+    assert.equal(engine.logs.filter((line) => line.includes("an ai line")).length, 2);
+  });
+
+  it("drops an ai line before ready: the handshake never takes one", async () => {
+    const engine = fakeEngine();
+    const opening = openPlayClient(engine.streams, {
+      deadlines: manualDeadlines(),
+      log: (line) => engine.logs.push(line),
+    });
+    engine.reply(AI_HELLO);
+    engine.say(JSON.stringify({ event: "ready", protocol: 3 }));
+    const client = await opening;
+    const heard: PlayAiLine[] = [];
+    client.hearAi((line) => heard.push(line));
+    await settle();
+    assert.deepEqual(heard, []);
+  });
+
+  const hostile: Array<[string, string]> = [
+    [
+      "an ai line longer than its cap",
+      JSON.stringify({ ...AI_HELLO, op: AiBridgeOp.Cancel, body: { ticket: "t".repeat(PLAY_AI_MAX_LINE_CHARS) } }),
+    ],
+    ["an unknown op", JSON.stringify({ ...AI_HELLO, op: "spend" })],
+    ["a rid that is too short", JSON.stringify({ ...AI_HELLO, rid: "r1" })],
+    ["a rid with a newline", JSON.stringify({ ...AI_HELLO, rid: "rid-0000\n1" })],
+    ["a body on hello", JSON.stringify({ ...AI_HELLO, body: { on: true } })],
+    ["an extra key", JSON.stringify({ ...AI_HELLO, grant: "all" })],
+    ["a call that is not one", JSON.stringify({ ...AI_HELLO, op: AiBridgeOp.Call, body: { prompt: 1 } })],
+    ["a proto key", '{"event":"ai","rid":"rid-00001","op":"cancel","body":{"__proto__":{"ticket":"ticket-001"}}}'],
+    ["an ai line that names a call id", JSON.stringify({ id: 99, ...AI_HELLO })],
+  ];
+  for (const [name, line] of hostile) {
+    it(`drops ${name}, and the next call is still answered`, async () => {
+      const { client, engine } = await readyClient();
+      const heard: PlayAiLine[] = [];
+      client.hearAi((read) => heard.push(read));
+      engine.say(line);
+      const call = client.call(PlayOp.State, {});
+      engine.reply({ id: await lastId(engine), ok: true, op: PlayOp.State, result: { tick: 1 } });
+      assert.deepEqual(await call, { tick: 1 });
+      assert.deepEqual(heard, []);
+    });
+  }
+
+  it("keeps reading when a listener throws", async () => {
+    const { client, engine } = await readyClient();
+    client.hearAi(() => {
+      throw new Error("listener bug");
+    });
+    engine.reply(AI_HELLO);
+    const call = client.call(PlayOp.State, {});
+    engine.reply({ id: await lastId(engine), ok: true, op: PlayOp.State, result: {} });
+    assert.deepEqual(await call, {});
+    assert.ok(engine.logs.some((line) => line.includes("listener bug")));
   });
 });
