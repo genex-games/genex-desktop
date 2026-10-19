@@ -295,7 +295,16 @@ describe("the build lane imports a Rust game's staged assets", { skip: SKIP_UNLE
     assert.equal(built.ok, true, JSON.stringify(built.problem));
     const out = path.join(String(built.output), "assets");
     const files = Object.keys(await tree(out));
-    assert.deepEqual(files, ["hull.glb", "notes.xyz", "props/crate.glb", "ship.glb", "ship.mtl", "tone.wav"]);
+    // The package step (C-15) writes the asset index beside the assets.
+    assert.deepEqual(files, [
+      "genex-asset-index.json",
+      "hull.glb",
+      "notes.xyz",
+      "props/crate.glb",
+      "ship.glb",
+      "ship.mtl",
+      "tone.wav",
+    ]);
     assert.equal(await extensionsOf(path.join(out, "hull.glb")), undefined, "Draco written back plain");
     assert.equal(await extensionsOf(path.join(out, "ship.glb")), undefined);
     assert.ok(sandboxes.runs.length > 0 && sandboxes.runs.every((run) => run.sandboxed), "every job ran sandboxed");
@@ -354,7 +363,11 @@ describe("the build lane imports a Rust game's staged assets", { skip: SKIP_UNLE
     const built = await builds.ensure(gameOf(dir), BuildTarget.Mac, CppBuildPurpose.Live);
     assert.equal(built.ok, true, JSON.stringify(built.problem));
     assert.equal(asked, 0);
-    assert.deepEqual(Object.keys(await tree(path.join(String(built.output), "assets"))), ["notes.xyz", "tone.wav"]);
+    assert.deepEqual(Object.keys(await tree(path.join(String(built.output), "assets"))), [
+      "genex-asset-index.json",
+      "notes.xyz",
+      "tone.wav",
+    ]);
     const receipt = await receiptOf(String(built.output));
     assert.equal(receipt.assets?.files.find((row) => row.file === "assets/walk.fbx")?.refusal, "unsupported-by-rust");
   });

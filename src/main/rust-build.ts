@@ -78,6 +78,9 @@ import {
   writeWebAssetMap,
 } from "./rust-build-web.ts";
 import type { RustStageImport, StagedImportReport } from "./rust-assets.ts";
+import { type AssetPackageReport, PackageRefusal, packageAssets, reservedAssetName } from "./rust-package-assets.ts";
+import { AssetLockState, readAssetLock } from "./asset-db.ts";
+import type { AssetLockEntry } from "../shared/asset-db.ts";
 import { RUST_ENGINE_FOLDER, RustFlavour } from "./rust-manifest.ts";
 import { type GameTrust, ownBuildScripts, UNTRUSTED } from "./rust-trust.ts";
 import { ExtensionRefusal } from "../shared/game-conformance.ts";
@@ -858,10 +861,10 @@ export class RustBuilds implements GameBuildLane {
         rust: RustBuildRefusal.StageRefused,
       });
     }
-    if (plan.trust.trusted && !(await stageBuildScript(plan.source, stageDir(plan.bin)))) {
-      const lines = [MESSAGE.buildScriptLinked(BUILD_SCRIPT_FILE)];
+    const refused = await this.#stageRefusal(plan);
+    if (refused !== null) {
       return this.#outcome(plan, BuildProblemCode.CommandFailed, {
-        lines,
+        lines: [refused],
         lastGood,
         rust: RustBuildRefusal.StageRefused,
       });
@@ -895,6 +898,18 @@ export class RustBuilds implements GameBuildLane {
     const build = await this.#step(plan, RustBuildStep.Build, buildCommand(plan, this.#jobs()), timeout, signal);
     if (!succeeded(build)) return this.#failed(plan, build, signal, lastGood);
     return await this.#admit(plan, build, compiler, lastGood, signal);
+  }
+
+  /**
+   * Why a stage the stager made cannot be built, as the refusal's line: a game file at a name the
+   * package step writes (`reserved-asset-name`, C-15), or a trusted game's linked build script.
+   * Null when it holds.
+   */
+  async #stageRefusal(plan: Plan): Promise<string | null> {
+    const reserved = await reservedAssetName(stageDir(plan.bin));
+    if (reserved) return `${PackageRefusal.ReservedAssetName}: ${reserved}`;
+    const scriptStaged = !plan.trust.trusted || (await stageBuildScript(plan.source, stageDir(plan.bin)));
+    return scriptStaged ? null : MESSAGE.buildScriptLinked(BUILD_SCRIPT_FILE);
   }
 
   /**
@@ -1015,7 +1030,7 @@ export class RustBuilds implements GameBuildLane {
       });
     }
     const { outputs } = written;
-    const receipt = this.#receipt(plan, compiler, outputs, web?.receipt ?? null);
+    const receipt = this.#receipt(plan, compiler, outputs, web?.receipt ?? null, written.package);
     await atomicWriteText(`${plan.bin}${RECEIPT_SUFFIX}`, `${JSON.stringify(receipt, null, 2)}\n`);
     if (plan.game.recordLock) await this.#recordLock(plan.game.project, plan.lock.digest);
     this.#emit(plan, BuildPhase.Done);
@@ -1074,7 +1089,8 @@ export class RustBuilds implements GameBuildLane {
     compiler: RustCompilerIdentity,
     outputs: RustBuildReceipt["outputs"],
     web: WebReceipt | null,
-  ): RustBuildReceipt {
+    pack: AssetPackageReport | null,
+  ): ReceiptWithPackage {
     return {
       version: 1,
       project: plan.game.project,
@@ -1089,6 +1105,7 @@ export class RustBuilds implements GameBuildLane {
       outputs,
       ...(web ? { web } : {}),
       ...(plan.assets ? { assets: plan.assets } : {}),
+      ...(pack ? { package: pack } : {}),
     };
   }
 
@@ -1616,15 +1633,18 @@ async function builtInside(bin: string, exe: string): Promise<string | null> {
   return realBin && realExe && isInside(realBin, realExe) && realExe !== realBin ? realExe : null;
 }
 
-/** What writing `<bin>.out` came to: the admitted files, or the admission's refusal (nothing replaced). */
+/** A receipt with the destination's asset package (C-15) beside the lane's own fields. */
+type ReceiptWithPackage = RustBuildReceipt & { package?: AssetPackageReport };
+
+/** What writing `<bin>.out` came to: the admitted files and the package, or the admission's refusal (nothing replaced). */
 type WrittenOutput =
-  | { ok: true; outputs: RustBuildReceipt["outputs"] }
+  | { ok: true; outputs: RustBuildReceipt["outputs"]; package: AssetPackageReport | null }
   | { ok: false; refused: Extract<RustOutputAdmission, { ok: false }> };
 
 /**
  * Writes `<bin>.out` afresh: the executable under each of the builder's names (for the web, the
- * regular files the web branch packaged in `web` instead) and the staged assets, regular files
- * only; `admit` (the host's admission) reads that fresh folder before anything replaces the last
+ * regular files the web branch packaged in `web` instead) and the destination's package of the
+ * staged assets (`packageAssets`, C-15: its families, the asset index), regular files only; `admit` (the host's admission) reads that fresh folder before anything replaces the last
  * good one, and a refusal leaves the old `out/` in place. Then swaps it into place and records
  * every file's digest in `<bin>.admitted`. Answers the admitted files.
  */
@@ -1640,8 +1660,15 @@ async function writeOutput(
   await mkdir(fresh);
   if (web) await copyRegularFiles(web, fresh);
   else await copyExecutables(plan, exe, fresh);
-  if (plan.builder.assets)
-    await copyRegularTree(path.join(stageDir(plan.bin), ASSETS_DIR), path.join(fresh, ASSETS_DIR));
+  const pack = plan.builder.assets
+    ? await packageAssets({
+        from: path.join(stageDir(plan.bin), ASSETS_DIR),
+        to: path.join(fresh, ASSETS_DIR),
+        target: plan.target,
+        lock: await trustedLockRows(plan.source),
+        imported: plan.assets,
+      })
+    : null;
   // A browser cannot list `assets/`: the page fetches by this map, and the module checks each file.
   if (web) await writeWebAssetMap(fresh);
   const servesStudio = rustFlavourOf(plan.purpose, plan.target) === RustFlavour.Dev;
@@ -1658,7 +1685,13 @@ async function writeOutput(
   await rename(fresh, out);
   await rm(old, { recursive: true, force: true });
   await atomicWriteText(`${plan.bin}${ADMITTED_SUFFIX}`, `${JSON.stringify(outputs)}\n`);
-  return { ok: true, outputs };
+  return { ok: true, outputs, package: pack };
+}
+
+/** The rows of the game's `genex-assets.lock` when it reads as trusted (the index's ids); null otherwise. */
+async function trustedLockRows(gameDir: string): Promise<AssetLockEntry[] | null> {
+  const lock = await readAssetLock(gameDir).catch(() => null);
+  return lock?.state === AssetLockState.Trusted ? lock.entries : null;
 }
 
 /**

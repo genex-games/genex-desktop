@@ -79,7 +79,14 @@ replace their sources in the stage and never in the game folder: an OBJ, STL or 
 a Draco, meshopt or quantized GLB is written back plain, and a Basis KTX2 gets its per-family files.
 A refused file leaves the build, and so does an output whose name another staged file holds
 (`name-taken`). The receipt's `assets` lists each file's action and refusal. A game with nothing
-to import starts no sandbox. Every lane output passes `admitRustOutput` before
+to import starts no sandbox. `writeOutput` then packages the stage per destination
+(`packageAssets` in [`rust-package-assets.ts`](../../src/main/rust-package-assets.ts),
+`DESTINATION_PACKAGES`): family files only for the families the destination picks (desktops BC,
+iOS ASTC, Android ASTC and ETC2, the web all three), never RGBA8; a phone drops a source image its
+families cover and family mips above `PHONE_MAX_TEXTURE_PX`. It writes
+`assets/genex-asset-index.json` (ids from a trusted `genex-assets.lock`, files and bytes per
+family, `deps`, `boot`), and the receipt's `package` gives the bytes. A game file at that name is
+refused `reserved-asset-name`. Every lane output passes `admitRustOutput` before
 `out/`, exports carry `rust-notices.ts` notices, phone exports
 ([`mobile-export-deps.ts`](../../src/main/core/mobile-export-deps.ts)) are signed by `mobile-sign.ts`, and a compiled-stack session builds with its lock's tools, never writing the store. The template is checked by
 `rust-template.test.ts`; the vendored set by `rust-vendor.ts`, cargo-deny and cargo-vet
