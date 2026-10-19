@@ -1153,6 +1153,9 @@ the `src/page/*.ts` file it is built from, so the page world cannot reach main, 
 capture failures: hidden/minimized windows remain hidden, failed evidence stays unavailable,
 and parallel private previews retain input, capture and reload without show/focus/restore events.
 Reports include timestamped native events under `.studio-dev/evidence/preview-visibility`.
+`node tests/e2e/run-create-route.mjs` drives the Create Live route from real game pages: Live's
+own page reaches a fake play-time AI, other frames and origins never do, a drive and a navigation
+abandon the page's calls, and a facet answers `ai_off`. Evidence goes to `.studio-dev/evidence/create-route`.
 `STUDIO_PACKAGE_DIR="out/Genex-darwin-arm64" node tests/e2e/run-computer-smoke.mjs`
 runs the existing scripted worker/playtester checks against the packaged application.
 

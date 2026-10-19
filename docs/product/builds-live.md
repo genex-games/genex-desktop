@@ -24,8 +24,9 @@ or Reload. An empty scaffold shows “Ready for your first idea”, or
 Otherwise only the user changes Live (opening a game, Reload, Play, Make live, a chat request while
 hidden). A newer healthy build, a changed game folder (checkpoint, landing, rewind), a chat's show
 or landing, or a broken shown build lights Reload; hidden and not stopped, all but a new build go
-in at once. The
-preview reaches only public library CDNs; Open Game names other hosts. Other folders' views:
+in at once.
+Previews reach only public library CDNs; Open Game names other hosts. Game AI runs only in Live,
+with Create Live on. Other folders' views:
 [projects](projects-engines.md#lives-views).
 
 **Builds** is a graph: You asked, a row per part, Your build, then the lead while no part
