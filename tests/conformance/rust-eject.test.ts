@@ -110,6 +110,9 @@ const DIGEST_A = "a".repeat(64);
 const DIGEST_B = "b".repeat(64);
 const SKIP_ON_WINDOWS = process.platform === "win32" ? "links, process groups and fd 3 are POSIX" : false;
 
+/** The game-systems crates EP-0b adds to the fork, in the order an eject patches them. */
+const GAME_SYSTEMS_CRATES = ["genex-anim", "genex-nav", "genex-stream"] as const;
+
 const sha256 = (bytes: string | Buffer) => createHash("sha256").update(bytes).digest("hex");
 
 /** One crate of the small vendored set: its files, written with cargo's `.cargo-checksum.json`. */
@@ -267,6 +270,35 @@ describe("eject copies the lock line's engine into the game", { skip: SKIP_ON_WI
       "no copy in progress is left behind",
     );
     assert.deepEqual(await readdir(scratch), [], "the copy was made in the host's scratch folder, and removed");
+  });
+
+  it("copies the game-systems crates (animation, navigation, streaming) beside the facade, each held to its digest manifest", async () => {
+    const game = await gameCopy();
+    const vendor = await smallVendor();
+    for (const crate of GAME_SYSTEMS_CRATES)
+      await vendoredCrate(vendor, crate, RELEASE, {
+        "Cargo.toml": crateToml(crate, RELEASE, ["genex-core"]),
+        "src/lib.rs": `//! ${crate}\npub fn stub() {}\n`,
+      });
+    const { service } = ejectFor(game, lineOf(vendor));
+
+    const answer = await service.eject("forked-pond");
+
+    assert.equal(answer.ok, true, JSON.stringify(answer));
+    for (const crate of GAME_SYSTEMS_CRATES)
+      for (const rel of ["Cargo.toml", "src/lib.rs", ".cargo-checksum.json"])
+        assert.deepEqual(
+          await readFile(path.join(game, "engine", crate, rel)),
+          await readFile(path.join(vendor, `${crate}-${RELEASE}`, rel)),
+          `${crate}/${rel}`,
+        );
+    const manifest = JSON.parse(
+      await readFile(path.join(game, "engine", ENGINE_MANIFEST_FILE), "utf8"),
+    ) as EngineManifest;
+    assert.deepEqual(
+      manifest.crates.map((crate) => crate.name),
+      ["genex", "genex-anim", "genex-core", "genex-nav", "genex-stream"],
+    );
   });
 
   it("is offered only where the suite can judge the fork: no Mac host or no macOS destination is eject-needs-mac, nothing written", async () => {
@@ -445,18 +477,22 @@ const RENDER_CRATE_FILES: Readonly<Record<string, string>> = {
 };
 
 describe("a game using every renderer feature ejects whole", { skip: SKIP_ON_WINDOWS }, () => {
-  it("forks the same crate set: the renderer is the game's, the transport and the phone shells stay the store's (characterization)", () => {
+  it("forks the same crate set: the renderer and the game-systems crates are the game's, the transport and the phone shells stay the store's", () => {
+    // Flipped in EP-0b: the animation, navigation and streaming crates join the fork.
     assert.deepEqual(
       [...RUST_ENGINE_CRATES],
       [
         "genex",
+        "genex-anim",
         "genex-assets",
         "genex-audio",
         "genex-core",
         "genex-hud",
+        "genex-nav",
         "genex-platform-desktop",
         "genex-platform-web",
         "genex-render",
+        "genex-stream",
       ],
     );
   });

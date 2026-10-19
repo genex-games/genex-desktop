@@ -9,8 +9,11 @@
 //! - [`session`]: the seed/start/pause/step/frame state machine, `state()` and its checksum, the
 //!   frame timings and the audio level;
 //! - [`digest`]: FNV-1a 64;
+//! - [`glb_guard`]: the checks a GLB passes before the `gltf` crate parses it at runtime;
 //! - [`json`]: the protocol's JSON value, reader and writer (the checksum hashes its dump);
 //! - [`paths`]: save roots, the asset-path rule, asset claims and capture paths;
+//! - [`map`]: `Map` and `Set`, the insertion-ordered collections every crate and game uses;
+//! - [`cell`]: `CellId`, the grid cell streaming and navigation share;
 //! - [`protocol`]: NDJSON framing and the request envelope;
 //! - [`saves`]: `save`/`load` under the destination's save root.
 //!
@@ -20,10 +23,13 @@
 //! The verbs of `studio.cpp` live in genex-studio (they need the transport), and its demo and
 //! advance-guard semantics in the genex facade, where `advance` outside a demo is a compile error.
 
+pub mod cell;
 pub mod clock;
 pub mod digest;
+pub mod glb_guard;
 pub mod input;
 pub mod json;
+pub mod map;
 pub mod paths;
 pub mod protocol;
 pub mod rng;

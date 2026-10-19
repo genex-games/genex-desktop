@@ -71,7 +71,51 @@ its genex release). New games default by
 (`preview.acquire {stacks}`); a lease declaring none is refused a Rust game. A Rust run is refused
 `rust-parts-missing` unless every `RUST_PARTS` module exports `SERVES_RUST`; the person may
 **Re-take** kept ones (`studio:seed.retake`; `seedNightRefusal`, `kept-pre-rust`;
-[harness runtime](../harness-runtime.md)). Every lane output passes `admitRustOutput` before
+[harness runtime](../harness-runtime.md)). After staging, the lane's import step
+(`importStagedAssets` in [`rust-assets.ts`](../../src/main/rust-assets.ts), jobs in
+`layout.assetJobs`) plans every staged `assets/**` file for the destination and runs each
+importable one as its own sandboxed job, at most `IMPORT_JOBS_MAX` (4) at once. The outputs
+replace their sources in the stage and never in the game folder: an OBJ, STL or PLY becomes a GLB,
+a Draco, meshopt or quantized GLB is written back plain, every GLB has its identical vertices welded
+and its duplicate or unreferenced accessors and materials dropped
+([`weld.ts`](../../src/substrate/asset-import/weld.ts); joints, weights and morph deltas are part of
+a vertex), a normal-mapped primitive without `TANGENT` gets MikkTSpace tangents, a mirrored UV
+seam's vertices split ([`tangents.ts`](../../src/substrate/asset-import/tangents.ts)), every
+triangle list is put in vertex cache and fetch order before its meshlets and LODs
+([`reorder.ts`](../../src/substrate/asset-import/reorder.ts)), and a Basis KTX2 gets its
+per-family files. The receipt carries each written GLB's counts
+and bytes (`sizes`, [`inspect.ts`](../../src/substrate/asset-import/inspect.ts)).
+A PNG or JPEG whose usage resolved (a `[[texture]]` row or a model's material slot; never its name)
+is encoded once to UASTC and gets the same per-family KTX2 beside it, the image kept as the fallback
+([`texture-encode.ts`](../../src/substrate/asset-import/texture-encode.ts)); a non-square or
+non-power-of-two one is first resampled into its square power-of-two class, and the row's
+`texture` records the class (issue `resampled`).
+A GLB's embedded PNG and JPEG images get the same encode as the last pass of its step: each once per
+usage its material slots give it, written beside the GLB as `<model>.t<image>[.<usage>].<family>.ktx2`
+and named in its `asset.extras.genex_textures`
+([`glb-textures.ts`](../../src/substrate/asset-import/glb-textures.ts)); the embedded image stays as
+the fallback, and an image it cannot encode keeps loading from the GLB.
+Every glTF first passes the Khronos validator ([`validate.ts`](../../src/substrate/asset-import/validate.ts),
+before any decoder): an error refuses it `validation-failed`, severity decided by issue code. The
+validator reads only an image's header, so the gate also decodes each embedded PNG
+([`png-check.ts`](../../src/substrate/asset-import/png-check.ts)); one the runtime could not decode
+is an `IMAGE_DATA_INVALID` warning on its image, and the model still imports.
+A refused file leaves the build, and so does an output whose name another staged file holds
+(`name-taken`). The receipt's `assets` lists each file's action and refusal. A game with nothing
+to import starts no sandbox. Each file is looked up first in the content-addressed import cache
+([`asset-cache.ts`](../../src/main/asset-cache.ts), `layout.assetCache`, `cachedImporter`; host-owned,
+every sandboxed process is denied writing it by `studioBaseDenyWrites`), and a
+delivery into a Rust game imports its files into that cache at once, keyed for this host's desktop
+build (`warmImports` in [`core/assets.ts`](../../src/main/core/assets.ts)), so that build runs no job
+for them. `assets.inventory` gives each `assets/` file's `import`: `pending` until its version is
+imported (a read starts it), `ready` with validator `issues`, or `refused` with its `refusal`. `writeOutput` then packages the stage per destination
+(`packageAssets` in [`rust-package-assets.ts`](../../src/main/rust-package-assets.ts),
+`DESTINATION_PACKAGES`): family files only for the families the destination picks (desktops BC,
+iOS ASTC, Android ASTC and ETC2, the web all three), never RGBA8; a phone drops a source image its
+families cover and family mips above `PHONE_MAX_TEXTURE_PX`. It writes
+`assets/genex-asset-index.json` (ids from a trusted `genex-assets.lock`, files and bytes per
+family, `deps`, `boot`), and the receipt's `package` gives the bytes. A game file at that name is
+refused `reserved-asset-name`. Every lane output passes `admitRustOutput` before
 `out/`, exports carry `rust-notices.ts` notices, phone exports
 ([`mobile-export-deps.ts`](../../src/main/core/mobile-export-deps.ts)) are signed by `mobile-sign.ts`, and a compiled-stack session builds with its lock's tools, never writing the store. The template is checked by
 `rust-template.test.ts`; the vendored set by `rust-vendor.ts`, cargo-deny and cargo-vet

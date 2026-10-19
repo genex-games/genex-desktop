@@ -16,11 +16,20 @@ import { type ImportSandbox, importRustAssets, type RustAssetImportDeps } from "
 import { BuildTarget, GameStack } from "../../src/shared/game-project.ts";
 import { convertAsset } from "../../src/substrate/asset-import/convert.ts";
 import { GltfComponent, meshToGlb, readGlb, writeGlb } from "../../src/substrate/asset-import/glb.ts";
+import {
+  decoderFile,
+  IMPORT_DECODERS,
+  IMPORTER_TOOL_FILES,
+  ImportDecoder,
+} from "../../src/substrate/asset-import/decoders.ts";
+import { dequantizeGlb } from "../../src/substrate/asset-import/dequantize.ts";
 import { normalizeGltf } from "../../src/substrate/asset-import/gltf-decompress.ts";
+import { GltfImportError } from "../../src/substrate/asset-import/gltf-json.ts";
 import {
   AssetImportRefusal,
   ImportAction,
   ImportConverter,
+  isAssetImportRefusal,
   planImport,
 } from "../../src/substrate/asset-import/import-plan.ts";
 import { Ktx2FamilySkip, transcodeKtx2 } from "../../src/substrate/asset-import/ktx2.ts";
@@ -128,7 +137,12 @@ describe("per-destination texture table", () => {
 describe("Basis Universal golden corpus", () => {
   it("texture.ktx2 transcodes to the golden bytes for every family, identically across two runs", async () => {
     const golden = JSON.parse(await readFile(path.join(IMPORT, "basisu-golden.json"), "utf8"));
-    const wasm = await readFile(fileURLToPath(import.meta.resolve(`three/${golden.transcoder.file}`)));
+    assert.ok(
+      IMPORT_DECODERS[ImportDecoder.Basisu].files.includes(golden.transcoder.file),
+      "the importer's transcoder",
+    );
+    assert.equal(IMPORTER_TOOL_FILES[golden.transcoder.file]?.sha256, golden.transcoder.sha256, "pinned at v2.50");
+    const wasm = await readFile(decoderFile(golden.transcoder.file));
     assert.equal(sha(wasm), golden.transcoder.sha256, "the pinned transcoder");
     const bytes = await sample("texture.ktx2");
     assert.equal(sha(bytes), golden.source.sha256);
@@ -137,6 +151,13 @@ describe("Basis Universal golden corpus", () => {
     const second = await transcodeKtx2(bytes, families);
     assert.deepEqual(first, second);
     assert.deepEqual(first, golden.level0);
+  });
+
+  it("a v2.50-encoded UASTC texture transcodes with the pinned v2.50 transcoder to the golden bytes", async () => {
+    const golden = JSON.parse(await readFile(path.join(IMPORT, "basisu-golden.json"), "utf8"));
+    const bytes = new Uint8Array(await readFile(fileURLToPath(new URL(`../../${golden.uastc.file}`, import.meta.url))));
+    assert.equal(sha(bytes), golden.uastc.sha256);
+    assert.deepEqual(await transcodeKtx2(bytes, Object.values(TextureCompression)), golden.uastc.level0);
   });
 
   it("a damaged KTX2 is refused malformed, and the file is never rewritten", async () => {
@@ -340,7 +361,6 @@ describe("converters", () => {
       "ply",
       "ply\nformat ascii 1.0\nelement vertex 3\nproperty float x\nproperty float y\nproperty float z\nelement face 1\nproperty list uchar int vertex_indices\nend_header\n0 0 0\n1 0 0\n0 1 0\n3 0 1 9\n",
     ],
-    [ImportConverter.GltfDecompress, "glb", "glTF but not really"],
   ];
   for (const [converter, ext, text] of damaged) {
     it(`a damaged .${ext} is refused malformed (${JSON.stringify(text.slice(0, 32))})`, async () => {
@@ -365,6 +385,22 @@ describe("converters", () => {
       targets: [BuildTarget.Mac],
     });
     assert.equal(!result.ok && result.refusal, AssetImportRefusal.ConverterMissing);
+  });
+
+  it("the GLB image sidecar step alone refuses a file that is not a GLB as malformed; no plan picks it, nor texture encoding without a usage", async () => {
+    const result = await convertAsset({
+      converter: ImportConverter.GlbTextures,
+      ext: "png",
+      name: "bark",
+      bytes: new Uint8Array([0x89, 0x50, 0x4e, 0x47]),
+      targets: [BuildTarget.Mac],
+    });
+    assert.equal(!result.ok && result.refusal, AssetImportRefusal.Malformed);
+    for (const file of ["assets/bark.png", "assets/bark.jpg", "assets/ship.glb"])
+      for (const converter of [ImportConverter.TextureEncode, ImportConverter.GlbTextures])
+        assert.notEqual(planImport(GameStack.RustWgpu, file).converter, converter, file);
+    assert.equal(AssetImportRefusal.ValidationFailed, "validation-failed");
+    assert.equal(isAssetImportRefusal(AssetImportRefusal.ValidationFailed), true);
   });
 });
 
@@ -525,6 +561,19 @@ describe("glTF the runtime can read", () => {
     });
   }
 
+  // Named flip (C-6): this was refused `malformed` by the decompress step; the glTF gate in front of
+  // it now refuses it first.
+  it("a .glb that is not glTF is refused validation-failed by the glTF gate", async () => {
+    const result = await convertAsset({
+      converter: ImportConverter.GltfDecompress,
+      ext: "glb",
+      name: "x",
+      bytes: new TextEncoder().encode("glTF but not really"),
+      targets: [BuildTarget.Mac],
+    });
+    assert.equal(!result.ok && result.refusal, AssetImportRefusal.ValidationFailed);
+  });
+
   it("a plain GLB is kept byte for byte", async () => {
     const bytes = await sample("animated.glb");
     assert.equal(sha(await normalizeGltf(bytes, "glb")), sha(bytes));
@@ -578,8 +627,10 @@ describe("quantized glTF (KHR_mesh_quantization, gltfpack's default)", () => {
     ["a component type glTF does not have", (json) => (json.accessors[1].componentType = 5124)],
     ["a view outside the binary chunk", (json) => (json.bufferViews[2].byteOffset = 1 << 30)],
   ];
+  // Named flip (C-6): the import step refused these `malformed` in the dequantize step; the glTF gate
+  // now refuses them `validation-failed` before it, and dequantize's own checks still refuse them.
   for (const [what, damage] of hostileQuantized) {
-    it(`a quantized GLB with ${what} is refused malformed`, async () => {
+    it(`a quantized GLB with ${what} is refused validation-failed, and dequantize alone refuses it malformed`, async () => {
       const { json, bin } = readGlb(new Uint8Array(await readFile(path.join(IMPORT, "quantized.glb")))) as {
         json: Json;
         bin: Uint8Array;
@@ -592,7 +643,11 @@ describe("quantized glTF (KHR_mesh_quantization, gltfpack's default)", () => {
         bytes: writeGlb(json, bin),
         targets: [BuildTarget.Mac],
       });
-      assert.equal(!result.ok && result.refusal, AssetImportRefusal.Malformed, JSON.stringify(result));
+      assert.equal(!result.ok && result.refusal, AssetImportRefusal.ValidationFailed, JSON.stringify(result));
+      assert.throws(
+        () => dequantizeGlb(structuredClone(json), bin),
+        (error: unknown) => error instanceof GltfImportError && error.code === AssetImportRefusal.Malformed,
+      );
     });
   }
 

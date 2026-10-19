@@ -82,6 +82,7 @@
 //!
 //! [`FrameRenderer`]: genex_render::FrameRenderer
 
+mod characters;
 mod hud_history;
 #[cfg(not(target_arch = "wasm32"))]
 mod warm;
@@ -112,7 +113,7 @@ use genex_render::motion::DrawId;
 use genex_render::letterbox::{letterbox, output_for_window};
 use genex_render::overlay::OverlayPainter;
 use genex_render::lights::SpotLight;
-use genex_render::scene::{CameraDesc, Lighting, Material, MeshId, PointLight, Scene, scaled};
+use genex_render::scene::{CameraDesc, Lighting, LineVertex, Material, MeshId, PointLight, Scene, scaled};
 use genex_render::texture::{CompressedTexture, TextureData, TextureFamily, TextureId, TextureKind, family_file, linear_to_srgb, read_ktx2, srgb_to_linear};
 use genex_render::presets::{on_ldr_scene, with_world_samples};
 use genex_render::renderer::landed_samples;
@@ -145,8 +146,92 @@ pub struct Drawn {
     pub by_tag: Vec<(String, u32)>,
     /// Models drawn as the missing-asset checker, in first-draw order.
     pub missing_models: Vec<String>,
+    /// The textures the frame bound, one per path in first-bound order ([`texture_facts`], C-11).
+    pub textures: Vec<TextureFact>,
+    /// What those textures tell an agent to fix ([`texture_facts`], C-11).
+    pub asset_issues: Vec<AssetIssue>,
     /// What the GPU encoded for the frame (`state().volatile.gpu`), never compared.
     pub gpu: GpuCounters,
+}
+
+/// Where a bound texture's texels came from (`__render.textures[path].family`, C-11).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum TextureOrigin {
+    /// A family file the Studio's import step wrote (`<stem>.<family>.ktx2`).
+    Family(TextureFamily),
+    /// The image itself, decoded to RGBA8 on the device's CPU.
+    Source,
+}
+
+impl TextureOrigin {
+    /// Wire spelling: the family's (`bc`, `astc`, `etc2`, `rgba8`) or `source`.
+    pub const fn wire(self) -> &'static str {
+        match self {
+            TextureOrigin::Family(family) => family.wire(),
+            TextureOrigin::Source => "source",
+        }
+    }
+}
+
+/// Why `state().__render.assetIssues` names an asset (C-11). Display only: an issue never moves
+/// the checksum and never refuses anything.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum AssetIssueCode {
+    /// A texture loaded from its image because the game ships no family file of it at all (the
+    /// import step encoded none: its usage was not resolved). GLB-embedded images are not named
+    /// until the runtime reads their sidecars (C-14).
+    TextureUncompressed,
+    /// A texture loaded from its image because the renderer refused the family file the game
+    /// ships in the device's family (unreadable, or every size class it fits is full: the
+    /// detail is in the log), so it is drawn uncompressed.
+    TextureFamilyRefused,
+}
+
+impl AssetIssueCode {
+    /// Every code, in declaration order.
+    pub const ALL: [AssetIssueCode; 2] = [AssetIssueCode::TextureUncompressed, AssetIssueCode::TextureFamilyRefused];
+
+    /// Wire spelling.
+    pub const fn wire(self) -> &'static str {
+        match self {
+            AssetIssueCode::TextureUncompressed => "texture-uncompressed",
+            AssetIssueCode::TextureFamilyRefused => "texture-family-refused",
+        }
+    }
+}
+
+/// One texture a frame bound (`state().__render.textures`, C-11): its asset path (a GLB-embedded
+/// image is `<model>#<image>`), the array kind its slot samples and where its texels came from.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TextureFact {
+    /// The asset path, or `<model path>#<image index>` for an image inside a GLB.
+    pub path: String,
+    /// The kind its slot samples it as (the first slot, when one file fills several).
+    pub kind: TextureKind,
+    /// Where its texels came from.
+    pub origin: TextureOrigin,
+}
+
+impl TextureFact {
+    /// The usage a `[[texture]]` row would name for it (`color`, `data`, `normal`; the host's
+    /// TextureUsage): an alpha-tested base colour is `color`.
+    pub const fn usage(&self) -> &'static str {
+        match self.kind {
+            TextureKind::Color | TextureKind::Cutout => "color",
+            TextureKind::Data => "data",
+            TextureKind::Normal => "normal",
+        }
+    }
+}
+
+/// One asset issue (`state().__render.assetIssues`, C-11).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AssetIssue {
+    /// The asset path.
+    pub path: String,
+    /// What is wrong with it.
+    pub code: AssetIssueCode,
 }
 
 /// Where the presenter reads a model's GLB bytes, by its path under `assets/`: natively the table
@@ -193,6 +278,8 @@ pub struct LoadedModel {
     pub parts: Vec<ModelPart>,
     /// Triangles of every part.
     pub triangles: u32,
+    /// The GLB images its parts' materials sample, uploaded, with the kind each was uploaded as.
+    pub textures: Vec<(u32, TextureKind)>,
 }
 
 /// One mesh of a [`LoadedModel`] and the material its GLB names for it (`None`: it names none).
@@ -321,7 +408,7 @@ impl Uploads for Resilient {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct AssetCache {
     models: Vec<(String, Option<LoadedModel>)>,
-    textures: Vec<(String, TextureKind, Option<TextureId>)>,
+    textures: Vec<CachedTexture>,
     /// The environment maps a frame named (`frame.environment(Environment::hdri(..))`), decoded on
     /// the CPU and prepared for the device (None: refused): only the prepared copy is kept, at most
     /// the device's width, its sun found on the full map. The presenter uploads one when the frame
@@ -330,6 +417,40 @@ pub struct AssetCache {
     /// Whether the texture family was chosen (renderer pass 2 A6.4): at the first frame naming a
     /// texture, before any texture loads.
     family_chosen: bool,
+}
+
+/// One texture an [`AssetCache`] tried: its path and kind, its id (`None`: refused) and where it
+/// loaded from (C-11).
+#[derive(Clone, Debug, PartialEq)]
+struct CachedTexture {
+    path: String,
+    kind: TextureKind,
+    id: Option<TextureId>,
+    origin: TextureOrigin,
+    /// Why it was loaded from its image, when that is the game's to fix: no family file of it in
+    /// any family, or the device's family file refused.
+    issue: Option<AssetIssueCode>,
+}
+
+/// What became of a texture's file in the renderer's family ([`load_compressed`]).
+enum Compressed {
+    /// Uploaded as this texture.
+    Loaded(TextureId),
+    /// Not looked for (the renderer stores RGBA8, an unsafe path) or not shipped.
+    Absent,
+    /// Shipped but refused (unreadable, or no size class with room); the refusal is logged.
+    Refused,
+}
+
+/// Whether the game ships `path` in any family (`<stem>.<family>.ktx2`), whether or not the
+/// device samples that family; `known` keeps the answers already looked up for this load.
+fn ships_any_family<'a>(path: &'a str, source: &dyn ModelSource, known: &mut Vec<(&'a str, bool)>) -> bool {
+    if let Some((_, ships)) = known.iter().find(|(known, _)| *known == path) {
+        return *ships;
+    }
+    let ships = TextureFamily::ALL.into_iter().any(|family| source.has_asset(&family_file(path, family)));
+    known.push((path, ships));
+    ships
 }
 
 /// Store the renderer's larger textures in the first family (best first for the device) the
@@ -345,30 +466,31 @@ fn choose_texture_family(frame: &Frame, source: &dyn ModelSource, uploads: &mut 
     }
 }
 
-/// `path`'s compressed file in the renderer's family uploaded as `kind` (renderer pass 2 A6.4),
-/// or `None` when the renderer stores RGBA8, the game ships no such file or it was refused (the
-/// image loads instead; a refusal is logged). A lost device is passed on.
-fn load_compressed(path: &str, kind: TextureKind, source: &dyn ModelSource, uploads: &mut dyn Uploads, log: &mut dyn FnMut(&str)) -> Result<Option<TextureId>, RenderError> {
+/// `path`'s compressed file in the renderer's family uploaded as `kind` (renderer pass 2 A6.4):
+/// absent when the renderer stores RGBA8 or the game ships no such file, refused when it is
+/// unreadable or the renderer refuses it (the image loads instead in both; a refusal is logged).
+/// A lost device is passed on.
+fn load_compressed(path: &str, kind: TextureKind, source: &dyn ModelSource, uploads: &mut dyn Uploads, log: &mut dyn FnMut(&str)) -> Result<Compressed, RenderError> {
     let family = uploads.texture_family();
     if family == TextureFamily::Rgba8 || !is_safe_asset_path(path) {
-        return Ok(None);
+        return Ok(Compressed::Absent);
     }
     let file = family_file(path, family);
-    let Some(bytes) = source.model_bytes(&file) else { return Ok(None) };
+    let Some(bytes) = source.model_bytes(&file) else { return Ok(Compressed::Absent) };
     let texture = match read_ktx2(&bytes) {
         Ok(texture) => texture,
         Err(error) => {
             log(&format!("texture {file:?} refused: {error}; loading {path:?}"));
-            return Ok(None);
+            return Ok(Compressed::Refused);
         }
     };
     let again = source.static_bytes(&file).map(|bytes| -> CompressedSource { Arc::new(move || read_ktx2(bytes)) });
     match uploads.add_compressed_texture(&texture, kind, again) {
-        Ok(id) => Ok(Some(id)),
+        Ok(id) => Ok(Compressed::Loaded(id)),
         Err(error) if error.code() == RenderCode::DeviceLost => Err(error),
         Err(error) => {
             log(&format!("texture {file:?} refused: {error}; loading {path:?}"));
-            Ok(None)
+            Ok(Compressed::Refused)
         }
     }
 }
@@ -388,14 +510,18 @@ impl AssetCache {
     /// tried already: for a shell that loads meshes itself, and for tests.
     pub fn insert_model(&mut self, path: &str, mesh: Option<MeshId>) {
         if !self.tried(path) {
-            let loaded = mesh.map(|mesh| LoadedModel { parts: vec![ModelPart { mesh, material: None }], triangles: 0 });
+            let loaded = mesh.map(|mesh| LoadedModel { parts: vec![ModelPart { mesh, material: None }], triangles: 0, textures: Vec::new() });
             self.models.push((path.to_owned(), loaded));
         }
     }
 
     /// The texture loaded for `path` as `kind`; `None` when it was refused or never tried.
     pub fn texture(&self, path: &str, kind: TextureKind) -> Option<TextureId> {
-        self.textures.iter().find(|(known, k, _)| known == path && *k == kind).and_then(|(_, _, id)| *id)
+        self.cached_texture(path, kind).and_then(|cached| cached.id)
+    }
+
+    fn cached_texture(&self, path: &str, kind: TextureKind) -> Option<&CachedTexture> {
+        self.textures.iter().find(|cached| cached.path == path && cached.kind == kind)
     }
 
     /// The environment map decoded for `path`, as prepared for the device; `None` when it was
@@ -431,14 +557,18 @@ impl AssetCache {
             let loaded = load_model(path, source, uploads, log)?;
             self.models.push((path.to_owned(), loaded));
         }
-        // A file used as several kinds (a base colour that is also a mask) is read once.
+        // A file used as several kinds (a base colour that is also a mask) is read once, and its
+        // family files are looked for once.
         let mut read: Vec<(&str, Option<TextureData>)> = Vec::new();
+        let mut shipped: Vec<(&str, bool)> = Vec::new();
         for (path, kind) in texture_paths(frame) {
-            if self.textures.iter().any(|(known, k, _)| known == path && *k == kind) {
+            if self.cached_texture(path, kind).is_some() {
                 continue;
             }
-            if let Some(id) = load_compressed(path, kind, source, uploads, log)? {
-                self.textures.push((path.to_owned(), kind, Some(id)));
+            let compressed = load_compressed(path, kind, source, uploads, log)?;
+            if let Compressed::Loaded(id) = compressed {
+                let origin = TextureOrigin::Family(uploads.texture_family());
+                self.textures.push(CachedTexture { path: path.to_owned(), kind, id: Some(id), origin, issue: None });
                 continue;
             }
             let at = match read.iter().position(|(known, _)| *known == path) {
@@ -453,7 +583,13 @@ impl AssetCache {
                 Some(data) => upload_texture(uploads, (data, kind, again), &format!("texture {path:?}"), log)?,
                 None => None,
             };
-            self.textures.push((path.to_owned(), kind, id));
+            let issue = match compressed {
+                _ if id.is_none() => None,
+                Compressed::Refused => Some(AssetIssueCode::TextureFamilyRefused),
+                _ if !ships_any_family(path, source, &mut shipped) => Some(AssetIssueCode::TextureUncompressed),
+                _ => None,
+            };
+            self.textures.push(CachedTexture { path: path.to_owned(), kind, id, origin: TextureOrigin::Source, issue });
         }
         if let Some(Environment::Hdri(hdri)) = frame.declared_environment()
             && !self.environments.iter().any(|(known, _)| *known == hdri.path)
@@ -502,7 +638,7 @@ fn model_paths(frame: &Frame) -> impl Iterator<Item = &str> {
             crate::GroupShape::Model(model) => model.path(),
             crate::GroupShape::Cube | crate::GroupShape::Sphere => None,
         },
-        Shape::Cube { .. } | Shape::Sphere { .. } | Shape::Line { .. } => None,
+        Shape::Cube { .. } | Shape::Sphere { .. } | Shape::Line { .. } | Shape::Lines { .. } => None,
     });
     let custom = frame.custom_draws().iter().filter_map(|draw| match &draw.mesh {
         CustomMesh::Model(model) => model.path(),
@@ -517,7 +653,7 @@ fn texture_paths(frame: &Frame) -> impl Iterator<Item = (&str, TextureKind)> {
         Shape::Model { material, .. } => material.as_ref(),
         Shape::Cube { material, .. } | Shape::Sphere { material, .. } => Some(material),
         Shape::Group { group } => group.material(),
-        Shape::Line { .. } => None,
+        Shape::Line { .. } | Shape::Lines { .. } => None,
     });
     let drawn = materials.flat_map(|material| {
         let slots = [
@@ -539,6 +675,53 @@ fn texture_paths(frame: &Frame) -> impl Iterator<Item = (&str, TextureKind)> {
         slots.into_iter().filter_map(|(path, kind)| Some((path?, kind)))
     });
     drawn.chain(terrain).chain(decals)
+}
+
+/// The textures `frame` binds with what `assets` loaded (`state().__render.textures`, C-11): one
+/// fact per path in first-bound order (the material, terrain and decal slots, then the images of
+/// the GLB models drawn with their own materials), and an issue per loose texture loaded from its
+/// image while the game ships no family file of it, or whose family file the renderer refused. A texture refused or not loaded yet is not
+/// bound. Display only: nothing here enters the simulation.
+pub fn texture_facts(frame: &Frame, assets: &AssetCache) -> (Vec<TextureFact>, Vec<AssetIssue>) {
+    let mut facts: Vec<TextureFact> = Vec::new();
+    let mut issues = Vec::new();
+    for (path, kind) in texture_paths(frame) {
+        let Some(cached) = assets.cached_texture(path, kind).filter(|cached| cached.id.is_some()) else { continue };
+        if facts.iter().any(|fact| fact.path == path) {
+            continue;
+        }
+        facts.push(TextureFact { path: path.to_owned(), kind, origin: cached.origin });
+        if let Some(code) = cached.issue {
+            issues.push(AssetIssue { path: path.to_owned(), code });
+        }
+    }
+    let mut models: Vec<&str> = Vec::new();
+    for path in models_with_own_materials(frame) {
+        if models.contains(&path) {
+            continue;
+        }
+        models.push(path);
+        let Some(loaded) = assets.model(path) else { continue };
+        for (image, kind) in &loaded.textures {
+            let key = format!("{path}#{image}");
+            if !facts.iter().any(|fact| fact.path == key) {
+                facts.push(TextureFact { path: key, kind: *kind, origin: TextureOrigin::Source });
+            }
+        }
+    }
+    (facts, issues)
+}
+
+/// The paths of the models `frame` draws with the materials their GLBs name (no material given).
+fn models_with_own_materials(frame: &Frame) -> impl Iterator<Item = &str> {
+    frame.draws().iter().filter_map(|draw| match &draw.shape {
+        Shape::Model { model, material: None, .. } => model.path(),
+        Shape::Group { group } if group.material().is_none() => match group.shape() {
+            crate::GroupShape::Model(model) => model.path(),
+            crate::GroupShape::Cube | crate::GroupShape::Sphere => None,
+        },
+        _ => None,
+    })
 }
 
 /// The terrain `frame` draws as the renderer takes it (renderer pass 2 A.7), its layers' textures
@@ -632,7 +815,7 @@ fn load_model(path: &str, source: &dyn ModelSource, uploads: &mut dyn Uploads, l
     let mut images: Vec<(u32, TextureKind, Option<TextureId>)> = Vec::new();
     let mut parts = Vec::with_capacity(glb.parts().len());
     let mut triangles = 0u32;
-    // Every part in one upload: the renderer copies its whole library once, not once a material.
+    // Every part in one upload: the renderer writes the model's own rows once, not once a material.
     // Each part brings the clusters the importer wrote (R2.3); a part without them clusters at runtime.
     // Its levels of detail (`genex_lods`, A6.9) come along: far instances draw a coarser level.
     let model_parts: ModelParts = glb.model_parts();
@@ -661,7 +844,8 @@ fn load_model(path: &str, source: &dyn ModelSource, uploads: &mut dyn Uploads, l
         };
         parts.push(ModelPart { mesh, material });
     }
-    Ok(Some(LoadedModel { parts, triangles }))
+    let textures = images.iter().filter(|(_, _, id)| id.is_some()).map(|(image, kind, _)| (*image, *kind)).collect();
+    Ok(Some(LoadedModel { parts, triangles, textures }))
 }
 
 /// `material` with its images uploaded, each image and kind once per model (`images` holds those
@@ -1062,7 +1246,12 @@ impl Presenter {
         let class = if live { handle.borrow().live_class() } else { handle.borrow().capture_class() };
         let asked = self.on_scene(asked, class);
         let samples = self.world_samples(handle, &asked.quality, live);
-        handle.borrow_mut().note_world_samples(samples);
+        // Live's world pass only: a capture on other samples (its pinned profile) noted here made
+        // `volatile.render`, read after the captures, report Live on the capture's samples (GF
+        // round 2: a phone's TAA Live read back as MSAA, which drops AO).
+        if live {
+            handle.borrow_mut().note_world_samples(samples);
+        }
         let choice = FrameChoice { quality: with_world_samples(&asked.quality, samples, class), ..asked };
         let deferred = landed_samples(asked.quality.anti_aliasing) != samples;
         self.set_drawn(handle, choice, class, live, deferred);
@@ -1432,6 +1621,7 @@ impl Presenter {
         if let Ok(drawn) = &drawn {
             runtime.note_triangles(drawn.triangles, &drawn.by_tag);
             runtime.note_missing_models(&drawn.missing_models);
+            runtime.note_texture_facts(&drawn.textures, &drawn.asset_issues);
         }
         Some(drawn)
     }
@@ -2085,6 +2275,8 @@ trait WorldSink {
     /// A retained instance group drawing with `material` (renderer pass 2 A.0b).
     fn group(&mut self, group: &genex_render::retained::InstanceGroup, material: Material);
     fn line(&mut self, from: [f32; 3], to: [f32; 3], color: [u8; 4]);
+    /// Line segments as one logical draw (NAV-15): each pair of vertices one segment.
+    fn lines(&mut self, vertices: &[LineVertex]);
     fn lighting(&mut self) -> &mut Lighting;
 }
 
@@ -2105,6 +2297,10 @@ impl WorldSink for Scene {
 
     fn line(&mut self, from: [f32; 3], to: [f32; 3], color: [u8; 4]) {
         Scene::line(self, from, to, color);
+    }
+
+    fn lines(&mut self, vertices: &[LineVertex]) {
+        Scene::lines(self, vertices);
     }
 
     fn lighting(&mut self) -> &mut Lighting {
@@ -2133,6 +2329,10 @@ impl WorldSink for ImmediateFrame {
 
     fn line(&mut self, from: [f32; 3], to: [f32; 3], color: [u8; 4]) {
         ImmediateFrame::line(self, from, to, color);
+    }
+
+    fn lines(&mut self, vertices: &[LineVertex]) {
+        ImmediateFrame::lines(self, vertices);
     }
 
     fn lighting(&mut self) -> &mut Lighting {
@@ -2184,6 +2384,12 @@ fn push_shape(sink: &mut impl WorldSink, assets: &AssetCache, missing: &mut Vec<
         }
         Shape::Line { from, to, color } => {
             sink.line(from.to_array(), to.to_array(), rgba(*color));
+            0
+        }
+        Shape::Lines { points, color } => {
+            let color = rgba(*color);
+            let vertices: Vec<LineVertex> = points.iter().map(|point| LineVertex::srgb(point.to_array(), color)).collect();
+            sink.lines(&vertices);
             0
         }
         Shape::Group { group } => push_group(sink, assets, missing, group),
@@ -2273,7 +2479,8 @@ fn world_frame(frame: &Frame, camera: &Camera, assets: &AssetCache) -> (Immediat
         // A new shot: TAA, AO, motion and exposure history start over (RQ5.6).
         immediate.camera_cut();
     }
-    let mut drawn = Drawn { draw_calls: frame.draw_calls(), ..Drawn::default() };
+    let (textures, asset_issues) = texture_facts(frame, assets);
+    let mut drawn = Drawn { draw_calls: frame.draw_calls(), textures, asset_issues, ..Drawn::default() };
     write_world(&mut immediate, frame, assets, &mut drawn);
     (immediate, drawn)
 }

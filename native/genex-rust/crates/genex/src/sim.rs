@@ -13,6 +13,9 @@ pub struct Sim<W> {
     pub physics: PhysicsWorld,
     /// Per-facet private state, so facets do not edit the entry file's world type.
     pub facets: FacetState,
+    /// The navigation world, rebuilt on every seed: empty unless `game.navigation` registered one
+    /// (the runtime owns it, as it owns physics).
+    pub nav: crate::nav::Nav,
 }
 
 impl<W> Sim<W> {

@@ -327,6 +327,14 @@ pub const SHADERS: &[(&str, &str)] = &[
     // Renderer pass 2 B.10: the ocean tier's simulation (spectrum, Stockham FFT, resolve) and surface.
     ("ocean-fft", crate::ocean::OCEAN_FFT),
     ("ocean", crate::ocean::OCEAN),
+    // Game systems (EP-0a1): stub entries for every planned shader, each replaced by the work
+    // package its module names.
+    ("impostor-bake", crate::impostor::bake::IMPOSTOR_BAKE),
+    ("impostor-pack", crate::impostor::bake::IMPOSTOR_PACK),
+    ("impostor-mip", crate::impostor::bake::IMPOSTOR_MIP),
+    ("impostor-draw", crate::impostor::draw::IMPOSTOR_DRAW),
+    ("skin-vertex", crate::skin_vertex::SKIN_VERTEX),
+    ("vat", crate::vat::VAT),
 ];
 
 /// A shader module from WGSL checked against [`crate::WGSL_MAX_BYTES`].

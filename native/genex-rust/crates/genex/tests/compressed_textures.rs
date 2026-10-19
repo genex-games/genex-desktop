@@ -277,12 +277,25 @@ fn metal_lakesides_maps_load_compressed_at_a_quarter_of_their_bytes() {
             std::fs::write(dir.join(format!("lakeside-maps-{label}-{}x{}.bgra", capture.width(), capture.height())), capture.bgra()).expect("written");
         }
         rows.push(row);
+        if families {
+            // GF round 2: a shipped family file the renderer refused (stone's normal and ORM maps
+            // when their size classes are full) is drawn from its image and named, never silent.
+            let render = runtime.state()["__render"].clone();
+            let from_images: Vec<&str> = render["textures"].as_object().into_iter().flatten().filter(|(_, fact)| fact["family"] == "source").map(|(path, _)| path.as_str()).collect();
+            let named: Vec<&str> = render["assetIssues"].as_array().into_iter().flatten().filter(|issue| issue["code"] == "texture-family-refused").filter_map(|issue| issue["path"].as_str()).collect();
+            eprintln!("compressed: drawn from images {from_images:?}, named {named:?}");
+            assert_eq!(from_images, named, "every map drawn from its image while its family file ships is named");
+        }
         let _ = std::fs::remove_dir_all(&root);
     }
     let (images, compressed) = (&rows[0], &rows[1]);
     assert_eq!(images.1, TextureFamily::Rgba8, "no family file: images");
     assert_ne!(compressed.1, TextureFamily::Rgba8, "the device's best family the game ships");
     let ratio = images.2 as f64 / compressed.2 as f64;
-    eprintln!("Lakeside's maps: {ratio:.2}x fewer bytes held; arrays {:.2}x", images.3 as f64 / compressed.3 as f64);
+    let arrays = images.3 as f64 / compressed.3 as f64;
+    eprintln!("Lakeside's maps: {ratio:.2}x fewer bytes held; arrays {arrays:.2}x");
     assert!(ratio >= 3.5, "the maps take {ratio:.2}x fewer bytes compressed (at least 3.5x)");
+    // Game systems GF: the GPU memory the arrays allocate drops as far (plan section 10, C-12),
+    // not only the bytes the textures hold.
+    assert!(arrays >= 3.5, "the arrays allocate {arrays:.2}x fewer bytes compressed (at least 3.5x)");
 }

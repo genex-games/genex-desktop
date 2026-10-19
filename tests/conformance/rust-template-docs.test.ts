@@ -1,15 +1,17 @@
 /**
  * The Rust game template's agent-facing docs (`src/game-template-rust/CLAUDE.md`,
- * `docs/CONTRACT.md`, `docs/GENEX_API.md`) agree with the contract they describe: every verb and
- * refusal code the contract page names is in the shared vocabularies (and every host verb is
- * named), the facade reference lists exactly the native features, input kinds and touch phases
- * the app knows, its determinism rules cover what the lane's lint file refuses, the two copies of
- * the reference are one byte-equal file, the docs link only to files the folder has, and neither
- * the docs nor the template leak a pinned eval brief to the in-app agent. The Rust eval case is a
- * draft in `evals/cases.md` that never names the stack.
+ * `docs/CONTRACT.md`, the facade reference `docs/GENEX_API.md` and its topic pages `docs/api/*.md`)
+ * agree with the contract they describe: every verb and refusal code the contract page names is in
+ * the shared vocabularies (and every host verb is named), the reference lists exactly the native
+ * features, input kinds and touch phases the app knows, its determinism rules cover what the lane's
+ * lint file refuses, the reference is a short index whose topic pages it lists, the facade crate's
+ * copy of the index and of every page is byte-equal to the template's, the docs link only to files
+ * the folder has, and neither the docs nor the template leak a pinned eval brief to the in-app
+ * agent. The Rust eval case is a draft in `evals/cases.md` that never names the stack.
  */
 import assert from "node:assert/strict";
-import { readdirSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { cp, mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
@@ -25,6 +27,7 @@ import {
   NativeOpError,
   NativeRefusal,
 } from "../../src/shared/native-contract.ts";
+import { GameStack } from "../../src/shared/game-project.ts";
 import { TouchPhase } from "../../src/shared/preview-contract.ts";
 import {
   DegradeReason,
@@ -50,10 +53,18 @@ import {
   type TomlTable,
   type TomlValue,
 } from "../../src/substrate/genex-toml.ts";
+import { GameWorkspaces } from "../../src/substrate/game-workspace.ts";
+import { tmpDir } from "../helpers/tmp.ts";
 
 const REPO = fileURLToPath(new URL("../..", import.meta.url));
 const TEMPLATE = path.join(REPO, "src", "game-template-rust");
-const FACADE_DOCS = path.join(REPO, "native", "genex-rust", "docs", "GENEX_API.md");
+const FACADE_ROOT = path.join(REPO, "native", "genex-rust");
+/** The reference's index, the same path in the template and in the facade crate. */
+const API_INDEX = "docs/GENEX_API.md";
+/** The folder of the reference's topic pages, beside the index in both trees. */
+const API_PAGES = "docs/api";
+/** The most words the index may take: the hooks and the rules, with every other topic on its own page. */
+const INDEX_WORDS_MAX = 2000;
 const LANE_LINTS = path.join(REPO, "native", "genex-rust", "clippy.toml");
 const RUST_CASE_ID = "touch-physics";
 
@@ -175,7 +186,7 @@ const RENDER_VOCABULARIES: Record<string, Record<string, string>> = {
 
 const read = (rel: string) => readFileSync(path.join(TEMPLATE, rel), "utf8");
 const contract = () => read("docs/CONTRACT.md");
-const api = () => read("docs/GENEX_API.md");
+const index = () => read(API_INDEX);
 
 /** The text of the `## <heading>` section, up to the next `## ` heading. */
 function section(markdown: string, heading: string): string {
@@ -185,6 +196,69 @@ function section(markdown: string, heading: string): string {
   const rest = lines.slice(start + 1);
   const end = rest.findIndex((line) => line.startsWith("## "));
   return (end < 0 ? rest : rest.slice(0, end)).join("\n");
+}
+
+/** The titles of `markdown`'s `## ` sections. */
+const sectionTitles = (markdown: string): string[] =>
+  markdown
+    .split("\n")
+    .filter((line) => line.startsWith("## "))
+    .map((line) => line.slice(3).trim());
+
+/** A topic the index lists: the chapter's title and the page that holds it. */
+interface Topic {
+  title: string;
+  page: string;
+}
+
+/** The topics the index's `## Topics` table lists, in its order. */
+function topics(): Topic[] {
+  return section(index(), "Topics")
+    .split("\n")
+    .flatMap((line) => {
+      const row = /^\| ([^|`]+?) \| `([^`]+)` \|/.exec(line);
+      return row ? [{ title: row[1] ?? "", page: row[2] ?? "" }] : [];
+    });
+}
+
+/** The topic pages of the reference under `root`, as `docs/api/<name>.md`, sorted; none without the folder. */
+function topicPages(root: string): string[] {
+  const dir = path.join(root, API_PAGES);
+  if (!existsSync(dir)) return [];
+  return readdirSync(dir)
+    .filter((name) => name.endsWith(".md"))
+    .sort()
+    .map((name) => `${API_PAGES}/${name}`);
+}
+
+/** A topic page's title (its `# ` first line) and the text after it. */
+function titled(markdown: string): { title: string; body: string } {
+  const [first = "", ...rest] = markdown.split("\n");
+  return { title: first.startsWith("# ") ? first.slice(2).trim() : "", body: rest.join("\n") };
+}
+
+/** The whole reference an agent can read: the index, then every topic page. */
+const api = () => [index(), ...topicPages(TEMPLATE).map(read)].join("\n");
+
+/** Every chapter title of the reference: the index's sections, then the topic pages' titles. */
+const chapterTitles = (): string[] => [
+  ...sectionTitles(index()),
+  ...topicPages(TEMPLATE).map((rel) => titled(read(rel)).title),
+];
+
+/** A chapter of the reference: the topic page with that title, or else the index's section. */
+function chapter(title: string): string {
+  const page = topicPages(TEMPLATE)
+    .map((rel) => titled(read(rel)))
+    .find((entry) => entry.title === title);
+  return page ? page.body : section(index(), title);
+}
+
+/** The page the index lists for the chapter `title`. */
+function pageOf(title: string): string {
+  const topic = topics().find((entry) => entry.title === title);
+  assert.ok(topic, `the index lists no "${title}" topic`);
+  return topic.page;
 }
 
 /** The backticked first cell of every row of the markdown table in `text`. */
@@ -264,13 +338,35 @@ describe("CONTRACT.md names the contract's vocabulary", () => {
   });
 });
 
-describe("GENEX_API.md is the facade's reference", () => {
-  it("is one byte-equal file with the facade crate's copy", () => {
-    assert.equal(api(), readFileSync(FACADE_DOCS, "utf8"));
+describe("GENEX_API.md is a short index of the reference's topic pages", () => {
+  it(`takes at most ${INDEX_WORDS_MAX} words: the hooks and the rules, every other topic on its own page`, () => {
+    assert.ok(wordCount(index()) <= INDEX_WORDS_MAX, `${wordCount(index())} words`);
   });
 
+  it("lists every topic page once, under the title the page carries", () => {
+    const listed = topics();
+    assert.ok(listed.length > 0, "the index lists no topic page");
+    assert.deepEqual(listed.map((topic) => topic.page).sort(), topicPages(TEMPLATE), "listed pages are the folder's");
+    assert.equal(new Set(listed.map((topic) => topic.title)).size, listed.length, "a topic is listed twice");
+    for (const topic of listed) assert.equal(titled(read(topic.page)).title, topic.title, topic.page);
+  });
+
+  it("gives every chapter one home: the index or one topic page", () => {
+    const titles = chapterTitles();
+    assert.equal(new Set(titles).size, titles.length, titles.join(", "));
+  });
+
+  it("is byte-equal, index and every page, to the facade crate's copy", () => {
+    assert.equal(index(), readFileSync(path.join(FACADE_ROOT, API_INDEX), "utf8"));
+    assert.deepEqual(topicPages(FACADE_ROOT), topicPages(TEMPLATE), "the two trees hold the same pages");
+    for (const page of topicPages(TEMPLATE))
+      assert.equal(read(page), readFileSync(path.join(FACADE_ROOT, page), "utf8"), `${page} differs`);
+  });
+});
+
+describe("GENEX_API.md is the facade's reference", () => {
   it("lists exactly the native features genex.toml accepts", () => {
-    const paragraph = /Native features:([\s\S]*?)\.\s/.exec(section(api(), "genex.toml"))?.[1] ?? "";
+    const paragraph = /Native features:([\s\S]*?)\.\s/.exec(chapter("genex.toml"))?.[1] ?? "";
     assert.deepEqual(ticked(paragraph).sort(), values(NativeEnhancedFeature).sort());
   });
 
@@ -282,7 +378,7 @@ describe("GENEX_API.md is the facade's reference", () => {
   });
 
   it("names every key the state document reserves and every install refusal", () => {
-    const text = section(api(), "Hooks");
+    const text = chapter("Hooks");
     for (const key of FACADE.runtimeKeys) assert.ok(text.includes(`\`${key}\``), `state key ${key} is not named`);
     for (const code of [...FACADE.installRefusals, ...FACADE.registrationRefusals])
       assert.ok(text.includes(`\`${code}\``), `install refusal ${code} is not named`);
@@ -356,7 +452,7 @@ describe("GENEX_API.md is the facade's reference", () => {
   });
 
   it("states a determinism rule for everything the lane's lint file refuses", () => {
-    const rules = section(api(), "Determinism");
+    const rules = chapter("Determinism");
     const lints = readFileSync(LANE_LINTS, "utf8");
     const refused = [...lints.matchAll(/path = "([^"]+)"/g)].map((match) => match[1] ?? "");
     assert.ok(refused.length > 30, "the lint file lists the refused paths");
@@ -375,14 +471,14 @@ describe("GENEX_API.md is the facade's reference", () => {
 });
 
 describe("GENEX_API.md's Rendering chapter", () => {
-  const chapter = () => section(api(), "Rendering");
+  const rendering = () => chapter("Rendering");
 
   it(`is one chapter of at most ${RENDERING_WORDS_MAX} words`, () => {
-    assert.ok(wordCount(chapter()) <= RENDERING_WORDS_MAX, `${wordCount(chapter())} words`);
+    assert.ok(wordCount(rendering()) <= RENDERING_WORDS_MAX, `${wordCount(rendering())} words`);
   });
 
   it("names every value of the renderer vocabularies a game states or reads", () => {
-    const named = codeWords(chapter());
+    const named = codeWords(rendering());
     const missing = Object.entries(RENDER_VOCABULARIES).flatMap(([name, vocabulary]) =>
       Object.values(vocabulary)
         .filter((value) => !named.has(value))
@@ -392,24 +488,21 @@ describe("GENEX_API.md's Rendering chapter", () => {
   });
 
   it("teaches the renderSettings verb's members, the settings panel and the Level-3 stages", () => {
-    const named = codeWords(chapter());
+    const named = codeWords(rendering());
     for (const member of RENDER_SETTINGS_MEMBERS) assert.ok(named.has(member), `renderSettings ${member}`);
     for (const word of ["renderSettings", "settings_panel"]) assert.ok(named.has(word), `${word}`);
-    const stages = codeWords(section(api(), "Custom GPU passes"));
+    const stages = codeWords(chapter("Custom GPU passes"));
     for (const stage of PASS_STAGES) assert.ok(stages.has(stage), `stage ${stage} is not named`);
-    const inChapter = codeWords(chapter());
+    const inChapter = codeWords(rendering());
     for (const stage of PASS_STAGES) assert.ok(inChapter.has(stage), `the chapter does not list stage ${stage}`);
   });
 
   it("leaves lights, meshlets and Level 2 to their own sections", () => {
-    const headings = api()
-      .split("\n")
-      .filter((line) => line.startsWith("## "))
-      .map((line) => line.slice(3));
+    const headings = chapterTitles();
     for (const heading of ["Lighting, materials and environment", "Big meshes", "Custom materials and post passes"])
       assert.ok(
         headings.some((line) => line.startsWith(heading)),
-        `no "## ${heading}" section`,
+        `no "${heading}" chapter`,
       );
   });
 });
@@ -419,6 +512,7 @@ describe("the template guide's rendering rules", () => {
 
   it(`stay rules: at most ${GUIDE_RENDERING_WORDS_MAX} words, and the reference holds the how`, () => {
     assert.ok(wordCount(rules()) <= GUIDE_RENDERING_WORDS_MAX, `${wordCount(rules())} words`);
+    assert.ok(rules().includes(pageOf("Rendering")), "the rules point at the Rendering page");
   });
 
   it("tell an agent to use presets, state the look in [render], prefer built-ins and test as a phone", () => {
@@ -442,7 +536,8 @@ describe("the template guide's world-look rules", () => {
 
   it(`stay rules: at most ${GUIDE_WORLD_LOOK_WORDS_MAX} words, and the reference holds the how`, () => {
     assert.ok(wordCount(rules()) <= GUIDE_WORLD_LOOK_WORDS_MAX, `${wordCount(rules())} words`);
-    assert.ok(rules().includes("docs/GENEX_API.md"), "the rules point at the reference");
+    for (const title of ["Lighting, materials and environment", "Grading and the lens"])
+      assert.ok(rules().includes(pageOf(title)), `the rules point at the ${title} page`);
   });
 
   it("point at the built-ins a world's look is made of, each a call the fixture pins", () => {
@@ -488,12 +583,7 @@ describe("the seed's Rust recipes sketch the world's look with pinned calls", ()
 
 describe("the seed's Rust recipes cite sections the reference has", () => {
   it("names a GENEX_API.md section in every evidence source", () => {
-    const sections = new Set(
-      api()
-        .split("\n")
-        .filter((line) => line.startsWith("## "))
-        .map((line) => line.slice(3).trim()),
-    );
+    const sections = new Set(chapterTitles());
     const recipes = readdirSync(RECIPES).filter((name) => name.startsWith("rust.") && name.endsWith(".json"));
     assert.ok(recipes.includes("rust.render-presets.json") && recipes.includes("rust.lighting-materials.json"));
     for (const name of recipes) {
@@ -551,10 +641,49 @@ describe("the seed's render-presets recipe teaches what the template and the ver
   });
 });
 
+/** A studio library over the repository's templates, in a fresh temporary folder. */
+async function library(): Promise<{ games: GameWorkspaces; base: string }> {
+  const base = await tmpDir("studio-rust-docs-");
+  const vendorDir = path.join(base, "vendor");
+  await mkdir(vendorDir, { recursive: true });
+  await writeFile(path.join(vendorDir, "three.module.js"), "export const REVISION = '0';\n");
+  const games = new GameWorkspaces({
+    root: path.join(base, "library"),
+    templateDir: path.join(REPO, "src", "game-template"),
+    rustTemplateDir: TEMPLATE,
+    rustCreation: true,
+    vendorDir,
+    indexFile: path.join(base, "projects.json"),
+    userData: path.join(base, "userData"),
+    homeDir: base,
+    platform: "darwin",
+  });
+  return { games, base };
+}
+
+describe("a Rust game folder carries the whole reference", () => {
+  it("a created game holds the index and every topic page, byte-equal to the template's", async () => {
+    const { games } = await library();
+    const game = await games.create("Pond", { stack: GameStack.RustWgpu });
+    for (const rel of [API_INDEX, ...topicPages(TEMPLATE)])
+      assert.equal(await readFile(path.join(game.dir, rel), "utf8"), read(rel), rel);
+  });
+
+  it("a Rust folder adopted with its own files is promised the index and every topic page", async () => {
+    const { games, base } = await library();
+    const own = path.join(base, "own");
+    await mkdir(own, { recursive: true });
+    await cp(path.join(TEMPLATE, "genex.toml"), path.join(own, "genex.toml"));
+    await cp(path.join(TEMPLATE, "src"), path.join(own, "src"), { recursive: true });
+    const planned = await games.plannedWrites(own);
+    for (const rel of [API_INDEX, ...topicPages(TEMPLATE)]) assert.ok(planned.includes(rel), rel);
+  });
+});
+
 describe("the agent-facing files agree with each other and the folder", () => {
   it("links only to files the template folder has", () => {
     const files = new Set(filesUnder(TEMPLATE));
-    for (const page of ["CLAUDE.md", "docs/CONTRACT.md", "docs/GENEX_API.md"]) {
+    for (const page of ["CLAUDE.md", "docs/CONTRACT.md", API_INDEX, ...topicPages(TEMPLATE)]) {
       const named = ticked(read(page)).filter((token) => /^(?:docs|web|assets|references)\/[\w./-]+\.\w+$/.test(token));
       for (const rel of named) assert.ok(files.has(rel), `${page} names ${rel}, which the template does not have`);
     }

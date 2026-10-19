@@ -4,14 +4,17 @@
 //! executable (`../Resources/assets/` inside a Mac app bundle, as the C++ runtime's `platform.cpp`
 //! finds them). A dev-flavour build (feature `studio`) with no `assets/` beside it, such as a plain
 //! `cargo run` from `target/debug`, reads `$CARGO_MANIFEST_DIR/assets` instead; an export never
-//! does. Models are loaded once per path; a path outside the asset-path rule is never read.
+//! does. Models are loaded once per path; a path outside the asset-path rule, a link, or a file
+//! whose real path leaves the asset folder is never read. The sim's reads (`gfx.assets().bytes`)
+//! go through the same [`AssetFiles`], attached before the first reset.
 
 #[cfg(feature = "studio")]
 use std::ffi::OsString;
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
-use crate::gfx::AssetTable;
+use crate::gfx::{ASSET_READ_MAX_BYTES, AssetError, AssetErrorCode, AssetGroup, AssetGroups, AssetSource, AssetTable};
 use crate::present::{ModelSource, Presenter, declared_features};
 use genex_core::paths::is_safe_asset_path;
 use genex_render::{Gpu, RenderError};
@@ -24,20 +27,100 @@ const ASSETS_DIR: &str = "assets";
 #[cfg(feature = "studio")]
 const MANIFEST_DIR_ENV: &str = "CARGO_MANIFEST_DIR";
 
-/// Models from the compiled table first, then files under the asset folder.
-struct FileSource {
+/// A native destination's assets, for the sim's reads and the presenter's: the compiled table
+/// first, then files under the asset folder. A file is read only under the asset-path rule, never
+/// through a link at its name, and only when its real path stays inside the folder's own (the rule
+/// of genex-assets' `AssetRoot`), as a regular file of at most [`ASSET_READ_MAX_BYTES`].
+#[doc(hidden)]
+pub struct AssetFiles {
     table: AssetTable,
+    /// The asset folder; None for the table only. Its real path is taken at each read, so a folder
+    /// made after the game started (the studio's first import) is read as before.
     root: Option<PathBuf>,
+    groups: AssetGroups,
 }
 
-impl ModelSource for FileSource {
-    fn model_bytes(&self, path: &str) -> Option<Vec<u8>> {
-        if let Some(bytes) = self.table.model_bytes(path) {
-            return Some(bytes);
+/// A refusal of `code` about `path`.
+fn refused(code: AssetErrorCode, path: &str, detail: impl std::fmt::Display) -> AssetError {
+    AssetError::new(code, format!("{path}: {detail}"))
+}
+
+impl AssetFiles {
+    /// The table, then the folder at `root` (None: the table only).
+    pub fn new(table: AssetTable, root: Option<PathBuf>) -> AssetFiles {
+        AssetFiles { table, root, groups: AssetGroups::default() }
+    }
+
+    /// The table, then this process's asset folder ([`asset_root`]).
+    pub fn for_process(table: AssetTable) -> AssetFiles {
+        AssetFiles::new(table, asset_root())
+    }
+
+    /// These files with the groups the build recorded for them.
+    pub fn with_groups(mut self, groups: AssetGroups) -> AssetFiles {
+        self.groups = groups;
+        self
+    }
+
+    /// The real path of `path` under the folder, a regular file, and its size; or why not. Nothing
+    /// is opened. The streamed reads (`stream_source.rs`) check their paths here too.
+    pub(crate) fn file(&self, path: &str) -> Result<(PathBuf, u64), AssetError> {
+        if !is_safe_asset_path(path) {
+            return Err(refused(AssetErrorCode::UnsafePath, path, "not a plain path under assets/"));
         }
-        // `Assets::model` already held the path to the rule; held again before any file is read.
-        let root = self.root.as_ref().filter(|_| is_safe_asset_path(path))?;
-        std::fs::read(root.join(path)).ok()
+        let Some(folder) = self.root.as_ref() else {
+            return Err(refused(AssetErrorCode::Missing, path, "no asset folder"));
+        };
+        // The folder's own links are resolved here; every link below it is checked against it.
+        let root = std::fs::canonicalize(folder).map_err(|error| refused(AssetErrorCode::Missing, path, error))?;
+        let named = path.split('/').fold(root.clone(), |named, segment| named.join(segment));
+        let link = std::fs::symlink_metadata(&named).map_err(|error| refused(AssetErrorCode::Missing, path, error))?;
+        if link.file_type().is_symlink() {
+            return Err(refused(AssetErrorCode::UnsafePath, path, "a link"));
+        }
+        let real = std::fs::canonicalize(&named).map_err(|error| refused(AssetErrorCode::Missing, path, error))?;
+        if !real.starts_with(&root) || real == root {
+            return Err(refused(AssetErrorCode::UnsafePath, path, "leaves the asset folder"));
+        }
+        let meta = std::fs::metadata(&real).map_err(|error| refused(AssetErrorCode::Missing, path, error))?;
+        if !meta.is_file() {
+            return Err(refused(AssetErrorCode::Missing, path, "not a file"));
+        }
+        if meta.len() > ASSET_READ_MAX_BYTES {
+            return Err(refused(AssetErrorCode::TooLarge, path, format!("{} bytes", meta.len())));
+        }
+        Ok((real, meta.len()))
+    }
+}
+
+impl AssetSource for AssetFiles {
+    fn read(&self, path: &str) -> Result<Arc<[u8]>, AssetError> {
+        if let Some(bytes) = self.table.static_bytes(path) {
+            return Ok(Arc::from(bytes));
+        }
+        let (real, _) = self.file(path)?;
+        let bytes = std::fs::read(&real).map_err(|error| refused(AssetErrorCode::Missing, path, error))?;
+        if bytes.len() as u64 > ASSET_READ_MAX_BYTES {
+            return Err(refused(AssetErrorCode::TooLarge, path, format!("{} bytes", bytes.len())));
+        }
+        Ok(Arc::from(bytes))
+    }
+
+    fn size(&self, path: &str) -> Result<u64, AssetError> {
+        if let Some(bytes) = self.table.static_bytes(path) {
+            return Ok(bytes.len() as u64);
+        }
+        self.file(path).map(|(_, size)| size)
+    }
+
+    fn group(&self, path: &str) -> AssetGroup {
+        self.groups.of(path)
+    }
+}
+
+impl ModelSource for AssetFiles {
+    fn model_bytes(&self, path: &str) -> Option<Vec<u8>> {
+        AssetSource::read(self, path).ok().map(|bytes| bytes.to_vec())
     }
 
     /// The compiled table's bytes only: a file under the asset folder may change, so its decoded
@@ -104,7 +187,7 @@ impl Presenter {
         let declared = declared_features()?;
         let gpu = Gpu::headless_with(declared)?;
         let open = move || Gpu::headless_with(declared);
-        let source = Box::new(FileSource { table: assets, root: asset_root });
+        let source = Box::new(AssetFiles::new(assets, asset_root));
         Presenter::with_gpu(gpu, size, declared, Box::new(open), source, log_to_stderr)
     }
 }
@@ -157,10 +240,43 @@ mod tests {
         std::fs::create_dir_all(dir.join("assets")).expect("assets folder");
         std::fs::write(dir.join("assets/disk.glb"), b"disk").expect("asset");
         std::fs::write(dir.join("secret.glb"), b"secret").expect("outside file");
-        let source = FileSource { table: &[("table.glb", b"table")], root: Some(dir.join("assets")) };
+        let source = AssetFiles::new(&[("table.glb", b"table")], Some(dir.join("assets")));
         assert_eq!(source.model_bytes("table.glb").as_deref(), Some(&b"table"[..]));
         assert_eq!(source.model_bytes("disk.glb").as_deref(), Some(&b"disk"[..]));
         for hostile in ["../secret.glb", "/etc/hosts", "a/../../secret.glb", "", "missing.glb"] {
+            assert_eq!(source.model_bytes(hostile), None, "{hostile:?}");
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A folder that appears after the files were opened (the studio's first import into a running
+    /// game) is read, as before the real-path rule.
+    #[test]
+    fn an_asset_folder_made_after_opening_is_read() {
+        let dir = std::env::temp_dir().join(format!("genex-present-late-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let source = AssetFiles::new(&[], Some(dir.join("assets")));
+        assert_eq!(source.model_bytes("late.glb"), None);
+        std::fs::create_dir_all(dir.join("assets")).expect("assets folder");
+        std::fs::write(dir.join("assets/late.glb"), b"late").expect("asset");
+        assert_eq!(source.model_bytes("late.glb").as_deref(), Some(&b"late"[..]));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A link inside `assets/` that leads out of it (a file link or a folder link) reads nothing:
+    /// the presenter's reads go through the real path, as the sim's do.
+    #[cfg(unix)]
+    #[test]
+    fn a_link_inside_the_assets_folder_that_leaves_it_reads_nothing() {
+        let dir = std::env::temp_dir().join(format!("genex-present-links-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("assets")).expect("assets folder");
+        std::fs::create_dir_all(dir.join("outside")).expect("outside folder");
+        std::fs::write(dir.join("outside/secret.glb"), b"secret").expect("outside file");
+        std::os::unix::fs::symlink(dir.join("outside/secret.glb"), dir.join("assets/leak.glb")).expect("file link");
+        std::os::unix::fs::symlink(dir.join("outside"), dir.join("assets/leaks")).expect("folder link");
+        let source = AssetFiles::new(&[], Some(dir.join("assets")));
+        for hostile in ["leak.glb", "leaks/secret.glb"] {
             assert_eq!(source.model_bytes(hostile), None, "{hostile:?}");
         }
         let _ = std::fs::remove_dir_all(&dir);

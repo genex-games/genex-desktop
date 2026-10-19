@@ -8,19 +8,23 @@
  * format checked, its digest taken host-side. The receipt's word is taken only for refusal codes
  * from the vocabulary and for the KTX2 transcode digests.
  *
- * TODO(M3): the jobs folder in `core/layout.ts`, the importer carried in the packaged app,
- * running it on deliveries to Rust games, and placing admitted outputs beside their sources (or
- * in the lane's staged copy, M2.2). Not wired in M2: deliveries to Rust games arrive with the
- * harness integration, and no catalog package owns the importer's payload yet.
+ * The build lane runs it on every staged copy (`importStagedAssets`, C-2): each importable file
+ * of the stage's `assets/` is a job of its own (the importer is a pure function of one file), at
+ * most {@link IMPORT_JOBS_MAX} at once, in the profile's `asset-jobs` folder (`core/layout.ts`).
+ * Admitted outputs replace their sources in the stage, never in the game folder: a converted
+ * OBJ's GLB takes the OBJ's place, a Draco GLB is written back plain under its own name, and a
+ * refused file leaves the stage, so the build ships only what the runtime reads.
  */
 import { createHash, randomUUID } from "node:crypto";
-import { lstat, mkdir, readFile } from "node:fs/promises";
+import { lstat, mkdir, readdir, readFile, rm } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { MINUTE_MS } from "../shared/duration.ts";
 import { assetExtension } from "../shared/game-assets.ts";
-import type { BuildTarget, GameStack } from "../shared/game-project.ts";
+import { type BuildTarget, GameStack } from "../shared/game-project.ts";
 import { readRegularFile, writeNewFile } from "../substrate/fsx.ts";
+import type { TextureUsage } from "../substrate/asset-import/basis-encoder.ts";
+import { IMPORTER_TOOLS_ENV } from "../substrate/asset-import/decoders.ts";
 import { isGlb, readGlb } from "../substrate/asset-import/glb.ts";
 import {
   AssetImportRefusal,
@@ -32,23 +36,32 @@ import {
 } from "../substrate/asset-import/import-plan.ts";
 import {
   IMPORT_JOB_VERSION,
+  type ImportIssue,
   type ImportJob,
   type ImportJobFile,
   ImportJobLayout,
   type ImportReceipt,
   parseImportReceipt,
 } from "../substrate/asset-import/job.ts";
+import { glbTextureFileName, isGlbTextureStemOf } from "../substrate/asset-import/glb-textures.ts";
 import { looksLikeRadiance } from "../substrate/asset-import/hdr.ts";
 import { type Ktx2FamilySkip, readKtx2Header } from "../substrate/asset-import/ktx2.ts";
 import { objMaterialLibrary } from "../substrate/asset-import/obj.ts";
 import { readGameAsset } from "../substrate/asset-import/safe-asset.ts";
+import { type EncodedTexture, stageTextureUsages } from "../substrate/asset-import/texture-encode.ts";
 import {
   familyFileName,
   KTX2_VK_FORMAT,
   type TextureCompression,
   type TranscodedTexture,
 } from "../substrate/asset-import/texture-table.ts";
-import type { RunRequest, RunResult, SandboxOptions, SandboxPolicy } from "../substrate/spawn.ts";
+import {
+  ProcessSandbox,
+  type RunRequest,
+  type RunResult,
+  type SandboxOptions,
+  type SandboxPolicy,
+} from "../substrate/spawn.ts";
 import { shellQuote } from "../substrate/shell-quote.ts";
 
 /** The largest file the import step reads from a game. */
@@ -62,6 +75,24 @@ export const IMPORT_TIMEOUT_MS = 5 * MINUTE_MS;
 /** The importer's output the host keeps for its log. */
 const IMPORT_OUTPUT_KEEP_CHARS = 64 * 1024;
 const IMPORT_LABEL = "asset-import";
+/** How many per-file import jobs one build runs at once: each is a Node process in a sandbox of its own. */
+export const IMPORT_JOBS_MAX = 4;
+/** The stage's folder of game assets (`rust-stage.ts` copies the game's `assets/` there). */
+const STAGE_ASSETS_DIR = "assets";
+
+/** The steps whose output is their input, kept: the host holds the output to the input's bytes. */
+const KEPT_INPUT_STEPS: ReadonlySet<ImportConverter> = new Set([
+  ImportConverter.Ktx2Check,
+  ImportConverter.HdrCheck,
+  ImportConverter.TextureEncode,
+]);
+/** The steps that write per-family KTX2 files beside their output (a GLB's: its image sidecars, C-13). */
+const FAMILY_STEPS: ReadonlySet<ImportConverter> = new Set([
+  ImportConverter.Ktx2Check,
+  ImportConverter.TextureEncode,
+  ImportConverter.GltfDecompress,
+  ImportConverter.GlbTextures,
+]);
 
 /** What every admitted output must start with, by output extension. */
 const OGG_MAGIC = [0x4f, 0x67, 0x67, 0x53] as const;
@@ -72,11 +103,18 @@ export interface ImporterCommand {
   env?: Record<string, string>;
 }
 
-/** This process's Node (Electron's, as Node) running `worker.ts`. */
-export function defaultImporterCommand(): ImporterCommand {
+/**
+ * This process's Node (Electron's, as Node) running `worker.ts`, reading its tools from `toolsDir`
+ * (the app's `resources/importer-tools`, `IMPORTER_TOOLS_ENV`) when given.
+ */
+export function defaultImporterCommand(toolsDir?: string): ImporterCommand {
   const worker = fileURLToPath(new URL("../substrate/asset-import/worker.ts", import.meta.url));
   const electron = typeof process.versions.electron === "string";
-  return { argv: [process.execPath, worker], ...(electron ? { env: { ELECTRON_RUN_AS_NODE: "1" } } : {}) };
+  const env: Record<string, string> = {
+    ...(electron ? { ELECTRON_RUN_AS_NODE: "1" } : {}),
+    ...(toolsDir ? { [IMPORTER_TOOLS_ENV]: toolsDir } : {}),
+  };
+  return { argv: [process.execPath, worker], ...(Object.keys(env).length > 0 ? { env } : {}) };
 }
 
 /** The sandbox one job runs in (`ProcessSandbox.create`), disposed after it. */
@@ -107,6 +145,10 @@ export interface RustAssetImportRequest {
   /** Posix paths under the game folder (`assets/ship.obj`). */
   files: readonly string[];
   targets: readonly BuildTarget[];
+  /** Each loose texture's resolved usage (`texture-usage.ts`), by its path: those are encoded (C-12). */
+  usages?: ReadonlyMap<string, TextureUsage>;
+  /** The build's Stop: a job in flight is ended, and its file refused `importer-failed`. */
+  signal?: AbortSignal;
 }
 
 /** An admitted output of the importer. */
@@ -131,6 +173,10 @@ export interface ImportedAsset {
   families?: ImportOutput[];
   /** Why a Basis KTX2 got no per-family files. */
   familiesSkipped?: Ktx2FamilySkip;
+  /** The glTF validator's warnings about the input (the receipt's, checked by `parseIssues`). */
+  issues?: ImportIssue[];
+  /** An encoded loose texture's usage, source size and class (C-12). */
+  texture?: EncodedTexture;
 }
 
 /** One import's outcome, file by file, in request order. */
@@ -200,7 +246,8 @@ async function prepare(
   const results: ImportedAsset[] = [];
   const planned: Planned[] = [];
   for (const [at, file] of request.files.entries()) {
-    const step = planImport(request.stack, file);
+    const usage = request.usages?.get(file);
+    const step = planImport(request.stack, file, usage);
     if (!runsImporter(step)) {
       results.push({ file, action: step.action, ...(step.refusal ? { refusal: step.refusal } : {}) });
       continue;
@@ -224,6 +271,7 @@ async function prepare(
       output: `${ImportJobLayout.Out}/${at}.${step.output}`,
       name: stem(file),
       ...(mtl ? { mtl } : {}),
+      ...(step.converter === ImportConverter.TextureEncode && usage ? { usage } : {}),
     };
     results.push({ file, action: step.action, converter: step.converter });
     planned.push({ at: results.length - 1, step, job });
@@ -243,19 +291,21 @@ async function runImporter(
   deps: RustAssetImportDeps,
   jobDir: string,
   folders: ReturnType<typeof jobFolders>,
+  signal: AbortSignal | undefined,
 ): Promise<RunResult | null> {
   const importer = deps.importer ?? defaultImporterCommand();
-  const sandbox = await deps.sandboxFor({
-    writableRoots: [],
-    scratchDir: folders.tmp,
-    secretPaths: [...deps.secretPaths],
-  });
   const policy: Partial<SandboxPolicy> = {
     allowedDomains: [],
     allowWrite: [folders.out],
     denyWrite: [...(deps.denyWrite ?? []), folders.in, folders.job],
   };
+  let sandbox: ImportSandbox | null = null;
   try {
+    sandbox = await deps.sandboxFor({
+      writableRoots: [],
+      scratchDir: folders.tmp,
+      secretPaths: [...deps.secretPaths],
+    });
     return await sandbox.run({
       command: [...importer.argv, jobDir].map(shellQuote).join(" "),
       cwd: jobDir,
@@ -265,11 +315,12 @@ async function runImporter(
       timeoutMs: deps.timeoutMs ?? IMPORT_TIMEOUT_MS,
       maxOutputBytes: IMPORT_OUTPUT_KEEP_CHARS,
       reapGroup: true,
+      ...(signal ? { signal } : {}),
     });
   } catch {
     return null;
   } finally {
-    await sandbox.dispose();
+    await sandbox?.dispose();
   }
 }
 
@@ -286,6 +337,8 @@ function looksLike(output: string, bytes: Uint8Array): boolean {
   }
   if (output === "ktx2") return readKtx2Header(bytes) !== null;
   if (output === "hdr") return looksLikeRadiance(bytes);
+  // An encoded texture's output is its source image, held to the input's digest by `admitOutput`.
+  if (output === "png" || output === "jpg" || output === "jpeg") return bytes.byteLength > 0;
   if (output === "ogg") return OGG_MAGIC.every((byte, i) => bytes[i] === byte);
   if (output === "gltf") {
     try {
@@ -304,8 +357,8 @@ async function admitOutput(jobDir: string, planned: Planned, source: string): Pr
   if (!info?.isFile() || info.size > IMPORT_OUTPUT_MAX_BYTES) return null;
   const bytes = await readRegularFile(file, IMPORT_OUTPUT_MAX_BYTES).catch(() => null);
   if (!bytes || !looksLike(planned.step.output, bytes)) return null;
-  // A kept KTX2 or HDR map must be the very file delivered: the importer only checks it.
-  if (planned.step.converter === ImportConverter.Ktx2Check || planned.step.converter === ImportConverter.HdrCheck) {
+  // A kept KTX2, HDR map or encoded texture's image must be the very file delivered: the importer only reads it.
+  if (KEPT_INPUT_STEPS.has(planned.step.converter)) {
     const input = await readFile(path.join(jobDir, ...planned.job.input.split("/")));
     if (sha256(input) !== sha256(bytes)) return null;
   }
@@ -322,9 +375,15 @@ async function readOutputFile(file: string): Promise<Uint8Array | null> {
 /** One family's KTX2 as the host admits it: a KTX2 in that family's own fixed format, plain levels. */
 async function admitFamily(
   jobDir: string,
-  family: { compression: TextureCompression; output: string },
+  family: { compression: TextureCompression; output: string; stem?: string },
   source: string,
 ): Promise<ImportOutput | null> {
+  // A GLB image sidecar's stem is the importer's word: it must name a file of this GLB's own beside it.
+  if (family.stem !== undefined && !isGlbTextureStemOf(source, family.stem)) return null;
+  const name =
+    family.stem === undefined
+      ? familyFileName(source, family.compression)
+      : glbTextureFileName(source, family.stem, family.compression);
   const file = path.join(jobDir, ...family.output.split("/"));
   const bytes = await readOutputFile(file);
   const header = bytes ? readKtx2Header(bytes) : null;
@@ -332,7 +391,7 @@ async function admitFamily(
   if (!bytes || !header || !formats.includes(header.vkFormat) || header.supercompression !== 0) return null;
   return {
     path: file,
-    file: familyFileName(source, family.compression),
+    file: name,
     bytes: bytes.byteLength,
     sha256: sha256(bytes),
   };
@@ -376,14 +435,16 @@ async function admitLine(
   if (!line.ok) return { action: ImportAction.Refuse, refusal: line.refusal };
   const output = line.output === item.job.output ? await admitOutput(jobDir, item, entry.file) : null;
   if (!output) return failed;
-  const families =
-    item.step.converter === ImportConverter.Ktx2Check ? await admitFamilies(jobDir, line, entry.file) : [];
+  const families = FAMILY_STEPS.has(item.step.converter) ? await admitFamilies(jobDir, line, entry.file) : [];
   if (!families) return failed;
+  const texture = item.step.converter === ImportConverter.TextureEncode ? line.texture : undefined;
   return {
     output,
     ...(line.textures ? { textures: line.textures } : {}),
     ...(line.families ? { families } : {}),
     ...(line.familiesSkipped ? { familiesSkipped: line.familiesSkipped } : {}),
+    ...(line.issues?.length ? { issues: line.issues } : {}),
+    ...(texture ? { texture } : {}),
   };
 }
 
@@ -425,8 +486,297 @@ export async function importRustAssets(
     files: planned.map((item) => item.job),
   };
   await writeNewFile(folders.job, JSON.stringify(job));
-  const run = await runImporter(deps, jobDir, folders);
+  const run = await runImporter(deps, jobDir, folders, request.signal);
   const finished = run !== null && run.code === 0 && !run.timedOut;
   await admit(jobDir, finished ? await readReceipt(folders.receipt) : null, planned, results);
   return { jobId, jobDir, files: results, log: run?.stderr ?? "" };
+}
+
+/**
+ * Why the stage step did not place a file's admitted output, beside the importer's own refusals.
+ * Wire values in the build receipt: never rename one.
+ */
+export const StagePlacementRefusal = {
+  /** Another staged file (a delivered GLB, or an earlier conversion) already holds the output's name. */
+  NameTaken: "name-taken",
+} as const;
+export type StagePlacementRefusal = (typeof StagePlacementRefusal)[keyof typeof StagePlacementRefusal];
+
+/** A file the stage step placed: its game-relative name, digest and size (never a job path). */
+export interface StagedAssetFile {
+  file: string;
+  sha256: string;
+  bytes: number;
+}
+
+/** What the stage step did with one staged file: the build receipt's `assets.files` row. */
+export interface StagedImportFile {
+  file: string;
+  action: ImportAction;
+  converter?: ImportConverter;
+  refusal?: AssetImportRefusal | StagePlacementRefusal;
+  /** The output placed in the stage (for a converted file, under its new name). */
+  output?: StagedAssetFile;
+  /** A Basis KTX2's (or an encoded texture's) per-family files placed beside it. */
+  families?: StagedAssetFile[];
+  familiesSkipped?: Ktx2FamilySkip;
+  /** An encoded loose texture's usage, source size and class (C-12). */
+  texture?: EncodedTexture;
+}
+
+/** The stage step's record in the build receipt (`assets`). */
+export interface StagedImportReport {
+  /** The jobs it ran at once, at most. */
+  jobs: number;
+  /** How long it took. */
+  ms: number;
+  /** Every staged file, in `/`-separated code-unit order. */
+  files: StagedImportFile[];
+}
+
+/** One build's stage to import for its destination. */
+export interface RustStageImportRequest {
+  /** The build's staged copy (`<bin>.stage`), the host's own. */
+  stage: string;
+  target: BuildTarget;
+  signal?: AbortSignal;
+}
+
+/** Some files imported, their outputs readable until `release` (which also removes any job folder). */
+export interface HeldImport {
+  files: ImportedAsset[];
+  release(): Promise<void>;
+}
+
+/**
+ * How the stage step imports one file: a plain importer job by default ({@link plainFileImport}),
+ * the content-addressed cache in the app (`cachedImporter` in `asset-cache.ts`), so a file a
+ * delivery already imported runs no job.
+ */
+export type StageFileImport = (deps: RustAssetImportDeps, request: RustAssetImportRequest) => Promise<HeldImport>;
+
+/** One importer job per call, its folder removed on release. */
+export const plainFileImport: StageFileImport = async (deps, request) => {
+  const job = await importRustAssets(deps, request);
+  return { files: job.files, release: () => rm(job.jobDir, { recursive: true, force: true }) };
+};
+
+/** How the stage step runs: its concurrency, clock and per-file import. */
+export interface RustStageImportOptions {
+  /** Jobs at once, clamped to 1..{@link IMPORT_JOBS_MAX} (default the max). */
+  jobs?: number;
+  now?: () => number;
+  /** Default {@link plainFileImport}. */
+  importFile?: StageFileImport;
+}
+
+/** The build lane's import step (`RustBuildsOptions.importAssets`): the report, or null once Stop came. */
+export type RustStageImport = (request: RustStageImportRequest) => Promise<StagedImportReport | null>;
+
+/** The jobs at once for `asked`: a whole number in 1..{@link IMPORT_JOBS_MAX}. */
+function importJobs(asked: number | undefined): number {
+  if (asked === undefined || !Number.isFinite(asked)) return IMPORT_JOBS_MAX;
+  return Math.min(IMPORT_JOBS_MAX, Math.max(1, Math.floor(asked)));
+}
+
+/** The regular files under the stage's `assets/`, `/`-separated, in code-unit order; links and odd files left out. */
+async function stagedAssets(stage: string, rel = STAGE_ASSETS_DIR): Promise<string[]> {
+  const files: string[] = [];
+  const entries = await readdir(path.join(stage, ...rel.split("/")), { withFileTypes: true }).catch(() => []);
+  for (const entry of entries) {
+    const child = `${rel}/${entry.name}`;
+    if (entry.isDirectory()) files.push(...(await stagedAssets(stage, child)));
+    else if (entry.isFile()) files.push(child);
+  }
+  return files.sort((a, b) => (a < b ? -1 : Number(a > b)));
+}
+
+/** Every file planned; the importable ones run as per-file jobs, `jobs` at once. Null once Stop came. */
+async function importEach(
+  deps: RustAssetImportDeps,
+  request: RustStageImportRequest & RustStageImportOptions,
+  files: readonly string[],
+  jobs: number,
+  releases: Array<() => Promise<void>>,
+): Promise<ImportedAsset[] | null> {
+  const importFile = request.importFile ?? plainFileImport;
+  const results: ImportedAsset[] = [];
+  const queue: number[] = [];
+  const usages = new Map<string, TextureUsage>();
+  for (const row of await stageTextureUsages(request.stage, files)) if (row.usage) usages.set(row.path, row.usage);
+  for (const [at, file] of files.entries()) {
+    const step = planImport(GameStack.RustWgpu, file, usages.get(file));
+    results.push({ file, action: step.action, ...(step.refusal ? { refusal: step.refusal } : {}) });
+    if (runsImporter(step)) queue.push(at);
+  }
+  const targets = [request.target];
+  let next = 0;
+  const worker = async () => {
+    for (let at = queue[next++]; at !== undefined && !request.signal?.aborted; at = queue[next++]) {
+      const file = files[at] ?? "";
+      const one = await importFile(deps, {
+        gameRoot: request.stage,
+        stack: GameStack.RustWgpu,
+        files: [file],
+        targets,
+        usages,
+        ...(request.signal ? { signal: request.signal } : {}),
+      });
+      releases.push(one.release);
+      const failed = { file, action: ImportAction.Refuse, refusal: AssetImportRefusal.ImporterFailed };
+      results[at] = one.files[0] ?? failed;
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(jobs, queue.length) }, worker));
+  return request.signal?.aborted ? null : results;
+}
+
+/** An admitted output read back and checked against its admitted digest; null when it changed. */
+async function admittedBytes(output: ImportOutput): Promise<Uint8Array | null> {
+  const bytes = await readOutputFile(output.path);
+  return bytes && sha256(bytes) === output.sha256 ? bytes : null;
+}
+
+/** `bytes` written at `rel` in the stage in place of what is there; false when a folder holds the name. */
+async function placeFile(stage: string, rel: string, bytes: Uint8Array): Promise<boolean> {
+  const file = path.join(stage, ...rel.split("/"));
+  const found = await lstat(file).catch(() => null);
+  if (found?.isDirectory()) return false;
+  // A link (never a staged file of the walk) is removed, never written through.
+  await rm(file, { force: true });
+  return await writeNewFile(file, bytes);
+}
+
+const digestOf = (output: ImportOutput): StagedAssetFile => ({
+  file: output.file,
+  sha256: output.sha256,
+  bytes: output.bytes,
+});
+
+/** Whether `name` is held by a staged file other than `own`. */
+const takenBy = (taken: ReadonlySet<string>, name: string, own: string) => name !== own && taken.has(name);
+
+/** An admitted file's family KTX2s placed beside it; one whose name another staged file holds is left out. */
+async function placeFamilies(stage: string, entry: ImportedAsset, taken: Set<string>): Promise<StagedAssetFile[]> {
+  const families: StagedAssetFile[] = [];
+  for (const family of entry.families ?? []) {
+    const familyBytes = takenBy(taken, family.file, entry.file) ? null : await admittedBytes(family);
+    if (!familyBytes || !(await placeFile(stage, family.file, familyBytes))) continue;
+    taken.add(family.file);
+    families.push(digestOf(family));
+  }
+  return families;
+}
+
+/** One admitted file placed in the stage: its row, refused `name-taken` when its output's name is held. */
+async function placeOne(stage: string, entry: ImportedAsset, taken: Set<string>): Promise<StagedImportFile> {
+  const { file, action, converter, output } = entry;
+  const row: StagedImportFile = { file, action, ...(converter ? { converter } : {}) };
+  const refuse = (refusal: AssetImportRefusal | StagePlacementRefusal): StagedImportFile => ({ ...row, refusal });
+  if (!output) return refuse(AssetImportRefusal.ImporterFailed);
+  if (takenBy(taken, output.file, file)) return refuse(StagePlacementRefusal.NameTaken);
+  const bytes = await admittedBytes(output);
+  if (!bytes) return refuse(AssetImportRefusal.ImporterFailed);
+  if (!(await placeFile(stage, output.file, bytes))) return refuse(StagePlacementRefusal.NameTaken);
+  taken.add(output.file);
+  if (output.file !== file) await rm(path.join(stage, ...file.split("/")), { force: true });
+  const families = await placeFamilies(stage, entry, taken);
+  return {
+    ...row,
+    output: digestOf(output),
+    ...(entry.families ? { families } : {}),
+    ...(entry.familiesSkipped ? { familiesSkipped: entry.familiesSkipped } : {}),
+    ...(entry.texture ? { texture: entry.texture } : {}),
+  };
+}
+
+/**
+ * Every result placed in the stage, in order: refused files leave it first (freeing their names),
+ * then each admitted output takes its source's place unless another staged file holds its name.
+ */
+async function placeAll(
+  stage: string,
+  sources: readonly string[],
+  results: readonly ImportedAsset[],
+): Promise<StagedImportFile[]> {
+  const taken = new Set(sources);
+  for (const entry of results) {
+    if (entry.action !== ImportAction.Refuse) continue;
+    taken.delete(entry.file);
+    await rm(path.join(stage, ...entry.file.split("/")), { force: true });
+  }
+  const rows: StagedImportFile[] = [];
+  for (const entry of results) {
+    const runs = entry.action === ImportAction.Normalize || entry.action === ImportAction.Convert;
+    if (runs) {
+      const row = await placeOne(stage, entry, taken);
+      if (row.refusal) await rm(path.join(stage, ...entry.file.split("/")), { force: true });
+      rows.push(row);
+      continue;
+    }
+    const { file, action, converter, refusal } = entry;
+    rows.push({ file, action, ...(converter ? { converter } : {}), ...(refusal ? { refusal } : {}) });
+  }
+  return rows;
+}
+
+/**
+ * The build lane's import step over a staged copy (C-2): every regular file of the stage's
+ * `assets/` planned for `target`, the importable ones run as sandboxed per-file jobs, and what was
+ * admitted placed back into the stage (see {@link placeAll}). No sandbox starts when no file runs
+ * the importer, nor for a file `importFile` finds in the cache. Each import is released (its job
+ * folder removed, its cache entry free to evict) before it answers. Null once the build's Stop came.
+ */
+export async function importStagedAssets(
+  deps: RustAssetImportDeps,
+  request: RustStageImportRequest & RustStageImportOptions,
+): Promise<StagedImportReport | null> {
+  if (request.signal?.aborted) return null;
+  const now = request.now ?? Date.now;
+  const started = now();
+  const jobs = importJobs(request.jobs);
+  const sources = await stagedAssets(request.stage);
+  const releases: Array<() => Promise<void>> = [];
+  try {
+    const results = await importEach(deps, request, sources, jobs, releases);
+    if (!results) return null;
+    const files = await placeAll(request.stage, sources, results);
+    return { jobs, ms: Math.max(0, now() - started), files };
+  } finally {
+    await Promise.all(releases.map((release) => release()));
+  }
+}
+
+/** The lane's import step over `deps` (the profile's jobs folder and the importer's sandboxes). */
+export function rustStageImporter(deps: RustAssetImportDeps, options: RustStageImportOptions = {}): RustStageImport {
+  return async (request) => await importStagedAssets(deps, { ...request, ...options });
+}
+
+/** What the importer's sandbox factory is built with: whether sandboxing is on, and the core's sandbox to put back. */
+export interface RustImportSandboxesOptions {
+  /** False only where the core's own sandbox is off. */
+  enabled?: boolean;
+  /**
+   * The core's sandbox, whose config goes back into the one process-wide runtime once a job's
+   * sandbox has pushed its own, and again once it goes (as `rustBuildSandboxes` does).
+   */
+  alongside?: Pick<ProcessSandbox, "refreshConfig">;
+}
+
+/** A `ProcessSandbox` per import job, as {@link RustAssetImportDeps.sandboxFor} asks for one. */
+export function rustImportSandboxes(options: RustImportSandboxesOptions = {}): RustAssetImportDeps["sandboxFor"] {
+  return async (sandboxOptions) => {
+    const sandbox = await ProcessSandbox.create({
+      ...sandboxOptions,
+      ...(options.enabled === undefined ? {} : { enabled: options.enabled }),
+    });
+    options.alongside?.refreshConfig();
+    return {
+      run: (request) => sandbox.run(request),
+      dispose: async () => {
+        await sandbox.dispose();
+        options.alongside?.refreshConfig();
+      },
+    };
+  };
 }

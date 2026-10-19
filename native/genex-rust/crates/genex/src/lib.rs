@@ -25,9 +25,12 @@
 //! (genex-platform-desktop: a window, or headless with `--headless` / `GENEX_HEADLESS=1`). A web
 //! build names genex-platform-web `genex`, whose `install` hands the game to the page; the
 //! phones' shells are their own crates.
-//! `docs/GENEX_API.md` is the full contract.
+//! `docs/GENEX_API.md` and its topic pages in `docs/api/` are the full contract.
 
+mod animation;
 mod camera;
+#[cfg(feature = "physics")]
+mod character;
 mod ctx;
 mod decal;
 mod extend;
@@ -42,19 +45,32 @@ pub mod loading;
 pub mod manifest;
 mod map;
 pub mod math;
+/// Navigation: genex-nav's surface, the nav `sim.nav` holds and `game.navigation` registers.
+pub mod nav;
+mod nav_bake;
+mod node_anim;
 /// How a game is drawn on each device: look, quality presets, device classes, the settings panel.
 pub mod render;
 mod rng;
 mod runtime;
+#[cfg(feature = "physics")]
+mod ragdoll;
 mod sim;
 mod particles;
+mod stream;
+mod stream_groups;
+mod stream_source;
+mod stream_tick;
 mod terrain;
+mod terrain_tiles;
 mod water;
 #[cfg(all(feature = "studio", not(target_arch = "wasm32")))]
 mod studio;
 /// The one presenter every shell draws with (native and web): host glue, not game API.
 #[doc(hidden)]
 pub mod present;
+/// The presenter's streamed view set (display state only).
+mod present_stream;
 /// The native presenter's headless device and model files.
 #[cfg(not(target_arch = "wasm32"))]
 mod present_files;
@@ -78,10 +94,32 @@ pub use genex_render::terrain::TerrainLook;
 /// How a material lets light through: subsurface scattering and diffuse transmission
 /// ([`Material::with_subsurface`]; renderer pass 2 B.1).
 pub use genex_render::subsurface::Subsurface;
-pub use gfx::{AssetTable, Assets, Gfx, Model};
+pub use gfx::{
+    ASSET_READ_MAX_BYTES, AssetBytes, AssetError, AssetErrorCode, AssetGroup, AssetGroups, AssetInfo, AssetSource, AssetTable, Assets, CharacterAsset, Gfx,
+    Model, ModelTriangles,
+};
+/// Why `gfx.character` refused (`error.code.wire()`, `error.detail`) and the skeleton a
+/// [`CharacterAsset`] describes, so a game names them without naming genex-anim.
+pub use genex_anim::skeleton::Skeleton;
+pub use genex_anim::{AnimationError, AnimationErrorCode};
+/// A native destination's asset files (the compiled table, then `assets/` by real path): host glue.
+#[cfg(not(target_arch = "wasm32"))]
+#[doc(hidden)]
+pub use present_files::AssetFiles;
+/// Async asset reads for the streamed view set (a range or a whole file, answered at a later poll):
+/// host glue.
+#[doc(hidden)]
+pub use stream_source::{AsyncSource, StreamAnswer, StreamBytes, StreamRequest};
+/// The native async source: the compiled table, then `assets/` by real path on the job pool.
+#[cfg(not(target_arch = "wasm32"))]
+#[doc(hidden)]
+pub use stream_source::StreamFiles;
 pub use input::Input;
 pub use map::{DeterministicState, Map, Set};
-pub use rng::Pcg32;
+pub use rng::{GameRng, Pcg32};
+/// A grid cell on the ground plane: the one key streaming and navigation share.
+pub use genex_core::cell::CellId;
+pub use stream::{CellBuild, CellInputs, STREAM_CELL_SIZE_MAX, STREAM_CELL_SIZE_MIN, StreamErrorCode, StreamTicket, Streaming};
 pub use runtime::{
     DEFAULT_SEED, DemoDriver, FIXED_STEP_MS, InstallError, InstallErrorCode, MAX_STEP_TICKS,
     RUNTIME_KEYS, Runtime, StepResult, UnknownName, View, step_ticks,
@@ -130,7 +168,8 @@ pub mod prelude {
 /// It first checks the registrations and panics with a typed code ([`InstallErrorCode`]) when
 /// they are inconsistent: a second `camera` or `player` without `.camera_override()` /
 /// `.player_override()`, duplicate or runtime-key probe names, duplicate camera, eye or demo
-/// names, an empty name, a facet state type registered twice, or a world size outside 64..=4096.
+/// names, an empty name, a facet state type registered twice, a world size outside 64..=4096, a
+/// second `game.streaming` or a streaming cell size outside its caps.
 /// Then it hands the game to the platform shell and returns when a native window closes.
 pub fn install<W: Default + 'static>(game: Game<W>) {
     install_with_assets(game, &[]);
@@ -139,7 +178,8 @@ pub fn install<W: Default + 'static>(game: Game<W>) {
 /// [`install`] for a game that compiles its assets into the binary: `assets` is searched first,
 /// then `assets/` beside the executable (in the dev flavour, with none there, the crate's own
 /// `assets/` that `cargo run` names).
+///
+/// The reset hooks read through the same assets (`gfx.assets().bytes`), from the first seed on.
 pub fn install_with_assets<W: Default + 'static>(game: Game<W>, assets: AssetTable) {
-    let runtime = Runtime::new(game).unwrap_or_else(|error| panic!("genex::install: {error}"));
-    runtime::run(runtime, assets);
+    runtime::install(game, assets);
 }

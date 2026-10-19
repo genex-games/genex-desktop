@@ -12,6 +12,7 @@
  */
 import { type CompiledStack, GameStack, isCompiledStack } from "./game-project.ts";
 
+import type { ImportIssue } from "./asset-db.ts";
 import type { CallMaking, MakingJob } from "./asset-making.ts";
 import type { CallCutOff } from "./plugins.ts";
 
@@ -63,6 +64,32 @@ export interface ProjectAsset {
   runId?: string;
   facetId?: string;
   iteration?: number;
+  /**
+   * What a Rust game's import step does with the file, found when it was delivered (or first
+   * listed) and imported into the import cache ahead of any build. Absent for a file the import
+   * step does not know and for every other stack's game.
+   */
+  import?: ProjectAssetImport;
+}
+
+/** Where a file's delivery-time import stands. Wire values in `assets.inventory`: never rename one. */
+export const AssetImportStatus = {
+  /** Not imported yet (this version of the file): the import has started or is queued. */
+  Pending: "pending",
+  /** The game loads the file, as it is or through the outputs its import wrote. */
+  Ready: "ready",
+  /** The import step refused the file: `refusal` says why, and builds leave it out. */
+  Refused: "refused",
+} as const;
+export type AssetImportStatus = (typeof AssetImportStatus)[keyof typeof AssetImportStatus];
+
+/** A Rust game's file as its import step sees it (`ProjectAsset.import`). */
+export interface ProjectAssetImport {
+  status: AssetImportStatus;
+  /** Set when `status` is `refused`. */
+  refusal?: AssetImportRefusal;
+  /** What the import noticed without refusing the file: glTF validator warnings (`validation-warning`, detail `<CODE> <pointer>`). */
+  issues?: ImportIssue[];
 }
 
 export interface ProjectAssets {
@@ -243,6 +270,43 @@ export const AssetRefusal = {
   UnsupportedByRust: "unsupported-by-rust",
 } as const;
 export type AssetRefusal = (typeof AssetRefusal)[keyof typeof AssetRefusal];
+
+/**
+ * Why the import step refused a file. The two stack refusals are `AssetRefusal`'s own values (the
+ * renderer words them); the rest are the importer's. Wire values: never rename one.
+ */
+export const AssetImportRefusal = {
+  /** A C++ · raylib game cannot load the format. */
+  UnsupportedByRaylib: AssetRefusal.UnsupportedByRaylib,
+  /** A Rust · wgpu game cannot load the format, and the import step does not convert it. */
+  UnsupportedByRust: AssetRefusal.UnsupportedByRust,
+  /** The name breaks the asset-path rule (`isSafeAssetPath`): absolute, climbing, a device name. */
+  UnsafePath: "unsafe-path",
+  /** The name resolves outside the game folder once its links are followed, or is a link itself. */
+  EscapesGame: "escapes-game",
+  /** Nothing is there. */
+  Missing: "missing",
+  /** A folder, a FIFO, a socket or a device: not a regular file. */
+  NotRegularFile: "not-regular-file",
+  /** Larger than the importer reads. */
+  TooLarge: "too-large",
+  /** The bytes are not the format the name says, or are damaged. */
+  Malformed: "malformed",
+  /** The glTF requires an extension the runtime does not read, even after the import step. */
+  UnsupportedExtension: "unsupported-extension",
+  /** The step needs a tool the store does not carry (an audio encoder). */
+  ConverterMissing: "converter-missing",
+  /** The importer failed, timed out, or answered something the host does not accept. */
+  ImporterFailed: "importer-failed",
+  /** The glTF validator found an error in the file: the first codes it named are in the detail. */
+  ValidationFailed: "validation-failed",
+} as const;
+export type AssetImportRefusal = (typeof AssetImportRefusal)[keyof typeof AssetImportRefusal];
+
+/** Whether `code` is one of the import step's refusals (a receipt's word is checked against it). */
+export function isAssetImportRefusal(code: unknown): code is AssetImportRefusal {
+  return typeof code === "string" && (Object.values(AssetImportRefusal) as string[]).includes(code);
+}
 
 /** The refusal each compiled stack marks a file it cannot use with. */
 const STACK_ASSET_REFUSAL = {

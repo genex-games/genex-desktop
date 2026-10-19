@@ -174,6 +174,39 @@ fn the_terrain_calls_and_refusals_are_the_fixtures() {
     assert_eq!(names(&pinned["terrain"]["refusals"]), refusals);
 }
 
+#[test]
+fn the_game_systems_blocks_are_the_fixtures() {
+    use genex::manifest::{ANIMATION_CALLS, ASSET_CALLS, ASSET_REFUSALS, LOD_CALLS, LOD_REFUSALS, NAV_CALLS, STREAM_CALLS};
+    let pinned = fixture();
+    let animation = genex_anim::AnimationErrorCode::ALL.map(genex_anim::AnimationErrorCode::wire);
+    let stream = genex::StreamErrorCode::ALL.map(genex::StreamErrorCode::wire);
+    let nav = genex::nav::NavErrorCode::ALL.map(genex::nav::NavErrorCode::wire);
+    let assets = genex::AssetErrorCode::ALL.map(genex::AssetErrorCode::wire);
+    assert_eq!(ASSET_REFUSALS, assets, "the manifest's asset refusals are AssetErrorCode's");
+    let blocks: [(&str, &[&str], &[&str]); 5] = [
+        ("animation", &ANIMATION_CALLS, &animation),
+        ("stream", &STREAM_CALLS, &stream),
+        ("nav", &NAV_CALLS, &nav),
+        ("assets", &ASSET_CALLS, &ASSET_REFUSALS),
+        ("lod", &LOD_CALLS, &LOD_REFUSALS),
+    ];
+    for (key, calls, refusals) in blocks {
+        assert_eq!(names(&pinned[key]["calls"]), calls, "{key} calls");
+        assert_eq!(names(&pinned[key]["refusals"]), refusals, "{key} refusals");
+    }
+}
+
+#[test]
+fn the_render_facts_are_the_fixtures() {
+    use genex::present::{AssetIssueCode, TextureOrigin};
+    use genex_render::texture::TextureFamily;
+    let pinned = fixture();
+    assert_eq!(names(&pinned["runtimeRender"]["keys"]), ["textures", "assetIssues"]);
+    assert_eq!(names(&pinned["runtimeRender"]["issueCodes"]), AssetIssueCode::ALL.map(AssetIssueCode::wire));
+    let families: Vec<&str> = TextureFamily::ALL.into_iter().map(|family| TextureOrigin::Family(family).wire()).chain([TextureOrigin::Source.wire()]).collect();
+    assert_eq!(names(&pinned["runtimeRender"]["families"]), families);
+}
+
 /// The calls the fixture pins under `key`, checked against the names a chain below calls.
 fn pinned_calls<'a>(pinned: &'a serde_json::Value, key: &str) -> Vec<&'a str> {
     names(&pinned[key]["calls"])

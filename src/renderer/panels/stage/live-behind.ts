@@ -74,13 +74,14 @@ function useLiveState(project: string | null): LiveBehindEvent | null {
 
 /**
  * The build the stage swapped in, what waits for Live, and the swap itself. `showBuild` is the
- * person's Play (it brings Live forward); `reload` is Reload, which brings in whatever waits.
+ * person's Play (it brings Live forward); `reload` is Reload, which brings in whatever waits and
+ * settles when that is done.
  */
 export function useLiveBehind(input: LiveBehindInput): {
   shownBuild: ShownBuild | null;
   behind: LiveBehind | null;
   showBuild: (head: string) => Promise<void>;
-  reload: () => void;
+  reload: () => Promise<void>;
 } {
   const { project, threadId, graph, selectedRun, loadLive, onView, onNotice } = input;
   const currentProject = useRef(project);
@@ -177,7 +178,7 @@ export function useLiveBehind(input: LiveBehindInput): {
   );
   const behindRef = useRef(behind);
   behindRef.current = behind;
-  const reload = useCallback(() => void apply(behindRef.current), [apply]);
+  const reload = useCallback(() => apply(behindRef.current), [apply]);
 
   const stage = stageWatchOf(input);
   useUnseenChanges(appliesUnseen(behind, stage) && !input.stopped ? behind : null, apply);

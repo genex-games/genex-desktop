@@ -4,9 +4,12 @@
  * nothing here touches the file system beyond the decoders' own files.
  */
 import type { BuildTarget } from "../../shared/game-project.ts";
-import { meshToGlb } from "./glb.ts";
-import { normalizeGltf } from "./gltf-decompress.ts";
+import type { TextureUsage } from "./basis-encoder.ts";
+import { GlbError, meshToGlb } from "./glb.ts";
+import { addGlbTextures, type GlbTextureSidecar } from "./glb-textures.ts";
+import { importGltf } from "./gltf-decompress.ts";
 import { GltfImportError } from "./gltf-json.ts";
+import { type ImportSizes, inspectGlb } from "./inspect.ts";
 import { checkRadiance, HdrError } from "./hdr.ts";
 import { AssetImportRefusal, ImportConverter } from "./import-plan.ts";
 import {
@@ -21,8 +24,13 @@ import {
 import { addLodExtras } from "./lods.ts";
 import { addMeshletExtras } from "./meshlets.ts";
 import { MeshFormatError, objToMesh } from "./obj.ts";
+import { reorderGlb } from "./reorder.ts";
 import { plyToMesh, stlToMesh } from "./stl-ply.ts";
+import { addTangents } from "./tangents.ts";
+import { type EncodedTexture, encodeTexture, requireUsage, TextureDecodeError } from "./texture-encode.ts";
 import { type TranscodedTexture, texturesForTargets } from "./texture-table.ts";
+import type { GltfIssue } from "./validate.ts";
+import { weldGlb } from "./weld.ts";
 
 /** One file for a step. */
 export interface ConvertInput {
@@ -38,6 +46,8 @@ export interface ConvertInput {
   targets: readonly BuildTarget[];
   /** The fewest triangles a GLB needs to get import-time meshlets; the renderer's default when absent. */
   meshletMinTriangles?: number;
+  /** A `texture-encode` file's resolved usage (`texture-usage.ts`). */
+  usage?: TextureUsage;
 }
 
 /** What a step wrote, or why it refused. */
@@ -50,6 +60,14 @@ export type ConvertResult =
       families?: Ktx2FamilyFile[];
       /** Why a Basis KTX2 got no per-family files. */
       familiesSkipped?: Ktx2FamilySkip;
+      /** The glTF validator's warnings about the input (`validate.ts`). */
+      issues?: GltfIssue[];
+      /** The written GLB's counts and bytes (C-7), for the receipt. */
+      sizes?: ImportSizes;
+      /** An encoded loose texture's usage, source size and class (C-12). */
+      texture?: EncodedTexture;
+      /** A GLB's embedded images as per-family KTX2 sidecars, named in its `genex_textures` (C-13). */
+      sidecars?: GlbTextureSidecar[];
     }
   | { ok: false; refusal: AssetImportRefusal; detail: string };
 
@@ -76,21 +94,63 @@ async function checkKtx2(input: ConvertInput): Promise<ConvertResult> {
   return { ok: true, bytes: input.bytes, textures, ...extra };
 }
 
+/** A loose PNG or JPEG encoded per family for its usage (C-12); the image itself is kept as the fallback. */
+async function encodeLoose(input: ConvertInput): Promise<ConvertResult> {
+  const { files, texture } = await encodeTexture(
+    input.bytes,
+    requireUsage(input.usage),
+    texturesForTargets(input.targets),
+  );
+  return { ok: true, bytes: input.bytes, families: files, texture };
+}
+
 /** A Radiance map checked against the renderer's caps; the file is kept. */
 function checkHdr(input: ConvertInput): ConvertResult {
   checkRadiance(input.bytes);
   return { ok: true, bytes: input.bytes };
 }
 
+/** One optional mesh step: a GLB in, the GLB to hand on out (the same bytes when the step skips). */
+type MeshStep = (glb: Uint8Array, input: ConvertInput) => Promise<Uint8Array>;
+
 /**
- * A GLB the runtime loads, with import-time meshlets (R2.3) and LODs (A6.9) when it is big enough
- * for each; never a refusal.
+ * The mesh steps in order. Weld comes before tangents (MikkTSpace splits only what welded vertices
+ * still disagree on) and both before the reorder, which fixes the vertex order the meshlets and LODs
+ * then index; the extras name views by index, so nothing rewrites vertices after them.
  */
-async function withMeshlets(glb: Uint8Array, input: ConvertInput): Promise<ConvertResult> {
-  const minTriangles = input.meshletMinTriangles;
-  const { bytes: clustered } = await addMeshletExtras(glb, minTriangles === undefined ? {} : { minTriangles });
-  const { bytes } = await addLodExtras(clustered);
-  return { ok: true, bytes };
+const MESH_STEPS: readonly MeshStep[] = [
+  async (glb) => weldGlb(glb).bytes,
+  async (glb) => (await addTangents(glb)).bytes,
+  async (glb) => (await reorderGlb(glb)).bytes,
+  async (glb, input) => {
+    const minTriangles = input.meshletMinTriangles;
+    return (await addMeshletExtras(glb, minTriangles === undefined ? {} : { minTriangles })).bytes;
+  },
+  async (glb) => (await addLodExtras(glb)).bytes,
+];
+
+/**
+ * A GLB the runtime loads: welded, deduplicated and pruned (C-7), tangent-complete and in vertex
+ * cache and fetch order (C-8), then with import-time meshlets (R2.3) and LODs (A6.9) when it is big
+ * enough for each, and its sizes for the receipt; never a refusal.
+ */
+async function meshSteps(glb: Uint8Array, input: ConvertInput): Promise<ConvertResult> {
+  let bytes = glb;
+  for (const step of MESH_STEPS) bytes = await step(bytes, input);
+  const sizes = inspectGlb(bytes);
+  return { ok: true, bytes, ...(sizes ? { sizes } : {}) };
+}
+
+/**
+ * A GLB step's output with its embedded images written out as per-family sidecars (C-13): the last
+ * pass, since it only adds `asset.extras.genex_textures` to the JSON. A GLB with none is kept as it is.
+ */
+async function withGlbTextures(result: ConvertResult, input: ConvertInput): Promise<ConvertResult> {
+  if (!result.ok) return result;
+  const textures = await addGlbTextures(result.bytes, input.name, texturesForTargets(input.targets));
+  if (!textures.encoded) return result;
+  const sizes = inspectGlb(textures.bytes);
+  return { ...result, bytes: textures.bytes, sidecars: textures.sidecars, ...(sizes ? { sizes } : {}) };
 }
 
 const decoder = new TextDecoder();
@@ -100,16 +160,18 @@ async function run(input: ConvertInput): Promise<ConvertResult> {
   switch (input.converter) {
     case ImportConverter.ObjToGlb: {
       const mesh = objToMesh(decoder.decode(input.bytes), input.mtl?.text ?? null, input.mtl?.dir ?? "", input.name);
-      return await withMeshlets(meshToGlb(mesh), input);
+      return await meshSteps(meshToGlb(mesh), input);
     }
     case ImportConverter.StlToGlb:
-      return await withMeshlets(meshToGlb(stlToMesh(input.bytes, input.name)), input);
+      return await meshSteps(meshToGlb(stlToMesh(input.bytes, input.name)), input);
     case ImportConverter.PlyToGlb:
-      return await withMeshlets(meshToGlb(plyToMesh(input.bytes, input.name)), input);
-    case ImportConverter.GltfDecompress:
-      return input.ext === "glb"
-        ? await withMeshlets(await normalizeGltf(input.bytes, input.ext), input)
-        : { ok: true, bytes: await normalizeGltf(input.bytes, input.ext) };
+      return await meshSteps(meshToGlb(plyToMesh(input.bytes, input.name)), input);
+    case ImportConverter.GltfDecompress: {
+      const { bytes, issues } = await importGltf(input.bytes, input.ext);
+      const result: ConvertResult =
+        input.ext === "glb" ? await withGlbTextures(await meshSteps(bytes, input), input) : { ok: true, bytes };
+      return result.ok && issues.length ? { ...result, issues } : result;
+    }
     case ImportConverter.Ktx2Check:
       return await checkKtx2(input);
     case ImportConverter.HdrCheck:
@@ -117,6 +179,10 @@ async function run(input: ConvertInput): Promise<ConvertResult> {
     case ImportConverter.AudioToOgg:
       // TODO(M2.3): an Ogg encoder as a pinned store tool; until then Opus and AAC are refused, typed.
       return refused(AssetImportRefusal.ConverterMissing, MESSAGE.NoAudioEncoder);
+    case ImportConverter.TextureEncode:
+      return await encodeLoose(input);
+    case ImportConverter.GlbTextures:
+      return await withGlbTextures({ ok: true, bytes: input.bytes }, input);
   }
 }
 
@@ -127,8 +193,10 @@ export async function convertAsset(input: ConvertInput): Promise<ConvertResult> 
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
     if (error instanceof GltfImportError) return refused(error.code, detail);
+    if (error instanceof TextureDecodeError) return refused(error.refusal, detail);
     if (
       error instanceof MeshFormatError ||
+      error instanceof GlbError ||
       error instanceof Ktx2Error ||
       error instanceof HdrError ||
       error instanceof SyntaxError

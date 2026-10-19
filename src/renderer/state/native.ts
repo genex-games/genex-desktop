@@ -270,6 +270,14 @@ export interface NativeStore extends StoreApi<NativeState> {
   hold(project: string, size: NativeEmbedSize): () => void;
   /** Embed `project` again (Try again, Restart inside Live), whatever its last run did. */
   retryEmbed(project: string, size: NativeEmbedSize): Promise<void>;
+  /** Live's canvas for `project` is now `size`: what a restart of its embedded run asks for. */
+  resized(project: string, size: NativeEmbedSize): void;
+  /**
+   * The person's Reload while Live holds `project`'s embedded run: the run the Reload ends (main
+   * ends it before it rebuilds) starts again at once, from what is on disk; one already stopped
+   * plays once `reloading` is done. A game Live does not show natively starts nothing.
+   */
+  afterReload(project: string, reloading: Promise<unknown>): Promise<void>;
   /** Pop out: unembed, show Web in Live, then open the Mac window (Play on Mac). */
   popOut(project: string): Promise<NativeRunStatus>;
 }
@@ -286,15 +294,17 @@ export function createNativeStore(api: NativeApi, timers: EmbedTimers = SYSTEM_T
       () => api.nativeState(project),
       (status) => apply((state) => nativeStateRead(state, project, status)),
     );
+  const embeds = embedHolds(api, timers, apply);
+  const reloads = embedReloads(embeds, (project) => nativeEmbedOf(store.getState(), project).status);
   const received = (status: NativeRunStatus): void => {
     if (status.mode === NativeRunMode.Embedded) {
       apply((state) => nativeEmbedReceived(state, status));
+      reloads.received(status);
       return;
     }
     settle(status.project);
     apply((state) => nativeStatusReceived(state, status));
   };
-  const embeds = embedHolds(api, timers, apply);
 
   return Object.assign(store, {
     start(): () => void {
@@ -348,6 +358,8 @@ export function createNativeStore(api: NativeApi, timers: EmbedTimers = SYSTEM_T
     },
     hold: embeds.hold,
     retryEmbed: embeds.embed,
+    resized: embeds.resized,
+    afterReload: reloads.afterReload,
     async popOut(project: string): Promise<NativeRunStatus> {
       apply((state) => nativeViewChosen(state, project, NativeView.Web));
       await embeds.unembed(project);
@@ -369,8 +381,11 @@ function embedHolds(api: NativeApi, timers: EmbedTimers, apply: (change: (state:
   const holds = new Map<string, { count: number; timer: unknown }>();
   /** Games with an embed asked for and no unembed since. */
   const embedded = new Set<string>();
+  /** The canvas size each of those last asked for. */
+  const sizes = new Map<string, NativeEmbedSize>();
   const embed = async (project: string, size: NativeEmbedSize): Promise<void> => {
     embedded.add(project);
+    sizes.set(project, size);
     apply((state) => nativeEmbedHeld(state, project));
     try {
       const status = await api.nativeEmbed(project, size);
@@ -381,6 +396,7 @@ function embedHolds(api: NativeApi, timers: EmbedTimers, apply: (change: (state:
   };
   const unembed = async (project: string): Promise<void> => {
     if (!embedded.delete(project)) return;
+    sizes.delete(project);
     apply((state) => nativeEmbedEnded(state, project));
     await api.nativeUnembed(project).catch(() => false);
   };
@@ -408,7 +424,47 @@ function embedHolds(api: NativeApi, timers: EmbedTimers, apply: (change: (state:
       letGo(project);
     };
   };
-  return { hold, embed, unembed };
+  const resized = (project: string, size: NativeEmbedSize): void => {
+    if (embedded.has(project)) sizes.set(project, size);
+  };
+  /** The size `project`'s held embedded run draws at, or null when Live holds none. */
+  const sizeOf = (project: string): NativeEmbedSize | null => sizes.get(project) ?? null;
+  return { hold, embed, unembed, resized, sizeOf };
+}
+
+/**
+ * Reloads with Live's Native view shown ({@link NativeStore.afterReload}): the embedded run a
+ * Reload ends starts again once, at the size Live holds; `shownOf` reads the run Live shows.
+ */
+function embedReloads(embeds: ReturnType<typeof embedHolds>, shownOf: (project: string) => NativeRunStatus | null) {
+  /** Each game's Reload under way, with the embedded run it ends (null when none was running). */
+  const reloads = new Map<string, { runId: string | null }>();
+  const restart = (project: string): void => {
+    reloads.delete(project);
+    const size = embeds.sizeOf(project);
+    if (size) void embeds.embed(project, size);
+  };
+  /** An embedded run's word: the run a Reload ends, once ended, starts again at once. */
+  const received = (status: NativeRunStatus): void => {
+    const reload = reloads.get(status.project);
+    if (reload?.runId === status.runId && nativeRunEnded(status)) restart(status.project);
+  };
+  const afterReload = async (project: string, reloading: Promise<unknown>): Promise<void> => {
+    if (!embeds.sizeOf(project)) {
+      await reloading.catch(() => {});
+      return;
+    }
+    const shown = shownOf(project);
+    const reload = { runId: shown && !nativeRunEnded(shown) ? shown.runId : null };
+    reloads.set(project, reload);
+    await reloading.catch(() => {});
+    // Already started again (its run's stop arrived first), or a later Reload took over.
+    if (reloads.get(project) !== reload) return;
+    reloads.delete(project);
+    const now = shownOf(project);
+    if (!now || nativeRunEnded(now)) restart(project);
+  };
+  return { received, afterReload };
 }
 
 const stores = new WeakMap<NativeApi, NativeStore>();

@@ -19,12 +19,18 @@ default = ["physics"]
 studio = ["dep:genex-studio", "dep:genex-frames"]
 # Rapier 3D, stepped once per tick (`Sim::physics`). A game with `[physics] enabled = false` in its
 # genex.toml is built without it: about a fifth of a web build's code (renderer pass 2, D11).
-physics = ["dep:rapier3d"]
+# The area crates' Rapier parts (characters, ragdolls, collider nav input, streamed colliders)
+# follow it.
+physics = ["dep:rapier3d", "genex-anim/physics", "genex-nav/physics", "genex-stream/physics"]
 
 [dependencies]
 # The clock, rng, input merger, state() snapshot and checksum, and saves are genex-core's
 # golden-checked port of the C++ template's units.
 genex-core = { workspace = true }
+# Game systems: animation, navigation and world streaming; the facade re-exports a small surface.
+genex-anim = { workspace = true }
+genex-nav = { workspace = true }
+genex-stream = { workspace = true }
 egui = { workspace = true }
 glam = { workspace = true }
 indexmap = { workspace = true }

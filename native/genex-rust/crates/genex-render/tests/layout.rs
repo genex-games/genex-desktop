@@ -148,6 +148,117 @@ fn every_renderer_shader_validates_against_webgpu_core() {
     }
 }
 
+/// The float literals of `source` (comments dropped) whose value lies outside f32's finite range:
+/// a shader-creation error under the WGSL spec that Chromium's Tint applies and naga does not
+/// (naga rounds `3.40282347e38` to `f32::MAX`; Tint refuses the module, so every pipeline built
+/// from it is invalid and the browser frame draws nothing).
+fn f32_overflowing_literals(source: &str) -> Vec<String> {
+    let text = genex_render::shaders::minify::minify(source);
+    let bytes = text.as_bytes();
+    let mut found = Vec::new();
+    let mut at = 0;
+    while at < bytes.len() {
+        let starts_number = bytes[at].is_ascii_digit() || (bytes[at] == b'.' && bytes.get(at + 1).is_some_and(u8::is_ascii_digit));
+        let inside_word = at > 0 && (bytes[at - 1].is_ascii_alphanumeric() || bytes[at - 1] == b'_');
+        if !starts_number || inside_word {
+            at += 1;
+            continue;
+        }
+        let (end, value) = literal_at(bytes, at);
+        if value.is_some_and(|value| value.abs() > f64::from(f32::MAX)) {
+            found.push(text[at..end].to_owned());
+        }
+        at = end.max(at + 1);
+    }
+    found
+}
+
+/// The end of the numeric literal starting at `at` and its value when it is an f32 or abstract
+/// float literal (`None` for integers and f16).
+fn literal_at(bytes: &[u8], at: usize) -> (usize, Option<f64>) {
+    let hex = bytes[at] == b'0' && matches!(bytes.get(at + 1), Some(b'x' | b'X'));
+    let (digits_end, value) = if hex { hex_float_at(bytes, at + 2) } else { decimal_float_at(bytes, at) };
+    match bytes.get(digits_end) {
+        Some(b'f') => (digits_end + 1, value.or_else(|| std::str::from_utf8(&bytes[at..digits_end]).ok()?.parse().ok())),
+        Some(b'h' | b'i' | b'u') => (digits_end + 1, None),
+        _ => (digits_end, value),
+    }
+}
+
+/// A decimal literal's end and, when it has a point or an exponent, its value.
+fn decimal_float_at(bytes: &[u8], at: usize) -> (usize, Option<f64>) {
+    let mut end = at;
+    let mut float = false;
+    while end < bytes.len() && (bytes[end].is_ascii_digit() || bytes[end] == b'.') {
+        float |= bytes[end] == b'.';
+        end += 1;
+    }
+    if matches!(bytes.get(end), Some(b'e' | b'E')) {
+        float = true;
+        end += 1;
+        if matches!(bytes.get(end), Some(b'+' | b'-')) {
+            end += 1;
+        }
+        while end < bytes.len() && bytes[end].is_ascii_digit() {
+            end += 1;
+        }
+    }
+    let text = std::str::from_utf8(&bytes[at..end]).unwrap_or_default();
+    (end, if float { text.parse().ok() } else { None })
+}
+
+/// A hexadecimal literal's end (after `0x`) and, when it has a binary exponent, its value.
+fn hex_float_at(bytes: &[u8], at: usize) -> (usize, Option<f64>) {
+    let mut end = at;
+    let mut mantissa = 0.0_f64;
+    let mut fraction_digits = 0_i32;
+    let mut after_point = false;
+    while let Some(&byte) = bytes.get(end) {
+        if byte == b'.' {
+            after_point = true;
+        } else if let Some(digit) = char::from(byte).to_digit(16) {
+            mantissa = mantissa * 16.0 + f64::from(digit);
+            fraction_digits += i32::from(after_point);
+        } else {
+            break;
+        }
+        end += 1;
+    }
+    if !matches!(bytes.get(end), Some(b'p' | b'P')) {
+        return (end, None);
+    }
+    end += 1;
+    let exponent_start = end;
+    if matches!(bytes.get(end), Some(b'+' | b'-')) {
+        end += 1;
+    }
+    while end < bytes.len() && bytes[end].is_ascii_digit() {
+        end += 1;
+    }
+    let exponent: i32 = std::str::from_utf8(&bytes[exponent_start..end]).ok().and_then(|text| text.parse().ok()).unwrap_or(0);
+    (end, Some(mantissa * 2f64.powi(exponent - 4 * fraction_digits)))
+}
+
+#[test]
+fn the_literal_scan_finds_what_tint_refuses_and_passes_what_it_accepts() {
+    assert_eq!(f32_overflowing_literals("let a = 3.40282347e38; // 1e39 in a comment"), vec!["3.40282347e38"]);
+    assert_eq!(f32_overflowing_literals("let b = -1e39f; let c = 4e38;"), vec!["1e39f", "4e38"]);
+    assert!(f32_overflowing_literals("let d = 0x1.fffffep+127f; let e = 3.4e38; let f = 340282346638528859811704183484516925440.0;").is_empty());
+    assert_eq!(f32_overflowing_literals("let g = 0x1p+128f;"), vec!["0x1p+128f"]);
+    assert!(f32_overflowing_literals("let h = 4294967295u; let v1e39 = vec2<f32>(1.0, 2.5e-3); let i = 0xffffffffu;").is_empty());
+    // The spelling the shaders use for f32::MAX is exactly it.
+    assert_eq!(literal_at(b"0x1.fffffep+127f", 0), (16, Some(f64::from(f32::MAX))));
+}
+
+#[test]
+fn every_renderer_shader_keeps_its_float_literals_in_f32_range() {
+    let unregistered = [("light-bin", genex_render::cluster::LIGHT_BIN)];
+    for (name, source) in SHADERS.iter().chain(&unregistered) {
+        let overflowing = f32_overflowing_literals(source);
+        assert!(overflowing.is_empty(), "{name}: {overflowing:?} lie outside f32's range; Tint refuses the module (write f32::MAX as 0x1.fffffep+127f)");
+    }
+}
+
 #[test]
 fn rust_struct_sizes_equal_the_golden_table_in_this_build() {
     let sizes: Vec<(&str, usize)> = GPU_STRUCTS.iter().map(|s| (s.wgsl, s.rust_size)).collect();

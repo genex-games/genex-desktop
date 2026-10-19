@@ -13,8 +13,12 @@
 //! `volatile.gpu` and `volatile.render` as a native studio run does; it also answers
 //! `renderSettings` and draws captures on the game's pinned capture profile (RQ0.7).
 
+use crate::assets::WebAssets;
+use crate::draw::{AssetSource as _, AssetTable};
 use crate::handle::GameHandle;
-use genex::present::Presenter;
+use genex::present::{ModelSource, Presenter};
+use genex::{AssetError, AssetErrorCode, AssetGroup, AssetGroups, AssetSource};
+use std::sync::Arc;
 use genex::render::{RenderAnswer, RenderChange, RenderStatus, requested_spelling, spelled_features};
 use genex::{Input, Key};
 use genex_core::clock::FpsMeter;
@@ -24,6 +28,65 @@ use genex_render::{GpuCounters, RenderCode};
 use genex_studio::verbs::{SpelledAnswer, SpelledChange, capture_provenance_value, render_answer_value, render_status_value, spell_change};
 use genex_studio::wire::{self, RenderSettingsChange, RenderSettingsRefusal};
 use genex_studio::{CaptureFault, Injection, Op, Pixels, StudioGame};
+
+/// A web build's assets for the sim's reads and the presenter's models: the table compiled into
+/// the module first, then the staged files the shell fetched and admitted before `studio_boot`
+/// (shared, so both read one copy). A reset reads them by the native rule (`gfx.assets().bytes`:
+/// boot and sim groups only, `not-preloaded` for the rest), so the same seed gives the same
+/// checksum on the web as on a desktop.
+#[derive(Clone)]
+pub struct WebSource {
+    compiled: AssetTable,
+    fetched: Arc<WebAssets>,
+    groups: AssetGroups,
+}
+
+impl WebSource {
+    /// The compiled table, then the fetched files.
+    pub fn new(compiled: AssetTable, fetched: WebAssets) -> WebSource {
+        WebSource { compiled, fetched: Arc::new(fetched), groups: AssetGroups::default() }
+    }
+
+    /// These assets with the groups the build recorded for them.
+    pub fn with_groups(mut self, groups: AssetGroups) -> WebSource {
+        self.groups = groups;
+        self
+    }
+
+    /// The bytes of `path`: the compiled table first, then the fetched files (as
+    /// [`crate::assets::Layered`] serves them).
+    fn bytes(&self, path: &str) -> Option<&[u8]> {
+        self.compiled.asset(path).or_else(|| self.fetched.get(path))
+    }
+}
+
+impl AssetSource for WebSource {
+    fn read(&self, path: &str) -> Result<Arc<[u8]>, AssetError> {
+        let bytes = self.bytes(path).ok_or_else(|| AssetError::new(AssetErrorCode::Missing, format!("{path} was not fetched")))?;
+        Ok(Arc::from(bytes))
+    }
+
+    fn size(&self, path: &str) -> Result<u64, AssetError> {
+        let bytes = self.bytes(path).ok_or_else(|| AssetError::new(AssetErrorCode::Missing, format!("{path} was not fetched")))?;
+        Ok(bytes.len() as u64)
+    }
+
+    fn group(&self, path: &str) -> AssetGroup {
+        self.groups.of(path)
+    }
+}
+
+impl ModelSource for WebSource {
+    fn model_bytes(&self, path: &str) -> Option<Vec<u8>> {
+        self.bytes(path).map(<[u8]>::to_vec)
+    }
+
+    /// The compiled table's bytes (they come first): a fetched file is not the program's for its
+    /// whole life, so its decoded upload is kept.
+    fn static_bytes(&self, path: &str) -> Option<&'static [u8]> {
+        self.compiled.iter().find(|(known, _)| *known == path).map(|(_, bytes)| *bytes)
+    }
+}
 
 /// The page verbs that only read: answering one changes nothing the next frame shows.
 const READ_ONLY_VERBS: [&str; 4] = [Op::STATE, Op::CAMERAS, Op::EYES, Op::DEMOS];
@@ -403,5 +466,108 @@ impl<P: Painter> StudioGame for HandleGame<'_, P> {
     }
     fn render_settings(&mut self, change: Option<&RenderSettingsChange>) -> Result<Value, RenderSettingsRefusal> {
         self.painter.render_settings(change)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use genex::{AssetFiles, AssetTable, Game, Runtime, json};
+    use genex_core::digest::{fnv1a64, hex64};
+
+    const LEVEL: &[u8] = br#"{"enemies": 3, "spawn": [1.5, 0.0, -2.0]}"#;
+
+    #[derive(Default)]
+    struct World {
+        enemies: i64,
+        outcome: Vec<String>,
+    }
+
+    /// The fetched set a page admits for `files`, by the build's asset map (version 1).
+    fn fetched(files: &[(&str, &[u8])]) -> WebAssets {
+        let entries: Vec<String> = files
+            .iter()
+            .map(|(path, bytes)| format!(r#"{{"path":"{path}","bytes":{},"fnv1a64":"{}"}}"#, bytes.len(), hex64(fnv1a64(bytes))))
+            .collect();
+        let map = format!(r#"{{"version":1,"files":[{}]}}"#, entries.join(","));
+        let mut assets = WebAssets::plan(map.as_bytes()).expect("a well-formed map");
+        for (path, bytes) in files {
+            assets.admit(path, bytes.to_vec()).expect("admitted");
+        }
+        assets
+    }
+
+    /// A game whose reset parses the level JSON, then counts it up each tick.
+    fn level_game() -> Game<World> {
+        let mut game = Game::new(World::default()).world_size(64, 64);
+        game.on_reset(|sim, _, _, gfx| {
+            let bytes = gfx.assets().bytes("levels/one.json").expect("the level reads at reset");
+            let level = bytes.json().expect("JSON");
+            sim.world.enemies = level["enemies"].as_i64().unwrap_or(-1);
+        });
+        game.on_update(|sim, ctx| sim.world.enemies += i64::from(ctx.rng.below(3)));
+        game.probe("enemies", |sim| json!(sim.world.enemies));
+        game
+    }
+
+    fn checksum_after(source: Box<dyn AssetSource>) -> String {
+        let mut runtime = Runtime::with_assets(level_game(), source).expect("valid game");
+        runtime.step(1000.0);
+        runtime.checksum()
+    }
+
+    /// A game that parses JSON at reset gets one checksum from a desktop's asset folder, a compiled
+    /// table and the web's fetched set.
+    #[test]
+    fn a_level_parsed_at_reset_gives_one_checksum_on_desktop_and_the_web() {
+        let dir = std::env::temp_dir().join(format!("genex-web-source-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("assets/levels")).expect("assets folder");
+        std::fs::write(dir.join("assets/levels/one.json"), LEVEL).expect("level");
+        let table: AssetTable = &[("levels/one.json", LEVEL)];
+        let desktop = checksum_after(Box::new(AssetFiles::new(&[], Some(dir.join("assets")))));
+        let compiled = checksum_after(Box::new(table));
+        let web = checksum_after(Box::new(WebSource::new(&[], fetched(&[("levels/one.json", LEVEL)]))));
+        assert_eq!(desktop, compiled);
+        assert_eq!(desktop, web);
+        let none = checksum_after_without_level();
+        assert_ne!(desktop, none, "the level moved the checksum: the read happened on the first seed");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    fn checksum_after_without_level() -> String {
+        let mut game = Game::new(World::default()).world_size(64, 64);
+        game.on_update(|sim, ctx| sim.world.enemies += i64::from(ctx.rng.below(3)));
+        game.probe("enemies", |sim| json!(sim.world.enemies));
+        let mut runtime = Runtime::new(game).expect("valid game");
+        runtime.step(1000.0);
+        runtime.checksum()
+    }
+
+    /// The web refuses a streamed asset at reset exactly as a desktop does, and the compiled table
+    /// comes before the fetched files.
+    #[test]
+    fn the_web_source_keeps_the_native_read_rules() {
+        let groups = AssetGroups::default().with("cells/a.json", AssetGroup::Stream);
+        let set = fetched(&[("cells/a.json", b"{}"), ("levels/one.json", b"fetched")]);
+        let compiled: AssetTable = &[("levels/one.json", LEVEL)];
+        let web = WebSource::new(compiled, set).with_groups(groups.clone());
+        let desktop = AssetFiles::new(&[("cells/a.json", b"{}"), ("levels/one.json", LEVEL)], None).with_groups(groups);
+        let paths = ["cells/a.json", "levels/one.json", "nope.json", "../x.json"];
+        let outcome = |source: Box<dyn AssetSource>| {
+            let mut game = Game::new(World::default()).world_size(64, 64);
+            game.on_reset(move |sim, _, _, gfx| {
+                for path in paths {
+                    let answer = gfx.assets().bytes(path);
+                    sim.world.outcome.push(answer.map_or_else(|error| error.code().wire().to_owned(), |bytes| format!("{} bytes", bytes.len())));
+                }
+            });
+            Runtime::with_assets(game, source).expect("valid game").sim().world.outcome.clone()
+        };
+        let expected = ["not-preloaded".to_owned(), format!("{} bytes", LEVEL.len()), "missing".to_owned(), "unsafe-path".to_owned()];
+        assert_eq!(outcome(Box::new(web.clone())), expected, "the web");
+        assert_eq!(outcome(Box::new(desktop)), expected, "a desktop");
+        assert_eq!(web.model_bytes("cells/a.json"), Some(b"{}".to_vec()), "the presenter draws from the same set");
+        assert_eq!(web.static_bytes("levels/one.json"), Some(LEVEL), "the compiled table is the program's");
     }
 }

@@ -17,6 +17,8 @@ licenses and terms of included third-party software.
 - Electron supplies its own license and Chromium notices.
 - The TypeScript 7 compiler (Apache-2.0), `@types/node` and `undici-types` (MIT) that the
   self-edit type gate runs keep their license and notice files under `dist/resources/tsc`.
+- The Rust asset importer's tools under `dist/resources/importer-tools` (Basis Universal, Draco,
+  meshoptimizer) have this page beside them ([Asset importer decoders](#asset-importer-decoders)).
 - The Genex asset CLI (`@genex-ai/cli-demo`, MIT) and its dependencies keep their license files
   in the Genex plugin payload under `dist/resources/plugins/genex/node_modules`.
 
@@ -134,9 +136,10 @@ exceptions: Genex ships them (below).
   pinned fallback.
 - The Basis Universal v2.50 WebAssembly encoder (`basis_encoder.js` and `basis_encoder.wasm`,
   Apache-2.0 with its NOTICE, the text under [Basis Universal](#basis-universal)), which the Rust ·
-  wgpu asset import step encodes textures with (`src/substrate/asset-import/basis-encoder.ts`,
-  pinned by sha256 at the `v2_50` release commit). So far only a development fetch
-  (`scripts/toolchains/basis-encoder.ts fetch`) downloads it; it is not committed or shipped.
+  wgpu asset import step encodes and transcodes textures with (`src/substrate/asset-import/basis-encoder.ts`,
+  pinned by sha256 at the `v2_50` release commit). A development fetch
+  (`node scripts/toolchains/importer-tools.ts fetch`) downloads it and it is never committed; the
+  build copies it into the packaged app ([Asset importer decoders](#asset-importer-decoders)).
 - The Rust crate checker, installed on the first crate approval: cargo-deny (MIT OR Apache-2.0)
   and cargo-vet (MIT OR Apache-2.0) from their official GitHub releases, and the RustSec
   advisory-db (CC0-1.0) at the commit `native/genex-rust/crate-policy.json` pins. The trusted
@@ -189,7 +192,7 @@ notice; the toolchain store compiles it into the headless raylib library on the 
 
 The `genex` workspace in `native/genex-rust` (Genex's own code, MIT) builds offline from a vendored
 crate set: `scripts/spike/rust-wgpu/vendor-allowlist.toml` names the direct dependencies,
-`setup-toolchain.sh` vendors their resolved closure (469 crates) into the project-local toolchain
+`setup-toolchain.sh` vendors their resolved closure (475 crates) into the project-local toolchain
 folder, and `native/genex-rust/Cargo.lock` pins what the workspace uses. No crate source is copied
 into this repository or shipped inside Genex.app; each vendored crate keeps its licence files in
 its own folder. A Rust game or a `genex` release links only the subset its targets and features
@@ -204,13 +207,15 @@ Notable terms in the closure:
   License 1.1) and emoji-icon-font (MIT). The licence texts are in the crate's `fonts/` folder.
 - MPL-2.0: the symphonia 0.6.1 crates (audio decoding) and triple_buffer 9.0.0, used unmodified;
   their source is the published crate on crates.io.
+- `bevy_mikktspace` 1.0.0 (the MikkTSpace tangent algorithm, Morten S. Mikkelsen's original under
+  the zlib licence) is under Zlib AND (MIT OR Apache-2.0); the zlib terms are in its source.
 - `self_cell` 1.3.0 is offered under Apache-2.0 OR GPL-2.0-only and `r-efi` under MIT OR
   Apache-2.0 OR LGPL-2.1-or-later; Genex uses Apache-2.0 and MIT respectively.
 
 | Licence (as the crate declares it) | Crates | Crates and versions |
 | --- | --- | --- |
-| MIT OR Apache-2.0 | 248 | accesskit 0.24.1, ahash 0.8.12, allocator-api2 0.2.21, android-activity 0.6.1, android_log-sys 0.3.2, android_logger 0.15.1, android_system_properties 0.1.6, arboard 3.6.1, arrayvec 0.7.8, as-raw-xcb-connection 1.0.1, ash 0.38.0+1.3.281, async-trait 0.1.92, atomic-arena 0.1.2, atomic-polyfill 1.0.3, base64 0.13.1, bitflags 1.3.2, bitflags 2.13.2, bumpalo 3.20.3, cast 0.3.0, cc 1.6.0, cfg-if 1.0.5, cobs 0.3.0, core-foundation 0.9.4, core-foundation-sys 0.8.7, core-graphics 0.23.2, core-graphics-types 0.1.3, coreaudio-rs 0.14.2, crc32fast 1.5.2, critical-section 1.2.0, crossbeam-utils 0.8.23, dasp_sample 0.11.0, document-features 0.2.12, downcast-rs 1.2.1, downcast-rs 2.0.2, ecolor 0.36.2, egui 0.36.2, egui-wgpu 0.36.2, egui-winit 0.36.2, either 1.18.0, emath 0.36.2, embedded-io 0.4.0, embedded-io 0.6.1, ena 0.14.4, env_filter 0.1.4, epaint 0.36.2, errno 0.3.14, euclid 0.22.14, fdeflate 0.3.7, find-msvc-tools 0.1.14, flate2 1.1.10, font-types 0.12.6, foreign-types 0.5.0, foreign-types-macros 0.2.4, foreign-types-shared 0.3.1, futures-channel 0.3.34, futures-core 0.3.34, futures-task 0.3.34, futures-util 0.3.34, getrandom 0.3.4, getrandom 0.4.3, gif 0.14.2, glam 0.30.10, glam 0.31.1, glam 0.32.1, glam 0.33.12, glamx 0.3.1, glob 0.3.4, gltf 1.4.1, gltf-derive 1.4.1, gltf-json 1.4.1, gpu-allocator 0.28.0, guillotiere 0.7.0, half 2.7.1, hash32 0.2.1, hash32 0.3.1, hashbrown 0.16.1, hashbrown 0.17.1, heapless 0.7.17, heapless 0.8.0, hermit-abi 0.5.3, image 0.25.10, image-webp 0.2.4, itertools 0.15.0, itoa 1.0.18, jni 0.21.1, jni 0.22.4, jni-macros 0.22.4, jni-sys 0.3.1, jni-sys 0.4.1, jni-sys-macros 0.4.1, jobserver 0.1.35, js-sys 0.3.106, kira 0.12.5, lazy_static 1.5.1, libc 0.2.190, litrs 1.0.0, lock_api 0.4.14, log 0.4.34, matrixmultiply 0.3.11, memmap2 0.9.11, naga 30.0.1, naga-types 30.0.1, ndk 0.9.0, ndk-context 0.1.1, ndk-sys 0.6.0+11769913, num-bigint 0.4.8, num-complex 0.4.6, num-derive 0.4.2, num-derive 0.5.1, num-integer 0.1.47, num-rational 0.4.2, num-traits 0.2.19, once_cell 1.21.4, parking_lot 0.12.5, parking_lot_core 0.9.12, paste 1.0.15, pastey 0.2.3, percent-encoding 2.3.2, pkg-config 0.3.34, plain 0.2.3, png 0.18.1, polycool 0.4.0, postcard 1.1.3, presser 0.3.1, proc-macro-crate 3.5.0, proc-macro2 1.0.107, profiling 1.0.18, profiling-procmacros 1.0.18, qoi 0.4.1, quick-error 2.0.1, quote 1.0.47, rand 0.8.8, rand_core 0.6.4, rand_xorshift 0.3.0, range-alloc 0.1.5, raw-window-metal 1.1.0, rawpointer 0.2.1, read-fonts 0.41.0, regex 1.13.1, regex-automata 0.4.18, regex-lite 0.1.9, regex-syntax 0.8.11, renderdoc-sys 1.1.0, robust 1.2.0, rstar 0.13.0, rtrb 0.4.0, rustc_version 0.4.1, rustversion 1.0.23, scoped-tls 1.0.1, scopeguard 1.2.0, semver 1.0.28, send_wrapper 0.6.0, serde 1.0.229, serde_arrays 0.2.0, serde_core 1.0.229, serde_derive 1.0.229, serde_json 1.0.151, serde_spanned 1.1.1, shlex 2.0.1, simdutf8 0.1.5, skrifa 0.44.0, smallvec 1.16.2, smol_str 0.2.2, spade 2.15.1, stable_deref_trait 1.2.1, static_assertions 1.1.0, syn 2.0.119, syn 3.0.6, target-tuple 1.0.2, thiserror 1.0.69, thiserror 2.0.21, thiserror-impl 1.0.69, thiserror-impl 2.0.21, toml 1.1.6+spec-1.1.0, toml_datetime 1.1.1+spec-1.1.0, toml_edit 0.25.15+spec-1.1.0, toml_parser 1.1.3+spec-1.1.0, toml_writer 1.1.2+spec-1.1.0, trybuild 1.0.121, ttf-parser 0.25.1, type-map 0.5.1, typenum 1.20.1, unicode-segmentation 1.13.3, unicode-width 0.2.2, vec_map 0.8.2, version_check 0.9.5, wasm-bindgen 0.2.129, wasm-bindgen-futures 0.4.79, wasm-bindgen-macro 0.2.129, wasm-bindgen-macro-support 0.2.129, wasm-bindgen-shared 0.2.129, wasm-bindgen-test 0.3.79, wasm-bindgen-test-macro 0.3.79, wasm-bindgen-test-shared 0.2.129, web-sys 0.3.106, web-time 1.1.0, weezl 0.1.12, wgpu 30.0.1, wgpu-core 30.0.1, wgpu-core-deps-apple 30.0.1, wgpu-core-deps-windows-linux-android 30.0.1, wgpu-hal 30.0.1, wgpu-naga-bridge 30.0.1, wgpu-types 30.0.1, windows 0.62.2, windows-collections 0.3.2, windows-core 0.62.2, windows-future 0.3.2, windows-implement 0.60.2, windows-interface 0.59.3, windows-link 0.2.1, windows-numerics 0.3.1, windows-result 0.4.1, windows-strings 0.5.1, windows-sys 0.45.0, windows-sys 0.52.0, windows-sys 0.59.0, windows-sys 0.60.2, windows-sys 0.61.2, windows-targets 0.42.2, windows-targets 0.52.6, windows-targets 0.53.5, windows-threading 0.2.1, windows_aarch64_gnullvm 0.42.2, windows_aarch64_gnullvm 0.52.6, windows_aarch64_gnullvm 0.53.1, windows_aarch64_msvc 0.42.2, windows_aarch64_msvc 0.52.6, windows_aarch64_msvc 0.53.1, windows_i686_gnu 0.42.2, windows_i686_gnu 0.52.6, windows_i686_gnu 0.53.1, windows_i686_gnullvm 0.52.6, windows_i686_gnullvm 0.53.1, windows_i686_msvc 0.42.2, windows_i686_msvc 0.52.6, windows_i686_msvc 0.53.1, windows_x86_64_gnu 0.42.2, windows_x86_64_gnu 0.52.6, windows_x86_64_gnu 0.53.1, windows_x86_64_gnullvm 0.42.2, windows_x86_64_gnullvm 0.52.6, windows_x86_64_gnullvm 0.53.1, windows_x86_64_msvc 0.42.2, windows_x86_64_msvc 0.52.6, windows_x86_64_msvc 0.53.1, x11rb 0.13.2, x11rb-protocol 0.13.2 |
-| MIT | 84 | alsa-sys 0.4.0, android-properties 0.2.2, block2 0.5.1, block2 0.6.2, bytes 1.12.1, calloop 0.13.0, calloop 0.14.5, calloop-wayland-source 0.3.0, calloop-wayland-source 0.4.1, cfg_aliases 0.2.2, color_quant 1.1.0, combine 4.6.8, crunchy 0.2.4, dispatch 0.2.0, dlib 0.5.3, extended 0.1.0, fax 0.2.7, harfrust 0.12.0, inflections 1.1.1, libm 0.2.16, libredox 0.1.25, libudev-sys 0.1.4, mint 0.5.9, nix 0.31.3, nu-ansi-term 0.50.3, objc-sys 0.3.5, objc2 0.5.3, objc2 0.6.5, objc2-app-kit 0.2.2, objc2-cloud-kit 0.2.2, objc2-contacts 0.2.2, objc2-core-data 0.2.2, objc2-core-image 0.2.2, objc2-core-location 0.2.2, objc2-encode 4.1.0, objc2-foundation 0.2.2, objc2-foundation 0.3.2, objc2-link-presentation 0.2.2, objc2-metal 0.2.2, objc2-quartz-core 0.2.2, objc2-symbols 0.2.2, objc2-ui-kit 0.2.2, objc2-uniform-type-identifiers 0.2.2, objc2-user-notifications 0.2.2, oorandom 11.1.5, orbclient 0.3.55, ordered-float 5.5.0, pulp 0.22.3, pulp-wasm-simd-flag 0.1.1, quick-xml 0.41.0, raw-cpuid 11.6.0, reborrow 0.5.5, redox_syscall 0.4.1, redox_syscall 0.5.18, redox_syscall 0.9.4, sctk-adwaita 0.10.1, simd-adler32 0.3.10, slab 0.4.12, smithay-client-toolkit 0.19.2, smithay-client-toolkit 0.20.0, smithay-clipboard 0.7.3, spin 0.9.9, strict-num 0.1.1, tiff 0.11.3, tokio 1.53.2, tracing 0.1.44, tracing-core 0.1.36, urlencoding 2.1.3, wayland-backend 0.3.17, wayland-client 0.31.15, wayland-csd-frame 0.3.0, wayland-cursor 0.31.14, wayland-protocols 0.32.13, wayland-protocols-experimental 20250721.0.1, wayland-protocols-misc 0.3.12, wayland-protocols-plasma 0.3.12, wayland-protocols-wlr 0.3.12, wayland-scanner 0.31.11, wayland-sys 0.31.11, winnow 1.0.4, x11-dl 2.21.0, xcursor 0.3.11, xkbcommon-dl 0.4.2, zmij 1.0.23 |
+| MIT OR Apache-2.0 | 249 | accesskit 0.24.1, ahash 0.8.12, allocator-api2 0.2.21, android-activity 0.6.1, android_log-sys 0.3.2, android_logger 0.15.1, android_system_properties 0.1.6, arboard 3.6.1, arrayvec 0.7.8, as-raw-xcb-connection 1.0.1, ash 0.38.0+1.3.281, async-trait 0.1.92, atomic-arena 0.1.2, atomic-polyfill 1.0.3, base64 0.13.1, bitflags 1.3.2, bitflags 2.13.2, bumpalo 3.20.3, cast 0.3.0, cc 1.6.0, cfg-if 1.0.5, cobs 0.3.0, core-foundation 0.9.4, core-foundation-sys 0.8.7, core-graphics 0.23.2, core-graphics-types 0.1.3, coreaudio-rs 0.14.2, crc32fast 1.5.2, critical-section 1.2.0, crossbeam-utils 0.8.23, dasp_sample 0.11.0, document-features 0.2.12, downcast-rs 1.2.1, downcast-rs 2.0.2, ecolor 0.36.2, egui 0.36.2, egui-wgpu 0.36.2, egui-winit 0.36.2, either 1.18.0, emath 0.36.2, embedded-io 0.4.0, embedded-io 0.6.1, ena 0.14.4, env_filter 0.1.4, epaint 0.36.2, errno 0.3.14, euclid 0.22.14, fdeflate 0.3.7, find-msvc-tools 0.1.14, flate2 1.1.10, font-types 0.12.6, foreign-types 0.5.0, foreign-types-macros 0.2.4, foreign-types-shared 0.3.1, futures-channel 0.3.34, futures-core 0.3.34, futures-task 0.3.34, futures-util 0.3.34, getrandom 0.3.4, getrandom 0.4.3, gif 0.14.2, glam 0.30.10, glam 0.31.1, glam 0.32.1, glam 0.33.12, glamx 0.3.1, glob 0.3.4, gltf 1.4.1, gltf-derive 1.4.1, gltf-json 1.4.1, gpu-allocator 0.28.0, guillotiere 0.7.0, half 2.7.1, hash32 0.2.1, hash32 0.3.1, hashbrown 0.16.1, hashbrown 0.17.1, heapless 0.7.17, heapless 0.8.0, hermit-abi 0.5.3, image 0.25.10, image-webp 0.2.4, itertools 0.15.0, itoa 1.0.18, jni 0.21.1, jni 0.22.4, jni-macros 0.22.4, jni-sys 0.3.1, jni-sys 0.4.1, jni-sys-macros 0.4.1, jobserver 0.1.35, js-sys 0.3.106, kira 0.12.5, lazy_static 1.5.1, libc 0.2.190, litrs 1.0.0, lock_api 0.4.14, log 0.4.34, matrixmultiply 0.3.11, memmap2 0.9.11, naga 30.0.1, naga-types 30.0.1, ndk 0.9.0, ndk-context 0.1.1, ndk-sys 0.6.0+11769913, nonmax 0.5.5, num-bigint 0.4.8, num-complex 0.4.6, num-derive 0.4.2, num-derive 0.5.1, num-integer 0.1.47, num-rational 0.4.2, num-traits 0.2.19, once_cell 1.21.4, parking_lot 0.12.5, parking_lot_core 0.9.12, paste 1.0.15, pastey 0.2.3, percent-encoding 2.3.2, pkg-config 0.3.34, plain 0.2.3, png 0.18.1, polycool 0.4.0, postcard 1.1.3, presser 0.3.1, proc-macro-crate 3.5.0, proc-macro2 1.0.107, profiling 1.0.18, profiling-procmacros 1.0.18, qoi 0.4.1, quick-error 2.0.1, quote 1.0.47, rand 0.8.8, rand_core 0.6.4, rand_xorshift 0.3.0, range-alloc 0.1.5, raw-window-metal 1.1.0, rawpointer 0.2.1, read-fonts 0.41.0, regex 1.13.1, regex-automata 0.4.18, regex-lite 0.1.9, regex-syntax 0.8.11, renderdoc-sys 1.1.0, robust 1.2.0, rstar 0.13.0, rtrb 0.4.0, rustc_version 0.4.1, rustversion 1.0.23, scoped-tls 1.0.1, scopeguard 1.2.0, semver 1.0.28, send_wrapper 0.6.0, serde 1.0.229, serde_arrays 0.2.0, serde_core 1.0.229, serde_derive 1.0.229, serde_json 1.0.151, serde_spanned 1.1.1, shlex 2.0.1, simdutf8 0.1.5, skrifa 0.44.0, smallvec 1.16.2, smol_str 0.2.2, spade 2.15.1, stable_deref_trait 1.2.1, static_assertions 1.1.0, syn 2.0.119, syn 3.0.6, target-tuple 1.0.2, thiserror 1.0.69, thiserror 2.0.21, thiserror-impl 1.0.69, thiserror-impl 2.0.21, toml 1.1.6+spec-1.1.0, toml_datetime 1.1.1+spec-1.1.0, toml_edit 0.25.15+spec-1.1.0, toml_parser 1.1.3+spec-1.1.0, toml_writer 1.1.2+spec-1.1.0, trybuild 1.0.121, ttf-parser 0.25.1, type-map 0.5.1, typenum 1.20.1, unicode-segmentation 1.13.3, unicode-width 0.2.2, vec_map 0.8.2, version_check 0.9.5, wasm-bindgen 0.2.129, wasm-bindgen-futures 0.4.79, wasm-bindgen-macro 0.2.129, wasm-bindgen-macro-support 0.2.129, wasm-bindgen-shared 0.2.129, wasm-bindgen-test 0.3.79, wasm-bindgen-test-macro 0.3.79, wasm-bindgen-test-shared 0.2.129, web-sys 0.3.106, web-time 1.1.0, weezl 0.1.12, wgpu 30.0.1, wgpu-core 30.0.1, wgpu-core-deps-apple 30.0.1, wgpu-core-deps-windows-linux-android 30.0.1, wgpu-hal 30.0.1, wgpu-naga-bridge 30.0.1, wgpu-types 30.0.1, windows 0.62.2, windows-collections 0.3.2, windows-core 0.62.2, windows-future 0.3.2, windows-implement 0.60.2, windows-interface 0.59.3, windows-link 0.2.1, windows-numerics 0.3.1, windows-result 0.4.1, windows-strings 0.5.1, windows-sys 0.45.0, windows-sys 0.52.0, windows-sys 0.59.0, windows-sys 0.60.2, windows-sys 0.61.2, windows-targets 0.42.2, windows-targets 0.52.6, windows-targets 0.53.5, windows-threading 0.2.1, windows_aarch64_gnullvm 0.42.2, windows_aarch64_gnullvm 0.52.6, windows_aarch64_gnullvm 0.53.1, windows_aarch64_msvc 0.42.2, windows_aarch64_msvc 0.52.6, windows_aarch64_msvc 0.53.1, windows_i686_gnu 0.42.2, windows_i686_gnu 0.52.6, windows_i686_gnu 0.53.1, windows_i686_gnullvm 0.52.6, windows_i686_gnullvm 0.53.1, windows_i686_msvc 0.42.2, windows_i686_msvc 0.52.6, windows_i686_msvc 0.53.1, windows_x86_64_gnu 0.42.2, windows_x86_64_gnu 0.52.6, windows_x86_64_gnu 0.53.1, windows_x86_64_gnullvm 0.42.2, windows_x86_64_gnullvm 0.52.6, windows_x86_64_gnullvm 0.53.1, windows_x86_64_msvc 0.42.2, windows_x86_64_msvc 0.52.6, windows_x86_64_msvc 0.53.1, x11rb 0.13.2, x11rb-protocol 0.13.2 |
+| MIT | 85 | alsa-sys 0.4.0, android-properties 0.2.2, block2 0.5.1, block2 0.6.2, bytes 1.12.1, calloop 0.13.0, calloop 0.14.5, calloop-wayland-source 0.3.0, calloop-wayland-source 0.4.1, cfg_aliases 0.2.2, color_quant 1.1.0, combine 4.6.8, crunchy 0.2.4, dispatch 0.2.0, dlib 0.5.3, extended 0.1.0, fax 0.2.7, harfrust 0.12.0, inflections 1.1.1, libm 0.2.16, libredox 0.1.25, libudev-sys 0.1.4, mint 0.5.9, nix 0.31.3, nu-ansi-term 0.50.3, objc-sys 0.3.5, objc2 0.5.3, objc2 0.6.5, objc2-app-kit 0.2.2, objc2-cloud-kit 0.2.2, objc2-contacts 0.2.2, objc2-core-data 0.2.2, objc2-core-image 0.2.2, objc2-core-location 0.2.2, objc2-encode 4.1.0, objc2-foundation 0.2.2, objc2-foundation 0.3.2, objc2-link-presentation 0.2.2, objc2-metal 0.2.2, objc2-quartz-core 0.2.2, objc2-symbols 0.2.2, objc2-ui-kit 0.2.2, objc2-uniform-type-identifiers 0.2.2, objc2-user-notifications 0.2.2, offset-allocator 0.2.0, oorandom 11.1.5, orbclient 0.3.55, ordered-float 5.5.0, pulp 0.22.3, pulp-wasm-simd-flag 0.1.1, quick-xml 0.41.0, raw-cpuid 11.6.0, reborrow 0.5.5, redox_syscall 0.4.1, redox_syscall 0.5.18, redox_syscall 0.9.4, sctk-adwaita 0.10.1, simd-adler32 0.3.10, slab 0.4.12, smithay-client-toolkit 0.19.2, smithay-client-toolkit 0.20.0, smithay-clipboard 0.7.3, spin 0.9.9, strict-num 0.1.1, tiff 0.11.3, tokio 1.53.2, tracing 0.1.44, tracing-core 0.1.36, urlencoding 2.1.3, wayland-backend 0.3.17, wayland-client 0.31.15, wayland-csd-frame 0.3.0, wayland-cursor 0.31.14, wayland-protocols 0.32.13, wayland-protocols-experimental 20250721.0.1, wayland-protocols-misc 0.3.12, wayland-protocols-plasma 0.3.12, wayland-protocols-wlr 0.3.12, wayland-scanner 0.31.11, wayland-sys 0.31.11, winnow 1.0.4, x11-dl 2.21.0, xcursor 0.3.11, xkbcommon-dl 0.4.2, zmij 1.0.23 |
 | Apache-2.0 OR MIT | 37 | alsa 0.11.0, atomic-waker 1.1.2, autocfg 1.5.1, bit-set 0.10.0, bit-vec 0.9.1, bit_field 0.10.3, cesu8 1.1.0, color 0.3.3, concurrent-queue 2.5.0, console_error_panic_hook 0.1.7, equivalent 1.0.2, fastrand 2.5.0, fearless_simd 0.4.1, fnv 1.0.7, gilrs 0.11.2, gilrs-core 0.6.8, glifo 0.2.0, indexmap 2.14.2, kurbo 0.13.1, linebender_resource_handle 0.1.1, minicov 0.3.8, nohash-hasher 0.2.0, noise 0.9.0, peniko 0.6.1, pin-project 1.1.13, pin-project-internal 1.1.13, pin-project-lite 0.2.17, polling 3.11.0, pollster 0.4.0, portable-atomic 1.15.0, portable-atomic-util 0.2.8, rustc-hash 1.1.0, rustc-hash 2.1.3, simd_cesu8 1.2.0, uuid 1.27.0, vello_common 0.1.0, vello_cpu 0.1.0 |
 | Zlib OR Apache-2.0 OR MIT | 24 | bytemuck 1.25.2, bytemuck_derive 1.12.1, dispatch2 0.3.1, objc2-app-kit 0.3.2, objc2-audio-toolbox 0.3.2, objc2-avf-audio 0.3.2, objc2-cloud-kit 0.3.2, objc2-core-audio 0.3.2, objc2-core-audio-types 0.3.2, objc2-core-data 0.3.2, objc2-core-foundation 0.3.2, objc2-core-graphics 0.3.2, objc2-core-image 0.3.2, objc2-core-location 0.3.2, objc2-core-text 0.3.2, objc2-core-video 0.3.2, objc2-io-kit 0.3.2, objc2-io-surface 0.3.2, objc2-metal 0.3.2, objc2-quartz-core 0.3.2, objc2-ui-kit 0.3.2, objc2-user-notifications 0.3.2, safe_arch 1.2.0, wide 1.7.1 |
 | Apache-2.0 | 16 | ab_glyph 0.2.32, ab_glyph_rasterizer 0.1.10, approx 0.5.1, codespan-reporting 0.13.1, cpal 0.18.2, gethostname 1.1.0, ktx2 0.5.0, nalgebra 0.35.0, nalgebra-macros 0.3.0, owned_ttf_parser 0.25.1, parry3d 0.31.1, rapier3d 0.36.0, simba 0.10.2, spirv 0.4.0+sdk-1.4.341.0, unicode-general-category 1.1.0, winit 0.30.13 |
@@ -220,6 +225,7 @@ Notable terms in the closure:
 | MIT OR Apache-2.0 OR Zlib | 6 | cursor-icon 1.2.0, raw-window-handle 0.6.2, xkeysym 0.2.1, zune-core 0.5.3, zune-inflate 0.2.54, zune-jpeg 0.5.15 |
 | BSD-3-Clause | 4 | exr 1.74.2, lebe 0.5.3, tiny-skia 0.11.4, tiny-skia-path 0.11.4 |
 | ISC | 3 | inotify 0.11.5, inotify-sys 0.1.8, libloading 0.8.9 |
+| Apache-2.0/MIT | 3 | deprecate-until 1.0.0, integer-sqrt 0.1.5, pathfinding 4.16.0 |
 | BSD-2-Clause OR Apache-2.0 OR MIT | 2 | zerocopy 0.8.59, zerocopy-derive 0.8.59 |
 | BSD-2-Clause OR MIT OR Apache-2.0 | 2 | mach2 0.4.3, mach2 0.6.0 |
 | BSD-3-Clause OR Apache-2.0 | 2 | moxcms 0.8.1, pxfm 0.1.30 |
@@ -234,6 +240,7 @@ Notable terms in the closure:
 | Apache-2.0 AND MIT | 1 | dpi 0.1.2 |
 | Apache-2.0 OR GPL-2.0-only | 1 | self_cell 1.3.0 |
 | BSD-2-Clause | 1 | arrayref 0.3.9 |
+| Zlib AND (MIT OR Apache-2.0) | 1 | bevy_mikktspace 1.0.0 |
 
 The spike's Android packaging (`scripts/spike/rust-wgpu/android-apk.sh`, developer tool only)
 fetches games-activity 4.4.0 (androidx.games), and its AppCompat closure from androidx: activity 1.0.0, annotation 1.2.0, appcompat 1.2.0, appcompat-resources 1.2.0, arch.core core-common 2.1.0 and core-runtime 2.0.0, collection 1.1.0, core 1.5.0, cursoradapter 1.0.0, customview 1.0.0, drawerlayout 1.0.0, fragment 1.1.0, interpolator 1.0.0, lifecycle-common 2.1.0, lifecycle-livedata 2.0.0, lifecycle-livedata-core 2.0.0, lifecycle-runtime 2.1.0, lifecycle-viewmodel 2.1.0, loader 1.0.0, savedstate 1.0.0, vectordrawable 1.1.0, vectordrawable-animated 1.1.0, versionedparcelable 1.1.1 and viewpager 1.0.0 from Google Maven (Apache-2.0), each pinned by sha256 in the script. They are
@@ -504,7 +511,7 @@ THE SOFTWARE.
 
 ### Godot Engine
 
-The licence of the Godot Engine code the AgX punchy tonemap, the circular depth of field, the clustered decals, the froxel volumetric fog, the particles' bitonic sort and the Hi-Z screen-space reflections port (table above).
+The licence of the Godot Engine code the AgX punchy tonemap, the circular depth of field, the clustered decals, the froxel volumetric fog, the particles' bitonic sort and the Hi-Z screen-space reflections port (table above), and the animation state machine's rules.
 
 ```
 Copyright (c) 2014-present Godot Engine contributors (see AUTHORS.md).
@@ -612,6 +619,109 @@ the following restrictions:
 3. This notice may not be removed or altered from any source distribution.
 ```
 
+## Rust game systems ports
+
+The game systems crates (`native/genex-rust/crates/genex-anim`, `genex-nav`, `genex-stream` and the
+mesh arena of `genex-render`, Genex's own code, MIT) port this code or these rules. They ship inside every
+Rust game that links the crate, and in its ejected source. Each file credits its source in a
+comment; each Apache 2.0 port carries the upstream notice and lists Genex's changes (§4(b)).
+
+| Genex file | What | Source | Upstream authors | Licence |
+| --- | --- | --- | --- | --- |
+| `crates/genex-anim/src/skeleton.rs` (`Skeleton`, `Skeleton::local_to_model`) | Joints sorted parent-first once at load, so local-to-model is one allocation-free pass over caller scratch | ozz-animation 0.17.0 (https://github.com/guillaumeblanc/ozz-animation), `include/ozz/animation/runtime/skeleton.h`, `src/animation/runtime/local_to_model_job.cc` | Guillaume Blanc | MIT (see [ozz-animation](#ozz-animation)) |
+| `crates/genex-anim/src/sample.rs` (`SampleCursor`) | One key position per track remembered between sampling calls, so a tick forward or backward costs a step or two instead of a search | ozz-animation 0.17.0, `include/ozz/animation/runtime/sampling_job.h`, `src/animation/runtime/sampling_job.cc` (`SamplingJob::Context`) | Guillaume Blanc | MIT (see [ozz-animation](#ozz-animation)) |
+| `crates/genex-anim/src/sample.rs` (cubic segments) | Evaluating a glTF cubic-spline segment with the tangents scaled by the key span and the rotation normalized afterwards (the rule only; no code was copied) | Bevy 0.20 (https://github.com/bevyengine/bevy), `crates/bevy_animation/src/gltf_curves.rs` | Bevy contributors | MIT OR Apache-2.0, used under Apache 2.0 (see [Apache License 2.0](#apache-license-20)) |
+| `crates/genex-anim/src/blend.rs` (`Blender::blend`, `apply_additive`, `additive_delta`) | The normalized pose blend (weighted sums, rotations kept in one hemisphere and normalized, the rest pose filling in under a weight threshold) and additive layers applied as `base × delta` (ozz 0.15's multiplication order); Genex copies a joint one layer alone drives and adds a Unity-style override | ozz-animation 0.17.0 (https://github.com/guillaumeblanc/ozz-animation), `src/animation/runtime/blending_job.cc` | Guillaume Blanc | MIT (see [ozz-animation](#ozz-animation)) |
+| `crates/genex-anim/src/mask.rs` (`JointMask::subtrees`) | Per-joint layer weights (ozz) named by subtree roots, a joint inherits its parent's membership (the rule only; no Bevy code was copied) | ozz-animation 0.17.0, `include/ozz/animation/runtime/blending_job.h` (`joint_weights`); Bevy (https://github.com/bevyengine/bevy), `crates/bevy_animation/src/graph.rs` (`AnimationMask`, mask groups) | Guillaume Blanc; Bevy contributors | MIT (see [ozz-animation](#ozz-animation)); MIT OR Apache-2.0, used under Apache 2.0 (see [Apache License 2.0](#apache-license-20)) |
+| `crates/genex-anim/src/humanoid.rs` (`HumanoidBone`), `tests/fixtures/humanoid-aliases.json` | The humanoid profile's bone names and order (22 of them) | Godot Engine 4.7.2-stable (https://github.com/godotengine/godot), `scene/resources/skeleton_profile.cpp` (`SkeletonProfileHumanoid`) | Godot Engine contributors | MIT (see [Godot Engine](#godot-engine)) |
+| `crates/genex-anim/src/graph.rs` (`AnimGraphBuilder`, `AnimGraph`), `src/machine.rs` (`Machine::step`) | The layered state machine: each layer with its own states, weight and mask, transitions within a layer, conditions built from parameters with and/or/not, and the per-layer update order (advance, then try the transitions). Only the structure and rules were taken; no code was copied. Genex adds priorities, any-state transitions, synced switches and interruptible blends | Fyrox 1.0.1 (https://github.com/FyroxEngine/Fyrox), `fyrox-animation/src/machine/{layer,state,transition,parameter}.rs` | Dmitry Stepanov and Fyrox Engine contributors | MIT (see [Fyrox](#fyrox)) |
+| `crates/genex-anim/src/graph.rs` (`TransitionBuilder::{priority, at_end, synced}`), `src/params.rs` (triggers) | Transition priorities, `AtEnd` and `Sync` switch modes, any-state transitions and one-shot requests consumed by the transition that takes them (the rules only; no code was copied) | Godot Engine 4.7.2-stable (https://github.com/godotengine/godot), `scene/animation/animation_node_state_machine.cpp` | Godot Engine contributors | MIT (see [Godot Engine](#godot-engine)) |
+| `crates/genex-anim/src/compact.rs` (`compact`, `CompactClip`) | Clip compaction: per-track key reduction against a model-space error measured at the joint's hierarchy radius (at least a 0.1 m skin distance), constant-track removal, smallest-three 16-bit rotations and 16-bit range-quantized translations and scales. Only the method was taken; no code was copied. Genex adds a whole-skeleton error check with tolerance halving and shared time-table indices | ozz-animation 0.17.0 (https://github.com/guillaumeblanc/ozz-animation), `src/animation/offline/animation_optimizer.cc`, `src/animation/runtime/animation_keyframe.h`, `src/animation/offline/animation_builder.cc` | Guillaume Blanc | MIT (see [ozz-animation](#ozz-animation)) |
+| `crates/genex-stream/src/residency.rs` (`Residency`, `ResidencyLimits`) | The residency policy: per-requester reference counts, an unload queue of unreferenced entries in release order, drained while resident bytes exceed a byte cap under a time limit, a cap on loads in flight, and `forbidHoles` (keep the coarser parent until every wanted child is resident) | cesium-native (https://github.com/CesiumGS/cesium-native), `Cesium3DTilesSelection/src/TilesetContentManager.cpp` (`unloadCachedTiles`, the tile reference counts and the unload list) and `Cesium3DTilesSelection/include/Cesium3DTilesSelection/TilesetOptions.h` (`maximumCachedBytes`, `maximumSimultaneousTileLoads`, `tileCacheUnloadTimeLimit`, `forbidHoles`) | CesiumGS, Inc. and Contributors | Apache 2.0 (see [Apache License 2.0](#apache-license-20); cesium-native ships no NOTICE file) |
+| `crates/genex-render/src/mesh_arena.rs` (`MeshArena::grow`, `move_to`) | Growing a full GPU buffer by remaking it twice as large and copying its live prefix buffer to buffer (the rule only; no code was copied) | Bevy (https://github.com/bevyengine/bevy), `crates/bevy_render/src/slab_allocator.rs` | Bevy contributors | MIT OR Apache-2.0, used under Apache 2.0 (see [Apache License 2.0](#apache-license-20)) |
+| `crates/genex-nav/src/runtime/dodgy/` (every file, with dodgy's own tests as `*_test.rs`) | ORCA local avoidance: velocity obstacles from neighbours and polygon obstacles, the 2D and 3D linear programs, the visibility set. Changed (§4(b), listed in `dodgy/mod.rs`): the `rand` direction for two agents on one spot is hashed from their keys, `Simulator::step` has no `HashMap` and keeps its near neighbours, visible line ids come back sorted, angles use libm, a zero responsibility sum no longer divides by zero, no `debug` feature | dodgy_2d 0.5.5 (https://github.com/andriyDev/dodgy, crates.io sha256 `d35627725e918aa4593ca54937cd8ef58078d3b9ab0fd060aee60c9bc3a2050e`), itself ported from RVO2 (https://gamma.cs.unc.edu/RVO2/) `Agent.cc` | andriyDev; RVO2: Jur van den Berg, Stephen J. Guy, Jamie Snape, Ming C. Lin, Dinesh Manocha, 2008 University of North Carolina at Chapel Hill | MIT OR Apache-2.0, used under Apache 2.0; RVO2 Apache 2.0 (see [Apache License 2.0](#apache-license-20) and [RVO2](#rvo2)) |
+| `crates/genex-nav/src/runtime/avoidance.rs` (`Avoidance::step`) | Gathering each agent's neighbouring agents and bodies and handing them to ORCA (Genex replaces the k-d tree and `HashMap`s with a sorted uniform grid and sorts neighbours by distance, then key) | landmass 0.9.3 (https://github.com/andriyDev/landmass, crates.io sha256 `fd2fd988b81194c6f02c293a28b510b44f1d8581c80b1bfe498e85e9c3f57b93`), `src/avoidance.rs` (`apply_avoidance_to_agents`) | andriyDev | MIT OR Apache-2.0, used under Apache 2.0 (see [Apache License 2.0](#apache-license-20)) |
+| `crates/genex-nav/src/runtime/{coords, util, geometry, nav_mesh, island, nav_data, link}.rs` (islands, navigation-mesh validation and sampling, island stitching with boundary links, modified nodes, region connectivity, animation-link data), with landmass's own tests as `nav_mesh_test.rs` and `nav_data_test.rs` | Islands and their stitching. Changed (listed in each file's header): std `HashMap`/`HashSet` and slotmap are insertion-ordered maps and a deterministic arena, the `geo` boundary clip and `kdtree` vertex snap are Genex's own `clip.rs` and `grid.rs`, the `disjoint` set is Genex's own `disjoint.rs` without a `Mutex`, a Y-up `GenexCoords`, a caller-set edge-link distance, tests converted from googletest to plain asserts | landmass 0.9.3 (https://github.com/andriyDev/landmass, crates.io sha256 `fd2fd988b81194c6f02c293a28b510b44f1d8581c80b1bfe498e85e9c3f57b93`), `src/{coords, util, geometry, nav_mesh, island, nav_data, link}.rs`, `PermittedAnimationLinks` from `src/agent.rs`, `src/{nav_mesh, nav_data}_test.rs` | andriyDev | MIT OR Apache-2.0, used under Apache 2.0 (see [Apache License 2.0](#apache-license-20)) |
+| `crates/genex-nav/src/input.rs` (`TileInput::clear_steep`, `AreaVolume`) | The walkable-slope rule (a triangle is walkable when its unit normal's y is above cos(slope)), convex area volumes marked between two heights with the even-odd point-in-polygon test, and the 12-point outline cap. The rules only; no code was copied | rerecast 0.5.0 (https://github.com/janhohenheim/rerecast), `ConvexVolume`; Recast Navigation (https://github.com/recastnavigation/recastnavigation), `Recast/Source/Recast.cpp` (`rcClearUnwalkableTriangles`), `Recast/Source/RecastArea.cpp` (`rcMarkConvexPolyArea`, `pointInPoly`), `DetourTileCache/Include/DetourTileCacheBuilder.h` (`DT_MAX_CONVEXVOL_PTS`) | Jan Hohenheim and rerecast contributors; Mikko Mononen and Recast Navigation contributors | MIT OR Apache-2.0 (rerecast); Zlib (Recast Navigation) |
+
+### Fyrox
+
+The licence of Fyrox, whose animation state machine's structure and rules the graph and machine follow (table above).
+
+```
+Copyright (c) 2019-present Dmitry Stepanov and Fyrox Engine contributors.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
+### ozz-animation
+
+The licence of the ozz-animation code the skeleton, sampler, blend and mask port (table above).
+
+```
+ozz-animation is hosted at http://github.com/guillaumeblanc/ozz-animation and
+distributed under the MIT License (MIT).
+
+---
+
+Copyright (c) 2020 Guillaume Blanc
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of
+this software and associated documentation files (the "Software"), to deal in
+the Software without restriction, including without limitation the rights to
+use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies
+of the Software, and to permit persons to whom the Software is furnished to do
+so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS
+FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR
+COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
+IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
+CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+```
+
+### RVO2
+
+The notice the dodgy_2d port keeps from RVO2, which dodgy_2d ported (table above). RVO2 is licensed
+under the Apache License 2.0 (see [Apache License 2.0](#apache-license-20)); it ships no NOTICE file.
+Each ported file carries this header:
+
+    Agent.cc
+    RVO2 Library
+
+    SPDX-FileCopyrightText: 2008 University of North Carolina at Chapel Hill
+
+    The authors may be contacted via:
+
+    Jur van den Berg, Stephen J. Guy, Jamie Snape, Ming C. Lin, Dinesh Manocha
+    Dept. of Computer Science
+    201 S. Columbia St.
+    Frederick P. Brooks, Jr. Computer Science Bldg.
+    Chapel Hill, N.C. 27599-3175
+    United States of America
+
+    <https://gamma.cs.unc.edu/RVO2/>
+
 ## Rust showcase environment map
 
 The Rust renderer's showcase game ships one sample HDR environment map. It is a development and
@@ -696,18 +806,41 @@ not shipped.
 ## Asset importer decoders
 
 The Rust · wgpu asset import step (`src/substrate/asset-import/`) runs five WebAssembly modules
-in its own sandbox: three decoders, meshoptimizer's meshlet clusterizer and its simplifier. They are the builds
-three.js 0.185.1 ships in `examples/jsm/libs`, read from the pinned `three` package (paths below
-are under it). Their licence and notice texts are in the three.js add-on library sections below. The packaged app does not carry the importer yet; when it does,
-this page ships beside the decoders.
+in its own sandbox: the Basis Universal transcoder, Draco's glTF decoder, and meshoptimizer's
+decoder, meshlet clusterizer and simplifier. Before any of them it runs the Khronos glTF validator
+(JavaScript compiled from Dart) on every glTF file. The packaged app carries them in
+`resources/importer-tools/` (paths below are under it), with this page beside them, and every file
+is pinned by sha256 in `src/substrate/asset-import/decoders.ts`. Draco and meshoptimizer are copied
+from the npm packages below; the Basis build is the v2.50 release's `webgl/encoder/build`, whose
+transcoder the importer calls (the same build encodes, so encoder and transcoder match). Their
+licence and notice texts are in the [Basis Universal](#basis-universal), [Draco](#draco),
+[meshoptimizer](#meshoptimizer) and [Zstandard](#zstandard) sections below.
 
 | File | Project | License |
 | --- | --- | --- |
-| `examples/jsm/libs/basis/` | [Basis Universal](https://github.com/BinomialLLC/basis_universal) v1.50 transcoder, with its embedded [Zstandard](https://github.com/facebook/zstd) decoder | Apache-2.0; embedded Zstandard BSD-3-Clause |
-| `examples/jsm/libs/draco/gltf/` | [Draco](https://github.com/google/draco) 1.5.6 glTF decoder | Apache-2.0 |
-| `examples/jsm/libs/meshopt_decoder.module.js` | [meshoptimizer](https://github.com/zeux/meshoptimizer) 1.1.1 decoder | MIT |
-| `examples/jsm/libs/meshopt_clusterizer.module.js` | [meshoptimizer](https://github.com/zeux/meshoptimizer) meshlet clusterizer (a development build between 1.1.1 and 1.2.0); the importer stores its meshlets in glTF `extras` | MIT |
-| `examples/jsm/libs/meshopt_simplifier.module.js` | [meshoptimizer](https://github.com/zeux/meshoptimizer) simplifier (a development build between 1.1.1 and 1.2.0); the importer stores its levels of detail in glTF `extras` | MIT |
+| `basis-encoder-2.50/` | [Basis Universal](https://github.com/BinomialLLC/basis_universal) v2.50 WebAssembly build (encoder and transcoder), with its embedded [Zstandard](https://github.com/facebook/zstd) | Apache-2.0 with its NOTICE; embedded Zstandard BSD-3-Clause |
+| `draco3dgltf/` | [Draco](https://github.com/google/draco) 1.5.9 glTF decoder (npm `draco3dgltf`) | Apache-2.0 |
+| `meshoptimizer/` | [meshoptimizer](https://github.com/zeux/meshoptimizer) 1.3.0 decoder, meshlet clusterizer, simplifier, MikkTSpace-compatible tangents and encoder (vertex cache and fetch order) (npm `meshoptimizer`); the importer stores its meshlets and levels of detail in glTF `extras` | MIT |
+| `gltf-validator/` | [Khronos glTF-Validator](https://github.com/KhronosGroup/glTF-Validator) 2.0.0-dev.3.10 (npm `gltf-validator`), the import step's glTF validation gate; its `LICENSE` and `NOTICES` files (the Dart runtime's notices) ship beside it | Apache-2.0 |
+
+## Asset importer packages
+
+These npm packages are pinned exactly in `package.json` for the asset importer
+(`src/substrate/asset-import/`), as development dependencies: the build copies the files the
+importer runs from `draco3dgltf`, `meshoptimizer` and `gltf-validator` into the app's `resources/importer-tools/`
+([Asset importer decoders](#asset-importer-decoders)), and the others are not carried in the app
+yet. Each package keeps its licence file in its own folder, except `draco3dgltf`,
+whose package declares Apache-2.0 without a licence file (the text is in
+[Apache License 2.0](#apache-license-20)); `gltf-validator` also carries a `NOTICES` file.
+
+| Package | Version | Project | License |
+| --- | --- | --- | --- |
+| `meshoptimizer` | 1.3.0 | [meshoptimizer](https://github.com/zeux/meshoptimizer) (simplifier, clusterizer, tangents, vertex order) | MIT |
+| `draco3dgltf` | 1.5.9 | [Draco](https://github.com/google/draco) glTF decoder | Apache-2.0 |
+| `gltf-validator` | 2.0.0-dev.3.10 | [Khronos glTF-Validator](https://github.com/KhronosGroup/glTF-Validator) | Apache-2.0 |
+| `fast-png` | 8.0.0 | [fast-png](https://github.com/image-js/fast-png) PNG decoder, with `iobuffer` 6.0.1 (MIT) | MIT |
+| `jpeg-js` | 0.4.4 | [jpeg-js](https://github.com/eugeneware/jpeg-js) JPEG decoder | BSD-3-Clause |
+| `fflate` | 0.8.3 | [fflate](https://github.com/101arrowz/fflate) zip and deflate | MIT |
 
 ## Asset importer ports
 
@@ -719,6 +852,7 @@ gltfpack itself is not in the repository.
 | Genex file | What | Source | Upstream author | Licence |
 | --- | --- | --- | --- | --- |
 | `src/substrate/asset-import/dequantize.ts` | `KHR_mesh_quantization` undone: which attributes become float32 (every one but `JOINTS_n`, morph targets too) and the normalized-integer division with its -1 clamp | glTF-Transform 4.5.1 (https://github.com/donmccurdy/glTF-Transform), `packages/functions/src/dequantize.ts` and `packages/core/src/utils/math-utils.ts` (`decodeNormalizedInt`) | Don McCurdy | MIT (see [glTF-Transform](#gltf-transform)) |
+| `src/substrate/asset-import/weld.ts`, `src/substrate/asset-import/prune.ts`, `src/substrate/asset-import/inspect.ts` | Bitwise vertex weld (the first-use write map over the index stream, the MurmurHash2 vertex hash over 4-byte-padded attributes with triangular probing, attribute compaction, 16-bit indices up to 65,534 vertices); accessor dedup (grouped as attributes, indices, animation inputs and outputs) and material dedup ignoring names; unreferenced accessors and materials pruned; the inspect report's mesh, texture and animation sizes | glTF-Transform 4.4.2 (https://github.com/donmccurdy/glTF-Transform), `packages/functions/src/weld.ts`, `hash-table.ts`, `compact-primitive.ts`, `dedup.ts`, `prune.ts` and `inspect.ts` | Don McCurdy | MIT (see [glTF-Transform](#gltf-transform)) |
 
 ### glTF-Transform
 
@@ -1137,7 +1271,7 @@ three.js 0.185.1 (r185) ships these third-party libraries in `examples/jsm/libs`
 
 Copyright (C) 2019-2024 Binomial LLC. All Rights Reserved.
 
-(The line above is from the v1.50 transcoder sources; v1.50's LICENSE carries only the Apache template line. The current upstream LICENSE reads `Copyright 2019-2026 Binomial LLC`.)
+(The line above is from the v1.50 transcoder sources; v1.50's LICENSE carries only the Apache template line. The current upstream LICENSE reads `Copyright 2019-2026 Binomial LLC`. The asset importer's v2.50 build is under the same licence and the NOTICE below.)
 
 Licensed under the Apache License, Version 2.0; the full text is at the end of this file.
 
@@ -1165,7 +1299,7 @@ If you modify the Basis Universal source code, specifications, or wiki documents
 
 Copyright 2016 The Draco Authors.
 
-(From the Draco 1.5.6 source file headers; the LICENSE file carries only the Apache template line. Draco has no NOTICE file.)
+(From the Draco 1.5.6 source file headers; the LICENSE file carries only the Apache template line. Draco has no NOTICE file. The asset importer's npm `draco3dgltf` 1.5.9 decoder is under the same licence.)
 
 Licensed under the Apache License, Version 2.0; the full text is at the end of this file.
 
@@ -1371,7 +1505,7 @@ SOFTWARE.
 
 ### meshoptimizer
 
-Copyright (c) 2016-2026 Arseny Kapoulkine (covers `meshopt_clusterizer.module.js`, `meshopt_decoder.module.js` and `meshopt_simplifier.module.js`)
+Copyright (c) 2016-2026 Arseny Kapoulkine (covers `meshopt_clusterizer.module.js`, `meshopt_decoder.module.js` and `meshopt_simplifier.module.js`, and the asset importer's `meshoptimizer/` files from npm `meshoptimizer` 1.3.0, whose `LICENSE.md` is this text)
 
 ```
 MIT License

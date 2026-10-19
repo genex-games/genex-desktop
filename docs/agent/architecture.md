@@ -969,6 +969,21 @@ managed local runtime; core has no Blender tool of its own.
   is never evidence the game uses it. The renderer never receives absolute game paths. Asset
   formats come from one table, [`src/shared/game-assets.ts`](../../src/shared/game-assets.ts)
   ([recipe](recipes.md#asset-format)).
+- **Asset database.** [`src/main/asset-db.ts`](../../src/main/asset-db.ts) keeps a Rust game's
+  `genex-assets.lock` beside `genex.toml`, committed and host-written only (shapes in
+  [`src/shared/asset-db.ts`](../../src/shared/asset-db.ts)). Each source keeps one random id across
+  in-place edits and across a rename that keeps its SHA-256; rows are sorted, so an unchanged tree
+  rewrites nothing. The lock carries a digest of its body: a mismatch (or a link, a non-file or an
+  unparsable lock) is rewritten from the files, keeping only ids whose path and digest still match,
+  and reports `lock-edited`. Rows with a non-relative path are dropped, and the lock's paths are
+  never opened. `derived` rows record bakes by input id (`withDerived`) and drop when an input goes.
+- **Texture usage.** [`src/substrate/asset-import/texture-usage.ts`](../../src/substrate/asset-import/texture-usage.ts)
+  decides the usage a texture is encoded as (color, data, normal). The order is a `genex.toml`
+  `[[texture]]` row, then the material slot a model samples it from (loose references resolved
+  inside the model's asset folder), then its provenance role (a Genex job role, a CC0 map), then a
+  Live observation the lock recorded. It never uses a file name. When nothing decides, the texture
+  is not encoded and gets `usage-unknown`. A weaker source that disagrees raises `usage-conflict`.
+  The usage and its source are recorded in the lock's settings.
 - **Readers.** `studio:game.asset.still` reads the game folder and Genex frames only (allow-listed,
   byte-sniffed, 16 MiB) and never widens `readRunStill`. `studio:game.asset.preview`
   ([`src/main/asset-preview.ts`](../../src/main/asset-preview.ts)) takes a project and a relative

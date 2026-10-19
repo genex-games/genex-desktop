@@ -347,6 +347,41 @@ fn metal_a_larger_chain_drops_its_top_levels_into_a_capped_class_and_an_image_la
     gpu.device.poll(wgpu::PollType::wait_indefinitely()).expect("uploads finish");
 }
 
+/// Game systems GF (C-12): under a compressed family class 0 holds only the images that have no
+/// family file (a fallback), so it grows by copy with them instead of taking its whole cap on the
+/// first one: two fallback maps hold two layers, not 32 (Lakeside's GPU arrays were 2.80x smaller
+/// instead of >= 3.5x because two refused maps allocated class 0's 32 layers).
+#[test]
+#[ignore = "needs a GPU: run with --ignored metal"]
+fn metal_fallback_images_under_a_compressed_family_take_only_the_class_0_layers_they_use() {
+    let Some(gpu) = gpu() else { return };
+    if !TextureFamily::Bc7.usable(gpu.device.features()) {
+        eprintln!("skipped: no BC on this adapter");
+        return;
+    }
+    let class = DeviceClass::from_wire("desktop-high").expect("class");
+    let quality = preset_textures(QualityPreset::High, class);
+    let mut arrays = ClassArrays::with_family(&gpu.device, class, quality, TextureFamily::Bc7);
+    let images: Vec<TextureData> = (0..3u8)
+        .map(|at| TextureData::rgba8(256, 256, (0..256 * 256 * 4).map(|i| (i as u8).wrapping_mul(7).wrapping_add(at * 40)).collect()).expect("rgba"))
+        .collect();
+    for (at, image) in images.iter().enumerate() {
+        let id = arrays.add(&gpu.device, &gpu.queue, image, TextureKind::Data).expect("a fallback image");
+        assert_eq!((id.class(), id.layer()), (TextureClass::S256, at as u32));
+    }
+    let (side, layers) = arrays.extent(TextureClass::S256, TextureKind::Data);
+    assert_eq!((side, layers), (256, 4), "three fallback images hold the next power of two of layers, not the class's cap");
+    // Nothing else is allocated: the colour fallback array and the BC classes hold no texture.
+    let four_layers = MaterialClass { size_px: 256, layers: 4 }.bytes();
+    assert_eq!(arrays.allocated_bytes(), four_layers, "only the four class-0 data layers are allocated");
+    assert_eq!(arrays.live_layers(TextureClass::S256, TextureKind::Data), 3);
+    // (Growth refills every live layer from its cached chain, as the 256 array of texture quality
+    // off does: tests/texture_layers.rs; an RGBA8 array is not copied out, so it is not read back.)
+    let chain: u64 = (0..mip_level_count(256)).map(|level| (256u64 >> level).pow(2) * 4).sum();
+    assert_eq!(arrays.cached_bytes(), 3 * chain, "the three chains are cached for the refill");
+    gpu.device.poll(wgpu::PollType::wait_indefinitely()).expect("uploads finish");
+}
+
 #[test]
 fn a_family_file_sits_beside_its_source_named_for_its_family() {
     let cases = [

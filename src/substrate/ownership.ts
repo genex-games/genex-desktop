@@ -73,6 +73,19 @@ const RUST_TEMPLATE_MAIN = "src/main.rs";
  */
 export const RUST_OWNER_FILES: readonly string[] = [RUST_TEMPLATE_MAIN, "genex.toml", "docs/GENEX_API.md"];
 
+/** The Rust template's API topic pages, which `docs/GENEX_API.md` indexes. */
+const RUST_API_PAGES = "docs/api";
+
+/**
+ * The Rust template's read-only API reference: the index and every topic page under `docs/api/`.
+ * Only the entry owner may edit it; no seam or facet name reaches it (a facet called `water` does
+ * not own `docs/api/water.md`). The seed's reviewer holds the same rule (`loop/review.ts`
+ * `isApiReference`).
+ */
+export function isApiReference(file: string): boolean {
+  return file === "docs/GENEX_API.md" || file === RUST_API_PAGES || file.startsWith(`${RUST_API_PAGES}/`);
+}
+
 /**
  * A file of a Rust game's ejected engine (`engine/**`, extension ladder level 5): the entry
  * owner's alone, whatever a facet's seam or name says. The seed's reviewer holds the same rule
@@ -84,7 +97,7 @@ export function isEngineFile(file: string): boolean {
 
 /** A compiled template's file only the entry owner may edit: the C++ entry, runtime and build file, or Rust's. */
 function isCompiledOwnerFile(file: string): boolean {
-  return CPP_OWNER_FILES.has(file) || RUST_OWNER_FILES.includes(file);
+  return CPP_OWNER_FILES.has(file) || RUST_OWNER_FILES.includes(file) || isApiReference(file);
 }
 
 /** The two files the rule singles out, for this project's shape. */
@@ -212,8 +225,9 @@ export function allowedFile(file: string, spec: OwnershipSpec, ownsMain: boolean
   const template = spec.template !== false;
   const entry = entryFiles(spec);
   if (isSharedFile(file, spec)) return true;
-  // An ejected engine is the entry owner's: no seam, wiring block or facet name reaches it.
-  if (template && isEngineFile(file)) return ownsMain;
+  // An ejected engine and the API reference are the entry owner's: no seam, wiring block or
+  // facet name reaches them.
+  if (template && (isEngineFile(file) || isApiReference(file))) return ownsMain;
   if (ownsMain && isEntryOwnersFile(file, entry)) return true;
   // The FACET WIRING block — reviewed by content. There is no such block in a game the user
   // brought, so a worker that does not own the entry there does not get to open it at all.

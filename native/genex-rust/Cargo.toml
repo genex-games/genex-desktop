@@ -23,6 +23,10 @@ members = [
   "crates/genex-gpu-memory",
   "crates/genex-assets",
   "crates/genex-audio",
+  # Game systems (EP-0a1): animation, navigation and world streaming, below the facade.
+  "crates/genex-anim",
+  "crates/genex-nav",
+  "crates/genex-stream",
   "crates/genex-platform-desktop",
   "crates/genex-platform-web",
   "crates/genex-platform-ios",
@@ -64,6 +68,10 @@ genex-frames = { path = "crates/genex-frames", version = "0.1.0" }
 genex-gpu-memory = { path = "crates/genex-gpu-memory", version = "0.1.0" }
 genex-assets = { path = "crates/genex-assets", version = "0.1.0" }
 genex-audio = { path = "crates/genex-audio", version = "0.1.0" }
+# Each without Rapier: the facade's `physics` feature turns theirs on.
+genex-anim = { path = "crates/genex-anim", version = "0.1.0" }
+genex-nav = { path = "crates/genex-nav", version = "0.1.0" }
+genex-stream = { path = "crates/genex-stream", version = "0.1.0" }
 genex-platform-desktop = { path = "crates/genex-platform-desktop", version = "0.1.0" }
 # Without its default `physics` too: the phone shells reach the facade through it and must not turn
 # Rapier on for a game that turned it off (a web game's manifest names the crate itself).
@@ -150,9 +158,18 @@ ndk-context = "0.1.1"
 jni = "0.21.1"
 android_logger = "0.15.1"
 
-# The initial game allowlist (plan "Agent policy"): `fastrand` seeded from ctx.rng only.
+# Game systems: the mesh arena's allocator (renderer), the runtime MikkTSpace tangent fallback and
+# genex-anim's Delaunay triangulation. Unused until the work packages that adopt them, so the lock
+# does not name them yet.
+offset-allocator = "=0.2.0"
+bevy_mikktspace = "=1.0.0"
+spade = "2.15.1"
+
+# The initial game allowlist (plan "Agent policy"): `fastrand` seeded from ctx.rng only, and
+# `pathfinding` (generic graph search over a game's own graphs).
 noise = "0.9.0"
 fastrand = "2.5.0"
+pathfinding = "4.16.0"
 
 # Tests.
 trybuild = "1.0.121"

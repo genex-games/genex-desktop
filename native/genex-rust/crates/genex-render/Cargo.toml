@@ -37,6 +37,9 @@ rapier3d = { workspace = true, optional = true }
 # The adapter probe's GPU-visible memory (the desktop memory budget; None on the web): FFI, so its
 # own crate, which an eject leaves in the store when it forks this one into a game.
 genex-gpu-memory = { workspace = true }
+# The mesh arena's ranges (game systems STR-1): Aaltonen's O(1) offset allocator, safe Rust,
+# deterministic (bins and a bitfield, no hashing, no time).
+offset-allocator = { workspace = true }
 
 # Headless native runs block on adapter and device requests; the web awaits them instead.
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]

@@ -241,7 +241,12 @@ fn a_material_s_textures_load_once_per_path_and_kind_and_a_missing_one_is_neutra
     assert_eq!(logged.len(), 1, "the missing texture is named once: {logged:?}");
     cache.load(&frame, &files, &mut uploads, &mut |line| panic!("nothing is retried: {line}")).expect("no device loss");
     let asked = files.asked.borrow().clone();
-    assert_eq!(asked, ["textures/wood.png", "textures/gone.png"], "each path is read once, whatever its kinds");
+    let images: Vec<&String> = asked.iter().filter(|path| !path.ends_with(".ktx2")).collect();
+    assert_eq!(images, ["textures/wood.png", "textures/gone.png"], "each path is read once, whatever its kinds");
+    // C-11: a texture loaded from its image is looked for once in every family (whether the game
+    // ships any, for `__render.assetIssues`); a texture that did not load is not.
+    let families: Vec<&String> = asked.iter().filter(|path| path.ends_with(".ktx2")).collect();
+    assert_eq!(families, ["textures/wood.bc.ktx2", "textures/wood.astc.ktx2", "textures/wood.etc2.ktx2", "textures/wood.rgba8.ktx2"]);
 
     let scene = to_scene(&frame, &Camera::DEFAULT, &cache);
     let textured = &scene.draws[0].material;

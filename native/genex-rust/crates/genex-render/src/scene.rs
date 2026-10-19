@@ -12,7 +12,7 @@
 //! find last frame's transforms for motion vectors.
 
 use std::borrow::Cow;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use bytemuck::{Pod, Zeroable};
 use glam::{Mat4, Vec3};
@@ -21,8 +21,9 @@ use crate::caps::BUFFER_MAX_BYTES;
 use crate::cull::{active_views, cascade_view, cpu_cull};
 use crate::error::{RenderCode, RenderError};
 use crate::instance::instance_row;
-use crate::layout::{GpuBatch, GpuCullViews, GpuFrame, GpuInstance, GpuLight, GpuMaterial, GpuMaterialExt, GpuSkinJob, GpuSkinVertex, MAX_CASCADES, NO_BATCH, SHADOW_CASCADES};
+use crate::layout::{GpuBatch, GpuMeshlet, GpuCullViews, GpuFrame, GpuInstance, GpuLight, GpuMaterial, GpuMaterialExt, GpuSkinJob, GpuSkinVertex, MAX_CASCADES, NO_BATCH, SHADOW_CASCADES};
 use crate::mesh::{LOD_NOMINAL_HEIGHT, LOD_THRESHOLD_PX, LodChain, MeshData, Vertex};
+use crate::mesh_arena::{ArenaStream, Rewrite, RowAllocator};
 use crate::meshlet::{self, MeshletLibrary, MeshletRange, MeshletSet};
 use crate::motion::{DrawId, MotionKeys, MotionRow, RowKind};
 use crate::pbr::{MaterialKey, light_table, radiance};
@@ -35,24 +36,37 @@ use crate::transparent::back_to_front;
 pub use crate::cull::{CpuCull, frustum_planes, frustum_planes_for, in_frustum};
 pub use crate::pbr::{Lighting, Material, PointLight, srgb_to_linear};
 
-/// A mesh in a [`MeshLibrary`].
+/// A mesh in a [`MeshLibrary`]: its slot and the generation of that slot it was handed out in
+/// (game systems STR-2). Removing a mesh moves its slot to the next generation, so the slot can
+/// hold another mesh while the old id names none: a draw of it is skipped and counted
+/// ([`FramePlan::stale_rows`]), never drawn as the new mesh.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct MeshId(u32);
+pub struct MeshId {
+    index: u32,
+    generation: u32,
+}
 
 impl MeshId {
     /// The unit cube.
-    pub const CUBE: MeshId = MeshId(0);
+    pub const CUBE: MeshId = MeshId::from_raw(0);
     /// The unit-radius sphere.
-    pub const SPHERE: MeshId = MeshId(1);
+    pub const SPHERE: MeshId = MeshId::from_raw(1);
+    /// The last id in order (a range's end).
+    const LAST: MeshId = MeshId { index: u32::MAX, generation: u32::MAX };
 
-    /// The id with this raw value (it may name no mesh).
+    /// The id of slot `raw` in its first generation (it may name no mesh).
     pub const fn from_raw(raw: u32) -> MeshId {
-        MeshId(raw)
+        MeshId { index: raw, generation: 0 }
     }
 
-    /// The raw value.
+    /// The raw value: the mesh's slot (the per-vertex slot and the frame's slot tables index it).
     pub const fn raw(self) -> u32 {
-        self.0
+        self.index
+    }
+
+    /// The generation of its slot the id was handed out in (0 until a mesh in the slot is removed).
+    pub const fn generation(self) -> u32 {
+        self.generation
     }
 }
 
@@ -107,6 +121,38 @@ impl ModelPart {
     }
 }
 
+/// A model part with its level meshes made and its chain checked, ready for the room check.
+struct PlannedPart {
+    mesh: MeshData,
+    meshlets: Option<MeshletSet>,
+    /// Level k's mesh at `levels[k - 1]`.
+    levels: Vec<MeshData>,
+    /// The chain's errors, when the part kept one.
+    errors: Option<Vec<f32>>,
+}
+
+impl PlannedPart {
+    /// `part` with a chain whose level indexes past its vertices dropped (it draws whole).
+    fn of(part: ModelPart) -> PlannedPart {
+        let ModelPart { mesh, meshlets, lods } = part;
+        let vertex_count = mesh.vertices.len() as u32;
+        let chain = lods.filter(|chain| chain.levels.iter().all(|level| level.indices.iter().all(|index| *index < vertex_count)));
+        let levels = chain.iter().flat_map(|chain| chain.levels.iter().map(|level| level_mesh(&mesh, &level.indices))).collect();
+        PlannedPart { errors: chain.map(|chain| chain.errors()), mesh, meshlets, levels }
+    }
+}
+
+/// Bytes of one entry's meshlet rows.
+fn meshlet_span_bytes(span: &MeshletSpan) -> u64 {
+    let [(_, meshlets), (_, vertices), (_, triangles)] = *span;
+    u64::from(meshlets) * u64::from(meshlet::MESHLET_RECORD_BYTES) + (u64::from(vertices) + u64::from(triangles)) * 4
+}
+
+/// Refused `buffer-too-large` with `detail`.
+fn refuse_too_large<T>(detail: String) -> Result<T, RenderError> {
+    Err(RenderError::refused(RenderCode::BufferTooLarge, detail))
+}
+
 /// A library mesh's levels of detail (renderer pass 2 A6.9): each level a mesh of its own (the
 /// level's triangles over the vertices they use), with the chain's object-space errors.
 #[derive(Clone, Debug, PartialEq)]
@@ -126,6 +172,42 @@ enum EntryRole {
     Skinned,
     /// A level of another mesh (never clustered, never drawn by a game: the plan draws it).
     Level,
+    /// A slot held with no rows while a replay re-creates the ids of a removed upload
+    /// ([`MeshLibrary::hold_slot`]); its removal follows.
+    Held,
+    /// A free slot: its mesh was removed.
+    Removed,
+}
+
+/// The meshlet-table rows a clustered entry took: (offset, rows) in the meshlet table, the
+/// meshlet vertices and the triangles.
+type MeshletSpan = [(u32, u32); 3];
+
+/// A slot's entry while it holds no rows (freed, or held for a replay).
+const EMPTY_ENTRY: MeshEntry = MeshEntry { first_index: 0, index_count: 0, base_vertex: 0, vertex_count: 0, center: [0.0; 3], radius: 0.0 };
+
+/// Where one mesh's rows go: its first vertex and first index.
+#[derive(Clone, Copy, Debug)]
+struct Placement {
+    base_vertex: u32,
+    first_index: u32,
+}
+
+/// The meshlet tables' streams (a re-cluster replaces them whole).
+const MESHLET_STREAMS: [ArenaStream; 3] = ArenaStream::MESHLET;
+
+/// Write `new` at row `offset` of `rows`, growing it with defaults; a write below its old length
+/// (a freed range filled again) is noted in `rewrites` for the arena.
+fn put_rows<T: Copy + Default>(rows: &mut Vec<T>, offset: u32, new: &[T], stream: ArenaStream, rewrites: &mut Vec<Rewrite>) {
+    let (old, start) = (rows.len(), offset as usize);
+    let end = start + new.len();
+    if end > old {
+        rows.resize(end, T::default());
+    }
+    rows[start..end].copy_from_slice(new);
+    if start < old && !new.is_empty() {
+        rewrites.push((stream, offset..end as u32));
+    }
 }
 
 /// Every mesh a renderer can draw, packed into one vertex and one index list, with a per-vertex
@@ -149,6 +231,21 @@ pub struct MeshLibrary {
     /// The valid sets meshes brought with them (R2.3's `genex_meshlets`), by entry, kept for a
     /// re-cluster.
     imported: BTreeMap<u32, MeshletSet>,
+    /// Per slot: the generation its live id carries (moved on when its mesh is removed).
+    generations: Vec<u32>,
+    /// Slots whose mesh was removed, reused smallest first (a slot whose generation ran out is
+    /// never reused).
+    free_slots: BTreeSet<u32>,
+    /// Where vertices (and their slots) go.
+    vertex_rows: RowAllocator,
+    /// Where indices go.
+    index_rows: RowAllocator,
+    /// Where the meshlet table, the meshlet vertices and the triangles go.
+    meshlet_rows: [RowAllocator; 3],
+    /// Per slot: the meshlet rows its meshlets took.
+    meshlet_spans: Vec<Option<MeshletSpan>>,
+    /// Rows written again below a stream's length since the arena last took them.
+    rewrites: Vec<Rewrite>,
 }
 
 impl Default for MeshLibrary {
@@ -178,9 +275,17 @@ impl MeshLibrary {
             roles: Vec::new(),
             lods: BTreeMap::new(),
             imported: BTreeMap::new(),
+            generations: Vec::new(),
+            free_slots: BTreeSet::new(),
+            vertex_rows: RowAllocator::default(),
+            index_rows: RowAllocator::default(),
+            meshlet_rows: Default::default(),
+            meshlet_spans: Vec::new(),
+            rewrites: Vec::new(),
         };
         for mesh in [MeshData::cube(), MeshData::sphere()] {
-            library.push(mesh, EntryRole::Mesh, None);
+            let placement = library.place(&mesh).expect("the built-in primitives fit an empty library");
+            library.push(mesh, EntryRole::Mesh, None, placement);
         }
         library
     }
@@ -196,6 +301,10 @@ impl MeshLibrary {
             return;
         }
         self.meshlets = MeshletLibrary::default();
+        self.meshlet_rows = Default::default();
+        self.meshlet_spans.fill(None);
+        // The tables go up whole once re-clustered (`Renderer::set_meshlets`).
+        self.rewrites.retain(|(stream, _)| !MESHLET_STREAMS.contains(stream));
         self.meshlet_states.clear();
         for entry in 0..self.entries.len() {
             let state = self.cluster(entry);
@@ -215,7 +324,7 @@ impl MeshLibrary {
 
     /// How the mesh draws on the meshlet path; `None` for an unknown id.
     pub fn meshlet_state(&self, id: MeshId) -> Option<MeshletState> {
-        self.meshlet_states.get(id.0 as usize).copied()
+        self.meshlet_states.get(id.index as usize).copied()
     }
 
     /// Entry `entry`'s meshlet state, appending its meshlets when it is clustered: its imported set
@@ -225,10 +334,20 @@ impl MeshLibrary {
         if self.roles[entry] != EntryRole::Mesh || !self.meshlet_setting.clusters(mesh.index_count / 3) {
             return MeshletState::Whole;
         }
+        // Taken out while the tables take its rows, and put back.
+        let imported = self.imported.remove(&(entry as u32));
+        let state = self.cluster_with(entry, mesh, imported.as_ref());
+        if let Some(set) = imported {
+            self.imported.insert(entry as u32, set);
+        }
+        state
+    }
+
+    /// [`MeshLibrary::cluster`] of `mesh` (entry `entry`) with the set it brought, if any.
+    fn cluster_with(&mut self, entry: usize, mesh: MeshEntry, imported: Option<&MeshletSet>) -> MeshletState {
         let base = mesh.base_vertex as usize;
         let indices = &self.indices[mesh.first_index as usize..(mesh.first_index + mesh.index_count) as usize];
-        let imported = self.imported.get(&(entry as u32)).filter(|set| meshlet::validate(set, indices, mesh.vertex_count).is_ok());
-        let set = match imported {
+        let set = match imported.filter(|set| meshlet::validate(set, indices, mesh.vertex_count).is_ok()) {
             Some(set) => Cow::Borrowed(set),
             None => {
                 let positions: Vec<[f32; 3]> = self.vertices[base..base + mesh.vertex_count as usize].iter().map(|v| v.position).collect();
@@ -236,42 +355,137 @@ impl MeshLibrary {
                 Cow::Owned(set)
             }
         };
-        match self.meshlets.append_within(&set, base as u32, BUFFER_MAX_BYTES) {
+        match self.place_meshlets(entry, &set, base as u32) {
             Ok(range) => MeshletState::Clustered(range),
             Err(refusal) => MeshletState::Refused(refusal.code()),
         }
     }
 
-    fn push(&mut self, mesh: MeshData, role: EntryRole, imported: Option<MeshletSet>) -> MeshId {
+    /// Write `set` (a mesh whose first vertex is library vertex `base_vertex`) into the meshlet
+    /// tables at rows their allocators give it, for slot `entry`: offsets move to the tables' and
+    /// vertex ids to the library's range. Refused `buffer-too-large`, nothing written, when a table
+    /// would pass the storage binding ([`BUFFER_MAX_BYTES`]) or `u32` rows.
+    fn place_meshlets(&mut self, entry: usize, set: &MeshletSet, base_vertex: u32) -> Result<MeshletRange, RenderError> {
+        let counts = [set.meshlets.len(), set.vertices.len(), set.triangles.len()].map(|rows| u32::try_from(rows).ok());
+        let mut span: MeshletSpan = [(0, 0); 3];
+        for (table, rows) in counts.into_iter().enumerate() {
+            let offset = rows.and_then(|rows| self.meshlet_rows[table].allocate(rows).map(|offset| (offset, rows)));
+            match offset {
+                Some(placed) => span[table] = placed,
+                None => return Err(self.unplace_meshlets(&span[..table])),
+            }
+        }
+        let lengths = [self.meshlets.meshlets.len(), self.meshlets.vertices.len(), self.meshlets.triangles.len()];
+        let ends: Vec<u64> = span.iter().zip(lengths).map(|((offset, rows), len)| u64::from(offset + rows).max(len as u64)).collect();
+        let bytes = (ends[0] * u64::from(meshlet::MESHLET_RECORD_BYTES)).max(ends[1].max(ends[2]) * 4);
+        if bytes > BUFFER_MAX_BYTES {
+            return Err(self.unplace_meshlets(&span));
+        }
+        let [(first, count), (vertex_base, _), (triangle_base, _)] = span;
+        let records: Vec<_> = set.meshlets.iter().map(|m| GpuMeshlet { vertex_offset: m.vertex_offset + vertex_base, triangle_offset: m.triangle_offset + triangle_base, ..*m }).collect();
+        let vertices: Vec<u32> = set.vertices.iter().map(|vertex| vertex + base_vertex).collect();
+        put_rows(&mut self.meshlets.meshlets, first, &records, ArenaStream::Meshlets, &mut self.rewrites);
+        put_rows(&mut self.meshlets.vertices, vertex_base, &vertices, ArenaStream::MeshletVertices, &mut self.rewrites);
+        put_rows(&mut self.meshlets.triangles, triangle_base, &set.triangles, ArenaStream::MeshletTriangles, &mut self.rewrites);
+        self.meshlet_spans[entry] = Some(span);
+        Ok(MeshletRange { first_meshlet: first, meshlet_count: count })
+    }
+
+    /// Give back the meshlet rows of `span` (latest first) and answer the refusal for a set that
+    /// does not fit.
+    fn unplace_meshlets(&mut self, span: &[(u32, u32)]) -> RenderError {
+        for (table, (offset, rows)) in span.iter().enumerate().rev() {
+            self.meshlet_rows[table].free(*offset, *rows);
+        }
+        RenderError::refused(RenderCode::BufferTooLarge, format!("meshlet tables past the {BUFFER_MAX_BYTES}-byte storage binding"))
+    }
+
+    /// A slot for a new entry: the smallest freed one (its generation already moved on), else a
+    /// new one at the end.
+    fn acquire_slot(&mut self) -> MeshId {
+        if let Some(index) = self.free_slots.pop_first() {
+            return MeshId { index, generation: self.generations[index as usize] };
+        }
+        let index = self.entries.len() as u32;
+        self.entries.push(EMPTY_ENTRY);
+        self.roles.push(EntryRole::Removed);
+        self.meshlet_states.push(MeshletState::Whole);
+        self.generations.push(0);
+        self.meshlet_spans.push(None);
+        MeshId { index, generation: 0 }
+    }
+
+    /// Put `mesh` at `placement` (rows [`MeshLibrary::place`] took) in a new slot.
+    fn push(&mut self, mesh: MeshData, role: EntryRole, imported: Option<MeshletSet>, placement: Placement) -> MeshId {
         let (center, radius) = mesh.bounds();
-        let id = MeshId(self.entries.len() as u32);
-        self.entries.push(MeshEntry {
-            first_index: self.indices.len() as u32,
+        let id = self.acquire_slot();
+        let at = id.index as usize;
+        self.entries[at] = MeshEntry {
+            first_index: placement.first_index,
             index_count: mesh.indices.len() as u32,
-            base_vertex: self.vertices.len() as i32,
+            base_vertex: placement.base_vertex as i32,
             vertex_count: mesh.vertices.len() as u32,
             center,
             radius,
-        });
-        self.slots.extend(std::iter::repeat_n(id.0, mesh.vertices.len()));
-        self.vertices.extend(mesh.vertices);
-        self.indices.extend(mesh.indices);
-        self.roles.push(role);
+        };
+        let slots = vec![id.index; mesh.vertices.len()];
+        put_rows(&mut self.slots, placement.base_vertex, &slots, ArenaStream::Slots, &mut self.rewrites);
+        put_rows(&mut self.vertices, placement.base_vertex, &mesh.vertices, ArenaStream::Vertices, &mut self.rewrites);
+        put_rows(&mut self.indices, placement.first_index, &mesh.indices, ArenaStream::Indices, &mut self.rewrites);
+        self.roles[at] = role;
         if let Some(set) = imported {
-            self.imported.insert(id.0, set);
+            self.imported.insert(id.index, set);
         }
-        let state = self.cluster(id.0 as usize);
-        self.meshlet_states.push(state);
+        self.meshlet_states[at] = self.cluster(at);
         id
     }
 
-    /// Refused `mesh-invalid` when `mesh` is empty or the library would exceed `u32` indices.
-    fn check_room(&self, mesh: &MeshData) -> Result<(), RenderError> {
-        let empty = mesh.indices.is_empty() || mesh.vertices.is_empty();
-        let total_vertices = self.vertices.len() + mesh.vertices.len();
-        let total_indices = self.indices.len() + mesh.indices.len();
-        if empty || i32::try_from(total_vertices).is_err() || u32::try_from(total_indices).is_err() {
+    /// Take rows for `mesh`'s vertices and indices; refused, with nothing taken, as
+    /// [`MeshLibrary::check_rows`] refuses the library they would make.
+    fn place(&mut self, mesh: &MeshData) -> Result<Placement, RenderError> {
+        let rows = (u32::try_from(mesh.vertices.len()).ok(), u32::try_from(mesh.indices.len()).ok());
+        let full = || RenderError::refused(RenderCode::MeshInvalid, "the library is full");
+        let (Some(vertex_rows), Some(index_rows)) = rows else { return Err(full()) };
+        let base_vertex = self.vertex_rows.allocate(vertex_rows).ok_or_else(full)?;
+        let Some(first_index) = self.index_rows.allocate(index_rows) else {
+            self.vertex_rows.free(base_vertex, vertex_rows);
+            return Err(full());
+        };
+        let placement = Placement { base_vertex, first_index };
+        let vertices = (base_vertex as usize + mesh.vertices.len()).max(self.vertices.len());
+        let indices = (first_index as usize + mesh.indices.len()).max(self.indices.len());
+        if let Err(refusal) = self.check_rows(vertices, indices) {
+            self.unplace(mesh, placement);
+            return Err(refusal);
+        }
+        Ok(placement)
+    }
+
+    /// Give back the rows [`MeshLibrary::place`] took for `mesh`.
+    fn unplace(&mut self, mesh: &MeshData, placement: Placement) {
+        self.index_rows.free(placement.first_index, mesh.indices.len() as u32);
+        self.vertex_rows.free(placement.base_vertex, mesh.vertices.len() as u32);
+    }
+
+    /// Refused `mesh-invalid` when `mesh` is empty.
+    fn check_mesh(mesh: &MeshData) -> Result<(), RenderError> {
+        if mesh.indices.is_empty() || mesh.vertices.is_empty() {
             return Err(RenderError::refused(RenderCode::MeshInvalid, "empty mesh, or the library is full"));
+        }
+        Ok(())
+    }
+
+    /// Refused when a library of `vertices` and `indices` would not fit: `mesh-invalid` past
+    /// `i32` vertices or `u32` indices, `buffer-too-large` past the GPU's binding.
+    fn check_rows(&self, vertices: usize, indices: usize) -> Result<(), RenderError> {
+        if i32::try_from(vertices).is_err() || u32::try_from(indices).is_err() {
+            return Err(RenderError::refused(RenderCode::MeshInvalid, "the library is full"));
+        }
+        let vertex_bytes = vertices as u64 * size_of::<Vertex>() as u64;
+        let index_bytes = indices as u64 * 4;
+        if vertex_bytes.max(index_bytes) > BUFFER_MAX_BYTES {
+            let detail = format!("{vertex_bytes} bytes of vertices and {index_bytes} of indices, past the {BUFFER_MAX_BYTES}-byte binding");
+            return Err(RenderError::refused(RenderCode::BufferTooLarge, detail));
         }
         Ok(())
     }
@@ -286,8 +500,9 @@ impl MeshLibrary {
     /// used when the mesh is clustered and the set passes [`meshlet::validate`] against it, else
     /// the mesh is clustered at runtime.
     pub fn add_with_meshlets(&mut self, mesh: MeshData, imported: Option<MeshletSet>) -> Result<MeshId, RenderError> {
-        self.check_room(&mesh)?;
-        Ok(self.push(mesh, EntryRole::Mesh, imported))
+        MeshLibrary::check_mesh(&mesh)?;
+        let placement = self.place(&mesh)?;
+        Ok(self.push(mesh, EntryRole::Mesh, imported, placement))
     }
 
     /// [`MeshLibrary::add_with_meshlets`] for a model part, its levels of detail kept as meshes of
@@ -296,33 +511,58 @@ impl MeshLibrary {
     /// indexes past the part's vertices is dropped (the part draws whole); a level the library
     /// has no room for refuses the part with nothing added.
     pub fn add_part(&mut self, part: ModelPart) -> Result<MeshId, RenderError> {
-        let ModelPart { mesh, meshlets, lods } = part;
-        let vertex_count = mesh.vertices.len() as u32;
-        let chain = lods.filter(|chain| chain.levels.iter().all(|level| level.indices.iter().all(|index| *index < vertex_count)));
-        let levels: Vec<MeshData> = chain.iter().flat_map(|chain| chain.levels.iter().map(|level| level_mesh(&mesh, &level.indices))).collect();
-        self.check_room(&mesh)?;
-        let extra = levels.iter().fold((mesh.vertices.len(), mesh.indices.len()), |(v, i), level| (v + level.vertices.len(), i + level.indices.len()));
-        if i32::try_from(self.vertices.len() + extra.0).is_err() || u32::try_from(self.indices.len() + extra.1).is_err() {
-            return Err(RenderError::refused(RenderCode::MeshInvalid, "the library is full"));
+        let ids = self.add_parts(vec![part])?;
+        ids.first().copied().ok_or_else(|| RenderError::refused(RenderCode::MeshInvalid, "no part was added"))
+    }
+
+    /// [`MeshLibrary::add_part`] for every part of one model, all or nothing: every part and level
+    /// takes its rows before any is added, so a refused part adds none of them and gives back the
+    /// rows the parts before it took (the library is never copied to roll one back).
+    pub fn add_parts(&mut self, parts: Vec<ModelPart>) -> Result<Vec<MeshId>, RenderError> {
+        let planned: Vec<PlannedPart> = parts.into_iter().map(PlannedPart::of).collect();
+        let mut placed: Vec<(&MeshData, Placement)> = Vec::new();
+        let mut refused = None;
+        for mesh in planned.iter().flat_map(|part| std::iter::once(&part.mesh).chain(&part.levels)) {
+            match MeshLibrary::check_mesh(mesh).and_then(|()| self.place(mesh)) {
+                Ok(placement) => placed.push((mesh, placement)),
+                Err(refusal) => {
+                    refused = Some(refusal);
+                    break;
+                }
+            }
         }
+        if let Some(refusal) = refused {
+            for (mesh, placement) in placed.into_iter().rev() {
+                self.unplace(mesh, placement);
+            }
+            return Err(refusal);
+        }
+        let mut placements = placed.into_iter().map(|(_, placement)| placement).collect::<Vec<_>>().into_iter();
+        Ok(planned.into_iter().map(|part| self.push_part(part, &mut placements)).collect())
+    }
+
+    /// Push a part and its levels at the rows taken for them, in order.
+    fn push_part(&mut self, part: PlannedPart, placements: &mut impl Iterator<Item = Placement>) -> MeshId {
+        let PlannedPart { mesh, meshlets, levels, errors } = part;
         let (center, radius) = mesh.bounds();
-        let id = self.push(mesh, EntryRole::Mesh, meshlets);
+        let mut next = || placements.next().expect("a placement per part and level");
+        let id = self.push(mesh, EntryRole::Mesh, meshlets, next());
         let mut ids = Vec::with_capacity(levels.len());
         for level in levels {
-            let level_id = self.push(level, EntryRole::Level, None);
-            let entry = &mut self.entries[level_id.0 as usize];
+            let level_id = self.push(level, EntryRole::Level, None, next());
+            let entry = &mut self.entries[level_id.index as usize];
             (entry.center, entry.radius) = (center, radius);
             ids.push(level_id);
         }
-        if let Some(chain) = chain.filter(|_| !ids.is_empty()) {
-            self.lods.insert(id.0, MeshLods { levels: ids, errors: chain.errors() });
+        if let Some(errors) = errors.filter(|_| !ids.is_empty()) {
+            self.lods.insert(id.index, MeshLods { levels: ids, errors });
         }
-        Ok(id)
+        id
     }
 
     /// The levels of detail mesh `id` brought ([`MeshLibrary::add_part`]), if any.
     pub fn lods(&self, id: MeshId) -> Option<&MeshLods> {
-        self.lods.get(&id.0)
+        self.lods.get(&id.index).filter(|_| self.is_live(id))
     }
 
     /// Add a skinned mesh: its bind pose as a mesh and its skin rows. Refused `mesh-invalid` when
@@ -341,20 +581,134 @@ impl MeshLibrary {
             return refuse(format!("a joint index is past the skin's {joints} joints"));
         }
         let skin_base = u32::try_from(self.skin.len()).map_err(|_| RenderError::refused(RenderCode::MeshInvalid, "the library is full"))?;
-        self.check_room(&data.mesh)?;
-        let mesh = self.push(data.mesh.clone(), EntryRole::Skinned, None);
+        let skin_bytes = (self.skin.len() + data.skin.len()) as u64 * size_of::<GpuSkinVertex>() as u64;
+        if skin_bytes > BUFFER_MAX_BYTES {
+            return refuse_too_large(format!("{skin_bytes} bytes of skin rows, past the {BUFFER_MAX_BYTES}-byte binding"));
+        }
+        MeshLibrary::check_mesh(&data.mesh)?;
+        let placement = self.place(&data.mesh)?;
+        let mesh = self.push(data.mesh.clone(), EntryRole::Skinned, None, placement);
         self.skin.extend_from_slice(&data.skin);
         Ok(SkinId { mesh, skin_base, joints: joints as u32 })
     }
 
-    /// The mesh's entry.
-    pub fn entry(&self, id: MeshId) -> Option<&MeshEntry> {
-        self.entries.get(id.0 as usize)
+    /// Remove mesh `id` and its levels of detail (game systems STR-2): their rows go back to the
+    /// allocators for the next mesh that fits, their slots move to the next generation (so `id`
+    /// and its levels' ids name nothing from now on) and are reused smallest first. Answers every
+    /// id freed, the mesh's first. Refused `mesh-invalid`, nothing removed, for an id that names
+    /// no mesh (unknown or already removed), a level (remove its mesh), a skinned mesh (its skin
+    /// rows are not freed yet) and the built-in cube and sphere (immediate draws name them).
+    pub fn remove(&mut self, id: MeshId) -> Result<Vec<MeshId>, RenderError> {
+        let refuse = |why: &str| Err(RenderError::refused(RenderCode::MeshInvalid, format!("mesh {} (generation {}) {why}", id.index, id.generation)));
+        if !self.is_live(id) {
+            return refuse("is not in the library");
+        }
+        if id.index <= MeshId::SPHERE.index {
+            return refuse("is a built-in primitive and stays");
+        }
+        match self.roles[id.index as usize] {
+            EntryRole::Level => return refuse("is a level of detail: remove its mesh"),
+            EntryRole::Skinned => return refuse("is skinned: skinned meshes are not removed yet"),
+            EntryRole::Mesh | EntryRole::Held | EntryRole::Removed => {}
+        }
+        let levels = self.lods.remove(&id.index).map(|lods| lods.levels).unwrap_or_default();
+        let freed: Vec<MeshId> = std::iter::once(id).chain(levels).collect();
+        for slot in &freed {
+            self.vacate(*slot);
+        }
+        Ok(freed)
     }
 
-    /// Meshes in the library.
+    /// Free slot `id` whatever it holds (a replay's removal of each id a removal freed): its rows,
+    /// its meshlet rows and the slot, its generation moved on. Answers whether it held anything.
+    pub(crate) fn vacate(&mut self, id: MeshId) -> bool {
+        let at = id.index as usize;
+        let held = at < self.entries.len() && self.generations[at] == id.generation && self.roles[at] != EntryRole::Removed;
+        if !held {
+            return false;
+        }
+        let entry = self.entries[at];
+        self.vertex_rows.free(entry.base_vertex as u32, entry.vertex_count);
+        self.index_rows.free(entry.first_index, entry.index_count);
+        if let Some(span) = self.meshlet_spans[at].take() {
+            for (table, (offset, rows)) in span.into_iter().enumerate() {
+                self.meshlet_rows[table].free(offset, rows);
+            }
+        }
+        self.entries[at] = EMPTY_ENTRY;
+        self.roles[at] = EntryRole::Removed;
+        self.meshlet_states[at] = MeshletState::Whole;
+        self.imported.remove(&id.index);
+        self.lods.remove(&id.index);
+        if let Some(next) = self.generations[at].checked_add(1) {
+            self.generations[at] = next;
+            self.free_slots.insert(id.index);
+        }
+        true
+    }
+
+    /// Hold the next slot with no rows (a replay re-creating the ids of an upload whose meshes
+    /// were all removed: the removal that follows frees it), answering its id.
+    pub(crate) fn hold_slot(&mut self) -> MeshId {
+        let id = self.acquire_slot();
+        self.roles[id.index as usize] = EntryRole::Held;
+        id
+    }
+
+    /// Whether `id` names a mesh the library holds now (not removed, not a stale generation).
+    fn is_live(&self, id: MeshId) -> bool {
+        let at = id.index as usize;
+        let live = |role: EntryRole| !matches!(role, EntryRole::Removed | EntryRole::Held);
+        self.roles.get(at).is_some_and(|role| live(*role)) && self.generations[at] == id.generation
+    }
+
+    /// Whether `id` names a slot of this library whose mesh was removed (a stale id): a draw of it
+    /// is skipped and counted, where an id the library never handed out is refused.
+    pub fn is_removed(&self, id: MeshId) -> bool {
+        (id.index as usize) < self.entries.len() && !self.is_live(id)
+    }
+
+    /// The mesh's entry; None for an unknown or removed id.
+    pub fn entry(&self, id: MeshId) -> Option<&MeshEntry> {
+        self.is_live(id).then(|| &self.entries[id.index as usize])
+    }
+
+    /// Mesh slots in the library, live and freed (the frame's slot tables are this long).
     pub fn len(&self) -> usize {
         self.entries.len()
+    }
+
+    /// Meshes the library holds now (levels of detail included).
+    pub fn live_meshes(&self) -> usize {
+        self.roles.iter().filter(|role| !matches!(role, EntryRole::Removed | EntryRole::Held)).count()
+    }
+
+    /// The rows written again below a stream's length since the last take (freed rows a new
+    /// mesh filled), for [`crate::mesh_arena::MeshArena::sync_with`].
+    pub fn take_rewrites(&mut self) -> Vec<Rewrite> {
+        std::mem::take(&mut self.rewrites)
+    }
+
+    /// Bytes the live meshes' rows take in every stream the arena mirrors (vertices with their
+    /// slots, indices, skin rows and meshlet rows): what a library with no freed rows would hold.
+    pub fn live_bytes(&self) -> u64 {
+        let vertex = size_of::<Vertex>() as u64 + 4;
+        let meshes: u64 = self
+            .entries
+            .iter()
+            .zip(&self.roles)
+            .filter(|(_, role)| !matches!(role, EntryRole::Removed | EntryRole::Held))
+            .map(|(entry, _)| u64::from(entry.vertex_count) * vertex + u64::from(entry.index_count) * 4)
+            .sum();
+        let meshlets: u64 = self.meshlet_spans.iter().flatten().map(meshlet_span_bytes).sum();
+        meshes + size_of_val(self.skin.as_slice()) as u64 + meshlets
+    }
+
+    /// Bytes every stream the arena mirrors spans now, freed rows included (the arena holds at
+    /// least this much).
+    pub fn span_bytes(&self) -> u64 {
+        let rows = size_of_val(self.vertices.as_slice()) + self.slots.len() * 4 + self.indices.len() * 4 + size_of_val(self.skin.as_slice());
+        rows as u64 + self.meshlets.bytes()
     }
 
     /// Whether it holds no mesh (never, after [`MeshLibrary::new`]).
@@ -514,6 +868,13 @@ pub struct LineVertex {
     pub color: [f32; 4],
 }
 
+impl LineVertex {
+    /// A vertex at `position` in the 8-bit sRGB `color` (what [`Scene::line`] stores).
+    pub fn srgb(position: [f32; 3], color: [u8; 4]) -> LineVertex {
+        LineVertex { position, color: color.map(|c| f32::from(c) / 255.0) }
+    }
+}
+
 /// A frame's water (renderer pass 2 B.3): one body and the water's clock.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct SceneWater {
@@ -622,9 +983,21 @@ impl Scene {
 
     /// Draw a line segment: one logical draw.
     pub fn line(&mut self, from: [f32; 3], to: [f32; 3], color: [u8; 4]) -> &mut Self {
-        let color = color.map(|c| f32::from(c) / 255.0);
-        self.lines.push(LineVertex { position: from, color });
-        self.lines.push(LineVertex { position: to, color });
+        self.lines.push(LineVertex::srgb(from, color));
+        self.lines.push(LineVertex::srgb(to, color));
+        self.logical_draws += 1;
+        self
+    }
+
+    /// Draw `vertices` as line segments, each pair one segment (a trailing odd vertex is
+    /// dropped): one logical draw however many segments (NAV-15), none when there is no segment.
+    /// The segments draw what [`Scene::line`] draws for each pair.
+    pub fn lines(&mut self, vertices: &[LineVertex]) -> &mut Self {
+        let whole = vertices.len() - vertices.len() % 2;
+        if whole == 0 {
+            return self;
+        }
+        self.lines.extend_from_slice(&vertices[..whole]);
         self.logical_draws += 1;
         self
     }
@@ -746,6 +1119,9 @@ pub struct FramePlan {
     pub lines: Vec<LineVertex>,
     /// Logical draws (draw, instanced, skinned and line calls), before any culling.
     pub logical_draws: u32,
+    /// Instance rows skipped because their mesh was removed (a stale [`MeshId`], game systems
+    /// STR-2): a draw's row, or every row of a retained group. Never drawn as the slot's new mesh.
+    pub stale_rows: u32,
     /// Each instance row's identity across frames, row for row (RQ5.1): its draw id and ordinal
     /// within the id, else its mesh and ordinal within its batch, and its skinned vertices. Empty
     /// for a frame that writes no motion ([`FramePlan::build_with_motion`]).
@@ -917,7 +1293,7 @@ impl Rows {
         keys: &mut DrawKeys,
         materials: &mut Materials,
     ) -> Result<(), RenderError> {
-        let meshes = (variant, MeshId(0))..=(variant, MeshId(u32::MAX));
+        let meshes = (variant, MeshId::from_raw(0))..=(variant, MeshId::LAST);
         for ((_, mesh), drawn) in by_mesh.range(meshes) {
             let entry = mesh_entry(library, *mesh)?;
             // A6.9: a mesh drawn whole with levels gets a batch per level, each with slots of its
@@ -1104,7 +1480,12 @@ impl FramePlan {
         let mut by_mesh: BTreeMap<(usize, MeshId), MeshDraws> = BTreeMap::new();
         let mut key_of: Vec<Option<MotionRow>> = if motion { vec![None; scene.draws.len()] } else { Vec::new() };
         let mut glass = Vec::new();
+        let mut stale_rows = 0u32;
         for (at, draw) in scene.draws.iter().enumerate() {
+            if library.is_removed(draw.mesh) {
+                stale_rows += 1;
+                continue;
+            }
             let entry = mesh_entry(library, draw.mesh)?;
             if draw.material.is_transparent() {
                 let source = DrawSource { skinned: false, first_index: entry.first_index, index_count: entry.index_count, base_vertex: entry.base_vertex };
@@ -1120,6 +1501,10 @@ impl FramePlan {
         // Retained groups (A.0b): opaque ones batch with their mesh's draws, ahead of them; a
         // transparent group's rows are sorted with the glass, one by one.
         for (at, GroupDraw { group, material, id }) in scene.groups.iter().enumerate().filter(|(_, draw)| !draw.group.is_empty()) {
+            if library.is_removed(group.mesh()) {
+                stale_rows += group.len() as u32;
+                continue;
+            }
             let entry = mesh_entry(library, group.mesh())?;
             let material = *material;
             if !material.is_transparent() {
@@ -1239,6 +1624,7 @@ impl FramePlan {
             transparent_sources,
             lines: scene.lines.clone(),
             logical_draws: scene.logical_draws,
+            stale_rows,
             motion,
             prev_models: Vec::new(),
             retained,

@@ -31,7 +31,7 @@ import {
 import { BuildProblemCode } from "../shared/build-problem.ts";
 import { type ARTIFACT_SIGNINGS, ExportRefusal, ExportSigning } from "../shared/game-export-contract.ts";
 import { ChatFileOpen } from "../shared/chat-files.ts";
-import { AssetRefusal } from "../shared/game-assets.ts";
+import { AssetImportRefusal, AssetImportStatus, AssetRefusal } from "../shared/game-assets.ts";
 import {
   BuildTarget,
   type CompiledStack,
@@ -4375,6 +4375,32 @@ export const ASSET_REFUSAL_WORDS = {
   [AssetRefusal.UnsupportedByRust]: (ext: string) =>
     `Rust games can’t load .${ext} files. Use PNG, JPEG, WebP or KTX2 pictures, OGG, WAV, MP3 or FLAC sound, and glTF or OBJ models.`,
 } as const satisfies Record<AssetRefusal, (ext: string) => string>;
+
+/**
+ * What the Assets preview says about a Rust game's file its import step has not imported yet,
+ * refused, or imported with warnings (`ProjectAsset.import`). A file that is simply ready says nothing.
+ */
+export const ASSET_IMPORT_WORDS = {
+  [AssetImportStatus.Pending]: "Getting this ready for your game’s builds…",
+  warnings: (count: number) =>
+    `Ready for builds. The model check noted ${count} ${count === 1 ? "thing" : "things"} worth a look.`,
+  refused: {
+    [AssetImportRefusal.UnsupportedByRaylib]: "C++ games can’t load this format, so builds leave it out.",
+    [AssetImportRefusal.UnsupportedByRust]: "Rust games can’t load this format, so builds leave it out.",
+    [AssetImportRefusal.UnsafePath]: "This file’s name can’t be used in a game, so builds leave it out.",
+    [AssetImportRefusal.EscapesGame]: "This file points outside the game folder, so builds leave it out.",
+    [AssetImportRefusal.Missing]: "This file is gone, so builds leave it out.",
+    [AssetImportRefusal.NotRegularFile]: "This isn’t a regular file, so builds leave it out.",
+    [AssetImportRefusal.TooLarge]: "This file is too large to import, so builds leave it out.",
+    [AssetImportRefusal.Malformed]: "This file is damaged or isn’t the format its name says, so builds leave it out.",
+    [AssetImportRefusal.UnsupportedExtension]:
+      "This model needs a glTF extension Genex games can’t read, so builds leave it out.",
+    [AssetImportRefusal.ConverterMissing]: "Genex can’t convert this format yet, so builds leave it out.",
+    [AssetImportRefusal.ImporterFailed]:
+      "Importing this file failed, so builds leave it out. Deliver it again to retry.",
+    [AssetImportRefusal.ValidationFailed]: "The model check found errors in this file, so builds leave it out.",
+  } satisfies Record<AssetImportRefusal, string>,
+} as const;
 
 /** Settings → Licenses: the shipped license texts (`panels/LicensesDialog.tsx`). */
 export const LICENSE_WORDS = {

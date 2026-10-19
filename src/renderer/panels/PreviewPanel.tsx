@@ -332,6 +332,17 @@ function useNativeView(loaded: GameProject | null, host: StudioPlatform | null, 
   return { choice, native: choice?.view === NativeView.Native };
 }
 
+/**
+ * The strip's Reload: brings in what waits for Live, and with the Native view shown starts the Mac
+ * build Live holds again from what is on disk (the Reload ends its run before rebuilding).
+ */
+function useNativeReload(project: string | null, native: boolean, reload: () => Promise<void>): () => void {
+  return useCallback(() => {
+    const reloading = reload();
+    if (project && native) void nativeStoreFor(studio().api).afterReload(project, reloading);
+  }, [project, native, reload]);
+}
+
 /** The conversation's builds: its whole log and its current run's workers' logs, folded into the graph and its history. */
 function useStageGraph({
   project,
@@ -994,6 +1005,7 @@ export function PreviewPanel({
     onView,
     onNotice,
   });
+  const stageReload = useNativeReload(project, nativeView.native, reload);
   const { macGame, windowShown, engine, canvasGame } = useStageNative(loaded, liveStage.host, liveStage.cover);
   const firstPlan = useFirstPlan(project, status, runGraph);
 
@@ -1014,7 +1026,7 @@ export function PreviewPanel({
         live={{ views, shown: liveView }}
         onTab={chooseTab}
         behind={behind}
-        onReload={reload}
+        onReload={stageReload}
         run={controls.run}
         fullScreen={controls.fullScreen}
         sound={controls.sound}

@@ -11,15 +11,33 @@
 //! magenta checker. The path rule is genex-core's port of `paths.h` (`isSafeAssetPath`).
 //! The files behind the handles are the ones the host-side importer (`src/main/rust-assets.ts`)
 //! normalized; a desktop run reads them from `assets/` beside the executable (`install_with_assets`).
+//!
+//! The sim may also read its assets while a reset builds it: `gfx.assets().bytes(path)` (a level's
+//! JSON), `.triangles(&model)` (a navmesh's or a collider's input, parsed by the renderer's own
+//! glTF reader) and `.info(path)` (size and group, nothing read). Every shell attaches its
+//! [`AssetSource`] before the first seed, and one rule holds on all six destinations: reads happen
+//! in `on_reset` only (`not-at-reset`), and only for assets of the boot and sim groups
+//! (`not-preloaded` for a streamed or named one). The bytes are part of the build, so the same seed
+//! gives the same checksum everywhere; a re-seed reuses what the first one read.
+//!
+//! `gfx.character(path)` reads a rigged GLB the same way and hands it to genex-anim's importer
+//! (behind genex-core's GLB guard); the rig is kept in an `Arc` cache across seeds, so a re-seed
+//! neither reads nor parses again. Every refusal, the read's included, is
+//! `animation-asset-invalid`.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::sync::Arc;
 
+use genex_anim::import::{Rig, import_rig};
+use genex_anim::skeleton::Skeleton;
+use genex_anim::AnimationError;
 use genex_core::paths::is_safe_asset_path;
 use genex_core::saves::Saves;
 use serde_json::Value;
 
 use crate::extend::{CustomMaterial, ExtensionRefusal, Extensions, PostPass, WgslSetup};
+use crate::map::Map;
+use crate::math::Vec3;
 
 /// A game's assets compiled into its binary: `(path under assets/, bytes)`. A dev build that
 /// passes none reads `assets/` beside the executable (`../Resources/assets/` in a Mac bundle), or
@@ -72,13 +90,309 @@ impl Model {
     }
 }
 
+/// The largest asset a reset reads into memory (genex-assets' `MAX_ASSET_BYTES`).
+pub const ASSET_READ_MAX_BYTES: u64 = 256 * 1024 * 1024;
+
+/// Why a sim-side asset read was refused. Wire codes: never rename one.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum AssetErrorCode {
+    /// The path breaks the asset-path rule (absolute, `..`, `.`, an empty segment, a backslash,
+    /// NUL), or is a link, or leads out of the asset folder once its links are followed.
+    UnsafePath,
+    /// The build has no asset at the path.
+    Missing,
+    /// Larger than [`ASSET_READ_MAX_BYTES`].
+    TooLarge,
+    /// [`Assets::triangles`] on bytes that are not a readable GLB with triangles, or
+    /// [`AssetBytes::json`] on bytes that are not JSON.
+    Malformed,
+    /// Read outside `on_reset`: the sim reads its assets while it is being built, never later.
+    NotAtReset,
+    /// The asset ships in a group that is not loaded before the first frame (a streamed or named
+    /// group): the same refusal on every destination, the web's and the native ones alike.
+    NotPreloaded,
+}
+
+impl AssetErrorCode {
+    /// Every code, in declaration order.
+    pub const ALL: [AssetErrorCode; 6] = [
+        AssetErrorCode::UnsafePath,
+        AssetErrorCode::Missing,
+        AssetErrorCode::TooLarge,
+        AssetErrorCode::Malformed,
+        AssetErrorCode::NotAtReset,
+        AssetErrorCode::NotPreloaded,
+    ];
+
+    /// The wire spelling.
+    pub const fn wire(self) -> &'static str {
+        match self {
+            AssetErrorCode::UnsafePath => "unsafe-path",
+            AssetErrorCode::Missing => "missing",
+            AssetErrorCode::TooLarge => "too-large",
+            AssetErrorCode::Malformed => "malformed",
+            AssetErrorCode::NotAtReset => "not-at-reset",
+            AssetErrorCode::NotPreloaded => "not-preloaded",
+        }
+    }
+}
+
+/// A refused asset read: its typed code and what it was about.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AssetError {
+    code: AssetErrorCode,
+    detail: String,
+}
+
+impl AssetError {
+    /// A refusal with `code` about `detail`.
+    pub fn new(code: AssetErrorCode, detail: impl Into<String>) -> AssetError {
+        AssetError { code, detail: detail.into() }
+    }
+
+    /// The typed code.
+    pub fn code(&self) -> AssetErrorCode {
+        self.code
+    }
+
+    /// What the refusal was about (for a log line; never matched on).
+    pub fn detail(&self) -> &str {
+        &self.detail
+    }
+}
+
+impl std::fmt::Display for AssetError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}: {}", self.code.wire(), self.detail)
+    }
+}
+
+impl std::error::Error for AssetError {}
+
+/// The bytes of one asset file, shared: a reset keeps them in the world (`Arc`), so update hooks
+/// use them without reading anything. Derefs to `[u8]`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AssetBytes {
+    bytes: Arc<[u8]>,
+}
+
+impl AssetBytes {
+    /// FNV-1a 64 of the bytes (genex-core's, the web asset map's digest).
+    pub fn digest(&self) -> u64 {
+        genex_core::digest::fnv1a64(&self.bytes)
+    }
+
+    /// The bytes as UTF-8 text, or None when they are not.
+    pub fn as_str(&self) -> Option<&str> {
+        std::str::from_utf8(&self.bytes).ok()
+    }
+
+    /// The bytes parsed as JSON (a level, a wave table), or `malformed`. Parsing is exact, so the
+    /// same file gives the same values on every destination.
+    pub fn json(&self) -> Result<Value, AssetError> {
+        serde_json::from_slice(&self.bytes).map_err(|error| AssetError::new(AssetErrorCode::Malformed, format!("not JSON: {error}")))
+    }
+}
+
+impl std::ops::Deref for AssetBytes {
+    type Target = [u8];
+
+    fn deref(&self) -> &[u8] {
+        &self.bytes
+    }
+}
+
+/// The CPU triangles of a model's default scene, node transforms applied (object space of its
+/// scene root), read with the renderer's own glTF reader: a navmesh bake's input, a collider, a
+/// gameplay query. Never a render level of detail.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ModelTriangles {
+    /// Vertex positions.
+    pub positions: Vec<Vec3>,
+    /// Three indices per triangle, each below `positions.len()`.
+    pub indices: Vec<u32>,
+    /// The smallest corner of the positions' bounds.
+    pub min: Vec3,
+    /// The largest corner of the positions' bounds.
+    pub max: Vec3,
+}
+
+impl ModelTriangles {
+    /// The triangles of a GLB's bytes, or `malformed`.
+    fn from_glb(path: &str, bytes: &[u8]) -> Result<ModelTriangles, AssetError> {
+        let mesh = genex_render::mesh::MeshData::from_glb(bytes).map_err(|error| AssetError::new(AssetErrorCode::Malformed, format!("{path}: {error}")))?;
+        let positions: Vec<Vec3> = mesh.vertices.iter().map(|vertex| Vec3::from_array(vertex.position)).collect();
+        let min = positions.iter().copied().fold(Vec3::splat(f32::INFINITY), Vec3::min);
+        let max = positions.iter().copied().fold(Vec3::splat(f32::NEG_INFINITY), Vec3::max);
+        Ok(ModelTriangles { positions, indices: mesh.indices, min, max })
+    }
+
+    /// Triangles in the list.
+    pub fn triangle_count(&self) -> usize {
+        self.indices.len() / 3
+    }
+}
+
+/// Which group of the build an asset ships in. Boot and sim assets are loaded before the first
+/// frame on every destination, so a reset may read them; streamed and named groups arrive later.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum AssetGroup {
+    /// Needed to draw the first frame.
+    Boot,
+    /// Read by the simulation (the default: a build that records no group ships every asset here).
+    #[default]
+    Sim,
+    /// Fetched while playing, by streaming.
+    Stream,
+    /// One of the game's named groups (`genex.toml`), required by name while playing.
+    Named,
+}
+
+impl AssetGroup {
+    /// The wire spelling.
+    pub const fn wire(self) -> &'static str {
+        match self {
+            AssetGroup::Boot => "boot",
+            AssetGroup::Sim => "sim",
+            AssetGroup::Stream => "stream",
+            AssetGroup::Named => "named",
+        }
+    }
+
+    /// Whether every destination has the group loaded before the first reset.
+    pub const fn preloaded(self) -> bool {
+        matches!(self, AssetGroup::Boot | AssetGroup::Sim)
+    }
+}
+
+/// The groups a build records for its assets, by path; a path it does not name is [`AssetGroup::Sim`].
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct AssetGroups {
+    rows: Vec<(String, AssetGroup)>,
+}
+
+impl AssetGroups {
+    /// These groups with `path` in `group` (a later row for the same path wins).
+    pub fn with(mut self, path: &str, group: AssetGroup) -> AssetGroups {
+        self.rows.retain(|(known, _)| known != path);
+        self.rows.push((path.to_owned(), group));
+        self
+    }
+
+    /// The group `path` ships in.
+    pub fn of(&self, path: &str) -> AssetGroup {
+        self.rows.iter().find(|(known, _)| known == path).map(|(_, group)| *group).unwrap_or_default()
+    }
+}
+
+/// What the build knows about one asset without the sim reading it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct AssetInfo {
+    /// Its size in bytes, as shipped for this destination.
+    pub bytes: u64,
+    /// The group it ships in.
+    pub group: AssetGroup,
+}
+
+/// Where a game's asset bytes come from, for the sim's reads and the presenter's: natively the
+/// table a game compiled in, then `assets/` beside the executable by real path; on the web the
+/// table, then the files the page fetched; on a phone the table. Each shell attaches one before
+/// the first reset ([`crate::Runtime::with_assets`]).
+pub trait AssetSource {
+    /// The bytes of `path` (already held to the asset-path rule), or why not.
+    fn read(&self, path: &str) -> Result<Arc<[u8]>, AssetError>;
+
+    /// The size of `path` without keeping its bytes, or why not (by default: a read).
+    fn size(&self, path: &str) -> Result<u64, AssetError> {
+        self.read(path).map(|bytes| bytes.len() as u64)
+    }
+
+    /// The group `path` ships in (by default [`AssetGroup::Sim`]: the build records none).
+    fn group(&self, _path: &str) -> AssetGroup {
+        AssetGroup::Sim
+    }
+}
+
+impl AssetSource for AssetTable {
+    fn read(&self, path: &str) -> Result<Arc<[u8]>, AssetError> {
+        let found = self.iter().find(|(known, _)| *known == path).map(|(_, bytes)| *bytes);
+        found.map(Arc::from).ok_or_else(|| AssetError::new(AssetErrorCode::Missing, path.to_owned()))
+    }
+
+    fn size(&self, path: &str) -> Result<u64, AssetError> {
+        let found = self.iter().find(|(known, _)| *known == path).map(|(_, bytes)| bytes.len() as u64);
+        found.ok_or_else(|| AssetError::new(AssetErrorCode::Missing, path.to_owned()))
+    }
+}
+
+/// A game with no assets compiled in and none on disk (a test's runtime).
+pub(crate) const NO_ASSETS: AssetTable = &[];
+
+/// A rigged GLB loaded at reset (`gfx.character(path)`): genex-anim's rig of its first skinned
+/// mesh node, shared by `Arc` (cloning is cheap; every seed gets the one parse).
+#[derive(Clone, Debug, PartialEq)]
+pub struct CharacterAsset {
+    path: Arc<str>,
+    rig: Arc<Rig>,
+}
+
+impl CharacterAsset {
+    /// The path under `assets/` it was loaded from.
+    pub fn path(&self) -> &str {
+        &self.path
+    }
+
+    /// Joints in its skeleton.
+    pub fn joint_count(&self) -> usize {
+        self.rig.skeleton().joint_count()
+    }
+
+    /// Its skeleton: joint names, parents and rest pose.
+    pub fn skeleton(&self) -> &Skeleton {
+        self.rig.skeleton()
+    }
+}
+
+/// What the asset folder remembers across seeds: each read's bytes, each model's triangles and
+/// each character's rig (or why it was refused), so a re-seed never reads or parses again (they
+/// are a pure function of the build's files).
+#[derive(Default)]
+struct Reads {
+    bytes: Map<String, AssetBytes>,
+    triangles: Map<String, Arc<ModelTriangles>>,
+    rigs: Map<String, Result<Arc<Rig>, AnimationError>>,
+}
+
 /// The game's `assets/` folder.
-#[derive(Debug, Default)]
 pub struct Assets {
     requested: RefCell<Vec<String>>,
+    source: Box<dyn AssetSource>,
+    /// Whether a reset hook is running: the only time the sim reads.
+    at_reset: Cell<bool>,
+    reads: RefCell<Reads>,
+}
+
+impl Default for Assets {
+    fn default() -> Assets {
+        Assets::with_source(Box::new(NO_ASSETS))
+    }
+}
+
+impl std::fmt::Debug for Assets {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Assets").field("requested", &self.requested).field("at_reset", &self.at_reset).finish_non_exhaustive()
+    }
 }
 
 impl Assets {
+    /// The asset folder reading from `source`.
+    pub(crate) fn with_source(source: Box<dyn AssetSource>) -> Assets {
+        Assets { requested: RefCell::new(Vec::new()), source, at_reset: Cell::new(false), reads: RefCell::new(Reads::default()) }
+    }
+
     /// A model at `assets/<path>` (glTF or GLB); a missing model when the path is not a plain
     /// relative path (no absolute path, `..`, `.`, empty segment or backslash).
     pub fn model(&self, path: &str) -> Model {
@@ -100,6 +414,85 @@ impl Assets {
         GameTexture { path: Some(Arc::from(path)) }
     }
 
+    /// The bytes of `assets/<path>`, read in `on_reset` only and only for an asset of the boot or
+    /// sim group (`not-preloaded` for a streamed or named one, on every destination). They are part
+    /// of the build, so the same seed gives the same checksum everywhere; a re-seed reuses them.
+    pub fn bytes(&self, path: &str) -> Result<AssetBytes, AssetError> {
+        self.admit(path)?;
+        let cached = self.reads.borrow().bytes.get(path).cloned();
+        let bytes = match cached {
+            Some(bytes) => bytes,
+            None => self.read(path)?,
+        };
+        self.note(path);
+        Ok(bytes)
+    }
+
+    /// Read `path` from the source once and keep it for later seeds.
+    fn read(&self, path: &str) -> Result<AssetBytes, AssetError> {
+        let bytes = self.source.read(path)?;
+        if bytes.len() as u64 > ASSET_READ_MAX_BYTES {
+            return Err(AssetError::new(AssetErrorCode::TooLarge, format!("{path}: {} bytes", bytes.len())));
+        }
+        let bytes = AssetBytes { bytes };
+        self.reads.borrow_mut().bytes.insert(path.to_owned(), bytes.clone());
+        Ok(bytes)
+    }
+
+    /// The triangles of `model`'s default scene, node transforms applied, read as [`Assets::bytes`]
+    /// reads (in `on_reset`, boot and sim groups only) and parsed once per build file: a missing
+    /// model handle is `unsafe-path`, bytes that are not a GLB with triangles `malformed`.
+    pub fn triangles(&self, model: &Model) -> Result<Arc<ModelTriangles>, AssetError> {
+        let Some(path) = model.path() else {
+            return Err(AssetError::new(AssetErrorCode::UnsafePath, "a missing model has no file"));
+        };
+        let bytes = self.bytes(path)?;
+        if let Some(triangles) = self.reads.borrow().triangles.get(path) {
+            return Ok(Arc::clone(triangles));
+        }
+        let triangles = Arc::new(ModelTriangles::from_glb(path, &bytes)?);
+        self.reads.borrow_mut().triangles.insert(path.to_owned(), Arc::clone(&triangles));
+        Ok(triangles)
+    }
+
+    /// The rig of the GLB at `assets/<path>`, read as [`Assets::bytes`] reads (in `on_reset`, boot
+    /// and sim groups only) and imported once per build file, its refusal included.
+    fn rig(&self, path: &str) -> Result<Arc<Rig>, AnimationError> {
+        let bytes = self.bytes(path).map_err(|error| AnimationError::asset_invalid(format!("{path}: {error}")))?;
+        if let Some(known) = self.reads.borrow().rigs.get(path) {
+            return known.clone();
+        }
+        let rig = import_rig(&bytes).map(Arc::new).map_err(|error| AnimationError { code: error.code, detail: format!("{path}: {}", error.detail) });
+        self.reads.borrow_mut().rigs.insert(path.to_owned(), rig.clone());
+        rig
+    }
+
+    /// What the build records for `assets/<path>` (its size and group), without reading it into
+    /// the sim; None for an unsafe path or an asset the build does not have.
+    pub fn info(&self, path: &str) -> Option<AssetInfo> {
+        if !is_safe_asset_path(path) {
+            return None;
+        }
+        let bytes = self.source.size(path).ok()?;
+        Some(AssetInfo { bytes, group: self.source.group(path) })
+    }
+
+    /// The rule every read passes first: a plain path, a reset running, a preloaded group. Only a
+    /// path that then reads is listed in `state().assets`, so a refused one leaves no trace.
+    fn admit(&self, path: &str) -> Result<(), AssetError> {
+        if !is_safe_asset_path(path) {
+            return Err(AssetError::new(AssetErrorCode::UnsafePath, format!("{path:?}")));
+        }
+        if !self.at_reset.get() {
+            return Err(AssetError::new(AssetErrorCode::NotAtReset, path.to_owned()));
+        }
+        let group = self.source.group(path);
+        if !group.preloaded() {
+            return Err(AssetError::new(AssetErrorCode::NotPreloaded, format!("{path} ships in the {} group", group.wire())));
+        }
+        Ok(())
+    }
+
     fn note(&self, path: &str) {
         let mut requested = self.requested.borrow_mut();
         if !requested.iter().any(|known| known == path) {
@@ -114,6 +507,11 @@ impl Assets {
 
     pub(crate) fn clear(&self) {
         self.requested.borrow_mut().clear();
+    }
+
+    /// Mark the reset hooks running (`true`) or done: reads are admitted only in between.
+    pub(crate) fn set_at_reset(&self, at_reset: bool) {
+        self.at_reset.set(at_reset);
     }
 }
 
@@ -130,8 +528,20 @@ pub struct Gfx {
 }
 
 impl Gfx {
-    pub(crate) fn new(world_size: [u32; 2], saves: Saves, wgsl: WgslSetup) -> Gfx {
-        Gfx { assets: Assets::default(), world_size, saves, extensions: Extensions::new(wgsl), textured: RefCell::new(Vec::new()) }
+    pub(crate) fn new(world_size: [u32; 2], saves: Saves, wgsl: WgslSetup, source: Box<dyn AssetSource>) -> Gfx {
+        let assets = Assets::with_source(source);
+        Gfx { assets, world_size, saves, extensions: Extensions::new(wgsl), textured: RefCell::new(Vec::new()) }
+    }
+
+    /// The rigged GLB at `assets/<path>` as a [`CharacterAsset`], in `on_reset` (an asset of the
+    /// boot or sim group, as [`Assets::bytes`] reads). The rig is parsed once per build file and
+    /// shared across seeds. Refused `animation-asset-invalid`: an unsafe path, a file the build
+    /// does not have or cannot read now, or one that is not a GLB with a usable skin (no skinned
+    /// mesh node, more than 256 joints, a broken node tree, a non-finite transform). A refusal
+    /// never crashes; the model handle of the same path draws the checker.
+    pub fn character(&self, path: &str) -> Result<CharacterAsset, AnimationError> {
+        let rig = self.assets.rig(path)?;
+        Ok(CharacterAsset { path: Arc::from(path), rig })
     }
 
     /// A texture handle for a v2 material or post pass (`gfx.texture(path)`, [`Assets::texture`]).
@@ -227,7 +637,7 @@ mod tests {
     use super::*;
 
     fn gfx() -> Gfx {
-        Gfx::new([320, 180], Saves::at(Err(genex_core::paths::SaveRefusal::NoStateDir)), WgslSetup::default())
+        Gfx::new([320, 180], Saves::at(Err(genex_core::paths::SaveRefusal::NoStateDir)), WgslSetup::default(), Box::new(NO_ASSETS))
     }
 
     #[test]
@@ -257,6 +667,24 @@ mod tests {
         }
         assert_eq!(gfx.assets().requested(), vec!["textures/bark.png", "Bark.JPG", "ui/icon.webp", "old/sky.bmp", "photo.jpeg"]);
         assert!(GameTexture::default().is_missing());
+    }
+
+    /// Reads are the reset's: outside it every read refuses `not-at-reset` before the source is
+    /// asked, and `info` (metadata, no bytes) still answers.
+    #[test]
+    fn a_read_outside_the_reset_refuses_not_at_reset() {
+        let table: AssetTable = &[("levels/one.json", b"{}")];
+        let gfx = Gfx::new([320, 180], Saves::at(Err(genex_core::paths::SaveRefusal::NoStateDir)), WgslSetup::default(), Box::new(table));
+        let assets = gfx.assets();
+        let refused = assets.bytes("levels/one.json").expect_err("outside the reset");
+        assert_eq!(refused.code(), AssetErrorCode::NotAtReset);
+        let model = assets.model("levels/one.json");
+        assert_eq!(assets.triangles(&model).expect_err("outside the reset").code(), AssetErrorCode::NotAtReset);
+        assert_eq!(assets.info("levels/one.json").map(|info| info.bytes), Some(2));
+        assets.set_at_reset(true);
+        assert_eq!(assets.bytes("levels/one.json").map(|bytes| bytes.to_vec()), Ok(b"{}".to_vec()));
+        assets.set_at_reset(false);
+        assert_eq!(assets.bytes("levels/one.json").expect_err("after the reset").code(), AssetErrorCode::NotAtReset);
     }
 
     #[test]

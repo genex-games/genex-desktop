@@ -67,7 +67,7 @@ use crate::prepass::ExtensionDemand;
 use crate::renderer::{FRAME_PRE_EXPOSURE_OFFSET, RenderOptions, Renderer, ScenePath, StagePrepass, WORLD_FORMAT, WorldNodes, WorldPass, WorldStage, shader};
 use crate::settings::{LdrReason, Look, Quality, TextureClass};
 use crate::settle::{ExposureHistories, FrameHistory, HistoryKey, HistoryReset, HistorySet, LiveFrame, LiveHistory, SettleFrame, SettleHooks};
-use crate::scene::{CameraDesc, Lighting, Material, MeshId, Scene, scaled};
+use crate::scene::{CameraDesc, Lighting, LineVertex, Material, MeshId, Scene, scaled};
 use crate::skin::{SkinId, SkinnedMeshData};
 use crate::tables::{CullPath, buffer, entry, pipeline_layout, uniform};
 use crate::texture::{TextureData, TextureId, TextureKind};
@@ -317,6 +317,16 @@ impl ImmediateFrame {
     pub fn line(&mut self, from: [f32; 3], to: [f32; 3], color: [u8; 4]) -> &mut Self {
         self.scene.line(from, to, color);
         self.counter.count();
+        self
+    }
+
+    /// Draw `vertices` as 3D line segments ([`Scene::lines`]): one logical draw, none when there
+    /// is no segment.
+    pub fn lines(&mut self, vertices: &[LineVertex]) -> &mut Self {
+        if vertices.len() >= 2 {
+            self.scene.lines(vertices);
+            self.counter.count();
+        }
         self
     }
 

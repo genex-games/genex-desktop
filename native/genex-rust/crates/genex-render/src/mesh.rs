@@ -28,6 +28,8 @@ pub use mesh_lod::{
     LOD_MAX_LEVELS, LOD_MIN_TRIANGLES, LOD_NOMINAL_HEIGHT, LOD_SCHEMA_VERSION, LOD_SELECT_WGSL, LOD_THRESHOLD_PX, LODS_EXTRAS_KEY, LodChain, LodExtrasKey,
     LodFault, LodLevel, LodLevelKey, LodWarning, batch_lod, lod_keeps, select_lod,
 };
+// The LOD fade band (game systems LOD-01).
+pub use mesh_lod::{LOD_FADE_TAG, LodBand, fade_batch_lod, lod_band, lod_band_keep};
 
 /// One vertex as the vertex buffer holds it (`MeshVertex` in the skinning shader).
 #[repr(C)]
@@ -394,8 +396,10 @@ impl MeshletMerge {
     }
 }
 
-/// A parsed GLB whose buffers are all the embedded `BIN` chunk.
+/// A parsed GLB whose buffers are all the embedded `BIN` chunk. The GLB guard runs first: `gltf`
+/// 1.4.1 panics on damaged input (gltf-rs #478) and wasm aborts on a panic (game systems SF-1b).
 pub(crate) fn open_glb(bytes: &[u8]) -> Result<gltf::Gltf, RenderError> {
+    genex_core::glb_guard::check_glb(bytes).map_err(|refusal| invalid(format!("not a valid GLB: {refusal}")))?;
     let gltf = gltf::Gltf::from_slice(bytes).map_err(|error| invalid(format!("not a valid GLB: {error}")))?;
     if let Some(uri) = gltf.buffers().find_map(|b| match b.source() {
         gltf::buffer::Source::Uri(uri) => Some(uri.to_owned()),

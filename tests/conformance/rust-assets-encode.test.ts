@@ -3,7 +3,7 @@
  * by the pinned Basis Universal v2.50 encoder into a mipmapped UASTC KTX2 (sRGB for colour, linear
  * for data and normal maps), which the import step then transcodes per family (A6.5). The encoder
  * is a pinned download, never committed: the pin rows run everywhere, the encoding rows where
- * `node scripts/toolchains/basis-encoder.ts fetch` has put it in `.studio-dev/tools/`.
+ * `node scripts/toolchains/importer-tools.ts fetch` has put it in `.studio-dev/tools/`.
  */
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
@@ -105,7 +105,7 @@ describe("the pinned Basis Universal encoder", () => {
 });
 
 describe("encoding PNG to KTX2 at import", {
-  skip: !fetched && "the encoder is not fetched (node scripts/toolchains/basis-encoder.ts fetch)",
+  skip: !fetched && "the encoder is not fetched (node scripts/toolchains/importer-tools.ts fetch)",
 }, () => {
   it("a square power-of-two colour PNG becomes a mipmapped sRGB UASTC KTX2 the transcoder reads per family", async () => {
     const encoder = await basisEncoder(ENCODER_DIR);

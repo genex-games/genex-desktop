@@ -14,6 +14,8 @@ import { isInside, toPosixRelative } from "../substrate/paths.ts";
 import type { CrateRefusal } from "../shared/crate-requests.ts";
 import type { ExtensionRefusal } from "../shared/game-conformance.ts";
 import type { NativeRefusal, RustAdmissionProblem } from "../shared/native-contract.ts";
+import type { StagedImportReport } from "./rust-assets.ts";
+import type { AssetPackageReport } from "./rust-package-assets.ts";
 import type { WebReceipt } from "./rust-build-web.ts";
 
 /** Why the Rust lane refused a build, beside the stage's `BuildProblemCode`. Typed; never rename a value. */
@@ -99,6 +101,10 @@ export interface RustBuildReceipt {
   outputs: Array<{ path: string; sha256: string; bytes: number }>;
   /** A web build's packaging: the tools, the module's sizes against the budget, the served files. */
   web?: WebReceipt;
+  /** The import step over the stage (C-2): each staged asset's action and refusal. */
+  assets?: StagedImportReport;
+  /** The destination's asset package (C-15): bytes, files per family, what was dropped or trimmed. */
+  package?: AssetPackageReport;
 }
 
 /** A crate the build was refused for (`dependency-not-allowed`): its name, when one is named, and why. */

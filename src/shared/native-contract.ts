@@ -90,8 +90,77 @@ export const NativeOp = {
    * `renderSettingsApi` answers `unknown-op` (made before the verb) or `unavailable`.
    */
   RenderSettings: "renderSettings",
+  /**
+   * Run one bake the game registered (`{kind, name}`: a navmesh, an impostor atlas) and write its
+   * output into the run's `state/bakes/<kind>/<name>`, answering its size and digest. Dev flavour
+   * only: a build step sends it to a headless session after the dev build, never an agent; an
+   * export answers `unknown-op`, a game that serves no bakes yet `unavailable`.
+   */
+  BakeAssets: "bakeAssets",
+  /**
+   * Swap named asset files in a running game (`{files: [{path, digest}]}`) without a rebuild: each
+   * is re-read on the next frame. Dev flavour only (Live and hidden runs); an export answers
+   * `unknown-op`, a game that does not serve it yet `unavailable`, one mid-reload `busy`.
+   */
+  ReloadAssets: "reloadAssets",
 } as const;
 export type NativeOp = (typeof NativeOp)[keyof typeof NativeOp];
+
+/** What a `bakeAssets` bakes: the game's registered bake of that kind. Wire values: never rename one. */
+export const BakeKind = {
+  /** A navmesh (`game.nav_bake`), loaded with `NavMesh::from_bytes`. */
+  Nav: "nav",
+  /** An impostor atlas of a model that opted in. */
+  Impostor: "impostor",
+} as const;
+export type BakeKind = (typeof BakeKind)[keyof typeof BakeKind];
+
+/** The most bytes one bake's output may hold; a reply declaring more is refused before any read. */
+export const NATIVE_BAKE_MAX_BYTES = 256 * 1024 * 1024;
+/** The most files one `reloadAssets` names. */
+export const NATIVE_RELOAD_FILES_MAX = 256;
+
+/** A bake's name is one path segment: lowercase letters, digits, `-` and `_`, at most 64, never a dot. */
+const BAKE_NAME = /^[a-z0-9][a-z0-9_-]{0,63}$/;
+
+/** Whether `value` is a bake name: it names a file in `state/bakes/<kind>/` and can never climb out. */
+export function isBakeName(value: unknown): value is string {
+  return typeof value === "string" && BAKE_NAME.test(value);
+}
+
+/** Why `reloadAssets` refused one file (its answer's `refused[].code`). Wire values: never rename one. */
+export const ReloadRefusal = {
+  /** The path breaks the asset-path rule: absolute, climbing, a link out of `assets/`. */
+  UnsafePath: "unsafe-path",
+  /** The bytes the game's source serves now do not have the digest the host named. */
+  DigestMismatch: "digest-mismatch",
+  /** Nothing is there. */
+  Missing: "missing",
+} as const;
+export type ReloadRefusal = (typeof ReloadRefusal)[keyof typeof ReloadRefusal];
+
+/** One file a `reloadAssets` names: its asset path and the FNV-1a 64 digest of its new bytes. */
+export interface NativeReloadFile {
+  path: string;
+  digest: string;
+}
+
+/** What `reloadAssets` answers: the paths swapped, the ones refused and the reloads still in flight. */
+export interface NativeReloadAnswer {
+  reloaded: string[];
+  refused: Array<{ path: string; code: ReloadRefusal }>;
+  /** Reloads not finished yet; a settled capture waits for 0. */
+  pending: number;
+}
+
+/** What `bakeAssets` answers: the bake it ran, and the size and digest of the file it wrote. */
+export interface NativeBakeReply {
+  kind: BakeKind;
+  name: string;
+  bytes: number;
+  /** FNV-1a 64 of the file's bytes, 16 lowercase hex; the host recomputes it before reading further. */
+  digest: string;
+}
 
 /** The events the game sends on its own (`{event, …}`). Wire values. */
 export const NativeEvent = {
@@ -388,6 +457,8 @@ export const NativeOpError = {
   Unavailable: RenderSettingsRefusal.Unavailable,
   /** An argument member of the wrong type (genex-studio's `VerbRefusal::BAD_ARGUMENT`). */
   BadArgument: "bad-argument",
+  /** The game is still applying an earlier `reloadAssets`: ask again once it settles. */
+  Busy: "busy",
 } as const;
 export type NativeOpError = (typeof NativeOpError)[keyof typeof NativeOpError];
 
@@ -1194,6 +1265,9 @@ export interface NativeOpArgs {
   [NativeOp.Release]: { slot: number; generation: number };
   /** No `set`: read the settings; with one, change what it names first. */
   [NativeOp.RenderSettings]: { set?: RenderSettingsChange };
+  [NativeOp.BakeAssets]: { kind: BakeKind; name: string };
+  /** At most `NATIVE_RELOAD_FILES_MAX` files. */
+  [NativeOp.ReloadAssets]: { files: NativeReloadFile[] };
 }
 
 /**
@@ -1224,6 +1298,8 @@ export interface NativeOpResults {
   [NativeOp.Surface]: { generation: number; width: number; height: number; slots: number };
   [NativeOp.Release]: Record<string, never>;
   [NativeOp.RenderSettings]: RenderSettingsAnswer;
+  [NativeOp.BakeAssets]: NativeBakeReply;
+  [NativeOp.ReloadAssets]: NativeReloadAnswer;
 }
 
 // Every op has a result shape: an op added without one fails here.
@@ -1589,6 +1665,34 @@ function isRenderSettingsResult(value: unknown): value is NativeOpResults[typeof
   return isRenderSettingsAnswer(value);
 }
 
+const BAKE_KINDS: ReadonlySet<string> = new Set<BakeKind>(Object.values(BakeKind));
+const RELOAD_REFUSALS: ReadonlySet<string> = new Set<ReloadRefusal>(Object.values(ReloadRefusal));
+function isBakeAssetsResult(value: unknown): value is NativeOpResults[typeof NativeOp.BakeAssets] {
+  return (
+    isRecord(value) &&
+    typeof value.kind === "string" &&
+    BAKE_KINDS.has(value.kind) &&
+    isBakeName(value.name) &&
+    isCount(value.bytes) &&
+    value.bytes <= NATIVE_BAKE_MAX_BYTES &&
+    typeof value.digest === "string" &&
+    DIGEST.test(value.digest)
+  );
+}
+const isReloadRefused = (value: unknown): boolean =>
+  isRecord(value) && isText(value.path) && typeof value.code === "string" && RELOAD_REFUSALS.has(value.code);
+function isReloadAssetsResult(value: unknown): value is NativeOpResults[typeof NativeOp.ReloadAssets] {
+  return (
+    isRecord(value) &&
+    isNames(value.reloaded) &&
+    value.reloaded.length <= NATIVE_RELOAD_FILES_MAX &&
+    Array.isArray(value.refused) &&
+    value.refused.length <= NATIVE_RELOAD_FILES_MAX &&
+    value.refused.every(isReloadRefused) &&
+    isCount(value.pending)
+  );
+}
+
 /** One validator per op. */
 const RESULT_CHECKS: { readonly [K in keyof NativeOpResults]: (value: unknown) => value is NativeOpResults[K] } = {
   [NativeOp.Seed]: isSeedResult,
@@ -1612,6 +1716,8 @@ const RESULT_CHECKS: { readonly [K in keyof NativeOpResults]: (value: unknown) =
   [NativeOp.Surface]: isSurfaceResult,
   [NativeOp.Release]: isReleaseResult,
   [NativeOp.RenderSettings]: isRenderSettingsResult,
+  [NativeOp.BakeAssets]: isBakeAssetsResult,
+  [NativeOp.ReloadAssets]: isReloadAssetsResult,
 };
 
 /** What protocol 2 adds to an op's check; ops absent here are checked as in protocol 1. */

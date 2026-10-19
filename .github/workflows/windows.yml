@@ -59,6 +59,8 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
+      - name: Fetch the importer's pinned Basis build
+        run: node scripts/toolchains/importer-tools.ts fetch
       - if: ${{ !inputs.files }}
         run: npm run typecheck
       - if: ${{ !inputs.files }}

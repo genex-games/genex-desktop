@@ -1,0 +1,334 @@
+{
+  "about": "Cell pack format v1 (STR-24), the contract between genex-stream's reader and writer (crates/genex-stream/src/pack.rs, held by crates/genex-stream/tests/pack.rs) and the host's placement compiler (C-28), which must write these bytes exactly. A pack is a folder under assets/: `world` is the exact text of its world.json, and each `cells` row is one cells/<x>_<z>.cell file, its bytes as hex and what they hold as `content`. A cell body is postcard 1.x wire format: unsigned integers as LEB128 varints, signed as zigzag varints, f32 as 4 bytes little-endian, strings as a varint byte length and UTF-8, sequences as a varint count and the items, options as 0 or 1 and the value, a collider shape as its varint index in `colliderShapes` and its fields. Field order: version, cell x, cell z, terrain, nav, things, colliders, models, groups, far. A transform is translation xyz, rotation xyzw, scale xyz. world.json is compact JSON with its keys in the order shown; cells are listed ascending by x, then z; a listed cell's `fnv` is the FNV-1a 64 of its body. Paths are assets/-relative and must pass genex-core's is_safe_asset_path. Refusals are the codes below.",
+  "version": 1,
+  "codes": [
+    "stream-pack-invalid",
+    "stream-pack-digest"
+  ],
+  "caps": {
+    "worldBytesMax": 8388608,
+    "cellBytesMax": 16777216,
+    "cellsMax": 65536,
+    "thingsMax": 4096,
+    "collidersMax": 4096,
+    "modelsMax": 1024,
+    "groupsMax": 256,
+    "instancesMax": 65536,
+    "pathBytesMax": 256,
+    "dataBytesMax": 4096
+  },
+  "terrainSamples": [
+    65,
+    129,
+    257,
+    513
+  ],
+  "colliderShapes": [
+    "cuboid",
+    "ball",
+    "capsule",
+    "cylinder",
+    "heightfield"
+  ],
+  "navSources": {
+    "colliders": 1,
+    "terrain": 2
+  },
+  "world": "{\"format\":\"genex-cell-pack\",\"version\":1,\"cellSize\":64,\"min\":{\"x\":-1,\"z\":-1},\"max\":{\"x\":1,\"z\":1},\"cells\":[{\"x\":-1,\"z\":0,\"bytes\":604,\"fnv\":\"6c470728fb047d92\"},{\"x\":0,\"z\":0,\"bytes\":10,\"fnv\":\"512de6c89da6cd44\"}]}",
+  "cells": [
+    {
+      "file": "cells/-1_0.cell",
+      "hex": "0101000116776f726c642f7465727261696e2f2d315f302e72313641030202000022c20000a03f00004041000000009a99193f00000000cdcc4c3f0000803f0000803f0000803f1a7b226c6f6f74223a226368657374222c22676f6c64223a31327d07000020c100000000000073420000000000000000000000000000803f0000803f0000803f0000803f046e756c6c05000000803f0000003f00000040000000c20000003f000000420000000000000000000000000000803f0000803f0000803f0000803f010000403f000048c20000403f000000410000000000000000000000000000803f0000803f0000803f0000803f026666663fcdcccc3e0000a0c16666a63f000020420000000000000000000000000000803f0000803f0000803f0000803f030000c03f0000803e0000a0c00000c03f0000a0400000000000000000000000000000803f0000803f0000803f0000803f0400004141000080c200000000000000000000000000000000000000000000803f0000803f0000803f0000803f01106d6f64656c732f686f7573652e676c62000000c20000000000000042000000009a99193f00000000cdcc4c3f000000400000004000000040010f6d6f64656c732f726f636b2e676c6203000070c200000000000040400000000000000000000000000000803f0000803f0000803f0000803f000048c10000000000004842000000000000803f00000000000000000000803f0000803f0000803f000080bf0000000000007c420000000000000000000000000000803f0000003f0000003f0000003f01146d6f64656c732f686c6f642f2d315f302e676c62",
+      "content": {
+        "cell": {
+          "x": -1,
+          "z": 0
+        },
+        "terrain": {
+          "path": "world/terrain/-1_0.r16",
+          "samples": 65
+        },
+        "nav": 3,
+        "things": [
+          {
+            "kind": 2,
+            "transform": {
+              "translation": [
+                -40.5,
+                1.25,
+                12
+              ],
+              "rotation": [
+                0,
+                0.6,
+                0,
+                0.8
+              ],
+              "scale": [
+                1,
+                1,
+                1
+              ]
+            },
+            "data": "{\"loot\":\"chest\",\"gold\":12}"
+          },
+          {
+            "kind": 7,
+            "transform": {
+              "translation": [
+                -10,
+                0,
+                60.75
+              ],
+              "rotation": [
+                0,
+                0,
+                0,
+                1
+              ],
+              "scale": [
+                1,
+                1,
+                1
+              ]
+            },
+            "data": "null"
+          }
+        ],
+        "colliders": [
+          {
+            "shape": {
+              "kind": "cuboid",
+              "half": [
+                1,
+                0.5,
+                2
+              ]
+            },
+            "transform": {
+              "translation": [
+                -32,
+                0.5,
+                32
+              ],
+              "rotation": [
+                0,
+                0,
+                0,
+                1
+              ],
+              "scale": [
+                1,
+                1,
+                1
+              ]
+            }
+          },
+          {
+            "shape": {
+              "kind": "ball",
+              "radius": 0.75
+            },
+            "transform": {
+              "translation": [
+                -50,
+                0.75,
+                8
+              ],
+              "rotation": [
+                0,
+                0,
+                0,
+                1
+              ],
+              "scale": [
+                1,
+                1,
+                1
+              ]
+            }
+          },
+          {
+            "shape": {
+              "kind": "capsule",
+              "halfHeight": 0.9,
+              "radius": 0.4
+            },
+            "transform": {
+              "translation": [
+                -20,
+                1.3,
+                40
+              ],
+              "rotation": [
+                0,
+                0,
+                0,
+                1
+              ],
+              "scale": [
+                1,
+                1,
+                1
+              ]
+            }
+          },
+          {
+            "shape": {
+              "kind": "cylinder",
+              "halfHeight": 1.5,
+              "radius": 0.25
+            },
+            "transform": {
+              "translation": [
+                -5,
+                1.5,
+                5
+              ],
+              "rotation": [
+                0,
+                0,
+                0,
+                1
+              ],
+              "scale": [
+                1,
+                1,
+                1
+              ]
+            }
+          },
+          {
+            "shape": {
+              "kind": "heightfield",
+              "x": 0,
+              "z": 0,
+              "columns": 65,
+              "rows": 65
+            },
+            "transform": {
+              "translation": [
+                -64,
+                0,
+                0
+              ],
+              "rotation": [
+                0,
+                0,
+                0,
+                1
+              ],
+              "scale": [
+                1,
+                1,
+                1
+              ]
+            }
+          }
+        ],
+        "models": [
+          {
+            "path": "models/house.glb",
+            "transform": {
+              "translation": [
+                -32,
+                0,
+                32
+              ],
+              "rotation": [
+                0,
+                0.6,
+                0,
+                0.8
+              ],
+              "scale": [
+                2,
+                2,
+                2
+              ]
+            }
+          }
+        ],
+        "groups": [
+          {
+            "model": "models/rock.glb",
+            "instances": [
+              {
+                "translation": [
+                  -60,
+                  0,
+                  3
+                ],
+                "rotation": [
+                  0,
+                  0,
+                  0,
+                  1
+                ],
+                "scale": [
+                  1,
+                  1,
+                  1
+                ]
+              },
+              {
+                "translation": [
+                  -12.5,
+                  0,
+                  50
+                ],
+                "rotation": [
+                  0,
+                  1,
+                  0,
+                  0
+                ],
+                "scale": [
+                  1,
+                  1,
+                  1
+                ]
+              },
+              {
+                "translation": [
+                  -1,
+                  0,
+                  63
+                ],
+                "rotation": [
+                  0,
+                  0,
+                  0,
+                  1
+                ],
+                "scale": [
+                  0.5,
+                  0.5,
+                  0.5
+                ]
+              }
+            ]
+          }
+        ],
+        "far": "models/hlod/-1_0.glb"
+      }
+    },
+    {
+      "file": "cells/0_0.cell",
+      "hex": "01000000000000000000",
+      "content": {
+        "cell": {
+          "x": 0,
+          "z": 0
+        },
+        "terrain": null,
+        "nav": 0,
+        "things": [],
+        "colliders": [],
+        "models": [],
+        "groups": [],
+        "far": null
+      }
+    }
+  ]
+}

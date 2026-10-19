@@ -660,6 +660,24 @@ A part also carries its material's `KHR_materials_*` extensions (`GlbPart::mater
 defaults and clamped into range, textures named by their image on TEXCOORD_0. They are read, not
 yet shaded: no GPU row carries them.
 
+### The mesh arena: adding and removing meshes
+
+The library (`MeshLibrary`) is the CPU mirror of the mesh arena (`src/mesh_arena.rs`): one GPU
+buffer each for vertices, slots, indices, skin rows and the three meshlet tables. The library
+places every mesh with a `RowAllocator` per stream (best fit over freed ranges, else the end; with
+no removals meshes pack back to back in add order). An add writes only that mesh's rows. A full
+stream is remade at twice its size, and the GPU copies the live prefix. No stream passes the
+128 MiB storage binding (`buffer-too-large`). On WebGPU and phones, a growth that would hold more
+than 256 MiB at once (old and new buffers) is refused `stream-arena-full`.
+
+`Renderer::remove_mesh` removes a mesh and its levels of detail. Their rows go to the next mesh
+that fits, and the slot is reused with its generation moved on. A skinned mesh and the built-in
+cube and sphere are refused `mesh-invalid`. A `MeshId` carries its slot's generation, so the old id
+names nothing: a draw of it is skipped and counted (`FrameStats::stale_rows`), never drawn as the
+slot's new mesh. An id the library never handed out still refuses the frame. `Resilient` logs each
+removal and drops an upload's data once all its meshes are removed. A replay then holds those
+slots empty and frees them at the removal, so every id comes back the same.
+
 ### Compressed material textures
 
 `src/texture_ktx2.rs` reads a KTX2 file in one fixed GPU format with the `ktx2` crate:
@@ -710,6 +728,34 @@ from the camera's distance to its sphere at a 1-pixel threshold of the output he
 (`mesh_lod::lod_keeps`, `gx_cull_lod_keeps`). Every view (cascades and spots too) draws an
 instance at the camera's level; an orthographic camera turns levels off. A clustered mesh (the
 meshlet path) and a transparent draw take the mesh itself. Level changes are not crossfaded yet.
+
+### `genex_textures` in glTF
+
+The Studio's import step writes the images a GLB carries inside it out as compressed textures, the
+way it encodes a loose PNG or JPEG. Each embedded PNG or JPEG a material samples is encoded once
+per usage its slots give it (base colour and emissive are `color`, a normal map is `normal`,
+metallic-roughness and occlusion are `data`), to one fixed-format KTX2 per texture family the
+game's destinations may pick, beside the GLB as `<stem>.<family>.ktx2`. The GLB names them in its
+`asset.extras`, never as an extension:
+
+```json
+"asset": { "version": "2.0", "extras": { "genex_textures": {
+  "v": 1,
+  "images": [ { "image": 0, "kind": "color", "stem": "crate.t0" },
+              { "image": 2, "kind": "data", "stem": "crate.t2" } ]
+} } }
+```
+
+`image` is a glTF image index and `kind` the usage it was encoded for, so its family files are
+sRGB for `color` and linear otherwise. `stem` is a file name in the GLB's own folder:
+`<model>.t<image>`, or `<model>.t<image>.<kind>` for an image sampled in more than one usage. Two
+images with the same bytes and usage share one stem. A block is malformed as a whole when its `v`
+is not 1, an `image` is out of range, a `kind` is unknown, a `stem` holds a `/`, a `\` or a NUL,
+starts with a dot or passes 200 characters, or an image and kind appear twice; a reader then takes
+the embedded images, as it does for a GLB without the block. The embedded image always stays in the
+GLB as that fallback. An image the step cannot encode (a file beside the GLB, a WebP, a KTX2, a
+damaged one) has no row. The runtime does not read the block yet: it still decodes every embedded
+image as RGBA8.
 
 ## Extension layouts
 

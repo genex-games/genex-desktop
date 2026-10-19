@@ -1,0 +1,337 @@
+{
+  "native/genex-rust/examples/pond/assets/pond.glb": {
+    "mesh": "d9261ca9bf94c876",
+    "skinned": "refused mesh-invalid",
+    "parts": "1e9beff77097d40a"
+  },
+  "native/genex-rust/examples/pond/assets/water.glb": {
+    "mesh": "9476cf23103dcdb1",
+    "skinned": "refused mesh-invalid",
+    "parts": "155e25ba0007b031"
+  },
+  "native/genex-rust/examples/showcase/game/assets/cylinder.glb": {
+    "mesh": "09c9eb81e3651f3a",
+    "skinned": "refused mesh-invalid",
+    "parts": "6bc3a54eea5f4cce"
+  },
+  "native/genex-rust/examples/showcase/game/assets/part-beam.glb": {
+    "mesh": "f889dfc27e5d740f",
+    "skinned": "refused mesh-invalid",
+    "parts": "fa94d97216910aed"
+  },
+  "native/genex-rust/examples/showcase/game/assets/part-bench.glb": {
+    "mesh": "a3b015d691576db1",
+    "skinned": "refused mesh-invalid",
+    "parts": "73ad9e5f5d141de7"
+  },
+  "native/genex-rust/examples/showcase/game/assets/part-chimney.glb": {
+    "mesh": "6b067d9bd97ec753",
+    "skinned": "refused mesh-invalid",
+    "parts": "2a9b0a1eafac2b01"
+  },
+  "native/genex-rust/examples/showcase/game/assets/part-deer-body.glb": {
+    "mesh": "65f74dabd91aea27",
+    "skinned": "refused mesh-invalid",
+    "parts": "6e7c4084f6913baf"
+  },
+  "native/genex-rust/examples/showcase/game/assets/part-deer-head.glb": {
+    "mesh": "8648d616fc006340",
+    "skinned": "refused mesh-invalid",
+    "parts": "fe34007615a1dfe8"
+  },
+  "native/genex-rust/examples/showcase/game/assets/part-door.glb": {
+    "mesh": "c1642c7e2e5cf9c9",
+    "skinned": "refused mesh-invalid",
+    "parts": "e53b0d124a6173fb"
+  },
+  "native/genex-rust/examples/showcase/game/assets/part-fisher-jacket.glb": {
+    "mesh": "8ddd808e30337736",
+    "skinned": "refused mesh-invalid",
+    "parts": "e463feeac5433f2a"
+  },
+  "native/genex-rust/examples/showcase/game/assets/part-fisher-trousers.glb": {
+    "mesh": "3dd5efdd99ca2af6",
+    "skinned": "refused mesh-invalid",
+    "parts": "619ab70ec61b70d6"
+  },
+  "native/genex-rust/examples/showcase/game/assets/part-floor.glb": {
+    "mesh": "a1b31b6d54789431",
+    "skinned": "refused mesh-invalid",
+    "parts": "cb8af2ce8ae943ef"
+  },
+  "native/genex-rust/examples/showcase/game/assets/part-footing.glb": {
+    "mesh": "69488889e0a364a1",
+    "skinned": "refused mesh-invalid",
+    "parts": "32875263c5295487"
+  },
+  "native/genex-rust/examples/showcase/game/assets/part-hull.glb": {
+    "mesh": "7e4598d23defb61a",
+    "skinned": "refused mesh-invalid",
+    "parts": "78fdffa6d2e3589c"
+  },
+  "native/genex-rust/examples/showcase/game/assets/part-log-firewood.glb": {
+    "mesh": "eed329ae805aa0a7",
+    "skinned": "refused mesh-invalid",
+    "parts": "d882d08b3aa3451d"
+  },
+  "native/genex-rust/examples/showcase/game/assets/part-log-jamb.glb": {
+    "mesh": "c821e8fb49eb4892",
+    "skinned": "refused mesh-invalid",
+    "parts": "d97553b2bd8d6660"
+  },
+  "native/genex-rust/examples/showcase/game/assets/part-log-long.glb": {
+    "mesh": "ebbf932411e9bb14",
+    "skinned": "refused mesh-invalid",
+    "parts": "db22bab915c39254"
+  },
+  "native/genex-rust/examples/showcase/game/assets/part-log-short.glb": {
+    "mesh": "7948731aa80468a2",
+    "skinned": "refused mesh-invalid",
+    "parts": "d69c52167b81f894"
+  },
+  "native/genex-rust/examples/showcase/game/assets/part-plank-0.glb": {
+    "mesh": "2253ebcf29a7b39f",
+    "skinned": "refused mesh-invalid",
+    "parts": "0ab3634ff94e1ad1"
+  },
+  "native/genex-rust/examples/showcase/game/assets/part-plank-1.glb": {
+    "mesh": "960ae8f4dfa3a10b",
+    "skinned": "refused mesh-invalid",
+    "parts": "6882ae5967003d01"
+  },
+  "native/genex-rust/examples/showcase/game/assets/part-plank-2.glb": {
+    "mesh": "e28267313a309343",
+    "skinned": "refused mesh-invalid",
+    "parts": "4247cb104a8214d5"
+  },
+  "native/genex-rust/examples/showcase/game/assets/part-porch.glb": {
+    "mesh": "6118194038e5190d",
+    "skinned": "refused mesh-invalid",
+    "parts": "3f7f835566bedba3"
+  },
+  "native/genex-rust/examples/showcase/game/assets/part-post.glb": {
+    "mesh": "11c264987641a702",
+    "skinned": "refused mesh-invalid",
+    "parts": "353910b8bb036774"
+  },
+  "native/genex-rust/examples/showcase/game/assets/part-roof.glb": {
+    "mesh": "189660d64f4272d9",
+    "skinned": "refused mesh-invalid",
+    "parts": "b784512fae5d9d5f"
+  },
+  "native/genex-rust/examples/showcase/game/assets/part-step.glb": {
+    "mesh": "65fe2842ca3cf0f5",
+    "skinned": "refused mesh-invalid",
+    "parts": "e980e37c4e70b947"
+  },
+  "native/genex-rust/examples/showcase/game/assets/rock-0.glb": {
+    "mesh": "431b5b296855c686",
+    "skinned": "refused mesh-invalid",
+    "parts": "c81350f6ff260598"
+  },
+  "native/genex-rust/examples/showcase/game/assets/rock-1.glb": {
+    "mesh": "5309b943d464842f",
+    "skinned": "refused mesh-invalid",
+    "parts": "efcf22ac46f3c0cb"
+  },
+  "native/genex-rust/examples/showcase/game/assets/rock-2.glb": {
+    "mesh": "a46e7bbffae17886",
+    "skinned": "refused mesh-invalid",
+    "parts": "ce5976d4d29d4d34"
+  },
+  "native/genex-rust/examples/showcase/game/assets/sphere.glb": {
+    "mesh": "8e7f408f1e388595",
+    "skinned": "refused mesh-invalid",
+    "parts": "a9d8ae69967a2ddf"
+  },
+  "native/genex-rust/examples/showcase/game/assets/tree-broadleaf-0-lod0-foliage.glb": {
+    "mesh": "dd8bc0546f490036",
+    "skinned": "refused mesh-invalid",
+    "parts": "189ed41d15cbd60a"
+  },
+  "native/genex-rust/examples/showcase/game/assets/tree-broadleaf-0-lod0-wood.glb": {
+    "mesh": "69415cafc8c02835",
+    "skinned": "refused mesh-invalid",
+    "parts": "11562e898e2b0cdf"
+  },
+  "native/genex-rust/examples/showcase/game/assets/tree-broadleaf-0-lod1-foliage.glb": {
+    "mesh": "d968e742a4323e07",
+    "skinned": "refused mesh-invalid",
+    "parts": "c6946b9383f6603d"
+  },
+  "native/genex-rust/examples/showcase/game/assets/tree-broadleaf-0-lod1-wood.glb": {
+    "mesh": "564ee9dbf91217af",
+    "skinned": "refused mesh-invalid",
+    "parts": "5ccc5261efbcf9a5"
+  },
+  "native/genex-rust/examples/showcase/game/assets/tree-broadleaf-0-lod2-foliage.glb": {
+    "mesh": "44d0b6410e0b3966",
+    "skinned": "refused mesh-invalid",
+    "parts": "89f131b99fdd9324"
+  },
+  "native/genex-rust/examples/showcase/game/assets/tree-broadleaf-0-lod2-wood.glb": {
+    "mesh": "4bba1addc3dd2f9c",
+    "skinned": "refused mesh-invalid",
+    "parts": "84c408f1d7947ab2"
+  },
+  "native/genex-rust/examples/showcase/game/assets/tree-broadleaf-1-lod0-foliage.glb": {
+    "mesh": "f8c84716d95ce430",
+    "skinned": "refused mesh-invalid",
+    "parts": "0fc253894dbd496c"
+  },
+  "native/genex-rust/examples/showcase/game/assets/tree-broadleaf-1-lod0-wood.glb": {
+    "mesh": "90f8897d294d3515",
+    "skinned": "refused mesh-invalid",
+    "parts": "24f583ad2a556343"
+  },
+  "native/genex-rust/examples/showcase/game/assets/tree-broadleaf-1-lod1-foliage.glb": {
+    "mesh": "5c91c49d7195ea1f",
+    "skinned": "refused mesh-invalid",
+    "parts": "b86de5ec7e915573"
+  },
+  "native/genex-rust/examples/showcase/game/assets/tree-broadleaf-1-lod1-wood.glb": {
+    "mesh": "5751acf7c7070493",
+    "skinned": "refused mesh-invalid",
+    "parts": "6b236417ae717bcb"
+  },
+  "native/genex-rust/examples/showcase/game/assets/tree-broadleaf-1-lod2-foliage.glb": {
+    "mesh": "6ea0dc8fe2433347",
+    "skinned": "refused mesh-invalid",
+    "parts": "30dcd732c3eeaa61"
+  },
+  "native/genex-rust/examples/showcase/game/assets/tree-broadleaf-1-lod2-wood.glb": {
+    "mesh": "f4369789cd18b84e",
+    "skinned": "refused mesh-invalid",
+    "parts": "7aeb6df684912564"
+  },
+  "native/genex-rust/examples/showcase/game/assets/tree-broadleaf-2-lod0-foliage.glb": {
+    "mesh": "6efbf81dc34d3168",
+    "skinned": "refused mesh-invalid",
+    "parts": "39186ea9c64a55ba"
+  },
+  "native/genex-rust/examples/showcase/game/assets/tree-broadleaf-2-lod0-wood.glb": {
+    "mesh": "681a536c16680a99",
+    "skinned": "refused mesh-invalid",
+    "parts": "7fba622774ff60ad"
+  },
+  "native/genex-rust/examples/showcase/game/assets/tree-broadleaf-2-lod1-foliage.glb": {
+    "mesh": "b0be66373e648165",
+    "skinned": "refused mesh-invalid",
+    "parts": "8098a3fbf9c4fd1d"
+  },
+  "native/genex-rust/examples/showcase/game/assets/tree-broadleaf-2-lod1-wood.glb": {
+    "mesh": "86a6c97a42c7c0a0",
+    "skinned": "refused mesh-invalid",
+    "parts": "db960c93c89893da"
+  },
+  "native/genex-rust/examples/showcase/game/assets/tree-broadleaf-2-lod2-foliage.glb": {
+    "mesh": "b8418189f0a14575",
+    "skinned": "refused mesh-invalid",
+    "parts": "7e0aafdea0ef3d41"
+  },
+  "native/genex-rust/examples/showcase/game/assets/tree-broadleaf-2-lod2-wood.glb": {
+    "mesh": "f9ff4bd8419252ff",
+    "skinned": "refused mesh-invalid",
+    "parts": "0765b2521c97b875"
+  },
+  "native/genex-rust/examples/showcase/game/assets/tree-pine-0-lod0-foliage.glb": {
+    "mesh": "61d9961eb8898fff",
+    "skinned": "refused mesh-invalid",
+    "parts": "4e678d3f8d7cd5f7"
+  },
+  "native/genex-rust/examples/showcase/game/assets/tree-pine-0-lod0-wood.glb": {
+    "mesh": "c1e1488b8ada5af7",
+    "skinned": "refused mesh-invalid",
+    "parts": "92063ee00344fd1d"
+  },
+  "native/genex-rust/examples/showcase/game/assets/tree-pine-0-lod1-foliage.glb": {
+    "mesh": "96521b05ae84e736",
+    "skinned": "refused mesh-invalid",
+    "parts": "a6baa9db8819fda0"
+  },
+  "native/genex-rust/examples/showcase/game/assets/tree-pine-0-lod1-wood.glb": {
+    "mesh": "4d2b826b39f34450",
+    "skinned": "refused mesh-invalid",
+    "parts": "563fc6f45c8e62fc"
+  },
+  "native/genex-rust/examples/showcase/game/assets/tree-pine-0-lod2-foliage.glb": {
+    "mesh": "1bc76f7e3db55e7f",
+    "skinned": "refused mesh-invalid",
+    "parts": "c8315bca8b445da3"
+  },
+  "native/genex-rust/examples/showcase/game/assets/tree-pine-0-lod2-wood.glb": {
+    "mesh": "63b5352f2117c951",
+    "skinned": "refused mesh-invalid",
+    "parts": "55886bd16badc857"
+  },
+  "native/genex-rust/examples/showcase/game/assets/tree-pine-1-lod0-foliage.glb": {
+    "mesh": "54942bd9048b2f63",
+    "skinned": "refused mesh-invalid",
+    "parts": "e6e14ff0e93bfce3"
+  },
+  "native/genex-rust/examples/showcase/game/assets/tree-pine-1-lod0-wood.glb": {
+    "mesh": "16deb65a1668f405",
+    "skinned": "refused mesh-invalid",
+    "parts": "996048b1ae3b305b"
+  },
+  "native/genex-rust/examples/showcase/game/assets/tree-pine-1-lod1-foliage.glb": {
+    "mesh": "90167d1b5fe70997",
+    "skinned": "refused mesh-invalid",
+    "parts": "62c63b6c060e546f"
+  },
+  "native/genex-rust/examples/showcase/game/assets/tree-pine-1-lod1-wood.glb": {
+    "mesh": "a27fa3e08dcedafb",
+    "skinned": "refused mesh-invalid",
+    "parts": "51ed60e76ee0f29b"
+  },
+  "native/genex-rust/examples/showcase/game/assets/tree-pine-1-lod2-foliage.glb": {
+    "mesh": "29330ec3b2d3349c",
+    "skinned": "refused mesh-invalid",
+    "parts": "11d13f777a72e6a8"
+  },
+  "native/genex-rust/examples/showcase/game/assets/tree-pine-1-lod2-wood.glb": {
+    "mesh": "a013c242f113aa11",
+    "skinned": "refused mesh-invalid",
+    "parts": "3f47250589b84e25"
+  },
+  "tests/fixtures/asset-import/lods-sphere.glb": {
+    "mesh": "5ab6927feb50cf37",
+    "skinned": "refused mesh-invalid",
+    "parts": "d9216d52f2b5b9d3"
+  },
+  "tests/fixtures/asset-import/quantized.glb": {
+    "mesh": "refused mesh-invalid",
+    "skinned": "refused mesh-invalid",
+    "parts": "refused mesh-invalid"
+  },
+  "tests/fixtures/asset-import/quantized.plain.glb": {
+    "mesh": "ca18e7477d180885",
+    "skinned": "refused mesh-invalid",
+    "parts": "907902a58585c571"
+  },
+  "tests/fixtures/asset-import/tangents-mirrored.glb": {
+    "mesh": "98bdff2ae36dfbd5",
+    "skinned": "refused mesh-invalid",
+    "parts": "8fe3f08dac6d1347"
+  },
+  "tests/fixtures/asset-import/tangents-mirrored.imported.glb": {
+    "mesh": "632d05bb7e1c2492",
+    "skinned": "refused mesh-invalid",
+    "parts": "e2baa86d421f46c6"
+  },
+  "tests/fixtures/asset-previews/animated.glb": {
+    "mesh": "3b61fbc8f94a9665",
+    "skinned": "refused mesh-invalid",
+    "parts": "48757cf37e233473"
+  },
+  "tests/fixtures/asset-previews/broken.glb": {
+    "mesh": "refused mesh-invalid",
+    "skinned": "refused mesh-invalid",
+    "parts": "refused mesh-invalid"
+  },
+  "tests/fixtures/asset-previews/compressed.glb": {
+    "mesh": "refused mesh-invalid",
+    "skinned": "refused mesh-invalid",
+    "parts": "refused mesh-invalid"
+  }
+}

@@ -155,7 +155,9 @@ describe("the Rust lane builds the template with the real toolchain (macOS)", ()
     const out = cold.output ?? "";
     assert.ok(await isArm64MachO(path.join(out, "game")));
     assert.ok(await isArm64MachO(path.join(out, "game-headless")));
-    assert.deepEqual(await readdir(path.join(out, "assets")), assets);
+    // Beside the staged assets, the package step (C-15) writes the asset index.
+    const packaged = [...assets, "genex-asset-index.json"].sort();
+    assert.deepEqual((await readdir(path.join(out, "assets"))).sort(), packaged);
     const receipt = cold.rust?.receipt;
     assert.equal(receipt?.compiler.release, "1.99.0");
     assert.equal(receipt?.compiler.host, "aarch64-apple-darwin");

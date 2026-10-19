@@ -93,6 +93,14 @@ import {
   wgslTomlFragment,
   withEngineRow,
 } from "../../src/substrate/genex-toml.ts";
+import { TextureUsage } from "../../src/substrate/asset-import/basis-encoder.ts";
+import {
+  GLB_TEXTURE_STEM_MAX_CHARS,
+  GLB_TEXTURES_EXTRAS_KEY,
+  GLB_TEXTURES_SCHEMA_VERSION,
+  GlbTextureImageKey,
+  GlbTexturesKey,
+} from "../../src/substrate/asset-import/glb-textures.ts";
 import { tmpDir } from "../helpers/tmp.ts";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
@@ -251,12 +259,62 @@ describe("genex.toml: the schema", () => {
 
   it("decodes string escapes and keeps the allowlist the runtime keeps", () => {
     assert.equal(accepted('[game]\ntitle = "Pond \\u00e9 \\"deep\\""\n').title, 'Pond é "deep"');
-    assert.deepEqual([...GAME_CRATE_ALLOWLIST].sort(), ["fastrand", "noise"]);
+    assert.deepEqual([...GAME_CRATE_ALLOWLIST].sort(), ["fastrand", "noise", "pathfinding"]);
+  });
+
+  it("admits pathfinding at a version requirement without a person's approval, like noise", () => {
+    const manifest = accepted(`${GAME}[crates]\npathfinding = "4.16"\n`);
+    assert.deepEqual(manifest.crates, [{ name: "pathfinding", version: "4.16" }]);
   });
 
   for (const [name, text, code] of hostile) {
     it(`refuses ${name} with ${code}`, () => {
       assert.equal(refusedCode(parseGenexToml(text)), code);
+    });
+  }
+});
+
+/** A `[[texture]]` row (C-10): a loose texture's usage, for what no material slot can tell. */
+const textureRow = (file: string, usage: string) => `[[texture]]\npath = "${file}"\nusage = "${usage}"\n`;
+
+describe("genex.toml: [[texture]] rows declare a loose texture's usage (C-10)", () => {
+  it("reads each row as a path under assets/ and a usage, in file order, and none when the file has none", () => {
+    const manifest = accepted(
+      `${GAME}${textureRow("textures/flow.png", "data")}${textureRow("ui/badge.webp", "color")}${textureRow("rock_n.jpg", "normal")}`,
+    );
+    assert.deepEqual(manifest.textures, [
+      { path: "textures/flow.png", usage: TextureUsage.Data },
+      { path: "ui/badge.webp", usage: TextureUsage.Color },
+      { path: "rock_n.jpg", usage: TextureUsage.Normal },
+    ]);
+    assert.deepEqual(accepted(GAME).textures, []);
+  });
+
+  const refused: Array<[string, string, string]> = [
+    ["a usage outside color, data and normal", textureRow("bark.png", "albedo"), GenexTomlCode.InvalidTextureUsage],
+    ["a usage in another case", textureRow("bark.png", "Normal"), GenexTomlCode.InvalidTextureUsage],
+    ["an empty usage", textureRow("bark.png", ""), GenexTomlCode.InvalidTextureUsage],
+    ["a path that climbs out of assets/", textureRow("../index.png", "color"), GenexTomlCode.InvalidTextureUsage],
+    ["a path climbing midway", textureRow("a/../../b.png", "color"), GenexTomlCode.InvalidTextureUsage],
+    ["an absolute path", textureRow("/etc/x.png", "color"), GenexTomlCode.InvalidTextureUsage],
+    ["a backslash path", textureRow("a\\\\b.png", "color"), GenexTomlCode.InvalidTextureUsage],
+    ["a path with an empty segment", textureRow("a//b.png", "color"), GenexTomlCode.InvalidTextureUsage],
+    ["a texture already encoded (KTX2)", textureRow("bark.ktx2", "color"), GenexTomlCode.InvalidTextureUsage],
+    ["a path that is not an image", textureRow("notes.txt", "data"), GenexTomlCode.InvalidTextureUsage],
+    [
+      "the same path twice, even with one usage",
+      `${textureRow("bark.png", "color")}${textureRow("bark.png", "color")}`,
+      GenexTomlCode.InvalidTextureUsage,
+    ],
+    ["a row without a usage", '[[texture]]\npath = "bark.png"\n', GenexTomlCode.Syntax],
+    ["a row without a path", '[[texture]]\nusage = "color"\n', GenexTomlCode.Syntax],
+    ["a usage of the wrong type", '[[texture]]\npath = "bark.png"\nusage = 1\n', GenexTomlCode.Syntax],
+    ["an unknown key in a row", `${textureRow("bark.png", "color")}srgb = true\n`, GenexTomlCode.Syntax],
+    ["[texture] as a single table", '[texture]\npath = "bark.png"\nusage = "color"\n', GenexTomlCode.Syntax],
+  ];
+  for (const [name, row, code] of refused) {
+    it(`refuses ${name} with ${code}`, () => {
+      assert.equal(refusedCode(parseGenexToml(`${GAME}${row}`)), code);
     });
   }
 });
@@ -631,6 +689,22 @@ describe("the genex_lods glTF extras schema is the renderer's", () => {
       extrasKeys: Object.values(LodExtrasKey),
       levelKeys: Object.values(LodLevelKey),
       faults: Object.values(LodFault),
+    });
+  });
+});
+
+describe("the genex_textures glTF extras schema is the importer's", () => {
+  it("names the key, version, members, kinds and stem cap glb-textures.ts writes", async () => {
+    const facade = JSON.parse(
+      await readFile(path.join(ROOT, "tests", "fixtures", "rust-facade-vocabulary.json"), "utf8"),
+    ) as { textures: Record<string, unknown> };
+    assert.deepEqual(facade.textures, {
+      extrasKey: GLB_TEXTURES_EXTRAS_KEY,
+      schemaVersion: GLB_TEXTURES_SCHEMA_VERSION,
+      extrasKeys: Object.values(GlbTexturesKey),
+      imageKeys: Object.values(GlbTextureImageKey),
+      kinds: Object.values(TextureUsage),
+      stemMaxChars: GLB_TEXTURE_STEM_MAX_CHARS,
     });
   });
 });

@@ -95,3 +95,39 @@ fn the_built_graph_has_one_glam() {
 fn package(line: &str) -> &str {
     line.split(" (").next().unwrap_or(line)
 }
+
+/// SF-1a: a game that parses a JSON level at reset (`gfx.assets().bytes`) and then draws from the
+/// tick rng has one checksum, pinned here, on every target that runs this file (aarch64, x86_64,
+/// wasm32), whichever shell's source served the bytes. The same game without the read differs, so
+/// the read reached the first seed.
+#[test]
+fn a_level_read_at_reset_has_one_pinned_checksum() {
+    use genex::prelude::*;
+    use genex::{AssetTable, Runtime};
+    const LEVEL: &[u8] = br#"{"enemies": 3, "spawn": [1.5, 0.0, -2.0]}"#;
+    const TABLE: AssetTable = &[("levels/one.json", LEVEL)];
+    #[derive(Default)]
+    struct World {
+        enemies: i64,
+    }
+    let game = |read: bool| {
+        let mut game = Game::new(World::default()).world_size(64, 64);
+        if read {
+            game.on_reset(|sim, _, _, gfx| {
+                let bytes = gfx.assets().bytes("levels/one.json").expect("the level reads at reset");
+                let level = bytes.json().expect("JSON");
+                sim.world.enemies = level["enemies"].as_i64().unwrap_or(-1);
+            });
+        }
+        game.on_update(|sim, ctx| sim.world.enemies += i64::from(ctx.rng.below(3)));
+        game.probe("enemies", |sim| json!(sim.world.enemies));
+        game
+    };
+    let checksum = |read: bool| {
+        let mut runtime = Runtime::with_assets(game(read), Box::new(TABLE)).expect("valid game");
+        runtime.step(1000.0);
+        runtime.checksum()
+    };
+    assert_eq!(checksum(true), "1e656e333231f976");
+    assert_ne!(checksum(true), checksum(false));
+}

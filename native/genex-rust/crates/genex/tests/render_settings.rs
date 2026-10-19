@@ -18,6 +18,8 @@ use genex_core::saves::Saves;
 use genex_render::device_class::APPLE_VENDOR_ID;
 
 const WORLD: (u32, u32) = (960, 540);
+/// Frames over the target that take dynamic resolution to its lowest step and past it.
+const DEMOTING_FRAMES: u64 = 2_000;
 
 fn class(wire: &str) -> DeviceClass {
     DeviceClass::from_wire(wire).expect("a known class")
@@ -532,6 +534,64 @@ fn a_phone_with_the_temporal_switches_on_draws_each_or_names_it_in_degraded() {
     }
 }
 
+/// GF round 2 (rust-eject's real fork, `render-presets`): right after the verb switched a phone
+/// to TAA, `volatile.render` still carried the last Live frame's findings (nothing deferred), so
+/// the check's wait for the change to land returned at once, its captures ran while Live still
+/// held the old MSAA pass, and the read after them found AO off. Until a Live frame has drawn a
+/// change (or held the last settings while it warms) the change is named deferred.
+#[test]
+fn a_change_no_live_frame_has_drawn_yet_is_named_deferred() {
+    let deferred = |control: &RenderControl| control.status().degraded.iter().any(|degrade| degrade.reason == genex::render::DegradeReason::PipelineChangeDeferred);
+    let mut phone = control(RenderConfig::new());
+    phone.apply(&RenderChange { device_class: Some(Some(class("mobile-low"))), ..RenderChange::default() });
+    phone.note_world_samples(genex_render::renderer::landed_samples(phone.live_asked().quality.anti_aliasing));
+    phone.note_frame_findings(Vec::new(), false);
+    assert!(!deferred(&phone), "the premise: Live drew mobile-low");
+    let change = RenderChange {
+        device_class: Some(Some(class("mobile-high"))),
+        features: [RenderFeature::Taa, RenderFeature::Ao].map(|feature| (feature, true)).into(),
+        ..RenderChange::default()
+    };
+    phone.apply(&change);
+    assert!(deferred(&phone), "no Live frame has drawn the change: {:?}", phone.status());
+    phone.note_world_samples(genex_render::renderer::landed_samples(phone.live_asked().quality.anti_aliasing));
+    phone.note_frame_findings(Vec::new(), false);
+    assert!(!deferred(&phone), "a Live frame drew it");
+}
+
+/// GF round 2 (rust-eject's real fork, `render-presets`, red in round 1, round 2 and pass 2):
+/// "mobile-high (temporal): ao was switched on, but the drawn frame has it off and degraded does
+/// not name it". The CPU row above draws no frame; a real run does, and when its frames are over
+/// the class's target dynamic resolution steps the scale down and then demotes the preset, which
+/// takes AO off. A switch the demotion turns off is named in `degraded` (`budget`, the switch as
+/// its subject), as the budget fit's own rungs are.
+#[test]
+fn a_switch_dynamic_resolution_demotes_off_is_named_in_degraded() {
+    let temporal = [RenderFeature::Taa, RenderFeature::Ao, RenderFeature::Exposure];
+    for wire in ["mobile-high", "mobile-mid", "mobile-low"] {
+        let mut phone = control(RenderConfig::new());
+        let change = RenderChange {
+            device_class: Some(Some(class(wire))),
+            preset: Some(Some(PresetChoice::Auto)),
+            features: temporal.iter().map(|feature| (*feature, true)).collect(),
+            ..RenderChange::default()
+        };
+        phone.apply(&change);
+        phone.note_world_samples(genex_render::renderer::landed_samples(phone.live_asked().quality.anti_aliasing));
+        let target = phone.gpu_target_ms();
+        for frame in 0..DEMOTING_FRAMES {
+            phone.observe(Some(1.0), Some(&[target * 3.0]), 16.0, std::time::Duration::from_millis(16 * frame));
+        }
+        let status = phone.status();
+        for feature in temporal {
+            let drawn = status.features.contains(&(feature, true));
+            let named = status.degraded.iter().any(|degrade| degrade.subject.as_deref() == Some(feature.wire()));
+            assert!(drawn || named, "{wire} (temporal, demoted): {} switched on is neither drawn nor degraded: {status:?}", feature.wire());
+        }
+    }
+}
+
+
 fn shadow_row(control: &RenderControl) -> ShadowRow {
     let shadows = control.live_frame().quality.shadows;
     (shadows.cascades, shadows.map_size, shadows.filter, shadows.format, shadows.far_cadence)
@@ -839,6 +899,32 @@ mod metal {
         let Some((pinned, live)) = cold_capture(Some(low)) else { return };
         assert_ne!(live, first, "the person's choice changes Live");
         assert_eq!(pinned, first, "but not the capture");
+    }
+
+    /// GF round 2 (rust-eject's real fork, `render-presets`, red since pass 2): "mobile-high
+    /// (temporal): ao was switched on, but the drawn frame has it off and degraded does not name
+    /// it". Live drew TAA with AO on one sample; the check's captures drew the pinned profile on
+    /// MSAA and noted their four samples as Live's world pass, so `volatile.render` (read after the
+    /// captures) reported Live as MSAA, which on a phone drops AO. A capture's samples are its own:
+    /// Live's status after one is what Live draws. Here Live draws the person's medium (MSAA) and
+    /// the reference capture TAA on one sample.
+    #[test]
+    #[ignore = "needs the host GPU: run with --ignored metal"]
+    fn metal_a_capture_on_other_samples_leaves_live_status_as_live_draws_it() {
+        let _gpu = gpu_rows();
+        let Some(mut presenter) = presenter([160, 90]) else { return };
+        let mut runtime = Runtime::new(scene_game()).expect("installs");
+        runtime.boot_render(presenter.gpu().device_facts().clone(), None);
+        runtime.render().borrow_mut().set_person(person_preset(QualityPreset::Medium));
+        presenter.draw_view(&mut runtime, View::Game).expect("a view").expect("a Live frame at medium");
+        assert_eq!(drawn_aa(&presenter), (false, 4), "the premise: Live draws medium's MSAA");
+        let live = runtime.render().borrow().status();
+        presenter.set_capturing(true);
+        presenter.draw_view(&mut runtime, View::Game).expect("a view").expect("a capture");
+        presenter.set_capturing(false);
+        assert_eq!(drawn_aa(&presenter), (true, 1), "the premise: the reference capture resolves TAA on one sample");
+        let after = runtime.render().borrow().status();
+        assert_eq!(after.features, live.features, "Live's status after a capture on other samples");
     }
 
     /// Whether `presenter`'s last frame resolved TAA, and its world pass's samples.

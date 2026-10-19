@@ -1,0 +1,24 @@
+[package]
+name = "genex-nav"
+description = "Navigation for genex games: Recast navmesh bakes, tiles, islands, agents, paths, avoidance, links, carving and queries."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+# Rapier 3D for the parts that need a physics world. The facade's own `physics` feature turns it on,
+# so a game built without physics links no Rapier through this crate either.
+[features]
+default = []
+physics = ["dep:rapier3d"]
+
+[dependencies]
+# `Map`/`Set`, `CellId` and `GameRng` live below the facade so this crate shares them with a game.
+genex-core = { workspace = true }
+glam = { workspace = true }
+rapier3d = { workspace = true, optional = true }

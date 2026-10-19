@@ -136,7 +136,7 @@ import { toolchain } from "../substrate/toolchain.ts";
 import { TurnFactory } from "../substrate/turns.ts";
 import type { EventData, EventEnvelope } from "../substrate/types.ts";
 import { AssetCheckpoints } from "./asset-checkpoints.ts";
-import { AssetService } from "./core/assets.ts";
+import { AssetService, cacheWarmer, hostDesktopTarget } from "./core/assets.ts";
 import { ChatPermissionService } from "./core/chat-permissions.ts";
 import { ConnectionService } from "./core/connections.ts";
 import { developmentStacksOpen } from "./core/stack-gate.ts";
@@ -241,6 +241,14 @@ import { studioRpc } from "./harness-rpc/studio.ts";
 import type { PlanReviewController } from "./plan-review.ts";
 import { PluginConsent } from "./plugin-consent.ts";
 import { assertOwnedProject } from "./project-policy.ts";
+import {
+  defaultImporterCommand,
+  type RustAssetImportDeps,
+  rustImportSandboxes,
+  rustStageImporter,
+} from "./rust-assets.ts";
+import { type AssetCache, cachedImporter, openAssetCache } from "./asset-cache.ts";
+import { IMPORTER_TOOLS_RESOURCES_FOLDER } from "../substrate/asset-import/decoders.ts";
 import { admittedBuildLock, type RustBuilds, rustBuildSandboxes } from "./rust-build.ts";
 import { webExportWarnings } from "./rust-build-web.ts";
 import { type MacNotice, writeNoticesFolder } from "../substrate/native-export.ts";
@@ -625,6 +633,8 @@ export class StudioCore {
   readonly #pluginTools: PluginToolService;
   readonly #conversation: ConversationService;
   readonly #assets: AssetService;
+  /** The import cache, opened on first use (`#assetCache()`). */
+  #assetCacheOpen: AssetCache | undefined;
   readonly #threads: GameThreadService;
   readonly #gameFiles: GameFileService;
   readonly #rewind: ChatRewindService;
@@ -739,7 +749,14 @@ export class StudioCore {
     this.#selfEditGate = new SelfEditGateService(this, this.#x);
     this.#pluginTools = new PluginToolService(this, this.#x);
     this.#conversation = new ConversationService(this, this.#x);
-    this.#assets = new AssetService(this, undefined, options.assetFolders?.now, this.#x.assetCalls);
+    this.#assets = new AssetService(this, undefined, options.assetFolders?.now, this.#x.assetCalls, {
+      // A delivery into a Rust game imports through the build lane's cache, keyed for this host's
+      // desktop build, so the next build finds the outputs ready (C-5).
+      imports: {
+        run: (gameRoot, files, signal) =>
+          cacheWarmer(this.#assetCache(), this.#assetImportDeps(), hostDesktopTarget()).run(gameRoot, files, signal),
+      },
+    });
     this.#threads = new GameThreadService(this);
     this.#gameFiles = new GameFileService(this);
     this.#rewind = new ChatRewindService(this, this.#x);
@@ -1247,6 +1264,23 @@ export class StudioCore {
     });
   }
 
+  /** The import cache (`asset-cache.ts`) builds and deliveries share; nothing is read until it is used. */
+  #assetCache(): AssetCache {
+    this.#assetCacheOpen ??= openAssetCache({ root: this.layout.assetCache });
+    return this.#assetCacheOpen;
+  }
+
+  /** What the Rust import step reaches: the profile's asset-jobs folder and a sandbox per job. */
+  #assetImportDeps(): RustAssetImportDeps {
+    return {
+      jobsRoot: this.layout.assetJobs,
+      sandboxFor: rustImportSandboxes({ enabled: this.options.sandbox ?? true, alongside: this.sandbox }),
+      secretPaths: this.#protectedPaths(),
+      denyWrite: [this.layout.toolchains, this.layout.nativeRuns],
+      importer: defaultImporterCommand(path.join(this.options.paths.resources, IMPORTER_TOOLS_RESOURCES_FOLDER)),
+    };
+  }
+
   /** The Rust lane, once `init` built it. */
   #rustLane(): RustBuilds {
     if (!this.#rustBuilds) throw new Error(MESSAGE.rustLaneNotStarted);
@@ -1295,6 +1329,10 @@ export class StudioCore {
       ejection: (project) => engineEjectionsFor(this).ejectedFrom(project),
       // Every destination's executable passes its policy and the transport scan before it is out/ (M3.5).
       admit: storeRustAdmit(this.layout.toolchains),
+      // The import step over each build's stage (C-2): sandboxed per-file jobs in the profile's
+      // asset-jobs folder, the importer reading its pinned tools from this build's resources (C-1),
+      // each file looked up in the content-addressed cache first (C-3), which deliveries warm (C-5).
+      importAssets: rustStageImporter(this.#assetImportDeps(), { importFile: cachedImporter(this.#assetCache()) }),
     });
   }
 
@@ -1562,6 +1600,13 @@ export class StudioCore {
       binding.threadId ?? this.mainThread,
     ).catch(() => {});
     this.emit(UiEvent.AssetDelivered, payload);
+    // A Rust game's delivered files import now, not at the next build (C-5); the inventory shows
+    // `pending` until they have. A build workspace's files are imported when they land.
+    if (workspace === "game" && stack === GameStack.RustWgpu)
+      void this.#assets.warmImports(
+        binding.project,
+        landed.map((item) => item.file),
+      );
   }
 
   /**
@@ -1831,6 +1876,8 @@ export class StudioCore {
     this.#planReviews?.stop();
     // No compiled build outlives the studio; they run in the sandbox disposed below.
     this.#gameBuilds.cancelAll();
+    // Nor a delivery's import (C-5): its job ends, so no importer outlives the core.
+    await this.#assets.stopImports();
     // A pause appended before `start()` may have planned a resume: it, and the hold on the Mac
     // awake that it asked for, end with the core either way.
     this.#autoResume.dispose();

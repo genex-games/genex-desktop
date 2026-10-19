@@ -96,3 +96,35 @@ impl Pcg32 {
         self.unit() < p
     }
 }
+
+/// What a deterministic query draws from: the reset's [`Pcg32`] or a tick's `ctx.rng` (the facade
+/// implements it for `CtxRng`). Engine crates take `&mut impl GameRng`, never a generator of their
+/// own, so every draw comes from the seeded stream.
+pub trait GameRng {
+    /// The next 32 random bits.
+    fn next_u32(&mut self) -> u32;
+    /// Uniform in `[0, bound)`; 0 when `bound` is 0.
+    fn below(&mut self, bound: u32) -> u32;
+    /// Uniform in `[0, 1)`.
+    fn unit(&mut self) -> f32;
+    /// Uniform in `[lo, hi)`.
+    fn range_f32(&mut self, lo: f32, hi: f32) -> f32;
+}
+
+impl GameRng for Pcg32 {
+    fn next_u32(&mut self) -> u32 {
+        Pcg32::next_u32(self)
+    }
+
+    fn below(&mut self, bound: u32) -> u32 {
+        Pcg32::below(self, bound)
+    }
+
+    fn unit(&mut self) -> f32 {
+        Pcg32::unit(self)
+    }
+
+    fn range_f32(&mut self, lo: f32, hi: f32) -> f32 {
+        Pcg32::range_f32(self, lo, hi)
+    }
+}

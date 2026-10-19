@@ -174,7 +174,8 @@ export function allowedFile(file: string, spec: ReviewSpec, ownsMain: boolean): 
   const main = spec.main ?? DEFAULT_MAIN;
   const studio = spec.studio ?? DEFAULT_STUDIO;
   if (sharedFile(file, spec.id)) return true;
-  // A Rust game's ejected engine is the entry owner's: no seam, wiring block or facet name reaches it.
+  // A Rust game's ejected engine and API reference are the entry owner's: no seam, wiring block or
+  // facet name reaches them.
   const engine = engineOwner(file, template, ownsMain);
   if (engine !== null) return engine;
   // The contract's declaration and the compiler config belong to whoever owns the entry: a
@@ -201,9 +202,20 @@ function isEngineFile(file: string): boolean {
   return file === "engine" || file.startsWith("engine/");
 }
 
-/** Whether a facet may write `file` of a template's ejected engine (only the entry owner may); null for any other file. */
+/**
+ * A Rust game's read-only API reference: `docs/GENEX_API.md` and every topic page under
+ * `docs/api/`. The host's hook holds the same rule (`substrate/ownership.ts` `isApiReference`).
+ */
+function isApiReference(file: string): boolean {
+  return file === "docs/GENEX_API.md" || file === "docs/api" || file.startsWith("docs/api/");
+}
+
+/**
+ * Whether a facet may write `file` of a template's ejected engine or API reference (only the entry
+ * owner may); null for any other file.
+ */
 function engineOwner(file: string, template: boolean, ownsMain: boolean): boolean | null {
-  return template && isEngineFile(file) ? ownsMain : null;
+  return template && (isEngineFile(file) || isApiReference(file)) ? ownsMain : null;
 }
 
 /** Files every facet may touch: its notes, the game's notes, the studio's scratch and the assets. */

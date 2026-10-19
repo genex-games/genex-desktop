@@ -5,14 +5,14 @@
 //! it, and a studio run's first frame at `high` makes about sixty. Made one after another on the
 //! frame thread they held a boxed game's `ready` past its 20 s deadline. The driver compiles
 //! concurrently (16 MSL compiles in the box: 3.7 s one after another, 0.55 s side by side on an M4
-//! Max), so every built-in pipeline is handed to a small pool of compile threads and the renderer
-//! keeps a [`Compiled`] handle. The first use waits for it; by then the frame has handed out every
+//! Max), so every built-in pipeline is handed to the job pool's threads ([`crate::jobs`], on its
+//! [`COMPILE_PRIORITY`] lane) and the renderer keeps a [`Compiled`] handle. The first use waits for it; by then the frame has handed out every
 //! pipeline it needs, so they compile side by side. The pipelines and their order of use are
 //! unchanged, so every picture is the same.
 //!
 //! On the web (no threads; the browser compiles off its own main thread) a pipeline is made where
 //! it is asked for. A game's own Level-2 WGSL (materials and post passes) compiles on the same pool
-//! through [`render_pipeline_checked`]: the compile thread pushes its own error scopes (wgpu's are
+//! through [`render_pipeline_checked`]: the job thread pushes its own error scopes (wgpu's are
 //! per thread), so a pipeline the backend refuses after naga accepted the source comes back as an
 //! error the admission turns into a typed refusal (renderer pass 2, RC-04), never the device's
 //! uncaptured-error panic raised again at the first draw. Level-3 passes compile where they are
@@ -27,36 +27,36 @@
 
 use std::ops::Deref;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Mutex};
 
 use genex_core::saves::Saves;
 use wgpu::{ComputePipeline, Device, PipelineCache, RenderPipeline};
 
-/// Compile threads at most: the driver's own compiler service does not scale past about this.
-#[cfg(not(target_arch = "wasm32"))]
-const MAX_COMPILE_THREADS: usize = 8;
-/// Compile threads at least, when the host's parallelism is unknown or 1.
-#[cfg(not(target_arch = "wasm32"))]
-const MIN_COMPILE_THREADS: usize = 2;
+use crate::jobs::{Job, Pool, Priority};
 
-/// A pipeline (or any value) being made on a compile thread: [`Compiled::get`] (or a deref) waits
+/// The lane pipeline compiles take on the job pool (game systems STR-4): a frame that needs a
+/// pipeline waits for it, so it goes ahead of prefetched streaming work and behind only what the
+/// simulation waits for.
+pub const COMPILE_PRIORITY: Priority = Priority::Visible;
+
+/// A pipeline (or any value) being made on a job thread: [`Compiled::get`] (or a deref) waits
 /// for it. A job that panicked panics again where its value is first used, with its message, as
 /// the call it replaced would have panicked there.
 pub struct Compiled<T> {
-    slot: Arc<OnceLock<Result<T, String>>>,
+    job: Arc<Job<T>>,
 }
 
 impl<T> Clone for Compiled<T> {
     fn clone(&self) -> Self {
-        Compiled { slot: Arc::clone(&self.slot) }
+        Compiled { job: Arc::clone(&self.job) }
     }
 }
 
 impl<T: std::fmt::Debug> std::fmt::Debug for Compiled<T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self.slot.get() {
+        match self.job.try_get() {
             Some(Ok(value)) => f.debug_tuple("Compiled").field(value).finish(),
-            Some(Err(message)) => f.debug_tuple("Compiled").field(&format_args!("panicked: {message}")).finish(),
+            Some(Err(error)) => f.debug_tuple("Compiled").field(&format_args!("panicked: {error}")).finish(),
             None => f.write_str("Compiled(<compiling>)"),
         }
     }
@@ -65,48 +65,44 @@ impl<T: std::fmt::Debug> std::fmt::Debug for Compiled<T> {
 impl<T: Send + Sync + 'static> Compiled<T> {
     /// A value that is already made.
     pub fn ready(value: T) -> Self {
-        let slot = OnceLock::new();
-        let _ = slot.set(Ok(value));
-        Compiled { slot: Arc::new(slot) }
+        Compiled { job: Arc::new(Job::ready(value)) }
     }
 
-    /// `job` run on a compile thread (inline on the web, or when no compile thread can start).
+    /// `job` run on the job pool's [`COMPILE_PRIORITY`] lane (inline on the web, or when no job
+    /// thread can start).
     pub fn spawn(job: impl FnOnce() -> T + Send + 'static) -> Self {
-        let slot = Arc::new(OnceLock::new());
-        let filled = Arc::clone(&slot);
         PENDING_JOBS.fetch_add(1, Ordering::AcqRel);
         SUBMITTED_JOBS.fetch_add(1, Ordering::AcqRel);
-        let run = move || {
-            let made = std::panic::catch_unwind(std::panic::AssertUnwindSafe(job)).map_err(|panic| panic_message(panic.as_ref()));
+        let counted = move || {
+            let made = std::panic::catch_unwind(std::panic::AssertUnwindSafe(job));
             // Counted before the value is out, so a reader that has the value sees it counted.
             FINISHED_JOBS.fetch_add(1, Ordering::AcqRel);
-            let _ = filled.set(made);
+            // The pool catches it again and keeps its message.
+            made.unwrap_or_else(|panic| std::panic::resume_unwind(panic))
+        };
+        let after = || {
             // The last job of a burst (a launch's, a preset change's): keep what it compiled.
             if PENDING_JOBS.fetch_sub(1, Ordering::AcqRel) == 1 {
                 save_pipeline_caches();
             }
         };
-        submit(Box::new(run));
-        Compiled { slot }
+        Compiled { job: Arc::new(Pool::global().spawn_then(COMPILE_PRIORITY, counted, after)) }
     }
 }
 
 impl<T> Compiled<T> {
-    /// The value, waiting until its compile thread has made it.
+    /// The value, waiting until its job thread has made it.
     pub fn get(&self) -> &T {
         #[cfg(not(target_arch = "wasm32"))]
-        if self.slot.get().is_none() && HOLDS.0.lock().map(|h| *h > 0).unwrap_or(false) && std::env::var("GENEX_DEBUG_WAITS").is_ok() {
+        if !self.job.is_ready() && Pool::global().is_held() && std::env::var("GENEX_DEBUG_WAITS").is_ok() {
             eprintln!("DEBUGWAIT {}", std::backtrace::Backtrace::force_capture());
         }
-        match self.slot.wait() {
-            Ok(value) => value,
-            Err(message) => panic!("{message}"),
-        }
+        self.job.get()
     }
 
     /// Whether the value is made (diagnostics and tests; never waits).
     pub fn is_ready(&self) -> bool {
-        self.slot.get().is_some()
+        self.job.is_ready()
     }
 }
 
@@ -118,113 +114,17 @@ impl<T> Deref for Compiled<T> {
     }
 }
 
-/// What a panic carried, as the message it is raised again with.
-fn panic_message(panic: &(dyn std::any::Any + Send)) -> String {
-    if let Some(text) = panic.downcast_ref::<&str>() {
-        return (*text).to_owned();
-    }
-    panic.downcast_ref::<String>().cloned().unwrap_or_else(|| "a pipeline compile panicked".to_owned())
-}
-
-type Job = Box<dyn FnOnce() + Send>;
-
-/// Run `job` on the compile pool, or here when there is none.
-#[cfg(not(target_arch = "wasm32"))]
-fn submit(job: Job) {
-    match pool() {
-        Some(sender) => {
-            if let Err(returned) = sender.send(job) {
-                (returned.0)();
-            }
-        }
-        None => job(),
-    }
-}
-
-#[cfg(target_arch = "wasm32")]
-fn submit(job: Job) {
-    job();
-}
-
-/// The compile pool's queue: its threads start on first use and live as long as the process.
-/// None when not one thread could start (every job then runs where it is submitted).
-#[cfg(not(target_arch = "wasm32"))]
-fn pool() -> Option<&'static std::sync::mpsc::Sender<Job>> {
-    static POOL: OnceLock<Option<std::sync::mpsc::Sender<Job>>> = OnceLock::new();
-    POOL.get_or_init(start_pool).as_ref()
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-fn start_pool() -> Option<std::sync::mpsc::Sender<Job>> {
-    use std::sync::Mutex;
-    let (sender, receiver) = std::sync::mpsc::channel::<Job>();
-    let receiver = Arc::new(Mutex::new(receiver));
-    let threads = std::thread::available_parallelism().map_or(MIN_COMPILE_THREADS, |n| n.get()).clamp(MIN_COMPILE_THREADS, MAX_COMPILE_THREADS);
-    let started = (0..threads)
-        .filter(|index| {
-            let receiver = Arc::clone(&receiver);
-            std::thread::Builder::new().name(format!("genex-compile-{index}")).spawn(move || compile_thread(&receiver)).is_ok()
-        })
-        .count();
-    (started > 0).then_some(sender)
-}
-
-/// One compile thread: take the next job and run it (the queue lock is released first, and a job
-/// never unwinds: [`Compiled::spawn`] catches its panic). A job waits while a [`CompileHold`] is
-/// alive.
-#[cfg(not(target_arch = "wasm32"))]
-fn compile_thread(receiver: &std::sync::Mutex<std::sync::mpsc::Receiver<Job>>) {
-    loop {
-        let next = match receiver.lock() {
-            Ok(queue) => queue.recv(),
-            Err(_) => return,
-        };
-        match next {
-            Ok(job) => {
-                wait_while_held();
-                job();
-            }
-            Err(_) => return,
-        }
-    }
-}
-
-/// Live holds on the compile pool and the condition a held compile thread waits on.
-#[cfg(not(target_arch = "wasm32"))]
-static HOLDS: (std::sync::Mutex<u32>, std::sync::Condvar) = (std::sync::Mutex::new(0), std::sync::Condvar::new());
-
-#[cfg(not(target_arch = "wasm32"))]
-fn wait_while_held() {
-    let (holds, released) = &HOLDS;
-    let Ok(held) = holds.lock() else { return };
-    // The guard is dropped at once: the job runs without it.
-    drop(released.wait_while(held, |held| *held > 0));
-}
-
-/// While alive, no compile thread starts a job: queued compiles wait and a frame that needs one
-/// waits with them. Tests stand a slow shader compiler in with it (the game box grants no shader
-/// cache, so every compile is cold there); dropping it lets the queue run.
+/// While alive, no job thread starts a job: queued compiles wait and a frame that needs one waits
+/// with them. Tests stand a slow shader compiler in with it (the game box grants no shader cache,
+/// so every compile is cold there); dropping it lets the queue run. It holds the whole job pool.
 #[cfg(not(target_arch = "wasm32"))]
 #[must_use = "the pool runs again when the hold is dropped"]
-pub struct CompileHold(());
+pub struct CompileHold(#[allow(dead_code, reason = "held for its drop")] crate::jobs::PoolHold);
 
-/// Hold the compile pool (see [`CompileHold`]).
+/// Hold the job pool (see [`CompileHold`]).
 #[cfg(not(target_arch = "wasm32"))]
 pub fn hold() -> CompileHold {
-    if let Ok(mut held) = HOLDS.0.lock() {
-        *held += 1;
-    }
-    CompileHold(())
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-impl Drop for CompileHold {
-    fn drop(&mut self) {
-        if let Ok(mut held) = HOLDS.0.lock() {
-            *held = held.saturating_sub(1);
-        }
-        HOLDS.1.notify_all();
-    }
+    CompileHold(Pool::global().hold())
 }
 
 /// The built-in compute shaders that declare workgroup memory, each audited to write every
@@ -254,14 +154,14 @@ pub fn written_first<'a>() -> wgpu::PipelineCompilationOptions<'a> {
     wgpu::PipelineCompilationOptions { zero_initialize_workgroup_memory: false, ..Default::default() }
 }
 
-/// Jobs handed to the compile pool and not finished yet.
+/// Compiles handed to the job pool and not finished yet.
 static PENDING_JOBS: AtomicUsize = AtomicUsize::new(0);
-/// Jobs ever handed to the compile pool, and ever finished: a boot's progress (owner decision D11).
+/// Compiles ever handed to the job pool, and ever finished: a boot's progress (owner decision D11).
 static SUBMITTED_JOBS: AtomicUsize = AtomicUsize::new(0);
 static FINISHED_JOBS: AtomicUsize = AtomicUsize::new(0);
 
-/// The compile pool's counts since the process started: pipelines (and other jobs) handed to it
-/// and finished. A boot reads them twice and reports the difference as pipelines n of m.
+/// The compiles' counts since the process started: pipelines (and other [`Compiled`] values)
+/// handed to the job pool and finished; the pool's other jobs (streaming) are not counted. A boot reads them twice and reports the difference as pipelines n of m.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct CompileTally {
     /// Jobs handed to the pool.
@@ -279,7 +179,7 @@ impl CompileTally {
     }
 }
 
-/// The compile pool's counts now.
+/// The compiles' counts now.
 pub fn compile_tally() -> CompileTally {
     // Finished first: a job that finishes between the two reads is never counted done before it was handed over.
     let finished = FINISHED_JOBS.load(Ordering::Acquire);
@@ -331,7 +231,7 @@ pub fn open_pipeline_cache(device: &Device, info: &wgpu::AdapterInfo) -> bool {
     true
 }
 
-/// Write `device`'s pipeline cache to its save file (the compile pool may still be adding to it;
+/// Write `device`'s pipeline cache to its save file (the job pool may still be adding to it;
 /// a later call writes what it has then). False when the device has none or the save is refused.
 pub fn save_pipeline_cache(device: &Device) -> bool {
     let caches = pipeline_caches();
@@ -340,8 +240,8 @@ pub fn save_pipeline_cache(device: &Device) -> bool {
     cache.get_data().is_some_and(|bytes| saves.save(file, &bytes))
 }
 
-/// Write every open pipeline cache to its save file: when the compile pool finishes a burst of
-/// jobs, so a launch's or a preset change's pipelines are kept for the next launch.
+/// Write every open pipeline cache to its save file: when the job pool finishes a burst of
+/// compiles, so a launch's or a preset change's pipelines are kept for the next launch.
 fn save_pipeline_caches() {
     let caches = pipeline_caches();
     let Some(saves) = caches.saves.as_ref() else { return };
@@ -365,7 +265,7 @@ pub fn render_pipeline(device: &Device, desc: &wgpu::RenderPipelineDescriptor<'_
     Compiled::spawn(move || owned.create(&device))
 }
 
-/// [`render_pipeline`] for a game's own source: the compile thread wraps the creation in
+/// [`render_pipeline`] for a game's own source: the job thread wraps the creation in
 /// validation and internal error scopes, so a pipeline the backend refuses is `Err` with wgpu's
 /// message. A scope the backend has not answered by then (the browser's, which answers
 /// asynchronously) counts as clean: the browser reports its own pipeline errors.
@@ -554,6 +454,7 @@ impl OwnedCompute {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::jobs::panic_message;
 
     /// Owner decision D11: a boot counts its pipelines n of m from the pool's tally (other tests'
     /// jobs run alongside, so the counts are at least this row's own).

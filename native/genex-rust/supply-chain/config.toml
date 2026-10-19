@@ -748,6 +748,10 @@ criteria = "safe-to-deploy"
 version = "0.2.0"
 criteria = "safe-to-deploy"
 
+[[exemptions.nonmax]]
+version = "0.5.5"
+criteria = "safe-to-deploy"
+
 [[exemptions.nu-ansi-term]]
 version = "0.50.3"
 criteria = "safe-to-run"
@@ -938,6 +942,10 @@ criteria = "safe-to-deploy"
 
 [[exemptions.objc2-user-notifications]]
 version = "0.3.2"
+criteria = "safe-to-deploy"
+
+[[exemptions.offset-allocator]]
+version = "0.2.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.once_cell]]

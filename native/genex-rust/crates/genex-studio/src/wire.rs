@@ -84,6 +84,12 @@ pub const INPUT_TOUCH: &str = "touch";
 pub const OP_SURFACE: &str = "surface";
 /// The embedded-run verb that gives a slot back (`NativeOp.Release`).
 pub const OP_RELEASE: &str = "release";
+/// The dev-flavour verb that reloads changed assets in a running Live game (`NativeOp.ReloadAssets`;
+/// game systems C-18 serves it, `unavailable` until then).
+pub const OP_RELOAD_ASSETS: &str = "reloadAssets";
+/// The dev-flavour verb the build lane's bake step sends a headless session, kind `nav` or
+/// `impostor` (`NativeOp.BakeAssets`; NAV-14 and LOD-23 serve it, `unavailable` until then).
+pub const OP_BAKE_ASSETS: &str = "bakeAssets";
 /// `ready`'s receipt member.
 pub const READY_RECEIPT: &str = "receipt";
 /// `state()`'s lifecycle member.

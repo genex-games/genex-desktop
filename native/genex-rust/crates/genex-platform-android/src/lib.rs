@@ -122,7 +122,8 @@ mod entry {
         if let Some(records) = &records {
             records.log_lifecycle(&genex::json!({ "event": "launched", "activity": ACTIVITY }));
         }
-        let mut runtime = match Runtime::new(game) {
+        // The sim reads the compiled table from its first reset on, as the presenter draws from it.
+        let mut runtime = match Runtime::with_assets(game, Box::new(assets)) {
             Ok(runtime) => runtime,
             Err(error) => {
                 log::error!("{error}");

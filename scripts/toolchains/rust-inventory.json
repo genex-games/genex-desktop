@@ -69,6 +69,9 @@
     "crunchy-0.2.4": {
       "buildScript": "build.rs"
     },
+    "deprecate-until-1.0.0": {
+      "procMacro": true
+    },
     "document-features-0.2.12": {
       "procMacro": true
     },
@@ -245,6 +248,9 @@
     },
     "pastey-0.2.3": {
       "procMacro": true
+    },
+    "pathfinding-4.16.0": {
+      "nonSource": ["tests/check-msrv-consistency.sh"]
     },
     "pin-project-internal-1.1.13": {
       "procMacro": true
@@ -661,9 +667,9 @@
   "release": {
     "genex": "0.1.0",
     "tree": {
-      "sha256": "4f650094d3346cc1042756adedeb8ab6f83c7d0df73c4a93a88b5ea6fe930a07",
-      "files": 24733,
-      "bytes": 677040354
+      "sha256": "9d9de398e68973af21e92e256859f25153651a89558b650d196c521b6f141d62",
+      "files": 25061,
+      "bytes": 679651720
     }
   }
 }

@@ -588,7 +588,12 @@
         "tests/conformance/rust-performance.test.ts",
         "tests/fixtures/bench-scene/**"
       ],
-      "documents": ["native/genex-rust/README.md", "native/genex-rust/docs/GENEX_API.md", "docs/agent/native-games.md"],
+      "documents": [
+        "native/genex-rust/README.md",
+        "native/genex-rust/docs/GENEX_API.md",
+        "native/genex-rust/docs/api/",
+        "docs/agent/native-games.md"
+      ],
       "commands": ["check:static", "test", "test:rust-spike"]
     },
     {
@@ -657,6 +662,8 @@
         "tests/helpers/dev-toolchains.ts",
         "tests/fixtures/rust-wasm/**",
         "tests/conformance/rust-build.test.ts",
+        "src/main/rust-assets.ts",
+        "tests/conformance/rust-assets-build.test.ts",
         "src/main/rust-eject.ts",
         "src/main/rust-trust.ts",
         "src/main/core/game-conformance-gate.ts",

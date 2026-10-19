@@ -11,8 +11,13 @@
 //! write-behind: the files saved since, and how their IndexedDB write went.
 //!
 //! Before `studio_boot` the shell also hands over the game's staged assets: [`studio_assets_plan`]
-//! reads the build's asset map and answers the files to fetch, and [`studio_assets_preload`] admits
-//! each fetched file (`crate::assets`). Models draw from the compiled table first, then these.
+//! reads the build's asset map (with the adapter's features, so one family file per texture is
+//! planned) and answers the files to fetch before the first reset (the boot and sim groups), and
+//! [`studio_assets_preload`] admits each fetched file (`crate::assets`). Models draw from the
+//! compiled table first, then these; the sim's reads see each file's group. Streamed and named
+//! files arrive while playing: [`studio_assets_wanted`] answers the fetches the game wants,
+//! [`studio_assets_arrived`] admits each (a whole file or one planned range) and
+//! [`studio_assets_release`] drops one again.
 //!
 //! Frames are drawn by genex's shared presenter (`genex::present::Presenter`), the one a native
 //! run draws with, behind the [`Screen`] painter: the game's Level-3 custom GPU passes (installed
@@ -58,11 +63,11 @@
 //! on the browser's device under error scopes and answers what each reported.
 
 use crate::assets::WebAssets;
-use crate::draw::{AssetTable, WebModels};
+use crate::draw::AssetTable;
 use crate::handle::GameHandle;
 use crate::saves::{SAVES_DATABASE_PREFIX, saves_state};
 use crate::selftest::{self, CaptureDigest, SelfTestPlan};
-use crate::studio::{HandleGame, Held, Painter, Screen, verb_changes_frame};
+use crate::studio::{HandleGame, Held, Painter, Screen, WebSource, verb_changes_frame};
 use genex::present::Presenter;
 use genex::{Game, Runtime, Value, json};
 use genex_core::saves::mirror::{self, MirrorError};
@@ -76,7 +81,7 @@ use genex_render::mesh::{MeshData, Vertex};
 use genex_render::scene::{CameraDesc, Material, MeshId, scaled, translation};
 use genex_render::immediate::Rect2d;
 use genex_render::lights::{PointLight, SpotLight};
-use genex_render::texture::{TextureData, TextureKind};
+use genex_render::texture::{TextureData, TextureFamily, TextureKind};
 use genex_render::device_class::DeviceClass;
 use genex_render::post::grading::{Grading, GradingLut, GradingLutError};
 use genex_render::presets::preset_quality;
@@ -120,8 +125,9 @@ struct Graphics {
     canvas: Option<Canvas>,
 }
 
-/// Starts the installed game: its registrations checked and its first reset run.
-type StartGame = Box<dyn FnOnce() -> Box<dyn GameHandle>>;
+/// Starts the installed game: its registrations checked, the assets its resets read attached, and
+/// its first reset run.
+type StartGame = Box<dyn FnOnce(Box<dyn genex::AssetSource>) -> Box<dyn GameHandle>>;
 
 struct Shell {
     name: String,
@@ -130,7 +136,8 @@ struct Shell {
     /// The started game.
     game: Option<Box<dyn GameHandle>>,
     assets: AssetTable,
-    /// The staged assets the shell fetched before boot (moved into the presenter at boot).
+    /// The staged assets: before boot the whole plan and the files fetched for it (the preloaded
+    /// ones move to the game at boot), after it the plan of the streamed and named files.
     fetched: WebAssets,
     graphics: Option<Graphics>,
     /// The named camera or eye the frame is drawn from; None for the game's own.
@@ -157,8 +164,8 @@ thread_local! {
 /// `genex::install` does (a refusal panics with the typed code) and its first reset runs.
 pub fn install_named<W: Default + 'static>(name: &str, game: Game<W>, assets: AssetTable) {
     console_error_panic_hook::set_once();
-    let start: StartGame = Box::new(move || {
-        let runtime = Runtime::new(game).unwrap_or_else(|error| panic!("genex::install: {error}"));
+    let start: StartGame = Box::new(move |source| {
+        let runtime = Runtime::with_assets(game, source).unwrap_or_else(|error| panic!("genex::install: {error}"));
         Box::new(runtime)
     });
     let shell = Shell {
@@ -184,10 +191,11 @@ fn started(game: &mut Option<Box<dyn GameHandle>>) -> Result<&mut dyn GameHandle
     }
 }
 
-/// Start the installed game once (its first reset reads the preloaded saves); answers its world size.
-fn start_game(shell: &mut Shell) -> Result<[u32; 2], JsValue> {
+/// Start the installed game once (its first reset reads the preloaded saves and `assets`, the
+/// files fetched before boot); answers its world size.
+fn start_game(shell: &mut Shell, assets: WebSource) -> Result<[u32; 2], JsValue> {
     if let Some(start) = shell.waiting.take() {
-        shell.game = Some(start());
+        shell.game = Some(start(Box::new(assets)));
     }
     Ok(started(&mut shell.game)?.world_size())
 }
@@ -294,7 +302,7 @@ fn hints_of(hints: Option<&str>) -> Option<genex::render::WebHints> {
     genex::render::web_hints_from_json(&value)
 }
 
-async fn open_graphics(canvas: Option<HtmlCanvasElement>, world: [u32; 2], models: WebModels) -> Result<Graphics, RenderError> {
+async fn open_graphics(canvas: Option<HtmlCanvasElement>, world: [u32; 2], models: WebSource) -> Result<Graphics, RenderError> {
     let no_adapter = |detail: String| RenderError::GpuUnsupported { reason: UnsupportedReason::NoAdapter, detail };
     let instance = core_instance();
     let surface = match &canvas {
@@ -358,8 +366,17 @@ fn draw_into(graphics: &mut Graphics, game: &mut Option<Box<dyn GameHandle>>, vi
 /// "gpu-unsupported", reason, limit?, detail}`; the shell shows the unsupported page for the latter.
 #[wasm_bindgen]
 pub async fn studio_boot(canvas: Option<HtmlCanvasElement>, hints: Option<String>) -> Result<String, JsValue> {
-    let world = with_shell(start_game)?;
-    let models = with_shell(|shell| Ok(WebModels { compiled: shell.assets, fetched: std::mem::take(&mut shell.fetched) }))?;
+    // One set of fetched files serves the sim's reads (attached before its first reset) and the
+    // presenter's models.
+    // The preloaded files move to the game's source with their groups; the shell keeps the plan
+    // of the streamed and named files for the fetches made while playing.
+    let models = with_shell(|shell| {
+        let fetched = std::mem::take(&mut shell.fetched);
+        shell.fetched = fetched.streaming_part();
+        let groups = fetched.groups();
+        Ok(WebSource::new(shell.assets, fetched).with_groups(groups))
+    })?;
+    let world = with_shell(|shell| start_game(shell, models.clone()))?;
     let mut graphics = match open_graphics(canvas, world, models).await {
         Ok(graphics) => graphics,
         Err(error) => return Ok(boot_refused(&error)),
@@ -1190,17 +1207,37 @@ pub fn studio_saves_status() -> String {
     saves_state(&mirror::status()).to_string()
 }
 
-/// Plan the staged assets from the build's asset map (`assets.json`'s text): answers the files to
-/// fetch, `[[path, bytes], …]`, each under the asset-path rule and the caps; entries left out are
-/// logged and never fetched. A map that is not well formed is refused `asset-map-invalid`.
+/// The WebGPU feature names (`GPUAdapter.features`) of the compressed texture families.
+const WEBGPU_TEXTURE_FEATURES: [(&str, wgpu::Features); 3] = [
+    ("texture-compression-bc", wgpu::Features::TEXTURE_COMPRESSION_BC),
+    ("texture-compression-astc", wgpu::Features::TEXTURE_COMPRESSION_ASTC),
+    ("texture-compression-etc2", wgpu::Features::TEXTURE_COMPRESSION_ETC2),
+];
+
+/// The compressed families an adapter samples, best first, from the shell's `{features, mobile}`
+/// JSON (`GPUAdapter.features` names and whether the page is a phone's); none without it.
+fn usable_families(adapter: Option<&str>) -> Vec<TextureFamily> {
+    let Some(adapter) = adapter.and_then(|text| serde_json::from_str::<Value>(text).ok()) else { return Vec::new() };
+    let names: Vec<&str> = adapter.get("features").and_then(Value::as_array).map(|names| names.iter().filter_map(Value::as_str).collect()).unwrap_or_default();
+    let features = WEBGPU_TEXTURE_FEATURES.iter().filter(|(name, _)| names.contains(name)).fold(wgpu::Features::empty(), |all, (_, feature)| all | *feature);
+    let mobile = adapter.get("mobile").and_then(Value::as_bool).unwrap_or(false);
+    TextureFamily::usable_compressed(features, mobile)
+}
+
+/// Plan the staged assets from the build's asset map (`assets.json`'s text) for the adapter
+/// (`{features, mobile}` JSON, optional): answers the files to fetch before the first reset,
+/// `[[path, bytes], …]`, each under the asset-path rule and the caps (a v1 map's every file; a v2
+/// map's boot and sim groups, one family file per texture); entries left out are logged and never
+/// fetched. A map that is not well formed is refused `asset-map-invalid`.
 #[wasm_bindgen]
-pub fn studio_assets_plan(map: &str) -> Result<js_sys::Array, JsValue> {
-    let assets = WebAssets::plan(map.as_bytes()).map_err(|error| refusal(error.code().wire(), &error))?;
+pub fn studio_assets_plan(map: &str, adapter: Option<String>) -> Result<js_sys::Array, JsValue> {
+    let usable = usable_families(adapter.as_deref());
+    let assets = WebAssets::plan_for(map.as_bytes(), &usable).map_err(|error| refusal(error.code().wire(), &error))?;
     for (path, why) in assets.skipped() {
         log::warn!("genex web: asset {path:?} left out: {}", why.wire());
     }
     let planned = js_sys::Array::new();
-    for asset in assets.planned() {
+    for asset in assets.preload() {
         // Planned files are at most MAX_ASSET_BYTES, far below 2^53.
         planned.push(&js_sys::Array::of2(&JsValue::from_str(&asset.path), &JsValue::from(asset.bytes as f64)));
     }
@@ -1208,6 +1245,44 @@ pub fn studio_assets_plan(map: &str) -> Result<js_sys::Array, JsValue> {
         shell.fetched = assets;
         Ok(planned)
     })
+}
+
+/// The fetches the game wants since the last call, `[[path, offset, bytes], …]`: a streamed or
+/// named file's planned ranges not yet admitted, or the whole file. Each is fetched (a `Range`
+/// request for a piece) and handed to [`studio_assets_arrived`].
+#[wasm_bindgen]
+pub fn studio_assets_wanted() -> Result<js_sys::Array, JsValue> {
+    with_shell(|shell| {
+        let wanted = js_sys::Array::new();
+        for fetch in shell.fetched.take_wanted() {
+            // Offsets and lengths are inside a file of at most MAX_ASSET_BYTES, far below 2^53.
+            let row = js_sys::Array::of3(&JsValue::from_str(&fetch.path), &JsValue::from(fetch.offset as f64), &JsValue::from(fetch.bytes as f64));
+            wanted.push(&row);
+        }
+        Ok(wanted)
+    })
+}
+
+/// Admit bytes fetched while playing: the whole of a planned file (offset 0) or exactly one of its
+/// planned ranges, with the recorded length and FNV-1a 64; refused (`asset-not-planned`,
+/// `asset-size-mismatch`, `asset-digest-mismatch`) with nothing admitted otherwise.
+#[wasm_bindgen]
+pub fn studio_assets_arrived(path: &str, offset: f64, bytes: js_sys::Uint8Array) -> Result<(), JsValue> {
+    let Some(offset) = whole_offset(offset) else { return Err(refusal(crate::assets::AssetRefusal::NotPlanned.wire(), "the offset is not a whole byte")) };
+    with_shell(|shell| shell.fetched.arrived(path, offset, bytes.to_vec()).map_err(|error| refusal(error.code().wire(), &error)))
+}
+
+/// `offset` as a byte position, when the page sent a whole, non-negative number below 2^53.
+fn whole_offset(offset: f64) -> Option<u64> {
+    let whole = offset.is_finite() && offset >= 0.0 && offset.fract() == 0.0 && offset < 9_007_199_254_740_992.0;
+    whole.then_some(offset as u64)
+}
+
+/// Drop a streamed or named file's admitted bytes so it can be wanted again; a boot or sim file
+/// stays resident (`asset-group-invalid`), an unplanned path is `asset-not-planned`.
+#[wasm_bindgen]
+pub fn studio_assets_release(path: &str) -> Result<(), JsValue> {
+    with_shell(|shell| shell.fetched.release(path).map_err(|error| refusal(error.code().wire(), &error)))
 }
 
 /// Admit one fetched file (its path as planned and its bytes): refused unless the plan named it

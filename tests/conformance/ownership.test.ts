@@ -59,6 +59,36 @@ describe("a Rust · wgpu template's ownership", () => {
     for (const row of rows) agree(row);
   });
 
+  // GF round 2: the API split moved the reference into docs/api/, and a facet whose id a page's
+  // name contains (water, terrain, api, docs) owned that page through the facet-name escape hatch.
+  it("keeps the API index and every docs/api/ page the entry owner's, whatever a facet is called", () => {
+    const water: OwnershipSpec = { id: "water", owns: ["src/facets/water.rs"] };
+    const api: OwnershipSpec = { id: "api", owns: ["src/facets/api.rs"] };
+    const docs: OwnershipSpec = { id: "docs", owns: ["src/facets/docs.rs"] };
+    const rows: Row[] = [
+      ["docs/api/water.md", water, false, false, "a page named like the facet is still read-only"],
+      ["docs/api/water.md", api, false, false, "a facet named api does not own the api folder"],
+      ["docs/api/terrain.md", api, false, false, "nor any page in it"],
+      ["docs/api/assets.md", fish, false, false, "a facet with a seam"],
+      ["docs/api/assets.md", loose, false, false, "a facet with no seam"],
+      ["docs/GENEX_API.md", docs, false, false, "a facet named docs does not own the index"],
+      ["docs/api/water.md", world, true, true, "the entry owner's own"],
+      ["docs/api", world, true, true, "the folder itself is the entry owner's"],
+      ["docs/api", water, false, false, "and no facet's"],
+      [
+        "docs/apiary.md",
+        { id: "apiary", owns: ["src/facets/apiary.rs"] },
+        false,
+        true,
+        "a name that only starts like it",
+      ],
+    ];
+    for (const row of rows) agree(row);
+    const ownership: Ownership = { facetId: "water", owns: ["src/facets/water.rs"], ownsMain: false };
+    const reason = ownershipReason("docs/api/water.md", ownership);
+    assert.match(reason, /docs\/api\/water\.md belongs to the facet that owns the entry/, reason);
+  });
+
   it("lets every facet add its FACET WIRING lines to src/main.rs and keep to src/facets/<slug>.rs", () => {
     const rows: Row[] = [
       ["src/main.rs", fish, false, true, "the wiring block is every facet's (reviewed by content)"],

@@ -1,13 +1,23 @@
 {
-  "transcoder": { "package": "three@0.185.1", "file": "examples/jsm/libs/basis/basis_transcoder.wasm", "sha256": "6cf17dc889352c42e9acf8897107978d127005fe3386c36a0e3845e27967630a" },
+  "transcoder": { "version": "2.50", "file": "basis-encoder-2.50/basis_encoder.wasm", "sha256": "48d4e39ccaa1e290a17d00c13b353a728227bb439108d5e6c944fe6ab80552db" },
   "source": {
     "file": "tests/fixtures/asset-previews/texture.ktx2",
     "sha256": "e56ddcc757fc73ff06bb0dac2a3533ce79c1e196ad895a3ff7dcc4d9de6b9d5d"
   },
   "level0": [
-    { "compression": "bc", "format": 6, "bytes": 1600, "sha256": "2cfc55a510069b053d7fd1567efbe3918c6e40711aca7843a2c4a7ef085c2944" },
+    { "compression": "bc", "format": 6, "bytes": 1600, "sha256": "5fd316a27dfa37d6150717b1e5efe234f75155b750bc22216268a82e82babef4" },
     { "compression": "astc", "format": 10, "bytes": 1600, "sha256": "087190f3b403db7c91e8729d33e9cb66b62abfff8f771e5974844be6575d3941" },
     { "compression": "etc2", "format": 1, "bytes": 1600, "sha256": "db6d8d88a6868c21ee0028cad274d619c670b46fe65e9ccb1d46a8192107b4f4" },
     { "compression": "rgba8", "format": 13, "bytes": 6400, "sha256": "b492daacc6737893324398334075c09a481bfff432240a718fc615ca0cd625ec" }
-  ]
+  ],
+  "uastc": {
+    "file": "tests/fixtures/asset-import/basis-uastc-64.ktx2",
+    "sha256": "911891820e9b2b0096cbfc08e25d2bbf76a9d389f2a6f60286165736ce834164",
+    "level0": [
+      { "compression": "bc", "format": 6, "bytes": 4096, "sha256": "f861d87c33b132318f67b82fb039869895fd8e084df90f176b90518ce739e3af" },
+      { "compression": "astc", "format": 10, "bytes": 4096, "sha256": "df5b288cce77ad341b8c4f553e49db331b6a4274f859778a94848ec4527569de" },
+      { "compression": "etc2", "format": 1, "bytes": 4096, "sha256": "b677ee0814245f8d249ccb7634085ffbe23e7b4659479a215d3950290873a378" },
+      { "compression": "rgba8", "format": 13, "bytes": 16384, "sha256": "2714efd3b408eb3ceb57d4dff2bf7bf138f0b84c9920fb7a234dbc6b0240ca93" }
+    ]
+  }
 }

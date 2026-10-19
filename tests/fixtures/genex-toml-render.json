@@ -24,7 +24,8 @@
     { "name": "a styled loading screen", "text": "[render.loading]\ntitle = \"Harbour Nights\"\nbackground = \"#1b2233\"\naccent = \"#7FB2EC\"\ntext = \"#eceae4\"\nlogo = \"ui/logo.png\"\n" },
     { "name": "a loading screen with only a colour", "text": "[render.loading]\nbackground = \"#000000\"\n" },
     { "name": "a game without physics", "text": "[physics]\nenabled = false\n" },
-    { "name": "an empty [physics]", "text": "[physics]\n" }
+    { "name": "an empty [physics]", "text": "[physics]\n" },
+    { "name": "a [[texture]] row", "text": "[[texture]]\npath = \"textures/flow.png\"\nusage = \"data\"\n" }
   ],
   "hostile": [
     { "name": "an unknown preset", "text": "[render]\npreset = \"insane\"\n", "code": "invalid-render-preset" },
@@ -84,7 +85,13 @@
     { "name": "an unknown loading key", "text": "[render.loading]\nfont = \"serif\"\n", "code": "manifest-syntax" },
     { "name": "a loading colour that is not a string", "text": "[render.loading]\naccent = 3\n", "code": "manifest-syntax" },
     { "name": "physics switched by a string", "text": "[physics]\nenabled = \"no\"\n", "code": "manifest-syntax" },
-    { "name": "an unknown key in [physics]", "text": "[physics]\ngravity = 9.8\n", "code": "manifest-syntax" }
+    { "name": "an unknown key in [physics]", "text": "[physics]\ngravity = 9.8\n", "code": "manifest-syntax" },
+    { "name": "a texture usage outside color, data and normal", "text": "[[texture]]\npath = \"bark.png\"\nusage = \"albedo\"\n", "code": "invalid-texture-usage" },
+    { "name": "a texture path that climbs out of assets/", "text": "[[texture]]\npath = \"../x.png\"\nusage = \"color\"\n", "code": "invalid-texture-usage" },
+    { "name": "a texture that is already KTX2", "text": "[[texture]]\npath = \"bark.ktx2\"\nusage = \"color\"\n", "code": "invalid-texture-usage" },
+    { "name": "the same texture path twice", "text": "[[texture]]\npath = \"a.png\"\nusage = \"color\"\n[[texture]]\npath = \"a.png\"\nusage = \"data\"\n", "code": "invalid-texture-usage" },
+    { "name": "a texture row without a usage", "text": "[[texture]]\npath = \"a.png\"\n", "code": "manifest-syntax" },
+    { "name": "an unknown key in a texture row", "text": "[[texture]]\npath = \"a.png\"\nusage = \"color\"\nsrgb = true\n", "code": "manifest-syntax" }
   ],
   "fragments": {
     "about": "What the build lane compiles in for the documented table followed by these [[wgsl]] rows: GENEX_RENDER_TOML (the host's renderTomlFragment) and GENEX_WGSL_TOML (wgslTomlFragment). genex's RenderConfig::from_toml and its [[wgsl]] reader read them back as the same settings and rows (tests/render_settings.rs).",

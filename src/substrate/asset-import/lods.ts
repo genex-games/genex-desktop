@@ -2,7 +2,7 @@
  * Import-time LODs (renderer pass 2, A6.9): a GLB of at least {@link LOD_MIN_TRIANGLES} triangles
  * gets `extras.genex_lods` on every primitive, the schema in
  * `native/genex-rust/crates/genex-render/README.md`. Each level is simplified from the primitive's
- * own triangles by meshoptimizer's simplifier (the build `three` ships, `decoders.ts`) to half the
+ * own triangles by meshoptimizer's simplifier (npm `meshoptimizer` 1.3.0, `decoders.ts`) to half the
  * previous level's target, its open borders locked so primitives of one mesh stay joined, and
  * carries its object-space error (meshoptimizer's relative error times the mesh's extent), never
  * less than the level before. The chain's length is the GLB's largest primitive's (levels stop when

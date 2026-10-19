@@ -47,8 +47,8 @@ Flag, with the file and line, any of:
   proc-macro the facet adds, or a crate in `genex.toml` that is not on the reviewed list (crates
   come only through the studio's request flow);
 - network access from the game (sockets, an HTTP client): games run offline;
-- edits to `docs/GENEX_API.md` or `web/shell.html`, or outside the files this facet owns, other
-  than its two FACET WIRING lines in `src/main.rs`
+- edits to `docs/GENEX_API.md`, a page under `docs/api/` or `web/shell.html`, or outside the files
+  this facet owns, other than its two FACET WIRING lines in `src/main.rs`
   (`#[path = "facets/<slug>.rs"] mod <slug>;` and `<slug>::wire(&mut game);`).
 
 Do not flag style, naming, clippy lints or performance. If there is nothing, say so.

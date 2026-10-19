@@ -228,7 +228,8 @@ describe("the games' .claude folders are write-denied", () => {
  * builds): the judge's rubrics, the games' `.claude` folders, and now the toolchain store and the
  * native run folders. The store's ANGLE is copied into every native bundle and backs the Metal
  * gate, and a native run folder is the host's: neither is under a writable root, and both are
- * denied besides.
+ * denied besides. The import cache joins them: a build packages its outputs by key, so a planted
+ * output would ship in every game that imports the same file.
  */
 describe("the studio's base write denies", () => {
   const userData = "/Users/me/Library/Application Support/Genex";
@@ -236,7 +237,7 @@ describe("the studio's base write denies", () => {
   const downloadCache = "/Users/me/Library/Caches/Genex/toolchain-downloads";
   const layout = { ...layoutFor(userData, downloadCache), gamesRoot: "/Users/me/AI Games" };
 
-  it("on macOS, keep today's entries and add the toolchain store, the native runs and the signing folder", {
+  it("on macOS, keep today's entries and add the toolchain store, the native runs, the signing folder and the import cache", {
     skip: process.platform === "win32",
   }, async () => {
     const denied = studioBaseDenyWrites(layout, kept, "darwin", () => false);
@@ -246,6 +247,8 @@ describe("the studio's base write denies", () => {
     // Flipped (wave-5 review): the signing folder joins, so no agent swaps a file jsign is about to sign.
     // Flipped (rust-wgpu M1.4): the host-level download cache every profile installs through joins too.
     // Flipped (rust-wgpu M5 review): the admitted phone packages a device launch installs join too.
+    // Flipped (game systems C-3): the import cache whose outputs every build packages joins too.
+    assert.equal(layout.assetCache, `${userData}/asset-cache`);
     assert.deepEqual(denied, [
       `${userData}/workspaces/harness/judge`,
       ...claudeFolderDenyWrites(layout.gamesRoot, kept, "darwin", () => false),
@@ -254,6 +257,7 @@ describe("the studio's base write denies", () => {
       layout.signing,
       layout.phonePackages,
       downloadCache,
+      layout.assetCache,
     ]);
     const deny = await macDeny(denied);
     for (const target of [
@@ -269,6 +273,7 @@ describe("the studio's base write denies", () => {
       "/Users/me/AI Games/pong/.claude/settings.json",
       `${downloadCache}/sha256/${"a".repeat(64)}`,
       `${downloadCache}/.incoming/partial`,
+      `${userData}/asset-cache/${"b".repeat(64)}/out/stone.bc.ktx2`,
     ])
       assert.ok(deny(target), `denied: ${target}`);
     for (const target of [
@@ -278,6 +283,7 @@ describe("the studio's base write denies", () => {
       `${userData}/toolchains-notes.txt`,
       `${userData}/native-runs.log`,
       "/Users/me/AI Games/pong/src/main.cpp",
+      `${userData}/asset-cache-notes.txt`,
     ])
       assert.ok(!deny(target), `writable: ${target}`);
   });
@@ -317,6 +323,7 @@ describe("the studio's base write denies", () => {
           layout.signing,
           layout.phonePackages,
           downloadCache,
+          layout.assetCache,
         ],
         platform,
       );

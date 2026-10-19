@@ -30,6 +30,10 @@
 //! [physics]                 # optional: a game without physics is built without Rapier
 //! enabled = false           # default true
 //!
+//! [[texture]]               # optional: a loose texture's usage, where no material slot tells it
+//! path = "textures/flow.png"   # under assets/: a PNG, JPEG or WebP
+//! usage = "data"            # color | data | normal
+//!
 //! [render]                  # optional: the renderer's quality and the game's look
 //! form_factors = ["desktop", "mobile"]
 //! preset = "auto"           # auto | low | medium | high | ultra
@@ -159,6 +163,24 @@ pub const TERRAIN_CALLS: [&str; 13] = [
 /// renderer pass 2 A.5's opt-out of the lit volume on `high` and `ultra` (`.with_volumetric(..)`).
 pub const FOG_CALLS: [&str; 8] =
     [".fog", "Fog::default", ".with_density", ".with_height", ".with_range", ".with_color", ".with_aerial_perspective", ".with_volumetric"];
+/// Game systems (EP-0a1): the call and refusal blocks of the five areas, empty until each area's
+/// work package pins what works (`tests/fixtures/rust-facade-vocabulary.json` holds the same).
+/// The animation calls of the facade (`.wire` is a refusal code's wire spelling).
+pub const ANIMATION_CALLS: [&str; 5] = ["gfx.character", ".joint_count", ".skeleton", ".path", ".wire"];
+/// The streaming calls of the facade.
+pub const STREAM_CALLS: [&str; 0] = [];
+/// The navigation calls of the facade.
+pub const NAV_CALLS: [&str; 1] = ["frame.lines"];
+/// The sim-side asset read calls of the facade, as a reset calls them (SF-1a); `.wire` is a
+/// refusal code's wire spelling.
+pub const ASSET_CALLS: [&str; 9] =
+    ["gfx.assets().bytes", "gfx.assets().triangles", "gfx.assets().info", ".json", ".digest", ".as_str", ".code", ".detail", ".wire"];
+/// The sim-side asset read refusals: [`crate::AssetErrorCode::ALL`]'s wire spellings.
+pub const ASSET_REFUSALS: [&str; 6] = ["unsafe-path", "missing", "too-large", "malformed", "not-at-reset", "not-preloaded"];
+/// The level-of-detail calls of the facade.
+pub const LOD_CALLS: [&str; 0] = [];
+/// The level-of-detail refusals (`__render.lodRefused` codes).
+pub const LOD_REFUSALS: [&str; 0] = [];
 /// The `[[wgsl]] api` versions the facade has defined; the runtime admits those genex-render
 /// serves (`EXTENSION_APIS`; `extension-api-unavailable` for the rest).
 pub const WGSL_EXTENSION_APIS: [i64; 2] = [1, 2];
@@ -430,6 +452,9 @@ pub struct GenexToml {
     /// Whether the game is built with physics.
     #[serde(default)]
     pub physics: PhysicsSection,
+    /// Loose textures' usages, read by the host's import step (C-10).
+    #[serde(default)]
+    pub texture: Vec<TextureRow>,
 }
 
 impl GenexToml {
@@ -792,6 +817,16 @@ impl PhysicsSection {
     }
 }
 
+/// A `[[texture]]` row: a loose texture's usage, for what no material slot can tell (C-10).
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct TextureRow {
+    /// Under assets/: a safe asset path to a PNG, JPEG or WebP.
+    pub path: String,
+    /// color, data or normal.
+    pub usage: String,
+}
+
 /// `[gpu]`.
 #[derive(Clone, Debug, Default, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
@@ -895,6 +930,8 @@ pub enum ManifestErrorCode {
     InvalidRenderLoading,
     /// A `[web] wasm_budget_mb` outside [`WEB_WASM_BUDGET_MIN_MB`]..=[`WEB_WASM_CEILING_MB`].
     InvalidWebBudget,
+    /// A `[[texture]]` row whose usage is not color, data or normal, whose path is not a safe path under assets/ to a PNG, JPEG or WebP, or whose path another row names.
+    InvalidTextureUsage,
 }
 
 impl ManifestErrorCode {
@@ -923,6 +960,7 @@ impl ManifestErrorCode {
             ManifestErrorCode::InvalidRenderShadows => "invalid-render-shadows",
             ManifestErrorCode::InvalidRenderLoading => "invalid-render-loading",
             ManifestErrorCode::InvalidWebBudget => "invalid-web-budget",
+            ManifestErrorCode::InvalidTextureUsage => "invalid-texture-usage",
         }
     }
 }
@@ -964,6 +1002,7 @@ pub fn parse(text: &str) -> Result<GenexToml, ManifestError> {
     check_features(&manifest.gpu.native_features)?;
     check_render(&manifest.render)?;
     check_web(&manifest.web)?;
+    check_textures(&manifest.texture)?;
     Ok(manifest)
 }
 
@@ -974,6 +1013,28 @@ fn check_web(web: &WebSection) -> Result<(), ManifestError> {
         }
         _ => Ok(()),
     }
+}
+
+/// The usages a `[[texture]]` row may name (the host's TextureUsage).
+const TEXTURE_USAGES: [&str; 3] = ["color", "data", "normal"];
+
+/// The image extensions a `[[texture]]` row may name (the host's encodable raster textures).
+const TEXTURE_EXTENSIONS: [&str; 4] = [".png", ".jpg", ".jpeg", ".webp"];
+
+/// Each `[[texture]]` row names a known usage and an encodable image under assets/, and no path twice.
+fn check_textures(rows: &[TextureRow]) -> Result<(), ManifestError> {
+    let mut seen = crate::map::Set::default();
+    for row in rows {
+        if !TEXTURE_USAGES.contains(&row.usage.as_str()) {
+            return Err(ManifestError::new(ManifestErrorCode::InvalidTextureUsage, format!("{} usage {}", row.path, row.usage)));
+        }
+        let lower = row.path.to_ascii_lowercase();
+        let image = TEXTURE_EXTENSIONS.iter().any(|extension| lower.ends_with(extension));
+        if !genex_core::paths::is_safe_asset_path(&row.path) || !image || !seen.insert(row.path.clone()) {
+            return Err(ManifestError::new(ManifestErrorCode::InvalidTextureUsage, row.path.clone()));
+        }
+    }
+    Ok(())
 }
 
 fn check_game(game: &GameSection) -> Result<(), ManifestError> {

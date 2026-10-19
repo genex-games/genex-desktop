@@ -7,6 +7,7 @@
  */
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
+import { existsSync } from "node:fs";
 import { copyFile, mkdir, readdir, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, it } from "node:test";
@@ -221,20 +222,37 @@ describe("the core registers its Rust lane behind the seam", { skip: SKIP_ON_WIN
   it("a Rust game's web export carries its staged assets and the asset map the page fetches them by", async () => {
     const { core } = await coreLite({ gamesRoot: await realpath(await tmpDir("core-rust-lane-games-")) });
     await seedRustFixture(core, RustFixtureKind.Game);
-    const glb = Buffer.from("glTF\u0002\u0000\u0000\u0000a staged model");
-    const models = path.join(core.games.dirFor(FIXTURE_RUST_GAME.name), "assets", "models");
-    await mkdir(models, { recursive: true });
-    await writeFile(path.join(models, "boat.glb"), glb);
+    const png = Buffer.from("\u0089PNG\r\n\u001a\na staged texture");
+    const textures = path.join(core.games.dirFor(FIXTURE_RUST_GAME.name), "assets", "textures");
+    await mkdir(textures, { recursive: true });
+    await writeFile(path.join(textures, "sky.png"), png);
     const out = path.join(await tmpDir("core-rust-lane-export-"), "out");
     await core.exportPublicCopy(FIXTURE_RUST_GAME.name, out);
     assert.deepEqual(
-      await readFile(path.join(out, "assets", "models", "boat.glb")),
-      glb,
+      await readFile(path.join(out, "assets", "textures", "sky.png")),
+      png,
       "the export carries the asset",
     );
     const map = JSON.parse(await readFile(path.join(out, WEB_FILES.assetMap), "utf8")) as WebAssetMap;
-    const boat = map.files.find((file) => file.path === "models/boat.glb");
-    assert.deepEqual(boat, { path: "models/boat.glb", bytes: glb.length, fnv1a64: fnv1a64Hex(glb) });
+    const sky = map.files.find((file) => file.path === "textures/sky.png");
+    assert.deepEqual(sky, { path: "textures/sky.png", bytes: png.length, fnv1a64: fnv1a64Hex(png) });
+  });
+
+  it("a Rust game's build runs the import step: a model the importer refuses leaves the export", async () => {
+    const { core } = await coreLite({ gamesRoot: await realpath(await tmpDir("core-rust-lane-games-")) });
+    await seedRustFixture(core, RustFixtureKind.Game);
+    const models = path.join(core.games.dirFor(FIXTURE_RUST_GAME.name), "assets", "models");
+    await mkdir(models, { recursive: true });
+    await writeFile(path.join(models, "boat.glb"), Buffer.from("glTF\u0002\u0000\u0000\u0000not a model"));
+    const out = path.join(await tmpDir("core-rust-lane-export-"), "out");
+    await core.exportPublicCopy(FIXTURE_RUST_GAME.name, out);
+    assert.equal(existsSync(path.join(out, "assets", "models", "boat.glb")), false, "the refused model is not shipped");
+    const map = JSON.parse(await readFile(path.join(out, WEB_FILES.assetMap), "utf8")) as WebAssetMap;
+    assert.equal(
+      map.files.find((file) => file.path === "models/boat.glb"),
+      undefined,
+      "nor fetched by the page",
+    );
   });
 });
 

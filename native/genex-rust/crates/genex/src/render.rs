@@ -260,7 +260,9 @@ impl SettingsSource {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum DegradeReason {
     /// The preset did not fit the class's memory budget: resource knobs stepped down, one entry per
-    /// rung taken with the rung's wire name as its subject (`ao`, `shadow-size`, ...).
+    /// rung taken with the rung's wire name as its subject (`ao`, `shadow-size`, ...). Also each
+    /// feature switch dynamic resolution's preset demotion turned off for the frame-time budget,
+    /// with the feature's wire name as its subject.
     Budget,
     /// A custom pass's bytes are over the budget's room.
     PassOverBudget,
@@ -966,6 +968,9 @@ pub struct RenderControl {
     /// The samples per pixel the renderer's world pass was built with (None before the first
     /// frame): Live reports what that pass draws ([`with_world_samples`]).
     world_samples: Option<u32>,
+    /// The settings generation when a Live frame last noted its world pass (None before the
+    /// first): a change since then is not drawn yet and is named deferred.
+    drawn_generation: Option<u64>,
 }
 
 /// The shared handle the runtime, the presenter and the panel reach the settings through.
@@ -1104,6 +1109,7 @@ impl RenderControl {
             textures: (class, TextureQuality::OFF),
             generation: 0,
             world_samples: None,
+            drawn_generation: None,
         };
         control.resolve();
         control
@@ -1377,6 +1383,7 @@ impl RenderControl {
     /// each frame's choice): Live reports what that pass draws.
     pub fn note_world_samples(&mut self, samples: u32) {
         self.world_samples = Some(samples);
+        self.drawn_generation = Some(self.generation);
     }
 
     /// The quality and scale a capture draws with (the pinned profile) and its provenance.
@@ -1461,7 +1468,7 @@ impl RenderControl {
         for pass in &self.pass_over_budget {
             degraded.push(Degrade { reason: DegradeReason::PassOverBudget, subject: Some(pass.clone()) });
         }
-        if self.pipeline_deferred {
+        if self.pipeline_deferred || self.change_undrawn() {
             degraded.push(Degrade { reason: DegradeReason::PipelineChangeDeferred, subject: Some("anti-aliasing".to_owned()) });
         }
         if let Some(reason) = self.ldr_reason {
@@ -1470,6 +1477,12 @@ impl RenderControl {
         let quality = self.live_frame().quality;
         for knob in not_landed(&quality) {
             degraded.push(Degrade { reason: DegradeReason::NotLanded, subject: Some(knob.to_owned()) });
+        }
+        for feature in self.demoted_off() {
+            let subject = Some(feature.wire().to_owned());
+            if !degraded.iter().any(|degrade| degrade.subject == subject) {
+                degraded.push(Degrade { reason: DegradeReason::Budget, subject });
+            }
         }
         let summary = self.timing.summary();
         RenderStatus {
@@ -1481,6 +1494,28 @@ impl RenderControl {
             gpu_ms: summary.gpu_p50,
             cpu_ms: summary.cpu_p50,
         }
+    }
+
+    /// Whether an explicit change came after the last Live frame (GF round 2: right after the verb
+    /// switched a phone to TAA, the last frame's findings said nothing was deferred, so a wait for
+    /// the change to land returned before any frame drew it).
+    fn change_undrawn(&self) -> bool {
+        self.drawn_generation.is_some_and(|drawn| drawn != self.generation)
+    }
+
+    /// The feature switches the Live frame would draw without dynamic resolution's preset
+    /// demotion and draws off with it (GF round 2: a phone over its frame time demoted to a
+    /// preset without AO drew AO off and named nothing).
+    fn demoted_off(&self) -> Vec<RenderFeature> {
+        if self.drs.demotion() == 0 {
+            return Vec::new();
+        }
+        let undemoted = match self.world_samples {
+            Some(samples) => with_world_samples(&self.live.quality, samples, self.live_class()),
+            None => self.live.quality,
+        };
+        let drawn = self.live_frame().quality;
+        RenderFeature::ALL.into_iter().filter(|feature| feature_drawn(&undemoted, *feature) && !feature_drawn(&drawn, *feature)).collect()
     }
 
     /// The profile Live frames resolve to (before dynamic resolution).

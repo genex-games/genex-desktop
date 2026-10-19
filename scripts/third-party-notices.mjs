@@ -183,7 +183,7 @@ export function assertThreeLibsListed(libsDir, markdown) {
 
 /**
  * Throws, naming them, when a decoder the Rust asset importer copies (`IMPORT_DECODERS` in
- * `src/substrate/asset-import/decoders.ts`: name → files under `three/`, upstream, licence) has a
+ * `src/substrate/asset-import/decoders.ts`: name → files under the importer tools folder, upstream, licence) has a
  * file without a row in THIRD-PARTY-NOTICES.md's importer table that names its upstream and licence.
  */
 export function assertImportDecodersListed(decoders, markdown) {

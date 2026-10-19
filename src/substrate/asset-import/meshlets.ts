@@ -1,6 +1,6 @@
 /**
  * Import-time meshlets (R2.3): a GLB at or above the triangle threshold is clustered with
- * meshoptimizer's clusterizer (the build `three` ships, `decoders.ts`) and each primitive gets
+ * meshoptimizer's clusterizer (npm `meshoptimizer` 1.3.0, `decoders.ts`) and each primitive gets
  * `extras.genex_meshlets`, the schema in `native/genex-rust/crates/genex-render/README.md`. Never
  * an extension, never in `extensionsRequired`: any glTF reader still draws the primitive, and the
  * Rust runtime validates the set again at load (`meshlet::validate`) and clusters at runtime when

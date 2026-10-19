@@ -143,6 +143,44 @@ import * as seedRunDispatch from "../../src/harness-seed/loop/run-dispatch.ts";
 import { launchRefusalCode as seedLaunchRefusalCode } from "../../src/harness-seed/loop/native-loop.ts";
 import { RUST_NIGHT_PARTS } from "../../src/substrate/seed-upgrade.ts";
 
+/** Bake names: a plain segment, and every hostile shape a path parameter meets. Both copies must agree on each. */
+const BAKE_NAME_CANDIDATES: unknown[] = [
+  "navmesh",
+  "level-1_a",
+  "x".repeat(64),
+  "x".repeat(65),
+  "",
+  ".",
+  "..",
+  "../x",
+  "/etc/hosts",
+  "a/b",
+  "a\\b",
+  "a\0b",
+  ".hidden",
+  "Nav",
+  "-lead",
+  1,
+  null,
+];
+
+/** bakeAssets and reloadAssets answers, good and malformed: each op's verdict must agree. */
+const ASSET_REPLY_CANDIDATES: unknown[] = [
+  { kind: "nav", name: "market", bytes: 4096, digest: "0123456789abcdef" },
+  { kind: "impostor", name: "oak", bytes: 0, digest: "0123456789abcdef" },
+  { kind: "terrain", name: "market", bytes: 4096, digest: "0123456789abcdef" },
+  { kind: "nav", name: "../market", bytes: 4096, digest: "0123456789abcdef" },
+  { kind: "nav", name: "market", bytes: -1, digest: "0123456789abcdef" },
+  { kind: "nav", name: "market", bytes: 2 ** 40, digest: "0123456789abcdef" },
+  { kind: "nav", name: "market", bytes: 4096, digest: "XYZ" },
+  { reloaded: ["textures/bark.png"], refused: [], pending: 0 },
+  { reloaded: [], refused: [{ path: "../x.png", code: "unsafe-path" }], pending: 1 },
+  { reloaded: [], refused: [{ path: "x.png", code: "gone" }], pending: 0 },
+  { reloaded: [1], refused: [], pending: 0 },
+  { reloaded: [], refused: [], pending: -1 },
+  { reloaded: [], refused: [] },
+];
+
 /** renderSettings answers, and captures with and without their render provenance: each op's verdict must agree. */
 const RENDER_REPLY_CANDIDATES: unknown[] = [
   {
@@ -1163,8 +1201,21 @@ describe("the C++ · raylib contract (shared/game-project.ts, game-targets.ts, n
       "NativeGpuTier",
       "NATIVE_PROTOCOL_VERSIONS",
       "NATIVE_WGPU_BACKENDS",
+      "BakeKind",
+      "ReloadRefusal",
     ] as const)
       assert.deepEqual(seedNative[name], native[name], name);
+  });
+
+  it("both copies declare the asset ops: bakeAssets of a nav or impostor bake, reloadAssets of named files", () => {
+    for (const copy of [native, seedNative]) {
+      assert.equal(copy.NativeOp.BakeAssets, "bakeAssets");
+      assert.equal(copy.NativeOp.ReloadAssets, "reloadAssets");
+      assert.deepEqual(copy.BakeKind, { Nav: "nav", Impostor: "impostor" });
+      assert.deepEqual(Object.values(copy.ReloadRefusal), ["unsafe-path", "digest-mismatch", "missing"]);
+    }
+    for (const name of BAKE_NAME_CANDIDATES)
+      assert.equal(seedNative.isBakeName(name), native.isBakeName(name), JSON.stringify(name));
   });
 
   it("both copies speak protocol 2 and still accept protocol 1", () => {
@@ -1265,6 +1316,7 @@ describe("the C++ · raylib contract (shared/game-project.ts, game-targets.ts, n
       { lifecycle: "resumed", safeArea: { top: -1, left: 0, bottom: 0, right: 0 } },
       { safeArea: { top: 0, left: 0, bottom: 0, right: 0 } },
       ...RENDER_REPLY_CANDIDATES,
+      ...ASSET_REPLY_CANDIDATES,
     ];
     for (const protocol of native.NATIVE_PROTOCOL_VERSIONS)
       for (const op of Object.values(native.NativeOp))

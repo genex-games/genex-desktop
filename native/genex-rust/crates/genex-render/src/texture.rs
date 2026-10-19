@@ -20,6 +20,14 @@
 //! first texture and keeps them; a material's texture reference carries its class
 //! (`layout::texture_ref`) and the forward pass samples the class arrays while any texture lives
 //! past class 0. Level-2 v2 materials and immediate quads sample class 0 only.
+//!
+//! Layers come and go (game systems STR-3): each array books its layers in a [`TextureLayers`], a
+//! reference count per layer and a free list, so [`ClassArrays::remove`] frees a layer once its
+//! last reference goes and the next texture of that array takes the lowest free layer before a new
+//! one, with no allocation. The layer cap counts live layers; a growing array's refill cache keeps
+//! no chain for a free layer.
+
+use std::collections::BTreeSet;
 
 use wgpu::{Device, Queue, Texture, TextureView};
 
@@ -510,18 +518,93 @@ fn class_of_side(side: u32) -> TextureClass {
     TextureClass::ALL.into_iter().find(|class| class.side() == side).unwrap_or(TextureClass::S256)
 }
 
+/// The layer book of one texture array (STR-3): a reference count per layer and a free list.
+/// [`TextureLayers::take`] hands out the lowest free layer, else the next new one while fewer than
+/// the cap are live; a layer is free again when its last reference is released. Everything is
+/// ordered, so the same adds and removes give the same layers on every destination.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TextureLayers {
+    cap: u32,
+    /// References per layer ever taken (0: free); its length is the high-water mark.
+    refs: Vec<u32>,
+    free: BTreeSet<u32>,
+}
+
+impl TextureLayers {
+    /// A book of at most `cap` live layers, none taken.
+    pub fn new(cap: u32) -> TextureLayers {
+        TextureLayers { cap, refs: Vec::new(), free: BTreeSet::new() }
+    }
+
+    /// A layer with one reference: the lowest free one, else a new one; None when `cap` are live.
+    pub fn take(&mut self) -> Option<u32> {
+        if let Some(layer) = self.free.pop_first() {
+            self.refs[layer as usize] = 1;
+            return Some(layer);
+        }
+        let layer = u32::try_from(self.refs.len()).ok().filter(|layer| *layer < self.cap)?;
+        self.refs.push(1);
+        Some(layer)
+    }
+
+    /// One more reference to a live `layer`: its count after, or None when it is not live.
+    pub fn retain(&mut self, layer: u32) -> Option<u32> {
+        let refs = self.refs.get_mut(layer as usize).filter(|refs| **refs > 0)?;
+        *refs += 1;
+        Some(*refs)
+    }
+
+    /// One reference fewer to a live `layer`: the count left (0: the layer is free again), or None
+    /// when it is not live.
+    pub fn release(&mut self, layer: u32) -> Option<u32> {
+        let refs = self.refs.get_mut(layer as usize).filter(|refs| **refs > 0)?;
+        *refs -= 1;
+        let left = *refs;
+        if left == 0 {
+            self.free.insert(layer);
+        }
+        Some(left)
+    }
+
+    /// References to `layer` (0 for a free or never-taken one).
+    pub fn refs(&self, layer: u32) -> u32 {
+        self.refs.get(layer as usize).copied().unwrap_or(0)
+    }
+
+    /// Whether `layer` holds a texture.
+    pub fn is_live(&self, layer: u32) -> bool {
+        self.refs(layer) > 0
+    }
+
+    /// Layers holding a texture.
+    pub fn live(&self) -> u32 {
+        self.high_water() - self.free.len() as u32
+    }
+
+    /// Layers ever taken (the array holds at least this many).
+    pub fn high_water(&self) -> u32 {
+        self.refs.len() as u32
+    }
+
+    /// Whether another layer can be taken.
+    fn has_room(&self) -> bool {
+        self.live() < self.cap
+    }
+}
+
 /// One kind's texture array of one size class on the GPU. Today's arrays (`growing`) start at
-/// one layer and grow by copy to a power of two, keeping the mip chains to refill; a pre-sized
-/// size-class array is a 1 × 1 placeholder until its first texture, then allocated at its cap. A
-/// compressed family's array (A6.4) is always pre-sized.
+/// one layer and grow by copy to a power of two, keeping each live layer's mip chain to refill; a
+/// pre-sized size-class array is a 1 × 1 placeholder until its first texture, then allocated at
+/// its cap. A compressed family's array (A6.4) is always pre-sized.
 pub(crate) struct TextureArray {
     kind: TextureKind,
     family: TextureFamily,
     side: u32,
     cap: u32,
     growing: bool,
-    layers: u32,
-    chains: Vec<Vec<TextureData>>,
+    layers: TextureLayers,
+    /// A growing array's refill cache, by layer: None for a free layer.
+    chains: Vec<Option<Vec<TextureData>>>,
     texture: Texture,
     view: TextureView,
 }
@@ -530,9 +613,15 @@ impl TextureArray {
     /// Today's array: 256 layers growing to [`MAX_TEXTURE_LAYERS`], one blank layer so the bind
     /// group is valid before any texture is added.
     pub(crate) fn new(device: &Device, kind: TextureKind) -> TextureArray {
+        TextureArray::growing(device, kind, MAX_TEXTURE_LAYERS)
+    }
+
+    /// An RGBA8 256 array growing by copy to at most `cap` layers, one blank layer to start.
+    fn growing(device: &Device, kind: TextureKind, cap: u32) -> TextureArray {
         let family = TextureFamily::Rgba8;
         let (texture, view) = array_texture(device, kind, family, TEXTURE_LAYER_PX, 1);
-        TextureArray { kind, family, side: TEXTURE_LAYER_PX, cap: MAX_TEXTURE_LAYERS, growing: true, layers: 0, chains: Vec::new(), texture, view }
+        let layers = TextureLayers::new(cap);
+        TextureArray { kind, family, side: TEXTURE_LAYER_PX, cap, growing: true, layers, chains: Vec::new(), texture, view }
     }
 
     /// A size-class array of `side` texels holding at most `cap` layers, allocated on its first
@@ -540,7 +629,7 @@ impl TextureArray {
     fn presized(device: &Device, kind: TextureKind, family: TextureFamily, side: u32, cap: u32) -> TextureArray {
         let placeholder = family.block_side();
         let (texture, view) = array_texture(device, kind, family, placeholder, 1);
-        TextureArray { kind, family, side, cap, growing: false, layers: 0, chains: Vec::new(), texture, view }
+        TextureArray { kind, family, side, cap, growing: false, layers: TextureLayers::new(cap), chains: Vec::new(), texture, view }
     }
 
     /// The view the shaders sample.
@@ -548,9 +637,9 @@ impl TextureArray {
         &self.view
     }
 
-    /// Whether another layer fits.
+    /// Whether another layer fits: fewer than the cap are live.
     fn has_room(&self) -> bool {
-        self.layers < self.cap
+        self.layers.has_room()
     }
 
     /// The array's side and layers as allocated.
@@ -558,9 +647,10 @@ impl TextureArray {
         (self.texture.width(), self.texture.depth_or_array_layers())
     }
 
-    /// The bytes allocated for textures (a placeholder counts none).
+    /// The bytes allocated for textures (a placeholder counts none; an array whose layers were all
+    /// removed keeps its allocation).
     fn allocated_bytes(&self) -> u64 {
-        if self.layers == 0 {
+        if self.layers.high_water() == 0 {
             return 0;
         }
         let (side, layers) = self.extent();
@@ -572,60 +662,89 @@ impl TextureArray {
 
     /// The bytes the textures it holds take (their layers' chains, not the array's reservation).
     fn held_bytes(&self) -> u64 {
-        self.family.chain_bytes(self.side) * u64::from(self.layers)
+        self.family.chain_bytes(self.side) * u64::from(self.layers.live())
+    }
+
+    /// The CPU bytes the refill cache keeps (live layers' chains of a growing array).
+    fn cached_bytes(&self) -> u64 {
+        self.chains.iter().flatten().flatten().map(|level| level.rgba.len() as u64).sum()
     }
 
     /// The refusal of a texture past the cap.
     fn full(&self) -> RenderError {
-        RenderError::refused(RenderCode::TextureTooLarge, format!("{} {:?} textures already", self.cap, self.kind))
+        RenderError::refused(RenderCode::TextureTooLarge, format!("{} {:?} textures live already", self.cap, self.kind))
     }
 
-    /// Add a mip chain of this array's side as the next layer, named as `kind` (this array's kind,
-    /// or [`TextureKind::Normal`] in a data array).
+    /// A layer for the next texture (the lowest free one, else a new one), with a pre-sized array
+    /// allocated at its cap on its first texture: no allocation when a freed layer is reused.
+    fn take_layer(&mut self, device: &Device) -> Result<u32, RenderError> {
+        let first = self.layers.high_water() == 0;
+        let layer = self.layers.take().ok_or_else(|| self.full())?;
+        if first && !self.growing {
+            (self.texture, self.view) = array_texture(device, self.kind, self.family, self.side, self.cap);
+        }
+        Ok(layer)
+    }
+
+    /// Add a mip chain of this array's side in the next layer ([`TextureArray::take_layer`]),
+    /// named as `kind` (this array's kind, or [`TextureKind::Normal`] in a data array).
     fn add_chain(&mut self, device: &Device, queue: &Queue, chain: Vec<TextureData>, kind: TextureKind) -> Result<TextureId, RenderError> {
-        let layer = self.layers;
-        if !self.has_room() {
-            return Err(self.full());
-        }
-        self.layers += 1;
+        let layer = self.take_layer(device)?;
+        let id = TextureId::in_class(kind, class_of_side(self.side), layer);
         if !self.growing {
-            if layer == 0 {
-                (self.texture, self.view) = array_texture(device, self.kind, self.family, self.side, self.cap);
-            }
             upload(queue, &self.texture, layer, &chain);
-            return Ok(TextureId::in_class(kind, class_of_side(self.side), layer));
+            return Ok(id);
         }
-        self.chains.push(chain);
+        let at = layer as usize;
+        if at == self.chains.len() {
+            self.chains.push(None);
+        }
+        self.chains[at] = Some(chain);
         if layer >= self.texture.depth_or_array_layers() {
+            // Grow by copy: every live layer is refilled from its cached chain; free ones are not.
             let layers = (layer + 1).next_power_of_two().min(self.cap);
             (self.texture, self.view) = array_texture(device, self.kind, self.family, self.side, layers);
             for (at, chain) in self.chains.iter().enumerate() {
-                upload(queue, &self.texture, at as u32, chain);
+                if let Some(chain) = chain {
+                    upload(queue, &self.texture, at as u32, chain);
+                }
             }
-        } else if let Some(chain) = self.chains.last() {
+        } else if let Some(chain) = &self.chains[at] {
             upload(queue, &self.texture, layer, chain);
         }
-        Ok(TextureId::in_class(kind, class_of_side(self.side), layer))
+        Ok(id)
     }
 
-    /// Add a compressed chain of this array's side (its family's blocks, level 0 first) as the
-    /// next layer, named as `kind`; the array is pre-sized, so it is allocated on its first layer.
+    /// Add a compressed chain of this array's side (its family's blocks, level 0 first) in the
+    /// next layer ([`TextureArray::take_layer`]: a freed one first), named as `kind`; the array is
+    /// pre-sized, so it is allocated on its first layer.
     fn add_blocks(&mut self, device: &Device, queue: &Queue, levels: &[Vec<u8>], kind: TextureKind) -> Result<TextureId, RenderError> {
-        let layer = self.layers;
-        if !self.has_room() {
-            return Err(self.full());
-        }
-        self.layers += 1;
-        if layer == 0 {
-            (self.texture, self.view) = array_texture(device, self.kind, self.family, self.side, self.cap);
-        }
+        let layer = self.take_layer(device)?;
         upload_blocks(queue, &self.texture, self.family, layer, levels);
         Ok(TextureId::in_class(kind, class_of_side(self.side), layer))
     }
 
-    /// Layers held.
+    /// One more reference to the texture in `layer`: its count after, or None when it is free.
+    fn retain(&mut self, layer: u32) -> Option<u32> {
+        self.layers.retain(layer)
+    }
+
+    /// One reference fewer to the texture in `layer`: the count left, or None when it is free. At
+    /// 0 the layer is free for the next texture and its cached chain is dropped; its texels stay
+    /// until a new texture overwrites them.
+    fn release(&mut self, layer: u32) -> Option<u32> {
+        let left = self.layers.release(layer)?;
+        if left == 0
+            && let Some(chain) = self.chains.get_mut(layer as usize)
+        {
+            *chain = None;
+        }
+        Some(left)
+    }
+
+    /// Layers holding a texture.
     fn layers(&self) -> u32 {
-        self.layers
+        self.layers.live()
     }
 }
 
@@ -650,7 +769,9 @@ impl ClassArrays {
     /// they take only [`CompressedTexture`]s of that family ([`ClassArrays::add_compressed`]) and
     /// are always pre-sized. Size class 0 (256) stays RGBA8 in every family, so an image without a
     /// compressed file (a generated texture, a source the import step could not encode) still
-    /// loads, at most 256 texels a side; [`TextureFamily::Rgba8`] is [`ClassArrays::new`].
+    /// loads, at most 256 texels a side; under a compressed family it holds only those fallbacks, so
+    /// it grows by copy with them to its cap instead of taking the cap on the first (game systems
+    /// GF, C-12). [`TextureFamily::Rgba8`] is [`ClassArrays::new`].
     pub fn with_family(device: &Device, class: DeviceClass, quality: TextureQuality, family: TextureFamily) -> ClassArrays {
         let caps = class_layer_caps(class, quality);
         let growing = quality == TextureQuality::OFF;
@@ -659,9 +780,12 @@ impl ClassArrays {
             .map(|texture_class| {
                 let (side, cap) = (texture_class.side(), caps[texture_class.index() as usize]);
                 let stored = if texture_class == TextureClass::S256 { TextureFamily::Rgba8 } else { family };
+                let fallback = family != TextureFamily::Rgba8 && texture_class == TextureClass::S256;
                 [TextureKind::Color, TextureKind::Data].map(|kind| {
                     if growing && texture_class == TextureClass::S256 {
                         TextureArray::new(device, kind)
+                    } else if fallback {
+                        TextureArray::growing(device, kind, cap)
                     } else {
                         TextureArray::presized(device, kind, stored, side, cap)
                     }
@@ -687,8 +811,9 @@ impl ClassArrays {
     }
 
     /// Whether no texture was added yet (the arrays can still be made again for another quality).
+    /// Arrays whose textures were all removed are not empty: they keep their allocation.
     pub fn is_empty(&self) -> bool {
-        self.arrays.iter().flatten().all(|array| array.layers() == 0)
+        self.arrays.iter().flatten().all(|array| array.layers.high_water() == 0)
     }
 
     /// Whether any texture lives past size class 0 (the shaders then sample the class arrays).
@@ -775,6 +900,29 @@ impl ClassArrays {
         array.add_blocks(device, queue, levels, kind)
     }
 
+    /// One more reference to the texture `id` names (a second material using it): its count after.
+    /// Refused `texture-invalid` when its layer holds no texture.
+    pub fn retain(&mut self, id: TextureId) -> Result<u32, RenderError> {
+        self.array_mut(id).retain(id.layer()).ok_or_else(|| not_live(id))
+    }
+
+    /// Drop one reference to the texture `id` names: the count left. At 0 its layer is free, and
+    /// the next texture of that array takes it with no new allocation (STR-3). Refused
+    /// `texture-invalid` when its layer holds no texture.
+    pub fn remove(&mut self, id: TextureId) -> Result<u32, RenderError> {
+        self.array_mut(id).release(id.layer()).ok_or_else(|| not_live(id))
+    }
+
+    /// Layers holding a texture in `class`'s `kind` array.
+    pub fn live_layers(&self, class: TextureClass, kind: TextureKind) -> u32 {
+        self.array(class, kind).layers()
+    }
+
+    /// The CPU bytes the growing arrays keep to refill on growth (each live layer's mip chain).
+    pub fn cached_bytes(&self) -> u64 {
+        self.arrays.iter().flatten().map(TextureArray::cached_bytes).sum()
+    }
+
     /// The view the shaders sample for `class`'s `kind` array.
     pub fn view(&self, class: TextureClass, kind: TextureKind) -> &TextureView {
         self.array(class, kind).view()
@@ -805,6 +953,15 @@ impl ClassArrays {
     fn array(&self, class: TextureClass, kind: TextureKind) -> &TextureArray {
         &self.arrays[class.index() as usize][usize::from(kind.is_data())]
     }
+
+    fn array_mut(&mut self, id: TextureId) -> &mut TextureArray {
+        &mut self.arrays[id.class().index() as usize][usize::from(id.kind().is_data())]
+    }
+}
+
+/// The refusal of a retain or remove of a layer that holds no texture.
+fn not_live(id: TextureId) -> RenderError {
+    RenderError::refused(RenderCode::TextureInvalid, format!("no {:?} texture lives in {:?} layer {}", id.kind(), id.class(), id.layer()))
 }
 
 /// A material array is sampled and written; a compressed one is also copied out, so its stored

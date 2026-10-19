@@ -20,9 +20,10 @@ use crate::camera::Camera;
 use crate::ctx::{Ctx, CtxRng, Key};
 use crate::frame::Frame;
 use crate::game::{Game, Single};
-use crate::gfx::Gfx;
+use crate::gfx::{AssetSource, Gfx};
 use crate::input::{Input, Merger, TickInput};
 use crate::map::Set;
+use crate::present::{AssetIssue, TextureFact};
 use crate::rng::Pcg32;
 use crate::sim::{FacetState, Sim};
 use genex_core::clock::FrameClock;
@@ -51,6 +52,10 @@ const MAX_NAME_CHARS: usize = 64;
 const DEFAULT_CAMERA: &str = "default";
 /// `state().__render`'s list of the models drawn as the missing-asset checker.
 const MISSING_MODELS_KEY: &str = "missingModels";
+/// `state().__render`'s textures the last frame bound, by path (C-11).
+const TEXTURES_KEY: &str = "textures";
+/// `state().__render`'s asset issues of the last frame (C-11).
+const ASSET_ISSUES_KEY: &str = "assetIssues";
 /// The game's name and bundle id as the build lane names them (`GENEX_GAME_NAME`,
 /// `GENEX_BUNDLE_ID` at compile time, as the C++ lane's `-D` defines); an exported app saves
 /// under them unless the game set its own `save_name`.
@@ -66,7 +71,7 @@ const BUILD_IDENTITY: GameIdentity<'static> = GameIdentity {
 };
 
 /// The keys `state()` owns; a probe may never use one as its name.
-pub const RUNTIME_KEYS: [&str; 17] = [
+pub const RUNTIME_KEYS: [&str; 18] = [
     "version",
     "contractVersion",
     "seed",
@@ -82,6 +87,8 @@ pub const RUNTIME_KEYS: [&str; 17] = [
     "player",
     "volatile",
     "__render",
+    // Display only, and only while streaming is registered: never in the checksum.
+    "__stream",
     "assets",
     "checksum",
 ];
@@ -116,11 +123,16 @@ pub enum InstallErrorCode {
     DuplicateFacetState,
     /// A world size side outside `64..=4096` (genex-core's `MIN_WORLD_PX..=MAX_WORLD_PX`).
     InvalidWorldSize,
+    /// A second `game.streaming`.
+    DuplicateStreaming,
+    /// A streaming registration outside its caps (a cell size outside
+    /// `STREAM_CELL_SIZE_MIN..=STREAM_CELL_SIZE_MAX`).
+    StreamingInvalid,
 }
 
 impl InstallErrorCode {
     /// Every code, in declaration order.
-    pub const ALL: [InstallErrorCode; 10] = [
+    pub const ALL: [InstallErrorCode; 12] = [
         InstallErrorCode::DuplicateCamera,
         InstallErrorCode::DuplicatePlayer,
         InstallErrorCode::DuplicateProbe,
@@ -131,6 +143,8 @@ impl InstallErrorCode {
         InstallErrorCode::InvalidName,
         InstallErrorCode::DuplicateFacetState,
         InstallErrorCode::InvalidWorldSize,
+        InstallErrorCode::DuplicateStreaming,
+        InstallErrorCode::StreamingInvalid,
     ];
 
     /// The typed code's wire spelling.
@@ -146,6 +160,8 @@ impl InstallErrorCode {
             InstallErrorCode::InvalidName => "invalid-name",
             InstallErrorCode::DuplicateFacetState => "duplicate-facet-state",
             InstallErrorCode::InvalidWorldSize => "invalid-world-size",
+            InstallErrorCode::DuplicateStreaming => "duplicate-streaming",
+            InstallErrorCode::StreamingInvalid => "streaming-invalid",
         }
     }
 }
@@ -223,6 +239,10 @@ struct Tally {
     tags: Vec<(String, u32, u32)>,
     /// Models the renderer drew as the missing-asset checker, in first-draw order.
     missing_models: Vec<String>,
+    /// The textures the renderer bound, one per path in first-bound order (C-11).
+    textures: Vec<TextureFact>,
+    /// What those textures tell an agent to fix (C-11).
+    asset_issues: Vec<AssetIssue>,
 }
 
 /// The simulation and clock state the hooks run against.
@@ -283,8 +303,16 @@ impl<W> DemoDriver<'_, W> {
 }
 
 impl<W: Default + 'static> Runtime<W> {
-    /// Check the registrations and seed [`DEFAULT_SEED`].
-    pub fn new(mut game: Game<W>) -> Result<Runtime<W>, InstallError> {
+    /// Check the registrations and seed [`DEFAULT_SEED`], with no assets to read (a test's or a
+    /// tool's runtime): every [`crate::Assets::bytes`] answers `missing`.
+    pub fn new(game: Game<W>) -> Result<Runtime<W>, InstallError> {
+        Runtime::with_assets(game, Box::new(crate::gfx::NO_ASSETS))
+    }
+
+    /// Check the registrations, attach the asset `source` the reset hooks read through
+    /// (`gfx.assets().bytes`, `.triangles`), then seed [`DEFAULT_SEED`]: the first reset already
+    /// reads, on every shell.
+    pub fn with_assets(mut game: Game<W>, source: Box<dyn AssetSource>) -> Result<Runtime<W>, InstallError> {
         validate(&game)?;
         let world = std::mem::take(&mut game.initial);
         let saves = saves_of(game.save_name.as_deref());
@@ -298,7 +326,7 @@ impl<W: Default + 'static> Runtime<W> {
             rng: Cell::new(Pcg32::seeded(u64::from(DEFAULT_SEED))),
             merger: Merger::default(),
             pointer_lock: false,
-            gfx: Gfx::new(game.world_size, saves, game.wgsl.clone()),
+            gfx: Gfx::new(game.world_size, saves, game.wgsl.clone(), source),
             hud: Hud::new(),
             clock: FrameClock::default(),
             tally: Tally::default(),
@@ -324,9 +352,11 @@ impl<W: Default + 'static> Runtime<W> {
         core.gfx.assets().clear();
         core.gfx.clear_extensions();
         let mut rng = Pcg32::seeded(u64::from(seed));
+        core.gfx.assets().set_at_reset(true);
         for hook in &self.game.resets {
             hook(&mut core.sim, seed, &mut rng, &core.gfx);
         }
+        core.gfx.assets().set_at_reset(false);
         core.rng.set(rng);
     }
 }
@@ -515,6 +545,9 @@ impl<W> Runtime<W> {
             volatile.set(name, CoreValue::from(&value));
         }
         state.set(session::VOLATILE_KEY, volatile);
+        if !self.game.streaming.is_empty() {
+            state.set(crate::stream::RUNTIME_KEY, crate::stream::runtime_value());
+        }
         state
     }
 
@@ -550,7 +583,8 @@ impl<W> Runtime<W> {
 
     /// The last frame's tally as `__render`: `{drawCalls, triangles, tags: {tag: {drawCalls,
     /// triangles}}, exact: false}` (`studio.cpp` `tallyJson`), plus `missingModels` (the model
-    /// paths drawn as the magenta checker) only when there are some.
+    /// paths drawn as the magenta checker), `textures` (`{path: {kind, family}}`) and
+    /// `assetIssues` (`[{path, code}]`), each only when there are some.
     fn render_value(&self) -> CoreValue {
         let tally = &self.core.tally;
         let mut tags = CoreValue::object();
@@ -569,6 +603,25 @@ impl<W> Runtime<W> {
             let missing = tally.missing_models.iter().map(|path| CoreValue::from(path.as_str())).collect();
             render.set(MISSING_MODELS_KEY, CoreValue::Array(missing));
         }
+        if !tally.textures.is_empty() {
+            let mut textures = CoreValue::object();
+            for fact in &tally.textures {
+                let mut entry = CoreValue::object();
+                entry.set("kind", CoreValue::from(fact.usage()));
+                entry.set("family", CoreValue::from(fact.origin.wire()));
+                textures.set(fact.path.as_str(), entry);
+            }
+            render.set(TEXTURES_KEY, textures);
+        }
+        if !tally.asset_issues.is_empty() {
+            let issues = tally.asset_issues.iter().map(|issue| {
+                let mut entry = CoreValue::object();
+                entry.set("path", CoreValue::from(issue.path.as_str()));
+                entry.set("code", CoreValue::from(issue.code.wire()));
+                entry
+            });
+            render.set(ASSET_ISSUES_KEY, CoreValue::Array(issues.collect()));
+        }
         render
     }
 
@@ -585,6 +638,13 @@ impl<W> Runtime<W> {
     /// the game's assets, or refused): `state().__render.missingModels`, absent when empty.
     pub fn note_missing_models(&mut self, paths: &[String]) {
         self.core.tally.missing_models = paths.to_vec();
+    }
+
+    /// The textures the renderer bound in the frame last drawn and the issues they raise (C-11):
+    /// `state().__render.textures` and `.assetIssues`, each absent when empty. Display only.
+    pub fn note_texture_facts(&mut self, textures: &[TextureFact], issues: &[AssetIssue]) {
+        self.core.tally.textures = textures.to_vec();
+        self.core.tally.asset_issues = issues.to_vec();
     }
 
     fn core_probes(&self) -> CoreValue {
@@ -614,7 +674,7 @@ impl<W> Runtime<W> {
         // Each custom GPU pass is one logical draw of every frame (M2.19).
         let custom = crate::gpu::tally(&self.game.gpu_passes, &mut tags);
         let draw_calls = frame.draw_calls() + custom;
-        self.core.tally = Tally { draw_calls, triangles: 0, tags, missing_models: Vec::new() };
+        self.core.tally = Tally { draw_calls, triangles: 0, tags, ..Tally::default() };
         Some(frame)
     }
 
@@ -679,6 +739,26 @@ pub(crate) fn run<W: Default + 'static>(mut runtime: Runtime<W>, assets: crate::
     }
 }
 
+/// `genex::install_with_assets`: check the game, attach this destination's asset source (the
+/// compiled `assets` first, then natively `assets/` beside the executable by real path) before the
+/// first seed, then hand the runtime to the platform shell.
+pub(crate) fn install<W: Default + 'static>(game: Game<W>, assets: crate::AssetTable) {
+    let runtime = Runtime::with_assets(game, native_source(assets)).unwrap_or_else(|error| panic!("genex::install: {error}"));
+    run(runtime, assets);
+}
+
+/// The sim's asset source on this destination: the compiled table, then the asset folder.
+#[cfg(not(target_arch = "wasm32"))]
+fn native_source(assets: crate::AssetTable) -> Box<dyn AssetSource> {
+    Box::new(crate::present_files::AssetFiles::for_process(assets))
+}
+
+/// A wasm32 build without the web shell reads its compiled table only.
+#[cfg(target_arch = "wasm32")]
+fn native_source(assets: crate::AssetTable) -> Box<dyn AssetSource> {
+    Box::new(assets)
+}
+
 /// The saves of this process: the run's `state/` under the studio, else the destination's root
 /// for the game's `save_name` or the build's identity.
 fn saves_of(save_name: Option<&str>) -> Saves {
@@ -686,7 +766,7 @@ fn saves_of(save_name: Option<&str>) -> Saves {
 }
 
 fn fresh_sim<W>(world: W, game: &Game<W>) -> Sim<W> {
-    Sim { world, physics: fresh_physics(), facets: FacetState::fresh(&game.facets) }
+    Sim { world, physics: fresh_physics(), facets: FacetState::fresh(&game.facets), nav: crate::nav::fresh(game.navigation.as_ref()) }
 }
 
 /// An empty physics world stepping at the fixed tick.
@@ -783,6 +863,7 @@ fn validate<W>(game: &Game<W>) -> Result<(), InstallError> {
     check_names(cameras, InstallErrorCode::DuplicateCameraName, &[DEFAULT_CAMERA])?;
     check_names(game.eyes.iter().map(|c| c.name.as_str()), InstallErrorCode::DuplicateEye, &[])?;
     check_names(game.demos.iter().map(|c| c.name.as_str()), InstallErrorCode::DuplicateDemo, &[])?;
+    check_streaming(&game.streaming)?;
     let mut facets = Set::default();
     for facet in &game.facets {
         if !facets.insert(facet.type_id) {
@@ -798,6 +879,24 @@ fn check_world_size(size: [u32; 2]) -> Result<(), InstallError> {
     }
     let detail = format!("{}x{} ({MIN_WORLD_PX}..={MAX_WORLD_PX})", size[0], size[1]);
     Err(InstallError::new(InstallErrorCode::InvalidWorldSize, detail))
+}
+
+fn check_streaming(registrations: &[crate::stream::Streaming]) -> Result<(), InstallError> {
+    if registrations.len() > 1 {
+        return Err(InstallError::new(InstallErrorCode::DuplicateStreaming, "game.streaming is registered once"));
+    }
+    match registrations.iter().find(|streaming| !streaming.valid()) {
+        Some(streaming) => {
+            let detail = format!(
+                "cell size {} ({}..={})",
+                streaming.cell_size(),
+                crate::stream::STREAM_CELL_SIZE_MIN,
+                crate::stream::STREAM_CELL_SIZE_MAX
+            );
+            Err(InstallError::new(InstallErrorCode::StreamingInvalid, detail))
+        }
+        None => Ok(()),
+    }
 }
 
 fn check_single<F>(registrations: &[Single<F>], code: InstallErrorCode, detail: &str) -> Result<(), InstallError> {
