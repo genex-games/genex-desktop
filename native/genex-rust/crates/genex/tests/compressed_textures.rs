@@ -283,6 +283,10 @@ fn metal_lakesides_maps_load_compressed_at_a_quarter_of_their_bytes() {
     assert_eq!(images.1, TextureFamily::Rgba8, "no family file: images");
     assert_ne!(compressed.1, TextureFamily::Rgba8, "the device's best family the game ships");
     let ratio = images.2 as f64 / compressed.2 as f64;
-    eprintln!("Lakeside's maps: {ratio:.2}x fewer bytes held; arrays {:.2}x", images.3 as f64 / compressed.3 as f64);
+    let arrays = images.3 as f64 / compressed.3 as f64;
+    eprintln!("Lakeside's maps: {ratio:.2}x fewer bytes held; arrays {arrays:.2}x");
     assert!(ratio >= 3.5, "the maps take {ratio:.2}x fewer bytes compressed (at least 3.5x)");
+    // Game systems GF: the GPU memory the arrays allocate drops as far (plan section 10, C-12),
+    // not only the bytes the textures hold.
+    assert!(arrays >= 3.5, "the arrays allocate {arrays:.2}x fewer bytes compressed (at least 3.5x)");
 }

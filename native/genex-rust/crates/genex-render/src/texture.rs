@@ -613,10 +613,15 @@ impl TextureArray {
     /// Today's array: 256 layers growing to [`MAX_TEXTURE_LAYERS`], one blank layer so the bind
     /// group is valid before any texture is added.
     pub(crate) fn new(device: &Device, kind: TextureKind) -> TextureArray {
+        TextureArray::growing(device, kind, MAX_TEXTURE_LAYERS)
+    }
+
+    /// An RGBA8 256 array growing by copy to at most `cap` layers, one blank layer to start.
+    fn growing(device: &Device, kind: TextureKind, cap: u32) -> TextureArray {
         let family = TextureFamily::Rgba8;
         let (texture, view) = array_texture(device, kind, family, TEXTURE_LAYER_PX, 1);
-        let layers = TextureLayers::new(MAX_TEXTURE_LAYERS);
-        TextureArray { kind, family, side: TEXTURE_LAYER_PX, cap: MAX_TEXTURE_LAYERS, growing: true, layers, chains: Vec::new(), texture, view }
+        let layers = TextureLayers::new(cap);
+        TextureArray { kind, family, side: TEXTURE_LAYER_PX, cap, growing: true, layers, chains: Vec::new(), texture, view }
     }
 
     /// A size-class array of `side` texels holding at most `cap` layers, allocated on its first
@@ -764,7 +769,9 @@ impl ClassArrays {
     /// they take only [`CompressedTexture`]s of that family ([`ClassArrays::add_compressed`]) and
     /// are always pre-sized. Size class 0 (256) stays RGBA8 in every family, so an image without a
     /// compressed file (a generated texture, a source the import step could not encode) still
-    /// loads, at most 256 texels a side; [`TextureFamily::Rgba8`] is [`ClassArrays::new`].
+    /// loads, at most 256 texels a side; under a compressed family it holds only those fallbacks, so
+    /// it grows by copy with them to its cap instead of taking the cap on the first (game systems
+    /// GF, C-12). [`TextureFamily::Rgba8`] is [`ClassArrays::new`].
     pub fn with_family(device: &Device, class: DeviceClass, quality: TextureQuality, family: TextureFamily) -> ClassArrays {
         let caps = class_layer_caps(class, quality);
         let growing = quality == TextureQuality::OFF;
@@ -773,9 +780,12 @@ impl ClassArrays {
             .map(|texture_class| {
                 let (side, cap) = (texture_class.side(), caps[texture_class.index() as usize]);
                 let stored = if texture_class == TextureClass::S256 { TextureFamily::Rgba8 } else { family };
+                let fallback = family != TextureFamily::Rgba8 && texture_class == TextureClass::S256;
                 [TextureKind::Color, TextureKind::Data].map(|kind| {
                     if growing && texture_class == TextureClass::S256 {
                         TextureArray::new(device, kind)
+                    } else if fallback {
+                        TextureArray::growing(device, kind, cap)
                     } else {
                         TextureArray::presized(device, kind, stored, side, cap)
                     }
