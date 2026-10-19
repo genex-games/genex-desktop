@@ -5,7 +5,7 @@
  */
 import type { BuildTarget } from "../../shared/game-project.ts";
 import { meshToGlb } from "./glb.ts";
-import { normalizeGltf } from "./gltf-decompress.ts";
+import { importGltf } from "./gltf-decompress.ts";
 import { GltfImportError } from "./gltf-json.ts";
 import { checkRadiance, HdrError } from "./hdr.ts";
 import { AssetImportRefusal, ImportConverter } from "./import-plan.ts";
@@ -23,6 +23,7 @@ import { addMeshletExtras } from "./meshlets.ts";
 import { MeshFormatError, objToMesh } from "./obj.ts";
 import { plyToMesh, stlToMesh } from "./stl-ply.ts";
 import { type TranscodedTexture, texturesForTargets } from "./texture-table.ts";
+import type { GltfIssue } from "./validate.ts";
 
 /** One file for a step. */
 export interface ConvertInput {
@@ -50,6 +51,8 @@ export type ConvertResult =
       families?: Ktx2FamilyFile[];
       /** Why a Basis KTX2 got no per-family files. */
       familiesSkipped?: Ktx2FamilySkip;
+      /** The glTF validator's warnings about the input (`validate.ts`). */
+      issues?: GltfIssue[];
     }
   | { ok: false; refusal: AssetImportRefusal; detail: string };
 
@@ -107,10 +110,11 @@ async function run(input: ConvertInput): Promise<ConvertResult> {
       return await withMeshlets(meshToGlb(stlToMesh(input.bytes, input.name)), input);
     case ImportConverter.PlyToGlb:
       return await withMeshlets(meshToGlb(plyToMesh(input.bytes, input.name)), input);
-    case ImportConverter.GltfDecompress:
-      return input.ext === "glb"
-        ? await withMeshlets(await normalizeGltf(input.bytes, input.ext), input)
-        : { ok: true, bytes: await normalizeGltf(input.bytes, input.ext) };
+    case ImportConverter.GltfDecompress: {
+      const { bytes, issues } = await importGltf(input.bytes, input.ext);
+      const result: ConvertResult = input.ext === "glb" ? await withMeshlets(bytes, input) : { ok: true, bytes };
+      return result.ok && issues.length ? { ...result, issues } : result;
+    }
     case ImportConverter.Ktx2Check:
       return await checkKtx2(input);
     case ImportConverter.HdrCheck:

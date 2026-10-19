@@ -15,6 +15,12 @@ import { normalizeGltf } from "../../src/substrate/asset-import/gltf-decompress.
 import { GltfImportError } from "../../src/substrate/asset-import/gltf-json.ts";
 import { AssetImportRefusal, ImportConverter } from "../../src/substrate/asset-import/import-plan.ts";
 import {
+  IMPORT_ISSUES_MAX,
+  IMPORT_JOB_VERSION,
+  parseImportReceipt,
+  parseIssues,
+} from "../../src/substrate/asset-import/job.ts";
+import {
   accessorReport,
   GltfIssueCode,
   GltfIssueSeverity,
@@ -325,4 +331,39 @@ describe("the gate's budget (advisory in lanes)", () => {
     const glb = quad();
     assert.deepEqual(await normalizeGltf(glb, "glb"), glb);
   });
+});
+
+describe("the validator's warnings in the import receipt", () => {
+  it("an imported GLB carries its warnings, by code and pointer", async () => {
+    const glb = quad({ normals: Float32Array.from([0, 0, 2, 0, 0, 2, 0, 0, 2, 0, 0, 2]) });
+    const result = await refusalOf(glb);
+    assert.ok(result.ok);
+    assert.ok(result.issues?.some((issue) => issue.code === "ACCESSOR_VECTOR3_NON_UNIT" && issue.pointer));
+    const entry = {
+      index: 0,
+      ok: true,
+      output: "out/0.glb",
+      issues: [{ code: "ACCESSOR_VECTOR3_NON_UNIT", pointer: "/accessors/1" }],
+    };
+    const receipt = parseImportReceipt({ version: IMPORT_JOB_VERSION, files: [entry] });
+    assert.deepEqual(receipt?.files[0], entry);
+  });
+
+  const hostile: Array<[string, unknown]> = [
+    ["more issues than the cap", Array.from({ length: IMPORT_ISSUES_MAX + 1 }, () => ({ code: "UNUSED_OBJECT" }))],
+    ["a code that is message text", [{ code: "This object may be unused." }]],
+    ["a pointer longer than the cap", [{ code: "UNUSED_OBJECT", pointer: "/".repeat(257) }]],
+    ["an issue that is not an object", ["UNUSED_OBJECT"]],
+    ["issues that are not a list", { code: "UNUSED_OBJECT" }],
+  ];
+  for (const [what, issues] of hostile) {
+    it(`a receipt line with ${what} is dropped`, () => {
+      assert.equal(parseIssues(issues), null);
+      const receipt = parseImportReceipt({
+        version: IMPORT_JOB_VERSION,
+        files: [{ index: 0, ok: true, output: "out/0.glb", issues }],
+      });
+      assert.deepEqual(receipt?.files, []);
+    });
+  }
 });

@@ -27,6 +27,18 @@ export const ImportJobLayout = {
 export const IMPORT_JOB_VERSION = 1;
 /** The longest `detail` a receipt entry keeps: a log line, never shown as copy. */
 export const IMPORT_DETAIL_MAX_CHARS = 300;
+/** The most validator warnings a receipt entry keeps. */
+export const IMPORT_ISSUES_MAX = 32;
+/** The longest JSON pointer a receipt issue keeps. */
+const ISSUE_POINTER_MAX_CHARS = 256;
+/** A validator issue code: the Khronos validator's spelling. */
+const ISSUE_CODE = /^[A-Z][A-Z0-9_]{0,63}$/;
+
+/** A warning the glTF validator found in an input (`validate.ts`), as the receipt carries it. */
+export interface ImportIssue {
+  code: string;
+  pointer?: string;
+}
 
 /** One file of a job. */
 export interface ImportJobFile {
@@ -67,6 +79,7 @@ export type ImportReceiptEntry =
       textures?: TranscodedTexture[];
       families?: ImportFamilyOutput[];
       familiesSkipped?: Ktx2FamilySkip;
+      issues?: ImportIssue[];
     }
   | { index: number; ok: false; refusal: AssetImportRefusal; detail: string };
 
@@ -171,6 +184,18 @@ function parseTextureFields(value: Json, index: number): Partial<Extract<ImportR
   return fields;
 }
 
+/** A receipt's issues: at most {@link IMPORT_ISSUES_MAX}, each a code and an optional pointer; null when one is bad. */
+export function parseIssues(value: unknown): ImportIssue[] | null {
+  if (!Array.isArray(value) || value.length > IMPORT_ISSUES_MAX) return null;
+  const issues = value.map((item): ImportIssue | null => {
+    if (!isObject(item) || typeof item.code !== "string" || !ISSUE_CODE.test(item.code)) return null;
+    if (item.pointer === undefined) return { code: item.code };
+    const pointer = typeof item.pointer === "string" && item.pointer.length <= ISSUE_POINTER_MAX_CHARS;
+    return pointer ? { code: item.code, pointer: item.pointer as string } : null;
+  });
+  return issues.every((issue) => issue !== null) ? (issues as ImportIssue[]) : null;
+}
+
 function parseEntry(value: unknown): ImportReceiptEntry | null {
   if (!isObject(value) || !isIndex(value.index)) return null;
   if (value.ok === false) {
@@ -180,7 +205,9 @@ function parseEntry(value: unknown): ImportReceiptEntry | null {
   }
   if (value.ok !== true || !isJobFile(value.output, "out", value.index)) return null;
   const fields = parseTextureFields(value, value.index);
-  return fields ? { index: value.index, ok: true, output: value.output, ...fields } : null;
+  const issues = value.issues === undefined ? undefined : parseIssues(value.issues);
+  if (!fields || issues === null) return null;
+  return { index: value.index, ok: true, output: value.output, ...fields, ...(issues ? { issues } : {}) };
 }
 
 /** A receipt as the host reads it: entries it cannot read are dropped (their files count as failed). */

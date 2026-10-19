@@ -621,20 +621,27 @@ the following restrictions:
 
 ## Rust game systems ports
 
-The game systems crates (`native/genex-rust/crates/genex-anim`, `genex-stream` and the mesh arena
-of `genex-render`, Genex's own code, MIT) port this code or these rules. They ship inside every
+The game systems crates (`native/genex-rust/crates/genex-anim`, `genex-nav`, `genex-stream` and the
+mesh arena of `genex-render`, Genex's own code, MIT) port this code or these rules. They ship inside every
 Rust game that links the crate, and in its ejected source. Each file credits its source in a
-comment; the Apache 2.0 port carries the upstream notice and lists Genex's changes (§4(b)).
+comment; each Apache 2.0 port carries the upstream notice and lists Genex's changes (§4(b)).
 
 | Genex file | What | Source | Upstream authors | Licence |
 | --- | --- | --- | --- | --- |
 | `crates/genex-anim/src/skeleton.rs` (`Skeleton`, `Skeleton::local_to_model`) | Joints sorted parent-first once at load, so local-to-model is one allocation-free pass over caller scratch | ozz-animation 0.17.0 (https://github.com/guillaumeblanc/ozz-animation), `include/ozz/animation/runtime/skeleton.h`, `src/animation/runtime/local_to_model_job.cc` | Guillaume Blanc | MIT (see [ozz-animation](#ozz-animation)) |
+| `crates/genex-anim/src/sample.rs` (`SampleCursor`) | One key position per track remembered between sampling calls, so a tick forward or backward costs a step or two instead of a search | ozz-animation 0.17.0, `include/ozz/animation/runtime/sampling_job.h`, `src/animation/runtime/sampling_job.cc` (`SamplingJob::Context`) | Guillaume Blanc | MIT (see [ozz-animation](#ozz-animation)) |
+| `crates/genex-anim/src/sample.rs` (cubic segments) | Evaluating a glTF cubic-spline segment with the tangents scaled by the key span and the rotation normalized afterwards (the rule only; no code was copied) | Bevy 0.20 (https://github.com/bevyengine/bevy), `crates/bevy_animation/src/gltf_curves.rs` | Bevy contributors | MIT OR Apache-2.0, used under Apache 2.0 (see [Apache License 2.0](#apache-license-20)) |
+| `crates/genex-anim/src/blend.rs` (`Blender::blend`, `apply_additive`, `additive_delta`) | The normalized pose blend (weighted sums, rotations kept in one hemisphere and normalized, the rest pose filling in under a weight threshold) and additive layers applied as `base × delta` (ozz 0.15's multiplication order); Genex copies a joint one layer alone drives and adds a Unity-style override | ozz-animation 0.17.0 (https://github.com/guillaumeblanc/ozz-animation), `src/animation/runtime/blending_job.cc` | Guillaume Blanc | MIT (see [ozz-animation](#ozz-animation)) |
+| `crates/genex-anim/src/mask.rs` (`JointMask::subtrees`) | Per-joint layer weights (ozz) named by subtree roots, a joint inherits its parent's membership (the rule only; no Bevy code was copied) | ozz-animation 0.17.0, `include/ozz/animation/runtime/blending_job.h` (`joint_weights`); Bevy (https://github.com/bevyengine/bevy), `crates/bevy_animation/src/graph.rs` (`AnimationMask`, mask groups) | Guillaume Blanc; Bevy contributors | MIT (see [ozz-animation](#ozz-animation)); MIT OR Apache-2.0, used under Apache 2.0 (see [Apache License 2.0](#apache-license-20)) |
+| `crates/genex-anim/src/humanoid.rs` (`HumanoidBone`), `tests/fixtures/humanoid-aliases.json` | The humanoid profile's bone names and order (22 of them) | Godot Engine 4.7.2-stable (https://github.com/godotengine/godot), `scene/resources/skeleton_profile.cpp` (`SkeletonProfileHumanoid`) | Godot Engine contributors | MIT (see [Godot Engine](#godot-engine)) |
 | `crates/genex-stream/src/residency.rs` (`Residency`, `ResidencyLimits`) | The residency policy: per-requester reference counts, an unload queue of unreferenced entries in release order, drained while resident bytes exceed a byte cap under a time limit, a cap on loads in flight, and `forbidHoles` (keep the coarser parent until every wanted child is resident) | cesium-native (https://github.com/CesiumGS/cesium-native), `Cesium3DTilesSelection/src/TilesetContentManager.cpp` (`unloadCachedTiles`, the tile reference counts and the unload list) and `Cesium3DTilesSelection/include/Cesium3DTilesSelection/TilesetOptions.h` (`maximumCachedBytes`, `maximumSimultaneousTileLoads`, `tileCacheUnloadTimeLimit`, `forbidHoles`) | CesiumGS, Inc. and Contributors | Apache 2.0 (see [Apache License 2.0](#apache-license-20); cesium-native ships no NOTICE file) |
 | `crates/genex-render/src/mesh_arena.rs` (`MeshArena::grow`, `move_to`) | Growing a full GPU buffer by remaking it twice as large and copying its live prefix buffer to buffer (the rule only; no code was copied) | Bevy (https://github.com/bevyengine/bevy), `crates/bevy_render/src/slab_allocator.rs` | Bevy contributors | MIT OR Apache-2.0, used under Apache 2.0 (see [Apache License 2.0](#apache-license-20)) |
+| `crates/genex-nav/src/runtime/dodgy/` (every file, with dodgy's own tests as `*_test.rs`) | ORCA local avoidance: velocity obstacles from neighbours and polygon obstacles, the 2D and 3D linear programs, the visibility set. Changed (§4(b), listed in `dodgy/mod.rs`): the `rand` direction for two agents on one spot is hashed from their keys, `Simulator::step` has no `HashMap` and keeps its near neighbours, visible line ids come back sorted, angles use libm, a zero responsibility sum no longer divides by zero, no `debug` feature | dodgy_2d 0.5.5 (https://github.com/andriyDev/dodgy, crates.io sha256 `d35627725e918aa4593ca54937cd8ef58078d3b9ab0fd060aee60c9bc3a2050e`), itself ported from RVO2 (https://gamma.cs.unc.edu/RVO2/) `Agent.cc` | andriyDev; RVO2: Jur van den Berg, Stephen J. Guy, Jamie Snape, Ming C. Lin, Dinesh Manocha, 2008 University of North Carolina at Chapel Hill | MIT OR Apache-2.0, used under Apache 2.0; RVO2 Apache 2.0 (see [Apache License 2.0](#apache-license-20) and [RVO2](#rvo2)) |
+| `crates/genex-nav/src/runtime/avoidance.rs` (`Avoidance::step`) | Gathering each agent's neighbouring agents and bodies and handing them to ORCA (Genex replaces the k-d tree and `HashMap`s with a sorted uniform grid and sorts neighbours by distance, then key) | landmass 0.9.3 (https://github.com/andriyDev/landmass, crates.io sha256 `fd2fd988b81194c6f02c293a28b510b44f1d8581c80b1bfe498e85e9c3f57b93`), `src/avoidance.rs` (`apply_avoidance_to_agents`) | andriyDev | MIT OR Apache-2.0, used under Apache 2.0 (see [Apache License 2.0](#apache-license-20)) |
 
 ### ozz-animation
 
-The licence of the ozz-animation code the skeleton ports (table above).
+The licence of the ozz-animation code the skeleton, sampler, blend and mask port (table above).
 
 ```
 ozz-animation is hosted at http://github.com/guillaumeblanc/ozz-animation and
@@ -661,6 +668,28 @@ COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
 IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
 CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 ```
+
+### RVO2
+
+The notice the dodgy_2d port keeps from RVO2, which dodgy_2d ported (table above). RVO2 is licensed
+under the Apache License 2.0 (see [Apache License 2.0](#apache-license-20)); it ships no NOTICE file.
+Each ported file carries this header:
+
+    Agent.cc
+    RVO2 Library
+
+    SPDX-FileCopyrightText: 2008 University of North Carolina at Chapel Hill
+
+    The authors may be contacted via:
+
+    Jur van den Berg, Stephen J. Guy, Jamie Snape, Ming C. Lin, Dinesh Manocha
+    Dept. of Computer Science
+    201 S. Columbia St.
+    Frederick P. Brooks, Jr. Computer Science Bldg.
+    Chapel Hill, N.C. 27599-3175
+    United States of America
+
+    <https://gamma.cs.unc.edu/RVO2/>
 
 ## Rust showcase environment map
 
@@ -747,7 +776,8 @@ not shipped.
 
 The Rust · wgpu asset import step (`src/substrate/asset-import/`) runs five WebAssembly modules
 in its own sandbox: the Basis Universal transcoder, Draco's glTF decoder, and meshoptimizer's
-decoder, meshlet clusterizer and simplifier. The packaged app carries them in
+decoder, meshlet clusterizer and simplifier. Before any of them it runs the Khronos glTF validator
+(JavaScript compiled from Dart) on every glTF file. The packaged app carries them in
 `resources/importer-tools/` (paths below are under it), with this page beside them, and every file
 is pinned by sha256 in `src/substrate/asset-import/decoders.ts`. Draco and meshoptimizer are copied
 from the npm packages below; the Basis build is the v2.50 release's `webgl/encoder/build`, whose
@@ -760,12 +790,13 @@ licence and notice texts are in the [Basis Universal](#basis-universal), [Draco]
 | `basis-encoder-2.50/` | [Basis Universal](https://github.com/BinomialLLC/basis_universal) v2.50 WebAssembly build (encoder and transcoder), with its embedded [Zstandard](https://github.com/facebook/zstd) | Apache-2.0 with its NOTICE; embedded Zstandard BSD-3-Clause |
 | `draco3dgltf/` | [Draco](https://github.com/google/draco) 1.5.9 glTF decoder (npm `draco3dgltf`) | Apache-2.0 |
 | `meshoptimizer/` | [meshoptimizer](https://github.com/zeux/meshoptimizer) 1.3.0 decoder, meshlet clusterizer and simplifier (npm `meshoptimizer`); the importer stores its meshlets and levels of detail in glTF `extras` | MIT |
+| `gltf-validator/` | [Khronos glTF-Validator](https://github.com/KhronosGroup/glTF-Validator) 2.0.0-dev.3.10 (npm `gltf-validator`), the import step's glTF validation gate; its `LICENSE` and `NOTICES` files (the Dart runtime's notices) ship beside it | Apache-2.0 |
 
 ## Asset importer packages
 
 These npm packages are pinned exactly in `package.json` for the asset importer
 (`src/substrate/asset-import/`), as development dependencies: the build copies the files the
-importer runs from `draco3dgltf` and `meshoptimizer` into the app's `resources/importer-tools/`
+importer runs from `draco3dgltf`, `meshoptimizer` and `gltf-validator` into the app's `resources/importer-tools/`
 ([Asset importer decoders](#asset-importer-decoders)), and the others are not carried in the app
 yet. Each package keeps its licence file in its own folder, except `draco3dgltf`,
 whose package declares Apache-2.0 without a licence file (the text is in

@@ -50,7 +50,7 @@ export const TextureUsageSource = {
   MaterialSlot: "material-slot",
   /** The asset's provenance (a Genex texture job's role, a CC0 row's map). */
   Provenance: "provenance",
-  /** What the importer saw in the pixels. */
+  /** The kind a Live run observed the game sample it as (__render.textures), as the lock recorded it (owner call C1: never the pixels or the name). */
   Observed: "observed",
 } as const;
 export type TextureUsageSource = (typeof TextureUsageSource)[keyof typeof TextureUsageSource];

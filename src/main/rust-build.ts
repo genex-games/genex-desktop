@@ -1090,7 +1090,7 @@ export class RustBuilds implements GameBuildLane {
     outputs: RustBuildReceipt["outputs"],
     web: WebReceipt | null,
     pack: AssetPackageReport | null,
-  ): ReceiptWithPackage {
+  ): RustBuildReceipt {
     return {
       version: 1,
       project: plan.game.project,
@@ -1632,9 +1632,6 @@ async function builtInside(bin: string, exe: string): Promise<string | null> {
   const [realBin, realExe] = await Promise.all([realpath(bin).catch(() => null), realpath(exe).catch(() => null)]);
   return realBin && realExe && isInside(realBin, realExe) && realExe !== realBin ? realExe : null;
 }
-
-/** A receipt with the destination's asset package (C-15) beside the lane's own fields. */
-type ReceiptWithPackage = RustBuildReceipt & { package?: AssetPackageReport };
 
 /** What writing `<bin>.out` came to: the admitted files and the package, or the admission's refusal (nothing replaced). */
 type WrittenOutput =

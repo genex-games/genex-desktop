@@ -30,6 +30,10 @@
 //! [physics]                 # optional: a game without physics is built without Rapier
 //! enabled = false           # default true
 //!
+//! [[texture]]               # optional: a loose texture's usage, where no material slot tells it
+//! path = "textures/flow.png"   # under assets/: a PNG, JPEG or WebP
+//! usage = "data"            # color | data | normal
+//!
 //! [render]                  # optional: the renderer's quality and the game's look
 //! form_factors = ["desktop", "mobile"]
 //! preset = "auto"           # auto | low | medium | high | ultra
@@ -446,6 +450,9 @@ pub struct GenexToml {
     /// Whether the game is built with physics.
     #[serde(default)]
     pub physics: PhysicsSection,
+    /// Loose textures' usages, read by the host's import step (C-10).
+    #[serde(default)]
+    pub texture: Vec<TextureRow>,
 }
 
 impl GenexToml {
@@ -808,6 +815,16 @@ impl PhysicsSection {
     }
 }
 
+/// A `[[texture]]` row: a loose texture's usage, for what no material slot can tell (C-10).
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct TextureRow {
+    /// Under assets/: a safe asset path to a PNG, JPEG or WebP.
+    pub path: String,
+    /// color, data or normal.
+    pub usage: String,
+}
+
 /// `[gpu]`.
 #[derive(Clone, Debug, Default, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
@@ -911,6 +928,8 @@ pub enum ManifestErrorCode {
     InvalidRenderLoading,
     /// A `[web] wasm_budget_mb` outside [`WEB_WASM_BUDGET_MIN_MB`]..=[`WEB_WASM_CEILING_MB`].
     InvalidWebBudget,
+    /// A `[[texture]]` row whose usage is not color, data or normal, whose path is not a safe path under assets/ to a PNG, JPEG or WebP, or whose path another row names.
+    InvalidTextureUsage,
 }
 
 impl ManifestErrorCode {
@@ -939,6 +958,7 @@ impl ManifestErrorCode {
             ManifestErrorCode::InvalidRenderShadows => "invalid-render-shadows",
             ManifestErrorCode::InvalidRenderLoading => "invalid-render-loading",
             ManifestErrorCode::InvalidWebBudget => "invalid-web-budget",
+            ManifestErrorCode::InvalidTextureUsage => "invalid-texture-usage",
         }
     }
 }
@@ -980,6 +1000,7 @@ pub fn parse(text: &str) -> Result<GenexToml, ManifestError> {
     check_features(&manifest.gpu.native_features)?;
     check_render(&manifest.render)?;
     check_web(&manifest.web)?;
+    check_textures(&manifest.texture)?;
     Ok(manifest)
 }
 
@@ -990,6 +1011,28 @@ fn check_web(web: &WebSection) -> Result<(), ManifestError> {
         }
         _ => Ok(()),
     }
+}
+
+/// The usages a `[[texture]]` row may name (the host's TextureUsage).
+const TEXTURE_USAGES: [&str; 3] = ["color", "data", "normal"];
+
+/// The image extensions a `[[texture]]` row may name (the host's encodable raster textures).
+const TEXTURE_EXTENSIONS: [&str; 4] = [".png", ".jpg", ".jpeg", ".webp"];
+
+/// Each `[[texture]]` row names a known usage and an encodable image under assets/, and no path twice.
+fn check_textures(rows: &[TextureRow]) -> Result<(), ManifestError> {
+    let mut seen = crate::map::Set::default();
+    for row in rows {
+        if !TEXTURE_USAGES.contains(&row.usage.as_str()) {
+            return Err(ManifestError::new(ManifestErrorCode::InvalidTextureUsage, format!("{} usage {}", row.path, row.usage)));
+        }
+        let lower = row.path.to_ascii_lowercase();
+        let image = TEXTURE_EXTENSIONS.iter().any(|extension| lower.ends_with(extension));
+        if !genex_core::paths::is_safe_asset_path(&row.path) || !image || !seen.insert(row.path.clone()) {
+            return Err(ManifestError::new(ManifestErrorCode::InvalidTextureUsage, row.path.clone()));
+        }
+    }
+    Ok(())
 }
 
 fn check_game(game: &GameSection) -> Result<(), ManifestError> {

@@ -11,6 +11,7 @@ import { convertAsset } from "./convert.ts";
 import { AssetImportRefusal } from "./import-plan.ts";
 import {
   IMPORT_DETAIL_MAX_CHARS,
+  IMPORT_ISSUES_MAX,
   IMPORT_JOB_VERSION,
   type ImportJob,
   type ImportJobFile,
@@ -60,6 +61,13 @@ async function importOne(jobDir: string, job: ImportJob, file: ImportJobFile): P
     ...(result.textures ? { textures: result.textures } : {}),
     ...(result.families ? { families } : {}),
     ...(result.familiesSkipped ? { familiesSkipped: result.familiesSkipped } : {}),
+    ...(result.issues
+      ? {
+          issues: result.issues
+            .slice(0, IMPORT_ISSUES_MAX)
+            .map(({ code, pointer }) => ({ code, ...(pointer ? { pointer } : {}) })),
+        }
+      : {}),
   };
 }
 

@@ -27,6 +27,10 @@ wasm_budget_mb = 8        # 1..=32, default 4
 
 [physics]                 # optional: a game with no physics builds without Rapier
 enabled = false           # default true
+
+[[texture]]               # optional: how a loose texture is used, when no model's material says
+path = "textures/flow.png"   # under assets/: a PNG, JPEG or WebP
+usage = "data"            # color | data | normal
 ```
 
 Unknown keys are refused. A `[[crate_request]]` row is a request, never an approval: keep it
@@ -52,3 +56,9 @@ Rapier is about a fifth of a web build's code. A game that never touches `sim.ph
 `genex::physics` sets `[physics] enabled = false`: it builds without Rapier, `sim.physics` is an
 empty stand-in that is never stepped, and code that reaches for Rapier does not compile until
 physics is turned back on.
+
+A `[[texture]]` row tells Studio how a loose image your code samples itself is used (a flow map, a
+mask, a custom material's normal map). A texture a model's material samples, and one Studio
+generated or fetched, needs no row. The usage never comes from the file name. A usage outside
+`color`, `data` and `normal`, a path outside `assets/` or not a PNG, JPEG or WebP, or the same path
+twice is refused `invalid-texture-usage`.
