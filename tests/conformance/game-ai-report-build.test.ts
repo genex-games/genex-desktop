@@ -30,6 +30,7 @@ import { REDACTED } from "../../src/shared/redact.ts";
 import {
   AUTOMATIC_REPORTS_PER_HOUR,
   REPORT_MAX_GAMES,
+  REPORT_SESSION_MAX_CHARS,
   type ReportCapture,
   createGameAiReports,
 } from "../../src/main/game-ai/report.ts";
@@ -163,17 +164,37 @@ describe("a Report's session", () => {
     assert.equal(bundle.calls[0]?.prompt, "turn 5");
   });
 
-  it("drops the oldest calls until the bundle fits the body cap", async () => {
+  it("keeps a session's text under its cap, the newest calls first", async () => {
     const { service } = reports();
     const play = callerFor(PLAY_GAME);
     const big = "x".repeat(100 * 1024);
     for (let i = 0; i < AI_REPORT_MAX_CALLS; i += 1)
       service.observe(play, traceOf({ request: requestOf({ prompt: `turn ${i} ${big}` }), rawOutput: big }));
     const bundle = await service.preview(PLAY_GAME);
-    assert.ok(JSON.stringify(bundle).length <= AI_REPORT_MAX_BODY_CHARS);
     assert.ok(bundle.calls.length < AI_REPORT_MAX_CALLS);
+    const kept = bundle.calls.reduce((sum, call) => sum + call.prompt.length + (call.rawOutput?.length ?? 0), 0);
+    assert.ok(kept <= REPORT_SESSION_MAX_CHARS);
     assert.match(bundle.calls.at(-1)?.prompt ?? "", new RegExp(`^turn ${AI_REPORT_MAX_CALLS - 1} `));
+    assert.ok(JSON.stringify(bundle).length <= AI_REPORT_MAX_BODY_CHARS);
     assert.ok(reread(bundle));
+  });
+
+  it("drops the oldest calls until the bundle fits the reader's node bound", async () => {
+    const { service } = reports();
+    const play = callerFor(PLAY_GAME);
+    const schema = { type: "array", items: { type: "integer" }, maxItems: 4000 };
+    const value = Array.from({ length: 2000 }, (_, i) => i);
+    for (let i = 0; i < AI_REPORT_MAX_CALLS; i += 1)
+      service.observe(
+        play,
+        traceOf({ request: requestOf({ prompt: `turn ${i}`, schema }), value, rawOutput: JSON.stringify(value) }),
+      );
+    const bundle = await service.preview(PLAY_GAME);
+    assert.ok(bundle.calls.length < AI_REPORT_MAX_CALLS, "the oldest calls went");
+    assert.equal(bundle.calls.at(-1)?.prompt, `turn ${AI_REPORT_MAX_CALLS - 1}`);
+    assert.equal(bundle.calls[0]?.system, requestOf().system, "the first call kept carries the system prompt whole");
+    assert.ok(bundle.calls.slice(1).every((call) => call.system === null && call.systemSha256));
+    assert.ok(reread(bundle), "the reader takes what is left");
   });
 
   it("keeps the sessions of the most recent games only", async () => {

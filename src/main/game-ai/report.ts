@@ -68,7 +68,12 @@ import { REDACTED } from "../../shared/redact.ts";
 import type { AiCallTrace, GameAiCaller, GameAiClock, GameAiReports, GenexAiPlatform } from "./types.ts";
 
 /** How many games' sessions are kept; the least recently played is let go first. */
-export const REPORT_MAX_GAMES = 16;
+export const REPORT_MAX_GAMES = 8;
+/**
+ * The most text one game's session keeps, in characters (prompts, player fields, replies): the
+ * oldest calls go first. With {@link REPORT_MAX_GAMES} it bounds what Reports hold in memory.
+ */
+export const REPORT_SESSION_MAX_CHARS = 8 * 1024 * 1024;
 /** The most automatic bundles one game sends in an hour. */
 export const AUTOMATIC_REPORTS_PER_HOUR = 3;
 /** The engine a capture that names none ran on: Play and Create Live serve web pages. */
@@ -137,6 +142,8 @@ export interface GameAiReportService extends GameAiReports {
 interface Session {
   title: string;
   traces: AiCallTrace[];
+  /** The text its traces hold, in characters. */
+  chars: number;
   /** Tickets an automatic bundle already went for, and when each went. */
   automatic: Map<string, number>;
 }
@@ -208,6 +215,15 @@ function readCapture(raw: Partial<ReportCapture> | null): ReportCapture {
     consoleErrors: readConsole(raw?.consoleErrors),
     frame: readFrame(raw?.frame),
   };
+}
+
+/** The text a trace holds, in characters: what a session counts against its cap. */
+function traceChars(trace: AiCallTrace): number {
+  const { request } = trace;
+  const fields = Object.values(request.untrusted).reduce((sum, value) => sum + value.length, 0);
+  const texts = [request.system, request.prompt, request.memory, trace.rawOutput];
+  const value = JSON.stringify(trace.value ?? null)?.length ?? 0;
+  return texts.reduce((sum: number, text) => sum + (text?.length ?? 0), fields + value);
 }
 
 // ── calls and the tape ─────────────────────────────────────────────────────────────────────
@@ -374,51 +390,45 @@ const sizeOf = (value: unknown): Size => ({ chars: JSON.stringify(value).length 
 const tooBig = (size: Size): boolean =>
   size.chars > AI_REPORT_MAX_BODY_CHARS - BODY_HEADROOM_CHARS || size.nodes > NODE_BUDGET;
 
-/** Drop the oldest of `items` while `size` is too big; answers what is left and the size after. */
-function dropOldest<T>(items: readonly T[], size: Size): { kept: T[]; size: Size } {
-  const kept = [...items];
-  let { chars, nodes } = size;
-  while (tooBig({ chars, nodes }) && kept.length) {
-    const dropped = sizeOf(kept.shift());
-    chars -= dropped.chars;
-    nodes -= dropped.nodes;
-  }
-  return { kept, size: { chars, nodes } };
+/** `size` less what `item` took. */
+function without(size: Size, item: unknown): Size {
+  const gone = sizeOf(item);
+  return { chars: size.chars - gone.chars, nodes: size.nodes - gone.nodes };
 }
 
 /**
- * Drop the oldest calls while `size` is too big. A dropped call that carried its system prompt
- * whole hands it to the next call named by the same hash, so every hash still has its text.
+ * Drop the oldest call. One that carried its system prompt whole hands it to the next call named by
+ * the same hash, so every hash still has its text.
  */
-function dropOldestCalls(calls: readonly AiReportCall[], size: Size): { kept: AiReportCall[]; size: Size } {
-  const kept = [...calls];
-  let { chars, nodes } = size;
-  for (let dropped = kept.shift(); dropped && tooBig({ chars, nodes }); dropped = kept.shift()) {
-    const gone = sizeOf(dropped);
-    chars -= gone.chars;
-    nodes -= gone.nodes;
-    const heir = dropped.system === null ? -1 : kept.findIndex((call) => call.systemSha256 === dropped.systemSha256);
-    const call = kept[heir];
-    if (call && dropped.system !== null) {
-      kept[heir] = { ...call, system: dropped.system };
-      chars += JSON.stringify(dropped.system).length - JSON.stringify(null).length;
-    }
-    if (!tooBig({ chars, nodes })) break;
-  }
-  return { kept, size: { chars, nodes } };
+function dropFirstCall(calls: AiReportCall[], size: Size): Size {
+  const dropped = calls.shift();
+  if (!dropped) return size;
+  const after = without(size, dropped);
+  const heir = dropped.system === null ? -1 : calls.findIndex((call) => call.systemSha256 === dropped.systemSha256);
+  const call = calls[heir];
+  if (!call || dropped.system === null) return after;
+  calls[heir] = { ...call, system: dropped.system };
+  return { ...after, chars: after.chars + JSON.stringify(dropped.system).length - JSON.stringify(null).length };
+}
+
+/** Drop the oldest tape line. */
+function dropFirstLine(tape: TapeLine[], size: Size): Size {
+  const dropped = tape.shift();
+  return dropped ? without(size, dropped) : size;
 }
 
 /**
- * The bundle within the body cap and the reader's node bound: the oldest calls go first, then the
- * oldest tape lines, then the capture's bulk.
+ * The bundle within the body cap and the reader's node bound: the oldest calls and tape lines go
+ * first, together, then the capture's bulk.
  */
 function fitBody(bundle: AiReportBundle): AiReportBundle {
-  const whole = sizeOf(bundle);
-  if (!tooBig(whole)) return bundle;
-  const calls = dropOldestCalls(bundle.calls, whole);
-  const tape = dropOldest(bundle.replay.tape, calls.size);
-  const fitted = { ...bundle, calls: calls.kept, replay: { ...bundle.replay, tape: tape.kept } };
-  if (!tooBig(tape.size)) return fitted;
+  let size = sizeOf(bundle);
+  if (!tooBig(size)) return bundle;
+  const calls = [...bundle.calls];
+  const tape = [...bundle.replay.tape];
+  while (tooBig(size) && (calls.length || tape.length)) size = dropFirstLine(tape, dropFirstCall(calls, size));
+  const fitted = { ...bundle, calls, replay: { ...bundle.replay, tape } };
+  if (!tooBig(size)) return fitted;
   return {
     ...fitted,
     aiState: null,
@@ -457,11 +467,20 @@ export function createGameAiReports(deps: GameAiReportsDeps): GameAiReportServic
   const newId = deps.newId ?? (() => `rep_${randomUUID().replaceAll("-", "")}`);
 
   const observe = (caller: GameAiCaller, trace: AiCallTrace): void => {
-    const session: Session = sessions.get(caller.game) ?? { title: caller.title, traces: [], automatic: new Map() };
+    const session: Session = sessions.get(caller.game) ?? {
+      title: caller.title,
+      traces: [],
+      chars: 0,
+      automatic: new Map(),
+    };
     session.title = caller.title;
     session.traces.push(trace);
-    if (session.traces.length > AI_REPORT_MAX_CALLS)
-      session.traces.splice(0, session.traces.length - AI_REPORT_MAX_CALLS);
+    session.chars += traceChars(trace);
+    while (session.traces.length > AI_REPORT_MAX_CALLS || session.chars > REPORT_SESSION_MAX_CHARS) {
+      const dropped = session.traces.shift();
+      if (!dropped) break;
+      session.chars -= traceChars(dropped);
+    }
     // The most recently played game goes last; the least recent is let go first.
     sessions.delete(caller.game);
     sessions.set(caller.game, session);
