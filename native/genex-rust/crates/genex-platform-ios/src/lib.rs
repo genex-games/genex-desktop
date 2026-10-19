@@ -108,7 +108,8 @@ pub fn run<W: Default + 'static>(name: &'static str, game: Game<W>, demo: &str, 
         log::set_max_level(log::LevelFilter::Info);
     }
     let records = documents_dir().map(|dir| Records::new(&dir, PLATFORM));
-    let runtime = match Runtime::new(game) {
+    // The sim reads the compiled table from its first reset on, as the presenter draws from it.
+    let runtime = match Runtime::with_assets(game, Box::new(assets)) {
         Ok(runtime) => runtime,
         Err(error) => {
             log::error!("{error}");

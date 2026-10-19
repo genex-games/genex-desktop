@@ -20,7 +20,7 @@ use crate::camera::Camera;
 use crate::ctx::{Ctx, CtxRng, Key};
 use crate::frame::Frame;
 use crate::game::{Game, Single};
-use crate::gfx::Gfx;
+use crate::gfx::{AssetSource, Gfx};
 use crate::input::{Input, Merger, TickInput};
 use crate::map::Set;
 use crate::rng::Pcg32;
@@ -294,8 +294,16 @@ impl<W> DemoDriver<'_, W> {
 }
 
 impl<W: Default + 'static> Runtime<W> {
-    /// Check the registrations and seed [`DEFAULT_SEED`].
-    pub fn new(mut game: Game<W>) -> Result<Runtime<W>, InstallError> {
+    /// Check the registrations and seed [`DEFAULT_SEED`], with no assets to read (a test's or a
+    /// tool's runtime): every [`crate::Assets::bytes`] answers `missing`.
+    pub fn new(game: Game<W>) -> Result<Runtime<W>, InstallError> {
+        Runtime::with_assets(game, Box::new(crate::gfx::NO_ASSETS))
+    }
+
+    /// Check the registrations, attach the asset `source` the reset hooks read through
+    /// (`gfx.assets().bytes`, `.triangles`), then seed [`DEFAULT_SEED`]: the first reset already
+    /// reads, on every shell.
+    pub fn with_assets(mut game: Game<W>, source: Box<dyn AssetSource>) -> Result<Runtime<W>, InstallError> {
         validate(&game)?;
         let world = std::mem::take(&mut game.initial);
         let saves = saves_of(game.save_name.as_deref());
@@ -309,7 +317,7 @@ impl<W: Default + 'static> Runtime<W> {
             rng: Cell::new(Pcg32::seeded(u64::from(DEFAULT_SEED))),
             merger: Merger::default(),
             pointer_lock: false,
-            gfx: Gfx::new(game.world_size, saves, game.wgsl.clone()),
+            gfx: Gfx::new(game.world_size, saves, game.wgsl.clone(), source),
             hud: Hud::new(),
             clock: FrameClock::default(),
             tally: Tally::default(),
@@ -335,9 +343,11 @@ impl<W: Default + 'static> Runtime<W> {
         core.gfx.assets().clear();
         core.gfx.clear_extensions();
         let mut rng = Pcg32::seeded(u64::from(seed));
+        core.gfx.assets().set_at_reset(true);
         for hook in &self.game.resets {
             hook(&mut core.sim, seed, &mut rng, &core.gfx);
         }
+        core.gfx.assets().set_at_reset(false);
         core.rng.set(rng);
     }
 }
@@ -691,6 +701,26 @@ pub(crate) fn run<W: Default + 'static>(mut runtime: Runtime<W>, assets: crate::
         let _ = assets;
         let _ = runtime.frame(View::Game);
     }
+}
+
+/// `genex::install_with_assets`: check the game, attach this destination's asset source (the
+/// compiled `assets` first, then natively `assets/` beside the executable by real path) before the
+/// first seed, then hand the runtime to the platform shell.
+pub(crate) fn install<W: Default + 'static>(game: Game<W>, assets: crate::AssetTable) {
+    let runtime = Runtime::with_assets(game, native_source(assets)).unwrap_or_else(|error| panic!("genex::install: {error}"));
+    run(runtime, assets);
+}
+
+/// The sim's asset source on this destination: the compiled table, then the asset folder.
+#[cfg(not(target_arch = "wasm32"))]
+fn native_source(assets: crate::AssetTable) -> Box<dyn AssetSource> {
+    Box::new(crate::present_files::AssetFiles::for_process(assets))
+}
+
+/// A wasm32 build without the web shell reads its compiled table only.
+#[cfg(target_arch = "wasm32")]
+fn native_source(assets: crate::AssetTable) -> Box<dyn AssetSource> {
+    Box::new(assets)
 }
 
 /// The saves of this process: the run's `state/` under the studio, else the destination's root

@@ -58,11 +58,11 @@
 //! on the browser's device under error scopes and answers what each reported.
 
 use crate::assets::WebAssets;
-use crate::draw::{AssetTable, WebModels};
+use crate::draw::AssetTable;
 use crate::handle::GameHandle;
 use crate::saves::{SAVES_DATABASE_PREFIX, saves_state};
 use crate::selftest::{self, CaptureDigest, SelfTestPlan};
-use crate::studio::{HandleGame, Held, Painter, Screen, verb_changes_frame};
+use crate::studio::{HandleGame, Held, Painter, Screen, WebSource, verb_changes_frame};
 use genex::present::Presenter;
 use genex::{Game, Runtime, Value, json};
 use genex_core::saves::mirror::{self, MirrorError};
@@ -120,8 +120,9 @@ struct Graphics {
     canvas: Option<Canvas>,
 }
 
-/// Starts the installed game: its registrations checked and its first reset run.
-type StartGame = Box<dyn FnOnce() -> Box<dyn GameHandle>>;
+/// Starts the installed game: its registrations checked, the assets its resets read attached, and
+/// its first reset run.
+type StartGame = Box<dyn FnOnce(Box<dyn genex::AssetSource>) -> Box<dyn GameHandle>>;
 
 struct Shell {
     name: String,
@@ -157,8 +158,8 @@ thread_local! {
 /// `genex::install` does (a refusal panics with the typed code) and its first reset runs.
 pub fn install_named<W: Default + 'static>(name: &str, game: Game<W>, assets: AssetTable) {
     console_error_panic_hook::set_once();
-    let start: StartGame = Box::new(move || {
-        let runtime = Runtime::new(game).unwrap_or_else(|error| panic!("genex::install: {error}"));
+    let start: StartGame = Box::new(move |source| {
+        let runtime = Runtime::with_assets(game, source).unwrap_or_else(|error| panic!("genex::install: {error}"));
         Box::new(runtime)
     });
     let shell = Shell {
@@ -184,10 +185,11 @@ fn started(game: &mut Option<Box<dyn GameHandle>>) -> Result<&mut dyn GameHandle
     }
 }
 
-/// Start the installed game once (its first reset reads the preloaded saves); answers its world size.
-fn start_game(shell: &mut Shell) -> Result<[u32; 2], JsValue> {
+/// Start the installed game once (its first reset reads the preloaded saves and `assets`, the
+/// files fetched before boot); answers its world size.
+fn start_game(shell: &mut Shell, assets: WebSource) -> Result<[u32; 2], JsValue> {
     if let Some(start) = shell.waiting.take() {
-        shell.game = Some(start());
+        shell.game = Some(start(Box::new(assets)));
     }
     Ok(started(&mut shell.game)?.world_size())
 }
@@ -294,7 +296,7 @@ fn hints_of(hints: Option<&str>) -> Option<genex::render::WebHints> {
     genex::render::web_hints_from_json(&value)
 }
 
-async fn open_graphics(canvas: Option<HtmlCanvasElement>, world: [u32; 2], models: WebModels) -> Result<Graphics, RenderError> {
+async fn open_graphics(canvas: Option<HtmlCanvasElement>, world: [u32; 2], models: WebSource) -> Result<Graphics, RenderError> {
     let no_adapter = |detail: String| RenderError::GpuUnsupported { reason: UnsupportedReason::NoAdapter, detail };
     let instance = core_instance();
     let surface = match &canvas {
@@ -358,8 +360,10 @@ fn draw_into(graphics: &mut Graphics, game: &mut Option<Box<dyn GameHandle>>, vi
 /// "gpu-unsupported", reason, limit?, detail}`; the shell shows the unsupported page for the latter.
 #[wasm_bindgen]
 pub async fn studio_boot(canvas: Option<HtmlCanvasElement>, hints: Option<String>) -> Result<String, JsValue> {
-    let world = with_shell(start_game)?;
-    let models = with_shell(|shell| Ok(WebModels { compiled: shell.assets, fetched: std::mem::take(&mut shell.fetched) }))?;
+    // One set of fetched files serves the sim's reads (attached before its first reset) and the
+    // presenter's models.
+    let models = with_shell(|shell| Ok(WebSource::new(shell.assets, std::mem::take(&mut shell.fetched))))?;
+    let world = with_shell(|shell| start_game(shell, models.clone()))?;
     let mut graphics = match open_graphics(canvas, world, models).await {
         Ok(graphics) => graphics,
         Err(error) => return Ok(boot_refused(&error)),
