@@ -113,3 +113,30 @@ export function aiRouteOp(pathname: string): AiBridgeOp | null {
   if (!pathname.startsWith(AI_ROUTE_PREFIX)) return null;
   return readMember(AiBridgeOp, pathname.slice(AI_ROUTE_PREFIX.length));
 }
+
+/**
+ * The Create Live route's streamed answer: a `call` sent with `stream: true` is answered as
+ * `text/event-stream`, its `delta` events first and one `reply` last, after which the stream ends.
+ * Every other answer is one JSON body. Wire values: never rename one.
+ */
+export const AiRouteEvent = {
+  /** `data` is an {@link AiRouteDelta}: the answer's text so far. */
+  Delta: "delta",
+  /** `data` is the call's `AiCallAnswer`. */
+  Reply: "reply",
+} as const;
+export type AiRouteEvent = (typeof AiRouteEvent)[keyof typeof AiRouteEvent];
+
+/** A streamed answer's text so far. */
+export interface AiRouteDelta {
+  text: string;
+}
+
+/**
+ * The body of a route refusal (any status but 200): the request never reached play-time AI, and
+ * nothing was kept. A 200 always carries the op's answer, which may itself be a typed refusal.
+ */
+export interface AiRouteRefusal {
+  v: typeof GAME_AI_WIRE_VERSION;
+  code: AiErrorCode;
+}
