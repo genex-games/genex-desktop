@@ -151,6 +151,7 @@ use crate::layout::{
     GpuPassView, MAX_CASCADES, SHADOW_CASCADES,
 };
 use crate::mesh::{MeshData, Vertex};
+use crate::mesh_arena::{ArenaSources, ArenaStream, MeshArena, QueueDevice};
 use crate::meshlet::MeshletSet;
 use crate::meshlet_cull::{
     ArgsSlot, CullExternals, CullPass as MeshletPass, HistoryUse, MeshletBuffers, MeshletCullNode, MeshletDrawLayouts, MeshletFrame, MeshletPipelineSpec, MeshletPipelines,
@@ -573,7 +574,8 @@ struct FramePrepass {
 }
 
 /// The library on the GPU: vertices (also the skinning source and the meshlet draws' pulled
-/// vertices), slots, indices, skin rows and the meshlet buffers (R2).
+/// vertices), slots, indices, skin rows and the meshlet buffers (R2), the mesh arena's buffers
+/// as they are now ([`mesh_buffers`]).
 struct MeshBuffers {
     vertices: Buffer,
     slots: Buffer,
@@ -827,7 +829,9 @@ pub struct Renderer {
     /// The queue the next frame uploads re-clustered meshlet buffers on.
     queue: Queue,
     meshes: MeshBuffers,
-    /// Times the library was uploaded again (each costs a full copy of every mesh).
+    /// The library's streams on the GPU, each written only where the library grew (STR-1).
+    mesh_arena: MeshArena<Buffer>,
+    /// Times a model's rows went up to the mesh arena (one per add).
     mesh_uploads: u64,
     layouts: Layouts,
     pipelines: Pipelines,
@@ -1406,21 +1410,28 @@ fn prepass_rows(device: &Device, layout: &BindGroupLayout, draws: usize) -> Resu
     Ok(PrepassRows { buffer, group, capacity })
 }
 
-fn mesh_buffers(device: &Device, queue: &Queue, library: &MeshLibrary) -> Result<MeshBuffers, RenderError> {
-    let upload = |label, bytes: &[u8], usage: BufferUsages| -> Result<Buffer, RenderError> {
-        let target = buffer(device, label, aligned(bytes.len() as u64), usage | BufferUsages::COPY_DST)?;
-        if !bytes.is_empty() {
-            queue.write_buffer(&target, 0, bytes);
-        }
-        Ok(target)
-    };
-    Ok(MeshBuffers {
-        vertices: upload("vertices", bytemuck::cast_slice(library.vertices()), BufferUsages::VERTEX | BufferUsages::STORAGE)?,
-        slots: upload("slots", bytemuck::cast_slice(library.slots()), BufferUsages::VERTEX)?,
-        indices: upload("indices", bytemuck::cast_slice(library.indices()), BufferUsages::INDEX)?,
-        skin: upload("skin", bytemuck::cast_slice(library.skin()), BufferUsages::STORAGE)?,
-        meshlets: MeshletBuffers::upload(device, queue, library.meshlets())?,
-    })
+/// The arena's buffers as the frame binds them (handles: nothing is copied).
+fn mesh_buffers(arena: &MeshArena<Buffer>) -> MeshBuffers {
+    let stream = |stream: ArenaStream| arena.buffer(stream).clone();
+    MeshBuffers {
+        vertices: stream(ArenaStream::Vertices),
+        slots: stream(ArenaStream::Slots),
+        indices: stream(ArenaStream::Indices),
+        skin: stream(ArenaStream::Skin),
+        meshlets: MeshletBuffers {
+            meshlets: stream(ArenaStream::Meshlets),
+            vertices: stream(ArenaStream::MeshletVertices),
+            triangles: stream(ArenaStream::MeshletTriangles),
+        },
+    }
+}
+
+/// The library's streams on the GPU, written whole (the renderer's first library).
+fn mesh_arena(device: &Device, queue: &Queue, library: &MeshLibrary) -> Result<MeshArena<Buffer>, RenderError> {
+    let mut arena_device = QueueDevice::new(device, queue);
+    let arena = MeshArena::new(&mut arena_device, &ArenaSources::of(library, true));
+    arena_device.finish();
+    arena
 }
 
 /// The sample count `options` gets on this device: 4 when both target formats take it.
@@ -2628,7 +2639,8 @@ impl Renderer {
         let samples = sample_count(&device, options);
         // Nothing clusters until a frame's quality draws meshlets ([`Renderer::set_meshlets`]).
         let library = MeshLibrary::with_meshlets(Meshlets::DEFAULT.with_enabled(false));
-        let meshes = mesh_buffers(&device, &gpu.queue, &library)?;
+        let arena = mesh_arena(&device, &gpu.queue, &library)?;
+        let meshes = mesh_buffers(&arena);
         let layouts = layouts(&device);
         let casters = CasterDepth::for_features(device.features());
         let pipelines = pipelines(&device, &layouts, casters)?;
@@ -2672,6 +2684,7 @@ impl Renderer {
             upscale: None,
             last_world: None,
             meshes,
+            mesh_arena: arena,
             mesh_uploads: 0,
             cull: CullPass::new(&device)?,
             skinning: SkinPass::new(&device)?,
@@ -3313,14 +3326,15 @@ impl Renderer {
         self.device.features()
     }
 
-    /// Add a mesh (a loaded GLB) and upload the library again.
+    /// Add a mesh (a loaded GLB) and upload its rows.
     pub fn add_mesh(&mut self, gpu: &Gpu, mesh: MeshData) -> Result<MeshId, RenderError> {
         let ids = self.add_meshes(gpu, vec![mesh])?;
         ids.first().copied().ok_or_else(|| RenderError::refused(crate::error::RenderCode::MeshInvalid, "no mesh was added"))
     }
 
-    /// Add `meshes` (every part of one model) and upload the library again once: one full copy of
-    /// the library however many parts the model has. A refused mesh adds none of them.
+    /// Add `meshes` (every part of one model) and upload their rows once, however many parts the
+    /// model has: the model's own bytes into the mesh arena, never the library's. A refused mesh
+    /// adds none of them and uploads nothing.
     pub fn add_meshes(&mut self, gpu: &Gpu, meshes: Vec<MeshData>) -> Result<Vec<MeshId>, RenderError> {
         self.add_meshes_with_meshlets(gpu, meshes.into_iter().map(|mesh| (mesh, None)).collect())
     }
@@ -3337,30 +3351,53 @@ impl Renderer {
     /// `genex_lods`, renderer pass 2 A6.9; [`MeshLibrary::add_part`]): the plan draws each
     /// instance at the level its distance from the camera picks.
     pub fn add_model_parts(&mut self, gpu: &Gpu, parts: Vec<ModelPart>) -> Result<Vec<MeshId>, RenderError> {
-        let mut library = self.library.clone();
-        let ids = parts.into_iter().map(|part| library.add_part(part)).collect::<Result<Vec<MeshId>, RenderError>>()?;
-        self.meshes = mesh_buffers(&gpu.device, &gpu.queue, &library)?;
-        self.meshlet_upload_pending = false;
-        self.mesh_uploads += 1;
-        self.library = library;
+        let ids = self.library.add_parts(parts)?;
+        self.sync_meshes(&gpu.device, &gpu.queue)?;
         // The meshlet table grew: last frame's candidates are not this library's.
         self.reset_meshlet_history();
         Ok(ids)
     }
 
-    /// Times the mesh library was uploaded again since this renderer was made (diagnostics).
+    /// Write the rows the library gained into the mesh arena (its meshlet tables only while they
+    /// are up: tables that are down go up whole when a frame draws meshlets).
+    fn sync_meshes(&mut self, device: &Device, queue: &Queue) -> Result<(), RenderError> {
+        let mut arena_device = QueueDevice::new(device, queue);
+        let synced = self.mesh_arena.sync(&mut arena_device, &ArenaSources::of(&self.library, !self.meshlet_upload_pending));
+        arena_device.finish();
+        synced?;
+        self.meshes = mesh_buffers(&self.mesh_arena);
+        self.mesh_uploads += 1;
+        Ok(())
+    }
+
+    /// Replace the arena's meshlet tables with the library's (`up`) or give them back.
+    fn replace_meshlet_tables(&mut self, device: &Device, queue: &Queue, up: bool) -> Result<(), RenderError> {
+        let empty = crate::meshlet::MeshletLibrary::default();
+        let tables = if up { self.library.meshlets() } else { &empty };
+        let mut arena_device = QueueDevice::new(device, queue);
+        let streams: [&[u8]; 3] = [bytemuck::cast_slice(&tables.meshlets), bytemuck::cast_slice(&tables.vertices), bytemuck::cast_slice(&tables.triangles)];
+        let replaced = ArenaStream::MESHLET.into_iter().zip(streams).try_for_each(|(stream, bytes)| self.mesh_arena.replace(&mut arena_device, stream, bytes));
+        arena_device.finish();
+        replaced?;
+        self.meshes = mesh_buffers(&self.mesh_arena);
+        Ok(())
+    }
+
+    /// Times a model's rows went up to the mesh arena since this renderer was made (diagnostics).
     pub fn mesh_uploads(&self) -> u64 {
         self.mesh_uploads
     }
 
-    /// Add a skinned mesh (its bind pose and skin) and upload the library again.
+    /// The mesh arena's running counts: bytes written from the CPU (each add its own model's),
+    /// bytes its growth copied on the GPU, and how often it grew.
+    pub fn mesh_arena_stats(&self) -> crate::mesh_arena::ArenaStats {
+        self.mesh_arena.stats()
+    }
+
+    /// Add a skinned mesh (its bind pose and skin) and upload its rows.
     pub fn add_skinned_mesh(&mut self, gpu: &Gpu, data: &SkinnedMeshData) -> Result<SkinId, RenderError> {
-        let mut library = self.library.clone();
-        let id = library.add_skinned(data)?;
-        self.meshes = mesh_buffers(&gpu.device, &gpu.queue, &library)?;
-        self.meshlet_upload_pending = false;
-        self.mesh_uploads += 1;
-        self.library = library;
+        let id = self.library.add_skinned(data)?;
+        self.sync_meshes(&gpu.device, &gpu.queue)?;
         self.reset_meshlet_history();
         Ok(id)
     }
@@ -4654,7 +4691,7 @@ impl Renderer {
         if !self.meshlet_upload_pending || !self.meshlet_game.drawn(&self.quality).0 {
             return Ok(());
         }
-        self.meshes.meshlets = MeshletBuffers::upload(device, queue, self.library.meshlets())?;
+        self.replace_meshlet_tables(device, queue, true)?;
         self.meshlet_upload_pending = false;
         Ok(())
     }
@@ -4665,7 +4702,8 @@ impl Renderer {
         if self.meshlet_upload_pending || self.library.meshlets().meshlets.is_empty() {
             return Ok(());
         }
-        self.meshes.meshlets = MeshletBuffers::upload(&self.device, &self.queue, &crate::meshlet::MeshletLibrary::default())?;
+        let (device, queue) = (self.device.clone(), self.queue.clone());
+        self.replace_meshlet_tables(&device, &queue, false)?;
         self.meshlet_upload_pending = true;
         Ok(())
     }
