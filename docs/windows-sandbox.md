@@ -115,6 +115,6 @@ jobs of `release.yml` and `package.yml` (PRs into `main`), after their other pac
 the runner's profile with 300,000 small files shaped like a developer's (`PROFILE_FILES` in
 `scripts/ci-heavy-profile.mjs`: package caches, `node_modules` trees, editor and browser data, the
 denied folders) and run `tests/e2e/run-sandbox-start-packaged.mjs`. It launches the package with
-`--studio-sandbox-start-smoke`, prints every `[sandbox]` step time and fails when the first sandboxed
-command fails or ends more than 60 s after launch. macOS has no such check: its sandbox compiles path
+`--studio-sandbox-start-smoke`, prints every `[sandbox]` step time and fails when the start fails or
+the first sandboxed command ends more than 60 s after launch. macOS has no such check: its sandbox compiles path
 rules without visiting the profile, and started in about 40 ms on an empty home and on that 300,000-file one.

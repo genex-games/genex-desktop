@@ -17,7 +17,13 @@ import readline from "node:readline";
 import { fixtureElectronArgs, fixtureElectronEnv } from "../../scripts/electron-runtime.mjs";
 import { startFakeOllama } from "../helpers/fake-ollama.ts";
 import { packagedApp } from "./packaged-app.mjs";
-import { sandboxStartReport, sandboxStartSummary, sandboxStartVerdict, sandboxStep } from "./sandbox-start-report.mjs";
+import {
+  START_FAILED,
+  sandboxStartReport,
+  sandboxStartSummary,
+  sandboxStartVerdict,
+  sandboxStep,
+} from "./sandbox-start-report.mjs";
 
 /**
  * From launch until the first sandboxed command ends: how long a person waits the first time Genex
@@ -26,7 +32,7 @@ import { sandboxStartReport, sandboxStartSummary, sandboxStartVerdict, sandboxSt
 const FIRST_START_BUDGET_MS = 60_000;
 /** How long past the budget the runner still waits for the app's report, to show how the start ends. */
 const REPORT_GRACE_MS = 180_000;
-/** How long the app may take to quit after its report before the runner stops it. */
+/** How long the app may take to quit after its report before the runner stops it; a failed start is stopped at once. */
 const EXIT_GRACE_MS = 60_000;
 /** The tail of the app's stderr printed when it gives no report. */
 const STDERR_TAIL_CHARS = 6_000;
@@ -45,7 +51,8 @@ const steps = [];
 let stdout = "";
 let stderrTail = "";
 child.stdout.setEncoding("utf8");
-readline.createInterface({ input: child.stderr }).on("line", (line) => {
+const stderrLines = readline.createInterface({ input: child.stderr });
+stderrLines.on("line", (line) => {
   stderrTail = `${stderrTail}${line}\n`.slice(-STDERR_TAIL_CHARS);
   const step = sandboxStep(line);
   if (!step) return;
@@ -54,12 +61,16 @@ readline.createInterface({ input: child.stderr }).on("line", (line) => {
   console.log(`  ${String(at).padStart(7)} ms  ${step.step}: ${step.error ?? `${step.ms} ms`}`);
 });
 
+// The report, or null once the start has failed (the app would only try again) or time is up.
 const report = await new Promise((resolve) => {
   const timer = setTimeout(() => resolve(sandboxStartReport(stdout)), FIRST_START_BUDGET_MS + REPORT_GRACE_MS);
   const done = (value) => {
     clearTimeout(timer);
     resolve(value);
   };
+  stderrLines.on("line", () => {
+    if (steps.at(-1)?.step === START_FAILED) done(null);
+  });
   child.stdout.on("data", (chunk) => {
     stdout += chunk;
     const found = sandboxStartReport(stdout);
@@ -72,20 +83,16 @@ const report = await new Promise((resolve) => {
     done(null);
   });
 });
-const running = child.exitCode === null && child.signalCode === null;
-const quit =
-  !running ||
-  (await once(child, "exit", { signal: AbortSignal.timeout(EXIT_GRACE_MS) }).then(
-    () => true,
-    () => false,
-  ));
-if (!quit) {
-  console.log(`::warning title=Packaged first start::the app did not quit within ${EXIT_GRACE_MS} ms of its report`);
-  child.kill("SIGKILL");
+const exited = () => child.exitCode !== null || child.signalCode !== null;
+if (report && !exited()) {
+  await once(child, "exit", { signal: AbortSignal.timeout(EXIT_GRACE_MS) }).catch(() =>
+    console.log(`::warning title=Packaged first start::the app did not quit within ${EXIT_GRACE_MS} ms`),
+  );
 }
+if (!exited()) child.kill("SIGKILL");
 await fake.close();
 
-const verdict = sandboxStartVerdict(report, FIRST_START_BUDGET_MS);
+const verdict = sandboxStartVerdict(report, steps, FIRST_START_BUDGET_MS);
 if (!report) console.error(stderrTail);
 await mkdir(path.dirname(EVIDENCE), { recursive: true });
 await writeFile(

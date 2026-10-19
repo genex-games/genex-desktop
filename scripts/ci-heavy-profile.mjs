@@ -21,9 +21,18 @@ import { parseArgs } from "node:util";
 export const PROFILE_FILES = 300_000;
 /** File-system calls in flight at once. */
 const IO_CONCURRENCY = 64;
-/** The smallest and largest seeded file, in bytes: source files, manifests and cache entries. */
-const MIN_FILE_BYTES = 120;
-const MAX_FILE_BYTES = 1_400;
+/**
+ * libuv threads that run them on Windows. A hosted runner's C: drive takes milliseconds per file
+ * (432 files/s on the default four), so more of them in flight help there; on macOS's APFS they
+ * slowed seeding sevenfold, so elsewhere the default stays.
+ */
+const WINDOWS_IO_THREADS = 64;
+/**
+ * The smallest and largest seeded file, in bytes: small source files, manifests and cache entries.
+ * NTFS keeps a file this small inside its MFT record, with no cluster of its own to write.
+ */
+const MIN_FILE_BYTES = 64;
+const MAX_FILE_BYTES = 600;
 /** Files in one package of a node_modules-style tree, before its nested dependency. */
 const PACKAGE_FILES = ["package.json", "README.md", "LICENSE", "index.js", "dist/index.js", "dist/index.d.ts"];
 const PACKAGE_SOURCES = 8;
@@ -186,6 +195,8 @@ function fail(reason) {
 }
 
 async function main() {
+  // Before the first file-system call starts libuv's pool, which reads this once.
+  if (process.platform === "win32") process.env.UV_THREADPOOL_SIZE ??= String(WINDOWS_IO_THREADS);
   const { values } = parseArgs({ options: { root: { type: "string" }, files: { type: "string" } } });
   const total = values.files === undefined ? PROFILE_FILES : Number(values.files);
   if (!Number.isSafeInteger(total) || total < DENIED_FOLDERS.length)

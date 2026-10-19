@@ -27,8 +27,13 @@ export function sandboxStartReport(stdout) {
   return match ? JSON.parse(match[1]) : null;
 }
 
-/** Whether the first start passes: its command ran, sandboxed, and ended within `budgetMs` of launch. */
-export function sandboxStartVerdict(report, budgetMs) {
+/**
+ * Whether the first start passes: no start step failed, and its command ran, sandboxed, within
+ * `budgetMs` of launch. A failed start fails it even when a retry went on to run the command.
+ */
+export function sandboxStartVerdict(report, steps, budgetMs) {
+  const failed = steps.find((step) => step.step === START_FAILED);
+  if (failed) return { ok: false, reason: `the sandbox start failed ${failed.at} ms after launch: ${failed.error}` };
   if (!report) return { ok: false, reason: "the app gave no report: its first sandboxed command never ended" };
   const after = `${report.firstCommandMs} ms after launch`;
   if (!report.ok) {

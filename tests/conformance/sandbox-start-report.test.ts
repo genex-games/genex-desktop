@@ -38,7 +38,8 @@ describe("packaged first start report", () => {
 
   it("passes a sandboxed command within the budget and fails every other ending, naming why", () => {
     const passed = { ok: true, firstCommandMs: 41_000, commandMs: 39_000, code: 0, sandboxed: true };
-    const cases: Array<[string, unknown, boolean, RegExp]> = [
+    const stamped = { at: 168_345, step: START_FAILED, error: "srt-win acl stamp timed out after 60000ms" };
+    const cases: Array<[string, unknown, boolean, RegExp, unknown[]?]> = [
       ["within the budget", passed, true, /41000 ms after launch, within the 60000 ms budget/],
       ["exactly the budget", { ...passed, firstCommandMs: BUDGET_MS }, true, /within/],
       [
@@ -61,9 +62,17 @@ describe("packaged first start report", () => {
         /failed 64000 ms after launch: acl stamp timed out/,
       ],
       ["no report", null, false, /never ended/],
+      [
+        "a logged start failure",
+        null,
+        false,
+        /start failed 168345 ms after launch: srt-win acl stamp timed out/,
+        [stamped],
+      ],
+      ["a start failure a retry got past", passed, false, /start failed 168345 ms after launch/, [stamped]],
     ];
-    for (const [name, report, ok, reason] of cases) {
-      const verdict = sandboxStartVerdict(report, BUDGET_MS);
+    for (const [name, report, ok, reason, steps = []] of cases) {
+      const verdict = sandboxStartVerdict(report, steps, BUDGET_MS);
       assert.equal(verdict.ok, ok, name);
       assert.match(verdict.reason, reason, name);
     }
