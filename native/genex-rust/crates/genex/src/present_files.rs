@@ -62,8 +62,9 @@ impl AssetFiles {
         self
     }
 
-    /// The real path of `path` under the folder, a regular file, and its size; or why not.
-    fn file(&self, path: &str) -> Result<(PathBuf, u64), AssetError> {
+    /// The real path of `path` under the folder, a regular file, and its size; or why not. Nothing
+    /// is opened. The streamed reads (`stream_source.rs`) check their paths here too.
+    pub(crate) fn file(&self, path: &str) -> Result<(PathBuf, u64), AssetError> {
         if !is_safe_asset_path(path) {
             return Err(refused(AssetErrorCode::UnsafePath, path, "not a plain path under assets/"));
         }
