@@ -173,24 +173,32 @@ an asset was integrated or used in the game.
 
 A call a game makes at play time reaches an engine as `complete()` with
 `purpose: CompletePurpose.Game` and the game's `responseSchema`
-([game-calls.ts](../src/substrate/engines/game-calls.ts)). Every engine first refuses, before
-anything is sent, a game's call with tools or pictures and any schema outside genex.games' closed
-dialect (`checkSchema` in `shared/game-ai-schema.ts`). What each engine then sends:
+([game-calls.ts](../src/substrate/engines/game-calls.ts)). `answersGameCalls` lists the engines
+that answer one: those whose every tool can be taken away. Every engine first refuses, before
+anything is sent, a game's call on an engine not in that list (unavailable), a game's call with
+tools or pictures, and any schema outside genex.games' closed dialect (`checkSchema` in
+`shared/game-ai-schema.ts`). What each engine then sends:
 
 - **Ollama, a model server you run, Bonsai**: the schema as OpenAI's `response_format`
   (`json_schema`, name `game_reply`), which Ollama reads as its `format` and llama.cpp, LM Studio
   and vLLM decode against as a grammar. pi-ai has no option for it, so the Ollama and server
   engines add it through pi-ai's `onPayload` hook; Bonsai writes its own body. `strict` is true
   only when every object requires all its properties and no node names a numeric, length or item
-  bound (`strictSchemaFits`).
+  bound (`strictSchemaFits`). A call that names no effort, or `none`, does not think: Ollama gets
+  `reasoning_effort: "none"` (its `think: false`) on a thinking model, Bonsai a budget of 0.
 - **OpenRouter**: `provider: {allow_fallbacks: false, require_parameters: true,
   data_collection: "deny"}`, and the schema only for a model whose catalog lists
   `structured_outputs` with an object root (hosted providers take no other). An Anthropic model
   gets one `cache_control` mark, on the system prompt, instead of pi-ai's marks on the last turn.
+  The connection (TCP and TLS) must open within `GAME_CONNECT_TIMEOUT_MS` (3 s); the generation
+  itself has only the caller's deadline.
 - **Claude Code**: a one-turn session with the game's system prompt in place of Claude Code's, the
   other messages as its prompt, no tools, MCP servers, skills, hooks or settings, no transcript
   (`persistSession: false`), in `GAME_CALL_CWD` (an empty folder in the OS's temp, apart from the
   judges'). It holds no reply to the schema: the caller validates every reply.
+- **OpenCode**: the one-shot answer session a judge gets (every OpenCode tool denied, an empty
+  folder, `ProcessSandbox`), with the game's words alone: no judge's rules. It holds no reply to
+  the schema either.
 - **Codex**: refused as unavailable before anything runs, because its shell cannot be removed.
 
 Every other completion's body is unchanged. `engine-game-calls.test.ts` holds each engine's body.
