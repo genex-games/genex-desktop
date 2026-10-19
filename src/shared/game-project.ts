@@ -3,6 +3,7 @@
  * Game sheet shows about a picked folder. `substrate/game-workspace.ts` decides and writes these
  * and re-exports the types; the renderer reads them through `window.studio`.
  */
+import type { AiVendor } from "./ai-vendors.ts";
 import type { GameRuntime } from "./computer-target.ts";
 import type { EngineBinding, LinkedEngine } from "./game-engine.ts";
 import type { GameLibraryEntry } from "./game-library.ts";
@@ -272,12 +273,25 @@ export interface ContentStamps {
   source: string | null;
 }
 
+/** An AI vendor's API host a file of an export reaches (D5): Publish warns about it. */
+export interface ExportAiHost {
+  /** The file, relative to the export (posix). */
+  file: string;
+  host: string;
+  vendor: AiVendor;
+}
+
 /** What `game.export` wrote: the public roots it assembled, and what it left out. */
 export interface ExportResult {
   dir: string;
   files: number;
   included: string[];
   excluded: string[];
+  /**
+   * The game calls an AI vendor directly, which Play refuses (`ai_direct_blocked`): the hosts it
+   * reaches, and what the agent should do instead. Absent when it reaches none.
+   */
+  aiDirect?: { hosts: ExportAiHost[]; hint: string };
 }
 
 /**

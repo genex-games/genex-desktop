@@ -1707,12 +1707,29 @@ export interface AttachReport {
 }
 // ↑ src/shared/game-project.ts
 
+export type AiVendor = 'openai' | 'anthropic' | 'google' | 'openrouter' | 'mistral' | 'groq' | 'together' | 'fireworks' | 'deepseek' | 'xai' | 'cohere' | 'perplexity' | 'replicate' | 'fal';
+// ↑ src/shared/ai-vendors.ts
+
+/** An AI vendor's API host a file of an export reaches (D5): Publish warns about it. */
+export interface ExportAiHost {
+  /** The file, relative to the export (posix). */
+  file: string;
+  host: string;
+  vendor: AiVendor;
+}
+// ↑ src/shared/game-project.ts
+
 /** What `game.export` wrote: the public roots it assembled, and what it left out. */
 export interface ExportResult {
   dir: string;
   files: number;
   included: string[];
   excluded: string[];
+  /**
+   * The game calls an AI vendor directly, which Play refuses (`ai_direct_blocked`): the hosts it
+   * reaches, and what the agent should do instead. Absent when it reaches none.
+   */
+  aiDirect?: { hosts: ExportAiHost[]; hint: string };
 }
 // ↑ src/shared/game-project.ts
 

@@ -54,7 +54,32 @@ export const MESSAGE = {
     "Publishing needs git and git-lfs on this Mac (brew install git-lfs). Studio will not let the Genex CLI install software.",
   DraftFailedTest:
     "The new build did not pass its test on the draft page, so it was not made public. Players still get the previous version.",
+  AiDirect: (hosts: readonly string[], more: number) =>
+    `This game calls an AI service directly (${hosts.join(", ")}${more > 0 ? ` and ${more} more` : ""}). Genex blocks that while people play, so its AI won't work there: ask the agent to make its AI calls through genex-ai.`,
 } as const;
+
+/** The most AI hosts a publish warning names; the rest are counted. */
+const AI_WARNING_HOSTS = 3;
+/** A hostname as the export names one. */
+const HOSTNAME_RE = /^[a-z0-9.-]{1,253}$/;
+
+const isObject = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+/**
+ * Publish's warning for a build that calls an AI vendor directly (D5), from the host's export answer
+ * (`ExportResult.aiDirect`), or null. The answer crosses the plugin boundary: anything that is not a
+ * list of hostnames reads as no warning.
+ */
+export function aiDirectWarning(exported: unknown): string | null {
+  const ai = isObject(exported) ? exported.aiDirect : null;
+  const rows: unknown[] = isObject(ai) && Array.isArray(ai.hosts) ? ai.hosts : [];
+  const hosts = rows.flatMap((row) =>
+    isObject(row) && typeof row.host === "string" && HOSTNAME_RE.test(row.host) ? [row.host] : [],
+  );
+  if (!hosts.length || hosts.length !== rows.length) return null;
+  return MESSAGE.AiDirect(hosts.slice(0, AI_WARNING_HOSTS), hosts.length - AI_WARNING_HOSTS);
+}
 
 /** Genex's own record of a hosted game, read by slug. `missing`: there is no hosted project. */
 export interface HostedStaging {

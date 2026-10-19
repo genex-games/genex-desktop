@@ -142,6 +142,7 @@ import {
   type ReviewAnswer,
 } from "./jobs.ts";
 import {
+  aiDirectWarning,
   canForceSettle,
   checksDraftPage,
   deploymentCheckDue,
@@ -774,13 +775,17 @@ export class GenexTools {
     };
     if (kind === GenexPublishKind.Gallery)
       job.title = cleanGenexTitle(title) ?? state.title ?? defaultGenexTitle(project);
-    const connect = exportStage ? await this.#exportGame(project, state, job, dir, exportStage) : false;
+    const exported = exportStage
+      ? await this.#exportGame(project, state, job, dir, exportStage)
+      : { connect: false, warning: null };
+    const { connect } = exported;
     const cover = coverRides(kind, state);
     // The shot is taken here, inside the invocation: a detached upload gets no answer from host services.
     const shotLines = cover && camera ? await this.#reshoot(project, camera) : [];
+    const warnings = [...(exported.warning ? [exported.warning] : []), ...shotLines];
     state.job = job;
     delete state.warnings;
-    if (shotLines.length) state.warnings = shotLines;
+    if (warnings.length) state.warnings = warnings;
     delete state.lastError;
     await this.#savePublishState(project, state);
     const done = this.#runPublishJob(project, kind, job, { cover, connect });
@@ -792,8 +797,9 @@ export class GenexTools {
     return this.#withCover(project, { ...state, job });
   }
   /**
-   * Export the game into the publish workspace and mark it, inside the invocation that asked. True
-   * when the game brings no SDK of its own, so Studio connects the copy once Genex names its project.
+   * Export the game into the publish workspace and mark it, inside the invocation that asked.
+   * `connect` when the game brings no SDK of its own, so Studio connects the copy once Genex names
+   * its project; `warning` when the build calls an AI vendor directly (D5).
    */
   async #exportGame(
     project: string,
@@ -801,7 +807,7 @@ export class GenexTools {
     job: GenexPublishJob,
     dir: string,
     exportStage: () => Promise<unknown>,
-  ): Promise<boolean> {
+  ): Promise<{ connect: boolean; warning: string | null }> {
     this.#exporting.add(project);
     try {
       const startPhase = job.phase;
@@ -816,7 +822,7 @@ export class GenexTools {
       await this.#writeWorkspaceManifest(dir, project, job, exported?.genex, connect);
       job.deployment = await markDeployment(path.join(dir, "dist"), job.id);
       job.phase = startPhase;
-      return connect;
+      return { connect, warning: aiDirectWarning(exported) };
     } catch (error) {
       job.state = GenexPublishJobState.Failed;
       job.phase = GenexPublishPhase.Failed;
