@@ -358,6 +358,8 @@ async function buildUnity(root, resources, sdk) {
   await mkdir(unity, { recursive: true });
   for (const file of ["plugin.json", "icon.svg"])
     await cp(path.join(root, "src/plugins/unity", file), path.join(unity, file));
+  // Genex's play-time AI package, embedded in a game's project by unity__add-ai, read beside the backend.
+  await cp(path.join(root, "src/plugins/unity/packages"), path.join(unity, "packages"), { recursive: true });
   // Genex's own type goes in as data: a panel can load no font from anywhere else.
   const panel = await inlinePanelSdk(await readFile(path.join(root, "src/plugins/unity/panel.html"), "utf8"), sdk);
   await writeFile(path.join(unity, "panel.html"), await inlinePanelFonts(panel, path.join(root, "src/renderer/fonts")));

@@ -83,8 +83,11 @@ function validate(tool: EnginePlayTool, args: Record<string, unknown>): void {
   if (tool === EnginePlayTool.Pause && typeof args.paused !== "boolean") throw new Error("paused must be a boolean.");
 }
 
-/** Pipeline input commands wrap their own PascalCase success inside the successful HTTP envelope. */
-function resultOf(result: unknown): unknown {
+/**
+ * A command's own result: Pipeline input commands wrap their own PascalCase success inside the
+ * successful HTTP envelope. Throws the editor's words when the command itself failed.
+ */
+export function pipelineResultOf(result: unknown): unknown {
   if (!isJsonObject(result)) return result;
   if (result.Success === false || result.success === false) {
     const detail = result.Error ?? result.errorDetails ?? result.error;
@@ -104,7 +107,7 @@ async function command(
     waitMs: 0,
   });
   if (!answer.ok) throw new Error(`Unity ${name}: ${answer.detail ?? answer.problem}.`);
-  return resultOf(answer.result);
+  return pipelineResultOf(answer.result);
 }
 
 const evaluate = (play: Play, at: Place, code: string) => command(play, at, Command.Eval, { code });
