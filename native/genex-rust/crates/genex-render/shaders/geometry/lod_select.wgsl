@@ -25,8 +25,10 @@ fn gx_lod_select(errors: vec4<f32>, levels: u32, distance: f32, pixels_per_unit:
 // within the last `beta` of the threshold, the finer level drawing the rest. A distance that is not positive,
 // a bias that is not finite and positive or a band outside [0, 1] draw the mesh itself whole.
 // Expression for expression the CPU's, so every comparison is of correctly rounded products.
+// f32::MAX is spelled exactly in hex: Chromium's Tint refuses the decimal 3.40282347e38 as outside
+// f32's range (naga rounds it), which left the browser's cull module, and every frame, invalid.
 fn gx_lod_band(errors: vec4<f32>, levels: u32, distance: f32, pixels_per_unit: f32, threshold_px: f32, bias: f32, beta: f32) -> vec2<f32> {
-    let usable = distance > 0.0 && bias > 0.0 && bias <= 3.40282347e38 && beta >= 0.0 && beta <= 1.0;
+    let usable = distance > 0.0 && bias > 0.0 && bias <= 0x1.fffffep+127f && beta >= 0.0 && beta <= 1.0;
     if (!usable) {
         return vec2<f32>(0.0, 1.0);
     }
@@ -43,7 +45,7 @@ fn gx_lod_band(errors: vec4<f32>, levels: u32, distance: f32, pixels_per_unit: f
         }
     }
     // An infinite budget (an infinite distance) leaves no band: the coarsest level is whole.
-    let whole = level == 0u || budget > 3.40282347e38 || fit <= (1.0 - beta) * budget;
+    let whole = level == 0u || budget > 0x1.fffffep+127f || fit <= (1.0 - beta) * budget;
     if (whole) {
         return vec2<f32>(f32(level), 1.0);
     }
