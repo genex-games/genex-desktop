@@ -11,7 +11,10 @@ pub const WGSL_MAX_BYTES: usize = 256 * 1024;
 pub const BUFFER_MAX_BYTES: u64 = 128 * 1024 * 1024;
 /// The largest texture: a 4096 × 4096 RGBA8 image.
 pub const TEXTURE_MAX_BYTES: u64 = 4096 * 4096 * 4;
-/// Bytes one frame may write to GPU buffers (instance, material, batch, line tables).
+/// Bytes one frame may write to GPU buffers (instance, material, batch, line tables): a hard
+/// refusal ([`UploadBudget`]). Streamed assets go through the soft upload queue instead
+/// ([`crate::upload_queue`]), which spreads them over frames under the class's smaller budget
+/// ([`crate::presets::stream_budget`]); this cap does not move for them.
 pub const UPLOAD_MAX_BYTES_PER_FRAME: u64 = 32 * 1024 * 1024;
 /// The largest capture, equal to the host's `NATIVE_CAPTURE_MAX_BYTES`.
 pub const CAPTURE_MAX_BYTES: u64 = 4096 * 4096 * 4;
