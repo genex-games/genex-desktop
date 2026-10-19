@@ -98,6 +98,10 @@ pub use gfx::{
     ASSET_READ_MAX_BYTES, AssetBytes, AssetError, AssetErrorCode, AssetGroup, AssetGroups, AssetInfo, AssetSource, AssetTable, Assets, CharacterAsset, Gfx,
     Model, ModelTriangles,
 };
+/// Why `gfx.character` refused (`error.code.wire()`, `error.detail`) and the skeleton a
+/// [`CharacterAsset`] describes, so a game names them without naming genex-anim.
+pub use genex_anim::skeleton::Skeleton;
+pub use genex_anim::{AnimationError, AnimationErrorCode};
 /// A native destination's asset files (the compiled table, then `assets/` by real path): host glue.
 #[cfg(not(target_arch = "wasm32"))]
 #[doc(hidden)]

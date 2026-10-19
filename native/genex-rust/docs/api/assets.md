@@ -22,7 +22,9 @@ game.on_reset(|sim, _seed, _rng, gfx| {
   own glTF reader. Never a render level of detail.
 - `gfx.assets().info(path)` answers `AssetInfo` (`bytes`, `group`) without reading the file into
   the simulation, or `None` for an unsafe path or a file the build does not have.
-- Keep what a reset read in the world (`Arc`, owned values): update hooks never read files.
+- Keep what a reset read in the world (`Arc`, owned values): update hooks never read files. A
+  world field names these types from the crate root, not the prelude
+  (`use genex::{AnimationError, AssetBytes, AssetError, CharacterAsset, ModelTriangles, Skeleton};`).
 - A re-seed reuses what the first seed read and parsed; reading again costs nothing.
 - `state().assets` lists every path a reset read.
 

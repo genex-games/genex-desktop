@@ -10,7 +10,8 @@ mod rigs;
 use genex::present::{AssetCache, Uploads};
 use genex::prelude::*;
 use genex::{AssetError, AssetFiles, CharacterAsset, AssetGroup, AssetGroups, AssetSource, AssetTable, DEFAULT_SEED, Runtime, View};
-use genex_anim::AnimationErrorCode;
+// A game names the refusal and the skeleton from the facade, never from genex-anim.
+use genex::{AnimationError, AnimationErrorCode, Skeleton};
 use genex_anim::import::import_rig;
 use genex_render::RenderError;
 use genex_render::mesh::MeshData;
@@ -89,7 +90,7 @@ fn loading_game(paths: &'static [&'static str]) -> Game<World> {
     let mut game = Game::new(World::default()).world_size(64, 64);
     game.on_reset(move |sim, _, _, gfx| {
         for path in paths {
-            let answer = gfx.character(path);
+            let answer: Result<CharacterAsset, AnimationError> = gfx.character(path);
             sim.world.outcome.push(answer.map_or_else(|error| error.code.wire().to_owned(), |hero| format!("{} joints", hero.joint_count())));
         }
     });
@@ -115,7 +116,8 @@ fn the_first_seed_gets_the_rig() {
     assert_eq!(runtime.tick(), 0, "the first seed, not a re-seed");
     let hero = runtime.sim().world.hero.clone().expect("loaded on the first seed");
     let expected = import_rig(*HERO).expect("genex-anim imports the fixture");
-    assert_eq!(hero.skeleton(), expected.skeleton(), "the facade's rig is genex-anim's import of the bytes");
+    let skeleton: &Skeleton = hero.skeleton();
+    assert_eq!(skeleton, expected.skeleton(), "the facade's rig is genex-anim's import of the bytes");
     assert_eq!(hero.joint_count(), 22);
     assert_eq!(hero.path(), "characters/hero.glb");
     assert_eq!(runtime.state()["assets"], json!(["characters/hero.glb"]), "state().assets lists the read");
