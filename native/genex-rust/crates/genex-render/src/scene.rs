@@ -868,6 +868,13 @@ pub struct LineVertex {
     pub color: [f32; 4],
 }
 
+impl LineVertex {
+    /// A vertex at `position` in the 8-bit sRGB `color` (what [`Scene::line`] stores).
+    pub fn srgb(position: [f32; 3], color: [u8; 4]) -> LineVertex {
+        LineVertex { position, color: color.map(|c| f32::from(c) / 255.0) }
+    }
+}
+
 /// A frame's water (renderer pass 2 B.3): one body and the water's clock.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct SceneWater {
@@ -976,9 +983,21 @@ impl Scene {
 
     /// Draw a line segment: one logical draw.
     pub fn line(&mut self, from: [f32; 3], to: [f32; 3], color: [u8; 4]) -> &mut Self {
-        let color = color.map(|c| f32::from(c) / 255.0);
-        self.lines.push(LineVertex { position: from, color });
-        self.lines.push(LineVertex { position: to, color });
+        self.lines.push(LineVertex::srgb(from, color));
+        self.lines.push(LineVertex::srgb(to, color));
+        self.logical_draws += 1;
+        self
+    }
+
+    /// Draw `vertices` as line segments, each pair one segment (a trailing odd vertex is
+    /// dropped): one logical draw however many segments (NAV-15), none when there is no segment.
+    /// The segments draw what [`Scene::line`] draws for each pair.
+    pub fn lines(&mut self, vertices: &[LineVertex]) -> &mut Self {
+        let whole = vertices.len() - vertices.len() % 2;
+        if whole == 0 {
+            return self;
+        }
+        self.lines.extend_from_slice(&vertices[..whole]);
         self.logical_draws += 1;
         self
     }

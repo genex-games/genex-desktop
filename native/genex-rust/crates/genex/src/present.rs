@@ -113,7 +113,7 @@ use genex_render::motion::DrawId;
 use genex_render::letterbox::{letterbox, output_for_window};
 use genex_render::overlay::OverlayPainter;
 use genex_render::lights::SpotLight;
-use genex_render::scene::{CameraDesc, Lighting, Material, MeshId, PointLight, Scene, scaled};
+use genex_render::scene::{CameraDesc, Lighting, LineVertex, Material, MeshId, PointLight, Scene, scaled};
 use genex_render::texture::{CompressedTexture, TextureData, TextureFamily, TextureId, TextureKind, family_file, linear_to_srgb, read_ktx2, srgb_to_linear};
 use genex_render::presets::{on_ldr_scene, with_world_samples};
 use genex_render::renderer::landed_samples;
@@ -503,7 +503,7 @@ fn model_paths(frame: &Frame) -> impl Iterator<Item = &str> {
             crate::GroupShape::Model(model) => model.path(),
             crate::GroupShape::Cube | crate::GroupShape::Sphere => None,
         },
-        Shape::Cube { .. } | Shape::Sphere { .. } | Shape::Line { .. } => None,
+        Shape::Cube { .. } | Shape::Sphere { .. } | Shape::Line { .. } | Shape::Lines { .. } => None,
     });
     let custom = frame.custom_draws().iter().filter_map(|draw| match &draw.mesh {
         CustomMesh::Model(model) => model.path(),
@@ -518,7 +518,7 @@ fn texture_paths(frame: &Frame) -> impl Iterator<Item = (&str, TextureKind)> {
         Shape::Model { material, .. } => material.as_ref(),
         Shape::Cube { material, .. } | Shape::Sphere { material, .. } => Some(material),
         Shape::Group { group } => group.material(),
-        Shape::Line { .. } => None,
+        Shape::Line { .. } | Shape::Lines { .. } => None,
     });
     let drawn = materials.flat_map(|material| {
         let slots = [
@@ -2086,6 +2086,8 @@ trait WorldSink {
     /// A retained instance group drawing with `material` (renderer pass 2 A.0b).
     fn group(&mut self, group: &genex_render::retained::InstanceGroup, material: Material);
     fn line(&mut self, from: [f32; 3], to: [f32; 3], color: [u8; 4]);
+    /// Line segments as one logical draw (NAV-15): each pair of vertices one segment.
+    fn lines(&mut self, vertices: &[LineVertex]);
     fn lighting(&mut self) -> &mut Lighting;
 }
 
@@ -2106,6 +2108,10 @@ impl WorldSink for Scene {
 
     fn line(&mut self, from: [f32; 3], to: [f32; 3], color: [u8; 4]) {
         Scene::line(self, from, to, color);
+    }
+
+    fn lines(&mut self, vertices: &[LineVertex]) {
+        Scene::lines(self, vertices);
     }
 
     fn lighting(&mut self) -> &mut Lighting {
@@ -2134,6 +2140,10 @@ impl WorldSink for ImmediateFrame {
 
     fn line(&mut self, from: [f32; 3], to: [f32; 3], color: [u8; 4]) {
         ImmediateFrame::line(self, from, to, color);
+    }
+
+    fn lines(&mut self, vertices: &[LineVertex]) {
+        ImmediateFrame::lines(self, vertices);
     }
 
     fn lighting(&mut self) -> &mut Lighting {
@@ -2185,6 +2195,12 @@ fn push_shape(sink: &mut impl WorldSink, assets: &AssetCache, missing: &mut Vec<
         }
         Shape::Line { from, to, color } => {
             sink.line(from.to_array(), to.to_array(), rgba(*color));
+            0
+        }
+        Shape::Lines { points, color } => {
+            let color = rgba(*color);
+            let vertices: Vec<LineVertex> = points.iter().map(|point| LineVertex::srgb(point.to_array(), color)).collect();
+            sink.lines(&vertices);
             0
         }
         Shape::Group { group } => push_group(sink, assets, missing, group),

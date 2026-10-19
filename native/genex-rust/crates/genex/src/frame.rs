@@ -563,6 +563,14 @@ pub enum Shape {
         /// Its colour.
         color: Color,
     },
+    /// Line segments drawn as one (`frame.lines`, NAV-15): each pair of points one segment.
+    #[non_exhaustive]
+    Lines {
+        /// The segments' end points, two per segment (an even count).
+        points: Arc<[Vec3]>,
+        /// Their colour.
+        color: Color,
+    },
     /// A retained instance group: its shape at every transform (renderer pass 2 A.0b).
     #[non_exhaustive]
     Group {
@@ -903,12 +911,33 @@ impl Frame {
         self.push(Shape::Line { from, to, color })
     }
 
-    /// Draw `nav` as `debug` asks (polygons, links, agents' paths) as line segments.
-    pub fn nav_debug(&mut self, nav: &crate::nav::Nav, debug: crate::nav::NavDebug) -> &mut Self {
-        for [from, to] in genex_nav::debug::segments(nav, debug) {
-            self.line(from, to, Color::GREEN);
+    /// Draw many line segments as one logical draw (NAV-15): `points` pair up into segments
+    /// (`points[0]` to `points[1]`, `points[2]` to `points[3]`, ...; a trailing odd point is
+    /// dropped), all in `color`. The pixels are those of a `frame.line` per segment; a debug
+    /// overlay of thousands of segments counts once in `drawCalls` and its tag. No segment, no
+    /// draw.
+    ///
+    /// ```
+    /// use genex::prelude::*;
+    ///
+    /// let mut frame = Frame::default();
+    /// let grid: Vec<Vec3> = (0..100).flat_map(|n| [vec3(n as f32, 0.0, 0.0), vec3(n as f32, 0.0, 10.0)]).collect();
+    /// frame.lines(&grid, Color::GREEN);
+    /// assert_eq!(frame.draw_calls(), 1);
+    /// ```
+    pub fn lines(&mut self, points: &[Vec3], color: Color) -> &mut Self {
+        let whole = points.len() - points.len() % 2;
+        if whole == 0 {
+            return self;
         }
-        self
+        self.push(Shape::Lines { points: Arc::from(&points[..whole]), color })
+    }
+
+    /// Draw `nav` as `debug` asks (polygons, links, agents' paths) as line segments: one
+    /// [`Frame::lines`] batch.
+    pub fn nav_debug(&mut self, nav: &crate::nav::Nav, debug: crate::nav::NavDebug) -> &mut Self {
+        let points: Vec<Vec3> = genex_nav::debug::segments(nav, debug).into_iter().flatten().collect();
+        self.lines(&points, Color::GREEN)
     }
 
     /// Draw `mesh` (a [`Model`], [`CustomMesh::Cube`] or [`CustomMesh::Sphere`]) under
