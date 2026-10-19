@@ -8,10 +8,11 @@
  * loads; this module only maps its rows to steps. Plan "Game services", M2.7.
  */
 import {
-  AssetRefusal,
+  AssetImportRefusal,
   AssetSupport,
   assetExtension,
   assetFormat,
+  isAssetImportRefusal,
   stackAcceptsAsset,
   stackAssetSupport,
 } from "../../shared/game-assets.ts";
@@ -62,37 +63,8 @@ export const ImportConverter = {
 } as const;
 export type ImportConverter = (typeof ImportConverter)[keyof typeof ImportConverter];
 
-/**
- * Why the import step refused a file. The two stack refusals are `AssetRefusal`'s own values (the
- * renderer words them); the rest are the importer's. Wire values: never rename one.
- */
-export const AssetImportRefusal = {
-  /** A C++ · raylib game cannot load the format. */
-  UnsupportedByRaylib: AssetRefusal.UnsupportedByRaylib,
-  /** A Rust · wgpu game cannot load the format, and the import step does not convert it. */
-  UnsupportedByRust: AssetRefusal.UnsupportedByRust,
-  /** The name breaks the asset-path rule (`isSafeAssetPath`): absolute, climbing, a device name. */
-  UnsafePath: "unsafe-path",
-  /** The name resolves outside the game folder once its links are followed, or is a link itself. */
-  EscapesGame: "escapes-game",
-  /** Nothing is there. */
-  Missing: "missing",
-  /** A folder, a FIFO, a socket or a device: not a regular file. */
-  NotRegularFile: "not-regular-file",
-  /** Larger than the importer reads. */
-  TooLarge: "too-large",
-  /** The bytes are not the format the name says, or are damaged. */
-  Malformed: "malformed",
-  /** The glTF requires an extension the runtime does not read, even after the import step. */
-  UnsupportedExtension: "unsupported-extension",
-  /** The step needs a tool the store does not carry (an audio encoder). */
-  ConverterMissing: "converter-missing",
-  /** The importer failed, timed out, or answered something the host does not accept. */
-  ImporterFailed: "importer-failed",
-  /** The glTF validator found an error in the file: the first codes it named are in the detail. */
-  ValidationFailed: "validation-failed",
-} as const;
-export type AssetImportRefusal = (typeof AssetImportRefusal)[keyof typeof AssetImportRefusal];
+/** The import step's refusals: one table, in `shared/game-assets.ts` (`assets.inventory` reports them). */
+export { AssetImportRefusal, isAssetImportRefusal };
 
 /** One file's step: what runs, and what it writes. */
 export interface ImportStep {
@@ -154,9 +126,4 @@ export function planImport(stack: GameStack, rel: string, usage?: TextureUsage |
 export function runsImporter(step: ImportStep): step is ImporterStep {
   const runs = step.action === ImportAction.Normalize || step.action === ImportAction.Convert;
   return runs && step.converter !== undefined && step.output !== undefined;
-}
-
-/** Whether `code` is one of the import step's refusals (a receipt's word is checked against it). */
-export function isAssetImportRefusal(code: unknown): code is AssetImportRefusal {
-  return typeof code === "string" && (Object.values(AssetImportRefusal) as string[]).includes(code);
 }

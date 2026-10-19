@@ -69,6 +69,7 @@ async function importOne(jobDir: string, job: ImportJob, file: ImportJobFile): P
     ...(result.textures ? { textures: result.textures } : {}),
     ...(result.families ? { families } : {}),
     ...(result.familiesSkipped ? { familiesSkipped: result.familiesSkipped } : {}),
+    ...(result.sizes ? { sizes: result.sizes } : {}),
     ...(result.texture ? { texture: result.texture } : {}),
     ...(result.issues
       ? {

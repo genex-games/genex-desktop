@@ -8,6 +8,7 @@ import type { TextureUsage } from "./basis-encoder.ts";
 import { meshToGlb } from "./glb.ts";
 import { importGltf } from "./gltf-decompress.ts";
 import { GltfImportError } from "./gltf-json.ts";
+import { type ImportSizes, inspectGlb } from "./inspect.ts";
 import { checkRadiance, HdrError } from "./hdr.ts";
 import { AssetImportRefusal, ImportConverter } from "./import-plan.ts";
 import {
@@ -26,6 +27,7 @@ import { plyToMesh, stlToMesh } from "./stl-ply.ts";
 import { type EncodedTexture, encodeTexture, requireUsage, TextureDecodeError } from "./texture-encode.ts";
 import { type TranscodedTexture, texturesForTargets } from "./texture-table.ts";
 import type { GltfIssue } from "./validate.ts";
+import { weldGlb } from "./weld.ts";
 
 /** One file for a step. */
 export interface ConvertInput {
@@ -57,6 +59,8 @@ export type ConvertResult =
       familiesSkipped?: Ktx2FamilySkip;
       /** The glTF validator's warnings about the input (`validate.ts`). */
       issues?: GltfIssue[];
+      /** The written GLB's counts and bytes (C-7), for the receipt. */
+      sizes?: ImportSizes;
       /** An encoded loose texture's usage, source size and class (C-12). */
       texture?: EncodedTexture;
     }
@@ -103,14 +107,17 @@ function checkHdr(input: ConvertInput): ConvertResult {
 }
 
 /**
- * A GLB the runtime loads, with import-time meshlets (R2.3) and LODs (A6.9) when it is big enough
- * for each; never a refusal.
+ * A GLB the runtime loads: welded, deduplicated and pruned (C-7), then with import-time meshlets
+ * (R2.3) and LODs (A6.9) when it is big enough for each, and its sizes for the receipt; never a
+ * refusal.
  */
 async function withMeshlets(glb: Uint8Array, input: ConvertInput): Promise<ConvertResult> {
   const minTriangles = input.meshletMinTriangles;
-  const { bytes: clustered } = await addMeshletExtras(glb, minTriangles === undefined ? {} : { minTriangles });
+  const { bytes: welded } = weldGlb(glb);
+  const { bytes: clustered } = await addMeshletExtras(welded, minTriangles === undefined ? {} : { minTriangles });
   const { bytes } = await addLodExtras(clustered);
-  return { ok: true, bytes };
+  const sizes = inspectGlb(bytes);
+  return { ok: true, bytes, ...(sizes ? { sizes } : {}) };
 }
 
 const decoder = new TextDecoder();

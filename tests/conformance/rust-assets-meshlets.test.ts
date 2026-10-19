@@ -244,7 +244,8 @@ describe("R2.3 import-time clusters", () => {
       primitives: [{ positions: flat, indices: Uint32Array.from({ length: indices.length }, (_, i) => i) }],
       materials: [],
     };
-    const out = await importGlb(meshToGlb(doc));
+    // The clusterer alone: the import step welds a soup first (C-7), which reorders its vertices.
+    const { bytes: out } = await addMeshletExtras(meshToGlb(doc));
     const { json, bin } = readGlb(out);
     const read = readMeshletSet(json, bin, 0);
     assert.ok(!("fault" in read));

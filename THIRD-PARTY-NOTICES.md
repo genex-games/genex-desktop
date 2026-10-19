@@ -511,7 +511,7 @@ THE SOFTWARE.
 
 ### Godot Engine
 
-The licence of the Godot Engine code the AgX punchy tonemap, the circular depth of field, the clustered decals, the froxel volumetric fog, the particles' bitonic sort and the Hi-Z screen-space reflections port (table above).
+The licence of the Godot Engine code the AgX punchy tonemap, the circular depth of field, the clustered decals, the froxel volumetric fog, the particles' bitonic sort and the Hi-Z screen-space reflections port (table above), and the animation state machine's rules.
 
 ```
 Copyright (c) 2014-present Godot Engine contributors (see AUTHORS.md).
@@ -634,10 +634,39 @@ comment; each Apache 2.0 port carries the upstream notice and lists Genex's chan
 | `crates/genex-anim/src/blend.rs` (`Blender::blend`, `apply_additive`, `additive_delta`) | The normalized pose blend (weighted sums, rotations kept in one hemisphere and normalized, the rest pose filling in under a weight threshold) and additive layers applied as `base × delta` (ozz 0.15's multiplication order); Genex copies a joint one layer alone drives and adds a Unity-style override | ozz-animation 0.17.0 (https://github.com/guillaumeblanc/ozz-animation), `src/animation/runtime/blending_job.cc` | Guillaume Blanc | MIT (see [ozz-animation](#ozz-animation)) |
 | `crates/genex-anim/src/mask.rs` (`JointMask::subtrees`) | Per-joint layer weights (ozz) named by subtree roots, a joint inherits its parent's membership (the rule only; no Bevy code was copied) | ozz-animation 0.17.0, `include/ozz/animation/runtime/blending_job.h` (`joint_weights`); Bevy (https://github.com/bevyengine/bevy), `crates/bevy_animation/src/graph.rs` (`AnimationMask`, mask groups) | Guillaume Blanc; Bevy contributors | MIT (see [ozz-animation](#ozz-animation)); MIT OR Apache-2.0, used under Apache 2.0 (see [Apache License 2.0](#apache-license-20)) |
 | `crates/genex-anim/src/humanoid.rs` (`HumanoidBone`), `tests/fixtures/humanoid-aliases.json` | The humanoid profile's bone names and order (22 of them) | Godot Engine 4.7.2-stable (https://github.com/godotengine/godot), `scene/resources/skeleton_profile.cpp` (`SkeletonProfileHumanoid`) | Godot Engine contributors | MIT (see [Godot Engine](#godot-engine)) |
+| `crates/genex-anim/src/graph.rs` (`AnimGraphBuilder`, `AnimGraph`), `src/machine.rs` (`Machine::step`) | The layered state machine: each layer with its own states, weight and mask, transitions within a layer, conditions built from parameters with and/or/not, and the per-layer update order (advance, then try the transitions). Only the structure and rules were taken; no code was copied. Genex adds priorities, any-state transitions, synced switches and interruptible blends | Fyrox 1.0.1 (https://github.com/FyroxEngine/Fyrox), `fyrox-animation/src/machine/{layer,state,transition,parameter}.rs` | Dmitry Stepanov and Fyrox Engine contributors | MIT (see [Fyrox](#fyrox)) |
+| `crates/genex-anim/src/graph.rs` (`TransitionBuilder::{priority, at_end, synced}`), `src/params.rs` (triggers) | Transition priorities, `AtEnd` and `Sync` switch modes, any-state transitions and one-shot requests consumed by the transition that takes them (the rules only; no code was copied) | Godot Engine 4.7.2-stable (https://github.com/godotengine/godot), `scene/animation/animation_node_state_machine.cpp` | Godot Engine contributors | MIT (see [Godot Engine](#godot-engine)) |
 | `crates/genex-stream/src/residency.rs` (`Residency`, `ResidencyLimits`) | The residency policy: per-requester reference counts, an unload queue of unreferenced entries in release order, drained while resident bytes exceed a byte cap under a time limit, a cap on loads in flight, and `forbidHoles` (keep the coarser parent until every wanted child is resident) | cesium-native (https://github.com/CesiumGS/cesium-native), `Cesium3DTilesSelection/src/TilesetContentManager.cpp` (`unloadCachedTiles`, the tile reference counts and the unload list) and `Cesium3DTilesSelection/include/Cesium3DTilesSelection/TilesetOptions.h` (`maximumCachedBytes`, `maximumSimultaneousTileLoads`, `tileCacheUnloadTimeLimit`, `forbidHoles`) | CesiumGS, Inc. and Contributors | Apache 2.0 (see [Apache License 2.0](#apache-license-20); cesium-native ships no NOTICE file) |
 | `crates/genex-render/src/mesh_arena.rs` (`MeshArena::grow`, `move_to`) | Growing a full GPU buffer by remaking it twice as large and copying its live prefix buffer to buffer (the rule only; no code was copied) | Bevy (https://github.com/bevyengine/bevy), `crates/bevy_render/src/slab_allocator.rs` | Bevy contributors | MIT OR Apache-2.0, used under Apache 2.0 (see [Apache License 2.0](#apache-license-20)) |
 | `crates/genex-nav/src/runtime/dodgy/` (every file, with dodgy's own tests as `*_test.rs`) | ORCA local avoidance: velocity obstacles from neighbours and polygon obstacles, the 2D and 3D linear programs, the visibility set. Changed (§4(b), listed in `dodgy/mod.rs`): the `rand` direction for two agents on one spot is hashed from their keys, `Simulator::step` has no `HashMap` and keeps its near neighbours, visible line ids come back sorted, angles use libm, a zero responsibility sum no longer divides by zero, no `debug` feature | dodgy_2d 0.5.5 (https://github.com/andriyDev/dodgy, crates.io sha256 `d35627725e918aa4593ca54937cd8ef58078d3b9ab0fd060aee60c9bc3a2050e`), itself ported from RVO2 (https://gamma.cs.unc.edu/RVO2/) `Agent.cc` | andriyDev; RVO2: Jur van den Berg, Stephen J. Guy, Jamie Snape, Ming C. Lin, Dinesh Manocha, 2008 University of North Carolina at Chapel Hill | MIT OR Apache-2.0, used under Apache 2.0; RVO2 Apache 2.0 (see [Apache License 2.0](#apache-license-20) and [RVO2](#rvo2)) |
 | `crates/genex-nav/src/runtime/avoidance.rs` (`Avoidance::step`) | Gathering each agent's neighbouring agents and bodies and handing them to ORCA (Genex replaces the k-d tree and `HashMap`s with a sorted uniform grid and sorts neighbours by distance, then key) | landmass 0.9.3 (https://github.com/andriyDev/landmass, crates.io sha256 `fd2fd988b81194c6f02c293a28b510b44f1d8581c80b1bfe498e85e9c3f57b93`), `src/avoidance.rs` (`apply_avoidance_to_agents`) | andriyDev | MIT OR Apache-2.0, used under Apache 2.0 (see [Apache License 2.0](#apache-license-20)) |
+| `crates/genex-nav/src/runtime/{coords, util, geometry, nav_mesh, island, nav_data, link}.rs` (islands, navigation-mesh validation and sampling, island stitching with boundary links, modified nodes, region connectivity, animation-link data), with landmass's own tests as `nav_mesh_test.rs` and `nav_data_test.rs` | Islands and their stitching. Changed (listed in each file's header): std `HashMap`/`HashSet` and slotmap are insertion-ordered maps and a deterministic arena, the `geo` boundary clip and `kdtree` vertex snap are Genex's own `clip.rs` and `grid.rs`, the `disjoint` set is Genex's own `disjoint.rs` without a `Mutex`, a Y-up `GenexCoords`, a caller-set edge-link distance, tests converted from googletest to plain asserts | landmass 0.9.3 (https://github.com/andriyDev/landmass, crates.io sha256 `fd2fd988b81194c6f02c293a28b510b44f1d8581c80b1bfe498e85e9c3f57b93`), `src/{coords, util, geometry, nav_mesh, island, nav_data, link}.rs`, `PermittedAnimationLinks` from `src/agent.rs`, `src/{nav_mesh, nav_data}_test.rs` | andriyDev | MIT OR Apache-2.0, used under Apache 2.0 (see [Apache License 2.0](#apache-license-20)) |
+
+### Fyrox
+
+The licence of Fyrox, whose animation state machine's structure and rules the graph and machine follow (table above).
+
+```
+Copyright (c) 2019-present Dmitry Stepanov and Fyrox Engine contributors.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
 
 ### ozz-animation
 
@@ -821,6 +850,7 @@ gltfpack itself is not in the repository.
 | Genex file | What | Source | Upstream author | Licence |
 | --- | --- | --- | --- | --- |
 | `src/substrate/asset-import/dequantize.ts` | `KHR_mesh_quantization` undone: which attributes become float32 (every one but `JOINTS_n`, morph targets too) and the normalized-integer division with its -1 clamp | glTF-Transform 4.5.1 (https://github.com/donmccurdy/glTF-Transform), `packages/functions/src/dequantize.ts` and `packages/core/src/utils/math-utils.ts` (`decodeNormalizedInt`) | Don McCurdy | MIT (see [glTF-Transform](#gltf-transform)) |
+| `src/substrate/asset-import/weld.ts`, `src/substrate/asset-import/prune.ts`, `src/substrate/asset-import/inspect.ts` | Bitwise vertex weld (the first-use write map over the index stream, the MurmurHash2 vertex hash over 4-byte-padded attributes with triangular probing, attribute compaction, 16-bit indices up to 65,534 vertices); accessor dedup (grouped as attributes, indices, animation inputs and outputs) and material dedup ignoring names; unreferenced accessors and materials pruned; the inspect report's mesh, texture and animation sizes | glTF-Transform 4.4.2 (https://github.com/donmccurdy/glTF-Transform), `packages/functions/src/weld.ts`, `hash-table.ts`, `compact-primitive.ts`, `dedup.ts`, `prune.ts` and `inspect.ts` | Don McCurdy | MIT (see [glTF-Transform](#gltf-transform)) |
 
 ### glTF-Transform
 

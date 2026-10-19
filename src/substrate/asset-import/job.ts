@@ -12,6 +12,7 @@
 import { BuildTarget } from "../../shared/game-project.ts";
 import type { TextureUsage } from "./basis-encoder.ts";
 import { type AssetImportRefusal, ImportConverter, isAssetImportRefusal } from "./import-plan.ts";
+import { type ImportSizes, parseImportSizes } from "./inspect.ts";
 import { Ktx2FamilySkip } from "./ktx2.ts";
 import { type EncodedTexture, parseEncodedTexture } from "./texture-encode.ts";
 import { TextureCompression, type TranscodedTexture } from "./texture-table.ts";
@@ -85,6 +86,8 @@ export type ImportReceiptEntry =
       families?: ImportFamilyOutput[];
       familiesSkipped?: Ktx2FamilySkip;
       issues?: ImportIssue[];
+      /** The written GLB's counts and bytes (C-7). */
+      sizes?: ImportSizes;
       /** An encoded loose texture's usage, source size and class (C-12). */
       texture?: EncodedTexture;
     }
@@ -227,8 +230,16 @@ function parseEntry(value: unknown): ImportReceiptEntry | null {
   if (value.ok !== true || !isJobFile(value.output, "out", value.index)) return null;
   const fields = parseTextureFields(value, value.index);
   const issues = value.issues === undefined ? undefined : parseIssues(value.issues);
-  if (!fields || issues === null) return null;
-  return { index: value.index, ok: true, output: value.output, ...fields, ...(issues ? { issues } : {}) };
+  const sizes = value.sizes === undefined ? undefined : parseImportSizes(value.sizes);
+  if (!fields || issues === null || sizes === null) return null;
+  return {
+    index: value.index,
+    ok: true,
+    output: value.output,
+    ...fields,
+    ...(issues ? { issues } : {}),
+    ...(sizes ? { sizes } : {}),
+  };
 }
 
 /** A receipt as the host reads it: entries it cannot read are dropped (their files count as failed). */

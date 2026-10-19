@@ -295,9 +295,9 @@
     "parts": "3f47250589b84e25"
   },
   "tests/fixtures/asset-import/lods-sphere.glb": {
-    "mesh": "7f8aa8ea1868cf3f",
+    "mesh": "7f16292d5efe3496",
     "skinned": "refused mesh-invalid",
-    "parts": "b7065b75a054a7a8"
+    "parts": "8e69e194699da49b"
   },
   "tests/fixtures/asset-import/quantized.glb": {
     "mesh": "refused mesh-invalid",

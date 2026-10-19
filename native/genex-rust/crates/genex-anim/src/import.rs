@@ -1,5 +1,5 @@
 //! GLB import of a rig: the skeleton of the first skinned mesh node, from bytes the sim-side
-//! asset read hands over (SF-1a; SF-1b's guard joins in front of `gltf` at its integrate).
+//! asset read hands over (SF-1a), checked by genex-core's GLB guard before `gltf` parses.
 //!
 //! `gltf` 1.4.1 can panic on damaged input (gltf-rs #478), and wasm aborts on a panic, so nothing
 //! reaches its readers unchecked: the container lengths are checked before it parses, every
@@ -64,6 +64,7 @@ pub fn import_rig(bytes: &[u8]) -> Result<Rig, AnimationError> {
 /// A GLB parsed by `gltf` after its container lengths are checked, with every buffer embedded
 /// and inside the BIN chunk.
 pub(crate) fn open(bytes: &[u8]) -> Result<gltf::Gltf, AnimationError> {
+    genex_core::glb_guard::check_glb(bytes).map_err(|refusal| AnimationError::asset_invalid(format!("not a valid GLB: {refusal}")))?;
     check_container(bytes)?;
     let gltf = gltf::Gltf::from_slice_without_validation(bytes).map_err(|error| AnimationError::asset_invalid(format!("not a valid GLB: {error}")))?;
     validate(gltf.document.as_json())?;

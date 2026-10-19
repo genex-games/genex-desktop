@@ -76,7 +76,11 @@ its genex release). New games default by
 `layout.assetJobs`) plans every staged `assets/**` file for the destination and runs each
 importable one as its own sandboxed job, at most `IMPORT_JOBS_MAX` (4) at once. The outputs
 replace their sources in the stage and never in the game folder: an OBJ, STL or PLY becomes a GLB,
-a Draco, meshopt or quantized GLB is written back plain, and a Basis KTX2 gets its per-family files.
+a Draco, meshopt or quantized GLB is written back plain, every GLB has its identical vertices welded
+and its duplicate or unreferenced accessors and materials dropped
+([`weld.ts`](../../src/substrate/asset-import/weld.ts); joints, weights and morph deltas are part of
+a vertex), and a Basis KTX2 gets its per-family files. The receipt carries each written GLB's counts
+and bytes (`sizes`, [`inspect.ts`](../../src/substrate/asset-import/inspect.ts)).
 A PNG or JPEG whose usage resolved (a `[[texture]]` row or a model's material slot; never its name)
 is encoded once to UASTC and gets the same per-family KTX2 beside it, the image kept as the fallback
 ([`texture-encode.ts`](../../src/substrate/asset-import/texture-encode.ts)); a non-square or

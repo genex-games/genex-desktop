@@ -170,10 +170,12 @@ fn a_rig_over_256_joints_is_refused_and_256_imports() {
     assert_eq!(error.code.wire(), "animation-asset-invalid");
 }
 
-/// Bytes `gltf` itself allocates to parse `glb` (what a refusal may cost at most, plus slack).
+/// Bytes the reader's two parses allocate for `glb`, genex-core's GLB guard (SF-1b, in front of
+/// `gltf` since the F5 integrate) and then `gltf` itself: what a refusal may cost at most, plus slack.
 fn parse_bytes(glb: &[u8]) -> u64 {
+    let (_, _, guard) = counted(|| genex_core::glb_guard::check_glb(glb).is_ok());
     let (_, _, bytes) = counted(|| gltf::Gltf::from_slice(glb).is_ok());
-    bytes
+    guard + bytes
 }
 
 /// Slack over the parse for a refusal: the parent table, its walk and the message.

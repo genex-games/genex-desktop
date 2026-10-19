@@ -3,10 +3,12 @@
 // accessors merge, unreferenced ones go, the output is byte-stable and passes the Khronos validator,
 // and a document the step cannot rewrite safely comes back as the very same bytes with the reason.
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
+import { BuildTarget } from "../../src/shared/game-project.ts";
+import { convertAsset } from "../../src/substrate/asset-import/convert.ts";
 import {
   ARRAY_BUFFER,
   BinWriter,
@@ -16,8 +18,12 @@ import {
   writeGlb,
 } from "../../src/substrate/asset-import/glb.ts";
 import { ImportSizeKey, inspectGlb, parseImportSizes } from "../../src/substrate/asset-import/inspect.ts";
+import { ImportConverter } from "../../src/substrate/asset-import/import-plan.ts";
+import { IMPORT_JOB_VERSION, ImportJobLayout, parseImportReceipt } from "../../src/substrate/asset-import/job.ts";
 import { validateGltf } from "../../src/substrate/asset-import/validate.ts";
 import { WeldSkip, weldGlb } from "../../src/substrate/asset-import/weld.ts";
+import { runImportJob } from "../../src/substrate/asset-import/worker.ts";
+import { tmpDir } from "../helpers/tmp.ts";
 
 // biome-ignore lint/suspicious/noExplicitAny: test fixtures poke at untyped glTF JSON.
 type Json = Record<string, any>;
@@ -465,5 +471,58 @@ describe("inspect: a GLB's sizes for the receipt", () => {
       Object.fromEntries(Object.entries(sizes).filter(([key]) => key !== ImportSizeKey.Textures)),
     ];
     for (const value of hostile) assert.equal(parseImportSizes(value), null, JSON.stringify(value));
+  });
+});
+
+describe("weld in the import step: the receipt carries the written GLB's sizes", () => {
+  it("a GLB through the step comes out welded, its sizes beside it", async () => {
+    const result = await convertAsset({
+      converter: ImportConverter.GltfDecompress,
+      ext: "glb",
+      name: "grid",
+      bytes: duplicatedGrid(),
+      targets: [BuildTarget.Mac],
+    });
+    assert.ok(result.ok);
+    assert.equal(inspectGlb(result.bytes)?.vertices, 18);
+    assert.deepEqual(result.sizes, inspectGlb(result.bytes));
+  });
+
+  it("the importer writes the sizes into the receipt, and the host reads them back", async () => {
+    const dir = await tmpDir("weld-receipt-");
+    await mkdir(path.join(dir, ImportJobLayout.In));
+    await mkdir(path.join(dir, ImportJobLayout.Out));
+    await writeFile(path.join(dir, "in", "0.glb"), duplicatedGrid());
+    const job = {
+      version: IMPORT_JOB_VERSION,
+      targets: [BuildTarget.Mac],
+      files: [
+        {
+          index: 0,
+          input: "in/0.glb",
+          ext: "glb",
+          converter: ImportConverter.GltfDecompress,
+          output: "out/0.glb",
+          name: "grid",
+        },
+      ],
+    };
+    await writeFile(path.join(dir, ImportJobLayout.Job), JSON.stringify(job));
+    assert.equal(await runImportJob(dir), 0);
+    const raw = JSON.parse(await readFile(path.join(dir, ImportJobLayout.Out, ImportJobLayout.Receipt), "utf8"));
+    const entry = parseImportReceipt(raw)?.files[0];
+    assert.ok(entry?.ok);
+    const written = new Uint8Array(await readFile(path.join(dir, "out", "0.glb")));
+    assert.deepEqual(entry.sizes, inspectGlb(written));
+    assert.equal(entry.sizes?.vertices, 18);
+  });
+
+  it("a receipt line with sizes the host cannot read is dropped", () => {
+    const sizes = inspectGlb(duplicatedGrid());
+    const line = { index: 0, ok: true, output: "out/0.glb" };
+    const read = (value: unknown) =>
+      parseImportReceipt({ version: IMPORT_JOB_VERSION, files: [{ ...line, sizes: value }] });
+    assert.deepEqual(read(sizes)?.files, [{ ...line, sizes }]);
+    assert.deepEqual(read({ ...sizes, vertices: -1 })?.files, []);
   });
 });

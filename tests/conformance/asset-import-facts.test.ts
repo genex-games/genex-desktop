@@ -246,33 +246,40 @@ describe("which files a delivery-time import reads, and when", () => {
     assert.equal(log.jobs.length, 0);
   });
 
-  it("hostile delivered names are refused before any import: nothing outside the game is read or written", async () => {
-    const { root, game, service, log, asked } = await rig();
-    const outside = path.join(root, "outside.glb");
-    await cp(path.join(SAMPLES, "compressed.glb"), outside);
-    await mkdir(path.join(root, "elsewhere"));
-    await cp(outside, path.join(root, "elsewhere", "x.glb"));
-    await symlink(outside, path.join(game, "assets", "link.glb"));
-    await symlink(path.join(root, "elsewhere"), path.join(game, "assets", "linked"));
-    await mkdir(path.join(game, "assets", "folder.glb"));
-    await service.warmImports("game", [
-      "../outside.glb",
-      "/etc/hosts",
-      "assets/../../outside.glb",
-      "assets/missing.glb",
-      "assets/link.glb",
-      "assets/linked/x.glb",
-      "assets/folder.glb",
-    ]);
-    assert.deepEqual(asked, [], "no hostile name reaches the import");
-    assert.equal(log.jobs.length, 0);
-    assert.equal(
-      (await inventoryRow(service, "assets/link.glb"))?.import,
-      undefined,
-      "a link is not listed as an asset",
-    );
-    assert.deepEqual(await readFile(outside), await readFile(path.join(SAMPLES, "compressed.glb")));
-  });
+  // Creating a symlink needs elevation or developer mode on Windows.
+  const LINKS = { skip: process.platform === "win32" && "creating symlinks needs elevation on Windows" };
+
+  it(
+    "hostile delivered names are refused before any import: nothing outside the game is read or written",
+    LINKS,
+    async () => {
+      const { root, game, service, log, asked } = await rig();
+      const outside = path.join(root, "outside.glb");
+      await cp(path.join(SAMPLES, "compressed.glb"), outside);
+      await mkdir(path.join(root, "elsewhere"));
+      await cp(outside, path.join(root, "elsewhere", "x.glb"));
+      await symlink(outside, path.join(game, "assets", "link.glb"));
+      await symlink(path.join(root, "elsewhere"), path.join(game, "assets", "linked"));
+      await mkdir(path.join(game, "assets", "folder.glb"));
+      await service.warmImports("game", [
+        "../outside.glb",
+        "/etc/hosts",
+        "assets/../../outside.glb",
+        "assets/missing.glb",
+        "assets/link.glb",
+        "assets/linked/x.glb",
+        "assets/folder.glb",
+      ]);
+      assert.deepEqual(asked, [], "no hostile name reaches the import");
+      assert.equal(log.jobs.length, 0);
+      assert.equal(
+        (await inventoryRow(service, "assets/link.glb"))?.import,
+        undefined,
+        "a link is not listed as an asset",
+      );
+      assert.deepEqual(await readFile(outside), await readFile(path.join(SAMPLES, "compressed.glb")));
+    },
+  );
 });
 
 describe("a delivery-time import when the core stops", () => {

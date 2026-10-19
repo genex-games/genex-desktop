@@ -8,6 +8,7 @@
   "tests/conformance/appearance.test.ts",
   "tests/conformance/architecture.test.ts",
   "tests/conformance/asset-checkpoint-records.test.ts",
+  "tests/conformance/asset-import-facts.test.ts",
   "tests/conformance/asset-preview.test.ts",
   "tests/conformance/asset-refs.test.ts",
   "tests/conformance/asset-reliability.test.ts",

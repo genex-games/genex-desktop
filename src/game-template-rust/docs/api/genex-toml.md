@@ -58,7 +58,13 @@ empty stand-in that is never stepped, and code that reaches for Rapier does not 
 physics is turned back on.
 
 A `[[texture]]` row tells Studio how a loose image your code samples itself is used (a flow map, a
-mask, a custom material's normal map). A texture a model's material samples, and one Studio
-generated or fetched, needs no row. The usage never comes from the file name. A usage outside
-`color`, `data` and `normal`, a path outside `assets/` or not a PNG, JPEG or WebP, or the same path
-twice is refused `invalid-texture-usage`.
+mask, a custom material's normal map). A texture a model's material samples needs no row. The usage
+never comes from the file name. A usage outside `color`, `data` and `normal`, a path outside
+`assets/` or not a PNG, JPEG or WebP, or the same path twice is refused `invalid-texture-usage`.
+
+When a build knows a PNG or JPEG's usage, Studio encodes it into GPU-compressed KTX2 files beside it,
+one per texture family your destinations use (`ground.bc.ktx2` on desktops, `.astc` and `.etc2` on
+phones, all of them on the web), and keeps the image as the fallback. An image that is not square
+with a power-of-two side is first resized to the nearest square power-of-two size (a 1000x600 image
+becomes 1024x1024), so sample it with UVs from 0 to 1. A WebP, or an image with no usage, ships as
+it is.
