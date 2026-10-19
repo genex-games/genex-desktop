@@ -396,8 +396,10 @@ impl MeshletMerge {
     }
 }
 
-/// A parsed GLB whose buffers are all the embedded `BIN` chunk.
+/// A parsed GLB whose buffers are all the embedded `BIN` chunk. The GLB guard runs first: `gltf`
+/// 1.4.1 panics on damaged input (gltf-rs #478) and wasm aborts on a panic (game systems SF-1b).
 pub(crate) fn open_glb(bytes: &[u8]) -> Result<gltf::Gltf, RenderError> {
+    genex_core::glb_guard::check_glb(bytes).map_err(|refusal| invalid(format!("not a valid GLB: {refusal}")))?;
     let gltf = gltf::Gltf::from_slice(bytes).map_err(|error| invalid(format!("not a valid GLB: {error}")))?;
     if let Some(uri) = gltf.buffers().find_map(|b| match b.source() {
         gltf::buffer::Source::Uri(uri) => Some(uri.to_owned()),

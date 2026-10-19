@@ -67,6 +67,8 @@ pub fn load_model(root: &AssetRoot, rel: &str) -> Result<Model, AssetError> {
         return Err(AssetError::new(AssetErrorCode::Unsupported, format!(".{ext} is not a model the runtime loads")));
     }
     let bytes = root.read(rel)?;
+    // `gltf` 1.4.1 panics on damaged input (gltf-rs #478): the GLB guard checks it first.
+    genex_core::glb_guard::check_glb(&bytes).map_err(|refusal| malformed(refusal.to_string()))?;
     let unchecked = Gltf::from_slice_without_validation(&bytes).map_err(|e| malformed(e.to_string()))?;
     if let Some(name) = unchecked.document.extensions_required().find(|name| IMPORTED_EXTENSIONS.contains(name)) {
         return Err(AssetError::new(AssetErrorCode::NeedsImport, format!("{rel} requires {name}")));

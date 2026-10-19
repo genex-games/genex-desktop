@@ -2,6 +2,9 @@
 //! before the first seed, the reset-only and preloaded-group rules, the hostile-path table (no read
 //! and no side effect) and the cache that keeps a re-seed from reading again.
 
+#[path = "../../genex-core/tests/support/glb.rs"]
+mod glb;
+
 use genex::prelude::*;
 use genex::{AssetError, AssetErrorCode, AssetFiles, AssetGroup, AssetGroups, AssetSource, AssetTable, DEFAULT_SEED, ModelTriangles, Runtime};
 use std::path::{Path, PathBuf};
@@ -149,6 +152,33 @@ fn triangles_of_a_file_that_is_not_a_glb_or_a_missing_model_are_refused() {
     });
     let runtime = Runtime::with_assets(game, Box::new(TABLE)).expect("valid game");
     assert_eq!(runtime.sim().world.outcome, ["malformed", "unsafe-path", "missing"]);
+}
+
+/// SF-1b: every hostile GLB of the guard's table answers `malformed` at reset, with no panic (the
+/// `gltf` crate panics on several of them, and wasm aborts on a panic) and nothing cached.
+#[test]
+fn triangles_of_each_hostile_glb_answer_malformed_without_a_panic() {
+    let dir = scratch("hostile-glb");
+    let rows = glb::hostile();
+    let names: Vec<String> = (0..rows.len()).map(|n| format!("hostile-{n}.glb")).collect();
+    for ((_, bytes), name) in rows.iter().zip(&names) {
+        write(&dir.join("assets").join(name), bytes);
+    }
+    let paths: &'static [String] = Box::leak(names.into_boxed_slice());
+    let mut game = Game::new(World::default()).world_size(64, 64);
+    game.on_reset(move |sim, _, _, gfx| {
+        for path in paths {
+            let model = gfx.assets().model(path);
+            let answer = gfx.assets().triangles(&model);
+            sim.world.outcome.push(answer.map_or_else(|error| error.code().wire().to_owned(), |_| "ok".to_owned()));
+        }
+    });
+    let files = AssetFiles::new(&[], Some(dir.join("assets")));
+    let runtime = Runtime::with_assets(game, Box::new(files)).expect("valid game");
+    let expected = vec!["malformed".to_owned(); rows.len()];
+    let named: Vec<(&str, &String)> = rows.iter().map(|(name, _)| *name).zip(&runtime.sim().world.outcome).collect();
+    assert_eq!(runtime.sim().world.outcome, expected, "{named:#?}");
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 /// The hostile-path table: each path is refused with its code, nothing outside the asset folder is
