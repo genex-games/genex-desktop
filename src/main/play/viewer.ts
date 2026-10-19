@@ -27,6 +27,7 @@ import {
   PlayViewerPhase,
 } from "../../shared/play.ts";
 import type { PlayMicReport } from "../../shared/play-mic.ts";
+import type { PlayAiGame } from "../game-ai/bridge-play.ts";
 import { mintedTicket, type PlayGallery, type PlayWorld, SignInNeeded, TicketStatus } from "./gallery.ts";
 import { BarLayout, barReveal } from "./bar-reveal.ts";
 import type { PlayComments } from "./comments.ts";
@@ -93,6 +94,8 @@ interface Session {
   world: PlayWorld | null;
   /** The game's page facts on their way: Comments waits for the game's id. */
   worldRead: Promise<PlayWorld | null>;
+  /** The address the game's page was opened at, once a ticket was minted (or known not to be). */
+  address: string | null;
   state: PlayBarState;
   /** A like is on its way: another press waits for it. */
   liking: boolean;
@@ -231,7 +234,8 @@ async function loadGame(ctx: ViewerContext, epoch: number, showAnyway: () => voi
   s.signedOut = ticket.status === TicketStatus.SignedOut;
   s.state = { ...s.state, signedIn: !s.signedOut };
   ctx.draw();
-  ctx.deps.game.open(ctx.deps.gameUrl(s.slug, mintedTicket(ticket)), s.slug);
+  s.address = ctx.deps.gameUrl(s.slug, mintedTicket(ticket));
+  ctx.deps.game.open(s.address, s.slug);
   return ctx.deps.clock.setTimeout(showAnyway, SHOW_GAME_AFTER_MS);
 }
 
@@ -322,6 +326,7 @@ const freshSession = (slug: string, title: string, epoch: number, micOn: boolean
   phase: PlayViewerPhase.Loading,
   world: null,
   worldRead: Promise.resolve(null),
+  address: null,
   state: { ...IDLE_STATE, title, remixing },
   liking: false,
   signedOut: false,
@@ -423,6 +428,18 @@ function viewerCalls(loop: ViewerLoop, heldEsc: ReturnType<typeof heldEscape>) {
       if (ctx.session() && reveal.layout() !== BarLayout.Hidden) deps.bar.show(barBounds(deps, reveal.layout()));
     },
     ...viewerComments(ctx),
+    /**
+     * The game on screen as its AI bridge names it, once its page facts are read: its genex.games
+     * project id (its AI's key), its name and the address its page was opened at. Null when no game
+     * is open, it closed meanwhile, or its facts could not be read.
+     */
+    aiGame: async (): Promise<PlayAiGame | null> => {
+      const s = ctx.session();
+      if (!s) return null;
+      const world = await s.worldRead;
+      if (!world || !s.address || !ctx.current(s.epoch)) return null;
+      return { projectId: world.id, title: world.title || s.title, address: s.address };
+    },
     /** The slug on screen, or null. */
     showing: (): string | null => ctx.session()?.slug ?? null,
   };

@@ -949,6 +949,43 @@ describe("Play viewer and the studio window", () => {
   });
 });
 
+describe("Play viewer's game, as its AI bridge names it", () => {
+  it("is the game on screen once its facts are read: its project id, its name and the address opened", async () => {
+    let read: (world: PlayWorld) => void = () => {};
+    const { viewer, opened } = rig({ world: () => new Promise<PlayWorld>((resolve) => (read = resolve)) });
+    viewer.open("lost-cathedral", "Lost Cathedral");
+    await settle();
+    // The page is up and asking before its facts arrive: the answer waits for them.
+    assert.equal(opened.length, 1);
+    const asked = viewer.aiGame();
+    read(WORLD);
+    const expected = { projectId: WORLD.id, title: WORLD.title, address: opened[0] };
+    assert.deepEqual(await asked, expected);
+    assert.deepEqual(await viewer.aiGame(), expected);
+  });
+
+  it("is nothing once the game closes, or for a game opened since", async () => {
+    const { viewer } = rig();
+    viewer.open("lost-cathedral", "Lost Cathedral");
+    await settle();
+    const before = viewer.aiGame();
+    viewer.close();
+    assert.equal(await before, null);
+    assert.equal(await viewer.aiGame(), null);
+  });
+
+  it("is nothing while the game's facts cannot be read: no project id, no AI", async () => {
+    const { viewer } = rig({
+      world: async () => {
+        throw new Error("502");
+      },
+    });
+    viewer.open("lost-cathedral", "Lost Cathedral");
+    await settle();
+    assert.equal(await viewer.aiGame(), null);
+  });
+});
+
 describe("Play addresses", () => {
   it("carries the ticket, or the guest marker, in the fragment", () => {
     assert.equal(
