@@ -26,8 +26,9 @@ import {
   withHarnessChecks,
 } from "../../src/harness-seed/loop/spec.ts";
 import { HostMethod } from "../../src/harness-seed/loop/host-methods.ts";
-import { normalizeGameTraits } from "../../src/harness-seed/loop/kinds.ts";
+import { normalizeGameTraits, readDeclaredGame, writeDeclaredGame } from "../../src/harness-seed/loop/kinds.ts";
 import { compilePlan } from "../../src/harness-seed/loop/director/rules.ts";
+import { declaredGameMessage } from "../../src/harness-seed/loop/director/workers.ts";
 import { ctxRecorder } from "../helpers/ctx-recorder.ts";
 import { tmpDir } from "../helpers/tmp.ts";
 
@@ -112,6 +113,25 @@ describe("which boards carry the AI checks", () => {
     assert.equal(normalizeGameTraits({ ai: AiRequirement.Optional }).ai, AiRequirement.Optional);
     for (const ai of ["AI", "yes", true, "the game uses an LLM", null, 1, { requires: "ai" }])
       assert.equal(normalizeGameTraits({ ai }).ai, undefined, JSON.stringify(ai));
+  });
+
+  it("keeps the game's AI in studio.json, so the next run starts knowing it", async () => {
+    let written = '{"name":"oracle"}';
+    const recorder = ctxRecorder({
+      handlers: {
+        [HostMethod.GameRead]: () => written,
+        [HostMethod.GameWrite]: (p) => {
+          written = String(p.contents);
+          return { bytes: written.length };
+        },
+      },
+    });
+    const result = await writeDeclaredGame(recorder.ctx as never, PROJECT, { ai: AiRequirement.Ai });
+    assert.equal(result.written, true);
+    assert.equal(JSON.parse(written).game.ai, AiRequirement.Ai);
+    assert.equal((await readDeclaredGame(recorder.ctx as never, PROJECT))?.ai, AiRequirement.Ai);
+    assert.equal(declaredGameMessage({ ai: AiRequirement.Ai }), "studio: this game uses play-time AI");
+    assert.equal(declaredGameMessage({ kind: "board", ai: AiRequirement.Ai }), "studio: this game is a board game");
   });
 
   it("takes the plan's ai and refuses one that is not a requirement", () => {

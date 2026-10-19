@@ -310,17 +310,23 @@ export function startMonitor(loopRun: LoopRun) {
 
 // ── the plan ──
 
+/** The commit that writes a declared game into studio.json, saying what was declared. */
+export function declaredGameMessage(game: AnyRecord): string {
+  if (game.kind) return `studio: this game is a ${game.kind} game`;
+  return "studio: this game uses play-time AI";
+}
+
 /**
  * What kind of game this is, on the run record: every judge, brief and check reads it from
- * there. A kind the director declared is written back into the user's studio.json once, so the
- * next run on this game starts knowing it.
+ * there. A kind (or play-time AI) the director declared is written back into the user's
+ * studio.json once, so the next run on this game starts knowing it.
  */
 async function declareGameKind(loopRun: LoopRun, game: AnyRecord): Promise<void> {
   const { ctx, journal, note, run } = loopRun;
   const changed = JSON.stringify(run.game ?? null) !== JSON.stringify(game);
   run.game = game;
   journal.run = { ...journal.run, game };
-  if (!changed || !game.kind) return;
+  if (!changed || !(game.kind || game.ai)) return;
   const declared = await writeDeclaredGame(ctx, run.project, game, { from: "plan" }).catch(() => null);
   // …and committed where it was written. This is the folder the user sees, and the run's
   // only snapshot of it was taken before this session opened, so an uncommitted studio.json
@@ -331,7 +337,7 @@ async function declareGameKind(loopRun: LoopRun, game: AnyRecord): Promise<void>
   const committed = await gitExec(
     ctx,
     { project: run.project },
-    GIT.commit(`studio: this game is a ${game.kind} game`, { only: ["studio.json"] }),
+    GIT.commit(declaredGameMessage(game), { only: ["studio.json"] }),
     { label: `director:${run.runId}:declare-kind` },
   ).catch(() => null);
   if (committed?.code !== 0)

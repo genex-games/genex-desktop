@@ -11,7 +11,7 @@
  * the driver (`playDemo`) yields to them after every frame, so each is known by the next drain.
  */
 import { setImmediate as yieldToKeys } from "node:timers/promises";
-import { AiErrorCode, AiOp, AiProvenance, AiSource } from "../../src/shared/game-ai.ts";
+import { AiErrorCode, AiOp, AiProvenance, AiSource, AiTier, readMember } from "../../src/shared/game-ai.ts";
 import { canonicalJson, edgeAnswer, edgeOfSeed, validateValue } from "../../src/shared/game-ai-schema.ts";
 import { callKey, type TapeLine, type TapeRead, TAPE_WIRE_VERSION, tapeSlot } from "../../src/shared/game-ai-tape.ts";
 
@@ -94,7 +94,7 @@ const keyOf = (request: StarterRequest): Promise<string> =>
     untrusted: request.untrusted ?? {},
     memory: null,
     schema: request.schema,
-    tier: request.tier === "smart" ? "smart" : "fast",
+    tier: readMember(AiTier, request.tier) ?? AiTier.Fast,
   });
 
 /** An `ai` object for a starter, answered from `options.lane`; `record` is what it saw. */
