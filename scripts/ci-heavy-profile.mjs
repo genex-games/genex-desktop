@@ -38,13 +38,11 @@ const PACKAGE_FILES = ["package.json", "README.md", "LICENSE", "index.js", "dist
 const PACKAGE_SOURCES = 8;
 /** Every NESTED_EVERY-th package carries a dependency of its own in a nested node_modules. */
 const NESTED_EVERY = 4;
-/** A content-addressed cache spreads its files over 256 folders, each holding CACHE_FANOUT more. */
-const CACHE_FANOUT = 16;
 const BODY = Buffer.alloc(MAX_FILE_BYTES, "synthetic profile file for the Genex first-start check\n");
 
 /** How an area's files are laid out. */
 export const Shape = {
-  /** A content-addressed cache: `<2 hex>/<1 hex>/<hash>` (npm's _cacache, pnpm's store, Chrome's cache). */
+  /** A content-addressed cache: `<2 hex>/<hash>`, as pnpm's store and git's objects lay theirs out. */
   Cache: "cache",
   /** A node_modules tree: packages of a dozen files, some with nested dependencies. */
   Packages: "packages",
@@ -104,7 +102,7 @@ function hexName(index, length) {
 function cacheFiles(at, count) {
   return Array.from({ length: count }, (_, i) => {
     const hash = hexName(i, 40);
-    return `${at}/${hash.slice(0, 2)}/${(i % CACHE_FANOUT).toString(16)}/${hash.slice(2)}`;
+    return `${at}/${hash.slice(0, 2)}/${hash.slice(2)}`;
   });
 }
 
