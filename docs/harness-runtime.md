@@ -1049,6 +1049,33 @@ taste judge watches move (`loop/motion-intent.ts`), and always the audio probe, 
 the next blind A/B carry the same evidence; the taste judge shows motion strips only when both
 builds have one.
 
+### Play-time AI in a run
+
+A game that calls a model while it is played says so with a typed word, never in prose: the plan's
+`ai` (`ai` when it cannot run without one, `optional` when it plays on without), kept in the run's
+game and in `studio.json`'s game block (`GameTraits.ai`, `loop/kinds.ts`). The entry owner's and
+the integration board then carry seven harness checks of kind `ai` (`loop/ai-checks.ts`), measured
+on the host's replays (`ai.replay`, tapes and canned answers only): `ai-replay-deterministic`,
+`ai-tape-covers-demos`, `ai-handles-no-answer` (with no answer; identity),
+`ai-output-clamped` (with the worst answers a schema allows, `answers: "edge"`),
+`ai-disclosure-shown` (`state().ai.disclosed`), `ai-no-direct-model-calls` (a scan of the build's
+regular files, never through a link, for the vendor hosts and key shapes of `shared/ai-vendors.ts`,
+copied in `loop/ai-contract.ts`; identity) and `ai-budget-in-gesture`. One evidence pass asks for
+each demo's replay once per kind of answer; a studio that cannot replay leaves them unmeasured. Each
+delegated builder of such a game gets the workspace's own `skills/llm-games.md` (the AI method, kept
+on upgrade when the agent edited it) as `.studio/AI.md`, the starters (`library/ai-starters/`:
+`world-sim`, `creature-gen`, `agent-arena`, `npc-dialogue`, each with its demo's tape) in
+`.studio/ai-starters/`, and one brief line naming both (`loop/ai-game.ts`). The director's `judge`
+adds the AI mechanic judge's word (`aiMechanic`, `loop/ai-mechanic.ts`, rubric
+`judge/ai-mechanic.md`): from the tapes and replays only, does an answer decide something the
+player acts on, legibly, varying with input, and does the game handle no answer. A direct engine's
+tools are `ai_schema_check`, `ai_tapes`, `ai_replay`, `ai_record`, `ai_bench` and `ai_model_check`
+(`tools/ai-tools.ts`; the registry skips `*-prompts.ts`). `ai.record`, `ai.bench` and
+`ai.modelCheck` run on a run budget `main/harness-rpc/ai.ts` creates per call (this Mac's models,
+one call at a time, a fixed cap, closed when the call answers): nothing the agent sends sizes it.
+The starters' tapes are written by `node scripts/ai-starters/record.ts` from hand-written answers
+(`source: "fixture"`); `loop-ai-starters.test.ts` replays them on every lane and fails a stale one.
+
 ## Acceptance evidence
 
 `npm run test:agentic-readiness` prepares two disposable local Git checkouts with shared

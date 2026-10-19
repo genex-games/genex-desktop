@@ -1,8 +1,8 @@
 /**
  * Harness RPC: play-time AI for the builder agent. It checks a schema against the closed dialect,
- * lists a game's saved playtests, replays a demo's tape under seeds (or with no answer at all),
- * records a tape and benches a call site on this Mac's models, and runs the model check on local
- * models only. Nothing here reaches the network: replays answer from tapes, and recording, benching
+ * lists a game's saved playtests, replays a demo's tape under seeds (or with no answer at all, or with
+ * the worst answers its shapes allow), records a tape and benches a call site on this Mac's models,
+ * and runs the model check on local models only. Nothing here reaches the network: replays answer from tapes, and recording, benching
  * and checking run on a run budget this module creates for the one call (`createRunBudget`: this
  * Mac's models, one call at a time, at most `AI_RECORD_MAX_CALLS`), which the agent can neither
  * create nor raise — nothing it sends sizes the budget, and the budget closes when the call answers.

@@ -114,9 +114,21 @@ describe("ai.* host methods: what reaches the play-time AI host", () => {
     );
   });
 
-  it("replays with no answer at all only when asked for by name", async () => {
+  it("replays with no answer at all, or with the worst answers, only when asked for by name", async () => {
     await api()[HostMethod.AiReplay]({ project: GAME, demo: "turn-three", seeds: [3], answers: AiReplayAnswers.None });
-    assert.deepEqual(calls[0]?.args, [GAME, "turn-three", [3], { root: null, answers: AiReplayAnswers.None }]);
+    await api()[HostMethod.AiReplay]({
+      project: GAME,
+      demo: "turn-three",
+      seeds: [1, 2],
+      answers: AiReplayAnswers.Edge,
+    });
+    assert.deepEqual(
+      calls.map((call) => call.args),
+      [
+        [GAME, "turn-three", [3], { root: null, answers: AiReplayAnswers.None }],
+        [GAME, "turn-three", [1, 2], { root: null, answers: AiReplayAnswers.Edge }],
+      ],
+    );
   });
 
   it("hands recording, benching and the model check a fresh run budget it closes when the call answers", async () => {
