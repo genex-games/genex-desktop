@@ -182,16 +182,21 @@ pub enum AssetIssueCode {
     /// import step encoded none: its usage was not resolved). GLB-embedded images are not named
     /// until the runtime reads their sidecars (C-14).
     TextureUncompressed,
+    /// A texture loaded from its image because the renderer refused the family file the game
+    /// ships in the device's family (unreadable, or every size class it fits is full: the
+    /// detail is in the log), so it is drawn uncompressed.
+    TextureFamilyRefused,
 }
 
 impl AssetIssueCode {
     /// Every code, in declaration order.
-    pub const ALL: [AssetIssueCode; 1] = [AssetIssueCode::TextureUncompressed];
+    pub const ALL: [AssetIssueCode; 2] = [AssetIssueCode::TextureUncompressed, AssetIssueCode::TextureFamilyRefused];
 
     /// Wire spelling.
     pub const fn wire(self) -> &'static str {
         match self {
             AssetIssueCode::TextureUncompressed => "texture-uncompressed",
+            AssetIssueCode::TextureFamilyRefused => "texture-family-refused",
         }
     }
 }
@@ -422,8 +427,19 @@ struct CachedTexture {
     kind: TextureKind,
     id: Option<TextureId>,
     origin: TextureOrigin,
-    /// Loaded from its image while the game ships no family file of it in any family.
-    uncompressed: bool,
+    /// Why it was loaded from its image, when that is the game's to fix: no family file of it in
+    /// any family, or the device's family file refused.
+    issue: Option<AssetIssueCode>,
+}
+
+/// What became of a texture's file in the renderer's family ([`load_compressed`]).
+enum Compressed {
+    /// Uploaded as this texture.
+    Loaded(TextureId),
+    /// Not looked for (the renderer stores RGBA8, an unsafe path) or not shipped.
+    Absent,
+    /// Shipped but refused (unreadable, or no size class with room); the refusal is logged.
+    Refused,
 }
 
 /// Whether the game ships `path` in any family (`<stem>.<family>.ktx2`), whether or not the
@@ -450,30 +466,31 @@ fn choose_texture_family(frame: &Frame, source: &dyn ModelSource, uploads: &mut 
     }
 }
 
-/// `path`'s compressed file in the renderer's family uploaded as `kind` (renderer pass 2 A6.4),
-/// or `None` when the renderer stores RGBA8, the game ships no such file or it was refused (the
-/// image loads instead; a refusal is logged). A lost device is passed on.
-fn load_compressed(path: &str, kind: TextureKind, source: &dyn ModelSource, uploads: &mut dyn Uploads, log: &mut dyn FnMut(&str)) -> Result<Option<TextureId>, RenderError> {
+/// `path`'s compressed file in the renderer's family uploaded as `kind` (renderer pass 2 A6.4):
+/// absent when the renderer stores RGBA8 or the game ships no such file, refused when it is
+/// unreadable or the renderer refuses it (the image loads instead in both; a refusal is logged).
+/// A lost device is passed on.
+fn load_compressed(path: &str, kind: TextureKind, source: &dyn ModelSource, uploads: &mut dyn Uploads, log: &mut dyn FnMut(&str)) -> Result<Compressed, RenderError> {
     let family = uploads.texture_family();
     if family == TextureFamily::Rgba8 || !is_safe_asset_path(path) {
-        return Ok(None);
+        return Ok(Compressed::Absent);
     }
     let file = family_file(path, family);
-    let Some(bytes) = source.model_bytes(&file) else { return Ok(None) };
+    let Some(bytes) = source.model_bytes(&file) else { return Ok(Compressed::Absent) };
     let texture = match read_ktx2(&bytes) {
         Ok(texture) => texture,
         Err(error) => {
             log(&format!("texture {file:?} refused: {error}; loading {path:?}"));
-            return Ok(None);
+            return Ok(Compressed::Refused);
         }
     };
     let again = source.static_bytes(&file).map(|bytes| -> CompressedSource { Arc::new(move || read_ktx2(bytes)) });
     match uploads.add_compressed_texture(&texture, kind, again) {
-        Ok(id) => Ok(Some(id)),
+        Ok(id) => Ok(Compressed::Loaded(id)),
         Err(error) if error.code() == RenderCode::DeviceLost => Err(error),
         Err(error) => {
             log(&format!("texture {file:?} refused: {error}; loading {path:?}"));
-            Ok(None)
+            Ok(Compressed::Refused)
         }
     }
 }
@@ -548,9 +565,10 @@ impl AssetCache {
             if self.cached_texture(path, kind).is_some() {
                 continue;
             }
-            if let Some(id) = load_compressed(path, kind, source, uploads, log)? {
+            let compressed = load_compressed(path, kind, source, uploads, log)?;
+            if let Compressed::Loaded(id) = compressed {
                 let origin = TextureOrigin::Family(uploads.texture_family());
-                self.textures.push(CachedTexture { path: path.to_owned(), kind, id: Some(id), origin, uncompressed: false });
+                self.textures.push(CachedTexture { path: path.to_owned(), kind, id: Some(id), origin, issue: None });
                 continue;
             }
             let at = match read.iter().position(|(known, _)| *known == path) {
@@ -565,8 +583,13 @@ impl AssetCache {
                 Some(data) => upload_texture(uploads, (data, kind, again), &format!("texture {path:?}"), log)?,
                 None => None,
             };
-            let uncompressed = id.is_some() && !ships_any_family(path, source, &mut shipped);
-            self.textures.push(CachedTexture { path: path.to_owned(), kind, id, origin: TextureOrigin::Source, uncompressed });
+            let issue = match compressed {
+                _ if id.is_none() => None,
+                Compressed::Refused => Some(AssetIssueCode::TextureFamilyRefused),
+                _ if !ships_any_family(path, source, &mut shipped) => Some(AssetIssueCode::TextureUncompressed),
+                _ => None,
+            };
+            self.textures.push(CachedTexture { path: path.to_owned(), kind, id, origin: TextureOrigin::Source, issue });
         }
         if let Some(Environment::Hdri(hdri)) = frame.declared_environment()
             && !self.environments.iter().any(|(known, _)| *known == hdri.path)
@@ -657,7 +680,7 @@ fn texture_paths(frame: &Frame) -> impl Iterator<Item = (&str, TextureKind)> {
 /// The textures `frame` binds with what `assets` loaded (`state().__render.textures`, C-11): one
 /// fact per path in first-bound order (the material, terrain and decal slots, then the images of
 /// the GLB models drawn with their own materials), and an issue per loose texture loaded from its
-/// image while the game ships no family file of it. A texture refused or not loaded yet is not
+/// image while the game ships no family file of it, or whose family file the renderer refused. A texture refused or not loaded yet is not
 /// bound. Display only: nothing here enters the simulation.
 pub fn texture_facts(frame: &Frame, assets: &AssetCache) -> (Vec<TextureFact>, Vec<AssetIssue>) {
     let mut facts: Vec<TextureFact> = Vec::new();
@@ -668,8 +691,8 @@ pub fn texture_facts(frame: &Frame, assets: &AssetCache) -> (Vec<TextureFact>, V
             continue;
         }
         facts.push(TextureFact { path: path.to_owned(), kind, origin: cached.origin });
-        if cached.uncompressed {
-            issues.push(AssetIssue { path: path.to_owned(), code: AssetIssueCode::TextureUncompressed });
+        if let Some(code) = cached.issue {
+            issues.push(AssetIssue { path: path.to_owned(), code });
         }
     }
     let mut models: Vec<&str> = Vec::new();

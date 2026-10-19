@@ -205,7 +205,7 @@
   "runtimeRender": {
     "keys": ["textures", "assetIssues"],
     "families": ["bc", "astc", "etc2", "rgba8", "source"],
-    "issueCodes": ["texture-uncompressed"]
+    "issueCodes": ["texture-uncompressed", "texture-family-refused"]
   },
   "animation": { "calls": ["gfx.character", ".joint_count", ".skeleton", ".path", ".wire"], "refusals": ["animation-asset-invalid", "animation-graph-invalid"] },
   "stream": { "calls": [], "refusals": ["stream-invalid", "stream-too-many-anchors", "stream-out-of-world"] },

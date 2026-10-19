@@ -356,7 +356,7 @@ mod texture_facts {
     use genex::present::{AssetCache, AssetIssue, AssetIssueCode, ModelSource, TextureFact, TextureOrigin, Uploads, texture_facts};
     use genex::prelude::*;
     use genex::{Frame, Transform};
-    use genex_render::RenderError;
+    use genex_render::{RenderCode, RenderError};
     use genex_render::device_loss::CompressedSource;
     use genex_render::mesh::MeshData;
     use genex_render::scene::MeshId;
@@ -449,11 +449,13 @@ mod texture_facts {
     struct Renderer {
         families: Vec<TextureFamily>,
         family: TextureFamily,
+        /// Refuse every compressed texture `texture-too-large` (every size class it fits is full).
+        classes_full: bool,
     }
 
     impl Renderer {
         fn offering(families: &[TextureFamily]) -> Renderer {
-            Renderer { families: families.to_vec(), family: TextureFamily::Rgba8 }
+            Renderer { families: families.to_vec(), family: TextureFamily::Rgba8, classes_full: false }
         }
     }
 
@@ -480,6 +482,9 @@ mod texture_facts {
         }
 
         fn add_compressed_texture(&mut self, _texture: &CompressedTexture, kind: TextureKind, _source: Option<CompressedSource>) -> Result<TextureId, RenderError> {
+            if self.classes_full {
+                return Err(RenderError::refused(RenderCode::TextureTooLarge, "every Normal size class it fits is full"));
+            }
             Ok(TextureId::new(kind, 1))
         }
     }
@@ -520,6 +525,22 @@ mod texture_facts {
         let (textures, issues) = facts(&normal_mapped(BARK), &files, &[TextureFamily::Etc2Rgba8]);
         assert_eq!(textures, [fact(BARK, TextureKind::Normal, TextureOrigin::Source)]);
         assert!(issues.is_empty(), "{issues:?}");
+    }
+
+    /// GF round 2 (visual): under BC7, Lakeside's stone normal and ORM files were refused
+    /// (`texture-too-large`: every size class they fit was full) and loaded as RGBA8 images, and
+    /// `assetIssues` named nothing, so an agent never learnt its maps were drawn uncompressed.
+    #[test]
+    fn a_shipped_family_file_the_renderer_refuses_is_a_source_texture_and_a_family_refused_issue() {
+        let files = Files(vec![(BARK, WHITE_PNG.to_vec()), (BARK_BC, bc_file())]);
+        let frame = normal_mapped(BARK);
+        let mut cache = AssetCache::default();
+        let mut full = Renderer { classes_full: true, ..Renderer::offering(&[TextureFamily::Bc7]) };
+        cache.load(&frame, &files, &mut full, &mut |_| {}).expect("no device loss");
+        let (textures, issues) = texture_facts(&frame, &cache);
+        assert_eq!(textures, [fact(BARK, TextureKind::Normal, TextureOrigin::Source)]);
+        let named: Vec<(&str, &str)> = issues.iter().map(|issue| (issue.path.as_str(), issue.code.wire())).collect();
+        assert_eq!(named, [(BARK, "texture-family-refused")]);
     }
 
     #[test]
@@ -588,7 +609,7 @@ mod texture_facts {
     #[test]
     fn the_issue_codes_have_their_wire_spellings() {
         let wire: Vec<&str> = AssetIssueCode::ALL.iter().map(|code| code.wire()).collect();
-        assert_eq!(wire, ["texture-uncompressed"]);
+        assert_eq!(wire, ["texture-uncompressed", "texture-family-refused"]);
         assert_eq!(TextureOrigin::Source.wire(), "source");
         assert_eq!(TextureOrigin::Family(TextureFamily::Etc2Rgba8).wire(), "etc2");
     }
