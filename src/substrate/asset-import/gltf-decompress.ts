@@ -5,7 +5,8 @@
  * re-laid out), and a GLB using `KHR_mesh_quantization` (gltfpack's default) is then written back
  * with float attributes (`dequantize.ts`). Anything else the file requires must be an extension
  * the runtime reads, or the file is refused. A `.gltf` (JSON with external buffers) is checked,
- * never rewritten.
+ * never rewritten. Before any of this, the file passes the glTF validation gate (`validate.ts`):
+ * nothing decodes a file the validator finds an error in.
  */
 import { AssetImportRefusal } from "./import-plan.ts";
 import {
@@ -32,6 +33,7 @@ import {
   strings,
   withoutExtensions,
 } from "./gltf-json.ts";
+import { type GltfIssue, validateGltf } from "./validate.ts";
 
 const DRACO = "KHR_draco_mesh_compression";
 const MESHOPT = ["EXT_meshopt_compression", "KHR_meshopt_compression"] as const;
@@ -244,12 +246,31 @@ function finishJson(json: Json, out: BinWriter, byteLength: number): GltfJson {
 /** Whether `json` uses a compression the import step decodes. */
 const needsDecompressing = (json: Json) => strings(json.extensionsUsed).some((name) => DECOMPRESSED.has(name));
 
+/** A glTF file as the import step writes it, with the validator's warnings about the input. */
+export interface ImportedGltf {
+  bytes: Uint8Array;
+  issues: GltfIssue[];
+}
+
 /**
- * The form of a glTF file the runtime loads: a GLB with Draco or meshopt data rewritten plain,
- * then a quantized one with float attributes, any other file unchanged. Throws {@link GltfImportError} when it is damaged, or requires an
- * extension the runtime does not read; a compressed `.gltf` is refused (deliver it as GLB).
+ * A glTF file validated (`validate.ts`), then in the form the runtime loads: a GLB with Draco or
+ * meshopt data rewritten plain, then a quantized one with float attributes, any other file
+ * unchanged. Throws {@link GltfImportError} when the validator finds an error, when it is damaged,
+ * or when it requires an extension the runtime does not read; a compressed `.gltf` is refused
+ * (deliver it as GLB).
  */
+export async function importGltf(bytes: Uint8Array, ext: string): Promise<ImportedGltf> {
+  const issues = await validateGltf(bytes, ext);
+  return { bytes: await normalizeValid(bytes, ext), issues };
+}
+
+/** {@link importGltf}'s output bytes alone. */
 export async function normalizeGltf(bytes: Uint8Array, ext: string): Promise<Uint8Array> {
+  return (await importGltf(bytes, ext)).bytes;
+}
+
+/** The runtime's form of a file the gate passed. */
+async function normalizeValid(bytes: Uint8Array, ext: string): Promise<Uint8Array> {
   if (ext === "gltf") {
     const json = parseJson(bytes);
     checkRequired(json, false);

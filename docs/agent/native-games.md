@@ -77,6 +77,8 @@ its genex release). New games default by
 importable one as its own sandboxed job, at most `IMPORT_JOBS_MAX` (4) at once. The outputs
 replace their sources in the stage and never in the game folder: an OBJ, STL or PLY becomes a GLB,
 a Draco, meshopt or quantized GLB is written back plain, and a Basis KTX2 gets its per-family files.
+Every glTF first passes the Khronos validator ([`validate.ts`](../../src/substrate/asset-import/validate.ts),
+before any decoder): an error refuses it `validation-failed`, severity decided by issue code.
 A refused file leaves the build, and so does an output whose name another staged file holds
 (`name-taken`). The receipt's `assets` lists each file's action and refusal. A game with nothing
 to import starts no sandbox. `writeOutput` then packages the stage per destination

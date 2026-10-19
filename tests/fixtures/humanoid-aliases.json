@@ -1,0 +1,464 @@
+{
+  "about": "The humanoid alias table: the 22 bones a humanoid rig must have (Godot SkeletonProfileHumanoid names, in profile order) and, per rig family, the joint names to try for each bone, first match wins; a joint matches by its exact name, then by the part after its last ':' or '|' ignoring ASCII case, and a joint an earlier bone took is skipped. A rig takes the family that maps the most bones, ties to the earlier family. genex-anim's humanoid.rs is the runtime copy and its tests/blend.rs holds the two equal; the host's character facts read this file.",
+  "bones": [
+    "Hips",
+    "Spine",
+    "Chest",
+    "UpperChest",
+    "Neck",
+    "Head",
+    "LeftShoulder",
+    "LeftUpperArm",
+    "LeftLowerArm",
+    "LeftHand",
+    "RightShoulder",
+    "RightUpperArm",
+    "RightLowerArm",
+    "RightHand",
+    "LeftUpperLeg",
+    "LeftLowerLeg",
+    "LeftFoot",
+    "LeftToes",
+    "RightUpperLeg",
+    "RightLowerLeg",
+    "RightFoot",
+    "RightToes"
+  ],
+  "profiles": [
+    {
+      "id": "humanoid",
+      "about": "The profile's own names: Godot's SkeletonProfileHumanoid (MIT), also the VRM and Unity humanoid spelling.",
+      "aliases": {
+        "Hips": [
+          "Hips"
+        ],
+        "Spine": [
+          "Spine"
+        ],
+        "Chest": [
+          "Chest"
+        ],
+        "UpperChest": [
+          "UpperChest"
+        ],
+        "Neck": [
+          "Neck"
+        ],
+        "Head": [
+          "Head"
+        ],
+        "LeftShoulder": [
+          "LeftShoulder"
+        ],
+        "LeftUpperArm": [
+          "LeftUpperArm"
+        ],
+        "LeftLowerArm": [
+          "LeftLowerArm"
+        ],
+        "LeftHand": [
+          "LeftHand"
+        ],
+        "RightShoulder": [
+          "RightShoulder"
+        ],
+        "RightUpperArm": [
+          "RightUpperArm"
+        ],
+        "RightLowerArm": [
+          "RightLowerArm"
+        ],
+        "RightHand": [
+          "RightHand"
+        ],
+        "LeftUpperLeg": [
+          "LeftUpperLeg"
+        ],
+        "LeftLowerLeg": [
+          "LeftLowerLeg"
+        ],
+        "LeftFoot": [
+          "LeftFoot"
+        ],
+        "LeftToes": [
+          "LeftToes"
+        ],
+        "RightUpperLeg": [
+          "RightUpperLeg"
+        ],
+        "RightLowerLeg": [
+          "RightLowerLeg"
+        ],
+        "RightFoot": [
+          "RightFoot"
+        ],
+        "RightToes": [
+          "RightToes"
+        ]
+      }
+    },
+    {
+      "id": "mixamorig",
+      "about": "Mixamo's auto-rigger; joints carry a `mixamorig:` prefix (any `name:` or `Armature|` prefix is ignored when matching).",
+      "aliases": {
+        "Hips": [
+          "Hips"
+        ],
+        "Spine": [
+          "Spine"
+        ],
+        "Chest": [
+          "Spine1"
+        ],
+        "UpperChest": [
+          "Spine2"
+        ],
+        "Neck": [
+          "Neck"
+        ],
+        "Head": [
+          "Head"
+        ],
+        "LeftShoulder": [
+          "LeftShoulder"
+        ],
+        "LeftUpperArm": [
+          "LeftArm"
+        ],
+        "LeftLowerArm": [
+          "LeftForeArm"
+        ],
+        "LeftHand": [
+          "LeftHand"
+        ],
+        "RightShoulder": [
+          "RightShoulder"
+        ],
+        "RightUpperArm": [
+          "RightArm"
+        ],
+        "RightLowerArm": [
+          "RightForeArm"
+        ],
+        "RightHand": [
+          "RightHand"
+        ],
+        "LeftUpperLeg": [
+          "LeftUpLeg"
+        ],
+        "LeftLowerLeg": [
+          "LeftLeg"
+        ],
+        "LeftFoot": [
+          "LeftFoot"
+        ],
+        "LeftToes": [
+          "LeftToeBase"
+        ],
+        "RightUpperLeg": [
+          "RightUpLeg"
+        ],
+        "RightLowerLeg": [
+          "RightLeg"
+        ],
+        "RightFoot": [
+          "RightFoot"
+        ],
+        "RightToes": [
+          "RightToeBase"
+        ]
+      }
+    },
+    {
+      "id": "meshy",
+      "about": "Meshy rigged characters. A synthetic look-alike: not yet checked against a provider output.",
+      "aliases": {
+        "Hips": [
+          "Hips"
+        ],
+        "Spine": [
+          "Spine"
+        ],
+        "Chest": [
+          "Spine01"
+        ],
+        "UpperChest": [
+          "Spine02"
+        ],
+        "Neck": [
+          "neck"
+        ],
+        "Head": [
+          "Head"
+        ],
+        "LeftShoulder": [
+          "LeftShoulder"
+        ],
+        "LeftUpperArm": [
+          "LeftArm"
+        ],
+        "LeftLowerArm": [
+          "LeftForeArm"
+        ],
+        "LeftHand": [
+          "LeftHand"
+        ],
+        "RightShoulder": [
+          "RightShoulder"
+        ],
+        "RightUpperArm": [
+          "RightArm"
+        ],
+        "RightLowerArm": [
+          "RightForeArm"
+        ],
+        "RightHand": [
+          "RightHand"
+        ],
+        "LeftUpperLeg": [
+          "LeftUpLeg"
+        ],
+        "LeftLowerLeg": [
+          "LeftLeg"
+        ],
+        "LeftFoot": [
+          "LeftFoot"
+        ],
+        "LeftToes": [
+          "LeftToeBase"
+        ],
+        "RightUpperLeg": [
+          "RightUpLeg"
+        ],
+        "RightLowerLeg": [
+          "RightLeg"
+        ],
+        "RightFoot": [
+          "RightFoot"
+        ],
+        "RightToes": [
+          "RightToeBase"
+        ]
+      }
+    },
+    {
+      "id": "tripo",
+      "about": "Tripo's own rig spec. A synthetic look-alike: not yet checked against a provider output.",
+      "aliases": {
+        "Hips": [
+          "Pelvis",
+          "Hip"
+        ],
+        "Spine": [
+          "Waist"
+        ],
+        "Chest": [
+          "Spine01"
+        ],
+        "UpperChest": [
+          "Spine02"
+        ],
+        "Neck": [
+          "NeckTwist01",
+          "Neck"
+        ],
+        "Head": [
+          "Head"
+        ],
+        "LeftShoulder": [
+          "L_Clavicle"
+        ],
+        "LeftUpperArm": [
+          "L_Upperarm"
+        ],
+        "LeftLowerArm": [
+          "L_Forearm"
+        ],
+        "LeftHand": [
+          "L_Hand"
+        ],
+        "RightShoulder": [
+          "R_Clavicle"
+        ],
+        "RightUpperArm": [
+          "R_Upperarm"
+        ],
+        "RightLowerArm": [
+          "R_Forearm"
+        ],
+        "RightHand": [
+          "R_Hand"
+        ],
+        "LeftUpperLeg": [
+          "L_Thigh"
+        ],
+        "LeftLowerLeg": [
+          "L_Calf"
+        ],
+        "LeftFoot": [
+          "L_Foot"
+        ],
+        "LeftToes": [
+          "L_ToeBase"
+        ],
+        "RightUpperLeg": [
+          "R_Thigh"
+        ],
+        "RightLowerLeg": [
+          "R_Calf"
+        ],
+        "RightFoot": [
+          "R_Foot"
+        ],
+        "RightToes": [
+          "R_ToeBase"
+        ]
+      }
+    },
+    {
+      "id": "uthana",
+      "about": "Uthana auto-rigged humanoids. A synthetic look-alike: not yet checked against a provider output.",
+      "aliases": {
+        "Hips": [
+          "hips"
+        ],
+        "Spine": [
+          "spine"
+        ],
+        "Chest": [
+          "chest"
+        ],
+        "UpperChest": [
+          "upper_chest"
+        ],
+        "Neck": [
+          "neck"
+        ],
+        "Head": [
+          "head"
+        ],
+        "LeftShoulder": [
+          "left_shoulder"
+        ],
+        "LeftUpperArm": [
+          "left_upper_arm"
+        ],
+        "LeftLowerArm": [
+          "left_lower_arm"
+        ],
+        "LeftHand": [
+          "left_hand"
+        ],
+        "RightShoulder": [
+          "right_shoulder"
+        ],
+        "RightUpperArm": [
+          "right_upper_arm"
+        ],
+        "RightLowerArm": [
+          "right_lower_arm"
+        ],
+        "RightHand": [
+          "right_hand"
+        ],
+        "LeftUpperLeg": [
+          "left_upper_leg"
+        ],
+        "LeftLowerLeg": [
+          "left_lower_leg"
+        ],
+        "LeftFoot": [
+          "left_foot"
+        ],
+        "LeftToes": [
+          "left_toes"
+        ],
+        "RightUpperLeg": [
+          "right_upper_leg"
+        ],
+        "RightLowerLeg": [
+          "right_lower_leg"
+        ],
+        "RightFoot": [
+          "right_foot"
+        ],
+        "RightToes": [
+          "right_toes"
+        ]
+      }
+    },
+    {
+      "id": "ue-mannequin",
+      "about": "Unreal Engine's mannequin, UE4 (three spine bones) and UE5 (five), and Quaternius' Universal Animation Library (CC0), which ships that skeleton.",
+      "aliases": {
+        "Hips": [
+          "pelvis"
+        ],
+        "Spine": [
+          "spine_01"
+        ],
+        "Chest": [
+          "spine_02"
+        ],
+        "UpperChest": [
+          "spine_05",
+          "spine_03"
+        ],
+        "Neck": [
+          "neck_01"
+        ],
+        "Head": [
+          "head"
+        ],
+        "LeftShoulder": [
+          "clavicle_l"
+        ],
+        "LeftUpperArm": [
+          "upperarm_l"
+        ],
+        "LeftLowerArm": [
+          "lowerarm_l"
+        ],
+        "LeftHand": [
+          "hand_l"
+        ],
+        "RightShoulder": [
+          "clavicle_r"
+        ],
+        "RightUpperArm": [
+          "upperarm_r"
+        ],
+        "RightLowerArm": [
+          "lowerarm_r"
+        ],
+        "RightHand": [
+          "hand_r"
+        ],
+        "LeftUpperLeg": [
+          "thigh_l"
+        ],
+        "LeftLowerLeg": [
+          "calf_l"
+        ],
+        "LeftFoot": [
+          "foot_l"
+        ],
+        "LeftToes": [
+          "ball_l"
+        ],
+        "RightUpperLeg": [
+          "thigh_r"
+        ],
+        "RightLowerLeg": [
+          "calf_r"
+        ],
+        "RightFoot": [
+          "foot_r"
+        ],
+        "RightToes": [
+          "ball_r"
+        ]
+      }
+    }
+  ]
+}

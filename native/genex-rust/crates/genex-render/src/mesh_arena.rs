@@ -1,20 +1,27 @@
 //! The mesh arena: one growable buffer each for vertices, slots, indices, skin and meshlets, sub-allocated
-//! per mesh, so adding a model uploads only its own bytes.
+//! per mesh, so adding a model uploads only its own bytes and removing one frees its rows for the next.
 //!
-//! The library ([`crate::scene::MeshLibrary`]) is the CPU mirror. Each sync writes only the rows the
-//! library gained since the last one, at their offsets, so the 50th model costs its own bytes, not the
-//! library's (the renderer re-uploaded every mesh on each add before game systems STR-1).
+//! The library ([`crate::scene::MeshLibrary`]) is the CPU mirror and places every mesh: each stream's
+//! rows come from a [`RowAllocator`] (best fit over the freed ranges, else the end), so a removed
+//! mesh's rows go to the next mesh that fits (game systems STR-2). Each sync writes only the rows the
+//! library appended past those held and the freed rows it filled again, at their offsets, so the
+//! 50th model costs its own bytes, not the library's (the renderer re-uploaded every mesh on each
+//! add before STR-1).
 //!
-//! - Ranges come from `offset-allocator` (MIT; Sebastian Aaltonen's OffsetAllocator ported by
-//!   Patrick Walton), one allocator per stream in that stream's rows. While nothing is freed it
-//!   hands out ranges back to back, which is the library's packing; STR-2 frees them.
 //! - A full stream grows as Bevy's slab allocator grows a slab (MIT OR Apache-2.0, the rule ported,
 //!   no code): a new buffer at twice the size, the live prefix copied buffer to buffer on the GPU.
-//!   The CPU never uploads it again.
+//!   The CPU never uploads it again. Growth is queue work recorded between frames (adds and removes
+//!   take the renderer whole), so it lands before the next frame's commands and never inside a pass.
 //! - No stream passes [`BUFFER_MAX_BYTES`] (WebGPU core's 128 MiB storage binding, inside its
 //!   256 MiB buffer): past it the sync is refused `buffer-too-large` with nothing written.
+//! - Growth holds the old and the new buffer at once until the copy is done. An arena with a peak
+//!   limit ([`MeshArena::set_peak_limit`]: WebGPU and phones, [`ARENA_PEAK_MAX_BYTES_CONSTRAINED`])
+//!   refuses a growth whose peak would pass it `stream-arena-full`, with nothing made or written,
+//!   so the caller evicts first.
 
-use offset_allocator::{Allocation, Allocator};
+use std::collections::{BTreeMap, BTreeSet};
+use std::ops::Range;
+
 use wgpu::{Buffer, BufferUsages, CommandEncoder, Device, Queue};
 
 use crate::caps::BUFFER_MAX_BYTES;
@@ -27,11 +34,9 @@ const STREAM_ALIGN_BYTES: u64 = 16;
 /// A full stream's buffer is remade this many times larger (Bevy's slab doubling): a library of
 /// n bytes copies O(n) bytes on the GPU over all its growth.
 const GROWTH_FACTOR: u64 = 2;
-/// Ranges one stream's allocator tracks (offset-allocator's default): one per add.
-const RANGES_MAX: u32 = 128 * 1024;
-/// Each allocator spans this many times the rows the cap allows, so the allocator's bin rounding
-/// never refuses a range the cap admits (the cap is checked on bytes before allocating).
-const ALLOCATOR_SPAN: u64 = 2;
+/// The peak bytes a mesh arena may hold during a growth (old and new buffers at once) on WebGPU and
+/// phones: WebGPU's default `maxBufferSize`, the STREAM design's arena ceiling (3.3).
+pub const ARENA_PEAK_MAX_BYTES_CONSTRAINED: u64 = 256 * 1024 * 1024;
 
 /// One of the library's GPU streams.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -103,11 +108,6 @@ impl ArenaStream {
             ArenaStream::Skin | ArenaStream::Meshlets | ArenaStream::MeshletVertices | ArenaStream::MeshletTriangles => BufferUsages::STORAGE,
         }
     }
-
-    /// The most rows the cap admits.
-    const fn max_rows(self) -> u64 {
-        BUFFER_MAX_BYTES / self.stride() as u64
-    }
 }
 
 /// What the arena does to a GPU: make a buffer, write bytes into one, copy a prefix between two.
@@ -161,32 +161,33 @@ pub struct ArenaStats {
     pub grows: u64,
     /// Syncs that wrote or grew anything.
     pub syncs: u64,
+    /// The most bytes the arena's buffers held at once: during a growth, the old buffers and the
+    /// new ones together (game systems STR-2).
+    pub peak_bytes: u64,
 }
 
-/// One stream: its buffer, the rows written into it and their ranges.
+/// One stream: its buffer and the rows written into it.
 struct Stream<B> {
     buffer: B,
     capacity: u64,
     rows: u32,
-    allocator: Allocator,
-    ranges: Vec<Allocation>,
 }
 
-/// The library's streams on a GPU, each written only where the library grew.
+/// The library's streams on a GPU, each written only where the library changed.
 pub struct MeshArena<B> {
     streams: Vec<Stream<B>>,
     stats: ArenaStats,
+    /// The peak a growth may reach ([`MeshArena::set_peak_limit`]); None: only the per-stream cap.
+    peak_limit: Option<u64>,
 }
+
+/// Rows of one stream the library wrote again inside the rows it held (a freed range filled by a
+/// new mesh), for [`MeshArena::sync_with`].
+pub type Rewrite = (ArenaStream, Range<u32>);
 
 /// `bytes` as a buffer size: aligned, at least [`STREAM_MIN_BYTES`].
 fn sized(bytes: u64) -> u64 {
     bytes.max(STREAM_MIN_BYTES).next_multiple_of(STREAM_ALIGN_BYTES)
-}
-
-/// A fresh allocator for `stream`'s rows.
-fn allocator(stream: ArenaStream) -> Allocator {
-    let span = (stream.max_rows() * ALLOCATOR_SPAN).min(u64::from(u32::MAX));
-    Allocator::with_max_allocs(span as u32, RANGES_MAX)
 }
 
 /// Refused `buffer-too-large` when `bytes` of `stream` pass the cap.
@@ -207,17 +208,69 @@ impl<B> MeshArena<B> {
         for stream in ArenaStream::ALL {
             let bytes = sources.bytes[stream.index()].unwrap_or_default();
             let mut held = Stream::made(device, stream, bytes.len())?;
-            stats.uploaded_bytes += held.append(device, stream, bytes)?;
+            stats.uploaded_bytes += held.append(device, stream, bytes);
             streams.push(held);
         }
-        Ok(MeshArena { streams, stats })
+        let mut arena = MeshArena { streams, stats, peak_limit: None };
+        arena.stats.peak_bytes = arena.bytes();
+        Ok(arena)
     }
 
-    /// Write what the library gained since the last sync: per stream the rows past those held,
-    /// growing a full buffer first. Refused with nothing written when a stream would pass the cap
-    /// (`buffer-too-large`) or holds fewer rows than the arena (`mesh-invalid`: rows only grow
-    /// until meshes can be removed; a re-clustered table goes through [`MeshArena::replace`]).
+    /// Refuse a growth whose peak (the buffers held plus the new ones, the old still alive until
+    /// their copy is done) would pass `limit` bytes, `stream-arena-full` (None: no limit but the
+    /// per-stream cap).
+    pub fn set_peak_limit(&mut self, limit: Option<u64>) {
+        self.peak_limit = limit;
+    }
+
+    /// Bytes every stream's buffer holds room for.
+    pub fn bytes(&self) -> u64 {
+        self.streams.iter().map(|held| held.capacity).sum()
+    }
+
+    /// Write what the library appended since the last sync: per stream the rows past those held,
+    /// growing a full buffer first. [`MeshArena::sync_with`] with no rewritten rows.
     pub fn sync<D: ArenaDevice<Buffer = B>>(&mut self, device: &mut D, sources: &ArenaSources<'_>) -> Result<(), RenderError> {
+        self.sync_with(device, sources, &[])
+    }
+
+    /// Write what the library changed since the last sync: per stream the rows past those held
+    /// (growing a full buffer first), then each of `rewritten` inside the rows held before (a
+    /// stream `sources` leaves out skips both). Refused with nothing written when a stream would
+    /// pass the cap (`buffer-too-large`), holds fewer rows than the arena (`mesh-invalid`: the
+    /// library never shrinks a stream; a re-clustered table goes through [`MeshArena::replace`])
+    /// or a growth's peak would pass the limit (`stream-arena-full`).
+    pub fn sync_with<D: ArenaDevice<Buffer = B>>(&mut self, device: &mut D, sources: &ArenaSources<'_>, rewritten: &[Rewrite]) -> Result<(), RenderError> {
+        self.check_sync(sources)?;
+        self.check_peak(sources)?;
+        let before = self.stats;
+        let held: Vec<u32> = self.streams.iter().map(|held| held.rows).collect();
+        for stream in ArenaStream::ALL {
+            let Some(bytes) = sources.bytes[stream.index()] else { continue };
+            self.grow(device, stream, bytes.len() as u64)?;
+            let held = &mut self.streams[stream.index()];
+            let from = held.rows as usize * stream.stride() as usize;
+            self.stats.uploaded_bytes += held.append(device, stream, &bytes[from..]);
+        }
+        for (stream, rows) in rewritten {
+            let Some(bytes) = sources.bytes[stream.index()] else { continue };
+            let end = rows.end.min(held[stream.index()]);
+            if rows.start >= end {
+                continue;
+            }
+            let stride = stream.stride() as usize;
+            let range = rows.start as usize * stride..end as usize * stride;
+            device.write(&self.streams[stream.index()].buffer, range.start as u64, &bytes[range.clone()]);
+            self.stats.uploaded_bytes += range.len() as u64;
+        }
+        if self.stats != before {
+            self.stats.syncs += 1;
+        }
+        Ok(())
+    }
+
+    /// Refused when a stream of `sources` passes the cap or holds fewer rows than the arena.
+    fn check_sync(&self, sources: &ArenaSources<'_>) -> Result<(), RenderError> {
         for stream in ArenaStream::ALL {
             let Some(bytes) = sources.bytes[stream.index()] else { continue };
             check_cap(stream, bytes.len())?;
@@ -227,25 +280,31 @@ impl<B> MeshArena<B> {
                 return Err(RenderError::refused(RenderCode::MeshInvalid, detail));
             }
         }
-        let before = self.stats;
-        for stream in ArenaStream::ALL {
-            let Some(bytes) = sources.bytes[stream.index()] else { continue };
-            self.grow(device, stream, bytes.len() as u64)?;
-            let held = &mut self.streams[stream.index()];
-            let from = held.rows as usize * stream.stride() as usize;
-            self.stats.uploaded_bytes += held.append(device, stream, &bytes[from..])?;
+        Ok(())
+    }
+
+    /// Refused `stream-arena-full` when the growths `sources` needs would, with the buffers held,
+    /// pass the peak limit; records the peak otherwise.
+    fn check_peak(&mut self, sources: &ArenaSources<'_>) -> Result<(), RenderError> {
+        let grown: u64 = ArenaStream::ALL
+            .into_iter()
+            .filter_map(|stream| sources.bytes[stream.index()].map(|bytes| self.grown_capacity(stream, bytes.len() as u64)))
+            .flatten()
+            .sum();
+        let peak = self.bytes() + grown;
+        if let Some(limit) = self.peak_limit.filter(|limit| peak > *limit) {
+            let detail = format!("growing the mesh arena would hold {peak} bytes at once, past its {limit}-byte limit");
+            return Err(RenderError::refused(RenderCode::StreamArenaFull, detail));
         }
-        if self.stats != before {
-            self.stats.syncs += 1;
-        }
+        self.stats.peak_bytes = self.stats.peak_bytes.max(peak);
         Ok(())
     }
 
     /// Replace `stream` whole with `bytes` (a re-clustered meshlet table, or tables given back):
-    /// a new buffer of exactly their size, written whole, its ranges forgotten.
+    /// a new buffer of exactly their size, written whole.
     pub fn replace<D: ArenaDevice<Buffer = B>>(&mut self, device: &mut D, stream: ArenaStream, bytes: &[u8]) -> Result<(), RenderError> {
         let mut held = Stream::made(device, stream, bytes.len())?;
-        self.stats.uploaded_bytes += held.append(device, stream, bytes)?;
+        self.stats.uploaded_bytes += held.append(device, stream, bytes);
         self.streams[stream.index()] = held;
         Ok(())
     }
@@ -260,14 +319,20 @@ impl<B> MeshArena<B> {
         self.move_to(device, stream, capacity)
     }
 
-    /// Make `stream`'s buffer hold `need` bytes: twice its size or the need (aligned), whichever
-    /// is larger, within the cap; the rows it holds are copied on the GPU.
-    fn grow<D: ArenaDevice<Buffer = B>>(&mut self, device: &mut D, stream: ArenaStream, need: u64) -> Result<(), RenderError> {
+    /// The capacity `stream` grows to for `need` bytes: twice its size or the need (aligned),
+    /// whichever is larger, within the cap; None when it holds room already.
+    fn grown_capacity(&self, stream: ArenaStream, need: u64) -> Option<u64> {
         let capacity = self.streams[stream.index()].capacity;
-        if need <= capacity {
-            return Ok(());
+        (need > capacity).then(|| sized(need).max(capacity * GROWTH_FACTOR).min(BUFFER_MAX_BYTES))
+    }
+
+    /// Make `stream`'s buffer hold `need` bytes ([`MeshArena::grown_capacity`]); the rows it holds
+    /// are copied on the GPU.
+    fn grow<D: ArenaDevice<Buffer = B>>(&mut self, device: &mut D, stream: ArenaStream, need: u64) -> Result<(), RenderError> {
+        match self.grown_capacity(stream, need) {
+            Some(capacity) => self.move_to(device, stream, capacity),
+            None => Ok(()),
         }
-        self.move_to(device, stream, sized(need).max(capacity * GROWTH_FACTOR).min(BUFFER_MAX_BYTES))
     }
 
     /// Remake `stream`'s buffer at `capacity` bytes, the rows it holds copied on the GPU.
@@ -299,11 +364,6 @@ impl<B> MeshArena<B> {
         self.streams[stream.index()].rows
     }
 
-    /// Ranges allocated in `stream` (one per sync that gave it rows).
-    pub fn ranges(&self, stream: ArenaStream) -> usize {
-        self.streams[stream.index()].ranges.len()
-    }
-
     /// The running counts.
     pub fn stats(&self) -> ArenaStats {
         self.stats
@@ -315,26 +375,93 @@ impl<B> Stream<B> {
     fn made<D: ArenaDevice<Buffer = B>>(device: &mut D, stream: ArenaStream, bytes: usize) -> Result<Stream<B>, RenderError> {
         check_cap(stream, bytes)?;
         let capacity = sized(bytes as u64);
-        Ok(Stream { buffer: device.create(stream, capacity)?, capacity, rows: 0, allocator: allocator(stream), ranges: Vec::new() })
+        Ok(Stream { buffer: device.create(stream, capacity)?, capacity, rows: 0 })
     }
 
-    /// Allocate a range for `bytes` (whole rows) right after the rows held and write it; the bytes
-    /// written. Refused `mesh-invalid` when the allocator places the range anywhere else (it
-    /// cannot while nothing is freed).
-    fn append<D: ArenaDevice<Buffer = B>>(&mut self, device: &mut D, stream: ArenaStream, bytes: &[u8]) -> Result<u64, RenderError> {
+    /// Write `bytes` (whole rows) right after the rows held; the bytes written.
+    fn append<D: ArenaDevice<Buffer = B>>(&mut self, device: &mut D, stream: ArenaStream, bytes: &[u8]) -> u64 {
         let rows = (bytes.len() / stream.stride() as usize) as u32;
         if rows == 0 {
-            return Ok(0);
+            return 0;
         }
-        let placed = self.allocator.allocate(rows).filter(|range| range.offset == self.rows);
-        let Some(range) = placed else {
-            let detail = format!("mesh {}: no range of {rows} rows after row {}", stream.label(), self.rows);
-            return Err(RenderError::refused(RenderCode::MeshInvalid, detail));
-        };
         device.write(&self.buffer, u64::from(self.rows) * u64::from(stream.stride()), bytes);
-        self.ranges.push(range);
         self.rows += rows;
-        Ok(bytes.len() as u64)
+        bytes.len() as u64
+    }
+}
+
+/// Where a library stream's rows go: best fit over the freed ranges (the smallest that holds
+/// them, the lowest offset among equals), else at the end. Freed neighbours merge, and a free
+/// range that reaches the end gives it back, so a library with no removals packs its meshes back
+/// to back in add order, as it always did. Deterministic: ordered maps, no hashing, no time.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct RowAllocator {
+    /// One past the last row in use.
+    end: u32,
+    /// Free ranges below `end`: offset to rows.
+    free: BTreeMap<u32, u32>,
+    /// The same ranges by (rows, offset), for the best fit.
+    by_size: BTreeSet<(u32, u32)>,
+}
+
+impl RowAllocator {
+    /// The first row of a range of `rows` rows, or None when it would end past `u32::MAX` (no
+    /// rows take nothing and answer the end).
+    pub fn allocate(&mut self, rows: u32) -> Option<u32> {
+        if rows == 0 {
+            return Some(self.end);
+        }
+        if let Some(&(size, offset)) = self.by_size.range((rows, 0)..).next() {
+            self.take_free(offset, size);
+            if size > rows {
+                self.put_free(offset + rows, size - rows);
+            }
+            return Some(offset);
+        }
+        let offset = self.end;
+        self.end = offset.checked_add(rows)?;
+        Some(offset)
+    }
+
+    /// Give back `rows` rows at `offset` (a range [`RowAllocator::allocate`] handed out).
+    pub fn free(&mut self, offset: u32, rows: u32) {
+        if rows == 0 {
+            return;
+        }
+        let (mut start, mut size) = (offset, rows);
+        if let Some((&before, &before_size)) = self.free.range(..start).next_back().filter(|(at, len)| **at + **len == start) {
+            self.take_free(before, before_size);
+            (start, size) = (before, before_size + size);
+        }
+        if let Some(&after_size) = self.free.get(&(start + size)) {
+            self.take_free(start + size, after_size);
+            size += after_size;
+        }
+        if start + size == self.end {
+            self.end = start;
+            return;
+        }
+        self.put_free(start, size);
+    }
+
+    /// One past the last row in use (the stream's live span).
+    pub fn end(&self) -> u32 {
+        self.end
+    }
+
+    /// Rows free below [`RowAllocator::end`].
+    pub fn free_rows(&self) -> u64 {
+        self.free.values().map(|rows| u64::from(*rows)).sum()
+    }
+
+    fn take_free(&mut self, offset: u32, rows: u32) {
+        self.free.remove(&offset);
+        self.by_size.remove(&(rows, offset));
+    }
+
+    fn put_free(&mut self, offset: u32, rows: u32) {
+        self.free.insert(offset, rows);
+        self.by_size.insert((rows, offset));
     }
 }
 
