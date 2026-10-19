@@ -1,7 +1,8 @@
 /**
  * The importer's tools: the Basis Universal v2.50 build (its transcoder; the same build encodes,
- * `basis-encoder.ts`), Draco's glTF decoder from npm `draco3dgltf`, and meshoptimizer's decoder,
- * meshlet clusterizer and simplifier (import-time LODs) from npm `meshoptimizer`. They live in one
+ * `basis-encoder.ts`), Draco's glTF decoder from npm `draco3dgltf`, meshoptimizer's decoder,
+ * meshlet clusterizer and simplifier (import-time LODs) from npm `meshoptimizer`, and the Khronos
+ * glTF validator from npm `gltf-validator` (`validate.ts`). They live in one
  * folder, the importer tools folder ({@link importerToolsDir}): the packaged app carries it in its
  * resources (`scripts/toolchains/importer-tools.ts` stages it at build time), and a development
  * checkout reads the npm packages in place and the Basis build where its fetch keeps it. Every
@@ -29,6 +30,8 @@ export const ImportDecoder = {
   Meshopt: "meshopt",
   MeshoptClusterizer: "meshopt-clusterizer",
   MeshoptSimplifier: "meshopt-simplifier",
+  /** Not a decoder: the Khronos glTF validator the import step runs before any decoder (`validate.ts`). */
+  GltfValidator: "gltf-validator",
 } as const;
 export type ImportDecoder = (typeof ImportDecoder)[keyof typeof ImportDecoder];
 
@@ -42,6 +45,7 @@ export const ImporterToolFolder = {
   Basis: `basis-encoder-${BASIS_ENCODER.version}`,
   Draco: "draco3dgltf",
   Meshoptimizer: "meshoptimizer",
+  GltfValidator: "gltf-validator",
 } as const;
 export type ImporterToolFolder = (typeof ImporterToolFolder)[keyof typeof ImporterToolFolder];
 
@@ -55,6 +59,7 @@ export interface ImporterToolFile {
 export const IMPORTER_TOOL_PACKAGES = {
   [ImporterToolFolder.Draco]: { name: "draco3dgltf", version: "1.5.9" },
   [ImporterToolFolder.Meshoptimizer]: { name: "meshoptimizer", version: "1.3.0" },
+  [ImporterToolFolder.GltfValidator]: { name: "gltf-validator", version: "2.0.0-dev.3.10" },
 } as const;
 
 const basisFile = (index: 0 | 1) => BASIS_ENCODER.files[index];
@@ -85,6 +90,19 @@ export const IMPORTER_TOOL_FILES: Readonly<Record<string, ImporterToolFile>> = {
   "meshoptimizer/meshopt_simplifier.js": {
     sha256: "c3098ee4cb4fc242b84f064c88898e76e44bf58b0e1f693507f323c08cdbb5ed",
     bytes: 67_671,
+  },
+  "gltf-validator/gltf_validator.dart.js": {
+    sha256: "b73a7b2d455ac217567725138b46d826a13d7d1bb0c88c15f7c571bfb349298c",
+    bytes: 307_792,
+  },
+  // Apache-2.0 §4(d): the package's NOTICES file ships beside the validator, with its licence.
+  "gltf-validator/NOTICES": {
+    sha256: "933f161ca1e7b3ead5a6cf93ebb3bf6cb67f0e79b38e08d2046f8cdc41cb78a3",
+    bytes: 22_286,
+  },
+  "gltf-validator/LICENSE": {
+    sha256: "3ddf9be5c28fe27dad143a5dc76eea25222ad1dd68934a047064e56ed2fa40c5",
+    bytes: 11_560,
   },
 };
 
@@ -122,6 +140,11 @@ export const IMPORT_DECODERS = {
     files: ["meshoptimizer/meshopt_simplifier.js"],
     upstream: "https://github.com/zeux/meshoptimizer",
     license: "MIT",
+  },
+  [ImportDecoder.GltfValidator]: {
+    files: ["gltf-validator/gltf_validator.dart.js", "gltf-validator/NOTICES", "gltf-validator/LICENSE"],
+    upstream: "https://github.com/KhronosGroup/glTF-Validator",
+    license: "Apache-2.0",
   },
 } as const satisfies Record<ImportDecoder, DecoderRecord>;
 

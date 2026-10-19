@@ -22,7 +22,9 @@ import {
   IMPORTER_TOOL_FILES,
   ImportDecoder,
 } from "../../src/substrate/asset-import/decoders.ts";
+import { dequantizeGlb } from "../../src/substrate/asset-import/dequantize.ts";
 import { normalizeGltf } from "../../src/substrate/asset-import/gltf-decompress.ts";
+import { GltfImportError } from "../../src/substrate/asset-import/gltf-json.ts";
 import {
   AssetImportRefusal,
   ImportAction,
@@ -359,7 +361,6 @@ describe("converters", () => {
       "ply",
       "ply\nformat ascii 1.0\nelement vertex 3\nproperty float x\nproperty float y\nproperty float z\nelement face 1\nproperty list uchar int vertex_indices\nend_header\n0 0 0\n1 0 0\n0 1 0\n3 0 1 9\n",
     ],
-    [ImportConverter.GltfDecompress, "glb", "glTF but not really"],
   ];
   for (const [converter, ext, text] of damaged) {
     it(`a damaged .${ext} is refused malformed (${JSON.stringify(text.slice(0, 32))})`, async () => {
@@ -562,6 +563,19 @@ describe("glTF the runtime can read", () => {
     });
   }
 
+  // Named flip (C-6): this was refused `malformed` by the decompress step; the glTF gate in front of
+  // it now refuses it first.
+  it("a .glb that is not glTF is refused validation-failed by the glTF gate", async () => {
+    const result = await convertAsset({
+      converter: ImportConverter.GltfDecompress,
+      ext: "glb",
+      name: "x",
+      bytes: new TextEncoder().encode("glTF but not really"),
+      targets: [BuildTarget.Mac],
+    });
+    assert.equal(!result.ok && result.refusal, AssetImportRefusal.ValidationFailed);
+  });
+
   it("a plain GLB is kept byte for byte", async () => {
     const bytes = await sample("animated.glb");
     assert.equal(sha(await normalizeGltf(bytes, "glb")), sha(bytes));
@@ -615,8 +629,10 @@ describe("quantized glTF (KHR_mesh_quantization, gltfpack's default)", () => {
     ["a component type glTF does not have", (json) => (json.accessors[1].componentType = 5124)],
     ["a view outside the binary chunk", (json) => (json.bufferViews[2].byteOffset = 1 << 30)],
   ];
+  // Named flip (C-6): the import step refused these `malformed` in the dequantize step; the glTF gate
+  // now refuses them `validation-failed` before it, and dequantize's own checks still refuse them.
   for (const [what, damage] of hostileQuantized) {
-    it(`a quantized GLB with ${what} is refused malformed`, async () => {
+    it(`a quantized GLB with ${what} is refused validation-failed, and dequantize alone refuses it malformed`, async () => {
       const { json, bin } = readGlb(new Uint8Array(await readFile(path.join(IMPORT, "quantized.glb")))) as {
         json: Json;
         bin: Uint8Array;
@@ -629,7 +645,11 @@ describe("quantized glTF (KHR_mesh_quantization, gltfpack's default)", () => {
         bytes: writeGlb(json, bin),
         targets: [BuildTarget.Mac],
       });
-      assert.equal(!result.ok && result.refusal, AssetImportRefusal.Malformed, JSON.stringify(result));
+      assert.equal(!result.ok && result.refusal, AssetImportRefusal.ValidationFailed, JSON.stringify(result));
+      assert.throws(
+        () => dequantizeGlb(structuredClone(json), bin),
+        (error: unknown) => error instanceof GltfImportError && error.code === AssetImportRefusal.Malformed,
+      );
     });
   }
 

@@ -17,7 +17,7 @@ import {
   readGlb as readGltfParts,
   writeGlb,
 } from "../../src/substrate/asset-import/glb.ts";
-import { ImportConverter } from "../../src/substrate/asset-import/import-plan.ts";
+import { AssetImportRefusal, ImportConverter } from "../../src/substrate/asset-import/import-plan.ts";
 import {
   addMeshletExtras,
   MESHLET_MAX_TRIANGLES,
@@ -206,9 +206,23 @@ describe("R2.3 import-time clusters", () => {
       ["a view past the buffer", mutate((j) => (j.bufferViews[0].byteLength = 1 << 30))],
       ["extras that are not an object", mutate((j) => (j.meshes[0].primitives[0].extras = [1]))],
     ];
+    // Named flip (C-6): the import step delivered all six unchanged; the glTF gate in front of the
+    // clusterizer now refuses the four invalid ones first. The clusterizer alone still leaves every one alone.
+    const valid = new Set(["lines", "extras that are not an object"]);
     for (const [name, bytes] of odd) {
-      const out = await importGlb(bytes);
-      assert.deepEqual(out, bytes, name);
+      assert.deepEqual((await addMeshletExtras(bytes)).bytes, bytes, name);
+      if (valid.has(name)) {
+        assert.deepEqual(await importGlb(bytes), bytes, name);
+        continue;
+      }
+      const refused = await convertAsset({
+        converter: ImportConverter.GltfDecompress,
+        ext: "glb",
+        name: "big",
+        bytes,
+        targets: [BuildTarget.Mac],
+      });
+      assert.equal(!refused.ok && refused.refusal, AssetImportRefusal.ValidationFailed, name);
     }
   });
 
