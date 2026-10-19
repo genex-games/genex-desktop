@@ -27,11 +27,15 @@ import {
   isCutConnection,
   longHaulFetch,
   needsVision,
+  onPayload,
   type PiAssistant,
+  type PiPayload,
+  type PiPayloadEdit,
   piContext,
   type PiStreamFn,
   streamHttpStatus,
 } from "./pi-completions.ts";
+import { gameCallSchema, gameResponseFormat, isGameCall, objectRoot } from "./game-calls.ts";
 import { CATALOG_DEADLINE_MS, CatalogError, ModelCatalog } from "./model-catalog.ts";
 import { LocalSessions } from "./local-session.ts";
 import { CompletionStop, DEFAULT_COMPACTION_PERCENT, STOPPED_BY_USER } from "./common.ts";
@@ -46,6 +50,7 @@ import { ReasoningEffort } from "../../shared/model-preferences.ts";
 import { EngineId } from "../../shared/providers.ts";
 import { errorMessage } from "../../shared/errors.ts";
 import { redactSecrets } from "../../shared/redact.ts";
+import type { AiOutputSchema } from "../../shared/game-ai-schema.ts";
 
 /** OpenRouter's OpenAI-compatible API. */
 export const OPENROUTER_API = "https://openrouter.ai/api/v1";
@@ -76,6 +81,21 @@ const KEY_SHAPE = /^[\x21-\x7e]{16,512}$/;
 const OPENROUTER_EFFORTS = [ReasoningEffort.Low, ReasoningEffort.Medium, ReasoningEffort.High] as const;
 /** Tokens per million, the unit OpenRouter's catalog prices are quoted against. */
 const PER_MILLION = 1_000_000;
+/** The catalog parameter of a model with a provider that holds a reply to a JSON schema. */
+const STRUCTURED_OUTPUTS = "structured_outputs";
+/** The id prefix of Anthropic's models, the ones that take `cache_control` marks through OpenRouter. */
+const ANTHROPIC_PREFIX = "anthropic/";
+/** Anthropic's prompt cache mark: the prefix up to it is cached for a few minutes. */
+const EPHEMERAL_CACHE = { type: "ephemeral" } as const;
+/** The roles pi-ai gives the system prompt: `developer` for the models OpenRouter routes to it. */
+const INSTRUCTION_ROLES: ReadonlySet<unknown> = new Set(["system", "developer"]);
+
+/**
+ * OpenRouter's routing for a game's call: the one provider it picks first and no other (a fallback
+ * could cost more than the person approved), only a provider that honours every parameter sent
+ * (the reply schema above all), and none that keeps or trains on what a player typed.
+ */
+const GAME_PROVIDER_ROUTING = { allow_fallbacks: false, require_parameters: true, data_collection: "deny" } as const;
 
 /** What this engine says to the person. */
 const MESSAGE = {
@@ -126,6 +146,8 @@ function priceNote(input: number, output: number): string {
 
 /** A model row's prices in dollars per million tokens, kept beside the row pi-ai prices replies from. */
 const PRICES = new WeakMap<EngineModel, { input: number; output: number }>();
+/** The rows whose model has a provider that holds a reply to a JSON schema. */
+const STRUCTURED = new WeakSet<EngineModel>();
 
 const positive = (value: unknown): number | undefined =>
   typeof value === "number" && Number.isSafeInteger(value) && value > 0 ? value : undefined;
@@ -179,6 +201,7 @@ export function openRouterModel(entry: CatalogEntry): EngineModel | null {
     note: priceNote(input, output),
   };
   PRICES.set(row, { input, output });
+  if (parameters.includes(STRUCTURED_OUTPUTS)) STRUCTURED.add(row);
   return row;
 }
 
@@ -231,6 +254,40 @@ function estimatedPromptTokens(request: CompleteRequest): number {
     request.tools ?? [],
   ]);
   return Math.ceil(text.length / CHARS_PER_TOKEN);
+}
+
+/**
+ * The body edit a request needs on OpenRouter, or null for one that asks for nothing new: the reply
+ * schema when the model has a provider that holds a reply to it and the root is an object (hosted
+ * providers take no other root), and for a game's call the routing and the system prompt's cache mark.
+ */
+function gamePayloadEdit(
+  request: CompleteRequest,
+  row: EngineModel,
+  schema: AiOutputSchema | null,
+): PiPayloadEdit | null {
+  const format = schema && STRUCTURED.has(row) && objectRoot(schema) ? gameResponseFormat(schema) : null;
+  const game = isGameCall(request);
+  if (!format && !game) return null;
+  return (payload) => ({
+    ...(game ? systemCacheMark(payload, row.id) : payload),
+    ...(format ? { response_format: format } : {}),
+    ...(game ? { provider: GAME_PROVIDER_ROUTING } : {}),
+  });
+}
+
+/**
+ * The body with Anthropic's one cache mark on the system prompt, the part of a game's call that
+ * repeats; a player's turn changes every call, and caching it would only pay the cache write.
+ */
+function systemCacheMark(payload: PiPayload, model: string): PiPayload {
+  if (!model.startsWith(ANTHROPIC_PREFIX) || !Array.isArray(payload.messages)) return payload;
+  const messages = payload.messages.map((message: { role?: unknown; content?: unknown }) => {
+    const marked = INSTRUCTION_ROLES.has(message.role) && typeof message.content === "string" && message.content;
+    if (!marked) return message;
+    return { ...message, content: [{ type: "text", text: message.content, cache_control: EPHEMERAL_CACHE }] };
+  });
+  return { ...payload, messages };
 }
 
 /** The key as pasted, trimmed, or null when it cannot be a key (a space, a newline, too short or long). */
@@ -433,6 +490,7 @@ export class OpenRouterEngine implements Engine {
   }
 
   async complete(request: CompleteRequest): Promise<CompleteResponse> {
+    const schema = gameCallSchema(request, this.id);
     const modelId = request.model;
     if (!modelId) throw new EngineError(EngineFailureKind.Unavailable, this.id, MESSAGE.NoModel);
     const row = await this.#knownRow(modelId);
@@ -445,13 +503,11 @@ export class OpenRouterEngine implements Engine {
     const key = await this.#key();
     const { models, model } = await this.#provider(row, key);
     try {
-      const stream = (models as { stream: PiStreamFn }).stream(model, piContext(request, this.id), {
-        fetch: longHaulFetch(request.signal),
-        timeoutMs: Math.min(request.timeoutMs ?? this.#timeoutMs, this.#timeoutMs),
-        maxTokens,
-        ...(request.signal ? { signal: request.signal } : {}),
-        ...(row.supportsThinking && request.effort ? { reasoningEffort: openRouterEffort(request.effort) } : {}),
-      });
+      const stream = (models as { stream: PiStreamFn }).stream(
+        model,
+        piContext(request, this.id),
+        this.#streamOptions(request, row, maxTokens, schema),
+      );
       await drainPiStream(stream, request, this.id);
       const assistant = (await stream.result()) as PiAssistant;
       if (assistant.stopReason === CompletionStop.Aborted)
@@ -469,6 +525,25 @@ export class OpenRouterEngine implements Engine {
     } catch (err) {
       throw this.#failure(err, request);
     }
+  }
+
+  /** pi-ai's options for one completion: transport, ceiling, reply cap, effort and the body edit. */
+  #streamOptions(
+    request: CompleteRequest,
+    row: EngineModel,
+    maxTokens: number,
+    schema: AiOutputSchema | null,
+  ): Record<string, unknown> {
+    return {
+      fetch: longHaulFetch(request.signal),
+      timeoutMs: Math.min(request.timeoutMs ?? this.#timeoutMs, this.#timeoutMs),
+      maxTokens,
+      ...(request.signal ? { signal: request.signal } : {}),
+      ...(row.supportsThinking && request.effort ? { reasoningEffort: openRouterEffort(request.effort) } : {}),
+      // A game's call places its one cache mark itself (`systemCacheMark`), not pi-ai's three.
+      ...(isGameCall(request) ? { cacheRetention: "none" } : {}),
+      ...onPayload(gamePayloadEdit(request, row, schema)),
+    };
   }
 
   /**

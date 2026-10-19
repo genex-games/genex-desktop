@@ -2,7 +2,8 @@
  * The studio's own turn loop talking to an OpenAI-compatible server through pi-ai: the message
  * conversion in both directions, the request context, the stream drain and the transport. Ollama
  * (a local server) and OpenRouter (a metered API) both complete through it; each engine keeps
- * its own provider description and its own words for a failure.
+ * its own provider description and its own words for a failure. A field pi-ai has no option for
+ * reaches the body through its `onPayload` hook ({@link onPayload}), applied just before sending.
  */
 import { randomUUID } from "node:crypto";
 import type { Message, Usage } from "../types.ts";
@@ -10,6 +11,8 @@ import { type CompleteRequest, EngineError, type ToolDefinition } from "./types.
 import { EngineFailureKind } from "../../shared/engine-requests.ts";
 import { EngineId } from "../../shared/providers.ts";
 import { CompletionStop, STOPPED_BY_USER } from "./common.ts";
+import { gameResponseFormat } from "./game-calls.ts";
+import type { AiOutputSchema } from "../../shared/game-ai-schema.ts";
 
 // ── message conversion (substrate ⇄ pi-ai) ─────────────────────────────────────────────────
 interface PiTextContent {
@@ -187,6 +190,26 @@ export function piContext(request: CompleteRequest, provider: string = EngineId.
 
 function toPiTool(tool: ToolDefinition): unknown {
   return { name: tool.name, description: tool.description, parameters: tool.parameters };
+}
+
+/** A request body as pi-ai built it, before it is sent: the OpenAI chat-completions fields. */
+export type PiPayload = Record<string, unknown>;
+
+/** One edit of the body pi-ai built, applied just before it is sent. */
+export type PiPayloadEdit = (payload: PiPayload) => PiPayload;
+
+/**
+ * pi-ai's `onPayload` option for a body edit, or no option at all when there is none, so a request
+ * that asks for nothing new goes out byte-identical. The edit is how a field pi-ai has no option
+ * for (`response_format`, OpenRouter's `provider`) reaches the wire.
+ */
+export function onPayload(edit: PiPayloadEdit | null): { onPayload?: (payload: unknown) => PiPayload } {
+  return edit ? { onPayload: (payload) => edit(payload as PiPayload) } : {};
+}
+
+/** The edit that holds the reply to a schema with strict structured output. */
+export function withResponseFormat(schema: AiOutputSchema): PiPayloadEdit {
+  return (payload) => ({ ...payload, response_format: gameResponseFormat(schema) });
 }
 
 /** Does the request carry a picture the model would have to see? */

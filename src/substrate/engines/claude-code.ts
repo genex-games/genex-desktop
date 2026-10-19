@@ -108,6 +108,7 @@ import { ContextSource } from "../../shared/context.ts";
 import { EngineFailureKind, isInterview, StopReason } from "../../shared/engine-requests.ts";
 import { SessionCostLedger, sessionTotals, turnShare } from "./session-cost.ts";
 import { AccountId, accountsRoot, SubscriptionAccounts } from "./subscription-accounts.ts";
+import { GAME_CALL_CWD, gameCallSchema, isGameCall } from "./game-calls.ts";
 
 export interface ClaudeCodeEngineOptions {
   onModelsChanged?: () => void;
@@ -146,6 +147,8 @@ export interface ClaudeCodeEngineOptions {
    * passes a directory it owns so a conformance run does not sit in the live judge's folder.
    */
   judgeCwd?: string;
+  /** Where a game's call runs (`CompletePurpose.Game`); defaults to `GAME_CALL_CWD`. A test passes its own. */
+  gameCwd?: string;
   /**
    * Whether building the engine sweeps stale judge transcripts out of the homes it can see.
    * The app passes true; a test leaves it off, because a constructor must never delete inside a
@@ -488,6 +491,7 @@ export class ClaudeCodeEngine implements Engine {
   readonly #resolveCli: typeof requireCodingCli;
   readonly #executable: string | undefined;
   readonly judgeCwd: string;
+  readonly gameCwd: string;
   readonly #skills: { judge?: string[]; delegate?: string[] };
   #queryFn: ClaudeCodeEngineOptions["queryFn"];
   #authStatusFn: ClaudeCodeEngineOptions["authStatusFn"];
@@ -525,6 +529,7 @@ export class ClaudeCodeEngine implements Engine {
     this.#costs = new SessionCostLedger(options.sessionCosts);
     this.#authStatusFn = options.authStatusFn;
     this.judgeCwd = options.judgeCwd ?? JUDGE_CWD;
+    this.gameCwd = options.gameCwd ?? GAME_CALL_CWD;
     // The judge's filter is a default, not a policy the caller cannot change; the delegate's is
     // absent unless somebody sets it, so a build session's query goes out byte-identical.
     this.#skills = {
@@ -979,19 +984,28 @@ export class ClaudeCodeEngine implements Engine {
    * Isolated one-shot for the critic. Not a second builder: no tools, no game folder, no
    * resume of the contractor session, still no `SendMessage`/`ListAgents`. The stills go in
    * as image blocks so this is the same "look at the pictures" path the local judge uses.
+   *
+   * A game's call (`CompletePurpose.Game`) is the same one-shot without the judge's framing: the
+   * game's system prompt is the session's own and the player's turn is the prompt, in a folder of
+   * its own (`gameCwd`) with no transcript kept. Claude Code holds no reply to a schema here (its
+   * `outputFormat` retries inside the CLI, out of the caller's count); the caller validates it.
    */
   async complete(request: CompleteRequest): Promise<CompleteResponse> {
+    // Refuses a game's call with tools, pictures or a schema outside the dialect before any session.
+    gameCallSchema(request, this.id);
     if (request.tools?.length) {
       throw new EngineError(EngineFailureKind.Other, this.id, MESSAGE.NoToolLoop);
     }
+    const game = isGameCall(request);
     const preparationStartedAt = Date.now();
     const ceilingMs = request.timeoutMs ?? COMPLETE_TIMEOUT_MS;
     const cliInstallation = await this.#installation(request.signal, ceilingMs);
     request.signal?.throwIfAborted();
     const query = await this.#query();
     const login = await this.resolveLogin();
-    // One stable, empty directory for every verdict (JUDGE_CWD) — remade if the OS swept it.
-    await mkdir(this.judgeCwd, { recursive: true });
+    // One stable, empty directory for every verdict (JUDGE_CWD), and one for every game's call —
+    // remade if the OS swept it.
+    await mkdir(game ? this.gameCwd : this.judgeCwd, { recursive: true });
     const judge: JudgeState = { text: "", modelUsed: undefined, usage: { engine: this.id }, apiError: null };
     // One controller, two triggers, same shape as delegate: the caller's stop and the ceiling.
     const controller = abortControllerFor(request.signal);
@@ -1002,8 +1016,10 @@ export class ClaudeCodeEngine implements Engine {
       if (Date.now() - preparationStartedAt >= ceilingMs)
         throw new EngineError(EngineFailureKind.Timeout, this.id, MESSAGE.JudgeLaunchTimeout);
       request.signal?.throwIfAborted();
-      const options = await this.#judgeOptions(request, cliInstallation, login, controller);
-      const stream = query({ prompt: judgePrompt(request), options } as never);
+      const options = game
+        ? await this.#gameOptions(request, cliInstallation, login, controller)
+        : await this.#judgeOptions(request, cliInstallation, login, controller);
+      const stream = query({ prompt: game ? gamePrompt(request) : judgePrompt(request), options } as never);
       this.#catalogEpoch.set(stream, this.#catalog.epoch());
       // Started after the stream exists — a throw during setup must not leave a live timer.
       ceiling = setTimeout(
@@ -1060,6 +1076,41 @@ export class ClaudeCodeEngine implements Engine {
       ...(request.preferences ? { settings: await this.preferenceSettings(request.model, request.preferences) } : {}),
       // Same bg-wait ceiling as delegate: the judge has no shell, but the env contract is
       // one contract — a future tool grant must not resurrect the wait-forever default.
+      env: this.#sessionEnv(cliInstallation.env, login, { CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS: BG_WAIT_CEILING_MS }),
+      abortController: controller,
+    };
+  }
+
+  /**
+   * A game's session: one turn in the empty game folder with the game's system prompt in place of
+   * Claude Code's, no tool, no MCP server, no skill, no hook, no setting and no transcript, so
+   * nothing of this Mac's home or of a project reaches the model or is kept after it answers.
+   */
+  async #gameOptions(
+    request: CompleteRequest,
+    cliInstallation: ClaudeInstallation,
+    login: ClaudeLogin,
+    controller: AbortController,
+  ): Promise<Record<string, unknown>> {
+    const preferences = request.preferences ? await this.preferenceSettings(request.model, request.preferences) : {};
+    return {
+      ...claudeLaunchOptions(cliInstallation.path),
+      cwd: this.gameCwd,
+      systemPrompt: gameSystemPrompt(request),
+      maxTurns: 1,
+      permissionMode: "default",
+      settingSources: [],
+      settings: { ...preferences, disableAllHooks: true },
+      persistSession: false,
+      mcpServers: {},
+      strictMcpConfig: true,
+      tools: [],
+      allowedTools: [],
+      skills: [],
+      disallowedTools: [...JUDGE_DISALLOWED_TOOLS],
+      sandbox: this.#toolless,
+      ...modelOption(request.model ?? this.#model),
+      ...(request.effort ? { effort: request.effort } : {}),
       env: this.#sessionEnv(cliInstallation.env, login, { CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS: BG_WAIT_CEILING_MS }),
       abortController: controller,
     };
@@ -2042,6 +2093,24 @@ function judgePrompt(request: CompleteRequest): unknown {
       parent_tool_use_id: null,
     };
   })();
+}
+
+/** A game's system prompt: the request's own, then any system message, as the session's system prompt. */
+function gameSystemPrompt(request: CompleteRequest): string {
+  const system = request.messages.filter((message) => message.role === "system").map((message) => message.content);
+  return [request.systemPrompt, ...system].filter(Boolean).join("\n\n");
+}
+
+/**
+ * A game's turn: every other message in order (a repair turn's earlier answer and what was wrong
+ * with it after the player's turn), as the one prompt of a one-turn session.
+ */
+function gamePrompt(request: CompleteRequest): string {
+  return request.messages
+    .filter((message) => message.role !== "system")
+    .map((message) => message.content)
+    .filter(Boolean)
+    .join("\n\n");
 }
 
 /**

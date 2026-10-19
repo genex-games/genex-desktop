@@ -69,7 +69,9 @@ The large-context inference ceiling is 25 minutes to permit cold prompt loading 
 Apple Silicon; explicit request deadlines and the enclosing session cancellation still win.
 The server prompt-cache RAM budget is disabled to avoid a second unbounded memory pool.
 Reasoning defaults low (512 tokens); medium/high/max use 2048/8192/unbounded thinking budgets,
-within each request's output and deadline limits. The pinned server reads
+within each request's output and deadline limits. A game's call that names no effort, or any
+request asking for `none`, does not think (budget 0), so the game's small output budget is spent
+on its answer ([a game's calls](#a-games-calls)). The pinned server reads
 [`reasoning_budget_tokens`](https://github.com/PrismML-Eng/llama.cpp/blob/9a9394a/tools/server/server-common.cpp#L1354) in the request body (not `reasoning_budget`); the process default is
 unrestricted so the max setting is not silently capped. Completed thinking is accounted in
 usage but is not replayed into session history.
@@ -166,6 +168,32 @@ schemas retain nested objects, arrays and enums. Assets still come from the conf
 service or Blender; Bonsai orchestrates them, it does not replace the generators. Existing
 consent, credential and paid-asset settings still apply. Downloaded files alone do not prove
 an asset was integrated or used in the game.
+
+## A game's calls
+
+A call a game makes at play time reaches an engine as `complete()` with
+`purpose: CompletePurpose.Game` and the game's `responseSchema`
+([game-calls.ts](../src/substrate/engines/game-calls.ts)). Every engine first refuses, before
+anything is sent, a game's call with tools or pictures and any schema outside genex.games' closed
+dialect (`checkSchema` in `shared/game-ai-schema.ts`). What each engine then sends:
+
+- **Ollama, a model server you run, Bonsai**: the schema as OpenAI's `response_format`
+  (`json_schema`, name `game_reply`), which Ollama reads as its `format` and llama.cpp, LM Studio
+  and vLLM decode against as a grammar. pi-ai has no option for it, so the Ollama and server
+  engines add it through pi-ai's `onPayload` hook; Bonsai writes its own body. `strict` is true
+  only when every object requires all its properties and no node names a numeric, length or item
+  bound (`strictSchemaFits`).
+- **OpenRouter**: `provider: {allow_fallbacks: false, require_parameters: true,
+  data_collection: "deny"}`, and the schema only for a model whose catalog lists
+  `structured_outputs` with an object root (hosted providers take no other). An Anthropic model
+  gets one `cache_control` mark, on the system prompt, instead of pi-ai's marks on the last turn.
+- **Claude Code**: a one-turn session with the game's system prompt in place of Claude Code's, the
+  other messages as its prompt, no tools, MCP servers, skills, hooks or settings, no transcript
+  (`persistSession: false`), in `GAME_CALL_CWD` (an empty folder in the OS's temp, apart from the
+  judges'). It holds no reply to the schema: the caller validates every reply.
+- **Codex**: refused as unavailable before anything runs, because its shell cannot be removed.
+
+Every other completion's body is unchanged. `engine-game-calls.test.ts` holds each engine's body.
 
 ## Verification
 

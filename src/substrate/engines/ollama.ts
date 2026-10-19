@@ -26,11 +26,14 @@ import {
   isCutConnection,
   longHaulFetch,
   needsVision,
+  onPayload,
   type PiAssistant,
   piContext,
   type PiStreamFn,
   streamHttpStatus,
+  withResponseFormat,
 } from "./pi-completions.ts";
+import { gameCallSchema } from "./game-calls.ts";
 import { supersededBy } from "../hardware.ts";
 import { childEnv } from "../child-env.ts";
 import { HOUR_MS, SECOND_MS } from "../../shared/duration.ts";
@@ -442,6 +445,9 @@ export class OllamaEngine implements Engine {
   }
 
   async complete(request: CompleteRequest): Promise<CompleteResponse> {
+    // Ollama's OpenAI-compatible endpoint reads `response_format` as its own `format`: the reply is
+    // decoded against the game's schema, not merely asked to fit it.
+    const schema = gameCallSchema(request, this.id);
     const modelId = request.model ?? (await this.defaultModel());
     if (!modelId) {
       throw new EngineError(EngineFailureKind.Unavailable, this.id, MESSAGE.NoModel);
@@ -462,6 +468,7 @@ export class OllamaEngine implements Engine {
         ...(request.signal ? { signal: request.signal } : {}),
         ...(request.maxTokens ? { maxTokens: request.maxTokens } : {}),
         ...(thinking && request.effort ? { reasoningEffort: normalizeEffort(request.effort) } : {}),
+        ...onPayload(schema ? withResponseFormat(schema) : null),
       });
       await drainPiStream(stream, request, this.id);
       const assistant = (await stream.result()) as PiAssistant;
