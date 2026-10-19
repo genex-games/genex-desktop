@@ -447,6 +447,9 @@ describe("play-time AI service: Genex picks, and asks once", () => {
     assert.equal(answer.code, null);
     assert.equal(answer.view?.door, AiDoor.Local);
     assert.ok(!r.notices.notices.some((notice) => notice.kind === GameAiNoticeKind.Consent));
+    const pill = r.bars.at(-1);
+    assert.equal(pill?.label, LOCAL_QWEN.model, "the pill names the model granted");
+    assert.equal(pill?.note, PlayAiNote.FirstUse);
   });
 
   it("asks once before a key is used, and not again for that game and door", async () => {

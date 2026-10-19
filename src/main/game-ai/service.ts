@@ -629,7 +629,8 @@ export class GameAiServiceImpl implements GameAiService {
 
   async #granted(game: AiGameKey, model: AiModelRef, consent: AiConsent, requires: AiRequirement) {
     const grant = await this.#deps.grants.grant(game, model, consent, requires);
-    this.#menus.delete(game);
+    // Read the menu again: it names the game's model now, and the pill draws from it.
+    await this.#menu(game, true);
     this.#changed(game, PlayAiNote.FirstUse);
     return { view: await this.#view(grant), code: null };
   }
