@@ -222,6 +222,11 @@ export const STUDIO_INVOKE_CHANNELS = {
   "studio:game-ai.publish-facts": "gameAiPublishFacts",
   "studio:game-ai.credits": "gameAiCredits",
   "studio:game-ai.checkout": "gameAiCheckout",
+  "studio:plan-watcher": "planWatcher",
+  "studio:plan-watcher.switch": "planWatcherSwitch",
+  "studio:plan-watcher.sign-in": "planWatcherSignIn",
+  "studio:plan-watcher.cancel": "planWatcherCancelSignIn",
+  "studio:plan-watcher.sign-out": "planWatcherSignOut",
   "studio:genex-account.read": "genexAccount",
   "studio:genex-account.sign-in": "genexSignIn",
   "studio:genex-account.cancel": "genexCancelSignIn",
@@ -480,6 +485,11 @@ export interface StudioInvokePayloads {
   "studio:game-ai.publish-facts": { project: string };
   "studio:game-ai.credits": undefined;
   "studio:game-ai.checkout": { product: Arg<"gameAiCheckout", 0> };
+  "studio:plan-watcher": undefined;
+  "studio:plan-watcher.switch": { enabled: boolean };
+  "studio:plan-watcher.sign-in": undefined;
+  "studio:plan-watcher.cancel": undefined;
+  "studio:plan-watcher.sign-out": undefined;
   "studio:genex-account.read": undefined;
   "studio:genex-account.sign-in": undefined;
   "studio:genex-account.cancel": undefined;

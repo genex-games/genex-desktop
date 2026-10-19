@@ -98,6 +98,11 @@ const NATIVE_CHANNELS = [
   "studio:game-ai.report",
   "studio:game-ai.check",
   "studio:game-ai.checkout",
+  // The plan watcher: turning it on polls genex.games and runs the person's own CLI on their plan,
+  // signing in opens the browser for a player credential, signing out removes it from the secret store.
+  "studio:plan-watcher.switch",
+  "studio:plan-watcher.sign-in",
+  "studio:plan-watcher.sign-out",
 ] as const satisfies readonly StudioInvokeChannel[];
 /**
  * Native steps inside a handler, asserted by name with `assertNativeActionAllowed`; no channel of
@@ -395,6 +400,9 @@ const FIXTURE_SAFE = [
   "studio:game-ai.recommend",
   "studio:game-ai.publish-facts",
   "studio:game-ai.credits",
+  // The plan watcher's view and a sign-in's cancel answer from memory: no socket opens.
+  "studio:plan-watcher",
+  "studio:plan-watcher.cancel",
 ] as const satisfies readonly StudioInvokeChannel[];
 export type NativeChannel = (typeof NATIVE_CHANNELS)[number];
 export type NativeStep = (typeof NATIVE_STEPS)[number];
