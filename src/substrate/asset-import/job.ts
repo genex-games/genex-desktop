@@ -10,9 +10,12 @@
  *   <job>/tmp/          the importer's TMPDIR
  */
 import { BuildTarget } from "../../shared/game-project.ts";
+import type { TextureUsage } from "./basis-encoder.ts";
 import { type AssetImportRefusal, ImportConverter, isAssetImportRefusal } from "./import-plan.ts";
 import { Ktx2FamilySkip } from "./ktx2.ts";
+import { type EncodedTexture, parseEncodedTexture } from "./texture-encode.ts";
 import { TextureCompression, type TranscodedTexture } from "./texture-table.ts";
+import { isTextureUsage } from "./texture-usage.ts";
 
 /** The job folder's fixed names. Wire values between host and importer: never rename one. */
 export const ImportJobLayout = {
@@ -54,6 +57,8 @@ export interface ImportJobFile {
   name: string;
   /** An OBJ's material library, copied as `in/<index>.mtl`, and its folder relative to the OBJ. */
   mtl?: { input: string; dir: string };
+  /** A `texture-encode` file's resolved usage (C-12). */
+  usage?: TextureUsage;
 }
 
 /** `job.json`. */
@@ -80,6 +85,8 @@ export type ImportReceiptEntry =
       families?: ImportFamilyOutput[];
       familiesSkipped?: Ktx2FamilySkip;
       issues?: ImportIssue[];
+      /** An encoded loose texture's usage, source size and class (C-12). */
+      texture?: EncodedTexture;
     }
   | { index: number; ok: false; refusal: AssetImportRefusal; detail: string };
 
@@ -114,16 +121,25 @@ export function isJobFile(rel: unknown, folder: "in" | "out", at: number): rel i
 
 function parseJobFile(value: unknown): ImportJobFile | null {
   if (!isObject(value) || !isIndex(value.index)) return null;
-  const { index, input, ext, converter, output, name, mtl } = value;
+  const { index, input, ext, converter, output, name, mtl, usage } = value;
   const valid =
     isJobFile(input, "in", index) &&
     isJobFile(output, "out", index) &&
     typeof ext === "string" &&
     typeof converter === "string" &&
     CONVERTERS.includes(converter) &&
-    typeof name === "string";
+    typeof name === "string" &&
+    (usage === undefined || isTextureUsage(usage));
   if (!valid) return null;
-  const file: ImportJobFile = { index, input, ext, converter: converter as ImportConverter, output, name };
+  const file: ImportJobFile = {
+    index,
+    input,
+    ext,
+    converter: converter as ImportConverter,
+    output,
+    name,
+    ...(isTextureUsage(usage) ? { usage } : {}),
+  };
   if (mtl === undefined) return file;
   if (!isObject(mtl) || !isJobFile(mtl.input, "in", index) || typeof mtl.dir !== "string") return null;
   return { ...file, mtl: { input: mtl.input, dir: mtl.dir } };
@@ -180,6 +196,11 @@ function parseTextureFields(value: Json, index: number): Partial<Extract<ImportR
   if (value.familiesSkipped !== undefined) {
     if (typeof value.familiesSkipped !== "string" || !SKIPS.includes(value.familiesSkipped)) return null;
     fields.familiesSkipped = value.familiesSkipped as Ktx2FamilySkip;
+  }
+  if (value.texture !== undefined) {
+    const texture = parseEncodedTexture(value.texture);
+    if (!texture) return null;
+    fields.texture = texture;
   }
   return fields;
 }

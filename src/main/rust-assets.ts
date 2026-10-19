@@ -23,6 +23,7 @@ import { MINUTE_MS } from "../shared/duration.ts";
 import { assetExtension } from "../shared/game-assets.ts";
 import { type BuildTarget, GameStack } from "../shared/game-project.ts";
 import { readRegularFile, writeNewFile } from "../substrate/fsx.ts";
+import type { TextureUsage } from "../substrate/asset-import/basis-encoder.ts";
 import { IMPORTER_TOOLS_ENV } from "../substrate/asset-import/decoders.ts";
 import { isGlb, readGlb } from "../substrate/asset-import/glb.ts";
 import {
@@ -45,6 +46,7 @@ import { looksLikeRadiance } from "../substrate/asset-import/hdr.ts";
 import { type Ktx2FamilySkip, readKtx2Header } from "../substrate/asset-import/ktx2.ts";
 import { objMaterialLibrary } from "../substrate/asset-import/obj.ts";
 import { readGameAsset } from "../substrate/asset-import/safe-asset.ts";
+import { type EncodedTexture, stageTextureUsages } from "../substrate/asset-import/texture-encode.ts";
 import {
   familyFileName,
   KTX2_VK_FORMAT,
@@ -75,6 +77,15 @@ const IMPORT_LABEL = "asset-import";
 export const IMPORT_JOBS_MAX = 4;
 /** The stage's folder of game assets (`rust-stage.ts` copies the game's `assets/` there). */
 const STAGE_ASSETS_DIR = "assets";
+
+/** The steps whose output is their input, kept: the host holds the output to the input's bytes. */
+const KEPT_INPUT_STEPS: ReadonlySet<ImportConverter> = new Set([
+  ImportConverter.Ktx2Check,
+  ImportConverter.HdrCheck,
+  ImportConverter.TextureEncode,
+]);
+/** The steps that write per-family KTX2 files beside their output. */
+const FAMILY_STEPS: ReadonlySet<ImportConverter> = new Set([ImportConverter.Ktx2Check, ImportConverter.TextureEncode]);
 
 /** What every admitted output must start with, by output extension. */
 const OGG_MAGIC = [0x4f, 0x67, 0x67, 0x53] as const;
@@ -127,6 +138,8 @@ export interface RustAssetImportRequest {
   /** Posix paths under the game folder (`assets/ship.obj`). */
   files: readonly string[];
   targets: readonly BuildTarget[];
+  /** Each loose texture's resolved usage (`texture-usage.ts`), by its path: those are encoded (C-12). */
+  usages?: ReadonlyMap<string, TextureUsage>;
   /** The build's Stop: a job in flight is ended, and its file refused `importer-failed`. */
   signal?: AbortSignal;
 }
@@ -153,6 +166,8 @@ export interface ImportedAsset {
   families?: ImportOutput[];
   /** Why a Basis KTX2 got no per-family files. */
   familiesSkipped?: Ktx2FamilySkip;
+  /** An encoded loose texture's usage, source size and class (C-12). */
+  texture?: EncodedTexture;
 }
 
 /** One import's outcome, file by file, in request order. */
@@ -222,7 +237,8 @@ async function prepare(
   const results: ImportedAsset[] = [];
   const planned: Planned[] = [];
   for (const [at, file] of request.files.entries()) {
-    const step = planImport(request.stack, file);
+    const usage = request.usages?.get(file);
+    const step = planImport(request.stack, file, usage);
     if (!runsImporter(step)) {
       results.push({ file, action: step.action, ...(step.refusal ? { refusal: step.refusal } : {}) });
       continue;
@@ -246,6 +262,7 @@ async function prepare(
       output: `${ImportJobLayout.Out}/${at}.${step.output}`,
       name: stem(file),
       ...(mtl ? { mtl } : {}),
+      ...(step.converter === ImportConverter.TextureEncode && usage ? { usage } : {}),
     };
     results.push({ file, action: step.action, converter: step.converter });
     planned.push({ at: results.length - 1, step, job });
@@ -311,6 +328,8 @@ function looksLike(output: string, bytes: Uint8Array): boolean {
   }
   if (output === "ktx2") return readKtx2Header(bytes) !== null;
   if (output === "hdr") return looksLikeRadiance(bytes);
+  // An encoded texture's output is its source image, held to the input's digest by `admitOutput`.
+  if (output === "png" || output === "jpg" || output === "jpeg") return bytes.byteLength > 0;
   if (output === "ogg") return OGG_MAGIC.every((byte, i) => bytes[i] === byte);
   if (output === "gltf") {
     try {
@@ -329,8 +348,8 @@ async function admitOutput(jobDir: string, planned: Planned, source: string): Pr
   if (!info?.isFile() || info.size > IMPORT_OUTPUT_MAX_BYTES) return null;
   const bytes = await readRegularFile(file, IMPORT_OUTPUT_MAX_BYTES).catch(() => null);
   if (!bytes || !looksLike(planned.step.output, bytes)) return null;
-  // A kept KTX2 or HDR map must be the very file delivered: the importer only checks it.
-  if (planned.step.converter === ImportConverter.Ktx2Check || planned.step.converter === ImportConverter.HdrCheck) {
+  // A kept KTX2, HDR map or encoded texture's image must be the very file delivered: the importer only reads it.
+  if (KEPT_INPUT_STEPS.has(planned.step.converter)) {
     const input = await readFile(path.join(jobDir, ...planned.job.input.split("/")));
     if (sha256(input) !== sha256(bytes)) return null;
   }
@@ -401,14 +420,15 @@ async function admitLine(
   if (!line.ok) return { action: ImportAction.Refuse, refusal: line.refusal };
   const output = line.output === item.job.output ? await admitOutput(jobDir, item, entry.file) : null;
   if (!output) return failed;
-  const families =
-    item.step.converter === ImportConverter.Ktx2Check ? await admitFamilies(jobDir, line, entry.file) : [];
+  const families = FAMILY_STEPS.has(item.step.converter) ? await admitFamilies(jobDir, line, entry.file) : [];
   if (!families) return failed;
+  const texture = item.step.converter === ImportConverter.TextureEncode ? line.texture : undefined;
   return {
     output,
     ...(line.textures ? { textures: line.textures } : {}),
     ...(line.families ? { families } : {}),
     ...(line.familiesSkipped ? { familiesSkipped: line.familiesSkipped } : {}),
+    ...(texture ? { texture } : {}),
   };
 }
 
@@ -481,9 +501,11 @@ export interface StagedImportFile {
   refusal?: AssetImportRefusal | StagePlacementRefusal;
   /** The output placed in the stage (for a converted file, under its new name). */
   output?: StagedAssetFile;
-  /** A Basis KTX2's per-family files placed beside it. */
+  /** A Basis KTX2's (or an encoded texture's) per-family files placed beside it. */
   families?: StagedAssetFile[];
   familiesSkipped?: Ktx2FamilySkip;
+  /** An encoded loose texture's usage, source size and class (C-12). */
+  texture?: EncodedTexture;
 }
 
 /** The stage step's record in the build receipt (`assets`). */
@@ -542,8 +564,10 @@ async function importEach(
 ): Promise<ImportedAsset[] | null> {
   const results: ImportedAsset[] = [];
   const queue: number[] = [];
+  const usages = new Map<string, TextureUsage>();
+  for (const row of await stageTextureUsages(request.stage, files)) if (row.usage) usages.set(row.path, row.usage);
   for (const [at, file] of files.entries()) {
-    const step = planImport(GameStack.RustWgpu, file);
+    const step = planImport(GameStack.RustWgpu, file, usages.get(file));
     results.push({ file, action: step.action, ...(step.refusal ? { refusal: step.refusal } : {}) });
     if (runsImporter(step)) queue.push(at);
   }
@@ -557,6 +581,7 @@ async function importEach(
         stack: GameStack.RustWgpu,
         files: [file],
         targets,
+        usages,
         ...(request.signal ? { signal: request.signal } : {}),
       });
       jobDirs.push(one.jobDir);
@@ -593,6 +618,18 @@ const digestOf = (output: ImportOutput): StagedAssetFile => ({
 /** Whether `name` is held by a staged file other than `own`. */
 const takenBy = (taken: ReadonlySet<string>, name: string, own: string) => name !== own && taken.has(name);
 
+/** An admitted file's family KTX2s placed beside it; one whose name another staged file holds is left out. */
+async function placeFamilies(stage: string, entry: ImportedAsset, taken: Set<string>): Promise<StagedAssetFile[]> {
+  const families: StagedAssetFile[] = [];
+  for (const family of entry.families ?? []) {
+    const familyBytes = takenBy(taken, family.file, entry.file) ? null : await admittedBytes(family);
+    if (!familyBytes || !(await placeFile(stage, family.file, familyBytes))) continue;
+    taken.add(family.file);
+    families.push(digestOf(family));
+  }
+  return families;
+}
+
 /** One admitted file placed in the stage: its row, refused `name-taken` when its output's name is held. */
 async function placeOne(stage: string, entry: ImportedAsset, taken: Set<string>): Promise<StagedImportFile> {
   const { file, action, converter, output } = entry;
@@ -605,18 +642,13 @@ async function placeOne(stage: string, entry: ImportedAsset, taken: Set<string>)
   if (!(await placeFile(stage, output.file, bytes))) return refuse(StagePlacementRefusal.NameTaken);
   taken.add(output.file);
   if (output.file !== file) await rm(path.join(stage, ...file.split("/")), { force: true });
-  const families: StagedAssetFile[] = [];
-  for (const family of entry.families ?? []) {
-    const familyBytes = takenBy(taken, family.file, file) ? null : await admittedBytes(family);
-    if (!familyBytes || !(await placeFile(stage, family.file, familyBytes))) continue;
-    taken.add(family.file);
-    families.push(digestOf(family));
-  }
+  const families = await placeFamilies(stage, entry, taken);
   return {
     ...row,
     output: digestOf(output),
     ...(entry.families ? { families } : {}),
     ...(entry.familiesSkipped ? { familiesSkipped: entry.familiesSkipped } : {}),
+    ...(entry.texture ? { texture: entry.texture } : {}),
   };
 }
 

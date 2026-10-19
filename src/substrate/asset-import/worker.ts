@@ -37,8 +37,16 @@ async function importOne(jobDir: string, job: ImportJob, file: ImportJobFile): P
   const mtl = file.mtl
     ? { text: await readFile(path.join(jobDir, file.mtl.input), "utf8"), dir: file.mtl.dir }
     : undefined;
-  const { converter, ext, name } = file;
-  const result = await convertAsset({ converter, ext, name, bytes, ...(mtl ? { mtl } : {}), targets: job.targets });
+  const { converter, ext, name, usage } = file;
+  const result = await convertAsset({
+    converter,
+    ext,
+    name,
+    bytes,
+    ...(mtl ? { mtl } : {}),
+    ...(usage ? { usage } : {}),
+    targets: job.targets,
+  });
   if (!result.ok) {
     return {
       index: file.index,
@@ -61,6 +69,7 @@ async function importOne(jobDir: string, job: ImportJob, file: ImportJobFile): P
     ...(result.textures ? { textures: result.textures } : {}),
     ...(result.families ? { families } : {}),
     ...(result.familiesSkipped ? { familiesSkipped: result.familiesSkipped } : {}),
+    ...(result.texture ? { texture: result.texture } : {}),
     ...(result.issues
       ? {
           issues: result.issues

@@ -387,17 +387,15 @@ describe("converters", () => {
     assert.equal(!result.ok && result.refusal, AssetImportRefusal.ConverterMissing);
   });
 
-  it("texture encoding and GLB image sidecars are declared but not served yet: refused converter-missing, and no plan picks them", async () => {
-    for (const converter of [ImportConverter.TextureEncode, ImportConverter.GlbTextures]) {
-      const result = await convertAsset({
-        converter,
-        ext: "png",
-        name: "bark",
-        bytes: new Uint8Array([0x89, 0x50, 0x4e, 0x47]),
-        targets: [BuildTarget.Mac],
-      });
-      assert.equal(!result.ok && result.refusal, AssetImportRefusal.ConverterMissing, converter);
-    }
+  it("GLB image sidecars are declared but not served yet: refused converter-missing; no plan picks them, nor texture encoding without a usage", async () => {
+    const result = await convertAsset({
+      converter: ImportConverter.GlbTextures,
+      ext: "png",
+      name: "bark",
+      bytes: new Uint8Array([0x89, 0x50, 0x4e, 0x47]),
+      targets: [BuildTarget.Mac],
+    });
+    assert.equal(!result.ok && result.refusal, AssetImportRefusal.ConverterMissing);
     for (const file of ["assets/bark.png", "assets/bark.jpg", "assets/ship.glb"])
       for (const converter of [ImportConverter.TextureEncode, ImportConverter.GlbTextures])
         assert.notEqual(planImport(GameStack.RustWgpu, file).converter, converter, file);

@@ -77,6 +77,11 @@ its genex release). New games default by
 importable one as its own sandboxed job, at most `IMPORT_JOBS_MAX` (4) at once. The outputs
 replace their sources in the stage and never in the game folder: an OBJ, STL or PLY becomes a GLB,
 a Draco, meshopt or quantized GLB is written back plain, and a Basis KTX2 gets its per-family files.
+A PNG or JPEG whose usage resolved (a `[[texture]]` row or a model's material slot; never its name)
+is encoded once to UASTC and gets the same per-family KTX2 beside it, the image kept as the fallback
+([`texture-encode.ts`](../../src/substrate/asset-import/texture-encode.ts)); a non-square or
+non-power-of-two one is first resampled into its square power-of-two class, and the row's
+`texture` records the class (issue `resampled`).
 Every glTF first passes the Khronos validator ([`validate.ts`](../../src/substrate/asset-import/validate.ts),
 before any decoder): an error refuses it `validation-failed`, severity decided by issue code.
 A refused file leaves the build, and so does an output whose name another staged file holds
