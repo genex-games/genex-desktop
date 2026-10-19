@@ -69,7 +69,8 @@ is what puts the AI checks on the board and this method in every builder's `.stu
    studio sets; the playtest lands in `ai/tapes/<name>.jsonl`. Record again after changing a prompt,
    a schema or a site — never edit a tape by hand.
 8. **Replay it** under three seeds: `ai_replay demo=<name>` (seeds 1,2,3), then
-   `answers=edge` for the worst answers the schemas allow. Same frames on every seed, no miss.
+   `answers=edge` for the worst answers the schemas allow. Each seed replays the same frames every
+   run, with no miss.
 9. **Bench each site**: `ai_bench site=<site>` — how often a local model fits the shape, and how
    long it takes. The paid bench and the model check on the creator's own plan or key run from
    Create; Genex never pays for them.
@@ -80,7 +81,7 @@ The entry owner's board carries these; the first two decide whether the work is 
 
 - `ai-handles-no-answer` — with AI off every demo ends cleanly (fallback, or the needs-AI state).
 - `ai-no-direct-model-calls` — no vendor host, no vendor key anywhere in the build.
-- `ai-replay-deterministic` — the same frames on every seed from the tape.
+- `ai-replay-deterministic` — each seed replays the same frames every run, from the tape.
 - `ai-tape-covers-demos` — the tape answers every call the demos make.
 - `ai-output-clamped` — the largest and smallest answers the schemas allow break nothing.
 - `ai-disclosure-shown` — `state().ai.disclosed` is true once the chip is drawn.

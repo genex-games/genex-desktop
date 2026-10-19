@@ -11,7 +11,7 @@ const count = (n: number, one: string, many = `${one}s`): string => `${n} ${n ==
 /** Why an AI check failed or went unmeasured. */
 export const AI_CHECK_WORDS = {
   notDeterministic: (demo: string) =>
-    `demo "${demo}" replayed different frames under different seeds from the same tape — answers must enter the game only through ai.drain() in update(), and nothing may read the wall clock or Math.random()`,
+    `demo "${demo}" replayed different frames on two runs of the same seed from the same tape — answers must enter the game only through ai.drain() in update(), and nothing may read the wall clock or Math.random()`,
   misses: (demo: string, misses: number) =>
     `demo "${demo}" made ${count(misses, "call")} its tape has no answer for — record the demo again with ai_record after changing a prompt, a schema or a site`,
   rejected: (demo: string, rejected: number) =>

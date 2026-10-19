@@ -360,3 +360,71 @@ export function canonicalJson(value: unknown): string {
     .sort(([a], [b]) => (a < b ? -1 : Number(a > b)));
   return `{${entries.map(([key, child]) => `${JSON.stringify(key)}:${canonicalJson(child)}`).join(",")}}`;
 }
+
+// ── the worst answers a schema allows (`ai.replay` with `answers: "edge"`) ──────────────────
+
+/** Which end of its bounds an edge answer takes. Wire values: never rename one. */
+export const AiEdge = { Max: "max", Min: "min" } as const;
+export type AiEdge = (typeof AiEdge)[keyof typeof AiEdge];
+
+/** The longest string an edge answer writes, however long its schema lets it be. */
+export const AI_EDGE_MAX_CHARS = 2000;
+/** The most items an edge list holds, however many its schema allows. */
+export const AI_EDGE_MAX_ITEMS = 64;
+/** The character an edge string is written in: a wide one, the worst for a layout. */
+const EDGE_CHAR = "W";
+
+/** The edge a replay seed plays: odd seeds the largest answers, even seeds the smallest. */
+export const edgeOfSeed = (seed: number): AiEdge => (Math.abs(seed) % 2 === 1 ? AiEdge.Max : AiEdge.Min);
+
+/** A number's edge: its bound on that side, or the largest safe integer when it names none. */
+function edgeNumber(schema: AiOutputSchema, edge: AiEdge): number {
+  const integer = schema.type === AiSchemaType.Integer;
+  if (edge === AiEdge.Max) {
+    const max = schema.maximum ?? Number.MAX_SAFE_INTEGER;
+    return integer ? Math.floor(max) : max;
+  }
+  const min = schema.minimum ?? -Number.MAX_SAFE_INTEGER;
+  return integer ? Math.ceil(min) : min;
+}
+
+/** How long an edge string is, or how many items an edge list holds: its bound, within the edge's own cap. */
+function edgeCount(min: number | undefined, max: number | undefined, cap: number, edge: AiEdge): number {
+  if (edge === AiEdge.Min) return min ?? 0;
+  return Math.max(min ?? 0, Math.min(max ?? cap, cap));
+}
+
+/** The edge of a schema the dialect admits. */
+function edgeOf(schema: AiOutputSchema, edge: AiEdge): unknown {
+  if (schema.enum) return edge === AiEdge.Max ? schema.enum.at(-1) : schema.enum[0];
+  switch (schema.type) {
+    case AiSchemaType.Object:
+      return Object.fromEntries(
+        Object.entries(schema.properties ?? {}).map(([key, child]) => [key, edgeOf(child, edge)]),
+      );
+    case AiSchemaType.Array: {
+      const items = schema.items;
+      const count = edgeCount(schema.minItems, schema.maxItems, AI_EDGE_MAX_ITEMS, edge);
+      return items ? Array.from({ length: count }, () => edgeOf(items, edge)) : [];
+    }
+    case AiSchemaType.String:
+      return EDGE_CHAR.repeat(edgeCount(schema.minLength, schema.maxLength, AI_EDGE_MAX_CHARS, edge));
+    case AiSchemaType.Number:
+    case AiSchemaType.Integer:
+      return edgeNumber(schema, edge);
+    case AiSchemaType.Boolean:
+      return edge === AiEdge.Max;
+    default:
+      return null;
+  }
+}
+
+/**
+ * The worst answer `schema` admits on one side of its bounds: on `max`, the largest numbers, the
+ * longest strings, the fullest lists and every enum's last word; on `min`, the smallest, the
+ * shortest, the emptiest and the first word. A string or a list its schema leaves unbounded stops at
+ * `AI_EDGE_MAX_CHARS` or `AI_EDGE_MAX_ITEMS`. `undefined` for a schema the dialect refuses. Pure.
+ */
+export function edgeAnswer(schema: unknown, edge: AiEdge): unknown {
+  return isAiOutputSchema(schema) ? edgeOf(schema, edge) : undefined;
+}

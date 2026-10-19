@@ -36,7 +36,7 @@ const SCHEMA_PROBLEM_WORDS: Record<AiSchemaProblem, string> = {
 /** One replay's answer, as the model reads it. */
 function replayWords(result: AiReplayResult): string {
   const lines = [
-    `${result.demo}: ${result.deterministic ? "every seed replayed the same frames" : "the seeds replayed DIFFERENT frames"}.`,
+    `${result.demo}: ${result.deterministic ? "every seed replayed its frames exactly" : "a seed replayed DIFFERENT frames on two runs"}.`,
     `${count(result.misses, "call")} the tape had no answer for, ${count(result.fallbacks, "fallback")} played, ${count(result.rejected, "tape line")} refused.`,
   ];
   if (result.settled !== undefined)
@@ -55,7 +55,7 @@ export const AI_TOOL_WORDS = {
     "Check a schema for a genex-ai ask/judge/act call against the closed dialect genex.games and Studio both hold answers to: no $ref, pattern, anyOf or format; every object closed (additionalProperties: false) with every property required; at most 5 deep, 32 properties, enums of 1–32 values. Pass the JSON schema; run it before a schema goes in the game.",
   tapesDescription:
     "List this game's saved playtests (ai/tapes/<demo>.jsonl): each demo's recorded AI calls, the call sites they cover and the lines the reader refused.",
-  replayDescription: `Replay a demo from its saved playtest under each seed (at most ${AI_REPLAY_MAX_SEEDS}), on this Mac with no network: whether every seed reached the same frames, the calls the tape had no answer for and the fallbacks that played. answers=${AiReplayAnswers.None} replays with AI off (does the game still end cleanly?); answers=${AiReplayAnswers.Edge} with the largest and smallest answers its schemas allow (does the applier clamp them?).`,
+  replayDescription: `Replay a demo from its saved playtest under each seed (at most ${AI_REPLAY_MAX_SEEDS}), on this Mac with no network: whether each seed replays the same frames every run, the calls the tape had no answer for and the fallbacks that played. answers=${AiReplayAnswers.None} replays with AI off (does the game still end cleanly?); answers=${AiReplayAnswers.Edge} with the largest and smallest answers its schemas allow (does the applier clamp them?).`,
   recordDescription:
     "Play a demo with this Mac's own models and save what they answered as its playtest (ai/tapes/<demo>.jsonl). Free, never the network; the studio caps the calls and runs one at a time. Record again after changing a prompt, a schema or a call site.",
   benchDescription: `Sample one call site on this Mac's models (at most ${AI_BENCH_MAX_SAMPLES} samples): how many replies fit the game's shape, the median reply time and tokens. Free, never the network.`,
