@@ -1,22 +1,26 @@
 /**
- * The WebAssembly decoders the importer runs: the Basis Universal transcoder, Draco's glTF decoder,
- * meshoptimizer's decoder, its meshlet clusterizer and its simplifier (import-time LODs), the
- * builds the pinned `three` package ships. Each is loaded from
- * its file with its WebAssembly handed over as bytes, so nothing is fetched. The importer runs
- * them inside its own sandbox (no network, writes only its job folder).
+ * The importer's tools: the Basis Universal v2.50 build (its transcoder; the same build encodes,
+ * `basis-encoder.ts`), Draco's glTF decoder from npm `draco3dgltf`, and meshoptimizer's decoder,
+ * meshlet clusterizer and simplifier (import-time LODs) from npm `meshoptimizer`. They live in one
+ * folder, the importer tools folder ({@link importerToolsDir}): the packaged app carries it in its
+ * resources (`scripts/toolchains/importer-tools.ts` stages it at build time), and a development
+ * checkout reads the npm packages in place and the Basis build where its fetch keeps it. Every
+ * file is held to its size and sha256 ({@link IMPORTER_TOOL_FILES}) before anything in it is
+ * evaluated, and each WebAssembly module is handed over as bytes, so nothing is fetched or read
+ * behind the pins. The importer runs them inside its own sandbox (no network, writes only its job
+ * folder).
  *
  * Shipping them is copying third-party code: `IMPORT_DECODERS` names each one's upstream and
  * licence, and THIRD-PARTY-NOTICES.md's "Asset importer decoders" table must list every file
  * with both (`assertImportDecodersListed`, held by `third-party-notices.test.ts`).
- * TODO(M3): carry these files in the packaged app and the toolchain store instead of resolving
- * them in `node_modules` (with the importer itself, `rust-assets.ts`; no catalog package owns it
- * yet, so the M2c integration left it open).
  */
-import { readFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { lstat, readFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 import vm from "node:vm";
+import { BASIS_ENCODER } from "./basis-encoder.ts";
 
 /** A decoder the importer runs. Wire values in the import receipt: never rename one. */
 export const ImportDecoder = {
@@ -28,67 +32,195 @@ export const ImportDecoder = {
 } as const;
 export type ImportDecoder = (typeof ImportDecoder)[keyof typeof ImportDecoder];
 
-/** Where a decoder's files are, under the `three` package, and what notice it needs. */
+/** The environment variable that names the importer tools folder (the host sets it for the importer). */
+export const IMPORTER_TOOLS_ENV = "GENEX_IMPORTER_TOOLS";
+
+/** The folder of each tool under the importer tools folder. */
+export const ImporterToolFolder = {
+  Basis: `basis-encoder-${BASIS_ENCODER.version}`,
+  Draco: "draco3dgltf",
+  Meshoptimizer: "meshoptimizer",
+} as const;
+export type ImporterToolFolder = (typeof ImporterToolFolder)[keyof typeof ImporterToolFolder];
+
+/** One pinned file of a tool. */
+export interface ImporterToolFile {
+  sha256: string;
+  bytes: number;
+}
+
+/** The npm package a tool folder is copied from in a development checkout, at its exact version. */
+export const IMPORTER_TOOL_PACKAGES = {
+  [ImporterToolFolder.Draco]: { name: "draco3dgltf", version: "1.5.9" },
+  [ImporterToolFolder.Meshoptimizer]: { name: "meshoptimizer", version: "1.3.0" },
+} as const;
+
+const basisFile = (index: 0 | 1) => BASIS_ENCODER.files[index];
+
+/**
+ * Every file the importer runs, as `<folder>/<file>` under the importer tools folder, with its
+ * pin. A package upgrade changes these pins, and the notices row with them.
+ */
+export const IMPORTER_TOOL_FILES: Readonly<Record<string, ImporterToolFile>> = {
+  [`${ImporterToolFolder.Basis}/${basisFile(0).name}`]: { sha256: basisFile(0).sha256, bytes: basisFile(0).bytes },
+  [`${ImporterToolFolder.Basis}/${basisFile(1).name}`]: { sha256: basisFile(1).sha256, bytes: basisFile(1).bytes },
+  "draco3dgltf/draco_decoder_gltf_nodejs.js": {
+    sha256: "9927d2886d34906aec5258d091a162f3d9f59ab7e84fd6a81961987bca3c363f",
+    bytes: 54_804,
+  },
+  "draco3dgltf/draco_decoder_gltf.wasm": {
+    sha256: "39b78cec9398af525d76f7eecf336ccf829891cec9524905e55fe686499834bf",
+    bytes: 183_697,
+  },
+  "meshoptimizer/meshopt_decoder.mjs": {
+    sha256: "10b313edaa0e322b0c1b46443f6c8b186b42139fe1eca189d50c09511d0ebedc",
+    bytes: 29_019,
+  },
+  "meshoptimizer/meshopt_clusterizer.js": {
+    sha256: "ab1841427630c3c7be0fa53cf8f0a5c6b8b284618200be9d7762b807b45cec01",
+    bytes: 32_101,
+  },
+  "meshoptimizer/meshopt_simplifier.js": {
+    sha256: "c3098ee4cb4fc242b84f064c88898e76e44bf58b0e1f693507f323c08cdbb5ed",
+    bytes: 67_671,
+  },
+};
+
+/** Where a decoder's files are, under the importer tools folder, and what notice it needs. */
 export interface DecoderRecord {
-  /** Paths under `three/` (its `examples/jsm/*` export). */
+  /** Paths under the importer tools folder (`<folder>/<file>`), each a key of {@link IMPORTER_TOOL_FILES}. */
   files: readonly string[];
   upstream: string;
   license: string;
 }
 
-/** Every decoder the importer copies from `three`, with its upstream and licence (THIRD-PARTY-NOTICES.md). */
+/** Every decoder the importer runs, with its upstream and licence (THIRD-PARTY-NOTICES.md). */
 export const IMPORT_DECODERS = {
   [ImportDecoder.Basisu]: {
-    files: ["examples/jsm/libs/basis/basis_transcoder.js", "examples/jsm/libs/basis/basis_transcoder.wasm"],
-    upstream: "https://github.com/BinomialLLC/basis_universal",
-    license: "Apache-2.0",
+    files: [`${ImporterToolFolder.Basis}/${basisFile(0).name}`, `${ImporterToolFolder.Basis}/${basisFile(1).name}`],
+    upstream: BASIS_ENCODER.upstream,
+    license: BASIS_ENCODER.license,
   },
   [ImportDecoder.Draco]: {
-    files: ["examples/jsm/libs/draco/gltf/draco_decoder.js", "examples/jsm/libs/draco/gltf/draco_decoder.wasm"],
+    files: ["draco3dgltf/draco_decoder_gltf_nodejs.js", "draco3dgltf/draco_decoder_gltf.wasm"],
     upstream: "https://github.com/google/draco",
     license: "Apache-2.0",
   },
   [ImportDecoder.Meshopt]: {
-    files: ["examples/jsm/libs/meshopt_decoder.module.js"],
+    files: ["meshoptimizer/meshopt_decoder.mjs"],
     upstream: "https://github.com/zeux/meshoptimizer",
     license: "MIT",
   },
   [ImportDecoder.MeshoptClusterizer]: {
-    files: ["examples/jsm/libs/meshopt_clusterizer.module.js"],
+    files: ["meshoptimizer/meshopt_clusterizer.js"],
     upstream: "https://github.com/zeux/meshoptimizer",
     license: "MIT",
   },
   [ImportDecoder.MeshoptSimplifier]: {
-    files: ["examples/jsm/libs/meshopt_simplifier.module.js"],
+    files: ["meshoptimizer/meshopt_simplifier.js"],
     upstream: "https://github.com/zeux/meshoptimizer",
     license: "MIT",
   },
 } as const satisfies Record<ImportDecoder, DecoderRecord>;
 
-const require = createRequire(import.meta.url);
+/** Why a tool file was refused. Wire values: never rename one. */
+export const ImporterToolFault = {
+  /** Not there, or not a regular file (a link, a folder, a device). */
+  Missing: "missing",
+  /** There, but not the pinned bytes. */
+  Mismatch: "mismatch",
+  /** A path no tool pins. */
+  Unpinned: "unpinned",
+} as const;
+export type ImporterToolFault = (typeof ImporterToolFault)[keyof typeof ImporterToolFault];
 
-/** The absolute path of a decoder file under the `three` package. */
-export function decoderFile(file: string): string {
-  return require.resolve(`three/${file}`);
+/** A tool file the importer will not run, and why. */
+export class ImporterToolError extends Error {
+  readonly fault: ImporterToolFault;
+  readonly file: string;
+  constructor(fault: ImporterToolFault, file: string) {
+    super(`importer tool ${file}: ${fault}`);
+    this.name = "ImporterToolError";
+    this.fault = fault;
+    this.file = file;
+  }
+}
+
+/** This checkout's root (decoders.ts is `src/substrate/asset-import/`). */
+const REPO = fileURLToPath(new URL("../../../", import.meta.url));
+
+/**
+ * Where a development checkout keeps each tool folder: the npm packages in its `node_modules`, the
+ * Basis build where `node scripts/toolchains/importer-tools.ts fetch` puts it.
+ */
+export function devToolFolder(folder: ImporterToolFolder, repo = REPO): string {
+  if (folder === ImporterToolFolder.Basis) return path.join(repo, ".studio-dev", "tools", folder);
+  return path.join(repo, "node_modules", IMPORTER_TOOL_PACKAGES[folder].name);
+}
+
+/** The importer tools folder the environment names, or null for a development checkout's own. */
+export function importerToolsDir(env: NodeJS.ProcessEnv = process.env): string | null {
+  const dir = env[IMPORTER_TOOLS_ENV];
+  return dir ? path.resolve(dir) : null;
+}
+
+/** The absolute path of a tool file (`<folder>/<file>`), in the named tools folder or this checkout's. */
+export function decoderFile(file: string, env: NodeJS.ProcessEnv = process.env): string {
+  const dir = importerToolsDir(env);
+  if (dir) return path.join(dir, file);
+  const [folder = "", ...rest] = file.split("/");
+  const known = Object.values(ImporterToolFolder).find((value) => value === folder);
+  if (!known) throw new ImporterToolError(ImporterToolFault.Unpinned, file);
+  return path.join(devToolFolder(known), ...rest);
+}
+
+const sha256 = (bytes: Uint8Array) => createHash("sha256").update(bytes).digest("hex");
+
+/** A tool file's bytes, held to its pin; throws {@link ImporterToolError} before anything is evaluated. */
+export async function pinnedToolFile(file: string): Promise<{ path: string; bytes: Uint8Array }> {
+  const pin = IMPORTER_TOOL_FILES[file];
+  if (!pin) throw new ImporterToolError(ImporterToolFault.Unpinned, file);
+  const at = decoderFile(file);
+  const info = await lstat(at).catch(() => null);
+  if (!info?.isFile()) throw new ImporterToolError(ImporterToolFault.Missing, file);
+  const bytes = new Uint8Array(await readFile(at));
+  if (bytes.byteLength !== pin.bytes || sha256(bytes) !== pin.sha256) {
+    throw new ImporterToolError(ImporterToolFault.Mismatch, file);
+  }
+  return { path: at, bytes };
 }
 
 /** An Emscripten module factory: called with options, resolves to the module. */
 type EmscriptenFactory<T> = (options: { wasmBinary: Uint8Array }) => Promise<T>;
 
 /**
- * Evaluate an Emscripten loader (a CommonJS-shaped script inside an ES-module package) and start
- * it with its WebAssembly given as bytes, so it never reads or fetches anything itself.
+ * Evaluate an Emscripten loader (a CommonJS-shaped script) held to its pin, and start it with its
+ * pinned WebAssembly given as bytes, so it never reads or fetches anything itself.
  */
 async function emscripten<T>(js: string, wasm: string): Promise<T> {
-  const file = decoderFile(js);
-  const source = await readFile(file, "utf8");
+  const [loader, binary] = await Promise.all([pinnedToolFile(js), pinnedToolFile(wasm)]);
   const module: { exports: unknown } = { exports: {} };
-  const load = vm.compileFunction(source, ["module", "exports", "require", "__dirname", "__filename"], {
-    filename: file,
-  });
-  load(module, module.exports, createRequire(file), path.dirname(file), file);
+  const load = vm.compileFunction(
+    new TextDecoder().decode(loader.bytes),
+    ["module", "exports", "require", "__dirname", "__filename"],
+    { filename: loader.path },
+  );
+  load(module, module.exports, createRequire(loader.path), path.dirname(loader.path), loader.path);
   const factory = module.exports as EmscriptenFactory<T>;
-  return await factory({ wasmBinary: new Uint8Array(await readFile(decoderFile(wasm))) });
+  return await factory({ wasmBinary: binary.bytes });
+}
+
+/**
+ * Evaluate an ES module held to its pin. The verified bytes themselves are imported (as a data
+ * URL), so what runs is what was checked; meshoptimizer's modules carry their WebAssembly inline
+ * and import nothing.
+ */
+async function pinnedModule(file: string): Promise<Record<string, unknown>> {
+  const { bytes } = await pinnedToolFile(file);
+  return (await import(`data:text/javascript;base64,${Buffer.from(bytes).toString("base64")}`)) as Record<
+    string,
+    unknown
+  >;
 }
 
 /** The parts of Basis Universal's KTX2 reader the importer calls. */
@@ -115,7 +247,7 @@ export interface BasisKtx2File {
   delete(): void;
 }
 
-/** The Basis Universal transcoder module. */
+/** The Basis Universal module (the v2.50 build, whose transcoder the importer calls). */
 export interface BasisModule {
   initializeBasis(): void;
   KTX2File: new (bytes: Uint8Array) => BasisKtx2File;
@@ -123,7 +255,7 @@ export interface BasisModule {
 
 let basis: Promise<BasisModule> | null = null;
 
-/** The Basis Universal transcoder, started once per process. */
+/** The Basis Universal v2.50 transcoder (the pinned build the encoder is), started once per process. */
 export function basisTranscoder(): Promise<BasisModule> {
   basis ??= (async () => {
     const [js, wasm] = IMPORT_DECODERS[ImportDecoder.Basisu].files;
@@ -185,6 +317,20 @@ export function dracoDecoder(): Promise<DracoModule> {
   return draco;
 }
 
+/** A meshoptimizer module (a `ready` promise its export resolves). */
+interface MeshoptModule {
+  ready: Promise<void>;
+}
+
+/** meshoptimizer's module for `decoder`, its pinned file evaluated and its export ready. */
+async function meshoptModule<T extends MeshoptModule>(decoder: ImportDecoder, exported: string): Promise<T> {
+  const [file] = IMPORT_DECODERS[decoder].files;
+  const loaded = (await pinnedModule(file))[exported] as T | undefined;
+  if (!loaded) throw new ImporterToolError(ImporterToolFault.Mismatch, file);
+  await loaded.ready;
+  return loaded;
+}
+
 /** meshoptimizer's decoder, as its module exports it. */
 export interface MeshoptDecoderModule {
   ready: Promise<void>;
@@ -199,14 +345,12 @@ export interface MeshoptDecoderModule {
   ): void;
 }
 
-/** meshoptimizer's decoder, ready. */
-export async function meshoptDecoder(): Promise<MeshoptDecoderModule> {
-  const [file] = IMPORT_DECODERS[ImportDecoder.Meshopt].files;
-  const { MeshoptDecoder } = (await import(pathToFileURL(decoderFile(file)).href)) as {
-    MeshoptDecoder: MeshoptDecoderModule;
-  };
-  await MeshoptDecoder.ready;
-  return MeshoptDecoder;
+let meshopt: Promise<MeshoptDecoderModule> | null = null;
+
+/** meshoptimizer's decoder, started once per process. */
+export function meshoptDecoder(): Promise<MeshoptDecoderModule> {
+  meshopt ??= meshoptModule<MeshoptDecoderModule>(ImportDecoder.Meshopt, "MeshoptDecoder");
+  return meshopt;
 }
 
 /** meshoptimizer's meshlet output: records of four `u32` (vertex offset, triangle offset in bytes, vertex count, triangle count). */
@@ -250,14 +394,12 @@ export interface MeshoptClusterizerModule {
   ): MeshletBounds[];
 }
 
-/** meshoptimizer's meshlet clusterizer, ready. */
-export async function meshoptClusterizer(): Promise<MeshoptClusterizerModule> {
-  const [file] = IMPORT_DECODERS[ImportDecoder.MeshoptClusterizer].files;
-  const { MeshoptClusterizer } = (await import(pathToFileURL(decoderFile(file)).href)) as {
-    MeshoptClusterizer: MeshoptClusterizerModule;
-  };
-  await MeshoptClusterizer.ready;
-  return MeshoptClusterizer;
+let clusterizer: Promise<MeshoptClusterizerModule> | null = null;
+
+/** meshoptimizer's meshlet clusterizer, started once per process. */
+export function meshoptClusterizer(): Promise<MeshoptClusterizerModule> {
+  clusterizer ??= meshoptModule<MeshoptClusterizerModule>(ImportDecoder.MeshoptClusterizer, "MeshoptClusterizer");
+  return clusterizer;
 }
 
 /** The parts of meshoptimizer's simplifier module the importer calls. */
@@ -277,12 +419,10 @@ export interface MeshoptSimplifierModule {
   getScale(vertexPositions: Float32Array, vertexPositionsStride: number): number;
 }
 
-/** meshoptimizer's simplifier, ready. */
-export async function meshoptSimplifier(): Promise<MeshoptSimplifierModule> {
-  const [file] = IMPORT_DECODERS[ImportDecoder.MeshoptSimplifier].files;
-  const { MeshoptSimplifier } = (await import(pathToFileURL(decoderFile(file)).href)) as {
-    MeshoptSimplifier: MeshoptSimplifierModule;
-  };
-  await MeshoptSimplifier.ready;
-  return MeshoptSimplifier;
+let simplifier: Promise<MeshoptSimplifierModule> | null = null;
+
+/** meshoptimizer's simplifier, started once per process. */
+export function meshoptSimplifier(): Promise<MeshoptSimplifierModule> {
+  simplifier ??= meshoptModule<MeshoptSimplifierModule>(ImportDecoder.MeshoptSimplifier, "MeshoptSimplifier");
+  return simplifier;
 }

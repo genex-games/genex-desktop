@@ -20,6 +20,7 @@ import { vendorTsc } from "./vendor-tsc.ts";
 import { bundleAngle } from "./bundle-angle.mjs";
 import { bundleLinuxSysroot } from "./bundle-linux-sysroot.mjs";
 import { shipRustPayload } from "./rust-payload.ts";
+import { bundleImporterTools } from "./toolchains/importer-tools.ts";
 /**
  * Build — assembles `dist/` for Electron.
  *
@@ -28,8 +29,10 @@ import { shipRustPayload } from "./rust-payload.ts";
  *   dist/renderer/*           React UI
  *   dist/resources/*          read-only app resources: the harness seed, the bootstrap, the game
  *                             templates (with the Rust lock line, scripts/rust-payload.ts),
- *                             vendored three.js, and the TypeScript 7 compiler the in-app type
- *                             gate runs (dist/resources/tsc, scripts/vendor-tsc.ts)
+ *                             vendored three.js, the TypeScript 7 compiler the in-app type
+ *                             gate runs (dist/resources/tsc, scripts/vendor-tsc.ts), and the
+ *                             Rust asset importer's tools (dist/resources/importer-tools,
+ *                             scripts/toolchains/importer-tools.ts)
  *
  * esbuild only, deliberately: one tool, no plugin-compatibility surface, and the game workspaces
  * need no bundler at all (import maps + vendored three).
@@ -370,6 +373,9 @@ async function copyResources() {
   await cp(path.join(root, "src/game-template"), path.join(resources, "game-template"), { recursive: true });
   await cp(path.join(root, "src/game-template-cpp"), path.join(resources, "game-template-cpp"), { recursive: true });
   await shipRustPayload({ root, resources });
+  // The Rust · wgpu asset importer's tools (the Basis v2.50 build, Draco, meshoptimizer), each file
+  // held to its pin; a --release build fails closed without one (scripts/toolchains/importer-tools.ts).
+  await bundleImporterTools({ root, resources, release });
   // Genex's headless raylib platform, byte for byte: a user's Mac prewarms its headless build from it.
   await mkdir(path.join(resources, "native", "raylib-platform"), { recursive: true });
   await cp(

@@ -1,7 +1,7 @@
 /**
  * Import-time LODs (renderer pass 2, A6.9): a GLB of at least `LOD_MIN_TRIANGLES` triangles gets
  * `extras.genex_lods` on every primitive, levels simplified from the primitive's own triangles by
- * meshoptimizer's simplifier (the build `three` ships), coarser and coarser, each with its
+ * meshoptimizer's simplifier (npm `meshoptimizer` 1.3.0, `decoders.ts`), coarser and coarser, each with its
  * object-space error. Never an extension: any glTF reader still draws the primitive whole, and
  * the runtime validates the levels again (genex-render `tests/glb_lods.rs` loads the golden below).
  */

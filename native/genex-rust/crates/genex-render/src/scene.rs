@@ -107,6 +107,37 @@ impl ModelPart {
     }
 }
 
+/// A model part with its level meshes made and its chain checked, ready for the room check.
+struct PlannedPart {
+    mesh: MeshData,
+    meshlets: Option<MeshletSet>,
+    /// Level k's mesh at `levels[k - 1]`.
+    levels: Vec<MeshData>,
+    /// The chain's errors, when the part kept one.
+    errors: Option<Vec<f32>>,
+}
+
+impl PlannedPart {
+    /// `part` with a chain whose level indexes past its vertices dropped (it draws whole).
+    fn of(part: ModelPart) -> PlannedPart {
+        let ModelPart { mesh, meshlets, lods } = part;
+        let vertex_count = mesh.vertices.len() as u32;
+        let chain = lods.filter(|chain| chain.levels.iter().all(|level| level.indices.iter().all(|index| *index < vertex_count)));
+        let levels = chain.iter().flat_map(|chain| chain.levels.iter().map(|level| level_mesh(&mesh, &level.indices))).collect();
+        PlannedPart { errors: chain.map(|chain| chain.errors()), mesh, meshlets, levels }
+    }
+
+    /// The vertices and indices it adds, levels included.
+    fn rows(&self) -> (usize, usize) {
+        self.levels.iter().fold((self.mesh.vertices.len(), self.mesh.indices.len()), |(v, i), level| (v + level.vertices.len(), i + level.indices.len()))
+    }
+}
+
+/// Refused `buffer-too-large` with `detail`.
+fn refuse_too_large<T>(detail: String) -> Result<T, RenderError> {
+    Err(RenderError::refused(RenderCode::BufferTooLarge, detail))
+}
+
 /// A library mesh's levels of detail (renderer pass 2 A6.9): each level a mesh of its own (the
 /// level's triangles over the vertices they use), with the chain's object-space errors.
 #[derive(Clone, Debug, PartialEq)]
@@ -265,13 +296,27 @@ impl MeshLibrary {
         id
     }
 
-    /// Refused `mesh-invalid` when `mesh` is empty or the library would exceed `u32` indices.
+    /// Refused `mesh-invalid` when `mesh` is empty or the library would exceed `u32` indices, and
+    /// `buffer-too-large` when its vertices or indices would pass the GPU's binding
+    /// ([`BUFFER_MAX_BYTES`]: the mesh arena holds each stream in one buffer).
     fn check_room(&self, mesh: &MeshData) -> Result<(), RenderError> {
-        let empty = mesh.indices.is_empty() || mesh.vertices.is_empty();
-        let total_vertices = self.vertices.len() + mesh.vertices.len();
-        let total_indices = self.indices.len() + mesh.indices.len();
-        if empty || i32::try_from(total_vertices).is_err() || u32::try_from(total_indices).is_err() {
+        if mesh.indices.is_empty() || mesh.vertices.is_empty() {
             return Err(RenderError::refused(RenderCode::MeshInvalid, "empty mesh, or the library is full"));
+        }
+        self.check_rows(self.vertices.len() + mesh.vertices.len(), self.indices.len() + mesh.indices.len())
+    }
+
+    /// Refused when a library of `vertices` and `indices` would not fit: `mesh-invalid` past
+    /// `i32` vertices or `u32` indices, `buffer-too-large` past the GPU's binding.
+    fn check_rows(&self, vertices: usize, indices: usize) -> Result<(), RenderError> {
+        if i32::try_from(vertices).is_err() || u32::try_from(indices).is_err() {
+            return Err(RenderError::refused(RenderCode::MeshInvalid, "the library is full"));
+        }
+        let vertex_bytes = vertices as u64 * size_of::<Vertex>() as u64;
+        let index_bytes = indices as u64 * 4;
+        if vertex_bytes.max(index_bytes) > BUFFER_MAX_BYTES {
+            let detail = format!("{vertex_bytes} bytes of vertices and {index_bytes} of indices, past the {BUFFER_MAX_BYTES}-byte binding");
+            return Err(RenderError::refused(RenderCode::BufferTooLarge, detail));
         }
         Ok(())
     }
@@ -296,15 +341,28 @@ impl MeshLibrary {
     /// indexes past the part's vertices is dropped (the part draws whole); a level the library
     /// has no room for refuses the part with nothing added.
     pub fn add_part(&mut self, part: ModelPart) -> Result<MeshId, RenderError> {
-        let ModelPart { mesh, meshlets, lods } = part;
-        let vertex_count = mesh.vertices.len() as u32;
-        let chain = lods.filter(|chain| chain.levels.iter().all(|level| level.indices.iter().all(|index| *index < vertex_count)));
-        let levels: Vec<MeshData> = chain.iter().flat_map(|chain| chain.levels.iter().map(|level| level_mesh(&mesh, &level.indices))).collect();
-        self.check_room(&mesh)?;
-        let extra = levels.iter().fold((mesh.vertices.len(), mesh.indices.len()), |(v, i), level| (v + level.vertices.len(), i + level.indices.len()));
-        if i32::try_from(self.vertices.len() + extra.0).is_err() || u32::try_from(self.indices.len() + extra.1).is_err() {
-            return Err(RenderError::refused(RenderCode::MeshInvalid, "the library is full"));
+        let ids = self.add_parts(vec![part])?;
+        ids.first().copied().ok_or_else(|| RenderError::refused(RenderCode::MeshInvalid, "no part was added"))
+    }
+
+    /// [`MeshLibrary::add_part`] for every part of one model, all or nothing: every part is checked
+    /// against the room the parts before it take, before any is added, so a refused part adds none
+    /// of them (and the library is never copied to roll one back).
+    pub fn add_parts(&mut self, parts: Vec<ModelPart>) -> Result<Vec<MeshId>, RenderError> {
+        let planned: Vec<PlannedPart> = parts.into_iter().map(PlannedPart::of).collect();
+        let (mut vertices, mut indices) = (self.vertices.len(), self.indices.len());
+        for part in &planned {
+            self.check_room(&part.mesh)?;
+            let (v, i) = part.rows();
+            (vertices, indices) = (vertices + v, indices + i);
+            self.check_rows(vertices, indices)?;
         }
+        Ok(planned.into_iter().map(|part| self.push_part(part)).collect())
+    }
+
+    /// Push a checked part and its levels.
+    fn push_part(&mut self, part: PlannedPart) -> MeshId {
+        let PlannedPart { mesh, meshlets, levels, errors } = part;
         let (center, radius) = mesh.bounds();
         let id = self.push(mesh, EntryRole::Mesh, meshlets);
         let mut ids = Vec::with_capacity(levels.len());
@@ -314,10 +372,10 @@ impl MeshLibrary {
             (entry.center, entry.radius) = (center, radius);
             ids.push(level_id);
         }
-        if let Some(chain) = chain.filter(|_| !ids.is_empty()) {
-            self.lods.insert(id.0, MeshLods { levels: ids, errors: chain.errors() });
+        if let Some(errors) = errors.filter(|_| !ids.is_empty()) {
+            self.lods.insert(id.0, MeshLods { levels: ids, errors });
         }
-        Ok(id)
+        id
     }
 
     /// The levels of detail mesh `id` brought ([`MeshLibrary::add_part`]), if any.
@@ -341,6 +399,10 @@ impl MeshLibrary {
             return refuse(format!("a joint index is past the skin's {joints} joints"));
         }
         let skin_base = u32::try_from(self.skin.len()).map_err(|_| RenderError::refused(RenderCode::MeshInvalid, "the library is full"))?;
+        let skin_bytes = (self.skin.len() + data.skin.len()) as u64 * size_of::<GpuSkinVertex>() as u64;
+        if skin_bytes > BUFFER_MAX_BYTES {
+            return refuse_too_large(format!("{skin_bytes} bytes of skin rows, past the {BUFFER_MAX_BYTES}-byte binding"));
+        }
         self.check_room(&data.mesh)?;
         let mesh = self.push(data.mesh.clone(), EntryRole::Skinned, None);
         self.skin.extend_from_slice(&data.skin);
