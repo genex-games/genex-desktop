@@ -16,6 +16,7 @@
 import { MINUTE_MS, SECOND_MS } from "../../shared/duration.ts";
 import type { AiWatcherRunner } from "../../shared/game-ai-watcher.ts";
 import type { ProviderUsage } from "../../shared/provider-usage.ts";
+import { AI_DEFAULT_KEEP_FOR_BUILDING_PERCENT } from "../../shared/game-ai-views.ts";
 import {
   FALLBACK_POLICY,
   type PendingGeneration,
@@ -23,7 +24,7 @@ import {
   PlayerAuthError,
   type PlayerClient,
   type PlayerPolicy,
-  PlayerProvider,
+  type PlayerProvider,
   PlayerRelease,
   PlayerUpdateRequiredError,
   type RunnerJob,
@@ -403,7 +404,8 @@ function coolDown(ctx: PassContext, provider: PlayerProvider, seconds: number | 
 async function keptForBuilding(ctx: PassContext, claim: Claimed): Promise<boolean> {
   const { deps, state } = ctx;
   const usage = await deps.planUsage(RUNNER_FOR_PROVIDER[claim.provider]).catch(() => null);
-  const ceiling = planCeiling(usage, await deps.keepForBuildingPercent());
+  const keep = await deps.keepForBuildingPercent().catch(() => AI_DEFAULT_KEEP_FOR_BUILDING_PERCENT);
+  const ceiling = planCeiling(usage, keep);
   state.resting = ceiling.resting ? { resetsAt: ceiling.resetsAt } : null;
   if (!ceiling.resting) return false;
   const resetMs = ceiling.resetsAt ? Date.parse(ceiling.resetsAt) - nowOf(ctx) : 0;

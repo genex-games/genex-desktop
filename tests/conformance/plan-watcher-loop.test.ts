@@ -477,6 +477,20 @@ describe("builds come first", () => {
     assert.equal(calls.claim.length, 1, "a row already told is not claimed again while the plan rests");
   });
 
+  it("a share Settings cannot read is the default share, and the claimed row is still answered", async () => {
+    const usage: ProviderUsage = { measuredAt: "", windows: [{ id: "five_hour", label: "", percent: 30 }] };
+    const { client, calls } = fakeClient();
+    const { pass } = session({
+      client,
+      planUsage: async () => usage,
+      keepForBuildingPercent: async () => {
+        throw new Error("settings unreadable");
+      },
+    });
+    await pass();
+    assert.equal(calls.submit.length, 1);
+  });
+
   it("under the line it answers", async () => {
     const usage: ProviderUsage = { measuredAt: "", windows: [{ id: "five_hour", label: "5-hour limit", percent: 30 }] };
     const { client, calls } = fakeClient();
