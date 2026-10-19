@@ -104,6 +104,7 @@ import {
   compiledShellEnv,
   StudioTool,
   studioToolName,
+  withoutStackVariables,
 } from "./studio-tool-prompts.ts";
 import { limitResetMs } from "./limit-reset.ts";
 import { JUDGE_RULES, offLimitsNote, planModeNote, readOnlyNote } from "./codex-prompts.ts";
@@ -1124,7 +1125,8 @@ export class CodexEngine implements Engine {
     // A compiled game's session builds with its lock's tools ahead of the login PATH.
     const loginPath = installation?.env.PATH ?? process.env.PATH;
     const compiledEnv = compiled ? compiledShellEnv(compiled, loginPath) : {};
-    return { home, env: subscriptionEnv({ ...installation?.env, ...compiledEnv, CODEX_HOME: home }), installation };
+    const inherited = withoutStackVariables(installation?.env);
+    return { home, env: subscriptionEnv({ ...inherited, ...compiledEnv, CODEX_HOME: home }), installation };
   }
 
   #classify(err: Error, extra = ""): EngineError {

@@ -82,6 +82,7 @@ import {
   STUDIO_TOOL_PREFIX,
   StudioTool,
   studioToolName,
+  withoutStackVariables,
 } from "./studio-tool-prompts.ts";
 import { captureArgs } from "./capture-args.ts";
 import {
@@ -1296,7 +1297,7 @@ export class ClaudeCodeEngine implements Engine {
     extra: Record<string, string> = {},
   ): Record<string, string> {
     return subscriptionEnv({
-      ...installationEnv,
+      ...withoutStackVariables(installationEnv),
       ...extra,
       ...(login.source === LoginSource.Isolated ? { CLAUDE_CONFIG_DIR: this.engineHome } : {}),
     });
@@ -2321,7 +2322,7 @@ function loginVariable(): string | undefined {
  */
 function subscriptionEnv(extra: Record<string, string | undefined> = {}): Record<string, string> {
   return childEnv(
-    { ...process.env, ...extra },
+    { ...withoutStackVariables(process.env), ...extra },
     { base: "contractor", vendor: "claude", keep: ["CLAUDE_CODE_OAUTH_TOKEN"] },
   );
 }

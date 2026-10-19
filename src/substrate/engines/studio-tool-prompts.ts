@@ -188,6 +188,38 @@ export const RustSessionVariable = {
 export type RustSessionVariable = (typeof RustSessionVariable)[keyof typeof RustSessionVariable];
 
 /**
+ * The toolchain variables a session takes from the studio alone, for every compiled stack: those of
+ * the host's `cppToolchainEnv` and `rustToolchainEnv` that name a folder, a tool or a target. The
+ * operator's own (a developer's
+ * CARGO_TARGET_DIR, a login shell's EM_CONFIG) never reach a session: a session of another stack
+ * or a Three.js one would build into the operator's folders, and a Rust session the store set
+ * nothing for would check against them.
+ */
+export const STUDIO_STACK_VARIABLES: readonly string[] = [
+  "CARGO_HOME",
+  "CARGO_TARGET_DIR",
+  "CARGO_BUILD_TARGET",
+  "CARGO_ENCODED_RUSTFLAGS",
+  "RUSTC",
+  RustSessionVariable.Manifest,
+  "GENEX_CMAKE",
+  "CMAKE_GENERATOR",
+  "CMAKE_TOOLCHAIN_FILE",
+  "EM_CONFIG",
+  "EM_CACHE",
+  "EMSDK_PYTHON",
+];
+
+/** `env` without {@link STUDIO_STACK_VARIABLES}: the inherited half of a coding session's environment. */
+export function withoutStackVariables(
+  env: Record<string, string | undefined> = {},
+): Record<string, string | undefined> {
+  const kept = { ...env };
+  for (const name of STUDIO_STACK_VARIABLES) delete kept[name];
+  return kept;
+}
+
+/**
  * What the host hands a Rust · wgpu game's session besides its brief (`DelegateRequest.rust`):
  * the store's cargo on PATH, the store's CARGO_HOME (read-only, offline over the vendored crates)
  * and a CARGO_TARGET_DIR of the session's own, cloned from the prewarmed dependency build. A store

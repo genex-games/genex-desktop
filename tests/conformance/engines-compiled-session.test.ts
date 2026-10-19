@@ -359,3 +359,72 @@ describe("a C++ · raylib game's session on each engine, as it was", () => {
     assert.deepEqual(three.policy, { denyRead: ["/forbidden"], denyWrite: ["/denied"] });
   });
 });
+
+/**
+ * The operator's own toolchain variables, as a developer's shell or a login shell hands them to
+ * the studio: a CARGO_TARGET_DIR, a CARGO_HOME, an EM_CONFIG of their own. A session's stack
+ * variables come from the studio alone, so none of these reaches a session of another stack, a
+ * Three.js session, or a compiled session the store set nothing for.
+ */
+const HOST_TOOLCHAIN_ENV = {
+  CARGO_HOME: "/operator/.cargo",
+  CARGO_TARGET_DIR: "/operator/cargo-target",
+  CARGO_BUILD_TARGET: "aarch64-apple-darwin",
+  [RustSessionVariable.Manifest]: "/operator/Cargo.toml",
+  GENEX_CMAKE: "/operator/genex.cmake",
+  EM_CONFIG: "/operator/.emscripten",
+  EM_CACHE: "/operator/em-cache",
+};
+
+/** Runs `body` with the operator's toolchain variables in the studio's own environment, then restores it. */
+async function withHostToolchainEnv(body: () => Promise<void>): Promise<void> {
+  const before = Object.fromEntries(Object.keys(HOST_TOOLCHAIN_ENV).map((name) => [name, process.env[name]]));
+  Object.assign(process.env, HOST_TOOLCHAIN_ENV);
+  try {
+    await body();
+  } finally {
+    for (const [name, value] of Object.entries(before)) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
+  }
+}
+
+describe("a session's stack variables come from the studio, never the operator's shell", () => {
+  it("Claude Code: a C++ and a Three.js session have no Rust variable, a Rust session only its own", async () => {
+    await withHostToolchainEnv(async () => {
+      const { root, rust, cpp, requests } = await sessions();
+      const seen: ClaudeOptions[] = [];
+      const engine = await claudeEngine(root, seen);
+      for (const request of [requests.rust, requests.cpp, requests.three]) await engine.delegate(request);
+      const [forRust, forCpp, three] = seen;
+      assert.ok(forRust && forCpp && three, "all three sessions started");
+      for (const name of RUST_VARIABLES) assert.equal(forRust.env[name], rust.env[name], `Rust ${name}`);
+      for (const name of CPP_VARIABLES) assert.equal(forRust.env[name], undefined, `Rust: no ${name}`);
+      for (const name of CPP_VARIABLES) assert.equal(forCpp.env[name], cpp.env[name], `C++ ${name}`);
+      for (const name of RUST_VARIABLES) assert.equal(forCpp.env[name], undefined, `C++: no ${name}`);
+      for (const name of [...RUST_VARIABLES, ...CPP_VARIABLES])
+        assert.equal(three.env[name], undefined, `Three.js: no ${name}`);
+    });
+  });
+
+  it("Codex: the same, and an unprewarmed Rust session gets none of the operator's either", async () => {
+    await withHostToolchainEnv(async () => {
+      const { root, rust, cpp, requests } = await sessions();
+      const seen: CodexSeen[] = [];
+      const engine = await codexEngine(root, seen);
+      const unprewarmed = { ...requests.rust, rust: { ...rust, path: [], env: {}, targetDir: null } };
+      for (const request of [requests.rust, requests.cpp, requests.three, unprewarmed]) await engine.delegate(request);
+      const [forRust, forCpp, three, bare] = seen;
+      assert.ok(forRust && forCpp && three && bare, "all four sessions started");
+      for (const name of RUST_VARIABLES) assert.equal(forRust.env[name], rust.env[name], `Rust ${name}`);
+      for (const name of CPP_VARIABLES) assert.equal(forRust.env[name], undefined, `Rust: no ${name}`);
+      for (const name of CPP_VARIABLES) assert.equal(forCpp.env[name], cpp.env[name], `C++ ${name}`);
+      for (const name of RUST_VARIABLES) assert.equal(forCpp.env[name], undefined, `C++: no ${name}`);
+      for (const name of [...RUST_VARIABLES, ...CPP_VARIABLES]) {
+        assert.equal(three.env[name], undefined, `Three.js: no ${name}`);
+        assert.equal(bare.env[name], undefined, `unprewarmed Rust: no ${name}`);
+      }
+    });
+  });
+});

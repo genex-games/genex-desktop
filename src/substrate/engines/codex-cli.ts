@@ -11,6 +11,7 @@ import { access } from "node:fs/promises";
 import path from "node:path";
 import { runCommand } from "./claude-cli.ts";
 import { childEnv } from "../child-env.ts";
+import { withoutStackVariables } from "./studio-tool-prompts.ts";
 import { errorMessage } from "../../shared/errors.ts";
 import { CodingCliState } from "../../shared/coding-cli.ts";
 import { SECOND_MS } from "../../shared/duration.ts";
@@ -53,7 +54,7 @@ export async function findCodexBinary(): Promise<string | null> {
  * variable either — a Claude sign-in or a GitHub token is not this CLI's business.
  */
 export function codexSubscriptionEnv(extra: Record<string, string | undefined> = {}): NodeJS.ProcessEnv {
-  return childEnv({ ...process.env, ...extra }, { base: "contractor", vendor: "codex" });
+  return childEnv({ ...withoutStackVariables(process.env), ...extra }, { base: "contractor", vendor: "codex" });
 }
 
 /** Only app-selected profiles use our storage policy; legacy CLI profiles keep theirs. */
