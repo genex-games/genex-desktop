@@ -111,8 +111,8 @@ function replayOf(ctx: HarnessCtx, pass: object, build: AiBuild, demo: string, a
   return asked;
 }
 
-/** Every demo's replay of one kind, in the order the game registers them, at most `AI_CHECK_MAX_DEMOS`. */
-async function replaysOf(
+/** Every demo's replay of one kind, in the order the game registers them, at most `AI_CHECK_MAX_DEMOS`; shared by a pass. */
+export async function replaysOf(
   ctx: HarnessCtx,
   pass: object,
   build: AiBuild,
@@ -348,7 +348,7 @@ export async function scanForDirectCalls(root: string): Promise<DirectCallScan> 
 }
 
 /** The build's folder: the run's copy, or the game's own as the library lists it. */
-async function buildFolder(ctx: HarnessCtx, build: AiBuild): Promise<string | null> {
+export async function buildFolder(ctx: HarnessCtx, build: AiBuild): Promise<string | null> {
   if (build.root) return build.root;
   const games = await ctx.call(HostMethod.GameList, {}).catch(() => []);
   const game = Array.isArray(games) ? games.find((entry) => entry?.name === build.project) : null;
@@ -368,7 +368,7 @@ async function directCallsVerdict(ctx: HarnessCtx, build: AiBuild): Promise<AiVe
 // ── the measurement ────────────────────────────────────────────────────────────────────────
 
 /** The demos a pass replays: the game's registered ones, at most `AI_CHECK_MAX_DEMOS`. */
-function demosOf(evidence: AiCheckEvidence): string[] {
+export function demosOf(evidence: AiCheckEvidence): string[] {
   const demos = Array.isArray(evidence.registeredDemos) ? evidence.registeredDemos : [];
   return demos.filter((demo) => typeof demo === "string" && demo).slice(0, AI_CHECK_MAX_DEMOS);
 }
@@ -392,7 +392,7 @@ async function replayVerdict(
 }
 
 /** The build an evidence pass names, when it names one. */
-function buildOf(evidence: AiCheckEvidence | null | undefined): AiBuild | null {
+export function buildOf(evidence: AiCheckEvidence | null | undefined): AiBuild | null {
   const build = evidence?.build;
   if (!isRecord(build) || typeof build.project !== "string" || !build.project) return null;
   return { project: build.project, root: typeof build.root === "string" && build.root ? build.root : null };
