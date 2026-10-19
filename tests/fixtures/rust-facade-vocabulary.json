@@ -196,7 +196,7 @@
   },
   "animation": { "calls": [], "refusals": ["animation-asset-invalid", "animation-graph-invalid"] },
   "stream": { "calls": [], "refusals": [] },
-  "nav": { "calls": [], "refusals": [] },
+  "nav": { "calls": [], "refusals": ["nav-input-invalid", "nav-too-large"] },
   "assets": {
     "calls": ["gfx.assets().bytes", "gfx.assets().triangles", "gfx.assets().info", ".json", ".digest"],
     "refusals": ["unsafe-path", "missing", "too-large", "malformed", "not-at-reset", "not-preloaded"]
