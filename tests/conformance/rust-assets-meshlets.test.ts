@@ -246,9 +246,7 @@ describe("R2.3 import-time clusters", () => {
 
   it("the clusterizer is a listed decoder with its notice", () => {
     assert.equal(ImportDecoder.MeshoptClusterizer, "meshopt-clusterizer");
-    assert.deepEqual(IMPORT_DECODERS[ImportDecoder.MeshoptClusterizer].files, [
-      "examples/jsm/libs/meshopt_clusterizer.module.js",
-    ]);
+    assert.deepEqual(IMPORT_DECODERS[ImportDecoder.MeshoptClusterizer].files, ["meshoptimizer/meshopt_clusterizer.js"]);
     assert.equal(IMPORT_DECODERS[ImportDecoder.MeshoptClusterizer].license, "MIT");
   });
 

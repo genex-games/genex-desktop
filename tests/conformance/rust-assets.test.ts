@@ -16,6 +16,12 @@ import { type ImportSandbox, importRustAssets, type RustAssetImportDeps } from "
 import { BuildTarget, GameStack } from "../../src/shared/game-project.ts";
 import { convertAsset } from "../../src/substrate/asset-import/convert.ts";
 import { GltfComponent, meshToGlb, readGlb, writeGlb } from "../../src/substrate/asset-import/glb.ts";
+import {
+  decoderFile,
+  IMPORT_DECODERS,
+  IMPORTER_TOOL_FILES,
+  ImportDecoder,
+} from "../../src/substrate/asset-import/decoders.ts";
 import { normalizeGltf } from "../../src/substrate/asset-import/gltf-decompress.ts";
 import {
   AssetImportRefusal,
@@ -129,7 +135,12 @@ describe("per-destination texture table", () => {
 describe("Basis Universal golden corpus", () => {
   it("texture.ktx2 transcodes to the golden bytes for every family, identically across two runs", async () => {
     const golden = JSON.parse(await readFile(path.join(IMPORT, "basisu-golden.json"), "utf8"));
-    const wasm = await readFile(fileURLToPath(import.meta.resolve(`three/${golden.transcoder.file}`)));
+    assert.ok(
+      IMPORT_DECODERS[ImportDecoder.Basisu].files.includes(golden.transcoder.file),
+      "the importer's transcoder",
+    );
+    assert.equal(IMPORTER_TOOL_FILES[golden.transcoder.file]?.sha256, golden.transcoder.sha256, "pinned at v2.50");
+    const wasm = await readFile(decoderFile(golden.transcoder.file));
     assert.equal(sha(wasm), golden.transcoder.sha256, "the pinned transcoder");
     const bytes = await sample("texture.ktx2");
     assert.equal(sha(bytes), golden.source.sha256);
@@ -138,6 +149,13 @@ describe("Basis Universal golden corpus", () => {
     const second = await transcodeKtx2(bytes, families);
     assert.deepEqual(first, second);
     assert.deepEqual(first, golden.level0);
+  });
+
+  it("a v2.50-encoded UASTC texture transcodes with the pinned v2.50 transcoder to the golden bytes", async () => {
+    const golden = JSON.parse(await readFile(path.join(IMPORT, "basisu-golden.json"), "utf8"));
+    const bytes = new Uint8Array(await readFile(fileURLToPath(new URL(`../../${golden.uastc.file}`, import.meta.url))));
+    assert.equal(sha(bytes), golden.uastc.sha256);
+    assert.deepEqual(await transcodeKtx2(bytes, Object.values(TextureCompression)), golden.uastc.level0);
   });
 
   it("a damaged KTX2 is refused malformed, and the file is never rewritten", async () => {
