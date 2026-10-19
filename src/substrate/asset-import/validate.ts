@@ -22,6 +22,7 @@ import { IMPORT_DECODERS, ImportDecoder, pinnedToolFile } from "./decoders.ts";
 import { GltfComponent, readGlb } from "./glb.ts";
 import { GltfImportError, index, isObject, type Json, objects } from "./gltf-json.ts";
 import { AssetImportRefusal } from "./import-plan.ts";
+import { isPng, pngDecodes } from "./png-check.ts";
 
 /** An issue's severity: the validator report's own numbers. Wire values: never renumber one. */
 export const GltfIssueSeverity = {
@@ -62,6 +63,8 @@ export const GltfIssueCode = {
   InvalidJson: "INVALID_JSON",
   GlbUnexpectedEnd: "GLB_UNEXPECTED_END_OF_CHUNK_DATA",
   IoError: "IO_ERROR",
+  /** An embedded image that does not decode (`png-check.ts`): a warning on the image, never a refusal. */
+  ImageDataInvalid: "IMAGE_DATA_INVALID",
 } as const;
 export type GltfIssueCode = (typeof GltfIssueCode)[keyof typeof GltfIssueCode];
 
@@ -186,7 +189,40 @@ export async function validateGltf(
   const report = engine === GltfValidatorEngine.Khronos ? await khronosReport(bytes, ext) : accessorReport(bytes, ext);
   const { errors, warnings } = gateIssues(report);
   if (errors.length || report.issues.numErrors > 0) throw refusal(errors, report.issues.numErrors);
-  return warnings;
+  return [...warnings, ...embeddedImageIssues(bytes, ext)];
+}
+
+/**
+ * A warning on each PNG this file holds (in a buffer view or a `data:` URI) that does not decode:
+ * the Khronos validator reads only an image's header, and the runtime refuses such an image
+ * `texture-invalid` while the model still draws. An image named by an external URI is not in the
+ * job, and other formats are left to the validator.
+ */
+function embeddedImageIssues(bytes: Uint8Array, ext: string): GltfIssue[] {
+  const document = parseDocument(bytes, ext, new Findings());
+  if (!document) return [];
+  const buffers = bufferBytes(document.json, document.bin, ext);
+  const images: unknown[] = Array.isArray(document.json.images) ? document.json.images : [];
+  return images.flatMap((image, at) => {
+    const data = isObject(image) ? imageBytes(image, document.json, buffers) : null;
+    if (!data || !isPng(data) || pngDecodes(data)) return [];
+    return [{ code: GltfIssueCode.ImageDataInvalid, severity: GltfIssueSeverity.Warning, pointer: `/images/${at}` }];
+  });
+}
+
+/** An image's bytes where this file holds them; null for an external URI or a view out of bounds. */
+function imageBytes(image: Json, json: Json, buffers: ReadonlyArray<Uint8Array | null>): Uint8Array | null {
+  if (typeof image.uri === "string") {
+    if (!BASE64_DATA_URI.test(image.uri)) return null;
+    return new Uint8Array(Buffer.from(image.uri.replace(BASE64_DATA_URI, ""), "base64"));
+  }
+  const at = index(image.bufferView);
+  const view = at === null || !Array.isArray(json.bufferViews) ? undefined : json.bufferViews[at];
+  if (!isObject(view)) return null;
+  const buffer = buffers[index(view.buffer) ?? -1];
+  const start = typeof view.byteOffset === "number" ? view.byteOffset : 0;
+  const end = start + (typeof view.byteLength === "number" ? view.byteLength : 0);
+  return buffer && end <= buffer.byteLength ? buffer.subarray(start, end) : null;
 }
 
 // The fallback engine: the checks that keep the runtime's `gltf` crate and the decoders in bounds.

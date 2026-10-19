@@ -27,7 +27,8 @@ import { readLodSet, validateLodSet } from "../../src/substrate/asset-import/lod
 import { type MeshletSet, readMeshletSet, validateMeshletSet } from "../../src/substrate/asset-import/meshlets.ts";
 import { ReorderSkip, reorderGlb } from "../../src/substrate/asset-import/reorder.ts";
 import { addTangents, TangentSkip } from "../../src/substrate/asset-import/tangents.ts";
-import { GltfIssueSeverity, validateGltf } from "../../src/substrate/asset-import/validate.ts";
+import { GltfIssueCode, GltfIssueSeverity, validateGltf } from "../../src/substrate/asset-import/validate.ts";
+import { inwardTriangles } from "../helpers/glb-winding.ts";
 
 // biome-ignore lint/suspicious/noExplicitAny: test fixtures poke at untyped glTF JSON.
 type Json = Record<string, any>;
@@ -45,10 +46,13 @@ const COMPONENT: ReadonlyMap<unknown, number> = new Map<unknown, number>([
 ]);
 /** The FIFO vertex cache the ACMR row simulates (meshoptimizer's `analyzeVertexCache` default size). */
 const CACHE_SIZE = 16;
-/** A 1x1 RGBA PNG: the normal map's image, embedded so the validator reads no external file. */
+/**
+ * A 1x1 RGBA PNG of a flat normal (128, 128, 255): the normal map's image, embedded so the
+ * validator reads no external file, and one the runtime decodes.
+ */
 const PNG_1X1 = Uint8Array.from(
   Buffer.from(
-    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mN8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==",
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNoaPj/HwAGggL/bOBDIwAAAABJRU5ErkJggg==",
     "base64",
   ),
 );
@@ -181,7 +185,8 @@ function sphereGlb(rings: number, segments: number, parts = 1, shaded = true, mi
       for (let s = 0; s < segments; s++) {
         const a = r * (segments + 1) + s;
         const b = a + segments + 1;
-        indices.push(a, b, a + 1, a + 1, b, b + 1);
+        // Counter-clockwise seen from outside: the sphere faces out.
+        indices.push(a, a + 1, b, a + 1, b + 1, b);
       }
     }
     const shading = shaded ? { normals: Float32Array.from(positions), uvs: Float32Array.from(uvs) } : {};
@@ -275,6 +280,10 @@ const errorsOf = async (glb: Uint8Array) =>
 
 const attributesOf = (glb: Uint8Array, primitive = 0): Json =>
   (readGlb(glb) as { json: Json }).json.meshes[0].primitives[primitive].attributes;
+
+/** The validator's findings that an embedded image does not decode. */
+const undecodable = async (glb: Uint8Array) =>
+  (await validateGltf(glb, "glb")).filter((issue) => issue.code === GltfIssueCode.ImageDataInvalid);
 
 describe("MikkTSpace tangents at import (C-8)", () => {
   it("a mirrored-UV normal-mapped grid gets one tangent sign per UV island, split at the mirror seam", async () => {
@@ -444,6 +453,24 @@ describe("the runtime fallback's fixtures (C-9)", () => {
     const signs = new Set(elements(out, attributesOf(out).TANGENT).map((tangent) => tangent[3]));
     assert.deepEqual(signs, new Set([-1, 1]), "both islands");
     assert.deepEqual(await errorsOf(out), []);
+    // GF round 2: the fixture's normal map did not decode and its sphere was wound inward, so the
+    // runtime refused the image and drew the sphere inside out.
+    for (const [name, glb] of [
+      ["the source", source],
+      ["the import", out],
+    ] as const) {
+      assert.deepEqual(await undecodable(glb), [], `${name}'s normal map decodes`);
+      assert.equal(inwardTriangles(glb), 0, `every triangle of ${name} faces outward`);
+    }
+  });
+
+  it("the sphere the rows build faces outward at every size", () => {
+    for (const [rings, segments] of [
+      [8, 16],
+      [16, 32],
+      [32, 64],
+    ])
+      assert.equal(inwardTriangles(sphereGlb(rings, segments)), 0, `${rings} x ${segments}`);
   });
 });
 

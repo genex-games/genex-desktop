@@ -96,7 +96,10 @@ and named in its `asset.extras.genex_textures`
 ([`glb-textures.ts`](../../src/substrate/asset-import/glb-textures.ts)); the embedded image stays as
 the fallback, and an image it cannot encode keeps loading from the GLB.
 Every glTF first passes the Khronos validator ([`validate.ts`](../../src/substrate/asset-import/validate.ts),
-before any decoder): an error refuses it `validation-failed`, severity decided by issue code.
+before any decoder): an error refuses it `validation-failed`, severity decided by issue code. The
+validator reads only an image's header, so the gate also decodes each embedded PNG
+([`png-check.ts`](../../src/substrate/asset-import/png-check.ts)); one the runtime could not decode
+is an `IMAGE_DATA_INVALID` warning on its image, and the model still imports.
 A refused file leaves the build, and so does an output whose name another staged file holds
 (`name-taken`). The receipt's `assets` lists each file's action and refusal. A game with nothing
 to import starts no sandbox. Each file is looked up first in the content-addressed import cache

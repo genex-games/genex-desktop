@@ -7,6 +7,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
+import { crc32, deflateSync } from "node:zlib";
 import { BuildTarget } from "../../src/shared/game-project.ts";
 import { convertAsset } from "../../src/substrate/asset-import/convert.ts";
 import { IMPORT_DECODERS, IMPORTER_TOOLS_ENV, ImportDecoder } from "../../src/substrate/asset-import/decoders.ts";
@@ -366,4 +367,125 @@ describe("the validator's warnings in the import receipt", () => {
       assert.deepEqual(receipt?.files, []);
     });
   }
+});
+
+// GF round 2: a normal map whose PNG had a bad IDAT CRC passed the gate with no issue (the Khronos
+// validator reads only an image's header), and the runtime then refused the image texture-invalid.
+describe("embedded images the runtime could not decode are an issue row, not a refusal", () => {
+  /** One PNG chunk: length, type, data and the CRC of type and data (`crc` replaces it). */
+  const chunk = (type: string, data: Uint8Array, crc?: number): Uint8Array => {
+    const out = new Uint8Array(12 + data.length);
+    const view = new DataView(out.buffer);
+    view.setUint32(0, data.length);
+    out.set(new TextEncoder().encode(type), 4);
+    out.set(data, 8);
+    view.setUint32(8 + data.length, crc ?? crc32(out.subarray(4, 8 + data.length)));
+    return out;
+  };
+  const QUAD_UVS = Float32Array.from([0, 0, 1, 0, 0, 1, 1, 1]);
+  const SIGNATURE = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+  /** An IHDR for an RGBA8 image of `width` x `height`, not interlaced. */
+  const ihdr = (width: number, height: number): Uint8Array => {
+    const data = new Uint8Array(13);
+    const view = new DataView(data.buffer);
+    view.setUint32(0, width);
+    view.setUint32(4, height);
+    data.set([8, 6, 0, 0, 0], 8);
+    return chunk("IHDR", data);
+  };
+  /** `rows` RGBA8 rows of `width` pixels, each led by filter byte `filter`. */
+  const scanlines = (width: number, rows: number, filter = 0): Uint8Array => {
+    const raw = new Uint8Array(rows * (1 + 4 * width)).fill(128);
+    for (let row = 0; row < rows; row++) raw[row * (1 + 4 * width)] = filter;
+    return raw;
+  };
+  const concat = (...parts: Uint8Array[]): Uint8Array => Uint8Array.from(parts.flatMap((part) => [...part]));
+  /** A PNG of the given chunks after the signature. */
+  const png = (...chunks: Uint8Array[]): Uint8Array => concat(SIGNATURE, ...chunks);
+  const iend = () => chunk("IEND", new Uint8Array(0));
+  const good = () => png(ihdr(2, 2), chunk("IDAT", deflateSync(scanlines(2, 2))), iend());
+
+  /** A quad whose material's base colour is `image`, embedded in the GLB's binary chunk. */
+  const textured = (image: Uint8Array): Uint8Array => withImage(quad({ uvs: QUAD_UVS }), image);
+  function withImage(glb: Uint8Array, image: Uint8Array): Uint8Array {
+    const { json, bin } = readGlb(glb) as { json: Json; bin: Uint8Array };
+    const pad = (4 - (bin.byteLength % 4)) % 4;
+    const out = new Uint8Array(bin.byteLength + pad + image.byteLength);
+    out.set(bin);
+    out.set(image, bin.byteLength + pad);
+    json.bufferViews.push({ buffer: 0, byteOffset: bin.byteLength + pad, byteLength: image.byteLength });
+    json.images = [{ bufferView: json.bufferViews.length - 1, mimeType: "image/png" }];
+    json.textures = [{ source: 0 }];
+    json.materials = [{ pbrMetallicRoughness: { baseColorTexture: { index: 0 } } }];
+    json.meshes[0].primitives[0].material = 0;
+    json.buffers = [{ byteLength: out.byteLength }];
+    return writeGlb(json, out);
+  }
+  const imageIssues = (warnings: Array<{ code: string; pointer?: string }>) =>
+    warnings.filter((issue) => issue.code === GltfIssueCode.ImageDataInvalid);
+
+  it("a PNG that decodes is no issue, on both engines", async () => {
+    for (const engine of ENGINES)
+      assert.deepEqual(imageIssues(await validateGltf(textured(good()), "glb", engine)), []);
+  });
+
+  const zlib = deflateSync(scanlines(2, 2));
+  // A PNG cut before its pixels (no IDAT, a chunk past the end) is the Khronos validator's own
+  // IMAGE_UNEXPECTED_EOS error, which refuses the file: these are the damages it does not see.
+  const hostile: Array<[string, () => Uint8Array]> = [
+    ["an IDAT whose CRC is wrong", () => png(ihdr(2, 2), chunk("IDAT", zlib, 0x3dc848ef), iend())],
+    [
+      "an IHDR whose CRC is wrong",
+      () => png(chunk("IHDR", ihdr(2, 2).subarray(8, 21), 1), chunk("IDAT", zlib), iend()),
+    ],
+    ["a deflate stream cut short", () => png(ihdr(2, 2), chunk("IDAT", zlib.subarray(0, zlib.length - 6)), iend())],
+    [
+      "a stream whose Adler-32 is wrong",
+      () => png(ihdr(2, 2), chunk("IDAT", concat(zlib.subarray(0, -4), Uint8Array.from([1, 2, 3, 4]))), iend()),
+    ],
+    ["pixels for a smaller image than its header names", () => png(ihdr(4, 4), chunk("IDAT", zlib), iend())],
+    ["pixels for a bigger image than its header names", () => png(ihdr(1, 1), chunk("IDAT", zlib), iend())],
+    ["a row filter that does not exist", () => png(ihdr(2, 2), chunk("IDAT", deflateSync(scanlines(2, 2, 9))), iend())],
+    ["no IEND", () => png(ihdr(2, 2), chunk("IDAT", zlib))],
+    ["a zero-width header", () => png(ihdr(0, 2), chunk("IDAT", zlib), iend())],
+  ];
+  for (const [what, image] of hostile) {
+    it(`an embedded PNG with ${what} is a warning at its image, on both engines, and still imports`, async () => {
+      for (const engine of ENGINES) {
+        const warnings = await validateGltf(textured(image()), "glb", engine);
+        assert.deepEqual(imageIssues(warnings), [
+          { code: GltfIssueCode.ImageDataInvalid, severity: GltfIssueSeverity.Warning, pointer: "/images/0" },
+        ]);
+      }
+      const result = await refusalOf(textured(image()));
+      assert.ok(result.ok, JSON.stringify(result));
+      assert.deepEqual(
+        result.issues
+          ?.filter((issue) => issue.code === GltfIssueCode.ImageDataInvalid)
+          .map(({ code, pointer }) => ({ code, pointer })),
+        [{ code: GltfIssueCode.ImageDataInvalid, pointer: "/images/0" }],
+      );
+    });
+  }
+
+  it("a data: URI PNG in a .gltf is read the same way", async () => {
+    const badCrc = png(ihdr(2, 2), chunk("IDAT", zlib, 0x3dc848ef), iend());
+    const { json, bin } = readGlb(textured(badCrc)) as { json: Json; bin: Uint8Array };
+    const view = json.bufferViews[json.images[0].bufferView];
+    const bytes = bin.subarray(view.byteOffset, view.byteOffset + view.byteLength);
+    json.images = [{ uri: `data:image/png;base64,${Buffer.from(bytes).toString("base64")}` }];
+    json.bufferViews.pop();
+    json.buffers = [
+      {
+        uri: `data:application/octet-stream;base64,${Buffer.from(bin).toString("base64")}`,
+        byteLength: bin.byteLength,
+      },
+    ];
+    const gltf = new TextEncoder().encode(JSON.stringify(json));
+    for (const engine of ENGINES)
+      assert.deepEqual(
+        imageIssues(await validateGltf(gltf, "gltf", engine)).map((issue) => issue.pointer),
+        ["/images/0"],
+      );
+  });
 });

@@ -25,6 +25,7 @@ import { convertAsset } from "../../src/substrate/asset-import/convert.ts";
 import { meshToGlb, readGlb, writeGlb } from "../../src/substrate/asset-import/glb.ts";
 import { ImportConverter } from "../../src/substrate/asset-import/import-plan.ts";
 import { addLodExtras, LodSkip, readLodSet, validateLodSet } from "../../src/substrate/asset-import/lods.ts";
+import { inwardTriangles } from "../helpers/glb-winding.ts";
 
 const FIXTURES = fileURLToPath(new URL("../fixtures/", import.meta.url));
 const sha = (bytes: Uint8Array) => createHash("sha256").update(bytes).digest("hex");
@@ -43,7 +44,8 @@ function sphereGlb(rings: number, segments: number, parts = 1): Uint8Array {
   const quad = (r: number, s: number) => {
     const a = r * (segments + 1) + s;
     const b = a + segments + 1;
-    return [a, b, a + 1, a + 1, b, b + 1];
+    // Counter-clockwise seen from outside: the sphere faces out.
+    return [a, a + 1, b, a + 1, b + 1, b];
   };
   const per = Math.ceil(rings / parts);
   const primitives = Array.from({ length: parts }, (_, part) => {
@@ -149,5 +151,8 @@ describe("import-time LODs (genex_lods)", () => {
       assert.ok(primitive.extras?.[LODS_EXTRAS_KEY], "levels on every primitive");
     const golden = new Uint8Array(await readFile(path.join(FIXTURES, "asset-import", "lods-sphere.glb")));
     assert.equal(sha(result.bytes), sha(golden), "genex-render tests/glb_lods.rs loads this file");
+    // GF round 2: the golden was wound inward, so the runtime drew it inside out.
+    for (const primitive of [0, 1])
+      assert.equal(inwardTriangles(golden, primitive), 0, `primitive ${primitive} faces outward`);
   });
 });
