@@ -3376,13 +3376,12 @@ impl Renderer {
 
     /// Write the rows the library gained, and the freed rows it filled again, into the mesh arena
     /// (its meshlet tables only while they are up: tables that are down go up whole when a frame
-    /// draws meshlets). Growth copies and writes are queue work ahead of the next frame's
-    /// submission, so a frame never sees a half-grown arena (STR-2).
+    /// draws meshlets), trimming the room a library with freed rows no longer needs
+    /// ([`MeshArena::sync_library`]). Growth and trim copies and writes are queue work ahead of the
+    /// next frame's submission, so a frame never sees a half-grown arena (STR-2).
     fn sync_meshes(&mut self, device: &Device, queue: &Queue) -> Result<(), RenderError> {
-        let rewrites = self.library.take_rewrites();
         let mut arena_device = QueueDevice::new(device, queue);
-        let sources = ArenaSources::of(&self.library, !self.meshlet_upload_pending);
-        let synced = self.mesh_arena.sync_with(&mut arena_device, &sources, &rewrites);
+        let synced = self.mesh_arena.sync_library(&mut arena_device, &mut self.library, !self.meshlet_upload_pending);
         arena_device.finish();
         synced?;
         self.meshes = mesh_buffers(&self.mesh_arena);

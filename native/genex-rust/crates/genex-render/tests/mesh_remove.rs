@@ -12,7 +12,7 @@
 use genex_render::device_loss::Resilient;
 use genex_render::immediate::ImmediateFrame;
 use genex_render::mesh::{LodChain, LodLevel, MeshData, Vertex};
-use genex_render::mesh_arena::{ArenaDevice, ArenaSources, ArenaStream, MeshArena, Rewrite, RowAllocator};
+use genex_render::mesh_arena::{ArenaDevice, ArenaSources, ArenaStream, MeshArena, RowAllocator};
 use genex_render::scene::{CameraDesc, FramePlan, Material, MeshId, MeshLibrary, MeshletState, ModelPart, Scene, translation};
 use genex_render::settings::Meshlets;
 use genex_render::skin::{Skeleton, SkeletonNode, SkinnedMeshData, Trs};
@@ -23,11 +23,14 @@ const HEIGHT: u32 = 64;
 /// The churn row: models added, then removed oldest first once this many are live.
 const CHURN_ADDS: usize = 500;
 const CHURN_REMOVES: usize = 450;
-/// The acceptance: the arena's rows (live and freed) within this many times the live bytes after
-/// the churn.
+/// The acceptance (PLAN STR-2): the arena's buffers, and so its rows (live and freed), within this
+/// many times the live bytes after the churn.
 const CHURN_SLACK: f64 = 1.5;
 /// A stream's buffer is at most this many times its rows (the doubling growth rule).
 const GROWTH_SLACK: f64 = 2.0;
+/// Bytes a churn may copy on the GPU (growths and trims) per byte it added: a growth copies the
+/// rows once for every eighth of the rows appended.
+const TRIM_COPY_SLACK: u64 = 8;
 
 // --- A counting device (as `mesh_arena.rs`'s) ---------------------------------------------------
 
@@ -99,10 +102,9 @@ fn stream_bytes(library: &MeshLibrary, stream: ArenaStream) -> Vec<u8> {
     sources.bytes[stream.index()].unwrap_or_default().to_vec()
 }
 
-/// Sync `library` into `arena` with its rewrites, as the renderer does.
+/// Sync `library` into `arena` as the renderer does ([`MeshArena::sync_library`]).
 fn sync(arena: &mut MeshArena<FakeBuffer>, device: &mut Counting, library: &mut MeshLibrary) -> Result<(), RenderError> {
-    let rewrites: Vec<Rewrite> = library.take_rewrites();
-    arena.sync_with(device, &ArenaSources::of(library, true), &rewrites)
+    arena.sync_library(device, library, true)
 }
 
 /// The GPU copy of every stream equals the library's rows.
@@ -297,7 +299,59 @@ fn churn_of_500_adds_and_450_removes_keeps_the_arena_rows_within_1_5x_of_the_liv
     let (live_bytes, span, held, peak) = (library.live_bytes(), library.span_bytes(), arena.bytes(), arena.stats().peak_bytes);
     eprintln!("churn: live {live_bytes} B, span {span} B ({:.3}x), arena {held} B ({:.3}x), peak {peak} B", span as f64 / live_bytes as f64, held as f64 / live_bytes as f64);
     assert!(span as f64 <= live_bytes as f64 * CHURN_SLACK, "the rows span {span} bytes for {live_bytes} live");
+    // GF round 2 (perf): the rows were within 1.5x but the buffers, grown by doubling while the
+    // churn's holes kept the rows long, held 1.734x the live bytes.
     assert!(held as f64 <= span as f64 * GROWTH_SLACK, "the buffers hold {held} bytes for rows of {span}");
+    assert!(held as f64 <= live_bytes as f64 * CHURN_SLACK, "the buffers hold {held} bytes for {live_bytes} live");
+}
+
+/// A library that never removed a mesh keeps Bevy's doubling (STR-1): no buffer is remade
+/// smaller, so adds keep their amortized one copy per byte.
+#[test]
+fn a_library_without_removals_keeps_the_doubling_and_is_never_trimmed() {
+    let mut device = Counting::default();
+    let mut library = MeshLibrary::new();
+    let mut arena = MeshArena::new(&mut device, &ArenaSources::of(&library, true)).expect("arena");
+    let mut capacities: Vec<u64> = Vec::new();
+    for i in 0..200u32 {
+        library.add(grid(2 + i % 9, 0.0)).expect("mesh");
+        sync(&mut arena, &mut device, &mut library).expect("sync");
+        let capacity = arena.capacity(ArenaStream::Vertices);
+        assert!(capacities.last().is_none_or(|last| capacity >= *last), "add {i}: the vertex buffer never shrinks without a removal");
+        capacities.push(capacity);
+    }
+    assert_eq!(library.span_bytes(), library.live_bytes(), "no freed rows");
+    assert_eq!(arena.stats().trims, 0, "nothing trimmed");
+    assert_mirrored(&arena, &device, &library);
+}
+
+/// While the library holds freed rows a stream grows by an eighth of its rows, and only a buffer
+/// doubled before the first removal is trimmed, so the churn's copies stay a bounded multiple of
+/// the bytes it added.
+#[test]
+fn trims_after_churn_copy_a_bounded_multiple_of_the_bytes_added() {
+    let mut device = Counting::default();
+    let mut library = MeshLibrary::new();
+    let mut arena = MeshArena::new(&mut device, &ArenaSources::of(&library, true)).expect("arena");
+    let mut live: std::collections::VecDeque<MeshId> = std::collections::VecDeque::new();
+    let mut added = 0u64;
+    let mut seed = 0x2545_f491u32;
+    for _ in 0..CHURN_ADDS {
+        seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+        let mesh = grid(2 + (seed >> 24) % 14, 0.0);
+        added += (mesh.vertices.len() * (size_of::<Vertex>() + 4) + mesh.indices.len() * 4) as u64;
+        live.push_back(library.add(mesh).expect("mesh"));
+        if live.len() > CHURN_ADDS - CHURN_REMOVES {
+            library.remove(live.pop_front().expect("oldest")).expect("removed");
+        }
+        sync(&mut arena, &mut device, &mut library).expect("sync");
+    }
+    let stats = arena.stats();
+    eprintln!("churn copies: {} B copied for {added} B added, {} grows, {} trims", stats.copied_bytes, stats.grows, stats.trims);
+    assert!(stats.trims > 0, "the churn trimmed");
+    assert!(stats.trims <= stats.grows, "every trim follows a growth: {stats:?}");
+    assert!(stats.copied_bytes <= added * TRIM_COPY_SLACK, "{} bytes copied for {added} added", stats.copied_bytes);
+    assert_mirrored(&arena, &device, &library);
 }
 
 #[test]

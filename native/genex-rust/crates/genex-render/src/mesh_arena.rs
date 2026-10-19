@@ -18,6 +18,12 @@
 //!   limit ([`MeshArena::set_peak_limit`]: WebGPU and phones, [`ARENA_PEAK_MAX_BYTES_CONSTRAINED`])
 //!   refuses a growth whose peak would pass it `stream-arena-full`, with nothing made or written,
 //!   so the caller evicts first.
+//! - While the library holds freed rows (a removal's holes, which keep its rows long), a full
+//!   stream grows to its rows plus an eighth instead of doubling, and a buffer doubled before the
+//!   first removal that holds more than its rows plus a quarter is trimmed to its rows plus an
+//!   eighth ([`MeshArena::trim`]), the rows copied on the GPU. After churn the buffers stay within
+//!   1.5x the live bytes (STR-2), where doubling alone held 1.73x. A library that never removed a
+//!   mesh keeps the doubling.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Range;
@@ -34,6 +40,10 @@ const STREAM_ALIGN_BYTES: u64 = 16;
 /// A full stream's buffer is remade this many times larger (Bevy's slab doubling): a library of
 /// n bytes copies O(n) bytes on the GPU over all its growth.
 const GROWTH_FACTOR: u64 = 2;
+/// While the library holds freed rows, a stream grows to, and is trimmed to, its rows plus this
+/// fraction of them (one eighth) as room to append into; it is trimmed only when its buffer holds
+/// more than its rows plus twice that (STR-2).
+const FRAGMENTED_HEADROOM_DIVISOR: u64 = 8;
 /// The peak bytes a mesh arena may hold during a growth (old and new buffers at once) on WebGPU and
 /// phones: WebGPU's default `maxBufferSize`, the STREAM design's arena ceiling (3.3).
 pub const ARENA_PEAK_MAX_BYTES_CONSTRAINED: u64 = 256 * 1024 * 1024;
@@ -159,6 +169,8 @@ pub struct ArenaStats {
     pub copied_bytes: u64,
     /// Times a stream's buffer was remade larger.
     pub grows: u64,
+    /// Times a stream's buffer was remade smaller ([`MeshArena::trim`]).
+    pub trims: u64,
     /// Syncs that wrote or grew anything.
     pub syncs: u64,
     /// The most bytes the arena's buffers held at once: during a growth, the old buffers and the
@@ -179,6 +191,9 @@ pub struct MeshArena<B> {
     stats: ArenaStats,
     /// The peak a growth may reach ([`MeshArena::set_peak_limit`]); None: only the per-stream cap.
     peak_limit: Option<u64>,
+    /// Whether the library held freed rows at the last [`MeshArena::sync_library`]: growth then
+    /// leaves an eighth of the rows as room instead of doubling.
+    fragmented: bool,
 }
 
 /// Rows of one stream the library wrote again inside the rows it held (a freed range filled by a
@@ -211,7 +226,7 @@ impl<B> MeshArena<B> {
             stats.uploaded_bytes += held.append(device, stream, bytes);
             streams.push(held);
         }
-        let mut arena = MeshArena { streams, stats, peak_limit: None };
+        let mut arena = MeshArena { streams, stats, peak_limit: None, fragmented: false };
         arena.stats.peak_bytes = arena.bytes();
         Ok(arena)
     }
@@ -269,6 +284,52 @@ impl<B> MeshArena<B> {
         Ok(())
     }
 
+    /// Bring the arena to `library`, as the renderer does after each add: its rows and the freed
+    /// rows it filled again ([`MeshArena::sync_with`]; its meshlet tables only when `meshlets`),
+    /// then, while the library holds freed rows, growing by an eighth of the rows and trimming
+    /// the room its streams no longer need ([`MeshArena::trim`]).
+    pub fn sync_library<D: ArenaDevice<Buffer = B>>(&mut self, device: &mut D, library: &mut crate::scene::MeshLibrary, meshlets: bool) -> Result<(), RenderError> {
+        let rewrites = library.take_rewrites();
+        self.fragmented = library.span_bytes() > library.live_bytes();
+        let sources = ArenaSources::of(library, meshlets);
+        self.sync_with(device, &sources, &rewrites)?;
+        if self.fragmented {
+            self.trim(device, &sources)?;
+        }
+        Ok(())
+    }
+
+    /// Remake each stream of `sources` whose buffer holds more than its rows plus a quarter at its
+    /// rows plus an eighth ([`FRAGMENTED_HEADROOM_DIVISOR`]), the rows copied on the GPU. A trim whose
+    /// peak (old and new buffers at once) would pass the peak limit is skipped: the buffer stays
+    /// as it is, which is never wrong.
+    pub fn trim<D: ArenaDevice<Buffer = B>>(&mut self, device: &mut D, sources: &ArenaSources<'_>) -> Result<(), RenderError> {
+        for stream in ArenaStream::ALL {
+            if sources.bytes[stream.index()].is_none() {
+                continue;
+            }
+            let Some(capacity) = self.trimmed_capacity(stream) else { continue };
+            let peak = self.bytes() + capacity;
+            if self.peak_limit.is_some_and(|limit| peak > limit) {
+                continue;
+            }
+            self.stats.peak_bytes = self.stats.peak_bytes.max(peak);
+            self.move_to(device, stream, capacity)?;
+            self.stats.trims += 1;
+        }
+        Ok(())
+    }
+
+    /// The capacity a trim gives `stream`: its rows plus an eighth (aligned); None while its buffer
+    /// holds no more than its rows plus a quarter.
+    fn trimmed_capacity(&self, stream: ArenaStream) -> Option<u64> {
+        let held = &self.streams[stream.index()];
+        let rows = u64::from(held.rows) * u64::from(stream.stride());
+        let room = rows / FRAGMENTED_HEADROOM_DIVISOR;
+        let trimmed = sized(rows + room);
+        (held.capacity > sized(rows + 2 * room) && trimmed < held.capacity).then_some(trimmed)
+    }
+
     /// Refused when a stream of `sources` passes the cap or holds fewer rows than the arena.
     fn check_sync(&self, sources: &ArenaSources<'_>) -> Result<(), RenderError> {
         for stream in ArenaStream::ALL {
@@ -316,26 +377,34 @@ impl<B> MeshArena<B> {
         if capacity <= self.streams[stream.index()].capacity {
             return Ok(());
         }
-        self.move_to(device, stream, capacity)
+        self.move_to(device, stream, capacity)?;
+        self.stats.grows += 1;
+        Ok(())
     }
 
     /// The capacity `stream` grows to for `need` bytes: twice its size or the need (aligned),
-    /// whichever is larger, within the cap; None when it holds room already.
+    /// whichever is larger, or the need plus an eighth while the library holds freed rows; within
+    /// the cap; None when it holds room already.
     fn grown_capacity(&self, stream: ArenaStream, need: u64) -> Option<u64> {
         let capacity = self.streams[stream.index()].capacity;
-        (need > capacity).then(|| sized(need).max(capacity * GROWTH_FACTOR).min(BUFFER_MAX_BYTES))
+        let grown = match self.fragmented {
+            true => sized(need + need / FRAGMENTED_HEADROOM_DIVISOR),
+            false => sized(need).max(capacity * GROWTH_FACTOR),
+        };
+        (need > capacity).then(|| grown.min(BUFFER_MAX_BYTES))
     }
 
     /// Make `stream`'s buffer hold `need` bytes ([`MeshArena::grown_capacity`]); the rows it holds
     /// are copied on the GPU.
     fn grow<D: ArenaDevice<Buffer = B>>(&mut self, device: &mut D, stream: ArenaStream, need: u64) -> Result<(), RenderError> {
-        match self.grown_capacity(stream, need) {
-            Some(capacity) => self.move_to(device, stream, capacity),
-            None => Ok(()),
-        }
+        let Some(capacity) = self.grown_capacity(stream, need) else { return Ok(()) };
+        self.move_to(device, stream, capacity)?;
+        self.stats.grows += 1;
+        Ok(())
     }
 
-    /// Remake `stream`'s buffer at `capacity` bytes, the rows it holds copied on the GPU.
+    /// Remake `stream`'s buffer at `capacity` bytes (at least its rows), the rows it holds copied
+    /// on the GPU.
     fn move_to<D: ArenaDevice<Buffer = B>>(&mut self, device: &mut D, stream: ArenaStream, capacity: u64) -> Result<(), RenderError> {
         let held = &mut self.streams[stream.index()];
         let buffer = device.create(stream, capacity)?;
@@ -345,7 +414,6 @@ impl<B> MeshArena<B> {
         }
         (held.buffer, held.capacity) = (buffer, capacity);
         self.stats.copied_bytes += live;
-        self.stats.grows += 1;
         Ok(())
     }
 
