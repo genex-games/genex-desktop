@@ -193,8 +193,9 @@ interface Pending {
   sentDelta: string | null;
 }
 
-/** One op to write to the game. */
-type Outgoing = { [O in PlayAiOp]: { op: O; args: PlayAiOpArgs[O] } }[PlayAiOp];
+/** One AI op to write to a game: an answer by its rid, or a streamed answer's text so far. */
+export type AiOutgoing = { [O in PlayAiOp]: { op: O; args: PlayAiOpArgs[O] } }[PlayAiOp];
+type Outgoing = AiOutgoing;
 
 /** The bridge's state: unanswered lines in arrival order, and refusals not yet written. */
 interface BridgeState {
@@ -232,7 +233,7 @@ function replaySettled(state: BridgeState, deadlines: PlayDeadlines): Promise<vo
 }
 
 /** Writes one AI op to the game; a refusal is the game's own (it is logged, never retried). */
-export type AiOpWriter = (op: PlayAiOp, args: PlayAiOpArgs[PlayAiOp]) => Promise<unknown>;
+export type AiOpWriter = (item: AiOutgoing) => Promise<unknown>;
 
 /**
  * The AI bridge of a native game Studio started, or null for a game whose `hello` did not declare
@@ -246,8 +247,8 @@ export function nativeAiBridge(
 ): NativeAiBridge | null {
   const { hello } = place;
   if (!hello.capabilities.ai) return null;
-  const write: AiOpWriter = (op, args) =>
-    takesAiOp(hello, op) ? client.send(op, { ...args }) : Promise.reject(new Error(MESSAGE.undeclared));
+  const write: AiOpWriter = (item) =>
+    takesAiOp(hello, item.op) ? client.send(item.op, { ...item.args }) : Promise.reject(new Error(MESSAGE.undeclared));
   return aiLineBridge(write, { cwd: place.cwd, channel: place.channel }, host, held);
 }
 
@@ -267,7 +268,7 @@ export function aiLineBridge(
   const state: BridgeState = { pending: new Map(), refusals: [], closed: false };
 
   const deliver = (item: Outgoing): Promise<void> =>
-    write(item.op, item.args).then(
+    write(item).then(
       () => {},
       (error: unknown) => log(MESSAGE.refused(item.op, errorMessage(error))),
     );
