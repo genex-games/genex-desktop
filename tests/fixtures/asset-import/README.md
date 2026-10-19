@@ -28,6 +28,12 @@ texture inputs are the shared samples in `../asset-previews/`.
   (`transcodeKtx2Families`, through the pinned transcoder); the runtime's `texture_compressed`
   rows read them.
 - `lods-sphere.glb`: a 16 x 32 UV sphere in two primitives (the test's own `sphereGlb`), as the
-  import step writes it: welded (C-7), then `extras.genex_lods` simplified by meshoptimizer's
+  import step writes it: welded (C-7), in vertex cache and fetch order (C-8; it has no normal map,
+  so no tangents), then `extras.genex_lods` simplified by meshoptimizer's
   simplifier (`rust-assets-lods.test.ts` holds it to `convertAsset`); genex-render's `glb_lods` rows
   load it.
+- `tangents-mirrored.glb`: an 8 x 16 UV sphere whose u is mirrored (1 → 0 → 1 around it), with a
+  normal-mapped material and no `TANGENT` (the test's own `sphereGlb` and `normalMapped`);
+  `tangents-mirrored.imported.glb` is what the import step writes from it, MikkTSpace tangents split
+  at both mirror seams (C-8). `rust-assets-tangents.test.ts` holds both to their functions and
+  `convertAsset`; the runtime's tangent fallback is held to the second (C-9).

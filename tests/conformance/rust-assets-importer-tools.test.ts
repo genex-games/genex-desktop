@@ -42,7 +42,14 @@ const basisFetched = Object.keys(IMPORTER_TOOL_FILES)
   .filter((name) => name.startsWith(`${ImporterToolFolder.Basis}/`))
   .every((name) => existsSync(decoderFile(name, {})));
 const BASIS_SKIP = !basisFetched && "the Basis build is not fetched (node scripts/toolchains/importer-tools.ts fetch)";
-const NPM_DECODERS = ["dracoDecoder", "meshoptDecoder", "meshoptSimplifier", "meshoptClusterizer"];
+const NPM_DECODERS = [
+  "dracoDecoder",
+  "meshoptDecoder",
+  "meshoptSimplifier",
+  "meshoptClusterizer",
+  "meshoptTangents",
+  "meshoptEncoder",
+];
 
 /** The importer's decoder modules, copied into a folder no `node_modules` is reachable from. */
 async function isolatedDecoders(): Promise<string> {
@@ -88,6 +95,8 @@ describe("the importer's tools, without three", () => {
       meshoptDecoder: "ok",
       meshoptSimplifier: "ok",
       meshoptClusterizer: "ok",
+      meshoptTangents: "ok",
+      meshoptEncoder: "ok",
     });
   });
 

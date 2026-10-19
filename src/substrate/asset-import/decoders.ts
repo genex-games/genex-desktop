@@ -1,7 +1,8 @@
 /**
  * The importer's tools: the Basis Universal v2.50 build (its transcoder; the same build encodes,
  * `basis-encoder.ts`), Draco's glTF decoder from npm `draco3dgltf`, meshoptimizer's decoder,
- * meshlet clusterizer and simplifier (import-time LODs) from npm `meshoptimizer`, and the Khronos
+ * meshlet clusterizer, simplifier (import-time LODs), MikkTSpace tangents and vertex order
+ * (`tangents.ts`, `reorder.ts`) from npm `meshoptimizer`, and the Khronos
  * glTF validator from npm `gltf-validator` (`validate.ts`). They live in one
  * folder, the importer tools folder ({@link importerToolsDir}): the packaged app carries it in its
  * resources (`scripts/toolchains/importer-tools.ts` stages it at build time), and a development
@@ -30,6 +31,10 @@ export const ImportDecoder = {
   Meshopt: "meshopt",
   MeshoptClusterizer: "meshopt-clusterizer",
   MeshoptSimplifier: "meshopt-simplifier",
+  /** Not a decoder: meshoptimizer's MikkTSpace-compatible tangents (`tangents.ts`). */
+  MeshoptTangents: "meshopt-tangents",
+  /** Not a decoder: meshoptimizer's vertex cache and fetch order (`reorder.ts`). */
+  MeshoptEncoder: "meshopt-encoder",
   /** Not a decoder: the Khronos glTF validator the import step runs before any decoder (`validate.ts`). */
   GltfValidator: "gltf-validator",
 } as const;
@@ -91,6 +96,14 @@ export const IMPORTER_TOOL_FILES: Readonly<Record<string, ImporterToolFile>> = {
     sha256: "c3098ee4cb4fc242b84f064c88898e76e44bf58b0e1f693507f323c08cdbb5ed",
     bytes: 67_671,
   },
+  "meshoptimizer/meshopt_tangents.js": {
+    sha256: "1f62e72b02bf0abae3151a49af5e62b92a4ee3bcedc1386d8425a24bb5da6d1f",
+    bytes: 26_331,
+  },
+  "meshoptimizer/meshopt_encoder.js": {
+    sha256: "22c128be3e22b187e2d2661882fc62f51e995f409c0fe14c9f6358cfbaff1611",
+    bytes: 24_363,
+  },
   "gltf-validator/gltf_validator.dart.js": {
     sha256: "b73a7b2d455ac217567725138b46d826a13d7d1bb0c88c15f7c571bfb349298c",
     bytes: 307_792,
@@ -138,6 +151,16 @@ export const IMPORT_DECODERS = {
   },
   [ImportDecoder.MeshoptSimplifier]: {
     files: ["meshoptimizer/meshopt_simplifier.js"],
+    upstream: "https://github.com/zeux/meshoptimizer",
+    license: "MIT",
+  },
+  [ImportDecoder.MeshoptTangents]: {
+    files: ["meshoptimizer/meshopt_tangents.js"],
+    upstream: "https://github.com/zeux/meshoptimizer",
+    license: "MIT",
+  },
+  [ImportDecoder.MeshoptEncoder]: {
+    files: ["meshoptimizer/meshopt_encoder.js"],
     upstream: "https://github.com/zeux/meshoptimizer",
     license: "MIT",
   },
@@ -450,4 +473,52 @@ let simplifier: Promise<MeshoptSimplifierModule> | null = null;
 export function meshoptSimplifier(): Promise<MeshoptSimplifierModule> {
   simplifier ??= meshoptModule<MeshoptSimplifierModule>(ImportDecoder.MeshoptSimplifier, "MeshoptSimplifier");
   return simplifier;
+}
+
+/** meshoptimizer's tangent generator option (`meshopt_tangents.d.ts`): `Compatible` is MikkTSpace's output. */
+export const MeshoptTangentsFlag = { Compatible: "Compatible" } as const;
+export type MeshoptTangentsFlag = (typeof MeshoptTangentsFlag)[keyof typeof MeshoptTangentsFlag];
+
+/** The parts of meshoptimizer's tangents module the importer calls. */
+export interface MeshoptTangentsModule {
+  ready: Promise<void>;
+  supported: boolean;
+  /** Per corner of `indices`: the unit tangent xyz and the bitangent sign. */
+  generateTangents(
+    indices: Uint32Array | null,
+    vertexPositions: Float32Array,
+    vertexPositionsStride: number,
+    vertexNormals: Float32Array,
+    vertexNormalsStride: number,
+    vertexUvs: Float32Array,
+    vertexUvsStride: number,
+    flags?: readonly MeshoptTangentsFlag[],
+  ): Float32Array;
+}
+
+let tangents: Promise<MeshoptTangentsModule> | null = null;
+
+/** meshoptimizer's MikkTSpace-compatible tangents, started once per process. */
+export function meshoptTangents(): Promise<MeshoptTangentsModule> {
+  tangents ??= meshoptModule<MeshoptTangentsModule>(ImportDecoder.MeshoptTangents, "MeshoptTangents");
+  return tangents;
+}
+
+/** The parts of meshoptimizer's encoder module the importer calls. */
+export interface MeshoptEncoderModule {
+  ready: Promise<void>;
+  supported: boolean;
+  /**
+   * `indices` reordered in place for the vertex cache (triangle lists) and renumbered in first-use
+   * order; returns old vertex → new vertex (`0xffffffff` for one no index uses) and the used count.
+   */
+  reorderMesh(indices: Uint32Array, triangles: boolean, optsize: boolean): [Uint32Array, number];
+}
+
+let encoder: Promise<MeshoptEncoderModule> | null = null;
+
+/** meshoptimizer's encoder (its vertex cache and fetch order), started once per process. */
+export function meshoptEncoder(): Promise<MeshoptEncoderModule> {
+  encoder ??= meshoptModule<MeshoptEncoderModule>(ImportDecoder.MeshoptEncoder, "MeshoptEncoder");
+  return encoder;
 }

@@ -183,7 +183,7 @@ const INDEX_READ: Readonly<Record<number, (data: DataView, at: number) => number
 };
 
 /** A primitive's index stream, or 0..count for an unindexed one; every index checked against the vertices. */
-function readIndices(doc: PackDoc, primitive: Json, vertexCount: number): Uint32Array {
+export function readIndices(doc: PackDoc, primitive: Json, vertexCount: number): Uint32Array {
   const at = index(primitive.indices);
   if (primitive.indices === undefined) return Uint32Array.from({ length: vertexCount }, (_, i) => i);
   if (at === null) throw new WeldSkipped(WeldSkip.UnreadableGeometry, "indices names no accessor");
@@ -212,7 +212,7 @@ const COMPONENT_READ: Readonly<Record<number, (data: DataView, at: number) => nu
 };
 
 /** Per-component bounds of dense data, in the accessor's own component values (glTF §5.1.6). */
-function bounds(accessor: Json, bytes: Uint8Array): { min: number[]; max: number[] } {
+export function bounds(accessor: Json, bytes: Uint8Array): { min: number[]; max: number[] } {
   const { componentBytes, width } = elementLayout(accessor);
   const read = COMPONENT_READ[accessor.componentType as number] ?? COMPONENT_READ[GltfComponent.Float];
   const data = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
@@ -242,7 +242,7 @@ function compact(bytes: Uint8Array, elementBytes: number, indices: Uint32Array, 
 }
 
 /** Append an accessor with `data` and no view yet (`packGlb` writes it); returns its index. */
-function appendAccessor(doc: PackDoc, accessor: Json, data: Uint8Array): number {
+export function appendAccessor(doc: PackDoc, accessor: Json, data: Uint8Array): number {
   const accessors = objects(doc.json.accessors);
   accessors.push(accessor);
   doc.json.accessors = accessors;
@@ -251,7 +251,7 @@ function appendAccessor(doc: PackDoc, accessor: Json, data: Uint8Array): number 
 }
 
 /** The distinct accessors of a primitive's attributes and morph targets, in first-named order. */
-function primitiveAccessors(primitive: Json): number[] {
+export function primitiveAccessors(primitive: Json): number[] {
   const found = attributeMaps(primitive).flatMap((map) => Object.values(map).map(index));
   if (found.some((at) => at === null))
     throw new WeldSkipped(WeldSkip.UnreadableGeometry, "an attribute names no accessor");
@@ -306,7 +306,7 @@ function appendIndices(doc: PackDoc, indices: Uint32Array, map: Uint32Array, cou
 }
 
 /** Why the step must leave this document alone, or null when it can run. */
-function precondition(json: Json): WeldSkip | null {
+export function precondition(json: Json): WeldSkip | null {
   const buffers = objects(json.buffers);
   if (buffers.length > 1 || buffers.some((buffer) => buffer.uri !== undefined)) return WeldSkip.ExternalBuffer;
   const used = [...strings(json.extensionsUsed), ...strings(json.extensionsRequired)];

@@ -18,6 +18,7 @@ import {
   writeGlb,
 } from "../../src/substrate/asset-import/glb.ts";
 import { AssetImportRefusal, ImportConverter } from "../../src/substrate/asset-import/import-plan.ts";
+import { reorderGlb } from "../../src/substrate/asset-import/reorder.ts";
 import {
   addMeshletExtras,
   MESHLET_MAX_TRIANGLES,
@@ -170,7 +171,10 @@ describe("R2.3 import-time clusters", () => {
   it("a GLB below the threshold is left as the converter delivered it", async () => {
     const small = glbOf(grid(10));
     const out = await importGlb(small);
-    assert.deepEqual(out, small);
+    // Named flip (C-8): the import step reorders every triangle list for the vertex cache before the
+    // clusterizer, so the GLB is the reorder's output, still without meshlets.
+    assert.deepEqual(out, (await reorderGlb(small)).bytes);
+    assert.equal(extrasOf(readGlb(out).json), undefined);
     assert.ok(200 < MESHLET_MIN_TRIANGLES);
   });
 
@@ -212,7 +216,9 @@ describe("R2.3 import-time clusters", () => {
     for (const [name, bytes] of odd) {
       assert.deepEqual((await addMeshletExtras(bytes)).bytes, bytes, name);
       if (valid.has(name)) {
-        assert.deepEqual(await importGlb(bytes), bytes, name);
+        // Named flip (C-8): the import step reorders a triangle list before the clusterizer leaves it
+        // alone, so it delivers the reorder's output (lines are not reordered).
+        assert.deepEqual(await importGlb(bytes), (await reorderGlb(bytes)).bytes, name);
         continue;
       }
       const refused = await convertAsset({

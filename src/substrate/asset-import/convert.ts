@@ -23,7 +23,9 @@ import {
 import { addLodExtras } from "./lods.ts";
 import { addMeshletExtras } from "./meshlets.ts";
 import { MeshFormatError, objToMesh } from "./obj.ts";
+import { reorderGlb } from "./reorder.ts";
 import { plyToMesh, stlToMesh } from "./stl-ply.ts";
+import { addTangents } from "./tangents.ts";
 import { type EncodedTexture, encodeTexture, requireUsage, TextureDecodeError } from "./texture-encode.ts";
 import { type TranscodedTexture, texturesForTargets } from "./texture-table.ts";
 import type { GltfIssue } from "./validate.ts";
@@ -106,16 +108,33 @@ function checkHdr(input: ConvertInput): ConvertResult {
   return { ok: true, bytes: input.bytes };
 }
 
+/** One optional mesh step: a GLB in, the GLB to hand on out (the same bytes when the step skips). */
+type MeshStep = (glb: Uint8Array, input: ConvertInput) => Promise<Uint8Array>;
+
 /**
- * A GLB the runtime loads: welded, deduplicated and pruned (C-7), then with import-time meshlets
- * (R2.3) and LODs (A6.9) when it is big enough for each, and its sizes for the receipt; never a
- * refusal.
+ * The mesh steps in order. Weld comes before tangents (MikkTSpace splits only what welded vertices
+ * still disagree on) and both before the reorder, which fixes the vertex order the meshlets and LODs
+ * then index; the extras name views by index, so nothing rewrites vertices after them.
  */
-async function withMeshlets(glb: Uint8Array, input: ConvertInput): Promise<ConvertResult> {
-  const minTriangles = input.meshletMinTriangles;
-  const { bytes: welded } = weldGlb(glb);
-  const { bytes: clustered } = await addMeshletExtras(welded, minTriangles === undefined ? {} : { minTriangles });
-  const { bytes } = await addLodExtras(clustered);
+const MESH_STEPS: readonly MeshStep[] = [
+  async (glb) => weldGlb(glb).bytes,
+  async (glb) => (await addTangents(glb)).bytes,
+  async (glb) => (await reorderGlb(glb)).bytes,
+  async (glb, input) => {
+    const minTriangles = input.meshletMinTriangles;
+    return (await addMeshletExtras(glb, minTriangles === undefined ? {} : { minTriangles })).bytes;
+  },
+  async (glb) => (await addLodExtras(glb)).bytes,
+];
+
+/**
+ * A GLB the runtime loads: welded, deduplicated and pruned (C-7), tangent-complete and in vertex
+ * cache and fetch order (C-8), then with import-time meshlets (R2.3) and LODs (A6.9) when it is big
+ * enough for each, and its sizes for the receipt; never a refusal.
+ */
+async function meshSteps(glb: Uint8Array, input: ConvertInput): Promise<ConvertResult> {
+  let bytes = glb;
+  for (const step of MESH_STEPS) bytes = await step(bytes, input);
   const sizes = inspectGlb(bytes);
   return { ok: true, bytes, ...(sizes ? { sizes } : {}) };
 }
@@ -127,15 +146,15 @@ async function run(input: ConvertInput): Promise<ConvertResult> {
   switch (input.converter) {
     case ImportConverter.ObjToGlb: {
       const mesh = objToMesh(decoder.decode(input.bytes), input.mtl?.text ?? null, input.mtl?.dir ?? "", input.name);
-      return await withMeshlets(meshToGlb(mesh), input);
+      return await meshSteps(meshToGlb(mesh), input);
     }
     case ImportConverter.StlToGlb:
-      return await withMeshlets(meshToGlb(stlToMesh(input.bytes, input.name)), input);
+      return await meshSteps(meshToGlb(stlToMesh(input.bytes, input.name)), input);
     case ImportConverter.PlyToGlb:
-      return await withMeshlets(meshToGlb(plyToMesh(input.bytes, input.name)), input);
+      return await meshSteps(meshToGlb(plyToMesh(input.bytes, input.name)), input);
     case ImportConverter.GltfDecompress: {
       const { bytes, issues } = await importGltf(input.bytes, input.ext);
-      const result: ConvertResult = input.ext === "glb" ? await withMeshlets(bytes, input) : { ok: true, bytes };
+      const result: ConvertResult = input.ext === "glb" ? await meshSteps(bytes, input) : { ok: true, bytes };
       return result.ok && issues.length ? { ...result, issues } : result;
     }
     case ImportConverter.Ktx2Check:
