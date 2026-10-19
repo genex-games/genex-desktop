@@ -113,6 +113,13 @@ What Play sends is in [PRIVACY](../PRIVACY.md#play).
   (`main/play/comments.ts`); Esc, ✕ or a click outside closes it and the game gets the keyboard back.
 - The page stays on Genex games' addresses; a link it opens goes to the browser, at most one every
   few seconds.
+- Report (in the AI pill's menu) sends what the game's AI wrote this session to genex.games, for
+  moderation and the game's maker: each AI call (prompts, the player's fields, the answer, the
+  model and how it was paid), a replay tape, the seed and build, state digests, console errors and
+  one frame. No account goes with it, and keys, emails and phone numbers are taken out first;
+  "See what's sent" shows exactly that. A reply still unusable after its repair sends an automatic
+  Report with none of the player's words. With usage-stats consent, Studio also sends how many
+  replies fit each game's shape per model and week, counts only.
 - Voice chat: a game that asks for a microphone gets the bar's mic switch, remembered per game.
   Main lets the page open the microphone only right after it asked it to, and only on the game's
   own origin.
@@ -170,3 +177,25 @@ Share, Add), `ipc/asset-library.ts` (`studio:assets.*`), `renderer/state/sharing
 `use-tile-picture.ts`); fixtures answer from `dev/fixture-asset-library.ts` (fixture `asset-library`,
 whose window also gets the library's files from the fixture).
 
+## Play-time AI: Reports, the model check and the export scan
+
+- Every settled AI call reaches one trace sink (`main/game-ai/trace-sink.ts`), each part apart: the
+  game's Report session in memory (`report.ts`), the creator's Create Live playtest moments
+  (`moments.ts`, `userData/game-ai/moments/`), and counts-only fit from play (`fit-counts.ts`).
+- A Report bundle (`AiReportBundle`, D9) carries the session's calls (an unchanged system prompt by
+  its hash), a replay tape, and the game's capture read as hostile: seed, build commit, inputs, state
+  digests, `state().ai`, console errors, one frame. Keys, emails and phone numbers are redacted,
+  including key-shaped names; the oldest calls go first until it fits the body cap.
+  `report-ingest.ts` posts it to genex.games' `AI_REPORT_ROUTE` with no account; a `create:` game's
+  never leaves. An automatic bundle carries no player text, once per call, three per game an hour.
+- Fit counts wait in `userData/game-ai/fit-counts.json` only while the person consents
+  (`shareFitCounts`), published games only, and go every six hours; turning consent off drops them.
+- The model check (`model-check.ts`, D10/D12) is optional and the creator's: it replays the newest
+  24 moments on their own doors (this Mac, their key, OpenCode, their plan when allowed), never
+  Genex credits, over the panel's picks they can run plus every connected model, at most twelve,
+  with the game's one repair and a judge on their own model. The result and their pick survive a
+  restart; a stop keeps the last result. `ipc/game-ai-report-check.ts` admits only a library game
+  whose folder is a real folder. The harness runs it on this Mac's models only.
+- Export refuses an AI vendor's key in any game file (file, line and vendor named, never the key)
+  and reports vendor API hosts reached by URL as `aiDirect` with the agent's genex-ai hint; Publish
+  shows it as a warning. Near misses from `shared/ai-vendors.ts` pass.

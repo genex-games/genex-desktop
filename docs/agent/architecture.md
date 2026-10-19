@@ -1001,9 +1001,9 @@ managed local runtime; core has no Blender tool of its own.
   the director calls `assets.checkpoint` before merging.
 - **Export.** [`src/substrate/game-export.ts`](../../src/substrate/game-export.ts) stages fresh public
   files and replaces only an app-managed destination; hidden files, env files, private-key names,
-  dependencies and symlinks are excluded or refused; parsed imports and references prune the
-  vendor folder. Static analysis cannot classify computed URLs, so browser export checks remain
-  required.
+  dependencies and symlinks are excluded or refused; parsed references prune the vendor folder. AI
+  vendor keys refuse it; vendor hosts warn (`export-ai-scan.ts`). Computed URLs need browser
+  checks.
 
 ## Persistence and the event log
 
