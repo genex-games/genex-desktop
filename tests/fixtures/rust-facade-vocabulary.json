@@ -207,11 +207,11 @@
     "families": ["bc", "astc", "etc2", "rgba8", "source"],
     "issueCodes": ["texture-uncompressed"]
   },
-  "animation": { "calls": ["gfx.character", ".joint_count", ".skeleton", ".path"], "refusals": ["animation-asset-invalid", "animation-graph-invalid"] },
+  "animation": { "calls": ["gfx.character", ".joint_count", ".skeleton", ".path", ".wire"], "refusals": ["animation-asset-invalid", "animation-graph-invalid"] },
   "stream": { "calls": [], "refusals": ["stream-invalid", "stream-too-many-anchors", "stream-out-of-world"] },
   "nav": { "calls": ["frame.lines"], "refusals": ["nav-input-invalid", "nav-too-large"] },
   "assets": {
-    "calls": ["gfx.assets().bytes", "gfx.assets().triangles", "gfx.assets().info", ".json", ".digest", ".as_str", ".code", ".detail"],
+    "calls": ["gfx.assets().bytes", "gfx.assets().triangles", "gfx.assets().info", ".json", ".digest", ".as_str", ".code", ".detail", ".wire"],
     "refusals": ["unsafe-path", "missing", "too-large", "malformed", "not-at-reset", "not-preloaded"]
   },
   "lod": { "calls": [], "refusals": [] }

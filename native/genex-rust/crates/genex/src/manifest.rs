@@ -165,15 +165,16 @@ pub const FOG_CALLS: [&str; 8] =
     [".fog", "Fog::default", ".with_density", ".with_height", ".with_range", ".with_color", ".with_aerial_perspective", ".with_volumetric"];
 /// Game systems (EP-0a1): the call and refusal blocks of the five areas, empty until each area's
 /// work package pins what works (`tests/fixtures/rust-facade-vocabulary.json` holds the same).
-/// The animation calls of the facade.
-pub const ANIMATION_CALLS: [&str; 4] = ["gfx.character", ".joint_count", ".skeleton", ".path"];
+/// The animation calls of the facade (`.wire` is a refusal code's wire spelling).
+pub const ANIMATION_CALLS: [&str; 5] = ["gfx.character", ".joint_count", ".skeleton", ".path", ".wire"];
 /// The streaming calls of the facade.
 pub const STREAM_CALLS: [&str; 0] = [];
 /// The navigation calls of the facade.
 pub const NAV_CALLS: [&str; 1] = ["frame.lines"];
-/// The sim-side asset read calls of the facade, as a reset calls them (SF-1a).
-pub const ASSET_CALLS: [&str; 8] =
-    ["gfx.assets().bytes", "gfx.assets().triangles", "gfx.assets().info", ".json", ".digest", ".as_str", ".code", ".detail"];
+/// The sim-side asset read calls of the facade, as a reset calls them (SF-1a); `.wire` is a
+/// refusal code's wire spelling.
+pub const ASSET_CALLS: [&str; 9] =
+    ["gfx.assets().bytes", "gfx.assets().triangles", "gfx.assets().info", ".json", ".digest", ".as_str", ".code", ".detail", ".wire"];
 /// The sim-side asset read refusals: [`crate::AssetErrorCode::ALL`]'s wire spellings.
 pub const ASSET_REFUSALS: [&str; 6] = ["unsafe-path", "missing", "too-large", "malformed", "not-at-reset", "not-preloaded"];
 /// The level-of-detail calls of the facade.

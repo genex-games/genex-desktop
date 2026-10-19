@@ -64,5 +64,6 @@ game.on_reset(|sim, _seed, _rng, gfx| {
 - Every refusal is `animation-asset-invalid` (`error.code.wire()`, with `error.detail` for a log
   line): an unsafe path, a file the build does not have or that ships in a streamed or named
   group, or a file that is not a GLB with a usable skin (no skinned mesh node, more than 256
-  joints, a node with two parents, a cycle, a non-finite transform). Nothing crashes, and the
-  same path drawn with `frame.model` shows the checker.
+  joints, a node with two parents, a cycle, a non-finite transform). Nothing crashes. A path the
+  build does not have shows the checker when drawn with `frame.model`; a GLB the renderer reads
+  but that has no usable skin still draws there as a static model.
