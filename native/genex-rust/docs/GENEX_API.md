@@ -2,7 +2,8 @@
 
 This index and its topic pages are the contract a game's Rust code is written against. Studio
 copies them read-only into every Rust game folder as `docs/GENEX_API.md` and `docs/api/`. The
-facade crate is `genex`; everything they teach comes from `use genex::prelude::*;`.
+facade crate is `genex`; everything they teach comes from `use genex::prelude::*;`, except
+where a page names its own `use genex::…;` line.
 
 ## A game
 
@@ -89,7 +90,11 @@ so a draw that needs the time reads a tick the world keeps from `on_update` (`ct
 - **State keys.** `state()` owns `version`, `contractVersion`, `seed`, `frame`, `simulatedMs`,
   `running`, `fps`, `held`, `pointerLock`, `hud`, `camera`, `error`, `player`, `volatile`,
   `__render`, `assets` and `checksum`, and `__stream` while `game.streaming` is registered
-  (display only and never in the checksum, so a probe may be named `stream`). `hud.items` lists
+  (display only and never in the checksum, so a probe may be named `stream`). World streaming
+  and navigation are not available yet: `install` accepts and checks `game.streaming` (the
+  refusals below), but no cell ever loads, so `__stream` stays at `active: 0`, and
+  `game.cell_content`, `game.navigation` and `frame.nav_debug` do nothing. Do not build a
+  mechanic on them. `hud.items` lists
   the label of every egui widget the last tick drew, in drawing order, so a check can find a
   widget by its label.
 - **Demos.** A demo scripts what a generic walk cannot reach (a state behind a menu, a long
