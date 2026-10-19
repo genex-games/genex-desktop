@@ -8,10 +8,10 @@ renderer probes the adapter at boot into a device class (`desktop-ultra`, `deskt
 `desktop-mid`, `desktop-low`, `mobile-high`, `mobile-mid`, `mobile-low`; a browser from its own
 hints) and starts on the class's preset: `auto` is `ultra`, `high`, `medium` and `low` on the four
 desktop classes, `medium` on `mobile-high` (scale 0.75), `low` on `mobile-mid` (0.67, 30 fps when
-hot) and `mobile-low` (0.6, 30 fps); a browser stops at `high`. A dynamic-resolution controller
+hot) and `mobile-low` (0.6, 30 fps); a browser stops at `high`. Dynamic resolution
 steps the render scale to hold the class's frame time. What does not fit the adapter or the
 class's memory budget turns cheaper or off, is listed in `state().volatile.render.degraded` with a
-typed reason (`budget`, naming the rung dropped; `format-unrenderable`, `pass-over-budget`,
+typed reason (`budget`, naming the rung or switch dropped; `format-unrenderable`, `pass-over-budget`,
 `pipeline-change-deferred`, `transient-unsupported`, `not-landed`, `custom-pass-v1-in-world`,
 `material-v1-in-hdr`) and never refuses the game. Desktop budgets grow with GPU memory (an eighth,
 up to 2 GiB).

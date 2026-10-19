@@ -1246,7 +1246,12 @@ impl Presenter {
         let class = if live { handle.borrow().live_class() } else { handle.borrow().capture_class() };
         let asked = self.on_scene(asked, class);
         let samples = self.world_samples(handle, &asked.quality, live);
-        handle.borrow_mut().note_world_samples(samples);
+        // Live's world pass only: a capture on other samples (its pinned profile) noted here made
+        // `volatile.render`, read after the captures, report Live on the capture's samples (GF
+        // round 2: a phone's TAA Live read back as MSAA, which drops AO).
+        if live {
+            handle.borrow_mut().note_world_samples(samples);
+        }
         let choice = FrameChoice { quality: with_world_samples(&asked.quality, samples, class), ..asked };
         let deferred = landed_samples(asked.quality.anti_aliasing) != samples;
         self.set_drawn(handle, choice, class, live, deferred);
