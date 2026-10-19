@@ -729,6 +729,34 @@ from the camera's distance to its sphere at a 1-pixel threshold of the output he
 instance at the camera's level; an orthographic camera turns levels off. A clustered mesh (the
 meshlet path) and a transparent draw take the mesh itself. Level changes are not crossfaded yet.
 
+### `genex_textures` in glTF
+
+The Studio's import step writes the images a GLB carries inside it out as compressed textures, the
+way it encodes a loose PNG or JPEG. Each embedded PNG or JPEG a material samples is encoded once
+per usage its slots give it (base colour and emissive are `color`, a normal map is `normal`,
+metallic-roughness and occlusion are `data`), to one fixed-format KTX2 per texture family the
+game's destinations may pick, beside the GLB as `<stem>.<family>.ktx2`. The GLB names them in its
+`asset.extras`, never as an extension:
+
+```json
+"asset": { "version": "2.0", "extras": { "genex_textures": {
+  "v": 1,
+  "images": [ { "image": 0, "kind": "color", "stem": "crate.t0" },
+              { "image": 2, "kind": "data", "stem": "crate.t2" } ]
+} } }
+```
+
+`image` is a glTF image index and `kind` the usage it was encoded for, so its family files are
+sRGB for `color` and linear otherwise. `stem` is a file name in the GLB's own folder:
+`<model>.t<image>`, or `<model>.t<image>.<kind>` for an image sampled in more than one usage. Two
+images with the same bytes and usage share one stem. A block is malformed as a whole when its `v`
+is not 1, an `image` is out of range, a `kind` is unknown, a `stem` holds a `/`, a `\` or a NUL,
+starts with a dot or passes 200 characters, or an image and kind appear twice; a reader then takes
+the embedded images, as it does for a GLB without the block. The embedded image always stays in the
+GLB as that fallback. An image the step cannot encode (a file beside the GLB, a WebP, a KTX2, a
+damaged one) has no row. The runtime does not read the block yet: it still decodes every embedded
+image as RGBA8.
+
 ## Extension layouts
 
 Level-2 materials and post passes declare `[[wgsl]] api = 1 | 2`. API 2 reads the v2 group map

@@ -27,6 +27,12 @@ import {
   planImport,
   runsImporter,
 } from "../substrate/asset-import/import-plan.ts";
+import {
+  glbTextureFamilyOf,
+  glbTextureFileName,
+  isGlbTextureStem,
+  isGlbTextureStemOf,
+} from "../substrate/asset-import/glb-textures.ts";
 import { IMPORT_JOB_VERSION, type ImportIssue, parseIssues } from "../substrate/asset-import/job.ts";
 import { Ktx2FamilySkip } from "../substrate/asset-import/ktx2.ts";
 import { objMaterialLibrary } from "../substrate/asset-import/obj.ts";
@@ -458,7 +464,8 @@ interface CachedLine {
   converter: ImportConverter;
   refusal?: AssetImportRefusal;
   output?: number;
-  families?: { slot: number; compression: TextureCompression }[];
+  /** Each family file's slot; a GLB image sidecar's (C-13) also names its stem. */
+  families?: { slot: number; compression: TextureCompression; stem?: string }[];
   textures?: TranscodedTexture[];
   familiesSkipped?: Ktx2FamilySkip;
   /** The validator's warnings about the source, so a hit reports what the import found. */
@@ -492,7 +499,9 @@ function parseFamilies(value: unknown, files: number): NonNullable<CachedLine["f
   const families: NonNullable<CachedLine["families"]> = [];
   for (const family of value) {
     if (!isRecord(family) || !isSlot(family.slot, files) || !isFamily(family.compression)) return null;
-    families.push({ slot: family.slot, compression: family.compression });
+    const { slot, compression, stem } = family;
+    if (stem !== undefined && !isGlbTextureStem(stem)) return null;
+    families.push({ slot, compression, ...(stem === undefined ? {} : { stem }) });
   }
   return families;
 }
@@ -550,7 +559,11 @@ function fromLine(file: string, step: ImporterStep, line: CachedLine, entry: Cac
   if (!output) return null;
   const families = line.families?.map((family) => {
     const stored = entry.files[family.slot];
-    return stored ? outputOf(stored, familyFileName(file, family.compression)) : null;
+    if (!stored) return null;
+    if (family.stem === undefined) return outputOf(stored, familyFileName(file, family.compression));
+    // A sidecar's stem starts with the model's name: a hit for a GLB under another name imports again.
+    if (!isGlbTextureStemOf(file, family.stem)) return null;
+    return outputOf(stored, glbTextureFileName(file, family.stem, family.compression));
   });
   if (families?.includes(null)) return null;
   return {
@@ -564,6 +577,19 @@ function fromLine(file: string, step: ImporterStep, line: CachedLine, entry: Cac
   };
 }
 
+/** Each family output's slot (after the output's) and family, a sidecar's with its stem; null for a name neither kind has. */
+function familyLinesOf(file: string, families: readonly ImportOutput[]): NonNullable<CachedLine["families"]> | null {
+  const lines: NonNullable<CachedLine["families"]> = [];
+  for (const [at, family] of families.entries()) {
+    const compression = Object.values(TextureCompression).find((c) => familyFileName(file, c) === family.file);
+    const sidecar = compression ? null : glbTextureFamilyOf(file, family.file);
+    if (compression) lines.push({ slot: at + 1, compression });
+    else if (sidecar) lines.push({ slot: at + 1, ...sidecar });
+    else return null;
+  }
+  return lines;
+}
+
 /** What to commit for an import's outcome, or null when it is not worth keeping (an importer failure). */
 function toLine(imported: ImportedAsset): { files: CacheFileInput[]; meta: CachedLine } | null {
   const { action, converter, refusal, output } = imported;
@@ -572,12 +598,8 @@ function toLine(imported: ImportedAsset): { files: CacheFileInput[]; meta: Cache
   if (refusal) return { files: [], meta: { action, converter, refusal } };
   if (!output) return null;
   const families = imported.families ?? [];
-  const familyLines: NonNullable<CachedLine["families"]> = [];
-  for (const [at, family] of families.entries()) {
-    const compression = Object.values(TextureCompression).find((c) => familyFileName(imported.file, c) === family.file);
-    if (!compression) return null;
-    familyLines.push({ slot: at + 1, compression });
-  }
+  const familyLines = familyLinesOf(imported.file, families);
+  if (!familyLines) return null;
   const meta: CachedLine = {
     action,
     converter,
