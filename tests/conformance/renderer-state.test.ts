@@ -1499,6 +1499,69 @@ describe("Live's Web | Native view: the embedded run the store holds", () => {
     assert.equal(nativeEmbedOf(store.getState(), "pong-mac").status?.runId, "embed-2");
   });
 
+  it("Reload in the Native view starts the embedded run it ended again, at the size Live holds now", async () => {
+    let runs = 1;
+    const fake = fakeStudioApi({
+      nativeEmbed: async (project) => {
+        runs += 1;
+        const startedAt = `2026-10-01T00:0${runs}:00.000Z`;
+        return embedded(project, NativeRunState.Building, { runId: `embed-${runs}`, startedAt });
+      },
+      nativeUnembed: async () => true,
+    });
+    const store = createNativeStore(fake.api, unembedTimers());
+    const stop = store.start();
+    store.hold("pong-mac", EMBED_SIZE);
+    await tick();
+    const first = embedded("pong-mac", NativeRunState.Ready, {
+      runId: "embed-2",
+      startedAt: "2026-10-01T00:02:00.000Z",
+    });
+    fake.emit({ type: UiEvent.NativeStatus, payload: first });
+    const wider = { width: 1200, height: 675, dpr: 2 };
+    store.resized("pong-mac", wider);
+    const reloading = deferred<void>();
+    const after = store.afterReload("pong-mac", reloading.promise);
+    // Main's Reload ends Live's embedded run before it rebuilds the browser build.
+    fake.emit({ type: UiEvent.NativeStatus, payload: { ...first, state: NativeRunState.Stopped, pid: null } });
+    await tick();
+    assert.deepEqual(fake.callsOf("nativeEmbed").at(-1), ["pong-mac", wider], "started again at once, at today's size");
+    assert.equal(nativeEmbedOf(store.getState(), "pong-mac").status?.runId, "embed-3");
+    reloading.resolve();
+    await after;
+    assert.equal(fake.callsOf("nativeEmbed").length, 2, "once, however the Reload ends");
+    const restarted = embedded("pong-mac", NativeRunState.Stopped, {
+      runId: "embed-3",
+      startedAt: "2026-10-01T00:03:00.000Z",
+    });
+    fake.emit({ type: UiEvent.NativeStatus, payload: restarted });
+    await tick();
+    assert.equal(fake.callsOf("nativeEmbed").length, 2, "a later stop is not the Reload's: it stays stopped");
+    stop();
+  });
+
+  it("Reload on a stopped Native view plays it once the Reload is done; nothing held, nothing started", async () => {
+    const fake = fakeStudioApi({
+      nativeEmbed: async (project) => embedded(project, NativeRunState.Stopped, { pid: null }),
+      nativeUnembed: async () => true,
+    });
+    const store = createNativeStore(fake.api, unembedTimers());
+    const stop = store.start();
+    store.hold("pong-mac", EMBED_SIZE);
+    await tick();
+    const reloading = deferred<void>();
+    const after = store.afterReload("pong-mac", reloading.promise);
+    await tick();
+    assert.equal(fake.callsOf("nativeEmbed").length, 1, "not before main's Reload has ended what it ends");
+    reloading.resolve();
+    await after;
+    assert.deepEqual(fake.callsOf("nativeEmbed").at(-1), ["pong-mac", EMBED_SIZE]);
+    assert.equal(fake.callsOf("nativeEmbed").length, 2);
+    await store.afterReload("web-only", Promise.resolve());
+    assert.equal(fake.callsOf("nativeEmbed").length, 2, "a game Live does not show natively starts nothing");
+    stop();
+  });
+
   it("an embed call that fails says so on Live's view instead of waiting forever", async () => {
     const fake = fakeStudioApi({
       nativeEmbed: async () => {

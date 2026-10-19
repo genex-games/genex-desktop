@@ -13,7 +13,7 @@ rounds end, then lands. Finish overrides the clock, never the final judge
 ([details](../harness-runtime.md#goal-completion-and-worker-approvals)).
 
 An active run opens Builds once; a build shown from the chat, or Builds with nothing to draw, opens
-Live. Files and images opened from the chat get closable tabs.
+Live. Files and images opened from chat get closable tabs.
 
 ## The two views
 
@@ -30,7 +30,7 @@ preview reaches only public library CDNs; Open Game names other hosts. Other fol
 [projects](projects-engines.md#lives-views).
 
 **Compiled games** (C++ · raylib; Rust · wgpu on an Apple-silicon Mac or Linux x64) build per
-destination in the sandbox; **Web | Native** shows the Mac build in Live. Rust needs WebGPU. Only your
+destination, sandboxed; **Web | Native** shows the Mac build in Live (Reload restarts it). Rust needs WebGPU. Only your
 **On a device** press installs a phone build ([feature map](../agent/feature-map.md)).
 
 **Builds** is a graph: You asked, a row per part, Your build, then the lead while no part

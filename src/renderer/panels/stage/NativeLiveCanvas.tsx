@@ -213,6 +213,7 @@ function useEmbedHold(box: RefObject<HTMLDivElement | null>, project: string, re
       const due = resizeDue(sent.current, size);
       if (!due) return;
       sent.current = due;
+      store.resized(project, due);
       void window.studio
         .nativeResize(project, due)
         .then((taken) => {
