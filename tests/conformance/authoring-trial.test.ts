@@ -605,6 +605,10 @@ describe("the live trial refuses before a paid turn it could not use", () => {
     // A CLI that, like Claude Code with a piped stdin, reads it to the end before answering.
     await writeFile(cli, '#!/bin/sh\ncat > /dev/null\necho \'{"type":"result"}\'\n', { mode: 0o755 });
     const log = path.join(dir, "turn.jsonl");
+    // agentTurn loads its argv and permission modules on first use. A cold load under a busy
+    // machine took seconds (3.6 s measured), so the deadline would time the import, not the CLI:
+    // load them before the clock starts, as every later turn of a trial finds them.
+    await Promise.all([import("../../scripts/evals/lanes/argv.ts"), import("../../src/shared/permissions.ts")]);
     let timer: NodeJS.Timeout | undefined;
     const waited = new Promise<"waited">((resolve) => {
       timer = setTimeout(() => resolve("waited"), STDIN_WAIT_LIMIT_MS);
