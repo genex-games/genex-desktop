@@ -21,4 +21,6 @@ physics = ["dep:rapier3d"]
 # `Map`/`Set`, `CellId` and `GameRng` live below the facade so this crate shares them with a game.
 genex-core = { workspace = true }
 glam = { workspace = true }
+# The rig importer (AN-1) reads GLBs with the same pinned parser genex-render and genex-assets use.
+gltf = { workspace = true }
 rapier3d = { workspace = true, optional = true }

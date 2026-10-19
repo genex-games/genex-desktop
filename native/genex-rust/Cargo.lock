@@ -1031,6 +1031,7 @@ version = "0.1.0"
 dependencies = [
  "genex-core",
  "glam 0.33.12",
+ "gltf",
  "rapier3d",
 ]
 
