@@ -1990,6 +1990,12 @@ export interface AiTapeSummary {
 }
 // ↑ src/shared/game-ai-views.ts
 
+export type AiReplayAnswers = 'none' | 'tape';
+// ↑ src/shared/game-ai-tape.ts
+
+export type AiErrorCode = 'provider' | 'timeout' | 'ai_off' | 'ai_unrecorded' | 'ai_direct_blocked' | 'bad_request' | 'prompt_too_large' | 'invalid_schema' | 'invalid_output' | 'consent_required' | 'consent_declined' | 'consent_pending' | 'no_gesture' | 'ai_paused' | 'grant_concurrency' | 'grant_rate_limited' | 'waiting_for_plan' | 'door_unavailable' | 'local_model_loading' | 'no_funding' | 'platform_door' | 'needs_verified' | 'plan_door_not_allowed' | 'insufficient_credits' | 'monthly_limit' | 'moderated' | 'canceled';
+// ↑ src/shared/game-ai.ts
+
 /** What `ai.replay` found: whether every seed replayed the same frames, and what the tape lacked. */
 export interface AiReplayResult {
   demo: string;
@@ -2002,6 +2008,17 @@ export interface AiReplayResult {
   fallbacks: number;
   /** Tape lines the reader refused. */
   rejected: number;
+  /** What the calls were answered with; absent: the tape. */
+  answers?: AiReplayAnswers;
+  /** Calls still waiting for an answer when a seed's demo ended, over every seed; absent when the host cannot tell. */
+  stuck?: number;
+  /**
+   * Every seed's demo ended — it ran to its end, or stopped behind Studio's "needs AI" state —
+   * with no crash and no console error; absent when the host cannot tell.
+   */
+  settled?: boolean;
+  /** How many calls were refused, by code (a grant asked for outside a gesture is `no_gesture`); absent when the host cannot tell. */
+  refused?: Partial<Record<AiErrorCode, number>>;
 }
 // ↑ src/shared/game-ai-tape.ts
 
@@ -2016,7 +2033,7 @@ export interface AiRecordResult {
 }
 // ↑ src/shared/game-ai-tape.ts
 
-export type AiDoor = 'plan' | 'local' | 'opencode' | 'byok' | 'plan-watcher' | 'genex-credits' | 'genex-dev' | 'tape' | 'fixture';
+export type AiDoor = 'plan' | 'tape' | 'local' | 'opencode' | 'byok' | 'plan-watcher' | 'genex-credits' | 'genex-dev' | 'fixture';
 // ↑ src/shared/game-ai.ts
 
 /** A model on one door: the engine that runs it (`EngineId`, or `genex` for the platform) and its id. */
@@ -2657,14 +2674,28 @@ export interface HarnessHostApi {
   // ── play-time AI: tapes, mocks and this Mac's models only, never the network ──
   /** Whether a schema is of the closed dialect a game's answers are held to, and if not, why. */
   "ai.schemaCheck": { params: { schema: unknown }; result: AiSchemaCheck };
+  // `root` is the build an `ai.*` call plays: the game's own folder when it is left out, or a run's
+  // copy of it under scratch (a worker's worktree), checked real by the host like `preview.load`'s.
   /** A game's saved playtests. */
-  "ai.tapes": { params: { project: string }; result: AiTapeSummary[] };
-  /** Replay a demo's tape under each seed: whether the frames match, and what the tape lacked. */
-  "ai.replay": { params: { project: string; demo: string; seeds: number[] }; result: AiReplayResult };
+  "ai.tapes": { params: { project: string; root?: string | null }; result: AiTapeSummary[] };
+  /**
+   * Replay a demo under each seed — on its tape, or with no answer at all (`answers: "none"`):
+   * whether the frames match, and what the tape lacked.
+   */
+  "ai.replay": {
+    params: { project: string; demo: string; seeds: number[]; root?: string | null; answers?: AiReplayAnswers | null };
+    result: AiReplayResult;
+  };
   /** Play a demo with this Mac's models on a host-created run budget, and save its tape. */
-  "ai.record": { params: { project: string; demo: string; seed: number }; result: AiRecordResult };
+  "ai.record": {
+    params: { project: string; demo: string; seed: number; root?: string | null };
+    result: AiRecordResult;
+  };
   /** Sample one call site on this Mac's models: fit, reply time, tokens. */
-  "ai.bench": { params: { project: string; site: string; samples?: number }; result: AiBenchResult };
+  "ai.bench": {
+    params: { project: string; site: string; samples?: number; root?: string | null };
+    result: AiBenchResult;
+  };
   /** The model check on this Mac's models only (the creator runs the cloud check from Create). */
   "ai.modelCheck": { params: { project: string }; result: AiCheckResult };
 }

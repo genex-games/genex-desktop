@@ -36,7 +36,7 @@ import type {
 import type { AiBridgeAnswers, AiBridgeMessage, AiGrantAnswer } from "../../shared/game-ai-bridge.ts";
 import type { AiBenchResult, AiCheckResult, AiFitCountRow, AiPublishFacts } from "../../shared/game-ai-check.ts";
 import type { AiReportBundle, AiReportOutcome, AiReportRequest } from "../../shared/game-ai-report.ts";
-import type { AiRecordResult, AiReplayResult, TapeLine } from "../../shared/game-ai-tape.ts";
+import type { AiRecordResult, AiReplayAnswers, AiReplayResult, TapeLine } from "../../shared/game-ai-tape.ts";
 import type {
   AiActivity,
   AiAutoTopUp,
@@ -401,13 +401,49 @@ export interface GameAiIpcHost {
   checkout(product: AiCreditProduct): Promise<void>;
 }
 
+/**
+ * A run budget the host creates for one harness `ai.record`, `ai.bench` or `ai.modelCheck`
+ * (`main/harness-rpc/ai.ts` `createRunBudget`): this Mac's models only, one call at a time, a fixed
+ * number of calls. Nothing the harness sends sizes it, so the agent can neither create nor raise
+ * one; it closes when the call that was handed it answers, and a closed budget takes nothing more.
+ */
+export interface AiRunBudget {
+  /** The doors its calls may use. */
+  readonly doors: readonly AiDoor[];
+  /** The most model calls it takes; the one repair of a reply is a call of its own. */
+  readonly maxCalls: number;
+  /** Calls at once. */
+  readonly concurrency: 1;
+  /** Take a slot for one model call on `door`; null when the door is not its own, the cap is spent, a call is already running or it closed. */
+  take(door: AiDoor): { release(): void } | null;
+  /** Calls taken so far. */
+  used(): number;
+  closed(): boolean;
+}
+
+/** Where a harness `ai.*` call plays: the build folder, checked real by the host (null: the game's own folder). */
+export interface AiHarnessBuild {
+  root: string | null;
+}
+
+/** How a harness replay plays a demo. */
+export interface AiReplayRun extends AiHarnessBuild {
+  answers: AiReplayAnswers;
+}
+
+/** A harness recording or bench: its build and the run budget the host made for it. */
+export interface AiHarnessRun extends AiHarnessBuild {
+  budget: AiRunBudget;
+}
+
 /** What `main/harness-rpc/ai.ts` delegates to: tapes, mocks and local models only, on a host-made run budget. */
 export interface GameAiHarnessHost {
-  tapes(project: string): Promise<AiTapeSummary[]>;
-  replay(project: string, demo: string, seeds: readonly number[]): Promise<AiReplayResult>;
-  record(project: string, demo: string, seed: number): Promise<AiRecordResult>;
-  bench(project: string, site: string, samples: number): Promise<AiBenchResult>;
-  modelCheck(project: string): Promise<AiCheckResult>;
+  tapes(project: string, build: AiHarnessBuild): Promise<AiTapeSummary[]>;
+  replay(project: string, demo: string, seeds: readonly number[], run: AiReplayRun): Promise<AiReplayResult>;
+  record(project: string, demo: string, seed: number, run: AiHarnessRun): Promise<AiRecordResult>;
+  bench(project: string, site: string, samples: number, run: AiHarnessRun): Promise<AiBenchResult>;
+  /** The check on this Mac's models only: an agent never spends a plan, a key or credits on it. */
+  modelCheck(project: string, run: { localOnly: true; budget: AiRunBudget }): Promise<AiCheckResult>;
 }
 
 /** The Play view's bridge (`play/viewer-view.ts` hears `PlayAiChannel.Request`). */

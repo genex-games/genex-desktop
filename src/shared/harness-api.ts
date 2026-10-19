@@ -38,7 +38,13 @@ import type { ProjectAssets } from "./game-assets.ts";
 import { AI_SITE_RE } from "./game-ai.ts";
 import { AI_BENCH_MAX_SAMPLES, type AiBenchResult, type AiCheckResult } from "./game-ai-check.ts";
 import type { AiSchemaProblem } from "./game-ai-schema.ts";
-import { AI_REPLAY_MAX_SEEDS, type AiRecordResult, type AiReplayResult, TAPE_NAME_RE } from "./game-ai-tape.ts";
+import {
+  AI_REPLAY_MAX_SEEDS,
+  type AiRecordResult,
+  AiReplayAnswers,
+  type AiReplayResult,
+  TAPE_NAME_RE,
+} from "./game-ai-tape.ts";
 import type { AiTapeSummary } from "./game-ai-views.ts";
 import type {
   AttachReport,
@@ -858,14 +864,28 @@ export interface HarnessHostApi {
   // ── play-time AI: tapes, mocks and this Mac's models only, never the network ──
   /** Whether a schema is of the closed dialect a game's answers are held to, and if not, why. */
   "ai.schemaCheck": { params: { schema: unknown }; result: AiSchemaCheck };
+  // `root` is the build an `ai.*` call plays: the game's own folder when it is left out, or a run's
+  // copy of it under scratch (a worker's worktree), checked real by the host like `preview.load`'s.
   /** A game's saved playtests. */
-  "ai.tapes": { params: { project: string }; result: AiTapeSummary[] };
-  /** Replay a demo's tape under each seed: whether the frames match, and what the tape lacked. */
-  "ai.replay": { params: { project: string; demo: string; seeds: number[] }; result: AiReplayResult };
+  "ai.tapes": { params: { project: string; root?: string | null }; result: AiTapeSummary[] };
+  /**
+   * Replay a demo under each seed — on its tape, or with no answer at all (`answers: "none"`):
+   * whether the frames match, and what the tape lacked.
+   */
+  "ai.replay": {
+    params: { project: string; demo: string; seeds: number[]; root?: string | null; answers?: AiReplayAnswers | null };
+    result: AiReplayResult;
+  };
   /** Play a demo with this Mac's models on a host-created run budget, and save its tape. */
-  "ai.record": { params: { project: string; demo: string; seed: number }; result: AiRecordResult };
+  "ai.record": {
+    params: { project: string; demo: string; seed: number; root?: string | null };
+    result: AiRecordResult;
+  };
   /** Sample one call site on this Mac's models: fit, reply time, tokens. */
-  "ai.bench": { params: { project: string; site: string; samples?: number }; result: AiBenchResult };
+  "ai.bench": {
+    params: { project: string; site: string; samples?: number; root?: string | null };
+    result: AiBenchResult;
+  };
   /** The model check on this Mac's models only (the creator runs the cloud check from Create). */
   "ai.modelCheck": { params: { project: string }; result: AiCheckResult };
 }
@@ -1170,17 +1190,20 @@ export const HARNESS_PARAM_SCHEMAS = {
     })
     .nullish(),
   "run.artifact": z.object({ runId: text, name: text }),
-  "ai.tapes": z.object({ project }),
+  "ai.tapes": z.object({ project, root: optionalText }),
   "ai.replay": z.object({
     project,
     demo: z.string().regex(TAPE_NAME_RE),
     seeds: z.array(aiSeed).min(1).max(AI_REPLAY_MAX_SEEDS),
+    root: optionalText,
+    answers: z.enum([AiReplayAnswers.Tape, AiReplayAnswers.None]).nullish(),
   }),
-  "ai.record": z.object({ project, demo: z.string().regex(TAPE_NAME_RE), seed: aiSeed }),
+  "ai.record": z.object({ project, demo: z.string().regex(TAPE_NAME_RE), seed: aiSeed, root: optionalText }),
   "ai.bench": z.object({
     project,
     site: z.string().regex(AI_SITE_RE),
     samples: z.number().int().min(1).max(AI_BENCH_MAX_SAMPLES).nullish(),
+    root: optionalText,
   }),
   "ai.modelCheck": z.object({ project }),
   "guardian.validate_edit": z.object({ files: z.array(z.object({ file: text, contents: text })) }),

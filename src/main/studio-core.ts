@@ -2200,7 +2200,7 @@ export class StudioCore {
       ...previewRpc(this, this.#x),
       ...desktopRpc(this, this.#x),
       ...judgeRpc(this),
-      ...aiRpc(this),
+      ...aiRpc(this, this.#x),
     };
     return table;
   }

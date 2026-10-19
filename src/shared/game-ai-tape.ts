@@ -10,6 +10,7 @@
  */
 import {
   type AiCallRequest,
+  type AiErrorCode,
   AiOp,
   AiSource,
   type AiTier,
@@ -183,6 +184,15 @@ export const AI_REPLAY_MAX_SEEDS = 8;
 /** The most calls one `ai.record` run may make, on the host-created local-only run budget. */
 export const AI_RECORD_MAX_CALLS = 200;
 
+/** What a harness replay answers a demo's calls with. Wire values: never rename one. */
+export const AiReplayAnswers = {
+  /** The demo's tape: a call it has no line for is `ai_unrecorded`, and the game's fallback plays. */
+  Tape: "tape",
+  /** No answer at all: every call is refused `ai_off`, as when the person turns AI off (`ai.handles-no-answer`). */
+  None: "none",
+} as const;
+export type AiReplayAnswers = (typeof AiReplayAnswers)[keyof typeof AiReplayAnswers];
+
 /** What `ai.replay` found: whether every seed replayed the same frames, and what the tape lacked. */
 export interface AiReplayResult {
   demo: string;
@@ -195,6 +205,17 @@ export interface AiReplayResult {
   fallbacks: number;
   /** Tape lines the reader refused. */
   rejected: number;
+  /** What the calls were answered with; absent: the tape. */
+  answers?: AiReplayAnswers;
+  /** Calls still waiting for an answer when a seed's demo ended, over every seed; absent when the host cannot tell. */
+  stuck?: number;
+  /**
+   * Every seed's demo ended — it ran to its end, or stopped behind Studio's "needs AI" state —
+   * with no crash and no console error; absent when the host cannot tell.
+   */
+  settled?: boolean;
+  /** How many calls were refused, by code (a grant asked for outside a gesture is `no_gesture`); absent when the host cannot tell. */
+  refused?: Partial<Record<AiErrorCode, number>>;
 }
 
 /** What `ai.record` saved. */
