@@ -70,6 +70,7 @@ import {
   activateChatFixture,
   DevProviders,
   FIRST_LAUNCH_STATUS,
+  FIXTURE_AGENTS_FAILURE,
   FIXTURE_SANDBOX_PROBLEM,
   FIXTURE_UPDATE_RELEASE,
   FixtureName,
@@ -1899,6 +1900,7 @@ async function launchStudio(studio: StudioCore): Promise<StartedStudio | null> {
     if (fixture) await activateChatFixture(studio, fixture);
     if (fixture?.project) await openFixtureGame(win, fixture.project);
     announceReady(userData);
+    showFixtureAgentsFailure(userData);
     const view = requirePreview();
     if (dev && __STUDIO_DEV_BUILD__) devRuntime = await startDevRuntime(dev, studio, win, view);
     return { core: studio, window: win, preview: view };
@@ -1914,6 +1916,12 @@ function announceReady(userData: string): void {
   studioLog.write("main", `studio ready at ${Math.round(performance.now())} ms`);
   // Rows a closed app left unsent go now, or are dropped once a week old.
   void runSharing.flush().catch((err) => studioLog.write("main", errorMessage(err)));
+}
+
+/** The agents-start-failed fixture: a started studio shows the agents' line, and its Try again just clears it. */
+function showFixtureAgentsFailure(userData: string): void {
+  if (!fixtureProviders || dev?.fixture !== FixtureName.AgentsStartFailed) return;
+  showAgentsFailure(FIXTURE_AGENTS_FAILURE, async () => announceReady(userData));
 }
 
 /** The game view `createWindow` attached; every started window has one. */
@@ -1987,8 +1995,8 @@ async function openFixtureGame(win: BrowserWindow, project: string): Promise<voi
 }
 
 /**
- * Boot the harness; false when it would not, and the window says so instead of the studio. A
- * developer or smoke launch throws, as its runner reads the failure from stderr.
+ * Boot the harness; false when it would not, and the studio's sidebar says so. A developer or smoke
+ * launch throws, as its runner reads the failure from stderr.
  */
 async function startHarness(studio: StudioCore): Promise<boolean> {
   try {
@@ -1997,25 +2005,24 @@ async function startHarness(studio: StudioCore): Promise<boolean> {
     return true;
   } catch (err) {
     if (dev || isSmoke) throw err;
-    await showStartFailure(studio, err);
+    showAgentsFailure(errorMessage(err), async () => {
+      await studio.start();
+      announceReady(userDataRoot);
+    });
     return false;
   }
 }
 
 /**
- * Hold the window on "Genex couldn't start" with the harness's error, Try again, a report and Quit,
- * and load it again to show that. It was an error box over the window, which quit the app when it
- * was closed. Try again boots the harness again and finishes the launch; a failure there shows its
- * own words.
+ * The studio's window is open, so it stays: the games and Play work without the harness, and the
+ * sidebar says the agents didn't start, with Try again (`retry`) and a report. On Windows the
+ * harness waits on a sandbox that starts behind the open window, so this can come a minute after
+ * the window opened. A Try again that fails shows its own words.
  */
-async function showStartFailure(studio: StudioCore, err: unknown): Promise<void> {
-  const failure = errorMessage(err);
+function showAgentsFailure(failure: string, retry: () => Promise<void>): void {
   studioLog.write("main", `harness would not start: ${failure}`);
-  bootGate.fail(failure, async () => {
-    await studio.start();
-    announceReady(userDataRoot);
-  });
-  await reshowBoot();
+  bootGate.agentsFailed(failure, retry);
+  pushUiEvent({ type: UiEvent.HarnessStartFailed, payload: { failure } });
 }
 
 /** The developer runtime, once the renderer shows its threads. */

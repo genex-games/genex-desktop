@@ -98,6 +98,7 @@ import {
 import { createToastsStore, notifyProblem, ToastTone, type ToastsStore } from "./toasts.ts";
 import { uiEventReads } from "./ui-event-routes.ts";
 import { createUpdateStore, updateDownloaded, type UpdateStore } from "./update.ts";
+import { agentsFailed, agentsStarted, type AgentsStartStore, createAgentsStartStore } from "./agents-start.ts";
 
 /** The log is the source of truth; this poll is the safety net for anything the stream missed. */
 export const EVENT_POLL_MS = 3 * SECOND_MS;
@@ -148,6 +149,8 @@ export interface Studio {
   readonly modelPicker: ModelPickerStore;
   /** A new version of the app waiting for a restart. */
   readonly update: UpdateStore;
+  /** Whether the open studio's agents started, and the sidebar's Try again and report when not. */
+  readonly agentsStart: AgentsStartStore;
   /** Subscribe to main's events, start the poll and bootstrap. Returns the stop. */
   start(): () => void;
   /** (Re)load everything main knows; a newer call wins over one still in flight. */
@@ -225,6 +228,7 @@ interface Stores {
   readonly launch: LaunchStore;
   readonly modelPicker: ModelPickerStore;
   readonly update: UpdateStore;
+  readonly agentsStart: AgentsStartStore;
 }
 
 function createStores(
@@ -258,6 +262,7 @@ function createStores(
     launch: createLaunchStore(),
     modelPicker: createModelPickerStore(storage),
     update: createUpdateStore(),
+    agentsStart: createAgentsStartStore(api),
   };
 }
 
@@ -328,7 +333,7 @@ function openedThreads(state: ThreadsState, boot: Bootstrap): ThreadsState {
 
 /** (Re)load everything main knows; a newer call wins over one still in flight. */
 function bootstrapper(api: StudioApi, stores: Stores, storage: KeyValueStorage | null): () => Promise<void> {
-  const { session, eventLog, library, engines, threads, plugins, agentScreens, update } = stores;
+  const { session, eventLog, library, engines, threads, plugins, agentScreens, update, agentsStart } = stores;
   let generation = 0;
   return async () => {
     const version = ++generation;
@@ -351,6 +356,8 @@ function bootstrapper(api: StudioApi, stores: Stores, storage: KeyValueStorage |
       const ready = await api.readyUpdate().catch(() => null);
       if (superseded()) return;
       update.setState((state) => updateDownloaded(state, ready), true);
+      // Agents that would not start before this window opened, or before a reload, still say so.
+      void agentsStart.refresh();
       const staged = await api.staged().catch(() => []);
       if (superseded()) return;
       library.setState((state) => stagedCounted(state, staged.length), true);
@@ -365,7 +372,10 @@ function bootstrapper(api: StudioApi, stores: Stores, storage: KeyValueStorage |
 }
 
 /** The events that change a store directly, beyond the reads they ask for. */
-function applyUiEvent({ agentScreens, threads, layout, library, update, play }: Stores, event: UiEvent): void {
+function applyUiEvent(
+  { agentScreens, threads, layout, library, update, play, agentsStart }: Stores,
+  event: UiEvent,
+): void {
   switch (event.type) {
     case UiEvent.PlayViewer:
       // The bar's Remix closed the viewer: the copy is made of the game it showed, as a card's is.
@@ -401,6 +411,12 @@ function applyUiEvent({ agentScreens, threads, layout, library, update, play }: 
       break;
     case UiEvent.UpdateReady:
       update.setState((state) => updateDownloaded(state, event.payload), true);
+      break;
+    case UiEvent.HarnessStartFailed:
+      agentsStart.setState((state) => agentsFailed(state, event.payload.failure), true);
+      break;
+    case UiEvent.StudioReady:
+      agentsStart.setState(agentsStarted, true);
       break;
     case UiEvent.DelegationStarted:
     case UiEvent.DelegationFinished:

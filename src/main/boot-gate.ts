@@ -4,8 +4,10 @@
  * the process sandbox cannot start, main holds the gate on the setup screen with the problem and
  * the step that re-runs core startup; Retry runs that step once (presses while it runs share it)
  * and the gate opens, or shows the problem the new attempt found. Any other failure is the
- * caller's: it rejects and leaves the setup state as it was. A harness that would not start holds
- * the gate on that failure (`fail`), whose Try again shows the next failure's words instead.
+ * caller's: it rejects and leaves the setup state as it was. A studio that would not start holds
+ * the gate on that failure (`fail`), whose Try again shows the next failure's words instead. Once
+ * the studio is open, a harness that would not start leaves the gate Ready with the failure's
+ * words (`agentsFailed`): the studio stays, and its Try again works the same way.
  *
  * On Windows the missing piece is a one-time install behind an administrator prompt, which Set up
  * runs (`installSandbox`); once installed it retries, and a dismissed prompt changes nothing.
@@ -47,6 +49,11 @@ export interface BootGate {
   hold(problem: SandboxProblem, attempt: () => Promise<void>): void;
   /** Show that the studio would not start, with `error`; Try again runs `attempt`, and a failure there shows its own words. */
   fail(error: string, attempt: () => Promise<void>): void;
+  /**
+   * The studio is open but its agents would not start: it stays, saying so with `error`; Try again
+   * runs `attempt`, and a failure there shows its own words.
+   */
+  agentsFailed(error: string, attempt: () => Promise<void>): void;
   /** A start still running at its limit shows as failed, as {@link fail}; nothing once the gate is past starting. */
   overdue(error: string, attempt: () => Promise<void>): boolean;
   /** Run the held attempt; the state after it. */
@@ -72,6 +79,11 @@ export function startStepAfter(mark: string): StartStep | null {
 
 /** What a Set up runs instead of the install once one has gone through this launch. */
 const ALREADY_INSTALLED = async (): Promise<SandboxInstall> => ({ cancelled: false });
+
+/** Showing a failure whose Try again shows the next one's words: the studio's, or its agents'. */
+function showsFailure(state: BootState): boolean {
+  return state.phase === BootPhase.Failed || state.failure !== undefined;
+}
 
 /** Held on the problem Set up fixes: a sandbox that has not been provisioned yet. */
 function waitsOnInstall(state: BootState): boolean {
@@ -103,7 +115,7 @@ export function createBootGate(platform: string, options: BootGateOptions = {}):
     } catch (error) {
       if (error instanceof SandboxUnavailableError) {
         state = { platform, phase: BootPhase.SandboxSetup, sandbox: error.problem };
-      } else if (state.phase === BootPhase.Failed) {
+      } else if (showsFailure(state)) {
         state = { ...state, failure: errorMessage(error) };
       } else {
         throw error;
@@ -152,6 +164,11 @@ export function createBootGate(platform: string, options: BootGateOptions = {}):
     fail(error, next) {
       holds++;
       state = { platform, phase: BootPhase.Failed, sandbox: null, failure: error };
+      attempt = next;
+    },
+    agentsFailed(error, next) {
+      holds++;
+      state = { ...ready, failure: error };
       attempt = next;
     },
     overdue(error, next) {

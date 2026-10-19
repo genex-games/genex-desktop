@@ -11,6 +11,7 @@ import { access, mkdir, readFile, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, it } from "node:test";
+import { setImmediate } from "node:timers/promises";
 import {
   OpenCodeEngine,
   type OpenCodeExec,
@@ -192,6 +193,61 @@ describe("OpenCode's account", () => {
 
   it("is OpenCode's own sign-in once it lists a provider's model", async () => {
     assert.equal((await account(signedIn(await fixture("opencode-models-1.18.txt")))).source, "system");
+  });
+
+  it("counts an OpenCode Go sign-in as a provider's, on 1.x and 2.x, a model its plan prices at nothing included", async () => {
+    const v1 = parseOpenCodeModels(await fixture("opencode-models-go-1.19.txt"));
+    const v2 = parseOpenCodeApiModels(await fixture("opencode-api-model-go-2.0.25.json"));
+    for (const listed of [v1, v2]) {
+      const go = listed.filter((model) => model.row.id.startsWith("opencode-go/"));
+      assert.deepEqual(go.map((model) => model.row.id).sort(), [
+        "opencode-go/kimi-k3",
+        "opencode-go/minimax-m3.1-flash-free",
+      ]);
+      assert.ok(
+        go.every((model) => !model.anonymous && !model.row.free),
+        "Go's models run only on its sign-in",
+      );
+      assert.ok(go.every((model) => model.hosts.includes("opencode.ai")));
+    }
+    const root = await tmpDir("opencode-account-");
+    const listing = await fixture("opencode-models-go-1.19.txt");
+    const engine = new OpenCodeEngine({ scratchRoot: root, resolveCli: ready, listModels: async () => listing });
+    assert.equal((await engine.account()).source, "system");
+  });
+
+  it("reads again after a sign-in that lands while a listing runs, so its models show and it reads connected", async () => {
+    const root = await tmpDir("opencode-account-");
+    const before = await fixture("opencode-models-1.18.txt");
+    const after = await fixture("opencode-models-go-1.19.txt");
+    let finishFirst = (_listing: string) => {};
+    let firstStarted = () => {};
+    const listing = new Promise<void>((resolve) => {
+      firstStarted = resolve;
+    });
+    let reads = 0;
+    const engine = new OpenCodeEngine({
+      scratchRoot: root,
+      resolveCli: ready,
+      listModels: () => {
+        reads++;
+        if (reads > 1) return Promise.resolve(after);
+        firstStarted();
+        return new Promise<string>((resolve) => {
+          finishFirst = resolve;
+        });
+      },
+    });
+    // The window came forward and started a listing; the sign-in finishes before that listing does.
+    const running = engine.refreshModels();
+    await listing;
+    const afterSignIn = engine.refreshModels(true);
+    await setImmediate();
+    finishFirst(before);
+    await Promise.all([running, afterSignIn]);
+    assert.equal(reads, 2, "the sign-in's refresh reads again rather than taking the running listing");
+    assert.equal((await engine.account()).source, "system");
+    assert.ok((await engine.models()).some((model) => model.id === "opencode-go/kimi-k3"));
   });
 
   it("lists a signed-in provider's models before its own free ones, so the picker starts with them", async () => {

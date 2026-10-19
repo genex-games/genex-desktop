@@ -49,6 +49,7 @@ export { FIRST_LAUNCH_STATUS, fixtureEngines } from "./fixture-engines.ts";
 export { installOlderPlugins } from "./fixture-plugin-updates.ts";
 export {
   DevProviders,
+  FIXTURE_AGENTS_FAILURE,
   FIXTURE_NAMES,
   FIXTURE_SANDBOX_PROBLEM,
   FIXTURE_UPDATE_RELEASE,

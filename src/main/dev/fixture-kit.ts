@@ -78,6 +78,8 @@ export const FixtureName = {
    * generations (one not saved, one saved, one shared, a saved sound) and a picture dropped in.
    */
   AssetLibrary: "asset-library",
+  /** The studio open, its agents not started: the sidebar's line, its details and report; Try again clears it. */
+  AgentsStartFailed: "agents-start-failed",
 } as const;
 export type FixtureName = (typeof FixtureName)[keyof typeof FixtureName];
 
@@ -93,6 +95,10 @@ export function isFixtureName(name: string): name is FixtureName {
 export function isChatFixture(name: string | null | undefined): boolean {
   return name === FixtureName.ChatHistory || name === FixtureName.ChatQuestions;
 }
+
+/** The words the agents-start-failed fixture's line shows under Details: srt-win's own timeout. */
+export const FIXTURE_AGENTS_FAILURE =
+  "srt-win acl stamp --holder-pid 59288 --sandbox-user-sid S-1-5-21-0-0-0-1006 timed out after 60000ms (killed by SIGTERM)";
 
 /**
  * What the sandbox-setup fixture shows before its first Retry: a Linux machine missing bubblewrap

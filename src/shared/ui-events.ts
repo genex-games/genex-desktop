@@ -87,6 +87,8 @@ export interface UiEventMap {
   "harness.status": { threadId?: string; status?: string; all?: ThreadStatusMap };
   "harness.log": { line: string; stream: "stdout" | "stderr" };
   "harness.boot": Partial<BootNotice>;
+  /** The open studio's harness would not start (main's own, never the harness's): why, for its line. */
+  "harness.start-failed": { failure: string };
   "seed.upgraded": { added: string[]; updated: string[]; kept: string[]; retired: string[] };
   "watchdog.triggered": { reason: string; snapshot: string | null };
   "watchdog.recovered": { reason: string; ok: boolean; reseeded?: boolean };
@@ -240,6 +242,7 @@ export const UiEvent = {
   HarnessStatus: "harness.status",
   HarnessLog: "harness.log",
   HarnessBoot: "harness.boot",
+  HarnessStartFailed: "harness.start-failed",
   SeedUpgraded: "seed.upgraded",
   WatchdogTriggered: "watchdog.triggered",
   WatchdogRecovered: "watchdog.recovered",

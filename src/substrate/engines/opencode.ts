@@ -120,6 +120,17 @@ const MESSAGE = {
   JudgeTimedOut: (minutes: number) => `the judge did not answer within ${minutes} min`,
 } as const;
 
+/** What a listing said beyond its rows. */
+interface ListingFacts {
+  /** The hosts each model's provider answers on, for the sandbox's network. */
+  hosts: ReadonlyMap<string, string[]>;
+  /** Whether it named a model some provider's sign-in runs, not only OpenCode's free ones. */
+  signedIn: boolean;
+  /** OpenCode's own free models in it, which run with no sign-in. */
+  anonymous: ReadonlySet<string>;
+}
+const NO_LISTING: ListingFacts = { hosts: new Map(), signedIn: false, anonymous: new Set() };
+
 /** One `opencode run`, as the engine starts it; injectable in tests. */
 export interface OpenCodeInvocation {
   argv: string[];
@@ -184,11 +195,8 @@ export class OpenCodeEngine implements Engine {
   readonly #resolveCli: () => Promise<{ ready: boolean; path?: string; version?: string; detail: string }>;
   readonly #lockRecovery: string | undefined;
   readonly #mcpTools: boolean;
-  #hosts = new Map<string, string[]>();
-  /** Whether the last listing named a model some provider's sign-in runs, not only OpenCode's free ones. */
-  #signedIn = false;
-  /** OpenCode's own free models in the last listing, which run with no sign-in. */
-  #anonymous = new Set<string>();
+  /** What each listing said beyond its rows, by the rows the catalog published: a dropped listing never counts. */
+  readonly #listings = new WeakMap<EngineModel[], ListingFacts>();
 
   constructor(options: OpenCodeEngineOptions) {
     this.#scratchRoot = options.scratchRoot ?? path.join(os.tmpdir(), `studio-${EngineId.OpenCode}`);
@@ -224,7 +232,7 @@ export class OpenCodeEngine implements Engine {
     const cli = await this.#resolveCli();
     if (cli.ready) await this.refreshModels().catch(() => {});
     return {
-      source: this.#signedIn ? LoginSource.System : LoginSource.None,
+      source: this.#shown().signedIn ? LoginSource.System : LoginSource.None,
       afterSignOut: "signed-out",
       cli: {
         state: cliState(cli),
@@ -257,10 +265,18 @@ export class OpenCodeEngine implements Engine {
     // A signed-in provider's models first: the picker starts with the first few it is given.
     const parsed = dialect === OpenCodeDialect.V2 ? parseOpenCodeApiModels(stdout) : parseOpenCodeModels(stdout);
     const listed = [...parsed.filter((model) => !model.anonymous), ...parsed.filter((model) => model.anonymous)];
-    this.#hosts = new Map(listed.map((model) => [model.row.id, model.hosts]));
-    this.#signedIn = listed.some((model) => !model.anonymous);
-    this.#anonymous = new Set(listed.filter((model) => model.anonymous).map((model) => model.row.id));
-    return { models: listed.map((model: OpenCodeModel) => model.row), source: ModelCatalogSource.Provider };
+    const models = listed.map((model: OpenCodeModel) => model.row);
+    this.#listings.set(models, {
+      hosts: new Map(listed.map((model) => [model.row.id, model.hosts])),
+      signedIn: listed.some((model) => !model.anonymous),
+      anonymous: new Set(listed.filter((model) => model.anonymous).map((model) => model.row.id)),
+    });
+    return { models, source: ModelCatalogSource.Provider };
+  }
+
+  /** What the listing the picker shows said beyond its rows; nothing before the first one. */
+  #shown(): ListingFacts {
+    return this.#listings.get(this.#catalog.models()) ?? NO_LISTING;
   }
 
   /** What the CLI lists: 1.18's `models --verbose`, or 2.x's `GET /api/model` from a server of the listing's own. */
@@ -500,7 +516,8 @@ export class OpenCodeEngine implements Engine {
 
   /** The hosts a session may reach: its model's provider, or every listed provider when OpenCode picks. */
   #domains(model: string | undefined): string[] {
-    const hosts = model ? (this.#hosts.get(model) ?? []) : [...this.#hosts.values()].flat();
+    const listed = this.#shown().hosts;
+    const hosts = model ? (listed.get(model) ?? []) : [...listed.values()].flat();
     return [...new Set([...hosts, ...CATALOG_HOSTS])];
   }
 
@@ -564,8 +581,9 @@ export class OpenCodeEngine implements Engine {
 
   /** Did the run use one of OpenCode's free models: the one picked, or OpenCode's own default with no sign-in? */
   #ranFreeModel(model: string | undefined): boolean {
-    if (model) return this.#anonymous.has(model);
-    return !this.#signedIn && this.#anonymous.size > 0;
+    const { anonymous, signedIn } = this.#shown();
+    if (model) return anonymous.has(model);
+    return !signedIn && anonymous.size > 0;
   }
 
   /** A failure on a free model, said as one, of the same kind so the run waits or stops as before. */
@@ -581,7 +599,7 @@ export class OpenCodeEngine implements Engine {
    */
   #blockedHostText(failure: { status: number | null }, model: string | undefined): string | null {
     if (!model || failure.status !== PROXY_REFUSED_STATUS) return null;
-    const hosts = this.#hosts.get(model);
+    const hosts = this.#shown().hosts.get(model);
     if (!hosts || hosts.length > 0) return null;
     return MESSAGE.HostUnknown(model.slice(0, model.indexOf("/")));
   }

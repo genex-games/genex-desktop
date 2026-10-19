@@ -24,6 +24,7 @@ import { studio } from "./studio.ts";
 import { activeThread, isGameThread, roomOf, threadMeta, studioThreadOf, type ThreadsState } from "./threads.ts";
 import type { ToastsState } from "./toasts.ts";
 import type { UpdateState } from "./update.ts";
+import type { AgentsStartState } from "./agents-start.ts";
 
 export { useShallow } from "zustand/react/shallow";
 
@@ -45,6 +46,7 @@ export const useToasts = <T>(select: Selector<ToastsState, T>): T => useStore(st
 export const useLayout = <T>(select: Selector<LayoutState, T>): T => useStore(studio().layout, select);
 export const useLaunch = <T>(select: Selector<LaunchState, T>): T => useStore(studio().launch, select);
 export const useUpdate = <T>(select: Selector<UpdateState, T>): T => useStore(studio().update, select);
+export const useAgentsStart = <T>(select: Selector<AgentsStartState, T>): T => useStore(studio().agentsStart, select);
 export const useModelPicker = <T>(select: Selector<ModelPickerState, T>): T => useStore(studio().modelPicker, select);
 /** The boot store lives beside the studio, not in it: it decides whether the studio starts at all. */
 export const useBoot = <T>(store: BootStore, select: Selector<BootStoreState, T>): T => useStore(store, select);

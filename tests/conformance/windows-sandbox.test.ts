@@ -28,6 +28,10 @@ import { ProcessSandbox, type SandboxRuntime } from "../../src/substrate/spawn.t
 import {
   type AncestorGrantDeps,
   type AncestorGrants,
+  type OwnDenyDeps,
+  type OwnDenyEntry,
+  type OwnDenyStamps,
+  type SessionMember,
   WindowsSandboxSession,
   ancestorDirs,
   ancestorGrants,
@@ -43,23 +47,32 @@ import {
   msysPath,
   msysPathList,
   granteeOf,
+  groupSidOnce,
+  ownDenyStamps,
   renderEnvFile,
+  routeWindowsDenies,
+  sandboxGroupOf,
   sandboxSidOnce,
   setupGaps,
   srtWinExecFailure,
   srtWinPath,
   windowsAccessReport,
+  windowsDenyHolders,
   windowsGrantHolders,
   windowsRunEnv,
   writeDeniesBeyondRead,
 } from "../../src/substrate/windows-sandbox.ts";
 import {
+  DenyAccess,
   type FolderAceEdit,
   type FolderAceEditor,
   FolderAceOp,
+  type FolderDenyEdit,
+  type FolderDenyEditor,
   folderAceCommand,
   folderAceEditor,
   folderAceOutcomes,
+  folderDenyEditor,
   FOLDER_ACE_SCRIPT,
   icaclsArgs,
 } from "../../src/substrate/windows-folder-ace.ts";
@@ -300,6 +313,26 @@ describe("read-attributes grants above each root", () => {
     assert.equal(none, 3, "three probes, then the caller says why it stops");
   });
 
+  it("names only the sandbox users' group in Genex's own denies, asked again until srt-win can say", async () => {
+    const group = "S-1-5-21-1-1002";
+    assert.equal(sandboxGroupOf({ groupSid: group, inSandboxGroup: true }), group);
+    assert.equal(sandboxGroupOf({ groupSid: group, inSandboxGroup: false }), null, "never the user's own SID");
+    assert.equal(sandboxGroupOf({}), null);
+    const answers: Array<string | null | Error> = [new Error("srt-win timed out"), null, group];
+    let asked = 0;
+    const sid = groupSidOnce(async () => {
+      asked++;
+      const answer = answers.shift() ?? null;
+      if (answer instanceof Error) throw answer;
+      return answer;
+    }, 0);
+    assert.equal(await sid(), null, "no group yet (Set up has not run)");
+    assert.equal(asked, 2, "asked again only while srt-win could not say");
+    assert.equal(await sid(), group, "asked again on the next call, and found");
+    assert.equal(await sid(), group);
+    assert.equal(asked, 3, "a found group is never asked for again");
+  });
+
   it("lists who may open each folder from the profile down to the files, for the log", async () => {
     const listed: string[] = [];
     const lines = await windowsAccessReport(PROFILE, [at("AppData", "Local", "genex", "app-1")], async (dir) => {
@@ -458,6 +491,45 @@ describe("an entry on one folder alone, on Windows", {
     await grants.revokeAll();
     assert.doesNotMatch(sddl(above, root), granted, "the grant is taken back");
     assert.match(sddl(moved, root), inheritedElsewhere, "nothing under the folder was rewritten by the take-back");
+  });
+
+  it("denies a folder and everything in it, guards its parent alone, and takes both back", async () => {
+    const root = realpathSync.native(await tmpDir("folder-deny-"));
+    const above = path.join(root, "above");
+    const secret = path.join(above, "secret");
+    const key = path.join(secret, "nested", "key");
+    const moved = path.join(above, "deep", "moved");
+    const elsewhere = path.join(root, "elsewhere");
+    await mkdir(path.dirname(key), { recursive: true });
+    await writeFile(key, "key");
+    await mkdir(path.dirname(moved), { recursive: true });
+    await mkdir(elsewhere);
+    // As above: the moved folder keeps what it inherited elsewhere until something walks `above`,
+    // the way srt-win's stamp of `secret` walked it (and the whole profile for `~\.ssh`).
+    execFileSync("icacls", [elsewhere, "/grant", `*${GUESTS}:(OI)(CI)(RA)`], { stdio: "ignore" });
+    await mkdir(path.join(elsewhere, "moved"));
+    await rename(path.join(elsewhere, "moved"), moved);
+    const inheritedElsewhere = /\(A;[A-Z]*ID[A-Z]*;(?:0x80|LO);;;BG\)/;
+    const denies = ownDenyStamps(path.join(root, "holders"), { sid: async () => GUESTS, pid: 1, alive: () => false });
+    const { own } = routeWindowsDenies({ read: [secret], write: [] });
+    assert.equal(await denies.sync(own), true);
+    assert.match(sddl(secret, root), /\(D;OICI;FA;;;BG\)/, "the folder is denied, passed down");
+    assert.match(sddl(key, root), /\(D;ID;FA;;;BG\)/, "a file below it inherits the deny");
+    assert.match(sddl(above, root), /\(D;;DC;;;BG\)/, "its parent may not have it deleted, on that folder alone");
+    assert.match(sddl(moved, root), inheritedElsewhere, "nothing else under the parent was rewritten");
+    await denies.revokeAll();
+    for (const dir of [secret, key, above]) assert.doesNotMatch(sddl(dir, root), /\(D;[^)]*;;;BG\)/, dir);
+    assert.match(sddl(moved, root), inheritedElsewhere, "nor by the take-back");
+  });
+
+  it("refuses to deny anyone the running user is, setting nothing", async () => {
+    const EVERYONE = "S-1-1-0";
+    const root = realpathSync.native(await tmpDir("folder-deny-self-"));
+    const target = path.join(root, "target");
+    await mkdir(target);
+    const edit = { dir: target, sid: EVERYONE, op: FolderAceOp.Deny, deny: DenyAccess.Read, guard: true } as const;
+    assert.equal(await folderDenyEditor()([edit]), null);
+    assert.doesNotMatch(sddl(target, root), /\(D;/);
   });
 });
 
@@ -808,19 +880,55 @@ function fakeAncestors() {
   return { ancestors, synced, revoked: () => revoked };
 }
 
-/** A session over fakes; `realDenies` keeps the real filter of missing deny paths. */
-function session(options: { realDenies?: boolean; profile?: string } = {}) {
+/**
+ * Genex's own deny entries over a fake: each sync's entries, logged in `calls` as "own denies";
+ * `available: false` answers as a PC where Genex cannot set them (no sandbox users' group).
+ */
+function fakeOwnDenies(calls: string[], options: { available?: boolean } = {}) {
+  const synced: OwnDenyEntry[][] = [];
+  let revoked = 0;
+  const denies: OwnDenyStamps = {
+    sync: async (entries) => {
+      calls.push("own denies");
+      synced.push([...entries]);
+      return options.available ?? true;
+    },
+    revokeAll: async () => {
+      revoked++;
+    },
+    revokeAllSync: () => {
+      revoked++;
+    },
+  };
+  return { denies, synced, revoked: () => revoked };
+}
+
+/**
+ * A session over fakes; `realDenies` keeps the real filter of missing deny paths, `ownDenies`
+ * lets Genex set the denies outside the grants itself (`unavailable`: a PC where it cannot).
+ */
+function session(
+  options: {
+    realDenies?: boolean;
+    profile?: string;
+    ownDenies?: boolean | "unavailable";
+    exists?: (p: string) => boolean;
+  } = {},
+) {
   const runtime = fakeSessionRuntime();
   const ancestors = fakeAncestors();
+  const own = fakeOwnDenies(runtime.calls, { available: options.ownDenies !== "unavailable" });
   const logged: string[] = [];
   const value = new WindowsSandboxSession({
     runtime: runtime.runtime,
     profile: options.profile ?? PROFILE,
     ancestors: ancestors.ancestors,
-    ...(options.realDenies ? {} : { keepDenies: (paths: readonly string[]) => [...paths] }),
+    ...(options.ownDenies ? { denies: own.denies } : {}),
+    ...(options.realDenies ? {} : { keepDenies: (paths: readonly string[]) => [...paths], exists: () => true }),
+    ...(options.exists ? { exists: options.exists } : {}),
     log: (line) => logged.push(line),
   });
-  return { session: value, runtime, ancestors, logged };
+  return { session: value, runtime, ancestors, own, logged };
 }
 
 const GAMES = at("AI Games");
@@ -1141,6 +1249,262 @@ describe("the grant session", () => {
   });
 });
 
+describe("deny paths Genex sets itself", () => {
+  // srt-win's stamp puts an inheritable FILE_DELETE_CHILD deny on every denied path's parent, and
+  // Windows passes it down through everything under that parent, once per path: for `~\.ssh` or
+  // `~\.claude` the whole profile, for a game's `.claude` the whole game. A large profile or a few
+  // large games ran past srt-win's 60-second deadline.
+  const PONG = at("AI Games", "Pong");
+  const NEVER_MADE = at("AI Games", "Pong", "never-made");
+  const exists = (p: string) => p !== NEVER_MADE;
+  const denying = (denyRead: string[], denyWrite: string[] = []): SessionMember => ({
+    grants: { write: [PONG], read: [] },
+    config: { ...BASE_CONFIG, filesystem: { ...BASE_CONFIG.filesystem, denyRead, denyWrite } },
+  });
+  const SECRETS = [
+    at(".ssh"),
+    at(".claude"),
+    at("AppData", "Roaming", "Microsoft", "Credentials"),
+    at("AI Games", "Pong", ".env"),
+    "D:\\Keys\\deploy.pem",
+    NEVER_MADE,
+  ];
+  const WRITE_ONLY = [at("AppData", "Local", "Roblox", "AssistantSettings"), at("AI Games", "Pong", ".claude")];
+
+  it("never hands srt-win a deny on a path that exists, whose parent its stamp would walk whole", async () => {
+    const s = session({ ownDenies: true, exists });
+    await s.session.join({}, denying(SECRETS, WRITE_ONLY));
+    const sent = s.runtime.last().filesystem;
+    assert.deepEqual(sent.denyRead, [NEVER_MADE], "only a path srt-win must make a placeholder for");
+    assert.deepEqual(sent.denyWrite, []);
+    assert.deepEqual(s.own.synced, [
+      [
+        { path: PROFILE, deny: null, guard: true },
+        { path: at(".claude"), deny: DenyAccess.Read, guard: false },
+        { path: at(".ssh"), deny: DenyAccess.Read, guard: false },
+        { path: PONG, deny: null, guard: true },
+        { path: at("AI Games", "Pong", ".claude"), deny: DenyAccess.Write, guard: false },
+        { path: at("AI Games", "Pong", ".env"), deny: DenyAccess.Read, guard: false },
+        { path: at("AppData", "Local", "Roblox"), deny: null, guard: true },
+        { path: at("AppData", "Local", "Roblox", "AssistantSettings"), deny: DenyAccess.Write, guard: false },
+        { path: at("AppData", "Roaming", "Microsoft"), deny: null, guard: true },
+        { path: at("AppData", "Roaming", "Microsoft", "Credentials"), deny: DenyAccess.Read, guard: false },
+        { path: "D:\\Keys", deny: null, guard: true },
+        { path: "D:\\Keys\\deploy.pem", deny: DenyAccess.Read, guard: false },
+      ],
+    ]);
+    assert.deepEqual(s.runtime.calls, ["own denies", "initialize"], "denied before srt-win grants anything");
+  });
+
+  it("leaves every deny to srt-win, as before, where Genex cannot set them itself", async () => {
+    const s = session({ ownDenies: "unavailable", exists });
+    await s.session.join({}, denying(SECRETS, WRITE_ONLY));
+    const sent = s.runtime.last().filesystem;
+    assert.deepEqual(sent.denyRead, SECRETS);
+    assert.deepEqual(sent.denyWrite, WRITE_ONLY);
+  });
+
+  it("sets them again on every regrant, and takes them back with the last member and on dispose", async () => {
+    const s = session({ ownDenies: true });
+    const owner = {};
+    await s.session.join(owner, denying([at(".ssh")]));
+    s.session.update(owner, { write: [PONG, LATE], read: [] });
+    await s.session.settled();
+    assert.deepEqual(s.runtime.calls, ["own denies", "initialize", "reset", "own denies", "initialize"]);
+    s.session.leave(owner);
+    await s.session.settled();
+    assert.equal(s.own.revoked(), 1);
+    await s.session.join({}, denying([at(".ssh")]));
+    await s.session.dispose();
+    assert.equal(s.own.revoked(), 2);
+  });
+
+  it("denies a path where it really is, its spelling and links worked out", () => {
+    const linked = at(".codex");
+    const realpath = (p: string) => (p === linked ? "D:\\dotfiles\\codex" : path.win32.resolve(p));
+    const routes = routeWindowsDenies(
+      { read: [linked, at("AppData", "..", ".aws")], write: [at(".AWS")] },
+      { realpath, exists: () => true },
+    );
+    assert.deepEqual(routes.srt, { read: [], write: [] });
+    assert.deepEqual(routes.own, [
+      { path: PROFILE, deny: null, guard: true },
+      { path: at(".aws"), deny: DenyAccess.Read, guard: false },
+      { path: "D:\\dotfiles", deny: null, guard: true },
+      { path: "D:\\dotfiles\\codex", deny: DenyAccess.Read, guard: false },
+    ]);
+  });
+
+  it("leaves srt-win only what it must make, or what has no folder to guard", () => {
+    const table: Array<[string, string]> = [
+      ["a path that does not exist yet (srt-win makes its placeholder)", NEVER_MADE],
+      ["a drive root", "D:\\"],
+      ["a network share", "\\\\nas\\keys\\deploy.pem"],
+    ];
+    for (const [label, denied] of table) {
+      const routes = routeWindowsDenies({ read: [denied], write: [denied] }, { realpath: (p) => p, exists });
+      assert.deepEqual(routes, { srt: { read: [denied], write: [denied] }, own: [] }, label);
+    }
+  });
+});
+
+describe("Genex's own deny entries", () => {
+  const SID = "S-1-5-21-1-1002";
+  const DEAD_PID = 3;
+  const done = (edits: readonly FolderDenyEdit[]) => edits.map(() => ({ ok: true }) as const);
+  const shape = (edit: FolderDenyEdit) => [edit.dir, `${edit.deny}`, edit.guard ? "guard" : "-"];
+  /** Deny entries for holder `pid` in `holders`, logging every edit as `[pid, dir, deny, guard]`. */
+  const holder = (holders: string, pid: number, calls: string[][], options: Partial<OwnDenyDeps> = {}) =>
+    ownDenyStamps(holders, {
+      sid: async () => SID,
+      pid,
+      alive: (other) => other !== DEAD_PID,
+      retryDelayMs: 0,
+      edit: async (edits) => {
+        for (const edit of edits) calls.push([`${pid}`, ...shape(edit)]);
+        return done(edits);
+      },
+      editSync: (edits) => {
+        for (const edit of edits) calls.push([`${pid}`, "sync", ...shape(edit)]);
+        return done(edits);
+      },
+      ...options,
+    });
+  const guard = { path: PROFILE, deny: null, guard: true };
+  const ssh = { path: at(".ssh"), deny: DenyAccess.Read, guard: false };
+  const assistant = {
+    path: at("AppData", "Local", "Roblox", "AssistantSettings"),
+    deny: DenyAccess.Write,
+    guard: false,
+  };
+
+  it("records each entry before setting it, and takes back what is no longer needed", async () => {
+    const holders = await tmpDir("windows-denies-");
+    const record = path.join(holders, "1.json");
+    const calls: string[][] = [];
+    const denies = holder(holders, 1, calls, {
+      edit: async (edits) => {
+        for (const edit of edits) {
+          if (edit.deny || edit.guard) {
+            const recorded = JSON.parse(await readFile(record, "utf8")) as { entries: OwnDenyEntry[] };
+            assert.ok(
+              recorded.entries.some((entry) => entry.path === edit.dir),
+              "recorded before set",
+            );
+          }
+          assert.equal(edit.sid, SID);
+          calls.push(shape(edit));
+        }
+        return done(edits);
+      },
+    });
+    assert.equal(await denies.sync([guard, ssh]), true);
+    assert.equal(await denies.sync([guard, assistant]), true);
+    assert.deepEqual(calls, [
+      [PROFILE, "null", "guard"],
+      [at(".ssh"), "read", "-"],
+      [PROFILE, "null", "guard"],
+      [assistant.path, "write", "-"],
+      [at(".ssh"), "null", "-"],
+    ]);
+    calls.length = 0;
+    await denies.revokeAll();
+    assert.deepEqual(calls, [
+      [PROFILE, "null", "-"],
+      [assistant.path, "null", "-"],
+    ]);
+    assert.equal(existsSync(record), false, "the record goes once everything is taken back");
+  });
+
+  it("sets each path to what every running Genex needs (a dev profile beside the app)", async () => {
+    const holders = await tmpDir("windows-denies-");
+    const calls: string[][] = [];
+    const app = holder(holders, 1, calls);
+    const dev = holder(holders, 2, calls);
+    await app.sync([guard, ssh]);
+    await dev.sync([{ ...ssh, deny: DenyAccess.Write }]);
+    await app.sync([]);
+    dev.revokeAllSync();
+    app.revokeAllSync();
+    assert.deepEqual(calls, [
+      ["1", PROFILE, "null", "guard"],
+      ["1", at(".ssh"), "read", "-"],
+      ["2", at(".ssh"), "read", "-"],
+      ["1", PROFILE, "null", "-"],
+      ["1", at(".ssh"), "write", "-"],
+      ["2", "sync", at(".ssh"), "null", "-"],
+    ]);
+    assert.deepEqual(await readdir(holders), [], "every record is gone");
+  });
+
+  it("takes back what a Genex that crashed left set, except what a running one needs", async () => {
+    const holders = await tmpDir("windows-denies-");
+    const crashed = { sid: SID, entries: [ssh, { path: at("Videos", "x"), deny: DenyAccess.Read, guard: false }] };
+    await writeFile(path.join(holders, `${DEAD_PID}.json`), JSON.stringify(crashed));
+    await writeFile(path.join(holders, "notes.txt"), "not a record");
+    const calls: string[][] = [];
+    await holder(holders, 1, calls).sync([ssh]);
+    assert.deepEqual(calls, [
+      ["1", at(".ssh"), "read", "-"],
+      ["1", at("Videos", "x"), "null", "-"],
+    ]);
+    assert.deepEqual((await readdir(holders)).sort(), ["1.json", "notes.txt"]);
+  });
+
+  it("answers false without the sandbox users' group, or where PowerShell cannot set the entries", async () => {
+    const holders = await tmpDir("windows-denies-");
+    const calls: string[][] = [];
+    assert.equal(await holder(holders, 1, calls, { sid: async () => null }).sync([ssh]), false);
+    assert.deepEqual(calls, []);
+    assert.deepEqual(await readdir(holders), [], "nothing recorded without a group");
+    const locked = holder(holders, 2, calls, { edit: async () => null });
+    assert.equal(await locked.sync([ssh]), false);
+    // A batch PowerShell gave up on part way may have set some entries: the record keeps them.
+    assert.deepEqual(await readdir(holders), ["2.json"]);
+  });
+
+  it("tries again only the entries refused once, and lets a take-back on a path that is gone go", async () => {
+    const holders = await tmpDir("windows-denies-");
+    const batches: string[][] = [];
+    let refusals = 1;
+    const flaky: FolderDenyEditor = async (edits) => {
+      batches.push(edits.map((edit) => edit.dir));
+      return edits.map((edit) =>
+        edit.dir === at(".ssh") && refusals-- > 0 ? { ok: false, error: "being changed" } : { ok: true },
+      );
+    };
+    const denies = holder(holders, 1, [], { edit: flaky });
+    await denies.sync([guard, ssh]);
+    assert.deepEqual(batches, [[PROFILE, at(".ssh")], [at(".ssh")]]);
+    const gone: FolderDenyEditor = async (edits) =>
+      edits.map((edit) => (edit.deny || edit.guard ? { ok: true } : { ok: false, error: "cannot find the file" }));
+    assert.equal(await holder(holders, 1, [], { edit: gone }).sync([]), true);
+    const broken: FolderDenyEditor = async (edits) => edits.map(() => ({ ok: false, error: "Access is denied." }));
+    await assert.rejects(
+      holder(holders, 2, [], { edit: broken }).sync([ssh]),
+      /could not deny the sandbox user .*\\\.ssh: Access is denied\./,
+    );
+  });
+
+  it("runs nothing when it has nothing to set and nothing to take back", async () => {
+    let runs = 0;
+    const denies = holder(await tmpDir("windows-denies-"), 1, [], {
+      edit: async (edits) => {
+        runs++;
+        return done(edits);
+      },
+    });
+    assert.equal(await denies.sync([]), true);
+    await denies.revokeAll();
+    assert.equal(runs, 0);
+  });
+
+  it("records under %LOCALAPPDATA%, beside the folder grants", () => {
+    assert.equal(windowsDenyHolders(PROFILE, at("AppData", "Local")), at("AppData", "Local", "genex-sandbox-denies"));
+    assert.equal(windowsDenyHolders(PROFILE, ""), at("AppData", "Local", "genex-sandbox-denies"));
+  });
+});
+
 // ── ProcessSandbox's Windows launch, through a fake runtime ─────────────────────────────────
 
 interface WrapCall {
@@ -1160,6 +1524,8 @@ async function windowsSandbox(
     /** Hold srt's initialize until the returned open is called. */
     holdInitialize?: boolean;
     failInitializeIn?: { subcommand: string; code: string };
+    /** Genex sets the denies outside the grants itself. */
+    ownDenies?: boolean;
   } = {},
 ) {
   const root = realpathSync.native(await tmpDir("windows-launch-"));
@@ -1168,7 +1534,7 @@ async function windowsSandbox(
   await mkdir(secrets, { recursive: true });
   const bash = options.bash === undefined ? await testBash() : options.bash;
   const wraps: WrapCall[] = [];
-  const s = session({ realDenies: true, profile: root });
+  const s = session({ realDenies: true, profile: root, ...(options.ownDenies ? { ownDenies: true } : {}) });
   const openInitialize = options.holdInitialize ? s.runtime.hold() : () => {};
   if (options.failInitializeIn)
     s.runtime.failInitializeIn(options.failInitializeIn.subcommand, options.failInitializeIn.code);
@@ -1303,6 +1669,22 @@ describe("ProcessSandbox on Windows", () => {
     assert.deepEqual(run?.denyRead, [], "the instance's denies are the session's already");
     assert.deepEqual(run?.denyWrite, [path.join(w.workspace, "later")], "only a missing path inside a grant is sent");
     assert.equal(existsSync(path.join(w.root, "never-created")), false);
+  });
+
+  it("never stamps per command a path the session already denies itself", async () => {
+    // srt-win would stamp it again for that command, walking everything under its parent folder.
+    const w = await windowsSandbox({ ownDenies: true });
+    const inner = path.join(w.secrets, "token");
+    await writeFile(inner, "secret");
+    assert.ok(!w.session.runtime.last().filesystem.denyRead.includes(w.secrets), "Genex denies it, not srt-win");
+    await w.sandbox.run({
+      command: "true",
+      cwd: w.workspace,
+      policy: { denyRead: [w.secrets, inner], denyWrite: [w.secrets, path.join(w.workspace, "later")] },
+    });
+    const run = w.wraps[0]?.config?.filesystem;
+    assert.deepEqual(run?.denyRead, []);
+    assert.deepEqual(run?.denyWrite, [path.join(w.workspace, "later")]);
   });
 
   it("a spawn that throws gives the session back and leaves no env file", async () => {

@@ -15,6 +15,9 @@
  *    They are granted after srt-win initializes, every time: its deny stamp puts a deny on each
  *    denied path's parent that replaces the sandbox user's entry there (userData, the parent of
  *    the secrets folder, lost its grant that way), and its reset removes that entry.
+ *  - A deny on a path that exists is Genex's own ({@link ownDenyStamps}): srt-win's stamp
+ *    re-propagates permissions through everything under each denied path's parent, which for
+ *    `~\.ssh` is the whole profile and for a game's `.claude` the whole game.
  *  - The environment given to `spawn()` never reaches the child: it starts with the sandbox
  *    user's own. A run's variables travel in an env file in its scratch folder that the command
  *    sources first and deletes ({@link renderEnvFile}).
@@ -35,12 +38,18 @@ import { StudioPlatform } from "../shared/boot.ts";
 import { ROBLOX_WINDOWS_SIGN_IN_STORES } from "./credential-homes.ts";
 import { errorMessage } from "../shared/errors.ts";
 import {
+  DenyAccess,
   editFolderAces,
   editFolderAcesSync,
+  editFolderDenies,
+  editFolderDeniesSync,
   type FolderAceEdit,
   type FolderAceEditor,
   type FolderAceEditorSync,
   FolderAceOp,
+  type FolderDenyEdit,
+  type FolderDenyEditor,
+  type FolderDenyEditorSync,
 } from "./windows-folder-ace.ts";
 
 const win = path.win32;
@@ -124,6 +133,7 @@ const MESSAGE = {
   BadEnvName: (name: string) => `refusing to write the environment variable ${JSON.stringify(name)}`,
   AncestorGrant: (dir: string, error: unknown) =>
     `could not let the sandbox user see the folder ${dir}: ${errorMessage(error)}`,
+  OwnDeny: (dir: string, error: unknown) => `could not deny the sandbox user ${dir}: ${errorMessage(error)}`,
   NoAnswer: "no answer for this folder",
   NoSandboxSid: "could not read the sandbox user's id from srt-win, so the folders above its grants stay closed to it",
   NoMembers: "the Windows sandbox session has no members",
@@ -564,18 +574,24 @@ function readRecord(file: string): GrantRecord | null {
 }
 
 /**
- * Every other holder's record in `holders`: `live` for processes that still run, `stale` for
- * those that are gone. A running holder's unreadable record is skipped (it may be mid-write).
+ * Every other holder's record in `holders`, read by `read`: `live` for processes that still run,
+ * `stale` for those that are gone. A running holder's unreadable record is skipped (it may be
+ * mid-write).
  */
-function otherHolders(holders: string, self: number, alive: (pid: number) => boolean) {
-  const live: GrantRecord[] = [];
-  const stale: Array<{ file: string; record: GrantRecord | null }> = [];
+function otherHolders<R>(
+  holders: string,
+  self: number,
+  alive: (pid: number) => boolean,
+  read: (file: string) => R | null,
+) {
+  const live: R[] = [];
+  const stale: Array<{ file: string; record: R | null }> = [];
   const names = existsSync(holders) ? readdirSync(holders) : [];
   for (const name of names) {
     const pid = Number(HOLDER_RECORD.exec(name)?.[1] ?? Number.NaN);
     if (!Number.isInteger(pid) || pid === self) continue;
     const file = path.join(holders, name);
-    const record = readRecord(file);
+    const record = read(file);
     if (!alive(pid)) stale.push({ file, record });
     else if (record) live.push(record);
   }
@@ -651,7 +667,7 @@ export function ancestorGrants(holders: string, deps: AncestorGrantDeps): Ancest
       // srt-win may have removed the sandbox user's entry on a folder granted before: grant them
       // all, except one that is gone (a member's deleted read root), where the grant would fail.
       await grantAll(dirs.filter(exists), sid);
-      const others = otherHolders(holders, self, alive);
+      const others = otherHolders(holders, self, alive, readRecord);
       const keep = new Set([...neededBy(others.live), ...dirs.map(pathKey)]);
       const stale = others.stale.flatMap((holder) => (holder.record ? [holder.record] : []));
       await takeBackOf([previous, ...stale], keep);
@@ -662,13 +678,13 @@ export function ancestorGrants(holders: string, deps: AncestorGrantDeps): Ancest
       const record = readRecord(recordFile);
       rmSync(recordFile, { force: true });
       if (!record) return;
-      await takeBackOf([record], neededBy(otherHolders(holders, self, alive).live));
+      await takeBackOf([record], neededBy(otherHolders(holders, self, alive, readRecord).live));
     },
     revokeAllSync() {
       const record = readRecord(recordFile);
       rmSync(recordFile, { force: true });
       if (!record) return;
-      const removals = takeBack([record], neededBy(otherHolders(holders, self, alive).live));
+      const removals = takeBack([record], neededBy(otherHolders(holders, self, alive, readRecord).live));
       try {
         if (removals.length > 0) editSync(removals);
       } catch {
@@ -718,6 +734,280 @@ function takeBack(records: readonly GrantRecord[], keep: ReadonlySet<string>): F
   return edits;
 }
 
+// ── Genex's own denies ───────────────────────────────────────────────────────────────────────
+//
+// srt-win's stamp puts an inheritable FILE_DELETE_CHILD deny on the parent of every path it
+// denies, and Windows passes that down through everything under the parent, once per denied path.
+// For `~\.ssh` or `~\.claude` the parent is the profile, for a game's `.claude` the whole game, and
+// a large profile or a few large games took longer than srt-win's 60-second deadline. Genex sets
+// every deny on a path that exists itself, as upstream sandbox-runtime proposes to
+// (anthropic-experimental/sandbox-runtime#523): the deny on the path, passed down through what is
+// under it, and FILE_DELETE_CHILD denied on its parent folder alone, which walks nothing. They name
+// the sandbox users' group: srt-win's recompose of a path drops every explicit entry for the
+// user's own SID, whoever set it.
+
+/**
+ * What Genex keeps denied on one path, for the sandbox users' group: a deny on the path, passed
+ * down to everything under it; FILE_DELETE_CHILD on the path alone (a denied path's parent, so the
+ * path cannot be deleted or renamed through it); or both.
+ */
+export interface OwnDenyEntry {
+  path: string;
+  deny: DenyAccess | null;
+  guard: boolean;
+}
+
+/** Who sets each deny path: srt-win (its lists, as given) or Genex ({@link OwnDenyEntry}). */
+export interface DenyRoutes {
+  srt: { read: string[]; write: string[] };
+  own: OwnDenyEntry[];
+}
+
+/** The stronger of two denies: a read deny refuses everything, writing included. */
+function strongerDeny(a: DenyAccess | null, b: DenyAccess | null): DenyAccess | null {
+  if (a === DenyAccess.Read || b === DenyAccess.Read) return DenyAccess.Read;
+  return a ?? b;
+}
+
+/** Both entries' denies on one path, spelled as the first. */
+function mergeEntry(a: OwnDenyEntry, b: OwnDenyEntry): OwnDenyEntry {
+  return { path: a.path, deny: strongerDeny(a.deny, b.deny), guard: a.guard || b.guard };
+}
+
+/** One entry per path, comparing names as NTFS does, sorted by path. */
+function mergeEntries(entries: readonly OwnDenyEntry[]): OwnDenyEntry[] {
+  const merged = new Map<string, OwnDenyEntry>();
+  for (const entry of entries) {
+    const key = pathKey(entry.path);
+    const had = merged.get(key);
+    merged.set(key, had ? mergeEntry(had, entry) : entry);
+  }
+  return [...merged.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([, entry]) => entry);
+}
+
+/** A network share (`\\server\share\…`): srt-win leaves a missing one alone, and Genex sets nothing there. */
+const UNC_PATH = /^[\\/]{2}/;
+
+/** How {@link routeWindowsDenies} sees the disk; each default is the real one. */
+export interface DenyRouteDeps {
+  /** Where a path really is (default: Windows' own resolution, links followed, {@link longPath}). */
+  realpath?: (p: string) => string;
+  exists?: (p: string) => boolean;
+}
+
+/**
+ * Whether Genex denies `real` itself: a path that exists, on a drive, with a folder above it to
+ * guard. srt-win keeps a missing one, which needs its placeholder, and a drive root or a share.
+ */
+function deniedByGenex(real: string, exists: (p: string) => boolean): boolean {
+  const guardable = !UNC_PATH.test(real) && pathKey(win.dirname(real)) !== pathKey(real);
+  return guardable && exists(real);
+}
+
+/**
+ * Split the session's deny paths between srt-win and Genex ({@link deniedByGenex}), each judged and
+ * denied where it really is: a link is denied at its target, as srt-win's stamp would.
+ */
+export function routeWindowsDenies(
+  deny: { read: readonly string[]; write: readonly string[] },
+  deps: DenyRouteDeps = {},
+): DenyRoutes {
+  const realpath = deps.realpath ?? ((p: string) => longPath(p));
+  const exists = deps.exists ?? existsSync;
+  const srt = { read: [] as string[], write: [] as string[] };
+  const own: OwnDenyEntry[] = [];
+  const route = (p: string, access: DenyAccess, sent: string[]) => {
+    const real = realpath(p);
+    if (!deniedByGenex(real, exists)) {
+      sent.push(p);
+      return;
+    }
+    own.push({ path: real, deny: access, guard: false }, { path: win.dirname(real), deny: null, guard: true });
+  };
+  for (const p of deny.read) route(p, DenyAccess.Read, srt.read);
+  for (const p of deny.write) route(p, DenyAccess.Write, srt.write);
+  return { srt, own: mergeEntries(own) };
+}
+
+/** What one holder's deny record keeps: whose entries, and which. */
+interface DenyRecord {
+  sid: string;
+  entries: OwnDenyEntry[];
+}
+
+function isDenyEntry(value: unknown): value is OwnDenyEntry {
+  if (typeof value !== "object" || value === null) return false;
+  const entry = value as Partial<OwnDenyEntry>;
+  const deny = entry.deny === null || entry.deny === DenyAccess.Read || entry.deny === DenyAccess.Write;
+  return typeof entry.path === "string" && deny && typeof entry.guard === "boolean";
+}
+
+function readDenyRecord(file: string): DenyRecord | null {
+  try {
+    const parsed = JSON.parse(readFileSync(file, "utf8")) as Partial<DenyRecord>;
+    if (typeof parsed.sid !== "string" || !Array.isArray(parsed.entries)) return null;
+    return { sid: parsed.sid, entries: (parsed.entries as unknown[]).filter(isDenyEntry) };
+  } catch {
+    return null;
+  }
+}
+
+/** What every record in `records` needs on each path, by SID and path identity. */
+function neededDenies(records: readonly DenyRecord[]): Map<string, OwnDenyEntry> {
+  const needed = new Map<string, OwnDenyEntry>();
+  for (const record of records) {
+    for (const entry of record.entries) {
+      const key = `${record.sid}|${pathKey(entry.path)}`;
+      const had = needed.get(key);
+      needed.set(key, had ? mergeEntry(had, entry) : entry);
+    }
+  }
+  return needed;
+}
+
+/**
+ * The edits that make each path `mine` names, then each path only `touched` (this holder's earlier
+ * record, a gone holder's) names, exactly what `mine` and every running holder need there.
+ */
+function denyEdits(
+  mine: DenyRecord,
+  touched: readonly (DenyRecord | null)[],
+  live: readonly DenyRecord[],
+): FolderDenyEdit[] {
+  const needed = neededDenies([mine, ...live]);
+  const edits = new Map<string, FolderDenyEdit>();
+  const add = (sid: string, dir: string) => {
+    const key = `${sid}|${pathKey(dir)}`;
+    if (edits.has(key)) return;
+    const want = needed.get(key);
+    edits.set(key, { dir, sid, op: FolderAceOp.Deny, deny: want?.deny ?? null, guard: want?.guard ?? false });
+  };
+  for (const entry of mine.entries) add(mine.sid, entry.path);
+  for (const record of touched) {
+    if (!record) continue;
+    for (const entry of record.entries) add(record.sid, entry.path);
+  }
+  return [...edits.values()];
+}
+
+/** Whether an edit sets something, rather than taking it back. */
+function setsDeny(edit: FolderDenyEdit): boolean {
+  return edit.deny !== null || edit.guard;
+}
+
+/**
+ * Apply `edits`, and again those that set something and were refused, up to
+ * {@link GRANT_ATTEMPTS} in all: another process changing the same entries can refuse one once.
+ * A take-back that fails is let go (its path may be gone). False when PowerShell could not apply
+ * a batch here.
+ */
+async function denyEach(edit: FolderDenyEditor, edits: readonly FolderDenyEdit[], retryMs: number) {
+  let pending = [...edits];
+  for (let attempt = 1; pending.length > 0; attempt++) {
+    const outcomes = await edit(pending);
+    if (!outcomes) return false;
+    const refused = pending.flatMap((one, i) => {
+      const outcome = outcomes[i];
+      if (outcome?.ok || !setsDeny(one)) return [];
+      return [{ edit: one, error: outcome ? outcome.error : MESSAGE.NoAnswer }];
+    });
+    const first = refused[0];
+    if (!first) return true;
+    if (attempt >= GRANT_ATTEMPTS) throw new Error(MESSAGE.OwnDeny(first.edit.dir, first.error));
+    await sleep(retryMs);
+    pending = refused.map((r) => r.edit);
+  }
+  return true;
+}
+
+/** How Genex's own denies reach Windows: whom they name, and the editor that sets them. */
+export interface OwnDenyDeps {
+  /** The sandbox users' group SID; null where there is none to name ({@link srtSandboxGroup}). */
+  sid: () => Promise<string | null>;
+  /** Applies a batch of deny edits (default {@link editFolderDenies}). */
+  edit?: FolderDenyEditor;
+  /** The same on process exit (default {@link editFolderDeniesSync}). */
+  editSync?: FolderDenyEditorSync;
+  /** This holder (default: this process). */
+  pid?: number;
+  /** Whether another holder's process still runs (default: signal 0). */
+  alive?: (pid: number) => boolean;
+  /** The wait before a refused edit is tried again (default {@link GRANT_RETRY_MS}). */
+  retryDelayMs?: number;
+}
+
+/** Genex's own deny entries for this process, shared with every other running Genex. */
+export interface OwnDenyStamps {
+  /**
+   * Set `entries`, and take back what this holder set before and no running one still needs.
+   * False where Genex cannot set them here (no sandbox users' group, PowerShell locked down or
+   * not answering): srt-win stamps them instead. Throws when Windows refused one.
+   */
+  sync(entries: readonly OwnDenyEntry[]): Promise<boolean>;
+  /** Take back every entry this holder recorded, except what another running Genex needs. */
+  revokeAll(): Promise<void>;
+  /** The same synchronously, on process exit. */
+  revokeAllSync(): void;
+}
+
+/**
+ * Genex's own deny entries, held like the ancestor grants ({@link ancestorGrants}): each process
+ * records its entries in `holders/<pid>.json` before it sets them, and every edit makes a path
+ * exactly what this process and every other running holder's record need there, so one Genex
+ * never takes back a deny another still relies on. A gone holder's entries go on the next sync.
+ */
+export function ownDenyStamps(holders: string, deps: OwnDenyDeps): OwnDenyStamps {
+  const edit = deps.edit ?? editFolderDenies;
+  const editSync = deps.editSync ?? editFolderDeniesSync;
+  const self = deps.pid ?? process.pid;
+  const alive = deps.alive ?? processAlive;
+  const retryMs = deps.retryDelayMs ?? GRANT_RETRY_MS;
+  const recordFile = path.join(holders, `${self}.json`);
+  const save = async (record: DenyRecord) => {
+    await mkdir(holders, { recursive: true });
+    await writeFile(recordFile, JSON.stringify(record));
+  };
+  const takeBackAll = () => {
+    const record = readDenyRecord(recordFile);
+    rmSync(recordFile, { force: true });
+    if (!record) return [];
+    const live = otherHolders(holders, self, alive, readDenyRecord).live;
+    return denyEdits({ sid: record.sid, entries: [] }, [record], live);
+  };
+  return {
+    async sync(entries) {
+      const sid = await deps.sid();
+      if (!sid) return false;
+      const wanted = mergeEntries(entries);
+      const previous = readDenyRecord(recordFile);
+      const others = otherHolders(holders, self, alive, readDenyRecord);
+      const stale = others.stale.flatMap((holder) => (holder.record ? [holder.record] : []));
+      const edits = denyEdits({ sid, entries: wanted }, [previous, ...stale], others.live);
+      if (edits.length > 0) {
+        // Recorded first, with what this holder set before: a crash between the two leaves a record.
+        const before = previous?.sid === sid ? previous.entries : [];
+        await save({ sid, entries: mergeEntries([...before, ...wanted]) });
+        if (!(await denyEach(edit, edits, retryMs))) return false;
+        await save({ sid, entries: wanted });
+      }
+      for (const holder of others.stale) rmSync(holder.file, { force: true });
+      return true;
+    },
+    async revokeAll() {
+      const edits = takeBackAll();
+      if (edits.length > 0) await edit(edits).catch(() => null);
+    },
+    revokeAllSync() {
+      try {
+        const edits = takeBackAll();
+        if (edits.length > 0) editSync(edits);
+      } catch {
+        /* nothing more can be done on the way out */
+      }
+    },
+  };
+}
+
 // ── the session ──────────────────────────────────────────────────────────────────────────────
 
 /** The part of sandbox-runtime's `SandboxManager` the session drives. */
@@ -759,6 +1049,12 @@ export interface WindowsSessionDeps {
   launcher?: () => Promise<() => void | Promise<void>>;
   /** Where the session says how long each step of a start took (Genex's log). */
   log?: (line: string) => void;
+  /** Genex's own denies for the paths that exist ({@link ownDenyStamps}); without it srt-win stamps them all. */
+  denies?: OwnDenyStamps;
+  /** Where a deny path really is (default: Windows' own resolution, {@link longPath}). */
+  realpath?: (p: string) => string;
+  /** Whether a deny path exists (default: `existsSync`); srt-win makes the placeholder of one that does not. */
+  exists?: (p: string) => boolean;
 }
 
 /** Whether sandbox-runtime failed because srt-win's egress check (`wfp`) ran out of time. */
@@ -781,6 +1077,8 @@ export class WindowsSandboxSession {
   #applied: WindowsGrants | null = null;
   /** The deny paths the applied config was built from, by path identity. */
   #appliedDenies = new Set<string>();
+  /** What Genex itself denies for the applied session ({@link ownDenyStamps}); empty when srt-win stamps every deny. */
+  #ownDenied: OwnDenyEntry[] = [];
   #applying: Promise<void> | null = null;
   #queued = false;
   /** A network change arrived while a regrant was being applied, which may have built its config before it. */
@@ -789,6 +1087,8 @@ export class WindowsSandboxSession {
   #regrants = 0;
   /** An initialize succeeded, so its once-per-process egress check has run srt-win as the sandbox user. */
   #started = false;
+  /** The last apply left the denies on paths that exist to Genex ({@link ownDenyStamps}), not srt-win. */
+  #ownRouted = false;
 
   constructor(deps: WindowsSessionDeps) {
     this.#deps = deps;
@@ -855,6 +1155,16 @@ export class WindowsSandboxSession {
     else if (this.#applying) this.#networkChanged = true;
   }
 
+  /**
+   * `paths` without those Genex's own entries already deny for `access`: srt-win would stamp each
+   * again for the one command, walking everything under its parent folder.
+   */
+  withoutOwnDenies(paths: readonly string[], access: DenyAccess): string[] {
+    const realpath = this.#deps.realpath ?? longPath;
+    const denying = this.#ownDenied.filter((entry) => entry.deny === DenyAccess.Read || entry.deny === access);
+    return paths.filter((p) => !denying.some((entry) => insideWindowsPath(entry.path, realpath(p))));
+  }
+
   /** Is everything `needed` asks for granted right now? */
   covers(needed: WindowsGrants): boolean {
     return this.#applied !== null && grantsCover(this.#applied, needed);
@@ -898,19 +1208,21 @@ export class WindowsSandboxSession {
     while (this.#applying || (this.#queued && this.#active === 0)) await (this.#applying ?? this.#regrant());
   }
 
-  /** Release every grant: srt's own and the folders above them. */
+  /** Release every grant: srt's own, the folders above them and Genex's own denies. */
   async dispose(): Promise<void> {
     await this.#applying?.catch(() => {});
     this.#queued = false;
     if (this.#applied) await this.#deps.runtime.reset();
     this.#applied = null;
+    this.#ownDenied = [];
     await this.#deps.ancestors.revokeAll();
+    await this.#deps.denies?.revokeAll();
   }
 
   /**
    * Initialize, again when only srt-win's egress check ran out of time; any other failure is final.
-   * A timed-out ACL step is not retried: it re-applies permissions below a denied path's parent
-   * folder, which can walk the whole user profile, so a retry repeats that walk.
+   * A timed-out ACL step is not retried: it re-applies permissions below each granted folder and
+   * each denied path's parent folder, so a retry repeats that walk.
    */
   async #initialize(config: SandboxRuntimeConfig): Promise<void> {
     const launcher = this.#started ? undefined : this.#deps.launcher;
@@ -965,10 +1277,12 @@ export class WindowsSandboxSession {
       this.#applied = null;
       if (wasApplied) await this.#deps.runtime.reset();
       const denies = [...this.#members.values()].flatMap(memberDenies);
-      await this.#initialize(this.#config(grants));
+      const plan = await this.#denyOwn(grants);
+      await this.#initialize(plan.config);
       await this.#grantAncestors(grants);
       this.#applied = grants;
       this.#appliedDenies = new Set(denies.map(pathKey));
+      this.#ownDenied = plan.own;
       if (this.#networkChanged) this.#deps.runtime.updateConfig(this.#config(grants));
       this.#networkChanged = false;
     })();
@@ -981,13 +1295,31 @@ export class WindowsSandboxSession {
     return applying;
   }
 
-  /** No member is left: take back srt's grants and the folders above them; a later join starts again. */
+  /** No member is left: take back srt's grants, the folders above them and Genex's denies; a later join starts again. */
   async #release(): Promise<void> {
     const wasApplied = this.#applied;
     this.#applied = null;
     this.#appliedDenies = new Set();
+    this.#ownDenied = [];
     if (wasApplied) await this.#deps.runtime.reset();
     await this.#deps.ancestors.revokeAll();
+    await this.#deps.denies?.revokeAll();
+  }
+
+  /**
+   * Set the denies on paths that exist Genex's own way ({@link routeWindowsDenies}), before srt-win
+   * grants anything, and answer the config that leaves srt-win the rest. Where Genex cannot set
+   * them here, srt-win stamps every deny, as before.
+   */
+  async #denyOwn(grants: WindowsGrants): Promise<{ config: SandboxRuntimeConfig; own: OwnDenyEntry[] }> {
+    const denies = this.#deps.denies;
+    if (denies) {
+      const plan = this.#plan(grants, true);
+      this.#ownRouted = await this.#timed("own denies", () => denies.sync(plan.own));
+      if (this.#ownRouted) return plan;
+    }
+    this.#ownRouted = false;
+    return this.#plan(grants, false);
   }
 
   /**
@@ -1005,8 +1337,16 @@ export class WindowsSandboxSession {
     }
   }
 
-  /** The session's runtime config: the latest member's settings, every member's grants, domains and denies. */
+  /** The session's runtime config, with the denies routed as the last apply routed them. */
   #config(grants: WindowsGrants): SandboxRuntimeConfig {
+    return this.#plan(grants, this.#ownRouted).config;
+  }
+
+  /**
+   * The session's runtime config: the latest member's settings, every member's grants, domains and
+   * denies; with `own`, srt-win's share of the denies and Genex's own entries for the rest.
+   */
+  #plan(grants: WindowsGrants, own: boolean): { config: SandboxRuntimeConfig; own: OwnDenyEntry[] } {
     const members = [...this.#members.values()];
     const latest = members.at(-1)?.config;
     if (!latest) throw new Error(MESSAGE.NoMembers);
@@ -1015,19 +1355,28 @@ export class WindowsSandboxSession {
     const scope = { roots, profile: this.#deps.profile };
     const union = (pick: (member: SessionMember) => readonly string[]) => keep(members.flatMap(pick), scope);
     const domains = [...new Set(members.flatMap((member) => member.config.network.allowedDomains ?? []))];
-    const denyRead = union((member) => member.config.filesystem.denyRead);
-    const denyWrite = union((member) => member.config.filesystem.denyWrite);
-    return {
+    const read = union((member) => member.config.filesystem.denyRead);
+    const deny = {
+      read,
+      write: writeDeniesBeyondRead(
+        union((member) => member.config.filesystem.denyWrite),
+        read,
+      ),
+    };
+    const route = { realpath: this.#deps.realpath, exists: this.#deps.exists };
+    const routes = own ? routeWindowsDenies(deny, route) : { srt: deny, own: [] };
+    const config = {
       ...latest,
       network: { ...latest.network, allowedDomains: domains },
       filesystem: {
         ...latest.filesystem,
         allowWrite: grants.write,
         allowRead: grants.read,
-        denyRead,
-        denyWrite: writeDeniesBeyondRead(denyWrite, denyRead),
+        denyRead: routes.srt.read,
+        denyWrite: routes.srt.write,
       },
     };
+    return { config, own: routes.own };
   }
 }
 
@@ -1037,11 +1386,18 @@ export class WindowsSandboxSession {
  * (`%LOCALAPPDATA%\genex`), which an uninstall removes before its hook could read it.
  */
 const GRANT_HOLDERS = "genex-sandbox-grants";
+/** The folder beside it where they record their own deny entries ({@link ownDenyStamps}). */
+const DENY_HOLDERS = "genex-sandbox-denies";
 const SRT_PACKAGE = "@anthropic-ai/sandbox-runtime";
 
 /** Where this user's Genex processes record their ancestor grants (uninstall takes back what is left). */
 export function windowsGrantHolders(profile: string, localAppData = process.env.LOCALAPPDATA): string {
   return win.join(localAppData || win.join(profile, "AppData", "Local"), GRANT_HOLDERS);
+}
+
+/** Where this user's Genex processes record their own deny entries, beside the ancestor grants. */
+export function windowsDenyHolders(profile: string, localAppData = process.env.LOCALAPPDATA): string {
+  return win.join(localAppData || win.join(profile, "AppData", "Local"), DENY_HOLDERS);
 }
 
 /** The `srt-sandbox` user's SID, or null while the sandbox is not provisioned. */
@@ -1074,8 +1430,46 @@ export async function srtAncestorGrantee(srtWin: string): Promise<string | null>
 
 /** The group's SID when the sandbox user is in it, else the user's own; null before it exists. */
 export function granteeOf(status: { sid?: string; groupSid?: string; inSandboxGroup?: boolean }): string | null {
-  if (status.inSandboxGroup && status.groupSid) return status.groupSid;
-  return status.sid ?? null;
+  return sandboxGroupOf(status) ?? status.sid ?? null;
+}
+
+/** The sandbox users' group SID when the sandbox user is in it; null otherwise. */
+export function sandboxGroupOf(status: { groupSid?: string; inSandboxGroup?: boolean }): string | null {
+  return status.inSandboxGroup && status.groupSid ? status.groupSid : null;
+}
+
+/**
+ * Whom Genex's own denies name: the sandbox users' group, never the sandbox user, whose explicit
+ * entries srt-win's recompose of a path drops (any host's, so another host's cleanup would undo a
+ * deny). Null while there is no group to name; throws when srt-win could not say.
+ */
+export async function srtSandboxGroup(srtWin: string): Promise<string | null> {
+  const srt = await import(SRT_PACKAGE);
+  return sandboxGroupOf(await srt.getWindowsSandboxUserStatusAsync({ srtWin: srt.resolveSrtWin({ path: srtWin }) }));
+}
+
+/**
+ * The group's SID by `lookup`, asked up to {@link SID_ATTEMPTS} times while srt-win cannot say and
+ * kept once found. "No group" is asked again on the next call: Set up may add it while Genex runs.
+ */
+export function groupSidOnce(
+  lookup: () => Promise<string | null>,
+  retryMs: number = SID_RETRY_MS,
+): () => Promise<string | null> {
+  let found: string | null = null;
+  return async () => {
+    for (let attempt = 1; !found && attempt <= SID_ATTEMPTS; attempt++) {
+      if (attempt > 1) await sleep(retryMs);
+      const answer = await lookup().then(
+        (sid) => ({ sid }),
+        () => null,
+      );
+      if (!answer) continue;
+      found = answer.sid;
+      return found;
+    }
+    return found;
+  };
 }
 
 /**
@@ -1176,8 +1570,9 @@ async function logSrtSteps(log: (line: string) => void): Promise<void> {
 
 /**
  * The process's one session for `runtime` (sandbox-runtime's singleton), created by the first
- * `ProcessSandbox` to need it. Its ancestor grants are recorded under {@link windowsGrantHolders}
- * and taken back when the process exits, except where another running Genex still needs them.
+ * `ProcessSandbox` to need it. Its ancestor grants and own denies are recorded under
+ * {@link windowsGrantHolders} and {@link windowsDenyHolders} and taken back when the process exits,
+ * except where another running Genex still needs them.
  */
 export function windowsSessionFor(
   runtime: SessionRuntime,
@@ -1187,6 +1582,9 @@ export function windowsSessionFor(
   if (existing) return existing;
   const holders = windowsGrantHolders(options.profile);
   const ancestors = ancestorGrants(holders, { sid: sandboxSidOnce(() => srtAncestorGrantee(options.srtWin)) });
+  const denies = ownDenyStamps(windowsDenyHolders(options.profile), {
+    sid: groupSidOnce(() => srtSandboxGroup(options.srtWin)),
+  });
   const srtWinDir = win.dirname(options.srtWin);
   const launchDirs = insideWindowsPath(options.installDir, srtWinDir)
     ? [options.installDir]
@@ -1198,10 +1596,14 @@ export function windowsSessionFor(
     runtime,
     profile: options.profile,
     ancestors,
+    denies,
     launcher,
     ...(log ? { log } : {}),
   });
-  process.once("exit", () => ancestors.revokeAllSync());
+  process.once("exit", () => {
+    ancestors.revokeAllSync();
+    denies.revokeAllSync();
+  });
   sessions.set(runtime, session);
   return session;
 }

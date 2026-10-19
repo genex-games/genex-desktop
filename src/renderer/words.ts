@@ -2406,6 +2406,21 @@ export const GENEX_TERMS_WORDS = {
   reviewLabel: "Review Genex terms on genex.games",
 } as const;
 
+/** The sidebar's line while the open studio's agents would not start (`AgentsStartLine.tsx`). */
+export const AGENTS_START_WORDS = {
+  line: "Agents didn’t start",
+  /** The line while Try again runs. */
+  starting: "Starting agents",
+  tryAgain: "Try again",
+  /** The line's own name, which opens why. */
+  detailsLabel: "Why the agents didn’t start",
+  report: "Send a report",
+  sending: "Sending…",
+  /** The bare ✓'s label, once the report went. */
+  sent: "Report sent",
+  reportFailed: "The report didn’t send. Try again in a moment.",
+} as const;
+
 export const PLUGIN_UPDATE_WORDS = {
   /** The line's name for what waits: it opens the list. */
   count: (count: number) => (count === 1 ? "1 plugin update" : `${count} plugin updates`),

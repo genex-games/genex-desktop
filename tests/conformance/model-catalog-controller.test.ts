@@ -33,6 +33,24 @@ test("refresh coalesces, respects freshness and can be forced", async () => {
   await catalog.refresh("a", read);
   assert.equal(calls, 3);
 });
+test("a forced refresh while a read runs reads again, and the running read's older answer never lands", async () => {
+  const catalog = new ModelCatalog();
+  let finishFirst = (_: ReturnType<typeof result>) => {};
+  let calls = 0;
+  const read = () => {
+    calls++;
+    if (calls > 1) return Promise.resolve(result("after-sign-in"));
+    return new Promise<ReturnType<typeof result>>((resolve) => {
+      finishFirst = resolve;
+    });
+  };
+  const running = catalog.refresh("a", read);
+  const forced = catalog.refresh("a", read, true);
+  finishFirst(result("before-sign-in"));
+  await Promise.all([running, forced]);
+  assert.equal(calls, 2);
+  assert.equal(catalog.models()[0]?.id, "after-sign-in");
+});
 test("late catalog from a previous identity cannot replace the current account", async () => {
   const catalog = new ModelCatalog();
   let finish = (_: ReturnType<typeof result>) => {};

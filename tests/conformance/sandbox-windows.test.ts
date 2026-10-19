@@ -12,8 +12,8 @@
  */
 import assert from "node:assert/strict";
 import { execFileSync, spawn } from "node:child_process";
-import { existsSync, realpathSync } from "node:fs";
-import { cp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { existsSync, readFileSync, realpathSync, rmSync } from "node:fs";
+import { cp, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
 import os from "node:os";
@@ -24,7 +24,7 @@ import { after, before, describe, it } from "node:test";
 import { HarnessInbox } from "../../src/substrate/harness-inbox.ts";
 import { SandboxLaunchCode, SandboxLaunchError } from "../../src/substrate/sandbox-unavailable.ts";
 import { ProcessSandbox, killChild } from "../../src/substrate/spawn.ts";
-import { srtWinPath } from "../../src/substrate/windows-sandbox.ts";
+import { granteeOf, sandboxGroupOf, srtWinPath } from "../../src/substrate/windows-sandbox.ts";
 import { removeTree, tmpDir } from "../helpers/tmp.ts";
 
 /** Why this machine cannot run the suite, or false when it can. */
@@ -44,6 +44,9 @@ const TEST_TIMEOUT_MS = 180_000;
 const HEARTBEAT_WAIT_MS = 30_000;
 const KILL_SETTLE_MS = 4_000;
 const SECRET = "profile-secret-content";
+const OPEN = "readable-beside-the-secret";
+/** BUILTIN\Guests, a SID nothing here runs as: its entry only marks what a walk rewrites. */
+const GUESTS = "S-1-5-32-546";
 
 /** A value for Git Bash: forward slashes, single-quoted. */
 const q = (value: string) => `'${value.replaceAll("\\", "/").replaceAll("'", `'\\''`)}'`;
@@ -55,6 +58,23 @@ let scratch: string;
 let secrets: string;
 let profileDir: string;
 let electronInstall: string;
+/** A folder in the profile outside every grant that the sandbox user may read, and the denied folder in it. */
+let deniedHome: string;
+let deniedKeys: string;
+/** A denied folder directly in the profile, and a folder beside it that kept what it inherited elsewhere. */
+let profileSecret: string;
+let movedProbe: string;
+/** The sandbox users' group, which Genex's own denies name; null where srt-win stamps every deny. */
+let sandboxGroup: string | null = null;
+
+/** A path's own DACL as SDDL, read through icacls, which saves it without changing anything. */
+function sddl(target: string): string {
+  const file = path.join(os.tmpdir(), `genex-acl-${process.pid}-${Math.random().toString(36).slice(2)}.txt`);
+  execFileSync("icacls", [target, "/save", file], { stdio: "ignore" });
+  const text = readFileSync(file, "utf16le");
+  rmSync(file, { force: true });
+  return text;
+}
 
 before(async () => {
   if (SKIP) return;
@@ -75,10 +95,31 @@ before(async () => {
   await writeFile(path.join(secrets, "token.txt"), SECRET);
   await writeFile(path.join(profileDir, "private.txt"), SECRET);
   if (existsSync(ELECTRON_DIST)) await cp(ELECTRON_DIST, electronInstall, { recursive: true });
+  // Readable to the sandbox user the way another srt host's grant would make it: only the deny on
+  // `keys` keeps the token in it closed.
+  const srt = await import("@anthropic-ai/sandbox-runtime");
+  const status = await srt.getWindowsSandboxUserStatusAsync({ srtWin: srt.resolveSrtWin({ path: srtWinPath() }) });
+  sandboxGroup = sandboxGroupOf(status);
+  deniedHome = path.join(root, "denied-home");
+  deniedKeys = path.join(deniedHome, "keys");
+  await mkdir(deniedKeys, { recursive: true });
+  await writeFile(path.join(deniedHome, "open.txt"), OPEN);
+  await writeFile(path.join(deniedKeys, "token.txt"), SECRET);
+  execFileSync("icacls", [deniedHome, "/grant", `*${granteeOf(status)}:(OI)(CI)(RX)`], { stdio: "ignore" });
+  // srt-win's stamp of a deny walked everything under its parent, here the whole profile; a folder
+  // moved in keeps what it inherited where it was made until such a walk works it out again.
+  profileSecret = path.join(os.homedir(), `genex-deny-direct-${process.pid}`);
+  movedProbe = path.join(os.homedir(), `genex-moved-probe-${process.pid}`);
+  await mkdir(profileSecret, { recursive: true });
+  const elsewhere = path.join(root, "elsewhere");
+  await mkdir(elsewhere);
+  execFileSync("icacls", [elsewhere, "/grant", `*${GUESTS}:(OI)(CI)(RA)`], { stdio: "ignore" });
+  await mkdir(path.join(elsewhere, "moved"));
+  await rename(path.join(elsewhere, "moved"), movedProbe);
   sandbox = await ProcessSandbox.create({
     writableRoots: [workspace],
     scratchDir: scratch,
-    secretPaths: [secrets],
+    secretPaths: [secrets, deniedKeys, profileSecret],
     readableRoots: [electronInstall],
   });
 });
@@ -88,6 +129,8 @@ after(async () => {
   const { SandboxManager } = await import("@anthropic-ai/sandbox-runtime");
   await SandboxManager.reset();
   await rm(profileDir, { recursive: true, force: true });
+  await removeTree(profileSecret);
+  await removeTree(movedProbe);
   await rm(path.dirname(electronInstall), { recursive: true, force: true, maxRetries: 3, retryDelay: 200 });
 });
 
@@ -144,6 +187,27 @@ describe("Windows sandbox: identity and files", { skip: SKIP, timeout: TEST_TIME
       const listing = await inside(`ls -A ${q(folder)}`);
       assert.equal(listing.stdout.trim(), "", `${folder} must not be listable: ${listing.stderr}`);
     }
+  });
+
+  it("refuses a denied folder in the profile even where the folder above it lets the sandbox user read", async () => {
+    const open = await inside(`cat ${q(path.join(deniedHome, "open.txt"))}`);
+    assert.equal(open.stdout, OPEN, `the folder above is readable, so the deny is what holds: ${open.stderr}`);
+    const token = await inside(`cat ${q(path.join(deniedKeys, "token.txt"))}`);
+    assert.notEqual(token.code, 0, `the token must not be readable: ${token.stdout}`);
+    assert.ok(!token.stdout.includes(SECRET), "the token leaked");
+    const listing = await inside(`ls -A ${q(deniedKeys)}`);
+    assert.equal(listing.stdout.trim(), "", `the denied folder must not be listable: ${listing.stderr}`);
+  });
+
+  it("denies a folder directly in the profile without rewriting anything else in the profile", async (t) => {
+    if (!sandboxGroup) return t.skip("no sandbox users' group here: srt-win stamps every deny");
+    assert.match(sddl(profileSecret), new RegExp(`\\(D;OICI;FA;;;${sandboxGroup}\\)`), "denied, passed down");
+    assert.match(sddl(os.homedir()), new RegExp(`\\(D;;DC;;;${sandboxGroup}\\)`), "guarded by the profile alone");
+    assert.match(
+      sddl(movedProbe),
+      /\(A;[A-Z]*ID[A-Z]*;(?:0x80|LO);;;BG\)/,
+      "nothing else in the profile was rewritten",
+    );
   });
 
   it("refuses a per-run write outside the session's grants before starting anything", async () => {

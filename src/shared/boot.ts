@@ -115,7 +115,7 @@ export interface BootState {
   setupTried?: true;
   /** What the core is doing while the phase is Starting. */
   step?: StartStep;
-  /** Why the studio would not start, while the phase is Failed. */
+  /** Why the studio would not start, while the phase is Failed; why its agents would not, while it is Ready. */
   failure?: string;
 }
 

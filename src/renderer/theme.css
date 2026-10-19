@@ -2609,6 +2609,89 @@ button.chat-header-title:hover {
 .chat-genex-terms .genex-terms-line-label {
   padding-inline-end: 8px;
 }
+/* The open studio's agents did not start (`AgentsStartLine.tsx`): the terms line's shape, its words
+ * and button in the warning colour (no icon, so the words fit the sidebar's default width), its
+ * name opening why (the raw error, Send a report) under it. */
+.agents-start {
+  display: flex;
+  flex-direction: column;
+  border-radius: var(--radius-control);
+  background: var(--field);
+  color: var(--ink);
+  font-size: 13px;
+  line-height: 18px;
+}
+.agents-start-line {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 32px;
+  padding-inline: 4px;
+}
+.agents-start-label {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  min-width: 0;
+  height: 100%;
+  padding-inline: 5px 4px;
+  color: color-mix(in oklab, var(--orange) 62%, var(--ink));
+  text-align: start;
+  cursor: pointer;
+}
+.agents-start-retry,
+.agents-start-send {
+  flex: none;
+  height: 24px;
+  padding-inline: 9px;
+  border-radius: 7px;
+  background: var(--orange-tint);
+  color: color-mix(in oklab, var(--orange) 62%, var(--ink));
+  font-size: 12px;
+  line-height: 16px;
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color var(--duration-quick);
+}
+.agents-start-retry:hover,
+.agents-start-send:hover {
+  background: color-mix(in oklab, var(--orange) 24%, transparent);
+}
+.agents-start-details {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 0 9px 9px;
+}
+.agents-start-error {
+  max-height: 72px;
+  width: 100%;
+  overflow: auto;
+  color: var(--ink-3);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 15px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+.agents-start-report {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+}
+.agents-start-note {
+  color: var(--ink-3);
+  font-size: 12px;
+  line-height: 16px;
+}
+.agents-start-sent {
+  padding-inline: 4px;
+  color: var(--ink);
+}
 /* Install what is ticked, on the line and in its list: the accent as a soft tint, its label a
  * lighter blue on dark and a deeper one on light. */
 .plugin-updates-run {

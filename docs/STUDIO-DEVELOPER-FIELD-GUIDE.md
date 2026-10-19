@@ -376,7 +376,8 @@ installed, and sign-in, links and downloads are refused as in every fixture) and
 and delivered, failed and stopped builds arrive as news; macOS notifications are refused) and
 sandbox-setup (the window opens on "Set up the protected workspace" for a Linux machine missing
 bubblewrap and socat, `[data-sandbox-setup]`; `[data-sandbox-retry]` opens the studio) and
-update-ready (the sidebar offers `[data-update-restart]` for a stand-in Genex 0.2.0; the restart
+agents-start-failed (the open studio's sidebar says "Agents didn't start", `[data-agents-start]`, with
+a stand-in srt-win timeout under its details; Try again clears it) and update-ready (the sidebar offers `[data-update-restart]` for a stand-in Genex 0.2.0; the restart
 itself is refused as native) and plugin-updates (Genex and Blender installed one version back: their
 rows and pages offer `Update to <version>` and the sidebar `[data-plugins-update]`, each refused as
 native) and unreal-game (the game linked to a stand-in Unreal project inside

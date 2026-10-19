@@ -22,6 +22,7 @@ import {
   setComputerControl,
 } from "../../src/renderer/use-computer-control.ts";
 import { StudioPlatform } from "../../src/shared/boot.ts";
+import { SetupReport } from "../../src/renderer/state/boot.ts";
 import { PlayViewerPhase } from "../../src/shared/play.ts";
 import { UpdateAction } from "../../src/shared/app-update.ts";
 import {
@@ -829,6 +830,36 @@ describe("the studio: one subscription, the bootstrap and the commands that span
     await tick();
     assert.equal(unreadable.app.update.getState().ready, null);
     assert.equal(unreadable.app.session.getState().status, "ready", "the studio opens without it");
+  });
+
+  it("agents that would not start show in the open studio: read at the bootstrap, announced, and Try again or a start clears them", async () => {
+    const failed = { platform: "win32", phase: "ready", sandbox: null, failure: "srt-win acl stamp timed out" };
+    const before = started({ bootState: async () => failed as never });
+    await tick();
+    assert.equal(before.app.agentsStart.getState().failure, "srt-win acl stamp timed out", "before this window opened");
+    const retries: Array<() => Promise<unknown>> = [
+      async () => ({ ...failed, failure: "EPERM: lstat AppData" }),
+      async () => ({ platform: "win32", phase: "ready", sandbox: null }),
+    ];
+    const { fake, app } = started({ retrySandboxSetup: (() => retries.shift()?.()) as never });
+    await tick();
+    assert.equal(app.agentsStart.getState().failure, null);
+    fake.emit({ type: "harness.start-failed", payload: { failure: "srt-win acl stamp timed out" } });
+    assert.equal(app.agentsStart.getState().failure, "srt-win acl stamp timed out");
+    await app.agentsStart.report();
+    assert.deepEqual(fake.callsOf("reportSandboxSetup"), [["srt-win acl stamp timed out"]]);
+    assert.equal(app.agentsStart.getState().report, SetupReport.Sent);
+    const trying = app.agentsStart.retry();
+    assert.equal(app.agentsStart.getState().retrying, true);
+    await trying;
+    assert.equal(app.agentsStart.getState().failure, "EPERM: lstat AppData", "a Try again that fails says why");
+    assert.equal(app.agentsStart.getState().report, SetupReport.Idle, "a new failure gets a report of its own");
+    await app.agentsStart.retry();
+    assert.equal(app.agentsStart.getState().failure, null);
+    assert.equal(fake.callsOf("retrySandboxSetup").length, 2);
+    fake.emit({ type: "harness.start-failed", payload: { failure: "again" } });
+    fake.emit({ type: "studio.ready", payload: { userData: "/u" } });
+    assert.equal(app.agentsStart.getState().failure, null, "a studio that started has its agents");
   });
 
   it("a failed bootstrap says why, and a retry replaces it", async () => {

@@ -25,6 +25,7 @@ import {
 import { NotificationsMenu } from "./NotificationsMenu.tsx";
 import { SidebarPluginUpdates } from "./SidebarPluginUpdates.tsx";
 import { GenexTermsLine } from "./plugins/genex/GenexTermsLine.tsx";
+import { AgentsStartLine } from "./AgentsStartLine.tsx";
 import type { PluginUpdate } from "../state/plugins.ts";
 import type { Notice } from "../notifications.ts";
 import type { LaunchInSidebar } from "../state/launch.ts";
@@ -37,7 +38,7 @@ import { usePeopleSync } from "../play/use-people-sync.ts";
 import { PlayRecent } from "../play/PlayRecent.tsx";
 import { PlaySwitch } from "../play/PlaySwitch.tsx";
 import { SidebarFriends } from "../play/SidebarFriends.tsx";
-import { usePeople, usePlay, useShallow } from "../state/hooks.ts";
+import { useAgentsStart, usePeople, usePlay, useShallow } from "../state/hooks.ts";
 import { PlayPage } from "../state/play.ts";
 import { besideRemix, remixCovers, remixShare } from "../play/remix-model.ts";
 import { remixTitle } from "../../shared/play.ts";
@@ -267,8 +268,8 @@ function LaunchRow({ title }: { title: string | null }): JSX.Element {
 }
 
 /**
- * What waits for the person, over the foot of the game list: Genex's updated terms to review, the
- * plugin updates line, then the app's own Relaunch to update or Download.
+ * What waits for the person, over the foot of the game list: agents that didn't start, Genex's
+ * updated terms to review, the plugin updates line, then the app's own Relaunch to update or Download.
  */
 function SidebarFooter({
   update,
@@ -282,9 +283,12 @@ function SidebarFooter({
 }: Props): JSX.Element | null {
   const pluginsWait = pluginUpdates.length > 0 || updatingPlugins;
   const genexTerms = usePeople((s) => s.genexTermsPending);
-  if (!update && !pluginsWait && !genexTerms) return null;
+  const agentsFailed = useAgentsStart((s) => s.failure !== null);
+  const waiting = Boolean(update) || pluginsWait || genexTerms || agentsFailed;
+  if (!waiting) return null;
   return (
     <div className="sidebar-footer">
+      <AgentsStartLine />
       <GenexTermsLine />
       {pluginsWait && (
         <SidebarPluginUpdates

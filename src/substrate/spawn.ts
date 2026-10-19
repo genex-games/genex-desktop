@@ -72,6 +72,7 @@ import {
   writeCurlHome,
   writeDeniesBeyondRead,
 } from "./windows-sandbox.ts";
+import { DenyAccess } from "./windows-folder-ace.ts";
 
 // Linux launches this native helper through a shell, which cannot traverse Electron's asar.
 // The runtime's automatic lookup returns its virtual archive path even when the file is unpacked.
@@ -930,7 +931,8 @@ export class ProcessSandbox {
    * A Windows run's own config: its network and the run's own denies (the instance's are the
    * session's). Grants are the session's too (srt-win refuses a per-command grant), and a deny
    * path that does not exist is dropped where it is unreadable anyway (in the profile, outside
-   * every grant), so srt-win never creates a placeholder there.
+   * every grant), so srt-win never creates a placeholder there. So is one Genex already denies
+   * for the session: srt-win would stamp it again for the command, walking its parent folder.
    */
   #windowsOverlay(
     backend: WindowsBackend,
@@ -938,14 +940,16 @@ export class ProcessSandbox {
   ): import("@anthropic-ai/sandbox-runtime").SandboxRuntimeConfig {
     const applied = backend.session.applied ?? { write: [], read: [] };
     const scope = { roots: [...applied.write, ...applied.read], profile: backend.profile };
-    const denyRead = keepWindowsDenies(patch.denyRead ?? [], scope);
+    const kept = (paths: readonly string[] | undefined, access: DenyAccess) =>
+      backend.session.withoutOwnDenies(keepWindowsDenies(paths ?? [], scope), access);
+    const denyRead = kept(patch.denyRead, DenyAccess.Read);
     const config = this.toRuntimeConfig({
       ...this.policy,
       allowedDomains: [...this.policy.allowedDomains, ...(patch.allowedDomains ?? [])],
       allowWrite: [],
       allowRead: [],
       denyRead,
-      denyWrite: writeDeniesBeyondRead(keepWindowsDenies(patch.denyWrite ?? [], scope), denyRead),
+      denyWrite: writeDeniesBeyondRead(kept(patch.denyWrite, DenyAccess.Write), denyRead),
     });
     return config;
   }
