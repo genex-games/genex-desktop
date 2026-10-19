@@ -77,6 +77,7 @@ import {
   type WebTools,
   writeWebAssetMap,
 } from "./rust-build-web.ts";
+import type { RustStageImport, StagedImportReport } from "./rust-assets.ts";
 import { RUST_ENGINE_FOLDER, RustFlavour } from "./rust-manifest.ts";
 import { type GameTrust, ownBuildScripts, UNTRUSTED } from "./rust-trust.ts";
 import { ExtensionRefusal } from "../shared/game-conformance.ts";
@@ -467,6 +468,13 @@ export interface RustBuildsOptions {
    * always passes it; a stand-in lane without it admits what it built.
    */
   admit?: RustOutputAdmit;
+  /**
+   * The import step over each build's stage (C-2, `rustStageImporter` in `rust-assets.ts`): the
+   * staged assets planned for the destination, the importable ones converted or written back plain
+   * in sandboxed jobs, refused ones left out, and the receipt's `assets` record. Absent: the staged
+   * assets go out as delivered.
+   */
+  importAssets?: RustStageImport;
   /** The clock progress, problems and receipts are stamped with (default: `Date.now`). */
   now?: () => number;
 }
@@ -595,7 +603,12 @@ interface Plan extends Pending {
   trust: GameTrust;
   /** The release the person ejected the game's engine from; null when it builds on the store's engine. */
   ejectedFrom: string | null;
+  /** What the import step did with the staged assets; null when it did not run. */
+  assets: StagedImportReport | null;
 }
+
+/** A receipt with the import step's record (C-2) beside the lane's own fields. */
+type ReceiptWithAssets = RustBuildReceipt & { assets?: StagedImportReport };
 
 /** A build running (or waiting for a slot), which later looks at the same folder join; each caller waits with its own signal. */
 interface InFlight {
@@ -814,6 +827,7 @@ export class RustBuilds implements GameBuildLane {
         storeVendor: located.toolchain.vendor,
         trust,
         ejectedFrom: await this.#ejectedFrom(pending),
+        assets: null,
       };
       return await this.#steps(plan, signal, lastGood);
     } catch (error) {
@@ -871,6 +885,7 @@ export class RustBuilds implements GameBuildLane {
         rust: RustBuildRefusal.DependencyNotAllowed,
       });
     }
+    if (!(await this.#importAssets(plan, signal))) return this.#outcome(plan, BuildProblemCode.Cancelled, { lastGood });
     const identity = await this.#step(plan, RustBuildStep.Identity, rustcCommand(plan), IDENTITY_TIMEOUT_MS, signal);
     if (!succeeded(identity)) return this.#failed(plan, identity, signal, lastGood);
     const compiler = parseRustcIdentity(identity.stdout);
@@ -883,6 +898,17 @@ export class RustBuilds implements GameBuildLane {
     const build = await this.#step(plan, RustBuildStep.Build, buildCommand(plan, this.#jobs()), timeout, signal);
     if (!succeeded(build)) return this.#failed(plan, build, signal, lastGood);
     return await this.#admit(plan, build, compiler, lastGood, signal);
+  }
+
+  /**
+   * The import step over the stage (C-2), for a destination whose `out/` carries the assets: the
+   * report kept for the receipt. False only when Stop came during it.
+   */
+  async #importAssets(plan: Plan, signal: AbortSignal): Promise<boolean> {
+    const step = this.options.importAssets;
+    if (!step || !plan.builder.assets) return true;
+    plan.assets = await step({ stage: stageDir(plan.bin), target: plan.target, signal });
+    return plan.assets !== null && !signal.aborted;
   }
 
   /**
@@ -1051,7 +1077,7 @@ export class RustBuilds implements GameBuildLane {
     compiler: RustCompilerIdentity,
     outputs: RustBuildReceipt["outputs"],
     web: WebReceipt | null,
-  ): RustBuildReceipt {
+  ): ReceiptWithAssets {
     return {
       version: 1,
       project: plan.game.project,
@@ -1065,6 +1091,7 @@ export class RustBuilds implements GameBuildLane {
       steps: plan.steps,
       outputs,
       ...(web ? { web } : {}),
+      ...(plan.assets ? { assets: plan.assets } : {}),
     };
   }
 

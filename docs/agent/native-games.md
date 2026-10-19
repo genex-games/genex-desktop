@@ -71,7 +71,15 @@ its genex release). New games default by
 (`preview.acquire {stacks}`); a lease declaring none is refused a Rust game. A Rust run is refused
 `rust-parts-missing` unless every `RUST_PARTS` module exports `SERVES_RUST`; the person may
 **Re-take** kept ones (`studio:seed.retake`; `seedNightRefusal`, `kept-pre-rust`;
-[harness runtime](../harness-runtime.md)). Every lane output passes `admitRustOutput` before
+[harness runtime](../harness-runtime.md)). After staging, the lane's import step
+(`importStagedAssets` in [`rust-assets.ts`](../../src/main/rust-assets.ts), jobs in
+`layout.assetJobs`) plans every staged `assets/**` file for the destination and runs each
+importable one as its own sandboxed job, at most `IMPORT_JOBS_MAX` (4) at once. The outputs
+replace their sources in the stage and never in the game folder: an OBJ, STL or PLY becomes a GLB,
+a Draco, meshopt or quantized GLB is written back plain, and a Basis KTX2 gets its per-family files.
+A refused file leaves the build, and so does an output whose name another staged file holds
+(`name-taken`). The receipt's `assets` lists each file's action and refusal. A game with nothing
+to import starts no sandbox. Every lane output passes `admitRustOutput` before
 `out/`, exports carry `rust-notices.ts` notices, phone exports
 ([`mobile-export-deps.ts`](../../src/main/core/mobile-export-deps.ts)) are signed by `mobile-sign.ts`, and a compiled-stack session builds with its lock's tools, never writing the store. The template is checked by
 `rust-template.test.ts`; the vendored set by `rust-vendor.ts`, cargo-deny and cargo-vet

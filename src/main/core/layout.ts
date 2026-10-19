@@ -44,6 +44,12 @@ export type StudioLayout = {
    */
   rustSessions: string;
   /**
+   * The Rust build lane's import jobs (`rust-assets.ts` `importStagedAssets`, C-2): one folder per
+   * job, host-written and removed once its outputs are placed in the build's stage. The host's,
+   * never under a writable root; each job's sandbox writes only its own `out/` and `tmp/`.
+   */
+  assetJobs: string;
+  /**
    * Where every export is staged and signed before it is renamed into place (`game-export.ts`):
    * the host's, never under a writable root, unlike the exports folder an agent may write.
    */
@@ -89,6 +95,7 @@ export function layoutFor(userData: string, downloadCache: string = hostDownload
     cppBuilds: path.join(userData, "cpp-builds"),
     rustBuilds: path.join(userData, "rust-builds"),
     rustSessions: path.join(userData, "rust-sessions"),
+    assetJobs: path.join(userData, "asset-jobs"),
     exportStaging: path.join(userData, EXPORT_STAGING_DIR),
     signing: path.join(userData, "signing"),
     phonePackages: path.join(userData, "phone-packages"),
@@ -112,6 +119,7 @@ export function prewarmDenyWrites(layout: StudioLayout): string[] {
     layout.cppBuilds,
     layout.rustBuilds,
     layout.rustSessions,
+    layout.assetJobs,
     layout.nativeRuns,
     layout.signing,
     layout.phonePackages,
