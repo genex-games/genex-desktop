@@ -139,9 +139,10 @@ export function prewarmDenyWrites(layout: StudioLayout): string[] {
  * agent rewrites the yardstick it is measured by), every game's `.claude` folder (a person's own
  * session there would load planted settings or hooks), the toolchain store (its ANGLE is copied
  * into every native bundle and backs the Metal gate), the native run folders and the signing folder
- * (a staged file swapped before jsign signs it would be signed with the person's certificate), and
- * the host-level download cache every profile installs through. The last four sit outside every
- * writable root already; denying them is defence in depth.
+ * (a staged file swapped before jsign signs it would be signed with the person's certificate), the
+ * admitted phone packages a device launch installs, the host-level download cache every profile
+ * installs through, and the import cache whose outputs every build packages by key. The last six
+ * sit outside every writable root already; denying them is defence in depth.
  */
 export function studioBaseDenyWrites(
   layout: StudioLayout,

@@ -100,7 +100,8 @@ before any decoder): an error refuses it `validation-failed`, severity decided b
 A refused file leaves the build, and so does an output whose name another staged file holds
 (`name-taken`). The receipt's `assets` lists each file's action and refusal. A game with nothing
 to import starts no sandbox. Each file is looked up first in the content-addressed import cache
-([`asset-cache.ts`](../../src/main/asset-cache.ts), `layout.assetCache`, `cachedImporter`), and a
+([`asset-cache.ts`](../../src/main/asset-cache.ts), `layout.assetCache`, `cachedImporter`; host-owned,
+every sandboxed process is denied writing it by `studioBaseDenyWrites`), and a
 delivery into a Rust game imports its files into that cache at once, keyed for this host's desktop
 build (`warmImports` in [`core/assets.ts`](../../src/main/core/assets.ts)), so that build runs no job
 for them. `assets.inventory` gives each `assets/` file's `import`: `pending` until its version is
