@@ -71,6 +71,11 @@ export type StudioLayout = {
    */
   jobs: string;
   /**
+   * The content-addressed import cache (`asset-cache.ts`, C-3): importer outputs by key. Host-owned;
+   * never writable by an agent process (outside every writable root).
+   */
+  assetCache: string;
+  /**
    * The homes of Loops' reviewers, one fresh folder per call. Never writable by an agent process
    * (unlike scratch), so no box can swap a folder on the way for a link while the host makes one.
    */
@@ -100,6 +105,7 @@ export function layoutFor(userData: string, downloadCache: string = hostDownload
     signing: path.join(userData, "signing"),
     phonePackages: path.join(userData, "phone-packages"),
     jobs: path.join(userData, "jobs"),
+    assetCache: path.join(userData, "asset-cache"),
     reviewers: path.join(userData, "reviewers"),
   };
 }
@@ -124,6 +130,7 @@ export function prewarmDenyWrites(layout: StudioLayout): string[] {
     layout.signing,
     layout.phonePackages,
     layout.downloadCache,
+    layout.assetCache,
   ];
 }
 
@@ -150,5 +157,6 @@ export function studioBaseDenyWrites(
     layout.signing,
     layout.phonePackages,
     layout.downloadCache,
+    layout.assetCache,
   ];
 }

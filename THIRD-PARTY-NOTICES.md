@@ -17,6 +17,8 @@ licenses and terms of included third-party software.
 - Electron supplies its own license and Chromium notices.
 - The TypeScript 7 compiler (Apache-2.0), `@types/node` and `undici-types` (MIT) that the
   self-edit type gate runs keep their license and notice files under `dist/resources/tsc`.
+- The Rust asset importer's tools under `dist/resources/importer-tools` (Basis Universal, Draco,
+  meshoptimizer) have this page beside them ([Asset importer decoders](#asset-importer-decoders)).
 - The Genex asset CLI (`@genex-ai/cli-demo`, MIT) and its dependencies keep their license files
   in the Genex plugin payload under `dist/resources/plugins/genex/node_modules`.
 
@@ -134,9 +136,10 @@ exceptions: Genex ships them (below).
   pinned fallback.
 - The Basis Universal v2.50 WebAssembly encoder (`basis_encoder.js` and `basis_encoder.wasm`,
   Apache-2.0 with its NOTICE, the text under [Basis Universal](#basis-universal)), which the Rust ·
-  wgpu asset import step encodes textures with (`src/substrate/asset-import/basis-encoder.ts`,
-  pinned by sha256 at the `v2_50` release commit). So far only a development fetch
-  (`scripts/toolchains/basis-encoder.ts fetch`) downloads it; it is not committed or shipped.
+  wgpu asset import step encodes and transcodes textures with (`src/substrate/asset-import/basis-encoder.ts`,
+  pinned by sha256 at the `v2_50` release commit). A development fetch
+  (`node scripts/toolchains/importer-tools.ts fetch`) downloads it and it is never committed; the
+  build copies it into the packaged app ([Asset importer decoders](#asset-importer-decoders)).
 - The Rust crate checker, installed on the first crate approval: cargo-deny (MIT OR Apache-2.0)
   and cargo-vet (MIT OR Apache-2.0) from their official GitHub releases, and the RustSec
   advisory-db (CC0-1.0) at the commit `native/genex-rust/crate-policy.json` pins. The trusted
@@ -616,6 +619,49 @@ the following restrictions:
 3. This notice may not be removed or altered from any source distribution.
 ```
 
+## Rust game systems ports
+
+The game systems crates (`native/genex-rust/crates/genex-anim`, `genex-stream` and the mesh arena
+of `genex-render`, Genex's own code, MIT) port this code or these rules. They ship inside every
+Rust game that links the crate, and in its ejected source. Each file credits its source in a
+comment; the Apache 2.0 port carries the upstream notice and lists Genex's changes (§4(b)).
+
+| Genex file | What | Source | Upstream authors | Licence |
+| --- | --- | --- | --- | --- |
+| `crates/genex-anim/src/skeleton.rs` (`Skeleton`, `Skeleton::local_to_model`) | Joints sorted parent-first once at load, so local-to-model is one allocation-free pass over caller scratch | ozz-animation 0.17.0 (https://github.com/guillaumeblanc/ozz-animation), `include/ozz/animation/runtime/skeleton.h`, `src/animation/runtime/local_to_model_job.cc` | Guillaume Blanc | MIT (see [ozz-animation](#ozz-animation)) |
+| `crates/genex-stream/src/residency.rs` (`Residency`, `ResidencyLimits`) | The residency policy: per-requester reference counts, an unload queue of unreferenced entries in release order, drained while resident bytes exceed a byte cap under a time limit, a cap on loads in flight, and `forbidHoles` (keep the coarser parent until every wanted child is resident) | cesium-native (https://github.com/CesiumGS/cesium-native), `Cesium3DTilesSelection/src/TilesetContentManager.cpp` (`unloadCachedTiles`, the tile reference counts and the unload list) and `Cesium3DTilesSelection/include/Cesium3DTilesSelection/TilesetOptions.h` (`maximumCachedBytes`, `maximumSimultaneousTileLoads`, `tileCacheUnloadTimeLimit`, `forbidHoles`) | CesiumGS, Inc. and Contributors | Apache 2.0 (see [Apache License 2.0](#apache-license-20); cesium-native ships no NOTICE file) |
+| `crates/genex-render/src/mesh_arena.rs` (`MeshArena::grow`, `move_to`) | Growing a full GPU buffer by remaking it twice as large and copying its live prefix buffer to buffer (the rule only; no code was copied) | Bevy (https://github.com/bevyengine/bevy), `crates/bevy_render/src/slab_allocator.rs` | Bevy contributors | MIT OR Apache-2.0, used under Apache 2.0 (see [Apache License 2.0](#apache-license-20)) |
+
+### ozz-animation
+
+The licence of the ozz-animation code the skeleton ports (table above).
+
+```
+ozz-animation is hosted at http://github.com/guillaumeblanc/ozz-animation and
+distributed under the MIT License (MIT).
+
+---
+
+Copyright (c) 2020 Guillaume Blanc
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of
+this software and associated documentation files (the "Software"), to deal in
+the Software without restriction, including without limitation the rights to
+use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies
+of the Software, and to permit persons to whom the Software is furnished to do
+so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS
+FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR
+COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
+IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
+CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+```
+
 ## Rust showcase environment map
 
 The Rust renderer's showcase game ships one sample HDR environment map. It is a development and
@@ -700,24 +746,28 @@ not shipped.
 ## Asset importer decoders
 
 The Rust · wgpu asset import step (`src/substrate/asset-import/`) runs five WebAssembly modules
-in its own sandbox: three decoders, meshoptimizer's meshlet clusterizer and its simplifier. They are the builds
-three.js 0.185.1 ships in `examples/jsm/libs`, read from the pinned `three` package (paths below
-are under it). Their licence and notice texts are in the three.js add-on library sections below. The packaged app does not carry the importer yet; when it does,
-this page ships beside the decoders.
+in its own sandbox: the Basis Universal transcoder, Draco's glTF decoder, and meshoptimizer's
+decoder, meshlet clusterizer and simplifier. The packaged app carries them in
+`resources/importer-tools/` (paths below are under it), with this page beside them, and every file
+is pinned by sha256 in `src/substrate/asset-import/decoders.ts`. Draco and meshoptimizer are copied
+from the npm packages below; the Basis build is the v2.50 release's `webgl/encoder/build`, whose
+transcoder the importer calls (the same build encodes, so encoder and transcoder match). Their
+licence and notice texts are in the [Basis Universal](#basis-universal), [Draco](#draco),
+[meshoptimizer](#meshoptimizer) and [Zstandard](#zstandard) sections below.
 
 | File | Project | License |
 | --- | --- | --- |
-| `examples/jsm/libs/basis/` | [Basis Universal](https://github.com/BinomialLLC/basis_universal) v1.50 transcoder, with its embedded [Zstandard](https://github.com/facebook/zstd) decoder | Apache-2.0; embedded Zstandard BSD-3-Clause |
-| `examples/jsm/libs/draco/gltf/` | [Draco](https://github.com/google/draco) 1.5.6 glTF decoder | Apache-2.0 |
-| `examples/jsm/libs/meshopt_decoder.module.js` | [meshoptimizer](https://github.com/zeux/meshoptimizer) 1.1.1 decoder | MIT |
-| `examples/jsm/libs/meshopt_clusterizer.module.js` | [meshoptimizer](https://github.com/zeux/meshoptimizer) meshlet clusterizer (a development build between 1.1.1 and 1.2.0); the importer stores its meshlets in glTF `extras` | MIT |
-| `examples/jsm/libs/meshopt_simplifier.module.js` | [meshoptimizer](https://github.com/zeux/meshoptimizer) simplifier (a development build between 1.1.1 and 1.2.0); the importer stores its levels of detail in glTF `extras` | MIT |
+| `basis-encoder-2.50/` | [Basis Universal](https://github.com/BinomialLLC/basis_universal) v2.50 WebAssembly build (encoder and transcoder), with its embedded [Zstandard](https://github.com/facebook/zstd) | Apache-2.0 with its NOTICE; embedded Zstandard BSD-3-Clause |
+| `draco3dgltf/` | [Draco](https://github.com/google/draco) 1.5.9 glTF decoder (npm `draco3dgltf`) | Apache-2.0 |
+| `meshoptimizer/` | [meshoptimizer](https://github.com/zeux/meshoptimizer) 1.3.0 decoder, meshlet clusterizer and simplifier (npm `meshoptimizer`); the importer stores its meshlets and levels of detail in glTF `extras` | MIT |
 
 ## Asset importer packages
 
 These npm packages are pinned exactly in `package.json` for the asset importer
-(`src/substrate/asset-import/`), as development dependencies until the importer moves onto them
-and the packaged app carries its tools. Each package keeps its licence file in its own folder, except `draco3dgltf`,
+(`src/substrate/asset-import/`), as development dependencies: the build copies the files the
+importer runs from `draco3dgltf` and `meshoptimizer` into the app's `resources/importer-tools/`
+([Asset importer decoders](#asset-importer-decoders)), and the others are not carried in the app
+yet. Each package keeps its licence file in its own folder, except `draco3dgltf`,
 whose package declares Apache-2.0 without a licence file (the text is in
 [Apache License 2.0](#apache-license-20)); `gltf-validator` also carries a `NOTICES` file.
 
@@ -1158,7 +1208,7 @@ three.js 0.185.1 (r185) ships these third-party libraries in `examples/jsm/libs`
 
 Copyright (C) 2019-2024 Binomial LLC. All Rights Reserved.
 
-(The line above is from the v1.50 transcoder sources; v1.50's LICENSE carries only the Apache template line. The current upstream LICENSE reads `Copyright 2019-2026 Binomial LLC`.)
+(The line above is from the v1.50 transcoder sources; v1.50's LICENSE carries only the Apache template line. The current upstream LICENSE reads `Copyright 2019-2026 Binomial LLC`. The asset importer's v2.50 build is under the same licence and the NOTICE below.)
 
 Licensed under the Apache License, Version 2.0; the full text is at the end of this file.
 
@@ -1186,7 +1236,7 @@ If you modify the Basis Universal source code, specifications, or wiki documents
 
 Copyright 2016 The Draco Authors.
 
-(From the Draco 1.5.6 source file headers; the LICENSE file carries only the Apache template line. Draco has no NOTICE file.)
+(From the Draco 1.5.6 source file headers; the LICENSE file carries only the Apache template line. Draco has no NOTICE file. The asset importer's npm `draco3dgltf` 1.5.9 decoder is under the same licence.)
 
 Licensed under the Apache License, Version 2.0; the full text is at the end of this file.
 
@@ -1392,7 +1442,7 @@ SOFTWARE.
 
 ### meshoptimizer
 
-Copyright (c) 2016-2026 Arseny Kapoulkine (covers `meshopt_clusterizer.module.js`, `meshopt_decoder.module.js` and `meshopt_simplifier.module.js`)
+Copyright (c) 2016-2026 Arseny Kapoulkine (covers `meshopt_clusterizer.module.js`, `meshopt_decoder.module.js` and `meshopt_simplifier.module.js`, and the asset importer's `meshoptimizer/` files from npm `meshoptimizer` 1.3.0, whose `LICENSE.md` is this text)
 
 ```
 MIT License

@@ -34,6 +34,8 @@ export type ImportDecoder = (typeof ImportDecoder)[keyof typeof ImportDecoder];
 
 /** The environment variable that names the importer tools folder (the host sets it for the importer). */
 export const IMPORTER_TOOLS_ENV = "GENEX_IMPORTER_TOOLS";
+/** The folder the build stages the tools into, under the app's resources (what the host names in {@link IMPORTER_TOOLS_ENV}). */
+export const IMPORTER_TOOLS_RESOURCES_FOLDER = "importer-tools";
 
 /** The folder of each tool under the importer tools folder. */
 export const ImporterToolFolder = {

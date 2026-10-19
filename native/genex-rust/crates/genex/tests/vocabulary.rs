@@ -181,6 +181,8 @@ fn the_game_systems_blocks_are_the_fixtures() {
     let animation = genex_anim::AnimationErrorCode::ALL.map(genex_anim::AnimationErrorCode::wire);
     let stream = genex::StreamErrorCode::ALL.map(genex::StreamErrorCode::wire);
     let nav = genex::nav::NavErrorCode::ALL.map(genex::nav::NavErrorCode::wire);
+    let assets = genex::AssetErrorCode::ALL.map(genex::AssetErrorCode::wire);
+    assert_eq!(ASSET_REFUSALS, assets, "the manifest's asset refusals are AssetErrorCode's");
     let blocks: [(&str, &[&str], &[&str]); 5] = [
         ("animation", &ANIMATION_CALLS, &animation),
         ("stream", &STREAM_CALLS, &stream),

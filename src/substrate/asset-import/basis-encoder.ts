@@ -9,8 +9,8 @@
  * pure function of the input and the usage.
  *
  * Which files are encoded, and as what usage, is the caller's: the importer never guesses a
- * texture's use from its name. TODO(A6.6 wiring): the store recipe that installs the encoder and
- * the import-plan step that encodes a game's textures with the usage its materials give them.
+ * texture's use from its name. TODO(A6.6 wiring): the import-plan step that encodes a game's
+ * textures with the usage its materials give them.
  */
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";

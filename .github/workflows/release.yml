@@ -43,6 +43,8 @@ jobs:
       # --ignore-scripts skips postinstall, which patches sandbox-runtime's executable lookup.
       - name: Patch the sandbox runtime as postinstall does
         run: node --input-type=module -e "await (await import('./scripts/patch-sandbox-runtime.mjs')).patchSandboxRuntime()"
+      - name: Fetch the importer's pinned Basis build
+        run: node scripts/toolchains/importer-tools.ts fetch
       - run: npm run check:static
       - run: npm run lint
       - run: npm run test:fast
@@ -67,6 +69,8 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
+      - name: Fetch the importer's pinned Basis build
+        run: node scripts/toolchains/importer-tools.ts fetch
       - run: npm run rebuild:terminal
       # `npm run verify` without its build smoke, which runs below without blocking the draft:
       # 12 of its 198 checks broke while it ran only here (0.1.0: launches now open at home, and the

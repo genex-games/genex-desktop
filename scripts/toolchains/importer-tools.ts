@@ -29,14 +29,15 @@ import {
   devToolFolder,
   IMPORTER_TOOL_FILES,
   IMPORTER_TOOL_PACKAGES,
+  IMPORTER_TOOLS_RESOURCES_FOLDER,
   ImporterToolFolder,
 } from "../../src/substrate/asset-import/decoders.ts";
 
 const REPO = fileURLToPath(new URL("../..", import.meta.url));
 /** Where `fetch` keeps the Basis build (what a development checkout's importer and tests read). */
 export const BASIS_DIR = devToolFolder(ImporterToolFolder.Basis, REPO);
-/** The folder the build stages the tools into, under the app's resources. */
-export const IMPORTER_TOOLS_RESOURCES_FOLDER = "importer-tools";
+/** The folder the build stages the tools into, under the app's resources (`decoders.ts` owns it). */
+export { IMPORTER_TOOLS_RESOURCES_FOLDER };
 /** The notices page staged beside the tools: it holds their licence texts. */
 const NOTICES = "THIRD-PARTY-NOTICES.md";
 const REFUSAL_PREFIX = "genex-importer-tools-refusal: ";

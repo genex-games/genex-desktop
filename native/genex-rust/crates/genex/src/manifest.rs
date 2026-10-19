@@ -167,10 +167,10 @@ pub const ANIMATION_CALLS: [&str; 0] = [];
 pub const STREAM_CALLS: [&str; 0] = [];
 /// The navigation calls of the facade.
 pub const NAV_CALLS: [&str; 0] = [];
-/// The sim-side asset read calls of the facade.
-pub const ASSET_CALLS: [&str; 0] = [];
-/// The sim-side asset read refusals (`AssetErrorCode` once SF-1a lands).
-pub const ASSET_REFUSALS: [&str; 0] = [];
+/// The sim-side asset read calls of the facade, as a reset calls them (SF-1a).
+pub const ASSET_CALLS: [&str; 5] = ["gfx.assets().bytes", "gfx.assets().triangles", "gfx.assets().info", ".json", ".digest"];
+/// The sim-side asset read refusals: [`crate::AssetErrorCode::ALL`]'s wire spellings.
+pub const ASSET_REFUSALS: [&str; 6] = ["unsafe-path", "missing", "too-large", "malformed", "not-at-reset", "not-preloaded"];
 /// The level-of-detail calls of the facade.
 pub const LOD_CALLS: [&str; 0] = [];
 /// The level-of-detail refusals (`__render.lodRefused` codes).

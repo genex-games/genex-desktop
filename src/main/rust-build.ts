@@ -607,9 +607,6 @@ interface Plan extends Pending {
   assets: StagedImportReport | null;
 }
 
-/** A receipt with the import step's record (C-2) beside the lane's own fields. */
-type ReceiptWithAssets = RustBuildReceipt & { assets?: StagedImportReport };
-
 /** A build running (or waiting for a slot), which later looks at the same folder join; each caller waits with its own signal. */
 interface InFlight {
   controller: AbortController;
@@ -1077,7 +1074,7 @@ export class RustBuilds implements GameBuildLane {
     compiler: RustCompilerIdentity,
     outputs: RustBuildReceipt["outputs"],
     web: WebReceipt | null,
-  ): ReceiptWithAssets {
+  ): RustBuildReceipt {
     return {
       version: 1,
       project: plan.game.project,

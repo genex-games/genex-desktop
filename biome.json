@@ -10,6 +10,7 @@
     "includes": [
       "**",
       "!tests/fixtures",
+      "!native/genex-rust/crates/genex-anim/tests/fixtures/oracle",
       "!research",
       "!archive",
       "!design",

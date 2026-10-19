@@ -23,6 +23,7 @@ import { MINUTE_MS } from "../shared/duration.ts";
 import { assetExtension } from "../shared/game-assets.ts";
 import { type BuildTarget, GameStack } from "../shared/game-project.ts";
 import { readRegularFile, writeNewFile } from "../substrate/fsx.ts";
+import { IMPORTER_TOOLS_ENV } from "../substrate/asset-import/decoders.ts";
 import { isGlb, readGlb } from "../substrate/asset-import/glb.ts";
 import {
   AssetImportRefusal,
@@ -84,11 +85,18 @@ export interface ImporterCommand {
   env?: Record<string, string>;
 }
 
-/** This process's Node (Electron's, as Node) running `worker.ts`. */
-export function defaultImporterCommand(): ImporterCommand {
+/**
+ * This process's Node (Electron's, as Node) running `worker.ts`, reading its tools from `toolsDir`
+ * (the app's `resources/importer-tools`, `IMPORTER_TOOLS_ENV`) when given.
+ */
+export function defaultImporterCommand(toolsDir?: string): ImporterCommand {
   const worker = fileURLToPath(new URL("../substrate/asset-import/worker.ts", import.meta.url));
   const electron = typeof process.versions.electron === "string";
-  return { argv: [process.execPath, worker], ...(electron ? { env: { ELECTRON_RUN_AS_NODE: "1" } } : {}) };
+  const env: Record<string, string> = {
+    ...(electron ? { ELECTRON_RUN_AS_NODE: "1" } : {}),
+    ...(toolsDir ? { [IMPORTER_TOOLS_ENV]: toolsDir } : {}),
+  };
+  return { argv: [process.execPath, worker], ...(Object.keys(env).length > 0 ? { env } : {}) };
 }
 
 /** The sandbox one job runs in (`ProcessSandbox.create`), disposed after it. */

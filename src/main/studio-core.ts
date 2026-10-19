@@ -241,6 +241,8 @@ import { studioRpc } from "./harness-rpc/studio.ts";
 import type { PlanReviewController } from "./plan-review.ts";
 import { PluginConsent } from "./plugin-consent.ts";
 import { assertOwnedProject } from "./project-policy.ts";
+import { defaultImporterCommand, rustImportSandboxes, rustStageImporter } from "./rust-assets.ts";
+import { IMPORTER_TOOLS_RESOURCES_FOLDER } from "../substrate/asset-import/decoders.ts";
 import { admittedBuildLock, type RustBuilds, rustBuildSandboxes } from "./rust-build.ts";
 import { webExportWarnings } from "./rust-build-web.ts";
 import { type MacNotice, writeNoticesFolder } from "../substrate/native-export.ts";
@@ -1295,6 +1297,15 @@ export class StudioCore {
       ejection: (project) => engineEjectionsFor(this).ejectedFrom(project),
       // Every destination's executable passes its policy and the transport scan before it is out/ (M3.5).
       admit: storeRustAdmit(this.layout.toolchains),
+      // The import step over each build's stage (C-2): sandboxed per-file jobs in the profile's
+      // asset-jobs folder, the importer reading its pinned tools from this build's resources (C-1).
+      importAssets: rustStageImporter({
+        jobsRoot: this.layout.assetJobs,
+        sandboxFor: rustImportSandboxes({ enabled: this.options.sandbox ?? true, alongside: this.sandbox }),
+        secretPaths: this.#protectedPaths(),
+        denyWrite: [this.layout.toolchains, this.layout.nativeRuns],
+        importer: defaultImporterCommand(path.join(this.options.paths.resources, IMPORTER_TOOLS_RESOURCES_FOLDER)),
+      }),
     });
   }
 

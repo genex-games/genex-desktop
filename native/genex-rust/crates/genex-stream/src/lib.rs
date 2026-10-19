@@ -20,3 +20,4 @@ pub mod physics;
 pub use error::StreamErrorCode;
 pub use genex_core::cell::CellId;
 pub use ids::StreamTicket;
+pub use residency::{EntryState, Requester, Residency, ResidencyClock, ResidencyLimits, ResidencyStats, Want};

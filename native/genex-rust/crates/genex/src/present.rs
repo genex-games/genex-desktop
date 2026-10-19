@@ -633,7 +633,7 @@ fn load_model(path: &str, source: &dyn ModelSource, uploads: &mut dyn Uploads, l
     let mut images: Vec<(u32, TextureKind, Option<TextureId>)> = Vec::new();
     let mut parts = Vec::with_capacity(glb.parts().len());
     let mut triangles = 0u32;
-    // Every part in one upload: the renderer copies its whole library once, not once a material.
+    // Every part in one upload: the renderer writes the model's own rows once, not once a material.
     // Each part brings the clusters the importer wrote (R2.3); a part without them clusters at runtime.
     // Its levels of detail (`genex_lods`, A6.9) come along: far instances draw a coarser level.
     let model_parts: ModelParts = glb.model_parts();

@@ -40,5 +40,5 @@ pub mod ragdoll;
 #[cfg(feature = "physics")]
 pub mod ragdoll_profile;
 
-pub use error::AnimationErrorCode;
+pub use error::{AnimationError, AnimationErrorCode};
 pub use ids::{ClipId, EventId, JointId, LayerId, ParamId, StateId};
