@@ -40,6 +40,7 @@ const MESSAGE = {
   repeated: (rid: string) => `[play-ai] dropped a line repeating the unanswered rid ${rid}`,
   failed: (why: string) => `[play-ai] the AI service failed a line: ${why}`,
   refused: (op: string, why: string) => `[play-ai] the game did not take ${op}: ${why}`,
+  undeclared: "the game's hello did not declare ai",
 } as const;
 
 /** Deadlines on the real clock; an armed one never keeps the studio alive. */
@@ -90,11 +91,15 @@ export function bridgeMessageOf(line: PlayAiLine): AiBridgeMessage {
   }
 }
 
-/** Where a native game runs, as main knows it: its folder, the bridge's own id for it and its hello. */
-export interface NativeAiPlace {
+/** Where a game's AI lines come from, as main knows it: its folder and the bridge's own id for it. */
+export interface AiLinePlace {
   cwd: string;
-  /** The process's channel id, which `abandon` names when it goes away. */
+  /** The process's (or the editor play's) channel id, which `abandon` names when it goes away. */
   channel: string;
+}
+
+/** Where a native game runs, as main knows it: its folder, the bridge's own id for it and its hello. */
+export interface NativeAiPlace extends AiLinePlace {
   hello: PlayHello;
 }
 
@@ -105,7 +110,7 @@ export interface NativeAiPlace {
  */
 export function nativeCaller(
   game: { name: string; title: string },
-  place: NativeAiPlace,
+  place: AiLinePlace,
   replaying: boolean,
 ): GameAiCaller {
   return {
@@ -131,7 +136,7 @@ export interface NativeAiService {
 export interface NativeAiHost {
   service: NativeAiService;
   /** The caller for this process, derived by main from where it runs; null: AI is off for it. */
-  callerFor(place: NativeAiPlace): GameAiCaller | null;
+  callerFor(place: AiLinePlace): GameAiCaller | null;
   deadlines?: PlayDeadlines;
   log?: (line: string) => void;
 }
@@ -148,7 +153,23 @@ export const NATIVE_AI_OFF: NativeAiHost = {
   callerFor: () => null,
 };
 
-/** A native game's AI bridge, over its Play Protocol client. */
+/**
+ * The host of a native player Studio started for `game` of the person's library: every line is
+ * asked as that game ({@link nativeCaller}), replaying when the run replays a saved playtest.
+ */
+export function nativeAiHost(
+  service: NativeAiService,
+  game: { name: string; title: string },
+  options: { replaying: boolean; log?: (line: string) => void },
+): NativeAiHost {
+  return {
+    service,
+    callerFor: (place) => nativeCaller(game, place, options.replaying),
+    ...(options.log ? { log: options.log } : {}),
+  };
+}
+
+/** A game's AI bridge: its `ai` lines in, each answer out once by its rid. */
 export interface NativeAiBridge {
   /** One `ai` line the game printed, read. */
   hear(line: PlayAiLine): void;
@@ -210,6 +231,9 @@ function replaySettled(state: BridgeState, deadlines: PlayDeadlines): Promise<vo
   });
 }
 
+/** Writes one AI op to the game; a refusal is the game's own (it is logged, never retried). */
+export type AiOpWriter = (op: PlayAiOp, args: PlayAiOpArgs[PlayAiOp]) => Promise<unknown>;
+
 /**
  * The AI bridge of a native game Studio started, or null for a game whose `hello` did not declare
  * `capabilities.ai`. `held` says whether the studio holds the game's clock right now.
@@ -220,21 +244,36 @@ export function nativeAiBridge(
   host: NativeAiHost,
   held: () => boolean,
 ): NativeAiBridge | null {
-  if (!place.hello.capabilities.ai) return null;
+  const { hello } = place;
+  if (!hello.capabilities.ai) return null;
+  const write: AiOpWriter = (op, args) =>
+    takesAiOp(hello, op) ? client.send(op, { ...args }) : Promise.reject(new Error(MESSAGE.undeclared));
+  return aiLineBridge(write, { cwd: place.cwd, channel: place.channel }, host, held);
+}
+
+/**
+ * The bridge between a game's `ai` lines and the AI service, whatever carries them: a native
+ * player's Play Protocol, or an engine editor's relay (`bridge-editor.ts`). Each line is asked
+ * under the caller main derives for `place`, and its answer is written once with `write`.
+ */
+export function aiLineBridge(
+  write: AiOpWriter,
+  place: AiLinePlace,
+  host: NativeAiHost,
+  held: () => boolean,
+): NativeAiBridge {
   const deadlines = host.deadlines ?? REAL_DEADLINES;
   const log = host.log ?? (() => {});
   const state: BridgeState = { pending: new Map(), refusals: [], closed: false };
 
-  const write = (item: Outgoing): Promise<void> | null => {
-    if (!takesAiOp(place.hello, item.op)) return null;
-    return client.send(item.op, { ...item.args }).then(
+  const deliver = (item: Outgoing): Promise<void> =>
+    write(item.op, item.args).then(
       () => {},
       (error: unknown) => log(MESSAGE.refused(item.op, errorMessage(error))),
     );
-  };
   const flush = async (): Promise<void> => {
     if (state.closed) return;
-    await Promise.all(takeOutgoing(state).map(write));
+    await Promise.all(takeOutgoing(state).map(deliver));
   };
   const deliverSoon = () => {
     if (!held()) void flush();

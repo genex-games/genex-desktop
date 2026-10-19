@@ -798,4 +798,28 @@ describe("a Play Protocol game on the agent's screen", () => {
     assert.ok(frames.length >= 1, "a move draws a frame");
     assert.ok(frames.every((f) => f.bytes > 0 && typeof f.width === "number"));
   });
+
+  it("asks the AI host it was given for a game that declares ai, as main's own caller of that game", {
+    skip: process.platform === "win32" ? "starts the fake game from a POSIX script" : false,
+  }, async () => {
+    const { computerTools } = await import("../../src/main/core/computer-tools.ts");
+    const { sandbox } = await recordingSandbox();
+    const fixture = fixtureNativeHost("bridge");
+    const previews = { openScreen: () => {}, frame: async () => {} };
+    const sessionPort = { get: async () => ({}), handle: () => "pool-1", loaded: null, release: async () => {} };
+    const tools = computerTools(
+      previews as never,
+      { project: "bridge", role: "builder" } as never,
+      await bridgeProject(["--ai"]),
+      await tmpDir("bridge-screen-"),
+      sessionPort as never,
+      { bridge: { sandbox, ai: fixture.host } },
+    );
+    after(() => tools.release());
+    await tools.onLiveTool("computer", { action: "wait", duration: 0.3 });
+    assert.ok(fixture.asked.length > 0, "the game's ai lines reached the host");
+    assert.ok(
+      fixture.asked.every(({ caller }) => caller.game === "create:bridge" && caller.channel.startsWith("native:")),
+    );
+  });
 });

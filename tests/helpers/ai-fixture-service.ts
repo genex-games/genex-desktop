@@ -20,7 +20,7 @@ import {
   type AiBridgeAnswer,
   type NativeAiHost,
   type NativeAiService,
-  nativeCaller,
+  nativeAiHost,
 } from "../../src/main/game-ai/bridge-native.ts";
 import type { GameAiCaller } from "../../src/main/game-ai/types.ts";
 
@@ -102,9 +102,10 @@ export function fixtureAiService() {
 /** A native host over the fixture service: the game is the library's `name`, replaying when asked. */
 export function fixtureNativeHost(name: string, options: { replaying?: boolean } = {}) {
   const fixture = fixtureAiService();
-  const host: NativeAiHost = {
-    service: fixture.service,
-    callerFor: (place) => nativeCaller({ name, title: name }, place, options.replaying ?? false),
-  };
+  const host: NativeAiHost = nativeAiHost(
+    fixture.service,
+    { name, title: name },
+    { replaying: options.replaying ?? false },
+  );
   return { host, ...fixture };
 }
