@@ -134,15 +134,15 @@ scope: Codex's cover pre-existing files, never directories; the Claude hook matc
 - **OpenCode reads its sign-ins; 2.x's server is unsandboxed** ([details](../connections-and-context.md#openrouter-and-opencode)).
 - **An install briefly opens the npm registry to every sandboxed process.** sandbox-runtime's
   proxy filters against one process-wide allow-list, so `ProcessSandbox.run` widens it for an
-  install's length (counted, restored in `finally`). The Install packages button, `genex__package`
+  install's length (counted). The Install packages button, `genex__package`
   (an exact-pinned `GENEX_GAME_PACKAGES` entry) and a remix's script-free `installGuarded` open
   it. No build starts meanwhile; agents' commands still reach it.
 - **A remix's setup scripts run** once trusted (Run setup scripts).
 - **Builds are confined on macOS and Linux only, and for writes**: a build can copy home files
   into the output Publish uploads.
 - **A Genex CLI run opens `api.genex.games` to every sandboxed process** for its length, the
-  same way. Other processes hold no Genex token (it reaches only the CLI's preload, on stdin), so
-  they reach the API but not as the user.
+  same way, as does a [plan watcher](../play.md#answering-games-with-your-plan) job its CLI's hosts.
+  Other processes hold neither token nor sign-in, so they reach those hosts but not as the user.
 - **Windows sandbox residuals** are listed in [Windows sandbox](../windows-sandbox.md#residual-risks).
 - **A command a reply offers runs outside the sandbox.** Run starts the agent-written line with the
   user's own permissions. Only one visible line without control characters is accepted; a
