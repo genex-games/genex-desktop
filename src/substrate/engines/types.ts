@@ -108,6 +108,17 @@ export interface EngineModel {
   free?: boolean;
 }
 
+/**
+ * Why a completion is asked for, when that changes how an engine frames it. Only a game's call is
+ * named: its engine skips the judge framing it gives other completions, runs with no tools, no MCP
+ * and no settings in a neutral directory, and holds the reply to `responseSchema`. Never rename a value.
+ */
+export const CompletePurpose = {
+  /** A call a game makes at play time (`main/game-ai`). */
+  Game: "game",
+} as const;
+export type CompletePurpose = (typeof CompletePurpose)[keyof typeof CompletePurpose];
+
 export interface CompleteRequest {
   model?: string;
   systemPrompt?: string;
@@ -135,6 +146,14 @@ export interface CompleteRequest {
   onActivity?: (phase: import("../../shared/chat-activity.ts").ChatActivityPhase) => void;
   /** Host-owned policy, applied by paths that can compact before retrying inference. */
   contextPolicy?: import("../../shared/context.ts").ContextPolicy;
+  /**
+   * A JSON schema of the closed dialect (`shared/game-ai-schema.ts`, already checked by the caller)
+   * the reply must fit: an engine that can hold a model to it sends it as strict structured output
+   * (`response_format` json_schema, Ollama's `format`); the caller validates the reply either way.
+   */
+  responseSchema?: unknown;
+  /** Why this completion is asked for; unset for every completion that is not a game's. */
+  purpose?: CompletePurpose;
 }
 
 /**

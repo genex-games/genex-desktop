@@ -229,20 +229,20 @@ describe("Play comments in the bar's layer", () => {
   });
 
   it("tells main what holds the bar only when it changes, asking for the bar again after mounting or a new game", () => {
-    const first = holdToTell(NOTHING_TOLD, { held: false, comments: false });
-    assert.deepEqual(first?.payload, { held: false, comments: false, ready: true });
-    assert.equal(holdToTell(first?.key ?? "", { held: false, comments: false }), null, "nothing new");
-    const hovered = holdToTell(first?.key ?? "", { held: true, comments: false, ready: true });
-    assert.deepEqual(hovered?.payload, { held: true, comments: false }, "only the first word asks for the bar");
-    assert.deepEqual(holdToTell(NOTHING_TOLD, { held: true, comments: false })?.payload, {
+    const first = holdToTell(NOTHING_TOLD, { held: false, overlay: null });
+    assert.deepEqual(first?.payload, { held: false, overlay: null, ready: true });
+    assert.equal(holdToTell(first?.key ?? "", { held: false, overlay: null }), null, "nothing new");
+    const hovered = holdToTell(first?.key ?? "", { held: true, overlay: null, ready: true });
+    assert.deepEqual(hovered?.payload, { held: true, overlay: null }, "only the first word asks for the bar");
+    assert.deepEqual(holdToTell(NOTHING_TOLD, { held: true, overlay: null })?.payload, {
       held: true,
-      comments: false,
+      overlay: null,
       ready: true,
     });
   });
 
   it("acts on a fresh Esc only: back to a playing game, out of one still loading or failed, never over Comments", () => {
-    const fresh = { repeat: false, commentsOpen: false };
+    const fresh = { repeat: false, overlayOpen: false };
     assert.equal(barEscape(PlayViewerPhase.Playing, fresh), BarEscape.Resume);
     assert.equal(barEscape(PlayViewerPhase.Loading, fresh), BarEscape.Leave);
     assert.equal(barEscape(PlayViewerPhase.Failed, fresh), BarEscape.Leave);
@@ -251,7 +251,7 @@ describe("Play comments in the bar's layer", () => {
       BarEscape.None,
       "a held Esc repeating",
     );
-    assert.equal(barEscape(PlayViewerPhase.Loading, { ...fresh, commentsOpen: true }), BarEscape.None);
+    assert.equal(barEscape(PlayViewerPhase.Loading, { ...fresh, overlayOpen: true }), BarEscape.None);
     assert.equal(barEscape(undefined, fresh), BarEscape.None);
   });
 

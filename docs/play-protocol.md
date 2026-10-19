@@ -129,6 +129,7 @@ trace and answer say which binary it played. Capabilities are levels, matching t
 | `seed` | `true` when `reset {seed}` makes a run repeat |
 | `actions` | the names `act` accepts; empty for none |
 | `screenshot` | the formats it can answer in; JPEG is asked for when listed |
+| `ai` | `true` when the game uses play-time AI (below); absent or anything else is `false` |
 
 A game lacks — and answers `unsupported` to — `pointer` and `wheel` without an absolute pointer,
 `look` without any pointer, `pause` and `play` without a clock, `step` without a step-locked one,
@@ -210,6 +211,22 @@ refused `step` answers the session's clock as "cannot step". A process that is g
 that timed out, fails the whole plan.
 
 Stopping a game: `quit`, then the process tree is killed if it has not exited within two seconds.
+
+## Play-time AI (optional)
+
+A game that declares `capabilities.ai` asks the studio's AI broker for text or JSON with id-less
+lines on stdout, `{"event":"ai","rid":"<8–100 of A-Z a-z 0-9 _ ->","op":"<op>","body":<body>}`. The
+ops and bodies are the web bridge's (`AiBridgeOp` and `readAiBridgeBody` in
+`src/shared/game-ai-bridge.ts`): `hello`, `doors`, `budget.active` and `budget.stop` take `null`;
+`call` takes one call (`AiCallRequest`), `cancel` a `{ticket}`, `budget.request` a grant request.
+The studio answers each line once with the optional op `ai.reply {rid, reply}`, and streams a
+`say` answer's text with `ai.delta {rid, text}`; a game acknowledges them like any request.
+
+The studio sends `ai.*` ops only to a game whose `hello` declared `ai`, ignores an `ai` line from
+one that did not, drops a line longer than 200 Ki characters and refuses a fifth unanswered line.
+Answers arrive on step boundaries, so a replayed run gets them on the same frames. A player the
+studio started runs with no network: AI reaches it only through these lines, on the doors main
+allows for its context (tapes and this Mac's models for an agent's run).
 
 ## Playing in an engine's editor
 

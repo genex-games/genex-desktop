@@ -6,6 +6,7 @@
 import type { LibraryKind } from "./asset-library.ts";
 
 import type { PlayCuration } from "./play-manage.ts";
+import type { PlayAiBar } from "./play-bar.ts";
 
 /** Where Play talks to genex.games: the API main calls and the website the app links to. */
 export interface PlayOrigins {
@@ -273,6 +274,8 @@ export interface PlayBarState {
   facts: PlayFacts | null;
   /** Null until the game asks for a microphone: then the header has a mic switch and its menu. */
   mic: PlayMicBar | null;
+  /** Null until the game says hello to its AI: then the header has the AI pill (`shared/play-bar.ts`). */
+  ai: PlayAiBar | null;
   /** How many comments the game has; null until its page facts are read. */
   comments: number | null;
   /** A Genex account is unlocked: the comments end in a field to write one, else in Sign in. Null until known. */

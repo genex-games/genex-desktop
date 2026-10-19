@@ -91,6 +91,13 @@ const NATIVE_CHANNELS = [
   "studio:app-look.open-settings",
   // Share… pops the Mac's share menu (Messages, Mail, AirDrop), which hands the link to other apps.
   "studio:play.share",
+  // Play-time AI: saving Settings may turn auto top-up on or off on genex.games (the person's saved
+  // payment method) and asks the plan's CLI for its window; a Report posts the bundle to
+  // genex.games; a model check spends the creator's own plan and key; checkout opens the browser.
+  "studio:game-ai.settings.save",
+  "studio:game-ai.report",
+  "studio:game-ai.check",
+  "studio:game-ai.checkout",
 ] as const satisfies readonly StudioInvokeChannel[];
 /**
  * Native steps inside a handler, asserted by name with `assertNativeActionAllowed`; no channel of
@@ -121,6 +128,12 @@ const NATIVE_STEPS = [
   // with the user's real Genex account; `host-package` opens the npm registry for one install.
   "studio:plugins.host-cli",
   "studio:plugins.host-package",
+  // Not channels either: `studio:game-ai.answer` asserts these before a card's yes spends anything.
+  // `approve-paid` grants a door that bills (the person's key, OpenCode's paid models, Genex credits,
+  // the creator's development credits) or approves a Genex confirm on genex.games; `approve-plan`
+  // grants the person's Claude or ChatGPT plan. A fixture profile's cards answer only free models.
+  "studio:game-ai.approve-paid",
+  "studio:game-ai.approve-plan",
 ] as const;
 /** Channels a disposable fixture profile may run: no native account, dialog, download or external app. */
 const FIXTURE_SAFE = [
@@ -366,6 +379,22 @@ const FIXTURE_SAFE = [
   "studio:project.inspect",
   "studio:project.adopt",
   "studio:project.open",
+  // Play-time AI: a fixture launch's menu, cards, Settings, Games list, playtests, check state,
+  // Publish facts and packs answer from its own stand-ins and the game's own folder; no socket
+  // opens. A card's yes on a door that spends asserts its native step (`approve-paid`, `approve-plan`).
+  "studio:game-ai.menu",
+  "studio:game-ai.pick",
+  "studio:game-ai.answer",
+  "studio:game-ai.enable",
+  "studio:game-ai.activity",
+  "studio:game-ai.settings",
+  "studio:game-ai.tapes",
+  "studio:game-ai.report.preview",
+  "studio:game-ai.check.state",
+  "studio:game-ai.check.stop",
+  "studio:game-ai.recommend",
+  "studio:game-ai.publish-facts",
+  "studio:game-ai.credits",
 ] as const satisfies readonly StudioInvokeChannel[];
 export type NativeChannel = (typeof NATIVE_CHANNELS)[number];
 export type NativeStep = (typeof NATIVE_STEPS)[number];

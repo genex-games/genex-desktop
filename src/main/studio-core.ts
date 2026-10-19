@@ -40,6 +40,7 @@ import { EventKind, ThreadKind, SnapshotScope } from "../shared/event-log.ts";
 import { assetKind, isAudioFile, type AssetDeliveredPayload } from "../shared/game-assets.ts";
 import { coverFromBrief, replaceableCover, type GameUpdate } from "../shared/game-library.ts";
 import type { HarnessHostHandlers, HarnessParams, HarnessResult, HostMethod } from "../shared/harness-api.ts";
+import type { GameAiHarnessHost } from "./game-ai/types.ts";
 import {
   type ExportReview,
   type PluginBinding,
@@ -189,6 +190,7 @@ import { pluginsRpc } from "./harness-rpc/plugins.ts";
 import { previewRpc } from "./harness-rpc/preview.ts";
 import { desktopRpc } from "./harness-rpc/desktop.ts";
 import { judgeRpc } from "./harness-rpc/judge.ts";
+import { aiRpc } from "./harness-rpc/ai.ts";
 import { runsRpc } from "./harness-rpc/runs.ts";
 import { snapshotRpc } from "./harness-rpc/snapshot.ts";
 import { hooksRpc } from "./harness-rpc/hooks.ts";
@@ -428,6 +430,12 @@ export interface StudioCoreOptions {
   onLog?: (line: string, stream: "stdout" | "stderr") => void;
   /** Where a message's @ tags are fetched from: genex.games, the account and git (`core/mention-tags.ts`). */
   mentionSources?: MentionSources;
+  /**
+   * Play-time AI for the harness (`harness-rpc/ai.ts`): tapes, mocks and this Mac's models on a
+   * host-created run budget. Absent in a studio composed without it, and in tests: the harness's
+   * `ai.*` calls then answer that it isn't running (the schema check still answers).
+   */
+  gameAi?: GameAiHarnessHost;
 }
 
 export type { CoreInternals };
@@ -2192,6 +2200,7 @@ export class StudioCore {
       ...previewRpc(this, this.#x),
       ...desktopRpc(this, this.#x),
       ...judgeRpc(this),
+      ...aiRpc(this),
     };
     return table;
   }

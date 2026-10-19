@@ -17,6 +17,7 @@ import type { CliInstallJob } from "./cli-install.ts";
 import type { ModelInstallJob } from "./model-install.ts";
 import type { ToolPermissionState } from "./permissions.ts";
 import type { PlayViewerEvent, RemixProgress } from "./play.ts";
+import type { GameAiNotice } from "./game-ai-views.ts";
 import type { PluginChange, PluginConsentEvent } from "./plugins.ts";
 import type { BootNotice, HarnessState } from "./protocol.ts";
 import type { RunSummary } from "./run-summary.ts";
@@ -160,6 +161,8 @@ export interface UiEventMap {
   // — play —
   /** Play's game viewer loaded, played, failed or closed (`main/play/viewer.ts`). */
   "play.viewer": PlayViewerEvent;
+  /** Play-time AI: a card to show, a stop, a game's AI changed, a model check moved on. */
+  "game-ai.notice": GameAiNotice;
   /** A remix moved to its next step or downloaded more of its models (`main/play/remix.ts`). */
   "play.remix": RemixProgress;
 
@@ -287,6 +290,7 @@ export const UiEvent = {
   LiveBehind: "live.behind",
   PreviewSoundToggle: "preview.sound.toggle",
   PlayViewer: "play.viewer",
+  GameAi: "game-ai.notice",
   PlayRemix: "play.remix",
   PluginsChanged: "plugins.changed",
   PluginEvent: "plugin.event",

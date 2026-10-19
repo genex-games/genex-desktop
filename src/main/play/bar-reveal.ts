@@ -36,7 +36,7 @@ export interface BarRevealDeps {
   place(layout: BarLayout): void;
 }
 
-const NO_HOLD: PlayBarHold = { held: false, comments: false };
+const NO_HOLD: PlayBarHold = { held: false, overlay: null };
 
 /** The bar's reveal over `deps`. */
 export function barReveal(deps: BarRevealDeps) {
@@ -59,7 +59,7 @@ export function barReveal(deps: BarRevealDeps) {
   };
   const show = (): void => {
     fadeTimer = stop(fadeTimer);
-    placeAt(hold.comments ? BarLayout.Full : BarLayout.Bar);
+    placeAt(hold.overlay !== null ? BarLayout.Full : BarLayout.Bar);
     if (up) return;
     up = true;
     deps.shown(true);
@@ -78,11 +78,11 @@ export function barReveal(deps: BarRevealDeps) {
   const showFor = (ms: number): void => {
     hideTimer = stop(hideTimer);
     show();
-    if (playing && !hold.held && !hold.comments) hideTimer = clock.setTimeout(hide, ms);
+    if (playing && !hold.held && hold.overlay === null) hideTimer = clock.setTimeout(hide, ms);
   };
 
   return {
-    /** A game opened, or could not load: the bar is up, and stays (Comments stays open over a failure). */
+    /** A game opened, or could not load: the bar is up, and stays (an open overlay stays open over a failure). */
     pinned(): void {
       playing = false;
       showFor(0);
@@ -99,12 +99,12 @@ export function barReveal(deps: BarRevealDeps) {
     /** What the bar's layer says holds it; letting go leaves it a moment more. */
     hold(next: PlayBarHold): void {
       const was = hold;
-      hold = { held: next.held, comments: next.comments };
-      if (hold.held || hold.comments) showFor(0);
-      else if (was.held || was.comments) showFor(BAR_LINGER_MS);
+      hold = { held: next.held, overlay: next.overlay };
+      if (hold.held || hold.overlay !== null) showFor(0);
+      else if (was.held || was.overlay !== null) showFor(BAR_LINGER_MS);
     },
-    /** Comments is open over the game. */
-    comments: (): boolean => hold.comments,
+    /** One of the bar's overlays (Comments, an AI card or menu) is open over the game. */
+    overlaid: (): boolean => hold.overlay !== null,
     /** The viewer closed: the layer goes at once. */
     close(): void {
       hideTimer = stop(hideTimer);

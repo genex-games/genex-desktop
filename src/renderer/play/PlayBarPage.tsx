@@ -9,7 +9,7 @@
 import type { JSX } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { PlayControl } from "../../shared/play.ts";
-import type { PlayBarApi } from "../../shared/play-bar.ts";
+import { type PlayBarApi, PlayBarOverlay } from "../../shared/play-bar.ts";
 import { UiEvent } from "../../shared/ui-events.ts";
 import { BarEscape, type BarView, barEscape, barNews, holdKey, holdToTell, NOTHING_TOLD } from "./bar-model.ts";
 import { PlayComments } from "./PlayComments.tsx";
@@ -39,7 +39,7 @@ function useHold(api: BarApi, openId: number | null) {
   const told = useRef(NOTHING_TOLD);
   const held = pointer || keyboard;
   useEffect(() => {
-    const tell = holdToTell(told.current, { held, comments });
+    const tell = holdToTell(told.current, { held, overlay: comments ? PlayBarOverlay.Comments : null });
     if (!tell) return;
     told.current = tell.key;
     api.playBar(tell.payload).catch(() => undefined);
@@ -56,10 +56,11 @@ function useHold(api: BarApi, openId: number | null) {
   const holds: BarHolds = useMemo(() => ({ pointer: setPointer, keyboard: setKeyboard }), []);
   const openComments = useCallback(() => {
     // The layer covers the window first, so the modal never draws cut off at the bar's edge.
+    const hold = { held: true, overlay: PlayBarOverlay.Comments };
     api
-      .playBar({ held: true, comments: true })
+      .playBar(hold)
       .then(() => {
-        told.current = holdKey({ held: true, comments: true });
+        told.current = holdKey(hold);
         setComments(true);
       })
       .catch(() => undefined);
@@ -77,7 +78,7 @@ function useEscape(api: BarApi, view: BarView | null, commentsOpen: boolean): vo
     const onKey = (event: KeyboardEvent): void => {
       if (event.key !== "Escape") return;
       // A held Esc that moved the keyboard here keeps repeating: only a fresh press acts.
-      const action = barEscape(phase.current, { repeat: event.repeat, commentsOpen: open.current });
+      const action = barEscape(phase.current, { repeat: event.repeat, overlayOpen: open.current });
       if (action === BarEscape.Resume) api.playControl(PlayControl.Resume).catch(() => undefined);
       if (action === BarEscape.Leave) api.playClose().catch(() => undefined);
     };

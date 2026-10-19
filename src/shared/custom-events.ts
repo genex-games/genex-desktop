@@ -152,6 +152,8 @@ export const CustomEvent = {
   CompactionFailed: "compaction_failed",
   /** One direct model call (`engine.complete`) and what served it; written by the host only. */
   CompletionCall: "completion_call",
+  /** One play-time AI call a game made and how it settled, with no prompt or answer text; written by the host only. */
+  GameAiCall: "game_ai_call",
   ConnectionsApplied: "connections_applied",
   ContextUsage: "context_usage",
   ContractorHandoff: "contractor_handoff",
@@ -588,6 +590,25 @@ export interface SelfChangePayload {
   summary?: string[];
 }
 
+/**
+ * One play-time AI call a game made (`main/game-ai/ledger.ts`): which game, site and door, what it
+ * came to and what it cost. Never the prompt, the player's text or the answer.
+ */
+export interface GameAiCallPayload {
+  game?: string;
+  site?: string;
+  door?: string;
+  model?: string | null;
+  provenance?: string;
+  /** Null when it answered; else the `AiErrorCode` it refused with. */
+  code?: string | null;
+  repaired?: boolean;
+  inputTokens?: number | null;
+  outputTokens?: number | null;
+  costMicros?: number;
+  latencyMs?: number;
+}
+
 export interface CustomEventMap {
   asset_delivered: AssetDeliveredPayload;
   mention_tagged: MentionTaggedPayload;
@@ -634,6 +655,7 @@ export interface CustomEventMap {
    */
   compacted: Partial<ContextMeasurement> & { messages?: number; trigger?: string; summary?: string; native?: boolean };
   completion_call: CompletionCallPayload;
+  game_ai_call: GameAiCallPayload;
   connector_tool: RunScope & Omit<ConnectorToolEvent, "error"> & { error?: string | null };
   connector_tool_started: RunScope & ConnectorToolStartedEvent;
   context_usage: ContextMeasurement;

@@ -114,5 +114,11 @@ export const HostMethod = {
   GuardianValidateEdit: "guardian.validate_edit",
   GuardianWriteSelf: "guardian.write_self",
   UiNotify: "ui.notify",
+  AiSchemaCheck: "ai.schemaCheck",
+  AiTapes: "ai.tapes",
+  AiReplay: "ai.replay",
+  AiRecord: "ai.record",
+  AiBench: "ai.bench",
+  AiModelCheck: "ai.modelCheck",
 } as const satisfies Record<string, HarnessHostMethod>;
 export type HostMethod = (typeof HostMethod)[keyof typeof HostMethod];

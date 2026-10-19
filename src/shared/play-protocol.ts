@@ -9,6 +9,8 @@
  */
 import { ClockLevel, PointerLevel, StateLevel, type TargetCapabilities, TargetRuntime } from "./computer-target.ts";
 import { SECOND_MS } from "./duration.ts";
+import { AI_MAX_BODY_CHARS, AI_ID_RE, type AiBridgeOp, hasExactKeys, isPlainRecord } from "./game-ai.ts";
+import { type AiBridgeAnswers, type AiBridgeMessage, readAiBridgeBody } from "./game-ai-bridge.ts";
 
 /** The protocol's major version this studio speaks; a game whose `hello` names another is refused. */
 export const PLAY_PROTOCOL_VERSION = 3;
@@ -67,6 +69,8 @@ export type PlayFailure = (typeof PlayFailure)[keyof typeof PlayFailure];
 export const PlayEvent = {
   Ready: "ready",
   Fatal: "fatal",
+  /** A game that declared `capabilities.ai` asks its AI bridge something (`readPlayAiLine`). */
+  Ai: "ai",
 } as const;
 export type PlayEvent = (typeof PlayEvent)[keyof typeof PlayEvent];
 
@@ -128,6 +132,8 @@ export interface PlayCapabilities {
   actions: string[];
   /** The formats `screenshot` can answer in, best first. */
   screenshot: PlayImageFormat[];
+  /** The game uses play-time AI: it sends `ai` lines and takes the `ai.*` ops (`PlayAiOp`). */
+  ai: boolean;
 }
 
 /** Which binary is playing: the game's own build id and, when it knows it, the hash of the source it was built from. */
@@ -208,6 +214,7 @@ function capabilitiesOf(raw: unknown): PlayCapabilities {
     seed: caps.seed === true,
     actions: strings(caps.actions),
     screenshot: formats.length ? formats : [PlayImageFormat.Png],
+    ai: caps.ai === true,
   };
 }
 
@@ -252,8 +259,43 @@ export function readHello(value: unknown): PlayHello | null {
   };
 }
 
-/** Which capability each optional core op needs, as a test of what `hello` declared. */
-const OP_NEEDS: Partial<Record<PlayOp, (caps: PlayCapabilities) => boolean>> = {
+/**
+ * The host's optional AI ops, sent only to a game that declared `capabilities.ai`: the answer to
+ * one of its `ai` lines, and a streamed answer's text so far. Wire values: never rename one.
+ */
+export const PlayAiOp = {
+  Reply: "ai.reply",
+  Delta: "ai.delta",
+} as const;
+export type PlayAiOp = (typeof PlayAiOp)[keyof typeof PlayAiOp];
+
+/** What each AI op carries: the `rid` of the line it answers. */
+export interface PlayAiOpArgs {
+  [PlayAiOp.Reply]: { rid: string; reply: AiBridgeAnswers[AiBridgeOp] };
+  [PlayAiOp.Delta]: { rid: string; text: string };
+}
+
+/** The longest `ai` line the studio reads from a game, in characters. */
+export const PLAY_AI_MAX_LINE_CHARS = AI_MAX_BODY_CHARS;
+/** The most `ai` lines of one game the studio holds unanswered; past it a line is refused. */
+export const PLAY_AI_MAX_IN_FLIGHT = 4;
+
+/** One `ai` line from a game, read: its own request id, echoed on the reply, and the bridge message. */
+export type PlayAiLine = { rid: string } & AiBridgeMessage;
+
+const AI_LINE_KEYS = ["event", "rid", "op", "body"] as const;
+
+/** An `ai` line from a game as the studio accepts it, or null: exact keys, a request id, a bridge message. */
+export function readPlayAiLine(value: unknown): PlayAiLine | null {
+  if (!isPlainRecord(value) || !hasExactKeys(value, AI_LINE_KEYS) || value.event !== PlayEvent.Ai) return null;
+  const { rid } = value;
+  if (typeof rid !== "string" || !AI_ID_RE.test(rid)) return null;
+  const message = readAiBridgeBody(value.op, value.body);
+  return message ? { rid, ...message } : null;
+}
+
+/** Which capability each optional op needs, as a test of what `hello` declared: core ops and the AI ops. */
+const OP_NEEDS: Partial<Record<PlayOp | PlayAiOp, (caps: PlayCapabilities) => boolean>> = {
   [PlayOp.Pointer]: (caps) => caps.pointer === PointerLevel.Absolute,
   [PlayOp.Wheel]: (caps) => caps.pointer === PointerLevel.Absolute,
   [PlayOp.Look]: (caps) => caps.pointer !== PointerLevel.None,
@@ -263,7 +305,12 @@ const OP_NEEDS: Partial<Record<PlayOp, (caps: PlayCapabilities) => boolean>> = {
   [PlayOp.Step]: (caps) => caps.clock === ClockLevel.StepLocked || caps.clock === ClockLevel.Replayable,
   [PlayOp.Reset]: (caps) => caps.seed,
   [PlayOp.State]: (caps) => caps.state !== StateLevel.None,
+  [PlayAiOp.Reply]: (caps) => caps.ai,
+  [PlayAiOp.Delta]: (caps) => caps.ai,
 };
+
+/** Whether the studio may send a game an AI op: only to one whose `hello` declared `capabilities.ai`. */
+export const takesAiOp = (hello: PlayHello, op: PlayAiOp): boolean => OP_NEEDS[op]?.(hello.capabilities) === true;
 
 /**
  * The core ops a game answers with `unsupported`: those its capability levels rule out (no

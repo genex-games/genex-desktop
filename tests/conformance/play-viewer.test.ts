@@ -30,6 +30,7 @@ import {
   SHOW_GAME_AFTER_MS,
 } from "../../src/main/play/viewer.ts";
 import type { PlayComment } from "../../src/shared/play-comments.ts";
+import { PlayBarOverlay } from "../../src/shared/play-bar.ts";
 import {
   PLAY_BAR_HEIGHT,
   type PlayBarState,
@@ -199,6 +200,7 @@ describe("Play viewer", () => {
         guestCard: false,
         facts: null,
         mic: null,
+        ai: null,
         comments: null,
         signedIn: null,
         remixing: false,
@@ -216,6 +218,7 @@ describe("Play viewer", () => {
       guestCard: false,
       facts: { author: "Simeon M", authorId: null, plays: 5300, online: 8 },
       mic: null,
+      ai: null,
       comments: 2,
       signedIn: true,
       remixing: false,
@@ -648,10 +651,10 @@ describe("Play viewer's bar over the game", () => {
 
   it("stays while the pointer or the keyboard is on it, a moment past their leaving", async () => {
     const { viewer, bar, advance } = await playing();
-    viewer.hold({ held: true, comments: false });
+    viewer.hold({ held: true, overlay: null });
     advance(LONG_PLAY_MS);
     assert.equal(bar()?.shown, true);
-    viewer.hold({ held: false, comments: false });
+    viewer.hold({ held: false, overlay: null });
     advance(BAR_LINGER_MS - 1);
     assert.equal(bar()?.shown, true);
     advance(1);
@@ -661,12 +664,12 @@ describe("Play viewer's bar over the game", () => {
   it("lays its layer over the whole window for Comments with the keyboard, and gives the game it back after", async () => {
     const { viewer, bar, log, advance } = await playing();
     log.length = 0;
-    viewer.hold({ held: true, comments: true });
+    viewer.hold({ held: true, overlay: PlayBarOverlay.Comments });
     assert.deepEqual(log, [`bar.show 0,0 ${WINDOW.width}x${WINDOW.height}`, "buttons shown", "bar.focus"]);
     advance(LONG_PLAY_MS);
     assert.equal(bar()?.shown, true);
     log.length = 0;
-    viewer.hold({ held: false, comments: false });
+    viewer.hold({ held: false, overlay: null });
     assert.deepEqual(log, [`bar.show 0,0 ${WINDOW.width}x${PLAY_BAR_HEIGHT}`, "buttons shown", "game.focus"]);
   });
 
@@ -674,14 +677,14 @@ describe("Play viewer's bar over the game", () => {
     const { viewer, log } = rig();
     viewer.open("lost-cathedral", "Lost Cathedral");
     await settle();
-    viewer.hold({ held: true, comments: true });
+    viewer.hold({ held: true, overlay: PlayBarOverlay.Comments });
     log.length = 0;
     viewer.loaded();
     assert.ok(!log.includes("game.focus"), "the comment field keeps the keyboard");
     const failing = rig();
     failing.viewer.open("lost-cathedral", "Lost Cathedral");
     await settle();
-    failing.viewer.hold({ held: true, comments: true });
+    failing.viewer.hold({ held: true, overlay: PlayBarOverlay.Comments });
     failing.log.length = 0;
     failing.viewer.failed();
     assert.ok(!failing.log.some((line) => line.startsWith("bar.")), "the layer stays over the whole window");
@@ -706,10 +709,10 @@ describe("Play viewer's bar over the game", () => {
     viewer.open("lost-cathedral", "Lost Cathedral");
     await settle();
     const before = events.length;
-    viewer.hold({ held: true, comments: false });
-    viewer.hold({ held: false, comments: false });
+    viewer.hold({ held: true, overlay: null });
+    viewer.hold({ held: false, overlay: null });
     assert.equal(events.length, before, "a hold alone draws nothing");
-    viewer.hold({ held: false, comments: false, ready: true });
+    viewer.hold({ held: false, overlay: null, ready: true });
     assert.equal(events.length, before + 1);
     assert.equal(events.at(-1)?.bar?.title, "Lost Cathedral");
   });

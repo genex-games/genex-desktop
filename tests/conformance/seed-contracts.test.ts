@@ -50,6 +50,11 @@ import * as seedSkills from "../../src/harness-seed/loop/skills.ts";
 import * as seedStateShape from "../../src/harness-seed/loop/state-shape.ts";
 import { SteerDelivery as seedSteerDelivery } from "../../src/harness-seed/loop/steer-delivery.ts";
 import * as seedTime from "../../src/harness-seed/loop/time.ts";
+import * as seedAi from "../../src/harness-seed/loop/ai-contract.ts";
+import { AiErrorCode } from "../../src/shared/game-ai.ts";
+import { AiSchemaProblem } from "../../src/shared/game-ai-schema.ts";
+import { AI_RECORD_MAX_CALLS, AI_REPLAY_MAX_SEEDS, TAPE_NAME_RE } from "../../src/shared/game-ai-tape.ts";
+import { AI_BENCH_MAX_SAMPLES } from "../../src/shared/game-ai-check.ts";
 import * as seedWakeSchedule from "../../src/harness-seed/loop/director/wake-schedule.ts";
 import { DelegationRefusal as seedDelegationRefusal } from "../../src/harness-seed/loop/director/lead-session.ts";
 import * as seedWorkers from "../../src/harness-seed/loop/workers/contract.ts";
@@ -699,6 +704,30 @@ describe("vocabularies (src/shared ↔ the seed's copies)", () => {
     assert.deepEqual(
       { second: seedTime.SECOND_MS, minute: seedTime.MINUTE_MS, hour: seedTime.HOUR_MS },
       { second: duration.SECOND_MS, minute: duration.MINUTE_MS, hour: duration.HOUR_MS },
+    );
+  });
+});
+
+describe("play-time AI (shared/game-ai*.ts ↔ loop/ai-contract.ts)", () => {
+  it("has the same error codes and schema problems", () => {
+    assert.deepEqual(seedAi.AiErrorCode, AiErrorCode);
+    assert.deepEqual(seedAi.AiSchemaProblem, AiSchemaProblem);
+  });
+
+  it("has the same bounds for the host's ai.* runs and the same demo names", () => {
+    assert.deepEqual(
+      {
+        seeds: seedAi.AI_REPLAY_MAX_SEEDS,
+        calls: seedAi.AI_RECORD_MAX_CALLS,
+        samples: seedAi.AI_BENCH_MAX_SAMPLES,
+        name: seedAi.TAPE_NAME_RE.source,
+      },
+      {
+        seeds: AI_REPLAY_MAX_SEEDS,
+        calls: AI_RECORD_MAX_CALLS,
+        samples: AI_BENCH_MAX_SAMPLES,
+        name: TAPE_NAME_RE.source,
+      },
     );
   });
 });

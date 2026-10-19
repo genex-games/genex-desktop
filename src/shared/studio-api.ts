@@ -25,6 +25,21 @@ import type { GenexAccountView } from "./genex-account.ts";
 import type { PlayBarHold } from "./play-bar.ts";
 import type { PlayComment, PlayCommentsPage } from "./play-comments.ts";
 import type { PlayCredits } from "./play-credits.ts";
+import type { AiGameKey, AiModelRef } from "./game-ai.ts";
+import type { AiCheckResult, AiPublishFacts } from "./game-ai-check.ts";
+import type { AiReportBundle, AiReportOutcome, AiReportRequest } from "./game-ai-report.ts";
+import type {
+  AiActivity,
+  AiConsentAnswer,
+  AiConsentResult,
+  AiCreditPack,
+  AiCreditProduct,
+  AiModelMenu,
+  AiPickResult,
+  AiTapeSummary,
+  GameAiSettingsPatch,
+  GameAiSettingsView,
+} from "./game-ai-views.ts";
 import type {
   AddOutcome,
   AddSource,
@@ -549,6 +564,40 @@ export interface StudioApi {
   playManage(gameId: string, change: PlayGameChange): Promise<PlayChangeResult>;
   /** Play: make a picture (already cropped to 16:9) a published game's cover on genex.games. */
   playCover(gameId: string, image: Uint8Array, contentType: PlayCoverType): Promise<PlayCoverResult>;
+  /** Play-time AI: the AI pill's model menu for a game (`shared/game-ai-views.ts`). */
+  gameAiMenu(game: AiGameKey): Promise<AiModelMenu>;
+  /** Play-time AI: use a model in a game now, or the first-use card that must come first. */
+  gameAiPick(game: AiGameKey, model: AiModelRef): Promise<AiPickResult>;
+  /** Play-time AI: the person's answer to a first-use card or a Genex confirm; plan and money need a native step. */
+  gameAiAnswer(answer: AiConsentAnswer): Promise<AiConsentResult>;
+  /** Play-time AI: turn a game's AI on or off; in-flight calls stop within a second. */
+  gameAiEnable(game: AiGameKey, enabled: boolean): Promise<void>;
+  /** Play-time AI: Settings' Games list, from the local ledger. */
+  gameAiActivity(): Promise<AiActivity>;
+  /** Play-time AI: Settings → Play-time AI. */
+  gameAiSettings(): Promise<GameAiSettingsView>;
+  /** Play-time AI: change Settings → Play-time AI (auto top-up is saved on genex.games); the settings after. */
+  gameAiSettingsSave(patch: GameAiSettingsPatch): Promise<GameAiSettingsView>;
+  /** Play-time AI: a game's saved playtests. */
+  gameAiTapes(project: string): Promise<AiTapeSummary[]>;
+  /** Play-time AI: what a Report of the game's AI would send, redacted ("See what's sent"). */
+  gameAiReportPreview(game: AiGameKey): Promise<AiReportBundle>;
+  /** Play-time AI: send a Report of what the game's AI wrote to Genex and the game's maker. */
+  gameAiReport(request: AiReportRequest): Promise<AiReportOutcome>;
+  /** Play-time AI: start the optional model check on the creator's own models; its state after. */
+  gameAiCheck(project: string): Promise<AiCheckResult>;
+  /** Play-time AI: a game's model check as it stands. */
+  gameAiCheckState(project: string): Promise<AiCheckResult>;
+  /** Play-time AI: stop a running model check; its state after. */
+  gameAiCheckStop(project: string): Promise<AiCheckResult>;
+  /** Play-time AI: the creator's recommended model (null clears it); the check after. */
+  gameAiRecommend(project: string, model: AiModelRef | null): Promise<AiCheckResult>;
+  /** Play-time AI: what Publish shows of a game's AI. */
+  gameAiPublishFacts(project: string): Promise<AiPublishFacts>;
+  /** Play-time AI: the credit packs genex.games sells, read live. */
+  gameAiCredits(): Promise<AiCreditPack[]>;
+  /** Play-time AI: open checkout for a pack or Genex Pro in the browser. */
+  gameAiCheckout(product: AiCreditProduct): Promise<void>;
   /** The app's Genex account: signed out, signing in, signed in, or a sign-in genex.games ended. Never asks the network. */
   genexAccount(): Promise<GenexAccountView>;
   /** Sign in to Genex in the browser (again, after a sign-in ended); the account as it is after. */

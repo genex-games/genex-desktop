@@ -91,6 +91,26 @@ export function containsSecret(text: string): boolean {
   return redactSecrets(text) !== text;
 }
 
+/** An email address: a local part, an `@` and a dotted domain. */
+const EMAIL = /[\w.+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+/g;
+/**
+ * A phone number: an optional `+` and country code, then at least nine digits in groups split by
+ * spaces, dots, dashes or brackets. Shorter runs (a score, a year, a time) stay readable.
+ */
+const PHONE = /(?<![\w+])\+?\(?\d{1,4}\)?(?:[ .-]?\(?\d{2,4}\)?){2,4}(?![\w])/g;
+/** Digits in a phone-shaped match: fewer than nine is a number in a sentence, not a phone. */
+const PHONE_MIN_DIGITS = 9;
+
+/**
+ * `text` with email addresses and phone numbers replaced by `[redacted]`: for what a person typed
+ * that leaves this Mac in a report (`shared/game-ai-report.ts`), beside `redactSecrets`.
+ */
+export function redactContacts(text: string): string {
+  return text
+    .replace(EMAIL, REDACTED)
+    .replace(PHONE, (match) => (match.replace(/\D/g, "").length >= PHONE_MIN_DIGITS ? REDACTED : match));
+}
+
 /**
  * `text` with each of these exact values replaced by `[redacted]`. Values shorter than
  * `minLength` are skipped: redacting them would eat ordinary words.

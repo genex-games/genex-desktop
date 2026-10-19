@@ -60,6 +60,7 @@ const HELLO: PlayHello = {
     seed: true,
     actions: ["jump"],
     screenshot: ["png"],
+    ai: false,
   },
   ops: [],
   unsupported: [],
