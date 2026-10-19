@@ -90,6 +90,26 @@ export const GENEX_MULTIPLAYER_VENDOR = {
 } as const;
 
 /**
+ * Where Studio's build of `genex-ai` (`src/page/ai`, the one way a game asks a model at play time)
+ * sits under a vendor folder, beside the embed SDK its platform lane loads (`../embed-sdk/`).
+ */
+export const GENEX_AI_VENDOR = {
+  Dir: "genex/ai",
+  Entry: "genex/ai/index.js",
+} as const;
+
+/** The specifier a game imports play-time AI by. */
+export const GENEX_AI_SPECIFIER = "genex-ai";
+
+/**
+ * The template's import-map row for `genex-ai`, at `/vendor`. Every template game maps it: it is
+ * Studio's own module, not a Genex package a game adds, so it is not a {@link GenexGamePackage}.
+ */
+export const GENEX_AI_IMPORT = {
+  [GENEX_AI_SPECIFIER]: `/vendor/${GENEX_AI_VENDOR.Entry}`,
+} as const satisfies Readonly<Record<string, string>>;
+
+/**
  * What a template game's import map maps for each package, at `/vendor`: the specifiers it imports
  * and Studio's copy of each. Multiplayer always brings player identity (`genexPackageSet`).
  */
