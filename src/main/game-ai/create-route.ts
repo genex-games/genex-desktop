@@ -8,8 +8,12 @@
  * Everything below holds before play-time AI hears of a request; a refusal keeps nothing:
  *  - Only POST with `application/json` (UTF-8) is taken. OPTIONS is a 403 with no CORS headers, so
  *    no other origin can preflight it, and nothing here ever sends a CORS header.
- *  - `Origin` equals the request's own origin exactly (a missing or `null` one is refused), fetch
- *    metadata, when sent, says same-origin, and the request names the game the preview shows now.
+ *  - Only a frame of the route's own origin may send to it ({@link routeRequestAllowed}, judged by
+ *    the preview's webRequest hook from the frame main knows sent it): another game's frame, a
+ *    sandboxed or `srcdoc` frame (`null`) and a request with no frame are cancelled before the
+ *    handler runs. Chromium hands a protocol handler no `Origin` and no fetch metadata, and protocol
+ *    handlers bypass CORS, so the frame is the only trustworthy sender; an `Origin` or
+ *    `Sec-Fetch-Site` that does arrive must still agree. The request names the game shown now.
  *  - The body is at most {@link ROUTE_MAX_BODY_BYTES}, counted as it streams in, and is JSON the
  *    op's reader takes.
  *  - A page sends at most `PLAY_AI_BURST` requests a window and holds at most `PLAY_AI_MAX_PENDING`
@@ -44,7 +48,7 @@ import {
 } from "../../shared/game-ai-bridge.ts";
 import { AiContext } from "../../shared/game-ai-route.ts";
 import { PLAY_AI_BURST, PLAY_AI_MAX_PENDING, PLAY_AI_WINDOW_MS } from "../../shared/play-ai.ts";
-import { HttpStatus, LIVE_PREVIEW_PARTITION } from "../page-serve.ts";
+import { HttpRouteKind, HttpStatus, LIVE_PREVIEW_PARTITION, routeGame, routeHttp } from "../page-serve.ts";
 import type { GameAiCaller, GameAiClock, GameAiService, GameAiSettingsStore } from "./types.ts";
 
 /**
@@ -249,11 +253,47 @@ function failed(message: AiBridgeMessage): Response {
 /** The request's own origin, as a browser spells it in `Origin`. */
 const originOf = (url: URL): string => `${url.protocol}//${url.host}`;
 
-/** Sent from the page's own origin: `Origin` exactly, and fetch metadata, when present, agreeing. */
+/**
+ * The request's own word on where it came from, when Chromium sends one: `Origin` exactly the
+ * route's, and fetch metadata same-origin. Neither reaches a protocol handler today, so the sender
+ * is judged by its frame first ({@link routeRequestAllowed}); these hold should either ever arrive.
+ */
 function sameOrigin(request: Request, url: URL): boolean {
-  if (request.headers.get("origin") !== originOf(url)) return false;
+  const origin = request.headers.get("origin");
+  if (origin !== null && origin !== originOf(url)) return false;
   const site = request.headers.get("sec-fetch-site");
   return site === null || site === SAME_ORIGIN;
+}
+
+/** `raw` as a URL, or null. */
+function parseUrl(raw: string): URL | null {
+  try {
+    return new URL(raw);
+  } catch {
+    return null;
+  }
+}
+
+/** Whether `url` is the Create Live route on a game's own origin: `game:` or its loopback port. */
+function isRouteUrl(url: URL, loopbackPorts: ReadonlyMap<number, string>): boolean {
+  if (url.protocol === "game:") return routeGame(url).route === HttpRouteKind.HostAi;
+  return url.protocol === "http:" && routeHttp(url, loopbackPorts).route === HttpRouteKind.HostAi;
+}
+
+/**
+ * Whether a request may go on, by the frame that sent it (`initiator`: that frame's origin as main
+ * reads it from webRequest, null when there is no frame). A request to the route goes on only from
+ * a frame of the route's own origin, exactly; every other request is not the route's to judge.
+ * Pure; never throws.
+ */
+export function routeRequestAllowed(
+  rawUrl: string,
+  loopbackPorts: ReadonlyMap<number, string>,
+  initiator: string | null,
+): boolean {
+  const url = parseUrl(rawUrl);
+  if (url === null || !isRouteUrl(url, loopbackPorts)) return true;
+  return initiator !== null && initiator === originOf(url);
 }
 
 /** `application/json`, with no parameter but a UTF-8 charset. */
@@ -345,12 +385,13 @@ function readHead(request: Request, url: URL, page: RoutePage): Head {
 
 /**
  * Answer one request to the Create Live route from `page`. Refusals come first and keep nothing;
- * then the context decides: Live (not driven) reaches play-time AI, everywhere else answers off.
+ * then the context decides: Live, switched on and not driven, reaches play-time AI; everywhere
+ * else, and wherever no play-time AI stands behind the preview (`host` null), answers off.
  */
 export async function answerCreateRoute(
   request: Request,
   page: RoutePage,
-  host: CreateRouteHost,
+  host: CreateRouteHost | null,
   gate: RouteGate,
 ): Promise<Response> {
   const head = readHead(request, new URL(request.url), page);
@@ -364,20 +405,25 @@ export async function answerCreateRoute(
   return answerMessage(message, page, host, gate, game);
 }
 
-/** Whether play-time AI hears this message: Live, and not driven (a cancel is always heard there). */
-function reachesService(message: AiBridgeMessage, page: RoutePage): boolean {
+/**
+ * Whether play-time AI hears this message: Live, with the route switched on and no machine driving
+ * it. A cancel is always heard on Live: it spends nothing, and it may end a call made before the
+ * switch went off or the drive began.
+ */
+async function reachesService(message: AiBridgeMessage, page: RoutePage, host: CreateRouteHost): Promise<boolean> {
   if (page.context !== AiContext.CreateLive) return false;
-  return !page.driving || message.op === AiBridgeOp.Cancel;
+  if (message.op === AiBridgeOp.Cancel) return true;
+  return !page.driving && (await createRouteEnabled(host));
 }
 
 async function answerMessage(
   message: AiBridgeMessage,
   page: RoutePage,
-  host: CreateRouteHost,
+  host: CreateRouteHost | null,
   gate: RouteGate,
   game: AiGameKey,
 ): Promise<Response> {
-  if (!reachesService(message, page)) return json(offAnswer(message));
+  if (host === null || !(await reachesService(message, page, host))) return json(offAnswer(message));
   // A cancel frees a held request; it never waits behind them.
   const release = message.op === AiBridgeOp.Cancel ? () => {} : gate.hold();
   if (!release) return busy(message);
@@ -448,4 +494,65 @@ function streamCall(caller: GameAiCaller, message: CallMessage, host: CreateRout
     },
   });
   return new Response(body, { status: HttpStatus.Ok, headers: STREAM_HEADERS });
+}
+
+// ── one preview ────────────────────────────────────────────────────────────────────────────
+
+/** Main's own clock, for a preview with no play-time AI behind it. */
+const WALL_CLOCK: GameAiClock = { now: () => Date.now() };
+
+/** The page a request came from, as the preview knows it: the context comes from the preview. */
+export type PreviewPage = Omit<RoutePage, "context" | "driving">;
+
+/** The Create Live route as one preview runs it (`GamePreview`). */
+export interface PreviewAi {
+  /** Answer one request to the route from a page in this preview. */
+  answer(request: Request, page: PreviewPage): Promise<Response>;
+  /**
+   * Run a machine's work on this preview (an input, a `__studio` call, an agent's evaluate): the
+   * page's AI is off while it runs and for {@link AI_DRIVE_QUIET_MS} after. The drive that starts
+   * a suspension abandons `channel`'s calls and cards, so nothing the page asked spends meanwhile.
+   */
+  drive<T>(channel: string | null, work: () => Promise<T>): Promise<T>;
+  /** The page went away or navigated: its pending tickets cancel and its calls abort. */
+  abandon(channel: string): void;
+}
+
+/**
+ * One preview's route: its context from its partition, read once (`previewAiContext`), and its own
+ * drive watch and gate. `host` null: no play-time AI behind this preview, so it answers off.
+ */
+export function previewAi(options: {
+  partition: string;
+  offscreen: boolean;
+  host: CreateRouteHost | null;
+  clock?: GameAiClock;
+}): PreviewAi {
+  const { host } = options;
+  const clock = options.clock ?? host?.clock ?? WALL_CLOCK;
+  const context = previewAiContext(options.partition, options.offscreen);
+  const watch = createDriveWatch(clock);
+  const gate = createRouteGate(clock);
+  // Only Live's pages ever reach play-time AI, so only Live has anything to abandon.
+  const live = host !== null && context === AiContext.CreateLive ? host : null;
+  const abandon = (channel: string): void => {
+    try {
+      live?.service.abandon(channel);
+    } catch {
+      // Navigation and teardown never fail on play-time AI's account; its calls end with the page.
+    }
+  };
+  return {
+    answer: (request, page) => answerCreateRoute(request, { ...page, context, driving: watch.driving() }, host, gate),
+    async drive(channel, work) {
+      const drive = watch.begin();
+      if (drive.started && channel !== null) abandon(channel);
+      try {
+        return await work();
+      } finally {
+        drive.end();
+      }
+    },
+    abandon,
+  };
 }

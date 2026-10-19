@@ -13,7 +13,9 @@ import {
   createDriveWatch,
   createRouteEnabled,
   createRouteGate,
+  previewAi,
   previewAiContext,
+  routeRequestAllowed,
   type CreateRouteHost,
   type RoutePage,
 } from "../../src/main/game-ai/create-route.ts";
@@ -265,12 +267,6 @@ const HOSTILE: Array<[string, () => Request, number, RoutePage?]> = [
   ["Origin null (a sandboxed frame or a data: page)", () => post("hello", null, { origin: "null" }), 403],
   ["Origin with a trailing slash", () => post("hello", null, { origin: `${ORIGIN}/` }), 403],
   ["Origin in other letters", () => post("hello", null, { origin: "GAME://pond-life" }), 403],
-  [
-    "a missing Origin",
-    () =>
-      new Request(`${ROUTE}hello`, { method: "POST", headers: { "content-type": "application/json" }, body: "null" }),
-    403,
-  ],
   ["a cross-site fetch metadata", () => post("hello", null, { "sec-fetch-site": "cross-site" }), 403],
   ["a same-site (not same-origin) fetch", () => post("hello", null, { "sec-fetch-site": "same-site" }), 403],
   [
@@ -594,5 +590,209 @@ describe("a machine driving the preview suspends its budgets (createDriveWatch)"
     b.end();
     now += AI_DRIVE_QUIET_MS;
     assert.equal(watch.driving(), false);
+  });
+});
+
+/** The off answers, by op, that every place but a Live human preview with the route on gives. */
+const OFF: Array<[string, unknown, unknown]> = [
+  [AiBridgeOp.Hello, null, { v: GAME_AI_WIRE_VERSION, on: false }],
+  [AiBridgeOp.Doors, null, { on: false, door: null }],
+  [
+    AiBridgeOp.Call,
+    CALL,
+    { v: GAME_AI_WIRE_VERSION, ok: false, ticket: CALL.ticket, code: AiErrorCode.Off, retryAfterMs: null },
+  ],
+  [AiBridgeOp.BudgetActive, null, { view: null, code: AiErrorCode.Off }],
+  [AiBridgeOp.BudgetRequest, { v: 1, requires: "ai", tiers: ["fast"] }, { view: null, code: AiErrorCode.Off }],
+  [AiBridgeOp.BudgetStop, null, { stopped: false }],
+];
+
+describe("the kill switch: with the route off, Live answers ai_off too (createRouteEnabled)", () => {
+  for (const [op, body, expected] of OFF) {
+    it(`switched off: ${op}`, async () => {
+      const { response, seen } = await answer(post(op, body), LIVE, fakeHost({ enabled: false }));
+      assert.equal(response.status, 200);
+      assert.deepEqual(await response.json(), expected);
+      assert.deepEqual(seen.calls, [], "the service never heard of it");
+    });
+    it(`no play-time AI behind the preview: ${op}`, async () => {
+      const response = await answerCreateRoute(post(op, body), LIVE, null, createRouteGate({ now: () => 0 }));
+      assert.equal(response.status, 200);
+      assert.deepEqual(await response.json(), expected);
+    });
+  }
+
+  it("reads a store it cannot read as off", async () => {
+    const broken = fakeHost();
+    broken.host.settings = {
+      view: async () => {
+        throw new Error("disk gone");
+      },
+    };
+    const { response, seen } = await answer(post("call", CALL), LIVE, broken);
+    assert.equal(((await response.json()) as { code: string }).code, AiErrorCode.Off);
+    assert.deepEqual(seen.calls, []);
+  });
+
+  it("still lets a call made before the switch went off be canceled", async () => {
+    const { response, seen } = await answer(
+      post("cancel", { ticket: CALL.ticket }),
+      LIVE,
+      fakeHost({ enabled: false }),
+    );
+    assert.deepEqual(await response.json(), { canceled: true });
+    assert.deepEqual(seen.calls[0]?.message, { op: AiBridgeOp.Cancel, body: { ticket: CALL.ticket } });
+  });
+
+  it("answers the hostile table the same with no play-time AI behind it", async () => {
+    for (const [what, request, status, page] of HOSTILE) {
+      const response = await answerCreateRoute(request(), page ?? LIVE, null, createRouteGate({ now: () => 0 }));
+      assert.equal(response.status, status, what);
+      assertNoCors(response, what);
+    }
+  });
+});
+
+describe("one preview's play-time AI (previewAi)", () => {
+  const SHOWN = { project: "pond-life", loaded: "pond-life", channel: "7" };
+  const live = (host: CreateRouteHost | null, clock = { now: () => 0 }) =>
+    previewAi({ partition: LIVE_PREVIEW_PARTITION, offscreen: false, host, clock });
+
+  it("reaches play-time AI from the Live human preview, as the game it shows", async () => {
+    const { host, seen } = fakeHost();
+    const response = await live(host).answer(post("hello", null), SHOWN);
+    assert.deepEqual(await response.json(), { v: GAME_AI_WIRE_VERSION, on: true });
+    assert.equal(seen.calls[0]?.caller.context, AiContext.CreateLive);
+    assert.equal(seen.calls[0]?.caller.channel, "7");
+  });
+
+  const elsewhere: Array<[string, string, boolean]> = [
+    ["a facet", "game-preview-facet-1", true],
+    ["Live's partition offscreen", LIVE_PREVIEW_PARTITION, true],
+    ["a look-alike partition", `persist:${LIVE_PREVIEW_PARTITION}`, false],
+  ];
+  for (const [what, partition, offscreen] of elsewhere) {
+    it(`answers ai_off from ${what}, and never abandons on its behalf`, async () => {
+      const { host, seen } = fakeHost();
+      const ai = previewAi({ partition, offscreen, host, clock: host.clock });
+      const response = await ai.answer(post("call", CALL), SHOWN);
+      assert.equal(((await response.json()) as { code: string }).code, AiErrorCode.Off);
+      await ai.drive("7", async () => {});
+      ai.abandon("7");
+      assert.deepEqual(seen.calls, []);
+      assert.deepEqual(seen.abandoned, []);
+    });
+  }
+
+  it("refuses a request from a game the preview does not show", async () => {
+    const { host, seen } = fakeHost();
+    const response = await live(host).answer(post("hello", null), { ...SHOWN, loaded: "other-game" });
+    assert.equal(response.status, 403);
+    assert.deepEqual(seen.calls, []);
+  });
+
+  it("suspends the page's AI while a machine drives it, abandoning its calls once as the drive starts", async () => {
+    let now = 1_000;
+    const { host, seen } = fakeHost({ now: () => now });
+    const ai = live(host, host.clock);
+    let during: unknown = null;
+    await ai.drive("7", async () => {
+      await ai.drive("7", async () => {});
+      during = await (await ai.answer(post("call", CALL), SHOWN)).json();
+    });
+    assert.equal((during as { code: string }).code, AiErrorCode.Off);
+    assert.deepEqual(seen.abandoned, ["7"], "abandoned once, at the start of the drive");
+    now += AI_DRIVE_QUIET_MS - 1;
+    assert.equal(
+      ((await (await ai.answer(post("call", CALL), SHOWN)).json()) as { code: string }).code,
+      AiErrorCode.Off,
+    );
+    now += 1;
+    assert.deepEqual(await (await ai.answer(post("call", CALL), SHOWN)).json(), ANSWER);
+  });
+
+  it("ends a drive whose work throws", async () => {
+    let now = 0;
+    const { host } = fakeHost({ now: () => now });
+    const ai = live(host, host.clock);
+    await assert.rejects(
+      ai.drive("7", async () => {
+        throw new Error("page gone");
+      }),
+      /page gone/,
+    );
+    now += AI_DRIVE_QUIET_MS;
+    assert.deepEqual(await (await ai.answer(post("call", CALL), SHOWN)).json(), ANSWER);
+  });
+
+  it("passes a page that went away on to play-time AI, and survives it failing", () => {
+    const { host, seen } = fakeHost();
+    live(host).abandon("7");
+    assert.deepEqual(seen.abandoned, ["7"]);
+    host.service.abandon = () => {
+      throw new Error("broken");
+    };
+    assert.doesNotThrow(() => live(host).abandon("8"));
+  });
+
+  it("answers ai_off with no play-time AI behind the preview", async () => {
+    const ai = live(null);
+    const response = await ai.answer(post("hello", null), SHOWN);
+    assert.deepEqual(await response.json(), { v: GAME_AI_WIRE_VERSION, on: false });
+    assert.equal(await ai.drive(null, async () => 42), 42);
+    assert.doesNotThrow(() => ai.abandon("7"));
+  });
+});
+
+describe("the frame gate: only a frame of the route's own origin may send to it (routeRequestAllowed)", () => {
+  // Chromium hands a protocol handler no Origin and no fetch metadata, and protocol handlers bypass
+  // CORS, so main judges the sender by the frame webRequest names, before the handler runs.
+  const ports = new Map([[41234, "pond-life"]]);
+  const rows: Array<[string, string, string | null, boolean]> = [
+    ["the game's own page", "game://pond-life/__genex/ai/v1/call", "game://pond-life", true],
+    ["the game's own loopback page", "http://localhost:41234/__genex/ai/v1/call", "http://localhost:41234", true],
+    ["another game's frame", "game://pond-life/__genex/ai/v1/call", "game://other-game", false],
+    ["a sandboxed or srcdoc frame (opaque origin)", "game://pond-life/__genex/ai/v1/call", "null", false],
+    ["no frame at all", "game://pond-life/__genex/ai/v1/call", null, false],
+    [
+      "the game's game: page asking on its loopback origin",
+      "http://localhost:41234/__genex/ai/v1/call",
+      "game://pond-life",
+      false,
+    ],
+    [
+      "the game's loopback page asking on game:",
+      "game://pond-life/__genex/ai/v1/call",
+      "http://localhost:41234",
+      false,
+    ],
+    ["another loopback host name", "http://localhost:41234/__genex/ai/v1/call", "http://127.0.0.1:41234", false],
+    ["an origin in other letters", "game://pond-life/__genex/ai/v1/call", "GAME://pond-life", false],
+    ["an origin with a trailing slash", "game://pond-life/__genex/ai/v1/call", "game://pond-life/", false],
+    [
+      "an unknown op under the prefix, from another game",
+      "game://pond-life/__genex/ai/v1/eval",
+      "game://other-game",
+      false,
+    ],
+    ["a file of the game, from another game (not the route)", "game://pond-life/index.html", "game://other-game", true],
+    ["a file, from no frame (a worker's read)", "game://pond-life/assets/a.png", null, true],
+    ["a loopback port no game holds", "http://localhost:41235/__genex/ai/v1/call", "game://pond-life", true],
+    ["not a URL", "::not a url::", "game://pond-life", true],
+  ];
+  for (const [what, url, initiator, allowed] of rows)
+    it(what, () => assert.equal(routeRequestAllowed(url, ports, initiator), allowed));
+});
+
+describe("the request's own headers, when Chromium sends them", () => {
+  it("takes a request with no Origin: the frame gate already judged its sender", async () => {
+    const request = new Request(`${ROUTE}hello`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "null",
+    });
+    const { response, seen } = await answer(request);
+    assert.equal(response.status, 200);
+    assert.equal(seen.calls.length, 1);
   });
 });
