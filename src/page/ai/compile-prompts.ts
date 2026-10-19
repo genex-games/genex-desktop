@@ -22,7 +22,7 @@ export interface JudgePromptQuestion {
 }
 
 /** How a yes-or-no question is answered, with what yes and no mean when the game said. */
-export const noulAnswerWords = (yes: string | null, no: string | null): string =>
+export const yesNoAnswerWords = (yes: string | null, no: string | null): string =>
   `a probability from 0 to 1 that the answer is yes${yes && no ? ` (yes: ${yes}; no: ${no})` : ""}`;
 
 /** How a question with named options is answered. */
@@ -66,9 +66,15 @@ export const COMPACT_PROMPT = [
 /** The role a compacted memory's summary is remembered under. */
 export const COMPACT_ROLE = "summary";
 
-/** Markers around one player-typed field in a platform prompt; the field's own text never contains them. */
+/** The marker before one player-typed field in a platform prompt. */
 export const UNTRUSTED_OPEN = (name: string) => `<<<player-text ${name}`;
+/** The marker after it; a field's own text never holds a marker (`fenced`). */
 export const UNTRUSTED_CLOSE = ">>>";
+/** What a run of three angle brackets in a player's text becomes, so it can neither close nor open a fence. */
+const MARKER_RUN = /<{3,}|>{3,}/g;
+
+/** A player's text with every marker-like run of angle brackets broken up. */
+export const fenced = (text: string): string => text.replace(MARKER_RUN, (run) => run.split("").join(" "));
 
 /** What a platform prompt says before the player-typed fields. */
 export const UNTRUSTED_NOTE =
@@ -89,7 +95,9 @@ export function platformPrompt(parts: PlatformPromptParts): string {
   if (parts.memory) sections.push(`What the game remembers:\n${parts.memory}`);
   sections.push(parts.prompt);
   if (parts.untrusted.length) {
-    const fields = parts.untrusted.map(([name, text]) => `${UNTRUSTED_OPEN(name)}\n${text}\n${UNTRUSTED_CLOSE}`);
+    const fields = parts.untrusted.map(
+      ([name, text]) => `${UNTRUSTED_OPEN(name)}\n${fenced(text)}\n${UNTRUSTED_CLOSE}`,
+    );
     sections.push([UNTRUSTED_NOTE, ...fields].join("\n"));
   }
   return sections.join("\n\n");
