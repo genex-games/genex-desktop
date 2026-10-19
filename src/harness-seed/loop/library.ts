@@ -32,6 +32,7 @@ import { appliesToBuild } from "./applies-to-build.ts";
 import { nearestReference } from "./style.ts";
 import { facetNotes } from "./repo.ts";
 import { gameLine, KIND_NAMES } from "./kinds.ts";
+import { aiBriefLine } from "./ai-game-prompts.ts";
 import { roleEngine, RoleKey, toolCall } from "./model-roles.ts";
 import { clip, CLIP_BRIEF, CLIP_DETAIL, CLIP_QUOTE, CLIP_REASON, sharesStem } from "./text.ts";
 import { clipTailWords, clipWords } from "./word-clip.ts";
@@ -906,6 +907,7 @@ function briefHeader(
     ``,
     `Run ${run.runId} · goal: ${run.goal}`,
     gameLine(game ?? run?.game),
+    aiBriefLine(game ?? run?.game),
     run.reference?.name ? `Reference / direction: ${run.reference.name}${notes}` : "",
     ``,
     `## Intent`,

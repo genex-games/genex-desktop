@@ -188,9 +188,14 @@ describe("the pages a builder is handed", () => {
     );
   });
 
-  it("ships exactly the two skills the run code reads", () => {
-    // director.md and facet-decomposition.md are read by name; four more used to ship and were
-    // read by nothing, which is what RETIRED_SEED_PATHS now takes off an install.
-    assert.deepEqual(readdirSync(pathMod.join(seedDir, "skills")).sort(), ["director.md", "facet-decomposition.md"]);
+  it("ships exactly the three skills the run code reads", () => {
+    // director.md and facet-decomposition.md are read by name, and so is llm-games.md (the AI
+    // method a game that declares play-time AI hands its builders, loop/ai-game.ts); four more used
+    // to ship and were read by nothing, which is what RETIRED_SEED_PATHS now takes off an install.
+    assert.deepEqual(readdirSync(pathMod.join(seedDir, "skills")).sort(), [
+      "director.md",
+      "facet-decomposition.md",
+      "llm-games.md",
+    ]);
   });
 });
