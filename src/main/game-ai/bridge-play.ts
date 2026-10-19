@@ -6,7 +6,7 @@
  * says, which game is calling:
  *  - only the page's top frame, on the very origin the viewer opened for the game on screen
  *    ({@link playCallerFor}); the game's key is `play:<genex.games project id>`, never the slug;
- *  - at most `PLAY_AI_BURST` envelopes a window and `PLAY_AI_MAX_PENDING` unanswered;
+ *  - at most `PLAY_AI_BURST` envelopes a window, `PLAY_AI_MAX_PENDING` unanswered, one call per ticket;
  *  - a grant or a Genex confirm only inside a person's gesture: the page's isolated world saw an
  *    activation and main saw a click or a key reach the page just before;
  *  - an answer only to the page that asked: a navigation abandons the page's calls and cards.
@@ -171,6 +171,10 @@ async function answerEnvelope(
   }
 }
 
+/** The ticket of a call: what names its streamed text and its cancel on the page. */
+const callTicket = (envelope: PlayAiEnvelope): string | null =>
+  envelope.op === PlayBridgeOp.Call ? envelope.body.ticket : null;
+
 /** Whether an op spends only inside a person's gesture. */
 const needsGesture = (envelope: PlayAiEnvelope): boolean =>
   envelope.op === PlayBridgeOp.BudgetRequest || envelope.op === PlayBridgeOp.GenexConfirm;
@@ -234,7 +238,8 @@ export function playAiPort(deps: PlayAiPortDeps) {
   let leaving = false;
   let gone = false;
   let lastGesture = Number.NEGATIVE_INFINITY;
-  const pending = new Set<number>();
+  /** The page's envelopes main has not answered yet, by number, each with its call's ticket. */
+  const pending = new Map<number, string | null>();
 
   const current = (at: number): boolean => at === epoch && !gone && deps.live();
   const deliver = (at: number, reply: PlayAiReply): void => {
@@ -242,11 +247,21 @@ export function playAiPort(deps: PlayAiPortDeps) {
   };
   const gestured = (bit: unknown): boolean => bit === true && deps.clock.now() - lastGesture <= PLAY_AI_GESTURE_MS;
 
+  /** Why an envelope from the game is answered without running, or null when it may run. */
+  const refusal = (envelope: PlayAiEnvelope, gesture: unknown): AiErrorCode | null => {
+    if (pending.size >= PLAY_AI_MAX_PENDING && !ALWAYS_HEARD.has(envelope.op)) return AiErrorCode.Concurrency;
+    // Two calls under one ticket would share one stream and one cancel on the page.
+    const ticket = callTicket(envelope);
+    if (ticket !== null && [...pending.values()].includes(ticket)) return AiErrorCode.BadRequest;
+    if (needsGesture(envelope) && !gestured(gesture)) return AiErrorCode.NoGesture;
+    return null;
+  };
+
   /** Run an accepted envelope and answer it, unless its page has gone meanwhile. */
   const run = async (at: number, caller: GameAiCaller, envelope: PlayAiEnvelope): Promise<void> => {
     const { bridge } = deps;
     if (!bridge) return deliver(at, playAiRefusal(envelope, AiErrorCode.Off));
-    pending.add(envelope.id);
+    pending.set(envelope.id, callTicket(envelope));
     const onDelta = (text: string): void => {
       if (current(at) && pending.has(envelope.id)) deps.send.delta({ id: envelope.id, text });
     };
@@ -272,10 +287,8 @@ export function playAiPort(deps: PlayAiPortDeps) {
       const at = epoch;
       const caller = playCallerFor(await deps.game(), frame.url, deps.channel);
       if (!caller || !current(at) || leaving || pending.has(envelope.id)) return;
-      if (pending.size >= PLAY_AI_MAX_PENDING && !ALWAYS_HEARD.has(envelope.op))
-        return deliver(at, playAiRefusal(envelope, AiErrorCode.Concurrency));
-      if (needsGesture(envelope) && !gestured(gesture))
-        return deliver(at, playAiRefusal(envelope, AiErrorCode.NoGesture));
+      const refused = refusal(envelope, gesture);
+      if (refused) return deliver(at, playAiRefusal(envelope, refused));
       await run(at, caller, envelope);
     },
     /** An input event reached the page: a click or a key is the person's gesture. */

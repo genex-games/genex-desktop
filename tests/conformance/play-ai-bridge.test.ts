@@ -398,6 +398,51 @@ describe("Play AI: the port's unanswered envelopes", () => {
   });
 });
 
+describe("Play AI: the port's running tickets", () => {
+  it("a second call with the ticket of one still running is refused without reaching the bridge", async () => {
+    const gate = deferred<void>();
+    const answers: FakeAnswers = {
+      [AiBridgeOp.Call]: async (body) => {
+        await gate.promise;
+        return {
+          v: GAME_AI_WIRE_VERSION,
+          ok: false,
+          ticket: body.ticket,
+          code: AiErrorCode.Canceled,
+          retryAfterMs: null,
+        };
+      },
+    };
+    const { port, replies, handled } = portRig({ answers });
+    const first = port.request(TOP, { id: 1, op: AiBridgeOp.Call, body: call("ticket-0001") }, false);
+    await tick();
+    await port.request(TOP, { id: 2, op: AiBridgeOp.Call, body: call("ticket-0001") }, false);
+    assert.deepEqual(replies, [
+      {
+        id: 2,
+        op: AiBridgeOp.Call,
+        body: {
+          v: GAME_AI_WIRE_VERSION,
+          ok: false,
+          ticket: "ticket-0001",
+          code: AiErrorCode.BadRequest,
+          retryAfterMs: null,
+        },
+      },
+    ]);
+    gate.resolve();
+    await first;
+    // Once it answered, the ticket is the page's to use again.
+    const again = port.request(TOP, { id: 3, op: AiBridgeOp.Call, body: call("ticket-0001") }, false);
+    await again;
+    assert.equal(handled.length, 2);
+    assert.deepEqual(
+      replies.map((reply) => reply.id),
+      [2, 1, 3],
+    );
+  });
+});
+
 describe("Play AI: the port across navigations", () => {
   it("streams a say's text to the envelope that asked, and only while that page is on screen", async () => {
     const gate = deferred<void>();
