@@ -36,6 +36,7 @@ import {
   AiRequirement,
   AiAuthority,
   creditsOfMicros,
+  fundingOf,
   GAME_AI_WIRE_VERSION,
   isPlatformDoor,
   needsConsent,
@@ -53,7 +54,10 @@ import {
 import { checkSchema, parseOutput } from "../../shared/game-ai-schema.ts";
 import {
   AI_LOW_CREDITS,
+  type AiActivity,
+  type AiConsentAnswer,
   AiConsentKind,
+  type AiConsentResult,
   type AiMenuRow,
   type AiModelMenu,
   AiModelTag,
@@ -76,7 +80,14 @@ import type {
   GameAiCaller,
   GameAiDeps,
   GameAiDoorImpl,
+  GameAiGrants,
+  GameAiIpcHost,
+  GameAiLedger,
+  GameAiModelCheck,
+  GameAiReports,
   GameAiService,
+  GameAiTapes,
+  GenexAiPlatform,
 } from "./types.ts";
 
 /** The one repair a reply that does not fit the game's shape gets. */
@@ -90,6 +101,7 @@ const MENU_CHANNEL = "menu";
 
 const MESSAGE = {
   unavailable: "that model can't be used for this game here",
+  checkoutElsewhere: "checkout opens only on genex.games",
 } as const;
 
 /** The model a replayed call names. */
@@ -580,6 +592,11 @@ export class GameAiServiceImpl implements GameAiService {
     this.#deps.notify({ kind: GameAiNoticeKind.Stop, card });
   }
 
+  /** A card's answer from the bar or Studio: the native step is asserted there before a yes spends. */
+  answer(answer: AiConsentAnswer): Promise<AiConsentResult> {
+    return this.#deps.consents.answer(answer);
+  }
+
   /** Turn a game's AI on again (Settings' Games list, the pill). */
   async enable(game: AiGameKey): Promise<void> {
     await this.#deps.grants.setOn(game, true);
@@ -801,4 +818,85 @@ function stopCardOf(
     resetsAt: facts.resetsAt ?? null,
     spentCredits: facts.spentCredits ?? null,
   };
+}
+
+// ── what the IPC registrar delegates to ────────────────────────────────────────────────────
+
+/** What the IPC host runs on: the service and the stores, plus the parts other areas build. */
+export interface GameAiIpcHostOptions {
+  service: GameAiServiceImpl;
+  grants: GameAiGrants;
+  settings: GameAiSettings;
+  tapes: GameAiTapes;
+  ledger: GameAiLedger;
+  platform: Pick<GenexAiPlatform, "packs" | "checkoutUrl">;
+  reports: GameAiReports;
+  check: GameAiModelCheck;
+  /** A library game's folder, resolved through the library by real path; throws for any other name. */
+  projectFolder(project: string): Promise<string>;
+  /** A game's name as the library or the catalog shows it. */
+  titleOf(game: AiGameKey): Promise<string>;
+  /** Open a page in the person's browser. */
+  openExternal(url: string): Promise<void>;
+  /** genex.games' own origin: checkout opens there and nowhere else. */
+  checkoutOrigin: string;
+}
+
+/** Whether a grant's spend shows as money in the Games list: credits or the person's key. */
+const spendsMoney = (funding: AiFunding): boolean => funding === AiFunding.Credits || funding === AiFunding.Key;
+
+/** `GameAiIpcHost` over the service; every payload was already read by the registrar. */
+export function createGameAiIpcHost(options: GameAiIpcHostOptions): GameAiIpcHost {
+  const { service, grants, settings, check, reports } = options;
+  return {
+    menu: (game) => service.menuOf(game),
+    pick: (game, model) => service.pick(game, model),
+    answer: (answer) => service.answer(answer),
+    enable: (game, enabled) => (enabled ? service.enable(game) : service.stop(game)),
+    activity: () => activityOf(options),
+    settings: () => settings.view(),
+    saveSettings: async (patch) => {
+      const view = await settings.save(patch);
+      // Taking the plan away is a payer change: every game on it stops at once.
+      if (patch.allowPlan === false) await service.payerChanged(AiDoor.Plan);
+      return view;
+    },
+    tapes: async (project) => options.tapes.list(await options.projectFolder(project)),
+    reportPreview: (game) => reports.preview(game),
+    report: (request) => reports.send(request),
+    check: (project) => check.start(project, { localOnly: false }),
+    checkState: (project) => check.state(project),
+    checkStop: (project) => check.stop(project),
+    recommend: (project, model) => check.recommend(project, model),
+    publishFacts: (project) => check.publishFacts(project),
+    credits: () => options.platform.packs(),
+    checkout: async (product) => {
+      const url = new URL(await options.platform.checkoutUrl(product));
+      if (url.origin !== new URL(options.checkoutOrigin).origin || url.protocol !== "https:") {
+        throw new Error(MESSAGE.checkoutElsewhere);
+      }
+      await options.openExternal(url.href);
+    },
+  };
+  /** Settings' Games list: every game holding a grant, its model and what it spent this month. */
+  async function activityOf(host: GameAiIpcHostOptions): Promise<AiActivity> {
+    const month = await host.ledger.monthByGame();
+    const live = grants.list().filter((grant) => grant.status !== AiGrantStatus.Replaced);
+    const games = await Promise.all(
+      live.map(async (grant) => {
+        const funding = fundingOf(grant.door, grant.door === AiDoor.Local);
+        return {
+          game: grant.game,
+          title: await host.titleOf(grant.game).catch(() => grant.game),
+          model: grant.model,
+          modelLabel: grant.model.model,
+          funding,
+          monthMicros: spendsMoney(funding) ? (month.get(grant.game) ?? 0) : 0,
+          on: grant.status !== AiGrantStatus.Off,
+          consent: grant.consent,
+        };
+      }),
+    );
+    return { games };
+  }
 }

@@ -9,25 +9,11 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
-import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
-import { CONSENT_INPUT_DELAY_MS, createGameAiConsents } from "../../src/main/game-ai/approvals.ts";
-import { createGameAiGrants, createGameAiSettings } from "../../src/main/game-ai/budgets.ts";
-import { createGameAiCache } from "../../src/main/game-ai/cache.ts";
-import { createFixtureDoor } from "../../src/main/game-ai/doors/fixture.ts";
-import { createTapeDoor } from "../../src/main/game-ai/doors/tape.ts";
-import { createGameAiLedger } from "../../src/main/game-ai/ledger.ts";
-import { createGameAiQueue } from "../../src/main/game-ai/queue.ts";
+import { CONSENT_INPUT_DELAY_MS } from "../../src/main/game-ai/approvals.ts";
 import { AiRefusal } from "../../src/main/game-ai/refusal.ts";
-import { createGameAiService, menuOffers, pickModel } from "../../src/main/game-ai/service.ts";
-import { createGameAiTapes } from "../../src/main/game-ai/tapes.ts";
-import {
-  AiWatcherState,
-  type AiDoorAnswer,
-  type GameAiCaller,
-  type GameAiDoorImpl,
-  type GenexAiPlatform,
-} from "../../src/main/game-ai/types.ts";
+import { pickModel } from "../../src/main/game-ai/service.ts";
+import { type GameAiCaller } from "../../src/main/game-ai/types.ts";
 import { EngineFailureKind } from "../../src/shared/engine-requests.ts";
 import {
   AiAuthority,
@@ -35,16 +21,13 @@ import {
   AiConsent,
   AiDoor,
   AiErrorCode,
-  AiFunding,
   AiGrantStatus,
   AiOp,
   AiProvenance,
   AiRequirement,
   AiTier,
   GAME_AI_WIRE_VERSION,
-  type AiCallAnswer,
   type AiCallRequest,
-  type AiGameKey,
   type AiModelRef,
 } from "../../src/shared/game-ai.ts";
 import { AiContext } from "../../src/shared/game-ai-route.ts";
@@ -55,206 +38,33 @@ import {
   AiPickPolicy,
   AiStopReason,
   GameAiNoticeKind,
-  type AiModelMenu,
-  type GameAiSettingsPatch,
 } from "../../src/shared/game-ai-views.ts";
-import { type PlayAiBar, PlayAiNote, PlayAiPhase } from "../../src/shared/play-bar.ts";
+import { PlayAiNote, PlayAiPhase } from "../../src/shared/play-bar.ts";
 import { EngineError } from "../../src/substrate/engines/types.ts";
 import {
   BYOK_HAIKU,
-  callCounter,
   CREDITS_HAIKU,
-  heldClock,
   LOCAL_QWEN,
   menuOf,
-  menuRow,
-  noticeLog,
   PLAN_HAIKU,
   type ScriptedRun,
-  scriptedDoor,
 } from "../helpers/game-ai-fakes.ts";
-import { tmpDir } from "../helpers/tmp.ts";
-
-const CROWNS: AiGameKey = "play:proj_crowns";
-const MOSS: AiGameKey = "create:Moss Garden";
-const SCHEMA = {
-  type: "object",
-  properties: { move: { type: "string" } },
-  required: ["move"],
-  additionalProperties: false,
-};
-const GOOD: AiDoorAnswer = {
-  text: '{"move":"march"}',
-  model: "m",
-  usage: { inputTokens: 300, outputTokens: 20 },
-  costMicros: 4_000,
-};
-const BAD: AiDoorAnswer = {
-  text: "I think Burgundy marches.",
-  model: "m",
-  usage: { inputTokens: 300, outputTokens: 20 },
-  costMicros: 4_000,
-};
-
-let tickets = 0;
-function call(patch: Partial<AiCallRequest> = {}): AiCallRequest {
-  tickets += 1;
-  return {
-    v: GAME_AI_WIRE_VERSION,
-    op: AiOp.Ask,
-    site: "turn.resolve",
-    ticket: `t_${String(tickets).padStart(8, "0")}`,
-    grantId: "g_placeholder",
-    system: "You narrate a 1444 Europe.",
-    prompt: "What does Burgundy do?",
-    untrusted: {},
-    memory: null,
-    schema: SCHEMA,
-    tier: AiTier.Fast,
-    authority: AiAuthority.Local,
-    maxOutputTokens: 200,
-    stream: false,
-    ...patch,
-  };
-}
-
-function caller(patch: Partial<GameAiCaller> = {}): GameAiCaller {
-  return {
-    game: CROWNS,
-    title: "Crowns of 1444",
-    context: AiContext.DesktopPlay,
-    ownGame: false,
-    replaying: false,
-    channel: "wc:1",
-    ...patch,
-  };
-}
-
-const LOCAL_ROW = menuRow(LOCAL_QWEN, AiFunding.Free);
-const BYOK_ROW = menuRow(BYOK_HAIKU, AiFunding.Key);
-const PLAN_ROW = menuRow(PLAN_HAIKU, AiFunding.Plan);
-
-/** genex.games, unused by these tests: every call refuses. */
-function noPlatform(): GenexAiPlatform {
-  const offline = () => Promise.reject(new Error("offline"));
-  return {
-    balanceCredits: offline,
-    packs: offline,
-    checkoutUrl: offline,
-    autoTopUp: offline,
-    setAutoTopUp: offline,
-    confirmTerms: offline,
-    answerConfirm: offline,
-    deviceFundingAllowed: offline,
-    sendReport: offline,
-    sendFitCounts: offline,
-  };
-}
-
-interface RigOptions {
-  menu?: (game: AiGameKey) => AiModelMenu;
-  scripts?: Partial<Record<AiDoor, ScriptedRun[]>>;
-  ready?: Partial<Record<AiDoor, boolean>>;
-  settings?: GameAiSettingsPatch;
-  moderate?: (text: string) => Promise<boolean>;
-  worstMicros?: number;
-}
-
-async function rig(options: RigOptions = {}) {
-  const dir = await tmpDir("game-ai-service-");
-  const clock = heldClock();
-  const settings = createGameAiSettings({ file: path.join(dir, "settings.json"), platform: noPlatform() });
-  await settings.load();
-  if (options.settings) await settings.save(options.settings);
-  const calls = callCounter();
-  const grantsFile = path.join(dir, "grants.json");
-  const grants = createGameAiGrants({ file: grantsFile, clock, calls, limits: () => settings.limits() });
-  await grants.load();
-  const ledger = createGameAiLedger({ dir, clock, record: () => undefined });
-  const notices = noticeLog();
-  const bars: PlayAiBar[] = [];
-  const menuFor = options.menu ?? ((game: AiGameKey) => menuOf(game, [LOCAL_ROW, BYOK_ROW, PLAN_ROW]));
-  const consents = createGameAiConsents({
-    clock,
-    notify: notices.notify,
-    assertNative: () => undefined,
-    usable: async (game, model) => menuOffers(menuFor(game), model) !== null,
-  });
-  const door = (id: AiDoor) =>
-    scriptedDoor(id, options.scripts?.[id] ?? [], {
-      ready: { ready: options.ready?.[id] ?? true },
-      worstMicros: options.worstMicros ?? 50_000,
-    });
-  const local = door(AiDoor.Local);
-  const byok = door(AiDoor.Byok);
-  const plan = door(AiDoor.Plan);
-  const dev = door(AiDoor.GenexDev);
-  const tape = createTapeDoor();
-  const doors = new Map<AiDoor, GameAiDoorImpl>([
-    [AiDoor.Local, local],
-    [AiDoor.Byok, byok],
-    [AiDoor.Plan, plan],
-    [AiDoor.GenexDev, dev],
-    [AiDoor.Tape, tape],
-    [AiDoor.Fixture, createFixtureDoor()],
-  ]);
-  const service = createGameAiService({
-    clock,
-    grants,
-    queue: createGameAiQueue({ slotWaitMs: 200, buildWaitMs: 50 }),
-    doors,
-    ledger,
-    cache: createGameAiCache({ clock }),
-    tapes: createGameAiTapes(),
-    platform: noPlatform(),
-    watcher: {
-      state: () => ({ state: AiWatcherState.Off, runners: [], resetsAt: null }),
-      start: async () => undefined,
-      stop: async () => undefined,
-      nudge: () => undefined,
-      building: () => undefined,
-    },
-    consents,
-    settings,
-    assertNative: () => undefined,
-    notify: notices.notify,
-    drawPill: (_game, bar) => void bars.push(bar),
-    menu: async (game) => menuFor(game),
-    moderate: options.moderate ?? (async () => true),
-  });
-  const ask = (request: AiCallRequest, who = caller(), onDelta?: (text: string) => void) =>
-    service.handle(who, { op: AiBridgeOp.Call, body: request }, onDelta);
-  return {
-    service,
-    grants,
-    grantsFile,
-    calls,
-    ledger,
-    notices,
-    bars,
-    clock,
-    consents,
-    ask,
-    local,
-    byok,
-    plan,
-    dev,
-    tape,
-    settings,
-  };
-}
-
-const doorRuns = (r: Awaited<ReturnType<typeof rig>>) =>
-  r.local.runs.length + r.byok.runs.length + r.plan.runs.length + r.dev.runs.length;
-
-function refusal(answer: AiCallAnswer): AiErrorCode | null {
-  return answer.ok ? null : answer.code;
-}
-
-/** The game's grant on `model`, as a person's yes would leave it. */
-async function granted(r: Awaited<ReturnType<typeof rig>>, model: AiModelRef, game: AiGameKey = CROWNS) {
-  return r.grants.grant(game, model, AiConsent.Card, AiRequirement.Optional);
-}
+import {
+  BAD,
+  BYOK_ROW,
+  call,
+  caller,
+  CROWNS,
+  doorRuns,
+  GOOD,
+  granted,
+  LOCAL_ROW,
+  MOSS,
+  PLAN_ROW,
+  refusal,
+  rig,
+  type RigOptions,
+} from "../helpers/game-ai-rig.ts";
 
 describe("play-time AI service: admission", () => {
   it("refuses with no side effect: nothing reserved, run, counted or logged", async () => {
@@ -346,7 +156,11 @@ describe("play-time AI service: admission", () => {
   });
 
   it("refuses a second call on a ticket still running", async () => {
-    const r = await rig({ scripts: { [AiDoor.Local]: [async () => (await sleep(30), GOOD)] } });
+    const slow: ScriptedRun = async () => {
+      await sleep(30);
+      return GOOD;
+    };
+    const r = await rig({ scripts: { [AiDoor.Local]: [slow] } });
     const request = call();
     const first = r.ask(request);
     await sleep(5);
