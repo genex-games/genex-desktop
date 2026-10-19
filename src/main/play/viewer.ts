@@ -145,8 +145,11 @@ function heldEscape(clock: Clock, onHeld: () => void) {
   };
 }
 
-/** What a closing tells the app beyond the closing itself: Genex to install, a remix to make, a profile to show. */
-type ClosedNews = Pick<PlayViewerEvent, "install" | "remix" | "profile">;
+/**
+ * What a closing tells the app beyond the closing itself: Genex to install, a remix to make, a
+ * profile to show, Settings → Model Providers to open.
+ */
+type ClosedNews = Pick<PlayViewerEvent, "install" | "remix" | "profile" | "models">;
 
 /** What the header's actions share: the session they act for and how they report back. */
 interface ViewerContext {
@@ -297,6 +300,10 @@ function barActions(ctx: ViewerContext): Record<PlayControl, (at?: PlayPoint) =>
     [PlayControl.Maker]: () => {
       const maker = ctx.session()?.world?.authorId;
       if (maker) ctx.close({ profile: maker });
+    },
+    // The AI pill's Add more models: models are added in Settings, which the game's window covers.
+    [PlayControl.AiModels]: () => {
+      if (ctx.session()) ctx.close({ models: true });
     },
     [PlayControl.Install]: () => {
       if (ctx.session()?.signedOut) ctx.close({ install: true });

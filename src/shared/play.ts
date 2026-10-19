@@ -201,6 +201,8 @@ export const PlayControl = {
   MicDevices: "mic-devices",
   /** The maker's name: the viewer closes and the app shows their profile. */
   Maker: "maker",
+  /** The AI pill's Add more models: the viewer closes and the app opens Settings → Model Providers. */
+  AiModels: "ai-models",
 } as const;
 export type PlayControl = (typeof PlayControl)[keyof typeof PlayControl];
 
@@ -319,4 +321,6 @@ export interface PlayViewerEvent {
   remix?: boolean;
   /** The maker's name closed the viewer: the app shows this account's profile. */
   profile?: string;
+  /** The AI pill's Add more models closed the viewer: the app opens Settings → Model Providers. */
+  models?: boolean;
 }

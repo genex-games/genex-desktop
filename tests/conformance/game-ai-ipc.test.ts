@@ -168,11 +168,14 @@ describe("the fixture policy of play-time AI", () => {
     }
   });
 
-  it("gives the Play bar the pill's calls and nothing that spends without a card", () => {
+  it("gives the Play bar the pill's calls and Get credits', and nothing that spends without a card", () => {
     const bar: readonly string[] = PLAY_BAR_CALLS;
-    for (const call of ["gameAiMenu", "gameAiPick", "gameAiAnswer", "gameAiEnable", "gameAiReport", "gameAiCheckout"])
+    const pill = ["gameAiMenu", "gameAiPick", "gameAiAnswer", "gameAiEnable", "gameAiReport", "gameAiCheckout"];
+    // Get credits reads the packs and auto top-up, and saves its switch (D11: a tap on Genex's own card).
+    for (const call of [...pill, "gameAiCredits", "gameAiSettings", "gameAiSettingsSave"])
       assert.ok(bar.includes(call), call);
-    for (const call of ["gameAiSettingsSave", "gameAiCheck", "gameAiRecommend"]) assert.ok(!bar.includes(call), call);
+    for (const call of ["gameAiCheck", "gameAiRecommend", "gameAiActivity", "gameAiTapes"])
+      assert.ok(!bar.includes(call), call);
   });
 });
 

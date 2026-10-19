@@ -748,6 +748,13 @@ describe("Play viewer's bar over the game", () => {
     assert.equal(unnamed.viewer.showing(), "lost-cathedral");
   });
 
+  it("closes onto Settings → Model Providers from the AI pill's Add more models", async () => {
+    const { viewer, events } = await playing();
+    viewer.control(PlayControl.AiModels);
+    assert.deepEqual(events.at(-1), { slug: "lost-cathedral", openId: 1, phase: PlayViewerPhase.Closed, models: true });
+    assert.equal(viewer.showing(), null);
+  });
+
   it("holds Remix while a remix is being made, and for a game that may not be remixed", async () => {
     const { viewer, bar } = await playing();
     viewer.remixing(true);

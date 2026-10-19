@@ -117,6 +117,8 @@ export interface PlayState {
   remixFailed: boolean;
   /** The viewer's guest card asked to sign in: the shell signs in to Genex once (`useGuestSignIn`). */
   installAsked: boolean;
+  /** The AI pill's Add more models closed the viewer: the shell opens Settings → Model Providers once (`useModelsAsked`). */
+  modelsAsked: boolean;
   /** The Assets shelf's switchers: whose assets, and which kind; kept while other shelves show. */
   assetView: AssetView;
   /** The person's own library as Mine reads it, for one kind and search at a time. */
@@ -147,6 +149,7 @@ export const initialPlay = (recent: PlayRecentEntry[] = []): PlayState => ({
   remixed: null,
   remixFailed: false,
   installAsked: false,
+  modelsAsked: false,
   assetView: ALL_ASSETS,
   library: EMPTY_LIBRARY,
   assetCatalog: EMPTY_CATALOG,
@@ -278,16 +281,17 @@ export const remixClosed = (shown: ViewerShown | null, event: PlayViewerEvent): 
   event.remix === true && shown?.slug === event.slug && shown.openId === event.openId;
 
 /**
- * Main's news about the viewer; the guest card's Sign in waits for the shell. The maker's name
- * closes the viewer onto their profile.
+ * Main's news about the viewer; the guest card's Sign in and the AI pill's Add more models wait for
+ * the shell. The maker's name closes the viewer onto their profile.
  */
 export function viewerReported(state: PlayState, event: PlayViewerEvent): PlayState {
   const viewer = viewerAfter(state.viewer, event);
-  const installAsked = state.installAsked || event.install === true;
-  const same = viewer === state.viewer && installAsked === state.installAsked;
-  if (same) return state;
-  const next = { ...state, viewer, installAsked };
   const closed = state.viewer !== null && viewer === null;
+  const installAsked = state.installAsked || event.install === true;
+  const modelsAsked = state.modelsAsked || (closed && event.models === true);
+  const same = viewer === state.viewer && installAsked === state.installAsked && modelsAsked === state.modelsAsked;
+  if (same) return state;
+  const next = { ...state, viewer, installAsked, modelsAsked };
   return closed && event.profile ? profileShown(next, event.profile) : next;
 }
 
@@ -361,6 +365,10 @@ export const remixFailureTold = (state: PlayState): PlayState =>
 /** The shell ran the guest card's Sign in. */
 export const installAnswered = (state: PlayState): PlayState =>
   state.installAsked ? { ...state, installAsked: false } : state;
+
+/** The shell opened Settings → Model Providers for the AI pill's Add more models. */
+export const modelsAnswered = (state: PlayState): PlayState =>
+  state.modelsAsked ? { ...state, modelsAsked: false } : state;
 
 /** A switcher on the Assets shelf turned: whose assets, or which kind. The same choice changes nothing. */
 export function assetViewChosen(state: PlayState, change: Partial<AssetView>): PlayState {
