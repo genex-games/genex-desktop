@@ -275,6 +275,9 @@ export interface PlayAiOpArgs {
   [PlayAiOp.Delta]: { rid: string; text: string };
 }
 
+/** One AI op the studio writes to a game: an answer by its rid, or a streamed answer's text so far. */
+export type PlayAiOutgoing = { [O in PlayAiOp]: { op: O; args: PlayAiOpArgs[O] } }[PlayAiOp];
+
 /** The longest `ai` line the studio reads from a game, in characters. */
 export const PLAY_AI_MAX_LINE_CHARS = AI_MAX_BODY_CHARS;
 /** The most `ai` lines of one game the studio holds unanswered; past it a line is refused. */

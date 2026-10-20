@@ -16,9 +16,12 @@ import { after, before, describe, it } from "node:test";
 import { setTimeout as sleep } from "node:timers/promises";
 import { canPoint, canStep, PointerLevel } from "../../src/shared/computer-target.ts";
 import { CaptureSurface, type PreviewInputAction } from "../../src/shared/preview-contract.ts";
+import { AiBridgeOp, AiErrorCode } from "../../src/shared/game-ai.ts";
 import {
+  PLAY_AI_MAX_IN_FLIGHT,
   PLAY_MAX_STEP_MS,
   PLAY_PROTOCOL_VERSION,
+  PlayAiOp,
   PlayErrorCode,
   type PlayHello,
   PlayOp,
@@ -29,6 +32,7 @@ import {
 import { type GameBridgeLaunch, launchGameBridge } from "../../src/main/core/game-bridge-target.ts";
 import { PlayProtocolError } from "../../src/substrate/play-protocol-client.ts";
 import { ProcessSandbox, shellQuote } from "../../src/substrate/spawn.ts";
+import { fixtureNativeHost } from "../helpers/ai-fixture-service.ts";
 import { tmpDir } from "../helpers/tmp.ts";
 
 const repo = path.resolve(import.meta.dirname, "../..");
@@ -36,11 +40,18 @@ const FAKE_GAME = path.join(repo, "tests/fixtures/fake-play-game.mjs");
 const FAKE_COMMAND = [process.execPath, FAKE_GAME].map(shellQuote).join(" ");
 /** How long a paused game is watched to prove nothing moves without a step. */
 const STILL_WATCH_MS = 120;
+/** A game that declares ai asks at least once within this much simulated time after a reset. */
+const AI_ASK_WITHIN_MS = 1000;
+/** One more step after asking: the boundary its answers are delivered on. */
+const AI_SETTLE_STEP_MS = 100;
+/** The steps a replay with AI is run in: several boundaries, answers landing between them. */
+const AI_REPLAY_STEP_MS = 64;
 
 /** The engines this run checks: the fake (whole and reduced) always, another engine when the environment names one. */
 const SUBJECTS: Array<{ name: string; command: string; cwd: string; skip: string | false }> = [
   { name: "fake-play-game", command: FAKE_COMMAND, cwd: repo, skip: false },
   { name: "fake-play-game --reduced", command: `${FAKE_COMMAND} --reduced`, cwd: repo, skip: false },
+  { name: "fake-play-game --ai", command: `${FAKE_COMMAND} --ai`, cwd: repo, skip: false },
   {
     name: process.env.PLAY_GAME_COMMAND ?? "PLAY_GAME_COMMAND",
     command: process.env.PLAY_GAME_COMMAND ?? "",
@@ -145,6 +156,20 @@ function echoOf(state: unknown): InputEcho | null {
   return isRecord(state) && isRecord(state.input) ? (state.input as InputEcho) : null;
 }
 
+/** The ai echo a game that declared ai may keep (docs/play-protocol.md): the rids it sent and those answered. */
+interface AiEcho {
+  asked: string[];
+  answered: string[];
+}
+
+/** The state's ai echo, under `volatile` (rids are not part of a replay), when the engine keeps one. */
+function aiEchoOf(state: unknown): AiEcho | null {
+  if (!isRecord(state) || !isRecord(state.volatile) || !isRecord(state.volatile.ai)) return null;
+  const { asked, answered } = state.volatile.ai;
+  const rids = (list: unknown) => (Array.isArray(list) ? list.filter((rid) => typeof rid === "string") : []);
+  return { asked: rids(asked), answered: rids(answered) };
+}
+
 /** The typed failure a promise rejected with. */
 async function refusal(promise: Promise<unknown>, what = "the call"): Promise<PlayProtocolError> {
   try {
@@ -160,6 +185,8 @@ for (const subject of SUBJECTS) {
   describe(`play protocol conformance — ${subject.name}`, { skip: subject.skip }, () => {
     let sandbox: ProcessSandbox;
     let game: GameBridgeLaunch;
+    /** The broker's stand-in: fixture answers, replayed, so a step waits for them. */
+    const ai = fixtureNativeHost("conformance", { replaying: true });
 
     before(async () => {
       const root = await tmpDir("play-conformance-");
@@ -169,7 +196,13 @@ for (const subject of SUBJECTS) {
         secretPaths: [],
         enabled: false,
       });
-      game = await launchGameBridge({ sandbox, command: subject.command, cwd: subject.cwd, label: "conformance" });
+      game = await launchGameBridge({
+        sandbox,
+        command: subject.command,
+        cwd: subject.cwd,
+        label: "conformance",
+        target: { ai: ai.host },
+      });
     });
 
     after(async () => {
@@ -431,6 +464,50 @@ for (const subject of SUBJECTS) {
       assert.ok(game.running());
     });
 
+    it("takes the studio's ai ops only when its hello declared ai", async () => {
+      const reply = { rid: "rid-never-asked", reply: { v: 1, on: true } };
+      if (!hello().capabilities.ai) {
+        assert.equal(game.target.ai, null, "a game that declared no ai has no AI bridge");
+        const error = await refusal(game.client.send(PlayAiOp.Reply, reply), PlayAiOp.Reply);
+        assert.equal(error.code, PlayErrorCode.UnknownOp);
+        assert.equal(ai.asked.length, 0, "nothing it printed reached the broker");
+        return;
+      }
+      assert.ok(game.target.ai, "a game that declared ai has its AI bridge");
+      await game.client.send(PlayAiOp.Reply, reply);
+      await game.client.send(PlayAiOp.Delta, { rid: "rid-never-asked", text: "late" });
+      assert.ok(await state(), "a reply to a line it never sent is taken and ignored");
+    });
+
+    it("asks over ai lines and gets each reply back by its rid, on a step boundary", async (t) => {
+      const caps = game.target.caps;
+      if (!hello().capabilities.ai) return t.skip("the engine declares no ai");
+      if (!canStep(caps)) return t.skip("the engine declares no step-locked clock");
+      await freshStart(21);
+      const before = ai.asked.length;
+      await game.target.clock?.step?.(AI_ASK_WITHIN_MS);
+      await game.target.clock?.step?.(AI_SETTLE_STEP_MS);
+      assert.ok(ai.asked.length > before, "the game asked within its first second");
+      for (const { caller } of ai.asked) assert.equal(caller.channel, `native:${game.child.pid}`, "main's own caller");
+      const echo = aiEchoOf(await state());
+      if (!echo) return t.diagnostic("the state keeps no ai echo: only the asking was checked");
+      assert.ok(echo.asked.length > 0);
+      assert.deepEqual([...echo.answered].sort(), [...echo.asked].sort(), "every line it sent was answered by its rid");
+    });
+
+    it("replays: the same seed and inputs get the same AI answers on the same ticks", async (t) => {
+      const caps = game.target.caps;
+      if (!hello().capabilities.ai) return t.skip("the engine declares no ai");
+      if (!caps.seed || !canStep(caps)) return t.skip("the engine declares no seed or no step-locked clock");
+      const run = async () => {
+        await freshStart(33);
+        for (let ms = 0; ms < AI_ASK_WITHIN_MS; ms += AI_REPLAY_STEP_MS)
+          await game.target.clock?.step?.(AI_REPLAY_STEP_MS);
+        return replayable(await state());
+      };
+      assert.deepEqual(await run(), await run());
+    });
+
     it("quits on request, and the process is gone", async () => {
       await game.client.call(PlayOp.Quit, {});
       const exit = await game.exited;
@@ -439,3 +516,69 @@ for (const subject of SUBJECTS) {
     });
   });
 }
+
+/**
+ * How the studio takes a game's `ai` lines, pinned on the fake game started with flags of its own:
+ * lines from a game that declared no ai, an oversize line, and more lines than may be in flight.
+ */
+describe("play protocol conformance — play-time AI lines the studio refuses", () => {
+  let sandbox: ProcessSandbox;
+
+  before(async () => {
+    const root = await tmpDir("play-conformance-ai-");
+    sandbox = await ProcessSandbox.create({
+      writableRoots: [root],
+      scratchDir: path.join(root, "scratch"),
+      secretPaths: [],
+      enabled: false,
+    });
+  });
+
+  after(async () => {
+    await sandbox?.dispose();
+  });
+
+  /** The fake game with `flags`, answered by a fixture broker, stopped after the row. */
+  async function fakeWith(flags: string) {
+    const ai = fixtureNativeHost("conformance", { replaying: true });
+    const game = await launchGameBridge({
+      sandbox,
+      command: `${FAKE_COMMAND} ${flags}`,
+      cwd: repo,
+      label: "conformance-ai",
+      target: { ai: ai.host },
+    });
+    after(() => game.stop());
+    await game.target.clock?.pause();
+    await game.target.seed?.(3);
+    await game.target.clock?.step?.(AI_ASK_WITHIN_MS);
+    await game.target.clock?.step?.(AI_SETTLE_STEP_MS);
+    const state = await game.target.state?.();
+    const codes =
+      isRecord(state) && isRecord(state.volatile) && isRecord(state.volatile.ai) ? state.volatile.ai.codes : [];
+    return { game, ai, echo: aiEchoOf(state), codes };
+  }
+
+  it("ignores every ai line of a game that declared no ai: none reaches the broker, and it plays on", async () => {
+    const { game, ai, echo } = await fakeWith("--ai-undeclared");
+    assert.equal(game.target.ai, null);
+    assert.equal(ai.asked.length, 0);
+    assert.ok(echo && echo.asked.length > 0, "the game did print its lines");
+    assert.deepEqual(echo?.answered, [], "and none was answered");
+    assert.ok(game.running());
+  });
+
+  it("drops an oversize ai line and answers the game's other lines by their rids", async () => {
+    const { ai, echo } = await fakeWith("--ai --ai-oversize");
+    assert.equal(ai.asked.length, 2, "its hello and its call reached the broker");
+    assert.ok(!ai.asked.some(({ message }) => message.op === AiBridgeOp.Cancel), "the oversize line never did");
+    assert.deepEqual([...(echo?.answered ?? [])].sort(), [...(echo?.asked ?? [])].sort());
+  });
+
+  it(`refuses lines past ${PLAY_AI_MAX_IN_FLIGHT} unanswered with grant_concurrency, each by its rid`, async () => {
+    const { ai, echo, codes } = await fakeWith(`--ai --ai-burst=${PLAY_AI_MAX_IN_FLIGHT + 1}`);
+    assert.equal(ai.asked.length, PLAY_AI_MAX_IN_FLIGHT, "the broker never held more than the cap");
+    assert.ok(Array.isArray(codes) && codes.includes(AiErrorCode.Concurrency), "a line past the cap was refused");
+    assert.deepEqual([...(echo?.answered ?? [])].sort(), [...(echo?.asked ?? [])].sort(), "every rid answered once");
+  });
+});

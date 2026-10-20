@@ -1,0 +1,14 @@
+{
+  "name": "com.genex.ai",
+  "version": "0.1.0",
+  "displayName": "Genex AI",
+  "description": "Play-time AI for a Genex game: the game asks a model for text, or for JSON that fits a C# type, and Genex answers on the model the person chose. Results enter the game only through GenexAi.Drain(), once per FixedUpdate. Genex relays it while the game plays in this editor; a build shipped outside Genex answers ai_off and plays its fallbacks.",
+  "unity": "6000.0",
+  "author": {
+    "name": "Genex",
+    "url": "https://genex.games"
+  },
+  "dependencies": {
+    "com.unity.nuget.newtonsoft-json": "3.2.1"
+  }
+}
