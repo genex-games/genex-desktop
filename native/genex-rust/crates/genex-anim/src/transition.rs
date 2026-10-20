@@ -33,26 +33,28 @@ use crate::math::Trs;
 /// A crossfade's source after an interrupt: the pose the layer was showing, carried on by a
 /// fading velocity.
 #[derive(Clone, Debug, PartialEq)]
-struct Frozen {
-    pose: Vec<Trs>,
-    velocity: Vec<JointVelocity>,
+pub(crate) struct Frozen {
+    pub(crate) pose: Vec<Trs>,
+    pub(crate) velocity: Vec<JointVelocity>,
 }
 
 /// What one layer shows across its machine's switches; see the module docs.
 #[derive(Clone, Debug)]
 pub struct TransitionPlayer {
     rest: Vec<Trs>,
-    pose: Vec<Trs>,
+    // `pose` through `frozen`, all but the `previous` scratch, are simulation state: crate-visible
+    // for the animator's snapshots.
+    pub(crate) pose: Vec<Trs>,
     previous: Vec<Trs>,
-    velocity: Vec<JointVelocity>,
+    pub(crate) velocity: Vec<JointVelocity>,
     /// A pose has been shown since the player was made or reset.
-    shown: bool,
+    pub(crate) shown: bool,
     /// The state the last update showed.
-    state: Option<StateId>,
+    pub(crate) state: Option<StateId>,
     /// The last update was inside a crossfade.
-    crossfading: bool,
-    offset: InertialOffset,
-    frozen: Option<Frozen>,
+    pub(crate) crossfading: bool,
+    pub(crate) offset: InertialOffset,
+    pub(crate) frozen: Option<Frozen>,
     evaluations: u64,
     source: Vec<Trs>,
     target: Vec<Trs>,

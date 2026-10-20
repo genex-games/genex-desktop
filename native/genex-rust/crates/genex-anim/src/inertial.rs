@@ -182,9 +182,10 @@ impl JointOffset {
 /// A pose's offset decaying toward zero: the state of an inertialized switch.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct InertialOffset {
-    joints: Vec<JointOffset>,
-    halflife: f32,
-    active: bool,
+    // Crate-visible for the animator's snapshots.
+    pub(crate) joints: Vec<JointOffset>,
+    pub(crate) halflife: f32,
+    pub(crate) active: bool,
 }
 
 impl InertialOffset {
