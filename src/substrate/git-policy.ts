@@ -28,6 +28,10 @@ export const HOST_GIT_CONFIG = [
   "tag.gpgsign=false",
   "-c",
   "core.alternateRefsCommand=",
+  // Git for Windows stops at 260 characters ("Filename too long") unless told otherwise; a game's
+  // folders under %USERPROFILE% reach that. Other Gits ignore the key.
+  "-c",
+  "core.longpaths=true",
   ...Object.entries(ATTACHED_MAINTENANCE).flatMap(([key, value]) => ["-c", `${key}=${value}`]),
 ];
 

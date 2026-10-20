@@ -2,16 +2,20 @@
 // the usual folders, a projects folder with deep node_modules trees and paths past Windows'
 // MAX_PATH, a game library with large files, a junction that loops back, and the homes Genex's
 // sandbox denies (.ssh, .claude, .codex, a browser profile). The sandbox start walks the profile,
-// so its size is the point.
+// so its size is the point. Then it waits for the machine to go quiet (settle.ts), so the start
+// timed next measures Genex, not Windows scanning the files just written.
 //
-//   node scripts/canary/lived-in-profile.ts --home <dir> [--files 150000] [--large-files 3]
+//   node scripts/canary/lived-in-profile.ts --home <dir> [--files 150000] [--large-files 3] [--settle-minutes 15]
 //
 // It refuses the running account's own home unless --force-own-home is given: it is meant for a
 // fresh canary user, never a person's account.
 import { mkdir, open, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { setTimeout as sleep } from "node:timers/promises";
 import { parseArgs } from "node:util";
+import { MINUTE_MS } from "../../src/shared/duration.ts";
+import { cpuBusy, SETTLE_CAP_MS, settledLine, waitForIdle } from "./settle.ts";
 
 /** Files written by default: about what a few years of a gaming PC's profile holds. */
 const DEFAULT_FILES = 150_000;
@@ -102,6 +106,7 @@ async function main(): Promise<void> {
       files: { type: "string", default: String(DEFAULT_FILES) },
       "large-files": { type: "string", default: String(DEFAULT_LARGE_FILES) },
       "force-own-home": { type: "boolean", default: false },
+      "settle-minutes": { type: "string", default: String(SETTLE_CAP_MS / MINUTE_MS) },
     },
   });
   if (!values.home) throw new Error("--home is required");
@@ -126,6 +131,10 @@ async function main(): Promise<void> {
   console.log(
     `  deepest path: ${deep.length} characters; ${large} × ${LARGE_FILE_BYTES / 2 ** 30} GB game files; loop: ${link}`,
   );
+  const capMs = Number(values["settle-minutes"]) * MINUTE_MS;
+  if (capMs <= 0) return;
+  const clock = { now: Date.now, sleep };
+  console.log(settledLine(await waitForIdle(cpuBusy(clock), clock, { capMs })));
 }
 
 await main();

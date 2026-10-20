@@ -48,6 +48,8 @@ const SEED_BACKUP_PREFIX = "seed-backup-";
 const HARNESS_EDITS_PREFIX = "harness-edits-";
 /** The largest module the rename rewrites; anything bigger is no seed module and is left alone. */
 const MAX_RENAMED_MODULE_BYTES = 4_000_000;
+/** Files read at once while hashing: one at a time spent most of a boot's seed pass waiting on disk. */
+const SEED_READ_CONCURRENCY = 32;
 /** How much of a failed layout migration's error the manifest keeps. */
 const LAYOUT_ERROR_MAX_CHARS = 500;
 /** The format `writeCatalogue` writes. */
@@ -531,17 +533,15 @@ async function deferredByLayout(
   workspaceDir: string,
   manifest: SeedManifest | null,
 ): Promise<Set<string>> {
-  const deferred = new Set<string>();
   const layout = manifest?.layoutVersion ?? 1;
-  for (const rel of seedTs) {
+  const held = await mapInChunks(seedTs, async (rel) => {
     const legacy = mjsFor(rel);
-    if (await pathExists(path.join(workspaceDir, legacy))) deferred.add(rel);
+    if (await pathExists(path.join(workspaceDir, legacy))) return true;
     // Deleted by the agent before the migration: the migration carries the deletion over. (A
     // `.ts` already on disk — the reseed laid the shipped self down — is nothing to carry.)
-    else if (layout < LAYOUT_VERSION && (await deletedBeforeMigration(workspaceDir, manifest, rel, legacy)))
-      deferred.add(rel);
-  }
-  return deferred;
+    return layout < LAYOUT_VERSION && (await deletedBeforeMigration(workspaceDir, manifest, rel, legacy));
+  });
+  return new Set(seedTs.filter((_, at) => held[at]));
 }
 
 /** The manifest owns the legacy `.mjs` of `rel` but not `rel`, and no `rel` is on disk. */
@@ -672,6 +672,8 @@ interface SeedPass {
   applied: Map<string, string>;
   /** Seed modules left to the layout migration (`deferredByLayout`). */
   deferred: Set<string>;
+  /** rel → hash of the workspace file before the pass (null: none), read ahead in parallel. */
+  targetHashes: Map<string, string | null>;
   report: SeedUpgradeReport;
 }
 
@@ -696,7 +698,10 @@ export async function applySeed(options: ApplySeedOptions): Promise<SeedUpgradeR
   if (renamed.length > 0) report.renamed = renamed;
   const seedModules = [...seedHashes.keys()].filter(isTsModule);
   const deferred = await deferredByLayout(seedModules, options.workspaceDir, body);
-  const pass: SeedPass = { options, manifest, applied, deferred, report };
+  // Read ahead: each file of the pass writes only its own path, so a hash read before the loop
+  // is the one the loop would read.
+  const targetHashes = await hashTargets(options.workspaceDir, [...seedHashes.keys()]);
+  const pass: SeedPass = { options, manifest, applied, deferred, targetHashes, report };
 
   for (const [rel, seedHash] of [...seedHashes.entries()].sort(([a], [b]) => (a < b ? -1 : 1))) {
     await applySeedFile(pass, rel, seedHash);
@@ -712,9 +717,26 @@ function emptyReport(mode: SeedUpgradeMode): SeedUpgradeReport {
 
 /** rel → sha256 of every file under `dir`, in walk order. */
 async function hashTree(dir: string): Promise<Map<string, string>> {
-  const hashes = new Map<string, string>();
-  for (const rel of await walk(dir)) hashes.set(rel, await hashFile(path.join(dir, rel)));
-  return hashes;
+  const files = await walk(dir);
+  const hashes = await mapInChunks(files, (rel) => hashFile(path.join(dir, rel)));
+  return new Map(files.map((rel, at) => [rel, hashes[at]]));
+}
+
+/** rel → sha256 of the workspace file at each path, or null where there is none. */
+async function hashTargets(workspaceDir: string, files: readonly string[]): Promise<Map<string, string | null>> {
+  const hashes = await mapInChunks(files, async (rel) => {
+    const target = path.join(workspaceDir, rel);
+    return (await pathExists(target)) ? await hashFile(target) : null;
+  });
+  return new Map(files.map((rel, at) => [rel, hashes[at]]));
+}
+
+/** `fn` over every item, SEED_READ_CONCURRENCY at a time; results in item order. */
+async function mapInChunks<T, R>(items: readonly T[], fn: (item: T) => Promise<R>): Promise<R[]> {
+  const out: R[] = [];
+  for (let at = 0; at < items.length; at += SEED_READ_CONCURRENCY)
+    out.push(...(await Promise.all(items.slice(at, at + SEED_READ_CONCURRENCY).map(fn))));
+  return out;
 }
 
 /** First launch: the whole seed copied in and recorded as laid down by the app. */
@@ -753,8 +775,7 @@ async function applySeedFile(pass: SeedPass, rel: string, seedHash: string): Pro
     await holdForLayoutMigration(pass, rel);
     return;
   }
-  const target = path.join(pass.options.workspaceDir, rel);
-  const targetHash = (await pathExists(target)) ? await hashFile(target) : null;
+  const targetHash = pass.targetHashes.get(rel) ?? null;
   const lastApplied = pass.manifest?.[rel] ?? null;
 
   if (targetHash === seedHash) {
@@ -910,10 +931,10 @@ async function carryRenamesOver(
   const rewritten: string[] = [];
   for (const [from, to] of Object.entries(RENAMED_SEED_FILES))
     if (await moveRenamedModule(options, manifest, from, to)) rewritten.push(to);
-  for (const rel of files) {
-    const stillThere = isTsModule(rel) && !(rel in RENAMED_SEED_FILES);
-    if (stillThere && (await rewriteOldNames(options, manifest, rel))) rewritten.push(rel);
-  }
+  // Each rewrite touches only its own module and that module's backup.
+  const stillThere = files.filter((rel) => isTsModule(rel) && !(rel in RENAMED_SEED_FILES));
+  const changed = await mapInChunks(stillThere, (rel) => rewriteOldNames(options, manifest, rel));
+  rewritten.push(...stillThere.filter((_, at) => changed[at]));
   return rewritten.sort();
 }
 

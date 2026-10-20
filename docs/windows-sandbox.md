@@ -7,7 +7,10 @@ share, is in [architecture](agent/architecture.md#processes-and-trust-boundaries
 drives sandbox-runtime's srt-win backend (vendored `srt-win.exe` from `app.asar.unpacked`):
 commands run as the local `srt-sandbox` user under Git Bash. The packaged app brings its own Git
 for Windows as `resources\git` and uses it only when the PC has no Git of its own (`findGitBash`);
-a development build uses the installed Git. The host runs git itself too, so the core settles which Git before
+a development build uses the installed Git. Claude Code is handed the same Git Bash
+(`CLAUDE_CODE_GIT_BASH_PATH`, unless the person set one): it looks only in Program Files and on
+PATH, and without one runs commands through its PowerShell tool, which the never-touch screen and
+saved Bash rules do not read. The host runs git itself too, so the core settles which Git before
 anything else at startup (`ensureHostGit`, which puts its `cmd` folder first on PATH); with none,
 the setup screen opens on `git-missing`. What differs from macOS:
 
@@ -32,6 +35,12 @@ the setup screen opens on `git-missing`. What differs from macOS:
   user does not fail a start; srt-win's setup, status and `trust-ca` calls keep SRT's. The actual
   process `exit` event retains synchronous cleanup, since promises cannot finish there. Partial
   grants remain eligible for that exit cleanup while initialization or its rollback is pending.
+- srt-win's egress filter lets the sandbox user reach loopback ports 60080-60089 only, so SRT's
+  network proxies listen there. Windows refuses a port it reserved (Hyper-V, WSL and Docker
+  reserve blocks of the dynamic range through winnat) with `EACCES`, which the patch makes SRT
+  skip like a port in use. When the whole range is refused, the start fails with
+  `SandboxLaunchCode.ProxyPortsRefused`, whose message names the range and the fix (restart, or
+  restart `winnat`). An administered `netsh` exclusion does not refuse a bind.
 - srt-win starts every command as `srt-sandbox` through CreateProcessWithLogonW, which the
   Secondary Logon service (`seclogon`) carries out; where hardening disabled it, Windows refuses
   every start ("Access is denied"). The setup check (`windowsSetupGaps`) reads its start type with
@@ -40,7 +49,9 @@ the setup screen opens on `git-missing`. What differs from macOS:
   (`WindowsSetupNeed.LogonService`) the setup card names in one line. Set up sets it to Manual
   (`sc config seclogon start= demand`, [`windows-logon-service.ts`](../src/substrate/windows-logon-service.ts))
   through Windows PowerShell's `Start-Process -Verb RunAs` before srt-win's install. srt-win
-  elevates itself, so a PC that needs both sees two approval prompts. A service Set up could not
+  elevates itself, so a PC that needs both sees two approval prompts. On a standard account each
+  prompt asks for an administrator's password, and the setup card says so; the install is
+  machine-wide, so the standard account uses what the administrator approved. A service Set up could not
   turn on (a policy keeps it off) leaves the card saying how to do it in Services.
 - That egress check starts srt-win as the sandbox user before any grant, and Windows opens its
   program and working folder as that user. A per-user install lives in the profile, so the session
@@ -74,9 +85,14 @@ the setup screen opens on `git-missing`. What differs from macOS:
   CLIs that run in the sandbox, OpenCode among them.
 - Neither `spawn()`'s environment nor stdin reaches the child: each run's variables
   (`windowsRunEnv`) go to an env file in scratch and its stdin to a file, each deleted by the
-  command as it reads it. The host sends nothing down the stdin pipe the command swaps away. The harness hears the host over a loopback inbox
+  command as it reads it, for a long-lived process (`spawnLongLived`'s `stdin`, OpenCode's brief)
+  as for a run. The host sends nothing down the stdin pipe the command swaps away. The harness hears the host over a loopback inbox
   ([`src/substrate/harness-inbox.ts`](../src/substrate/harness-inbox.ts)) whose first line must
-  be the one-time `HARNESS_INBOX_TOKEN`; it answers on stdout.
+  be the one-time `HARNESS_INBOX_TOKEN`; it answers on stdout. A process whose input goes on for
+  its whole life (`liveInput`, a Play Protocol game) runs under a relay
+  ([`src/substrate/windows-live-input.ts`](../src/substrate/windows-live-input.ts)): the studio's
+  own Node in the same sandbox listens on loopback, starts the command under Git Bash with its
+  stdin piped, and passes on what the first connection to open with the one-time token sends.
 - Deny paths are session-wide (a per-command deny binds every command anyway); a path denied both
   ways is sent as a read deny only. A missing deny path in the profile outside every grant is
   dropped, since srt-win would create a placeholder; off the profile it is kept. srt-win's
@@ -131,7 +147,8 @@ the session already grants for reading, so it needs no grant of its own. The Squ
 runs its Git Bash and `cmd\git.exe` with no other Git on PATH, and the package job's chat turn
 sets `STUDIO_WINDOWS_BUNDLED_GIT_ONLY=1`, so the sandbox user runs this Git Bash. To move to a newer Git, change the
 pin; the build refuses a release that lacks a path the trim list names, so the list is reviewed.
-The terminal panel still opens an installed Git Bash, else PowerShell.
+The terminal panel and a chat's Run command open an installed Git Bash first, then this one, and
+PowerShell only when neither is there ([`src/main/terminal-shell.ts`](../src/main/terminal-shell.ts)).
 
 ## Visual C++ runtime
 
@@ -178,6 +195,16 @@ Two Genex editing one folder's entries at the same moment can lose one edit unti
 and srt-win's own cleanup never sees Genex's entries. Every sandboxed process can read a run's env
 file until the command deletes it, and PATH folders under the profile whole (pnpm's home without
 its store). A broker outlives an Electron crash.
+
+A confined run (`RunRequest.confine`) is not held to its own folders here: every sandboxed command
+runs as the one `srt-sandbox` user, so a per-run write deny would bind every other running command
+too. An engine plugin's sandbox job (`sandbox.run`, the Unreal plugin's `RunUAT.bat BuildPlugin`)
+asks for its package folder and its scratch only, and the host checks that request by real path,
+but the job can write whatever the session grants (Genex's game folders and linked projects).
+srt-win also refuses a per-command read grant, so such a job reads the engine with the sandbox
+user's own rights: an engine under Program Files is readable to every local user, and one inside
+the person's profile is not, so UAT fails there. Real per-run confinement needs a per-run identity
+from srt-win (for example a restricting SID per exec).
 
 ## CI and curated suite
 

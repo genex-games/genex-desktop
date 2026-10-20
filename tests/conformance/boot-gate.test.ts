@@ -122,8 +122,9 @@ describe("boot gate", () => {
 });
 
 describe("starting and a studio that would not start", () => {
-  it("moves the starting window on at the core's games and sandbox marks", () => {
+  it("moves the starting window on at the core's seed, games and sandbox marks", () => {
     assert.equal(startStepAfter("core:settings"), null);
+    assert.equal(startStepAfter("core:seed"), StartStep.Games);
     assert.equal(startStepAfter("core:games"), StartStep.Workspace);
     assert.equal(startStepAfter("core:sandbox"), StartStep.Studio);
   });

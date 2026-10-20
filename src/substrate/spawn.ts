@@ -26,7 +26,7 @@ import { mkdir, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { createRequire } from "node:module";
-import type { Readable } from "node:stream";
+import type { Readable, Writable } from "node:stream";
 import { MINUTE_MS } from "../shared/duration.ts";
 import { errorMessage } from "../shared/errors.ts";
 import { type SandboxProblem, StudioPlatform } from "../shared/boot.ts";
@@ -40,6 +40,7 @@ import {
   missingLinuxTools,
   sandboxProblem,
   windowsLaunchError,
+  windowsProxyPortsError,
   windowsSetupProblem,
 } from "./sandbox-unavailable.ts";
 import { childEnv, windowsBaseEnv } from "./child-env.ts";
@@ -75,6 +76,7 @@ import {
   writeDeniesBeyondRead,
 } from "./windows-sandbox.ts";
 import { DenyAccess } from "./windows-folder-ace.ts";
+import { type LiveInput, openLiveInput } from "./windows-live-input.ts";
 
 // Linux launches this native helper through a shell, which cannot traverse Electron's asar.
 // The runtime's automatic lookup returns its virtual archive path even when the file is unpacked.
@@ -117,8 +119,15 @@ export interface RunRequest {
   /** Correlation label used for sandbox-violation attribution and logging. */
   label?: string;
   maxOutputBytes?: number;
+  /** Which end of a stream longer than `maxOutputBytes` is kept; the head unless said. */
+  keepOutput?: OutputKept;
   signal?: AbortSignal;
 }
+
+/** Which end of a long stdout or stderr a run keeps: a long build log ends with its verdict. */
+export const OutputKept = { Head: "head", Tail: "tail" } as const;
+/** Which end of a long stream a run keeps. */
+export type OutputKept = (typeof OutputKept)[keyof typeof OutputKept];
 
 /**
  * The folders a confined run writes: a game's build or install writes its game and its own scratch,
@@ -349,31 +358,68 @@ interface LaunchPlan {
   stdinInFile?: boolean;
 }
 
-/** Collect a child's stdout and stderr as text, each clipped at `maxChars`. */
+/** One stream's kept text: its first or its last `maxChars` characters. */
+interface KeptStream {
+  add(text: string): void;
+  text(): string;
+}
+
+/** Keep the first `maxChars` characters of a stream; `onClip` hears that some were dropped. */
+function keptHead(maxChars: number, onClip: () => void): KeptStream {
+  let kept = "";
+  return {
+    add(text) {
+      if (kept.length + text.length > maxChars) onClip();
+      if (kept.length < maxChars) kept = (kept + text).slice(0, maxChars);
+    },
+    text: () => kept,
+  };
+}
+
+/**
+ * Keep the last `maxChars` characters of a stream. The text is trimmed only once it holds twice
+ * the cap, so a long log costs a copy per `maxChars` of output, not one per chunk.
+ */
+function keptTail(maxChars: number, onClip: () => void): KeptStream {
+  let kept = "";
+  return {
+    add(text) {
+      kept += text;
+      if (kept.length > maxChars) onClip();
+      if (kept.length > 2 * maxChars) kept = kept.slice(-maxChars);
+    },
+    text: () => kept.slice(-maxChars),
+  };
+}
+
+/** Collect a child's stdout and stderr as text, each clipped at `maxChars` from the end `keep` names. */
 function captureOutput(
   child: { stdout: Readable; stderr: Readable },
   maxChars: number,
+  keep: OutputKept,
 ): { stdout: string; stderr: string; truncated: boolean } {
-  const output = { stdout: "", stderr: "", truncated: false };
-  const clip = (buf: Buffer, current: string): string => {
-    if (current.length >= maxChars) {
-      output.truncated = true;
-      return current;
-    }
-    const next = current + buf.toString("utf8");
-    if (next.length > maxChars) {
-      output.truncated = true;
-      return next.slice(0, maxChars);
-    }
-    return next;
+  let truncated = false;
+  const onClip = () => {
+    truncated = true;
   };
-  child.stdout.on("data", (buf: Buffer) => {
-    output.stdout = clip(buf, output.stdout);
-  });
-  child.stderr.on("data", (buf: Buffer) => {
-    output.stderr = clip(buf, output.stderr);
-  });
-  return output;
+  const kept = keep === OutputKept.Tail ? keptTail : keptHead;
+  const stdout = kept(maxChars, onClip);
+  const stderr = kept(maxChars, onClip);
+  child.stdout.setEncoding("utf8");
+  child.stderr.setEncoding("utf8");
+  child.stdout.on("data", (text: string) => stdout.add(text));
+  child.stderr.on("data", (text: string) => stderr.add(text));
+  return {
+    get stdout() {
+      return stdout.text();
+    },
+    get stderr() {
+      return stderr.text();
+    },
+    get truncated() {
+      return truncated;
+    },
+  };
 }
 
 /**
@@ -712,7 +758,10 @@ export class ProcessSandbox {
     await session
       .join(this, { grants: this.#windowsGrants(backend), config: this.#windowsSessionConfig() })
       .catch(async (error: unknown) => {
-        throw await asWindowsSetupProblem(error, this.#seams.setupGaps ?? windowsSetupGaps);
+        throw (
+          windowsProxyPortsError(error) ??
+          (await asWindowsSetupProblem(error, this.#seams.setupGaps ?? windowsSetupGaps))
+        );
       });
     this.#windows = backend;
     // A folder or deny added while the session started (a start in the background) joins it now.
@@ -778,23 +827,60 @@ export class ProcessSandbox {
     env?: Record<string, string>;
     label?: string;
     policy?: Partial<SandboxPolicy>;
-  }): Promise<{ child: ChildProcess; sandboxed: boolean }> {
+    /**
+     * All of the process's input, sent once and then closed. Pass it here rather than writing to
+     * the child: on Windows srt-win does not pass stdin on, so only the run's stdin file carries it.
+     */
+    stdin?: string;
+    /**
+     * Input the caller keeps writing for the life of the process (the Play Protocol's requests):
+     * write it to the answer's `input`, never to `child.stdin`, which srt-win does not pass on.
+     */
+    liveInput?: boolean;
+  }): Promise<{ child: ChildProcess; sandboxed: boolean; input: Writable }> {
     // Held open until the process is gone, as `run` holds it for the length of a run.
     const close = await this.#openDomains(request.policy);
+    let live: LiveInput | null = null;
     try {
-      const plan = await this.#launchPlan({ ...request, longLived: true });
+      live = request.liveInput ? await this.#liveInput(request.command) : null;
+      const launch = live ? { ...request, ...this.#relayed(live, request.env) } : request;
+      const plan = await this.#launchPlan({ ...launch, longLived: true });
+      const relay = live;
       const done = () => {
         plan.release?.();
         close();
+        void relay?.close();
       };
       const child = this.#start(plan);
       child.once("close", done);
       child.once("error", done);
-      return { child, sandboxed: plan.sandboxed };
+      if (request.stdin !== undefined) {
+        // A process that exits before reading its input lands EPIPE here; its exit already says so.
+        child.stdin.on("error", () => {});
+        child.stdin.end(plan.stdinInFile ? undefined : request.stdin);
+      }
+      if (relay) void relay.connect(() => child.exitCode === null && child.signalCode === null);
+      return { child, sandboxed: plan.sandboxed, input: relay?.input ?? child.stdin };
     } catch (err) {
       close();
+      await live?.close();
       throw err;
     }
+  }
+
+  /** Windows, sandboxed: the relay a process's live input goes through. Null elsewhere: stdin carries it. */
+  async #liveInput(command: string): Promise<LiveInput | null> {
+    await this.ensureReady();
+    const backend = this.#windows;
+    if (!this.enabled || !backend) return null;
+    return openLiveInput({ command, shell: backend.bash, scratchDir: this.scratchDir });
+  }
+
+  /** The relay in place of the caller's command, by the studio's own Node, its variables beside the caller's. */
+  #relayed(live: LiveInput, env: Record<string, string> | undefined): { command: string; env: Record<string, string> } {
+    const node = shellQuote(mixedPath(longPath(process.execPath, this.#platform)));
+    const file = shellQuote(mixedPath(live.file));
+    return { command: `export ELECTRON_RUN_AS_NODE=1; exec ${node} ${file}`, env: { ...env, ...live.env } };
   }
 
   /**
@@ -1028,7 +1114,11 @@ export class ProcessSandbox {
 
     const child = this.#start(plan);
     return await new Promise<RunResult>((resolve, reject) => {
-      const output = captureOutput(child, request.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_CHARS);
+      const output = captureOutput(
+        child,
+        request.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_CHARS,
+        request.keepOutput ?? OutputKept.Head,
+      );
 
       let timedOut = false;
       const timer = setTimeout(() => {

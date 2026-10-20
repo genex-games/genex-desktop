@@ -11,9 +11,12 @@ export const WEB_AT_ROOT: readonly FactRef[] = [{ id: CoreFact.WebGame, path: ".
 /** The game an Unreal lead and its workers build when nothing else is known: an Unreal project at the folder's root. */
 export const UNREAL_AT_ROOT: readonly FactRef[] = [{ id: CoreFact.UnrealProject, path: "." }];
 
-/** The folder a brief names: the last two parts of the game's folder, else the run's project. */
+/**
+ * The folder a brief names: the last two parts of the game's folder, `/`-joined on every platform
+ * (`AI Games/rift`, never `C:\Users\ana\AI Games\rift`), else the run's project.
+ */
 export function folderLabelOf(dir: string | null | undefined, project: string | null | undefined): string {
-  return dir ? dir.split("/").slice(-2).join("/") : String(project ?? "");
+  return dir ? dir.split(/[\\/]/).filter(Boolean).slice(-2).join("/") : String(project ?? "");
 }
 
 /** What a run's identity is read from: its run record, its game folder and what that folder holds. */

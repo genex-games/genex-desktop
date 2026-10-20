@@ -1,7 +1,7 @@
 {
   "apiVersion": 3,
   "id": "unreal",
-  "version": "0.17.5",
+  "version": "0.17.7",
   "icon": "icon.svg",
   "name": "Unreal Engine",
   "publisher": "Genex",
@@ -279,7 +279,7 @@
     {
       "name": "plugin-package",
       "facts": ["unreal-plugin"],
-      "description": "Package the plugin for the Mac with Epic's BuildPlugin in the background, into unreal/Saved/Genex/Packages/<Plugin>/ with a note beside it. Answers {started} at once; read plugin-status. stop: true ends a running package.",
+      "description": "Package the plugin for this computer (the Mac, or Win64 on Windows) with Epic's BuildPlugin in the background, into unreal/Saved/Genex/Packages/<Plugin>/ with a note beside it. Answers {started} at once; read plugin-status. stop: true ends a running package.",
       "parameters": {
         "type": "object",
         "properties": {

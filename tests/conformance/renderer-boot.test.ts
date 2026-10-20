@@ -351,6 +351,7 @@ const FAILED: BootState = {
 describe("a window that opens while the studio starts", () => {
   it("says which step the core is on, and follows it", async () => {
     const { controller, waits } = startingBoot([
+      starting(StartStep.Agents),
       starting(StartStep.Games),
       starting(StartStep.Workspace),
       starting(StartStep.Studio),
@@ -361,8 +362,8 @@ describe("a window that opens while the studio starts", () => {
       if (bootView(state) === BootView.Starting) steps.push(state.step);
     });
     await controller.start();
-    assert.deepEqual(steps, [StartStep.Games, StartStep.Workspace, StartStep.Studio]);
-    assert.equal(waits.length, 3, "one wait before each new question");
+    assert.deepEqual(steps, [StartStep.Agents, StartStep.Games, StartStep.Workspace, StartStep.Studio]);
+    assert.equal(waits.length, 4, "one wait before each new question");
   });
 
   it("goes on to the setup screen a start ends on, and runs Set up there by itself", async () => {

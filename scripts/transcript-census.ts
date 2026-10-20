@@ -568,14 +568,22 @@ export function ownedByStudio(cwd: string | null | undefined, homes: Homes): boo
   if (homes.gameRoots.some((root) => isInside(root, cwd))) return true;
   if (!STUDIO_SCRATCH_PREFIXES.some((prefix) => path.basename(cwd).startsWith(prefix))) return false;
   // macOS hands `os.tmpdir()` back as /var/folders/... and reports the same folder to a child
-  // process as /private/var/folders/..., so the temp root is matched through both names.
+  // process as /private/var/folders/..., so the temp root is matched through both names. Windows
+  // often hands it back as an 8.3 short name (`RUNNER~1`) while the engine starts a session in the
+  // folder's real path, so the real path counts too.
   const parent = path.dirname(path.resolve(cwd));
   const tmp = path.resolve(homes.tmpDir);
-  return (
-    isInside(tmp, parent) ||
-    isInside(path.join("/private", tmp), parent) ||
-    isInside(tmp.replace(/^\/private/, ""), parent)
-  );
+  const names = [tmp, path.join("/private", tmp), tmp.replace(/^\/private/, ""), realTempPath(tmp)];
+  return names.some((name) => name !== null && isInside(name, parent));
+}
+
+/** The temp root's real path (long names, links resolved), or null when it cannot be read. */
+function realTempPath(tmp: string): string | null {
+  try {
+    return fs.realpathSync.native(tmp);
+  } catch {
+    return null;
+  }
 }
 
 export interface Look {

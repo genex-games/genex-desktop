@@ -17,7 +17,8 @@ import { vendorGenexMultiplayer } from "./vendor-genex-multiplayer.ts";
 /**
  * Build — assembles `dist/` for Electron.
  *
- *   dist/main/main.mjs        substrate + app shell (ESM, Electron 43 supports ESM main)
+ *   dist/main/main.mjs        Electron's entry: turns on V8's compile cache, imports app.mjs
+ *   dist/main/app.mjs         substrate + app shell (ESM, Electron 43 supports ESM main)
  *   dist/preload/preload.cjs  renderer bridge (sandboxed preloads must be CommonJS)
  *   dist/preload/play-mic.cjs Play game view's microphone (the app's mic in a published game's page)
  *   dist/renderer/*           React UI
@@ -98,10 +99,17 @@ async function nodeContexts() {
       outfile: path.join(dist, "resources/terminal/host.cjs"),
       format: "cjs",
     }),
+    // Electron's entry: turns on the compile cache, then imports app.mjs (src/main/boot.ts).
+    await esbuild.context({
+      ...shared,
+      entryPoints: [path.join(root, "src/main/boot.ts")],
+      outfile: path.join(dist, "main/main.mjs"),
+      format: "esm",
+    }),
     await esbuild.context({
       ...shared,
       entryPoints: [path.join(root, "src/main/index.ts")],
-      outfile: path.join(dist, "main/main.mjs"),
+      outfile: path.join(dist, "main/app.mjs"),
       format: "esm",
       // ESM output in a CJS-ish host: give bundled deps their expected globals.
       banner: {

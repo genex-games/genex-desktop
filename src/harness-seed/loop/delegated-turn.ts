@@ -74,6 +74,7 @@ import { compactedSummary, endedByCompaction } from "./compaction-log.ts";
 import { TurnStop, sayInTurn } from "./turn-record.ts";
 import { type ChatWorkersSeat, chatWorkersGrant, withChatWorkers } from "./workers/chat-workers.ts";
 import type { TurnOptions, TurnOutcome } from "./turn-loop.ts";
+import { folderLabelOf } from "./workers/identity.ts";
 import type { AnyRecord, CallResult, HarnessCtx, HarnessTool, ToolCtx, ToolOutcome } from "../types/harness.d.ts";
 import type {
   BuildObservation,
@@ -897,7 +898,7 @@ async function placeHandoff(ctx: HarnessCtx, options: DelegatedOptions, chat: Ch
       fresh: await isFreshGame(ctx, chat, descriptor),
       engineChoice: asksKind(options, chat, descriptor, offer.kinds),
       ...offer,
-      folderLabel: folderLabel(projectDir, chat.project),
+      folderLabel: folderLabelOf(projectDir, chat.project),
       extraReads,
       startedAt: Date.now(),
     };
@@ -923,7 +924,7 @@ async function placeHandoff(ctx: HarnessCtx, options: DelegatedOptions, chat: Ch
     // A game the studio just made has no kind yet: with an engine plugin on, the user picks first.
     engineChoice: offer.kinds.length > 0,
     ...offer,
-    folderLabel: folderLabel(created.dir, project),
+    folderLabel: folderLabelOf(created.dir, project),
     extraReads,
     startedAt: Date.now(),
   };
@@ -981,11 +982,6 @@ async function pluginOffer(ctx: HarnessCtx, project: string, descriptor: GamePro
   const madeHere = kinds.some((kind) => Array.isArray(kind.makes) && kind.makes.includes(CoreFact.UnrealProject));
   const pluginsOff = !madeHere && hasFact(factsOfGame(descriptor), CoreFact.UnrealProject);
   return { kinds, pluginsOff };
-}
-
-/** "folder AI Games/rift", never an absolute path — the last two segments say it all. */
-function folderLabel(projectDir: string | null | undefined, project: string): string {
-  return projectDir ? projectDir.split("/").slice(-2).join("/") : project;
 }
 
 /**

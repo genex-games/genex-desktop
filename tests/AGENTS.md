@@ -50,6 +50,8 @@ through the JS API imports `@typescript/typescript6`.
 - `fake-ollama.ts`, `scripted-claude.ts`, `scripted-codex.ts`: scripted engines, no network.
   `fake-anthropic.ts`: enough of Anthropic's Messages API for the real Claude Code CLI to run one
   scripted worker command (`ANTHROPIC_BASE_URL`, a dummy OAuth token, nothing billed).
+  `fake-openai-responses.ts`: the same for the real Codex CLI over OpenAI's Responses API (a custom
+  model provider, no sign-in).
 - `snapshot-fixtures.ts`: dirty, untracked and nested user repositories.
 - `unreal-lead-host.ts`: a fake host for the Unreal runner's lead (its scripted turns calling the
   run tools, the editor's answers, the clock), whose moments run on `unreal-moment-bus.ts`, a fake
@@ -170,6 +172,8 @@ Tests that read local projects or open the network are skipped unless opted in:
 `STUDIO_LOCAL_FIXTURES=1` for local projects, `STUDIO_NETWORK_TESTS=1` for real network and
 local Ollama probes, `STUDIO_GODOT_LIVE=1` for the Godot plugin against this Mac's own Godot
 (`godot-live.test.ts`), `STUDIO_CLAUDE_CLI_TESTS=1` for the real Claude Code CLI against
-`fake-anthropic.ts` (`claude-studio-shell-cli.test.ts`, `claude-tool-loading.test.ts`). Never make a default test depend on this machine. `STUDIO_RIG_UNSANDBOXED=1`
+`fake-anthropic.ts` (`claude-studio-shell-cli.test.ts`, `claude-tool-loading.test.ts`),
+`STUDIO_CODEX_CLI_TESTS=1` for the real Codex CLI against `fake-openai-responses.ts`
+(`codex-sandbox-cli.test.ts`). Never make a default test depend on this machine. `STUDIO_RIG_UNSANDBOXED=1`
 runs rigs without the process sandbox, for a container where it cannot start (no user
 namespaces); containment cases prove nothing there, and CI keeps the sandbox.

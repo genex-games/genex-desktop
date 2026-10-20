@@ -113,9 +113,10 @@ const REAL_DEADLINES: PlayDeadlines = {
   },
 };
 
-/** A child process's pipes and exit, for the client. */
-export function playStreamsOf(child: ChildProcess): PlayStreams {
-  const { stdout, stdin, stderr } = child;
+/** A child process's pipes and exit, for the client; `input` in place of its stdin when the sandbox gave one. */
+export function playStreamsOf(child: ChildProcess, input?: Writable): PlayStreams {
+  const { stdout, stderr } = child;
+  const stdin = input ?? child.stdin;
   if (!stdout || !stdin) throw new Error("a play process needs piped stdin and stdout");
   const exited = new Promise<PlayExit>((resolve) => {
     child.once("close", (code, signal) => resolve({ code, signal }));

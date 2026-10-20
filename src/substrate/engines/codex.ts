@@ -193,6 +193,8 @@ export interface CodexEngineOptions {
   findBinaryFn?: () => Promise<string | null>;
   /** Injected in tests: the plan's rate limits for the account in `home`, as Codex's app server answers. */
   readRateLimits?: (home: string) => Promise<unknown>;
+  /** The OS Codex runs on (default: this process's); a test picks one to see its flags. */
+  platform?: NodeJS.Platform;
 }
 
 /** One `codex exec` invocation, as an async stream of the CLI's own JSONL events. */
@@ -281,6 +283,10 @@ const UNAVAILABLE_PATTERN = /\b5\d\d\b|stream disconnected|connection (reset|clo
 const CodexWebSearch = {
   Live: "live",
   Disabled: "disabled",
+} as const;
+/** Codex's `windows.sandbox` setting, as the CLI spells it. */
+const CodexWindowsSandbox = {
+  Unelevated: "unelevated",
 } as const;
 /** The kind of one change in a `file_change` item that creates a file (the rest edit one). */
 const FILE_CHANGE_ADD = "add";
@@ -403,8 +409,10 @@ export class CodexEngine implements Engine {
    * engine's whole life.
    */
   #dynamicToolsRefusedAt: number | null = null;
+  readonly #platform: NodeJS.Platform;
 
   constructor(options: CodexEngineOptions) {
+    this.#platform = options.platform ?? process.platform;
     this.#dynamicTools = options.codexDynamicTools === true;
     this.#suppressedSkillsDir =
       options.hostSkills === HostSkills.Suppress
@@ -740,6 +748,7 @@ export class CodexEngine implements Engine {
     try {
       const argv = [
         ...JUDGE_EXEC_ARGS,
+        ...windowsSandboxArgs(this.#platform),
         ...(model ? ["-m", model] : []),
         ...effortArgs(request.effort),
         ...(await this.preferenceArgs(request.model, request.preferences)),
@@ -913,7 +922,9 @@ export class CodexEngine implements Engine {
     let scratch: string | null = null;
     let turn: CodexDynamicTurn | null = null;
     try {
-      if (startsElsewhere(request)) scratch = await mkdtemp(path.join(os.tmpdir(), "studio-playtest-"));
+      // Its real path: on Windows the temp folder is often an 8.3 short name (`RUNNER~1`), and
+      // Codex's Windows sandbox refuses a writable root it spells two ways ("split writable root sets").
+      if (startsElsewhere(request)) scratch = await realpath(await mkdtemp(path.join(os.tmpdir(), "studio-playtest-")));
       turn = await this.#openDynamicTurn(request, scratch ?? ctx.cwd, ctx);
       const bridge = turn ? null : await this.#openBridge(request, scratch ?? ctx.cwd);
       return { scratch, bridge, turn };
@@ -976,6 +987,7 @@ export class CodexEngine implements Engine {
     const { env, installation } = await this.#cli(signal, Boolean(this.#appServerFn));
     return [
       ...(chatMode(request) === PermissionMode.Bypass ? BYPASS_CONFIG_ARGS : sandboxArgs(runDir)),
+      ...windowsSandboxArgs(this.#platform),
       ...effortArgs(request.effort),
       ...(await this.preferenceArgs(request.model, request.preferences)),
       ...(await hostSkillArgs(this.#suppressedSkillsDir)),
@@ -1062,6 +1074,7 @@ export class CodexEngine implements Engine {
       ...CODEX_EXEC_FLAGS,
       ...(model ? ["-m", model] : []),
       ...sessionBox(request, runDir),
+      ...windowsSandboxArgs(this.#platform),
       ...effortArgs(request.effort),
       ...(await this.preferenceArgs(request.model, request.preferences)),
       ...imageArgs(imagePaths),
@@ -2153,6 +2166,18 @@ function sandboxArgs(runDir: string, roots: string[] = [runDir], network = false
     "-c",
     `sandbox_workspace_write.network_access=${network}`,
   ];
+}
+
+/**
+ * Codex's own sandbox on Windows, which is off unless config turns it on, and Genex runs Codex
+ * without the person's config (`--ignore-user-config`). Off, Codex has nothing to enforce a
+ * `workspace-write` or `read-only` box with, so under `approval_policy=never` it refuses every
+ * command it does not know to be safe ("blocked by policy"): no `node`, no `npm`, no studio
+ * bridge, and no build. `unelevated` is its restricted-token sandbox, which needs no
+ * administrator setup (`elevated` asks for one through UAC on first use, with nobody to answer).
+ */
+export function windowsSandboxArgs(platform: NodeJS.Platform): string[] {
+  return platform === "win32" ? ["-c", `windows.sandbox="${CodexWindowsSandbox.Unelevated}"`] : [];
 }
 
 /** `undefined`/"auto" = the model's own default. Anything above this CLI's ceiling is clamped. */

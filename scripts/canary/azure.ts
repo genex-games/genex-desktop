@@ -40,9 +40,9 @@ const AZURE_PROFILE_FILES = 60_000;
 const USER_NAME = "canary-user";
 /**
  * How old a sign-in may be before the next az call signs in again. GitHub's OIDC token lasts five
- * minutes and the Azure token az gets with it about an hour, after which az signs in again with the
- * expired OIDC token and fails; a call made on a sign-in this fresh therefore has most of an hour,
- * and each phase on the VM finishes well within it.
+ * minutes and the Azure token az gets with it about an hour, after which az renews it with the
+ * expired OIDC token and fails; a call made on a sign-in this fresh (with az's cached token dropped,
+ * `signInCommands`) therefore has most of an hour, and each phase on the VM finishes well within it.
  */
 const SIGN_IN_MAX_AGE_MS = 5 * MINUTE_MS;
 /** The audience Azure's federated credentials for GitHub expect. */
@@ -121,11 +121,17 @@ export const DEFAULT_LOCATIONS = [
   "uksouth",
 ];
 /**
- * What Azure answers when a region takes no new customers' resources, or has no capacity for a
- * size right now: either way another size or region may work.
+ * What Azure answers when a region takes no new customers' resources, has no capacity for a size
+ * right now, or has no quota left (the run's other machine may have taken the room both read as
+ * free): either way another size or region may work.
  */
 const TRY_ELSEWHERE =
-  /locationineligible|not accepting new customers|SkuNotAvailable|Capacity Restrictions|not available in location/i;
+  /locationineligible|not accepting new customers|SkuNotAvailable|Capacity Restrictions|not available in location|QuotaExceeded/i;
+
+/** Whether Azure's refusal `error` leaves another size or region worth trying. */
+export function triesElsewhere(error: string): boolean {
+  return TRY_ELSEWHERE.test(error);
+}
 const VM_SCRIPT = path.join(import.meta.dirname, "windows", "azure-vm.ps1");
 /** The Marketplace publisher of the Windows 11 and 10 images. */
 const CLIENT_PUBLISHER = "MicrosoftWindowsDesktop";
@@ -188,6 +194,31 @@ export function signInDue(signedInAt: number | null, now: number): boolean {
   return signedInAt === null || now - signedInAt >= SIGN_IN_MAX_AGE_MS;
 }
 
+/**
+ * The az calls that sign in with OIDC `token`: the cached account first, because az keeps an Azure
+ * token across sign-ins and renews it near its expiry with the latest OIDC token, by then minutes
+ * stale (AADSTS700024); then the sign-in, then the subscription.
+ */
+export function signInCommands(signIn: GitHubSignIn, token: string): string[][] {
+  return [
+    ["account", "clear"],
+    [
+      "login",
+      "--service-principal",
+      "-u",
+      signIn.clientId,
+      "-t",
+      signIn.tenantId,
+      "--federated-token",
+      token,
+      "--allow-no-subscriptions",
+      "-o",
+      "none",
+    ],
+    ["account", "set", "-s", signIn.subscriptionId],
+  ];
+}
+
 let signedInAt: number | null = null;
 
 /** In a GitHub job, sign az in again with a fresh OIDC token once the last sign-in is old. */
@@ -196,22 +227,10 @@ async function freshSignIn(): Promise<void> {
   if (!signIn || !signInDue(signedInAt, Date.now())) return;
   const token = await gitHubToken(signIn);
   console.log(`::add-mask::${token}`);
-  const login = await sh("az", [
-    "login",
-    "--service-principal",
-    "-u",
-    signIn.clientId,
-    "-t",
-    signIn.tenantId,
-    "--federated-token",
-    token,
-    "--allow-no-subscriptions",
-    "-o",
-    "none",
-  ]);
-  if (login.code !== 0) throw new Error(`az login failed:\n${login.stderr || login.stdout}`);
-  const account = await sh("az", ["account", "set", "-s", signIn.subscriptionId]);
-  if (account.code !== 0) throw new Error(`az account set failed:\n${account.stderr || account.stdout}`);
+  for (const args of signInCommands(signIn, token)) {
+    const ran = await sh("az", args);
+    if (ran.code !== 0) throw new Error(`az ${args.slice(0, 2).join(" ")} failed:\n${ran.stderr || ran.stdout}`);
+  }
   signedInAt = Date.now();
 }
 
@@ -407,7 +426,7 @@ async function createSomewhere(
         return { group, storage: await create(group, account, { ...options, size, location }, ownerPassword) };
       } catch (error) {
         await deleteGroup(group);
-        if (!TRY_ELSEWHERE.test(String(error))) throw error;
+        if (!triesElsewhere(String(error))) throw error;
         console.log(`${location} refused ${size}: ${azureReason(String(error))}`);
       }
     }

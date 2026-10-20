@@ -111,7 +111,7 @@ export function npmShimScript(text: string, shim: string): string | null {
 }
 
 /** `cmd.exe` by its full path, so a PATH entry or working folder can never stand in for it. */
-function commandInterpreter(env: NodeJS.ProcessEnv): string {
+export function commandInterpreter(env: NodeJS.ProcessEnv): string {
   const systemRoot = envValue(env, "SystemRoot") || "C:\\Windows";
   return path.win32.join(systemRoot, "System32", "cmd.exe");
 }
@@ -161,4 +161,43 @@ export function spawnCommand(file: string, args: readonly string[], options: Spa
     windowsHide: true,
     windowsVerbatimArguments: launch.windowsVerbatimArguments,
   });
+}
+
+/**
+ * What a whole-quoted script line can't carry: a quote ends the quoting, `%` expands inside quotes,
+ * `!` expands for a script that turns on delayed expansion, and a control character ends the line.
+ */
+// biome-ignore lint/suspicious/noControlCharactersInRegex: control characters are what this refuses
+const QUOTED_LINE_UNSAFE = /["%!\x00-\x1f]/;
+/** A `-Name=value` argument, as Epic's AutomationTool and UnrealBuildTool take one. */
+const NAMED_ARGUMENT = /^(-[A-Za-z][A-Za-z0-9_]*=)(.+)$/;
+/** A word that reads the same through any number of cmd.exe parses and goes bare (`=` stays in `%*`). */
+const QUOTED_LINE_PLAIN = /^[A-Za-z0-9_\-.+@:\\/=]+$/;
+
+/** Why a whole-quoted script line was refused. */
+const QUOTED_LINE_MESSAGE = {
+  Unsafe: "Refusing a command-script line cmd.exe can't carry: a quote, %, ! or a control character",
+  TrailingBackslash: "Refusing a quoted command-script argument that ends in a backslash",
+} as const;
+
+/** One argument of a whole-quoted line: a plain word bare, `-Name="value"`, or the whole of it quoted. */
+function quotedLineArgument(arg: string): string {
+  if (QUOTED_LINE_UNSAFE.test(arg)) throw new Error(QUOTED_LINE_MESSAGE.Unsafe);
+  if (QUOTED_LINE_PLAIN.test(arg)) return arg;
+  // A backslash before the closing quote would escape it for the program behind the script.
+  if (arg.endsWith("\\")) throw new Error(QUOTED_LINE_MESSAGE.TrailingBackslash);
+  const named = NAMED_ARGUMENT.exec(arg);
+  return named ? `${named[1]}"${named[2]}"` : `"${arg}"`;
+}
+
+/**
+ * A command script's line with every path whole inside double quotes, for a script that hands its
+ * arguments on through `%*` (Epic's RunUAT.bat): inside quotes `&`, `|`, `<`, `>`, `^`, `(`, `)`
+ * and spaces stay literal on every parse, and no quote is ever added inside or escaped, so the
+ * quoting reads the same the second time. What quotes can't hold is refused, never passed: a quote,
+ * `%`, `!` or a control character anywhere, and a backslash ending a quoted argument.
+ */
+export function quotedScriptLine(file: string, args: readonly string[]): string {
+  if (QUOTED_LINE_UNSAFE.test(file)) throw new Error(QUOTED_LINE_MESSAGE.Unsafe);
+  return [`"${file}"`, ...args.map(quotedLineArgument)].join(" ");
 }

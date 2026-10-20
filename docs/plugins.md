@@ -691,7 +691,8 @@ testing <Part>: <signal> in <frame>", crash: {signal, frames}}` (the top eight f
 path or address; the frame named is the game module's first). The runner then calls `reopen-editor`
 (`editor-reopen.ts`): `{answering: true}` when Unreal answers, else `{started: true}` and a job that
 ends this project's leftover editor and crash reporter only (normal quit when it is the only editor,
-then `SIGTERM`, then `SIGKILL`; processes are listed on a Mac only), rebuilds the game's module with
+then `SIGTERM`, then `SIGKILL`; on Windows only the editors are listed, by WMI with their command
+lines, and each is ended with its process tree; the crash reporter is looked for on a Mac only), rebuilds the game's module with
 UnrealBuildTool (a hot reload leaves `UnrealEditor.modules` on a numbered library; a failed build
 fails the job with its errors) and opens the project, waiting up to 5 minutes. `editor-state`
 answers `{answering, running, reopening: {state: idle|reopening|done|failed, error?, seconds?},
@@ -1782,6 +1783,26 @@ Available services are capability checked and scoped to the calling plugin:
   on this computer: a desktop with its driver, and apps its `engine.apps` declares here (computer
   control that is off still counts, since its card offers to turn it on). It asks nothing and
   needs no bound game; offer Do it for me only when it answers true, and the click path otherwise.
+- `sandbox.run {program, args, reads, writes, scratchEnv?, env?, timeoutMs}` / `sandbox.result {id}` /
+  `sandbox.stop {id}` (capability `game-engine`, `substrate/plugins/sandbox-jobs.ts`): a long job of
+  the plugin's (Unreal's package on Windows) run in the studio's ProcessSandbox. `sandbox.run` checks
+  the request by real path (the program inside a folder it `reads`, no drive root or folder holding
+  the home folder read, each folder it `writes` a real folder strictly inside the bound game and
+  outside its hidden folders, no network share or device path, at most two running jobs per plugin,
+  a deadline from 1 s to `PLUGIN_SANDBOX_MAX_TIMEOUT_MS`, 60 minutes), starts it and answers `{id}`
+  at once; the host owns the job past the call, as `runtime.install` owns a download, and ends it
+  with its process tree at its deadline, on `sandbox.stop`, and when the plugin's backend stops, the
+  plugin is turned off or removed, or the studio stops. `sandbox.result` answers `running`, `exited`
+  (with `exitCode` and each output stream's last 4 MiB, where a log's verdict is), `timed-out`,
+  `stopped` or `failed` (an error code), or null for a job the host doesn't know (another plugin's
+  included). The writes go to ProcessSandbox as the run's confinement and `scratchEnv` names
+  variables set to folders in the job's own scratch. A `.bat` or `.cmd` program runs as `cmd.exe /d /v:off /s /c %GENEX_COMMAND_LINE%`:
+  Git Bash would quote a prepared line again, so the host builds the line (`quotedScriptLine`: the
+  file and every non-plain argument whole in double quotes, `-Name="value"`) and cmd.exe expands it;
+  a quote, `%`, `!`, a control character or a backslash ending a quoted argument is refused. On
+  Windows, srt-win grants writes for its whole session and refuses a per-command read grant, so the
+  confinement there is the request rather than a fence, and the engine is read with the sandbox
+  user's own rights ([Windows sandbox](windows-sandbox.md#residual-risks)).
 - `credentials.read/write/clear`: plugin-scoped protected storage. Reserved account actions
   `unlock`, `connect`, `disconnect` authorize these operations; agents cannot invoke actions.
   Cache unlocked credentials only in the backend session. Background status must never unlock.
@@ -2351,7 +2372,8 @@ raised, not returned).
 `unreal__plugin-build` needs the editor lock and asks first: the call saves the person's work through
 the Genex editor helper, quits Unreal and waits, then the host's editor target is built as the
 plugin's background job, which opens Unreal again after a good build and leaves it closed after a
-failed one. `unreal__plugin-test {filter?, stop?}` runs `UnrealEditor-Cmd` headless
+failed one. `unreal__plugin-test {filter?, stop?}` runs `UnrealEditor-Cmd` headless (the engine's
+`Binaries/Mac/UnrealEditor-Cmd`, or `Binaries\Win64\UnrealEditor-Cmd.exe` on Windows)
 (`automation-tests.ts`: `Automation RunTests <filter>`, the plugin's name by default, no shell, a
 small environment, its own process group, 30 minutes) and keeps Epic's report and a `summary.md` in
 `unreal/Saved/Genex/Tests/<Plugin>/`. Like `open-editor`, it runs outside ProcessSandbox and
@@ -2359,11 +2381,17 @@ UnrealBuildTool's Seatbelt profile: it loads the same host project and plugin bi
 person's own editor loads after every `plugin-build` (so the plugin's code gains no access it lacks
 there), and the editor needs what that profile denies (its per-user engine folders, the derived data
 cache, its shader workers). Its last lines and failure messages reach an agent with the project's
-and engine's folders taken out and any other absolute path cut to its base name (`ubt.ts`
-`pathScrubber`). `unreal__plugin-package {stop?}` runs `RunUAT.sh BuildPlugin`
+and engine's folders taken out and any other absolute path cut to its base name, Windows paths
+(`C:\…`, `C:/…`, `\\server\…`) included and compared without case (`ubt.ts` `pathScrubber`). `unreal__plugin-package {stop?}` runs `RunUAT.sh BuildPlugin`
 (`uat.ts`) in UnrealBuildTool's sandbox, which may also write the package folder (`extraWrites`), with
-UAT's logs in the sandbox's scratch; the package goes to `unreal/Saved/Genex/Packages/<Plugin>/` and a
-note beside it (`<Plugin>.md`: path, version, files, platforms, or the errors; a new run removes the
+UAT's logs in the sandbox's scratch. On Windows it needs no Xcode: it hands `RunUAT.bat BuildPlugin
+-Plugin=… -Package=… -TargetPlatforms=Win64 -NoP4` to Genex's own process sandbox as a host job
+(`sandbox.run`, reading the engine and the project, writing the package folder, UAT's logs in the
+job's scratch through `uebp_LogFolder`, within 45 minutes); the record stays running until a later
+call of the plugin's tools sees the host's job ended, and that call writes the note (a job the host
+no longer knows reads as failed). A game whose path holds a quote, `%` or `!`, or lies on a network
+share, is refused before the package folder is made or emptied. Either way the package goes to `unreal/Saved/Genex/Packages/<Plugin>/` and a
+note beside it (`<Plugin>.md`: path, version, files, platforms (`Mac` or `Win64`), or the errors; a new run removes the
 last one first; the note is written only in the packages folder as it is when the job ends, never
 through a link swapped in meanwhile, and the packaged descriptor is read only as a plain file within
 its cap). One job runs at a time per project, reserved before anything is touched, and each job is
@@ -2371,7 +2399,8 @@ its plugin's own (a call naming another plugin never reads, answers for or stops
 reads as Genex's own restart from before Unreal is quit and is refused while Genex reopens Unreal or
 adds its C++ module; a call stopped before its job starts changes nothing (a build stopped once
 Unreal was quit opens it again); and the backend stopping (Genex quits, the plugin is turned off)
-ends every running job's process group. A headless editor that exits badly before Automation wrote
+ends every running job's process group (on Windows its tree, by `taskkill /T /F`: Genex closes the
+backend's channel there instead of a SIGTERM, which would end the backend before it could). A headless editor that exits badly before Automation wrote
 its report is a failed run, its summary naming the exit code, the counts so far and its last lines.
 `unreal__plugin-status` answers each job's state and results and `proof`: the summary, the note and
 `unreal/Saved/Genex/Shots/<Plugin>-window.jpg` (kept by `app_look`'s `save`) that exist, the summary
@@ -2595,7 +2624,9 @@ agent-supplied C# remains subject to the connector's existing gate.
 Whether an editor has a project open is read from the computer's processes (`processes.ts`: a
 Unity editor whose command line names the project with `-projectPath`, in either spelling), and
 from the Pipeline descriptor's process only while the list shows it as a Unity editor that names
-this project or none (Windows' task list, `tasklist`, names Unity.exe without a command line).
+this project or none. On Windows the editors are listed by WMI with their command lines
+(`substrate/windows-processes.ts`; paths compared case-blind, either separator), else by the task
+list, `tasklist`, which names Unity.exe without a command line; an editor is ended with its tree.
 A stale descriptor whose id another app got blocks no Open, and that app is never signalled.
 Unity's lock file (`Temp/UnityLockfile`) is no sign: a killed editor leaves it and its descriptor
 behind. Installed

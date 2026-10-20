@@ -15,9 +15,12 @@ import {
   linuxInstallCommands,
 } from "../../src/shared/boot.ts";
 import {
+  SandboxLaunchCode,
+  SandboxLaunchError,
   SandboxUnavailableError,
   missingLinuxTools,
   sandboxProblem,
+  windowsProxyPortsError,
   windowsSetupProblem,
 } from "../../src/substrate/sandbox-unavailable.ts";
 import { ProcessSandbox, type SandboxRuntime } from "../../src/substrate/spawn.ts";
@@ -106,6 +109,31 @@ describe("sandbox problem mapping", () => {
       null,
     ])
       assert.equal(windowsSetupProblem(error), null, String(error));
+  });
+});
+
+describe("Windows proxy ports", () => {
+  it("Windows refusing every proxy port says what to do, by the error's code and call", () => {
+    const refused = (code: string, syscall = "listen") =>
+      Object.assign(new Error(`listen ${code}: permission denied 127.0.0.1:60089`), { code, syscall, port: 60089 });
+    for (const code of ["EACCES", "EADDRINUSE"]) {
+      const error = refused(code);
+      const launch = windowsProxyPortsError(error);
+      assert.ok(launch instanceof SandboxLaunchError, code);
+      assert.equal(launch.code, SandboxLaunchCode.ProxyPortsRefused);
+      assert.equal(launch.cause, error);
+      assert.match(launch.message, /60080-60089/);
+      assert.match(launch.message, /net start winnat/);
+    }
+    for (const error of [
+      refused("EACCES", "connect"),
+      refused("EINVAL"),
+      Object.assign(new Error("listen EACCES"), { code: "acl_grant_failed" }),
+      new Error("listen EACCES: permission denied 127.0.0.1:60080"),
+      "EACCES",
+      null,
+    ])
+      assert.equal(windowsProxyPortsError(error), null, String(error));
   });
 });
 

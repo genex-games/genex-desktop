@@ -581,6 +581,28 @@ describe("end-editor (the live builder's cold restore)", () => {
     );
   });
 
+  it("ends this project's Windows editor, found by its UnrealEditor.exe and the project its command line names", async () => {
+    const exec = "C:\\Program Files\\Epic Games\\UE_5.8\\Engine\\Binaries\\Win64\\UnrealEditor.exe";
+    const w = await reopenWorld({
+      platform: "win32",
+      rows: (p) => [
+        { pid: 8000, exec, args: `${exec} ${p.project} -log` },
+        { pid: 8001, exec, args: `${exec} C:\\Users\\ana\\Documents\\Unreal Projects\\Other\\Other.uproject` },
+      ],
+    });
+    w.rows.splice(
+      w.rows.findIndex((row) => row.pid === 7900),
+      1,
+    );
+    assert.deepEqual(await w.endEditor(), { ended: 1 });
+    assert.deepEqual(w.signals, [[8000, "SIGTERM"]]);
+    assert.deepEqual(
+      w.rows.map((row) => row.pid),
+      [8001],
+      "another project's editor runs on",
+    );
+  });
+
   it("throws when this project's processes outlive even a kill", async () => {
     const w = await reopenWorld({ stubborn: { 7900: { SIGTERM: true, SIGKILL: true } } });
     await assert.rejects(w.endEditor(), /didn't end/);

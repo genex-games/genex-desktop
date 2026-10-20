@@ -12,6 +12,7 @@
  */
 import type { ChildProcess } from "node:child_process";
 import path from "node:path";
+import type { Writable } from "node:stream";
 import { setTimeout as sleep } from "node:timers/promises";
 import type { ScreenAct } from "../../shared/agent-screen.ts";
 import {
@@ -477,7 +478,7 @@ export interface GameBridgeLaunchOptions {
   /** How long a game is given to quit on its own before it is killed. */
   stopGraceMs?: number;
   /** Starts the game some other way than `command` in the sandbox (an engine a plugin runs). */
-  spawn?: () => Promise<{ child: ChildProcess }>;
+  spawn?: () => Promise<{ child: ChildProcess; input?: Writable }>;
 }
 
 /** A process to stop, the client that can ask it to quit, and how long it is given. */
@@ -507,14 +508,15 @@ async function stopGame({ child, client, exited, graceMs }: StopPlan): Promise<v
  * target. Throws a {@link PlayProtocolError} (the process stopped first) when it never becomes one.
  */
 export async function launchGameBridge(options: GameBridgeLaunchOptions): Promise<GameBridgeLaunch> {
-  const { child } = options.spawn
+  const { child, input } = options.spawn
     ? await options.spawn()
     : await options.sandbox.spawnLongLived({
         command: options.command,
         cwd: options.cwd,
         label: options.label ?? `play:${path.basename(options.cwd)}`,
+        liveInput: true,
       });
-  const streams = playStreamsOf(child);
+  const streams = playStreamsOf(child, input);
   const graceMs = options.stopGraceMs ?? QUIT_GRACE_MS;
   let client: PlayClient | null = null;
   try {

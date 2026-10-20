@@ -6,6 +6,7 @@
 import type { JSX } from "react";
 import { useState } from "react";
 import type { FolderInspection, GameLocation } from "../../shared/game-project.ts";
+import { pathLeaf } from "../../shared/path-label.ts";
 import { inspectPickedFolder } from "../open-folder.ts";
 import {
   DropdownMenu,
@@ -31,9 +32,6 @@ const MESSAGE = {
 
 /** The menu's two places: the games folder, or the folder the user chose. */
 const Place = { Games: "games", Chosen: "chosen" } as const;
-
-/** The last part of a folder's label: `~/AI Games` → `AI Games`. */
-const folderName = (pathLabel: string): string => pathLabel.split("/").filter(Boolean).at(-1) ?? pathLabel;
 
 /** One row's two lines: what it is, and a path (mono) or a few words saying more. */
 function FolderLines({ title, path, hint }: { title: string; path?: string; hint?: string }): JSX.Element {
@@ -65,7 +63,7 @@ export function HomeFolderChip({
   onProblem: (words: string) => void;
 }): JSX.Element {
   const [busy, setBusy] = useState(false);
-  const label = folderName(location?.pathLabel ?? rootLabel);
+  const label = pathLeaf(location?.pathLabel ?? rootLabel);
   const ask = async (work: () => Promise<void>) => {
     if (busy) return;
     setBusy(true);
@@ -109,7 +107,7 @@ export function HomeFolderChip({
           <DropdownMenuRadioItem value={Place.Games} onSelect={() => onLocation(null)}>
             <span className="flex min-w-0 items-center gap-2.5">
               <Icon name="folder" size={16} />
-              <FolderLines title={folderName(rootLabel)} path={rootLabel} />
+              <FolderLines title={pathLeaf(rootLabel)} path={rootLabel} />
             </span>
           </DropdownMenuRadioItem>
           {/* Picking this row asks for a folder every time, even when one is chosen already. */}
@@ -117,7 +115,7 @@ export function HomeFolderChip({
             <span className="flex min-w-0 items-center gap-2.5">
               <Icon name="folder-plus" size={16} />
               <FolderLines
-                title={location ? folderName(location.pathLabel) : MESSAGE.another}
+                title={location ? pathLeaf(location.pathLabel) : MESSAGE.another}
                 path={location?.pathLabel}
               />
             </span>

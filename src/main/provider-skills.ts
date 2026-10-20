@@ -1,10 +1,11 @@
 /** Discovery only: never sends a model prompt, executes a skill, or imports user tools. */
-import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
 import { readFile, readdir, realpath, stat } from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
+import { spawnCommand } from "../substrate/command-launch.ts";
 import { resolveCodingCli } from "../substrate/engines/external-cli.ts";
+import { stopChild } from "../substrate/process-tree.ts";
 import { isBelow, isInside, toPosixRelative } from "../substrate/paths.ts";
 import { codexSubscriptionEnv } from "../substrate/engines/codex-cli.ts";
 import {
@@ -83,11 +84,18 @@ async function codexCatalog(cwd: string, home: string | null): Promise<unknown> 
   const executable = cli.status.path;
   if (cli.status.state !== CodingCliState.Ready || !executable) throw new Error(MESSAGE.codexUnavailable);
   return new Promise((resolve, reject) => {
-    const child = spawn(executable, ["app-server"], {
+    // npm installs Codex as `codex.cmd` on Windows, which only `spawnCommand` can start.
+    const child = spawnCommand(executable, ["app-server"], {
       cwd,
       env: codexSubscriptionEnv({ ...cli.env, ...(home ? { CODEX_HOME: home } : {}) }),
       stdio: ["pipe", "pipe", "ignore"],
     });
+    const { stdin, stdout } = child;
+    if (!stdin || !stdout) {
+      void stopChild(child);
+      reject(new Error(MESSAGE.codexNotStarted));
+      return;
+    }
     let bytes = 0;
     let done = false;
     const finish = (error?: Error, value?: unknown) => {
@@ -95,20 +103,20 @@ async function codexCatalog(cwd: string, home: string | null): Promise<unknown> 
       done = true;
       clearTimeout(timer);
       lines.close();
-      child.kill();
+      void stopChild(child, { signal: "SIGTERM" });
       if (error) reject(error);
       else resolve(value);
     };
     const timer = setTimeout(() => {
-      child.kill("SIGKILL");
+      void stopChild(child);
       finish(new Error(MESSAGE.codexTimedOut));
     }, CODEX_DISCOVERY_TIMEOUT_MS);
-    const lines = createInterface({ input: child.stdout });
-    const send = (data: unknown) => child.stdin.write(`${JSON.stringify(data)}\n`);
+    const lines = createInterface({ input: stdout });
+    const send = (data: unknown) => stdin.write(`${JSON.stringify(data)}\n`);
     child.on("error", () => finish(new Error(MESSAGE.codexNotStarted)));
     child.on("exit", () => finish(new Error(MESSAGE.codexExited)));
-    child.stdin.on("error", () => finish(new Error(MESSAGE.codexPipeClosed)));
-    child.stdout.on("data", (chunk) => {
+    stdin.on("error", () => finish(new Error(MESSAGE.codexPipeClosed)));
+    stdout.on("data", (chunk) => {
       bytes += chunk.length;
       if (bytes > CODEX_INVENTORY_MAX_BYTES) finish(new Error(MESSAGE.codexOversized));
     });

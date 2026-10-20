@@ -27,6 +27,8 @@ import os from "node:os";
 import path from "node:path";
 import { listDirs } from "../fsx.ts";
 import { childEnv } from "../child-env.ts";
+import { envValue } from "../toolchain.ts";
+import { findGitBash } from "../windows-sandbox.ts";
 import { credentialHomes } from "../credential-homes.ts";
 import type { Usage } from "../types.ts";
 import type { ModelTokenUsage } from "../../shared/event-log.ts";
@@ -113,6 +115,7 @@ import { CodingCliState } from "../../shared/coding-cli.ts";
 import { HOUR_MS, MINUTE_MS, SECOND_MS } from "../../shared/duration.ts";
 import { limitResetMs } from "./limit-reset.ts";
 import { EngineId } from "../../shared/providers.ts";
+import { StudioPlatform } from "../../shared/boot.ts";
 import { EngineKind, EngineStatusCode, LoginSource } from "../../shared/engine-descriptor.ts";
 import { ChatActivityPhase } from "../../shared/chat-activity.ts";
 import { ContextSource } from "../../shared/context.ts";
@@ -145,6 +148,8 @@ export interface ClaudeCodeEngineOptions {
   queryFn?: typeof import("@anthropic-ai/claude-agent-sdk").query;
   /** The OS the CLI runs on (default: this process's); a test picks one to see its options. */
   platform?: NodeJS.Platform;
+  /** Finds the Git Bash handed to the CLI on Windows (default: `findGitBash`); injected in tests. */
+  gitBash?: () => Promise<string | null>;
   /**
    * Where a session whose commands Genex's sandbox runs (`studioShell`) keeps each sandbox's
    * scratch; the system temp folder when absent.
@@ -198,6 +203,8 @@ const TELEMETRY_INTERVAL_MS = 30 * SECOND_MS;
  * it. 0 would mean wait forever: a dev server left running would hold the build to its deadline.
  */
 const BG_WAIT_CEILING_MS = String(MINUTE_MS);
+/** The variable that tells Claude Code on Windows which Git Bash to run its Bash tool in. */
+const GIT_BASH_ENV = "CLAUDE_CODE_GIT_BASH_PATH";
 /** App output policy, not a provider-advertised model limit. */
 const STANDARD_MAX_TOKENS = 64_000;
 /** A studio-shell command's default and longest run, as Claude Code's own Bash allows. */
@@ -457,6 +464,10 @@ export class ClaudeCodeEngine implements Engine {
   readonly #platform: NodeJS.Platform;
   /** What a studio-shell session's command sandbox is made with. */
   readonly #shells: Pick<ClaudeCodeEngineOptions, "scratchRoot" | "toolPath" | "commandSandbox">;
+  /** Finds Git Bash for a Windows CLI; null off Windows, where the CLI's shell is the system's. */
+  readonly #findGitBash: (() => Promise<string | null>) | null;
+  /** The Git Bash found, looked up once at the first session. */
+  #gitBash: Promise<string | null> | null = null;
   #telemetryAt = new WeakMap<object, number>();
   #telemetryEpoch = new WeakMap<object, number>();
   #catalogEpoch = new WeakMap<object, number>();
@@ -564,6 +575,8 @@ export class ClaudeCodeEngine implements Engine {
       toolPath: options.toolPath,
       commandSandbox: options.commandSandbox,
     };
+    const windows = this.#platform === StudioPlatform.Windows;
+    this.#findGitBash = windows ? (options.gitBash ?? (() => findGitBash())) : null;
     this.#costs = new SessionCostLedger(options.sessionCosts);
     this.#authStatusFn = options.authStatusFn;
     this.judgeCwd = options.judgeCwd ?? JUDGE_CWD;
@@ -1340,7 +1353,11 @@ export class ClaudeCodeEngine implements Engine {
       // the finished build open until the deadline — a minute after the main thread goes
       // idle, background shells get 5s of grace and the run ends. (0 means wait forever,
       // never that.)
-      env: this.#sessionEnv(cliInstallation.env, login, { CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS: BG_WAIT_CEILING_MS }),
+      // On Windows the CLI is handed Genex's Git Bash (`#gitBashEnv`).
+      env: this.#sessionEnv(cliInstallation.env, login, {
+        ...(await this.#gitBashEnv(cliInstallation.env)),
+        CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS: BG_WAIT_CEILING_MS,
+      }),
       stderr: (data: string) => request.onEvent?.({ type: DelegateEventType.Stderr, payload: data }),
       abortController: controller,
     };
@@ -1410,6 +1427,21 @@ export class ClaudeCodeEngine implements Engine {
         showThinkingSummaries: true,
       },
     };
+  }
+
+  /**
+   * The Git Bash a Windows session's CLI runs its commands in: the one Genex's own sandbox uses
+   * (`findGitBash`, Genex's bundled copy on a PC without Git). Claude Code looks only in Program
+   * Files and on PATH, and without one it turns its Bash tool off for a PowerShell tool, which the
+   * never-touch screen and the person's saved Bash rules do not read. A path the person set
+   * themselves is kept; none off Windows or when no Git Bash is found.
+   */
+  async #gitBashEnv(installationEnv: NodeJS.ProcessEnv): Promise<Record<string, string>> {
+    if (!this.#findGitBash) return {};
+    if (envValue(installationEnv, GIT_BASH_ENV) || envValue(process.env, GIT_BASH_ENV)) return {};
+    this.#gitBash ??= this.#findGitBash().catch(() => null);
+    const bash = await this.#gitBash;
+    return bash ? { [GIT_BASH_ENV]: bash } : {};
   }
 
   /** The child environment: the subscription's, with Studio's config home when Studio owns the login. */

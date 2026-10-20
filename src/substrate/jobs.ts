@@ -26,6 +26,7 @@ import {
   type JobClock,
   type JobExit,
   type JobKill,
+  type JobEndTree,
   type JobProbe,
   jobEnd,
   openJobLog,
@@ -52,7 +53,7 @@ import {
 import type { SandboxPolicy } from "./spawn.ts";
 import { isWindows } from "./toolchain.ts";
 
-export type { JobClock, JobKill, JobProbe, JobTail };
+export type { JobClock, JobEndTree, JobKill, JobProbe, JobTail };
 
 /** How long a job may run when its starter names no limit. */
 export const JOB_DEFAULT_HOURS = 2;
@@ -80,6 +81,8 @@ export const JOB_COMMAND_MAX_CHARS = 4_000;
 export const JOB_STOP_GRACE_MS = 3 * SECOND_MS;
 /** How long a job's output may stay open after its process exited (something it left holds it). */
 const JOB_DRAIN_MS = 2 * SECOND_MS;
+/** How many times a left job's start time is read before it is left running unread. */
+const PROBE_ATTEMPTS = 3;
 
 /** Why a job did not start (`JobRefusal.code`). Never rename a value: the job tools answer by it. */
 export const JobRefusalCode = {
@@ -132,6 +135,10 @@ export interface JobServiceOptions {
   probe?: JobProbe;
   clock?: JobClock;
   kill?: JobKill;
+  /** Windows: ends a job's tree (default: runs `taskkill`). */
+  endTree?: JobEndTree;
+  /** Hears what became of a job an earlier app left running, for the app's log. */
+  onLog?: (line: string) => void;
   /** Hears each start once its record is on disk. */
   onStarted?: (record: JobRecord) => void | Promise<void>;
   /** Hears each end once its record is on disk, and on a later start each end not yet logged. */
@@ -193,6 +200,8 @@ export class JobService {
   readonly #probe: JobProbe;
   readonly #clock: JobClock;
   readonly #kill: JobKill | undefined;
+  readonly #endTree: JobEndTree | undefined;
+  readonly #onLog: JobServiceOptions["onLog"];
   readonly #onStarted: JobServiceOptions["onStarted"];
   readonly #onEnded: JobServiceOptions["onEnded"];
   readonly #platform: NodeJS.Platform;
@@ -216,6 +225,8 @@ export class JobService {
     this.#probe = options.probe ?? psProbe(this.#platform);
     this.#clock = options.clock ?? SYSTEM_CLOCK;
     this.#kill = options.kill;
+    this.#endTree = options.endTree;
+    this.#onLog = options.onLog;
     this.#onStarted = options.onStarted;
     this.#onEnded = options.onEnded;
     this.#logMaxBytes = options.logMaxBytes ?? JOB_LOG_MAX_BYTES;
@@ -429,8 +440,7 @@ export class JobService {
 
   /** Write the record, arm the time limit, then tell `onStarted`: all before the job's end is handled. */
   async #announce(record: JobRecord, arm: () => void): Promise<JobRecord> {
-    if (record.pid && !isWindows(this.#platform))
-      record.procStart = (await this.#probe.startTime(record.pid).catch(() => null)) ?? undefined;
+    if (record.pid) record.procStart = (await this.#readStart(record.pid)) ?? undefined;
     await this.#locked(record.owner.project, () => writeJobRecord(this.#root, record));
     arm();
     const started = copy(record);
@@ -451,7 +461,7 @@ export class JobService {
   async #signal(live: LiveJob, signal: NodeJS.Signals): Promise<void> {
     if (!isWindows(this.#platform)) return signalGroup(live.record.pid, signal, this.#kill);
     if (live.child.exitCode !== null || live.child.signalCode !== null) return;
-    await signalJob(live.record.pid, signal, { kill: this.#kill, platform: this.#platform });
+    await signalJob(live.record.pid, signal, { kill: this.#kill, endTree: this.#endTree, platform: this.#platform });
   }
 
   async #finish(live: LiveJob, end: JobExit, log: WriteStream): Promise<JobRecord> {
@@ -525,13 +535,12 @@ export class JobService {
     return live.ended;
   }
 
-  /** Close a record an earlier app left running; kill its group only when it is the same process. */
+  /**
+   * Close a record an earlier app left running; kill its group (Windows: its tree) only when it is
+   * the same process, so a reused id is never hit.
+   */
   async #interrupt(record: JobRecord): Promise<JobRecord> {
-    if (record.pid && record.procStart && !isWindows(this.#platform)) {
-      const now = await this.#probe.startTime(record.pid).catch(() => null);
-      if (now === record.procStart)
-        await signalJob(record.pid, "SIGKILL", { kill: this.#kill, platform: this.#platform });
-    }
+    if (record.pid && record.procStart) await this.#endLeft(record, record.pid, record.procStart);
     const closed: JobRecord = {
       ...record,
       state: JobState.Interrupted,
@@ -539,6 +548,28 @@ export class JobService {
     };
     await this.#saveEnd(closed);
     return copy(closed);
+  }
+
+  /** End a left job's group or tree when its process still has the start time recorded, and log what happened. */
+  async #endLeft(record: JobRecord, pid: number, procStart: string): Promise<void> {
+    const job = `left job ${record.id} (pid ${pid})`;
+    const now = await this.#readStart(pid);
+    if (now === undefined) return this.#onLog?.(`[jobs] ${job}: its start time could not be read; left running`);
+    if (now !== procStart) return this.#onLog?.(`[jobs] ${job}: not the same process any more (${now ?? "gone"})`);
+    await signalJob(pid, "SIGKILL", { kill: this.#kill, endTree: this.#endTree, platform: this.#platform });
+    this.#onLog?.(`[jobs] ${job}: ended`);
+  }
+
+  /** A process's start time, null when it is gone, undefined when it could not be read after every attempt. */
+  async #readStart(pid: number): Promise<string | null | undefined> {
+    for (let attempt = 0; attempt < PROBE_ATTEMPTS; attempt++) {
+      const read = await this.#probe.startTime(pid).then(
+        (time) => ({ time }),
+        () => null,
+      );
+      if (read) return read.time;
+    }
+    return undefined;
   }
 
   async #mark(project: string, id: string, fields: Pick<JobRecord, "toldChat" | "endLogged">): Promise<void> {

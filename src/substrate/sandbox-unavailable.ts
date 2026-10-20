@@ -32,6 +32,8 @@ export const SandboxLaunchCode = {
   NetworkDrive: "network-drive",
   /** Windows: a run asked to write or read a folder outside the session's grants. */
   NotGranted: "not-granted",
+  /** Windows: every port of srt-win's proxy range is reserved by Windows or held by another program. */
+  ProxyPortsRefused: "proxy-ports-refused",
 } as const;
 export type SandboxLaunchCode = (typeof SandboxLaunchCode)[keyof typeof SandboxLaunchCode];
 
@@ -41,6 +43,15 @@ const WINDOWS_LAUNCH_CODES: ReadonlyMap<string, SandboxLaunchCode> = new Map([
   ["srt_win_timeout", SandboxLaunchCode.SrtWinTimeout],
   ["mapped_drive_cwd", SandboxLaunchCode.NetworkDrive],
 ]);
+
+/**
+ * The loopback ports srt-win's egress filter lets the sandbox user reach, where its network proxies
+ * must listen: sandbox-runtime's default, which Genex's install keeps.
+ */
+const SRT_PROXY_PORTS = "60080-60089";
+/** What Windows answers a listen on a port it reserved (EACCES) or another program holds. */
+const PORT_REFUSED: ReadonlySet<string> = new Set(["EACCES", "EADDRINUSE"]);
+const LISTEN_SYSCALL = "listen";
 
 const MESSAGE = {
   Unavailable: (problem: SandboxProblem) =>
@@ -53,6 +64,7 @@ const MESSAGE = {
       "Commands cannot run in a folder on a mapped or network drive. Move the game to a local drive.",
     [SandboxLaunchCode.NotGranted]:
       "This folder is not open to sandboxed commands yet. It opens once the running commands finish; try again then.",
+    [SandboxLaunchCode.ProxyPortsRefused]: `Windows did not let Genex's sandbox use its network ports (${SRT_PROXY_PORTS}). Hyper-V, WSL or Docker often reserve them. Restart the PC, or run "net stop winnat" and then "net start winnat" in a terminal opened as administrator, and try again.`,
   } satisfies Record<SandboxLaunchCode, string>,
 } as const;
 
@@ -71,6 +83,18 @@ export function windowsLaunchError(error: unknown): SandboxLaunchError | null {
   const code = typeof error === "object" && error !== null && "code" in error ? error.code : undefined;
   const launch = typeof code === "string" ? WINDOWS_LAUNCH_CODES.get(code) : undefined;
   return launch ? new SandboxLaunchError(launch, undefined, { cause: error }) : null;
+}
+
+/**
+ * The launch failure for a Windows start whose network proxies found no port they could listen
+ * on, by the error's code and call; null for any other error. SRT tries each port of its range
+ * and throws the last refusal.
+ */
+export function windowsProxyPortsError(error: unknown): SandboxLaunchError | null {
+  if (!(error instanceof Error) || !("syscall" in error) || error.syscall !== LISTEN_SYSCALL) return null;
+  const code = "code" in error ? error.code : undefined;
+  if (typeof code !== "string" || !PORT_REFUSED.has(code)) return null;
+  return new SandboxLaunchError(SandboxLaunchCode.ProxyPortsRefused, error.message, { cause: error });
 }
 
 /** The sandbox cannot start on this computer; `problem` says why and how to fix it. */

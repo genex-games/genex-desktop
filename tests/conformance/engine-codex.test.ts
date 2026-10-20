@@ -80,7 +80,10 @@ const successRun = [
   },
 ];
 
-async function signedInEngine(execFn: CodexExec): Promise<{ engine: CodexEngine; root: string }> {
+async function signedInEngine(
+  execFn: CodexExec,
+  platform?: NodeJS.Platform,
+): Promise<{ engine: CodexEngine; root: string }> {
   const root = await tmpDir("studio-codex-");
   const home = path.join(root, "codex-home");
   await mkdir(home, { recursive: true });
@@ -93,6 +96,7 @@ async function signedInEngine(execFn: CodexExec): Promise<{ engine: CodexEngine;
       executable: "/fake/codex",
       authStatusFn: async () => ({ loggedIn: true, method: "chatgpt", detail: "Logged in using ChatGPT" }),
       execFn,
+      ...(platform ? { platform } : {}),
     }),
     root,
   };
@@ -389,6 +393,50 @@ describe("codex engine", () => {
     // Unattended work has no mode at all: the sandboxed contract.
     await engine.delegate({ prompt: "build pong", cwd: game });
     assert.ok(sandboxed(seen.at(-1)!.argv));
+  });
+
+  it("turns on Codex's own Windows sandbox for every session on Windows, and nowhere else (#304)", async () => {
+    // Off, Codex has nothing to hold a workspace-write or read-only box with, so under
+    // approval_policy=never it refuses every command it does not know to be safe: the lead's
+    // bridge call "rejected: blocked by policy", and no build ever starts.
+    const WINDOWS_SANDBOX = 'windows.sandbox="unelevated"';
+    const sessions = async (platform: NodeJS.Platform) => {
+      const { fn, seen } = fakeExec(successRun);
+      const { engine, root } = await signedInEngine(fn, platform);
+      const game = path.join(root, "game");
+      await mkdir(game, { recursive: true });
+      const permissions = (mode: PermissionMode): DelegatePermissions => ({
+        mode,
+        allow: [],
+        directories: [],
+        protectWrites: [],
+        ask: async () => ({ decision: "deny" }),
+      });
+      const worker: WorkerSeat = {
+        id: "w1",
+        title: "Scene builder",
+        mode: PermissionMode.Auto,
+        writeRoots: [game],
+        neverTouch: { roots: [], open: [] },
+        research: false,
+      };
+      for (const mode of ["auto", "plan", "bypassPermissions"] as const) {
+        await engine.delegate({ prompt: "build pong", cwd: game, permissions: permissions(mode) });
+      }
+      await engine.delegate({ prompt: "build pong", cwd: game, readOnly: true });
+      await engine.delegate({ prompt: "build the scene", cwd: game, worker });
+      await engine.complete({ systemPrompt: "You are the judge.", messages: [{ role: "user", content: "A or B?" }] });
+      return seen.map((call) => call.argv);
+    };
+    const windows = await sessions("win32");
+    assert.equal(windows.length, 6);
+    for (const argv of windows) {
+      const at = argv.indexOf(WINDOWS_SANDBOX);
+      assert.ok(at > 0 && argv[at - 1] === "-c", argv.join(" "));
+    }
+    for (const argv of await sessions("darwin")) {
+      assert.ok(!argv.some((arg) => arg.startsWith("windows.")), argv.join(" "));
+    }
   });
 
   it("a Codex worker is always boxed: its roots writable, the network on only in a Bypass chat, never the bypass flag", async () => {

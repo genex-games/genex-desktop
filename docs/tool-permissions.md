@@ -397,7 +397,10 @@ sits only in the row's `input` (`{title, command, folder}`), folded under Detail
 
 A job ends by itself, by `job_stop`, at its time limit (`hours`, 2 by default, at most 24), when
 its run settles (the harness's own `run.settled`: its lead's and its workers' jobs), when the chat
-turn that started its worker returns, and when Genex quits. A harness crash or restart ends none.
+turn that started its worker returns, and when Genex quits. A harness crash or restart ends none. When Genex itself died, its next start marks
+each job still recorded as running interrupted and ends its process group (Windows: its tree,
+through `taskkill`) when that process's start time still matches the one recorded, so a reused id
+is never hit.
 The chat's own session's jobs outlive its turns, and its next turn is told which ended
 (`jobNotice`); a run's lead hears its run's ends through `jobs.list`, the harness's one read of the
 registry ([harness runtime](harness-runtime.md)). Each start and end is a host record in its chat
@@ -532,7 +535,10 @@ reads of it at its next round.
 Codex runs Auto as before (`workspace-write` in the game folder, no network, never asks), Bypass
 with `--dangerously-bypass-approvals-and-sandbox`, and Plan from a folder of its own (`startsElsewhere`,
 as a read-only session) where only the studio's bridge is writable, told it plans
-(`planModeNote`). A pick applies to its next turn. Every Codex launch runs with Codex's own
+(`planModeNote`). A pick applies to its next turn. On Windows every launch also turns on Codex's own
+restricted-token sandbox (`windows.sandbox="unelevated"`, `windowsSandboxArgs`): Genex runs Codex
+without the person's config, and without that sandbox Codex refuses every command it does not know
+to be safe under `approval_policy=never` ("blocked by policy"). Every Codex launch runs with Codex's own
 sub-agents (`multi_agent`, `multi_agent_v2`) and its screen and browser hands (`computer_use`,
 `in_app_browser`, `browser_use`, `browser_use_external`) disabled, those its `codex features list`
 knows (`CODEX_SUBAGENT_FEATURES`, `CODEX_SCREEN_FEATURES`): the studio's `computer` tool is the

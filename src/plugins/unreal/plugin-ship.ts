@@ -7,6 +7,9 @@
  * automation tests headless (`automation-tests.ts`) and keeps a summary; `plugin-package` runs
  * BuildPlugin in UnrealBuildTool's sandbox (`uat.ts`) and keeps a note of the package; both are jobs
  * that `stop` ends. `plugin-status` says how each stands and lists the proof a finish can name.
+ * On Windows the package is a job Genex runs in its own process sandbox (`sandbox.run`) and owns: the
+ * record stays running until a later call of these tools sees the host's job ended, and that call
+ * writes the note.
  *
  * One job runs at a time per project, each kept as its plugin's own; the backend stopping ends every
  * running job's process group. Every path an agent reads is relative to the game's folder (a test
@@ -17,9 +20,10 @@
 import { randomUUID } from "node:crypto";
 import { lstat, readdir, realpath, rm } from "node:fs/promises";
 import path from "node:path";
-import type { PluginContext } from "../../plugin-sdk/index.d.ts";
+import type { PluginContext, PluginHostCall } from "../../plugin-sdk/index.d.ts";
 import { MINUTE_MS, SECOND_MS } from "../../shared/duration.ts";
 import { errorMessage } from "../../shared/errors.ts";
+import { type PluginSandboxJob, PluginService, SandboxJobState } from "../../shared/plugins.ts";
 import {
   createFileInDir,
   ensureDirBelow,
@@ -53,7 +57,14 @@ import {
   type RestartTarget,
 } from "./editor-restart.ts";
 import { HELPER_FOLDER } from "./setup.ts";
-import { packagePlugin } from "./uat.ts";
+import {
+  type PackageResult,
+  packagePlugin,
+  packageResultOf,
+  type WindowsPackage,
+  windowsPackageJob,
+  windowsPackageProblem,
+} from "./uat.ts";
 import {
   type CompileOptions,
   type CompileResult,
@@ -136,7 +147,10 @@ const NOTE_EXTENSION = ".md";
 const SHOT_SUFFIX = "-window.jpg";
 /** A plugin descriptor is a few kilobytes. */
 const DESCRIPTOR_MAX_BYTES = 256 * 1024;
-const PLATFORMS = "Mac";
+/** What a package is built for, by the platform Genex runs on. */
+const PACKAGED_FOR: Partial<Record<NodeJS.Platform, string>> = { darwin: "Mac", win32: "Win64" };
+/** The platform whose package is a job Genex runs in its own sandbox. */
+const WINDOWS = "win32";
 const IDLE: ShipRecord = { state: ShipState.Idle };
 const STARTED = { started: true } as const;
 /** How many of a crashed test run's last output lines its summary keeps, and how long each may be. */
@@ -177,6 +191,7 @@ const MESSAGE = {
   NotBuilt: (why: string) => `${why}\nUnreal stays closed; fix the errors and call plugin-build again.`,
   NotAnswering: `Genex built the plugin, but Unreal didn't answer within ${OPEN_WAIT_MS / MINUTE_MS} minutes of opening it. Open the game from the Unreal button.`,
   Stopped: "Stopped.",
+  Lost: "Genex no longer knows this package job (it restarted, or the plugin was turned off); package again.",
   Restarting:
     "Genex is restarting Unreal for this project (reopening it, or adding its C++ module), so it built nothing. Build the plugin once Unreal answers again.",
   TimedOut: `The tests were stopped after ${TEST_TIMEOUT_MS / MINUTE_MS} minutes.`,
@@ -313,6 +328,8 @@ const pluginKey = (project: string, plugin: string) => `${project}\n${plugin}`;
 function createJobs(deps: ShipToolsDeps) {
   const records = new Map<string, { of: JobOf; record: ShipRecord }>();
   const stops = new Map<string, AbortController>();
+  /** Jobs Genex runs for the plugin (`sandbox.run`), by job key: the host's id and what ends the record once it ended. */
+  const hosted = new Map<string, { of: JobOf; id: string; end: (job: PluginSandboxJob) => Promise<void> }>();
   const filters = new Map<string, string>();
   const running = (of: JobOf) => records.get(jobKey(of))?.record.state === ShipState.Running;
   /** The job running for any plugin of the project, if one does. */
@@ -343,6 +360,9 @@ function createJobs(deps: ShipToolsDeps) {
     const settle = (record: ShipRecord) => {
       if (stops.get(at) === stop) put(of, record);
     };
+    /** Records how `work` ended, `seconds` long, and lets the job go. */
+    const conclude = (work: Promise<ShipOutcome>, seconds: () => number) =>
+      endRecord(work, stop.signal, seconds).then(settle).finally(letGo);
     return {
       signal: stop.signal,
       release() {
@@ -353,21 +373,18 @@ function createJobs(deps: ShipToolsDeps) {
       },
       run(work: (signal: AbortSignal) => Promise<ShipOutcome>) {
         const started = deps.now();
-        void work(stop.signal)
-          .then(
-            (outcome) => {
-              const seconds = Math.round((deps.now() - started) / SECOND_MS);
-              settle(
-                stop.signal.aborted ? { state: ShipState.Stopped } : { state: ShipState.Done, seconds, ...outcome },
-              );
-            },
-            (failure: unknown) => {
-              const failed = failure instanceof ShipFailure ? failure.outcome : {};
-              const state = stop.signal.aborted ? ShipState.Stopped : ShipState.Failed;
-              settle({ state, error: errorMessage(failure), ...failed });
-            },
-          )
-          .finally(letGo);
+        void conclude(work(stop.signal), () => Math.round((deps.now() - started) / SECOND_MS));
+      },
+      /**
+       * Hands the job to the host's sandbox job `id`: it stays running until `sight` sees the host's
+       * job ended, and `finish` then makes its outcome (a package's note) from how it ended.
+       */
+      hand(id: string, finish: (job: PluginSandboxJob) => Promise<ShipOutcome>) {
+        const end = (job: PluginSandboxJob) => {
+          if (job.state === SandboxJobState.Stopped) stop.abort();
+          return conclude(finish(job), () => job.seconds ?? 0);
+        };
+        hosted.set(at, { of, id, end });
       },
     };
   };
@@ -384,15 +401,51 @@ function createJobs(deps: ShipToolsDeps) {
       const busy = runningIn(project);
       if (busy) throw new Error(MESSAGE.Busy(BUSY_WORDS[busy.job]));
     },
-    /** Stops the plugin's running `job`; answers whether one ran. */
-    stop(of: JobOf) {
-      const stop = stops.get(jobKey(of));
+    /** Stops the plugin's running `job`, through the host for a job Genex runs; answers whether one ran. */
+    async stop(of: JobOf, host: PluginHostCall) {
+      const at = jobKey(of);
+      const stop = stops.get(at);
       stop?.abort();
+      const held = hosted.get(at);
+      if (held) {
+        hosted.delete(at);
+        await host(PluginService.SandboxStop, { id: held.id }).catch(() => {});
+        put(of, { state: ShipState.Stopped });
+        stops.delete(at);
+      }
       return { stopped: stop !== undefined };
+    },
+    /**
+     * Asks the host how each job it runs for the plugin stands, and ends the record of each that
+     * ended: the first call to see it writes its outcome. A host that can't answer now leaves it running.
+     */
+    async sight(host: PluginHostCall) {
+      for (const [at, held] of [...hosted]) {
+        const job = await host(PluginService.SandboxResult, { id: held.id }).catch(() => undefined);
+        if (job === undefined || job?.state === SandboxJobState.Running || hosted.get(at) !== held) continue;
+        hosted.delete(at);
+        if (job !== null) await held.end(job);
+        else {
+          put(held.of, { state: ShipState.Failed, error: MESSAGE.Lost });
+          stops.delete(at);
+        }
+      }
     },
   };
 }
 type Jobs = ReturnType<typeof createJobs>;
+
+/** How a job's work ended, as its record: done (`seconds` long), failed (with what it left) or stopped. */
+async function endRecord(work: Promise<ShipOutcome>, stopped: AbortSignal, seconds: () => number): Promise<ShipRecord> {
+  try {
+    const outcome = await work;
+    return stopped.aborted ? { state: ShipState.Stopped } : { state: ShipState.Done, seconds: seconds(), ...outcome };
+  } catch (failure) {
+    const failed = failure instanceof ShipFailure ? failure.outcome : {};
+    const state = stopped.aborted ? ShipState.Stopped : ShipState.Failed;
+    return { state, error: errorMessage(failure), ...failed };
+  }
+}
 
 /** A job that failed but left something to read (a package's note). */
 class ShipFailure extends Error {
@@ -466,7 +519,10 @@ function testSummary(plugin: string, filter: string, line: string, result: Autom
 async function runTests(deps: ShipToolsDeps, target: EngineTarget, filter: string, dir: string, signal: AbortSignal) {
   const run = deps.runProgram ?? systemRunProgram;
   const args = automationArgs(target.projectFile, filter, dir);
-  const outcome = await run(editorCmdPath(target.engine.directory), args, { signal, timeoutMs: TEST_TIMEOUT_MS });
+  const outcome = await run(editorCmdPath(target.engine.directory, deps.platform), args, {
+    signal,
+    timeoutMs: TEST_TIMEOUT_MS,
+  });
   if (signal.aborted) throw new Error(MESSAGE.Stopped);
   if (outcome.timedOut) throw new Error(MESSAGE.TimedOut);
   const scrub = await pathScrubber(target.projectDir, target.engine.directory);
@@ -525,7 +581,7 @@ async function startTests(deps: ShipToolsDeps, jobs: Jobs, call: ShipCall) {
   const { storage, context, args } = call;
   const target = await shipTarget(deps, storage, context, args);
   const tests = jobOf(target, ShipJob.Test);
-  if (args.stop === true) return jobs.stop(tests);
+  if (args.stop === true) return jobs.stop(tests, context.host);
   stopIfAborted(context.signal);
   const filter = args.filter === undefined ? target.plugin.name : args.filter;
   if (!isTestFilter(filter)) throw new Error(MESSAGE.BadFilter);
@@ -566,7 +622,12 @@ async function versionName(file: string): Promise<string> {
 }
 
 /** The package note: where the package is, its version, its files and platforms, or why it failed. */
-async function packageNote(target: EngineTarget, dir: string, summary: string, errors: string): Promise<string> {
+async function packageNote(
+  target: EngineTarget,
+  dir: string,
+  result: { summary: string; errors: string; platform: NodeJS.Platform },
+): Promise<string> {
+  const { summary, errors } = result;
   const shown = shownIn(target.gameDir, dir);
   const head = [`# ${target.plugin.name} package`, "", summary, ""];
   if (errors) return [...head, "## Errors", errors.trim(), ""].join("\n");
@@ -578,7 +639,7 @@ async function packageNote(target: EngineTarget, dir: string, summary: string, e
     `Package: ${shown}`,
     `Version: ${version || "unknown"}`,
     `${count} files, ${kib} KiB`,
-    `Platforms: ${PLATFORMS}`,
+    `Platforms: ${PACKAGED_FOR[result.platform] ?? ""}`,
   ];
   return [...head, ...facts.map((fact) => `- ${fact}`), ""].join("\n");
 }
@@ -601,13 +662,11 @@ async function writeNote(target: ShipTarget, parent: string, name: string, text:
   });
 }
 
+/** A package's folders: the packages folder and the plugin's package folder in it, by real path. */
+type PackageFolders = { parent: string; dir: string };
+
 /** The package job: BuildPlugin in the build sandbox, then the note beside the package folder, kept even when it failed. */
-async function runPackage(
-  deps: ShipToolsDeps,
-  target: EngineTarget,
-  folders: { parent: string; dir: string },
-  signal: AbortSignal,
-) {
+async function runPackage(deps: ShipToolsDeps, target: EngineTarget, folders: PackageFolders, signal: AbortSignal) {
   const result = await packagePlugin({
     engineDir: target.engine.directory,
     projectDir: target.projectDir,
@@ -620,9 +679,28 @@ async function runPackage(
     ...(deps.prepareSandbox ? { prepareSandbox: deps.prepareSandbox } : {}),
   });
   if (signal.aborted) throw new Error(MESSAGE.Stopped);
+  return packaged(target, folders, result, deps.platform);
+}
+
+/** The package's folders as `windowsPackageJob` and `packageResultOf` name them. */
+const windowsPackage = (target: EngineTarget, packageDir: string): WindowsPackage => ({
+  engineDir: target.engine.directory,
+  projectDir: target.projectDir,
+  pluginFile: target.plugin.descriptor,
+  packageDir,
+});
+
+/** The note beside the package folder, kept even when the package failed, and the package's outcome. */
+async function packaged(
+  target: EngineTarget,
+  folders: PackageFolders,
+  result: PackageResult,
+  platform: NodeJS.Platform,
+) {
   const errors = result.ok ? "" : buildErrors(result);
   const name = `${target.plugin.name}${NOTE_EXTENSION}`;
-  await writeNote(target, folders.parent, name, await packageNote(target, folders.dir, result.summary, errors));
+  const note = await packageNote(target, folders.dir, { summary: result.summary, errors, platform });
+  await writeNote(target, folders.parent, name, note);
   const outcome = {
     line: result.summary,
     package: shownIn(target.gameDir, folders.dir),
@@ -632,22 +710,39 @@ async function runPackage(
   return outcome;
 }
 
-/** `plugin-package`: stops the running package with `stop`; else starts BuildPlugin unless another job runs. */
+/**
+ * `plugin-package`: stops the running package with `stop`; else starts BuildPlugin unless another job
+ * runs. On Windows it needs no Xcode: Genex runs RunUAT.bat in its own sandbox as a host job, and a
+ * folder cmd.exe can't carry is refused before the package folder is made or emptied.
+ */
 async function startPackage(deps: ShipToolsDeps, jobs: Jobs, call: ShipCall) {
   const { storage, context, args } = call;
   const target = await shipTarget(deps, storage, context, args);
   const packaging = jobOf(target, ShipJob.Package);
-  if (args.stop === true) return jobs.stop(packaging);
+  if (args.stop === true) return jobs.stop(packaging, context.host);
   stopIfAborted(context.signal);
-  const engine = await engineTarget(deps, target, true);
+  const windows = deps.platform === WINDOWS;
+  const engine = await engineTarget(deps, target, !windows);
   if (jobs.running(packaging)) return STARTED;
   jobs.refuseBusy(target.project);
+  const packageDir = path.join(target.projectDir, ...PACKAGES_FOLDER, target.plugin.name);
+  const problem = windows ? windowsPackageProblem(windowsPackage(engine, packageDir)) : undefined;
+  if (problem) throw new Error(problem);
   const job = jobs.reserve(packaging);
   const note = `${target.plugin.name}${NOTE_EXTENSION}`;
   const folders = await preparedFolder(job, context.signal, () =>
     freshFolder(target, PACKAGES_FOLDER, target.plugin.name, [note]),
   );
-  job.run((signal) => runPackage(deps, engine, folders, signal));
+  if (!windows) {
+    job.run((signal) => runPackage(deps, engine, folders, signal));
+    return STARTED;
+  }
+  const folder = windowsPackage(engine, folders.dir);
+  const started = await context.host(PluginService.SandboxRun, windowsPackageJob(folder)).catch((failure: unknown) => {
+    job.release();
+    throw failure;
+  });
+  job.hand(started.id, async (ended) => packaged(engine, folders, await packageResultOf(ended, folder), deps.platform));
   return STARTED;
 }
 
@@ -697,12 +792,22 @@ type Handler = (args: Args, context: PluginContext, storage: string) => Promise<
  */
 export function createShipTools(deps: ShipToolsDeps, otherRestart: RestartBusy = () => false) {
   const jobs = createJobs(deps);
+  // Every tool first sees how the jobs Genex runs for the plugin stand: one that ended is recorded then.
+  const sighted =
+    (handler: Handler): Handler =>
+    async (args, context, storage) => {
+      await jobs.sight(context.host);
+      return handler(args, context, storage);
+    };
   const handlers: Record<ShipToolName, Handler> = {
-    [ShipToolName.PluginBuild]: (args, context, storage) =>
+    [ShipToolName.PluginBuild]: sighted((args, context, storage) =>
       startBuild(deps, jobs, { storage, context, args }, otherRestart),
-    [ShipToolName.PluginTest]: (args, context, storage) => startTests(deps, jobs, { storage, context, args }),
-    [ShipToolName.PluginPackage]: (args, context, storage) => startPackage(deps, jobs, { storage, context, args }),
-    [ShipToolName.PluginStatus]: (args, context, storage) => shipStatus(deps, jobs, storage, context, args),
+    ),
+    [ShipToolName.PluginTest]: sighted((args, context, storage) => startTests(deps, jobs, { storage, context, args })),
+    [ShipToolName.PluginPackage]: sighted((args, context, storage) =>
+      startPackage(deps, jobs, { storage, context, args }),
+    ),
+    [ShipToolName.PluginStatus]: sighted((args, context, storage) => shipStatus(deps, jobs, storage, context, args)),
   };
   return { handlers, restarting: jobs.building };
 }

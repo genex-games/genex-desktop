@@ -18,7 +18,8 @@
  * the `afterRestore` hook where an install step would go.
  */
 import { constants } from "node:fs";
-import { copyFile, cp, lstat, mkdir, readdir, symlink, writeFile } from "node:fs/promises";
+import { copyFile, cp, lstat, mkdir, readdir, rm, stat, symlink, writeFile } from "node:fs/promises";
+import { setTimeout as sleep } from "node:timers/promises";
 import path from "node:path";
 import { ensureDir, pathExists } from "./fsx.ts";
 import { shortId } from "./ids.ts";
@@ -29,6 +30,7 @@ import { type SnapshotRecord, SnapshotScope } from "../shared/event-log.ts";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { startWithRecovery } from "./process-start.ts";
+import { MINUTE_MS, SECOND_MS } from "../shared/duration.ts";
 import { errorMessage } from "../shared/errors.ts";
 import { hostGitArgs, hostGitConfig, hostGitEnv } from "./git-policy.ts";
 
@@ -142,6 +144,8 @@ const MESSAGE = {
   NotDescendant: "the folder's HEAD no longer descends from the snapshot",
   ForeignCommits: "the branch holds commits since the snapshot that the studio did not make",
   RescueReason: (snapshotId: string) => `pre-restore rescue before ${snapshotId}`,
+  IndexLockHeld: (lock: string, waitedMs: number) =>
+    `${lock} was still held after ${waitedMs / SECOND_MS} s: another git is writing this folder's first commit`,
 } as const;
 
 /** A refusal with a typed `code`; the folder was left exactly as it was. */
@@ -274,13 +278,86 @@ export async function resolveCommit(dir: string, revision: string): Promise<stri
   return hash;
 }
 
-/** `git init` + an initial commit if the directory is not a repo yet. */
-export async function ensureRepo(dir: string): Promise<void> {
+/**
+ * Written into `.git` before a new repository's first commit and removed once that commit lands. A
+ * start that ended inside the commit (the harness seed's took minutes on a busy Windows PC, and the
+ * window's Try again relaunches) leaves it behind, so the next start finishes the commit instead of
+ * taking `.git` for a finished repository. A person's own repository never has it.
+ */
+export const FIRST_COMMIT_MARKER = "genex-first-commit";
+/** How long a new repository's first commit waits for an index.lock that another git holds. */
+export const INDEX_LOCK_WAIT_MS = 2 * MINUTE_MS;
+/** How often it looks again, and how old an unheld lock must be before it is a dead start's. */
+const INDEX_LOCK_POLL_MS = 2 * SECOND_MS;
+const INDEX_LOCK_STALE_MS = 30 * SECOND_MS;
+/** Errors from removing a lock that a running process still has open (Windows). */
+const LOCK_HELD_CODES = new Set(["EBUSY", "EPERM", "EACCES"]);
+
+/** How {@link ensureRepo} waits on a held index.lock; the test's clock and removal in tests. */
+export interface FirstCommitDeps {
+  clock?: { now: () => number; sleep: (ms: number) => Promise<unknown> };
+  removeLock?: (file: string) => Promise<void>;
+  /** Called as each git step of a first commit finishes (`init`, `add`, `commit`), for the start's log. */
+  onStep?: (step: FirstCommitStep) => void;
+}
+
+/** The git steps of a new repository's first commit. */
+export const FirstCommitStep = { Init: "init", Add: "add", Commit: "commit" } as const;
+export type FirstCommitStep = (typeof FirstCommitStep)[keyof typeof FirstCommitStep];
+
+/** Whether `dir` has no repository yet, or one whose first commit an earlier start left unfinished. */
+export async function needsFirstCommit(dir: string): Promise<boolean> {
+  const dotGit = path.join(dir, ".git");
+  return !(await pathExists(dotGit)) || (await pathExists(path.join(dotGit, FIRST_COMMIT_MARKER)));
+}
+
+/** `git init` + an initial commit if the directory is not a repo yet, or finish one an earlier start left. */
+export async function ensureRepo(dir: string, deps: FirstCommitDeps = {}): Promise<void> {
   await ensureDir(dir);
-  if (await pathExists(path.join(dir, ".git"))) return;
+  if (!(await needsFirstCommit(dir))) return;
+  const dotGit = path.join(dir, ".git");
+  // The marker goes in before git writes anything, so no interrupted start looks finished.
+  await ensureDir(dotGit);
+  await writeFile(path.join(dotGit, FIRST_COMMIT_MARKER), "");
   await git(dir, ["init", "-q", "-b", "main"]);
+  deps.onStep?.(FirstCommitStep.Init);
+  await releaseIndexLock(dotGit, deps);
   await stagePublicChanges(dir);
-  await git(dir, ["commit", "-q", "--allow-empty", "-m", "substrate: initial"]);
+  deps.onStep?.(FirstCommitStep.Add);
+  if (!(await gitOrNull(dir, ["rev-parse", "--verify", "--quiet", "HEAD"])))
+    await git(dir, ["commit", "-q", "--allow-empty", "-m", "substrate: initial"]);
+  deps.onStep?.(FirstCommitStep.Commit);
+  await rm(path.join(dotGit, FIRST_COMMIT_MARKER), { force: true });
+}
+
+/**
+ * Wait for a first commit's index.lock to go: a git an earlier start left running holds it (Windows
+ * refuses to remove an open file) until it ends; one nothing holds is a killed git's, removed once it
+ * is old enough that no git of this start can own it. Throws, naming the lock, past {@link INDEX_LOCK_WAIT_MS}.
+ */
+async function releaseIndexLock(dotGit: string, deps: FirstCommitDeps): Promise<void> {
+  const clock = deps.clock ?? { now: Date.now, sleep: (ms: number) => sleep(ms) };
+  const removeLock = deps.removeLock ?? ((file: string) => rm(file));
+  const lock = path.join(dotGit, "index.lock");
+  const deadline = clock.now() + INDEX_LOCK_WAIT_MS;
+  for (;;) {
+    const found = await stat(lock).catch(() => null);
+    if (!found) return;
+    if (clock.now() - found.mtimeMs >= INDEX_LOCK_STALE_MS && (await removed(lock, removeLock))) return;
+    if (clock.now() >= deadline) throw new Error(MESSAGE.IndexLockHeld(lock, INDEX_LOCK_WAIT_MS));
+    await clock.sleep(INDEX_LOCK_POLL_MS);
+  }
+}
+
+/** Whether `lock` could be removed; false while a running process holds it open. */
+async function removed(lock: string, removeLock: (file: string) => Promise<void>): Promise<boolean> {
+  try {
+    await removeLock(lock);
+    return true;
+  } catch (error) {
+    if (LOCK_HELD_CODES.has((error as NodeJS.ErrnoException).code ?? "")) return false;
+    throw error;
+  }
 }
 
 /** Environment files never enter host-created commits, even when an adopted folder has no ignore file. */
@@ -424,12 +501,15 @@ export class SnapshotEngine {
     this.workspaces.set(spec.name, spec.dir);
   }
 
-  /** A repository for every workspace that has none yet; a game's rules are topped up before its first commit. */
-  async init(): Promise<void> {
+  /**
+   * A repository for every workspace that has none yet; a game's rules are topped up before its
+   * first commit. `onStep` hears each first commit's git steps by workspace name.
+   */
+  async init(onStep?: (workspace: string, step: FirstCommitStep) => void): Promise<void> {
     for (const [name, dir] of this.workspaces) {
       // Only a folder about to get its first commit: init runs for every game at each start.
-      if (!(await pathExists(path.join(dir, ".git")))) await this.#beforeCommit(name, dir);
-      await ensureRepo(dir);
+      if (await needsFirstCommit(dir)) await this.#beforeCommit(name, dir);
+      await ensureRepo(dir, onStep ? { onStep: (step) => onStep(name, step) } : {});
     }
   }
 

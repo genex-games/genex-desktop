@@ -4,15 +4,21 @@
  * heard however it comes, its process group signalled, and its start time read so a later app
  * start can tell the same process from a reused id.
  */
-import { type ChildProcess, execFile } from "node:child_process";
+import { type ChildProcess, type ExecFileException, execFile } from "node:child_process";
 import { createWriteStream, type WriteStream } from "node:fs";
 import { once } from "node:events";
 import { SECOND_MS } from "../shared/duration.ts";
-import { isWindows } from "./toolchain.ts";
-import { killProcessTree } from "./process-tree.ts";
+import path from "node:path";
+import { envValue, isWindows } from "./toolchain.ts";
+import { killProcessTree, type TreeKillCommand } from "./process-tree.ts";
 
 /** How long `ps` may take to tell a process's start time. */
 const PROBE_TIMEOUT_MS = 5 * SECOND_MS;
+/**
+ * Windows PowerShell's own start can take several seconds on a busy PC, most of all while the app
+ * itself is starting, which is when left jobs are checked: a read cut short there left the job running.
+ */
+const WINDOWS_PROBE_TIMEOUT_MS = 20 * SECOND_MS;
 
 const MESSAGE = {
   logCapped: "\n[Genex: the log stopped here at its size cap; the job keeps running]\n",
@@ -20,7 +26,11 @@ const MESSAGE = {
 
 /** Reads a process's start time, to tell it from a later process given the same id. */
 export interface JobProbe {
-  /** The start time as `ps -o lstart=` prints it, or null when no such process runs. */
+  /**
+   * The start time as `ps -o lstart=` prints it (Windows: as a round-trip UTC time to the 100 ns
+   * tick), or null when no such process runs. Rejects when the time could not be read at all (the
+   * reader timed out or did not start), which says nothing about the process.
+   */
   startTime(pid: number): Promise<string | null>;
 }
 
@@ -33,6 +43,9 @@ export interface JobClock {
 
 /** Sends a signal to a process or, with a negative id, to a process group (`process.kill`). */
 export type JobKill = (pid: number, signal: NodeJS.Signals) => void;
+
+/** Runs `taskkill` to end a job's tree on Windows (`process-tree.ts`); injectable for tests. */
+export type JobEndTree = (command: TreeKillCommand) => Promise<void>;
 
 /** How a job's process ended. */
 export interface JobExit {
@@ -51,15 +64,40 @@ export const SYSTEM_CLOCK: JobClock = {
   clearTimeout: (handle) => clearTimeout(handle as NodeJS.Timeout),
 };
 
-/** `ps -o lstart= -p <pid>` on macOS and Linux; Windows has no such reading, so nothing ever matches. */
+/**
+ * The command reading `pid`'s start time: `ps -o lstart= -p <pid>` on macOS and Linux; on Windows,
+ * Windows PowerShell by its full path asking for the process's start time.
+ */
+export function startTimeCommand(
+  pid: number,
+  platform: NodeJS.Platform = process.platform,
+  env: NodeJS.ProcessEnv = process.env,
+): { file: string; args: string[] } {
+  if (!isWindows(platform)) return { file: "/bin/ps", args: ["-o", "lstart=", "-p", String(pid)] };
+  const systemRoot = envValue(env, "SystemRoot") || "C:\\Windows";
+  const script = `(Get-Process -Id ${Math.trunc(pid)} -ErrorAction Stop).StartTime.ToUniversalTime().ToString('o')`;
+  return {
+    file: path.win32.join(systemRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe"),
+    args: ["-NoProfile", "-NonInteractive", "-Command", script],
+  };
+}
+
+/** Whether the reader ran to its end and answered with a failing exit code: no such process. */
+function exitedWithCode(error: ExecFileException): boolean {
+  return typeof error.code === "number" && !error.killed;
+}
+
+/** Reads a start time by {@link startTimeCommand}; null when the process is gone. */
 export function psProbe(platform: NodeJS.Platform = process.platform): JobProbe {
+  const timeout = isWindows(platform) ? WINDOWS_PROBE_TIMEOUT_MS : PROBE_TIMEOUT_MS;
   return {
     startTime: (pid) =>
-      new Promise((resolve) => {
-        if (isWindows(platform)) return resolve(null);
-        execFile("/bin/ps", ["-o", "lstart=", "-p", String(pid)], { timeout: PROBE_TIMEOUT_MS }, (error, stdout) =>
-          resolve(error ? null : stdout.trim() || null),
-        );
+      new Promise((resolve, reject) => {
+        const { file, args } = startTimeCommand(pid, platform);
+        execFile(file, args, { timeout, windowsHide: true }, (error, stdout) => {
+          if (error && !exitedWithCode(error)) return reject(error);
+          resolve(error ? null : stdout.trim() || null);
+        });
       }),
   };
 }
@@ -136,9 +174,9 @@ export function jobEnd(child: ChildProcess, onExit: () => void, clock: JobClock,
 export function signalJob(
   pid: number | undefined,
   signal: NodeJS.Signals,
-  options: { kill?: JobKill; platform: NodeJS.Platform },
+  options: { kill?: JobKill; endTree?: JobEndTree; platform: NodeJS.Platform },
 ): Promise<void> {
-  return killProcessTree(pid, { signal, kill: options.kill, platform: options.platform });
+  return killProcessTree(pid, { signal, kill: options.kill, run: options.endTree, platform: options.platform });
 }
 
 /**
