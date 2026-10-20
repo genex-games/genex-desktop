@@ -26,6 +26,10 @@ pub const MAX_SAVE_BYTES: usize = 16 * 1024 * 1024;
 /// The most bytes all of one game's saves may hold together (64 MiB, owner call U1), on every
 /// destination.
 pub const MAX_TOTAL_SAVE_BYTES: u64 = 64 * 1024 * 1024;
+/// The folder under every save root where genex-crash's file sink keeps crash records. A game
+/// never saves, loads, lists or removes in it (any letter case: macOS and Windows fold case), but
+/// its records count toward [`MAX_TOTAL_SAVE_BYTES`] (owner call OX-4).
+pub const CRASH_RECORDS_DIR: &str = "genex-crash";
 /// How deep [`Saves::bytes_used`] walks below the root; deeper files are not counted.
 const WALK_DEPTH_MAX: usize = 32;
 /// The suffix of the sibling a save is staged in before its rename.
@@ -239,20 +243,26 @@ impl Saves {
         self.root.as_deref().ok().filter(|root| !root.is_empty())
     }
 
-    /// `file` is a safe relative path outside the host's folders.
+    /// `file` is a safe relative path outside the host's folders and the crash records folder.
     fn is_game_path(&self, file: &str) -> bool {
         let first = file.split('/').next().unwrap_or_default();
-        paths::is_safe_asset_path(file) && !self.host.contains(&first)
+        paths::is_safe_asset_path(file) && !self.host.contains(&first) && !is_crash_records(first)
     }
 
     /// The root as a path and `file`'s segments, when both are usable.
     fn split<'a>(&self, file: &'a str) -> Option<(PathBuf, Vec<&'a str>)> {
         let root = self.usable_root()?;
-        if !paths::is_safe_asset_path(file) {
+        let first = file.split('/').next().unwrap_or_default();
+        if !paths::is_safe_asset_path(file) || is_crash_records(first) {
             return None;
         }
         Some((PathBuf::from(root), file.split('/').collect()))
     }
+}
+
+/// Whether a top-level save folder name is the crash records folder, in any letter case.
+fn is_crash_records(first: &str) -> bool {
+    first.eq_ignore_ascii_case(CRASH_RECORDS_DIR)
 }
 
 /// Ok when replacing `existing` bytes with `len` keeps a game at `used` within the quota.

@@ -1,0 +1,47 @@
+{
+  "format": "genex-crash/1",
+  "kind": "panic",
+  "source": "game",
+  "fatal": true,
+  "handled": false,
+  "message": "index out of bounds: the len is 3 but the index is 7",
+  "location": { "file": "src/enemy.rs", "line": 42, "column": 17 },
+  "thread": { "name": "main", "main": true },
+  "frames": [{ "ip": "0x1045a3f20" }, { "ip": "0x1045a2b10" }, { "ip": "0x1045a1004" }],
+  "anchor": { "ip": "0x1045a0000" },
+  "images": [],
+  "gpu": null,
+  "wasm": null,
+  "context": {
+    "seed": 1,
+    "tick": 300,
+    "frame": 312,
+    "simulatedMs": 5000.5,
+    "running": true,
+    "destination": "mac",
+    "flavour": "dev",
+    "build": "3f2a9c41d0e8b7a6",
+    "contract": 2,
+    "genex": "0.1.0"
+  },
+  "replay": { "seed": 1, "fromTick": 0, "toTick": 300, "complete": true, "track": "Z2VuZXgtaW5wdXQtdHJhY2s=" },
+  "profile": {
+    "v": 1,
+    "on": true,
+    "frames": 120,
+    "cpu": { "p50": 6.1, "p95": 9.8 },
+    "gpu": null,
+    "top": [
+      { "scope": "physics", "game": false, "p95": 1.9 },
+      { "scope": "enemy_ai", "game": true, "p95": 1.1 }
+    ],
+    "counters": { "enemies": 42 },
+    "memory": [],
+    "hitches": { "count": 2, "last": 288 },
+    "nodes": "off",
+    "dropped": { "scopes": 0, "counters": 0, "frames": 0 }
+  },
+  "hitches": [211, 288],
+  "symbols": null,
+  "trimmed": []
+}
