@@ -10,6 +10,10 @@
 //! history never resets) and its reply carries their `render` provenance
 //! ([`StudioGame::capture_provenance`]: preset, class, source, scale, `settleFrames`,
 //! `historyReset`, `exposure`).
+//! The dev flavour's `profile` verb (game systems PROF-4) checks its argument
+//! ([`wire::parse_profile`]) and hands the game a typed request ([`StudioGame::profile`],
+//! `unavailable` by default); a `trace` answer is written by the studio into the run's
+//! `state/profile/trace-<seq>.json` with its size and digest, as captures are.
 //! [`spell_change`], [`render_answer_value`], [`render_status_value`] and
 //! [`capture_provenance_value`] carry the renderer's values across by their wire spellings, so a
 //! game's runtime (native or web) never re-declares the wire's shapes.
@@ -28,9 +32,9 @@ use genex_core::session::{AudioLevel, CONTRACT_VERSION, StepResult, Timings};
 use crate::transport::Transport;
 use crate::wire::{
     self, CONTRACT_VERSION_V2, CaptureExposure, CaptureProvenance, Degrade, DegradeReason, DeviceClass, Lifecycle,
-    PROTOCOL_VERSION as PROTOCOL_V2, QualityPreset, Receipt, RenderFeature, RenderSettingsAnswer, RenderSettingsChange,
+    PROTOCOL_VERSION as PROTOCOL_V2, ProfileRequest, QualityPreset, Receipt, RenderFeature, RenderSettingsAnswer, RenderSettingsChange,
     RenderSettingsRefusal, RenderStatus, SafeArea, SettingsArgError, SettingsSource, SurfaceArgs, parse_release,
-    parse_render_settings, parse_surface, ring_point_to_world,
+    parse_profile, parse_render_settings, parse_surface, ring_point_to_world,
 };
 
 /// The ops this runtime answers. Wire values shared with the host: never rename one.
@@ -84,10 +88,16 @@ impl Op {
     pub const BAKE_ASSETS: &'static str = wire::OP_BAKE_ASSETS;
     /// Swap changed asset files in a running dev game (dev flavour; C-18 serves it).
     pub const RELOAD_ASSETS: &'static str = wire::OP_RELOAD_ASSETS;
+    /// Read the game's frame profile (dev flavour; PROF-5 serves it, `unavailable` until then).
+    pub const PROFILE: &'static str = wire::OP_PROFILE;
     /// The asset tools a native run (only the dev flavour links the studio natively) knows and
     /// answers `unavailable` until their runtime lands; the web flavour, which an export serves too,
     /// answers them `unknown-op` and never lists them (CONTRACT.md).
     pub const ASSET_TOOLS: [&'static str; 2] = [Op::BAKE_ASSETS, Op::RELOAD_ASSETS];
+    /// Every op only a native run serves on top of [`Op::ALL`] (the dev flavour: an export never
+    /// links the studio natively): the asset tools, then `profile`. The web flavour, which an
+    /// export serves too, answers each `unknown-op` and never lists it.
+    pub const DEV_TOOLS: [&'static str; 3] = [Op::BAKE_ASSETS, Op::RELOAD_ASSETS, Op::PROFILE];
     /// The ops only a game that can embed in Live serves; any other answers them `unknown-op`
     /// and never lists them, which the host reads as a game made before embedding.
     pub const EMBEDDING: [&'static str; 2] = [Op::SURFACE, Op::RELEASE];
@@ -198,6 +208,13 @@ pub const CAPTURES_KEPT: u32 = 8;
 pub const CAPTURE_MAX_PX: u32 = 4096;
 /// The most bytes one capture file may hold (`NATIVE_CAPTURE_MAX_BYTES`).
 pub const CAPTURE_MAX_BYTES: u64 = CAPTURE_MAX_PX as u64 * CAPTURE_MAX_PX as u64 * 4;
+/// Trace files a run keeps under `state/profile/`: the host copies each when its answer arrives and
+/// never deletes in `state/` while the game runs, so the game drops the oldest (as captures).
+pub const TRACES_KEPT: u32 = 8;
+/// The folder under the state root traces go in, and a trace file's name around its sequence number.
+const PROFILE_DIR: &str = "profile";
+const TRACE_PREFIX: &str = "trace-";
+const TRACE_EXTENSION: &str = ".json";
 /// The camera name that gives the view back to the game.
 pub const DEFAULT_CAMERA: &str = "default";
 /// The value range `seed(n)` takes, as JavaScript's `n >>> 0` does.
@@ -227,6 +244,16 @@ pub enum CaptureFault {
     /// (`device-lost` while the device is re-created, `upload-budget`, `mesh-invalid`, ...), which
     /// the `capture` verb answers as is.
     Refused(&'static str),
+}
+
+/// What a game answers a `profile` request with ([`StudioGame::profile`]).
+#[derive(Clone, Debug, PartialEq)]
+pub enum ProfileAnswer {
+    /// The answer as is: the summary, the `ProfileReport` v2, or the arm's `{mode}`.
+    Value(Value),
+    /// A trace's Chrome trace JSON, which the studio writes into `state/profile/` and answers with
+    /// its sequence number, size and digest.
+    Trace(Vec<u8>),
 }
 
 /// What the studio drives: the runtime behind a game (the facade's `Runtime`, a shell, a test
@@ -349,6 +376,12 @@ pub trait StudioGame {
     /// Answers whether the game can: one without render settings refuses an ask (`bad-argument`).
     fn set_capture_lens(&mut self, lens: CaptureLens) -> bool {
         lens == CaptureLens::default()
+    }
+    /// `profile` (dev flavour): answer `request` (checked: a known action, frames clamped, `arm`
+    /// with a mode), or refuse it with a wire code. A game that serves no profiles answers
+    /// `unavailable`. Display only: nothing a tick computes depends on what this answers.
+    fn profile(&mut self, _request: &ProfileRequest) -> Result<ProfileAnswer, &'static str> {
+        Err(VerbRefusal::UNAVAILABLE)
     }
 }
 
@@ -555,6 +588,8 @@ pub struct Studio {
     ready: bool,
     closing: bool,
     captures: u32,
+    /// Traces written under `state/profile/`.
+    traces: u32,
     camera: String,
     muted: bool,
     /// The protocol `ready` stated: 1, or 2 with the receipt.
@@ -723,6 +758,7 @@ impl Studio {
             ready: false,
             closing: false,
             captures: 0,
+            traces: 0,
             camera: DEFAULT_CAMERA.to_owned(),
             muted: false,
             protocol: PROTOCOL_VERSION,
@@ -938,7 +974,7 @@ impl Studio {
             ops.extend(Op::EMBEDDING);
         }
         if self.files {
-            ops.extend(Op::ASSET_TOOLS);
+            ops.extend(Op::DEV_TOOLS);
         }
         ops
     }
@@ -970,6 +1006,7 @@ impl Studio {
             }
             Op::RENDER_SETTINGS => Studio::render_settings(game, arg),
             Op::BAKE_ASSETS | Op::RELOAD_ASSETS => refuse(VerbRefusal::UNAVAILABLE),
+            Op::PROFILE => self.profile(game, arg),
             // `handle` routes only the ops in this flavour's set here.
             _ => refuse(Refusal::UNKNOWN_OP),
         }
@@ -986,6 +1023,52 @@ impl Studio {
             Ok(answer) => Answer::Result(answer),
             Err(refusal) => refuse(refusal.wire()),
         }
+    }
+
+    /// `profile`: the argument checked here, the answer the game's; a trace is written here.
+    fn profile<G: StudioGame>(&mut self, game: &mut G, arg: &Value) -> Answer {
+        let Ok(request) = parse_profile(arg) else { return refuse(VerbRefusal::BAD_ARGUMENT) };
+        let folder = self.profile_folder();
+        // A trace with nowhere to go is refused before the game builds it.
+        if request.action == wire::ProfileAction::Trace && folder.is_empty() {
+            return refuse(VerbRefusal::NO_STATE_DIR);
+        }
+        match game.profile(&request) {
+            Ok(ProfileAnswer::Value(value)) => Answer::Result(value),
+            Ok(ProfileAnswer::Trace(bytes)) => self.trace_file(&folder, &bytes),
+            Err(code) => refuse(code),
+        }
+    }
+
+    /// `<state>/profile/`, beside `captures/`; "" where captures have nowhere to go either.
+    fn profile_folder(&self) -> String {
+        let captures = paths::capture_folder(&self.save_root);
+        if captures.is_empty() {
+            return String::new();
+        }
+        // `capture_folder` ends in the platform's separator (one ASCII byte); the trace folder does too.
+        let separator = &captures[captures.len() - 1..];
+        format!("{}{PROFILE_DIR}{separator}", self.save_root)
+    }
+
+    /// Write a trace into `<state>/profile/trace-<seq>.json` and answer its seq, size and digest;
+    /// a failed write takes no sequence number and answers `no-state-dir`.
+    fn trace_file(&mut self, folder: &str, bytes: &[u8]) -> Answer {
+        let seq = self.traces + 1;
+        let path = |n: u32| format!("{folder}{TRACE_PREFIX}{n}{TRACE_EXTENSION}");
+        if fs::create_dir_all(folder).is_err() || fs::write(path(seq), bytes).is_err() {
+            return refuse(VerbRefusal::NO_STATE_DIR);
+        }
+        self.traces = seq;
+        if seq > TRACES_KEPT {
+            // Already gone is fine: the host never deletes there, and nothing else reads it.
+            let _ = fs::remove_file(path(seq - TRACES_KEPT));
+        }
+        Answer::Result(object([
+            ("seq", Value::from(seq)),
+            ("bytes", Value::from(bytes.len() as f64)),
+            ("digest", Value::from(hex64(fnv1a64(bytes)))),
+        ]))
     }
 
     fn camera_names<G: StudioGame>(&self, game: &G) -> Vec<String> {
