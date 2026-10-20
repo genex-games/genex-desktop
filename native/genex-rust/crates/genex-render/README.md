@@ -532,6 +532,8 @@ around the pixel blended by weight and height, hex-tiled (Mikkelsen 2022) on des
 buffer to the forward stage's (tests/terrain.rs). Probe captures and spot shadows leave the
 terrain out. The ledger's `terrain` buffers row counts its tables and grid.
 
+A streamed world's tiles live in `terrain::atlas` (game systems STR-21, after bevy_terrain's tile atlas). `TileAtlasGpu` holds one storage table of fixed slots, each one square tile in the single terrain's layout (heights, control words, normal pyramid). Desktops get up to 256 slots within the 128 MiB binding; phones get up to 64 within 48 MiB, so a desktop has 44 slots of 513-sample tiles and a phone 16. `TileAtlas` counts requests per tile. A released tile stays in its slot, queued oldest-first, until a new tile needs that slot, and a re-request revives it without a load. A tile still loading draws its nearest loaded ancestor (`best_tile`). A request when every slot holds a requested tile is refused `stream-arena-full`, and an upload for a tile that is no longer loading writes nothing (tests/terrain_atlas.rs).
+
 ## Grass and scatter
 
 A terrain layer may carry grass (`terrain::TerrainLayer::grass`, `foliage::GrassLayer`; the

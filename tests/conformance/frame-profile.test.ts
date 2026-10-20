@@ -6,6 +6,7 @@
  * fixture genex-profile writes (`tests/fixtures/profile-report-v2.json`, PROF-1b) adds its row.
  */
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { harnessParamsProblem, HostMethod } from "../../src/shared/harness-api.ts";
 import { describe, it } from "node:test";
 import {
@@ -235,5 +236,13 @@ describe("the harness's preview.frameProfile and game.crashes params", () => {
       assert.ok(harnessParamsProblem(HostMethod.PreviewFrameProfile, params), JSON.stringify(params));
     for (const params of [null, {}, { project: 7 }, { project: "pong", id: 3 }])
       assert.ok(harnessParamsProblem(HostMethod.GameCrashes, params), JSON.stringify(params));
+  });
+});
+
+describe("the shared fixture genex-profile writes (PROF-1b)", () => {
+  it("parses the summary and the report genex-profile writes, unchanged", () => {
+    const fixture = JSON.parse(readFileSync(new URL("../fixtures/profile-report-v2.json", import.meta.url), "utf8"));
+    assert.deepEqual(parseProfileSummary(fixture.summary), fixture.summary);
+    assert.deepEqual(parseProfileReport(fixture.report), fixture.report);
   });
 });

@@ -679,8 +679,8 @@ SOFTWARE.
 
 ## Rust game systems ports
 
-The game systems crates (`native/genex-rust/crates/genex-anim`, `genex-nav`, `genex-stream`, `genex-ui` and the
-mesh arena of `genex-render`, Genex's own code, MIT) port this code or these rules. They ship inside every
+The game systems crates (`native/genex-rust/crates/genex-anim`, `genex-nav`, `genex-profile`, `genex-stream`,
+`genex-ui` and the mesh arena and terrain tile atlas of `genex-render`, Genex's own code, MIT) port this code or these rules. They ship inside every
 Rust game that links the crate, and in its ejected source. Each file credits its source in a
 comment; each Apache 2.0 port carries the upstream notice and lists Genex's changes (§4(b)).
 
@@ -698,13 +698,21 @@ comment; each Apache 2.0 port carries the upstream notice and lists Genex's chan
 | `crates/genex-anim/src/inertial.rs` (`InertialOffset`, `decay_spring`, `fast_negexp`, `halflife_to_damping`, `fade_velocities`) | Inertialized transitions: the offset from the next pose to the visible one, with its velocity, decayed by a critically damped spring of a given half-life and added onto the next pose; Holden's rational `exp(-x)`; dead blending's fading velocity (Genex keeps rotation offsets as scaled axes in the parent's frame, takes the next pose's velocity at the switch as zero, clears an offset under 1e-4 and refuses non-finite parts) | Spring-It-On (https://github.com/orangeduck/Spring-It-On, commit 4d97b497), `common.h` (`fast_negexp`, `halflife_to_damping`, `damper_decay_exact`), `springdamper.c`, `inertialization.c`, `deadblending.c`; Motion-Matching (https://github.com/orangeduck/Motion-Matching, commit 57b7250e), `controller.cpp`, `spring.h` | Daniel Holden | MIT (see [Spring-It-On and Motion-Matching](#spring-it-on-and-motion-matching)) |
 | `crates/genex-anim/src/transition.rs` (`TransitionPlayer`) | What a layer shows across switches: a linear crossfade of the left and next states, an inertialized switch taking its offset from the visible pose, and an interrupted crossfade that starts from the frozen visible pose carried on by a fading velocity (the crossfade rule is Godot's xfade, the rule only; dead blending after Holden) | Godot Engine 4.7.2-stable (https://github.com/godotengine/godot), `scene/animation/animation_node_state_machine.cpp` (xfade); Spring-It-On, `deadblending.c` | Godot Engine contributors; Daniel Holden | MIT (see [Godot Engine](#godot-engine) and [Spring-It-On and Motion-Matching](#spring-it-on-and-motion-matching)) |
 | `crates/genex-anim/src/ik.rs` (`solve_two_bone`, `solve_aim`, `apply_two_bone`, `apply_look_at`) | Two-bone IK (the mid angle by the law of cosines, the start joint turned onto the target, then about the target axis toward the pole, an optional twist, softening near full reach, the weight as an nlerp from identity) and aim IK (a forward ray from an offset point turned through the target, up kept toward a pole). Changed: half-angle quaternions over `sqrt` instead of `acos`; a bent chain bends in its own plane (bevy_animation_graph's pole inference, the rule only) and `mid_axis` serves a straight one; Genex's own softening curve `1 - (4 / (r + 4))^4`; every degenerate input solves to no correction; a look-at chain split by share, base first | ozz-animation 0.17.0 (https://github.com/guillaumeblanc/ozz-animation), `src/animation/runtime/ik_two_bone_job.cc`, `src/animation/runtime/ik_aim_job.cc`, `samples/look_at/sample_look_at.cc`; bevy_animation_graph (https://github.com/mbrea-c/bevy_animation_graph), `twoboneik_node.rs` | Guillaume Blanc; bevy_animation_graph contributors | MIT (see [ozz-animation](#ozz-animation)); bevy_animation_graph MIT OR Apache-2.0, the rule only, no code copied |
+| `crates/genex-anim/src/root_motion.rs` (`extract`, `MotionTrack::delta`, `blend`) | Root motion: the root joint's ground-plane travel and yaw taken out of a clip at load into a motion track and baked out of the root's keys, the per-tick delta read across a loop's wrap as the rest of the cycle plus the start of the next, and deltas blended by weight (the rules only; no code was copied). Genex adds the in-place flag, the swing-twist yaw unwrapped over a 60 Hz grid joined with the root's keys, and deltas in character space at the tick's start | ozz-animation 0.17.0 (https://github.com/guillaumeblanc/ozz-animation), `include/ozz/animation/offline/motion_extractor.h`, `src/animation/runtime/motion_blending_job.cc`; Godot Engine 4.7.2-stable (https://github.com/godotengine/godot), `scene/animation/animation_mixer.cpp` (root motion accumulation) | Guillaume Blanc; Godot Engine contributors | MIT (see [ozz-animation](#ozz-animation) and [Godot Engine](#godot-engine)) |
+| `crates/genex-anim/src/evaluate.rs` (`compose`) | The evaluation order: sample, blend, layers, local-to-model, then IK as modifiers parent before child (legs, arms, look-at) (the order only; no code was copied) | ozz-animation 0.17.0, `samples/` job chains; Godot Engine 4.7.2-stable, `scene/3d/skeleton_modifier_3d.cpp` | Guillaume Blanc; Godot Engine contributors | MIT (see [ozz-animation](#ozz-animation) and [Godot Engine](#godot-engine)) |
 | `crates/genex-stream/src/residency.rs` (`Residency`, `ResidencyLimits`) | The residency policy: per-requester reference counts, an unload queue of unreferenced entries in release order, drained while resident bytes exceed a byte cap under a time limit, a cap on loads in flight, and `forbidHoles` (keep the coarser parent until every wanted child is resident) | cesium-native (https://github.com/CesiumGS/cesium-native), `Cesium3DTilesSelection/src/TilesetContentManager.cpp` (`unloadCachedTiles`, the tile reference counts and the unload list) and `Cesium3DTilesSelection/include/Cesium3DTilesSelection/TilesetOptions.h` (`maximumCachedBytes`, `maximumSimultaneousTileLoads`, `tileCacheUnloadTimeLimit`, `forbidHoles`) | CesiumGS, Inc. and Contributors | Apache 2.0 (see [Apache License 2.0](#apache-license-20); cesium-native ships no NOTICE file) |
 | `crates/genex-render/src/mesh_arena.rs` (`MeshArena::grow`, `move_to`) | Growing a full GPU buffer by remaking it twice as large and copying its live prefix buffer to buffer (the rule only; no code was copied) | Bevy (https://github.com/bevyengine/bevy), `crates/bevy_render/src/slab_allocator.rs` | Bevy contributors | MIT OR Apache-2.0, used under Apache 2.0 (see [Apache License 2.0](#apache-license-20)) |
+| `crates/genex-render/src/terrain/atlas.rs` (`TileAtlas`, `TileAtlas::best_tile`) | The terrain tile atlas: a request count per tile, released tiles kept in their slots with the slots queued oldest-first and revived on a re-request, a new tile taking the front slot, and the walk up the parents to the nearest loaded tile. Changed (listed in the file's header): slot exhaustion refuses `stream-arena-full` instead of panicking, a completion for a tile that is not loading is dropped, a `BTreeMap` instead of hashing, no file IO or Bevy resources, slots sized by form factor and the 128 MiB binding | bevy_terrain (https://github.com/kurtkuehnert/bevy_terrain), `src/terrain_data/tile_atlas.rs` (`TileAtlasState`) | Kurt Kühnert | MIT OR Apache-2.0, used under Apache 2.0 (see [Apache License 2.0](#apache-license-20)) |
+| `crates/genex-profile/src/gpu_lane.rs` (`GpuLane::spans`) | GPU query results laid out as begin/end spans with depth, stream range and scope count (sequential node brackets; not registered with puffin's global profiler) | wgpu-profiler 0.28.0 (https://github.com/Wumpf/wgpu-profiler), `src/puffin.rs` (`collect_stream_info_recursive`) | Andreas Reich and wgpu-profiler contributors | MIT OR Apache-2.0, used under MIT (see [wgpu-profiler](#wgpu-profiler)) |
+| `crates/genex-profile/src/trace.rs` (`chrome_trace`) | Chrome trace JSON: a `traceEvents` array of `X` events with microsecond `ts` and `dur`, one `tid` per lane (written with serde_json, frames laid out by interval) | wgpu-profiler 0.28.0, `src/chrometrace.rs` | Andreas Reich and wgpu-profiler contributors | MIT OR Apache-2.0, used under MIT (see [wgpu-profiler](#wgpu-profiler)) |
 | `crates/genex-nav/src/runtime/dodgy/` (every file, with dodgy's own tests as `*_test.rs`) | ORCA local avoidance: velocity obstacles from neighbours and polygon obstacles, the 2D and 3D linear programs, the visibility set. Changed (§4(b), listed in `dodgy/mod.rs`): the `rand` direction for two agents on one spot is hashed from their keys, `Simulator::step` has no `HashMap` and keeps its near neighbours, visible line ids come back sorted, angles use libm, a zero responsibility sum no longer divides by zero, no `debug` feature | dodgy_2d 0.5.5 (https://github.com/andriyDev/dodgy, crates.io sha256 `d35627725e918aa4593ca54937cd8ef58078d3b9ab0fd060aee60c9bc3a2050e`), itself ported from RVO2 (https://gamma.cs.unc.edu/RVO2/) `Agent.cc` | andriyDev; RVO2: Jur van den Berg, Stephen J. Guy, Jamie Snape, Ming C. Lin, Dinesh Manocha, 2008 University of North Carolina at Chapel Hill | MIT OR Apache-2.0, used under Apache 2.0; RVO2 Apache 2.0 (see [Apache License 2.0](#apache-license-20) and [RVO2](#rvo2)) |
 | `crates/genex-nav/src/runtime/avoidance.rs` (`Avoidance::step`) | Gathering each agent's neighbouring agents and bodies and handing them to ORCA (Genex replaces the k-d tree and `HashMap`s with a sorted uniform grid and sorts neighbours by distance, then key) | landmass 0.9.3 (https://github.com/andriyDev/landmass, crates.io sha256 `fd2fd988b81194c6f02c293a28b510b44f1d8581c80b1bfe498e85e9c3f57b93`), `src/avoidance.rs` (`apply_avoidance_to_agents`) | andriyDev | MIT OR Apache-2.0, used under Apache 2.0 (see [Apache License 2.0](#apache-license-20)) |
 | `crates/genex-nav/src/runtime/{coords, util, geometry, nav_mesh, island, nav_data, link}.rs` (islands, navigation-mesh validation and sampling, island stitching with boundary links, modified nodes, region connectivity, animation-link data), with landmass's own tests as `nav_mesh_test.rs` and `nav_data_test.rs` | Islands and their stitching. Changed (listed in each file's header): std `HashMap`/`HashSet` and slotmap are insertion-ordered maps and a deterministic arena, the `geo` boundary clip and `kdtree` vertex snap are Genex's own `clip.rs` and `grid.rs`, the `disjoint` set is Genex's own `disjoint.rs` without a `Mutex`, a Y-up `GenexCoords`, a caller-set edge-link distance, tests converted from googletest to plain asserts | landmass 0.9.3 (https://github.com/andriyDev/landmass, crates.io sha256 `fd2fd988b81194c6f02c293a28b510b44f1d8581c80b1bfe498e85e9c3f57b93`), `src/{coords, util, geometry, nav_mesh, island, nav_data, link}.rs`, `PermittedAnimationLinks` from `src/agent.rs`, `src/{nav_mesh, nav_data}_test.rs` | andriyDev | MIT OR Apache-2.0, used under Apache 2.0 (see [Apache License 2.0](#apache-license-20)) |
 | `crates/genex-nav/src/runtime/{archipelago, agent, character, astar, path, pathfinding, query}.rs` (agents, characters, A*, the funnel, path queries, the nav-mesh border obstacles for avoidance), with landmass's own tests as `{archipelago, agent, astar, path, pathfinding, query}_test.rs` | Agents, A* and the straight-path funnel. Changed (listed in each file's header): insertion-ordered maps and a deterministic arena, an A* heap ordered by (estimate, cost, state) with a node cap and partial results, a per-update search budget with a FIFO wait queue, shut areas and closed links (gates) that drop the corridors crossing them, a filter-based path query, tests converted from googletest to plain asserts | landmass 0.9.3 (https://github.com/andriyDev/landmass, crates.io sha256 `fd2fd988b81194c6f02c293a28b510b44f1d8581c80b1bfe498e85e9c3f57b93`), `src/{lib, agent, character, astar, path, pathfinding, query}.rs`, `nav_mesh_borders_to_dodgy_obstacles` from `src/avoidance.rs`, `src/{lib, agent, astar, path, pathfinding, query}_test.rs` | andriyDev | MIT OR Apache-2.0, used under Apache 2.0 (see [Apache License 2.0](#apache-license-20)) |
 | `crates/genex-nav/src/input.rs` (`TileInput::clear_steep`, `AreaVolume`) | The walkable-slope rule (a triangle is walkable when its unit normal's y is above cos(slope)), convex area volumes marked between two heights with the even-odd point-in-polygon test, and the 12-point outline cap. The rules only; no code was copied | rerecast 0.5.0 (https://github.com/janhohenheim/rerecast), `ConvexVolume`; Recast Navigation (https://github.com/recastnavigation/recastnavigation), `Recast/Source/Recast.cpp` (`rcClearUnwalkableTriangles`), `Recast/Source/RecastArea.cpp` (`rcMarkConvexPolyArea`, `pointInPoly`), `DetourTileCache/Include/DetourTileCacheBuilder.h` (`DT_MAX_CONVEXVOL_PTS`) | Jan Hohenheim and rerecast contributors; Mikko Mononen and Recast Navigation contributors | MIT OR Apache-2.0 (rerecast); Zlib (Recast Navigation) |
+| `crates/genex-nav/src/recast/` (every file but `error.rs`; `ops.rs` keeps only `floor`, `ceil`, `abs`, `cos`), `tests/recast_parity.rs` (from `tests/cpp_comparison.rs` and `crates/test_utils`) | Recast navmesh generation: heightfield rasterization, span filters, compact heightfield, erosion, convex area volumes, the watershed distance field and regions, contours, polygon mesh and detail mesh, with the C++ parity test. Changed (listed in `recast/mod.rs`, each file's header and `crates/genex-nav/PORTS.md`): glam 0.33, slotmap replaced by Genex's arena, thiserror and bitflags written out by hand, one typed `RecastError` in place of anyhow, `cos` always through libm, no tracing, serde or bevy_reflect, std instead of no_std. An altered version of both rerecast and Recast | rerecast 0.5.0 (https://github.com/janhohenheim/rerecast, tag `v0.5.0`, tarball sha256 `1ed9c37afa1ccca1121b16bed89afd33dab05cf5668bbeeac58dc4d7054fc2d0`), `crates/rerecast/src/*`, itself a port of Recast Navigation (https://github.com/recastnavigation/recastnavigation) | Jan Hohenheim and rerecast contributors; Mikko Mononen and Recast Navigation contributors | MIT OR Apache-2.0, used under MIT (see [rerecast](#rerecast)); Zlib (see [Recast Navigation](#recast-navigation)) |
+| `crates/genex-nav/tests/fixtures/recast/dungeon/*.json` | Recast's dungeon demo level and C++ Recast's dumps of its config, area volumes, contour set, polygon mesh and detail mesh, byte for byte | rerecast 0.5.0, `assets/test/dungeon/`; the level is Recast Navigation's `RecastDemo/Bin/Meshes/dungeon.obj` ("Dungeon level copyrighted by John Ratcliff for use in recast algorithm testing", rerecast's `assets/models/license.md`) | John Ratcliff (level); Jan Hohenheim (dumps) | Zlib (Recast Navigation); MIT OR Apache-2.0 (rerecast) |
+| `crates/genex-nav/src/bake.rs` (`bake_tile`) | The per-tile build: a border of `walkableRadius + 3` cells, regions partitioned with the border kept out, heights counted from one floor for every tile. The steps only; no code was copied | Recast Navigation, `RecastDemo/Source/Sample_TileMesh.cpp` (`Sample_TileMesh::buildTileMesh`) | Mikko Mononen and Recast Navigation contributors | Zlib (see [Recast Navigation](#recast-navigation)) |
 | `crates/genex-ui/src/kit/toast.rs` (`Toasts`, `ToastKind`) | The toast queue: top-right stack with 8 px margin and spacing and 10 px padding, the `1 - (1 - x)^3` slide, a countdown that pauses under the pointer, the 4 px progress line. Changed (listed in the file's header): time counted in simulation ticks instead of `stable_dt`, the queue kept in egui memory (a seed forgets it), level icons drawn as shapes, the close cross dropped (a click anywhere dismisses), a capped queue, AccessKit labels and keys | egui-notify 0.23 (https://github.com/ItsEthra/egui-notify), `src/lib.rs` | ItsEthra | MIT (see [egui-notify](#egui-notify)) |
 
 ### egui-notify
@@ -791,6 +799,58 @@ IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
 CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 ```
 
+### Recast Navigation
+
+The licence of Recast Navigation, which rerecast ported and whose tile build and dungeon test level
+genex-nav uses (table above).
+
+```
+Copyright (c) 2009 Mikko Mononen memon@inside.org
+
+This software is provided 'as-is', without any express or implied
+warranty.  In no event will the authors be held liable for any damages
+arising from the use of this software.
+
+Permission is granted to anyone to use this software for any purpose,
+including commercial applications, and to alter it and redistribute it
+freely, subject to the following restrictions:
+
+1. The origin of this software must not be misrepresented; you must not
+claim that you wrote the original software. If you use this software
+in a product, an acknowledgment in the product documentation would be
+appreciated but is not required.
+2. Altered source versions must be plainly marked as such, and must not be
+misrepresented as being the original software.
+3. This notice may not be removed or altered from any source distribution.
+```
+
+### rerecast
+
+The licence of rerecast, whose Recast port genex-nav ports (table above). Its MIT text carries no
+copyright line; its Cargo.toml names the author, Jan Hohenheim.
+
+```
+MIT License
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
 ### RVO2
 
 The notice the dodgy_2d port keeps from RVO2, which dodgy_2d ported (table above). RVO2 is licensed
@@ -822,6 +882,35 @@ repositories carry the same text.
 MIT License
 
 Copyright (c) 2021 Daniel Holden
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
+### wgpu-profiler
+
+The licence of wgpu-profiler, whose span layout and Chrome trace format genex-profile ports (table
+above).
+
+```
+MIT License
+
+Copyright (c) 2021 Andreas Reich
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal

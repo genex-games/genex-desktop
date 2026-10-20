@@ -3,9 +3,8 @@
 //! are capped per device class, and reports carry the GPU lanes, memory rows and a Chrome trace.
 //! Profiling never enters the checksum.
 //!
-//! Every planned module is declared now so each work package fills one body (G6 profiling,
-//! PROF-0d); a module that names its work package is still a stub. The recorder, its scope
-//! vocabulary, caps, counters and summary are filled (PROF-1a).
+//! The recorder, its scope vocabulary, caps, counters and summary (PROF-1a), and the hitches, the
+//! GPU lane, memory rows, ProfileReport v2 and the Chrome trace (PROF-1b) are filled.
 
 pub mod scope;
 pub mod recorder;
@@ -20,6 +19,11 @@ pub mod trace;
 
 pub use caps::{CapsClass, ProfileCaps};
 pub use counters::Counters;
+pub use gpu_lane::{GpuLane, GpuNodeSample, GpuNodeTime, WORLD_NODE};
+pub use hitch::{Hitch, HitchCause, HitchDetector};
+pub use memory::{MemoryClass, MemoryRows};
+pub use report::{ProfileReport, ReportMeta};
+pub use trace::{chrome_trace, trace_digest};
 pub use recorder::{Clock, Profiler, ProfilerConfig, WorkerLane, counter, default_clock, detach_thread};
 pub use scope::{EngineScope, ScopeGuard, ScopeKey, ScopeName, scope};
 pub use summary::{GpuTimeSource, NodeTiming, ProfileSummary};

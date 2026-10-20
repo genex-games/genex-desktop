@@ -28,9 +28,11 @@ pub mod debug;
 #[cfg(feature = "physics")]
 pub mod input_rapier;
 
+pub use bake::{BakeConfig, bake_tile};
 pub use config::NavConfig;
 pub use debug::NavDebug;
 pub use error::{NavError, NavErrorCode};
 pub use ids::{AgentId, NavBodyId, NavLinkId, NavObstacleId};
 pub use input::{NavArea, NavInput};
+pub use tile::NavTile;
 pub use world::Nav;
