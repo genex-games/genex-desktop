@@ -28,6 +28,7 @@ import { fitDescription } from "../../src/plugins/unreal/editor-describe.ts";
 import { editorEndpoint } from "../../src/plugins/unreal/editor-port.ts";
 import { EditorStart, editorStart } from "../../src/plugins/unreal/editor-status.ts";
 import { decodePng, encodePng } from "../../src/plugins/unreal/tone.ts";
+import { FILE_LINKS } from "../helpers/folder-links.ts";
 import { tmpDir } from "../helpers/tmp.ts";
 
 const ENDPOINT = "http://127.0.0.1:8000/mcp";
@@ -600,7 +601,6 @@ test("a play start is recognised however Unreal would resolve its name", async (
 const SECOND = 1000;
 /** A crash answered within this is fast: without the watch the call waits out its five minutes. */
 const CRASH_ANSWER_MS = 2 * SECOND;
-const LINKS = process.platform === "win32" && "links need privileges on Windows";
 
 /** Unreal's log for `project` as the editor starts it: a byte-order mark, the open line, the command line. */
 const unrealLog = (project: string) =>
@@ -835,7 +835,7 @@ const unreadLogs: Array<{
 ];
 for (const row of unreadLogs)
   test(`with ${row.name}, the call goes through as before and nothing is written`, {
-    skip: row.links ? LINKS : false,
+    skip: row.links ? FILE_LINKS : false,
   }, async () => {
     const log = await projectLog(DRIFT, null);
     const target = await row.arrange(log);

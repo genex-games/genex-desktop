@@ -10,10 +10,12 @@ import { spawnSync } from "node:child_process";
 import path from "node:path";
 import { describe, it } from "node:test";
 import { parsePartManifest } from "../../src/plugins/unreal/part-manifest.ts";
+import { findPython3 } from "../helpers/python3.ts";
 
 const HELPER_PYTHON = path.resolve("src/plugins/unreal/GenexEditorHelper/Content/Python");
 const PYTHON_TIMEOUT_MS = 30_000;
-const skip = process.platform === "win32" ? "the helper's tests run on POSIX" : false;
+const PYTHON = findPython3()?.command;
+const skip = PYTHON ? false : "needs Python 3 on PATH";
 
 /** Each declaration through the helper's reader: its Blueprints' [name, base, parent], or null when refused. */
 const HELPER_READER = `
@@ -31,7 +33,7 @@ print(json.dumps(answers))
 `;
 
 function helperReads(rows: unknown[]): Array<Array<[string, string, string | null]> | null> {
-  const run = spawnSync("python3", ["-c", HELPER_READER], {
+  const run = spawnSync(PYTHON ?? "python3", ["-c", HELPER_READER], {
     input: JSON.stringify(rows),
     encoding: "utf8",
     timeout: PYTHON_TIMEOUT_MS,

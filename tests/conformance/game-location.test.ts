@@ -5,15 +5,15 @@
  * offer to open whatever was already in it).
  */
 import assert from "node:assert/strict";
-import { mkdir, readdir, readFile, realpath, rename, symlink, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, realpath, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, it } from "node:test";
 import { GameWorkspaces } from "../../src/substrate/game-workspace.ts";
 import { coreLite } from "../helpers/core-lite.ts";
+import { linkFolder } from "../helpers/folder-links.ts";
 import { tmpDir } from "../helpers/tmp.ts";
 
 const repo = path.resolve(import.meta.dirname, "../..");
-const posixOnly = process.platform === "win32" ? "symlinks need privileges on Windows" : false;
 
 async function workspaces() {
   const base = await tmpDir("studio-game-location-");
@@ -178,19 +178,17 @@ describe("creating a game in a chosen folder", () => {
     assert.deepEqual((await games.list()).map((game) => game.name).sort(), [a.name, b.name].sort());
   });
 
-  it("a link to an ordinary folder creates the game in the folder it points at", { skip: posixOnly }, async () => {
+  it("a link to an ordinary folder creates the game in the folder it points at", async () => {
     const { games, base, places } = await workspaces();
     await mkdir(path.join(places, "real"));
-    await symlink(path.join(places, "real"), path.join(base, "shortcut"));
+    await linkFolder(path.join(places, "real"), path.join(base, "shortcut"));
     const game = await games.create("Linked", { parent: path.join(base, "shortcut") });
     assert.equal(game.dir, path.join(await realpath(path.join(places, "real")), "Linked"));
   });
 });
 
 describe("a location that is refused changes nothing", () => {
-  it("a link swapped in after the location was checked is caught before anything is written", {
-    skip: posixOnly,
-  }, async () => {
+  it("a link swapped in after the location was checked is caught before anything is written", async () => {
     const env = await workspaces();
     const parent = path.join(env.places, "Projects");
     const outside = path.join(env.base, "outside");
@@ -199,7 +197,7 @@ describe("a location that is refused changes nothing", () => {
     const before = await sideEffects(env.games, env.options, outside);
     const swap = async () => {
       await rename(parent, `${parent}-moved`);
-      await symlink(outside, parent);
+      await linkFolder(outside, parent);
     };
     await assert.rejects(env.games.create("Escape", { parent, allowed: swap }));
     assert.deepEqual(await sideEffects(env.games, env.options, outside), before, "nothing outside, no alias");
@@ -208,7 +206,6 @@ describe("a location that is refused changes nothing", () => {
   /** Each row builds a hostile location and names the folder whose contents must not change. */
   const rows: Array<{
     name: string;
-    skip?: string | false;
     setup(env: Awaited<ReturnType<typeof workspaces>>): Promise<{ parent: string; watched: string }>;
   }> = [
     {
@@ -270,10 +267,9 @@ describe("a location that is refused changes nothing", () => {
     },
     {
       name: "a link to a game",
-      skip: posixOnly,
       async setup({ games, base }) {
         const game = await games.create("Pong");
-        await symlink(game.dir, path.join(base, "to-pong"));
+        await linkFolder(game.dir, path.join(base, "to-pong"));
         return { parent: path.join(base, "to-pong"), watched: game.dir };
       },
     },
@@ -311,7 +307,7 @@ describe("a location that is refused changes nothing", () => {
   ];
 
   for (const row of rows) {
-    it(row.name, { skip: row.skip ?? false }, async () => {
+    it(row.name, async () => {
       const env = await workspaces();
       const { parent, watched } = await row.setup(env);
       const before = await sideEffects(env.games, env.options, watched);
@@ -328,10 +324,10 @@ async function studio() {
 }
 
 describe("the studio checks a chosen folder before the library writes anything", () => {
-  it("a development profile keeps new games inside its own games folder", { skip: posixOnly }, async () => {
+  it("a development profile keeps new games inside its own games folder", async () => {
     const { core, gamesRoot } = await studio();
     const outside = await tmpDir("studio-game-location-outside-");
-    await symlink(outside, path.join(gamesRoot, "shortcut"));
+    await linkFolder(outside, path.join(gamesRoot, "shortcut"));
     for (const parent of [outside, path.join(gamesRoot, "shortcut")]) {
       await assert.rejects(core.gameLocation(parent), /outside the owned|alias/, parent);
       await assert.rejects(core.createGame("Escape", { parent }), /outside the owned|alias/, parent);
@@ -340,19 +336,21 @@ describe("the studio checks a chosen folder before the library writes anything",
     assert.deepEqual(await readdir(gamesRoot), ["shortcut"]);
   });
 
-  it("refuses the Genex login folder, also through a link, before anything is written", {
-    skip: posixOnly,
-  }, async (t) => {
+  it("refuses the Genex login folder, also through a link, before anything is written", async (t) => {
     const home = await realpath(await tmpDir("studio-game-location-home-"));
-    const previous = process.env.HOME;
-    process.env.HOME = home;
-    t.after(() => {
-      process.env.HOME = previous;
-    });
+    // The home folder is HOME's off Windows and USERPROFILE's on it (`os.homedir()`).
+    for (const key of ["HOME", "USERPROFILE"]) {
+      const previous = process.env[key];
+      process.env[key] = home;
+      t.after(() => {
+        if (previous === undefined) delete process.env[key];
+        else process.env[key] = previous;
+      });
+    }
     // A launch without the development policy, as the normal profile runs.
     const { core } = await coreLite({ executionPolicy: { runBackgroundImprovement: false } });
     await mkdir(path.join(home, "dotfiles", "genex", "inner"), { recursive: true });
-    await symlink(path.join(home, "dotfiles", "genex"), path.join(home, ".genex"));
+    await linkFolder(path.join(home, "dotfiles", "genex"), path.join(home, ".genex"));
     for (const parent of [path.join(home, ".genex"), path.join(home, "dotfiles", "genex", "inner")]) {
       await assert.rejects(core.gameLocation(parent), /can't create games there/, parent);
       await assert.rejects(core.createGame("Leak", { parent }), /can't create games there/, parent);

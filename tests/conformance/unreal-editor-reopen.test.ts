@@ -10,7 +10,7 @@
  * real files.
  */
 import assert from "node:assert/strict";
-import { cp, mkdir, realpath, symlink, writeFile } from "node:fs/promises";
+import { cp, mkdir, realpath, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, it } from "node:test";
 import type { PluginContext, PluginHookContext } from "../../src/plugin-sdk/index.d.ts";
@@ -22,6 +22,7 @@ import { createLoopTools, LiveLoopToolName, LoopToolName } from "../../src/plugi
 import { HelperState, type SetupEnv } from "../../src/plugins/unreal/setup.ts";
 import { CompileFailure, type CompileOptions, type CompileResult } from "../../src/plugins/unreal/ubt.ts";
 import { XcodeState } from "../../src/plugins/unreal/xcode.ts";
+import { linkFolder } from "../helpers/folder-links.ts";
 import { tmpDir } from "../helpers/tmp.ts";
 import { CrashLog, crashLog } from "../helpers/unreal-editor-stand-in.ts";
 
@@ -399,7 +400,7 @@ describe("reopen-editor ends only this project's processes", () => {
       "a crash folder that is a link to this project's",
       async (p) => {
         const folder = path.join(p.crashes, `CrashReport-UE-${NAME}-pid-4321-FEDCBA9876543210`);
-        await symlink(p.ours, folder);
+        await linkFolder(p.ours, folder);
         return reporter(`"${folder}/"`);
       },
     ],
@@ -427,7 +428,7 @@ describe("reopen-editor ends only this project's processes", () => {
     ],
   ];
   for (const [label, make] of hostile) {
-    it(`leaves ${label} running`, { skip: process.platform === "win32" && "links need privileges" }, async () => {
+    it(`leaves ${label} running`, async () => {
       const w = await reopenWorld();
       const made = await make(w.paths);
       w.rows.push(made);

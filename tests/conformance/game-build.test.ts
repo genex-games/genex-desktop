@@ -11,6 +11,7 @@ import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { describe, it } from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
 import { promisify } from "node:util";
@@ -36,6 +37,7 @@ import {
 import type { ProjectShape } from "../../src/substrate/game-workspace.ts";
 import { GENEX_GAME_PACKAGES } from "../../src/shared/genex.ts";
 import type { RunRequest, RunResult } from "../../src/substrate/spawn.ts";
+import { posixShell } from "../helpers/posix-shell.ts";
 import { tmpDir } from "../helpers/tmp.ts";
 
 const exec = promisify(execFile);
@@ -63,18 +65,20 @@ const VITE_SHAPE: ProjectShape = {
   serve: "dist",
 };
 
-/**
- * Real npm through a POSIX shell (`shellRunner`). What these runs prove is npm's own settings
- * order, the same on every platform; Windows has no /bin/sh to run them with.
- */
-const POSIX_NPM = { skip: process.platform === "win32" && "runs npm through /bin/sh, which Windows lacks" };
+const WINDOWS = process.platform === "win32";
+/** A setup script that leaves `pwned` in its package's folder, under any platform's script shell. */
+const TOUCH_PWNED = `node -e "require('fs').writeFileSync('pwned', '')"`;
 
-/** A runner that runs the command for real, outside any sandbox: npm's own behavior is the point. */
+/**
+ * A runner that runs the command for real, outside any sandbox: npm's own behavior is the point.
+ * It runs under the shell a build runs under, `/bin/sh` or Git Bash on Windows (`posix-shell.ts`),
+ * with the env file's `MSYS_NO_PATHCONV=1` there.
+ */
 async function shellRunner(request: RunRequest): Promise<RunResult> {
   const started = Date.now();
-  const result = await exec("/bin/sh", ["-c", request.command], {
+  const result = await exec(await posixShell(), ["-c", request.command], {
     cwd: request.cwd,
-    env: { ...process.env, ...request.env },
+    env: { ...process.env, ...request.env, ...(WINDOWS ? { MSYS_NO_PATHCONV: "1" } : {}) },
   }).then(
     (out) => ({ code: 0, ...out }),
     (error: { code?: number; stdout?: string; stderr?: string }) => ({
@@ -773,7 +777,7 @@ describe("building a game the user owns", () => {
     ]);
   });
 
-  it("runs a guarded install with the system's git, whatever program the copy's .npmrc names", POSIX_NPM, async () => {
+  it("runs a guarded install with the system's git, whatever program the copy's .npmrc names", async () => {
     const work = await tmpDir("studio-git-dep-");
     // A package in a local repository: npm fetches a git dependency with the program its `git` names.
     const dep = path.join(work, "dep");
@@ -785,12 +789,19 @@ describe("building a game the user owns", () => {
     const dir = await gameRepo("planted-git");
     await writeFile(
       path.join(dir, "package.json"),
-      JSON.stringify({ name: "planted-git", version: "1.0.0", dependencies: { dep: `git+file://${dep}` } }),
+      JSON.stringify({
+        name: "planted-git",
+        version: "1.0.0",
+        dependencies: { dep: `git+${pathToFileURL(dep).href}` },
+      }),
     );
-    await writeFile(path.join(dir, "evil.sh"), `#!/bin/sh\ntouch "${path.join(dir, "pwned")}"\nexit 1\n`, {
-      mode: 0o755,
-    });
-    await writeFile(path.join(dir, ".npmrc"), "git=./evil.sh\n");
+    // The program the copy names, in the form its platform runs: either way it leaves `pwned` and fails.
+    const pwned = path.join(dir, "pwned");
+    const evil = WINDOWS
+      ? { file: "evil.cmd", text: `@echo off\r\ntype nul > "${pwned}"\r\nexit /b 1\r\n` }
+      : { file: "evil.sh", text: `#!/bin/sh\ntouch "${pwned}"\nexit 1\n` };
+    await writeFile(path.join(dir, evil.file), evil.text, { mode: 0o755 });
+    await writeFile(path.join(dir, ".npmrc"), `git=./${evil.file}\n`);
     const builds = new GameBuilds({ root: path.join(await tmpDir("studio-shadow-"), "builds"), run: shellRunner });
     const result = await builds.installGuarded({ project: "planted-git", dir });
     assert.equal(result?.ok, true, result?.lines.join("\n"));
@@ -798,14 +809,15 @@ describe("building a game the user owns", () => {
     assert.ok((await stat(path.join(dir, "node_modules", "dep", "package.json"))).isFile());
   });
 
-  it("runs the guarded install without the copy's own scripts, whatever its .npmrc says", POSIX_NPM, async () => {
+  it("runs the guarded install without the copy's own scripts, whatever its .npmrc says", async () => {
     const dir = await gameRepo("planted-npmrc");
     await writeFile(
       path.join(dir, "package.json"),
       JSON.stringify({
         name: "planted",
         version: "1.0.0",
-        scripts: { preinstall: "touch pwned", postinstall: "touch pwned" },
+        // Node, not `touch`: npm runs a script under cmd.exe on Windows.
+        scripts: { preinstall: TOUCH_PWNED, postinstall: TOUCH_PWNED },
       }),
     );
     await writeFile(

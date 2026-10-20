@@ -16,6 +16,7 @@ import {
   writeFileInDir,
   createFileInDir,
 } from "../../src/substrate/fsx.ts";
+import { linkFolder } from "../helpers/folder-links.ts";
 import { tmpDir } from "../helpers/tmp.ts";
 
 /** Windows keeps only a read-only flag, so there a mode is compared by its owner-write bit alone. */
@@ -187,9 +188,7 @@ it("readRegularFile refuses a link and reads a regular file", async () => {
   await assert.rejects(readRegularFile(path.join(dir, "link.json"), 10), { code: "ELOOP" });
 });
 
-it("writeFileInDir never writes through a folder swapped for a link after its check, nor empties a file there", {
-  skip: process.platform === "win32" ? "folder links need privileges on Windows" : false,
-}, async () => {
+it("writeFileInDir never writes through a folder swapped for a link after its check, nor empties a file there", async () => {
   const root = await realpath(await tmpDir("fsx-in-dir-"));
   const outside = await realpath(await tmpDir("fsx-in-dir-outside-"));
   await writeFile(path.join(outside, "x.plist"), "the person's own file");
@@ -198,7 +197,7 @@ it("writeFileInDir never writes through a folder swapped for a link after its ch
   // The folder is checked, then swapped for a link out before the write opens its name.
   const swap = async () => {
     await rename(dir, path.join(root, "observers-old"));
-    await symlink(outside, dir);
+    await linkFolder(outside, dir);
   };
   await assert.rejects(writeFileInDir(dir, "x.plist", "planted", swap), (err: NodeJS.ErrnoException) => {
     assert.equal(err.code, "ELOOP");
@@ -214,7 +213,7 @@ it("writeFileInDir never writes through a folder swapped for a link after its ch
   await assert.rejects(
     writeFileInDir(fresh, "new.png", "planted", async () => {
       await rename(fresh, path.join(root, "fresh-old"));
-      await symlink(outside, fresh);
+      await linkFolder(outside, fresh);
     }),
   );
   assert.equal(await readFile(path.join(outside, "new.png"), "utf8").catch(() => ""), "", "no bytes land outside");
@@ -225,9 +224,7 @@ it("writeFileInDir never writes through a folder swapped for a link after its ch
   assert.equal(await readFile(path.join(plain, "a.png"), "utf8"), "new", "a plain folder takes it, emptied first");
 });
 
-it("createFileInDir makes a new file only: never over one there, never through a folder swapped for a link", {
-  skip: process.platform === "win32" ? "folder links need privileges on Windows" : false,
-}, async () => {
+it("createFileInDir makes a new file only: never over one there, never through a folder swapped for a link", async () => {
   const root = await realpath(await tmpDir("fsx-create-"));
   const outside = await realpath(await tmpDir("fsx-create-outside-"));
   const dir = path.join(root, "made");
@@ -243,7 +240,7 @@ it("createFileInDir makes a new file only: never over one there, never through a
   await assert.rejects(
     createFileInDir(swapped, "b.txt", "planted", async () => {
       await rename(swapped, path.join(root, "swapped-old"));
-      await symlink(outside, swapped);
+      await linkFolder(outside, swapped);
     }),
     { code: "ELOOP" },
   );

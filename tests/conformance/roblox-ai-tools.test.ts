@@ -35,6 +35,7 @@ import type { PluginManifest } from "../../src/shared/plugins.ts";
 import { UiEvent, type UiEvent as UiEventData } from "../../src/shared/ui-events.ts";
 import { validateManifest } from "../../src/substrate/plugins/manifest.ts";
 import { type CoreLite, coreLite } from "../helpers/core-lite.ts";
+import { FILE_LINKS, linkFolder } from "../helpers/folder-links.ts";
 import { hostFor, makeGame, robloxMac } from "../helpers/roblox-mac.ts";
 import { tmpDir } from "../helpers/tmp.ts";
 
@@ -426,7 +427,7 @@ describe("pictures from the game folder", () => {
     [
       "a linked folder on the way",
       async ({ folder, outside }) => {
-        await symlink(path.dirname(outside), path.join(folder, "linked"));
+        await linkFolder(path.dirname(outside), path.join(folder, "linked"));
         return `linked/${path.basename(outside)}`;
       },
     ],
@@ -462,9 +463,13 @@ describe("pictures from the game folder", () => {
     ["a backslash path", async () => "art\\icon.png"],
   ];
 
+  /** The rows that link a file, which a Windows account may lack the privilege for. */
+  const FILE_LINK_ROWS = new Set(["a link to a picture inside", "a link to a picture outside"]);
   for (const [why, lay] of HOSTILE)
     for (const tool of [AskFirstTool.StoreImage, AskFirstTool.UploadImage])
-      it(`${tool} refuses ${why}: no Studio call, no copy`, { skip: process.platform === "win32" }, async () => {
+      it(`${tool} refuses ${why}: no Studio call, no copy`, {
+        skip: FILE_LINK_ROWS.has(why) && FILE_LINKS,
+      }, async () => {
         const game = await gameIn();
         const outside = path.join(path.dirname(game.folder), "secret.png");
         await writeFile(outside, PNG);

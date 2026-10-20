@@ -9,13 +9,35 @@ import {
   type InstallerRun,
 } from "../../src/substrate/cli-installer.ts";
 import { CliInstallProblem } from "../../src/shared/cli-install.ts";
+import { windowsBaseEnv } from "../../src/substrate/child-env.ts";
 import type { CodingProvider } from "../../src/shared/coding-cli.ts";
 import { tmpDir } from "../helpers/tmp.ts";
 
-const POSIX_ONLY = process.platform === "win32" && "runs its scripts with /bin/sh and /bin/bash";
+const WINDOWS = process.platform === "win32";
+
+/** A path as one quoted word of the installer's own language: POSIX shell, or PowerShell on Windows. */
+const quoted = (file: string) => (WINDOWS ? `'${file.replaceAll("'", "''")}'` : `"${file}"`);
+
+/**
+ * Stand-in installers in the language this system's installer is written in: a shell script
+ * (run by /bin/sh or /bin/bash) on macOS and Linux, a PowerShell script on Windows.
+ */
+const INSTALLER = WINDOWS
+  ? {
+      dumpEnv: (report: string) =>
+        "$lines = Get-ChildItem Env: | ForEach-Object { $_.Name + '=' + $_.Value }\n" +
+        `[System.IO.File]::WriteAllLines(${quoted(report)}, [string[]]$lines)\n`,
+      fail: "[Console]::Error.WriteLine('no space left')\nexit 7\n",
+      hang: (marker: string) => `Start-Sleep -Seconds 30\nNew-Item -ItemType File -Path ${quoted(marker)}\n`,
+    }
+  : {
+      dumpEnv: (report: string) => `#!/bin/sh\nenv > ${quoted(report)}\n`,
+      fail: "#!/bin/sh\necho 'no space left' >&2\nexit 7\n",
+      hang: (marker: string) => `#!/bin/sh\nsleep 30\ntouch ${quoted(marker)}\n`,
+    };
 
 // What the app's own environment can carry: keys, and either vendor's login home.
-const PARENT = {
+const CARRIED = {
   HOME: "/Users/ada",
   PATH: "/usr/bin:/bin",
   ANTHROPIC_API_KEY: "synthetic-anthropic",
@@ -23,6 +45,8 @@ const PARENT = {
   CLAUDE_CONFIG_DIR: "/Users/ada/.claude-elsewhere",
   CODEX_HOME: "/Users/ada/.codex-elsewhere",
 };
+/** The app's environment: on Windows also what any Windows program needs to start (PowerShell does). */
+const PARENT = { ...windowsBaseEnv(process.env), ...CARRIED };
 
 /** A fetch that answers every request with `body`, as if served from `url` (the request's own by default). */
 function serving(body: string, init: { status?: number; url?: string } = {}): typeof fetch {
@@ -116,19 +140,17 @@ test("an installer that cannot be fetched whole over HTTPS is never run and leav
   }
 });
 
-test("a fetched installer runs as the person with its own switches, and without keys or the other vendor's home", {
-  skip: POSIX_ONLY,
-}, async () => {
+test("a fetched installer runs as the person with its own switches, and without keys or the other vendor's home", async () => {
   for (const provider of ["claude-code", "codex"] as const) {
     const tmpRoot = await tmpDir("cli-installer-");
     const report = path.join(await tmpDir("cli-installer-out-"), "env.txt");
-    const fetch = serving(`#!/bin/sh\nenv > "${report}"\n`);
+    const fetch = serving(INSTALLER.dumpEnv(report));
     const outcome = await installCodingCli(provider, { platform: process.platform, env: PARENT, fetch, tmpRoot });
     assert.deepEqual(outcome, { ok: true }, provider);
     const seen = Object.fromEntries(
       readFileSync(report, "utf8")
         .trim()
-        .split("\n")
+        .split(/\r?\n/)
         .map((line) => [line.slice(0, line.indexOf("=")), line.slice(line.indexOf("=") + 1)]),
     );
     assert.equal(seen.HOME, PARENT.HOME, provider);
@@ -146,14 +168,12 @@ test("a fetched installer runs as the person with its own switches, and without 
   }
 });
 
-test("an installer that fails or hangs is reported with its last words, and a hung one is stopped", {
-  skip: POSIX_ONLY,
-}, async () => {
+test("an installer that fails or hangs is reported with its last words, and a hung one is stopped", async () => {
   const tmpRoot = await tmpDir("cli-installer-");
   const failed = await installCodingCli("codex", {
     platform: process.platform,
     env: PARENT,
-    fetch: serving("#!/bin/sh\necho 'no space left' >&2\nexit 7\n"),
+    fetch: serving(INSTALLER.fail),
     tmpRoot,
   });
   assert.equal(failed.ok, false);
@@ -165,7 +185,7 @@ test("an installer that fails or hangs is reported with its last words, and a hu
   const hung = await installCodingCli("codex", {
     platform: process.platform,
     env: PARENT,
-    fetch: serving(`#!/bin/sh\nsleep 30\ntouch "${marker}"\n`),
+    fetch: serving(INSTALLER.hang(marker)),
     tmpRoot,
     timeoutMs: 300,
   });

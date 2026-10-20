@@ -27,6 +27,7 @@ import { validateManifest } from "../../src/substrate/plugins/manifest.ts";
 import { type Engine, HelperState, inspectProject, type SetupEnv } from "../../src/plugins/unreal/setup.ts";
 import { type XcodeStatus, XcodeState } from "../../src/plugins/unreal/xcode.ts";
 import { UNREAL_NEW_GAME_TOOL } from "../../src/harness-seed/loop/unreal-prompts.ts";
+import { FILE_LINKS, linkFolder } from "../helpers/folder-links.ts";
 import { tmpDir } from "../helpers/tmp.ts";
 
 const GIB = 1024 ** 3;
@@ -44,7 +45,6 @@ const NO_XCODE: XcodeStatus = { ...READY_XCODE, state: XcodeState.Missing, app: 
 const HELPER = path.resolve("src/plugins/unreal/GenexEditorHelper");
 const BOM = "\uFEFF";
 const PROJECT_ID = "0123456789ABCDEF0123456789ABCDEF";
-const SEPARATE_LINKS = process.platform === "win32" && "links need privileges on Windows";
 /** A PNG's first bytes are enough for a thumbnail the panel shows as it is. */
 const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3]);
 
@@ -354,7 +354,7 @@ describe("New game templates", () => {
   });
 
   it("skips a template folder that is a link, and shows no thumbnail that is a link", {
-    skip: SEPARATE_LINKS,
+    skip: FILE_LINKS,
   }, async () => {
     const f = await fixture();
     const templates = path.join(f.engine.directory, "Templates");
@@ -802,19 +802,17 @@ const hostile: HostileRow[] = [
   {
     name: "a name a link already has",
     code: CreateErrorCode.NameTaken,
-    links: true,
     arrange: async (f) => {
-      await symlink(f.outside, path.join(f.parent, "GxCar"));
+      await linkFolder(f.outside, path.join(f.parent, "GxCar"));
       return {};
     },
   },
   {
     name: "a parent folder that is a link elsewhere",
     code: CreateErrorCode.Link,
-    links: true,
     arrange: async (f) => {
       const parent = path.join(f.root, "Linked Projects");
-      await symlink(f.outside, parent);
+      await linkFolder(f.outside, parent);
       return { parent };
     },
   },
@@ -868,9 +866,8 @@ const hostile: HostileRow[] = [
   {
     name: "a template folder that is a link",
     code: CreateErrorCode.Link,
-    links: true,
     arrange: async (f) => {
-      await symlink(
+      await linkFolder(
         path.join(f.engine.directory, "Templates", "TP_BlankBP"),
         path.join(f.engine.directory, "Templates", "TP_TopDownBP"),
       );
@@ -893,11 +890,10 @@ const hostile: HostileRow[] = [
   {
     name: "a shared pack's content folder that is a link",
     code: CreateErrorCode.Link,
-    links: true,
     arrange: async (f) => {
       const content = path.join(f.engine.directory, "Templates/TemplateResources/Standard/Vehicles/Content");
       await rename(content, path.join(f.outside, "VehiclesContent"));
-      await symlink(path.join(f.outside, "VehiclesContent"), content);
+      await linkFolder(path.join(f.outside, "VehiclesContent"), content);
       return {};
     },
   },
@@ -922,7 +918,7 @@ const hostile: HostileRow[] = [
 
 describe("A new game is refused, creating nothing,", () => {
   for (const row of hostile)
-    it(`for ${row.name}`, { skip: row.links ? SEPARATE_LINKS : false }, async () => {
+    it(`for ${row.name}`, { skip: row.links ? FILE_LINKS : false }, async () => {
       const f = await fixture();
       const input = {
         template: BlueprintTemplate.Vehicle as string,
@@ -1494,8 +1490,7 @@ const refusals: Refusal[] = [
   { name: "a game with an unreal file", arrange: (dir) => writeFile(path.join(dir, "unreal"), "mine") },
   {
     name: "a game whose unreal is a link out of it",
-    links: true,
-    arrange: (dir, outside) => symlink(outside, path.join(dir, "unreal")),
+    arrange: (dir, outside) => linkFolder(outside, path.join(dir, "unreal")),
   },
   {
     name: "a game whose ignore file is a link out of it",
@@ -1568,7 +1563,7 @@ describe("The Unreal plugin's new-game tool", () => {
 
   describe("is refused, changing nothing anywhere,", () => {
     for (const row of refusals)
-      it(`for ${row.name}`, { skip: row.links ? SEPARATE_LINKS : false }, async () => {
+      it(`for ${row.name}`, { skip: row.links ? FILE_LINKS : false }, async () => {
         const g = await newGameFixture({ game: row.game });
         await row.arrange?.(g.dir, g.outside);
         const witness = async () => ({

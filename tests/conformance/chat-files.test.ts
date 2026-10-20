@@ -434,24 +434,29 @@ test("Studio and a chat without a game resolve only what they can reach", async 
   ]);
 });
 
-test("opening re-resolves the name; a build-only file opens as a read-only copy", {
-  skip: process.platform === "win32" && "exec bits and read-only modes are POSIX",
+test("opening a program by its name shows it in its folder", {
+  skip: process.platform === "win32" && "exec bits are POSIX: Windows tells a program by its extension",
 }, async () => {
+  const { game, scope } = fixture();
+  assert.deepEqual(await new ChatFileResolver().target(scope(), { name: "tools/run.command" }), {
+    open: "finder",
+    target: path.join(game, "tools", "run.command"),
+  });
+});
+
+test("opening re-resolves the name; a build-only file opens as a read-only copy", async () => {
   const { game, root, scope } = fixture();
   const chat = new ChatFileResolver();
   assert.deepEqual(await chat.target(scope(), { name: "assets/video/intro.mp4" }), {
     open: "app",
     target: path.join(game, "assets", "video", "intro.mp4"),
   });
-  assert.deepEqual(await chat.target(scope(), { name: "tools/run.command" }), {
-    open: "finder",
-    target: path.join(game, "tools", "run.command"),
-  });
   const copy = await chat.target(scope(), { name: "src/enemy.js" });
   assert.equal(copy.open, "app");
   assert.equal(path.basename(copy.target), "enemy.js");
   assert.ok(copy.target.startsWith(path.join(root, "opened-files")), "the copy is where the scope keeps copies");
   assert.equal(readFileSync(copy.target, "utf8"), "enemy");
+  // On Windows the mode is the read-only attribute: 0o444 with it, 0o666 without.
   assert.equal(statSync(copy.target).mode & 0o222, 0, "the copy cannot be edited by mistake");
   assert.equal(
     (await chat.target(scope(), { name: "src/enemy.js" })).target,

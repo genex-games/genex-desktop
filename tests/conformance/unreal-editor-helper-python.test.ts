@@ -14,6 +14,7 @@ import { agentBrief } from "../../src/harness-seed/loop/unreal/agent-prompts.ts"
 import { AgentKind } from "../../src/harness-seed/loop/unreal/lead-contract.ts";
 import { TOOLSET_OF } from "../../src/plugins/unreal/loop-tools.ts";
 import { checkPython, GENEX_NAMES } from "../../src/plugins/unreal/python-check.ts";
+import { findPython3 } from "../helpers/python3.ts";
 
 const FIXTURES = path.resolve("tests/fixtures/unreal-helper");
 const HELPER_PYTHON = path.resolve("src/plugins/unreal/GenexEditorHelper/Content/Python");
@@ -21,25 +22,21 @@ const HELPER_PYTHON = path.resolve("src/plugins/unreal/GenexEditorHelper/Content
 const MIN_PYTHON = [3, 10] as const;
 const PYTHON_TIMEOUT_MS = 60_000;
 
-function pythonVersion(): number[] | undefined {
-  const probe = spawnSync("python3", ["-c", "import sys; print(sys.version_info[0], sys.version_info[1])"], {
-    encoding: "utf8",
-  });
-  if (probe.status !== 0) return undefined;
-  return probe.stdout.trim().split(" ").map(Number);
-}
+const FOUND = findPython3();
+/** The Python 3 the tests run, by the name PATH knows it. */
+const PYTHON3 = FOUND?.command ?? "python3";
 
 function skipReason(): string | false {
-  if (process.platform === "win32") return "the helper's path checks are tested on POSIX paths";
-  const version = pythonVersion();
-  if (!version) return "no python3 on PATH";
-  const [major = 0, minor = 0] = version;
+  if (!FOUND) return "no Python 3 on PATH";
+  const [major, minor] = FOUND.version;
   if (major < MIN_PYTHON[0] || (major === MIN_PYTHON[0] && minor < MIN_PYTHON[1]))
-    return `python3 ${version.join(".")} is older than ${MIN_PYTHON.join(".")}`;
+    return `${FOUND.command} ${FOUND.version.join(".")} is older than ${MIN_PYTHON.join(".")}`;
   return false;
 }
 
 const SKIP = skipReason();
+/** The helper's own Python test modules build POSIX paths for its path checks, so they run off Windows. */
+const SKIP_MODULES = SKIP || (process.platform === "win32" && "the helper's path checks are tested on POSIX paths");
 const modules = readdirSync(FIXTURES)
   .filter((name) => /^test_.*\.py$/.test(name))
   .map((name) => name.replace(/\.py$/, ""))
@@ -73,7 +70,7 @@ test("every editor tool the Loop sends to the Genex editor helper is one of its 
   // The helper's Python packages are genex_play and genex_loop; the rest are Epic's.
   const routed = Object.entries(TOOLSET_OF).filter(([, toolset]) => toolset.startsWith("genex_"));
   const toolsets = [...new Set(routed.map(([, toolset]) => toolset))];
-  const run = spawnSync("python3", ["-c", LIST_TOOLS, ...toolsets], PYTHON);
+  const run = spawnSync(PYTHON3, ["-c", LIST_TOOLS, ...toolsets], PYTHON);
   assert.equal(run.status, 0, run.stderr);
   const names = JSON.parse(run.stdout) as Record<string, string[]>;
   for (const [tool, toolset] of routed) assert.ok(names[toolset]?.includes(tool), `${toolset} has no tool ${tool}`);
@@ -86,7 +83,7 @@ names = ['import_model', 'import_character', 'import_animation', 'import_sound']
 print(json.dumps({n: list(inspect.signature(getattr(GenexBuildTools, n)).parameters) for n in names}))`;
 
 test("a sub-agent's brief writes every import call with every argument the build tools take", { skip: SKIP }, () => {
-  const run = spawnSync("python3", ["-c", IMPORT_PARAMS], PYTHON);
+  const run = spawnSync(PYTHON3, ["-c", IMPORT_PARAMS], PYTHON);
   assert.equal(run.status, 0, run.stderr);
   const params = JSON.parse(run.stdout) as Record<string, string[]>;
   const brief = agentBrief({
@@ -117,7 +114,7 @@ api = part_api.for_part(PartFiles('Bike', '/game/unreal/parts/Bike', '', '', '',
 print(json.dumps(sorted(n for n in vars(api) if not n.startswith('_'))))`;
 
 test("apply.py's check knows exactly the names of the helper's genex module", { skip: SKIP }, () => {
-  const run = spawnSync("python3", ["-c", LIST_GENEX], PYTHON);
+  const run = spawnSync(PYTHON3, ["-c", LIST_GENEX], PYTHON);
   assert.equal(run.status, 0, run.stderr);
   assert.deepEqual(JSON.parse(run.stdout), [...GENEX_NAMES].sort());
 });
@@ -137,14 +134,14 @@ test("python-check finds every Unreal name the build and play tools use among Un
   assert.ok(ENGINE_FACING.includes(path.join("genex_build", "terrain.py")), ENGINE_FACING.join(", "));
   for (const file of ENGINE_FACING) {
     const source = readFileSync(path.join(HELPER_PYTHON, file), "utf8");
-    const problems = await checkPython({ python: "python3", names: REAL_NAMES }, source);
+    const problems = await checkPython({ python: PYTHON3, names: REAL_NAMES }, source);
     assert.deepEqual(problems, [], `${file}: ${problems.map((p) => `line ${p.line}: ${p.message}`).join("; ")}`);
   }
 });
 
 for (const name of modules) {
-  test(`Genex editor helper Python: ${name}`, { skip: SKIP }, () => {
-    const run = spawnSync("python3", ["-m", "unittest", "-v", name], PYTHON);
+  test(`Genex editor helper Python: ${name}`, { skip: SKIP_MODULES }, () => {
+    const run = spawnSync(PYTHON3, ["-m", "unittest", "-v", name], PYTHON);
     const report = `${run.stdout}\n${run.stderr}`;
     const ran = Number(/Ran (\d+) tests?/.exec(report)?.[1] ?? 0);
     assert.equal(run.status, 0, report);

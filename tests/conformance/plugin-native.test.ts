@@ -2,11 +2,11 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtemp, mkdir, writeFile, readFile, rm, symlink } from "node:fs/promises";
 import os from "node:os";
-import { execFileSync } from "node:child_process";
 import path from "node:path";
 import { PluginNativeServices } from "../../src/substrate/plugins/native.ts";
 import { validateManifest } from "../../src/substrate/plugins/manifest.ts";
 import type { PluginManifest, PluginNativeResult } from "../../src/shared/plugins.ts";
+import { FILE_LINKS } from "../helpers/folder-links.ts";
 
 async function setup() {
   const root = await mkdtemp(path.join(os.tmpdir(), "native-plugin-")),
@@ -100,20 +100,22 @@ test("native manifests require declared recipes, safe aliases, a pinned digest a
 });
 
 test("runtime discovery supports spaced symlinks and accurately reports missing and incompatible versions", {
-  skip: process.platform === "win32" && "native runtimes (Blender, Bonsai) stay macOS and Linux only",
+  skip: FILE_LINKS,
 }, async () => {
   const f = await setup();
   try {
+    // The runtime is the Node running this test, on every system: Windows has no /bin/bash.
     const link = path.join(f.root, "External runtime");
-    await symlink("/bin/bash", link);
-    const spec = f.manifest.nativeRuntimes![0]!;
-    const ready = await f.service.detect({ ...spec, candidates: [link] }, f.storage);
-    assert.equal(ready.state, "ready");
-    // The version this machine's bash reports (3.2 on macOS, 5.x on Linux), not one machine's.
-    const bashVersion = execFileSync("/bin/bash", ["--version"], { encoding: "utf8" }).match(
-      /version (\d+\.\d+\.\d+)/,
-    )?.[1];
-    assert.equal(ready.version, bashVersion);
+    await symlink(process.execPath, link);
+    const spec = {
+      ...f.manifest.nativeRuntimes![0]!,
+      candidates: [link],
+      version: { args: ["--version"], pattern: "v(\\d+\\.\\d+\\.\\d+)", minimum: "3.0.0" },
+    };
+    const ready = await f.service.detect(spec, f.storage);
+    assert.equal(ready.state, "ready", ready.detail);
+    // The version this Node reports, not one machine's.
+    assert.equal(ready.version, process.versions.node);
     assert.equal(
       (await f.service.detect({ ...spec, candidates: [path.join(f.root, "missing")] }, f.storage)).state,
       "missing",
@@ -123,7 +125,7 @@ test("runtime discovery supports spaced symlinks and accurately reports missing 
       "incompatible",
     );
     // A runtime that names a first release x.y (Godot's 4.3) reads as x.y.0 against the minimum.
-    const twoParts = { ...spec.version, pattern: "version (\\d+\\.\\d+)" };
+    const twoParts = { ...spec.version, pattern: "v(\\d+\\.\\d+)" };
     const short = await f.service.detect({ ...spec, version: twoParts }, f.storage);
     assert.equal(short.state, "ready");
     assert.match(String(short.version), /^\d+\.\d+$/);

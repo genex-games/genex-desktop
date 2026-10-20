@@ -126,6 +126,14 @@ through the JS API imports `@typescript/typescript6`.
 - `processes.ts`: `running(pid)`, whether a process still runs. A test that proves a stop left
   nothing behind asks it, not `process.kill(pid, 0)`, which also finds a process that exited but
   is not reaped yet.
+- `job-spawn.ts`: agent jobs without the sandbox, as it starts them with the sandbox off: the
+  command under `posix-shell.ts`'s shell (Git Bash on Windows), in a group of its own off Windows,
+  where a stop ends the tree with `taskkill` instead (`shellJobSpawn`, `exitingJobSpawn`, `endTree`).
+- `folder-links.ts`: links a hostile-input row plants. `linkFolder` makes a junction on Windows,
+  which needs no privilege, so a folder-link row runs there too; `FILE_LINKS` skips a file-link
+  row only on a Windows account that can't make one.
+- `python3.ts`: `findPython3`, the Python 3 on PATH (`python3`, or `python` on Windows) for tests
+  of the Python the Unreal plugin runs.
 
 Characterization so far: the `api()` keys and `StudioCore` surface (`core-surface`, `rpc-surface`),
 the seed contracts the app keeps its own copy of (`seed-contracts`), spike snapshot/worktree

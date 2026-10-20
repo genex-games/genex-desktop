@@ -296,7 +296,10 @@ describe("checking the sandbox at startup", { skip: POSIX_ONLY }, () => {
       await linux.dispose();
     }
   });
+});
 
+// No shell runs here: the wrapped command is never started, so every platform checks it.
+describe("checking the sandbox at startup where no check applies", () => {
   it("starts nothing on macOS or Windows, or with the sandbox off", async () => {
     const { fake, calls } = runtime(["/bin/sh", "-c", "exit 1"]);
     const mac = await sandbox(fake, StudioPlatform.Mac);

@@ -1547,8 +1547,21 @@ describe("composer provider preferences", () => {
   });
 });
 
+it("host recovery gives a crashed lock's files back the write access it took, on every platform", async () => {
+  const cwd = await tmpDir("studio-host-recovery-");
+  const recovery = await tmpDir("studio-host-record-");
+  const file = path.join(cwd, "index.html");
+  await writeFile(file, "game");
+  // On Windows a mode is the read-only attribute: 0o666 without it, 0o444 with it.
+  const before = (await stat(file)).mode & 0o777;
+  await lockUnowned(cwd, { facetId: "rules", owns: ["rules.js"], ownsMain: false }, recovery);
+  assert.equal((await stat(file)).mode & 0o222, 0, "locked");
+  assert.equal(await releaseStaleLocks(cwd, recovery), true);
+  assert.equal((await stat(file)).mode & 0o777, before, "writable again, as it was");
+});
+
 it("host recovery restores original group write bits after a crash", {
-  skip: process.platform === "win32",
+  skip: process.platform === "win32" && "Windows files have no group write bit, only a read-only attribute",
 }, async () => {
   const cwd = await tmpDir("studio-host-recovery-");
   const recovery = await tmpDir("studio-host-record-");

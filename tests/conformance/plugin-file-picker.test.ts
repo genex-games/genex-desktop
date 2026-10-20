@@ -16,9 +16,9 @@ import {
   type PluginFileDialogOptions,
 } from "../../src/main/core/plugin-file-picker.ts";
 import { PluginFileProblem, pluginFileRequest, readPluginFileRequest } from "../../src/shared/plugin-file-request.ts";
+import { FILE_LINKS, linkFolder } from "../helpers/folder-links.ts";
 import { tmpDir } from "../helpers/tmp.ts";
 
-const LINKS = process.platform === "win32" && "links need privileges on Windows";
 const REQUEST = { title: "Choose a project", extensions: ["uproject"] };
 const WINDOW = { id: "studio-window" };
 const UNREAL: PickerPlugin = {
@@ -202,7 +202,7 @@ describe("Choose file's answer", () => {
     assert.equal(await choose("unreal", REQUEST), await realpath(upper));
   });
 
-  it("for a link is the file it leads to", { skip: LINKS }, async () => {
+  it("for a link is the file it leads to", { skip: FILE_LINKS }, async () => {
     const dir = await tmpDir("plugin-file-picker-");
     const real = path.join(dir, "real", "Racer.uproject");
     await mkdir(path.dirname(real));
@@ -221,8 +221,8 @@ describe("Choose file's answer", () => {
       ["a folder named like a project", (dir) => folder(dir, "Racer.uproject"), false],
       ["a file that is not there", async (dir) => path.join(dir, "Gone.uproject"), false],
       ["a relative path", async () => "Racer.uproject", false],
-      ["a link named like a project that leads to another file", (dir) => link(dir, "notes.txt"), LINKS],
-      ["a link named like a project that leads to a folder", (dir) => link(dir, "folder"), LINKS],
+      ["a link named like a project that leads to another file", (dir) => link(dir, "notes.txt"), FILE_LINKS],
+      ["a link named like a project that leads to a folder", (dir) => link(dir, "folder"), false],
     ];
     for (const [label, make, skip] of ANSWERS)
       it(label, { skip }, async () => {
@@ -255,6 +255,7 @@ async function link(dir: string, target: string): Promise<string> {
   if (target === "folder") await mkdir(destination);
   else await writeFile(destination, "secret");
   const named = path.join(dir, "Racer.uproject");
-  await symlink(destination, named);
+  if (target === "folder") await linkFolder(destination, named);
+  else await symlink(destination, named);
   return named;
 }

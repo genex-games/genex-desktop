@@ -5,7 +5,8 @@
  * assertion here is about that promise being mechanically true, not merely intended.
  */
 import assert from "node:assert/strict";
-import { chmod, mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { constants as fsConstants } from "node:fs";
+import { chmod, mkdir, open, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, it } from "node:test";
 import { EventStore } from "../../src/substrate/event-store.ts";
@@ -23,6 +24,12 @@ import { shellExec as sh } from "../helpers/posix-shell.ts";
 import { workspaceContentStamp } from "../../src/substrate/workspace-content.ts";
 import { SnapshotScope } from "../../src/shared/event-log.ts";
 import { dirtyUserRepo, fixtureGit, nestedUserRepo } from "../helpers/snapshot-fixtures.ts";
+
+/**
+ * libuv's `UV_FS_O_EXLOCK` on Windows (uv/win.h): the file is opened sharing nothing, so no other
+ * process can read, write or delete it until the handle closes. Node passes open flags through.
+ */
+const WINDOWS_EXCLUSIVE_OPEN = 0x10000000;
 
 const exists = (target: string): Promise<boolean> =>
   stat(target).then(
@@ -627,6 +634,33 @@ describe("restoring a game the user may still be working in", () => {
       );
     } finally {
       await chmod(unreadable, 0o644).catch(() => {});
+    }
+  });
+
+  it("on Windows, refuses the restore, touching nothing, when another program holds a file open", {
+    skip: process.platform !== "win32" && "only Windows lets a program hold a file against every other reader",
+  }, async () => {
+    const { repo, engine, before } = await snapshotted();
+    await writeFile(path.join(repo.dir, "src/main.js"), "export const speed = 3; // edited during the run\n");
+    // Held as an exporter holds what it is writing, sharing nothing: `add -A` cannot read it,
+    // while `clean -fd` would delete it once it is let go.
+    const held = path.join(repo.dir, "export-in-progress.bin");
+    await writeFile(held, "half-written by the user's exporter\n");
+    const handle = await open(held, fsConstants.O_RDWR | WINDOWS_EXCLUSIVE_OPEN);
+    try {
+      await assert.rejects(() => engine.restore(before, { gameWorkspace: "game" }), { code: "rescue-failed" });
+      assert.equal(await exists(held), true, "the held file is still there");
+      assert.equal(
+        await readFile(path.join(repo.dir, "src/main.js"), "utf8"),
+        "export const speed = 3; // edited during the run\n",
+      );
+      assert.equal(
+        await fixtureGit(repo.dir, ["rev-parse", "HEAD"]),
+        before.git.game,
+        "no commit was made on the user's branch",
+      );
+    } finally {
+      await handle.close();
     }
   });
 

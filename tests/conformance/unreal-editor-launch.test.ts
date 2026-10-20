@@ -56,11 +56,11 @@ import { toolbarStatusFrom } from "../../src/shared/plugin-toolbar.ts";
 import { createEngineLinks } from "../../src/substrate/plugins/engine-links.ts";
 import { ENGINES as ENGINE_CATALOG } from "../helpers/engines.ts";
 import { validateManifest } from "../../src/substrate/plugins/manifest.ts";
+import { FILE_LINKS, linkFolder } from "../helpers/folder-links.ts";
 import { tmpDir } from "../helpers/tmp.ts";
 
 const GIB = 1024 ** 3;
 const HELPER = path.resolve("src/plugins/unreal/GenexEditorHelper");
-const LINKS = process.platform === "win32" && "links need privileges on Windows";
 /** Where this machine's Unreal writes a project's log: fixtures of a platform-neutral read put it there. */
 const HOST = process.platform;
 /** Who holds a log is asked of lsof on a Mac only; Windows paths can't stand in for a Mac's. */
@@ -377,11 +377,11 @@ describe("Open in Unreal", () => {
     assert.deepEqual(opened, { project: f.drift, launched: true, at: START });
   });
 
-  it("a name with spaces, quotes and shell characters reaches Unreal as one argument, unchanged", {
-    skip: process.platform === "win32" && "Windows file names can't hold quotes",
-  }, async () => {
+  it("a name with spaces, quotes and shell characters reaches Unreal as one argument, unchanged", async () => {
     const f = await launchFixture();
-    const odd = await project(path.join(f.root, "Projects $(touch pwned)"), `Drift "Racer"; echo $HOME`);
+    // A Windows file name can't hold a double quote; a single one and cmd's % stand in for it there.
+    const quoted = process.platform === "win32" ? `'Racer' %HOME%` : `"Racer"`;
+    const odd = await project(path.join(f.root, "Projects $(touch pwned)"), `Drift ${quoted}; echo $HOME`);
     await f.act("open-editor", { project: odd });
     assert.deepEqual(f.launched, [macOpen(f, odd)]);
   });
@@ -621,13 +621,12 @@ const refusedOpens: Array<{
   {
     name: "an engine whose editor app is a link to another app",
     code: LaunchErrorCode.EditorMissing,
-    links: true,
     fixture: { editorApp: false },
     arrange: async (f) => {
       const other = path.join(f.root, "Other.app");
       await mkdir(other, { recursive: true });
       await mkdir(path.dirname(f.app("UE_5.8")), { recursive: true });
-      await symlink(other, f.app("UE_5.8"));
+      await linkFolder(other, f.app("UE_5.8"));
       return f.drift;
     },
   },
@@ -635,7 +634,7 @@ const refusedOpens: Array<{
 
 describe("Open in Unreal refuses, launching and writing nothing,", () => {
   for (const row of refusedOpens)
-    it(`for ${row.name}`, { skip: row.links ? LINKS : false }, async () => {
+    it(`for ${row.name}`, { skip: row.links ? FILE_LINKS : false }, async () => {
       const f = await launchFixture(row.fixture);
       const target = await row.arrange(f);
       const witness = await tree(f.root);
@@ -764,11 +763,11 @@ describe("Get Unreal Engine", () => {
       async (launcher: string) => {
         const other = path.join(path.dirname(path.dirname(launcher)), "Other.app");
         await mkdir(other);
-        await symlink(other, launcher);
+        await linkFolder(other, launcher);
       },
     ],
   ] as const)
-    it(`opens the download page instead of ${name}`, { skip: LINKS }, async () => {
+    it(`opens the download page instead of ${name}`, async () => {
       const f = await launchFixture();
       await arrange(path.join(f.applications, "Epic Games Launcher.app"));
       await f.act("get-unreal");
@@ -1081,7 +1080,7 @@ async function writeLink(f: Fixture, body: string, game = "valley") {
 
 describe("The Unreal toolbar never trusts", () => {
   for (const row of hostileLinks)
-    it(`${row.name}: the game has no link`, { skip: row.links ? LINKS : false }, async () => {
+    it(`${row.name}: the game has no link`, { skip: row.links ? FILE_LINKS : false }, async () => {
       const f = await launchFixture();
       await f.act("setup", { project: f.drift });
       await row.arrange(f);
@@ -1151,7 +1150,7 @@ const hostileToolbar: Array<{ name: string; badge: string; links?: boolean; arra
 
 describe("The toolbar never trusts", () => {
   for (const row of hostileToolbar)
-    it(`${row.name}`, { skip: row.links ? LINKS : false }, async () => {
+    it(`${row.name}`, { skip: row.links ? FILE_LINKS : false }, async () => {
       const f = await launchFixture();
       await row.arrange(f);
       f.live.running = true;
@@ -1712,24 +1711,22 @@ describe("The panel's disk note", () => {
 });
 
 describe("The Get Unreal view knows whether Epic's launcher is installed", () => {
-  const rows: Array<{ name: string; launcher: boolean; links?: boolean; arrange: (app: string) => Promise<unknown> }> =
-    [
-      { name: "no launcher", launcher: false, arrange: async () => undefined },
-      { name: "the launcher app", launcher: true, arrange: (app) => mkdir(app) },
-      { name: "a plain file named like it", launcher: false, arrange: (app) => writeFile(app, "not an app") },
-      {
-        name: "a link to another app",
-        launcher: false,
-        links: true,
-        arrange: async (app) => {
-          const other = path.join(path.dirname(path.dirname(app)), "Other.app");
-          await mkdir(other);
-          await symlink(other, app);
-        },
+  const rows: Array<{ name: string; launcher: boolean; arrange: (app: string) => Promise<unknown> }> = [
+    { name: "no launcher", launcher: false, arrange: async () => undefined },
+    { name: "the launcher app", launcher: true, arrange: (app) => mkdir(app) },
+    { name: "a plain file named like it", launcher: false, arrange: (app) => writeFile(app, "not an app") },
+    {
+      name: "a link to another app",
+      launcher: false,
+      arrange: async (app) => {
+        const other = path.join(path.dirname(path.dirname(app)), "Other.app");
+        await mkdir(other);
+        await linkFolder(other, app);
       },
-    ];
+    },
+  ];
   for (const row of rows)
-    it(`${row.name}: launcher ${row.launcher}`, { skip: row.links ? LINKS : false }, async () => {
+    it(`${row.name}: launcher ${row.launcher}`, async () => {
       const f = await launchFixture({ engines: [ENGINES[1]] });
       await row.arrange(path.join(f.applications, "Epic Games Launcher.app"));
       assert.equal((await f.act("status", { project: f.drift })).launcher, row.launcher);
@@ -1878,7 +1875,7 @@ describe("A project's own Unreal log", () => {
     },
   ];
   for (const row of hostileLogs)
-    it(`reads nothing from ${row.name}, and writes nothing`, { skip: row.links ? LINKS : false }, async () => {
+    it(`reads nothing from ${row.name}, and writes nothing`, { skip: row.links ? FILE_LINKS : false }, async () => {
       const f = await logFixture(UNREAL_LOG("", ""));
       await row.arrange(f);
       const witness = await tree(f.root);
@@ -2059,8 +2056,7 @@ describe("The projects Unreal has open, by the logs its editors hold", () => {
     await mkdir(path.join(logs, "Editor"), { recursive: true });
     await mkdir(path.join(logs, "CrashReportClient"), { recursive: true });
     await mkdir(path.join(root, "elsewhere", "LinkedEditor"), { recursive: true });
-    if (process.platform !== "win32")
-      await symlink(path.join(root, "elsewhere", "LinkedEditor"), path.join(logs, "LinkedEditor"));
+    await linkFolder(path.join(root, "elsewhere", "LinkedEditor"), path.join(logs, "LinkedEditor"));
     return { root, home, logs };
   }
 
@@ -2175,9 +2171,8 @@ describe("A project's log naming it in another spelling", () => {
     { name: "as it is", named: async (f) => f.project, ours: true },
     {
       name: "through a link to its folder's parent",
-      links: true,
       named: async (f) => {
-        await symlink(path.join(f.root, "Projects"), path.join(f.root, "Linked"));
+        await linkFolder(path.join(f.root, "Projects"), path.join(f.root, "Linked"));
         return path.join(f.root, "Linked", "Drift", "Drift.uproject");
       },
       ours: true,
@@ -2207,7 +2202,7 @@ describe("A project's log naming it in another spelling", () => {
   ];
   for (const row of rows)
     it(`${row.ours ? "is" : "isn't"} its log when it names ${row.name}, and writes nothing`, {
-      skip: row.links ? LINKS : false,
+      skip: row.links ? FILE_LINKS : false,
     }, async () => {
       const f = await spelled(row.named);
       if (row.caseless && !(await caseInsensitive(f.root))) return;
@@ -2725,20 +2720,18 @@ const hostileModules: Array<{
   },
   {
     name: "a Mac folder that is a link to one holding a hot modules file",
-    links: true,
     arrange: async (f, outside) => {
       await writeFile(path.join(outside, "UnrealEditor.modules"), HOT);
       await mkdir(path.join(path.dirname(f.drift), "Binaries"), { recursive: true });
-      await symlink(outside, path.join(path.dirname(f.drift), "Binaries", "Mac"));
+      await linkFolder(outside, path.join(path.dirname(f.drift), "Binaries", "Mac"));
     },
   },
   {
     name: "a Binaries folder that is a link",
-    links: true,
     arrange: async (f, outside) => {
       await mkdir(path.join(outside, "Mac"), { recursive: true });
       await writeFile(path.join(outside, "Mac", "UnrealEditor.modules"), HOT);
-      await symlink(outside, path.join(path.dirname(f.drift), "Binaries"));
+      await linkFolder(outside, path.join(path.dirname(f.drift), "Binaries"));
     },
   },
   {
@@ -2770,7 +2763,7 @@ const hostileModules: Array<{
 
 describe("A hot-reloaded library is never trusted from", () => {
   for (const row of hostileModules)
-    it(row.name, { skip: row.links === true && LINKS }, async () => {
+    it(row.name, { skip: row.links === true && FILE_LINKS }, async () => {
       const f = await launchFixture();
       await cppDrift(f);
       const outside = path.join(f.root, "outside");

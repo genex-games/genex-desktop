@@ -2,16 +2,16 @@
  * `StudioCore.stop` on quit: one failing step must not skip the ones after it (review PROD-9),
  * or a connector, the harness host or the budget flush would be left behind. And the harness,
  * which runs detached in its own process group, must be gone when the app exits, however long
- * the connectors and previews take to close (B3).
+ * the connectors and previews take to close (B3). Jobs run under the platform's shell: in a group of
+ * their own off Windows, a tree `taskkill` ends on Windows.
  */
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
 import { it } from "node:test";
 import { runShutdown, settleWithin, shutdownSteps, type ShutdownTimers } from "../../src/main/app-lifecycle.ts";
 import { type JobOwner, JobRole, JobScopeKind, JobState, JobStopper } from "../../src/shared/jobs.ts";
 import { PermissionMode } from "../../src/shared/permissions.ts";
-import type { JobSpawn } from "../../src/substrate/jobs.ts";
 import { coreLite } from "../helpers/core-lite.ts";
+import { endTree, shellJobSpawn, spawnShell } from "../helpers/job-spawn.ts";
 import { running } from "../helpers/processes.ts";
 import { startRig } from "../helpers/studio-rig.ts";
 
@@ -93,11 +93,8 @@ it("quitting kills a harness that will not stop, as the last step before the app
   }
 });
 
-/** Starts a job's command in a group of its own, as the sandbox does, without the sandbox. */
-const plainJobSpawn: JobSpawn = async (request) => ({
-  child: spawn("/bin/sh", ["-c", request.command], { cwd: request.cwd, detached: true, stdio: "pipe" }),
-  sandboxed: false,
-});
+/** Starts a job's command as the sandbox does, without the sandbox. */
+const plainJobSpawn = shellJobSpawn();
 
 const jobOwner: JobOwner = {
   project: "game",
@@ -106,20 +103,10 @@ const jobOwner: JobOwner = {
   scope: { kind: JobScopeKind.Chat },
 };
 
-function killGroup(pid: number | undefined): void {
-  try {
-    if (pid) process.kill(-pid, "SIGKILL");
-  } catch {
-    /* already gone */
-  }
-}
-
-it("quitting stops every agent job after the harness and before the sandbox closes, and leaves other apps alone", {
-  skip: process.platform === "win32" && "process groups and /bin/sh are POSIX",
-}, async () => {
+it("quitting stops every agent job after the harness and before the sandbox closes, and leaves other apps alone", async () => {
   const rig = await startRig({}, { jobSpawn: plainJobSpawn });
   // Stands in for an app a person can see, such as the editor a plugin opened: not a job.
-  const other = spawn("/bin/sh", ["-c", "sleep 30"], { detached: true, stdio: "ignore" });
+  const other = await spawnShell("sleep 30", { stdio: "ignore" });
   const job = await rig.core.jobs.start({
     owner: jobOwner,
     title: "Server",
@@ -149,15 +136,13 @@ it("quitting stops every agent job after the harness and before the sandbox clos
   } finally {
     rig.core.host.stop = hostStop;
     rig.core.sandbox.dispose = dispose;
-    killGroup(job.pid);
-    killGroup(other.pid);
+    await endTree(job.pid);
+    await endTree(other.pid);
     await rig.stop().catch(() => {});
   }
 });
 
-it("a core that never started still stops the jobs it was handed when it stops", {
-  skip: process.platform === "win32" && "process groups and /bin/sh are POSIX",
-}, async () => {
+it("a core that never started still stops the jobs it was handed when it stops", async () => {
   const lite = await coreLite({ jobSpawn: plainJobSpawn });
   const job = await lite.core.jobs.start({
     owner: jobOwner,
@@ -172,6 +157,6 @@ it("a core that never started still stops the jobs it was handed when it stops",
     assert.equal(running(job.pid ?? 0), false);
     assert.equal((await lite.core.jobs.get(jobOwner.project, job.id))?.stoppedBy, JobStopper.Quit);
   } finally {
-    killGroup(job.pid);
+    await endTree(job.pid);
   }
 });

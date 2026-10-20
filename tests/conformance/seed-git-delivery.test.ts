@@ -2,21 +2,24 @@
  * A sub-agent's delivery on its way from its copy of the game into the game folder, as `loop/git.ts`
  * says it to git: one folder committed in the copy (`commitFolder`), what that commit holds under
  * the folder with sizes (`treeEntries`), and chosen files checked out of it (`checkoutPaths`). Run
- * against real repositories through a `run.exec` that runs `/bin/sh -c` as the host does; hostile
+ * against real repositories through a `run.exec` that runs the host's shell (`/bin/sh -c`, Git Bash on
+ * Windows, `posix-shell.ts`) as the host does; hostile
  * folder and file names reach git as one word each and run nothing.
  */
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, it } from "node:test";
 import { promisify } from "node:util";
 import { checkoutPaths, commitFolder, treeEntries } from "../../src/harness-seed/loop/git-delivery.ts";
 import { gitFile } from "../helpers/git.ts";
+import { posixShell } from "../helpers/posix-shell.ts";
 import { tmpDir } from "../helpers/tmp.ts";
 
 const sh = promisify(execFile);
-const SKIP = process.platform === "win32" ? "runs /bin/sh as the host does on macOS" : false;
+/** The env file's setting on Windows, where Git Bash would otherwise rewrite a path-like word. */
+const SHELL_ENV = process.platform === "win32" ? { ...process.env, MSYS_NO_PATHCONV: "1" } : process.env;
 
 /** A ctx whose `run.exec` runs the command in `cwd` (or the game folder for `{ project }`), as the host does. */
 function execCtx(game: string) {
@@ -26,7 +29,11 @@ function execCtx(game: string) {
       assert.equal(method, "run.exec");
       commands.push(params.command);
       try {
-        const out = await sh("/bin/sh", ["-c", params.command], { cwd: params.cwd ?? game, encoding: "utf8" });
+        const out = await sh(await posixShell(), ["-c", params.command], {
+          cwd: params.cwd ?? game,
+          encoding: "utf8",
+          env: SHELL_ENV,
+        });
         return { code: 0, stdout: out.stdout, stderr: out.stderr };
       } catch (err) {
         const failed = err as { code?: number; stdout?: string; stderr?: string };
@@ -51,7 +58,7 @@ async function gameAndCopy() {
   return { root, game, copy };
 }
 
-describe("a sub-agent's delivery through loop/git.ts", { skip: SKIP }, () => {
+describe("a sub-agent's delivery through loop/git.ts", () => {
   it("commits only the agent's folder in its copy, lists it with sizes, and lands chosen files in the game", async () => {
     const { game, copy } = await gameAndCopy();
     const folder = "assets/agents/blender_model-1";
@@ -84,8 +91,7 @@ describe("a sub-agent's delivery through loop/git.ts", { skip: SKIP }, () => {
       await treeEntries(ctx, { project: "game" }, "HEAD", folder);
       await checkoutPaths(ctx, { project: "game" }, "HEAD", [folder]);
       for (const where of [game, copy]) {
-        const listed = await sh("ls", ["-a"], { cwd: where, encoding: "utf8" });
-        assert.doesNotMatch(listed.stdout, /PWNED/, `nothing ran in ${where}`);
+        assert.ok(!(await readdir(where)).includes("PWNED"), `nothing ran in ${where}`);
       }
     });
   }

@@ -7,7 +7,7 @@
  */
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
-import { mkdir, readdir, readFile, realpath, symlink } from "node:fs/promises";
+import { mkdir, readdir, readFile, realpath } from "node:fs/promises";
 import path from "node:path";
 import { after, describe, it } from "node:test";
 import { runAppLook } from "../../src/main/core/app-look-tool.ts";
@@ -26,6 +26,7 @@ import {
 } from "../../src/substrate/app-look.ts";
 import { NeverTouchKind } from "../../src/substrate/engines/never-touch.ts";
 import type { DelegateRequest } from "../../src/substrate/engines/types.ts";
+import { linkFolder } from "../helpers/folder-links.ts";
 import { tmpDir } from "../helpers/tmp.ts";
 import { CLAUDE, closeWorkerChats, LOCAL, RUN_ID, workerChat } from "../helpers/worker-chat.ts";
 
@@ -210,11 +211,10 @@ describe("app_look", () => {
 
   it("app_look saves its picture inside the session's folder when asked, and never elsewhere", {
     timeout: CASE_TIMEOUT_MS,
-    skip: process.platform === "win32" && "links need privileges on Windows",
   }, async () => {
     const chat = await lookChat();
     const outside = await realpath(await tmpDir("studio-look-outside-"));
-    await symlink(outside, path.join(chat.gameDir, "linked"));
+    await linkFolder(outside, path.join(chat.gameDir, "linked"));
     const stub = (await stubAppLook().look({ id: 1 } as never)) as { image: { data: string } };
     const picture = Buffer.from(stub.image.data, "base64");
     const own = await looksIn(chat, await ownTurn(chat), [{ app: "Fixture App", save: "shots/w.jpg" }]);
@@ -270,7 +270,7 @@ describe("app_look", () => {
     const root = await realpath(await tmpDir("studio-look-linked-"));
     const real = path.join(root, "games", "level-tools");
     await mkdir(real, { recursive: true });
-    await symlink(path.join(root, "games"), path.join(root, "alias"));
+    await linkFolder(path.join(root, "games"), path.join(root, "alias"));
     const folder = path.join(root, "alias", "level-tools");
     const neverTouch = { roots: [], open: [] };
     const caller = { project: "p", chatThreadId: null, save: { folder, neverTouch, planning: async () => false } };

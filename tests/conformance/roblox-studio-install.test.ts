@@ -10,7 +10,7 @@ import assert from "node:assert/strict";
 import { lstat, mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, it } from "node:test";
-import { HELPER_FILE, type SetupDone, setUp, setupPaths } from "../../src/plugins/roblox/setup.ts";
+import { HELPER_FILE, type SetupDone, type SetupPaths, setUp, setupPaths } from "../../src/plugins/roblox/setup.ts";
 import type { Launch } from "../../src/plugins/roblox/studio-launch.ts";
 import type { LocateStat, Run } from "../../src/plugins/roblox/studio-locate.ts";
 import { STUDIO_MAC_APP } from "../../src/plugins/roblox/studio-locate.ts";
@@ -471,6 +471,22 @@ interface Timeline {
   reopenedRunsFor?: number;
 }
 
+/**
+ * Roblox's folders where this computer's Studio keeps them, before its first sign-in: on Windows
+ * LOCALAPPDATA's Roblox folder, elsewhere a Mac home's Documents › Roblox and Library › Roblox. No
+ * account has settings yet.
+ */
+async function robloxFolders(root: string, home: string): Promise<SetupPaths> {
+  if (process.platform === "win32") {
+    const local = path.join(root, "Local");
+    await mkdir(path.join(local, "Roblox"), { recursive: true });
+    return setupPaths("win32", { LOCALAPPDATA: local }, home);
+  }
+  await mkdir(path.join(home, "Documents", "Roblox"), { recursive: true });
+  await mkdir(path.join(home, "Library", "Roblox"), { recursive: true });
+  return setupPaths("darwin", { HOME: home }, home);
+}
+
 function afterDeps(timeline: Timeline, setUpStep: (running: boolean) => Promise<string>) {
   let clock = 0;
   const opened: Launch[] = [];
@@ -554,17 +570,14 @@ describe("after Roblox's installer: sign-in, Set up while Studio is closed, Stud
     assert.equal(after.opened.length, 1);
   });
 
-  it("with no account settings yet, still adds the helper and leaves the MCP switch step open", {
-    skip: process.platform === "win32" && "a Mac home on a Mac path",
-  }, async () => {
+  it("with no account settings yet, still adds the helper and leaves the MCP switch step open", async () => {
     const root = await tmpDir("roblox-after-install-");
     const home = path.join(root, "home");
-    await mkdir(path.join(home, "Documents", "Roblox"), { recursive: true });
-    await mkdir(path.join(home, "Library", "Roblox"), { recursive: true });
+    const paths = await robloxFolders(root, home);
     let done: SetupDone | undefined;
     const after = afterDeps({ installedAt: 0, firstStudio: { from: 0, to: 10_000 } }, async (running) => {
       done = await setUp({
-        paths: setupPaths("darwin", { HOME: home }, home),
+        paths,
         helper: await shippedHelper(),
         storage: path.join(root, "storage"),
         running: async () => running,
@@ -573,7 +586,7 @@ describe("after Roblox's installer: sign-in, Set up while Studio is closed, Stud
       return "Helper added.";
     });
     await afterInstall(after.deps, { signal: signal() });
-    assert.ok((await lstat(path.join(home, "Documents", "Roblox", "Plugins", HELPER_FILE))).isFile());
+    assert.ok((await lstat(path.join(paths.plugins, HELPER_FILE))).isFile());
     assert.equal(done?.switches.files, 0, "no settings file was made or guessed");
     assert.equal(after.opened.length, 1);
   });

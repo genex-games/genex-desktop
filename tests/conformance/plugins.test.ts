@@ -23,6 +23,7 @@ import { RESERVED_TOOLBAR_LABELS } from "../../src/substrate/plugins/reserved-la
 import type { PluginChange, PluginInfo, PluginManifest, PluginSource } from "../../src/shared/plugins.ts";
 import { CallCutOff } from "../../src/shared/plugins.ts";
 import { PluginCallCutOff } from "../../src/substrate/plugins/process.ts";
+import { FILE_LINKS, linkFolder } from "../helpers/folder-links.ts";
 const source = EXAMPLE_PLUGIN;
 test("bundled plugin uses a real child, tools and settings share one contract; disabled fails closed", async () => {
   const f = await fixture();
@@ -87,21 +88,29 @@ test("local package validation rejects links, incompatibility and duplicate decl
     await f.close();
   }
 });
-test("package inspection refuses a link or special file at any depth and accepts a deep plain tree", {
-  skip: process.platform === "win32" && "named pipes, socket files and unprivileged links are POSIX file kinds",
-}, async (t) => {
+test("package inspection refuses a link or special file at any depth and accepts a deep plain tree", async (t) => {
   const root = await mkdtemp(path.join(os.tmpdir(), "plugin-walk-"));
   t.after(() => rm(root, { recursive: true, force: true }));
   const nested = (dir: string) => path.join(dir, "assets", "deep", "deeper");
+  const outside = path.join(root, "outside");
+  await mkdir(outside);
+  await writeFile(path.join(outside, "hosts"), "127.0.0.1 localhost\n");
   const listening: net.Server[] = [];
   t.after(() => {
     for (const server of listening) server.close();
   });
-  const cases: Array<[string, (dir: string) => Promise<void>]> = [
-    ["a link at the top", (dir) => symlink("/tmp", path.join(dir, "escape"))],
-    ["a link deep inside", (dir) => symlink("/etc/hosts", path.join(nested(dir), "hosts"))],
-    ["a dangling link", (dir) => symlink(path.join(dir, "missing"), path.join(nested(dir), "gone"))],
-    ["a link to a folder inside", (dir) => symlink(path.join(dir, "assets"), path.join(nested(dir), "loop"))],
+  /** Plants one hostile entry in a copy of the package. */
+  type Plant = (dir: string) => Promise<void>;
+  const folderLinks: Array<[string, Plant]> = [
+    ["a link at the top", (dir) => linkFolder(outside, path.join(dir, "escape"))],
+    ["a link to a folder inside", (dir) => linkFolder(path.join(dir, "assets"), path.join(nested(dir), "loop"))],
+  ];
+  const fileLinks: Array<[string, Plant]> = [
+    ["a link deep inside", (dir) => symlink(path.join(outside, "hosts"), path.join(nested(dir), "hosts"))],
+    ["a dangling link", (dir) => symlink(path.join(dir, "missing"), path.join(nested(dir), "gone"), "file")],
+  ];
+  // Windows has neither kind in a folder: its named pipes and sockets live outside the file system.
+  const posixKinds: Array<[string, Plant]> = [
     ["a named pipe", async (dir) => void execFileSync("mkfifo", [path.join(nested(dir), "pipe")])],
     [
       "a socket",
@@ -113,6 +122,7 @@ test("package inspection refuses a link or special file at any depth and accepts
         }),
     ],
   ];
+  const cases = [...folderLinks, ...(FILE_LINKS ? [] : fileLinks), ...(process.platform === "win32" ? [] : posixKinds)];
   for (const [name, plant] of cases) {
     const dir = path.join(root, name.replaceAll(" ", "-"));
     await cp(source, dir, { recursive: true });

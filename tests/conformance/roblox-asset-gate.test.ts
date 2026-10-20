@@ -32,10 +32,11 @@ import {
   manyTriangles,
   modelFixtures,
 } from "../helpers/roblox-models.ts";
+import { FILE_LINKS, linkFolder } from "../helpers/folder-links.ts";
 import { tmpDir } from "../helpers/tmp.ts";
 
 const PREVIEWS = path.resolve(import.meta.dirname, "../fixtures/asset-previews");
-const links = { skip: process.platform === "win32" ? "links need privileges on Windows" : false };
+const fileLinks = { skip: FILE_LINKS };
 
 const checked = (answer: GateAnswer): ModelCheck => {
   assert.ok(answer.ok, answer.ok ? "" : answer.message);
@@ -319,10 +320,10 @@ describe("files that can't be checked are refused in plain words, read no furthe
     assert.deepEqual(problems(await checkModel(folder, "large.glb")), [ModelProblem.Texture]);
   });
 
-  it("a link to a model outside, and a linked folder on the way, are refused unopened", links, async () => {
+  it("a link to a model outside, and a linked folder on the way, are refused unopened", fileLinks, async () => {
     const { folder, outside } = await hostile();
     await symlink(path.join(outside, "cube.glb"), path.join(folder, "models", "link.glb"));
-    await symlink(outside, path.join(folder, "linked"));
+    await linkFolder(outside, path.join(folder, "linked"));
     for (const file of ["models/link.glb", "linked/cube.glb"]) {
       const reader = recording();
       const answer = await checkModel(folder, file, { open: reader.open });
@@ -376,7 +377,7 @@ describe(".gltf files and real exports", () => {
       assert.deepEqual(reader.opened, [path.join(folder, "models", "cube.gltf")], "only the .gltf itself");
     });
 
-  it("refuses a buffer that is a link, without opening it", links, async () => {
+  it("refuses a buffer that is a link, without opening it", fileLinks, async () => {
     const root = await tmpDir("roblox-gltf-link-");
     const folder = path.join(root, "game");
     await mkdir(path.join(folder, "models"), { recursive: true });

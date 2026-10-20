@@ -16,9 +16,7 @@ const owner: JobOwner = {
   scope: { kind: JobScopeKind.Chat },
 };
 
-it("a job outlives a harness restart, and the registry still lists it", {
-  skip: process.platform === "win32" && "the POSIX process check",
-}, async () => {
+it("a job outlives a harness restart, and the registry still lists it", async () => {
   const rig = await startRig();
   let job: JobRecord | undefined;
   try {

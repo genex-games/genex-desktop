@@ -11,7 +11,7 @@
 import assert from "node:assert/strict";
 import { type ChildProcess, execFileSync, fork } from "node:child_process";
 import { existsSync } from "node:fs";
-import { mkdir, readdir, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { describe, it } from "node:test";
@@ -37,6 +37,7 @@ import {
 } from "../../src/plugins/unreal/ubt.ts";
 import { XcodeState } from "../../src/plugins/unreal/xcode.ts";
 import { running } from "../helpers/processes.ts";
+import { linkFolder } from "../helpers/folder-links.ts";
 import { tmpDir } from "../helpers/tmp.ts";
 import { tree } from "../helpers/unreal-fake-engine.ts";
 
@@ -69,10 +70,25 @@ const SAVED = { saved: true, dirty: [], ms: 30 };
 /** How long the stand-in Unreal takes to close after the quit, and to answer after it opens. */
 const QUIT_TAKES_MS = 6_000;
 const OPEN_TAKES_MS = 20_000;
-const SEPARATE_LINKS = process.platform === "win32" && "links need privileges on Windows";
-const PROCESS_GROUPS = process.platform === "win32" && "process groups are POSIX";
+const FIFOS = process.platform === "win32" && "Windows has no FIFOs";
+/** Windows delivers no SIGTERM: `kill("SIGTERM")` ends a process there at once, before it can stop anything. */
+const SIGTERM_HANDLED = process.platform === "win32" && "Windows delivers no SIGTERM to a handler";
 /** How long a forked backend may take to import itself and start its job (a slow CI runner included). */
 const BACKEND_START_MS = 20_000;
+
+/**
+ * A program that starts a child of its own, writes the child's pid to `pidFile` and waits for it.
+ * It is Node, so the same program stands in on every platform.
+ */
+function parentOfChild(pidFile: string): [string, string[]] {
+  const script = [
+    'const { spawn } = require("node:child_process");',
+    'const { writeFileSync } = require("node:fs");',
+    'const child = spawn(process.execPath, ["-e", "setTimeout(() => {}, 30000)"], { stdio: "ignore" });',
+    `writeFileSync(${JSON.stringify(pidFile)}, String(child.pid));`,
+  ].join("\n");
+  return [process.execPath, ["-e", script]];
+}
 
 /** Automation's report: two passes and a failure with its error. */
 const REPORT = {
@@ -527,9 +543,7 @@ describe("the plugin's jobs", () => {
     await w.call(ShipToolName.PluginTest, { stop: true });
   });
 
-  it("stop ends a running job's process group, and so does the backend stopping", {
-    skip: PROCESS_GROUPS,
-  }, async () => {
+  it("stop ends a running job's process group, and so does the backend stopping", async () => {
     const ended: string[] = [];
     const test = holding(ended, "test");
     const w = await shipWorld({
@@ -555,19 +569,16 @@ describe("the plugin's jobs", () => {
     const root = await realpath(await tmpDir("studio-run-program-"));
     const pidFile = path.join(root, "child.pid");
     const stop = new AbortController();
-    const program = systemRunProgram("/bin/sh", ["-c", `sleep 30 & echo $! > "${pidFile}"; wait`], {
-      signal: stop.signal,
-      timeoutMs: 60_000,
-    });
+    const program = systemRunProgram(...parentOfChild(pidFile), { signal: stop.signal, timeoutMs: 60_000 });
     await until(async () => existsSync(pidFile) && (await readFile(pidFile, "utf8")).trim() !== "");
     const child = Number((await readFile(pidFile, "utf8")).trim());
     stop.abort();
     await program;
     for (let i = 0; i < 100 && running(child); i++) await pause(20);
-    assert.equal(running(child), false, "the shell's own child ended with it");
+    assert.equal(running(child), false, "the program's own child ended with it");
   });
 
-  it("a hostile plugin name or test filter starts nothing", { skip: SEPARATE_LINKS }, async () => {
+  it("a hostile plugin name or test filter starts nothing", async () => {
     type Row = [
       string,
       string,
@@ -592,7 +603,7 @@ describe("the plugin's jobs", () => {
         { plugin: "Linked" },
         async (w) => {
           await writeFile(path.join(w.outside, "Linked.uplugin"), "{}");
-          await symlink(w.outside, path.join(w.unreal, "Plugins", "Linked"));
+          await linkFolder(w.outside, path.join(w.unreal, "Plugins", "Linked"));
         },
       ],
       ...["a b", "x;y", "../x", "", "a".repeat(81), "LevelTools*", "-ExecCmds=Quit"].map(
@@ -603,7 +614,7 @@ describe("the plugin's jobs", () => {
         "a Saved folder that is a link out of the project",
         ShipToolName.PluginTest,
         {},
-        (w) => symlink(w.outside, path.join(w.unreal, "Saved")),
+        (w) => linkFolder(w.outside, path.join(w.unreal, "Saved")),
       ],
       [
         "a package folder on the way that is a link out",
@@ -611,7 +622,7 @@ describe("the plugin's jobs", () => {
         {},
         async (w) => {
           await mkdir(path.join(w.unreal, "Saved", "Genex"), { recursive: true });
-          await symlink(w.outside, path.join(w.unreal, "Saved", "Genex", "Packages"));
+          await linkFolder(w.outside, path.join(w.unreal, "Saved", "Genex", "Packages"));
         },
       ],
     ];
@@ -840,16 +851,14 @@ describe("what a job leaves", () => {
     }
   });
 
-  it("a package's note is never written through a link swapped in during the job, and a FIFO descriptor never hangs it", {
-    skip: SEPARATE_LINKS,
-  }, async () => {
+  it("a package's note is never written through a link swapped in during the job", async () => {
     const swapped = await shipWorld({
       runCommand: async (_file, args) => {
         const packaged = argOf(args, "Package");
         await mkdir(packaged, { recursive: true });
         const packages = path.dirname(packaged);
         await rm(packages, { recursive: true });
-        await symlink(swapped.outside, packages);
+        await linkFolder(swapped.outside, packages);
         return { code: 0, output: "BUILD SUCCESSFUL\n" };
       },
     });
@@ -857,7 +866,9 @@ describe("what a job leaves", () => {
     const after = await swapped.settled("package");
     assert.equal(after.package.state, ShipState.Failed);
     assert.deepEqual(await readdir(swapped.outside), [], "nothing written outside the project");
+  });
 
+  it("a package's FIFO descriptor never hangs its note", { skip: FIFOS }, async () => {
     const fifo = await shipWorld({
       runCommand: async (_file, args) => {
         const packaged = argOf(args, "Package");
@@ -945,7 +956,7 @@ describe("when Genex stops the backend", () => {
         `import { backendStopped } from ${JSON.stringify(pathToFileURL(BACKEND).href)};`,
         `import { systemRunProgram } from ${JSON.stringify(pathToFileURL(RUNNER).href)};`,
         "const signal = backendStopped();",
-        `void systemRunProgram("/bin/sh", ["-c", ${JSON.stringify(`sleep 30 & echo $! > "${pidFile}"; wait`)}], { signal, timeoutMs: 60000 });`,
+        `void systemRunProgram(...${JSON.stringify(parentOfChild(pidFile))}, { signal, timeoutMs: 60000 });`,
       ].join("\n"),
     );
     const child = fork(script, [], { stdio: ["ignore", "ignore", "inherit", "ipc"] });
@@ -963,12 +974,12 @@ describe("when Genex stops the backend", () => {
       ? Promise.resolve()
       : new Promise<void>((resolve) => child.once("exit", () => resolve()));
 
-  for (const [label, stop] of [
-    ["quits it (SIGTERM)", (child: ChildProcess) => child.kill("SIGTERM")],
-    ["drops its channel", (child: ChildProcess) => child.disconnect()],
+  for (const [label, stop, skip] of [
+    ["quits it (SIGTERM)", (child: ChildProcess) => child.kill("SIGTERM"), SIGTERM_HANDLED],
+    ["drops its channel", (child: ChildProcess) => child.disconnect(), false],
   ] as const) {
     it(`a job's whole process group ends when Genex ${label}, and the backend exits`, {
-      skip: PROCESS_GROUPS,
+      skip,
       timeout: 30_000,
     }, async () => {
       const root = await realpath(await tmpDir("studio-backend-stop-"));

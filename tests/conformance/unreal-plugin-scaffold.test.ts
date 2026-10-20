@@ -7,7 +7,7 @@
  * Everything runs on a fake engine (`helpers/unreal-fake-engine.ts`); nothing starts Unreal or UBT.
  */
 import assert from "node:assert/strict";
-import { chmod, lstat, mkdir, readdir, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, readdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, it } from "node:test";
 import { CreateError, CreateErrorCode } from "../../src/plugins/unreal/create-project.ts";
@@ -16,6 +16,7 @@ import { removeGameProjectFolder, undoGameProjectFolder } from "../../src/plugin
 import { planPlugin, writePlugin } from "../../src/plugins/unreal/plugin-scaffold.ts";
 import { type BuildSandboxRequest, prepareBuildSandbox } from "../../src/plugins/unreal/ubt-sandbox.ts";
 import { compileEditor, projectPluginDirs, systemRunCommand } from "../../src/plugins/unreal/ubt.ts";
+import { linkFolder } from "../helpers/folder-links.ts";
 import { tmpDir } from "../helpers/tmp.ts";
 import {
   ENGINE_MODULE_NAME,
@@ -27,7 +28,6 @@ import {
 } from "../helpers/unreal-fake-engine.ts";
 
 const NEW_PLUGIN = "new-plugin";
-const SEPARATE_LINKS = process.platform === "win32" && "links need privileges on Windows";
 const SANDBOX = process.platform === "darwin" ? false : "the build sandbox is macOS's sandbox-exec";
 
 /** The .uplugin Genex writes for a plugin named `name` whose module is of `type`, as Epic's wizard does. */
@@ -166,7 +166,6 @@ describe("the Unreal plugin's new-plugin tool", () => {
   type Refusal = {
     name: string;
     args?: Record<string, unknown>;
-    links?: boolean;
     game?: boolean;
     arrange?: (dir: string, outside: string) => Promise<void>;
   };
@@ -196,15 +195,14 @@ describe("the Unreal plugin's new-plugin tool", () => {
     { name: "a game that already has an unreal folder", arrange: (dir) => mkdir(path.join(dir, "unreal")) },
     {
       name: "a game whose unreal is a link out of it",
-      links: true,
-      arrange: (dir, outside) => symlink(outside, path.join(dir, "unreal")),
+      arrange: (dir, outside) => linkFolder(outside, path.join(dir, "unreal")),
     },
     { name: "no game open in Genex", game: false },
   ];
 
   describe("new-plugin refuses a bad name, a taken folder or a game that already has a project, and writes nothing", () => {
     for (const row of refusals)
-      it(`for ${row.name}`, { skip: row.links ? SEPARATE_LINKS : false }, async () => {
+      it(`for ${row.name}`, async () => {
         const f = await unrealBackendFixture({ game: row.game });
         await row.arrange?.(f.dir, f.outside);
         const witness = async () => ({
@@ -238,12 +236,12 @@ describe("removing the folder a failed new-plugin made", () => {
     },
     {
       name: "an unreal that is a link out of the game is kept, and nothing behind it is touched",
-      arrange: (game, outside) => symlink(outside, path.join(game, "unreal")),
+      arrange: (game, outside) => linkFolder(outside, path.join(game, "unreal")),
       removed: false,
     },
   ];
   for (const row of ROWS)
-    it(row.name, { skip: row.name.includes("link") ? SEPARATE_LINKS : false }, async () => {
+    it(row.name, async () => {
       const root = await realpath(await tmpDir("studio-unreal-remove-"));
       const game = path.join(root, "game");
       const outside = path.join(root, "outside");
@@ -313,7 +311,7 @@ async function hostProject(root: string) {
   await writeFile(path.join(plugins, "LevelTools", "Source", "Tool.cpp"), "// the plugin's code\n");
   await writeFile(path.join(plugins, "GenexEditorHelper", "GenexEditorHelper.uplugin"), "{}");
   await writeFile(path.join(outside, "Elsewhere.uplugin"), "{}");
-  if (!SEPARATE_LINKS) await symlink(outside, path.join(plugins, "Elsewhere"));
+  await linkFolder(outside, path.join(plugins, "Elsewhere"));
   return { unreal, plugins, outside, engine: path.join(root, "engine"), home: path.join(root, "home") };
 }
 
@@ -347,9 +345,7 @@ describe("a host project's build", () => {
       ["a folder outside the project", [p.outside]],
       ["a relative folder", ["Plugins/LevelTools"]],
       ["the project itself", [p.unreal]],
-      ...(SEPARATE_LINKS
-        ? []
-        : [["a link out of the project", [path.join(p.plugins, "Elsewhere")]] as [string, string[]]]),
+      ["a link out of the project", [path.join(p.plugins, "Elsewhere")]],
       ["a folder that isn't there", [path.join(p.plugins, "Missing")]],
     ];
     for (const [name, pluginDirs] of hostile)
@@ -408,14 +404,14 @@ describe("writing a planned plugin", () => {
     {
       name: "a link planted in the new plugin's folder",
       havePlugins: false,
-      between: (folder, outside) => symlink(outside, path.join(folder, "Source")),
+      between: (folder, outside) => linkFolder(outside, path.join(folder, "Source")),
     },
     {
       name: "the new plugin's folder swapped for a link",
       havePlugins: false,
       between: async (folder, outside) => {
         await rm(folder, { recursive: true });
-        await symlink(outside, folder);
+        await linkFolder(outside, folder);
       },
     },
     {
@@ -423,12 +419,12 @@ describe("writing a planned plugin", () => {
       havePlugins: true,
       before: async (project, outside) => {
         await rm(path.join(project, "Plugins"), { recursive: true });
-        await symlink(outside, path.join(project, "Plugins"));
+        await linkFolder(outside, path.join(project, "Plugins"));
       },
     },
   ];
   for (const row of plantings) {
-    it(`never writes through ${row.name}`, { skip: SEPARATE_LINKS }, async () => {
+    it(`never writes through ${row.name}`, async () => {
       const root = await realpath(await tmpDir("studio-plugin-write-"));
       const project = path.join(root, "unreal");
       const outside = path.join(root, "outside");

@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
 import { after, it } from "node:test";
-import { spawn } from "node:child_process";
 import { access, readdir, readFile, truncate, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { startRig, waitForLog, customEvents, type Rig } from "../helpers/studio-rig.ts";
@@ -11,7 +10,7 @@ import { SkippedBy } from "../../src/shared/chat-rewind.ts";
 import { CustomEvent, customRecord } from "../../src/shared/custom-events.ts";
 import { latestRun } from "../../src/shared/coordinator.ts";
 import { git } from "../../src/substrate/snapshots.ts";
-import type { JobSpawn } from "../../src/substrate/jobs.ts";
+import { shellJobSpawn } from "../helpers/job-spawn.ts";
 import { JobRole, JobScopeKind } from "../../src/shared/jobs.ts";
 import { PermissionMode } from "../../src/shared/permissions.ts";
 import type { EventEnvelope } from "../../src/substrate/types.ts";
@@ -613,15 +612,10 @@ it("rewinding over a running build stops it first; the build leaves the chat and
   }
 });
 
-it("a rewind over a running build waits for the build's jobs to end, and their lines leave with it", {
-  skip: process.platform === "win32" && "process groups and /bin/sh are POSIX",
-}, async () => {
-  // The job winds down a second after its Stop, as a real build tool does.
-  const jobSpawn: JobSpawn = async (request) => ({
-    child: spawn("/bin/sh", ["-c", request.command], { cwd: request.cwd, detached: true, stdio: "pipe" }),
-    sandboxed: false,
-  });
-  const rig = await startRig({}, { jobSpawn });
+it("a rewind over a running build waits for the build's jobs to end, and their lines leave with it", async () => {
+  // Off Windows the job winds down a second after its Stop, as a real build tool does; Windows
+  // ends its tree at once (`taskkill /F`), and the rewind waits for that end all the same.
+  const rig = await startRig({}, { jobSpawn: shellJobSpawn() });
   rigs.push(rig);
   const project = "rewind-running-job";
   await rig.core.games.scaffold(project);

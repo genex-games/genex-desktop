@@ -15,6 +15,7 @@ import {
   readEditorLog,
   startCrashCheck,
 } from "../../src/plugins/unreal/editor-log.ts";
+import { FILE_LINKS } from "../helpers/folder-links.ts";
 import { tmpDir } from "../helpers/tmp.ts";
 import { CrashLog, crashLog } from "../helpers/unreal-editor-stand-in.ts";
 
@@ -197,7 +198,8 @@ describe("a part's watch for its editor crashing", () => {
 });
 
 describe("a part's watch reads only its own project's log", () => {
-  const unread: Array<[string, (w: Awaited<ReturnType<typeof world>>) => Promise<string>]> = [
+  /** Each log, where the crash then gets written, and whether it plants a link to a file. */
+  const unread: Array<[string, (w: Awaited<ReturnType<typeof world>>) => Promise<string>, boolean]> = [
     [
       "a log that links to the crashing one",
       async (w) => {
@@ -206,6 +208,7 @@ describe("a part's watch reads only its own project's log", () => {
         await symlink(other, w.file);
         return other;
       },
+      true,
     ],
     [
       "the log of another project with the same name",
@@ -213,10 +216,11 @@ describe("a part's watch reads only its own project's log", () => {
         await writeFile(w.file, await openLog("/Games/Elsewhere/DirtTrack.uproject"));
         return w.file;
       },
+      false,
     ],
   ];
-  for (const [label, arrange] of unread)
-    it(`reads no crash from ${label}`, { skip: process.platform === "win32" && "links need privileges" }, async () => {
+  for (const [label, arrange, links] of unread)
+    it(`reads no crash from ${label}`, { skip: links && FILE_LINKS }, async () => {
       const w = await world();
       const target = await arrange(w);
       const check = await startCrashCheck(w.file, w.project, w.probe);

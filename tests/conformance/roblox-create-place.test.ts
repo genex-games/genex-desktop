@@ -17,6 +17,7 @@ import {
   SHIPPED_TEMPLATE,
   suggestName,
 } from "../../src/plugins/roblox/create-place.ts";
+import { FILE_LINKS, linkFolder } from "../helpers/folder-links.ts";
 import { tmpDir } from "../helpers/tmp.ts";
 
 const TEMPLATE = SHIPPED_TEMPLATE;
@@ -98,12 +99,12 @@ describe("New Roblox game's place file", () => {
     assert.deepEqual(await readdir(game), ["sky-race.rbxlx"]);
   });
 
-  it("refuses a game folder that is a link, writing nothing", { skip: process.platform === "win32" }, async () => {
+  it("refuses a game folder that is a link, writing nothing", async () => {
     const game = await gameFolder();
     const elsewhere = path.join(path.dirname(game), "elsewhere");
     await mkdir(elsewhere);
     const linked = path.join(path.dirname(game), "linked");
-    await symlink(elsewhere, linked);
+    await linkFolder(elsewhere, linked);
     await assert.rejects(
       createPlace({ folder: linked, name: "sky-race.rbxlx", template: TEMPLATE }),
       refused(CreatePlaceRefusal.Linked),
@@ -111,9 +112,7 @@ describe("New Roblox game's place file", () => {
     assert.deepEqual(await readdir(elsewhere), []);
   });
 
-  it("refuses a place that is a link already, writing nothing through it", {
-    skip: process.platform === "win32",
-  }, async () => {
+  it("refuses a place that is a link already, writing nothing through it", { skip: FILE_LINKS }, async () => {
     const game = await gameFolder();
     const target = path.join(path.dirname(game), "target.rbxlx");
     await symlink(target, path.join(game, "sky-race.rbxlx"));

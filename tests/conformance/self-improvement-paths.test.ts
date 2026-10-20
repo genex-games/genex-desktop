@@ -10,6 +10,7 @@ import path from "node:path";
 import { describe, it } from "node:test";
 import { SuggestionRefused, type StagedRecord } from "../../src/main/self-changes.ts";
 import { coreLite, type CoreLite } from "../helpers/core-lite.ts";
+import { FILE_LINKS, linkFolder } from "../helpers/folder-links.ts";
 import { tmpDir } from "../helpers/tmp.ts";
 
 const LESSONS_FILE = "library/contract-lessons.md";
@@ -17,7 +18,10 @@ const PAYLOAD = "<plist>planted by the harness</plist>\n";
 const OUTSIDE_SECRET = "a file the harness must never rewrite\n";
 const SKILL = "facet-decomposition";
 
-const SYMLINKS = { skip: process.platform === "win32" && "planting symbolic links needs privileges on Windows" };
+/** What a row plants: a file link (privileged on Windows), a folder link (`linkFolder`), or none. */
+const Planted = { FileLink: "file-link", FolderLink: "folder-link", NoLink: "no-link" } as const;
+type Planted = (typeof Planted)[keyof typeof Planted];
+const skipFor = (planted: Planted) => ({ skip: planted === Planted.FileLink && FILE_LINKS });
 
 /** Every file under `dir` with its text, so a row can assert nothing there changed. */
 async function contents(dir: string): Promise<Record<string, string>> {
@@ -55,6 +59,7 @@ const skillRecord = (currentText: string): StagedRecord => ({
 
 interface HostileRow {
   name: string;
+  planted: Planted;
   /** Plants the link (or the odd file) in the workspace; returns the record the harness stages. */
   plant: (ws: string, outside: string) => Promise<StagedRecord>;
 }
@@ -62,6 +67,7 @@ interface HostileRow {
 const HOSTILE: HostileRow[] = [
   {
     name: "a dangling link at the lessons file",
+    planted: Planted.FileLink,
     plant: async (ws, outside) => {
       await mkdir(path.join(ws, "library"), { recursive: true });
       await symlink(path.join(outside, "x.plist"), path.join(ws, LESSONS_FILE));
@@ -70,6 +76,7 @@ const HOSTILE: HostileRow[] = [
   },
   {
     name: "a lessons file linked to an existing outside file",
+    planted: Planted.FileLink,
     plant: async (ws, outside) => {
       await mkdir(path.join(ws, "library"), { recursive: true });
       await symlink(path.join(outside, "secret.txt"), path.join(ws, LESSONS_FILE));
@@ -78,30 +85,34 @@ const HOSTILE: HostileRow[] = [
   },
   {
     name: "a library folder linked to an outside folder",
+    planted: Planted.FolderLink,
     plant: async (ws, outside) => {
       await rm(path.join(ws, "library"), { recursive: true, force: true });
-      await symlink(outside, path.join(ws, "library"));
+      await linkFolder(outside, path.join(ws, "library"));
       return lessonsRecord("");
     },
   },
   {
     name: "a library folder linked to an outside folder that does not exist",
+    planted: Planted.FolderLink,
     plant: async (ws, outside) => {
       await rm(path.join(ws, "library"), { recursive: true, force: true });
-      await symlink(path.join(outside, "LaunchAgents"), path.join(ws, "library"));
+      await linkFolder(path.join(outside, "LaunchAgents"), path.join(ws, "library"));
       return lessonsRecord("");
     },
   },
   {
     name: "a library folder linked to another folder of the workspace",
+    planted: Planted.FolderLink,
     plant: async (ws) => {
       await rm(path.join(ws, "library"), { recursive: true, force: true });
-      await symlink(path.join(ws, "prompts"), path.join(ws, "library"));
+      await linkFolder(path.join(ws, "prompts"), path.join(ws, "library"));
       return lessonsRecord("");
     },
   },
   {
     name: "a library that is a file, not a folder",
+    planted: Planted.NoLink,
     plant: async (ws) => {
       await rm(path.join(ws, "library"), { recursive: true, force: true });
       await writeFile(path.join(ws, "library"), "not a folder\n");
@@ -110,6 +121,7 @@ const HOSTILE: HostileRow[] = [
   },
   {
     name: "a skill file linked to an existing outside file",
+    planted: Planted.FileLink,
     plant: async (ws, outside) => {
       await rm(path.join(ws, "skills", `${SKILL}.md`), { force: true });
       await symlink(path.join(outside, "secret.txt"), path.join(ws, "skills", `${SKILL}.md`));
@@ -124,7 +136,7 @@ async function stage(lite: CoreLite, record: StagedRecord): Promise<void> {
 
 describe("applying a learned suggestion stays inside the harness workspace", () => {
   for (const row of HOSTILE) {
-    it(`refuses ${row.name}, and nothing outside the workspace changes`, SYMLINKS, async () => {
+    it(`refuses ${row.name}, and nothing outside the workspace changes`, skipFor(row.planted), async () => {
       const lite = await coreLite();
       const ws = lite.core.layout.harnessWs;
       const outside = await tmpDir("self-improvement-outside-");

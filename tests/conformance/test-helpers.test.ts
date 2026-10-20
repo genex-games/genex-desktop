@@ -102,7 +102,9 @@ describe("ctxRecorder", () => {
   });
 });
 
-describe("running", { skip: process.platform === "win32" && "Windows has no process states to read" }, () => {
+describe("running", {
+  skip: process.platform === "win32" && "Windows has no unreaped processes: its task list drops one that exited",
+}, () => {
   // The child exits at once; its parent hears SIGCHLD, prints the child's pid and never reaps it.
   const UNREAPED =
     'my $exited = 0; $SIG{CHLD} = sub { $exited = 1 }; my $pid = fork(); if ($pid == 0) { exit 0; } sleep 1 until $exited; $| = 1; print "$pid\\n"; sleep 30;';
@@ -123,7 +125,7 @@ describe("running", { skip: process.platform === "win32" && "Windows has no proc
   });
 });
 
-describe("leftover children", { skip: process.platform === "win32" && "reads process states with ps" }, () => {
+describe("leftover children", () => {
   /** A cap on the nested run, so a check that stopped working fails here instead of hanging. */
   const RUN_CAP_MS = 60 * SECOND_MS;
 

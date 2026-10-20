@@ -9883,11 +9883,16 @@ describe("a Loop on a vehicle template", () => {
   });
 
   it("an apply.py called an invented method (set_generate_overlap_events) and passed the gate: the check names an unknown method on an object of a known class", async (t) => {
-    const python = await promisify(execFile)("python3", ["-c", "import ast"]).then(
-      () => "python3",
-      () => "",
-    );
-    if (!python || process.platform === "win32") {
+    // Windows installs Python as `python`; elsewhere it is `python3`.
+    let python = "";
+    for (const candidate of ["python3", "python"]) {
+      if (python) break;
+      python = await promisify(execFile)(candidate, ["-c", "import ast"]).then(
+        () => candidate,
+        () => "",
+      );
+    }
+    if (!python) {
       t.skip("needs python3 (the product uses Unreal's own)");
       return;
     }

@@ -28,6 +28,7 @@ import {
 } from "../../src/plugins/unreal/loop-tools.ts";
 import { CompileFailure, type CompileOptions, type CompileResult } from "../../src/plugins/unreal/ubt.ts";
 import { XcodeState } from "../../src/plugins/unreal/xcode.ts";
+import { linkFolder } from "../helpers/folder-links.ts";
 import { tmpDir } from "../helpers/tmp.ts";
 
 const MODULE = "Rush";
@@ -161,7 +162,7 @@ describe("landing a part's C++ in the game", () => {
       async (w) => {
         await rm(w.source, { recursive: true });
         await writeFile(path.join(w.outside, "Bike.h"), "// outside\n");
-        await symlink(w.outside, w.source);
+        await linkFolder(w.outside, w.source);
       },
     ],
     [
@@ -169,7 +170,7 @@ describe("landing a part's C++ in the game", () => {
       async (w) => {
         const real = path.join(w.root, "elsewhere-source");
         await rename(path.join(w.copy, "unreal", "Source"), real);
-        await symlink(real, path.join(w.copy, "unreal", "Source"));
+        await linkFolder(real, path.join(w.copy, "unreal", "Source"));
       },
     ],
     [
@@ -178,7 +179,7 @@ describe("landing a part's C++ in the game", () => {
         const parts = path.dirname(w.source);
         const real = path.join(w.root, "elsewhere-parts");
         await rename(parts, real);
-        await symlink(real, parts);
+        await linkFolder(real, parts);
       },
     ],
     ["an Objective-C++ file", (w) => writeFile(path.join(w.source, "Bike.mm"), "@interface Bike @end\n")],
@@ -191,7 +192,7 @@ describe("landing a part's C++ in the game", () => {
         await writeFile(path.join(w.source, "Private", "Deep", "Deep.h"), "// deep\n");
       },
     ],
-    ["a subfolder that is a link", (w) => symlink(w.outside, path.join(w.source, "Public"))],
+    ["a subfolder that is a link", (w) => linkFolder(w.outside, path.join(w.source, "Public"))],
     [
       "more than 20 files",
       async (w) => {
@@ -204,14 +205,14 @@ describe("landing a part's C++ in the game", () => {
       async (w) => {
         const source = path.join(w.game, "Source");
         await rm(source, { recursive: true });
-        await symlink(w.outside, source);
+        await linkFolder(w.outside, source);
       },
     ],
     [
       "the game's part folder linked to a folder outside",
       async (w) => {
         await mkdir(path.dirname(w.landing), { recursive: true });
-        await symlink(w.outside, w.landing);
+        await linkFolder(w.outside, w.landing);
       },
     ],
     [

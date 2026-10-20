@@ -30,6 +30,7 @@ import {
   portFree,
   rememberAnswers,
 } from "../../src/plugins/unreal/editor-port.ts";
+import { FILE_LINKS, linkFolder } from "../helpers/folder-links.ts";
 import { tmpDir } from "../helpers/tmp.ts";
 
 const BLOCK = { first: 18_000, last: 18_999 } as const;
@@ -485,7 +486,6 @@ const hostileRecords: Array<{
   },
   {
     name: "a record folder that links elsewhere",
-    links: true,
     arrange: async (s, outside) => {
       await mkdir(path.join(outside, "folder"), { recursive: true });
       await writeFile(
@@ -493,7 +493,7 @@ const hostileRecords: Array<{
         JSON.stringify(record("/Games/Out2/Out2.uproject", 18_006)),
       );
       await mkdir(path.join(s, "setup"), { recursive: true });
-      await symlink(path.join(outside, "folder"), path.join(s, "setup", "linked-folder"));
+      await linkFolder(path.join(outside, "folder"), path.join(s, "setup", "linked-folder"));
     },
   },
 ];
@@ -536,7 +536,7 @@ describe("the set-up projects the bridge reads from storage", () => {
 
   for (const row of hostileRecords) {
     it(`skips ${row.name}, changing nothing`, {
-      skip: Boolean(row.links) && process.platform === "win32" && "links need privileges on Windows",
+      skip: Boolean(row.links) && FILE_LINKS,
     }, async () => {
       const root = await tmpDir("studio-unreal-storage-");
       const storage = path.join(root, "storage");
@@ -605,7 +605,7 @@ describe("the projects the bridge may reach", () => {
   ];
   for (const row of hostileChoices) {
     it(`reads no choice from ${row.name}, changing nothing`, {
-      skip: Boolean(row.links) && process.platform === "win32" && "links need privileges on Windows",
+      skip: Boolean(row.links) && FILE_LINKS,
     }, async () => {
       const root = await tmpDir("studio-unreal-storage-");
       const storage = path.join(root, "storage");
@@ -671,7 +671,7 @@ describe("each game's own project", () => {
     }
   });
 
-  it("reads no link from a link file that is a symbolic link", { skip: process.platform === "win32" }, async () => {
+  it("reads no link from a link file that is a symbolic link", { skip: FILE_LINKS }, async () => {
     const root = await tmpDir("studio-unreal-storage-");
     const storage = path.join(root, "storage");
     const outside = path.join(root, "outside");

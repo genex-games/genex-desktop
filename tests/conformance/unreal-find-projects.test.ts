@@ -16,11 +16,11 @@ import type { Launch } from "../../src/plugins/unreal/editor-launch.ts";
 import { findProjects, keepFor, placeOf, scanProjectsFolder } from "../../src/plugins/unreal/find-projects.ts";
 import { findEngines, type SetupEnv, setUpProject } from "../../src/plugins/unreal/setup.ts";
 import { type XcodeStatus, XcodeState } from "../../src/plugins/unreal/xcode.ts";
+import { FILE_LINKS, linkFolder } from "../helpers/folder-links.ts";
 import { tmpDir } from "../helpers/tmp.ts";
 
 const GIB = 1024 ** 3;
 const HELPER = path.resolve("src/plugins/unreal/GenexEditorHelper");
-const LINKS = process.platform === "win32" && "links need privileges on Windows";
 const START = Date.UTC(2026, 9, 4, 9, 0, 0);
 const READY_XCODE: XcodeStatus = {
   state: XcodeState.Ready,
@@ -157,12 +157,10 @@ describe("The Unreal panel's project list", () => {
     assert.equal(found[3].opened, null);
   });
 
-  it("lists a project once by its real path, however each list spells it", {
-    skip: LINKS,
-  }, async () => {
+  it("lists a project once by its real path, however each list spells it", async () => {
     const f = await fixture();
     const gamma = await project(path.join(f.root, "Elsewhere"), "Gamma");
-    await symlink(path.join(f.root, "Elsewhere"), path.join(f.root, "Via"));
+    await linkFolder(path.join(f.root, "Elsewhere"), path.join(f.root, "Via"));
     await setUpProject(gamma, { env: f.env, helper: HELPER, storage: f.storage });
     await f.recent([[path.join(f.root, "Via", "Gamma", "Gamma.uproject"), "2026.10.03-20.00.00"]]);
     const found = await f.find();
@@ -212,10 +210,9 @@ const hostile: Array<{
 }> = [
   {
     name: "a project folder in Unreal Projects that links to a project elsewhere",
-    links: true,
     arrange: async (f) => {
       await project(path.join(f.root, "Outside"), "Linked");
-      await symlink(path.join(f.root, "Outside", "Linked"), path.join(f.folder, "Linked"));
+      await linkFolder(path.join(f.root, "Outside", "Linked"), path.join(f.folder, "Linked"));
     },
   },
   {
@@ -229,11 +226,10 @@ const hostile: Array<{
   },
   {
     name: "an Unreal Projects folder that is itself a link",
-    links: true,
     arrange: async (f) => {
       await f.recent([[path.join(f.folder, "Drift", "Drift.uproject"), "2026.10.01-08.00.00"]]);
       await project(path.join(f.root, "Real Projects"), "Linked");
-      await symlink(path.join(f.root, "Real Projects"), path.join(f.home, "Documents", "Linked Projects"));
+      await linkFolder(path.join(f.root, "Real Projects"), path.join(f.home, "Documents", "Linked Projects"));
       // The scan is pointed at the link itself; Drift still comes from Unreal's own list.
       f.folder = path.join(f.home, "Documents", "Linked Projects");
     },
@@ -312,7 +308,7 @@ const hostile: Array<{
 
 describe("The project list never shows, follows or writes", () => {
   for (const row of hostile)
-    it(`${row.name}`, { skip: row.links ? LINKS : false }, async () => {
+    it(`${row.name}`, { skip: row.links ? FILE_LINKS : false }, async () => {
       const f = await fixture();
       await project(f.folder, "Drift");
       await row.arrange(f);
@@ -336,16 +332,14 @@ describe("A project's spelling", () => {
 });
 
 describe("Where a folder is shown", () => {
-  it("names the same Documents folder the same way in the New game form and the project list, through a link", {
-    skip: LINKS,
-  }, async () => {
+  it("names the same Documents folder the same way in the New game form and the project list, through a link", async () => {
     const root = await realpath(await tmpDir("studio-unreal-place-"));
     const home = path.join(root, "home");
     const synced = path.join(root, "Synced", "Documents");
     await mkdir(path.join(synced, "Unreal Projects"), { recursive: true });
     await mkdir(home, { recursive: true });
     // Documents is a link elsewhere, as a synced Documents folder can be.
-    await symlink(synced, path.join(home, "Documents"));
+    await linkFolder(synced, path.join(home, "Documents"));
     const folder = path.join(home, "Documents", "Unreal Projects");
     await project(folder, "Drift");
     const backend = createUnrealBackend({
@@ -407,10 +401,10 @@ describe("Documents in OneDrive", () => {
     );
   });
 
-  it("still skips a project folder that really is a link", { skip: LINKS }, async () => {
+  it("still skips a project folder that really is a link", async () => {
     const f = await fixture();
     const outside = await project(path.join(f.root, "Outside"), "Victim");
-    await symlink(path.dirname(outside), path.join(f.folder, "Victim"));
+    await linkFolder(path.dirname(outside), path.join(f.folder, "Victim"));
     assert.deepEqual(await scanProjectsFolder(f.folder), []);
   });
 });

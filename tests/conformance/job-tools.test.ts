@@ -4,11 +4,11 @@
  * on a card, Plan answers that it waits for the plan), the folder a job runs in, the never-touch
  * screen on its command in every mode, who sees and stops which job, the host records in the chat,
  * the chat's next turn told of its jobs, and what ends a job besides itself (its run's settle, its
- * chat turn's end). Real core, fake delegated engines, and each job a plain `/bin/sh -c` in its own
- * process group, its spawn request recorded.
+ * chat turn's end). Real core, fake delegated engines, and each job a plain shell command (`/bin/sh -c`
+ * in its own process group, Git Bash on Windows, where a stop ends its tree), its spawn request
+ * recorded.
  */
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
 import { realpath, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -31,6 +31,7 @@ import { PermissionMode } from "../../src/shared/permissions.ts";
 import { UiEvent } from "../../src/shared/ui-events.ts";
 import type { DelegateRequest } from "../../src/substrate/engines/types.ts";
 import type { JobSpawn } from "../../src/substrate/jobs.ts";
+import { shellJobSpawn } from "../helpers/job-spawn.ts";
 import { running } from "../helpers/processes.ts";
 import { CLAUDE, closeWorkerChats, LOCAL, POLL_MS, POLL_TRIES, RUN_ID, workerChat } from "../helpers/worker-chat.ts";
 
@@ -43,7 +44,6 @@ const SHORT = "echo built; exit 0";
 const STARTED = /^Job ([0-9a-f-]{36}) \(/;
 const IN_PLAN = /The chat is in Plan mode, so this did not start: jobs wait until the plan is approved/;
 const NEVER_TOUCH = /Genex never lets a worker reach|Genex could not check what this command reaches/;
-const POSIX = { skip: process.platform === "win32" && "process groups and /bin/sh are POSIX" } as const;
 /** What the harness reads of a job: what it is and how it ended, never where its files are. */
 const JOB_VIEW_FIELDS = [
   "command",
@@ -66,15 +66,10 @@ type SpawnRequest = Parameters<JobSpawn>[0];
 type Chat = Awaited<ReturnType<typeof jobChat>>;
 type Call = [string, Record<string, unknown>];
 
-/** A game chat whose core starts each job as a plain `/bin/sh -c` in its own group, recording each request. */
+/** A game chat whose core starts each job under the platform's shell, recording each request. */
 async function jobChat() {
   const spawned: SpawnRequest[] = [];
-  const jobSpawn: JobSpawn = async (request) => {
-    spawned.push(request);
-    const child = spawn("/bin/sh", ["-c", request.command], { cwd: request.cwd, detached: true, stdio: "pipe" });
-    return { child, sandboxed: false };
-  };
-  const chat = await workerChat({ jobSpawn });
+  const chat = await workerChat({ jobSpawn: shellJobSpawn((request) => spawned.push(request)) });
   return { ...chat, spawned, game: chat.game, gameDir: await realpath(chat.project.dir) };
 }
 
@@ -175,7 +170,6 @@ describe("job tools", () => {
   });
 
   it("in Bypass and Auto a job starts without a card, in its own folder, in the mode's box", {
-    ...POSIX,
     timeout: CASE_TIMEOUT_MS,
   }, async () => {
     const chat = await jobChat();
@@ -196,7 +190,6 @@ describe("job tools", () => {
   });
 
   it("a job follows the chat's mode at the moment it starts, not the mode its session began in", {
-    ...POSIX,
     timeout: CASE_TIMEOUT_MS,
   }, async () => {
     const chat = await jobChat();
@@ -218,7 +211,6 @@ describe("job tools", () => {
   });
 
   it("in Accept edits and Manual a job waits for the person's card, and a declined card starts nothing", {
-    ...POSIX,
     timeout: CASE_TIMEOUT_MS,
   }, async () => {
     const chat = await jobChat();
@@ -261,7 +253,6 @@ describe("job tools", () => {
   });
 
   it("a worker's job card names the worker and waits; the person's switch to Bypass answers it", {
-    ...POSIX,
     timeout: CASE_TIMEOUT_MS,
   }, async () => {
     const chat = await jobChat();
@@ -306,7 +297,6 @@ describe("job tools", () => {
   });
 
   it("a worker's job writes only its own folders and never reaches the never-touch list", {
-    ...POSIX,
     timeout: CASE_TIMEOUT_MS,
   }, async () => {
     const chat = await jobChat();
@@ -393,7 +383,6 @@ describe("job tools", () => {
   });
 
   it("a web lead's job runs in the worktree it leads and never writes the game folder; the Unreal lead's runs in the game folder", {
-    ...POSIX,
     timeout: CASE_TIMEOUT_MS,
   }, async () => {
     const chat = await jobChat();
@@ -419,7 +408,6 @@ describe("job tools", () => {
   });
 
   it("a session sees and stops only its chat's jobs, and a worker only its own", {
-    ...POSIX,
     timeout: CASE_TIMEOUT_MS,
   }, async () => {
     const chat = await jobChat();
@@ -466,7 +454,6 @@ describe("job tools", () => {
   });
 
   it("every start and end is a host record in the chat, and the harness cannot write one", {
-    ...POSIX,
     timeout: CASE_TIMEOUT_MS,
   }, async () => {
     const chat = await jobChat();
@@ -510,7 +497,6 @@ describe("job tools", () => {
   });
 
   it("a job's records name its run, or the chat turn it was started in", {
-    ...POSIX,
     timeout: CASE_TIMEOUT_MS,
   }, async () => {
     const chat = await jobChat();
@@ -537,7 +523,7 @@ describe("job tools", () => {
     assert.deepEqual(record?.owner.scope, { kind: JobScopeKind.Chat }, "it still outlives the turn");
   });
 
-  it("the person's Stop stops the job and records who stopped it", { ...POSIX, timeout: CASE_TIMEOUT_MS }, async () => {
+  it("the person's Stop stops the job and records who stopped it", { timeout: CASE_TIMEOUT_MS }, async () => {
     const chat = await jobChat();
     await chat.core.setPermissionMode(chat.threadId, PermissionMode.Auto);
     const { answers } = await callsIn(chat, await ownTurn(chat), [[JobTool.Start, { title: "Server", command: LONG }]]);
@@ -587,7 +573,6 @@ describe("job tools", () => {
   });
 
   it("the harness reads a run's job ends and cannot start or stop one", {
-    ...POSIX,
     timeout: CASE_TIMEOUT_MS,
   }, async () => {
     const chat = await jobChat();
@@ -630,7 +615,6 @@ describe("job tools", () => {
   });
 
   it("the chat's next turn is told which of its jobs finished, once", {
-    ...POSIX,
     timeout: CASE_TIMEOUT_MS,
   }, async () => {
     const chat = await jobChat();
@@ -654,7 +638,6 @@ describe("job tools", () => {
   });
 
   it("a run's jobs stop when the harness reports the run settled, and a crash does not stop them", {
-    ...POSIX,
     timeout: CASE_TIMEOUT_MS,
   }, async () => {
     const chat = await jobChat();
@@ -672,7 +655,6 @@ describe("job tools", () => {
   });
 
   it("a chat-turn worker's jobs stop when the turn's delegation returns; the chat's own outlive it", {
-    ...POSIX,
     timeout: CASE_TIMEOUT_MS,
   }, async () => {
     const chat = await jobChat();

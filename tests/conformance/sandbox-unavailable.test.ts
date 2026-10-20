@@ -149,13 +149,14 @@ describe("ProcessSandbox raises a typed error", () => {
     } as SandboxRuntime;
   }
 
-  async function create(fake: SandboxRuntime): Promise<ProcessSandbox> {
+  async function create(fake: SandboxRuntime, platform?: NodeJS.Platform): Promise<ProcessSandbox> {
     const root = await tmpDir("sandbox-unavailable-");
     return ProcessSandbox.create({
       writableRoots: [root],
       scratchDir: path.join(root, "scratch"),
       secretPaths: [],
       runtime: fake,
+      ...(platform ? { platform } : {}),
     });
   }
 
@@ -176,17 +177,25 @@ describe("ProcessSandbox raises a typed error", () => {
     assert.equal(initialized, false);
   });
 
-  it("when a dependency is missing, carrying sandbox-runtime's findings", {
-    skip:
-      process.platform === "win32" && "Windows skips srt's dependency probe (its setup codes: windows-sandbox.test.ts)",
-  }, async () => {
-    const fake = runtime({ checkDependencies: () => ({ errors: ["socat not installed"], warnings: [] }) });
-    await assert.rejects(create(fake), (error: unknown) => {
-      assert.ok(error instanceof SandboxUnavailableError);
-      assert.deepEqual(error.problem.details, ["socat not installed"]);
-      return true;
+  // The backends that run srt's dependency probe, driven by name so every host checks both. Windows
+  // skips the probe; its setup codes are windows-sandbox.test.ts's.
+  for (const platform of ["darwin", "linux"] as const)
+    it(`on ${platform}, when a dependency is missing, carrying sandbox-runtime's findings`, async () => {
+      let initialized = false;
+      const fake = runtime({
+        checkDependencies: () => ({ errors: ["socat not installed"], warnings: [] }),
+        initialize: async () => {
+          initialized = true;
+        },
+      });
+      await assert.rejects(create(fake, platform), (error: unknown) => {
+        assert.ok(error instanceof SandboxUnavailableError);
+        assert.equal(error.problem.platform, platform);
+        assert.deepEqual(error.problem.details, ["socat not installed"]);
+        return true;
+      });
+      assert.equal(initialized, false, "nothing starts behind a failed probe");
     });
-  });
 
   it("an initialize failure that is not a setup problem stays what it was", async () => {
     const fake = runtime({

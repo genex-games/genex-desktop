@@ -33,6 +33,7 @@ import {
 import { scriptFiles, sourcemapOf } from "../../src/plugins/roblox/sourcemap.ts";
 import type { InstallCommandResult, InstallRun } from "../../src/plugins/roblox/studio-install.ts";
 import { type LocateStat, systemLocateFs } from "../../src/plugins/roblox/studio-locate.ts";
+import { linkFolder } from "../helpers/folder-links.ts";
 import { tmpDir } from "../helpers/tmp.ts";
 
 const BANNED_WORDS = /overnight|night|morning|tonight|Unreal/i;
@@ -483,12 +484,10 @@ describe("Add Luau checks", () => {
     assert.equal(error.code, LuauAddRefusal.Unsupported);
   });
 
-  it("refuses a storage whose luau folder is a link, writing nothing through it", async (t) => {
-    if (process.platform === "win32") return t.skip("making a link needs rights the Windows runner may lack");
-    const { symlink } = await import("node:fs/promises");
+  it("refuses a storage whose luau folder is a link, writing nothing through it", async () => {
     const { storage, deps } = await addDeps(fakeGitHub().fetchFn, fakeUnzip().run);
     const elsewhere = await tmpDir("roblox-luau-elsewhere-");
-    await symlink(elsewhere, path.join(storage, "luau"));
+    await linkFolder(elsewhere, path.join(storage, "luau"));
     const error = await refused(
       addLuauChecks(
         deps,
@@ -516,17 +515,16 @@ describe("the sourcemap", () => {
     assert.deepEqual(sourcemapOf(files), expected);
   });
 
-  it("lists no script through a linked src/ or a linked folder inside it", async (t) => {
-    if (process.platform === "win32") return t.skip("making a link needs rights the Windows runner may lack");
-    const { symlink, cp } = await import("node:fs/promises");
+  it("lists no script through a linked src/ or a linked folder inside it", async () => {
+    const { cp } = await import("node:fs/promises");
     const game = await tmpDir("roblox-sourcemap-");
-    await symlink(path.join(FIXTURE, "game", "src"), path.join(game, "src"));
+    await linkFolder(path.join(FIXTURE, "game", "src"), path.join(game, "src"));
     assert.deepEqual(await scriptFiles(game), [], "a src/ that is a link is refused whole");
     const other = await tmpDir("roblox-sourcemap-");
     await cp(path.join(FIXTURE, "game", "src"), path.join(other, "src"), { recursive: true });
     await mkdir(path.join(other, "outside", "Deep"), { recursive: true });
     await writeFile(path.join(other, "outside", "Deep", "Evil.luau"), "return 1\n");
-    await symlink(path.join(other, "outside"), path.join(other, "src", "ServerStorage"));
+    await linkFolder(path.join(other, "outside"), path.join(other, "src", "ServerStorage"));
     assert.ok(
       !(await scriptFiles(other)).some((file) => file.startsWith("ServerStorage/")),
       "a linked folder isn't walked",

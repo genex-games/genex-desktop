@@ -54,6 +54,7 @@ import { MINUTE_MS } from "../../src/harness-seed/loop/time.ts";
 import type { Run } from "../../src/harness-seed/types/harness.d.ts";
 import { HostMethod } from "../../src/shared/harness-api.ts";
 import { type CtxRecorder, ctxRecorder } from "../helpers/ctx-recorder.ts";
+import { FILE_LINKS, linkFolder } from "../helpers/folder-links.ts";
 import { fakeFinishReview } from "../helpers/reviewer.ts";
 import { tmpDir } from "../helpers/tmp.ts";
 
@@ -625,35 +626,8 @@ describe("the finish check", () => {
     assert.match(String(proof.refused[1]), /hidden/, "a hidden folder stays refused by its full path too");
   });
 
-  it("a proof file swapped after its check is never read through: a link, a FIFO, or a folder on the way", {
-    skip: process.platform === "win32" ? "links and FIFOs are POSIX here" : false,
-    timeout: 10_000,
-  }, async () => {
-    const outside = await tmpDir("finish-check-swap-outside-");
-    await writeFile(path.join(outside, "tests.txt"), "SENTINEL outside");
-    const rows: Array<[string, (folder: string) => Promise<void>]> = [
-      [
-        "a link at the file's own name",
-        async (folder) => {
-          await rm(path.join(folder, "reports", "tests.txt"));
-          await symlink(path.join(outside, "tests.txt"), path.join(folder, "reports", "tests.txt"));
-        },
-      ],
-      [
-        "a FIFO at the file's own name",
-        async (folder) => {
-          await rm(path.join(folder, "reports", "tests.txt"));
-          execFileSync("mkfifo", [path.join(folder, "reports", "tests.txt")]);
-        },
-      ],
-      [
-        "its folder swapped for a link out",
-        async (folder) => {
-          await rename(path.join(folder, "reports"), path.join(folder, "reports-old"));
-          await symlink(outside, path.join(folder, "reports"));
-        },
-      ],
-    ];
+  /** Each swap refused, reading nothing of `outside`; then a plain file is read. */
+  async function swapsRefused(rows: Array<[string, (folder: string) => Promise<void>]>): Promise<void> {
     for (const [what, swap] of rows) {
       const folder = await leadFolder();
       const read = await readProofFile(folder, "reports/tests.txt", () => swap(folder));
@@ -662,6 +636,54 @@ describe("the finish check", () => {
     }
     const plain = await readProofFile(await leadFolder(), "reports/tests.txt");
     assert.ok("bytes" in plain && plain.bytes.toString().startsWith("12 passed"), "a plain file is read");
+  }
+
+  it("a proof file swapped after its check for a link at its name is never read through", {
+    skip: FILE_LINKS,
+    timeout: 10_000,
+  }, async () => {
+    const outside = await tmpDir("finish-check-swap-outside-");
+    await writeFile(path.join(outside, "tests.txt"), "SENTINEL outside");
+    await swapsRefused([
+      [
+        "a link at the file's own name",
+        async (folder) => {
+          await rm(path.join(folder, "reports", "tests.txt"));
+          await symlink(path.join(outside, "tests.txt"), path.join(folder, "reports", "tests.txt"));
+        },
+      ],
+    ]);
+  });
+
+  it("a proof file swapped after its check for a FIFO is never read through", {
+    skip: process.platform === "win32" && "Windows has no FIFOs in the file system",
+    timeout: 10_000,
+  }, async () => {
+    await swapsRefused([
+      [
+        "a FIFO at the file's own name",
+        async (folder) => {
+          await rm(path.join(folder, "reports", "tests.txt"));
+          execFileSync("mkfifo", [path.join(folder, "reports", "tests.txt")]);
+        },
+      ],
+    ]);
+  });
+
+  it("a proof file whose folder is swapped for a link out after its check is never read through", {
+    timeout: 10_000,
+  }, async () => {
+    const outside = await tmpDir("finish-check-swap-outside-");
+    await writeFile(path.join(outside, "tests.txt"), "SENTINEL outside");
+    await swapsRefused([
+      [
+        "its folder swapped for a link out",
+        async (folder) => {
+          await rename(path.join(folder, "reports"), path.join(folder, "reports-old"));
+          await linkFolder(outside, path.join(folder, "reports"));
+        },
+      ],
+    ]);
   });
 
   it("the finish hook's notes and pictures, and the run's job results, join the proof", async () => {

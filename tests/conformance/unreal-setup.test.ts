@@ -50,6 +50,7 @@ import {
 import { type XcodeStatus, XcodeState } from "../../src/plugins/unreal/xcode.ts";
 import { createEngineLinks } from "../../src/substrate/plugins/engine-links.ts";
 import { ENGINES as ENGINE_CATALOG } from "../helpers/engines.ts";
+import { FILE_LINKS, linkFolder } from "../helpers/folder-links.ts";
 import { tmpDir } from "../helpers/tmp.ts";
 
 const GIB = 1024 ** 3;
@@ -793,9 +794,8 @@ const openSpellings: Array<{
   { name: "as it is", named: async (f) => realpath(f.project.file), refuses: true },
   {
     name: "through a link to its folder's parent",
-    links: true,
     named: async (f) => {
-      await symlink(path.join(f.root, "Projects"), path.join(f.root, "Linked"));
+      await linkFolder(path.join(f.root, "Projects"), path.join(f.root, "Linked"));
       return path.join(f.root, "Linked", "Drift", "Drift.uproject");
     },
     refuses: true,
@@ -822,7 +822,7 @@ const openSpellings: Array<{
 describe("Set up Unreal while an editor runs", () => {
   for (const row of openSpellings)
     it(`${row.refuses ? "refuses, changing nothing," : "sets up"} when the open project is ${row.name}`, {
-      skip: row.links && process.platform === "win32" && "links need privileges on Windows",
+      skip: row.links && FILE_LINKS,
     }, async () => {
       const f = await setupFixture({ ini: USER_INI });
       if (row.caseless && !(await caseInsensitive(f.root))) return;
@@ -856,6 +856,8 @@ describe("Set up Unreal while an editor runs", () => {
 const hostile: Array<{
   name: string;
   code: string;
+  /** It plants a link to a file, which Windows makes only with a privilege. */
+  links?: boolean;
   arrange: (f: Awaited<ReturnType<typeof setupFixture>>, outside: string) => Promise<string>;
 }> = [
   { name: "a relative path", code: SetupErrorCode.NotProjectFile, arrange: async () => "Drift/Drift.uproject" },
@@ -880,6 +882,7 @@ const hostile: Array<{
   {
     name: "a .uproject that is a link to a project elsewhere",
     code: SetupErrorCode.NoProject,
+    links: true,
     arrange: async (f, outside) => {
       const elsewhere = await fakeProject(outside, "Elsewhere");
       const link = path.join(f.project.directory, "Linked.uproject");
@@ -899,7 +902,7 @@ const hostile: Array<{
     name: "a Plugins folder that links outside the project",
     code: SetupErrorCode.Link,
     arrange: async (f, outside) => {
-      await symlink(outside, path.join(f.project.directory, "Plugins"));
+      await linkFolder(outside, path.join(f.project.directory, "Plugins"));
       return f.project.file;
     },
   },
@@ -908,13 +911,14 @@ const hostile: Array<{
     code: SetupErrorCode.Link,
     arrange: async (f, outside) => {
       await mkdir(path.join(f.project.directory, "Plugins"));
-      await symlink(outside, path.join(f.project.directory, "Plugins/GenexEditorHelper"));
+      await linkFolder(outside, path.join(f.project.directory, "Plugins/GenexEditorHelper"));
       return f.project.file;
     },
   },
   {
     name: "a link inside the helper folder",
     code: SetupErrorCode.Link,
+    links: true,
     arrange: async (f, outside) => {
       const python = path.join(f.project.directory, "Plugins/GenexEditorHelper/Content/Python");
       await mkdir(python, { recursive: true });
@@ -928,13 +932,14 @@ const hostile: Array<{
     code: SetupErrorCode.Link,
     arrange: async (f, outside) => {
       await mkdir(path.join(f.project.directory, "Saved/Config"), { recursive: true });
-      await symlink(outside, path.join(f.project.directory, "Saved/Config/MacEditor"));
+      await linkFolder(outside, path.join(f.project.directory, "Saved/Config/MacEditor"));
       return f.project.file;
     },
   },
   {
     name: "a settings file that links outside the project",
     code: SetupErrorCode.Link,
+    links: true,
     arrange: async (f, outside) => {
       await mkdir(path.join(f.project.directory, "Saved/Config/MacEditor"), { recursive: true });
       await writeFile(path.join(outside, "victim.ini"), "[Victim]\nKeep=1\n");
@@ -954,10 +959,8 @@ describe("Set up Unreal refuses, changing nothing,", () => {
     assert.deepEqual(await tree(f.storage), {});
   });
 
-  for (const { name, code, arrange } of hostile) {
-    it(`refuses ${name} and changes nothing`, {
-      skip: process.platform === "win32" && "links need privileges on Windows",
-    }, async () => {
+  for (const { name, code, links, arrange } of hostile) {
+    it(`refuses ${name} and changes nothing`, { skip: links && FILE_LINKS }, async () => {
       const f = await setupFixture();
       const outside = path.join(f.root, "outside");
       await mkdir(outside, { recursive: true });
@@ -984,7 +987,9 @@ type SetFixture = Awaited<ReturnType<typeof setupFixture>>;
 async function linkAfterSetup(f: SetFixture, outside: string, relative: string) {
   const moved = path.join(outside, path.basename(relative));
   await rename(path.join(f.project.directory, relative), moved);
-  await symlink(moved, path.join(f.project.directory, relative));
+  const at = path.join(f.project.directory, relative);
+  if ((await lstat(moved)).isDirectory()) await linkFolder(moved, at);
+  else await symlink(moved, at);
 }
 
 const SETTINGS_DIR = path.dirname(SETTINGS_INI);
@@ -994,6 +999,8 @@ const hostileUndo: Array<{
   name: string;
   code: string;
   ini?: string;
+  /** It plants a link to a file, which Windows makes only with a privilege. */
+  links?: boolean;
   arrange: (f: SetFixture, outside: string) => Promise<string>;
 }> = [
   { name: "a relative path", code: SetupErrorCode.NotProjectFile, arrange: async () => "Drift/Drift.uproject" },
@@ -1018,6 +1025,7 @@ const hostileUndo: Array<{
   {
     name: "a .uproject that is a link to the set-up project",
     code: SetupErrorCode.NoProject,
+    links: true,
     arrange: async (f) => {
       const link = path.join(f.root, "Linked.uproject");
       await symlink(f.project.file, link);
@@ -1043,6 +1051,7 @@ const hostileUndo: Array<{
   {
     name: "a link planted inside the helper folder",
     code: SetupErrorCode.Link,
+    links: true,
     arrange: async (f, outside) => {
       const target = path.join(f.project.directory, "Plugins/GenexEditorHelper/Content/Python/init_unreal.py");
       await rename(target, path.join(outside, "init_unreal.py"));
@@ -1071,6 +1080,7 @@ const hostileUndo: Array<{
     name: "a settings file linked after setup",
     code: SetupErrorCode.Link,
     ini: USER_INI,
+    links: true,
     arrange: async (f, outside) => {
       await linkAfterSetup(f, outside, SETTINGS_INI);
       return f.project.file;
@@ -1079,8 +1089,8 @@ const hostileUndo: Array<{
 ];
 
 describe("Undo setup refuses, changing nothing,", () => {
-  for (const { name, code, ini, arrange } of hostileUndo)
-    it(`refuses ${name}`, { skip: process.platform === "win32" && "links need privileges on Windows" }, async () => {
+  for (const { name, code, ini, links, arrange } of hostileUndo)
+    it(`refuses ${name}`, { skip: links && FILE_LINKS }, async () => {
       const f = await setupFixture(ini === undefined ? {} : { ini });
       await setUpProject(f.project.file, f.options);
       const outside = path.join(f.root, "outside");
@@ -1915,9 +1925,7 @@ describe("Updating the Genex editor helper", () => {
     assert.equal(await exists(path.join(f.project.directory, "Plugins")), false, "the project had no Plugins folder");
   });
 
-  it("a settings file that became a link is neither read nor written", {
-    skip: process.platform === "win32" && "links need privileges on Windows",
-  }, async () => {
+  it("a settings file that became a link is neither read nor written", { skip: FILE_LINKS }, async () => {
     const f = await setUpByOlderGenex();
     const outside = path.join(f.root, "outside");
     await mkdir(outside, { recursive: true });
@@ -1988,7 +1996,6 @@ const hostileUpdate: Array<{
   {
     name: "a Plugins folder linked after setup",
     code: SetupErrorCode.Link,
-    links: true,
     arrange: async (f, outside) => {
       await linkAfterSetup(f, outside, "Plugins");
       return { file: f.project.file };
@@ -1997,7 +2004,6 @@ const hostileUpdate: Array<{
   {
     name: "a helper folder linked after setup",
     code: SetupErrorCode.Link,
-    links: true,
     arrange: async (f, outside) => {
       await linkAfterSetup(f, outside, HELPER_FOLDER);
       return { file: f.project.file };
@@ -2028,7 +2034,7 @@ const hostileUpdate: Array<{
 describe("Updating the Genex editor helper refuses, writing nothing,", () => {
   for (const { name, code, links, arrange } of hostileUpdate)
     it(`refuses ${name}`, {
-      skip: links === true && process.platform === "win32" && "links need privileges",
+      skip: links === true && FILE_LINKS,
     }, async () => {
       const f = await setUpByOlderGenex();
       const outside = path.join(f.root, "outside");

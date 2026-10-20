@@ -15,7 +15,6 @@
  * met, and its mark comes off in that phase.
  */
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { cp, mkdir, mkdtemp, readdir, readFile, realpath, writeFile } from "node:fs/promises";
 import os from "node:os";
@@ -74,6 +73,7 @@ import unrealManifest from "../../src/plugins/unreal/plugin.json" with { type: "
 import { type CoreLite, coreLite } from "../helpers/core-lite.ts";
 import { type CtxHandler, ctxRecorder } from "../helpers/ctx-recorder.ts";
 import { gitFile } from "../helpers/git.ts";
+import { exitingJobSpawn } from "../helpers/job-spawn.ts";
 import { copyOfExample, PLUGIN_SDK_BACKEND, personAllowsLocalTools } from "../helpers/plugins.ts";
 import { unrealBackendFixture } from "../helpers/unreal-fake-engine.ts";
 import { writeSkillExample } from "../helpers/plugin-author.ts";
@@ -156,12 +156,9 @@ let lite: CoreLite;
 /** How often, and how many times, a case looks for a consent card before it says none came. */
 const CARD_POLL_MS = 20;
 const CARD_TRIES = 250;
-/** Every job the core started, as asked: its process is a shell that exits at once, never the command. */
+/** Every job the core started, as asked: its process is a Node that exits at once, never the command. */
 const jobsSpawned: Array<Parameters<JobSpawn>[0]> = [];
-const recordingJobSpawn: JobSpawn = async (request) => {
-  jobsSpawned.push(request);
-  return { child: spawn("/bin/sh", ["-c", "exit 0"], { detached: true, stdio: "pipe" }), sandboxed: false };
-};
+const recordingJobSpawn = exitingJobSpawn((request) => jobsSpawned.push(request));
 /** The core announced a card (`UiEvent.ToolPermission`): a case waiting for one reads the rows again. */
 const cards = new Changes();
 /** Where each case's copy goes: beside the games folder, since every folder in it is a game of its own. */
@@ -1232,9 +1229,7 @@ describe("Unreal asked for with the plugin off: find the plugin, or go on with g
     assert.match(prompt, /Unreal plugin is off/);
     assert.match(prompt, /can't save inside the editor before a checkpoint/);
   });
-  it("without the plugin the lead builds with UnrealBuildTool and UnrealEditor-Cmd as jobs and looks with app_look", {
-    skip: process.platform === "win32" && "jobs' process groups are POSIX",
-  }, async (t) => {
+  it("without the plugin the lead builds with UnrealBuildTool and UnrealEditor-Cmd as jobs and looks with app_look", async (t) => {
     const { dir, game } = await adopted(Project.UnrealGame);
     assert.equal(lite.core.plugins.enabled(UNREAL_PLUGIN), false, "the Unreal plugin is off");
     const threadId = await lite.core.threadForGame(game.name);
@@ -1554,9 +1549,7 @@ describe("a Godot game with its plugin off: generic tools, jobs and looking at t
     assert.equal(await ignored(dir, ".godot/imported/icon.ctex"), true);
   });
 
-  it("the lead and workers run godot --headless as jobs within the chat's permission mode, and look at the running game with app_look", {
-    skip: process.platform === "win32" && "jobs' process groups are POSIX",
-  }, async (t) => {
+  it("the lead and workers run godot --headless as jobs within the chat's permission mode, and look at the running game with app_look", async (t) => {
     const { dir, game } = await adopted(Project.GodotGame);
     const gameDir = await realpath(dir);
     const threadId = await lite.core.threadForGame(game.name);
