@@ -170,3 +170,24 @@ Share, Add), `ipc/asset-library.ts` (`studio:assets.*`), `renderer/state/sharing
 `use-tile-picture.ts`); fixtures answer from `dev/fixture-asset-library.ts` (fixture `asset-library`,
 whose window also gets the library's files from the fixture).
 
+
+## Play-time AI for creators
+
+The creator side of play-time AI lives in `renderer/panels/game-ai/`, its words in `words.ts`
+(`AI_SETTINGS_WORDS`, `GET_CREDITS_WORDS`, `CREATE_AI_WORDS`, `MODEL_CHECK_WORDS`,
+`PUBLISH_AI_WORDS`, `REPORT_INBOX_WORDS`, `ENGINE_AI_WORDS`) and its derivations in
+`play-ai-view.ts`. Genex credits are the unit; dollars show only at checkout.
+
+- **Settings → Play-time AI** (`SettingsSection.PlayAi`): how games pick, credits with Get credits
+  and auto top-up (off by default; genex.games holds it to once a day and three times a month),
+  optional limits, the Games list with Turn off, and the maker switches.
+- **Create**: the strip's AI pill (`[data-stage-ai]`) is the chat's model menu for the game; a
+  pick that first uses a plan or credits shows its one-sentence card, whose commit waits 600 ms.
+  Engine Live cards show the same as one line (`[data-engine-ai]`).
+- **Model check** (optional, the creator's own models) and **Player reports**: Fix with agent
+  saves the report's tape as the game's playtest (`studio:ai-reports.fix`, realpath-contained)
+  and asks the chat to replay it; the player's note never goes into that prompt.
+- **Publish**: Needs AI or Works without AI, nothing preselected; Publish waits for that choice,
+  never for a check.
+
+`npm run test:ui -- play-ai-studio` checks every state in dark and light.
