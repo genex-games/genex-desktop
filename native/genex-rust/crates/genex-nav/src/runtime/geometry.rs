@@ -131,7 +131,6 @@ pub(crate) fn clip_edge_to_triangle(
 }
 
 /// Projects `point` onto the segment; returns the projection and its fraction along the segment.
-#[expect(dead_code, reason = "the path and query ports (NAV-7, NAV-9) call it")]
 pub(crate) fn project_point_to_line_segment(point: Vec3, (start, end): (Vec3, Vec3)) -> (Vec3, f32) {
     let dir = end - start;
     let dir_length_squared = dir.length_squared();
