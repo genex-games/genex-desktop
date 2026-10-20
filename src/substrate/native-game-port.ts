@@ -14,6 +14,7 @@ import { lstat } from "node:fs/promises";
 import path from "node:path";
 import { StringDecoder } from "node:string_decoder";
 import { type BuildIdentity, type CaptureProvenance, renderProvenanceCopy } from "../shared/build-preview.ts";
+import { type CrashRecordV1, isGameMadeRecord } from "../shared/crash-record.ts";
 import { SECOND_MS } from "../shared/duration.ts";
 import type { BuildTarget } from "../shared/game-project.ts";
 import {
@@ -372,6 +373,10 @@ export class NativeGamePort implements PreviewPort {
   #observed = false;
   /** The camera the last answered `debugCamera` left the game on. */
   #camera: string = DEFAULT_CAMERA;
+  /** The last crash record the game sent (CRASH-5): the registry hands it to the crash store as the run ends. */
+  #lastCrash: CrashRecordV1 | null = null;
+  /** The tick the game's last answered `state` named, for a host-made hang record; null before one. */
+  #lastTick: number | null = null;
 
   constructor(io: NativePortIo) {
     this.#io = io;
@@ -436,6 +441,16 @@ export class NativeGamePort implements PreviewPort {
   /** How the game ended, once it was reaped; null while it runs. */
   get exit(): { code: number | null; signal: string | null } | null {
     return this.#exit;
+  }
+
+  /** The last crash record the game sent this run, or null. */
+  get lastCrash(): CrashRecordV1 | null {
+    return this.#lastCrash;
+  }
+
+  /** The tick the game's last answered `state` named, or null. */
+  get lastTick(): number | null {
+    return this.#lastTick;
   }
 
   /** Ends the game for `refusal` (SIGKILL to its group); every waiting call rejects with it. Idempotent. */
@@ -689,6 +704,7 @@ export class NativeGamePort implements PreviewPort {
   #noteClock(op: NativeOp, result: unknown): void {
     if (!isRecord(result)) return;
     if (op === NativeOp.Seed) this.#running = false;
+    if (op === NativeOp.State && Number.isSafeInteger(result.tick)) this.#lastTick = Number(result.tick);
     const clockOp = op === NativeOp.Start || op === NativeOp.Pause;
     if (clockOp && typeof result.running === "boolean") this.#running = result.running;
   }
@@ -794,8 +810,22 @@ export class NativeGamePort implements PreviewPort {
       if (event.progress) for (const listener of this.#listeners) listener(event);
       return;
     }
+    if (event.event === NativeEvent.Crash && !this.#keepCrash(event.record)) return;
     if (event.event === NativeEvent.Fatal) this.#note(ConsoleLevel.Error, event.reason);
     for (const listener of this.#listeners) listener(event);
+  }
+
+  /**
+   * A game's own record is kept as the run's last; one naming a kind or writer only the host, the
+   * shell or a platform reader makes (a forged `hang`, a `source: "host"`) ends the game `reply-invalid`.
+   */
+  #keepCrash(record: CrashRecordV1): boolean {
+    if (!isGameMadeRecord(record)) {
+      this.kill(NativeRefusal.ReplyInvalid, MESSAGE.replyInvalid);
+      return false;
+    }
+    this.#lastCrash = record;
+    return true;
   }
 
   /** The one `ready`: this run's nonce and protocol, or the game ends `bad-handshake`. A second is a violation. */

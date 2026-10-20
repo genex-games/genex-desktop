@@ -5,7 +5,7 @@ import type { EventData } from "../../substrate/types.ts";
 
 const MESSAGE = {
   hostOnly:
-    "permission, consent, recovery, self-change, plugin suggestion, don't-wait, unsaved-file, job, app access, automatic resume, finish check and extension-ladder rows are written by the studio only",
+    "permission, consent, recovery, self-change, plugin suggestion, don't-wait, unsaved-file, job, app access, automatic resume, finish check, extension-ladder and game crash rows are written by the studio only",
 } as const;
 const HOST_CUSTOM_EVENTS: ReadonlySet<unknown> = new Set([
   CustomEvent.ToolPermission,
@@ -24,6 +24,8 @@ const HOST_CUSTOM_EVENTS: ReadonlySet<unknown> = new Set([
   CustomEvent.CrateRequest,
   CustomEvent.CrateDecision,
   CustomEvent.DeviceLaunch,
+  // A crash record is the host's: it kept the file `game_crashed` names (`core/game-crashes.ts`).
+  CustomEvent.GameCrashed,
   CustomEvent.SeedRetake,
   // A turn-it-on card is shown by `plugins_suggest` only, after its checks: its button turns a plugin on.
   CustomEvent.PluginSuggested,

@@ -5,13 +5,13 @@
  * Roots go through `assertHarnessRoot`; artifact paths are always the host's own. No method
  * installs a toolchain, runs `xcode-select` or writes a lock: only the lane records one (and a
  * Windows or Linux build's destination check), after a build of the game folder. A harness stops
- * only the runs its own leases started, never the person's Play window. A game's crash records and
- * a lease's frame profile answer `unavailable` until the host keeps records and reads profiles.
+ * only the runs its own leases started, never the person's Play window. A game's crash records are
+ * read from its own `.studio/crashes/` (`game-crashes.ts`); a lease's frame profile answers
+ * `unavailable` until the host reads profiles.
  */
 import path from "node:path";
 import { CppBuildPurpose } from "../../shared/build-problem.ts";
 import { BuildTarget, destinationsOf, isBuildTarget, isCompiledStack, stackOf } from "../../shared/game-project.ts";
-import { type GameCrashesUnavailable, gameCrashesUnavailable } from "../../shared/crash-record.ts";
 import { type ProfileUnavailable, ProfileUnavailableReason, profileUnavailable } from "../../shared/frame-profile.ts";
 import { type HarnessHostHandlers, type HarnessParams, HostMethod } from "../../shared/harness-api.ts";
 import {
@@ -31,6 +31,7 @@ import {
 } from "../../substrate/native-cross-admission.ts";
 import { NativeLeasePort } from "../../substrate/native-game-port.ts";
 import type { CoreInternals, StudioCore } from "../studio-core.ts";
+import { gameCrashes } from "./game-crashes.ts";
 
 const MESSAGE = {
   invalidTarget: (target: string) => `native.build: "${target}" is not a destination`,
@@ -191,15 +192,6 @@ async function stop(x: CoreInternals, p: HarnessParams<typeof HostMethod.NativeS
   return stopped;
 }
 
-/** `game.crashes`: the game is checked like every root; no record is kept yet. */
-async function crashes(
-  x: CoreInternals,
-  p: HarnessParams<typeof HostMethod.GameCrashes>,
-): Promise<GameCrashesUnavailable> {
-  await x.assertHarnessRoot(p.project, null);
-  return gameCrashesUnavailable();
-}
-
 /** `preview.frameProfile`: `no-run` for a handle that names no lease; no profile is read yet. */
 function frameProfile(x: CoreInternals, p: HarnessParams<typeof HostMethod.PreviewFrameProfile>): ProfileUnavailable {
   const leased = Boolean(x.previewPool?.leaseOf(p.handle));
@@ -212,7 +204,7 @@ export function nativeRpc(core: StudioCore, x: CoreInternals) {
     [HostMethod.NativeBuild]: async (p) => build(core, x, p),
     [HostMethod.NativeStatus]: async (p) => status(core, x, p),
     [HostMethod.NativeStop]: async (p) => stop(x, p),
-    [HostMethod.GameCrashes]: async (p) => crashes(x, p),
+    [HostMethod.GameCrashes]: async (p) => gameCrashes(core, x, p),
     [HostMethod.PreviewFrameProfile]: async (p) => frameProfile(x, p),
   } satisfies Partial<HarnessHostHandlers>;
 }

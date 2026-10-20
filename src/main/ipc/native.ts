@@ -16,7 +16,6 @@
  * Stop the person asked for. An error crossing IPC keeps only its sentence, and the card already
  * says how the run ended.
  */
-import { gameCrashesUnavailable } from "../../shared/crash-record.ts";
 import { CustomEvent, customEventData } from "../../shared/custom-events.ts";
 import { ProfileUnavailableReason, parseFrameProfileRequest, profileUnavailable } from "../../shared/frame-profile.ts";
 import type { DeviceLaunchResult } from "../../shared/device-launch.ts";
@@ -42,6 +41,7 @@ import {
 } from "../core/device-launch.ts";
 import type { NativeSurfaceSize } from "../core/native-runs.ts";
 import type { StudioCore } from "../studio-core.ts";
+import { listedGameCrashes } from "./game-crashes.ts";
 import type { IpcHandle } from "./registrar.ts";
 
 /** Why a native request is refused before the registry is asked. */
@@ -268,8 +268,9 @@ function shownRun(core: NativeIpcCore, project: string): NativeRunStatus | null 
 
 /**
  * A game's frame profile and crash records, both fixture-safe reads. The game and the request are
- * checked first; until the host reads profiles (PROF-6) and keeps records (CRASH-5) each answers
- * `unavailable`: a profile `no-run` when no run is shown, else `not-served`.
+ * checked first; a game's crash records are read from its own `.studio/crashes/` (CRASH-5), and
+ * until the host reads profiles (PROF-6) a profile answers `unavailable`: `no-run` when no run is
+ * shown, else `not-served`.
  */
 function registerProfileAndCrashesIpc(handle: IpcHandle, core: NativeIpcCore): void {
   handle("studio:native.profile", async (payload) => {
@@ -278,10 +279,7 @@ function registerProfileAndCrashesIpc(handle: IpcHandle, core: NativeIpcCore): v
     const reason = shownRun(core, project) ? ProfileUnavailableReason.NotServed : ProfileUnavailableReason.NoRun;
     return profileUnavailable(reason);
   });
-  handle("studio:game.crashes", async (payload) => {
-    await listedGame(core, payload);
-    return gameCrashesUnavailable();
-  });
+  handle("studio:game.crashes", async (payload) => listedGameCrashes(await listedProject(core, payload)));
 }
 
 /**

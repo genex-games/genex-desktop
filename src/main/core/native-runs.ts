@@ -22,6 +22,10 @@
  * violation, the memory cap) has its descendants killed with its group, and the run ends killed
  * with that refusal within `NATIVE_REAP_MARGIN_MS` even when the kernel is slow to reap it. Each
  * capture's provenance carries the run id and the build `prepare` admitted.
+ *
+ * A run that ends crashed (the game's own `crash` record, a kill for a missed call deadline, or an
+ * abnormal exit) names its record in its last status, and the record goes to the crash store
+ * (`core/game-crashes.ts`) before the run dir is removed.
  */
 import { execFile } from "node:child_process";
 import { randomBytes } from "node:crypto";
@@ -33,6 +37,7 @@ import { StudioPlatform } from "../../shared/boot.ts";
 import type { BuildIdentity } from "../../shared/build-preview.ts";
 import type { BuildProblem } from "../../shared/build-problem.ts";
 import { SECOND_MS } from "../../shared/duration.ts";
+import type { CrashRecordV1 } from "../../shared/crash-record.ts";
 import { errorMessage } from "../../shared/errors.ts";
 import { type BuildTarget, isCompiledStack } from "../../shared/game-project.ts";
 import {
@@ -70,6 +75,7 @@ import { descendants as processDescendants } from "../../substrate/plugins/nativ
 import type { GameChild, GameExit, GameSpawnRequest } from "../../substrate/spawn.ts";
 import type { FramesSlot, NativeFramesHost } from "../native-frames.ts";
 import { processStartedAt } from "../native-supervisor-logic.ts";
+import { crashIdOf, type GameCrashStore, hostCrashRecord } from "./game-crashes.ts";
 
 const run = promisify(execFile);
 
@@ -215,6 +221,8 @@ export interface NativeRunsOptions {
   frames?: NativeFramesHost | null;
   /** The host's platform, which decides how a stop ends a game (default: this one's). */
   platform?: NodeJS.Platform;
+  /** Where a crashed run's record is kept (`core/game-crashes.ts`); absent or null keeps none and names none. */
+  crashes?: GameCrashStore | null;
 }
 
 /** A live run: its status and its port. */
@@ -1152,14 +1160,26 @@ export class NativeRuns implements NativeRunsHost {
     for (const handle of Object.values(entry.timers)) timers.clearTimeout(handle);
     this.#flush(entry);
     const endedAt = new Date(timers.now()).toISOString();
-    this.#set(entry, { ...ending, endedAt });
+    const crash = this.#crashOf(entry, ending);
+    const named = crash ? { crash: { crashId: crashIdOf(entry.status.runId), kind: crash.kind } } : {};
+    this.#set(entry, { ...ending, endedAt, ...named });
     this.#runs.delete(entry.status.runId);
     this.#closeFrames(entry);
     if (entry.child) this.#options.supervisor?.forget(entry.status.runId);
+    // The record is in memory (the port's or the host's): it never needs the run dir removed next.
+    if (crash) void this.#options.crashes?.keep({ project: entry.request.project, runId: entry.status.runId }, crash);
     // The bundle is read-only to the game: `removeRunDir` gives its folders their write bit back first.
     void removeRunDir(entry.runDir)
       .catch((error: unknown) => this.#log(MESSAGE.sweep(entry.runDir, errorMessage(error))))
       .finally(() => entry.ended.resolve());
+  }
+
+  /** The record a run that ended so leaves: the game's own last one, else the host's; null with no store. */
+  #crashOf(entry: RunEntry, ending: Ending): CrashRecordV1 | null {
+    if (!this.#options.crashes || !entry.child) return null;
+    const sent = entry.port?.lastCrash ?? null;
+    if (sent) return sent;
+    return hostCrashRecord(ending, { destination: entry.request.target, tick: entry.port?.lastTick ?? null });
   }
 
   // ── the boot sweep ────────────────────────────────────────────────────────────────────────

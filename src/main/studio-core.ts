@@ -142,6 +142,7 @@ import { ConnectionService } from "./core/connections.ts";
 import { developmentStacksOpen } from "./core/stack-gate.ts";
 import { ConversationService } from "./core/conversation.ts";
 import { DelegationService } from "./core/delegation.ts";
+import { createGameCrashStore } from "./core/game-crashes.ts";
 import { GameFileService } from "./core/game-files.ts";
 import { nameFromIdea, nameGame } from "./core/game-naming.ts";
 import { makeBackdropShader } from "./core/backdrop-generation.ts";
@@ -1353,6 +1354,16 @@ export class StudioCore {
       timers: this.#x.nativeTimers,
       ...(this.options.nativeSupervisor ? { supervisor: this.options.nativeSupervisor } : {}),
       frames: this.options.nativeFrames ?? null,
+      // A crashed run's record goes to its game's `.studio/crashes/` and is announced on the main thread (CRASH-5).
+      crashes: createGameCrashStore({
+        gameDir: async (project) => {
+          const dir = this.games.dirFor(project);
+          await this.assertProjectAllowed(dir);
+          return dir;
+        },
+        announce: (payload) => this.append([customEventData(CustomEvent.GameCrashed, { ...payload })]),
+        now: () => Date.now(),
+      }),
     };
     return this.options.createNativeRuns ? this.options.createNativeRuns(options) : new NativeRuns(options);
   }

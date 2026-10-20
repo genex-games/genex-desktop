@@ -47,6 +47,7 @@ import type { EventEnvelope } from "./types.ts";
 import type { ToolChipRow } from "./ui/ToolChips.tsx";
 import { OutputTone, ToolState } from "./ui/tool-state.ts";
 import { GameEngine, isGameEngine } from "../shared/game-engine.ts";
+import { CrashKind, type GameCrashedPayload, gameCrashedOf } from "../shared/crash-record.ts";
 import { LoopProfile } from "../shared/project-facts.ts";
 import { type ConnectorStep, connectorStep, endsPlay, showsPlayView, startsPlay } from "./chat/connector-steps.ts";
 import {
@@ -296,6 +297,8 @@ export const SystemTag = {
   Engine: "ENGINE",
   /** The reviewer's check of the lead's claim that the goal is reached: never routine. */
   FinishCheck: "FINISH CHECK",
+  /** A game's run crashed and the host kept its record (`game_crashed`): never routine. */
+  Crash: "CRASH",
 } as const;
 export type SystemTag = (typeof SystemTag)[keyof typeof SystemTag];
 
@@ -1080,6 +1083,40 @@ function narrateCheckpointSkipped(chat: ChatDraft, event: EventEnvelope): void {
   const skipped = customPayload(event.data, CustomEvent.CheckpointSkipped);
   const words = skipped ? checkpointSkippedWords(skipped) : null;
   if (words) say(chat, event.id, SystemTag.Checkpoint, words, true);
+}
+
+/** The crash line's words (CRASH-5): what happened to the game, by the record's kind. */
+const CRASH_WORDS = {
+  kinds: {
+    [CrashKind.Panic]: "panicked",
+    [CrashKind.GpuValidation]: "hit a GPU error",
+    [CrashKind.DeviceLost]: "lost its GPU device",
+    [CrashKind.WasmTrap]: "trapped in WebAssembly",
+    [CrashKind.NativeFault]: "crashed with a memory fault",
+    [CrashKind.OutOfMemory]: "ran out of memory",
+    [CrashKind.Hang]: "stopped answering and was ended",
+    [CrashKind.ProcessExit]: "exited abnormally",
+  } satisfies Record<CrashKind, string>,
+  unknownKind: "crashed",
+  aGame: "A game",
+  at: (file: string, line: number) => ` at ${file}:${line}`,
+  tick: (tick: number) => ` (tick ${tick})`,
+  repeat: (runs: number) => `; the same crash in ${runs} runs`,
+} as const;
+
+/** One line for a `game_crashed` record: the game, what happened, where, and how often. */
+function crashLine(crash: GameCrashedPayload): string {
+  const what = crash.kind ? CRASH_WORDS.kinds[crash.kind] : CRASH_WORDS.unknownKind;
+  const where = crash.location ? CRASH_WORDS.at(crash.location.file, crash.location.line) : "";
+  const when = typeof crash.tick === "number" ? CRASH_WORDS.tick(crash.tick) : "";
+  const again = (crash.repeat ?? 1) > 1 ? CRASH_WORDS.repeat(crash.repeat ?? 1) : "";
+  return `${crash.project ?? CRASH_WORDS.aGame} ${what}${where}${when}${again}.`;
+}
+
+/** A crash stays a line of its own; a handled, non-fatal one (a device loss recovered) is not trouble. */
+function narrateGameCrashed(chat: ChatDraft, event: EventEnvelope): void {
+  const crash = gameCrashedOf(event);
+  if (crash) say(chat, event.id, SystemTag.Crash, crashLine(crash), crash.fatal !== false);
 }
 
 function narrateSeed(chat: ChatDraft, event: EventEnvelope): void {
@@ -1917,6 +1954,7 @@ const NARRATORS: readonly Narrator[] = [
   narrateRebuild,
   narrateSeed,
   narrateCheckpointSkipped,
+  narrateGameCrashed,
   narrateCompaction,
   narrateEngineLink,
   narrateEngineUndone,

@@ -158,7 +158,12 @@ Desktop exports stage privately at the current lock; certificate signing uses it
 Mac Play, agent runs and embedding use `NativeRuns`: prepare, `spawnGame`, nonce `ready`,
 `NativeGamePort`. Stop requests quit, then TERM/KILL; boot sweeps orphans; app death kills registered
 groups. A v2 game that misses a step or capture deadline, or goes silent owing one, is killed
-`gpu-hang`; one that restores a lost GPU device gets a new Live ring generation. Captures carry
+`gpu-hang`; one that restores a lost GPU device gets a new Live ring generation. A run that ends
+crashed names its record in its status (`crash`): the game's own last `crash` record (a forged host
+kind or writer is `reply-invalid`), else a host-made `hang` (killed `unresponsive` or `gpu-hang`) or
+`process-exit`. [`game-crashes.ts`](../../src/main/core/game-crashes.ts) keeps it in the game's
+`.studio/crashes/` by the host's own name (one file per signature, with `repeat`; at most 32),
+announces `game_crashed` once and answers `game.crashes` and `studio:game.crashes`. Captures carry
 provenance (seq, digest, camera, run, build, the `render` settings the game answered with and the
 capture's `outputSize`; null where the path did not know them), saved as `<label>.provenance.json`; builder captures add `c<N>_<camera>.manifest.json` (run, worker, commit, build); a failed one `c<N>.refused.json`; links refused (`confinedCaptureDir`). Sessions clone Emscripten caches under `<scratch>/cpp-sessions/<game>/`.
 

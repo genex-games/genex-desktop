@@ -65,8 +65,10 @@ one and cannot add one. A verb the game does not know answers `unknown-op`.
 Besides its answers the game sends events on the same channel: `ready` once it runs, `starting`
 for each finished boot step before that, `fatal` before it exits on an error, and `crash` with its
 `genex-crash/1` record when it panics or loses its GPU device (a boot panic before `ready` too).
-The studio reads each crash record as data: a malformed one ends the run `reply-invalid`. It keeps
-no crash records yet.
+The studio reads each crash record as data: a malformed one ends the run `reply-invalid`, and so
+does one naming a kind or a writer only the studio makes (`hang`, `process-exit`, a `source` other
+than `game`). It keeps the run's last record in the game's `.studio/crashes/` (at most 32; the same
+crash again is counted, not stored twice), and agents read them with `game.crashes`.
 
 What the renderer runs with is in `state().volatile.render` (device class, preset, scale, feature
 switches, `degraded` reasons, GPU and CPU milliseconds): outside the checksum and never compared.
