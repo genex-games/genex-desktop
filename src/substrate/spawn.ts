@@ -124,8 +124,10 @@ export interface RunRequest {
  * The folders a confined run writes: a game's build or install writes its game and its own scratch,
  * never another game, the games folder or another build's scratch. The sandbox's deny lists still
  * hold, and so do the few folders srt itself keeps writable for every run (its own temp folder,
- * npm's and Claude's logs under `$HOME`). On Windows srt-win grants writes for the whole session,
- * so a confinement there changes nothing: the run writes what every sandboxed process there writes.
+ * npm's and Claude's logs under `$HOME`). On Windows every sandboxed process runs as the one
+ * sandbox user, and srt-win grants writes to that user for the whole session, so a confinement
+ * there only makes the run's folders and its temp folder: the run can still write what every
+ * sandboxed process there writes.
  */
 export interface RunConfinement {
   /** The only folders the run may write. */
@@ -609,7 +611,7 @@ export class ProcessSandbox {
     // A start in flight joins the session; it leaves only after that.
     await this.#starting?.catch(() => {});
     if (this.#windows) {
-      this.#windows.session.leave(this);
+      await this.#windows.session.leave(this);
       return;
     }
     const runtime = this.#manager;
@@ -891,7 +893,8 @@ export class ProcessSandbox {
         throw new SandboxLaunchError(SandboxLaunchCode.NotGranted, [...needed.write, ...needed.read].join(", "));
       if (request.longLived) await backend.session.refreshAncestors();
       const cwd = longPath(request.cwd, this.#platform);
-      const command = `${await this.#runPrelude(backend, request, files)} ${request.command}`;
+      const tmp = await this.#runTmp(request);
+      const command = `${await this.#runPrelude(backend, request, files, tmp)} ${request.command}`;
       const wrapped = await manager
         .wrapWithSandboxArgv(command, backend.bash, this.#windowsOverlay(backend, patch), signal, cwd, {
           commandId: request.label ?? request.command,
@@ -917,10 +920,10 @@ export class ProcessSandbox {
   /**
    * What a Windows command runs first: source its env file, and read a run's stdin from a file
    * (srt-win does not pass stdin through). Each file is deleted as soon as it is open or read;
-   * `files` collects them for the host to remove too.
+   * `files` collects them for the host to remove too. `tmp` is the run's temp folder.
    */
-  async #runPrelude(backend: WindowsBackend, request: LaunchRequest, files: string[]): Promise<string> {
-    const envFile = await this.#writeEnvFile(backend, request.env);
+  async #runPrelude(backend: WindowsBackend, request: LaunchRequest, files: string[], tmp: string): Promise<string> {
+    const envFile = await this.#writeEnvFile(backend, request.env, tmp);
     files.push(envFile);
     const env = shellQuote(mixedPath(envFile));
     const steps = [`. ${env}; rm -f ${env};`];
@@ -934,10 +937,10 @@ export class ProcessSandbox {
     return steps.join(" ");
   }
 
-  /** Write one run's env file into the scratch folder; readable by its owner only. */
-  async #writeEnvFile(backend: WindowsBackend, own: Record<string, string> | undefined): Promise<string> {
+  /** Write one run's env file into the scratch folder, its temp folder `tmp`; readable by its owner only. */
+  async #writeEnvFile(backend: WindowsBackend, own: Record<string, string> | undefined, tmp: string): Promise<string> {
     const env = await this.#env(process.env, own);
-    const vars = windowsRunEnv({ env, own: own ?? {}, scratch: this.scratchDir, curlHome: backend.curlHome });
+    const vars = windowsRunEnv({ env, own: own ?? {}, scratch: tmp, curlHome: backend.curlHome });
     const file = path.join(this.scratchDir, `.env-${randomUUID()}.sh`);
     await writeFile(file, renderEnvFile({ vars, toolPath: env.PATH ?? "" }), { mode: 0o600 });
     return file;

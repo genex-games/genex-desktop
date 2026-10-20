@@ -1281,12 +1281,17 @@ export class WindowsSandboxSession {
 
   /**
    * A member is gone (its `ProcessSandbox` disposed): queue a regrant that takes back what only it
-   * needed. Its deny paths stay until then, which only ever denies more.
+   * needed. Its deny paths stay until then, which only ever denies more. The last member out waits
+   * for the release, so a stopping core has taken srt's grants and its proxy back when it returns;
+   * any other leave resolves at once, since its regrant waits for the commands still running.
    */
-  leave(owner: object): void {
+  async leave(owner: object): Promise<void> {
     if (!this.#members.delete(owner) || !this.#applied) return;
     const needed = grantUnion([...this.#members.values()].map((member) => member.grants));
-    if (this.#members.size === 0 || !grantsCover(needed, this.#applied)) this.#queue();
+    if (this.#members.size > 0 && grantsCover(needed, this.#applied)) return;
+    this.#queue();
+    // A release that fails is the next start's to recover (srt-win records what each holder set).
+    if (this.#members.size === 0) await this.settled().catch(() => {});
   }
 
   /** A member's network settings changed: srt applies network changes live, without a regrant. */
