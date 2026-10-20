@@ -656,6 +656,8 @@ pub struct Frame {
     water: Option<crate::water::Water>,
     decals: Vec<crate::decal::Decal>,
     particles: Vec<crate::particles::Particles>,
+    /// Whether the presenter draws the streamed cell overlay over this frame (`cells_debug`).
+    cells_debug: bool,
 }
 
 impl Default for Frame {
@@ -675,6 +677,7 @@ impl Default for Frame {
             water: None,
             decals: Vec::new(),
             particles: Vec::new(),
+            cells_debug: false,
         }
     }
 }
@@ -938,6 +941,19 @@ impl Frame {
     pub fn nav_debug(&mut self, nav: &crate::nav::Nav, debug: crate::nav::NavDebug) -> &mut Self {
         let points: Vec<Vec3> = genex_nav::debug::segments(nav, debug).into_iter().flatten().collect();
         self.lines(&points, Color::GREEN)
+    }
+
+    /// Draw the streamed view set's cells as outlines on the ground (y = 0), one batch per state:
+    /// green when every model is drawn, yellow while one loads, grey while the cell builds, red
+    /// when a model or the cell was refused. Nothing without `game.streaming`. Display only.
+    pub fn cells_debug(&mut self) -> &mut Self {
+        self.cells_debug = true;
+        self
+    }
+
+    /// Whether the game asked for the cell overlay ([`Frame::cells_debug`]).
+    pub(crate) fn wants_cells_debug(&self) -> bool {
+        self.cells_debug
     }
 
     /// Draw `mesh` (a [`Model`], [`CustomMesh::Cube`] or [`CustomMesh::Sphere`]) under

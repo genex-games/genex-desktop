@@ -416,6 +416,13 @@ impl<W> Runtime<W> {
         self.core.stream.loading()
     }
 
+    /// What the presenter's streamed view set reads (STR-16): the registration, the cell builders
+    /// and the seed; None without `game.streaming`.
+    pub(crate) fn stream_view(&self) -> Option<crate::present_stream::ViewInputs> {
+        let streaming = self.game.streaming.first()?;
+        Some(crate::present_stream::ViewInputs::new(streaming, &self.game.cell_contents, self.core.seed))
+    }
+
     /// Run [`step_ticks`]`(ms)` ticks, running or not. A streaming commit held past
     /// `STREAM_HOLD_MAX_MS` in total ends the step early (`ticks` says how many ran).
     pub fn step(&mut self, ms: f64) -> StepResult {

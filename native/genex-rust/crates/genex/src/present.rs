@@ -118,8 +118,14 @@ use genex_render::texture::{CompressedTexture, TextureData, TextureFamily, Textu
 use genex_render::presets::{on_ldr_scene, with_world_samples};
 use genex_render::renderer::landed_samples;
 use genex_render::timing::{Clock, CpuTimer};
-use genex_render::device_class::DeviceClass;
+use genex_render::device_class::{DeviceClass, FormFactor, PerformanceTier, TargetOs};
 use genex_render::{CullPath, Gpu, GpuCounters, ImmediateFrame, RenderCode, RenderError, RenderOptions, WORLD_FORMAT};
+
+/// The streamed view set the presenter draws for a game that registered `game.streaming` (STR-16).
+pub use crate::present_stream::{
+    STREAM_LOADS_DESKTOP, STREAM_LOADS_PHONE, STREAM_LOADS_WEB, STREAM_VIEW_CELL_MODELS_MAX, STREAM_VIEW_MODEL_ESTIMATE_BYTES, StreamView, ViewIo,
+    ViewLimits, ViewStats,
+};
 
 /// The renderer's planes for a facade camera, which carries none.
 const NEAR_PLANE: f32 = 0.1;
@@ -335,6 +341,11 @@ pub trait Uploads {
     }
     /// Add a texture as the next layer of its kind's array.
     fn add_texture(&mut self, data: &TextureData, kind: TextureKind) -> Result<TextureId, RenderError>;
+    /// Remove mesh `id` and its levels (an evicted streamed model, STR-16). The default holds no
+    /// meshes, so it removes nothing.
+    fn remove_mesh(&mut self, _id: MeshId) -> Result<(), RenderError> {
+        Ok(())
+    }
     /// [`Uploads::add_meshes_with_meshlets`] for parts `source` decodes again from bytes the
     /// program holds for its whole life: a renderer that replays uploads keeps the source, not the
     /// parts (the default adds them as any other).
@@ -394,6 +405,10 @@ impl Uploads for Resilient {
 
     fn add_texture(&mut self, data: &TextureData, kind: TextureKind) -> Result<TextureId, RenderError> {
         Resilient::add_texture(self, data, kind)
+    }
+
+    fn remove_mesh(&mut self, id: MeshId) -> Result<(), RenderError> {
+        Resilient::remove_mesh(self, id).map(drop)
     }
 
     fn add_meshes_from(&mut self, parts: ModelParts, source: PartsSource) -> Result<Vec<MeshId>, RenderError> {
@@ -575,6 +590,22 @@ impl AssetCache {
             let loaded = mesh.map(|mesh| LoadedModel { parts: vec![ModelPart { mesh, material: None }], triangles: 0, textures: Vec::new(), runtime_tangents: false });
             self.models.push((path.to_owned(), loaded));
         }
+    }
+
+    /// Record what became of `path`'s load (`None`: refused), replacing what was recorded: the
+    /// streamed view set's finish (STR-16).
+    pub(crate) fn put_model(&mut self, path: &str, loaded: Option<LoadedModel>) {
+        match self.models.iter_mut().find(|(known, _)| known == path) {
+            Some(entry) => entry.1 = loaded,
+            None => self.models.push((path.to_owned(), loaded)),
+        }
+    }
+
+    /// Forget `path` (it was evicted): the model it held, for its meshes to be freed; a later
+    /// draw loads it again.
+    pub(crate) fn take_model(&mut self, path: &str) -> Option<LoadedModel> {
+        let at = self.models.iter().position(|(known, _)| known == path)?;
+        self.models.remove(at).1
     }
 
     /// The texture loaded for `path` as `kind`; `None` when it was refused or never tried.
@@ -897,7 +928,7 @@ fn upload_texture(uploads: &mut dyn Uploads, texture: TextureUpload<'_>, what: &
 
 /// Load one model: every part's mesh and the textures its materials sample. A missing or
 /// malformed file, or a refused mesh, refuses the model (logged); a refused texture only its slot.
-fn load_model(path: &str, source: &dyn ModelSource, uploads: &mut dyn Uploads, log: &mut dyn FnMut(&str)) -> Result<Option<LoadedModel>, RenderError> {
+pub(crate) fn load_model(path: &str, source: &dyn ModelSource, uploads: &mut dyn Uploads, log: &mut dyn FnMut(&str)) -> Result<Option<LoadedModel>, RenderError> {
     let Some(bytes) = source.model_bytes(path) else {
         log(&format!("model {path:?} is not in the game's assets: drawing the missing-asset checker"));
         return Ok(None);
@@ -1089,6 +1120,9 @@ pub struct Presenter {
     last_output: Option<(u32, u32)>,
     source: Box<dyn ModelSource>,
     assets: AssetCache,
+    /// The streamed view set (STR-16): idle unless the game registered `game.streaming`; its
+    /// limits follow the drawn class.
+    stream: crate::present_stream::StreamView,
     /// Why the last frame was not drawn, until one is.
     failed: Option<RenderError>,
     /// Whether frames run the game's custom passes (a diagnostic switch; on by default).
@@ -1251,6 +1285,10 @@ impl Presenter {
             last_output: None,
             source,
             assets: AssetCache::default(),
+            stream: crate::present_stream::StreamView::new(crate::present_stream::ViewLimits::for_class(
+                DeviceClass::new(FormFactor::Desktop, PerformanceTier::High),
+                TargetOs::current(),
+            )),
             failed: None,
             custom_passes: true,
             log,
@@ -1725,8 +1763,11 @@ impl Presenter {
     /// the triangles drawn; None for a view the game does not have.
     pub fn draw_view<W: Default + 'static>(&mut self, runtime: &mut Runtime<W>, view: View<'_>) -> Option<Result<Drawn, RenderError>> {
         let camera = runtime.camera(view)?;
-        let frame = runtime.frame(view)?;
+        let mut frame = runtime.frame(view)?;
         let handle = self.attach(runtime);
+        if let Err(error) = self.stream_frame(runtime, &handle, &camera, &mut frame) {
+            return Some(Err(error));
+        }
         let output = self.frame_output(&handle);
         let world = self.resilient.renderer().renderer().logical_size();
         // A capture paints its HUD into the world target at the capture's own pixels per point (1 at
@@ -1776,6 +1817,36 @@ impl Presenter {
             runtime.note_texture_facts(&drawn.textures, &drawn.asset_issues);
         }
         Some(drawn)
+    }
+
+    /// The streamed view set's part of a frame (STR-16): its limits follow the drawn class, then it
+    /// updates from the camera and appends its draws to `frame`. Nothing without `game.streaming`.
+    fn stream_frame<W>(&mut self, runtime: &Runtime<W>, handle: &RenderHandle, camera: &Camera, frame: &mut Frame) -> Result<(), RenderError> {
+        let (class, os) = {
+            let control = handle.borrow();
+            let class = if self.capturing { control.capture_class() } else { control.live_class() };
+            (class, control.facts().os)
+        };
+        let limits = ViewLimits::for_class(class, os);
+        if limits != self.stream.limits() {
+            self.stream.set_limits(limits);
+        }
+        let log = self.log;
+        let io = ViewIo { assets: &mut self.assets, source: &*self.source, uploads: &mut self.resilient, clock: &self.clock, log: &mut |line| log(line) };
+        self.stream.update(runtime, camera, io)?;
+        self.stream.draw_into(frame);
+        Ok(())
+    }
+
+    /// What the streamed view set holds and did in the last frame (STR-16).
+    pub fn stream_stats(&self) -> ViewStats {
+        self.stream.stats()
+    }
+
+    /// Read streamed models through `source` (natively `StreamFiles`, on the web the page's
+    /// fetches) instead of the presenter's own source, answered at once (STR-16).
+    pub fn set_stream_source(&mut self, source: Box<dyn crate::stream_source::AsyncSource>) {
+        self.stream.set_source(source);
     }
 
     /// Start a Live frame's timing: the GPU times that landed since the last one (None without
@@ -2593,6 +2664,12 @@ pub fn water_of(frame: &Frame, tick: u64) -> Option<genex_render::scene::SceneWa
 /// The renderer's scene for `frame` drawn from `camera` with what `assets` loaded: its lights,
 /// then its shapes in draw order. The presenter writes its frame with the same writer, so a shell
 /// drawing this scene draws what the presenter draws.
+/// What `frame`'s world draw counts against `assets` with no GPU: the draws, triangles, models
+/// drawn as the checker and textures `draw_view` reports.
+pub fn drawn_of(frame: &Frame, camera: &Camera, assets: &AssetCache) -> Drawn {
+    world_frame(frame, camera, assets).1
+}
+
 pub fn to_scene(frame: &Frame, camera: &Camera, assets: &AssetCache) -> Scene {
     let mut scene = Scene::new(camera_desc(camera), rgba(frame.clear_color()));
     write_world(&mut scene, frame, assets, &mut Drawn::default());
