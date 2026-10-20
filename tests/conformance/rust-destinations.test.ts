@@ -13,6 +13,7 @@ import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import {
   type CargoJob,
+  cargoCheckArgs,
   DestinationsRefusal,
   DestinationTriple,
   type DestinationsDeps,
@@ -41,14 +42,17 @@ const ENGINE = [
   "genex-anim",
   "genex-nav",
   "genex-stream",
+  "genex-net",
   "genex",
 ];
 /** The game-systems crates (EP-0b): every destination compiles them, since the facade re-exports them. */
 const GAME_SYSTEMS_CRATES = ["genex-anim", "genex-nav", "genex-stream"];
+/** The vendored relay client (MP-0t): checked on the web row with its `web` feature only, until the store gives native rows a libcolyseus. */
+const RELAY_CLIENT = "genex-multiplayer";
 
 const EXPECTED_ROWS: Record<string, string[]> = {
   [DestinationTriple.MacArm]: [...ENGINE, "genex-platform-desktop", "genex-studio"],
-  [DestinationTriple.Web]: [...ENGINE, "genex-platform-web"],
+  [DestinationTriple.Web]: [...ENGINE, "genex-platform-web", RELAY_CLIENT],
   [DestinationTriple.IosDevice]: [...ENGINE, "genex-platform-ios"],
   [DestinationTriple.IosSimulator]: [...ENGINE, "genex-platform-ios"],
   [DestinationTriple.Android]: [...ENGINE, "genex-platform-android"],
@@ -113,6 +117,25 @@ describe("rust-destinations plan", () => {
     const rows = planRows(GAME_SYSTEMS_CRATES);
     assert.equal(rows.length, 7);
     for (const row of rows) assert.deepEqual(row.crates, GAME_SYSTEMS_CRATES, row.triple);
+  });
+
+  it("compiles the multiplayer layer on every destination, and the vendored relay client on the web row with its web feature", () => {
+    for (const row of planRows()) assert.ok(row.crates.includes("genex-net"), `${row.triple} lacks genex-net`);
+    const withClient = planRows().filter((row) => row.crates.includes(RELAY_CLIENT));
+    assert.deepEqual(
+      withClient.map((row) => row.triple),
+      [DestinationTriple.Web],
+    );
+    assert.deepEqual(cargoCheckArgs(withClient[0]).slice(-2), ["--features", `${RELAY_CLIENT}/web`]);
+    for (const row of planRows().filter((found) => found.triple !== DestinationTriple.Web))
+      assert.equal(cargoCheckArgs(row).includes("--features"), false, row.triple);
+    const narrowed = planRows(["genex-core"]).find((row) => row.triple === DestinationTriple.Web);
+    assert.ok(narrowed);
+    assert.equal(
+      cargoCheckArgs(narrowed).includes("--features"),
+      false,
+      "no feature for a crate the row does not check",
+    );
   });
 
   it("narrows every row to --crates and drops rows left empty", () => {

@@ -57,7 +57,7 @@ import {
   type EngineManifest,
   EngineUpdates,
 } from "../../src/main/rust-eject.ts";
-import { gameCargoLock, RUST_ENGINE_CRATES } from "../../src/main/rust-manifest.ts";
+import { gameCargoLock, RUST_ENGINE_CRATES, RUST_ENGINE_KEPT_CRATES } from "../../src/main/rust-manifest.ts";
 import { RustStageCode, stageRustGame } from "../../src/main/rust-stage.ts";
 import {
   allowedFile as reviewAllowedFile,
@@ -301,6 +301,40 @@ describe("eject copies the lock line's engine into the game", { skip: SKIP_ON_WI
     );
   });
 
+  it("copies the multiplayer layer (genex-net) and leaves the vendored relay client (FFI and a build script) in the store", async () => {
+    const game = await gameCopy();
+    const vendor = await smallVendor();
+    for (const crate of ["genex-net", "genex-multiplayer"])
+      await vendoredCrate(vendor, crate, RELEASE, {
+        "Cargo.toml": crateToml(crate, RELEASE, crate === "genex-net" ? ["genex-core"] : []),
+        "src/lib.rs": `//! ${crate}\npub fn stub() {}\n`,
+      });
+    await writeFile(path.join(vendor, `genex-multiplayer-${RELEASE}`, "build.rs"), "fn main() {}\n");
+    const { service } = ejectFor(game, lineOf(vendor));
+
+    const answer = await service.eject("forked-pond");
+
+    assert.equal(answer.ok, true, JSON.stringify(answer));
+    for (const rel of ["Cargo.toml", "src/lib.rs", ".cargo-checksum.json"])
+      assert.deepEqual(
+        await readFile(path.join(game, "engine", "genex-net", rel)),
+        await readFile(path.join(vendor, `genex-net-${RELEASE}`, rel)),
+        `genex-net/${rel}`,
+      );
+    assert.equal(
+      existsSync(path.join(game, "engine", "genex-multiplayer")),
+      false,
+      "the relay client stays the store's",
+    );
+    const manifest = JSON.parse(
+      await readFile(path.join(game, "engine", ENGINE_MANIFEST_FILE), "utf8"),
+    ) as EngineManifest;
+    assert.deepEqual(
+      manifest.crates.map((crate) => crate.name),
+      ["genex", "genex-core", "genex-net"],
+    );
+  });
+
   it("is offered only where the suite can judge the fork: no Mac host or no macOS destination is eject-needs-mac, nothing written", async () => {
     const game = await gameCopy();
     const before = await listing(game);
@@ -478,7 +512,8 @@ const RENDER_CRATE_FILES: Readonly<Record<string, string>> = {
 
 describe("a game using every renderer feature ejects whole", { skip: SKIP_ON_WINDOWS }, () => {
   it("forks the same crate set: the renderer and the game-systems crates are the game's, the transport and the phone shells stay the store's", () => {
-    // Flipped in EP-0b: the animation, navigation and streaming crates join the fork.
+    // Flipped in EP-0b: the animation, navigation and streaming crates join the fork. Flipped in
+    // MP-0t: the multiplayer layer genex-net joins it; the vendored relay client stays the store's.
     assert.deepEqual(
       [...RUST_ENGINE_CRATES],
       [
@@ -489,11 +524,28 @@ describe("a game using every renderer feature ejects whole", { skip: SKIP_ON_WIN
         "genex-core",
         "genex-hud",
         "genex-nav",
+        "genex-net",
         "genex-platform-desktop",
         "genex-platform-web",
         "genex-render",
         "genex-stream",
       ],
+    );
+    assert.deepEqual(
+      [...RUST_ENGINE_KEPT_CRATES],
+      [
+        "genex-frames",
+        "genex-gpu-memory",
+        "genex-multiplayer",
+        "genex-platform-android",
+        "genex-platform-ios",
+        "genex-studio",
+      ],
+    );
+    assert.deepEqual(
+      RUST_ENGINE_CRATES.filter((name) => RUST_ENGINE_KEPT_CRATES.includes(name)),
+      [],
+      "a crate is forked or kept, never both",
     );
   });
 
