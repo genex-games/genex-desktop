@@ -154,9 +154,16 @@ function cliResult(run: GenexCliRun, code: number | null, output: CliOutput, tim
   const redact = (text: string) => text.replaceAll(run.token, REDACTED);
   if (run.signal?.aborted || timedOut) throw new GenexCliStopped(timedOut);
   const answered = code !== null && (run.answerExitCodes ?? ANSWER_EXIT_CODES).includes(code);
-  if (!answered) throw new Error(redact(output.err || output.out || MESSAGE.Exited(code)).slice(-ERROR_TAIL_CHARS));
+  const failure = () => new Error(redact(output.err || output.out || MESSAGE.Exited(code)).slice(-ERROR_TAIL_CHARS));
+  if (!answered) throw failure();
   if (!run.parse) return { out: redact(output.out) };
-  return parseGenexJson(output.out);
+  try {
+    return parseGenexJson(output.out);
+  } catch (error) {
+    // A non-zero exit named as an answer that printed none is a failure, in the CLI's own words.
+    if (code !== 0) throw failure();
+    throw error;
+  }
 }
 
 /** Spawn the CLI with the token on fd 3 and settle with its answer. */

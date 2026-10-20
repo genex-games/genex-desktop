@@ -20,6 +20,7 @@ const NATIVE_CHANNELS = [
   "studio:plugins.choose-file",
   // Publish from Studio's dialog uploads the game to Genex with the user's real account.
   "studio:plugins.genex-publish",
+  "studio:plugins.genex-publish-apps",
   "studio:subscription.signin",
   "studio:subscription.forget-studio-login",
   // A subscription's accounts: listing asks each account's CLI for its email; choosing one changes
@@ -90,6 +91,8 @@ const NATIVE_CHANNELS = [
   // Open Privacy settings opens macOS System Settings.
   "studio:app-look.open-settings",
   // Share… pops the Mac's share menu (Messages, Mail, AirDrop), which hands the link to other apps.
+  // Finder shows an installed game's app: an external app.
+  "studio:play.reveal-install",
   "studio:play.share",
 ] as const satisfies readonly StudioInvokeChannel[];
 /**
@@ -275,6 +278,8 @@ const FIXTURE_SAFE = [
   "studio:plugins.action",
   // Publish's file list: the same export Export makes, into the profile's scratch, then removed.
   "studio:plugins.genex-publish-review",
+  // Publish's platform rows: what the game folder holds, read only.
+  "studio:plugins.genex-publish-platforms",
   "studio:plugins.index",
   "studio:plugins.watch",
   // A local plugin's grants live in the profile's install record; no dialog, no socket.
@@ -291,6 +296,21 @@ const FIXTURE_SAFE = [
   "studio:play.online",
   "studio:play.open",
   "studio:play.close",
+  // A game's own page reads the catalog like a card does; a fixture launch answers it (`dev/fixture-play.ts`).
+  "studio:play.game",
+  // A native game's install writes into the profile's own installed-games folder; a fixture launch
+  // downloads its made-up games from its own files (`dev/fixture-native.ts`), so no socket opens.
+  "studio:play.install",
+  "studio:play.install-cancel",
+  "studio:play.installs",
+  "studio:play.uninstall",
+  // An installed game plays from the profile's own installed-games folder, in the game sandbox: in a
+  // fixture launch that is the fixture's stand-in app (`dev/fixture-native-app.ts`), never another app.
+  "studio:play.launch",
+  "studio:play.session",
+  "studio:play.sessions",
+  // A like from a game's page: a fixture launch's likes answer signed out (`dev/fixture-play.ts`).
+  "studio:play.like",
   // The viewer header's controls: a fixture launch's likes, tickets and invites answer signed out, even with its account.
   "studio:play.control",
   // The bar's layer says what holds it up; no socket.

@@ -1,8 +1,8 @@
 /**
  * The Genex icon set: line glyphs on one 24-unit grid with a 1.75 stroke, round caps and joins.
  * Parts marked `a-*` move once when the enclosing control is hovered or focused; the motion
- * lives in styles/icons.css and stops under Reduce Motion. Dots, carets and Unity's mark are the
- * only fills.
+ * lives in styles/icons.css and stops under Reduce Motion. Dots, carets and the marks of Unity,
+ * Apple and Windows are the only fills.
  */
 import type { JSX, ReactNode } from "react";
 
@@ -208,6 +208,37 @@ const glyphs = {
   // Full screen: the four corners pushed out to the edges.
   expand: (
     <path d="M4 9V6.5A2.5 2.5 0 0 1 6.5 4H9M15 4h2.5A2.5 2.5 0 0 1 20 6.5V9M20 15v2.5a2.5 2.5 0 0 1-2.5 2.5H15M9 20H6.5A2.5 2.5 0 0 1 4 17.5V15" />
+  ),
+  // The Apple and Windows marks a native game's card and page name its systems by, filled like Unity's.
+  apple: (
+    <path
+      d="M16.4 12.6c0-2.4 2-3.5 2.1-3.6-1.1-1.7-2.9-1.9-3.5-1.9-1.5-.2-2.9.9-3.7.9-.8 0-1.9-.9-3.2-.8-1.6 0-3.1 1-4 2.4-1.7 3-.4 7.4 1.2 9.8.8 1.2 1.8 2.5 3 2.4 1.2 0 1.7-.8 3.1-.8s1.9.8 3.2.7c1.3 0 2.1-1.2 2.9-2.4.9-1.3 1.3-2.6 1.3-2.7 0 0-2.4-1-2.4-4zM14 5.3c.7-.8 1.1-1.9 1-3-1 0-2.1.7-2.8 1.5-.6.7-1.2 1.8-1 2.9 1.1.1 2.1-.6 2.8-1.4z"
+      fill="currentColor"
+      stroke="none"
+    />
+  ),
+  windows: (
+    <path
+      d="M3 5.5 10.5 4.5v7H3zM12 4.3 21 3v8.5h-9zM3 12.5h7.5v7L3 18.5zM12 12.5h9V21l-9-1.3z"
+      fill="currentColor"
+      stroke="none"
+    />
+  ),
+  /** A download: an arrow falling onto a tray. */
+  download: (
+    <>
+      <g className="a-nudge">
+        <path d="M12 4v11M7.5 10.5 12 15l4.5-4.5" />
+      </g>
+      <path d="M5 19.5h14" />
+    </>
+  ),
+  /** A window of its own: a game's, brought forward. */
+  window: (
+    <>
+      <rect x="3" y="4.5" width="18" height="15" rx="2.5" />
+      <path d="M3 9h18" />
+    </>
   ),
   /** An update waiting: an arrow rising in a ring. */
   update: (

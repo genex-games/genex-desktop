@@ -13,7 +13,7 @@ unchanged. Where it disagrees with this preface, this preface wins.
 - An image is for something flat: a decal, a sign, a poster, UI art or an icon. Never stand one in
   for something the game shows in 3D, such as a crowd, a building or scenery.
 
-<!-- upstream @genex-ai/cli-demo/templates/skills/genex-tool-image/SKILL.md v1.36.9 sha256 d74589a791d7a89475566e72bbc5364e090f2f6fcec7ed78ee36c52a88661f02 -->
+<!-- upstream @genex-ai/cli-demo/templates/skills/genex-tool-image/SKILL.md v1.36.11 sha256 d74589a791d7a89475566e72bbc5364e090f2f6fcec7ed78ee36c52a88661f02 -->
 ---
 name: genex-tool-image
 description: Generate a real image (PNG/JPEG) from a text prompt with `npx genex image` — posters, signs, logos, sprites, icons, card and item art, loading screens, decals, art for in-game screens. Pass `--transparent` for an alpha channel, `--edit` to modify an existing image, `--remove-bg` to cut a background. The file downloads to ./assets and is yours.

@@ -29,6 +29,8 @@ import {
   GenexPublishPhase,
   type GenexGameManifest,
   type GenexJob,
+  GenexListingState,
+  type GenexNativeRecord,
   type GenexPublishJob,
   type GenexPublishState,
   type GenexRequest,
@@ -38,6 +40,7 @@ import { MINUTE_MS, SECOND_MS } from "../../shared/duration.ts";
 import { errorMessage } from "../../shared/errors.ts";
 import { PluginStillProblemCode } from "../../shared/plugins.ts";
 import { GenexCliStopped, runGenexCli, genexCliPath } from "./cli.ts";
+import { listingOf, type NativeUpload, pinnedCliSendsApps, sendNativeBuild } from "./native-publish.ts";
 import {
   adviceLines,
   type CoverAnswer,
@@ -101,6 +104,7 @@ import {
   HTTP_NOT_FOUND,
   HTTP_UNAUTHORIZED,
   isGenexAuthorizationUrl,
+  DEFAULT_DASHBOARD,
   isGenexLink,
   MIN_POLL_INTERVAL_S,
   statusOf,
@@ -184,6 +188,10 @@ export { genexCliEnv, parseGenexJson } from "./cli.ts";
 const ASSET_TIMEOUT_MS = 3 * MINUTE_MS;
 /** An upload of a whole game, not a request: the CLI builds, pushes source and deploys in one run. */
 const PUBLISH_TIMEOUT_MS = 20 * MINUTE_MS;
+/** How long one app's `genex native publish` may take: zipping, hashing and uploading a large build. */
+const NATIVE_PUBLISH_TIMEOUT_MS = 60 * MINUTE_MS;
+/** Where a publish's apps are recorded in its workspace, apart from `publish.json`. */
+const NATIVE_FILE = "native.json";
 /** Bounded so a waiting agent answers well inside the host's 190 s invocation ceiling. */
 const PUBLISH_WAIT_MS = 150_000;
 const MIN_PUBLISH_WAIT_MS = SECOND_MS;
@@ -318,6 +326,28 @@ interface CoverStep {
   done: Promise<GenexCoverSent | null>;
 }
 
+/** A publish's apps being sent, behind its web build. */
+interface NativeStep {
+  jobId: string;
+  controller: AbortController;
+  done: Promise<void>;
+}
+
+/** A publish's apps as `native.json` keeps them. */
+type NativeSaved = Pick<GenexNativeRecord, "jobId" | "sent" | "failed" | "listing">;
+
+/** `native.json` as read: any shape that is not a record of sent and failed apps is none. */
+function readNativeSaved(value: unknown): NativeSaved {
+  const record = typeof value === "object" && value !== null ? (value as Partial<NativeSaved>) : {};
+  const listing = listingOf(record);
+  return {
+    ...(typeof record.jobId === "string" ? { jobId: record.jobId } : {}),
+    sent: Array.isArray(record.sent) ? record.sent : [],
+    failed: Array.isArray(record.failed) ? record.failed : [],
+    ...(listing ? { listing } : {}),
+  };
+}
+
 /** How long the cover's own steps may take; tests shorten them. */
 interface CoverTimeouts {
   shotMs: number;
@@ -400,6 +430,10 @@ export class GenexTools {
   #publishJobs = new Map<string, { job: GenexPublishJob; done: Promise<void> }>();
   /** The cover send running per game: the one a publish leaves behind it, or genex__cover-set's. */
   #coverSteps = new Map<string, CoverStep>();
+  /** The apps a publish is sending, per game. */
+  #nativeSteps = new Map<string, NativeStep>();
+  /** Whether this CLI has `genex native`; tests say so of their stand-in. */
+  readonly #sendsApps: boolean;
   /** When Studio last took each game's cover on its own (`coverAuto`). */
   #coverAutoAt = new Map<string, number>();
   /** The last write to a game's kept shot, or a send's read of it: each waits for the one before. */
@@ -431,6 +465,8 @@ export class GenexTools {
       embedSdk?: string;
       /** How long a generation waits for the person to accept Genex's terms, and how often it asks. */
       termsWait?: { waitMs: number; pollMs: number };
+      /** Whether the CLI sends apps (`genex native`); else read from the pinned CLI's version. */
+      sendsApps?: boolean;
     } = {},
   ) {
     this.root = root;
@@ -448,6 +484,7 @@ export class GenexTools {
     this.#observe = options.observe;
     this.#deliver = options.deliver ?? deliverGenexFiles;
     this.#preload = options.preload ?? fileURLToPath(new URL("../../genex-host/preload.mjs", import.meta.url));
+    this.#sendsApps = options.sendsApps ?? pinnedCliSendsApps();
   }
   async init() {
     this.#initialized ??= (async () => {
@@ -736,16 +773,112 @@ export class GenexTools {
    * the public version, creating the hosted project and the gallery listing the first time. `title`
    * is the name it is listed under: the last one Studio listed, else its folder name, as words.
    * `camera` shoots the genex-cover demo again; that frame is sent once the publish is recorded.
+   * `apps` are the game's Mac and Windows builds, sent once its web build is public.
    */
   async publishGallery(
     project: string,
     exportStage: () => Promise<unknown>,
     title?: unknown,
     camera?: CoverCamera,
+    apps: readonly NativeUpload[] = [],
   ): Promise<GenexPublishState> {
     return this.#account(() =>
-      this.#startPublish(project, GenexPublishKind.Gallery, { exportStage, title, ...(camera ? { camera } : {}) }),
+      this.#startPublish(project, GenexPublishKind.Gallery, {
+        exportStage,
+        title,
+        apps,
+        ...(camera ? { camera } : {}),
+      }),
     );
+  }
+  /**
+   * Publish a game that has only apps, no web build: send each with `genex native publish` and list
+   * the game in the gallery under `title` with the first that goes, creating its hosted project the
+   * first time. Runs as a publish job, so the dialog shows it like one.
+   */
+  async publishAppsOnly(project: string, apps: readonly NativeUpload[], title?: unknown): Promise<GenexPublishState> {
+    return this.#account(async () => {
+      if (!this.#sendsApps || apps.length === 0) throw new Error(PUBLISH_MESSAGE.NoApps);
+      const state = await this.publishStatus(project);
+      if (!state.connected) throw new Error(PUBLISH_MESSAGE.ConnectFirst);
+      if (!(await this.#termsAccepted(project, state))) return state;
+      const busy =
+        state.job?.state === GenexPublishJobState.Running || state.job?.state === GenexPublishJobState.Unresolved;
+      if (busy) return state;
+      await this.#stopNativeStep(project);
+      const dir = await this.#publishWorkspace(project);
+      const meta = await readJsonOr<HostedMeta>(metaFile(dir));
+      const job: GenexPublishJob = {
+        id: randomUUID(),
+        kind: GenexPublishKind.Gallery,
+        state: GenexPublishJobState.Running,
+        phase: publishPhaseFor(meta),
+        startedAt: new Date().toISOString(),
+        title: cleanGenexTitle(title) ?? state.title ?? defaultGenexTitle(project),
+      };
+      state.job = job;
+      delete state.warnings;
+      delete state.lastError;
+      await this.#savePublishState(project, state);
+      const done = this.#runAppsJob(project, job, apps);
+      this.#publishJobs.set(project, { job, done });
+      void done.finally(() => {
+        if (this.#publishJobs.get(project)?.job === job) this.#publishJobs.delete(project);
+      });
+      return this.#withCover(project, { ...state, job });
+    });
+  }
+  /** The apps-only publish itself, detached from the press: hosted project, apps, listing, record. */
+  async #runAppsJob(project: string, job: GenexPublishJob, apps: readonly NativeUpload[]): Promise<void> {
+    const dir = this.#publishDir(project);
+    const controller = new AbortController();
+    this.#controllers.set(controller, { project });
+    const step: NativeStep = { jobId: job.id, controller, done: Promise.resolve() };
+    try {
+      const meta = await this.#ensureHostedProject(project, dir, path.join(dir, "home"), job, controller.signal);
+      job.phase = GenexPublishPhase.Uploading;
+      await this.#persistJob(project, job);
+      const sending = this.#sendApps(project, job.id, apps, controller.signal, { title: job.title ?? project });
+      step.done = sending.then(() => {});
+      this.#nativeSteps.set(project, step);
+      await this.#recordApps(project, job, meta, await sending);
+    } catch (error) {
+      finishJob(job, GenexPublishJobState.Failed, new Date().toISOString());
+      job.error = errorMessage(error).slice(-PUBLISH_ERROR_TAIL_CHARS);
+      await this.#persistJob(project, job).catch(() => {});
+    } finally {
+      this.#controllers.delete(controller);
+      if (this.#nativeSteps.get(project) === step) this.#nativeSteps.delete(project);
+    }
+  }
+  /** What an apps-only publish did, on the record: listed (or held, or refused), or nothing sent. */
+  async #recordApps(project: string, job: GenexPublishJob, meta: HostedMeta, sent: NativeSaved): Promise<void> {
+    const now = new Date().toISOString();
+    const state = await this.#publishState(project);
+    mergeMeta(state, meta);
+    state.job = job;
+    const listing = sent.listing;
+    if (sent.sent.length === 0) {
+      finishJob(job, GenexPublishJobState.Failed, now);
+      job.error = sent.failed[0]?.error ?? PUBLISH_MESSAGE.NoApps;
+    } else if (listing?.state === GenexListingState.Refused) {
+      finishJob(job, GenexPublishJobState.Failed, now);
+      job.error = listing.detail ?? PUBLISH_MESSAGE.ListingRefused;
+    } else {
+      finishJob(job, GenexPublishJobState.Done, now);
+      state.lastPublishAt = now;
+      if (job.title) state.title = job.title;
+      // Held for review or not listed at all: the apps are live, and the dialog says which (`native.listing`).
+      if (listing?.state === GenexListingState.Published && state.slug) {
+        // Genex's word that it is listed: kept in the hosted record every status read merges.
+        const listed = { ...meta, status: GenexHostedStatus.Published };
+        await atomicWriteJson(metaFile(this.#publishDir(project)), listed);
+        mergeMeta(state, listed);
+        state.galleryUrl = `${DEFAULT_DASHBOARD}/${state.slug}`;
+      }
+    }
+    if (job.error) state.lastError = job.error;
+    await this.#savePublishState(project, state);
   }
   /** Record Genex's terms answer; false when the user still has to accept them. */
   async #termsAccepted(project: string, state: GenexPublishState): Promise<boolean> {
@@ -763,7 +896,12 @@ export class GenexTools {
   async #startPublish(
     project: string,
     kind: GenexPublishKind,
-    { exportStage, title, camera }: { exportStage?: () => Promise<unknown>; title?: unknown; camera?: CoverCamera },
+    {
+      exportStage,
+      title,
+      camera,
+      apps = [],
+    }: { exportStage?: () => Promise<unknown>; title?: unknown; camera?: CoverCamera; apps?: readonly NativeUpload[] },
   ): Promise<GenexPublishState> {
     const state = await this.publishStatus(project);
     if (!state.connected) throw new Error(PUBLISH_MESSAGE.ConnectFirst);
@@ -771,8 +909,9 @@ export class GenexTools {
     const busy =
       state.job?.state === GenexPublishJobState.Running || state.job?.state === GenexPublishJobState.Unresolved;
     if (busy) return state;
-    // A newer publish replaces the last one's cover send: it shoots and sends its own frame.
+    // A newer publish replaces the last one's cover send and its apps: it sends its own.
     await this.#stopCoverStep(project);
+    await this.#stopNativeStep(project);
     const dir = await this.#publishWorkspace(project);
     await this.#gitReady(dir, path.join(dir, "home"));
     const meta = await readJsonOr<HostedMeta>(metaFile(dir));
@@ -794,7 +933,7 @@ export class GenexTools {
     if (shotLines.length) state.warnings = shotLines;
     delete state.lastError;
     await this.#savePublishState(project, state);
-    const done = this.#runPublishJob(project, kind, job, { cover, connect });
+    const done = this.#runPublishJob(project, kind, job, { cover, connect, apps });
     this.#publishJobs.set(project, { job, done });
     this.#exporting.delete(project);
     void done.finally(() => {
@@ -882,7 +1021,7 @@ export class GenexTools {
     project: string,
     kind: GenexPublishKind,
     job: GenexPublishJob,
-    { cover, connect }: { cover: boolean; connect: boolean },
+    { cover, connect, apps }: { cover: boolean; connect: boolean; apps: readonly NativeUpload[] },
   ): Promise<void> {
     const dir = this.#publishDir(project);
     const home = path.join(dir, "home");
@@ -900,6 +1039,8 @@ export class GenexTools {
       for (const phase of publicSteps(meta, kind, relist)) outs.push(await this.#runStep(run, phase, listing));
       await this.#recordUpload(project, dir, kind, job, meta, outs);
       if (cover && coverRides(kind, await this.#pages(project))) this.#startCoverStep(project, job.id);
+      // The apps go once the web build is public: a draft is not for players, and apps are live at once.
+      if (kind === GenexPublishKind.Gallery && apps.length > 0) void this.publishApps(project, job.id, apps);
     } catch (error) {
       await this.#failPublishJob(project, job, run.attempt, error);
     } finally {
@@ -1192,7 +1333,8 @@ export class GenexTools {
     const own = last?.jobId !== undefined && last.jobId === state.job?.id;
     const warnings = [...(state.warnings ?? []), ...(own ? (last.lines ?? []) : [])];
     const cover = { shot, last, sending: this.#coverSteps.has(project), candidates, clip, clipLast };
-    return { ...state, ...(warnings.length ? { warnings } : {}), cover };
+    const native = await this.#nativeRecord(project);
+    return { ...state, ...(warnings.length ? { warnings } : {}), cover, native };
   }
   /**
    * genex__cover shoot: photograph the game's genex-cover demo now and keep it as its shot. A
@@ -1415,6 +1557,80 @@ export class GenexTools {
       });
     this.#coverSteps.set(project, step);
     return step;
+  }
+  // ── the game's apps ──────────────────────────────────────────────────────────────────────
+  /** A game's apps as its last publish sent them, and whether they are going now. */
+  async #nativeRecord(project: string): Promise<GenexNativeRecord> {
+    const saved = readNativeSaved(await readJsonOr(path.join(this.#publishDir(project), NATIVE_FILE)));
+    return { supported: this.#sendsApps, sending: this.#nativeSteps.has(project), ...saved };
+  }
+  /**
+   * Send publish `jobId`'s apps (`genex native publish`), one at a time, each recorded as it goes; a
+   * newer publish stops them. Nothing goes while the CLI has no `genex native`. Settles when the last
+   * app went or failed.
+   */
+  async publishApps(project: string, jobId: string, apps: readonly NativeUpload[]): Promise<void> {
+    if (!this.#sendsApps || apps.length === 0) return;
+    await this.#stopNativeStep(project);
+    await this.#startNativeStep(project, jobId, apps).done;
+  }
+  #startNativeStep(project: string, jobId: string, apps: readonly NativeUpload[]): NativeStep {
+    const controller = new AbortController();
+    this.#controllers.set(controller, { project });
+    const step: NativeStep = { jobId, controller, done: Promise.resolve() };
+    step.done = this.#sendApps(project, jobId, apps, controller.signal)
+      .then(() => {})
+      .catch(() => {})
+      .finally(() => {
+        this.#controllers.delete(controller);
+        if (this.#nativeSteps.get(project) === step) this.#nativeSteps.delete(project);
+      });
+    this.#nativeSteps.set(project, step);
+    return step;
+  }
+  /**
+   * Each app through `genex native publish`, recorded as it goes: what went live and what did not.
+   * With `gallery`, the game is listed under its title with the first app that goes (a game with only
+   * apps); the record then keeps Genex's answer.
+   */
+  async #sendApps(
+    project: string,
+    jobId: string,
+    apps: readonly NativeUpload[],
+    signal: AbortSignal,
+    gallery?: { title: string },
+  ): Promise<NativeSaved> {
+    const dir = this.#publishDir(project);
+    const file = path.join(dir, NATIVE_FILE);
+    const record: NativeSaved = { jobId, sent: [], failed: [] };
+    await mkdir(path.join(dir, "home"), { recursive: true, mode: 0o700 });
+    await atomicWriteJson(file, record);
+    for (const app of apps) {
+      const listing = gallery && !record.listing ? ["--gallery", "--title", gallery.title] : [];
+      const outcome = await sendNativeBuild(app, (target) =>
+        this.#spawnCli(dir, ["native", "publish", target, ...listing], signal, {
+          timeoutMs: NATIVE_PUBLISH_TIMEOUT_MS,
+          parse: true,
+          home: path.join(dir, "home"),
+          // A refused listing exits 1 with its answer: the build itself is live.
+          answerExitCodes: [0, 1],
+        }),
+      );
+      // Stopped: a newer publish writes its own record.
+      if (signal.aborted) return record;
+      if ("sent" in outcome) record.sent.push(outcome.sent);
+      else record.failed.push(outcome.failed);
+      if (outcome.listing) record.listing = outcome.listing;
+      await atomicWriteJson(file, record);
+    }
+    return record;
+  }
+  /** Stop a game's apps being sent and wait for the step to end. */
+  async #stopNativeStep(project: string): Promise<void> {
+    const step = this.#nativeSteps.get(project);
+    if (!step) return;
+    step.controller.abort();
+    await step.done;
   }
   /** Stop a game's running cover send and wait for it to end; it records nothing once stopped. */
   async #stopCoverStep(project: string): Promise<void> {

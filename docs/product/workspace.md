@@ -5,13 +5,13 @@
 The sidebar holds Search, Notifications, Send feedback
 ([what it sends](../../PRIVACY.md#send-feedback)), the Play/Create switch, New game, Plugins,
 Harness, Settings, Games, Friends and, once they wait, **Genex terms updated**,
-**plugin updates** and **Relaunch to update** (Linux: **Download**); lists scroll. Pinned games lead, then recent activity. Every launch
+**plugin updates** and **Relaunch to update** (Linux: **Download**). Pinned games lead, then recent activity. Every launch
 opens **home** (also the wordmark): one composer over an optional picture. A game opens its
 conversation beside the stage (Live, Builds once planned, Assets); Harness opens its conversation
 and Activity; Plugins fills the workspace.
 
 Settings is a modal: Genex account, Model Providers, Local Models, Appearance, Games, Storage,
-Harness, Permissions, Privacy, About. Narrow windows use a drawer; wide ones remember the sidebar.
+Harness, Permissions, Privacy, About. Narrow windows use a drawer.
 
 The bell keeps unanswered questions, plans and permission requests, then build endings and
 sign-outs, each opening where answered; unfocused, macOS notifications and the Dock badge carry

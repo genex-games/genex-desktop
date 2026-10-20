@@ -18,6 +18,7 @@ import type { StudioApi } from "./studio-api.ts";
 import type { AddSource, ShareItem } from "./asset-library.ts";
 import type { ExportReview, GithubVersion } from "./plugins.ts";
 import type { PlayControl, PlayPoint, PlayShelf } from "./play.ts";
+import type { SessionAction } from "./play-native.ts";
 import type { PlayBarHold } from "./play-bar.ts";
 import type { PlayPurchaseAnswer } from "./play-purchase.ts";
 import type { PlayCoverType, PlayGameChange } from "./play-manage.ts";
@@ -106,7 +107,9 @@ export const STUDIO_INVOKE_CHANNELS = {
   "studio:plugins.action": "pluginAction",
   "studio:plugins.choose-file": "pluginChooseFile",
   "studio:plugins.genex-publish-review": "genexPublishReview",
+  "studio:plugins.genex-publish-platforms": "genexPublishPlatforms",
   "studio:plugins.genex-publish": "genexPublish",
+  "studio:plugins.genex-publish-apps": "genexPublishApps",
   "studio:plugins.index": "pluginsIndex",
   "studio:plugins.install-github": "pluginInstallGithub",
   "studio:plugins.lookup-github": "pluginLookupGithub",
@@ -175,6 +178,16 @@ export const STUDIO_INVOKE_CHANNELS = {
   "studio:play.remix": "playRemix",
   "studio:play.online": "playOnline",
   "studio:play.open": "playOpen",
+  "studio:play.game": "playGame",
+  "studio:play.install": "playInstall",
+  "studio:play.install-cancel": "playInstallCancel",
+  "studio:play.installs": "playInstalls",
+  "studio:play.uninstall": "playUninstall",
+  "studio:play.launch": "playLaunch",
+  "studio:play.session": "playSession",
+  "studio:play.sessions": "playSessions",
+  "studio:play.reveal-install": "playRevealInstall",
+  "studio:play.like": "playLike",
   "studio:play.close": "playClose",
   "studio:play.control": "playControl",
   "studio:play.bar": "playBar",
@@ -354,7 +367,9 @@ export interface StudioInvokePayloads {
   "studio:plugins.action": { id: string; name: string; args: unknown; project?: string; ticket?: string };
   "studio:plugins.choose-file": { id: string; request: Arg<"pluginChooseFile", 1> };
   "studio:plugins.genex-publish-review": { project: string };
+  "studio:plugins.genex-publish-platforms": { project: string };
   "studio:plugins.genex-publish": { project: string; review: ExportReview; title?: string };
+  "studio:plugins.genex-publish-apps": { project: string; title?: string };
   "studio:plugins.index": { refresh?: boolean };
   "studio:plugins.install-github": { spec: string };
   "studio:plugins.lookup-github": { link: string; version?: GithubVersion };
@@ -424,6 +439,16 @@ export interface StudioInvokePayloads {
   "studio:play.remix": { slug: string };
   "studio:play.online": { slugs: string[] };
   "studio:play.open": { slug: string; title: string };
+  "studio:play.game": { slug: string };
+  "studio:play.install": { slug: string };
+  "studio:play.install-cancel": { slug: string };
+  "studio:play.installs": undefined;
+  "studio:play.uninstall": { slug: string };
+  "studio:play.launch": { slug: string };
+  "studio:play.session": { slug: string; action: SessionAction };
+  "studio:play.sessions": undefined;
+  "studio:play.reveal-install": { slug: string };
+  "studio:play.like": { slug: string; liked: boolean };
   "studio:play.close": undefined;
   "studio:play.control": { control: PlayControl; at?: PlayPoint };
   "studio:play.bar": PlayBarHold;

@@ -634,6 +634,21 @@ export class ProcessSandbox {
   }
 
   /**
+   * Open another folder the agent may read: a native runtime the person installed in their own
+   * profile, which srt-win's sandbox user cannot read otherwise. Idempotent, and a no-op when `dir`
+   * already sits inside a readable or writable root.
+   */
+  allowRead(dir: string): void {
+    const resolved = path.resolve(dir);
+    const roots = [...this.policy.allowRead, ...this.policy.allowWrite];
+    if (roots.some((root) => isInside(root, resolved))) return;
+    this.policy.allowRead.push(resolved);
+    // Windows: grants change only between commands, so the session queues a regrant instead.
+    if (this.#windows) this.#windows.session.update(this, this.#windowsGrants(this.#windows));
+    else this.#pushConfig();
+  }
+
+  /**
    * Deny writing more paths from the next process on (a game's `.claude` folder, once the game is
    * adopted). A process already running keeps the policy it started with.
    */

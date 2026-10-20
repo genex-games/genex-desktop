@@ -14,7 +14,7 @@
  * preview is injected through {@link PreviewPort}.
  */
 import type { ChildProcess } from "node:child_process";
-import { cp, lstat, mkdtemp, readFile, readdir, realpath, rename, rm, stat } from "node:fs/promises";
+import { cp, lstat, mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, stat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { sandboxBesidePlugins } from "./core/boot-side-by-side.ts";
@@ -967,7 +967,31 @@ export class StudioCore {
     return [this.layout.secrets, this.layout.engineHomes, path.join(os.homedir(), ".genex")];
   }
 
-  #createSandbox(games: GameProject[]): Promise<ProcessSandbox> {
+  /** The plugins' native runtimes and jobs; on Windows they run in the process sandbox, from folders it is granted at start. */
+  #nativeServices(): PluginNativeServices {
+    const windows = {
+      // Null until the sandbox has started (plugins are wired beside it).
+      sandbox: () => this.#sandboxIfStarted(),
+      work: this.layout.nativeWork,
+      runtimes: this.layout.nativeRuntimes,
+    };
+    return new PluginNativeServices(this.options.paths.userData, [this.layout.secrets], {
+      settings: (id) => this.plugins.settings(id),
+      ...(process.platform === StudioPlatform.Windows ? { windows } : {}),
+    });
+  }
+
+  /** The process sandbox once `init` has set it; plugin services are wired before it is. */
+  #sandboxIfStarted(): ProcessSandbox | null {
+    const started: ProcessSandbox | undefined = this.sandbox;
+    return started ?? null;
+  }
+
+  async #createSandbox(games: GameProject[]): Promise<ProcessSandbox> {
+    // Windows: native jobs work in, and read pinned runtimes from, folders granted now. srt-win
+    // changes grants only while no sandboxed command runs, and agents keep commands running.
+    const windows = process.platform === StudioPlatform.Windows;
+    if (windows) await mkdir(this.layout.nativeRuntimes, { recursive: true });
     return ProcessSandbox.create({
       writableRoots: [
         this.layout.workspaces,
@@ -975,6 +999,7 @@ export class StudioCore {
         this.layout.exports,
         this.layout.gamesRoot,
         ...games.map((game) => game.dir),
+        ...(windows ? [this.layout.nativeWork] : []),
       ],
       scratchDir: this.layout.scratch,
       secretPaths: this.#protectedPaths(),
@@ -992,7 +1017,7 @@ export class StudioCore {
           games.map((game) => game.dir),
         ),
       ],
-      readableRoots: [this.options.paths.resources],
+      readableRoots: [this.options.paths.resources, ...(windows ? [this.layout.nativeRuntimes] : [])],
       enabled: this.options.sandbox ?? true,
       // Windows: the window opens on the games while the network check and folder grants finish.
       startInBackground: true,
@@ -1068,7 +1093,7 @@ export class StudioCore {
       path.join(this.options.paths.resources, "plugin-sdk/backend.mjs"),
       (id, method, args, binding, invocation) => this.pluginServices.call(id, method, args, binding, invocation),
     );
-    const nativePlugins = new PluginNativeServices(this.options.paths.userData, [this.layout.secrets]);
+    const nativePlugins = this.#nativeServices();
     this.#nativePlugins = nativePlugins;
     this.plugins.nativeService = (manifest, directory, method, args, binding, invocation) =>
       nativePlugins.call(

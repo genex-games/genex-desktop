@@ -28,6 +28,7 @@ import {
   PlayViewerPhase,
 } from "../../shared/play.ts";
 import type { PlayMicReport } from "../../shared/play-mic.ts";
+import { NativeAppOffer, type PlayBarNative } from "../../shared/play-native.ts";
 import { mintedTicket, type PlayGallery, type PlayWorld, SignInNeeded, TicketStatus } from "./gallery.ts";
 import { BarLayout, barReveal } from "./bar-reveal.ts";
 import type { PlayComments } from "./comments.ts";
@@ -90,6 +91,13 @@ export interface PlayViewerDeps {
   clock: { setTimeout(run: () => void, ms: number): unknown; clearTimeout(handle: unknown): void; now(): number };
   /** The game's voice chat: the system, the page's microphone, the menu and what is remembered. */
   mic: PlayMicDeps;
+  /** A web game's native app on this computer (`PlayControl.NativeApp`); none where Genex plays no native game. */
+  nativeApp?: {
+    /** What the bar offers for `slug`'s app, or null when this computer has none. */
+    offer(slug: string): Promise<PlayBarNative | null>;
+    /** Install it, or play it in its own window. */
+    press(slug: string): Promise<void>;
+  };
 }
 
 interface Session {
@@ -123,6 +131,7 @@ const IDLE_STATE: PlayBarState = {
   comments: null,
   signedIn: null,
   remixing: false,
+  nativeApp: null,
   purchase: null,
 };
 
@@ -235,6 +244,7 @@ async function loadGame(ctx: ViewerContext, epoch: number, showAnyway: () => voi
     },
     () => null,
   );
+  void readNativeApp(ctx, epoch);
   const ticket = await gallery.ticket(s.slug);
   if (!ctx.current(epoch)) return null;
   // Only a missing account earns the guest card: a ticket the account could not mint is no reason to install Genex.
@@ -243,6 +253,31 @@ async function loadGame(ctx: ViewerContext, epoch: number, showAnyway: () => voi
   ctx.draw();
   ctx.deps.game.open(ctx.deps.gameUrl(s.slug, mintedTicket(ticket)), s.slug);
   return ctx.deps.clock.setTimeout(showAnyway, SHOW_GAME_AFTER_MS);
+}
+
+/** What the bar offers for the game opened as `epoch`'s native app, read again whenever an install changes. */
+async function readNativeApp(ctx: ViewerContext, epoch: number): Promise<void> {
+  const s = ctx.current(epoch);
+  const native = ctx.deps.nativeApp;
+  if (!s || !native) return;
+  const offer = await native.offer(s.slug).catch(() => null);
+  const live = ctx.current(epoch);
+  if (!live) return;
+  live.state = { ...live.state, nativeApp: offer };
+  ctx.draw();
+}
+
+/**
+ * The native-app pill pressed: install the app, or play it, the viewer giving way first (one copy
+ * of a game at a time). Nothing while it installs.
+ */
+function pressNativeApp(ctx: ViewerContext): void {
+  const s = ctx.session();
+  const native = ctx.deps.nativeApp;
+  const offer = s?.state.nativeApp?.offer;
+  if (!s || !native || !offer || offer === NativeAppOffer.Installing) return;
+  if (offer === NativeAppOffer.Ready) ctx.close();
+  void native.press(s.slug).catch(() => undefined);
 }
 
 /** Offer a signed-out guest a Genex account in the header, until its × or the game closes. */
@@ -321,6 +356,7 @@ function barActions(ctx: ViewerContext): Record<PlayControl, (at?: PlayPoint) =>
       if (ctx.session()?.phase === PlayViewerPhase.Playing && !ctx.covering()) ctx.deps.game.focus();
     },
     [PlayControl.Mic]: () => void toggleMic(ctx).catch(() => ctx.note(PlayNote.MicFailed)),
+    [PlayControl.NativeApp]: () => pressNativeApp(ctx),
     [PlayControl.MicDevices]: (at) => chooseMic(ctx, at),
   };
 }
@@ -459,6 +495,11 @@ function viewerCalls(loop: ViewerLoop, heldEsc: ReturnType<typeof heldEscape>) {
       if (ctx.session() && reveal.layout() !== BarLayout.Hidden) deps.bar.show(barBounds(deps, reveal.layout()));
     },
     ...viewerComments(ctx),
+    /** An install changed: the bar's native-app pill reads what it offers again. */
+    nativeChanged: (): void => {
+      const s = ctx.session();
+      if (s) void readNativeApp(ctx, s.epoch);
+    },
     purchase: purchases.purchase,
     mayReserve: purchases.mayReserve,
     answerPurchase: purchases.answerPurchase,

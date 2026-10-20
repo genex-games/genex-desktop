@@ -72,6 +72,11 @@ function isAccountId(id: unknown): id is string {
 
 export class SubscriptionAccounts {
   readonly #options: SubscriptionAccountsOptions;
+  /**
+   * The last change to the choice file. Each change reads the file and writes it whole, so two at
+   * once would lose one: an email kept while the account is forgotten brought the account back.
+   */
+  #changes: Promise<unknown> = Promise.resolve();
 
   constructor(options: SubscriptionAccountsOptions) {
     this.#options = options;
@@ -134,16 +139,22 @@ export class SubscriptionAccounts {
   /** Run on `id` from now on. Refused for an id no account stands behind. */
   async choose(id: string): Promise<void> {
     if (!isAccountId(id)) throw new Error(MESSAGE.unknown(String(id)));
-    const known = (await this.list()).some((entry) => entry.id === id);
-    if (!known) throw new Error(MESSAGE.unknown(id));
-    await this.#write({ ...(await this.#read()), chosen: id });
+    await this.#change(async () => {
+      const known = (await this.list()).some((entry) => entry.id === id);
+      if (!known) throw new Error(MESSAGE.unknown(id));
+      await this.#write({ ...(await this.#read()), chosen: id });
+    });
   }
 
   /**
    * A home for one more account, not yet listed: the first added id nobody remembers. A home left
    * by a sign-in that never finished is emptied, so its leftovers never sign anybody in.
    */
-  async newAccount(): Promise<{ id: string; home: string }> {
+  newAccount(): Promise<{ id: string; home: string }> {
+    return this.#change(() => this.#newAccount());
+  }
+
+  async #newAccount(): Promise<{ id: string; home: string }> {
     const remembered = new Set((await this.#read()).accounts?.map((account) => account.id));
     for (let n = FIRST_ADDED; n <= MAX_ADDED; n++) {
       const id = `${ADDED_PREFIX}${n}`;
@@ -164,19 +175,30 @@ export class SubscriptionAccounts {
     // The Terminal login is the CLI's own: Studio lists it whenever it holds a sign-in.
     if (id === AccountId.Terminal) return;
     if (!isAccountId(id)) throw new Error(MESSAGE.unknown(String(id)));
-    const file = await this.#read();
-    const others = (file.accounts ?? []).filter((account) => account.id !== id);
     const { email } = details;
-    await this.#write({ ...file, accounts: [...others, { id, ...(email ? { email } : {}) }] });
+    await this.#change(async () => {
+      const file = await this.#read();
+      const others = (file.accounts ?? []).filter((account) => account.id !== id);
+      await this.#write({ ...file, accounts: [...others, { id, ...(email ? { email } : {}) }] });
+    });
   }
 
   /** Drop an account from the list; a choice of it goes too. Its home is the caller's to clear. */
   async forget(id: string): Promise<void> {
     if (!isAccountId(id)) throw new Error(MESSAGE.unknown(String(id)));
-    const file = await this.#read();
-    const accounts = (file.accounts ?? []).filter((account) => account.id !== id);
-    const { chosen, ...rest } = file;
-    await this.#write({ ...rest, accounts, ...(chosen && chosen !== id ? { chosen } : {}) });
+    await this.#change(async () => {
+      const file = await this.#read();
+      const accounts = (file.accounts ?? []).filter((account) => account.id !== id);
+      const { chosen, ...rest } = file;
+      await this.#write({ ...rest, accounts, ...(chosen && chosen !== id ? { chosen } : {}) });
+    });
+  }
+
+  /** Run `change` once every change asked before it has finished, whether or not those failed. */
+  #change<T>(change: () => Promise<T>): Promise<T> {
+    const next = this.#changes.then(change, change);
+    this.#changes = next.catch(() => {});
+    return next;
   }
 
   async #read(): Promise<AccountsFile> {

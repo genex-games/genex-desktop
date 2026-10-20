@@ -30,16 +30,30 @@ import { contractorIdentity } from "./chat-labels.ts";
 import { StageView } from "./stage.ts";
 import { STORAGE_KEYS } from "./storage.ts";
 import type { EventEnvelope } from "./types.ts";
-import { A_PLUGIN, NOTICE_WORDS, permissionTitleWords, permissionWords, problemWords, wasCancelled } from "./words.ts";
+import {
+  A_PLUGIN,
+  NATIVE_WORDS,
+  NOTICE_WORDS,
+  permissionTitleWords,
+  permissionWords,
+  problemWords,
+  wasCancelled,
+} from "./words.ts";
+import { sizeWords } from "../shared/byte-size.ts";
+import { InstallFailure, isInstallFailure } from "../shared/play-native.ts";
 import { ToolPermissionState } from "../shared/permissions.ts";
 
-/** What a notice is about: a question, a plan, a plugin's permission, a build's ending, a sign-in. */
+/**
+ * What a notice is about: a question, a plan, a plugin's permission, a build's ending, a sign-in, or
+ * a game from Play installed, failed to install or updated (`slug` names it; it opens its page).
+ */
 export const NoticeKind = {
   Question: "question",
   Plan: "plan",
   Permission: "permission",
   Build: "build",
   SignIn: "signin",
+  Play: "play",
 } as const;
 export type NoticeKind = (typeof NoticeKind)[keyof typeof NoticeKind];
 
@@ -67,6 +81,9 @@ export interface Notice {
   view?: typeof StageView.Live | typeof StageView.Builds;
   /** The provider a sign-in notice is about. */
   engine?: string;
+  /** A Play notice's game, and its name as the row says it. */
+  slug?: string;
+  title?: string;
 }
 
 export interface NoticeState {
@@ -88,6 +105,7 @@ const noticeKey = {
   permission: (requestId: string) => `permission:${requestId}`,
   build: (runId: string) => `build:${runId}`,
   signIn: (engine: string) => `signin:${engine}`,
+  play: (slug: string) => `play:${slug}`,
 };
 const AUTOPLAN_PREFIX = noticeKey.autoplan("");
 
@@ -224,6 +242,11 @@ function readNoticeEvent(feed: FeedDraft, event: EventEnvelope): void {
     case CustomEvent.ConversationRewound:
       onRewound(feed, event);
       break;
+    case CustomEvent.PlayInstallFinished:
+    case CustomEvent.PlayInstallFailed:
+    case CustomEvent.PlayUpdateAvailable:
+      onPlayInstall(feed, event, custom.event_type);
+      break;
     default:
       break;
   }
@@ -355,9 +378,44 @@ function onSignedOut(feed: FeedDraft, event: EventEnvelope): void {
   raise(feed, event, { kind: NoticeKind.SignIn, key: noticeKey.signIn(engine), engine, text: NOTICE_WORDS.signedOut });
 }
 
-/** Who a row is from: the provider for a sign-in, else the game, a game still being named, or the Harness chat. */
+/** What a Play install's row says: ready, why it failed, or a new version waiting. */
+function playInstallText(event: EventEnvelope, kind: PlayInstallEvent): Pick<Notice, "text" | "tone"> {
+  if (kind === CustomEvent.PlayInstallFinished) return { text: NOTICE_WORDS.readyToPlay, tone: NoticeTone.Done };
+  if (kind === CustomEvent.PlayUpdateAvailable) {
+    const size = payloadOf(event, CustomEvent.PlayUpdateAvailable).sizeBytes;
+    return { text: NOTICE_WORDS.newVersion(sizeWords(typeof size === "number" ? size : 0)) };
+  }
+  const failed = payloadOf(event, CustomEvent.PlayInstallFailed);
+  const failure = isInstallFailure(failed.failure) ? failed.failure : InstallFailure.Failed;
+  const needed = typeof failed.neededBytes === "number" ? failed.neededBytes : 0;
+  return { text: NATIVE_WORDS.installFailed[failure](sizeWords(needed)), tone: NoticeTone.Failed };
+}
+
+/** The Play install events a row is raised for. */
+type PlayInstallEvent =
+  | typeof CustomEvent.PlayInstallFinished
+  | typeof CustomEvent.PlayInstallFailed
+  | typeof CustomEvent.PlayUpdateAvailable;
+
+/** A game from Play installed, failed to install, or has a new version: one row per game, the newest. */
+function onPlayInstall(feed: FeedDraft, event: EventEnvelope, kind: PlayInstallEvent): void {
+  const about = payloadOf(event, kind);
+  const slug = words(about.slug);
+  if (!slug) return;
+  const title = words(about.title) ?? slug;
+  raise(feed, event, {
+    kind: NoticeKind.Play,
+    key: noticeKey.play(slug),
+    slug,
+    title,
+    ...playInstallText(event, kind),
+  });
+}
+
+/** Who a row is from: the provider for a sign-in, a Play game, else the game, a game still being named, or the Harness chat. */
 export function noticeSource(notice: Notice, gameTitle: string | undefined, gameThread = true): string {
   if (notice.kind === NoticeKind.SignIn) return contractorIdentity(notice.engine ?? "").label;
+  if (notice.kind === NoticeKind.Play) return notice.title ?? "";
   return gameTitle ?? (gameThread ? NOTICE_WORDS.newGame : NOTICE_WORDS.harness);
 }
 

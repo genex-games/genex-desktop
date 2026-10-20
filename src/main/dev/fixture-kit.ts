@@ -78,10 +78,18 @@ export const FixtureName = {
    * generations (one not saved, one saved, one shared, a saved sound) and a picture dropped in.
    */
   AssetLibrary: "asset-library",
+  /**
+   * Play's native games for real: the fixture catalog's Mac apps built on this Mac (Xcode) and
+   * served from the profile's own files, Frigate installed and Puck Rush one version behind.
+   */
+  NativeGames: "native-games",
   /** The studio open, its agents not started: the sidebar's line, its details and report; Try again clears it. */
   AgentsStartFailed: "agents-start-failed",
 } as const;
 export type FixtureName = (typeof FixtureName)[keyof typeof FixtureName];
+
+/** The library game every fixture but the first launch opens on. */
+export const FIXTURE_GAME = "fixture-game";
 
 /** The one list of named fixtures; scripts/studio-dev.ts validates and lists from it. */
 export const FIXTURE_NAMES: readonly FixtureName[] = Object.values(FixtureName);

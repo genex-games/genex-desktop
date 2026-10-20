@@ -162,7 +162,9 @@ run them only with explicit permission. Evidence goes to `.studio-dev/evidence/`
 `tests/windows-suite.json` is the Windows CI's required suite
 ([verification](../docs/agent/verification.md#test-layers)). When a test file is meaningful on
 Windows and passes there, add it, sorted; `windows-suite.test.ts` refuses missing, duplicate,
-unsorted and rig entries. A POSIX-only case skips on `win32` with its reason; don't drop the
+unsorted and rig entries. A file that changes the whole machine (a reservation of the sandbox's
+proxy ports) is listed in `RUN_ALONE` in `scripts/test-windows.mjs`, which runs it after the rest,
+one at a time. A POSIX-only case skips on `win32` with its reason; don't drop the
 file from the list for it. The informational fast-group report (a Windows dispatch with
 `backlog`) lists the files still to fix and the clean ones ready to add.
 
@@ -170,7 +172,8 @@ file from the list for it. The informational fast-group report (a Windows dispat
 
 Tests that read local projects or open the network are skipped unless opted in:
 `STUDIO_LOCAL_FIXTURES=1` for local projects, `STUDIO_NETWORK_TESTS=1` for real network and
-local Ollama probes, `STUDIO_GODOT_LIVE=1` for the Godot plugin against this Mac's own Godot
+local Ollama probes (on Windows also Local Blender's real download and a sandboxed job,
+`blender-windows-live.test.ts`), `STUDIO_GODOT_LIVE=1` for the Godot plugin against this Mac's own Godot
 (`godot-live.test.ts`), `STUDIO_CLAUDE_CLI_TESTS=1` for the real Claude Code CLI against
 `fake-anthropic.ts` (`claude-studio-shell-cli.test.ts`, `claude-tool-loading.test.ts`),
 `STUDIO_CODEX_CLI_TESTS=1` for the real Codex CLI against `fake-openai-responses.ts`

@@ -3,11 +3,14 @@ import type {
   PlayFeedPage,
   PlayFeedRequest,
   PlayGame,
+  PlayGameDetail,
   PlayPoint,
   PlayShelf,
   PlayShelves,
 } from "./play.ts";
 import type { PlayChangeResult, PlayCoverResult, PlayCoverType, PlayGameChange } from "./play-manage.ts";
+import type { NativeInstalls, NativeSession, SessionAction } from "./play-native.ts";
+import type { PublishPlatform } from "./publish-platforms.ts";
 import type { GenexCatalogItem } from "./mention-corpus.ts";
 import type { MentionRef, MentionRetry } from "./prompt-mention.ts";
 import type {
@@ -212,11 +215,19 @@ export interface StudioApi {
   pluginChooseFile(id: string, request: PluginFileRequest): Promise<string | null>;
   /** The files Publish would put online for a game, for Studio's Publish dialog to show. Uploads nothing. */
   genexPublishReview(project: string): Promise<ExportReview>;
+  /** The web, Mac and Windows rows of Studio's Publish dialog for a game, from what its folder holds. */
+  genexPublishPlatforms(project: string): Promise<PublishPlatform[]>;
   /**
    * Publish the game to the Genex gallery from Studio's Publish dialog: its Publish press approved
    * the files in `review`; `title` is the name players see.
    */
   genexPublish(project: string, review: ExportReview, title?: string): Promise<void>;
+  /**
+   * Publish a game that has only apps (no web build) from Studio's Publish dialog: its ready Mac and
+   * Windows apps go to Genex and the game is listed under `title`. The press, under the rows it names,
+   * is the consent.
+   */
+  genexPublishApps(project: string, title?: string): Promise<void>;
   pluginsIndex(refresh?: boolean): Promise<PluginIndexView>;
   pluginInstallGithub(spec: string): Promise<void>;
   /** What a pasted GitHub link leads to, pinned to one exact commit; nothing is installed. */
@@ -499,6 +510,26 @@ export interface StudioApi {
   playOnline(slugs: string[]): Promise<Record<string, number>>;
   /** Play: open a game full screen in the viewer, its bar showing `title`; how it goes arrives as `UiEvent.PlayViewer`. */
   playOpen(slug: string, title: string): Promise<void>;
+  /** Play: a game's own page (a native game's, which has no web build to open): its card and what the page adds. */
+  playGame(slug: string): Promise<PlayGameDetail>;
+  /** Play: install a game's build for this computer; how it goes arrives as `UiEvent.PlayInstalls`. */
+  playInstall(slug: string): Promise<void>;
+  /** Play: stop a game's install, waiting or under way, or forget how a failed one ended. */
+  playInstallCancel(slug: string): Promise<void>;
+  /** Play: every game installed on this computer and every install under way or failed. */
+  playInstalls(): Promise<NativeInstalls>;
+  /** Play: remove a game from this computer; its saves stay. */
+  playUninstall(slug: string): Promise<void>;
+  /** Play: play an installed game in its own window (a running one comes forward); how it goes arrives as `UiEvent.PlaySessions`. */
+  playLaunch(slug: string): Promise<void>;
+  /** Play: bring a running game forward, quit it, or forget how it failed to start. */
+  playSession(slug: string, action: SessionAction): Promise<void>;
+  /** Play: the games being played in their own windows, and the ones that failed to start. */
+  playSessions(): Promise<NativeSession[]>;
+  /** Play: show an installed game's app in Finder. */
+  playRevealInstall(slug: string): Promise<void>;
+  /** Play: like or unlike a game from its own page, as the Genex account; answers its likes after. */
+  playLike(slug: string, liked: boolean): Promise<{ liked: boolean; likes: number }>;
   /** Play: close the viewer. */
   playClose(): Promise<void>;
   /** Play: one of the viewer header's controls (Like, Share, Exit…); main answers with `UiEvent.PlayViewer`. */

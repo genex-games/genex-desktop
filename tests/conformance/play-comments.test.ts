@@ -233,6 +233,9 @@ describe("Who may answer a purchase sheet", () => {
       manage: unused as PlayIpcDeps["manage"],
       web: PLAY_ORIGIN.web,
       share: () => {},
+      installs: () => null,
+      sessions: () => null,
+      reveal: () => {},
     });
     const call = (event: IpcSender, payload: unknown) => listeners.get("studio:play.purchase")?.(event, payload);
     return { call, answered, studio, bar };

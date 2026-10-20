@@ -185,6 +185,8 @@ export interface QuitParts {
   claudeLogin: { cancel(): unknown };
   terminals: { dispose(): unknown };
   core: { host: { stop(): Promise<void>; kill(): void }; stop(): Promise<void> } | null;
+  /** Play's native games being played in their own windows: each ends with the app. */
+  games?: { stopAll(): Promise<void> } | null;
 }
 
 /**
@@ -194,8 +196,17 @@ export interface QuitParts {
  * detached in its own process group, which the app's exit would not end, so the last step kills
  * whatever is left of it outright.
  */
-export function shutdownSteps({ keepAwake, codexLogin, claudeLogin, terminals, core }: QuitParts): ShutdownStep[] {
+export function shutdownSteps({
+  keepAwake,
+  codexLogin,
+  claudeLogin,
+  terminals,
+  core,
+  games,
+}: QuitParts): ShutdownStep[] {
   return [
+    // A game asked to quit gets its grace period, then is killed with everything it started.
+    { name: "end native games", timeoutMs: 5 * SECOND_MS, run: () => games?.stopAll() },
     { name: "stop the harness", timeoutMs: 7 * SECOND_MS, run: () => core?.host.stop() },
     { name: "release keep-awake", timeoutMs: SECOND_MS, run: () => keepAwake.release() },
     { name: "dismiss Codex sign-in", timeoutMs: 3 * SECOND_MS, run: () => codexLogin.dismiss() },

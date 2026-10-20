@@ -32,6 +32,7 @@ import type { ChatJudgeResultPayload } from "./chat-judge.ts";
 import type { WorkerFinishedPayload, WorkerStartedPayload } from "./workers.ts";
 import type { ObserverCapturePayload } from "./observers.ts";
 import type { FinishCheckPayload, StillToFix } from "./finish-check.ts";
+import type { InstallFailure, PlayInstallPayload } from "./play-native.ts";
 
 /**
  * Every custom event name in the studio's own code. A few are only read: names older versions
@@ -181,6 +182,12 @@ export const CustomEvent = {
   ToolRegistryApplied: "tool_registry_applied",
   UserFeedback: "user_feedback",
   // the studio itself: its harness, learning and games
+  /** A game from Play installed on this computer (shared/play-native.ts); written by the host only. */
+  PlayInstallFinished: "play_install_finished",
+  /** A game from Play failed to install, and why; written by the host only. */
+  PlayInstallFailed: "play_install_failed",
+  /** genex.games has a newer build of an installed game; written by the host only. */
+  PlayUpdateAvailable: "play_update_available",
   BuildObservation: "build_observation",
   FixtureNoise: "fixture_noise",
   GameArchived: "game_archived",
@@ -591,6 +598,9 @@ export interface SelfChangePayload {
 
 export interface CustomEventMap {
   asset_delivered: AssetDeliveredPayload;
+  play_install_finished: PlayInstallPayload;
+  play_install_failed: PlayInstallPayload & { failure?: InstallFailure; neededBytes?: number };
+  play_update_available: PlayInstallPayload & { sizeBytes?: number };
   mention_tagged: MentionTaggedPayload;
   /**
    * `facetId` and `beyond`: a card about a step beyond the ask names its part and the proposal, so a

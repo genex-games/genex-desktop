@@ -33,7 +33,7 @@ import { Pending } from "../../../ui/Pending.tsx";
 import { StepBar } from "../../../ui/StepBar.tsx";
 import { useAsyncEffect } from "../../../use-async-effect.ts";
 import { useCopy } from "../../../use-copy.ts";
-import { ACCOUNT_WORDS, GENEX_WORDS, problemWords } from "../../../words.ts";
+import { ACCOUNT_WORDS, GENEX_WORDS, PUBLISH_PLATFORM_WORDS, problemWords } from "../../../words.ts";
 import { MakingArt } from "../../MakingArt.tsx";
 import { PluginApproval } from "../../PluginApproval.tsx";
 import { readGenexShot } from "./genex-cover-shot.ts";
@@ -57,6 +57,9 @@ import { useGenexStatus } from "./use-genex-status.ts";
 import { CoverControls, CoverMedia, CoverTool } from "./PublishCover.tsx";
 import { CoverKind, type PublishCover, useElapsed, usePublishCover } from "./use-publish-cover.ts";
 import { Pressing, usePublishRecord } from "./use-publish-record.ts";
+import { PublishPlatforms, usePublishPlatforms } from "./PublishPlatforms.tsx";
+import { appsLabel, nothingToPublish, onlyApps } from "./publish-platforms-view.ts";
+import type { PublishPlatform } from "../../../../shared/publish-platforms.ts";
 import { PublishShareLine } from "./PublishShare.tsx";
 import { useShareWhenLive } from "./use-publish-share.ts";
 
@@ -692,6 +695,25 @@ export function GenexPublishDialog({
   );
 }
 
+/** The game folder's platforms, and the main press's words when the game has only apps ("Publish Mac app"). */
+function useAppsPublish(project: string): {
+  platforms: PublishPlatform[] | null;
+  apps: string | null;
+  waiting: boolean;
+} {
+  const platforms = usePublishPlatforms(project);
+  return {
+    platforms,
+    apps: platforms && onlyApps(platforms) ? appsLabel(platforms) : null,
+    // A game made in an engine with nothing to send yet: the rows say why, and the press waits.
+    waiting: platforms !== null && nothingToPublish(platforms),
+  };
+}
+
+/** The main press's own words: Save name while it celebrates, a game's apps, else the view's. */
+const pressLabel = (celebrate: boolean, apps: string | null): string | undefined =>
+  celebrate ? WORDS.saveName : (apps ?? undefined);
+
 /** Whether the dialog celebrates: an attempt it watched just went live; a new press ends it. */
 function useCelebration(view: PublishView, publishing: boolean): boolean {
   const before = useRef<PublishView | null>(null);
@@ -708,8 +730,8 @@ function useCelebration(view: PublishView, publishing: boolean): boolean {
 
 /**
  * The read record: the banner with the game's name and where it is, then what the moment needs:
- * the running attempt's progress, the celebration and link once it just went live, the link of a
- * live game, or a failed attempt's line, and the presses.
+ * the platforms a game with an app is built for, the running attempt's progress, the celebration
+ * and link once it just went live, the link of a live game, or a failed attempt's line, and the presses.
  */
 function PublishBody({
   view,
@@ -733,6 +755,7 @@ function PublishBody({
   const failure = record.error ? { text: record.error, details: record.error } : view.failure;
   const open = () => void record.act(GenexAction.PublishOpen, { target: LinkTarget.Gallery });
   const opening = record.pressing === Pressing.Action;
+  const { platforms, apps, waiting } = useAppsPublish(project);
   return (
     <div
       className="genex-publish-body"
@@ -757,6 +780,7 @@ function PublishBody({
             {problem}
           </p>
         ))}
+        <PublishPlatforms project={project} platforms={platforms} shown={!celebrate} native={record.state?.native} />
         {view.running && <Progress view={view} />}
         {failure && !publishing && <p className="genex-publish-failure">{failure.text}</p>}
         <PublishShareLine share={share} celebrate={celebrate} />
@@ -767,7 +791,9 @@ function PublishBody({
             name={name}
             publishing={publishing}
             project={project}
-            label={celebrate ? WORDS.saveName : undefined}
+            label={pressLabel(celebrate, apps)}
+            apps={apps !== null}
+            waiting={waiting}
           />
         )}
         {!publishing && <Links view={view} project={project} onOpen={open} opening={opening} />}
@@ -778,6 +804,7 @@ function PublishBody({
           making={Boolean(cover.making)}
           record={record}
           name={name}
+          apps={apps !== null}
         />
       </div>
     </div>
@@ -815,9 +842,12 @@ function Hint({
   record,
   name,
   testShown = false,
+  apps = false,
 }: {
   /** The test link's own line stands in for the default intro, so the two never both show. */
   testShown?: boolean;
+  /** The game has only apps: its players install it in the Genex app rather than follow a link. */
+  apps?: boolean;
   view: PublishView;
   publishing: boolean;
   /** Another cover is on its way: the line says where it shows. */
@@ -840,7 +870,7 @@ function Hint({
   if (publishing) return <p className="genex-publish-hint">{WORDS.keepsGoing}</p>;
   if (making) return <p className="genex-publish-hint">{WORDS.coverMakingSoon}</p>;
   if (view.stage === PublishStage.Public || view.failure || testShown) return null;
-  return <p className="genex-publish-hint">{WORDS.intro}</p>;
+  return <p className="genex-publish-hint">{apps ? PUBLISH_PLATFORM_WORDS.appsHint : WORDS.intro}</p>;
 }
 
 /** The busy button's words: the step at work and the attempt's clock. */
@@ -865,6 +895,8 @@ function Presses({
   publishing,
   project,
   label,
+  apps = false,
+  waiting = false,
 }: {
   view: PublishView;
   record: ReturnType<typeof usePublishRecord>;
@@ -873,6 +905,10 @@ function Presses({
   project: string;
   /** The main press's words in place of the view's (Save name, for a rename right after it went live). */
   label?: string;
+  /** The game has only apps: the press publishes them instead of a web build. */
+  apps?: boolean;
+  /** Nothing to send yet (a game made in an engine with no app it can send): the press waits. */
+  waiting?: boolean;
 }): JSX.Element {
   if (view.terms) {
     const terms = view.terms;
@@ -895,10 +931,10 @@ function Presses({
       variant={publishing ? "secondary" : "default"}
       size="default"
       className="genex-publish-primary"
-      aria-label={view.primary.ariaLabel}
+      aria-label={apps && label ? label : view.primary.ariaLabel}
       aria-busy={publishing || undefined}
-      disabled={publishing || !view.canPublish || record.pressing !== Pressing.None}
-      onClick={() => void record.publish(name)}
+      disabled={publishing || waiting || !view.canPublish || record.pressing !== Pressing.None}
+      onClick={() => void (apps ? record.publishApps(name) : record.publish(name))}
     >
       {publishing ? <BusyLabel view={view} /> : (label ?? view.primary.label)}
     </Button>

@@ -17,10 +17,18 @@ import {
   type PlayFeedPage,
   type PlayFeedRequest,
   type PlayGame,
+  type PlayGameDetail,
   PlayShelf,
   type PlayShelves,
   shelfOf,
 } from "../../shared/play.ts";
+import {
+  FIXTURE_BUILD_HOSTS,
+  NATIVE_BUILD_HOSTS,
+  type NativeHost,
+  nativeOf,
+  playableHere,
+} from "../../shared/play-native.ts";
 import { AvatarStyle, isAccountId } from "../../shared/play-people.ts";
 import { isPlayMobileSupport, type PlayCuration, PlayMobileSupport } from "../../shared/play-manage.ts";
 import type { GenexCatalogItem } from "../../shared/mention-corpus.ts";
@@ -45,8 +53,10 @@ export const HTTP_UNAUTHORIZED = 401;
 const BAD_GATEWAY = 502;
 /** The longest cursor the gallery hands out (an id), with room to spare; ids and codes are held to it too. */
 const CURSOR_MAX = 64;
-/** How much of a gallery item's text a card keeps. */
-const TEXT_MAX = { title: 200, author: 120, description: 400 } as const;
+/** How much of a gallery item's text a card keeps; a game's own page keeps more of its description. */
+const TEXT_MAX = { title: 200, author: 120, description: 400, about: 4000 } as const;
+/** The most screenshots a game's page shows. */
+const SHOTS_MAX = 4;
 /** The most online reads one count makes: the shown games beyond them wait for the next count. */
 const ONLINE_MAX_READS = 4;
 /** How long one network call may take. */
@@ -107,8 +117,13 @@ export interface GalleryDeps {
   /** The unlocked Genex account's token, or undefined while there is none. */
   token(): Promise<string | undefined>;
   now(): number;
-  /** A fixture launch: its drawn covers are let through. */
+  /** A fixture launch: its drawn covers are let through, and its builds' made-up host. */
   localImages?: boolean;
+  /**
+   * This computer, when the app knows it: a game it cannot play at all (no web build, no build for
+   * it) is left out of the tabs and search. Absent, every game is listed.
+   */
+  host?: NativeHost;
 }
 
 /** A failed call that keeps its status, so a sign-in problem reads apart from an outage. */
@@ -243,11 +258,16 @@ function curationOf(item: Record<string, unknown>): PlayCuration {
   };
 }
 
+/** The hosts a build may download from: genex.games' build CDN, or a fixture launch's made-up one. */
+export const buildHostsFor = (local: boolean): ReadonlySet<string> =>
+  local ? FIXTURE_BUILD_HOSTS : NATIVE_BUILD_HOSTS;
+
 /**
  * One gallery item as the dashboard shows it, or null when it lacks what a card needs. `local`
- * (fixture launches only) also lets drawn SVG covers through.
+ * (fixture launches only) also lets drawn SVG covers through. Its native builds are kept only from
+ * `hosts`, and only an item that names builds gets a native side.
  */
-export function toPlayGame(item: unknown, local = false): PlayGame | null {
+export function toPlayGame(item: unknown, local = false, hosts = buildHostsFor(local)): PlayGame | null {
   if (!isRecord(item)) return null;
   const id = text(item.id, CURSOR_MAX);
   const title = text(item.title, TEXT_MAX.title).trim();
@@ -255,6 +275,7 @@ export function toPlayGame(item: unknown, local = false): PlayGame | null {
   const author = isRecord(item.author) ? item.author : {};
   const online = typeof item.online === "number" && Number.isFinite(item.online) ? count(item.online) : null;
   const coverUrl = imageUrl(item.thumbnailUrl, local);
+  const native = nativeOf(item, hosts);
   return {
     id,
     slug: item.slug,
@@ -275,6 +296,7 @@ export function toPlayGame(item: unknown, local = false): PlayGame | null {
     remixable: cloneUrlOf(item) !== null,
     assetKind: assetKindOf(item.assetKind),
     curation: curationOf(item),
+    ...(native ? { native } : {}),
   };
 }
 
@@ -302,8 +324,14 @@ export function itemShelf(item: unknown): PlayShelf {
   return categories.includes(PlayShelf.Tools) ? PlayShelf.Tools : PlayShelf.Games;
 }
 
-/** A page of the gallery: its valid items (on `shelf` alone when one is named), each once, and the next cursor. */
-export function toFeedPage(body: unknown, local = false, shelf?: PlayShelf): PlayFeedPage {
+/** Whether `game` plays on `host` at all; every game does while the computer is not known. */
+const playsOn = (game: PlayGame, host: NativeHost | undefined): boolean => !host || playableHere(game, host);
+
+/**
+ * A page of the gallery: its valid items (on `shelf` alone when one is named), each once, and the
+ * next cursor. Given `host`, a game it cannot play at all is left out.
+ */
+export function toFeedPage(body: unknown, local = false, shelf?: PlayShelf, host?: NativeHost): PlayFeedPage {
   const items = isRecord(body) && Array.isArray(body.items) ? body.items : [];
   const seen = new Set<string>();
   const games: PlayGame[] = [];
@@ -311,6 +339,7 @@ export function toFeedPage(body: unknown, local = false, shelf?: PlayShelf): Pla
     if (shelf && itemShelf(item) !== shelf) continue;
     const game = toPlayGame(item, local);
     if (!game || seen.has(game.id)) continue;
+    if (!playsOn(game, host)) continue;
     seen.add(game.id);
     games.push(game);
   }
@@ -466,7 +495,8 @@ function catalogReads(deps: GalleryDeps) {
     if (category !== PlayCategory.Featured) query.set("category", category);
     if (isCursor(cursor)) query.set("cursor", cursor);
     const started = generation;
-    const page = toFeedPage(await readRoute(request, `${PlayRoute.Feed}?${query}`), local, shelfOf(category));
+    const body = await readRoute(request, `${PlayRoute.Feed}?${query}`);
+    const page = toFeedPage(body, local, shelfOf(category), deps.host);
     if (first && started === generation) firstPages.set(category, { at: now(), page });
     return page;
   };
@@ -494,7 +524,7 @@ function catalogReads(deps: GalleryDeps) {
     if (words.length === 0) return [];
     const searched = isPlayShelf(shelf) ? shelf : PlayShelf.Games;
     const scored = (await catalog())
-      .filter((entry) => entry.shelf === searched)
+      .filter((entry) => entry.shelf === searched && playsOn(entry.game, deps.host))
       .map(({ game }) => ({ game, score: searchScore(game, words) }))
       .filter((hit) => hit.score > 0);
     scored.sort((a, b) => b.score - a.score || b.game.plays - a.game.plays);
@@ -542,27 +572,40 @@ function catalogReads(deps: GalleryDeps) {
   return { feed, shelves, search, mentionItems, assetManifest, online, forget };
 }
 
+/** When a game last changed: the API's own date, else its newest build's, else null. */
+function updatedAtOf(item: Record<string, unknown>, game: PlayGame): string | null {
+  const at = typeof item.updatedAt === "string" ? Date.parse(item.updatedAt) : Number.NaN;
+  if (Number.isFinite(at)) return new Date(at).toISOString();
+  const published = game.native?.builds.map((build) => build.publishedAt).sort() ?? [];
+  return published.at(-1) ?? null;
+}
+
 /** What the signed-in account adds: a game's likes, a like, a sign-in ticket and an invite code. */
 function accountCalls(deps: GalleryDeps) {
   const { request, token } = deps;
   const local = deps.localImages === true;
   let invite: { token: string; code: string } | null = null;
 
-  /** The game's page facts, with whether this account likes it when one is signed in. */
-  const world = async (slug: string): Promise<PlayWorld> => {
+  /** A game's page item and its card, read with the account's token so the API says whether it likes it. */
+  const worldItem = async (slug: string): Promise<{ item: Record<string, unknown>; game: PlayGame }> => {
     if (!isPlaySlug(slug)) throw new Error(MESSAGE.BadSlug);
     const body = await readRoute(request, PlayRoute.world(slug), await token());
     const item = isRecord(body) && isRecord(body.item) ? body.item : {};
     const game = toPlayGame(item, local);
     if (!game) throw new GalleryError(PlayRoute.world(slug), BAD_GATEWAY);
+    return { item, game };
+  };
+
+  /** The game's page facts, with whether this account likes it when one is signed in. */
+  const world = async (slug: string): Promise<PlayWorld> => {
+    const { item, game } = await worldItem(slug);
     const { id, title, multiplayer, remixable, plays, online } = game;
-    const likes = count(item.likesCount);
     return {
       id,
       slug,
       title,
       multiplayer,
-      likes,
+      likes: count(item.likesCount),
       liked: item.likedByMe === true,
       remixable,
       cloneUrl: cloneUrlOf(item),
@@ -572,6 +615,21 @@ function accountCalls(deps: GalleryDeps) {
       online,
       comments: count(item.commentsCount),
       coverUrl: game.coverUrl,
+    };
+  };
+
+  /** A game's own page: its card, likes and comments, its whole description, screenshots and when it changed. */
+  const game = async (slug: string): Promise<PlayGameDetail> => {
+    const { item, game: card } = await worldItem(slug);
+    const shots = Array.isArray(item.shots) ? item.shots.map((shot) => imageUrl(shot, local)) : [];
+    return {
+      ...card,
+      description: text(item.description, TEXT_MAX.about).trim(),
+      likes: count(item.likesCount),
+      liked: item.likedByMe === true,
+      comments: count(item.commentsCount),
+      shots: shots.filter((shot): shot is string => shot !== null).slice(0, SHOTS_MAX),
+      updatedAt: updatedAtOf(item, card),
     };
   };
 
@@ -623,7 +681,7 @@ function accountCalls(deps: GalleryDeps) {
     }
   };
 
-  return { world, setLiked, ticket, inviteCode };
+  return { world, game, setLiked, ticket, inviteCode };
 }
 
 /** Play's gallery over `deps`. */

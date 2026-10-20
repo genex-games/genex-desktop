@@ -12,7 +12,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Popover, PopoverContent, PopoverTrigger } from "../ui/popover.tsx";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip.tsx";
 import { PickerLabel } from "../ui/PickerPanel.tsx";
-import { Icon } from "../ui/icons.tsx";
+import { Icon, type IconName } from "../ui/icons.tsx";
 import { isRovingKey, RovingAxis, rovingTarget } from "../ui/roving-focus.ts";
 import { GameAvatar } from "../ui/GameAvatar.tsx";
 import { CLAUDE_CODE_MARK, CODEX_MARK } from "../ui/provider-marks.ts";
@@ -90,6 +90,12 @@ function noticeTime(notice: Notice, now: number): string {
   return `starts in ${Math.max(1, Math.ceil((notice.until - now) / MINUTE_MS))}m`;
 }
 
+/** A row's glyph with no game cover: Play's for a game from Play, else the chat's kind. */
+const artIcon = (notice: Notice, gameChat: boolean): IconName => {
+  if (notice.kind === NoticeKind.Play) return "gamepad";
+  return gameChat ? "new-game" : "harness";
+};
+
 /** A row's picture: its game's cover, else the provider's mark or the chat's kind. */
 function NoticeArt({ notice, game, gameChat }: { notice: Notice; game?: GameProject; gameChat: boolean }) {
   if (game) return <GameAvatar cover={game.cover} gameKey={game.name} className="notify-art" />;
@@ -98,7 +104,7 @@ function NoticeArt({ notice, game, gameChat }: { notice: Notice; game?: GameProj
       {notice.kind === NoticeKind.SignIn ? (
         <ProviderGlyph engine={notice.engine} />
       ) : (
-        <Icon name={gameChat ? "new-game" : "harness"} size={15} />
+        <Icon name={artIcon(notice, gameChat)} size={15} />
       )}
     </span>
   );

@@ -1,7 +1,7 @@
 {
   "apiVersion": 3,
   "id": "genex",
-  "version": "1.10.14",
+  "version": "1.10.17",
   "name": "Genex plugin",
   "publisher": "Genex",
   "description": "3D models, characters, sound and art for your games, made in chat with Genex credits. Coding stays on your own provider.",
@@ -329,6 +329,11 @@
       "name": "publish-gallery",
       "label": "Publish",
       "confirmation": "Upload Studio's exported copy of this game to its Genex draft page and make it the public version in the gallery. Everyone can find and play it. The first time, a hosted Genex project is created for this game under your account. Its cover shot also becomes its picture on Genex, unless you chose one there."
+    },
+    {
+      "name": "publish-apps",
+      "label": "Publish apps",
+      "confirmation": "Upload this game's ready Mac and Windows apps from its folder to Genex and list the game in the gallery, where people playing in the Genex desktop app can install them. The first time, a hosted Genex project is created for this game under your account."
     },
     {
       "name": "publish-allow-upload",

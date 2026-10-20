@@ -23,6 +23,18 @@ export type StudioLayout = {
    * (unlike scratch), so no box can swap a folder on the way for a link while the host makes one.
    */
   reviewers: string;
+  /**
+   * Windows: native jobs' working folders (staged inputs, outputs, scratch), granted to the process
+   * sandbox when it starts. Their records and deliveries stay in the plugin's storage.
+   */
+  nativeWork: string;
+  /** Windows: plugins' pinned native runtimes (Local Blender's Blender), readable by the process sandbox. */
+  nativeRuntimes: string;
+  /**
+   * Games from Play installed on this computer, one folder per game with its saves beside it
+   * (`main/play/native-installs.ts`). Outside every agent-writable root, like `jobs`.
+   */
+  installedGames: string;
 };
 
 export function layoutFor(userData: string): StudioLayout {
@@ -39,5 +51,8 @@ export function layoutFor(userData: string): StudioLayout {
     exports: path.join(userData, "exports"),
     jobs: path.join(userData, "jobs"),
     reviewers: path.join(userData, "reviewers"),
+    nativeWork: path.join(userData, "native-work"),
+    nativeRuntimes: path.join(userData, "native-runtimes"),
+    installedGames: path.join(userData, "installed-games"),
   };
 }

@@ -14,6 +14,16 @@ import { PlayShelf } from "../../shared/play.ts";
 import { fixtureCreatorAnswer } from "./fixture-creator.ts";
 import { createFixtureManage } from "./fixture-manage.ts";
 import {
+  type FixtureNative,
+  type FixtureNativeGame,
+  fixtureNativeFields,
+  LARGE,
+  MEDIUM,
+  macApp,
+  SMALL,
+  windowsApp,
+} from "./fixture-native.ts";
+import {
   type FixtureCatalog,
   fixtureAccountOf,
   fixtureAuthorId,
@@ -40,6 +50,8 @@ interface FixtureGame {
   mobileSupport?: PlayMobileSupport;
   /** genex.games' crash reports found it desktop only. */
   desktopOnlyByReports?: boolean;
+  /** Its native builds, for a game made in an engine. */
+  native?: FixtureNative;
 }
 
 const GAMES: FixtureGame[] = [
@@ -65,6 +77,69 @@ const GAMES: FixtureGame[] = [
     online: 8,
     private: true,
     mobileSupport: PlayMobileSupport.DesktopOnly,
+    // A web game with a Mac app beside it: its card plays the web build, the bar offers the app.
+    native: { web: true, engine: "unity", builds: [macApp("SKATE", "2.1", LARGE)] },
+  },
+  // Native games: no web build, so a card opens the game's page.
+  {
+    slug: "dust-runners",
+    title: "Dust Runners",
+    author: "Kir",
+    plays: 940,
+    categories: ["games", "racing"],
+    hue: 28,
+    // Its source is the author's own: no Remix.
+    private: true,
+    native: { web: false, engine: "unity", builds: [macApp("Dust Runners", "1.3", LARGE)] },
+  },
+  {
+    slug: "iron-tide",
+    title: "Iron Tide",
+    author: "achimala",
+    plays: 1210,
+    categories: ["games", "shooter"],
+    hue: 245,
+    // Its source is the author's own: no Remix.
+    private: true,
+    native: {
+      web: false,
+      engine: "unreal",
+      builds: [macApp("Iron Tide", "0.9", MEDIUM), windowsApp("Iron Tide", "0.9", MEDIUM)],
+    },
+  },
+  {
+    slug: "frigate",
+    title: "Frigate",
+    author: "Gab",
+    plays: 1904,
+    categories: ["games", "multiplayer"],
+    hue: 170,
+    multiplayer: true,
+    online: 4,
+    native: {
+      web: false,
+      engine: "godot",
+      builds: [macApp("Frigate", "1.1", MEDIUM), windowsApp("Frigate", "1.1", MEDIUM)],
+    },
+  },
+  {
+    slug: "puck-rush",
+    title: "Puck Rush",
+    author: "Gab",
+    plays: 803,
+    categories: ["games", "sports"],
+    hue: 6,
+    native: { web: false, engine: "godot", builds: [macApp("Puck Rush", "1.3", SMALL)] },
+  },
+  // Only a Windows build: a Mac's tabs leave it out, and its maker's profile says so.
+  {
+    slug: "harbor-lights",
+    title: "Harbor Lights",
+    author: "Kir",
+    plays: 122,
+    categories: ["games", "exploration"],
+    hue: 205,
+    native: { web: false, engine: "unreal", builds: [windowsApp("Harbor Lights", "1.0", MEDIUM)] },
   },
   {
     slug: "sandstorm",
@@ -258,6 +333,7 @@ function baseItem(game: FixtureGame, index: number) {
     mobileAutoStatus: game.desktopOnlyByReports ? PlayMobileSupport.DesktopOnly : null,
     author: { id: fixtureAuthorId(game.author), name: game.author, image: null },
     ...(game.assetKind ? { assetKind: game.assetKind } : {}),
+    ...(game.native ? fixtureNativeFields(game.slug, game.native) : {}),
   };
 }
 
@@ -309,7 +385,16 @@ function world(slug: string): GalleryAnswer {
   if (!game) return NOT_FOUND;
   const liked = likes.get(slug) === true;
   const facts = { likesCount: 3 + (liked ? 1 : 0), likedByMe: liked, commentsCount: fixtureCommentCount(game.id) };
-  return ok({ item: { ...game, ...facts } });
+  return ok({ item: { ...game, ...facts, ...pageFacts(game.id) } });
+}
+
+/** What a native game's page adds: a longer description and screenshots, drawn in the game's hue. */
+function pageFacts(id: string): Record<string, unknown> {
+  const hue = HUES.get(id) ?? 0;
+  const fixture = CATALOG.find((game, index) => baseItem(game, index).id === id);
+  if (!fixture?.native) return {};
+  const about = `${fixture.title} is a fixture game made in an engine. It has no web build, so it installs on this Mac and plays in its own window.`;
+  return { description: about, shots: [40, 120, 200, 280].map((shift) => cover((hue + shift) % 360)) };
 }
 
 /** The search catalog: every fixture game in its slim shape, the author a name. */
@@ -401,3 +486,9 @@ export function fixtureGamePage(slug: string): string {
   const page = `<!doctype html><html><head><meta charset="utf-8"><title>${title}</title><style>html,body{margin:0;height:100%;background:#000;overflow:hidden;font:600 28px/1.2 -apple-system,system-ui,sans-serif;color:#fff}canvas{position:fixed;inset:0;width:100%;height:100%}h1{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);margin:0;text-shadow:0 2px 24px #000}${FIXTURE_BUY_STYLE}</style></head><body data-fixture-game="${slug}"><canvas id="c"></canvas><h1>${title}</h1><script>const c=document.getElementById("c"),x=c.getContext("2d");let t=0;function f(){c.width=innerWidth;c.height=innerHeight;const g=x.createLinearGradient(0,0,0,c.height);g.addColorStop(0,"hsl(${hue} 55% 18%)");g.addColorStop(1,"hsl(${(hue + 30) % 360} 60% 42%)");x.fillStyle=g;x.fillRect(0,0,c.width,c.height);x.fillStyle="hsl(${(hue + 50) % 360} 90% 72%)";x.beginPath();x.arc(c.width*(.5+.3*Math.sin(t/90)),c.height*.35,40,0,7);x.fill();t++;requestAnimationFrame(f)}f()</script><script>${fixtureBuyScript(slug)}</script></body></html>`;
   return `data:text/html;charset=utf-8,${encodeURIComponent(page)}`;
 }
+
+/** The fixture catalog's games with native builds, for the native-games fixture's archives. */
+export const fixtureNativeGames = (): FixtureNativeGame[] =>
+  CATALOG.flatMap((game) =>
+    game.native ? [{ slug: game.slug, title: game.title, hue: game.hue, native: game.native }] : [],
+  );

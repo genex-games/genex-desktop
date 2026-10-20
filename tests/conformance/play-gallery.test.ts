@@ -21,6 +21,7 @@ import {
   visibleShelves,
 } from "../../src/main/play/gallery.ts";
 import { PlayCategory, PlayShelf } from "../../src/shared/play.ts";
+import { FIXTURE_BUILD_HOST, NativeArch, type NativeHost, NativePlatform } from "../../src/shared/play-native.ts";
 
 const TOKEN = "genex-cli-token";
 
@@ -59,7 +60,7 @@ interface Call {
 /** A gallery over a scripted API: each route answers what `answers` says, and every call is kept. */
 function rig(
   answers: (call: Call) => GalleryAnswer | Promise<GalleryAnswer>,
-  options: { token?: string | undefined; now?: number } = {},
+  options: { token?: string | undefined; now?: number; host?: NativeHost; local?: boolean } = {},
 ) {
   const token = "token" in options ? options.token : TOKEN;
   const calls: Call[] = [];
@@ -69,7 +70,14 @@ function rig(
     calls.push(call);
     return answers(call);
   };
-  const gallery = playGallery({ request, token: async () => token, now: () => clock });
+  const host = options.host ? { host: options.host } : {};
+  const gallery = playGallery({
+    request,
+    token: async () => token,
+    now: () => clock,
+    localImages: options.local === true,
+    ...host,
+  });
   return { gallery, calls, advance: (ms: number) => (clock += ms) };
 }
 
@@ -491,6 +499,142 @@ describe("Play gallery calls", () => {
     assert.equal(calls.length, 1);
     assert.equal(await rig(() => ok({ code: "a b&c" })).gallery.inviteCode(), undefined);
     assert.equal(await rig(() => ok({ code: "x" }), { token: undefined }).gallery.inviteCode(), undefined);
+  });
+});
+
+/** A build row as the API serves it, on the fixture launch's made-up build host. */
+function buildRow(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    platform: "mac",
+    arch: "universal",
+    version: "1.3.0",
+    sizeBytes: 1_200_000_000,
+    installedBytes: 1_400_000_000,
+    sha256: "b".repeat(64),
+    url: `https://${FIXTURE_BUILD_HOST}/dust-runners/1.3.0/mac.zip`,
+    entry: "Dust Runners.app",
+    minOs: "13.0",
+    publishedAt: "2026-10-17T10:00:00.000Z",
+    ...overrides,
+  };
+}
+
+const THIS_MAC: NativeHost = { platform: NativePlatform.Mac, arch: NativeArch.Arm64, osVersion: "15.1" };
+
+describe("Play's native games", () => {
+  const nativeItem = (overrides: Record<string, unknown> = {}) =>
+    item({ id: "n1", slug: "dust-runners", title: "Dust Runners", builds: [buildRow()], web: false, ...overrides });
+
+  it("gives a card a native side only when the item names builds, from a host the app trusts", () => {
+    assert.equal("native" in (toPlayGame(item()) ?? {}), false, "a web game is unchanged");
+    const real = toPlayGame(nativeItem());
+    assert.deepEqual(real?.native, { web: false, engine: null, builds: [] }, "genex.games names no build host yet");
+    const fixture = toPlayGame(nativeItem({ engine: "unity" }), true);
+    assert.equal(fixture?.native?.engine, "unity");
+    assert.deepEqual(
+      fixture?.native?.builds.map((build) => build.entry),
+      ["Dust Runners.app"],
+    );
+  });
+
+  it("leaves a game this computer cannot play out of the tabs, and keeps web games and ones it can", async () => {
+    const windowsOnly = item({
+      id: "w1",
+      slug: "harbor-lights",
+      title: "Harbor Lights",
+      web: false,
+      builds: [buildRow({ platform: "windows", arch: "x64", entry: "Harbor/Harbor.exe" })],
+    });
+    const items = [
+      item(),
+      nativeItem(),
+      windowsOnly,
+      item({
+        id: "s1",
+        slug: "skate",
+        title: "SKATE",
+        builds: [buildRow({ platform: "windows", arch: "x64", entry: "Skate.exe" })],
+      }),
+    ];
+    const listed = async (host?: NativeHost) =>
+      (
+        await rig(() => ok({ items }), { local: true, ...(host ? { host } : {}) }).gallery.feed({
+          category: PlayCategory.Featured,
+        })
+      ).games.map((game) => game.slug);
+    assert.deepEqual(await listed(THIS_MAC), ["lost-cathedral", "dust-runners", "skate"]);
+    assert.deepEqual(
+      await listed(),
+      ["lost-cathedral", "dust-runners", "harbor-lights", "skate"],
+      "unknown computer: all",
+    );
+    const intel: NativeHost = { platform: NativePlatform.Mac, arch: NativeArch.X64, osVersion: "12.0" };
+    assert.deepEqual(
+      await listed(intel),
+      ["lost-cathedral", "skate"],
+      "the Mac app asks for a newer macOS than this one",
+    );
+  });
+
+  it("leaves a game this computer cannot play out of search", async () => {
+    const items = [
+      item({ id: "g1", slug: "ocean-racer", title: "Ocean Racer" }),
+      item({
+        id: "g2",
+        slug: "ocean-port",
+        title: "Ocean Port",
+        web: false,
+        builds: [buildRow({ platform: "windows", arch: "x64", entry: "Port.exe" })],
+      }),
+    ];
+    const { gallery } = rig(() => ok({ items }), { local: true, host: THIS_MAC });
+    assert.deepEqual(
+      (await gallery.search("ocean")).map((game) => game.slug),
+      ["ocean-racer"],
+    );
+  });
+
+  it("reads a game's own page: its card, whole description, screenshots on Genex's hosts and when it changed", async () => {
+    const description = "Race three rivals across the dunes. ".repeat(20).trim();
+    const shots = [
+      "https://cdn.genex.technology/shots/1.webp",
+      "https://evil.example/2.webp",
+      "https://cdn.genex.technology/shots/3.webp",
+      "https://cdn.genex.technology/shots/4.webp",
+      "https://cdn.genex.technology/shots/5.webp",
+      "https://cdn.genex.technology/shots/6.webp",
+    ];
+    const { gallery, calls } = rig(
+      () =>
+        ok({
+          item: {
+            ...nativeItem({ engine: "unity", description, shots }),
+            likesCount: 12,
+            likedByMe: true,
+            commentsCount: 4,
+          },
+        }),
+      { local: true },
+    );
+    const page = await gallery.game("dust-runners");
+    assert.equal(page.slug, "dust-runners");
+    assert.equal(page.description, description, "the page keeps more than a card's description");
+    assert.deepEqual(page.shots, [
+      "https://cdn.genex.technology/shots/1.webp",
+      "https://cdn.genex.technology/shots/3.webp",
+      "https://cdn.genex.technology/shots/4.webp",
+      "https://cdn.genex.technology/shots/5.webp",
+    ]);
+    assert.deepEqual([page.likes, page.liked, page.comments], [12, true, 4]);
+    assert.equal(page.updatedAt, "2026-10-17T10:00:00.000Z", "no date of its own: the newest build's");
+    assert.equal(page.native?.engine, "unity");
+    assert.equal(calls[0]?.route, PlayRoute.world("dust-runners"));
+    assert.equal(calls[0]?.token, TOKEN);
+    const dated = rig(() => ok({ item: { ...item(), updatedAt: "2026-10-01T00:00:00Z" } }));
+    assert.equal((await dated.gallery.game("lost-cathedral")).updatedAt, "2026-10-01T00:00:00.000Z");
+    const undated = rig(() => ok({ item: item() }));
+    assert.equal((await undated.gallery.game("lost-cathedral")).updatedAt, null);
+    await assert.rejects(gallery.game("../../api"), /Not a game address/);
   });
 });
 

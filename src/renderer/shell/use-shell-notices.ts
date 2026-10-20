@@ -17,7 +17,7 @@ export function noticeState(notices: Notifications): "waiting" | "unread" | unde
 /** Notifications read the same log the chat does; opening one goes where it points. */
 export function useShellNotices(
   app: Studio,
-  input: { ready: boolean; dialogs: Dialogs; away: boolean },
+  input: { ready: boolean; dialogs: Dialogs; away: boolean; openPlay: (play: boolean) => void },
   navigation: Navigation,
   views: StageViews,
 ): Notifications {
@@ -31,11 +31,18 @@ export function useShellNotices(
         openSettings(SettingsSection.Providers);
         return;
       }
+      // A game from Play: its own page.
+      if (notice.kind === NoticeKind.Play) {
+        if (!notice.slug) return;
+        input.openPlay(true);
+        app.play.showGame(notice.slug);
+        return;
+      }
       if (!app.threads.getState().records.some((thread) => thread.id === notice.threadId)) return;
       selectThread(notice.threadId);
       if (notice.view) chooseStageView(notice.view);
     },
-    [app, openSettings, selectThread, chooseStageView],
+    [app, openSettings, selectThread, chooseStageView, input.openPlay],
   );
   return useNotifications({
     ready: input.ready,

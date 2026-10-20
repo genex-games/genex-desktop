@@ -14,6 +14,7 @@ import { GenexStudioTool } from "../../src/main/core/genex-cli-prompts.ts";
 import {
   PublishRefusal,
   PublishRefusedError,
+  publishAppsFromDialog,
   publishFromDialog,
   publishReview,
 } from "../../src/main/core/genex-publish.ts";
@@ -151,6 +152,65 @@ test("the name typed in the dialog reaches Genex as one clean line, and a blank 
       await publishFromDialog(rig.core, GAME, await publishReview(rig.core, GAME), title);
       assert.deepEqual(rig.calls.at(-1)?.args, args, JSON.stringify(title));
     }
+  } finally {
+    await rig.close();
+  }
+});
+
+test("the game's ready Mac app goes with the dialog's publish once the Genex CLI can send apps", async () => {
+  const rig = await dialogRig();
+  try {
+    // A universal Mac app as an engine's build leaves it, made after the game's last change.
+    const app = path.join(rig.game.dir, "Builds", "Mac", "Snow.app", "Contents");
+    await mkdir(path.join(app, "MacOS"), { recursive: true });
+    await writeFile(
+      path.join(app, "Info.plist"),
+      "<plist><dict><key>CFBundleExecutable</key><string>Snow</string></dict></plist>",
+    );
+    const fat = Buffer.alloc(48);
+    fat.writeUInt32BE(0xcafebabe, 0);
+    fat.writeUInt32BE(2, 4);
+    fat.writeUInt32BE(0x0100000c, 8);
+    fat.writeUInt32BE(0x01000007, 28);
+    await writeFile(path.join(app, "MacOS", "Snow"), fat);
+    const review = await publishReview(rig.core, GAME);
+    await publishFromDialog(rig.core, GAME, review, undefined, true);
+    assert.deepEqual(rig.calls.at(-1)?.args, { native: ["Builds/Mac/Snow.app"] });
+    await publishFromDialog(rig.core, GAME, await publishReview(rig.core, GAME), undefined, false);
+    assert.deepEqual(rig.calls.at(-1)?.args, {}, "a CLI without `genex native` is sent no app");
+  } finally {
+    await rig.close();
+  }
+});
+
+test("an Unreal game with a ready Mac app publishes as its app, never as a web game", async () => {
+  const rig = await dialogRig();
+  try {
+    const game = await addUnrealGame(rig);
+    await assert.rejects(publishAppsFromDialog(rig.core, UNREAL_GAME, UNREAL_TITLE, true), /no Mac or Windows app/);
+    const app = path.join(game.dir, "Builds", "Mac", "Dirt Track.app", "Contents");
+    await mkdir(path.join(app, "MacOS"), { recursive: true });
+    await writeFile(
+      path.join(app, "Info.plist"),
+      "<plist><dict><key>CFBundleExecutable</key><string>DirtTrack</string></dict></plist>",
+    );
+    const arm = Buffer.alloc(32);
+    arm.writeUInt32LE(0xfeedfacf, 0);
+    arm.writeUInt32LE(0x0100000c, 4);
+    await writeFile(path.join(app, "MacOS", "DirtTrack"), arm);
+    await publishAppsFromDialog(rig.core, UNREAL_GAME, `  ${UNREAL_TITLE}\n`, true);
+    assert.deepEqual(rig.calls.at(-1), {
+      id: "genex",
+      name: "publish-apps",
+      args: { native: ["Builds/Mac/Dirt Track.app"], title: UNREAL_TITLE },
+      binding: { project: UNREAL_GAME, directory: game.dir, threadId: undefined },
+    });
+    assert.equal(rig.staged.length, 0, "no web copy is made");
+    await assert.rejects(publishAppsFromDialog(rig.core, UNREAL_GAME, UNREAL_TITLE, false), /no Mac or Windows app/);
+    await assert.rejects(
+      publishFromDialog(rig.core, UNREAL_GAME, await publishReview(rig.core, GAME)),
+      refusedAsUnreal,
+    );
   } finally {
     await rig.close();
   }

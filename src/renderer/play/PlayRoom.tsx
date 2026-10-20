@@ -7,6 +7,7 @@
  * Offline, the bar says so, what cannot load says it comes back by itself, and it does once the Mac
  * is online again.
  */
+import { opensPage } from "./native-model.ts";
 import type { JSX, KeyboardEvent, RefObject, UIEvent } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AssetScope } from "../../shared/asset-library.ts";
@@ -209,10 +210,11 @@ export function Grid({
   /** The measured first row plays its clips by itself (the dashboard's Games feed only). */
   autoplayTopRow?: boolean;
 }): JSX.Element {
-  const play = useCallback(
-    (game: PlayGame) => void studio().play.open({ slug: game.slug, title: game.title, coverUrl: game.coverUrl }),
-    [],
-  );
+  const play = useCallback((game: PlayGame) => {
+    const entry = { slug: game.slug, title: game.title, coverUrl: game.coverUrl };
+    // A native game with no web build opens its own page.
+    void studio().play.open(opensPage(game) ? { ...entry, page: true } : entry);
+  }, []);
   const grid = useRef<HTMLDivElement>(null);
   const columns = useGridColumns(grid, autoplayTopRow);
   const topRow = (game: PlayGame, index: number): boolean =>
@@ -430,6 +432,8 @@ export function PlayRoom({
   const noun = WORDS.nouns[shelf];
   useEffect(() => {
     void studio().play.loadShelves();
+    // The cards of native games show what is installed and installing on this computer.
+    void studio().play.loadNative();
   }, []);
   useEffect(() => {
     void studio().play.loadFeed(shown);

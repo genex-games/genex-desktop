@@ -43,7 +43,10 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip.tsx";
 import { GENEX_WORDS, PLUGIN_TOOLBAR_WORDS, problemWords } from "../words.ts";
 import { GenexPublishDialog, GenexSetupDialog, PublishSignInDialog } from "./plugins/genex/GenexPublish.tsx";
 import { webFolderOf } from "../../shared/project-workspace.ts";
-import { isGenexPublish, stripEntries, studioPublishButton } from "./plugins/genex/genex-publish-view.ts";
+import { isGenexPublish, publishesWeb, stripEntries, studioPublishButton } from "./plugins/genex/genex-publish-view.ts";
+import { PublishTarget } from "../../shared/publish-platforms.ts";
+import { makesApps } from "./plugins/genex/publish-platforms-view.ts";
+import { useAsyncEffect } from "../use-async-effect.ts";
 import { useCoverAfterTurns } from "./plugins/genex/use-cover-after-turns.ts";
 import { PluginApproval } from "./PluginApproval.tsx";
 import { PluginPanelDialog } from "./PluginPanelDialog.tsx";
@@ -371,11 +374,11 @@ function usePress({ project, onNotice, refreshRef, setPanel, setReview, setBusy 
 function useStudioPublish(
   plugins: PluginInfo[],
   project: string | null,
-  { facts, holds }: { facts: readonly FactRef[]; holds: FolderHolds | undefined },
+  { facts, holds, apps }: { facts: readonly FactRef[]; holds: FolderHolds | undefined; apps: boolean },
   genexPublish: PluginToolbarEntry | undefined,
 ) {
   const [setup, setSetup] = useState(false);
-  const shown = studioPublishButton(plugins, project, facts, holds);
+  const shown = studioPublishButton(plugins, project, facts, holds, apps);
   useEffect(() => {
     if (setup && !project) setSetup(false);
   }, [setup, project]);
@@ -500,6 +503,48 @@ function StudioPublishButton({ onPress, folded }: { onPress: () => void; folded:
   );
 }
 
+/**
+ * Whether a game that is not a web game has an app Publish can send (a Unity or Unreal game built for
+ * the Mac), read from its folder once per game; a web game never asks.
+ */
+function useReadyApps(project: string | null, web: boolean): boolean {
+  const [apps, setApps] = useState(false);
+  useAsyncEffect(
+    (alive) => {
+      setApps(false);
+      if (!project || web) return undefined;
+      void window.studio
+        .genexPublishPlatforms(project)
+        .then((rows) => {
+          if (alive()) setApps(rows.some((row) => row.target !== PublishTarget.Web && row.uploads));
+        })
+        .catch(() => {});
+      return undefined;
+    },
+    [project, web],
+  );
+  return apps;
+}
+
+/** The strip's plugin buttons, with whether the game publishes as a web game or has ready apps to publish. */
+function useStripEntries(
+  plugins: PluginInfo[],
+  project: string | null,
+  facts: readonly FactRef[],
+  holds?: FolderHolds,
+) {
+  const web = publishesWeb(facts, holds);
+  // A Unity, Godot or Unreal game gets Publish for its apps: its dialog says what it needs first.
+  const engine = !web && makesApps(facts);
+  const ready = useReadyApps(project, web || engine);
+  const apps = engine || ready;
+  const entries = useMemo(
+    () => stripEntries(plugins, project, facts, holds, apps),
+    [plugins, project, facts, holds, apps],
+  );
+  return { entries, web, apps };
+}
+
 /** What Multiplayer needs to know of the open game (`GameProject.awaitingFirstBuild`, `.multiplayer`). */
 export interface GameMultiplayer {
   builtOnce: boolean;
@@ -521,7 +566,7 @@ export function PluginToolbar({
   onOpenChange,
   folded = false,
 }: Props): JSX.Element {
-  const entries = useMemo(() => stripEntries(plugins, project, facts, holds), [plugins, project, facts, holds]);
+  const { entries, web, apps } = useStripEntries(plugins, project, facts, holds);
   const entriesRef = useRef(entries);
   entriesRef.current = entries;
   // Membership, not identity: the list is re-fetched every few seconds while the Plugins dialog
@@ -540,9 +585,10 @@ export function PluginToolbar({
   }, [entries, panel]);
   const genexPublish = entries.find(isGenexPublish);
   useCoverAfterTurns(project, Boolean(genexPublish?.plugin.enabled) && !emptyGame);
-  const studioPublish = useStudioPublish(plugins, project, { facts, holds }, genexPublish);
+  const studioPublish = useStudioPublish(plugins, project, { facts, holds, apps }, genexPublish);
   const publish = Boolean(genexPublish) || studioPublish.shown;
-  const multiplayerShown = multiplayerOn(publish, emptyGame, game, { facts, holds });
+  // A game published only as its apps runs no Genex web SDK: Multiplayer is for web games.
+  const multiplayerShown = multiplayerOn(publish && web, emptyGame, game, { facts, holds });
   // Multiplayer is the plugin's: its Publish shows while it is off, but only an on Genex makes a game multiplayer.
   const multiplayer = useMultiplayer(
     project,

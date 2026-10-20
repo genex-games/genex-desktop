@@ -11,6 +11,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { cp, mkdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { setTimeout as delay } from "node:timers/promises";
 import { after, afterEach, before, describe, it } from "node:test";
 import { EventStore } from "../../src/substrate/event-store.ts";
 import { HarnessHost, UpdateJournal } from "../../src/substrate/harness-host.ts";
@@ -40,6 +41,21 @@ let root: string;
 const rigs: Rig[] = [];
 /** How long a rig's harness gets to stop when its test is over. */
 const RIG_STOP_GRACE_MS = 200;
+/** How often, and at most how long, a test looks for what the host should have done by itself. */
+const UNTIL_POLL_MS = 50;
+const UNTIL_LIMIT_MS = 60_000;
+
+/**
+ * Wait until `done` holds, failing with `what` if it never does. The host's background work
+ * includes sandboxed boots, which take seconds on a Windows runner, so a fixed pause is a race.
+ */
+async function until(done: () => boolean, what: string): Promise<void> {
+  const deadline = Date.now() + UNTIL_LIMIT_MS;
+  while (!done()) {
+    assert.ok(Date.now() < deadline, what);
+    await delay(UNTIL_POLL_MS);
+  }
+}
 
 before(async () => {
   root = await tmpDir("studio-host-");
@@ -268,9 +284,8 @@ describe("harness host: self-modification", () => {
     await r.host.stop();
 
     await assert.rejects(() => rebuilt.start(), /exited during boot|did not report ready/);
-    // The host retries, hits the crash-loop threshold, and the watchdog rewinds.
-    await new Promise((resolve) => setTimeout(resolve, 3_000));
-    assert.equal(restored, true, "watchdog must have restored the healthy snapshot");
+    // The host retries in the background, hits the crash-loop threshold, and the watchdog rewinds.
+    await until(() => restored, "watchdog must have restored the healthy snapshot");
     const events = await r.store.listEvents(r.thread);
     assert.ok(events.some((e) => e.data.type === "workspace_restored"));
 
@@ -321,8 +336,7 @@ describe("harness host: self-modification", () => {
         },
       })
       .catch(() => {});
-    await new Promise((resolve) => setTimeout(resolve, 8_000));
-    assert.ok(r.wedges >= 1, "a harness that stops beating must be reported as wedged");
+    await until(() => r.wedges >= 1, "a harness that stops beating must be reported as wedged");
     await r.host.stop(200);
   });
 
@@ -416,13 +430,11 @@ describe("harness host: crash handling", () => {
         .catch(() => {});
 
     crash();
-    await new Promise((resolve) => setTimeout(resolve, 2_500));
-    assert.equal(r.host.state, "ready", "first crash is simply restarted");
+    await until(() => r.host.exits.length === 1 && r.host.state === "ready", "first crash is simply restarted");
     assert.equal(r.crashLoops, 0);
 
     crash();
-    await new Promise((resolve) => setTimeout(resolve, 2_500));
-    assert.equal(r.crashLoops, 1, "the second crash inside the window escalates to the watchdog");
+    await until(() => r.crashLoops === 1, "the second crash inside the window escalates to the watchdog");
     await r.host.stop(200);
   });
 });

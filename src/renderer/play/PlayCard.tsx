@@ -9,7 +9,7 @@ import type { CSSProperties, JSX, MouseEvent } from "react";
 import { memo, useEffect, useId, useRef, useState } from "react";
 import { playCardMenu } from "../../shared/play-manage.ts";
 import type { PlayGame } from "../../shared/play.ts";
-import { usePeople, usePlay } from "../state/hooks.ts";
+import { usePeople, usePlay, useShallow } from "../state/hooks.ts";
 import { studio } from "../state/studio.ts";
 import { Button } from "../ui/Button.tsx";
 import { Icon } from "../ui/icons.tsx";
@@ -17,6 +17,8 @@ import { PLAY_WORDS } from "../words.ts";
 import { CardMenu } from "./card-menu/CardMenu.tsx";
 import { claimHoverClip, releaseHoverClip } from "./clip-playback.ts";
 import { CoverClip } from "./CoverClip.tsx";
+import { CardBadge, cardBadge } from "./native-model.ts";
+import { CardNativeBadge } from "./NativeBadge.tsx";
 import { createShownCovers, formatCount } from "./play-model.ts";
 
 const WORDS = PLAY_WORDS;
@@ -165,10 +167,26 @@ export const PlayCard = memo(function PlayCard({
   const making = usePlay((s) => s.making?.slug ?? null);
   const remixing = making === game.slug;
   const menu = useCardMenu(game);
+  // Only this game's install and download: a card redraws when they change, not when another's do.
+  const native = usePlay(
+    useShallow((s) => ({
+      host: s.installs.host,
+      installed: s.installs.installed.find((one) => one.slug === game.slug) ?? null,
+      progress: s.installs.progress.find((one) => one.slug === game.slug) ?? null,
+    })),
+  );
+  const installed = native.installed;
+  const badge = cardBadge(game, {
+    host: native.host,
+    installed: installed ? [installed] : [],
+    progress: native.progress ? [native.progress] : [],
+  });
+  // An installed game's card gets the ⋯ for anyone: Show in Finder and Remove from this Mac.
+  const hasMenu = menu !== null || installed !== null;
   const [menuOpen, setMenuOpen] = useState(false);
   // A right-click anywhere on a card with a menu opens it, as the ⋯ does; one inside a dialog the
   // menu opened (a portal, so its events still reach the card through React) is the dialog's own.
-  const contextMenu = menu
+  const contextMenu = hasMenu
     ? (event: MouseEvent<HTMLElement>) => {
         if (!(event.target instanceof Node) || !event.currentTarget.contains(event.target)) return;
         event.preventDefault();
@@ -205,9 +223,12 @@ export const PlayCard = memo(function PlayCard({
             />
           )}
           <span className="play-card-shade" aria-hidden="true" />
-          <Stats game={game} />
+          {badge?.kind !== CardBadge.Downloading && <Stats game={game} />}
+          {badge && <CardNativeBadge badge={badge} />}
         </button>
-        {menu && <CardMenu game={game} menu={menu} open={menuOpen} onOpenChange={setMenuOpen} />}
+        {hasMenu && (
+          <CardMenu game={game} menu={menu} installed={installed} open={menuOpen} onOpenChange={setMenuOpen} />
+        )}
       </div>
       <div className="play-card-meta">
         <div className="min-w-0 flex-1">

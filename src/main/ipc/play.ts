@@ -8,6 +8,9 @@ import type { CreatorStats } from "../play/creator-stats.ts";
 import type { GenexCredits } from "../play/credits.ts";
 import type { PlayGallery, PlayWorld } from "../play/gallery.ts";
 import type { PlayManage } from "../play/manage.ts";
+import type { NativeInstaller } from "../play/native-installs.ts";
+import { isSessionAction, NO_INSTALLS, SessionAction } from "../../shared/play-native.ts";
+import type { NativeSessions } from "../play/native-launch.ts";
 import { onWebsite } from "../play/origins.ts";
 import type { PlayPeople } from "../play/people.ts";
 import type { PlayViewer } from "../play/viewer.ts";
@@ -27,6 +30,9 @@ const MESSAGE = {
   badGame: "not a published game",
   badChange: "not a change the card menu makes",
   badCoverType: "not a cover picture type",
+  noInstalls: "native games are not available on this computer",
+  badSessionAction: "not something a running game is asked",
+  notInstalled: "that game is not installed",
 } as const;
 
 /** What Play's channels answer from. */
@@ -45,6 +51,12 @@ export interface PlayIpcDeps {
   web: string;
   /** Pop the Mac's share menu for `url` in the studio window, by `at` when it is known. */
   share(url: string, at: PlayPoint | undefined): void;
+  /** Native games' installs on this computer; null where Genex runs no native game. */
+  installs(): NativeInstaller | null;
+  /** Native games being played; null where Genex runs no native game. */
+  sessions(): NativeSessions | null;
+  /** Show a file in Finder (`shell.showItemInFolder`). */
+  reveal(file: string): void;
 }
 
 /** Register Play's channels: the catalog's reads, Remix and the viewer. */
@@ -89,17 +101,79 @@ export function registerPlayIpc(handle: IpcHandle, deps: PlayIpcDeps): void {
   // The renderer names a game by its slug; main builds every address from it.
   handle("studio:play.open", async (payload) => {
     if (!isPlaySlug(payload?.slug)) throw new Error(MESSAGE.badSlug);
+    // One copy of a game at a time: its native app being played comes forward instead.
+    const live = deps.sessions();
+    if (live?.playing(payload.slug)) return live.show(payload.slug);
     const shown = viewer();
     if (!shown) throw new Error(MESSAGE.noWindow);
     shown.open(payload.slug, payload.title);
   });
   handle("studio:play.close", async () => viewer()?.close());
+  handle("studio:play.game", (payload) => {
+    if (!isPlaySlug(payload?.slug)) throw new Error(MESSAGE.badSlug);
+    return gallery.game(payload.slug);
+  });
   // The bar names a control (and where it is, for a menu); the viewer acts only on one it knows.
   handle("studio:play.control", async (payload) => viewer()?.control(payload?.control, readPlayPoint(payload?.at)));
   handle("studio:play.bar", async (payload) => viewer()?.hold(payload));
   // The purchase sheet's answer: the viewer reads it, and pays or cancels only the purchase it holds.
   handle("studio:play.purchase", async (payload) => viewer()?.answerPurchase(payload));
   registerCommentsIpc(handle, viewer);
+  registerInstallsIpc(handle, deps.installs);
+  registerSessionsIpc(handle, deps.sessions);
+  registerGameIpc(handle, deps);
+}
+
+/** A native game played in its own window: named by its slug, shown or quit by a named action. */
+function registerSessionsIpc(handle: IpcHandle, sessions: PlayIpcDeps["sessions"]): void {
+  const launcher = (): NativeSessions => {
+    const found = sessions();
+    if (!found) throw new Error(MESSAGE.noInstalls);
+    return found;
+  };
+  handle("studio:play.launch", (payload) => {
+    if (!isPlaySlug(payload?.slug)) throw new Error(MESSAGE.badSlug);
+    return launcher().launch(payload.slug);
+  });
+  handle("studio:play.session", (payload) => {
+    if (!isPlaySlug(payload?.slug)) throw new Error(MESSAGE.badSlug);
+    if (!isSessionAction(payload.action)) throw new Error(MESSAGE.badSessionAction);
+    const live = launcher();
+    return payload.action === SessionAction.Show ? live.show(payload.slug) : live.quit(payload.slug);
+  });
+  handle("studio:play.sessions", async () => sessions()?.sessions() ?? []);
+}
+
+/** An installed game's app in Finder, and a like from a game's page: each named by its slug, resolved in main. */
+function registerGameIpc(handle: IpcHandle, deps: PlayIpcDeps): void {
+  handle("studio:play.reveal-install", async (payload) => {
+    if (!isPlaySlug(payload?.slug)) throw new Error(MESSAGE.badSlug);
+    const app = await deps.installs()?.appOf(payload.slug);
+    if (!app) throw new Error(MESSAGE.notInstalled);
+    deps.reveal(app);
+  });
+  handle("studio:play.like", async (payload) => {
+    if (!isPlaySlug(payload?.slug)) throw new Error(MESSAGE.badSlug);
+    const { id } = await deps.gallery.world(payload.slug);
+    return deps.gallery.setLiked(id, payload.liked === true);
+  });
+}
+
+/** A native game's install: the renderer names a game by its slug; main reads its build from the catalog. */
+function registerInstallsIpc(handle: IpcHandle, installs: PlayIpcDeps["installs"]): void {
+  const installer = (): NativeInstaller => {
+    const found = installs();
+    if (!found) throw new Error(MESSAGE.noInstalls);
+    return found;
+  };
+  const slugOf = (payload: { slug?: unknown } | undefined): string => {
+    if (!isPlaySlug(payload?.slug)) throw new Error(MESSAGE.badSlug);
+    return payload.slug;
+  };
+  handle("studio:play.install", (payload) => installer().install(slugOf(payload)));
+  handle("studio:play.install-cancel", (payload) => installer().cancel(slugOf(payload)));
+  handle("studio:play.installs", async () => (await installs()?.state()) ?? NO_INSTALLS);
+  handle("studio:play.uninstall", (payload) => installer().uninstall(slugOf(payload)));
 }
 
 /** The viewed game's comments: always the game on screen, never one the renderer names. */

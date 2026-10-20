@@ -33,6 +33,9 @@ const NOTICE_SUBTITLES: Partial<Record<NoticeKind, string>> = {
   [NoticeKind.Permission]: "Permission needed",
 };
 
+/** A sign-in or Play notice belongs to no chat: it always shows. Any other shows while its chat is open and its game is here. */
+const unthreaded = (notice: Notice): boolean => notice.kind === NoticeKind.SignIn || notice.kind === NoticeKind.Play;
+
 export interface Notifications {
   /** Rows about chats and games that still exist (and every sign-in). */
   visible: Notice[];
@@ -116,9 +119,8 @@ export function useNotifications({
     const openChat = (id: string): boolean =>
       threads.some((thread) => thread.id === id && !threadMeta(thread).archived);
     const gameKept = (project: string | undefined): boolean => !project || games.some((game) => game.name === project);
-    /** A sign-in notice always shows; any other while its chat is open and its game is still here. */
     const shows = (notice: Notice): boolean =>
-      notice.kind === NoticeKind.SignIn || (openChat(notice.threadId) && gameKept(notice.project));
+      unthreaded(notice) || (openChat(notice.threadId) && gameKept(notice.project));
     return notices.items.filter(shows);
   }, [notices, threads, games]);
   const waitingCount = waitingNotices(visible).length;

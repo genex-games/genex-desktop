@@ -11,12 +11,14 @@
  * switch beside its name, with a menu of microphones. Offline, the facts say so in place of the
  * players, and Like and Remix wait for the connection.
  */
+import { sizeWords } from "../../shared/byte-size.ts";
+import { NativeAppOffer, type PlayBarNative } from "../../shared/play-native.ts";
 import type { CSSProperties, FocusEvent, JSX, PointerEvent, ReactNode, RefObject } from "react";
 import { useEffect, useRef, useState } from "react";
 import { type PlayBarState, type PlayMicBar, PlayControl, type PlayPoint } from "../../shared/play.ts";
 import { Icon, type IconName } from "../ui/icons.tsx";
 import { useOnline } from "../ui/use-online.ts";
-import { PLAY_WORDS } from "../words.ts";
+import { NATIVE_WORDS, PLAY_WORDS } from "../words.ts";
 import type { BarView } from "./bar-model.ts";
 import { formatCount, justLiked, noteOn } from "./play-model.ts";
 
@@ -333,6 +335,7 @@ function Actions({
   const bursts = useLikeBursts(bar);
   return (
     <div ref={actions} className="play-viewer-bar-actions">
+      {bar?.nativeApp && <NativeAppButton app={bar.nativeApp} send={send} />}
       <BarButton
         control={PlayControl.Like}
         icon="heart"
@@ -374,6 +377,47 @@ function Actions({
         <Icon name="close" size={16} />
       </button>
     </div>
+  );
+}
+
+/** The game's native app beside Like: install it, its install's progress as a ring, or play it. */
+function NativeAppButton({ app, send }: { app: PlayBarNative; send: SendControl }): JSX.Element {
+  const platform = NATIVE_WORDS.platform[app.platform];
+  const size = sizeWords(app.bytes);
+  const installing = app.offer === NativeAppOffer.Installing;
+  const label = (() => {
+    if (installing) return NATIVE_WORDS.appInstalling(platform, app.percent);
+    if (app.offer === NativeAppOffer.Ready) return NATIVE_WORDS.playApp(platform);
+    return NATIVE_WORDS.app(platform);
+  })();
+  return (
+    <button
+      type="button"
+      className="play-viewer-bar-pill play-viewer-bar-native"
+      aria-label={app.offer === NativeAppOffer.Install ? NATIVE_WORDS.installAppLabel(platform, size) : label}
+      data-play-bar={PlayControl.NativeApp}
+      data-native-offer={app.offer}
+      aria-disabled={installing || undefined}
+      onClick={() => send(PlayControl.NativeApp)}
+    >
+      <span className="play-bar-icon">
+        {installing ? (
+          <span
+            className="play-bar-ring"
+            aria-hidden="true"
+            style={{ background: `conic-gradient(currentColor ${app.percent * 3.6}deg, transparent 0)` }}
+          />
+        ) : (
+          <Icon name={app.offer === NativeAppOffer.Ready ? "play" : "download"} size={16} />
+        )}
+      </span>
+      <span className="play-bar-label" data-shown>
+        <span>
+          {label}
+          {app.offer === NativeAppOffer.Install && <span className="play-bar-size"> {size}</span>}
+        </span>
+      </span>
+    </button>
   );
 }
 

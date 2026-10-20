@@ -3046,6 +3046,34 @@ Genex:
   refuses the same games (`assertPublishable`, `PublishRefusedError` code `unreal-game` or
   `not-web-game`): the dialog's review and publish, `genex__publish`
   before its consent card, and `export.stage` (a panel's or toolbar's publish) before it exports.
+- For a game linked to an engine, or one whose folder holds a player build, the dialog lists its
+  platforms above the presses (`PublishPlatforms.tsx`, `publish-platforms-view.ts`; read by
+  `studio:plugins.genex-publish-platforms` from `main/core/publish-platforms.ts`): Web, Mac app and
+  Windows app. `main/core/native-builds.ts` finds the builds from the binaries themselves (a
+  `.app`'s Mach-O program, a PE `.exe` beside its data; never through a link, engine caches skipped,
+  the walk capped). A row says what its build runs on, when it was built and its size; "Built
+  before your last change" when the game's sources (outside builds, caches and history) changed more
+  than a minute after it; or "Not made yet" with Make with agent, which sends "Make a <Platform> app
+  of <Game> so I can publish it for <Platform> players." through the game's chat at once (as Another
+  cover does) and keeps the dialog open, the row then saying "Asked the agent". A ready app goes
+  with Publish (`publishedApps`, passed as `native` in `publish-gallery`'s arguments; the line under
+  the rows says "Publish also sends the Mac app."): once the web build is public, the plugin sends
+  each with `genex native publish <the .app, or the .exe's folder> --json` in the publish workspace
+  (`publishApps`, `native-publish.ts`, one hour each), one at a time, after resolving each by real
+  path inside the game folder. An app that fails never fails the publish; its row says "Not sent"
+  and a line under the rows says why in the CLI's words. Each result is kept in the workspace's
+  `native.json` and answered as `GenexPublishState.native` (Sending…, On Genex). A draft sends no app,
+  and a stale build stays. While the pinned CLI is older than `genex native` (1.36.11), nothing is
+  sent and a built app says "Coming soon" (`uploads: false`), its players getting the web version.
+  A game with no web build but a ready app (an Unreal or Unity game built for the Mac) gets Publish
+  on the strip too (`stripEntries`' `apps`, read through the same channel); its press says "Publish
+  Mac app" and runs `studio:plugins.genex-publish-apps` (`publishAppsFromDialog`, no web copy, no
+  `assertPublishable`) → the plugin's `publish-apps` (`publishAppsOnly`): the hosted project is made
+  the first time, each app goes with `genex native publish`, the first that goes carrying
+  `--gallery --title <name>` (a refused listing exits 1 with its answer; the app is live either way).
+  Listed, the record turns public with the game's genex.games page as its link; held for review or
+  not listed, a line under the rows says so; refused, the publish fails in Genex's words. Multiplayer
+  stays off for it. A web game with no app shows no rows. L4: `npm run test:ui -- publish-platforms-ui`.
 - Every published copy gets a `<head>` tag when `deployment.ts` marks it (`withHead`): the games
   host injects its environment (`window.__GENEX__`), mobile kit, crash watchdog and cover
   responder only into one, and the marker never goes ahead of the doctype. A game whose
@@ -3157,6 +3185,12 @@ Local Blender:
 - `blender__model`'s `script` is the path of a `.py` in the game (`assets/src/<name>.py` when left
   out). Code passed as the script, a path the host would refuse, and a path that is no regular file
   of the game are refused before anything runs, in words that say to write the file first.
+- It finds Blender on a Mac in Applications, and on Windows in Program Files (`Blender Foundation/
+  Blender */`), beside the program `.blend` files open with, in its Microsoft Store package, Steam
+  or Scoop, or wherever the person chose `blender.exe` (the `program` setting, Choose Blender… on
+  its card). It pins Blender's Mac `.dmg` and Windows x64 and arm64 zips. On a Windows PC with no
+  OpenGL 4.3 driver Workbench crashes Blender, so the wrapper checks with a child Blender first and
+  renders with Cycles on the CPU instead.
 - Run Blender through the tool: in a worker's sandbox Blender started from a shell cannot reach the
   GPU (Metal) and crashes while it picks its GPU backend at startup, even with `-b`. The tool's jobs
   run in the native-job sandbox, which allows the GPU.
@@ -3191,6 +3225,20 @@ answers `{started: true}` as the download starts and the installation record say
 since a call's deadline must not cut the download short. An agent cannot choose a binary, download
 URL or installation action: either way the manifest's pinned one is installed.
 
+A candidate (`native-candidates.ts`) is an absolute POSIX path (skipped on Windows), a path under
+`home:`, `studio:`, `storage:` or, on Windows, `programfiles:`, `programfilesx86:` and
+`localappdata:`; a path beside the program Windows opens a file type with (`opens:.blend/…`, from
+the registry's open command); a path inside this user's Microsoft Store package whose name starts so
+(`package:<name>/…`, from its `PackageRootFolder`); or `setting:<key>`, the absolute path the person
+chose in one of the plugin's declared string settings. One segment may hold one `*` (`Blender *`),
+every match tried newest name first. A runtime pins one download (`install`, read as macOS Apple
+Silicon) or one per platform (`installs`, each with its `platform`: `darwin-arm64`, `win32-x64`,
+`win32-arm64`; at most four, one per platform) as a `dmg`, `tar.gz` or `zip`; Windows unpacks with
+its own `tar.exe`. `runtime.detect` answers the pin for this computer as `download` (none where the
+manifest pins none), and an install there is refused in words that say to install it yourself. A version
+probe may take 30 s, and the first one after an install 2 minutes: antivirus scans a program's first
+start (Blender's took 15.8 s on a Windows VM with Defender, then 0.2 s).
+
 `nativeJobs` declares fixed argument arrays with package/input/output/value bindings, validated
 value patterns, input/output names, deadline, byte limits and optional GPU access. `native.run`
 stages only declared project input files; the child receives no full-project read grant.
@@ -3222,6 +3270,13 @@ each opened without following links and checked by device and inode (`copyDeclar
 link, a hard-linked file or a file swapped during delivery is refused. A pinned `.dmg` runtime is
 copied with its relative links kept (`copyRuntimeTree`; a link out of the runtime is refused) and
 probed after the image is detached.
+On Windows a managed job runs in the process sandbox like every other agent process
+(`runSandboxedNativeProcess`: srt-win as the sandbox user, through Git Bash), with no network. Its
+staged inputs, outputs, scratch and the plugin's package files live in the profile's `native-work`
+folder, writable from the sandbox's start; pinned runtimes unpack into `native-runtimes`, readable
+from the start, so an install never waits for a regrant. A runtime found elsewhere in the person's
+profile is granted for reading when detected; one under Program Files or a Store package is readable
+as it is. Output goes to log files whose tails are kept, and `gpu` grants nothing more.
 A runtime's version is `x.y.z` or `x.y` (read as `x.y.0`). An enabled plugin's runtime also starts a
 bridge game whose `studio.json` play names it as its `engine` (docs/play-protocol.md): the studio
 detects it as above and runs it long-lived in the same profile with the GPU, its stdio open.

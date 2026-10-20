@@ -11,6 +11,7 @@ import { Pending } from "../ui/Pending.tsx";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip.tsx";
 import { freedWords, freeSpaceWords, freeUpWords, problemWords, STORAGE_KIND_WORDS, STORAGE_WORDS } from "../words.ts";
 import { FreeSpaceSheet } from "./FreeSpaceSheet.tsx";
+import { InstalledGamesSection } from "./InstalledGamesSection.tsx";
 
 /** The one button: how much it frees, with what goes and what stays in its tooltip. */
 function FreeUpButton({
@@ -107,6 +108,7 @@ export function StorageSection(): JSX.Element {
         )}
       </section>
       {space && <StorageKinds space={space} />}
+      <InstalledGamesSection />
       {notice && (
         <p role="status" className="text-ink-2">
           {notice}

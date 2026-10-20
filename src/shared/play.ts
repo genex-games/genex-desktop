@@ -6,6 +6,7 @@
 import type { LibraryKind } from "./asset-library.ts";
 
 import type { PlayCuration } from "./play-manage.ts";
+import type { PlayBarNative, PlayNative } from "./play-native.ts";
 import type { PlayPurchaseSheet } from "./play-purchase.ts";
 
 /** Where Play talks to genex.games: the API main calls and the website the app links to. */
@@ -129,6 +130,20 @@ export interface PlayGame {
   assetKind: LibraryKind | null;
   /** What the card menu reads (mobile flag, tags, remixing); a search's card carries none, so it has no menu. */
   curation?: PlayCuration;
+  /** Its native builds, once the API names any: absent for a web game, as every game was before. */
+  native?: PlayNative;
+}
+
+/** A game's own page (`studio:play.game`): its card with what its page adds. */
+export interface PlayGameDetail extends PlayGame {
+  likes: number;
+  /** The signed-in account likes it. */
+  liked: boolean;
+  comments: number;
+  /** Up to four screenshots, https images on Genex's hosts. */
+  shots: string[];
+  /** When it last changed, ISO 8601, or null when the API does not say. */
+  updatedAt: string | null;
 }
 
 /** One page of a tab. */
@@ -201,6 +216,8 @@ export const PlayControl = {
   MicDevices: "mic-devices",
   /** The maker's name: the viewer closes and the app shows their profile. */
   Maker: "maker",
+  /** The game's native app: install it, or play it in its own window (the viewer gives way). */
+  NativeApp: "native-app",
 } as const;
 export type PlayControl = (typeof PlayControl)[keyof typeof PlayControl];
 
@@ -280,6 +297,8 @@ export interface PlayBarState {
   signedIn: boolean | null;
   /** A remix is being made: Remix waits for it. */
   remixing: boolean;
+  /** The game's native app for this computer, beside Like; null when it has none. */
+  nativeApp: PlayBarNative | null;
   /** The game asked to be paid: Studio's purchase sheet covers it. Null with none open. */
   purchase: PlayPurchaseSheet | null;
 }

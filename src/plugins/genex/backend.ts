@@ -2,6 +2,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { GenexTools } from "./adapter.ts";
 import { COVER_CLIP } from "./clip.ts";
+import { nativeUploads } from "./native-publish.ts";
 import { type CoverCamera, CoverOperation, COVER_STILL, MESSAGE as COVER_MESSAGE } from "./cover.ts";
 import { SessionCredentials } from "../../substrate/session-credentials.ts";
 import {
@@ -277,9 +278,18 @@ const ACTIONS: Record<string, Action> = {
   [GenexAction.PublishDraft]: withProject((genex, project, _args, service, camera) =>
     genex.publishDraft(project, () => service(PluginService.ExportStage, {}), camera),
   ),
-  [GenexAction.PublishGallery]: withProject((genex, project, args, service, camera) =>
-    genex.publishGallery(project, () => service(PluginService.ExportStage, {}), args.title, camera),
-  ),
+  [GenexAction.PublishGallery]: async (genex, args, ctx, service, invokedAt) => {
+    if (!ctx.project) throw new Error(MESSAGE.OpenProject);
+    // The dialog names the game's apps by their place in its folder; only real builds inside it go.
+    const apps = ctx.directory ? await nativeUploads(ctx.directory, args.native) : [];
+    const exportStage = () => service(PluginService.ExportStage, {});
+    return genex.publishGallery(ctx.project, exportStage, args.title, coverCamera(ctx, service, invokedAt), apps);
+  },
+  [GenexAction.PublishApps]: async (genex, args, ctx) => {
+    if (!ctx.project) throw new Error(MESSAGE.OpenProject);
+    const apps = ctx.directory ? await nativeUploads(ctx.directory, args.native) : [];
+    return genex.publishAppsOnly(ctx.project, apps, args.title);
+  },
   [GenexAction.PublishAllowUpload]: withProject((genex, project, args) =>
     genex.publishAllowNewUpload(project, String(args.jobId ?? "")),
   ),

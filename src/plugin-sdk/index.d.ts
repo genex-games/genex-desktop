@@ -21,17 +21,24 @@ export interface PluginNativeRuntime {
   label: string;
   candidates: string[];
   version: { args: string[]; pattern: string; minimum: string };
-  install?: {
-    action: string;
-    url: string;
-    sha256: string;
-    bytes: number;
-    unpackedBytes: number;
-    format: "dmg" | "tar.gz";
-    entry: string;
-    executable: string;
-    notices: string[];
-  };
+  /** The pinned download, for a Mac with Apple silicon unless it names another `platform`. */
+  install?: PluginRuntimePin;
+  /** Pinned downloads for other computers, one per `platform`. */
+  installs?: PluginRuntimePin[];
+}
+/** One pinned runtime download behind a confirmed setup action, for one kind of computer. */
+export interface PluginRuntimePin {
+  action: string;
+  url: string;
+  sha256: string;
+  bytes: number;
+  unpackedBytes: number;
+  format: "dmg" | "tar.gz" | "zip";
+  entry: string;
+  executable: string;
+  notices: string[];
+  /** The computer this download runs on; left out, a Mac with Apple silicon. */
+  platform?: "darwin-arm64" | "win32-x64" | "win32-arm64";
 }
 export type PluginNativeArg = string | { source: "package" | "input" | "output" | "value"; name: string };
 export interface PluginNativeJob {
@@ -82,6 +89,8 @@ export interface PluginNativeStatus {
   path?: string;
   version?: string;
   detail: string;
+  /** The pinned download for this computer, when the runtime has one: its setup action and size. */
+  download?: { action: string; url: string; bytes: number };
 }
 export interface PluginRuntimeInstall {
   runtime: string;

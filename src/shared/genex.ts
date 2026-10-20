@@ -24,6 +24,8 @@ export const GenexAction = {
   PublishStatus: "publish-status",
   PublishDraft: "publish-draft",
   PublishGallery: "publish-gallery",
+  /** Publish a game that has only apps, no web build: send them and list the game (`genex native publish --gallery`). */
+  PublishApps: "publish-apps",
   PublishAllowUpload: "publish-allow-upload",
   PublishOpen: "publish-open",
   PublishBadge: "publish-badge",
@@ -48,6 +50,7 @@ export const GENEX_ACCOUNT_ACTIONS: readonly GenexAction[] = [
   GenexAction.PublishStatus,
   GenexAction.PublishDraft,
   GenexAction.PublishGallery,
+  GenexAction.PublishApps,
   GenexAction.PublishAllowUpload,
   GenexAction.PublishOpen,
   GenexAction.PublishBadge,
@@ -582,4 +585,52 @@ export interface GenexPublishState {
    * Absent from a Genex plugin older than covers.
    */
   cover?: GenexCoverRecord;
+  /**
+   * The game's Mac and Windows apps as its last publish sent them, answered beside the record like
+   * the cover. Absent from a Genex plugin older than native builds.
+   */
+  native?: GenexNativeRecord;
+}
+
+/** One app a publish sent: live for desktop players under `version`. */
+export interface GenexNativeSent {
+  platform: string;
+  arch: string;
+  version: string;
+  sizeBytes: number;
+  publishedAt: string;
+}
+
+/** One app a publish could not send, and Genex's or the CLI's words for why. */
+export interface GenexNativeFailure {
+  platform: string;
+  arch: string;
+  error: string;
+}
+
+/** How Genex answered the listing of a game that has only apps. Wire values: never rename one. */
+export const GenexListingState = { Published: "published", Held: "held", Refused: "refused" } as const;
+export type GenexListingState = (typeof GenexListingState)[keyof typeof GenexListingState];
+
+/** Genex's answer to listing a game that has only apps: listed, held for review, or refused, and why. */
+export interface GenexNativeListing {
+  state: GenexListingState;
+  detail: string | null;
+}
+
+/**
+ * A publish's apps (`genex native publish`): they go after the web build is public, one at a time,
+ * and an app that fails never fails the publish. `supported` is false while Studio's pinned CLI is
+ * older than native builds: the dialog then says they are coming soon and nothing is sent.
+ */
+export interface GenexNativeRecord {
+  supported: boolean;
+  /** Apps are being sent now. */
+  sending: boolean;
+  /** The publish the record belongs to; absent before any. */
+  jobId?: string;
+  sent: GenexNativeSent[];
+  failed: GenexNativeFailure[];
+  /** A game with only apps is listed with its first app that goes: Genex's answer. */
+  listing?: GenexNativeListing;
 }

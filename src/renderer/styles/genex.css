@@ -1150,6 +1150,104 @@ button.genex-publish-banner-name:hover {
   text-decoration-color: color-mix(in oklab, currentColor 40%, transparent);
   text-underline-offset: 3px;
 }
+/* The platforms a game with an app is built for: one framed list, a hairline between rows. */
+.genex-publish-platforms {
+  display: grid;
+  gap: 12px;
+}
+.genex-publish-platforms > ul {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border-radius: 12px;
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+.genex-publish-platform {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 56px;
+  padding: 10px 10px 10px 14px;
+}
+.genex-publish-platform + .genex-publish-platform {
+  box-shadow: inset 0 1px 0 var(--line);
+}
+.genex-publish-platform > svg {
+  flex: none;
+  color: color-mix(in oklab, var(--accent) 55%, var(--ink));
+}
+/* A platform not made yet is drawn quieter than the ones that are. */
+.genex-publish-platform[data-state="missing"] > svg,
+.genex-publish-platform[data-state="missing"] .genex-publish-platform-text > span:first-child {
+  color: var(--ink-3);
+}
+.genex-publish-platform-text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  font-size: 14px;
+  line-height: 20px;
+}
+.genex-publish-platform-detail {
+  overflow: hidden;
+  color: var(--ink-3);
+  font-size: 12.5px;
+  line-height: 18px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.genex-publish-platform[data-state="stale"] .genex-publish-platform-detail {
+  color: color-mix(in oklab, var(--orange) 70%, var(--ink-2));
+}
+.genex-publish-platform-size {
+  flex: none;
+  color: var(--ink-2);
+  font: 12.5px / 18px var(--font-family-mono);
+  font-variant-numeric: tabular-nums;
+}
+.genex-publish-platform-note {
+  flex: none;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--hover);
+  color: var(--ink-3);
+  font: 11.5px / 18px var(--font-family-mono);
+}
+.genex-publish-platform-make {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding-inline: 12px 10px;
+  border-radius: 9px;
+  background: var(--hover);
+  color: var(--ink);
+  font: 12.5px / 1 var(--font-family-mono);
+}
+.genex-publish-platform-make:hover {
+  background: var(--hover-2);
+}
+/* The words of an app that is on Genex, and of one that could not be sent. */
+.genex-publish-platform-note[data-end="sent"] {
+  color: color-mix(in oklab, var(--green) 70%, var(--ink-2));
+}
+.genex-publish-platform-note[data-end="failed"] {
+  color: color-mix(in oklab, var(--orange) 70%, var(--ink-2));
+}
+.genex-publish-platform-failure {
+  color: color-mix(in oklab, var(--orange) 70%, var(--ink-2));
+  font-size: 13px;
+  line-height: 19px;
+  overflow-wrap: anywhere;
+}
+.genex-publish-reach {
+  color: var(--ink-3);
+  font-size: 13px;
+  line-height: 19px;
+}
 /* The busy button: the step at work, then its clock. */
 .genex-publish-clock {
   margin-inline-start: 6px;

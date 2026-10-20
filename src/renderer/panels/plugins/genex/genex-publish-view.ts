@@ -413,9 +413,10 @@ export function stripEntries(
   project: string | null,
   facts: readonly FactRef[],
   holds?: FolderHolds,
+  apps = false,
 ): PluginToolbarEntry[] {
   const entries = toolbarEntries(plugins, project, { facts, holds });
-  return publishable(facts, holds) ? entries : entries.filter((entry) => !isGenexPublish(entry));
+  return publishable(facts, holds) || apps ? entries : entries.filter((entry) => !isGenexPublish(entry));
 }
 
 /**
@@ -427,9 +428,15 @@ export function studioPublishButton(
   project: string | null,
   facts: readonly FactRef[],
   holds?: FolderHolds,
+  apps = false,
 ): boolean {
-  return Boolean(project) && publishable(facts, holds) && !toolbarEntries(plugins, project).some(isGenexPublish);
+  const offered = publishable(facts, holds) || apps;
+  return Boolean(project) && offered && !toolbarEntries(plugins, project).some(isGenexPublish);
 }
+
+/** Whether Publish puts the game online as a web game (else, at most, as its apps). */
+export const publishesWeb = (facts: readonly FactRef[], holds: FolderHolds | undefined): boolean =>
+  publishable(facts, holds);
 
 /**
  * Answers that leave nothing for a publish to do about a frame: Genex took it, already had it, or

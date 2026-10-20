@@ -51,8 +51,10 @@ export function usePublishRecord(plugin: PluginInfo, project: string | null) {
       setReadError(words(e));
     }
   }, [id, project]);
-  // A Publish press shows its first steps (preparing the copy) while the press itself still runs.
-  const busy = (state ? publishView(state).running : false) || pressing === Pressing.Publish;
+  // A Publish press shows its first steps (preparing the copy) while the press itself still runs,
+  // and the game's apps going behind its web build are followed as closely as the build.
+  const sendingApps = state?.native?.sending === true;
+  const busy = (state ? publishView(state).running : false) || sendingApps || pressing === Pressing.Publish;
   useEffect(() => {
     void refresh();
     const timer = window.setInterval(() => void refresh(), busy ? RUNNING_POLL_MS : IDLE_POLL_MS);
@@ -93,6 +95,9 @@ export function usePublishRecord(plugin: PluginInfo, project: string | null) {
     /** Publish under `title`: the press is the consent to exactly the listed files. */
     publish: (title: string): Promise<void> =>
       run(Pressing.Publish, async () => window.studio.genexPublish(game, await currentFiles(), title)),
+    /** Publish a game that has only apps under `title`: the press is the consent to the apps its rows name. */
+    publishApps: (title: string): Promise<void> =>
+      run(Pressing.Publish, () => window.studio.genexPublishApps(game, title)),
     /**
      * Publish again while Studio cannot tell whether the last upload reached Genex: settle that
      * upload (`again` names it), then publish under `title` as Publish does.

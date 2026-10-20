@@ -137,7 +137,9 @@ const MESSAGE = {
   UnityGuidance:
     "Files are relative to the game folder, beside its Unity project. Inspect these renders first, then bring model.glb into the project: Unity reads .glb only through the glTFast package (com.unity.cloud.gltfast), so add it with the editor's package_add when the project lacks it, then call import_asset with the delivered file as source (a path relative to the Unity project) and a path under Assets/. Blender metres are Unity metres and +Z up becomes +Y up; model with the pivot at the base and check which way it faces in the scene. Look at it with capture_game_view from the player's view: a delivered file alone is not integration proof.",
   NotReady: (detail: string) =>
-    `Local Blender can't run on this Mac: ${detail} Tell the user in your next reply, since they may want Blender used: Genex can download the Blender it pins (about 350 MB) into its own storage and leaves their Blender as it is. Call blender__install to ask them (they confirm it on a card, and the download takes a few minutes), or they press Download Blender in Settings, Plugins, Local Blender. Until blender__status reads ready, don't make these models another way without saying so.`,
+    `Local Blender can't run on this computer: ${detail} Tell the user in your next reply, since they may want Blender used: Genex can download the Blender it pins (350 to 400 MB) into its own storage and leaves their Blender as it is. Call blender__install to ask them (they confirm it on a card, and the download takes a few minutes), or they press Download Blender in Settings, Plugins, Local Blender. Until blender__status reads ready, don't make these models another way without saying so.`,
+  NoDownload: (detail: string) =>
+    `Local Blender can't run on this computer: ${detail} Tell the user in your next reply, since they may want Blender used: Genex has no Blender download for this computer, so they install Blender 4.2 or newer themselves (or choose their blender program in Settings, Plugins, Local Blender). Until blender__status reads ready, don't make these models another way without saying so.`,
   InstallStarted:
     "The download of the Blender Genex pins has started in Genex's storage; the user's own Blender stays as it is. Call blender__status until its runtime reads ready (a few minutes), then model.",
   UnrealJoin: (meshes: number) =>
@@ -352,10 +354,12 @@ function deliveryGuidance(engine: EngineKind, resPath: string | null): string {
   return engine === GameEngine.Unreal ? MESSAGE.UnrealGuidance : MESSAGE.EngineGuidance;
 }
 
-/** Blender's state on this Mac, with what to tell the user when it can't run. */
+/** Blender's state on this computer, with what to tell the user when it can't run. */
 async function runtimeStatus(ctx: PluginContext) {
   const runtime = await ctx.host(HostService.RuntimeDetect, BLENDER);
-  return runtime?.state === RUNTIME_READY ? { runtime } : { runtime, next: MESSAGE.NotReady(runtime?.detail ?? "") };
+  if (runtime?.state === RUNTIME_READY) return { runtime };
+  const detail = runtime?.detail ?? "";
+  return { runtime, next: runtime?.download ? MESSAGE.NotReady(detail) : MESSAGE.NoDownload(detail) };
 }
 
 /** A failed job's error, or why Blender can't run here and what to tell the user, when that is the reason. */

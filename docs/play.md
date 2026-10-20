@@ -154,6 +154,60 @@ What Play sends is in [PRIVACY](../PRIVACY.md#play).
   game takes the row. A failure is a toast, and Play comes back for a person still with it. A remix
   keeps its scripts off until a build fails and the person trusts it: the stage's Run setup scripts.
 
+## Native builds
+
+A game made in Unity, Godot or Unreal can carry a Mac app or a Windows program besides (or instead
+of) its web build. The app's copy of the contract is `src/shared/play-native.ts`; genex.games does
+not serve it yet, and every field is optional, so a server that sends none of it leaves Play as it
+is.
+
+- A gallery item (feed, search catalog, a profile's games, `/api/gallery/world/<slug>`) may add
+  `builds` (a list of rows), `web` (false when there is no web build; absent means there is one)
+  and `engine` (an engine id: `unity`, `godot`, `unreal`). The world item may add `shots` (https
+  images on Genex's image hosts, four at most) and `updatedAt`. Multiplayer stays `multiplayer`.
+- A build row: `platform` (`mac`, `windows`, `linux`), `arch` (`arm64`, `x64`, `universal` for a
+  Mac app), `version` (the author's build id), `sizeBytes` (the archive), `installedBytes`
+  (unpacked), `sha256` (hex of the archive), `url`, `entry` (what runs, from the archive's root: a
+  `.app` bundle at the root for a Mac, an `.exe` for Windows), optional `minOs` (`13.0`,
+  `10.0.19041`) and `publishedAt`. The archive is a zip; its `url` is https on a build host the app
+  trusts (`NATIVE_BUILD_HOSTS`: `cdn.genex.technology` by exact name, so a game's own
+  `<slug>.genex.technology` site never hands out an app), with no port or credentials, never
+  redirecting elsewhere, and answers `Range`. A row with anything off is dropped, the rest kept.
+- The build a computer installs is its platform's for its own processor, else a universal Mac app,
+  else, on Apple silicon with Rosetta installed, an Intel-only one, where its `minOs` is met
+  (`buildFor`). Nothing is launched on Windows until its sandbox can show a program's window. A game with no web
+  build and no build for this computer is left out of the tabs and search; its maker's profile
+  still lists it.
+- Installing (`main/play/native-installs.ts`, `studio:play.install`, progress as
+  `UiEvent.PlayInstalls`): one install at a time, the rest queued; a free-space check (download,
+  unpacked game and 1 GiB); the archive streamed to `installed-games/.downloads/` (resumed by
+  range, given up after a minute without a byte), its sha256 checked, its zip directory read before
+  anything is unpacked (`native-zip.ts`: no entry or link outside it, nothing written through a
+  link, no more than the stated size), unpacked with `ditto --noqtn`, every link resolved inside it,
+  the app's signature (ad hoc is enough) and processor checked, then its bundle id set to
+  `games.genex.play.<slug>` and signed again ad hoc, so it can only write its own preferences. Each
+  game keeps `installed-games/<slug>/<version>/` and `saves/`; `index.json` lists them. Removing a
+  game (refused while it runs) keeps its saves; an update keeps the running version until it quits.
+- Playing (`main/play/native-launch.ts`): one copy per game, in the game sandbox (`spawnNativeGame`:
+  the app read-only, `saves/` its HOME and `CFFIXED_USER_HOME`, its own preference domain, its
+  `NSIRD_` atomic-save folder, window, GPU and sound, no network). Genex finds its window by pid and
+  brings it forward (macOS does not); the page's Quit asks it to quit, then ends its process tree;
+  quitting Genex ends every game, and the next start ends a leftover only while it is the same
+  process. A web game's Mac app is offered in the viewer's bar (install, progress, play: the viewer
+  gives way), and opening a game whose app runs brings the app forward.
+- Notices: an install finished or failed, and a newer build of an installed game (checked at start
+  and every six hours, once per version), are written to the log (`play_install_finished`,
+  `play_install_failed`, `play_update_available`); the feed shows them as Play rows that open the
+  game's page. Settings › Storage lists installed games with Remove; they are not a "Free up" kind.
+- Fixtures: every fixture launch has native games (Dust Runners, Iron Tide, Frigate, Puck Rush,
+  Harbor Lights, and SKATE's Mac app) on `builds.genex.invalid`, which never resolves. The
+  `native-games` fixture builds their Mac apps on this Mac (Xcode, `dev/fixture-native-app.ts`),
+  serves the archives from the profile at a few MB a second, and starts with Frigate installed,
+  Puck Rush one version behind, and a Mac build in the library game's `Builds/Mac`, so its Publish
+  dialog lists platforms ([Genex publish](plugins.md#first-party-privileges)).
+- `studio:play.game` reads a game's own page (`StudioApi.playGame`): its card, likes, comments,
+  description, screenshots and when it changed.
+
 ## Where to work
 
 `src/renderer/play/`, `src/renderer/state/play.ts` and `people.ts`, `src/renderer/avatars/`,

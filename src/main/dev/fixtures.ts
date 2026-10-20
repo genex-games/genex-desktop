@@ -22,6 +22,7 @@ import { activateLiveChat, activatePlanReviews, seedChatFeedback, seedChatHistor
 import { hasLandedLoopRun, seedFirstLoopRun, seedLandedLoopRun } from "./fixture-history.ts";
 import {
   appendSuggestion,
+  FIXTURE_GAME,
   FIXTURE_MODEL,
   FIXTURE_VERSION,
   FixtureName,
@@ -49,6 +50,7 @@ export { FIRST_LAUNCH_STATUS, fixtureEngines } from "./fixture-engines.ts";
 export { installOlderPlugins } from "./fixture-plugin-updates.ts";
 export {
   DevProviders,
+  FIXTURE_GAME,
   FIXTURE_AGENTS_FAILURE,
   FIXTURE_NAMES,
   FIXTURE_SANDBOX_PROBLEM,
@@ -101,8 +103,8 @@ export async function prepareFixture(core: StudioCore, id: string): Promise<Prep
   if (id === FixtureName.FirstLaunch)
     return { project: "", threadId: core.mainThread, fixture: id, version: FIXTURE_VERSION };
   // Reuse never resets a project's files or append-only history.
-  const found = (await core.games.list()).find((p) => p.name === "fixture-game");
-  const project = found ?? (await core.games.scaffold("fixture-game", { title: "Fixture Game" }));
+  const found = (await core.games.list()).find((p) => p.name === FIXTURE_GAME);
+  const project = found ?? (await core.games.scaffold(FIXTURE_GAME, { title: "Fixture Game" }));
   const game: FixtureGame = {
     core,
     id,

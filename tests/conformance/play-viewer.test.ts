@@ -24,6 +24,7 @@ import { BAR_FADE_MS, BAR_LINGER_MS, BAR_SHOWN_MS } from "../../src/main/play/ba
 import { closePage, closeWithWindow, dropGameView } from "../../src/main/play/view-drop.ts";
 import { BAR_EDGE_PX, NOTE_MS, SHOW_GAME_AFTER_MS } from "../../src/main/play/viewer.ts";
 import type { PlayComment } from "../../src/shared/play-comments.ts";
+import { NativeAppOffer, NativePlatform, type PlayBarNative } from "../../src/shared/play-native.ts";
 import { PLAY_BAR_HEIGHT, PlayControl, PlayNote, PlayViewerPhase } from "../../src/shared/play.ts";
 import { esc, MINTED, NOT_MINTED, rig, SIGNED_OUT, saved, settle, WINDOW, WORLD } from "../helpers/play-viewer-rig.ts";
 
@@ -52,6 +53,7 @@ describe("Play viewer", () => {
         comments: null,
         signedIn: null,
         remixing: false,
+        nativeApp: null,
         purchase: null,
       },
     });
@@ -70,6 +72,7 @@ describe("Play viewer", () => {
       comments: 2,
       signedIn: true,
       remixing: false,
+      nativeApp: null,
       purchase: null,
     });
     assert.equal(viewer.showing(), "lost-cathedral");
@@ -849,5 +852,78 @@ describe("Play addresses", () => {
     gate("https://a.example/3");
     gate("http://a.example/4");
     assert.deepEqual(opened, ["https://a.example/1", "https://a.example/3"]);
+  });
+});
+
+describe("Play viewer: a web game's native app", () => {
+  const offer = (kind: PlayBarNative["offer"], percent = 0): PlayBarNative => ({
+    offer: kind,
+    platform: NativePlatform.Mac,
+    bytes: 1_400,
+    percent,
+  });
+
+  /** A viewer whose game has a native app offered as `current` says, every press recorded. */
+  function nativeRig(start: PlayBarNative | null) {
+    let current = start;
+    const presses: string[] = [];
+    const made = rig({
+      nativeApp: {
+        offer: async () => current,
+        press: async (slug) => {
+          presses.push(slug);
+        },
+      },
+    });
+    return { ...made, presses, set: (next: PlayBarNative | null) => (current = next) };
+  }
+
+  it("shows the app's pill once it is read, and follows an install as it goes", async () => {
+    const { viewer, bar, set } = nativeRig(offer(NativeAppOffer.Install));
+    viewer.open("skate", "SKATE");
+    await settle();
+    assert.deepEqual(bar()?.nativeApp, offer(NativeAppOffer.Install));
+    set(offer(NativeAppOffer.Installing, 38));
+    viewer.nativeChanged();
+    await settle();
+    assert.deepEqual(bar()?.nativeApp, offer(NativeAppOffer.Installing, 38));
+  });
+
+  it("installs from the pill while the web game keeps playing, and does nothing while it installs", async () => {
+    const { viewer, presses, events, set } = nativeRig(offer(NativeAppOffer.Install));
+    viewer.open("skate", "SKATE");
+    await settle();
+    viewer.control(PlayControl.NativeApp);
+    await settle();
+    assert.deepEqual(presses, ["skate"]);
+    assert.ok(!events.some((event) => event.phase === PlayViewerPhase.Closed), "the web game stays");
+    set(offer(NativeAppOffer.Installing, 10));
+    viewer.nativeChanged();
+    await settle();
+    viewer.control(PlayControl.NativeApp);
+    await settle();
+    assert.deepEqual(presses, ["skate"]);
+  });
+
+  it("plays the installed app in its own window: the viewer gives way first", async () => {
+    const { viewer, presses, events } = nativeRig(offer(NativeAppOffer.Ready));
+    viewer.open("skate", "SKATE");
+    await settle();
+    viewer.control(PlayControl.NativeApp);
+    await settle();
+    assert.equal(events.at(-1)?.phase, PlayViewerPhase.Closed);
+    assert.deepEqual(presses, ["skate"]);
+  });
+
+  it("offers no pill for a game with no app here, nor where Genex plays no native game", async () => {
+    const none = nativeRig(null);
+    none.viewer.open("lost-cathedral", "Lost Cathedral");
+    await settle();
+    assert.equal(none.bar()?.nativeApp, null);
+    const plain = rig();
+    plain.viewer.open("lost-cathedral", "Lost Cathedral");
+    await settle();
+    plain.viewer.control(PlayControl.NativeApp);
+    assert.equal(plain.bar()?.nativeApp, null);
   });
 });

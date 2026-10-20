@@ -43,6 +43,8 @@ export interface PlayRecentEntry {
   slug: string;
   title: string;
   coverUrl: string | null;
+  /** A native game with no web build: it opens its page, not the viewer. */
+  page?: true;
 }
 
 /** `game` first in Recent, once, with the list kept to {@link RECENT_MAX}. */
@@ -58,7 +60,8 @@ const isRecentEntry = (value: unknown): value is PlayRecentEntry => {
     isPlaySlug(entry.slug) &&
     typeof entry.title === "string" &&
     entry.title.length > 0 &&
-    (cover === null || typeof cover === "string")
+    (cover === null || typeof cover === "string") &&
+    (entry.page === undefined || entry.page === true)
   );
 };
 

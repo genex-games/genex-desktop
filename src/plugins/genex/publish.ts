@@ -54,6 +54,8 @@ export const MESSAGE = {
     "Publishing needs git and git-lfs on this Mac (brew install git-lfs). Studio will not let the Genex CLI install software.",
   DraftFailedTest:
     "The new build did not pass its test on the draft page, so it was not made public. Players still get the previous version.",
+  NoApps: "This game has no Mac or Windows app ready to publish.",
+  ListingRefused: "Genex did not list the game in the gallery.",
 } as const;
 
 /** Genex's own record of a hosted game, read by slug. `missing`: there is no hosted project. */

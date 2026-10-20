@@ -40,7 +40,7 @@ import { type MicGate, micGate, micGateFor } from "./mic.ts";
 import { closePage, closeWithWindow, dropGameView } from "./view-drop.ts";
 import { isPurchaseWindow, wirePurchaseCapture } from "./purchase-window.ts";
 import type { PlayMicStore } from "./mic-store.ts";
-import { playViewer, type PlayViewer } from "./viewer.ts";
+import { playViewer, type PlayViewer, type PlayViewerDeps } from "./viewer.ts";
 
 /** Each studio window's Play views, for the development control (`dev/runtime.ts`). */
 const viewsOf = new WeakMap<BrowserWindow, PlayViews>();
@@ -104,6 +104,8 @@ export interface PlayViewDeps {
   barPreload: string;
   /** The game's comments on genex.games. */
   comments: PlayComments;
+  /** A web game's native app on this computer, for the bar's pill; absent where Genex plays no native game. */
+  nativeApp?: PlayViewerDeps["nativeApp"];
   /** genex.games' coin, for a game's purchase sheet. */
   coin: ViewerCoin;
   /** The app's Genex account: the purchase sheet's Sign in. */
@@ -468,6 +470,7 @@ export function wirePlayViewer(deps: PlayViewDeps): PlayViewer {
     // The game's view loses the keyboard to the bar, and with it any mouse lock it held.
     bar,
     comments: deps.comments,
+    ...(deps.nativeApp ? { nativeApp: deps.nativeApp } : {}),
     coin: deps.coin,
     account: deps.account,
     openPage: deps.openPage,

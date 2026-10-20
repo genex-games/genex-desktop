@@ -105,6 +105,8 @@ export type RigOverrides = Partial<PlayViewerDeps["gallery"]> & {
   barFades?: boolean;
   barFocused?: () => boolean;
   coin?: Partial<ViewerCoin>;
+  /** A web game's native app on this computer, for the bar's pill. */
+  nativeApp?: PlayViewerDeps["nativeApp"];
 };
 
 /**
@@ -209,6 +211,7 @@ export function rig(overrides: RigOverrides = {}) {
       openSettings: () => {},
       store: { on: () => false, setOn: () => {}, device: () => null, setDevice: () => {} },
     },
+    ...(overrides.nativeApp ? { nativeApp: overrides.nativeApp } : {}),
   };
   const viewer = playViewer(deps);
   /** The header as last drawn. */

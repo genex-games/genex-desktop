@@ -67,7 +67,15 @@ import {
   type LibraryStore,
 } from "./library.ts";
 import { createPluginsStore, PLUGIN_INDEX_POLL_MS, type PluginsStore } from "./plugins.ts";
-import { createPlayStore, type PlayStore, remixClosed, remixProgressed, viewerReported } from "./play.ts";
+import {
+  createPlayStore,
+  installsReported,
+  type PlayStore,
+  remixClosed,
+  remixProgressed,
+  sessionsReported,
+  viewerReported,
+} from "./play.ts";
 import { createPeopleStore, type PeopleStore } from "./people.ts";
 import { createSharingStore, type SharingStore } from "./sharing.ts";
 import {
@@ -384,6 +392,12 @@ function applyUiEvent(
       break;
     case UiEvent.PlayRemix:
       play.setState((state) => remixProgressed(state, event.payload), true);
+      break;
+    case UiEvent.PlayInstalls:
+      play.setState((state) => installsReported(state, event.payload), true);
+      break;
+    case UiEvent.PlaySessions:
+      play.setState((state) => sessionsReported(state, event.payload), true);
       break;
     case UiEvent.PreviewFrame:
       agentScreens.setState((state) => frameReceived(state, event.payload), true);

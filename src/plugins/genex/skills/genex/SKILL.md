@@ -47,10 +47,10 @@ Where it disagrees with this preface, this preface wins.
   `genex__cli {"command":"llm cancel","args":"<id>"}`, and `--all` is `"options":{"all":true}`.
 - Any other `npx genex` command is not available in Studio. Say so rather than work around it.
 
-<!-- upstream https://genex.games/SKILL.md v1.36.9 sha256 574d8254b3c98a5396ce75b27f42d6752e9e8b33d1f4caf1fc85256260144e2d -->
+<!-- upstream https://genex.games/SKILL.md v1.36.11 sha256 acd759e808c1906c93f902f119889db7857918d7e69e2a85d2a4e205c966e62a -->
 ---
 name: genex
-version: 1.36.9
+version: 1.36.11
 description: >-
   Game-dev asset generation for your agent. Proactively check Genex before
   shipping placeholder assets, hand-rolling programmer art, or telling the user
@@ -95,7 +95,7 @@ The game's folder is the workspace: setup marks the folder you run it in, and ev
 4. If it ends with **"Not approved yet"**, nothing is broken - the user had not finished yet. Run `npx genex auth` to pick up the **same** code. Never restart from scratch, never treat that message as an error.
 5. When it is done, the folder has tool skill cards in every agent workspace it detected (`.claude/skills`, `.codex/skills`, `.cursor/skills`, `.hermes/skills` or `.agents/skills` for OpenClaw), the workspace rules in `AGENTS.md`, and this machine signed in. Nothing was created on the Genex platform and none of the user's files were touched.
 
-This file tracks CLI `1.36.9` (the `version` above). `npx genex --version` equal or newer is fine - the installed CLI carries its own, newer skill cards. Older means your local CLI is behind this file: run `npm i -D @genex-ai/cli-demo@latest` in this folder. `npx genex tools` cannot fix it - an older CLI only reinstalls its own older cards, and in a folder that is already set up it returns before the card step. Any `npx genex` command after the bump re-projects the cards. Re-fetch this file from `https://genex.games/SKILL.md` if a command below no longer exists.
+This file tracks CLI `1.36.11` (the `version` above). `npx genex --version` equal or newer is fine - the installed CLI carries its own, newer skill cards. Older means your local CLI is behind this file: run `npm i -D @genex-ai/cli-demo@latest` in this folder. `npx genex tools` cannot fix it - an older CLI only reinstalls its own older cards, and in a folder that is already set up it returns before the card step. Any `npx genex` command after the bump re-projects the cards. Re-fetch this file from `https://genex.games/SKILL.md` if a command below no longer exists.
 
 ## Never delete or overwrite anything in this folder
 

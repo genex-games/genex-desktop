@@ -111,6 +111,24 @@ describe("subscription accounts", () => {
     );
   });
 
+  it("changes asked at the same time each land, one after another in the order asked", async () => {
+    const { accounts } = await store({ studio: true });
+    const added = await accounts.newAccount();
+    await signIn(added.home);
+    await accounts.remember(added.id, {});
+    // As in Settings: an email lookup keeps its answer while the person forgets that account.
+    await Promise.all([
+      accounts.remember(added.id, { email: "old@example.com" }),
+      accounts.forget(added.id),
+      accounts.remember(AccountId.Studio, { email: "me@example.com" }),
+    ]);
+    assert.deepEqual(
+      (await accounts.list()).map(({ id, email }) => ({ id, email })),
+      [{ id: AccountId.Studio, email: "me@example.com" }],
+    );
+    assert.equal((await accounts.newAccount()).id, added.id, "the forgotten account's id is free again");
+  });
+
   it("refuses ids that are not an account's, and touches nothing for them", async () => {
     const { accounts, root } = await store({ terminal: true });
     const hostile = [

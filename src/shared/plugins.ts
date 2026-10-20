@@ -27,23 +27,55 @@ export const NativeJobState = {
 } as const;
 export type NativeJobState = (typeof NativeJobState)[keyof typeof NativeJobState];
 
+/**
+ * The computers a pinned runtime download is for (`PluginRuntimePin.platform`): operating system and
+ * processor, as Node names them. Published in plugin manifests: never rename a value.
+ */
+export const NativePlatform = {
+  MacArm64: "darwin-arm64",
+  WindowsX64: "win32-x64",
+  WindowsArm64: "win32-arm64",
+} as const;
+export type NativePlatform = (typeof NativePlatform)[keyof typeof NativePlatform];
+
+/** The archive a pinned runtime comes in. Published in plugin manifests: never rename a value. */
+export const RuntimeArchive = { Dmg: "dmg", TarGz: "tar.gz", Zip: "zip" } as const;
+export type RuntimeArchive = (typeof RuntimeArchive)[keyof typeof RuntimeArchive];
+
+/** One pinned runtime download behind a confirmed setup action, for one kind of computer. */
+export interface PluginRuntimePin {
+  action: string;
+  url: string;
+  sha256: string;
+  bytes: number;
+  unpackedBytes: number;
+  format: RuntimeArchive;
+  entry: string;
+  executable: string;
+  notices: string[];
+  /** The computer this download runs on; left out, a Mac with Apple silicon. */
+  platform?: NativePlatform;
+}
+
 /** API 3. Runtime names and launch recipes come from reviewed plugin code, never tool inputs. */
 export interface PluginNativeRuntime {
   id: string;
   label: string;
   candidates: string[];
   version: { args: string[]; pattern: string; minimum: string };
-  install?: {
-    action: string;
-    url: string;
-    sha256: string;
-    bytes: number;
-    unpackedBytes: number;
-    format: "dmg" | "tar.gz";
-    entry: string;
-    executable: string;
-    notices: string[];
-  };
+  /** The pinned download, for a Mac with Apple silicon unless it names another `platform`. */
+  install?: PluginRuntimePin;
+  /** Pinned downloads for other computers, one per `platform`. */
+  installs?: PluginRuntimePin[];
+}
+
+/** The pinned download of `runtime` for `platform` (this computer's by default), if it has one. */
+export function runtimePinFor(
+  runtime: Pick<PluginNativeRuntime, "install" | "installs">,
+  platform: string,
+): PluginRuntimePin | undefined {
+  const pins = [...(runtime.install ? [runtime.install] : []), ...(runtime.installs ?? [])];
+  return pins.find((pin) => (pin.platform ?? NativePlatform.MacArm64) === platform);
 }
 export type PluginNativeArg = string | { source: "package" | "input" | "output" | "value"; name: string };
 export interface PluginNativeJob {
@@ -63,6 +95,8 @@ export interface PluginNativeStatus {
   path?: string;
   version?: string;
   detail: string;
+  /** The pinned download for this computer, when the runtime has one: its setup action and size. */
+  download?: { action: string; url: string; bytes: number };
 }
 export interface PluginRuntimeInstall {
   runtime: string;

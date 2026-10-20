@@ -44,7 +44,7 @@ Its `web/` build plays in Live.
 
 **Roblox Studio** sets up your Studio; **New Roblox game** writes a Baseplate place, **Use in this
 game** links one per game. Unity sets up and opens its project; agents add packages, build and
-play (keys and mouse need Input System).
+play (keys and mouse need Input System). Publish lists Web, Mac and Windows builds.
 
 ## Live's views
 
