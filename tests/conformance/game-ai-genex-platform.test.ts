@@ -52,18 +52,24 @@ function api(routes: Record<string, GalleryAnswer | ((init: Init) => GalleryAnsw
 
 const ok = (body: unknown): GalleryAnswer => ({ status: 200, body });
 
-/** A grant waiting for the person, as genex.games' `grantView` shows it. */
-function grantView(patch: Record<string, unknown> = {}) {
+/** The limit a waiting grant offers, as genex.games freezes it on the grant's terms. */
+const GRANT_LIMIT = { minCredits: 100, maxCredits: 2_000, stepCredits: 50, defaultCredits: 300 };
+
+/**
+ * A grant waiting for the person, as genex.games' `grantView` shows it: `limitCredits` stays 0
+ * until the person confirms, so the limit to offer is the terms' default.
+ */
+function grantView(patch: Record<string, unknown> = {}, limit: Record<string, unknown> = GRANT_LIMIT) {
   return {
     id: "grant_1",
     status: "requires_confirmation",
     funding: null,
     projectId: "proj_crowns",
     quoteId: QUOTE,
-    terms: { billingPolicy: "metered-credits-v1", currency: "credits" },
+    terms: { billingPolicy: "metered-credits-v1", currency: "credits", limit },
     allowedFunding: ["credits", "claude"],
     currency: "credits",
-    limitCredits: 300,
+    limitCredits: 0,
     ...patch,
   };
 }
@@ -341,14 +347,27 @@ describe("genex.games for play-time AI: the desktop confirm (D3)", () => {
       ["stopped", { status: "stopped" }],
       ["coins", { currency: "coins" }],
       ["credits not allowed", { allowedFunding: ["claude"] }],
-      ["no limit", { limitCredits: 0 }],
-      ["a fractional limit", { limitCredits: 2.5 }],
       ["no game", { projectId: null }],
       ["a game id out of shape", { projectId: "../proj" }],
       ["no quote", { quoteId: 7 }],
+      ["no limit on the terms", { terms: { billingPolicy: "metered-credits-v1", currency: "credits" } }],
     ];
     for (const [label, patch] of rows) {
       const a = api({ [`GET ${PlatformRoute.grant("grant_1")}`]: ok(grantView(patch)) });
+      assert.equal(await a.platform.confirmTerms({ kind: GenexConfirmKind.Grant, id: "grant_1" }), null, label);
+    }
+    const limits: Array<[string, Record<string, unknown>]> = [
+      ["a zero default", { ...GRANT_LIMIT, defaultCredits: 0 }],
+      ["a fractional default", { ...GRANT_LIMIT, defaultCredits: 302.5 }],
+      ["a default off the step", { ...GRANT_LIMIT, defaultCredits: 320 }],
+      ["a default below the floor", { ...GRANT_LIMIT, defaultCredits: 50 }],
+      ["a default above the ceiling", { ...GRANT_LIMIT, defaultCredits: 2_050 }],
+      ["a string default", { ...GRANT_LIMIT, defaultCredits: "300" }],
+      ["no step", { ...GRANT_LIMIT, stepCredits: 0 }],
+      ["a floor above the ceiling", { ...GRANT_LIMIT, minCredits: 3_000 }],
+    ];
+    for (const [label, limit] of limits) {
+      const a = api({ [`GET ${PlatformRoute.grant("grant_1")}`]: ok(grantView({}, limit)) });
       assert.equal(await a.platform.confirmTerms({ kind: GenexConfirmKind.Grant, id: "grant_1" }), null, label);
     }
     const missing = api({});

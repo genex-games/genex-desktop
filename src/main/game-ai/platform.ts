@@ -191,6 +191,24 @@ function waitingInCredits(raw: unknown): { game: string } | null {
   return allowed && game ? { game } : null;
 }
 
+/**
+ * The limit a waiting grant offers: its terms' default, on the frozen slider (floor, ceiling, step).
+ * A grant's own `limitCredits` stays 0 until the person confirms, so it is never the offer.
+ */
+function offeredLimit(terms: Record<string, unknown> | null): number | null {
+  const limit = isPlainRecord(terms?.limit) ? terms.limit : null;
+  if (!limit) return null;
+  const { minCredits, maxCredits, stepCredits, defaultCredits } = limit;
+  const bounded =
+    isPositiveCount(minCredits, MAX_CONFIRM_CREDITS) &&
+    isPositiveCount(maxCredits, MAX_CONFIRM_CREDITS) &&
+    isPositiveCount(stepCredits, MAX_CONFIRM_CREDITS) &&
+    isPositiveCount(defaultCredits, MAX_CONFIRM_CREDITS);
+  if (!bounded) return null;
+  const onSlider = minCredits <= defaultCredits && defaultCredits <= maxCredits;
+  return onSlider && (defaultCredits - minCredits) % stepCredits === 0 ? defaultCredits : null;
+}
+
 /** A grant's terms (`grantView`), or null. */
 function readGrantTerms(raw: unknown): ConfirmTerms | null {
   const waiting = waitingInCredits(raw);
@@ -198,8 +216,8 @@ function readGrantTerms(raw: unknown): ConfirmTerms | null {
   const terms = isPlainRecord(raw.terms) ? raw.terms : null;
   const quoteId = textMatching(raw.quoteId, QUOTE_ID_RE);
   const billingPolicy = textMatching(terms?.billingPolicy, POLICY_RE);
-  const maxCredits = raw.limitCredits;
-  if (!quoteId || !billingPolicy || !isPositiveCount(maxCredits, MAX_CONFIRM_CREDITS)) return null;
+  const maxCredits = offeredLimit(terms);
+  if (!quoteId || !billingPolicy || maxCredits === null) return null;
   return { quoteId, billingPolicy, maxCredits, game: waiting.game };
 }
 
