@@ -179,6 +179,16 @@ and srt-win's own cleanup never sees Genex's entries. Every sandboxed process ca
 file until the command deletes it, and PATH folders under the profile whole (pnpm's home without
 its store). A broker outlives an Electron crash.
 
+A confined run (`RunRequest.confine`) is not held to its own folders here: every sandboxed command
+runs as the one `srt-sandbox` user, so a per-run write deny would bind every other running command
+too. An engine plugin's sandbox job (`sandbox.run`, the Unreal plugin's `RunUAT.bat BuildPlugin`)
+asks for its package folder and its scratch only, and the host checks that request by real path,
+but the job can write whatever the session grants (Genex's game folders and linked projects).
+srt-win also refuses a per-command read grant, so such a job reads the engine with the sandbox
+user's own rights: an engine under Program Files is readable to every local user, and one inside
+the person's profile is not, so UAT fails there. Real per-run confinement needs a per-run identity
+from srt-win (for example a restricting SID per exec).
+
 ## CI and curated suite
 
 `windows.yml` and `terminal.yml`. Every PR runs `check.yml`'s Linux `gate` (architecture,

@@ -217,6 +217,7 @@ const MESSAGE = {
   DisconnectRequired: "Explicit disconnect required",
   NativeUnavailable: "Native runtime service unavailable",
   CapabilityDenied: "Plugin service capability denied",
+  SandboxUnavailable: "Sandbox jobs unavailable",
   UnknownTool: "Unknown plugin tool",
   UnknownSkill: (id: string, name: string) => `Plugin ${id} has no skill named ${JSON.stringify(name)}`,
   UnknownJudge: (id: string, judge: string) => `Plugin ${id} has no judge named ${JSON.stringify(judge)}`,
@@ -264,7 +265,7 @@ function capabilityFor(method: string): PluginCapability | undefined {
     return PluginCapability.ProjectWrite;
   if (method.startsWith("jobs.") || method === PluginService.EventsEmit) return PluginCapability.Jobs;
   if (method === PluginService.ExportStage) return PluginCapability.Export;
-  if (ENGINE_SERVICES.has(method)) return PluginCapability.GameEngine;
+  if (ENGINE_SERVICES.has(method) || isSandboxService(method)) return PluginCapability.GameEngine;
   return undefined;
 }
 /**
@@ -290,6 +291,13 @@ const CREDENTIAL_SERVICES = new Set<string>([
   PluginService.CredentialsClear,
 ]);
 const isCredentialService = (method: string) => CREDENTIAL_SERVICES.has(method);
+/** An engine plugin's long jobs in the studio's process sandbox, which the sandbox jobs answer. */
+const SANDBOX_SERVICES = new Set<string>([
+  PluginService.SandboxRun,
+  PluginService.SandboxResult,
+  PluginService.SandboxStop,
+]);
+const isSandboxService = (method: string) => SANDBOX_SERVICES.has(method);
 /** Services the native runtime host answers rather than the plugin services. */
 const isNativeService = (method: string) => method.startsWith("native.") || method.startsWith("runtime.");
 /** An invocation of a user action by one of the given names (never a tool, review or another action). */
@@ -724,6 +732,17 @@ export class PluginRegistry {
   #tail: Promise<unknown> = Promise.resolve();
   readonly root: string;
   readonly seeds: string;
+  /**
+   * The `game-engine` plugins' long jobs in the studio's process sandbox (`sandbox.run`). The host
+   * owns them past the call that started them, and a plugin's end with its backend ends them too.
+   * Absent, those services fail closed.
+   */
+  sandboxJobs:
+    | {
+        call(id: string, method: string, args: unknown, binding: PluginBinding | undefined): Promise<unknown>;
+        stopAll(id?: string): Promise<void>;
+      }
+    | undefined;
   nativeService:
     | ((
         manifest: PluginManifest,
@@ -1419,8 +1438,7 @@ export class PluginRegistry {
     // An update or a hot reload says which skills it touched: their text reaches every later brief.
     const skills = previous && !previous.removed ? pluginSkillChange(previous, p) : undefined;
     p.lastSkillChange = skills;
-    this.#processes.get(id)?.stop();
-    this.#processes.delete(id);
+    this.#stopBackend(id);
     if (previous && identityKey(this.#identity(previous)) !== identityKey(this.#identity(p)))
       await this.#erase(id, previous);
     this.#installed.set(id, p);
@@ -1493,8 +1511,13 @@ export class PluginRegistry {
     if (this.#keepsAccount(p)) return;
     this.#lockAccount(id);
     this.#unwatch(id);
+    this.#stopBackend(id);
+  }
+  /** Stops the plugin's backend and ends its sandbox jobs with their process trees. */
+  #stopBackend(id: string) {
     this.#processes.get(id)?.stop();
     this.#processes.delete(id);
+    void this.sandboxJobs?.stopAll(id).catch(() => {});
   }
   /**
    * A sign-in to the app's account finished: its plugin turns on, unless the person turned it off
@@ -1517,8 +1540,7 @@ export class PluginRegistry {
       this.#unwatch(id);
       this.#pending.delete(id);
       this.#pendingReason.delete(id);
-      this.#processes.get(id)?.stop();
-      this.#processes.delete(id);
+      this.#stopBackend(id);
       await this.#save();
       await this.#mcpSync(id);
       const owned = path.join(this.#packages(), id);
@@ -1848,8 +1870,14 @@ export class PluginRegistry {
       if (!capability || !hasCapability(p, capability)) throw new Error(MESSAGE.CapabilityDenied);
       if (capability === PluginCapability.Credentials && isCredentialService(method))
         return this.#credentialService(id, p, method, args);
-      return this.service(id, method, args, binding, invocation);
+      return this.#answer(id, method, args, binding, invocation);
     };
+  }
+  /** A gated host service: an engine plugin's sandbox job, or one the plugin services answer. */
+  #answer(id: string, method: string, args: unknown, binding?: PluginBinding, invocation?: PluginInvocation) {
+    if (!isSandboxService(method)) return this.service(id, method, args, binding, invocation);
+    if (!this.sandboxJobs) throw new Error(MESSAGE.SandboxUnavailable);
+    return this.sandboxJobs.call(id, method, args, binding);
   }
   /** The plugin's backend child, started on first use: an agent's tool reaches it only while the plugin is on. */
   #process(id: string) {
@@ -1864,6 +1892,8 @@ export class PluginRegistry {
           if (this.#processes.get(id) === process) {
             this.#errors.set(id, error);
             this.#processes.delete(id);
+            // A backend that ended takes its jobs with it: nobody is left to read or stop them.
+            void this.sandboxJobs?.stopAll(id).catch(() => {});
             this.#fire({ id, reason: PluginChangeReason.Failed });
           }
         },
@@ -2312,6 +2342,7 @@ export class PluginRegistry {
     for (const id of [...this.#watchers.keys()]) this.#unwatch(id);
     for (const process of this.#processes.values()) process.stop();
     this.#processes.clear();
+    void this.sandboxJobs?.stopAll().catch(() => {});
     // A stopped plugin has no servers: the last stop point is one of them too.
     for (const id of this.#accounts.keys()) this.#lockAccount(id);
     this.#mcpAuthorized.clear();

@@ -116,6 +116,7 @@ import { ensureFactIgnoreRules } from "../substrate/nested-repos.ts";
 import { mcpSecretPort, type SecretPort } from "../substrate/mcp/store.ts";
 import { isBelow, isInside } from "../substrate/paths.ts";
 import { PluginNativeServices } from "../substrate/plugins/native.ts";
+import { PluginSandboxJobs } from "../substrate/plugins/sandbox-jobs.ts";
 import { spawnNativeLongLived } from "../substrate/plugins/native-process.ts";
 import { PluginRegistry } from "../substrate/plugins/registry.ts";
 import { PluginServices } from "../substrate/plugins/services.ts";
@@ -214,6 +215,8 @@ const HARNESS_HEARTBEAT_TIMEOUT_MS = 10 * MINUTE_MS;
 const HARNESS_CRASH_LOOP = { count: 3, windowMs: 5 * MINUTE_MS } as const;
 /** Where the folder chosen in Settings → Games is remembered, under userData. */
 const GAMES_ROOT_FILE = "games-root.json";
+/** The folder in the sandbox's scratch where each engine plugin's sandbox job keeps its own. */
+const PLUGIN_JOBS_FOLDER = "plugin-jobs";
 /** The prefix of the scratch folder an engine's game runs with (its private home and temp files). */
 const ENGINE_SCRATCH_PREFIX = "genex-play-";
 
@@ -998,6 +1001,20 @@ export class StudioCore {
     });
   }
 
+  /**
+   * The programs the host runs for plugins, each in this studio's sandbox: a manifest's `host` tool
+   * (Genex's CLI, a package install) and an engine plugin's long job (`sandbox.run`: Unreal's
+   * package on Windows), which keeps its scratch in the sandbox's own scratch folder.
+   */
+  #wirePluginPrograms(): void {
+    this.plugins.hostTool = genexHostTool({ cli: this.#genexCli(), packages: this.#genexPackages() });
+    this.plugins.hostToolConsent = genexHostPreflight(this.#genexPackages());
+    this.plugins.sandboxJobs = new PluginSandboxJobs({
+      run: (request) => this.sandbox.run(request),
+      scratch: path.join(this.layout.scratch, PLUGIN_JOBS_FOLDER),
+    });
+  }
+
   /** The plugin registry and the host services its plugins call, wired to the core and started. */
   async #wirePluginServices(): Promise<void> {
     this.pluginServices = new PluginServices(
@@ -1091,8 +1108,7 @@ export class StudioCore {
     this.plugins.agentWritable = (directory) => this.#agentWritable(directory);
     // A Finder-launched app has a bare PATH: Genex's publish found no git-lfs from Homebrew there.
     this.plugins.toolPath = async () => (await toolchain()).path;
-    this.plugins.hostTool = genexHostTool({ cli: this.#genexCli(), packages: this.#genexPackages() });
-    this.plugins.hostToolConsent = genexHostPreflight(this.#genexPackages());
+    this.#wirePluginPrograms();
     this.pluginServices.exportStage = async (binding, target, pluginId) => {
       // A panel's or toolbar's own publish reaches only here: refused as the dialog and agent tool refuse it.
       await assertPublishable(this, binding.project);
@@ -1491,6 +1507,8 @@ export class StudioCore {
     }
     this.#started = false;
     this.plugins?.cancel();
+    // Engine plugins' sandbox jobs are the studio's own: none outlives it.
+    await this.plugins?.sandboxJobs?.stopAll().catch(() => {});
     this.#consent.cancel({}, "stop");
     this.#permissions.cancel({}, ToolPermissionBy.Stop);
     if (this.#x.idleTimer) clearInterval(this.#x.idleTimer);
