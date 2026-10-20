@@ -25,6 +25,10 @@
 //! settings it drew until the new renderer is ready, so the loop answers every verb and heartbeat
 //! while the game box compiles the new configuration's shaders cold.
 //!
+//! Play-time AI (genex-ai): `ready` declares `capabilities.ai` for a game that called `game.ai(..)`;
+//! when the studio took it (`GENEX_STUDIO_AI=1`) the game's AI is connected, its lines go out
+//! before each reply and after each live frame, and `ai.reply` / `ai.delta` reach `ctx.ai`.
+//!
 //! Host glue, not simulation: it reads the wall clock to pace live frames and time them, which
 //! the lane's game rules refuse in game code. TODO(M2.4): the windowed desktop shell (a Studio run
 //! without `GENEX_HEADLESS` opens a window) and `front`/`visible` on it.
@@ -210,6 +214,7 @@ impl<W: Default + 'static> StudioRun<'_, W> {
             size: self.game.world_size(),
             seed: self.game.seed_value(),
             receipt,
+            ai: self.game.uses_ai(),
         }
     }
 
@@ -393,6 +398,15 @@ impl<W: Default + 'static> StudioGame for StudioRun<'_, W> {
     fn make_ring(&mut self, ring: &SurfaceArgs) -> Result<(), RingFault> {
         self.live.make_ring(&self.presenter, ring)
     }
+    fn take_ai_op(&mut self, op: &str, arg: &Value) -> Option<bool> {
+        // The studio's argument, already parsed under the protocol's line and depth caps, read
+        // again as the JSON genex-ai takes; bytes that are not JSON text are no argument.
+        let arg: serde_json::Value = serde_json::from_slice(&arg.dump()).ok()?;
+        self.game.ai().take_studio_op(op, &arg).ok()
+    }
+    fn take_ai_lines(&mut self) -> Vec<String> {
+        self.game.ai().take_lines()
+    }
     fn release_slot(&mut self, generation: u32, slot: u32) {
         self.live.release(generation, slot);
     }
@@ -415,6 +429,8 @@ fn run<W: Default + 'static>(studio: &mut Studio, link: &Transport, game: &mut S
         let interval = last.map_or(0.0, |at| (start - at).as_secs_f64() * 1000.0);
         last = Some(start);
         game.live_frame(interval);
+        // Lines the live ticks printed go out now; a request's own go out before its reply.
+        studio.flush_ai(link, game);
         if game.live.present(&mut game.presenter, game.visible) == Presented::Gone {
             studio.end_ring();
         }
@@ -492,6 +508,9 @@ pub(crate) fn serve<W: Default + 'static>(runtime: &mut Runtime<W>, assets: Asse
     let mut game = studio_run(runtime, presenter, Live::from_env(&env), &starting);
     let info = game.ready_info();
     studio.announce_ready(&link, &info);
+    if studio.takes_ai() {
+        game.game.ai().connect();
+    }
     run(&mut studio, &link, &mut game);
     game.live.close();
     Some(0)
@@ -669,6 +688,34 @@ mod metal {
         let shown = call(&mut studio, &mut run, "capture", "{}");
         assert_eq!(shown["ok"], json::Value::Bool(true), "{shown:?}");
         assert_ne!(shown["result"]["digest"], plain["result"]["digest"], "the HUD is painted into the capture");
+    }
+
+    #[test]
+    #[ignore = "needs the host GPU: run with --ignored metal"]
+    fn metal_a_game_that_uses_ai_declares_it_prints_its_lines_and_takes_the_studios_answers() {
+        let mut ai_game = game(Projection::Perspective, 6.0);
+        ai_game.ai(crate::ai::AiOptions::default());
+        ai_game.on_update(|_, ctx| {
+            if ctx.tick == 0 {
+                ctx.ai.hello();
+            }
+        });
+        let Some(mut run) = run_of(ai_game) else { return };
+        assert!(run.ready_info().ai, "ready declares capabilities.ai");
+        run.game.ai().connect();
+        run.game.seed(1);
+        run.game.step(16.0);
+        let lines = run.take_ai_lines();
+        assert_eq!(lines.len(), 1);
+        let line: serde_json::Value = serde_json::from_str(&lines[0]).expect("a line");
+        assert_eq!((line["event"].as_str(), line["op"].as_str()), (Some("ai"), Some("hello")));
+        let reply = format!(r#"{{"rid":{},"reply":{{"v":1,"on":true}}}}"#, line["rid"]);
+        let reply = json::parse(reply.as_bytes()).expect("arg");
+        assert_eq!(run.take_ai_op("ai.reply", &reply), Some(true));
+        assert!(run.game.ai().status().on);
+        assert_eq!(run.take_ai_op("ai.reply", &json::parse(br#"{"reply":{}}"#).expect("arg")), None, "no rid: refused");
+        let plain = run_of(game(Projection::Perspective, 6.0)).expect("a second run on the same adapter");
+        assert!(!plain.ready_info().ai, "a game without AI declares none");
     }
 
     /// `game` with `config` and AO and TAA switched off on the reference class: nothing temporal

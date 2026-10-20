@@ -23,6 +23,12 @@ pub const NONCE_ENV: &str = "GENEX_STUDIO_NONCE";
 pub const MAX_NONCE_BYTES: usize = 256;
 /// Lines the reader holds before it waits for the main thread to answer some.
 pub const MAX_QUEUED_LINES: usize = 256;
+/// The variable a studio sets to [`AI_ENV_ON`] when it takes play-time AI lines (genex-ai): a
+/// game that uses AI writes its `ai` lines and is served `ai.reply` / `ai.delta` only then, so a
+/// studio that reads an unknown event as a violation never sees one.
+pub const AI_ENV: &str = "GENEX_STUDIO_AI";
+/// [`AI_ENV`]'s value when the studio takes AI lines; anything else is no.
+pub const AI_ENV_ON: &str = "1";
 /// Windows: the variable naming the protocol pipe; the game launcher sets it.
 pub const PIPE_ENV: &str = "GENEX_STUDIO_PIPE";
 /// Windows: every run's pipe is this prefix and the run id, as the launcher names it.

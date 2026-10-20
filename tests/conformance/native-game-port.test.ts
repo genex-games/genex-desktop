@@ -8,6 +8,7 @@
  */
 import assert from "node:assert/strict";
 import { execFile, spawn } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { lstat, mkdir, readdir, readFile, rename, rm, symlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { Duplex, PassThrough } from "node:stream";
@@ -26,6 +27,10 @@ import {
   NATIVE_READY_TIMEOUT_MS,
   NATIVE_START_MAX_MS,
   NATIVE_STDERR_LINE_MAX_CHARS,
+  NATIVE_AI_EVENT,
+  NATIVE_AI_MAX_LINE_CHARS,
+  type NativeAiLine,
+  NativeAiOp,
   NativeError,
   NativeEvent,
   NativeOp,
@@ -44,6 +49,8 @@ import {
   type NativeLeaseOptions,
   type NativeLeaseRun,
   NativeOpRefusedError,
+  type NativeAiLink,
+  type NativeAiPortIo,
   type NativePortIo,
 } from "../../src/substrate/native-game-port.ts";
 import type { GameChild } from "../../src/substrate/spawn.ts";
@@ -1525,4 +1532,262 @@ describe("the fd-3 pipe against a hostile game", { skip: POSIX_ONLY }, () => {
       await game.assertEnded(mode);
     });
   }
+});
+
+/** The play-time AI wire both sides hold: the lines a game prints and the answers the studio sends. */
+const PLAY_AI_WIRE = JSON.parse(readFileSync(new URL("../fixtures/play-ai-wire-v1.json", import.meta.url), "utf8")) as {
+  lines: Array<{ line: string; hostReads: boolean }>;
+  answers: Record<string, Record<string, unknown>>;
+};
+const AI_RID = "rsai-00000001";
+const AI_HELLO = { event: NATIVE_AI_EVENT, rid: AI_RID, op: "hello", body: null };
+/** A Rust game's ready that declares play-time AI. */
+const AI_READY = { ...V2_READY, capabilities: { ai: true } };
+
+/** A link that records what the port tells it; `boundary` waits until the row opens it. */
+function recordingLink() {
+  const heard: NativeAiLine[] = [];
+  const calls: string[] = [];
+  const io: NativeAiPortIo[] = [];
+  let open: () => void = () => {};
+  let gate: Promise<void> = Promise.resolve();
+  const link: NativeAiLink = {
+    hear: (line) => void heard.push(line),
+    boundary: () => {
+      calls.push("boundary");
+      return gate;
+    },
+    flush: async () => void calls.push("flush"),
+    close: () => void calls.push("close"),
+  };
+  return {
+    heard,
+    calls,
+    io,
+    start: (portIo: NativeAiPortIo) => {
+      io.push(portIo);
+      return link;
+    },
+    /** The next boundary waits until `open()` is called. */
+    hold: () => {
+      gate = new Promise((resolve) => {
+        open = resolve;
+      });
+      return () => open();
+    },
+    link,
+  };
+}
+
+/** A port whose studio took the game's AI, with a game that declared it. */
+async function aiRig(link = recordingLink()) {
+  const r = await rig({ ready: false, io: { ai: link.start } });
+  r.game.send(readyEvent(AI_READY));
+  await r.port.ready();
+  return { ...r, link };
+}
+
+describe("play-time AI on the studio connection: a game whose AI the studio did not take", () => {
+  it("an ai line from a game the studio did not start with GENEX_STUDIO_AI is reply-invalid", async () => {
+    const r = await rig({ ready: false });
+    r.game.send(readyEvent(AI_READY));
+    await r.port.ready();
+    r.game.send(AI_HELLO);
+    await r.clock.settle();
+    assert.equal(r.port.failure, NativeRefusal.ReplyInvalid);
+    assert.ok(r.game.killed());
+  });
+
+  it("a game whose ready declares no AI gets no link, and an ai line from it is reply-invalid", async () => {
+    const link = recordingLink();
+    const r = await rig({ ready: false, io: { ai: link.start } });
+    r.game.send(readyEvent(V2_READY));
+    await r.port.ready();
+    assert.equal(link.io.length, 0, "no link started");
+    r.game.send(AI_HELLO);
+    await r.clock.settle();
+    assert.equal(r.port.failure, NativeRefusal.ReplyInvalid);
+    assert.deepEqual(link.heard, []);
+  });
+
+  it("an ai line before ready is reply-invalid: the handshake fails and no link starts", async () => {
+    const link = recordingLink();
+    const r = await rig({ ready: false, io: { ai: link.start } });
+    r.game.send(AI_HELLO);
+    assert.equal(await refusalOf(r.port.ready()), NativeRefusal.ReplyInvalid);
+    assert.equal(link.io.length, 0);
+    assert.deepEqual(link.heard, []);
+  });
+});
+
+describe("play-time AI on the studio connection: a game whose AI the studio took", () => {
+  it("every line the wire fixture says the host reads reaches the link as the game printed it, in order", async () => {
+    const r = await aiRig();
+    const read = PLAY_AI_WIRE.lines.filter((row) => row.hostReads);
+    for (const row of read) r.game.raw(`${row.line}\n`);
+    await r.clock.settle();
+    assert.deepEqual(
+      r.link.heard.map((line) => line.value),
+      read.map((row) => JSON.parse(row.line)),
+    );
+    assert.equal(r.port.failure, null, "the game runs on");
+  });
+
+  it("a line outside the envelope is dropped with a console warning: nothing reaches the link and the game runs on", async () => {
+    const r = await aiRig();
+    const hostile: string[] = [
+      JSON.stringify({ ...AI_HELLO, rid: "short" }),
+      JSON.stringify({ ...AI_HELLO, rid: "../../../etc/passwd" }),
+      JSON.stringify({ ...AI_HELLO, extra: 1 }),
+      JSON.stringify({ ...AI_HELLO, body: [] }),
+      JSON.stringify({ ...AI_HELLO, op: 7 }),
+      '{"event":"ai","rid":"rsai-00000001","op":"hello","body":null,"__proto__":{"polluted":true}}',
+      JSON.stringify({ ...AI_HELLO, op: "call", body: { prompt: "x".repeat(NATIVE_AI_MAX_LINE_CHARS) } }),
+    ];
+    for (const line of hostile) r.game.raw(`${line}\n`);
+    await r.clock.settle();
+    assert.deepEqual(r.link.heard, []);
+    assert.equal(r.port.failure, null);
+    assert.equal(r.game.killed(), false);
+    assert.equal(r.port.consoleEntries().length, hostile.length, "one warning a line");
+    assert.equal(({} as Record<string, unknown>).polluted, undefined);
+  });
+
+  it("a link that throws while it hears a line leaves the port and the game as they were", async () => {
+    const link = recordingLink();
+    link.link.hear = () => {
+      throw new Error("the AI service is not there");
+    };
+    const r = await aiRig(link);
+    r.game.send(AI_HELLO);
+    await r.clock.settle();
+    assert.equal(r.port.failure, null);
+    assert.equal(r.port.consoleEntries().length, 1);
+  });
+
+  it("ai.reply and ai.delta go out in the native envelope and answer {taken}", async () => {
+    const r = await aiRig();
+    const [io] = r.link.io;
+    assert.ok(io, "the link started at ready");
+    const reply = { rid: AI_RID, reply: PLAY_AI_WIRE.answers.hello ?? {} };
+    const replied = io.write(NativeAiOp.Reply, reply);
+    assert.deepEqual(await lastRequest(r), { id: 1, op: NativeAiOp.Reply, arg: reply });
+    r.game.send({ id: 1, ok: true, op: NativeAiOp.Reply, result: { taken: true } });
+    assert.deepEqual(await replied, { taken: true });
+    const streamed = io.write(NativeAiOp.Delta, { rid: AI_RID, text: "Hel" });
+    assert.deepEqual(await lastRequest(r), { id: 2, op: NativeAiOp.Delta, arg: { rid: AI_RID, text: "Hel" } });
+    r.game.send({ id: 2, ok: true, op: NativeAiOp.Delta, result: { taken: false, extra: 1 } });
+    assert.deepEqual(await streamed, { taken: false });
+  });
+
+  it("an AI op outside its shape is refused before anything is written", async () => {
+    const r = await aiRig();
+    const [io] = r.link.io;
+    assert.ok(io);
+    const hostile: Array<[NativeAiOp, unknown]> = [
+      [NativeAiOp.Reply, { rid: "short", reply: {} }],
+      [NativeAiOp.Reply, { rid: AI_RID, reply: [] }],
+      [NativeAiOp.Delta, { rid: AI_RID, text: "x".repeat(NATIVE_AI_MAX_LINE_CHARS + 1) }],
+      [NativeAiOp.Delta, { rid: AI_RID, text: 3 }],
+    ];
+    for (const [op, arg] of hostile) {
+      // @ts-expect-error: the row hands the writer what its type refuses, as a bug in main would.
+      const refused = await io.write(op, arg).then(
+        () => null,
+        (error: unknown) => error,
+      );
+      assert.ok(refused instanceof Error, `${op} ${JSON.stringify(arg).slice(0, 80)} is refused`);
+    }
+    await r.clock.settle();
+    assert.deepEqual(r.game.requests, [], "nothing written");
+    assert.equal(r.port.failure, null);
+  });
+
+  it("an answer to an AI op outside {taken} is reply-invalid; a game's refusal rejects and the game runs on", async () => {
+    const r = await aiRig();
+    const [io] = r.link.io;
+    assert.ok(io);
+    const refused = io.write(NativeAiOp.Reply, { rid: AI_RID, reply: {} });
+    await lastRequest(r);
+    r.game.send({ id: 1, ok: false, op: NativeAiOp.Reply, error: "bad-argument" });
+    const error = await refused.then(
+      () => null,
+      (failure: unknown) => failure,
+    );
+    assert.ok(error instanceof NativeOpRefusedError);
+    assert.equal(error.gameError, "bad-argument");
+    assert.equal(r.port.failure, null);
+    const wrong = io.write(NativeAiOp.Reply, { rid: AI_RID, reply: {} });
+    await lastRequest(r);
+    r.game.send({ id: 2, ok: true, op: NativeAiOp.Reply, result: { taken: "yes" } });
+    assert.equal(await refusalOf(wrong), NativeRefusal.ReplyInvalid);
+    assert.ok(r.game.killed());
+  });
+
+  it("while the studio holds the clock a step first waits for the link's boundary; a running clock does not, and a start flushes", async () => {
+    const r = await aiRig();
+    const seeded = r.port.call(NativeOp.Seed, { seed: 3 });
+    r.game.send({ id: (await lastRequest(r)).id, ok: true, op: NativeOp.Seed, result: { seed: 3, paused: true } });
+    await seeded;
+    const open = r.link.hold();
+    const stepping = r.port.call(NativeOp.Step, { ms: 100 });
+    await r.clock.settle();
+    assert.deepEqual(r.link.calls, ["boundary"]);
+    assert.deepEqual(
+      r.game.requests.map((request) => request.op),
+      [NativeOp.Seed],
+      "the step waits for the boundary",
+    );
+    open();
+    const step = await lastRequest(r);
+    assert.equal(step.op, NativeOp.Step);
+    r.game.send({
+      id: step.id,
+      ok: true,
+      op: NativeOp.Step,
+      result: { frame: 6, simulatedMs: 100, steppedFrames: 6, drawCalls: 1 },
+    });
+    await stepping;
+    const starting = r.port.call(NativeOp.Start);
+    r.game.send({ id: (await lastRequest(r)).id, ok: true, op: NativeOp.Start, result: { running: true } });
+    await starting;
+    await r.clock.settle();
+    assert.deepEqual(r.link.calls, ["boundary", "flush"]);
+    const running = r.port.call(NativeOp.Step, { ms: 16 });
+    const second = await lastRequest(r);
+    assert.equal(second.op, NativeOp.Step, "a running clock steps at once");
+    r.game.send({
+      id: second.id,
+      ok: true,
+      op: NativeOp.Step,
+      result: { frame: 7, simulatedMs: 16, steppedFrames: 1, drawCalls: 1 },
+    });
+    await running;
+    assert.deepEqual(r.link.calls, ["boundary", "flush"]);
+  });
+
+  it("the game's end closes the link once; a write after it rejects and nothing is written", async () => {
+    const r = await aiRig();
+    const [io] = r.link.io;
+    assert.ok(io);
+    r.game.reap({ code: 0, signal: null });
+    await r.clock.settle();
+    assert.deepEqual(r.link.calls, ["close"]);
+    const late = await io.write(NativeAiOp.Reply, { rid: AI_RID, reply: {} }).then(
+      () => null,
+      (error: unknown) => error,
+    );
+    assert.ok(late instanceof NativeExitError);
+    assert.deepEqual(r.game.requests, []);
+    r.port.kill(NativeRefusal.ReplyInvalid);
+    await r.clock.settle();
+    assert.deepEqual(r.link.calls, ["close"], "closed once");
+  });
+
+  it("a game the host kills closes its link", async () => {
+    const r = await aiRig();
+    r.port.kill(NativeRefusal.Unresponsive);
+    await r.clock.settle();
+    assert.deepEqual(r.link.calls, ["close"]);
+  });
 });

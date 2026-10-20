@@ -1,0 +1,5 @@
+error: genex_ai::Schema: #[genex_ai(…)] takes max_length, min_length, max_items, min_items, min, max, description and title
+ --> tests/ui/fail/unknown_bound.rs:8:16
+  |
+8 |     #[genex_ai(pattern = "a+")]
+  |                ^^^^^^^

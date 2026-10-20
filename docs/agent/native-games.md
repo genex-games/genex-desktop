@@ -89,7 +89,10 @@ Desktop exports stage privately at the current lock; certificate signing uses it
 Mac Play, agent runs and embedding use `NativeRuns`: prepare, `spawnGame`, nonce `ready`,
 `NativeGamePort`. Stop requests quit, then TERM/KILL; boot sweeps orphans; app death kills registered
 groups. A v2 game that misses a step or capture deadline, or goes silent owing one, is killed
-`gpu-hang`; one that restores a lost GPU device gets a new Live ring generation. Captures carry
+`gpu-hang`; one that restores a lost GPU device gets a new Live ring generation. Play-time AI:
+a run whose `playAi` names a link starts with `GENEX_STUDIO_AI=1` (all three game boxes); its port
+hands the game's `ai` lines to that link and writes `ai.reply`/`ai.delta`. Studio wires no
+`playAi` yet, so a Rust game's AI calls settle `ai_off` and it plays its fallbacks. Captures carry
 provenance (seq, digest, camera, run, build), saved as `<label>.provenance.json`; builder captures add `c<N>_<camera>.manifest.json` (run, worker, commit, build); a failed one `c<N>.refused.json`; links refused (`confinedCaptureDir`). Sessions clone Emscripten caches under `<scratch>/cpp-sessions/<game>/`.
 
 **Toolchain store.** Each compiled stack keeps its own current lock in one store

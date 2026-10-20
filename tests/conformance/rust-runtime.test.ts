@@ -15,7 +15,10 @@
  * panic). Rows the C++ suite has no twin for: contract v2's `state()` (`lifecycle`, `safeArea`),
  * touch input in world pixels, saves under the run's `state/`, and touch synthesis (M3.9): a play
  * script's `touch` and `click` driven through the host's `preview.input` routing reach a
- * touch-only control on the Mac build.
+ * touch-only control on the Mac build. Play-time AI (genex-ai): a game the studio started with
+ * `GENEX_STUDIO_AI=1` prints its `ai` lines to the port's AI link and takes `ai.delta` /
+ * `ai.reply` in the native envelope, held to `tests/fixtures/play-ai-wire-v1.json`; without the
+ * variable it prints none and its calls settle `ai_off`, so it plays its fallbacks.
  *
  * Needs the installed Rust toolchain (`scripts/spike/rust-wgpu/setup-toolchain.sh`) and the host
  * GPU (Metal on the Mac): the rows skip without them, and `GENEX_REQUIRE_TOOLCHAINS=1` turns a
@@ -24,7 +27,7 @@
 import assert from "node:assert/strict";
 import { execFile, spawn } from "node:child_process";
 import { once } from "node:events";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { mkdir, readdir, readFile, realpath } from "node:fs/promises";
 import path from "node:path";
 import { Duplex } from "node:stream";
@@ -34,6 +37,12 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { MINUTE_MS, SECOND_MS } from "../../src/shared/duration.ts";
 import {
+  NATIVE_AI_RID,
+  NATIVE_STUDIO_AI_ON,
+  type NativeAiLine,
+  NativeAiOp,
+  NativeEnv,
+  readNativeAiLine,
   NATIVE_CAPTURE_FORMAT,
   NATIVE_PROTOCOL_VERSION,
   NativeRefusal,
@@ -50,6 +59,8 @@ import {
 import { TouchPhase } from "../../src/shared/preview-contract.ts";
 import type { GameChild, GameExit } from "../../src/substrate/spawn.ts";
 import {
+  type NativeAiLinkStart,
+  type NativeAiPortIo,
   NativeExitError,
   NativeGamePort,
   NativeOpRefusedError,
@@ -66,7 +77,9 @@ const execFileAsync = promisify(execFile);
 const REPO = fileURLToPath(new URL("../..", import.meta.url));
 /** The cargo env helper: the pinned sysroot, the vendored crates and the genex workspace manifest. */
 const RUST_ENV = path.join(REPO, "scripts", "toolchains", "rust-env.ts");
-const TOOLCHAIN_CARGO = path.join(REPO, ".studio-dev", "spike-toolchain", "sysroot", "bin", "cargo");
+/** The pinned toolchain: the spike folder, or the one `GENEX_RUST_TOOLCHAIN_DIR` names (as `rust-env.ts` reads it). */
+const TOOLCHAIN_DIR = process.env.GENEX_RUST_TOOLCHAIN_DIR ?? path.join(REPO, ".studio-dev", "spike-toolchain");
+const TOOLCHAIN_CARGO = path.join(TOOLCHAIN_DIR, "sysroot", "bin", "cargo");
 const TARGET_DIR = process.env.CARGO_TARGET_DIR ?? path.join(REPO, ".studio-dev", "cargo-target");
 const GAME = path.join(TARGET_DIR, "debug", "examples", "rust-protocol-game");
 const BUILD = ["cargo", "build", "-p", "genex", "--example", "rust-protocol-game", "--features", "studio"];
@@ -161,6 +174,8 @@ interface StartOptions {
   /** `GENEX_STATE_DIR` as given; null leaves it out. The run's own `state/` is made either way. */
   state?: string | null;
   env?: Record<string, string>;
+  /** The port's play-time AI link, for a game started with `GENEX_STUDIO_AI=1`. */
+  ai?: NativeAiLinkStart;
 }
 
 const started: Spawned[] = [];
@@ -221,6 +236,7 @@ async function startRun(options: StartOptions = {}): Promise<Run> {
     stateDir,
     timers: REAL_TIMERS,
     encodeJpeg: async () => Buffer.from("jpeg"),
+    ...(options.ai ? { ai: options.ai } : {}),
   });
   const events: NativeEventMessage[] = [];
   port.onEvent((event) => events.push(event));
@@ -659,5 +675,88 @@ describe("the Rust runtime over fd 3: touch synthesis", { ...NEEDS, timeout: SUI
     const state = await stateOf(run);
     assert.equal(state.taps, 1, "Mouse1 is touch 0");
     assert.equal(state.touch, null, "and no script finger: touch 0 is the mouse's");
+  });
+});
+
+/** The play-time AI wire both sides hold: the answers the studio sends, as the TypeScript prints them. */
+const PLAY_AI_WIRE = JSON.parse(readFileSync(new URL("../fixtures/play-ai-wire-v1.json", import.meta.url), "utf8")) as {
+  answers: { callOk: Record<string, unknown> };
+};
+/** The protocol game's say (`KeyI`): its site, and the fallback it plays without an answer. */
+const SAY_SITE = "protocol.greet";
+const SAY_FALLBACK = "Hello from the fallback.";
+const SAID = "Hello there, player.";
+
+/** A link that keeps every line the port hands it and the writer it was given; its boundaries deliver nothing. */
+function keepingLink() {
+  const heard: NativeAiLine[] = [];
+  const io: NativeAiPortIo[] = [];
+  const start: NativeAiLinkStart = (portIo) => {
+    io.push(portIo);
+    return { hear: (line) => void heard.push(line), boundary: async () => {}, flush: async () => {}, close: () => {} };
+  };
+  return { heard, io, start };
+}
+
+/** Presses `KeyI` (the protocol game says hello) and lets one tick read it. */
+async function askToSay(run: Run): Promise<void> {
+  await run.port.input([{ type: "down", keys: ["KeyI"] }]);
+  await run.port.call(NativeOp.Step, { ms: TICK_MS });
+  await run.port.input([{ type: "up", keys: ["KeyI"] }]);
+}
+
+describe("the Rust runtime over fd 3: play-time AI", { ...NEEDS, timeout: SUITE_TIMEOUT_MS }, () => {
+  it("started with GENEX_STUDIO_AI=1, its say reaches the port's link and the studio's ai.delta and ai.reply reach the game", async () => {
+    const link = keepingLink();
+    const run = await startRun({ env: { [NativeEnv.StudioAi]: NATIVE_STUDIO_AI_ON }, ai: link.start });
+    const ready = await run.port.ready();
+    assert.equal(ready.ai, true, "ready declares capabilities.ai");
+    const [io] = link.io;
+    assert.ok(io, "the port started its link at ready");
+    await run.port.call(NativeOp.Seed, { seed: 1 });
+    assert.equal(io.held(), true, "a seeded game's clock is the studio's");
+    await askToSay(run);
+    const [line] = link.heard;
+    assert.ok(line, "the say's line came before the step's reply");
+    assert.match(line.rid, NATIVE_AI_RID);
+    assert.deepEqual(readNativeAiLine(line.value, JSON.stringify(line.value).length), line, "the line is the wire's");
+    const body = line.value.body as Record<string, unknown>;
+    assert.equal(line.value.op, "call");
+    assert.equal(body.op, "say");
+    assert.equal(body.site, SAY_SITE);
+    assert.equal(typeof body.ticket, "string");
+    assert.deepEqual(await io.write(NativeAiOp.Delta, { rid: line.rid, text: "Hello" }), { taken: true });
+    const reply = { ...PLAY_AI_WIRE.answers.callOk, ticket: body.ticket, value: SAID };
+    assert.deepEqual(await io.write(NativeAiOp.Reply, { rid: line.rid, reply }), { taken: true });
+    assert.deepEqual(await io.write(NativeAiOp.Reply, { rid: line.rid, reply }), { taken: false }, "answered once");
+    await run.port.call(NativeOp.Step, { ms: TICK_MS });
+    const state = await stateOf(run);
+    assert.deepEqual(state.said, { text: SAID, code: null }, "the answer was drained on the next tick");
+    const ai = (state.volatile as Record<string, { asked: string[]; answered: string[] }>).ai;
+    assert.deepEqual([ai?.asked, ai?.answered], [[line.rid], [line.rid]]);
+    assert.equal(link.heard.length, 1, "one line for one say");
+    assert.equal(run.port.failure, null);
+  });
+
+  it("without GENEX_STUDIO_AI it prints no ai line and its say settles ai_off: the game plays its fallback", async () => {
+    const run = await startRun();
+    const ready = await run.port.ready();
+    assert.equal(ready.ai, true, "the game still declares its AI");
+    await run.port.call(NativeOp.Seed, { seed: 1 });
+    await askToSay(run);
+    await run.port.call(NativeOp.Step, { ms: TICK_MS });
+    assert.deepEqual((await stateOf(run)).said, { text: SAY_FALLBACK, code: "ai_off" });
+    assert.equal(run.port.failure, null, "no ai line ever reached the port");
+  });
+
+  it("answers ai.reply unknown-op when the studio did not take its AI, and bad-argument without a rid when it did", async () => {
+    const plain = await startRaw();
+    const refused = await plain.ask({ op: NativeAiOp.Reply, arg: { rid: "rsai-00000001", reply: {} } });
+    assert.equal(refused.error, NativeOpError.UnknownOp);
+    const taken = await startRaw({ env: { [NativeEnv.StudioAi]: NATIVE_STUDIO_AI_ON } });
+    const noRid = await taken.ask({ op: NativeAiOp.Reply, arg: { reply: {} } });
+    assert.equal(noRid.error, GameRefusal.BadArgument);
+    const late = await taken.ask({ op: NativeAiOp.Reply, arg: { rid: "rsai-00000099", reply: {} } });
+    assert.deepEqual(late.result, { taken: false }, "a rid the game is not waiting for");
   });
 });

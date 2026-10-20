@@ -20,6 +20,8 @@ app never imports it. The game-facing contract is [docs/GENEX_API.md](docs/GENEX
 | `genex-platform-web` | WebGPU-only web shell | M0a.7, M2.9 |
 | `genex-assets` | glTF and image loaders | M2.7 |
 | `genex-platform-ios`, `genex-platform-android` | mobile shells | M0a.16, M2.10, M5.3 |
+| `genex-ai` | play-time AI (`genex::ai`, `ctx.ai`): ask, say, judge and act over the studio's `ai` lines, results only through `drain()`, the closed schema dialect; held to the TypeScript wire by `tests/fixtures/play-ai-wire-v1.json`; no network crate in its graph | play-time AI |
+| `genex-ai-derive` | `#[derive(genex_ai::Schema)]`: a type as the closed dialect, in step with its serde names; an enum of documented variants as an act call's tools | play-time AI |
 | `examples/pond` | the pond sample | M0a.7 |
 | `examples/custom-pass` | the custom GPU pass sample (`genex::gpu`, extension ladder level 3) | M2.19 |
 | `examples/showcase` | the lakeside showcase: a game folder (`game/`) Studio opens, on the current renderer (its built-in physical sky, `frame.environment`) plus five custom passes; its named shots are the renderer before/after captures (`tests/shots.rs`), beside three renderer bench scenes (`src/bench`: materials, outdoor, a 64k-instance city; `tests/bench_scenes.rs`), two stress scenes (`src/stress.rs`: 1,024 point lights over a plaza, a 1.5 M triangle forest) and the perf harness: the scenes x profiles x sizes matrix (`tests/perf_matrix.rs`, driven by `scripts/spike/rust-wgpu/render-perf.ts`: baseline, the 10% `off` gate, interleaved A/B against saved executables, feature costs against the plan's budgets) and the earlier single-profile bench (`cargo bench --bench render-baseline`) | renderer follow-up |
@@ -111,3 +113,30 @@ start a thread carry their own `clippy.toml` saying why; `genex-core` keeps its 
 f64 forms added (its audio meter's FFT is the one reasoned `#[allow]`).
 `scripts/spike/rust-wgpu/parity.sh` proves each rule on a fixture, runs the pond twice for
 bit-identical output and compares records across targets (see its header).
+
+## Play-time AI on the studio connection
+
+A Rust game speaks the play-time AI lines of `docs/play-protocol.md` ("Play-time AI") on its
+studio connection (fd 3, the Windows pipe) rather than on a Play Protocol stdout, with the
+native envelope around the studio's ops:
+
+- A game that calls `game.ai(..)` declares it in `ready`: `"capabilities": {"ai": true}`.
+- The studio takes the game's AI only by starting it with `GENEX_STUDIO_AI=1`
+  (`genex_studio::AI_ENV`). Without it the game writes no `ai` line (a host that reads an
+  unknown event as a violation never sees one), answers `ai.reply` / `ai.delta` `unknown-op`, and
+  every call fails `ai_off` at once so the game plays its fallbacks. The desktop host sets the
+  variable only for a run whose `NativeRuns` `playAi` names an AI link; that run's
+  `NativeGamePort` hands each line to the link and writes its answers. Studio passes no
+  `playAi` yet, so today every Rust game it starts plays its fallbacks.
+- Lines are id-less events, `{"event":"ai","rid":"rsai-…","op":…,"body":…}`, byte for byte the
+  TypeScript's `JSON.stringify` of the same message (`tests/fixtures/play-ai-wire-v1.json`). Each
+  goes out before the reply of the request whose ticks printed it, and after each live frame.
+- The studio answers with `{"id":…,"op":"ai.reply","arg":{"rid":…,"reply":…}}` and streams a
+  `say` with `{"id":…,"op":"ai.delta","arg":{"rid":…,"text":…}}`; the game replies
+  `{"taken": bool}` (false for a rid it is not waiting for, such as a line of a run before a
+  `seed`), or `bad-argument` for an argument without a string `rid`.
+- `state().volatile.ai` is `{asked, answered, status}`: the rids sent and answered this run and
+  the AI's status, outside the checksum.
+
+`scripts/toolchains/play-ai-wire-fixture.ts check --from <checkout>` holds the fixture to the
+TypeScript modules of a checkout that has them.

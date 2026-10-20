@@ -46,6 +46,14 @@ import {
   NativeEnv,
   NativeError,
   NativeEvent,
+  NATIVE_AI_EVENT,
+  NATIVE_AI_MAX_LINE_CHARS,
+  NATIVE_AI_RID,
+  NATIVE_STUDIO_AI_ON,
+  NativeAiOp,
+  checkNativeAiArg,
+  isNativeAiResult,
+  readNativeAiLine,
   NativeFramesCode,
   NativeInputKind,
   NativeOp,
@@ -981,5 +989,119 @@ describe("contract v2: ready carries the capability receipt", () => {
     const parsed = parseNativeEvent(v3);
     assert.ok(parsed && parsed.event === NativeEvent.Ready);
     assert.equal(isNativeProtocolVersion(parsed.protocol), false);
+  });
+});
+
+/** The play-time AI wire both sides hold (generated from the TypeScript AI modules; the Rust crate replays it). */
+const PLAY_AI_WIRE = JSON.parse(readFileSync(new URL("../fixtures/play-ai-wire-v1.json", import.meta.url), "utf8")) as {
+  limits: { AI_MAX_BODY_CHARS: number };
+  patterns: { id: string };
+  lines: Array<{ op: string; line: string; hostReads: boolean }>;
+  answers: Record<string, Record<string, unknown>>;
+};
+/** A rid as genex-ai prints them. */
+const RID = "rsai-00000001";
+/** One `ai` line as a Rust game prints it on its studio connection. */
+const aiLine = (overrides: Record<string, unknown> = {}) => ({
+  event: NATIVE_AI_EVENT,
+  rid: RID,
+  op: "hello",
+  body: null,
+  ...overrides,
+});
+
+describe("play-time AI on the studio connection: the wire genex-ai speaks", () => {
+  it("names the variable, the event and the ops the Rust crate reads and writes", () => {
+    assert.equal(NativeEnv.StudioAi, "GENEX_STUDIO_AI");
+    assert.equal(NATIVE_STUDIO_AI_ON, "1");
+    assert.equal(NATIVE_AI_EVENT, "ai");
+    assert.deepEqual(NativeAiOp, { Reply: "ai.reply", Delta: "ai.delta" });
+    // Optional ops of a game whose AI the studio took: never in the ops every game serves.
+    for (const op of Object.values(NativeAiOp)) assert.equal(isNativeOp(op), false, op);
+    assert.equal(Object.values(NativeEvent).includes(NATIVE_AI_EVENT as NativeEvent), false);
+  });
+
+  it("holds the rid pattern and the longest line to the shared wire fixture", () => {
+    assert.equal(NATIVE_AI_RID.source, PLAY_AI_WIRE.patterns.id);
+    assert.equal(NATIVE_AI_MAX_LINE_CHARS, PLAY_AI_WIRE.limits.AI_MAX_BODY_CHARS);
+  });
+
+  it("reads every line the fixture says the host reads, as the game printed it", () => {
+    const read = PLAY_AI_WIRE.lines.filter((row) => row.hostReads);
+    assert.ok(read.length > 0, "the fixture has lines the host reads");
+    for (const row of read) {
+      const value = JSON.parse(row.line) as Record<string, unknown>;
+      assert.deepEqual(readNativeAiLine(value, row.line.length), { rid: value.rid, value }, row.line);
+    }
+  });
+
+  it("refuses a line outside the envelope: no record, another event, a bad rid, a key more or less, a body that is no object, too long", () => {
+    const rows: Array<[unknown, number]> = [
+      [null, 10],
+      [[], 10],
+      ["ai", 10],
+      [7, 10],
+      [aiLine({ event: "ready" }), 10],
+      [aiLine({ rid: undefined }), 10],
+      [aiLine({ rid: 12345678 }), 10],
+      [aiLine({ rid: "short" }), 10],
+      [aiLine({ rid: "has space1" }), 10],
+      [aiLine({ rid: "../../etc/passwd" }), 10],
+      [aiLine({ rid: "r".repeat(101) }), 10],
+      [aiLine({ op: 1 }), 10],
+      [aiLine({ op: null }), 10],
+      [aiLine({ op: "" }), 10],
+      [aiLine({ op: "o".repeat(65) }), 10],
+      [aiLine({ body: [] }), 10],
+      [aiLine({ body: "body" }), 10],
+      [aiLine({ body: 3 }), 10],
+      [aiLine({ extra: true }), 10],
+      [JSON.parse('{"event":"ai","rid":"rsai-00000001","op":"hello","body":null,"__proto__":{"polluted":true}}'), 10],
+      [{ event: NATIVE_AI_EVENT, rid: RID, op: "hello" }, 10],
+      [aiLine(), NATIVE_AI_MAX_LINE_CHARS + 1],
+    ];
+    for (const [value, chars] of rows) assert.equal(readNativeAiLine(value, chars), null, JSON.stringify(value));
+    assert.equal(({} as Record<string, unknown>).polluted, undefined, "nothing reached a prototype");
+  });
+
+  it("checks the studio's own answer before it is written: a rid, a reply object or a text", () => {
+    for (const reply of Object.values(PLAY_AI_WIRE.answers))
+      assert.equal(checkNativeAiArg(NativeAiOp.Reply, { rid: RID, reply }), true, JSON.stringify(reply));
+    assert.equal(checkNativeAiArg(NativeAiOp.Delta, { rid: RID, text: "Hel" }), true);
+    assert.equal(checkNativeAiArg(NativeAiOp.Delta, { rid: RID, text: "" }), true, "a stream may start empty");
+    const bad: Array<[string, unknown]> = [
+      [NativeAiOp.Reply, null],
+      [NativeAiOp.Reply, { rid: RID }],
+      [NativeAiOp.Reply, { rid: "short", reply: {} }],
+      [NativeAiOp.Reply, { rid: RID, reply: null }],
+      [NativeAiOp.Reply, { rid: RID, reply: [] }],
+      [NativeAiOp.Reply, { rid: RID, reply: "ok" }],
+      [NativeAiOp.Reply, { rid: RID, reply: {}, extra: 1 }],
+      [NativeAiOp.Delta, { rid: RID, text: 3 }],
+      [NativeAiOp.Delta, { rid: RID, text: "x".repeat(NATIVE_AI_MAX_LINE_CHARS + 1) }],
+      [NativeAiOp.Delta, { rid: RID }],
+      [NativeAiOp.Delta, { rid: RID, text: "x", reply: {} }],
+      ["ai.teleport", { rid: RID, reply: {} }],
+    ];
+    for (const [op, arg] of bad) assert.equal(checkNativeAiArg(op, arg), false, `${op} ${JSON.stringify(arg)}`);
+  });
+
+  it("reads the game's answer to an AI op as {taken}", () => {
+    assert.equal(isNativeAiResult({ taken: true }), true);
+    assert.equal(isNativeAiResult({ taken: false }), true);
+    for (const bad of [null, {}, [], { taken: "yes" }, { taken: 1 }, "taken"])
+      assert.equal(isNativeAiResult(bad), false);
+  });
+
+  it("a ready that declares capabilities.ai says so; any other capabilities shape declares no AI", () => {
+    const ready = WIRE.readyV2;
+    const declared = parseNativeEvent({ ...ready, capabilities: { ai: true } });
+    assert.ok(declared && declared.event === NativeEvent.Ready);
+    assert.equal(declared.ai, true);
+    for (const capabilities of [{ ai: false }, { ai: "yes" }, { ai: 1 }, "ai", ["ai"], null, {}]) {
+      const parsed = parseNativeEvent({ ...ready, capabilities });
+      assert.ok(parsed && parsed.event === NativeEvent.Ready, JSON.stringify(capabilities));
+      assert.equal("ai" in parsed, false, JSON.stringify(capabilities));
+    }
   });
 });

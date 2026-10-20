@@ -1006,6 +1006,7 @@ name = "genex"
 version = "0.1.0"
 dependencies = [
  "egui",
+ "genex-ai",
  "genex-core",
  "genex-frames",
  "genex-hud",
@@ -1021,6 +1022,25 @@ dependencies = [
  "toml",
  "trybuild",
  "wgpu",
+]
+
+[[package]]
+name = "genex-ai"
+version = "0.1.0"
+dependencies = [
+ "genex-ai-derive",
+ "serde",
+ "serde_json",
+ "trybuild",
+]
+
+[[package]]
+name = "genex-ai-derive"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
 ]
 
 [[package]]

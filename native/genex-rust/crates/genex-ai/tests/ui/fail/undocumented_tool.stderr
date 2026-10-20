@@ -1,0 +1,5 @@
+error: genex_ai::Schema: tool "Flee" needs a doc comment: the model reads it to pick the tool
+  --> tests/ui/fail/undocumented_tool.rs:10:5
+   |
+10 |     Flee { far: bool },
+   |     ^^^^

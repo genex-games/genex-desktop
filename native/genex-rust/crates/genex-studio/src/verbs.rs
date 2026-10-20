@@ -80,9 +80,16 @@ impl Op {
     pub const RELEASE: &'static str = wire::OP_RELEASE;
     /// Read or change the renderer's quality (every flavour; `unavailable` until a game serves it).
     pub const RENDER_SETTINGS: &'static str = wire::OP_RENDER_SETTINGS;
+    /// The answer to one of the game's `ai` lines, by its rid (play-time AI, genex-ai).
+    pub const AI_REPLY: &'static str = "ai.reply";
+    /// A streamed `say` answer's text so far, by its line's rid.
+    pub const AI_DELTA: &'static str = "ai.delta";
     /// The ops only a game that can embed in Live serves; any other answers them `unknown-op`
     /// and never lists them, which the host reads as a game made before embedding.
     pub const EMBEDDING: [&'static str; 2] = [Op::SURFACE, Op::RELEASE];
+    /// The ops served only when the studio took the game's play-time AI ([`Studio::takes_ai`]):
+    /// any other run answers them `unknown-op` and never lists them.
+    pub const AI: [&'static str; 2] = [Op::AI_REPLY, Op::AI_DELTA];
     /// The ops every build serves, the web export's whole set: `studio.cpp`'s, in the order it
     /// registers them, then `renderSettings`, which no C++ game has.
     pub const SHARED: [&'static str; 14] = [
@@ -146,7 +153,8 @@ impl VerbRefusal {
     /// `webCall` answers). A native run never sends it: lines that arrive before `ready` stay
     /// queued and are answered after it, as v1's transport does.
     pub const STARTING: &'static str = "starting";
-    /// A `surface` or `release` argument outside its shape: nothing was made or freed.
+    /// A `surface`, `release`, `ai.reply` or `ai.delta` argument outside its shape: nothing was
+    /// made, freed or answered.
     pub const BAD_ARGUMENT: &'static str = "bad-argument";
     /// A `surface` generation no newer than the last one asked for.
     pub const STALE_GENERATION: &'static str = "stale-generation";
@@ -190,6 +198,10 @@ pub const CAPTURE_MAX_BYTES: u64 = CAPTURE_MAX_PX as u64 * CAPTURE_MAX_PX as u64
 pub const DEFAULT_CAMERA: &str = "default";
 /// The value range `seed(n)` takes, as JavaScript's `n >>> 0` does.
 const SEED_RANGE: f64 = 4_294_967_296.0;
+/// `ready`'s capability levels, as the Play Protocol's `hello` names them: only `ai` so far.
+const READY_CAPABILITIES: &str = "capabilities";
+/// The capability a game that uses play-time AI declares.
+const CAPABILITY_AI: &str = "ai";
 /// `audioLevel` reports rms to four decimals and the centroid in whole hertz.
 const RMS_SCALE: f64 = 10_000.0;
 /// Timings are reported to a microsecond.
@@ -325,6 +337,18 @@ pub trait StudioGame {
     /// without render settings, whose reply has no `render` member.
     fn capture_provenance(&self) -> Option<Value> {
         None
+    }
+    /// One of the studio's AI ops ([`Op::AI`]) with its argument (`{rid, reply}` or
+    /// `{rid, text}`): whether it answered a line still waiting, or None for an argument outside
+    /// its shape. Only called when the studio took the game's AI.
+    fn take_ai_op(&mut self, _op: &str, _arg: &Value) -> Option<bool> {
+        None
+    }
+    /// The `ai` lines the game printed since the last call, oldest first, each one JSON object
+    /// without its newline (`{"event":"ai","rid",…}`). Only called when the studio took the
+    /// game's AI.
+    fn take_ai_lines(&mut self) -> Vec<String> {
+        Vec::new()
     }
 }
 
@@ -468,6 +492,8 @@ pub struct ReadyInfo {
     /// The capability receipt: a contract v2 game states protocol 2 and carries it; None keeps
     /// the protocol 1 `ready`.
     pub receipt: Option<Receipt>,
+    /// The game uses play-time AI: `ready` declares `capabilities.ai`.
+    pub ai: bool,
 }
 
 /// The studio's side of one game: the envelope, the verbs and what they keep between calls.
@@ -490,6 +516,10 @@ pub struct Studio {
     asked_generation: u32,
     /// The ring made last, while one is open.
     ring: Option<SurfaceArgs>,
+    /// The studio said it takes play-time AI lines ([`crate::AI_ENV`]).
+    ai_host: bool,
+    /// The studio took this game's AI: its lines are written and its ops served.
+    ai: bool,
 }
 
 /// `{id, ok:false, op, error, available?}` as a line.
@@ -655,6 +685,8 @@ impl Studio {
             protocol: PROTOCOL_VERSION,
             asked_generation: 0,
             ring: None,
+            ai_host: false,
+            ai: false,
         }
     }
 
@@ -664,11 +696,14 @@ impl Studio {
         Studio::new(save_root.to_owned(), true, &Op::ALL)
     }
 
-    /// A native run's studio over the process environment's `GENEX_STATE_DIR`.
+    /// A native run's studio over the process environment's `GENEX_STATE_DIR`, taking play-time
+    /// AI lines when `GENEX_STUDIO_AI` is `1` ([`crate::AI_ENV`]).
     pub fn for_run(env: &dyn Fn(&str) -> Option<String>) -> Studio {
         let identity = paths::GameIdentity { name: "", bundle_id: "" };
         let root = paths::save_root(paths::Destination::GenexRun, env, identity).unwrap_or_default();
-        Studio::native(&root)
+        let mut studio = Studio::native(&root);
+        studio.ai_host = env(crate::AI_ENV).as_deref() == Some(crate::transport::AI_ENV_ON);
+        studio
     }
 
     /// The web build's studio: the shared ops only; a capture describes the frame and the shell
@@ -692,6 +727,7 @@ impl Studio {
     /// verbs as the protocol it states; false when the studio is gone.
     pub fn announce_ready(&mut self, link: &Transport, info: &ReadyInfo) -> bool {
         self.mark_ready();
+        self.ai = self.ai_host && info.ai;
         self.set_protocol(if info.receipt.is_some() { PROTOCOL_V2 } else { PROTOCOL_VERSION });
         link.send(&Studio::ready_line(link.nonce(), info))
     }
@@ -715,7 +751,29 @@ impl Studio {
                 fields.set(key, value);
             }
         }
+        if info.ai {
+            fields.set(READY_CAPABILITIES, object([(CAPABILITY_AI, Value::Bool(true))]));
+        }
         protocol::event(Event::READY, &fields)
+    }
+
+    /// Whether the studio took the game's play-time AI: it said it takes AI lines and the game's
+    /// `ready` declared `capabilities.ai`. Only then are the game's lines written and
+    /// [`Op::AI`] served; the runtime connects the game's AI on it.
+    pub fn takes_ai(&self) -> bool {
+        self.ai
+    }
+
+    /// Write the `ai` lines the game printed, oldest first, when the studio took its AI; nothing
+    /// otherwise. [`Studio::serve`] flushes before every reply, so the studio hears a line before
+    /// the reply of the request whose ticks printed it; a live loop flushes after its frame.
+    pub fn flush_ai<G: StudioGame>(&self, link: &Transport, game: &mut G) {
+        if !self.ai {
+            return;
+        }
+        for line in game.take_ai_lines() {
+            link.send(line.as_bytes());
+        }
     }
 
     /// Answer as protocol `version` speaks (1, or 2: `state()` carries `lifecycle` and
@@ -780,7 +838,9 @@ impl Studio {
         for item in link.take() {
             match item {
                 NextLine::Line(line) => {
-                    link.send(&self.handle(game, &line));
+                    let reply = self.handle(game, &line);
+                    self.flush_ai(link, game);
+                    link.send(&reply);
                     served.answered += 1;
                 }
                 NextLine::TooLong => {
@@ -858,6 +918,9 @@ impl Studio {
         if self.files && game.embeddable() {
             ops.extend(Op::EMBEDDING);
         }
+        if self.ai {
+            ops.extend(Op::AI);
+        }
         ops
     }
 
@@ -887,8 +950,20 @@ impl Studio {
                 Answer::Result(object([("visible", Value::from(visible))]))
             }
             Op::RENDER_SETTINGS => Studio::render_settings(game, arg),
+            Op::AI_REPLY | Op::AI_DELTA => Studio::ai_op(game, op, arg),
             // `handle` routes only the ops in this flavour's set here.
             _ => refuse(Refusal::UNKNOWN_OP),
+        }
+    }
+
+    /// `ai.reply` / `ai.delta`: an object argument the game reads (its rid and its answer).
+    fn ai_op<G: StudioGame>(game: &mut G, op: &str, arg: &Value) -> Answer {
+        if !matches!(arg, Value::Object(_)) {
+            return refuse(VerbRefusal::BAD_ARGUMENT);
+        }
+        match game.take_ai_op(op, arg) {
+            Some(taken) => Answer::Result(object([("taken", Value::Bool(taken))])),
+            None => refuse(VerbRefusal::BAD_ARGUMENT),
         }
     }
 

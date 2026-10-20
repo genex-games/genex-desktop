@@ -31,6 +31,7 @@ import { SECOND_MS } from "../../src/shared/duration.ts";
 import {
   GameBoxProblem,
   NativeBackend,
+  NATIVE_STUDIO_AI_ON,
   NativeEnv,
   NativeGpuTier,
   NativeOp,
@@ -619,6 +620,15 @@ describe("the Linux game box: display, audio and environment", () => {
       assert.equal(box.env[NativeEnv.Home], `${LINUX_BOX_STATE}/home`);
       assert.equal(box.env[NativeEnv.AnglePlatform], "vulkan");
       assert.ok(!Object.keys(box.env).some((name) => name.startsWith("LD_")), mode);
+    }
+  });
+
+  it("sets GENEX_STUDIO_AI=1 only when the studio answers the game's play-time AI", async () => {
+    const answered = await boxArgs({ ai: true });
+    assert.equal(answered.env[NativeEnv.StudioAi], NATIVE_STUDIO_AI_ON);
+    for (const ai of [false, undefined]) {
+      const plain = await boxArgs(ai === undefined ? {} : { ai });
+      assert.ok(!(NativeEnv.StudioAi in plain.env), String(ai));
     }
   });
 

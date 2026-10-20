@@ -183,6 +183,7 @@ impl Spike {
             seed: self.session.seed_value(),
             // The spike stays a protocol 1 game (its conformance rows assert protocol 1).
             receipt: None,
+            ai: false,
         }
     }
 
