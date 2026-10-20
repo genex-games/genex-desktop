@@ -287,6 +287,31 @@ jobs:
           name: release-regression-evidence
           path: .studio-dev/evidence
           if-no-files-found: ignore
+  # Check's `fast` job runs every fast test on macOS for each push to main. When its run on this
+  # commit passed, the release reuses it instead of queueing six more macOS shards behind the
+  # account's few macOS runners; otherwise (or when it fails) regression-fast runs them here.
+  fast-evidence:
+    needs: validate
+    if: vars.RELEASE_REGRESSION != 'skip'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 45
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      reuse: ${{ steps.evidence.outputs.reuse }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+      - name: Look for Check's passed macOS fast job on this commit
+        id: evidence
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/release-fast-evidence.mjs
   # The macOS regression is `npm test` in disjoint shards (rig runners serial, as `npm test` runs
   # them), the static gates once, and the end-to-end suites. Each shard reports on its own, so a
   # failure names its shard and "Re-run failed jobs" repeats only that one.
@@ -355,8 +380,8 @@ jobs:
           path: .studio-dev/evidence
           if-no-files-found: ignore
   regression-fast:
-    needs: validate
-    if: vars.RELEASE_REGRESSION != 'skip'
+    needs: [validate, fast-evidence]
+    if: vars.RELEASE_REGRESSION != 'skip' && needs.fast-evidence.outputs.reuse == 'false'
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.validate.outputs.fast_matrix) }}
@@ -389,10 +414,10 @@ jobs:
           name: regression-evidence-fast-${{ matrix.shard }}
           path: .studio-dev/evidence
           if-no-files-found: ignore
-  # One stable result for the whole regression: success only when every shard and the e2e passed,
-  # skipped (with them) under RELEASE_REGRESSION=skip.
+  # One stable result for the whole regression: success only when every shard and the e2e passed
+  # (the fast shards either here or in Check on this commit), skipped under RELEASE_REGRESSION=skip.
   regression:
-    needs: [validate, regression-rig, regression-harness, regression-fast, regression-e2e]
+    needs: [validate, fast-evidence, regression-rig, regression-harness, regression-fast, regression-e2e]
     if: ${{ !cancelled() && vars.RELEASE_REGRESSION != 'skip' }}
     runs-on: ubuntu-22.04
     timeout-minutes: 5

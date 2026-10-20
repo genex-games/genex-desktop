@@ -320,6 +320,7 @@ test("stable gate names fail closed on failed, cancelled, skipped or absent requ
   assert.throws(() => assertCiResults({ ...complete, "fast-tests": { result: "cancelled" } }, "fast"));
   const regression = {
     validate: { result: "success" },
+    "fast-evidence": { result: "success", outputs: { reuse: "false" } },
     "regression-rig": { result: "success" },
     "regression-harness": { result: "success" },
     "regression-fast": { result: "success" },
@@ -329,6 +330,16 @@ test("stable gate names fail closed on failed, cancelled, skipped or absent requ
   for (const name of Object.keys(regression))
     for (const result of ["failure", "cancelled", "skipped", undefined])
       assert.throws(() => assertCiResults({ ...regression, [name]: { result } }, "regression"), Error, name);
+  // Check's passed macOS fast job on the same commit stands in for the skipped fast shards, and
+  // only then: a skipped fast lane without that evidence, or a missing decision, fails closed.
+  const reused = {
+    ...regression,
+    "fast-evidence": { result: "success", outputs: { reuse: "true" } },
+    "regression-fast": { result: "skipped" },
+  };
+  assert.doesNotThrow(() => assertCiResults(reused, "regression"));
+  assert.throws(() => assertCiResults({ ...reused, "regression-fast": { result: "success" } }, "regression"));
+  assert.throws(() => assertCiResults({ ...regression, "fast-evidence": { result: "success" } }, "regression"));
   assert.throws(() => assertCiResults(complete, "unknown"), /lane/);
 });
 
