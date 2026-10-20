@@ -209,6 +209,12 @@ pathfinding = "4.16.0"
 trybuild = "1.0.121"
 wasm-bindgen-test = "0.3.79"
 
+# Engine dev and test builds keep file and line tables only: three checkouts share one target, and full
+# debug info filled the disk between waves. Backtraces still name file and line.
+[profile.dev]
+debug = "line-tables-only"
+incremental = false
+
 [profile.release]
 codegen-units = 1
 lto = "thin"
