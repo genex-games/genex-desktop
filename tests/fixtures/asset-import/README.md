@@ -31,8 +31,9 @@ texture inputs are the shared samples in `../asset-previews/`.
   `sphereGlb`), as the
   import step writes it: welded (C-7), in vertex cache and fetch order (C-8; it has no normal map,
   so no tangents), then `extras.genex_lods` simplified by meshoptimizer's
-  simplifier (`rust-assets-lods.test.ts` holds it to `convertAsset`); genex-render's `glb_lods` rows
-  load it.
+  attribute-aware simplifier, the equator's shared vertices locked and each error at least how far
+  the sphere's vertices lie from the level (LOD-09; `rust-assets-lods.test.ts` holds it to
+  `convertAsset`); genex-render's `glb_lods` rows load it.
 - `tangents-mirrored.glb`: an 8 x 16 UV sphere wound to face out, whose u is mirrored (1 → 0 → 1
   around it), with a normal-mapped material (a 1 x 1 flat-normal PNG that decodes) and no `TANGENT`
   (the test's own `sphereGlb` and `normalMapped`); `tangents-mirrored.imported.glb` is what the
