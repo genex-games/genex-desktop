@@ -27,8 +27,10 @@ members = [
   "crates/genex-anim",
   "crates/genex-nav",
   "crates/genex-stream",
-  # Multiplayer (MP-0): the net input stream below the facade.
+  # Multiplayer (MP-0): the net input stream below the facade, and the vendored relay client it
+  # drives (MP-1a: its build script links the store's pinned libcolyseus, never a download).
   "crates/genex-net",
+  "crates/genex-multiplayer",
   # G6 core game systems (INT-prep): input, saves, gameplay UI, profiling and crash reports.
   "crates/genex-input",
   "crates/genex-save",
