@@ -15,13 +15,15 @@ import {
   AiConsentKind,
   type AiMenuRow,
   type AiModelMenu,
+  type AiStopReason,
 } from "../../../shared/game-ai-views.ts";
 import { hostPlatform } from "../../platform.ts";
 import { Icon } from "../../ui/icons.tsx";
 import { PickerLabel, PickerSeparator, pickerRow } from "../../ui/PickerPanel.tsx";
 import { RovingAxis, rovingTarget } from "../../ui/roving-focus.ts";
 import { AI_WORDS, countWords, CREATE_AI_WORDS, thisMachine, yourPlanWords } from "../../words.ts";
-import { makerOf, modelLabel, tagWords, usageWords } from "./play-ai-view.ts";
+import type { StopAction } from "../../play/ai-model.ts";
+import { makerOf, modelLabel, type StopCardView, tagWords, usageWords } from "./play-ai-view.ts";
 
 const WORDS = CREATE_AI_WORDS;
 /** The engine that names a model run on Genex credits (`AiModelRef.engine` for the platform doors). */
@@ -332,7 +334,7 @@ export function ConsentCard({
     else onChange();
   };
   return (
-    <div className="play-ai-card" data-ai-consent={ticket.kind} role="group" aria-label={ticket.title}>
+    <div className="stage-ai-card" data-ai-consent={ticket.kind} role="group" aria-label={ticket.title}>
       <Sentence before={words.before} strong={words.strong} after={words.after} />
       <p className="text-ink-3">{words.small}</p>
       <div className="play-ai-card-presses">
@@ -350,6 +352,46 @@ export function ConsentCard({
           {words.no}
           {changesModel(ticket.kind) && <Icon name="chevron-down" size={12} />}
         </button>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * A stop card main pushed for a Create playtest (`V3-Stops`): one line, its fine print and the ways
+ * on it offers, the same as Play's. Its presses wait out {@link busy} (the 600 ms gate).
+ */
+export function StopCard({
+  view,
+  reason,
+  title,
+  busy,
+  onPress,
+}: {
+  view: StopCardView;
+  reason: AiStopReason;
+  title: string;
+  busy: boolean;
+  onPress: (action: StopAction) => void;
+}): JSX.Element {
+  return (
+    <div className="stage-ai-card" data-ai-stop={reason} role="group" aria-label={title}>
+      <p className="text-ink">{view.line}</p>
+      <p className="text-ink-3">{view.small}</p>
+      <div className="play-ai-card-presses">
+        {view.presses.map((press, at) => (
+          <button
+            key={press.action}
+            type="button"
+            className="people-button"
+            data-tone={at === 0 ? "primary" : undefined}
+            data-ai-stop-action={press.action}
+            disabled={busy}
+            onClick={() => onPress(press.action)}
+          >
+            {press.label}
+          </button>
+        ))}
       </div>
     </div>
   );

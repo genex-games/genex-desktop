@@ -186,7 +186,14 @@ const call = (fn: ((...args: unknown[]) => Promise<unknown>) | undefined, ...arg
   fn ? fn(...args) : Promise.reject(new Error(AiErrorCode.DoorUnavailable));
 
 /** The code an SDK rejection carries (`error.message`), as a failure code. */
-const codeOfError = (error: unknown): AiErrorCode => platformCode(error instanceof Error ? error.message : undefined);
+/**
+ * The failure an SDK error names. A page's fetch with no network throws a `TypeError` carrying no
+ * genex.games code: the lane is down (§8: network down is `door_unavailable`), not the provider.
+ */
+const codeOfError = (error: unknown): AiErrorCode => {
+  if (error instanceof TypeError) return AiErrorCode.DoorUnavailable;
+  return platformCode(error instanceof Error ? error.message : undefined);
+};
 
 const num = (value: unknown): number | null => (typeof value === "number" && Number.isFinite(value) ? value : null);
 

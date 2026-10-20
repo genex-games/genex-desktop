@@ -57,7 +57,7 @@ function ReportRow({
   if (fix && "failure" in fix) line = WORDS.failure[fix.failure];
   if (fix && "problem" in fix) line = fix.problem;
   return (
-    <li className="play-ai-report" data-ai-report={item.id} data-ai-report-kind={item.kind}>
+    <li className="ai-inbox-report" data-ai-report={item.id} data-ai-report-kind={item.kind}>
       <div className="flex min-w-0 flex-1 flex-col gap-0.5">
         <span className="flex min-w-0 items-baseline gap-2">
           <span className="truncate text-ink">{reasonWords(item)}</span>

@@ -10,7 +10,14 @@
  */
 import { type JSX, type KeyboardEvent, type RefObject, useCallback, useEffect, useRef, useState } from "react";
 import { type AiGameKey, type AiModelRef, createGameKey } from "../../../shared/game-ai.ts";
-import { type AiConsentTicket, AiConsentRefusal, type AiModelMenu } from "../../../shared/game-ai-views.ts";
+import {
+  type AiConsentTicket,
+  AiConsentRefusal,
+  type AiModelMenu,
+  AiPause,
+  type AiStopCard,
+} from "../../../shared/game-ai-views.ts";
+import { StopAction } from "../../play/ai-model.ts";
 import { useGenexSignIn } from "../../play/use-genex-sign-in.ts";
 import { hostPlatform } from "../../platform.ts";
 import { openSettings, SettingsSection } from "../../settings-navigation.ts";
@@ -18,9 +25,9 @@ import { cn } from "../../ui/cn.ts";
 import { Icon } from "../../ui/icons.tsx";
 import { Popover, PopoverContent, PopoverTrigger } from "../../ui/popover.tsx";
 import { CREATE_AI_WORDS, ENGINE_AI_WORDS, problemWords } from "../../words.ts";
-import { type AiMenuActions, AiMenuPanel, ConsentCard } from "./AiMenuPanel.tsx";
+import { type AiMenuActions, AiMenuPanel, ConsentCard, StopCard } from "./AiMenuPanel.tsx";
 import { ModelCheckDialog } from "./ModelCheckDialog.tsx";
-import { engineAiLine, type EngineAiLineView, PillState, pillView, usesAi } from "./play-ai-view.ts";
+import { engineAiLine, type EngineAiLineView, PillState, pillView, stopCardView, usesAi } from "./play-ai-view.ts";
 import { ReportInbox } from "./ReportInbox.tsx";
 import { useAiMenu, useAiPending } from "./use-game-ai.ts";
 
@@ -77,7 +84,70 @@ function useConsent(game: AiGameKey, refresh: () => Promise<void>) {
       return false;
     }
   };
-  return { ticket, stop: pending.stop, picked: setPicked, changing, setChanging, answer, gateOpen, error, setError };
+  return {
+    ticket,
+    stop: pending.stop,
+    clearStop: pending.clearStop,
+    picked: setPicked,
+    changing,
+    setChanging,
+    answer,
+    gateOpen,
+    error,
+    setError,
+  };
+}
+
+/** What a stop card's press does in Create: every one settles the card, then goes its way on. */
+function useStopActions(
+  game: AiGameKey,
+  consent: ReturnType<typeof useConsent>,
+  ways: {
+    pick: (model: AiModelRef) => Promise<void>;
+    enable: (on: boolean) => Promise<void>;
+    refresh: () => Promise<void>;
+  },
+  show: (open: boolean) => void,
+) {
+  const resume = async (pause: AiPause) => {
+    try {
+      await window.studio.gameAiResume(game, pause);
+      consent.clearStop();
+      await ways.refresh();
+      show(false);
+    } catch (cause) {
+      consent.setError(problemWords(cause));
+    }
+  };
+  const leave = () => {
+    consent.clearStop();
+    show(false);
+  };
+  return (action: StopAction, card: AiStopCard): void => {
+    const run: Record<StopAction, () => void> = {
+      [StopAction.GetCredits]: () => {
+        leave();
+        openSettings(SettingsSection.PlayAi, null);
+      },
+      [StopAction.UseAlternative]: () => {
+        consent.clearStop();
+        if (card.alternative) void ways.pick(card.alternative);
+      },
+      [StopAction.Change]: () => consent.clearStop(),
+      [StopAction.UseAnother]: () => consent.clearStop(),
+      [StopAction.KeepPlaying]: () => void resume(AiPause.DailyAlert),
+      [StopAction.Resume]: () => void resume(AiPause.AutoTopUp),
+      [StopAction.TurnOn]: () => {
+        consent.clearStop();
+        void ways.enable(true);
+      },
+      [StopAction.Ok]: leave,
+      [StopAction.Keep]: leave,
+      [StopAction.StopToday]: leave,
+      [StopAction.BackToPlay]: leave,
+    };
+    run[action]();
+  };
 }
 
 /** The pill's face: a sparkle, the model's name and its one tag. */
@@ -151,21 +221,36 @@ const ignoreRepeat = (event: KeyboardEvent<HTMLDivElement>) => {
   if (event.repeat && (event.key === "Enter" || event.key === " ")) event.preventDefault();
 };
 
-/** What the open control shows: the card waiting on the person, else the model menu. */
+/** What the open control shows: the card waiting on the person, else a stop main pushed, else the model menu. */
 function ControlPanel({
   menu,
   consent,
   actions,
+  stopGateOpen,
+  onStop,
   onDone,
   onSignIn,
 }: {
   menu: AiModelMenu | null;
   consent: ReturnType<typeof useConsent>;
   actions: AiMenuActions;
+  stopGateOpen: boolean;
+  onStop: (action: StopAction, card: AiStopCard) => void;
   onDone: () => void;
   onSignIn: () => void;
 }): JSX.Element | null {
   const asking = consent.ticket !== null && !consent.changing;
+  const { stop } = consent;
+  if (!asking && stop)
+    return (
+      <StopCard
+        view={stopCardView(stop, hostPlatform())}
+        reason={stop.reason}
+        title={stop.title}
+        busy={!stopGateOpen}
+        onPress={(action) => onStop(action, stop)}
+      />
+    );
   if (asking && consent.ticket)
     return (
       <ConsentCard
@@ -201,7 +286,7 @@ function ControlTrigger({
       data-stage-ai={pill ? view.state : undefined}
       data-engine-ai-choose={pill ? undefined : ""}
       data-asking={asking || undefined}
-      className={cn(pill ? "play-ai-pill no-drag" : "play-ai-line-choose", asking && "play-ai-pill-asking")}
+      className={cn(pill ? "stage-ai-pill no-drag" : "play-ai-line-choose", asking && "play-ai-pill-asking")}
     >
       {pill ? <PillFace view={view} /> : ENGINE_AI_WORDS.choose}
     </PopoverTrigger>
@@ -274,15 +359,17 @@ export function AiModelControl({
   const trigger = useRef<HTMLButtonElement>(null);
   const { open, show } = useOpen(onOpenChange);
   const { dialog, setDialog, pick, enable, openDialog } = useControlActions(game, refresh, consent, show);
+  const onStop = useStopActions(game, consent, { pick, enable, refresh }, show);
+  const stopGateOpen = useCommitGate(consent.stop ? `${consent.stop.reason} ${consent.stop.game}` : null);
   const view = pillView(menu);
   const line = engineAiLine(menu, { stop: consent.stop, consent: consent.ticket !== null }, hostPlatform());
   const pill = dress === AiControlDress.Pill;
-  // A card main pushes for this game opens the control where it is.
+  // A card or a stop main pushes for this game opens the control where it is (playtests follow Play's rules).
   useEffect(() => {
-    if (consent.ticket) show(true);
-  }, [consent.ticket, show]);
+    if (consent.ticket || consent.stop) show(true);
+  }, [consent.ticket, consent.stop, show]);
   // A game that never used AI keeps the strip and the card as they were; its first card brings the control.
-  const hidden = pill ? !usesAi(menu) && !consent.ticket : line === null;
+  const hidden = pill ? !usesAi(menu) && !consent.ticket && !consent.stop : line === null;
   if (hidden && dialog === AiDialog.None) return null;
   const actions: AiMenuActions = {
     onPick: (model) => void pick(model),
@@ -295,7 +382,8 @@ export function AiModelControl({
     },
     onSignIn: signIn,
   };
-  const triggered = pill || line?.choose === true || consent.ticket !== null;
+  const triggered = pill || line?.choose === true || consent.ticket !== null || consent.stop !== null;
+  const waiting = (consent.ticket !== null && !consent.changing) || consent.stop !== null;
   return (
     <>
       <Popover open={open} onOpenChange={(next) => show(next)}>
@@ -304,14 +392,7 @@ export function AiModelControl({
             <LineFace line={line} />
           </span>
         )}
-        {triggered && (
-          <ControlTrigger
-            pill={pill}
-            view={view}
-            asking={consent.ticket !== null && !consent.changing}
-            trigger={trigger}
-          />
-        )}
+        {triggered && <ControlTrigger pill={pill} view={view} asking={waiting} trigger={trigger} />}
         <PopoverContent
           side={pill ? "bottom" : "top"}
           align="end"
@@ -320,7 +401,15 @@ export function AiModelControl({
           aria-label={WORDS.menuLabel}
           onKeyDown={ignoreRepeat}
         >
-          <ControlPanel menu={menu} consent={consent} actions={actions} onDone={() => show(false)} onSignIn={signIn} />
+          <ControlPanel
+            menu={menu}
+            consent={consent}
+            actions={actions}
+            stopGateOpen={stopGateOpen}
+            onStop={onStop}
+            onDone={() => show(false)}
+            onSignIn={signIn}
+          />
           {consent.error && (
             <p role="alert" className="px-2 py-1 text-red">
               {consent.error}

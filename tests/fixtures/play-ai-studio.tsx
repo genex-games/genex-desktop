@@ -19,7 +19,8 @@ import { ReportInbox } from "../../src/renderer/panels/game-ai/ReportInbox.tsx";
 import { EngineAiLine, StageAiPill } from "../../src/renderer/panels/game-ai/StageAiPill.tsx";
 import { GenexPublishDialog } from "../../src/renderer/panels/plugins/genex/GenexPublish.tsx";
 import { studio } from "../../src/renderer/state/studio.ts";
-import { AiDoor, AiFunding, type AiModelRef, AiRequirement } from "../../src/shared/game-ai.ts";
+import { AiDoor, AiFunding, type AiModelRef, AiRequirement, createGameKey } from "../../src/shared/game-ai.ts";
+import { UiEvent } from "../../src/shared/ui-events.ts";
 import {
   AiCheckFit,
   type AiCheckResult,
@@ -31,6 +32,9 @@ import { type AiReportInboxItem, AiReportKind, AiReportReason } from "../../src/
 import {
   AiConsentKind,
   AiMaker,
+  AiPause,
+  AiStopReason,
+  GameAiNoticeKind,
   type AiMenuRow,
   type AiModelMenu,
   AiModelTag,
@@ -275,6 +279,7 @@ fake.stub("gameAiCredits", async () => [
   { id: "pack_5000", credits: 5000, priceCents: 5500 },
 ]);
 fake.stub("gameAiCheckout", async () => {});
+fake.stub("gameAiResume", async () => {});
 fake.stub("gameAiMenu", async () => menu);
 fake.stub("gameAiCheckState", async () => check);
 fake.stub("gameAiInbox", async () => REPORTS.map((item) => ({ ...item })));
@@ -415,6 +420,48 @@ async function answerCard() {
   return { answers: fake.callsOf("gameAiAnswer"), cardGone: document.querySelector("[data-ai-consent]") === null };
 }
 
+/**
+ * A Create Live playtest reaches the daily alert: main pushes the stop card, which opens the pill in
+ * place (V3-Create-States: the same rules as Play); Keep playing waits out its 600 ms, then resumes.
+ */
+async function stopCard() {
+  fake.emit({
+    type: UiEvent.GameAi,
+    payload: {
+      kind: GameAiNoticeKind.Stop,
+      card: {
+        game: createGameKey(GAME),
+        title: TITLE,
+        reason: AiStopReason.DailyAlert,
+        model: HAIKU,
+        modelLabel: "Claude Haiku 4.5",
+        alternative: QWEN,
+        alternativeLabel: "Qwen3 8B",
+        resetsAt: null,
+        spentCredits: 500,
+      },
+    },
+  });
+  await settle();
+  await wait(120);
+  const keep = document.querySelector<HTMLButtonElement>("[data-ai-stop-action=keep-playing]");
+  const gatedAtFirst = keep?.disabled ?? null;
+  const asking = document.querySelector("[data-stage-ai]")?.classList.contains("play-ai-pill-asking") ?? false;
+  const card = text("[data-ai-stop]");
+  const reason = document.querySelector("[data-ai-stop]")?.getAttribute("data-ai-stop") ?? null;
+  await wait(700);
+  await settle();
+  return { card, reason, asking, gatedAtFirst, pause: AiPause.DailyAlert };
+}
+
+/** Press the stop card's Keep playing, past its gate. */
+async function keepPlaying() {
+  document.querySelector<HTMLElement>("[data-ai-stop-action=keep-playing]")?.click();
+  await settle();
+  await wait(120);
+  return { resumed: fake.callsOf("gameAiResume"), gone: document.querySelector("[data-ai-stop]") === null };
+}
+
 async function modelCheck(options: { theme: Theme; state: string }) {
   check = CHECKS[options.state] ?? CHECK_DONE;
   await show(options.theme, <ModelCheckDialog project={GAME} title={TITLE} onPlayNow={() => {}} onClose={() => {}} />);
@@ -507,5 +554,5 @@ async function engine(options: { theme: Theme; state: string }) {
 }
 
 Object.assign(window, {
-  aiRig: { settings, credits, pill, openMenu, pickForCard, answerCard, modelCheck, reports, fixFirst, publish, pressPublish, choose, engine },
+  aiRig: { settings, credits, pill, openMenu, pickForCard, answerCard, stopCard, keepPlaying, modelCheck, reports, fixFirst, publish, pressPublish, choose, engine },
 });

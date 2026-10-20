@@ -100,6 +100,16 @@ app.whenReady().then(async()=>{
    await capture(theme+'-pill-card');
    const answered=await step(theme+'Answer','window.aiRig.answerCard()');
    assert.deepEqual(answered.answers.at(-1),[{ticket:'ticket-0001',approve:true,model:null,unranked:false}]);
+   // A stop main pushes for a Create playtest opens the pill with its card (V3-Create-States, V3-Stops).
+   const stop=await step(theme+'Stop','window.aiRig.stopCard()');
+   assert.equal(stop.reason,'daily-alert');
+   assert.equal(stop.card,'Lantern Run has spent 500 credits today. That’s the alert you set. Change it in Settings. Keep playing Stop for today');
+   assert.equal(stop.asking,true,'the pill says it waits on the person');
+   assert.equal(stop.gatedAtFirst,true,'Keep playing waits 600 ms');
+   await capture(theme+'-pill-stop');
+   const kept=await step(theme+'KeepPlaying','window.aiRig.keepPlaying()');
+   assert.deepEqual(kept.resumed.at(-1),['create:lantern-run',stop.pause]);
+   assert.equal(kept.gone,true);
    // The model check (V3-Create-Check, V3-Create-States).
    const empty=await step(theme+'CheckEmpty','window.aiRig.modelCheck({theme:'+t+',state:"empty"})');
    assert.equal(empty.intro,'Play Lantern Run once with AI, then check which models fit. It runs on your own models, and it’s optional.');

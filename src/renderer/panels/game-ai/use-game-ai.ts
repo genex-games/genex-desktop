@@ -64,6 +64,7 @@ export function useAiPending(game: AiGameKey | null): {
   consent: AiConsentTicket | null;
   stop: AiStopCard | null;
   clearConsent: () => void;
+  clearStop: () => void;
 } {
   const [consent, setConsent] = useState<AiConsentTicket | null>(null);
   const [stop, setStop] = useState<AiStopCard | null>(null);
@@ -84,5 +85,10 @@ export function useAiPending(game: AiGameKey | null): {
       [game],
     ),
   );
-  return { consent, stop, clearConsent: useCallback(() => setConsent(null), []) };
+  return {
+    consent,
+    stop,
+    clearConsent: useCallback(() => setConsent(null), []),
+    clearStop: useCallback(() => setStop(null), []),
+  };
 }

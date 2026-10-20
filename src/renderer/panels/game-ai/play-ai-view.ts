@@ -25,6 +25,7 @@ import {
   AiStopReason,
 } from "../../../shared/game-ai-views.ts";
 import { EngineId } from "../../../shared/providers.ts";
+import { StopAction, stopActions } from "../../play/ai-model.ts";
 import {
   AI_WORDS,
   CREATE_AI_WORDS,
@@ -315,6 +316,82 @@ export interface EngineAiLineView {
   text: string;
   choose: boolean;
   tone: AiLineTone;
+}
+
+/** One press of a Create stop card: its action (shared with Play's, `play/ai-model.ts`) and its label. */
+export interface StopPressView {
+  action: StopAction;
+  label: string;
+}
+
+/** A Create stop card (`V3-Stops`, `V3-Create-States`): its line, its fine print and its presses. */
+export interface StopCardView {
+  line: string;
+  small: string;
+  presses: StopPressView[];
+}
+
+/** A time of day a plan rests until, as the person's clock shows it; null when none or unreadable. */
+function restTime(iso: string | null): string | null {
+  if (!iso || !Number.isFinite(Date.parse(iso))) return null;
+  return new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" }).format(new Date(iso));
+}
+
+/** A stop card's line and fine print in Create's words. */
+function stopLines(card: AiStopCard, platform: string): Pick<StopCardView, "line" | "small"> {
+  const words = CREATE_AI_WORDS.stop;
+  const alternative = card.alternativeLabel;
+  switch (card.reason) {
+    case AiStopReason.OutOfCredits:
+      return { line: words.outOfCredits, small: words.outOfCreditsSmall(alternative, thisMachine(platform)) };
+    case AiStopReason.PlanResting: {
+      const plan = yourPlanWords(card.model ? planMaker(card.model.engine) : null);
+      return { line: words.planResting(plan, restTime(card.resetsAt)), small: words.planRestingSmall(alternative) };
+    }
+    case AiStopReason.DailyAlert:
+      return { line: words.dailyAlert(card.title, card.spentCredits ?? 0), small: words.dailyAlertSmall };
+    case AiStopReason.NeedsAiOff:
+      return { line: words.needsAiOff(card.title), small: words.needsAiOffSmall(card.modelLabel) };
+    case AiStopReason.NotAnswering:
+      return { line: words.notAnswering(card.modelLabel), small: words.notAnsweringSmall };
+    case AiStopReason.Struggles:
+      return {
+        line: words.struggles(card.modelLabel ?? card.model?.model ?? "", card.title),
+        small: words.strugglesSmall(alternative),
+      };
+    case AiStopReason.TopUpPaused:
+      return { line: words.topUpPaused(card.title), small: words.topUpPausedSmall };
+  }
+}
+
+/** A Create stop press's label. */
+function stopPressLabel(action: StopAction, card: AiStopCard): string {
+  const words = CREATE_AI_WORDS.stop;
+  const model = card.modelLabel ?? card.model?.model ?? "";
+  const labels: Record<StopAction, string> = {
+    [StopAction.GetCredits]: AI_WORDS.getCredits,
+    [StopAction.UseAlternative]: words.use(card.alternativeLabel ?? ""),
+    [StopAction.Ok]: words.ok,
+    [StopAction.Change]: words.change,
+    [StopAction.KeepPlaying]: words.keepPlaying,
+    [StopAction.StopToday]: words.stopForToday,
+    [StopAction.TurnOn]: words.turnOn,
+    [StopAction.BackToPlay]: words.ok,
+    [StopAction.Keep]: words.keep(model),
+    [StopAction.UseAnother]: words.anotherModel,
+    [StopAction.Resume]: words.resume,
+  };
+  return labels[action];
+}
+
+/** A Create stop card: the same reasons and presses as Play's, in Create's words. */
+export function stopCardView(card: AiStopCard, platform: string): StopCardView {
+  const { primary, secondary } = stopActions(card);
+  const presses = [primary, ...(secondary ? [secondary] : [])].map((action) => ({
+    action,
+    label: stopPressLabel(action, card),
+  }));
+  return { ...stopLines(card, platform), presses };
 }
 
 /** A stop card's line on the engine card. */

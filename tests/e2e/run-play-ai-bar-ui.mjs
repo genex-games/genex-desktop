@@ -128,6 +128,9 @@ app.whenReady().then(async()=>{
   await until('Get credits', 'Boolean(document.querySelector("[data-play-ai-credits] [data-ai-pack]"))');
   const packs=await js('[...document.querySelectorAll("[data-ai-pack]")].map(e=>[e.dataset.aiPack,e.getAttribute("aria-checked"),e.querySelector("small").textContent])');
   check('the four packs, smallest first, 2,500 picked, prices as checkout charges', JSON.stringify(packs)===JSON.stringify([['pack_500','false','$5.50'],['pack_1000','false','$11'],['pack_2500','true','$27.50'],['pack_5000','false','$55']]));
+  // Studio's own Get credits rules (play-ai-studio.css) never reach the bar's: the four packs sit in one row.
+  check('the four packs sit in one row', (await js('new Set([...document.querySelectorAll("[data-ai-pack]")].map(e=>Math.round(e.getBoundingClientRect().top))).size'))===1);
+  check('the pill keeps the look of the bar, not of Create', (await js('getComputedStyle(document.querySelector("[data-play-ai-pill]")).maxWidth'))!=='220px');
   await until('auto top-up', 'Boolean(document.querySelector("[data-ai-auto-top-up]"))');
   check('auto top-up is off, at most once a day', (await js('document.querySelector("[data-ai-auto-top-up]").getAttribute("aria-checked")'))==='false' && (await text('#play-ai-auto-top-up'))==='Add 1,000 when I’m under 100 · at most once a day');
   check('no fee in the copy', !(await js('document.body.innerText')).toLowerCase().includes('fee'));

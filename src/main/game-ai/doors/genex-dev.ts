@@ -8,7 +8,7 @@
  * the library's link to its published self, never from the page.
  */
 import { setTimeout as sleep } from "node:timers/promises";
-import { MINUTE_MS } from "../../../shared/duration.ts";
+import { MINUTE_MS, SECOND_MS } from "../../../shared/duration.ts";
 import {
   AiDoor,
   AiErrorCode,
@@ -22,7 +22,7 @@ import {
   MICROS_PER_CREDIT,
 } from "../../../shared/game-ai.ts";
 import type { DoorReadiness } from "../../../shared/game-ai-route.ts";
-import type { GalleryRequest } from "../../play/gallery.ts";
+import type { GalleryAnswer, GalleryRequest } from "../../play/gallery.ts";
 import { gameSingleText, promptTokensOf } from "../game-ai-prompts.ts";
 import { AiRefusal } from "../refusal.ts";
 import type { AiDoorAnswer, AiDoorRequest, GameAiDoorImpl } from "../types.ts";
@@ -103,7 +103,16 @@ export interface GenexDevDoorOptions {
   now?: () => number;
   /** The pause between polls (tests hold it short). */
   pollMs?: number;
+  /** How long one request to genex.games may take before the lane reads as down ({@link DEV_CONNECT_DEADLINE_MS}). */
+  connectMs?: number;
 }
+
+/**
+ * How long one request to the lane (a create, a poll) may take before the door reads as down (§8:
+ * network down is `door_unavailable` within 3 s). The generation itself runs on genex.games and is
+ * polled, so a request is always a short one.
+ */
+export const DEV_CONNECT_DEADLINE_MS = 3 * SECOND_MS;
 
 const isPrice = (value: unknown): value is number => typeof value === "number" && Number.isFinite(value) && value >= 0;
 
@@ -220,7 +229,7 @@ class DevDoor implements GenexDevDoor {
     if (!token || !project) throw new AiRefusal(AiErrorCode.DoorUnavailable);
     const worst = this.worstCaseMicros(call.request, call.model);
     if (!Number.isFinite(worst)) throw new AiRefusal(AiErrorCode.DoorUnavailable);
-    const created = await this.#options.request(DevRoute.generations(project), {
+    const created = await this.#send(DevRoute.generations(project), {
       method: "POST",
       token,
       body: { maxCredits: worst / MICROS_PER_CREDIT, request: this.#generationRequest(call) },
@@ -266,12 +275,33 @@ class DevDoor implements GenexDevDoor {
       }
       await sleep(this.#options.pollMs ?? POLL_MS, undefined, { signal }).catch(() => undefined);
       if (signal.aborted) continue;
-      const answer = await this.#options.request(DevRoute.generation(project, current.id), { method: "GET", token });
+      const answer = await this.#send(DevRoute.generation(project, current.id), { method: "GET", token });
       const next = readGeneration(answer.body);
       if (answer.status < 200 || answer.status >= 300 || !next) throw refusalOf(answer.status, answer.body);
       current = next;
     }
     return current;
+  }
+
+  /**
+   * One request to the lane, held to {@link DEV_CONNECT_DEADLINE_MS}: a network that is down, a host
+   * that never answers or a connection cut is the door down, never the provider's failure.
+   */
+  async #send(route: string, init: Parameters<GalleryRequest>[1]): Promise<GalleryAnswer> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const late = new Promise<never>((_resolve, reject) => {
+      timer = setTimeout(
+        () => reject(new AiRefusal(AiErrorCode.DoorUnavailable)),
+        this.#options.connectMs ?? DEV_CONNECT_DEADLINE_MS,
+      );
+    });
+    try {
+      return await Promise.race([this.#options.request(route, init), late]);
+    } catch {
+      throw new AiRefusal(AiErrorCode.DoorUnavailable);
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   async #cancel(project: string, token: string, id: string): Promise<void> {

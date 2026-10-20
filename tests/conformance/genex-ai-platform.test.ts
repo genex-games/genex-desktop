@@ -326,6 +326,19 @@ describe("a published game's calls", () => {
     });
   }
 
+  it("answers door_unavailable at once when the network is down", async () => {
+    const { sdk } = fakeSdk({
+      generate: () => {
+        // What a page's fetch throws with no network: a TypeError, with no genex.games code.
+        throw new TypeError("Failed to fetch");
+      },
+    });
+    const { ai } = platformAi(sdk);
+    await ai.ready();
+    ai.ask({ site: "npc.reply", prompt: "p", schema: Line });
+    assert.equal((await nextResult(ai))?.code, AiErrorCode.DoorUnavailable);
+  });
+
   it("reads an SDK that throws as its code", async () => {
     const { sdk } = fakeSdk({
       generate: () => {

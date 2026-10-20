@@ -10,15 +10,15 @@ import assert from "node:assert/strict";
 import { createByokDoor } from "../../src/main/game-ai/doors/byok.ts";
 import type { EngineSource } from "../../src/main/game-ai/doors/engine.ts";
 import { createFixtureDoor, fixtureValue } from "../../src/main/game-ai/doors/fixture.ts";
-import { createGenexDevDoor, DevRoute } from "../../src/main/game-ai/doors/genex-dev.ts";
+import { createGenexDevDoor, DEV_CONNECT_DEADLINE_MS, DevRoute } from "../../src/main/game-ai/doors/genex-dev.ts";
 import { createLocalDoor } from "../../src/main/game-ai/doors/local.ts";
 import { createPlanDoor, planShare } from "../../src/main/game-ai/doors/plan.ts";
 import { createTapeDoor } from "../../src/main/game-ai/doors/tape.ts";
 import { HOST_PREAMBLE, promptTokensOf } from "../../src/main/game-ai/game-ai-prompts.ts";
-import { AiRefusal } from "../../src/main/game-ai/refusal.ts";
+import { AiRefusal, failureOf } from "../../src/main/game-ai/refusal.ts";
 import type { AiDoorRequest } from "../../src/main/game-ai/types.ts";
 import type { GalleryRequest } from "../../src/main/play/gallery.ts";
-import { HOUR_MS } from "../../src/shared/duration.ts";
+import { HOUR_MS, SECOND_MS } from "../../src/shared/duration.ts";
 import { EngineKind, EngineStatusCode } from "../../src/shared/engine-descriptor.ts";
 import {
   AiAuthority,
@@ -38,8 +38,10 @@ import {
   type CompleteRequest,
   CompletePurpose,
   type Engine,
+  EngineError,
   type EngineModel,
 } from "../../src/substrate/engines/types.ts";
+import { EngineFailureKind } from "../../src/shared/engine-requests.ts";
 
 const CROWNS: AiGameKey = "play:proj_crowns";
 const SCHEMA = {
@@ -94,7 +96,13 @@ function row(id: string, patch: Partial<EngineModel> = {}): EngineModel {
 function fakeEngine(
   id: string,
   rows: EngineModel[],
-  options: { ready?: boolean; reply?: string; usage?: Record<string, number>; plan?: Engine["readUsage"] } = {},
+  options: {
+    ready?: boolean;
+    reply?: string;
+    usage?: Record<string, number>;
+    plan?: Engine["readUsage"];
+    fail?: Error;
+  } = {},
 ) {
   const requests: CompleteRequest[] = [];
   const engine: Engine & { requests: CompleteRequest[] } = {
@@ -109,6 +117,7 @@ function fakeEngine(
     models: async () => rows,
     complete: async (request) => {
       requests.push(request);
+      if (options.fail) throw options.fail;
       return {
         message: { role: "assistant", content: options.reply ?? '{"move":"march"}' },
         usage: options.usage ?? { input_tokens: 120, output_tokens: 8 },
@@ -231,6 +240,18 @@ describe("the person's OpenRouter key", () => {
       (await silent.run(doorCall(haiku, request), never())).costMicros,
       silent.worstCaseMicros(request, haiku),
     );
+  });
+
+  it("answers door_unavailable when the network is down: a cut connection is a door down", async () => {
+    // The OpenRouter engine gives up on a host that does not connect within GAME_CONNECT_TIMEOUT_MS
+    // (3 s, `engine-game-calls.test.ts`) and names a refused or cut connection as unavailable.
+    const cut = new EngineError(EngineFailureKind.Unavailable, EngineId.OpenRouter, "fetch failed");
+    const door = createByokDoor({ engines: sourceOf(fakeEngine(EngineId.OpenRouter, [priced], { fail: cut })) });
+    await door.models();
+    await assert.rejects(door.run(doorCall(haiku), never()), (error: unknown) => {
+      assert.equal(failureOf(error).code, AiErrorCode.DoorUnavailable);
+      return true;
+    });
   });
 
   it("offers nothing without a key", async () => {
@@ -421,13 +442,15 @@ describe("the development lane", () => {
 
   function lane(
     answers: Array<{ status: number; body: unknown }>,
-    options: { project?: string | null; token?: string } = {},
+    options: { project?: string | null; token?: string; network?: (route: string) => Promise<never> | null } = {},
   ) {
     const sent: Array<{ route: string; method?: string; body?: unknown; token?: string }> = [];
     const queue = [...answers];
     const request: GalleryRequest = async (route, init) => {
       sent.push({ route, ...init });
       if (route === DevRoute.Models) return { status: 200, body: MODELS };
+      const down = options.network?.(route);
+      if (down) return down;
       return (
         queue.shift() ?? {
           status: 200,
@@ -440,9 +463,37 @@ describe("the development lane", () => {
       token: async () => ("token" in options ? options.token : "creator-token"),
       projectOf: async () => (options.project === undefined ? "proj_moss" : options.project),
       pollMs: 1,
+      connectMs: 50,
     });
     return { door, sent };
   }
+
+  it("answers door_unavailable within its connect deadline when the network is down", async () => {
+    assert.equal(DEV_CONNECT_DEADLINE_MS, 3 * SECOND_MS, "network down answers within 3 s (§8)");
+    const rows: Array<{ label: string; network: (route: string) => Promise<never> | null }> = [
+      { label: "a refused connection", network: () => Promise.reject(new TypeError("fetch failed")) },
+      { label: "a host that never answers", network: () => new Promise<never>(() => {}) },
+      {
+        label: "a poll that never answers",
+        network: (route) => (route.includes("/generations/gen_") ? new Promise<never>(() => {}) : null),
+      },
+    ];
+    for (const row of rows) {
+      const { door } = lane(
+        row.label === "a poll that never answers"
+          ? [{ status: 200, body: { id: "gen_1", status: "queued", chargedCredits: 0 } }]
+          : [],
+        { network: row.network },
+      );
+      await door.models();
+      const started = performance.now();
+      await refusedWith(door.run(doorCall(model), never()), AiErrorCode.DoorUnavailable, row.label);
+      assert.ok(
+        performance.now() - started < SECOND_MS,
+        `${row.label}: answered at the deadline, not the call's minute`,
+      );
+    }
+  });
 
   it("offers the featured, fully priced generation models and holds whole credits", async () => {
     const { door } = lane([]);

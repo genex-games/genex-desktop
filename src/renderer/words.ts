@@ -5504,6 +5504,10 @@ export const CREATE_AI_WORDS = {
     stopForToday: "Stop for today",
     turnOn: "Turn on AI",
     anotherModel: "Use another model",
+    topUpPaused: (title: string) => `${title} paused its AI.`,
+    topUpPausedSmall: "It topped up your Genex credits twice today. Resume to keep playing.",
+    resume: "Resume",
+    change: "Change",
   },
 } as const;
 

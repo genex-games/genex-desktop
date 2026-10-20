@@ -69,7 +69,7 @@ export function GetCreditsDialog({
   const line = topUp ?? { on: false, underCredits: AI_AUTO_TOPUP_UNDER_CREDITS, addCredits: AI_AUTO_TOPUP_ADD_CREDITS };
   return (
     <DialogSurface title={WORDS.title} description={WORDS.intro} onDismiss={onDismiss} size="md" testId="get-credits">
-      <div className="play-ai-credits" data-get-credits>
+      <div className="ai-credits-dialog" data-get-credits>
         {!packs && !failed && (
           <p role="status" className="text-ink-3">
             {WORDS.loading}
@@ -84,7 +84,7 @@ export function GetCreditsDialog({
           </p>
         )}
         {packs && (
-          <div role="radiogroup" aria-label={WORDS.packs} className="play-ai-packs">
+          <div role="radiogroup" aria-label={WORDS.packs} className="ai-credits-packs">
             {packs.map((candidate) => (
               <button
                 key={candidate.id}
@@ -92,7 +92,7 @@ export function GetCreditsDialog({
                 role="radio"
                 aria-checked={candidate.id === pick}
                 data-credit-pack={candidate.id}
-                className="play-ai-pack"
+                className="ai-credits-pack"
                 onClick={() => setChosen(candidate.id)}
               >
                 <span className="play-ai-pack-credits">{countWords(candidate.credits)}</span>

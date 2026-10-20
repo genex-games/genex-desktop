@@ -42,16 +42,16 @@
 }
 
 /* Get credits: the packs as a grid of presses, the price in mono, the chosen one marked. */
-.play-ai-credits {
+.ai-credits-dialog {
   display: grid;
   gap: 12px;
 }
-.play-ai-packs {
+.ai-credits-packs {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(96px, 1fr));
   gap: 8px;
 }
-.play-ai-pack {
+.ai-credits-pack {
   display: grid;
   gap: 2px;
   padding: 10px 12px;
@@ -62,12 +62,12 @@
   text-align: start;
   cursor: pointer;
 }
-.play-ai-pack:hover,
-.play-ai-pack:focus-visible {
+.ai-credits-pack:hover,
+.ai-credits-pack:focus-visible {
   background: var(--hover);
   outline: none;
 }
-.play-ai-pack[aria-checked="true"] {
+.ai-credits-pack[aria-checked="true"] {
   border-color: var(--accent-fill);
   box-shadow: inset 0 0 0 1px var(--accent-fill);
 }
@@ -97,7 +97,7 @@
 }
 
 /* Create's pill: the strip's glass, the model's name, one tag. */
-.play-ai-pill {
+.stage-ai-pill {
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -112,8 +112,8 @@
   white-space: nowrap;
   cursor: pointer;
 }
-.play-ai-pill:hover,
-.play-ai-pill[data-popup-open] {
+.stage-ai-pill:hover,
+.stage-ai-pill[data-popup-open] {
   background: var(--hover);
 }
 .play-ai-pill-asking {
@@ -150,7 +150,7 @@
 }
 
 /* The one-sentence card (`V3-First`). */
-.play-ai-card {
+.stage-ai-card {
   display: grid;
   gap: 8px;
   padding: 8px;
@@ -206,13 +206,13 @@
   border-radius: var(--radius-card);
   background: var(--card);
 }
-.play-ai-report {
+.ai-inbox-report {
   display: flex;
   align-items: center;
   gap: 12px;
   padding: 12px 14px;
 }
-.play-ai-report + .play-ai-report {
+.ai-inbox-report + .ai-inbox-report {
   border-block-start: 1px solid var(--line);
 }
 .play-ai-report-note {
