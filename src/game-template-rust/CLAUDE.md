@@ -42,14 +42,35 @@ over its code budget (4 MB of gzip unless `genex.toml` `[web] wasm_budget_mb` ra
 Past 32 MB the export is refused `wasm-over-budget`, and a budget outside 1..=32 is refused
 `invalid-web-budget`. A game that uses no physics sets `[physics] enabled = false`, which leaves
 Rapier (a fifth of the web build) out.
-Assets have a budget per destination too (web 64 MB, phones 200 MB, desktop 2 GB): an export past it
-still ships but downloads slower, so prefer compressed and fewer files over raising `[assets]
-budget_mb`; past 512 MB a web build is refused `assets-over-ceiling`.
 Every destination shows a loading screen until the first lit frame; never draw your own. Give it
 the game's look in `genex.toml` `[render.loading]` (title, `#rrggbb` background, accent and text, a
 logo under `assets/`), as `docs/api/loading-screen.md` shows.
 When a run answers a refusal code (`gpu-unsupported`, `build-failed`, ...), read it in
 `docs/CONTRACT.md` before changing code.
+
+## Assets
+
+Models, textures and skies live in `assets/`. Studio imports each file when it lands and writes
+what the game loads; `docs/api/assets.md`, `docs/api/drawing.md` and `docs/api/genex-toml.md`
+hold the how.
+
+- **CC0 before making.** For a common prop, surface or sky, `cc0__search`, then `cc0__fetch` at
+  `1k` (2k only for what fills the screen). Studio downloads it and records its licence in
+  `genex-assets.lock`: never download a file, add a licence line or edit the lock yourself. A held
+  curated pack answers why: take a Poly Haven or ambientCG asset instead.
+- **Read the import's facts.** After a delivery the lock's rows name `issues` by code
+  (`triangles-over-budget`, `albedo-out-of-range`, `usage-unknown`): fix the file, never the lock.
+- **Say how a loose texture is used.** A texture a model's material samples needs nothing. A loose
+  image your code samples gets a `[[texture]]` row (`color`, `data` or `normal`); without one it
+  ships uncompressed and `state().__render.assetIssues` names it `texture-uncompressed`. Keep
+  images square with a power-of-two side.
+- **Fit the budgets.** Each destination has one (web 64 MB, phones 200 MB, desktop 2 GB): past it
+  an export still ships but downloads slower, so prefer compressed, fewer and smaller files over
+  raising `[assets] budget_mb`; past 512 MB a web build is refused `assets-over-ceiling`. What the
+  first frame does not need goes in an `[[asset_group]]`, which a reset never reads.
+- **Check a capture.** `state().__render.missingModels` absent, each texture in
+  `__render.textures` with a compressed `family`, and `assetIssues` absent before calling assets
+  done.
 
 ## Rendering
 

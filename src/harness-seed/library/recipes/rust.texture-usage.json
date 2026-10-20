@@ -1,0 +1,47 @@
+{
+  "id": "rust.texture-usage",
+  "runtime": "rust-wgpu",
+  "title": "Loose textures in Rust: a [[texture]] usage row, square power-of-two images, compressed families checked",
+  "tags": [
+    "texture",
+    "textures",
+    "usage",
+    "normal",
+    "mask",
+    "flow",
+    "material",
+    "ktx2",
+    "compressed",
+    "uncompressed",
+    "png",
+    "jpeg",
+    "asset",
+    "rust",
+    "wgpu",
+    "genex"
+  ],
+  "checkClass": "materials",
+  "kind": "technique",
+  "pack": "rust",
+  "note": "A loose image your code samples gets a [[texture]] row (color, data or normal); make it square power-of-two; __render.assetIssues must not list it.",
+  "intent": "Studio encodes each PNG or JPEG whose usage it knows into GPU-compressed KTX2 files beside it (bc on desktops, astc and etc2 on phones, all of them on the web, where a browser fetches only the one its GPU reads) and keeps the image as the fallback. A texture a model's material samples is known from its slot; a CC0 map is known from its role. A loose image your own code samples (a custom material's normal map, a mask, a flow map) is known only from a [[texture]] row in genex.toml with usage color, data or normal, never from its file name. Without one it ships as the image and state().__render.assetIssues names it texture-uncompressed. Make images square with a power-of-two side (an odd size is resized and its UVs stretch) and sample them with UVs from 0 to 1. After a build look at state().__render.textures: each texture's kind is the usage you meant and its family is bc, astc, etc2 or rgba8, not source. texture-family-refused means every size class it fits is full: use fewer or smaller textures of that kind. tangents-runtime names a normal-mapped model the import did not see: import it instead of loading it raw.",
+  "sketch": "# genex.toml\n[[texture]]\npath = \"textures/water-normal.png\"   # sampled by a custom material, so no model's slot says\nusage = \"normal\"\n\n[[texture]]\npath = \"textures/foam-mask.png\"\nusage = \"data\"                          # numbers, not colour: never sRGB-decoded\n",
+  "port": "The facet that samples a loose texture owns its [[texture]] row; a texture a model's material samples is the model's and needs none.",
+  "evidence": [
+    {
+      "source": "src/game-template-rust/docs/GENEX_API.md (genex.toml)",
+      "note": "[[texture]] rows, invalid-texture-usage, the KTX2 families per destination and the power-of-two resize."
+    },
+    {
+      "source": "src/game-template-rust/docs/GENEX_API.md (Drawing)",
+      "note": "__render.textures kind and family; __render.assetIssues texture-uncompressed, texture-family-refused, tangents-runtime."
+    }
+  ],
+  "stats": {
+    "applied": 0,
+    "wins": 0,
+    "losses": 0
+  },
+  "status": "candidate",
+  "origin": "seed"
+}

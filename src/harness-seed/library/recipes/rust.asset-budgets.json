@@ -1,0 +1,47 @@
+{
+  "id": "rust.asset-budgets",
+  "runtime": "rust-wgpu",
+  "title": "Asset budgets per destination in Rust: fewer and smaller files, later groups, import facts read",
+  "tags": [
+    "asset",
+    "assets",
+    "budget",
+    "size",
+    "download",
+    "phone",
+    "mobile",
+    "web",
+    "triangles",
+    "polycount",
+    "group",
+    "streaming",
+    "export",
+    "rust",
+    "wgpu",
+    "genex"
+  ],
+  "checkClass": "stats",
+  "kind": "technique",
+  "pack": "rust",
+  "note": "Fit web 64 MB, phones 200 MB and desktop 2 GB of assets; shrink and drop files before raising [assets] budget_mb; later content goes in an [[asset_group]].",
+  "intent": "Every destination measures its package against an asset budget: 64 MB on the web, 200 MB on an iPhone or Android phone, 2 GB on a desktop. Past it an export still ships with assets-over-budget and downloads slower; past the hard cap (512 MB on the web, 4096 MB on a phone) the build is refused assets-over-ceiling. Fit the budget before raising [assets] budget_mb: fetch textures at the size they are seen at (1k on phones), reuse one material across props, let phones keep textures up to phone_max_texture_px (2048 by default) and remove files the game never loads. Read genex-assets.lock after each delivery: a row's issues name triangles-over-budget (a character over 100,000 triangles, any other model over 250,000), albedo-out-of-range or metallic-partial by code; fix the model, never the lock, which Studio alone writes. Assets the first frame does not need (a second level, a castle's interiors) go in an [[asset_group]] so they arrive while playing, not before the first frame; a reset never reads one (not-preloaded).",
+  "sketch": "# genex.toml\n[assets]\nphone_max_texture_px = 1024    # a phone-first game: halve every phone texture\n\n[assets.desktop]\nbudget_mb = 1024               # only when the brief is desktop-first and the files are already lean\n\n[[asset_group]]\nname = \"castle\"\npaths = [\"interiors/castle/**\", \"props/throne.glb\"]\n",
+  "port": "The facet that owns a level owns its asset group; the budget keys are the game's, changed only with the reason in the facet's notes.",
+  "evidence": [
+    {
+      "source": "src/game-template-rust/docs/GENEX_API.md (genex.toml)",
+      "note": "[assets] budget_mb and phone_max_texture_px, assets-over-budget, assets-over-ceiling, [[asset_group]] globs."
+    },
+    {
+      "source": "src/game-template-rust/docs/GENEX_API.md (Reading assets)",
+      "note": "A reset reads boot and sim group assets only; a named group refuses not-preloaded."
+    }
+  ],
+  "stats": {
+    "applied": 0,
+    "wins": 0,
+    "losses": 0
+  },
+  "status": "candidate",
+  "origin": "seed"
+}
