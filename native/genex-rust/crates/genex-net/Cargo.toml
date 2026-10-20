@@ -11,13 +11,12 @@ repository.workspace = true
 [lints]
 workspace = true
 
-# Backends are chosen by the build, never by game code. `relay` will link the vendored
-# genex-multiplayer client (native libcolyseus or the web bridge) for exports and the web draft;
-# `loopback` marks Live, dev, judge and device builds. Both are empty until their work packages
-# (MP-2b, MP-3a) fill them, so no build links any network code yet.
+# Backends are chosen by the build, never by game code. `relay` links the vendored
+# genex-multiplayer client (native libcolyseus through the store's GENEX_COLYSEUS_LIB_DIR) for
+# exports; `loopback` marks Live, dev, judge and device builds, which link no network code.
 [features]
 default = []
-relay = []
+relay = ["dep:genex-multiplayer", "genex-multiplayer/native"]
 loopback = []
 
 [dependencies]
@@ -27,3 +26,9 @@ genex-core = { workspace = true }
 glam = { workspace = true }
 serde_json = { workspace = true }
 libm = { workspace = true }
+genex-multiplayer = { workspace = true, optional = true }
+
+[dev-dependencies]
+# Only the pure halves (interp, pose, protocol, types): the oracle dump records the vendored
+# interpolator, and the relay mapping rows build the crate's own events. No libcolyseus is linked.
+genex-multiplayer = { workspace = true }

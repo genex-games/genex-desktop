@@ -1,0 +1,16 @@
+{
+  "about": "Control answers (PROTOCOL.md §7.2): the relay's reason codes and the crate's own settlements, mapped to NetControl wire values.",
+  "rows": [
+    { "accepted": true, "reason": "accepted", "expect": "accepted" },
+    { "accepted": false, "reason": "already-owner", "expect": "already-owner" },
+    { "accepted": false, "reason": "held", "expect": "held" },
+    { "accepted": false, "reason": "not-host", "expect": "not-host" },
+    { "accepted": false, "reason": "not-owner", "expect": "not-owner" },
+    { "accepted": false, "reason": "host-authority", "expect": "host-authority" },
+    { "accepted": false, "reason": "rate-limited", "expect": "rate-limited" },
+    { "accepted": false, "reason": "unknown-object", "expect": "unknown-object" },
+    { "accepted": false, "reason": "timeout", "expect": "offline" },
+    { "accepted": false, "reason": "disconnected", "expect": "offline" },
+    { "accepted": false, "reason": "something-new", "expect": "offline" }
+  ]
+}

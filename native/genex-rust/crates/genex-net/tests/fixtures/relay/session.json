@@ -1,0 +1,39 @@
+{
+  "about": "A recorded-shape native session for the counting fake: each step is what one pump polls (events) and the views the session then holds; expect is the frame cut after it.",
+  "steps": [
+    {
+      "events": [{ "type": "joined", "sessionId": "s1" }, { "type": "playerJoined", "id": "s1" }, { "type": "playerJoined", "id": "s2" }, { "type": "hostChanged", "host": "s1" }],
+      "sessionId": "s1", "hostId": "s1",
+      "players": [
+        { "id": "s1", "name": "Ada", "connected": true, "state": { "x": 1.0 }, "stateRaw": { "x": 1.0 }, "isMe": true },
+        { "id": "s2", "name": "Bo", "connected": true, "state": { "x": 4.5, "px": 1.0, "py": 2.0, "pz": 3.0, "pq": [0.0, 0.0, 0.0, 1.0] }, "stateRaw": { "x": 5.0, "px": 1.0, "py": 2.0, "pz": 3.5, "pq": [0.0, 0.0, 0.0, 1.0] } }
+      ],
+      "objects": [{ "id": "ball", "owner": "s2", "seq": 1, "epoch": 2, "state": { "x": 0.5 }, "stateRaw": { "x": 0.75 } }],
+      "shared": { "phase": "lobby" },
+      "serverNow": 1234.5,
+      "expect": { "status": "joined", "me": "s1", "host": "s1", "isHost": true, "players": 2, "connected": 2, "events": 3 }
+    },
+    {
+      "events": [],
+      "sessionId": "s1", "hostId": "s1",
+      "players": [
+        { "id": "s1", "name": "Ada", "connected": true, "state": { "x": 1.0 }, "stateRaw": { "x": 1.0 }, "isMe": true },
+        { "id": "s2", "name": "Bo", "connected": false, "state": { "x": 5.0 }, "stateRaw": { "x": 5.0 } }
+      ],
+      "objects": [],
+      "shared": { "phase": "play" },
+      "serverNow": 1251.0,
+      "expect": { "status": "joined", "me": "s1", "host": "s1", "isHost": true, "players": 2, "connected": 1, "events": 1 }
+    },
+    {
+      "events": [{ "type": "matchStart", "roundId": 3 }],
+      "sessionId": "s1", "hostId": "s2",
+      "players": [{ "id": "s1", "name": "Ada", "connected": true, "state": {}, "stateRaw": {}, "isMe": true }],
+      "objects": [],
+      "shared": { "phase": "play" },
+      "match": { "status": "playing", "players": ["s1", "s2"], "minPlayers": 2, "maxPlayers": 4, "winnerId": "" },
+      "serverNow": 1251.0,
+      "expect": { "status": "joined", "me": "s1", "host": "s2", "isHost": false, "players": 1, "connected": 1, "events": 1 }
+    }
+  ]
+}

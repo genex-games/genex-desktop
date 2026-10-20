@@ -1288,6 +1288,7 @@ name = "genex-net"
 version = "0.1.0"
 dependencies = [
  "genex-core",
+ "genex-multiplayer",
  "glam 0.33.12",
  "libm",
  "serde_json",

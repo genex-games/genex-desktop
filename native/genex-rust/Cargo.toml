@@ -83,6 +83,9 @@ genex-anim = { path = "crates/genex-anim", version = "0.1.0" }
 genex-nav = { path = "crates/genex-nav", version = "0.1.0" }
 genex-stream = { path = "crates/genex-stream", version = "0.1.0" }
 genex-net = { path = "crates/genex-net", version = "0.1.0" }
+# Without `native`: genex-net's `relay` feature turns it on, so only export builds of a `[net]` game
+# link libcolyseus (MP-3a); the pure halves (interp, pose, protocol, types) serve its tests.
+genex-multiplayer = { path = "crates/genex-multiplayer", version = "0.1.0", default-features = false }
 # G6: the facade takes each only in its area's facade work package (EXT-PLAN M5).
 genex-input = { path = "crates/genex-input", version = "0.1.0" }
 genex-save = { path = "crates/genex-save", version = "0.1.0" }
