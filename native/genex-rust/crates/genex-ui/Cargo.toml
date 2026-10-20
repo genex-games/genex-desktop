@@ -18,6 +18,9 @@ workspace = true
 genex-core = { workspace = true }
 egui = { workspace = true }
 image = { workspace = true }
+# fluent-bundle and unic-langid for the text catalogs and locales (UIS-6).
+fluent-bundle = { workspace = true }
+unic-langid = { workspace = true }
 
 [dev-dependencies]
 # The tests lay out text, so their contexts get the HUD's text fonts (egui is built without its
