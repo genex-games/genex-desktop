@@ -35,7 +35,7 @@ const RUN_TIMEOUT_MS = 60_000;
 const RANGE_LOW = 60080;
 const RANGE_SIZE = 10;
 /** The proxy's port in the sandboxed command's proxy variable. */
-const PROXY_PORT = /127\.0\.0\.1:(\d+)/;
+const PROXY_PORT = /(?:127\.0\.0\.1|localhost):(\d+)/;
 /** The credentials in a proxy URL, kept out of a failure's message. */
 const PROXY_CREDENTIALS = /\/\/[^@/]*@/;
 
