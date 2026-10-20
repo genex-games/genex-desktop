@@ -1793,7 +1793,10 @@ single billing authority. Every client of a Genex account shares one per-account
 and a paid request refused by it fails: a status read asks Genex again only about generations it
 has not seen settle (`completed`, `failed`, `canceled`; remembered by the backend until sign-out),
 and the Genex page re-reads every 5 s only while a job is requested, submitting, accepted or
-generating or a sign-in waits, otherwise once a minute (`genexPollMs`). Plugin process failures
+generating or a sign-in waits, otherwise once a minute (`genexPollMs`); behind another app it reads
+once a minute (every 5 s still while a sign-in waits) and a hidden window reads nothing until shown.
+A status read reuses a game's `genex budget` answer for 30 s, and any other CLI command in that
+game forgets it. Plugin process failures
 are shown in Plugins and reported as a `failed` change.
 
 ## Project facts

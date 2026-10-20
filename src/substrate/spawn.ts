@@ -29,7 +29,7 @@ import { createRequire } from "node:module";
 import type { Readable } from "node:stream";
 import { MINUTE_MS } from "../shared/duration.ts";
 import { errorMessage } from "../shared/errors.ts";
-import { StudioPlatform } from "../shared/boot.ts";
+import { type SandboxProblem, StudioPlatform } from "../shared/boot.ts";
 import { ownBubblewrap } from "./linux-bubblewrap.ts";
 import { prepareSandbox } from "./sandbox-prepare.ts";
 import {
@@ -66,10 +66,11 @@ import {
   renderEnvFile,
   srtWinExecFailure,
   srtWinPath,
-  windowsDependencyErrors,
+  type WindowsSetupGap,
   windowsDenyRead,
   windowsRunEnv,
   windowsSessionFor,
+  windowsSetupGaps,
   writeCurlHome,
   writeDeniesBeyondRead,
 } from "./windows-sandbox.ts";
@@ -209,8 +210,8 @@ export interface WindowsSeams {
   session?: WindowsSandboxSession;
   /** The real user's profile folder (default: the home folder). */
   profile?: string;
-  /** sandbox-runtime's Windows dependency check (default: {@link windowsDependencyErrors}). */
-  dependencyErrors?: () => Promise<string[]>;
+  /** What of the Windows sandbox is not set up yet (default: {@link windowsSetupGaps}). */
+  setupGaps?: () => Promise<WindowsSetupGap[]>;
 }
 
 /** The part of sandbox-runtime's `SandboxManager` this file drives. */
@@ -305,21 +306,26 @@ function asSetupProblem(error: unknown): unknown {
   return setup ? new SandboxUnavailableError(setup) : error;
 }
 
-/**
- * A failed Windows start as the setup problem the window shows, when it is one: by the error's
- * code, else by sandbox-runtime's dependency check, whose refusal `initialize` throws untyped. A
- * failure the check does not explain, or a check that fails itself, stays the error it was.
- */
-async function asWindowsSetupProblem(error: unknown, dependencyErrors: () => Promise<string[]>): Promise<unknown> {
-  const typed = asSetupProblem(error);
-  if (typed !== error) return typed;
-  const errors = await dependencyErrors().catch((): string[] => []);
-  const problem = sandboxProblem({
+/** The Windows setup problem for what is not set up yet, carrying what Set up does; null when nothing is missing. */
+function windowsGapProblem(gaps: readonly WindowsSetupGap[]): SandboxProblem | null {
+  return sandboxProblem({
     platform: StudioPlatform.Windows,
     supported: true,
-    dependencyErrors: errors,
+    dependencyErrors: gaps.map((gap) => gap.detail),
     missingTools: [],
+    windowsNeeds: [...new Set(gaps.map((gap) => gap.need))],
   });
+}
+
+/**
+ * A failed Windows start as the setup problem the window shows, when it is one: by the error's
+ * code, else by what is not set up yet, whose refusal `initialize` throws untyped. A failure the
+ * check does not explain, or a check that fails itself, stays the error it was.
+ */
+async function asWindowsSetupProblem(error: unknown, setupGaps: () => Promise<WindowsSetupGap[]>): Promise<unknown> {
+  const typed = asSetupProblem(error);
+  if (typed !== error) return typed;
+  const problem = windowsGapProblem(await setupGaps().catch((): WindowsSetupGap[] => []));
   return problem ? new SandboxUnavailableError(problem) : error;
 }
 
@@ -630,13 +636,8 @@ export class ProcessSandbox {
     assertSandboxReady(runtime, this.#platform);
     const bash = this.#seams.bash === undefined ? await findGitBash() : this.#seams.bash;
     if (!bash) throw new SandboxUnavailableError(gitMissingProblem());
-    const gaps = await (this.#seams.dependencyErrors ?? windowsDependencyErrors)().catch((): string[] => []);
-    const problem = sandboxProblem({
-      platform: StudioPlatform.Windows,
-      supported: true,
-      dependencyErrors: gaps,
-      missingTools: [],
-    });
+    const gaps = await (this.#seams.setupGaps ?? windowsSetupGaps)().catch((): WindowsSetupGap[] => []);
+    const problem = windowsGapProblem(gaps);
     if (problem) throw new SandboxUnavailableError(problem);
     const started = performance.now();
     this.#initialize().then(
@@ -706,7 +707,7 @@ export class ProcessSandbox {
     await session
       .join(this, { grants: this.#windowsGrants(backend), config: this.#windowsSessionConfig() })
       .catch(async (error: unknown) => {
-        throw await asWindowsSetupProblem(error, this.#seams.dependencyErrors ?? windowsDependencyErrors);
+        throw await asWindowsSetupProblem(error, this.#seams.setupGaps ?? windowsSetupGaps);
       });
     this.#windows = backend;
     // A folder or deny added while the session started (a start in the background) joins it now.

@@ -139,6 +139,8 @@ export interface Worker {
   promise?: Promise<unknown>;
   /** The engine limit that ended its session, when one did (`noteWorkerLimit`). */
   limit?: AnyRecord;
+  /** Its engine refused it: the sandbox a worker runs in cannot run on this computer (`workers/sandbox-refusal.ts`). */
+  sandboxRefused?: boolean;
   /** A conflict worker's merge (conflict-worker.ts): opened in its worktree before its session. */
   merging?: ConflictMerge | null;
   /**

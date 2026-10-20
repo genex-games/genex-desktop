@@ -8,7 +8,7 @@ import { GenexAction, type GenexStatus } from "../../../../shared/genex.ts";
 import type { PluginInfo } from "../../../../shared/plugins.ts";
 import { UiEvent } from "../../../../shared/ui-events.ts";
 import { type PluginReviewRequest, runPluginAction } from "../../../plugin-actions.ts";
-import { genexPollMs, isGenexStatus } from "./genex-view.ts";
+import { genexPollMs, isGenexStatus, type PageAttention } from "./genex-view.ts";
 
 /** Why an answer is not a status. */
 const MESSAGE = { unreadable: "Genex answered with something Studio can’t read." } as const;
@@ -74,26 +74,55 @@ export function useGenexStatus(plugin: PluginInfo, project: string | null | unde
     }
     void refresh();
     const again = (): void => void refresh();
+    const shown = (): void => {
+      if (!document.hidden) again();
+    };
     window.addEventListener("focus", again);
+    document.addEventListener("visibilitychange", shown);
     const unsubscribe = window.studio.onEvent((event) => {
       const own = event.type === UiEvent.PluginsChanged && event.payload?.id === id;
       if (own || event.type === UiEvent.ConnectionsChanged) again();
     });
     return () => {
       window.removeEventListener("focus", again);
+      document.removeEventListener("visibilitychange", shown);
       unsubscribe();
     };
   }, [id, refresh, reading]);
 
-  const pollMs = genexPollMs(status);
+  const attention = usePageAttention();
+  const pollMs = genexPollMs(status, attention);
   useEffect(() => {
-    if (!reading) return;
+    if (!reading || pollMs === null) return;
     const timer = window.setInterval(() => void refresh(), pollMs);
     return () => window.clearInterval(timer);
   }, [pollMs, refresh, reading]);
 
   const error = actionError || readError;
   return { status, error, running, act, refresh, review, closeReview: () => setReview(null) };
+}
+
+const readAttention = (): PageAttention => ({ hidden: document.hidden, focused: document.hasFocus() });
+
+/** Whether the window can be seen and is in front, kept current as the person moves between apps. */
+function usePageAttention(): PageAttention {
+  const [attention, setAttention] = useState(readAttention);
+  useEffect(() => {
+    const update = (): void =>
+      setAttention((current) => {
+        const next = readAttention();
+        return next.hidden === current.hidden && next.focused === current.focused ? current : next;
+      });
+    window.addEventListener("focus", update);
+    window.addEventListener("blur", update);
+    document.addEventListener("visibilitychange", update);
+    return () => {
+      window.removeEventListener("focus", update);
+      window.removeEventListener("blur", update);
+      document.removeEventListener("visibilitychange", update);
+    };
+  }, []);
+  return attention;
 }
 
 /** What the Genex page's parts share from the live status. */

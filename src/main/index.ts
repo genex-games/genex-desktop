@@ -197,6 +197,7 @@ import { windowControlsPainter } from "./window-chrome.ts";
 import { appUserModelId, installedWorkingDir, runSquirrelStep, squirrelStartup } from "./windows-install.ts";
 import { BootPhase, type SandboxProblem, StartStep, StudioPlatform } from "../shared/boot.ts";
 import { SandboxUnavailableError } from "../substrate/sandbox-unavailable.ts";
+import { type Painter, paintWhileUsed } from "../substrate/paint-while-used.ts";
 import { longPath, takeBackSandboxEntries } from "../substrate/windows-sandbox.ts";
 import { installWindowsSandbox } from "../substrate/windows-sandbox-setup.ts";
 import { toolchain } from "../substrate/toolchain.ts";
@@ -919,7 +920,8 @@ function attachPreviews(studio: StudioCore, win: BrowserWindow): void {
   // normal compositor never fires requestAnimationFrame, whatever backgroundThrottling says,
   // so a game in it stood still — the computer-smoke fixture reported frame 0 after a
   // 600 ms W hold. Offscreen rendering paints the frames itself at 60 fps, so a worker's
-  // window keeps simulating while the worker plays in it.
+  // window keeps simulating while the worker plays in it — and only then: a window nobody has
+  // called for a minute stops painting until the next call (`paint-while-used.ts`).
   const used = new Set<number>();
   studio.options.createHeadlessPreview = async () => {
     let slot = 1;
@@ -1212,7 +1214,22 @@ function createFacetPreview(studio: StudioCore, index: number, released: () => v
     else facetWin.setSize(width, height);
     port.setBounds({ x: 0, y: 0, width, height });
   };
-  return port;
+  return paintWhileUsed(port, facetPainter(port));
+}
+
+/** A facet window's painting, on whichever page its view holds now (`create` can replace it). */
+function facetPainter(port: GamePreview): Painter {
+  const page = (): Electron.WebContents | null => {
+    const wc = port.view?.webContents;
+    return wc && !wc.isDestroyed() ? wc : null;
+  };
+  return {
+    start: () => {
+      const wc = page();
+      if (wc && !wc.isPainting()) wc.startPainting();
+    },
+    stop: () => page()?.stopPainting(),
+  };
 }
 
 /** Collected before the first load so a renderer that fails on boot is diagnosable. */

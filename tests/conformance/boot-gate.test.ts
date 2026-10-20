@@ -329,6 +329,19 @@ describe("Set up (Windows)", () => {
     assert.equal(installs, 2);
   });
 
+  it("hands the install the problem it is held on, so Set up does what that problem needs", async () => {
+    const handed: SandboxProblem[] = [];
+    const gate = createBootGate(StudioPlatform.Windows, {
+      installSandbox: async (problem) => {
+        handed.push(problem);
+        return { cancelled: true };
+      },
+    });
+    gate.hold(NOT_PROVISIONED, async () => {});
+    await gate.setUp();
+    assert.deepEqual(handed, [NOT_PROVISIONED]);
+  });
+
   it("says a Set up has run this launch, so a window that loads again does not run it by itself", async () => {
     const { gate } = windowsGate(async () => ({ cancelled: true }));
     assert.equal(gate.state().setupTried, undefined);

@@ -7,7 +7,13 @@ import assert from "node:assert/strict";
 import { chmod, mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, it } from "node:test";
-import { PackageManager, SandboxProblemCode, SandboxTool, linuxInstallCommands } from "../../src/shared/boot.ts";
+import {
+  PackageManager,
+  SandboxProblemCode,
+  SandboxTool,
+  WindowsSetupNeed,
+  linuxInstallCommands,
+} from "../../src/shared/boot.ts";
 import {
   SandboxUnavailableError,
   missingLinuxTools,
@@ -72,6 +78,19 @@ describe("sandbox problem mapping", () => {
     });
     assert.equal(problem?.code, SandboxProblemCode.NotProvisioned);
     assert.deepEqual(problem?.installCommands, []);
+  });
+
+  it("Windows carries what Set up needs to do, when the check says", () => {
+    const needs = [WindowsSetupNeed.Sandbox, WindowsSetupNeed.LogonService];
+    const problem = sandboxProblem({
+      platform: "win32",
+      supported: true,
+      dependencyErrors: ["Sandbox user is not provisioned", "The Secondary Logon service is disabled"],
+      missingTools: [],
+      windowsNeeds: needs,
+    });
+    assert.equal(problem?.code, SandboxProblemCode.NotProvisioned);
+    assert.deepEqual(problem?.windowsNeeds, needs);
   });
 
   it("Windows initialize errors map by their code, never by their words", () => {

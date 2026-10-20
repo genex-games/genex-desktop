@@ -28,7 +28,7 @@ import {
   type Rig,
 } from "../helpers/studio-rig.ts";
 import { tmpDir } from "../helpers/tmp.ts";
-import { ctxRecorder } from "../helpers/ctx-recorder.ts";
+import { type CtxHandler, ctxRecorder } from "../helpers/ctx-recorder.ts";
 import { fakeFinishReview, reviewerAnswer, seatedReviewer } from "../helpers/reviewer.ts";
 import { CLOSE_SETTLE_MS } from "../../src/harness-seed/loop/director/budgets.ts";
 import { CALL_MARGIN_MS } from "../../src/harness-seed/loop/finish-check.ts";
@@ -2373,10 +2373,11 @@ function runEventTypes(events: Awaited<ReturnType<typeof waitForLog>>, runId: st
   return types;
 }
 
-/** A run as the director's tool handler reads it, with a builder `plaza` and a recording host. */
-function markingLoopRun(state: string) {
+/** A run as the director's tool handler reads it, with a builder `plaza` and a recording host (answering `handlers` too). */
+function markingLoopRun(state: string, handlers: Record<string, CtxHandler> = {}) {
   const rec = ctxRecorder({
     handlers: {
+      ...handlers,
       "artifact.read": () => null,
       "artifact.write": () => 1,
       "events.head": () => null,
@@ -2387,6 +2388,7 @@ function markingLoopRun(state: string) {
   });
   const integrated: unknown[] = [];
   const cards: string[] = [];
+  const plains: Array<string | null> = [];
   const log: Array<{ seq: number; text: string }> = [];
   const plaza = { id: "plaza", title: "Plaza", state, mode: "loop" };
   const loopRun = {
@@ -2411,8 +2413,9 @@ function markingLoopRun(state: string) {
       loopRun.state.integrationHead = "bbb";
       return "merged plaza";
     },
-    decision: async (text: string) => {
+    decision: async (text: string, plain?: string | null) => {
       cards.push(text);
+      plains.push(plain ?? null);
     },
     note: (text: string) => log.push({ seq: log.length + 1, text }),
     notesSince: (seq: number) => log.filter((entry) => entry.seq > seq),
@@ -2420,7 +2423,7 @@ function markingLoopRun(state: string) {
     routeUserSteers: async () => {},
     inbox: { steering: async () => [], finishing: async () => false },
   };
-  return { loopRun, rec, integrated, cards, log };
+  return { loopRun, rec, integrated, cards, plains, log };
 }
 
 /** The `worker_finished` records a director appended, by their payloads. */
@@ -2533,6 +2536,59 @@ describe("the director's worker_mark and readers, in Genex's one worker model", 
     const failedWithCommit = { ...failed.loopRun.state.workers.get("plaza"), from: "base1", lastCommit: "own1" };
     await recordBuilderEnded(failed.loopRun as never, failedWithCommit as never, "it broke");
     assert.equal(workerFinishes(failed.rec)[0]?.delivered, undefined, "only a finished builder hands work back");
+  });
+
+  it("WIN-275: a builder its engine refused for a sandbox this computer cannot run ends in that code; worker_start then starts nothing on that engine and the person is told once, with Codex offered", async () => {
+    const { recordBuilderEnded } = await import("../../src/harness-seed/loop/workers/director-pool.ts");
+    const { handler } = await import("../../src/harness-seed/loop/director/tools.ts");
+    const refusals = await import("../../src/harness-seed/loop/workers/sandbox-refusal.ts");
+    const ready = { code: "ready", detail: "" };
+    const engines = () => [
+      { id: "claude-code", kind: "delegated", status: ready },
+      { id: "codex", kind: "delegated", status: ready },
+    ];
+    const marking = markingLoopRun("failed", { "engine.describe": engines });
+    try {
+      const plaza = marking.loopRun.state.workers.get("plaza");
+      Object.assign(plaza as object, { sandboxRefused: true });
+      await recordBuilderEnded(marking.loopRun as never, plaza as never, "lead-facing words");
+      assert.equal(workerFinishes(marking.rec)[0]?.stopCode, "sandbox_unavailable");
+      refusals.noteSandboxRefusal("claude-code", "sandbox required but unavailable");
+      for (const isolation of ["copy", "read"]) {
+        const args = { id: `paving-${isolation}`, task: "Pave the plaza.", isolation };
+        const answer = String(await handler(marking.loopRun as never, "worker_start", args));
+        assert.match(
+          answer,
+          /^Not started: sandbox required but unavailable\. Every worker_start on Claude Code/,
+          isolation,
+        );
+        assert.match(answer, /do the work yourself/, isolation);
+        assert.match(answer, /pick Codex for Workers/, `${isolation}: the other signed-in engine is offered`);
+      }
+      assert.deepEqual(marking.rec.paramsOf("engine.delegate"), [], "nothing reached the engine");
+      assert.equal(marking.plains.length, 1, "the person is told once");
+      assert.match(
+        String(marking.plains[0]),
+        /^Claude Code can't run workers on (Windows|this computer) yet, so the lead builds on its own\. Pick Codex for Workers to use them\.$/,
+      );
+      const told: Array<string | null | undefined> = [];
+      const windows = {
+        ctx: { call: async () => [] },
+        decision: async (_: string, plain?: string | null) => told.push(plain),
+      };
+      await refusals.tellSandboxRefusal(
+        windows,
+        refusals.noteSandboxRefusal("claude-code", "sandbox required but unavailable"),
+        "win32",
+      );
+      assert.deepEqual(
+        told,
+        ["Claude Code can't run workers on Windows yet, so the lead builds on its own."],
+        "no Codex signed in: none offered",
+      );
+    } finally {
+      refusals.forgetSandboxRefusals();
+    }
   });
 
   it("a builder that stops short says why in the app's own code: the lead stopped it, the Loop ended first, or an error", async () => {

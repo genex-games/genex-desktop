@@ -25,6 +25,16 @@ the setup screen opens on `git-missing`. What differs from macOS:
   a slow cleanup must not hold Electron's main thread. The actual process `exit` event retains
   synchronous cleanup, since promises cannot finish there. Partial grants remain eligible for
   that exit cleanup while initialization or its rollback is pending.
+- srt-win starts every command as `srt-sandbox` through CreateProcessWithLogonW, which the
+  Secondary Logon service (`seclogon`) carries out; where hardening disabled it, Windows refuses
+  every start ("Access is denied"). The setup check (`windowsSetupGaps`) reads its start type with
+  `sc qc seclogon`, which needs no administrator (the number decides; the word after it is
+  localized), beside srt-win's two status probes, and a disabled service is a setup gap
+  (`WindowsSetupNeed.LogonService`) the setup card names in one line. Set up sets it to Manual
+  (`sc config seclogon start= demand`, [`windows-logon-service.ts`](../src/substrate/windows-logon-service.ts))
+  through Windows PowerShell's `Start-Process -Verb RunAs` before srt-win's install. srt-win
+  elevates itself, so a PC that needs both sees two approval prompts. A service Set up could not
+  turn on (a policy keeps it off) leaves the card saying how to do it in Services.
 - That egress check starts srt-win as the sandbox user before any grant, and Windows opens its
   program and working folder as that user. A per-user install lives in the profile, so the session
   grants the install folder (and srt-win's, when apart) for reading first, among Genex's own grants
@@ -86,7 +96,9 @@ the setup screen opens on `git-missing`. What differs from macOS:
   protected paths use `PROTECTED_DACL_SECURITY_INFORMATION` together with the DACL mask.
   The entries name the group because srt-win's recompose of a path drops every explicit entry for
   the user's SID. Each Genex records its entries in `%LOCALAPPDATA%\genex-sandbox-denies\<pid>.json`;
-  every edit makes a path what all running holders need. An edit that finds a path as it should be
+  every edit makes a path what all running holders need. The group's passed-down allows are Genex's
+  only on a folder it grants or granted: on a path it only denies or guards, an allow someone else
+  gave the group stays. An edit that finds a path as it should be
   writes nothing, so passing entries down a folder happens once: a Genex that quits keeps its
   record, and the next sync of any Genex keeps what a running one needs and takes back the rest. A
   first walk of a large folder can take minutes (10 at most per batch; the log names each edit
@@ -126,7 +138,9 @@ exist itself; a missing one outside every grant is not sent.
 
 srt-win is alpha. Every srt host on the machine shares the
 `srt-sandbox` SID and so each other's grants and denies. Claude Code's tool-less sessions (usage,
-model list, judge) run without its own sandbox on Windows (`toollessSandbox`). DNS still resolves; the proxy token is on the
+model list, judge) run without its own sandbox on Windows (`toollessSandbox`); a worker's session
+needs it, and where the CLI cannot run it the worker is refused rather than run unboxed
+([harness runtime](harness-runtime.md#a-workers-engine-that-cannot-run-its-sandbox)). DNS still resolves; the proxy token is on the
 runner's command line. A folder opened while the harness runs is writable only after it next
 stops. srt-win's stamp of a missing deny path (or a per-command one) re-propagates permissions
 under that path's parent, holding each folder open meanwhile. Genex's own entries stay between
@@ -157,7 +171,9 @@ package.yml --ref <branch> -f only=win32`). `rig.yml` runs the rig group on PRs 
 runner only, it exports `GENEX_WINDOWS_SANDBOX=ready`) and `npm run test:windows -- --suite-only`
 (the curated `tests/windows-suite.json`). Its sandbox files are `windows-sandbox.test.ts` (grant
 session, env file and launch through fakes; runs everywhere) and `sandbox-windows.test.ts` (the
-real srt-win's hostile-input tables; skipped unless `GENEX_WINDOWS_SANDBOX=ready`). A dispatch
+real srt-win's hostile-input tables; skipped unless `GENEX_WINDOWS_SANDBOX=ready`).
+`windows-logon-service.test.ts` reads the runner's real Secondary Logon service and runs Set up's
+elevated step there (Actions only: it changes a service). A dispatch
 with `backlog` also runs the rest of the fast group as an informational pass that never fails;
 the job summary and `windows-tests` artifact list failing files and tests and clean files not yet
 in the suite. Test files run side by side, so one file's sandbox re-propagates srt-win's entries

@@ -190,6 +190,12 @@ export const StopReason = {
   NoProgress: "no_progress",
   MaxTurns: "max_turns",
   Aborted: "aborted",
+  /**
+   * The CLI refused the session before it did anything: the sandbox it asked for cannot run on this
+   * computer (Claude Code's `failIfUnavailable`). No build exists, and another session on the same
+   * engine would be refused the same way.
+   */
+  SandboxUnavailable: "sandbox_unavailable",
 } as const;
 export type StopReason = (typeof StopReason)[keyof typeof StopReason];
 

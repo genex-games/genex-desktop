@@ -20,6 +20,9 @@ import { blockClock, minutesToBlockEnd, nextBlockStretch, withinBlock } from "..
 import { blockBench, blockContinueAsk } from "../build-block-prompts.ts";
 import { announceLoss, lostProviderOf, stopOutOfUsage, waitForProvider } from "../provider.ts";
 import { clockRoom, sleepOnPausedClock } from "../paused-clock.ts";
+import { StopCode, stopWith } from "../../outcomes.ts";
+import { noteSandboxRefusal, sandboxRefused } from "../../workers/sandbox-refusal.ts";
+import { SANDBOX_REFUSAL_WORDS } from "../../workers/sandbox-refusal-prompts.ts";
 
 /**
  * How a delegated build turn failed, beside the engine's own failure kinds: the clock cut it
@@ -70,6 +73,7 @@ export async function buildChallenger(loop: FacetLoop, round: FacetRound): Promi
   }
   round.buildEndedAt = Date.now();
   if (ctx.cancelled) return stoppedByUser(loop);
+  if (sandboxRefused(round.buildEngineError)) return stopOnSandboxRefusal(loop, round);
   const retried = await waitOutProviderOutage(loop, round);
   if (retried) return retried;
   const held = await holdForProvider(loop, round);
@@ -89,6 +93,19 @@ export async function buildChallenger(loop: FacetLoop, round: FacetRound): Promi
     await stoppedHere(round.iteration, true);
     return RoundFlow.Stop;
   }
+}
+
+/**
+ * A build the engine refused because the sandbox it runs workers in cannot run on this computer:
+ * nothing was built, so there is nothing to judge, roll back or strike, and every later build would
+ * be refused the same way. The facet stops on its first attempt, the refusal kept for every worker
+ * start after it (`workers/sandbox-refusal.ts`), and its goal's attempt given back.
+ */
+function stopOnSandboxRefusal(loop: FacetLoop, round: FacetRound): RoundFlow {
+  const refusal = noteSandboxRefusal(loop.engineId, round.buildFailed);
+  stopWith(loop.result, StopCode.SandboxUnavailable, SANDBOX_REFUSAL_WORDS.stopped(refusal.said));
+  loop.result.lostToProvider = StopReason.SandboxUnavailable;
+  return RoundFlow.Stop;
 }
 
 /** The build turn's own fields, whichever kind of engine takes it. */

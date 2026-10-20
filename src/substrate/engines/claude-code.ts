@@ -192,6 +192,11 @@ const RATE_LIMIT_PATTERNS = [/rate.?limit/i, /usage limit/i, /session limit/i, /
 const USAGE_LIMIT_PATTERN = /(weekly|monthly).{0,12}limit|limit.{0,30}resets [A-Z][a-z]{2} \d/i;
 /** A spawn that failed before Claude Code started: the binary is missing or its path went stale. */
 const SPAWN_FAILURE_PATTERN = /\bspawn\b.*\b(ENOTDIR|ENOENT)\b|\b(ENOTDIR|ENOENT)\b.*\bspawn\b/i;
+/**
+ * The CLI refusing a session whose sandbox cannot run here (its `failIfUnavailable`), as Claude
+ * Code 2.1.303 words it: "sandbox required but unavailable: …".
+ */
+const SANDBOX_UNAVAILABLE_PATTERN = /\bsandbox required but unavailable\b/i;
 
 /** The Agent SDK's message types, as its stream spells them. Vendor wire values. */
 const SdkMessage = {
@@ -306,6 +311,8 @@ const MESSAGE = {
   NotCompacted: "Claude Code did not compact the session",
   WokeAfterEnd:
     "the session went on after its turn ended (a background task woke it), when Genex could no longer answer its tool calls; what it did then is not finished work",
+  SandboxUnavailable: (said: string) =>
+    `Claude Code cannot run its sandbox on this computer, so it refused the session before it began: ${said}`,
 } as const;
 
 /**
@@ -1388,6 +1395,7 @@ export class ClaudeCodeEngine implements Engine {
   #observeTurn(message: Record<string, unknown>, run: RunState, request: DelegateRequest, stream: unknown): void {
     const fromAssistant = message.type === SdkMessage.Assistant;
     run.turns++;
+    if (fromAssistant) run.replied = true;
     if (fromAssistant && request.interviewTools?.length) recordStudioToolCalls(message, run, request.interviewTools);
     this.#reportActivity(message, run, request);
     if (!fromAssistant) return;
@@ -1468,6 +1476,8 @@ export class ClaudeCodeEngine implements Engine {
     // because their signal fired first.
     const aborted = request.signal?.aborted;
     if (aborted || run.deadlineHit) return this.#partial(interruption(aborted), partialState());
+    const unboxed = sandboxRefusal(run, (err as Error)?.message);
+    if (unboxed) return this.#partial(unboxed, partialState());
     const classified = this.#classify(err as Error);
     if (classified.kind === EngineFailureKind.Auth) this.#authFailure = classified.message;
     // A limit that arrived as an error result: the text names it, the throw does not. Read the
@@ -1505,6 +1515,8 @@ export class ClaudeCodeEngine implements Engine {
     }
     if (run.ok) this.#authFailure = null;
     this.#throwIfLimited(run);
+    const unboxed = sandboxRefusal(run);
+    if (unboxed) return this.#partial(unboxed, runPartialState(run, request, startedAt, this.#model));
     failWokenWorker(run, request);
     const model = request.model ?? this.#model;
     const result: DelegateResult = {
@@ -1722,6 +1734,8 @@ interface JudgeState {
 /** Everything one delegation learns from its stream, in the order it learns it. */
 interface RunState {
   turns: number;
+  /** The model said something (an assistant message): the session did start working. */
+  replied: boolean;
   summary: string;
   ok: boolean;
   /** The result's own subtype when the build did not end well; "error" when it gave none. */
@@ -1769,6 +1783,7 @@ interface RunState {
 function newRunState(usage: Usage, cliInstallation: ClaudeInstallation): RunState {
   return {
     turns: 0,
+    replied: false,
     summary: "",
     ok: false,
     errorSubtype: null,
@@ -1894,6 +1909,20 @@ function failWokenWorker(run: RunState, request: DelegateRequest): void {
   run.ok = false;
   run.errorSubtype = StopReason.Error;
   run.errorText = MESSAGE.WokeAfterEnd;
+}
+
+/**
+ * A session the CLI refused before the model said a word because the sandbox it asked for cannot run
+ * on this computer, as the ending it is (`StopReason.SandboxUnavailable`), its words kept; null for
+ * any other ending. The refusal is the CLI's own words in its error result or in what the SDK threw.
+ */
+function sandboxRefusal(run: RunState, thrown?: string): DelegateEnding | null {
+  if (run.ok || run.replied) return null;
+  const said = [run.errorText, thrown].find(
+    (text) => typeof text === "string" && SANDBOX_UNAVAILABLE_PATTERN.test(text),
+  );
+  if (!said) return null;
+  return { stopReason: StopReason.SandboxUnavailable, errorText: MESSAGE.SandboxUnavailable(said) };
 }
 
 /** The session's result message: how the build ended, what it said, what it cost. */
@@ -2344,6 +2373,9 @@ async function workerSandbox(
   const writes = box.home ? [os.homedir(), ...roots] : roots;
   return {
     enabled: true,
+    // Never a worker without its box: its sandboxed commands run unasked. A computer whose CLI cannot
+    // run the sandbox refuses the session instead (`StopReason.SandboxUnavailable`).
+    failIfUnavailable: true,
     autoAllowBashIfSandboxed: box.autoAllow,
     allowUnsandboxedCommands: box.unsandboxed,
     filesystem: {

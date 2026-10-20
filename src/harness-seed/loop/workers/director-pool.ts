@@ -19,6 +19,7 @@ import { DIRECTOR_MARK_WORDS, FIT_IN_WORDS, RUN_POOL_WORDS } from "./prompts.ts"
 import { REAL_CLOCK } from "./records.ts";
 import { waitingWorkers } from "./questions.ts";
 import { closeRunPool, type RunPoolSeat, runPool, runPoolCall, runPoolStatus } from "./run-pool.ts";
+import { refusedStart, sandboxRefusalOn, tellIfRefused, tellSandboxRefusal } from "./sandbox-refusal.ts";
 
 /** The worker tools that name one worker, which a reader of the run's pool answers for its own id. */
 const ONE_WORKER_TOOLS: ReadonlySet<string> = new Set([
@@ -84,8 +85,23 @@ function seatOf(loopRun: LoopRun): RunPoolSeat {
     leadFolder: integrationWorktree,
     identity: { folderLabel: folderLabelOf(projectDir, run.project), facts: loopRun.gameFacts ?? WEB_AT_ROOT },
     clock: REAL_CLOCK,
-    onEnded: (record) => loopRun.note(RUN_POOL_WORDS.ended(record.id, record.title, record.state)),
+    onEnded: (record) => {
+      loopRun.note(RUN_POOL_WORDS.ended(record.id, record.title, record.state));
+      tellIfRefused(loopRun, engine, record.stopCode);
+    },
   };
+}
+
+/**
+ * A `worker_start` on a builders' engine that refused a worker for a sandbox this computer cannot
+ * run (`workers/sandbox-refusal.ts`), copy or read: nothing starts, the lead is told to do the work
+ * itself and the person is told once. Null when nothing holds the engine.
+ */
+async function sandboxRefusalAnswer(loopRun: LoopRun): Promise<string | null> {
+  const refusal = sandboxRefusalOn(roleEngine(loopRun.run, RoleKey.Builder));
+  if (!refusal) return null;
+  await tellSandboxRefusal(loopRun, refusal);
+  return refusedStart(loopRun.ctx, refusal);
 }
 
 /** A director's `worker_start` asking for a reader: one from the run's pool, in the game folder. */
@@ -107,6 +123,8 @@ async function startReader(loopRun: LoopRun, args: AnyRecord): Promise<string> {
  */
 export async function pooledAnswer(loopRun: LoopRun, name: string, args: AnyRecord): Promise<string | null> {
   if (name === WorkerTool.Start) {
+    const refused = await sandboxRefusalAnswer(loopRun);
+    if (refused) return refused;
     const isolation = String(args.isolation ?? "").trim();
     if (isolation === WorkerIsolation.Lock) return RUN_POOL_WORDS.noLock;
     return isolation === WorkerIsolation.Read ? startReader(loopRun, args) : null;
@@ -206,6 +224,7 @@ const ownSummary = (worker: Worker): string | null =>
 function builderStopCode(loopRun: LoopRun, worker: Worker, state: WorkerEnd): WorkerStopCode | null {
   if (state === WorkerEnd.Done) return null;
   if (worker.stoppedByLead) return WorkerStopCode.StoppedByLead;
+  if (worker.sandboxRefused) return WorkerStopCode.SandboxUnavailable;
   const cutOff = worker.state === WorkerState.Running || worker.stopRequested || Boolean(loopRun.ctx.cancelled);
   return cutOff ? WorkerStopCode.RunEnded : WorkerStopCode.Error;
 }

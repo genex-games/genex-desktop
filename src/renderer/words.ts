@@ -1875,6 +1875,7 @@ export const WORKER_STOP_WORDS = {
   [WorkerStopCode.RunEnded]: "The Loop ended first",
   [WorkerStopCode.StoppedByLead]: "The lead stopped it",
   [WorkerStopCode.Error]: "It ran into an error",
+  [WorkerStopCode.SandboxUnavailable]: "Claude Code can't run workers on this computer yet",
 } as const satisfies Record<WorkerStopCode, string>;
 
 /** Text as a sentence: its first letter capitalized, and a full stop when it has no end of its own. */
@@ -3395,6 +3396,11 @@ export const SANDBOX_SETUP_WORDS = {
       /** The bare ✓'s label, once the report went. */
       sent: "Report sent",
       reportFailed: "The report didn’t send. Try again in a moment.",
+    },
+    /** Windows' Secondary Logon service is disabled: agents start through it. */
+    logonService: {
+      line: "Secondary Logon is turned off on this PC. Set up turns it back on, since agents start through it.",
+      fix: "Turn on Secondary Logon in Windows Services (Startup type: Manual), then try again.",
     },
   },
   /** A Windows window opened before the core: what the start is doing, by `StartStep`. */

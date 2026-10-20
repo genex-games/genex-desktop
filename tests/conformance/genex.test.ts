@@ -554,6 +554,31 @@ it("an asset command gives the CLI a HOME of its own, so the user's own Genex sk
   }
 });
 
+it("a status read reuses a recent allowance instead of starting the CLI again, until it is old", async () => {
+  const temp = await mkdtemp(path.join(os.tmpdir(), "studio-genex-allowance-"));
+  const genex = await countingGenex(
+    () => undefined,
+    () => undefined,
+  );
+  let now = Date.parse("2026-10-20T08:00:00Z");
+  try {
+    const tools = new GenexTools(path.join(temp, "host"), genex.api, {
+      credentials: fixtureCredentials(path.join(temp, "host")),
+      now: () => now,
+    });
+    await fixtureCredentials(tools.root).set("fixture-token");
+    // The status read asks for credits itself; the CLI's `budget` asks once more.
+    const credits = async () => (await genex.during(() => tools.status("game"))).get("/api/credits/me") ?? 0;
+    assert.equal(await credits(), 2, "the first read runs the CLI");
+    assert.equal(await credits(), 1, "a read right after reuses its allowance");
+    now += 31 * 1000;
+    assert.equal(await credits(), 2, "an allowance older than the reuse time is read again");
+  } finally {
+    await genex.close();
+    await rm(temp, { recursive: true, force: true });
+  }
+});
+
 const total = (hits: Map<string, number>) => [...hits.values()].reduce((a, b) => a + b, 0);
 /** A job id for the n-th record: a UUID, as Studio's job folders are. */
 const jobId = (n: number) => `${String(n).padStart(8, "0")}-0000-4000-8000-000000000000`;
@@ -620,6 +645,8 @@ it("a status read asks Genex only about generations it has not seen settle, howe
     const secondHits = await genex.during(async () => {
       second = await tools.status("game");
     });
+    // Warm, as the read of `game` is: a recent allowance is reused, not read by the CLI again.
+    await tools.status("empty");
     const baseline = await genex.during(() => tools.status("empty"));
     assert.equal(second?.error, undefined, "the account read itself succeeded");
     const asked = [...secondHits.keys()].filter(

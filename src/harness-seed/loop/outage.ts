@@ -56,6 +56,8 @@ export const StopReason = {
   NoProgress: "no_progress",
   MaxTurns: "max_turns",
   Aborted: "aborted",
+  /** The CLI refused the session before it did anything: the sandbox it asked for cannot run on this computer. */
+  SandboxUnavailable: "sandbox_unavailable",
 } as const;
 export type StopReason = (typeof StopReason)[keyof typeof StopReason];
 

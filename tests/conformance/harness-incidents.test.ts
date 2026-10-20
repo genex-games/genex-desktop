@@ -78,6 +78,7 @@ import {
 } from "../../src/harness-seed/loop/replan.ts";
 import { isTransientProviderError, StopReason, withProviderPatience } from "../../src/harness-seed/loop/outage.ts";
 import { forgetProviderLosses, noteProviderLoss, providerLossFor } from "../../src/harness-seed/loop/provider-loss.ts";
+import { forgetSandboxRefusals, sandboxRefusalOn } from "../../src/harness-seed/loop/workers/sandbox-refusal.ts";
 import {
   HARNESS_CHECKS,
   loadCatalogue,
@@ -4916,6 +4917,30 @@ describe("a provider lost mid-run", () => {
     const turns = calls.filter((c) => c.method === "engine.delegate").map((c) => c.params);
     return { result, appended, turns };
   };
+
+  it("WIN-275. a build the engine refused because its sandbox cannot run here stops the facet on its first attempt: no judge, no strike, no outage wait, and no later worker starts on that engine", async () => {
+    const said =
+      "Claude Code cannot run its sandbox on this computer, so it refused the session before it began: sandbox required but unavailable: the Windows sandbox is not active on this session (feature gate off)";
+    try {
+      const { result, appended, turns } = await facetOnStub(() => ({
+        ok: false,
+        stopReason: "sandbox_unavailable",
+        errorText: said,
+        turns: 0,
+        usage: {},
+        engine: "codex",
+      }));
+      assert.equal(turns.length, 1, "a refused build is not tried a second time");
+      assert.equal(result.stopCode, "sandbox-unavailable");
+      assert.ok(result.stoppedBecause.includes("sandbox required but unavailable"), result.stoppedBecause);
+      assert.deepEqual(appended("facet_iteration"), [], "there is no build to judge");
+      assert.deepEqual(appended("facet_circuit_break"), []);
+      assert.deepEqual(appended("facet_provider_outage"), []);
+      assert.ok(sandboxRefusalOn("codex"), "the refusal holds the engine for the next worker start");
+    } finally {
+      forgetSandboxRefusals();
+    }
+  });
 
   it("D12. a worker's build turn that meets a disabled account is an outage, never a broken round: it waits, and the run's stop keeps its work", async () => {
     try {

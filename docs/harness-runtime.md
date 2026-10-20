@@ -1398,6 +1398,21 @@ up to the run's working deadline, as the outage ladder's waits do. A worker the 
 any round of it was judged gives its goal attempt back (`attempt-refund.ts` `refundProviderAttempt`), so a
 restart is never refused for progress it never had the chance to make.
 
+### A workers' engine that cannot run its sandbox
+
+A worker always runs in its engine's sandbox, never without it: Claude Code's worker box keeps
+`failIfUnavailable: true`, because its sandboxed commands run unasked and the CLI itself is not inside
+ProcessSandbox. Where that box cannot run (Claude Code on a Windows whose sandbox its provider has not
+turned on yet), the CLI refuses the session before the model says anything, and the engine reports it
+as `StopReason.SandboxUnavailable` with the CLI's own words (`engines/claude-code.ts`
+`sandboxRefusal`); a session that already replied keeps its ordinary failure. The refusal holds that
+engine for an hour across every pool and Loop of the harness (`loop/workers/sandbox-refusal.ts`): a
+director's builder facet stops on its first build (`StopCode.SandboxUnavailable`: no judge, strike,
+outage wait or rollback, its goal attempt given back), a pool worker ends with
+`WorkerStopCode.SandboxUnavailable`, and every later `worker_start` on that engine starts nothing and
+tells the lead to do the work itself, naming the other workers' engine when the host reports it
+signed in. A Loop's person is told once on a decision card, with that engine offered for Workers.
+
 ### Automatic resume
 
 A paused build is the user's to resume, with three exceptions the host takes itself

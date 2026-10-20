@@ -17,7 +17,7 @@ import { PassThrough } from "node:stream";
 import { describe, it } from "node:test";
 import { setImmediate as turn, setTimeout as delay } from "node:timers/promises";
 import type { SandboxRuntimeConfig } from "@anthropic-ai/sandbox-runtime";
-import { SandboxProblemCode } from "../../src/shared/boot.ts";
+import { SandboxProblemCode, WindowsSetupNeed } from "../../src/shared/boot.ts";
 import { HarnessHost } from "../../src/substrate/harness-host.ts";
 import {
   SandboxLaunchCode,
@@ -65,9 +65,12 @@ import {
   windowsAccessReport,
   windowsDenyHolders,
   windowsGrantHolders,
+  type WindowsSetupGap,
   windowsRunEnv,
+  windowsSetupGaps,
   writeDeniesBeyondRead,
 } from "../../src/substrate/windows-sandbox.ts";
+import { ServiceStartType } from "../../src/substrate/windows-logon-service.ts";
 import {
   DenyAccess,
   GrantAccess,
@@ -467,6 +470,7 @@ describe("an entry on one folder alone", () => {
       deny: null,
       guard: false,
       grant: GrantAccess.Read,
+      allows: true,
     };
     const killed = folderOwnEditor({
       powershell: async () => Promise.reject(Object.assign(new Error("Command failed"), { killed: true })),
@@ -648,6 +652,25 @@ describe("an entry on one folder alone, on Windows", {
     await next.revokeAll();
   });
 
+  it("denies a folder and guards the one above it without touching an allow Genex did not set there", async () => {
+    const root = realpathSync.native(await tmpDir("folder-deny-beside-"));
+    const above = path.join(root, "above");
+    const secret = path.join(above, "secret");
+    const open = path.join(above, "open.txt");
+    await mkdir(secret, { recursive: true });
+    await writeFile(open, "open");
+    execFileSync("icacls", [above, "/grant", `*${GUESTS}:(OI)(CI)(RX)`], { stdio: "ignore" });
+    const theirs = /\(A;OICI;0x1200a9;;;BG\)/i;
+    assert.match(sddl(above, root), theirs);
+    const entries = ownAclEntries(path.join(root, "holders"), { sid: async () => GUESTS, pid: 1, alive: () => false });
+    assert.equal(await entries.sync(routeWindowsDenies({ read: [secret], write: [] }).own), true);
+    assert.match(sddl(above, root), theirs, "the allow on the folder stays");
+    assert.match(sddl(above, root), /\(D;;(?:0x40|DT);;;BG\)/, "beside the guard");
+    assert.match(sddl(open, root), /\(A;ID;0x1200a9;;;BG\)/i, "and what is in the folder still inherits it");
+    await entries.revokeAll();
+    assert.match(sddl(above, root), theirs, "taking the deny back leaves it too");
+  });
+
   it("refuses to deny anyone the running user is, setting nothing", async () => {
     const EVERYONE = "S-1-1-0";
     const root = realpathSync.native(await tmpDir("folder-deny-self-"));
@@ -660,6 +683,7 @@ describe("an entry on one folder alone, on Windows", {
       deny: DenyAccess.Read,
       guard: true,
       grant: null,
+      allows: false,
     } as const;
     assert.equal(await folderOwnEditor()([edit]), null);
     assert.doesNotMatch(sddl(target, root), /\(D;/);
@@ -1818,6 +1842,28 @@ describe("Genex's own deny entries", () => {
     assert.deepEqual(logged, [`own entries: ${at(".ssh")} took 41 s (once; they stay)`]);
   });
 
+  it("touches the group's passed-down allows only on a folder Genex grants or once granted", async () => {
+    // A deny or a guard on a folder must leave an allow there that Genex did not set (an admin's,
+    // or the grant on the folder above a denied one) exactly as it is.
+    const holders = await tmpDir("windows-denies-");
+    const seen: FolderOwnEdit[] = [];
+    const recording: FolderOwnEditor = async (edits) => {
+      seen.push(...edits);
+      return edits.map(() => ({ ok: true }) as const);
+    };
+    const denies = holder(holders, 1, [], { edit: recording });
+    const game = { path: at("AI Games"), deny: null, guard: false, grant: GrantAccess.Modify };
+    await denies.sync([guard, ssh, game]);
+    const allows = (dir: string) => seen.filter((edit) => edit.dir === dir).map((edit) => edit.allows);
+    assert.deepEqual(allows(PROFILE), [false], "a guard leaves the folder's allows alone");
+    assert.deepEqual(allows(at(".ssh")), [false], "so does a deny");
+    assert.deepEqual(allows(at("AI Games")), [true]);
+    seen.length = 0;
+    await denies.sync([guard, ssh]);
+    const takenBack = seen.find((edit) => edit.dir === at("AI Games"));
+    assert.deepEqual(takenBack && [takenBack.allows, takenBack.grant], [true, null], "a grant Genex set goes");
+  });
+
   it("runs nothing when it has nothing to set and nothing to take back", async () => {
     let runs = 0;
     const denies = holder(await tmpDir("windows-denies-"), 1, [], {
@@ -1844,8 +1890,16 @@ describe("Genex's own deny entries", () => {
     const edits = sandboxEntriesLeft(holders, alive);
     assert.deepEqual(edits, [
       { dir: at("AppData"), sid: SID, op: FolderAceOp.Remove },
-      { dir: at("AI Games"), sid: SID, op: FolderAceOp.Own, deny: null, guard: false, grant: null },
-      { dir: at(".ssh"), sid: SID, op: FolderAceOp.Own, deny: DenyAccess.Read, guard: false, grant: null },
+      { dir: at("AI Games"), sid: SID, op: FolderAceOp.Own, deny: null, guard: false, grant: null, allows: true },
+      {
+        dir: at(".ssh"),
+        sid: SID,
+        op: FolderAceOp.Own,
+        deny: DenyAccess.Read,
+        guard: false,
+        grant: null,
+        allows: false,
+      },
     ]);
     const started: Array<{ file: string; env: NodeJS.ProcessEnv }> = [];
     const spawnBatch = (file: string, _args: string[], env: NodeJS.ProcessEnv) => {
@@ -1884,7 +1938,7 @@ async function windowsSandbox(
     wrapError?: object;
     initializeError?: object;
     bash?: string | null;
-    dependencyErrors?: () => Promise<string[]>;
+    setupGaps?: () => Promise<WindowsSetupGap[]>;
     startInBackground?: boolean;
     /** Hold srt's initialize until the returned open is called. */
     holdInitialize?: boolean;
@@ -1934,7 +1988,7 @@ async function windowsSandbox(
     secretPaths: [secrets, path.join(root, "never-created")],
     runtime,
     platform: "win32",
-    windows: { bash, session: s.session, profile: root, dependencyErrors: options.dependencyErrors },
+    windows: { bash, session: s.session, profile: root, setupGaps: options.setupGaps },
     toolPath: async () => "",
     ...(options.startInBackground ? { startInBackground: true } : {}),
   });
@@ -2163,7 +2217,7 @@ describe("ProcessSandbox on Windows", () => {
     await assert.rejects(
       windowsSandbox({
         initializeError: new Error(`Sandbox dependencies not available: ${unprovisioned}`),
-        dependencyErrors: async () => [unprovisioned],
+        setupGaps: async () => [{ need: WindowsSetupNeed.Sandbox, detail: unprovisioned }],
       }),
       (error: unknown) => {
         if (!(error instanceof SandboxUnavailableError)) return false;
@@ -2173,9 +2227,9 @@ describe("ProcessSandbox on Windows", () => {
       },
     );
     // A failure the check does not explain, or a check that fails itself, stays the error it was.
-    for (const dependencyErrors of [async () => [], async () => Promise.reject(new Error("srt-win missing"))]) {
+    for (const setupGaps of [async () => [], async () => Promise.reject(new Error("srt-win missing"))]) {
       await assert.rejects(
-        windowsSandbox({ initializeError: new Error("proxy port in use"), dependencyErrors }),
+        windowsSandbox({ initializeError: new Error("proxy port in use"), setupGaps }),
         (error: unknown) => !(error instanceof SandboxUnavailableError) && /proxy port in use/.test(String(error)),
       );
     }
@@ -2183,10 +2237,10 @@ describe("ProcessSandbox on Windows", () => {
 });
 
 describe("ProcessSandbox on Windows, started in the background", () => {
-  const ready = async () => [];
+  const ready = async (): Promise<WindowsSetupGap[]> => [];
 
   it("is created while srt still initializes, and a run waits for the start", async () => {
-    const w = await windowsSandbox({ startInBackground: true, holdInitialize: true, dependencyErrors: ready });
+    const w = await windowsSandbox({ startInBackground: true, holdInitialize: true, setupGaps: ready });
     let finished = false;
     const run = w.sandbox.run({ command: "printf started", cwd: w.workspace }).then((result) => {
       finished = true;
@@ -2206,21 +2260,41 @@ describe("ProcessSandbox on Windows, started in the background", () => {
   it("still refuses at once what Set up fixes: no sandbox user, no Git for Windows", async () => {
     const unprovisioned = "Sandbox user is not provisioned (user=false, cred=false).";
     await assert.rejects(
-      windowsSandbox({ startInBackground: true, dependencyErrors: async () => [unprovisioned] }),
+      windowsSandbox({
+        startInBackground: true,
+        setupGaps: async () => [{ need: WindowsSetupNeed.Sandbox, detail: unprovisioned }],
+      }),
       (error: unknown) =>
         error instanceof SandboxUnavailableError && error.problem.code === SandboxProblemCode.NotProvisioned,
     );
     await assert.rejects(
-      windowsSandbox({ startInBackground: true, bash: null, dependencyErrors: ready }),
+      windowsSandbox({ startInBackground: true, bash: null, setupGaps: ready }),
       (error: unknown) =>
         error instanceof SandboxUnavailableError && error.problem.code === SandboxProblemCode.GitMissing,
+    );
+  });
+
+  it("refuses at once a disabled Secondary Logon service, as a setup screen that names it", async () => {
+    const off = "The Secondary Logon service (seclogon) is disabled.";
+    await assert.rejects(
+      windowsSandbox({
+        startInBackground: true,
+        setupGaps: async () => [{ need: WindowsSetupNeed.LogonService, detail: off }],
+      }),
+      (error: unknown) => {
+        if (!(error instanceof SandboxUnavailableError)) return false;
+        assert.equal(error.problem.code, SandboxProblemCode.NotProvisioned);
+        assert.deepEqual(error.problem.windowsNeeds, [WindowsSetupNeed.LogonService]);
+        assert.deepEqual(error.problem.details, [off]);
+        return true;
+      },
     );
   });
 
   it("a start that failed behind the window is tried again by the next run", async () => {
     const w = await windowsSandbox({
       startInBackground: true,
-      dependencyErrors: ready,
+      setupGaps: ready,
       failInitializeIn: { subcommand: "acl", code: "acl_grant_failed" },
     });
     // The start behind the window fails first; a run that came during it would report that failure.
@@ -2235,13 +2309,48 @@ describe("ProcessSandbox on Windows, started in the background", () => {
 
 describe("what is not set up yet", () => {
   const set = { provisioned: true, credPresent: true };
+  const on = ServiceStartType.Demand;
+  const needs = (gaps: WindowsSetupGap[]) => gaps.map((gap) => gap.need);
+
   it("names a missing sandbox user or credential, then missing filters, and nothing on a set-up PC", () => {
-    assert.equal(setupGaps({ user: { provisioned: false, credPresent: false }, wfp: { state: "absent" } }).length, 1);
-    assert.equal(setupGaps({ user: { provisioned: true, credPresent: false }, wfp: { state: "installed" } }).length, 1);
-    assert.equal(setupGaps({ user: set, wfp: { state: "absent" } }).length, 1);
-    assert.deepEqual(setupGaps({ user: set, wfp: { state: "installed" } }), []);
+    const missing = { provisioned: false, credPresent: false };
+    assert.equal(setupGaps({ user: missing, wfp: { state: "absent" }, logonService: on }).length, 1);
+    const noCred = { provisioned: true, credPresent: false };
+    assert.equal(setupGaps({ user: noCred, wfp: { state: "installed" }, logonService: on }).length, 1);
+    assert.equal(setupGaps({ user: set, wfp: { state: "absent" }, logonService: on }).length, 1);
+    assert.deepEqual(setupGaps({ user: set, wfp: { state: "installed" }, logonService: on }), []);
     // Reading the filters needs an administrator; srt treats it as informational, and so do we.
-    assert.deepEqual(setupGaps({ user: set, wfp: { state: "cannot-read" } }), []);
+    assert.deepEqual(setupGaps({ user: set, wfp: { state: "cannot-read" }, logonService: on }), []);
+  });
+
+  it("names a disabled Secondary Logon service beside whatever else is missing", () => {
+    const off = ServiceStartType.Disabled;
+    const missing = { provisioned: false, credPresent: false };
+    assert.deepEqual(needs(setupGaps({ user: set, wfp: { state: "installed" }, logonService: off })), [
+      WindowsSetupNeed.LogonService,
+    ]);
+    assert.deepEqual(needs(setupGaps({ user: missing, wfp: { state: "absent" }, logonService: off })), [
+      WindowsSetupNeed.Sandbox,
+      WindowsSetupNeed.LogonService,
+    ]);
+    // Manual, automatic, or a start type `sc` could not say: Windows starts it when asked, or we cannot tell.
+    for (const logonService of [ServiceStartType.Demand, ServiceStartType.Auto, null]) {
+      assert.deepEqual(setupGaps({ user: set, wfp: { state: "installed" }, logonService }), [], String(logonService));
+    }
+  });
+
+  it("asks srt-win and `sc` together; srt-win's failure is the start's own error, an unread service is no gap", async () => {
+    const status = async () => ({ user: set, wfp: { state: "installed" } });
+    const off = async () => ServiceStartType.Disabled;
+    assert.deepEqual(needs(await windowsSetupGaps({ status, logonService: off })), [WindowsSetupNeed.LogonService]);
+    const unread = async () => {
+      throw new Error("sc.exe: Access is denied");
+    };
+    assert.deepEqual(await windowsSetupGaps({ status, logonService: unread }), []);
+    const failing = async () => {
+      throw new Error("srt-win missing");
+    };
+    await assert.rejects(windowsSetupGaps({ status: failing, logonService: off }), /srt-win missing/);
   });
 });
 

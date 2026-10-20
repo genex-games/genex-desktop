@@ -34,7 +34,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { promisify } from "node:util";
 import type { SandboxRuntimeConfig } from "@anthropic-ai/sandbox-runtime";
 import { SECOND_MS } from "../shared/duration.ts";
-import { StudioPlatform } from "../shared/boot.ts";
+import { StudioPlatform, WindowsSetupNeed } from "../shared/boot.ts";
 import { ROBLOX_WINDOWS_SIGN_IN_STORES } from "./credential-homes.ts";
 import { errorMessage } from "../shared/errors.ts";
 import {
@@ -54,6 +54,7 @@ import {
   type FolderOwnEditorSync,
   GrantAccess,
 } from "./windows-folder-ace.ts";
+import { logonServiceStartType, ServiceStartType } from "./windows-logon-service.ts";
 
 const win = path.win32;
 const run = promisify(execFile);
@@ -162,6 +163,8 @@ const MESSAGE = {
   NoMembers: "the Windows sandbox session has no members",
   UserNotSetUp: (user: boolean, cred: boolean) => `Sandbox user is not provisioned (user=${user}, cred=${cred}).`,
   FiltersNotSetUp: "WFP filters are not installed for the sandbox user.",
+  LogonServiceDisabled:
+    "The Secondary Logon service (seclogon) is disabled, so Windows refuses to start commands as the sandbox user.",
 } as const;
 
 /** Folders the sandbox user may write and read, for the whole session. */
@@ -963,7 +966,15 @@ function ownEdits(
   touched: readonly (OwnRecord | null)[],
   live: readonly OwnRecord[],
 ): FolderOwnEdit[] {
+  const records = [mine, ...live, ...touched.filter((record): record is OwnRecord => record !== null)];
   const needed = neededEntries([mine, ...live]);
+  // Genex makes the group's passed-down allows exact only where a record grants or granted: an
+  // allow it never set (on a denied path, or a guarded parent) is left as it is.
+  const granted = new Set(
+    records.flatMap((record) =>
+      record.entries.filter((entry) => entry.grant).map((entry) => `${record.sid}|${pathKey(entry.path)}`),
+    ),
+  );
   const edits = new Map<string, FolderOwnEdit>();
   const add = (sid: string, dir: string) => {
     const key = `${sid}|${pathKey(dir)}`;
@@ -976,6 +987,7 @@ function ownEdits(
       deny: want?.deny ?? null,
       guard: want?.guard ?? false,
       grant: want?.grant ?? null,
+      allows: granted.has(key),
     });
   };
   for (const entry of mine.entries) add(mine.sid, entry.path);
@@ -1749,17 +1761,26 @@ export async function grantLauncherFolders(
 /** srt-win's `wfp status` answer for filters that were never installed (or were removed). */
 const WFP_ABSENT = "absent";
 
-/** What srt-win's `user status` and `wfp status` say, as far as setup goes. */
-export interface WindowsSetupStatus {
+/** srt-win's `user status` and `wfp status` answers, as far as setup goes. */
+export interface SrtSetupStatus {
   user: { provisioned: boolean; credPresent: boolean };
   wfp: { state: string };
 }
 
-/**
- * What is not set up yet, by srt-win's status answers: the sandbox user, its credential, or the
- * WFP filters (once the user exists). Empty when everything is in place, even if a start failed.
- */
-export function setupGaps({ user, wfp }: WindowsSetupStatus): string[] {
+/** What setup depends on: srt-win's status answers and the Secondary Logon service's start type. */
+export interface WindowsSetupStatus extends SrtSetupStatus {
+  /** Null when `sc` could not say. */
+  logonService: ServiceStartType | null;
+}
+
+/** One part of the Windows sandbox not set up yet: what Set up does about it, and the words for Details. */
+export interface WindowsSetupGap {
+  need: WindowsSetupNeed;
+  detail: string;
+}
+
+/** What srt-win says is missing: the sandbox user, its credential, or the WFP filters once the user exists. */
+function srtGaps({ user, wfp }: SrtSetupStatus): string[] {
   if (!user.provisioned || !user.credPresent) {
     return [MESSAGE.UserNotSetUp(user.provisioned, user.credPresent)];
   }
@@ -1767,21 +1788,50 @@ export function setupGaps({ user, wfp }: WindowsSetupStatus): string[] {
 }
 
 /**
- * The parts of the Windows sandbox not set up yet, the ones `initialize` checks first.
- * `initialize` reports that refusal as a plain Error with no code, so a failed start asks again
- * here to tell "not set up yet" from a fault. It asks srt-win's two status probes directly, not
- * srt's dependency check: that one also lists a probe that failed (a slow first scan, a missing
- * srt-win), which would turn a set-up PC's fault into a second approval prompt. A probe that
- * fails throws, and the start's own error stands.
+ * What is not set up yet: what srt-win's status answers say is missing, and a disabled Secondary
+ * Logon service, without which every start is refused. Empty when everything is in place, even if
+ * a start failed.
  */
-export async function windowsDependencyErrors(srtWin: string = srtWinPath()): Promise<string[]> {
+export function setupGaps(status: WindowsSetupStatus): WindowsSetupGap[] {
+  const gaps = srtGaps(status).map((detail) => ({ need: WindowsSetupNeed.Sandbox, detail }));
+  if (status.logonService !== ServiceStartType.Disabled) return gaps;
+  return [...gaps, { need: WindowsSetupNeed.LogonService, detail: MESSAGE.LogonServiceDisabled }];
+}
+
+/** How {@link windowsSetupGaps} asks: srt-win's status, and the Secondary Logon service's start type. */
+export interface WindowsSetupProbes {
+  status: () => Promise<SrtSetupStatus>;
+  logonService: () => Promise<ServiceStartType | null>;
+}
+
+/** srt-win's two status probes, asked directly. */
+async function srtSetupStatus(srtWin: string): Promise<SrtSetupStatus> {
   const srt = await import(SRT_PACKAGE);
   const opts = { srtWin: srt.resolveSrtWin({ path: srtWin }) };
   const [user, wfp] = await Promise.all([
     srt.getWindowsSandboxUserStatusAsync(opts),
     srt.getWindowsWfpStatusAsync(opts),
   ]);
-  return setupGaps({ user, wfp });
+  return { user, wfp };
+}
+
+/** The probes the app asks: the srt-win this build ships, and `sc`. */
+function setupProbes(): WindowsSetupProbes {
+  return { status: () => srtSetupStatus(srtWinPath()), logonService: () => logonServiceStartType() };
+}
+
+/**
+ * The parts of the Windows sandbox not set up yet: the ones `initialize` checks first, and the
+ * Secondary Logon service every start goes through. `initialize` reports its refusal as a plain
+ * Error with no code, so a failed start asks again here to tell "not set up yet" from a fault. It
+ * asks srt-win's two status probes directly, not srt's dependency check: that one also lists a
+ * probe that failed (a slow first scan, a missing srt-win), which would turn a set-up PC's fault
+ * into a second approval prompt. An srt-win probe that fails throws, and the start's own error
+ * stands; a service `sc` cannot read is no gap.
+ */
+export async function windowsSetupGaps(probes: WindowsSetupProbes = setupProbes()): Promise<WindowsSetupGap[]> {
+  const [srt, logonService] = await Promise.all([probes.status(), probes.logonService().catch(() => null)]);
+  return setupGaps({ ...srt, logonService });
 }
 
 const sessions = new WeakMap<object, WindowsSandboxSession>();

@@ -189,6 +189,14 @@ const PUBLISH_WAIT_MS = 150_000;
 const MIN_PUBLISH_WAIT_MS = SECOND_MS;
 /** How long a verified sign-in is trusted before status asks Genex again. */
 const SESSION_CACHE_MS = 2 * MINUTE_MS;
+/**
+ * How long a status read reuses a game's allowance before starting the CLI's `budget` again. The
+ * page reads status every 5 s while a generation runs, and each `budget` is a whole Node process;
+ * every other CLI command in that game forgets the allowance, since it may have spent from it.
+ */
+const ALLOWANCE_REUSE_MS = 30 * SECOND_MS;
+/** The CLI command that reads a game's allowance. */
+const BUDGET_COMMAND = "budget";
 /** Kept back from the host's ceiling for one call, to record a generation's answer once its CLI stops. */
 const ASSET_SETTLE_MS = 10 * SECOND_MS;
 /** A generation is not submitted with less than this left of its call: its CLI could not finish. */
@@ -385,6 +393,8 @@ export class GenexTools {
   #controllers = new Map<AbortController, { project: string; threadId?: string }>();
   /** The publish running in this process, per game. Absent after a restart: the record then reconciles. */
   #sessionIdentity: { token: string; expires: number; session: any } | undefined;
+  /** Each game workspace's last `budget` answer, for the sign-in that read it. */
+  #allowances = new Map<string, { epoch: number; token: string; at: number; allowance: unknown }>();
   #exporting = new Set<string>();
   #readinessChecks = new Map<string, Promise<void>>();
   #publishJobs = new Map<string, { job: GenexPublishJob; done: Promise<void> }>();
@@ -513,6 +523,7 @@ export class GenexTools {
     // What Genex said under this sign-in is not carried over to the next one.
     this.#settledGenerations.clear();
     this.#foundGenerations.clear();
+    this.#allowances.clear();
     for (const c of this.#controllers.keys()) c.abort();
     await this.#account(async () => {
       await (await this.#store()).clear();
@@ -1543,11 +1554,28 @@ export class GenexTools {
   }
   /** Asset commands: structured output, the asset timeout (or less), the workspace's contained HOME. */
   async #cli(cwd: string, args: string[], signal?: AbortSignal, timeoutMs = ASSET_TIMEOUT_MS): Promise<any> {
-    return this.#spawnCli(cwd, args, signal, {
-      timeoutMs,
-      parse: true,
-      home: path.join(cwd, "home"),
-    });
+    try {
+      return await this.#spawnCli(cwd, args, signal, {
+        timeoutMs,
+        parse: true,
+        home: path.join(cwd, "home"),
+      });
+    } finally {
+      // Whatever ran may have spent from the allowance; a `budget` read records its own answer.
+      if (args[0] !== BUDGET_COMMAND) this.#allowances.delete(cwd);
+    }
+  }
+  /** The game's allowance: a recent answer for this sign-in, or the CLI's `budget` asked again. */
+  async #allowance(cwd: string, signal?: AbortSignal): Promise<unknown> {
+    const token = (await this.#token()) ?? "";
+    const epoch = this.#authEpoch;
+    const known = this.#allowances.get(cwd);
+    const fresh =
+      known && known.epoch === epoch && known.token === token && this.#now() - known.at < ALLOWANCE_REUSE_MS;
+    if (fresh) return known.allowance;
+    const allowance = await this.#cli(cwd, [BUDGET_COMMAND], signal);
+    if (epoch === this.#authEpoch) this.#allowances.set(cwd, { epoch, token, at: this.#now(), allowance });
+    return allowance;
   }
   /** Publish commands: plain logs (preview/publish/promote ignore `--json`), a long timeout, a contained HOME. */
   async #cliText(cwd: string, args: string[], signal: AbortSignal | undefined, home: string): Promise<{ out: string }> {
@@ -1703,7 +1731,7 @@ export class GenexTools {
       if (typeof credits.unlimited === "boolean") result.unlimited = credits.unlimited;
       if (!project) return;
       const cwd = await this.#workspace(project);
-      result.allowance = await this.#cli(cwd, ["budget"], signal);
+      result.allowance = await this.#allowance(cwd, signal);
       result.lanes = await this.#fetch(GenexRoute.Lanes, withSignal(signal));
     } catch (e) {
       if (statusOf(e) === HTTP_UNAUTHORIZED) markSignedOut(result);

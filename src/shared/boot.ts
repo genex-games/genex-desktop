@@ -55,6 +55,18 @@ export const SandboxProblemCode = {
 } as const;
 export type SandboxProblemCode = (typeof SandboxProblemCode)[keyof typeof SandboxProblemCode];
 
+/** Windows, not provisioned: what Set up does about it. */
+export const WindowsSetupNeed = {
+  /** Install the `srt-sandbox` user, its credential and its network filters (srt-win's install). */
+  Sandbox: "sandbox",
+  /**
+   * Turn the Secondary Logon service (`seclogon`) back on: every sandboxed command starts as the
+   * sandbox user through it, so with it disabled Windows refuses each one.
+   */
+  LogonService: "logon-service",
+} as const;
+export type WindowsSetupNeed = (typeof WindowsSetupNeed)[keyof typeof WindowsSetupNeed];
+
 /** The programs the Linux sandbox needs, by the command it runs. */
 export const SandboxTool = {
   Bubblewrap: "bwrap",
@@ -101,6 +113,8 @@ export interface SandboxProblem {
   details: string[];
   /** Isolation blocked by AppArmor: the command that installs a profile allowing it for this app. */
   allowCommand?: string;
+  /** Windows, not provisioned: what Set up does; absent means the sandbox install alone. */
+  windowsNeeds?: WindowsSetupNeed[];
 }
 
 /** Main's answer to `bootState`: the platform, and the setup problem while the phase is SandboxSetup. */

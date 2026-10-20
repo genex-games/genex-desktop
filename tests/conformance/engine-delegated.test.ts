@@ -18,6 +18,8 @@ import { STEER_STALL_MS, steerFeed, steerSession, userFrame } from "../../src/su
 import { credentialHomes } from "../../src/substrate/credential-homes.ts";
 import { absoluteRule } from "../../src/substrate/engines/claude-permissions.ts";
 import { EngineError, type Engine } from "../../src/substrate/engines/types.ts";
+import { StopReason } from "../../src/shared/engine-requests.ts";
+import { PermissionMode } from "../../src/shared/permissions.ts";
 import { registeredSchema, scriptedClaude, wokenSession } from "../helpers/scripted-claude.ts";
 import { tmpDir } from "../helpers/tmp.ts";
 
@@ -138,7 +140,75 @@ const successRun = [
   },
 ];
 
+/** The CLI's own words when the sandbox a session asks for cannot run on this computer. */
+const SANDBOX_REFUSAL =
+  "sandbox required but unavailable: sandbox is enabled but the Windows sandbox is not active on this session (feature gate off). set sandbox.failIfUnavailable=false to run without it";
+/** A refused session's result: an error before any turn. */
+const sandboxRefusedResult = {
+  type: "result",
+  subtype: "error_during_execution",
+  is_error: true,
+  errors: [SANDBOX_REFUSAL],
+  num_turns: 0,
+};
+
+/**
+ * How a refused session's stream ends: on the result alone, the CLI's refusal thrown (after init
+ * when the CLI sent one: the SDK yields it first), or the result followed by the SDK's own throw.
+ */
+function refusalThrow(ending: string, initialized: boolean): { throwOn?: Error; throwAfter?: Error } {
+  if (ending === "result") return {};
+  if (ending === "result-then-throw") return { throwAfter: new Error("Claude Code process exited with code 1") };
+  return initialized ? { throwAfter: new Error(SANDBOX_REFUSAL) } : { throwOn: new Error(SANDBOX_REFUSAL) };
+}
+
+/** A worker's delegation in a disposable folder: its session asks for Claude Code's sandbox. */
+async function workerRequest() {
+  const cwd = await tmpDir("claude-worker-start-");
+  return {
+    cwd,
+    prompt: "Build the fixture",
+    worker: {
+      id: "fixture-worker",
+      title: "Fixture worker",
+      mode: PermissionMode.Manual,
+      writeRoots: [cwd],
+      neverTouch: { roots: [], open: [] },
+      research: false,
+    },
+  };
+}
+
 describe("claude code delegated engine", () => {
+  it("WIN-275: a worker whose sandbox the CLI cannot run here ends as sandbox_unavailable, its box still required", async () => {
+    const init = { type: "system", subtype: "init", model: "claude-sonnet-5", session_id: "refused", tools: [] };
+    for (const platform of ["win32", "darwin"] as const)
+      for (const initialized of [false, true])
+        for (const ending of ["throw", "result", "result-then-throw"]) {
+          const label = `${platform}/${initialized ? "after init" : "before init"}/${ending}`;
+          const messages = [...(initialized ? [init] : []), ...(ending === "throw" ? [] : [sandboxRefusedResult])];
+          const sdk = fakeQuery(messages, refusalThrow(ending, initialized));
+          const result = await (await engineWithLogin(sdk.fn, platform)).delegate(await workerRequest());
+          assert.equal(result.ok, false, label);
+          assert.equal(result.stopReason, StopReason.SandboxUnavailable, label);
+          assert.ok(result.errorText?.includes(SANDBOX_REFUSAL), `${label}: the CLI's own reason is kept`);
+          const sandbox = sdk.seen[0]?.sandbox as Record<string, unknown>;
+          assert.equal(sandbox.enabled, true, label);
+          assert.equal(sandbox.failIfUnavailable, true, `${label}: never run without the box`);
+        }
+  });
+
+  it("WIN-275: a session that already replied, or failed some other way, keeps its own ending", async () => {
+    const replied = { type: "assistant", message: { content: [{ type: "text", text: "Building." }] } };
+    const afterReply = fakeQuery([replied, sandboxRefusedResult]);
+    const result = await (await engineWithLogin(afterReply.fn)).delegate(await workerRequest());
+    assert.equal(result.stopReason, "error_during_execution", "a session that worked is a failed build, judged as one");
+    const other = fakeQuery([], { throwOn: new Error("fixture startup refused") });
+    await assert.rejects((await engineWithLogin(other.fn)).delegate(await workerRequest()), { kind: "other" });
+    const signedOut = fakeQuery([], { throwOn: new Error("not logged in") });
+    await assert.rejects((await engineWithLogin(signedOut.fn)).delegate(await workerRequest()), { kind: "auth" });
+  });
+
   it("streams only reply text, preserves long completed replies, and retains tool results", async () => {
     const text = "The bridge and lights are ready. ".repeat(200);
     const { fn, seen } = fakeQuery([

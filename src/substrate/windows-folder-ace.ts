@@ -69,8 +69,13 @@ export interface FolderOwnEdit {
   deny: DenyAccess | null;
   /** FILE_DELETE_CHILD denied on the path alone, so a denied entry in it cannot be deleted or renamed. */
   guard: boolean;
-  /** Allowed on the path and, through inheritance, on everything under it. */
+  /** Allowed on the path and, through inheritance, on everything under it (with `allows`). */
   grant: GrantAccess | null;
+  /**
+   * Whether this edit also makes the SID's passed-down allows on the path exactly `grant`: only on a
+   * folder Genex grants or once granted. Elsewhere (a deny, a guard) an allow it did not set stays.
+   */
+  allows: boolean;
 }
 
 /**
@@ -180,7 +185,7 @@ function Grant($acl, $sid) {
 }
 # A read-attributes entry ({@link Grant}) passes nothing down; a grant on a whole folder (Own) does.
 function FolderAllow($ace, $sid) { (ExplicitAllow $ace $sid) -and [int]$ace.AceFlags -eq 0 }
-function OwnEntry($ace, $sid) { (ExplicitDeny $ace $sid) -or ((ExplicitAllow $ace $sid) -and [int]$ace.AceFlags -ne 0) }
+function OwnEntry($ace, $sid, $allows) { (ExplicitDeny $ace $sid) -or ($allows -and (ExplicitAllow $ace $sid) -and [int]$ace.AceFlags -ne 0) }
 function Remove($acl, $sid) {
   $how = 'none'
   for ($i = $acl.Count - 1; $i -ge 0; $i--) {
@@ -195,17 +200,18 @@ function Shapes($aces, $inheritable) {
 function Entry($flags, $qualifier, $mask, $sid) {
   New-Object Security.AccessControl.CommonAce($flags, [Security.AccessControl.AceQualifier]::$qualifier, $mask, $sid, $false, $null)
 }
-# The SID's denies and passed-down allows made exactly the edit's: denies first, then the allow
-# after every explicit deny (the canonical order), the read-attributes entries left as they are.
+# The SID's denies (and, with allows set, its passed-down allows) made exactly the edit's: denies
+# first, then the allow after every explicit deny (the canonical order); the read-attributes
+# entries, and without allows every allow, left as they are.
 function Own($acl, $sid, $edit) {
   $denies = @()
   if ($edit.deny) { $denies += ,(Entry $PASSED_DOWN 'AccessDenied' $DENIED[[string]$edit.deny] $sid) }
   if ($edit.guard) { $denies += ,(Entry ([Security.AccessControl.AceFlags]::None) 'AccessDenied' $DELETE_CHILD $sid) }
   $allows = @()
-  if ($edit.grant) { $allows += ,(Entry $PASSED_DOWN 'AccessAllowed' $GRANTED[[string]$edit.grant] $sid) }
-  $had = @(for ($i = 0; $i -lt $acl.Count; $i++) { if (OwnEntry $acl[$i] $sid) { $acl[$i] } })
+  if ($edit.allows -and $edit.grant) { $allows += ,(Entry $PASSED_DOWN 'AccessAllowed' $GRANTED[[string]$edit.grant] $sid) }
+  $had = @(for ($i = 0; $i -lt $acl.Count; $i++) { if (OwnEntry $acl[$i] $sid $edit.allows) { $acl[$i] } })
   if ((Shapes $had $false) -eq (Shapes ($denies + $allows) $false)) { return 'none' }
-  for ($i = $acl.Count - 1; $i -ge 0; $i--) { if (OwnEntry $acl[$i] $sid) { $acl.RemoveAce($i) } }
+  for ($i = $acl.Count - 1; $i -ge 0; $i--) { if (OwnEntry $acl[$i] $sid $edit.allows) { $acl.RemoveAce($i) } }
   foreach ($ace in $denies) { $acl.InsertAce(0, $ace) }
   foreach ($ace in $allows) {
     $at = 0
@@ -268,13 +274,17 @@ foreach ($edit in @($request)) {
 }
 $outcomes = foreach ($edit in @($request)) {
   $watch = [Diagnostics.Stopwatch]::StartNew()
-  try { Edit $edit; @{ ok = $true; ms = $watch.ElapsedMilliseconds } } catch { @{ ok = $false; error = $_.Exception.Message } }
+  try {
+    Edit $edit
+    # How long Windows took over an own edit, which may pass entries down a large folder.
+    if ($edit.op -eq '${FolderAceOp.Own}') { @{ ok = $true; ms = $watch.ElapsedMilliseconds } } else { @{ ok = $true } }
+  } catch { @{ ok = $false; error = $_.Exception.Message } }
 }
 Answer (ConvertTo-Json -InputObject @($outcomes) -Compress)
 `;
 
 /** Windows PowerShell by its full path: a folder on PATH must not stand in for it. */
-function powershell(env: NodeJS.ProcessEnv = process.env): string {
+export function windowsPowerShell(env: NodeJS.ProcessEnv = process.env): string {
   const systemRoot = env.SystemRoot || env.SYSTEMROOT || "C:\\Windows";
   return path.win32.join(systemRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
 }
@@ -287,7 +297,7 @@ export function folderAceCommand(
   const script = Buffer.from(FOLDER_ACE_SCRIPT, "utf16le").toString("base64");
   const payload = Buffer.from(JSON.stringify(edits), "utf8").toString("base64");
   return {
-    file: powershell(env),
+    file: windowsPowerShell(env),
     args: ["-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", script],
     env: { ...env, [EDITS_ENV]: payload },
   };
