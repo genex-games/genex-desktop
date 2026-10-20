@@ -27,7 +27,7 @@ import type { CoreInternals, StudioCore } from "../studio-core.ts";
 import { attachReport, noAttachment, str } from "../core/page-report.ts";
 import { startHeldInPlan } from "../core/project-tools.ts";
 import { withEditorPlay } from "../core/editor-play-session.ts";
-import { isBelow, throughClaudeFolder, throughGitFolder } from "../../substrate/paths.ts";
+import { isBelow, samePath, throughClaudeFolder, throughGitFolder } from "../../substrate/paths.ts";
 
 /** The largest image `game.read` hands back. */
 const MAX_IMAGE_READ_MB = 8;
@@ -74,7 +74,26 @@ const CONTRACT_COMPANION_FILES = [
 /** A run id an integration workspace is filed under: a plain slug, dots allowed. */
 const RUN_ID = /^[a-z0-9][a-z0-9-_.]*$/i;
 
+/** The field of `git worktree list --porcelain -z` that names a worktree's folder. */
+const WORKTREE_FIELD = "worktree ";
+
 const readText = (file: string): Promise<string | null> => readFile(file, "utf8").catch(() => null);
+
+/**
+ * The real paths of a game's registered worktrees. Git names a folder its own way (Git for
+ * Windows writes `C:/Users/…` where Node's realpath answers `C:\Users\…`), so each is resolved
+ * before it is compared; one whose folder is gone is left out. `-z` ends every field with a NUL,
+ * so a folder name holding a newline cannot pass for another field.
+ */
+async function registeredWorktrees(game: string): Promise<string[]> {
+  const listing = await git(game, ["worktree", "list", "--porcelain", "-z"]);
+  const named = listing
+    .split("\0")
+    .filter((field) => field.startsWith(WORKTREE_FIELD))
+    .map((field) => field.slice(WORKTREE_FIELD.length));
+  const real = await Promise.all(named.map((dir) => realpath(dir).catch(() => null)));
+  return real.filter((dir) => dir !== null);
+}
 
 /** A run's integration workspace, refused unless git has it registered as a worktree of this game. */
 async function integrationWorkspace(core: StudioCore, project: string, runId: string): Promise<string> {
@@ -82,8 +101,8 @@ async function integrationWorkspace(core: StudioCore, project: string, runId: st
   await core.assertProjectAllowed(core.games.dirFor(project));
   const workspace = await realpath(path.join(core.layout.scratch, "autopilot", runId, "integration"));
   // Git's registration ties this host-derived worktree to the authorized game.
-  const listing = await git(core.games.dirFor(project), ["worktree", "list", "--porcelain"]);
-  if (!listing.split("\n").includes(`worktree ${workspace}`)) throw new Error(MESSAGE.foreignWorkspace);
+  const registered = await registeredWorktrees(core.games.dirFor(project));
+  if (!registered.some((dir) => samePath(dir, workspace))) throw new Error(MESSAGE.foreignWorkspace);
   return workspace;
 }
 
