@@ -1,0 +1,5 @@
+error: genex_ai::Schema: a description is at most 500 characters (the doc comment or `description`)
+ --> tests/ui/fail/long_description.rs:8:5
+  |
+8 |     #[genex_ai(description = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa...
+  |     ^

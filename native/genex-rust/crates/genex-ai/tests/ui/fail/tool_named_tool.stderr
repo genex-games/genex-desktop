@@ -1,0 +1,5 @@
+error: genex_ai::Schema: tool "tool" needs a name of [A-Za-z][A-Za-z0-9_]{0,63} other than "tool"
+  --> tests/ui/fail/tool_named_tool.rs:11:5
+   |
+11 |     Tool { name: String },
+   |     ^^^^

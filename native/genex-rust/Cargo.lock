@@ -1031,6 +1031,7 @@ dependencies = [
  "genex-ai-derive",
  "serde",
  "serde_json",
+ "trybuild",
 ]
 
 [[package]]

@@ -24,3 +24,5 @@ serde_json = { workspace = true }
 # The shared fixture holds doubles JavaScript printed; reading them back exactly takes serde_json's
 # correctly rounded parser (tests only: the runtime's own parsing is left as the workspace has it).
 serde_json = { workspace = true, features = ["float_roundtrip"] }
+# The derive's compile-time refusals (`tests/compile_fail.rs`).
+trybuild = { workspace = true }

@@ -1,0 +1,5 @@
+error: genex_ai::Schema: #[serde(tag)] changes the shape in a way the closed dialect cannot say
+ --> tests/ui/fail/tagged_enum.rs:6:9
+  |
+6 | #[serde(tag = "kind", deny_unknown_fields)]
+  |         ^^^

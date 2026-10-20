@@ -1,0 +1,5 @@
+error: genex_ai::Schema: #[serde(flatten)] changes the shape in a way the closed dialect cannot say
+  --> tests/ui/fail/flattened_field.rs:14:13
+   |
+14 |     #[serde(flatten)]
+   |             ^^^^^^^

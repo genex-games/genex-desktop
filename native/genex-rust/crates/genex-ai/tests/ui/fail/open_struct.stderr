@@ -1,0 +1,5 @@
+error: genex_ai::Schema needs #[serde(deny_unknown_fields)]: the dialect's objects are closed, and so is the type that reads one
+ --> tests/ui/fail/open_struct.rs:6:8
+  |
+6 | struct Turn {
+  |        ^^^^
