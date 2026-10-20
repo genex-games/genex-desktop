@@ -52,7 +52,7 @@ pub use output::{
 pub use sink::SinkQueue;
 pub use spatial::{
     CUTOFF_FAR_HZ, CUTOFF_OPEN_HZ, DOPPLER_RATE_MAX, DOPPLER_RATE_MIN, SPEED_OF_SOUND_M_S, attenuation_db, distance_cutoff_hz,
-    doppler_rate, pan,
+    doppler_rate, pan, pan_gains,
 };
 pub use vocab::{
     AUDIO_EVENTS_MAX, Attenuation, AudioErrorCode, AudioEventCode, AudioSettings, AudioSpan, Bus, LOGICAL_VOICES_MAX,

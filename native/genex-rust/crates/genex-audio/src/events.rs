@@ -1,8 +1,8 @@
 //! What happened to voices on a tick: the bounded event list `state().volatile.audio.events`
-//! shows and the running counts that keep what the list drops. Bodies are AU-2's.
+//! shows and the running counts that keep what the list drops.
 
-use crate::ops::{SoundId, Voice};
-use crate::vocab::{AUDIO_EVENTS_MAX, AudioEventCode};
+use crate::ops::{MusicId, SoundId, Voice};
+use crate::vocab::{AUDIO_EVENTS_MAX, AudioErrorCode, AudioEventCode};
 
 /// One thing that happened to a voice.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -11,12 +11,44 @@ pub struct AudioEvent {
     pub tick: u64,
     /// What happened.
     pub code: AudioEventCode,
-    /// The voice ([`Voice::NONE`] for a refused play).
+    /// The voice (a refused play's is the id its call answered; [`Voice::NONE`] for a music
+    /// event or a refused command that names no voice).
     pub voice: Voice,
     /// The sound involved, when there is one.
     pub sound: Option<SoundId>,
     /// The voice that caused it (a steal's thief), or [`Voice::NONE`].
     pub by: Voice,
+    /// The music involved, for a music event.
+    pub music: Option<MusicId>,
+    /// Why a play or command was refused.
+    pub reason: Option<AudioErrorCode>,
+}
+
+impl AudioEvent {
+    /// An event with no voice, sound, music or reason yet.
+    pub(crate) fn at(tick: u64, code: AudioEventCode) -> AudioEvent {
+        AudioEvent { tick, code, voice: Voice::NONE, sound: None, by: Voice::NONE, music: None, reason: None }
+    }
+
+    /// This event about `voice` playing `sound`.
+    pub(crate) fn of(self, voice: Voice, sound: Option<SoundId>) -> AudioEvent {
+        AudioEvent { voice, sound, ..self }
+    }
+
+    /// This event caused by `by`.
+    pub(crate) fn by(self, by: Voice) -> AudioEvent {
+        AudioEvent { by, ..self }
+    }
+
+    /// This event about `music`.
+    pub(crate) fn music(self, music: MusicId) -> AudioEvent {
+        AudioEvent { music: Some(music), ..self }
+    }
+
+    /// This refusal, for `reason`.
+    pub(crate) fn because(self, reason: AudioErrorCode) -> AudioEvent {
+        AudioEvent { reason: Some(reason), ..self }
+    }
 }
 
 /// Running totals since the last seed.
@@ -67,5 +99,10 @@ impl EventLog {
     /// The totals since the last seed.
     pub fn counts(&self) -> AudioCounts {
         self.counts
+    }
+
+    /// A log that goes on from `counts` with no events (a restored save section).
+    pub(crate) fn resume(counts: AudioCounts) -> EventLog {
+        EventLog { events: Vec::new(), counts }
     }
 }

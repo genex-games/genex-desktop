@@ -1,5 +1,5 @@
 //! Occlusion: an [`Occluder`] the facade implements over physics colliders, and the round-robin
-//! scheduler that casts at most [`OCCLUSION_RAYS_PER_TICK`] rays a tick. Bodies are AU-3's.
+//! scheduler that casts at most [`OCCLUSION_RAYS_PER_TICK`] rays a tick.
 
 use crate::ops::Voice;
 use crate::vocab::OCCLUSION_RAYS_PER_TICK;
@@ -21,19 +21,45 @@ pub trait Occluder {
 /// Picks which voices get a ray this tick, in id order, wrapping round.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct OcclusionScheduler {
-    /// The id after the last voice cast.
+    /// The id after the last voice cast; 0 starts from the lowest id.
     cursor: u32,
 }
 
 impl OcclusionScheduler {
     /// The voices (sorted by id) to cast for this tick, at most [`OCCLUSION_RAYS_PER_TICK`].
+    ///
+    /// Under the cap every voice is cast every tick. Over it, a tick casts from the first id past
+    /// the last one cast, up to the cap or the highest id, and the tick after the highest id
+    /// starts again from the lowest, so `n` voices are all refreshed within `ceil(n / cap)`
+    /// ticks, in id order.
     pub fn pick(&mut self, audible: &[Voice]) -> Vec<Voice> {
-        let _ = (self.cursor, audible, OCCLUSION_RAYS_PER_TICK);
-        Vec::new()
+        let Some(last) = audible.last() else { return Vec::new() };
+        if audible.len() <= OCCLUSION_RAYS_PER_TICK {
+            self.cursor = last.id().wrapping_add(1);
+            return audible.to_vec();
+        }
+        let start = audible.iter().position(|voice| voice.id() >= self.cursor).unwrap_or(0);
+        let picked: Vec<Voice> = audible[start..].iter().take(OCCLUSION_RAYS_PER_TICK).copied().collect();
+        let reached_end = start + picked.len() == audible.len();
+        self.cursor = match picked.last() {
+            Some(voice) if !reached_end => voice.id().wrapping_add(1),
+            _ => 0,
+        };
+        picked
     }
 
     /// Back to the first voice (a seed).
     pub fn reset(&mut self) {
         self.cursor = 0;
+    }
+
+    /// The id after the last voice cast (the save section keeps it).
+    pub(crate) fn cursor(&self) -> u32 {
+        self.cursor
+    }
+
+    /// A scheduler resuming after `cursor` (a restored save section).
+    pub(crate) fn resume(cursor: u32) -> OcclusionScheduler {
+        OcclusionScheduler { cursor }
     }
 }
