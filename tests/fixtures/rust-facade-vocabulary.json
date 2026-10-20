@@ -17,6 +17,7 @@
     "volatile",
     "__render",
     "__stream",
+    "__input",
     "assets",
     "checksum"
   ],
@@ -32,7 +33,10 @@
     "duplicate-facet-state",
     "invalid-world-size",
     "duplicate-streaming",
-    "streaming-invalid"
+    "streaming-invalid",
+    "duplicate-input",
+    "input-invalid",
+    "duplicate-touch-controls"
   ],
   "registrationRefusals": ["gpu-pass-invalid"],
   "levelTwoCalls": [

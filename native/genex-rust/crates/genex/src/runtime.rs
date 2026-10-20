@@ -21,6 +21,7 @@ use crate::ctx::{Ctx, CtxRng, Key};
 use crate::frame::Frame;
 use crate::game::{Game, Single};
 use crate::gfx::{AssetSource, Gfx};
+use crate::actions::{InputError, InputErrorCode, InputTrack, TrackAnchor};
 use crate::input::{Input, Merger, TickInput};
 use crate::map::Set;
 use crate::present::{AssetIssue, TextureFact};
@@ -37,6 +38,7 @@ use serde_json::{Map as JsonMap, Value};
 use crate::render::{DeviceFacts, RenderControl, RenderHandle, ScoreLevel};
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
+use std::collections::VecDeque;
 use std::fmt;
 
 /// One simulation tick, in milliseconds (genex-core's).
@@ -73,8 +75,11 @@ const BUILD_IDENTITY: GameIdentity<'static> = GameIdentity {
     },
 };
 
+/// The format tag of [`Runtime::input_snapshot`].
+const INPUT_SNAPSHOT_FORMAT: &str = "genex-input-snapshot/1";
+
 /// The keys `state()` owns; a probe may never use one as its name.
-pub const RUNTIME_KEYS: [&str; 18] = [
+pub const RUNTIME_KEYS: [&str; 19] = [
     "version",
     "contractVersion",
     "seed",
@@ -92,6 +97,8 @@ pub const RUNTIME_KEYS: [&str; 18] = [
     "__render",
     // Display only, and only while streaming is registered: never in the checksum.
     "__stream",
+    // Display only, and only while `game.input` is registered: never in the checksum.
+    "__input",
     "assets",
     "checksum",
 ];
@@ -132,11 +139,18 @@ pub enum InstallErrorCode {
     /// `STREAM_CELL_SIZE_MIN..=STREAM_CELL_SIZE_MAX`, radii or an anchor count past theirs, or a
     /// sim set past `STREAM_SIM_BYTES_MAX` at the cell caps.
     StreamingInvalid,
+    /// A second `game.input`.
+    DuplicateInput,
+    /// An action map genex-input refuses (an id, a binding, a cap), or touch controls outside the
+    /// world, past their caps or bound to no action.
+    InputInvalid,
+    /// A second `game.touch_controls`.
+    DuplicateTouchControls,
 }
 
 impl InstallErrorCode {
     /// Every code, in declaration order.
-    pub const ALL: [InstallErrorCode; 12] = [
+    pub const ALL: [InstallErrorCode; 15] = [
         InstallErrorCode::DuplicateCamera,
         InstallErrorCode::DuplicatePlayer,
         InstallErrorCode::DuplicateProbe,
@@ -149,6 +163,9 @@ impl InstallErrorCode {
         InstallErrorCode::InvalidWorldSize,
         InstallErrorCode::DuplicateStreaming,
         InstallErrorCode::StreamingInvalid,
+        InstallErrorCode::DuplicateInput,
+        InstallErrorCode::InputInvalid,
+        InstallErrorCode::DuplicateTouchControls,
     ];
 
     /// The typed code's wire spelling.
@@ -166,6 +183,9 @@ impl InstallErrorCode {
             InstallErrorCode::InvalidWorldSize => "invalid-world-size",
             InstallErrorCode::DuplicateStreaming => "duplicate-streaming",
             InstallErrorCode::StreamingInvalid => "streaming-invalid",
+            InstallErrorCode::DuplicateInput => "duplicate-input",
+            InstallErrorCode::InputInvalid => "input-invalid",
+            InstallErrorCode::DuplicateTouchControls => "duplicate-touch-controls",
         }
     }
 }
@@ -269,6 +289,8 @@ struct Core<W> {
     /// The streaming engine (STR-9): builds in flight and the hold counters; idle without
     /// `game.streaming`.
     stream: crate::stream_tick::StreamTick,
+    /// Recorded tick rows a replay runs instead of the merger's (IN-12).
+    rows: VecDeque<genex_core::input::TickInput>,
 }
 
 /// A game behind its registrations: what platform shells and the verb transport drive.
@@ -311,6 +333,13 @@ impl<W> DemoDriver<'_, W> {
     }
 }
 
+impl<W: Default> DemoDriver<'_, W> {
+    /// Replay a recorded input track exactly as `Runtime::replay` does (IN-12).
+    pub fn replay(&mut self, track: &InputTrack) -> Result<StepResult, InputError> {
+        replay(self.game, self.core, track)
+    }
+}
+
 impl<W: Default + 'static> Runtime<W> {
     /// Check the registrations and seed [`DEFAULT_SEED`], with no assets to read (a test's or a
     /// tool's runtime): every [`crate::Assets::bytes`] answers `missing`.
@@ -342,8 +371,11 @@ impl<W: Default + 'static> Runtime<W> {
             render: Rc::new(RefCell::new(RenderControl::new(game.render.clone(), (game.world_size[0], game.world_size[1])))),
             g6: crate::g6::G6::default(),
             stream: crate::stream_tick::StreamTick::new(game.streaming.first(), &game.cell_contents),
+            rows: VecDeque::new(),
         };
         let mut runtime = Runtime { game, core };
+        // The player's bindings are read once, before the first seed (IN-11).
+        runtime.core.g6.input.install(&runtime.game.g6.input, runtime.core.gfx.saves(), studio_run());
         runtime.seed(DEFAULT_SEED);
         Ok(runtime)
     }
@@ -351,28 +383,7 @@ impl<W: Default + 'static> Runtime<W> {
     /// Rebuild the simulation on `seed` from defaults, run the reset hooks in order, pause and
     /// clear held and pending input.
     pub fn seed(&mut self, seed: u32) {
-        let core = &mut self.core;
-        core.sim = fresh_sim(W::default(), &self.game);
-        core.seed = seed;
-        core.tick = 0;
-        core.running = false;
-        core.clock.reset();
-        core.merger = Merger::default();
-        core.pointer_lock = false;
-        core.hud.reset();
-        core.g6.reset(&self.game.g6);
-        core.gfx.assets().clear();
-        core.gfx.clear_extensions();
-        core.stream.reset(seed);
-        let mut rng = Pcg32::seeded(u64::from(seed));
-        core.gfx.assets().set_at_reset(true);
-        for hook in &self.game.resets {
-            hook(&mut core.sim, seed, &mut rng, &core.gfx);
-        }
-        core.gfx.assets().set_at_reset(false);
-        core.rng.set(rng);
-        // Anchors a reset placed take effect at the first tick's commit: start its builds now.
-        core.stream.prefetch(&core.sim);
+        seed_core(&self.game, &mut self.core, seed);
     }
 
     /// Run streamed cell builds on `pool` instead of the process pool (tests and tools comparing
@@ -387,6 +398,17 @@ impl<W: Default + 'static> Runtime<W> {
     #[doc(hidden)]
     pub fn use_stream_clock(&mut self, clock: Box<dyn FnMut() -> f64>) {
         self.core.stream.use_clock(clock);
+    }
+
+    /// Replay a recorded input track (IN-12): the track's bindings come into force, a track from
+    /// the seed seeds its seed first (one from a snapshot needs the input and the world restored
+    /// at its first tick), then each recorded row runs one tick in place of the merger's input.
+    /// The same (seed, bindings, rows) give the same checksum on every tick. Refuses
+    /// `input-track-mismatch` for another contract, world size or bindings, or without
+    /// `game.input`.
+    #[doc(hidden)]
+    pub fn replay(&mut self, track: &InputTrack) -> Result<StepResult, InputError> {
+        replay(&self.game, &mut self.core, track)
     }
 }
 
@@ -494,6 +516,22 @@ impl<W> Runtime<W> {
         let env = |name: &str| (name == ANDROID_DATA_KEY).then(|| internal_data_path.to_owned());
         let game = paths::identity_of(self.game.save_name.as_deref().unwrap_or(""), "", BUILD_IDENTITY);
         self.core.gfx.set_saves(Saves::for_destination(Destination::Android, &env, game));
+        self.core.g6.input.rebase(&self.game.g6.input, self.core.gfx.saves(), studio_run());
+        let tick = self.core.tick;
+        restart_journal(&self.game, &mut self.core, tick);
+    }
+
+    /// Rebase the saves onto a Studio run's `state/` folder (`state_dir`, absolute, ending in its
+    /// separator) and read the player's bindings from there, as a run the studio started would
+    /// (key labels ignored). For tests and tools that stand in for a Genex run.
+    #[doc(hidden)]
+    pub fn use_studio_saves(&mut self, state_dir: &str) {
+        let env = |name: &str| (name == paths::STATE_DIR_ENV).then(|| state_dir.to_owned());
+        let game = paths::identity_of(self.game.save_name.as_deref().unwrap_or(""), "", BUILD_IDENTITY);
+        self.core.gfx.set_saves(Saves::for_destination(Destination::GenexRun, &env, game));
+        self.core.g6.input.rebase(&self.game.g6.input, self.core.gfx.saves(), true);
+        let tick = self.core.tick;
+        restart_journal(&self.game, &mut self.core, tick);
     }
 
     /// The simulation, read-only.
@@ -596,6 +634,15 @@ impl<W> Runtime<W> {
             state.set(session::VOLATILE_KEY, volatile);
         }
         core.g6.runtime_keys(&self.game.g6, &mut state);
+        if core.g6.input.registered() {
+            let mut input = state[crate::actions::RUNTIME_KEY].clone();
+            input.set("journal", CoreValue::from(&core.g6.journal.runtime_value()));
+            let device = core.g6.input.ctx().device();
+            if let Some(touch) = core.g6.touch.runtime_value(&self.game.g6.touch, device) {
+                input.set("touchControls", CoreValue::from(&touch));
+            }
+            state.set(crate::actions::RUNTIME_KEY, input);
+        }
         state
     }
 
@@ -627,6 +674,64 @@ impl<W> Runtime<W> {
     /// A phone shell raises its keyboard while this holds. Display only: it moves no checksum.
     pub fn keyboard_wanted(&self) -> bool {
         genex_hud::keyboard_wanted(self.core.hud.context())
+    }
+
+    /// The input journal since the seed or the last input restore (IN-12): host glue for crash
+    /// records and replays. Empty without `game.input`.
+    #[doc(hidden)]
+    pub fn journal(&self) -> crate::actions::InputJournalView<'_> {
+        self.core.g6.journal.view()
+    }
+
+    /// The keyboard layout's labels by DOM code (a shell's layout map): they change prompts and
+    /// `state().__input.hints` only, never what an action reads or a checksum. Ignored in a Studio
+    /// run, so judged runs read the same prompts.
+    #[doc(hidden)]
+    pub fn set_key_labels(&mut self, labels: &crate::Map<String, String>) {
+        let pairs = labels.iter().map(|(code, label)| (code.as_str(), label.as_str()));
+        self.core.g6.input.set_labels(genex_input::glyph::KeyLabels::from_pairs(pairs));
+    }
+
+    /// The input state between ticks (a save's `input` section, IN-12): every action's latches,
+    /// values and condition memory, the contexts, the pad family and the fingers on touch
+    /// controls. `Value::Null` without `game.input`.
+    #[doc(hidden)]
+    pub fn input_snapshot(&self) -> Value {
+        let input = &self.core.g6.input;
+        if !input.registered() {
+            return Value::Null;
+        }
+        serde_json::json!({
+            "format": INPUT_SNAPSHOT_FORMAT,
+            "tick": self.core.tick,
+            "actions": input.action_state().snapshot(),
+            "family": input.family().as_str(),
+            "touch": self.core.g6.touch.snapshot(),
+        })
+    }
+
+    /// Put back an [`Runtime::input_snapshot`] of the same action map and touch layout, all or
+    /// nothing, and journal from here (a snapshot-anchored track). The world, the tick and the
+    /// rest of a save are the caller's (the saves area restores them).
+    #[doc(hidden)]
+    pub fn input_restore(&mut self, snapshot: &Value) -> Result<(), InputError> {
+        let invalid = |detail: &str| InputError::new(InputErrorCode::TrackInvalid, format!("input snapshot: {detail}"));
+        let core = &mut self.core;
+        if !core.g6.input.registered() {
+            return Err(InputError::new(InputErrorCode::TrackMismatch, "the game has no game.input"));
+        }
+        if snapshot["format"].as_str() != Some(INPUT_SNAPSHOT_FORMAT) {
+            return Err(invalid("not a genex-input-snapshot/1 snapshot"));
+        }
+        let actions = genex_input::state::ActionState::restore(core.g6.input.map(), &snapshot["actions"])?;
+        let family = snapshot["family"].as_str().and_then(crate::actions::PadFamily::from_wire).ok_or_else(|| invalid("an unknown pad family"))?;
+        let touch = &snapshot["touch"];
+        if !touch.is_null() {
+            core.g6.touch.restore(&self.game.g6.touch, touch)?;
+        }
+        core.g6.input.restore(actions, family);
+        core.g6.journal.anchor(core.tick);
+        Ok(())
     }
 
     /// The last frame's tally as `__render`: `{drawCalls, triangles, tags: {tag: {drawCalls,
@@ -813,6 +918,92 @@ fn saves_of(save_name: Option<&str>) -> Saves {
     Saves::for_process(save_name.unwrap_or(""), "", BUILD_IDENTITY)
 }
 
+/// `Runtime::replay` and `DemoDriver::replay` on the game's state.
+fn replay<W: Default>(game: &Game<W>, core: &mut Core<W>, track: &InputTrack) -> Result<StepResult, InputError> {
+    let mismatch = |detail: &str| InputError::new(InputErrorCode::TrackMismatch, detail.to_owned());
+    let Some(defaults) = game.g6.input.map() else { return Err(mismatch("the game has no game.input")) };
+    let header = track.header();
+    if header.contract != session::CONTRACT_VERSION || header.world != game.world_size {
+        return Err(mismatch("the track was recorded for another contract or world size"));
+    }
+    let mut map = defaults.clone();
+    if !header.bindings.is_empty() {
+        map.apply_blob(&header.bindings)?;
+    }
+    if map.digest() != header.bindings_digest {
+        return Err(mismatch("the track's bindings do not match its digest"));
+    }
+    let anchored_here = track.anchor() == TrackAnchor::Snapshot && track.start_tick() == core.tick;
+    if track.anchor() == TrackAnchor::Snapshot && !anchored_here {
+        return Err(mismatch("a snapshot track replays from its first tick, after the input and world restore"));
+    }
+    // The run's bindings for the replay; not the player's file, so nothing is written.
+    core.g6.input.set_map(map);
+    if track.anchor() == TrackAnchor::Seed {
+        seed_core(game, core, header.seed);
+    }
+    core.rows = track.inputs().map(|(_, row)| row).collect();
+    let mut hold = crate::stream_tick::HoldBudget::step();
+    let due = core.rows.len();
+    let ticks = (0..due).take_while(|_| tick(game, core, &mut hold)).count() as u32;
+    core.rows.clear();
+    Ok(StepResult { ticks, frame: core.tick, simulated_ms: simulated_ms(core.tick) })
+}
+
+/// `seed` on the game's state: defaults, reset hooks in order, paused, input cleared.
+fn seed_core<W: Default>(game: &Game<W>, core: &mut Core<W>, seed: u32) {
+    core.sim = fresh_sim(W::default(), game);
+    core.seed = seed;
+    core.tick = 0;
+    core.running = false;
+    core.clock.reset();
+    core.merger = Merger::default();
+    core.rows.clear();
+    core.pointer_lock = false;
+    core.hud.reset();
+    core.g6.reset(&game.g6);
+    start_journal(game, core);
+    core.gfx.assets().clear();
+    core.gfx.clear_extensions();
+    core.stream.reset(seed);
+    let mut rng = Pcg32::seeded(u64::from(seed));
+    core.gfx.assets().set_at_reset(true);
+    for hook in &game.resets {
+        hook(&mut core.sim, seed, &mut rng, &core.gfx);
+    }
+    core.gfx.assets().set_at_reset(false);
+    core.rng.set(rng);
+    // Anchors a reset placed take effect at the first tick's commit: start its builds now.
+    core.stream.prefetch(&core.sim);
+}
+
+/// With `game.input`, journal the run from tick 0 under the seed and the player's bindings.
+fn start_journal<W>(game: &Game<W>, core: &mut Core<W>) {
+    restart_journal(game, core, 0);
+}
+
+/// Journal from tick `tick` under the bindings in force now (the file stays empty while they are
+/// the game's own): from the seed at tick 0, else anchored at `tick`.
+fn restart_journal<W>(game: &Game<W>, core: &mut Core<W>, tick: u64) {
+    let Some(defaults) = game.g6.input.map() else { return };
+    let map = core.g6.input.map();
+    let digest = map.digest();
+    let bindings = if digest == defaults.digest() { Vec::new() } else { map.to_blob() };
+    let header = genex_input::track::TrackHeader {
+        seed: core.seed,
+        contract: session::CONTRACT_VERSION,
+        world: game.world_size,
+        bindings_digest: digest,
+        bindings,
+    };
+    core.g6.journal.start(header, tick);
+}
+
+/// Whether the studio started this process (a Genex run): its key labels are ignored.
+fn studio_run() -> bool {
+    paths::destination_of(&paths::process_env) == Destination::GenexRun
+}
+
 fn fresh_sim<W>(world: W, game: &Game<W>) -> Sim<W> {
     Sim {
         world,
@@ -850,29 +1041,35 @@ fn step<W>(game: &Game<W>, core: &mut Core<W>, ms: f64) -> StepResult {
 }
 
 /// One fixed tick: the streaming commit slot (STR-9), then update hooks, UI hooks and one physics
-/// step. The G6 areas' hooks (UIS-0) run in INPUT's order: merge, HUD focus gating, touch
-/// controls, device tracker, evaluate, journal, then the net cut, the update and UI hooks, physics
-/// and the net flush, inside `g6_tick_begin` and `g6_tick_end`. False, with nothing changed, when
-/// the commit is held past `hold` waiting on a cell build.
+/// step. The G6 areas' hooks (UIS-0) run in INPUT's order: merge (a replay's recorded row instead
+/// of the merger's), HUD focus gating, touch controls, device tracker and evaluate, journal, then
+/// the net cut, the update and UI hooks, physics and the net flush, inside `g6_tick_begin` and
+/// `g6_tick_end`. False, with nothing changed, when the commit is held past `hold` waiting on a
+/// cell build.
 fn tick<W>(game: &Game<W>, core: &mut Core<W>, hold: &mut crate::stream_tick::HoldBudget) -> bool {
     // First, so a held commit leaves the tick untouched: no input consumed, no hook run.
     if core.stream.commit(&mut core.sim, &game.stream_commits, core.gfx.assets(), hold).is_err() {
         return false;
     }
     core.g6.tick_begin(&game.g6, core.tick);
-    let input = core.merger.next_tick(game.world_size);
-    core.g6.input.merge(&game.g6.input, &input);
+    let input = match core.rows.pop_front() {
+        Some(row) => TickInput::from_core(row, game.world_size),
+        None => core.merger.next_tick(game.world_size),
+    };
     core.pointer_lock = input.pointer_lock;
     // A HUD widget with the keyboard's focus (Tab to a settings switch, a tapped text field) takes
-    // the keys from the update hooks until Escape or a click elsewhere; the HUD itself still gets
-    // them below. Mouse buttons (and so touch 0) stay the game's.
-    let taken = genex_hud::keys_taken(core.hud.context()).then(|| input.keys.mouse_buttons_only());
+    // the keys from the update hooks and the actions until Escape or a click elsewhere; the HUD
+    // itself still gets them below. Mouse buttons (and so touch 0) stay the game's.
+    let keys_taken = genex_hud::keys_taken(core.hud.context());
+    let taken = keys_taken.then(|| input.keys.mouse_buttons_only());
     let text = if taken.is_some() { "" } else { input.text.as_str() };
-    core.g6.touch.step(&game.g6.touch, &input);
-    core.g6.input.track_devices(&game.g6.input, &input);
-    core.g6.input.evaluate(&game.g6.input);
-    core.g6.journal.record(&core.g6.input);
+    let (touch, free) = core.g6.touch.step(&game.g6.touch, game.world_size, &input);
+    core.g6.input.evaluate(&input.core, keys_taken, &touch, free);
+    core.g6.journal.record(core.tick, &input.core);
     core.g6.net.cut(&game.g6.net, &mut core.sim.net);
+    // The HUD runs for UI hooks, and for touch controls (painted, and items a script can aim at).
+    let hud_runs = !game.uis.is_empty() || game.g6.touch.layout().is_some();
+    let controls = if hud_runs { core.g6.input.enter_panel(&input.core) } else { None };
     let ctx = Ctx {
         keys: taken.as_ref().unwrap_or(&input.keys),
         touches: &input.touches,
@@ -893,17 +1090,37 @@ fn tick<W>(game: &Game<W>, core: &mut Core<W>, hold: &mut crate::stream_tick::Ho
     for hook in &game.updates {
         hook(&mut core.sim, &ctx);
     }
-    if !game.uis.is_empty() {
-        let sim = &mut core.sim;
+    if hud_runs {
+        let mut hud = hud_input(&input);
+        if let Some(navigation) = core.g6.input.hud_navigation() {
+            // The `ui` actions are the HUD's navigation keys now; a focused text field keeps the
+            // raw keys it edits with.
+            if !keys_taken {
+                hud.pressed_keys = crate::actions::without_nav_keys(&hud.pressed_keys);
+            }
+            hud.extra_events = navigation;
+        }
+        let shown = crate::actions_touch::State::shown(&game.g6.touch, ctx.actions.device());
+        let (sim, touch) = (&mut core.sim, &core.g6.touch);
         let panel = crate::render::PanelScope::enter(&core.render);
-        core.hud.run(game.world_size, simulated_ms(core.tick) / 1000.0, &hud_input(&input), |ui| {
+        core.hud.run(game.world_size, simulated_ms(core.tick) / 1000.0, &hud, |ui| {
             for hook in &game.uis {
                 hook(sim, ui, &ctx);
             }
+            if shown {
+                touch.paint(&game.g6.touch, game.world_size, ui);
+            }
         });
         drop(panel);
-        // The person's panel choice is kept per device, outside the simulation.
+        let digest = core.g6.input.map().digest();
+        core.g6.input.leave_panel(controls);
+        if core.g6.input.map().digest() != digest {
+            // The rest of the run evaluates with the new bindings: journal it from the next tick.
+            restart_journal(game, core, core.tick + 1);
+        }
+        // The person's panel choices are kept per device, outside the simulation.
         core.render.borrow_mut().save(core.gfx.saves());
+        core.g6.input.save_if_changed(core.gfx.saves());
     }
     #[cfg(feature = "physics")]
     core.sim.physics.step();
@@ -929,6 +1146,28 @@ fn hud_input(input: &TickInput) -> HudInput {
     }
 }
 
+/// `install`'s input checks: one map and one layout, each one genex-input accepts.
+fn check_input<W>(game: &Game<W>) -> Result<(), InstallError> {
+    let (input, touch) = (&game.g6.input, &game.g6.touch);
+    if input.count() > 1 {
+        return Err(InstallError::new(InstallErrorCode::DuplicateInput, "game.input is registered once"));
+    }
+    if touch.count() > 1 {
+        return Err(InstallError::new(InstallErrorCode::DuplicateTouchControls, "game.touch_controls is registered once"));
+    }
+    let refused = |error: InputError| InstallError::new(InstallErrorCode::InputInvalid, error.to_string());
+    if let Some(map) = input.map() {
+        map.validate().map_err(refused)?;
+    }
+    if let Some(layout) = touch.layout() {
+        layout.validate(game.world_size).map_err(refused)?;
+        if let Some(map) = input.map() {
+            layout.check_bindings(map).map_err(refused)?;
+        }
+    }
+    Ok(())
+}
+
 fn validate<W>(game: &Game<W>) -> Result<(), InstallError> {
     check_world_size(game.world_size)?;
     check_single(&game.cameras, InstallErrorCode::DuplicateCamera, "a second camera needs .camera_override()")?;
@@ -939,6 +1178,7 @@ fn validate<W>(game: &Game<W>) -> Result<(), InstallError> {
     check_names(game.eyes.iter().map(|c| c.name.as_str()), InstallErrorCode::DuplicateEye, &[])?;
     check_names(game.demos.iter().map(|c| c.name.as_str()), InstallErrorCode::DuplicateDemo, &[])?;
     check_streaming(&game.streaming, &game.cell_contents, game.navigation.as_ref())?;
+    check_input(game)?;
     let mut facets = Set::default();
     for facet in &game.facets {
         if !facets.insert(facet.type_id) {

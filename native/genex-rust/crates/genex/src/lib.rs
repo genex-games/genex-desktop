@@ -28,7 +28,8 @@
 //! `docs/GENEX_API.md` and its topic pages in `docs/api/` are the full contract.
 
 // G6 facade contracts (UIS-0): module stubs each area's facade work package fills.
-mod actions;
+/// Input actions: `game.input`, `ctx.actions`, touch controls, rebinding and prompts (genex-input).
+pub mod actions;
 mod actions_journal;
 mod actions_touch;
 mod audio;
@@ -41,7 +42,6 @@ mod settings;
 mod ui;
 mod animation;
 mod camera;
-#[cfg(feature = "physics")]
 mod character;
 mod ctx;
 mod decal;
@@ -114,6 +114,19 @@ pub use gfx::{
 /// [`CharacterAsset`] describes, so a game names them without naming genex-anim.
 pub use genex_anim::skeleton::Skeleton;
 pub use genex_anim::{AnimationError, AnimationErrorCode};
+/// The character controller (genex-anim, AN-19): `Character::spawn` / `drive` through
+/// `sim.physics`, `Character::on_ground` / `drive_on` over a height function in any build.
+pub use character::{
+    CHARACTER_SKIN, Character, CharacterError, CharacterErrorCode, CharacterMotion, CharacterNav, CharacterParams, CharacterStep, GroundHit, NavFit, RootMotion,
+    TERMINAL_FALL_SPEED,
+};
+/// Humanoid ragdolls (genex-anim, AN-20; physics only): `Ragdoll::build` / `follow` / `go_limp` /
+/// `power` / `recover` / `view` over `sim.physics`.
+#[cfg(feature = "physics")]
+pub use ragdoll::{
+    HumanoidBone, RAGDOLL_DEFAULT_MASS, RAGDOLL_GROUP, RAGDOLL_LIMP_DAMPING, RAGDOLL_MOTOR_DAMPING, RAGDOLL_MOTOR_STIFFNESS, RAGDOLL_PARTS_MAX, Ragdoll, RagdollBody,
+    RagdollJoint, RagdollMode, RagdollPart, RagdollProfile, RagdollView,
+};
 /// A native destination's asset files (the compiled table, then `assets/` by real path): host glue.
 #[cfg(not(target_arch = "wasm32"))]
 #[doc(hidden)]
@@ -176,11 +189,13 @@ pub mod physics {
 
 /// Everything a game file needs: `use genex::prelude::*;`.
 pub mod prelude {
+    pub use crate::actions::{ActionId, ActionMap, Binding, Condition, Context, ContextId, PadButton, Stick, TouchControls};
     pub use crate::math::{Mat3, Mat4, Quat, Vec2, Vec3, Vec4, vec2, vec3, vec4};
     pub use crate::{
         Assets, Camera, Color, Ctx, CustomMaterial, CustomMesh, DemoDriver, FacetState, Frame, Game, Gfx, Input, Key, Map,
         Material, Model, Pcg32, PhysicsWorld, PostPass, Projection, Set, Sim, Touch, Transform, Value, View, egui, json,
     };
+    pub use crate::{Character, CharacterMotion, CharacterNav};
 }
 
 /// Start the runtime with this game. Required, once, at the end of the game's `main`.
