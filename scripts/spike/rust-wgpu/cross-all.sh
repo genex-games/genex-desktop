@@ -6,7 +6,8 @@
 # Runs cross-offline.sh (two cold builds with no network) first, then cross-windows.sh
 # (x86_64-pc-windows-gnullvm, FXC), cross-linux.sh (its red row without the sysroot, then
 # x86_64-unknown-linux-gnu.2.28 with zig + cargo-zigbuild), cross-android.sh (aarch64-linux-android,
-# 16 KB pages) and cross-ios.sh (aarch64-apple-ios and -sim, minos 16.0), each in its own process,
+# 16 KB pages), cross-ios.sh (aarch64-apple-ios and -sim, minos 16.0) and cross-net.sh (the relay
+# client's libcolyseus link rows, MP-1b), each in its own process,
 # and keeps going after a failure. It writes <evidence>/summary.json naming each row's exit code
 # and exits 1 when any row failed. The cross artifacts are copied to .studio-dev/cross/artifacts/.
 # Between rows it stops with the code `disk` when free space falls under the run's line.
@@ -26,7 +27,7 @@ main() {
     "") rows+=("cross-offline.sh") ;;
     *) cross_fail usage "usage: cross-all.sh [--skip-offline]" ;;
   esac
-  rows+=("cross-windows.sh" "cross-linux.sh --no-sysroot" "cross-linux.sh" "cross-android.sh" "cross-ios.sh")
+  rows+=("cross-windows.sh" "cross-linux.sh --no-sysroot" "cross-linux.sh" "cross-android.sh" "cross-ios.sh" "cross-net.sh")
   local row status results="" failed=0 started=$(cross_now_ms)
   for row in "${rows[@]}"; do
     cross_require_disk

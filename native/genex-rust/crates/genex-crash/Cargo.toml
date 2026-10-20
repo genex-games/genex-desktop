@@ -18,3 +18,8 @@ genex-core = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
+
+# backtrace for the raw instruction pointers of a panic's stack (`trace` only: the host
+# symbolicates); never on wasm32, where the web shell keeps the engine's stack.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+backtrace = { workspace = true }

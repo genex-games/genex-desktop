@@ -3802,6 +3802,8 @@ export const TOOLCHAIN_WORDS = {
     [ToolchainId.CargoDeny]: "cargo-deny",
     [ToolchainId.CargoVet]: "cargo-vet",
     [ToolchainId.RustsecAdvisoryDb]: "RustSec advisories",
+    [ToolchainId.Colyseus]: "Multiplayer relay library",
+    [ToolchainId.ColyseusSource]: "Multiplayer relay library source",
   } satisfies Record<ToolchainId, string>,
   size: byteWords,
   disk: (free: number, need: number) => `${byteWords(need)} needed, ${byteWords(free)} free`,

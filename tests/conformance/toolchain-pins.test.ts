@@ -488,6 +488,9 @@ describe("the Rust stack's pins", () => {
     ToolchainId.CargoDeny,
     ToolchainId.CargoVet,
     ToolchainId.RustsecAdvisoryDb,
+    // The relay client's libcolyseus (MP-1a), installed only for a [net] game's exports.
+    ToolchainId.Colyseus,
+    ToolchainId.ColyseusSource,
   ];
 
   /** The spike's verified pins table (`scripts/spike/rust-wgpu/pins.md`): url → sha256. */

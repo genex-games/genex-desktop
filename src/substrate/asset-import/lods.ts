@@ -308,6 +308,10 @@ function simplifyInputs(doc: PackDoc, primitives: Json[], geometry: Geometry[]):
  * Lock every vertex of a primitive's leaf cards (`lod-cards.ts`), alpha-masked or not: unlocked,
  * edge collapse erodes each card into a sliver and the crown loses half its area, so they stay
  * whole as `LockBorder` kept them before LOD-09 (a crown of cards alone is then not coarser).
+ *
+ * TODO(LOD-10, follow-up): coarser levels would prune or merge whole cards here instead of keeping
+ * every one. The owner dropped that work on 2026-10-20 over patent US7973789B2, so cards stay
+ * locked; pick it up again only with a design the owner has cleared against that patent.
  */
 function lockCards(geometry: Geometry, lock: Uint8Array): void {
   for (const card of findCards(geometry)?.cards ?? []) for (const vertex of card.vertices) lock[vertex] = VERTEX_LOCKED;

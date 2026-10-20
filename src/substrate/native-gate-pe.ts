@@ -636,6 +636,12 @@ export const RUST_WINDOWS_DLLS: ReadonlySet<string> = new Set(
     "xinput1_4",
   ].map((name) => `${name}.dll`),
 );
+/**
+ * What a `[net]` game's export may import besides {@link RUST_WINDOWS_DLLS}: the sockets and the
+ * certificate store its relay client (libcolyseus, MP-1a) links. Admitted only for such a build
+ * (`admitRustPe`'s `network`); every other Rust game still opens no network.
+ */
+export const RUST_WINDOWS_NET_DLLS: ReadonlySet<string> = new Set(["ws2_32", "crypt32"].map((name) => `${name}.dll`));
 /** ANGLE's GL libraries (not its `d3dcompiler_47.dll`, which is System32's too): a raylib game's, never a Rust one's. */
 const ANGLE_GL_KEYS: ReadonlySet<string> = new Set(
   [WindowsAngleDll.Egl, WindowsAngleDll.Gles].map((name) => name.toLowerCase()),
@@ -881,8 +887,13 @@ const rustRefused = (refusal: NativeRefusal, problem: RustAdmissionProblem, deta
   detail,
 });
 
+/** Whether `key` (a bare DLL key) is on the Rust allow-list, the network one included for a `[net]` export. */
+function rustAllowed(key: string, network: boolean): boolean {
+  return RUST_WINDOWS_DLLS.has(key) || API_SET_DLL.test(key) || (network && RUST_WINDOWS_NET_DLLS.has(key));
+}
+
 /** Why a Rust image's imports or delay imports are not the policy's, or null: GL first, then DXC, then the allow-list. */
-function rustImportRefusal(image: PeImage): RustBinaryRefusal | null {
+function rustImportRefusal(image: PeImage, network: boolean): RustBinaryRefusal | null {
   const imported = [...image.imports, ...image.delayImports];
   const gl = imported.find((name) => OPENGL_DLLS.has(dllKey(name)) || ANGLE_GL_KEYS.has(dllKey(name)));
   if (gl !== undefined)
@@ -893,7 +904,7 @@ function rustImportRefusal(image: PeImage): RustBinaryRefusal | null {
   }
   const foreign = imported.find((name) => {
     const key = bareDllKey(name);
-    return key === null || !(RUST_WINDOWS_DLLS.has(key) || API_SET_DLL.test(key));
+    return key === null || !rustAllowed(key, network);
   });
   if (foreign === undefined) return null;
   return rustRefused(NativeRefusal.ForeignImport, RustAdmissionProblem.ForeignImport, MESSAGE.RustForeign(foreign));
@@ -902,9 +913,9 @@ function rustImportRefusal(image: PeImage): RustBinaryRefusal | null {
 /**
  * Admits a Rust · wgpu game's Windows executable from its bytes (M3.5): an x64 PE32+ executable
  * (not a DLL) whose imports and delay imports are bare names of {@link RUST_WINDOWS_DLLS} or API
- * sets. Pure; never throws.
+ * sets, and for a `[net]` game's export (`network`) of {@link RUST_WINDOWS_NET_DLLS}. Pure; never throws.
  */
-export function admitRustPe(bytes: Uint8Array): RustPeAdmission {
+export function admitRustPe(bytes: Uint8Array, options: { network?: boolean } = {}): RustPeAdmission {
   const read = readPe(bytes);
   if (!read.ok) return rustRefused(NativeRefusal.NotAnExecutable, RustAdmissionProblem.Unreadable, read.detail);
   const { image } = read;
@@ -915,7 +926,7 @@ export function admitRustPe(bytes: Uint8Array): RustPeAdmission {
   if (image.dll || !image.executable) {
     return rustRefused(NativeRefusal.NotAnExecutable, RustAdmissionProblem.NotAnExecutable, MESSAGE.NotAnExeImage);
   }
-  return rustImportRefusal(image) ?? { ok: true, image };
+  return rustImportRefusal(image, options.network === true) ?? { ok: true, image };
 }
 
 /**

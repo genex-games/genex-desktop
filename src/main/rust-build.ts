@@ -79,6 +79,7 @@ import {
   writeWebAssetMap,
 } from "./rust-build-web.ts";
 import type { RustStageImport, StagedImportReport } from "./rust-assets.ts";
+import { colyseusBuildEnv } from "./rust-colyseus.ts";
 import {
   type AssetPackageReport,
   PackageRefusal,
@@ -254,6 +255,8 @@ export interface RustToolchain {
   reads: readonly string[];
   /** The web branch's packaging tools (a web build's locate names them); absent for other destinations. */
   web?: WebTools;
+  /** The store's `colyseus` component folder (installed or not) a native build names its libcolyseus folder in; absent: none pinned here. */
+  colyseus?: string;
 }
 
 /**
@@ -1471,6 +1474,8 @@ function buildEnv(plan: Plan): Record<string, string> {
   // The game's [render] and [[wgsl]] reach every destination, which has no game folder to read them from.
   if (plan.renderToml !== null) env[RENDER_TOML_ENV] = plan.renderToml;
   if (plan.wgslToml !== null) env[WGSL_TOML_ENV] = plan.wgslToml;
+  // The relay client's build script downloads libcolyseus when no folder is named: every native build names one (MP-1a).
+  Object.assign(env, colyseusBuildEnv(plan.toolchain.colyseus ?? null, plan.bin, plan.builder.triple));
   return env;
 }
 

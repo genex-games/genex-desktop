@@ -71,6 +71,15 @@ const NO_WINDOW_ON = "1";
 /** A caller's explicit opt-out, for the owner's windowed smoke rows. */
 const NO_WINDOW_OPT_OUT = "0";
 
+/**
+ * The folder the vendored relay client's build script (genex-multiplayer `build.rs`) links
+ * libcolyseus from. Unset, that script downloads the Colyseus xcframework on a Mac, so the helper
+ * always names one: the toolchain's `tools/colyseus/<triple>`, or the caller's own folder.
+ */
+const COLYSEUS_LIB_DIR_ENV = "GENEX_COLYSEUS_LIB_DIR";
+/** The archive that build script reads only on its download path: never passed on. */
+const COLYSEUS_ARCHIVE_ENV = "GENEX_COLYSEUS_ARCHIVE";
+
 /** Cargo tools whose first word after the subcommand is a command of their own, ahead of `--manifest-path`. */
 const NESTED_COMMAND_TOOLS: ReadonlySet<string> = new Set(["vet"]);
 /** Global cargo options that consume the next argument. */
@@ -105,6 +114,7 @@ const PRINTED_ENV = [
   "AR_x86_64_pc_windows_gnullvm",
   "CARGO_TARGET_X86_64_PC_WINDOWS_GNULLVM_LINKER",
   "JAVA_HOME",
+  "GENEX_COLYSEUS_LIB_DIR",
 ] as const;
 const WRAPPER_VARIABLES = [
   "RUSTC_WRAPPER",
@@ -429,6 +439,7 @@ export function rustEnvironment(layout: RustToolchainLayout, env: NodeJS.Process
   const out: NodeJS.ProcessEnv = { ...env };
   for (const name of UNSET_VARIABLES) delete out[name];
   for (const name of FLAG_VARIABLES) delete out[name];
+  delete out[COLYSEUS_ARCHIVE_ENV];
   for (const name of Object.keys(out)) {
     if (name.startsWith("CARGO_") && !CALLER_CARGO_VARIABLE.test(name)) delete out[name];
   }
@@ -444,8 +455,40 @@ export function rustEnvironment(layout: RustToolchainLayout, env: NodeJS.Process
     CARGO_TARGET_DIR: env.CARGO_TARGET_DIR || path.join(REPO, ".studio-dev", "cargo-target"),
     CARGO_NET_OFFLINE: "true",
     IPHONEOS_DEPLOYMENT_TARGET: env.IPHONEOS_DEPLOYMENT_TARGET || IOS_DEPLOYMENT_TARGET,
+    [COLYSEUS_LIB_DIR_ENV]: env[COLYSEUS_LIB_DIR_ENV] || colyseusLibDir(layout, hostTriple()),
     ...crossEnv(layout, env),
   };
+}
+
+/** The toolchain's libcolyseus folder for `triple` (a glibc floor dropped): `tools/colyseus/<triple>`. */
+export function colyseusLibDir(layout: RustToolchainLayout, triple: string): string {
+  return path.join(layout.tools, "colyseus", triple.replace(/-gnu\..*$/, "-gnu"));
+}
+
+/** The first `--target` before `--`, or null for the host (none, or `host`, `all`, `host-tuple`). */
+function firstTarget(args: readonly string[]): string | null {
+  const end = args.indexOf("--");
+  const own = end < 0 ? args : args.slice(0, end);
+  const at = own.findIndex((arg) => arg === "--target" || arg.startsWith("--target="));
+  if (at < 0) return null;
+  const target = own[at] === "--target" ? (own[at + 1] ?? "") : own[at].slice("--target=".length);
+  return HOST_TARGETS.has(target) ? null : target;
+}
+
+/**
+ * `env` with the libcolyseus folder of the triple cargo builds for `args` (the first `--target`, else
+ * the host's), unless the caller named a folder of its own in `caller`. One folder per run: a run
+ * naming several targets links the first one's.
+ */
+export function colyseusEnvironment(
+  layout: RustToolchainLayout,
+  caller: NodeJS.ProcessEnv,
+  env: NodeJS.ProcessEnv,
+  args: readonly string[],
+): NodeJS.ProcessEnv {
+  if (caller[COLYSEUS_LIB_DIR_ENV]) return env;
+  const target = firstTarget(args);
+  return target === null ? env : { ...env, [COLYSEUS_LIB_DIR_ENV]: colyseusLibDir(layout, target) };
 }
 
 /** A `--target` needs its rust-std in the sysroot and, for some targets, a cross linker. */
@@ -613,7 +656,8 @@ function main(argv: readonly string[]): void {
   if (tool === "cargo") {
     const argv = cargoArgv(layout, rest, env, process.cwd());
     checkCleanQuiet(rest, env);
-    runTool(path.join(layout.sysroot, "bin", "cargo"), argv, cargoEnvironment(env, rest));
+    const cargoEnv = colyseusEnvironment(layout, process.env, cargoEnvironment(env, rest), rest);
+    runTool(path.join(layout.sysroot, "bin", "cargo"), argv, cargoEnv);
     return;
   }
   runTool(resolveTool(layout, tool, env), rest, env);
