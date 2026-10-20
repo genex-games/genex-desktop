@@ -36,7 +36,7 @@ pub mod gpu;
 
 use crate::device_class::FormFactor;
 use crate::error::{RenderCode, RenderError};
-use crate::settings::{Quality, TextureClass};
+use crate::settings::{Quality, QualityPreset, TextureClass};
 use crate::texture::TextureId;
 
 /// Quads per side of a node's grid: every node is one instance of this grid (a quarter node
@@ -103,24 +103,54 @@ impl Heightfield {
         }
         let min = heights.iter().copied().fold(f32::INFINITY, f32::min);
         let max = heights.iter().copied().fold(f32::NEG_INFINITY, f32::max);
-        let step = if max > min { (max - min) / f32::from(u16::MAX) } else { 0.0 };
-        let quantized = heights
-            .iter()
-            .map(|h| if step > 0.0 { ((h - min) / step).round().clamp(0.0, f32::from(u16::MAX)) as u16 } else { 0 })
-            .collect();
-        Ok(Heightfield { samples, origin, spacing, min, step, heights: quantized })
+        let (min, step) = quantization_over((min, max));
+        Ok(Heightfield { samples, origin, spacing, min, step, heights: quantize(heights, min, step) })
+    }
+
+    /// The height field of `heights` quantized over `range` (lowest, highest) instead of its own
+    /// span (game systems STR-22): every tile of a tiled terrain shares its world's range, so a
+    /// sample two tiles share holds the same 16 bits in both. Refused `mesh-invalid` as
+    /// [`Heightfield::new`], and for a range that is not finite and ordered or a height outside it.
+    pub fn with_range(samples: (u32, u32), origin: [f32; 2], spacing: f32, heights: &[f32], range: (f32, f32)) -> Result<Heightfield, RenderError> {
+        check_range(range)?;
+        let checked = Heightfield::new(samples, origin, spacing, heights)?;
+        if let Some(bad) = heights.iter().position(|h| *h < range.0 || *h > range.1) {
+            return Err(invalid(format!("height {bad} ({}) is outside the range {range:?}", heights[bad])));
+        }
+        let (min, step) = quantization_over(range);
+        Ok(Heightfield { min, step, heights: quantize(heights, min, step), ..checked })
+    }
+
+    /// [`Heightfield::with_range`] of `height(x, z)` sampled at every grid point.
+    pub fn from_fn_with_range(samples: (u32, u32), origin: [f32; 2], spacing: f32, range: (f32, f32), height: impl Fn(f32, f32) -> f32) -> Result<Heightfield, RenderError> {
+        check_samples(samples)?;
+        Heightfield::with_range(samples, origin, spacing, &sample_grid(samples, origin, spacing, height), range)
+    }
+
+    /// Every `2^shift`-th sample a side, quantization and origin kept (a tile authored finer than a
+    /// device class takes, [`tile_samples_cap`]); refused `mesh-invalid` when the quads a side do
+    /// not divide or fewer than [`MIN_TERRAIN_SAMPLES`] would be left.
+    pub fn decimate(&self, shift: u32) -> Result<Heightfield, RenderError> {
+        let factor = 1u32.checked_shl(shift).unwrap_or(0);
+        let divides = |n: u32| factor > 0 && (n - 1).is_multiple_of(factor);
+        if !divides(self.samples.0) || !divides(self.samples.1) {
+            return Err(invalid(format!("{} x {} samples do not thin by {factor}", self.samples.0, self.samples.1)));
+        }
+        let samples = ((self.samples.0 - 1) / factor + 1, (self.samples.1 - 1) / factor + 1);
+        check_samples(samples)?;
+        let mut heights = Vec::with_capacity(samples.0 as usize * samples.1 as usize);
+        for z in 0..samples.1 {
+            for x in 0..samples.0 {
+                heights.push(self.heights[(z * factor * self.samples.0 + x * factor) as usize]);
+            }
+        }
+        Ok(Heightfield { samples, origin: self.origin, spacing: self.spacing * factor as f32, min: self.min, step: self.step, heights })
     }
 
     /// The height field of `height(x, z)` sampled at every grid point.
     pub fn from_fn(samples: (u32, u32), origin: [f32; 2], spacing: f32, height: impl Fn(f32, f32) -> f32) -> Result<Heightfield, RenderError> {
         check_samples(samples)?;
-        let mut heights = Vec::with_capacity(samples.0 as usize * samples.1 as usize);
-        for z in 0..samples.1 {
-            for x in 0..samples.0 {
-                heights.push(height(origin[0] + x as f32 * spacing, origin[1] + z as f32 * spacing));
-            }
-        }
-        Heightfield::new(samples, origin, spacing, &heights)
+        Heightfield::new(samples, origin, spacing, &sample_grid(samples, origin, spacing, height))
     }
 
     /// Samples per side (x, z).
@@ -279,6 +309,39 @@ pub fn pack_normal(v: [f32; 3]) -> u32 {
 pub fn unpack_normal(word: u32) -> [f32; 3] {
     let snorm = |bits: u32| (((bits << 22) as i32) >> 22) as f32 / 511.0;
     [snorm(word & 0x3ff), snorm((word >> 10) & 0x3ff), snorm((word >> 20) & 0x3ff)]
+}
+
+/// `height(x, z)` at every grid point, row-major.
+fn sample_grid(samples: (u32, u32), origin: [f32; 2], spacing: f32, height: impl Fn(f32, f32) -> f32) -> Vec<f32> {
+    let mut heights = Vec::with_capacity(samples.0 as usize * samples.1 as usize);
+    for z in 0..samples.1 {
+        for x in 0..samples.0 {
+            heights.push(height(origin[0] + x as f32 * spacing, origin[1] + z as f32 * spacing));
+        }
+    }
+    heights
+}
+
+/// The lowest height and one step for heights spanning `(min, max)`.
+fn quantization_over((min, max): (f32, f32)) -> (f32, f32) {
+    let step = if max > min { (max - min) / f32::from(u16::MAX) } else { 0.0 };
+    (min, step)
+}
+
+/// `heights` as 16-bit steps of `step` over `min`.
+fn quantize(heights: &[f32], min: f32, step: f32) -> Vec<u16> {
+    heights
+        .iter()
+        .map(|h| if step > 0.0 { ((h - min) / step).round().clamp(0.0, f32::from(u16::MAX)) as u16 } else { 0 })
+        .collect()
+}
+
+fn check_range(range: (f32, f32)) -> Result<(), RenderError> {
+    let usable = range.0.is_finite() && range.1.is_finite() && range.0 <= range.1;
+    if !usable {
+        return Err(invalid(format!("height range {range:?} must be finite and ordered")));
+    }
+    Ok(())
 }
 
 fn check_samples(samples: (u32, u32)) -> Result<(), RenderError> {
@@ -495,13 +558,36 @@ impl TerrainLod {
     /// to one two levels coarser and a coarser neighbour's own morph has not started on their
     /// shared edge.
     pub fn new(tree: &TerrainTree, detail: f32) -> TerrainLod {
-        let least = TerrainLod::range0(tree);
+        TerrainLod::doubling(tree.lods(), TerrainLod::range0(tree), detail)
+    }
+
+    /// `lods` levels from `least` times `detail` (at least 1), each range twice the one below.
+    fn doubling(lods: u32, least: f32, detail: f32) -> TerrainLod {
         let range0 = least * detail.max(1.0);
         let mut ranges = [f32::INFINITY; MAX_TERRAIN_LODS];
-        for (l, range) in ranges.iter_mut().enumerate().take(tree.lods() as usize - 1) {
+        for (l, range) in ranges.iter_mut().enumerate().take(lods as usize - 1) {
             *range = range0 * (1u32 << l) as f32;
         }
-        TerrainLod { lods: tree.lods(), ranges }
+        TerrainLod { lods, ranges }
+    }
+
+    /// The world-wide levels of a tiled terrain (game systems STR-22): one set of ranges for every
+    /// tile, so two tiles agree on a shared edge's morph. Each level's least crack-free range comes
+    /// from the largest node box any tile could have (a node's square, the tallest tile's height
+    /// span), not from the tiles resident now, so a tile streaming in never moves a range.
+    pub fn tiled(tiling: &TerrainTiling, detail: f32) -> TerrainLod {
+        let rise = tiling.tile_ranges.iter().map(|(lo, hi)| hi - lo).fold(0.0_f32, f32::max);
+        let quads = tiling.samples - 1;
+        let diagonal = |l: u32| {
+            let side = (TERRAIN_GRID << l).min(quads) as f32 * tiling.spacing;
+            (2.0 * side * side + rise * rise).sqrt()
+        };
+        TerrainLod::doubling(tiling.lods(), least_range0(tiling.spacing, tiling.lods(), diagonal), detail)
+    }
+
+    /// Levels whose top (only) level never morphs: a coarse window's one row (game systems STR-22).
+    pub const fn unmorphed() -> TerrainLod {
+        TerrainLod { lods: 1, ranges: [f32::INFINITY; MAX_TERRAIN_LODS] }
     }
 
     /// The least crack-free lod-0 range of `tree` (see [`TerrainLod::new`]). A level-`l` node box
@@ -509,13 +595,7 @@ impl TerrainLod {
     /// sit beside it; level `l`'s own morph starts `(2 MORPH_END_RATIO - 1) MORPH_START_RATIO` of
     /// range `l - 1` past that range, so the diagonal must stay under it.
     pub fn range0(tree: &TerrainTree) -> f32 {
-        let unmorphed = (2.0 * MORPH_END_RATIO - 1.0) * MORPH_START_RATIO;
-        let mut least = TERRAIN_GRID as f32 * tree.spacing;
-        for l in 1..tree.lods() {
-            let diagonal = tree.largest_diagonal(l);
-            least = least.max(diagonal / (unmorphed * (1u32 << (l - 1)) as f32));
-        }
-        least * RANGE_HEADROOM
+        least_range0(tree.spacing, tree.lods(), |l| tree.largest_diagonal(l))
     }
 
     /// Level `lod`'s morph band (start, end) in metres: from [`MORPH_START_RATIO`] of the way
@@ -547,6 +627,17 @@ impl TerrainLod {
         let c = self.morph_constants(lod);
         1.0 - (c[0] - distance * c[1]).clamp(0.0, 1.0)
     }
+}
+
+/// The least crack-free lod-0 range of `lods` levels over samples `spacing` apart whose level-`l`
+/// node boxes are at most `diagonal(l)` across ([`TerrainLod::range0`]).
+fn least_range0(spacing: f32, lods: u32, diagonal: impl Fn(u32) -> f32) -> f32 {
+    let unmorphed = (2.0 * MORPH_END_RATIO - 1.0) * MORPH_START_RATIO;
+    let mut least = TERRAIN_GRID as f32 * spacing;
+    for l in 1..lods {
+        least = least.max(diagonal(l) / (unmorphed * (1u32 << (l - 1)) as f32));
+    }
+    least * RANGE_HEADROOM
 }
 
 /// One drawn node: its first sample, its level and the quads it draws a side ([`TERRAIN_GRID`],
@@ -845,3 +936,597 @@ pub fn grid_indices(quads: u32) -> Vec<u32> {
 
 /// The budget ledger's label for the terrain's buffers ([`crate::budget::BudgetKind::Buffers`]).
 pub const TERRAIN_LEDGER_LABEL: &str = "terrain";
+
+// --- Multi-tile terrain (game systems STR-22) ---------------------------------------------------
+//
+// A streamed world's terrain is still one terrain a frame, cut into square tiles of the same
+// sample count on one grid. Each tile keeps A.7's own quadtree and morph; every tile shares the
+// world's ranges ([`TerrainLod::tiled`]) and its height quantization
+// ([`Heightfield::with_range`]), so a vertex on an edge two tiles share is computed from the same
+// inputs on both sides and lands on the same bits. A tile's origin is the previous tile's plus the
+// tile's side, summed in order ([`TerrainTiling::tile_origin`]), so a border sample's position is
+// one addition both tiles make. A tile not loaded draws its window of the always-resident
+// overview: one unmorphed row from a coarse window ([`TERRAIN_GRID`] quads a side, the tile's top
+// level) while the camera is too far for its top node to split, otherwise the window upsampled to
+// the tile's samples, selected like a loaded tile. Either way its border samples are its loaded
+// neighbours' own, so a missing tile leaves no hole and no crack.
+
+/// The most tiles on a side of a tiled terrain: its overview ([`TERRAIN_GRID`] quads a tile)
+/// stays within [`MAX_TERRAIN_SAMPLES`].
+pub const MAX_TERRAIN_TILES: u32 = (MAX_TERRAIN_SAMPLES - 1) / TERRAIN_GRID;
+/// The most samples on a side of a tile on mobile-low (tiles authored finer are thinned,
+/// [`Heightfield::decimate`]).
+pub const MOBILE_LOW_TILE_SAMPLES_MAX: u32 = 129;
+
+/// The most samples a side a tile has on a device of `form` at `preset`: 129 on mobile-low, the
+/// terrain's own cap elsewhere.
+pub const fn tile_samples_cap(form: FormFactor, preset: QualityPreset) -> u32 {
+    match (form, preset) {
+        (FormFactor::Mobile, QualityPreset::Low) => MOBILE_LOW_TILE_SAMPLES_MAX,
+        _ => MAX_TERRAIN_SAMPLES,
+    }
+}
+
+/// The levels of detail of a tile `samples` a side (as [`TerrainTree::new`] counts them).
+fn tile_lods(samples: u32) -> u32 {
+    let quads = samples - 1;
+    let mut lods = 1;
+    while (TERRAIN_GRID << (lods - 1)) < quads && (lods as usize) < MAX_TERRAIN_LODS {
+        lods += 1;
+    }
+    lods
+}
+
+/// The layout of a tiled terrain: tiles across and down, each `samples` a side `spacing` apart
+/// (one sample shared with each neighbour), from world `origin`, every height within `range`.
+#[derive(Clone, Debug, PartialEq)]
+pub struct TerrainTiling {
+    tiles: (u32, u32),
+    samples: u32,
+    spacing: f32,
+    range: (f32, f32),
+    /// Each tile's lowest and highest height (the world's range unless narrowed).
+    tile_ranges: Vec<(f32, f32)>,
+    /// The world x of each tile column's first sample, then the z of each row's, one past the
+    /// last tile: each the one before plus the tile's side.
+    edges: [Vec<f32>; 2],
+}
+
+impl TerrainTiling {
+    /// `tiles` (across, down) of `samples` a side. Refused `mesh-invalid` for no tile or more than
+    /// [`MAX_TERRAIN_TILES`] a side, a sample count whose quads are not [`TERRAIN_GRID`] times a
+    /// power of two (17, 33, 65, 129, 257, 513, 1025, 2049), a spacing or origin that is not
+    /// finite and positive, or a range that is not finite and ordered.
+    pub fn new(tiles: (u32, u32), samples: u32, origin: [f32; 2], spacing: f32, range: (f32, f32)) -> Result<TerrainTiling, RenderError> {
+        let tile_count = 1..=MAX_TERRAIN_TILES;
+        if !tile_count.contains(&tiles.0) || !tile_count.contains(&tiles.1) {
+            return Err(invalid(format!("{} x {} tiles, each side 1..={MAX_TERRAIN_TILES}", tiles.0, tiles.1)));
+        }
+        let quads = samples.saturating_sub(1);
+        let tile_samples = quads >= TERRAIN_GRID && quads.is_power_of_two() && samples <= MAX_TERRAIN_SAMPLES;
+        if !tile_samples {
+            return Err(invalid(format!("tiles of {samples} samples: 16 quads times a power of two, at most {MAX_TERRAIN_SAMPLES}")));
+        }
+        let usable_spacing = spacing.is_finite() && spacing > 0.0;
+        if !usable_spacing || !origin.iter().all(|v| v.is_finite()) {
+            return Err(invalid(format!("spacing {spacing} and origin {origin:?} must be finite, the spacing positive")));
+        }
+        check_range(range)?;
+        let side = quads as f32 * spacing;
+        let edges = [0, 1].map(|axis| {
+            let count = if axis == 0 { tiles.0 } else { tiles.1 };
+            let mut at = vec![origin[axis]];
+            for t in 0..count as usize {
+                at.push(at[t] + side);
+            }
+            at
+        });
+        Ok(TerrainTiling { tiles, samples, spacing, range, tile_ranges: vec![range; (tiles.0 * tiles.1) as usize], edges })
+    }
+
+    /// This tiling with each tile's own height range (row-major, each within the world's range):
+    /// narrower ranges give shorter level ranges ([`TerrainLod::tiled`]). Refused `mesh-invalid`
+    /// for the wrong count or a range outside the world's.
+    pub fn with_tile_ranges(mut self, ranges: Vec<(f32, f32)>) -> Result<TerrainTiling, RenderError> {
+        if ranges.len() != self.tile_ranges.len() {
+            return Err(invalid(format!("{} tile ranges for {} tiles", ranges.len(), self.tile_ranges.len())));
+        }
+        for (i, range) in ranges.iter().enumerate() {
+            check_range(*range)?;
+            if range.0 < self.range.0 || range.1 > self.range.1 {
+                return Err(invalid(format!("tile {i}'s range {range:?} is outside the world's {:?}", self.range)));
+            }
+        }
+        self.tile_ranges = ranges;
+        Ok(self)
+    }
+
+    /// Tiles across and down.
+    pub const fn tiles(&self) -> (u32, u32) {
+        self.tiles
+    }
+
+    /// Samples a side of every tile.
+    pub const fn samples(&self) -> u32 {
+        self.samples
+    }
+
+    /// Metres between samples.
+    pub const fn spacing(&self) -> f32 {
+        self.spacing
+    }
+
+    /// Every height's range (the quantization every tile shares).
+    pub const fn range(&self) -> (f32, f32) {
+        self.range
+    }
+
+    /// The lowest height and one step every tile and the overview quantize with.
+    pub fn quantization(&self) -> (f32, f32) {
+        quantization_over(self.range)
+    }
+
+    /// Levels of detail of every tile.
+    pub fn lods(&self) -> u32 {
+        tile_lods(self.samples)
+    }
+
+    /// The top level (a tile's whole-tile node), the level a coarse window draws at.
+    pub fn top(&self) -> u32 {
+        self.lods() - 1
+    }
+
+    /// The index of `tile` (row-major), or None past the tiling.
+    pub fn index(&self, tile: [u32; 2]) -> Option<usize> {
+        let inside = tile[0] < self.tiles.0 && tile[1] < self.tiles.1;
+        inside.then_some((tile[1] * self.tiles.0 + tile[0]) as usize)
+    }
+
+    /// The world x, z of `tile`'s first sample (each tile's the one before plus the tile's side,
+    /// so a border sample is the same addition from both tiles).
+    pub fn tile_origin(&self, tile: [u32; 2]) -> [f32; 2] {
+        [self.edges[0][tile[0] as usize], self.edges[1][tile[1] as usize]]
+    }
+
+    /// The tile's box as far as any data can make it: its square and its height range.
+    pub fn tile_box(&self, tile: [u32; 2]) -> TerrainBox {
+        let (x0, z0) = (self.edges[0][tile[0] as usize], self.edges[1][tile[1] as usize]);
+        let (x1, z1) = (self.edges[0][tile[0] as usize + 1], self.edges[1][tile[1] as usize + 1]);
+        let (lo, hi) = self.index(tile).map_or(self.range, |i| self.tile_ranges[i]);
+        ([x0, lo, z0], [x1, hi, z1])
+    }
+
+    /// The tile under world (`x`, `z`), clamped onto the tiling.
+    pub fn tile_at(&self, x: f32, z: f32) -> [u32; 2] {
+        let pick = |edges: &[f32], v: f32| edges[1..edges.len() - 1].iter().take_while(|edge| v >= **edge).count() as u32;
+        [pick(&self.edges[0], x), pick(&self.edges[1], z)]
+    }
+
+    /// `tile`'s heights from `height(x, z)` at its samples, quantized over the world's range.
+    pub fn tile_heights(&self, tile: [u32; 2], height: impl Fn(f32, f32) -> f32) -> Result<Heightfield, RenderError> {
+        self.index(tile).ok_or_else(|| invalid(format!("tile {tile:?} is outside the tiling")))?;
+        Heightfield::from_fn_with_range((self.samples, self.samples), self.tile_origin(tile), self.spacing, self.range, height)
+    }
+
+    /// The overview's samples across and down: [`TERRAIN_GRID`] quads a tile.
+    pub fn overview_samples(&self) -> (u32, u32) {
+        (self.tiles.0 * TERRAIN_GRID + 1, self.tiles.1 * TERRAIN_GRID + 1)
+    }
+
+    /// The overview from `height(x, z)`, sampled where the tiles' top-level vertices are (so it
+    /// equals the loaded tiles there), quantized over the world's range.
+    pub fn overview_from_fn(&self, height: impl Fn(f32, f32) -> f32) -> Result<Heightfield, RenderError> {
+        let (w, d) = self.overview_samples();
+        let top = 1u32 << self.top();
+        let at = |axis: usize, i: u32| {
+            let tile = (i / TERRAIN_GRID).min(self.edges[axis].len() as u32 - 2);
+            let local = (i - tile * TERRAIN_GRID) * top;
+            self.edges[axis][tile as usize] + local as f32 * self.spacing
+        };
+        let mut heights = Vec::with_capacity(w as usize * d as usize);
+        for z in 0..d {
+            for x in 0..w {
+                heights.push(height(at(0, x), at(1, z)));
+            }
+        }
+        Heightfield::with_range((w, d), self.tile_origin([0, 0]), self.spacing * top as f32, &heights, self.range)
+    }
+}
+
+/// Where a tile's samples come from.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum TileSource {
+    /// A loaded tile in this atlas slot ([`atlas::TileAtlas`]).
+    Slot(u32),
+    /// A tile not loaded: its window of the overview.
+    Overview,
+}
+
+/// One tile's ground: its source, the heights its rows read and their tree. A coarse window holds
+/// [`TERRAIN_GRID`] + 1 samples a side at the tile's top-level spacing; every other ground the
+/// tile's samples.
+#[derive(Clone, Debug, PartialEq)]
+pub struct TileGround {
+    source: TileSource,
+    coarse: bool,
+    heights: Heightfield,
+    tree: TerrainTree,
+}
+
+impl TileGround {
+    fn new(source: TileSource, coarse: bool, heights: Heightfield) -> TileGround {
+        let tree = TerrainTree::new(&heights);
+        TileGround { source, coarse, heights, tree }
+    }
+
+    /// Where its samples come from.
+    pub const fn source(&self) -> TileSource {
+        self.source
+    }
+
+    /// Whether it is a coarse window (one unmorphed row at the tile's top level).
+    pub const fn is_coarse(&self) -> bool {
+        self.coarse
+    }
+
+    /// The heights its rows read.
+    pub const fn heights(&self) -> &Heightfield {
+        &self.heights
+    }
+
+    /// Their tree.
+    pub const fn tree(&self) -> &TerrainTree {
+        &self.tree
+    }
+}
+
+/// One drawn node of a tiled terrain: its tile, where the tile's samples come from, and the row in
+/// the tile's ground (a coarse window's row is in the window's own samples).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct TileRow {
+    /// The tile (column, row).
+    pub tile: [u32; 2],
+    /// Its samples' source: the atlas slot the row reads, or the overview.
+    pub source: TileSource,
+    /// The row in the tile's ground.
+    pub row: TerrainRow,
+}
+
+/// A tiled terrain's grounds: a loaded tile's own heights, or a missing tile's overview window.
+#[derive(Clone, Debug, PartialEq)]
+pub struct TerrainTiles {
+    tiling: TerrainTiling,
+    overview: Heightfield,
+    grounds: Vec<TileGround>,
+}
+
+impl TerrainTiles {
+    /// `tiling` with every tile missing (drawn from `overview`, [`TerrainTiling::overview_samples`]
+    /// quantized over the tiling's range). Refused `mesh-invalid` for another sample count or
+    /// quantization.
+    pub fn new(tiling: TerrainTiling, overview: Heightfield) -> Result<TerrainTiles, RenderError> {
+        if overview.samples() != tiling.overview_samples() {
+            let want = tiling.overview_samples();
+            return Err(invalid(format!("an overview of {:?} samples for {} x {} tiles ({want:?})", overview.samples(), tiling.tiles.0, tiling.tiles.1)));
+        }
+        if !same_bits(overview.quantization(), tiling.quantization()) {
+            return Err(invalid(format!("the overview is quantized over {:?}, not the tiling's range {:?}", overview.quantization(), tiling.range)));
+        }
+        let mut tiles = TerrainTiles { tiling, overview, grounds: Vec::new() };
+        let (nx, nz) = tiles.tiling.tiles;
+        for tz in 0..nz {
+            for tx in 0..nx {
+                let ground = tiles.window([tx, tz], true);
+                tiles.grounds.push(ground);
+            }
+        }
+        Ok(tiles)
+    }
+
+    /// The layout.
+    pub const fn tiling(&self) -> &TerrainTiling {
+        &self.tiling
+    }
+
+    /// The overview.
+    pub const fn overview(&self) -> &Heightfield {
+        &self.overview
+    }
+
+    /// `tile`'s ground (None past the tiling).
+    pub fn ground(&self, tile: [u32; 2]) -> Option<&TileGround> {
+        self.tiling.index(tile).map(|i| &self.grounds[i])
+    }
+
+    /// Refuse `heights` for `tile` (`mesh-invalid`): a tile outside the tiling, another sample
+    /// count, origin, spacing or quantization than the tiling gives it, or a border sample that
+    /// differs from a loaded neighbour's.
+    pub fn check_tile(&self, tile: [u32; 2], heights: &Heightfield) -> Result<(), RenderError> {
+        let index = self.tiling.index(tile).ok_or_else(|| invalid(format!("tile {tile:?} is outside the tiling")))?;
+        let s = self.tiling.samples;
+        let (at, origin) = (self.tiling.tile_origin(tile), heights.origin());
+        let placed = heights.samples() == (s, s) && same_bits((origin[0], origin[1]), (at[0], at[1]));
+        if !placed || heights.spacing().to_bits() != self.tiling.spacing.to_bits() {
+            return Err(invalid(format!("tile {tile:?}: {:?} samples at {:?}, {} m apart, is not the tiling's", heights.samples(), heights.origin(), heights.spacing())));
+        }
+        if !same_bits(heights.quantization(), self.tiling.quantization()) {
+            return Err(invalid(format!("tile {tile:?} is not quantized over the tiling's range {:?}", self.tiling.range)));
+        }
+        let (lo, hi) = self.tiling.tile_ranges[index];
+        let (min, step) = heights.quantization();
+        let outside = heights.quantized().iter().any(|q| {
+            let h = min + f32::from(*q) * step;
+            h < lo - step || h > hi + step
+        });
+        if outside {
+            return Err(invalid(format!("tile {tile:?} has heights outside its range {:?}", (lo, hi))));
+        }
+        for (x, z) in border_samples(s) {
+            let global = self.global(tile, x, z);
+            let own = heights.quantized()[(z * s + x) as usize];
+            if let Some(theirs) = self.loaded_sample(global, Some(tile)).filter(|theirs| *theirs != own) {
+                return Err(invalid(format!("tile {tile:?}: border sample ({x}, {z}) is {own}, its loaded neighbour's {theirs}")));
+            }
+        }
+        Ok(())
+    }
+
+    /// Load `heights` (checked: [`TerrainTiles::check_tile`]) into `tile`, read from atlas `slot`.
+    /// Returns the tiles whose ground changed (the tile and its missing neighbours, whose windows
+    /// take its border), in index order.
+    pub fn insert(&mut self, tile: [u32; 2], slot: u32, heights: Heightfield) -> Result<Vec<[u32; 2]>, RenderError> {
+        self.check_tile(tile, &heights)?;
+        let index = self.tiling.index(tile).unwrap_or_default();
+        self.grounds[index] = TileGround::new(TileSource::Slot(slot), false, heights);
+        Ok(self.refresh_around(tile))
+    }
+
+    /// Unload `tile` (it draws its overview window again): its slot, or None when it was not
+    /// loaded. The tiles whose ground changed are [`TerrainTiles::around`] it.
+    pub fn remove(&mut self, tile: [u32; 2]) -> Option<u32> {
+        let index = self.tiling.index(tile)?;
+        let TileSource::Slot(slot) = self.grounds[index].source else { return None };
+        self.grounds[index] = self.window(tile, true);
+        self.refresh_around(tile);
+        Some(slot)
+    }
+
+    /// `tile` and its eight neighbours inside the tiling, in index order.
+    pub fn around(&self, tile: [u32; 2]) -> Vec<[u32; 2]> {
+        let mut out = Vec::new();
+        for dz in -1i64..=1 {
+            for dx in -1i64..=1 {
+                let (x, z) = (i64::from(tile[0]) + dx, i64::from(tile[1]) + dz);
+                if x >= 0 && z >= 0 && self.tiling.index([x as u32, z as u32]).is_some() {
+                    out.push([x as u32, z as u32]);
+                }
+            }
+        }
+        out
+    }
+
+    /// Rebuild the missing tiles around `tile` (their borders may be its samples now).
+    fn refresh_around(&mut self, tile: [u32; 2]) -> Vec<[u32; 2]> {
+        let around = self.around(tile);
+        for at in &around {
+            let index = self.tiling.index(*at).unwrap_or_default();
+            if self.grounds[index].source == TileSource::Overview {
+                let coarse = self.grounds[index].coarse;
+                self.grounds[index] = self.window(*at, coarse);
+            }
+        }
+        around
+    }
+
+    /// Give each missing tile the window the camera at `camera` needs under `lod`: the full window
+    /// where its top node could split (its box within the next level's range), the coarse one
+    /// elsewhere. The two draw the same surface wherever the top node does not split, so the swap
+    /// never shows. Returns the tiles whose ground changed, in index order.
+    pub fn prepare(&mut self, lod: &TerrainLod, camera: [f32; 3]) -> Vec<[u32; 2]> {
+        let top = self.tiling.top();
+        let mut changed = Vec::new();
+        let (nx, nz) = self.tiling.tiles;
+        for tz in 0..nz {
+            for tx in 0..nx {
+                let index = (tz * nx + tx) as usize;
+                if self.grounds[index].source != TileSource::Overview {
+                    continue;
+                }
+                let full = top > 0 && sphere_touches(self.tiling.tile_box([tx, tz]), camera, lod.ranges[top as usize - 1]);
+                if full == self.grounds[index].coarse {
+                    self.grounds[index] = self.window([tx, tz], !full);
+                    changed.push([tx, tz]);
+                }
+            }
+        }
+        changed
+    }
+
+    /// The rows drawn for a camera at `camera` under the world's `lod` (each tile's
+    /// [`TerrainTree::select`], a coarse window's one unmorphed row), tile by tile in index order.
+    pub fn select(&self, lod: &TerrainLod, camera: [f32; 3]) -> Vec<TileRow> {
+        let mut rows = Vec::new();
+        let unmorphed = TerrainLod::unmorphed();
+        let (nx, nz) = self.tiling.tiles;
+        for tz in 0..nz {
+            for tx in 0..nx {
+                let ground = &self.grounds[(tz * nx + tx) as usize];
+                let levels = if ground.coarse { &unmorphed } else { lod };
+                rows.extend(ground.tree.select(levels, camera).into_iter().map(|row| TileRow { tile: [tx, tz], source: ground.source, row }));
+            }
+        }
+        rows
+    }
+
+    /// The levels `row` morphs with: the world's, or none for a coarse window.
+    pub fn row_lod(&self, lod: &TerrainLod, row: TileRow) -> TerrainLod {
+        let coarse = self.ground(row.tile).is_some_and(|ground| ground.coarse);
+        if coarse { TerrainLod::unmorphed() } else { *lod }
+    }
+
+    /// Grid vertex (`gx`, `gz`) of `row` for a camera at `camera` (the vertex shader's CPU twin
+    /// over the row's tile, [`TerrainTree::vertex`]).
+    pub fn vertex(&self, lod: &TerrainLod, row: TileRow, gx: u32, gz: u32, camera: [f32; 3]) -> [f32; 3] {
+        let Some(ground) = self.ground(row.tile) else { return [f32::NAN; 3] };
+        ground.tree.vertex(&ground.heights, &self.row_lod(lod, row), row.row, gx, gz, camera)
+    }
+
+    /// `row`'s level of detail on the world's scale (a coarse window's row is at the top level).
+    pub fn row_level(&self, row: TileRow) -> u32 {
+        let coarse = self.ground(row.tile).is_some_and(|ground| ground.coarse);
+        if coarse { row.row.lod + self.tiling.top() } else { row.row.lod }
+    }
+
+    /// `row`'s sample rectangle on the world's sample grid: x0, z0, x1, z1.
+    pub fn row_rect(&self, row: TileRow) -> [u32; 4] {
+        let coarse = self.ground(row.tile).is_some_and(|ground| ground.coarse);
+        let shift = if coarse { self.tiling.top() } else { 0 };
+        let quads = self.tiling.samples - 1;
+        let base = [row.tile[0] * quads, row.tile[1] * quads];
+        let span = row.row.span() << shift;
+        let at = [row.row.texel[0] << shift, row.row.texel[1] << shift];
+        [base[0] + at[0], base[1] + at[1], base[0] + (at[0] + span).min(quads), base[1] + (at[1] + span).min(quads)]
+    }
+
+    /// The ground height at world (`x`, `z`): the tile under it, bilinear (clamped onto the tiling).
+    pub fn height(&self, x: f32, z: f32) -> f32 {
+        let tile = self.tiling.tile_at(x, z);
+        self.ground(tile).map_or(f32::NAN, |ground| ground.heights.height(x, z))
+    }
+
+    /// Sample (`x`, `z`) of `tile` on the world's sample grid.
+    fn global(&self, tile: [u32; 2], x: u32, z: u32) -> [u32; 2] {
+        let quads = self.tiling.samples - 1;
+        [tile[0] * quads + x, tile[1] * quads + z]
+    }
+
+    /// The quantized sample at world grid point `global` from a loaded tile holding it (every
+    /// loaded tile holding it agrees: [`TerrainTiles::check_tile`]), skipping `except`.
+    fn loaded_sample(&self, global: [u32; 2], except: Option<[u32; 2]>) -> Option<u16> {
+        let quads = self.tiling.samples - 1;
+        let holders = |g: u32| {
+            let t = g / quads;
+            let previous = (g.is_multiple_of(quads) && t > 0).then(|| t - 1);
+            [Some(t), previous]
+        };
+        for tz in holders(global[1]).into_iter().flatten() {
+            for tx in holders(global[0]).into_iter().flatten() {
+                // While the grounds are first built (`new`) none is loaded yet.
+                let Some(ground) = self.tiling.index([tx, tz]).and_then(|index| self.grounds.get(index)) else { continue };
+                let loaded = matches!(ground.source, TileSource::Slot(_)) && except != Some([tx, tz]);
+                if loaded {
+                    let (x, z) = (global[0] - tx * quads, global[1] - tz * quads);
+                    return Some(ground.heights.quantized()[(z * self.tiling.samples + x) as usize]);
+                }
+            }
+        }
+        None
+    }
+
+    /// The quantized sample a missing tile's window holds at world grid point `global`: a loaded
+    /// tile's own on a border it shares, otherwise the overview, bilinear in quantized steps (a
+    /// function of the point alone, so two windows sharing a border agree on it).
+    fn window_sample(&self, global: [u32; 2], border: bool) -> u16 {
+        if let Some(own) = border.then(|| self.loaded_sample(global, None)).flatten() {
+            return own;
+        }
+        let scale = (1u32 << self.tiling.top()) as f32;
+        let (w, d) = self.overview.samples();
+        let (u, v) = ((global[0] as f32 / scale).min((w - 1) as f32), (global[1] as f32 / scale).min((d - 1) as f32));
+        let (u0, v0) = (u.floor(), v.floor());
+        let (fu, fv) = (u - u0, v - v0);
+        let q = |x: u32, z: u32| f32::from(self.overview.quantized()[(z.min(d - 1) * w + x.min(w - 1)) as usize]);
+        let (iu, iv) = (u0 as u32, v0 as u32);
+        let near = q(iu, iv) + (q(iu + 1, iv) - q(iu, iv)) * fu;
+        let far = q(iu, iv + 1) + (q(iu + 1, iv + 1) - q(iu, iv + 1)) * fu;
+        (near + (far - near) * fv).round().clamp(0.0, f32::from(u16::MAX)) as u16
+    }
+
+    /// `tile`'s overview window: coarse ([`TERRAIN_GRID`] + 1 samples a side at the top level's
+    /// spacing) or full (the tile's samples).
+    fn window(&self, tile: [u32; 2], coarse: bool) -> TileGround {
+        let s = self.tiling.samples;
+        let shift = if coarse { self.tiling.top() } else { 0 };
+        let side = (s - 1) >> shift;
+        let mut heights = Vec::with_capacity(((side + 1) * (side + 1)) as usize);
+        for z in 0..=side {
+            for x in 0..=side {
+                let border = x == 0 || z == 0 || x == side || z == side;
+                heights.push(self.window_sample(self.global(tile, x << shift, z << shift), border));
+            }
+        }
+        let spacing = self.tiling.spacing * (1u32 << shift) as f32;
+        let (min, step) = self.tiling.quantization();
+        let field = Heightfield { samples: (side + 1, side + 1), origin: self.tiling.tile_origin(tile), spacing, min, step, heights };
+        TileGround::new(TileSource::Overview, coarse, field)
+    }
+}
+
+/// Whether two pairs of floats hold the same bits.
+fn same_bits(a: (f32, f32), b: (f32, f32)) -> bool {
+    a.0.to_bits() == b.0.to_bits() && a.1.to_bits() == b.1.to_bits()
+}
+
+/// The border samples of a tile `s` a side: its first and last rows, then the columns between.
+fn border_samples(s: u32) -> impl Iterator<Item = (u32, u32)> {
+    let rows = (0..s).flat_map(move |x| [(x, 0), (x, s - 1)]);
+    let columns = (1..s - 1).flat_map(move |z| [(0, z), (s - 1, z)]);
+    rows.chain(columns)
+}
+
+/// One tile's draw in one view: its tile, the source its rows read, and (first full row, full
+/// rows, first quarter row, quarter rows) in the frame's row table.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TileDraw {
+    /// The tile.
+    pub tile: [u32; 2],
+    /// Where its rows read their samples (the atlas slot names the group the draw binds).
+    pub source: TileSource,
+    /// Its rows in the frame's table.
+    pub rows: [u32; 4],
+}
+
+/// One frame's rows of a tiled terrain per view: each view's tiles in index order, each tile's
+/// full rows then its quarters (nearest the camera first).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct TiledFrame {
+    /// Every draw's rows, back to back.
+    pub rows: Vec<TerrainRow>,
+    /// Per view, its tiles' draws.
+    pub views: Vec<Vec<TileDraw>>,
+    /// Rows selected before any view's cull.
+    pub selected: u32,
+}
+
+impl TiledFrame {
+    /// The rows `tiles` selects for `camera` under `lod`, culled by each of `views` (inward frustum
+    /// planes).
+    pub fn plan(tiles: &TerrainTiles, lod: &TerrainLod, camera: [f32; 3], views: &[[[f32; 4]; 6]]) -> TiledFrame {
+        let mut selected = tiles.select(lod, camera);
+        let row_box = |row: &TileRow| tiles.ground(row.tile).map_or(([0.0; 3], [0.0; 3]), |ground| ground.tree.row_box(row.row));
+        let key = |row: &TileRow| (row.tile[1], row.tile[0], row.row.quads != TERRAIN_GRID);
+        selected.sort_by(|a, b| key(a).cmp(&key(b)).then(box_distance(row_box(a), camera).total_cmp(&box_distance(row_box(b), camera))).then(a.cmp(b)));
+        let boxes: Vec<TerrainBox> = selected.iter().map(row_box).collect();
+        let mut frame = TiledFrame { selected: selected.len() as u32, ..TiledFrame::default() };
+        for planes in views {
+            let mut draws = Vec::new();
+            let mut start = 0;
+            while start < selected.len() {
+                let tile = selected[start].tile;
+                let end = start + selected[start..].iter().take_while(|row| row.tile == tile).count();
+                let first = frame.rows.len() as u32;
+                let kept = |full: bool| selected[start..end].iter().zip(&boxes[start..end]).filter(move |(row, b)| (row.row.quads == TERRAIN_GRID) == full && box_in_planes(**b, planes));
+                frame.rows.extend(kept(true).map(|(row, _)| row.row));
+                let quarters_first = frame.rows.len() as u32;
+                frame.rows.extend(kept(false).map(|(row, _)| row.row));
+                let end_row = frame.rows.len() as u32;
+                if end_row > first {
+                    draws.push(TileDraw { tile, source: selected[start].source, rows: [first, quarters_first - first, quarters_first, end_row - quarters_first] });
+                }
+                start = end;
+            }
+            frame.views.push(draws);
+        }
+        frame
+    }
+}
