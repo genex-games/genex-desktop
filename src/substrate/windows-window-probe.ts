@@ -9,7 +9,8 @@
  * A host helper like the driver: Windows PowerShell (Microsoft's, on every Windows 10 and 11) runs a
  * fixed script, handed over as `-EncodedCommand` (no file, so no execution policy applies), outside
  * the ProcessSandbox, using only .NET's own UI Automation, Windows Forms and process reads: nothing
- * is compiled, so no generated DLL and no compiler stand between it and its first answer. It reports its start in stages, says it is ready with the primary screen's size as
+ * is compiled and no cmdlet runs, so no generated DLL, no compiler and no first-use preparation of
+ * PowerShell's modules stand between it and its first answer. It reports its start in stages, says it is ready with the primary screen's size as
  * it sees it (Windows may scale a process's points), then answers one JSON line for each request
  * line on its stdin: `front`, `at <x> <y>` (in its own points: the caller scales the driver's
  * physical pixels to them) or `pid <n>`. An app is its executable's name and its file description
@@ -50,27 +51,56 @@ const MESSAGE = {
  * code page can garble them.
  */
 export const WINDOW_PROBE_SCRIPT = String.raw`$ErrorActionPreference = 'Stop'
+# No cmdlets, so no module is ever loaded: a first cmdlet makes PowerShell prepare every installed
+# module for first use, which can take many seconds on a fresh machine.
+$PSModuleAutoLoadingPreference = 'None'
+$Culture = [System.Globalization.CultureInfo]::InvariantCulture
+
+# One JSON value: ASCII only (every other character escaped), so no console code page can garble it.
+function Quote([string]$text) {
+  $json = [System.Text.StringBuilder]::new('"')
+  foreach ($c in $text.ToCharArray()) {
+    $code = [int]$c
+    if ($c -eq '"' -or $c -eq '\') { [void]$json.Append('\').Append($c) }
+    elseif ($code -lt 0x20 -or $code -gt 0x7e) { [void]$json.Append('\u').Append($code.ToString('x4')) }
+    else { [void]$json.Append($c) }
+  }
+  return $json.Append('"').ToString()
+}
+function Json($value) {
+  if ($null -eq $value) { return 'null' }
+  if ($value -is [bool]) { if ($value) { return 'true' } return 'false' }
+  if ($value -is [int] -or $value -is [long] -or $value -is [double]) { return $value.ToString($Culture) }
+  if ($value -is [System.Collections.IDictionary]) {
+    $fields = foreach ($key in $value.Keys) { (Quote $key) + ':' + (Json $value[$key]) }
+    return '{' + ($fields -join ',') + '}'
+  }
+  return Quote ([string]$value)
+}
 function Say($value) {
-  $json = $value | ConvertTo-Json -Compress
-  [Console]::Out.WriteLine([regex]::Replace($json, '[^\x20-\x7e]', { param($m) '\u{0:x4}' -f [int][char]$m.Value }))
+  [Console]::Out.WriteLine((Json $value))
   [Console]::Out.Flush()
 }
+
 Say @{ stage = 'started' }
-Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes, WindowsBase, System.Windows.Forms
+foreach ($assembly in 'UIAutomationClient', 'UIAutomationTypes', 'WindowsBase', 'System.Windows.Forms') {
+  [void][System.Reflection.Assembly]::LoadWithPartialName($assembly)
+}
 Say @{ stage = 'loaded' }
 $Element = [System.Windows.Automation.AutomationElement]
 $Root = $Element::RootElement
 $Walker = [System.Windows.Automation.TreeWalker]::RawViewWalker
 $Edit = [System.Windows.Automation.ControlType]::Edit
-$Culture = [System.Globalization.CultureInfo]::InvariantCulture
 
 # The primary screen in UI Automation's own points: Windows Forms' view of it, scaled by how the two
 # see the whole desktop (both are scaled alike unless Windows treats them differently).
 $virtual = [System.Windows.Forms.SystemInformation]::VirtualScreen
 $primary = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
 $desktop = $Root.Current.BoundingRectangle
-$scaleX = if ($virtual.Width -gt 0) { $desktop.Width / $virtual.Width } else { 1 }
-$scaleY = if ($virtual.Height -gt 0) { $desktop.Height / $virtual.Height } else { 1 }
+$scaleX = 1
+$scaleY = 1
+if ($virtual.Width -gt 0) { $scaleX = $desktop.Width / $virtual.Width }
+if ($virtual.Height -gt 0) { $scaleY = $desktop.Height / $virtual.Height }
 $view = [ordered]@{ width = [int][math]::Round($primary.Width * $scaleX); height = [int][math]::Round($primary.Height * $scaleY) }
 
 # The top-level window an element is in: the window a click on it lands in.
@@ -95,11 +125,10 @@ function SecureOf($node) {
 
 function AppOfProcess([int]$id) {
   if ($id -le 0) { return @{ pid = 0 } }
-  $process = Get-Process -Id $id -ErrorAction SilentlyContinue
-  if ($null -eq $process) { return @{ pid = 0 } }
+  try { $process = [System.Diagnostics.Process]::GetProcessById($id) } catch { return @{ pid = 0 } }
   $name = ''
-  try { if ($process.Path) { $name = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($process.Path).FileDescription } } catch { }
-  return [ordered]@{ pid = $id; exe = "$($process.ProcessName).exe"; name = "$name".Trim() }
+  try { $name = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($process.MainModule.FileName).FileDescription } catch { }
+  return [ordered]@{ pid = $id; exe = $process.ProcessName + '.exe'; name = ([string]$name).Trim() }
 }
 
 function AppOfElement($node, [bool]$focus) {
@@ -107,7 +136,7 @@ function AppOfElement($node, [bool]$focus) {
   $top = TopOf $node
   $app = AppOfProcess ([int]$top.Current.ProcessId)
   if ($app.pid -le 0) { return $app }
-  $app.window = [int64]$top.Current.NativeWindowHandle
+  $app.window = [long]$top.Current.NativeWindowHandle
   if ($focus) { $app.secure = SecureOf $node }
   return $app
 }
@@ -117,7 +146,7 @@ function AppOfElement($node, [bool]$focus) {
 function Focused() {
   $node = $Element::FocusedElement
   if ($null -eq $node -or $node.Current.ControlType -eq $Edit) { return $node }
-  Start-Sleep -Milliseconds ${FOCUS_SETTLE_MS}
+  [System.Threading.Thread]::Sleep(${FOCUS_SETTLE_MS})
   $again = $Element::FocusedElement
   if ($null -eq $again) { return $node }
   return $again
@@ -127,7 +156,7 @@ function Ask([string]$line) {
   $parts = $line.Trim().Split(' ')
   if ($parts[0] -eq 'front' -and $parts.Length -eq 1) { return AppOfElement (Focused) $true }
   if ($parts[0] -eq 'at' -and $parts.Length -eq 3) {
-    $point = New-Object System.Windows.Point ([int]::Parse($parts[1], $Culture)), ([int]::Parse($parts[2], $Culture))
+    $point = [System.Windows.Point]::new([int]::Parse($parts[1], $Culture), [int]::Parse($parts[2], $Culture))
     return AppOfElement ($Element::FromPoint($point)) $false
   }
   if ($parts[0] -eq 'pid' -and $parts.Length -eq 2) { return AppOfProcess ([int]::Parse($parts[1], $Culture)) }
@@ -136,7 +165,7 @@ function Ask([string]$line) {
 
 Say ([ordered]@{ ready = $true; view = $view })
 while ($null -ne ($line = [Console]::In.ReadLine())) {
-  try { Say (Ask $line) } catch { Say @{ error = "$($_.Exception.Message)" } }
+  try { Say (Ask $line) } catch { Say @{ error = $_.Exception.Message } }
 }
 `;
 
