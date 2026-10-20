@@ -204,7 +204,7 @@ export function shippedRustStage(payload: string): RustStage {
     });
     if (!staged.ok) return { ok: false, code: staged.code, detail: staged.detail };
     const dependencies = [FACADE_CRATE, ...staged.manifest.crates.map((crate) => crate.name)];
-    const { title, nativeFeatures, render, wgsl, wasmBudgetMb } = staged.manifest;
+    const { title, nativeFeatures, render, wgsl, wasmBudgetMb, assetGroups } = staged.manifest;
     const renderToml = render ? renderTomlFragment(render) : null;
     const wgslToml = wgslTomlFragment(wgsl);
     const loading = render?.loading ?? null;
@@ -217,6 +217,7 @@ export function shippedRustStage(payload: string): RustStage {
       wgslToml,
       wasmBudgetMb: wasmBudgetMb ?? null,
       loading,
+      assetGroups: assetGroups ?? [],
     };
   };
 }

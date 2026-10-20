@@ -1,5 +1,5 @@
 {
-  "about": "genex.toml's [render] table, [[wgsl]] api and [web] budget: rows both parsers read, the host's src/substrate/genex-toml.ts (tests/conformance/genex-toml.test.ts) and genex's manifest.rs (native/genex-rust/crates/genex/tests/manifest.rs). Each text follows a valid [game] table; an accepted row parses, a hostile row is refused with its code on both sides. Change both sides with this file.",
+  "about": "genex.toml's [render] table, [[wgsl]] api, [web] budget, [[texture]] and [[asset_group]] rows: rows both parsers read, the host's src/substrate/genex-toml.ts (tests/conformance/genex-toml.test.ts) and genex's manifest.rs (native/genex-rust/crates/genex/tests/manifest.rs). Each text follows a valid [game] table; an accepted row parses, a hostile row is refused with its code on both sides. Change both sides with this file.",
   "game": "[game]\ntitle = \"Pond\"\n",
   "accepted": [
     {
@@ -25,7 +25,9 @@
     { "name": "a loading screen with only a colour", "text": "[render.loading]\nbackground = \"#000000\"\n" },
     { "name": "a game without physics", "text": "[physics]\nenabled = false\n" },
     { "name": "an empty [physics]", "text": "[physics]\n" },
-    { "name": "a [[texture]] row", "text": "[[texture]]\npath = \"textures/flow.png\"\nusage = \"data\"\n" }
+    { "name": "a [[texture]] row", "text": "[[texture]]\npath = \"textures/flow.png\"\nusage = \"data\"\n" },
+    { "name": "[[asset_group]] rows, one path in two groups", "text": "[[asset_group]]\nname = \"castle\"\npaths = [\"interiors/castle/**\", \"props/*.glb\"]\n[[asset_group]]\nname = \"crypt\"\npaths = [\"interiors/crypt/t?mb.glb\", \"props/door.glb\"]\n" },
+    { "name": "an asset group name at 64 characters", "text": "[[asset_group]]\nname = \"gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg\"\npaths = [\"a.glb\"]\n" }
   ],
   "hostile": [
     { "name": "an unknown preset", "text": "[render]\npreset = \"insane\"\n", "code": "invalid-render-preset" },
@@ -91,7 +93,22 @@
     { "name": "a texture that is already KTX2", "text": "[[texture]]\npath = \"bark.ktx2\"\nusage = \"color\"\n", "code": "invalid-texture-usage" },
     { "name": "the same texture path twice", "text": "[[texture]]\npath = \"a.png\"\nusage = \"color\"\n[[texture]]\npath = \"a.png\"\nusage = \"data\"\n", "code": "invalid-texture-usage" },
     { "name": "a texture row without a usage", "text": "[[texture]]\npath = \"a.png\"\n", "code": "manifest-syntax" },
-    { "name": "an unknown key in a texture row", "text": "[[texture]]\npath = \"a.png\"\nusage = \"color\"\nsrgb = true\n", "code": "manifest-syntax" }
+    { "name": "an unknown key in a texture row", "text": "[[texture]]\npath = \"a.png\"\nusage = \"color\"\nsrgb = true\n", "code": "manifest-syntax" },
+    { "name": "an asset group path that climbs out of assets/", "text": "[[asset_group]]\nname = \"g\"\npaths = [\"../src/main.rs\"]\n", "code": "invalid-asset-group" },
+    { "name": "an absolute asset group path", "text": "[[asset_group]]\nname = \"g\"\npaths = [\"/etc/passwd\"]\n", "code": "invalid-asset-group" },
+    { "name": "an asset group glob with a bracket class", "text": "[[asset_group]]\nname = \"g\"\npaths = [\"props/[ab].glb\"]\n", "code": "invalid-asset-group" },
+    { "name": "** inside an asset group segment", "text": "[[asset_group]]\nname = \"g\"\npaths = [\"props/a**.glb\"]\n", "code": "invalid-asset-group" },
+    { "name": "an asset group path naming a Windows device", "text": "[[asset_group]]\nname = \"g\"\npaths = [\"props/con.glb\"]\n", "code": "invalid-asset-group" },
+    { "name": "the reserved asset group boot", "text": "[[asset_group]]\nname = \"boot\"\npaths = [\"a.glb\"]\n", "code": "invalid-asset-group" },
+    { "name": "the reserved asset group sim", "text": "[[asset_group]]\nname = \"sim\"\npaths = [\"a.glb\"]\n", "code": "invalid-asset-group" },
+    { "name": "the reserved asset group stream in another case", "text": "[[asset_group]]\nname = \"Stream\"\npaths = [\"a.glb\"]\n", "code": "invalid-asset-group" },
+    { "name": "an asset group name with a slash", "text": "[[asset_group]]\nname = \"a/b\"\npaths = [\"a.glb\"]\n", "code": "invalid-asset-group" },
+    { "name": "an asset group name past 64 characters", "text": "[[asset_group]]\nname = \"ggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg\"\npaths = [\"a.glb\"]\n", "code": "invalid-asset-group" },
+    { "name": "an asset group with no paths", "text": "[[asset_group]]\nname = \"g\"\npaths = []\n", "code": "invalid-asset-group" },
+    { "name": "one glob twice in an asset group", "text": "[[asset_group]]\nname = \"g\"\npaths = [\"a.glb\", \"a.glb\"]\n", "code": "invalid-asset-group" },
+    { "name": "one asset group name twice", "text": "[[asset_group]]\nname = \"g\"\npaths = [\"a.glb\"]\n[[asset_group]]\nname = \"g\"\npaths = [\"b.glb\"]\n", "code": "invalid-asset-group" },
+    { "name": "an asset group without paths", "text": "[[asset_group]]\nname = \"g\"\n", "code": "manifest-syntax" },
+    { "name": "an unknown key in an asset group", "text": "[[asset_group]]\nname = \"g\"\npaths = [\"a.glb\"]\nboot = true\n", "code": "manifest-syntax" }
   ],
   "fragments": {
     "about": "What the build lane compiles in for the documented table followed by these [[wgsl]] rows: GENEX_RENDER_TOML (the host's renderTomlFragment) and GENEX_WGSL_TOML (wgslTomlFragment). genex's RenderConfig::from_toml and its [[wgsl]] reader read them back as the same settings and rows (tests/render_settings.rs).",

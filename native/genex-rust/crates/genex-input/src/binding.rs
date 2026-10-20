@@ -192,32 +192,10 @@ impl Stick {
     }
 }
 
-wire_enum!(
-    /// A pad's family, which picks the face labels and the `ui` context's confirm button. Display
-    /// and layout only: it never changes what an input is bound to outside the `ui` context.
-    /// (genex-core takes this vocabulary with the per-platform family fill, IN-4; this crate then
-    /// re-exports it unchanged.)
-    PadFamily {
-        /// Unknown pad: standard positions, Xbox-style labels.
-        Generic = "generic",
-        /// Xbox and XInput pads.
-        Xbox = "xbox",
-        /// PlayStation pads.
-        PlayStation = "playstation",
-        /// Nintendo pads: confirm is the right face button (East).
-        Nintendo = "nintendo",
-        /// Steam controllers.
-        Steam = "steam",
-    }
-);
-
-// The wire_enum macro owns the derive list, so the default is written out.
-#[allow(clippy::derivable_impls)]
-impl Default for PadFamily {
-    fn default() -> Self {
-        PadFamily::Generic
-    }
-}
+/// A pad's family, which picks the face labels and the `ui` context's confirm button. Display and
+/// layout only: it never changes what an input is bound to outside the `ui` context. genex-core
+/// owns the vocabulary (one table, with the per-platform family fill); this crate re-exports it.
+pub use genex_core::pad_family::PadFamily;
 
 /// A key, by its DOM `code` name (`KeyW`, `Space`, `ShiftLeft`, `Mouse1`). Stored inline so a
 /// binding is `Copy` and a const (`Binding::WASD`).

@@ -41,6 +41,7 @@ import { rustTargetBuilders } from "../../src/main/core/internals.ts";
 import { RustBuildRefusal, RustBuildStep } from "../../src/main/rust-build-diagnostics.ts";
 import { RUST_WEB_EXPORT_PROFILE_SETTINGS, WEB_FILES, type WebAssetMap } from "../../src/main/rust-build-web.ts";
 import { RustFlavour, RustManifestCode } from "../../src/main/rust-manifest.ts";
+import { ASSET_INDEX_FILE, type AssetIndex } from "../../src/main/rust-package-assets.ts";
 import { BuildProblemCode, CppBuildPurpose } from "../../src/shared/build-problem.ts";
 import { WEB_BUDGET_MB_BYTES } from "../../src/shared/game-export-contract.ts";
 import { BuildTarget, GameStack, ProjectKind } from "../../src/shared/game-project.ts";
@@ -66,6 +67,9 @@ const MAC_SDK = "/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk";
 const TEMPLATE_GENEX_TOML = path.join(REPO, "src", "game-template-rust", "genex.toml");
 const RENDER_TABLE = "[render]";
 const RENDER_SUBTABLE_PREFIX = "[render.";
+/** Two `[[asset_group]]` rows sharing `props/door.png` (C-30). */
+const ASSET_GROUP_ROWS =
+  '[[asset_group]]\nname = "harbour"\npaths = ["props/**", "textures/sky.png"]\n\n[[asset_group]]\nname = "crypt"\npaths = ["props/door.png"]\n';
 
 /**
  * The [render] fragment the stage hands the lane for src/game-template-rust/genex.toml, read from
@@ -238,6 +242,29 @@ describe("the core registers its Rust lane behind the seam", { skip: SKIP_ON_WIN
     assert.deepEqual(sky, { path: "textures/sky.png", bytes: png.length, fnv1a64: fnv1a64Hex(png) });
   });
 
+  it("a Rust game's export indexes the asset groups its genex.toml names; a member is not boot (C-30)", async () => {
+    const { core } = await coreLite({ gamesRoot: await realpath(await tmpDir("core-rust-lane-games-")) });
+    await seedRustFixture(core, RustFixtureKind.Game);
+    const game = core.games.dirFor(FIXTURE_RUST_GAME.name);
+    const toml = path.join(game, "genex.toml");
+    await writeFile(toml, `${await readFile(toml, "utf8")}\n${ASSET_GROUP_ROWS}`);
+    for (const rel of ["props/door.png", "props/sail.png", "textures/sky.png", "textures/sea.png"]) {
+      await mkdir(path.dirname(path.join(game, "assets", rel)), { recursive: true });
+      await writeFile(path.join(game, "assets", rel), Buffer.from(`\u0089PNG\r\n\u001a\n${rel}`));
+    }
+    const out = path.join(await tmpDir("core-rust-lane-export-"), "out");
+    await core.exportPublicCopy(FIXTURE_RUST_GAME.name, out);
+    const index = JSON.parse(await readFile(path.join(out, "assets", ASSET_INDEX_FILE), "utf8")) as AssetIndex;
+    assert.deepEqual(index.groups, [
+      { name: "crypt", assets: ["props/door.png"] },
+      { name: "harbour", assets: ["props/door.png", "props/sail.png", "textures/sky.png"] },
+    ]);
+    assert.deepEqual(
+      index.assets.filter((entry) => entry.boot).map((entry) => entry.path),
+      ["textures/sea.png"],
+    );
+  });
+
   it("a Rust game's build runs the import step: a model the importer refuses leaves the export", async () => {
     const { core } = await coreLite({ gamesRoot: await realpath(await tmpDir("core-rust-lane-games-")) });
     await seedRustFixture(core, RustFixtureKind.Game);
@@ -330,6 +357,8 @@ describe("the core's Rust stage: the genex release the shipped lock line pins", 
       // Flipped (renderer pass 2, D11): the stage also hands the lane the game's [render.loading],
       // null for the template, which styles no loading screen of its own.
       loading: null,
+      // Flipped (C-30): the stage also hands the lane the game's [[asset_group]] rows, none for the template.
+      assetGroups: [],
     });
     assert.match(await readFile(path.join(into, "Cargo.toml"), "utf8"), /^genex = "=0\.1\.0"$/m);
   });
@@ -406,6 +435,29 @@ describe("the core's Rust stage: the genex release the shipped lock line pins", 
       assert.deepEqual(await readdir(parent), [], "nothing staged");
     });
   }
+});
+
+describe("the core's Rust stage: a game's [[asset_group]] rows", { skip: SKIP_ON_WINDOWS }, () => {
+  it("hands the lane the asset groups a game names in [[asset_group]], in file order (C-30)", async () => {
+    const payload = rustPayloadDir(await shippedResources());
+    const dir = await templateGame();
+    await writeFile(
+      path.join(dir, "genex.toml"),
+      `${await readFile(path.join(dir, "genex.toml"), "utf8")}\n${ASSET_GROUP_ROWS}`,
+    );
+    const into = path.join(await realpath(await tmpDir("core-rust-lane-stage-")), "game.stage");
+    const staged = await shippedRustStage(payload)(
+      { project: "ferris", dir },
+      into,
+      BuildTarget.Mac,
+      RustFlavour.Export,
+    );
+    assert.ok(staged.ok, JSON.stringify(staged));
+    assert.deepEqual(staged.assetGroups, [
+      { name: "harbour", paths: ["props/**", "textures/sky.png"] },
+      { name: "crypt", paths: ["props/door.png"] },
+    ]);
+  });
 });
 
 describe("the core's Rust lane: a web export (stub cargo)", { skip: SKIP_ON_WINDOWS }, () => {

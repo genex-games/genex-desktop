@@ -226,6 +226,9 @@ impl<G: ShellGame> ApplicationHandler for WindowedApp<G> {
             WindowEvent::KeyboardInput { event, .. } => {
                 if let PhysicalKey::Code(code) = event.physical_key {
                     self.sampler.key(code, event.state);
+                    if event.state.is_pressed() {
+                        self.sampler.learn_label(code, &event.logical_key);
+                    }
                 }
                 if let (true, Some(text)) = (event.state.is_pressed(), event.text.as_deref()) {
                     self.sampler.text(text);

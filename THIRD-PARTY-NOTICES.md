@@ -188,6 +188,14 @@ third-party notices, and load desktop X11/Wayland libraries from the player's sy
 (@raysan5) and contributors). Its header marks what Genex changed and keeps raylib's licence
 notice; the toolchain store compiles it into the headless raylib library on the user's machine.
 
+## SDL's controller table
+
+`native/genex-rust/crates/genex-core/src/pad_family.rs` holds an altered port of SDL's
+`src/joystick/controller_list.h` (zlib, Copyright (C) Valve Corporation; SDL commit
+b9d64c45a965edc4b003c160ab446426363e192d): the USB vendor and product ids of known gamepads, each
+folded into the face-label family Genex shows. Its module notes mark what Genex changed and keep
+the zlib notice; every Rust game compiles it in.
+
 ## Rust runtime crates
 
 The `genex` workspace in `native/genex-rust` (Genex's own code, MIT) builds offline from a vendored
@@ -662,7 +670,7 @@ SOFTWARE.
 
 ## Rust game systems ports
 
-The game systems crates (`native/genex-rust/crates/genex-anim`, `genex-nav`, `genex-stream` and the
+The game systems crates (`native/genex-rust/crates/genex-anim`, `genex-nav`, `genex-stream`, `genex-ui` and the
 mesh arena of `genex-render`, Genex's own code, MIT) port this code or these rules. They ship inside every
 Rust game that links the crate, and in its ejected source. Each file credits its source in a
 comment; each Apache 2.0 port carries the upstream notice and lists Genex's changes (§4(b)).
@@ -684,6 +692,35 @@ comment; each Apache 2.0 port carries the upstream notice and lists Genex's chan
 | `crates/genex-nav/src/runtime/avoidance.rs` (`Avoidance::step`) | Gathering each agent's neighbouring agents and bodies and handing them to ORCA (Genex replaces the k-d tree and `HashMap`s with a sorted uniform grid and sorts neighbours by distance, then key) | landmass 0.9.3 (https://github.com/andriyDev/landmass, crates.io sha256 `fd2fd988b81194c6f02c293a28b510b44f1d8581c80b1bfe498e85e9c3f57b93`), `src/avoidance.rs` (`apply_avoidance_to_agents`) | andriyDev | MIT OR Apache-2.0, used under Apache 2.0 (see [Apache License 2.0](#apache-license-20)) |
 | `crates/genex-nav/src/runtime/{coords, util, geometry, nav_mesh, island, nav_data, link}.rs` (islands, navigation-mesh validation and sampling, island stitching with boundary links, modified nodes, region connectivity, animation-link data), with landmass's own tests as `nav_mesh_test.rs` and `nav_data_test.rs` | Islands and their stitching. Changed (listed in each file's header): std `HashMap`/`HashSet` and slotmap are insertion-ordered maps and a deterministic arena, the `geo` boundary clip and `kdtree` vertex snap are Genex's own `clip.rs` and `grid.rs`, the `disjoint` set is Genex's own `disjoint.rs` without a `Mutex`, a Y-up `GenexCoords`, a caller-set edge-link distance, tests converted from googletest to plain asserts | landmass 0.9.3 (https://github.com/andriyDev/landmass, crates.io sha256 `fd2fd988b81194c6f02c293a28b510b44f1d8581c80b1bfe498e85e9c3f57b93`), `src/{coords, util, geometry, nav_mesh, island, nav_data, link}.rs`, `PermittedAnimationLinks` from `src/agent.rs`, `src/{nav_mesh, nav_data}_test.rs` | andriyDev | MIT OR Apache-2.0, used under Apache 2.0 (see [Apache License 2.0](#apache-license-20)) |
 | `crates/genex-nav/src/input.rs` (`TileInput::clear_steep`, `AreaVolume`) | The walkable-slope rule (a triangle is walkable when its unit normal's y is above cos(slope)), convex area volumes marked between two heights with the even-odd point-in-polygon test, and the 12-point outline cap. The rules only; no code was copied | rerecast 0.5.0 (https://github.com/janhohenheim/rerecast), `ConvexVolume`; Recast Navigation (https://github.com/recastnavigation/recastnavigation), `Recast/Source/Recast.cpp` (`rcClearUnwalkableTriangles`), `Recast/Source/RecastArea.cpp` (`rcMarkConvexPolyArea`, `pointInPoly`), `DetourTileCache/Include/DetourTileCacheBuilder.h` (`DT_MAX_CONVEXVOL_PTS`) | Jan Hohenheim and rerecast contributors; Mikko Mononen and Recast Navigation contributors | MIT OR Apache-2.0 (rerecast); Zlib (Recast Navigation) |
+| `crates/genex-ui/src/kit/toast.rs` (`Toasts`, `ToastKind`) | The toast queue: top-right stack with 8 px margin and spacing and 10 px padding, the `1 - (1 - x)^3` slide, a countdown that pauses under the pointer, the 4 px progress line. Changed (listed in the file's header): time counted in simulation ticks instead of `stable_dt`, the queue kept in egui memory (a seed forgets it), level icons drawn as shapes, the close cross dropped (a click anywhere dismisses), a capped queue, AccessKit labels and keys | egui-notify 0.23 (https://github.com/ItsEthra/egui-notify), `src/lib.rs` | ItsEthra | MIT (see [egui-notify](#egui-notify)) |
+
+### egui-notify
+
+The licence of egui-notify, whose toast queue `crates/genex-ui/src/kit/toast.rs` ports (table above).
+
+```
+MIT License
+
+Copyright (c) 2022-2023 ItsEthra
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
 
 ### Fyrox
 

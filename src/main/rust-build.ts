@@ -60,6 +60,7 @@ import { hostOf, STACK_HOST_MATRIX } from "../shared/game-targets.ts";
 import type { ToolchainLock } from "../shared/toolchain.ts";
 import type { UiEventMap } from "../shared/ui-events.ts";
 import { atomicWriteText, openNoFollow, readRegularFile } from "../substrate/fsx.ts";
+import type { AssetGroupRow } from "../substrate/genex-toml.ts";
 import { isInside, toPosixRelative } from "../substrate/paths.ts";
 import { literalGlob, ProcessSandbox, type RunRequest, type RunResult, shellQuote } from "../substrate/spawn.ts";
 import type { CrateRefusal } from "../shared/crate-requests.ts";
@@ -293,6 +294,8 @@ export type RustStaged =
       wasmBudgetMb?: number | null;
       /** `[render.loading]`, checked: the web page's loading screen; null or absent: the defaults. */
       loading?: LoadingStyle | null;
+      /** `[[asset_group]]` rows, checked: the asset index's named groups (C-30); absent: none. */
+      assetGroups?: readonly AssetGroupRow[];
     }
   | { ok: false; code: string; detail: string };
 
@@ -598,6 +601,8 @@ interface Plan extends Pending {
   wasmBudgetMb: number | null;
   /** The game's `[render.loading]`, as staged; null: the defaults. */
   loading: LoadingStyle | null;
+  /** The game's `[[asset_group]]` rows, as staged: the package's named groups (C-30). */
+  assetGroups: readonly AssetGroupRow[];
   /** What the game may use of its profile's crate overlay. */
   grant: Extract<RustCrateGrant, { ok: true }>;
   /** The store's own vendored crates (the toolchain's `vendor` is the merged source when the game has a grant). */
@@ -823,6 +828,7 @@ export class RustBuilds implements GameBuildLane {
         wgslToml: null,
         wasmBudgetMb: null,
         loading: null,
+        assetGroups: [],
         grant,
         storeVendor: located.toolchain.vendor,
         trust,
@@ -875,6 +881,7 @@ export class RustBuilds implements GameBuildLane {
     plan.wgslToml = staged.wgslToml ?? null;
     plan.wasmBudgetMb = staged.wasmBudgetMb ?? null;
     plan.loading = staged.loading ?? null;
+    plan.assetGroups = staged.assetGroups ?? [];
     const outside = staged.dependencies.filter(
       (name) => name !== FACADE_CRATE && !Object.hasOwn(RUST_CRATE_ALLOWLIST, name) && !plan.grant.names.includes(name),
     );
@@ -1664,6 +1671,7 @@ async function writeOutput(
         target: plan.target,
         lock: await trustedLockRows(plan.source),
         imported: plan.assets,
+        groups: plan.assetGroups,
       })
     : null;
   // A browser cannot list `assets/`: the page fetches by this map, and the module checks each file.

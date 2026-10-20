@@ -34,6 +34,10 @@
 //! path = "textures/flow.png"   # under assets/: a PNG, JPEG or WebP
 //! usage = "data"            # color | data | normal
 //!
+//! [[asset_group]]           # optional: assets a game loads during play, by name (C-30)
+//! name = "castle"           # letters, digits, _ and -; never boot, sim or stream (the build's own groups)
+//! paths = ["interiors/castle/**", "props/throne.glb"]  # globs under assets/: *, ? and whole-segment **
+//!
 //! [render]                  # optional: the renderer's quality and the game's look
 //! form_factors = ["desktop", "mobile"]
 //! preset = "auto"           # auto | low | medium | high | ultra
@@ -455,6 +459,9 @@ pub struct GenexToml {
     /// Loose textures' usages, read by the host's import step (C-10).
     #[serde(default)]
     pub texture: Vec<TextureRow>,
+    /// Named groups of assets a game loads during play, read by the host's package step (C-30).
+    #[serde(default)]
+    pub asset_group: Vec<AssetGroupRow>,
 }
 
 impl GenexToml {
@@ -827,6 +834,16 @@ pub struct TextureRow {
     pub usage: String,
 }
 
+/// An `[[asset_group]]` row: a named set of assets a game loads during play (C-30).
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct AssetGroupRow {
+    /// A letter or digit, then letters, digits, `_` and `-`; never one of [`RESERVED_ASSET_GROUPS`].
+    pub name: String,
+    /// Globs under assets/: `*` and `?` inside a segment, `**` as a whole segment.
+    pub paths: Vec<String>,
+}
+
 /// `[gpu]`.
 #[derive(Clone, Debug, Default, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
@@ -932,6 +949,9 @@ pub enum ManifestErrorCode {
     InvalidWebBudget,
     /// A `[[texture]]` row whose usage is not color, data or normal, whose path is not a safe path under assets/ to a PNG, JPEG or WebP, or whose path another row names.
     InvalidTextureUsage,
+    /// An `[[asset_group]]` row whose name is malformed, reserved or taken, whose paths are none, too
+    /// many, repeated or a glob outside assets/; or more rows than [`MAX_ASSET_GROUPS`].
+    InvalidAssetGroup,
 }
 
 impl ManifestErrorCode {
@@ -961,6 +981,7 @@ impl ManifestErrorCode {
             ManifestErrorCode::InvalidRenderLoading => "invalid-render-loading",
             ManifestErrorCode::InvalidWebBudget => "invalid-web-budget",
             ManifestErrorCode::InvalidTextureUsage => "invalid-texture-usage",
+            ManifestErrorCode::InvalidAssetGroup => "invalid-asset-group",
         }
     }
 }
@@ -1003,6 +1024,7 @@ pub fn parse(text: &str) -> Result<GenexToml, ManifestError> {
     check_render(&manifest.render)?;
     check_web(&manifest.web)?;
     check_textures(&manifest.texture)?;
+    check_asset_groups(&manifest.asset_group)?;
     Ok(manifest)
 }
 
@@ -1035,6 +1057,67 @@ fn check_textures(rows: &[TextureRow]) -> Result<(), ManifestError> {
         }
     }
     Ok(())
+}
+
+/// The asset groups every build already has (the web map's boot, sim and stream groups): an
+/// `[[asset_group]]` may not take one of these names, in any case.
+pub const RESERVED_ASSET_GROUPS: [&str; 3] = ["boot", "sim", "stream"];
+/// The most `[[asset_group]]` rows a game declares.
+pub const MAX_ASSET_GROUPS: usize = 64;
+/// The most paths one `[[asset_group]]` lists.
+pub const MAX_ASSET_GROUP_PATHS: usize = 256;
+/// The longest asset group name.
+const MAX_ASSET_GROUP_NAME_CHARS: usize = 64;
+/// The glob segment that matches any number of whole segments.
+const ANY_SEGMENTS: &str = "**";
+
+/// Each `[[asset_group]]` has a free, unreserved name and 1..=[`MAX_ASSET_GROUP_PATHS`] distinct globs
+/// under assets/; at most [`MAX_ASSET_GROUPS`] rows. One path in two groups is allowed (the host's
+/// `checkAssetGroups`).
+fn check_asset_groups(rows: &[AssetGroupRow]) -> Result<(), ManifestError> {
+    if rows.len() > MAX_ASSET_GROUPS {
+        return Err(ManifestError::new(ManifestErrorCode::InvalidAssetGroup, format!("{} groups", rows.len())));
+    }
+    let mut names = crate::map::Set::default();
+    for row in rows {
+        let reserved = RESERVED_ASSET_GROUPS.contains(&row.name.to_ascii_lowercase().as_str());
+        if !valid_asset_group_name(&row.name) || reserved || !names.insert(row.name.clone()) {
+            return Err(ManifestError::new(ManifestErrorCode::InvalidAssetGroup, format!("{:?}", row.name)));
+        }
+        if row.paths.is_empty() || row.paths.len() > MAX_ASSET_GROUP_PATHS {
+            let detail = format!("{} has {} paths", row.name, row.paths.len());
+            return Err(ManifestError::new(ManifestErrorCode::InvalidAssetGroup, detail));
+        }
+        let mut seen = crate::map::Set::default();
+        if let Some(bad) = row.paths.iter().find(|glob| !is_asset_glob(glob) || !seen.insert(glob.as_str())) {
+            return Err(ManifestError::new(ManifestErrorCode::InvalidAssetGroup, format!("{} {bad:?}", row.name)));
+        }
+    }
+    Ok(())
+}
+
+/// A letter or digit, then letters, digits, `_` and `-`, at most [`MAX_ASSET_GROUP_NAME_CHARS`].
+fn valid_asset_group_name(name: &str) -> bool {
+    let first = name.chars().next().is_some_and(|c| c.is_ascii_alphanumeric());
+    let rest = name.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-'));
+    first && rest && name.chars().count() <= MAX_ASSET_GROUP_NAME_CHARS
+}
+
+/// Whether `glob` stays under assets/: the safe asset path rule with `*` and `?` inside a segment and
+/// `**` as a whole segment; no other glob syntax (the host's `isAssetGlob`).
+fn is_asset_glob(glob: &str) -> bool {
+    !glob.is_empty() && glob.split('/').all(is_asset_glob_segment)
+}
+
+fn is_asset_glob_segment(segment: &str) -> bool {
+    if segment == ANY_SEGMENTS {
+        return true;
+    }
+    let allowed = |c: char| c.is_ascii_alphanumeric() || matches!(c, ' ' | '_' | '.' | '*' | '?' | '-');
+    if segment.is_empty() || !segment.chars().all(allowed) || segment.contains(ANY_SEGMENTS) {
+        return false;
+    }
+    segment.contains(['*', '?']) || genex_core::paths::is_safe_asset_path(segment)
 }
 
 fn check_game(game: &GameSection) -> Result<(), ManifestError> {

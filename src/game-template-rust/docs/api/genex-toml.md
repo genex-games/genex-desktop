@@ -31,6 +31,10 @@ enabled = false           # default true
 [[texture]]               # optional: how a loose texture is used, when no model's material says
 path = "textures/flow.png"   # under assets/: a PNG, JPEG or WebP
 usage = "data"            # color | data | normal
+
+[[asset_group]]           # optional: assets the game loads during play, by name
+name = "castle"           # letters, digits, _ and -; never boot, sim or stream
+paths = ["interiors/castle/**", "props/throne.glb"]  # globs under assets/
 ```
 
 Unknown keys are refused. A `[[crate_request]]` row is a request, never an approval: keep it
@@ -68,3 +72,11 @@ phones, all of them on the web), and keeps the image as the fallback. An image t
 with a power-of-two side is first resized to the nearest square power-of-two size (a 1000x600 image
 becomes 1024x1024), so sample it with UVs from 0 to 1. A WebP, or an image with no usage, ships as
 it is.
+
+An `[[asset_group]]` names assets your game does not need before its first frame (a castle's
+interiors, a level's props). Each path is a glob under `assets/`: `*` matches within one folder, `?`
+one character, and a whole `**` segment any number of folders. An asset may be in several groups.
+Studio's asset index lists each group with its assets and marks them as not needed at boot. A name
+outside letters, digits, `_` and `-` (64 at most), `boot`, `sim` or `stream`, a name used twice, a
+group with no paths or more than 256, the same path twice, or a path outside `assets/` is refused
+`invalid-asset-group`; so are more than 64 groups.
