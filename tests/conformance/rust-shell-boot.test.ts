@@ -331,7 +331,7 @@ describe("the Rust web shell loads the game's staged assets before the first fra
 /** The world the stand-in game boots with: 16:9, as the template's. */
 const POINTER_WORLD = [960, 540] as const;
 
-/** A booting stand-in for the game's module that records every `input` verb the shell sends. */
+/** A booting stand-in for the game's module that records every `input` verb the shell sends but the keyboard layout. */
 const POINTER_MODULE = [
   "window.__inputs = [];",
   "export default async function init() {}",
@@ -345,7 +345,8 @@ const POINTER_MODULE = [
   "export function studio_assets_plan() { return []; }",
   "export function studio_assets_preload() {}",
   `export async function studio_boot() { return JSON.stringify({ ok: true, receipt: {}, world: ${JSON.stringify(POINTER_WORLD)} }); }`,
-  'export function studio_call(op, arg) { if (op === "input") window.__inputs.push(JSON.parse(arg)); return JSON.stringify({ id: null, ok: true, op, result: {} }); }',
+  // The boot's keyboard layout (IN-7) is kept apart: these rows read the verbs a pointer, key or pad sends.
+  'export function studio_call(op, arg) { if (op === "input") { const verb = JSON.parse(arg); (verb.layout ? (window.__layouts ??= []) : window.__inputs).push(verb); } return JSON.stringify({ id: null, ok: true, op, result: {} }); }',
   "export function studio_frame() { return 0; }",
   "",
 ].join("\n");
@@ -811,7 +812,8 @@ const INPUT_MODULE = [
   "export function studio_assets_plan() { return []; }",
   "export function studio_assets_preload() {}",
   "export async function studio_boot() { return JSON.stringify({ ok: true, receipt: {}, world: [960, 540] }); }",
-  'export function studio_call(op, arg) { if (op === "input") window.__inputs.push(JSON.parse(arg)); return JSON.stringify({ id: null, ok: true, op, result: {} }); }',
+  // The boot's keyboard layout (IN-7) is kept apart: these rows read the verbs a pointer, key or pad sends.
+  'export function studio_call(op, arg) { if (op === "input") { const verb = JSON.parse(arg); (verb.layout ? (window.__layouts ??= []) : window.__inputs).push(verb); } return JSON.stringify({ id: null, ok: true, op, result: {} }); }',
   "export function studio_frame() {",
   "  window.__frames += 1;",
   "  if (window.__lostAt && window.__frames >= window.__lostAt) {",
@@ -945,9 +947,9 @@ describe("the Rust web shell's input and a lost device", { skip: browserSkip() }
     }
   });
 
-  it("a real gamepad is sent in the standard order when it changes, and once more when it goes", async () => {
+  it("a real gamepad is sent in the standard order with its id when it changes, and once more when it goes", async () => {
     const pads = `{
-      window.__pad = { index: 0, connected: true, buttons: [{ value: 0, pressed: false }, { value: 1, pressed: true }], axes: [0.5, -1] };
+      window.__pad = { index: 0, id: "054c-0ce6-DualSense Wireless Controller", connected: true, buttons: [{ value: 0, pressed: false }, { value: 1, pressed: true }], axes: [0.5, -1] };
       navigator.getGamepads = () => [window.__pad];
     }`;
     const { context, page, inputs } = await booted(pads);
@@ -955,7 +957,10 @@ describe("the Rust web shell's input and a lost device", { skip: browserSkip() }
       await page.waitForFunction(() => (window as unknown as InputWindow).__inputs.length > 0, null, {
         timeout: BOOT_TIMEOUT_MS,
       });
-      assert.deepEqual(await inputs(), [{ pads: [{ index: 0, connected: true, buttons: [0, 1], axes: [0.5, -1] }] }]);
+      const id = "054c-0ce6-DualSense Wireless Controller";
+      assert.deepEqual(await inputs(), [
+        { pads: [{ index: 0, id, connected: true, buttons: [0, 1], axes: [0.5, -1] }] },
+      ]);
       await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
       assert.deepEqual(await inputs(), [], "an unchanged pad is not sent again");
       await page.evaluate(() => {
