@@ -354,7 +354,7 @@ fn bake(clip: &Clip, root: JointId, frames: &[RootFrame], motion: &MotionTrack) 
     let mut tracks: Vec<Track> = clip.tracks().iter().filter(|track| !moved(track)).cloned().collect();
     tracks.push(Track::new(root, Interpolation::Linear, motion.times.clone(), TrackValues::Translation(translations))?);
     tracks.push(Track::new(root, Interpolation::Linear, motion.times.clone(), TrackValues::Rotation(rotations))?);
-    Clip::new(clip.name(), tracks)
+    Clip::from_parts(clip.name().to_owned(), clip.duration(), tracks, clip.ignored_channels().to_vec())
 }
 
 /// The weighted mean of `motions`, weights normalized; NaN, negative and infinite weights count as

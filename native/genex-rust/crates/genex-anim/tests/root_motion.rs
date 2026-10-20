@@ -6,7 +6,7 @@
 
 mod support;
 
-use genex_anim::clip::{Clip, Interpolation, Property, Track, TrackValues};
+use genex_anim::clip::{Clip, Interpolation, Property, Track, TrackValues, import_clips};
 use genex_anim::events::Span;
 use genex_anim::import::{Rig, import_rig};
 use genex_anim::root_motion::{Extracted, MotionAxes, MotionSettings, MotionTrack, RootMotion, blend, extract};
@@ -270,6 +270,43 @@ fn the_baked_clip_and_its_motion_rebuild_the_original_root() {
     let kept = extract(rig.skeleton(), &clip, &MotionSettings { bake: false, ..MotionSettings::default() }).expect("extracts");
     assert_eq!(kept.clip, clip);
     assert_eq!(kept.motion, extracted(&rig, &clip).motion);
+}
+
+#[test]
+fn baking_keeps_the_clips_duration_and_skipped_channels() {
+    // A file clip whose prop channel outlasts the root's keys: the clip lasts 2 s, skipped
+    // channels included, and names the prop channel it skips. Baking leaves both as they were.
+    let mut spec = support::humanoid22();
+    let hips = spec.nodes.iter().position(|node| node.name == "Hips").expect("a Hips node");
+    let prop = spec.node("Prop", None, [1.0, 0.0, 0.0], Quat::IDENTITY, [1.0; 3]);
+    let walk = [Vec3::new(0.0, 1.0, 0.0), Vec3::new(0.0, 1.0, 1.2)].iter().flat_map(|v| v.to_array()).collect();
+    let turn = [Quat::IDENTITY, Quat::from_rotation_y(1.0)].iter().flat_map(|q| q.to_array()).collect();
+    spec.clips[0].channels = vec![
+        support::ChannelSpec {
+            node: hips,
+            path: support::ChannelPath::Translation,
+            interpolation: support::ChannelInterpolation::Linear,
+            times: vec![0.0, 1.0],
+            values: walk,
+        },
+        support::ChannelSpec {
+            node: prop,
+            path: support::ChannelPath::Rotation,
+            interpolation: support::ChannelInterpolation::Linear,
+            times: vec![0.0, 2.0],
+            values: turn,
+        },
+    ];
+    let glb = spec.glb();
+    let rig = import_rig(&glb).expect("the rig imports");
+    let clip = import_clips(&glb, &rig).expect("the clips import").remove(0);
+    assert_eq!(clip.duration(), 2.0);
+    assert_eq!(clip.ignored_channels().len(), 1);
+    let result = extracted(&rig, &clip);
+    assert!(!result.motion.in_place(), "the walk travels");
+    assert_ne!(result.clip, clip, "the root is baked");
+    assert_eq!(result.clip.duration(), clip.duration());
+    assert_eq!(result.clip.ignored_channels(), clip.ignored_channels());
 }
 
 #[test]
