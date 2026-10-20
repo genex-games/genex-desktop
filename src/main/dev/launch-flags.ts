@@ -25,6 +25,8 @@ export const StudioFlag = {
   /** `=<png>`: where the computer smoke saves its screenshot. */
   ComputerShot: "--studio-computer-shot",
   TerminalSmoke: "--studio-terminal-smoke",
+  /** Time the first sandboxed command from launch (`smoke/sandbox-start.ts`); a smoke launch only. */
+  SandboxStartSmoke: "--studio-sandbox-start-smoke",
   /** `=<png>`: where the smoke saves the sign-in screenshot. */
   LoginShot: "--studio-login-shot",
   /** `=<png>`: a PNG of the smoke window when it finishes. */
