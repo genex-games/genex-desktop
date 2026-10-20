@@ -271,7 +271,7 @@ describe("the one Loop's start", () => {
     const fresh = host.leadCalls().findIndex((call, i) => i > 0 && call.resume === undefined);
     assert.ok(fresh > 0, "a later turn opened a fresh session");
     for (const prompt of [prompts[0], prompts[fresh]]) {
-      assert.match(String(prompt), /You are working inside Genex, the Mac app this chat runs in/);
+      assert.match(String(prompt), /You are working inside Genex, the desktop app this chat runs in/);
       assert.match(String(prompt), /never start a server/);
     }
   });

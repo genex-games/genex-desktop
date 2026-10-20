@@ -81,7 +81,7 @@ function holdsWords(facts: readonly FactRef[], holds?: FolderHolds | null): stri
 }
 
 /**
- * Who runs the session, the first thing every brief says: Genex, the Mac app the chat runs in; the
+ * Who runs the session, the first thing every brief says: Genex, the desktop app the chat runs in; the
  * project's folder and what it holds (`holds`: what a folder with no facts holds); that Genex shows a
  * web game itself; and that a plugin here is a Genex plugin, never an engine's own plugins or add-ons.
  */
@@ -95,7 +95,7 @@ export function appIdentity({
   holds?: FolderHolds | null;
 }): string {
   const folder = folderLabel ? `the folder \`${folderLabel}\`` : "this game's folder";
-  return `You are working inside Genex, the Mac app this chat runs in. This project is ${folder}; it holds ${holdsWords(facts, holds)}. Genex shows a web game in its own Live view beside this chat: never start a server for the person to open. In Genex, a plugin means a Genex plugin (Plugins in the sidebar), which adds tools and know-how; an engine's own plugins and add-ons are files in the project, not Genex plugins.`;
+  return `You are working inside Genex, the desktop app this chat runs in. This project is ${folder}; it holds ${holdsWords(facts, holds)}. Genex shows a web game in its own Live view beside this chat: never start a server for the person to open. In Genex, a plugin means a Genex plugin (Plugins in the sidebar), which adds tools and know-how; an engine's own plugins and add-ons are files in the project, not Genex plugins.`;
 }
 
 /** How a session finds a plugin for what the request names, and never turns one on itself. */
