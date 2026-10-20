@@ -53,6 +53,7 @@ import type {
   GameAiSettingsPatch,
   GameAiSettingsView,
 } from "../../shared/game-ai-views.ts";
+import { AiWatcherState } from "../../shared/game-ai-watcher.ts";
 import type { GenexDesktopConfirmAnswer, GenexDesktopConfirmRequest } from "../../shared/genex-desktop-bridge.ts";
 import type { PlayAiBar } from "../../shared/play-bar.ts";
 import type { CompletePurpose } from "../../substrate/engines/types.ts";
@@ -277,17 +278,8 @@ export interface GenexAiPlatform {
   sendFitCounts(rows: readonly AiFitCountRow[]): Promise<void>;
 }
 
-/** Where the plan watcher stands. Wire values: never rename one. */
-export const AiWatcherState = {
-  Off: "off",
-  Online: "online",
-  /** A build is running: the plan is the builder's first. */
-  Yielding: "yielding",
-  /** The plan reached its keep-for-building line; it resumes at `resetsAt`. */
-  Resting: "resting",
-  SignedOut: "signed-out",
-} as const;
-export type AiWatcherState = (typeof AiWatcherState)[keyof typeof AiWatcherState];
+/** Where the plan watcher stands; its home is the shared view Settings reads (`shared/game-ai-watcher.ts`). */
+export { AiWatcherState };
 
 /** The watcher (§3.7): answers genex.games' plan-funded jobs with the person's own CLI, serially, tool-free. */
 export interface GameAiPlanWatcher {

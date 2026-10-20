@@ -28,6 +28,7 @@ import type { PlayCredits } from "./play-credits.ts";
 import type { AiGameKey, AiModelRef } from "./game-ai.ts";
 import type { AiCheckResult, AiPublishFacts } from "./game-ai-check.ts";
 import type { AiReportBundle, AiReportOutcome, AiReportRequest } from "./game-ai-report.ts";
+import type { AiWatcherView } from "./game-ai-watcher.ts";
 import type {
   AiActivity,
   AiConsentAnswer,
@@ -598,6 +599,16 @@ export interface StudioApi {
   gameAiCredits(): Promise<AiCreditPack[]>;
   /** Play-time AI: open checkout for a pack or Genex Pro in the browser. */
   gameAiCheckout(product: AiCreditProduct): Promise<void>;
+  /** Settings → Play-time AI, "While you play": this Mac answering games with the person's own plan. Never asks the network. */
+  planWatcher(): Promise<AiWatcherView>;
+  /** Turn answering games with the person's plan on or off (off by default); the watcher as it is after. */
+  planWatcherSwitch(enabled: boolean): Promise<AiWatcherView>;
+  /** Start the Genex player sign-in in the browser: a credential that answers games and can move no money. */
+  planWatcherSignIn(): Promise<AiWatcherView>;
+  /** Stop a player sign-in waiting in the browser; the watcher as it is after. */
+  planWatcherCancelSignIn(): Promise<AiWatcherView>;
+  /** Forget the Genex player credential on this Mac; the watcher as it is after. */
+  planWatcherSignOut(): Promise<AiWatcherView>;
   /** The app's Genex account: signed out, signing in, signed in, or a sign-in genex.games ended. Never asks the network. */
   genexAccount(): Promise<GenexAccountView>;
   /** Sign in to Genex in the browser (again, after a sign-in ended); the account as it is after. */

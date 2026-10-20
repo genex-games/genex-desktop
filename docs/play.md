@@ -156,6 +156,24 @@ process), in one order: read → route → reserve → queue → door → valida
   game), the development lane on genex.games, a saved playtest (`<game>/ai/tapes/`, replayed by key
   and occurrence, never verified) and the fixture a fixture profile answers with.
 
+## Answering games with your plan
+
+Settings › Play-time AI, While you play: Answer games with my plan (off). Then this Mac answers
+genex.games' plan-funded calls (a web game in any browser, or a published game in Play) with the
+person's own Claude Code, or Codex only behind its read-deny check (`src/main/game-ai/player-*.ts`,
+ported from genex-demo's `genex player`). genex.games composes every job and keeps the ledger,
+limits, waits and Stop; the watcher only works the queue: one job at a time, under a lease (so
+`genex player` on the same Mac never answers one twice), nothing claimed while a build runs, and
+past the keep-for-building share a row goes back as a wait until the plan's reset.
+
+- Sign-in is a separate Genex player credential (`scope: 'player'`, no money), in the secret store
+  under `genex-player-credential`, bound to Play's API. A refused one ends; a 426 asks for an update.
+- Each job: the official CLI, no tools, the game's text on stdin, API-key variables blanked, a
+  fresh temp folder removed afterwards, inside a `ProcessSandbox` that denies reading the home
+  folder bar the CLI's install (and Claude Code's own home). A CLI is advertised only after a probe
+  proves a canary there unreadable and the CLI still signed in.
+- Logs carry ids, codes and timings, never a prompt or an answer. Tests: `plan-watcher-*`.
+
 ## Where to work
 
 `src/renderer/play/`, `src/renderer/state/play.ts` and `people.ts`, `src/renderer/avatars/`,
