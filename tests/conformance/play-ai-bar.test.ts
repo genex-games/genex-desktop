@@ -11,8 +11,10 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
+  afterAnswer,
   AiCardKind,
   autoTopUpPatch,
+  cardKey,
   CARD_COMMIT_GATE_MS,
   cardFor,
   cardsAfter,
@@ -25,11 +27,15 @@ import {
   genexRow,
   menuGroups,
   NO_CARDS,
+  noteDone,
   noteFor,
+  overlayForCard,
   packsShown,
   PillName,
   PillValue,
+  pillOpens,
   pillView,
+  pickRequest,
   placeUnder,
   REPORT_PREVIEW_CHARS,
   REPORT_PREVIEW_MOMENTS,
@@ -64,6 +70,7 @@ import {
 } from "../../src/shared/game-ai-report.ts";
 import {
   AiConsentKind,
+  AiConsentRefusal,
   type AiConsentTicket,
   type AiCreditPack,
   AiMaker,
@@ -74,7 +81,7 @@ import {
   type AiStopCard,
   GameAiNoticeKind,
 } from "../../src/shared/game-ai-views.ts";
-import { PLAY_AI_NOTE_MS, type PlayAiBar, PlayAiNote, PlayAiPhase } from "../../src/shared/play-bar.ts";
+import { PLAY_AI_NOTE_MS, type PlayAiBar, PlayAiNote, PlayAiPhase, PlayBarOverlay } from "../../src/shared/play-bar.ts";
 import { EngineId } from "../../src/shared/providers.ts";
 
 const GAME: AiGameKey = "play:p-crowns";
@@ -265,6 +272,11 @@ describe("the AI pill", () => {
     const more = noteFor(added, bar({ note: PlayAiNote.CreditsAdded, addedCredits: 1000 }), NOW + 100);
     assert.notEqual(more, added, "another top-up is another note");
     assert.equal(more?.until, NOW + 100 + PLAY_AI_NOTE_MS[PlayAiNote.CreditsAdded]);
+  });
+
+  it("wears a done note with a check, as Share's Link copied, and the others plain", () => {
+    const done = Object.values(PlayAiNote).filter(noteDone);
+    assert.deepEqual(done, [PlayAiNote.CreditsAdded, PlayAiNote.ReportSent]);
   });
 
   it("never prints a broken count, whatever number it is handed", () => {
@@ -673,5 +685,59 @@ describe("a model the check marked", () => {
     });
     const view = menu({ struggling: [weak, weak] });
     assert.equal(PLAY_AI_WORDS.menu.struggle(view.struggling.length), "2 more may struggle");
+  });
+});
+
+describe("the bar's AI overlays", () => {
+  it("opens the card that waits from the pill, else the model menu", () => {
+    assert.equal(pillOpens(null), PlayBarOverlay.AiMenu);
+    assert.equal(pillOpens({ kind: AiCardKind.Stop, card: stop() }), PlayBarOverlay.AiCard);
+    assert.equal(pillOpens({ kind: AiCardKind.Consent, consent: ticket() }), PlayBarOverlay.AiCard);
+  });
+
+  it("knows a card by its ticket, or by its game's stop and why", () => {
+    assert.equal(cardKey({ kind: AiCardKind.Consent, consent: ticket() }), "consent:ticket-0001");
+    assert.equal(cardKey({ kind: AiCardKind.Stop, card: stop() }), `stop:${GAME}:${AiStopReason.OutOfCredits}`);
+  });
+
+  it("opens a card that comes over nothing else, never twice once set aside, and closes it when it goes", () => {
+    const card = { kind: AiCardKind.Consent, consent: ticket() } as const;
+    const key = cardKey(card);
+    const table: Array<[string, PlayBarOverlay | null, typeof card | null, string | null, PlayBarOverlay | null]> = [
+      ["a card over nothing opens", null, card, null, PlayBarOverlay.AiCard],
+      ["set aside, it waits on the pill", null, card, key, null],
+      ["another card after one set aside opens", null, card, "consent:ticket-0000", PlayBarOverlay.AiCard],
+      ["Comments open: the card waits", PlayBarOverlay.Comments, card, null, PlayBarOverlay.Comments],
+      ["the menu open (Change): the card waits", PlayBarOverlay.AiMenu, card, null, PlayBarOverlay.AiMenu],
+      ["Get credits open: the card waits", PlayBarOverlay.AiCredits, card, null, PlayBarOverlay.AiCredits],
+      ["the card went: its overlay closes", PlayBarOverlay.AiCard, null, null, null],
+      ["no card, nothing open", null, null, null, null],
+      ["the menu stays without a card", PlayBarOverlay.AiMenu, null, null, PlayBarOverlay.AiMenu],
+    ];
+    for (const [name, open, shown, aside, expected] of table)
+      assert.equal(overlayForCard(open, shown, aside), expected, name);
+  });
+
+  it("answers the card being changed with the model picked, and else picks it", () => {
+    const card = ticket();
+    assert.deepEqual(pickRequest(card, QWEN), {
+      answer: { ticket: card.ticket, approve: true, model: QWEN, unranked: false },
+    });
+    assert.deepEqual(pickRequest(null, QWEN), { pick: QWEN });
+  });
+
+  it("drops a card its answer settled, keeps one answered too soon, and says why a model was refused", () => {
+    const cards = cardsAfter(NO_CARDS, { kind: GameAiNoticeKind.Consent, consent: ticket() });
+    const played = afterAnswer(cards, "ticket-0001", { ok: true, model: HAIKU });
+    assert.equal(cardFor(played.cards, GAME, NOW), null);
+    assert.equal(played.problem, null);
+    const lapsedCard = afterAnswer(cards, "ticket-0001", { ok: false, code: AiConsentRefusal.Expired });
+    assert.equal(cardFor(lapsedCard.cards, GAME, NOW), null);
+    const early = afterAnswer(cards, "ticket-0001", { ok: false, code: AiConsentRefusal.TooSoon });
+    assert.equal(early.cards, cards);
+    assert.equal(early.problem, null);
+    const refused = afterAnswer(cards, "ticket-0001", { ok: false, code: AiConsentRefusal.Unavailable });
+    assert.equal(refused.cards, cards);
+    assert.equal(refused.problem, AiConsentRefusal.Unavailable);
   });
 });

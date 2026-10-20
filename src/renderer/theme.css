@@ -8,6 +8,7 @@
 @import "./styles/onboarding.css";
 @import "./styles/genex.css";
 @import "./styles/play.css";
+@import "./styles/play-ai.css";
 @import "./styles/play-assets.css";
 @import "./styles/people.css";
 @custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));

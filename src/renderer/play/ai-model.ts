@@ -14,6 +14,8 @@ import {
   type AiAutoTopUp,
   AiConsentKind,
   type AiConsentAnswer,
+  AiConsentRefusal,
+  type AiConsentResult,
   type AiConsentTicket,
   type AiCreditPack,
   AiCreditProductKind,
@@ -27,7 +29,7 @@ import {
   type GameAiSettingsPatch,
   readAiCreditProduct,
 } from "../../shared/game-ai-views.ts";
-import { PLAY_AI_NOTE_MS, type PlayAiBar, type PlayAiNote, PlayAiPhase } from "../../shared/play-bar.ts";
+import { PLAY_AI_NOTE_MS, type PlayAiBar, PlayAiNote, PlayAiPhase, PlayBarOverlay } from "../../shared/play-bar.ts";
 
 /** A card's yes counts only once it has been on screen this long: no click meant for the game lands on it. */
 export const CARD_COMMIT_GATE_MS = 600;
@@ -45,6 +47,10 @@ const MAX_PACKS = 8;
 export const REPORT_PREVIEW_CHARS = 600;
 /** The most AI moments a Report's preview lists: the newest. */
 export const REPORT_PREVIEW_MOMENTS = 50;
+
+/** Where reading something from main stands (the menu, the packs, what a Report sends). Never rename a value. */
+export const AiLoad = { Loading: "loading", Ready: "ready", Failed: "failed" } as const;
+export type AiLoad = (typeof AiLoad)[keyof typeof AiLoad];
 
 // ── the pill ────────────────────────────────────────────────────────────────────────────────
 
@@ -136,6 +142,12 @@ export function noteFor(shown: ShownNote | null, ai: PlayAiBar | null, now: numb
   if (shown?.key === key) return shown;
   return { note: ai.note, key, until: now + PLAY_AI_NOTE_MS[ai.note] };
 }
+
+/** Notes that say something is done: worn with a check over a green tint (`Report-v2`). */
+const DONE_NOTES: ReadonlySet<PlayAiNote> = new Set([PlayAiNote.CreditsAdded, PlayAiNote.ReportSent]);
+
+/** Whether a note says something is done. */
+export const noteDone = (note: PlayAiNote): boolean => DONE_NOTES.has(note);
 
 // ── the model menu ──────────────────────────────────────────────────────────────────────────
 
@@ -238,6 +250,51 @@ export function cardFor(cards: AiCards, game: AiGameKey, now: number): AiCard | 
   if (consent && !lapsed(consent, now)) return { kind: AiCardKind.Consent, consent };
   const card = Object.hasOwn(cards.stops, game) ? cards.stops[game] : undefined;
   return card ? { kind: AiCardKind.Stop, card } : null;
+}
+
+/** A card's identity: a first-use card's ticket, or a stop card's game and why. */
+export const cardKey = (card: AiCard): string =>
+  card.kind === AiCardKind.Consent
+    ? `${AiCardKind.Consent}:${card.consent.ticket}`
+    : `${AiCardKind.Stop}:${card.card.game}:${card.card.reason}`;
+
+/** What the pill's press opens: the card that waits, else the model menu. */
+export const pillOpens = (card: AiCard | null): PlayBarOverlay =>
+  card ? PlayBarOverlay.AiCard : PlayBarOverlay.AiMenu;
+
+/**
+ * The bar's overlay after the cards changed: a card that comes opens itself over nothing else, unless
+ * the person set it aside (it then waits on the pill); a card that goes takes its overlay with it.
+ */
+export function overlayForCard(
+  open: PlayBarOverlay | null,
+  card: AiCard | null,
+  setAside: string | null,
+): PlayBarOverlay | null {
+  if (open === PlayBarOverlay.AiCard) return card ? open : null;
+  if (open !== null || !card) return open;
+  return cardKey(card) === setAside ? null : PlayBarOverlay.AiCard;
+}
+
+/** What a model picked in the menu asks main: the answer to the card being changed, else a pick. */
+export type PickRequest = { answer: AiConsentAnswer } | { pick: AiModelRef };
+
+/** The request for a model picked in the menu, with `changing` the first-use card its Change opened it for. */
+export function pickRequest(changing: AiConsentTicket | null, model: AiModelRef): PickRequest {
+  const answer = changing ? consentAnswer(changing, ConsentAction.Change, model) : null;
+  return answer ? { answer } : { pick: model };
+}
+
+/** The cards after main's word on an answer, and what to tell the person when a model was refused. */
+export function afterAnswer(
+  cards: AiCards,
+  ticket: string,
+  result: AiConsentResult,
+): { cards: AiCards; problem: AiConsentRefusal | null } {
+  if (result.ok || result.code === AiConsentRefusal.Expired)
+    return { cards: withoutConsent(cards, ticket), problem: null };
+  // Too soon: the yes came inside the card's first moments; the card stays for a real one.
+  return { cards, problem: result.code === AiConsentRefusal.Unavailable ? result.code : null };
 }
 
 /** Whether a card shown at `shownAt` takes a yes at `now`. */
