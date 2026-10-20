@@ -197,7 +197,7 @@ import { windowControlsPainter } from "./window-chrome.ts";
 import { appUserModelId, installedWorkingDir, runSquirrelStep, squirrelStartup } from "./windows-install.ts";
 import { BootPhase, type SandboxProblem, StartStep, StudioPlatform } from "../shared/boot.ts";
 import { SandboxUnavailableError } from "../substrate/sandbox-unavailable.ts";
-import { longPath } from "../substrate/windows-sandbox.ts";
+import { longPath, takeBackSandboxEntries } from "../substrate/windows-sandbox.ts";
 import { installWindowsSandbox } from "../substrate/windows-sandbox-setup.ts";
 import { toolchain } from "../substrate/toolchain.ts";
 import { errorMessage } from "../shared/errors.ts";
@@ -304,6 +304,12 @@ const resources = resourcesDir();
 // anything else runs: no profile, no window (main/windows-install.ts).
 const squirrelStep = squirrelStartup(process.platform, process.argv, process.execPath);
 if (squirrelStep) {
+  // The sandbox's grants and denies outlive each launch; an uninstall takes them back.
+  if (squirrelStep.takeBackSandbox)
+    takeBackSandboxEntries(
+      (file, args, env) => spawn(file, args, { env, detached: true, stdio: "ignore", windowsHide: true }),
+      os.homedir(),
+    );
   await runSquirrelStep(squirrelStep, (file, args) =>
     spawn(file, args, { detached: true, stdio: "ignore", windowsHide: true }),
   );

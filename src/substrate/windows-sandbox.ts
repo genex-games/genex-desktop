@@ -48,6 +48,7 @@ import {
   type FolderAceEditorSync,
   type FolderAceOutcome,
   FolderAceOp,
+  folderAceCommand,
   type FolderOwnEdit,
   type FolderOwnEditor,
   type FolderOwnEditorSync,
@@ -1539,6 +1540,55 @@ export function windowsGrantHolders(profile: string, localAppData = process.env.
 /** Where this user's Genex processes record their own grants and denies, beside the ancestor grants. */
 export function windowsDenyHolders(profile: string, localAppData = process.env.LOCALAPPDATA): string {
   return win.join(localAppData || win.join(profile, "AppData", "Local"), DENY_HOLDERS);
+}
+
+/** A holder id no process has: every record in a folder is another holder's. */
+const NO_HOLDER = -1;
+
+/**
+ * What an uninstall takes back: every entry this user's Genex processes recorded (the read-attributes
+ * entries above the grants, and the grants and denies Genex keeps between launches), except what a
+ * Genex still running needs.
+ */
+export function sandboxEntriesLeft(
+  holders: { above: string; own: string },
+  alive: (pid: number) => boolean = processAlive,
+): Array<FolderAceEdit | FolderOwnEdit> {
+  const records = <R>(holders: string, read: (file: string) => R | null) => {
+    const { live, stale } = otherHolders(holders, NO_HOLDER, alive, read);
+    return { live, gone: stale.flatMap((holder) => (holder.record ? [holder.record] : [])) };
+  };
+  const above = records(holders.above, readRecord);
+  const own = records(holders.own, readOwnRecord);
+  return [
+    ...takeBack(above.gone, neededBy(above.live)),
+    ...ownEdits({ sid: own.gone[0]?.sid ?? "", entries: [] }, own.gone, own.live),
+  ];
+}
+
+/** Starts a program that goes on after this process exits; answers what lets this one go first. */
+export type DetachedSpawn = (file: string, args: string[], env: NodeJS.ProcessEnv) => { unref(): void };
+
+/**
+ * Take back {@link sandboxEntriesLeft} when Genex is uninstalled, in one Windows PowerShell batch
+ * that runs on after the uninstall launch exits: Squirrel waits on that launch only briefly, and
+ * passing a grant's removal down a large folder takes longer. Answers how many entries it took back.
+ */
+export function takeBackSandboxEntries(
+  spawnBatch: DetachedSpawn,
+  profile: string,
+  env: NodeJS.ProcessEnv = process.env,
+  deps: { holders?: { above: string; own: string }; alive?: (pid: number) => boolean } = {},
+): number {
+  const holders = deps.holders ?? {
+    above: windowsGrantHolders(profile, env.LOCALAPPDATA),
+    own: windowsDenyHolders(profile, env.LOCALAPPDATA),
+  };
+  const edits = sandboxEntriesLeft(holders, deps.alive);
+  if (edits.length === 0) return 0;
+  const command = folderAceCommand(edits, env);
+  spawnBatch(command.file, command.args, command.env).unref();
+  return edits.length;
 }
 
 /** The `srt-sandbox` user's SID, or null while the sandbox is not provisioned. */

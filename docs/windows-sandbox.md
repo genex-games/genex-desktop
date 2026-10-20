@@ -130,9 +130,14 @@ model list, judge) run without its own sandbox on Windows (`toollessSandbox`). D
 runner's command line. A folder opened while the harness runs is writable only after it next
 stops. srt-win's stamp of a missing deny path (or a per-command one) re-propagates permissions
 under that path's parent, holding each folder open meanwhile. Genex's own entries stay between
-launches, so while Genex is closed every srt sandbox on the PC (Claude Code's shell sandbox runs
-as the same user) keeps reading the granted toolchains and writing Genex's game folders and linked
-projects, and stays denied the secrets; uninstall does not take them back yet. A folder moved into
+launches (the owner's choice, for start times): while Genex is closed, only processes running as
+the sandbox user (any srt sandbox on the PC, Claude Code's shell sandbox among them) keep reading
+the granted toolchains and writing Genex's game folders and linked projects, and they stay denied
+the secrets; the real user's own access never changes. The next Genex start takes back what it no
+longer needs, and uninstalling Genex takes back every recorded entry no running Genex needs, in
+one Windows PowerShell batch that runs on after Squirrel's uninstall launch exits
+(`takeBackSandboxEntries`). Genex has no switch that turns the sandbox off; one added must take
+them back the same way. A folder moved into
 a granted one from elsewhere on the same drive keeps what it inherited there, so the sandbox
 cannot open it until its entries are passed down again (the grant changing, or a reinstall).
 Two Genex editing one folder's entries at the same moment can lose one edit until the next sync,

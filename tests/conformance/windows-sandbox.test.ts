@@ -54,11 +54,13 @@ import {
   renderEnvFile,
   routeWindowsDenies,
   routeWindowsGrants,
+  sandboxEntriesLeft,
   sandboxGroupOf,
   sandboxSidOnce,
   setupGaps,
   srtWinExecFailure,
   srtWinPath,
+  takeBackSandboxEntries,
   toolDirEntries,
   windowsAccessReport,
   windowsDenyHolders,
@@ -1827,6 +1829,39 @@ describe("Genex's own deny entries", () => {
     assert.equal(await denies.sync([]), true);
     await denies.revokeAll();
     assert.equal(runs, 0);
+  });
+
+  it("leaves an uninstall every recorded entry to take back, except what a running Genex needs", async () => {
+    const local = await tmpDir("windows-uninstall-");
+    const holders = { above: path.join(local, "genex-sandbox-grants"), own: path.join(local, "genex-sandbox-denies") };
+    await mkdir(holders.own, { recursive: true });
+    await mkdir(holders.above, { recursive: true });
+    const game = { path: at("AI Games"), deny: null, guard: false, grant: GrantAccess.Modify };
+    await writeFile(path.join(holders.own, `${DEAD_PID}.json`), JSON.stringify({ sid: SID, entries: [game, ssh] }));
+    await writeFile(path.join(holders.own, "7.json"), JSON.stringify({ sid: SID, entries: [ssh] }));
+    await writeFile(path.join(holders.above, `${DEAD_PID}.json`), JSON.stringify({ sid: SID, dirs: [at("AppData")] }));
+    const alive = (pid: number) => pid === 7;
+    const edits = sandboxEntriesLeft(holders, alive);
+    assert.deepEqual(edits, [
+      { dir: at("AppData"), sid: SID, op: FolderAceOp.Remove },
+      { dir: at("AI Games"), sid: SID, op: FolderAceOp.Own, deny: null, guard: false, grant: null },
+      { dir: at(".ssh"), sid: SID, op: FolderAceOp.Own, deny: DenyAccess.Read, guard: false, grant: null },
+    ]);
+    const started: Array<{ file: string; env: NodeJS.ProcessEnv }> = [];
+    const spawnBatch = (file: string, _args: string[], env: NodeJS.ProcessEnv) => {
+      started.push({ file, env });
+      return { unref: () => {} };
+    };
+    assert.equal(takeBackSandboxEntries(spawnBatch, PROFILE, { SystemRoot: "C:\\Windows" }, { holders, alive }), 3);
+    assert.equal(started.length, 1, "one PowerShell batch, left to run after the uninstall launch exits");
+    const payload = JSON.parse(Buffer.from(started[0]?.env.GENEX_FOLDER_ACES ?? "", "base64").toString("utf8"));
+    assert.deepEqual(payload, edits);
+    const none = await tmpDir("windows-uninstall-empty-");
+    const empty = { above: path.join(none, "a"), own: path.join(none, "b") };
+    assert.equal(
+      takeBackSandboxEntries(() => assert.fail("nothing to take back"), PROFILE, {}, { holders: empty }),
+      0,
+    );
   });
 
   it("records under %LOCALAPPDATA%, beside the folder grants", () => {
