@@ -1,0 +1,35 @@
+{
+  "format": "genex-world-cells",
+  "version": 1,
+  "cellSize": 64,
+  "bounds": { "min": { "x": -2, "z": -2 }, "max": { "x": 1, "z": 1 } },
+  "nav": ["terrain"],
+  "terrain": {
+    "samples": 65,
+    "height": { "function": "hills", "level": 4, "amplitude": 12, "wavelength": 180, "seed": 7 }
+  },
+  "things": [
+    { "kind": 1, "at": [3, 0, 3], "yaw": 90, "data": { "spawn": "player" } },
+    { "kind": 4, "at": [-70, 0, 20], "data": { "npc": "miller" } }
+  ],
+  "models": [
+    { "model": "models/mill.glb", "at": [-80, 0, 40], "yaw": 30, "scale": [1.5, 1.5, 1.5] },
+    { "model": "models/well.glb", "at": [10, 0, -12] }
+  ],
+  "colliders": [
+    { "shape": "heightfield", "at": [-128, 0, -128] },
+    { "shape": "cuboid", "half": [4, 3, 4], "at": [-80, 3, 40] }
+  ],
+  "groups": [
+    {
+      "model": "models/tree.glb",
+      "instances": [
+        { "at": [-100, 0, -100], "yaw": 10 },
+        { "at": [-20, 0, -90], "yaw": 70, "scale": 1.2 },
+        { "at": [30, 0, 30] },
+        { "at": [100, 0, -40], "yaw": 200, "scale": 0.8 },
+        { "at": [-60, 0, 100] }
+      ]
+    }
+  ]
+}
