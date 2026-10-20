@@ -196,6 +196,9 @@ pub struct GlbPart {
     pub lods: Option<LodChain>,
     /// The typed warnings of the primitives whose `genex_lods` were refused.
     pub lod_warnings: Vec<LodWarning>,
+    /// A normal-mapped primitive of it had no TANGENT, so its tangents were generated at load
+    /// (MikkTSpace, game systems C-9): the Studio's import step, which writes them, was skipped.
+    pub runtime_tangents: bool,
 }
 
 impl GlbPart {
@@ -209,8 +212,11 @@ impl GlbPart {
 #[derive(Clone, Debug, PartialEq)]
 pub struct GlbModel {
     parts: Vec<GlbPart>,
-    /// Per image index: `None` when no material samples it, else the decoded image or why not.
+    /// Per image index: `None` when no material samples it (or the images were left undecoded,
+    /// [`GlbModel::from_glb_undecoded`]), else the decoded image or why not.
     images: Vec<Option<Result<TextureData, RenderError>>>,
+    /// The image sidecars its `asset.extras.genex_textures` names (game systems C-13, C-14).
+    sidecars: GlbSidecars,
 }
 
 impl GlbModel {
@@ -230,7 +236,30 @@ impl GlbModel {
                 *slot = Some(embedded_image(&image, blob));
             }
         }
-        Ok(GlbModel { parts, images })
+        Ok(GlbModel { parts, images, sidecars: read_sidecars(&gltf) })
+    }
+
+    /// [`GlbModel::from_glb`] with no image decoded ([`GlbModel::image`] answers `None`): for a
+    /// loader that takes an image's sidecar when it has one and decodes the embedded image only
+    /// when it does not ([`GlbModel::image_from_glb`], C-14).
+    pub fn from_glb_undecoded(bytes: &[u8]) -> Result<GlbModel, RenderError> {
+        let gltf = open_glb(bytes)?;
+        let parts = glb_parts(&gltf)?;
+        Ok(GlbModel { parts, images: vec![None; gltf.images().len()], sidecars: read_sidecars(&gltf) })
+    }
+
+    /// The image sidecars a GLB names and whether its materials sample any image, read from its
+    /// JSON only (no mesh or image is decoded): what a loader chooses its texture family by before
+    /// it loads the model (C-14). Refused as [`GlbModel::from_glb`] refuses a file it cannot open.
+    pub fn sidecars_of_glb(bytes: &[u8]) -> Result<(GlbSidecars, bool), RenderError> {
+        let gltf = open_glb(bytes)?;
+        let samples_images = gltf.materials().any(|material| material_samples_image(&material));
+        Ok((read_sidecars(&gltf), samples_images))
+    }
+
+    /// The image sidecars its `asset.extras.genex_textures` names (C-14).
+    pub fn sidecars(&self) -> &GlbSidecars {
+        &self.sidecars
     }
 
     /// The meshes and meshlets of [`GlbModel::from_glb`]'s parts, in its order, with no image
@@ -269,19 +298,19 @@ impl GlbModel {
 /// `mesh-invalid` with no triangles at all).
 fn glb_parts(gltf: &gltf::Gltf) -> Result<Vec<GlbPart>, RenderError> {
     let blob = gltf.blob.as_deref();
-    let mut groups: Vec<(Option<usize>, MeshData, MeshletMerge, LodMerge)> = Vec::new();
+    let mut groups: Vec<(Option<usize>, MeshData, MeshletMerge, LodMerge, bool)> = Vec::new();
     for_each_primitive(gltf, &mut |primitive, world| {
         let key = primitive.material().index();
         let at = match groups.iter().position(|(known, ..)| *known == key) {
             Some(at) => at,
             None => {
-                groups.push((key, MeshData::default(), MeshletMerge::default(), LodMerge::default()));
+                groups.push((key, MeshData::default(), MeshletMerge::default(), LodMerge::default(), false));
                 groups.len() - 1
             }
         };
-        let (_, mesh, merge, lods) = &mut groups[at];
+        let (_, mesh, merge, lods, runtime_tangents) = &mut groups[at];
         let base = mesh.vertices.len() as u32;
-        mesh.append_with_meshlets(gltf, primitive, world, blob, merge)?;
+        *runtime_tangents |= mesh.append_with_meshlets(gltf, primitive, world, blob, merge)?;
         let vertex_count = mesh.vertices.len() as u32 - base;
         lods.visit(read_lod_extras(gltf, primitive, blob, vertex_count), world, base);
         Ok(())
@@ -292,7 +321,7 @@ fn glb_parts(gltf: &gltf::Gltf) -> Result<Vec<GlbPart>, RenderError> {
     }
     let parts = groups
         .into_iter()
-        .map(|(key, mesh, merge, lods)| {
+        .map(|(key, mesh, merge, lods, runtime_tangents)| {
             let material = key.and_then(|index| gltf.materials().nth(index));
             let merged = merge.finish();
             let (lods, lod_warnings) = lods.finish();
@@ -307,10 +336,203 @@ fn glb_parts(gltf: &gltf::Gltf) -> Result<Vec<GlbPart>, RenderError> {
                 meshlet_warnings: merged.warnings,
                 lods,
                 lod_warnings,
+                runtime_tangents,
             }
         })
         .collect();
     Ok(parts)
+}
+
+/// The member of a GLB's `asset.extras` naming its image sidecars, never an extension (the
+/// Studio's import step writes it, `glb-textures.ts`; schema in this crate's README).
+pub const GLB_TEXTURES_EXTRAS_KEY: &str = "genex_textures";
+/// The `genex_textures` schema version the runtime reads.
+pub const GLB_TEXTURES_SCHEMA_VERSION: u64 = 1;
+/// The longest sidecar stem a block may name.
+pub const GLB_TEXTURE_STEM_MAX_CHARS: usize = 200;
+
+/// The members of the `genex_textures` object: its schema version and its images.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GlbTexturesKey {
+    /// `v`: the schema version.
+    Version,
+    /// `images`: one row per encoded (image, usage).
+    Images,
+}
+
+impl GlbTexturesKey {
+    /// Every key, in the writer's order.
+    pub const ALL: [GlbTexturesKey; 2] = [GlbTexturesKey::Version, GlbTexturesKey::Images];
+
+    /// Wire spelling.
+    pub const fn wire(self) -> &'static str {
+        match self {
+            GlbTexturesKey::Version => "v",
+            GlbTexturesKey::Images => "images",
+        }
+    }
+}
+
+/// The members of one `genex_textures` image row.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GlbTextureImageKey {
+    /// `image`: the glTF image index.
+    Image,
+    /// `kind`: the usage it was encoded for.
+    Kind,
+    /// `stem`: the sidecar's file name stem in the GLB's own folder.
+    Stem,
+}
+
+impl GlbTextureImageKey {
+    /// Every key, in the writer's order.
+    pub const ALL: [GlbTextureImageKey; 3] = [GlbTextureImageKey::Image, GlbTextureImageKey::Kind, GlbTextureImageKey::Stem];
+
+    /// Wire spelling.
+    pub const fn wire(self) -> &'static str {
+        match self {
+            GlbTextureImageKey::Image => "image",
+            GlbTextureImageKey::Kind => "kind",
+            GlbTextureImageKey::Stem => "stem",
+        }
+    }
+}
+
+/// The usage a sidecar was encoded for: `color` files are sRGB, the others linear.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GlbTextureUsage {
+    /// Base colour and emissive.
+    Color,
+    /// Metallic-roughness and occlusion.
+    Data,
+    /// A tangent-space normal map.
+    Normal,
+}
+
+impl GlbTextureUsage {
+    /// Every usage, in the writer's order.
+    pub const ALL: [GlbTextureUsage; 3] = [GlbTextureUsage::Color, GlbTextureUsage::Data, GlbTextureUsage::Normal];
+
+    /// Wire spelling.
+    pub const fn wire(self) -> &'static str {
+        match self {
+            GlbTextureUsage::Color => "color",
+            GlbTextureUsage::Data => "data",
+            GlbTextureUsage::Normal => "normal",
+        }
+    }
+
+    /// The usage a slot sampling `kind` reads (an alpha-tested base colour is `color`).
+    pub const fn of(kind: TextureKind) -> GlbTextureUsage {
+        match kind {
+            TextureKind::Color | TextureKind::Cutout => GlbTextureUsage::Color,
+            TextureKind::Data => GlbTextureUsage::Data,
+            TextureKind::Normal => GlbTextureUsage::Normal,
+        }
+    }
+
+    fn from_wire(wire: &str) -> Option<GlbTextureUsage> {
+        GlbTextureUsage::ALL.into_iter().find(|usage| usage.wire() == wire)
+    }
+}
+
+/// One image a GLB ships as family files beside it: `<stem>.<family>.ktx2` in its folder.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GlbSidecar {
+    /// The glTF image index.
+    pub image: u32,
+    /// The usage its family files were encoded for.
+    pub usage: GlbTextureUsage,
+    /// The file name stem in the GLB's own folder (checked: no folder, no leading dot).
+    pub stem: String,
+}
+
+/// What a GLB's `asset.extras.genex_textures` gave (C-14).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub enum GlbSidecars {
+    /// No such block: the GLB was not imported, or none of its images could be encoded.
+    #[default]
+    Absent,
+    /// A block that passed every check.
+    Named(Vec<GlbSidecar>),
+    /// A block refused as a whole, and why: a loader then decodes the embedded images, as for a GLB
+    /// without one, and says so in its log.
+    Malformed(String),
+}
+
+impl GlbSidecars {
+    /// The stem of image `image`'s family files for a slot sampling `kind`, if the block names one.
+    pub fn stem(&self, image: u32, kind: TextureKind) -> Option<&str> {
+        let GlbSidecars::Named(rows) = self else { return None };
+        let usage = GlbTextureUsage::of(kind);
+        rows.iter().find(|row| row.image == image && row.usage == usage).map(|row| row.stem.as_str())
+    }
+
+    /// Every row of a block that passed its checks (none otherwise).
+    pub fn rows(&self) -> &[GlbSidecar] {
+        match self {
+            GlbSidecars::Named(rows) => rows,
+            GlbSidecars::Absent | GlbSidecars::Malformed(_) => &[],
+        }
+    }
+}
+
+/// Whether `stem` may name a file in the GLB's own folder: not empty, at most
+/// [`GLB_TEXTURE_STEM_MAX_CHARS`] UTF-16 units (the writer's `length`), no `/`, `\` or NUL, not
+/// starting with a dot.
+fn is_sidecar_stem(stem: &str) -> bool {
+    let plain = !stem.contains(['/', '\\', '\0']) && !stem.starts_with('.');
+    plain && !stem.is_empty() && stem.encode_utf16().count() <= GLB_TEXTURE_STEM_MAX_CHARS
+}
+
+/// One image row, checked against the GLB's `images` count.
+fn sidecar_row(row: &gltf::json::Value, images: usize) -> Result<GlbSidecar, String> {
+    let image = row.get(GlbTextureImageKey::Image.wire()).and_then(gltf::json::Value::as_u64).ok_or("an image row has no image index")?;
+    let image = u32::try_from(image).ok().filter(|image| (*image as usize) < images).ok_or_else(|| format!("image {image} is out of range"))?;
+    let kind = row.get(GlbTextureImageKey::Kind.wire()).and_then(gltf::json::Value::as_str).unwrap_or_default();
+    let usage = GlbTextureUsage::from_wire(kind).ok_or_else(|| format!("kind {kind:?} is unknown"))?;
+    let stem = row.get(GlbTextureImageKey::Stem.wire()).and_then(gltf::json::Value::as_str).unwrap_or_default();
+    if !is_sidecar_stem(stem) {
+        return Err(format!("stem {stem:?} is not a file name in the model's folder"));
+    }
+    Ok(GlbSidecar { image, usage, stem: stem.to_owned() })
+}
+
+/// The rows of a `genex_textures` block, or why it is malformed as a whole.
+fn sidecar_rows(block: &gltf::json::Value, images: usize) -> Result<Vec<GlbSidecar>, String> {
+    let version = block.get(GlbTexturesKey::Version.wire()).and_then(gltf::json::Value::as_u64);
+    if version != Some(GLB_TEXTURES_SCHEMA_VERSION) {
+        return Err(format!("version {version:?} is not {GLB_TEXTURES_SCHEMA_VERSION}"));
+    }
+    let rows = block.get(GlbTexturesKey::Images.wire()).and_then(gltf::json::Value::as_array).ok_or("it has no images list")?;
+    let mut sidecars: Vec<GlbSidecar> = Vec::with_capacity(rows.len());
+    for row in rows {
+        let sidecar = sidecar_row(row, images)?;
+        if sidecars.iter().any(|known| known.image == sidecar.image && known.usage == sidecar.usage) {
+            return Err(format!("image {} as {} appears twice", sidecar.image, sidecar.usage.wire()));
+        }
+        sidecars.push(sidecar);
+    }
+    Ok(sidecars)
+}
+
+/// The sidecars `asset.extras.genex_textures` names. Extras that are not an object, or have no
+/// such member, are [`GlbSidecars::Absent`]; a member that fails any check is malformed as a whole.
+fn read_sidecars(gltf: &gltf::Gltf) -> GlbSidecars {
+    let Some(raw) = gltf.document.as_json().asset.extras.as_deref() else { return GlbSidecars::Absent };
+    let Ok(extras) = gltf::json::deserialize::from_str::<gltf::json::Value>(raw.get()) else { return GlbSidecars::Absent };
+    let Some(block) = extras.get(GLB_TEXTURES_EXTRAS_KEY) else { return GlbSidecars::Absent };
+    match sidecar_rows(block, gltf.images().len()) {
+        Ok(rows) => GlbSidecars::Named(rows),
+        Err(detail) => GlbSidecars::Malformed(detail),
+    }
+}
+
+/// Whether a material samples any image on a slot this loader reads.
+fn material_samples_image(material: &gltf::Material<'_>) -> bool {
+    let read = read_material(material);
+    let emissive = read_emission(material).is_some_and(|emission| emission.texture.is_some());
+    read.textures().next().is_some() || emissive
 }
 
 /// A value in `0..=1`, or `fallback` when it is not finite.
