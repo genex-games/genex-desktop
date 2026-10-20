@@ -270,7 +270,10 @@ store pins upstream's v0.18.10 release assets by sha256 (the `colyseus` componen
 xcframework, the Linux x86_64 tarball and the MinGW zip, laid out unchanged one folder per triple,
 the universal Apple libraries thinned to arm64) and the source tarball (`colyseus-source`); only an
 export of a `[net]` game links it, and no shipped build does yet. Its build script uses RustCrypto
-sha2 (MIT OR Apache-2.0).
+sha2 (MIT OR Apache-2.0). Android's libcolyseus is built by the store from that source with zig
+0.15.2 (MIT), whose standard library and compiler-rt are compiled into the library's Zig parts,
+and with zig-msgpack (MIT, https://github.com/zigcc/zig-msgpack, commit
+47c15d217efebd17a585dd04125f9b6b6f659d5a), pinned by sha256 beside the source.
 
 The spike's Android packaging (`scripts/spike/rust-wgpu/android-apk.sh`, developer tool only)
 fetches games-activity 4.4.0 (androidx.games), and its AppCompat closure from androidx: activity 1.0.0, annotation 1.2.0, appcompat 1.2.0, appcompat-resources 1.2.0, arch.core core-common 2.1.0 and core-runtime 2.0.0, collection 1.1.0, core 1.5.0, cursoradapter 1.0.0, customview 1.0.0, drawerlayout 1.0.0, fragment 1.1.0, interpolator 1.0.0, lifecycle-common 2.1.0, lifecycle-livedata 2.0.0, lifecycle-livedata-core 2.0.0, lifecycle-runtime 2.1.0, lifecycle-viewmodel 2.1.0, loader 1.0.0, savedstate 1.0.0, vectordrawable 1.1.0, vectordrawable-animated 1.1.0, versionedparcelable 1.1.1 and viewpager 1.0.0 from Google Maven (Apache-2.0), each pinned by sha256 in the script. They are

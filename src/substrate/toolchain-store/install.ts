@@ -55,6 +55,7 @@ import {
 } from "./artifact.ts";
 import { appResourcesDir, BUNDLE_LOCK, type BundleLock, bundledFolder, bundledTargetOf, isBundled } from "./bundled.ts";
 import { arrangeColyseusLibs, colyseusProbeFiles } from "./colyseus.ts";
+import { colyseusSourceProbeFiles } from "./colyseus-android.ts";
 import { cachedDownload } from "./download-cache.ts";
 import {
   COMPONENT_LAYOUT,
@@ -456,9 +457,10 @@ const PROBES = {
     runProbe(exe(host, "cargo-vet"), ["--version"], `cargo-vet ${entry.version}`),
   ],
   [ToolchainId.RustsecAdvisoryDb]: () => [{ files: ["crates", "support.toml"] }],
-  // libcolyseus, laid out per triple after extraction ({@link STAGED_LAYOUT}); the source at its root.
+  // libcolyseus, laid out per triple after extraction ({@link STAGED_LAYOUT}); Android's build
+  // inputs in their folders (`colyseus-android.ts`): the source, the host's zig, the zig package.
   [ToolchainId.Colyseus]: (entry) => [{ files: colyseusProbeFiles(entry) }],
-  [ToolchainId.ColyseusSource]: () => [{ files: ["build.zig", "include/colyseus"] }],
+  [ToolchainId.ColyseusSource]: () => [{ files: colyseusSourceProbeFiles() }],
 } as const satisfies Record<ToolchainId, (entry: ToolchainEntry, host: ToolchainHost) => ProbeSpec[]>;
 
 /** Components whose unpacked archives are rearranged in staging before the probe: libcolyseus's per-triple folders. */
