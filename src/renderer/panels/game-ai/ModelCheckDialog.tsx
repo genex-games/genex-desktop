@@ -225,6 +225,7 @@ export function ModelCheckDialog({
           <CheckTable rows={checkRows(result, platform)} />
         )}
         {struggles && result?.state === AiCheckState.Done && <p className="text-ink-3">{struggles}</p>}
+        {result?.state === AiCheckState.Done && <p className="text-ink-3">{WORDS.pickNote}</p>}
         {error && (
           <p role="alert" className="text-red">
             {error}
@@ -232,7 +233,6 @@ export function ModelCheckDialog({
         )}
         {result && (
           <div className="play-ai-dialog-presses">
-            {result.state === AiCheckState.Done && <span className="mr-auto text-ink-3">{WORDS.pickNote}</span>}
             <Presses result={result} busy={busy} project={project} act={act} onPlayNow={onPlayNow} onClose={onClose} />
           </div>
         )}

@@ -31,6 +31,7 @@ import {
   strugglesLine,
   usageWords,
 } from "../../src/renderer/panels/game-ai/play-ai-view.ts";
+import { checkoutPriceWords, keySpendWords } from "../../src/renderer/words.ts";
 
 const MAC = StudioPlatform.Mac;
 const HAIKU: AiModelRef = { door: AiDoor.Plan, engine: "claude-code", model: "claude-haiku-4-5" };
@@ -351,5 +352,15 @@ describe("the engine Live card's AI line", () => {
       choose: true,
       tone: AiLineTone.Waiting,
     });
+  });
+});
+
+describe("money words", () => {
+  it("shows each pack at its one checkout price, cents always in pairs", () => {
+    assert.deepEqual([550, 1100, 2750, 5500, 999].map(checkoutPriceWords), ["$5.50", "$11", "$27.50", "$55", "$9.99"]);
+  });
+
+  it("reads own-key spend in cents under a dollar, then dollars", () => {
+    assert.deepEqual([410_000, 1_240_000, 1_000_000].map(keySpendWords), ["41¢", "$1.24", "$1"]);
   });
 });

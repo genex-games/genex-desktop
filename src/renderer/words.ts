@@ -4846,8 +4846,9 @@ export const MENTION_WORDS = {
 
 /** Counts as people read them: digit groups, the same on every Mac. */
 const AI_COUNT = new Intl.NumberFormat("en-US");
-/** A credit pack's price at checkout: `$5.50`, `$11`. */
-const AI_PRICE = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", minimumFractionDigits: 0 });
+/** Whole dollars (`$11`), and dollars with their cents in pairs (`$5.50`). */
+const AI_PRICE = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 });
+const AI_PRICE_CENTS = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", minimumFractionDigits: 2 });
 /** USD micros in a dollar and in a cent. */
 const MICROS_PER_DOLLAR = 1_000_000;
 const MICROS_PER_CENT = 10_000;
@@ -4866,13 +4867,14 @@ export const countWords = (count: number): string => AI_COUNT.format(count);
 /** A pack's price at checkout, from cents: "$5.50", "$11". */
 export function checkoutPriceWords(cents: number): string {
   const dollars = cents / 100;
-  return Number.isInteger(dollars) ? AI_PRICE.format(dollars) : AI_PRICE.format(Number(dollars.toFixed(2)));
+  return Number.isInteger(dollars) ? AI_PRICE.format(dollars) : AI_PRICE_CENTS.format(dollars);
 }
 
 /** Spend on the person's own key, from USD micros, as OpenRouter bills it: "41¢", "$1.24". */
 export function keySpendWords(micros: number): string {
   if (micros < MICROS_PER_DOLLAR) return `${Math.ceil(Math.max(0, micros) / MICROS_PER_CENT)}¢`;
-  return AI_PRICE.format(Number((micros / MICROS_PER_DOLLAR).toFixed(2)));
+  const dollars = Number((micros / MICROS_PER_DOLLAR).toFixed(2));
+  return Number.isInteger(dollars) ? AI_PRICE.format(dollars) : AI_PRICE_CENTS.format(dollars);
 }
 
 /** A whole-dollar limit from USD micros: "$5". */
@@ -5220,7 +5222,7 @@ export const REPORT_INBOX_WORDS = {
   moments: (calls: number, invalid: number) =>
     invalid > 0 ? `${plural(calls, "AI moment")} · ${invalid} didn’t fit` : plural(calls, "AI moment"),
   fix: "Fix with agent",
-  fixLabel: (when: string) => `Fix the report from ${when} with your agent`,
+  fixLabel: (reason: string, when: string) => `Fix with agent: ${reason}, ${when}`,
   /**
    * What Fix with agent asks the game's chat. The player's note never goes in it: a player's
    * words are not the creator's instructions. The agent reads the replay itself.

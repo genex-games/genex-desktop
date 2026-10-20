@@ -75,7 +75,7 @@ function ReportRow({
         )}
       </div>
       <Button
-        aria-label={WORDS.fixLabel(when)}
+        aria-label={WORDS.fixLabel(reasonWords(item), when)}
         busy={fix !== undefined && "busy" in fix}
         disabled={sent}
         data-ai-report-fix={sent ? "sent" : ""}

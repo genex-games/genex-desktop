@@ -222,6 +222,8 @@
 
 /* Publish's AI block. */
 .play-ai-publish {
+  /* Needs AI / Works without AI sit in the field's well, as the menus' segments do. */
+  --picker-well: var(--field);
   display: grid;
   gap: 10px;
   padding: 12px 14px;
