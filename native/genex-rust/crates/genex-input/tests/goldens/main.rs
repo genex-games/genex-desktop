@@ -3,6 +3,7 @@
 
 mod actions;
 mod modifiers;
+mod replay;
 
 use genex_core::input::{Injection, InputMerger, PAD_AXES, PAD_BUTTONS, PadState, TickInput};
 use genex_input::map::ActionMap;
