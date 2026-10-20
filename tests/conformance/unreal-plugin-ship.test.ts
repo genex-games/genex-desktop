@@ -72,6 +72,7 @@ const SAVED = { saved: true, dirty: [], ms: 30 };
 const QUIT_TAKES_MS = 6_000;
 const OPEN_TAKES_MS = 20_000;
 const SEPARATE_LINKS = process.platform === "win32" && "links need privileges on Windows";
+const SEATBELT = process.platform === "win32" && "the build sandbox is macOS's Seatbelt profile";
 const PROCESS_GROUPS = process.platform === "win32" && "process groups are POSIX";
 /** How long a forked backend may take to import itself and start its job (a slow CI runner included). */
 const BACKEND_START_MS = 20_000;
@@ -455,7 +456,9 @@ describe("plugin-test", () => {
 });
 
 describe("plugin-package", () => {
-  it("plugin-package runs BuildPlugin in the build sandbox and reports the package path", async () => {
+  it("plugin-package runs BuildPlugin in the build sandbox and reports the package path", {
+    skip: SEATBELT,
+  }, async () => {
     const w = await shipWorld();
     assert.deepEqual(await w.call(ShipToolName.PluginPackage), { started: true });
     const done = await w.settled("package");
