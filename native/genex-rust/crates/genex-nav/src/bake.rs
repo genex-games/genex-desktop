@@ -48,7 +48,7 @@ const BORDER_PADDING_CELLS: u16 = 3;
 /// How far a tile edge may sit from a whole number of cells, as a fraction of the tile.
 const TILE_CELL_TOLERANCE: f32 = 1.0e-4;
 /// Recast ignores a detail sample distance below this many cells and samples nothing.
-const DETAIL_SAMPLE_CELLS_MIN: f32 = 0.9;
+pub(crate) const DETAIL_SAMPLE_CELLS_MIN: f32 = 0.9;
 
 /// How a navmesh is baked for one walker: its body in metres, the voxel sizes and the tile edge,
 /// and Recast's region, contour and detail settings.
@@ -315,7 +315,7 @@ fn run_recast(
 
 /// A stage's refusal as a navigation refusal: an outline Recast cannot triangulate or a triangle
 /// it cannot rasterize is the input's; running out of layers, regions or indices is size.
-fn recast_refusal(error: RecastError) -> NavError {
+pub(crate) fn recast_refusal(error: RecastError) -> NavError {
     match error {
         RecastError::PolygonMesh(PolygonNavmeshError::InvalidContour) | RecastError::Rasterization(_) => {
             NavError::input_invalid(format!("Recast cannot cut this input: {error}"))
@@ -326,7 +326,7 @@ fn recast_refusal(error: RecastError) -> NavError {
 
 /// The floor (lowered to the window's lowest corner if that is below it) and the window's
 /// highest corner; `None` without triangles.
-fn height_range(window: &TileInput, floor: f32) -> Option<(f32, f32)> {
+pub(crate) fn height_range(window: &TileInput, floor: f32) -> Option<(f32, f32)> {
     let corners = window.triangles.iter().flatten();
     let (low, high) = corners.fold((f32::INFINITY, f32::NEG_INFINITY), |(low, high), v| (low.min(v.y), high.max(v.y)));
     if low > high {
@@ -336,21 +336,21 @@ fn height_range(window: &TileInput, floor: f32) -> Option<(f32, f32)> {
 }
 
 /// The window's triangles as Recast's input, each triangle's area as its Recast area.
-fn trimesh(window: &TileInput) -> TriMesh {
+pub(crate) fn trimesh(window: &TileInput) -> TriMesh {
     let vertices: Vec<Vec3A> = window.triangles.iter().flatten().map(|&v| Vec3A::from(v)).collect();
     let indices = (0..window.triangles.len() as u32).map(|t| UVec3::new(3 * t, 3 * t + 1, 3 * t + 2)).collect();
     let area_types = window.areas.iter().map(|area| AreaType(area.raw())).collect();
     TriMesh { vertices, indices, area_types }
 }
 
-fn convex_volume(volume: &crate::input::AreaVolume) -> ConvexVolume {
+pub(crate) fn convex_volume(volume: &crate::input::AreaVolume) -> ConvexVolume {
     let (min_y, max_y) = volume.heights();
     ConvexVolume { vertices: volume.outline().to_vec(), min_y, max_y, area: AreaType(volume.area().raw()) }
 }
 
 /// The FNV-1a 64 digest of a tile's input window: the height floor, its triangles (by their
 /// bits), their areas after the slope rule, and the volumes it marks.
-fn window_digest(window: &TileInput, input: &NavInput, floor: f32) -> u64 {
+pub(crate) fn window_digest(window: &TileInput, input: &NavInput, floor: f32) -> u64 {
     let mut bytes = Vec::with_capacity(window.triangles.len() * 37 + 16);
     bytes.extend_from_slice(&floor.to_bits().to_le_bytes());
     bytes.extend_from_slice(&(window.triangles.len() as u64).to_le_bytes());
@@ -380,7 +380,7 @@ fn tile_coordinate(start: f32, cells: u16, tile_cells: u16, config: &BakeConfig)
 }
 
 /// Recast's polygon and detail meshes as a tile mesh in metres.
-fn tile_mesh(poly: &PolygonNavmesh, detail: &DetailNavmesh, corner: Vec2, config: &BakeConfig, tile_cells: u16) -> TileMesh {
+pub(crate) fn tile_mesh(poly: &PolygonNavmesh, detail: &DetailNavmesh, corner: Vec2, config: &BakeConfig, tile_cells: u16) -> TileMesh {
     let vertices = poly
         .vertices
         .iter()
