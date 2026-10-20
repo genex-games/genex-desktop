@@ -27,3 +27,13 @@ serde_json = { workspace = true }
 postcard = { workspace = true }
 libm = { workspace = true }
 egui = { workspace = true, optional = true }
+
+[dev-dependencies]
+# The panel rows lay out text, so their contexts get the HUD's text fonts (egui is built without its
+# default fonts).
+epaint_default_fonts = { workspace = true }
+
+# The controls panel and the touch-control painter's rows need the `panel` feature (egui).
+[[test]]
+name = "panel"
+required-features = ["panel"]
