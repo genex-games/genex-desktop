@@ -12,8 +12,9 @@
 //!   (through a [`SinkQueue`], drained by an [`AudioOutput`]), so `audioLevel` is the same with or
 //!   without a device, in a headless run, a boxed run or a window.
 //!
-//! Files decode with [`decode_sound`] (WAV, Ogg Vorbis, MP3, FLAC). The iOS audio session and
-//! Android audio focus are their shells'.
+//! Files decode with [`decode_sound`] (WAV, Ogg Vorbis, MP3, FLAC); music stays compressed and
+//! decodes while it plays ([`Music::stream`]). The iOS audio session and Android audio focus are
+//! their shells'.
 
 mod decode;
 #[cfg(not(any(target_arch = "wasm32", target_os = "ios", target_os = "android")))]
@@ -33,14 +34,14 @@ mod vocab;
 mod voices;
 mod zones;
 
-pub use decode::{MAX_SOUND_BYTES, decode_sound};
+pub use decode::{MAX_CLAIMED_SECONDS, MAX_DECODED_FRAMES, MAX_SOUND_BYTES, decode_sound};
 #[cfg(not(any(target_arch = "wasm32", target_os = "ios", target_os = "android")))]
 pub use device::{DeviceOutput, Resampler};
 pub use director::{Director, StepInput};
 pub use events::{AudioCounts, AudioEvent, EventLog};
 pub use meter::{AUDIO_WINDOW_FRAMES, AudioLevel, AudioMeter};
 pub use mixer::{AudioError, FRAMES_PER_TICK, MIXER_RATE_HZ, Mixer, Sound};
-pub use music::{MUSIC_RING_FRAMES, Music};
+pub use music::{MUSIC_RING_FRAMES, MUSIC_WORKING_BYTES, Music};
 pub use occlusion::{OCCLUDED_CUTOFF_FLOOR_HZ, OCCLUDER_TRANSMISSION, OCCLUSION_TWEEN_S, Occluder, OcclusionScheduler};
 pub use ops::{
     AudioCommand, AudioSetup, Duck, Listener, LogicalVoice, MixerOp, MusicId, MusicOpts, MusicTrack, PRIORITY_DEFAULT, PRIORITY_UI,
