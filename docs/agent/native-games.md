@@ -108,7 +108,13 @@ every sandboxed process is denied writing it by `studioBaseDenyWrites`), and a
 delivery into a Rust game imports its files into that cache at once, keyed for this host's desktop
 build (`warmImports` in [`core/assets.ts`](../../src/main/core/assets.ts)), so that build runs no job
 for them. `assets.inventory` gives each `assets/` file's `import`: `pending` until its version is
-imported (a read starts it), `ready` with validator `issues`, or `refused` with its `refusal`. `writeOutput` then packages the stage per destination
+imported (a read starts it), `ready` with validator `issues`, or `refused` with its `refusal`.
+A written GLB's `issues` also hold the validation report's codes
+([`report.ts`](../../src/substrate/asset-import/report.ts)): an untextured base colour outside
+real albedo, part metal, an IOR outside 1.0-3.0, triangles over the class budget. A rigged GLB's
+`import.character` lists clip names, lengths and motion, joints, humanoid coverage and skinned
+levels ([`character-facts.ts`](../../src/substrate/asset-import/character-facts.ts), the alias
+table `tests/fixtures/humanoid-aliases.json`); the host checks both in the receipt. `writeOutput` then packages the stage per destination
 (`packageAssets` in [`rust-package-assets.ts`](../../src/main/rust-package-assets.ts),
 `DESTINATION_PACKAGES`): family files only for the families the destination picks (desktops BC,
 iOS ASTC, Android ASTC and ETC2, the web all three), never RGBA8; a phone drops a source image its

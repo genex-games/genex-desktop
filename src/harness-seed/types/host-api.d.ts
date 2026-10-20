@@ -540,7 +540,7 @@ export type AssetImportStatus = 'pending' | 'ready' | 'refused';
 export type AssetImportRefusal = 'unsupported-by-raylib' | 'unsupported-by-rust' | 'unsafe-path' | 'escapes-game' | 'missing' | 'not-regular-file' | 'too-large' | 'malformed' | 'unsupported-extension' | 'converter-missing' | 'importer-failed' | 'validation-failed';
 // ↑ src/shared/game-assets.ts
 
-export type ImportIssueCode = 'lock-edited' | 'usage-unknown' | 'usage-conflict' | 'resampled' | 'validation-warning';
+export type ImportIssueCode = 'lock-edited' | 'usage-unknown' | 'usage-conflict' | 'resampled' | 'validation-warning' | 'albedo-out-of-range' | 'metallic-partial' | 'ior-out-of-range' | 'triangles-over-budget';
 // ↑ src/shared/asset-db.ts
 
 /** One issue on a lock row. */
@@ -551,13 +551,59 @@ export interface ImportIssue {
 }
 // ↑ src/shared/asset-db.ts
 
+export type ClipMotion = 'in-place' | 'root-motion';
+// ↑ src/shared/character-facts.ts
+
+/** One clip of a rigged GLB: its name as the runtime knows it, its length and how it moves. */
+export interface CharacterClip {
+  /** The glTF animation's name (empty when the file gives none): what `AnimGraph` code names. */
+  name: string;
+  /** The clip's length: its last key time, rounded to the millisecond. */
+  seconds: number;
+  motion: ClipMotion;
+}
+// ↑ src/shared/character-facts.ts
+
+/** How much of the humanoid profile a rig maps, under the rig family that maps the most. */
+export interface HumanoidCoverage {
+  /** The alias table's family id the joint names matched (`mixamorig`, `ue-mannequin`, …). */
+  rig: string;
+  /** Required bones the rig has. */
+  mapped: number;
+  /** Required bones in all: {@link HUMANOID_REQUIRED_BONES}. */
+  required: number;
+  /** The required bones it lacks, in profile order (Godot `SkeletonProfileHumanoid` names). */
+  missing: string[];
+}
+// ↑ src/shared/character-facts.ts
+
+/** A rigged GLB's facts: its skeleton, clips, humanoid coverage and skinned levels. */
+export interface CharacterFacts {
+  /** Joints in the skeleton of the first skinned mesh node, the nodes between two joints included. */
+  joints: number;
+  /** The clips in file order, at most {@link CHARACTER_CLIPS_MAX}. */
+  clips: CharacterClip[];
+  /** The clips the file has, listed or not. */
+  clipCount: number;
+  humanoid: HumanoidCoverage;
+  /** The levels the skinned mesh draws at: 1, plus its import-time LODs (which keep its skin). */
+  skinnedLevels: number;
+}
+// ↑ src/shared/character-facts.ts
+
 /** A Rust game's file as its import step sees it (`ProjectAsset.import`). */
 export interface ProjectAssetImport {
   status: AssetImportStatus;
   /** Set when `status` is `refused`. */
   refusal?: AssetImportRefusal;
-  /** What the import noticed without refusing the file: glTF validator warnings (`validation-warning`, detail `<CODE> <pointer>`). */
+  /**
+   * What the import noticed without refusing the file: glTF validator warnings
+   * (`validation-warning`, detail `<CODE> <pointer>`), then the validation report's checks of the
+   * GLB it wrote (material ranges, the triangle budget; detail a JSON pointer or the numbers).
+   */
   issues?: ImportIssue[];
+  /** A rigged GLB's clips, joints, humanoid coverage and skinned levels (C-23); absent for any other file. */
+  character?: CharacterFacts;
 }
 // ↑ src/shared/game-assets.ts
 

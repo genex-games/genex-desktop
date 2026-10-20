@@ -19,6 +19,8 @@ import { createHash, randomUUID } from "node:crypto";
 import { lstat, mkdir, readdir, readFile, rm } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import type { ImportIssue as ReportIssue } from "../shared/asset-db.ts";
+import type { CharacterFacts } from "../shared/character-facts.ts";
 import { MINUTE_MS } from "../shared/duration.ts";
 import { assetExtension } from "../shared/game-assets.ts";
 import { type BuildTarget, GameStack } from "../shared/game-project.ts";
@@ -177,6 +179,10 @@ export interface ImportedAsset {
   issues?: ImportIssue[];
   /** An encoded loose texture's usage, source size and class (C-12). */
   texture?: EncodedTexture;
+  /** The validation report's issues about the written GLB (C-23), checked by `parseReport`. */
+  report?: ReportIssue[];
+  /** A rigged GLB's facts (C-23), checked by `parseCharacterFacts`. */
+  character?: CharacterFacts;
 }
 
 /** One import's outcome, file by file, in request order. */
@@ -445,6 +451,8 @@ async function admitLine(
     ...(line.familiesSkipped ? { familiesSkipped: line.familiesSkipped } : {}),
     ...(line.issues?.length ? { issues: line.issues } : {}),
     ...(texture ? { texture } : {}),
+    ...(line.report?.length ? { report: line.report } : {}),
+    ...(line.character ? { character: line.character } : {}),
   };
 }
 

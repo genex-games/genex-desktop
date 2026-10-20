@@ -9,12 +9,16 @@
  *   <job>/out/          the one folder the importer writes, with receipt.json
  *   <job>/tmp/          the importer's TMPDIR
  */
+import type { ImportIssue as ReportIssue } from "../../shared/asset-db.ts";
+import { type CharacterFacts, parseCharacterFacts } from "../../shared/character-facts.ts";
 import { BuildTarget } from "../../shared/game-project.ts";
 import type { TextureUsage } from "./basis-encoder.ts";
 import { isGlbTextureStem } from "./glb-textures.ts";
 import { type AssetImportRefusal, ImportConverter, isAssetImportRefusal } from "./import-plan.ts";
+import { HUMANOID_BONES } from "./character-facts.ts";
 import { type ImportSizes, parseImportSizes } from "./inspect.ts";
 import { Ktx2FamilySkip } from "./ktx2.ts";
+import { parseReport } from "./report.ts";
 import { type EncodedTexture, parseEncodedTexture } from "./texture-encode.ts";
 import { TextureCompression, type TranscodedTexture } from "./texture-table.ts";
 import { isTextureUsage } from "./texture-usage.ts";
@@ -97,6 +101,10 @@ export type ImportReceiptEntry =
       sizes?: ImportSizes;
       /** An encoded loose texture's usage, source size and class (C-12). */
       texture?: EncodedTexture;
+      /** The validation report's issues about the written GLB (C-23, `report.ts`). */
+      report?: ReportIssue[];
+      /** A rigged GLB's clips, joints, humanoid coverage and skinned levels (C-23, `character-facts.ts`). */
+      character?: CharacterFacts;
     }
   | { index: number; ok: false; refusal: AssetImportRefusal; detail: string };
 
@@ -242,6 +250,14 @@ export function parseIssues(value: unknown): ImportIssue[] | null {
   return issues.every((issue) => issue !== null) ? (issues as ImportIssue[]) : null;
 }
 
+/** A line's C-23 fields (`report`, `character`), each checked; null when one is bad. */
+function parseFactFields(value: Json): Partial<Extract<ImportReceiptEntry, { ok: true }>> | null {
+  const report = value.report === undefined ? undefined : parseReport(value.report);
+  const character = value.character === undefined ? undefined : parseCharacterFacts(value.character, HUMANOID_BONES);
+  if (report === null || character === null) return null;
+  return { ...(report ? { report } : {}), ...(character ? { character } : {}) };
+}
+
 function parseEntry(value: unknown): ImportReceiptEntry | null {
   if (!isObject(value) || !isIndex(value.index)) return null;
   if (value.ok === false) {
@@ -253,7 +269,8 @@ function parseEntry(value: unknown): ImportReceiptEntry | null {
   const fields = parseTextureFields(value, value.index);
   const issues = value.issues === undefined ? undefined : parseIssues(value.issues);
   const sizes = value.sizes === undefined ? undefined : parseImportSizes(value.sizes);
-  if (!fields || issues === null || sizes === null) return null;
+  const facts = parseFactFields(value);
+  if (!fields || !facts || issues === null || sizes === null) return null;
   return {
     index: value.index,
     ok: true,
@@ -261,6 +278,7 @@ function parseEntry(value: unknown): ImportReceiptEntry | null {
     ...fields,
     ...(issues ? { issues } : {}),
     ...(sizes ? { sizes } : {}),
+    ...facts,
   };
 }
 

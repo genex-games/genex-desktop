@@ -3,8 +3,11 @@
  * a typed refusal) out. The sandboxed importer (`worker.ts`) runs this for every file of its job;
  * nothing here touches the file system beyond the decoders' own files.
  */
+import type { ImportIssue as ReportIssue } from "../../shared/asset-db.ts";
+import type { CharacterFacts } from "../../shared/character-facts.ts";
 import type { BuildTarget } from "../../shared/game-project.ts";
 import type { TextureUsage } from "./basis-encoder.ts";
+import { characterFacts } from "./character-facts.ts";
 import { GlbError, meshToGlb } from "./glb.ts";
 import { addGlbTextures, type GlbTextureSidecar } from "./glb-textures.ts";
 import { importGltf } from "./gltf-decompress.ts";
@@ -25,6 +28,7 @@ import { addLodExtras } from "./lods.ts";
 import { addMeshletExtras } from "./meshlets.ts";
 import { MeshFormatError, objToMesh } from "./obj.ts";
 import { reorderGlb } from "./reorder.ts";
+import { reportGlb } from "./report.ts";
 import { plyToMesh, stlToMesh } from "./stl-ply.ts";
 import { addTangents } from "./tangents.ts";
 import { type EncodedTexture, encodeTexture, requireUsage, TextureDecodeError } from "./texture-encode.ts";
@@ -68,6 +72,10 @@ export type ConvertResult =
       texture?: EncodedTexture;
       /** A GLB's embedded images as per-family KTX2 sidecars, named in its `genex_textures` (C-13). */
       sidecars?: GlbTextureSidecar[];
+      /** The validation report's issues about the written GLB (C-23). */
+      report?: ReportIssue[];
+      /** A rigged GLB's facts (C-23). */
+      character?: CharacterFacts;
     }
   | { ok: false; refusal: AssetImportRefusal; detail: string };
 
@@ -138,7 +146,15 @@ async function meshSteps(glb: Uint8Array, input: ConvertInput): Promise<ConvertR
   let bytes = glb;
   for (const step of MESH_STEPS) bytes = await step(bytes, input);
   const sizes = inspectGlb(bytes);
-  return { ok: true, bytes, ...(sizes ? { sizes } : {}) };
+  const report = reportGlb(bytes);
+  const character = characterFacts(bytes);
+  return {
+    ok: true,
+    bytes,
+    ...(sizes ? { sizes } : {}),
+    ...(report.length ? { report } : {}),
+    ...(character ? { character } : {}),
+  };
 }
 
 /**
