@@ -100,6 +100,9 @@ before any decoder): an error refuses it `validation-failed`, severity decided b
 validator reads only an image's header, so the gate also decodes each embedded PNG
 ([`png-check.ts`](../../src/substrate/asset-import/png-check.ts)); one the runtime could not decode
 is an `IMAGE_DATA_INVALID` warning on its image, and the model still imports.
+An Opus, AAC or M4A file becomes mono or stereo Ogg Vorbis at 48 kHz through the pinned host tool
+`genex-audio-ogg` ([`audio-ogg.ts`](../../src/substrate/asset-import/audio-ogg.ts)): its container is
+checked first (`malformed`), and a platform without the tool's pin refuses it `converter-missing`.
 A refused file leaves the build, and so does an output whose name another staged file holds
 (`name-taken`). The receipt's `assets` lists each file's action and refusal. A game with nothing
 to import starts no sandbox. Each file is looked up first in the content-addressed import cache
