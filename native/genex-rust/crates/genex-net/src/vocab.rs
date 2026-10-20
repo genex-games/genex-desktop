@@ -2,9 +2,9 @@
 //! MatchStatus, NetWarning), each with `ALL` and its exact wire spelling, the caps a game sees, the
 //! protocol limits the write queue checks, and the refusal a write returns.
 //!
-//! The reserved message names and the size limits are the relay protocol's (PROTOCOL.md §5): this
-//! crate does not link genex-multiplayer yet (it is not a workspace member, owner call), so they
-//! are restated here and `tests/writes.rs` holds them equal to the vendored crate's own table.
+//! The reserved message names and the size limits are the relay protocol's (PROTOCOL.md §5),
+//! restated here (the crate links genex-multiplayer only under `relay`), and `tests/writes.rs`
+//! holds them equal to the vendored crate's own table.
 
 use std::fmt;
 

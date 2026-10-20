@@ -12,6 +12,7 @@
       "!tests/fixtures",
       "!native/genex-rust/crates/genex-anim/tests/fixtures/oracle",
       "!native/genex-rust/crates/genex-nav/tests/fixtures/recast",
+      "!native/genex-rust/crates/genex-net/tests/fixtures",
       "!research",
       "!archive",
       "!design",

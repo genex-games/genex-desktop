@@ -6,6 +6,9 @@
 //! serde form, hashed into a probe and so into the checksum) with 1 or 8 workers, inline builds
 //! and scrambled completion.
 //!
+//! `game.stream_colliders()` is that hook in the facade: a builder adds `CellColliders` as a part
+//! and the runtime streams them the same way.
+//!
 //! Every row is new behaviour (section 0 of the game systems plan). A game built without physics
 //! has no colliders to stream: this file, like genex-stream's `physics` module, is not compiled.
 
@@ -18,12 +21,11 @@ use std::time::Duration;
 use genex::physics::{ColliderBuilder, RigidBodyBuilder, RigidBodyHandle, Vector};
 use genex::prelude::*;
 use genex::{
-    CellBuild, CellId, CellInputs, CellPart, EnteredCell, FIXED_STEP_MS, Runtime, STREAM_CELL_COLLIDERS_MAX, Sim, StreamCommit, StreamErrorCode,
-    Streaming,
+    CellBuild, CellColliders, CellId, CellInputs, CellPart, EnteredCell, FIXED_STEP_MS, Runtime, STREAM_CELL_COLLIDERS_MAX, Sim, StreamColliders,
+    StreamCommit, StreamErrorCode, Streaming,
 };
 use genex_core::digest::{fnv1a64, hex64};
 use genex_render::jobs::Pool;
-use genex_stream::physics::{CellColliders, StreamColliders};
 use serde_json::json;
 
 const CELL: f32 = 32.0;
@@ -73,8 +75,21 @@ struct World {
     ball: Option<RigidBodyHandle>,
 }
 
-/// A cell's colliders from the seed and the cell alone: a ground slab and seeded boxes and balls.
+/// A cell's colliders from the seed and the cell alone: a ground slab and seeded boxes and balls,
+/// carried in this file's own part for its own hook.
 fn cell_colliders(cell: CellId, inputs: &CellInputs) -> CellBuild<u32> {
+    let (thing, colliders) = cell_parts(cell, inputs);
+    CellBuild::default().thing(thing).part(Colliders(colliders))
+}
+
+/// The same colliders as `CellColliders`, the part `game.stream_colliders()` streams.
+fn cell_colliders_part(cell: CellId, inputs: &CellInputs) -> CellBuild<u32> {
+    let (thing, colliders) = cell_parts(cell, inputs);
+    CellBuild::default().thing(thing).part(colliders)
+}
+
+/// A cell's thing and its colliders.
+fn cell_parts(cell: CellId, inputs: &CellInputs) -> (u32, CellColliders) {
     let mut rng = inputs.rng();
     let (min, _) = inputs.bounds();
     let half = CELL * 0.5;
@@ -90,7 +105,7 @@ fn cell_colliders(cell: CellId, inputs: &CellInputs) -> CellBuild<u32> {
         };
         colliders.push(collider.translation(at));
     }
-    CellBuild::default().thing(count + (cell.x + cell.z).unsigned_abs()).part(Colliders(colliders))
+    (count + (cell.x + cell.z).unsigned_abs(), colliders)
 }
 
 /// The anchor's cell along x at `tick`: 20 cells out, then back.
@@ -112,6 +127,22 @@ fn walking_game(inverted: bool) -> Game<World> {
     game.cell_content(cell_colliders);
     game.facet_state::<StreamColliders>();
     game.stream_commit(ColliderCommit { inverted });
+    walk(&mut game);
+    game
+}
+
+/// The walk through the facade's own commit hook.
+fn facade_walking_game() -> Game<World> {
+    let mut game = Game::new(World::default());
+    game.streaming(Streaming::grid(CELL).sim_radius(1).hysteresis(1).prefetch(1));
+    game.cell_content(cell_colliders_part);
+    game.stream_colliders();
+    walk(&mut game);
+    game
+}
+
+/// The anchor walk, the ball, what the commit entered each tick, and the probes.
+fn walk(game: &mut Game<World>) {
     game.on_reset(|sim, _, _, _| {
         sim.stream.set_anchor("player", vec3(walk_x(0), 0.0, 10.0)).expect("anchor");
         let ball = RigidBodyBuilder::dynamic().translation(Vector::new(10.0, 3.0, 10.0)).linvel(Vector::new(6.0, 0.0, 0.0));
@@ -135,7 +166,6 @@ fn walking_game(inverted: bool) -> Game<World> {
         let at = sim.world.ball.map(|ball| sim.physics.bodies[ball].translation());
         json!(at.map(|at| [at.x.to_bits(), at.y.to_bits(), at.z.to_bits()]))
     });
-    game
 }
 
 fn run(game: Game<World>, pool: Pool, seed: u32) -> Runtime<World> {
@@ -196,6 +226,17 @@ fn an_anchor_walk_across_20_cells_and_back_gives_equal_handles_and_collider_set_
     assert_eq!(probes(&one), probes(&eight), "the Rapier collider set, the ledger and the ball");
     assert_eq!(probes(&one), probes(&inline));
     assert_eq!(one.checksum(), inline.checksum());
+}
+
+#[test]
+fn game_stream_colliders_streams_cell_colliders_parts_as_the_hand_written_hook_does() {
+    // New behaviour: the facade's hook and part.
+    let hand_written = run(walking_game(false), Pool::inline(), 7);
+    let facade = run(facade_walking_game(), Pool::inline(), 7);
+    assert!(!facade.sim().world.heard.is_empty(), "the facade's hook entered cells");
+    assert_eq!(hand_written.sim().world.heard, facade.sim().world.heard, "the same handles, cell by cell");
+    assert_eq!(sim_state(&hand_written), sim_state(&facade), "the collider set, the ledger and the ball");
+    assert_eq!(hand_written.checksum(), facade.checksum());
 }
 
 #[test]

@@ -305,6 +305,14 @@ impl<W: Default + 'static> Game<W> {
         self
     }
 
+    /// Stream the static colliders cell builders add (`CellBuild::part(CellColliders)`): they enter
+    /// `sim.physics` with their cell and leave with it, in canonical order.
+    #[cfg(feature = "physics")]
+    pub fn stream_colliders(&mut self) -> &mut Self {
+        self.facet_state::<genex_stream::physics::StreamColliders>();
+        self.stream_commit(crate::stream::ColliderCommit)
+    }
+
     /// Give the world a navigation mesh walkers of `config` use: every seed rebuilds `sim.nav`
     /// for it (the runtime owns the nav, as it owns physics).
     pub fn navigation(&mut self, config: crate::nav::NavConfig) -> &mut Self {

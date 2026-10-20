@@ -39,6 +39,7 @@ needs Ctx and Drawing).
 | Drawing | `docs/api/drawing.md` | Tags, models, cubes, spheres, lines and the clear colour, and loading models from `assets/`. |
 | Reading assets | `docs/api/assets.md` | What a reset may read from `assets/` (a level's JSON, a model's triangles), its refusals and why the checksum stays the same everywhere. |
 | Streaming a large world | `docs/api/streaming.md` | A world in cells: anchors, the sim radius, cell builders, entered and left cells, holds and their refusals. |
+| Navigation | `docs/api/navigation.md` | The walker, nav input, baking and `.navmesh` bytes, tiles, area costs, carved obstacles and refusals. |
 | Lighting, materials and environment | `docs/api/lighting.md` | The sun, ambient, point and spot lights, materials and emission, reflection probes, irradiance volumes, decals, the sky and HDR maps. |
 | Rendering | `docs/api/rendering.md` | Look and quality: presets, device classes, features, `[render]`, the settings panel, shadows, draw ids and camera cuts. |
 | Grading and the lens | `docs/api/grading.md` | The order a look is built in, the grade, white balance, LUTs, depth of field and motion blur. |
@@ -96,8 +97,9 @@ so a draw that needs the time reads a tick the world keeps from `on_update` (`ct
   `game.streaming(..)` and builds cells with `game.cell_content(..)` (`CellBuild::default()`,
   `.thing(..)`; `.hysteresis(..)`, `.prefetch(..)` and `.anchors(..)` tune it); the sim moves it
   with `sim.stream.set_anchor(..)` and `sim.stream.clear_anchor(..)` and reads
-  `sim.stream.entered()` and `sim.stream.left()` each tick. Navigation is not available yet:
-  `game.navigation` and `frame.nav_debug` do nothing. `hud.items` lists
+  `sim.stream.entered()` and `sim.stream.left()` each tick. `game.navigation(..)` registers a
+  walker and `sim.nav` holds its nav (`docs/api/navigation.md`); `frame.nav_debug` draws nothing
+  yet. `hud.items` lists
   the label of every egui widget the last tick drew, in drawing order, so a check can find a
   widget by its label.
 - **Demos.** A demo scripts what a generic walk cannot reach (a state behind a menu, a long

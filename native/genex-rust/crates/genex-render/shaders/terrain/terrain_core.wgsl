@@ -34,7 +34,8 @@ struct GxTerrain {
     // x, y: samples across and down; z: the control words' first word; w: the normal pyramid's
     // levels.
     size: vec4<u32>,
-    // x: layers; y, z, w: 0.
+    // x: layers; y: the heights' first sample in the maps (0 for one terrain, a tile's atlas slot
+    // otherwise: `terrain::gpu::tile_terrain_row`); z, w: 0.
     counts: vec4<u32>,
     // x: the macro variation; y: 1 / its feature size (metres); z: the wet darkening; w: the wet
     // roughness.
@@ -71,7 +72,7 @@ fn gx_terrain_index(x: u32, z: u32) -> u32 {
 
 // The height of sample (`x`, `z`), clamped onto the grid (`Heightfield::sample`).
 fn gx_terrain_sample(x: u32, z: u32) -> f32 {
-    let at = gx_terrain_index(x, z);
+    let at = gx_terrain.counts.y + gx_terrain_index(x, z);
     let q = (gx_terrain_maps[at >> 1u] >> ((at & 1u) * 16u)) & 0xffffu;
     return gx_terrain.heights.x + f32(q) * gx_terrain.heights.y;
 }

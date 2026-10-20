@@ -86,3 +86,14 @@ lists its patches. The FNV-pinned traces live in `tests/runtime_stitch.rs` and
 `src/runtime/detour.rs` (NAV-9) ports Detour's raycast, moveAlongSurface,
 findRandomPointAroundCircle and findDistanceToWall (Zlib, altered; changes in the file header;
 pinned digest in `tests/detour.rs`).
+
+## Carving (`src/carve.rs`, NAV-10)
+
+- Not ported code. The logic follows DetourTileCache (recastnavigation, Zlib; `DetourTileCache.cpp`:
+  `dtObstacleCylinder`/`dtObstacleBox` shapes, obstacle requests marking the tiles they touch, a
+  rebuild queue worked a bounded amount per update) and DotRecast's `Detour.Dynamic` (Zlib: keep a
+  dynamic tile's checkpoint and rebuild only touched tiles from it). No code was copied.
+- Changed: the bound is Recast stage units (7 per tile), not whole tiles; obstacles are marked
+  with the null area on the compact heightfield before erosion, through rerecast's
+  `mark_convex_poly_area` (already ported in `src/recast/`); the checkpoint is the compact
+  heightfield, kept only while carving covers the tile; a cylinder is the circumscribed 12-gon.

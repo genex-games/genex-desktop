@@ -137,6 +137,9 @@ pub use stream::{
     StreamError, StreamErrorCode, StreamTicket, Streaming,
 };
 pub use stream_tick::{EnteredCell, STREAM_HOLD_LIVE_SLICE_MS, STREAM_HOLD_MAX_MS, STREAM_HOLD_OVERLAY_MS, StreamCommit, StreamState};
+#[cfg(feature = "physics")]
+/// A cell's static colliders and the ledger of streamed colliders (STR-10).
+pub use genex_stream::physics::{CellColliders, StreamColliders};
 pub use runtime::{
     DEFAULT_SEED, DemoDriver, FIXED_STEP_MS, InstallError, InstallErrorCode, MAX_STEP_TICKS,
     RUNTIME_KEYS, Runtime, StepResult, UnknownName, View, step_ticks,

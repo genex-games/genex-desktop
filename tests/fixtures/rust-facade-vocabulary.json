@@ -208,8 +208,8 @@
     "issueCodes": ["texture-uncompressed", "texture-family-refused", "tangents-runtime"]
   },
   "animation": { "calls": ["gfx.character", ".joint_count", ".skeleton", ".path", ".wire"], "refusals": ["animation-asset-invalid", "animation-graph-invalid"] },
-  "stream": { "calls": ["Streaming::grid", ".sim_radius", ".hysteresis", ".prefetch", ".anchors", "game.streaming", "game.cell_content", "CellBuild::default", ".thing", "sim.stream.set_anchor", "sim.stream.clear_anchor", "sim.stream.entered", "sim.stream.left"], "refusals": ["stream-invalid", "stream-too-many-anchors", "stream-out-of-world", "stream-not-registered", "stream-hold-timeout"] },
-  "nav": { "calls": ["frame.lines"], "refusals": ["nav-input-invalid", "nav-too-large", "nav-tile-invalid", "nav-config-invalid", "nav-link-invalid", "nav-cost-invalid"] },
+  "stream": { "calls": ["Streaming::grid", ".sim_radius", ".hysteresis", ".prefetch", ".anchors", "game.streaming", "game.cell_content", "CellBuild::default", ".thing", "sim.stream.set_anchor", "sim.stream.clear_anchor", "sim.stream.entered", "sim.stream.left", ".part", "CellColliders::new", ".with", "game.stream_colliders", ".handles"], "refusals": ["stream-invalid", "stream-too-many-anchors", "stream-out-of-world", "stream-not-registered", "stream-hold-timeout"] },
+  "nav": { "calls": ["frame.lines", "game.navigation", "NavConfig::walker", "NavInput::new", "NavMesh::bake", "NavMesh::bake_tile", "NavMesh::from_bytes_for", "nav.add_mesh", "nav.add_tile", "nav.remove_tile", "nav.set_area_cost", "nav.set_area_open", "nav.add_obstacle", "nav.move_obstacle", "nav.remove_obstacle", "nav.pending_rebuilds", "nav.update"], "refusals": ["nav-input-invalid", "nav-too-large", "nav-tile-invalid", "nav-config-invalid", "nav-link-invalid", "nav-cost-invalid"] },
   "assets": {
     "calls": ["gfx.assets().bytes", "gfx.assets().triangles", "gfx.assets().info", ".json", ".digest", ".as_str", ".code", ".detail", ".wire"],
     "refusals": ["unsafe-path", "missing", "too-large", "malformed", "not-at-reset", "not-preloaded"]

@@ -29,10 +29,12 @@ pub mod debug;
 pub mod input_rapier;
 
 pub use bake::{BakeConfig, bake_tile};
+pub use carve::{NAV_OBSTACLES_MAX, NavObstacle};
 pub use config::NavConfig;
 pub use debug::NavDebug;
 pub use error::{NavError, NavErrorCode};
 pub use ids::{AgentId, NavBodyId, NavLinkId, NavObstacleId};
 pub use input::{NavArea, NavInput};
+pub use memo::{NAV_MEMO_BYTES_MAX, NAV_MEMO_BYTES_MAX_PHONE};
 pub use tile::NavTile;
-pub use world::Nav;
+pub use world::{NAV_TILES_MAX, Nav, NavBudget, NavMesh, NavMeshSource};

@@ -179,13 +179,19 @@ pub const FOG_CALLS: [&str; 8] =
 /// The animation calls of the facade (`.wire` is a refusal code's wire spelling).
 pub const ANIMATION_CALLS: [&str; 5] = ["gfx.character", ".joint_count", ".skeleton", ".path", ".wire"];
 /// The streaming calls of the facade (STR-9).
-pub const STREAM_CALLS: [&str; 13] = [
+pub const STREAM_CALLS: [&str; 18] = [
     "Streaming::grid", ".sim_radius", ".hysteresis", ".prefetch", ".anchors", "game.streaming",
     "game.cell_content", "CellBuild::default", ".thing", "sim.stream.set_anchor", "sim.stream.clear_anchor",
-    "sim.stream.entered", "sim.stream.left",
+    "sim.stream.entered", "sim.stream.left", ".part", "CellColliders::new", ".with", "game.stream_colliders",
+    ".handles",
 ];
-/// The navigation calls of the facade.
-pub const NAV_CALLS: [&str; 1] = ["frame.lines"];
+/// The navigation calls of the facade (NAV-11).
+pub const NAV_CALLS: [&str; 17] = [
+    "frame.lines", "game.navigation", "NavConfig::walker", "NavInput::new", "NavMesh::bake", "NavMesh::bake_tile",
+    "NavMesh::from_bytes_for", "nav.add_mesh", "nav.add_tile", "nav.remove_tile", "nav.set_area_cost",
+    "nav.set_area_open", "nav.add_obstacle", "nav.move_obstacle", "nav.remove_obstacle", "nav.pending_rebuilds",
+    "nav.update",
+];
 /// The sim-side asset read calls of the facade, as a reset calls them (SF-1a); `.wire` is a
 /// refusal code's wire spelling.
 pub const ASSET_CALLS: [&str; 9] =

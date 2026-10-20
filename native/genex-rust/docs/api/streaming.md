@@ -57,6 +57,11 @@ game.on_update(|sim, _| {
 - `game.stream_commit(hook)` runs a `StreamCommit` hook for each cell that leaves (descending,
   hooks in reverse order) or enters (ascending, in order) inside the commit. Engine areas plug in
   here (streamed colliders, nav islands); a game rarely needs one.
+- `game.stream_colliders()` streams static colliders (physics builds only): a builder adds them
+  with `.part(CellColliders::new().with(collider))`, each a Rapier `ColliderBuilder`. They enter
+  `sim.physics` with their cell (cells ascending, then in build order) and leave with it in
+  reverse; `sim.facets.get::<StreamColliders>().handles(cell)` lists their handles. Register it
+  once.
 
 A build that is late holds the frame, never the commit: the tick waits for it, so the
 simulation is the same however fast the machine is. `state().volatile.__stream` counts `stalls`
