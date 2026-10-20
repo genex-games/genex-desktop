@@ -40,8 +40,9 @@ import {
   neverTouchVerdict,
   pathVerdict,
   screenedPaths,
+  SHELL_TOOL,
 } from "./never-touch.ts";
-import { STUDIO_TOOL_PREFIX } from "./studio-tool-prompts.ts";
+import { STUDIO_SHELL_TOOL, STUDIO_TOOL_PREFIX } from "./studio-tool-prompts.ts";
 import type {
   DelegateAsks,
   DelegatePermissions,
@@ -106,6 +107,14 @@ const LEAD_UNSCREENED_TOOLS: ReadonlySet<string> = new Set([
 ]);
 /** The hook event a tool call's screen answers, in the SDK's spelling. */
 const PRE_TOOL_USE = "PreToolUse";
+
+/**
+ * A tool as the host reads it: the studio's shell (Genex's sandbox running a Claude Code session's
+ * commands on Windows) is that session's Bash, so its question and its screen read as a command.
+ */
+function hostTool(tool: string): string {
+  return tool === STUDIO_SHELL_TOOL ? SHELL_TOOL : tool;
+}
 /** The CLI's Auto gate refusing the mode: its words, which only this adapter reads. */
 const AUTO_REFUSED = /cannot set permission mode to auto/i;
 /** Claude Code's own name for Manual in the modes it reports. */
@@ -718,7 +727,7 @@ async function carryQuestion(
   let answer: PermissionReply;
   try {
     answer = await asks.ask(
-      { tool: toolName, input, toolUseId: options.toolUseID, ...askWords(options), always: grants },
+      { tool: hostTool(toolName), input, toolUseId: options.toolUseID, ...askWords(options), always: grants },
       options.signal,
     );
   } catch {
@@ -796,6 +805,7 @@ function preToolAsk(reason: string): Record<string, unknown> {
 
 /** Whether a lead's call goes on without the host's screen: a read, its own bookkeeping, the studio's own tools. */
 function unscreened(tool: string): boolean {
+  if (tool === STUDIO_SHELL_TOOL) return false;
   return LEAD_UNSCREENED_TOOLS.has(tool) || tool.startsWith(STUDIO_TOOL_PREFIX);
 }
 
@@ -820,7 +830,7 @@ export function leadScreenHook(lead: LeadAsks) {
     const toolInput = hook.tool_input && typeof hook.tool_input === "object" ? hook.tool_input : {};
     const toolUseId = typeof hook.tool_use_id === "string" ? { toolUseId: hook.tool_use_id } : {};
     const verdict = await lead
-      .screen({ tool, input: toolInput as Record<string, unknown>, ...toolUseId })
+      .screen({ tool: hostTool(tool), input: toolInput as Record<string, unknown>, ...toolUseId })
       .catch(() => ({ message: MESSAGE.unscreened }));
     if (!verdict) return {};
     return "askFirst" in verdict ? preToolAsk(verdict.reason) : preToolDeny(verdict.message);

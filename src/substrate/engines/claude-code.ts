@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { realpath } from "node:fs/promises";
 import { ModelCatalog, CatalogError, CATALOG_DEADLINE_MS } from "./model-catalog.ts";
 import { ModelCatalogSource, ModelCatalogProblemCode } from "../../shared/model-catalog.ts";
@@ -74,11 +75,21 @@ import {
   CHECKPOINT_TOOL,
   CLAUDE_CAPTURE_TOOL,
   intakeToolReply,
+  RUN_COMMAND_TOOL,
   STUDIO_MCP_SERVER,
+  STUDIO_SHELL_TOOL,
   STUDIO_TOOL_PREFIX,
   StudioTool,
   studioToolName,
 } from "./studio-tool-prompts.ts";
+import {
+  type CommandBox,
+  type CommandSandboxFactory,
+  commandFailed,
+  commandReport,
+  type SessionShell,
+  sessionShell,
+} from "./session-commands.ts";
 import { captureArgs } from "./capture-args.ts";
 import {
   abortControllerFor,
@@ -135,6 +146,15 @@ export interface ClaudeCodeEngineOptions {
   /** The OS the CLI runs on (default: this process's); a test picks one to see its options. */
   platform?: NodeJS.Platform;
   /**
+   * Where a session whose commands Genex's sandbox runs (`studioShell`) keeps each sandbox's
+   * scratch; the system temp folder when absent.
+   */
+  scratchRoot?: string;
+  /** PATH for those commands (the studio's toolchain). */
+  toolPath?: () => Promise<string>;
+  /** Makes those sessions' command sandboxes; injected in tests, `ProcessSandbox.create` otherwise. */
+  commandSandbox?: CommandSandboxFactory;
+  /**
    * Where each session's last running totals are kept across restarts (`session-cost.ts`); in
    * memory only when absent.
    */
@@ -180,6 +200,11 @@ const TELEMETRY_INTERVAL_MS = 30 * SECOND_MS;
 const BG_WAIT_CEILING_MS = String(MINUTE_MS);
 /** App output policy, not a provider-advertised model limit. */
 const STANDARD_MAX_TOKENS = 64_000;
+/** A studio-shell command's default and longest run, as Claude Code's own Bash allows. */
+const SHELL_DEFAULT_TIMEOUT_MS = 2 * MINUTE_MS;
+const SHELL_MAX_TIMEOUT_MS = 10 * MINUTE_MS;
+/** How much of a studio-shell command's stdout and stderr the model reads, each. */
+const SHELL_OUTPUT_BYTES = 30_000;
 /** The trace keeps this much of a thought, a tool result, a final report, a denial and a tool input. */
 const TRACE_THINKING_CHARS = 2_000;
 const TRACE_TOOL_RESULT_CHARS = 12_000;
@@ -428,6 +453,10 @@ export class ClaudeCodeEngine implements Engine {
   readonly #catalog: ModelCatalog;
   /** The sandbox of a session that runs no tool: the usage read, model discovery, the judge. */
   readonly #toolless: { enabled: boolean };
+  /** The OS the CLI runs on: where Claude Code's own sandbox cannot start, Genex's runs the commands. */
+  readonly #platform: NodeJS.Platform;
+  /** What a studio-shell session's command sandbox is made with. */
+  readonly #shells: Pick<ClaudeCodeEngineOptions, "scratchRoot" | "toolPath" | "commandSandbox">;
   #telemetryAt = new WeakMap<object, number>();
   #telemetryEpoch = new WeakMap<object, number>();
   #catalogEpoch = new WeakMap<object, number>();
@@ -529,6 +558,12 @@ export class ClaudeCodeEngine implements Engine {
     this.#resolveCli = options.resolveCli ?? requireCodingCli;
     this.#queryFn = options.queryFn;
     this.#toolless = toollessSandbox(options.platform);
+    this.#platform = options.platform ?? process.platform;
+    this.#shells = {
+      scratchRoot: options.scratchRoot,
+      toolPath: options.toolPath,
+      commandSandbox: options.commandSandbox,
+    };
     this.#costs = new SessionCostLedger(options.sessionCosts);
     this.#authStatusFn = options.authStatusFn;
     this.judgeCwd = options.judgeCwd ?? JUDGE_CWD;
@@ -963,7 +998,11 @@ export class ClaudeCodeEngine implements Engine {
    * the builder chooses when there is something to show.) Capture, live and interview tools join
    * it when the delegation grants them.
    */
-  async #studioServer(request: DelegateRequest, interviewTools: StudioToolSpec[]): Promise<unknown> {
+  async #studioServer(
+    request: DelegateRequest,
+    interviewTools: StudioToolSpec[],
+    shell: SessionShell | null,
+  ): Promise<unknown> {
     const [{ createSdkMcpServer, tool }, { z }] = await Promise.all([
       import("@anthropic-ai/claude-agent-sdk"),
       import("zod"),
@@ -978,7 +1017,29 @@ export class ClaudeCodeEngine implements Engine {
         ...(onCapture ? [captureTool(kit, onCapture)] : []),
         ...(onLiveTool ? (request.liveTools ?? []).map((spec) => liveTool(kit, spec, onLiveTool)) : []),
         ...interviewTools.map((spec) => intakeTool(kit, spec)),
+        ...(shell ? [runCommandTool(kit, shell)] : []),
       ],
+    });
+  }
+
+  /**
+   * The shell of a session whose commands Genex's sandbox runs: the box Claude Code's own sandbox
+   * would have been (`workerSandbox`, `unattendedSandbox`), built from the list as the host built it.
+   */
+  async #shell(request: DelegateRequest, protectedPaths: string[], ctx: SessionContext): Promise<SessionShell> {
+    const id = randomUUID();
+    const scratchRoot = this.#shells.scratchRoot ?? path.join(os.tmpdir(), `studio-${this.id}`);
+    return sessionShell({
+      box: {
+        ...(await shellBox(request, protectedPaths)),
+        scratchDir: path.join(scratchRoot, id),
+        platform: this.#platform,
+        ...(this.#shells.toolPath ? { toolPath: this.#shells.toolPath } : {}),
+      },
+      label: `${this.id}:${id}`,
+      maxOutputBytes: SHELL_OUTPUT_BYTES,
+      signal: ctx.controller.signal,
+      ...(this.#shells.commandSandbox ? { create: this.#shells.commandSandbox } : {}),
     });
   }
 
@@ -1205,6 +1266,7 @@ export class ClaudeCodeEngine implements Engine {
       if (deadlineTimer) clearTimeout(deadlineTimer);
       run.feed?.dispose();
       run.control.release();
+      await run.shell?.dispose();
     }
 
     // Some SDK streams end cleanly after abort instead of throwing.
@@ -1225,6 +1287,8 @@ export class ClaudeCodeEngine implements Engine {
     const maxTurns = request.compact ? COMPACT_MAX_TURNS : (request.maxTurns ?? this.#maxTurns);
     const { cwd, directories, protectedPaths, rules } = await this.#contractorReach(request, login);
     const asks = asksOf(request);
+    const shell = studioShell(request, this.#platform) ? await this.#shell(asked, protectedPaths, ctx) : null;
+    ctx.run.shell = shell;
     return {
       ...claudeLaunchOptions(cliInstallation.path),
       cwd: request.cwd,
@@ -1255,17 +1319,18 @@ export class ClaudeCodeEngine implements Engine {
       // own MCP configurations — the kiosk build came up with 111 tools including the user's
       // Linear and ElevenLabs. Only what is declared here exists.
       ...(this.#skills.delegate !== undefined ? { skills: this.#skills.delegate } : {}),
-      mcpServers: { [STUDIO_MCP_SERVER]: await this.#studioServer(request, interviewTools) },
+      mcpServers: { [STUDIO_MCP_SERVER]: await this.#studioServer(request, interviewTools, shell) },
       strictMcpConfig: true,
-      allowedTools: allowedToolsFor(request, interviewTools),
-      disallowedTools: disallowedToolsFor(request),
-      ...blindBuiltIns(request),
+      allowedTools: allowedToolsFor(request, interviewTools, Boolean(shell)),
+      disallowedTools: disallowedToolsFor(request, Boolean(shell)),
+      ...builtInsFor(request, Boolean(shell)),
       // No sandbox key at all for a session that asks: Claude Code's default, which a game's own
       // project settings may still turn on. Every command it runs was asked about first. A worker
       // is boxed in every mode, Bypass included (`workerSandbox`).
       // The box denies the whole sign-in homes (`baseDenyRead`) whatever the session's own home
-      // hands it: it is fenced from the list as the host built it.
-      ...(await sandboxFor(asked, asks, protectedPaths)),
+      // hands it: it is fenced from the list as the host built it. Where Claude Code's own sandbox
+      // cannot start (Windows), Genex's runs the commands instead (`studioShell`).
+      ...(await sandboxFor(asked, asks, protectedPaths, this.#platform)),
       ...(directories.length ? { additionalDirectories: directories } : {}),
       ...(await this.#delegateSettings(request, rules)),
       // Only pin a config home when the studio owns the login; otherwise let Claude Code find
@@ -1773,6 +1838,8 @@ interface RunState {
   inputClosed: boolean;
   /** The session replied again after its input ended (a background task woke it). */
   wokeAfterEnd: boolean;
+  /** Its shell in Genex's sandbox, where that runs its commands (`studioShell`); disposed when it ends. */
+  shell: SessionShell | null;
   /** What the session said at the result that closed its input, before anything woke it. */
   closedSummary: string | null;
   /** Genex tool calls it made once woken, which no answer could reach (`DelegateResult.cutAfterTurn`). */
@@ -1805,6 +1872,7 @@ function newRunState(usage: Usage, cliInstallation: ClaudeInstallation): RunStat
     apiError: null,
     inputClosed: false,
     wokeAfterEnd: false,
+    shell: null,
     closedSummary: null,
     cutAfterTurn: [],
   };
@@ -2164,7 +2232,7 @@ function compactSummaryText(raw: string | null): string {
  * session (the playtester, a waking run's lead) is never allowed its shell by a blanket rule, and
  * has none at all unless it asks in the chat's mode (`leadAsks`, `disallowedToolsFor`).
  */
-function allowedToolsFor(request: DelegateRequest, interviewTools: StudioToolSpec[]): string[] {
+function allowedToolsFor(request: DelegateRequest, interviewTools: StudioToolSpec[], genexShell = false): string[] {
   return [
     studioToolName(StudioTool.Checkpoint),
     ...(request.onCapture ? [studioToolName(StudioTool.Capture)] : []),
@@ -2174,9 +2242,23 @@ function allowedToolsFor(request: DelegateRequest, interviewTools: StudioToolSpe
     // would silence the very question it exists to ask. Its standing allows are the rules the
     // person saved (settings `permissions.allow`). Nor does a worker: its box runs sandboxed
     // commands unasked itself where its mode does (Auto), and asks about them where it does not.
-    ...(request.readOnly || asksOf(request) || request.worker ? [] : [SHELL_TOOL]),
+    ...shellAllows(request, genexShell),
     ...(researches(request) ? WEB_TOOLS : []),
   ];
+}
+
+/**
+ * The shell a session runs unasked. In Claude Code's own box, Bash for an unattended session. In
+ * Genex's (`studioShell`), the studio's shell wherever that box runs commands unasked: an unattended
+ * builder, and a worker whose box does (Bypass, Auto, one that cannot ask); Accept edits and Manual
+ * ask about each command, as their box did.
+ */
+function shellAllows(request: DelegateRequest, genexShell: boolean): string[] {
+  if (genexShell) {
+    const unasked = !request.worker || workerBox(request.worker, Boolean(request.readOnly)).autoAllow;
+    return unasked ? [STUDIO_SHELL_TOOL] : [];
+  }
+  return request.readOnly || asksOf(request) || request.worker ? [] : [SHELL_TOOL];
 }
 
 /**
@@ -2201,7 +2283,14 @@ function researches(request: DelegateRequest): boolean {
  * read-only lead or coordinator the person may talk to (`leadAsks`), the chat's main agent, keeps
  * what the chat's own session keeps; the chat's mode decides each call.
  */
-function disallowedToolsFor(request: DelegateRequest): string[] {
+function disallowedToolsFor(request: DelegateRequest, genexShell = false): string[] {
+  const refused = refusedTools(request);
+  // Where Genex's sandbox runs the commands, Claude Code's own shell would run them in none.
+  return genexShell && !refused.includes(SHELL_TOOL) ? [...refused, SHELL_TOOL] : refused;
+}
+
+/** The tools a session never gets, whoever runs its commands (`disallowedToolsFor`). */
+function refusedTools(request: DelegateRequest): string[] {
   if (request.blind) return [...new Set([...JUDGE_DISALLOWED_TOOLS, ...EDIT_TOOLS, ...ASKING_TOOLS])];
   if (request.worker) return workerDisallowedTools(request);
   if (request.readOnly && !request.leadAsks)
@@ -2216,14 +2305,39 @@ function disallowedToolsFor(request: DelegateRequest): string[] {
 
 /** The only built-in a blind judge may load: tool search, which brings in its deferred live tools. */
 const BLIND_BUILT_INS = ["ToolSearch"];
+/**
+ * The built-ins of a session whose commands Genex's sandbox runs (`studioShell`): its files, its
+ * task list, the web and its plan, and none that starts a process of its own (Bash, PowerShell,
+ * Monitor, REPL, scheduled prompts, sub-agents), which would run outside every box.
+ */
+const STUDIO_SHELL_BUILT_INS = [
+  "Read",
+  "Write",
+  "Edit",
+  "Glob",
+  "Grep",
+  "NotebookEdit",
+  "TodoWrite",
+  "TaskCreate",
+  "TaskGet",
+  "TaskUpdate",
+  "TaskList",
+  "ToolSearch",
+  "WebFetch",
+  "WebSearch",
+  "ExitPlanMode",
+  "Skill",
+];
 
 /**
- * A blind judge's built-ins, as an allowlist on top of its block list: a built-in Claude Code adds
- * later (Skill, Workflow's sub-agents with their file tools) would otherwise reach it unasked.
- * Every other session keeps Claude Code's own set.
+ * A session's built-ins, as an allowlist on top of its block list, where one is kept: a blind
+ * judge's, and a studio-shell session's. A built-in Claude Code adds later (Skill, Workflow's
+ * sub-agents with their file tools, a shell of its own) would otherwise reach it unasked. Every
+ * other session keeps Claude Code's own set.
  */
-function blindBuiltIns(request: DelegateRequest): { tools?: string[] } {
-  return request.blind ? { tools: [...BLIND_BUILT_INS] } : {};
+function builtInsFor(request: DelegateRequest, genexShell: boolean): { tools?: string[] } {
+  if (request.blind) return { tools: [...BLIND_BUILT_INS] };
+  return genexShell ? { tools: [...STUDIO_SHELL_BUILT_INS] } : {};
 }
 
 /**
@@ -2340,12 +2454,19 @@ function unattendedSandbox(request: DelegateRequest, protectedPaths: string[]): 
   };
 }
 
-/** The session's sandbox: none for a session that asks; a worker's box, in every mode; else the unattended one. */
+/**
+ * The session's sandbox: none for a session that asks; a worker's box, in every mode; else the
+ * unattended one. On Windows Claude Code's own sandbox cannot start (a worker's refused the
+ * session), so it is off there and Genex's runs the commands of a session that runs any
+ * (`studioShell`); a read-only one runs none.
+ */
 async function sandboxFor(
   request: DelegateRequest,
   asks: DelegateAsks | undefined,
   protectedPaths: string[],
+  platform: NodeJS.Platform,
 ): Promise<{ sandbox?: Record<string, unknown> }> {
+  if (platform === "win32") return request.worker || !asks ? { sandbox: { enabled: false } } : {};
   if (request.worker) {
     const box = workerBox(request.worker, Boolean(request.readOnly));
     return { sandbox: await workerSandbox(request, box, protectedPaths) };
@@ -2394,6 +2515,47 @@ async function workerSandbox(
  */
 function workerClaudeFolders(cwd: string, roots: readonly string[]): string[] {
   return claudeFoldersIn([cwd, ...roots]);
+}
+
+/**
+ * Whether Genex's sandbox runs the session's commands, through the studio's `run_command`, in
+ * place of Claude Code's own: where that cannot start (Windows), for a session that runs commands
+ * in a box, a worker that writes or an unattended builder. A session that asks runs its commands
+ * where the person would; a read-only one runs none.
+ */
+export function studioShell(request: DelegateRequest, platform: NodeJS.Platform): boolean {
+  if (platform !== "win32" || request.blind) return false;
+  if (request.worker) return !workerReadOnly(request.worker, Boolean(request.readOnly));
+  return !asksOf(request) && !request.readOnly;
+}
+
+/**
+ * A studio-shell session's box: what Claude Code's would have been (`workerSandbox`,
+ * `unattendedSandbox`). It writes the session's folder and a worker's roots (in Bypass the home
+ * folder too), never reads or writes the studio's protected folders, the CLIs' sign-in homes or the
+ * never-touch list fenced around the worker's own folders, and never writes Claude Code's folders.
+ */
+async function shellBox(
+  request: DelegateRequest,
+  protectedPaths: string[],
+): Promise<Pick<CommandBox, "cwd" | "writableRoots" | "secretPaths" | "denyWrite">> {
+  const seat = request.worker;
+  const fence = seat ? await neverTouchFence(seat.neverTouch) : { reads: [], writes: [] };
+  const roots = workerWrites(request);
+  const home = seat ? workerBox(seat, Boolean(request.readOnly)).home : false;
+  const signIns = credentialHomes();
+  return {
+    cwd: path.resolve(request.cwd),
+    writableRoots: home ? [os.homedir(), ...roots] : roots,
+    secretPaths: [...protectedPaths, ...signIns, ...(request.denyReads ?? []), ...fence.reads],
+    denyWrite: [
+      ...protectedPaths,
+      ...signIns,
+      ...fence.writes,
+      ...(request.optimization?.denyWrites ?? []),
+      ...(seat ? workerClaudeFolders(request.cwd, roots) : []),
+    ],
+  };
 }
 
 /** A system message that says which mode the session runs in: its init, or a status that changed it. */
@@ -2450,6 +2612,15 @@ interface McpKit {
   tool: typeof import("@anthropic-ai/claude-agent-sdk").tool;
   z: typeof import("zod").z;
 }
+/**
+ * Loads a tool with the prompt. Claude Code (2.1.304 on) defers MCP tools behind its tool search,
+ * offering their names but not their schemas, and a session that cannot see a tool its prompt
+ * relies on does not reliably look for it: the checkpoint, capture, a chat's interview tools and
+ * the studio's shell load from the first turn. Live and connector tools, a large and varied set,
+ * stay deferred.
+ */
+const LOAD_WITH_PROMPT = { alwaysLoad: true } as const;
+
 /** A tool's MCP answer: its text, then any pictures it came back with. */
 type ToolAnswer = {
   content: Array<{ type: "text"; text: string } | { type: "image"; data: string; mimeType: string }>;
@@ -2477,6 +2648,7 @@ function checkpointTool(kit: McpKit, request: Pick<DelegateRequest, "onEvent" | 
         return { content: [{ type: "text", text: CHECKPOINT_TOOL.failed(errorMessage(err)) }], isError: true };
       }
     },
+    LOAD_WITH_PROMPT,
   );
 }
 
@@ -2499,7 +2671,44 @@ function captureTool(kit: McpKit, onCapture: NonNullable<DelegateRequest["onCapt
         return { content: [{ type: "text" as const, text: `capture failed: ${errorMessage(err)}` }], isError: true };
       }
     },
+    LOAD_WITH_PROMPT,
   );
+}
+
+/**
+ * `run_command`: the session's shell, in Genex's sandbox (`studioShell`). A command that failed, or
+ * that the sandbox could not run, reports as a failed call, never ending the session.
+ */
+function runCommandTool(kit: McpKit, shell: SessionShell) {
+  const { tool, z } = kit;
+  return tool(
+    StudioTool.RunCommand,
+    RUN_COMMAND_TOOL.description,
+    {
+      command: z.string().describe(RUN_COMMAND_TOOL.command),
+      timeout: z.number().optional().describe(RUN_COMMAND_TOOL.timeout),
+    },
+    async (args: { command: string; timeout?: number }): Promise<ToolAnswer> => {
+      try {
+        const result = await shell.run(String(args.command ?? ""), shellTimeout(args.timeout));
+        return {
+          content: [{ type: "text", text: commandReport(result) }],
+          ...(commandFailed(result) ? { isError: true } : {}),
+        };
+      } catch (err) {
+        return { content: [{ type: "text", text: RUN_COMMAND_TOOL.failed(errorMessage(err)) }], isError: true };
+      }
+    },
+    // The session's only shell is never deferred behind tool search (Claude Code 2.1.304 defers
+    // MCP tools by default): a worker that cannot see its shell does not look for one.
+    LOAD_WITH_PROMPT,
+  );
+}
+
+/** The time a command asked for, within the shell's longest; its default when it asked for none. */
+function shellTimeout(asked: number | undefined): number {
+  if (typeof asked !== "number" || !Number.isFinite(asked) || asked <= 0) return SHELL_DEFAULT_TIMEOUT_MS;
+  return Math.min(asked, SHELL_MAX_TIMEOUT_MS);
 }
 
 /**
@@ -2580,9 +2789,13 @@ function intakeTool(kit: McpKit, spec: StudioToolSpec) {
     const field = z.string().describe(prop.description ?? "");
     shape[key] = spec.parameters?.required?.includes(key) ? field : field.optional();
   }
-  return tool(spec.name, spec.description, shape, async () => ({
-    content: [{ type: "text" as const, text: intakeToolReply(spec.name) }],
-  }));
+  return tool(
+    spec.name,
+    spec.description,
+    shape,
+    async () => ({ content: [{ type: "text" as const, text: intakeToolReply(spec.name) }] }),
+    LOAD_WITH_PROMPT,
+  );
 }
 
 /** How the SDK is told to start the selected Claude, as `query` options. */
@@ -2711,7 +2924,9 @@ function compactPart(part: Record<string, unknown>, cwd?: string): Record<string
     return { type: SdkBlock.Thinking, text: clip(String(part.thinking ?? ""), TRACE_THINKING_CHARS) };
   }
   if (part.type === SdkBlock.ToolUse) {
-    return { type: SdkBlock.ToolUse, name: part.name, id: part.id, input: summariseToolInput(part.input, cwd) };
+    // The studio's shell is the session's Bash: the log, the chat and the report read it as one.
+    const name = part.name === STUDIO_SHELL_TOOL ? SHELL_TOOL : part.name;
+    return { type: SdkBlock.ToolUse, name, id: part.id, input: summariseToolInput(part.input, cwd) };
   }
   if (part.type === SdkBlock.ToolResult) {
     return {

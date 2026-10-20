@@ -49,6 +49,12 @@ export const StudioFlag = {
   KeepUserData: "--keep-userdata",
   /** Show the self test's window. */
   Show: "--show",
+  /**
+   * `=<file>`: the self test also runs one Claude Code worker against the scripted Anthropic
+   * stand-in its runner named in `ANTHROPIC_BASE_URL`, whose command writes `<file>` in the
+   * worker's folder (`smoke/claude-worker-check.ts`).
+   */
+  ClaudeWorkerCheck: "--claude-worker-check",
 } as const;
 export type StudioFlag = (typeof StudioFlag)[keyof typeof StudioFlag];
 

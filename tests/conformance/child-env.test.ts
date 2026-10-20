@@ -541,6 +541,8 @@ describe("SEC-3: both CLIs' sign-in homes are off limits to every agent process"
       systemHome,
       queryFn: fn,
       protectedPaths: [path.join(root, "secrets")],
+      // Claude Code's own box; on Windows Genex's holds the same lists (claude-windows-commands.test.ts).
+      platform: "darwin",
     });
     await engine.delegate({ prompt: "build", cwd: root });
     const options = seen[0]! as {

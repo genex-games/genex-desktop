@@ -40,6 +40,8 @@ interface RegisteredTool {
   ) => Promise<{ content: Array<Record<string, unknown>>; isError?: boolean }>;
   /** What the SDK built from the zod shape the engine handed it — the model's real contract. */
   inputSchema?: { safeParse: (value: unknown) => { success: boolean } };
+  /** The MCP metadata the SDK sent with the tool, `anthropic/alwaysLoad` among it. */
+  _meta?: Record<string, unknown>;
 }
 
 /** The SDK server object keeps its tools on the MCP instance; this is the only way in. */
@@ -58,6 +60,14 @@ function registeredTools(options: Record<string, unknown> | null): Record<string
  */
 export function registeredSchema(record: ScriptedClaude, tool: string): RegisteredTool["inputSchema"] {
   return registeredTools(record.options)[tool]?.inputSchema;
+}
+
+/**
+ * Whether one studio tool was registered to load with the prompt, never deferred behind Claude
+ * Code's tool search (`tool(..., { alwaysLoad: true })`).
+ */
+export function alwaysLoaded(record: ScriptedClaude, tool: string): boolean {
+  return registeredTools(record.options)[tool]?._meta?.["anthropic/alwaysLoad"] === true;
 }
 
 export function scriptedClaude(plan: ScriptedToolStep[]): ScriptedClaude {

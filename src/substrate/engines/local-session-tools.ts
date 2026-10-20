@@ -7,12 +7,12 @@ import { mkdir, readdir, readFile, realpath, stat, writeFile } from "node:fs/pro
 import path from "node:path";
 import { allowedFile, ownershipReason, specOf } from "../ownership.ts";
 import { isInside, toPosixRelative } from "../paths.ts";
-import type { ProcessSandbox } from "../spawn.ts";
 import type { ToolCall } from "../types.ts";
 import { MINUTE_MS } from "../../shared/duration.ts";
 import { LOCAL_NOTE, LOCAL_TOOL_DESCRIPTION } from "./local-session-prompts.ts";
 import { StudioTool } from "./studio-tool-prompts.ts";
 import { captureArgs } from "./capture-args.ts";
+import { type CommandSandbox, runSessionCommand } from "./session-commands.ts";
 import type { DelegateRequest, DelegateResult, LiveToolResult, ToolDefinition } from "./types.ts";
 
 /** The local session's own tools, by the name the model calls. */
@@ -194,7 +194,7 @@ export interface ToolContext {
   cwd: string;
   signal: AbortSignal;
   resolveFile: FileResolver;
-  sandbox: ProcessSandbox | null;
+  sandbox: CommandSandbox | null;
   forbidden: string[];
   deniedWrites: string[];
   /** The sandbox label: `<engine>:<session id>`. */
@@ -309,13 +309,14 @@ async function runCommandTool(args: ToolArgs, context: ToolContext): Promise<Liv
   if (typeof args.command !== "string") throw new Error(MESSAGE.CommandNotString);
   if (!context.sandbox) throw new Error(MESSAGE.ReadOnlyCommand);
   return JSON.stringify(
-    await context.sandbox.run({
+    await runSessionCommand(context.sandbox, {
       command: args.command,
       cwd: context.cwd,
       signal: context.signal,
       timeoutMs: LOCAL_TOOL_LIMITS.commandTimeoutMs,
       maxOutputBytes: LOCAL_TOOL_LIMITS.commandOutputBytes,
-      policy: { denyRead: context.forbidden, denyWrite: context.deniedWrites },
+      denyRead: context.forbidden,
+      denyWrite: context.deniedWrites,
       label: context.label,
     }),
   );

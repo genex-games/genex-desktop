@@ -10,6 +10,8 @@ export const StudioTool = {
   Capture: "capture",
   /** The Loop chat's question tool: it records the question and ends the reply. */
   AskUser: "ask_user",
+  /** The shell of a Claude Code session whose own sandbox cannot start (Windows): Genex's sandbox runs it. */
+  RunCommand: "run_command",
 } as const;
 export type StudioTool = (typeof StudioTool)[keyof typeof StudioTool];
 
@@ -21,6 +23,19 @@ export const STUDIO_TOOL_PREFIX = `mcp__${STUDIO_MCP_SERVER}__`;
 export function studioToolName(name: string): string {
   return `${STUDIO_TOOL_PREFIX}${name}`;
 }
+
+/** The studio's shell as the contractor calls it; the host and the never-touch screen read it as `Bash`. */
+export const STUDIO_SHELL_TOOL = studioToolName(StudioTool.RunCommand);
+
+/** `run_command`: Claude Code's shell where Genex's sandbox, not Claude Code's own, holds the commands. */
+export const RUN_COMMAND_TOOL = {
+  description:
+    "Run a shell command in this workspace and get its output. This is your shell: Bash is not available here. Commands run under Git Bash inside Genex's sandbox, so use bash syntax and forward slashes. The sandbox writes only your workspace and the folders you were given, has no network, and starts each command fresh in the workspace (no state carries over between calls, and nothing runs in the background: a dev server or watcher would only hold the call until it times out).",
+  command: "The command line to run, for example `node --check src/main.js` or `npm test`.",
+  timeout: "Milliseconds before the command is stopped (default 2 minutes, at most 10).",
+  /** The sandbox could not run the command at all: the session reads why and goes on. */
+  failed: (why: string) => `The command could not run: ${why}`,
+} as const;
 
 /** `checkpoint`: the contractor decides which moments are worth showing. */
 export const CHECKPOINT_TOOL = {

@@ -3,7 +3,15 @@ import { spawnSync } from "node:child_process";
 import { mkdir, readdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, test } from "node:test";
-import { AGENT_CHECKS, agentChecksDone, agentVerdict, readSelfTest } from "../../scripts/canary/agent-command.ts";
+import {
+  AGENT_CHECKS,
+  agentChecksDone,
+  agentChecksFor,
+  agentVerdict,
+  CLAUDE_WORKER_CHECKS,
+  readSelfTest,
+} from "../../scripts/canary/agent-command.ts";
+import { CLAUDE_WORKER_CHECK } from "../../src/main/smoke/claude-worker-check.ts";
 import { gitHubSignIn, gitHubToken, ownerResult, signInDue, sizesWithRoom } from "../../scripts/canary/azure.ts";
 import { readStart } from "../../scripts/canary/first-start.ts";
 import {
@@ -240,6 +248,23 @@ describe("release canary agent command", () => {
     assert.match(failed.detail, /failed: harness boots inside the sandbox: state=failed/);
     const missing = agentVerdict(readSelfTest(""), "runner exited 1");
     assert.match(missing.detail, /never reported: a chat turn completes end to end/);
+  });
+
+  test("on Windows a release whose runner has the Claude worker stage also waits for that worker's checks", () => {
+    const runner = 'const claudeWorker = process.argv.includes("--claude-worker");';
+    const checks = agentChecksFor("win32", runner);
+    assert.deepEqual(checks, [...AGENT_CHECKS, ...CLAUDE_WORKER_CHECKS]);
+    assert.deepEqual(agentChecksFor("win32", "// an older runner"), AGENT_CHECKS, "an older release never had it");
+    assert.deepEqual(agentChecksFor("darwin", runner), AGENT_CHECKS, "Claude Code's own sandbox runs elsewhere");
+    assert.equal(agentChecksDone(readSelfTest(passed), checks), false, "the worker has not reported yet");
+    const refused = `${passed}\n[selftest] PASS ${CLAUDE_WORKER_CHECKS[0]}: claude.exe\n[selftest] FAIL ${CLAUDE_WORKER_CHECKS[1]}: sandbox_unavailable\n[selftest] FAIL ${CLAUDE_WORKER_CHECKS[2]}: file missing`;
+    const verdict = agentVerdict(readSelfTest(refused), "stopped", checks);
+    assert.equal(verdict.outcome, StepOutcome.Fail);
+    assert.match(verdict.detail, /failed: a Claude worker ran its turn without being refused: sandbox_unavailable/);
+  });
+
+  test("the canary waits for the Claude worker checks by the names the self test prints", () => {
+    assert.deepEqual([...CLAUDE_WORKER_CHECKS], Object.values(CLAUDE_WORKER_CHECK));
   });
 });
 

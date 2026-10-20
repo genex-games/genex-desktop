@@ -6,7 +6,7 @@ How agents play and look at what they build: one tool, one referee, swappable ta
 
 | Layer | What | Code |
 | --- | --- | --- |
-| 0 · delivery | How a provider's CLI receives the tool: Claude Code as an in-process MCP tool, OpenCode as a local MCP server relayed over the file bridge (`studio-mcp-shim.ts`, pictures inline), Codex through the file bridge (`studio-bridge.ts`, the fallback) or app-server dynamic tools where enabled, Bonsai and OpenRouter in `LocalSessions`, Ollama through `preview.computer` | `src/substrate/engines/*` |
+| 0 · delivery | How a provider's CLI receives the tool: Claude Code as an in-process MCP tool (deferred behind its tool search, like every live and connector tool, while the studio's `checkpoint`, `capture`, `run_command` and a chat's interview tools load with the prompt), OpenCode as a local MCP server relayed over the file bridge (`studio-mcp-shim.ts`, pictures inline), Codex through the file bridge (`studio-bridge.ts`, the fallback) or app-server dynamic tools where enabled, Bonsai and OpenRouter in `LocalSessions`, Ollama through `preview.computer` | `src/substrate/engines/*` |
 | 1 · tool | One `computer` tool: Anthropic's `computer_toolset_20260801` actions, the studio verbs (`camera`, `state`, `reload`, `console`), `batch` and `observe`. Its description and action list are built from the target's capabilities, so a verb the target lacks is never offered and calling it gets a sentence, not a silent no-op | `src/substrate/computer-tool.ts`, `computer-tool-prompts.ts`, `computer-vocabulary.ts` |
 | 2 · session | The referee: parse, refuse what the target cannot do, keep the action budget, pace the clock, answer, check a goal, write the trace | `src/main/core/computer-session.ts`, `src/substrate/computer-trace.ts` |
 | 3 · targets | A `ComputerTarget` with graded capabilities: the browser preview, a game speaking the Genex Play Protocol, and the person's desktop or a VM (cua-driver) | `src/substrate/computer-target.ts`, `src/shared/computer-target.ts`, `src/main/core/browser-preview-target.ts` |
@@ -265,10 +265,13 @@ transparent overlays such as a game overlay over the whole screen) and its app l
 installed app, so the studio asks Windows itself through the window probe
 ([`windows-window-probe.ts`](../src/substrate/windows-window-probe.ts)): Windows PowerShell running a
 fixed script, handed over as `-EncodedCommand` (no file, so no execution policy), that uses only .NET's
-UI Automation, Windows Forms and process reads: nothing compiled and no cmdlet, as a first cmdlet
+UI Automation, Windows Forms, process reads and user32's `GetWindowLongW` declared in memory
+(Reflection.Emit): nothing compiled and no cmdlet, as a first cmdlet
 makes PowerShell prepare every installed module for first use (over 20 s on a fresh machine). It answers which app is in front
-and whether its focused field is a password field (UI Automation's `IsPassword`, asked again a moment
-later when focus is on no text field, as Chromium's accessibility wakes on first asking), and which
+and whether its focused field is a password field (UI Automation's `IsPassword`, or, for a Win32
+edit control, its own `ES_PASSWORD` style: .NET's UI Automation names a Windows Forms password box a
+Pane with no password flag; asked again a moment later when focus is on no text field, as
+Chromium's accessibility wakes on first asking), and which
 app a click at a point reaches (the element there, up to its top-level window), with its window's
 handle so the tree fallback skips cua's slow window list. It says its view of the primary screen
 when ready, and click points are scaled to it, whatever DPI awareness PowerShell has. An app is its
