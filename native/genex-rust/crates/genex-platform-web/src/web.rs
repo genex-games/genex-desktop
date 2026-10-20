@@ -163,7 +163,8 @@ thread_local! {
 /// `studio_boot`, after the shell preloaded its saves: there its registrations are checked as
 /// `genex::install` does (a refusal panics with the typed code) and its first reset runs.
 pub fn install_named<W: Default + 'static>(name: &str, game: Game<W>, assets: AssetTable) {
-    console_error_panic_hook::set_once();
+    // A panic gives the shell one crash record, then the console text it always logged (CRASH-3).
+    crate::crash::install(name);
     let start: StartGame = Box::new(move |source| {
         let runtime = Runtime::with_assets(game, source).unwrap_or_else(|error| panic!("genex::install: {error}"));
         Box::new(runtime)

@@ -82,6 +82,21 @@
       frame the module refuses with device-lost (the browser reset its GPU) flushes the saves and
       shows a card with that code (status failed); any other refusal is frame-failed.
 
+      Crash reports (game systems CRASH-3): a Rust panic goes through genex-crash's hook, which hands
+      the shell one genex-crash/1 record (GenexShell.crash), then logs the console text it always
+      logged; the trap that ends the panic is not recorded again. A WebAssembly trap with no panic
+      before it (from a frame, a verb, window.onerror or an unhandled rejection) is the shell's own
+      wasm-trap record with the engine's wasm-function frames; the game's device lost (any reason
+      but destroyed) is a device-lost record beside the device-lost card, and an uncaptured GPU
+      error a gpu-validation record that is not fatal (at most GPU_ERROR_RECORDS_MAX distinct ones).
+      Records are kept in the game's IndexedDB database genex-crashes:<game> (the module names it,
+      studio_crash_database), CRASH_RECORDS_KEPT at most, the oldest pruned, and survive a reload;
+      window.__studio.crashes() answers them newest first (a promise), on every page contract, the
+      failed and unsupported ones too. After a fatal crash the module is never called again (its
+      state is mid-frame). window.__studio.profile(request) is the dev profile verb through
+      studio_call, a refusal answered {__refused: code} as renderSettings (the web answers
+      unknown-op: an export serves the same page).
+
       Input: keys while the canvas has focus, all released at once when the canvas, the window or
       the page loses it (their keyups would go elsewhere); Mouse1 held from pointerdown to pointerup
       with the pointer (a click no tick saw is also sent as a tap), the pointer's movement as look
@@ -434,6 +449,37 @@
       const PHASE_FOLLOW = 1 / 32;
       /** Why a frame stopped the game: the module's typed code on its error, else frame-failed. Wire values. */
       const FrameFailure = { DeviceLost: "device-lost", Failed: "frame-failed" };
+      /** A crash record's format and the kinds, sources and classes the shell writes (src/shared/crash-record.ts). Wire values. */
+      const CRASH_FORMAT = "genex-crash/1";
+      const CrashKind = { Panic: "panic", GpuValidation: "gpu-validation", DeviceLost: "device-lost", WasmTrap: "wasm-trap" };
+      const CrashSource = { Game: "game", Shell: "shell" };
+      const WasmTrapKind = { Unreachable: "unreachable", Memory: "memory", Stack: "stack", Other: "other" };
+      const GpuErrorClass = { Validation: "validation", OutOfMemory: "out-of-memory", Internal: "internal" };
+      /**
+       * What a trap was, from the engine's RuntimeError text: WebAssembly gives a trap no typed code,
+       * so the texts V8, SpiderMonkey and JavaScriptCore use are the only signal (lower case).
+       */
+      const TRAP_TEXTS = [
+        [WasmTrapKind.Unreachable, ["unreachable"]],
+        [WasmTrapKind.Memory, ["memory access out of bounds", "index out of bounds", "out of bounds memory access"]],
+        [WasmTrapKind.Stack, ["call stack", "too much recursion"]],
+      ];
+      /** One engine stack frame inside the module (`wasm-function[N]:0xOFF`). */
+      const WASM_FRAME = /wasm-function\[(\d+)\]:0x([0-9a-f]+)/gi;
+      /** The destination a web record names. */
+      const WEB_DESTINATION = "web";
+      /** The lost reason of a device the page destroyed on purpose: not a crash. */
+      const LOST_DESTROYED = "destroyed";
+      /** The IndexedDB object store crash records are kept in (keys count up), and how many stay. */
+      const CRASHES_STORE = "records";
+      const CRASHES_DB_VERSION = 1;
+      const CRASH_RECORDS_KEPT = 16;
+      /** The record caps the shell keeps to (genex-crash's): its JSON, its message and its frames. */
+      const CRASH_RECORD_MAX_BYTES = 64 * 1024;
+      const CRASH_MESSAGE_MAX_CHARS = 2048;
+      const CRASH_FRAMES_MAX = 128;
+      /** Distinct uncaptured GPU errors one page records (a browser may report one every frame). */
+      const GPU_ERROR_RECORDS_MAX = 4;
       /** The mouse button a page pointer is (the protocol's key name). */
       const MOUSE1 = "Mouse1";
       /** One wheel line in pixels (WheelEvent.DOM_DELTA_LINE), as the desktop shell counts a notch. */
@@ -505,7 +551,25 @@
       const loading = { watchdog: null, fill: 0, staged: { saves: [], map: null, assets: [] } };
       const status = { state: State.Starting, code: null, reason: null, limit: null, receipt: null };
       const saves = { db: null, flushing: Promise.resolve(), scheduled: false, retryAt: 0 };
-      const shell = { status, module: null, world: null, progress: null, adapter: null, flushSaves: async () => {} };
+      /** The crash records: the database, those taken before it opened, and whether the module is dead. */
+      const crashes = {
+        db: null,
+        taken: [],
+        writing: Promise.resolve(),
+        fatal: false,
+        panicked: false,
+        deviceLost: false,
+        gpuErrors: new Set(),
+      };
+      const shell = {
+        status,
+        module: null,
+        world: null,
+        progress: null,
+        adapter: null,
+        flushSaves: async () => {},
+        crash: takeGameCrash,
+      };
       window.GenexShell = shell;
 
       function firstLimitBelowCore(limits) {
@@ -609,6 +673,7 @@
         window.__studio = {
           version: 1,
           state: () => ({ version: 1, error: status.code, volatile: { gpu: { ...refusal } } }),
+          crashes: readCrashes,
         };
         console.error(`genex: ${status.code} (${[status.reason, status.limit].filter(Boolean).join(": ")})`);
       }
@@ -639,6 +704,7 @@
         window.__studio ??= {
           version: 1,
           state: () => ({ version: 1, error: status.code, volatile: { boot: { reason: status.reason } } }),
+          crashes: readCrashes,
         };
         console.error(error);
       }
@@ -728,6 +794,7 @@
         window.__studio ??= {
           version: 1,
           state: () => ({ version: 1, error: status.code, volatile: { boot: { reason: status.reason } } }),
+          crashes: readCrashes,
         };
         console.error(`genex: ${BOOT_TIMEOUT} (${status.reason})`);
       }
@@ -831,6 +898,7 @@
           const opened = await requestDevice.apply(this, args);
           if (gpuHooks.device === null) {
             gpuHooks.device = opened;
+            watchDeviceCrashes(opened);
             if (gpuHooks.plan) await prewarm(opened, gpuHooks.plan).catch((error) => console.warn(error));
           }
           return opened;
@@ -1237,6 +1305,199 @@
         await Promise.all(Array.from({ length: ASSET_FETCHES }, fetchNext));
       }
 
+      // ── crash reports: the game's records and the shell's own, kept in IndexedDB ──
+
+      /** A record's JSON within the cap, or null (a record over it is not kept). */
+      function fittingJson(record) {
+        const json = JSON.stringify(record);
+        return json.length <= CRASH_RECORD_MAX_BYTES ? json : null;
+      }
+
+      /** Keep one record: in the database when it is open, else until it opens. */
+      function keepCrash(record) {
+        if (!record.context || typeof record.context !== "object") record.context = {};
+        record.context.destination ??= WEB_DESTINATION;
+        if (fittingJson(record) === null) return;
+        crashes.taken.push(record);
+        if (crashes.db) writeCrashes();
+      }
+
+      /** Write the records taken so far, one after another, pruning the oldest past CRASH_RECORDS_KEPT. */
+      function writeCrashes() {
+        crashes.writing = crashes.writing.then(async () => {
+          const records = crashes.taken.splice(0);
+          if (!crashes.db || records.length === 0) return;
+          const transaction = crashes.db.transaction(CRASHES_STORE, "readwrite");
+          const done = new Promise((resolve) => {
+            transaction.oncomplete = () => resolve();
+            transaction.onerror = () => resolve();
+            transaction.onabort = () => resolve();
+          });
+          const store = transaction.objectStore(CRASHES_STORE);
+          for (const record of records) store.add(record);
+          const keys = await settled(store.getAllKeys());
+          for (const key of keys.slice(0, Math.max(0, keys.length - CRASH_RECORDS_KEPT))) store.delete(key);
+          await done;
+        });
+        crashes.writing = crashes.writing.catch((error) => console.warn(`genex: crashes: ${error?.name ?? error}`));
+        return crashes.writing;
+      }
+
+      /** The game's crash database (named by the module), opened before studio_boot; none without IndexedDB or the export. */
+      async function openCrashes(game) {
+        try {
+          if (typeof game.studio_crash_database !== "function" || !window.indexedDB) return;
+          const request = indexedDB.open(game.studio_crash_database(), CRASHES_DB_VERSION);
+          request.onupgradeneeded = () => {
+            if (!request.result.objectStoreNames.contains(CRASHES_STORE)) {
+              request.result.createObjectStore(CRASHES_STORE, { autoIncrement: true });
+            }
+          };
+          crashes.db = await settled(request);
+          await writeCrashes();
+        } catch (error) {
+          console.warn(`genex: crashes: ${error?.name ?? error}`);
+          crashes.db = null;
+        }
+      }
+
+      /** Every kept record, newest first (`window.__studio.crashes()`): the database's, or this page's without one. */
+      async function readCrashes() {
+        await crashes.writing;
+        if (!crashes.db) return [...crashes.taken].reverse();
+        const store = crashes.db.transaction(CRASHES_STORE, "readonly").objectStore(CRASHES_STORE);
+        const kept = await settled(store.getAll());
+        return [...kept, ...crashes.taken].reverse();
+      }
+
+      /**
+       * The module's crash hook hands a record here (`GenexShell.crash(json)`, from inside the panic
+       * hook: it never throws). A fatal one means the module is dead: the trap that follows is not
+       * recorded again, and nothing calls the module any more. A dead module's later records are dropped.
+       */
+      function takeGameCrash(json) {
+        try {
+          if (crashes.fatal) return;
+          const record = JSON.parse(json);
+          if (record?.format !== CRASH_FORMAT) return;
+          if (record.fatal === true) Object.assign(crashes, { fatal: true, panicked: true });
+          if (record.kind === CrashKind.DeviceLost) crashes.deviceLost = true;
+          keepCrash(record);
+        } catch {
+          /* a record the shell cannot read is dropped: the panic's console text still follows */
+        }
+      }
+
+      /** A shell-made record of `kind` with its message and sides (the fields genex-crash/1 requires). */
+      function shellRecord(kind, fatal, message, sides = {}) {
+        return {
+          format: CRASH_FORMAT,
+          kind,
+          source: CrashSource.Shell,
+          fatal,
+          handled: false,
+          message: String(message ?? "").slice(0, CRASH_MESSAGE_MAX_CHARS),
+          location: null,
+          thread: null,
+          frames: [],
+          anchor: null,
+          images: [],
+          gpu: null,
+          wasm: null,
+          context: {},
+          replay: null,
+          profile: null,
+          hitches: [],
+          symbols: null,
+          ...sides,
+        };
+      }
+
+      /** Whether `error` is a WebAssembly trap (a RuntimeError, or a stack overflow inside the module). */
+      function isTrap(error) {
+        if (globalThis.WebAssembly?.RuntimeError && error instanceof WebAssembly.RuntimeError) return true;
+        return error instanceof RangeError && String(error.stack ?? "").includes("wasm-function[");
+      }
+
+      /** What a trap was, by the engine's text (TRAP_TEXTS); a stack overflow outside a RuntimeError is `stack`. */
+      function trapKind(error) {
+        const text = String(error?.message ?? "").toLowerCase();
+        for (const [kind, texts] of TRAP_TEXTS) if (texts.some((known) => text.includes(known))) return kind;
+        return error instanceof RangeError ? WasmTrapKind.Stack : WasmTrapKind.Other;
+      }
+
+      /** The engine's `wasm-function[N]:0xOFF` frames of a trap, top first. */
+      function wasmFrames(error) {
+        const frames = [];
+        for (const match of String(error?.stack ?? "").matchAll(WASM_FRAME)) {
+          if (frames.length >= CRASH_FRAMES_MAX) break;
+          frames.push({ func: Number(match[1]), offset: Number.parseInt(match[2], 16) });
+        }
+        return frames;
+      }
+
+      /**
+       * A trap that reached the shell: the shell's own fatal `wasm-trap` record, unless a panic's
+       * record came first (a panic ends in a trap) or the module was already dead. Answers whether
+       * it was a trap.
+       */
+      function noteTrap(error) {
+        if (!isTrap(error)) return false;
+        if (!crashes.fatal) {
+          const wasm = { trap: trapKind(error), stack: wasmFrames(error) };
+          keepCrash(shellRecord(CrashKind.WasmTrap, true, error.message, { wasm }));
+        }
+        crashes.fatal = true;
+        return true;
+      }
+
+      /** The class of an uncaptured GPU error, by its type. */
+      function gpuErrorClass(error) {
+        if (globalThis.GPUOutOfMemoryError && error instanceof GPUOutOfMemoryError) return GpuErrorClass.OutOfMemory;
+        if (globalThis.GPUInternalError && error instanceof GPUInternalError) return GpuErrorClass.Internal;
+        return GpuErrorClass.Validation;
+      }
+
+      /** The GPU side of a shell record (genex-crash/1 `gpu`). */
+      function gpuSide(fields) {
+        const adapter = shell.adapter?.name ?? null;
+        return { class: null, reason: null, backend: "webgpu", adapter, ...fields };
+      }
+
+      /**
+       * The game's device, watched for crashes: a loss (any reason but destroyed) is the game's own
+       * `device-lost` record (its renderer's lost callback, which runs after this one), else, a turn
+       * later, the shell's fatal one (the web re-creates a device only by reloading); each distinct
+       * uncaptured error is a `gpu-validation` record that is not fatal, up to GPU_ERROR_RECORDS_MAX.
+       */
+      function watchDeviceCrashes(device) {
+        Promise.resolve(device.lost)
+          .then((info) => {
+            if (!info || info.reason === LOST_DESTROYED) return;
+            setTimeout(() => {
+              if (crashes.deviceLost) return;
+              const description = String(info.message ?? "");
+              const gpu = gpuSide({ reason: String(info.reason ?? "unknown"), description });
+              keepCrash(shellRecord(CrashKind.DeviceLost, true, description, { gpu }));
+            }, 0);
+          })
+          .catch(() => {});
+        device.addEventListener?.("uncapturederror", (event) => {
+          const description = String(event?.error?.message ?? "").slice(0, CRASH_MESSAGE_MAX_CHARS);
+          const seen = crashes.gpuErrors;
+          if (seen.has(description) || seen.size >= GPU_ERROR_RECORDS_MAX) return;
+          seen.add(description);
+          const gpu = gpuSide({ class: gpuErrorClass(event?.error), description });
+          keepCrash(shellRecord(CrashKind.GpuValidation, false, description, { gpu }));
+        });
+      }
+
+      /** Traps no caller caught: a frame's own are caught in run(); these are the page's leftovers. */
+      function listenForTraps() {
+        window.addEventListener("error", (event) => noteTrap(event.error));
+        window.addEventListener("unhandledrejection", (event) => noteTrap(event.reason));
+      }
+
       // ── the page contract ──
 
       /** A PNG of a capture for the page contract (the digest stays the BGRA bytes'). */
@@ -1274,7 +1535,15 @@
 
       /** One op through studio_call: the argument goes in as JSON and the envelope comes back as JSON. */
       function call(game, op, arg) {
-        const reply = JSON.parse(game.studio_call(op, JSON.stringify(arg ?? null)));
+        // A dead module is never called again: its state stopped mid-frame.
+        if (crashes.fatal) return undefined;
+        let reply;
+        try {
+          reply = JSON.parse(game.studio_call(op, JSON.stringify(arg ?? null)));
+        } catch (error) {
+          noteTrap(error);
+          throw error;
+        }
         if (reply?.ok === true) return reply.result;
         console.warn(`${op}: ${reply?.error}`);
         return undefined;
@@ -1350,7 +1619,14 @@
             };
           }
           bindPageShapes(game, api);
+          /** The dev profile verb (`{action, frames?, mode?}`); a refusal answers `{__refused: code}`, as renderSettings. */
+          api.profile = (request) => {
+            if (crashes.fatal) return { [REFUSED]: FrameFailure.Failed };
+            const reply = JSON.parse(game.studio_call("profile", JSON.stringify(request ?? {})));
+            return reply?.ok === true ? reply.result : { [REFUSED]: String(reply?.error ?? "") };
+          };
         }
+        api.crashes = readCrashes;
         window.__studio = api;
         shell.hex = hex;
       }
@@ -1403,6 +1679,11 @@
         let first = true;
         const pacer = { samples: [], refresh: null, owed: 0, phase: 0 };
         const frame = (now) => {
+          // A crash ended the module (in a verb, or a frame of its own): no frame calls it again.
+          if (crashes.fatal) {
+            if (status.state === State.Running) Object.assign(status, { state: State.Failed, code: FrameFailure.Failed });
+            return;
+          }
           const ms = pacedFrameMs(pacer, Math.min(MAX_FRAME_MS, Math.max(0, now - last)));
           last = now;
           try {
@@ -1417,6 +1698,7 @@
               showDeviceLost(game, error);
               return;
             }
+            noteTrap(error);
             Object.assign(status, { state: State.Failed, code: FrameFailure.Failed, reason: String(error?.message ?? error) });
             return;
           }
@@ -1586,6 +1868,8 @@
         const module = await fetchWasm();
         await game.default(module ? { module_or_path: module } : undefined);
         shell.module = game;
+        // The crash records' database first: a panic in the boot below is kept too.
+        await openCrashes(game);
         // The saves and the assets first: studio_boot starts the game, and its first reset reads them.
         await preloadSaves(game);
         await preloadAssets(game);
@@ -1613,7 +1897,9 @@
       }
 
       watchPageGpu();
+      listenForTraps();
       boot().catch((error) => {
+        noteTrap(error);
         if (status.state === State.Starting) showFailed(error);
       });
     </script>
