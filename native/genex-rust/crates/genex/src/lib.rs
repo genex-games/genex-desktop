@@ -131,7 +131,12 @@ pub use map::{DeterministicState, Map, Set};
 pub use rng::{GameRng, Pcg32};
 /// A grid cell on the ground plane: the one key streaming and navigation share.
 pub use genex_core::cell::CellId;
-pub use stream::{CellBuild, CellInputs, STREAM_CELL_SIZE_MAX, STREAM_CELL_SIZE_MIN, StreamErrorCode, StreamTicket, Streaming};
+pub use stream::{
+    CellBuild, CellInputs, CellPart, STREAM_ANCHORS_MAX, STREAM_CELL_COLLIDERS_MAX, STREAM_CELL_INSTANCES_MAX, STREAM_CELL_SIZE_MAX,
+    STREAM_CELL_SIZE_MIN, STREAM_CELL_THINGS_MAX, STREAM_RING_MAX, STREAM_SIM_BYTES_MAX, STREAM_SIM_RADIUS_MAX, STREAM_WORLD_EXTENT_MAX,
+    StreamError, StreamErrorCode, StreamTicket, Streaming,
+};
+pub use stream_tick::{EnteredCell, STREAM_HOLD_LIVE_SLICE_MS, STREAM_HOLD_MAX_MS, STREAM_HOLD_OVERLAY_MS, StreamCommit, StreamState};
 pub use runtime::{
     DEFAULT_SEED, DemoDriver, FIXED_STEP_MS, InstallError, InstallErrorCode, MAX_STEP_TICKS,
     RUNTIME_KEYS, Runtime, StepResult, UnknownName, View, step_ticks,

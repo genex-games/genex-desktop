@@ -88,6 +88,16 @@ impl Model {
     pub fn is_missing(&self) -> bool {
         self.path.is_none()
     }
+
+    /// A handle for `assets/<path>` that nothing has recorded yet: a streamed cell's builder makes
+    /// it on a worker, and the commit slot records its path in cell order (STR-9). A missing model
+    /// for a path that is not a plain relative path.
+    pub(crate) fn unrecorded(path: &str) -> Model {
+        if !is_safe_asset_path(path) {
+            return Model::default();
+        }
+        Model { path: Some(Arc::from(path)) }
+    }
 }
 
 /// The largest asset a reset reads into memory (genex-assets' `MAX_ASSET_BYTES`).
