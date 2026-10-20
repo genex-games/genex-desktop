@@ -15,17 +15,22 @@ pub enum NavErrorCode {
     /// Bake input over a cap: more than [`crate::input::NAV_INPUT_TRIANGLES_MAX`] triangles or
     /// [`crate::input::NAV_AREA_VOLUMES_MAX`] area volumes (NAV-3, `input.rs`).
     TooLarge,
+    /// An off-mesh link that cannot attach: a non-finite end or cost, a negative cost, or an end
+    /// farther than the sample reach and `animation_link_max_vertical_distance` from every mesh
+    /// (NAV-8, `links.rs`).
+    LinkInvalid,
 }
 
 impl NavErrorCode {
     /// Every code, in declaration order.
-    pub const ALL: [NavErrorCode; 2] = [NavErrorCode::InputInvalid, NavErrorCode::TooLarge];
+    pub const ALL: [NavErrorCode; 3] = [NavErrorCode::InputInvalid, NavErrorCode::TooLarge, NavErrorCode::LinkInvalid];
 
     /// The code's wire spelling.
     pub const fn wire(self) -> &'static str {
         match self {
             NavErrorCode::InputInvalid => "nav-input-invalid",
             NavErrorCode::TooLarge => "nav-too-large",
+            NavErrorCode::LinkInvalid => "nav-link-invalid",
         }
     }
 }
@@ -48,6 +53,11 @@ impl NavError {
     /// A `nav-too-large` refusal.
     pub fn too_large(detail: impl Into<String>) -> NavError {
         NavError { code: NavErrorCode::TooLarge, detail: detail.into() }
+    }
+
+    /// A `nav-link-invalid` refusal.
+    pub fn link_invalid(detail: impl Into<String>) -> NavError {
+        NavError { code: NavErrorCode::LinkInvalid, detail: detail.into() }
     }
 }
 
