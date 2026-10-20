@@ -254,6 +254,7 @@ export class GameAiServiceImpl implements GameAiService {
     const { grants } = this.#deps;
     switch (message.op) {
       case AiBridgeOp.Hello:
+        this.#greeted(caller.game);
         return { v: GAME_AI_WIRE_VERSION, on: !grants.isOff(caller.game) };
       case AiBridgeOp.Doors: {
         const on = !grants.isOff(caller.game);
@@ -787,6 +788,13 @@ export class GameAiServiceImpl implements GameAiService {
   }
 
   // ── helpers ────────────────────────────────────────────────────────────────────────────────
+
+  /** A game's AI said hello: its pill shows, naming its model as the menu, read again, names it. */
+  #greeted(game: AiGameKey): void {
+    void this.#menu(game, true)
+      .catch(() => null)
+      .then(() => this.#draw(game, PlayAiPhase.Ready));
+  }
 
   #seen(caller: GameAiCaller): void {
     this.#titles.set(caller.game, caller.title);

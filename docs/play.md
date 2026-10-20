@@ -179,8 +179,16 @@ process), in one order: read → route → reserve → queue → door → valida
   a minute and a day (the plan: one at a time, 50 a day, resting past the share each plan keeps for
   building); the person's daily alert pauses a game, and their OpenRouter monthly limit holds the key.
 - The queue puts builds first; Stop, a page going away or a payer change aborts calls at once.
-  Text other players will see is moderated before it is answered. `ledger.jsonl` keeps ids, counts
-  and money per call, never text, each also a `CustomEvent.GameAiCall`.
+  A payer change is a new or forgotten OpenRouter key, another account of the Claude plan, an
+  OpenCode sign-in, or the Genex account Studio is signed in as changing (seen by its token).
+  Text other players will see is answered only from a door genex.games screens: the development
+  lane says who sees each answer, and genex.games withholds shared text its classifier did not
+  clear (`moderated`). `ledger.jsonl` keeps ids, counts and money per call, never text, each also a
+  `CustomEvent.GameAiCall`.
+- One service per launch (`game-ai/host.ts`, composed by `main/game-ai-app.ts`) answers Play's page,
+  Create Live's route, a native game an agent plays and the harness; its genex.games client
+  (`platform.ts`) reads the balance, the packs at one price, checkout and auto top-up (a card is
+  saved on Stripe's page), and the embed SDK's confirms by id. The pill's menu is `menu.ts`.
 - Doors (`doors/`): this Mac's installed models (never a download), OpenCode, the person's
   OpenRouter key (fully priced models only), the Claude plan (Claude Code only, Create on one's own
   game), the development lane on genex.games, a saved playtest (`<game>/ai/tapes/`, replayed by key

@@ -1073,6 +1073,12 @@ tools are `ai_schema_check`, `ai_tapes`, `ai_replay`, `ai_record`, `ai_bench` an
 (`tools/ai-tools.ts`; the registry skips `*-prompts.ts`). `ai.record`, `ai.bench` and
 `ai.modelCheck` run on a run budget `main/harness-rpc/ai.ts` creates per call (this Mac's models,
 one call at a time, a fixed cap, closed when the call answers): nothing the agent sends sizes it.
+The host (`main/game-ai/harness-host.ts`) plays each demo on a hidden window of its own
+(`core/ai-demo-player.ts`), the lane named on the page's shim tag (`data-genex-ai`): the tape, off,
+or `edge` (odd seeds the largest answers, even seeds the smallest). A replay plays each seed twice
+and compares a digest per checkpoint. A recording starts from an empty tape, answers the first call
+the page reports it missed (`__genexAi.missed()`) on this Mac's model, and plays again until
+nothing is missed or the budget is spent; with nothing recorded, the old tape stays.
 The starters' tapes are written by `node scripts/ai-starters/record.ts` from hand-written answers
 (`source: "fixture"`); `loop-ai-starters.test.ts` replays them on every lane and fails a stale one.
 

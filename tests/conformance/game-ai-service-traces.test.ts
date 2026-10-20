@@ -3,13 +3,22 @@
  * with the text the ledger never keeps: the session's Reports (D9), the creator's model-check
  * moments (D10) and fit from play (D12) are built from it. A refusal before any door is chosen is
  * not a model's call and is not traced; a sink that throws never reaches the game's answer.
- * Moderation (D6) is told which door answered, so only a door genex.games screened passes.
+ * Moderation (D6) is told which door answered, so only a door genex.games screened passes. A game's
+ * AI saying hello draws its pill in Play's bar.
  */
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import type { AiCallTrace, GameAiCaller } from "../../src/main/game-ai/types.ts";
 import { EngineFailureKind } from "../../src/shared/engine-requests.ts";
-import { AiAuthority, AiDoor, AiErrorCode, AiProvenance, type AiModelRef } from "../../src/shared/game-ai.ts";
+import {
+  AiAuthority,
+  AiBridgeOp,
+  AiDoor,
+  AiErrorCode,
+  AiProvenance,
+  type AiModelRef,
+} from "../../src/shared/game-ai.ts";
+import { PlayAiPhase } from "../../src/shared/play-bar.ts";
 import { AiValidation } from "../../src/shared/game-ai-report.ts";
 import { AiContext } from "../../src/shared/game-ai-route.ts";
 import { EngineError } from "../../src/substrate/engines/types.ts";
@@ -137,5 +146,23 @@ describe("play-time AI service: traces", () => {
     });
     await granted(r, BYOK_HAIKU);
     assert.ok((await r.ask(call())).ok);
+  });
+});
+
+describe("play-time AI service: the pill on hello", () => {
+  it("draws the game's pill when its AI says hello: its model as the menu names it, or off", async () => {
+    const r = await rig();
+    await granted(r, BYOK_HAIKU);
+    await r.service.handle(caller(), { op: AiBridgeOp.Hello, body: null });
+    await new Promise((resolve) => setImmediate(resolve));
+    const bar = r.bars.at(-1);
+    assert.equal(bar?.game, CROWNS);
+    assert.equal(bar?.phase, PlayAiPhase.Ready);
+    assert.deepEqual(bar?.model, BYOK_HAIKU);
+    assert.equal(bar?.label, BYOK_HAIKU.model);
+    await r.grants.setOn(CROWNS, false);
+    await r.service.handle(caller(), { op: AiBridgeOp.Hello, body: null });
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(r.bars.at(-1)?.phase, PlayAiPhase.Off);
   });
 });
