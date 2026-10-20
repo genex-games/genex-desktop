@@ -7,7 +7,10 @@ share, is in [architecture](agent/architecture.md#processes-and-trust-boundaries
 drives sandbox-runtime's srt-win backend (vendored `srt-win.exe` from `app.asar.unpacked`):
 commands run as the local `srt-sandbox` user under Git Bash. The packaged app brings its own Git
 for Windows as `resources\git` and uses it only when the PC has no Git of its own (`findGitBash`);
-a development build uses the installed Git. The host runs git itself too, so the core settles which Git before
+a development build uses the installed Git. Claude Code is handed the same Git Bash
+(`CLAUDE_CODE_GIT_BASH_PATH`, unless the person set one): it looks only in Program Files and on
+PATH, and without one runs commands through its PowerShell tool, which the never-touch screen and
+saved Bash rules do not read. The host runs git itself too, so the core settles which Git before
 anything else at startup (`ensureHostGit`, which puts its `cmd` folder first on PATH); with none,
 the setup screen opens on `git-missing`. What differs from macOS:
 
@@ -46,7 +49,9 @@ the setup screen opens on `git-missing`. What differs from macOS:
   (`WindowsSetupNeed.LogonService`) the setup card names in one line. Set up sets it to Manual
   (`sc config seclogon start= demand`, [`windows-logon-service.ts`](../src/substrate/windows-logon-service.ts))
   through Windows PowerShell's `Start-Process -Verb RunAs` before srt-win's install. srt-win
-  elevates itself, so a PC that needs both sees two approval prompts. A service Set up could not
+  elevates itself, so a PC that needs both sees two approval prompts. On a standard account each
+  prompt asks for an administrator's password, and the setup card says so; the install is
+  machine-wide, so the standard account uses what the administrator approved. A service Set up could not
   turn on (a policy keeps it off) leaves the card saying how to do it in Services.
 - That egress check starts srt-win as the sandbox user before any grant, and Windows opens its
   program and working folder as that user. A per-user install lives in the profile, so the session

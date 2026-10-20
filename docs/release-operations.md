@@ -137,6 +137,8 @@ macOS 26 and 15, Ubuntu 26.04 and 24.04 and Windows Server 2025 on GitHub-hosted
 (install and repository only, in a container), and with `CANARY_AZURE=on` Windows 11 and 10 on
 Azure VMs made for the run and deleted after it. Every Windows machine starts Genex as its
 administrator on a lived-in profile (`lived-in-profile.ts`), whose first start sets the sandbox up;
+after writing a profile it waits up to 15 minutes for the CPU to go quiet (`settle.ts`), since
+Windows Search and the antivirus scan the new files and a start timed in that storm measured them;
 the Azure machines then log a standard user on at its own desktop, with a lived-in profile too, and
 run it again. An owner's run whose script never starts fails its machine as `owner run did not
 start`, and the standard user's run, which needs that sandbox, is skipped. A GitHub runner cannot: an account started inside the runner's session cannot set up
@@ -156,7 +158,8 @@ in the `canary` environment's variables (`AZURE_CLIENT_ID`, `AZURE_TENANT_ID`,
 `AZURE_SUBSCRIPTION_ID`). A run outlasts one OIDC sign-in, so `azure.ts` signs in again with a
 fresh token before an Azure call once the last sign-in is five minutes old. `CANARY_WIN11_IMAGE`, `CANARY_WIN10_IMAGE`, `CANARY_AZURE_SIZE` and
 `CANARY_AZURE_LOCATION` (regions, comma-separated) override the defaults. Without them the job
-takes the first two-core size its quota allows, in the first region that accepts it. Windows 11
+takes the first two-core size its quota allows, in the first region that accepts it; a region
+whose quota the run's other machine took first is passed over too. Windows 11
 and 10 images need a qualifying Windows license (Microsoft 365 Business Premium, E3/E5, Windows
 Enterprise or Visual Studio); Windows Server images carry their own.
 

@@ -69,18 +69,28 @@ const POSITION = String.raw`(?::\d+(?::\d+)?|#L\d+(?:-L?\d+)?)?`;
 const BEFORE = String.raw`(?<=^|[\s(\["'` + BT + String.raw`{<=,;«“‘—–])`;
 const AFTER = String.raw`(?=$|[\s)\]}"'` + BT + String.raw`>,;:!?.»”’—–…])`;
 const SEGMENT = String.raw`\.?${WORD}[${LETTERS}.@+\-]*`;
+// Windows separates folders with either slash (`C:\Users\me`, `src\game.ts`); `\` is in no STOP.
+const SEP = String.raw`[\\/]`;
+const NOT_SEP = String.raw`\\/`;
+/**
+ * The rest of an absolute path after its `lead`. A space belongs to the path only inside a
+ * capitalized folder name that goes on to a separator ("AI Games/", "Application Support/",
+ * "Моя игра/"), and not after a file name or a full stop, so the next sentence, or the next
+ * argument of a command (`cp /tmp/out src/a.js`), is not swallowed. Bounded look-around keeps a
+ * long run of capitalized words linear.
+ */
+const absolute = (lead: string, sep: string, notSep: string) =>
+  String.raw`${BEFORE}${lead}(?:[^${STOP}]|(?<=${sep}\p{Lu}[^${notSep}]{0,255})(?<![.:!?])(?<!${EXT})[ ](?=(?:\p{Lu}[^${STOP}${notSep}.:]{0,63} ){0,3}${WORD}[^${STOP}${notSep}]{0,127}${sep}))+`;
 const MENTION = new RegExp(
   [
     // file:///Users/me/a.md
     String.raw`${BEFORE}file:\/\/[^${STOP}]+`,
-    // /Users/me/AI Games/rift/a.js, ~/Movies/intro.mp4, never `//` (a comment). A space belongs to
-    // the path only inside a capitalized folder name that goes on to a slash ("AI Games/",
-    // "Application Support/", "Моя игра/"), and not after a file name or a full stop, so the next
-    // sentence, or the next argument of a command (`cp /tmp/out src/a.js`), is not swallowed.
-    // Bounded look-around keeps a long run of capitalized words linear.
-    String.raw`${BEFORE}(?:~|)\/(?!\/)(?:[^${STOP}]|(?<=\/\p{Lu}[^/]{0,255})(?<![.:!?])(?<!${EXT})[ ](?=(?:\p{Lu}[^${STOP}/.:]{0,63} ){0,3}${WORD}[^${STOP}/]{0,127}\/))+`,
-    // src/game.js, ./docs/DESIGN.md, ../shared/a.ts
-    String.raw`${BEFORE}(?:(?:\.{1,2}\/)+|${SEGMENT}\/)(?:${SEGMENT}\/)*${SEGMENT}${EXT}${POSITION}${AFTER}`,
+    // /Users/me/AI Games/rift/a.js, ~/Movies/intro.mp4, never `//` (a comment).
+    absolute(String.raw`(?:~|)\/(?!\/)`, String.raw`\/`, "/"),
+    // C:\Users\me\AI Games\rift\a.js, C:/Users/me/a.md
+    absolute(String.raw`[A-Za-z]:${SEP}(?=[^${STOP}])`, SEP, NOT_SEP),
+    // src/game.js, ./docs/DESIGN.md, ../shared/a.ts, and with backslashes on Windows
+    String.raw`${BEFORE}(?:(?:\.{1,2}${SEP})+|${SEGMENT}${SEP})(?:${SEGMENT}${SEP})*${SEGMENT}${EXT}${POSITION}${AFTER}`,
     // package.json, intro.mp4 (main looks for these in the game)
     String.raw`${BEFORE}${WORD}[${LETTERS}.+\-]*\.[A-Za-z][A-Za-z0-9]{1,9}${POSITION}${AFTER}`,
   ]
@@ -93,7 +103,7 @@ const URL_LIKE = /\b[a-z][a-z0-9+.-]{0,31}:\/\/[^\s<>"'`]+/gi;
 const TRAILING = /[.,;:!?'")\]}>»”’—–…]+$/u;
 // "assets/Hero Sprite.png": a relative path stops at the space, so the words after it are the
 // rest of a spaced name, not a file of their own.
-const CUT_BEFORE = /\/[^\s/.]+ $/u;
+const CUT_BEFORE = /[\\/][^\s\\/.]+ $/u;
 /** The position an editor adds to a name (`:42`, `:42:7`, `#L12-L20`). */
 const TRAILING_POSITION = /(?::\d+(?::\d+)?|#L\d+(?:-L?\d+)?)$/;
 
@@ -109,18 +119,25 @@ function trimMention(raw: string): string {
   return value.replace(/ +$/, "");
 }
 
-/** An absolute or `~/` name worth asking about: `/tmp/a.png` and `/Users/me/Game`, not `/usr` or `</div>`. */
+/** A Windows drive's path: `C:\Users`, `d:/out`. */
+const DRIVE_PATH = /^[A-Za-z]:[\\/]/;
+
+/**
+ * An absolute or `~/` name worth asking about: `/tmp/a.png`, `/Users/me/Game` and
+ * `C:\Users\me\Game`, not `/usr`, `C:\Users` or `</div>`.
+ */
 function plausibleAbsolute(name: string): boolean {
   const bare = name.replace(TRAILING_POSITION, "");
   // `//` starts a code comment; slashes alone are never a file.
   if (bare.startsWith("//") || !/[^/~]/.test(bare)) return false;
-  return /\.[A-Za-z][A-Za-z0-9]{0,9}$/.test(bare) || (bare.match(/\//g)?.length ?? 0) >= 2;
+  const folders = bare.replace(DRIVE_PATH, "/").match(/[\\/]/g)?.length ?? 0;
+  return /\.[A-Za-z][A-Za-z0-9]{0,9}$/.test(bare) || folders >= 2;
 }
 
 function plausible(name: string): boolean {
   if (name.length < 2 || name.length > CHAT_FILE_NAME_MAX) return false;
   if (name.startsWith("file://")) return name.length > 8;
-  if (name.startsWith("/") || name.startsWith("~/")) return plausibleAbsolute(name);
+  if (name.startsWith("/") || name.startsWith("~/") || DRIVE_PATH.test(name)) return plausibleAbsolute(name);
   return true;
 }
 
@@ -139,7 +156,7 @@ function mentionAt(text: string, match: RegExpExecArray, blocked: Array<[number,
   if (blocked.some(([from, to]) => start >= from && start < to)) return null;
   const name = trimMention(match[0]);
   if (!plausible(name)) return null;
-  if (!name.includes("/") && CUT_BEFORE.test(text.slice(Math.max(0, start - CUT_LOOKBEHIND), start))) return null;
+  if (!/[\\/]/.test(name) && CUT_BEFORE.test(text.slice(Math.max(0, start - CUT_LOOKBEHIND), start))) return null;
   return { start, end: start + name.length, name };
 }
 
@@ -164,7 +181,8 @@ export function fileMentions(text: string): FileMention[] {
 export function wholeFileName(code: string): string | null {
   const value = code.trim();
   if (!value || /[\n\r]/.test(value)) return null;
-  if (/^(?:~\/|\/|file:\/\/)/.test(value)) return plausible(value) && !/[<>"'`|*?]/.test(value) ? value : null;
+  if (/^(?:~\/|\/|file:\/\/|[A-Za-z]:[\\/])/.test(value))
+    return plausible(value) && !/[<>"'`|*?]/.test(value) ? value : null;
   const [only, ...more] = fileMentions(value);
   const whole = only !== undefined && more.length === 0 && only.start === 0 && only.end === value.length;
   return whole ? value : null;

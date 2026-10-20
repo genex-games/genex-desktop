@@ -21,6 +21,7 @@ import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { after, before, describe, it } from "node:test";
+import { launchGameBridge } from "../../src/main/core/game-bridge-target.ts";
 import { HarnessInbox } from "../../src/substrate/harness-inbox.ts";
 import { SandboxLaunchCode, SandboxLaunchError } from "../../src/substrate/sandbox-unavailable.ts";
 import { ProcessSandbox, killChild } from "../../src/substrate/spawn.ts";
@@ -38,6 +39,7 @@ const SKIP = skipReason();
 const REPO = fileURLToPath(new URL("../..", import.meta.url));
 const BOOTSTRAP = path.join(REPO, "src", "harness-boot", "bootstrap.mjs");
 const FIXTURE_OK = path.join(REPO, "tests", "fixtures", "harness-ok");
+const FAKE_PLAY_GAME = path.join(REPO, "tests", "fixtures", "fake-play-game.mjs");
 const ELECTRON_DIST = path.join(REPO, "node_modules", "electron", "dist");
 const RUN_TIMEOUT_MS = 60_000;
 const TEST_TIMEOUT_MS = 180_000;
@@ -262,6 +264,34 @@ describe("Windows sandbox: stdio", { skip: SKIP, timeout: TEST_TIMEOUT_MS }, () 
   it("pipes a run's stdin to the command", async () => {
     const result = await inside("cat", { stdin: "from-the-host\n" });
     assert.equal(result.stdout, "from-the-host\n", result.stderr);
+  });
+
+  it("hands a long-lived process its input, as OpenCode's brief must reach `opencode run`", async () => {
+    const { child } = await sandbox.spawnLongLived({ command: "cat", cwd: workspace, stdin: "the brief\n" });
+    let output = "";
+    child.stdout?.setEncoding("utf8");
+    child.stdout?.on("data", (chunk: string) => {
+      output += chunk;
+    });
+    const code = await new Promise((resolve) => child.once("close", resolve));
+    assert.equal(code, 0);
+    assert.equal(output, "the brief\n");
+  });
+
+  it("drives a Play Protocol game it started, its requests reaching the game", {
+    todo: "requests go down stdin, which srt-win does not pass on; fixed in a follow-up",
+  }, async () => {
+    const launched = await launchGameBridge({
+      sandbox,
+      command: `${q(process.execPath)} ${q(FAKE_PLAY_GAME)}`,
+      cwd: workspace,
+      stopGraceMs: 2_000,
+    });
+    try {
+      assert.equal(launched.target.hello?.protocol, 3);
+    } finally {
+      await launched.stop();
+    }
   });
 
   it("boots the harness bootstrap and hears it over the loopback inbox (stdin does not reach it)", async () => {

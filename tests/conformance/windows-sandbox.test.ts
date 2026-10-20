@@ -18,6 +18,7 @@ import { describe, it } from "node:test";
 import { setImmediate as turn, setTimeout as delay } from "node:timers/promises";
 import type { SandboxRuntimeConfig } from "@anthropic-ai/sandbox-runtime";
 import { SandboxProblemCode, WindowsSetupNeed } from "../../src/shared/boot.ts";
+import { openCodeEvents } from "../../src/substrate/engines/opencode.ts";
 import { HarnessHost } from "../../src/substrate/harness-host.ts";
 import {
   SandboxLaunchCode,
@@ -1978,7 +1979,8 @@ async function windowsSandbox(
     ) => {
       wraps.push({ command, binShell, config, cwd });
       if (options.wrapError) throw options.wrapError;
-      return { argv: [bash, "-c", command], env: process.env };
+      // As srt-win does, the command's stdin is never the pipe the host writes to.
+      return { argv: [bash, "-c", `exec 0</dev/null; ${command}`], env: process.env };
     }) as SandboxRuntime["wrapWithSandboxArgv"],
     annotateStderrWithSandboxFailures: (_command: string, stderr: string) => stderr,
   } as unknown as SandboxRuntime;
@@ -2040,6 +2042,34 @@ describe("ProcessSandbox on Windows", () => {
       stdin: "x".repeat(PIPE_OVERFLOW_BYTES),
     });
     assert.equal(result.stdout.trim(), String(PIPE_OVERFLOW_BYTES), result.stderr);
+  });
+
+  it("delivers OpenCode's brief through the stdin file, so the CLI has a message to run", async () => {
+    // Issue #303: the brief written down the pipe never reached `opencode run`, which failed
+    // every build turn with "You must provide a message".
+    const w = await windowsSandbox();
+    const brief = "Write hello to out.txt\nit's $(echo ran)";
+    // A stand-in CLI: Node, printing the whole of its stdin as one event.
+    const cli = path.join(w.root, "cli.cjs");
+    await writeFile(
+      cli,
+      'process.stdout.write(JSON.stringify({ brief: require("node:fs").readFileSync(0, "utf8") }) + "\\n");\n',
+    );
+    const seen: Array<Record<string, unknown>> = [];
+    const invocation = {
+      argv: [cli.replaceAll("\\", "/")],
+      cwd: w.workspace,
+      prompt: brief,
+      env: {},
+      signal: new AbortController().signal,
+      domains: [],
+    };
+    const node = process.execPath.replaceAll("\\", "/");
+    for await (const event of openCodeEvents(w.sandbox, node, invocation)) seen.push(event);
+    assert.deepEqual(seen, [{ brief }]);
+    const leftovers = (await readdir(w.sandbox.scratchDir)).filter((name) => name.startsWith(".stdin-"));
+    assert.deepEqual(leftovers, [], "the stdin file is gone once the CLI has opened it");
+    assert.equal(w.session.session.active, 0, "the CLI gave the session back");
   });
 
   it("with the sandbox off (tests only), runs Git Bash with the Windows basics, never /bin/sh", async () => {

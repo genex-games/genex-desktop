@@ -782,6 +782,11 @@ export class ProcessSandbox {
     env?: Record<string, string>;
     label?: string;
     policy?: Partial<SandboxPolicy>;
+    /**
+     * All of the process's input, sent once and then closed. Pass it here rather than writing to
+     * the child: on Windows srt-win does not pass stdin on, so only the run's stdin file carries it.
+     */
+    stdin?: string;
   }): Promise<{ child: ChildProcess; sandboxed: boolean }> {
     // Held open until the process is gone, as `run` holds it for the length of a run.
     const close = await this.#openDomains(request.policy);
@@ -794,6 +799,11 @@ export class ProcessSandbox {
       const child = this.#start(plan);
       child.once("close", done);
       child.once("error", done);
+      if (request.stdin !== undefined) {
+        // A process that exits before reading its input lands EPIPE here; its exit already says so.
+        child.stdin.on("error", () => {});
+        child.stdin.end(plan.stdinInFile ? undefined : request.stdin);
+      }
       return { child, sandboxed: plan.sandboxed };
     } catch (err) {
       close();

@@ -68,6 +68,7 @@ const MESSAGE = {
 
 /** The step a starting core is on once it passes each of its boot marks (`StudioCore.init`). */
 const STEP_AFTER_MARK: Readonly<Record<string, StartStep>> = {
+  "core:seed": StartStep.Games,
   "core:games": StartStep.Workspace,
   "core:sandbox": StartStep.Studio,
 };

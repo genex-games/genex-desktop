@@ -3379,12 +3379,12 @@ export const SANDBOX_SETUP_WORDS = {
   windows: {
     settingUp: {
       title: "Setting up Genex",
-      line: "Windows will ask you to allow this once. Agents work in their own protected space, away from your files.",
+      line: "Windows will ask you to allow this once. If it asks for a password, an administrator of this PC can enter theirs. Agents work in their own protected space, away from your files.",
       step: "Waiting for your OK",
     },
     needsOk: {
       title: "Genex needs your OK to set up",
-      line: "Agents only run in a protected space that Windows has to allow once. On a work PC, an admin may need to approve it.",
+      line: "Agents only run in a protected space that Windows has to allow once. If you aren’t an administrator of this PC, ask one to enter their password when Windows asks, then press Set up.",
       setUp: "Set up",
     },
     failed: {
@@ -3408,6 +3408,7 @@ export const SANDBOX_SETUP_WORDS = {
     title: "Starting Genex",
     line: "Getting your games and the protected workspace ready.",
     step: {
+      agents: "Preparing your agents",
       games: "Reading your games",
       workspace: "Starting the protected workspace",
       studio: "Opening the studio",

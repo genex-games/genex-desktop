@@ -142,22 +142,26 @@ const CONTROL_CHAR = /[\x00-\x1f]/;
 /** The position an editor adds to a name (`:42`, `:42:7`, `#L12-L20`). */
 const TRAILING_POSITION = /(?::\d+(?::\d+)?|#L\d+(?:-L?\d+)?)$/;
 
-/** A `file:` URL's path, or null when it is not one the platform can read. */
-function filePathOf(value: string): string | null {
+/**
+ * A `file:` URL's path, or null when it is not one the platform can read. On Windows the URL's
+ * path of a drive (`/C:/Users/me`) is that drive's path (`C:/Users/me`).
+ */
+function filePathOf(value: string, platform: NodeJS.Platform): string | null {
   try {
-    return decodeURIComponent(new URL(value).pathname);
+    const file = decodeURIComponent(new URL(value).pathname);
+    return platform === StudioPlatform.Windows ? file.replace(/^\/(?=[A-Za-z]:\/)/, "") : file;
   } catch {
     return null;
   }
 }
 
 /** The chat's words for a file → a name to look up, or null when it cannot be one. */
-export function chatFileName(raw: unknown): string | null {
+export function chatFileName(raw: unknown, platform: NodeJS.Platform = process.platform): string | null {
   const trimmed = typeof raw === "string" ? raw.trim() : "";
   if (!trimmed || trimmed.length > CHAT_FILE_NAME_MAX || CONTROL_CHAR.test(trimmed)) return null;
   let value = trimmed.replace(/^(["'`])(.*)\1$/, "$2");
   if (/^file:/i.test(value)) {
-    const file = filePathOf(value);
+    const file = filePathOf(value, platform);
     if (file === null) return null;
     value = file;
   } else if (/^[a-z][a-z0-9+.-]*:\/\//i.test(value)) {

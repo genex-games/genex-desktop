@@ -97,6 +97,7 @@ async function firstStart(
   if (!installed.startedByInstaller) await platform.launch(installed, evidence);
   const log = path.join(installed.userData, "logs", "studio.log");
   const wait = await waitForStart(log, offset, FIRST_START_BUDGET_MS[kind], clock, START_POLL_MS);
+  if (wait.timedOut) await platform.overrun?.(installed, evidence);
   await screenshot(path.join(evidence, "first-start.png"));
   await platform.quit(installed);
   const { readyMs, sandboxMs, failure, problem } = wait.reading;

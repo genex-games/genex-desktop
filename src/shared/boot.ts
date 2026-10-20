@@ -27,7 +27,9 @@ export type BootPhase = (typeof BootPhase)[keyof typeof BootPhase];
 
 /** What a starting core is doing, as the window's status line says it. */
 export const StartStep = {
-  /** Reading the settings, the event log and the games. */
+  /** Reading the settings and preparing the agents' own workspace (a first start commits it). */
+  Agents: "agents",
+  /** Reading the event log and the games. */
   Games: "games",
   /** Starting the protected workspace: on Windows the slow step, with its network check. */
   Workspace: "workspace",

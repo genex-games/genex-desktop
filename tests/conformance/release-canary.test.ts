@@ -12,7 +12,14 @@ import {
   readSelfTest,
 } from "../../scripts/canary/agent-command.ts";
 import { CLAUDE_WORKER_CHECK } from "../../src/main/smoke/claude-worker-check.ts";
-import { gitHubSignIn, gitHubToken, ownerResult, signInDue, sizesWithRoom } from "../../scripts/canary/azure.ts";
+import {
+  gitHubSignIn,
+  gitHubToken,
+  ownerResult,
+  signInDue,
+  sizesWithRoom,
+  triesElsewhere,
+} from "../../scripts/canary/azure.ts";
 import { readStart } from "../../scripts/canary/first-start.ts";
 import {
   assetTag,
@@ -25,6 +32,7 @@ import {
 } from "../../scripts/canary/links.ts";
 import { IssueAction, issueAction, summaryMarkdown, withMissing } from "../../scripts/canary/report.ts";
 import { aptVersions, isRelease } from "../../scripts/canary/repository.ts";
+import { QUIET_SAMPLES, SAMPLE_MS, settledLine, waitForIdle } from "../../scripts/canary/settle.ts";
 import {
   CanaryStep,
   type MachineResult,
@@ -286,6 +294,15 @@ describe("release canary Azure size", () => {
     assert.deepEqual(sizesWithRoom([usage("cores", 10, 10), usage("standardDASv5Family", 0, 10)]), []);
     assert.deepEqual(sizesWithRoom([]), []);
   });
+
+  test("a region whose quota another machine of the run took meanwhile is passed over, not the run's end", () => {
+    // v0.1.13's Windows 10 job: both Azure machines read room in westus3, Windows 11 took it first.
+    const quota =
+      "(QuotaExceeded) Operation could not be completed as it results in exceeding approved Total Regional Cores quota. Location: westus3, Current Limit: 10, Current Usage: 10, Additional Required: 2";
+    assert.equal(triesElsewhere(quota), true);
+    assert.equal(triesElsewhere("(SkuNotAvailable) The requested VM size is not available"), true);
+    assert.equal(triesElsewhere("(AuthorizationFailed) The client does not have authorization"), false);
+  });
 });
 
 describe("release canary Azure owner run", () => {
@@ -487,12 +504,46 @@ describe("release canary lived-in profile", () => {
   test("it fills a canary home with the folders a person's has", async () => {
     const home = await tmpDir("canary-home-");
     const script = path.join(import.meta.dirname, "..", "..", "scripts", "canary", "lived-in-profile.ts");
-    const ran = spawnSync(process.execPath, [script, "--home", home, "--files", "200", "--large-files", "0"], {
-      encoding: "utf8",
-    });
+    const args = [script, "--home", home, "--files", "200", "--large-files", "0", "--settle-minutes", "0"];
+    const ran = spawnSync(process.execPath, args, { encoding: "utf8" });
     assert.equal(ran.status, 0, ran.stderr);
     const top = await readdir(home);
     for (const folder of ["Documents", "Downloads", "Pictures", "source", "SteamLibrary", ".ssh", ".claude", ".codex"])
       assert.ok(top.includes(folder), `${folder} in ${top.join(", ")}`);
+  });
+});
+
+describe("release canary settle", () => {
+  /** A sampler answering `shares` in turn (the last one again once they run out), each taking a sample's time. */
+  function samples(clock: WaitClock, shares: number[]): () => Promise<number> {
+    let index = 0;
+    return async () => {
+      await clock.sleep(SAMPLE_MS);
+      return shares[Math.min(index++, shares.length - 1)] ?? 0;
+    };
+  }
+
+  test("a machine still scanning a fresh profile is waited on until it has been quiet for a while", async () => {
+    const clock = heldClock();
+    const busy = [1, 1, 0.95, 0.1, 0.1, 0.8, ...Array(QUIET_SAMPLES).fill(0.1)];
+    const settled = await waitForIdle(samples(clock, busy), clock, { capMs: 10 * MINUTE_MS });
+    assert.equal(settled.idle, true);
+    // The quiet run that a busy sample broke does not count: six busy-or-broken samples, then six quiet.
+    assert.equal(settled.waitedMs, (6 + QUIET_SAMPLES) * SAMPLE_MS);
+    assert.match(settledLine(settled), /^machine settled: idle after 60 s$/);
+  });
+
+  test("a machine that never goes quiet is timed anyway once the cap has passed, and the line says so", async () => {
+    const clock = heldClock();
+    const settled = await waitForIdle(samples(clock, [1]), clock, { capMs: MINUTE_MS });
+    assert.equal(settled.idle, false);
+    assert.equal(settled.waitedMs, MINUTE_MS);
+    assert.equal(settledLine(settled), "machine still busy after 60 s (100% CPU); the start is timed anyway");
+  });
+
+  test("an idle machine is settled after one quiet run of samples", async () => {
+    const clock = heldClock();
+    const settled = await waitForIdle(samples(clock, [0]), clock);
+    assert.deepEqual(settled, { idle: true, waitedMs: QUIET_SAMPLES * SAMPLE_MS, lastBusy: 0 });
   });
 });
