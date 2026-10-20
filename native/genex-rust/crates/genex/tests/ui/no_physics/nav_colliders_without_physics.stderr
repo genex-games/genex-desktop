@@ -1,0 +1,5 @@
+error[E0599]: no method named `with_colliders` found for struct `NavInput` in the current scope
+ --> tests/ui/no_physics/nav_colliders_without_physics.rs:7:34
+  |
+7 |     let _input = NavInput::new().with_colliders(&world, |_| Some(NavArea::WALK));
+  |                                  ^^^^^^^^^^^^^^ method not found in `NavInput`

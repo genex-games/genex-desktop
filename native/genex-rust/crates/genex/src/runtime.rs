@@ -931,7 +931,7 @@ fn validate<W>(game: &Game<W>) -> Result<(), InstallError> {
     check_names(cameras, InstallErrorCode::DuplicateCameraName, &[DEFAULT_CAMERA])?;
     check_names(game.eyes.iter().map(|c| c.name.as_str()), InstallErrorCode::DuplicateEye, &[])?;
     check_names(game.demos.iter().map(|c| c.name.as_str()), InstallErrorCode::DuplicateDemo, &[])?;
-    check_streaming(&game.streaming, &game.cell_contents)?;
+    check_streaming(&game.streaming, &game.cell_contents, game.navigation.as_ref())?;
     let mut facets = Set::default();
     for facet in &game.facets {
         if !facets.insert(facet.type_id) {
@@ -949,9 +949,19 @@ fn check_world_size(size: [u32; 2]) -> Result<(), InstallError> {
     Err(InstallError::new(InstallErrorCode::InvalidWorldSize, detail))
 }
 
-fn check_streaming(registrations: &[crate::stream::Streaming], contents: &[crate::stream::CellContent]) -> Result<(), InstallError> {
+fn check_streaming(
+    registrations: &[crate::stream::Streaming],
+    contents: &[crate::stream::CellContent],
+    navigation: Option<&crate::nav::NavConfig>,
+) -> Result<(), InstallError> {
     if registrations.len() > 1 {
         return Err(InstallError::new(InstallErrorCode::DuplicateStreaming, "game.streaming is registered once"));
+    }
+    // A stream cell holds whole nav tiles, so a cell's nav is its own tiles (NAV-11).
+    let split_tiles = registrations.iter().zip(navigation).find(|(streaming, nav)| !nav.divides_stream_cell(streaming.cell_size()));
+    if let Some((streaming, nav)) = split_tiles {
+        let detail = format!("the stream cell size {} is not a whole number of {} m nav tiles", streaming.cell_size(), nav.tile());
+        return Err(InstallError::new(InstallErrorCode::StreamingInvalid, detail));
     }
     let thing_bytes = contents.iter().map(|content| content.thing_bytes).max().unwrap_or(0);
     match registrations.iter().find_map(|streaming| streaming.refusal(thing_bytes)) {

@@ -27,16 +27,20 @@ pub enum NavErrorCode {
     /// farther than the sample reach and `animation_link_max_vertical_distance` from every mesh
     /// (NAV-8, `links.rs`).
     LinkInvalid,
+    /// An area cost that is not finite and above zero, or a cost for the null area (NAV-11,
+    /// `world.rs`).
+    CostInvalid,
 }
 
 impl NavErrorCode {
     /// Every code, in declaration order.
-    pub const ALL: [NavErrorCode; 5] = [
+    pub const ALL: [NavErrorCode; 6] = [
         NavErrorCode::InputInvalid,
         NavErrorCode::TooLarge,
         NavErrorCode::TileInvalid,
         NavErrorCode::ConfigInvalid,
         NavErrorCode::LinkInvalid,
+        NavErrorCode::CostInvalid,
     ];
 
     /// The code's wire spelling.
@@ -47,6 +51,7 @@ impl NavErrorCode {
             NavErrorCode::TileInvalid => "nav-tile-invalid",
             NavErrorCode::ConfigInvalid => "nav-config-invalid",
             NavErrorCode::LinkInvalid => "nav-link-invalid",
+            NavErrorCode::CostInvalid => "nav-cost-invalid",
         }
     }
 }
@@ -84,6 +89,11 @@ impl NavError {
     /// A `nav-link-invalid` refusal.
     pub fn link_invalid(detail: impl Into<String>) -> NavError {
         NavError { code: NavErrorCode::LinkInvalid, detail: detail.into() }
+    }
+
+    /// A `nav-cost-invalid` refusal.
+    pub fn cost_invalid(detail: impl Into<String>) -> NavError {
+        NavError { code: NavErrorCode::CostInvalid, detail: detail.into() }
     }
 }
 
