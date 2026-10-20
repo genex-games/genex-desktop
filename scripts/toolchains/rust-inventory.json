@@ -109,6 +109,9 @@
     "generic-array-0.14.7": {
       "buildScript": "build.rs"
     },
+    "genex-save-0.1.0": {
+      "nonSource": ["tests/goldens/deflate-300k.sav"]
+    },
     "getrandom-0.3.4": {
       "buildScript": "build.rs"
     },
@@ -689,9 +692,9 @@
   "release": {
     "genex": "0.1.0",
     "tree": {
-      "sha256": "d9ab47f59c353d2513279cadc7ba1b5aa66af8cfa4dd31ab0c24f6aadcaffa7b",
-      "files": 25964,
-      "bytes": 688765599
+      "sha256": "f3b27dbf845ccd1dcb99496b5fd7f5ecefdbcb92ed507cf6736f8a0b3c9ca59d",
+      "files": 25983,
+      "bytes": 689341440
     }
   }
 }
