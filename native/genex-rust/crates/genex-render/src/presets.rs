@@ -12,6 +12,7 @@
 //! land on top. A feature that does not fit is switched off or made cheaper, never refused.
 
 use crate::device_class::{DeviceClass, DeviceFacts, FormFactor, PerformanceTier, TargetOs};
+use genex_gpu_memory::MemoryFacts;
 use crate::post::bloom::CHAIN_RESOLUTION;
 use crate::post::dof::DofTier;
 use crate::foliage::GrassQuality;
@@ -283,6 +284,86 @@ pub fn stream_budget(class: DeviceClass, os: TargetOs) -> StreamBudget {
     };
     let upload_bytes = if os == TargetOs::Web { row.min(STREAM_UPLOAD_WEB_BYTES) } else { row };
     StreamBudget { upload_bytes, finish_ms: crate::jobs::finish_budget_ms(class) }
+}
+
+/// The streamed content pool of a desktop, by tier: ultra, high, mid, low (owner call S8). Ultra
+/// and high grow with GPU-visible memory ([`STREAM_POOL_ULTRA_MEMORY_DIVISOR`],
+/// [`STREAM_POOL_HIGH_MEMORY_DIVISOR`]) up to [`STREAM_POOL_DESKTOP_MAX_BYTES`].
+pub const STREAM_POOL_DESKTOP_BYTES: [u64; 4] = [1536 * MIB, 768 * MIB, 384 * MIB, 256 * MIB];
+/// The streamed content pool of a phone, by tier: high (and ultra), mid, low.
+pub const STREAM_POOL_PHONE_BYTES: [u64; 3] = [320 * MIB, 192 * MIB, 96 * MIB];
+/// A desktop-ultra pool may grow to this share of GPU-visible memory (one sixth)...
+pub const STREAM_POOL_ULTRA_MEMORY_DIVISOR: u64 = 6;
+/// ...a desktop-high pool to this share (one eighth)...
+pub const STREAM_POOL_HIGH_MEMORY_DIVISOR: u64 = 8;
+/// ...and neither past this ceiling (high never grows past ultra's cap).
+pub const STREAM_POOL_DESKTOP_MAX_BYTES: u64 = 3 * GIB;
+/// A browser's pool is at most this...
+pub const STREAM_POOL_WEB_CAP_BYTES: u64 = 384 * MIB;
+/// ...and this per GB of `navigator.deviceMemory`...
+pub const STREAM_POOL_WEB_PER_DEVICE_GB: u64 = 48 * MIB;
+/// ...or this when the browser hides `deviceMemory` (Safari, Firefox).
+pub const STREAM_POOL_WEB_UNKNOWN_BYTES: u64 = 192 * MIB;
+/// The share of a phone's pool it keeps under memory pressure, in percent.
+pub const STREAM_POOL_PRESSURE_PERCENT: u64 = 60;
+
+/// The streamed content pool of `class` on the device `facts` and `memory` describe (game systems
+/// STR-7, owner call S8): the bytes of view-set GPU content (the mesh arena, streamed texture
+/// layers and terrain tiles) the residency policy may keep. It sits beside the render budget
+/// ([`class_budget_bytes`]); the sim's CPU cap is one number for every class.
+/// - A desktop takes its tier's row; ultra and high grow with GPU-visible memory.
+/// - A browser takes min([`STREAM_POOL_WEB_CAP_BYTES`], [`STREAM_POOL_WEB_PER_DEVICE_GB`] per GB),
+///   [`STREAM_POOL_WEB_UNKNOWN_BYTES`] without `deviceMemory`, never above its desktop tier's row;
+///   a phone browser (a mobile class, or hints that say phone) takes the phone pool.
+/// - A phone takes its tier's row, at most Android's memory class, cut to
+///   [`STREAM_POOL_PRESSURE_PERCENT`] when the OS asks it to shed memory (a trim level of
+///   `RUNNING_LOW` or worse, a low-memory signal) or when iOS's headroom is below the pool.
+///
+/// A missing fact keeps the class default; D16 applies, so a device that cannot fit sheds the
+/// view set and the pool is never raised.
+pub fn stream_pool_bytes(class: DeviceClass, facts: &DeviceFacts, memory: &MemoryFacts) -> u64 {
+    let phone_browser = facts.os == TargetOs::Web && facts.web.is_some_and(|hints| hints.is_mobile());
+    if class.form == FormFactor::Mobile || phone_browser {
+        return phone_pool_bytes(class.tier, facts.os, memory);
+    }
+    let row = desktop_pool_bytes(class.tier, facts.gpu_visible_memory_bytes);
+    if facts.os != TargetOs::Web {
+        return row;
+    }
+    let by_memory = match facts.web.and_then(|hints| hints.device_memory_gb) {
+        Some(gb) if gb.is_finite() && gb > 0.0 => (f64::from(gb) * STREAM_POOL_WEB_PER_DEVICE_GB as f64) as u64,
+        _ => STREAM_POOL_WEB_UNKNOWN_BYTES,
+    };
+    row.min(STREAM_POOL_WEB_CAP_BYTES).min(by_memory)
+}
+
+/// A desktop tier's pool: the row, and for ultra and high their share of GPU-visible memory up to
+/// [`STREAM_POOL_DESKTOP_MAX_BYTES`].
+fn desktop_pool_bytes(tier: PerformanceTier, gpu_visible: Option<u64>) -> u64 {
+    let (row, divisor) = match tier {
+        PerformanceTier::Ultra => (STREAM_POOL_DESKTOP_BYTES[0], Some(STREAM_POOL_ULTRA_MEMORY_DIVISOR)),
+        PerformanceTier::High => (STREAM_POOL_DESKTOP_BYTES[1], Some(STREAM_POOL_HIGH_MEMORY_DIVISOR)),
+        PerformanceTier::Mid => (STREAM_POOL_DESKTOP_BYTES[2], None),
+        PerformanceTier::Low => (STREAM_POOL_DESKTOP_BYTES[3], None),
+    };
+    let grown = gpu_visible.zip(divisor).map_or(0, |(bytes, divisor)| (bytes / divisor).min(STREAM_POOL_DESKTOP_MAX_BYTES));
+    row.max(grown)
+}
+
+/// A phone tier's pool on `os`: the row, at most the memory class, cut under pressure (native
+/// phones only: a browser reports no pressure).
+fn phone_pool_bytes(tier: PerformanceTier, os: TargetOs, memory: &MemoryFacts) -> u64 {
+    let row = match tier {
+        PerformanceTier::Ultra | PerformanceTier::High => STREAM_POOL_PHONE_BYTES[0],
+        PerformanceTier::Mid => STREAM_POOL_PHONE_BYTES[1],
+        PerformanceTier::Low => STREAM_POOL_PHONE_BYTES[2],
+    };
+    if os == TargetOs::Web {
+        return row;
+    }
+    let capped = memory.memory_class_bytes().map_or(row, |class_bytes| row.min(class_bytes));
+    let short_headroom = memory.available_bytes.is_some_and(|available| available < row);
+    if memory.under_pressure() || short_headroom { capped * STREAM_POOL_PRESSURE_PERCENT / 100 } else { capped }
 }
 
 /// The preset table (plan §2.4), before caps.

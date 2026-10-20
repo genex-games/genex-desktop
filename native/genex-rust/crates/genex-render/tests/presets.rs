@@ -13,8 +13,10 @@ use genex_render::device_class::{DeviceClass, DeviceFacts, FormFactor, Performan
 use genex_render::presets::{
     ANDROID_REFERENCE, ClassOverride, DESKTOP_REFERENCE, IPHONE_REFERENCE, LAPTOP_REFERENCE, MOBILE_MAX_RADIANCE_PX, MOBILE_RCAS_SHARPNESS, OFF_RENDER_PASSES, RenderOverrides,
     SHADOW_MAP_MAX_PX, SHADOW_MAP_MIN_PX, ShadowOverride, WEB_REFERENCE, class_budget_bytes, class_defaults, default_preset, drs_step_sizes, hdri_map_width, preset_quality, profile, reference_resolution,
-    on_ldr_scene, render_pass_budget, resolve, scene_format, with_world_samples, work_limits,
+    on_ldr_scene, render_pass_budget, resolve, scene_format, with_world_samples, work_limits, STREAM_POOL_DESKTOP_BYTES, STREAM_POOL_PHONE_BYTES,
+    STREAM_POOL_PRESSURE_PERCENT, stream_pool_bytes,
 };
+use genex_gpu_memory::{MemoryFacts, TRIM_MEMORY_RUNNING_CRITICAL, TRIM_MEMORY_RUNNING_LOW, TRIM_MEMORY_RUNNING_MODERATE};
 use genex_render::graph::{feature_landed, not_landed};
 use genex_render::settings::{
     AntiAliasing, AoResolution, DEFAULT_RCAS_SHARPNESS, KnobKind, PresetChoice, Quality, QualityKnob, QualityPreset, RenderFeature, RenderSettings,
@@ -1471,4 +1473,137 @@ fn ultra_at_4k_fits_two_gib_and_high_at_1440p_fits_one() {
     let bytes = total(&quality, &at_1440p);
     eprintln!("ROW high 1440p: {} MiB of {} MiB", bytes / MIB, GIB / MIB);
     assert!(bytes <= GIB, "high 1440p: {bytes} over 1 GiB");
+}
+
+// ---- game systems STR-7: the content pool per class (owner call S8), new behaviour ----
+
+/// The facts of a native destination with this GPU-visible memory.
+fn native_facts(os: TargetOs, gpu_visible: Option<u64>) -> DeviceFacts {
+    let backend = match os {
+        TargetOs::Windows => Backend::Dx12,
+        TargetOs::Linux | TargetOs::Android => Backend::Vulkan,
+        _ => Backend::Metal,
+    };
+    DeviceFacts::new(os, backend, DeviceType::IntegratedGpu).with_gpu_visible_memory(gpu_visible)
+}
+
+/// The facts of a browser with these hints (None: the shell sent none).
+fn browser_facts(hints: Option<WebHints>) -> DeviceFacts {
+    let facts = DeviceFacts::new(TargetOs::Web, Backend::BrowserWebGpu, DeviceType::Other);
+    match hints {
+        Some(hints) => facts.with_web(hints),
+        None => facts,
+    }
+}
+
+/// Section 10's pools: each row is (class, destination facts, memory facts, pool MiB).
+#[test]
+fn the_memory_fact_table_gives_the_section_10_pools() {
+    const GIB: u64 = 1024 * MIB;
+    let none = MemoryFacts::default();
+    let mac = |gib: u64| native_facts(TargetOs::MacOs, Some(gib * GIB));
+    let desktop_browser = WebHints { device_memory_gb: Some(8.0), ..WebHints::default() };
+    let small_browser = WebHints { device_memory_gb: Some(2.0), ..WebHints::default() };
+    let hidden_memory = WebHints { device_memory_gb: None, ..WebHints::default() };
+    let iphone_safari = WebHints { max_touch_points: 5, coarse_pointer: true, short_side_css_px: 393, device_memory_gb: None, ..WebHints::default() };
+    let android_chrome = WebHints { max_touch_points: 5, coarse_pointer: true, device_memory_gb: Some(8.0), ua_mobile: Some(true), ..WebHints::default() };
+    let rows: [(&str, DeviceFacts, u64, &str); 19] = [
+        ("desktop-ultra", native_facts(TargetOs::MacOs, None), 1536, "unknown memory keeps 1536 MiB"),
+        ("desktop-ultra", mac(8), 1536, "1/6 of 8 GiB is below the floor"),
+        ("desktop-ultra", mac(12), 2048, "1/6 of 12 GiB"),
+        ("desktop-ultra", mac(48), 3072, "capped at 3 GiB"),
+        ("desktop-high", native_facts(TargetOs::Windows, None), 768, "unknown memory keeps 768 MiB"),
+        ("desktop-high", native_facts(TargetOs::Linux, Some(4 * GIB)), 768, "1/8 of 4 GiB is below the floor"),
+        ("desktop-high", native_facts(TargetOs::Windows, Some(16 * GIB)), 2048, "1/8 of 16 GiB"),
+        ("desktop-high", mac(48), 3072, "never above ultra's cap"),
+        ("desktop-mid", mac(48), 384, "mid is fixed"),
+        ("desktop-low", mac(48), 256, "low is fixed"),
+        ("desktop-high", browser_facts(Some(desktop_browser)), 384, "min(384, 48 x 8)"),
+        ("desktop-mid", browser_facts(Some(small_browser)), 96, "48 x 2"),
+        ("desktop-high", browser_facts(Some(hidden_memory)), 192, "Safari and Firefox hide deviceMemory"),
+        ("desktop-high", browser_facts(None), 192, "no hints yet"),
+        ("mobile-high", browser_facts(Some(iphone_safari)), 320, "an iPhone browser takes the phone pool"),
+        ("mobile-low", browser_facts(Some(android_chrome)), 96, "an Android browser takes the phone pool"),
+        ("mobile-high", native_facts(TargetOs::Android, None), 320, "phones: high"),
+        ("mobile-mid", native_facts(TargetOs::Ios, None), 192, "phones: mid"),
+        ("mobile-low", native_facts(TargetOs::Android, None), 96, "phones: low"),
+    ];
+    for (wire, facts, mib, why) in rows {
+        assert_eq!(stream_pool_bytes(class(wire), &facts, &none), mib * MIB, "{wire} on {:?}: {why}", facts.os);
+    }
+    let mobile_ultra = DeviceClass::new(FormFactor::Mobile, PerformanceTier::Ultra);
+    assert_eq!(stream_pool_bytes(mobile_ultra, &native_facts(TargetOs::Ios, None), &none), 320 * MIB, "mobile-ultra takes mobile-high's");
+    // A phone-class browser whose hints do not say phone still takes the phone pool of its class.
+    assert_eq!(stream_pool_bytes(class("mobile-mid"), &browser_facts(None), &none), 192 * MIB);
+    // A browser's pool never exceeds the desktop cap of its tier either.
+    assert_eq!(stream_pool_bytes(class("desktop-low"), &browser_facts(Some(desktop_browser)), &none), 256 * MIB);
+    assert_eq!(STREAM_POOL_PHONE_BYTES, [320 * MIB, 192 * MIB, 96 * MIB]);
+    assert_eq!(STREAM_POOL_DESKTOP_BYTES, [1536 * MIB, 768 * MIB, 384 * MIB, 256 * MIB]);
+}
+
+/// Android's `RUNNING_LOW` trim level (and anything worse) cuts a phone's pool to 60%; a milder
+/// level does not, and a desktop has no pressure cut.
+#[test]
+fn a_running_low_trim_cuts_the_phone_pool_to_60_percent() {
+    let android = native_facts(TargetOs::Android, None);
+    let trimmed = |level: i32| MemoryFacts { trim_level: Some(level), ..MemoryFacts::default() };
+    for (wire, full) in [("mobile-high", 320), ("mobile-mid", 192), ("mobile-low", 96)] {
+        let pool = |memory: &MemoryFacts| stream_pool_bytes(class(wire), &android, memory);
+        assert_eq!(pool(&trimmed(TRIM_MEMORY_RUNNING_LOW)), full * MIB * 60 / 100, "{wire} at RUNNING_LOW");
+        assert_eq!(pool(&trimmed(TRIM_MEMORY_RUNNING_CRITICAL)), full * MIB * 60 / 100, "{wire} at RUNNING_CRITICAL");
+        assert_eq!(pool(&trimmed(TRIM_MEMORY_RUNNING_MODERATE)), full * MIB, "{wire} at RUNNING_MODERATE keeps its pool");
+        let low = MemoryFacts { low_memory: true, ..MemoryFacts::default() };
+        assert_eq!(pool(&low), full * MIB * 60 / 100, "{wire} when the OS says memory is low");
+    }
+    assert_eq!(STREAM_POOL_PRESSURE_PERCENT, 60);
+    let desktop = stream_pool_bytes(class("desktop-high"), &native_facts(TargetOs::Linux, None), &trimmed(TRIM_MEMORY_RUNNING_CRITICAL));
+    assert_eq!(desktop, 768 * MIB, "no pressure cut on a desktop");
+}
+
+/// iOS: the pool follows `os_proc_available_memory`: less headroom than the class's pool cuts it to
+/// 60%. Android: the pool never exceeds the app's memory class.
+#[test]
+fn the_phone_pool_follows_available_memory_and_the_memory_class() {
+    let iphone = native_facts(TargetOs::Ios, None);
+    let available = |mib: u64| MemoryFacts { available_bytes: Some(mib * MIB), ..MemoryFacts::default() };
+    assert_eq!(stream_pool_bytes(class("mobile-high"), &iphone, &available(2048)), 320 * MIB, "plenty of headroom");
+    assert_eq!(stream_pool_bytes(class("mobile-high"), &iphone, &available(320)), 320 * MIB, "headroom equal to the pool");
+    assert_eq!(stream_pool_bytes(class("mobile-high"), &iphone, &available(319)), 192 * MIB, "less headroom than the pool");
+    let android = native_facts(TargetOs::Android, None);
+    let class_mib = |mib: u32| MemoryFacts { memory_class_mib: Some(mib), ..MemoryFacts::default() };
+    assert_eq!(stream_pool_bytes(class("mobile-high"), &android, &class_mib(512)), 320 * MIB);
+    assert_eq!(stream_pool_bytes(class("mobile-high"), &android, &class_mib(256)), 256 * MIB, "capped by the memory class");
+    let both = MemoryFacts { memory_class_mib: Some(256), trim_level: Some(TRIM_MEMORY_RUNNING_LOW), ..MemoryFacts::default() };
+    assert_eq!(stream_pool_bytes(class("mobile-high"), &android, &both), 256 * MIB * 60 / 100, "the cut applies after the cap");
+    assert_eq!(stream_pool_bytes(class("mobile-low"), &android, &class_mib(0)), 96 * MIB, "a zero memory class is not a fact");
+}
+
+/// A missing fact keeps the class default, on every class and destination.
+#[test]
+fn a_missing_memory_fact_keeps_the_class_default() {
+    let none = MemoryFacts::default();
+    let defaults = [1536, 768, 384, 256];
+    for class in DeviceClass::ALL {
+        let os = if class.form == FormFactor::Mobile { [TargetOs::Ios, TargetOs::Android] } else { [TargetOs::MacOs, TargetOs::Windows] };
+        let expected = match (class.form, class.tier) {
+            (FormFactor::Desktop, tier) => defaults[tier_index(tier)],
+            (FormFactor::Mobile, PerformanceTier::Ultra | PerformanceTier::High) => 320,
+            (FormFactor::Mobile, PerformanceTier::Mid) => 192,
+            (FormFactor::Mobile, PerformanceTier::Low) => 96,
+            _ => panic!("a new class needs a pool row"),
+        };
+        for os in os {
+            assert_eq!(stream_pool_bytes(class, &native_facts(os, None), &none), expected * MIB, "{} on {os:?}", class.wire());
+        }
+    }
+}
+
+fn tier_index(tier: PerformanceTier) -> usize {
+    match tier {
+        PerformanceTier::Ultra => 0,
+        PerformanceTier::High => 1,
+        PerformanceTier::Mid => 2,
+        PerformanceTier::Low => 3,
+        _ => panic!("a new tier needs a pool row"),
+    }
 }
