@@ -4,7 +4,7 @@
 //! embedded textures, one mesh per material, are [`GlbModel`] (`glb_material.rs`).
 
 use bytemuck::{Pod, Zeroable};
-use glam::{Mat3, Mat4, Vec2, Vec3};
+use glam::{Mat3, Mat4, Vec3};
 
 use crate::error::{RenderCode, RenderError};
 use crate::layout::GpuMeshlet;
@@ -16,7 +16,10 @@ use crate::meshlet::{
 // The GLB material loader lives beside the mesh loader it shares the primitive walk with.
 #[path = "glb_material.rs"]
 mod glb_material;
-pub use glb_material::{GLTF_DEFAULT_ALPHA_CUTOFF, GlbEmission, GlbMaterial, GlbModel, GlbPart, decode_image};
+pub use glb_material::{
+    GLB_TEXTURE_STEM_MAX_CHARS, GLB_TEXTURES_EXTRAS_KEY, GLB_TEXTURES_SCHEMA_VERSION, GLTF_DEFAULT_ALPHA_CUTOFF, GlbEmission, GlbMaterial, GlbModel, GlbPart, GlbSidecar,
+    GlbSidecars, GlbTextureImageKey, GlbTextureUsage, GlbTexturesKey, decode_image,
+};
 // The material extensions (A6.1) live beside the material loader that reads them.
 #[path = "glb_material_ext.rs"]
 mod glb_material_ext;
@@ -172,7 +175,7 @@ impl MeshData {
         let blob = gltf.blob.as_deref();
         let mut mesh = MeshData::default();
         let mut merge = MeshletMerge::default();
-        for_each_primitive(&gltf, &mut |primitive, world| mesh.append_with_meshlets(&gltf, primitive, world, blob, &mut merge))?;
+        for_each_primitive(&gltf, &mut |primitive, world| mesh.append_with_meshlets(&gltf, primitive, world, blob, &mut merge).map(drop))?;
         if mesh.indices.is_empty() {
             return Err(invalid("the GLB has no triangles"));
         }
@@ -180,7 +183,8 @@ impl MeshData {
     }
 
     /// [`MeshData::append_primitive`] that also hands the primitive's `genex_meshlets` to `merge`
-    /// (a [`crate::glb_material::GlbModel`] part merges its own primitives' sets).
+    /// (a [`crate::glb_material::GlbModel`] part merges its own primitives' sets). True when the
+    /// primitive's tangents were generated here (C-9: a normal-mapped primitive without TANGENT).
     pub(crate) fn append_with_meshlets(
         &mut self,
         gltf: &gltf::Gltf,
@@ -188,10 +192,10 @@ impl MeshData {
         world: Mat4,
         blob: Option<&[u8]>,
         merge: &mut MeshletMerge,
-    ) -> Result<(), RenderError> {
+    ) -> Result<bool, RenderError> {
         let appended = self.append_placed(primitive, world, blob)?;
         merge.visit(read_meshlet_extras(gltf, primitive, blob, &appended), world, appended.base);
-        Ok(())
+        Ok(appended.runtime_tangents)
     }
 
     /// Append one primitive's triangles placed by `world` (normals and tangents transformed).
@@ -203,7 +207,7 @@ impl MeshData {
     fn append_placed(&mut self, primitive: &gltf::Primitive<'_>, world: Mat4, blob: Option<&[u8]>) -> Result<AppendedPrimitive, RenderError> {
         let normal_matrix = Mat3::from_mat4(world).inverse().transpose();
         let linear = Mat3::from_mat4(world);
-        let (vertices, indices) = read_primitive(primitive, blob)?;
+        let PrimitiveVertices { vertices, indices, runtime_tangents } = read_primitive_split(primitive, blob)?;
         let base = u32::try_from(self.vertices.len()).map_err(|_| invalid("too many vertices"))?;
         let vertex_count = vertices.len() as u32;
         for v in vertices {
@@ -217,7 +221,7 @@ impl MeshData {
             });
         }
         self.indices.extend(indices.iter().map(|i| base + i));
-        Ok(AppendedPrimitive { base, vertex_count, indices })
+        Ok(AppendedPrimitive { base, vertex_count, indices, runtime_tangents })
     }
 
     /// The bounding sphere: the centre of the box around the vertices and the farthest vertex.
@@ -240,6 +244,8 @@ struct AppendedPrimitive {
     base: u32,
     vertex_count: u32,
     indices: Vec<u32>,
+    /// Its tangents were generated here ([`PrimitiveVertices::runtime_tangents`]).
+    runtime_tangents: bool,
 }
 
 /// What one primitive's `extras.genex_meshlets` gave.
@@ -486,49 +492,121 @@ fn check_index_layout(primitive: &gltf::Primitive<'_>) -> Result<(), RenderError
     Err(invalid(format!("indices are {:?} {:?}: not a layout glTF gives them", accessor.data_type(), accessor.dimensions())))
 }
 
-/// One triangle primitive's vertices in its own space and its indices from 0: POSITION required,
-/// NORMAL from the faces when absent, TEXCOORD_0 zero when absent, TANGENT from the uvs when absent.
-/// Each is read only after its layout is one glTF gives it ([`check_attribute_layout`]).
+/// One triangle primitive's attributes in its own space and its indices from 0, before any
+/// tangent is generated: POSITION required, NORMAL from the faces when absent, TEXCOORD_0 zero when
+/// absent, TANGENT as stored (None when absent). Each is read only after its layout is one glTF
+/// gives it ([`check_attribute_layout`]).
+struct PrimitiveAttributes {
+    positions: Vec<[f32; 3]>,
+    normals: Vec<[f32; 3]>,
+    uvs: Vec<[f32; 2]>,
+    tangents: Option<Vec<[f32; 4]>>,
+    indices: Vec<u32>,
+}
+
+impl PrimitiveAttributes {
+    fn read(primitive: &gltf::Primitive<'_>, blob: Option<&[u8]>) -> Result<PrimitiveAttributes, RenderError> {
+        if primitive.mode() != gltf::mesh::Mode::Triangles {
+            return Err(invalid(format!("primitive mode {:?} is not triangles", primitive.mode())));
+        }
+        for semantic in [gltf::Semantic::Positions, gltf::Semantic::Normals, gltf::Semantic::TexCoords(0), gltf::Semantic::Tangents] {
+            check_attribute_layout(primitive, &semantic)?;
+        }
+        check_index_layout(primitive)?;
+        let reader = primitive.reader(|_| blob);
+        let positions: Vec<[f32; 3]> = reader.read_positions().ok_or_else(|| invalid("a primitive has no readable POSITION"))?.collect();
+        let count = positions.len() as u32;
+        let indices: Vec<u32> = match reader.read_indices() {
+            Some(indices) => indices.into_u32().collect(),
+            None => (0..count).collect(),
+        };
+        if !indices.len().is_multiple_of(3) || indices.iter().any(|&i| i >= count) {
+            return Err(invalid("indices are not whole triangles inside the vertex range"));
+        }
+        let normals: Vec<[f32; 3]> = match reader.read_normals() {
+            Some(normals) => normals.collect(),
+            None => face_normals(&positions, &indices),
+        };
+        let uvs: Vec<[f32; 2]> = match reader.read_tex_coords(0) {
+            Some(uvs) => uvs.into_f32().collect(),
+            None => vec![[0.0, 0.0]; positions.len()],
+        };
+        if normals.len() != positions.len() || uvs.len() != positions.len() {
+            return Err(invalid("NORMAL or TEXCOORD_0 and POSITION counts differ"));
+        }
+        let tangents: Option<Vec<[f32; 4]>> = reader.read_tangents().map(Iterator::collect);
+        if tangents.as_ref().is_some_and(|tangents| tangents.len() != positions.len()) {
+            return Err(invalid("TANGENT and POSITION counts differ"));
+        }
+        Ok(PrimitiveAttributes { positions, normals, uvs, tangents, indices })
+    }
+
+    /// The vertices with `tangents`, one per vertex in order; vertex `count + i` copies vertex `copies[i]`.
+    fn vertices(&self, tangents: &[[f32; 4]], copies: &[u32]) -> Vec<Vertex> {
+        let sources = (0..self.positions.len() as u32).chain(copies.iter().copied());
+        sources
+            .zip(tangents)
+            .map(|(source, tangent)| {
+                let i = source as usize;
+                Vertex { position: self.positions[i], normal: self.normals[i], uv: self.uvs[i], tangent: *tangent }
+            })
+            .collect()
+    }
+}
+
+/// One primitive as [`read_primitive_split`] reads it.
+pub(crate) struct PrimitiveVertices {
+    /// Its vertices: the primitive's own, then the copies a mirrored seam split off (each a copy of
+    /// the vertex [`split_by_tangent`] names).
+    pub(crate) vertices: Vec<Vertex>,
+    /// Three per triangle, from 0.
+    pub(crate) indices: Vec<u32>,
+    /// The primitive is normal-mapped and had no TANGENT, so MikkTSpace ran here (C-9): what the
+    /// Studio's import step writes was not there (`tangents-runtime`).
+    pub(crate) runtime_tangents: bool,
+}
+
+/// Whether the primitive's material samples a normal map on TEXCOORD_0, the uv set a vertex
+/// carries (the import step's rule for writing TANGENT, C-8).
+fn is_normal_mapped(primitive: &gltf::Primitive<'_>) -> bool {
+    primitive.material().normal_texture().is_some_and(|normal| normal.tex_coord() == 0)
+}
+
+/// One triangle primitive's vertices in its own space and its indices from 0 ([`PrimitiveAttributes`]).
+/// A normal-mapped primitive without TANGENT gets MikkTSpace tangents ([`mikk_corner_tangents`]),
+/// and a vertex whose corners disagree becomes one vertex per distinct tangent, as the import step
+/// splits it; any other primitive without TANGENT keeps one vertex per POSITION, each with its first
+/// corner's tangent, so extras indexing its vertices (meshlets, LODs) stay valid.
+pub(crate) fn read_primitive_split(primitive: &gltf::Primitive<'_>, blob: Option<&[u8]>) -> Result<PrimitiveVertices, RenderError> {
+    let attributes = PrimitiveAttributes::read(primitive, blob)?;
+    if let Some(tangents) = &attributes.tangents {
+        let vertices = attributes.vertices(tangents, &[]);
+        return Ok(PrimitiveVertices { vertices, indices: attributes.indices, runtime_tangents: false });
+    }
+    let corners = mikk_corner_tangents(&attributes);
+    let split = split_by_tangent(&attributes.indices, &corners, attributes.positions.len());
+    if is_normal_mapped(primitive) {
+        let vertices = attributes.vertices(&split.tangents, &split.copies);
+        return Ok(PrimitiveVertices { vertices, indices: split.indices, runtime_tangents: true });
+    }
+    let vertices = attributes.vertices(&split.tangents[..attributes.positions.len()], &[]);
+    Ok(PrimitiveVertices { vertices, indices: attributes.indices, runtime_tangents: false })
+}
+
+/// One triangle primitive's vertices, one per POSITION, and its indices from 0: a primitive without
+/// TANGENT gives each vertex its first corner's MikkTSpace tangent (a mirrored seam is not split:
+/// the skinned loader keeps JOINTS and WEIGHTS one per POSITION).
 pub(crate) fn read_primitive(primitive: &gltf::Primitive<'_>, blob: Option<&[u8]>) -> Result<(Vec<Vertex>, Vec<u32>), RenderError> {
-    if primitive.mode() != gltf::mesh::Mode::Triangles {
-        return Err(invalid(format!("primitive mode {:?} is not triangles", primitive.mode())));
-    }
-    for semantic in [gltf::Semantic::Positions, gltf::Semantic::Normals, gltf::Semantic::TexCoords(0), gltf::Semantic::Tangents] {
-        check_attribute_layout(primitive, &semantic)?;
-    }
-    check_index_layout(primitive)?;
-    let reader = primitive.reader(|_| blob);
-    let positions: Vec<[f32; 3]> = reader.read_positions().ok_or_else(|| invalid("a primitive has no readable POSITION"))?.collect();
-    let count = positions.len() as u32;
-    let indices: Vec<u32> = match reader.read_indices() {
-        Some(indices) => indices.into_u32().collect(),
-        None => (0..count).collect(),
+    let attributes = PrimitiveAttributes::read(primitive, blob)?;
+    let vertices = match &attributes.tangents {
+        Some(tangents) => attributes.vertices(tangents, &[]),
+        None => {
+            let corners = mikk_corner_tangents(&attributes);
+            let split = split_by_tangent(&attributes.indices, &corners, attributes.positions.len());
+            attributes.vertices(&split.tangents[..attributes.positions.len()], &[])
+        }
     };
-    if !indices.len().is_multiple_of(3) || indices.iter().any(|&i| i >= count) {
-        return Err(invalid("indices are not whole triangles inside the vertex range"));
-    }
-    let normals: Vec<[f32; 3]> = match reader.read_normals() {
-        Some(normals) => normals.collect(),
-        None => face_normals(&positions, &indices),
-    };
-    let uvs: Vec<[f32; 2]> = match reader.read_tex_coords(0) {
-        Some(uvs) => uvs.into_f32().collect(),
-        None => vec![[0.0, 0.0]; positions.len()],
-    };
-    if normals.len() != positions.len() || uvs.len() != positions.len() {
-        return Err(invalid("NORMAL or TEXCOORD_0 and POSITION counts differ"));
-    }
-    let tangents: Vec<[f32; 4]> = match reader.read_tangents() {
-        Some(tangents) => tangents.collect(),
-        None => uv_tangents(&positions, &normals, &uvs, &indices),
-    };
-    if tangents.len() != positions.len() {
-        return Err(invalid("TANGENT and POSITION counts differ"));
-    }
-    let vertices = (0..positions.len())
-        .map(|i| Vertex { position: positions[i], normal: normals[i], uv: uvs[i], tangent: tangents[i] })
-        .collect();
-    Ok((vertices, indices))
+    Ok((vertices, attributes.indices))
 }
 
 /// Area-weighted vertex normals from the triangles, for a primitive without NORMAL.
@@ -544,33 +622,117 @@ fn face_normals(positions: &[[f32; 3]], indices: &[u32]) -> Vec<[f32; 3]> {
     sums.into_iter().map(|n| n.normalize_or(Vec3::Y).to_array()).collect()
 }
 
-/// Per-vertex tangents from the uv gradients of the triangles (summed, then made orthogonal to
-/// the normal), for a primitive without TANGENT; a vertex with no usable gradient gets any tangent.
-fn uv_tangents(positions: &[[f32; 3]], normals: &[[f32; 3]], uvs: &[[f32; 2]], indices: &[u32]) -> Vec<[f32; 4]> {
-    let mut tangents = vec![Vec3::ZERO; positions.len()];
-    let mut bitangents = vec![Vec3::ZERO; positions.len()];
-    for tri in indices.as_chunks::<3>().0 {
-        let [a, b, c] = tri.map(|i| Vec3::from(positions[i as usize]));
-        let [ta, tb, tc] = tri.map(|i| Vec2::from(uvs[i as usize]));
-        let (e1, e2, d1, d2) = (b - a, c - a, tb - ta, tc - ta);
-        let det = d1.x * d2.y - d2.x * d1.y;
-        if det.abs() <= f32::EPSILON {
-            continue;
-        }
-        let t = (e1 * d2.y - e2 * d1.y) / det;
-        let bt = (e2 * d1.x - e1 * d2.x) / det;
-        for &i in tri {
-            tangents[i as usize] += t;
-            bitangents[i as usize] += bt;
+/// MikkTSpace's sqrt and acos from libm (the f64 acos the reference implementation uses), so the
+/// fallback builds the same bits on every target (`clippy.toml`).
+struct LibmOps;
+
+impl bevy_mikktspace::Ops for LibmOps {
+    fn sqrt(x: f32) -> f32 {
+        libm::sqrtf(x)
+    }
+
+    fn acos(x: f32) -> f32 {
+        libm::acos(f64::from(x)) as f32
+    }
+}
+
+/// A primitive's triangles as MikkTSpace reads them, and the tangent it answers for each corner.
+struct MikkGeometry<'a> {
+    attributes: &'a PrimitiveAttributes,
+    corners: Vec<[f32; 4]>,
+}
+
+impl MikkGeometry<'_> {
+    fn vertex(&self, face: usize, vert: usize) -> usize {
+        self.attributes.indices[face * 3 + vert] as usize
+    }
+}
+
+impl bevy_mikktspace::Geometry<LibmOps> for MikkGeometry<'_> {
+    fn num_faces(&self) -> usize {
+        self.attributes.indices.len() / 3
+    }
+
+    fn num_vertices_of_face(&self, _face: usize) -> usize {
+        3
+    }
+
+    fn position(&self, face: usize, vert: usize) -> [f32; 3] {
+        self.attributes.positions[self.vertex(face, vert)]
+    }
+
+    fn normal(&self, face: usize, vert: usize) -> [f32; 3] {
+        self.attributes.normals[self.vertex(face, vert)]
+    }
+
+    fn tex_coord(&self, face: usize, vert: usize) -> [f32; 2] {
+        self.attributes.uvs[self.vertex(face, vert)]
+    }
+
+    fn set_tangent(&mut self, tangent_space: Option<bevy_mikktspace::TangentSpace>, face: usize, vert: usize) {
+        // A degenerate corner MikkTSpace answers nothing for gets any tangent orthogonal to its normal.
+        let tangent = match tangent_space {
+            Some(space) => space.tangent_encoded(),
+            None => any_tangent(Vec3::from(self.normal(face, vert)).normalize_or(Vec3::Y)).extend(1.0).to_array(),
+        };
+        self.corners[face * 3 + vert] = tangent;
+    }
+}
+
+/// The MikkTSpace tangent of every corner (xyz unit, w the bitangent's sign), three per triangle:
+/// the space the Studio's import step writes with meshoptimizer's `generateTangents(Compatible)`
+/// (C-8), so a baked normal map shades the same with or without the import (C-9).
+fn mikk_corner_tangents(attributes: &PrimitiveAttributes) -> Vec<[f32; 4]> {
+    let mut geometry = MikkGeometry { attributes, corners: vec![[1.0, 0.0, 0.0, 1.0]; attributes.indices.len()] };
+    // Its error type has no variant: generation cannot fail.
+    if let Err(error) = bevy_mikktspace::generate_tangents(&mut geometry) {
+        log::warn!("mikktspace: {error}");
+    }
+    geometry.corners
+}
+
+/// A primitive's vertices split by corner tangent ([`split_by_tangent`]).
+struct TangentSplit {
+    /// One tangent per vertex: the primitive's own, then the copies.
+    tangents: Vec<[f32; 4]>,
+    /// The corners' vertices.
+    indices: Vec<u32>,
+    /// For each copy, the vertex it copies.
+    copies: Vec<u32>,
+}
+
+/// One vertex per distinct (vertex, tangent): a vertex keeps its index for its first corner's
+/// tangent, and each other tangent its corners have becomes a copy after the vertices, in corner
+/// order. Tangents compare bit for bit. The import step's rule (`tangents.ts`, `splitByTangent`).
+/// A vertex no corner uses keeps +x, right-handed.
+fn split_by_tangent(indices: &[u32], corners: &[[f32; 4]], vertex_count: usize) -> TangentSplit {
+    let bits = |tangent: &[f32; 4]| tangent.map(f32::to_bits);
+    let mut tangents: Vec<[f32; 4]> = vec![[1.0, 0.0, 0.0, 1.0]; vertex_count];
+    let mut kept: Vec<Option<[u32; 4]>> = vec![None; vertex_count];
+    // The copies made so far, by (source vertex, tangent bits), in creation order.
+    let mut made: std::collections::BTreeMap<(u32, [u32; 4]), u32> = std::collections::BTreeMap::new();
+    let mut copies = Vec::new();
+    let mut split = Vec::with_capacity(indices.len());
+    for (&vertex, tangent) in indices.iter().zip(corners) {
+        let key = bits(tangent);
+        let slot = &mut kept[vertex as usize];
+        match slot {
+            None => {
+                *slot = Some(key);
+                tangents[vertex as usize] = *tangent;
+                split.push(vertex);
+            }
+            Some(first) if *first == key => split.push(vertex),
+            Some(_) => {
+                let next = (vertex_count + copies.len()) as u32;
+                let copy = *made.entry((vertex, key)).or_insert(next);
+                if copy == next {
+                    copies.push(vertex);
+                    tangents.push(*tangent);
+                }
+                split.push(copy);
+            }
         }
     }
-    (0..positions.len())
-        .map(|i| {
-            let n = Vec3::from(normals[i]).normalize_or(Vec3::Y);
-            let t = tangents[i] - n * n.dot(tangents[i]);
-            let t = t.try_normalize().unwrap_or_else(|| any_tangent(n));
-            let w = if n.cross(t).dot(bitangents[i]) < 0.0 { -1.0 } else { 1.0 };
-            t.extend(w).to_array()
-        })
-        .collect()
+    TangentSplit { tangents, indices: split, copies }
 }

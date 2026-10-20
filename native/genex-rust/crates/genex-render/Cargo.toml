@@ -40,6 +40,10 @@ genex-gpu-memory = { workspace = true }
 # The mesh arena's ranges (game systems STR-1): Aaltonen's O(1) offset allocator, safe Rust,
 # deterministic (bins and a bitfield, no hashing, no time).
 offset-allocator = { workspace = true }
+# The runtime tangent fallback (game systems C-9): MikkTSpace, the space the Studio's import step
+# writes, for a normal-mapped primitive that reached the runtime without TANGENT. Safe Rust,
+# no_std, its sqrt and acos handed libm's (`mesh.rs`), so every target builds the same bits.
+bevy_mikktspace = { workspace = true }
 
 # Headless native runs block on adapter and device requests; the web awaits them instead.
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
