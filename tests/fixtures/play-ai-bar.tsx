@@ -85,6 +85,7 @@ const SETTINGS: GameAiSettingsView = {
   createRouteEnabled: false,
   allowPlan: true,
   shareFitCounts: false,
+  pausedGames: [],
 };
 
 const call = (said: string, wrote: string) => ({

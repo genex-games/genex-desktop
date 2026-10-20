@@ -63,6 +63,7 @@ import {
   GAME_AI_DIR,
   type GameAiClock,
   type GameAiConsents,
+  type GameAiDeps,
   type GameAiDoorImpl,
   type GameAiHarnessHost,
   type GameAiInboxHost,
@@ -398,6 +399,10 @@ export function createGameAi(deps: GameAiHostDeps): GameAiHost {
     facts: (model) => catalog.facts(model),
     fitCounts,
     check: (game) => ownCheck(check, game),
+    projectIdOf: async (game) => {
+      const own = libraryName(game);
+      return own === null ? publishedId(game) : playProject(own);
+    },
   });
   account.onChange(() => service.payerChanged(AiDoor.GenexDev));
 
@@ -475,7 +480,8 @@ interface ServiceParts {
 function serviceOf(
   deps: GameAiHostDeps,
   parts: ServiceParts,
-  reads: Pick<GameAiMenuDeps, "titleOf" | "facts" | "check"> & { fitCounts: GameAiFitCounts },
+  reads: Pick<GameAiMenuDeps, "titleOf" | "facts" | "check"> &
+    Pick<GameAiDeps, "projectIdOf"> & { fitCounts: GameAiFitCounts },
 ): { service: GameAiServiceImpl; consents: GameAiConsents } {
   const { clock, grants, platform } = parts;
   let service: GameAiServiceImpl | null = null;
@@ -517,6 +523,7 @@ function serviceOf(
     menu,
     moderate: screenedByStand,
     traces: createTraceSink({ reports: parts.reports, moments: parts.moments, fitCounts: reads.fitCounts }),
+    projectIdOf: reads.projectIdOf,
   });
   return { service, consents };
 }

@@ -67,7 +67,7 @@ import {
 const SLUG = "crowns-1444";
 const GAME_ORIGIN = `https://${SLUG}.genex.technology`;
 const ADDRESS = `${GAME_ORIGIN}/?genex_r=1#genex_ticket=T1`;
-const GAME: PlayAiGame = { projectId: "cm-crowns", title: "Crowns of 1444", address: ADDRESS };
+const GAME: PlayAiGame = { projectId: "cm-crowns", title: "Crowns of 1444", address: ADDRESS, shared: false };
 const KEY = playGameKey(GAME.projectId);
 const TOP = { url: `${GAME_ORIGIN}/`, top: true };
 const CONFIRM: GenexDesktopConfirmRequest = { kind: GenexConfirmKind.Grant, id: "grant_123" };
@@ -115,7 +115,12 @@ describe("Play AI: who is calling", () => {
       ownGame: false,
       replaying: false,
       channel: "41",
+      sharedAudience: false,
     });
+  });
+
+  it("says other players see a multiplayer game, so every call of it is held as shared (D6)", () => {
+    assert.equal(playCallerFor({ ...GAME, shared: true }, `${GAME_ORIGIN}/`, "41")?.sharedAudience, true);
   });
 
   const hostile: Array<[string, PlayAiGame | null, string]> = [

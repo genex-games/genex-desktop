@@ -53,6 +53,7 @@ import type {
   AiCreditPack,
   AiCreditProduct,
   AiModelMenu,
+  AiPause,
   AiPickResult,
   AiStopCard,
   AiTapeSummary,
@@ -98,6 +99,12 @@ export interface GameAiCaller {
   replaying: boolean;
   /** The bridge's own id for the page or process (`webContents.id`, a native job id), for abandon. */
   channel: string;
+  /**
+   * Other players see this game's AI text, as far as Genex can tell (a multiplayer Play game):
+   * every call is held as shared, whatever it says (D6), as genex.games holds a game that declared
+   * a shared audience. Absent: the game shows its text to the person playing only.
+   */
+  sharedAudience?: boolean;
 }
 
 // ── grants (keyed by profile, game and door; first-use consent, no TTL) ────────────────────
@@ -286,6 +293,17 @@ export interface GenexAiPlatform {
   sendReport(bundle: AiReportBundle): Promise<AiReportOutcome>;
   /** Counts-only fit rows, sent only with the person's consent. */
   sendFitCounts(rows: readonly AiFitCountRow[]): Promise<void>;
+  /** The person's games genex.games paused after a second top-up within a day (D11); none while signed out. */
+  pausedGames(): Promise<AiPlatformPause[]>;
+  /** Let a paused game spend again (`POST /api/billing/auto-topup/games/:projectId/resume`). */
+  resumeGame(projectId: string): Promise<void>;
+}
+
+/** A game genex.games paused after its top-ups, by its project id. */
+export interface AiPlatformPause {
+  projectId: string;
+  title: string | null;
+  pausedAt: string;
 }
 
 /** Where the plan watcher stands; its home is the shared view Settings reads (`shared/game-ai-watcher.ts`). */
@@ -375,6 +393,8 @@ export interface GameAiDeps {
   moderate(text: string, door: AiDoor): Promise<boolean>;
   /** Hears every settled call with its text: the session's Reports, model-check moments, fit counts. */
   traces?: GameAiTraceSink;
+  /** The genex.games project a game is (a Play game's own, a library game's published one); null when none. */
+  projectIdOf(game: AiGameKey): Promise<string | null>;
 }
 
 /**
@@ -448,6 +468,8 @@ export interface GameAiIpcHost {
   publishFacts(project: string): Promise<AiPublishFacts>;
   credits(): Promise<AiCreditPack[]>;
   checkout(product: AiCreditProduct): Promise<void>;
+  /** Let a paused game's AI go on: past the daily alert (Keep playing), or after its top-ups (Resume). */
+  resume(game: AiGameKey, pause: AiPause): Promise<void>;
 }
 
 /**

@@ -250,6 +250,7 @@ function playCalls(bridge: BridgeCalls) {
     gameAiPublishFacts: (project) => invoke("studio:game-ai.publish-facts", { project }),
     gameAiCredits: () => invoke("studio:game-ai.credits"),
     gameAiCheckout: (product) => invoke("studio:game-ai.checkout", { product }),
+    gameAiResume: (game, pause) => invoke("studio:game-ai.resume", { game, pause }),
     planWatcher: () => invoke("studio:plan-watcher"),
     planWatcherSwitch: (enabled) => invoke("studio:plan-watcher.switch", { enabled }),
     planWatcherSignIn: () => invoke("studio:plan-watcher.sign-in"),

@@ -222,6 +222,7 @@ export const STUDIO_INVOKE_CHANNELS = {
   "studio:game-ai.publish-facts": "gameAiPublishFacts",
   "studio:game-ai.credits": "gameAiCredits",
   "studio:game-ai.checkout": "gameAiCheckout",
+  "studio:game-ai.resume": "gameAiResume",
   "studio:plan-watcher": "planWatcher",
   "studio:plan-watcher.switch": "planWatcherSwitch",
   "studio:plan-watcher.sign-in": "planWatcherSignIn",
@@ -492,6 +493,7 @@ export interface StudioInvokePayloads {
   "studio:game-ai.publish-facts": { project: string };
   "studio:game-ai.credits": undefined;
   "studio:game-ai.checkout": { product: Arg<"gameAiCheckout", 0> };
+  "studio:game-ai.resume": { game: Arg<"gameAiResume", 0>; pause: Arg<"gameAiResume", 1> };
   "studio:plan-watcher": undefined;
   "studio:plan-watcher.switch": { enabled: boolean };
   "studio:plan-watcher.sign-in": undefined;

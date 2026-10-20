@@ -98,6 +98,8 @@ const NATIVE_CHANNELS = [
   "studio:game-ai.report",
   "studio:game-ai.check",
   "studio:game-ai.checkout",
+  // Resume asks genex.games to let a game it paused after its top-ups spend again (D11).
+  "studio:game-ai.resume",
   // The plan watcher: turning it on polls genex.games and runs the person's own CLI on their plan,
   // signing in opens the browser for a player credential, signing out removes it from the secret store.
   "studio:plan-watcher.switch",

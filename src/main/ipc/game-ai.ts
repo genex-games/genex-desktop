@@ -10,6 +10,7 @@ import {
   readAiConsentAnswer,
   readAiCreditProduct,
   readAiModelRef,
+  readAiPause,
   readAiReportRequest,
   readGameAiSettingsPatch,
 } from "../../shared/game-ai-views.ts";
@@ -25,6 +26,7 @@ const MESSAGE = {
   badProject: "not a game in the library",
   badReport: "not a report",
   badProduct: "not something Get credits sells",
+  badPause: "not a pause a game waits in",
 } as const;
 
 /** The longest library name a channel takes. */
@@ -89,6 +91,11 @@ export function registerGameAiIpc(handle: IpcHandle, host: GameAiIpcHost): void 
     const product = readAiCreditProduct(payload?.product);
     if (!product) throw new Error(MESSAGE.badProduct);
     return host.checkout(product);
+  });
+  handle("studio:game-ai.resume", async (payload) => {
+    const pause = readAiPause(payload?.pause);
+    if (!pause) throw new Error(MESSAGE.badPause);
+    return host.resume(gameOf(payload?.game), pause);
   });
 }
 

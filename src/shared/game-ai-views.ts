@@ -189,8 +189,31 @@ export const AiStopReason = {
   NotAnswering: "not-answering",
   /** The person picked a model the check marked weak here. */
   Struggles: "struggles",
+  /** genex.games paused the game after a second auto top-up within a day (D11). */
+  TopUpPaused: "top-up-paused",
 } as const;
 export type AiStopReason = (typeof AiStopReason)[keyof typeof AiStopReason];
+
+/** Why a game's AI waits for the person to let it go on. Wire values: never rename one. */
+export const AiPause = {
+  /** It reached the daily alert the person set (Studio's own pause). */
+  DailyAlert: "daily-alert",
+  /** genex.games paused it after a second auto top-up within a day (D11). */
+  AutoTopUp: "auto-topup",
+} as const;
+export type AiPause = (typeof AiPause)[keyof typeof AiPause];
+
+/** A pause as the renderer sends it, or null. */
+export const readAiPause = (raw: unknown): AiPause | null => readMember(AiPause, raw);
+
+/** A game genex.games paused after its top-ups, as Settings lists it with Resume. */
+export interface AiPausedGame {
+  game: AiGameKey;
+  /** Its name on genex.games; null when it has none there now. */
+  title: string | null;
+  /** When it paused (ISO). */
+  pausedAt: string;
+}
 
 /** A stop card's facts. */
 export interface AiStopCard {
@@ -233,6 +256,8 @@ export interface GameAiSettingsView {
   pro: boolean | null;
   /** Null until read from genex.games (or signed out). */
   autoTopUp: AiAutoTopUp | null;
+  /** Games genex.games paused after a second top-up within a day; each waits for Resume. */
+  pausedGames: AiPausedGame[];
   /** Alert when a game spends this many credits in a day; null: no alert. */
   dailyAlertCredits: number | null;
   /** Games pause before they use this share of each plan. */

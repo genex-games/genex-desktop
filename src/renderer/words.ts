@@ -4531,6 +4531,11 @@ function stopWords(card: AiStopCard, platform: string, time: Intl.DateTimeFormat
         line: [`${model} may struggle in ${title}.`],
         small: alt ? `Replies may not fit the game. The maker recommends ${alt}.` : "Replies may not fit the game.",
       };
+    case AiStopReason.TopUpPaused:
+      return {
+        line: [`${title} paused its AI.`],
+        small: "It topped up your Genex credits twice today. Resume to keep playing.",
+      };
   }
 }
 
@@ -4636,6 +4641,8 @@ function stopActionWords(action: StopAction, card: AiStopCard): string {
       return `Keep ${firstWord(card.modelLabel ?? "this model")}`;
     case StopAction.UseAnother:
       return "Use another model";
+    case StopAction.Resume:
+      return "Resume";
   }
 }
 
@@ -5337,7 +5344,7 @@ export const AI_SETTINGS_WORDS = {
   topUp: "Top up automatically",
   /** The guardrails genex.games holds auto top-up to (D11), in the words of its caps. */
   topUpWhat: (perDay: number, perMonth: number) =>
-    `At most ${perDay === 1 ? "once" : `${perDay} times`} a day and ${perMonth} times a month. Turns off if a payment fails.`,
+    `At most ${perDay === 1 ? "once" : `${perDay} times`} a day and ${perMonth} times a month. Turns off if a payment fails. You agree to it on genex.games.`,
   topUpUnder: (credits: number) => `under ${countWords(credits)}`,
   topUpAdd: (credits: number) => `add ${countWords(credits)}`,
   topUpUnderLabel: "Top up when you have under",
@@ -5366,6 +5373,11 @@ export const AI_SETTINGS_WORDS = {
   turnOn: "Turn on",
   turnOffLabel: (title: string) => `Turn off AI in ${title}`,
   turnOnLabel: (title: string) => `Turn on AI in ${title}`,
+  /** A game genex.games paused after its second top-up in a day (D11). */
+  pausedTitle: (title: string | null) => title ?? "A game you played",
+  pausedWhat: "Paused after topping up your credits twice in a day",
+  resume: "Resume",
+  resumeLabel: (title: string | null) => `Resume AI in ${title ?? "this game"}`,
   makers: "For game makers",
   createRoute: "AI in your playtests",
   createRouteWhat: "Your games can use AI while you play them in Create. Agents always replay saved playtests.",
@@ -5514,6 +5526,7 @@ export const ENGINE_AI_WORDS = {
     needsAiOff: "AI is off, and this game needs it",
     notAnswering: "AI paused: the model isn’t answering",
     struggles: (model: string) => `AI · ${model} may struggle here`,
+    topUpPaused: "AI paused after two top-ups today",
   },
   choose: "Choose",
 } as const;

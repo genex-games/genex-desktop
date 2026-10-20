@@ -180,18 +180,61 @@ describe("genex.games for play-time AI: auto top-up (D11)", () => {
     }
   });
 
-  it("turns it on under the mandate the person was shown, and off with no mandate", async () => {
+  // Flipped: Studio sent PUT {on:true, mandateVersion} echoing genex.games' current version, which
+  // genex.games stores as the person's consent to wording they never saw. Turning it on, or changing
+  // its line or pack while it is on, now happens only on genex.games' own page (Stripe's), which
+  // shows the mandate with the pack's checkout price; Studio never sends a mandate version as a yes.
+  it("turns it on only on genex.games' own page, which shows the mandate, even with a card saved", async () => {
     const a = api({
       [`GET ${PlatformRoute.AutoTopUp}`]: ok(view()),
-      [`PUT ${PlatformRoute.AutoTopUp}`]: (init) => ok(view({ config: { ...(init.body as object), on: true } })),
+      [`POST ${PlatformRoute.AutoTopUpSetup}`]: ok({ url: STRIPE_SETUP }),
     });
-    const on = await a.platform.setAutoTopUp({ on: true, underCredits: 100, addCredits: 1000 });
-    assert.equal(on.on, true);
+    const after = await a.platform.setAutoTopUp({ on: true, underCredits: 100, addCredits: 1000 });
+    assert.equal(after.on, false, "the switch turns on when genex.games says the person agreed");
+    assert.deepEqual(a.opened, [STRIPE_SETUP]);
+    assert.ok(!a.sent.some((row) => row.init.method === "PUT"), "no PUT names a mandate the person was not shown");
+  });
+
+  it("changes the line or the pack while on only on genex.games' page, naming the new numbers", async () => {
+    const a = api({
+      [`GET ${PlatformRoute.AutoTopUp}`]: ok(view({ config: { on: true, underCredits: 100, addCredits: 1000 } })),
+      [`POST ${PlatformRoute.AutoTopUpSetup}`]: ok({ url: STRIPE_SETUP }),
+    });
+    const after = await a.platform.setAutoTopUp({ on: true, underCredits: 100, addCredits: 5000 });
+    assert.deepEqual(after, { on: true, underCredits: 100, addCredits: 1000 }, "the old numbers hold until then");
+    assert.ok(!a.sent.some((row) => row.init.method === "PUT"));
+    const setup = a.sent.find((row) => row.route === PlatformRoute.AutoTopUpSetup);
+    assert.deepEqual(setup?.init.body, {
+      underCredits: 100,
+      addCredits: 5000,
+      mandateVersion: "2026-10-20",
+      source: "credits_modal",
+    });
+  });
+
+  it("changes nothing when it is already on with these numbers", async () => {
+    const a = api({
+      [`GET ${PlatformRoute.AutoTopUp}`]: ok(view({ config: { on: true, underCredits: 100, addCredits: 1000 } })),
+    });
+    const after = await a.platform.setAutoTopUp({ on: true, underCredits: 100, addCredits: 1000 });
+    assert.deepEqual(after, { on: true, underCredits: 100, addCredits: 1000 });
+    assert.deepEqual(
+      a.sent.map((row) => row.init.method),
+      ["GET"],
+      "nothing written, nothing opened",
+    );
+    assert.deepEqual(a.opened, []);
+  });
+
+  it("turns it off, or changes its numbers while off, with no mandate", async () => {
+    const a = api({
+      [`GET ${PlatformRoute.AutoTopUp}`]: ok(view({ config: { on: true, underCredits: 100, addCredits: 1000 } })),
+      [`PUT ${PlatformRoute.AutoTopUp}`]: (init) => ok(view({ config: init.body })),
+    });
+    const off = await a.platform.setAutoTopUp({ on: false, underCredits: 200, addCredits: 2500 });
+    assert.deepEqual(off, { on: false, underCredits: 200, addCredits: 2500 });
     const put = a.sent.find((row) => row.init.method === "PUT");
-    assert.deepEqual(put?.init.body, { on: true, underCredits: 100, addCredits: 1000, mandateVersion: "2026-10-20" });
-    await a.platform.setAutoTopUp({ on: false, underCredits: 100, addCredits: 1000 });
-    const off = a.sent.filter((row) => row.init.method === "PUT")[1];
-    assert.deepEqual(off?.init.body, { on: false, underCredits: 100, addCredits: 1000 });
+    assert.deepEqual(put?.init.body, { on: false, underCredits: 200, addCredits: 2500 });
   });
 
   it("opens Stripe's card page when no card is saved, and leaves the switch as it was", async () => {
@@ -230,11 +273,50 @@ describe("genex.games for play-time AI: auto top-up (D11)", () => {
 
   it("says genex.games' refusal, by its code, and changes nothing here", async () => {
     const a = api({
-      [`GET ${PlatformRoute.AutoTopUp}`]: ok(view()),
-      [`PUT ${PlatformRoute.AutoTopUp}`]: { status: 409, body: { error: "mandate_changed" } },
+      [`GET ${PlatformRoute.AutoTopUp}`]: ok(view({ config: { on: true, underCredits: 100, addCredits: 1000 } })),
+      [`PUT ${PlatformRoute.AutoTopUp}`]: { status: 400, body: { error: "invalid_input" } },
     });
-    await assert.rejects(a.platform.setAutoTopUp({ on: true, underCredits: 100, addCredits: 1000 }), /mandate_changed/);
+    await assert.rejects(a.platform.setAutoTopUp({ on: false, underCredits: 100, addCredits: 1000 }), /invalid_input/);
     await assert.rejects(api({}, null).platform.setAutoTopUp({ on: false, underCredits: 100, addCredits: 1000 }));
+  });
+
+  it("lists the games genex.games paused after their top-ups, dropping any row out of shape", async () => {
+    const a = api({
+      [`GET ${PlatformRoute.AutoTopUp}`]: ok(
+        view({
+          pausedGames: [
+            { projectId: "proj_crowns", title: "Crowns of 1444", pausedAt: "2026-10-20T09:00:00.000Z" },
+            { projectId: "proj_moss", title: null, pausedAt: "2026-10-19T09:00:00.000Z" },
+            { projectId: "../admin", title: "x", pausedAt: "2026-10-20T09:00:00.000Z" },
+            { projectId: "proj_x", title: 7, pausedAt: "2026-10-20T09:00:00.000Z" },
+            { projectId: "proj_y", title: "y", pausedAt: "yesterday" },
+            { projectId: "proj_z", title: "z".repeat(500), pausedAt: "2026-10-20T09:00:00.000Z" },
+            null,
+          ],
+        }),
+      ),
+    });
+    assert.deepEqual(await a.platform.pausedGames(), [
+      { projectId: "proj_crowns", title: "Crowns of 1444", pausedAt: "2026-10-20T09:00:00.000Z" },
+      { projectId: "proj_moss", title: null, pausedAt: "2026-10-19T09:00:00.000Z" },
+    ]);
+    assert.deepEqual(await api({}, null).platform.pausedGames(), [], "none while signed out");
+  });
+
+  it("resumes a paused game as the signed-in account, and never sends an id out of genex.games' shape", async () => {
+    const route = PlatformRoute.resumeGame("proj_crowns");
+    const a = api({ [`POST ${route}`]: ok(view()) });
+    await a.platform.resumeGame("proj_crowns");
+    assert.equal(a.sent[0]?.route, "/api/billing/auto-topup/games/proj_crowns/resume");
+    assert.equal(a.sent[0]?.init.token, TOKEN);
+    for (const id of ["../admin", "proj crowns", "", "a".repeat(65), "proj%2F..", "proj/../x"]) {
+      const bad = api({});
+      await assert.rejects(bad.platform.resumeGame(id), JSON.stringify(id));
+      assert.deepEqual(bad.sent, [], `${JSON.stringify(id)}: nothing sent`);
+    }
+    const missing = api({ [`POST ${route}`]: { status: 404, body: { error: "not_found" } } });
+    await assert.rejects(missing.platform.resumeGame("proj_crowns"), /not_found/);
+    await assert.rejects(api({}, null).platform.resumeGame("proj_crowns"), /sign in/);
   });
 });
 

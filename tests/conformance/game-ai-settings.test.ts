@@ -24,6 +24,7 @@ function platform(options: { balance?: number | null; down?: boolean } = {}) {
       set.push(next);
       return next;
     },
+    pausedGames: () => (options.down ? fail() : Promise.resolve([])),
   };
   return stub;
 }

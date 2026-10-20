@@ -13,7 +13,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { CONSENT_INPUT_DELAY_MS } from "../../src/main/game-ai/approvals.ts";
 import { AiRefusal } from "../../src/main/game-ai/refusal.ts";
 import { pickModel } from "../../src/main/game-ai/service.ts";
-import { type GameAiCaller } from "../../src/main/game-ai/types.ts";
+import type { GameAiCaller } from "../../src/main/game-ai/types.ts";
 import { EngineFailureKind } from "../../src/shared/engine-requests.ts";
 import {
   AiAuthority,
@@ -21,6 +21,7 @@ import {
   AiConsent,
   AiDoor,
   AiErrorCode,
+  AiFunding,
   AiGrantStatus,
   AiOp,
   AiProvenance,
@@ -35,6 +36,7 @@ import { callKey, callKeyInput, TAPE_WIRE_VERSION } from "../../src/shared/game-
 import {
   AiConsentKind,
   AiModelTag,
+  AiPause,
   AiPickPolicy,
   AiStopReason,
   GameAiNoticeKind,
@@ -46,9 +48,13 @@ import {
   CREDITS_HAIKU,
   LOCAL_QWEN,
   menuOf,
+  menuRow,
   PLAN_HAIKU,
   type ScriptedRun,
 } from "../helpers/game-ai-fakes.ts";
+
+/** The maker's pick on the development lane, paid in the creator's Genex credits. */
+const DEV_HAIKU: AiModelRef = { door: AiDoor.GenexDev, engine: "genex", model: "anthropic/claude-haiku-4.5" };
 import {
   BAD,
   BYOK_ROW,
@@ -356,26 +362,42 @@ describe("play-time AI service: stops", () => {
     assert.equal(r.grants.consented(CROWNS, AiDoor.Byok), false);
   });
 
-  it("shows the plan-resting card with its reset, once a minute at most", async () => {
+  it("switches a resting plan's game to a free model, says so on the pill and the card, and plays on", async () => {
     const r = await rig({
-      scripts: {
-        [AiDoor.Plan]: [
-          new AiRefusal(AiErrorCode.WaitingForPlan, 60_000),
-          new AiRefusal(AiErrorCode.WaitingForPlan, 60_000),
-        ],
-      },
+      scripts: { [AiDoor.Plan]: [new AiRefusal(AiErrorCode.WaitingForPlan, 60_000)], [AiDoor.Local]: [GOOD] },
       settings: { allowPlan: true },
     });
     const owner = caller({ game: MOSS, context: AiContext.CreateLive, ownGame: true });
     await granted(r, PLAN_HAIKU, MOSS);
     assert.equal(refusal(await r.ask(call(), owner)), AiErrorCode.WaitingForPlan);
-    await r.ask(call(), owner);
+    await sleep(5);
+    assert.deepEqual(r.grants.live(MOSS)?.model, LOCAL_QWEN, "Genex switched, as the card says");
+    assert.ok(r.bars.some((bar) => bar.game === MOSS && bar.note === PlayAiNote.PlanResting));
     const stops = r.notices.notices.filter((notice) => notice.kind === GameAiNoticeKind.Stop);
     assert.equal(stops.length, 1);
     const card = stops[0]?.kind === GameAiNoticeKind.Stop ? stops[0].card : null;
     assert.equal(card?.reason, AiStopReason.PlanResting);
     assert.equal(card?.resetsAt, new Date(r.clock.now() + 60_000).toISOString());
-    assert.deepEqual(card?.alternative, LOCAL_QWEN, "a free model to go on with");
+    assert.deepEqual(card?.alternative, LOCAL_QWEN, "the free model it switched to");
+    assert.ok((await r.ask(call(), owner)).ok, "the next call is answered by the free model");
+    assert.equal(r.local.runs.length, 1);
+  });
+
+  it("names no switch when no free model is there: AI comes back with the plan", async () => {
+    const r = await rig({
+      scripts: { [AiDoor.Plan]: [new AiRefusal(AiErrorCode.WaitingForPlan, 60_000)] },
+      settings: { allowPlan: true },
+      menu: (game) => menuOf(game, [PLAN_ROW, BYOK_ROW]),
+    });
+    const owner = caller({ game: MOSS, context: AiContext.CreateLive, ownGame: true });
+    await granted(r, PLAN_HAIKU, MOSS);
+    assert.equal(refusal(await r.ask(call(), owner)), AiErrorCode.WaitingForPlan);
+    await sleep(5);
+    assert.deepEqual(r.grants.live(MOSS)?.model, PLAN_HAIKU, "nothing switched");
+    const stop = r.notices.notices.find((notice) => notice.kind === GameAiNoticeKind.Stop);
+    const card = stop?.kind === GameAiNoticeKind.Stop ? stop.card : null;
+    assert.equal(card?.reason, AiStopReason.PlanResting);
+    assert.equal(card?.alternative, null, "the card never says Genex switched");
   });
 
   it("pauses a game at its daily alert and shows the card", async () => {
@@ -389,6 +411,109 @@ describe("play-time AI service: stops", () => {
     const card = r.notices.notices.find((notice) => notice.kind === GameAiNoticeKind.Stop);
     assert.equal(card?.kind === GameAiNoticeKind.Stop && card.card.reason, AiStopReason.DailyAlert);
     assert.equal(refusal(await r.ask(call())), AiErrorCode.Paused);
+  });
+
+  it("Keep playing lets a game paused at its daily alert go on, and the alert stays quiet today", async () => {
+    const r = await rig({
+      scripts: {
+        [AiDoor.Byok]: [
+          { ...GOOD, costMicros: 12_000 },
+          { ...GOOD, costMicros: 12_000 },
+        ],
+      },
+      settings: { dailyAlertCredits: 1 },
+    });
+    await granted(r, BYOK_HAIKU);
+    assert.ok((await r.ask(call())).ok);
+    assert.equal(r.grants.live(CROWNS)?.status, AiGrantStatus.Paused);
+    await r.service.resume(CROWNS, AiPause.DailyAlert);
+    assert.equal(r.grants.live(CROWNS)?.status, AiGrantStatus.Active);
+    assert.ok((await r.ask(call())).ok, "the next call is admitted");
+    assert.equal(r.grants.live(CROWNS)?.status, AiGrantStatus.Active, "the same day's alert does not pause it again");
+  });
+
+  it("shows a game genex.games paused after its top-ups, and Resume asks genex.games to let it go on", async () => {
+    const resumed: string[] = [];
+    const r = await rig({
+      scripts: { [AiDoor.GenexDev]: [new AiRefusal(AiErrorCode.Paused)] },
+      platform: { resumeGame: async (projectId) => void resumed.push(projectId) },
+      menu: (game) => menuOf(game, [LOCAL_ROW, menuRow(DEV_HAIKU, AiFunding.Credits)]),
+    });
+    const owner = caller({ game: MOSS, context: AiContext.CreateLive, ownGame: true });
+    await granted(r, DEV_HAIKU, MOSS);
+    assert.equal(refusal(await r.ask(call(), owner)), AiErrorCode.Paused);
+    const stop = r.notices.notices.find((notice) => notice.kind === GameAiNoticeKind.Stop);
+    const card = stop?.kind === GameAiNoticeKind.Stop ? stop.card : null;
+    assert.equal(card?.reason, AiStopReason.TopUpPaused, "not the daily-alert card");
+    await r.service.resume(CROWNS, AiPause.AutoTopUp);
+    assert.deepEqual(resumed, ["proj_crowns"]);
+    await assert.rejects(r.service.resume(MOSS, AiPause.AutoTopUp), "a library game has no genex.games pause");
+  });
+
+  it("says a model is not answering after it fails twice in a row, once", async () => {
+    const down = new AiRefusal(AiErrorCode.DoorUnavailable);
+    const r = await rig({ scripts: { [AiDoor.Byok]: [down, down, down] } });
+    await granted(r, BYOK_HAIKU);
+    await r.ask(call());
+    assert.equal(r.notices.notices.filter((notice) => notice.kind === GameAiNoticeKind.Stop).length, 0);
+    await r.ask(call());
+    await r.ask(call());
+    const stops = r.notices.notices.filter((notice) => notice.kind === GameAiNoticeKind.Stop);
+    assert.equal(stops.length, 1);
+    assert.equal(stops[0]?.kind === GameAiNoticeKind.Stop && stops[0].card.reason, AiStopReason.NotAnswering);
+  });
+
+  it("shows a game that needs AI, with AI off, its card", async () => {
+    const r = await rig();
+    await r.grants.grant(CROWNS, LOCAL_QWEN, AiConsent.Silent, AiRequirement.Ai);
+    await r.service.stop(CROWNS);
+    assert.equal(refusal(await r.ask(call())), AiErrorCode.Off);
+    const stop = r.notices.notices.find((notice) => notice.kind === GameAiNoticeKind.Stop);
+    assert.equal(stop?.kind === GameAiNoticeKind.Stop && stop.card.reason, AiStopReason.NeedsAiOff);
+    // A game asking for AI it needs, with AI off for it, shows the same card.
+    await r.service.stop(MOSS);
+    const asked = await r.service.requestGrant(caller({ game: MOSS }), {
+      v: GAME_AI_WIRE_VERSION,
+      requires: AiRequirement.Ai,
+      tiers: [AiTier.Fast],
+    });
+    assert.equal(asked.code, AiErrorCode.Off);
+    const cards = r.notices.notices.filter(
+      (notice) => notice.kind === GameAiNoticeKind.Stop && notice.card.game === MOSS,
+    );
+    assert.equal(cards.length, 1);
+  });
+
+  it("an optional game with AI off plays on with no card", async () => {
+    const r = await rig();
+    await granted(r, LOCAL_QWEN);
+    await r.service.stop(CROWNS);
+    assert.equal(refusal(await r.ask(call())), AiErrorCode.Off);
+    assert.equal(r.notices.notices.filter((notice) => notice.kind === GameAiNoticeKind.Stop).length, 0);
+  });
+
+  it("warns when the person picks a model the check found struggling, naming the maker's pick", async () => {
+    const weak = menuRow({ door: AiDoor.Local, engine: "ollama", model: "llama3.2:3b" }, AiFunding.Free);
+    const best = { ...LOCAL_ROW, tag: AiModelTag.Best };
+    const r = await rig({ menu: (game) => menuOf(game, [best], { struggling: [weak] }) });
+    const picked = await r.service.pick(CROWNS, weak.model);
+    assert.deepEqual(picked, { ok: true, model: weak.model });
+    assert.deepEqual(r.grants.live(CROWNS)?.model, weak.model, "players can still pick it");
+    const stop = r.notices.notices.find((notice) => notice.kind === GameAiNoticeKind.Stop);
+    const card = stop?.kind === GameAiNoticeKind.Stop ? stop.card : null;
+    assert.equal(card?.reason, AiStopReason.Struggles);
+    assert.deepEqual(card?.alternative, LOCAL_QWEN);
+  });
+});
+
+describe("play-time AI service: a game other players see", () => {
+  it("holds every call of a multiplayer Play game as shared, whatever the call says (D6)", async () => {
+    const r = await rig({ scripts: { [AiDoor.Local]: [GOOD] } });
+    await granted(r, LOCAL_QWEN);
+    const seen = caller({ sharedAudience: true });
+    assert.equal(refusal(await r.ask(call({ authority: AiAuthority.Local }), seen)), AiErrorCode.NeedsVerified);
+    assert.equal(r.local.runs.length, 0, "an unverified door never writes shared text");
+    assert.ok((await r.ask(call({ authority: AiAuthority.Local }))).ok, "a single-player game's local call plays");
   });
 });
 

@@ -958,7 +958,7 @@ describe("Play viewer and the studio window", () => {
 });
 
 describe("Play viewer's game, as its AI bridge names it", () => {
-  it("is the game on screen once its facts are read: its project id, its name and the address opened", async () => {
+  it("is the game on screen once its facts are read: its project id, its name, the address opened and whether others see it", async () => {
     let read: (world: PlayWorld) => void = () => {};
     const { viewer, opened } = rig({ world: () => new Promise<PlayWorld>((resolve) => (read = resolve)) });
     viewer.open("lost-cathedral", "Lost Cathedral");
@@ -967,7 +967,8 @@ describe("Play viewer's game, as its AI bridge names it", () => {
     assert.equal(opened.length, 1);
     const asked = viewer.aiGame();
     read(WORLD);
-    const expected = { projectId: WORLD.id, title: WORLD.title, address: opened[0] };
+    // A multiplayer game's AI text may reach other players: the bridge holds its calls as shared (D6).
+    const expected = { projectId: WORLD.id, title: WORLD.title, address: opened[0], shared: WORLD.multiplayer };
     assert.deepEqual(await asked, expected);
     assert.deepEqual(await viewer.aiGame(), expected);
   });

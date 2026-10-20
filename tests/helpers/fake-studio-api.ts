@@ -209,6 +209,7 @@ const METHODS = [
   "gameAiPublishFacts",
   "gameAiCredits",
   "gameAiCheckout",
+  "gameAiResume",
   "planWatcher",
   "planWatcherSwitch",
   "planWatcherSignIn",

@@ -153,6 +153,7 @@ describe("the fixture policy of play-time AI", () => {
       "studio:game-ai.report",
       "studio:game-ai.check",
       "studio:game-ai.checkout",
+      "studio:game-ai.resume",
     ];
     for (const channel of AI_CHANNELS) {
       const expected = native.includes(channel) ? ChannelClass.Native : ChannelClass.FixtureSafe;

@@ -94,6 +94,7 @@ function fakeAi() {
         createRouteEnabled: enabled,
         allowPlan: false,
         shareFitCounts: false,
+        pausedGames: [],
       }),
     },
     service: {

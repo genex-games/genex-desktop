@@ -41,6 +41,7 @@ import type {
   AiConsentResult,
   AiCreditPack,
   AiCreditProduct,
+  AiPause,
   AiModelMenu,
   AiPickResult,
   AiTapeSummary,
@@ -605,6 +606,8 @@ export interface StudioApi {
   gameAiCredits(): Promise<AiCreditPack[]>;
   /** Play-time AI: open checkout for a pack or Genex Pro in the browser. */
   gameAiCheckout(product: AiCreditProduct): Promise<void>;
+  /** Play-time AI: let a paused game's AI go on, past the daily alert (Keep playing) or after its top-ups (Resume). */
+  gameAiResume(game: AiGameKey, pause: AiPause): Promise<void>;
   /** Settings → Play-time AI, "While you play": this Mac answering games with the person's own plan. Never asks the network. */
   planWatcher(): Promise<AiWatcherView>;
   /** Turn answering games with the person's plan on or off (off by default); the watcher as it is after. */

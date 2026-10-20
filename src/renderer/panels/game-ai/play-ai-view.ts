@@ -330,6 +330,8 @@ function stoppedWords(card: AiStopCard): string {
       return ENGINE_AI_WORDS.stopped.needsAiOff;
     case AiStopReason.NotAnswering:
       return ENGINE_AI_WORDS.stopped.notAnswering;
+    case AiStopReason.TopUpPaused:
+      return ENGINE_AI_WORDS.stopped.topUpPaused;
     default:
       return ENGINE_AI_WORDS.stopped.struggles(card.modelLabel ?? card.model?.model ?? "");
   }

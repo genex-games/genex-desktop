@@ -126,11 +126,15 @@ export function noPlatform(): GenexAiPlatform {
     answerConfirm: offline,
     sendReport: offline,
     sendFitCounts: offline,
+    pausedGames: offline,
+    resumeGame: offline,
   };
 }
 
 export interface RigOptions {
   menu?: (game: AiGameKey) => AiModelMenu;
+  /** genex.games' calls the test answers; every other one refuses. */
+  platform?: Partial<GenexAiPlatform>;
   scripts?: Partial<Record<AiDoor, ScriptedRun[]>>;
   ready?: Partial<Record<AiDoor, boolean>>;
   settings?: GameAiSettingsPatch;
@@ -187,7 +191,7 @@ export async function rig(options: RigOptions = {}) {
     ledger,
     cache: createGameAiCache({ clock }),
     tapes,
-    platform: noPlatform(),
+    platform: { ...noPlatform(), ...options.platform },
     watcher: {
       state: () => ({ state: AiWatcherState.Off, runners: [], resetsAt: null }),
       start: async () => undefined,
@@ -202,6 +206,8 @@ export async function rig(options: RigOptions = {}) {
     drawPill: (_game, bar) => void bars.push(bar),
     menu: async (game) => menuFor(game),
     moderate: options.moderate ?? (async () => true),
+    // A Play game is its own genex.games project; a library game here was never published.
+    projectIdOf: async (game) => (game.startsWith("play:") ? game.slice("play:".length) : null),
     ...(options.traces ? { traces: options.traces } : {}),
   });
   const ask = (request: AiCallRequest, who = caller(), onDelta?: (text: string) => void) =>

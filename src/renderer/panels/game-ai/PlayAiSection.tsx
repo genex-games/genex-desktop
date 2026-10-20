@@ -14,6 +14,8 @@ import {
   type AiActivity,
   type AiAutoTopUp,
   type AiGameRow,
+  AiPause,
+  type AiPausedGame,
   AiPickPolicy,
   type GameAiSettingsPatch,
   type GameAiSettingsView,
@@ -317,21 +319,43 @@ function LimitsGroup({
   );
 }
 
-/** Every game that used AI, with how it runs and Turn off / Turn on. */
+/** Every game that used AI, with how it runs and Turn off / Turn on; a game genex.games paused, with Resume. */
 function GamesGroup({
   games,
+  paused,
   busy,
   onEnable,
+  onResume,
 }: {
   games: readonly AiGameRow[];
+  paused: readonly AiPausedGame[];
   busy: string | null;
   onEnable: (row: AiGameRow) => void;
+  onResume: (row: AiPausedGame) => void;
 }): JSX.Element {
   return (
     <Group label={WORDS.games}>
-      {games.length === 0 && (
+      {games.length === 0 && paused.length === 0 && (
         <Row title={<span className="text-ink-3">{WORDS.gamesEmpty}</span>} testId="games-empty" />
       )}
+      {paused.map((row) => (
+        <Row
+          key={`paused:${row.game}`}
+          title={WORDS.pausedTitle(row.title)}
+          what={WORDS.pausedWhat}
+          testId={`paused:${row.game}`}
+        >
+          <Button
+            aria-label={WORDS.resumeLabel(row.title)}
+            busy={busy === row.game}
+            disabled={busy !== null}
+            data-play-ai-resume={row.game}
+            onClick={() => onResume(row)}
+          >
+            {WORDS.resume}
+          </Button>
+        </Row>
+      ))}
       {games.map((row) => (
         <Row key={row.game} title={row.title} what={gameLine(row)} testId={`game:${row.game}`}>
           <Button
@@ -416,12 +440,24 @@ function usePlayAiSettings() {
       setBusy(null);
     }
   };
-  return { view, activity, error, busy, save, enable };
+  const resume = async (row: AiPausedGame) => {
+    setBusy(row.game);
+    setError(null);
+    try {
+      await window.studio.gameAiResume(row.game, AiPause.AutoTopUp);
+      setView(await window.studio.gameAiSettings());
+    } catch (cause) {
+      setError(problemWords(cause));
+    } finally {
+      setBusy(null);
+    }
+  };
+  return { view, activity, error, busy, save, enable, resume };
 }
 
 /** Settings → Play-time AI. */
 export function PlayAiSection({ onOpenProviders }: { onOpenProviders: () => void }): JSX.Element {
-  const { view, activity, error, busy, save, enable } = usePlayAiSettings();
+  const { view, activity, error, busy, save, enable, resume } = usePlayAiSettings();
   const [buying, setBuying] = useState(false);
   const alert = error && (
     <p role="alert" className="mt-2 text-red">
@@ -443,7 +479,13 @@ export function PlayAiSection({ onOpenProviders }: { onOpenProviders: () => void
       <ModelsGroup view={view} save={save} onOpenProviders={onOpenProviders} />
       <CreditsGroup view={view} save={save} onGetCredits={() => setBuying(true)} />
       <LimitsGroup view={view} save={save} />
-      <GamesGroup games={activity.games} busy={busy} onEnable={(row) => void enable(row)} />
+      <GamesGroup
+        games={activity.games}
+        paused={view.pausedGames}
+        busy={busy}
+        onEnable={(row) => void enable(row)}
+        onResume={(row) => void resume(row)}
+      />
       <MakersGroup view={view} save={save} />
       {alert}
       {buying && <GetCreditsDialog topUp={view.autoTopUp} onTopUp={save} onDismiss={() => setBuying(false)} />}

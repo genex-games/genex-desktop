@@ -457,7 +457,7 @@ function viewerCalls(loop: ViewerLoop, heldEsc: ReturnType<typeof heldEscape>) {
       if (!s) return null;
       const world = await s.worldRead;
       if (!world || !s.address || !ctx.current(s.epoch)) return null;
-      return { projectId: world.id, title: world.title || s.title, address: s.address };
+      return { projectId: world.id, title: world.title || s.title, address: s.address, shared: world.multiplayer };
     },
     /** The slug on screen, or null. */
     showing: (): string | null => ctx.session()?.slug ?? null,

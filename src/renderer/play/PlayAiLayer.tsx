@@ -11,6 +11,7 @@ import { useEffect, useRef, useState } from "react";
 import {
   type AiConsentAnswer,
   type AiConsentTicket,
+  AiPause,
   type AiStopCard,
   GameAiNoticeKind,
 } from "../../shared/game-ai-views.ts";
@@ -100,6 +101,12 @@ function pickModel(ctx: AiContext, model: AiModelRef): void {
   );
 }
 
+/** Lets a paused game's AI go on (main unpauses it, or asks genex.games to), then settles its card. */
+function resumeAi(ctx: AiContext, pause: AiPause, then: () => void): void {
+  ctx.setProblem(null);
+  ctx.api.gameAiResume(ctx.game, pause).then(then, () => ctx.setProblem(PLAY_AI_WORDS.answerFailed));
+}
+
 /** Turns the game's AI on or off. */
 function enableAi(ctx: AiContext, on: boolean, then: () => void): void {
   ctx.setProblem(null);
@@ -123,7 +130,8 @@ function stopActed(ctx: AiContext, card: AiStopCard, action: StopAction): void {
     [StopAction.StopToday]: leave,
     [StopAction.BackToPlay]: leave,
     [StopAction.Ok]: settle,
-    [StopAction.KeepPlaying]: settle,
+    [StopAction.KeepPlaying]: () => resumeAi(ctx, AiPause.DailyAlert, settle),
+    [StopAction.Resume]: () => resumeAi(ctx, AiPause.AutoTopUp, settle),
     [StopAction.Keep]: settle,
   };
   ways[action]();

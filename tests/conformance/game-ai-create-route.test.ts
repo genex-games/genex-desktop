@@ -89,6 +89,7 @@ function settingsView(createRouteEnabled: boolean): GameAiSettingsView {
     createRouteEnabled,
     allowPlan: false,
     shareFitCounts: false,
+    pausedGames: [],
   };
 }
 

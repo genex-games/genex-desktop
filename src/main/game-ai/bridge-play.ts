@@ -83,6 +83,8 @@ export interface PlayAiGame {
   title: string;
   /** The address the viewer opened the game at: its origin is the game's (a fixture's stand-in page: the address itself). */
   address: string;
+  /** Other players see the game: genex.games lists it multiplayer, so its AI text may reach them (D6). */
+  shared: boolean;
 }
 
 /** The parts of an address its origin is compared by: scheme, host and port, and no user. */
@@ -114,7 +116,15 @@ export function playCallerFor(game: PlayAiGame | null, frameUrl: string, channel
   if (!game || !onGamePage(game.address, frameUrl)) return null;
   const key = readAiGameKey(playGameKey(game.projectId));
   if (!key) return null;
-  return { game: key, title: game.title, context: AiContext.DesktopPlay, ownGame: false, replaying: false, channel };
+  return {
+    game: key,
+    title: game.title,
+    context: AiContext.DesktopPlay,
+    ownGame: false,
+    replaying: false,
+    channel,
+    sharedAudience: game.shared,
+  };
 }
 
 /** The answer to an envelope that was refused before anything ran: the op's own shape, saying `code`. */

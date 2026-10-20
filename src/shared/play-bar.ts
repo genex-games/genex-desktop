@@ -28,6 +28,7 @@ export const PLAY_BAR_CALLS = [
   "gameAiReportPreview",
   "gameAiReport",
   "gameAiCheckout",
+  "gameAiResume",
   "gameAiCredits",
   "gameAiSettings",
   "gameAiSettingsSave",

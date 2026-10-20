@@ -373,6 +373,8 @@ export const StopAction = {
   Keep: "keep",
   /** Opens the model menu. */
   UseAnother: "use-another",
+  /** Lets a game genex.games paused after its top-ups spend again. */
+  Resume: "resume",
 } as const;
 export type StopAction = (typeof StopAction)[keyof typeof StopAction];
 
@@ -397,6 +399,8 @@ export function stopActions(card: AiStopCard): CardActions<StopAction> {
       return alternative
         ? { primary: StopAction.UseAlternative, secondary: StopAction.Keep }
         : { primary: StopAction.Keep, secondary: StopAction.Change };
+    case AiStopReason.TopUpPaused:
+      return { primary: StopAction.Resume, secondary: StopAction.StopToday };
   }
 }
 

@@ -30,7 +30,7 @@ import {
 import type { GalleryAnswer, GalleryRequest } from "../play/gallery.ts";
 import type { ReportInboxSource, ReportSourceAnswer } from "./report-inbox.ts";
 import { genexAiIngest } from "./report-ingest.ts";
-import type { GenexAiPlatform } from "./types.ts";
+import type { AiPlatformPause, GenexAiPlatform } from "./types.ts";
 
 /** The routes play-time AI reads and writes on genex.games. */
 export const PlatformRoute = {
@@ -39,6 +39,7 @@ export const PlatformRoute = {
   Checkout: "/api/billing/checkout",
   AutoTopUp: "/api/billing/auto-topup",
   AutoTopUpSetup: "/api/billing/auto-topup/setup",
+  resumeGame: (project: string) => `/api/billing/auto-topup/games/${encodeURIComponent(project)}/resume`,
   grant: (id: string) => `/api/runtime/grants/${encodeURIComponent(id)}`,
   grantConfirm: (id: string) => `/api/runtime/grants/${encodeURIComponent(id)}/confirm`,
   grantStop: (id: string) => `/api/runtime/grants/${encodeURIComponent(id)}/stop`,
@@ -61,8 +62,6 @@ const CHECKOUT_SOURCE = "credits_modal";
 const AWAITS_CONFIRMATION = "requires_confirmation";
 /** The funding a desktop confirm approves: Genex credits. Wire value. */
 const CREDITS_FUNDING = "credits";
-/** genex.games' code for auto top-up with no card saved under the current mandate. Wire value. */
-const SETUP_REQUIRED = "setup_required";
 /** genex.games' project and pack ids. */
 const PROJECT_ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
 const PACK_KEY_RE = /^[A-Za-z0-9_-]{1,40}$/;
@@ -74,6 +73,12 @@ const MANDATE_RE = /^[A-Za-z0-9._-]{1,40}$/;
 const MAX_CONFIRM_CREDITS = 1_000_000;
 /** The largest price a pack may name, in cents ($100,000). */
 const MAX_PACK_CENTS = 10_000_000;
+/** The most paused games read from one answer. */
+const MAX_PAUSED_GAMES = 200;
+/** A UTC time as genex.games writes one (`toISOString`). */
+const ISO_TIME_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/;
+/** The longest title a published game is read under. */
+const MAX_TITLE_CHARS = 200;
 
 const MESSAGE = {
   signedOut: "sign in to Genex first",
@@ -136,11 +141,28 @@ function readAutoTopUpConfig(raw: unknown): AiAutoTopUp | null {
   return { on, underCredits, addCredits };
 }
 
-/** Auto top-up as genex.games shows it: the switch, whether a card is saved, and the mandate's version. */
+/** Auto top-up as genex.games shows it: the switch, the mandate's version and the games it paused. */
 interface AutoTopUpView {
   config: AiAutoTopUp;
-  ready: boolean;
   mandateVersion: string | null;
+  pausedGames: AiPlatformPause[];
+}
+
+/** A title genex.games names: null for none, undefined when it is out of shape. */
+function readTitle(raw: unknown): string | null | undefined {
+  if (raw === null) return null;
+  if (typeof raw !== "string") return undefined;
+  const title = raw.trim();
+  return title && title.length <= MAX_TITLE_CHARS ? title : undefined;
+}
+
+/** A paused game's row, or null: genex.games' project id, its title (or none) and when it paused. */
+function readPause(raw: unknown): AiPlatformPause | null {
+  if (!isPlainRecord(raw)) return null;
+  const projectId = textMatching(raw.projectId, PROJECT_ID_RE);
+  const title = readTitle(raw.title);
+  const pausedAt = textMatching(raw.pausedAt, ISO_TIME_RE);
+  return projectId && pausedAt && title !== undefined ? { projectId, title, pausedAt } : null;
 }
 
 function readAutoTopUpView(raw: unknown): AutoTopUpView | null {
@@ -148,7 +170,9 @@ function readAutoTopUpView(raw: unknown): AutoTopUpView | null {
   const config = readAutoTopUpConfig(raw.config);
   if (!config) return null;
   const mandate = isPlainRecord(raw.mandate) ? textMatching(raw.mandate.version, MANDATE_RE) : null;
-  return { config, ready: raw.ready === true, mandateVersion: mandate };
+  const rows = Array.isArray(raw.pausedGames) ? raw.pausedGames.slice(0, MAX_PAUSED_GAMES) : [];
+  const pausedGames = rows.map(readPause).filter((row): row is AiPlatformPause => row !== null);
+  return { config, mandateVersion: mandate, pausedGames };
 }
 
 /** What a confirm needs of a grant or generation: its quote, policy, most credits and game. */
@@ -274,11 +298,9 @@ function creditCalls(account: Account): Pick<GenexAiPlatform, "balanceCredits" |
   };
 }
 
-/** The body auto top-up's switch is saved with: turning it on names the mandate the person was shown. */
-function autoTopUpBody(next: AiAutoTopUp, view: AutoTopUpView): Record<string, unknown> {
-  const config = { on: next.on, underCredits: next.underCredits, addCredits: next.addCredits };
-  return next.on ? { ...config, mandateVersion: view.mandateVersion } : config;
-}
+/** Whether two settings name the same line and pack. */
+const sameNumbers = (a: AiAutoTopUp, b: AiAutoTopUp): boolean =>
+  a.underCredits === b.underCredits && a.addCredits === b.addCredits;
 
 /** The switch genex.games saved, or why it did not. */
 function savedAutoTopUp(answer: GalleryAnswer): AiAutoTopUp {
@@ -288,18 +310,24 @@ function savedAutoTopUp(answer: GalleryAnswer): AiAutoTopUp {
   return saved;
 }
 
-/** Auto top-up's switch (D11): its caps, idempotency and receipts are genex.games' own. */
+/**
+ * Auto top-up's switch (D11): its caps, idempotency and receipts are genex.games' own. Turning it
+ * on, or a new line or pack while it is on, is the person's consent to a mandate that names both
+ * numbers, so it happens on genex.games' own page (Stripe's), which shows that wording with the
+ * pack's checkout price; Studio never sends a mandate version as a yes. Off, and numbers while off,
+ * save here.
+ */
 function autoTopUpCalls(
   account: Account,
   openExternal: GenexAiPlatformDeps["openExternal"],
-): Pick<GenexAiPlatform, "autoTopUp" | "setAutoTopUp"> {
+): Pick<GenexAiPlatform, "autoTopUp" | "setAutoTopUp" | "pausedGames" | "resumeGame"> {
   const viewOf = async (): Promise<AutoTopUpView | null> => {
     if (!(await account.token())) return null;
     const answer = await account.signed(PlatformRoute.AutoTopUp, { method: "GET" });
     return isSuccess(answer) ? readAutoTopUpView(answer.body) : null;
   };
-  /** No card saved under the mandate: open Stripe's page to save one, and leave the switch as it is. */
-  const setUpCard = async (next: AiAutoTopUp, view: AutoTopUpView): Promise<AiAutoTopUp> => {
+  /** Open genex.games' page for the mandate and the card, and leave the switch as it is until it says yes. */
+  const consentOnGenex = async (next: AiAutoTopUp, view: AutoTopUpView): Promise<AiAutoTopUp> => {
     const body = {
       underCredits: next.underCredits,
       addCredits: next.addCredits,
@@ -318,10 +346,16 @@ function autoTopUpCalls(
     async setAutoTopUp(next) {
       const view = await viewOf();
       if (!view) throw new Error((await account.token()) ? MESSAGE.unreadable("auto top-up") : MESSAGE.signedOut);
-      if (next.on && !view.ready) return setUpCard(next, view);
-      const answer = await account.signed(PlatformRoute.AutoTopUp, { method: "PUT", body: autoTopUpBody(next, view) });
-      if (errorCode(answer.body) === SETUP_REQUIRED) return setUpCard(next, view);
-      return savedAutoTopUp(answer);
+      if (next.on && view.config.on && sameNumbers(next, view.config)) return view.config;
+      if (next.on) return consentOnGenex(next, view);
+      const body = { on: false, underCredits: next.underCredits, addCredits: next.addCredits };
+      return savedAutoTopUp(await account.signed(PlatformRoute.AutoTopUp, { method: "PUT", body }));
+    },
+    pausedGames: async () => (await viewOf().catch(() => null))?.pausedGames ?? [],
+    async resumeGame(projectId) {
+      if (!PROJECT_ID_RE.test(projectId)) throw new Error(MESSAGE.unreadable("the game"));
+      const answer = await account.signed(PlatformRoute.resumeGame(projectId), { method: "POST" });
+      if (!isSuccess(answer)) throw new Error(MESSAGE.refused("resuming the game", errorCode(answer.body)));
     },
   };
 }
@@ -375,8 +409,6 @@ export function createGenexAiPlatform(deps: GenexAiPlatformDeps): GenexAiPlatfor
 
 // ── the creator's own published game ─────────────────────────────────────────────────────────
 
-/** The longest title a published game is read under. */
-const MAX_TITLE_CHARS = 200;
 /** The most a share may be, in basis points: the whole of it. */
 const MAX_SHARE_BPS = 10_000;
 /** From here on a failure is genex.games' own, not the request's. */

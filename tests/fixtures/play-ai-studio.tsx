@@ -130,6 +130,7 @@ const SETTINGS: GameAiSettingsView = {
   createRouteEnabled: false,
   allowPlan: false,
   shareFitCounts: false,
+  pausedGames: [],
 };
 
 const GAMES = [

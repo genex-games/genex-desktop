@@ -34,6 +34,7 @@ import {
   AI_ID_RE,
   isPlainRecord,
   microsOfCredits,
+  playGameKey,
   readAiGameKey,
   readMember,
 } from "../../shared/game-ai.ts";
@@ -608,7 +609,7 @@ async function readSettingsFile(file: string): Promise<LocalSettings> {
 }
 
 /** What the settings store reads from genex.games. */
-export type SettingsPlatform = Pick<GenexAiPlatform, "balanceCredits" | "autoTopUp" | "setAutoTopUp">;
+export type SettingsPlatform = Pick<GenexAiPlatform, "balanceCredits" | "autoTopUp" | "setAutoTopUp" | "pausedGames">;
 
 /** The settings store, with what the rest of the broker reads synchronously. */
 export type GameAiSettings = GameAiSettingsStore & {
@@ -626,11 +627,17 @@ export function createGameAiSettings(options: { file: string; platform: Settings
 
   async function view(): Promise<GameAiSettingsView> {
     // A genex.games that cannot be reached reads as signed out; Settings still opens.
-    const [balanceCredits, autoTopUp] = await Promise.all([
+    const [balanceCredits, autoTopUp, paused] = await Promise.all([
       options.platform.balanceCredits().catch(() => null),
       options.platform.autoTopUp().catch(() => null),
+      options.platform.pausedGames().catch(() => []),
     ]);
-    return { ...local, signedIn: balanceCredits !== null, balanceCredits, pro: null, autoTopUp };
+    // A paused game is a Play game: its key is its genex.games project's.
+    const pausedGames = paused.flatMap(({ projectId, title, pausedAt }) => {
+      const game = readAiGameKey(playGameKey(projectId));
+      return game ? [{ game, title, pausedAt }] : [];
+    });
+    return { ...local, signedIn: balanceCredits !== null, balanceCredits, pro: null, autoTopUp, pausedGames };
   }
 
   async function save(patch: GameAiSettingsPatch): Promise<GameAiSettingsView> {

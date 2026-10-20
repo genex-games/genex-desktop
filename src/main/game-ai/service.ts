@@ -61,6 +61,7 @@ import {
   type AiMenuRow,
   type AiModelMenu,
   AiModelTag,
+  AiPause,
   AiPickPolicy,
   type AiPickResult,
   type AiStopCard,
@@ -100,10 +101,15 @@ const MENU_TTL_MS = 5 * SECOND_MS;
 const STOP_CARD_QUIET_MS = MINUTE_MS;
 /** The channel a pick from a menu speaks on: no page, so abandon never closes its card. */
 const MENU_CHANNEL = "menu";
+/** Failures in a row (a door down, a timeout) after which the game's pill says its model is not answering. */
+const NOT_ANSWERING_AFTER = 2;
+/** The failures that mean a model is not answering, as opposed to refusing this one call. */
+const NOT_ANSWERING_CODES: ReadonlySet<AiErrorCode> = new Set([AiErrorCode.DoorUnavailable, AiErrorCode.Timeout]);
 
 const MESSAGE = {
   unavailable: "that model can't be used for this game here",
   checkoutElsewhere: "checkout opens only on genex.games and its payment page",
+  notPublished: "this game has no genex.games project to resume",
 } as const;
 
 /** The model a replayed call names. */
@@ -140,9 +146,25 @@ const sameModel = (a: AiModelRef, b: AiModelRef): boolean =>
 /** Every row a menu offers (its groups; never the folded "may struggle" ones). */
 const menuRows = (menu: AiModelMenu): AiMenuRow[] => menu.groups.flatMap((group) => group.rows);
 
-/** The menu's row for a model it offers ready now, or null: what a pick or a Change may choose. */
+/**
+ * The menu's row for a model it offers ready now, or null: what a pick or a Change may choose. A
+ * row folded under "may struggle" may still be picked (Genex warns then); Genex never picks one itself.
+ */
 export function menuOffers(menu: AiModelMenu, model: AiModelRef): AiMenuRow | null {
-  return menuRows(menu).find((row) => row.ready && sameModel(row.model, model)) ?? creditsRow(menu, model);
+  const offered = [...menuRows(menu), ...menu.struggling];
+  return offered.find((row) => row.ready && sameModel(row.model, model)) ?? creditsRow(menu, model);
+}
+
+/** Whether a model sits in the menu's "may struggle" fold. */
+const struggles = (menu: AiModelMenu, model: AiModelRef): boolean =>
+  menu.struggling.some((row) => sameModel(row.model, model));
+
+/** The maker's pick the menu names, ready: what a struggling pick's card offers instead. */
+function makersPick(menu: AiModelMenu): AiPick | null {
+  const best = menuRows(menu).find((row) => row.ready && row.tag === AiModelTag.Best);
+  if (best) return { model: best.model, row: best };
+  const credits = creditsRow(menu);
+  return credits ? { model: credits.model, row: credits } : null;
 }
 
 /** The Genex group's row: the maker's pick on the person's credits, when they are signed in. */
@@ -226,6 +248,10 @@ export class GameAiServiceImpl implements GameAiService {
   readonly #channels = new Map<string, Set<AiGameKey>>();
   /** The game titles callers named, for cards. */
   readonly #titles = new Map<AiGameKey, string>();
+  /** Failures in a row that say a game's model is not answering. */
+  readonly #failures = new Map<AiGameKey, number>();
+  /** The balance when Get credits last opened checkout; the pill says what came once it rises. */
+  #balanceAtCheckout: number | null = null;
 
   constructor(deps: GameAiServiceDeps) {
     this.#deps = deps;
@@ -276,9 +302,11 @@ export class GameAiServiceImpl implements GameAiService {
 
   // ── a call ─────────────────────────────────────────────────────────────────────────────────
 
-  async #call(caller: GameAiCaller, request: AiCallRequest, onDelta?: (text: string) => void): Promise<AiCallAnswer> {
+  async #call(caller: GameAiCaller, asked: AiCallRequest, onDelta?: (text: string) => void): Promise<AiCallAnswer> {
     // A ticket names one call at a time: a second while the first runs is refused before anything else.
-    if (this.#flights.has(request.ticket)) return refused(request.ticket, AiErrorCode.BadRequest);
+    if (this.#flights.has(asked.ticket)) return refused(asked.ticket, AiErrorCode.BadRequest);
+    // D6: a game other players see has every call held as shared, as genex.games holds it.
+    const request = caller.sharedAudience ? { ...asked, authority: AiAuthority.Shared } : asked;
     // Registered from the first check, so Stop or a page going away aborts a call still being admitted.
     const controller = new AbortController();
     this.#flights.set(request.ticket, { game: caller.game, channel: caller.channel, controller });
@@ -319,7 +347,7 @@ export class GameAiServiceImpl implements GameAiService {
     const worst = admitted.door.worstCaseMicros(request, admitted.model);
     const hold = grant && admitted.route.door !== AiDoor.Tape ? await this.#deps.grants.reserve(grant, worst) : null;
     if (hold && !hold.ok) {
-      this.#refusedAfter(caller, hold.code, hold.retryAfterMs);
+      await this.#refusedAfter(caller, hold.code, hold.retryAfterMs);
       return refused(request.ticket, hold.code, hold.retryAfterMs);
     }
     return this.#fly(caller, request, { ...admitted, grant }, { hold: hold?.hold ?? null, signal }, onDelta);
@@ -335,7 +363,7 @@ export class GameAiServiceImpl implements GameAiService {
     const pick = grant || !menu ? null : pickModel(menu, this.#deps.settings.local().pick, caller.context);
     const route = routeCall(await this.#routeInput(caller, request, grant, menu, pick));
     if (!route.ok) {
-      this.#refusedAfter(caller, route.code, null);
+      await this.#refusedAfter(caller, route.code, null);
       return refused(request.ticket, route.code);
     }
     const routed = this.#deps.doors.get(route.door);
@@ -395,7 +423,7 @@ export class GameAiServiceImpl implements GameAiService {
       const slot = await this.#deps.queue.acquire(admitted.route.door, caller.game, signal);
       if (!slot.ok) {
         await hold?.release();
-        this.#refusedAfter(caller, slot.code, slot.retryAfterMs);
+        await this.#refusedAfter(caller, slot.code, slot.retryAfterMs);
         return refused(request.ticket, slot.code, slot.retryAfterMs);
       }
       try {
@@ -416,7 +444,7 @@ export class GameAiServiceImpl implements GameAiService {
         charged: 0,
         started,
       });
-      this.#refusedAfter(caller, failure.code, failure.retryAfterMs);
+      await this.#refusedAfter(caller, failure.code, failure.retryAfterMs);
       return refused(request.ticket, failure.code, failure.retryAfterMs);
     } finally {
       this.#draw(caller.game, PlayAiPhase.Ready);
@@ -584,24 +612,75 @@ export class GameAiServiceImpl implements GameAiService {
 
   /** After a charge: a game paused at its daily alert shows its card. */
   #afterSettle(caller: GameAiCaller): void {
+    this.#failures.delete(caller.game);
     const grant = this.#deps.grants.live(caller.game);
     if (grant?.status !== AiGrantStatus.Paused) return;
     this.#stopCard(caller.game, AiStopReason.DailyAlert, { spentCredits: creditsOfMicros(grant.todayMicros) });
   }
 
-  /** The stop card a refusal shows, if any. */
-  #refusedAfter(caller: GameAiCaller, code: AiErrorCode, retryAfterMs: number | null): void {
-    const now = this.#deps.clock.now();
-    if (code === AiErrorCode.WaitingForPlan) {
-      const resetsAt = retryAfterMs === null ? null : new Date(now + retryAfterMs).toISOString();
-      this.#stopCard(caller.game, AiStopReason.PlanResting, { resetsAt });
+  /** The stop card a refusal shows, if any; a resting plan's switch is made before the game hears the refusal. */
+  async #refusedAfter(caller: GameAiCaller, code: AiErrorCode, retryAfterMs: number | null): Promise<void> {
+    const { game } = caller;
+    this.#notAnswering(game, code);
+    const live = this.#deps.grants.live(game);
+    switch (code) {
+      case AiErrorCode.WaitingForPlan:
+        await this.#planResting(caller, retryAfterMs).catch(() => undefined);
+        return;
+      case AiErrorCode.OutOfCredits:
+        this.#stopCard(game, AiStopReason.OutOfCredits, {});
+        return;
+      case AiErrorCode.Paused:
+        // Studio's own pause is the grant's; any other is genex.games', after the game's top-ups (D11).
+        if (live?.status === AiGrantStatus.Paused)
+          this.#stopCard(game, AiStopReason.DailyAlert, { spentCredits: creditsOfMicros(live.todayMicros) });
+        else this.#stopCard(game, AiStopReason.TopUpPaused, {});
+        return;
+      case AiErrorCode.Off:
+        this.#needsAiOff(game, live?.requires);
+        return;
+      default:
+        return;
+    }
+  }
+
+  /** A model that failed {@link NOT_ANSWERING_AFTER} times in a row says so; an answer starts the count again. */
+  #notAnswering(game: AiGameKey, code: AiErrorCode): void {
+    if (!NOT_ANSWERING_CODES.has(code)) {
+      this.#failures.delete(game);
       return;
     }
-    if (code === AiErrorCode.OutOfCredits) this.#stopCard(caller.game, AiStopReason.OutOfCredits, {});
-    if (code === AiErrorCode.Paused) {
-      const spent = creditsOfMicros(this.#deps.grants.live(caller.game)?.todayMicros ?? 0);
-      this.#stopCard(caller.game, AiStopReason.DailyAlert, { spentCredits: spent });
+    const failures = (this.#failures.get(game) ?? 0) + 1;
+    this.#failures.set(game, failures);
+    if (failures >= NOT_ANSWERING_AFTER) this.#stopCard(game, AiStopReason.NotAnswering, {});
+  }
+
+  /** A game that needs AI, with AI off, waits under its card; one that does not plays on. */
+  #needsAiOff(game: AiGameKey, requires: AiRequirement | undefined): void {
+    const needs = requires === AiRequirement.Ai || this.#menus.get(game)?.menu?.requires === AiRequirement.Ai;
+    if (needs) this.#stopCard(game, AiStopReason.NeedsAiOff, {});
+  }
+
+  /**
+   * The person's plan rests: Genex switches the game to a free model that is ready, when there is
+   * one, and the pill and the card say so; with none, the card says AI comes back with the plan.
+   */
+  async #planResting(caller: GameAiCaller, retryAfterMs: number | null): Promise<void> {
+    const { game } = caller;
+    const now = this.#deps.clock.now();
+    const resetsAt = retryAfterMs === null ? null : new Date(now + retryAfterMs).toISOString();
+    const resting = this.#deps.grants.live(game);
+    const menu = await this.#menu(game);
+    const free = menu ? pickModel(menu, AiPickPolicy.FreeOnly, caller.context) : null;
+    const switchable = free && resting && !sameModel(free.model, resting.model) && !this.#deps.grants.isOff(game);
+    let switched: AiPick | null = null;
+    if (switchable) {
+      await this.#deps.grants.grant(game, free.model, AiConsent.Silent, resting.requires);
+      await this.#menu(game, true);
+      this.#changed(game, PlayAiNote.PlanResting);
+      switched = free;
     }
+    this.#stopCard(game, AiStopReason.PlanResting, { resetsAt, grant: resting, alternative: switched });
   }
 
   // ── grants, stops and pages ────────────────────────────────────────────────────────────────
@@ -609,7 +688,10 @@ export class GameAiServiceImpl implements GameAiService {
   async requestGrant(caller: GameAiCaller, request: AiGrantRequest): Promise<AiGrantAnswer> {
     this.#seen(caller);
     const { grants } = this.#deps;
-    if (grants.isOff(caller.game)) return { view: null, code: AiErrorCode.Off };
+    if (grants.isOff(caller.game)) {
+      this.#needsAiOff(caller.game, request.requires);
+      return { view: null, code: AiErrorCode.Off };
+    }
     const live = grants.live(caller.game);
     if (live) return { view: await this.#view(live), code: null };
     const menu = await this.#menu(caller.game);
@@ -635,6 +717,7 @@ export class GameAiServiceImpl implements GameAiService {
     const requires = menu.requires;
     if (!needsConsent(model.door, free) || this.#deps.grants.consented(game, model.door)) {
       await this.#granted(game, model, AiConsent.Menu, requires);
+      this.#warnIfStruggling(game, menu, model);
       return { ok: true, model };
     }
     const caller = this.#menuCaller(game, menu);
@@ -642,8 +725,49 @@ export class GameAiServiceImpl implements GameAiService {
       this.#deps.clock,
       this.#facts(caller, { model, row }, this.#cardKind(row.funding), menu),
     );
-    void this.#askFor(caller, ticket, requires, model).catch(() => undefined);
+    void this.#askFor(caller, ticket, requires, model)
+      .then((answer) => {
+        if (answer.view) this.#warnIfStruggling(game, menu, this.#deps.grants.live(game)?.model ?? null);
+      })
+      .catch(() => undefined);
     return { ok: false, consent: ticket };
+  }
+
+  /** A model the check found struggling here, picked anyway: its card names the maker's pick (V3-Create-Check). */
+  #warnIfStruggling(game: AiGameKey, menu: AiModelMenu, model: AiModelRef | null): void {
+    if (!model || !struggles(menu, model)) return;
+    const pick = makersPick(menu);
+    const grant = this.#deps.grants.live(game);
+    this.#stopCard(game, AiStopReason.Struggles, {
+      grant,
+      alternative: pick && !sameModel(pick.model, model) ? pick : null,
+    });
+  }
+
+  /**
+   * Let a paused game's AI go on: past the daily alert (Keep playing; the alert stays quiet for the
+   * rest of the day), or on genex.games after its top-ups paused it (Resume, D11).
+   */
+  async resume(game: AiGameKey, pause: AiPause): Promise<void> {
+    if (pause === AiPause.DailyAlert) {
+      const live = this.#deps.grants.live(game);
+      if (live?.status === AiGrantStatus.Paused) await this.#deps.grants.setStatus(live.id, AiGrantStatus.Active);
+    } else {
+      const project = await this.#deps.projectIdOf(game);
+      if (!project) throw new Error(MESSAGE.notPublished);
+      await this.#deps.platform.resumeGame(project);
+    }
+    this.#changed(game, null);
+  }
+
+  /** Get credits opened checkout: the pill says how many came once the balance rises. */
+  checkoutOpened(balance: number | null): void {
+    this.#balanceAtCheckout = balance;
+  }
+
+  /** A note on a game's pill (a Report sent). */
+  noted(game: AiGameKey, note: PlayAiNote): void {
+    this.#draw(game, this.#deps.grants.isOff(game) ? PlayAiPhase.Off : PlayAiPhase.Ready, note);
   }
 
   async stop(game: AiGameKey): Promise<void> {
@@ -822,7 +946,16 @@ export class GameAiServiceImpl implements GameAiService {
     if (!fresh && kept && now - kept.at < MENU_TTL_MS) return kept.menu;
     const menu = await this.#deps.menu(game).catch(() => null);
     this.#menus.set(game, { at: now, menu });
+    this.#creditsCame(game, menu?.genex.balanceCredits ?? null);
     return menu;
+  }
+
+  /** The balance rose since checkout opened: the pill says how many came, once. */
+  #creditsCame(game: AiGameKey, balance: number | null): void {
+    const before = this.#balanceAtCheckout;
+    if (before === null || balance === null || balance <= before) return;
+    this.#balanceAtCheckout = null;
+    this.#draw(game, PlayAiPhase.Ready, PlayAiNote.CreditsAdded, balance - before);
   }
 
   #changed(game: AiGameKey, note: PlayAiNote | null): void {
@@ -831,19 +964,18 @@ export class GameAiServiceImpl implements GameAiService {
   }
 
   /** Show a stop card once a minute at most per game and reason. */
-  #stopCard(game: AiGameKey, reason: AiStopReason, facts: { resetsAt?: string | null; spentCredits?: number }): void {
+  #stopCard(game: AiGameKey, reason: AiStopReason, facts: StopFacts): void {
     const key = `${reason} ${game}`;
     const now = this.#deps.clock.now();
     if (now - (this.#stops.get(key) ?? Number.NEGATIVE_INFINITY) < STOP_CARD_QUIET_MS) return;
     this.#stops.set(key, now);
     const title = this.#titles.get(game) ?? this.#menus.get(game)?.menu?.title ?? game;
-    this.showStop(
-      stopCardOf(game, title, reason, this.#deps.grants.live(game), this.#menus.get(game)?.menu ?? null, facts),
-    );
+    const grant = facts.grant === undefined ? this.#deps.grants.live(game) : facts.grant;
+    this.showStop(stopCardOf(game, title, reason, grant, this.#menus.get(game)?.menu ?? null, facts));
   }
 
   /** Redraw the game's pill from its grant and the menu Genex last read. */
-  #draw(game: AiGameKey, phase: PlayAiPhase, note: PlayAiNote | null = null): void {
+  #draw(game: AiGameKey, phase: PlayAiPhase, note: PlayAiNote | null = null, addedCredits: number | null = null): void {
     const menu = this.#menus.get(game)?.menu ?? null;
     const off = this.#deps.grants.isOff(game);
     const unranked = Boolean(menu?.leaderboard) && this.#unranked.has(game);
@@ -851,6 +983,7 @@ export class GameAiServiceImpl implements GameAiService {
       phase: off ? PlayAiPhase.Off : phase,
       note,
       unranked,
+      addedCredits,
     });
     this.#deps.drawPill(game, bar);
   }
@@ -861,7 +994,7 @@ function pillBar(
   game: AiGameKey,
   grant: AiGrantRecord | null,
   menu: AiModelMenu | null,
-  state: { phase: PlayAiPhase; note: PlayAiNote | null; unranked: boolean },
+  state: { phase: PlayAiPhase; note: PlayAiNote | null; unranked: boolean; addedCredits: number | null },
 ): PlayAiBar {
   const row = grant && menu ? menuOffers(menu, grant.model) : null;
   const credits = row?.funding === AiFunding.Credits;
@@ -878,8 +1011,18 @@ function pillBar(
     lowCredits: balance !== null && balance <= AI_LOW_CREDITS,
     unranked: state.unranked,
     note: state.note,
-    addedCredits: null,
+    addedCredits: state.note === PlayAiNote.CreditsAdded ? state.addedCredits : null,
   };
+}
+
+/** What a stop card says beyond its reason; `grant` and `alternative` name them when the card must not guess. */
+interface StopFacts {
+  resetsAt?: string | null;
+  spentCredits?: number;
+  /** The grant the card is about (a resting plan's, after the switch); else the game's live one. */
+  grant?: AiGrantRecord | null;
+  /** The way on the card names (the model Genex switched to, the maker's pick); else a free model. */
+  alternative?: AiPick | null;
 }
 
 /** A stop card's facts: the model the game used and, when there is one, a free model to go on with. */
@@ -889,10 +1032,11 @@ function stopCardOf(
   reason: AiStopReason,
   grant: AiGrantRecord | null,
   menu: AiModelMenu | null,
-  facts: { resetsAt?: string | null; spentCredits?: number },
+  facts: StopFacts,
 ): AiStopCard {
   const free = menu ? pickModel(menu, AiPickPolicy.FreeOnly, AiContext.DesktopPlay) : null;
-  const alternative = free && (!grant || !sameModel(free.model, grant.model)) ? free : null;
+  const guessed = free && (!grant || !sameModel(free.model, grant.model)) ? free : null;
+  const alternative = facts.alternative === undefined ? guessed : facts.alternative;
   const row = grant && menu ? menuOffers(menu, grant.model) : null;
   return {
     game,
@@ -916,7 +1060,7 @@ export interface GameAiIpcHostOptions {
   settings: GameAiSettings;
   tapes: GameAiTapes;
   ledger: GameAiLedger;
-  platform: Pick<GenexAiPlatform, "packs" | "checkoutUrl">;
+  platform: Pick<GenexAiPlatform, "packs" | "checkoutUrl" | "balanceCredits">;
   reports: GameAiReports;
   check: GameAiModelCheck;
   /** A library game's folder, resolved through the library by real path; throws for any other name. */
@@ -959,7 +1103,12 @@ export function createGameAiIpcHost(options: GameAiIpcHostOptions): GameAiIpcHos
     },
     tapes: async (project) => options.tapes.list(await options.projectFolder(project)),
     reportPreview: (game) => reports.preview(game),
-    report: (request) => reports.send(request),
+    report: async (request) => {
+      const outcome = await reports.send(request);
+      // Report-v2: once sent, the pill wears the note.
+      if (outcome.ok) service.noted(request.game, PlayAiNote.ReportSent);
+      return outcome;
+    },
     check: (project) => check.start(project, { localOnly: false }),
     checkState: (project) => check.state(project),
     checkStop: (project) => check.stop(project),
@@ -969,8 +1118,10 @@ export function createGameAiIpcHost(options: GameAiIpcHostOptions): GameAiIpcHos
     checkout: async (product) => {
       const url = checkoutPage(await options.platform.checkoutUrl(product), options.checkoutOrigins);
       if (!url) throw new Error(MESSAGE.checkoutElsewhere);
+      service.checkoutOpened(await options.platform.balanceCredits().catch(() => null));
       await options.openExternal(url);
     },
+    resume: (game, pause) => service.resume(game, pause),
   };
   /** Settings' Games list: every game holding a grant, its model and what it spent this month. */
   async function activityOf(host: GameAiIpcHostOptions): Promise<AiActivity> {

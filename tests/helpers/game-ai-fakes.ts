@@ -6,7 +6,7 @@
 import {
   AiConsent,
   AiDoor,
-  AiFunding,
+  type AiFunding,
   AiRequirement,
   type AiGameKey,
   type AiModelRef,
@@ -128,6 +128,7 @@ export function defaultSettings(patch: Partial<GameAiSettingsView> = {}): GameAi
     createRouteEnabled: false,
     allowPlan: false,
     shareFitCounts: false,
+    pausedGames: [],
     ...patch,
   };
 }
