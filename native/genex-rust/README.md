@@ -19,6 +19,8 @@ app never imports it. The game-facing contract is [docs/GENEX_API.md](docs/GENEX
 | `genex-gpu-memory` | the adapter's GPU-visible memory through wgpu's hal (Metal, DX12, Vulkan FFI), for the desktop memory budget; kept in the store on an eject | renderer follow-up |
 | `genex-platform-web` | WebGPU-only web shell | M0a.7, M2.9 |
 | `genex-assets` | glTF and image loaders | M2.7 |
+| `genex-net` | multiplayer below the facade: the network as an input stream (one `NetFrame` per tick, a byte-capped journal, the tick's writes queued until after it) over Off, Loopback, Relay and Replay backends, deterministic on every destination (`tests/forbidden.rs`); module stubs until their work packages fill them | game systems (multiplayer) |
+| `genex-multiplayer` | the Genex relay protocol 3 client, vendored byte for byte from genex-demo and held to its `PROVENANCE.toml` by `tests/conformance/rust-vendored-multiplayer.test.ts` (fixes go upstream first); `native` links libcolyseus 0.18.10 through its build script, `web` binds the JS bridge; kept in the store on an eject | game systems (multiplayer) |
 | `genex-platform-ios`, `genex-platform-android` | mobile shells | M0a.16, M2.10, M5.3 |
 | `examples/pond` | the pond sample | M0a.7 |
 | `examples/custom-pass` | the custom GPU pass sample (`genex::gpu`, extension ladder level 3) | M2.19 |
@@ -62,9 +64,12 @@ change, rerun with `TRYBUILD=overwrite` and review the `.stderr` diff.
   Each entry pins the version `scripts/spike/rust-wgpu/vendor-allowlist.toml` vendored. A crate
   missing from the vendored tree goes into the allowlist first, then
   `setup-toolchain.sh --vendor`.
-- The one exception is the mobile shells' `pond` dev-dependency, a path inside this workspace:
-  their `pond_ios` and `pond_android` examples are the spike's packaged executables
-  (`scripts/spike/rust-wgpu/ios-app.sh`, `android-apk.sh`).
+- The exceptions are the mobile shells' `pond` dev-dependency, a path inside this workspace
+  (their `pond_ios` and `pond_android` examples are the spike's packaged executables,
+  `scripts/spike/rust-wgpu/ios-app.sh`, `android-apk.sh`), and the vendored `genex-multiplayer`,
+  whose upstream manifest keeps its own version requirements; the lock resolves them to the
+  workspace's versions, plus `sha2` for its build script. Its manifest differs from upstream only
+  in naming the upstream edition (2021), as its `PROVENANCE.toml` declares.
 - The pond's `studio` feature (on by default) is the dev flavour: started by the studio (fd 3
   and `GENEX_STUDIO_NONCE`) it serves genex-studio's verbs headless over the facade runtime
   (`examples/pond/src/studio.rs`, the stand-in for the facade adapter M2.4 lands). Export

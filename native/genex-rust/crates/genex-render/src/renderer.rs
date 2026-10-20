@@ -880,6 +880,9 @@ pub struct Renderer {
     grass: Option<crate::foliage::gpu::GrassGpu>,
     grass_pipelines: grass_draw::GrassPipelines,
     grass_time: grass_draw::GrassTime,
+    /// The impostors its pipelines stage baked (game systems LOD-13): the baker, the class's atlas
+    /// arrays and each species' row ([`Renderer::bake_impostor`]).
+    impostors: crate::impostor::bake::ImpostorStage,
     /// The look's depth of field and motion blur (graph nodes 17a and 17b, renderer pass 2 A.9).
     lens: std::cell::RefCell<lens::LensNodes>,
     shadow_sampler: Sampler,
@@ -2725,6 +2728,7 @@ impl Renderer {
             grass: None,
             grass_pipelines: grass_draw::GrassPipelines::default(),
             grass_time: grass_draw::GrassTime::default(),
+            impostors: crate::impostor::bake::ImpostorStage::default(),
             lens: std::cell::RefCell::default(),
             shadow_sampler,
             point_sampler,
@@ -3343,6 +3347,44 @@ impl Renderer {
     /// included, e.g. `RG11B10UFLOAT_RENDERABLE` for the compact scene format).
     pub fn device_features(&self) -> wgpu::Features {
         self.device.features()
+    }
+
+    /// Bake an impostor species in the pipelines stage (game systems LOD-13): `parts`, library
+    /// meshes each drawn with its row of the material table the last frame uploaded, baked round
+    /// their bounding spheres from `layout`'s directions into the next layer of `class`'s atlas
+    /// arrays, through the forward pass's material sampling. None past the class's species cap
+    /// (the species keeps its coarsest mesh, `degraded` `budget`) or when no part is in the library.
+    pub fn bake_impostor(
+        &mut self,
+        gpu: &Gpu,
+        parts: &[(MeshId, u32)],
+        layout: crate::impostor::ImpostorLayout,
+        class: crate::impostor::ImpostorClass,
+    ) -> Result<Option<crate::impostor::GpuImpostor>, RenderError> {
+        use crate::impostor::bake::{BakeMaterials, BakeMesh, BakePart};
+        let entries: Vec<(&crate::scene::MeshEntry, u32)> = parts.iter().filter_map(|(mesh, material)| self.library.entry(*mesh).map(|entry| (entry, *material))).collect();
+        let Some(bounds) = crate::impostor::ImpostorBounds::of_spheres(entries.iter().map(|(entry, _)| (entry.center, entry.radius))) else { return Ok(None) };
+        let bake_parts: Vec<BakePart> = entries
+            .iter()
+            .map(|(entry, material)| BakePart { first_index: entry.first_index, index_count: entry.index_count, base_vertex: entry.base_vertex, material: *material })
+            .collect();
+        let arrays = TextureClass::ALL.map(|class| [TextureKind::Color, TextureKind::Data].map(|kind| self.textures.view(class, kind)));
+        let [[c256, d256], [c512, d512], [c1024, d1024], [c2048, d2048]] = arrays;
+        let arrays = [c256, d256, c512, d512, c1024, d1024, c2048, d2048];
+        let materials = BakeMaterials { materials: self.tables.materials.get(), material_ext: self.tables.material_ext.get(), arrays, sampler: &self.texture_sampler };
+        let mesh = BakeMesh { vertices: &self.meshes.vertices, indices: &self.meshes.indices, parts: &bake_parts };
+        self.impostors.bake(&gpu.device, &gpu.queue, class, &mesh, &materials, &bounds, layout)
+    }
+
+    /// Make `class`'s impostor atlas arrays for `species` species (at most its cap: the layers the
+    /// ledger admits), before the pipelines stage bakes them.
+    pub fn reserve_impostors(&mut self, gpu: &Gpu, class: crate::impostor::ImpostorClass, species: u32) {
+        self.impostors.reserve(&gpu.device, class, species);
+    }
+
+    /// The impostors baked so far: the atlas arrays and each species' row (the draw reads them).
+    pub fn impostors(&self) -> &crate::impostor::bake::ImpostorStage {
+        &self.impostors
     }
 
     /// Add a mesh (a loaded GLB) and upload its rows.

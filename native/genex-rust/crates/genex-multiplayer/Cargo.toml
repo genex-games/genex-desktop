@@ -1,0 +1,44 @@
+[package]
+name = "genex-multiplayer"
+version = "0.1.0"
+description = "Genex relay protocol 3 client for Rust: a thin layer over the official Colyseus 0.18 native SDK (native) or the @genex-ai/multiplayer TypeScript SDK (wasm32 web)."
+edition = "2021"
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+build = "build.rs"
+links = "colyseus"
+
+[features]
+default = ["native"]
+# Native desktop: links the prebuilt libcolyseus (colyseus/native-sdk v0.18.10) over a hand-written
+# C ABI. build.rs fetches the pinned archive (sha256-verified) or uses GENEX_COLYSEUS_LIB_DIR.
+native = ["dep:sha2"]
+# wasm32-unknown-unknown: binds the JS bridge module `@genex-ai/multiplayer/bridge` (BRIDGE.md).
+web = ["dep:wasm-bindgen", "dep:wasm-bindgen-futures", "dep:js-sys"]
+
+[dependencies]
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.145"
+wasm-bindgen = { version = "0.2.117", optional = true }
+wasm-bindgen-futures = { version = "0.4.67", optional = true }
+js-sys = { version = "0.3.94", optional = true }
+
+[build-dependencies]
+sha2 = { version = "0.10.9", optional = true }
+
+[[example]]
+name = "smoke"
+required-features = ["native"]
+
+[[example]]
+name = "reconnect"
+required-features = ["native"]
+
+[[example]]
+name = "identity"
+required-features = ["native"]
+
+[[example]]
+name = "driver"
+required-features = ["native"]

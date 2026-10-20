@@ -110,8 +110,9 @@ export { RUST_ENGINE_FOLDER };
  * The genex crates an eject copies into `engine/` and the manifest points at the fork, in the
  * order they are patched. Each is safe Rust with no build script, so the fork builds under the
  * lane's unchanged policy (`-F unsafe_code`, no build scripts) with the trust flag off. The
- * animation, navigation and streaming crates are the facade's own dependencies, so they fork with
- * it; a release that does not carry one yet is skipped like any absent crate.
+ * animation, navigation, streaming and multiplayer (`genex-net`) crates are the facade's own
+ * dependencies, so they fork with it; a release that does not carry one yet is skipped like any
+ * absent crate.
  */
 export const RUST_ENGINE_CRATES: readonly string[] = Object.freeze([
   "genex",
@@ -121,6 +122,7 @@ export const RUST_ENGINE_CRATES: readonly string[] = Object.freeze([
   "genex-core",
   "genex-hud",
   "genex-nav",
+  "genex-net",
   "genex-platform-desktop",
   "genex-platform-web",
   "genex-render",
@@ -129,13 +131,15 @@ export const RUST_ENGINE_CRATES: readonly string[] = Object.freeze([
 
 /**
  * The genex crates an eject leaves in the store: the studio's transport and Live's frame wire
- * (the host contract the conformance suite judges), the adapter's GPU-visible memory query and the
- * phone shells, each FFI over `unsafe` that the lane's `-F unsafe_code` would refuse in a game's
- * own crate.
+ * (the host contract the conformance suite judges), the adapter's GPU-visible memory query, the
+ * vendored relay client `genex-multiplayer` (libcolyseus over FFI, linked by a build script) and
+ * the phone shells, each FFI over `unsafe` that the lane's `-F unsafe_code` would refuse in a
+ * game's own crate.
  */
 export const RUST_ENGINE_KEPT_CRATES: readonly string[] = Object.freeze([
   "genex-frames",
   "genex-gpu-memory",
+  "genex-multiplayer",
   "genex-platform-android",
   "genex-platform-ios",
   "genex-studio",
