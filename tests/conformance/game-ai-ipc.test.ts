@@ -247,12 +247,17 @@ describe("the harness's ai.* calls", () => {
       await table[HostMethod.AiTapes]({ project: game.name });
       await table[HostMethod.AiReplay]({ project: game.name, demo: "first-turn", seeds: [1, 2] });
       await table[HostMethod.AiBench]({ project: game.name, site: "npc.greet" });
-      await assert.rejects(table[HostMethod.AiTapes]({ project: "someone-elses" }), /not a game in the library/);
-      assert.deepEqual(heard, [
-        ["tapes", game.name],
-        ["replay", game.name, "first-turn", [1, 2]],
-        ["bench", game.name, "npc.greet", 5],
-      ]);
+      await assert.rejects(table[HostMethod.AiTapes]({ project: "someone-elses" }));
+      // The game's own folder is no root; a bench also carries the run budget the host made for it.
+      assert.deepEqual(
+        heard.map((call) => call.slice(0, 4)),
+        [
+          ["tapes", game.name, { root: null }],
+          ["replay", game.name, "first-turn", [1, 2]],
+          ["bench", game.name, "npc.greet", 5],
+        ],
+      );
+      assert.deepEqual(heard[1]?.[4], { root: null, answers: "tape" });
     } finally {
       await close();
     }

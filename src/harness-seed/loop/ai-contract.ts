@@ -117,6 +117,15 @@ export type AiCheckTest = (typeof AiCheckTest)[keyof typeof AiCheckTest];
 export const AiRequirement = { Ai: "ai", Optional: "optional" } as const;
 export type AiRequirement = (typeof AiRequirement)[keyof typeof AiRequirement];
 
+/** Whether a value is one of the AI requirement words. */
+const isAiRequirement = (raw: unknown): raw is AiRequirement =>
+  Object.values(AiRequirement).some((word) => word === raw);
+
+/** A declared AI requirement, read only from its typed word; anything else is no declaration. */
+export function aiRequirementOf(raw: unknown): AiRequirement | null {
+  return isAiRequirement(raw) ? raw : null;
+}
+
 // ── AI vendors a game may not call directly ─────────────────────────────────────────────────
 
 /** The vendors. Wire values: never rename one. */

@@ -10,10 +10,9 @@
  */
 import { copyFile, lstat, mkdir, readdir, readFile } from "node:fs/promises";
 import path from "node:path";
-import { aiRequirementOf } from "./kinds.ts";
 import { writeWorktreeFile } from "./library.ts";
 import { AI_METHOD_FILE_PATH, aiBriefLine } from "./ai-game-prompts.ts";
-import type { AiRequirement } from "./ai-contract.ts";
+import { type AiRequirement, aiRequirementOf } from "./ai-contract.ts";
 
 export { AI_METHOD_FILE_PATH, aiBriefLine };
 

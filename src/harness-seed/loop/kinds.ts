@@ -28,7 +28,7 @@ import { CONTROL_EXERCISE, type PlayAction } from "./play-script.ts";
 import { SECOND_MS } from "./time.ts";
 import { isPlainRecord } from "./json.ts";
 import { MAX_ACTION_MS, MAX_PLAY_SCRIPT } from "./config.ts";
-import { AiRequirement } from "./ai-contract.ts";
+import { type AiRequirement, aiRequirementOf } from "./ai-contract.ts";
 import type { AnyRecord, HarnessCtx } from "../types/harness.d.ts";
 import type { GameImageRead } from "../types/host-api.d.ts";
 
@@ -99,15 +99,6 @@ export interface GameTraits {
    */
   ai?: AiRequirement;
 }
-
-/** A declared AI requirement, read only from its typed word; anything else is no declaration. */
-export function aiRequirementOf(raw: unknown): AiRequirement | null {
-  return isAiRequirement(raw) ? raw : null;
-}
-
-/** Whether a value is one of the AI requirement words. */
-const isAiRequirement = (raw: unknown): raw is AiRequirement =>
-  Object.values(AiRequirement).some((word) => word === raw);
 
 /** One of the two input checks: the state paths it reads, its expression and its note. */
 export interface InputProbe {

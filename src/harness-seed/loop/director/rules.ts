@@ -14,8 +14,8 @@
  */
 import { shortSha } from "../git.ts";
 import { Side } from "../judge.ts";
-import { aiRequirementOf, GameTrait, isGameKind, KIND_NAMES, normalizePlayScript } from "../kinds.ts";
-import { AiRequirement } from "../ai-contract.ts";
+import { GameTrait, isGameKind, KIND_NAMES, normalizePlayScript } from "../kinds.ts";
+import { AiRequirement, aiRequirementOf } from "../ai-contract.ts";
 import { isRunning, WorkerMode } from "../outcomes.ts";
 import { parsePlanSteering } from "../replan.ts";
 import { allowedFile, mechanicalReview } from "../review.ts";

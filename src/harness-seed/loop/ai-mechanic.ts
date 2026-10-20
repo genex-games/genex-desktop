@@ -12,9 +12,17 @@
  */
 import { lstat, readFile } from "node:fs/promises";
 import path from "node:path";
-import { askJudgeFor, judgePrompt } from "./judge.ts";
-import { aiRequirementOf, gameLine } from "./kinds.ts";
-import { AI_SITE_RE, AI_TAPE_EXTENSION, AI_TAPES_DIR, AiReplayAnswers, TAPE_NAME_RE } from "./ai-contract.ts";
+// By namespace: a kept older judge.ts may predate `askJudgeFor`, and a named import would stop this file loading.
+import * as judges from "./judge.ts";
+import { gameLine } from "./kinds.ts";
+import {
+  AI_SITE_RE,
+  AI_TAPE_EXTENSION,
+  AI_TAPES_DIR,
+  AiReplayAnswers,
+  aiRequirementOf,
+  TAPE_NAME_RE,
+} from "./ai-contract.ts";
 import { buildFolder, buildOf, demosOf, replaysOf, type AiCheckEvidence } from "./ai-checks.ts";
 import {
   AI_MECHANIC_RUBRIC_FALLBACK,
@@ -166,12 +174,14 @@ export async function judgeAiMechanic(
   run: Run,
   evidence: AiCheckEvidence & object,
 ): Promise<AiMechanicVerdict | AiMechanicUnavailable> {
+  if (typeof judges.askJudgeFor !== "function" || typeof judges.judgePrompt !== "function")
+    return { unavailable: "this harness's judge.ts cannot ask the AI mechanic judge" };
   const demos = await aiMechanicDemos(ctx, evidence);
   if (!Array.isArray(demos)) return demos;
-  const systemPrompt = await judgePrompt(ctx, AI_MECHANIC_RUBRIC, AI_MECHANIC_RUBRIC_FALLBACK);
+  const systemPrompt = await judges.judgePrompt(ctx, AI_MECHANIC_RUBRIC, AI_MECHANIC_RUBRIC_FALLBACK);
   const userContent = aiMechanicBrief(gameLine(run.game), demos);
   try {
-    const { raw } = await askJudgeFor(ctx, { run, systemPrompt, userContent });
+    const { raw } = await judges.askJudgeFor(ctx, { run, systemPrompt, userContent });
     return readAiMechanicVerdict(raw);
   } catch (err: unknown) {
     return {

@@ -2,8 +2,7 @@
  * The line a builder's brief carries when its game calls a model in play (`ai-game.ts`): where the
  * AI method is, and whether the game may run without an answer.
  */
-import { AiRequirement } from "./ai-contract.ts";
-import { aiRequirementOf } from "./kinds.ts";
+import { AiRequirement, aiRequirementOf } from "./ai-contract.ts";
 
 /** Where a delegated builder finds the AI method, beside its brief. */
 export const AI_METHOD_FILE_PATH = ".studio/AI.md";

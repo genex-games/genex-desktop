@@ -18,7 +18,7 @@ import { fitBrief } from "../brief-fit.ts";
 import { blockBench } from "../build-block-prompts.ts";
 import { openCarriedFixes } from "../carried-fixes.ts";
 import { withIdentity } from "../../workers/identity.ts";
-import { writeAiMethodFile } from "../../ai-game.ts";
+import { aiOfGame, writeAiMethodFile } from "../../ai-game.ts";
 
 /** A template game's entry module, when the shape names none. */
 const DEFAULT_ENTRY = "src/main.js";
@@ -82,9 +82,11 @@ async function writeRecipesFile(loop: FacetLoop, round: FacetRound): Promise<str
  * skill reaches the next round.
  */
 async function writeAiMethod(loop: FacetLoop): Promise<void> {
-  const { ctx, delegated, game, run, workdir } = loop;
-  if (!delegated || !workdir || typeof ctx.workspace !== "string") return;
-  await writeAiMethodFile(ctx.workspace, workdir, game ?? run.game).catch(() => null);
+  const { delegated, game, run, workdir } = loop;
+  const declared = game ?? run.game;
+  if (!delegated || !workdir || !aiOfGame(declared)) return;
+  const workspace = loop.ctx?.workspace;
+  if (typeof workspace === "string") await writeAiMethodFile(workspace, workdir, declared).catch(() => null);
 }
 
 /**
