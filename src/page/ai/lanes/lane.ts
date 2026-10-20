@@ -34,6 +34,8 @@ export interface LaneReply {
 /** One call as a lane runs it. */
 export interface LaneCall {
   call: CompiledCall;
+  /** The grant the game holds, by the id its lane gave it; null before it holds one. */
+  grantId: string | null;
   /** The call's tape key (`callKey`) and which occurrence of it this is, from 0. */
   key: string;
   n: number;

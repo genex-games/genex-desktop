@@ -9,6 +9,7 @@
  * (`__studio.seed()`) forgets every call, so a seed and the same steps replay the same frames.
  */
 import {
+  AI_ID_RE,
   AiAuthority,
   type AiBudgetView,
   type AiCallAnswer,
@@ -31,7 +32,7 @@ import { COMPACT_PROMPT, COMPACT_ROLE } from "./compile-prompts.ts";
 import { type Compiled, type CompiledCall, compileAct, compileAsk, compileJudge, compileSay } from "./compile.ts";
 import { inbox } from "./inbox.ts";
 import { type AiMemory, type AiMemoryLine, applyCompaction, createMemory, keepOf, MEMORY_NAME_RE } from "./memory.ts";
-import { type Lane, type LaneReply, refusedReply } from "./lanes/lane.ts";
+import { type Lane, type LaneOpened, type LaneReply, refusedReply } from "./lanes/lane.ts";
 import { callKeyNow } from "./sha256.ts";
 import type { AiDisclosure, AiFailure, AiResult, AiStatus, AiTicket, CreateAiOptions, GameAi } from "./types.ts";
 
@@ -137,17 +138,28 @@ function count(rt: Runtime, code: AiErrorCode): void {
 /** Whether a grant view names a door genex.games answers. */
 const onPlatform = (view: AiBudgetView | null): boolean => view !== null && isPlatformDoor(view.door);
 
+/** Open genex.games' lane, or null when the page has none or it cannot open. */
+async function openPlatform(rt: Runtime): Promise<{ lane: Lane; opened: LaneOpened } | null> {
+  const platform = rt.deps.lanes.platform;
+  if (!platform) return null;
+  try {
+    const lane = await platform();
+    return { lane, opened: await lane.open() };
+  } catch {
+    return null;
+  }
+}
+
 /** Move to genex.games' lane, once, when the game's grant is answered there. */
 async function movePlatform(rt: Runtime): Promise<boolean> {
-  const platform = rt.deps.lanes.platform;
-  if (!platform || rt.laneName === null || rt.lane?.needsGrant) return false;
-  const lane = await platform();
-  const opened = await lane.open();
-  rt.lane = lane;
-  rt.laneName = lane.lane;
-  rt.on = opened.on;
-  rt.tape = opened.tape;
-  rt.grant = opened.grant.view;
+  if (rt.laneName === null || rt.lane?.needsGrant) return false;
+  const moved = await openPlatform(rt);
+  if (!moved) return false;
+  rt.lane = moved.lane;
+  rt.laneName = moved.lane.lane;
+  rt.on = moved.opened.on;
+  rt.tape = moved.opened.tape;
+  rt.grant = moved.opened.grant.view;
   return true;
 }
 
@@ -288,8 +300,10 @@ function send(rt: Runtime, pending: Pending): void {
   }
   const failed = () => settle(rt, pending, refusedReply(pending.ticket, AiErrorCode.Provider, null));
   try {
+    const grantId = rt.grant?.id ?? null;
     const reply = lane.call({
-      call: { ...call, wire: { ...call.wire, grantId: rt.grant?.id ?? call.wire.grantId } },
+      call: { ...call, wire: { ...call.wire, grantId: wireGrantId(grantId) } },
+      grantId,
       key: pending.key,
       n: pending.n,
       onDelta: (text) => {
@@ -489,9 +503,13 @@ function memoryOf(rt: Runtime, name: unknown, keep: unknown): AiMemory {
 
 const compileContext = (rt: Runtime) => ({
   ticket: ticketId(rt.epoch, rt.tickets + 1),
-  grantId: rt.grant?.id ?? UNGRANTED_ID,
+  grantId: UNGRANTED_ID,
   sites: rt.options.sites,
 });
+
+/** The grant id a call carries to main: the game's when main's wire can name it (a host grant's always can). */
+const wireGrantId = (grantId: string | null): string =>
+  grantId !== null && AI_ID_RE.test(grantId) ? grantId : UNGRANTED_ID;
 
 /** A request's fallback, read without running a getter twice. */
 const fallbackOf = (request: unknown): unknown =>
