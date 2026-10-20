@@ -205,6 +205,18 @@ describe("what the model check runs on", () => {
     assert.equal(fx.doors[1]?.runs.length, 0);
   });
 
+  it("tells every door call, the judge's included, the creator's game it checks", async () => {
+    const fx = await check((clock) => [door(AiDoor.Local, ["qwen3:8b"], fits, clock)]);
+    await fx.service.start(PROJECT, { localOnly: false });
+    await fx.service.settled(PROJECT);
+    const runs = fx.doors[0]?.runs ?? [];
+    assert.ok(
+      runs.some((run) => run.call.request.site === CHECK_SITE),
+      "the judge ran",
+    );
+    for (const run of runs) assert.equal(run.call.game, createGameKey(PROJECT));
+  });
+
   it("checks at most twelve models, the standard panel's picks first", async () => {
     const many = Array.from({ length: 20 }, (_, i) => `vendor/model-${i}`);
     const fx = await check((clock) => [

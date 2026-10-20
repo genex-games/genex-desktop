@@ -441,9 +441,15 @@ function doorCalls(deps: ModelCheckDeps) {
   };
 
   /** One moment on one model, with the game's one repair. */
-  const answer = async (impl: GameAiDoorImpl, model: AiModelRef, moment: AiMoment, signal: AbortSignal) => {
+  const answer = async (
+    impl: GameAiDoorImpl,
+    model: AiModelRef,
+    moment: AiMoment,
+    game: AiGameKey,
+    signal: AbortSignal,
+  ) => {
     const started = deps.clock.now();
-    const call = { request: moment.request, model, purpose: CompletePurpose.Game, repair: null };
+    const call = { game, request: moment.request, model, purpose: CompletePurpose.Game, repair: null };
     const first = await impl.run(call, signal);
     let parsed = parseOutput(moment.request.schema, first.text);
     let costMicros = first.costMicros;
@@ -462,7 +468,7 @@ function doorCalls(deps: ModelCheckDeps) {
   /** One moment on one model; null when it never got a slot. A failed call is a moment with no answer. */
   const runMoment = (impl: GameAiDoorImpl, model: AiModelRef, moment: AiMoment, game: AiGameKey, signal: AbortSignal) =>
     inSlot(model, game, signal, () =>
-      answer(impl, model, moment, signal).catch((): MomentResult => {
+      answer(impl, model, moment, game, signal).catch((): MomentResult => {
         signal.throwIfAborted();
         return NO_ANSWER;
       }),
@@ -478,7 +484,7 @@ function doorCalls(deps: ModelCheckDeps) {
     const impl = judge ? deps.doors.get(judge.door) : undefined;
     if (!judge || !impl || !items.length) return null;
     const request = judgeRequest(items);
-    const call = { request, model: judge, purpose: CompletePurpose.Game, repair: null };
+    const call = { game, request, model: judge, purpose: CompletePurpose.Game, repair: null };
     return inSlot(judge, game, signal, () =>
       impl.run(call, signal).then(
         (reply) => readVerdict(request.schema, reply.text),

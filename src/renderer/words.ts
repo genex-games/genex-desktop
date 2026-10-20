@@ -5226,9 +5226,8 @@ const AI_COUNT = new Intl.NumberFormat("en-US");
 /** Whole dollars (`$11`), and dollars with their cents in pairs (`$5.50`). */
 const AI_PRICE = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 });
 const AI_PRICE_CENTS = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", minimumFractionDigits: 2 });
-/** USD micros in a dollar and in a cent. */
+/** USD micros in a dollar (a cent is `MICROS_PER_CENT`, one credit). */
 const MICROS_PER_DOLLAR = 1_000_000;
-const MICROS_PER_CENT = 10_000;
 
 /** "this Mac", or "this computer" where the studio runs on another system (`renderer/platform.ts`). */
 export const thisMachine = (platform: string): string =>
