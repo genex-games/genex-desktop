@@ -12,6 +12,10 @@
  *    process exit event keeps synchronous cleanup, including partially applied initialization.
  * 5. Every srt-win ACL call (grant, stamp, revoke and restore, each sync and async) and the egress
  *    check wait {@link SRT_WIN_TIMEOUT_MS} instead of SRT's 60 and 30 seconds.
+ * 6. The Windows proxies try the next port of srt-win's loopback range when Windows refuses one
+ *    (EACCES), as when another program holds it (EADDRINUSE). Hyper-V, WSL, Docker and
+ *    administrators reserve ports in that range (`netsh int ipv4 show excludedportrange
+ *    protocol=tcp`), and SRT gave up on the first, so the agents never started.
  *
  * Policy generation, arguments and outcomes are untouched. */
 import { createRequire } from "node:module";
@@ -41,6 +45,7 @@ const WHICH_MARKER = "// Studio: absolute executable lookup";
 const ASYNC_MARKER = "// Studio: srt-win off the event loop";
 const CLEANUP_MARKER = "// Studio: async ACL cleanup with synchronous exit fallback";
 const DEADLINE_MARKER = "// Studio: srt-win deadlines";
+const PORT_MARKER = "// Studio: refused proxy ports";
 
 /**
  * How long srt-win may take over an ACL call or the egress check. A grant or stamp passes an entry
@@ -224,6 +229,21 @@ function patchDeadlines(original) {
   return `${fixed}\n${DEADLINE_MARKER}: ${SRT_WIN_TIMEOUT_MS} ms for each ACL call and the egress check.\n`;
 }
 
+/** `listenInRange` moving past a port Windows refuses as well as one in use. */
+function patchProxyPorts(original) {
+  return replaceOnce(
+    original,
+    [
+      [
+        "                    err?.code === 'EADDRINUSE' &&",
+        `                    ${PORT_MARKER}: Windows refuses a reserved port with EACCES.
+                    (err?.code === 'EADDRINUSE' || err?.code === 'EACCES') &&`,
+      ],
+    ],
+    "SRT's proxy port range",
+  );
+}
+
 export async function patchSandboxRuntime() {
   const pkg = require.resolve("@anthropic-ai/sandbox-runtime/package.json");
   const metadata = JSON.parse(await readFile(pkg, "utf8"));
@@ -294,6 +314,7 @@ export async function patchSandboxRuntime() {
       `${original}\n${ASYNC_MARKER}.\nexport { grantWindowsAclAsync, stampWindowsAclAsync, setStudioStepLog } from './sandbox/windows-sandbox-utils.js';\n`,
   );
   await patchCleanup(dist);
+  await patchFile(dist, "sandbox/listen-in-range.js", PORT_MARKER, patchProxyPorts);
   // Last, so the async twins above carry the deadline too.
   await patchFile(dist, "sandbox/windows-sandbox-utils.js", DEADLINE_MARKER, patchDeadlines);
 }

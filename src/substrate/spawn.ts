@@ -40,6 +40,7 @@ import {
   missingLinuxTools,
   sandboxProblem,
   windowsLaunchError,
+  windowsProxyPortsError,
   windowsSetupProblem,
 } from "./sandbox-unavailable.ts";
 import { childEnv, windowsBaseEnv } from "./child-env.ts";
@@ -712,7 +713,10 @@ export class ProcessSandbox {
     await session
       .join(this, { grants: this.#windowsGrants(backend), config: this.#windowsSessionConfig() })
       .catch(async (error: unknown) => {
-        throw await asWindowsSetupProblem(error, this.#seams.setupGaps ?? windowsSetupGaps);
+        throw (
+          windowsProxyPortsError(error) ??
+          (await asWindowsSetupProblem(error, this.#seams.setupGaps ?? windowsSetupGaps))
+        );
       });
     this.#windows = backend;
     // A folder or deny added while the session started (a start in the background) joins it now.
