@@ -114,7 +114,7 @@ function snapshot(dir: string): string[] {
 /** A fake rust tool: `--version` answers the pinned version, anything else prints its argv and env as JSON. */
 const FAKE_TOOL = (name: string) => `#!/bin/bash
 if [ "$1" = "--version" ] || [ "$1" = "-V" ]; then echo "${name} ${RUST_VERSION} (fake)"; exit 0; fi
-node -e 'const e = process.env; process.stdout.write(JSON.stringify({tool: process.argv[1], argv: process.argv.slice(2), env: {CARGO_HOME: e.CARGO_HOME, CARGO: e.CARGO, PATH: e.PATH, RUSTC: e.RUSTC, RUSTUP_TOOLCHAIN: e.RUSTUP_TOOLCHAIN ?? null, RUSTUP_HOME: e.RUSTUP_HOME ?? null, RUSTC_WRAPPER: e.RUSTC_WRAPPER ?? null, CARGO_BUILD_RUSTC_WRAPPER: e.CARGO_BUILD_RUSTC_WRAPPER ?? null, CARGO_TARGET_DIR: e.CARGO_TARGET_DIR, CARGO_NET_OFFLINE: e.CARGO_NET_OFFLINE, GENEX_NO_WINDOW: e.GENEX_NO_WINDOW ?? null}, configKeys: Object.keys(e).filter((k) => /^(CARGO_|RUST)/.test(k)).sort()}))' "${name}" "$@"
+node -e 'const e = process.env; process.stdout.write(JSON.stringify({tool: process.argv[1], argv: process.argv.slice(2), env: {CARGO_HOME: e.CARGO_HOME, CARGO: e.CARGO, PATH: e.PATH, RUSTC: e.RUSTC, RUSTUP_TOOLCHAIN: e.RUSTUP_TOOLCHAIN ?? null, RUSTUP_HOME: e.RUSTUP_HOME ?? null, RUSTC_WRAPPER: e.RUSTC_WRAPPER ?? null, CARGO_BUILD_RUSTC_WRAPPER: e.CARGO_BUILD_RUSTC_WRAPPER ?? null, CARGO_TARGET_DIR: e.CARGO_TARGET_DIR, CARGO_NET_OFFLINE: e.CARGO_NET_OFFLINE, GENEX_NO_WINDOW: e.GENEX_NO_WINDOW ?? null, GENEX_COLYSEUS_LIB_DIR: e.GENEX_COLYSEUS_LIB_DIR ?? null, GENEX_COLYSEUS_ARCHIVE: e.GENEX_COLYSEUS_ARCHIVE ?? null}, configKeys: Object.keys(e).filter((k) => /^(CARGO_|RUST)/.test(k)).sort()}))' "${name}" "$@"
 exit "\${FAKE_TOOL_EXIT:-0}"
 `;
 
@@ -256,6 +256,8 @@ interface FakeCargoOutput {
     CARGO_TARGET_DIR: string;
     CARGO_NET_OFFLINE: string;
     GENEX_NO_WINDOW: string | null;
+    GENEX_COLYSEUS_LIB_DIR: string | null;
+    GENEX_COLYSEUS_ARCHIVE: string | null;
   };
   /** Every `CARGO_*` and `RUST*` variable the tool saw, sorted. */
   configKeys: string[];
@@ -588,6 +590,83 @@ describe("rust-env.ts marks test and bench runs windowless", POSIX_ONLY, () => {
       assert.equal((JSON.parse(result.stdout) as FakeCargoOutput).env.GENEX_NO_WINDOW, row.expected);
     });
   }
+});
+
+/**
+ * The vendored relay client's build script (genex-multiplayer `build.rs`) downloads the Colyseus
+ * xcframework on a Mac when `GENEX_COLYSEUS_LIB_DIR` is unset (MP-1a). The helper always names a
+ * lib folder in the toolchain, so a workspace build never reaches the network: a folder nobody
+ * filled makes the script stop with its "has no libcolyseus.a" message instead.
+ */
+const COLYSEUS_ROWS: {
+  name: string;
+  args: string[];
+  caller?: NodeJS.ProcessEnv;
+  expected: (toolchain: string) => string;
+}[] = [
+  {
+    name: "a workspace test names the host triple's folder",
+    args: ["test", "--workspace", "--offline"],
+    expected: (toolchain) => path.join(toolchain, "tools", "colyseus", HOST_TRIPLE),
+  },
+  {
+    name: "a check of the host triple named with --target= names its folder",
+    args: ["check", `--target=${HOST_TRIPLE}`],
+    expected: (toolchain) => path.join(toolchain, "tools", "colyseus", HOST_TRIPLE),
+  },
+  {
+    name: "an empty caller value is replaced",
+    args: ["build"],
+    caller: { GENEX_COLYSEUS_LIB_DIR: "" },
+    expected: (toolchain) => path.join(toolchain, "tools", "colyseus", HOST_TRIPLE),
+  },
+  {
+    name: "a caller's own folder is kept (the owner's prepared lib folder)",
+    args: ["build"],
+    caller: { GENEX_COLYSEUS_LIB_DIR: "/opt/colyseus/lib" },
+    expected: () => "/opt/colyseus/lib",
+  },
+];
+
+describe("rust-env.ts always names a Colyseus lib folder, so no build script downloads one", POSIX_ONLY, () => {
+  for (const row of COLYSEUS_ROWS) {
+    it(row.name, async () => {
+      const f = await fakeToolchain();
+      const result = await runEnv(["--", "cargo", ...row.args], { ...f.env, ...row.caller });
+      assert.equal(result.code, 0, result.stderr);
+      const out = JSON.parse(result.stdout) as FakeCargoOutput;
+      assert.equal(out.env.GENEX_COLYSEUS_LIB_DIR, row.expected(f.toolchain));
+    });
+  }
+
+  it("names the folder of the triple a cross build targets", async () => {
+    const f = await fakeToolchain();
+    await mkdir(path.join(f.toolchain, "sysroot", "lib", "rustlib", "wasm32-unknown-unknown", "lib"), {
+      recursive: true,
+    });
+    const result = await runEnv(["--", "cargo", "check", "--target", "wasm32-unknown-unknown", "--", "-x"], f.env);
+    assert.equal(result.code, 0, result.stderr);
+    const out = JSON.parse(result.stdout) as FakeCargoOutput;
+    assert.equal(out.env.GENEX_COLYSEUS_LIB_DIR, path.join(f.toolchain, "tools", "colyseus", "wasm32-unknown-unknown"));
+  });
+
+  it("drops a caller's archive path, which only the download fallback reads", async () => {
+    const f = await fakeToolchain();
+    const env = { ...f.env, GENEX_COLYSEUS_ARCHIVE: path.join(f.home, "Colyseus.xcframework.zip") };
+    const result = await runEnv(["--", "cargo", "build"], env);
+    assert.equal(result.code, 0, result.stderr);
+    const out = JSON.parse(result.stdout) as FakeCargoOutput;
+    assert.equal(out.env.GENEX_COLYSEUS_ARCHIVE, null);
+    assert.equal(out.env.GENEX_COLYSEUS_LIB_DIR, path.join(f.toolchain, "tools", "colyseus", HOST_TRIPLE));
+  });
+
+  it("prints the folder in --print-env, so a sourced shell builds the same way", async () => {
+    const f = await fakeToolchain();
+    const result = await runEnv(["--", "--print-env"], f.env);
+    assert.equal(result.code, 0, result.stderr);
+    const dir = path.join(f.toolchain, "tools", "colyseus", HOST_TRIPLE);
+    assert.ok(result.stdout.includes(`export GENEX_COLYSEUS_LIB_DIR='${dir}'`), result.stdout);
+  });
 });
 
 describe("rust-env.ts never cleans the shared target under a running build", () => {

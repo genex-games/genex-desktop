@@ -2111,9 +2111,41 @@ Local Blender:
   show each material's colour: the wrapper copies a shader's Base Color to the viewport colour
   Workbench draws.
 
+CC0 Library: its backend imports the CC0 fetch core (`substrate/cc0-fetch.ts`, with fflate) and
+the lock's texture-usage table, which `scripts/build-plugins.mjs` bundles from this repo.
+
 Both: their ids are bundled seeds, so no GitHub, index or local package may take them over, the
 scaffold refuses them (with `example` and `studio`), and the app's catalog policy reserves them as
 official ids.
+
+## The CC0 Library
+
+The bundled `cc0` plugin (`src/plugins/cc0`, owner call C11, on by default, no account) gives every
+game free CC0 assets. `cc0__search` reads Poly Haven's model, texture and HDRI lists (cached an hour
+per kind) and ambientCG's material search; each result names the `source` and `id` that
+`cc0__fetch` takes. `cc0__fetch` runs in the plugin's backend, never in an agent's sandbox, under
+the CC0 fetch rules of `substrate/cc0-fetch.ts`: every URL is plain https on an allowlisted host
+(the API hosts `api.polyhaven.com` and `ambientcg.com`; the download hosts `dl.polyhaven.org` and
+`ambientcg.com`; `acg-download.struffelproductions.com` only as the one redirect ambientCG's `get`
+answers), each download is checked against its published size and md5 and pinned by sha256, and
+nothing is written until every file of the fetch has passed. A Poly Haven model is packed into one
+self-contained GLB (its buffers and images embedded, `glb.ts`), because a Rust game loads a model
+from one file's bytes; `maps` adds loose maps beside it. A texture brings its maps (Poly Haven `diff`,
+`nor_gl`, `arm`; ambientCG's zip members `Color`, `NormalGL`, `Roughness`, `AmbientOcclusion`,
+`Metalness` under those role names) and an HDRI one `.hdr`. Resolutions are 1k, 2k and 4k.
+
+The files go through `assets.deliver` into `assets/cc0/<job>/`, where the job id is a UUID made from
+the source, id and resolution, so fetching the same asset again lands in the same folder. The plugin
+keeps a delivery record per job (`jobs.write`: source, page, authors, and each file's path, sha256,
+role and URL); `provenance.ts` `cc0LockFacts` turns it into `genex-assets.lock` facts with origin
+`cc0`, licence CC0-1.0, the source, and a map's usage from its role (`PROVENANCE_ROLE_USAGE`).
+A refusal is the fetch core's typed code (`host-not-allowed`, `hash-mismatch`, …) or `curated-held`,
+in the error text as `cc0 <code>: <detail>`. Every request names `Genex-CC0/<version>` in its
+User-Agent, as Poly Haven's API terms ask, and Poly Haven's live results carry
+`credit: "Powered by Poly Haven"`, which the plugin's panel shows under its search results.
+`source: "curated"` fetches a sha256-pinned pack from `curated.ts`; packs that cannot be fetched
+under the rules yet are listed as held with a typed reason (`no-stable-host`: Quaternius's itch.io
+links are signed per download; `zip-nested`: Kenney's kits nest their files in folders).
 
 ## Deferred work
 

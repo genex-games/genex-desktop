@@ -16,6 +16,7 @@ use std::path::PathBuf;
 
 use genex_render::device_class::DeviceClass;
 use genex_render::layout::MAX_LOCAL_LIGHTS;
+use genex_render::lod_rows::{DrawLod, FAR_RULE_NONE, GpuFarRule};
 use genex_render::lights::SpotLight;
 use genex_render::mesh::MeshData;
 use genex_render::presets::preset_quality;
@@ -98,6 +99,62 @@ fn a_still_world_draws_whole_until_its_casters_stood_still_then_holds_its_maps()
     assert!(uses[..=first].iter().all(|layer| *layer == [LayerUse::Draw; 2]), "{uses:?}");
     // Nothing else reaches the layers: their maps already hold the statics, so no pass runs.
     assert!(uses[first + 1..].iter().all(|layer| *layer == [LayerUse::Hold; 2]), "{uses:?}");
+}
+
+/// A far rule that thins the CPU rows' field from 5 m (game systems LOD-18): the camera's view
+/// of it changes whenever the camera moves, whatever its rows do.
+const FOREST_RULE: GpuFarRule = GpuFarRule { start: 5.0, end: 25.0, keep: 0.3, fade_out: 10.0 };
+
+/// [`world`] with its spheres thinned by [`FOREST_RULE`] (a forest past its far start), fading in
+/// a band of `band` (LOD-03's fade twins of every far-ruled mesh are drawn either way).
+fn forest(band: f32) -> Scene {
+    let mut scene = Scene::new(CameraDesc::look_at([0.0, 4.0, 10.0], [0.0, 0.0, -4.0]), [0, 0, 0, 255]);
+    scene.lighting.sun_dir = SUN;
+    scene.lighting.shadow_distance = DISTANCE;
+    scene.lod_band = band;
+    scene.far_rules = vec![FOREST_RULE];
+    scene.draw(MeshId::CUBE, scaled([0.0, -0.6, -10.0], [30.0, 0.2, 30.0]), Material::color(GREY));
+    scene.draw(MeshId::CUBE, translation(2.0, 0.0, -2.0), Material::color(GREY));
+    scene.set_lod(DrawLod { far_rule: 1, ..DrawLod::OWN });
+    for i in 0..GRID * GRID {
+        let (x, z) = ((i % GRID) as f32 * 1.5 - 11.0, (i / GRID) as f32 * 1.5 - 16.0);
+        scene.draw(MeshId::SPHERE, translation(x, 0.0, z), Material::color(GREY));
+    }
+    scene
+}
+
+/// Whether batch `b` of `plan` draws rows a far rule thins.
+fn far_ruled(plan: &FramePlan, b: usize) -> bool {
+    let batch = &plan.batches[b];
+    let first = batch.first_row as usize;
+    plan.lod_rows.get(first..first + batch.instance_count as usize).unwrap_or(&[]).iter().any(|row| row.far_rule != FAR_RULE_NONE)
+}
+
+// Game systems LOD-05. At head the thinned field stood still, so it joined the cache: the cached
+// layers kept every sphere whole while the camera's cull thinned and faded them (a stale shadow).
+#[test]
+fn a_fading_forest_never_enters_the_static_cache() {
+    for band in [0.0, 0.15] {
+        let (mut cache, mut history) = (ShadowCache::default(), CascadeHistory::default());
+        let scene = forest(band);
+        let warm = STILL_FRAMES as u64 + 6;
+        for frame in 0..warm {
+            let (plan, cached) = step(&mut cache, &mut history, frame, &scene, true);
+            assert!(!plan.fade_runs.is_empty(), "band {band}: the forest draws its fade twins");
+            let thinned: Vec<usize> = (0..plan.batches.len()).filter(|b| far_ruled(&plan, *b)).collect();
+            assert!(thinned.len() >= 2, "band {band}: the field and its twin ({thinned:?})");
+            for b in thinned {
+                assert!(!cached.cached(b as u32), "band {band} frame {frame}: batch {b} (thinned by a far rule) entered the cache");
+            }
+            if frame + 1 == warm {
+                assert!(cached.cached(0), "band {band}: the still ground and cube stay cached");
+                for layer in 0..2 {
+                    assert!(cached.reached(layer), "band {band}: the forest reaches cascade {layer}: it draws over the cache");
+                    assert_ne!(cached.layer(layer), LayerUse::Hold, "band {band}: a layer the forest reaches is never held");
+                }
+            }
+        }
+    }
 }
 
 #[test]
@@ -319,6 +376,65 @@ fn metal_cached_shadow_frames_match_uncached_ones_byte_for_byte_while_casters_mo
     // With the ground in the overlay (the box shares its mesh), the far cascade's few cached
     // spheres no longer outweigh its copy: it draws whole; the others reuse their caches.
     assert!((38..45).all(|frame| cached_frames[frame] + 1 >= layers), "after the box moved: {cached_frames:?}");
+}
+
+/// Trees on a side of the forest row's forest.
+const FOREST_GRID: usize = 12;
+
+/// The forest row's frame `frame`: [`match_scene`]'s still world (its field cached) and a forest
+/// of `tree` (a mesh of its own) a far rule thins and fades (game systems LOD-05), the camera
+/// dollying in on frames 20-27 and standing still after, so the thinning changes while every row
+/// stands still.
+fn forest_scene(frame: u64, (mover, tree): (MeshId, MeshId), band: f32) -> Scene {
+    let mut scene = match_scene(0, mover);
+    let dolly = 0.25 * frame.clamp(20, 28).saturating_sub(20) as f32;
+    scene.camera = CameraDesc::look_at([0.0, 6.0, 10.0 - dolly], [0.0, 0.0, -3.0 - dolly]);
+    scene.lod_band = band;
+    scene.far_rules = vec![GpuFarRule { start: 6.0, end: 22.0, keep: 0.3, fade_out: 8.0 }];
+    scene.set_lod(DrawLod { far_rule: 1, ..DrawLod::OWN });
+    for i in 0..FOREST_GRID * FOREST_GRID {
+        let (x, z) = ((i % FOREST_GRID) as f32 * 1.1 - 6.0, (i / FOREST_GRID) as f32 * 1.1 - 12.0);
+        scene.draw(tree, translation(x, 1.6, z), Material::color(GREY));
+    }
+    scene
+}
+
+// Game systems LOD-05: the fade twins cast from the overlay of a cached layer. At head a cached
+// layer drew no fade twin (the overlay walked the whole batches only) and cached the thinned
+// field whole.
+#[test]
+#[ignore = "needs a GPU: run with --ignored metal"]
+fn metal_a_fading_forests_cached_shadow_frames_match_uncached_ones_byte_for_byte() {
+    let _row = gpu_row();
+    let Some(gpu) = gpu() else { return };
+    let mut quality = shadow_quality(1, None);
+    quality.shadows.map_size = 1024;
+    let size = (256, 144);
+    for band in [0.0, 0.15] {
+        let mut renderers = [false, true].map(|cache| renderer(&gpu, size, &quality, cache));
+        let meshes: Vec<(MeshId, MeshId)> = renderers
+            .iter_mut()
+            .map(|renderer| (renderer.add_mesh(&gpu, MeshData::cube()).expect("the mover's mesh"), renderer.add_mesh(&gpu, MeshData::sphere()).expect("the tree's mesh")))
+            .collect();
+        let mut cached_frames = Vec::new();
+        for frame in 0..36u64 {
+            let captures: Vec<_> = renderers
+                .iter_mut()
+                .zip(&meshes)
+                .map(|(renderer, meshes)| {
+                    renderer.set_frame_index(frame);
+                    renderer.render(&gpu, &forest_scene(frame, *meshes, band), CullPath::Gpu).expect("frame");
+                    (renderer.capture(&gpu).expect("capture"), renderer.last_stats().shadow_layers_cached)
+                })
+                .collect();
+            let differing = captures[0].0.bgra().iter().zip(captures[1].0.bgra()).filter(|(a, b)| a != b).count();
+            assert_eq!(differing, 0, "band {band} frame {frame}: the cached frame differs from the uncached one in {differing} bytes");
+            cached_frames.push(captures[1].1);
+        }
+        eprintln!("band {band}: cached layers by frame: {cached_frames:?}");
+        assert!(cached_frames[12..20].iter().all(|layers| *layers > 0), "band {band}: the still field is drawn from the cache: {cached_frames:?}");
+        assert!(cached_frames[30..].iter().all(|layers| *layers > 0), "band {band}: and again once the camera stopped: {cached_frames:?}");
+    }
 }
 
 /// The cost row: a world of [`COST_GRID`]² static spheres on a ground under two shadowed spots and

@@ -11,12 +11,10 @@ use crate::layout::GpuInstance;
 pub fn instance_row(model: &[f32; 16], center: [f32; 3], radius: f32, material: u32) -> GpuInstance {
     let matrix = Mat4::from_cols_array(model);
     let normal = normal_matrix(&matrix);
-    let world_center = matrix.transform_point3(Vec3::from(center));
-    let scale = matrix.x_axis.truncate().length().max(matrix.y_axis.truncate().length()).max(matrix.z_axis.truncate().length());
     GpuInstance {
         model: *model,
         normal: normal.to_cols_array(),
-        bounds: [world_center.x, world_center.y, world_center.z, radius * scale],
+        bounds: crate::lod_rows::world_sphere(model, center, radius),
         material,
         pad: [0; 3],
     }

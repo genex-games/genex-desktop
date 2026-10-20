@@ -42,7 +42,7 @@ one and cannot add one. A verb the game does not know answers `unknown-op`.
 | `pause` | Stop ticks. |
 | `step` | Run `max(1, round(ms / 16.667))` ticks, at most 36,000, and answer the frame, the simulated time, the ticks run and the draw calls. |
 | `state` | Every probe plus the runtime's own keys (`frame`, `checksum`, `held`, `hud`, `__render`, ...), and on phones the app `lifecycle` and the `safeArea`. |
-| `input` | Inject a list of `actions`: keys, pointer, look, wheel, `text`, `gamepad` state or `touch` fingers; edges fire on the next tick. |
+| `input` | Inject a list of `actions`: keys, pointer, look, wheel, `text`, `gamepad` state or `touch` fingers; edges fire on the next tick. A `gamepad` action may name its `family` (`generic`, `xbox`, `playstation`, `nintendo`, `steam`) so a run without real pads shows that family's button labels; it never changes what a button does, and any other value refuses the whole list. |
 | `capture` | Render a view of the world target (BGRA, the HUD painted in) into the run's `state/captures/` and answer its size and digest, and, once the game serves `renderSettings`, the `render` settings it was drawn with (preset, device class, where the settings came from, scale, settle frames). A frame that could not be drawn is refused with the renderer's code (`device-lost`, `upload-budget`, ...), never answered with an older picture. An optional `size` (`{width, height}`, whole pixels, each side 64 to 4096) draws it natively at that size; one outside that shape is refused `bad-argument`. An optional `lens` (`{depthOfField?, motionBlur?}`, booleans) draws the look's depth of field and motion blur, which a capture otherwise leaves out; another shape, or an ask a game without render settings cannot draw, is refused `bad-argument`. |
 | `debugCamera` | Switch to a named camera or eye, or back to the game's own. |
 | `cameras` | The registered camera names. |
@@ -59,7 +59,14 @@ one and cannot add one. A verb the game does not know answers `unknown-op`.
 | `release` | Embedded runs: give a finished frame slot back to the game. |
 | `renderSettings` | Read the renderer's quality, or change it with `{set: {preset, deviceClass, features, renderScaleLock, frameBudgetMs}}`: a preset, an emulated device class (to see the game "as a phone"), feature switches, a render-scale lock and the frame time dynamic resolution holds (1-100 ms), for this session only. A game advertises it in its `ready` receipt (`renderSettingsApi`); until then it answers `unavailable`. An unknown preset, class or feature answers `unknown-preset`, `unknown-device-class` or `unknown-render-feature`; a scale lock outside 0.5 to 1 answers `invalid-render-scale` and a budget outside its range `invalid-frame-budget`; a member of the wrong type answers `bad-argument`. A change holds for the rest of the session: `{set: {preset: null, deviceClass: null, features: null, renderScaleLock: null, frameBudgetMs: null}}` gives the game's own settings back. |
 | `bakeAssets` | Run one bake the game registered, `{kind, name}` with kind `nav` or `impostor` and a name of lowercase letters, digits, `-` and `_` (at most 64), into the run's `state/bakes/<kind>/<name>`, and answer the bake with its `bytes` and `digest`. The studio's build sends it to a headless run after a dev build; a game never calls it and an agent cannot send it. The output goes to the build's stage and the studio's cache, never into the game folder. A build that serves no bakes yet answers `unavailable`, and an export answers `unknown-op`. |
+| `profile` | The game's frame profile, `{action, frames?, mode?}`: `summary` (what `state().volatile.profile` holds), `report` (a `ProfileReport` v2 of the last `frames`, default 120, at most 240, with every kept hitch; at most 256 KiB, `truncated` past it), `arm` (`mode` `frame` or `nodes`: per-node GPU timing until `frame` again or 1,800 frames pass) or `trace` (a Chrome trace of the report window into the run's `state/profile/`, answering its `bytes` and `digest`). Dev builds only: an export answers `unknown-op`, and so does a dev build until its runtime serves profiles. |
 | `reloadAssets` | Swap asset files in a running dev game without a rebuild: `{files: [{path, digest}]}`, at most 256, each re-read on the next frame. Answers the `reloaded` paths, the `refused` ones with a code (`unsafe-path`, `digest-mismatch`, `missing`) and how many reloads are still `pending`; a settled capture waits for 0. A game still applying an earlier reload answers `busy`, a build that does not serve it yet `unavailable`, and an export `unknown-op`. |
+
+Besides its answers the game sends events on the same channel: `ready` once it runs, `starting`
+for each finished boot step before that, `fatal` before it exits on an error, and `crash` with its
+`genex-crash/1` record when it panics or loses its GPU device (a boot panic before `ready` too).
+The studio reads each crash record as data: a malformed one ends the run `reply-invalid`. It keeps
+no crash records yet.
 
 What the renderer runs with is in `state().volatile.render` (device class, preset, scale, feature
 switches, `degraded` reasons, GPU and CPU milliseconds): outside the checksum and never compared.
@@ -77,7 +84,7 @@ the preview. Each forwards to the host verb of its name, except the page shapes 
 | `pause` | As the host verb. |
 | `step` | As the host verb. |
 | `state` | As the host verb. |
-| `input` | The host `input` verb with its full argument, touches included. |
+| `input` | The host `input` verb with its full argument, touches included. The shell sends real pads with their `Gamepad.id` (so the game can tell a pad's family) and, where the browser offers the keyboard's layout map, its key labels once as `layout`, for display only. |
 | `injectInput` | The page shape of `input` for a play script: held keys, look and wheel deltas. |
 | `debugCamera` | As the host verb. |
 | `cameras` | As the host verb. |

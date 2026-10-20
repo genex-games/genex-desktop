@@ -258,7 +258,8 @@ Every project's Loop is the director's wake loop, in one of two profiles (`LoopP
   C++ game; a game's in-tree `build/` is agent scratch (`src/main/cpp-build.ts`).
 - **Toolchain store / lock**: the host's pinned tools under `layout.toolchains` (CMake, Ninja,
   Emscripten, raylib, ANGLE for C++; Rust's sysroot and browser standard library are pinned in
-  `rust-recipe.json`; a release build does not download them yet), installed only from the
+  `rust-recipe.json`, beside libcolyseus for a `[net]` game's exports; a release build does not
+  download them yet), installed only from the
   Toolchain sheet; a lock names the versions a game builds with by digest, one current lock per
   compiled stack, and a game keeps its recorded lock across a bump
   (`src/substrate/toolchain-store/`, `src/main/core/toolchains.ts`).

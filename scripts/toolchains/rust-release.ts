@@ -235,6 +235,29 @@ const VERSION_LINE = /^(\s*version\s*=\s*")([^"]*)(".*)$/;
 const PATH_DEPENDENCY = /^\s*([A-Za-z0-9_-]+)\s*=\s*\{(?=[^}]*\bpath\s*=)[^}]*\}/;
 const DEPENDENCY_VERSION = /(\bversion\s*=\s*")([^"]*)(")/;
 
+/** The `members = [ … ]` array of a `[workspace]` table (one line or several; never `default-members`). */
+const MEMBERS_ARRAY = /(?:^|\n)\s*members\s*=\s*\[([^\]]*)\]/;
+/** One member that is a crate folder: `"crates/<name>"`. */
+const MEMBER_CRATE = /"crates\/([A-Za-z0-9_-]+)"/g;
+
+/**
+ * The folders under the workspace's `crates/` its manifest lists as members, in byte order: a
+ * vendored crate kept out of the workspace (its build script fetches a prebuilt library) is not
+ * released.
+ */
+export async function releasedCrates(workspace: string): Promise<string[]> {
+  const text = await readFile(path.join(workspace, "Cargo.toml"), "utf8");
+  const table = tableLines(text, "workspace")
+    .map(({ line }) => line)
+    .join("\n");
+  const members = new Set([...(MEMBERS_ARRAY.exec(table)?.[1] ?? "").matchAll(MEMBER_CRATE)].map((match) => match[1]));
+  const folders = await readdir(path.join(workspace, "crates"), { withFileTypes: true });
+  return folders
+    .filter((entry) => entry.isDirectory() && members.has(entry.name))
+    .map((entry) => entry.name)
+    .sort();
+}
+
 /** The `[workspace.package]` version of a workspace manifest's text. */
 function manifestVersion(text: string, file: string): string {
   for (const { line } of tableLines(text, "workspace.package")) {
@@ -637,13 +660,11 @@ async function gitListedFiles(dir: string): Promise<string[] | null> {
 }
 
 /**
- * The workspace's library crates (`crates/*`) as `cargo package` makes them: offline, unverified,
+ * The workspace's library crates (its `crates/*` members) as `cargo package` makes them: offline, unverified,
  * no lock inside, packaged from a copy under `scratch` so no crate records the commit it came from.
  */
 async function packageGenex(workspace: string, version: string, scratch: string): Promise<string[]> {
-  const crates = (await readdir(path.join(workspace, "crates"), { withFileTypes: true })).filter((e) =>
-    e.isDirectory(),
-  );
+  const crates = await releasedCrates(workspace);
   const copy = path.join(scratch, PACKAGE_WORKSPACE);
   await rm(copy, { recursive: true, force: true });
   await copyPackageSources(workspace, copy);
@@ -651,7 +672,7 @@ async function packageGenex(workspace: string, version: string, scratch: string)
     process.env.CARGO_TARGET_DIR || path.join(REPO, ".studio-dev", "cargo-target"),
     PACKAGE_TARGET,
   );
-  const packages = crates.flatMap((entry) => ["-p", entry.name]);
+  const packages = crates.flatMap((name) => ["-p", name]);
   const flags = [
     "--no-verify",
     "--offline",
@@ -664,7 +685,7 @@ async function packageGenex(workspace: string, version: string, scratch: string)
   await cargo(["package", ...packages, ...flags, "--target-dir", target], copy, "package").finally(() =>
     rm(copy, { recursive: true, force: true }),
   );
-  const made = crates.map((entry) => path.join(target, "package", `${entry.name}-${version}.crate`));
+  const made = crates.map((name) => path.join(target, "package", `${name}-${version}.crate`));
   if (!made.every((file) => existsSync(file)))
     throw new ReleaseRefused(ReleaseRefusal.CargoFailed, MESSAGE.NoCrates(target));
   return made.sort();

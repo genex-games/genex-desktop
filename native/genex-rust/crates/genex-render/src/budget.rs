@@ -553,6 +553,9 @@ pub struct BufferCounts {
     pub indices: u64,
     /// Skin-vertex rows.
     pub skin_vertices: u64,
+    /// Each cull view's slots in the instance fade table (game systems LOD-03): the visible slots
+    /// when the plan has fade batches, else 0.
+    pub fade_slots: u64,
 }
 
 /// A frame table of `bytes` as allocated: the table rounding (16 bytes, at least 256) grown to
@@ -587,6 +590,12 @@ pub fn buffer_model(counts: &BufferCounts) -> u64 {
         if counts.motion { rows(counts.instances, size_of::<GpuPrevModel>()) } else { table_bytes(0) },
         table_bytes(counts.light_ext_bytes),
         table_bytes(counts.light_bin_bytes),
+        // The LOD rows follow the instance table's room (game systems LOD-02); the fade table is
+        // a fade and a grow per visible slot (LOD-03).
+        table_bytes(rows(counts.instances, size_of::<GpuInstance>()) / size_of::<GpuInstance>() as u64 * crate::lod_rows::LOD_ROW_BYTES),
+        table_bytes(counts.views * counts.fade_slots * crate::layout::INSTANCE_FADE_BYTES),
+        // The far rules' uniform (game systems LOD-18): every rule, from the first frame.
+        table_bytes(crate::lod_rows::FAR_RULES_BYTES),
     ];
     let library = [counts.vertices * size_of::<GpuMeshVertex>() as u64, counts.vertices * 4, counts.indices * 4, counts.skin_vertices * 32].map(crate::tables::aligned);
     tables.iter().chain(&library).sum::<u64>() + FIXED_BUFFER_BYTES

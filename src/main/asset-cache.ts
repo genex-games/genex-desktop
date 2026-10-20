@@ -17,7 +17,10 @@ import { createHash, randomUUID } from "node:crypto";
 import { copyFile, lstat, lutimes, mkdir, readdir, rename, rm } from "node:fs/promises";
 import path from "node:path";
 import { HOUR_MS } from "../shared/duration.ts";
+import type { ImportIssue as ReportIssue } from "../shared/asset-db.ts";
+import { type CharacterFacts, parseCharacterFacts } from "../shared/character-facts.ts";
 import { readRegularFile, writeNewFile } from "../substrate/fsx.ts";
+import { HUMANOID_BONES } from "../substrate/asset-import/character-facts.ts";
 import {
   AssetImportRefusal,
   ImportAction,
@@ -36,6 +39,7 @@ import {
 import { IMPORT_JOB_VERSION, type ImportIssue, parseIssues } from "../substrate/asset-import/job.ts";
 import { Ktx2FamilySkip } from "../substrate/asset-import/ktx2.ts";
 import { objMaterialLibrary } from "../substrate/asset-import/obj.ts";
+import { parseReport } from "../substrate/asset-import/report.ts";
 import { readGameAsset } from "../substrate/asset-import/safe-asset.ts";
 import { type EncodedTexture, parseEncodedTexture } from "../substrate/asset-import/texture-encode.ts";
 import {
@@ -63,8 +67,9 @@ export const ASSET_CACHE_DEFAULT_CAP_BYTES = 4 * 1024 * 1024 * 1024;
 /**
  * The entry format this host writes and reads; another version is a miss. 2: a GLB's import also
  * writes its embedded images' sidecars (C-13), so an entry from before misses and imports again.
+ * 3: a GLB's line also carries the validation report and character facts (C-23).
  */
-export const ASSET_CACHE_VERSION = 2;
+export const ASSET_CACHE_VERSION = 3;
 /** The largest entry receipt read back. */
 const RECEIPT_MAX_BYTES = 1024 * 1024;
 /** A staging folder no commit of this process owns, older than this, is a dead commit's. */
@@ -475,6 +480,10 @@ interface CachedLine {
   issues?: ImportIssue[];
   /** An encoded loose texture's record (C-12). */
   texture?: EncodedTexture;
+  /** The validation report's issues about the written GLB (C-23). */
+  report?: ReportIssue[];
+  /** A rigged GLB's facts (C-23). */
+  character?: CharacterFacts;
 }
 
 /** A guard for one vocabulary's values. */
@@ -509,15 +518,24 @@ function parseFamilies(value: unknown, files: number): NonNullable<CachedLine["f
   return families;
 }
 
+/** A line's report and character facts (C-23), checked; null when one is malformed. */
+function parseFactFields(meta: Record<string, unknown>): Pick<CachedLine, "report" | "character"> | null {
+  const report = meta.report === undefined ? undefined : parseReport(meta.report);
+  const character = meta.character === undefined ? undefined : parseCharacterFacts(meta.character, HUMANOID_BONES);
+  if (report === null || character === null) return null;
+  return { ...(report?.length ? { report } : {}), ...(character ? { character } : {}) };
+}
+
 /** The optional fields of an output line, checked; null when one is malformed. */
 function parseOutputFields(meta: Record<string, unknown>, files: number): Partial<CachedLine> | null {
   const { families, textures, familiesSkipped, issues, texture } = meta;
   const parsedFamilies = families === undefined ? undefined : parseFamilies(families, files);
   const parsedIssues = issues === undefined ? undefined : parseIssues(issues);
   const encoded = texture === undefined ? undefined : parseEncodedTexture(texture);
+  const facts = parseFactFields(meta);
   const texturesValid = textures === undefined || (Array.isArray(textures) && textures.every(isTexture));
   const skipValid = familiesSkipped === undefined || isSkip(familiesSkipped);
-  const parsedValid = parsedFamilies !== null && parsedIssues !== null && encoded !== null;
+  const parsedValid = parsedFamilies !== null && parsedIssues !== null && encoded !== null && facts !== null;
   if (!parsedValid || !texturesValid || !skipValid) return null;
   return {
     ...(parsedFamilies ? { families: parsedFamilies } : {}),
@@ -525,6 +543,7 @@ function parseOutputFields(meta: Record<string, unknown>, files: number): Partia
     ...(isSkip(familiesSkipped) ? { familiesSkipped } : {}),
     ...(parsedIssues?.length ? { issues: parsedIssues } : {}),
     ...(encoded ? { texture: encoded } : {}),
+    ...facts,
   };
 }
 
@@ -577,6 +596,8 @@ function fromLine(file: string, step: ImporterStep, line: CachedLine, entry: Cac
     ...(line.familiesSkipped ? { familiesSkipped: line.familiesSkipped } : {}),
     ...(line.issues ? { issues: line.issues } : {}),
     ...(line.texture ? { texture: line.texture } : {}),
+    ...(line.report ? { report: line.report } : {}),
+    ...(line.character ? { character: line.character } : {}),
   };
 }
 
@@ -612,6 +633,8 @@ function toLine(imported: ImportedAsset): { files: CacheFileInput[]; meta: Cache
     ...(imported.familiesSkipped ? { familiesSkipped: imported.familiesSkipped } : {}),
     ...(imported.issues?.length ? { issues: imported.issues } : {}),
     ...(imported.texture ? { texture: imported.texture } : {}),
+    ...(imported.report?.length ? { report: imported.report } : {}),
+    ...(imported.character ? { character: imported.character } : {}),
   };
   const files = [output, ...families].map((item) => ({ path: item.path, sha256: item.sha256 }));
   return { files, meta };

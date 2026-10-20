@@ -74,7 +74,8 @@ impl<T: Send + Sync + 'static> Compiled<T> {
         PENDING_JOBS.fetch_add(1, Ordering::AcqRel);
         SUBMITTED_JOBS.fetch_add(1, Ordering::AcqRel);
         let counted = move || {
-            let made = std::panic::catch_unwind(std::panic::AssertUnwindSafe(job));
+            // Caught as handled (CRASH-2); the re-raise below is not a new panic, so one record.
+            let made = genex_crash::catching(std::panic::AssertUnwindSafe(job));
             // Counted before the value is out, so a reader that has the value sees it counted.
             FINISHED_JOBS.fetch_add(1, Ordering::AcqRel);
             // The pool catches it again and keeps its message.

@@ -1,0 +1,286 @@
+{
+  "summary": {
+    "v": 1,
+    "on": true,
+    "frames": 4,
+    "cpu": {
+      "p50": 4.0,
+      "p95": 31.0
+    },
+    "gpu": {
+      "p50": 3.5,
+      "p95": 3.5,
+      "source": "timestamps"
+    },
+    "top": [
+      {
+        "scope": "tick",
+        "game": false,
+        "p95": 30.0
+      },
+      {
+        "scope": "enemy_ai",
+        "game": true,
+        "p95": 30.0
+      },
+      {
+        "scope": "draw",
+        "game": false,
+        "p95": 1.0
+      }
+    ],
+    "counters": {
+      "enemies": 42.0
+    },
+    "memory": [
+      {
+        "class": "streamed-meshes",
+        "bytes": 41943040,
+        "budget": 67108864
+      },
+      {
+        "class": "process-resident",
+        "bytes": 512000000
+      }
+    ],
+    "hitches": {
+      "count": 1,
+      "last": 3
+    },
+    "nodes": "armed",
+    "dropped": {
+      "scopes": 0,
+      "counters": 0,
+      "frames": 0
+    }
+  },
+  "report": {
+    "v": 2,
+    "engine": "rust-wgpu",
+    "destination": "mac",
+    "deviceClass": "desktop-high",
+    "frames": [
+      {
+        "index": 0,
+        "cpuMs": 4.0,
+        "gpuMs": 3.5,
+        "intervalMs": 0.0,
+        "scopes": [
+          {
+            "scope": "frame",
+            "game": false,
+            "depth": 0,
+            "startUs": 0.0,
+            "us": 4000.0
+          },
+          {
+            "scope": "tick",
+            "game": false,
+            "depth": 1,
+            "startUs": 0.0,
+            "us": 3000.0
+          },
+          {
+            "scope": "enemy_ai",
+            "game": true,
+            "depth": 2,
+            "startUs": 0.0,
+            "us": 3000.0
+          },
+          {
+            "scope": "draw",
+            "game": false,
+            "depth": 1,
+            "startUs": 3000.0,
+            "us": 1000.0
+          }
+        ],
+        "gpu": [
+          {
+            "node": "shadows",
+            "ms": 1.25
+          },
+          {
+            "node": "world",
+            "ms": 2.0
+          }
+        ]
+      },
+      {
+        "index": 1,
+        "cpuMs": 4.0,
+        "gpuMs": 3.5,
+        "intervalMs": 16.0,
+        "scopes": [
+          {
+            "scope": "frame",
+            "game": false,
+            "depth": 0,
+            "startUs": 0.0,
+            "us": 4000.0
+          },
+          {
+            "scope": "tick",
+            "game": false,
+            "depth": 1,
+            "startUs": 0.0,
+            "us": 3000.0
+          },
+          {
+            "scope": "enemy_ai",
+            "game": true,
+            "depth": 2,
+            "startUs": 0.0,
+            "us": 3000.0
+          },
+          {
+            "scope": "draw",
+            "game": false,
+            "depth": 1,
+            "startUs": 3000.0,
+            "us": 1000.0
+          }
+        ],
+        "gpu": [
+          {
+            "node": "shadows",
+            "ms": 1.25
+          },
+          {
+            "node": "world",
+            "ms": 2.0
+          }
+        ]
+      },
+      {
+        "index": 2,
+        "cpuMs": 4.0,
+        "gpuMs": 3.5,
+        "intervalMs": 16.0,
+        "scopes": [
+          {
+            "scope": "frame",
+            "game": false,
+            "depth": 0,
+            "startUs": 0.0,
+            "us": 4000.0
+          },
+          {
+            "scope": "tick",
+            "game": false,
+            "depth": 1,
+            "startUs": 0.0,
+            "us": 3000.0
+          },
+          {
+            "scope": "enemy_ai",
+            "game": true,
+            "depth": 2,
+            "startUs": 0.0,
+            "us": 3000.0
+          },
+          {
+            "scope": "draw",
+            "game": false,
+            "depth": 1,
+            "startUs": 3000.0,
+            "us": 1000.0
+          }
+        ],
+        "gpu": [
+          {
+            "node": "shadows",
+            "ms": 1.25
+          },
+          {
+            "node": "world",
+            "ms": 2.0
+          }
+        ]
+      },
+      {
+        "index": 3,
+        "cpuMs": 31.0,
+        "gpuMs": 3.5,
+        "intervalMs": 16.0,
+        "scopes": [
+          {
+            "scope": "frame",
+            "game": false,
+            "depth": 0,
+            "startUs": 0.0,
+            "us": 31000.0
+          },
+          {
+            "scope": "tick",
+            "game": false,
+            "depth": 1,
+            "startUs": 0.0,
+            "us": 30000.0
+          },
+          {
+            "scope": "enemy_ai",
+            "game": true,
+            "depth": 2,
+            "startUs": 0.0,
+            "us": 30000.0
+          },
+          {
+            "scope": "draw",
+            "game": false,
+            "depth": 1,
+            "startUs": 30000.0,
+            "us": 1000.0
+          }
+        ],
+        "gpu": [
+          {
+            "node": "shadows",
+            "ms": 1.25
+          },
+          {
+            "node": "world",
+            "ms": 2.0
+          }
+        ]
+      }
+    ],
+    "hitches": [
+      {
+        "frame": 3,
+        "cause": "cpu",
+        "thresholdMs": 25.0,
+        "top": [
+          {
+            "scope": "tick",
+            "us": 30000.0
+          },
+          {
+            "scope": "enemy_ai",
+            "us": 30000.0
+          },
+          {
+            "scope": "draw",
+            "us": 1000.0
+          }
+        ]
+      }
+    ],
+    "memory": [
+      {
+        "class": "streamed-meshes",
+        "bytes": 41943040,
+        "budget": 67108864
+      },
+      {
+        "class": "process-resident",
+        "bytes": 512000000
+      }
+    ],
+    "counters": {
+      "enemies": 42.0
+    },
+    "gpuSource": "timestamps",
+    "truncated": false
+  }
+}

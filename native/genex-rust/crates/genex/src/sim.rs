@@ -16,6 +16,12 @@ pub struct Sim<W> {
     /// The navigation world, rebuilt on every seed: empty unless `game.navigation` registered one
     /// (the runtime owns it, as it owns physics).
     pub nav: crate::nav::Nav,
+    /// The streamed world's sim set: anchors, active cells and what this tick's commit moved
+    /// (empty without `game.streaming`; the runtime commits it at the start of every tick).
+    pub stream: crate::stream_tick::StreamState,
+    /// The tick's net frame, owned by the runtime like `nav` (G6 contract stub until MP-4a makes it
+    /// game API).
+    pub(crate) net: crate::net::SimNet,
 }
 
 impl<W> Sim<W> {

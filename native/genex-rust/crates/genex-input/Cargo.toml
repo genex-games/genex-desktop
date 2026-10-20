@@ -1,0 +1,39 @@
+[package]
+name = "genex-input"
+description = "Input actions for genex games: action ids, bindings, contexts, conditions and modifiers evaluated in ticks, touch controls, rebinding, the input journal and prompts."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+# The rebinding panel draws with egui; without `panel` this crate takes no UI dependency.
+[features]
+default = []
+panel = ["dep:egui"]
+
+[dependencies]
+# genex-core for the merged tick input the actions read and its FNV-1a digest; serde (visitor only)
+# so a bindings file with a duplicate key or deep nesting is refused instead of read last-wins.
+genex-core = { workspace = true }
+serde = { workspace = true }
+# serde_json for bindings files and the runtime key, postcard for the journal's records, libm for
+# the stick math; all already locked (no new vendored crate).
+serde_json = { workspace = true }
+postcard = { workspace = true }
+libm = { workspace = true }
+egui = { workspace = true, optional = true }
+
+[dev-dependencies]
+# The panel rows lay out text, so their contexts get the HUD's text fonts (egui is built without its
+# default fonts).
+epaint_default_fonts = { workspace = true }
+
+# The controls panel and the touch-control painter's rows need the `panel` feature (egui).
+[[test]]
+name = "panel"
+required-features = ["panel"]

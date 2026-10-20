@@ -12,6 +12,9 @@
       "buildScript": "build.rs",
       "nonSource": ["android-games-sdk/import-games-sdk.sh"]
     },
+    "anyhow-1.0.104": {
+      "buildScript": "build.rs"
+    },
     "arboard-3.6.1": {
       "nonSource": ["tools/run_with_leaks.sh"]
     },
@@ -72,6 +75,9 @@
     "deprecate-until-1.0.0": {
       "procMacro": true
     },
+    "displaydoc-0.2.7": {
+      "procMacro": true
+    },
     "document-features-0.2.12": {
       "procMacro": true
     },
@@ -99,6 +105,18 @@
     },
     "foreign-types-macros-0.2.4": {
       "procMacro": true
+    },
+    "generic-array-0.14.7": {
+      "buildScript": "build.rs"
+    },
+    "genex-audio-0.1.0": {
+      "nonSource": ["tests/fixtures/music-10s.ogg", "tests/fixtures/silence-3min.ogg", "tests/fixtures/tone-44k.ogg"]
+    },
+    "genex-multiplayer-0.1.0": {
+      "buildScript": "build.rs"
+    },
+    "genex-save-0.1.0": {
+      "nonSource": ["tests/goldens/deflate-300k.sav"]
     },
     "getrandom-0.3.4": {
       "buildScript": "build.rs"
@@ -235,6 +253,9 @@
     "objc2-0.6.5": {
       "buildScript": "build.rs"
     },
+    "object-0.37.3": {
+      "buildScript": "build.rs"
+    },
     "orbclient-0.3.55": {
       "buildScript": "build.rs",
       "nonSource": ["res/unifont.font"]
@@ -309,6 +330,16 @@
     },
     "serde_json-1.0.151": {
       "buildScript": "build.rs"
+    },
+    "sha2-0.10.9": {
+      "nonSource": [
+        "tests/data/sha224.blb",
+        "tests/data/sha256.blb",
+        "tests/data/sha384.blb",
+        "tests/data/sha512.blb",
+        "tests/data/sha512_224.blb",
+        "tests/data/sha512_256.blb"
+      ]
     },
     "simd_cesu8-1.2.0": {
       "nonSource": ["img/decode_cesu8.png", "img/decode_mutf8.png", "img/encode_cesu8.png", "img/encode_mutf8.png"]
@@ -667,9 +698,9 @@
   "release": {
     "genex": "0.1.0",
     "tree": {
-      "sha256": "9d9de398e68973af21e92e256859f25153651a89558b650d196c521b6f141d62",
-      "files": 25061,
-      "bytes": 679651720
+      "sha256": "ace44839d80bf7c43a5c4acd24cee0341ba7805781a5a7cf8528dee2b12c1c9b",
+      "files": 26097,
+      "bytes": 693128545
     }
   }
 }

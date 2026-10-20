@@ -76,6 +76,14 @@ export const ToolchainId = {
   CargoVet: "cargo-vet",
   /** The pinned RustSec advisory-db snapshot cargo-deny reads (`crate-policy.json` pins the same commit). */
   RustsecAdvisoryDb: "rustsec-advisory-db",
+  /**
+   * The relay client's native core (Colyseus native-sdk {@link COLYSEUS_VERSION}): upstream's
+   * prebuilt static libraries, laid out one folder per native triple ({@link COLYSEUS_TRIPLES}).
+   * Only an export of a `[net]` game links it ({@link RUST_NET_COMPONENTS}).
+   */
+  Colyseus: "colyseus",
+  /** The same release's source tarball: Android's libcolyseus is built from it (upstream ships no Android prebuilt). */
+  ColyseusSource: "colyseus-source",
 } as const;
 export type ToolchainId = (typeof ToolchainId)[keyof typeof ToolchainId];
 
@@ -471,6 +479,121 @@ export const RUST_MOBILE_COMPONENTS = {
     ToolchainId.Jdk,
   ],
 } as const satisfies Record<MobileBuildTarget, readonly ToolchainId[]>;
+
+/** The Colyseus native-sdk release the vendored relay client binds (its reconnect takeover reads this release's struct layout). */
+export const COLYSEUS_VERSION = "0.18.10";
+
+/** The upstream release assets the store pins. Wire values (recipe file names): never rename one. */
+export const ColyseusAsset = {
+  /** Apple: one xcframework with the macOS (universal), iPhone and iOS Simulator slices. */
+  Xcframework: "Colyseus.xcframework.zip",
+  /** Linux x86_64: the core and its companion archives under `lib/`. */
+  LinuxX64: "colyseus-linux-x86_64.tar.gz",
+  /** Windows x86_64 (MinGW ABI): the same archives as `<name>.lib` under `lib/`. */
+  WindowsX64: "colyseus-windows-x86_64.zip",
+  /** The source tree, for the Android build (MP-1b). */
+  Source: "colyseus-source-v0.18.10.tar.gz",
+} as const;
+export type ColyseusAsset = (typeof ColyseusAsset)[keyof typeof ColyseusAsset];
+
+/**
+ * Each asset's pin: size and sha256 as GitHub's release digest states them and as the downloaded
+ * bytes hashed (2026-10-20); `into` is the folder of the `colyseus` component it unpacks to.
+ */
+export const COLYSEUS_ASSETS = {
+  [ColyseusAsset.Xcframework]: {
+    bytes: 27694569,
+    sha256: "66eb6f4ebd662e81f20e63a3c42c515159f523246238055ff55fdf6d09b09982",
+    into: "apple",
+  },
+  [ColyseusAsset.LinuxX64]: {
+    bytes: 4848504,
+    sha256: "74170d62ab47d65fc5898226856e95f7a34016541f9b15408cc841848633dc91",
+    into: "linux",
+  },
+  [ColyseusAsset.WindowsX64]: {
+    bytes: 3762440,
+    sha256: "8073572579d7ff30caf6ef2bee6efcb1ffc302e34dad2489e7e21d0302923aab",
+    into: "windows",
+  },
+  [ColyseusAsset.Source]: {
+    bytes: 39198211,
+    sha256: "a90950b6871dcba9f32e31e71ecb3e914c851e015b62b7534fe31aac6d60a325",
+    into: "",
+  },
+} as const satisfies Record<ColyseusAsset, { bytes: number; sha256: string; into: string }>;
+
+/** The release download of `asset`. */
+export function colyseusAssetUrl(asset: ColyseusAsset): string {
+  return `https://github.com/colyseus/native-sdk/releases/download/v${COLYSEUS_VERSION}/${asset}`;
+}
+
+/** The native triples a `[net]` game links libcolyseus for. Wire values (store folder names): never rename one. */
+export const ColyseusTriple = {
+  Mac: "aarch64-apple-darwin",
+  Ios: "aarch64-apple-ios",
+  IosSim: "aarch64-apple-ios-sim",
+  Linux: "x86_64-unknown-linux-gnu",
+  Windows: "x86_64-pc-windows-gnullvm",
+  Android: "aarch64-linux-android",
+} as const;
+export type ColyseusTriple = (typeof ColyseusTriple)[keyof typeof ColyseusTriple];
+
+/**
+ * Where each prebuilt triple's libraries sit in its unpacked asset: the folder, and the file
+ * suffix upstream gives them (`.a`, or `.lib` in the MinGW zip; the store renames each to
+ * `lib<name>.a`, the name the crate's build script and a GNU-style linker look for). Android has
+ * no prebuilt: it is built from {@link ColyseusAsset}`.Source` (MP-1b).
+ */
+export const COLYSEUS_TRIPLES = {
+  [ColyseusTriple.Mac]: {
+    asset: ColyseusAsset.Xcframework,
+    folder: "Colyseus.xcframework/macos-arm64_x86_64",
+    suffix: ".a",
+  },
+  [ColyseusTriple.Ios]: { asset: ColyseusAsset.Xcframework, folder: "Colyseus.xcframework/ios-arm64", suffix: ".a" },
+  [ColyseusTriple.IosSim]: {
+    asset: ColyseusAsset.Xcframework,
+    folder: "Colyseus.xcframework/ios-arm64_x86_64-simulator",
+    suffix: ".a",
+  },
+  [ColyseusTriple.Linux]: { asset: ColyseusAsset.LinuxX64, folder: "lib", suffix: ".a" },
+  [ColyseusTriple.Windows]: { asset: ColyseusAsset.WindowsX64, folder: "lib", suffix: ".lib" },
+  [ColyseusTriple.Android]: { asset: ColyseusAsset.Source, folder: "", suffix: ".a" },
+} as const satisfies Record<ColyseusTriple, { asset: ColyseusAsset; folder: string; suffix: string }>;
+
+/**
+ * The static libraries of a prebuilt, in link order: the core first, then its companions (a Linux
+ * or Windows asset ships them split; the xcframework merges them into the core). The crate's
+ * build script links each one present.
+ */
+export const COLYSEUS_LIBRARIES: readonly string[] = Object.freeze([
+  "colyseus",
+  "http_zig",
+  "strutil_zig",
+  "system_certs_zig",
+  "msgpack_builder",
+  "msgpack_reader",
+  "wslay",
+  "mbedtls",
+  "mbedx509",
+  "mbedcrypto",
+]);
+
+/**
+ * What an export of a `[net]` game needs per destination beyond the destination's own components
+ * (Live, judges and captures link no network code, so no other build needs them): libcolyseus for
+ * every native destination, built from source for Android, nothing for the browser (its relay
+ * client is the JS bridge).
+ */
+export const RUST_NET_COMPONENTS = {
+  [BuildTarget.Web]: [],
+  [BuildTarget.Mac]: [ToolchainId.Colyseus],
+  [BuildTarget.Windows]: [ToolchainId.Colyseus],
+  [BuildTarget.Linux]: [ToolchainId.Colyseus],
+  [BuildTarget.Ios]: [ToolchainId.Colyseus],
+  [BuildTarget.Android]: [ToolchainId.ColyseusSource],
+} as const satisfies StackComponents;
 
 /**
  * The components a person installs with the Android SDK and its licence, never an agent and never

@@ -82,6 +82,8 @@ import {
   WGSL_EXTENSION_APIS,
 } from "../../src/shared/render-quality.ts";
 import {
+  assetBudgetOf,
+  assetGroupMatches,
   checkTargetFeatures,
   checkWgslFiles,
   GAME_CRATE_ALLOWLIST,
@@ -315,6 +317,230 @@ describe("genex.toml: [[texture]] rows declare a loose texture's usage (C-10)", 
   for (const [name, row, code] of refused) {
     it(`refuses ${name} with ${code}`, () => {
       assert.equal(refusedCode(parseGenexToml(`${GAME}${row}`)), code);
+    });
+  }
+});
+
+/** An `[[asset_group]]` row (C-30): a named set of assets a game loads during play. */
+const groupRow = (name: string, paths: readonly string[]) =>
+  `[[asset_group]]\nname = "${name}"\npaths = [${paths.map((rel) => JSON.stringify(rel)).join(", ")}]\n`;
+
+/** `[[asset_group]]` rows refused, each with its code. */
+const REFUSED_GROUPS: Array<[string, string, string]> = [
+  ["a path that climbs out of assets/", groupRow("g", ["../src/main.rs"]), GenexTomlCode.InvalidAssetGroup],
+  ["a path climbing midway", groupRow("g", ["a/../../b.glb"]), GenexTomlCode.InvalidAssetGroup],
+  ["a glob climbing out", groupRow("g", ["**/../x"]), GenexTomlCode.InvalidAssetGroup],
+  ["an absolute path", groupRow("g", ["/etc/passwd"]), GenexTomlCode.InvalidAssetGroup],
+  ["a backslash path", groupRow("g", ["a\\\\b.glb"]), GenexTomlCode.InvalidAssetGroup],
+  ["a drive letter", groupRow("g", ["C:/x.glb"]), GenexTomlCode.InvalidAssetGroup],
+  ["an empty segment", groupRow("g", ["a//b.glb"]), GenexTomlCode.InvalidAssetGroup],
+  ["a dot segment", groupRow("g", ["./b.glb"]), GenexTomlCode.InvalidAssetGroup],
+  ["an empty path", groupRow("g", [""]), GenexTomlCode.InvalidAssetGroup],
+  ["a bracket class", groupRow("g", ["props/[ab].glb"]), GenexTomlCode.InvalidAssetGroup],
+  ["a brace set", groupRow("g", ["props/{a,b}.glb"]), GenexTomlCode.InvalidAssetGroup],
+  ["** inside a segment", groupRow("g", ["props/a**.glb"]), GenexTomlCode.InvalidAssetGroup],
+  ["a Windows device name", groupRow("g", ["props/con.glb"]), GenexTomlCode.InvalidAssetGroup],
+  ["the reserved name boot", groupRow("boot", ["a.glb"]), GenexTomlCode.InvalidAssetGroup],
+  ["the reserved name sim", groupRow("sim", ["a.glb"]), GenexTomlCode.InvalidAssetGroup],
+  ["the reserved name stream", groupRow("stream", ["a.glb"]), GenexTomlCode.InvalidAssetGroup],
+  ["a reserved name in another case", groupRow("Boot", ["a.glb"]), GenexTomlCode.InvalidAssetGroup],
+  ["an empty name", groupRow("", ["a.glb"]), GenexTomlCode.InvalidAssetGroup],
+  ["a name with a slash", groupRow("a/b", ["a.glb"]), GenexTomlCode.InvalidAssetGroup],
+  ["a name with a space", groupRow("a b", ["a.glb"]), GenexTomlCode.InvalidAssetGroup],
+  ["a name over 64 characters", groupRow("g".repeat(65), ["a.glb"]), GenexTomlCode.InvalidAssetGroup],
+  ["a group with no paths", groupRow("g", []), GenexTomlCode.InvalidAssetGroup],
+  ["one glob twice in a group", groupRow("g", ["a.glb", "a.glb"]), GenexTomlCode.InvalidAssetGroup],
+  ["one name twice", `${groupRow("g", ["a.glb"])}${groupRow("g", ["b.glb"])}`, GenexTomlCode.InvalidAssetGroup],
+  [
+    "more paths than a group holds",
+    groupRow(
+      "g",
+      Array.from({ length: 257 }, (_, at) => `p${at}.glb`),
+    ),
+    GenexTomlCode.InvalidAssetGroup,
+  ],
+  [
+    "more groups than a game holds",
+    Array.from({ length: 65 }, (_, at) => groupRow(`g${at}`, ["a.glb"])).join(""),
+    GenexTomlCode.InvalidAssetGroup,
+  ],
+  ["a row without paths", '[[asset_group]]\nname = "g"\n', GenexTomlCode.Syntax],
+  ["a row without a name", '[[asset_group]]\npaths = ["a.glb"]\n', GenexTomlCode.Syntax],
+  ["paths as one string", '[[asset_group]]\nname = "g"\npaths = "a.glb"\n', GenexTomlCode.Syntax],
+  ["a path that is not a string", '[[asset_group]]\nname = "g"\npaths = [1]\n', GenexTomlCode.Syntax],
+  ["an unknown key in a row", `${groupRow("g", ["a.glb"])}boot = true\n`, GenexTomlCode.Syntax],
+  ["[asset_group] as a single table", '[asset_group]\nname = "g"\npaths = ["a.glb"]\n', GenexTomlCode.Syntax],
+];
+
+describe("genex.toml: [[asset_group]] rows name groups of assets loaded during play (C-30)", () => {
+  it("reads each group's name and globs under assets/, in file order, and none when the file has none", () => {
+    const manifest = accepted(
+      `${GAME}${groupRow("castle", ["interiors/castle/**", "props/throne.glb"])}${groupRow("crypt", ["interiors/crypt/*.glb"])}`,
+    );
+    assert.deepEqual(manifest.assetGroups, [
+      { name: "castle", paths: ["interiors/castle/**", "props/throne.glb"] },
+      { name: "crypt", paths: ["interiors/crypt/*.glb"] },
+    ]);
+    assert.deepEqual(accepted(GAME).assetGroups, []);
+  });
+
+  it("allows one path in two groups: each group lists it", () => {
+    const manifest = accepted(`${GAME}${groupRow("a", ["props/door.glb"])}${groupRow("b", ["props/*.glb"])}`);
+    assert.deepEqual(
+      manifest.assetGroups?.map((group) => [group.name, assetGroupMatches(group, "props/door.glb")]),
+      [
+        ["a", true],
+        ["b", true],
+      ],
+    );
+  });
+
+  const matches: Array<[string, string, boolean]> = [
+    ["props/*.glb", "props/door.glb", true],
+    ["props/*.glb", "props/sub/door.glb", false],
+    ["props/*.glb", "props/door.png", false],
+    ["props/d??r.glb", "props/door.glb", true],
+    ["props/d?r.glb", "props/door.glb", false],
+    ["interiors/**", "interiors/castle/hall.glb", true],
+    ["interiors/**", "interiors/a.glb", true],
+    ["interiors/**", "interiors", false],
+    ["interiors/**/hall.glb", "interiors/hall.glb", true],
+    ["interiors/**/hall.glb", "interiors/castle/east/hall.glb", true],
+    ["interiors/**/hall.glb", "interiors/castle/hallway.glb", false],
+    ["**", "anything/at/all.bin", true],
+    ["a.b", "aXb", false],
+    ["Props/door.glb", "props/door.glb", false],
+  ];
+  for (const [glob, rel, expected] of matches) {
+    it(`matches ${glob} against ${rel}: ${expected}`, () => {
+      assert.equal(assetGroupMatches({ name: "g", paths: [glob] }, rel), expected);
+    });
+  }
+
+  for (const [name, row, code] of REFUSED_GROUPS) {
+    it(`refuses ${name} with ${code}`, () => {
+      assert.equal(refusedCode(parseGenexToml(`${GAME}${row}`)), code);
+    });
+  }
+});
+
+const MIB = 1024 * 1024;
+const assetsRow = (lines: string) => `${GAME}[assets]\n${lines}`;
+const destinationRow = (destination: string, lines: string) => `${GAME}[assets.${destination}]\n${lines}`;
+
+/** `[assets]` texts refused, each with its code (C-17). */
+const REFUSED_ASSETS: Array<[string, string, string]> = [
+  ["a budget of 0 MB", assetsRow("budget_mb = 0\n"), GenexTomlCode.AssetBudgetOutOfRange],
+  ["a negative budget", assetsRow("budget_mb = -5\n"), GenexTomlCode.AssetBudgetOutOfRange],
+  ["a budget past any destination's bound", assetsRow("budget_mb = 65537\n"), GenexTomlCode.AssetBudgetOutOfRange],
+  [
+    "a web budget past the 512 MB shell cap",
+    destinationRow("web", "budget_mb = 513\n"),
+    GenexTomlCode.AssetBudgetOutOfRange,
+  ],
+  ["an iOS budget past 4096 MB", destinationRow("ios", "budget_mb = 4097\n"), GenexTomlCode.AssetBudgetOutOfRange],
+  [
+    "an Android budget past 4096 MB",
+    destinationRow("android", "budget_mb = 4097\n"),
+    GenexTomlCode.AssetBudgetOutOfRange,
+  ],
+  ["a desktop budget of 0 MB", destinationRow("desktop", "budget_mb = 0\n"), GenexTomlCode.AssetBudgetOutOfRange],
+  [
+    "a texture cap that is no power of two",
+    assetsRow("phone_max_texture_px = 1000\n"),
+    GenexTomlCode.InvalidTextureCap,
+  ],
+  ["a texture cap below 512", assetsRow("phone_max_texture_px = 256\n"), GenexTomlCode.InvalidTextureCap],
+  ["a texture cap above 4096", assetsRow("phone_max_texture_px = 8192\n"), GenexTomlCode.InvalidTextureCap],
+  ["a float budget", assetsRow("budget_mb = 64.5\n"), GenexTomlCode.Syntax],
+  ["a string budget", assetsRow('budget_mb = "64"\n'), GenexTomlCode.Syntax],
+  ["an unknown [assets] key", assetsRow("max_files = 9\n"), GenexTomlCode.Syntax],
+  ["an unknown destination", destinationRow("switch", "budget_mb = 9\n"), GenexTomlCode.Syntax],
+  ["a destination per OS (mac is desktop)", destinationRow("mac", "budget_mb = 9\n"), GenexTomlCode.Syntax],
+  ["a texture cap per destination", destinationRow("ios", "phone_max_texture_px = 1024\n"), GenexTomlCode.Syntax],
+  ["[assets] as an array", `${GAME}[[assets]]\nbudget_mb = 9\n`, GenexTomlCode.Syntax],
+];
+
+// Owner call C8: web 64 MB, iOS 200 MB, Android 200 MB, desktop 2 GB; an export past its budget warns
+// (`assets-over-budget`) and only a hard cap refuses (`assets-over-ceiling`): the web shell's 512 MB.
+describe("genex.toml: [assets] budgets per destination (C-17, owner call C8)", () => {
+  it("reads [assets] budget_mb and phone_max_texture_px, and each [assets.<destination>] budget_mb", () => {
+    const manifest = accepted(
+      `${GAME}[assets]\nbudget_mb = 300\nphone_max_texture_px = 1024\n\n[assets.web]\nbudget_mb = 48\n\n[assets.desktop]\nbudget_mb = 4096\n`,
+    );
+    assert.deepEqual(manifest.assets, {
+      budgetMb: 300,
+      phoneMaxTexturePx: 1024,
+      destinations: { web: 48, desktop: 4096 },
+    });
+  });
+
+  it("names no budgets when the file has no [assets], and none of a key the table leaves out", () => {
+    assert.equal(accepted(GAME).assets, null);
+    assert.deepEqual(accepted(`${GAME}[assets]\n`).assets, {
+      budgetMb: null,
+      phoneMaxTexturePx: null,
+      destinations: {},
+    });
+    assert.deepEqual(accepted(destinationRow("ios", "budget_mb = 150\n")).assets, {
+      budgetMb: null,
+      phoneMaxTexturePx: null,
+      destinations: { ios: 150 },
+    });
+  });
+
+  const defaults: Array<[BuildTarget, number, number | null]> = [
+    [BuildTarget.Web, 64, 512],
+    [BuildTarget.Ios, 200, 4096],
+    [BuildTarget.Android, 200, 4096],
+    [BuildTarget.Mac, 2048, null],
+    [BuildTarget.Windows, 2048, null],
+    [BuildTarget.Linux, 2048, null],
+  ];
+  for (const [target, budgetMb, ceilingMb] of defaults) {
+    it(`a game that names no budget gets ${budgetMb} MB on ${target}, ceiling ${ceilingMb ?? "none"}`, () => {
+      assert.deepEqual(assetBudgetOf(null, target), {
+        budgetBytes: budgetMb * MIB,
+        ceilingBytes: ceilingMb === null ? null : ceilingMb * MIB,
+      });
+      assert.deepEqual(assetBudgetOf(accepted(GAME).assets, target), assetBudgetOf(null, target));
+    });
+  }
+
+  it("a destination's own budget beats [assets] budget_mb, which beats the default", () => {
+    const { assets } = accepted(`${GAME}[assets]\nbudget_mb = 300\n\n[assets.ios]\nbudget_mb = 150\n`);
+    assert.equal(assetBudgetOf(assets, BuildTarget.Ios).budgetBytes, 150 * MIB);
+    assert.equal(assetBudgetOf(assets, BuildTarget.Android).budgetBytes, 300 * MIB);
+    assert.equal(assetBudgetOf(assets, BuildTarget.Linux).budgetBytes, 300 * MIB);
+    assert.equal(assetBudgetOf(assets, BuildTarget.Web).budgetBytes, 300 * MIB);
+  });
+
+  it("an [assets] budget_mb above a destination's hard cap is that cap there, never past it", () => {
+    const { assets } = accepted(assetsRow("budget_mb = 8000\n"));
+    assert.deepEqual(assetBudgetOf(assets, BuildTarget.Web), { budgetBytes: 512 * MIB, ceilingBytes: 512 * MIB });
+    assert.deepEqual(assetBudgetOf(assets, BuildTarget.Ios), {
+      budgetBytes: 4096 * MIB,
+      ceilingBytes: 4096 * MIB,
+    });
+    assert.deepEqual(assetBudgetOf(assets, BuildTarget.Mac), { budgetBytes: 8000 * MIB, ceilingBytes: null });
+  });
+
+  it("admits each budget at its bounds: 1 MB, the web shell's 512 MB, the phones' 4096 MB", () => {
+    for (const text of [
+      assetsRow("budget_mb = 1\n"),
+      destinationRow("web", "budget_mb = 512\n"),
+      destinationRow("ios", "budget_mb = 4096\n"),
+      destinationRow("android", "budget_mb = 4096\n"),
+      assetsRow("phone_max_texture_px = 512\n"),
+      assetsRow("phone_max_texture_px = 4096\n"),
+    ]) {
+      accepted(text);
+    }
+  });
+
+  for (const [name, text, code] of REFUSED_ASSETS) {
+    it(`refuses ${name} with ${code}`, () => {
+      assert.equal(refusedCode(parseGenexToml(text)), code);
     });
   }
 });

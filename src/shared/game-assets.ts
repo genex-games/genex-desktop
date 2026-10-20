@@ -13,6 +13,7 @@
 import { type CompiledStack, GameStack, isCompiledStack } from "./game-project.ts";
 
 import type { ImportIssue } from "./asset-db.ts";
+import type { CharacterFacts } from "./character-facts.ts";
 import type { CallMaking, MakingJob } from "./asset-making.ts";
 import type { CallCutOff } from "./plugins.ts";
 
@@ -88,8 +89,14 @@ export interface ProjectAssetImport {
   status: AssetImportStatus;
   /** Set when `status` is `refused`. */
   refusal?: AssetImportRefusal;
-  /** What the import noticed without refusing the file: glTF validator warnings (`validation-warning`, detail `<CODE> <pointer>`). */
+  /**
+   * What the import noticed without refusing the file: glTF validator warnings
+   * (`validation-warning`, detail `<CODE> <pointer>`), then the validation report's checks of the
+   * GLB it wrote (material ranges, the triangle budget; detail a JSON pointer or the numbers).
+   */
   issues?: ImportIssue[];
+  /** A rigged GLB's clips, joints, humanoid coverage and skinned levels (C-23); absent for any other file. */
+  character?: CharacterFacts;
 }
 
 export interface ProjectAssets {

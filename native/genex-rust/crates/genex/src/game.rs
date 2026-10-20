@@ -60,6 +60,8 @@ pub struct Game<W> {
     pub(crate) streaming: Vec<crate::stream::Streaming>,
     /// `game.cell_content` builders, in registration order.
     pub(crate) cell_contents: Vec<crate::stream::CellContent>,
+    /// `game.stream_commit` hooks, in registration order.
+    pub(crate) stream_commits: Vec<Box<dyn crate::stream_tick::StreamCommit<W>>>,
     /// `game.navigation`: the nav every seed rebuilds `sim.nav` for.
     pub(crate) navigation: Option<crate::nav::NavConfig>,
     /// Custom GPU passes (`game.gpu_pass`, extension ladder level 3, M2.19).
@@ -68,6 +70,9 @@ pub struct Game<W> {
     pub(crate) render: crate::render::RenderConfig,
     /// Where its Level-2 `[[wgsl]]` sources come from (`game.wgsl`, extension ladder level 2).
     pub(crate) wgsl: crate::extend::WgslSetup,
+    /// The G6 areas' registrations (input, audio, saves, UI, settings, net), each written by its
+    /// area's `impl Game` block (UIS-0).
+    pub(crate) g6: crate::g6::G6Setup,
 }
 
 /// The handle `game.camera(..)` returns; `.camera_override()` lets this camera replace an
@@ -122,10 +127,12 @@ impl<W: Default + 'static> Game<W> {
             facets: Vec::new(),
             streaming: Vec::new(),
             cell_contents: Vec::new(),
+            stream_commits: Vec::new(),
             navigation: None,
             gpu_passes: Vec::new(),
             render: crate::render::RenderConfig::from_build(),
             wgsl: crate::extend::WgslSetup::default(),
+            g6: crate::g6::G6Setup::default(),
         }
     }
 
@@ -270,22 +277,40 @@ impl<W: Default + 'static> Game<W> {
     }
 
     /// Stream the world in cells (registered once; `install` refuses a second registration
-    /// `duplicate-streaming` and a cell size outside the caps `streaming-invalid`). While it is
-    /// registered `state()` carries the display-only key `__stream`.
+    /// `duplicate-streaming`, and a cell size, radius or anchor count outside its caps or a sim set
+    /// past `STREAM_SIM_BYTES_MAX` `streaming-invalid`). Every tick starts with the commit slot,
+    /// which moves `sim.stream` to its anchors; while it is registered `state()` carries the
+    /// display-only key `__stream`.
     pub fn streaming(&mut self, streaming: crate::stream::Streaming) -> &mut Self {
         self.streaming.push(streaming);
         self
     }
 
-    /// Build a streamed cell's content: `builder` runs for every cell entering the sim set, and
-    /// what each builder records is merged in cell order. Facets may each register one, run in
-    /// registration order.
-    pub fn cell_content<T: 'static, F>(&mut self, builder: F) -> &mut Self
+    /// Build a streamed cell's content: `builder` runs for every cell entering the sim set, on a
+    /// worker (inline on the web), so it must be pure: the same cell and inputs give the same
+    /// build everywhere. What each builder records is merged in cell order. Facets may each
+    /// register one, run in registration order.
+    pub fn cell_content<T: Send + Sync + 'static, F>(&mut self, builder: F) -> &mut Self
     where
         F: Fn(crate::CellId, &crate::stream::CellInputs) -> crate::stream::CellBuild<T> + Send + Sync + 'static,
     {
         self.cell_contents.push(crate::stream::CellContent::new(builder));
         self
+    }
+
+    /// A hook the commit slot calls for every cell that leaves (descending, hooks in reverse
+    /// registration order) or enters (ascending, in registration order) the sim set.
+    pub fn stream_commit(&mut self, hook: impl crate::stream_tick::StreamCommit<W> + 'static) -> &mut Self {
+        self.stream_commits.push(Box::new(hook));
+        self
+    }
+
+    /// Stream the static colliders cell builders add (`CellBuild::part(CellColliders)`): they enter
+    /// `sim.physics` with their cell and leave with it, in canonical order.
+    #[cfg(feature = "physics")]
+    pub fn stream_colliders(&mut self) -> &mut Self {
+        self.facet_state::<genex_stream::physics::StreamColliders>();
+        self.stream_commit(crate::stream::ColliderCommit)
     }
 
     /// Give the world a navigation mesh walkers of `config` use: every seed rebuilds `sim.nav`

@@ -141,6 +141,10 @@ export const RPC_CLASSES = {
   "native.build": RpcClass.Work,
   "native.status": RpcClass.Record,
   "native.stop": RpcClass.Work,
+  // Reads the host's own crash records for the game.
+  "game.crashes": RpcClass.Record,
+  // One question to the lease's game (a report or trace is a few frames' data).
+  "preview.frameProfile": RpcClass.Page,
   // Builds the game, then starts and stops two runs of it: bounded by the build and Stop deadlines.
   "game.conformance": RpcClass.Work,
   // Records a request for the person to decide later; it never waits for the decision.

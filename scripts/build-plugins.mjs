@@ -145,6 +145,22 @@ async function buildBlender(root, resources, sdk) {
   });
 }
 
+/** The CC0 Library: its manifest, its panel with the SDK inlined, and its backend bundled with the CC0 fetch core. */
+async function buildCc0(root, resources, sdk) {
+  const cc0 = path.join(resources, "plugins/cc0");
+  await mkdir(cc0, { recursive: true });
+  await cp(path.join(root, "src/plugins/cc0/plugin.json"), path.join(cc0, "plugin.json"));
+  await writeFile(
+    path.join(cc0, "panel.html"),
+    await inlinePanelSdk(await readFile(path.join(root, "src/plugins/cc0/panel.html"), "utf8"), sdk),
+  );
+  await build({
+    ...NODE_BACKEND,
+    entryPoints: [path.join(root, "src/plugins/cc0/backend.ts")],
+    outfile: path.join(cc0, "backend.mjs"),
+  });
+}
+
 async function buildUnreal(root, resources, sdk) {
   const unreal = path.join(resources, "plugins/unreal");
   await mkdir(unreal, { recursive: true });
@@ -180,6 +196,7 @@ export async function buildPlugins(root, resources, { dependencies = true } = {}
   await buildGenex(root, resources, { dependencies });
   const sdk = path.join(root, "src/plugin-sdk");
   await buildBlender(root, resources, sdk);
+  await buildCc0(root, resources, sdk);
   await buildUnreal(root, resources, sdk);
   await mkdir(path.join(resources, "examples"), { recursive: true });
   await cp(path.join(root, "src/plugins/example"), path.join(resources, "examples/example"), { recursive: true });

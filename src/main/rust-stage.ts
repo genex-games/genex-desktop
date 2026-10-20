@@ -157,6 +157,8 @@ export interface StageHooks {
 /** The folders of a game a build takes whole. `src/` is required. */
 const SOURCE_FOLDER = "src";
 const ASSETS_FOLDER = "assets";
+/** World placement files (`world/*.cells.json`), compiled by the import step into `assets/` (C-28); never shipped. */
+const WORLD_FOLDER = "world";
 /** The entry cargo builds (`[[bin]] path` in the host-written manifest). */
 const ENTRY = "src/main.rs";
 /** A copy in progress, beside the stage, renamed into place once whole. */
@@ -224,6 +226,7 @@ async function fillStage(walk: Walk, manifest: GenexToml, pins: StagePins, engin
   const copied =
     (await copyFolder(walk, [root], SOURCE_FOLDER, true)) ??
     (await copyFolder(walk, [root], ASSETS_FOLDER, false)) ??
+    (await copyFolder(walk, [root], WORLD_FOLDER, false)) ??
     (await copyWgsl(walk, [root], manifest));
   if (copied) return copied;
   if (!files.includes(ENTRY)) return refuse(RustStageCode.MissingEntry, ENTRY);

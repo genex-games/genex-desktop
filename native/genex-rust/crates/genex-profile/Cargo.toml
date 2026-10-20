@@ -1,0 +1,29 @@
+[package]
+name = "genex-profile"
+description = "Profiling for genex games: typed engine scopes over puffin with an injected clock, frame summaries, counters, hitches, GPU lanes, memory and trace reports."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+# `web` reads puffin's clock from `performance.now()` (web-time) on wasm32; a browser build turns it
+# on, or injects its own clock.
+[features]
+default = []
+web = ["puffin/web"]
+
+[dependencies]
+# puffin records the scope streams (no serialization: no bincode, lz4 or zstd); serde and
+# serde_json write the summary the host reads. All locked by the PROF-0d dependency commit.
+puffin = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+# The compile-fail row: a bad scope name in a const does not build.
+trybuild = { workspace = true }

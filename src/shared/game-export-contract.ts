@@ -99,15 +99,27 @@ export function isWebWasmBudgetMb(mb: number): boolean {
 export const ExportWarningCode = {
   /** The browser game's optimized code is past its game's budget: it loads slower on phones and weak devices. */
   WasmOverTarget: "wasm-over-target",
+  /** The destination's asset package is past its game's budget (C-17, owner call C8): a bigger download and install. */
+  AssetsOverBudget: "assets-over-budget",
 } as const;
 export type ExportWarningCode = (typeof ExportWarningCode)[keyof typeof ExportWarningCode];
 
-/** A warning on an export that was made: its code, the gzip size and the game's budget it passed. */
-export interface ExportWarning {
-  code: ExportWarningCode;
+/** The browser game's optimized code past its budget: the gzip size and the game's budget it passed. */
+export interface WasmExportWarning {
+  code: "wasm-over-target";
   gzipBytes: number;
   budgetBytes: number;
 }
+
+/** The destination's asset package past its budget (C-17): the package's bytes and the budget it passed. */
+export interface AssetsExportWarning {
+  code: "assets-over-budget";
+  bytes: number;
+  budgetBytes: number;
+}
+
+/** A warning on an export that was made, by its code. */
+export type ExportWarning = WasmExportWarning | AssetsExportWarning;
 
 /**
  * Whether an export's GPU path has run on a real GPU of its destination, recorded on the export's

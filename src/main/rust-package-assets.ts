@@ -16,8 +16,19 @@
  * - **Index.** `assets/genex-asset-index.json` ({@link ASSET_INDEX_FILE}) lists every packaged
  *   asset under the name a game reads it by: its id from a trusted `genex-assets.lock`, its kind and
  *   licence, the files shipped for it with their bytes and family, its dependency edges and its
- *   `boot` flag (every asset is boot until asset groups have a producer). A game's own file at that
- *   name is refused at stage ({@link reservedAssetName}).
+ *   `boot` flag. A game's own file at that name is refused at stage ({@link reservedAssetName}).
+ * - **Streaming facts (C-29).** A GLB's entry carries `mesh` (`stream-facts.ts`): its levels of
+ *   detail coarse first, each with the byte ranges of its triangle lists in the shipped file, the
+ *   head and vertex bytes every level needs, and its UV texel density. A KTX2 file carries its
+ *   `levels` smallest first, each with its side and byte range. The streaming code reads these and
+ *   never parses the files to plan a fetch.
+ * - **Groups (C-30).** `genex.toml`'s `[[asset_group]]` rows become the index's `groups`, each
+ *   listing the assets whose name one of its globs matches (an asset may be in several). An asset
+ *   in any group is not `boot`: a game loads it during play; every other asset is.
+ * - **Budget (C-17).** The package's bytes (the index included) are measured against the
+ *   destination's budget (`genex-toml.ts`' `assetBudgetOf`, owner call C8): past it the receipt says
+ *   so and an export warns; past the destination's hard cap (the web shell's 512 MB, a phone's
+ *   4096 MB) {@link packageCeilingRefusal} names the refusal the build answers.
  *
  * Only regular files and folders are walked: a link, a FIFO or anything else in the stage is left
  * out, never followed. Pure over its inputs: two packages of one stage are byte-identical.
@@ -26,30 +37,52 @@ import { constants as FS } from "node:fs";
 import { copyFile, lstat, mkdir, readdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { AssetLicence, type AssetLockEntry } from "../shared/asset-db.ts";
+import { type AssetsExportWarning, ExportWarningCode } from "../shared/game-export-contract.ts";
 import { type AssetKind, assetKind } from "../shared/game-assets.ts";
 import { BuildTarget } from "../shared/game-project.ts";
 import { openNoFollow, readRegularFile } from "../substrate/fsx.ts";
 import { readKtx2Header } from "../substrate/asset-import/ktx2.ts";
 import { writeKtx2 } from "../substrate/asset-import/ktx2-write.ts";
+import {
+  type ByteRange,
+  glbStreamFacts,
+  ktx2HeadBytes,
+  ktx2LevelFacts,
+  type MeshFacts,
+  type TextureLevelFacts,
+} from "../substrate/asset-import/stream-facts.ts";
 import { DESTINATION_TEXTURES, KTX2_VK_FORMAT, TextureCompression } from "../substrate/asset-import/texture-table.ts";
+import {
+  type AssetBudget,
+  type AssetGroupRow,
+  assetBudgetOf,
+  assetGroupMatches,
+  ASSET_BUDGET_MB_BYTES,
+} from "../substrate/genex-toml.ts";
 import type { StagedImportReport } from "./rust-assets.ts";
 
 /** The packaged asset index, at the top of `out/assets`. Reserved: a game's own file there is refused. */
 export const ASSET_INDEX_FILE = "genex-asset-index.json";
 /** The index format this host writes (genex's `info()` reads it). */
 export const ASSET_INDEX_VERSION = 1;
-/** The largest texture side a phone package keeps (`phone_max_texture_px`'s default, C-17 makes it a key). */
+/** The largest texture side a phone package keeps when `genex.toml` names no `[assets] phone_max_texture_px`. */
 export const PHONE_MAX_TEXTURE_PX = 2048;
 /** The largest family KTX2 the package step reads to trim its mips; a larger one goes out untrimmed. */
 const TRIM_READ_MAX_BYTES = 512 * 1024 * 1024;
 /** Bytes of a KTX2 header plus its level index entry size: what the trim reads the level index with. */
 const KTX2_HEADER_BYTES = 80;
 const KTX2_LEVEL_ENTRY_BYTES = 24;
+/** The most levels a KTX2's index lists that the index's `levels` reads (16384 px down to 1). */
+const KTX2_MAX_LEVELS = 15;
+/** The largest GLB the index reads its streaming facts from (genex's `MAX_ASSET_BYTES`); a larger one has none. */
+const MESH_FACTS_MAX_BYTES = 256 * 1024 * 1024;
 
 /** Why the package step refused a build. Wire values in the lane's refusal line: never rename one. */
 export const PackageRefusal = {
   /** A game file at a name the package step writes ({@link ASSET_INDEX_FILE}). */
   ReservedAssetName: "reserved-asset-name",
+  /** The package passes its destination's hard cap (C-17): the web shell's 512 MB, a phone's 4096 MB. */
+  AssetsOverCeiling: "assets-over-ceiling",
 } as const;
 export type PackageRefusal = (typeof PackageRefusal)[keyof typeof PackageRefusal];
 
@@ -98,6 +131,39 @@ export interface AssetIndexFile {
   bytes: number;
   /** A KTX2's side in texels as shipped (after a phone's trim). */
   px?: number;
+  /** A KTX2's levels as shipped, smallest first: each one's side and byte range in the file (C-29). */
+  levels?: TextureLevelFacts[];
+}
+
+/** One level of a model in the index (C-29): 0 is the mesh itself. */
+export interface AssetIndexMeshLevel {
+  level: number;
+  triangles: number;
+  /** The largest primitive error, object space before node scale; 0 for level 0. */
+  error: number;
+  /** Where its triangle lists lie in the shipped GLB. */
+  ranges: ByteRange[];
+}
+
+/** A model's streaming facts (C-29), over its shipped GLB. */
+export interface AssetIndexMesh {
+  /** Level 0's triangles. */
+  triangles: number;
+  /** UV units per world unit (TEXCOORD_0 area over scene area); null without UVs. */
+  uvDensity: number | null;
+  /** The bytes every read starts with: the GLB header, the JSON chunk and the BIN chunk header. */
+  head: ByteRange;
+  /** The vertex data every level reads. */
+  vertices: ByteRange[];
+  /** Coarsest first, level 0 last. */
+  levels: AssetIndexMeshLevel[];
+}
+
+/** One `[[asset_group]]` in the index (C-30). */
+export interface AssetIndexGroup {
+  name: string;
+  /** The index paths of its members, sorted. */
+  assets: string[];
 }
 
 /** One asset in the index, under the name a game reads it by. */
@@ -113,8 +179,10 @@ export interface AssetIndexEntry {
   files: AssetIndexFile[];
   /** Ids of the entries it reads (the lock's `deps`), sorted. */
   deps: string[];
-  /** Whether it is loaded before the first frame: every asset, until asset groups have a producer. */
+  /** Whether it is loaded before the first frame: every asset outside the named groups. */
   boot: boolean;
+  /** A GLB's streaming facts; absent for any other asset and for a GLB the runtime would not read. */
+  mesh?: AssetIndexMesh;
 }
 
 /** `assets/genex-asset-index.json`. */
@@ -123,6 +191,8 @@ export interface AssetIndex {
   target: BuildTarget;
   /** Sorted by path. */
   assets: AssetIndexEntry[];
+  /** The game's named asset groups, sorted by name (C-30). */
+  groups: AssetIndexGroup[];
 }
 
 /** A file the package left out, and why. */
@@ -140,6 +210,16 @@ export interface PackageTrimmed {
   bytesAfter: number;
 }
 
+/** The package measured against its destination's budget (C-17). */
+export interface AssetPackageBudget {
+  /** Past it an export warns (`assets-over-budget`). */
+  budgetBytes: number;
+  /** Past it the build is refused ({@link PackageRefusal.AssetsOverCeiling}); null: the destination has none. */
+  ceilingBytes: number | null;
+  withinBudget: boolean;
+  withinCeiling: boolean;
+}
+
 /** The package's record in the build receipt (`package`). */
 export interface AssetPackageReport {
   target: BuildTarget;
@@ -151,6 +231,7 @@ export interface AssetPackageReport {
   bytesBy: Record<string, number>;
   dropped: PackageDropped[];
   trimmed: PackageTrimmed[];
+  budget: AssetPackageBudget;
 }
 
 /** One build's package: the stage's assets, where they go, and what the index draws on. */
@@ -166,7 +247,16 @@ export interface AssetPackageRequest {
   imported?: StagedImportReport | null;
   /** A phone's texture cap (default {@link PHONE_MAX_TEXTURE_PX}). */
   textureCapPx?: number;
+  /** `genex.toml`'s checked `[[asset_group]]` rows (C-30); absent: none. */
+  groups?: readonly AssetGroupRow[];
+  /** The budget the package is measured against (`assetBudgetOf`); absent: the destination's default. */
+  budget?: AssetBudget;
 }
+
+const MESSAGE = {
+  overCeiling: (target: BuildTarget, bytes: number, ceilingBytes: number) =>
+    `${PackageRefusal.AssetsOverCeiling}: the ${target} package is ${bytes} bytes, past its ${ceilingBytes / ASSET_BUDGET_MB_BYTES} MB cap`,
+};
 
 /** The stage's folder of game assets, and the package's in `out/`. */
 const ASSETS_DIR = "assets";
@@ -314,13 +404,18 @@ async function shipFile(
   const size = (await lstat(from)).size;
   if (file.family === null || !rules.trimsMips) {
     await copyFile(from, to);
-    return { path: file.path, ...(file.family ? { family: file.family } : {}), bytes: size, ...(await pxOf(to, file)) };
+    return {
+      path: file.path,
+      ...(file.family ? { family: file.family } : {}),
+      bytes: size,
+      ...(await ktx2Facts(to, file)),
+    };
   }
   const bytes = await readRegularFile(from, TRIM_READ_MAX_BYTES).catch(() => null);
   const cut = bytes ? trimKtx2(bytes, request.textureCapPx ?? PHONE_MAX_TEXTURE_PX) : null;
   if (!cut) {
     await copyFile(from, to);
-    return { path: file.path, family: file.family, bytes: size, ...(await pxOf(to, file)) };
+    return { path: file.path, family: file.family, bytes: size, ...(await ktx2Facts(to, file)) };
   }
   await writeFile(to, cut.bytes);
   trimmed.push({
@@ -330,22 +425,51 @@ async function shipFile(
     bytesBefore: size,
     bytesAfter: cut.bytes.length,
   });
-  return { path: file.path, family: file.family, bytes: cut.bytes.length, px: cut.toPx };
+  const levels = ktx2LevelFacts(cut.bytes, cut.bytes.length);
+  return { path: file.path, family: file.family, bytes: cut.bytes.length, px: cut.toPx, ...(levels ? { levels } : {}) };
 }
 
-/** A shipped KTX2's side, read from its header (never through a link); nothing for any other file. */
-async function pxOf(file: string, named: Named): Promise<{ px?: number }> {
+/**
+ * A shipped KTX2's side and levels, read from its header and level index (never through a link);
+ * nothing for any other file.
+ */
+async function ktx2Facts(file: string, named: Named): Promise<{ px?: number; levels?: TextureLevelFacts[] }> {
   if (!named.path.endsWith(".ktx2")) return {};
   const handle = await openNoFollow(file, FS.O_RDONLY | FS.O_NONBLOCK).catch(() => null);
   if (!handle) return {};
   try {
-    const head = new Uint8Array(KTX2_HEADER_BYTES);
-    const { bytesRead } = await handle.read(head, 0, KTX2_HEADER_BYTES, 0);
-    const header = readKtx2Header(head.subarray(0, bytesRead));
-    return header ? { px: header.width } : {};
+    const want = ktx2HeadBytes(KTX2_MAX_LEVELS);
+    const head = new Uint8Array(want);
+    const { bytesRead } = await handle.read(head, 0, want, 0);
+    const read = head.subarray(0, bytesRead);
+    const header = readKtx2Header(read);
+    if (!header) return {};
+    const levels = ktx2LevelFacts(read, (await handle.stat()).size);
+    return { px: header.width, ...(levels ? { levels } : {}) };
   } finally {
     await handle.close();
   }
+}
+
+/** The streaming facts of each shipped GLB in `to`, by its path; a file that is not a readable GLB has none. */
+async function meshFacts(to: string, files: readonly AssetIndexFile[]): Promise<Map<string, MeshFacts>> {
+  const facts = new Map<string, MeshFacts>();
+  for (const file of files) {
+    if (file.family || !file.path.toLowerCase().endsWith(".glb")) continue;
+    const bytes = await readRegularFile(path.join(to, ...file.path.split("/")), MESH_FACTS_MAX_BYTES).catch(() => null);
+    const found = bytes ? glbStreamFacts(bytes) : null;
+    if (found) facts.set(file.path, found);
+  }
+  return facts;
+}
+
+/** The index's groups (sorted by name), each with the entries one of its globs names. */
+function indexGroups(entries: readonly AssetIndexEntry[], rows: readonly AssetGroupRow[]): AssetIndexGroup[] {
+  const groups = rows.map((row) => ({
+    name: row.name,
+    assets: entries.filter((entry) => assetGroupMatches(row, entry.path)).map((entry) => entry.path),
+  }));
+  return groups.sort((a, b) => (a.name < b.name ? -1 : Number(a.name > b.name)));
 }
 
 /** The game-relative source each shipped `assets/` name came from (a converted OBJ's GLB → the OBJ). */
@@ -362,6 +486,7 @@ function indexEntries(
   shipped: readonly AssetIndexFile[],
   dropped: readonly PackageDropped[],
   request: AssetPackageRequest,
+  meshes: ReadonlyMap<string, MeshFacts>,
 ): AssetIndexEntry[] {
   const lockByPath = new Map((request.lock ?? []).map((row) => [row.path, row]));
   const sources = sourcesOf(request.imported);
@@ -385,23 +510,37 @@ function indexEntries(
     if (!file.family) group.own ??= file.path;
     group.files.push(file);
   }
+  const lockRowOf = (asset: string) => {
+    const game = `${ASSETS_DIR}/${asset}`;
+    return lockByPath.get(sources.get(game) ?? game);
+  };
   const entries: AssetIndexEntry[] = [];
   for (const [stem, group] of groups) {
     const asset = group.own ?? group.files[0]?.path ?? stem;
-    const game = `${ASSETS_DIR}/${asset}`;
-    const row = lockByPath.get(sources.get(game) ?? game);
-    entries.push({
-      path: asset,
-      ...(row ? { id: row.id } : {}),
-      kind: row?.kind ?? assetKind(asset),
-      licence: row?.licence ?? AssetLicence.Unknown,
-      bytes: group.files.reduce((sum, file) => sum + file.bytes, 0),
-      files: [...group.files].sort(byPath),
-      deps: [...(row?.deps ?? [])].sort(),
-      boot: true,
-    });
+    entries.push(indexEntry(asset, group.files, lockRowOf(asset), { groups: request.groups ?? [], meshes }));
   }
   return entries.sort(byPath);
+}
+
+/** One index entry: `asset`'s files, its lock row's facts, whether a named group holds it, and its mesh facts. */
+function indexEntry(
+  asset: string,
+  files: readonly AssetIndexFile[],
+  row: AssetLockEntry | undefined,
+  facts: { groups: readonly AssetGroupRow[]; meshes: ReadonlyMap<string, MeshFacts> },
+): AssetIndexEntry {
+  const mesh = facts.meshes.get(asset);
+  return {
+    path: asset,
+    ...(row ? { id: row.id } : {}),
+    kind: row?.kind ?? assetKind(asset),
+    licence: row?.licence ?? AssetLicence.Unknown,
+    bytes: files.reduce((sum, file) => sum + file.bytes, 0),
+    files: [...files].sort(byPath),
+    deps: [...(row?.deps ?? [])].sort(),
+    boot: !facts.groups.some((group) => assetGroupMatches(group, asset)),
+    ...(mesh ? { mesh } : {}),
+  };
 }
 
 /** The receipt's bytes per bucket: each family, the sources that have family files, and the rest. */
@@ -430,19 +569,49 @@ export async function packageAssets(request: AssetPackageRequest): Promise<Asset
   const trimmed: PackageTrimmed[] = [];
   const files: AssetIndexFile[] = [];
   for (const file of shipped) files.push(await shipFile(request, rules, file, trimmed));
-  const assets = indexEntries(files, dropped, request);
-  const index: AssetIndex = { version: ASSET_INDEX_VERSION, target: request.target, assets };
+  const assets = indexEntries(files, dropped, request, await meshFacts(request.to, files));
+  const groups = indexGroups(assets, request.groups ?? []);
+  const index: AssetIndex = { version: ASSET_INDEX_VERSION, target: request.target, assets, groups };
   const text = `${JSON.stringify(index)}\n`;
   await writeFile(path.join(request.to, ASSET_INDEX_FILE), text);
   const indexBytes = Buffer.byteLength(text);
+  const bytes = files.reduce((sum, file) => sum + file.bytes, indexBytes);
   return {
     target: request.target,
-    bytes: files.reduce((sum, file) => sum + file.bytes, indexBytes),
+    bytes,
     files: files.length + 1,
     bytesBy: bytesBy(files, assets, indexBytes),
     dropped,
     trimmed,
+    budget: measured(bytes, request.budget ?? assetBudgetOf(null, request.target)),
   };
+}
+
+/** `bytes` against `budget`: within each bound when it is at most that bound. */
+function measured(bytes: number, budget: AssetBudget): AssetPackageBudget {
+  const { budgetBytes, ceilingBytes } = budget;
+  return {
+    budgetBytes,
+    ceilingBytes,
+    withinBudget: bytes <= budgetBytes,
+    withinCeiling: ceilingBytes === null || bytes <= ceilingBytes,
+  };
+}
+
+/** The warning an export carries from its package: past the destination's budget (`assets-over-budget`), or none. */
+export function packageExportWarnings(report: AssetPackageReport | null | undefined): AssetsExportWarning[] {
+  if (!report || report.budget.withinBudget) return [];
+  return [{ code: ExportWarningCode.AssetsOverBudget, bytes: report.bytes, budgetBytes: report.budget.budgetBytes }];
+}
+
+/**
+ * The refusal line of a package past its destination's hard cap (`assets-over-ceiling: …`, naming
+ * its size and the cap); null for one within it, however far past its budget.
+ */
+export function packageCeilingRefusal(report: AssetPackageReport): string | null {
+  const { ceilingBytes, withinCeiling } = report.budget;
+  if (withinCeiling || ceilingBytes === null) return null;
+  return MESSAGE.overCeiling(report.target, report.bytes, ceilingBytes);
 }
 
 /** Whether every family a destination's package lists is one its texture table may pick. */

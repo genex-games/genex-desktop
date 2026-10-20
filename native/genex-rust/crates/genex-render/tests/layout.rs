@@ -77,7 +77,7 @@ use naga::proc::Layouter;
 use naga::valid::{Capabilities, ModuleInfo, ValidationFlags, Validator};
 
 /// The golden sizes in bytes. Changing one is a layout change for every shader and extension.
-const GOLDEN: [(&str, usize); 34] = [
+const GOLDEN: [(&str, usize); 35] = [
     // RQ5.6 flipped 752 -> 768: the camera's TAA jitter lane (`GpuFrame::jitter`). Pass 2's
     // contracts wave flipped 768 -> 784: each cascade's comparison bias (`GpuFrame::cascade_bias`).
     // P2-0.8b (T-06) flipped 784 -> 800: the frame's texture mip bias (`GpuFrame::texture_lod`).
@@ -88,6 +88,9 @@ const GOLDEN: [(&str, usize); 34] = [
     // Pass 2 A6.9 flipped 32 -> 36: each batch's first instance row (`GpuBatch::first_row`, a level's
     // batch has slots of its own over its mesh's rows) beside its level of detail (`lod`).
     ("Batch", 36),
+    // Game systems LOD-02 added the LOD row (cull binding 6): the sphere an instance's levels are
+    // measured from, its bias, its far rule and two spare words.
+    ("LodRow", 32),
     ("PassView", 16),
     // Pass 2 A6.9 flipped 880 -> 912: the levels of detail's view (`GpuCullViews::lod`, `lod_params`).
     ("CullViews", 912),
@@ -754,16 +757,20 @@ fn the_forward_frame_group_stays_within_webgpu_core_per_stage_limits() {
         // Renderer pass 2 A.3 flipped 8 -> 9 storage buffers: the reflection probes' rows. A.4
         // flipped the sampled textures from the cap then (14) to 15 of the cap now (16): the
         // irradiance volumes' atlas at binding 32. The look pass (B.9's frame hook) flipped them
-        // 15 -> 16, all of the cap: the screen reflections at binding 30.
-        (4, 9, 16, 4),
+        // 15 -> 16, all of the cap: the screen reflections at binding 30. Game systems LOD-04
+        // flipped 9 -> 10 storage buffers: the instance fade table at binding 31; LOD-18 flipped
+        // 10 -> 11: the same table at the faded pipelines' group 1 binding 2 (their vertices'
+        // far-field grow), which no other pipeline's layout holds.
+        (4, 11, 16, 4),
         "{counts:?}"
     );
     // WebGPU's limits are per stage: the fragment stage reads five tables (materials, lights, the
     // light extensions, the one light-bin table and the material extensions; pass 2 A.0 LG-16
     // flipped 6 -> 5), the vertex stage the instance side.
     let fragment = stage_counts_in(&module, &info, naga::ShaderStage::Fragment);
-    // Renderer pass 2 A.3 flipped 5 -> 6: the reflection probes' rows.
-    assert_eq!(fragment.storage_buffers, 6, "{fragment:?}");
+    // Renderer pass 2 A.3 flipped 5 -> 6: the reflection probes' rows. Game systems LOD-04
+    // flipped 6 -> 7: the instance fade table, read by the faded fragment entries alone.
+    assert_eq!(fragment.storage_buffers, 7, "{fragment:?}");
     for stage in [naga::ShaderStage::Vertex, naga::ShaderStage::Fragment] {
         let used = stage_counts_in(&module, &info, stage);
         assert!(used.uniform_buffers <= core.max_uniform_buffers_per_shader_stage, "{stage:?}: {used:?}");
@@ -1116,7 +1123,8 @@ fn the_meshlet_draw_pipeline_layout_holds_cores_eight_storage_buffers_per_stage(
     }
     // Today's frame group shows three tables to the vertex stage (instances, batches, the visible
     // list): with the meshlet group's four, one vertex-stage storage binding is left for R2.4
-    // (for example the previous-model table motion vectors need).
+    // (for example the previous-model table motion vectors need). Game systems LOD-18 reads the
+    // far-field grow through the faded pipelines' own group 1, not here.
     let vertex = layout_storage_buffers(&frame, wgpu::ShaderStages::VERTEX) + layout_storage_buffers(&meshlet, wgpu::ShaderStages::VERTEX);
     assert_eq!(vertex, 7, "vertex-stage storage buffers of the meshlet draw's pipeline layout");
     // Every group-0 global the draw declares is a frame-group binding of the same kind and access
@@ -1574,8 +1582,44 @@ fn the_stage_zero_contract_slots_hold_todays_values() {
         .chain(FRAME_LIGHT_BINDINGS.iter().map(|(binding, _)| *binding))
         .chain(FRAME_MATERIAL_CLASS_BINDINGS.iter().map(|(binding, _)| *binding))
         .collect();
-    assert!(!taken.contains(&FRAME_INSTANCE_FADE_BINDING.0), "binding {} is free", FRAME_INSTANCE_FADE_BINDING.0);
+    assert!(!taken.contains(&FRAME_INSTANCE_FADE_BINDING.0), "binding {} collides with no forward frame binding", FRAME_INSTANCE_FADE_BINDING.0);
     assert!(FRAME_INSTANCE_FADE_BINDING.0 > 30, "it clears the screen reflections' binding 30");
+}
+
+/// Game systems LOD-02 and LOD-03: the cull reads the LOD rows (binding 6, `LodRow` per opaque
+/// row) and writes the instance fade table (binding 7, `vec2<f32>` per visible-list slot, the
+/// table the forward frame's binding 31 names), within WebGPU core's eight storage buffers per
+/// stage. Named flips: the fade table went from reserved and unbound (`binding 31 is free`) to
+/// bound and written by the cull, and its row from 4 bytes (f32 per instance row) to 8 (fade and
+/// grow per slot); the cull's storage buffers from 5 to 7 of 8.
+#[test]
+fn the_cull_reads_the_lod_rows_and_writes_the_fade_table_within_cores_storage_limit() {
+    use genex_render::cull::{CULL_FADES_BINDING, CULL_MARK_ENTRY, CULL_SCAN_ENTRY, CULL_SCATTER_ENTRY};
+    use genex_render::layout::INSTANCE_FADE_BYTES;
+    use genex_render::lod_rows::{CULL_LOD_ROWS_BINDING, LOD_ROW_BYTES};
+    assert_eq!(INSTANCE_FADE_BYTES, 8, "a fade and a grow per slot");
+    let module = parse("cull", shader("cull"));
+    let info = validated("cull", &module);
+    let global = |name: &str| module.global_variables.iter().find(|(_, global)| global.name.as_deref() == Some(name)).map(|(_, global)| global).unwrap_or_else(|| panic!("{name} declared"));
+    let (lod_rows, fades) = (global("lod_rows"), global("fades"));
+    assert_eq!(lod_rows.binding.as_ref().map(|at| (at.group, at.binding)), Some((0, CULL_LOD_ROWS_BINDING)));
+    assert_eq!(fades.binding.as_ref().map(|at| (at.group, at.binding)), Some((0, CULL_FADES_BINDING)));
+    assert_eq!(lod_rows.space, naga::AddressSpace::Storage { access: naga::StorageAccess::LOAD });
+    assert_eq!(fades.space, naga::AddressSpace::Storage { access: naga::StorageAccess::LOAD | naga::StorageAccess::STORE });
+    let stride = |global: &naga::GlobalVariable| match module.types[global.ty].inner {
+        naga::TypeInner::Array { stride, .. } => u64::from(stride),
+        ref other => panic!("an array, not {other:?}"),
+    };
+    assert_eq!((stride(lod_rows), stride(fades)), (LOD_ROW_BYTES, INSTANCE_FADE_BYTES));
+    let core = wgpu::Limits::defaults();
+    let declared = module.global_variables.iter().filter(|(_, global)| matches!(global.space, naga::AddressSpace::Storage { .. })).count() as u32;
+    assert_eq!(declared, 7, "the cull group's storage buffers");
+    assert!(declared <= core.max_storage_buffers_per_shader_stage, "{declared} of {}", core.max_storage_buffers_per_shader_stage);
+    for entry in [CULL_MARK_ENTRY, CULL_SCAN_ENTRY, CULL_SCATTER_ENTRY] {
+        let used = storage_buffers_used(&module, &info, entry);
+        eprintln!("{entry}: {} storage buffers {used:?}", used.len());
+        assert!(used.len() as u32 <= core.max_storage_buffers_per_shader_stage, "{entry}: {used:?}");
+    }
 }
 
 #[test]
@@ -1681,9 +1725,10 @@ fn the_forward_frame_layout_with_every_reserved_slot_fits_webgpu_core() {
     // Renderer pass 2 A.4 flipped the sampled textures 14 -> 15 (the irradiance volumes' atlas)
     // and the headroom row: under owner decision D1 the forward stage may use all of core's 16.
     // The look pass (B.9's frame hook) flipped them 15 -> 16: the screen reflections at binding 30.
+    // Game systems LOD-04 flipped the storage buffers 6 -> 7: the instance fade table (binding 31).
     assert_eq!(
         (fragment.uniform_buffers, fragment.storage_buffers, fragment.sampled_textures, fragment.samplers),
-        (3, 6, 16, 4),
+        (3, 7, 16, 4),
         "{fragment:?}"
     );
     assert!(fragment.sampled_textures <= FORWARD_FRAGMENT_TEXTURES_MAX);
@@ -1753,9 +1798,11 @@ fn the_light_binning_node_lands_and_the_legacy_plan_keeps_its_light_table() {
 /// The forward fragment stage's storage-buffer plan (renderer pass 2 section 2, LG-16): five
 /// today, then the reflection-probe rows (A.3) and the decal rows (A.10) take one each, so it ends
 /// at seven of core's eight. Lights, decals and probes are binned into one table (`light_bins`).
-// Renderer pass 2 A.3 flipped 5 -> 6 (the reflection probes' rows); the decal rows (A.10) take the next.
-const FORWARD_FRAGMENT_STORAGE_TODAY: u32 = 6;
-const FORWARD_FRAGMENT_STORAGE_TIER_A: u32 = FORWARD_FRAGMENT_STORAGE_TODAY + 1;
+// Renderer pass 2 A.3 flipped 5 -> 6 (the reflection probes' rows). The decal rows (A.10) landed
+// in the light tables, so game systems LOD-04 flipped 6 -> 7 with the slot they had held: the
+// instance fade table (frame binding 31, fragment-only), leaving one of core's eight spare.
+const FORWARD_FRAGMENT_STORAGE_TODAY: u32 = 7;
+const FORWARD_FRAGMENT_STORAGE_TIER_A: u32 = FORWARD_FRAGMENT_STORAGE_TODAY;
 
 #[test]
 fn the_forward_fragment_stage_leaves_tier_a_its_storage_slots_and_every_stage_stays_within_eight() {

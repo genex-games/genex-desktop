@@ -16,10 +16,15 @@ inside a GLB is `props/crate.glb#0`), with the usage it was bound as (`kind`: `c
 compressed file the import step wrote, `source` for the image itself).
 `state().__render.assetIssues` lists `{path, code}` to fix: `texture-uncompressed` names a loose
 texture loaded from its image because the game ships no compressed file of it (give it a
-`[[texture]]` row in `genex.toml`, or sample it from a model's material, so the import encodes it);
-`texture-family-refused` names one whose compressed file the renderer refused (unreadable, or
-every size class it fits is full: the log says which), so it is drawn from its image (fewer or
-smaller textures of that kind keep it compressed).
+`[[texture]]` row in `genex.toml`, or sample it from a model's material, so the import encodes
+it), or an image inside a GLB (`props/crate.glb#0`) the game ships no compressed copy of (import
+the model: the import writes each image a material samples beside it); `texture-family-refused`
+names one whose compressed file the renderer refused (unreadable, or every size class it fits is
+full: the log says which), so it is drawn from its image (fewer or smaller textures of that kind
+keep it compressed); `tangents-runtime` names a model with a normal map and no tangents, so they
+were generated when it loaded (import the model to have them written once). A compressed file
+of 256 texels or less (under the smallest compressed size class) is drawn from its image by
+design and named for nothing.
 Both keys are absent while empty and never move the checksum.
 The Studio's asset import writes a compressed (Draco, meshopt) or
 quantized (`KHR_mesh_quantization`, gltfpack's default) GLB back plain with float attributes,

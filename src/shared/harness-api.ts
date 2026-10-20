@@ -19,6 +19,7 @@ import type { BuildProblem } from "./build-problem.ts";
 import type { ContextSettings } from "./context.ts";
 import type { CompletionProvenance } from "./custom-events.ts";
 import type { CrateRequestAnswer, CrateRequestParams } from "./crate-requests.ts";
+import type { GameCrashesAnswer, GameCrashesUnavailable } from "./crash-record.ts";
 import type { EngineDescriptor } from "./engine-descriptor.ts";
 import type {
   CompleteResponse,
@@ -56,6 +57,13 @@ import type { McpLiveTool } from "./mcp.ts";
 import type { SteerDelivery } from "./message-queue.ts";
 import type { ModelPreferences } from "./model-preferences.ts";
 import { SECOND_MS } from "./duration.ts";
+import {
+  type FrameProfileAnswer,
+  FrameProfileAction,
+  type FrameProfileRequest,
+  GpuTimingMode,
+  PROFILE_REPORT_FRAMES_MAX,
+} from "./frame-profile.ts";
 import type { NativeAdmissionFacts, NativeRunStatus } from "./native-contract.ts";
 import type { OptimizationCandidate, ProfileRequest, Revision } from "./optimization.ts";
 import {
@@ -735,6 +743,13 @@ export interface HarnessHostApi {
     result: string;
   };
   "preview.profile": { params: ProfileRequest & { handle: string }; result: unknown };
+  /**
+   * A Rust game's frame profile on a native or web lease (`shared/frame-profile.ts`): its summary,
+   * a `ProfileReport` v2 of the last `frames` (default 120, at most 240), arming per-node GPU timing,
+   * or a Chrome trace. `{state: "unavailable", reason}` when the lease runs no game, the game is an
+   * export or older than the verb, or this host does not serve profiles yet.
+   */
+  "preview.frameProfile": { params: FrameProfileRequest & { handle: string }; result: FrameProfileAnswer };
   "preview.reload": { params: { handle?: string; retry?: boolean }; result: boolean };
   "preview.screenshot": {
     params: {
@@ -875,6 +890,15 @@ export interface HarnessHostApi {
   "native.status": { params: { project: string; handle?: string }; result: NativeRunStatus | null };
   /** Stop the lease's run (`handle`) or the game's agent runs; false when none ran. */
   "native.stop": { params: { project: string; handle?: string }; result: boolean };
+  /**
+   * The game's crash records the host kept (`shared/crash-record.ts`, `genex-crash/1`), newest
+   * first, at most `GAME_CRASHES_MAX`: `since` (ISO 8601) keeps the later ones, `id` the one it
+   * names. `{state: "unavailable", reason}` until this host keeps records.
+   */
+  "game.crashes": {
+    params: { project: string; since?: string; id?: string };
+    result: GameCrashesAnswer | GameCrashesUnavailable;
+  };
 
   /**
    * Run the game conformance suite on the game's current Mac build (read-only: it builds, starts
@@ -1024,6 +1048,7 @@ export const HostMethod = {
   JobsList: "jobs.list",
   PreviewLoad: "preview.load",
   PreviewProfile: "preview.profile",
+  PreviewFrameProfile: "preview.frameProfile",
   PreviewReload: "preview.reload",
   PreviewScreenshot: "preview.screenshot",
   PreviewPageUi: "preview.pageUi",
@@ -1053,6 +1078,7 @@ export const HostMethod = {
   NativeBuild: "native.build",
   NativeStatus: "native.status",
   NativeStop: "native.stop",
+  GameCrashes: "game.crashes",
   GameConformance: "game.conformance",
   CratesRequest: "crates.request",
   RunArtifact: "run.artifact",
@@ -1250,6 +1276,14 @@ export const HARNESS_PARAM_SCHEMAS = {
   "native.build": z.object({ project, target: buildTarget, root: optionalText }),
   "native.status": z.object({ project, handle: optionalText }),
   "native.stop": z.object({ project, handle: optionalText }),
+  "game.crashes": z.object({ project, since: optionalText, id: optionalText }),
+  // Not path-bearing either: its action, frames and mode go to the game's verb, so they are checked here.
+  "preview.frameProfile": z.object({
+    handle: text,
+    action: z.enum(Object.values(FrameProfileAction)),
+    frames: z.number().int().min(1).max(PROFILE_REPORT_FRAMES_MAX).optional(),
+    mode: z.enum(Object.values(GpuTimingMode)).optional(),
+  }),
   "game.conformance": z.object({ project, root: optionalText, demo: optionalText, threadId: optionalText }),
   // A crate's name and version are joined into the registry index and the overlay's paths later.
   "crates.request": z.object({

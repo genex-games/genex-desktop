@@ -416,6 +416,21 @@ describe("the export menu and its notice, per destination", () => {
     assert.match(EXPORT_WORDS.wasmOverTarget("5.0", "4"), /slower .*phones/);
     assert.equal(exportNotice({ ...web, warnings: [] }), exportedWords(web), "no warning: as before");
   });
+
+  // Owner call C8 (C-17): an export whose assets are past the game's budget for that destination warns.
+  it("adds the longer-download warning after an export whose assets are past its game's budget", () => {
+    const web = { dir: "/x/exports/pond", files: 4, included: ["index.html"], excluded: [] };
+    const assets = {
+      code: ExportWarningCode.AssetsOverBudget,
+      bytes: 96 * WEB_BUDGET_MB_BYTES,
+      budgetBytes: 64 * WEB_BUDGET_MB_BYTES,
+    };
+    assert.equal(
+      exportNotice({ ...web, warnings: [assets] }),
+      `${exportedWords(web)} ${EXPORT_WORDS.assetsOverBudget("96.0", "64")}`,
+    );
+    assert.match(EXPORT_WORDS.assetsOverBudget("96.0", "64"), /budget_mb under \[assets\]/);
+  });
 });
 
 describe("the running build's lead screen", () => {

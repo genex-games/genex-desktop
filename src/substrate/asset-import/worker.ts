@@ -22,6 +22,7 @@ import {
   parseImportJob,
   sidecarOutput,
 } from "./job.ts";
+import { IMPORT_REPORT_MAX } from "./report.ts";
 
 /** The exit code of a job the importer cannot read. */
 export const IMPORT_JOB_UNREADABLE_EXIT = 2;
@@ -90,6 +91,8 @@ async function importOne(jobDir: string, job: ImportJob, file: ImportJobFile): P
     ...(result.familiesSkipped ? { familiesSkipped: result.familiesSkipped } : {}),
     ...(result.sizes ? { sizes: result.sizes } : {}),
     ...(result.texture ? { texture: result.texture } : {}),
+    ...(result.report ? { report: result.report.slice(0, IMPORT_REPORT_MAX) } : {}),
+    ...(result.character ? { character: result.character } : {}),
     ...(result.issues
       ? {
           issues: result.issues

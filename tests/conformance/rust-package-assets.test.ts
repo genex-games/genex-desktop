@@ -42,6 +42,7 @@ import {
   PackageRefusal,
   PHONE_MAX_TEXTURE_PX,
   packageAssets,
+  packageCeilingRefusal,
   packageFamiliesListed,
   trimKtx2,
 } from "../../src/main/rust-package-assets.ts";
@@ -356,6 +357,34 @@ describe("a Rust build's package carries only what its destination reads", { ski
     });
   }
 
+  // C-17: the lane hands the package the game's [assets] (its texture cap and budget) from the stage.
+  it("an iPhone build trims to the game's phone_max_texture_px and measures its own [assets.ios] budget", {
+    timeout: LANE_ROW_MS,
+  }, async () => {
+    const parent = await realpath(await tmpDir("rust-package-assets-toml-"));
+    const dir = await gameWith(parent, [["huge.png", path.join(SAMPLES, "animated.gif")]]);
+    await writeFile(path.join(dir, "assets", "huge.astc.ktx2"), chain(TextureCompression.Astc, 1024));
+    const assets = { budgetMb: null, phoneMaxTexturePx: 512, destinations: { ios: 1 } };
+    const staging: RustBuildsOptions["stage"] = async (game, into) => ({ ...(await stage(game, into)), assets });
+    const built = await (await lane(parent, { stage: staging })).ensure(
+      gameOf(dir),
+      BuildTarget.Ios,
+      CppBuildPurpose.Live,
+    );
+    assert.equal(built.ok, true, JSON.stringify(built.problem));
+    const pack = (await receiptOf(String(built.output))).package as AssetPackageReport;
+    assert.deepEqual(
+      pack.trimmed.map((row) => [row.file, row.fromPx, row.toPx]),
+      [["huge.astc.ktx2", 1024, 512]],
+    );
+    assert.deepEqual(pack.budget, {
+      budgetBytes: 1024 * 1024,
+      ceilingBytes: 4096 * 1024 * 1024,
+      withinBudget: pack.bytes <= 1024 * 1024,
+      withinCeiling: true,
+    });
+  });
+
   it("a game's own file at the index's name is refused at stage: reserved-asset-name", {
     timeout: LANE_ROW_MS,
   }, async () => {
@@ -495,17 +524,27 @@ describe("the asset index", () => {
       "tone.wav",
     ]);
     const astc = (await readFile(family("astc"))).length;
-    // bark.png went out as its ASTC file only: the entry keeps the name the game reads it by.
-    assert.deepEqual(byPath["bark.png"], {
-      path: "bark.png",
-      id: "00000000000000b1",
-      kind: "image",
-      licence: AssetLicence.Cc0,
-      bytes: astc,
-      files: [{ path: "bark.astc.ktx2", family: TextureCompression.Astc, bytes: astc, px: 64 }],
-      deps: [],
-      boot: true,
-    });
+    // bark.png went out as its ASTC file only: the entry keeps the name the game reads it by. Its
+    // file's levels (C-29, smallest first) are `rust-asset-index.test.ts`'s rows; here only their sides.
+    const barkFile = byPath["bark.png"]?.files[0];
+    assert.deepEqual(
+      barkFile?.levels?.map((level) => level.px),
+      [1, 2, 4, 8, 16, 32, 64],
+    );
+    const { levels: _levels, ...barkShipped } = barkFile ?? { path: "" };
+    assert.deepEqual(
+      { ...byPath["bark.png"], files: [barkShipped] },
+      {
+        path: "bark.png",
+        id: "00000000000000b1",
+        kind: "image",
+        licence: AssetLicence.Cc0,
+        bytes: astc,
+        files: [{ path: "bark.astc.ktx2", family: TextureCompression.Astc, bytes: astc, px: 64 }],
+        deps: [],
+        boot: true,
+      },
+    );
     assert.equal(byPath["ship.glb"]?.id, "00000000000000a1");
     assert.deepEqual(byPath["ship.glb"]?.deps, ["00000000000000a2"]);
     assert.equal(byPath["ship.mtl"]?.id, "00000000000000a2");
@@ -517,7 +556,7 @@ describe("the asset index", () => {
     );
     assert.ok(
       index.assets.every((entry) => entry.boot),
-      "every asset is boot until asset groups have a producer",
+      "every asset is boot when the game names no asset group (C-30)",
     );
     assert.deepEqual(
       report.dropped.filter((row) => row.reason === PackageDrop.SourceCovered).map((row) => row.file),
@@ -639,6 +678,102 @@ describe("a phone package's texture cap", () => {
       trees.push(digests.join("\n"));
     }
     assert.equal(trees[0], trees[1]);
+  });
+});
+
+const MIB = 1024 * 1024;
+
+/** A stage of `count` files of `bytes` each, for the budget rows. */
+async function sizedStage(parent: string, count: number, bytes: number): Promise<string> {
+  const filler = new Uint8Array(bytes).fill(7);
+  return await stagedAssets(
+    parent,
+    Array.from({ length: count }, (_, at): [string, Uint8Array] => [`data/blob-${at}.bin`, filler]),
+  );
+}
+
+// Owner call C8: each destination's package has a budget (warn past it) and the web a hard cap,
+// the shell's 512 MB, past which the build is refused `assets-over-ceiling`.
+describe("the package step against its destination's budget (C-17)", () => {
+  const defaults: Array<[BuildTarget, number, number | null]> = [
+    [BuildTarget.Web, 64, 512],
+    [BuildTarget.Ios, 200, 4096],
+    [BuildTarget.Android, 200, 4096],
+    [BuildTarget.Mac, 2048, null],
+    [BuildTarget.Windows, 2048, null],
+    [BuildTarget.Linux, 2048, null],
+  ];
+  for (const [target, budgetMb, ceilingMb] of defaults) {
+    it(`a ${target} package with no budget named is measured against ${budgetMb} MB`, async () => {
+      const parent = await realpath(await tmpDir("rust-package-budget-default-"));
+      const from = await sizedStage(parent, 2, 1024);
+      const report = await packageAssets({ from, to: path.join(parent, "out", "assets"), target });
+      assert.deepEqual(report.budget, {
+        budgetBytes: budgetMb * MIB,
+        ceilingBytes: ceilingMb === null ? null : ceilingMb * MIB,
+        withinBudget: true,
+        withinCeiling: true,
+      });
+    });
+  }
+
+  it("a web package past its budget is measured over it, within the ceiling, and not refused", async () => {
+    const parent = await realpath(await tmpDir("rust-package-budget-over-"));
+    const from = await sizedStage(parent, 3, 4096);
+    const to = path.join(parent, "out", "assets");
+    const budget = { budgetBytes: 8192, ceilingBytes: 64 * 1024 };
+    const report = await packageAssets({ from, to, target: BuildTarget.Web, budget });
+    assert.ok(report.bytes > budget.budgetBytes, `${report.bytes} bytes`);
+    assert.deepEqual(report.budget, { ...budget, withinBudget: false, withinCeiling: true });
+    assert.equal(packageCeilingRefusal(report), null, "past the budget only warns");
+    assert.deepEqual((await files(to)).length, 4, "every file still goes out");
+  });
+
+  it("a web package past the ceiling is refused assets-over-ceiling, naming its size and the cap", async () => {
+    const parent = await realpath(await tmpDir("rust-package-budget-ceiling-"));
+    const from = await sizedStage(parent, 3, 4096);
+    const budget = { budgetBytes: 4096, ceilingBytes: 8192 };
+    const report = await packageAssets({
+      from,
+      to: path.join(parent, "out", "assets"),
+      target: BuildTarget.Web,
+      budget,
+    });
+    assert.deepEqual(report.budget, { ...budget, withinBudget: false, withinCeiling: false });
+    assert.equal(PackageRefusal.AssetsOverCeiling, "assets-over-ceiling");
+    const refusal = packageCeilingRefusal(report) ?? "";
+    assert.match(refusal, /^assets-over-ceiling: /);
+    assert.match(refusal, new RegExp(`${report.bytes} bytes`));
+    assert.match(refusal, /web/);
+  });
+
+  it("a package exactly at its budget and its ceiling is within both", async () => {
+    const parent = await realpath(await tmpDir("rust-package-budget-exact-"));
+    const from = await sizedStage(parent, 1, 2048);
+    const probe = await packageAssets({ from, to: path.join(parent, "probe", "assets"), target: BuildTarget.Web });
+    const budget = { budgetBytes: probe.bytes, ceilingBytes: probe.bytes };
+    const report = await packageAssets({
+      from,
+      to: path.join(parent, "out", "assets"),
+      target: BuildTarget.Web,
+      budget,
+    });
+    assert.deepEqual(report.budget, { ...budget, withinBudget: true, withinCeiling: true });
+    assert.equal(packageCeilingRefusal(report), null);
+  });
+
+  it("a desktop package has no ceiling: however far past its budget, it is never refused", async () => {
+    const parent = await realpath(await tmpDir("rust-package-budget-desktop-"));
+    const from = await sizedStage(parent, 2, 4096);
+    const budget = { budgetBytes: 1, ceilingBytes: null };
+    const report = await packageAssets({
+      from,
+      to: path.join(parent, "out", "assets"),
+      target: BuildTarget.Mac,
+      budget,
+    });
+    assert.deepEqual(report.budget, { ...budget, withinBudget: false, withinCeiling: true });
+    assert.equal(packageCeilingRefusal(report), null);
   });
 });
 

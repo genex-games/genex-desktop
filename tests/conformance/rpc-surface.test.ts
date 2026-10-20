@@ -39,6 +39,8 @@ const API_KEYS = [
   "finish.settle",
   "game.attached",
   "game.contentStamp",
+  // Crash records for a native game (PROF-0c); a build that keeps none answers unavailable.
+  "game.crashes",
   "game.export",
   "game.list",
   "game.read",
@@ -90,6 +92,8 @@ const API_KEYS = [
   "preview.diff",
   "preview.emptyScene",
   "preview.evaluate",
+  // The running game's frame profile (PROF-0c).
+  "preview.frameProfile",
   "preview.gesture",
   "preview.gpuErrors",
   "preview.input",

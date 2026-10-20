@@ -584,6 +584,7 @@
         "tests/conformance/authoring-trial.test.ts",
         "tests/fixtures/authoring-trial/**",
         "tests/conformance/rust-runtime.test.ts",
+        "tests/conformance/rust-vendored-multiplayer.test.ts",
         "tests/fixtures/rust-protocol-game/**",
         "tests/conformance/rust-performance.test.ts",
         "tests/fixtures/bench-scene/**"
@@ -699,6 +700,7 @@
         "tests/conformance/rust-end-to-end.test.ts",
         "tests/fixtures/rust-fd3-stub-game.mjs",
         "tests/conformance/rust-web.test.ts",
+        "tests/conformance/rust-build-web-families.test.ts",
         "tests/conformance/rust-mobile-build.test.ts",
         "src/substrate/rust-notices.ts",
         "src/substrate/mobile-sign.ts",

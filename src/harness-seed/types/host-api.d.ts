@@ -540,7 +540,7 @@ export type AssetImportStatus = 'pending' | 'ready' | 'refused';
 export type AssetImportRefusal = 'unsupported-by-raylib' | 'unsupported-by-rust' | 'unsafe-path' | 'escapes-game' | 'missing' | 'not-regular-file' | 'too-large' | 'malformed' | 'unsupported-extension' | 'converter-missing' | 'importer-failed' | 'validation-failed';
 // ↑ src/shared/game-assets.ts
 
-export type ImportIssueCode = 'lock-edited' | 'usage-unknown' | 'usage-conflict' | 'resampled' | 'validation-warning';
+export type ImportIssueCode = 'lock-edited' | 'usage-unknown' | 'usage-conflict' | 'resampled' | 'validation-warning' | 'albedo-out-of-range' | 'metallic-partial' | 'ior-out-of-range' | 'triangles-over-budget';
 // ↑ src/shared/asset-db.ts
 
 /** One issue on a lock row. */
@@ -551,13 +551,59 @@ export interface ImportIssue {
 }
 // ↑ src/shared/asset-db.ts
 
+export type ClipMotion = 'in-place' | 'root-motion';
+// ↑ src/shared/character-facts.ts
+
+/** One clip of a rigged GLB: its name as the runtime knows it, its length and how it moves. */
+export interface CharacterClip {
+  /** The glTF animation's name (empty when the file gives none): what `AnimGraph` code names. */
+  name: string;
+  /** The clip's length: its last key time, rounded to the millisecond. */
+  seconds: number;
+  motion: ClipMotion;
+}
+// ↑ src/shared/character-facts.ts
+
+/** How much of the humanoid profile a rig maps, under the rig family that maps the most. */
+export interface HumanoidCoverage {
+  /** The alias table's family id the joint names matched (`mixamorig`, `ue-mannequin`, …). */
+  rig: string;
+  /** Required bones the rig has. */
+  mapped: number;
+  /** Required bones in all: {@link HUMANOID_REQUIRED_BONES}. */
+  required: number;
+  /** The required bones it lacks, in profile order (Godot `SkeletonProfileHumanoid` names). */
+  missing: string[];
+}
+// ↑ src/shared/character-facts.ts
+
+/** A rigged GLB's facts: its skeleton, clips, humanoid coverage and skinned levels. */
+export interface CharacterFacts {
+  /** Joints in the skeleton of the first skinned mesh node, the nodes between two joints included. */
+  joints: number;
+  /** The clips in file order, at most {@link CHARACTER_CLIPS_MAX}. */
+  clips: CharacterClip[];
+  /** The clips the file has, listed or not. */
+  clipCount: number;
+  humanoid: HumanoidCoverage;
+  /** The levels the skinned mesh draws at: 1, plus its import-time LODs (which keep its skin). */
+  skinnedLevels: number;
+}
+// ↑ src/shared/character-facts.ts
+
 /** A Rust game's file as its import step sees it (`ProjectAsset.import`). */
 export interface ProjectAssetImport {
   status: AssetImportStatus;
   /** Set when `status` is `refused`. */
   refusal?: AssetImportRefusal;
-  /** What the import noticed without refusing the file: glTF validator warnings (`validation-warning`, detail `<CODE> <pointer>`). */
+  /**
+   * What the import noticed without refusing the file: glTF validator warnings
+   * (`validation-warning`, detail `<CODE> <pointer>`), then the validation report's checks of the
+   * GLB it wrote (material ranges, the triangle budget; detail a JSON pointer or the numbers).
+   */
   issues?: ImportIssue[];
+  /** A rigged GLB's clips, joints, humanoid coverage and skinned levels (C-23); absent for any other file. */
+  character?: CharacterFacts;
 }
 // ↑ src/shared/game-assets.ts
 
@@ -1639,15 +1685,24 @@ export interface AttachReport {
 export type GpuQualification = 'untested' | 'real-gpu';
 // ↑ src/shared/game-export-contract.ts
 
-export type ExportWarningCode = 'wasm-over-target';
-// ↑ src/shared/game-export-contract.ts
-
-/** A warning on an export that was made: its code, the gzip size and the game's budget it passed. */
-export interface ExportWarning {
-  code: ExportWarningCode;
+/** The browser game's optimized code past its budget: the gzip size and the game's budget it passed. */
+export interface WasmExportWarning {
+  code: "wasm-over-target";
   gzipBytes: number;
   budgetBytes: number;
 }
+// ↑ src/shared/game-export-contract.ts
+
+/** The destination's asset package past its budget (C-17): the package's bytes and the budget it passed. */
+export interface AssetsExportWarning {
+  code: "assets-over-budget";
+  bytes: number;
+  budgetBytes: number;
+}
+// ↑ src/shared/game-export-contract.ts
+
+/** A warning on an export that was made, by its code. */
+export type ExportWarning = WasmExportWarning | AssetsExportWarning;
 // ↑ src/shared/game-export-contract.ts
 
 /** What `game.export` wrote: the public roots it assembled, and what it left out. */
@@ -1692,6 +1747,143 @@ export interface ProfileBegin {
 
 export type ProfileRequest = ProfileBegin | { action: "read" | "end" | "start"; sessionId: string };
 // ↑ src/shared/optimization.ts
+
+export type FrameProfileAction = 'summary' | 'report' | 'arm' | 'trace';
+// ↑ src/shared/frame-profile.ts
+
+export type GpuTimingMode = 'frame' | 'nodes';
+// ↑ src/shared/frame-profile.ts
+
+/** A `profile` request: the action, the report's frames and the arm's mode. */
+export interface FrameProfileRequest {
+  action: FrameProfileAction;
+  frames?: number;
+  mode?: GpuTimingMode;
+}
+// ↑ src/shared/frame-profile.ts
+
+/** A frame-time distribution, in milliseconds. */
+export interface ProfilePercentiles {
+  p50: number;
+  p95: number;
+}
+// ↑ src/shared/frame-profile.ts
+
+export type GpuTimeSource = 'timestamps' | 'timestamps-quantized' | 'submit-latency' | 'none';
+// ↑ src/shared/frame-profile.ts
+
+/** One memory row: a GPU budget kind, a CPU memory class or a process measure, in bytes. */
+export interface ProfileMemoryRow {
+  class: string;
+  bytes: number;
+  budget?: number;
+}
+// ↑ src/shared/frame-profile.ts
+
+export type NodeTimingState = 'off' | 'armed';
+// ↑ src/shared/frame-profile.ts
+
+/** `state().volatile.profile`: the last frames' summary (at most 4 KiB). */
+export interface ProfileSummaryV1 {
+  v: 1;
+  /** Scopes are recorded (off in exports, where cpu and gpu still come from the frame timers). */
+  on: boolean;
+  frames: number;
+  cpu: ProfilePercentiles;
+  gpu: (ProfilePercentiles & { source: GpuTimeSource }) | null;
+  top: Array<{ scope: string; game: boolean; p95: number }>;
+  counters: Record<string, number>;
+  memory: ProfileMemoryRow[];
+  hitches: { count: number; last: number | null };
+  nodes: NodeTimingState;
+  dropped: { scopes: number; counters: number; frames: number };
+}
+// ↑ src/shared/frame-profile.ts
+
+/** One timed scope of a report frame, microseconds from the frame's start. */
+export interface ProfileScope {
+  scope: string;
+  game: boolean;
+  depth: number;
+  startUs: number;
+  us: number;
+}
+// ↑ src/shared/frame-profile.ts
+
+/** One frame of a report. */
+export interface ProfileFrame {
+  index: number;
+  cpuMs: number;
+  gpuMs: number | null;
+  intervalMs: number;
+  scopes: ProfileScope[];
+  /** Per-node GPU time while armed: the frame graph row's wire name, or `world`. */
+  gpu: Array<{ node: string; ms: number }>;
+}
+// ↑ src/shared/frame-profile.ts
+
+export type HitchCause = 'cpu' | 'gpu' | 'pacing';
+// ↑ src/shared/frame-profile.ts
+
+/** One kept hitch: the frame, why, the line it crossed and its heaviest scopes. */
+export interface ProfileHitch {
+  frame: number;
+  cause: HitchCause;
+  thresholdMs: number;
+  top: Array<{ scope: string; us: number }>;
+}
+// ↑ src/shared/frame-profile.ts
+
+/** What the dev op `profile` answers for `report` (at most 256 KiB). */
+export interface ProfileReportV2 {
+  v: 2;
+  engine: string;
+  destination: string;
+  deviceClass: string;
+  frames: ProfileFrame[];
+  hitches: ProfileHitch[];
+  memory: ProfileMemoryRow[];
+  counters: Record<string, number>;
+  gpuSource: GpuTimeSource;
+  truncated: boolean;
+}
+// ↑ src/shared/frame-profile.ts
+
+/** What `arm` answers: the mode now in force. */
+export interface ProfileArmAnswer {
+  mode: GpuTimingMode;
+}
+// ↑ src/shared/frame-profile.ts
+
+/** What `trace` answers: the trace file's size and FNV-1a 64 digest. */
+export interface ProfileTraceAnswer {
+  bytes: number;
+  digest: string;
+}
+// ↑ src/shared/frame-profile.ts
+
+/** What each action answers, by action. */
+export interface ProfileAnswers {
+  [FrameProfileAction.Summary]: ProfileSummaryV1;
+  [FrameProfileAction.Report]: ProfileReportV2;
+  [FrameProfileAction.Arm]: ProfileArmAnswer;
+  [FrameProfileAction.Trace]: ProfileTraceAnswer;
+}
+// ↑ src/shared/frame-profile.ts
+
+export type ProfileUnavailableReason = 'not-served' | 'no-run' | 'unknown-op';
+// ↑ src/shared/frame-profile.ts
+
+/** What the host answers when it has no profile. */
+export interface ProfileUnavailable {
+  state: "unavailable";
+  reason: ProfileUnavailableReason;
+}
+// ↑ src/shared/frame-profile.ts
+
+/** What `preview.frameProfile` and `studio:native.profile` answer. */
+export type FrameProfileAnswer = ProfileAnswers[FrameProfileAction] | ProfileUnavailable;
+// ↑ src/shared/frame-profile.ts
 
 export type CaptureSurface = 'canvas' | 'page' | 'auto';
 // ↑ src/shared/preview-contract.ts
@@ -1842,7 +2034,7 @@ export interface PreviewPortStatus {
 }
 // ↑ src/shared/preview-contract.ts
 
-export type ReadyVia = 'shim' | 'contract' | 'none';
+export type ReadyVia = 'none' | 'shim' | 'contract';
 // ↑ src/shared/preview-contract.ts
 
 export type ReadyPhase = 'ready' | 'failed' | 'boot' | 'unknown';
@@ -2052,7 +2244,7 @@ export interface NativeCapabilityReceipt {
 export type GameBoxProblem = 'launcher-missing' | 'bubblewrap-missing' | 'userns-restricted' | 'x11-only' | 'no-wayland' | 'wayland-unrestricted' | 'no-headless-build' | 'box-refused' | 'wayland-helper-missing';
 // ↑ src/shared/native-contract.ts
 
-export type BootStage = 'ready' | 'wasm' | 'assets' | 'device' | 'pipelines' | 'frame';
+export type BootStage = 'ready' | 'frame' | 'wasm' | 'assets' | 'device' | 'pipelines';
 // ↑ src/shared/native-contract.ts
 
 /** Where a starting game's boot is: its stage and, where counted, `done` of `total` (null when not counted). */
@@ -2062,6 +2254,9 @@ export interface NativeBootProgress {
   total: number | null;
 }
 // ↑ src/shared/native-contract.ts
+
+export type CrashKind = 'device-lost' | 'panic' | 'gpu-validation' | 'wasm-trap' | 'native-fault' | 'out-of-memory' | 'hang' | 'process-exit';
+// ↑ src/shared/crash-record.ts
 
 /** What a run looks like to the renderer, the harness and `studio:native.state`. */
 export interface NativeRunStatus {
@@ -2085,10 +2280,145 @@ export interface NativeRunStatus {
   owner: string | null;
   /** Where a starting game's boot is (its last `starting` that named a stage); absent or null otherwise. */
   progress?: NativeBootProgress | null;
+  /** The crash record the host kept for this run (`game.crashes` names it); absent or null when none. */
+  crash?: { crashId: string; kind: CrashKind } | null;
   startedAt: string;
   endedAt: string | null;
 }
 // ↑ src/shared/native-contract.ts
+
+export type CrashSource = 'game' | 'shell' | 'platform' | 'host';
+// ↑ src/shared/crash-record.ts
+
+/** Where in the source the crash happened. */
+export interface CrashLocation {
+  file: string;
+  line: number;
+  column: number;
+}
+// ↑ src/shared/crash-record.ts
+
+/** One stack frame: a runtime address (`0x…`), or an offset into a named debug image (platform records). */
+export type CrashFrame = { ip: string } | { image: number; offset: string };
+// ↑ src/shared/crash-record.ts
+
+/** A debug image a platform record's frames point into (a MetricKit binary UUID, an Android build id). */
+export interface CrashImage {
+  name: string;
+  id: string;
+}
+// ↑ src/shared/crash-record.ts
+
+export type GpuErrorClass = 'out-of-memory' | 'validation' | 'internal';
+// ↑ src/shared/crash-record.ts
+
+/** The GPU's side of a `gpu-validation` or `device-lost` record. */
+export interface CrashGpu {
+  class: GpuErrorClass | null;
+  reason: string | null;
+  description: string;
+  backend: string | null;
+  adapter: string | null;
+}
+// ↑ src/shared/crash-record.ts
+
+export type WasmTrap = 'unreachable' | 'memory' | 'stack' | 'other';
+// ↑ src/shared/crash-record.ts
+
+/** A web trap's side: what trapped and the engine's `wasm-function[N]:0xOFF` frames. */
+export interface CrashWasm {
+  trap: WasmTrap;
+  stack: Array<{ func: number; offset: number }>;
+}
+// ↑ src/shared/crash-record.ts
+
+export type CrashFlavour = 'dev' | 'export';
+// ↑ src/shared/crash-record.ts
+
+/** Where the game was: every field the writer knew. */
+export interface CrashContext {
+  seed?: number;
+  tick?: number;
+  frame?: number;
+  simulatedMs?: number;
+  running?: boolean;
+  destination?: string;
+  flavour?: CrashFlavour;
+  build?: string;
+  contract?: number;
+  genex?: string;
+}
+// ↑ src/shared/crash-record.ts
+
+/** The input since the last seed or snapshot anchor, to replay the crash with `seed`, `input` and `step`. */
+export interface CrashReplay {
+  seed: number;
+  fromTick: number;
+  toTick: number;
+  /** False when the ring was busy or overflowed (then `fromTick` moved). */
+  complete: boolean;
+  /** Base64 of the InputTrack tail. */
+  track: string;
+}
+// ↑ src/shared/crash-record.ts
+
+export type CrashTrimmed = 'profile' | 'replay.track' | 'frames' | 'message' | 'location.file';
+// ↑ src/shared/crash-record.ts
+
+/** A `genex-crash/1` record as the host keeps it. */
+export interface CrashRecordV1 {
+  format: "genex-crash/1";
+  kind: CrashKind;
+  source: CrashSource;
+  fatal: boolean;
+  handled: boolean;
+  message: string;
+  location: CrashLocation | null;
+  thread: { name: string; main: boolean } | null;
+  frames: CrashFrame[];
+  /** The runtime address of `genex_crash::anchor`, from which the host computes the image's slide. */
+  anchor: string | null;
+  images: CrashImage[];
+  gpu: CrashGpu | null;
+  wasm: CrashWasm | null;
+  context: CrashContext;
+  replay: CrashReplay | null;
+  profile: ProfileSummaryV1 | null;
+  hitches: number[];
+  /** The host's symbolication; always null in what a game sends. */
+  symbols: null;
+  trimmed: CrashTrimmed[];
+}
+// ↑ src/shared/crash-record.ts
+
+/** One record `game.crashes` lists: the host's id for it, the run it came from, and how often it recurred. */
+export interface GameCrashEntry {
+  crashId: string;
+  runId: string | null;
+  /** When the host persisted it (ISO 8601). */
+  at: string;
+  /** How many runs crashed with the same signature. */
+  repeat: number;
+  symbolicated: boolean;
+  record: CrashRecordV1;
+}
+// ↑ src/shared/crash-record.ts
+
+/** What `game.crashes` and `studio:game.crashes` answer once the host keeps records. */
+export interface GameCrashesAnswer {
+  records: GameCrashEntry[];
+}
+// ↑ src/shared/crash-record.ts
+
+export type GameCrashesUnavailableReason = 'not-served';
+// ↑ src/shared/crash-record.ts
+
+/** What they answer before that. */
+export interface GameCrashesUnavailable {
+  state: "unavailable";
+  reason: GameCrashesUnavailableReason;
+}
+// ↑ src/shared/crash-record.ts
 
 /** What the harness sends with `game.conformance`: the game, optionally a playable worktree, and the demo to seed. */
 export interface GameConformanceParams {
@@ -2615,6 +2945,13 @@ export interface HarnessHostApi {
     result: string;
   };
   "preview.profile": { params: ProfileRequest & { handle: string }; result: unknown };
+  /**
+   * A Rust game's frame profile on a native or web lease (`shared/frame-profile.ts`): its summary,
+   * a `ProfileReport` v2 of the last `frames` (default 120, at most 240), arming per-node GPU timing,
+   * or a Chrome trace. `{state: "unavailable", reason}` when the lease runs no game, the game is an
+   * export or older than the verb, or this host does not serve profiles yet.
+   */
+  "preview.frameProfile": { params: FrameProfileRequest & { handle: string }; result: FrameProfileAnswer };
   "preview.reload": { params: { handle?: string; retry?: boolean }; result: boolean };
   "preview.screenshot": {
     params: {
@@ -2755,6 +3092,15 @@ export interface HarnessHostApi {
   "native.status": { params: { project: string; handle?: string }; result: NativeRunStatus | null };
   /** Stop the lease's run (`handle`) or the game's agent runs; false when none ran. */
   "native.stop": { params: { project: string; handle?: string }; result: boolean };
+  /**
+   * The game's crash records the host kept (`shared/crash-record.ts`, `genex-crash/1`), newest
+   * first, at most `GAME_CRASHES_MAX`: `since` (ISO 8601) keeps the later ones, `id` the one it
+   * names. `{state: "unavailable", reason}` until this host keeps records.
+   */
+  "game.crashes": {
+    params: { project: string; since?: string; id?: string };
+    result: GameCrashesAnswer | GameCrashesUnavailable;
+  };
 
   /**
    * Run the game conformance suite on the game's current Mac build (read-only: it builds, starts

@@ -17,11 +17,23 @@ pub enum StreamErrorCode {
     /// An anchor outside the world: past [`crate::grid::STREAM_WORLD_EXTENT_MAX`] from the origin
     /// on either axis (STR-8, `grid.rs`).
     OutOfWorld,
+    /// A streaming call in a game that never registered `game.streaming` (STR-9, the facade's
+    /// `stream_tick.rs`).
+    NotRegistered,
+    /// A commit held past the facade's `STREAM_HOLD_MAX_MS` waiting on a cell build: reported in
+    /// `state().volatile.stream`, never a call's refusal; the tick did not run (STR-9).
+    HoldTimeout,
 }
 
 impl StreamErrorCode {
     /// Every code, in declaration order.
-    pub const ALL: [StreamErrorCode; 3] = [StreamErrorCode::Invalid, StreamErrorCode::TooManyAnchors, StreamErrorCode::OutOfWorld];
+    pub const ALL: [StreamErrorCode; 5] = [
+        StreamErrorCode::Invalid,
+        StreamErrorCode::TooManyAnchors,
+        StreamErrorCode::OutOfWorld,
+        StreamErrorCode::NotRegistered,
+        StreamErrorCode::HoldTimeout,
+    ];
 
     /// The code's wire spelling.
     pub const fn wire(self) -> &'static str {
@@ -29,6 +41,8 @@ impl StreamErrorCode {
             StreamErrorCode::Invalid => "stream-invalid",
             StreamErrorCode::TooManyAnchors => "stream-too-many-anchors",
             StreamErrorCode::OutOfWorld => "stream-out-of-world",
+            StreamErrorCode::NotRegistered => "stream-not-registered",
+            StreamErrorCode::HoldTimeout => "stream-hold-timeout",
         }
     }
 }

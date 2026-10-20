@@ -107,7 +107,7 @@ use genex_render::settings::{Environment, Quality};
 #[cfg(not(target_arch = "wasm32"))]
 use genex_render::extension::native_features;
 use genex_render::immediate::HUD_TAG;
-use genex_render::mesh::{CUBE_TRIANGLES, GlbMaterial, GlbModel, MeshData, SPHERE_TRIANGLES, decode_image};
+use genex_render::mesh::{CUBE_TRIANGLES, GlbMaterial, GlbModel, GlbSidecars, MeshData, SPHERE_TRIANGLES, decode_image};
 use genex_render::meshlet::MeshletSet;
 use genex_render::motion::DrawId;
 use genex_render::letterbox::{letterbox, output_for_window};
@@ -179,24 +179,30 @@ impl TextureOrigin {
 #[non_exhaustive]
 pub enum AssetIssueCode {
     /// A texture loaded from its image because the game ships no family file of it at all (the
-    /// import step encoded none: its usage was not resolved). GLB-embedded images are not named
-    /// until the runtime reads their sidecars (C-14).
+    /// import step encoded none: its usage was not resolved), or a GLB image (`<model>#<image>`)
+    /// loaded from the GLB because it ships no sidecar of it in any family (C-14: the model was not
+    /// imported, or its image could not be encoded).
     TextureUncompressed,
     /// A texture loaded from its image because the renderer refused the family file the game
     /// ships in the device's family (unreadable, or every size class it fits is full: the
-    /// detail is in the log), so it is drawn uncompressed.
+    /// detail is in the log), so it is drawn uncompressed. A GLB image whose sidecar was refused
+    /// is named `<model>#<image>` (C-14).
     TextureFamilyRefused,
+    /// A model with a normal-mapped primitive that had no TANGENT, so MikkTSpace ran at load
+    /// (game systems C-9): the import step, which writes the tangents, was skipped.
+    TangentsRuntime,
 }
 
 impl AssetIssueCode {
     /// Every code, in declaration order.
-    pub const ALL: [AssetIssueCode; 2] = [AssetIssueCode::TextureUncompressed, AssetIssueCode::TextureFamilyRefused];
+    pub const ALL: [AssetIssueCode; 3] = [AssetIssueCode::TextureUncompressed, AssetIssueCode::TextureFamilyRefused, AssetIssueCode::TangentsRuntime];
 
     /// Wire spelling.
     pub const fn wire(self) -> &'static str {
         match self {
             AssetIssueCode::TextureUncompressed => "texture-uncompressed",
             AssetIssueCode::TextureFamilyRefused => "texture-family-refused",
+            AssetIssueCode::TangentsRuntime => "tangents-runtime",
         }
     }
 }
@@ -278,8 +284,23 @@ pub struct LoadedModel {
     pub parts: Vec<ModelPart>,
     /// Triangles of every part.
     pub triangles: u32,
-    /// The GLB images its parts' materials sample, uploaded, with the kind each was uploaded as.
-    pub textures: Vec<(u32, TextureKind)>,
+    /// The GLB images its parts' materials sample, uploaded, in first-use order.
+    pub textures: Vec<ModelTexture>,
+    /// A normal-mapped primitive had no TANGENT, so its tangents were generated at load (C-9).
+    pub runtime_tangents: bool,
+}
+
+/// One GLB image a [`LoadedModel`] uploaded (C-11, C-14).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ModelTexture {
+    /// The glTF image index.
+    pub image: u32,
+    /// The kind it was uploaded as.
+    pub kind: TextureKind,
+    /// Where its texels came from: a sidecar family file (`genex_textures`) or the embedded image.
+    pub origin: TextureOrigin,
+    /// Why it loaded from the embedded image, when that is the game's to fix.
+    pub issue: Option<AssetIssueCode>,
 }
 
 /// One mesh of a [`LoadedModel`] and the material its GLB names for it (`None`: it names none).
@@ -338,6 +359,11 @@ pub trait Uploads {
     fn texture_family(&self) -> TextureFamily {
         TextureFamily::Rgba8
     }
+    /// The side of the smallest size class the family is stored in: a family file under it is
+    /// held as its image by design, never refused (0, the default: every side).
+    fn compressed_min_side(&self) -> u32 {
+        0
+    }
     /// Store the larger textures in `family` from the first texture on; refused by default.
     fn set_texture_family(&mut self, family: TextureFamily) -> Result<(), RenderError> {
         Err(RenderError::refused(RenderCode::TextureInvalid, format!("{family:?} textures are not taken here")))
@@ -388,6 +414,11 @@ impl Uploads for Resilient {
 
     fn texture_family(&self) -> TextureFamily {
         self.renderer().renderer().texture_family()
+    }
+
+    fn compressed_min_side(&self) -> u32 {
+        // Class 0 is always RGBA8 (`ClassArrays::family`): a family starts at the next class.
+        genex_render::layout::TEXTURE_SIZE_CLASSES[1]
     }
 
     fn set_texture_family(&mut self, family: TextureFamily) -> Result<(), RenderError> {
@@ -453,14 +484,34 @@ fn ships_any_family<'a>(path: &'a str, source: &dyn ModelSource, known: &mut Vec
     ships
 }
 
+/// The image sidecars of a model a frame draws (C-14): its path, the stems its GLB names and
+/// whether its materials sample any image.
+struct ModelSidecars<'a> {
+    path: &'a str,
+    sidecars: GlbSidecars,
+    samples_images: bool,
+}
+
+/// `model`'s sidecar `stem` in `family`: `<stem>.<family>.ktx2` in the model's folder (C-13's
+/// `glbTextureFileName`), or None when that is not a plain path under `assets/`.
+fn sidecar_file(model: &str, stem: &str, family: TextureFamily) -> Option<String> {
+    let folder = model.rfind('/').map_or("", |at| &model[..=at]);
+    let file = format!("{folder}{stem}.{}.ktx2", family.wire());
+    is_safe_asset_path(&file).then_some(file)
+}
+
 /// Store the renderer's larger textures in the first family (best first for the device) the
 /// game ships a file of for a texture `frame` names (`<stem>.<family>.ktx2`, the Studio's import
-/// step writes them; renderer pass 2 A6.4). A game without one keeps RGBA8, and so does a renderer
-/// that already holds a texture.
-fn choose_texture_family(frame: &Frame, source: &dyn ModelSource, uploads: &mut dyn Uploads, log: &mut dyn FnMut(&str)) {
+/// step writes them; renderer pass 2 A6.4) or for an image sidecar of a model it draws (C-14). A
+/// game without one keeps RGBA8, and so does a renderer that already holds a texture.
+fn choose_texture_family(frame: &Frame, models: &[ModelSidecars<'_>], source: &dyn ModelSource, uploads: &mut dyn Uploads, log: &mut dyn FnMut(&str)) {
     let paths: Vec<&str> = texture_paths(frame).map(|(path, _)| path).filter(|path| is_safe_asset_path(path)).collect();
-    let shipped = uploads.compressed_families().into_iter().find(|family| paths.iter().any(|path| source.has_asset(&family_file(path, *family))));
-    let Some(family) = shipped else { return };
+    let ships = |family: TextureFamily| {
+        let loose = paths.iter().any(|path| source.has_asset(&family_file(path, family)));
+        let sidecars = models.iter().flat_map(|model| model.sidecars.rows().iter().map(move |row| (model.path, row.stem.as_str())));
+        loose || sidecars.filter_map(|(model, stem)| sidecar_file(model, stem, family)).any(|file| source.has_asset(&file))
+    };
+    let Some(family) = uploads.compressed_families().into_iter().find(|family| ships(*family)) else { return };
     if let Err(error) = uploads.set_texture_family(family) {
         log(&format!("{} textures not taken: {error}", family.wire()));
     }
@@ -475,8 +526,15 @@ fn load_compressed(path: &str, kind: TextureKind, source: &dyn ModelSource, uplo
     if family == TextureFamily::Rgba8 || !is_safe_asset_path(path) {
         return Ok(Compressed::Absent);
     }
-    let file = family_file(path, family);
-    let Some(bytes) = source.model_bytes(&file) else { return Ok(Compressed::Absent) };
+    load_family_file(&family_file(path, family), path, kind, source, uploads, log)
+}
+
+/// The family file `file` uploaded as `kind` in place of `path` (a loose image, or a GLB's
+/// `<model>#<image>`): absent when the game ships no such file or it is under the family's
+/// smallest size class (the image is held there by design), refused (logged) when it is
+/// unreadable or the renderer refuses it. A lost device is passed on.
+fn load_family_file(file: &str, path: &str, kind: TextureKind, source: &dyn ModelSource, uploads: &mut dyn Uploads, log: &mut dyn FnMut(&str)) -> Result<Compressed, RenderError> {
+    let Some(bytes) = source.model_bytes(file) else { return Ok(Compressed::Absent) };
     let texture = match read_ktx2(&bytes) {
         Ok(texture) => texture,
         Err(error) => {
@@ -484,7 +542,11 @@ fn load_compressed(path: &str, kind: TextureKind, source: &dyn ModelSource, uplo
             return Ok(Compressed::Refused);
         }
     };
-    let again = source.static_bytes(&file).map(|bytes| -> CompressedSource { Arc::new(move || read_ktx2(bytes)) });
+    // Under the family's smallest class the renderer holds the image by design (C-14): not a refusal.
+    if texture.side() < uploads.compressed_min_side() {
+        return Ok(Compressed::Absent);
+    }
+    let again = source.static_bytes(file).map(|bytes| -> CompressedSource { Arc::new(move || read_ktx2(bytes)) });
     match uploads.add_compressed_texture(&texture, kind, again) {
         Ok(id) => Ok(Compressed::Loaded(id)),
         Err(error) if error.code() == RenderCode::DeviceLost => Err(error),
@@ -510,7 +572,7 @@ impl AssetCache {
     /// tried already: for a shell that loads meshes itself, and for tests.
     pub fn insert_model(&mut self, path: &str, mesh: Option<MeshId>) {
         if !self.tried(path) {
-            let loaded = mesh.map(|mesh| LoadedModel { parts: vec![ModelPart { mesh, material: None }], triangles: 0, textures: Vec::new() });
+            let loaded = mesh.map(|mesh| LoadedModel { parts: vec![ModelPart { mesh, material: None }], triangles: 0, textures: Vec::new(), runtime_tangents: false });
             self.models.push((path.to_owned(), loaded));
         }
     }
@@ -542,13 +604,31 @@ impl AssetCache {
         self.environments.iter().find(|(known, _)| known == path).and_then(|(_, map)| map.clone())
     }
 
+    /// The image sidecars of every model `frame` draws that was never tried, once each, read from
+    /// its GLB's JSON (a model that does not open has none: its load says why).
+    fn untried_sidecars<'a>(&self, frame: &'a Frame, source: &dyn ModelSource) -> Vec<ModelSidecars<'a>> {
+        let mut models: Vec<ModelSidecars<'a>> = Vec::new();
+        for path in model_paths(frame) {
+            if self.tried(path) || models.iter().any(|model| model.path == path) {
+                continue;
+            }
+            let Some((sidecars, samples_images)) = source.model_bytes(path).and_then(|bytes| GlbModel::sidecars_of_glb(&bytes).ok()) else { continue };
+            models.push(ModelSidecars { path, sidecars, samples_images });
+        }
+        models
+    }
+
     /// Load every model and material texture `frame` draws that was never tried: bytes from
     /// `source`, handed to `uploads`; each refusal is told to `log` once. A lost device stops
     /// the load (`device-lost`) and leaves what was not loaded to be tried again.
     pub fn load(&mut self, frame: &Frame, source: &dyn ModelSource, uploads: &mut dyn Uploads, log: &mut dyn FnMut(&str)) -> Result<(), RenderError> {
-        if !self.family_chosen && texture_paths(frame).next().is_some() {
-            choose_texture_family(frame, source, uploads, log);
-            self.family_chosen = true;
+        if !self.family_chosen {
+            let models = self.untried_sidecars(frame, source);
+            let textured = texture_paths(frame).next().is_some() || models.iter().any(|model| model.samples_images);
+            if textured {
+                choose_texture_family(frame, &models, source, uploads, log);
+                self.family_chosen = true;
+            }
         }
         for path in model_paths(frame) {
             if self.tried(path) {
@@ -679,9 +759,11 @@ fn texture_paths(frame: &Frame) -> impl Iterator<Item = (&str, TextureKind)> {
 
 /// The textures `frame` binds with what `assets` loaded (`state().__render.textures`, C-11): one
 /// fact per path in first-bound order (the material, terrain and decal slots, then the images of
-/// the GLB models drawn with their own materials), and an issue per loose texture loaded from its
-/// image while the game ships no family file of it, or whose family file the renderer refused. A texture refused or not loaded yet is not
-/// bound. Display only: nothing here enters the simulation.
+/// the GLB models drawn with their own materials, each from its sidecar or its embedded image,
+/// C-14), and the asset issues (`__render.assetIssues`): a texture or GLB image loaded from its
+/// image while the game ships no family file (sidecar) of it, or whose family file the renderer
+/// refused, then each model drawn whose tangents were generated at load (C-9). A texture
+/// refused or not loaded yet is not bound. Display only: nothing here enters the simulation.
 pub fn texture_facts(frame: &Frame, assets: &AssetCache) -> (Vec<TextureFact>, Vec<AssetIssue>) {
     let mut facts: Vec<TextureFact> = Vec::new();
     let mut issues = Vec::new();
@@ -702,12 +784,27 @@ pub fn texture_facts(frame: &Frame, assets: &AssetCache) -> (Vec<TextureFact>, V
         }
         models.push(path);
         let Some(loaded) = assets.model(path) else { continue };
-        for (image, kind) in &loaded.textures {
-            let key = format!("{path}#{image}");
+        for texture in &loaded.textures {
+            let key = format!("{path}#{}", texture.image);
+            // An image bound in two usages is one fact (its first) but each usage's issue counts.
+            if let Some(code) = texture.issue
+                && !issues.iter().any(|issue| issue.path == key && issue.code == code)
+            {
+                issues.push(AssetIssue { path: key.clone(), code });
+            }
             if !facts.iter().any(|fact| fact.path == key) {
-                facts.push(TextureFact { path: key, kind: *kind, origin: TextureOrigin::Source });
+                facts.push(TextureFact { path: key, kind: texture.kind, origin: texture.origin });
             }
         }
+    }
+    // Every model drawn whose tangents were generated at load (C-9), once, in first-draw order.
+    let mut named: Vec<&str> = Vec::new();
+    for path in model_paths(frame) {
+        if named.contains(&path) || !assets.model(path).is_some_and(|loaded| loaded.runtime_tangents) {
+            continue;
+        }
+        named.push(path);
+        issues.push(AssetIssue { path: path.to_owned(), code: AssetIssueCode::TangentsRuntime });
     }
     (facts, issues)
 }
@@ -805,14 +902,18 @@ fn load_model(path: &str, source: &dyn ModelSource, uploads: &mut dyn Uploads, l
         log(&format!("model {path:?} is not in the game's assets: drawing the missing-asset checker"));
         return Ok(None);
     };
-    let glb = match GlbModel::from_glb(&bytes) {
+    // Images are decoded only when their sidecar does not load (C-14).
+    let glb = match GlbModel::from_glb_undecoded(&bytes) {
         Ok(glb) => glb,
         Err(error) => {
             log(&format!("model {path:?} refused: {error}"));
             return Ok(None);
         }
     };
-    let mut images: Vec<(u32, TextureKind, Option<TextureId>)> = Vec::new();
+    if let GlbSidecars::Malformed(detail) = glb.sidecars() {
+        log(&format!("model {path:?}: genex_textures ignored ({detail}); loading its embedded images"));
+    }
+    let mut images: Vec<(ModelTexture, Option<TextureId>)> = Vec::new();
     let mut parts = Vec::with_capacity(glb.parts().len());
     let mut triangles = 0u32;
     // Every part in one upload: the renderer writes the model's own rows once, not once a material.
@@ -839,45 +940,96 @@ fn load_model(path: &str, source: &dyn ModelSource, uploads: &mut dyn Uploads, l
         }
         triangles = triangles.saturating_add(triangles_of(&part.mesh));
         let material = match part.material {
-            Some(material) => Some(glb_textures((path, still), &glb, &material, &mut images, uploads, log)?),
+            Some(material) => Some(glb_textures(GlbSource { path, bytes: &bytes, still, glb: &glb }, &material, &mut images, (source, uploads), log)?),
             None => None,
         };
         parts.push(ModelPart { mesh, material });
     }
-    let textures = images.iter().filter(|(_, _, id)| id.is_some()).map(|(image, kind, _)| (*image, *kind)).collect();
-    Ok(Some(LoadedModel { parts, triangles, textures }))
+    let textures = images.iter().filter(|(_, id)| id.is_some()).map(|(texture, _)| *texture).collect();
+    let runtime_tangents = glb.parts().iter().any(|part| part.runtime_tangents);
+    Ok(Some(LoadedModel { parts, triangles, textures, runtime_tangents }))
+}
+
+/// A model's GLB as [`glb_textures`] reads its images: its path, its bytes (an image without a
+/// sidecar is decoded from them), the bytes again when the program holds them for its whole life
+/// (a replay decodes from them), and the parsed model.
+struct GlbSource<'a> {
+    path: &'a str,
+    bytes: &'a [u8],
+    still: Option<&'static [u8]>,
+    glb: &'a GlbModel,
+}
+
+/// Whether the game ships image `image` of `model` as a sidecar in any family for a slot sampling
+/// `kind`, whether or not the device samples that family (the import step did its part).
+fn ships_any_sidecar(model: &GlbSource<'_>, image: u32, kind: TextureKind, source: &dyn ModelSource) -> bool {
+    let Some(stem) = model.glb.sidecars().stem(image, kind) else { return false };
+    TextureFamily::ALL.into_iter().filter_map(|family| sidecar_file(model.path, stem, family)).any(|file| source.has_asset(&file))
+}
+
+/// What became of a GLB image's sidecar ([`upload_sidecar`]).
+enum Sidecar {
+    /// Uploaded from the family file as this texture.
+    Loaded(TextureId, TextureFamily),
+    /// Shipped but refused (logged): the embedded image loads, named `texture-family-refused`.
+    Refused,
+}
+
+/// Image `image` of `model` uploaded as `kind` from its sidecar in the renderer's family (C-14);
+/// `None` when the GLB names no sidecar for it, the renderer stores RGBA8 or the family file is
+/// not shipped, so the embedded image loads. A lost device is passed on.
+fn upload_sidecar(model: &GlbSource<'_>, image: u32, kind: TextureKind, source: &dyn ModelSource, uploads: &mut dyn Uploads, log: &mut dyn FnMut(&str)) -> Result<Option<Sidecar>, RenderError> {
+    let family = uploads.texture_family();
+    let file = model.glb.sidecars().stem(image, kind).filter(|_| family != TextureFamily::Rgba8).and_then(|stem| sidecar_file(model.path, stem, family));
+    let Some(file) = file else { return Ok(None) };
+    match load_family_file(&file, &format!("{}#{image}", model.path), kind, source, uploads, log)? {
+        Compressed::Loaded(id) => Ok(Some(Sidecar::Loaded(id, family))),
+        Compressed::Absent => Ok(None),
+        Compressed::Refused => Ok(Some(Sidecar::Refused)),
+    }
 }
 
 /// `material` with its images uploaded, each image and kind once per model (`images` holds those
-/// done); an image that cannot be used leaves its slot untextured (logged). `model` is the model's
-/// path and, when the program holds them for its whole life, its bytes (a replay decodes an image
-/// from them again).
+/// done): from the image's sidecar in the renderer's family when the GLB names one and the game
+/// ships it (C-14), else from the embedded image, decoded here; an image that cannot be used
+/// leaves its slot untextured (logged).
 fn glb_textures(
-    model: (&str, Option<&'static [u8]>),
-    glb: &GlbModel,
+    model: GlbSource<'_>,
     material: &GlbMaterial,
-    images: &mut Vec<(u32, TextureKind, Option<TextureId>)>,
-    uploads: &mut dyn Uploads,
+    images: &mut Vec<(ModelTexture, Option<TextureId>)>,
+    (source, uploads): (&dyn ModelSource, &mut dyn Uploads),
     log: &mut dyn FnMut(&str),
 ) -> Result<GlbMaterial<TextureId>, RenderError> {
     for (image, kind) in material.textures() {
-        if images.iter().any(|(i, k, _)| *i == image && *k == kind) {
+        if images.iter().any(|(done, _)| done.image == image && done.kind == kind) {
             continue;
         }
-        let (path, still) = model;
-        let what = format!("model {path:?} image {image}");
-        let again = still.map(|bytes| -> TextureSource { Arc::new(move || GlbModel::image_from_glb(bytes, image)) });
-        let id = match glb.image(image) {
-            Some(Ok(data)) => upload_texture(uploads, (data, kind, again), &what, log)?,
-            Some(Err(error)) => {
+        let refused = match upload_sidecar(&model, image, kind, source, uploads, log)? {
+            Some(Sidecar::Loaded(id, family)) => {
+                images.push((ModelTexture { image, kind, origin: TextureOrigin::Family(family), issue: None }, Some(id)));
+                continue;
+            }
+            Some(Sidecar::Refused) => true,
+            None => false,
+        };
+        let what = format!("model {:?} image {image}", model.path);
+        let again = model.still.map(|bytes| -> TextureSource { Arc::new(move || GlbModel::image_from_glb(bytes, image)) });
+        let id = match GlbModel::image_from_glb(model.bytes, image) {
+            Ok(data) => upload_texture(uploads, (&data, kind, again), &what, log)?,
+            Err(error) => {
                 log(&format!("{what} refused: {error}"));
                 None
             }
-            None => None,
         };
-        images.push((image, kind, id));
+        let issue = match id {
+            None => None,
+            Some(_) if refused => Some(AssetIssueCode::TextureFamilyRefused),
+            Some(_) if !ships_any_sidecar(&model, image, kind, source) => Some(AssetIssueCode::TextureUncompressed),
+            Some(_) => None,
+        };
+        images.push((ModelTexture { image, kind, origin: TextureOrigin::Source, issue }, id));
     }
-    let uploaded = |image: u32, kind: TextureKind| images.iter().find(|(i, k, _)| *i == image && *k == kind).and_then(|(_, _, id)| *id);
+    let uploaded = |image: u32, kind: TextureKind| images.iter().find(|(done, _)| done.image == image && done.kind == kind).and_then(|(_, id)| *id);
     Ok(material.map_textures(uploaded))
 }
 

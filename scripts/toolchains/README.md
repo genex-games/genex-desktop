@@ -51,7 +51,8 @@ scripts with Node 24.
   `summary.json` under `.studio-dev/rust-destinations/`; the exit code is 0 only when all rows pass.
 - `rust-vendor.ts check | inventory | archive --out <dir>` guards the vendored crate set: `check`
   refuses any build script, proc macro or non-source file not listed in `rust-inventory.json`, any
-  stale entry, GL backend crate or link; `inventory` rewrites the list for review; `archive`
+  stale entry (the workspace's own crates' entries, such as a `genex-*` golden, are left to
+  `rust-release.ts cut`), GL backend crate or link; `inventory` rewrites the list for review; `archive`
   re-vendors offline and writes the reproducible release inputs (vendored archive, `genex`
   sources, sysroot manifest, `release-inputs.json`). The `rust-toolchain.yml` workflow runs it with
   cargo-deny and cargo-vet; publishing the inputs is an owner step. `rust-gate-workflow.ts` reads

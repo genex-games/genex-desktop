@@ -74,7 +74,10 @@ its genex release). New games default by
 [harness runtime](../harness-runtime.md)). After staging, the lane's import step
 (`importStagedAssets` in [`rust-assets.ts`](../../src/main/rust-assets.ts), jobs in
 `layout.assetJobs`) plans every staged `assets/**` file for the destination and runs each
-importable one as its own sandboxed job, at most `IMPORT_JOBS_MAX` (4) at once. The outputs
+importable one as its own sandboxed job, at most `IMPORT_JOBS_MAX` (4) at once. A job whose
+importer was killed by a signal runs once more (the importer is a pure function of its job), and a
+refused file's row names why in `detail`: the importer's own line, its exit or timeout with the end
+of its stderr, or the sandbox's error. The outputs
 replace their sources in the stage and never in the game folder: an OBJ, STL or PLY becomes a GLB,
 a Draco, meshopt or quantized GLB is written back plain, every GLB has its identical vertices welded
 and its duplicate or unreferenced accessors and materials dropped
@@ -100,6 +103,9 @@ before any decoder): an error refuses it `validation-failed`, severity decided b
 validator reads only an image's header, so the gate also decodes each embedded PNG
 ([`png-check.ts`](../../src/substrate/asset-import/png-check.ts)); one the runtime could not decode
 is an `IMAGE_DATA_INVALID` warning on its image, and the model still imports.
+An Opus, AAC or M4A file becomes mono or stereo Ogg Vorbis at 48 kHz through the pinned host tool
+`genex-audio-ogg` ([`audio-ogg.ts`](../../src/substrate/asset-import/audio-ogg.ts)): its container is
+checked first (`malformed`), and a platform without the tool's pin refuses it `converter-missing`.
 A refused file leaves the build, and so does an output whose name another staged file holds
 (`name-taken`). The receipt's `assets` lists each file's action and refusal. A game with nothing
 to import starts no sandbox. Each file is looked up first in the content-addressed import cache
@@ -108,13 +114,29 @@ every sandboxed process is denied writing it by `studioBaseDenyWrites`), and a
 delivery into a Rust game imports its files into that cache at once, keyed for this host's desktop
 build (`warmImports` in [`core/assets.ts`](../../src/main/core/assets.ts)), so that build runs no job
 for them. `assets.inventory` gives each `assets/` file's `import`: `pending` until its version is
-imported (a read starts it), `ready` with validator `issues`, or `refused` with its `refusal`. `writeOutput` then packages the stage per destination
+imported (a read starts it), `ready` with validator `issues`, or `refused` with its `refusal`.
+A written GLB's `issues` also hold the validation report's codes
+([`report.ts`](../../src/substrate/asset-import/report.ts)): an untextured base colour outside
+real albedo, part metal, an IOR outside 1.0-3.0, triangles over the class budget. A rigged GLB's
+`import.character` lists clip names, lengths and motion, joints, humanoid coverage and skinned
+levels ([`character-facts.ts`](../../src/substrate/asset-import/character-facts.ts), the alias
+table `tests/fixtures/humanoid-aliases.json`); the host checks both in the receipt. `writeOutput` then packages the stage per destination
 (`packageAssets` in [`rust-package-assets.ts`](../../src/main/rust-package-assets.ts),
 `DESTINATION_PACKAGES`): family files only for the families the destination picks (desktops BC,
 iOS ASTC, Android ASTC and ETC2, the web all three), never RGBA8; a phone drops a source image its
 families cover and family mips above `PHONE_MAX_TEXTURE_PX`. It writes
 `assets/genex-asset-index.json` (ids from a trusted `genex-assets.lock`, files and bytes per
-family, `deps`, `boot`), and the receipt's `package` gives the bytes. A game file at that name is
+family, `deps`, `boot`), and the receipt's `package` gives the bytes. On the web, `webAssetMap` ([`rust-build-web.ts`](../../src/main/rust-build-web.ts)) writes `assets.json` v2: each family file carries its `family` and the texture it is `of`, so the module plans only the family the shell's adapter samples (`studio_assets_plan(map, {features, mobile})`); the image is tagged `source`, and left out, only when the runtime never falls back to it (every shipped family, none RGBA8, each at least 512 px). Streaming reads only the
+index ([`stream-facts.ts`](../../src/substrate/asset-import/stream-facts.ts)): a GLB's `mesh`
+lists its levels coarse first with their byte ranges, the head and vertex ranges every level
+needs, and its UV texel density; a KTX2 file's `levels` run smallest first with their ranges.
+`genex.toml`'s `[[asset_group]]` rows become the index's `groups`, and a member of any group is not
+`boot`. The receipt's `package.budget` measures the package against its destination's budget
+(`assetBudgetOf` in [`genex-toml.ts`](../../src/substrate/genex-toml.ts), `ASSET_BUDGETS`: web 64 MB,
+iOS and Android 200 MB, desktop 2 GB unless `[assets]` names another): past it an export warns
+`assets-over-budget`, and past a hard cap (the web shell's 512 MB, a phone's 4096 MB)
+`packageCeilingRefusal` refuses the build `assets-over-ceiling`. `[assets] phone_max_texture_px`
+replaces the phone mip cap. A game file at that name is
 refused `reserved-asset-name`. Every lane output passes `admitRustOutput` before
 `out/`, exports carry `rust-notices.ts` notices, phone exports
 ([`mobile-export-deps.ts`](../../src/main/core/mobile-export-deps.ts)) are signed by `mobile-sign.ts`, and a compiled-stack session builds with its lock's tools, never writing the store. The template is checked by

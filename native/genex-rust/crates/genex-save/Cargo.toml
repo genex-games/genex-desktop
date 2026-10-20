@@ -1,0 +1,20 @@
+[package]
+name = "genex-save"
+description = "Saves for genex games: slots, the versioned envelope and codec, migrations, autosave rings and the save quota."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+# genex-core for the store's caps and write errors, the web mirror's wire codes and FNV-1a 64;
+# serde_json (preserve_order, ryu floats) for the envelope; miniz_oxide to deflate large bodies.
+# All already locked (no new vendored crate).
+genex-core = { workspace = true }
+serde_json = { workspace = true }
+miniz_oxide = { workspace = true }

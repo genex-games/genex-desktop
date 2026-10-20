@@ -3802,6 +3802,8 @@ export const TOOLCHAIN_WORDS = {
     [ToolchainId.CargoDeny]: "cargo-deny",
     [ToolchainId.CargoVet]: "cargo-vet",
     [ToolchainId.RustsecAdvisoryDb]: "RustSec advisories",
+    [ToolchainId.Colyseus]: "Multiplayer relay library",
+    [ToolchainId.ColyseusSource]: "Multiplayer relay library source",
   } satisfies Record<ToolchainId, string>,
   size: byteWords,
   disk: (free: number, need: number) => `${byteWords(need)} needed, ${byteWords(free)} free`,
@@ -4290,6 +4292,9 @@ export const EXPORT_WORDS = {
   /** After a browser export whose code is past its game's budget (`ExportWarningCode.WasmOverTarget`), sizes in MB. */
   wasmOverTarget: (gzipMb: string, budgetMb: string) =>
     `Its code is ${gzipMb} MB compressed, over the game’s ${budgetMb} MB budget, so it loads slower on phones and weak devices. Raise wasm_budget_mb in genex.toml if that’s fine.`,
+  /** After an export whose assets are past the game's budget for that destination (`ExportWarningCode.AssetsOverBudget`), sizes in MB. */
+  assetsOverBudget: (assetsMb: string, budgetMb: string) =>
+    `Its assets are ${assetsMb} MB, over the game’s ${budgetMb} MB budget for this destination, so it takes longer to download. Raise budget_mb under [assets] in genex.toml if that’s fine.`,
   /** The phone export sheet: what it makes and how it is signed. */
   mobile: {
     title: (phone: string) => `Export for ${phone}`,

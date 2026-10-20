@@ -19,6 +19,11 @@ app never imports it. The game-facing contract is [docs/GENEX_API.md](docs/GENEX
 | `genex-gpu-memory` | the adapter's GPU-visible memory through wgpu's hal (Metal, DX12, Vulkan FFI), for the desktop memory budget; kept in the store on an eject | renderer follow-up |
 | `genex-platform-web` | WebGPU-only web shell | M0a.7, M2.9 |
 | `genex-assets` | glTF and image loaders | M2.7 |
+| `genex-net` | multiplayer below the facade: the network as an input stream (one `NetFrame` per tick, a byte-capped journal, the tick's writes queued until after it) over Off, Loopback, Relay and Replay backends, deterministic on every destination (`tests/forbidden.rs`); Loopback with NetScript's scripted remote players and the sim-time libm port of the relay interpolator (MP-2b), and the native Relay backend over genex-multiplayer behind the `relay` feature (MP-3a), are filled; Replay and the web relay mapping are stubs until MP-3b | game systems (multiplayer) |
+| `genex-multiplayer` | the Genex relay protocol 3 client, vendored byte for byte from genex-demo and held to its `PROVENANCE.toml` by `tests/conformance/rust-vendored-multiplayer.test.ts` (fixes go upstream first); `native` links libcolyseus 0.18.10 through its build script, `web` binds the JS bridge; kept in the store on an eject; a workspace member (MP-1a): its native build script links the toolchain store's pinned libcolyseus from `GENEX_COLYSEUS_LIB_DIR` and never downloads | game systems (multiplayer) |
+| `genex-input` | input actions below the facade: action ids, bindings, contexts, conditions and modifiers evaluated in ticks, touch controls, rebinding, the journal and prompts (the `panel` feature adds egui); the action wire, glyphs, input track and capped journal (IN-3) are filled; the remaining stub modules name their work packages | game systems (G6 input) |
+| `genex-save`, `genex-ui` | save slots, the versioned envelope, migrations and autosave; gameplay UI widgets, focus and controller navigation, Fluent text and the settings menu; every module is filled (genex-hud builds genex-ui for its UI scale bounds, keys and navigation events; the facade does not call either yet) | game systems (G6 saves and gameplay UI) |
+| `genex-profile`, `genex-crash` | typed engine scopes over puffin, frame summaries and reports; typed crash records with raw frames, the panic hook and a capped file sink; the recorder, scope vocabulary, caps, counters and summary (PROF-1a), the hitches, GPU lane, memory rows, ProfileReport v2 and Chrome trace (PROF-1b), the record, vocabularies and file sink under the save root's reserved genex-crash/ (CRASH-1a) and the panic hook, frames, context and replay source (CRASH-1b) are filled; genex-render brackets frame-graph steps on the GPU while armed and times encode and submit (PROF-2), and records device loss, GPU validation errors and caught job and compile panics, which genex-studio sends as the `crash` event before `fatal` (CRASH-2) | game systems (G6 profiling and crash reports) |
 | `genex-platform-ios`, `genex-platform-android` | mobile shells | M0a.16, M2.10, M5.3 |
 | `examples/pond` | the pond sample | M0a.7 |
 | `examples/custom-pass` | the custom GPU pass sample (`genex::gpu`, extension ladder level 3) | M2.19 |
@@ -62,9 +67,12 @@ change, rerun with `TRYBUILD=overwrite` and review the `.stderr` diff.
   Each entry pins the version `scripts/spike/rust-wgpu/vendor-allowlist.toml` vendored. A crate
   missing from the vendored tree goes into the allowlist first, then
   `setup-toolchain.sh --vendor`.
-- The one exception is the mobile shells' `pond` dev-dependency, a path inside this workspace:
-  their `pond_ios` and `pond_android` examples are the spike's packaged executables
-  (`scripts/spike/rust-wgpu/ios-app.sh`, `android-apk.sh`).
+- The exceptions are the mobile shells' `pond` dev-dependency, a path inside this workspace
+  (their `pond_ios` and `pond_android` examples are the spike's packaged executables,
+  `scripts/spike/rust-wgpu/ios-app.sh`, `android-apk.sh`), and the vendored `genex-multiplayer`,
+  whose upstream manifest keeps its own version requirements; the lock resolves them to the
+  workspace's versions, plus `sha2` for its build script. Its manifest differs from upstream only
+  in naming the upstream edition (2021), as its `PROVENANCE.toml` declares.
 - The pond's `studio` feature (on by default) is the dev flavour: started by the studio (fd 3
   and `GENEX_STUDIO_NONCE`) it serves genex-studio's verbs headless over the facade runtime
   (`examples/pond/src/studio.rs`, the stand-in for the facade adapter M2.4 lands). Export

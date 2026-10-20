@@ -39,6 +39,7 @@ import {
   packArchive,
   scanVendor,
   VendorRefusal,
+  workspaceCrates,
   writeInventory,
 } from "../../scripts/toolchains/rust-vendor.ts";
 import { compilesPastFailedGate, workflowSteps } from "../../scripts/toolchains/rust-gate-workflow.ts";
@@ -540,6 +541,36 @@ describe("the vendored set's inventory refuses what nobody reviewed", () => {
     await assert.rejects(checkVendor(vendor, inventoryFile), refusedWith(VendorRefusal.InventoryStale, /gone-1\.0\.0/));
   });
 
+  it("leaves the workspace's own crates to the release cut: their entries are not stale for a registry tree", async () => {
+    const own = new Set(["genex-save-0.1.0"]);
+    const listed = {
+      ...FIXTURE_INVENTORY.crates,
+      "genex-save-0.1.0": { nonSource: ["tests/goldens/deflate-300k.sav"] },
+    };
+    const { vendor, inventoryFile } = await fixtureVendor({ crates: listed });
+    await checkVendor(vendor, inventoryFile, own);
+    await assert.rejects(
+      checkVendor(vendor, inventoryFile),
+      refusedWith(VendorRefusal.InventoryStale, /genex-save-0\.1\.0/),
+    );
+    const gone = await fixtureVendor({ crates: { ...listed, "gone-1.0.0": { buildScript: "build.rs" } } });
+    await assert.rejects(
+      checkVendor(gone.vendor, gone.inventoryFile, own),
+      refusedWith(VendorRefusal.InventoryStale, /gone-1\.0\.0/),
+    );
+  });
+
+  it("reads the workspace's own crates from a lock: the packages without a checksum", async () => {
+    const lock = path.join(await tmpDir("studio-rust-vendor-lock-"), "Cargo.lock");
+    const registry = 'source = "registry+https://github.com/rust-lang/crates.io-index"\nchecksum = "00"\n';
+    await writeFile(
+      lock,
+      `version = 4\n\n[[package]]\nname = "genex-save"\nversion = "0.1.0"\ndependencies = [\n "serde",\n]\n\n[[package]]\nname = "serde"\nversion = "1.0.0"\n${registry}`,
+    );
+    assert.deepEqual([...(await workspaceCrates(lock))], ["genex-save-0.1.0"]);
+    assert.ok((await workspaceCrates(WORKSPACE_LOCK)).has("genex-save-0.1.0"));
+  });
+
   it("refuses a GL backend crate: WebGPU core is the floor", async () => {
     const { vendor, inventoryFile } = await fixtureVendor();
     await writeCrates(vendor, { "glow-0.16.0": { "Cargo.toml": plainManifest("glow", "0.16.0") } });
@@ -605,7 +636,7 @@ describe("the vendored set's inventory refuses what nobody reviewed", () => {
   });
 
   it("the committed inventory lists exactly what the installed vendored set holds", needsToolchain(), async () => {
-    await checkVendor(path.join(SPIKE_DIR, "vendor"), COMMITTED_INVENTORY);
+    await checkVendor(path.join(SPIKE_DIR, "vendor"), COMMITTED_INVENTORY, await workspaceCrates(WORKSPACE_LOCK));
   });
 });
 

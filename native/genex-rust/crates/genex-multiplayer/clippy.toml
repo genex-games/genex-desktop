@@ -1,0 +1,6 @@
+# genex-multiplayer is the vendored relay client: host network code, not a simulation. The lane's
+# game rules (../../clippy.toml, M0a.9) do not bind it, and this file replaces them for this crate,
+# leaving upstream's own lint setup (none): its stamps read the wall clock (`Instant`,
+# `SystemTime`) and its views key players, objects and pending calls in `HashMap`s. genex-net, not
+# this crate, keeps a game deterministic: it cuts one frame per tick into a journal. This is the one
+# local file PROVENANCE.toml declares beside the upstream folder.

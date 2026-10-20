@@ -226,6 +226,10 @@ const FIXTURE_SAFE = [
   "studio:native.unembed",
   "studio:native.input",
   "studio:native.resize",
+  // A game's frame profile and its kept crash records: reads of the profile's own runs and of the
+  // game's own `.studio/` folder; no window, dialog, download or socket.
+  "studio:native.profile",
+  "studio:game.crashes",
   // Re-taking a seed copy rewrites one module of the profile's own harness workspace and keeps
   // the agent's edit as a patch there; nothing outside the profile is touched.
   "studio:seed.retake",

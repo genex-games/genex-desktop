@@ -1,7 +1,8 @@
 //! The cached shadow layers' passes (renderer pass 2, B.6; [`crate::shadow_cache`]): a layer the
 //! frame's cache plan draws from the cache gets, on a rebuild, its static casters drawn into the
 //! cache layer; then the cache layer copied into the shadow map's layer; then the overlay (the
-//! terrain's and grass's casters, every batch the cache does not hold, skinned ones included)
+//! terrain's and grass's casters, every batch the cache does not hold, skinned ones included,
+//! and the LOD crossfade's fade twins through the faded casters, game systems LOD-05)
 //! drawn over the copy, when an overlay caster reaches the layer. A held layer opens no pass; a
 //! layer the plan draws whole takes the uncached pass.
 
@@ -62,6 +63,9 @@ impl Renderer {
         self.draw_terrain_casters(&mut pass, prep, cascade);
         self.draw_grass_casters(&mut pass, prep, cascade);
         self.draw_cascade_batches(&mut pass, prep, cascade, false, stats);
+        // The fade twins (LOD-05): never cached, they cast over the copy as a full draw casts them.
+        let format = self.shadow_desc.format;
+        self.draw_caster_fades(&mut pass, (&prep.groups.pass, &prep.groups.pass_fade), (&prep.plan, 1 + cascade as u32), format, stats);
         passes + 1
     }
 
@@ -147,6 +151,12 @@ impl Renderer {
             // Spot casters draw a variant's batches with the plain spot pipeline (variants.rs).
             for run in &plan.variants {
                 self.draw_variant_runs(pass, (&groups.pass, pipeline), (plan, run), view, cached, stats);
+            }
+            // The overlay's fade twins (LOD-05), through the faded spot casters; the next spot
+            // takes the plain pipeline again.
+            if !cached && !plan.fade_runs.is_empty() {
+                self.draw_spot_fades(pass, &groups.pass_fade, plan, view, None, stats);
+                pass.set_pipeline(pipeline);
             }
         }
     }

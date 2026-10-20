@@ -1,9 +1,11 @@
 /**
  * A C++ game's own window: Play on Mac (native: a window on the desktop), its state, Stop and
  * Bring to front (native: it raises a desktop window); and its Mac build inside Live (embed,
- * unembed, input, resize: fixture-safe, no desktop window). Every handler first checks that
- * `project` names a game in the library, inside the allowed games root, and the renderer's size or
- * input against its shape (`parseNativeEmbedSize`, `parseNativeInput`), and refuses anything else
+ * unembed, input, resize: fixture-safe, no desktop window); and reads of a run's frame profile
+ * and the game's crash records (fixture-safe, answering unavailable for now). Every handler first
+ * checks that `project` names a game in the library, inside the allowed games root, and the
+ * renderer's size, input or profile request against its shape (`parseNativeEmbedSize`,
+ * `parseNativeInput`, `parseFrameProfileRequest`), and refuses anything else
  * before the registry is asked; then it delegates to `core.nativeRuns`. Input and resize, sent
  * once a frame, only reach a run embed started for a listed game: they check the name's shape and
  * go to the registry at once, so the game takes them in the order they were sent.
@@ -14,7 +16,9 @@
  * Stop the person asked for. An error crossing IPC keeps only its sentence, and the card already
  * says how the run ended.
  */
+import { gameCrashesUnavailable } from "../../shared/crash-record.ts";
 import { CustomEvent, customEventData } from "../../shared/custom-events.ts";
+import { ProfileUnavailableReason, parseFrameProfileRequest, profileUnavailable } from "../../shared/frame-profile.ts";
 import type { DeviceLaunchResult } from "../../shared/device-launch.ts";
 import { BuildTarget, type GameProject } from "../../shared/game-project.ts";
 import {
@@ -45,6 +49,7 @@ const MESSAGE = {
   noGame: "Open a game before playing it in its own window.",
   badSize: "Live's canvas size is not one a game can be shown at.",
   badInput: "That input is not one a game takes.",
+  badProfile: "That is not a frame profile request a game takes.",
 } as const;
 
 /** The longest game name the library makes; anything longer is not one of its games. */
@@ -229,7 +234,10 @@ function registerEmbedIpc(handle: IpcHandle, core: NativeIpcCore, iso: () => str
   });
 }
 
-/** Registers the nine `studio:native.*` channels: the window's four, the embedded run's four and the person's device launch. */
+/**
+ * Registers the eleven channels: the window's four, the profile and crash reads, the embedded
+ * run's four and the person's device launch.
+ */
 export function registerNativeIpc(handle: IpcHandle, core: NativeIpcCore, options: NativeIpcOptions = {}): void {
   const iso = () => new Date(options.now?.() ?? Date.now()).toISOString();
   handle("studio:native.run", async (payload) => {
@@ -248,8 +256,32 @@ export function registerNativeIpc(handle: IpcHandle, core: NativeIpcCore, option
     core.nativeRuns.state(await listedGame(core, payload), NativeRunMode.Window),
   );
   handle("studio:native.front", async (payload) => core.nativeRuns.front(await listedGame(core, payload)));
+  registerProfileAndCrashesIpc(handle, core);
   registerDeviceLaunchIpc(handle, core, { ...options, iso });
   registerEmbedIpc(handle, core, iso);
+}
+
+/** The run of `project` Live or its window shows, embedded first; null when none runs. */
+function shownRun(core: NativeIpcCore, project: string): NativeRunStatus | null {
+  return core.nativeRuns.state(project, NativeRunMode.Embedded) ?? core.nativeRuns.state(project, NativeRunMode.Window);
+}
+
+/**
+ * A game's frame profile and crash records, both fixture-safe reads. The game and the request are
+ * checked first; until the host reads profiles (PROF-6) and keeps records (CRASH-5) each answers
+ * `unavailable`: a profile `no-run` when no run is shown, else `not-served`.
+ */
+function registerProfileAndCrashesIpc(handle: IpcHandle, core: NativeIpcCore): void {
+  handle("studio:native.profile", async (payload) => {
+    const project = await listedGame(core, payload);
+    if (!parseFrameProfileRequest(field(payload, "request"))) throw new Error(MESSAGE.badProfile);
+    const reason = shownRun(core, project) ? ProfileUnavailableReason.NotServed : ProfileUnavailableReason.NoRun;
+    return profileUnavailable(reason);
+  });
+  handle("studio:game.crashes", async (payload) => {
+    await listedGame(core, payload);
+    return gameCrashesUnavailable();
+  });
 }
 
 /**

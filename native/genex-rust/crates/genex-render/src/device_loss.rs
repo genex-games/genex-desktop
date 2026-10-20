@@ -68,12 +68,16 @@ pub struct DeviceWatch {
 impl DeviceWatch {
     /// Watch `gpu`'s device. Once it is lost, wgpu's errors from work already in flight are
     /// logged instead of panicking (the default handler's behaviour stays for a live device).
+    /// With the crash hook installed (CRASH-2), a loss is a `device-lost` record that is not fatal
+    /// (recovery goes on) and an uncaptured error on a live device panics as a `gpu-validation`
+    /// record with its class.
     pub fn attach(gpu: &Gpu) -> DeviceWatch {
         let lost = Arc::new(AtomicBool::new(false));
         let on_lost = Arc::clone(&lost);
         gpu.device.set_device_lost_callback(move |reason, message| {
             on_lost.store(true, Ordering::SeqCst);
             log::warn!("genex-render: device lost ({reason:?}): {message}");
+            genex_crash::record_device_lost(lost_reason(reason), &message);
         });
         let on_error = Arc::clone(&lost);
         gpu.device.on_uncaptured_error(Arc::new(move |error: wgpu::Error| {
@@ -81,7 +85,9 @@ impl DeviceWatch {
                 log::warn!("genex-render: error on a lost device: {error}");
                 return;
             }
-            // wgpu's own default: an uncaptured validation error on a live device is a bug.
+            // wgpu's own default: an uncaptured validation error on a live device is a bug. The
+            // crash hook types the panic below by the error's class.
+            genex_crash::note_gpu_error(error_class(&error), &error.to_string());
             panic!("wgpu error: {error}");
         }));
         DeviceWatch { lost }
@@ -96,6 +102,23 @@ impl DeviceWatch {
     pub fn force_loss(&self, gpu: &Gpu) {
         self.lost.store(true, Ordering::SeqCst);
         gpu.device.destroy();
+    }
+}
+
+/// A wgpu device-lost reason as the crash record spells it.
+fn lost_reason(reason: wgpu::DeviceLostReason) -> &'static str {
+    match reason {
+        wgpu::DeviceLostReason::Destroyed => "destroyed",
+        wgpu::DeviceLostReason::Unknown => "unknown",
+    }
+}
+
+/// The crash record's class of an uncaptured wgpu error.
+fn error_class(error: &wgpu::Error) -> genex_crash::GpuErrorClass {
+    match error {
+        wgpu::Error::OutOfMemory { .. } => genex_crash::GpuErrorClass::OutOfMemory,
+        wgpu::Error::Internal { .. } => genex_crash::GpuErrorClass::Internal,
+        wgpu::Error::Validation { .. } => genex_crash::GpuErrorClass::Validation,
     }
 }
 

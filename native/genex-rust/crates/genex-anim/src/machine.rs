@@ -52,20 +52,20 @@ impl ActiveTransition {
     }
 }
 
-/// One layer's place in its graph.
+/// One layer's place in its graph (crate-visible for the animator's snapshots).
 #[derive(Clone, Copy, Debug, PartialEq)]
-struct LayerState {
-    state: StateId,
+pub(crate) struct LayerState {
+    pub(crate) state: StateId,
     /// Seconds since the state was entered.
-    seconds: f32,
+    pub(crate) seconds: f32,
     /// The state's clip time.
-    time: f32,
+    pub(crate) time: f32,
     /// The state's `once` clip has reached its end.
-    ended: bool,
+    pub(crate) ended: bool,
     /// This step finished a cycle of a loop, or the `once` clip is ended.
-    cycle_end: bool,
-    weight: f32,
-    transition: Option<ActiveTransition>,
+    pub(crate) cycle_end: bool,
+    pub(crate) weight: f32,
+    pub(crate) transition: Option<ActiveTransition>,
 }
 
 /// The layers that switched state in one step, as bits.
@@ -93,8 +93,8 @@ impl Switched {
 #[derive(Clone, Debug, PartialEq)]
 pub struct Machine {
     graph: AnimGraph,
-    params: Params,
-    layers: Vec<LayerState>,
+    pub(crate) params: Params,
+    pub(crate) layers: Vec<LayerState>,
 }
 
 impl Machine {

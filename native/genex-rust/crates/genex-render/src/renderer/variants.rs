@@ -17,7 +17,18 @@
 //! - **Sun casters.** `vs_shadow_mask` with the plain test at the cutoff (a hashed or coverage edge
 //!   would shimmer in the filtered map); double-sided casters draw both faces.
 //! - **Spot casters** draw a variant's batches with the plain spot pipeline (whole and culled, as
-//!   before P2-0.12; spot cutouts are open).
+//!   before P2-0.12; spot cutouts are open), and the fade twins with the faded spot casters.
+//!
+//! **Faded twins (game systems LOD-04).** A frame with a LOD fade band plans each level mesh's
+//! fade batches after every other batch ([`FramePlan::fade_runs`]), read through their own
+//! pass-view rows ([`fade_pass_entry`]). They draw with the same pipelines made from the faded
+//! entry points (`*_fade`, `GX_LOD_FADE`): the world pass covers each MSAA sample by one level
+//! (`sample_mask`; one sample: the pixel), the prepass, the depth step and the sun casters cut
+//! away the pixels the other level keeps. A world pass that tests `Equal` shades with the faded
+//! entries too (coincident levels both pass the test), cutting what the faded steps cut. Spot
+//! casters cut the twins as the sun's do (`spot_shadow.wgsl`), and the static shadow cache does
+//! not cast them yet (LOD-05). The faded pipelines read the far-field grow (LOD-18) through their
+//! own group 1 (`pass_fade`).
 
 use wgpu::{BindGroup, CompareFunction, Face, RenderPass, RenderPipeline, TextureFormat};
 
@@ -29,7 +40,7 @@ use crate::error::RenderError;
 use crate::scene::{DRAW_VARIANTS, DrawVariant, FramePlan, VariantRun};
 use crate::settings::ShadowFormat;
 use crate::shadow::{CASTER_CONSTANT_BIAS, CASTER_SLOPE_BIAS, CasterDepth, DEPTH16_UNIT};
-use crate::tables::{ARGS_STRIDE, PASS_VIEW_STRIDE, pipeline_layout, variant_pass_entry};
+use crate::tables::{ARGS_STRIDE, PASS_VIEW_STRIDE, fade_pass_entry, pipeline_layout, variant_pass_entry};
 
 /// How a pipeline resolves a cutout's edge (`GX_ALPHA_MODE` in `shaders/alpha_mask.wgsl`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -93,21 +104,57 @@ struct PrepassKey {
     motion: bool,
 }
 
-/// The draw variants' pipelines, made on the first frame that draws each variant.
+/// One set of the variants' pipelines (whole or faded), made on the first frame that draws each
+/// variant.
 #[derive(Default)]
-pub(super) struct VariantPipelines {
+struct PipelineSet {
     world: Option<(WorldKey, [Option<WorldSet>; DRAW_VARIANTS])>,
     prepass: Option<(PrepassKey, [Option<Compiled<RenderPipeline>>; DRAW_VARIANTS])>,
     /// Each variant's sun casters into `depth32float` and `depth16unorm` maps.
     casters: [Option<[Compiled<RenderPipeline>; 2]>; DRAW_VARIANTS],
 }
 
+/// The draw variants' pipelines: the variant batches' (whole) and the fade twins' (faded, game
+/// systems LOD-04), every variant's twins among them.
+#[derive(Default)]
+pub(super) struct VariantPipelines {
+    whole: PipelineSet,
+    faded: PipelineSet,
+}
+
 impl VariantPipelines {
     /// Variant `variant`'s sun caster pipeline into a `depth16unorm` (`depth16`) or `depth32float`
     /// map, once made (the static shadow cache's passes, B.6).
     pub(super) fn caster(&self, variant: usize, depth16: bool) -> Option<&RenderPipeline> {
-        self.casters.get(variant)?.as_ref().map(|casters| &*casters[usize::from(depth16)])
+        self.whole.casters.get(variant)?.as_ref().map(|casters| &*casters[usize::from(depth16)])
     }
+
+    /// The set of the whole (`fade` false) or faded pipelines.
+    fn set(&self, fade: bool) -> &PipelineSet {
+        if fade { &self.faded } else { &self.whole }
+    }
+}
+
+/// The faded pipelines' constants (game systems LOD-04): the fade on, the colour pipeline's
+/// samples, whether the dither turns each frame, and the far field's grow (LOD-18; 1 for a copy
+/// only crossfading, so always on).
+fn fade_constants(samples: u32, temporal: bool) -> [(&'static str, f64); 4] {
+    [("GX_LOD_FADE", 1.0), ("GX_LOD_FADE_SAMPLES", f64::from(samples)), ("GX_LOD_FADE_TEMPORAL", f64::from(u8::from(temporal))), ("GX_LOD_GROW", 1.0)]
+}
+
+/// A variant pipeline's group 1: the pass view, with the instance fade table for a faded one
+/// (its vertices read the far-field grow there, LOD-18).
+fn pass_layout(layouts: &Layouts, fade: bool) -> &wgpu::BindGroupLayout {
+    if fade { &layouts.pass_fade } else { &layouts.pass }
+}
+
+/// The frame's two group-1 sets: the pass views, and the pass views with the instance fade table
+/// (the faded pipelines', LOD-18).
+pub(super) type PassGroups<'a> = (&'a BindGroup, &'a BindGroup);
+
+/// The group-1 set a run draws with: the faded one for the fade twins' faded pipelines.
+fn pass_group<'a>((whole, faded): PassGroups<'a>, fade: bool) -> &'a BindGroup {
+    if fade { faded } else { whole }
 }
 
 /// The parts of a variant pipeline the variants choose.
@@ -147,23 +194,31 @@ fn equal_depth(reversed: bool) -> wgpu::DepthStencilState {
     wgpu::DepthStencilState { depth_compare: Some(CompareFunction::Equal), ..depth_state(false, reversed) }
 }
 
-/// `variant`'s world-pass pipelines for `key`.
-fn world_set(device: &wgpu::Device, layouts: &Layouts, key: &WorldKey, variant: DrawVariant) -> Result<WorldSet, RenderError> {
+/// `variant`'s world-pass pipelines for `key`, from the faded entries when `fade` (game systems
+/// LOD-04). A faded shading that tests `Equal` cuts what its depth step or the prepass cut: both
+/// levels of a crossfade may pass the test where their surfaces coincide. An alpha-tested one
+/// keeps or drops whole pixels (its depth step's cut), an opaque one covers samples.
+fn world_set(device: &wgpu::Device, layouts: &Layouts, key: &WorldKey, variant: DrawVariant, fade: bool) -> Result<WorldSet, RenderError> {
     let module = shader(device, "forward", crate::shaders::FORWARD)?;
-    let layout = pipeline_layout(device, "forward variant", &[&layouts.frame, &layouts.pass]);
-    let constants = surface_constants(key.reversed, key.format, key.surface);
+    let layout = pipeline_layout(device, "forward variant", &[&layouts.frame, pass_layout(layouts, fade)]);
+    let samples = if key.equal { 1 } else { key.samples };
+    let mut constants = surface_constants(key.reversed, key.format, key.surface).to_vec();
+    if fade {
+        constants.extend(fade_constants(if variant.masked { 1 } else { samples }, key.surface.shadow_temporal));
+    }
     let writes = [Some(wgpu::ColorTargetState { format: key.format, blend: None, write_mask: wgpu::ColorWrites::ALL })];
     let tested = variant.masked || key.equal;
+    let (vertex, fragment) = if fade { ("vs_main_fade", "fs_main_fade") } else { ("vs_main", "fs_main") };
     let shade_spec = VariantSpec {
-        label: "forward variant",
+        label: if fade { "forward faded" } else { "forward variant" },
         module: &module,
-        vertex: "vs_main",
-        fragment: Some("fs_main"),
+        vertex,
+        fragment: Some(fragment),
         layout: &layout,
         targets: &writes,
         depth: if tested { equal_depth(key.reversed) } else { depth_state(true, key.reversed) },
         variant,
-        samples: if key.equal { 1 } else { key.samples },
+        samples,
         alpha_to_coverage: false,
         unclipped_depth: false,
         constants: &constants,
@@ -171,14 +226,16 @@ fn world_set(device: &wgpu::Device, layouts: &Layouts, key: &WorldKey, variant: 
     let shade = variant_pipeline(device, &shade_spec);
     let depth = (variant.masked && !key.equal).then(|| {
         let mode = AlphaMode::for_camera(key.samples, key.surface.shadow_temporal);
-        let mut masked = constants.to_vec();
+        let mut masked = constants.clone();
         masked.push(("GX_ALPHA_MODE", f64::from(mode.shader_id())));
         // The colour target is bound and never written: under alpha-to-coverage its alpha becomes
         // the samples' coverage.
         let silent = [Some(wgpu::ColorTargetState { format: key.format, blend: None, write_mask: wgpu::ColorWrites::empty() })];
+        let (vertex, fragment) = if fade { ("vs_main_fade", "fs_mask_depth_fade") } else { ("vs_main", "fs_mask_depth") };
         let spec = VariantSpec {
             label: "forward variant depth",
-            fragment: Some("fs_mask_depth"),
+            vertex,
+            fragment: Some(fragment),
             targets: &silent,
             depth: depth_state(true, key.reversed),
             alpha_to_coverage: mode == AlphaMode::Coverage,
@@ -190,23 +247,39 @@ fn world_set(device: &wgpu::Device, layouts: &Layouts, key: &WorldKey, variant: 
     Ok(WorldSet { shade, depth })
 }
 
+/// The prepass entry points of a batch: its motion twin's (`motion`), alpha-tested (`masked`),
+/// faded (`fade`, game systems LOD-04).
+const fn prepass_entries(motion: bool, masked: bool, fade: bool) -> (&'static str, &'static str) {
+    match (motion, masked, fade) {
+        (false, false, false) => ("vs_prepass", "fs_prepass"),
+        (false, true, false) => ("vs_prepass_mask", "fs_prepass_mask"),
+        (true, false, false) => (crate::motion::VERTEX_ENTRY, crate::motion::FRAGMENT_ENTRY),
+        (true, true, false) => ("vs_prepass_motion_mask", "fs_prepass_motion_mask"),
+        (false, false, true) => ("vs_prepass_fade", "fs_prepass_fade"),
+        (false, true, true) => ("vs_prepass_mask_fade", "fs_prepass_mask_fade"),
+        (true, false, true) => ("vs_prepass_motion_fade", "fs_prepass_motion_fade"),
+        (true, true, true) => ("vs_prepass_motion_mask_fade", "fs_prepass_motion_mask_fade"),
+    }
+}
+
 /// `variant`'s prepass pipeline for `key` (its motion twin when `key.motion`, over `motion`'s
-/// group 2).
-fn prepass_pipeline(device: &wgpu::Device, layouts: &Layouts, motion: Option<&crate::motion::MotionNode>, key: &PrepassKey, variant: DrawVariant) -> Result<Compiled<RenderPipeline>, RenderError> {
+/// group 2), from the faded entries when `fade` (game systems LOD-04).
+fn prepass_pipeline(device: &wgpu::Device, layouts: &Layouts, motion: Option<&crate::motion::MotionNode>, key: &PrepassKey, (variant, fade): (DrawVariant, bool)) -> Result<Compiled<RenderPipeline>, RenderError> {
     let module = shader(device, "prepass", crate::shaders::PREPASS)?;
-    let (vertex, fragment) = match (key.motion, variant.masked) {
-        (false, false) => ("vs_prepass", "fs_prepass"),
-        (false, true) => ("vs_prepass_mask", "fs_prepass_mask"),
-        (true, false) => (crate::motion::VERTEX_ENTRY, crate::motion::FRAGMENT_ENTRY),
-        (true, true) => ("vs_prepass_motion_mask", "fs_prepass_motion_mask"),
-    };
+    let (vertex, fragment) = prepass_entries(key.motion, variant.masked, fade);
     let normals = [Some(wgpu::ColorTargetState { format: crate::prepass::NORMALS_FORMAT, blend: None, write_mask: wgpu::ColorWrites::ALL })];
     let all = crate::motion::TARGET_FORMATS.map(|format| Some(wgpu::ColorTargetState { format, blend: None, write_mask: wgpu::ColorWrites::ALL }));
     let layout = match motion.filter(|_| key.motion) {
-        Some(node) => pipeline_layout(device, "prepass motion variant", &[&layouts.frame, &layouts.pass, node.layout()]),
-        None => pipeline_layout(device, "prepass variant", &[&layouts.frame, &layouts.pass]),
+        Some(node) => pipeline_layout(device, "prepass motion variant", &[&layouts.frame, pass_layout(layouts, fade), node.layout()]),
+        None => pipeline_layout(device, "prepass variant", &[&layouts.frame, pass_layout(layouts, fade)]),
     };
-    let constants = [("GX_ALPHA_MODE", f64::from(key.mode.shader_id()))];
+    let mut constants = Vec::new();
+    if variant.masked {
+        constants.push(("GX_ALPHA_MODE", f64::from(key.mode.shader_id())));
+    }
+    if fade {
+        constants.extend([("GX_LOD_FADE", 1.0), ("GX_LOD_FADE_TEMPORAL", f64::from(u8::from(key.mode == AlphaMode::Hashed))), ("GX_LOD_GROW", 1.0)]);
+    }
     Ok(variant_pipeline(device, &VariantSpec {
         label: vertex,
         module: &module,
@@ -219,16 +292,16 @@ fn prepass_pipeline(device: &wgpu::Device, layouts: &Layouts, motion: Option<&cr
         samples: 1,
         alpha_to_coverage: false,
         unclipped_depth: false,
-        constants: if variant.masked { &constants } else { &[] },
+        constants: &constants,
     }))
 }
 
 /// `variant`'s sun casters into a map of `format`: both faces for a double-sided variant, the
 /// cutout's shape for an alpha-tested one (the plain test), the casters' bias as
 /// `shadow::caster_pipeline` sets it.
-fn caster_pipeline(device: &wgpu::Device, layouts: &Layouts, casters: CasterDepth, format: TextureFormat, variant: DrawVariant) -> Result<Compiled<RenderPipeline>, RenderError> {
+fn caster_pipeline(device: &wgpu::Device, layouts: &Layouts, casters: CasterDepth, format: TextureFormat, (variant, fade): (DrawVariant, bool)) -> Result<Compiled<RenderPipeline>, RenderError> {
     let module = shader(device, "shadow", crate::shaders::SHADOW)?;
-    let layout = pipeline_layout(device, "shadow variant", &[&layouts.shadow, &layouts.pass]);
+    let layout = pipeline_layout(device, "shadow variant", &[&layouts.shadow, pass_layout(layouts, fade)]);
     let unclipped = casters == CasterDepth::Unclipped;
     let unit = if format == TextureFormat::Depth16Unorm { DEPTH16_UNIT } else { 0.0 };
     let constants = [
@@ -237,12 +310,19 @@ fn caster_pipeline(device: &wgpu::Device, layouts: &Layouts, casters: CasterDept
         ("GX_SHADOW_BIAS_CONSTANT", f64::from(CASTER_CONSTANT_BIAS)),
         ("GX_SHADOW_BIAS_SLOPE", f64::from(CASTER_SLOPE_BIAS)),
         ("GX_ALPHA_MODE", f64::from(AlphaMode::Test.shader_id())),
+        ("GX_LOD_FADE", f64::from(u8::from(fade))),
+        ("GX_LOD_GROW", f64::from(u8::from(fade))),
     ];
-    let (vertex, fragment) = match (variant.masked, unclipped) {
-        (false, true) => ("vs_shadow", None),
-        (false, false) => ("vs_shadow", Some("fs_shadow_caster")),
-        (true, true) => ("vs_shadow_mask", Some("fs_shadow_mask")),
-        (true, false) => ("vs_shadow_mask", Some("fs_shadow_mask_depth")),
+    let (vertex, fragment) = match (variant.masked, unclipped, fade) {
+        (false, true, false) => ("vs_shadow", None),
+        (false, false, false) => ("vs_shadow", Some("fs_shadow_caster")),
+        (true, true, false) => ("vs_shadow_mask", Some("fs_shadow_mask")),
+        (true, false, false) => ("vs_shadow_mask", Some("fs_shadow_mask_depth")),
+        // A faded caster always runs a fragment: it cuts the other level's texels (LOD-04).
+        (false, true, true) => ("vs_shadow_fade", Some("fs_shadow_fade")),
+        (false, false, true) => ("vs_shadow_fade", Some("fs_shadow_caster_fade")),
+        (true, true, true) => ("vs_shadow_mask_fade", Some("fs_shadow_mask_fade")),
+        (true, false, true) => ("vs_shadow_mask_fade", Some("fs_shadow_mask_depth_fade")),
     };
     // A fragment that writes its depth gets no hardware bias: the shader applies it.
     let bias = if unclipped {
@@ -273,49 +353,77 @@ fn caster_pipeline(device: &wgpu::Device, layouts: &Layouts, casters: CasterDept
     }))
 }
 
-impl Renderer {
-    /// Make the pipelines the variants `plan` draws need this frame, on `path`, with the frame's
-    /// `prepass` (motion when `motion`): nothing for a plan without variants.
-    pub(super) fn ensure_variants(&mut self, plan: &FramePlan, path: &ScenePath, prepass: Option<&FramePrepass>, motion: bool) -> Result<(), RenderError> {
-        if plan.variants.is_empty() {
+/// What making a pipeline set needs (borrowed apart from the sets it fills).
+struct Maker<'a> {
+    device: &'a wgpu::Device,
+    layouts: &'a Layouts,
+    motion: Option<&'a crate::motion::MotionNode>,
+    casters: CasterDepth,
+    /// Whether the frame casts the sun's shadows (the casters are made then).
+    shadows: bool,
+}
+
+impl Maker<'_> {
+    /// Make in `set` the pipelines `runs` need for `world` and `prepass` (faded when `fade`).
+    fn ensure(&self, set: &mut PipelineSet, runs: &[VariantRun], (world, prepass): (WorldKey, Option<PrepassKey>), fade: bool) -> Result<(), RenderError> {
+        if runs.is_empty() {
             return Ok(());
         }
-        let surface = self.surface_key(path.hdr);
-        let world = WorldKey { format: path.format, reversed: path.depth_reversed, samples: self.samples, surface, equal: prepass.is_some_and(|prepass| prepass.equal) };
-        if self.variants.world.as_ref().is_none_or(|(made, _)| *made != world) {
-            self.variants.world = Some((world, Default::default()));
+        if set.world.as_ref().is_none_or(|(made, _)| *made != world) {
+            set.world = Some((world, Default::default()));
         }
-        let prepass_key = prepass.map(|_| PrepassKey { reversed: path.depth_reversed, mode: AlphaMode::for_camera(1, path.taa), motion });
-        if let Some(key) = prepass_key
-            && self.variants.prepass.as_ref().is_none_or(|(made, _)| *made != key)
+        if let Some(key) = prepass
+            && set.prepass.as_ref().is_none_or(|(made, _)| *made != key)
         {
-            self.variants.prepass = Some((key, Default::default()));
+            set.prepass = Some((key, Default::default()));
         }
-        for run in &plan.variants {
+        for run in runs {
             let at = run.variant.index();
-            if let Some((key, sets)) = self.variants.world.as_mut()
+            if let Some((key, sets)) = set.world.as_mut()
                 && sets[at].is_none()
             {
-                sets[at] = Some(world_set(&self.device, &self.layouts, key, run.variant)?);
+                sets[at] = Some(world_set(self.device, self.layouts, key, run.variant, fade)?);
             }
-            if let (Some(_), Some((key, pipelines))) = (prepass_key, self.variants.prepass.as_mut())
+            if let (Some(_), Some((key, pipelines))) = (prepass, set.prepass.as_mut())
                 && pipelines[at].is_none()
             {
-                pipelines[at] = Some(prepass_pipeline(&self.device, &self.layouts, self.motion_node.as_ref(), key, run.variant)?);
+                pipelines[at] = Some(prepass_pipeline(self.device, self.layouts, self.motion, key, (run.variant, fade))?);
             }
-            if plan.cascades.is_some() && self.variants.casters[at].is_none() {
-                let caster = |format: ShadowFormat| caster_pipeline(&self.device, &self.layouts, self.casters, format.texture_format(), run.variant);
-                self.variants.casters[at] = Some([caster(ShadowFormat::Depth32)?, caster(ShadowFormat::Depth16)?]);
+            if self.shadows && set.casters[at].is_none() {
+                let caster = |format: ShadowFormat| caster_pipeline(self.device, self.layouts, self.casters, format.texture_format(), (run.variant, fade));
+                set.casters[at] = Some([caster(ShadowFormat::Depth32)?, caster(ShadowFormat::Depth16)?]);
             }
         }
         Ok(())
     }
+}
 
-    /// Draw `run`'s batches of view `view` through its rows of `pass_views` (the plan's culled
-    /// counts on the CPU path).
-    fn draw_run(&self, pass: &mut RenderPass<'_>, pass_views: &BindGroup, (plan, run): (&FramePlan, &VariantRun), view: u32, counts: Option<&[u32]>, stats: &mut FrameStats) {
+/// The runs of the whole variant batches (`fade` false) or of the fade twins.
+fn runs_of(plan: &FramePlan, fade: bool) -> &[VariantRun] {
+    if fade { &plan.fade_runs } else { &plan.variants }
+}
+
+impl Renderer {
+    /// Make the pipelines the variants and fade twins `plan` draws need this frame, on `path`,
+    /// with the frame's `prepass` (motion when `motion`): nothing for a plan without either.
+    pub(super) fn ensure_variants(&mut self, plan: &FramePlan, path: &ScenePath, prepass: Option<&FramePrepass>, motion: bool) -> Result<(), RenderError> {
+        if plan.variants.is_empty() && plan.fade_runs.is_empty() {
+            return Ok(());
+        }
+        let surface = self.surface_key(path.hdr);
+        let world = WorldKey { format: path.format, reversed: path.depth_reversed, samples: self.samples, surface, equal: prepass.is_some_and(|prepass| prepass.equal) };
+        let prepass_key = prepass.map(|_| PrepassKey { reversed: path.depth_reversed, mode: AlphaMode::for_camera(1, path.taa), motion });
+        let maker = Maker { device: &self.device, layouts: &self.layouts, motion: self.motion_node.as_ref(), casters: self.casters, shadows: plan.cascades.is_some() };
+        maker.ensure(&mut self.variants.whole, &plan.variants, (world, prepass_key), false)?;
+        maker.ensure(&mut self.variants.faded, &plan.fade_runs, (world, prepass_key), true)
+    }
+
+    /// Draw `run`'s batches of view `view` through its rows of `pass_views` (the fade twins' rows
+    /// when `fade`; the plan's culled counts on the CPU path).
+    fn draw_run(&self, pass: &mut RenderPass<'_>, pass_views: &BindGroup, (plan, run, fade): (&FramePlan, &VariantRun, bool), view: u32, counts: Option<&[u32]>, stats: &mut FrameStats) {
         let total = plan.batches.len() as u32;
-        pass.set_bind_group(1, pass_views, &[(variant_pass_entry(plan, view, run.variant.index()) * PASS_VIEW_STRIDE) as u32]);
+        let entry = if fade { fade_pass_entry(plan, view, run.variant.index()) } else { variant_pass_entry(plan, view, run.variant.index()) };
+        pass.set_bind_group(1, pass_views, &[(entry * PASS_VIEW_STRIDE) as u32]);
         let sources = [
             (run.batches.start..run.skinned_from, &self.meshes.vertices, &self.meshes.slots),
             (run.skinned_from..run.batches.end, self.tables.skinned.get(), self.tables.skinned_slots.get()),
@@ -343,50 +451,86 @@ impl Renderer {
         }
     }
 
-    /// The world pass's variant batches (the camera view), after the plain ones, with the frame
-    /// group bound at group 0: each alpha-tested run's depth step, then its shading.
-    pub(super) fn draw_world_variants(&self, pass: &mut RenderPass<'_>, pass_views: &BindGroup, plan: &FramePlan, counts: Option<&[u32]>, stats: &mut FrameStats) {
-        let Some((_, sets)) = self.variants.world.as_ref() else { return };
-        for run in &plan.variants {
-            let Some(set) = sets[run.variant.index()].as_ref() else { continue };
-            if let Some(depth) = &set.depth {
-                pass.set_pipeline(depth);
-                self.draw_run(pass, pass_views, (plan, run), 0, counts, stats);
+    /// The world pass's variant batches (the camera view), after the plain ones, then the fade
+    /// twins (LOD-04), with the frame group bound at group 0: each alpha-tested run's depth step,
+    /// then its shading.
+    pub(super) fn draw_world_variants(&self, pass: &mut RenderPass<'_>, groups: PassGroups<'_>, plan: &FramePlan, counts: Option<&[u32]>, stats: &mut FrameStats) {
+        for fade in [false, true] {
+            let pass_views = pass_group(groups, fade);
+            let Some((_, sets)) = self.variants.set(fade).world.as_ref() else { continue };
+            for run in runs_of(plan, fade) {
+                let Some(set) = sets[run.variant.index()].as_ref() else { continue };
+                if let Some(depth) = &set.depth {
+                    pass.set_pipeline(depth);
+                    self.draw_run(pass, pass_views, (plan, run, fade), 0, counts, stats);
+                }
+                pass.set_pipeline(&set.shade);
+                self.draw_run(pass, pass_views, (plan, run, fade), 0, counts, stats);
             }
-            pass.set_pipeline(&set.shade);
-            self.draw_run(pass, pass_views, (plan, run), 0, counts, stats);
         }
     }
 
-    /// The prepass's variant batches (the camera view), after the plain ones, with its groups 0 and
-    /// (on motion frames) 2 bound.
-    pub(super) fn draw_prepass_variants(&self, pass: &mut RenderPass<'_>, pass_views: &BindGroup, plan: &FramePlan, counts: Option<&[u32]>, motion: bool) {
-        let Some((_, pipelines)) = self.variants.prepass.as_ref().filter(|(key, _)| key.motion == motion) else { return };
+    /// The prepass's variant batches (the camera view), after the plain ones, then the fade twins,
+    /// with its groups 0 and (on motion frames) 2 bound.
+    pub(super) fn draw_prepass_variants(&self, pass: &mut RenderPass<'_>, groups: PassGroups<'_>, plan: &FramePlan, counts: Option<&[u32]>, motion: bool) {
         // The world pass's statistics count its own draws; the prepass's repeat them.
         let mut stats = FrameStats::default();
-        for run in &plan.variants {
-            let Some(pipeline) = pipelines[run.variant.index()].as_ref() else { continue };
-            pass.set_pipeline(pipeline);
-            self.draw_run(pass, pass_views, (plan, run), 0, counts, &mut stats);
+        for fade in [false, true] {
+            let pass_views = pass_group(groups, fade);
+            let Some((_, pipelines)) = self.variants.set(fade).prepass.as_ref().filter(|(key, _)| key.motion == motion) else { continue };
+            for run in runs_of(plan, fade) {
+                let Some(pipeline) = pipelines[run.variant.index()].as_ref() else { continue };
+                pass.set_pipeline(pipeline);
+                self.draw_run(pass, pass_views, (plan, run, fade), 0, counts, &mut stats);
+            }
         }
     }
 
     /// A cascade's variant casters (view `view`) into a map of `format`, after the plain ones,
-    /// with the shadow group bound at group 0.
-    pub(super) fn draw_caster_variants(&self, pass: &mut RenderPass<'_>, pass_views: &BindGroup, (plan, view): (&FramePlan, u32), format: TextureFormat, counts: Option<&[u32]>, stats: &mut FrameStats) {
-        let at = usize::from(format == ShadowFormat::Depth16.texture_format());
-        for run in &plan.variants {
-            let Some(casters) = self.variants.casters[run.variant.index()].as_ref() else { continue };
-            pass.set_pipeline(&casters[at]);
-            self.draw_run(pass, pass_views, (plan, run), view, counts, stats);
+    /// then the fade twins' faded casters, with the shadow group bound at group 0.
+    pub(super) fn draw_caster_variants(&self, pass: &mut RenderPass<'_>, groups: PassGroups<'_>, (plan, view): (&FramePlan, u32), format: TextureFormat, counts: Option<&[u32]>, stats: &mut FrameStats) {
+        for fade in [false, true] {
+            self.draw_caster_runs(pass, groups, (plan, view, fade), format, counts, stats);
         }
     }
 
-    /// A shadowed spot's variant batches (view `view`) with the spot pipeline already set: whole and
-    /// culled as before P2-0.12.
-    pub(super) fn draw_spot_variants(&self, pass: &mut RenderPass<'_>, pass_views: &BindGroup, plan: &FramePlan, view: u32, counts: Option<&[u32]>, stats: &mut FrameStats) {
+    /// A cascade's fade twins (view `view`) through the faded casters into a map of `format`,
+    /// with the shadow group bound at group 0: the overlay of a cached layer (game systems
+    /// LOD-05; the static cache never holds them).
+    pub(super) fn draw_caster_fades(&self, pass: &mut RenderPass<'_>, groups: PassGroups<'_>, (plan, view): (&FramePlan, u32), format: TextureFormat, stats: &mut FrameStats) {
+        self.draw_caster_runs(pass, groups, (plan, view, true), format, None, stats);
+    }
+
+    /// The whole variant runs' casters, or the fade twins' (`fade`), of view `view`.
+    fn draw_caster_runs(&self, pass: &mut RenderPass<'_>, groups: PassGroups<'_>, (plan, view, fade): (&FramePlan, u32, bool), format: TextureFormat, counts: Option<&[u32]>, stats: &mut FrameStats) {
+        let at = usize::from(format == ShadowFormat::Depth16.texture_format());
+        let pass_views = pass_group(groups, fade);
+        for run in runs_of(plan, fade) {
+            let Some(casters) = self.variants.set(fade).casters[run.variant.index()].as_ref() else { continue };
+            pass.set_pipeline(&casters[at]);
+            self.draw_run(pass, pass_views, (plan, run, fade), view, counts, stats);
+        }
+    }
+
+    /// A shadowed spot's variant batches (view `view`) with the spot pipeline already set: whole
+    /// and culled as before P2-0.12; then its fade twins through the faded spot casters (each copy
+    /// cut by its fade and grown by its far-field grow; LOD-04, LOD-18), which the next spot
+    /// replaces with the plain ones.
+    pub(super) fn draw_spot_variants(&self, pass: &mut RenderPass<'_>, groups: PassGroups<'_>, plan: &FramePlan, view: u32, counts: Option<&[u32]>, stats: &mut FrameStats) {
         for run in &plan.variants {
-            self.draw_run(pass, pass_views, (plan, run), view, counts, stats);
+            self.draw_run(pass, groups.0, (plan, run, false), view, counts, stats);
+        }
+        self.draw_spot_fades(pass, groups.1, plan, view, counts, stats);
+    }
+
+    /// A shadowed spot's fade twins (view `view`) through the faded spot casters, through
+    /// `pass_fade` (the pass views and the fade table); the caller sets the plain spot pipeline
+    /// again before the next spot. Also the overlay of a cached spot layer (LOD-05).
+    pub(super) fn draw_spot_fades(&self, pass: &mut RenderPass<'_>, pass_fade: &BindGroup, plan: &FramePlan, view: u32, counts: Option<&[u32]>, stats: &mut FrameStats) {
+        let Some(spots) = self.spot_shadow.as_ref().filter(|_| !plan.fade_runs.is_empty()) else { return };
+        pass.set_pipeline(spots.faded_pipeline(self.shadow_desc.format));
+        for run in &plan.fade_runs {
+            self.draw_run(pass, pass_fade, (plan, run, true), view, counts, stats);
         }
     }
 }

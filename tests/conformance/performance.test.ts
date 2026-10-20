@@ -131,3 +131,10 @@ it("says why a comparison was refused, regressed, or found no win", () => {
   for (const [name, before, after, bracket, reason] of cases)
     assert.equal(comparePerformance(before as never, after as never, bracket as never).reason, reason, name);
 });
+it("a native run's samples compare as a web run's do: a draw-call reduction can win (PROF-0c)", () => {
+  const native = (tree: string, calls: number) =>
+    three(tree, calls).map((s) => ({ ...s, backend: "native", renderer: "genex-render", version: "0.1.0" }));
+  const r = comparePerformance(native("b", 100) as never, native("c", 50) as never, native("b", 100)[0] as never);
+  assert.equal(r.comparable, true, r.reason);
+  assert.equal(r.improved, true);
+});

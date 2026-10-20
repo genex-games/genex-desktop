@@ -15,7 +15,7 @@
 import { lstat, realpath } from "node:fs/promises";
 import path from "node:path";
 import { type BuildTarget, GameStack } from "../../shared/game-project.ts";
-import { ToolchainId, type ToolchainLock } from "../../shared/toolchain.ts";
+import { ToolchainId, type ToolchainLock, toolchainHostOf } from "../../shared/toolchain.ts";
 import { readRegularFile } from "../../substrate/fsx.ts";
 import { renderTomlFragment, wgslTomlFragment } from "../../substrate/genex-toml.ts";
 import { admitRustOutput } from "../../substrate/native-cross-admission.ts";
@@ -38,6 +38,7 @@ import {
   type RustOutputAdmit,
   type RustStage,
 } from "../rust-build.ts";
+import { colyseusComponentFolder } from "../rust-colyseus.ts";
 import { genexReleaseOf, RUST_GAME_PACKAGE, RustManifestCode } from "../rust-manifest.ts";
 import { stageRustGame } from "../rust-stage.ts";
 
@@ -149,7 +150,14 @@ export function storeRustLocate(store: string, payload: string): RustBuildsOptio
     if (!(await hasClippyConf(payload))) return { ok: false, missing: [MESSAGE.noClippy(clippy)] };
     const { sysroot, vendor, webTools } = found.located;
     const reads = [await realpath(store), await realpath(payload)];
-    const toolchain = { bin: path.join(sysroot, "bin"), vendor, clippyConf: payload, reads };
+    const colyseus = colyseusComponentFolder(store, toolchainHostOf(process.platform, process.arch));
+    const toolchain = {
+      bin: path.join(sysroot, "bin"),
+      vendor,
+      clippyConf: payload,
+      reads,
+      ...(colyseus && { colyseus }),
+    };
     return { ok: true, toolchain: webTools ? { ...toolchain, web: webTools } : toolchain };
   };
 }
@@ -204,7 +212,7 @@ export function shippedRustStage(payload: string): RustStage {
     });
     if (!staged.ok) return { ok: false, code: staged.code, detail: staged.detail };
     const dependencies = [FACADE_CRATE, ...staged.manifest.crates.map((crate) => crate.name)];
-    const { title, nativeFeatures, render, wgsl, wasmBudgetMb } = staged.manifest;
+    const { title, nativeFeatures, render, wgsl, wasmBudgetMb, assetGroups, assets } = staged.manifest;
     const renderToml = render ? renderTomlFragment(render) : null;
     const wgslToml = wgslTomlFragment(wgsl);
     const loading = render?.loading ?? null;
@@ -217,6 +225,8 @@ export function shippedRustStage(payload: string): RustStage {
       wgslToml,
       wasmBudgetMb: wasmBudgetMb ?? null,
       loading,
+      assetGroups: assetGroups ?? [],
+      assets: assets ?? null,
     };
   };
 }

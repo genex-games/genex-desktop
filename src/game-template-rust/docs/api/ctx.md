@@ -4,8 +4,11 @@
 `ctx.pads`, `ctx.pointer` (fraction of the frame, y down), `ctx.look`, `ctx.wheel`,
 `ctx.text`, `ctx.rng` (the only randomness), `ctx.dt` (1/60), `ctx.tick` (ticks since the last
 seed), `ctx.world_size`, and `ctx.save(file, bytes)` / `ctx.load(file)` for the game's own save
-folder (a safe relative name; a folder the studio gives each run). On Vulkan the renderer keeps
-its pipeline cache in the same folder (`genex-pipeline-cache/<adapter>.bin`): leave that name alone.
+folder (a safe relative name; a folder the studio gives each run). One save holds at most 16 MiB
+and all of a game's saves 64 MiB together; `ctx.save` answers false past either. On Vulkan the
+renderer keeps its pipeline cache in the same folder (`genex-pipeline-cache/<adapter>.bin`): leave
+that name alone. The pipeline cache counts toward the 64 MiB. The `.sav` suffix is reserved for
+genex's slot bodies, which load lazily on the web, so name your own files otherwise.
 
 `world_size` is the game's logical size on every screen: touches, the pointer, the HUD's points
 and a capture's default size are measured in it. It is not the resolution: Live frames are drawn

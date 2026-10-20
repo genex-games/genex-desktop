@@ -61,6 +61,18 @@ renderer enables it. In-pass nodes draw inside one world pass.
 The HDR path draws camera views reverse-Z (`Greater`, cleared to 0) on `Depth32Float`; the
 legacy path keeps standard Z. `GxFrameV2` and `GxPostV2` expose `depth_reversed`.
 
+## Skinning
+
+`SkinnedModel::from_glb` loads every primitive of every node the first skin binds, one `SkinPart`
+per material in first-use order (a single-material GLB is one part in the file's primitive order).
+`Renderer::add_skinned_model` (or `add_skinned_parts`) keeps the parts; `Scene::draw_skinned_parts`
+names one material per part, `draw_skinned` one for all. Node 3 runs one job per part of each
+distinct pose: draws of one skin with a bit-identical palette share its jobs and output (one batch,
+one row each), and a job whose output the skinned table already holds is skipped, so a still
+character runs no skinning and its rows read last frame's vertices equal to this frame's (zero
+motion). The skinned output, its slots and last frame's copy grow to the need, then by quarter
+steps rounded to 64 KiB (`tables::skinned_growth`), not to the next power of two.
+
 ## Ambient occlusion: horizons, the visibility bitmask, screen-space GI
 
 Node 10 (`post::ao`) runs one horizon search, `shaders/post/gtao.wgsl`, in one of three methods
@@ -532,6 +544,10 @@ around the pixel blended by weight and height, hex-tiled (Mikkelsen 2022) on des
 buffer to the forward stage's (tests/terrain.rs). Probe captures and spot shadows leave the
 terrain out. The ledger's `terrain` buffers row counts its tables and grid.
 
+A streamed world's tiles live in `terrain::atlas` (game systems STR-21, after bevy_terrain's tile atlas). `TileAtlasGpu` holds one storage table of fixed slots, each one square tile in the single terrain's layout (heights, control words, normal pyramid). Desktops get up to 256 slots within the 128 MiB binding; phones get up to 64 within 48 MiB, so a desktop has 44 slots of 513-sample tiles and a phone 16. `TileAtlas` counts requests per tile. A released tile stays in its slot, queued oldest-first, until a new tile needs that slot, and a re-request revives it without a load. A tile still loading draws its nearest loaded ancestor (`best_tile`). A request when every slot holds a requested tile is refused `stream-arena-full`, and an upload for a tile that is no longer loading writes nothing (tests/terrain_atlas.rs).
+
+A tiled terrain (game systems STR-22) is still one terrain a frame. `TerrainTiling` lays out square tiles of one sample count (17 to 2049, 16 quads times a power of two; 129 at most on mobile-low, `tile_samples_cap`, finer tiles thinned with `Heightfield::decimate`). Every tile quantizes over the world's height range (`Heightfield::with_range`) and each tile's origin is the previous one's plus the tile's side, so a sample two tiles share holds the same bits in both. `TerrainLod::tiled` gives one set of ranges for the world from the largest node box any tile could have, so a tile streaming in never moves a range. `TerrainTiles` selects each tile with A.7's own tree under those ranges; vertices on a shared border coincide bit for bit, neighbours one level apart included. A missing tile draws its window of the always-resident overview (16 quads a tile): one unmorphed row while its top node cannot split, the window upsampled to the tile's samples when it can, its border samples taken from loaded neighbours, so it leaves no hole. `TerrainTilesGpu` gives each tile a group over its atlas slot (`tile_terrain_row`: the heights' first sample in `counts.y`) or its window's maps, and draws each tile's rows from one rows table (tests/terrain_tiles.rs).
+
 ## Grass and scatter
 
 A terrain layer may carry grass (`terrain::TerrainLayer::grass`, `foliage::GrassLayer`; the
@@ -654,6 +670,13 @@ tangents; float or normalized 8/16-bit uvs and weights; 8/16-bit joints; unsigne
 other layout, such as a `KHR_mesh_quantization` one the Studio's import step did not dequantize,
 is refused `mesh-invalid` before the `gltf` reader would misread it or panic.
 
+A normal-mapped primitive without TANGENT gets MikkTSpace tangents when it loads
+(`bevy_mikktspace`, its sqrt and acos from libm so every target builds the same bits), split at
+mirrored uv seams the way the Studio's import step splits them, and its part says so
+(`GlbPart::runtime_tangents`, `tangents-runtime` in `__render.assetIssues`); any other primitive
+without TANGENT keeps one vertex per POSITION, each with its first corner's tangent, so its
+`genex_meshlets` and `genex_lods` still validate.
+
 A part also carries its material's `KHR_materials_*` extensions (`GlbPart::material_ext`, from
 `src/glb_material_ext.rs`): `ior`, `specular`, `clearcoat`, `sheen`, `transmission` (factor),
 `volume` (factors) and `anisotropy`, read from the raw extension JSON with the specification's
@@ -701,8 +724,10 @@ loss replays the family before the textures. The budget still reserves the array
 
 ### `genex_lods` in glTF
 
-The Studio's import step simplifies a GLB of at least 512 triangles with meshoptimizer and stores
-each primitive's levels in its `extras`, never as an extension:
+The Studio's import step simplifies a GLB of at least 512 triangles with meshoptimizer's
+attribute-aware simplifier (normals and the first texture coordinates weighed; vertices where
+primitives meet and every leaf card's vertices locked; each error at least how far the primitive's
+vertices lie from the level). Each primitive's levels go in its `extras`, never as an extension:
 
 ```json
 "extras": { "genex_lods": {
@@ -724,10 +749,80 @@ Drawn: `MeshLibrary::add_part` keeps each level as a mesh of its own (the vertic
 the part's bounding sphere. A frame plans a batch per level of a mesh drawn whole; each holds all
 of the mesh's instance rows (`GpuBatch::first_row`) in slots of its own in the visible list
 (`FramePlan::visible_slots`), and the cull keeps an instance only in the batch of the level picked
-from the camera's distance to its sphere at a 1-pixel threshold of the output height
-(`mesh_lod::lod_keeps`, `gx_cull_lod_keeps`). Every view (cascades and spots too) draws an
-instance at the camera's level; an orthographic camera turns levels off. A clustered mesh (the
-meshlet path) and a transparent draw take the mesh itself. Level changes are not crossfaded yet.
+from the camera's distance at a 1-pixel threshold of the output height (`mesh_lod::lod_row_keep`,
+`gx_cull_lod_fade`). Every view (cascades and spots too) draws an instance at the camera's level;
+an orthographic camera turns levels off. A clustered mesh (the meshlet path) and a transparent
+draw take the mesh itself.
+
+The distance is measured from each opaque row's LOD row (`src/lod_rows.rs`, `GpuLodRow`, 32 bytes,
+cull binding 6, parallel to the instance rows so the 160-byte row stays frozen): the row's own
+sphere unless the draw names a model-space origin (`Scene::set_lod(DrawLod { origin, bias, .. })`),
+so every part of a compound model measured from one sphere switches at the same distance; the
+bias scales the chain's projected errors (2 holds each level twice as far). A retained group
+computes its LOD rows once per version and uploads them over its instance rows' dirty ranges
+(`Renderer::last_lod_row_upload_bytes`); the LOD table is replaced exactly when the instance
+table is. With a fade band (`Scene::lod_band`, in (0, 1]; 0 by default, the hard switch) a plan
+adds a fade twin of every level batch after all other batches (`FramePlan::fade_runs`, their
+slot bases in `FramePlan::fade_slots`), the cull keeps an instance whose level's projected error
+is within the band's last share of the threshold in the two neighbouring twins, and its scatter
+writes each twin survivor's signed fade and grow into the per-slot fade table (cull binding 7,
+`vec2<f32>` per visible-list slot, held only by a frame with fade batches;
+`Renderer::read_view_fades`). The faded fragments read the fade at the forward frame's binding 31
+and the sun casters' binding 11; the faded vertices read the grow at their own group 1, binding 2
+(`PASS_FADE_GROWS_BINDING`), so no other pipeline's vertex stage counts the table (the meshlet
+motion prepass holds all of core's eight).
+
+The twins draw through faded pipelines (`renderer/variants.rs`: the `*_fade` entry points of
+`forward.wgsl`, `prepass.wgsl` and `shadow.wgsl`, `GX_LOD_FADE`). The two levels of a crossfade
+cover each pixel, or each MSAA sample, exactly once by a dither threshold (`gx_lod_fade_*` in
+`common.wgsl`: interleaved gradient noise, turned by the golden ratio each frame on TAA paths):
+- MSAA covers samples with `sample_mask`, both levels in proportion, so a pixel shows no stipple;
+- TAA and a one-sample path keep or drop whole pixels, and the resolve averages the levels;
+- an `Equal` main pass and an alpha-tested batch's shading apply the cut their depth step or the
+  prepass applied (coincident levels both pass the test); an alpha-tested batch keeps
+  alpha-to-coverage and cuts whole pixels, never writing `sample_mask` beside it;
+- the sun's and the shadowed spots' casters cut the other level's texels by the unturned
+  threshold. The static shadow cache never holds a twin, a batch with levels or rows a far rule
+  thins (their casting follows the camera): they are its overlay, and the twins cast through the
+  faded casters over a cached layer's copy as a full draw casts them (`tests/shadow_cache.rs`:
+  a fading forest's cached frames equal uncached ones byte for byte).
+`tests/lod_fade.rs` holds the incoming share within 1/16 with no hole on every path. The band
+stays 0 by default until LOD-06 (the band in `Quality`) lands; the first fade-in still waits for
+the faded pipelines' compile (the Live fallback to whole levels is open).
+
+Far field (`lod_rows::far_field`, `gx_far_field` in `shaders/cull.wgsl`): a draw naming a far
+rule (`DrawLod::far_rule`, 1 + its index in `Scene::far_rules`, at most `FAR_RULES_MAX`; cull
+binding 8) thins past the rule's start, stateless. A copy's hash (its sphere's centre on a 1 cm
+grid, so any row order keeps the same copies) against a keep threshold falling smoothly to an
+expected share of `keep` at `end`, then to none over `fade_out`, gives the share of its pixels
+drawn, and survivors grow about their origin by `min(1 / sqrt(share kept), 2)`, so the drawn
+cover holds. A thinned copy draws only through its mesh's fade twins (a mesh with a far-ruled row
+gets twins with or without a band), its fade times the far share and its grow applied by the
+faded vertex stages (`GX_LOD_GROW`); every whole batch drops it. The motion vectors use this
+frame's grow for both positions (under a tenth of a pixel a frame at 30 m/s;
+`tests/far_field.rs`). The GPU keeps the CPU twin's copies; its shares and grows may differ by
+about 1e-6 (WGSL's square roots and quotients).
+
+Impostors (`src/impostor/`, a port of kansei's, MIT): a species is baked from a model's parts
+(`Renderer::bake_impostor`) into three RGBA8 atlas arrays of N x N orthographic frames on an
+octahedral or hemi-octahedral grid (base colour and coverage; normal, depth and roughness;
+occlusion, metallic, transmission and class), sized per class (`ImpostorClass`). Placed with
+`Renderer::set_impostors` (`ImpostorInstance`: a model matrix, the species' row and a fade), each
+draws after the terrain and its grass as a camera-facing quad over its bounds
+(`shaders/impostor/draw.wgsl`): the three frames nearest the view direction, each reprojected
+along the view ray to its stored depth in three parallax steps (off on the phone sizes), their
+surface blended by sharpened weights and their coverage by the plain ones (cut at 0.35), lit
+through the forward chunks like a built-in surface. The prepass gets its depth and normal and,
+on motion frames, the reconstructed surface point's motion (the quad turning to face the camera
+is not motion). On desktop high and ultra (`impostor::draw::writes_depth`) the fragments write
+the reconstructed surface's depth (`frag_depth`); below, the quad's flat depth keeps early depth
+testing for tile GPUs. A fade cuts whole pixels with the meshes' dither. The forward frame group
+holds all of WebGPU core's 16 sampled textures, so the impostor pipelines bind group 0 without its
+eight material arrays (`renderer::impostor_frame_layout_entries`) and group 2 their own (species
+rows, instances, atlases). Impostors cast no shadow yet (LOD-15: the coarsest mesh casts).
+`tests/impostor_draw.rs` holds a cube's impostor to its mesh: silhouette IoU at least 0.95 at
+the switch, mean luminance within TAA's 0.04 accumulation floor under the sun, the sky and fog,
+and motion within a tenth of a pixel of the mesh's on a pan.
 
 ### `genex_textures` in glTF
 
@@ -754,8 +849,13 @@ is not 1, an `image` is out of range, a `kind` is unknown, a `stem` holds a `/`,
 starts with a dot or passes 200 characters, or an image and kind appear twice; a reader then takes
 the embedded images, as it does for a GLB without the block. The embedded image always stays in the
 GLB as that fallback. An image the step cannot encode (a file beside the GLB, a WebP, a KTX2, a
-damaged one) has no row. The runtime does not read the block yet: it still decodes every embedded
-image as RGBA8.
+damaged one) has no row. The runtime reads the block (`GlbModel::sidecars`, checked as above; a
+malformed block loads the embedded images with a log line and never refuses the model). The
+facade's presenter uploads an image from `<stem>.<family>.ktx2` in the renderer's family and
+decodes the embedded image only when the block names no row for that image and usage, the game
+ships no file in that family, the file is under the family's smallest size class or the renderer
+refuses it (then named `texture-family-refused`). The family is chosen from the first textured
+frame's loose textures and its models' sidecars together.
 
 ## Extension layouts
 

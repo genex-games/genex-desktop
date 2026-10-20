@@ -4,7 +4,8 @@
 //!
 //! 1. `tables`: the frame uniforms, cull views and tables are written to the queue;
 //! 2. `before-cull`: a [`WorldStage`]'s compute work (Level-3 `before-cull` passes);
-//! 3. `skinning`: compute skinning of every skinned draw into the skinned vertex buffer;
+//! 3. `skinning`: compute skinning of every skinned part into the skinned vertex buffer (one job
+//!    per part of each distinct pose; a job whose output the buffer holds is skipped, AN-16b);
 //! 4. `cull`: on the GPU-driven path, one compute cull of every opaque batch against every view
 //!    (the camera and each shadow cascade) writing `draw_indexed_indirect` arguments; the CPU path
 //!    culls the same tables on the CPU and issues direct draws, as the reference;
@@ -111,6 +112,8 @@
 
 /// Live GPU frame timing: two timestamps around a whole frame (plan §2.6).
 pub mod live_timing;
+/// Per-node GPU timing: brackets around each frame-graph step while armed (PROF-2).
+pub mod node_timing;
 /// The forward pass's RQ4 screen effects: fog row, AO term, contact-shadow mask (RQ4.6).
 mod effects;
 mod froxel_fog;
@@ -118,6 +121,7 @@ mod froxel_fog;
 mod lens;
 mod probe_capture;
 mod grass_draw;
+mod impostor_draw;
 mod shadow_cache_draw;
 mod ssr_draw;
 mod terrain_draw;
@@ -171,7 +175,7 @@ use crate::settings::{
     ShadowFormat, ShadowSettings, TextureClass, Tonemapper, Upscaler,
 };
 use crate::settle::{HistoryReset, HistorySet, TaaHistories};
-use crate::skin::{SkinBuffers, SkinId, SkinPass, SkinnedMeshData};
+use crate::skin::{SkinBuffers, SkinId, SkinPart, SkinPass, SkinnedHeld, SkinnedMeshData, SkinnedModel};
 use crate::sky::SkyState;
 use crate::tables::{ARGS_STRIDE, PASS_VIEW_STRIDE, Tables, Uploads, VERTEX_STRIDE, aligned, buffer, entry, pipeline_layout, storage, uniform};
 use crate::target_pool::{TargetDesc, TargetPolicy, TargetPool};
@@ -303,7 +307,8 @@ pub struct FrameStats {
     pub direct_opaque_draws: u32,
     /// Transparent direct draws.
     pub transparent_draws: u32,
-    /// Compute-skinning jobs.
+    /// Compute-skinning jobs run: one per part of each distinct pose, less those whose output the
+    /// skinned table already held (game systems AN-16a/b; 0 for a frame of still characters).
     pub skin_jobs: u32,
     /// Render passes the renderer's nodes opened (shadow cascades, the world pass, the upscale).
     pub render_passes: u32,
@@ -350,9 +355,17 @@ struct Layouts {
     frame: BindGroupLayout,
     shadow: BindGroupLayout,
     pass: BindGroupLayout,
+    /// The faded pipelines' group 1 (game systems LOD-18): the pass view and, at
+    /// [`PASS_FADE_GROWS_BINDING`], the instance fade table their vertices read the far-field grow
+    /// from, so no other pipeline's vertex stage sees it (the meshlet motion prepass holds all of
+    /// core's eight vertex storage buffers).
+    pass_fade: BindGroupLayout,
     lines: BindGroupLayout,
     /// The prepass's custom-geometry row (`prepass_draw`, group 1 binding 1, dynamic offset).
     prepass_draw: BindGroupLayout,
+    /// The impostor pipelines' group 0 (game systems LOD-14): the frame group without the
+    /// material texture arrays ([`impostor_frame_layout_entries`]).
+    impostor_frame: BindGroupLayout,
 }
 
 /// The pipelines that draw into the scene colour: one set for the legacy world format with standard
@@ -632,7 +645,7 @@ struct Upscale {
 /// regrown, a texture array grown), not every frame.
 #[derive(Clone, PartialEq)]
 struct GroupsKey {
-    buffers: [Buffer; 9],
+    buffers: [Buffer; 10],
     /// The shadow array, then every material texture array ([`Renderer::texture_views`]).
     views: (TextureView, [TextureView; 8]),
     /// The environment maps' generation (the neutral inputs until the bake replaces them).
@@ -642,6 +655,8 @@ struct GroupsKey {
     effects: [TextureView; 4],
     /// The material sampler's anisotropy (P2-0.12 LG-02: a quality change replaces the sampler).
     anisotropy: u16,
+    /// Whether the impostor frame group is made too (LOD-14: impostors are placed).
+    impostors: bool,
 }
 
 impl GroupsKey {
@@ -820,6 +835,8 @@ pub struct Renderer {
     /// The live frame timer, armed for one frame at a time (its begin pass is recorded by the
     /// `tables` node, which only sees the renderer shared).
     timer: std::cell::RefCell<Option<live_timing::FrameTimer>>,
+    /// The per-node brackets, armed one Live frame at a time (never a capture's).
+    node_timer: std::cell::RefCell<Option<node_timing::NodeTimer>>,
     pool: TargetPool,
     targets: Targets,
     groups: Option<(GroupsKey, FrameGroups)>,
@@ -880,6 +897,11 @@ pub struct Renderer {
     grass: Option<crate::foliage::gpu::GrassGpu>,
     grass_pipelines: grass_draw::GrassPipelines,
     grass_time: grass_draw::GrassTime,
+    /// The impostors its pipelines stage baked (game systems LOD-13): the baker, the class's atlas
+    /// arrays and each species' row ([`Renderer::bake_impostor`]).
+    impostors: crate::impostor::bake::ImpostorStage,
+    /// The impostors placed and their draw (game systems LOD-14, [`Renderer::set_impostors`]).
+    impostor_draw: Option<crate::impostor::draw::ImpostorDraw>,
     /// The look's depth of field and motion blur (graph nodes 17a and 17b, renderer pass 2 A.9).
     lens: std::cell::RefCell<lens::LensNodes>,
     shadow_sampler: Sampler,
@@ -937,6 +959,8 @@ pub struct Renderer {
     retained_held: std::cell::RefCell<Option<(Buffer, Vec<crate::retained::RetainedSpan>)>>,
     /// Bytes of instance rows the last upload wrote.
     last_instance_bytes: std::cell::Cell<u64>,
+    /// Bytes of LOD rows the last frame wrote (game systems LOD-02).
+    last_lod_row_bytes: std::cell::Cell<u64>,
     /// The history set the next frames draw on (Live, or a settled capture's; RQ5.6).
     history_set: HistorySet,
     /// Whether a frame index of 0 keeps TAA's and the motion history (a dynamic-resolution step:
@@ -950,6 +974,8 @@ pub struct Renderer {
     motion_node: Option<MotionNode>,
     /// Last frame's skinned vertices for the motion prepass.
     skinned_prev: SkinnedPrevious,
+    /// What the skinned output table holds (AN-16b): a job whose output it holds is skipped.
+    skinned_held: std::cell::RefCell<SkinnedHeld>,
     /// TAA's histories, Live's and a capture's own (graph node 17), made on the first TAA frame.
     taa: std::cell::RefCell<Option<TaaHistories>>,
     /// The water's node and opaque copy (graph node 16a, B.3), made on the first frame with water.
@@ -1063,6 +1089,10 @@ pub fn frame_layout_entries() -> Vec<BindGroupLayoutEntry> {
     .chain(classes)
     // Renderer pass 2 B.9: the screen reflections, the stage's 16th sampled texture (D1).
     .chain([texture_entry(crate::screen_inputs::FRAME_REFLECTIONS_BINDING.0, color, wgpu::TextureViewDimension::D2)])
+    // Game systems LOD-04: the instance fade table, read by the faded fragments alone (the vertex
+    // stage's storage buffers stay as they were, the meshlet draw's 7 of 8 among them; the faded
+    // vertices read the far-field grow through their own group 1, LOD-18).
+    .chain([storage(crate::layout::FRAME_INSTANCE_FADE_BINDING.0, true, fragment)])
     .collect()
 }
 
@@ -1077,6 +1107,7 @@ fn shadow_layout_entries() -> Vec<BindGroupLayoutEntry> {
     entries.extend([storage(SHADOW_MASK_MATERIALS, true, fragment), storage(SHADOW_MASK_MATERIAL_EXT, true, fragment)]);
     entries.extend(SHADOW_MASK_COLOR_ARRAYS.map(|binding| texture_entry(binding, color, D2Array)));
     entries.push(sampler_entry(SHADOW_MASK_SAMPLER, wgpu::SamplerBindingType::Filtering));
+    entries.push(storage(SHADOW_INSTANCE_FADE, true, fragment));
     entries
 }
 
@@ -1086,6 +1117,13 @@ const SHADOW_MASK_MATERIALS: u32 = 4;
 const SHADOW_MASK_MATERIAL_EXT: u32 = 5;
 const SHADOW_MASK_COLOR_ARRAYS: [u32; 4] = [6, 7, 8, 9];
 const SHADOW_MASK_SAMPLER: u32 = 10;
+/// The sun casters' instance fade table (game systems LOD-04, `shaders/shadow.wgsl`): the frame
+/// layout's [`crate::layout::FRAME_INSTANCE_FADE_BINDING`], read by the faded casters' fragments.
+pub(crate) const SHADOW_INSTANCE_FADE: u32 = 11;
+/// The faded pipelines' group-1 binding of the instance fade table (game systems LOD-18,
+/// `lod_grows` in `shaders/forward.wgsl`, `prepass.wgsl` and `shadow.wgsl`): their vertices'
+/// far-field grows. Binding 1 of group 1 is the prepass's custom-geometry row.
+pub(crate) const PASS_FADE_GROWS_BINDING: u32 = 2;
 
 fn layouts(device: &Device) -> Layouts {
     let (vertex, fragment) = (ShaderStages::VERTEX, ShaderStages::FRAGMENT);
@@ -1094,10 +1132,26 @@ fn layouts(device: &Device) -> Layouts {
         frame: bind_group_layout(device, "frame", &frame),
         shadow: bind_group_layout(device, "shadow", &shadow_layout_entries()),
         pass: bind_group_layout(device, "pass view", &[uniform(0, true, vertex)]),
+        pass_fade: bind_group_layout(device, "pass view fade", &[uniform(0, true, vertex), storage(PASS_FADE_GROWS_BINDING, true, vertex)]),
         // The line fragment reads the frame's pre-exposure on the HDR scene.
         lines: bind_group_layout(device, "lines", &[uniform(0, false, vertex | fragment)]),
         prepass_draw: bind_group_layout(device, "prepass draw", &[uniform(1, true, vertex)]),
+        impostor_frame: bind_group_layout(device, "impostor frame", &impostor_frame_layout_entries()),
     }
+}
+
+/// Whether the frame group's `binding` is a material texture array (the class-0 pair and the
+/// larger size classes'): the impostor frame group leaves them out.
+fn material_array_binding(binding: u32) -> bool {
+    binding == 8 || binding == 9 || FRAME_MATERIAL_CLASS_BINDINGS.iter().any(|(at, _)| *at == binding)
+}
+
+/// The impostor pipelines' group 0 (game systems LOD-14): the forward frame group's entries
+/// without its eight material texture arrays. The forward fragment stage holds all of WebGPU
+/// core's 16 sampled textures, so the impostor's three atlases (its group 2) take their room; an
+/// impostor reads its material from its atlases, never from the material arrays.
+pub fn impostor_frame_layout_entries() -> Vec<BindGroupLayoutEntry> {
+    frame_layout_entries().into_iter().filter(|entry| !material_array_binding(entry.binding)).collect()
 }
 
 /// The depth test of a depth-writing (`write`) or depth-testing pipeline, standard or `reversed`.
@@ -1876,7 +1930,11 @@ struct FrameGroups {
     frame: BindGroup,
     shadow: BindGroup,
     pass: BindGroup,
+    /// The faded pipelines' group 1: the pass views and the instance fade table (LOD-18).
+    pass_fade: BindGroup,
     lines: BindGroup,
+    /// The impostor pipelines' group 0 (LOD-14), on frames that draw impostors.
+    impostor_frame: Option<BindGroup>,
 }
 
 /// One frame's plan and uploads, from [`Renderer::begin_frame_prepass`] until [`Renderer::end_frame`].
@@ -2098,7 +2156,8 @@ impl<'a> WorldNodes<'a> {
         let plan = &self.prep.plan;
         match id {
             NodeId::Tables | NodeId::BeforeCull | NodeId::Opaque | NodeId::AfterOpaque | NodeId::Transparent => true,
-            NodeId::Skinning => !plan.skin_jobs.is_empty(),
+            // A frame whose jobs are all held still copies last frame's output for its motion.
+            NodeId::Skinning => plan.skinned_vertices > 0,
             // A frame that bins nothing keeps the zero bin header Uploads wrote (renderer pass 2
             // A.4: reflection probes and irradiance volumes are binned in a frame with no light).
             NodeId::LightBinning => plan.binned.as_ref().is_some_and(bins_anything),
@@ -2191,8 +2250,9 @@ impl<'a> WorldNodes<'a> {
             }
             NodeId::BeforeCull => stage.before_cull(frame.encoder(), &renderer.world_pass()),
             NodeId::Skinning => {
-                renderer.encode_skinning(frame.encoder(), plan);
-                self.count_compute(frame, 1);
+                if renderer.encode_skinning(frame.encoder(), plan) {
+                    self.count_compute(frame, 1);
+                }
             }
             NodeId::LightBinning => {
                 if renderer.encode_light_bins(frame, plan) {
@@ -2451,7 +2511,7 @@ impl<'a> WorldNodes<'a> {
                     pass.set_bind_group(1, &groups.pass, &[0]);
                     let meshlets = self.prep.meshlets.as_ref().map(|meshlets| &meshlets.frame);
                     renderer.draw_batches(pass, plan, 0, self.counts(0), meshlets, &mut self.stats);
-                    renderer.draw_world_variants(pass, &groups.pass, plan, self.counts(0), &mut self.stats);
+                    renderer.draw_world_variants(pass, (&groups.pass, &groups.pass_fade), plan, self.counts(0), &mut self.stats);
                     if let Some(pipeline) = meshlets.and_then(|_| renderer.meshlet_opaque_pipeline())
                         && renderer.draw_meshlets(pass, &groups.frame, &groups.pass, 0, ArgsSlot::All, pipeline)
                     {
@@ -2461,6 +2521,8 @@ impl<'a> WorldNodes<'a> {
                 // The terrain (A.7), after the opaque batches, then its grass (A.8).
                 renderer.draw_terrain(pass, &groups.frame, &groups.pass);
                 renderer.draw_grass(pass, &groups.frame, &groups.pass);
+                // The impostors (LOD-14), after the terrain and its grass.
+                renderer.draw_impostors(pass, &groups);
                 if !plan.lines.is_empty() {
                     pass.set_pipeline(&renderer.scene_pipelines().lines);
                     pass.set_bind_group(0, &groups.lines, &[]);
@@ -2693,6 +2755,7 @@ impl Renderer {
             path: ScenePath::LEGACY,
             last_path: None,
             timer: std::cell::RefCell::new(None),
+            node_timer: std::cell::RefCell::new(None),
             pool,
             targets,
             groups: None,
@@ -2723,6 +2786,8 @@ impl Renderer {
             grass: None,
             grass_pipelines: grass_draw::GrassPipelines::default(),
             grass_time: grass_draw::GrassTime::default(),
+            impostors: crate::impostor::bake::ImpostorStage::default(),
+            impostor_draw: None,
             lens: std::cell::RefCell::default(),
             shadow_sampler,
             point_sampler,
@@ -2748,12 +2813,14 @@ impl Renderer {
             last_meshlets: None,
             retained_held: std::cell::RefCell::new(None),
             last_instance_bytes: std::cell::Cell::new(0),
+            last_lod_row_bytes: std::cell::Cell::new(0),
             history_set: HistorySet::Live,
             temporal_kept: false,
             temporal: FrameTemporal::NONE,
             motion_history: [MotionHistory::new(), MotionHistory::new()],
             motion_node: None,
             skinned_prev: SkinnedPrevious::default(),
+            skinned_held: std::cell::RefCell::new(SkinnedHeld::default()),
             taa: std::cell::RefCell::new(None),
             water: std::cell::RefCell::new(None),
             reactive: None,
@@ -3307,6 +3374,17 @@ impl Renderer {
         Some(slot.as_mut()?.arm())
     }
 
+    /// Bracket the next frame's graph steps on the GPU as frame `frame` (Live frames only): opens
+    /// the [`node_timing::NodeTimer`] on first use and answers earlier frames' landed per-node
+    /// times. None when the device has no timestamp queries.
+    pub fn arm_node_timer(&mut self, queue: &Queue, frame: u64) -> Option<Vec<node_timing::NodeFrame>> {
+        let mut slot = self.node_timer.borrow_mut();
+        if slot.is_none() {
+            *slot = node_timing::NodeTimer::new(&self.device, queue);
+        }
+        Some(slot.as_mut()?.arm(frame))
+    }
+
     /// Close the armed frame's timing: its end pass (after everything the frame drew into the
     /// world target), the resolve of earlier frames and their readback. Nothing when not armed.
     pub fn finish_frame_timer(&mut self) {
@@ -3340,6 +3418,44 @@ impl Renderer {
     /// included, e.g. `RG11B10UFLOAT_RENDERABLE` for the compact scene format).
     pub fn device_features(&self) -> wgpu::Features {
         self.device.features()
+    }
+
+    /// Bake an impostor species in the pipelines stage (game systems LOD-13): `parts`, library
+    /// meshes each drawn with its row of the material table the last frame uploaded, baked round
+    /// their bounding spheres from `layout`'s directions into the next layer of `class`'s atlas
+    /// arrays, through the forward pass's material sampling. None past the class's species cap
+    /// (the species keeps its coarsest mesh, `degraded` `budget`) or when no part is in the library.
+    pub fn bake_impostor(
+        &mut self,
+        gpu: &Gpu,
+        parts: &[(MeshId, u32)],
+        layout: crate::impostor::ImpostorLayout,
+        class: crate::impostor::ImpostorClass,
+    ) -> Result<Option<crate::impostor::GpuImpostor>, RenderError> {
+        use crate::impostor::bake::{BakeMaterials, BakeMesh, BakePart};
+        let entries: Vec<(&crate::scene::MeshEntry, u32)> = parts.iter().filter_map(|(mesh, material)| self.library.entry(*mesh).map(|entry| (entry, *material))).collect();
+        let Some(bounds) = crate::impostor::ImpostorBounds::of_spheres(entries.iter().map(|(entry, _)| (entry.center, entry.radius))) else { return Ok(None) };
+        let bake_parts: Vec<BakePart> = entries
+            .iter()
+            .map(|(entry, material)| BakePart { first_index: entry.first_index, index_count: entry.index_count, base_vertex: entry.base_vertex, material: *material })
+            .collect();
+        let arrays = TextureClass::ALL.map(|class| [TextureKind::Color, TextureKind::Data].map(|kind| self.textures.view(class, kind)));
+        let [[c256, d256], [c512, d512], [c1024, d1024], [c2048, d2048]] = arrays;
+        let arrays = [c256, d256, c512, d512, c1024, d1024, c2048, d2048];
+        let materials = BakeMaterials { materials: self.tables.materials.get(), material_ext: self.tables.material_ext.get(), arrays, sampler: &self.texture_sampler };
+        let mesh = BakeMesh { vertices: &self.meshes.vertices, indices: &self.meshes.indices, parts: &bake_parts };
+        self.impostors.bake(&gpu.device, &gpu.queue, class, &mesh, &materials, &bounds, layout)
+    }
+
+    /// Make `class`'s impostor atlas arrays for `species` species (at most its cap: the layers the
+    /// ledger admits), before the pipelines stage bakes them.
+    pub fn reserve_impostors(&mut self, gpu: &Gpu, class: crate::impostor::ImpostorClass, species: u32) {
+        self.impostors.reserve(&gpu.device, class, species);
+    }
+
+    /// The impostors baked so far: the atlas arrays and each species' row (the draw reads them).
+    pub fn impostors(&self) -> &crate::impostor::bake::ImpostorStage {
+        &self.impostors
     }
 
     /// Add a mesh (a loaded GLB) and upload its rows.
@@ -3386,6 +3502,8 @@ impl Renderer {
         synced?;
         self.meshes = mesh_buffers(&self.mesh_arena);
         self.mesh_uploads += 1;
+        // The skinned output was skinned from the meshes as they were.
+        self.skinned_held.get_mut().forget();
         Ok(())
     }
 
@@ -3431,9 +3549,21 @@ impl Renderer {
         self.mesh_arena.stats()
     }
 
-    /// Add a skinned mesh (its bind pose and skin) and upload its rows.
+    /// Add a skinned mesh (its bind pose and skin) and upload its rows: one part, drawn with one
+    /// material.
     pub fn add_skinned_mesh(&mut self, gpu: &Gpu, data: &SkinnedMeshData) -> Result<SkinId, RenderError> {
-        let id = self.library.add_skinned(data)?;
+        self.add_skinned_parts(gpu, data, &[SkinPart::whole(&data.mesh)])
+    }
+
+    /// Add a skinned GLB's mesh with its parts (AN-16a, [`SkinnedModel::from_glb`]): each part
+    /// draws with its own material ([`Scene::draw_skinned_parts`]).
+    pub fn add_skinned_model(&mut self, gpu: &Gpu, model: &SkinnedModel) -> Result<SkinId, RenderError> {
+        self.add_skinned_parts(gpu, &model.data, &model.parts)
+    }
+
+    /// Add a skinned mesh with `parts` ([`MeshLibrary::add_skinned_parts`]) and upload its rows.
+    pub fn add_skinned_parts(&mut self, gpu: &Gpu, data: &SkinnedMeshData, parts: &[SkinPart]) -> Result<SkinId, RenderError> {
+        let id = self.library.add_skinned_parts(data, parts)?;
         self.sync_meshes(&gpu.device, &gpu.queue)?;
         self.reset_meshlet_history();
         Ok(id)
@@ -3645,6 +3775,9 @@ impl Renderer {
         let uploads = Uploads::new(&mut plan, path, instance_rows)?;
         self.tables.ensure(&self.device, &plan, &uploads)?;
         self.keep_previous_skinned(previous_skinned)?;
+        // AN-16b: only the jobs whose output the skinned table does not hold run (and upload).
+        let generations = [self.tables.skinned.generation(), self.tables.skinned_slots.generation()];
+        plan.skin_jobs = self.skinned_held.get_mut().jobs_to_run(&plan.skin_jobs, &plan.joints, generations);
         self.last = LastFrame { batches: plan.batches.len() as u32, views: plan.views, skinned_vertices: plan.skinned_vertices, opaque_instances: plan.visible_slots };
         Ok((plan, uploads, environment_sun))
     }
@@ -3842,7 +3975,8 @@ impl Renderer {
         self.skinned_prev.copy = bytes.unwrap_or(0);
         let Some(bytes) = bytes else { return Ok(()) };
         if self.skinned_prev.buffer.as_ref().is_none_or(|buffer| buffer.size() < bytes) {
-            let size = aligned(bytes).next_power_of_two();
+            let held = self.skinned_prev.buffer.as_ref().map_or(0, Buffer::size);
+            let size = crate::tables::skinned_growth(held, aligned(bytes));
             self.skinned_prev.buffer = Some(buffer(&self.device, "previous skinned vertices", size, BufferUsages::STORAGE | BufferUsages::COPY_DST)?);
         }
         Ok(())
@@ -4028,7 +4162,7 @@ impl Renderer {
             // The world pass's statistics count its own draws; the prepass's repeat them.
             let meshlets = prep.meshlets.as_ref().map(|meshlets| &meshlets.frame);
             self.draw_batches(&mut pass, &prep.plan, 0, counts, meshlets, &mut FrameStats::default());
-            self.draw_prepass_variants(&mut pass, &prep.groups.pass, &prep.plan, counts, motion.is_some());
+            self.draw_prepass_variants(&mut pass, (&prep.groups.pass, &prep.groups.pass_fade), &prep.plan, counts, motion.is_some());
             // Pass 1's meshlets (every visible one without occlusion); node 8 adds pass 2's.
             if let (Some(_), Some(meshlet_pipelines)) = (meshlets, self.meshlet_pipelines()) {
                 let pipeline = self.meshlet_prepass_pipeline(meshlet_pipelines, &mut pass, prep);
@@ -4055,6 +4189,7 @@ impl Renderer {
         // grass's (A.8).
         self.draw_terrain_prepass(&mut pass, prep, motion.map(|(group, _, _, _)| group));
         self.draw_grass_prepass(&mut pass, prep, motion.map(|(group, _, _, _)| group));
+        self.draw_impostors_prepass(&mut pass, prep, motion.map(|(group, _, _, _)| group));
         if let Some((group, motion_pipelines, _, _)) = motion {
             // T-03: the camera's motion wherever no geometry drew (the sky, its sun disc, the fog
             // horizon), after every draw of the pass: `Equal` against the cleared far plane.
@@ -4380,6 +4515,7 @@ impl Renderer {
         // to compare with (A.0b).
         *self.retained_held.borrow_mut() = Some((self.tables.instances.get().clone(), plan.retained.clone()));
         self.last_instance_bytes.set(uploads.instance_bytes());
+        self.last_lod_row_bytes.set(uploads.lod_row_bytes());
     }
 
     /// The instance-table rows `plan` writes: all of them, less its retained groups' rows the
@@ -4396,6 +4532,12 @@ impl Renderer {
     /// group's rows are written once).
     pub fn last_instance_upload_bytes(&self) -> u64 {
         self.last_instance_bytes.get()
+    }
+
+    /// Bytes of LOD rows the last frame wrote (game systems LOD-02: a static retained group's are
+    /// written once, with its instance rows).
+    pub fn last_lod_row_upload_bytes(&self) -> u64 {
+        self.last_lod_row_bytes.get()
     }
 
     /// Prepare a frame of `scene`: plan and room in the tables, the targets of the current scale
@@ -4430,6 +4572,7 @@ impl Renderer {
         self.ensure_variants(&plan, &scene_path, prepass.as_ref(), spec.motion)?;
         self.prepare_terrain(&plan, &scene_path, prepass.as_ref(), spec.motion)?;
         self.prepare_grass(&plan, &scene_path, prepass.as_ref(), spec.motion)?;
+        self.prepare_impostors(&scene_path, prepass.as_ref(), spec.motion)?;
         self.path = scene_path;
         let meshlets = self.prepare_meshlets(meshlets, prepass.is_some())?;
         let consumers = prepass.as_ref().map_or(PrepassConsumers::NONE, |prepass| prepass.consumers);
@@ -4497,6 +4640,9 @@ impl Renderer {
             visible: self.tables.visible.get(),
             args: self.tables.args.get(),
             scratch: self.tables.cull_scratch.get(),
+            lod_rows: self.tables.lod_rows.get(),
+            fades: self.tables.instance_fade.get(),
+            far_rules: self.tables.far_rules.get(),
         };
         self.cull.encode(&self.device, encoder, &buffers, plan.visible_slots, plan.views, timestamps);
     }
@@ -4834,6 +4980,11 @@ impl Renderer {
         if grass > 0 {
             ledger.register(Buffers, crate::foliage::GRASS_LEDGER_LABEL, grass);
         }
+        // The placed impostors' species rows and instances (LOD-14).
+        let impostors = self.impostor_draw_bytes();
+        if impostors > 0 {
+            ledger.register(Buffers, crate::impostor::draw::IMPOSTOR_DRAW_LEDGER_LABEL, impostors);
+        }
         // The reflection probes' cubes, capture targets and rows (A.3), outside the target pool.
         let probes = self.environment.borrow().probes().bytes();
         if probes > 0 {
@@ -4893,6 +5044,7 @@ impl Renderer {
             vertices: self.library.vertices().len() as u64,
             indices: self.library.indices().len() as u64,
             skin_vertices: self.library.skin().len() as u64,
+            fade_slots: crate::tables::fade_slots(&plan),
         };
         Ok(crate::budget::buffer_model(&counts))
     }
@@ -4906,12 +5058,15 @@ impl Renderer {
         node.read(gpu, frame)
     }
 
-    fn encode_skinning(&self, encoder: &mut wgpu::CommandEncoder, plan: &FramePlan) {
-        let Some(most) = plan.skin_jobs.iter().map(|job| job.count).max() else { return };
+    /// Graph node 3: last frame's skinned vertices copied for the motion prepass, then the jobs
+    /// whose output the table does not hold (AN-16b). Answers whether it dispatched.
+    fn encode_skinning(&self, encoder: &mut wgpu::CommandEncoder, plan: &FramePlan) -> bool {
         // Last frame's skinned vertices, kept for the motion prepass before they are overwritten.
         if let Some(previous) = self.skinned_prev.buffer.as_ref().filter(|_| self.skinned_prev.copy > 0) {
             encoder.copy_buffer_to_buffer(self.tables.skinned.get(), 0, previous, 0, self.skinned_prev.copy);
         }
+        self.skinned_held.borrow_mut().commit();
+        let Some(most) = plan.skin_jobs.iter().map(|job| job.count).max() else { return false };
         let buffers = SkinBuffers {
             source: &self.meshes.vertices,
             skin: &self.meshes.skin,
@@ -4921,6 +5076,7 @@ impl Renderer {
             output_slots: self.tables.skinned_slots.get(),
         };
         self.skinning.encode(&self.device, encoder, &buffers, plan.skin_jobs.len() as u32, most);
+        true
     }
 
     /// Draw `scene` into the world target. A refusal (unknown mesh, mismatched skin, upload
@@ -4936,8 +5092,8 @@ impl Renderer {
         let prep = self.begin_frame_prepass(scene, path, stage.ldr_reason(), prepass)?;
         let mut frame = FrameEncoder::new(&self.device, &gpu.queue, "frame");
         let mut staged = Staged { nodes: self.world_nodes(&prep), stage };
-        let ran = crate::graph::run(&mut staged, &mut frame);
-        frame.submit();
+        let live = self.history_set == HistorySet::Live && !self.environment_settle;
+        let ran = node_timing::run_and_submit(&mut staged, &mut frame, self.node_timer.borrow_mut().as_mut(), live);
         let done = staged.nodes.finish();
         ran?;
         self.end_frame(prep, done);
@@ -4952,8 +5108,8 @@ impl Renderer {
         let prep = self.begin_frame_prepass(scene, path, stage.ldr_reason(), StagePrepass { demand, draws: stage.prepass_draws() })?;
         let mut frame = FrameEncoder::new(&self.device, &gpu.queue, "frame");
         let mut staged = CustomStaged { nodes: self.world_nodes(&prep), stage };
-        let ran = crate::graph::run(&mut staged, &mut frame);
-        frame.submit();
+        let live = self.history_set == HistorySet::Live && !self.environment_settle;
+        let ran = node_timing::run_and_submit(&mut staged, &mut frame, self.node_timer.borrow_mut().as_mut(), live);
         let done = staged.nodes.finish();
         ran?;
         self.end_frame(prep, done);
@@ -5023,11 +5179,15 @@ impl Renderer {
                 t.light_ext.get().clone(),
                 t.light_bins.get().clone(),
                 t.material_ext.get().clone(),
+                // The faded draws' fade table (LOD-04, LOD-18): a frame whose twins grew it
+                // rebinds it.
+                t.instance_fade.get().clone(),
             ],
             views: (self.shadow_maps.array.clone(), self.texture_views()),
             environment: self.environment.borrow().generation(),
             effects: self.effect_views(),
             anisotropy: self.texture_anisotropy,
+            impostors: self.draws_impostors(),
         }
     }
 
@@ -5118,7 +5278,12 @@ impl Renderer {
         }));
         let reflections_binding = crate::screen_inputs::FRAME_REFLECTIONS_BINDING.0;
         entries.push(wgpu::BindGroupEntry { binding: reflections_binding, resource: wgpu::BindingResource::TextureView(&reflections) });
+        entries.push(entry(crate::layout::FRAME_INSTANCE_FADE_BINDING.0, t.instance_fade.get()));
         let frame = self.device.create_bind_group(&wgpu::BindGroupDescriptor { label: Some("frame"), layout: &self.layouts.frame, entries: &entries });
+        let impostor_frame = self.draws_impostors().then(|| {
+            let entries: Vec<wgpu::BindGroupEntry<'_>> = entries.iter().filter(|entry| !material_array_binding(entry.binding)).cloned().collect();
+            self.device.create_bind_group(&wgpu::BindGroupDescriptor { label: Some("impostor frame"), layout: &self.layouts.impostor_frame, entries: &entries })
+        });
         let color_classes = TextureClass::ALL.map(|class| self.textures.view(class, TextureKind::Color));
         let mut shadow_entries =
             vec![entry(0, &self.frame_uniforms), entry(1, t.instances.get()), entry(2, t.visible.get()), entry(3, t.slot_base.get())];
@@ -5127,6 +5292,7 @@ impl Renderer {
             SHADOW_MASK_COLOR_ARRAYS.into_iter().zip(color_classes).map(|(binding, view)| wgpu::BindGroupEntry { binding, resource: wgpu::BindingResource::TextureView(view) }),
         );
         shadow_entries.push(wgpu::BindGroupEntry { binding: SHADOW_MASK_SAMPLER, resource: wgpu::BindingResource::Sampler(&self.texture_sampler) });
+        shadow_entries.push(entry(SHADOW_INSTANCE_FADE, t.instance_fade.get()));
         let shadow = self.device.create_bind_group(&wgpu::BindGroupDescriptor { label: Some("shadow"), layout: &self.layouts.shadow, entries: &shadow_entries });
         let pass = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("pass view"),
@@ -5140,12 +5306,18 @@ impl Renderer {
                 }),
             }],
         });
+        let pass_view = wgpu::BindingResource::Buffer(wgpu::BufferBinding { buffer: t.pass_views.get(), offset: 0, size: wgpu::BufferSize::new(size_of::<GpuPassView>() as u64) });
+        let pass_fade = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("pass view fade"),
+            layout: &self.layouts.pass_fade,
+            entries: &[wgpu::BindGroupEntry { binding: 0, resource: pass_view }, entry(PASS_FADE_GROWS_BINDING, t.instance_fade.get())],
+        });
         let lines = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("lines"),
             layout: &self.layouts.lines,
             entries: &[entry(0, &self.frame_uniforms)],
         });
-        FrameGroups { frame, shadow, pass, lines }
+        FrameGroups { frame, shadow, pass, pass_fade, lines, impostor_frame }
     }
 
     /// Below scale 1: the upscale pipeline (made once) and its bind group over the scene target
@@ -5251,7 +5423,7 @@ impl Renderer {
         plan.views = crate::spot_shadow::apply_views(&mut plan.frame, &mut plan.cull_views, cascades, &spots);
         plan.spot_shadows = spots;
         if self.spot_shadow.is_none() {
-            self.spot_shadow = Some(crate::spot_shadow::SpotShadowPipelines::new(&self.device, &self.layouts.pass, &mesh_buffers_layout())?);
+            self.spot_shadow = Some(crate::spot_shadow::SpotShadowPipelines::new(&self.device, (&self.layouts.pass, &self.layouts.pass_fade), &mesh_buffers_layout())?);
         }
         Ok(())
     }
@@ -5300,10 +5472,11 @@ impl Renderer {
             slot_base: t.slot_base.get(),
             light_ext: t.light_ext.get(),
         };
-        pass.set_pipeline(pipelines.pipeline(self.shadow_desc.format));
         pass.set_bind_group(0, &pipelines.bind_group(&self.device, &inputs), &[]);
         pass.set_index_buffer(self.meshes.indices.slice(..), wgpu::IndexFormat::Uint32);
         for (spot, counts) in plan.spot_shadows.iter().zip(counts) {
+            // Each spot starts on the plain casters (the previous spot ended on the faded ones).
+            pass.set_pipeline(pipelines.pipeline(self.shadow_desc.format));
             let (x, y, side) = crate::spot_shadow::tile_rect(spot.slot, self.shadow_desc.side);
             pass.set_viewport(x as f32, y as f32, side as f32, side as f32, 0.0, 1.0);
             pass.set_scissor_rect(x, y, side, side);
@@ -5311,7 +5484,7 @@ impl Renderer {
             pass.set_bind_group(1, &groups.pass, &[(u64::from(view) * PASS_VIEW_STRIDE) as u32]);
             // The meshlet path never covers a spot's view: its casters draw whole.
             self.draw_batches(&mut pass, plan, view, *counts, None, stats);
-            self.draw_spot_variants(&mut pass, &groups.pass, plan, view, *counts, stats);
+            self.draw_spot_variants(&mut pass, (&groups.pass, &groups.pass_fade), plan, view, *counts, stats);
         }
     }
 
@@ -5391,7 +5564,7 @@ impl Renderer {
         pass.set_index_buffer(self.meshes.indices.slice(..), wgpu::IndexFormat::Uint32);
         let meshlets = prep.meshlets.as_ref().map(|meshlets| &meshlets.frame);
         self.draw_batches(&mut pass, plan, view, counts, meshlets, stats);
-        self.draw_caster_variants(&mut pass, &groups.pass, (plan, view), self.shadow_desc.format, counts, stats);
+        self.draw_caster_variants(&mut pass, (&groups.pass, &groups.pass_fade), (plan, view), self.shadow_desc.format, counts, stats);
         let casters = self.meshlet_pipelines().map(|pipelines| if self.shadow_desc.format == ShadowFormat::Depth16.texture_format() { &pipelines.shadow16 } else { &pipelines.shadow });
         let caster_view = meshlets.is_some_and(|frame| view < frame.views);
         if let (true, Some(casters)) = (caster_view, casters)
@@ -5566,6 +5739,18 @@ impl Renderer {
             return Ok(Vec::new());
         }
         let staging = stage_buffer(gpu, self.tables.visible.get(), u64::from(view) * bytes, bytes)?;
+        Ok(bytemuck::pod_collect_to_vec(&map_read_blocking(gpu, &staging, bytes)?))
+    }
+
+    /// The last frame's fade table in cull view `view`'s region (game systems LOD-03): `[fade,
+    /// grow]` per visible-list slot, meaningful for the slots of fade-batch survivors only.
+    pub fn read_view_fades(&self, gpu: &Gpu, view: u32) -> Result<Vec<[f32; 2]>, RenderError> {
+        let bytes = u64::from(self.last.opaque_instances) * crate::layout::INSTANCE_FADE_BYTES;
+        // A frame without fade batches holds no fade region (`tables::fade_slots`).
+        if bytes == 0 || view >= self.last.views || !self.tables.instance_fade.holds(u64::from(view + 1) * bytes) {
+            return Ok(Vec::new());
+        }
+        let staging = stage_buffer(gpu, self.tables.instance_fade.get(), u64::from(view) * bytes, bytes)?;
         Ok(bytemuck::pod_collect_to_vec(&map_read_blocking(gpu, &staging, bytes)?))
     }
 

@@ -1,0 +1,35 @@
+[package]
+name = "genex-ui"
+description = "Gameplay UI for genex games: focus and keyed widgets, controller navigation, the widget kit, localized text and the settings menu."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+# Each work package adds the dependencies it uses from [workspace.dependencies] (all locked).
+# genex-core for the pad state navigation reads (UIS-4); egui for every widget (UIS-4, UIS-5);
+# png decodes the kit's PNG images once per path (UIS-5): the png crate alone, so a web build does
+# not link the image crate's other decoders.
+genex-core = { workspace = true }
+egui = { workspace = true }
+png = { workspace = true }
+# fluent-bundle and unic-langid for the text catalogs and locales (UIS-6).
+fluent-bundle = { workspace = true }
+unic-langid = { workspace = true }
+# serde (visitor only) and serde_json for genex-settings.json: a repeated key or deep nesting is
+# refused instead of read last-wins (UIS-7).
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+# The tests lay out text, so their contexts get the HUD's text fonts (egui is built without its
+# default fonts).
+epaint_default_fonts = { workspace = true }
+# image encodes the test PNGs and is the reference decode the kit's PNG decode is held to.
+image = { workspace = true }

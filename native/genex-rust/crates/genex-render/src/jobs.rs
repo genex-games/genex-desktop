@@ -317,7 +317,8 @@ impl Pool {
                 // Cancelled while queued.
                 return;
             }
-            let made = std::panic::catch_unwind(std::panic::AssertUnwindSafe(job)).map_err(|panic| JobError::Panicked(panic_message(panic.as_ref())));
+            // A panic the pool survives: the crash hook records it handled (CRASH-2).
+            let made = genex_crash::catching(std::panic::AssertUnwindSafe(job)).map_err(|panic| JobError::Panicked(panic_message(panic.as_ref())));
             filled.state.store(FINISHED, Ordering::Release);
             let _ = filled.outcome.set(made);
             drop(filled);

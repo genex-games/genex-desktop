@@ -32,6 +32,7 @@ import {
   rustTrustPolicy,
 } from "../../src/main/rust-build.ts";
 import { RustBuildRefusal } from "../../src/main/rust-build-diagnostics.ts";
+import { RUST_ENGINE_CRATES, RUST_ENGINE_KEPT_CRATES } from "../../src/main/rust-manifest.ts";
 import {
   createEngineTrust,
   ENGINE_TRUST_FILE,
@@ -502,10 +503,17 @@ describe("the Rust lane's unsafe and build-script policy follows the flag; its s
   }, async () => {
     const parent = await realpath(await tmpDir("rust-trust-eject-"));
     const dir = await rustGame(parent, "ejected", { buildScript: false, unsafe: false });
-    const crates = (await readdir(VENDOR_DIR)).filter((name) => /^genex(-[a-z-]+)?-\d/.test(name));
-    assert.ok(crates.length > 0);
-    for (const name of crates)
-      await cp(path.join(VENDOR_DIR, name), path.join(dir, "engine", name.replace(/-\d.*$/, "")), { recursive: true });
+    // Flipped in GC: an eject forks only the engine crates; the kept ones (the relay client
+    // genex-multiplayer, whose build script links libcolyseus, and the transport and phone shells)
+    // stay the store's, so they are not copied under engine/ here either.
+    const crateOf = (folder: string) => folder.replace(/-\d.*$/, "");
+    const vendored = (await readdir(VENDOR_DIR)).filter((name) => /^genex(-[a-z-]+)?-\d/.test(name));
+    const forked = vendored.filter((name) => RUST_ENGINE_CRATES.includes(crateOf(name)));
+    assert.ok(forked.length > 0);
+    const kept = vendored.filter((name) => RUST_ENGINE_KEPT_CRATES.includes(crateOf(name)));
+    assert.ok(kept.length > 0, "the release vendors the kept crates the fork resolves from the store");
+    for (const name of forked)
+      await cp(path.join(VENDOR_DIR, name), path.join(dir, "engine", crateOf(name)), { recursive: true });
     assert.deepEqual(await ownBuildScripts(dir), []);
   });
 

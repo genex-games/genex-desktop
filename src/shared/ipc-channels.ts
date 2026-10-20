@@ -215,6 +215,8 @@ export const STUDIO_INVOKE_CHANNELS = {
   "studio:native.input": "nativeInput",
   "studio:native.resize": "nativeResize",
   "studio:native.launchDevice": "nativeLaunchDevice",
+  "studio:native.profile": "nativeProfile",
+  "studio:game.crashes": "gameCrashes",
   "studio:seed.retake": "retakeSeedModule",
   "studio:crates.list": "cratesList",
   "studio:crates.decide": "cratesDecide",
@@ -445,6 +447,9 @@ export interface StudioInvokePayloads {
   "studio:native.resize": { project: string; size: Arg<"nativeResize", 1> };
   /** Main checks the game and the request before anything reaches a device. */
   "studio:native.launchDevice": { project: string; request: Arg<"nativeLaunchDevice", 1> };
+  /** Main checks the game and the request's shape (`parseFrameProfileRequest`) before any run is asked. */
+  "studio:native.profile": { project: string; request: Arg<"nativeProfile", 1> };
+  "studio:game.crashes": { project: string };
   "studio:seed.retake": { module: string };
   /** No `project`: every game's requests. */
   "studio:crates.list": { project?: string };

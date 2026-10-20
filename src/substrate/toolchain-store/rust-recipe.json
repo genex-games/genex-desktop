@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "about": "The Rust stack's pinned toolchain archives (manifest.ts reads them as RUST_MANIFEST). Every URL is a durable release URL on its component's release host (RELEASE_URL_PREFIXES); each sha256 is the one scripts/spike/rust-wgpu/pins.md records from the official source's published checksum, each size the downloaded archive's (darwin-arm64) or the release host's Content-Length (linux-x64, 2026-10-06). The crate checker (cargo-deny, cargo-vet and the RustSec snapshot `crate-policy.json` pins; `scripts/toolchains/crate-policy.ts refresh` moves the snapshot) installs on demand at the person's first crate approval and is in no build lock. The vendored crate set (rust-vendor) joins once the owner publishes a `genex` release cut by `scripts/toolchains/rust-release.ts cut` and `rust-release.ts pin` adds it.",
+  "about": "The Rust stack's pinned toolchain archives (manifest.ts reads them as RUST_MANIFEST). Every URL is a durable release URL on its component's release host (RELEASE_URL_PREFIXES); each sha256 is the one scripts/spike/rust-wgpu/pins.md records from the official source's published checksum, each size the downloaded archive's (darwin-arm64) or the release host's Content-Length (linux-x64, 2026-10-06). The crate checker (cargo-deny, cargo-vet and the RustSec snapshot `crate-policy.json` pins; `scripts/toolchains/crate-policy.ts refresh` moves the snapshot) installs on demand at the person's first crate approval and is in no build lock. The vendored crate set (rust-vendor) joins once the owner publishes a `genex` release cut by `scripts/toolchains/rust-release.ts cut` and `rust-release.ts pin` adds it. libcolyseus (colyseus, colyseus-source; MP-1a) is pinned by the GitHub release digest of each Colyseus native-sdk v0.18.10 asset, checked against the downloaded bytes on 2026-10-20; only an export of a `[net]` game installs it (`RUST_NET_COMPONENTS`). Android's libcolyseus is built from the source (colyseus-source, MP-1b, owner decision G12) with zig 0.15.2 (upstream's build.zig refuses any other zig; ziglang.org's download/index.json digest, checked against the downloaded bytes) and the zig_msgpack archive build.zig.zon names (commit 47c15d2, sha256 taken on download, its zig package hash checked with zig fetch), one entry per host.",
   "rust": {
     "version": "1.99.0",
     "date": "2026-10-01",
@@ -272,6 +272,130 @@
           "format": "tar.gz",
           "strip": 1,
           "into": ""
+        }
+      ]
+    },
+    {
+      "id": "colyseus",
+      "version": "0.18.10",
+      "host": "darwin-arm64",
+      "target": null,
+      "licence": "MIT (Colyseus native-sdk); bundles cJSON (MIT), mbedTLS (Apache-2.0), wslay (MIT), sds (BSD-2-Clause), uthash (BSD-1-Clause)",
+      "archives": [
+        {
+          "url": "https://github.com/colyseus/native-sdk/releases/download/v0.18.10/Colyseus.xcframework.zip",
+          "bytes": 27694569,
+          "sha256": "66eb6f4ebd662e81f20e63a3c42c515159f523246238055ff55fdf6d09b09982",
+          "format": "zip",
+          "strip": 0,
+          "into": "apple"
+        },
+        {
+          "url": "https://github.com/colyseus/native-sdk/releases/download/v0.18.10/colyseus-linux-x86_64.tar.gz",
+          "bytes": 4848504,
+          "sha256": "74170d62ab47d65fc5898226856e95f7a34016541f9b15408cc841848633dc91",
+          "format": "tar.gz",
+          "strip": 0,
+          "into": "linux"
+        },
+        {
+          "url": "https://github.com/colyseus/native-sdk/releases/download/v0.18.10/colyseus-windows-x86_64.zip",
+          "bytes": 3762440,
+          "sha256": "8073572579d7ff30caf6ef2bee6efcb1ffc302e34dad2489e7e21d0302923aab",
+          "format": "zip",
+          "strip": 0,
+          "into": "windows"
+        }
+      ]
+    },
+    {
+      "id": "colyseus",
+      "version": "0.18.10",
+      "host": "linux-x64",
+      "target": null,
+      "licence": "MIT (Colyseus native-sdk); bundles cJSON (MIT), mbedTLS (Apache-2.0), wslay (MIT), sds (BSD-2-Clause), uthash (BSD-1-Clause)",
+      "archives": [
+        {
+          "url": "https://github.com/colyseus/native-sdk/releases/download/v0.18.10/colyseus-linux-x86_64.tar.gz",
+          "bytes": 4848504,
+          "sha256": "74170d62ab47d65fc5898226856e95f7a34016541f9b15408cc841848633dc91",
+          "format": "tar.gz",
+          "strip": 0,
+          "into": "linux"
+        },
+        {
+          "url": "https://github.com/colyseus/native-sdk/releases/download/v0.18.10/colyseus-windows-x86_64.zip",
+          "bytes": 3762440,
+          "sha256": "8073572579d7ff30caf6ef2bee6efcb1ffc302e34dad2489e7e21d0302923aab",
+          "format": "zip",
+          "strip": 0,
+          "into": "windows"
+        }
+      ]
+    },
+    {
+      "id": "colyseus-source",
+      "version": "0.18.10",
+      "host": "darwin-arm64",
+      "target": null,
+      "licence": "MIT (Colyseus native-sdk); bundles cJSON (MIT), mbedTLS (Apache-2.0), wslay (MIT), sds (BSD-2-Clause), uthash (BSD-1-Clause); built with zig 0.15.2 (MIT) and zig_msgpack (MIT)",
+      "archives": [
+        {
+          "url": "https://github.com/colyseus/native-sdk/releases/download/v0.18.10/colyseus-source-v0.18.10.tar.gz",
+          "bytes": 39198211,
+          "sha256": "a90950b6871dcba9f32e31e71ecb3e914c851e015b62b7534fe31aac6d60a325",
+          "format": "tar.gz",
+          "strip": 0,
+          "into": "source"
+        },
+        {
+          "url": "https://ziglang.org/download/0.15.2/zig-aarch64-macos-0.15.2.tar.xz",
+          "bytes": 50635984,
+          "sha256": "3cc2bab367e185cdfb27501c4b30b1b0653c28d9f73df8dc91488e66ece5fa6b",
+          "format": "tar.xz",
+          "strip": 1,
+          "into": "zig"
+        },
+        {
+          "url": "https://github.com/zigcc/zig-msgpack/archive/47c15d217efebd17a585dd04125f9b6b6f659d5a.tar.gz",
+          "bytes": 77942,
+          "sha256": "30a0d7c9a3ab8002ccfcd18745a0b27aaac73eff3de881b157c30f65709e90a9",
+          "format": "tar.gz",
+          "strip": 1,
+          "into": "packages/zig_msgpack-0.0.14-evvueGolBQBs_m726tBf4ISJQqC926AM96EtxZy9LUaI"
+        }
+      ]
+    },
+    {
+      "id": "colyseus-source",
+      "version": "0.18.10",
+      "host": "linux-x64",
+      "target": null,
+      "licence": "MIT (Colyseus native-sdk); bundles cJSON (MIT), mbedTLS (Apache-2.0), wslay (MIT), sds (BSD-2-Clause), uthash (BSD-1-Clause); built with zig 0.15.2 (MIT) and zig_msgpack (MIT)",
+      "archives": [
+        {
+          "url": "https://github.com/colyseus/native-sdk/releases/download/v0.18.10/colyseus-source-v0.18.10.tar.gz",
+          "bytes": 39198211,
+          "sha256": "a90950b6871dcba9f32e31e71ecb3e914c851e015b62b7534fe31aac6d60a325",
+          "format": "tar.gz",
+          "strip": 0,
+          "into": "source"
+        },
+        {
+          "url": "https://ziglang.org/download/0.15.2/zig-x86_64-linux-0.15.2.tar.xz",
+          "bytes": 53733924,
+          "sha256": "02aa270f183da276e5b5920b1dac44a63f1a49e55050ebde3aecc9eb82f93239",
+          "format": "tar.xz",
+          "strip": 1,
+          "into": "zig"
+        },
+        {
+          "url": "https://github.com/zigcc/zig-msgpack/archive/47c15d217efebd17a585dd04125f9b6b6f659d5a.tar.gz",
+          "bytes": 77942,
+          "sha256": "30a0d7c9a3ab8002ccfcd18745a0b27aaac73eff3de881b157c30f65709e90a9",
+          "format": "tar.gz",
+          "strip": 1,
+          "into": "packages/zig_msgpack-0.0.14-evvueGolBQBs_m726tBf4ISJQqC926AM96EtxZy9LUaI"
         }
       ]
     }

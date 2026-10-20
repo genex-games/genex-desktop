@@ -22,9 +22,14 @@ override GX_SHADOW_DEPTH_UNIT: f32 = 0.0;
 // depth change per pixel.
 override GX_SHADOW_BIAS_CONSTANT: f32 = 2.0;
 override GX_SHADOW_BIAS_SLOPE: f32 = 2.0;
-// Whether the casters may fade between LODs, dithered as the forward pass dithers them (the forward
-// pass's `GX_LOD_FADE`); false (the default) casts every row whole.
+// Whether the casters may fade between LODs (game systems LOD-04): the faded entries
+// (`shadow.wgsl`'s `*_fade`) cast only the texels their level of a crossfade keeps, by the
+// forward pass's dither unturned, so each texel is cast by one level; false (the default) casts
+// every row whole.
 override GX_LOD_FADE: bool = false;
+// Whether the faded casters grow each copy about its origin by its far-field grow (game systems
+// LOD-18, the forward pass's `GX_LOD_GROW`), so a thinned copy's shadow grows with it.
+override GX_LOD_GROW: bool = false;
 
 struct ShadowCasterOut {
     @builtin(position) clip: vec4<f32>,

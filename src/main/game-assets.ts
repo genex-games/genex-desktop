@@ -35,6 +35,7 @@ import {
   type ProjectAssets,
 } from "../shared/game-assets.ts";
 import { type ImportIssue as ProjectImportIssue, ImportIssueCode } from "../shared/asset-db.ts";
+import type { CharacterFacts } from "../shared/character-facts.ts";
 import { GameStack } from "../shared/game-project.ts";
 import { ImportAction, planImport, runsImporter } from "../substrate/asset-import/import-plan.ts";
 import type { ImportIssue as ValidatorIssue } from "../substrate/asset-import/job.ts";
@@ -695,14 +696,23 @@ function validationIssue(issue: ValidatorIssue): ProjectImportIssue {
   return { code: ImportIssueCode.ValidationWarning, detail };
 }
 
-/** One file's import outcome as inventory facts: its refusal, or `ready` with the validator's warnings. */
+/**
+ * One file's import outcome as inventory facts: its refusal, or `ready` with the validator's
+ * warnings, then the validation report's issues, and a rigged GLB's character facts (C-23).
+ */
 export function importedFacts(outcome: {
   refusal?: ProjectAssetImport["refusal"];
   issues?: readonly ValidatorIssue[];
+  report?: readonly ProjectImportIssue[];
+  character?: CharacterFacts;
 }): ProjectAssetImport {
   if (outcome.refusal) return { status: AssetImportStatus.Refused, refusal: outcome.refusal };
-  const issues = (outcome.issues ?? []).map(validationIssue);
-  return { status: AssetImportStatus.Ready, ...(issues.length ? { issues } : {}) };
+  const issues = [...(outcome.issues ?? []).map(validationIssue), ...(outcome.report ?? [])];
+  return {
+    status: AssetImportStatus.Ready,
+    ...(issues.length ? { issues } : {}),
+    ...(outcome.character ? { character: outcome.character } : {}),
+  };
 }
 
 /** Retained originals remain discoverable when a worker moved or removed its delivered copy.

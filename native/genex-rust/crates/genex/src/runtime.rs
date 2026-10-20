@@ -56,6 +56,9 @@ const MISSING_MODELS_KEY: &str = "missingModels";
 const TEXTURES_KEY: &str = "textures";
 /// `state().__render`'s asset issues of the last frame (C-11).
 const ASSET_ISSUES_KEY: &str = "assetIssues";
+/// `state().volatile`'s streaming counters, while streaming is registered (STR-9): the runtime
+/// key's name, so no volatile probe can take it.
+const STREAM_VOLATILE_KEY: &str = "__stream";
 /// The game's name and bundle id as the build lane names them (`GENEX_GAME_NAME`,
 /// `GENEX_BUNDLE_ID` at compile time, as the C++ lane's `-D` defines); an exported app saves
 /// under them unless the game set its own `save_name`.
@@ -125,8 +128,9 @@ pub enum InstallErrorCode {
     InvalidWorldSize,
     /// A second `game.streaming`.
     DuplicateStreaming,
-    /// A streaming registration outside its caps (a cell size outside
-    /// `STREAM_CELL_SIZE_MIN..=STREAM_CELL_SIZE_MAX`).
+    /// A streaming registration outside its caps: a cell size outside
+    /// `STREAM_CELL_SIZE_MIN..=STREAM_CELL_SIZE_MAX`, radii or an anchor count past theirs, or a
+    /// sim set past `STREAM_SIM_BYTES_MAX` at the cell caps.
     StreamingInvalid,
 }
 
@@ -260,6 +264,11 @@ struct Core<W> {
     tally: Tally,
     /// The render settings (display state: nothing the checksum reads).
     render: crate::render::RenderHandle,
+    /// The G6 areas' runtime state (UIS-0): every hook a no-op until its area lands.
+    g6: crate::g6::G6,
+    /// The streaming engine (STR-9): builds in flight and the hold counters; idle without
+    /// `game.streaming`.
+    stream: crate::stream_tick::StreamTick,
 }
 
 /// A game behind its registrations: what platform shells and the verb transport drive.
@@ -331,6 +340,8 @@ impl<W: Default + 'static> Runtime<W> {
             clock: FrameClock::default(),
             tally: Tally::default(),
             render: Rc::new(RefCell::new(RenderControl::new(game.render.clone(), (game.world_size[0], game.world_size[1])))),
+            g6: crate::g6::G6::default(),
+            stream: crate::stream_tick::StreamTick::new(game.streaming.first(), &game.cell_contents),
         };
         let mut runtime = Runtime { game, core };
         runtime.seed(DEFAULT_SEED);
@@ -349,8 +360,10 @@ impl<W: Default + 'static> Runtime<W> {
         core.merger = Merger::default();
         core.pointer_lock = false;
         core.hud.reset();
+        core.g6.reset(&self.game.g6);
         core.gfx.assets().clear();
         core.gfx.clear_extensions();
+        core.stream.reset(seed);
         let mut rng = Pcg32::seeded(u64::from(seed));
         core.gfx.assets().set_at_reset(true);
         for hook in &self.game.resets {
@@ -358,6 +371,22 @@ impl<W: Default + 'static> Runtime<W> {
         }
         core.gfx.assets().set_at_reset(false);
         core.rng.set(rng);
+        // Anchors a reset placed take effect at the first tick's commit: start its builds now.
+        core.stream.prefetch(&core.sim);
+    }
+
+    /// Run streamed cell builds on `pool` instead of the process pool (tests and tools comparing
+    /// thread counts; `Pool::inline()` is the web's). Builds in flight are dropped.
+    #[doc(hidden)]
+    pub fn use_stream_pool(&mut self, pool: std::sync::Arc<genex_render::jobs::Pool>) {
+        self.core.stream.use_pool(pool);
+        self.core.stream.prefetch(&self.core.sim);
+    }
+
+    /// Measure streaming holds with `clock` (milliseconds) instead of the process clock (tests).
+    #[doc(hidden)]
+    pub fn use_stream_clock(&mut self, clock: Box<dyn FnMut() -> f64>) {
+        self.core.stream.use_clock(clock);
     }
 }
 
@@ -381,7 +410,14 @@ impl<W> Runtime<W> {
         self.core.running
     }
 
-    /// Run [`step_ticks`]`(ms)` ticks, running or not.
+    /// Whether a streaming commit has been held past `STREAM_HOLD_OVERLAY_MS`: what a shell's
+    /// loading look over the last frame would read (no shell paints one yet). Display only.
+    pub fn stream_loading(&self) -> bool {
+        self.core.stream.loading()
+    }
+
+    /// Run [`step_ticks`]`(ms)` ticks, running or not. A streaming commit held past
+    /// `STREAM_HOLD_MAX_MS` in total ends the step early (`ticks` says how many ran).
     pub fn step(&mut self, ms: f64) -> StepResult {
         step(&self.game, &mut self.core, ms)
     }
@@ -393,11 +429,11 @@ impl<W> Runtime<W> {
         if !self.core.running {
             return 0;
         }
-        let ticks = self.core.clock.advance(frame_ms);
-        for _ in 0..ticks {
-            tick(&self.game, &mut self.core);
-        }
-        ticks
+        let due = self.core.clock.advance(frame_ms);
+        // A held commit waits a slice of the frame; the ticks it could not run are dropped, so a
+        // hold slows Live down instead of bursting after it.
+        let mut hold = crate::stream_tick::HoldBudget::live();
+        (0..due).take_while(|_| tick(&self.game, &mut self.core, &mut hold)).count() as u32
     }
 
     /// Inject input for the next tick; answers the keys now held.
@@ -546,8 +582,13 @@ impl<W> Runtime<W> {
         }
         state.set(session::VOLATILE_KEY, volatile);
         if !self.game.streaming.is_empty() {
-            state.set(crate::stream::RUNTIME_KEY, crate::stream::runtime_value());
+            let active = core.sim.stream.active().collect();
+            state.set(crate::stream::RUNTIME_KEY, crate::stream::runtime_value(&active));
+            let mut volatile = state[session::VOLATILE_KEY].clone();
+            volatile.set(STREAM_VOLATILE_KEY, core.stream.volatile_value());
+            state.set(session::VOLATILE_KEY, volatile);
         }
+        core.g6.runtime_keys(&self.game.g6, &mut state);
         state
     }
 
@@ -766,7 +807,14 @@ fn saves_of(save_name: Option<&str>) -> Saves {
 }
 
 fn fresh_sim<W>(world: W, game: &Game<W>) -> Sim<W> {
-    Sim { world, physics: fresh_physics(), facets: FacetState::fresh(&game.facets), nav: crate::nav::fresh(game.navigation.as_ref()) }
+    Sim {
+        world,
+        physics: fresh_physics(),
+        facets: FacetState::fresh(&game.facets),
+        nav: crate::nav::fresh(game.navigation.as_ref()),
+        stream: crate::stream_tick::StreamState::fresh(game.streaming.first()),
+        net: crate::net::SimNet,
+    }
 }
 
 /// An empty physics world stepping at the fixed tick.
@@ -789,22 +837,35 @@ fn simulated_ms(tick: u64) -> f64 {
 }
 
 fn step<W>(game: &Game<W>, core: &mut Core<W>, ms: f64) -> StepResult {
-    let ticks = step_ticks(ms);
-    for _ in 0..ticks {
-        tick(game, core);
-    }
+    let mut hold = crate::stream_tick::HoldBudget::step();
+    let ticks = (0..step_ticks(ms)).take_while(|_| tick(game, core, &mut hold)).count() as u32;
     StepResult { ticks, frame: core.tick, simulated_ms: simulated_ms(core.tick) }
 }
 
-/// One fixed tick: update hooks, UI hooks, then one physics step.
-fn tick<W>(game: &Game<W>, core: &mut Core<W>) {
+/// One fixed tick: the streaming commit slot (STR-9), then update hooks, UI hooks and one physics
+/// step. The G6 areas' hooks (UIS-0) run in INPUT's order: merge, HUD focus gating, touch
+/// controls, device tracker, evaluate, journal, then the net cut, the update and UI hooks, physics
+/// and the net flush, inside `g6_tick_begin` and `g6_tick_end`. False, with nothing changed, when
+/// the commit is held past `hold` waiting on a cell build.
+fn tick<W>(game: &Game<W>, core: &mut Core<W>, hold: &mut crate::stream_tick::HoldBudget) -> bool {
+    // First, so a held commit leaves the tick untouched: no input consumed, no hook run.
+    if core.stream.commit(&mut core.sim, &game.stream_commits, core.gfx.assets(), hold).is_err() {
+        return false;
+    }
+    core.g6.tick_begin(&game.g6, core.tick);
     let input = core.merger.next_tick(game.world_size);
+    core.g6.input.merge(&game.g6.input, &input);
     core.pointer_lock = input.pointer_lock;
     // A HUD widget with the keyboard's focus (Tab to a settings switch, a tapped text field) takes
     // the keys from the update hooks until Escape or a click elsewhere; the HUD itself still gets
     // them below. Mouse buttons (and so touch 0) stay the game's.
     let taken = genex_hud::keys_taken(core.hud.context()).then(|| input.keys.mouse_buttons_only());
     let text = if taken.is_some() { "" } else { input.text.as_str() };
+    core.g6.touch.step(&game.g6.touch, &input);
+    core.g6.input.track_devices(&game.g6.input, &input);
+    core.g6.input.evaluate(&game.g6.input);
+    core.g6.journal.record(&core.g6.input);
+    core.g6.net.cut(&game.g6.net, &mut core.sim.net);
     let ctx = Ctx {
         keys: taken.as_ref().unwrap_or(&input.keys),
         touches: &input.touches,
@@ -819,6 +880,8 @@ fn tick<W>(game: &Game<W>, core: &mut Core<W>) {
         tick: core.tick,
         world_size: game.world_size,
         saves: core.gfx.saves(),
+        actions: core.g6.input.ctx(),
+        audio: core.g6.audio.ctx(),
     };
     for hook in &game.updates {
         hook(&mut core.sim, &ctx);
@@ -837,7 +900,11 @@ fn tick<W>(game: &Game<W>, core: &mut Core<W>) {
     }
     #[cfg(feature = "physics")]
     core.sim.physics.step();
+    core.g6.net.flush(&game.g6.net, &mut core.sim.net);
+    core.stream.prefetch(&core.sim);
+    core.g6.tick_end(&game.g6, core.tick);
     core.tick += 1;
+    true
 }
 
 /// What the HUD reads from one tick's merged input: the pointer as a fraction of the world,
@@ -851,6 +918,7 @@ fn hud_input(input: &TickInput) -> HudInput {
         wheel: [input.wheel.x, input.wheel.y],
         text: input.text.clone(),
         pressed_keys: input.keys.pressed.clone(),
+        ..HudInput::default()
     }
 }
 
@@ -863,7 +931,7 @@ fn validate<W>(game: &Game<W>) -> Result<(), InstallError> {
     check_names(cameras, InstallErrorCode::DuplicateCameraName, &[DEFAULT_CAMERA])?;
     check_names(game.eyes.iter().map(|c| c.name.as_str()), InstallErrorCode::DuplicateEye, &[])?;
     check_names(game.demos.iter().map(|c| c.name.as_str()), InstallErrorCode::DuplicateDemo, &[])?;
-    check_streaming(&game.streaming)?;
+    check_streaming(&game.streaming, &game.cell_contents, game.navigation.as_ref())?;
     let mut facets = Set::default();
     for facet in &game.facets {
         if !facets.insert(facet.type_id) {
@@ -881,20 +949,23 @@ fn check_world_size(size: [u32; 2]) -> Result<(), InstallError> {
     Err(InstallError::new(InstallErrorCode::InvalidWorldSize, detail))
 }
 
-fn check_streaming(registrations: &[crate::stream::Streaming]) -> Result<(), InstallError> {
+fn check_streaming(
+    registrations: &[crate::stream::Streaming],
+    contents: &[crate::stream::CellContent],
+    navigation: Option<&crate::nav::NavConfig>,
+) -> Result<(), InstallError> {
     if registrations.len() > 1 {
         return Err(InstallError::new(InstallErrorCode::DuplicateStreaming, "game.streaming is registered once"));
     }
-    match registrations.iter().find(|streaming| !streaming.valid()) {
-        Some(streaming) => {
-            let detail = format!(
-                "cell size {} ({}..={})",
-                streaming.cell_size(),
-                crate::stream::STREAM_CELL_SIZE_MIN,
-                crate::stream::STREAM_CELL_SIZE_MAX
-            );
-            Err(InstallError::new(InstallErrorCode::StreamingInvalid, detail))
-        }
+    // A stream cell holds whole nav tiles, so a cell's nav is its own tiles (NAV-11).
+    let split_tiles = registrations.iter().zip(navigation).find(|(streaming, nav)| !nav.divides_stream_cell(streaming.cell_size()));
+    if let Some((streaming, nav)) = split_tiles {
+        let detail = format!("the stream cell size {} is not a whole number of {} m nav tiles", streaming.cell_size(), nav.tile());
+        return Err(InstallError::new(InstallErrorCode::StreamingInvalid, detail));
+    }
+    let thing_bytes = contents.iter().map(|content| content.thing_bytes).max().unwrap_or(0);
+    match registrations.iter().find_map(|streaming| streaming.refusal(thing_bytes)) {
+        Some(detail) => Err(InstallError::new(InstallErrorCode::StreamingInvalid, detail)),
         None => Ok(()),
     }
 }

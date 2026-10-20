@@ -251,6 +251,7 @@ import { type AssetCache, cachedImporter, openAssetCache } from "./asset-cache.t
 import { IMPORTER_TOOLS_RESOURCES_FOLDER } from "../substrate/asset-import/decoders.ts";
 import { admittedBuildLock, type RustBuilds, rustBuildSandboxes } from "./rust-build.ts";
 import { webExportWarnings } from "./rust-build-web.ts";
+import { packageExportWarnings } from "./rust-package-assets.ts";
 import { type MacNotice, writeNoticesFolder } from "../substrate/native-export.ts";
 import { MobileBuild, mobileTargetSettings, RUST_MOBILE_BUILDERS } from "./rust-build-mobile.ts";
 import { exportAndroidGame } from "./core/android-export-run.ts";
@@ -2573,7 +2574,8 @@ export class StudioCore {
       secretValues: this.knownSecretValues(),
     });
     if (notices) await writeNoticesFolder(path.join(targetDir, RUST_EXPORT_NOTICES), game.title ?? game.name, notices);
-    const warnings = webExportWarnings(built.rust?.receipt?.web);
+    const rust = built.rust?.receipt;
+    const warnings = [...webExportWarnings(rust?.web), ...packageExportWarnings(rust?.package)];
     return warnings.length ? { ...exported, warnings } : exported;
   }
 

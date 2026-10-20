@@ -54,6 +54,8 @@ import {
   writeNew,
 } from "./artifact.ts";
 import { appResourcesDir, BUNDLE_LOCK, type BundleLock, bundledFolder, bundledTargetOf, isBundled } from "./bundled.ts";
+import { arrangeColyseusLibs, colyseusProbeFiles } from "./colyseus.ts";
+import { colyseusSourceProbeFiles } from "./colyseus-android.ts";
 import { cachedDownload } from "./download-cache.ts";
 import {
   COMPONENT_LAYOUT,
@@ -455,7 +457,16 @@ const PROBES = {
     runProbe(exe(host, "cargo-vet"), ["--version"], `cargo-vet ${entry.version}`),
   ],
   [ToolchainId.RustsecAdvisoryDb]: () => [{ files: ["crates", "support.toml"] }],
+  // libcolyseus, laid out per triple after extraction ({@link STAGED_LAYOUT}); Android's build
+  // inputs in their folders (`colyseus-android.ts`): the source, the host's zig, the zig package.
+  [ToolchainId.Colyseus]: (entry) => [{ files: colyseusProbeFiles(entry) }],
+  [ToolchainId.ColyseusSource]: () => [{ files: colyseusSourceProbeFiles() }],
 } as const satisfies Record<ToolchainId, (entry: ToolchainEntry, host: ToolchainHost) => ProbeSpec[]>;
+
+/** Components whose unpacked archives are rearranged in staging before the probe: libcolyseus's per-triple folders. */
+const STAGED_LAYOUT: Readonly<Partial<Record<ToolchainId, (staging: string) => Promise<unknown>>>> = {
+  [ToolchainId.Colyseus]: arrangeColyseusLibs,
+};
 
 /** Every file a probe names is in the staging folder. */
 async function checkFiles(entry: ToolchainEntry, staging: string, files: readonly string[]): Promise<void> {
@@ -590,6 +601,7 @@ async function installOne(
         signal: deps.signal,
       });
     await rm(downloads, { recursive: true, force: true });
+    await STAGED_LAYOUT[entry.id]?.(staging);
     progress.phase(ToolchainInstallPhase.Probing, entry.id);
     if (entry.local) {
       const manifest = await readPinnedManifest(staging, entry.local);

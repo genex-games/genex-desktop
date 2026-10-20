@@ -188,13 +188,25 @@ third-party notices, and load desktop X11/Wayland libraries from the player's sy
 (@raysan5) and contributors). Its header marks what Genex changed and keeps raylib's licence
 notice; the toolchain store compiles it into the headless raylib library on the user's machine.
 
+## SDL's controller table and face labels
+
+`native/genex-rust/crates/genex-core/src/pad_family.rs` holds an altered port of SDL's
+`src/joystick/controller_list.h` (zlib, Copyright (C) Valve Corporation; SDL commit
+b9d64c45a965edc4b003c160ab446426363e192d): the USB vendor and product ids of known gamepads, each
+folded into the face-label family Genex shows. `native/genex-rust/crates/genex-input/src/glyph.rs`
+holds an altered port of SDL3's face-button labels (`SDL_GetGamepadButtonLabelForFaceStyle` and
+`SDL_GetGamepadFaceStyleForGamepadType` in `src/joystick/SDL_gamepad.c`, zlib, Copyright (C)
+1997-2026 Sam Lantinga; same SDL commit). The module notes of both files mark what Genex changed and
+keep the zlib notice; every Rust game compiles them in.
+
 ## Rust runtime crates
 
 The `genex` workspace in `native/genex-rust` (Genex's own code, MIT) builds offline from a vendored
 crate set: `scripts/spike/rust-wgpu/vendor-allowlist.toml` names the direct dependencies,
-`setup-toolchain.sh` vendors their resolved closure (475 crates) into the project-local toolchain
-folder, and `native/genex-rust/Cargo.lock` pins what the workspace uses. No crate source is copied
-into this repository or shipped inside Genex.app; each vendored crate keeps its licence files in
+`setup-toolchain.sh` vendors their resolved closure (502 crates) into the project-local toolchain
+folder, and `native/genex-rust/Cargo.lock` pins what the workspace uses. Apart from
+genex-multiplayer (below), no crate source is copied into this repository or shipped inside
+Genex.app; each vendored crate keeps its licence files in
 its own folder. A Rust game or a `genex` release links only the subset its targets and features
 resolve, together with the Rust standard library (MIT OR Apache-2.0). Where a crate offers a
 choice of licences, Genex uses it under the first one listed.
@@ -209,14 +221,16 @@ Notable terms in the closure:
   their source is the published crate on crates.io.
 - `bevy_mikktspace` 1.0.0 (the MikkTSpace tangent algorithm, Morten S. Mikkelsen's original under
   the zlib licence) is under Zlib AND (MIT OR Apache-2.0); the zlib terms are in its source.
+- tinystr 0.8.4, zerofrom 0.1.8 and zerovec 0.11.8 (ICU4X, through unic-langid for gameplay UI
+  text) are under the Unicode License v3 (Unicode-3.0), a permissive licence.
 - `self_cell` 1.3.0 is offered under Apache-2.0 OR GPL-2.0-only and `r-efi` under MIT OR
   Apache-2.0 OR LGPL-2.1-or-later; Genex uses Apache-2.0 and MIT respectively.
 
 | Licence (as the crate declares it) | Crates | Crates and versions |
 | --- | --- | --- |
-| MIT OR Apache-2.0 | 249 | accesskit 0.24.1, ahash 0.8.12, allocator-api2 0.2.21, android-activity 0.6.1, android_log-sys 0.3.2, android_logger 0.15.1, android_system_properties 0.1.6, arboard 3.6.1, arrayvec 0.7.8, as-raw-xcb-connection 1.0.1, ash 0.38.0+1.3.281, async-trait 0.1.92, atomic-arena 0.1.2, atomic-polyfill 1.0.3, base64 0.13.1, bitflags 1.3.2, bitflags 2.13.2, bumpalo 3.20.3, cast 0.3.0, cc 1.6.0, cfg-if 1.0.5, cobs 0.3.0, core-foundation 0.9.4, core-foundation-sys 0.8.7, core-graphics 0.23.2, core-graphics-types 0.1.3, coreaudio-rs 0.14.2, crc32fast 1.5.2, critical-section 1.2.0, crossbeam-utils 0.8.23, dasp_sample 0.11.0, document-features 0.2.12, downcast-rs 1.2.1, downcast-rs 2.0.2, ecolor 0.36.2, egui 0.36.2, egui-wgpu 0.36.2, egui-winit 0.36.2, either 1.18.0, emath 0.36.2, embedded-io 0.4.0, embedded-io 0.6.1, ena 0.14.4, env_filter 0.1.4, epaint 0.36.2, errno 0.3.14, euclid 0.22.14, fdeflate 0.3.7, find-msvc-tools 0.1.14, flate2 1.1.10, font-types 0.12.6, foreign-types 0.5.0, foreign-types-macros 0.2.4, foreign-types-shared 0.3.1, futures-channel 0.3.34, futures-core 0.3.34, futures-task 0.3.34, futures-util 0.3.34, getrandom 0.3.4, getrandom 0.4.3, gif 0.14.2, glam 0.30.10, glam 0.31.1, glam 0.32.1, glam 0.33.12, glamx 0.3.1, glob 0.3.4, gltf 1.4.1, gltf-derive 1.4.1, gltf-json 1.4.1, gpu-allocator 0.28.0, guillotiere 0.7.0, half 2.7.1, hash32 0.2.1, hash32 0.3.1, hashbrown 0.16.1, hashbrown 0.17.1, heapless 0.7.17, heapless 0.8.0, hermit-abi 0.5.3, image 0.25.10, image-webp 0.2.4, itertools 0.15.0, itoa 1.0.18, jni 0.21.1, jni 0.22.4, jni-macros 0.22.4, jni-sys 0.3.1, jni-sys 0.4.1, jni-sys-macros 0.4.1, jobserver 0.1.35, js-sys 0.3.106, kira 0.12.5, lazy_static 1.5.1, libc 0.2.190, litrs 1.0.0, lock_api 0.4.14, log 0.4.34, matrixmultiply 0.3.11, memmap2 0.9.11, naga 30.0.1, naga-types 30.0.1, ndk 0.9.0, ndk-context 0.1.1, ndk-sys 0.6.0+11769913, nonmax 0.5.5, num-bigint 0.4.8, num-complex 0.4.6, num-derive 0.4.2, num-derive 0.5.1, num-integer 0.1.47, num-rational 0.4.2, num-traits 0.2.19, once_cell 1.21.4, parking_lot 0.12.5, parking_lot_core 0.9.12, paste 1.0.15, pastey 0.2.3, percent-encoding 2.3.2, pkg-config 0.3.34, plain 0.2.3, png 0.18.1, polycool 0.4.0, postcard 1.1.3, presser 0.3.1, proc-macro-crate 3.5.0, proc-macro2 1.0.107, profiling 1.0.18, profiling-procmacros 1.0.18, qoi 0.4.1, quick-error 2.0.1, quote 1.0.47, rand 0.8.8, rand_core 0.6.4, rand_xorshift 0.3.0, range-alloc 0.1.5, raw-window-metal 1.1.0, rawpointer 0.2.1, read-fonts 0.41.0, regex 1.13.1, regex-automata 0.4.18, regex-lite 0.1.9, regex-syntax 0.8.11, renderdoc-sys 1.1.0, robust 1.2.0, rstar 0.13.0, rtrb 0.4.0, rustc_version 0.4.1, rustversion 1.0.23, scoped-tls 1.0.1, scopeguard 1.2.0, semver 1.0.28, send_wrapper 0.6.0, serde 1.0.229, serde_arrays 0.2.0, serde_core 1.0.229, serde_derive 1.0.229, serde_json 1.0.151, serde_spanned 1.1.1, shlex 2.0.1, simdutf8 0.1.5, skrifa 0.44.0, smallvec 1.16.2, smol_str 0.2.2, spade 2.15.1, stable_deref_trait 1.2.1, static_assertions 1.1.0, syn 2.0.119, syn 3.0.6, target-tuple 1.0.2, thiserror 1.0.69, thiserror 2.0.21, thiserror-impl 1.0.69, thiserror-impl 2.0.21, toml 1.1.6+spec-1.1.0, toml_datetime 1.1.1+spec-1.1.0, toml_edit 0.25.15+spec-1.1.0, toml_parser 1.1.3+spec-1.1.0, toml_writer 1.1.2+spec-1.1.0, trybuild 1.0.121, ttf-parser 0.25.1, type-map 0.5.1, typenum 1.20.1, unicode-segmentation 1.13.3, unicode-width 0.2.2, vec_map 0.8.2, version_check 0.9.5, wasm-bindgen 0.2.129, wasm-bindgen-futures 0.4.79, wasm-bindgen-macro 0.2.129, wasm-bindgen-macro-support 0.2.129, wasm-bindgen-shared 0.2.129, wasm-bindgen-test 0.3.79, wasm-bindgen-test-macro 0.3.79, wasm-bindgen-test-shared 0.2.129, web-sys 0.3.106, web-time 1.1.0, weezl 0.1.12, wgpu 30.0.1, wgpu-core 30.0.1, wgpu-core-deps-apple 30.0.1, wgpu-core-deps-windows-linux-android 30.0.1, wgpu-hal 30.0.1, wgpu-naga-bridge 30.0.1, wgpu-types 30.0.1, windows 0.62.2, windows-collections 0.3.2, windows-core 0.62.2, windows-future 0.3.2, windows-implement 0.60.2, windows-interface 0.59.3, windows-link 0.2.1, windows-numerics 0.3.1, windows-result 0.4.1, windows-strings 0.5.1, windows-sys 0.45.0, windows-sys 0.52.0, windows-sys 0.59.0, windows-sys 0.60.2, windows-sys 0.61.2, windows-targets 0.42.2, windows-targets 0.52.6, windows-targets 0.53.5, windows-threading 0.2.1, windows_aarch64_gnullvm 0.42.2, windows_aarch64_gnullvm 0.52.6, windows_aarch64_gnullvm 0.53.1, windows_aarch64_msvc 0.42.2, windows_aarch64_msvc 0.52.6, windows_aarch64_msvc 0.53.1, windows_i686_gnu 0.42.2, windows_i686_gnu 0.52.6, windows_i686_gnu 0.53.1, windows_i686_gnullvm 0.52.6, windows_i686_gnullvm 0.53.1, windows_i686_msvc 0.42.2, windows_i686_msvc 0.52.6, windows_i686_msvc 0.53.1, windows_x86_64_gnu 0.42.2, windows_x86_64_gnu 0.52.6, windows_x86_64_gnu 0.53.1, windows_x86_64_gnullvm 0.42.2, windows_x86_64_gnullvm 0.52.6, windows_x86_64_gnullvm 0.53.1, windows_x86_64_msvc 0.42.2, windows_x86_64_msvc 0.52.6, windows_x86_64_msvc 0.53.1, x11rb 0.13.2, x11rb-protocol 0.13.2 |
-| MIT | 85 | alsa-sys 0.4.0, android-properties 0.2.2, block2 0.5.1, block2 0.6.2, bytes 1.12.1, calloop 0.13.0, calloop 0.14.5, calloop-wayland-source 0.3.0, calloop-wayland-source 0.4.1, cfg_aliases 0.2.2, color_quant 1.1.0, combine 4.6.8, crunchy 0.2.4, dispatch 0.2.0, dlib 0.5.3, extended 0.1.0, fax 0.2.7, harfrust 0.12.0, inflections 1.1.1, libm 0.2.16, libredox 0.1.25, libudev-sys 0.1.4, mint 0.5.9, nix 0.31.3, nu-ansi-term 0.50.3, objc-sys 0.3.5, objc2 0.5.3, objc2 0.6.5, objc2-app-kit 0.2.2, objc2-cloud-kit 0.2.2, objc2-contacts 0.2.2, objc2-core-data 0.2.2, objc2-core-image 0.2.2, objc2-core-location 0.2.2, objc2-encode 4.1.0, objc2-foundation 0.2.2, objc2-foundation 0.3.2, objc2-link-presentation 0.2.2, objc2-metal 0.2.2, objc2-quartz-core 0.2.2, objc2-symbols 0.2.2, objc2-ui-kit 0.2.2, objc2-uniform-type-identifiers 0.2.2, objc2-user-notifications 0.2.2, offset-allocator 0.2.0, oorandom 11.1.5, orbclient 0.3.55, ordered-float 5.5.0, pulp 0.22.3, pulp-wasm-simd-flag 0.1.1, quick-xml 0.41.0, raw-cpuid 11.6.0, reborrow 0.5.5, redox_syscall 0.4.1, redox_syscall 0.5.18, redox_syscall 0.9.4, sctk-adwaita 0.10.1, simd-adler32 0.3.10, slab 0.4.12, smithay-client-toolkit 0.19.2, smithay-client-toolkit 0.20.0, smithay-clipboard 0.7.3, spin 0.9.9, strict-num 0.1.1, tiff 0.11.3, tokio 1.53.2, tracing 0.1.44, tracing-core 0.1.36, urlencoding 2.1.3, wayland-backend 0.3.17, wayland-client 0.31.15, wayland-csd-frame 0.3.0, wayland-cursor 0.31.14, wayland-protocols 0.32.13, wayland-protocols-experimental 20250721.0.1, wayland-protocols-misc 0.3.12, wayland-protocols-plasma 0.3.12, wayland-protocols-wlr 0.3.12, wayland-scanner 0.31.11, wayland-sys 0.31.11, winnow 1.0.4, x11-dl 2.21.0, xcursor 0.3.11, xkbcommon-dl 0.4.2, zmij 1.0.23 |
-| Apache-2.0 OR MIT | 37 | alsa 0.11.0, atomic-waker 1.1.2, autocfg 1.5.1, bit-set 0.10.0, bit-vec 0.9.1, bit_field 0.10.3, cesu8 1.1.0, color 0.3.3, concurrent-queue 2.5.0, console_error_panic_hook 0.1.7, equivalent 1.0.2, fastrand 2.5.0, fearless_simd 0.4.1, fnv 1.0.7, gilrs 0.11.2, gilrs-core 0.6.8, glifo 0.2.0, indexmap 2.14.2, kurbo 0.13.1, linebender_resource_handle 0.1.1, minicov 0.3.8, nohash-hasher 0.2.0, noise 0.9.0, peniko 0.6.1, pin-project 1.1.13, pin-project-internal 1.1.13, pin-project-lite 0.2.17, polling 3.11.0, pollster 0.4.0, portable-atomic 1.15.0, portable-atomic-util 0.2.8, rustc-hash 1.1.0, rustc-hash 2.1.3, simd_cesu8 1.2.0, uuid 1.27.0, vello_common 0.1.0, vello_cpu 0.1.0 |
+| MIT OR Apache-2.0 | 263 | accesskit 0.24.1, ahash 0.8.12, allocator-api2 0.2.21, android-activity 0.6.1, android_log-sys 0.3.2, android_logger 0.15.1, android_system_properties 0.1.6, anyhow 1.0.104, arboard 3.6.1, arrayvec 0.7.8, as-raw-xcb-connection 1.0.1, ash 0.38.0+1.3.281, async-trait 0.1.92, atomic-arena 0.1.2, atomic-polyfill 1.0.3, backtrace 0.3.76, base64 0.13.1, bitflags 1.3.2, bitflags 2.13.2, block-buffer 0.10.4, bumpalo 3.20.3, cast 0.3.0, cc 1.6.0, cfg-if 1.0.5, cobs 0.3.0, core-foundation 0.9.4, core-foundation-sys 0.8.7, core-graphics 0.23.2, core-graphics-types 0.1.3, coreaudio-rs 0.14.2, cpufeatures 0.2.17, crc32fast 1.5.2, critical-section 1.2.0, crossbeam-utils 0.8.23, crypto-common 0.1.7, dasp_sample 0.11.0, digest 0.10.7, displaydoc 0.2.7, document-features 0.2.12, downcast-rs 1.2.1, downcast-rs 2.0.2, ecolor 0.36.2, egui 0.36.2, egui-wgpu 0.36.2, egui-winit 0.36.2, either 1.18.0, emath 0.36.2, embedded-io 0.4.0, embedded-io 0.6.1, ena 0.14.4, env_filter 0.1.4, epaint 0.36.2, errno 0.3.14, euclid 0.22.14, fdeflate 0.3.7, find-msvc-tools 0.1.14, flate2 1.1.10, font-types 0.12.6, foreign-types 0.5.0, foreign-types-macros 0.2.4, foreign-types-shared 0.3.1, futures-channel 0.3.34, futures-core 0.3.34, futures-task 0.3.34, futures-util 0.3.34, getrandom 0.3.4, getrandom 0.4.3, gif 0.14.2, gimli 0.32.3, glam 0.30.10, glam 0.31.1, glam 0.32.1, glam 0.33.12, glamx 0.3.1, glob 0.3.4, gltf 1.4.1, gltf-derive 1.4.1, gltf-json 1.4.1, gpu-allocator 0.28.0, guillotiere 0.7.0, half 2.7.1, hash32 0.2.1, hash32 0.3.1, hashbrown 0.16.1, hashbrown 0.17.1, heapless 0.7.17, heapless 0.8.0, hermit-abi 0.5.3, image 0.25.10, image-webp 0.2.4, itertools 0.14.0, itertools 0.15.0, itoa 1.0.18, jni 0.21.1, jni 0.22.4, jni-macros 0.22.4, jni-sys 0.3.1, jni-sys 0.4.1, jni-sys-macros 0.4.1, jobserver 0.1.35, js-sys 0.3.106, kira 0.12.5, lazy_static 1.5.1, libc 0.2.190, litrs 1.0.0, lock_api 0.4.14, log 0.4.34, matrixmultiply 0.3.11, memmap2 0.9.11, naga 30.0.1, naga-types 30.0.1, ndk 0.9.0, ndk-context 0.1.1, ndk-sys 0.6.0+11769913, nonmax 0.5.5, num-bigint 0.4.8, num-complex 0.4.6, num-derive 0.4.2, num-derive 0.5.1, num-integer 0.1.47, num-rational 0.4.2, num-traits 0.2.19, once_cell 1.21.4, parking_lot 0.12.5, parking_lot_core 0.9.12, paste 1.0.15, pastey 0.2.3, percent-encoding 2.3.2, pkg-config 0.3.34, plain 0.2.3, png 0.18.1, polycool 0.4.0, postcard 1.1.3, presser 0.3.1, proc-macro-crate 3.5.0, proc-macro2 1.0.107, profiling 1.0.18, profiling-procmacros 1.0.18, puffin 0.20.0, qoi 0.4.1, quick-error 2.0.1, quote 1.0.47, rand 0.8.8, rand_core 0.6.4, rand_xorshift 0.3.0, range-alloc 0.1.5, raw-window-metal 1.1.0, rawpointer 0.2.1, read-fonts 0.41.0, regex 1.13.1, regex-automata 0.4.18, regex-lite 0.1.9, regex-syntax 0.8.11, renderdoc-sys 1.1.0, robust 1.2.0, rstar 0.13.0, rtrb 0.4.0, rustc_version 0.4.1, rustversion 1.0.23, scoped-tls 1.0.1, scopeguard 1.2.0, semver 1.0.28, send_wrapper 0.6.0, serde 1.0.229, serde_arrays 0.2.0, serde_core 1.0.229, serde_derive 1.0.229, serde_json 1.0.151, serde_spanned 1.1.1, sha2 0.10.9, shlex 2.0.1, simdutf8 0.1.5, skrifa 0.44.0, smallvec 1.16.2, smol_str 0.2.2, spade 2.15.1, stable_deref_trait 1.2.1, static_assertions 1.1.0, syn 2.0.119, syn 3.0.6, sys-locale 0.3.2, target-tuple 1.0.2, thiserror 1.0.69, thiserror 2.0.21, thiserror-impl 1.0.69, thiserror-impl 2.0.21, toml 1.1.6+spec-1.1.0, toml_datetime 1.1.1+spec-1.1.0, toml_edit 0.25.15+spec-1.1.0, toml_parser 1.1.3+spec-1.1.0, toml_writer 1.1.2+spec-1.1.0, trybuild 1.0.121, ttf-parser 0.25.1, type-map 0.5.1, typenum 1.20.1, unic-langid 0.9.6, unic-langid-impl 0.9.6, unicode-segmentation 1.13.3, unicode-width 0.2.2, vec_map 0.8.2, version_check 0.9.5, wasm-bindgen 0.2.129, wasm-bindgen-futures 0.4.79, wasm-bindgen-macro 0.2.129, wasm-bindgen-macro-support 0.2.129, wasm-bindgen-shared 0.2.129, wasm-bindgen-test 0.3.79, wasm-bindgen-test-macro 0.3.79, wasm-bindgen-test-shared 0.2.129, web-sys 0.3.106, web-time 1.1.0, weezl 0.1.12, wgpu 30.0.1, wgpu-core 30.0.1, wgpu-core-deps-apple 30.0.1, wgpu-core-deps-windows-linux-android 30.0.1, wgpu-hal 30.0.1, wgpu-naga-bridge 30.0.1, wgpu-types 30.0.1, windows 0.62.2, windows-collections 0.3.2, windows-core 0.62.2, windows-future 0.3.2, windows-implement 0.60.2, windows-interface 0.59.3, windows-link 0.2.1, windows-numerics 0.3.1, windows-result 0.4.1, windows-strings 0.5.1, windows-sys 0.45.0, windows-sys 0.52.0, windows-sys 0.59.0, windows-sys 0.60.2, windows-sys 0.61.2, windows-targets 0.42.2, windows-targets 0.52.6, windows-targets 0.53.5, windows-threading 0.2.1, windows_aarch64_gnullvm 0.42.2, windows_aarch64_gnullvm 0.52.6, windows_aarch64_gnullvm 0.53.1, windows_aarch64_msvc 0.42.2, windows_aarch64_msvc 0.52.6, windows_aarch64_msvc 0.53.1, windows_i686_gnu 0.42.2, windows_i686_gnu 0.52.6, windows_i686_gnu 0.53.1, windows_i686_gnullvm 0.52.6, windows_i686_gnullvm 0.53.1, windows_i686_msvc 0.42.2, windows_i686_msvc 0.52.6, windows_i686_msvc 0.53.1, windows_x86_64_gnu 0.42.2, windows_x86_64_gnu 0.52.6, windows_x86_64_gnu 0.53.1, windows_x86_64_gnullvm 0.42.2, windows_x86_64_gnullvm 0.52.6, windows_x86_64_gnullvm 0.53.1, windows_x86_64_msvc 0.42.2, windows_x86_64_msvc 0.52.6, windows_x86_64_msvc 0.53.1, x11rb 0.13.2, x11rb-protocol 0.13.2 |
+| MIT | 86 | alsa-sys 0.4.0, android-properties 0.2.2, block2 0.5.1, block2 0.6.2, bytes 1.12.1, calloop 0.13.0, calloop 0.14.5, calloop-wayland-source 0.3.0, calloop-wayland-source 0.4.1, cfg_aliases 0.2.2, color_quant 1.1.0, combine 4.6.8, crunchy 0.2.4, dispatch 0.2.0, dlib 0.5.3, extended 0.1.0, fax 0.2.7, generic-array 0.14.7, harfrust 0.12.0, inflections 1.1.1, libm 0.2.16, libredox 0.1.25, libudev-sys 0.1.4, mint 0.5.9, nix 0.31.3, nu-ansi-term 0.50.3, objc-sys 0.3.5, objc2 0.5.3, objc2 0.6.5, objc2-app-kit 0.2.2, objc2-cloud-kit 0.2.2, objc2-contacts 0.2.2, objc2-core-data 0.2.2, objc2-core-image 0.2.2, objc2-core-location 0.2.2, objc2-encode 4.1.0, objc2-foundation 0.2.2, objc2-foundation 0.3.2, objc2-link-presentation 0.2.2, objc2-metal 0.2.2, objc2-quartz-core 0.2.2, objc2-symbols 0.2.2, objc2-ui-kit 0.2.2, objc2-uniform-type-identifiers 0.2.2, objc2-user-notifications 0.2.2, offset-allocator 0.2.0, oorandom 11.1.5, orbclient 0.3.55, ordered-float 5.5.0, pulp 0.22.3, pulp-wasm-simd-flag 0.1.1, quick-xml 0.41.0, raw-cpuid 11.6.0, reborrow 0.5.5, redox_syscall 0.4.1, redox_syscall 0.5.18, redox_syscall 0.9.4, sctk-adwaita 0.10.1, simd-adler32 0.3.10, slab 0.4.12, smithay-client-toolkit 0.19.2, smithay-client-toolkit 0.20.0, smithay-clipboard 0.7.3, spin 0.9.9, strict-num 0.1.1, tiff 0.11.3, tokio 1.53.2, tracing 0.1.44, tracing-core 0.1.36, urlencoding 2.1.3, wayland-backend 0.3.17, wayland-client 0.31.15, wayland-csd-frame 0.3.0, wayland-cursor 0.31.14, wayland-protocols 0.32.13, wayland-protocols-experimental 20250721.0.1, wayland-protocols-misc 0.3.12, wayland-protocols-plasma 0.3.12, wayland-protocols-wlr 0.3.12, wayland-scanner 0.31.11, wayland-sys 0.31.11, winnow 1.0.4, x11-dl 2.21.0, xcursor 0.3.11, xkbcommon-dl 0.4.2, zmij 1.0.23 |
+| Apache-2.0 OR MIT | 43 | addr2line 0.25.1, alsa 0.11.0, atomic-waker 1.1.2, autocfg 1.5.1, bit-set 0.10.0, bit-vec 0.9.1, bit_field 0.10.3, cesu8 1.1.0, color 0.3.3, concurrent-queue 2.5.0, console_error_panic_hook 0.1.7, equivalent 1.0.2, fastrand 2.5.0, fearless_simd 0.4.1, fluent-bundle 0.16.0, fluent-langneg 0.13.1, fluent-syntax 0.12.0, fnv 1.0.7, gilrs 0.11.2, gilrs-core 0.6.8, glifo 0.2.0, indexmap 2.14.2, intl-memoizer 0.5.3, kurbo 0.13.1, linebender_resource_handle 0.1.1, minicov 0.3.8, nohash-hasher 0.2.0, noise 0.9.0, object 0.37.3, peniko 0.6.1, pin-project 1.1.13, pin-project-internal 1.1.13, pin-project-lite 0.2.17, polling 3.11.0, pollster 0.4.0, portable-atomic 1.15.0, portable-atomic-util 0.2.8, rustc-hash 1.1.0, rustc-hash 2.1.3, simd_cesu8 1.2.0, uuid 1.27.0, vello_common 0.1.0, vello_cpu 0.1.0 |
 | Zlib OR Apache-2.0 OR MIT | 24 | bytemuck 1.25.2, bytemuck_derive 1.12.1, dispatch2 0.3.1, objc2-app-kit 0.3.2, objc2-audio-toolbox 0.3.2, objc2-avf-audio 0.3.2, objc2-cloud-kit 0.3.2, objc2-core-audio 0.3.2, objc2-core-audio-types 0.3.2, objc2-core-data 0.3.2, objc2-core-foundation 0.3.2, objc2-core-graphics 0.3.2, objc2-core-image 0.3.2, objc2-core-location 0.3.2, objc2-core-text 0.3.2, objc2-core-video 0.3.2, objc2-io-kit 0.3.2, objc2-io-surface 0.3.2, objc2-metal 0.3.2, objc2-quartz-core 0.3.2, objc2-ui-kit 0.3.2, objc2-user-notifications 0.3.2, safe_arch 1.2.0, wide 1.7.1 |
 | Apache-2.0 | 16 | ab_glyph 0.2.32, ab_glyph_rasterizer 0.1.10, approx 0.5.1, codespan-reporting 0.13.1, cpal 0.18.2, gethostname 1.1.0, ktx2 0.5.0, nalgebra 0.35.0, nalgebra-macros 0.3.0, owned_ttf_parser 0.25.1, parry3d 0.31.1, rapier3d 0.36.0, simba 0.10.2, spirv 0.4.0+sdk-1.4.341.0, unicode-general-category 1.1.0, winit 0.30.13 |
 | MPL-2.0 | 11 | symphonia 0.6.1, symphonia-bundle-flac 0.6.1, symphonia-bundle-mp3 0.6.1, symphonia-codec-pcm 0.6.1, symphonia-codec-vorbis 0.6.1, symphonia-common 0.6.1, symphonia-core 0.6.1, symphonia-format-ogg 0.6.1, symphonia-format-riff 0.6.1, symphonia-metadata 0.6.1, triple_buffer 9.0.0 |
@@ -225,7 +239,9 @@ Notable terms in the closure:
 | MIT OR Apache-2.0 OR Zlib | 6 | cursor-icon 1.2.0, raw-window-handle 0.6.2, xkeysym 0.2.1, zune-core 0.5.3, zune-inflate 0.2.54, zune-jpeg 0.5.15 |
 | BSD-3-Clause | 4 | exr 1.74.2, lebe 0.5.3, tiny-skia 0.11.4, tiny-skia-path 0.11.4 |
 | ISC | 3 | inotify 0.11.5, inotify-sys 0.1.8, libloading 0.8.9 |
-| Apache-2.0/MIT | 3 | deprecate-until 1.0.0, integer-sqrt 0.1.5, pathfinding 4.16.0 |
+| Apache-2.0/MIT | 4 | deprecate-until 1.0.0, integer-sqrt 0.1.5, intl_pluralrules 7.0.2, pathfinding 4.16.0 |
+| Unicode-3.0 | 3 | tinystr 0.8.4, zerofrom 0.1.8, zerovec 0.11.8 |
+| MIT/Apache-2.0 | 2 | fallible-iterator 0.3.0, rustc-demangle 0.1.28 |
 | BSD-2-Clause OR Apache-2.0 OR MIT | 2 | zerocopy 0.8.59, zerocopy-derive 0.8.59 |
 | BSD-2-Clause OR MIT OR Apache-2.0 | 2 | mach2 0.4.3, mach2 0.6.0 |
 | BSD-3-Clause OR Apache-2.0 | 2 | moxcms 0.8.1, pxfm 0.1.30 |
@@ -241,6 +257,25 @@ Notable terms in the closure:
 | Apache-2.0 OR GPL-2.0-only | 1 | self_cell 1.3.0 |
 | BSD-2-Clause | 1 | arrayref 0.3.9 |
 | Zlib AND (MIT OR Apache-2.0) | 1 | bevy_mikktspace 1.0.0 |
+
+### Vendored relay client (genex-multiplayer)
+
+`native/genex-rust/crates/genex-multiplayer` is Genex's own relay protocol 3 client (MIT, first
+party), copied unchanged from the genex-demo monorepo at commit 8cd1477a2
+(`sdks/rust/genex-multiplayer`); its `PROVENANCE.toml` records every file's sha256, the one
+manifest line changed (the upstream edition, 2021) and the one file added (`clippy.toml`). Its
+native backend links the Colyseus native SDK 0.18.10 prebuilt (MIT), which bundles cJSON (MIT),
+mbedTLS (Apache-2.0), wslay (MIT), sds (BSD-2-Clause) and uthash (BSD-1-Clause). The toolchain
+store pins upstream's v0.18.10 release assets by sha256 (the `colyseus` component: the
+xcframework, the Linux x86_64 tarball and the MinGW zip, laid out unchanged one folder per triple,
+the universal Apple libraries thinned to arm64) and the source tarball (`colyseus-source`); only an
+export of a `[net]` game links it, and no shipped build does yet. Its build script uses RustCrypto
+sha2 (MIT OR Apache-2.0). Android's libcolyseus is built by the store from that source with zig
+0.15.2 (MIT), whose standard library and compiler-rt are compiled into the library's Zig parts,
+and with zig-msgpack (MIT, https://github.com/zigcc/zig-msgpack, commit
+47c15d217efebd17a585dd04125f9b6b6f659d5a), pinned by sha256 beside the source.
+`native/genex-rust/crates/genex-net/src/interp.rs` is a port of this crate's `src/interp.rs` and
+`src/pose.rs` (MIT, first party) to sim time over libm; its header names the source.
 
 The spike's Android packaging (`scripts/spike/rust-wgpu/android-apk.sh`, developer tool only)
 fetches games-activity 4.4.0 (androidx.games), and its AppCompat closure from androidx: activity 1.0.0, annotation 1.2.0, appcompat 1.2.0, appcompat-resources 1.2.0, arch.core core-common 2.1.0 and core-runtime 2.0.0, collection 1.1.0, core 1.5.0, cursoradapter 1.0.0, customview 1.0.0, drawerlayout 1.0.0, fragment 1.1.0, interpolator 1.0.0, lifecycle-common 2.1.0, lifecycle-livedata 2.0.0, lifecycle-livedata-core 2.0.0, lifecycle-runtime 2.1.0, lifecycle-viewmodel 2.1.0, loader 1.0.0, savedstate 1.0.0, vectordrawable 1.1.0, vectordrawable-animated 1.1.0, versionedparcelable 1.1.1 and viewpager 1.0.0 from Google Maven (Apache-2.0), each pinned by sha256 in the script. They are
@@ -288,6 +323,7 @@ credits its source in a comment.
 | `shaders/post/motion_blur.wgsl` (`fs_mb_direct`) | Motion blur, direct tier: samples along the pixel's own exposure vector, a nearer sample kept only where its own motion along that direction reaches the pixel, the scene kept below a pixel of motion (Genex compares the sample's exposure with the pixel's, spaces samples a pixel apart without noise and reads whole texels) | Bevy 0.20.0 (https://github.com/bevyengine/bevy), `crates/bevy_post_process/src/motion_blur/motion_blur.wesl` | Bevy contributors | MIT OR Apache-2.0, used under Apache 2.0 (see [Apache License 2.0](#apache-license-20)) |
 | `src/terrain/mod.rs` (`TerrainTree::select`, `TerrainLod`, `TerrainTree::vertex`), `shaders/terrain/terrain_core.wgsl` (`gx_terrain_morph_k`, `gx_terrain_vertex`) | Continuous distance-dependent level of detail for heightmap terrain: the quadtree selection by distance ranges with partial (quarter) nodes, the morph constants and the vertex morph of odd grid vertices onto their even neighbours (Genex selects on the CPU without a frustum and culls per view, floors the ranges so no node is two levels from a neighbour, reads 16-bit heights from a storage table and samples integer positions exactly) | CDLOD (https://github.com/fstrugar/CDLOD), `source/BasicCDLOD/CDLODQuadTree.cpp` (`LODSelect`), `CDLODRenderer.cpp` and the shader's `morphVertex` | Filip Strugar | MIT (see [CDLOD](#cdlod)) |
 | `shaders/terrain/hextile.wgsl` | Hex-tiling: the triangle grid of hexagons, each tile's rotation and offset, its centre, and the luminance-weighted blend of the three tiles' samples (Genex hashes the vertex ids with integers instead of `sin`, shares the tiles between a layer's colour and data textures and turns the data texture's normal back onto the surface) | mmikk/hextile-demo (https://github.com/mmikk/hextile-demo), `hextile-demo/hextiling.h` (`TriangleGrid`, `hash`, `MakeCenST`, `LoadRot2x2`, `hex2colTex`) | Morten S. Mikkelsen ("Practical Real-Time Hex-Tiling", JCGT 11(2) 2022) | MIT (see [hextile-demo](#hextile-demo)) |
+| `src/impostor/mod.rs` (`encode`, `decode`, `frame_direction`, `frame_axes`, `ImpostorBounds::of_points`), `src/impostor/bake.rs` (`ImpostorBaker`), `shaders/impostor/pack.wgsl`, `shaders/impostor/mip.wgsl`, `shaders/impostor/draw.wgsl` and `src/impostor/draw.rs` (the impostor draw) | Octahedral and hemi-octahedral impostors: the frame grid's encode and decode, the bake cameras' axes, the orthographic per-frame bake at a supersampled size, the pack compute (coverage, averages over covered render texels, the normal from the depth's slope where none was written, the dilation of empty texels) and the coverage-weighted mip compute. Genex adds a third atlas (occlusion, metallic, transmission, class), octahedrally encoded normals, the forward pass's own material evaluation in the bake fragment, texture-array layers per species, and coverage-preserving mips (Castano's rule) where kansei averages plainly; the draw: the camera-facing quad clamped to the projected box, the three nearest frames' barycentric blend with the view ray's reprojection to the stored depth; Genex adds texture-array atlases, three parallax steps, sharpened surface weights, the forward pass's lighting, motion vectors from the reconstructed point and frag_depth on desktop high and ultra | kansei (https://github.com/Siroko/kansei) at its 2026-10-18 head, `rust/kansei-core/src/impostors/{mod,bake}.rs`, `rust/kansei-core/src/shaders/impostor_pack.wgsl`, `impostor_mip.wgsl`, `rust/kansei-core/src/shaders/impostor.wgsl` (commit 1e3bddb8) | Felix Martinez | MIT (see [kansei](#kansei)) |
 
 ### CDLOD
 
@@ -619,10 +655,34 @@ the following restrictions:
 3. This notice may not be removed or altered from any source distribution.
 ```
 
+### kansei
+
+MIT License
+
+Copyright (c) 2024 Felix Martinez
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
 ## Rust game systems ports
 
-The game systems crates (`native/genex-rust/crates/genex-anim`, `genex-nav`, `genex-stream` and the
-mesh arena of `genex-render`, Genex's own code, MIT) port this code or these rules. They ship inside every
+The game systems crates (`native/genex-rust/crates/genex-anim`, `genex-audio`, `genex-nav`, `genex-profile`, `genex-stream`,
+`genex-ui` and the mesh arena and terrain tile atlas of `genex-render`, Genex's own code, MIT) port this code or these rules. They ship inside every
 Rust game that links the crate, and in its ejected source. Each file credits its source in a
 comment; each Apache 2.0 port carries the upstream notice and lists Genex's changes (§4(b)).
 
@@ -637,12 +697,56 @@ comment; each Apache 2.0 port carries the upstream notice and lists Genex's chan
 | `crates/genex-anim/src/graph.rs` (`AnimGraphBuilder`, `AnimGraph`), `src/machine.rs` (`Machine::step`) | The layered state machine: each layer with its own states, weight and mask, transitions within a layer, conditions built from parameters with and/or/not, and the per-layer update order (advance, then try the transitions). Only the structure and rules were taken; no code was copied. Genex adds priorities, any-state transitions, synced switches and interruptible blends | Fyrox 1.0.1 (https://github.com/FyroxEngine/Fyrox), `fyrox-animation/src/machine/{layer,state,transition,parameter}.rs` | Dmitry Stepanov and Fyrox Engine contributors | MIT (see [Fyrox](#fyrox)) |
 | `crates/genex-anim/src/graph.rs` (`TransitionBuilder::{priority, at_end, synced}`), `src/params.rs` (triggers) | Transition priorities, `AtEnd` and `Sync` switch modes, any-state transitions and one-shot requests consumed by the transition that takes them (the rules only; no code was copied) | Godot Engine 4.7.2-stable (https://github.com/godotengine/godot), `scene/animation/animation_node_state_machine.cpp` | Godot Engine contributors | MIT (see [Godot Engine](#godot-engine)) |
 | `crates/genex-anim/src/compact.rs` (`compact`, `CompactClip`) | Clip compaction: per-track key reduction against a model-space error measured at the joint's hierarchy radius (at least a 0.1 m skin distance), constant-track removal, smallest-three 16-bit rotations and 16-bit range-quantized translations and scales. Only the method was taken; no code was copied. Genex adds a whole-skeleton error check with tolerance halving and shared time-table indices | ozz-animation 0.17.0 (https://github.com/guillaumeblanc/ozz-animation), `src/animation/offline/animation_optimizer.cc`, `src/animation/runtime/animation_keyframe.h`, `src/animation/offline/animation_builder.cc` | Guillaume Blanc | MIT (see [ozz-animation](#ozz-animation)) |
+| `crates/genex-anim/src/inertial.rs` (`InertialOffset`, `decay_spring`, `fast_negexp`, `halflife_to_damping`, `fade_velocities`) | Inertialized transitions: the offset from the next pose to the visible one, with its velocity, decayed by a critically damped spring of a given half-life and added onto the next pose; Holden's rational `exp(-x)`; dead blending's fading velocity (Genex keeps rotation offsets as scaled axes in the parent's frame, takes the next pose's velocity at the switch as zero, clears an offset under 1e-4 and refuses non-finite parts) | Spring-It-On (https://github.com/orangeduck/Spring-It-On, commit 4d97b497), `common.h` (`fast_negexp`, `halflife_to_damping`, `damper_decay_exact`), `springdamper.c`, `inertialization.c`, `deadblending.c`; Motion-Matching (https://github.com/orangeduck/Motion-Matching, commit 57b7250e), `controller.cpp`, `spring.h` | Daniel Holden | MIT (see [Spring-It-On and Motion-Matching](#spring-it-on-and-motion-matching)) |
+| `crates/genex-anim/src/transition.rs` (`TransitionPlayer`) | What a layer shows across switches: a linear crossfade of the left and next states, an inertialized switch taking its offset from the visible pose, and an interrupted crossfade that starts from the frozen visible pose carried on by a fading velocity (the crossfade rule is Godot's xfade, the rule only; dead blending after Holden) | Godot Engine 4.7.2-stable (https://github.com/godotengine/godot), `scene/animation/animation_node_state_machine.cpp` (xfade); Spring-It-On, `deadblending.c` | Godot Engine contributors; Daniel Holden | MIT (see [Godot Engine](#godot-engine) and [Spring-It-On and Motion-Matching](#spring-it-on-and-motion-matching)) |
+| `crates/genex-anim/src/ik.rs` (`solve_two_bone`, `solve_aim`, `apply_two_bone`, `apply_look_at`) | Two-bone IK (the mid angle by the law of cosines, the start joint turned onto the target, then about the target axis toward the pole, an optional twist, softening near full reach, the weight as an nlerp from identity) and aim IK (a forward ray from an offset point turned through the target, up kept toward a pole). Changed: half-angle quaternions over `sqrt` instead of `acos`; a bent chain bends in its own plane (bevy_animation_graph's pole inference, the rule only) and `mid_axis` serves a straight one; Genex's own softening curve `1 - (4 / (r + 4))^4`; every degenerate input solves to no correction; a look-at chain split by share, base first | ozz-animation 0.17.0 (https://github.com/guillaumeblanc/ozz-animation), `src/animation/runtime/ik_two_bone_job.cc`, `src/animation/runtime/ik_aim_job.cc`, `samples/look_at/sample_look_at.cc`; bevy_animation_graph (https://github.com/mbrea-c/bevy_animation_graph), `twoboneik_node.rs` | Guillaume Blanc; bevy_animation_graph contributors | MIT (see [ozz-animation](#ozz-animation)); bevy_animation_graph MIT OR Apache-2.0, the rule only, no code copied |
+| `crates/genex-anim/src/root_motion.rs` (`extract`, `MotionTrack::delta`, `blend`) | Root motion: the root joint's ground-plane travel and yaw taken out of a clip at load into a motion track and baked out of the root's keys, the per-tick delta read across a loop's wrap as the rest of the cycle plus the start of the next, and deltas blended by weight (the rules only; no code was copied). Genex adds the in-place flag, the swing-twist yaw unwrapped over a 60 Hz grid joined with the root's keys, and deltas in character space at the tick's start | ozz-animation 0.17.0 (https://github.com/guillaumeblanc/ozz-animation), `include/ozz/animation/offline/motion_extractor.h`, `src/animation/runtime/motion_blending_job.cc`; Godot Engine 4.7.2-stable (https://github.com/godotengine/godot), `scene/animation/animation_mixer.cpp` (root motion accumulation) | Guillaume Blanc; Godot Engine contributors | MIT (see [ozz-animation](#ozz-animation) and [Godot Engine](#godot-engine)) |
+| `crates/genex-anim/src/evaluate.rs` (`compose`) | The evaluation order: sample, blend, layers, local-to-model, then IK as modifiers parent before child (legs, arms, look-at) (the order only; no code was copied) | ozz-animation 0.17.0, `samples/` job chains; Godot Engine 4.7.2-stable, `scene/3d/skeleton_modifier_3d.cpp` | Guillaume Blanc; Godot Engine contributors | MIT (see [ozz-animation](#ozz-animation) and [Godot Engine](#godot-engine)) |
 | `crates/genex-stream/src/residency.rs` (`Residency`, `ResidencyLimits`) | The residency policy: per-requester reference counts, an unload queue of unreferenced entries in release order, drained while resident bytes exceed a byte cap under a time limit, a cap on loads in flight, and `forbidHoles` (keep the coarser parent until every wanted child is resident) | cesium-native (https://github.com/CesiumGS/cesium-native), `Cesium3DTilesSelection/src/TilesetContentManager.cpp` (`unloadCachedTiles`, the tile reference counts and the unload list) and `Cesium3DTilesSelection/include/Cesium3DTilesSelection/TilesetOptions.h` (`maximumCachedBytes`, `maximumSimultaneousTileLoads`, `tileCacheUnloadTimeLimit`, `forbidHoles`) | CesiumGS, Inc. and Contributors | Apache 2.0 (see [Apache License 2.0](#apache-license-20); cesium-native ships no NOTICE file) |
 | `crates/genex-render/src/mesh_arena.rs` (`MeshArena::grow`, `move_to`) | Growing a full GPU buffer by remaking it twice as large and copying its live prefix buffer to buffer (the rule only; no code was copied) | Bevy (https://github.com/bevyengine/bevy), `crates/bevy_render/src/slab_allocator.rs` | Bevy contributors | MIT OR Apache-2.0, used under Apache 2.0 (see [Apache License 2.0](#apache-license-20)) |
+| `crates/genex-render/src/terrain/atlas.rs` (`TileAtlas`, `TileAtlas::best_tile`) | The terrain tile atlas: a request count per tile, released tiles kept in their slots with the slots queued oldest-first and revived on a re-request, a new tile taking the front slot, and the walk up the parents to the nearest loaded tile. Changed (listed in the file's header): slot exhaustion refuses `stream-arena-full` instead of panicking, a completion for a tile that is not loading is dropped, a `BTreeMap` instead of hashing, no file IO or Bevy resources, slots sized by form factor and the 128 MiB binding | bevy_terrain (https://github.com/kurtkuehnert/bevy_terrain), `src/terrain_data/tile_atlas.rs` (`TileAtlasState`) | Kurt Kühnert | MIT OR Apache-2.0, used under Apache 2.0 (see [Apache License 2.0](#apache-license-20)) |
+| `crates/genex-profile/src/gpu_lane.rs` (`GpuLane::spans`) | GPU query results laid out as begin/end spans with depth, stream range and scope count (sequential node brackets; not registered with puffin's global profiler) | wgpu-profiler 0.28.0 (https://github.com/Wumpf/wgpu-profiler), `src/puffin.rs` (`collect_stream_info_recursive`) | Andreas Reich and wgpu-profiler contributors | MIT OR Apache-2.0, used under MIT (see [wgpu-profiler](#wgpu-profiler)) |
+| `crates/genex-profile/src/trace.rs` (`chrome_trace`) | Chrome trace JSON: a `traceEvents` array of `X` events with microsecond `ts` and `dur`, one `tid` per lane (written with serde_json, frames laid out by interval) | wgpu-profiler 0.28.0, `src/chrometrace.rs` | Andreas Reich and wgpu-profiler contributors | MIT OR Apache-2.0, used under MIT (see [wgpu-profiler](#wgpu-profiler)) |
 | `crates/genex-nav/src/runtime/dodgy/` (every file, with dodgy's own tests as `*_test.rs`) | ORCA local avoidance: velocity obstacles from neighbours and polygon obstacles, the 2D and 3D linear programs, the visibility set. Changed (§4(b), listed in `dodgy/mod.rs`): the `rand` direction for two agents on one spot is hashed from their keys, `Simulator::step` has no `HashMap` and keeps its near neighbours, visible line ids come back sorted, angles use libm, a zero responsibility sum no longer divides by zero, no `debug` feature | dodgy_2d 0.5.5 (https://github.com/andriyDev/dodgy, crates.io sha256 `d35627725e918aa4593ca54937cd8ef58078d3b9ab0fd060aee60c9bc3a2050e`), itself ported from RVO2 (https://gamma.cs.unc.edu/RVO2/) `Agent.cc` | andriyDev; RVO2: Jur van den Berg, Stephen J. Guy, Jamie Snape, Ming C. Lin, Dinesh Manocha, 2008 University of North Carolina at Chapel Hill | MIT OR Apache-2.0, used under Apache 2.0; RVO2 Apache 2.0 (see [Apache License 2.0](#apache-license-20) and [RVO2](#rvo2)) |
 | `crates/genex-nav/src/runtime/avoidance.rs` (`Avoidance::step`) | Gathering each agent's neighbouring agents and bodies and handing them to ORCA (Genex replaces the k-d tree and `HashMap`s with a sorted uniform grid and sorts neighbours by distance, then key) | landmass 0.9.3 (https://github.com/andriyDev/landmass, crates.io sha256 `fd2fd988b81194c6f02c293a28b510b44f1d8581c80b1bfe498e85e9c3f57b93`), `src/avoidance.rs` (`apply_avoidance_to_agents`) | andriyDev | MIT OR Apache-2.0, used under Apache 2.0 (see [Apache License 2.0](#apache-license-20)) |
 | `crates/genex-nav/src/runtime/{coords, util, geometry, nav_mesh, island, nav_data, link}.rs` (islands, navigation-mesh validation and sampling, island stitching with boundary links, modified nodes, region connectivity, animation-link data), with landmass's own tests as `nav_mesh_test.rs` and `nav_data_test.rs` | Islands and their stitching. Changed (listed in each file's header): std `HashMap`/`HashSet` and slotmap are insertion-ordered maps and a deterministic arena, the `geo` boundary clip and `kdtree` vertex snap are Genex's own `clip.rs` and `grid.rs`, the `disjoint` set is Genex's own `disjoint.rs` without a `Mutex`, a Y-up `GenexCoords`, a caller-set edge-link distance, tests converted from googletest to plain asserts | landmass 0.9.3 (https://github.com/andriyDev/landmass, crates.io sha256 `fd2fd988b81194c6f02c293a28b510b44f1d8581c80b1bfe498e85e9c3f57b93`), `src/{coords, util, geometry, nav_mesh, island, nav_data, link}.rs`, `PermittedAnimationLinks` from `src/agent.rs`, `src/{nav_mesh, nav_data}_test.rs` | andriyDev | MIT OR Apache-2.0, used under Apache 2.0 (see [Apache License 2.0](#apache-license-20)) |
+| `crates/genex-nav/src/runtime/{archipelago, agent, character, astar, path, pathfinding, query}.rs` (agents, characters, A*, the funnel, path queries, the nav-mesh border obstacles for avoidance), with landmass's own tests as `{archipelago, agent, astar, path, pathfinding, query}_test.rs` | Agents, A* and the straight-path funnel. Changed (listed in each file's header): insertion-ordered maps and a deterministic arena, an A* heap ordered by (estimate, cost, state) with a node cap and partial results, a per-update search budget with a FIFO wait queue, shut areas and closed links (gates) that drop the corridors crossing them, a filter-based path query, tests converted from googletest to plain asserts | landmass 0.9.3 (https://github.com/andriyDev/landmass, crates.io sha256 `fd2fd988b81194c6f02c293a28b510b44f1d8581c80b1bfe498e85e9c3f57b93`), `src/{lib, agent, character, astar, path, pathfinding, query}.rs`, `nav_mesh_borders_to_dodgy_obstacles` from `src/avoidance.rs`, `src/{lib, agent, astar, path, pathfinding, query}_test.rs` | andriyDev | MIT OR Apache-2.0, used under Apache 2.0 (see [Apache License 2.0](#apache-license-20)) |
+| `crates/genex-nav/src/runtime/detour.rs` (`Archipelago::{raycast, move_along, random_point, distance_to_wall}`) | Detour surface queries: the 2D segment-polygon clip of `dtIntersectSegmentPoly2D` and the polygon walk of `dtNavMeshQuery::raycast`, the bounded breadth-first slide of `moveAlongSurface` (`MAX_STACK` 48), the area-weighted reservoir pick of `findRandomPointAroundCircle` with `dtRandomPointInConvexPoly`, and the shrinking-radius wall search of `findDistanceToWall`. Changed (listed in the file header): islands and boundary links walked in world space, walls from modified nodes and shut areas, genex-core Pcg32 only, breadth-first search, hostile input answers None. An altered version | Recast Navigation (https://github.com/recastnavigation/recastnavigation), `Detour/Source/DetourNavMeshQuery.cpp`, `Detour/Source/DetourCommon.cpp` | Mikko Mononen and Recast Navigation contributors | Zlib (see [Recast Navigation](#recast-navigation)) |
+| `crates/genex-nav/src/carve.rs` (`Carving`, `NavObstacle`) | Obstacle carving: cylinder and box obstacles marking the tiles they touch, and a rebuild queue worked a bounded amount per update, rebuilding touched tiles from a kept checkpoint. The logic only; no code was copied | Recast Navigation (https://github.com/recastnavigation/recastnavigation), `DetourTileCache/Source/DetourTileCache.cpp`; DotRecast (https://github.com/ikpil/DotRecast), `src/DotRecast.Detour.Dynamic` | Mikko Mononen and Recast Navigation contributors; ikpil and DotRecast contributors | Zlib (see [Recast Navigation](#recast-navigation)); Zlib |
 | `crates/genex-nav/src/input.rs` (`TileInput::clear_steep`, `AreaVolume`) | The walkable-slope rule (a triangle is walkable when its unit normal's y is above cos(slope)), convex area volumes marked between two heights with the even-odd point-in-polygon test, and the 12-point outline cap. The rules only; no code was copied | rerecast 0.5.0 (https://github.com/janhohenheim/rerecast), `ConvexVolume`; Recast Navigation (https://github.com/recastnavigation/recastnavigation), `Recast/Source/Recast.cpp` (`rcClearUnwalkableTriangles`), `Recast/Source/RecastArea.cpp` (`rcMarkConvexPolyArea`, `pointInPoly`), `DetourTileCache/Include/DetourTileCacheBuilder.h` (`DT_MAX_CONVEXVOL_PTS`) | Jan Hohenheim and rerecast contributors; Mikko Mononen and Recast Navigation contributors | MIT OR Apache-2.0 (rerecast); Zlib (Recast Navigation) |
+| `crates/genex-nav/src/recast/` (every file but `error.rs`; `ops.rs` keeps only `floor`, `ceil`, `abs`, `cos`), `tests/recast_parity.rs` (from `tests/cpp_comparison.rs` and `crates/test_utils`) | Recast navmesh generation: heightfield rasterization, span filters, compact heightfield, erosion, convex area volumes, the watershed distance field and regions, contours, polygon mesh and detail mesh, with the C++ parity test. Changed (listed in `recast/mod.rs`, each file's header and `crates/genex-nav/PORTS.md`): glam 0.33, slotmap replaced by Genex's arena, thiserror and bitflags written out by hand, one typed `RecastError` in place of anyhow, `cos` always through libm, no tracing, serde or bevy_reflect, std instead of no_std. An altered version of both rerecast and Recast | rerecast 0.5.0 (https://github.com/janhohenheim/rerecast, tag `v0.5.0`, tarball sha256 `1ed9c37afa1ccca1121b16bed89afd33dab05cf5668bbeeac58dc4d7054fc2d0`), `crates/rerecast/src/*`, itself a port of Recast Navigation (https://github.com/recastnavigation/recastnavigation) | Jan Hohenheim and rerecast contributors; Mikko Mononen and Recast Navigation contributors | MIT OR Apache-2.0, used under MIT (see [rerecast](#rerecast)); Zlib (see [Recast Navigation](#recast-navigation)) |
+| `crates/genex-nav/tests/fixtures/recast/dungeon/*.json` | Recast's dungeon demo level and C++ Recast's dumps of its config, area volumes, contour set, polygon mesh and detail mesh, byte for byte | rerecast 0.5.0, `assets/test/dungeon/`; the level is Recast Navigation's `RecastDemo/Bin/Meshes/dungeon.obj` ("Dungeon level copyrighted by John Ratcliff for use in recast algorithm testing", rerecast's `assets/models/license.md`) | John Ratcliff (level); Jan Hohenheim (dumps) | Zlib (Recast Navigation); MIT OR Apache-2.0 (rerecast) |
+| `crates/genex-nav/src/bake.rs` (`bake_tile`) | The per-tile build: a border of `walkableRadius + 3` cells, regions partitioned with the border kept out, heights counted from one floor for every tile. The steps only; no code was copied | Recast Navigation, `RecastDemo/Source/Sample_TileMesh.cpp` (`Sample_TileMesh::buildTileMesh`) | Mikko Mononen and Recast Navigation contributors | Zlib (see [Recast Navigation](#recast-navigation)) |
+| `crates/genex-ui/src/kit/toast.rs` (`Toasts`, `ToastKind`) | The toast queue: top-right stack with 8 px margin and spacing and 10 px padding, the `1 - (1 - x)^3` slide, a countdown that pauses under the pointer, the 4 px progress line. Changed (listed in the file's header): time counted in simulation ticks instead of `stable_dt`, the queue kept in egui memory (a seed forgets it), level icons drawn as shapes, the close cross dropped (a click anywhere dismisses), a capped queue, AccessKit labels and keys | egui-notify 0.23 (https://github.com/ItsEthra/egui-notify), `src/lib.rs` | ItsEthra | MIT (see [egui-notify](#egui-notify)) |
+| `crates/genex-audio/src/music.rs` (`MusicStream`, `Resampler`), `src/decode.rs` (`decode_sound`, `append_frames`) | Playing a sound from a frame source: kira's static-sound process loop (per-frame volume and fade interpolation, the fractional position advanced by the source rate, the 4-point resampler fed one source frame at a time, the stop fade and the end once the resampler empties) and its decode loop and sample conversion over symphonia buffers. Changed (listed in the files' headers): frames come from a ring that symphonia packets fill inline instead of a decoded array; loops wrap by an accurate seek plus a priming packet or by reopening; no pause, resume, rate, panning or seek commands; the decode is capped and guarded against panics | kira 0.12.5 (https://github.com/tesselode/kira), `src/sound/static_sound/sound.rs`, `src/sound/static_sound/sound/resampler.rs`, `src/sound/static_sound/data/from_file.rs`, `src/sound/symphonia.rs` | Andrew Minnich and kira contributors | MIT OR Apache-2.0, used under Apache 2.0 (see [Apache License 2.0](#apache-license-20)) |
+
+### egui-notify
+
+The licence of egui-notify, whose toast queue `crates/genex-ui/src/kit/toast.rs` ports (table above).
+
+```
+MIT License
+
+Copyright (c) 2022-2023 ItsEthra
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
 
 ### Fyrox
 
@@ -672,7 +776,7 @@ SOFTWARE.
 
 ### ozz-animation
 
-The licence of the ozz-animation code the skeleton, sampler, blend and mask port (table above).
+The licence of the ozz-animation code the skeleton, sampler, blend, mask and IK port (table above).
 
 ```
 ozz-animation is hosted at http://github.com/guillaumeblanc/ozz-animation and
@@ -700,6 +804,58 @@ IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
 CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 ```
 
+### Recast Navigation
+
+The licence of Recast Navigation, which rerecast ported and whose tile build and dungeon test level
+genex-nav uses (table above).
+
+```
+Copyright (c) 2009 Mikko Mononen memon@inside.org
+
+This software is provided 'as-is', without any express or implied
+warranty.  In no event will the authors be held liable for any damages
+arising from the use of this software.
+
+Permission is granted to anyone to use this software for any purpose,
+including commercial applications, and to alter it and redistribute it
+freely, subject to the following restrictions:
+
+1. The origin of this software must not be misrepresented; you must not
+claim that you wrote the original software. If you use this software
+in a product, an acknowledgment in the product documentation would be
+appreciated but is not required.
+2. Altered source versions must be plainly marked as such, and must not be
+misrepresented as being the original software.
+3. This notice may not be removed or altered from any source distribution.
+```
+
+### rerecast
+
+The licence of rerecast, whose Recast port genex-nav ports (table above). Its MIT text carries no
+copyright line; its Cargo.toml names the author, Jan Hohenheim.
+
+```
+MIT License
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
 ### RVO2
 
 The notice the dodgy_2d port keeps from RVO2, which dodgy_2d ported (table above). RVO2 is licensed
@@ -721,6 +877,64 @@ Each ported file carries this header:
     United States of America
 
     <https://gamma.cs.unc.edu/RVO2/>
+
+### Spring-It-On and Motion-Matching
+
+The licence of Daniel Holden's code the inertialization and dead-blending port (table above). Both
+repositories carry the same text.
+
+```
+MIT License
+
+Copyright (c) 2021 Daniel Holden
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
+### wgpu-profiler
+
+The licence of wgpu-profiler, whose span layout and Chrome trace format genex-profile ports (table
+above).
+
+```
+MIT License
+
+Copyright (c) 2021 Andreas Reich
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
 
 ## Rust showcase environment map
 

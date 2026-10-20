@@ -16,6 +16,7 @@ import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { captureSurface } from "../../src/main/core/capture.ts";
+import { parseCrashRecord } from "../../src/shared/crash-record.ts";
 import { GameStack } from "../../src/shared/game-project.ts";
 import { CaptureSurface } from "../../src/shared/preview-contract.ts";
 import {
@@ -987,6 +988,36 @@ describe("visibility, sound and events", () => {
     await r.clock.settle();
     assert.deepEqual(heard, [{ event: NativeEvent.Focus, focused: true }]);
     r.game.send({ event: "focus", focused: "yes" });
+    await r.clock.settle();
+    assert.equal(r.port.failure, NativeRefusal.ReplyInvalid);
+    assert.ok(r.game.killed());
+  });
+
+  it("a crash event before ready (a boot panic) reaches the listeners and the run still waits for ready (PROF-0c)", async () => {
+    const r = await rig({ ready: false });
+    const heard: unknown[] = [];
+    r.port.onEvent((event) => heard.push(event));
+    const record = {
+      format: "genex-crash/1",
+      kind: "panic",
+      source: "game",
+      fatal: true,
+      handled: false,
+      message: "boom",
+    };
+    r.game.send({ event: "crash", record });
+    await r.clock.settle();
+    assert.equal(heard.length, 1);
+    assert.deepEqual(heard[0], { event: NativeEvent.Crash, record: parseCrashRecord(record) });
+    assert.equal(r.port.failure, null);
+    assert.equal(r.game.killed(), false);
+    r.game.send(readyEvent());
+    await r.port.ready();
+  });
+
+  it("a malformed crash event is reply-invalid", async () => {
+    const r = await rig();
+    r.game.send({ event: "crash", record: { format: "genex-crash/1", kind: "meltdown" } });
     await r.clock.settle();
     assert.equal(r.port.failure, NativeRefusal.ReplyInvalid);
     assert.ok(r.game.killed());

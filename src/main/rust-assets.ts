@@ -17,8 +17,11 @@
  */
 import { createHash, randomUUID } from "node:crypto";
 import { lstat, mkdir, readdir, readFile, rm } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import type { ImportIssue as ReportIssue } from "../shared/asset-db.ts";
+import type { CharacterFacts } from "../shared/character-facts.ts";
 import { MINUTE_MS } from "../shared/duration.ts";
 import { assetExtension } from "../shared/game-assets.ts";
 import { type BuildTarget, GameStack } from "../shared/game-project.ts";
@@ -35,6 +38,7 @@ import {
   runsImporter,
 } from "../substrate/asset-import/import-plan.ts";
 import {
+  IMPORT_DETAIL_MAX_CHARS,
   IMPORT_JOB_VERSION,
   type ImportIssue,
   type ImportJob,
@@ -49,6 +53,7 @@ import { type Ktx2FamilySkip, readKtx2Header } from "../substrate/asset-import/k
 import { objMaterialLibrary } from "../substrate/asset-import/obj.ts";
 import { readGameAsset } from "../substrate/asset-import/safe-asset.ts";
 import { type EncodedTexture, stageTextureUsages } from "../substrate/asset-import/texture-encode.ts";
+import { type StagedWorldCells, stageWorldCells } from "../substrate/asset-import/world-cells.ts";
 import {
   familyFileName,
   KTX2_VK_FORMAT,
@@ -75,6 +80,14 @@ export const IMPORT_TIMEOUT_MS = 5 * MINUTE_MS;
 /** The importer's output the host keeps for its log. */
 const IMPORT_OUTPUT_KEEP_CHARS = 64 * 1024;
 const IMPORT_LABEL = "asset-import";
+/**
+ * How many more times a job runs after its importer crashed (killed by a signal, or a shell exit
+ * above 128): Node 24's garbage collector can crash under load while the encoder's WebAssembly is
+ * on the stack. The importer is a pure function of the job, so a rerun writes the same outputs.
+ */
+const IMPORT_CRASH_RETRIES = 1;
+/** A shell reports a child killed by signal `n` as exit `128 + n`. */
+const SHELL_SIGNAL_EXIT_BASE = 128;
 /** How many per-file import jobs one build runs at once: each is a Node process in a sandbox of its own. */
 export const IMPORT_JOBS_MAX = 4;
 /** The stage's folder of game assets (`rust-stage.ts` copies the game's `assets/` there). */
@@ -93,6 +106,20 @@ const FAMILY_STEPS: ReadonlySet<ImportConverter> = new Set([
   ImportConverter.GltfDecompress,
   ImportConverter.GlbTextures,
 ]);
+
+/** How a failed file's `detail` says what happened: a log line, never shown as copy. */
+const MESSAGE = {
+  NoReceiptLine: "the importer's receipt has no line for this file",
+  NoReceipt: "the importer exited 0 but left no receipt the host accepts",
+  OutputRefused: "the importer's output was not admitted",
+  FamiliesRefused: "the importer's family files were not admitted",
+  OutputChanged: "the admitted output changed before it was placed",
+  NoRow: "the import answered no row for this file",
+  TimedOut: "the importer timed out",
+  Exit: "the importer exited",
+  Crashed: "the importer crashed:",
+  SandboxFailed: "the importer's sandbox failed",
+} as const;
 
 /** What every admitted output must start with, by output extension. */
 const OGG_MAGIC = [0x4f, 0x67, 0x67, 0x53] as const;
@@ -177,6 +204,12 @@ export interface ImportedAsset {
   issues?: ImportIssue[];
   /** An encoded loose texture's usage, source size and class (C-12). */
   texture?: EncodedTexture;
+  /** The validation report's issues about the written GLB (C-23), checked by `parseReport`. */
+  report?: ReportIssue[];
+  /** A rigged GLB's facts (C-23), checked by `parseCharacterFacts`. */
+  character?: CharacterFacts;
+  /** Why a refused file failed: the importer's own line, or how its job ended (a log line, capped). */
+  detail?: string;
 }
 
 /** One import's outcome, file by file, in request order. */
@@ -292,7 +325,7 @@ async function runImporter(
   jobDir: string,
   folders: ReturnType<typeof jobFolders>,
   signal: AbortSignal | undefined,
-): Promise<RunResult | null> {
+): Promise<RunResult | { thrown: string }> {
   const importer = deps.importer ?? defaultImporterCommand();
   const policy: Partial<SandboxPolicy> = {
     allowedDomains: [],
@@ -306,7 +339,7 @@ async function runImporter(
       scratchDir: folders.tmp,
       secretPaths: [...deps.secretPaths],
     });
-    return await sandbox.run({
+    const request: RunRequest = {
       command: [...importer.argv, jobDir].map(shellQuote).join(" "),
       cwd: jobDir,
       env: importer.env,
@@ -316,11 +349,38 @@ async function runImporter(
       maxOutputBytes: IMPORT_OUTPUT_KEEP_CHARS,
       reapGroup: true,
       ...(signal ? { signal } : {}),
-    });
-  } catch {
-    return null;
+    };
+    // A run killed by a signal (not stopped by the build) runs again from an empty out/.
+    const crashed = (result: RunResult) => crashSignal(result) !== null && !signal?.aborted;
+    let run = await sandbox.run(request);
+    for (let retry = 0; retry < IMPORT_CRASH_RETRIES && crashed(run); retry += 1) {
+      await emptyFolders([folders.out, folders.tmp]);
+      run = await sandbox.run(request);
+    }
+    return run;
+  } catch (error) {
+    return { thrown: error instanceof Error ? error.message : String(error) };
   } finally {
     await sandbox?.dispose();
+  }
+}
+
+/** The signal that killed a run's importer (directly, or as the shell's `128 + n` exit); null when it was not killed. */
+function crashSignal(run: RunResult): string | null {
+  if (run.timedOut) return null;
+  if (run.signal) return run.signal;
+  const code = run.code ?? 0;
+  if (code <= SHELL_SIGNAL_EXIT_BASE) return null;
+  const number = code - SHELL_SIGNAL_EXIT_BASE;
+  const named = Object.entries(os.constants.signals).find(([, value]) => value === number);
+  return named?.[0] ?? `signal ${number}`;
+}
+
+/** Each of `folders` emptied, kept in place (a crashed run's partial outputs and scratch). */
+async function emptyFolders(folders: readonly string[]): Promise<void> {
+  for (const folder of folders) {
+    await rm(folder, { recursive: true, force: true });
+    await mkdir(folder);
   }
 }
 
@@ -423,20 +483,52 @@ async function readReceipt(file: string): Promise<ImportReceipt | null> {
   }
 }
 
-/** What one planned file's receipt line comes to: its admitted outputs, or how it failed. */
+/** A refusal's detail cut to what a receipt keeps. */
+const capDetail = (detail: string) => detail.slice(0, IMPORT_DETAIL_MAX_CHARS);
+
+/**
+ * How a job that left no receipt to read ended: its exit or timeout with the end of the importer's
+ * stderr, or the sandbox's own error; null for a run that exited 0.
+ */
+function runEnd(run: RunResult | { thrown: string }): string | null {
+  if ("thrown" in run) return capDetail(`${MESSAGE.SandboxFailed}: ${run.thrown}`);
+  if (run.code === 0 && !run.timedOut) return null;
+  const crashed = crashSignal(run);
+  const exit = crashed === null ? `${MESSAGE.Exit} ${run.code}` : `${MESSAGE.Crashed} ${crashed}`;
+  const how = run.timedOut ? MESSAGE.TimedOut : exit;
+  const stderr = run.stderr.trim();
+  if (!stderr) return capDetail(how);
+  // The end of stderr holds the error; keep as much of it as the cap leaves.
+  const room = Math.max(0, IMPORT_DETAIL_MAX_CHARS - how.length - 2);
+  return capDetail(`${how}: ${stderr.slice(-room)}`);
+}
+
+/** A refused file with the detail of its failure. */
+const failedWith = (detail: string): Partial<ImportedAsset> => ({
+  action: ImportAction.Refuse,
+  refusal: AssetImportRefusal.ImporterFailed,
+  detail: capDetail(detail),
+});
+
+/** A receipt line the importer refused, with its own detail when it gave one. */
+function refusedLine(line: Extract<ImportReceipt["files"][number], { ok: false }>): Partial<ImportedAsset> {
+  return { action: ImportAction.Refuse, refusal: line.refusal, ...(line.detail ? { detail: line.detail } : {}) };
+}
+
+/** What one planned file's receipt line comes to: its admitted outputs, or how it failed (`ended`: the run's end, when it left no receipt). */
 async function admitLine(
   jobDir: string,
   item: Planned,
   entry: ImportedAsset,
   line: ImportReceipt["files"][number] | undefined,
+  ended: string,
 ): Promise<Partial<ImportedAsset>> {
-  const failed = { action: ImportAction.Refuse, refusal: AssetImportRefusal.ImporterFailed };
-  if (!line) return failed;
-  if (!line.ok) return { action: ImportAction.Refuse, refusal: line.refusal };
+  if (!line) return failedWith(ended);
+  if (!line.ok) return refusedLine(line);
   const output = line.output === item.job.output ? await admitOutput(jobDir, item, entry.file) : null;
-  if (!output) return failed;
+  if (!output) return failedWith(MESSAGE.OutputRefused);
   const families = FAMILY_STEPS.has(item.step.converter) ? await admitFamilies(jobDir, line, entry.file) : [];
-  if (!families) return failed;
+  if (!families) return failedWith(MESSAGE.FamiliesRefused);
   const texture = item.step.converter === ImportConverter.TextureEncode ? line.texture : undefined;
   return {
     output,
@@ -445,21 +537,24 @@ async function admitLine(
     ...(line.familiesSkipped ? { familiesSkipped: line.familiesSkipped } : {}),
     ...(line.issues?.length ? { issues: line.issues } : {}),
     ...(texture ? { texture } : {}),
+    ...(line.report?.length ? { report: line.report } : {}),
+    ...(line.character ? { character: line.character } : {}),
   };
 }
 
-/** Each planned file's outcome from the receipt, every output checked. */
+/** Each planned file's outcome from the receipt, every output checked (`ended`: why a file has no line). */
 async function admit(
   jobDir: string,
   receipt: ImportReceipt | null,
   planned: readonly Planned[],
   results: ImportedAsset[],
+  ended: string,
 ): Promise<void> {
   for (const item of planned) {
     const entry = results[item.at];
     if (!entry) continue;
     const line = receipt?.files.find((file) => file.index === item.job.index);
-    Object.assign(entry, await admitLine(jobDir, item, entry, line));
+    Object.assign(entry, await admitLine(jobDir, item, entry, line, ended));
   }
 }
 
@@ -487,9 +582,11 @@ export async function importRustAssets(
   };
   await writeNewFile(folders.job, JSON.stringify(job));
   const run = await runImporter(deps, jobDir, folders, request.signal);
-  const finished = run !== null && run.code === 0 && !run.timedOut;
-  await admit(jobDir, finished ? await readReceipt(folders.receipt) : null, planned, results);
-  return { jobId, jobDir, files: results, log: run?.stderr ?? "" };
+  const ended = runEnd(run);
+  const receipt = ended === null ? await readReceipt(folders.receipt) : null;
+  const missing = receipt === null && ended === null ? MESSAGE.NoReceipt : MESSAGE.NoReceiptLine;
+  await admit(jobDir, receipt, planned, results, ended ?? missing);
+  return { jobId, jobDir, files: results, log: "stderr" in run ? run.stderr : "" };
 }
 
 /**
@@ -522,6 +619,8 @@ export interface StagedImportFile {
   familiesSkipped?: Ktx2FamilySkip;
   /** An encoded loose texture's usage, source size and class (C-12). */
   texture?: EncodedTexture;
+  /** Why a refused file failed (a log line, capped): the importer's own, or how its job ended. */
+  detail?: string;
 }
 
 /** The stage step's record in the build receipt (`assets`). */
@@ -532,6 +631,8 @@ export interface StagedImportReport {
   ms: number;
   /** Every staged file, in `/`-separated code-unit order. */
   files: StagedImportFile[];
+  /** The stage's `world/*.cells.json`, each compiled into its `assets/` or refused with nothing written (C-28). */
+  worlds?: StagedWorldCells[];
 }
 
 /** One build's stage to import for its destination. */
@@ -623,8 +724,7 @@ async function importEach(
         ...(request.signal ? { signal: request.signal } : {}),
       });
       releases.push(one.release);
-      const failed = { file, action: ImportAction.Refuse, refusal: AssetImportRefusal.ImporterFailed };
-      results[at] = one.files[0] ?? failed;
+      results[at] = one.files[0] ?? { file, ...failedWith(MESSAGE.NoRow), action: ImportAction.Refuse };
     }
   };
   await Promise.all(Array.from({ length: Math.min(jobs, queue.length) }, worker));
@@ -676,7 +776,7 @@ async function placeOne(stage: string, entry: ImportedAsset, taken: Set<string>)
   if (!output) return refuse(AssetImportRefusal.ImporterFailed);
   if (takenBy(taken, output.file, file)) return refuse(StagePlacementRefusal.NameTaken);
   const bytes = await admittedBytes(output);
-  if (!bytes) return refuse(AssetImportRefusal.ImporterFailed);
+  if (!bytes) return { ...refuse(AssetImportRefusal.ImporterFailed), detail: MESSAGE.OutputChanged };
   if (!(await placeFile(stage, output.file, bytes))) return refuse(StagePlacementRefusal.NameTaken);
   taken.add(output.file);
   if (output.file !== file) await rm(path.join(stage, ...file.split("/")), { force: true });
@@ -714,10 +814,20 @@ async function placeAll(
       rows.push(row);
       continue;
     }
-    const { file, action, converter, refusal } = entry;
-    rows.push({ file, action, ...(converter ? { converter } : {}), ...(refusal ? { refusal } : {}) });
+    rows.push(unplacedRow(entry));
   }
   return rows;
+}
+
+/** The row of a file the importer did not run on or refused: its plan, and a refusal's detail. */
+function unplacedRow({ file, action, converter, refusal, detail }: ImportedAsset): StagedImportFile {
+  return {
+    file,
+    action,
+    ...(converter ? { converter } : {}),
+    ...(refusal ? { refusal } : {}),
+    ...(refusal && detail ? { detail } : {}),
+  };
 }
 
 /**
@@ -741,7 +851,10 @@ export async function importStagedAssets(
     const results = await importEach(deps, request, sources, jobs, releases);
     if (!results) return null;
     const files = await placeAll(request.stage, sources, results);
-    return { jobs, ms: Math.max(0, now() - started), files };
+    const admitted = await stagedAssets(request.stage);
+    const assets = new Set(admitted.map((file) => file.slice(STAGE_ASSETS_DIR.length + 1)));
+    const worlds = await stageWorldCells(request.stage, assets);
+    return { jobs, ms: Math.max(0, now() - started), files, worlds };
   } finally {
     await Promise.all(releases.map((release) => release()));
   }

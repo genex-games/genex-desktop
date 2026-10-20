@@ -19,10 +19,13 @@
       limit}}}, and window.GenexShell.status carries the same.
 
       Assets: a browser cannot list a folder, so the build writes assets.json (the asset map) beside
-      the page. Before studio_boot the shell hands the map to studio_assets_plan, fetches each file
-      it planned from assets/ (never a URL outside that folder, never more bytes than planned) and
-      hands it to studio_assets_preload, which admits it only at the recorded length and digest.
-      Each step is bound only when the module exports it.
+      the page. Before studio_boot the shell hands the map to studio_assets_plan with the adapter's
+      texture facts (its texture-compression-* features and whether the page is a phone's, by the
+      renderer's own rule), so the module plans one of a texture's family files, the one this
+      adapter samples; it fetches each file planned from assets/ (never a URL outside that folder,
+      never more bytes than planned) and hands it to studio_assets_preload, which admits it only at
+      the recorded length and digest. The loading screen counts the planned files, and
+      window.GenexShell.adapter carries the facts. Each step is bound only when the module exports it.
 
       A boot that fails after that (the module, its wasm, the saves preload, an asset or
       studio_boot throws) shows the "couldn't start" card with the typed code boot-failed, never an empty stage, and
@@ -83,7 +86,9 @@
       the page loses it (their keyups would go elsewhere); Mouse1 held from pointerdown to pointerup
       with the pointer (a click no tick saw is also sent as a tap), the pointer's movement as look
       while Mouse1 is held or the pointer is locked to the canvas, the wheel in pixels, and real
-      gamepads in the browser's standard mapping, polled each animation frame.
+      gamepads in the browser's standard mapping with their Gamepad.id (so the game can tell the
+      pad's family), polled each animation frame. Where the browser offers the keyboard's layout
+      map (Chromium), its key labels are sent once, for display only.
     -->
     <style>
       :root {
@@ -445,6 +450,10 @@
       const ASSETS_DIR = "assets/";
       /** How many asset files are fetched at once. */
       const ASSET_FETCHES = 6;
+      /** The WebGPU features of the compressed texture families, in the order the plan is told them. */
+      const TEXTURE_FEATURES = ["texture-compression-bc", "texture-compression-astc", "texture-compression-etc2"];
+      /** A screen whose short side is at most this many CSS pixels is a phone's (genex-render's WEB_MOBILE_SHORT_SIDE_CSS_PX). */
+      const MOBILE_SHORT_SIDE_CSS_PX = 900;
       /** Why an asset stopped the boot (the module's own refusals keep their codes). Wire values. */
       const AssetFailure = {
         FetchFailed: "asset-fetch-failed",
@@ -496,7 +505,7 @@
       const loading = { watchdog: null, fill: 0, staged: { saves: [], map: null, assets: [] } };
       const status = { state: State.Starting, code: null, reason: null, limit: null, receipt: null };
       const saves = { db: null, flushing: Promise.resolve(), scheduled: false, retryAt: 0 };
-      const shell = { status, module: null, world: null, progress: null, flushSaves: async () => {} };
+      const shell = { status, module: null, world: null, progress: null, adapter: null, flushSaves: async () => {} };
       window.GenexShell = shell;
 
       function firstLimitBelowCore(limits) {
@@ -520,7 +529,30 @@
         }
         if (!adapter) return { reason: Reason.NoAdapter };
         const limit = firstLimitBelowCore(adapter.limits);
-        return limit ? { reason: Reason.LimitBelowCore, limit } : null;
+        if (limit) return { reason: Reason.LimitBelowCore, limit };
+        shell.adapter = adapterFacts(adapter);
+        return null;
+      }
+
+      /**
+       * What the asset plan reads of the adapter: the compressed texture families it samples (their
+       * WebGPU feature names) and whether the page is a phone's, by the renderer's rule, so the
+       * file planned is the family the renderer stores.
+       */
+      function adapterFacts(adapter) {
+        const offered = adapter.features;
+        const features = TEXTURE_FEATURES.filter((name) => typeof offered?.has === "function" && offered.has(name));
+        return { features, mobile: isMobile(pageHints()) };
+      }
+
+      /**
+       * Whether the hints say phone or tablet (genex-render's WebHints::is_mobile): a mobile user
+       * agent, touch with a coarse pointer, or a short screen side of at most MOBILE_SHORT_SIDE_CSS_PX.
+       */
+      function isMobile(hints) {
+        const coarseTouch = hints.maxTouchPoints > 0 && hints.coarsePointer;
+        const smallScreen = hints.shortSideCssPx > 0 && hints.shortSideCssPx <= MOBILE_SHORT_SIDE_CSS_PX;
+        return hints.uaMobile === true || coarseTouch || smallScreen;
       }
 
       /** One element with its text (never markup) and attributes. */
@@ -904,7 +936,7 @@
             await game.default({ module_or_path: data.module });
             if (typeof game.studio_saves_preload === "function") game.studio_saves_preload(data.saves);
             if (data.map !== null && typeof game.studio_assets_plan === "function") {
-              game.studio_assets_plan(data.map);
+              game.studio_assets_plan(data.map, data.adapter);
               for (const [name, bytes] of data.assets) game.studio_assets_preload(name, bytes);
             }
             const board = typeof OffscreenCanvas === "function" ? new OffscreenCanvas(data.size[0], data.size[1]) : null;
@@ -935,7 +967,8 @@
           setTimeout(() => resolve({ error: "the dry boot took too long" }), RECORD_TIMEOUT_MS);
         });
         const transfer = assets.map(([, bytes]) => bytes.buffer);
-        const message = { source, module, saves, map, assets, hints: deviceHints(), size: [canvas.width, canvas.height] };
+        const size = [canvas.width, canvas.height];
+        const message = { source, module, saves, map, assets, adapter: adapterJson(), hints: deviceHints(), size };
         worker.postMessage(message, [...new Set(transfer)]);
         loading.staged = { saves: [], map: null, assets: [] };
         const result = await answer;
@@ -954,6 +987,11 @@
 
       /** The device hints studio_boot classifies the browser by, as JSON (a member the browser hides is left out). */
       function deviceHints() {
+        return JSON.stringify(pageHints());
+      }
+
+      /** The page's device hints as an object ({@link deviceHints}). */
+      function pageHints() {
         const screen = window.screen ?? { width: 0, height: 0 };
         const hints = {
           maxTouchPoints: navigator.maxTouchPoints ?? 0,
@@ -963,7 +1001,7 @@
         if (typeof navigator.deviceMemory === "number") hints.deviceMemoryGb = navigator.deviceMemory;
         if (typeof navigator.hardwareConcurrency === "number") hints.hardwareConcurrency = navigator.hardwareConcurrency;
         if (typeof navigator.userAgentData?.mobile === "boolean") hints.uaMobile = navigator.userAgentData.mobile;
-        return JSON.stringify(hints);
+        return hints;
       }
 
       /**
@@ -1169,6 +1207,11 @@
         loading.staged.assets.push([name, bytes]);
       }
 
+      /** The adapter's texture facts as the plan reads them (`{features, mobile}` JSON), or undefined before preflight passed. */
+      function adapterJson() {
+        return shell.adapter ? JSON.stringify(shell.adapter) : undefined;
+      }
+
       /** The staged assets in the module before studio_boot: the map planned, then each file fetched and admitted. */
       async function preloadAssets(game) {
         if (typeof game.studio_assets_plan !== "function") {
@@ -1178,7 +1221,8 @@
         const response = await fetch(ASSET_MAP, { cache: "no-store" });
         if (!response.ok) throw new Error(`${AssetFailure.FetchFailed}: ${ASSET_MAP} answered ${response.status}`);
         loading.staged.map = await response.text();
-        const planned = Array.from(game.studio_assets_plan(loading.staged.map));
+        // The adapter picks one of a texture's family files; the progress counts only what is planned.
+        const planned = Array.from(game.studio_assets_plan(loading.staged.map, adapterJson()));
         const total = planned.length;
         let done = 0;
         progress(LoadStage.Assets, done, total);
@@ -1415,9 +1459,17 @@
         return { x: event.deltaX * unit, y: event.deltaY * unit };
       }
 
+      /** The most characters of a pad's Gamepad.id sent (its vendor and product ids lead it). */
+      const PAD_ID_MAX_CHARS = 128;
+      /** The most keys of the keyboard's layout map sent, and the longest key code and label kept. */
+      const LAYOUT_KEYS_MAX = 256;
+      const LAYOUT_CODE_MAX_CHARS = 64;
+      const LAYOUT_LABEL_MAX_CHARS = 8;
+
       /**
        * Real pads as the `input` verb's `pads` (the browser's standard mapping is the protocol's
-       * order), sent when one changed; a pad that went away is sent once as disconnected.
+       * order), each with its Gamepad.id so the game can tell its family (Safari's names no vendor:
+       * generic), sent when one changed; a pad that went away is sent once as disconnected.
        */
       function pollGamepads(game, input) {
         const pads = typeof navigator.getGamepads === "function" ? [...navigator.getGamepads()] : [];
@@ -1426,6 +1478,7 @@
           connected: pad.connected,
           buttons: [...pad.buttons].map((button) => Math.max(button.value, button.pressed ? 1 : 0)),
           axes: [...pad.axes],
+          id: String(pad.id ?? "").slice(0, PAD_ID_MAX_CHARS),
         }));
         const gone = [...input.pads.keys()].filter((index) => !now.some((pad) => pad.index === index));
         const changed = now.filter((pad) => input.pads.get(pad.index) !== JSON.stringify(pad));
@@ -1433,6 +1486,30 @@
         for (const index of gone) input.pads.delete(index);
         for (const pad of changed) input.pads.set(pad.index, JSON.stringify(pad));
         call(game, "input", { pads: [...changed, ...gone.map((index) => ({ index, connected: false }))] });
+      }
+
+      /**
+       * The keyboard's labels per key code (`{KeyW: "z"}` on AZERTY) as the `input` verb's `layout`,
+       * sent once where the browser offers `navigator.keyboard.getLayoutMap()` (Chromium). Display
+       * only: the game shows them beside its bindings and never reads a key by its label.
+       */
+      async function forwardKeyboardLayout(game) {
+        const keyboard = navigator.keyboard;
+        if (typeof keyboard?.getLayoutMap !== "function") return;
+        const map = await Promise.resolve()
+          .then(() => keyboard.getLayoutMap())
+          .catch(() => null);
+        if (!map || typeof map.forEach !== "function") return;
+        const layout = Object.create(null);
+        let kept = 0;
+        map.forEach((label, code) => {
+          const fits = typeof code === "string" && code.length <= LAYOUT_CODE_MAX_CHARS;
+          const readable = typeof label === "string" && label.length <= LAYOUT_LABEL_MAX_CHARS;
+          if (kept >= LAYOUT_KEYS_MAX || !fits || !readable) return;
+          layout[code] = label;
+          kept += 1;
+        });
+        if (kept > 0) call(game, "input", { layout });
       }
 
       /** Release every key and button the page holds (focus left the game: its keyup would go elsewhere). */
@@ -1496,6 +1573,7 @@
           },
           { passive: false },
         );
+        forwardKeyboardLayout(game).catch(() => {});
         return input;
       }
 

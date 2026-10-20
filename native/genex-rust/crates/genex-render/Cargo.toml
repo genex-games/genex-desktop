@@ -40,6 +40,17 @@ genex-gpu-memory = { workspace = true }
 # The mesh arena's ranges (game systems STR-1): Aaltonen's O(1) offset allocator, safe Rust,
 # deterministic (bins and a bitfield, no hashing, no time).
 offset-allocator = { workspace = true }
+# The runtime tangent fallback (game systems C-9): MikkTSpace, the space the Studio's import step
+# writes, for a normal-mapped primitive that reached the runtime without TANGENT. Safe Rust,
+# no_std, its sqrt and acos handed libm's (`mesh.rs`), so every target builds the same bits.
+bevy_mikktspace = { workspace = true }
+# The engine scopes `encode` and `submit` and the GPU lane's per-node samples (game systems PROF-2):
+# write-only profiling below the facade, recording nothing on a thread no profiler is attached to.
+genex-profile = { workspace = true }
+# Typed GPU incidents and caught panics (game systems CRASH-2): a device loss and an uncaptured
+# validation error become crash records, and the job pool and pipeline compiles catch panics as
+# handled. Records nothing until the game installs the crash hook.
+genex-crash = { workspace = true }
 
 # Headless native runs block on adapter and device requests; the web awaits them instead.
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]

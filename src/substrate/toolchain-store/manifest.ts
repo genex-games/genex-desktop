@@ -81,6 +81,14 @@ export const RELEASE_URL_PREFIXES = {
   [ToolchainId.CargoVet]: ["https://github.com/mozilla/cargo-vet/releases/download/"],
   // One commit's tree of the RustSec database, as GitHub archives it: `crate-policy.json` pins it.
   [ToolchainId.RustsecAdvisoryDb]: ["https://github.com/rustsec/advisory-db/archive/"],
+  // Colyseus native-sdk's own release assets (`COLYSEUS_ASSETS`): the prebuilts and the source tarball.
+  [ToolchainId.Colyseus]: ["https://github.com/colyseus/native-sdk/releases/download/"],
+  // Android's libcolyseus is built from the source with zig 0.15.2 and the zig_msgpack archive (MP-1b).
+  [ToolchainId.ColyseusSource]: [
+    "https://github.com/colyseus/native-sdk/releases/download/",
+    "https://ziglang.org/download/0.15.2/",
+    "https://github.com/zigcc/zig-msgpack/archive/",
+  ],
 } as const satisfies Record<ToolchainId, readonly string[]>;
 
 /**

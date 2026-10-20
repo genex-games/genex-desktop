@@ -442,6 +442,42 @@ impl NavInput {
         bounds
     }
 
+    /// The FNV-1a 64 digest of everything a bake reads, by content: the soup triangles' corners
+    /// (by their bits) and areas in input order, the terrain's grid, samples and area, the area
+    /// volumes and the bounds. Equal inputs have equal digests however they were built (a
+    /// terrain is read sample by sample, never by identity); `.navmesh` bytes and the bake memo
+    /// carry it (NAV-11).
+    pub fn digest(&self) -> u64 {
+        let mut hash = Digest(genex_core::digest::FNV_OFFSET_BASIS);
+        hash.u64(self.triangle_count() as u64);
+        for (corners, area) in self.indices.as_chunks::<3>().0.iter().zip(&self.areas) {
+            corners.iter().for_each(|&i| hash.vec3(self.vertices[i as usize]));
+            hash.bytes(&[area.raw()]);
+        }
+        hash.u64(u64::from(self.terrain.is_some()));
+        if let Some(terrain) = &self.terrain {
+            let heights = terrain.heights.as_ref();
+            let (across, down) = heights.samples();
+            hash.u64(u64::from(across) << 32 | u64::from(down));
+            heights.origin().into_iter().chain([heights.spacing()]).for_each(|v| hash.f32(v));
+            hash.bytes(&[terrain.area.raw()]);
+            for z in 0..down {
+                (0..across).for_each(|x| hash.f32(heights.sample(x, z)));
+            }
+        }
+        hash.u64(self.volumes.len() as u64);
+        for volume in &self.volumes {
+            hash.bytes(&[volume.area.raw(), volume.outline.len() as u8]);
+            volume.outline.iter().flat_map(|p| p.to_array()).chain([volume.min_y, volume.max_y]).for_each(|v| hash.f32(v));
+        }
+        hash.u64(u64::from(self.bounds.is_some()));
+        if let Some((min, max)) = self.bounds {
+            hash.vec3(min);
+            hash.vec3(max);
+        }
+        hash.0
+    }
+
     fn vertices_used(&self) -> impl Iterator<Item = Vec3> + '_ {
         self.indices.iter().map(|&i| self.vertices[i as usize])
     }
@@ -616,6 +652,27 @@ impl NavInput {
         }
         tile.volumes = self.volumes.iter().enumerate().filter(|(_, volume)| volume.overlaps(min, max)).map(|(index, _)| index).collect();
         Ok(tile)
+    }
+}
+
+/// An FNV-1a 64 digest taken in pieces, numbers little-endian and floats by their bits.
+struct Digest(u64);
+
+impl Digest {
+    fn bytes(&mut self, bytes: &[u8]) {
+        self.0 = genex_core::digest::fnv1a64_from(bytes, self.0);
+    }
+
+    fn u64(&mut self, value: u64) {
+        self.bytes(&value.to_le_bytes());
+    }
+
+    fn f32(&mut self, value: f32) {
+        self.bytes(&value.to_bits().to_le_bytes());
+    }
+
+    fn vec3(&mut self, value: Vec3) {
+        value.to_array().into_iter().for_each(|v| self.f32(v));
     }
 }
 

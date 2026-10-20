@@ -222,7 +222,9 @@ impl Clip {
         Clip::from_parts(name.into(), duration, tracks, Vec::new())
     }
 
-    fn from_parts(name: String, duration: f32, mut tracks: Vec<Track>, ignored: Vec<IgnoredChannel>) -> Result<Clip, AnimationError> {
+    /// A clip from its parts as an importer or the root-motion bake has them: the duration and
+    /// skipped channels are kept as given.
+    pub(crate) fn from_parts(name: String, duration: f32, mut tracks: Vec<Track>, ignored: Vec<IgnoredChannel>) -> Result<Clip, AnimationError> {
         tracks.sort_by_key(|track| (track.joint, track.property()));
         if let Some(pair) = tracks.windows(2).find(|pair| (pair[0].joint, pair[0].property()) == (pair[1].joint, pair[1].property())) {
             let (joint, property) = (pair[0].joint.raw(), pair[0].property());

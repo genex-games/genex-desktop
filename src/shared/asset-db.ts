@@ -70,6 +70,14 @@ export const ImportIssueCode = {
   Resampled: "resampled",
   /** The glTF validator warned about the file (its first codes are in the detail). */
   ValidationWarning: "validation-warning",
+  /** An untextured material's base colour is darker or brighter than real surfaces (detail: its JSON pointer). */
+  AlbedoOutOfRange: "albedo-out-of-range",
+  /** An untextured material is part metal: surfaces are metal (1) or not (0) (detail: its JSON pointer). */
+  MetallicPartial: "metallic-partial",
+  /** A material's index of refraction lies outside 1.0-3.0 (detail: its JSON pointer). */
+  IorOutOfRange: "ior-out-of-range",
+  /** A model has more triangles than its class's budget (detail: `<triangles>/<budget>`). */
+  TrianglesOverBudget: "triangles-over-budget",
 } as const;
 export type ImportIssueCode = (typeof ImportIssueCode)[keyof typeof ImportIssueCode];
 

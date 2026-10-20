@@ -38,6 +38,8 @@ needs Ctx and Drawing).
 | UI | `docs/api/ui.md` | `on_ui`: the egui HUD and menus, a game's only UI path. |
 | Drawing | `docs/api/drawing.md` | Tags, models, cubes, spheres, lines and the clear colour, and loading models from `assets/`. |
 | Reading assets | `docs/api/assets.md` | What a reset may read from `assets/` (a level's JSON, a model's triangles), its refusals and why the checksum stays the same everywhere. |
+| Streaming a large world | `docs/api/streaming.md` | A world in cells: anchors, the sim radius, cell builders, entered and left cells, holds and their refusals. |
+| Navigation | `docs/api/navigation.md` | The walker, nav input, baking and `.navmesh` bytes, tiles, area costs, carved obstacles and refusals. |
 | Lighting, materials and environment | `docs/api/lighting.md` | The sun, ambient, point and spot lights, materials and emission, reflection probes, irradiance volumes, decals, the sky and HDR maps. |
 | Rendering | `docs/api/rendering.md` | Look and quality: presets, device classes, features, `[render]`, the settings panel, shadows, draw ids and camera cuts. |
 | Grading and the lens | `docs/api/grading.md` | The order a look is built in, the grade, white balance, LUTs, depth of field and motion blur. |
@@ -78,7 +80,7 @@ so a draw that needs the time reads a tick the world keeps from `on_update` (`ct
   `n`. The runtime starts on seed 1 and is paused after every seed.
 - **Tick.** A tick is 1/60 s. It runs every `on_update` in registration order, then every
   `on_ui`, then steps physics once. `step(ms)` runs `max(1, round(ms / 16.667))` ticks, at most
-  36,000.
+  36,000. A streamed world's held commit can end a step early (`docs/api/streaming.md`).
 - **Single-valued hooks.** A second `camera` or `player` makes `install` panic
   (`duplicate-camera`, `duplicate-player`) unless it is marked as the replacement:
   `game.camera(..).camera_override();`, `game.player(..).player_override();`.
@@ -90,11 +92,14 @@ so a draw that needs the time reads a tick the world keeps from `on_update` (`ct
 - **State keys.** `state()` owns `version`, `contractVersion`, `seed`, `frame`, `simulatedMs`,
   `running`, `fps`, `held`, `pointerLock`, `hud`, `camera`, `error`, `player`, `volatile`,
   `__render`, `assets` and `checksum`, and `__stream` while `game.streaming` is registered
-  (display only and never in the checksum, so a probe may be named `stream`). World streaming
-  and navigation are not available yet: `install` accepts and checks `game.streaming` (the
-  refusals below), but no cell ever loads, so `__stream` stays at `active: 0`, and
-  `game.cell_content`, `game.navigation` and `frame.nav_debug` do nothing. Do not build a
-  mechanic on them. `hud.items` lists
+  (display only and never in the checksum, so a probe may be named `stream`). A streamed world
+  (`docs/api/streaming.md`) registers `Streaming::grid(64.0).sim_radius(1)` with
+  `game.streaming(..)` and builds cells with `game.cell_content(..)` (`CellBuild::default()`,
+  `.thing(..)`; `.hysteresis(..)`, `.prefetch(..)` and `.anchors(..)` tune it); the sim moves it
+  with `sim.stream.set_anchor(..)` and `sim.stream.clear_anchor(..)` and reads
+  `sim.stream.entered()` and `sim.stream.left()` each tick. `game.navigation(..)` registers a
+  walker and `sim.nav` holds its nav (`docs/api/navigation.md`); `frame.nav_debug` draws nothing
+  yet. `hud.items` lists
   the label of every egui widget the last tick drew, in drawing order, so a check can find a
   widget by its label.
 - **Demos.** A demo scripts what a generic walk cannot reach (a state behind a menu, a long
@@ -110,7 +115,9 @@ so a draw that needs the time reads a tick the world keeps from `on_update` (`ct
   (a probe named like a `state()` key), `duplicate-camera-name`, `duplicate-eye`,
   `duplicate-demo`, `invalid-name`, `duplicate-facet-state` (one state type registered twice),
   `invalid-world-size`, `duplicate-streaming` (a second `game.streaming`) and `streaming-invalid`
-  (a cell size outside 8..=1024 metres). `game.gpu_pass` panics `gpu-pass-invalid` as it is
+  (a cell size outside 8..=1024 metres, a radius or anchor count outside its range, a
+  registration past the simulated cells' memory cap, or, with `game.navigation`, a stream cell
+  that is not a whole number of nav tiles). `game.gpu_pass` panics `gpu-pass-invalid` as it is
   registered: an empty, overlong or repeated pass name, or one pass over the cap.
 
 ## Verbs

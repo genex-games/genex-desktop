@@ -292,6 +292,12 @@ pub struct Ctx<'a> {
     pub world_size: [u32; 2],
     /// The game's save folder.
     pub saves: &'a Saves,
+    /// The tick's evaluated actions (G6 contract stub until IN-11 makes it game API).
+    #[expect(dead_code, reason = "IN-11 makes ctx.actions game API")]
+    pub(crate) actions: crate::actions::CtxActions<'a>,
+    /// What the tick's hooks play through (G6 contract stub until AU-7 makes it game API).
+    #[expect(dead_code, reason = "AU-7 makes ctx.audio game API")]
+    pub(crate) audio: crate::audio::CtxAudio<'a>,
 }
 
 impl Ctx<'_> {
@@ -304,5 +310,11 @@ impl Ctx<'_> {
     /// The bytes saved as `file`, or None.
     pub fn load(&self, file: &str) -> Option<Vec<u8>> {
         self.saves.load(file)
+    }
+
+    /// The save slots (G6 contract stub until UIS-9 makes it game API).
+    #[expect(dead_code, reason = "UIS-9 makes ctx.slots() game API")]
+    pub(crate) fn slots(&self) -> crate::saves::CtxSlots<'_> {
+        crate::saves::CtxSlots(std::marker::PhantomData)
     }
 }

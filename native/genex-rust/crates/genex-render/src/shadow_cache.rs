@@ -6,9 +6,11 @@
 //! caster again.
 //!
 //! - **Static** is a library batch, plain or a draw variant (no skinning, no levels of detail,
-//!   whose level follows the camera), whose rows (model matrix and material, row for row) stood still for [`STILL_FRAMES`]
-//!   frames. Every other caster is the overlay: skinned and moving batches, a batch with levels,
-//!   the terrain's and the grass's casters.
+//!   whose level follows the camera, no far rule, whose thinning follows it too), whose rows
+//!   (model matrix and material, row for row) stood still for [`STILL_FRAMES`] frames. Every other
+//!   caster is the overlay: skinned and moving batches, a batch with levels or rows a far rule
+//!   thins, the LOD crossfade's fade twins (game systems LOD-05: they cast through the faded
+//!   casters over the copy), the terrain's and the grass's casters.
 //! - A layer's **key** is its matrix (and cull view), the map's shape and the static set, which
 //!   changes when a cached caster moves, comes or goes. A layer whose key is its cache's reuses
 //!   the cache; one whose key is last frame's but not its cache's **rebuilds** it (statics into
@@ -25,9 +27,8 @@
 //!   ([`CACHE_PAYS_TRIANGLES_PER_BYTE`]); a light one draws whole.
 //! - Only Live frames cache: a settled capture's re-renders, the CPU reference path and the
 //!   meshlet path draw every caster as before ([`LayerUse::Draw`]).
-//! - Not covered yet: the LOD crossfade's faded rows (`GX_LOD_FADE`, not landed) must join the
-//!   overlay when it lands, and a material whose row index stays while its content changes is
-//!   not seen as a change.
+//! - Not covered yet: a material whose row index stays while its content changes is not seen as
+//!   a change.
 //!
 //! A sun cascade follows the camera (its map moves by whole texels), so a cascade reuses its cache
 //! while the camera stands still or moves inside a texel; the spot layer's matrices stand still
@@ -298,7 +299,7 @@ impl ShadowCache {
             .enumerate()
             .map(|(b, batch)| {
                 let Some(group) = groups[b] else { return false };
-                if batch.lod[0] != 0 {
+                if batch.lod[0] != 0 || far_ruled(plan, batch) {
                     return false;
                 }
                 let key = [batch.first_index, batch.index_count, batch.base_vertex as u32, group];
@@ -314,6 +315,13 @@ impl ShadowCache {
         self.batches.retain(|_, still| still.seen == frame);
         cached
     }
+}
+
+/// Whether `batch` draws rows a far rule thins (game systems LOD-18): the camera's cull drops and
+/// fades its copies wherever the camera goes, so its casters are the overlay's (LOD-05).
+fn far_ruled(plan: &FramePlan, batch: &crate::layout::GpuBatch) -> bool {
+    let first = batch.first_row as usize;
+    plan.lod_rows.get(first..first + batch.instance_count as usize).unwrap_or(&[]).iter().any(|row| row.far_rule != crate::lod_rows::FAR_RULE_NONE)
 }
 
 /// By batch of `plan`: its group when it draws from the library (0 plain, 1 + its variant run),

@@ -52,6 +52,12 @@ export interface CheckOutcome {
   pass?: boolean | null;
 }
 
+/** What drew a sample: a web page's WebGL or WebGPU, or a native run's renderer. Wire values. */
+export const SampleBackend = { WebGl: "webgl", WebGpu: "webgpu", Native: "native" } as const;
+export type SampleBackend = (typeof SampleBackend)[keyof typeof SampleBackend];
+const isSampleBackend = (value: unknown): boolean =>
+  typeof value === "string" && Object.values(SampleBackend).some((backend) => backend === value);
+
 /** The sample format this comparison reads, and the samples each side of it takes. */
 const SAMPLE_SCHEMA = 1;
 const PAIRED_SAMPLES = 3;
@@ -102,7 +108,7 @@ export function comparableSamples(
   for (const key of ["backend", "renderer", "version", "scope", "scenarioId"]) {
     if (a[key] == null || a[key] !== b[key]) return `${key} changed or unavailable`;
   }
-  if (!["webgl", "webgpu"].includes(a.backend as string) || !a.version) return "actual backend/version unavailable";
+  if (!isSampleBackend(a.backend) || !a.version) return "actual backend/version unavailable";
   if (canonical(a.configuration) !== canonical(b.configuration))
     return "view, resolution or render configuration changed";
   return null;

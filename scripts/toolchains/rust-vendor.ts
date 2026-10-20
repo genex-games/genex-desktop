@@ -44,6 +44,8 @@ const RUST_ENV = path.join(REPO, "scripts", "toolchains", "rust-env.ts");
 const DEFAULT_INVENTORY = path.join(REPO, "scripts", "toolchains", "rust-inventory.json");
 const ALLOWLIST = path.join(REPO, "scripts", "spike", "rust-wgpu", "vendor-allowlist.toml");
 const GENEX_WORKSPACE = "native/genex-rust";
+/** The workspace's lock: its packages without a checksum are the workspace's own crates. */
+const WORKSPACE_LOCK = path.join(REPO, GENEX_WORKSPACE, "Cargo.lock");
 /** How much of a file is read to tell text from a binary. */
 const SNIFF_BYTES = 8 * 1024;
 const TAR_BLOCK = 512;
@@ -270,12 +272,32 @@ export async function readInventory(file: string): Promise<Inventory> {
   }
 }
 
-/** Refuse a vendored tree that holds anything the inventory does not list, or lacks anything it lists. */
-export async function checkVendor(vendor: string, inventoryFile: string): Promise<void> {
+/**
+ * Refuse a vendored tree that holds anything the inventory does not list, or lacks anything it lists.
+ * `own` names the workspace's own crate folders (`name-version`): a registry tree never holds them,
+ * so their entries are left to `rust-release.ts cut`, which holds the release tree to all of them.
+ */
+export async function checkVendor(
+  vendor: string,
+  inventoryFile: string,
+  own: ReadonlySet<string> = new Set(),
+): Promise<void> {
   const inventory = await readInventory(inventoryFile);
-  const { added, stale } = compareInventory(await scanVendor(vendor), inventory);
+  const crates = Object.fromEntries(Object.entries(inventory.crates).filter(([crate]) => !own.has(crate)));
+  const { added, stale } = compareInventory(await scanVendor(vendor), { crates });
   if (added.length > 0) throw new VendorRefused(VendorRefusal.InventoryNew, MESSAGE.New(added));
   if (stale.length > 0) throw new VendorRefused(VendorRefusal.InventoryStale, MESSAGE.Stale(stale));
+}
+
+/** The workspace's own packages a lock names (no checksum: path crates), by `name-version`. */
+export async function workspaceCrates(lock: string = WORKSPACE_LOCK): Promise<Set<string>> {
+  const own = new Set<string>();
+  for (const block of (await readFile(lock, "utf8")).split("[[package]]").slice(1)) {
+    const name = /^name = "(.*)"$/m.exec(block)?.[1];
+    const version = /^version = "(.*)"$/m.exec(block)?.[1];
+    if (name && version && !/^checksum = /m.test(block)) own.add(`${name}-${version}`);
+  }
+  return own;
 }
 
 /** Rewrite the inventory from the tree (a release change a person reviews). */
@@ -429,7 +451,7 @@ async function revendor(out: string): Promise<string> {
 /** Build the release inputs into `out`: vendored archive, genex sources, sysroot manifest and their index. */
 async function archive(out: string, inventoryFile: string): Promise<void> {
   const vendor = await revendor(out);
-  await checkVendor(vendor, inventoryFile);
+  await checkVendor(vendor, inventoryFile, await workspaceCrates());
   const vendored = await packArchive(vendor, path.join(out, "genex-vendor.tar.gz"), "vendor");
   await rm(vendor, { recursive: true, force: true });
   const sources = await packFiles(
@@ -475,7 +497,7 @@ async function main(argv: readonly string[]): Promise<void> {
   const inventory = option(args, "inventory") ?? DEFAULT_INVENTORY;
   const vendor = option(args, "vendor") ?? rustToolchainLayout().vendor;
   if (command === "check") {
-    await checkVendor(vendor, inventory);
+    await checkVendor(vendor, inventory, await workspaceCrates());
     process.stdout.write(`ok: every build script, proc macro and non-source file in ${vendor} is reviewed\n`);
     return;
   }

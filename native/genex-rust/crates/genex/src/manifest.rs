@@ -34,6 +34,17 @@
 //! path = "textures/flow.png"   # under assets/: a PNG, JPEG or WebP
 //! usage = "data"            # color | data | normal
 //!
+//! [[asset_group]]           # optional: assets a game loads during play, by name (C-30)
+//! name = "castle"           # letters, digits, _ and -; never boot, sim or stream (the build's own groups)
+//! paths = ["interiors/castle/**", "props/throne.glb"]  # globs under assets/: *, ? and whole-segment **
+//!
+//! [assets]                  # optional: the package's budgets in MB, read by the host's package step (C-17)
+//! budget_mb = 300           # every destination's budget: past it the host's export warns
+//! phone_max_texture_px = 2048  # iOS and Android packages drop KTX2 levels above it: 512..=4096, a power of two
+//!
+//! [assets.web]              # one destination's budget: web, ios, android or desktop
+//! budget_mb = 64            # defaults web 64, ios 200, android 200, desktop 2048; at most web 512, phones 4096
+//!
 //! [render]                  # optional: the renderer's quality and the game's look
 //! form_factors = ["desktop", "mobile"]
 //! preset = "auto"           # auto | low | medium | high | ultra
@@ -167,10 +178,20 @@ pub const FOG_CALLS: [&str; 8] =
 /// work package pins what works (`tests/fixtures/rust-facade-vocabulary.json` holds the same).
 /// The animation calls of the facade (`.wire` is a refusal code's wire spelling).
 pub const ANIMATION_CALLS: [&str; 5] = ["gfx.character", ".joint_count", ".skeleton", ".path", ".wire"];
-/// The streaming calls of the facade.
-pub const STREAM_CALLS: [&str; 0] = [];
-/// The navigation calls of the facade.
-pub const NAV_CALLS: [&str; 1] = ["frame.lines"];
+/// The streaming calls of the facade (STR-9).
+pub const STREAM_CALLS: [&str; 18] = [
+    "Streaming::grid", ".sim_radius", ".hysteresis", ".prefetch", ".anchors", "game.streaming",
+    "game.cell_content", "CellBuild::default", ".thing", "sim.stream.set_anchor", "sim.stream.clear_anchor",
+    "sim.stream.entered", "sim.stream.left", ".part", "CellColliders::new", ".with", "game.stream_colliders",
+    ".handles",
+];
+/// The navigation calls of the facade (NAV-11).
+pub const NAV_CALLS: [&str; 17] = [
+    "frame.lines", "game.navigation", "NavConfig::walker", "NavInput::new", "NavMesh::bake", "NavMesh::bake_tile",
+    "NavMesh::from_bytes_for", "nav.add_mesh", "nav.add_tile", "nav.remove_tile", "nav.set_area_cost",
+    "nav.set_area_open", "nav.add_obstacle", "nav.move_obstacle", "nav.remove_obstacle", "nav.pending_rebuilds",
+    "nav.update",
+];
 /// The sim-side asset read calls of the facade, as a reset calls them (SF-1a); `.wire` is a
 /// refusal code's wire spelling.
 pub const ASSET_CALLS: [&str; 9] =
@@ -455,6 +476,12 @@ pub struct GenexToml {
     /// Loose textures' usages, read by the host's import step (C-10).
     #[serde(default)]
     pub texture: Vec<TextureRow>,
+    /// Named groups of assets a game loads during play, read by the host's package step (C-30).
+    #[serde(default)]
+    pub asset_group: Vec<AssetGroupRow>,
+    /// The package's budgets and a phone's texture cap, read by the host's package step (C-17).
+    #[serde(default)]
+    pub assets: AssetsSection,
 }
 
 impl GenexToml {
@@ -827,6 +854,51 @@ pub struct TextureRow {
     pub usage: String,
 }
 
+/// An `[[asset_group]]` row: a named set of assets a game loads during play (C-30).
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct AssetGroupRow {
+    /// A letter or digit, then letters, digits, `_` and `-`; never one of [`RESERVED_ASSET_GROUPS`].
+    pub name: String,
+    /// Globs under assets/: `*` and `?` inside a segment, `**` as a whole segment.
+    pub paths: Vec<String>,
+}
+
+/// `[assets]`: the package's budgets, read by the host's package step (C-17, owner call C8). Past a
+/// budget the host's export warns; only a destination's hard cap refuses.
+#[derive(Clone, Debug, Default, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct AssetsSection {
+    /// Every destination's budget in MB, [`ASSET_BUDGET_MIN_MB`]..=[`ASSET_BUDGET_MAX_MB`]; none: each destination's default.
+    #[serde(default)]
+    pub budget_mb: Option<i64>,
+    /// The largest texture side an iOS or Android package keeps: a power of two in
+    /// [`PHONE_TEXTURE_CAP_MIN_PX`]..=[`PHONE_TEXTURE_CAP_MAX_PX`]; none: the host's default (2048).
+    #[serde(default)]
+    pub phone_max_texture_px: Option<i64>,
+    /// The browser package's own budget, at most [`WEB_ASSETS_CEILING_MB`].
+    #[serde(default)]
+    pub web: Option<AssetDestinationBudget>,
+    /// The iPhone package's own budget, at most [`PHONE_ASSETS_CEILING_MB`].
+    #[serde(default)]
+    pub ios: Option<AssetDestinationBudget>,
+    /// The Android package's own budget, at most [`PHONE_ASSETS_CEILING_MB`].
+    #[serde(default)]
+    pub android: Option<AssetDestinationBudget>,
+    /// The Mac, Windows and Linux packages' own budget, at most [`ASSET_BUDGET_MAX_MB`].
+    #[serde(default)]
+    pub desktop: Option<AssetDestinationBudget>,
+}
+
+/// An `[assets.<destination>]` table.
+#[derive(Clone, Debug, Default, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct AssetDestinationBudget {
+    /// The destination's budget in MB.
+    #[serde(default)]
+    pub budget_mb: Option<i64>,
+}
+
 /// `[gpu]`.
 #[derive(Clone, Debug, Default, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
@@ -932,6 +1004,14 @@ pub enum ManifestErrorCode {
     InvalidWebBudget,
     /// A `[[texture]]` row whose usage is not color, data or normal, whose path is not a safe path under assets/ to a PNG, JPEG or WebP, or whose path another row names.
     InvalidTextureUsage,
+    /// An `[[asset_group]]` row whose name is malformed, reserved or taken, whose paths are none, too
+    /// many, repeated or a glob outside assets/; or more rows than [`MAX_ASSET_GROUPS`].
+    InvalidAssetGroup,
+    /// An `[assets]` or `[assets.<destination>]` budget below [`ASSET_BUDGET_MIN_MB`] or past the
+    /// destination's hard cap ([`ASSET_BUDGET_MAX_MB`] for `[assets]` and desktop).
+    AssetBudgetOutOfRange,
+    /// An `[assets] phone_max_texture_px` that is not a power of two from [`PHONE_TEXTURE_CAP_MIN_PX`] to [`PHONE_TEXTURE_CAP_MAX_PX`].
+    InvalidTextureCap,
 }
 
 impl ManifestErrorCode {
@@ -961,6 +1041,9 @@ impl ManifestErrorCode {
             ManifestErrorCode::InvalidRenderLoading => "invalid-render-loading",
             ManifestErrorCode::InvalidWebBudget => "invalid-web-budget",
             ManifestErrorCode::InvalidTextureUsage => "invalid-texture-usage",
+            ManifestErrorCode::InvalidAssetGroup => "invalid-asset-group",
+            ManifestErrorCode::AssetBudgetOutOfRange => "asset-budget-out-of-range",
+            ManifestErrorCode::InvalidTextureCap => "invalid-texture-cap",
         }
     }
 }
@@ -1003,7 +1086,50 @@ pub fn parse(text: &str) -> Result<GenexToml, ManifestError> {
     check_render(&manifest.render)?;
     check_web(&manifest.web)?;
     check_textures(&manifest.texture)?;
+    check_asset_groups(&manifest.asset_group)?;
+    check_assets(&manifest.assets)?;
     Ok(manifest)
+}
+
+/// The smallest package budget a game may name, in MB (the host's `ASSET_BUDGET_MIN_MB`).
+pub const ASSET_BUDGET_MIN_MB: i64 = 1;
+/// The largest `[assets] budget_mb` and desktop budget (the host's `ASSET_BUDGET_MAX_MB`): a bound on the key.
+pub const ASSET_BUDGET_MAX_MB: i64 = 65536;
+/// The web package's hard cap in MB: the shell admits at most this much (genex-platform-web's `MAX_ASSETS_TOTAL_BYTES`).
+pub const WEB_ASSETS_CEILING_MB: i64 = 512;
+/// A phone package's hard cap in MB.
+pub const PHONE_ASSETS_CEILING_MB: i64 = 4096;
+/// The smallest and largest `[assets] phone_max_texture_px`.
+pub const PHONE_TEXTURE_CAP_MIN_PX: i64 = 512;
+/// See [`PHONE_TEXTURE_CAP_MIN_PX`].
+pub const PHONE_TEXTURE_CAP_MAX_PX: i64 = 4096;
+
+/// Budgets from 1 MB to each destination's cap, and a phone texture cap that is a power of two from
+/// 512 to 4096 px (the host's `checkAssets`).
+fn check_assets(assets: &AssetsSection) -> Result<(), ManifestError> {
+    let destinations = [
+        ("web", &assets.web, WEB_ASSETS_CEILING_MB),
+        ("ios", &assets.ios, PHONE_ASSETS_CEILING_MB),
+        ("android", &assets.android, PHONE_ASSETS_CEILING_MB),
+        ("desktop", &assets.desktop, ASSET_BUDGET_MAX_MB),
+    ];
+    if let Some(mb) = assets.budget_mb.filter(|mb| !(ASSET_BUDGET_MIN_MB..=ASSET_BUDGET_MAX_MB).contains(mb)) {
+        return Err(ManifestError::new(ManifestErrorCode::AssetBudgetOutOfRange, format!("assets.budget_mb {mb}")));
+    }
+    for (name, row, max) in destinations {
+        let named = row.as_ref().and_then(|row| row.budget_mb);
+        if let Some(mb) = named.filter(|mb| !(ASSET_BUDGET_MIN_MB..=max).contains(mb)) {
+            let detail = format!("assets.{name}.budget_mb {mb}");
+            return Err(ManifestError::new(ManifestErrorCode::AssetBudgetOutOfRange, detail));
+        }
+    }
+    let cap_fits = |px: &i64| (PHONE_TEXTURE_CAP_MIN_PX..=PHONE_TEXTURE_CAP_MAX_PX).contains(px) && px & (px - 1) == 0;
+    match assets.phone_max_texture_px {
+        Some(px) if !cap_fits(&px) => {
+            Err(ManifestError::new(ManifestErrorCode::InvalidTextureCap, format!("assets.phone_max_texture_px {px}")))
+        }
+        _ => Ok(()),
+    }
 }
 
 fn check_web(web: &WebSection) -> Result<(), ManifestError> {
@@ -1035,6 +1161,67 @@ fn check_textures(rows: &[TextureRow]) -> Result<(), ManifestError> {
         }
     }
     Ok(())
+}
+
+/// The asset groups every build already has (the web map's boot, sim and stream groups): an
+/// `[[asset_group]]` may not take one of these names, in any case.
+pub const RESERVED_ASSET_GROUPS: [&str; 3] = ["boot", "sim", "stream"];
+/// The most `[[asset_group]]` rows a game declares.
+pub const MAX_ASSET_GROUPS: usize = 64;
+/// The most paths one `[[asset_group]]` lists.
+pub const MAX_ASSET_GROUP_PATHS: usize = 256;
+/// The longest asset group name.
+const MAX_ASSET_GROUP_NAME_CHARS: usize = 64;
+/// The glob segment that matches any number of whole segments.
+const ANY_SEGMENTS: &str = "**";
+
+/// Each `[[asset_group]]` has a free, unreserved name and 1..=[`MAX_ASSET_GROUP_PATHS`] distinct globs
+/// under assets/; at most [`MAX_ASSET_GROUPS`] rows. One path in two groups is allowed (the host's
+/// `checkAssetGroups`).
+fn check_asset_groups(rows: &[AssetGroupRow]) -> Result<(), ManifestError> {
+    if rows.len() > MAX_ASSET_GROUPS {
+        return Err(ManifestError::new(ManifestErrorCode::InvalidAssetGroup, format!("{} groups", rows.len())));
+    }
+    let mut names = crate::map::Set::default();
+    for row in rows {
+        let reserved = RESERVED_ASSET_GROUPS.contains(&row.name.to_ascii_lowercase().as_str());
+        if !valid_asset_group_name(&row.name) || reserved || !names.insert(row.name.clone()) {
+            return Err(ManifestError::new(ManifestErrorCode::InvalidAssetGroup, format!("{:?}", row.name)));
+        }
+        if row.paths.is_empty() || row.paths.len() > MAX_ASSET_GROUP_PATHS {
+            let detail = format!("{} has {} paths", row.name, row.paths.len());
+            return Err(ManifestError::new(ManifestErrorCode::InvalidAssetGroup, detail));
+        }
+        let mut seen = crate::map::Set::default();
+        if let Some(bad) = row.paths.iter().find(|glob| !is_asset_glob(glob) || !seen.insert(glob.as_str())) {
+            return Err(ManifestError::new(ManifestErrorCode::InvalidAssetGroup, format!("{} {bad:?}", row.name)));
+        }
+    }
+    Ok(())
+}
+
+/// A letter or digit, then letters, digits, `_` and `-`, at most [`MAX_ASSET_GROUP_NAME_CHARS`].
+fn valid_asset_group_name(name: &str) -> bool {
+    let first = name.chars().next().is_some_and(|c| c.is_ascii_alphanumeric());
+    let rest = name.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-'));
+    first && rest && name.chars().count() <= MAX_ASSET_GROUP_NAME_CHARS
+}
+
+/// Whether `glob` stays under assets/: the safe asset path rule with `*` and `?` inside a segment and
+/// `**` as a whole segment; no other glob syntax (the host's `isAssetGlob`).
+fn is_asset_glob(glob: &str) -> bool {
+    !glob.is_empty() && glob.split('/').all(is_asset_glob_segment)
+}
+
+fn is_asset_glob_segment(segment: &str) -> bool {
+    if segment == ANY_SEGMENTS {
+        return true;
+    }
+    let allowed = |c: char| c.is_ascii_alphanumeric() || matches!(c, ' ' | '_' | '.' | '*' | '?' | '-');
+    if segment.is_empty() || !segment.chars().all(allowed) || segment.contains(ANY_SEGMENTS) {
+        return false;
+    }
+    segment.contains(['*', '?']) || genex_core::paths::is_safe_asset_path(segment)
 }
 
 fn check_game(game: &GameSection) -> Result<(), ManifestError> {

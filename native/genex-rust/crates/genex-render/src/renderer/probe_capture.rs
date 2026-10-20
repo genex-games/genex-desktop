@@ -250,9 +250,9 @@ impl Renderer {
         let rows = plan.visible_slots as usize;
         let reversed = self.path.depth_reversed;
         let shadows = plan.frame.cascade_splits[3] > 0.5 && plan.views > 1;
-        let lod = plan.cull_views.lod;
-        let face_cull = crate::cull::cpu_cull(&crate::cull::frustum_planes_for(face.view_proj, reversed), lod, &plan.batches, &plan.instances, rows);
-        let light_cull = (shadows && !face.shadow_drawn).then(|| crate::cull::cpu_cull(&crate::cull::frustum_planes(face.light.0), lod, &plan.batches, &plan.instances, rows));
+        let lod = plan.cull_lod();
+        let face_cull = crate::cull::cpu_cull(&crate::cull::frustum_planes_for(face.view_proj, reversed), &lod, &plan.batches, &plan.instances, rows);
+        let light_cull = (shadows && !face.shadow_drawn).then(|| crate::cull::cpu_cull(&crate::cull::frustum_planes(face.light.0), &lod, &plan.batches, &plan.instances, rows));
         let mut lists = face_cull.visible.clone();
         lists.extend(light_cull.as_ref().map_or_else(|| vec![0; rows], |cull| cull.visible.clone()));
         let row = capture_frame(&plan.frame, face, (shadows, reversed), rows as u32);
@@ -344,6 +344,8 @@ impl Renderer {
         entries.extend(FRAME_MATERIAL_CLASS_BINDINGS.into_iter().zip(class_views).map(|((binding, _), view)| wgpu::BindGroupEntry { binding, resource: wgpu::BindingResource::TextureView(view) }));
         let neutral = self.ssr.borrow().neutral().clone();
         entries.push(wgpu::BindGroupEntry { binding: crate::screen_inputs::FRAME_REFLECTIONS_BINDING.0, resource: wgpu::BindingResource::TextureView(&neutral) });
+        // A capture draws no faded batch (game systems LOD-04): the table is bound, never read.
+        entries.push(entry(crate::layout::FRAME_INSTANCE_FADE_BINDING.0, t.instance_fade.get()));
         self.device.create_bind_group(&wgpu::BindGroupDescriptor { label: Some("probe capture frame"), layout: &self.layouts.frame, entries: &entries })
     }
 
@@ -363,6 +365,7 @@ impl Renderer {
             SHADOW_MASK_COLOR_ARRAYS.into_iter().zip(color_classes).map(|(binding, view)| wgpu::BindGroupEntry { binding, resource: wgpu::BindingResource::TextureView(view) }),
         );
         entries.push(wgpu::BindGroupEntry { binding: SHADOW_MASK_SAMPLER, resource: wgpu::BindingResource::Sampler(&self.texture_sampler) });
+        entries.push(entry(SHADOW_INSTANCE_FADE, t.instance_fade.get()));
         self.device.create_bind_group(&wgpu::BindGroupDescriptor { label: Some("probe capture shadow"), layout: &self.layouts.shadow, entries: &entries })
     }
 }

@@ -50,6 +50,7 @@ import { NativeOp, NativeRunMode, type NativeTimers } from "../../src/shared/nat
 import type { ToolchainLock } from "../../src/shared/toolchain.ts";
 import { readGlb } from "../../src/substrate/asset-import/glb.ts";
 import { AssetImportRefusal, ImportAction, ImportConverter } from "../../src/substrate/asset-import/import-plan.ts";
+import { IMPORT_DETAIL_MAX_CHARS } from "../../src/substrate/asset-import/job.ts";
 import { NativeGamePort } from "../../src/substrate/native-game-port.ts";
 import {
   type GameChild,
@@ -488,6 +489,80 @@ describe("the import step over a stage", { skip: SKIP_UNLESS_MAC }, () => {
       assert.ok(report?.files.every((row) => row.refusal === AssetImportRefusal.ImporterFailed));
       assert.deepEqual(await readdir(path.join(stageDir, "assets")), [], "a failed file stays out of the stage");
     }
+  });
+
+  it("names how a failed job ended in its refusal: the exit and the importer's stderr, a timeout, a sandbox that did not start", async () => {
+    const parent = await realpath(await tmpDir("rust-assets-detail-"));
+    const stageDir = path.join(parent, "stage");
+    await mkdir(path.join(stageDir, "assets"), { recursive: true });
+    for (let i = 0; i < 3; i += 1)
+      await copyFile(path.join(SAMPLES, "model.stl"), path.join(stageDir, "assets", `m${i}.stl`));
+    let jobs = 0;
+    // One job at a time, so each file meets the failure its turn brings.
+    const sandboxFor = async (): Promise<ImportSandbox> => {
+      jobs += 1;
+      if (jobs === 3) throw new Error("sandbox-exec: profile refused");
+      const timedOut = jobs === 2;
+      return {
+        run: async (request) => ({
+          ...(await runShell({ ...request, command: "echo 'encoder: out of memory' >&2; exit 3" })),
+          ...(timedOut ? { code: null, timedOut: true } : {}),
+        }),
+        dispose: async () => {},
+      };
+    };
+    const report = await importStagedAssets(
+      { jobsRoot: path.join(parent, "jobs"), sandboxFor, secretPaths: [] },
+      { stage: stageDir, target: BuildTarget.Mac, jobs: 1 },
+    );
+    const rows = report?.files ?? [];
+    assert.deepEqual(
+      rows.map((row) => row.refusal),
+      [AssetImportRefusal.ImporterFailed, AssetImportRefusal.ImporterFailed, AssetImportRefusal.ImporterFailed],
+    );
+    assert.match(rows[0]?.detail ?? "", /exited 3: encoder: out of memory/);
+    assert.match(rows[1]?.detail ?? "", /timed out/);
+    assert.match(rows[2]?.detail ?? "", /sandbox-exec: profile refused/);
+    for (const row of rows) assert.ok((row.detail ?? "").length <= IMPORT_DETAIL_MAX_CHARS, row.detail);
+  });
+
+  it("runs a job again once when the importer crashed, and names the signal when it crashes twice; an ordinary exit is not retried", {
+    timeout: IMPORT_ROW_MS,
+  }, async () => {
+    const crash = { code: 139, stderr: "/bin/sh: line 1: 4242 Segmentation fault: 11  node worker.ts job" };
+    const outcome = async (ends: ReadonlyArray<{ code: number; stderr: string } | "real">) => {
+      const parent = await realpath(await tmpDir("rust-assets-crash-"));
+      const stageDir = path.join(parent, "stage");
+      await mkdir(path.join(stageDir, "assets"), { recursive: true });
+      await copyFile(path.join(SAMPLES, "model.stl"), path.join(stageDir, "assets", "ship.stl"));
+      let runs = 0;
+      const sandboxFor = async (): Promise<ImportSandbox> => ({
+        run: async (request) => {
+          const end = ends[runs] ?? "real";
+          runs += 1;
+          // A crashed importer may leave a partial output behind; the retry starts from an empty out/.
+          await writeFile(path.join(request.cwd, "out", "0.glb"), "partial");
+          if (end === "real") return await runShell({ ...request, command: `rm -f out/0.glb; ${request.command}` });
+          return { ...(await runShell({ ...request, command: "true" })), code: end.code, stderr: end.stderr };
+        },
+        dispose: async () => {},
+      });
+      const report = await importStagedAssets(
+        { jobsRoot: path.join(parent, "jobs"), sandboxFor, secretPaths: [] },
+        { stage: stageDir, target: BuildTarget.Mac },
+      );
+      return { runs, row: report?.files[0] };
+    };
+    const once = await outcome([crash, "real"]);
+    assert.equal(once.runs, 2, "a crash runs the job once more");
+    assert.equal(once.row?.output?.file, "assets/ship.glb", JSON.stringify(once.row));
+    const twice = await outcome([crash, crash]);
+    assert.equal(twice.runs, 2, "at most once more");
+    assert.equal(twice.row?.refusal, AssetImportRefusal.ImporterFailed);
+    assert.match(twice.row?.detail ?? "", /SIGSEGV/);
+    const exited = await outcome([{ code: 1, stderr: "no" }, "real"]);
+    assert.equal(exited.runs, 1, "an importer that exits on its own is not run again");
+    assert.equal(exited.row?.refusal, AssetImportRefusal.ImporterFailed);
   });
 
   it("answers null and places nothing once the build is stopped", async () => {

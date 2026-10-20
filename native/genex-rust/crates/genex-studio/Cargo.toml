@@ -19,6 +19,8 @@ genex-core = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 log = { workspace = true }
+# The crash hook whose fd-3 sink sends the `crash` event before `fatal` (game systems CRASH-2).
+genex-crash = { workspace = true }
 
 # The adopted descriptor is marked close-on-exec (`fcntl`), as transport.cpp does; the spike
 # example's stubborn test double also ignores SIGTERM with it (std has no signal API).

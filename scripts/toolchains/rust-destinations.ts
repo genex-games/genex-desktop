@@ -12,6 +12,9 @@
  *   the studio presenter `genex-studio` on desktop rows, `-web` on wasm32). `--crates` narrows
  *   every row to the named crates (a row left with none is not planned); an unknown name is
  *   refused.
+ * - The vendored relay client `genex-multiplayer` is checked on the web row with its `web`
+ *   feature (the JS bridge; nothing linked). Its native build links libcolyseus from a lib dir its
+ *   build script is given, so the native rows take it once the env helper exports one.
  * - The Linux row is checked the way the Linux build lane builds: the target-scoped pkg-config
  *   variables point at the store's Linux sysroot (cpal links libasound, gilrs libudev), so no
  *   host library is consulted. Without a sysroot that row is `not-run`, never green.
@@ -78,16 +81,20 @@ const ENGINE_CRATES = [
   "genex-anim",
   "genex-nav",
   "genex-stream",
+  "genex-net",
   "genex",
 ] as const;
 
 /** The crates added to the engine set by family (the studio presenter rides with the desktop shell). */
 const FAMILY_CRATES = {
   [Family.Desktop]: ["genex-platform-desktop", "genex-studio"],
-  [Family.Web]: ["genex-platform-web"],
+  [Family.Web]: ["genex-platform-web", "genex-multiplayer"],
   [Family.Ios]: ["genex-platform-ios"],
   [Family.Android]: ["genex-platform-android"],
 } as const satisfies Record<Family, readonly string[]>;
+
+/** The features a crate is checked with wherever a row names it (the relay client's web backend on wasm32). */
+const CRATE_FEATURES: Readonly<Record<string, readonly string[]>> = { "genex-multiplayer": ["web"] };
 
 const DESTINATIONS: readonly { triple: DestinationTriple; family: Family }[] = [
   { triple: DestinationTriple.MacArm, family: Family.Desktop },
@@ -154,7 +161,16 @@ export function planRows(crates?: readonly string[]): PlannedRow[] {
 
 /** The cargo arguments (after `cargo`) of one row. */
 export function cargoCheckArgs(row: PlannedRow): string[] {
-  return ["check", "--offline", "--locked", "--target", row.triple, ...row.crates.flatMap((name) => ["-p", name])];
+  const features = row.crates.flatMap((name) => (CRATE_FEATURES[name] ?? []).map((feature) => `${name}/${feature}`));
+  return [
+    "check",
+    "--offline",
+    "--locked",
+    "--target",
+    row.triple,
+    ...row.crates.flatMap((name) => ["-p", name]),
+    ...(features.length > 0 ? ["--features", features.join(",")] : []),
+  ];
 }
 
 /** One finished or skipped row, as written to `<triple>.json` and `summary.json`. */

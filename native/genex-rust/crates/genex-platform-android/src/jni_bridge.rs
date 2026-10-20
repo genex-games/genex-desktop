@@ -3,7 +3,11 @@
 //! display cutout GameActivity hands over natively (`Activity.getWindow().getDecorView()
 //! .getRootWindowInsets().getDisplayCutout()`, API 28+); for both candidates, the audio focus
 //! (`AudioManager.requestAudioFocus`), the thermal status (`PowerManager
-//! .getCurrentThermalStatus`) and the display's refresh rate (`Display.getRefreshRate`). A missing object or a Java exception answers `None`, never a panic.
+//! .getCurrentThermalStatus`), the display's refresh rate (`Display.getRefreshRate`) and an input
+//! device's USB vendor and product ids (`InputDevice.getVendorId`/`getProductId`, which name a
+//! gamepad's family) and the memory facts the streamed content pool reads (game systems STR-7:
+//! `ActivityManager.getMemoryClass`, the last trim level and the low-memory flag). A missing object
+//! or a Java exception answers `None`, never a panic.
 
 #[cfg(feature = "native-activity")]
 use crate::SafeArea;
@@ -20,6 +24,16 @@ const AUDIOFOCUS_GAIN: i32 = 1;
 const AUDIOFOCUS_REQUEST_GRANTED: i32 = 1;
 /// `Context.POWER_SERVICE`.
 const POWER_SERVICE: &str = "power";
+/// `Context.ACTIVITY_SERVICE`.
+const ACTIVITY_SERVICE: &str = "activity";
+/// `android.app.ActivityManager`, whose static `getMyMemoryState` fills a process record.
+const ACTIVITY_MANAGER_CLASS: &str = "android/app/ActivityManager";
+/// `ActivityManager.RunningAppProcessInfo`, which carries `lastTrimLevel`.
+const PROCESS_INFO_CLASS: &str = "android/app/ActivityManager$RunningAppProcessInfo";
+/// `ActivityManager.MemoryInfo`, which carries `lowMemory`.
+const MEMORY_INFO_CLASS: &str = "android/app/ActivityManager$MemoryInfo";
+/// `android.view.InputDevice`, whose static `getDevice(int)` answers a device by id.
+const INPUT_DEVICE_CLASS: &str = "android/view/InputDevice";
 /// `requestAudioFocus(OnAudioFocusChangeListener, int, int)` (deprecated in API 26, still served:
 /// the listener-less form needs no Java class of the app's own). A focus loss while resumed needs
 /// a listener, which is a Java class: the APK has none of its own (NativeActivity), so the shell
@@ -134,4 +148,93 @@ pub fn display_refresh_hz() -> Option<f32> {
         let display = object(env, &manager, "getDefaultDisplay", "()Landroid/view/Display;", &[])?;
         call(env, &display, "getRefreshRate", "()F", &[])?.f().ok()
     })
+}
+
+/// The USB vendor and product ids of the input device with `device_id` (the id a key or motion
+/// event names; `InputDevice.getDevice(int)`, `getVendorId()`, `getProductId()`, API 19), or `None`
+/// for a device that is gone, a virtual one (ids 0) or ids outside a USB id's range.
+/// TODO(IN-6): the per-device joystick reader, which sees raw device ids before winit, sends
+/// `PadChange::Family(pad_family(vendor, product))` when a controller first takes a slot.
+pub fn input_device_ids(device_id: i32) -> Option<(u16, u16)> {
+    with_activity(|env, _| {
+        let found = env.call_static_method(INPUT_DEVICE_CLASS, "getDevice", "(I)Landroid/view/InputDevice;", &[JValue::Int(device_id)]);
+        if found.is_err() {
+            let _ = env.exception_clear();
+        }
+        let device = found.ok()?.l().ok().filter(|device| !device.is_null())?;
+        let vendor = u16::try_from(call(env, &device, "getVendorId", "()I", &[])?.i().ok()?).ok()?;
+        let product = u16::try_from(call(env, &device, "getProductId", "()I", &[])?.i().ok()?).ok()?;
+        (vendor != 0 || product != 0).then_some((vendor, product))
+    })
+}
+
+/// What Android's `ActivityManager` says about memory (game systems STR-7), each part `None` when
+/// it cannot be read. NativeActivity has no Java class to receive `onTrimMemory`, so the trim
+/// level is polled instead: `getMyMemoryState` reports the last level the system sent this
+/// process (`lastTrimLevel`, API 16). The shell reads it with its thermal poll and on winit's
+/// memory warning (`onLowMemory`), and merges it into `genex_gpu_memory::MemoryFacts`
+/// (`with_android`), where `RUNNING_LOW` or worse cuts the phone's content pool.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct MemoryState {
+    /// The per-app memory class in MiB (`getMemoryClass`, API 5).
+    pub memory_class_mib: Option<u32>,
+    /// The last `ComponentCallbacks2.TRIM_MEMORY_*` level sent to this process (0: none yet).
+    pub last_trim_level: Option<i32>,
+    /// Whether the system considers itself low on memory (`MemoryInfo.lowMemory`, API 1).
+    pub low_memory: Option<bool>,
+}
+
+/// The activity manager's memory facts, or `None` without an activity manager.
+pub fn memory_state() -> Option<MemoryState> {
+    with_activity(|env, activity| {
+        let name = env.new_string(ACTIVITY_SERVICE).ok()?;
+        let manager = object(env, activity, "getSystemService", "(Ljava/lang/String;)Ljava/lang/Object;", &[JValue::Object(&name)])?;
+        let memory_class = call(env, &manager, "getMemoryClass", "()I", &[]).and_then(|answer| answer.i().ok());
+        Some(MemoryState {
+            memory_class_mib: memory_class.and_then(|mib| u32::try_from(mib).ok()).filter(|mib| *mib > 0),
+            last_trim_level: last_trim_level(env),
+            low_memory: low_memory(env, &manager),
+        })
+    })
+}
+
+/// A new object of `class` from its no-argument constructor; a thrown exception answers `None`.
+fn new_object<'local>(env: &mut JNIEnv<'local>, class: &str) -> Option<JObject<'local>> {
+    let made = env.new_object(class, "()V", &[]);
+    if made.is_err() {
+        let _ = env.exception_clear();
+    }
+    made.ok().filter(|made| !made.is_null())
+}
+
+/// An `int` field of `obj`; a missing field answers `None`.
+fn int_field(env: &mut JNIEnv<'_>, obj: &JObject<'_>, name: &str) -> Option<i32> {
+    let value = env.get_field(obj, name, "I");
+    if value.is_err() {
+        let _ = env.exception_clear();
+    }
+    value.ok()?.i().ok()
+}
+
+/// The last trim level the system sent this process (`getMyMemoryState(info).lastTrimLevel`).
+fn last_trim_level(env: &mut JNIEnv<'_>) -> Option<i32> {
+    let info = new_object(env, PROCESS_INFO_CLASS)?;
+    let sig = "(Landroid/app/ActivityManager$RunningAppProcessInfo;)V";
+    let filled = env.call_static_method(ACTIVITY_MANAGER_CLASS, "getMyMemoryState", sig, &[JValue::Object(&info)]);
+    if filled.is_err() {
+        let _ = env.exception_clear();
+        return None;
+    }
+    int_field(env, &info, "lastTrimLevel")
+}
+
+/// Whether the system is low on memory (`getMemoryInfo(info).lowMemory`).
+fn low_memory(env: &mut JNIEnv<'_>, manager: &JObject<'_>) -> Option<bool> {
+    let info = new_object(env, MEMORY_INFO_CLASS)?;
+    call(env, manager, "getMemoryInfo", "(Landroid/app/ActivityManager$MemoryInfo;)V", &[JValue::Object(&info)])?;
+    let value = env.get_field(&info, "lowMemory", "Z");
+    if value.is_err() {
+        let _ = env.exception_clear();
+    }
+    value.ok()?.z().ok()
 }

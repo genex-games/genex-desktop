@@ -1,0 +1,28 @@
+[package]
+name = "genex-crash"
+description = "Crash reports for genex games: typed crash records with raw frames and context, the panic hook, a capped file sink and replay of the ticks before a crash."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+# genex-core for the save root the file sink writes under (and its reserved crash folder);
+# serde and serde_json for the record's JSON; thiserror for the refusal enums. All already locked.
+genex-core = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+
+# backtrace for the raw instruction pointers of a panic's stack (`trace` only: the host
+# symbolicates); never on wasm32, where the web shell keeps the engine's stack. Not on iOS either:
+# backtrace 0.3.76 always compiles its gimli symbolizer there, which calls libc's _dyld_* functions,
+# and libc 0.2.190 declares those for macOS only. iOS walks the stack with the system unwinder
+# (frames.rs), the same _Unwind_Backtrace backtrace itself uses on Apple targets.
+[target.'cfg(not(any(target_arch = "wasm32", target_os = "ios")))'.dependencies]
+backtrace = { workspace = true }

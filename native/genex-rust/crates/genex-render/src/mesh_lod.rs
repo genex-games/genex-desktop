@@ -25,7 +25,8 @@
 //! threshold it fades in and the finer level fades out, both within the threshold. A level's
 //! batch gets a fade twin ([`fade_batch_lod`], [`LOD_FADE_TAG`]) and [`lod_band_keep`] keeps each
 //! (instance, level) pair in exactly one of them, with the slot's signed fade value. A band of 0
-//! is today's hard switch bit for bit; the cull adopts the band in LOD-03.
+//! is today's hard switch bit for bit. The cull keeps by [`lod_row_keep`] (LOD-03): the band
+//! measured from the instance's LOD row (its origin and bias, LOD-02, [`crate::lod_rows`]).
 
 use glam::{Mat3, Mat4};
 
@@ -280,25 +281,26 @@ pub fn fade_batch_lod(level: u32, errors: &[f32], radius: f32) -> [u32; 3] {
     [tag | LOD_FADE_TAG, low, high]
 }
 
-/// A chain's errors scaled by an instance's radius, the chain's length and the instance's
-/// distance from the camera to its bounding sphere: what [`lod_keeps`] and [`lod_band_keep`]
-/// measure.
-fn instance_chain(lod: [u32; 3], bounds: [f32; 4], view: [f32; 4]) -> ([f32; 4], usize, f32) {
+/// A chain's errors scaled by an instance's radius (its row's `bounds`), the chain's length and
+/// the distance from the camera to the sphere `origin` its levels are measured from (the bounds
+/// themselves unless its LOD row names another, game systems LOD-02): what [`lod_keeps`] and
+/// [`lod_row_keep`] measure.
+fn instance_chain(lod: [u32; 3], bounds: [f32; 4], origin: [f32; 4], view: [f32; 4]) -> ([f32; 4], usize, f32) {
     let levels = ((lod[0] >> LOD_LEVELS_SHIFT) & LOD_LEVEL_MASK).min(LOD_MAX_LEVELS) as usize;
     let halves = [lod[1] & 0xFFFF, lod[1] >> 16, lod[2] & 0xFFFF, lod[2] >> 16];
     let errors = halves.map(|bits| f16_value(bits as u16) * bounds[3]);
-    let offset = [bounds[0] - view[0], bounds[1] - view[1], bounds[2] - view[2]];
-    let distance = (offset[0] * offset[0] + offset[1] * offset[1] + offset[2] * offset[2]).sqrt() - bounds[3];
+    let offset = [origin[0] - view[0], origin[1] - view[1], origin[2] - view[2]];
+    let distance = (offset[0] * offset[0] + offset[1] * offset[1] + offset[2] * offset[2]).sqrt() - origin[3];
     (errors, levels, distance)
 }
 
 /// An instance's band from the camera; levels off (`view.w` not positive) or a radius that is
 /// not positive draw the mesh itself whole.
-fn instance_band(lod: [u32; 3], bounds: [f32; 4], view: [f32; 4], bias: f32, beta: f32) -> LodBand {
+fn instance_band(lod: [u32; 3], bounds: [f32; 4], origin: [f32; 4], view: [f32; 4], bias: f32, beta: f32) -> LodBand {
     if !positive(view[3]) || !positive(bounds[3]) {
         return LodBand::MESH;
     }
-    let (errors, levels, distance) = instance_chain(lod, bounds, view);
+    let (errors, levels, distance) = instance_chain(lod, bounds, origin, view);
     lod_band(&errors[..levels], distance, view[3], 1.0, bias, beta)
 }
 
@@ -308,14 +310,23 @@ fn instance_band(lod: [u32; 3], bounds: [f32; 4], view: [f32; 4], bias: f32, bet
 /// that level; its fade twin ([`LOD_FADE_TAG`]) keeps those fading in to it (`-share`: draw the
 /// pixels whose dither threshold is at least `1 - share`) or out of it to the next coarser level
 /// (`1 - share`: draw those below it), so each (instance, level) pair is kept by one batch and
-/// every pixel by one of the two levels. The cull's twin is LOD-03's.
+/// every pixel by one of the two levels. Measured from the instance's own bounds
+/// ([`lod_row_keep`] with them as the origin).
 pub fn lod_band_keep(lod: [u32; 3], bounds: [f32; 4], view: [f32; 4], bias: f32, beta: f32) -> Option<f32> {
+    lod_row_keep(lod, bounds, bounds, view, bias, beta)
+}
+
+/// [`lod_band_keep`] with the distance measured from the world sphere `origin` of the instance's
+/// LOD row (game systems LOD-02: one sphere for every part of a compound model), its errors still
+/// scaled by its own `bounds`' radius. The cull's keep rule (`gx_cull_lod_fade` in
+/// `shaders/cull.wgsl`, expression for expression; game systems LOD-03).
+pub fn lod_row_keep(lod: [u32; 3], bounds: [f32; 4], origin: [f32; 4], view: [f32; 4], bias: f32, beta: f32) -> Option<f32> {
     if lod[0] & LOD_TAG == 0 {
         return Some(WHOLE);
     }
     let level = lod[0] & LOD_LEVEL_MASK;
     let fade = lod[0] & LOD_FADE_TAG != 0;
-    let band = instance_band(lod, bounds, view, bias, beta);
+    let band = instance_band(lod, bounds, origin, view, bias, beta);
     if band.share >= WHOLE {
         return (!fade && level == band.level).then_some(WHOLE);
     }
@@ -326,6 +337,32 @@ pub fn lod_band_keep(lod: [u32; 3], bounds: [f32; 4], view: [f32; 4], bias: f32,
         return Some(-band.share);
     }
     (level + 1 == band.level).then_some(WHOLE - band.share)
+}
+
+/// [`lod_row_keep`] with the instance's far field (game systems LOD-18): whether the cull keeps
+/// it in a batch, with its slot's `[fade, grow]`. A copy nearer than its far rule's start keeps
+/// [`lod_row_keep`]'s answer, grow 1. A thinned one (past the start) is dropped by every whole
+/// batch and drawn by its fade batches only: the level it is whole at with the far share as its
+/// fade, or its two crossfading levels with their fades times the far share; a share of 0 drops
+/// it everywhere. The cull's twin is `gx_cull_lod_fade` in `shaders/cull.wgsl`.
+pub fn lod_row_keep_far(lod: [u32; 3], bounds: [f32; 4], origin: [f32; 4], view: [f32; 4], (bias, beta): (f32, f32), far: crate::lod_rows::FarField) -> Option<[f32; 2]> {
+    if !far.thinned {
+        return lod_row_keep(lod, bounds, origin, view, bias, beta).map(|fade| [fade, WHOLE]);
+    }
+    let fade_batch = lod[0] & LOD_TAG != 0 && lod[0] & LOD_FADE_TAG != 0;
+    if !fade_batch || far.share.is_nan() || far.share <= 0.0 {
+        return None;
+    }
+    let level = lod[0] & LOD_LEVEL_MASK;
+    let band = instance_band(lod, bounds, origin, view, bias, beta);
+    let fade = if band.share >= WHOLE {
+        (level == band.level).then_some(far.share)
+    } else if level == band.level {
+        Some(-band.share * far.share)
+    } else {
+        (level + 1 == band.level).then_some((WHOLE - band.share) * far.share)
+    };
+    fade.map(|fade| [fade, far.grow])
 }
 
 /// The LOD row (`GpuBatch::lod`) of a batch drawing level `level` (0 the mesh itself) of a chain
@@ -346,8 +383,9 @@ pub fn batch_lod(level: u32, errors: &[f32], radius: f32) -> [u32; 3] {
 /// a batch without levels keeps every instance, a level's batch only the instances
 /// [`select_lod`] gives that level, seen from the camera's distance to the bounding sphere, and a
 /// fade batch ([`LOD_FADE_TAG`]) none (no band here: [`lod_band_keep`] with a band of 0, for a
-/// positive radius). The cull's `gx_cull_lod_keeps`, expression for expression; no plan writes a
-/// fade batch until the cull takes the band (LOD-03), so the cull has no fade branch yet.
+/// positive radius). A6.9's keep rule, kept as the reference [`lod_row_keep`] with a band of 0
+/// is held to (the cull keeps by [`lod_row_keep`] since LOD-03); unlike it, a radius that is not
+/// positive here scales every error to 0 and picks the coarsest level.
 pub fn lod_keeps(lod: [u32; 3], bounds: [f32; 4], view: [f32; 4]) -> bool {
     if lod[0] & LOD_TAG == 0 {
         return true;
@@ -361,7 +399,7 @@ pub fn lod_keeps(lod: [u32; 3], bounds: [f32; 4], view: [f32; 4]) -> bool {
     if !positive(view[3]) {
         return level == 0;
     }
-    let (errors, levels, distance) = instance_chain(lod, bounds, view);
+    let (errors, levels, distance) = instance_chain(lod, bounds, bounds, view);
     select_lod(&errors[..levels], distance, view[3], 1.0) == level
 }
 

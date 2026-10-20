@@ -40,6 +40,8 @@ export const RustBuildRefusal = {
   TargetSettings: "target-settings",
   /** The host's admission refused an executable the build made (M3.5's policy, or the transport scan). */
   AdmissionRefused: "admission-refused",
+  /** The destination's asset package passed its hard cap (`assets-over-ceiling` in the line, C-17). */
+  PackageRefused: "package-refused",
 } as const;
 export type RustBuildRefusal = (typeof RustBuildRefusal)[keyof typeof RustBuildRefusal];
 

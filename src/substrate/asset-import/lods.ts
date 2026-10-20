@@ -1,12 +1,19 @@
 /**
- * Import-time LODs (renderer pass 2, A6.9): a GLB of at least {@link LOD_MIN_TRIANGLES} triangles
- * gets `extras.genex_lods` on every primitive, the schema in
+ * Import-time LODs (renderer pass 2, A6.9; attribute-aware since LOD-09): a GLB of at least
+ * {@link LOD_MIN_TRIANGLES} triangles gets `extras.genex_lods` on every primitive, the schema in
  * `native/genex-rust/crates/genex-render/README.md`. Each level is simplified from the primitive's
  * own triangles by meshoptimizer's simplifier (npm `meshoptimizer` 1.3.0, `decoders.ts`) to half the
- * previous level's target, its open borders locked so primitives of one mesh stay joined, and
- * carries its object-space error (meshoptimizer's relative error times the mesh's extent), never
- * less than the level before. The chain's length is the GLB's largest primitive's (levels stop when
- * one is no longer markedly coarser, its error passes {@link LOD_MAX_RELATIVE_ERROR}, or at
+ * previous level's target, weighing the primitive's normals and first texture coordinates beside
+ * its positions so a collapse that would slide the texture or bend the shading costs what it does.
+ * Vertices that also lie in another primitive are locked, so primitives that meet stay joined, and
+ * so are leaf cards' (`lod-cards.ts`), so foliage keeps its area; a primitive's own open borders may
+ * simplify. Levels from the second on may drop small disconnected
+ * parts, and a double-sided material's folds are kept.
+ *
+ * Each level carries its object-space error: the largest of meshoptimizer's error times the mesh's
+ * extent, how far the primitive's vertices lie from the level (`lod-deviation.ts`) and the level
+ * before's error. The chain's length is the GLB's largest primitive's (levels stop when one is no
+ * longer markedly coarser, its error passes {@link LOD_MAX_RELATIVE_ERROR}, or at
  * {@link LOD_MAX_LEVELS}); a primitive that cannot be simplified that far repeats its last level,
  * so every primitive has the same number. Never an extension, never in `extensionsRequired`: any
  * glTF reader still draws the primitive whole, and the runtime validates the levels again.
@@ -23,10 +30,13 @@ import {
   LodLevelKey,
   LODS_EXTRAS_KEY,
 } from "../../shared/render-quality.ts";
-import { meshoptSimplifier } from "./decoders.ts";
-import { type GltfJson, readGlb, writeGlb } from "./glb.ts";
+import { MeshoptSimplifyFlag, meshoptSimplifier } from "./decoders.ts";
+import { GltfComponent, type GltfJson, readGlb, writeGlb } from "./glb.ts";
 import { index, isObject, type Json, objects } from "./gltf-json.ts";
+import { findCards } from "./lod-cards.ts";
+import { vertexDeviation } from "./lod-deviation.ts";
 import { type Geometry, readGeometry } from "./meshlets.ts";
+import { accessorData, type PackDoc } from "./prune.ts";
 
 /** Each level aims at this share of the previous level's triangles. */
 const LOD_RATIO = 0.5;
@@ -34,10 +44,27 @@ const LOD_RATIO = 0.5;
 const LOD_MIN_REDUCTION = 0.85;
 /** The coarsest error a level may have, relative to the mesh's extent. */
 export const LOD_MAX_RELATIVE_ERROR = 0.1;
-/** The simplifier's flags: open borders stay where they are, so a mesh's primitives keep meeting. */
-const SIMPLIFY_FLAGS = ["LockBorder"] as const;
+/** How much a unit of normal difference weighs against a unit of position error (Godot's and kansei's choice). */
+const NORMAL_WEIGHT = 0.5;
+/** How much a unit of texture-coordinate difference weighs against a unit of position error. */
+const UV_WEIGHT = 1;
+/** The first level (1-based) that may drop small disconnected parts. */
+const PRUNE_FROM_LEVEL = 2;
+/** `vertexLock` value that keeps a vertex in place (meshoptimizer's `meshopt_SimplifyVertex_Lock`). */
+const VERTEX_LOCKED = 1;
+const NORMAL = "NORMAL";
+const TEXCOORD_0 = "TEXCOORD_0";
 const U32_BYTES = 4;
 const TRIANGLE = 3;
+const NORMAL_FLOATS = 3;
+const UV_FLOATS = 2;
+/** The glTF accessor type of each attribute width read here. */
+const VECTOR_TYPE: Readonly<Record<number, string>> = { [UV_FLOATS]: "VEC2", [NORMAL_FLOATS]: "VEC3" };
+/** Each normalized integer component type's reader and its largest value (glTF 3.11). */
+const NORMALIZED: Readonly<Record<number, readonly [number, (data: DataView, at: number) => number, number]>> = {
+  [GltfComponent.UnsignedByte]: [1, (data, at) => data.getUint8(at), 255],
+  [GltfComponent.UnsignedShort]: [2, (data, at) => data.getUint16(at, true), 65_535],
+};
 
 /** Why {@link addLodExtras} returned the GLB unchanged. */
 export const LodSkip = {
@@ -87,50 +114,207 @@ export function validateLodSet(set: LodSet, vertexCount: number): LodFault | nul
   return null;
 }
 
-/** The levels of one primitive, the largest primitive's count of them decided by the caller. */
-async function simplifyPrimitive(geometry: Geometry, targets: readonly number[]): Promise<LodSet> {
+/** One primitive as the simplifier takes it: geometry, weighed attributes, locks and flags. */
+interface SimplifyInput {
+  geometry: Geometry;
+  /** Per vertex: the normal (when the primitive has one), then UV0 (when it has one). */
+  attributes: Float32Array;
+  stride: number;
+  weights: number[];
+  lock: Uint8Array;
+  doubleSided: boolean;
+}
+
+/** A float or normalized-integer attribute of `width` components as tight floats, or null. */
+function attributeFloats(doc: PackDoc, at: unknown, width: number, count: number): Float32Array | null {
+  const found = index(at);
+  const accessor = objects(doc.json.accessors)[found ?? -1];
+  const shaped = accessor !== undefined && accessor.type === VECTOR_TYPE[width] && index(accessor.count) === count;
+  if (found === null || !shaped) return null;
+  let bytes: Uint8Array;
+  try {
+    bytes = accessorData(doc, found);
+  } catch {
+    return null;
+  }
+  const data = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  if (accessor.componentType === GltfComponent.Float) {
+    return bytes.byteLength === count * width * 4
+      ? Float32Array.from({ length: count * width }, (_, i) => data.getFloat32(i * 4, true))
+      : null;
+  }
+  const normalized = NORMALIZED[Number(accessor.componentType)];
+  if (!normalized || accessor.normalized !== true || bytes.byteLength !== count * width * normalized[0]) return null;
+  const [size, read, largest] = normalized;
+  return Float32Array.from({ length: count * width }, (_, i) => read(data, i * size) / largest);
+}
+
+/** The primitive's normal and UV0 interleaved with their weights; absent ones are left out. */
+function weighedAttributes(
+  doc: PackDoc,
+  primitive: Json,
+  count: number,
+): Pick<SimplifyInput, "attributes" | "stride" | "weights"> {
+  const attributes = isObject(primitive.attributes) ? primitive.attributes : {};
+  const streams = [
+    {
+      values: attributeFloats(doc, attributes[NORMAL], NORMAL_FLOATS, count),
+      width: NORMAL_FLOATS,
+      weight: NORMAL_WEIGHT,
+    },
+    { values: attributeFloats(doc, attributes[TEXCOORD_0], UV_FLOATS, count), width: UV_FLOATS, weight: UV_WEIGHT },
+  ].filter((stream): stream is { values: Float32Array; width: number; weight: number } => stream.values !== null);
+  const stride = streams.reduce((sum, stream) => sum + stream.width, 0);
+  const out = new Float32Array(count * stride);
+  let offset = 0;
+  for (const stream of streams) {
+    for (let vertex = 0; vertex < count; vertex++)
+      out.set(stream.values.subarray(vertex * stream.width, (vertex + 1) * stream.width), vertex * stride + offset);
+    offset += stream.width;
+  }
+  return { attributes: out, stride, weights: streams.flatMap((stream) => Array(stream.width).fill(stream.weight)) };
+}
+
+/** A position's key: its three floats, -0 read as 0. */
+const positionKey = (positions: Float32Array, vertex: number) =>
+  `${(positions[vertex * 3] ?? 0) + 0},${(positions[vertex * 3 + 1] ?? 0) + 0},${(positions[vertex * 3 + 2] ?? 0) + 0}`;
+
+/** The vertices a primitive's triangles use, each once, in first-use order. */
+function usedVertices(geometry: Geometry): number[] {
+  const seen = new Uint8Array(geometry.positions.length / 3);
+  const used: number[] = [];
+  for (const vertex of geometry.indices) {
+    if (seen[vertex]) continue;
+    seen[vertex] = 1;
+    used.push(vertex);
+  }
+  return used;
+}
+
+/**
+ * Per primitive, 1 on each vertex its triangles use whose position another primitive's triangles
+ * also use: where primitives meet. Primitives sharing one vertex buffer count only what they draw.
+ */
+function sharedVertexLocks(geometry: readonly Geometry[]): Uint8Array[] {
+  const owners = new Map<string, number>();
+  const used = geometry.map(usedVertices);
+  used.forEach((vertices, primitive) => {
+    for (const vertex of vertices) {
+      const key = positionKey(geometry[primitive]?.positions ?? new Float32Array(), vertex);
+      const owner = owners.get(key);
+      if (owner === undefined) owners.set(key, primitive);
+      else if (owner !== primitive) owners.set(key, -1);
+    }
+  });
+  return geometry.map((each, primitive) => {
+    const lock = new Uint8Array(each.positions.length / 3);
+    for (const vertex of used[primitive] ?? [])
+      if (owners.get(positionKey(each.positions, vertex)) === -1) lock[vertex] = VERTEX_LOCKED;
+    return lock;
+  });
+}
+
+/** Whether the primitive's material draws both faces. */
+function isDoubleSided(json: Json, primitive: Json): boolean {
+  return objects(json.materials)[index(primitive.material) ?? -1]?.doubleSided === true;
+}
+
+/** The simplifier's options for the 1-based level `level`. */
+function flagsFor(input: SimplifyInput, level: number): MeshoptSimplifyFlag[] {
+  const flags: MeshoptSimplifyFlag[] = [MeshoptSimplifyFlag.ErrorClamped];
+  if (level >= PRUNE_FROM_LEVEL) flags.push(MeshoptSimplifyFlag.Prune);
+  if (input.doubleSided) flags.push(MeshoptSimplifyFlag.PreserveFolds);
+  return flags;
+}
+
+/** One simplification of `indices` to `share` of its triangles: the indices and the relative error. */
+async function simplifyTo(
+  input: SimplifyInput,
+  indices: Uint32Array,
+  share: number,
+  level: number,
+): Promise<[Uint32Array, number]> {
   const simplifier = await meshoptSimplifier();
-  const scale = simplifier.getScale(geometry.positions, TRIANGLE);
+  const target = Math.floor((indices.length * share) / TRIANGLE) * TRIANGLE;
+  return simplifier.simplifyWithAttributes(
+    indices,
+    input.geometry.positions,
+    TRIANGLE,
+    input.attributes,
+    input.stride,
+    input.weights,
+    input.lock,
+    target,
+    LOD_MAX_RELATIVE_ERROR,
+    flagsFor(input, level),
+  );
+}
+
+/** The levels of one primitive, `count` of them, each with its object-space error. */
+async function simplifyPrimitive(input: SimplifyInput, count: number): Promise<LodSet> {
+  const { positions } = input.geometry;
+  const original = input.geometry.indices;
   const levels: LodLevel[] = [];
-  let last: LodLevel = { indices: geometry.indices, error: 0 };
-  for (const share of targets) {
-    const target = Math.floor((geometry.indices.length * share) / TRIANGLE) * TRIANGLE;
-    const [indices, error] = simplifier.simplify(
-      geometry.indices,
-      geometry.positions,
-      TRIANGLE,
-      target,
-      LOD_MAX_RELATIVE_ERROR,
-      [...SIMPLIFY_FLAGS],
-    );
+  let last: LodLevel = { indices: original, error: 0 };
+  if (!original.length) return { levels: Array.from({ length: count }, () => last) };
+  const scale = (await meshoptSimplifier()).getScale(positions, TRIANGLE);
+  for (let level = 1; level <= count; level++) {
+    const [indices, error] = await simplifyTo(input, original, LOD_RATIO ** level, level);
     const usable = indices.length > 0 && indices.length <= last.indices.length;
-    last = usable ? { indices, error: Math.max(Math.fround(error * scale), last.error) } : last;
+    if (usable) {
+      const deviation = vertexDeviation(positions, original, indices);
+      last = { indices, error: Math.max(Math.fround(error * scale), Math.fround(deviation), last.error) };
+    }
     levels.push(last);
   }
   return { levels };
 }
 
-/** The shares of the original each level aims at, as long as the largest primitive keeps getting coarser. */
-async function chainTargets(largest: Geometry): Promise<number[]> {
-  const simplifier = await meshoptSimplifier();
-  const targets: number[] = [];
-  let previous = largest.indices.length;
-  for (let level = 1; level <= LOD_MAX_LEVELS; level++) {
-    const share = LOD_RATIO ** level;
-    const target = Math.floor((largest.indices.length * share) / TRIANGLE) * TRIANGLE;
-    const [indices] = simplifier.simplify(
-      largest.indices,
-      largest.positions,
-      TRIANGLE,
-      target,
-      LOD_MAX_RELATIVE_ERROR,
-      [...SIMPLIFY_FLAGS],
-    );
+/** How many levels the largest primitive gets before they stop getting coarser. */
+async function chainLength(inputs: SimplifyInput[]): Promise<number> {
+  const largest = inputs.reduce((most, each) =>
+    each.geometry.indices.length > most.geometry.indices.length ? each : most,
+  );
+  const original = largest.geometry.indices;
+  let previous = original.length;
+  let length = 0;
+  for (let level = 1; level <= LOD_MAX_LEVELS && original.length; level++) {
+    const [indices] = await simplifyTo(largest, original, LOD_RATIO ** level, level);
     if (!indices.length || indices.length > previous * LOD_MIN_REDUCTION) break;
-    targets.push(share);
+    length = level;
     previous = indices.length;
   }
-  return targets;
+  return length;
+}
+
+/** Each primitive's simplifier input, its attributes read from `doc`. */
+function simplifyInputs(doc: PackDoc, primitives: Json[], geometry: Geometry[]): SimplifyInput[] {
+  const locks = sharedVertexLocks(geometry);
+  return geometry.map((each, at) => {
+    const primitive = primitives[at] ?? {};
+    const count = each.positions.length / 3;
+    const lock = locks[at] ?? new Uint8Array(count);
+    lockCards(each, lock);
+    return {
+      geometry: each,
+      ...weighedAttributes(doc, primitive, count),
+      lock,
+      doubleSided: isDoubleSided(doc.json, primitive),
+    };
+  });
+}
+
+/**
+ * Lock every vertex of a primitive's leaf cards (`lod-cards.ts`), alpha-masked or not: unlocked,
+ * edge collapse erodes each card into a sliver and the crown loses half its area, so they stay
+ * whole as `LockBorder` kept them before LOD-09 (a crown of cards alone is then not coarser).
+ *
+ * TODO(LOD-10, follow-up): coarser levels would prune or merge whole cards here instead of keeping
+ * every one. The owner dropped that work on 2026-10-20 over patent US7973789B2, so cards stay
+ * locked; pick it up again only with a design the owner has cleared against that patent.
+ */
+function lockCards(geometry: Geometry, lock: Uint8Array): void {
+  for (const card of findCards(geometry)?.cards ?? []) for (const vertex of card.vertices) lock[vertex] = VERTEX_LOCKED;
 }
 
 /** Whether any primitive's extras already name `genex_lods`, or are not an object a key can join. */
@@ -164,17 +348,18 @@ export async function addLodExtras(glb: Uint8Array, options: { minTriangles?: nu
   if (found.length !== geometry.length || !found.length) return skip(LodSkip.UnreadableGeometry);
   const triangles = found.reduce((sum, each) => sum + each.indices.length / TRIANGLE, 0);
   if (triangles < (options.minTriangles ?? LOD_MIN_TRIANGLES)) return skip(LodSkip.BelowThreshold);
+  const doc: PackDoc = { json, bin: parts.bin, data: new Map() };
+  const inputs = simplifyInputs(doc, primitives, found);
   let sets: LodSet[];
   try {
-    const largest = found.reduce((most, each) => (each.indices.length > most.indices.length ? each : most));
-    const targets = await chainTargets(largest);
-    if (!targets.length) return skip(LodSkip.NotCoarser);
+    const count = await chainLength(inputs);
+    if (!count) return skip(LodSkip.NotCoarser);
     sets = [];
-    for (const each of found) sets.push(await simplifyPrimitive(each, targets));
+    for (const each of inputs) sets.push(await simplifyPrimitive(each, count));
   } catch {
     return skip(LodSkip.NoSimplifier);
   }
-  const invalid = sets.some((set, at) => validateLodSet(set, (found[at]?.positions.length ?? 0) / TRIANGLE) !== null);
+  const invalid = sets.some((set, at) => validateLodSet(set, (found[at]?.positions.length ?? 0) / 3) !== null);
   if (invalid) return skip(LodSkip.NotCoarser);
   return { bytes: writeExtras(json, parts.bin, primitives, sets), simplified: true };
 }

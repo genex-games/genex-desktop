@@ -8,6 +8,9 @@ texture inputs are the shared samples in `../asset-previews/`.
   locally with FFmpeg 7.1.1 (`-f lavfi -i sine=frequency=440:sample_rate=48000:duration=0.5`,
   0.25 s for Opus; `-fflags +bitexact -map_metadata -1`; libvorbis `-q:a 2`, libmp3lame 64 kb/s,
   FLAC, PCM s16le, libopus 24 kb/s). No third-party recording.
+- `tone.aac`, `tone.m4a`: `tone.wav` encoded to AAC-LC (ADTS and an MP4 sound track) with macOS
+  `afconvert -f adts -d aac` and `afconvert -f m4af -d aac` (macOS 26.6); the inputs of the
+  `audio-to-ogg` step's real-encoder rows (`tests/conformance/asset-import-audio-ogg.test.ts`).
 - `basisu-golden.json`: the first level of `../asset-previews/texture.ktx2` and of
   `basis-uastc-64.ktx2` transcoded by the importer's pinned Basis Universal v2.50 build (its
   `basis_encoder.wasm`, by sha256) to each texture family (BC7, ASTC 4×4, ETC2, RGBA32), by
@@ -31,14 +34,16 @@ texture inputs are the shared samples in `../asset-previews/`.
   `sphereGlb`), as the
   import step writes it: welded (C-7), in vertex cache and fetch order (C-8; it has no normal map,
   so no tangents), then `extras.genex_lods` simplified by meshoptimizer's
-  simplifier (`rust-assets-lods.test.ts` holds it to `convertAsset`); genex-render's `glb_lods` rows
-  load it.
+  attribute-aware simplifier, the equator's shared vertices locked and each error at least how far
+  the sphere's vertices lie from the level (LOD-09; `rust-assets-lods.test.ts` holds it to
+  `convertAsset`); genex-render's `glb_lods` rows load it.
 - `tangents-mirrored.glb`: an 8 x 16 UV sphere wound to face out, whose u is mirrored (1 → 0 → 1
   around it), with a normal-mapped material (a 1 x 1 flat-normal PNG that decodes) and no `TANGENT`
   (the test's own `sphereGlb` and `normalMapped`); `tangents-mirrored.imported.glb` is what the
   import step writes from it, MikkTSpace tangents split at both mirror seams (C-8).
-  `rust-assets-tangents.test.ts` holds both to their functions and `convertAsset`; the runtime's
-  tangent fallback (C-9, not landed yet) is to be held to the second.
+  `rust-assets-tangents.test.ts` holds both to their functions and `convertAsset`; genex-render's
+  `tests/tangents.rs` holds the runtime's tangent fallback (C-9) to the second, per corner within
+  1e-4; genex's `present` Metal row draws both with a bumpy normal map.
 - genex's `imported_fixtures` Metal row draws `tangents-mirrored.imported.glb` and
   `lods-sphere.glb` under four suns and holds both to facing out, and the tangent sphere's normal
   map to being bound.

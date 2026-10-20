@@ -1,5 +1,7 @@
 //! The storage-buffer tables a frame draws from and the bytes it writes into them. Every table
-//! grows to the next power of two when a frame needs more and is never shrunk; every byte a frame
+//! grows to the next power of two when a frame needs more and is never shrunk, except the skinned
+//! output and its slots, which grow by [`skinned_growth`] (game systems AN-16b: 48 B per skinned
+//! vertex per instance, twice with motion vectors, is too much to round up); every byte a frame
 //! writes is charged against the per-frame upload budget before the first write, so a refused
 //! frame leaves the GPU untouched (the world target keeps the previous frame).
 //!
@@ -159,16 +161,53 @@ pub(crate) fn aligned(bytes: u64) -> u64 {
     bytes.max(TABLE_MIN_BYTES).div_ceil(16) * 16
 }
 
+/// The granule the skinned tables grow in (AN-16b).
+pub const SKINNED_GROWTH_GRANULE_BYTES: u64 = 64 * 1024;
+/// How much a skinned table grows past what it held when a frame needs more (AN-16b): a quarter.
+const SKINNED_GROWTH_NUM: u64 = 5;
+const SKINNED_GROWTH_DEN: u64 = 4;
+
+/// The size a skinned table (the skinned output, its slots, last frame's copy) takes when it
+/// holds `held` bytes and a frame needs `need` (game systems AN-16b): `need` itself the first
+/// time, else at least 1.25 times what it held, rounded up to [`SKINNED_GROWTH_GRANULE_BYTES`]
+/// (below one granule, to the next power of two, as every other table) and never past
+/// [`crate::BUFFER_MAX_BYTES`] when `need` fits under it. A table of 48 MB of skinned vertices
+/// takes 48 MB, not the next power of two's 64.
+pub fn skinned_growth(held: u64, need: u64) -> u64 {
+    let grown = if held == 0 { need } else { need.max(held.saturating_mul(SKINNED_GROWTH_NUM) / SKINNED_GROWTH_DEN) };
+    if grown < SKINNED_GROWTH_GRANULE_BYTES {
+        return grown.next_power_of_two();
+    }
+    let rounded = grown.div_ceil(SKINNED_GROWTH_GRANULE_BYTES).saturating_mul(SKINNED_GROWTH_GRANULE_BYTES);
+    if need <= crate::BUFFER_MAX_BYTES { rounded.min(crate::BUFFER_MAX_BYTES) } else { rounded }
+}
+
+/// How a table grows when a frame needs more than it holds.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Growth {
+    /// To the next power of two.
+    PowerOfTwo,
+    /// By [`skinned_growth`].
+    Skinned,
+}
+
 /// One growable GPU table.
 pub(crate) struct Table {
     label: &'static str,
     usage: BufferUsages,
     buffer: Option<Buffer>,
+    growth: Growth,
+    /// How many buffers it has had: a new one holds nothing of the old one's.
+    generation: u64,
 }
 
 impl Table {
     const fn new(label: &'static str, usage: BufferUsages) -> Table {
-        Table { label, usage, buffer: None }
+        Table { label, usage, buffer: None, growth: Growth::PowerOfTwo, generation: 0 }
+    }
+
+    const fn skinned(label: &'static str, usage: BufferUsages) -> Table {
+        Table { label, usage, buffer: None, growth: Growth::Skinned, generation: 0 }
     }
 
     /// Make room for `bytes`; a grown table is a new, empty buffer.
@@ -177,8 +216,18 @@ impl Table {
         if self.buffer.as_ref().is_some_and(|b| b.size() >= need) {
             return Ok(());
         }
-        self.buffer = Some(buffer(device, self.label, need.next_power_of_two(), self.usage)?);
+        let size = match self.growth {
+            Growth::PowerOfTwo => need.next_power_of_two(),
+            Growth::Skinned => skinned_growth(self.capacity(), need),
+        };
+        self.buffer = Some(buffer(device, self.label, size, self.usage)?);
+        self.generation += 1;
         Ok(())
+    }
+
+    /// How many buffers the table has had (a changed count: what it held is gone).
+    pub(crate) fn generation(&self) -> u64 {
+        self.generation
     }
 
     /// Whether the table holds `bytes` without growing (a grown table loses what it held).
@@ -189,6 +238,11 @@ impl Table {
     /// The table's label and the bytes its buffer holds (None before it is first ensured).
     pub(crate) fn held(&self) -> Option<(&'static str, u64)> {
         self.buffer.as_ref().map(|buffer| (self.label, buffer.size()))
+    }
+
+    /// The bytes its buffer holds (0 before it is first ensured).
+    fn capacity(&self) -> u64 {
+        self.buffer.as_ref().map_or(0, Buffer::size)
     }
 
     /// The buffer (present once [`Table::ensure`] ran).
@@ -226,6 +280,16 @@ pub(crate) struct Tables {
     pub light_bins: Table,
     /// Each material row's extension (`material_ext`, RQ6.3: its emission), parallel to `materials`.
     pub material_ext: Table,
+    /// The LOD rows (game systems LOD-02, cull binding 6), parallel to the opaque instance rows:
+    /// sized by the instance table's room and replaced exactly when it is, so a retained group's
+    /// held instance rows mean its LOD rows are held too.
+    pub lod_rows: Table,
+    /// The per-slot fade table (game systems LOD-03, cull binding 7): `vec2<f32>` per visible-list
+    /// slot of every view, written by the cull for fade-batch survivors.
+    pub instance_fade: Table,
+    /// The frame's far rules (game systems LOD-18, cull binding 8): a uniform of
+    /// [`crate::lod_rows::FAR_RULES_MAX`] rules, the first `plan.far_rules` written.
+    pub far_rules: Table,
 }
 
 impl Tables {
@@ -245,12 +309,16 @@ impl Tables {
             lines: Table::new("lines", BufferUsages::VERTEX | BufferUsages::COPY_DST),
             joints: Table::new("joints", storage),
             skin_jobs: Table::new("skin jobs", storage),
-            skinned: Table::new("skinned vertices", BufferUsages::STORAGE | BufferUsages::VERTEX | BufferUsages::COPY_SRC),
-            skinned_slots: Table::new("skinned slots", BufferUsages::STORAGE | BufferUsages::VERTEX),
+            skinned: Table::skinned("skinned vertices", BufferUsages::STORAGE | BufferUsages::VERTEX | BufferUsages::COPY_SRC),
+            skinned_slots: Table::skinned("skinned slots", BufferUsages::STORAGE | BufferUsages::VERTEX),
             prev_models: Table::new("previous models", storage),
             light_ext: Table::new("light extensions", storage),
             light_bins: Table::new("light bins", storage),
             material_ext: Table::new("material extensions", storage),
+            lod_rows: Table::new("lod rows", storage),
+            // COPY_SRC: the fade rows read a view's region back (`Renderer::read_view_fades`).
+            instance_fade: Table::new("instance fade", storage | BufferUsages::COPY_SRC),
+            far_rules: Table::new("far rules", BufferUsages::UNIFORM | BufferUsages::COPY_DST),
         }
     }
 
@@ -275,6 +343,9 @@ impl Tables {
             &self.light_ext,
             &self.light_bins,
             &self.material_ext,
+            &self.lod_rows,
+            &self.instance_fade,
+            &self.far_rules,
         ]
         .into_iter()
         .filter_map(Table::held)
@@ -284,13 +355,18 @@ impl Tables {
     /// Make room for `uploads` (and the GPU-written tables of `plan`).
     pub(crate) fn ensure(&mut self, device: &Device, plan: &FramePlan, uploads: &Uploads) -> Result<(), RenderError> {
         let visible_rows = u64::from(plan.views) * u64::from(plan.visible_slots) + plan.transparent.len() as u64;
+        // The LOD table follows the instance table's room (LOD-02): a new instance table is a new
+        // LOD table, and the LOD table never grows on its own.
+        if !self.instances.holds(bytes_of_rows(&plan.instances)) {
+            self.lod_rows.buffer = None;
+        }
         let sizes = [
             (&mut self.instances, bytes_of_rows(&plan.instances)),
             (&mut self.materials, bytes_of_rows(&plan.materials)),
             (&mut self.material_ext, bytes_of_rows(&plan.material_ext)),
             (&mut self.lights, bytes_of_rows(&plan.lights)),
             (&mut self.batches, bytes_of_rows(&plan.batches)),
-            (&mut self.slot_base, bytes_of_rows(&plan.slot_base)),
+            (&mut self.slot_base, bytes_of_rows(&plan.slot_base) + bytes_of_rows(&plan.fade_slots)),
             (&mut self.visible, visible_rows * 4),
             (&mut self.args, u64::from(plan.views) * plan.batches.len() as u64 * ARGS_STRIDE),
             (&mut self.cull_scratch, crate::cull::scratch_bytes(plan.visible_slots, plan.views)),
@@ -305,10 +381,14 @@ impl Tables {
             // bin table holds masks only on a binned frame (RQ6.2), else a zero bin header.
             (&mut self.light_ext, uploads.light_ext.len() as u64),
             (&mut self.light_bins, light_bin_bytes(plan, uploads)),
+            (&mut self.instance_fade, u64::from(plan.views) * fade_slots(plan) * crate::layout::INSTANCE_FADE_BYTES),
+            (&mut self.far_rules, crate::lod_rows::FAR_RULES_BYTES),
         ];
         for (table, bytes) in sizes {
             table.ensure(device, bytes)?;
         }
+        let instance_room = self.instances.capacity() / size_of::<crate::layout::GpuInstance>() as u64;
+        self.lod_rows.ensure(device, instance_room * crate::lod_rows::LOD_ROW_BYTES)?;
         Ok(())
     }
 }
@@ -336,6 +416,14 @@ pub(crate) struct Uploads {
     /// The instance-table rows this frame writes (renderer pass 2 A.0b): every row, less the
     /// retained groups' rows the table already holds as they were ([`instance_upload_ranges`]).
     pub instance_rows: Vec<std::ops::Range<usize>>,
+    /// The LOD rows this frame writes (game systems LOD-02): the instance rows written, clipped
+    /// to the opaque rows ([`crate::lod_rows::lod_row_upload_ranges`]).
+    pub lod_rows: Vec<std::ops::Range<usize>>,
+    /// The CPU path's fade table (every view's region; LOD-03), empty on the GPU path or without
+    /// fade batches.
+    pub fades: Vec<u8>,
+    /// The frame's far rules (LOD-18), empty without any.
+    pub far_rules: Vec<u8>,
 }
 
 /// The instance-table rows a frame of `rows` rows whose retained groups lie at `spans` writes when
@@ -451,20 +539,62 @@ pub fn variant_pass_entry(plan: &FramePlan, view: u32, variant: usize) -> u64 {
     u64::from(plan.views) + plan.transparent.len() as u64 + (variant as u64 - 1) * u64::from(plan.views) + u64::from(view)
 }
 
+/// The variant pass entries the plan holds after its views and transparent draws: every
+/// non-plain variant's block when it draws a variant, else none.
+fn variant_blocks(plan: &FramePlan) -> u64 {
+    if plan.variants.is_empty() { 0 } else { crate::scene::DRAW_VARIANTS as u64 - 1 }
+}
+
+/// The variants whose fade twins' slot bases the plan holds (game systems LOD-04): its
+/// `fade_slots` regions, one per variant of the slot-base layout, none without fade batches.
+fn fade_regions(plan: &FramePlan) -> u32 {
+    if plan.fade_slots.is_empty() || plan.slot_count == 0 { 0 } else { plan.fade_slots.len() as u32 / plan.slot_count }
+}
+
+/// The pass-view entry of view `view`'s fade-twin rows of draw variant `variant` (game systems
+/// LOD-04): after the variants' blocks, one block of the plan's views per fade region, each
+/// reading its variant's region of the twins' slot bases, which follow the plan's own in the
+/// slot-base table.
+pub fn fade_pass_entry(plan: &FramePlan, view: u32, variant: usize) -> u64 {
+    let after_variants = u64::from(plan.views) + plan.transparent.len() as u64 + variant_blocks(plan) * u64::from(plan.views);
+    after_variants + variant as u64 * u64::from(plan.views) + u64::from(view)
+}
+
 fn pass_views(plan: &FramePlan) -> Vec<u8> {
     let transparent_base = plan.views * plan.visible_slots;
     let views = (0..plan.views).map(|view| GpuPassView { view, direct: 0, base: 0, slot_offset: 0 });
     let glass = (0..plan.transparent.len() as u32).map(|k| GpuPassView { view: 0, direct: 1, base: transparent_base + k, slot_offset: 0 });
     // Each non-plain variant's rows read its region of the slot-base table (P2-0.12).
-    let varied = if plan.variants.is_empty() { 0..0 } else { 1..crate::scene::DRAW_VARIANTS as u32 };
+    let varied = 1..1 + variant_blocks(plan) as u32;
     let variants = varied.flat_map(|variant| (0..plan.views).map(move |view| GpuPassView { view, direct: 0, base: 0, slot_offset: variant * plan.slot_count }));
-    let entries: Vec<GpuPassView> = views.chain(glass).chain(variants).collect();
+    // Each variant's fade twins read their region of the twins' slot bases (LOD-04).
+    let fade_base = plan.slot_base.len() as u32;
+    let fades = (0..fade_regions(plan)).flat_map(|variant| (0..plan.views).map(move |view| GpuPassView { view, direct: 0, base: 0, slot_offset: fade_base + variant * plan.slot_count }));
+    let entries: Vec<GpuPassView> = views.chain(glass).chain(variants).chain(fades).collect();
     let mut bytes = vec![0u8; entries.len().max(1) * PASS_VIEW_STRIDE as usize];
     for (i, entry) in entries.iter().enumerate() {
         let at = i * PASS_VIEW_STRIDE as usize;
         bytes[at..at + size_of::<GpuPassView>()].copy_from_slice(bytemuck::bytes_of(entry));
     }
     bytes
+}
+
+/// Each cull view's slots in the instance fade table (game systems LOD-03): the plan's visible
+/// slots when it has fade batches, else none (the table keeps its smallest size, which the cull
+/// binds and never writes).
+pub fn fade_slots(plan: &FramePlan) -> u64 {
+    if plan.fade_runs.is_empty() { 0 } else { u64::from(plan.visible_slots) }
+}
+
+/// The fade table the CPU path writes (game systems LOD-03): every view's fades, slot for slot
+/// with its visible list, when the plan has fade batches; nothing otherwise (or on the GPU path,
+/// whose cull writes them).
+fn cpu_fades(plan: &FramePlan, cpu_culls: &[CpuCull]) -> Vec<u8> {
+    if plan.fade_runs.is_empty() {
+        return Vec::new();
+    }
+    let fades: Vec<[f32; 2]> = cpu_culls.iter().flat_map(|cull| cull.fades.iter().copied()).collect();
+    bytemuck::cast_slice(&fades).to_vec()
 }
 
 /// The visible-list bytes a frame writes from the CPU, and where they start.
@@ -485,6 +615,8 @@ fn visible_rows(plan: &FramePlan, path: CullPath) -> (Vec<u8>, u64, Vec<CpuCull>
 impl Uploads {
     pub(crate) fn new(plan: &mut FramePlan, path: CullPath, instance_rows: Vec<std::ops::Range<usize>>) -> Result<Uploads, RenderError> {
         let (visible, visible_offset, cpu_culls) = visible_rows(plan, path);
+        let lod_rows = crate::lod_rows::lod_row_upload_ranges(plan.lod_rows.len(), &instance_rows);
+        let fades = cpu_fades(plan, &cpu_culls);
         let uploads = Uploads {
             frame: bytemuck::bytes_of::<GpuFrame>(&plan.frame).to_vec(),
             cull_views: bytemuck::bytes_of::<GpuCullViews>(&plan.cull_views).to_vec(),
@@ -501,6 +633,9 @@ impl Uploads {
             visible_offset,
             cpu_culls,
             instance_rows,
+            lod_rows,
+            fades,
+            far_rules: bytemuck::cast_slice(&plan.far_rules).to_vec(),
         };
         let mut budget = UploadBudget::new();
         for bytes in uploads.all() {
@@ -511,15 +646,17 @@ impl Uploads {
         for bytes in other_rows {
             budget.charge(bytes.len() as u64)?;
         }
+        budget.charge(bytes_of_rows(&plan.fade_slots))?;
         let written: usize = uploads.instance_rows.iter().map(ExactSizeIterator::len).sum();
         budget.charge((written * size_of::<crate::layout::GpuInstance>()) as u64)?;
+        budget.charge(uploads.lod_row_bytes())?;
         budget.charge(std::mem::size_of_val(uploads.prev_models.as_slice()) as u64)?;
         Ok(uploads)
     }
 
     /// The tables built here (the plan's own rows are [`plan_rows`]).
-    fn all(&self) -> [&Vec<u8>; 7] {
-        [&self.light_ext, &self.light_tiles, &self.light_zbins, &self.frame, &self.cull_views, &self.pass_views, &self.visible]
+    fn all(&self) -> [&Vec<u8>; 9] {
+        [&self.light_ext, &self.light_tiles, &self.light_zbins, &self.frame, &self.cull_views, &self.pass_views, &self.visible, &self.fades, &self.far_rules]
     }
 
     /// Every table write this frame makes from the CPU, for the upload arena: `plan`'s rows straight
@@ -531,12 +668,18 @@ impl Uploads {
             let bytes: &[u8] = bytemuck::cast_slice(&plan.instances[range.clone()]);
             (tables.instances.get(), (range.start * row) as u64, bytes)
         });
+        let lod_writes = self.lod_rows.iter().map(|range| {
+            let bytes: &[u8] = bytemuck::cast_slice(&plan.lod_rows[range.clone()]);
+            (tables.lod_rows.get(), range.start as u64 * crate::lod_rows::LOD_ROW_BYTES, bytes)
+        });
         let rest = [
             (tables.materials.get(), 0, materials),
             (tables.material_ext.get(), 0, material_ext),
             (tables.lights.get(), 0, lights),
             (tables.batches.get(), 0, batches),
             (tables.slot_base.get(), 0, slot_base),
+            // The fade twins' slot bases follow (game systems LOD-04, [`fade_pass_entry`]).
+            (tables.slot_base.get(), bytes_of_rows(&plan.slot_base), bytemuck::cast_slice(&plan.fade_slots)),
             (tables.pass_views.get(), 0, self.pass_views.as_slice()),
             (tables.lines.get(), 0, lines),
             (tables.joints.get(), 0, joints),
@@ -546,8 +689,16 @@ impl Uploads {
             (tables.light_bins.get(), 0, self.light_zbins.as_slice()),
             (tables.prev_models.get(), 0, bytemuck::cast_slice(&self.prev_models)),
             (tables.visible.get(), self.visible_offset, self.visible.as_slice()),
+            (tables.instance_fade.get(), 0, self.fades.as_slice()),
+            (tables.far_rules.get(), 0, self.far_rules.as_slice()),
         ];
-        instance_writes.chain(rest).collect()
+        instance_writes.chain(lod_writes).chain(rest).collect()
+    }
+
+    /// Bytes of LOD rows this frame writes (game systems LOD-02: a static retained group's are
+    /// written once).
+    pub(crate) fn lod_row_bytes(&self) -> u64 {
+        self.lod_rows.iter().map(ExactSizeIterator::len).sum::<usize>() as u64 * crate::lod_rows::LOD_ROW_BYTES
     }
 
     /// Bytes of instance rows this frame writes (A.0b).
