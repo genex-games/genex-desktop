@@ -3,6 +3,7 @@ import { useState, type JSX } from "react";
 import { Button } from "../ui/Button.tsx";
 import { Icon } from "../ui/icons.tsx";
 import { problemWords } from "../words.ts";
+import { pathParts } from "../../shared/path-label.ts";
 
 /** The section's own words. */
 const WORDS = {
@@ -11,12 +12,6 @@ const WORDS = {
   change: "Change…",
   choosing: "Choosing…",
 } as const;
-
-/** A path as its parent ("~/") and its own folder ("AI Games"): the parent is cut first when it is long. */
-function pathParts(label: string): { parent: string; leaf: string } {
-  const cut = label.replace(/\/+$/, "").lastIndexOf("/");
-  return cut < 0 ? { parent: "", leaf: label } : { parent: label.slice(0, cut + 1), leaf: label.slice(cut + 1) };
-}
 
 export function GamesSection({
   rootLabel,

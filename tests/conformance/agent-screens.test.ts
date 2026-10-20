@@ -80,6 +80,14 @@ describe("the words for a screen", () => {
     assert.equal(keysWords(["+"]), "+");
     assert.equal(keysWords(["constructor"]), "Constructor", "a name that is also an object key");
   });
+  it("names the Mac's modifier glyphs as a Windows keyboard does", () => {
+    assert.equal(keysWords(["meta+c"]), "⌘+C", "before main answers: the Mac's");
+    assert.equal(keysWords(["meta+c"], "darwin"), "⌘+C");
+    assert.equal(keysWords(["alt+Tab"], "darwin"), "⌥+Tab");
+    assert.equal(keysWords(["meta+c"], "win32"), "Win+C");
+    assert.equal(keysWords(["alt+Tab", "ctrl+s"], "win32"), "Alt+Tab+Ctrl+S");
+    assert.equal(screenDoing({ deed: ScreenDeed.Press, keys: ["option+f4"] }, "win32"), "Pressing Alt+F4");
+  });
   it("gives a frame's age short on a node and long on a card", () => {
     assert.equal(screenAgo(10_000, 11_000), "now");
     assert.equal(screenAgo(10_000, 13_000), "3s");

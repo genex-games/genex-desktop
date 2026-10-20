@@ -25,6 +25,7 @@ import { WorkerStopCode } from "../shared/workers.ts";
 import { type PackageManager, type SandboxProblemCode, type StartStep, StudioPlatform } from "../shared/boot.ts";
 import { ChatFileOpen } from "../shared/chat-files.ts";
 import { sizeWords } from "../shared/byte-size.ts";
+import { homePath, pathLeaf } from "../shared/path-label.ts";
 import { freeableBytes, StorageKind, type StorageFreed, type StorageSpace } from "../shared/storage-space.ts";
 import { SkippedBy, type SkippedFile } from "../shared/chat-rewind.ts";
 import { LiveBehindReason } from "../shared/live-behind.ts";
@@ -1579,32 +1580,54 @@ const KEY_WORD: Record<string, string> = {
   option: "⌥",
 };
 
-function keyWord(key: string): string {
+/** The keys a Windows or Linux keyboard names in words where the Mac's carries a glyph. */
+const KEY_WORD_OFF_MAC: Record<string, string> = {
+  cmd: "Win",
+  command: "Win",
+  meta: "Win",
+  super: "Win",
+  alt: "Alt",
+  option: "Alt",
+};
+
+function keyWord(key: string, platform: string): string {
   const lower = key.toLowerCase();
+  const offMac = platform !== "" && platform !== StudioPlatform.Mac;
+  if (offMac && Object.hasOwn(KEY_WORD_OFF_MAC, lower)) return KEY_WORD_OFF_MAC[lower] ?? key;
   if (Object.hasOwn(KEY_WORD, lower)) return KEY_WORD[lower] ?? key;
   return key.length === 1 ? key.toUpperCase() : key.charAt(0).toUpperCase() + key.slice(1);
 }
 
-/** Keys as a player reads them: "space" is Space, "ArrowRight" is →, "shift+w" is Shift+W. */
-export function keysWords(keys: readonly string[]): string {
+/**
+ * Keys as a player reads them: "space" is Space, "ArrowRight" is →, "shift+w" is Shift+W; "meta"
+ * is ⌘ on the Mac (or before main answers) and Win elsewhere, "alt" ⌥ or Alt.
+ */
+export function keysWords(keys: readonly string[], platform = ""): string {
   return keys
     .flatMap((combo) => (combo === "+" ? [combo] : combo.split("+").filter(Boolean)))
-    .map(keyWord)
+    .map((key) => keyWord(key, platform))
     .join("+");
 }
 
 /** A deed and, for a press, its keys. */
-function screenWords(act: ScreenAct | undefined, words: Record<ScreenDeed, string>, unknown: string): string {
+function screenWords(
+  act: ScreenAct | undefined,
+  words: Record<ScreenDeed, string>,
+  unknown: string,
+  platform: string,
+): string {
   if (!act || !Object.hasOwn(words, act.deed)) return unknown;
-  const keys = act.deed === ScreenDeed.Press && act.keys?.length ? ` ${keysWords(act.keys)}` : "";
+  const keys = act.deed === ScreenDeed.Press && act.keys?.length ? ` ${keysWords(act.keys, platform)}` : "";
   return `${words[act.deed]}${keys}`;
 }
 
 /** What an agent is doing at its screen, as its node says it: "Pressing Space", "Looking around". */
-export const screenDoing = (act: ScreenAct | undefined): string => screenWords(act, SCREEN_DOING, SCREEN_PLAYING.doing);
+export const screenDoing = (act: ScreenAct | undefined, platform = ""): string =>
+  screenWords(act, SCREEN_DOING, SCREEN_PLAYING.doing, platform);
 
 /** The same, done, as a step of its trail says it: "Pressed →", "Opened". */
-export const screenDone = (act: ScreenAct | undefined): string => screenWords(act, SCREEN_DONE, SCREEN_PLAYING.done);
+export const screenDone = (act: ScreenAct | undefined, platform = ""): string =>
+  screenWords(act, SCREEN_DONE, SCREEN_PLAYING.done, platform);
 
 /** A frame this recent is happening now. */
 const SCREEN_NOW_MS = 2 * SECOND_MS;
@@ -2825,7 +2848,8 @@ function permissionAsker(event: Partial<ToolPermissionEvent>): string {
 function toolAskWords(event: Partial<ToolPermissionEvent>, tool: string): string {
   const who = permissionAsker(event);
   if (PERMISSION_EDIT_TOOLS.has(tool)) {
-    const name = permissionPath(event)?.split("/").filter(Boolean).pop();
+    const path = permissionPath(event);
+    const name = path ? pathLeaf(path) : undefined;
     return name ? `${who} wants to edit ${name}` : `${who} wants to edit a file`;
   }
   if (PERMISSION_READ_TOOLS.has(tool)) {
@@ -2880,9 +2904,6 @@ function parsedRule(rule: string): { tool: string; content: string } {
 
 /** `npm test:*` and `npm test *` both allow every command that starts with the prefix. */
 const commandPrefix = (content: string): string | undefined => /^(.+?)(?::\*| \*)$/.exec(content)?.[1]?.trim();
-
-/** A path in a person's home, as `~/…`. */
-const homePath = (path: string): string => path.replace(/^\/(?:Users|home)\/[^/]+(?=\/|$)/, "~");
 
 /** What one rule allows, and where. */
 function ruleGrantWords(rule: string, scope: RuleScope): string {

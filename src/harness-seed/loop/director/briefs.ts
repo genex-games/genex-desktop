@@ -29,6 +29,7 @@ import { SHIP_DEFECTS_NOT_POLISH } from "./art-direction-prompts.ts";
 import type { AnyRecord, Run } from "../../types/harness.d.ts";
 // Type-only: erased at runtime, so this module still imports no part of the run.
 import type { Worker } from "./loop-run.ts";
+import { folderLabelOf as folderLabelOfDir } from "../workers/identity.ts";
 
 /**
  * This part serves a lead that is its chat's own session (one session): it builds in the integration
@@ -134,8 +135,7 @@ const WEB_AT_ROOT: readonly FactRef[] = [{ id: CoreFact.WebGame, path: "." }];
 
 /** The folder a brief names: the last two parts of the game's folder (or the lead's), else the run's project. */
 function folderLabelOf(run: Run, lead: { gameFolder: string } | null, gameFolder: string | null): string {
-  const folder = gameFolder || lead?.gameFolder;
-  return folder ? folder.split("/").slice(-2).join("/") : String(run.project ?? "");
+  return folderLabelOfDir(gameFolder || lead?.gameFolder, run.project);
 }
 
 /**
