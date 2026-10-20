@@ -43,8 +43,11 @@ export function GamesSection({
         <div className="mt-2.5 flex min-w-0 items-center gap-2">
           <div data-games-root title={rootLabel} className="settings-path">
             <Icon name="folder" size={14} className="shrink-0 text-ink-3" />
-            <span className="min-w-0 truncate text-ink-3">{parent}</span>
-            <span className="shrink-0 whitespace-nowrap text-ink">{leaf}</span>
+            {/* One run of text: the parent's separator sits right against the folder's name. */}
+            <span className="flex min-w-0">
+              <span className="min-w-0 truncate text-ink-3">{parent}</span>
+              <span className="shrink-0 whitespace-nowrap text-ink">{leaf}</span>
+            </span>
           </div>
           <Button disabled={busy} onClick={() => void choose()} className="h-9">
             {busy ? WORDS.choosing : WORDS.change}
