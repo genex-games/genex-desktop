@@ -2352,7 +2352,8 @@ raised, not returned).
 `unreal__plugin-build` needs the editor lock and asks first: the call saves the person's work through
 the Genex editor helper, quits Unreal and waits, then the host's editor target is built as the
 plugin's background job, which opens Unreal again after a good build and leaves it closed after a
-failed one. `unreal__plugin-test {filter?, stop?}` runs `UnrealEditor-Cmd` headless
+failed one. `unreal__plugin-test {filter?, stop?}` runs `UnrealEditor-Cmd` headless (the engine's
+`Binaries/Mac/UnrealEditor-Cmd`, or `Binaries\Win64\UnrealEditor-Cmd.exe` on Windows)
 (`automation-tests.ts`: `Automation RunTests <filter>`, the plugin's name by default, no shell, a
 small environment, its own process group, 30 minutes) and keeps Epic's report and a `summary.md` in
 `unreal/Saved/Genex/Tests/<Plugin>/`. Like `open-editor`, it runs outside ProcessSandbox and
@@ -2372,7 +2373,8 @@ its plugin's own (a call naming another plugin never reads, answers for or stops
 reads as Genex's own restart from before Unreal is quit and is refused while Genex reopens Unreal or
 adds its C++ module; a call stopped before its job starts changes nothing (a build stopped once
 Unreal was quit opens it again); and the backend stopping (Genex quits, the plugin is turned off)
-ends every running job's process group. A headless editor that exits badly before Automation wrote
+ends every running job's process group (on Windows its tree, by `taskkill /T /F`: Genex closes the
+backend's channel there instead of a SIGTERM, which would end the backend before it could). A headless editor that exits badly before Automation wrote
 its report is a failed run, its summary naming the exit code, the counts so far and its last lines.
 `unreal__plugin-status` answers each job's state and results and `proof`: the summary, the note and
 `unreal/Saved/Genex/Shots/<Plugin>-window.jpg` (kept by `app_look`'s `save`) that exist, the summary

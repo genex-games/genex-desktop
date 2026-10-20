@@ -183,6 +183,7 @@
   "tests/conformance/plugin-native.test.ts",
   "tests/conformance/plugin-panel-context.test.ts",
   "tests/conformance/plugin-payload-paths.test.ts",
+  "tests/conformance/plugin-process-stop.test.ts",
   "tests/conformance/plugin-scan.test.ts",
   "tests/conformance/plugin-sdk-types.test.ts",
   "tests/conformance/plugin-toolbar.test.ts",
