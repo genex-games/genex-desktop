@@ -10,6 +10,10 @@
 //! shares its rows. [`InstanceGroup::update`] replaces a range of its transforms, copying the
 //! rows first when a scene still holds them, and records the range, so the next upload writes
 //! only the rows that changed.
+//!
+//! A group's LOD rows (game systems LOD-02, [`crate::lod_rows`]) are computed the same way: once
+//! per version, bounds and [`DrawLod`], an update recomputing only its range, and uploaded over
+//! the instance rows' dirty ranges.
 
 use std::ops::Range;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -18,6 +22,7 @@ use std::sync::{Arc, Mutex};
 use crate::error::{RenderCode, RenderError};
 use crate::instance::instance_row;
 use crate::layout::GpuInstance;
+use crate::lod_rows::{DrawLod, GpuLodRow, lod_row};
 use crate::pbr::Material;
 use crate::scene::MeshId;
 
@@ -54,6 +59,17 @@ struct GroupInner {
     changes: Vec<(u64, Range<u32>)>,
     /// The rows of `models` for the bounds they were computed with.
     rows: Mutex<Option<GroupRows>>,
+    /// The LOD rows of `models` for the bounds and draw LOD they were computed with (LOD-02).
+    lod_rows: Mutex<Option<GroupLodRows>>,
+}
+
+/// A group's computed LOD rows (game systems LOD-02).
+#[derive(Clone, Debug)]
+struct GroupLodRows {
+    bounds: ([f32; 3], f32),
+    lod: DrawLod,
+    version: u64,
+    rows: Arc<Vec<GpuLodRow>>,
 }
 
 /// A group's computed rows (material index 0; a plan writes the frame's own).
@@ -67,7 +83,17 @@ struct GroupRows {
 impl Clone for GroupInner {
     fn clone(&self) -> GroupInner {
         let rows = self.rows.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clone();
-        GroupInner { id: self.id, mesh: self.mesh, material: self.material, models: self.models.clone(), version: self.version, changes: self.changes.clone(), rows: Mutex::new(rows) }
+        let lod_rows = self.lod_rows.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clone();
+        GroupInner {
+            id: self.id,
+            mesh: self.mesh,
+            material: self.material,
+            models: self.models.clone(),
+            version: self.version,
+            changes: self.changes.clone(),
+            rows: Mutex::new(rows),
+            lod_rows: Mutex::new(lod_rows),
+        }
     }
 }
 
@@ -89,7 +115,8 @@ impl InstanceGroup {
         if models.len() > GROUP_MAX_INSTANCES {
             return Err(too_many(models.len()));
         }
-        let inner = GroupInner { id: NEXT_GROUP.fetch_add(1, Ordering::Relaxed), mesh, material, models, version: 0, changes: Vec::new(), rows: Mutex::new(None) };
+        let id = NEXT_GROUP.fetch_add(1, Ordering::Relaxed);
+        let inner = GroupInner { id, mesh, material, models, version: 0, changes: Vec::new(), rows: Mutex::new(None), lod_rows: Mutex::new(None) };
         Ok(InstanceGroup { inner: Arc::new(inner) })
     }
 
@@ -188,6 +215,34 @@ impl InstanceGroup {
         *cached = Some(GroupRows { bounds, version: self.inner.version, rows: rows.clone() });
         rows
     }
+
+    /// The group's LOD rows (game systems LOD-02) for a mesh whose model-space sphere is
+    /// `center`/`radius`, drawn with `lod`: computed once per version, bounds and `lod`; an
+    /// update recomputes only the rows it changed when the previous rows are at hand.
+    pub fn lod_rows(&self, center: [f32; 3], radius: f32, lod: &DrawLod) -> Arc<Vec<GpuLodRow>> {
+        let rows = self.rows(center, radius);
+        let mut cached = self.inner.lod_rows.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let bounds = (center, radius);
+        let same = |held: &&GroupLodRows| held.bounds == bounds && held.lod == *lod;
+        if let Some(held) = cached.as_ref().filter(same).filter(|held| held.version == self.inner.version) {
+            return held.rows.clone();
+        }
+        let row = |at: usize| lod_row(&self.inner.models[at], rows[at].bounds, lod);
+        let changed = cached.as_ref().filter(same).and_then(|held| Some((held, self.changed_since(held.version)?)));
+        let lod_rows = match changed {
+            Some((held, range)) => {
+                let mut lod_rows = Arc::unwrap_or_clone(held.rows.clone());
+                for at in range {
+                    lod_rows[at as usize] = row(at as usize);
+                }
+                lod_rows
+            }
+            None => (0..self.inner.models.len()).map(row).collect(),
+        };
+        let lod_rows = Arc::new(lod_rows);
+        *cached = Some(GroupLodRows { bounds, lod: *lod, version: self.inner.version, rows: lod_rows.clone() });
+        lod_rows
+    }
 }
 
 /// Where a drawn group's rows landed in a frame's instance table: what the renderer compares with
@@ -204,15 +259,18 @@ pub struct RetainedSpan {
     pub material: u32,
     /// The mesh's model-space sphere its rows' bounds were computed with.
     pub bounds: ([f32; 3], f32),
+    /// The draw LOD its LOD rows were computed with (game systems LOD-02).
+    pub lod: DrawLod,
 }
 
 impl RetainedSpan {
     /// The rows of this span that differ from `last`'s, the same group's span of the last upload
     /// (relative to the span's first row): none when it lies where it lay with the same material,
-    /// bounds and version, the updates' range when only its group changed since, else all of it.
+    /// bounds, draw LOD and version, the updates' range when only its group changed since, else
+    /// all of it.
     pub fn changed_since(&self, last: &RetainedSpan) -> Range<u32> {
         let placed = self.group.id() == last.group.id() && self.first_row == last.first_row && self.rows == last.rows;
-        let same = placed && self.material == last.material && self.bounds == last.bounds;
+        let same = placed && self.material == last.material && self.bounds == last.bounds && self.lod == last.lod;
         if !same {
             return 0..self.rows;
         }

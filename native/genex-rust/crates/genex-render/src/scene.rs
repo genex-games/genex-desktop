@@ -18,7 +18,7 @@ use bytemuck::{Pod, Zeroable};
 use glam::{Mat4, Vec3};
 
 use crate::caps::BUFFER_MAX_BYTES;
-use crate::cull::{active_views, cascade_view, cpu_cull};
+use crate::cull::{CullLod, active_views, cascade_view, cpu_cull};
 use crate::error::{RenderCode, RenderError};
 use crate::instance::instance_row;
 use crate::layout::{GpuBatch, GpuMeshlet, GpuCullViews, GpuFrame, GpuInstance, GpuLight, GpuMaterial, GpuMaterialExt, GpuSkinJob, GpuSkinVertex, MAX_CASCADES, NO_BATCH, SHADOW_CASCADES};
@@ -27,6 +27,7 @@ use crate::mesh_arena::{ArenaStream, Rewrite, RowAllocator};
 use crate::meshlet::{self, MeshletLibrary, MeshletRange, MeshletSet};
 use crate::motion::{DrawId, MotionKeys, MotionRow, RowKind};
 use crate::pbr::{MaterialKey, light_table, radiance};
+use crate::lod_rows::{DrawLod, GpuLodRow, lod_row};
 use crate::retained::{InstanceGroup, RetainedSpan};
 use crate::settings::{Meshlets, ShadowSettings};
 use crate::shadow::{Cascades, camera_forward, fit};
@@ -830,6 +831,8 @@ pub struct DrawItem {
     pub material: Material,
     /// The draw id current when it was drawn ([`Scene::set_id`]), if any (RQ5.1 motion vectors).
     pub id: Option<DrawId>,
+    /// How its levels are chosen, current when it was drawn ([`Scene::set_lod`], game systems LOD-02).
+    pub lod: DrawLod,
 }
 
 /// One draw of a retained instance group (renderer pass 2 A.0b).
@@ -841,6 +844,8 @@ pub struct GroupDraw {
     pub material: Material,
     /// The draw id current when it was drawn ([`Scene::set_id`]), if any.
     pub id: Option<DrawId>,
+    /// How its instances' levels are chosen ([`Scene::set_lod`], game systems LOD-02).
+    pub lod: DrawLod,
 }
 
 /// One skinned draw: a skinned mesh posed by its joint matrices.
@@ -903,9 +908,17 @@ pub struct Scene {
     pub groups: Vec<GroupDraw>,
     /// The water drawn over the opaque scene (renderer pass 2 B.3; None: no water).
     pub water: Option<SceneWater>,
+    /// The levels' fade band (game systems LOD-03; `beta` of [`crate::mesh::lod_band`], in
+    /// (0, 1]): while a level's projected error is within the last `lod_band` of the threshold it
+    /// crossfades with the finer level through its fade batches. 0 (the default) is the hard
+    /// switch and plans no fade batch; so does a value outside (0, 1]. The faded pipelines that
+    /// draw the fade batches are LOD-04's: until then no frame draws them.
+    pub lod_band: f32,
     logical_draws: u32,
     /// The draw id later draws carry ([`Scene::set_id`]).
     id: Option<DrawId>,
+    /// How later draws' levels are chosen ([`Scene::set_lod`]).
+    lod: DrawLod,
 }
 
 impl Scene {
@@ -920,9 +933,25 @@ impl Scene {
             lines: Vec::new(),
             groups: Vec::new(),
             water: None,
+            lod_band: 0.0,
             logical_draws: 0,
             id: None,
+            lod: DrawLod::OWN,
         }
+    }
+
+    /// How the following draws' levels are chosen (game systems LOD-02): the model-space sphere
+    /// every part of a compound model measures from, so its parts switch together, and the bias
+    /// (2 holds each level twice as far). [`DrawLod::OWN`] (the default) measures each part from
+    /// its own bounds at the recorded errors.
+    pub fn set_lod(&mut self, lod: DrawLod) -> &mut Self {
+        self.lod = lod;
+        self
+    }
+
+    /// How the following draws' levels are chosen.
+    pub fn lod(&self) -> DrawLod {
+        self.lod
     }
 
     /// The draw id the following draws carry (`frame.id(key)` in the facade), `None` for none:
@@ -941,15 +970,15 @@ impl Scene {
 
     /// Draw `mesh` under `model`: one logical draw.
     pub fn draw(&mut self, mesh: MeshId, model: [f32; 16], material: Material) -> &mut Self {
-        self.draws.push(DrawItem { mesh, model, material, id: self.id });
+        self.draws.push(DrawItem { mesh, model, material, id: self.id, lod: self.lod });
         self.logical_draws += 1;
         self
     }
 
     /// Draw `mesh` once per model: one logical draw, however many instances.
     pub fn draw_instanced(&mut self, mesh: MeshId, models: &[[f32; 16]], material: Material) -> &mut Self {
-        let id = self.id;
-        self.draws.extend(models.iter().map(|model| DrawItem { mesh, model: *model, material, id }));
+        let (id, lod) = (self.id, self.lod);
+        self.draws.extend(models.iter().map(|model| DrawItem { mesh, model: *model, material, id, lod }));
         self.logical_draws += 1;
         self
     }
@@ -964,7 +993,7 @@ impl Scene {
     /// [`Scene::draw_group`] with `material` instead of the group's own (the facade resolves its
     /// textures each frame): its rows are still the group's, only their material row changes.
     pub fn draw_group_with(&mut self, group: &InstanceGroup, material: Material) -> &mut Self {
-        self.groups.push(GroupDraw { group: group.clone(), material, id: self.id });
+        self.groups.push(GroupDraw { group: group.clone(), material, id: self.id, lod: self.lod });
         self.logical_draws += 1;
         self
     }
@@ -1136,6 +1165,18 @@ pub struct FramePlan {
     /// error threshold (A6.9; 0 for an orthographic camera, whose levels are off):
     /// [`FramePlan::set_lod_height`] scales it into the cull's LOD view.
     pub lod_per_height: f32,
+    /// The LOD rows (game systems LOD-02), row for row with the opaque instance rows: the sphere
+    /// each row's levels are measured from and its bias (cull binding 6).
+    pub lod_rows: Vec<GpuLodRow>,
+    /// The fade batches' runs (game systems LOD-03), one per variant that draws a mesh with
+    /// levels, after every other batch: each level's fade twin, its own slots over its mesh's
+    /// rows. Empty without a fade band ([`Scene::lod_band`]).
+    pub fade_runs: Vec<VariantRun>,
+    /// The visible-list base of each level mesh's fade twin, laid out as
+    /// [`FramePlan::slot_base`] (a variant's region at its index times `slot_count`),
+    /// [`NO_BATCH`] where none: the region a faded draw finds its rows through (LOD-04). Empty
+    /// without fade batches.
+    pub fade_slots: Vec<u32>,
 }
 
 /// How a material's opaque draws are batched and drawn (P2-0.12): plain (back faces culled, drawn
@@ -1268,6 +1309,21 @@ struct Rows {
     lod_batches: bool,
     /// Visible-list slots taken so far: a batch's rows, and a level batch's own over its mesh's.
     slots: u32,
+    /// The LOD rows, row for row with `instances` (game systems LOD-02).
+    lod_rows: Vec<GpuLodRow>,
+    /// Each batched mesh with levels, for its fade twins (game systems LOD-03).
+    lod_meshes: Vec<LodMesh>,
+}
+
+/// A batched mesh with levels: its variant, its rows (its fade twins hold the same rows), its
+/// meshes level by level (the mesh itself first) and its chain's errors and bounding radius.
+struct LodMesh {
+    variant: usize,
+    first_row: u32,
+    count: usize,
+    levels: Vec<MeshId>,
+    errors: Vec<f32>,
+    radius: f32,
 }
 
 /// One variant's draws of one library mesh: retained groups (indices into `Scene::groups`), then
@@ -1316,8 +1372,43 @@ impl Rows {
                 self.slots += count as u32;
             }
             self.lod_batches |= levels > 0;
+            if let Some(lods) = lods {
+                let levels = std::iter::once(*mesh).chain(lods.levels.iter().copied()).collect();
+                self.lod_meshes.push(LodMesh { variant, first_row, count, levels, errors: lods.errors.clone(), radius: entry.radius });
+            }
         }
         Ok(())
+    }
+
+    /// The fade twins of every batched mesh with levels (game systems LOD-03), after every other
+    /// batch: per variant a run of each mesh's level batches again, tagged
+    /// [`crate::mesh::LOD_FADE_TAG`], with slots of their own over the mesh's rows, their slot
+    /// bases in `fade_slots` (laid out as `slot_base`).
+    fn push_fade_twins(&mut self, library: &MeshLibrary) -> Result<(Vec<VariantRun>, Vec<u32>), RenderError> {
+        if self.lod_meshes.is_empty() {
+            return Ok((Vec::new(), Vec::new()));
+        }
+        let mut fade_slots = vec![NO_BATCH; self.slot_base.len()];
+        let mut runs = Vec::new();
+        for variant in DrawVariant::ALL {
+            let first = self.batches.len() as u32;
+            for lod_mesh in self.lod_meshes.iter().filter(|lod_mesh| lod_mesh.variant == variant.index()) {
+                for (level, level_mesh) in lod_mesh.levels.iter().enumerate() {
+                    let geometry = mesh_entry(library, *level_mesh)?;
+                    fade_slots[variant.index() * self.slot_count + level_mesh.raw() as usize] = self.slots;
+                    let mut row = batch(self.slots as usize, lod_mesh.count, geometry.first_index, geometry.index_count, geometry.base_vertex);
+                    row.first_row = lod_mesh.first_row;
+                    row.lod = crate::mesh::fade_batch_lod(level as u32, &lod_mesh.errors, lod_mesh.radius);
+                    self.batches.push(row);
+                    self.slots += lod_mesh.count as u32;
+                }
+            }
+            let end = self.batches.len() as u32;
+            if end > first {
+                runs.push(VariantRun { variant, batches: first..end, skinned_from: end });
+            }
+        }
+        Ok((runs, fade_slots))
     }
 
     /// The instance rows of `drawn` (a mesh's draws in one variant): its retained groups' rows,
@@ -1329,7 +1420,9 @@ impl Rows {
         }
         for at in &drawn.draws {
             let draw = &scene.draws[*at];
-            self.instances.push(instance_row(&draw.model, entry.center, entry.radius, materials.row(&draw.material)));
+            let row = instance_row(&draw.model, entry.center, entry.radius, materials.row(&draw.material));
+            self.lod_rows.push(lod_row(&draw.model, row.bounds, &draw.lod));
+            self.instances.push(row);
             self.motion.extend(key_of.get(*at).copied().flatten());
         }
         self.instances.len() - first
@@ -1337,10 +1430,11 @@ impl Rows {
 
     /// One opaque retained group's rows: its cached rows under this frame's material row, and its
     /// span (A.0b).
-    fn push_group(&mut self, GroupDraw { group, material, id }: &GroupDraw, entry: &MeshEntry, keys: &mut DrawKeys, materials: &mut Materials) {
+    fn push_group(&mut self, GroupDraw { group, material, id, lod }: &GroupDraw, entry: &MeshEntry, keys: &mut DrawKeys, materials: &mut Materials) {
         let material = materials.row(material);
         let first = self.instances.len();
         self.instances.extend_from_slice(&group.rows(entry.center, entry.radius));
+        self.lod_rows.extend_from_slice(&group.lod_rows(entry.center, entry.radius, lod));
         if material != 0 {
             for row in &mut self.instances[first..] {
                 row.material = material;
@@ -1350,7 +1444,7 @@ impl Rows {
             self.motion.extend(keys.row(*id, group.mesh(), RowKind::Opaque, None));
         }
         let rows = group.len() as u32;
-        self.retained.push(RetainedSpan { group: group.clone(), first_row: first as u32, rows, material, bounds: (entry.center, entry.radius) });
+        self.retained.push(RetainedSpan { group: group.clone(), first_row: first as u32, rows, material, bounds: (entry.center, entry.radius), lod: *lod });
     }
 
     /// One opaque skinned draw's batch (one row), its slot base in `variant`'s region.
@@ -1361,6 +1455,7 @@ impl Rows {
         skinned.first_row = self.instances.len() as u32;
         self.batches.push(skinned);
         self.slots += 1;
+        self.lod_rows.push(lod_row(&draw.model, row.bounds, &DrawLod::OWN));
         self.instances.push(row);
         self.motion.extend(key);
     }
@@ -1500,7 +1595,7 @@ impl FramePlan {
         }
         // Retained groups (A.0b): opaque ones batch with their mesh's draws, ahead of them; a
         // transparent group's rows are sorted with the glass, one by one.
-        for (at, GroupDraw { group, material, id }) in scene.groups.iter().enumerate().filter(|(_, draw)| !draw.group.is_empty()) {
+        for (at, GroupDraw { group, material, id, .. }) in scene.groups.iter().enumerate().filter(|(_, draw)| !draw.group.is_empty()) {
             if library.is_removed(group.mesh()) {
                 stale_rows += group.len() as u32;
                 continue;
@@ -1530,6 +1625,8 @@ impl FramePlan {
             retained: Vec::new(),
             lod_batches: false,
             slots: 0,
+            lod_rows: Vec::with_capacity(instances),
+            lod_meshes: Vec::new(),
         };
         rows.push_meshes(scene, library, &by_mesh, 0, &key_of, &mut keys, &mut materials)?;
         let static_batches = rows.batches.len() as u32;
@@ -1562,7 +1659,9 @@ impl FramePlan {
                 variants.push(VariantRun { variant, batches: first..end, skinned_from });
             }
         }
-        let Rows { mut instances, mut motion, batches, slot_base, retained, lod_batches, slots: visible_slots, .. } = rows;
+        let band = fade_band(scene.lod_band);
+        let (fade_runs, fade_slots) = if band > 0.0 { rows.push_fade_twins(library)? } else { (Vec::new(), Vec::new()) };
+        let Rows { mut instances, mut motion, batches, slot_base, retained, lod_batches, slots: visible_slots, lod_rows, .. } = rows;
         let opaque_instances = instances.len() as u32;
         let view_proj = scene.camera.projection(aspect, depth_reversed);
         let lit = options.sun.map_or(scene.lighting.sun_intensity > 0.0, |sun| sun.color.iter().any(|c| *c > 0.0));
@@ -1589,6 +1688,7 @@ impl FramePlan {
         let eye = scene.camera.eye;
         cull_views.lod = [eye[0], eye[1], eye[2], lod_per_height * LOD_NOMINAL_HEIGHT as f32];
         cull_views.lod_params[0] = u32::from(lod_batches);
+        cull_views.lod_params[1] = band.to_bits();
         cull_views.planes[0] = camera_planes;
         if let Some(set) = &shadows {
             for (c, planes) in set.planes.iter().enumerate().take(drawn_cascades(set)) {
@@ -1629,6 +1729,9 @@ impl FramePlan {
             prev_models: Vec::new(),
             retained,
             lod_per_height,
+            lod_rows,
+            fade_runs,
+            fade_slots,
         })
     }
 
@@ -1646,7 +1749,12 @@ impl FramePlan {
 
     /// The reference cull of view `view` (0 the camera, 1 + c shadow cascade c).
     pub fn cpu_cull_view(&self, view: usize) -> CpuCull {
-        cpu_cull(&self.cull_views.planes[view], self.cull_views.lod, &self.batches, &self.instances, self.visible_slots as usize)
+        cpu_cull(&self.cull_views.planes[view], &self.cull_lod(), &self.batches, &self.instances, self.visible_slots as usize)
+    }
+
+    /// What the cull reads to choose levels: the LOD view, the fade band and the LOD rows.
+    pub fn cull_lod(&self) -> CullLod<'_> {
+        CullLod { view: self.cull_views.lod, band: f32::from_bits(self.cull_views.lod_params[1]), rows: &self.lod_rows }
     }
 
     /// The shadow cascades this frame plans (0 without sun shadows): [`ShadowSettings::cascades`].
@@ -1665,6 +1773,12 @@ fn fit_cascades(scene: &Scene, aspect: f32, sun_dir: [f32; 3], settings: &Shadow
 /// The cascades `set` holds: the leading run of positive split depths (an undrawn cascade's is 0).
 fn drawn_cascades(set: &Cascades) -> usize {
     set.splits.iter().take(MAX_CASCADES).take_while(|end| **end > 0.0).count()
+}
+
+/// The fade band a plan takes from [`Scene::lod_band`]: the band when it is in (0, 1], else 0
+/// (the hard switch, no fade batch; NaN included).
+fn fade_band(band: f32) -> f32 {
+    if band > 0.0 && band <= 1.0 { band } else { 0.0 }
 }
 
 fn batch(first_instance: usize, instance_count: usize, first_index: u32, index_count: u32, base_vertex: i32) -> GpuBatch {

@@ -250,9 +250,9 @@ impl Renderer {
         let rows = plan.visible_slots as usize;
         let reversed = self.path.depth_reversed;
         let shadows = plan.frame.cascade_splits[3] > 0.5 && plan.views > 1;
-        let lod = plan.cull_views.lod;
-        let face_cull = crate::cull::cpu_cull(&crate::cull::frustum_planes_for(face.view_proj, reversed), lod, &plan.batches, &plan.instances, rows);
-        let light_cull = (shadows && !face.shadow_drawn).then(|| crate::cull::cpu_cull(&crate::cull::frustum_planes(face.light.0), lod, &plan.batches, &plan.instances, rows));
+        let lod = plan.cull_lod();
+        let face_cull = crate::cull::cpu_cull(&crate::cull::frustum_planes_for(face.view_proj, reversed), &lod, &plan.batches, &plan.instances, rows);
+        let light_cull = (shadows && !face.shadow_drawn).then(|| crate::cull::cpu_cull(&crate::cull::frustum_planes(face.light.0), &lod, &plan.batches, &plan.instances, rows));
         let mut lists = face_cull.visible.clone();
         lists.extend(light_cull.as_ref().map_or_else(|| vec![0; rows], |cull| cull.visible.clone()));
         let row = capture_frame(&plan.frame, face, (shadows, reversed), rows as u32);
