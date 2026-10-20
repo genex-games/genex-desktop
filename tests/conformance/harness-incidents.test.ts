@@ -6046,7 +6046,7 @@ describe("the Loop's time limit", () => {
     assert.doesNotMatch(unbounded, /Building until about/, "∞ has no end time to promise");
     assert.match(unbounded, /required outcomes are verified/);
     assert.ok(unbounded.includes(ceilingDay), `the ceiling is dated (${ceilingDay}): ${unbounded}`);
-    assert.match(unbounded, /keep the app open and the Mac awake/i);
+    assert.match(unbounded, /keep the app open and the computer awake/i);
     assert.match(unbounded, /resumes itself|tap on Resume/);
 
     const capped = launchPromise({ wallClockMs: 3_600_000 }, null, now);

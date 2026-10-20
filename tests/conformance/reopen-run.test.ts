@@ -443,7 +443,7 @@ describe("reopening the finished build once the reply has ended", () => {
     assert.equal(told[0]?.type, "messages");
     assert.match(
       String(told[0]?.words),
-      /The build goes on until your request is checked, by about .+ at the latest — keep the app open and the Mac awake\./,
+      /The build goes on until your request is checked, by about .+ at the latest — keep the app open and the computer awake\./,
     );
 
     assert.equal(starts.length, 1);

@@ -89,10 +89,10 @@ const MESSAGE = {
   // stay awake, and that a paused run is not a lost one. "until satisfied" alone
   // answered none of those — the first real run ended on the plan's five-hour window at 105
   // of 180 minutes and nobody had been told that could happen.
-  buildPromised: (end: string) => `Building until about ${end} — keep the app open and the Mac awake. `,
+  buildPromised: (end: string) => `Building until about ${end} — keep the app open and the computer awake. `,
   // ∞ has no end to promise; its 24 h ceiling is a date, since as a bare clock it is "now".
   untilSatisfiedPromised: (ceiling: string) =>
-    `It finishes when the required outcomes are verified, with a safety stop by about ${ceiling} — keep the app open and the Mac awake. `,
+    `It finishes when the required outcomes are verified, with a safety stop by about ${ceiling} — keep the app open and the computer awake. `,
   planWindow:
     "Your Claude plan's window can pause it partway; it waits out the reset and resumes itself, or one tap on Resume.",
   connectionFirst:
