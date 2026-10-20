@@ -64,6 +64,10 @@ pub struct HudWidget {
     pub label: String,
     /// `[x0, y0, x1, y1]` in world pixels.
     pub rect: [f32; 4],
+    /// Its stable key (genex-ui's `Keyed`, the AccessKit `author_id`), when it was given one.
+    pub key: Option<String>,
+    /// Whether it had egui's focus after the tick (the AccessKit tree's focus).
+    pub focused: bool,
 }
 
 impl HudWidget {
@@ -75,8 +79,8 @@ impl HudWidget {
 }
 
 /// The labelled widgets of an AccessKit update, depth first from the root in child order (the
-/// order the UI drew them), at most `cap`.
-pub(crate) fn widgets(update: Option<&TreeUpdate>, cap: usize) -> Vec<HudWidget> {
+/// order the UI drew them), at most `cap`; egui's point bounds become world pixels at `ui_scale`.
+pub(crate) fn widgets(update: Option<&TreeUpdate>, cap: usize, ui_scale: f32) -> Vec<HudWidget> {
     let Some(update) = update else { return Vec::new() };
     let Some(root) = update.tree.as_ref().map(|tree| tree.root) else { return Vec::new() };
     let nodes: BTreeMap<NodeId, &Node> = update.nodes.iter().map(|(id, node)| (*id, node)).collect();
@@ -88,7 +92,7 @@ pub(crate) fn widgets(update: Option<&TreeUpdate>, cap: usize) -> Vec<HudWidget>
             continue;
         }
         let Some(node) = nodes.get(&id) else { continue };
-        if let Some(widget) = widget(node) {
+        if let Some(widget) = widget(node, id == update.focus, ui_scale) {
             found.push(widget);
         }
         stack.extend(node.children().iter().rev());
@@ -96,10 +100,10 @@ pub(crate) fn widgets(update: Option<&TreeUpdate>, cap: usize) -> Vec<HudWidget>
     found
 }
 
-fn widget(node: &Node) -> Option<HudWidget> {
+fn widget(node: &Node, focused: bool, ui_scale: f32) -> Option<HudWidget> {
     let role = WidgetRole::of(node.role())?;
     let label = node.label().or_else(|| node.value())?;
     let bounds = node.bounds()?;
-    let rect = [bounds.x0 as f32, bounds.y0 as f32, bounds.x1 as f32, bounds.y1 as f32];
-    Some(HudWidget { role, label: label.to_owned(), rect })
+    let rect = [bounds.x0, bounds.y0, bounds.x1, bounds.y1].map(|point| point as f32 * ui_scale);
+    Some(HudWidget { role, label: label.to_owned(), rect, key: node.author_id().map(str::to_owned), focused })
 }

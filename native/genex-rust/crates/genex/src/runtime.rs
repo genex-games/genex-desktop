@@ -876,6 +876,7 @@ fn hud_input(input: &TickInput) -> HudInput {
         wheel: [input.wheel.x, input.wheel.y],
         text: input.text.clone(),
         pressed_keys: input.keys.pressed.clone(),
+        ..HudInput::default()
     }
 }
 

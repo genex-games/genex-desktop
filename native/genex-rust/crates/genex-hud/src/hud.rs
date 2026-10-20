@@ -1,10 +1,12 @@
 //! The HUD a runtime owns: one egui context stepped by the simulation, the legacy HUD, and what
 //! the display paints from them.
 
-use crate::input::{HudInput, raw_input};
+use crate::fonts::{self, FontRefusal, LocaleFont};
+use crate::input::{self, HudInput, raw_input};
 use crate::legacy::{self, Color, Legacy};
 use crate::record::{self, HudWidget};
 use egui::epaint::textures::TexturesDelta;
+use egui::emath::TSTransform;
 use egui::epaint::{ClippedPrimitive, ClippedShape, Shape};
 use std::num::NonZeroUsize;
 
@@ -34,7 +36,8 @@ pub struct HudPaint {
     pub primitives: Vec<ClippedPrimitive>,
     /// Texture changes since the last paint (the font atlas first); apply before drawing.
     pub textures_delta: TexturesDelta,
-    /// Device pixels per world pixel the primitives were tessellated for.
+    /// Device pixels per egui point the primitives were tessellated for: the display's ratio
+    /// times the last tick's UI scale (egui-wgpu's `ScreenDescriptor::pixels_per_point`).
     pub pixels_per_point: f32,
 }
 
@@ -47,6 +50,8 @@ pub struct Hud {
     textures: TexturesDelta,
     legacy: Legacy,
     world_size: [u32; 2],
+    ui_scale: f32,
+    locale_fonts: Vec<LocaleFont>,
 }
 
 impl Default for Hud {
@@ -55,10 +60,14 @@ impl Default for Hud {
     }
 }
 
-fn fresh_context() -> egui::Context {
+fn fresh_context(locale_fonts: &[LocaleFont]) -> egui::Context {
     let ctx = egui::Context::default();
-    crate::fonts::install_fonts(&ctx);
-    ctx.options_mut(|options| options.max_passes = PASSES_PER_TICK);
+    ctx.set_fonts(fonts::fonts_with(locale_fonts));
+    ctx.options_mut(|options| {
+        options.max_passes = PASSES_PER_TICK;
+        // The UI scale is the HUD's alone: no key combination zooms egui behind the tick's back.
+        options.zoom_with_keyboard = false;
+    });
     // The AccessKit tree is how widgets are recorded into hud.items.
     ctx.enable_accesskit();
     ctx
@@ -68,28 +77,42 @@ impl Hud {
     /// A HUD with fresh egui memory.
     pub fn new() -> Hud {
         Hud {
-            ctx: fresh_context(),
+            ctx: fresh_context(&[]),
             passes: 0,
             widgets: Vec::new(),
             shapes: Vec::new(),
             textures: TexturesDelta::default(),
             legacy: Legacy::default(),
             world_size: [1, 1],
+            ui_scale: 1.0,
+            locale_fonts: Vec::new(),
         }
     }
 
     /// `seed`: forget egui's memory (focus, open headers, scroll, animations) and the legacy HUD.
-    /// Texture frees for the old context's images are kept for the next paint.
+    /// Texture frees for the old context's images are kept for the next paint. The locale fonts
+    /// stay.
     pub fn reset(&mut self) {
         if self.passes > 0 {
             // The fresh context uploads its own font atlas under the same id on its first pass.
             self.textures.set.clear();
         }
-        self.ctx = fresh_context();
+        self.ctx = fresh_context(&self.locale_fonts);
         self.passes = 0;
         self.widgets.clear();
         self.shapes.clear();
         self.legacy = Legacy::default();
+    }
+
+    /// The fallback fonts a locale needs (UIS-8), behind the HUD's text fonts, from the next pass
+    /// on; the font atlas they fill uploads with that tick's texture delta, and they outlive
+    /// [`Hud::reset`]. An empty list goes back to the text fonts alone. A refused list changes
+    /// nothing.
+    pub fn set_locale_fonts(&mut self, locale_fonts: &[LocaleFont]) -> Result<(), FontRefusal> {
+        fonts::check_locale_fonts(locale_fonts)?;
+        self.locale_fonts = locale_fonts.to_vec();
+        self.ctx.set_fonts(fonts::fonts_with(&self.locale_fonts));
+        Ok(())
     }
 
     /// One tick's UI: build egui's input from the tick's merged input and `seconds` of simulated
@@ -98,7 +121,8 @@ impl Hud {
         let output = self.ctx.run_ui(raw_input(world_size, seconds, input), |root| ui(root));
         self.passes += 1;
         self.world_size = world_size;
-        self.widgets = record::widgets(output.platform_output.accesskit_update.as_ref(), MAX_HUD_ITEMS);
+        self.ui_scale = input::ui_scale(input);
+        self.widgets = record::widgets(output.platform_output.accesskit_update.as_ref(), MAX_HUD_ITEMS, self.ui_scale);
         self.shapes = output.shapes;
         self.textures.append(output.textures_delta);
     }
@@ -154,21 +178,29 @@ impl Hud {
     /// Tessellate the last drawn frame's legacy HUD and the last tick's widgets for a display at
     /// `pixels_per_point` device pixels per world pixel. Display only: a later tick sees nothing
     /// of it. Glyphs only legacy text uses reach the atlas with the next tick's texture delta.
+    /// egui laid the widgets out in points (world pixels over the UI scale), so the legacy HUD's
+    /// world-pixel shapes are scaled into points and both are tessellated at the display's ratio
+    /// times the UI scale.
     pub fn paint(&mut self, pixels_per_point: f32) -> HudPaint {
         let textures_delta = std::mem::take(&mut self.textures);
+        let pixels_per_point = pixels_per_point * self.ui_scale;
         if self.passes == 0 {
             // egui has no fonts before its first pass.
             return HudPaint { primitives: Vec::new(), textures_delta, pixels_per_point };
         }
         let world = egui::Rect::from_min_size(
             egui::Pos2::ZERO,
-            egui::vec2(self.world_size[0] as f32, self.world_size[1] as f32),
+            egui::vec2(self.world_size[0] as f32, self.world_size[1] as f32) / self.ui_scale,
         );
-        let legacy = self.ctx.fonts_mut(|fonts| {
+        let mut legacy = self.ctx.fonts_mut(|fonts| {
             self.legacy.shapes(self.world_size, |text, size, color| {
                 Shape::text(&mut *fonts, egui::Pos2::ZERO, egui::Align2::LEFT_TOP, text, egui::FontId::proportional(size), color)
             })
         });
+        if self.ui_scale != 1.0 {
+            let into_points = TSTransform::from_scaling(self.ui_scale.recip());
+            legacy.iter_mut().for_each(|shape| shape.transform(into_points));
+        }
         let mut shapes: Vec<ClippedShape> = legacy.into_iter().map(|shape| ClippedShape { clip_rect: world, shape }).collect();
         shapes.extend(self.shapes.iter().cloned());
         HudPaint { primitives: self.ctx.tessellate(shapes, pixels_per_point), textures_delta, pixels_per_point }

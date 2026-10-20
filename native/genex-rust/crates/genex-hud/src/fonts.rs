@@ -6,8 +6,14 @@
 //!
 //! The workspace builds egui without its `default_fonts` feature, so every context the HUD makes
 //! gets these definitions first ([`install_fonts`]).
+//!
+//! A locale whose script those fonts lack (CJK, Arabic, Devanagari, ...) brings its own fallback
+//! fonts, game assets that are never in the default bundle ([`LocaleFont`], UIS-8). They go behind
+//! the text fonts in both families, so Latin text never changes face. Their bytes are checked
+//! before egui sees them: egui panics on a font it cannot parse.
 
 use egui::{FontData, FontDefinitions, FontFamily, Pos2, Rect, Response, Shape, Stroke, Ui, Vec2, emath::Rot2, vec2};
+use std::borrow::Cow;
 use std::sync::Arc;
 
 /// The text font, and the monospace one.
@@ -23,15 +29,102 @@ const TOOTH_LENGTH: f32 = 0.32;
 const TOOTH_WIDTH: f32 = 0.38;
 const HUB_HOLE: f32 = 0.38;
 const ICON_GAP: f32 = 8.0;
+/// The most locale fonts a HUD holds.
+pub const MAX_LOCALE_FONTS: usize = 8;
+/// The largest locale font, in bytes (a full CJK face is about 20 MB).
+pub const MAX_LOCALE_FONT_BYTES: usize = 32 * 1024 * 1024;
+/// The longest locale font name, in bytes.
+pub const MAX_LOCALE_FONT_NAME: usize = 64;
+/// The OpenType table directory: its header, one table record, and the sfnt versions a single
+/// face starts with (TrueType outlines, CFF outlines, Apple's `true`), as the font reader checks.
+const SFNT_HEADER_BYTES: usize = 12;
+const SFNT_TABLE_RECORD_BYTES: usize = 16;
+const SFNT_VERSIONS: [[u8; 4]; 3] = [[0, 1, 0, 0], *b"OTTO", *b"true"];
+
+/// A fallback font a locale needs: its name (unique, never one of the HUD's own) and its bytes,
+/// one OpenType or TrueType face (not a collection).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LocaleFont {
+    /// The font's name in egui's definitions.
+    pub name: String,
+    /// The font file.
+    pub data: Cow<'static, [u8]>,
+}
+
+impl LocaleFont {
+    /// A locale font named `name` from `data`.
+    pub fn new(name: &str, data: impl Into<Cow<'static, [u8]>>) -> LocaleFont {
+        LocaleFont { name: name.to_owned(), data: data.into() }
+    }
+}
+
+/// Why a list of locale fonts was refused.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum FontRefusal {
+    /// More than [`MAX_LOCALE_FONTS`].
+    TooMany,
+    /// A name that is empty, longer than [`MAX_LOCALE_FONT_NAME`], one of the HUD's own fonts or
+    /// given twice.
+    BadName,
+    /// Bytes that are not one font face, or more than [`MAX_LOCALE_FONT_BYTES`].
+    Invalid,
+}
+
+/// Check `locale_fonts` before egui sees them.
+pub(crate) fn check_locale_fonts(locale_fonts: &[LocaleFont]) -> Result<(), FontRefusal> {
+    if locale_fonts.len() > MAX_LOCALE_FONTS {
+        return Err(FontRefusal::TooMany);
+    }
+    for (index, font) in locale_fonts.iter().enumerate() {
+        let reserved = [TEXT_FONT, MONO_FONT].contains(&font.name.as_str());
+        let repeated = locale_fonts[..index].iter().any(|earlier| earlier.name == font.name);
+        let bad_length = font.name.is_empty() || font.name.len() > MAX_LOCALE_FONT_NAME;
+        if reserved || repeated || bad_length {
+            return Err(FontRefusal::BadName);
+        }
+        if font.data.len() > MAX_LOCALE_FONT_BYTES || !is_font_face(&font.data) {
+            return Err(FontRefusal::Invalid);
+        }
+    }
+    Ok(())
+}
+
+/// Whether `data` starts with a whole table directory of one font face: a known sfnt version and
+/// every table record inside the bytes. This is what the font reader egui uses checks before
+/// it reads any table (it reads tables defensively after that).
+fn is_font_face(data: &[u8]) -> bool {
+    let Some(header) = data.get(..SFNT_HEADER_BYTES) else { return false };
+    let known = SFNT_VERSIONS.iter().any(|version| header[..4] == *version);
+    let tables = usize::from(u16::from_be_bytes([header[4], header[5]]));
+    known && SFNT_HEADER_BYTES + tables * SFNT_TABLE_RECORD_BYTES <= data.len()
+}
 
 /// egui's text fonts without its emoji fonts: Ubuntu Light for proportional text (Hack behind it
 /// for symbols), Hack for monospace (Ubuntu Light behind it, as egui's own order).
 pub fn fonts() -> FontDefinitions {
+    fonts_with(&[])
+}
+
+/// [`fonts`] with `locale_fonts` behind the text fonts in both families, in the order given.
+/// The caller has checked them ([`crate::Hud::set_locale_fonts`]).
+pub(crate) fn fonts_with(locale_fonts: &[LocaleFont]) -> FontDefinitions {
     let mut fonts = FontDefinitions::empty();
     fonts.font_data.insert(MONO_FONT.to_owned(), Arc::new(FontData::from_static(epaint_default_fonts::HACK_REGULAR)));
     fonts.font_data.insert(TEXT_FONT.to_owned(), Arc::new(FontData::from_static(epaint_default_fonts::UBUNTU_LIGHT)));
-    fonts.families.insert(FontFamily::Proportional, vec![TEXT_FONT.to_owned(), MONO_FONT.to_owned()]);
-    fonts.families.insert(FontFamily::Monospace, vec![MONO_FONT.to_owned(), TEXT_FONT.to_owned()]);
+    let mut proportional = vec![TEXT_FONT.to_owned(), MONO_FONT.to_owned()];
+    let mut monospace = vec![MONO_FONT.to_owned(), TEXT_FONT.to_owned()];
+    for font in locale_fonts {
+        let data = match &font.data {
+            Cow::Borrowed(bytes) => FontData::from_static(bytes),
+            Cow::Owned(bytes) => FontData::from_owned(bytes.clone()),
+        };
+        fonts.font_data.insert(font.name.clone(), Arc::new(data));
+        proportional.push(font.name.clone());
+        monospace.push(font.name.clone());
+    }
+    fonts.families.insert(FontFamily::Proportional, proportional);
+    fonts.families.insert(FontFamily::Monospace, monospace);
     fonts
 }
 
