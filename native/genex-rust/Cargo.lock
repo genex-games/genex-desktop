@@ -1269,6 +1269,12 @@ dependencies = [
 [[package]]
 name = "genex-ui"
 version = "0.1.0"
+dependencies = [
+ "egui",
+ "epaint_default_fonts",
+ "genex-core",
+ "image",
+]
 
 [[package]]
 name = "gethostname"

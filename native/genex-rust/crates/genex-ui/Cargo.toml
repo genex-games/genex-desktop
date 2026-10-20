@@ -12,4 +12,14 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
-# Module stubs only: each work package adds the dependencies it uses from [workspace.dependencies].
+# Each work package adds the dependencies it uses from [workspace.dependencies] (all locked).
+# genex-core for the pad state navigation reads (UIS-4); egui for every widget (UIS-4, UIS-5);
+# image decodes the kit's PNG images once per path (UIS-5).
+genex-core = { workspace = true }
+egui = { workspace = true }
+image = { workspace = true }
+
+[dev-dependencies]
+# The tests lay out text, so their contexts get the HUD's text fonts (egui is built without its
+# default fonts).
+epaint_default_fonts = { workspace = true }
