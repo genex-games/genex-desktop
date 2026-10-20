@@ -7,7 +7,7 @@
  */
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { AiDoor, AiOp, AiProvenance, AiRequirement } from "../../src/shared/game-ai.ts";
+import { AiAudience, AiDoor, AiOp, AiProvenance, AiRequirement } from "../../src/shared/game-ai.ts";
 import { readAiPublishChoice } from "../../src/shared/game-ai-check.ts";
 import {
   AI_REPORT_INBOX_MAX,
@@ -188,24 +188,29 @@ describe("inboxItemOf", () => {
 });
 
 describe("readAiPublishChoice", () => {
+  // Flipped: the choice also names who sees the game's AI text (D6).
   it("takes what Publish chose", () => {
-    assert.deepEqual(readAiPublishChoice({ requires: AiRequirement.Ai, leaderboard: true }), {
-      requires: AiRequirement.Ai,
-      leaderboard: true,
-    });
-    assert.deepEqual(readAiPublishChoice({ requires: AiRequirement.Optional, leaderboard: false }), {
-      requires: AiRequirement.Optional,
-      leaderboard: false,
-    });
+    const shared = { requires: AiRequirement.Ai, leaderboard: true, audience: AiAudience.Shared };
+    assert.deepEqual(readAiPublishChoice(shared), shared);
+    const own = { requires: AiRequirement.Optional, leaderboard: false, audience: AiAudience.Player };
+    assert.deepEqual(readAiPublishChoice(own), own);
   });
 
   const hostile: Array<[string, unknown]> = [
     ["nothing", null],
     ["a word", "ai"],
-    ["an unknown requirement", { requires: "maybe", leaderboard: false }],
-    ["a leaderboard that is not a switch", { requires: AiRequirement.Ai, leaderboard: "yes" }],
-    ["a price riding along", { requires: AiRequirement.Ai, leaderboard: false, priceCents: 1 }],
-    ["a missing switch", { requires: AiRequirement.Ai }],
+    ["an unknown requirement", { requires: "maybe", leaderboard: false, audience: AiAudience.Player }],
+    [
+      "a leaderboard that is not a switch",
+      { requires: AiRequirement.Ai, leaderboard: "yes", audience: AiAudience.Player },
+    ],
+    [
+      "a price riding along",
+      { requires: AiRequirement.Ai, leaderboard: false, audience: AiAudience.Player, priceCents: 1 },
+    ],
+    ["a missing switch", { requires: AiRequirement.Ai, audience: AiAudience.Player }],
+    ["a missing audience", { requires: AiRequirement.Ai, leaderboard: false }],
+    ["an unknown audience", { requires: AiRequirement.Ai, leaderboard: false, audience: "everyone" }],
     ["an array", [AiRequirement.Ai, false]],
   ];
   for (const [what, raw] of hostile) {
