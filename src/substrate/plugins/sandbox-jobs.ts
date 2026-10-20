@@ -35,7 +35,7 @@ import {
 } from "../../shared/plugins.ts";
 import { commandInterpreter, isCommandScript, quotedScriptLine } from "../command-launch.ts";
 import { isBelow, isInside } from "../paths.ts";
-import { type RunRequest, type RunResult, shellQuote } from "../spawn.ts";
+import { OutputKept, type RunRequest, type RunResult, shellQuote } from "../spawn.ts";
 import { mixedPath } from "../windows-sandbox.ts";
 
 /** The variable a command script's line reaches cmd.exe in. */
@@ -285,6 +285,7 @@ export class PluginSandboxJobs {
       env: { ...checked.env, ...scratchVars, ...env },
       timeoutMs: checked.timeoutMs,
       maxOutputBytes: PLUGIN_SANDBOX_OUTPUT_CHARS,
+      keepOutput: OutputKept.Tail,
       signal: controller.signal,
       label: `plugin-sandbox:${plugin}`,
       confine: { write: checked.writes, tmp },

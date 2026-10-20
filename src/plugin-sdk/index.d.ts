@@ -70,6 +70,7 @@ export interface PluginSandboxJob {
   id: string;
   state: "running" | "exited" | "timed-out" | "stopped" | "failed";
   exitCode?: number | null;
+  /** The last 4 MiB of each stream, where a long log ends with its verdict; `truncated` when cut. */
   stdout?: string;
   stderr?: string;
   truncated?: boolean;

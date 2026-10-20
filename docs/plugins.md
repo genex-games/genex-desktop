@@ -1793,10 +1793,10 @@ Available services are capability checked and scoped to the calling plugin:
   at once; the host owns the job past the call, as `runtime.install` owns a download, and ends it
   with its process tree at its deadline, on `sandbox.stop`, and when the plugin's backend stops, the
   plugin is turned off or removed, or the studio stops. `sandbox.result` answers `running`, `exited`
-  (with `exitCode` and each output stream's first 4 MiB), `timed-out`, `stopped` or `failed` (an
-  error code), or null for a job the host doesn't know (another plugin's included). The writes go to
-  ProcessSandbox as the run's confinement and `scratchEnv` names variables set to folders in the
-  job's own scratch. A `.bat` or `.cmd` program runs as `cmd.exe /d /v:off /s /c %GENEX_COMMAND_LINE%`:
+  (with `exitCode` and each output stream's last 4 MiB, where a log's verdict is), `timed-out`,
+  `stopped` or `failed` (an error code), or null for a job the host doesn't know (another plugin's
+  included). The writes go to ProcessSandbox as the run's confinement and `scratchEnv` names
+  variables set to folders in the job's own scratch. A `.bat` or `.cmd` program runs as `cmd.exe /d /v:off /s /c %GENEX_COMMAND_LINE%`:
   Git Bash would quote a prepared line again, so the host builds the line (`quotedScriptLine`: the
   file and every non-plain argument whole in double quotes, `-Name="value"`) and cmd.exe expands it;
   a quote, `%`, `!`, a control character or a backslash ending a quoted argument is refused. On

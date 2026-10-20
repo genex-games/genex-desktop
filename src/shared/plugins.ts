@@ -1061,7 +1061,7 @@ export type PluginService = (typeof PluginService)[keyof typeof PluginService];
 export const PLUGIN_SANDBOX_MAX_TIMEOUT_MS = 60 * MINUTE_MS;
 /** The shortest deadline a sandbox job may ask for. */
 export const PLUGIN_SANDBOX_MIN_TIMEOUT_MS = 1000;
-/** How much of each of a sandbox job's stdout and stderr the host keeps, in characters, from its start. */
+/** How much of each of a sandbox job's stdout and stderr the host keeps, in characters, from its end. */
 export const PLUGIN_SANDBOX_OUTPUT_CHARS = 4 * 1024 * 1024;
 
 /** Where a plugin's sandbox job is (`PluginSandboxJob.state`). Published to plugins: never rename a value. */

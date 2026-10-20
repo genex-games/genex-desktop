@@ -117,8 +117,15 @@ export interface RunRequest {
   /** Correlation label used for sandbox-violation attribution and logging. */
   label?: string;
   maxOutputBytes?: number;
+  /** Which end of a stream longer than `maxOutputBytes` is kept; the head unless said. */
+  keepOutput?: OutputKept;
   signal?: AbortSignal;
 }
+
+/** Which end of a long stdout or stderr a run keeps: a long build log ends with its verdict. */
+export const OutputKept = { Head: "head", Tail: "tail" } as const;
+/** Which end of a long stream a run keeps. */
+export type OutputKept = (typeof OutputKept)[keyof typeof OutputKept];
 
 /**
  * The folders a confined run writes: a game's build or install writes its game and its own scratch,
@@ -349,31 +356,68 @@ interface LaunchPlan {
   stdinInFile?: boolean;
 }
 
-/** Collect a child's stdout and stderr as text, each clipped at `maxChars`. */
+/** One stream's kept text: its first or its last `maxChars` characters. */
+interface KeptStream {
+  add(text: string): void;
+  text(): string;
+}
+
+/** Keep the first `maxChars` characters of a stream; `onClip` hears that some were dropped. */
+function keptHead(maxChars: number, onClip: () => void): KeptStream {
+  let kept = "";
+  return {
+    add(text) {
+      if (kept.length + text.length > maxChars) onClip();
+      if (kept.length < maxChars) kept = (kept + text).slice(0, maxChars);
+    },
+    text: () => kept,
+  };
+}
+
+/**
+ * Keep the last `maxChars` characters of a stream. The text is trimmed only once it holds twice
+ * the cap, so a long log costs a copy per `maxChars` of output, not one per chunk.
+ */
+function keptTail(maxChars: number, onClip: () => void): KeptStream {
+  let kept = "";
+  return {
+    add(text) {
+      kept += text;
+      if (kept.length > maxChars) onClip();
+      if (kept.length > 2 * maxChars) kept = kept.slice(-maxChars);
+    },
+    text: () => kept.slice(-maxChars),
+  };
+}
+
+/** Collect a child's stdout and stderr as text, each clipped at `maxChars` from the end `keep` names. */
 function captureOutput(
   child: { stdout: Readable; stderr: Readable },
   maxChars: number,
+  keep: OutputKept,
 ): { stdout: string; stderr: string; truncated: boolean } {
-  const output = { stdout: "", stderr: "", truncated: false };
-  const clip = (buf: Buffer, current: string): string => {
-    if (current.length >= maxChars) {
-      output.truncated = true;
-      return current;
-    }
-    const next = current + buf.toString("utf8");
-    if (next.length > maxChars) {
-      output.truncated = true;
-      return next.slice(0, maxChars);
-    }
-    return next;
+  let truncated = false;
+  const onClip = () => {
+    truncated = true;
   };
-  child.stdout.on("data", (buf: Buffer) => {
-    output.stdout = clip(buf, output.stdout);
-  });
-  child.stderr.on("data", (buf: Buffer) => {
-    output.stderr = clip(buf, output.stderr);
-  });
-  return output;
+  const kept = keep === OutputKept.Tail ? keptTail : keptHead;
+  const stdout = kept(maxChars, onClip);
+  const stderr = kept(maxChars, onClip);
+  child.stdout.setEncoding("utf8");
+  child.stderr.setEncoding("utf8");
+  child.stdout.on("data", (text: string) => stdout.add(text));
+  child.stderr.on("data", (text: string) => stderr.add(text));
+  return {
+    get stdout() {
+      return stdout.text();
+    },
+    get stderr() {
+      return stderr.text();
+    },
+    get truncated() {
+      return truncated;
+    },
+  };
 }
 
 /**
@@ -1028,7 +1072,11 @@ export class ProcessSandbox {
 
     const child = this.#start(plan);
     return await new Promise<RunResult>((resolve, reject) => {
-      const output = captureOutput(child, request.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_CHARS);
+      const output = captureOutput(
+        child,
+        request.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_CHARS,
+        request.keepOutput ?? OutputKept.Head,
+      );
 
       let timedOut = false;
       const timer = setTimeout(() => {

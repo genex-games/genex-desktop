@@ -8,7 +8,7 @@
  * ProcessSandbox is a recording stand-in; a hostile request starts nothing and leaves nothing behind.
  */
 import assert from "node:assert/strict";
-import { mkdir, readdir, realpath, symlink, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readdir, realpath, symlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, it } from "node:test";
 import {
@@ -17,7 +17,7 @@ import {
   PluginService,
   SandboxJobState,
 } from "../../src/shared/plugins.ts";
-import type { RunRequest, RunResult } from "../../src/substrate/spawn.ts";
+import { ProcessSandbox, type RunRequest, type RunResult } from "../../src/substrate/spawn.ts";
 import { COMMAND_LINE_ENV, PluginSandboxJobs } from "../../src/substrate/plugins/sandbox-jobs.ts";
 import { copyOfExample, installLocalOn, personAllowsLocalTools, PLUGIN_SDK_BACKEND } from "../helpers/plugins.ts";
 import { PluginRegistry } from "../../src/substrate/plugins/registry.ts";
@@ -168,6 +168,7 @@ describe("sandbox.run", () => {
       "confine",
       "cwd",
       "env",
+      "keepOutput",
       "label",
       "maxOutputBytes",
       "signal",
@@ -321,6 +322,43 @@ describe("sandbox.result and sandbox.stop", () => {
     assert.equal(((await w.result(other.id, "other-engine")) as { state: string }).state, SandboxJobState.Running);
     await w.jobs.stopAll();
     assert.equal(w.sandbox.runs[2]?.request.signal?.aborted, true, "the core stopping ends them all");
+  });
+});
+
+describe("a long job's output", () => {
+  const POSIX_ONLY = process.platform === "win32" && "a POSIX shell script; Windows runs plugin-sandbox-jobs-windows";
+
+  it("keeps the last PLUGIN_SANDBOX_OUTPUT_CHARS of each stream, so a long log's verdict survives", {
+    skip: POSIX_ONLY,
+  }, async (t) => {
+    const w = await world({ platform: process.platform });
+    // Unconfined: what is kept of the output is ProcessSandbox's capture, the same with or without srt.
+    const sandbox = await ProcessSandbox.create({
+      writableRoots: [w.game],
+      scratchDir: path.join(w.root, "sandbox"),
+      secretPaths: [],
+      enabled: false,
+    });
+    t.after(() => sandbox.dispose());
+    const jobs = new PluginSandboxJobs({ run: (request) => sandbox.run(request), scratch: w.scratch });
+    const script = path.join(w.engine, "uat.sh");
+    const flood = PLUGIN_SANDBOX_OUTPUT_CHARS + 1024 * 1024;
+    await writeFile(
+      script,
+      `#!/bin/sh\nhead -c ${flood} /dev/zero | tr '\\0' x\necho\necho BUILD SUCCESSFUL\nhead -c ${flood} /dev/zero | tr '\\0' y >&2\necho 'ERROR: last words' >&2\n`,
+    );
+    await chmod(script, 0o755);
+    const request = { program: script, args: [], reads: [w.engine], writes: [w.packageDir], timeoutMs: 60_000 };
+    const { id } = (await jobs.call("unreal", PluginService.SandboxRun, request, w.binding)) as { id: string };
+    const read = () => jobs.call("unreal", PluginService.SandboxResult, { id }, w.binding);
+    await until(async () => ((await read()) as { state: string }).state !== SandboxJobState.Running);
+    const job = (await read()) as { state: string; stdout: string; stderr: string; truncated: boolean };
+    assert.equal(job.state, SandboxJobState.Exited);
+    assert.equal(job.truncated, true);
+    assert.equal(job.stdout.length, PLUGIN_SANDBOX_OUTPUT_CHARS);
+    assert.ok(job.stdout.endsWith("x\nBUILD SUCCESSFUL\n"), `the verdict is kept: ${job.stdout.slice(-40)}`);
+    assert.equal(job.stderr.length, PLUGIN_SANDBOX_OUTPUT_CHARS);
+    assert.ok(job.stderr.endsWith("yERROR: last words\n"), "stderr keeps its tail too");
   });
 });
 
