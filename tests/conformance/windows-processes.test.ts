@@ -88,17 +88,15 @@ describe("listing Windows' processes", () => {
     assert.equal(ran, 0);
   });
 
-  it(
-    "finds this test's own Node with its command line on a real Windows",
-    { skip: process.platform !== "win32" && "Windows PowerShell and WMI are Windows'" },
-    async () => {
-      const rows = await windowsProcesses([path.win32.basename(process.execPath)]);
-      const own = rows?.find((row) => row.pid === process.pid);
-      assert.ok(own, `this process (${process.pid}) is listed: ${JSON.stringify(rows)}`);
-      assert.equal(own.exec.toLowerCase(), process.execPath.toLowerCase());
-      assert.ok(own.args.startsWith(own.exec), own.args);
-    },
-  );
+  it("finds this test's own Node with its command line on a real Windows", {
+    skip: process.platform !== "win32" && "Windows PowerShell and WMI are Windows'",
+  }, async () => {
+    const rows = await windowsProcesses([path.win32.basename(process.execPath)]);
+    const own = rows?.find((row) => row.pid === process.pid);
+    assert.ok(own, `this process (${process.pid}) is listed: ${JSON.stringify(rows)}`);
+    assert.equal(own.exec.toLowerCase(), process.execPath.toLowerCase());
+    assert.ok(own.args.startsWith(own.exec), own.args);
+  });
 
   it("answers null when PowerShell fails, so a caller can fall back", async () => {
     const failing = async () => {
