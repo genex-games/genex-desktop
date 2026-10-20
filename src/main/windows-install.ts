@@ -46,6 +46,8 @@ const SHORTCUT_ARGS = {
 export interface SquirrelStep {
   updateExe: string;
   args: string[];
+  /** An uninstall: the sandbox's entries Genex keeps between launches go too (`takeBackSandboxEntries`). */
+  takeBackSandbox: boolean;
 }
 
 /** Squirrel's Update.exe for the app at `execPath`. */
@@ -58,7 +60,11 @@ export function squirrelStartup(platform: string, argv: readonly string[], execP
   if (platform !== StudioPlatform.Windows) return null;
   const event = argv.find((arg): arg is SquirrelEvent => SQUIRREL_EVENTS.has(arg));
   if (!event) return null;
-  return { updateExe: squirrelUpdateExe(execPath), args: SHORTCUT_ARGS[event](path.win32.basename(execPath)) };
+  return {
+    updateExe: squirrelUpdateExe(execPath),
+    args: SHORTCUT_ARGS[event](path.win32.basename(execPath)),
+    takeBackSandbox: event === SquirrelEvent.Uninstall,
+  };
 }
 
 /** The app user model id main sets, or null where there is none to set (another OS, a Squirrel install). */
@@ -90,7 +96,11 @@ type SpawnStep = (file: string, args: readonly string[]) => StepChild;
  * Run a Squirrel step's Update.exe and settle when it exits, fails to start or runs past
  * `timeoutMs`: the launch exits after it either way, and an install must never hang on a shortcut.
  */
-export function runSquirrelStep(step: SquirrelStep, spawn: SpawnStep, timeoutMs = SQUIRREL_STEP_TIMEOUT_MS) {
+export function runSquirrelStep(
+  step: Pick<SquirrelStep, "updateExe" | "args">,
+  spawn: SpawnStep,
+  timeoutMs = SQUIRREL_STEP_TIMEOUT_MS,
+) {
   if (step.args.length === 0) return Promise.resolve();
   return new Promise<void>((resolve) => {
     const child = spawn(step.updateExe, step.args);

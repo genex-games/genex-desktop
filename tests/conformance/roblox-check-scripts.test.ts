@@ -12,6 +12,7 @@ import path from "node:path";
 import { describe, it } from "node:test";
 import {
   CHECK_CONFIGS,
+  CHECK_TOOL_MAX_MS,
   type CheckDeps,
   type CheckRun,
   checkScripts,
@@ -254,6 +255,9 @@ describe("what check-scripts checks again", () => {
   });
 });
 
+/** The limit the misbehaving program gets, so a hang ends the test quickly. */
+const SHORT_LIMIT_MS = 500;
+
 describe("a program that misbehaves is named, never mistaken for a clean check", () => {
   const rows: Array<{ name: string; tool: LuauTool; mode: Mode; why: RegExp }> = [
     { name: "hangs past its limit", tool: LuauTool.LuauLsp, mode: "hang", why: /didn't finish within/ },
@@ -263,7 +267,10 @@ describe("a program that misbehaves is named, never mistaken for a clean check",
   for (const row of rows)
     it(`${row.tool} ${row.name}`, async () => {
       const { folder, deps } = await bench({ [row.tool]: row.mode });
-      const short: CheckDeps = { ...deps, timeout: () => AbortSignal.timeout(500) };
+      // Only the program under test gets the short limit: on a loaded runner the healthy fakes
+      // (each a node process) can take longer than that to start, and must not fail beside it.
+      const limitOf = (ms: number) => (ms === CHECK_TOOL_MAX_MS[row.tool] ? SHORT_LIMIT_MS : ms);
+      const short: CheckDeps = { ...deps, timeout: (ms) => AbortSignal.timeout(limitOf(ms)) };
       const check = await checkScripts(short, { folder, game: "g", all: true });
       assert.deepEqual(
         check.failed.map((failure) => failure.tool),

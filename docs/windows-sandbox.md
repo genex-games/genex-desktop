@@ -11,20 +11,23 @@ a development build uses the installed Git. The host runs git itself too, so the
 anything else at startup (`ensureHostGit`, which puts its `cmd` folder first on PATH); with none,
 the setup screen opens on `git-missing`. What differs from macOS:
 
-- Grants are NTFS ACL entries set at `initialize()` for the whole process. One
-  `WindowsSandboxSession` holds the union of every `ProcessSandbox`'s roots. A folder opened later,
+- Grants are NTFS ACL entries for the whole process, Genex's own (below) set before srt-win's
+  `initialize()`. One `WindowsSandboxSession` holds the union of every `ProcessSandbox`'s roots. A folder opened later,
   or a disposed member's folders, queue one `reset()` + `initialize()` that runs once no command
   holds the session; the last member out releases everything. A per-run grant outside the
   session's roots is refused (`not-granted`); network changes stay live (`updateConfig`).
-  `initialize()` is tried up to three times only when srt-win's egress check (`wfp`) times out; a
-  timed-out ACL step fails at once, since a retry would repeat its walk under each granted folder
-  and each denied path's parent.
+  `initialize()` is tried a second time only when srt-win's egress check (`wfp`) times out; a
+  timed-out ACL step fails at once, since a retry would repeat its walk under each folder srt-win
+  grants and each denied path's parent.
 - The version-guarded [SRT patch](../scripts/patch-sandbox-runtime.mjs) runs initialization,
   failed-initialization rollback, launcher rollback and session reset ACL commands asynchronously.
-  Revoke and restore each keep their 60-second deadline, holder PID, SID and best-effort outcomes;
-  a slow cleanup must not hold Electron's main thread. The actual process `exit` event retains
-  synchronous cleanup, since promises cannot finish there. Partial grants remain eligible for
-  that exit cleanup while initialization or its rollback is pending.
+  Revoke and restore each keep their holder PID, SID and best-effort outcomes; a slow cleanup must
+  not hold Electron's main thread. Every srt-win ACL call (grant, stamp, revoke and restore, sync
+  and async) and the egress check wait two minutes instead of SRT's 60 and 30 seconds
+  (`SRT_WIN_TIMEOUT_MS`), so a slow disk, an antivirus scan or a cold first start as the sandbox
+  user does not fail a start; srt-win's setup, status and `trust-ca` calls keep SRT's. The actual
+  process `exit` event retains synchronous cleanup, since promises cannot finish there. Partial
+  grants remain eligible for that exit cleanup while initialization or its rollback is pending.
 - srt-win starts every command as `srt-sandbox` through CreateProcessWithLogonW, which the
   Secondary Logon service (`seclogon`) carries out; where hardening disabled it, Windows refuses
   every start ("Access is denied"). The setup check (`windowsSetupGaps`) reads its start type with
@@ -37,8 +40,9 @@ the setup screen opens on `git-missing`. What differs from macOS:
   turn on (a policy keeps it off) leaves the card saying how to do it in Services.
 - That egress check starts srt-win as the sandbox user before any grant, and Windows opens its
   program and working folder as that user. A per-user install lives in the profile, so the session
-  grants the install folder (and srt-win's, when apart) for reading first
-  (`grantLauncherFolders`), and a packaged app works from its install folder (`installedWorkingDir`).
+  grants the install folder (and srt-win's, when apart) for reading first, among Genex's own grants
+  or, where Genex cannot set them, with srt-win's (`grantLauncherFolders`), and a packaged app
+  works from its install folder (`installedWorkingDir`).
   It asks srt-win for the user's SID up to three times; without that grant the check fails with
   "CreateProcessWithLogonW(srt-sandbox): Access is denied", so the log says why one was not made.
   The same refusal comes from a disabled Secondary Logon service (`seclogon`).
@@ -55,6 +59,15 @@ the setup screen opens on `git-missing`. What differs from macOS:
   `%LOCALAPPDATA%\genex-sandbox-grants\<pid>.json` and revokes only those no other running Genex
   records. The SID is asked of srt-win up to three times; without it the apply fails. The harness gets the entries set again just before it starts, and one that exits during
   boot logs `icacls` for each folder from the profile down to its files.
+- The toolchain's PATH folders under the profile (npm's global prefix, pnpm's home, nvm, Scoop) are
+  granted for reading (`grantableToolDirs`), and a grant passes its entry down through every file
+  under each one. pnpm's home holds its package store (`store\v3`, `store\v10`), a file
+  for every package the person's projects ever installed, which made a pnpm user's first start
+  grow with their history; no sandboxed command reads it (a sandboxed pnpm keeps its own store, and
+  global packages' files are hardlinks that share their security descriptor). So that home is
+  granted entry by entry without its store, and with no link among the entries, since srt-win
+  grants a link's target. npm's global prefix is granted whole: its `node_modules` are the global
+  CLIs that run in the sandbox, OpenCode among them.
 - Neither `spawn()`'s environment nor stdin reaches the child: each run's variables
   (`windowsRunEnv`) go to an env file in scratch and its stdin to a file, each deleted by the
   command as it reads it. The host sends nothing down the stdin pipe the command swaps away. The harness hears the host over a loopback inbox
@@ -65,14 +78,18 @@ the setup screen opens on `git-missing`. What differs from macOS:
   dropped, since srt-win would create a placeholder; off the profile it is kept. srt-win's
   `argv_too_long`, `srt_win_timeout` and exit 16 `mapped_drive_cwd` become `SandboxLaunchError`
   codes.
-- Genex sets every deny on a path that exists itself (`routeWindowsDenies`, `ownDenyStamps`),
-  before srt-win grants anything. srt-win's stamp puts an inheritable FILE_DELETE_CHILD deny on
-  each denied path's parent, which Windows passes down through everything under it, once per
-  path: for `.ssh` or `.claude` the whole profile, for a game's `.claude` the whole game, past
-  srt-win's 60-second deadline on a large profile or a few large games
-  ([sandbox-runtime#457](https://github.com/anthropic-experimental/sandbox-runtime/issues/457)).
-  That stamp runs in the background start behind the open window, so its timeout replaced an idle
-  window with "Genex couldn't start". Genex denies the path, where it really is, to the sandbox
+- Genex sets every grant and every deny on a path that exists itself (`routeWindowsGrants`,
+  `routeWindowsDenies`, `ownAclEntries`), before srt-win starts, and keeps them between launches.
+  srt-win's grant passed its entry down through everything under each folder at every start (a
+  toolchain, a games folder full of `node_modules`), and took it back at every exit; its stamp
+  puts an inheritable FILE_DELETE_CHILD deny on each denied path's parent, which Windows passes
+  down through everything under it, once per path: for `.ssh` or `.claude` the whole profile, for
+  a game's `.claude` the whole game. Either ran past srt-win's deadline (SRT's 60 seconds; two
+  minutes now, above) on a large profile ([sandbox-runtime#457](https://github.com/anthropic-experimental/sandbox-runtime/issues/457)),
+  in the background start behind the open window. Genex grants a folder to the sandbox users'
+  group, passed down through what is under it (read and run, or with write and delete, without
+  FILE_DELETE_CHILD, as srt-win's grants), and marks its write grants safe for Git, as srt-win
+  does. It denies a path, where it really is, to the sandbox
   users' group, passed down through what is under the path alone, and FILE_DELETE_CHILD on its
   parent folder alone (the shape
   [sandbox-runtime#523](https://github.com/anthropic-experimental/sandbox-runtime/pull/523) proposes), with
@@ -82,10 +99,17 @@ the setup screen opens on `git-missing`. What differs from macOS:
   protected paths use `PROTECTED_DACL_SECURITY_INFORMATION` together with the DACL mask.
   The entries name the group because srt-win's recompose of a path drops every explicit entry for
   the user's SID. Each Genex records its entries in `%LOCALAPPDATA%\genex-sandbox-denies\<pid>.json`;
-  every edit makes a path what all running holders need, and a gone holder's entries go on the
-  next sync. A per-command deny Genex already sets is not sent again. Without the group, where
-  PowerShell cannot run the batch or the running user holds the SID, srt-win stamps every deny as
-  before, and the log says so (`own denies off`). srt-win keeps a missing deny path (it makes its placeholder), a drive root and a share.
+  every edit makes a path what all running holders need. The group's passed-down allows are Genex's
+  only on a folder it grants or granted: on a path it only denies or guards, an allow someone else
+  gave the group stays. An edit that finds a path as it should be
+  writes nothing, so passing entries down a folder happens once: a Genex that quits keeps its
+  record, and the next sync of any Genex keeps what a running one needs and takes back the rest. A
+  first walk of a large folder can take minutes (10 at most per batch; the log names each edit
+  over 2 s); one that runs out of time keeps what it set, and the next try goes on. A per-command
+  deny Genex already sets is not sent again. Without the group, where PowerShell cannot run the
+  batch or the running user holds the SID, srt-win sets every grant and deny as before, and the
+  log says so (`own entries off`). srt-win keeps a missing deny path (it makes its placeholder), a
+  drive root and a share.
 - `killChild` kills the srt-win broker, whose job ends the tree; `HarnessHost.stop()` sends
   `shutdown` and kills only after the grace.
 
@@ -105,6 +129,16 @@ sets `STUDIO_WINDOWS_BUNDLED_GIT_ONLY=1`, so the sandbox user runs this Git Bash
 pin; the build refuses a release that lacks a path the trim list names, so the list is reviewed.
 The terminal panel still opens an installed Git Bash, else PowerShell.
 
+## Visual C++ runtime
+
+`srt-win.exe` imports `vcruntime140.dll`, which Windows does not include: without it the broker
+exits 0xC0000135 (`srt-win user status exited 3221225781` in the log) and the sandbox never starts.
+A hosted runner hides this, since its Visual Studio installed the DLL in System32. Packaging copies
+each Visual C++ runtime DLL a bundled executable imports beside it, for its architecture, from the
+build machine's Visual Studio (`VCToolsRedistDir`, else vswhere), and refuses to package without
+one ([`scripts/package-vc-runtime.cjs`](../scripts/package-vc-runtime.cjs)). The packaged smoke
+reads every executable and DLL in the package and fails on a runtime import with no copy beside it.
+
 ## Denied reads
 
 `ProcessSandbox`'s base deny list (`baseDenyRead` in `spawn.ts`) is macOS and Linux's. Windows has its own list
@@ -121,14 +155,22 @@ model list, judge) run without its own sandbox on Windows (`toollessSandbox`); a
 needs it, and where the CLI cannot run it the worker is refused rather than run unboxed
 ([harness runtime](harness-runtime.md#a-workers-engine-that-cannot-run-its-sandbox)). DNS still resolves; the proxy token is on the
 runner's command line. A folder opened while the harness runs is writable only after it next
-stops. srt-win's own entries are inheritable, so each apply and reset re-propagates them through
-everything under the folder they are on, holding each folder open meanwhile, and its stamp of a
-missing deny path (or a per-command one) does so under that path's parent. Genex's own deny still passes down through
-everything under its path (a large browser profile takes the longest), within srt-win's 60-second
-deadline for the batch. Two Genex editing one folder's entries at the same moment can lose one
-edit until the next sync, and a deny a crashed Genex left stays (still denying) until a Genex next
-starts: srt-win's own cleanup never sees it. Every sandboxed process can read a run's env file until the command deletes it, and PATH
-folders under the profile whole. A broker outlives an Electron crash.
+stops. srt-win's stamp of a missing deny path (or a per-command one) re-propagates permissions
+under that path's parent, holding each folder open meanwhile. Genex's own entries stay between
+launches (the owner's choice, for start times): while Genex is closed, only processes running as
+the sandbox user (any srt sandbox on the PC, Claude Code's shell sandbox among them) keep reading
+the granted toolchains and writing Genex's game folders and linked projects, and they stay denied
+the secrets; the real user's own access never changes. The next Genex start takes back what it no
+longer needs, and uninstalling Genex takes back every recorded entry no running Genex needs, in
+one Windows PowerShell batch that runs on after Squirrel's uninstall launch exits
+(`takeBackSandboxEntries`). Genex has no switch that turns the sandbox off; one added must take
+them back the same way. A folder moved into
+a granted one from elsewhere on the same drive keeps what it inherited there, so the sandbox
+cannot open it until its entries are passed down again (the grant changing, or a reinstall).
+Two Genex editing one folder's entries at the same moment can lose one edit until the next sync,
+and srt-win's own cleanup never sees Genex's entries. Every sandboxed process can read a run's env
+file until the command deletes it, and PATH folders under the profile whole (pnpm's home without
+its store). A broker outlives an Electron crash.
 
 ## CI and curated suite
 

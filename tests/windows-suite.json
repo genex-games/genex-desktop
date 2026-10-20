@@ -152,6 +152,7 @@
   "tests/conformance/package-linked-modules.test.ts",
   "tests/conformance/package-prune.test.ts",
   "tests/conformance/package-signing.test.ts",
+  "tests/conformance/package-vc-runtime.test.ts",
   "tests/conformance/page-serve.test.ts",
   "tests/conformance/page-shim.test.ts",
   "tests/conformance/paint-while-used.test.ts",

@@ -121,6 +121,8 @@ through the JS API imports `@typescript/typescript6`.
 - `game-ai-traces.ts`: settled play-time AI calls as the service hands its trace sink (`traceOf`,
   `requestOf`), the callers main derives (`callerFor` a Play or a Create game) and a clock the test
   moves (`heldClock`), for the Report, model-check, moments and fit-count suites.
+- `pe-image.ts`: minimal Windows PE images naming the DLLs a test gives (import and delay-load
+  tables, a machine type), for the package's Visual C++ runtime checks.
 - `processes.ts`: `running(pid)`, whether a process still runs. A test that proves a stop left
   nothing behind asks it, not `process.kill(pid, 0)`, which also finds a process that exited but
   is not reaped yet.

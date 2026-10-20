@@ -38,6 +38,7 @@ function fixture(t: TestContext) {
     "import { rig } from '../helpers/studio-rig.ts'; import { it } from 'node:test'; it('incident', () => { void rig; });\n",
   );
   write("tests/conformance/behavior.test.ts", "import { behavior } from '../../src/behavior.ts'; void behavior;\n");
+  write("tests/conformance/rig-behavior.test.ts", "import { rig } from '../helpers/studio-rig.ts'; void rig;\n");
   write("tests/test-map.json", JSON.stringify({ map: { "src/behavior.ts": [CI_BASELINE[0]] } }));
   write("scripts/test.mjs", "process.exit(Number(process.env.FIXTURE_EXIT ?? 0));\n");
   const git = (...args: string[]) => execFileSync("git", args, { cwd: root, env: testEnv(), stdio: "pipe" });
@@ -163,6 +164,60 @@ test("a global plan cannot drop a fast test or the harness while keeping its int
   assert.throws(() => validateCiPlan(root, withoutHarness), /Global CI inputs/);
 });
 
+test("a full plan holds all of npm test once: fast and seed on Linux, fast, rig and harness on macOS", (t) => {
+  const { root } = fixture(t);
+  const plan = createCiPlan(root, { full: true });
+  const rig = "tests/conformance/rig-behavior.test.ts";
+  assert.equal(plan.full, true);
+  assert.deepEqual(plan.changed, [], "a full plan compares against nothing");
+  assert.deepEqual(plan.harness.files, [...HARNESS_GATE].sort());
+  assert.deepEqual(plan.rig.files, [rig], "the harness gate's rig file runs in its own shards, not twice");
+  assert.ok(!plan.fast.files.includes(rig));
+  assert.deepEqual(
+    new Set([...plan.unit.files, ...plan.seed.files, ...plan.harness.files]),
+    new Set([...plan.fast.files, ...HARNESS_GATE]),
+  );
+  const tests = fs.globSync("tests/**/*.test.ts", { cwd: root }).sort();
+  assert.deepEqual([...new Set([...plan.fast.files, ...plan.rig.files, ...plan.harness.files])].sort(), tests);
+  assert.doesNotThrow(() => validateCiPlan(root, plan));
+  const focused = createCiPlan(root, { changed: ["src/behavior.ts"] });
+  assert.equal(focused.full, false);
+  assert.deepEqual(focused.rig.files, [rig], "every plan carries the rig inventory");
+  assert.deepEqual(focused.harness.files, []);
+});
+
+test("a full plan cannot drop a fast test or the harness, and no rig file may run as a fast or harness test", (t) => {
+  const { root } = fixture(t);
+  const plan = createCiPlan(root, { full: true });
+  const missing = "tests/conformance/behavior.test.ts";
+  const narrowed = structuredClone(plan);
+  narrowed.unit.files = narrowed.unit.files.filter((file) => file !== missing);
+  narrowed.unit.shards = narrowed.unit.shards
+    .map((shard) => ({ ...shard, files: shard.files.filter((file) => file !== missing) }))
+    .filter((shard) => shard.files.length);
+  assert.throws(() => validateCiPlan(root, narrowed), /full plans/);
+  assert.throws(() => validateCiPlan(root, { ...plan, harness: { files: [], roots: [], shards: [] } }), /full plans/);
+  const overlapping = structuredClone(plan);
+  overlapping.rig.files = [...overlapping.rig.files, missing].sort();
+  overlapping.rig.shards[0].files = [...overlapping.rig.shards[0].files, missing].sort();
+  assert.throws(() => validateCiPlan(root, overlapping), /overlap/);
+  assert.throws(() => validateCiPlan(root, { ...plan, full: "yes" }), /full/);
+});
+
+test("a rig worker runs its files one at a time", (t) => {
+  const { root, write } = fixture(t);
+  const plan = createCiPlan(root, { full: true });
+  write(
+    "scripts/test.mjs",
+    `import fs from 'node:fs'; fs.writeFileSync('worker-args.json', JSON.stringify(process.argv.slice(2)));`,
+  );
+  assert.equal(runCiShard(root, plan, "rig", 1), 0);
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(root, "worker-args.json"), "utf8")), [
+    "--test-concurrency=1",
+    "tests/conformance/rig-behavior.test.ts",
+  ]);
+});
+
 test("malformed, incomplete, repeated, escaped and missing-file plans fail before a worker starts", (t) => {
   const { root } = fixture(t);
   const original = createCiPlan(root, { changed: [] });
@@ -230,6 +285,12 @@ test("the CLI refuses a bad base and emits one reusable plan with matrix outputs
     plan.unit.shards.map((shard: { id: number }) => shard.id),
   );
   assert.notEqual(cli("run", "--plan", output, "--group", "unit", "--shard", "0").status, 0);
+  const full = cli("plan", "--full", "--output", output, "--github-output", githubOutput);
+  assert.equal(full.status, 0, full.stderr);
+  assert.equal(JSON.parse(fs.readFileSync(output, "utf8")).full, true);
+  assert.match(fs.readFileSync(githubOutput, "utf8"), /rig_matrix=\{"include":\[\{"shard":1\}\]\}/);
+  assert.notEqual(cli("plan", "--full", "--base", "HEAD", "--output", output).status, 0, "a full plan has no base");
+  assert.notEqual(cli("plan", "--full", "--full", "--output", output).status, 0);
 });
 
 test("stable gate names fail closed on failed, cancelled, skipped or absent required jobs", () => {
@@ -257,6 +318,29 @@ test("stable gate names fail closed on failed, cancelled, skipped or absent requ
   assert.throws(() => assertCiResults({ ...unselected, harness: { result: "success" } }, "gate"));
   assert.throws(() => assertCiResults({ ...complete, plan: { result: "success" } }, "gate"));
   assert.throws(() => assertCiResults({ ...complete, "fast-tests": { result: "cancelled" } }, "fast"));
+  const regression = {
+    validate: { result: "success" },
+    "fast-evidence": { result: "success", outputs: { reuse: "false" } },
+    "regression-rig": { result: "success" },
+    "regression-harness": { result: "success" },
+    "regression-fast": { result: "success" },
+    "regression-e2e": { result: "success" },
+  };
+  assert.doesNotThrow(() => assertCiResults(regression, "regression"));
+  for (const name of Object.keys(regression))
+    for (const result of ["failure", "cancelled", "skipped", undefined])
+      assert.throws(() => assertCiResults({ ...regression, [name]: { result } }, "regression"), Error, name);
+  // Check's passed macOS fast job on the same commit stands in for the skipped fast shards, and
+  // only then: a skipped fast lane without that evidence, or a missing decision, fails closed.
+  const reused = {
+    ...regression,
+    "fast-evidence": { result: "success", outputs: { reuse: "true" } },
+    "regression-fast": { result: "skipped" },
+  };
+  assert.doesNotThrow(() => assertCiResults(reused, "regression"));
+  assert.throws(() => assertCiResults({ ...reused, "regression-fast": { result: "success" } }, "regression"));
+  assert.throws(() => assertCiResults({ ...regression, "fast-evidence": { result: "success" } }, "regression"));
+  assert.throws(() => assertCiResults(complete, "unknown"), /lane/);
 });
 
 test("a worker receives only its planned files and an explicit concurrency, and signal exits fail", (t) => {

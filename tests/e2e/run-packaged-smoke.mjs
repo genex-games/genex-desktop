@@ -12,7 +12,8 @@ import { readdir, readFile } from "node:fs/promises";
  * asking) and, with STUDIO_EXPECT_SIGNED=1, the Developer ID signature and Gatekeeper's verdict. On
  * macOS and Windows it also checks the bundled cua-driver: the pinned version, its license, and that
  * it starts embedded from inside the package (on a Mac signed with the app's own identity when
- * STUDIO_EXPECT_SIGNED=1; on Windows carrying cua's own valid signature).
+ * STUDIO_EXPECT_SIGNED=1; on Windows carrying cua's own valid signature). On Windows every
+ * executable and DLL in the package must find the Visual C++ runtime DLLs it imports beside it.
  *
  *   npm run package && node tests/e2e/run-packaged-smoke.mjs
  *   STUDIO_PACKAGE_DIR=<out/Genex-<platform>-<arch>> overrides the package folder.
@@ -30,6 +31,7 @@ import { rm } from "node:fs/promises";
 import net from "node:net";
 import { setTimeout as sleep } from "node:timers/promises";
 import { CUA_DRIVER_RELEASE } from "../../scripts/vendor-cua-driver.ts";
+import vcRuntime from "../../scripts/package-vc-runtime.cjs";
 import { connectCuaDriver, driverEnv, GrantHolder } from "../../src/substrate/cua-driver-client.ts";
 import {
   bundledCuaDriver,
@@ -41,7 +43,7 @@ import {
 
 const root = fileURLToPath(new URL("../..", import.meta.url));
 const target = `${process.platform}-${process.arch}`;
-const { appBundle, bin, resourcesDir } = packagedApp(root);
+const { appBundle, bin, packageDir, resourcesDir } = packagedApp(root);
 const expectSigned = process.platform === "darwin" && process.env.STUDIO_EXPECT_SIGNED === "1";
 /** The fuses forge.config.cjs flips, as the packaged binary must carry them. */
 const EXPECTED_FUSES = {
@@ -189,6 +191,7 @@ addCheck(
 );
 if (process.platform === "darwin") await signatureChecks();
 if (process.platform === "darwin" || process.platform === "win32") await cuaDriverChecks();
+if (process.platform === "win32") await vcRuntimeCheck();
 // Keep the fallback in smoke mode if the gate regresses: this negative probe must
 // never initialize normal product data merely to prove a packaged flag is refused.
 const denied = spawn(bin, fixtureElectronArgs(["--studio-smoke", "--studio-dev-launch=/not-an-owned-launch.json"]), {
@@ -233,6 +236,22 @@ process.exit(report.failed === 0 && code === 0 ? 0 : 1);
 function addCheck(name, ok, detail) {
   report.checks.push({ name, ok, ...(detail ? { detail } : {}) });
   if (!ok) report.failed++;
+}
+
+/**
+ * Windows: every executable, DLL and addon in the package has the Visual C++ runtime DLLs it
+ * imports beside it, for its architecture (scripts/package-vc-runtime.cjs). Windows does not
+ * include them, so without a copy a program such as srt-win.exe exits 0xC0000135 before it runs;
+ * a runner whose Visual Studio installed them in System32 would never show it.
+ */
+async function vcRuntimeCheck() {
+  const gaps = await vcRuntime.missingVcRuntime(packageDir);
+  const describe = ({ file, missing, error }) => `${path.relative(packageDir, file)}: ${error ?? missing.join(", ")}`;
+  addCheck(
+    "every executable and DLL in the package has the Visual C++ runtime it imports beside it",
+    gaps.length === 0,
+    gaps.slice(0, 5).map(describe).join("; "),
+  );
 }
 
 /** Whether something accepts connections on a socket or named pipe now. */

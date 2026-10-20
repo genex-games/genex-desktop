@@ -7,6 +7,7 @@
       "tests/conformance/sandbox-windows-start.test.ts"
     ],
     ".github/workflows/check.yml": ["tests/conformance/ci-test-plan.test.ts"],
+    "scripts/canary/**": ["tests/conformance/release-canary.test.ts"],
     "src/main/preview.ts": ["tests/conformance/page-shim.test.ts", "tests/conformance/page-serve.test.ts"],
     "src/page/**": ["tests/conformance/page-shim.test.ts", "tests/conformance/page-serve.test.ts"],
     "docs/**": ["tests/conformance/agent-context.test.ts", "tests/conformance/agent-instructions.test.ts"],

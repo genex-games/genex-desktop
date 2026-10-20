@@ -14,15 +14,16 @@
  * at run time (no compiler). Where PowerShell may not do that (Constrained Language Mode), or
  * does not answer, the batch falls back to `icacls`: slow, but the same entries.
  *
- * The same script sets the deny entries Genex keeps itself for the deny paths that exist
- * (`ownDenyStamps` in `windows-sandbox.ts`): a deny on the path, passed down to everything under
- * it, and a FILE_DELETE_CHILD deny on its parent folder alone. Those have no `icacls` fallback:
- * `icacls` would walk the parent, which is what they exist to avoid.
+ * The same script sets the entries Genex keeps itself for the sandbox users' group (`ownAclEntries`
+ * in `windows-sandbox.ts`): a grant on each folder the sandbox may use and a deny on each path it
+ * may not, each passed down to everything under its path, and a FILE_DELETE_CHILD deny on a denied
+ * path's parent folder alone. Those have no `icacls` fallback: `icacls` would walk a denied path's
+ * parent, which is what they exist to avoid.
  */
 import { execFile, execFileSync } from "node:child_process";
 import path from "node:path";
 import { promisify } from "node:util";
-import { SECOND_MS } from "../shared/duration.ts";
+import { MINUTE_MS, SECOND_MS } from "../shared/duration.ts";
 import { errorMessage } from "../shared/errors.ts";
 
 const run = promisify(execFile);
@@ -31,10 +32,10 @@ const run = promisify(execFile);
 export const FolderAceOp = {
   /** Allow FILE_READ_ATTRIBUTES and SYNCHRONIZE, without inheritance: merged into an explicit allow it already has. */
   Grant: "grant",
-  /** Remove every explicit allow for the SID, as `icacls /remove:g` does; its denies stay. */
+  /** Remove the SID's explicit allows that pass nothing down, as {@link Grant} sets; its denies and grants stay. */
   Remove: "remove",
-  /** Make the SID's explicit denies on the path exactly the edit's `deny` and `guard` ({@link FolderDenyEdit}). */
-  Deny: "deny",
+  /** Make the SID's explicit denies and passed-down allows on the path exactly the edit's ({@link FolderOwnEdit}). */
+  Own: "own",
 } as const;
 export type FolderAceOp = (typeof FolderAceOp)[keyof typeof FolderAceOp];
 
@@ -45,6 +46,13 @@ export const DenyAccess = {
 } as const;
 export type DenyAccess = (typeof DenyAccess)[keyof typeof DenyAccess];
 
+/** What a grant allows: reading and running (srt-win's read grant), or that and writing and deleting its own files. */
+export const GrantAccess = {
+  Read: "read",
+  Modify: "modify",
+} as const;
+export type GrantAccess = (typeof GrantAccess)[keyof typeof GrantAccess];
+
 /** One change to one folder's own DACL. */
 export interface FolderAceEdit {
   dir: string;
@@ -52,45 +60,59 @@ export interface FolderAceEdit {
   op: typeof FolderAceOp.Grant | typeof FolderAceOp.Remove;
 }
 
-/** The SID's denies on one path, made exactly these; both off takes them back. */
-export interface FolderDenyEdit {
+/** The SID's own entries on one path, made exactly these; all off takes them back. */
+export interface FolderOwnEdit {
   dir: string;
   sid: string;
-  op: typeof FolderAceOp.Deny;
+  op: typeof FolderAceOp.Own;
   /** Denied on the path and, through inheritance, on everything under it. */
   deny: DenyAccess | null;
   /** FILE_DELETE_CHILD denied on the path alone, so a denied entry in it cannot be deleted or renamed. */
   guard: boolean;
+  /** Allowed on the path and, through inheritance, on everything under it (with `allows`). */
+  grant: GrantAccess | null;
+  /**
+   * Whether this edit also makes the SID's passed-down allows on the path exactly `grant`: only on a
+   * folder Genex grants or once granted. Elsewhere (a deny, a guard) an allow it did not set stays.
+   */
+  allows: boolean;
 }
 
-/** What became of one edit: done, or the reason Windows refused it. */
-export type FolderAceOutcome = { ok: true } | { ok: false; error: string };
+/**
+ * What became of one edit: done (and how long Windows took, for an edit that passed entries
+ * down), or the reason it was refused; `timedOut` when the batch ran out of time before it.
+ */
+export type FolderAceOutcome = { ok: true; ms?: number } | { ok: false; error: string; timedOut?: true };
 
 /** Applies edits in order and answers one outcome per edit; never throws. */
 export type FolderAceEditor = (edits: readonly FolderAceEdit[]) => Promise<FolderAceOutcome[]>;
 /** {@link FolderAceEditor} for process exit, when nothing asynchronous runs any more. */
 export type FolderAceEditorSync = (edits: readonly FolderAceEdit[]) => FolderAceOutcome[];
 /**
- * Applies deny edits in order and answers one outcome per edit, or null when PowerShell could not
- * apply the batch here (locked down, no answer, or a SID the running user holds); never throws.
+ * Applies own edits in order and answers one outcome per edit, or null when PowerShell could not
+ * apply the batch here (locked down, no answer, or a SID the running user holds); never throws. A
+ * batch that ran out of time answers every edit as refused with `timedOut`.
  */
-export type FolderDenyEditor = (edits: readonly FolderDenyEdit[]) => Promise<FolderAceOutcome[] | null>;
-/** {@link FolderDenyEditor} for process exit. */
-export type FolderDenyEditorSync = (edits: readonly FolderDenyEdit[]) => FolderAceOutcome[] | null;
+export type FolderOwnEditor = (edits: readonly FolderOwnEdit[]) => Promise<FolderAceOutcome[] | null>;
+/** {@link FolderOwnEditor} for process exit. */
+export type FolderOwnEditorSync = (edits: readonly FolderOwnEdit[]) => FolderAceOutcome[] | null;
 
 const MESSAGE = {
   /** A refusal the script gave no words for. */
   Refused: "refused",
+  TimedOut: (ms: number) => `Windows was still passing the entries down after ${Math.round(ms / SECOND_MS)} s`,
 } as const;
 
 /** How long one PowerShell batch or one `icacls` call may take. */
 const TOOL_TIMEOUT_MS = 15 * SECOND_MS;
 /**
- * How long one batch of deny edits may take: srt-win's own `acl stamp` deadline, which these
- * edits replace. Each passes its deny down through everything under its path, as srt-win did,
- * but no longer through everything under the path's parent.
+ * How long one batch of own edits may take. A grant or deny passes its entry down through
+ * everything under its path, a file at a time, so the first one on a large folder (a conda
+ * install, a browser profile, a games folder full of node_modules) takes minutes. The entries
+ * stay between launches, so that walk happens once per folder, and later launches only check
+ * them; a batch that still runs out of time keeps what it set, and the next try goes on from there.
  */
-const DENY_TIMEOUT_MS = 60 * SECOND_MS;
+const OWN_TIMEOUT_MS = 10 * MINUTE_MS;
 /** The variable that hands a batch to the script: base64 of its UTF-8 JSON, so no console code page touches a path. */
 const EDITS_ENV = "GENEX_FOLDER_ACES";
 
@@ -126,6 +148,9 @@ $READ_ATTRIBUTES = 0x100080
 # data, append, extended attributes, attributes, DELETE) with FILE_DELETE_CHILD, which no
 # inheritable entry on the parent passes down any more.
 $DENIED = @{ read = 0x1F01FF; write = 0x10156 }
+# What a grant allows: srt-win's read grant (read and execute), or its working-tree grant (read,
+# write, execute and DELETE, without FILE_DELETE_CHILD, so a denied file in it cannot be deleted).
+$GRANTED = @{ read = 0x1200A9; modify = 0x1301BF }
 $DELETE_CHILD = 0x40
 $PASSED_DOWN = [Security.AccessControl.AceFlags]'ObjectInherit, ContainerInherit'
 $SE_FILE_OBJECT = 1
@@ -158,26 +183,42 @@ function Grant($acl, $sid) {
   $acl.InsertAce($at, (New-Object Security.AccessControl.CommonAce([Security.AccessControl.AceFlags]::None, [Security.AccessControl.AceQualifier]::AccessAllowed, $READ_ATTRIBUTES, $sid, $false, $null)))
   return 'folder'
 }
+# A read-attributes entry ({@link Grant}) passes nothing down; a grant on a whole folder (Own) does.
+function FolderAllow($ace, $sid) { (ExplicitAllow $ace $sid) -and [int]$ace.AceFlags -eq 0 }
+function OwnEntry($ace, $sid, $allows) { (ExplicitDeny $ace $sid) -or ($allows -and (ExplicitAllow $ace $sid) -and [int]$ace.AceFlags -ne 0) }
 function Remove($acl, $sid) {
   $how = 'none'
   for ($i = $acl.Count - 1; $i -ge 0; $i--) {
-    if (ExplicitAllow $acl[$i] $sid) { $acl.RemoveAce($i); $how = 'folder' }
+    if (FolderAllow $acl[$i] $sid) { $acl.RemoveAce($i); $how = 'folder' }
   }
   return $how
 }
-# Entries as comparable text (inheritance flags and mask of each), the inheritable ones alone when asked.
+# Entries as comparable text (kind, inheritance flags and mask of each), the inheritable ones alone when asked.
 function Shapes($aces, $inheritable) {
-  (@($aces | Where-Object { -not $inheritable -or [int]$_.AceFlags -ne 0 } | ForEach-Object { "$([int]$_.AceFlags):$($_.AccessMask)" }) | Sort-Object) -join ','
+  (@($aces | Where-Object { -not $inheritable -or [int]$_.AceFlags -ne 0 } | ForEach-Object { "$($_.AceQualifier):$([int]$_.AceFlags):$($_.AccessMask)" }) | Sort-Object) -join ','
 }
-function Deny($acl, $sid, $edit) {
-  $want = @()
-  if ($edit.deny) { $want += ,(New-Object Security.AccessControl.CommonAce($PASSED_DOWN, [Security.AccessControl.AceQualifier]::AccessDenied, $DENIED[[string]$edit.deny], $sid, $false, $null)) }
-  if ($edit.guard) { $want += ,(New-Object Security.AccessControl.CommonAce([Security.AccessControl.AceFlags]::None, [Security.AccessControl.AceQualifier]::AccessDenied, $DELETE_CHILD, $sid, $false, $null)) }
-  $had = @(for ($i = 0; $i -lt $acl.Count; $i++) { if (ExplicitDeny $acl[$i] $sid) { $acl[$i] } })
-  if ((Shapes $had $false) -eq (Shapes $want $false)) { return 'none' }
-  for ($i = $acl.Count - 1; $i -ge 0; $i--) { if (ExplicitDeny $acl[$i] $sid) { $acl.RemoveAce($i) } }
-  foreach ($ace in $want) { $acl.InsertAce(0, $ace) }
-  if ((Shapes $had $true) -eq (Shapes $want $true)) { return 'folder' }
+function Entry($flags, $qualifier, $mask, $sid) {
+  New-Object Security.AccessControl.CommonAce($flags, [Security.AccessControl.AceQualifier]::$qualifier, $mask, $sid, $false, $null)
+}
+# The SID's denies (and, with allows set, its passed-down allows) made exactly the edit's: denies
+# first, then the allow after every explicit deny (the canonical order); the read-attributes
+# entries, and without allows every allow, left as they are.
+function Own($acl, $sid, $edit) {
+  $denies = @()
+  if ($edit.deny) { $denies += ,(Entry $PASSED_DOWN 'AccessDenied' $DENIED[[string]$edit.deny] $sid) }
+  if ($edit.guard) { $denies += ,(Entry ([Security.AccessControl.AceFlags]::None) 'AccessDenied' $DELETE_CHILD $sid) }
+  $allows = @()
+  if ($edit.allows -and $edit.grant) { $allows += ,(Entry $PASSED_DOWN 'AccessAllowed' $GRANTED[[string]$edit.grant] $sid) }
+  $had = @(for ($i = 0; $i -lt $acl.Count; $i++) { if (OwnEntry $acl[$i] $sid $edit.allows) { $acl[$i] } })
+  if ((Shapes $had $false) -eq (Shapes ($denies + $allows) $false)) { return 'none' }
+  for ($i = $acl.Count - 1; $i -ge 0; $i--) { if (OwnEntry $acl[$i] $sid $edit.allows) { $acl.RemoveAce($i) } }
+  foreach ($ace in $denies) { $acl.InsertAce(0, $ace) }
+  foreach ($ace in $allows) {
+    $at = 0
+    while ($at -lt $acl.Count -and -not $acl[$at].IsInherited -and "$($acl[$at].AceType)" -like '*Denied*') { $at++ }
+    $acl.InsertAce($at, $ace)
+  }
+  if ((Shapes $had $true) -eq (Shapes ($denies + $allows) $true)) { return 'folder' }
   return 'tree'
 }
 # By name, with the path's explicit entries alone: Windows works out again what it inherits and
@@ -203,11 +244,11 @@ function Edit($edit) {
   if (-not $ok) { throw (Refused $code) }
   $sd = New-Object Security.AccessControl.RawSecurityDescriptor($bytes, 0)
   $acl = $sd.DiscretionaryAcl
-  $deny = $edit.op -eq '${FolderAceOp.Deny}'
+  $own = $edit.op -eq '${FolderAceOp.Own}'
   # No DACL lets everyone in: there is nothing to add an entry to, and a deny must not pass for done.
-  if ($null -eq $acl) { if ($deny) { throw 'the path has no DACL' } else { return } }
+  if ($null -eq $acl) { if ($own) { throw 'the path has no DACL' } else { return } }
   $sid = New-Object Security.Principal.SecurityIdentifier ([string]$edit.sid)
-  $how = if ($deny) { Deny $acl $sid $edit } elseif ($edit.op -eq '${FolderAceOp.Grant}') { Grant $acl $sid } else { Remove $acl $sid }
+  $how = if ($own) { Own $acl $sid $edit } elseif ($edit.op -eq '${FolderAceOp.Grant}') { Grant $acl $sid } else { Remove $acl $sid }
   if ($how -eq 'none') { return }
   $sd.DiscretionaryAcl = $acl
   if ($how -eq 'tree') { WriteTree $edit.dir $sd; return }
@@ -226,13 +267,18 @@ function Answer($json) {
 $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
 $held = @($identity.User) + @($identity.Groups)
 foreach ($edit in @($request)) {
-  if ($edit.op -eq '${FolderAceOp.Deny}' -and ($held -contains (New-Object Security.Principal.SecurityIdentifier ([string]$edit.sid)))) {
+  if ($edit.op -eq '${FolderAceOp.Own}' -and ($held -contains (New-Object Security.Principal.SecurityIdentifier ([string]$edit.sid)))) {
     Answer '{"refused":"the running user holds this SID"}'
     exit
   }
 }
 $outcomes = foreach ($edit in @($request)) {
-  try { Edit $edit; @{ ok = $true } } catch { @{ ok = $false; error = $_.Exception.Message } }
+  $watch = [Diagnostics.Stopwatch]::StartNew()
+  try {
+    Edit $edit
+    # How long Windows took over an own edit, which may pass entries down a large folder.
+    if ($edit.op -eq '${FolderAceOp.Own}') { @{ ok = $true; ms = $watch.ElapsedMilliseconds } } else { @{ ok = $true } }
+  } catch { @{ ok = $false; error = $_.Exception.Message } }
 }
 Answer (ConvertTo-Json -InputObject @($outcomes) -Compress)
 `;
@@ -245,7 +291,7 @@ export function windowsPowerShell(env: NodeJS.ProcessEnv = process.env): string 
 
 /** The PowerShell command line and environment that run one batch. */
 export function folderAceCommand(
-  edits: readonly (FolderAceEdit | FolderDenyEdit)[],
+  edits: readonly (FolderAceEdit | FolderOwnEdit)[],
   env: NodeJS.ProcessEnv = process.env,
 ) {
   const script = Buffer.from(FOLDER_ACE_SCRIPT, "utf16le").toString("base64");
@@ -264,7 +310,9 @@ export function folderAceOutcomes(stdout: string, count: number): FolderAceOutco
     if (!Array.isArray(parsed) || parsed.length !== count) return null;
     return parsed.map((item: unknown): FolderAceOutcome => {
       const answer = typeof item === "object" && item !== null ? item : {};
-      if ("ok" in answer && answer.ok === true) return { ok: true };
+      if ("ok" in answer && answer.ok === true) {
+        return "ms" in answer && typeof answer.ms === "number" ? { ok: true, ms: answer.ms } : { ok: true };
+      }
       return { ok: false, error: "error" in answer ? String(answer.error) : MESSAGE.Refused };
     });
   } catch {
@@ -338,7 +386,7 @@ export function folderAceEditor(tools: FolderAceTools = {}): FolderAceEditor {
 
 /** One batch through PowerShell, synchronously: its outcomes, or null when it gave none. */
 function batchSync(
-  edits: readonly (FolderAceEdit | FolderDenyEdit)[],
+  edits: readonly (FolderAceEdit | FolderOwnEdit)[],
   env: NodeJS.ProcessEnv,
   timeoutMs: number,
 ): FolderAceOutcome[] | null {
@@ -375,23 +423,33 @@ export function folderAceEditorSync(env: NodeJS.ProcessEnv = process.env): Folde
   };
 }
 
+/** Whether a PowerShell run was stopped for running past its deadline (Node's `timeout` kills it). */
+function ranOutOfTime(error: unknown): boolean {
+  return typeof error === "object" && error !== null && "killed" in error && error.killed === true;
+}
+
 /**
- * An editor for deny entries: one PowerShell batch, with no `icacls` to fall back to (it would walk
- * everything under each parent folder); null where PowerShell cannot apply the batch.
+ * An editor for Genex's own entries: one PowerShell batch, with no `icacls` to fall back to (it
+ * would walk everything under each denied path's parent); null where PowerShell cannot apply the
+ * batch, and every edit refused as `timedOut` when it ran past {@link OWN_TIMEOUT_MS}.
  */
-export function folderDenyEditor(tools: Pick<FolderAceTools, "env" | "powershell"> = {}): FolderDenyEditor {
-  const powershellRun = tools.powershell ?? ((file, args, env) => runPowerShell(file, args, env, DENY_TIMEOUT_MS));
+export function folderOwnEditor(tools: Pick<FolderAceTools, "env" | "powershell"> = {}): FolderOwnEditor {
+  const powershellRun = tools.powershell ?? ((file, args, env) => runPowerShell(file, args, env, OWN_TIMEOUT_MS));
   return async (edits) => {
     if (edits.length === 0) return [];
     const command = folderAceCommand(edits, tools.env);
-    const stdout = await powershellRun(command.file, command.args, command.env).catch(() => "");
-    return folderAceOutcomes(stdout, edits.length);
+    try {
+      return folderAceOutcomes(await powershellRun(command.file, command.args, command.env), edits.length);
+    } catch (error) {
+      if (!ranOutOfTime(error)) return null;
+      return edits.map(() => ({ ok: false, error: MESSAGE.TimedOut(OWN_TIMEOUT_MS), timedOut: true }) as const);
+    }
   };
 }
 
-/** {@link folderDenyEditor} for process exit, with the real program. */
-export function folderDenyEditorSync(env: NodeJS.ProcessEnv = process.env): FolderDenyEditorSync {
-  return (edits) => (edits.length === 0 ? [] : batchSync(edits, env, DENY_TIMEOUT_MS));
+/** {@link folderOwnEditor} for process exit, with the real program. */
+export function folderOwnEditorSync(env: NodeJS.ProcessEnv = process.env): FolderOwnEditorSync {
+  return (edits) => (edits.length === 0 ? [] : batchSync(edits, env, OWN_TIMEOUT_MS));
 }
 
 /** The editor the sandbox uses. */
@@ -399,6 +457,6 @@ export const editFolderAces: FolderAceEditor = folderAceEditor();
 /** The editor the sandbox uses on process exit. */
 export const editFolderAcesSync: FolderAceEditorSync = folderAceEditorSync();
 /** The deny editor the sandbox uses. */
-export const editFolderDenies: FolderDenyEditor = folderDenyEditor();
+export const editFolderOwn: FolderOwnEditor = folderOwnEditor();
 /** The deny editor the sandbox uses on process exit. */
-export const editFolderDeniesSync: FolderDenyEditorSync = folderDenyEditorSync();
+export const editFolderOwnSync: FolderOwnEditorSync = folderOwnEditorSync();
