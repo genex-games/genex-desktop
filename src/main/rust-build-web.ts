@@ -11,7 +11,10 @@
  *    CLI must match the `wasm-bindgen` crate in the lock byte for byte, or the glue is wrong);
  * 2. `wasm-bindgen --target web` into a fresh output folder (a link there is refused, nothing is
  *    written through one);
- * 3. `wasm-opt -Oz` (binaryen {@link BINARYEN_VERSION}) for an optimized build;
+ * 3. `wasm-opt -Oz` (binaryen {@link BINARYEN_VERSION}) for an optimized build, with
+ *    `--symbolmap` into the export's debug folder outside the served one (CRASH-7a,
+ *    `substrate/rust-debug-files.ts`): `-Oz` drops the name section from the module players get,
+ *    and the map names each `wasm-function[N]` of a crash record's frames;
  * 4. a check that the folder holds only regular files the tools wrote (a link they left is refused);
  * 5. `index.html` from the shell with the game's title HTML-escaped and its loading screen styled
  *    by `[render.loading]` (`shared/loading-style.ts`), and `size.json`;
@@ -249,6 +252,11 @@ export interface WebPackageInput {
   loading?: LoadingStyle;
   /** Run wasm-opt (an export or any release build). */
   optimize: boolean;
+  /**
+   * Where an optimized build's `wasm-opt --symbolmap` writes the function-index-to-name map
+   * (CRASH-7a): outside {@link WebPackageInput.out}, never served; absent: no map.
+   */
+  symbolMap?: string;
   /** The game's own budget in MB of gzip (`[web] wasm_budget_mb`); absent: {@link WEB_WASM_BUDGET_DEFAULT_MB}. */
   budgetMb?: number;
   tools: WebTools;
@@ -323,11 +331,13 @@ export function bindgenCommand(tool: string, wasm: string, out: string): string 
   return [shellQuote(tool), ...args, shellQuote(wasm)].join(" ");
 }
 
-/** `wasm-opt -Oz` of the bound module into its sibling. */
-export function wasmOptCommand(tool: string, out: string): string {
+/** `wasm-opt -Oz` of the bound module into its sibling, and its symbol map into `symbolMap` when one is named. */
+export function wasmOptCommand(tool: string, out: string, symbolMap?: string): string {
   const from = shellQuote(path.join(out, WEB_FILES.wasm));
   const to = shellQuote(path.join(out, WEB_FILES.optimizing));
-  return [shellQuote(tool), "-Oz", ...WASM_OPT_FEATURES, from, "-o", to].join(" ");
+  // After -Oz on the line: binaryen runs passes in order, so the map names the optimized module's indices.
+  const map = symbolMap === undefined ? [] : [shellQuote(`--symbolmap=${symbolMap}`)];
+  return [shellQuote(tool), "-Oz", ...WASM_OPT_FEATURES, from, "-o", to, ...map].join(" ");
 }
 
 function firstLines(result: WebRunResult): string {
@@ -361,7 +371,12 @@ async function outputRefusal(out: string): Promise<string | null> {
 
 /** wasm-opt over the bound module, renamed into place once whole; the refusal or null. */
 async function optimize(input: WebPackageInput, tool: string): Promise<WebPackageResult | null> {
-  const run = await input.run(wasmOptCommand(tool, input.out), RustWebStep.WasmOpt);
+  // An earlier build's map never stands in for this one's.
+  if (input.symbolMap !== undefined) {
+    await rm(input.symbolMap, { recursive: true, force: true });
+    await mkdir(path.dirname(input.symbolMap), { recursive: true });
+  }
+  const run = await input.run(wasmOptCommand(tool, input.out, input.symbolMap), RustWebStep.WasmOpt);
   if (run.code !== 0) {
     return refused(
       RustWebRefusal.WasmOptFailed,

@@ -51,6 +51,7 @@ import type { XcodeExec } from "../../src/substrate/toolchain-store/locate.ts";
 import { admitRustOutput } from "../../src/substrate/native-cross-admission.ts";
 import { NativeRefusal, RustAdmissionProblem } from "../../src/shared/native-contract.ts";
 import { macBinary } from "../fixtures/rust-bundles/binaries.ts";
+import { DebugFileKind, EXPORT_DEBUG_SETTINGS } from "../../src/substrate/rust-debug-files.ts";
 import { tmpDir } from "../helpers/tmp.ts";
 
 const LOCK: ToolchainLock = {
@@ -621,11 +622,11 @@ describe("the Rust lane builds behind the seam", { skip: SKIP_ON_WINDOWS }, () =
     }
   });
 
-  it("builds Live with the engine and its dependencies optimized and the game crate not (K6); an export keeps cargo's release profile", async () => {
+  it("builds Live with the engine and its dependencies optimized and the game crate not (K6); an export is cargo's release profile with line tables kept in a dSYM (CRASH-7a)", async () => {
     const depsOptimized = 'profile.dev.package."*".opt-level=1';
     for (const [purpose, expected] of [
       [CppBuildPurpose.Live, [depsOptimized]],
-      [CppBuildPurpose.Export, []],
+      [CppBuildPurpose.Export, EXPORT_DEBUG_SETTINGS[DebugFileKind.Dsym]],
     ] as const) {
       const parent = await realpath(await tmpDir("rust-dev-profile-"));
       const open = openSandboxes();
