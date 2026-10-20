@@ -26,6 +26,10 @@
 //!   that the shell fills from IndexedDB before the first reset and drains write-behind (M2.9);
 //!   the `web` module's `studio_saves_*` exports are the shell's side of it.
 //!
+//! - [`crash`]: crash reports on the page (game systems CRASH-3): genex-crash's hook hands the
+//!   shell one `genex-crash/1` record per panic (kept in IndexedDB, read by
+//!   `window.__studio.crashes()`), chained in front of our port of console_error_panic_hook.
+//!
 //! - The web build's facade: this crate re-exports all of `genex`, and a game's web build names it
 //!   `genex` (the host-written manifest's `genex = { package = "genex-platform-web", … }`), so the
 //!   template's `genex::install(game)` hands the game to this shell ([`install`]) when the module
@@ -37,6 +41,7 @@
 //! and lifecycle beyond the saves flush are not wired yet.
 
 pub mod assets;
+pub mod crash;
 pub mod draw;
 pub mod handle;
 pub mod saves;

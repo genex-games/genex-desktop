@@ -22,6 +22,9 @@
 //!   ([`RenderStatus`]) and a capture's `render` provenance ([`CaptureProvenance`]). The receipt
 //!   lists every extension API version served, the renderer's own optional features, the inputs a
 //!   v2 extension really gets and, once served, the verb's version ([`RENDER_SETTINGS_API_VERSION`]).
+//! - The dev-flavour `profile` verb (game systems PROF-4, `src/shared/frame-profile.ts`): its
+//!   [`ProfileAction`] and [`GpuTimingMode`] vocabularies and [`parse_profile`], which clamps a
+//!   report's frames to [`PROFILE_REPORT_FRAMES_MAX`].
 //!
 //! `verbs.rs` sends [`ready_fields`]' receipt and protocol 2 in `ready` and adds
 //! [`set_state_v2`]'s fields to every state snapshot.
@@ -90,6 +93,13 @@ pub const OP_RELOAD_ASSETS: &str = "reloadAssets";
 /// The dev-flavour verb the build lane's bake step sends a headless session, kind `nav` or
 /// `impostor` (`NativeOp.BakeAssets`; NAV-14 and LOD-23 serve it, `unavailable` until then).
 pub const OP_BAKE_ASSETS: &str = "bakeAssets";
+/// The dev-flavour verb that reads the game's frame profile (`NativeOp.Profile`, game systems PROF-4):
+/// `{action, frames?, mode?}` ([`parse_profile`]); a game that serves no profiles answers `unavailable`.
+pub const OP_PROFILE: &str = "profile";
+/// The frames a `profile` `report` covers when it names none (`PROFILE_REPORT_FRAMES_DEFAULT`).
+pub const PROFILE_REPORT_FRAMES_DEFAULT: u32 = 120;
+/// The most frames a `profile` request covers; more are clamped to it (`PROFILE_REPORT_FRAMES_MAX`).
+pub const PROFILE_REPORT_FRAMES_MAX: u32 = 240;
 /// `ready`'s receipt member.
 pub const READY_RECEIPT: &str = "receipt";
 /// `state()`'s lifecycle member.
@@ -800,6 +810,71 @@ pub fn parse_release(arg: &Value) -> Result<ReleaseArgs, BadField> {
         return Err(BadField("generation"));
     }
     Ok(ReleaseArgs { slot, generation })
+}
+
+vocabulary! {
+    /// What a `profile` request asks for (`FrameProfileAction`).
+    ProfileAction {
+        /// The `volatile.profile` summary.
+        Summary => "summary",
+        /// `ProfileReport` v2 for the last `frames` frames, plus every kept hitch.
+        Report => "report",
+        /// Switch GPU timing to `mode`.
+        Arm => "arm",
+        /// A Chrome trace of the report window, written into the run's `state/profile/`.
+        Trace => "trace",
+    }
+}
+
+vocabulary! {
+    /// How the GPU is timed (`GpuTimingMode`): the whole frame (Live's default) or each frame-graph node.
+    GpuTimingMode {
+        /// One span per frame.
+        Frame => "frame",
+        /// One span per frame-graph node, until `frame` again or the arm's frames pass.
+        Nodes => "nodes",
+    }
+}
+
+/// A `profile` request as the studio hands it to the game ([`parse_profile`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ProfileRequest {
+    /// What is asked for.
+    pub action: ProfileAction,
+    /// The frames a report or trace covers: [`PROFILE_REPORT_FRAMES_DEFAULT`] when absent, at most
+    /// [`PROFILE_REPORT_FRAMES_MAX`] (a larger number is clamped).
+    pub frames: u32,
+    /// The GPU timing mode: always present for `arm`, which needs one; absent otherwise unless given.
+    pub mode: Option<GpuTimingMode>,
+}
+
+/// A `profile` argument: an object with a known `action`, `frames` a whole number of at least 1
+/// (clamped to [`PROFILE_REPORT_FRAMES_MAX`]) when present, and `mode` a known [`GpuTimingMode`]
+/// when present (required by `arm`). Unknown members are ignored.
+pub fn parse_profile(arg: &Value) -> Result<ProfileRequest, BadField> {
+    if !matches!(arg, Value::Object(_)) {
+        return Err(BadField("arg"));
+    }
+    let action = ProfileAction::from_wire(text(arg, "action")?).ok_or(BadField("action"))?;
+    let frames = match arg.get("frames") {
+        None => PROFILE_REPORT_FRAMES_DEFAULT,
+        Some(_) => {
+            let asked = number(arg, "frames")?;
+            if asked.fract() != 0.0 || asked < 1.0 {
+                return Err(BadField("frames"));
+            }
+            // At least 1 and clamped to the cap, so the conversion is exact.
+            asked.min(f64::from(PROFILE_REPORT_FRAMES_MAX)) as u32
+        }
+    };
+    let mode = match arg.get("mode") {
+        None => None,
+        Some(_) => Some(GpuTimingMode::from_wire(text(arg, "mode")?).ok_or(BadField("mode"))?),
+    };
+    if action == ProfileAction::Arm && mode.is_none() {
+        return Err(BadField("mode"));
+    }
+    Ok(ProfileRequest { action, frames, mode })
 }
 
 /// Where a pointer Live sends in ring pixels (`px: true`) lands in the world: the world is drawn

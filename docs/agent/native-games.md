@@ -138,7 +138,10 @@ iOS and Android 200 MB, desktop 2 GB unless `[assets]` names another): past it a
 `packageCeilingRefusal` refuses the build `assets-over-ceiling`. `[assets] phone_max_texture_px`
 replaces the phone mip cap. A game file at that name is
 refused `reserved-asset-name`. Every lane output passes `admitRustOutput` before
-`out/`, exports carry `rust-notices.ts` notices, phone exports
+`out/`. An export keeps line tables outside it ([`rust-debug-files.ts`](../../src/substrate/rust-debug-files.ts)):
+a dSYM (Apple, debug map stripped), the unstripped executable (ELF/PE, shipped through
+`llvm-objcopy --strip-debug`) or the web `wasm-opt --symbolmap` map, in `<bin>.debug/<digest>/` by
+the shipped file's SHA-256, four builds kept. Exports carry `rust-notices.ts` notices, phone exports
 ([`mobile-export-deps.ts`](../../src/main/core/mobile-export-deps.ts)) are signed by `mobile-sign.ts`, and a compiled-stack session builds with its lock's tools, never writing the store. The template is checked by
 `rust-template.test.ts`; the vendored set by `rust-vendor.ts`, cargo-deny and cargo-vet
 (`.github/workflows/rust-toolchain.yml`); person-approved crates join a per-profile overlay

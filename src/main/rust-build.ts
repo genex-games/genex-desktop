@@ -34,6 +34,13 @@
  * and an output that no longer matches its digests is no output. A receipt (`<bin>.receipt.json`)
  * records each step's time and the compiler's identity.
  *
+ * An export keeps its debug files beside `<bin>.out`, never in it (CRASH-7a,
+ * `substrate/rust-debug-files.ts`): its release profile carries line tables, and after admission
+ * the dSYM (Apple), the unstripped executable (ELF and PE, whose shipped copy the toolchain's
+ * `llvm-objcopy --strip-debug` wrote in the build's sandbox) or the web export's wasm-opt symbol
+ * map go to `<bin>.debug/<digest>/`, keyed by the shipped file's SHA-256. Keeping them never fails
+ * a build.
+ *
  * Destinations are built by {@link RUST_TARGET_BUILDERS}: the Mac's here, and refusing
  * placeholders for the others until their lanes land in their own modules (web M2.9, iOS and
  * Android M2.10, Windows M4.1 `rust-build-windows.ts`, Linux M4.2 `rust-build-linux.ts` through cargo-zigbuild, a `front`), each registered over this table by its slice
@@ -69,11 +76,22 @@ import type { CrateId } from "../substrate/toolchain-store/crate-vendor-job.ts";
 import { execXcode, macSdkPath, type XcodeExec } from "../substrate/toolchain-store/locate.ts";
 import { isLockDigest } from "../substrate/toolchain-store/lock.ts";
 import { RUST_DEV_PROFILE_SETTINGS } from "../substrate/toolchain-store/rust-locate.ts";
+import {
+  type DebugSource,
+  DebugFileKind,
+  debugFileKind,
+  EXPORT_DEBUG_SETTINGS,
+  keepDebugFiles,
+  rustObjcopy,
+  stripDebugCommand,
+  WEB_SYMBOL_MAP_FILE,
+} from "../substrate/rust-debug-files.ts";
 import { refusalProblem, toolchainRefusal } from "./cpp-build.ts";
 import {
   packageWeb,
   RUST_WEB_EXPORT_PROFILE_SETTINGS,
   RUST_WEB_STEP_TIMEOUT_MS,
+  WEB_FILES,
   type WebReceipt,
   type WebTools,
   writeWebAssetMap,
@@ -117,6 +135,8 @@ const MESSAGE = {
   targetUnbuilt: (target: string) => `Rust games do not build for ${target} in this version yet`,
   noArtifact: "the build finished, but cargo named no executable for the game",
   artifactRefused: (file: string) => `${file} is not a file the build wrote in its own folder`,
+  stripFailed: (file: string, code: number | null) =>
+    `llvm-objcopy could not strip the debug lines from ${file} (exit ${code ?? "on a signal"}), so the export ships nothing`,
   linked: (where: string) => `${where} is a link or not a folder, and the build lane never works through one`,
   webShellMissing: "the app's web shell (game-template-rust/web/shell.html) is not a page the app ships",
   webToolsMissing: "the store located no wasm-bindgen for the web build",
@@ -146,6 +166,8 @@ export const RUST_BUILD_TIMEOUT_MS = {
 const LOCK_TIMEOUT_MS = 2 * MINUTE_MS;
 /** How long `rustc -vV` may run. */
 const IDENTITY_TIMEOUT_MS = 30 * SECOND_MS;
+/** How long an export's `llvm-objcopy --strip-debug` may run. */
+const STRIP_TIMEOUT_MS = 2 * MINUTE_MS;
 /** How many cores one build gets before a second may run beside it. */
 const CORES_PER_BUILD = 4;
 /** How much of a build's output the sandbox keeps: a cold build prints a JSON line per crate. */
@@ -225,6 +247,8 @@ const LOCK_FILE = "Cargo.lock";
 const ASSETS_DIR = "assets";
 /** Inside the build folder: the web branch's packaged folder, which `out/` serves. */
 const WEB_DIR = "web";
+/** Inside the build folder: an export's stripped executable and web symbol map, before admission keeps them (CRASH-7a). */
+const DEBUG_STAGE_DIR = "debug";
 /** The stub entry the lock is generated against: resolution reads only the manifest. */
 const LOCK_STUB_MAIN = "fn main() {}\n";
 /** The working folder every cargo command runs from: no `.cargo/config.toml` can be planted above it. */
@@ -626,6 +650,14 @@ interface Plan extends Pending {
   ejectedFrom: string | null;
   /** What the import step did with the staged assets; null when it did not run. */
   assets: StagedImportReport | null;
+  /** How an export keeps its debug files (CRASH-7a); null for every other build, set once the compiler is known. */
+  debug: ExportDebug | null;
+}
+
+/** An export's debug files: how they are kept, and the toolchain's `llvm-objcopy` for a kind that strips. */
+interface ExportDebug {
+  kind: DebugFileKind;
+  objcopy: string | null;
 }
 
 /** A build running (or waiting for a slot), which later looks at the same folder join; each caller waits with its own signal. */
@@ -848,6 +880,7 @@ export class RustBuilds implements GameBuildLane {
         trust,
         ejectedFrom: await this.#ejectedFrom(pending),
         assets: null,
+        debug: null,
       };
       return await this.#steps(plan, signal, lastGood);
     } catch (error) {
@@ -904,6 +937,7 @@ export class RustBuilds implements GameBuildLane {
     const identity = await this.#step(plan, RustBuildStep.Identity, rustcCommand(plan), IDENTITY_TIMEOUT_MS, signal);
     if (!succeeded(identity)) return this.#failed(plan, identity, signal, lastGood);
     const compiler = parseRustcIdentity(identity.stdout);
+    plan.debug = await exportDebugOf(plan, compiler);
     const locked = await this.#lock(plan, signal, lastGood);
     if (locked) return locked;
     this.#emit(plan, BuildPhase.Build);
@@ -1028,12 +1062,14 @@ export class RustBuilds implements GameBuildLane {
         rust: RustBuildRefusal.ArtifactRefused,
       });
     }
+    const shipped = await this.#shipped(plan, inside, lastGood, signal);
+    if (typeof shipped !== "string") return shipped;
     const web = plan.target === BuildTarget.Web ? await this.#packageWeb(plan, inside, signal) : null;
     if (web && !web.ok) {
       if (signal.aborted) return this.#outcome(plan, BuildProblemCode.Cancelled, { lastGood, ran: true });
       return this.#outcome(plan, BuildProblemCode.CommandFailed, { ...web.refusal, lastGood, ran: true });
     }
-    const written = await writeOutput(plan, inside, web ? path.join(plan.bin, WEB_DIR) : null, this.options.admit);
+    const written = await writeOutput(plan, shipped, web ? path.join(plan.bin, WEB_DIR) : null, this.options.admit);
     if (!written.ok && "packageRefused" in written) {
       return this.#outcome(plan, BuildProblemCode.CommandFailed, {
         lines: [written.packageRefused],
@@ -1055,6 +1091,7 @@ export class RustBuilds implements GameBuildLane {
     const { outputs } = written;
     const receipt = this.#receipt(plan, compiler, outputs, web?.receipt ?? null, written.package);
     await atomicWriteText(`${plan.bin}${RECEIPT_SUFFIX}`, `${JSON.stringify(receipt, null, 2)}\n`);
+    await this.#keepDebug(plan, inside, outputs);
     if (plan.game.recordLock) await this.#recordLock(plan.game.project, plan.lock.digest);
     this.#emit(plan, BuildPhase.Done);
     const output = `${plan.bin}${OUT_SUFFIX}`;
@@ -1066,6 +1103,72 @@ export class RustBuilds implements GameBuildLane {
       ran: true,
       rust: { refusal: null, diagnostics: [], receipt },
     };
+  }
+
+  /**
+   * The executable the build ships ({@link RustBuilds.#stripped}) in a fresh debug stage, or the
+   * refusal when an export's strip failed: nothing of it ships.
+   */
+  async #shipped(
+    plan: Plan,
+    exe: string,
+    lastGood: string | null,
+    signal: AbortSignal,
+  ): Promise<string | BuildOutcome> {
+    if (plan.debug) await freshFolder(path.join(plan.bin, DEBUG_STAGE_DIR));
+    const shipped = await this.#stripped(plan, exe, signal);
+    if ("file" in shipped) return shipped.file;
+    if (signal.aborted) return this.#outcome(plan, BuildProblemCode.Cancelled, { lastGood, ran: true });
+    return this.#outcome(plan, BuildProblemCode.CommandFailed, {
+      lines: [MESSAGE.stripFailed(path.basename(exe), shipped.failed)],
+      lastGood,
+      ran: true,
+      rust: RustBuildRefusal.ArtifactRefused,
+    });
+  }
+
+  /**
+   * The executable an export ships: for a kind that strips (ELF and PE), the copy the toolchain's
+   * `llvm-objcopy --strip-debug` wrote in the build's sandbox; otherwise cargo's own. `failed`
+   * (the tool's exit code) when the strip wrote no file or Stop came.
+   */
+  async #stripped(plan: Plan, exe: string, signal: AbortSignal): Promise<{ file: string } | { failed: number | null }> {
+    const objcopy = plan.debug?.kind === DebugFileKind.Unstripped ? plan.debug.objcopy : null;
+    if (objcopy === null) return { file: exe };
+    const to = path.join(plan.bin, DEBUG_STAGE_DIR, path.basename(exe));
+    const run = await plan.sandbox.run({
+      command: `exec ${envPrefix(plan)} ${stripDebugCommand(objcopy, exe, to)}`,
+      cwd: CARGO_CWD,
+      timeoutMs: STRIP_TIMEOUT_MS,
+      signal,
+      reapGroup: true,
+      maxOutputBytes: OUTPUT_MAX_BYTES,
+      label: `rust:${plan.game.project}:${plan.target}:strip`,
+    });
+    if (run.code !== 0 || signal.aborted) return { failed: run.code };
+    return (await lstat(to).catch(() => null))?.isFile() ? { file: to } : { failed: run.code };
+  }
+
+  /**
+   * An export's debug files kept in `<bin>.debug/<digest>/` by the shipped file's digest (the one
+   * a run's `BuildIdentity` carries). Best effort: a failure here never fails the build.
+   */
+  async #keepDebug(plan: Plan, exe: string, outputs: RustBuildReceipt["outputs"]): Promise<void> {
+    if (!plan.debug) return;
+    const [name] = plan.builder.executables;
+    const shippedName = plan.target === BuildTarget.Web ? WEB_FILES.wasm : name;
+    const digest = outputs.find((file) => file.path === shippedName)?.sha256;
+    if (!digest || !name) return;
+    await keepDebugFiles({
+      bin: plan.bin,
+      digest,
+      target: plan.target,
+      triple: plan.builder.triple,
+      kind: plan.debug.kind,
+      sources: debugSources(plan.debug.kind, exe, name, plan.bin),
+      within: plan.bin,
+      now: () => this.#now(),
+    }).catch(() => null);
   }
 
   /**
@@ -1086,6 +1189,9 @@ export class RustBuilds implements GameBuildLane {
       title: plan.title,
       ...(plan.loading === null ? {} : { loading: plan.loading }),
       optimize: plan.purpose === CppBuildPurpose.Export,
+      ...(plan.debug?.kind === DebugFileKind.SymbolMap
+        ? { symbolMap: path.join(plan.bin, DEBUG_STAGE_DIR, WEB_SYMBOL_MAP_FILE) }
+        : {}),
       ...(plan.wasmBudgetMb === null ? {} : { budgetMb: plan.wasmBudgetMb }),
       tools,
       run: async (line, step) => {
@@ -1541,7 +1647,28 @@ function profileArgs(plan: Plan): string[] {
   const asConfig = (settings: readonly string[]) => settings.flatMap((setting) => ["--config", setting]);
   if (profileOf(plan.purpose) !== PROFILE.release) return asConfig(RUST_DEV_PROFILE_SETTINGS);
   const web = plan.target === BuildTarget.Web ? asConfig(RUST_WEB_EXPORT_PROFILE_SETTINGS) : [];
-  return ["--release", ...web];
+  const debug = plan.debug ? asConfig(EXPORT_DEBUG_SETTINGS[plan.debug.kind]) : [];
+  return ["--release", ...web, ...debug];
+}
+
+/**
+ * How an export keeps its debug files (CRASH-7a): by its destination's triple; null for Live and
+ * judging builds, and for a kind that strips when the toolchain has no `llvm-objcopy` (that export
+ * builds as before, keeping none).
+ */
+async function exportDebugOf(plan: Plan, compiler: RustCompilerIdentity): Promise<ExportDebug | null> {
+  if (plan.purpose !== CppBuildPurpose.Export) return null;
+  const kind = debugFileKind(plan.builder.triple);
+  if (kind !== DebugFileKind.Unstripped) return { kind, objcopy: null };
+  const objcopy = rustObjcopy(plan.toolchain.bin, compiler.host);
+  return (await lstat(objcopy).catch(() => null))?.isFile() ? { kind, objcopy } : null;
+}
+
+/** What an export of `kind` keeps: the dSYM cargo uplifted beside `exe`, the unstripped `exe`, or the web symbol map. */
+function debugSources(kind: DebugFileKind, exe: string, name: string, bin: string): DebugSource[] {
+  if (kind === DebugFileKind.Dsym) return [{ from: `${exe}.dSYM`, as: `${name}.dSYM` }];
+  if (kind === DebugFileKind.Unstripped) return [{ from: exe, as: name }];
+  return [{ from: path.join(bin, DEBUG_STAGE_DIR, WEB_SYMBOL_MAP_FILE), as: WEB_SYMBOL_MAP_FILE }];
 }
 
 /** `cargo <step> <args>`, or the destination's front end's own subcommand for the step with the same arguments. */
@@ -1807,6 +1934,12 @@ export async function lastAdmitted(bin: string): Promise<string | null> {
   } catch {
     return null;
   }
+}
+
+/** `dir` emptied and made afresh as a real folder (a link at its name is removed, never followed). */
+async function freshFolder(dir: string): Promise<void> {
+  await rm(dir, { recursive: true, force: true });
+  await mkdir(dir);
 }
 
 /**
