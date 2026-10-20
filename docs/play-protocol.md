@@ -257,10 +257,14 @@ addon's GenexPlay; a Rust game declares it in its own `hello`.
 
 A game played in its editor speaks no protocol, so the SDK queues the same `ai` lines and Studio's
 relay (`main/game-ai/bridge-editor.ts`) pulls them through the editor channel the engine plugin
-already has, and pushes the answers back by rid; no port or token is added. The caller is the
-creator's own game: Create Live while a person plays, a harness run while the agent plays. A play
+already has, and pushes the answers back by rid; no port or token is added. Main keeps one relay
+per Godot or Unity project a library game links (`main/game-ai/editor-relays.ts`, synced from the
+library every few seconds; a project that leads out of its game's folder is never relayed). The
+caller is the creator's own game: Create Live while a person plays, which answers `ai_off` while
+Settings' "AI in your playtests" is off, and a harness run while a run is going in the game. A play
 that ends abandons its calls. Answers travel as data only: files, or base64 of their JSON inside
-host-owned code.
+host-owned code. Unreal's channel is built, but main does not start its relay yet: the editor's port
+is the Unreal plugin's own record, so an Unreal game in PIE plays its fallbacks.
 
 | Engine | Channel | Lines in | Answers out | Relayed when |
 |---|---|---|---|---|

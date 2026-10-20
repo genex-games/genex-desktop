@@ -57,6 +57,7 @@ import { createGameAiQueue, type GameAiQueueOptions } from "./queue.ts";
 import { createReportInbox } from "./report-inbox.ts";
 import { createGameAiReports, type GameAiReportService, type ReportCapture } from "./report.ts";
 import { createGameAiIpcHost, createGameAiService, type GameAiServiceImpl, menuOffers } from "./service.ts";
+import { editorAiRelays, type EditorAiRelaysOptions } from "./editor-relays.ts";
 import { createGameAiTapes } from "./tapes.ts";
 import { createTraceSink } from "./trace-sink.ts";
 import {
@@ -146,6 +147,11 @@ export interface GameAiHostDeps {
   demos: AiDemoPlayer;
   /** The queue's waits (tests hold them short). */
   queue?: GameAiQueueOptions;
+  /**
+   * The engine editors to relay play-time AI for (`editor-relays.ts`): the library's linked Godot
+   * and Unity projects, and the games a run is going in. Absent: no editor is relayed.
+   */
+  editors?: Pick<EditorAiRelaysOptions, "targets" | "runningGames" | "log">;
 }
 
 /** Play-time AI for one profile. */
@@ -409,6 +415,14 @@ export function createGameAi(deps: GameAiHostDeps): GameAiHost {
     },
   });
   account.onChange(() => service.payerChanged(AiDoor.GenexDev));
+  // A game played in Godot's or Unity's own editor is answered through that editor's channel.
+  const editors = deps.editors
+    ? editorAiRelays({
+        service,
+        ...deps.editors,
+        createRouteEnabled: () => settings.local().createRouteEnabled,
+      })
+    : null;
 
   const ipc = ipcOf(deps, { ...parts, service, check, library, warmNames: () => catalog.warm(doors.values()) });
   let built: boolean | null = null;
@@ -450,6 +464,7 @@ export function createGameAi(deps: GameAiHostDeps): GameAiHost {
       // The account Studio starts signed in as is the payer every credits grant was agreed under.
       await token();
       await deps.watcher.start();
+      editors?.start();
     },
     building(on) {
       if (built === on) return;
@@ -460,6 +475,7 @@ export function createGameAi(deps: GameAiHostDeps): GameAiHost {
     payerChanged: (door) => service.payerChanged(door),
     keepForBuildingPercent: () => settings.local().keepForBuildingPercent,
     async dispose() {
+      await editors?.stop();
       await deps.watcher.stop();
       await fitCounts.flush(true).catch(() => undefined);
     },

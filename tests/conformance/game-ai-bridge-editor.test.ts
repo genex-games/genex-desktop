@@ -76,7 +76,7 @@ function scriptedChannel() {
   return { channel, queued, pushed, state };
 }
 
-function relayOver(agent = false) {
+function relayOver(agent = false, createRoute = true) {
   const fixture = fixtureAiService();
   const scripted = scriptedChannel();
   const logs: string[] = [];
@@ -85,6 +85,7 @@ function relayOver(agent = false) {
     game: GAME,
     place: PLACE,
     agentPlaying: () => agent,
+    createRouteEnabled: () => createRoute,
     log: (line) => logs.push(line),
   });
   return { relay, fixture, logs, ...scripted };
@@ -122,6 +123,25 @@ describe("an engine editor's AI relay", () => {
       replaying: false,
       channel: PLACE.channel,
     });
+  });
+
+  it("answers ai_off to a person's editor play while Settings' AI in your playtests is off (D1)", async () => {
+    const { relay, fixture, queued, pushed } = relayOver(false, false);
+    queued.push([helloLine("rid-00001"), callLine("rid-00002", "t_00000002")]);
+    await twoTicks(relay);
+    assert.equal(fixture.asked.length, 0, "the service is never asked: nothing can spend");
+    const replies = pushed
+      .flat()
+      .map((item) => ("reply" in item.args ? item.args.reply : null) as { code?: string; on?: boolean });
+    assert.equal(replies.length, 2);
+    for (const reply of replies) assert.ok(reply.code === AiErrorCode.Off || reply.on === false, JSON.stringify(reply));
+  });
+
+  it("still relays the agent's play while the switch is off: a harness run never spends", async () => {
+    const { relay, fixture, queued } = relayOver(true, false);
+    queued.push([helloLine("rid-00001")]);
+    await twoTicks(relay);
+    assert.equal(fixture.asked[0]?.caller.context, AiContext.HarnessRun);
   });
 
   it("asks as a harness run while the agent plays", async () => {

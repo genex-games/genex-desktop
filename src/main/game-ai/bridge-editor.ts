@@ -82,8 +82,13 @@ export interface EditorAiRelayOptions {
   service: NativeAiService;
   game: EditorAiGame;
   place: AiLinePlace;
-  /** Whether the agent plays the game in the editor right now (the plugin's agent-play marker). */
+  /** Whether the agent plays the game in the editor right now (a run is going in the game). */
   agentPlaying: () => boolean;
+  /**
+   * Settings' "AI in your playtests" (D1, off by default): a person's editor play is Create Live,
+   * which answers `ai_off` while it is off. An agent's play is a harness run, which never spends.
+   */
+  createRouteEnabled: () => boolean;
   log?: (line: string) => void;
 }
 
@@ -113,7 +118,12 @@ export function editorAiRelay(channel: EditorAiChannel, options: EditorAiRelayOp
   const outbox: AiOutgoing[] = [];
   const host = {
     service: options.service,
-    callerFor: (place: AiLinePlace) => editorCaller(options.game, place, options.agentPlaying()),
+    callerFor: (place: AiLinePlace): GameAiCaller | null => {
+      const agent = options.agentPlaying();
+      // No caller is `ai_off` for the line, before the service is asked anything.
+      if (!agent && !options.createRouteEnabled()) return null;
+      return editorCaller(options.game, place, agent);
+    },
     log,
   };
   let bridge: NativeAiBridge | null = null;

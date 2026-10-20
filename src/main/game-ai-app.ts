@@ -5,6 +5,7 @@
  * checkout and sign-ins (never in a fixture launch); the plan watcher, whose every job is boxed by
  * the same deny list as the agents; and a Report's capture from Play's game or Create's Live page.
  */
+import { setTimeout as sleep } from "node:timers/promises";
 import type { BrowserWindow } from "electron";
 import { shell } from "electron";
 import { type AiGameKey, isPlainRecord } from "../shared/game-ai.ts";
@@ -18,7 +19,10 @@ import { memoryKeyStore } from "../substrate/provider-keys.ts";
 import type { GenexAccount } from "./core/genex-account.ts";
 import { assertNativeActionAllowed } from "./dev/native-policy.ts";
 import { openGenexPage } from "./genex-browser.ts";
+import { type EditorAiChannels, editorAiTargets } from "./game-ai/editor-targets.ts";
 import { createGameAi, type GameAiHost, libraryName, publishedId } from "./game-ai/host.ts";
+import { godotAiChannel } from "../plugins/godot/editor-bridge.ts";
+import { unityAiChannel } from "../plugins/unity/ai-relay.ts";
 import { STRIPE_CHECKOUT_ORIGIN } from "./game-ai/platform.ts";
 import { createPlanWatcher, type PlanWatcher } from "./game-ai/player-watcher.ts";
 import { planWatcherDeps } from "./game-ai/player-watcher-host.ts";
@@ -28,6 +32,12 @@ import { playAiCapture } from "./play/viewer-view.ts";
 import type { PlayViewer } from "./play/viewer.ts";
 import type { StudioCore } from "./studio-core.ts";
 import type { GameAiNativeStep } from "./game-ai/types.ts";
+
+/** The editors main reaches with play-time AI: Godot's bridge folder and Unity's Pipeline server. */
+const EDITOR_CHANNELS: EditorAiChannels = {
+  godot: (dir) => godotAiChannel(dir, { now: Date.now, sleep: (ms, signal) => sleep(ms, undefined, { signal }) }),
+  unity: (dir) => unityAiChannel(dir),
+};
 
 /** A genex.games project id as the publish record keeps it. */
 const PROJECT_ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
@@ -136,6 +146,12 @@ export function composeGameAi(deps: GameAiAppDeps): AppGameAi {
     capture: (game) => captureOf(deps, game),
     watcher,
     demos: { play: (run) => studio.playAiDemo(run) },
+    editors: {
+      targets: async () => editorAiTargets(await studio.games.list(), EDITOR_CHANNELS),
+      runningGames: async () =>
+        new Set(((await studio.pluginServices.runningGames?.()) ?? []).map((game) => game.project)),
+      log: (line) => deps.log(line),
+    },
   });
   return { ...host, watcher };
 }

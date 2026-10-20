@@ -254,6 +254,7 @@ describe("the Godot plugin on this Mac's Godot", { skip: !LIVE, timeout: LIVE_TI
       game: { name: "live", title: "Live Probe" },
       place: { cwd: project, channel: "editor:godot:live" },
       agentPlaying: () => false,
+      createRouteEnabled: () => true,
     });
     const stop = new AbortController();
     const relaying = runEditorAiRelay(relay, { signal: stop.signal });

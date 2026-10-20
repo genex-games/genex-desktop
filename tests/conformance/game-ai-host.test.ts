@@ -7,6 +7,8 @@
  * genex.games, the engines and the library are stand-ins; nothing opens a socket.
  */
 import { describe, it } from "node:test";
+import { PlayEvent } from "../../src/shared/play-protocol.ts";
+import { setImmediate as nextTurn } from "node:timers/promises";
 import assert from "node:assert/strict";
 import { mkdir, symlink, writeFile } from "node:fs/promises";
 import path from "node:path";
@@ -31,7 +33,9 @@ import { tmpDir } from "../helpers/tmp.ts";
 const OWN = "Moss Garden";
 const DEV_MODEL = { door: AiDoor.GenexDev, engine: "genex", model: "anthropic/claude-haiku-4.5" } as const;
 
-async function composed(options: { userData?: string; token?: () => string | undefined } = {}) {
+async function composed(
+  options: { userData?: string; token?: () => string | undefined; editors?: GameAiHostDeps["editors"] } = {},
+) {
   const userData = options.userData ?? (await tmpDir("game-ai-host-"));
   const library = await tmpDir("game-ai-host-library-");
   const gameDir = path.join(library, OWN);
@@ -79,6 +83,7 @@ async function composed(options: { userData?: string; token?: () => string | und
     },
     demos: { play: async () => ({ ended: true, digests: [], status: null, missed: [], consoleErrors: 0 }) },
     queue: { slotWaitMs: 50, buildWaitMs: 20 },
+    ...(options.editors ? { editors: options.editors } : {}),
   };
   const host = createGameAi(deps);
   await host.start();
@@ -151,6 +156,36 @@ describe("play-time AI for one profile", () => {
     assert.deepEqual(c.watcher.building, [true, false]);
     await c.host.dispose();
     assert.equal(c.watcher.stopped, 1);
+  });
+
+  it("relays its linked editors once started, a person's play off by default (D1), and stops them on dispose", async () => {
+    const queued: unknown[][] = [[{ event: PlayEvent.Ai, rid: "rid-00000001", op: AiBridgeOp.Hello, body: null }]];
+    const pushed: unknown[] = [];
+    let pulls = 0;
+    const channel = {
+      pull: async () => {
+        pulls += 1;
+        return queued.shift() ?? [];
+      },
+      push: async (items: readonly unknown[]) => {
+        pushed.push(...items);
+        return true;
+      },
+    };
+    const c = await composed({
+      editors: {
+        targets: async () => [{ key: "godot-project:/g", game: { name: OWN, title: OWN }, cwd: "/g", channel }],
+        runningGames: async () => new Set(),
+      },
+    });
+    for (let i = 0; i < 500 && pushed.length === 0; i++) await nextTurn();
+    assert.ok(pulls > 0, "the editor is pulled once play-time AI starts");
+    const reply = (pushed[0] as { args: { reply: { on: boolean } } } | undefined)?.args.reply;
+    assert.equal(reply?.on, false, "Create Live answers ai_off while AI in your playtests is off");
+    await c.host.dispose();
+    const after = pulls;
+    for (let i = 0; i < 50; i++) await nextTurn();
+    assert.equal(pulls, after, "nothing is pulled after dispose");
   });
 
   it("stops the credits grants when the Genex account Studio is signed in as changes", async () => {
