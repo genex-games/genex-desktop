@@ -30,6 +30,9 @@
  * `assets.json` (`writeOutput` in `rust-build.ts`): a browser cannot list a folder, so the shell
  * fetches the files the map names and the module admits each only when it is exactly the length
  * and FNV-1a 64 recorded (genex-platform-web's `assets`), under the same asset-path rule and caps.
+ * Map v2 tags a texture's family files (`<stem>.<family>.ktx2`, C-16) with their `family` and the
+ * texture they are `of`, so the module plans only the one the adapter samples; the image is tagged
+ * `source`, and left out beside a family file, only when the runtime never falls back to it.
  *
  * The refusal of a web build for a game that declares native-enhanced features
  * (`native-features-web`) is the stage's (`rust-stage.ts`), before cargo runs.
@@ -53,8 +56,11 @@ import {
   WEB_WASM_CEILING_BYTES,
   WEB_WASM_CEILING_MB,
 } from "../shared/game-export-contract.ts";
+import { assetFormat } from "../shared/game-assets.ts";
 import { LOADING_DEFAULTS, type LoadingStyle, loadingStyleProblem } from "../shared/loading-style.ts";
+import { readKtx2Header } from "../substrate/asset-import/ktx2.ts";
 import { isSafeAssetPath } from "../substrate/asset-import/safe-asset.ts";
+import { TextureCompression } from "../substrate/asset-import/texture-table.ts";
 import { atomicWriteText, readRegularFile } from "../substrate/fsx.ts";
 import { fnv1a64Hex } from "../substrate/native-game-port.ts";
 import { shellQuote } from "../substrate/shell-quote.ts";
@@ -124,8 +130,19 @@ export const WEB_FILES = {
   assetMap: "assets.json",
 } as const;
 
-/** The asset map's format (genex-platform-web's `ASSET_MAP_VERSION`). */
-export const WEB_ASSET_MAP_VERSION = 1;
+/** The asset map's format (genex-platform-web's `ASSET_MAP_VERSION`): v2 adds a texture's `family` and `of`. */
+export const WEB_ASSET_MAP_VERSION = 2;
+/**
+ * The side of genex-render's smallest family size class (`layout::TEXTURE_SIZE_CLASSES[1]`): the
+ * runtime loads a texture's image in place of a family file under it.
+ */
+const FAMILY_MIN_SIDE_PX = 512;
+/** The most of a family file read to find its side: the KTX2 header and its data format descriptor. */
+const KTX2_HEAD_BYTES = 1024;
+/** A family file's suffix (the runtime's `family_file` rule: `<stem>.<family>.ktx2`). */
+const KTX2_SUFFIX = ".ktx2";
+/** The family tags a family file's name may carry (`texture-table.ts`' families, exactly as spelled). */
+const FAMILY_TAGS: ReadonlySet<string> = new Set(Object.values(TextureCompression));
 /** The module's caps (genex-platform-web's `assets`): one file, all files, and how many. */
 export const WEB_ASSET_LIMITS = {
   /** The desktop's own cap on one asset (genex-assets' `MAX_ASSET_BYTES`). */
@@ -136,11 +153,22 @@ export const WEB_ASSET_LIMITS = {
 /** The caps {@link webAssetMap} applies. */
 export type WebAssetLimits = { [K in keyof typeof WEB_ASSET_LIMITS]: number };
 
+/**
+ * A map entry's `family` (genex-platform-web's map v2): one GPU family file of a texture
+ * (`<stem>.<family>.ktx2`) or the texture's `source` image. Wire values; never rename one.
+ */
+export const WebAssetFamily = { ...TextureCompression, Source: "source" } as const;
+export type WebAssetFamily = (typeof WebAssetFamily)[keyof typeof WebAssetFamily];
+
 /** One staged file the page may fetch: its `/`-separated path under `assets/`, length and FNV-1a 64. */
 export interface WebAssetEntry {
   path: string;
   bytes: number;
   fnv1a64: string;
+  /** For one of a texture's files: which (the module plans one per texture for the adapter). */
+  family?: WebAssetFamily;
+  /** The texture the file is one of: its image's path, or the family files' stem when it has none. */
+  of?: string;
 }
 
 /** `assets.json`: every staged file the page fetches before the game's first frame. */
@@ -427,29 +455,122 @@ async function regularFiles(dir: string, rel = ""): Promise<string[]> {
   return files;
 }
 
-/** One file's map entry, or null when it breaks the asset-path rule, the per-file cap or is not a regular file. */
-async function assetEntry(assets: string, rel: string, maxFileBytes: number): Promise<WebAssetEntry | null> {
+/** One file's map entry, its family and its KTX2 side; null when it breaks the asset-path rule, the per-file cap or is not a regular file. */
+async function assetEntry(assets: string, rel: string, maxFileBytes: number): Promise<Staged | null> {
   if (!isSafeAssetPath(rel)) return null;
   const bytes = await readRegularFile(path.join(assets, ...rel.split("/")), maxFileBytes).catch(() => null);
-  return bytes ? { path: rel, bytes: bytes.length, fnv1a64: fnv1a64Hex(bytes) } : null;
+  if (!bytes) return null;
+  const header = rel.endsWith(KTX2_SUFFIX) ? readKtx2Header(bytes.subarray(0, KTX2_HEAD_BYTES)) : null;
+  const side = header ? Math.min(header.width, header.height) : null;
+  return { entry: { path: rel, bytes: bytes.length, fnv1a64: fnv1a64Hex(bytes) }, side, family: familyFile(rel) };
+}
+
+/** A file the map lists: its entry, the side of its KTX2 header (null when not a readable KTX2) and, for a family file, its stem and family. */
+interface Staged {
+  entry: WebAssetEntry;
+  side: number | null;
+  family: FamilyFile | null;
+}
+
+/** A family file's texture stem and family. */
+interface FamilyFile {
+  stem: string;
+  family: TextureCompression;
+}
+
+/** `rel`'s stem and family by the runtime's `family_file` rule (`textures/rock.bc.ktx2` → `textures/rock`, bc); null for any other file. */
+function familyFile(rel: string): FamilyFile | null {
+  if (!rel.endsWith(KTX2_SUFFIX)) return null;
+  const stem = rel.slice(0, -KTX2_SUFFIX.length);
+  const dot = stem.lastIndexOf(".");
+  const tag = stem.slice(dot + 1);
+  if (dot <= stem.lastIndexOf("/") || !FAMILY_TAGS.has(tag)) return null;
+  return { stem: stem.slice(0, dot), family: tag as TextureCompression };
+}
+
+/** `rel`'s stem when it is an image a game names as a texture (never a model, a family file or an environment map). */
+function imageStem(rel: string): string | null {
+  const format = assetFormat(rel);
+  if (format?.kind !== "image" || format.environment === true || familyFile(rel) !== null) return null;
+  const dot = rel.lastIndexOf(".");
+  return dot > rel.lastIndexOf("/") ? rel.slice(0, dot) : null;
+}
+
+/** One texture's files in the map: its family files and the images of its stem. */
+interface TextureFiles {
+  families: Array<Staged & { family: FamilyFile }>;
+  images: Staged[];
+}
+
+const isFamilyFile = (file: Staged): file is Staged & { family: FamilyFile } => file.family !== null;
+
+/** The textures with family files, by stem. */
+function texturesOf(staged: readonly Staged[]): Map<string, TextureFiles> {
+  const textures = new Map<string, TextureFiles>();
+  for (const file of staged.filter(isFamilyFile)) {
+    const found = textures.get(file.family.stem) ?? { families: [], images: [] };
+    found.families.push(file);
+    textures.set(file.family.stem, found);
+  }
+  for (const file of staged) {
+    const stem = imageStem(file.entry.path);
+    if (stem !== null) textures.get(stem)?.images.push(file);
+  }
+  return textures;
+}
+
+/**
+ * Whether the runtime never loads `texture`'s image while the map holds its family files, so the
+ * module may leave the image out: it is the texture's one image, its family files cover every
+ * compressed family any texture ships (`shipped`; the renderer stores one family for all), none is
+ * RGBA8 (the runtime reads the image, never that file) and each is a KTX2 at least
+ * {@link FAMILY_MIN_SIDE_PX} a side.
+ */
+function imageReplaceable(texture: TextureFiles, shipped: ReadonlySet<TextureCompression>): boolean {
+  if (texture.images.length !== 1) return false;
+  const families = new Set(texture.families.map((file) => file.family.family));
+  if (families.has(TextureCompression.Rgba8)) return false;
+  const sized = texture.families.every((file) => file.side !== null && file.side >= FAMILY_MIN_SIDE_PX);
+  return sized && [...shipped].every((family) => families.has(family));
+}
+
+/**
+ * Tags each texture's files for the module's per-adapter plan (C-16): every family file with its
+ * `family` and the texture it is `of` (its one image's path, else the stem), and the image
+ * `source` only when {@link imageReplaceable}; an image the runtime may still load stays a plain
+ * entry, always fetched.
+ */
+function tagTextures(staged: readonly Staged[]): void {
+  const textures = texturesOf(staged);
+  const compressed = staged.filter(isFamilyFile).map((file) => file.family.family);
+  const shipped = new Set(compressed.filter((family) => family !== TextureCompression.Rgba8));
+  for (const [stem, texture] of textures) {
+    const image = texture.images.length === 1 ? texture.images[0] : undefined;
+    const of = image ? image.entry.path : stem;
+    for (const file of texture.families) Object.assign(file.entry, { family: file.family.family, of });
+    if (image && imageReplaceable(texture, shipped)) Object.assign(image.entry, { family: WebAssetFamily.Source, of });
+  }
 }
 
 /**
  * The asset map of a staged `assets/` folder: each regular file (never a link, never through a
  * linked folder) whose path passes the asset-path rule and fits the per-file cap, sorted by path,
- * until the file count or total byte cap is reached. A missing folder is an empty map.
+ * until the file count or total byte cap is reached. A texture's files are tagged for the
+ * adapter's pick ({@link tagTextures}); every other entry is the v1 map's. A missing folder is an
+ * empty map.
  */
 export async function webAssetMap(assets: string, limits: WebAssetLimits = WEB_ASSET_LIMITS): Promise<WebAssetMap> {
-  const files: WebAssetEntry[] = [];
+  const staged: Staged[] = [];
   let total = 0;
   for (const rel of (await regularFiles(assets)).sort()) {
-    if (files.length >= limits.maxFiles) break;
-    const entry = await assetEntry(assets, rel, limits.maxFileBytes);
-    if (!entry || total + entry.bytes > limits.maxTotalBytes) continue;
-    total += entry.bytes;
-    files.push(entry);
+    if (staged.length >= limits.maxFiles) break;
+    const file = await assetEntry(assets, rel, limits.maxFileBytes);
+    if (!file || total + file.entry.bytes > limits.maxTotalBytes) continue;
+    total += file.entry.bytes;
+    staged.push(file);
   }
-  return { version: WEB_ASSET_MAP_VERSION, files };
+  tagTextures(staged);
+  return { version: WEB_ASSET_MAP_VERSION, files: staged.map((file) => file.entry) };
 }
 
 /** Writes `out`'s {@link WEB_FILES.assetMap} for the assets staged in `out/assets`. */
