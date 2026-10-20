@@ -1024,6 +1024,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "genex-ai"
+version = "0.1.0"
+dependencies = [
+ "genex-ai-derive",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "genex-ai-derive"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
+]
+
+[[package]]
 name = "genex-assets"
 version = "0.1.0"
 dependencies = [

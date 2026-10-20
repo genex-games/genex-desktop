@@ -27,6 +27,8 @@ members = [
   "crates/genex-platform-web",
   "crates/genex-platform-ios",
   "crates/genex-platform-android",
+  "crates/genex-ai",
+  "crates/genex-ai-derive",
   # Every example game is a member (the pond, and M2.19's `custom-pass`): an example folder holds
   # its own Cargo.toml, so a new one needs no edit here, only its lock lines.
   "examples/*",
@@ -66,6 +68,8 @@ genex-platform-desktop = { path = "crates/genex-platform-desktop", version = "0.
 genex-platform-web = { path = "crates/genex-platform-web", version = "0.1.0" }
 genex-platform-ios = { path = "crates/genex-platform-ios", version = "0.1.0" }
 genex-platform-android = { path = "crates/genex-platform-android", version = "0.1.0" }
+genex-ai = { path = "crates/genex-ai", version = "0.1.0" }
+genex-ai-derive = { path = "crates/genex-ai-derive", version = "0.1.0" }
 
 # Renderer: WebGPU-core backends only, never a GL feature (the vendored-set gate refuses glow).
 wgpu = { version = "=30.0.1", default-features = false, features = ["std", "parking_lot", "metal", "vulkan", "dx12", "webgpu", "wgsl", "fragile-send-sync-non-atomic-wasm"] }
@@ -108,6 +112,12 @@ libm = "0.2.16"
 log = "0.4.34"
 thiserror = "2.0.21"
 toml = "1.1.6"
+
+# `#[derive(genex_ai::Schema)]` (genex-ai-derive): the vendored syn 2 line thiserror's derive
+# already builds, with its default parsing and printing.
+proc-macro2 = "1.0.107"
+quote = "1.0.47"
+syn = "2.0.119"
 
 # macOS / iOS.
 objc2 = "0.6.5"
