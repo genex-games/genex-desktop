@@ -12,8 +12,10 @@
 import { spawn } from "node:child_process";
 import path from "node:path";
 import { MINUTE_MS } from "../../shared/duration.ts";
+import { windowsBaseEnv } from "../../substrate/child-env.ts";
 import { readRegularFile } from "../../substrate/fsx.ts";
 import { killProcessTree } from "../../substrate/process-tree.ts";
+import { envValue } from "../../substrate/toolchain.ts";
 import { outputCollector } from "./ubt.ts";
 
 /** How long a test run may take before its process tree is ended. */
@@ -160,11 +162,17 @@ export async function readAutomationReport(reportDir: string, output: string): P
   }
 }
 
-/** The small environment a test run starts with: the kept variables Genex has, nothing else. */
-export function programEnv(env: NodeJS.ProcessEnv = process.env): Record<string, string> {
-  const kept: Record<string, string> = {};
+/**
+ * The small environment a test run starts with: the kept variables Genex has (`Path` read as
+ * `PATH`) and, on Windows, the basics any program needs to start and find its folders.
+ */
+export function programEnv(
+  env: NodeJS.ProcessEnv = process.env,
+  platform: NodeJS.Platform = process.platform,
+): Record<string, string> {
+  const kept: Record<string, string> = windowsBaseEnv(env, platform);
   for (const name of KEPT_ENV) {
-    const value = env[name];
+    const value = envValue(env, name);
     if (value !== undefined) kept[name] = value;
   }
   return kept;
@@ -177,7 +185,12 @@ export function programEnv(env: NodeJS.ProcessEnv = process.env): Record<string,
  */
 export const systemRunProgram: RunProgram = (file, args, { signal, timeoutMs }) =>
   new Promise((resolve, reject) => {
-    const child = spawn(file, args, { env: programEnv(), detached: true, stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn(file, args, {
+      env: programEnv(),
+      detached: true,
+      windowsHide: true,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
     const output = outputCollector();
     child.stdout?.on("data", output.add);
     child.stderr?.on("data", output.add);

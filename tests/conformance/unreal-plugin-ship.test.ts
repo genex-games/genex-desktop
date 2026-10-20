@@ -21,6 +21,7 @@ import {
   automationArgs,
   editorCmdPath,
   type ProgramOutcome,
+  programEnv,
   type RunProgram,
   systemRunProgram,
 } from "../../src/plugins/unreal/automation-tests.ts";
@@ -353,6 +354,32 @@ describe("plugin-test", () => {
       editorCmdPath("C:\\Program Files\\Epic Games\\UE_5.8", "win32"),
       "C:\\Program Files\\Epic Games\\UE_5.8\\Engine\\Binaries\\Win64\\UnrealEditor-Cmd.exe",
     );
+  });
+
+  it("the headless editor keeps only the small environment, plus the basics Windows needs to start", () => {
+    const parent = {
+      HOME: "/Users/ana",
+      PATH: "/usr/bin",
+      SECRET_TOKEN: "x",
+      SystemRoot: "C:\\Windows",
+      TEMP: "C:\\Users\\ana\\AppData\\Local\\Temp",
+    };
+    assert.deepEqual(programEnv(parent, "darwin"), { HOME: "/Users/ana", PATH: "/usr/bin" });
+    const windows = {
+      Path: "C:\\Windows\\System32",
+      SystemRoot: "C:\\Windows",
+      TEMP: "C:\\Temp",
+      USERPROFILE: "C:\\Users\\ana",
+      LOCALAPPDATA: "C:\\Users\\ana\\AppData\\Local",
+      SECRET_TOKEN: "x",
+    };
+    assert.deepEqual(programEnv(windows, "win32"), {
+      PATH: "C:\\Windows\\System32",
+      SystemRoot: "C:\\Windows",
+      TEMP: "C:\\Temp",
+      USERPROFILE: "C:\\Users\\ana",
+      LOCALAPPDATA: "C:\\Users\\ana\\AppData\\Local",
+    });
   });
 
   it("plugin-test on Windows runs the engine's Win64 UnrealEditor-Cmd.exe", async () => {
