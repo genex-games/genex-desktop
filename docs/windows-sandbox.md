@@ -32,6 +32,12 @@ the setup screen opens on `git-missing`. What differs from macOS:
   user does not fail a start; srt-win's setup, status and `trust-ca` calls keep SRT's. The actual
   process `exit` event retains synchronous cleanup, since promises cannot finish there. Partial
   grants remain eligible for that exit cleanup while initialization or its rollback is pending.
+- srt-win's egress filter lets the sandbox user reach loopback ports 60080-60089 only, so SRT's
+  network proxies listen there. Windows refuses a port it reserved (Hyper-V, WSL and Docker
+  reserve blocks of the dynamic range through winnat) with `EACCES`, which the patch makes SRT
+  skip like a port in use. When the whole range is refused, the start fails with
+  `SandboxLaunchCode.ProxyPortsRefused`, whose message names the range and the fix (restart, or
+  restart `winnat`). An administered `netsh` exclusion does not refuse a bind.
 - srt-win starts every command as `srt-sandbox` through CreateProcessWithLogonW, which the
   Secondary Logon service (`seclogon`) carries out; where hardening disabled it, Windows refuses
   every start ("Access is denied"). The setup check (`windowsSetupGaps`) reads its start type with

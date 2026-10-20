@@ -110,7 +110,9 @@ describe("sandbox problem mapping", () => {
     ])
       assert.equal(windowsSetupProblem(error), null, String(error));
   });
+});
 
+describe("Windows proxy ports", () => {
   it("Windows refusing every proxy port says what to do, by the error's code and call", () => {
     const refused = (code: string, syscall = "listen") =>
       Object.assign(new Error(`listen ${code}: permission denied 127.0.0.1:60089`), { code, syscall, port: 60089 });
