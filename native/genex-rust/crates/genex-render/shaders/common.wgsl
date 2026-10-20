@@ -92,6 +92,45 @@ const GX_SPOT_SHADOW_UNFADED: f32 = 0.0;
 // The LOD crossfade of an instance-table row that is not fading (the instance fade table's value,
 // layout::INSTANCE_FADE_WHOLE): drawn whole.
 const GX_INSTANCE_FADE_WHOLE: f32 = 1.0;
+// The LOD crossfade's dither (game systems LOD-04; kansei `lod_fade.wgsl`, MIT, ideas): the faded
+// entries keep a pixel, or an MSAA sample, of a fade-batch survivor by a threshold in [0, 1) and
+// the survivor's fade (the instance fade table's x, `mesh::lod_row_keep`): fading out (0 <= fade
+// < 1) keeps the thresholds below it, fading in (fade = -share) those at or above 1 - share, so
+// the two levels of one crossfade cover each pixel exactly once; whole (1) keeps every pixel.
+// The threshold is interleaved gradient noise of the pixel (Jimenez 2014), turned by the golden
+// ratio's fraction each frame on temporal paths so the resolve blends the two levels.
+const GX_LOD_FADE_TURN: f32 = 0.618034;
+// The turns repeat after this many frames (keeps the walk's float exact).
+const GX_LOD_FADE_FRAMES: u32 = 64u;
+
+// The dither threshold of the pixel at `pixel` (framebuffer coordinates) on frame `frame_key`
+// (0 on a path that does not turn it), in [0, 1).
+fn gx_lod_fade_threshold(pixel: vec2<f32>, frame_key: u32) -> f32 {
+    let ign = fract(52.9829189 * fract(dot(floor(pixel), vec2<f32>(0.06711056, 0.00583715))));
+    return fract(ign + GX_LOD_FADE_TURN * f32(frame_key % GX_LOD_FADE_FRAMES));
+}
+
+// Whether a survivor of fade `fade` keeps threshold `threshold`. `1.0 + fade` is the fade-out
+// twin's `1 - share` exactly (one rounding each), so the twins' kept sets never overlap or gap.
+fn gx_lod_fade_keeps(fade: f32, threshold: f32) -> bool {
+    if fade < 0.0 {
+        return threshold >= 1.0 + fade;
+    }
+    return threshold < fade;
+}
+
+// The samples of a `samples`-sample pixel a survivor of fade `fade` keeps (an MSAA path's
+// `sample_mask`): sample i keeps the threshold `(i + threshold) / samples`, so the pixel is
+// covered by both levels in proportion, without a stipple, and each sample by one level.
+fn gx_lod_fade_coverage(fade: f32, threshold: f32, samples: u32) -> u32 {
+    var mask = 0u;
+    for (var i = 0u; i < samples; i++) {
+        if gx_lod_fade_keeps(fade, (f32(i) + threshold) / f32(samples)) {
+            mask |= 1u << i;
+        }
+    }
+    return mask;
+}
 const GX_LIGHT_BIN_HEADER_WORDS: u32 = 16u;
 // Z-bins per clusterable kind (cluster::LIGHT_ZBINS); kind k's start at the header plus k of them.
 const GX_LIGHT_ZBINS: u32 = 64u;

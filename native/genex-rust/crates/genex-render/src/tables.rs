@@ -238,6 +238,9 @@ pub(crate) struct Tables {
     /// The per-slot fade table (game systems LOD-03, cull binding 7): `vec2<f32>` per visible-list
     /// slot of every view, written by the cull for fade-batch survivors.
     pub instance_fade: Table,
+    /// The frame's far rules (game systems LOD-18, cull binding 8): a uniform of
+    /// [`crate::lod_rows::FAR_RULES_MAX`] rules, the first `plan.far_rules` written.
+    pub far_rules: Table,
 }
 
 impl Tables {
@@ -266,6 +269,7 @@ impl Tables {
             lod_rows: Table::new("lod rows", storage),
             // COPY_SRC: the fade rows read a view's region back (`Renderer::read_view_fades`).
             instance_fade: Table::new("instance fade", storage | BufferUsages::COPY_SRC),
+            far_rules: Table::new("far rules", BufferUsages::UNIFORM | BufferUsages::COPY_DST),
         }
     }
 
@@ -292,6 +296,7 @@ impl Tables {
             &self.material_ext,
             &self.lod_rows,
             &self.instance_fade,
+            &self.far_rules,
         ]
         .into_iter()
         .filter_map(Table::held)
@@ -312,7 +317,7 @@ impl Tables {
             (&mut self.material_ext, bytes_of_rows(&plan.material_ext)),
             (&mut self.lights, bytes_of_rows(&plan.lights)),
             (&mut self.batches, bytes_of_rows(&plan.batches)),
-            (&mut self.slot_base, bytes_of_rows(&plan.slot_base)),
+            (&mut self.slot_base, bytes_of_rows(&plan.slot_base) + bytes_of_rows(&plan.fade_slots)),
             (&mut self.visible, visible_rows * 4),
             (&mut self.args, u64::from(plan.views) * plan.batches.len() as u64 * ARGS_STRIDE),
             (&mut self.cull_scratch, crate::cull::scratch_bytes(plan.visible_slots, plan.views)),
@@ -328,6 +333,7 @@ impl Tables {
             (&mut self.light_ext, uploads.light_ext.len() as u64),
             (&mut self.light_bins, light_bin_bytes(plan, uploads)),
             (&mut self.instance_fade, u64::from(plan.views) * fade_slots(plan) * crate::layout::INSTANCE_FADE_BYTES),
+            (&mut self.far_rules, crate::lod_rows::FAR_RULES_BYTES),
         ];
         for (table, bytes) in sizes {
             table.ensure(device, bytes)?;
@@ -367,6 +373,8 @@ pub(crate) struct Uploads {
     /// The CPU path's fade table (every view's region; LOD-03), empty on the GPU path or without
     /// fade batches.
     pub fades: Vec<u8>,
+    /// The frame's far rules (LOD-18), empty without any.
+    pub far_rules: Vec<u8>,
 }
 
 /// The instance-table rows a frame of `rows` rows whose retained groups lie at `spans` writes when
@@ -482,14 +490,38 @@ pub fn variant_pass_entry(plan: &FramePlan, view: u32, variant: usize) -> u64 {
     u64::from(plan.views) + plan.transparent.len() as u64 + (variant as u64 - 1) * u64::from(plan.views) + u64::from(view)
 }
 
+/// The variant pass entries the plan holds after its views and transparent draws: every
+/// non-plain variant's block when it draws a variant, else none.
+fn variant_blocks(plan: &FramePlan) -> u64 {
+    if plan.variants.is_empty() { 0 } else { crate::scene::DRAW_VARIANTS as u64 - 1 }
+}
+
+/// The variants whose fade twins' slot bases the plan holds (game systems LOD-04): its
+/// `fade_slots` regions, one per variant of the slot-base layout, none without fade batches.
+fn fade_regions(plan: &FramePlan) -> u32 {
+    if plan.fade_slots.is_empty() || plan.slot_count == 0 { 0 } else { plan.fade_slots.len() as u32 / plan.slot_count }
+}
+
+/// The pass-view entry of view `view`'s fade-twin rows of draw variant `variant` (game systems
+/// LOD-04): after the variants' blocks, one block of the plan's views per fade region, each
+/// reading its variant's region of the twins' slot bases, which follow the plan's own in the
+/// slot-base table.
+pub fn fade_pass_entry(plan: &FramePlan, view: u32, variant: usize) -> u64 {
+    let after_variants = u64::from(plan.views) + plan.transparent.len() as u64 + variant_blocks(plan) * u64::from(plan.views);
+    after_variants + variant as u64 * u64::from(plan.views) + u64::from(view)
+}
+
 fn pass_views(plan: &FramePlan) -> Vec<u8> {
     let transparent_base = plan.views * plan.visible_slots;
     let views = (0..plan.views).map(|view| GpuPassView { view, direct: 0, base: 0, slot_offset: 0 });
     let glass = (0..plan.transparent.len() as u32).map(|k| GpuPassView { view: 0, direct: 1, base: transparent_base + k, slot_offset: 0 });
     // Each non-plain variant's rows read its region of the slot-base table (P2-0.12).
-    let varied = if plan.variants.is_empty() { 0..0 } else { 1..crate::scene::DRAW_VARIANTS as u32 };
+    let varied = 1..1 + variant_blocks(plan) as u32;
     let variants = varied.flat_map(|variant| (0..plan.views).map(move |view| GpuPassView { view, direct: 0, base: 0, slot_offset: variant * plan.slot_count }));
-    let entries: Vec<GpuPassView> = views.chain(glass).chain(variants).collect();
+    // Each variant's fade twins read their region of the twins' slot bases (LOD-04).
+    let fade_base = plan.slot_base.len() as u32;
+    let fades = (0..fade_regions(plan)).flat_map(|variant| (0..plan.views).map(move |view| GpuPassView { view, direct: 0, base: 0, slot_offset: fade_base + variant * plan.slot_count }));
+    let entries: Vec<GpuPassView> = views.chain(glass).chain(variants).chain(fades).collect();
     let mut bytes = vec![0u8; entries.len().max(1) * PASS_VIEW_STRIDE as usize];
     for (i, entry) in entries.iter().enumerate() {
         let at = i * PASS_VIEW_STRIDE as usize;
@@ -554,6 +586,7 @@ impl Uploads {
             instance_rows,
             lod_rows,
             fades,
+            far_rules: bytemuck::cast_slice(&plan.far_rules).to_vec(),
         };
         let mut budget = UploadBudget::new();
         for bytes in uploads.all() {
@@ -564,6 +597,7 @@ impl Uploads {
         for bytes in other_rows {
             budget.charge(bytes.len() as u64)?;
         }
+        budget.charge(bytes_of_rows(&plan.fade_slots))?;
         let written: usize = uploads.instance_rows.iter().map(ExactSizeIterator::len).sum();
         budget.charge((written * size_of::<crate::layout::GpuInstance>()) as u64)?;
         budget.charge(uploads.lod_row_bytes())?;
@@ -572,8 +606,8 @@ impl Uploads {
     }
 
     /// The tables built here (the plan's own rows are [`plan_rows`]).
-    fn all(&self) -> [&Vec<u8>; 8] {
-        [&self.light_ext, &self.light_tiles, &self.light_zbins, &self.frame, &self.cull_views, &self.pass_views, &self.visible, &self.fades]
+    fn all(&self) -> [&Vec<u8>; 9] {
+        [&self.light_ext, &self.light_tiles, &self.light_zbins, &self.frame, &self.cull_views, &self.pass_views, &self.visible, &self.fades, &self.far_rules]
     }
 
     /// Every table write this frame makes from the CPU, for the upload arena: `plan`'s rows straight
@@ -595,6 +629,8 @@ impl Uploads {
             (tables.lights.get(), 0, lights),
             (tables.batches.get(), 0, batches),
             (tables.slot_base.get(), 0, slot_base),
+            // The fade twins' slot bases follow (game systems LOD-04, [`fade_pass_entry`]).
+            (tables.slot_base.get(), bytes_of_rows(&plan.slot_base), bytemuck::cast_slice(&plan.fade_slots)),
             (tables.pass_views.get(), 0, self.pass_views.as_slice()),
             (tables.lines.get(), 0, lines),
             (tables.joints.get(), 0, joints),
@@ -605,6 +641,7 @@ impl Uploads {
             (tables.prev_models.get(), 0, bytemuck::cast_slice(&self.prev_models)),
             (tables.visible.get(), self.visible_offset, self.visible.as_slice()),
             (tables.instance_fade.get(), 0, self.fades.as_slice()),
+            (tables.far_rules.get(), 0, self.far_rules.as_slice()),
         ];
         instance_writes.chain(lod_writes).chain(rest).collect()
     }

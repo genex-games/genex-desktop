@@ -27,7 +27,7 @@ use crate::mesh_arena::{ArenaStream, Rewrite, RowAllocator};
 use crate::meshlet::{self, MeshletLibrary, MeshletRange, MeshletSet};
 use crate::motion::{DrawId, MotionKeys, MotionRow, RowKind};
 use crate::pbr::{MaterialKey, light_table, radiance};
-use crate::lod_rows::{DrawLod, GpuLodRow, lod_row};
+use crate::lod_rows::{DrawLod, FAR_RULE_NONE, FAR_RULES_MAX, GpuFarRule, GpuLodRow, far_rule_usable, lod_row};
 use crate::retained::{InstanceGroup, RetainedSpan};
 use crate::settings::{Meshlets, ShadowSettings};
 use crate::shadow::{Cascades, camera_forward, fit};
@@ -914,6 +914,11 @@ pub struct Scene {
     /// switch and plans no fade batch; so does a value outside (0, 1]. The faded pipelines that
     /// draw the fade batches are LOD-04's: until then no frame draws them.
     pub lod_band: f32,
+    /// The far rules draws thin by (game systems LOD-18): a draw whose [`DrawLod::far_rule`] is
+    /// `k` thins by `far_rules[k - 1]` ([`crate::lod_rows::far_field`]). The first
+    /// [`crate::lod_rows::FAR_RULES_MAX`] count; a rule `far_rule_usable` refuses leaves its
+    /// draws alone.
+    pub far_rules: Vec<GpuFarRule>,
     logical_draws: u32,
     /// The draw id later draws carry ([`Scene::set_id`]).
     id: Option<DrawId>,
@@ -934,6 +939,7 @@ impl Scene {
             groups: Vec::new(),
             water: None,
             lod_band: 0.0,
+            far_rules: Vec::new(),
             logical_draws: 0,
             id: None,
             lod: DrawLod::OWN,
@@ -1177,6 +1183,9 @@ pub struct FramePlan {
     /// [`NO_BATCH`] where none: the region a faded draw finds its rows through (LOD-04). Empty
     /// without fade batches.
     pub fade_slots: Vec<u32>,
+    /// The frame's far rules (game systems LOD-18; cull binding 8): [`Scene::far_rules`], at most
+    /// [`FAR_RULES_MAX`], each one `far_rule_usable` refuses zeroed (a zero rule thins nothing).
+    pub far_rules: Vec<GpuFarRule>,
 }
 
 /// How a material's opaque draws are batched and drawn (P2-0.12): plain (back faces culled, drawn
@@ -1311,12 +1320,15 @@ struct Rows {
     slots: u32,
     /// The LOD rows, row for row with `instances` (game systems LOD-02).
     lod_rows: Vec<GpuLodRow>,
-    /// Each batched mesh with levels, for its fade twins (game systems LOD-03).
+    /// Each batched mesh with levels or a far rule, for its fade twins (game systems LOD-03,
+    /// LOD-18).
     lod_meshes: Vec<LodMesh>,
 }
 
-/// A batched mesh with levels: its variant, its rows (its fade twins hold the same rows), its
-/// meshes level by level (the mesh itself first) and its chain's errors and bounding radius.
+/// A batched mesh with fade twins: its variant, its rows (its fade twins hold the same rows), its
+/// meshes level by level (the mesh itself first; only it for a mesh without levels), its chain's
+/// errors and bounding radius, and whether a row of it names a far rule (game systems LOD-18:
+/// its thinned copies draw through its twins, with or without a band).
 struct LodMesh {
     variant: usize,
     first_row: u32,
@@ -1324,6 +1336,7 @@ struct LodMesh {
     levels: Vec<MeshId>,
     errors: Vec<f32>,
     radius: f32,
+    far: bool,
 }
 
 /// One variant's draws of one library mesh: retained groups (indices into `Scene::groups`), then
@@ -1372,27 +1385,37 @@ impl Rows {
                 self.slots += count as u32;
             }
             self.lod_batches |= levels > 0;
-            if let Some(lods) = lods {
-                let levels = std::iter::once(*mesh).chain(lods.levels.iter().copied()).collect();
-                self.lod_meshes.push(LodMesh { variant, first_row, count, levels, errors: lods.errors.clone(), radius: entry.radius });
+            // A clustered mesh's meshlet path culls its instances itself: it is never thinned
+            // (game systems LOD-18), so its rows' far rules are dropped here.
+            if library.meshlet_state(*mesh) != Some(MeshletState::Whole) {
+                self.lod_rows[first_row as usize..].iter_mut().for_each(|row| row.far_rule = FAR_RULE_NONE);
+            }
+            let far = self.lod_rows[first_row as usize..].iter().any(|row| row.far_rule != FAR_RULE_NONE);
+            if lods.is_some() || far {
+                let levels = std::iter::once(*mesh).chain(lods.iter().flat_map(|lods| lods.levels.iter().copied())).collect();
+                let errors = lods.map_or_else(Vec::new, |lods| lods.errors.clone());
+                self.lod_meshes.push(LodMesh { variant, first_row, count, levels, errors, radius: entry.radius, far });
             }
         }
         Ok(())
     }
 
-    /// The fade twins of every batched mesh with levels (game systems LOD-03), after every other
-    /// batch: per variant a run of each mesh's level batches again, tagged
-    /// [`crate::mesh::LOD_FADE_TAG`], with slots of their own over the mesh's rows, their slot
-    /// bases in `fade_slots` (laid out as `slot_base`).
-    fn push_fade_twins(&mut self, library: &MeshLibrary) -> Result<(Vec<VariantRun>, Vec<u32>), RenderError> {
-        if self.lod_meshes.is_empty() {
+    /// The fade twins (game systems LOD-03, LOD-18), after every other batch: with a band
+    /// (`banded`) of every batched mesh with levels, and of every mesh a row of which names a far
+    /// rule; per variant a run of each such mesh's level batches again (the mesh itself for one
+    /// without levels), tagged [`crate::mesh::LOD_FADE_TAG`], with slots of their own over the
+    /// mesh's rows, their slot bases in `fade_slots` (laid out as `slot_base`).
+    fn push_fade_twins(&mut self, library: &MeshLibrary, banded: bool) -> Result<(Vec<VariantRun>, Vec<u32>), RenderError> {
+        if !self.lod_meshes.iter().any(|lod_mesh| banded || lod_mesh.far) {
             return Ok((Vec::new(), Vec::new()));
         }
+        // A twin's slots are not its rows: the cull looks each slot's batch up.
+        self.lod_batches = true;
         let mut fade_slots = vec![NO_BATCH; self.slot_base.len()];
         let mut runs = Vec::new();
         for variant in DrawVariant::ALL {
             let first = self.batches.len() as u32;
-            for lod_mesh in self.lod_meshes.iter().filter(|lod_mesh| lod_mesh.variant == variant.index()) {
+            for lod_mesh in self.lod_meshes.iter().filter(|lod_mesh| lod_mesh.variant == variant.index() && (banded || lod_mesh.far)) {
                 for (level, level_mesh) in lod_mesh.levels.iter().enumerate() {
                     let geometry = mesh_entry(library, *level_mesh)?;
                     fade_slots[variant.index() * self.slot_count + level_mesh.raw() as usize] = self.slots;
@@ -1660,7 +1683,8 @@ impl FramePlan {
             }
         }
         let band = fade_band(scene.lod_band);
-        let (fade_runs, fade_slots) = if band > 0.0 { rows.push_fade_twins(library)? } else { (Vec::new(), Vec::new()) };
+        let (fade_runs, fade_slots) = rows.push_fade_twins(library, band > 0.0)?;
+        let far_rules: Vec<GpuFarRule> = scene.far_rules.iter().take(FAR_RULES_MAX).map(|rule| if far_rule_usable(rule) { *rule } else { GpuFarRule::default() }).collect();
         let Rows { mut instances, mut motion, batches, slot_base, retained, lod_batches, slots: visible_slots, lod_rows, .. } = rows;
         let opaque_instances = instances.len() as u32;
         let view_proj = scene.camera.projection(aspect, depth_reversed);
@@ -1689,6 +1713,7 @@ impl FramePlan {
         cull_views.lod = [eye[0], eye[1], eye[2], lod_per_height * LOD_NOMINAL_HEIGHT as f32];
         cull_views.lod_params[0] = u32::from(lod_batches);
         cull_views.lod_params[1] = band.to_bits();
+        cull_views.lod_params[2] = far_rules.len() as u32;
         cull_views.planes[0] = camera_planes;
         if let Some(set) = &shadows {
             for (c, planes) in set.planes.iter().enumerate().take(drawn_cascades(set)) {
@@ -1732,6 +1757,7 @@ impl FramePlan {
             lod_rows,
             fade_runs,
             fade_slots,
+            far_rules,
         })
     }
 
@@ -1754,7 +1780,7 @@ impl FramePlan {
 
     /// What the cull reads to choose levels: the LOD view, the fade band and the LOD rows.
     pub fn cull_lod(&self) -> CullLod<'_> {
-        CullLod { view: self.cull_views.lod, band: f32::from_bits(self.cull_views.lod_params[1]), rows: &self.lod_rows }
+        CullLod { view: self.cull_views.lod, band: f32::from_bits(self.cull_views.lod_params[1]), rows: &self.lod_rows, far_rules: &self.far_rules }
     }
 
     /// The shadow cascades this frame plans (0 without sun shadows): [`ShadowSettings::cascades`].

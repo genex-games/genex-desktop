@@ -378,7 +378,7 @@ mod lod {
         let near = library.add_part(chained_sphere([0.0, 0.0, 0.0])).expect("part");
         let behind = library.add_part(chained_sphere([0.0, 0.0, -6.0])).expect("part");
         // The model's sphere holds both parts: every part measures from it.
-        let model_sphere = DrawLod { origin: Some([0.0, 0.0, -3.0, 4.0]), bias: 1.0 };
+        let model_sphere = DrawLod { origin: Some([0.0, 0.0, -3.0, 4.0]), bias: 1.0, ..DrawLod::OWN };
         let material = Material::color([180, 170, 160, 255]);
         let (mut apart, mut levels_seen) = (0, std::collections::BTreeSet::new());
         for distance in distances(240) {
@@ -410,7 +410,7 @@ mod lod {
         // A point origin: the distance is exactly the origin's, so doubling it is exact.
         let level_at = |distance: f32, bias: f32| {
             let mut scene = Scene::new(down_z(), [0; 4]);
-            scene.set_lod(DrawLod { origin: Some([0.0; 4]), bias });
+            scene.set_lod(DrawLod { origin: Some([0.0; 4]), bias, ..DrawLod::OWN });
             scene.draw(mesh, translation(0.0, 0.0, -distance), material);
             let plan = plan_of(&scene, &library);
             drawn_level(&plan, &plan.cpu_cull(), 0).expect("in view")
@@ -433,7 +433,7 @@ mod lod {
         let entry = *library.entry(mesh).expect("entry");
         let models: Vec<[f32; 16]> = (0..40).map(|i| translation(i as f32, 0.0, -10.0 - i as f32)).collect();
         let mut group = InstanceGroup::new(mesh, Material::color([90, 140, 90, 255]), models.clone()).expect("group");
-        let lod = DrawLod { origin: Some([0.0, 0.0, 0.0, 2.0]), bias: 1.5 };
+        let lod = DrawLod { origin: Some([0.0, 0.0, 0.0, 2.0]), bias: 1.5, ..DrawLod::OWN };
         let mut scene = Scene::new(down_z(), [0; 4]);
         scene.set_lod(lod).draw_group(&group);
         let first = plan_of(&scene, &library);
@@ -466,8 +466,8 @@ mod lod {
             let distance = 3.0 * libm::powf(1000.0, i as f32 / (count - 1).max(1) as f32);
             let x = ((i % 7) as f32 - 3.0) * distance * 0.06;
             let lod = match (i % 3, i % 5) {
-                (0, _) => DrawLod { origin: Some([0.0; 4]), bias: 2.0 },
-                (_, 0) => DrawLod { origin: Some([0.0, 0.0, 1.0, 3.0]), bias: 0.5 },
+                (0, _) => DrawLod { origin: Some([0.0; 4]), bias: 2.0, ..DrawLod::OWN },
+                (_, 0) => DrawLod { origin: Some([0.0, 0.0, 1.0, 3.0]), bias: 0.5, ..DrawLod::OWN },
                 _ => DrawLod::OWN,
             };
             scene.set_lod(lod).draw(mesh, translation(x, 1.0, -distance), Material::color([180, 170, 160, 255]));
@@ -611,7 +611,7 @@ mod lod {
         let mut group = InstanceGroup::new(mesh, Material::color([90, 140, 90, 255]), models).expect("group");
         let frame = |group: &InstanceGroup| {
             let mut scene = Scene::new(down_z(), [0; 4]);
-            scene.set_lod(DrawLod { origin: None, bias: 2.0 }).draw_group(group);
+            scene.set_lod(DrawLod { origin: None, bias: 2.0, ..DrawLod::OWN }).draw_group(group);
             scene
         };
         let mut uploads = Vec::new();

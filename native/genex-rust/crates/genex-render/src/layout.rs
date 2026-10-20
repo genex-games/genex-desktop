@@ -306,8 +306,10 @@ pub struct GpuCullViews {
     /// position xyz; w the output's pixels a world unit at distance 1 over the error threshold
     /// (0: levels off, every instance at its mesh itself).
     pub lod: [f32; 4],
-    /// x: 1 when a batch draws a level (the cull looks each row's batch up only then); y: the
-    /// fade band's bits (`f32::to_bits` of `beta`, game systems LOD-03; 0 the hard switch); z, w: 0.
+    /// x: 1 when a batch draws a level or a fade twin (the cull looks each row's batch up only
+    /// then); y: the fade band's bits (`f32::to_bits` of `beta`, game systems LOD-03; 0 the hard
+    /// switch); z: the frame's far rules (game systems LOD-18; 0: none, no LOD row read for
+    /// them); w: 0.
     pub lod_params: [u32; 4],
 }
 

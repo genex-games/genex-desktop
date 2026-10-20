@@ -431,6 +431,10 @@ pub struct SpotShadowPipelines {
     layout: BindGroupLayout,
     depth32: Compiled<RenderPipeline>,
     depth16: Compiled<RenderPipeline>,
+    /// The fade twins' casters (game systems LOD-04, LOD-18): each copy cut by its fade and grown
+    /// by its far-field grow, over the faded group 1 (`pass_fade`).
+    faded32: Compiled<RenderPipeline>,
+    faded16: Compiled<RenderPipeline>,
 }
 
 /// The buffers a spot pass's frame group binds.
@@ -448,20 +452,35 @@ pub struct SpotShadowInputs<'a> {
 }
 
 impl SpotShadowPipelines {
-    /// The pipelines over the renderer's pass-view layout (`pass`, group 1) and mesh streams.
-    pub fn new(device: &Device, pass: &BindGroupLayout, buffers: &[Option<wgpu::VertexBufferLayout<'_>>]) -> Result<SpotShadowPipelines, RenderError> {
+    /// The pipelines over the renderer's pass-view layouts (`pass`, group 1; `pass_fade`, the
+    /// faded casters' group 1 with the instance fade table) and mesh streams.
+    pub fn new(device: &Device, (pass, pass_fade): (&BindGroupLayout, &BindGroupLayout), buffers: &[Option<wgpu::VertexBufferLayout<'_>>]) -> Result<SpotShadowPipelines, RenderError> {
         let vertex = wgpu::ShaderStages::VERTEX;
         let entries = [uniform(0, false, vertex), storage(1, true, vertex), storage(2, true, vertex), storage(3, true, vertex), storage(4, true, vertex)];
         let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor { label: Some("spot shadow"), entries: &entries });
         let module = crate::shaders::module(device, "spot shadow", SPOT_SHADOW)?;
-        let pipeline_layout = pipeline_layout(device, "spot shadow", &[&layout, pass]);
-        let pipeline = |format: ShadowFormat| spot_pipeline(device, &module, &pipeline_layout, buffers, format.texture_format());
-        Ok(SpotShadowPipelines { depth32: pipeline(ShadowFormat::Depth32), depth16: pipeline(ShadowFormat::Depth16), layout })
+        let plain_layout = pipeline_layout(device, "spot shadow", &[&layout, pass]);
+        let faded_layout = pipeline_layout(device, "spot shadow faded", &[&layout, pass_fade]);
+        let pipeline = |format: ShadowFormat| spot_pipeline(device, (&module, &plain_layout), buffers, format.texture_format(), false);
+        let faded = |format: ShadowFormat| spot_pipeline(device, (&module, &faded_layout), buffers, format.texture_format(), true);
+        Ok(SpotShadowPipelines {
+            depth32: pipeline(ShadowFormat::Depth32),
+            depth16: pipeline(ShadowFormat::Depth16),
+            faded32: faded(ShadowFormat::Depth32),
+            faded16: faded(ShadowFormat::Depth16),
+            layout,
+        })
     }
 
     /// The pipeline drawing into an array of `format`.
     pub fn pipeline(&self, format: TextureFormat) -> &RenderPipeline {
         if format == TextureFormat::Depth16Unorm { &self.depth16 } else { &self.depth32 }
+    }
+
+    /// The fade twins' caster pipeline drawing into an array of `format` (game systems LOD-04,
+    /// LOD-18): over the faded group 1.
+    pub fn faded_pipeline(&self, format: TextureFormat) -> &RenderPipeline {
+        if format == TextureFormat::Depth16Unorm { &self.faded16 } else { &self.faded32 }
     }
 
     /// The frame group over `inputs`.
@@ -482,18 +501,21 @@ impl SpotShadowPipelines {
 
 /// A spot caster pipeline: depth only into `format`, back faces culled, the sun casters' constant
 /// and slope-scaled bias, and clipped depth (a perspective map has a real near plane; nothing is
-/// pancaked onto it).
+/// pancaked onto it). A `faded` one draws the fade twins (`vs_spot_shadow_fade`, a fragment that
+/// cuts the other level's texels).
 fn spot_pipeline(
     device: &Device,
-    module: &wgpu::ShaderModule,
-    layout: &wgpu::PipelineLayout,
+    (module, layout): (&wgpu::ShaderModule, &wgpu::PipelineLayout),
     buffers: &[Option<wgpu::VertexBufferLayout<'_>>],
     format: TextureFormat,
+    faded: bool,
 ) -> Compiled<RenderPipeline> {
+    let vertex = if faded { "vs_spot_shadow_fade" } else { SPOT_SHADOW_VERTEX_ENTRY };
+    let fragment = faded.then(|| wgpu::FragmentState { module, entry_point: Some("fs_spot_shadow_fade"), compilation_options: Default::default(), targets: &[] });
     crate::compile::render_pipeline(device, &wgpu::RenderPipelineDescriptor {
-        label: Some("spot shadow"),
+        label: Some(if faded { "spot shadow faded" } else { "spot shadow" }),
         layout: Some(layout),
-        vertex: wgpu::VertexState { module, entry_point: Some(SPOT_SHADOW_VERTEX_ENTRY), compilation_options: Default::default(), buffers },
+        vertex: wgpu::VertexState { module, entry_point: Some(vertex), compilation_options: Default::default(), buffers },
         primitive: wgpu::PrimitiveState { cull_mode: Some(wgpu::Face::Back), ..Default::default() },
         depth_stencil: Some(wgpu::DepthStencilState {
             format,
@@ -503,7 +525,7 @@ fn spot_pipeline(
             bias: wgpu::DepthBiasState { constant: CASTER_CONSTANT_BIAS, slope_scale: CASTER_SLOPE_BIAS, clamp: 0.0 },
         }),
         multisample: wgpu::MultisampleState::default(),
-        fragment: None,
+        fragment,
         multiview_mask: None,
         cache: None,
     })

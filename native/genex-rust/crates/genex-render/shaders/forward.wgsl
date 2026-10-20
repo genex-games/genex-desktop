@@ -7,10 +7,20 @@
 // `gx_clip_position` and `@invariant` (shaders/clip_position.wgsl), as every depth writer's is, so
 // the depth/normal prepass and an `Equal`-depth main pass agree bit for bit.
 
-// Whether the pipeline's instances may fade between LODs (a pipeline-overridable constant): their
-// fragments are dithered away by the instance fade table (layout::FRAME_INSTANCE_FADE_BINDING)
-// once the crossfade lands; false (the default) draws every row whole.
+// Whether the pipeline's instances may fade between LODs (a pipeline-overridable constant): the
+// faded entries (`vs_main_fade`, `fs_main_fade`, `fs_mask_depth_fade`; game systems LOD-04) keep
+// a fade-batch survivor's pixels by the instance fade table (`gx_lod_fade_keeps`); false (the
+// default) draws every row whole.
 override GX_LOD_FADE: bool = false;
+// The faded colour pipeline's samples per pixel: its `sample_mask` covers each sample by one level
+// (1: the whole pixel by one level, whatever the target's samples).
+override GX_LOD_FADE_SAMPLES: u32 = 1u;
+// Whether the faded entries turn their dither each frame (TAA averages the two levels).
+override GX_LOD_FADE_TEMPORAL: bool = false;
+// Whether the faded vertex entries grow each copy about its origin by its slot's far-field grow
+// (game systems LOD-18; the instance fade table's y); false (the default) draws every copy at
+// its own size.
+override GX_LOD_GROW: bool = false;
 
 @group(0) @binding(0) var<uniform> frame: FrameUniforms;
 @group(0) @binding(1) var<storage, read> instances: array<Instance>;
@@ -48,7 +58,16 @@ fn gx_light_tile_word(i: u32) -> u32 {
 @group(0) @binding(27) var data_textures_1024: texture_2d_array<f32>;
 @group(0) @binding(28) var color_textures_2048: texture_2d_array<f32>;
 @group(0) @binding(29) var data_textures_2048: texture_2d_array<f32>;
+// The instance fade table (layout::FRAME_INSTANCE_FADE_BINDING; game systems LOD-03, LOD-04):
+// (fade, grow) per visible-list slot, written by the cull for fade-batch survivors. Only the
+// faded fragment entries read it, so the frame layout shows it to the fragment stage alone (the
+// faded vertices read the grow at `lod_grows`, LOD-18).
+@group(0) @binding(31) var<storage, read> instance_fade: array<vec2<f32>>;
 @group(1) @binding(0) var<uniform> pass_view: PassView;
+// The instance fade table again, for the faded vertex entries' far-field grow (game systems
+// LOD-18; renderer::PASS_FADE_GROWS_BINDING): only the faded pipelines' group 1 holds it, so no
+// other pipeline's vertex stage counts it.
+@group(1) @binding(2) var<storage, read> lod_grows: array<vec2<f32>>;
 
 struct VsIn {
     @location(0) position: vec3<f32>,
@@ -65,6 +84,70 @@ struct VsOut {
     @location(2) uv: vec2<f32>,
     @location(3) tangent: vec4<f32>,
     @location(4) @interpolate(flat) material: u32,
+}
+
+// `VsOut` with the vertex's visible-list slot (its index into the instance fade table): the
+// faded entries' varyings (game systems LOD-04). Location for location `VsOut`'s, then the slot.
+struct VsFadeOut {
+    @builtin(position) @invariant clip: vec4<f32>,
+    @location(0) world_pos: vec3<f32>,
+    @location(1) normal: vec3<f32>,
+    @location(2) uv: vec2<f32>,
+    @location(3) tangent: vec4<f32>,
+    @location(4) @interpolate(flat) material: u32,
+    @location(5) @interpolate(flat) fade_at: u32,
+}
+
+// A faded colour fragment: the shading and the samples of the pixel its level keeps.
+struct FadeTarget {
+    @location(0) color: vec4<f32>,
+    @builtin(sample_mask) coverage: u32,
+}
+
+// The visible-list slot of batch vertex `in` (`instance`) through the pass view.
+fn gx_forward_visible_at(in: VsIn, instance: u32) -> u32 {
+    var start = 0u;
+    if pass_view.direct == 0u {
+        start = slot_base[in.slot + pass_view.slot_offset];
+    }
+    return visible_row(pass_view.view, pass_view.direct, pass_view.base, start, instance, frame.counts.w);
+}
+
+// The far-field grow of the copy at visible-list slot `at` (game systems LOD-18): its slot's
+// grow under `GX_LOD_GROW`, else 1 (an exact product).
+fn gx_forward_grow(at: u32) -> f32 {
+    if GX_LOD_GROW {
+        return lod_grows[at].y;
+    }
+    return 1.0;
+}
+
+// `vs_main` of a faded batch (game systems LOD-04): its outputs (the same expressions), with the
+// slot the fragment reads its fade at, the copy grown about its origin (LOD-18).
+@vertex
+fn vs_main_fade(in: VsIn, @builtin(instance_index) instance: u32) -> VsFadeOut {
+    let at = gx_forward_visible_at(in, instance);
+    let row = instances[visible[at]];
+    let world = row.model * vec4<f32>(in.position * gx_forward_grow(at), 1.0);
+    var out: VsFadeOut;
+    out.clip = gx_clip_position(frame.view_proj, world, frame.jitter.xy);
+    out.world_pos = world.xyz;
+    out.normal = (row.normal * vec4<f32>(in.normal, 0.0)).xyz;
+    out.uv = in.uv;
+    out.tangent = vec4<f32>((row.model * vec4<f32>(in.tangent.xyz, 0.0)).xyz, in.tangent.w);
+    out.material = row.material;
+    out.fade_at = at;
+    return out;
+}
+
+// A faded fragment's `VsOut` (the shading's input).
+fn gx_unfade(in: VsFadeOut) -> VsOut {
+    return VsOut(in.clip, in.world_pos, in.normal, in.uv, in.tangent, in.material);
+}
+
+// The dither threshold of a faded fragment at `pixel`: turned by the frame on temporal paths.
+fn gx_forward_fade_threshold(pixel: vec2<f32>) -> f32 {
+    return gx_lod_fade_threshold(pixel, select(0u, frame.shadow_counts.z, GX_LOD_FADE_TEMPORAL));
 }
 
 @vertex
@@ -154,6 +237,40 @@ fn fs_main(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f
 fn fs_blend(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
     let lit = surface(in, front);
     return vec4<f32>(gx_encode_ldr(lit.rgb), lit.a);
+}
+
+// A faded batch's shading (game systems LOD-04): `fs_main`, covering the samples its level keeps
+// (`sample_mask`: under MSAA both levels share the pixel in proportion, no stipple; at one sample
+// the pixel is its level's or the other's). It shades over its own depth step's or the prepass's
+// depth with `Equal` too, where both levels of a crossfade may pass the test (coincident
+// surfaces), so it applies the same cut as the depth step did: `GX_LOD_FADE_SAMPLES` 1 keeps or
+// drops the whole pixel (an alpha-tested batch, whose depth step cut whole pixels). It never
+// discards, and writes no coverage the pipeline's alpha-to-coverage would own (its pipelines
+// have none).
+@fragment
+fn fs_main_fade(in: VsFadeOut, @builtin(front_facing) front: bool) -> FadeTarget {
+    var out: FadeTarget;
+    out.color = vec4<f32>(gx_encode_ldr(surface(gx_unfade(in), front).rgb), 1.0);
+    out.coverage = 0xffffffffu;
+    if GX_LOD_FADE {
+        let fade = instance_fade[in.fade_at].x;
+        let threshold = gx_forward_fade_threshold(in.clip.xy);
+        out.coverage = select(gx_lod_fade_coverage(fade, threshold, GX_LOD_FADE_SAMPLES), select(0u, 0xffffffffu, gx_lod_fade_keeps(fade, threshold)), GX_LOD_FADE_SAMPLES <= 1u);
+    }
+    return out;
+}
+
+// A faded alpha-tested batch's depth step (game systems LOD-04): `fs_mask_depth` with the pixels
+// the other level keeps cut away. Its pipeline keeps alpha-to-coverage under MSAA, which owns
+// the samples' coverage, so the fade discards whole pixels and never writes `sample_mask`.
+@fragment
+fn fs_mask_depth_fade(in: VsFadeOut) -> @location(0) vec4<f32> {
+    let kept = gx_alpha_mask(in.material, in.uv, in.world_pos, frame.shadow_counts.z);
+    let faded = GX_LOD_FADE && !gx_lod_fade_keeps(instance_fade[in.fade_at].x, gx_forward_fade_threshold(in.clip.xy));
+    if faded || (GX_ALPHA_MODE != GX_ALPHA_TO_COVERAGE && kept <= 0.0) {
+        discard;
+    }
+    return vec4<f32>(0.0, 0.0, 0.0, kept);
 }
 
 // The world pass's depth step of an alpha-tested batch (P2-0.12): its depth with the cutout cut

@@ -32,7 +32,7 @@ pub use mesh_lod::{
     LodFault, LodLevel, LodLevelKey, LodWarning, batch_lod, lod_keeps, select_lod,
 };
 // The LOD fade band (game systems LOD-01).
-pub use mesh_lod::{LOD_FADE_TAG, LodBand, fade_batch_lod, lod_band, lod_band_keep, lod_row_keep};
+pub use mesh_lod::{LOD_FADE_TAG, LodBand, fade_batch_lod, lod_band, lod_band_keep, lod_row_keep, lod_row_keep_far};
 
 /// One vertex as the vertex buffer holds it (`MeshVertex` in the skinning shader).
 #[repr(C)]

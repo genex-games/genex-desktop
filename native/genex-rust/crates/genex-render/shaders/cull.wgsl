@@ -23,6 +23,9 @@
 // `views.lod_params.y`) a level's fade batch keeps the instances fading in or out of it
 // (`gx_cull_lod_fade`, mesh_lod.rs `lod_row_keep`); `cull_scatter` writes each fade-batch
 // survivor's fade into `fades`, slot for slot with the visible list, and no other slot.
+// The far field (game systems LOD-18): a copy whose LOD row names a far rule (`far_rules`) and
+// lies past its start is thinned (`gx_far_field`): its whole batches drop it, its fade batches
+// keep it with the far share in its fade and the far field's grow beside it.
 
 @group(0) @binding(0) var<uniform> views: CullViews;
 @group(0) @binding(1) var<storage, read> instances: array<Instance>;
@@ -39,7 +42,7 @@ struct LodRow {
     origin: vec4<f32>,
     // Every projected error of its chain is scaled by this (2: each level held twice as far).
     bias: f32,
-    // Its far rule (0: none; LOD-18).
+    // Its far rule (0: none; else 1 + its index in `far_rules`, LOD-18).
     far_rule: u32,
     spare0: u32,
     spare1: u32,
@@ -50,6 +53,90 @@ struct LodRow {
 // Per active view, slot for slot with the visible list: (fade, grow) of each fade-batch survivor
 // (layout.rs FRAME_INSTANCE_FADE_BINDING, cull.rs CULL_FADES_BINDING).
 @group(0) @binding(7) var<storage, read_write> fades: array<vec2<f32>>;
+
+// One far rule (lod_rows.rs `GpuFarRule`, game systems LOD-18): past `start` the copies thin to
+// an expected share of `keep` at `end`, then fade out over `fade_out` (0: kept to the horizon).
+struct FarRule {
+    start: f32,
+    end: f32,
+    keep: f32,
+    fade_out: f32,
+}
+
+// lod_rows.rs FAR_RULES_MAX rules; the frame's count is `views.lod_params.z`, and the plan zeroes
+// a rule `far_rule_usable` refuses (a zero rule leaves its copies alone).
+struct FarRules {
+    rules: array<FarRule, 16>,
+}
+
+// The frame's far rules (lod_rows.rs CULL_FAR_RULES_BINDING); a row's rule k is rules[k - 1].
+@group(0) @binding(8) var<uniform> far_rules: FarRules;
+
+// lod_rows.rs FAR_FADE_BAND (the grass's grow-in band), FAR_GROW_MAX and the hash's cells a unit.
+const GX_FAR_FADE_BAND: f32 = 0.15;
+const GX_FAR_GROW_MAX: f32 = 2.0;
+const GX_FAR_HASH_CELLS: f32 = 100.0;
+
+// lod_rows.rs `far_hash`: the copy's sphere centre on a 1 cm grid, hashed, in [0, 1).
+fn gx_far_hash(origin: vec4<f32>) -> f32 {
+    let cell = vec3<u32>(vec3<i32>(floor(origin.xyz * GX_FAR_HASH_CELLS + 0.5)));
+    var h = (cell.x * 0x8da6b343u) ^ (cell.y * 0xd8163841u) ^ (cell.z * 0xcb1ab31fu);
+    h ^= h >> 16u;
+    h *= 0x7feb352du;
+    h ^= h >> 15u;
+    h *= 0x846ca68bu;
+    h ^= h >> 16u;
+    return f32(h >> 8u) / 16777216.0;
+}
+
+// lod_rows.rs `far_threshold`: the keep threshold whose expected drawn share is `density`.
+fn gx_far_threshold(density: f32) -> f32 {
+    let b = GX_FAR_FADE_BAND;
+    let room = 2.0 * b * (1.0 - b);
+    let upper = 1.0 - b / (2.0 * (1.0 - b));
+    let lower = b / (2.0 * (1.0 - b));
+    if density >= upper {
+        return 1.0 - sqrt(room * (1.0 - density));
+    }
+    if density >= lower {
+        return density * (1.0 - b) + 0.5 * b;
+    }
+    return sqrt(room * density);
+}
+
+// lod_rows.rs `far_field`, expression for expression: x 1 when the copy is thinned (past its
+// rule's start), y its share of pixels drawn (0: thinned away), z its grow about its origin.
+fn gx_far_field(lod_row: LodRow) -> vec3<f32> {
+    let near = vec3<f32>(0.0, 1.0, 1.0);
+    if lod_row.far_rule == 0u || lod_row.far_rule > views.lod_params.z {
+        return near;
+    }
+    let rule = far_rules.rules[lod_row.far_rule - 1u];
+    let usable = rule.start >= 0.0 && rule.end > rule.start && rule.keep > 0.0 && rule.keep <= 1.0 && rule.fade_out >= 0.0;
+    if !usable {
+        return near;
+    }
+    let offset = lod_row.origin.xyz - views.lod.xyz;
+    let distance = sqrt(offset.x * offset.x + offset.y * offset.y + offset.z * offset.z);
+    let past_start = distance > rule.start && distance <= 0x1.fffffep+127f;
+    if !past_start {
+        return near;
+    }
+    let t = clamp((distance - rule.start) / (rule.end - rule.start), 0.0, 1.0);
+    let eased = t * t * (3.0 - 2.0 * t);
+    let density = 1.0 + (rule.keep - 1.0) * eased;
+    let grow = min(1.0 / sqrt(density), GX_FAR_GROW_MAX);
+    var threshold = gx_far_threshold(density);
+    if rule.fade_out > 0.0 && distance > rule.end {
+        threshold *= max(1.0 - (distance - rule.end) / rule.fade_out, 0.0);
+    }
+    if !(threshold > 0.0) {
+        return vec3<f32>(1.0, 0.0, grow);
+    }
+    let hashed = gx_far_hash(lod_row.origin) * (1.0 - GX_FAR_FADE_BAND);
+    let share = clamp((threshold - hashed) / GX_FAR_FADE_BAND, 0.0, 1.0);
+    return vec3<f32>(1.0, share, grow);
+}
 
 // Rows per block (cull.rs CULL_BLOCK): one workgroup's invocations.
 const GX_CULL_BLOCK: u32 = 256u;
@@ -136,18 +223,29 @@ fn gx_cull_half(bits: u32) -> f32 {
 }
 
 // Whether `batch` keeps its instance row `row` of world sphere `bounds`, and the fade its
-// slot gets: x 1 when kept, y the signed fade (1 whole). A batch without levels keeps every
-// instance whole; a level's batch the instances whole at its level; its fade twin those fading in
-// to it (-share) or out of it to the next coarser level (1 - share), measured from the row's LOD
-// row (read only for a level's batch). Levels off (`lod.w` not positive) or a radius that is not
-// positive draw the mesh itself whole. mesh_lod.rs `lod_row_keep` is its CPU twin, expression for
-// expression.
-fn gx_cull_lod_fade(batch: Batch, bounds: vec4<f32>, row: u32) -> vec2<f32> {
-    if (batch.lod & GX_LOD_TAG) == 0u {
-        return vec2<f32>(1.0, 1.0);
+// slot gets: x 1 when kept, y the signed fade (1 whole), z the grow (1 unthinned). A batch
+// without levels keeps every instance whole; a level's batch the instances whole at its level;
+// its fade twin those fading in to it (-share) or out of it to the next coarser level
+// (1 - share), measured from the row's LOD row (read only for a level's batch). Levels off
+// (`lod.w` not positive) or a radius that is not positive draw the mesh itself whole. With far
+// rules (`views.lod_params.z`, game systems LOD-18) a copy past its rule's start is thinned:
+// every whole batch drops it and its fade batches keep it, the fade times the far share and the
+// grow the far field's (`gx_far_field`). mesh_lod.rs `lod_row_keep_far` is its CPU twin,
+// expression for expression.
+fn gx_cull_lod_fade(batch: Batch, bounds: vec4<f32>, row: u32) -> vec3<f32> {
+    var far = vec3<f32>(0.0, 1.0, 1.0);
+    if views.lod_params.z != 0u {
+        far = gx_far_field(lod_rows[row]);
+    }
+    let tagged = (batch.lod & GX_LOD_TAG) != 0u;
+    let fade = tagged && (batch.lod & GX_LOD_FADE_TAG) != 0u;
+    if far.x > 0.0 && (!fade || !(far.y > 0.0)) {
+        return vec3<f32>(0.0, 1.0, 1.0);
+    }
+    if !tagged {
+        return vec3<f32>(1.0, 1.0, 1.0);
     }
     let level = batch.lod & 15u;
-    let fade = (batch.lod & GX_LOD_FADE_TAG) != 0u;
     var band = vec2<f32>(0.0, 1.0);
     if views.lod.w > 0.0 && bounds.w > 0.0 {
         let levels = min((batch.lod >> 4u) & 15u, 4u);
@@ -158,16 +256,25 @@ fn gx_cull_lod_fade(batch: Batch, bounds: vec4<f32>, row: u32) -> vec2<f32> {
         band = gx_lod_band(errors, levels, distance, views.lod.w, 1.0, lod_row.bias, bitcast<f32>(views.lod_params.y));
     }
     let picked = u32(band.x);
+    if far.x > 0.0 {
+        if band.y >= 1.0 {
+            return vec3<f32>(select(0.0, 1.0, level == picked), far.y, far.z);
+        }
+        if level == picked {
+            return vec3<f32>(1.0, -band.y * far.y, far.z);
+        }
+        return vec3<f32>(select(0.0, 1.0, level + 1u == picked), (1.0 - band.y) * far.y, far.z);
+    }
     if band.y >= 1.0 {
-        return vec2<f32>(select(0.0, 1.0, !fade && level == picked), 1.0);
+        return vec3<f32>(select(0.0, 1.0, !fade && level == picked), 1.0, 1.0);
     }
     if !fade {
-        return vec2<f32>(0.0, 1.0);
+        return vec3<f32>(0.0, 1.0, 1.0);
     }
     if level == picked {
-        return vec2<f32>(1.0, -band.y);
+        return vec3<f32>(1.0, -band.y, 1.0);
     }
-    return vec2<f32>(select(0.0, 1.0, level + 1u == picked), 1.0 - band.y);
+    return vec3<f32>(select(0.0, 1.0, level + 1u == picked), 1.0 - band.y, 1.0);
 }
 
 // Inclusive Hillis-Steele scan of `scan` over the workgroup.
@@ -286,10 +393,10 @@ fn cull_scatter(@builtin(workgroup_id) group: vec3<u32>, @builtin(local_invocati
         // The survivor's instance row: the row its own slot `own` stands for in its batch.
         let row = batch.first_row + own - batch.first_instance;
         visible[view * views.params.x + slot] = row;
-        // A fade batch's survivor gets its fade (LOD-03); grow stays 1 until the far field.
+        // A fade batch's survivor gets its fade (LOD-03) and its far field's grow (LOD-18).
         if (batch.lod & GX_LOD_FADE_TAG) != 0u {
-            let fade = gx_cull_lod_fade(batch, instances[row].bounds, row).y;
-            fades[view * views.params.x + slot] = vec2<f32>(fade, 1.0);
+            let kept = gx_cull_lod_fade(batch, instances[row].bounds, row);
+            fades[view * views.params.x + slot] = kept.yz;
         }
     }
 }

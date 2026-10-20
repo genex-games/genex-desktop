@@ -740,7 +740,7 @@ draw take the mesh itself.
 
 The distance is measured from each opaque row's LOD row (`src/lod_rows.rs`, `GpuLodRow`, 32 bytes,
 cull binding 6, parallel to the instance rows so the 160-byte row stays frozen): the row's own
-sphere unless the draw names a model-space origin (`Scene::set_lod(DrawLod { origin, bias })`),
+sphere unless the draw names a model-space origin (`Scene::set_lod(DrawLod { origin, bias, .. })`),
 so every part of a compound model measured from one sphere switches at the same distance; the
 bias scales the chain's projected errors (2 holds each level twice as far). A retained group
 computes its LOD rows once per version and uploads them over its instance rows' dirty ranges
@@ -749,12 +749,39 @@ table is. With a fade band (`Scene::lod_band`, in (0, 1]; 0 by default, the hard
 adds a fade twin of every level batch after all other batches (`FramePlan::fade_runs`, their
 slot bases in `FramePlan::fade_slots`), the cull keeps an instance whose level's projected error
 is within the band's last share of the threshold in the two neighbouring twins, and its scatter
-writes each twin survivor's signed fade (and a grow of 1) into the per-slot fade table (cull
-binding 7, `vec2<f32>` per visible-list slot, held only by a frame with fade batches, the table
-the forward frame's binding 31 names;
-`Renderer::read_view_fades`). The faded pipelines that draw the twins are not landed yet, so no
-frame draws a fade batch and a band leaves its rows undrawn while they fade: keep it 0 until they
-land.
+writes each twin survivor's signed fade and grow into the per-slot fade table (cull binding 7,
+`vec2<f32>` per visible-list slot, held only by a frame with fade batches;
+`Renderer::read_view_fades`). The faded fragments read the fade at the forward frame's binding 31
+and the sun casters' binding 11; the faded vertices read the grow at their own group 1, binding 2
+(`PASS_FADE_GROWS_BINDING`), so no other pipeline's vertex stage counts the table (the meshlet
+motion prepass holds all of core's eight).
+
+The twins draw through faded pipelines (`renderer/variants.rs`: the `*_fade` entry points of
+`forward.wgsl`, `prepass.wgsl` and `shadow.wgsl`, `GX_LOD_FADE`). The two levels of a crossfade
+cover each pixel, or each MSAA sample, exactly once by a dither threshold (`gx_lod_fade_*` in
+`common.wgsl`: interleaved gradient noise, turned by the golden ratio each frame on TAA paths):
+- MSAA covers samples with `sample_mask`, both levels in proportion, so a pixel shows no stipple;
+- TAA and a one-sample path keep or drop whole pixels, and the resolve averages the levels;
+- an `Equal` main pass and an alpha-tested batch's shading apply the cut their depth step or the
+  prepass applied (coincident levels both pass the test); an alpha-tested batch keeps
+  alpha-to-coverage and cuts whole pixels, never writing `sample_mask` beside it;
+- the sun's and the shadowed spots' casters cut the other level's texels by the unturned
+  threshold. The static shadow cache does not cast the twins yet (LOD-05).
+`tests/lod_fade.rs` holds the incoming share within 1/16 with no hole on every path. The band
+stays 0 by default until LOD-05 (the cache overlay) and LOD-06 (the band in `Quality`) land.
+
+Far field (`lod_rows::far_field`, `gx_far_field` in `shaders/cull.wgsl`): a draw naming a far
+rule (`DrawLod::far_rule`, 1 + its index in `Scene::far_rules`, at most `FAR_RULES_MAX`; cull
+binding 8) thins past the rule's start, stateless. A copy's hash (its sphere's centre on a 1 cm
+grid, so any row order keeps the same copies) against a keep threshold falling smoothly to an
+expected share of `keep` at `end`, then to none over `fade_out`, gives the share of its pixels
+drawn, and survivors grow about their origin by `min(1 / sqrt(share kept), 2)`, so the drawn
+cover holds. A thinned copy draws only through its mesh's fade twins (a mesh with a far-ruled row
+gets twins with or without a band), its fade times the far share and its grow applied by the
+faded vertex stages (`GX_LOD_GROW`); every whole batch drops it. The motion vectors use this
+frame's grow for both positions (under a tenth of a pixel a frame at 30 m/s;
+`tests/far_field.rs`). The GPU keeps the CPU twin's copies; its shares and grows may differ by
+about 1e-6 (WGSL's square roots and quotients).
 
 ### `genex_textures` in glTF
 

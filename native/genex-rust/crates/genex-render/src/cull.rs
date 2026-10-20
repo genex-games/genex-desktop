@@ -23,6 +23,12 @@
 //! survivors' signed fade into the per-slot fade table (binding 7, parallel to the visible list,
 //! `vec2(fade, grow)` per slot, [`crate::layout::INSTANCE_FADE_BYTES`]); no other slot is written.
 //!
+//! The far field (game systems LOD-18): a row whose LOD row names a far rule (binding 8, the
+//! frame's [`crate::lod_rows::GpuFarRule`]s) and lies past its start is thinned
+//! ([`crate::lod_rows::far_field`]): every whole batch drops it and its fade batches keep it, its
+//! fade times the far share and its slot's grow the far field's, so the faded draws dither it and
+//! grow it about its origin ([`crate::mesh::lod_row_keep_far`]).
+//!
 //! The HDR path draws camera views with reverse-Z (RQ1.1): [`frustum_planes_for`] takes the
 //! reversed (and possibly infinite) projection and answers the same six inward planes, so the
 //! compute and CPU culls keep one test.
@@ -33,7 +39,7 @@ use wgpu::{BindGroupLayout, Buffer, ComputePipeline, Device};
 
 use crate::error::RenderError;
 use crate::layout::{GpuBatch, GpuInstance, INSTANCE_FADE_WHOLE, MAX_CASCADES, MAX_SHADOWED_SPOTS, MAX_VIEWS};
-use crate::lod_rows::{GpuLodRow, LOD_BIAS_DEFAULT};
+use crate::lod_rows::{FarField, GpuFarRule, GpuLodRow, LOD_BIAS_DEFAULT, far_field};
 
 /// Opaque rows per cull block: one workgroup's invocations (`GX_CULL_BLOCK` in cull.wgsl).
 pub const CULL_BLOCK: u32 = 256;
@@ -95,13 +101,15 @@ pub struct CpuCull {
     pub visible: Vec<u32>,
     /// Survivors per batch.
     pub counts: Vec<u32>,
-    /// The fade table, slot for slot with `visible` (game systems LOD-03): `[fade, grow]` for each
-    /// survivor of a fade batch (the signed fade of [`crate::mesh::lod_row_keep`], grow 1); every
-    /// other slot holds [`INSTANCE_FADE_WHOLE`] twice and is never written by the compute pass.
+    /// The fade table, slot for slot with `visible` (game systems LOD-03, LOD-18): `[fade, grow]`
+    /// for each survivor of a fade batch ([`crate::mesh::lod_row_keep_far`]: the signed fade times
+    /// the far share, the far field's growth); every other slot holds [`INSTANCE_FADE_WHOLE`]
+    /// twice and is never written by the compute pass.
     pub fades: Vec<[f32; 2]>,
 }
 
-/// What the cull reads to choose levels (renderer pass 2 A6.9, game systems LOD-02 and LOD-03).
+/// What the cull reads to choose levels (renderer pass 2 A6.9, game systems LOD-02, LOD-03 and
+/// LOD-18).
 #[derive(Clone, Copy, Debug)]
 pub struct CullLod<'a> {
     /// The frame's LOD view ([`crate::layout::GpuCullViews::lod`]): the camera position, w the
@@ -110,14 +118,19 @@ pub struct CullLod<'a> {
     /// The fade band (`beta` of [`crate::mesh::lod_band`]; 0 the hard switch).
     pub band: f32,
     /// The LOD rows, row for row with the opaque instance rows; a row past them measures from
-    /// its bounds at the default bias.
+    /// its bounds at the default bias, under no far rule.
     pub rows: &'a [GpuLodRow],
+    /// The frame's far rules (game systems LOD-18): a row's rule `k` is `far_rules[k - 1]`.
+    pub far_rules: &'a [GpuFarRule],
 }
 
 impl CullLod<'_> {
-    /// The origin and bias of instance row `row` of world `bounds`.
-    fn of(&self, row: usize, bounds: [f32; 4]) -> ([f32; 4], f32) {
-        self.rows.get(row).map_or((bounds, LOD_BIAS_DEFAULT), |lod| (lod.origin, lod.bias))
+    /// The origin and bias of instance row `row` of world `bounds`, and its far field.
+    fn of(&self, row: usize, bounds: [f32; 4]) -> ([f32; 4], f32, FarField) {
+        let Some(lod) = self.rows.get(row) else { return (bounds, LOD_BIAS_DEFAULT, FarField::NEAR) };
+        let rule = (lod.far_rule as usize).checked_sub(1).and_then(|at| self.far_rules.get(at));
+        let far = rule.map_or(FarField::NEAR, |rule| far_field(rule, lod.origin, [self.view[0], self.view[1], self.view[2]]));
+        (lod.origin, lod.bias, far)
     }
 }
 
@@ -169,13 +182,13 @@ pub fn cpu_cull(planes: &[[f32; 4]; 6], lod: &CullLod<'_>, batches: &[GpuBatch],
         let mut written = 0;
         for i in batch.first_row..batch.first_row + batch.instance_count {
             let bounds = instances[i as usize].bounds;
-            let (origin, bias) = lod.of(i as usize, bounds);
-            let kept = crate::mesh::lod_row_keep(batch.lod, bounds, origin, lod.view, bias, lod.band).filter(|_| in_frustum(planes, bounds));
+            let (origin, bias, far) = lod.of(i as usize, bounds);
+            let kept = crate::mesh::lod_row_keep_far(batch.lod, bounds, origin, lod.view, (bias, lod.band), far).filter(|_| in_frustum(planes, bounds));
             let Some(fade) = kept else { continue };
             let slot = (batch.first_instance + written) as usize;
             visible[slot] = i;
             if fade_batch {
-                fades[slot] = [fade, INSTANCE_FADE_WHOLE];
+                fades[slot] = fade;
             }
             written += 1;
         }
@@ -206,6 +219,9 @@ pub(crate) struct CullBuffers<'a> {
     /// The per-slot fade table (binding 7, game systems LOD-03): every view's region of
     /// `vec2<f32>` per visible-list slot.
     pub fades: &'a Buffer,
+    /// The frame's far rules (binding 8, game systems LOD-18): a uniform of
+    /// [`crate::lod_rows::FAR_RULES_MAX`] rules.
+    pub far_rules: &'a Buffer,
 }
 
 impl CullPass {
@@ -222,6 +238,7 @@ impl CullPass {
                 compute_storage(5, false),
                 compute_storage(crate::lod_rows::CULL_LOD_ROWS_BINDING, true),
                 compute_storage(CULL_FADES_BINDING, false),
+                compute_uniform(crate::lod_rows::CULL_FAR_RULES_BINDING),
             ],
         });
         let module = crate::shaders::module(device, "cull", crate::shaders::CULL)?;
@@ -263,6 +280,7 @@ impl CullPass {
                 crate::tables::entry(5, buffers.scratch),
                 crate::tables::entry(crate::lod_rows::CULL_LOD_ROWS_BINDING, buffers.lod_rows),
                 crate::tables::entry(CULL_FADES_BINDING, buffers.fades),
+                crate::tables::entry(crate::lod_rows::CULL_FAR_RULES_BINDING, buffers.far_rules),
             ],
         });
         let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor { label: Some("cull"), timestamp_writes: timestamps });

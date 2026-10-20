@@ -350,6 +350,11 @@ struct Layouts {
     frame: BindGroupLayout,
     shadow: BindGroupLayout,
     pass: BindGroupLayout,
+    /// The faded pipelines' group 1 (game systems LOD-18): the pass view and, at
+    /// [`PASS_FADE_GROWS_BINDING`], the instance fade table their vertices read the far-field grow
+    /// from, so no other pipeline's vertex stage sees it (the meshlet motion prepass holds all of
+    /// core's eight vertex storage buffers).
+    pass_fade: BindGroupLayout,
     lines: BindGroupLayout,
     /// The prepass's custom-geometry row (`prepass_draw`, group 1 binding 1, dynamic offset).
     prepass_draw: BindGroupLayout,
@@ -632,7 +637,7 @@ struct Upscale {
 /// regrown, a texture array grown), not every frame.
 #[derive(Clone, PartialEq)]
 struct GroupsKey {
-    buffers: [Buffer; 9],
+    buffers: [Buffer; 10],
     /// The shadow array, then every material texture array ([`Renderer::texture_views`]).
     views: (TextureView, [TextureView; 8]),
     /// The environment maps' generation (the neutral inputs until the bake replaces them).
@@ -1068,6 +1073,10 @@ pub fn frame_layout_entries() -> Vec<BindGroupLayoutEntry> {
     .chain(classes)
     // Renderer pass 2 B.9: the screen reflections, the stage's 16th sampled texture (D1).
     .chain([texture_entry(crate::screen_inputs::FRAME_REFLECTIONS_BINDING.0, color, wgpu::TextureViewDimension::D2)])
+    // Game systems LOD-04: the instance fade table, read by the faded fragments alone (the vertex
+    // stage's storage buffers stay as they were, the meshlet draw's 7 of 8 among them; the faded
+    // vertices read the far-field grow through their own group 1, LOD-18).
+    .chain([storage(crate::layout::FRAME_INSTANCE_FADE_BINDING.0, true, fragment)])
     .collect()
 }
 
@@ -1082,6 +1091,7 @@ fn shadow_layout_entries() -> Vec<BindGroupLayoutEntry> {
     entries.extend([storage(SHADOW_MASK_MATERIALS, true, fragment), storage(SHADOW_MASK_MATERIAL_EXT, true, fragment)]);
     entries.extend(SHADOW_MASK_COLOR_ARRAYS.map(|binding| texture_entry(binding, color, D2Array)));
     entries.push(sampler_entry(SHADOW_MASK_SAMPLER, wgpu::SamplerBindingType::Filtering));
+    entries.push(storage(SHADOW_INSTANCE_FADE, true, fragment));
     entries
 }
 
@@ -1091,6 +1101,13 @@ const SHADOW_MASK_MATERIALS: u32 = 4;
 const SHADOW_MASK_MATERIAL_EXT: u32 = 5;
 const SHADOW_MASK_COLOR_ARRAYS: [u32; 4] = [6, 7, 8, 9];
 const SHADOW_MASK_SAMPLER: u32 = 10;
+/// The sun casters' instance fade table (game systems LOD-04, `shaders/shadow.wgsl`): the frame
+/// layout's [`crate::layout::FRAME_INSTANCE_FADE_BINDING`], read by the faded casters' fragments.
+pub(crate) const SHADOW_INSTANCE_FADE: u32 = 11;
+/// The faded pipelines' group-1 binding of the instance fade table (game systems LOD-18,
+/// `lod_grows` in `shaders/forward.wgsl`, `prepass.wgsl` and `shadow.wgsl`): their vertices'
+/// far-field grows. Binding 1 of group 1 is the prepass's custom-geometry row.
+pub(crate) const PASS_FADE_GROWS_BINDING: u32 = 2;
 
 fn layouts(device: &Device) -> Layouts {
     let (vertex, fragment) = (ShaderStages::VERTEX, ShaderStages::FRAGMENT);
@@ -1099,6 +1116,7 @@ fn layouts(device: &Device) -> Layouts {
         frame: bind_group_layout(device, "frame", &frame),
         shadow: bind_group_layout(device, "shadow", &shadow_layout_entries()),
         pass: bind_group_layout(device, "pass view", &[uniform(0, true, vertex)]),
+        pass_fade: bind_group_layout(device, "pass view fade", &[uniform(0, true, vertex), storage(PASS_FADE_GROWS_BINDING, true, vertex)]),
         // The line fragment reads the frame's pre-exposure on the HDR scene.
         lines: bind_group_layout(device, "lines", &[uniform(0, false, vertex | fragment)]),
         prepass_draw: bind_group_layout(device, "prepass draw", &[uniform(1, true, vertex)]),
@@ -1881,6 +1899,8 @@ struct FrameGroups {
     frame: BindGroup,
     shadow: BindGroup,
     pass: BindGroup,
+    /// The faded pipelines' group 1: the pass views and the instance fade table (LOD-18).
+    pass_fade: BindGroup,
     lines: BindGroup,
 }
 
@@ -2456,7 +2476,7 @@ impl<'a> WorldNodes<'a> {
                     pass.set_bind_group(1, &groups.pass, &[0]);
                     let meshlets = self.prep.meshlets.as_ref().map(|meshlets| &meshlets.frame);
                     renderer.draw_batches(pass, plan, 0, self.counts(0), meshlets, &mut self.stats);
-                    renderer.draw_world_variants(pass, &groups.pass, plan, self.counts(0), &mut self.stats);
+                    renderer.draw_world_variants(pass, (&groups.pass, &groups.pass_fade), plan, self.counts(0), &mut self.stats);
                     if let Some(pipeline) = meshlets.and_then(|_| renderer.meshlet_opaque_pipeline())
                         && renderer.draw_meshlets(pass, &groups.frame, &groups.pass, 0, ArgsSlot::All, pipeline)
                     {
@@ -4073,7 +4093,7 @@ impl Renderer {
             // The world pass's statistics count its own draws; the prepass's repeat them.
             let meshlets = prep.meshlets.as_ref().map(|meshlets| &meshlets.frame);
             self.draw_batches(&mut pass, &prep.plan, 0, counts, meshlets, &mut FrameStats::default());
-            self.draw_prepass_variants(&mut pass, &prep.groups.pass, &prep.plan, counts, motion.is_some());
+            self.draw_prepass_variants(&mut pass, (&prep.groups.pass, &prep.groups.pass_fade), &prep.plan, counts, motion.is_some());
             // Pass 1's meshlets (every visible one without occlusion); node 8 adds pass 2's.
             if let (Some(_), Some(meshlet_pipelines)) = (meshlets, self.meshlet_pipelines()) {
                 let pipeline = self.meshlet_prepass_pipeline(meshlet_pipelines, &mut pass, prep);
@@ -4551,6 +4571,7 @@ impl Renderer {
             scratch: self.tables.cull_scratch.get(),
             lod_rows: self.tables.lod_rows.get(),
             fades: self.tables.instance_fade.get(),
+            far_rules: self.tables.far_rules.get(),
         };
         self.cull.encode(&self.device, encoder, &buffers, plan.visible_slots, plan.views, timestamps);
     }
@@ -5078,6 +5099,9 @@ impl Renderer {
                 t.light_ext.get().clone(),
                 t.light_bins.get().clone(),
                 t.material_ext.get().clone(),
+                // The faded draws' fade table (LOD-04, LOD-18): a frame whose twins grew it
+                // rebinds it.
+                t.instance_fade.get().clone(),
             ],
             views: (self.shadow_maps.array.clone(), self.texture_views()),
             environment: self.environment.borrow().generation(),
@@ -5173,6 +5197,7 @@ impl Renderer {
         }));
         let reflections_binding = crate::screen_inputs::FRAME_REFLECTIONS_BINDING.0;
         entries.push(wgpu::BindGroupEntry { binding: reflections_binding, resource: wgpu::BindingResource::TextureView(&reflections) });
+        entries.push(entry(crate::layout::FRAME_INSTANCE_FADE_BINDING.0, t.instance_fade.get()));
         let frame = self.device.create_bind_group(&wgpu::BindGroupDescriptor { label: Some("frame"), layout: &self.layouts.frame, entries: &entries });
         let color_classes = TextureClass::ALL.map(|class| self.textures.view(class, TextureKind::Color));
         let mut shadow_entries =
@@ -5182,6 +5207,7 @@ impl Renderer {
             SHADOW_MASK_COLOR_ARRAYS.into_iter().zip(color_classes).map(|(binding, view)| wgpu::BindGroupEntry { binding, resource: wgpu::BindingResource::TextureView(view) }),
         );
         shadow_entries.push(wgpu::BindGroupEntry { binding: SHADOW_MASK_SAMPLER, resource: wgpu::BindingResource::Sampler(&self.texture_sampler) });
+        shadow_entries.push(entry(SHADOW_INSTANCE_FADE, t.instance_fade.get()));
         let shadow = self.device.create_bind_group(&wgpu::BindGroupDescriptor { label: Some("shadow"), layout: &self.layouts.shadow, entries: &shadow_entries });
         let pass = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("pass view"),
@@ -5195,12 +5221,18 @@ impl Renderer {
                 }),
             }],
         });
+        let pass_view = wgpu::BindingResource::Buffer(wgpu::BufferBinding { buffer: t.pass_views.get(), offset: 0, size: wgpu::BufferSize::new(size_of::<GpuPassView>() as u64) });
+        let pass_fade = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("pass view fade"),
+            layout: &self.layouts.pass_fade,
+            entries: &[wgpu::BindGroupEntry { binding: 0, resource: pass_view }, entry(PASS_FADE_GROWS_BINDING, t.instance_fade.get())],
+        });
         let lines = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("lines"),
             layout: &self.layouts.lines,
             entries: &[entry(0, &self.frame_uniforms)],
         });
-        FrameGroups { frame, shadow, pass, lines }
+        FrameGroups { frame, shadow, pass, pass_fade, lines }
     }
 
     /// Below scale 1: the upscale pipeline (made once) and its bind group over the scene target
@@ -5306,7 +5338,7 @@ impl Renderer {
         plan.views = crate::spot_shadow::apply_views(&mut plan.frame, &mut plan.cull_views, cascades, &spots);
         plan.spot_shadows = spots;
         if self.spot_shadow.is_none() {
-            self.spot_shadow = Some(crate::spot_shadow::SpotShadowPipelines::new(&self.device, &self.layouts.pass, &mesh_buffers_layout())?);
+            self.spot_shadow = Some(crate::spot_shadow::SpotShadowPipelines::new(&self.device, (&self.layouts.pass, &self.layouts.pass_fade), &mesh_buffers_layout())?);
         }
         Ok(())
     }
@@ -5355,10 +5387,11 @@ impl Renderer {
             slot_base: t.slot_base.get(),
             light_ext: t.light_ext.get(),
         };
-        pass.set_pipeline(pipelines.pipeline(self.shadow_desc.format));
         pass.set_bind_group(0, &pipelines.bind_group(&self.device, &inputs), &[]);
         pass.set_index_buffer(self.meshes.indices.slice(..), wgpu::IndexFormat::Uint32);
         for (spot, counts) in plan.spot_shadows.iter().zip(counts) {
+            // Each spot starts on the plain casters (the previous spot ended on the faded ones).
+            pass.set_pipeline(pipelines.pipeline(self.shadow_desc.format));
             let (x, y, side) = crate::spot_shadow::tile_rect(spot.slot, self.shadow_desc.side);
             pass.set_viewport(x as f32, y as f32, side as f32, side as f32, 0.0, 1.0);
             pass.set_scissor_rect(x, y, side, side);
@@ -5366,7 +5399,7 @@ impl Renderer {
             pass.set_bind_group(1, &groups.pass, &[(u64::from(view) * PASS_VIEW_STRIDE) as u32]);
             // The meshlet path never covers a spot's view: its casters draw whole.
             self.draw_batches(&mut pass, plan, view, *counts, None, stats);
-            self.draw_spot_variants(&mut pass, &groups.pass, plan, view, *counts, stats);
+            self.draw_spot_variants(&mut pass, (&groups.pass, &groups.pass_fade), plan, view, *counts, stats);
         }
     }
 
@@ -5446,7 +5479,7 @@ impl Renderer {
         pass.set_index_buffer(self.meshes.indices.slice(..), wgpu::IndexFormat::Uint32);
         let meshlets = prep.meshlets.as_ref().map(|meshlets| &meshlets.frame);
         self.draw_batches(&mut pass, plan, view, counts, meshlets, stats);
-        self.draw_caster_variants(&mut pass, &groups.pass, (plan, view), self.shadow_desc.format, counts, stats);
+        self.draw_caster_variants(&mut pass, (&groups.pass, &groups.pass_fade), (plan, view), self.shadow_desc.format, counts, stats);
         let casters = self.meshlet_pipelines().map(|pipelines| if self.shadow_desc.format == ShadowFormat::Depth16.texture_format() { &pipelines.shadow16 } else { &pipelines.shadow });
         let caster_view = meshlets.is_some_and(|frame| view < frame.views);
         if let (true, Some(casters)) = (caster_view, casters)

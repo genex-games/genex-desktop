@@ -339,6 +339,32 @@ pub fn lod_row_keep(lod: [u32; 3], bounds: [f32; 4], origin: [f32; 4], view: [f3
     (level + 1 == band.level).then_some(WHOLE - band.share)
 }
 
+/// [`lod_row_keep`] with the instance's far field (game systems LOD-18): whether the cull keeps
+/// it in a batch, with its slot's `[fade, grow]`. A copy nearer than its far rule's start keeps
+/// [`lod_row_keep`]'s answer, grow 1. A thinned one (past the start) is dropped by every whole
+/// batch and drawn by its fade batches only: the level it is whole at with the far share as its
+/// fade, or its two crossfading levels with their fades times the far share; a share of 0 drops
+/// it everywhere. The cull's twin is `gx_cull_lod_fade` in `shaders/cull.wgsl`.
+pub fn lod_row_keep_far(lod: [u32; 3], bounds: [f32; 4], origin: [f32; 4], view: [f32; 4], (bias, beta): (f32, f32), far: crate::lod_rows::FarField) -> Option<[f32; 2]> {
+    if !far.thinned {
+        return lod_row_keep(lod, bounds, origin, view, bias, beta).map(|fade| [fade, WHOLE]);
+    }
+    let fade_batch = lod[0] & LOD_TAG != 0 && lod[0] & LOD_FADE_TAG != 0;
+    if !fade_batch || far.share.is_nan() || far.share <= 0.0 {
+        return None;
+    }
+    let level = lod[0] & LOD_LEVEL_MASK;
+    let band = instance_band(lod, bounds, origin, view, bias, beta);
+    let fade = if band.share >= WHOLE {
+        (level == band.level).then_some(far.share)
+    } else if level == band.level {
+        Some(-band.share * far.share)
+    } else {
+        (level + 1 == band.level).then_some((WHOLE - band.share) * far.share)
+    };
+    fade.map(|fade| [fade, far.grow])
+}
+
 /// The LOD row (`GpuBatch::lod`) of a batch drawing level `level` (0 the mesh itself) of a chain
 /// whose levels have `errors` (object space, at most [`LOD_MAX_LEVELS`]) on a mesh of bounding
 /// radius `radius`: x the tag (the batch's level and the chain's length), y and z the errors
