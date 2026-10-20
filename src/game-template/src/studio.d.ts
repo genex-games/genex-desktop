@@ -248,6 +248,11 @@ export interface StudioState {
   player: PlayerPose | null;
   /** Present only when the game passed `config.flow`: the screen it is on, and whether that is play. */
   flow?: GameFlow;
+  /**
+   * Present only when the game started `genex-ai` (`createAi`): its `ai.status()` — `AiStatus` in
+   * `src/ai.d.ts`, left loose here so this file compiles in a game that never declares genex-ai.
+   */
+  ai?: Readonly<Record<string, unknown>>;
   [probe: string]: unknown;
 }
 

@@ -3,6 +3,18 @@
 You are building inside AI Game Studio. Below the upstream marker is Genex's card on calling a
 model from a running game, unchanged. Where it disagrees with this preface, this preface wins.
 
+## In a Studio game: `genex-ai`
+
+- Write a game's model calls with `genex-ai` (`docs/AI.md` in the game): `createAi`, `ai.ask`,
+  `ai.say`, `ai.judge`, `ai.act`, answers through `ai.drain()`. Never call the SDK's `generate`,
+  `generateStream`, `judge` or `requestSpendGrant` yourself: on genex.games `genex-ai` makes those
+  calls (and inside Genex Desktop's Play the SDK asks the app to approve, with no popup); everywhere
+  else it answers from the person's own models or a saved playtest.
+- On boot, `await ai.activeBudget()`: it reuses the player's running grant (`getActiveSpendGrant()`),
+  so a reload never asks again. `ai.requestBudget()` belongs in a click or key handler only.
+- The bench's `--max-coins` figure is in Genex credits: pass it as the call's `maxCredits`, or as
+  `createAi({ platform: { maxCredits } })` for every call.
+
 ## Commands, as Studio tools
 
 - `npx genex llm models`, `llm status` and `llm cancel <id>`: `genex__cli`, for example

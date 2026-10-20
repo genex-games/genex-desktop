@@ -3069,6 +3069,16 @@ Genex:
 - A game using `@genex-ai/embed-sdk` is previewed with `?genex_local_test=1`. A template game whose
   page loads Studio's copy (`/vendor/genex/`, `pageLoadsGenexSdk` in `shared/genex-page.ts`) is
   previewed on its loopback origin, where the SDK runs in local test mode without the query.
+- Play-time AI in a game is `genex-ai` ([`src/page/ai/`](../src/page/ai/)), bundled by
+  `scripts/genex-ai-bundle.mjs` into `vendor/genex/ai/index.js` (`GENEX_AI_VENDOR`) and mapped by
+  the template's import map (`GENEX_AI_IMPORT`); the export carries it like any vendored file. It
+  imports nothing: the connect module (`connect.js`, the preview's and a published copy's) puts the
+  SDK it connected on `window.__genexEmbedSdk` (`GENEX_EMBED_SDK_GLOBAL`), and `genex-ai`'s platform
+  lane calls that very copy, so on genex.games and in Play it calls Genex as the page's player. A game
+  that bundles its own SDK passes it as `createAi({ platform: { sdk } })`. Which lane answers
+  (`shared/game-ai-lane.ts`: off, a saved playtest, mock values, main's Create route or Play bridge,
+  genex.games) and every failure code are in the template's `docs/AI.md`; `studio.js` copies
+  `ai.status()` into `state().ai` and resets it on `seed()`.
 - `tools[].host` (API 3, id `genex`, source `bundled`, else refused before any hook runs) names a
   program Studio runs for the tool through the registry's `hostTool` hook. `genex-cli` backs
   `genex__cli` and `genex-cli-paid` backs `genex__cli-paid`: Studio's pinned CLI runs in

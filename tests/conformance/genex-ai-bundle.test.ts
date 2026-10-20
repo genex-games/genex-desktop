@@ -14,7 +14,7 @@ import { build, type Metafile } from "esbuild";
 import { genexAiBundle } from "../../scripts/genex-ai-bundle.mjs";
 import { AiErrorCode } from "../../src/shared/game-ai.ts";
 import { GENEX_AI_STUDIO_GLOBAL } from "../../src/shared/game-ai-lane.ts";
-import { GENEX_AI_VENDOR } from "../../src/shared/genex.ts";
+import { GENEX_AI_IMPORT, GENEX_AI_SPECIFIER, GENEX_AI_VENDOR } from "../../src/shared/genex.ts";
 import { tmpDir } from "../helpers/tmp.ts";
 
 /** The most the bundle may weigh, gzipped (plan: the SDK is at most 25 KB gzip). */
@@ -55,5 +55,16 @@ describe("the genex-ai bundle", () => {
     const handle = Reflect.get(globalThis, GENEX_AI_STUDIO_GLOBAL);
     assert.equal(typeof handle?.status, "function");
     assert.equal(typeof handle?.reset, "function");
+  });
+});
+
+describe("the template's import map", () => {
+  it("maps genex-ai to the very file the build writes", async () => {
+    const page = await readFile(path.resolve("src/game-template/index.html"), "utf8");
+    const [, body = ""] = /<script type="importmap">([\s\S]*?)<\/script>/.exec(page) ?? [];
+    const imports = JSON.parse(body).imports as Record<string, string>;
+    assert.equal(imports[GENEX_AI_SPECIFIER], GENEX_AI_IMPORT[GENEX_AI_SPECIFIER]);
+    const served = imports[GENEX_AI_SPECIFIER] ?? "";
+    assert.equal(path.join(outRoot, served), file, "the served URL is the bundle's place under the vendor folder");
   });
 });

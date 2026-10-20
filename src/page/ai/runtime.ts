@@ -29,7 +29,15 @@ import type { AiLane } from "../../shared/game-ai-lane.ts";
 import { validateValue } from "../../shared/game-ai-schema.ts";
 import { callKeyInput } from "../../shared/game-ai-tape.ts";
 import { COMPACT_PROMPT, COMPACT_ROLE } from "./compile-prompts.ts";
-import { type Compiled, type CompiledCall, compileAct, compileAsk, compileJudge, compileSay } from "./compile.ts";
+import {
+  type Compiled,
+  type CompileContext,
+  type CompiledCall,
+  compileAct,
+  compileAsk,
+  compileJudge,
+  compileSay,
+} from "./compile.ts";
 import { inbox } from "./inbox.ts";
 import { type AiMemory, type AiMemoryLine, applyCompaction, createMemory, keepOf, MEMORY_NAME_RE } from "./memory.ts";
 import { type Lane, type LaneOpened, type LaneReply, refusedReply } from "./lanes/lane.ts";
@@ -511,11 +519,26 @@ const compileContext = (rt: Runtime) => ({
 const wireGrantId = (grantId: string | null): string =>
   grantId !== null && AI_ID_RE.test(grantId) ? grantId : UNGRANTED_ID;
 
-/** A request's fallback, read without running a getter twice. */
-const fallbackOf = (request: unknown): unknown =>
-  typeof request === "object" && request !== null ? Reflect.get(request, "fallback") : undefined;
-const siteOf = (request: unknown): unknown =>
-  typeof request === "object" && request !== null ? Reflect.get(request, "site") : undefined;
+/**
+ * A game's request read once into plain fields: every getter runs once, and a request that throws
+ * while it is read (a proxy, a throwing getter) reads as empty, which compiles to `bad_request`.
+ */
+function fieldsOf(request: unknown): Record<string, unknown> {
+  if (typeof request !== "object" || request === null) return {};
+  try {
+    return { ...request };
+  } catch {
+    return {};
+  }
+}
+
+/** The compilers, by op. */
+const COMPILE = {
+  [AiOp.Ask]: compileAsk,
+  [AiOp.Say]: compileSay,
+  [AiOp.Judge]: compileJudge,
+  [AiOp.Act]: compileAct,
+} as const satisfies Record<AiOp, (fields: Record<string, unknown>, context: CompileContext) => Compiled>;
 
 /** The game's AI over `deps`: lanes, gesture and registration. */
 export function createRuntime(options: CreateAiOptions | undefined, deps: RuntimeDeps): GameAi {
@@ -546,16 +569,17 @@ export function createRuntime(options: CreateAiOptions | undefined, deps: Runtim
   };
   rt.opening = open(rt);
   deps.register({ status: () => status(rt), reset: (seed) => reset(rt, seed) });
-  const start = <T>(op: AiOp, compiled: Compiled, request: unknown): AiTicket<T> =>
-    ticketOf<T>(rt, issue(rt, op, compiled, siteOf(request), fallbackOf(request)));
-  const objectOf = (request: unknown): Record<string, unknown> =>
-    typeof request === "object" && request !== null ? { ...request } : { site: undefined };
+  const start = <T>(op: AiOp, request: unknown): AiTicket<T> => {
+    const fields = fieldsOf(request);
+    const compiled = COMPILE[op](fields, compileContext(rt));
+    return ticketOf<T>(rt, issue(rt, op, compiled, fields.site, fields.fallback));
+  };
   return {
     ready: () => rt.opening,
-    ask: (request) => start(AiOp.Ask, compileAsk(objectOf(request), compileContext(rt)), request),
-    say: (request) => start(AiOp.Say, compileSay(objectOf(request), compileContext(rt)), request),
-    judge: (request) => start(AiOp.Judge, compileJudge(objectOf(request), compileContext(rt)), request),
-    act: (request) => start(AiOp.Act, compileAct(objectOf(request), compileContext(rt)), request),
+    ask: (request) => start(AiOp.Ask, request),
+    say: (request) => start(AiOp.Say, request),
+    judge: (request) => start(AiOp.Judge, request),
+    act: (request) => start(AiOp.Act, request),
     memory: (name, memoryOptions) => memoryOf(rt, name, memoryOptions?.keep),
     drain: () => drain(rt),
     async activeBudget() {

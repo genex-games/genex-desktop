@@ -22,6 +22,12 @@ game's controls and viewpoints, replace `phase: "empty"`. Five rules; tables in 
    registry: load their returned files and verify use in the preview. A flat colour with no map is
    a defect; a sphere canopy a `[blob]`; a box for a gun a `[primitive]`.
 
+A game that asks a model while it is played uses `genex-ai` only (`docs/AI.md`): answers are data
+applied in `update()` from `ai.drain()`, clamped by your own code; never fetch an AI vendor or ship a
+key; every call has a `site`, a bounded schema and the player's words in `untrusted`; declare
+`requires`, give a fallback wherever the game can go on without the answer, ask for AI only in a click
+or key handler, ship a saved playtest per AI demo, and draw `ai.disclosure()`.
+
 Three lessons every facet re-learned: non-owner facets touch `src/main.js` only inside the `FACET
 WIRING` block (one import, one init line — the harness union-merges it, anything else conflicts);
 before re-tuning lighting or fog, capture what the base already draws; and a check that cannot pass

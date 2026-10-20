@@ -293,6 +293,30 @@ describe("the game's own calls", () => {
     assert.equal(seen.length, before);
   });
 
+  it("refuses a request that cannot be read (a throwing getter, a proxy, no object) as bad_request, and never throws", async () => {
+    const { ai } = aiOn(offLane());
+    await ai.ready();
+    const throwing = Object.defineProperty({}, "site", {
+      enumerable: true,
+      get() {
+        throw new Error("boom");
+      },
+    });
+    const trap = new Proxy(
+      {},
+      {
+        ownKeys: () => {
+          throw new Error("trap");
+        },
+      },
+    );
+    for (const request of [throwing, trap, null, 7]) ai.ask(request as never);
+    assert.deepEqual(
+      ai.drain().map((result) => result.code),
+      [AiErrorCode.BadRequest, AiErrorCode.BadRequest, AiErrorCode.BadRequest, AiErrorCode.BadRequest],
+    );
+  });
+
   it("refuses a grant asked for outside a click or key, and counts it", async () => {
     const { ai, gesture } = aiOn(tapeLane(AiLane.Tape).lane);
     await ai.ready();
