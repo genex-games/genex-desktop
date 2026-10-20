@@ -97,6 +97,7 @@ import {
   recordsShape,
   webGameSignal,
 } from "./project-shape.ts";
+import { renderDumpRules } from "./render-dumps.ts";
 import { ensureRepo } from "./snapshots.ts";
 import { workspaceContentStamp } from "./workspace-content.ts";
 
@@ -1148,11 +1149,12 @@ export class GameWorkspaces {
    * checkpoints): tops up its `.gitignore` with the lines of the facts it holds now, so a port never
    * sweeps the new engine's scratch into history, and answers the placed rules. Only the facts'
    * lines: the generic rules and the file itself were written when the folder was opened, and a
-   * person who changed them since keeps their change. A file already in history stays there; a
-   * linked or missing ignore file is left alone.
+   * person who changed them since keeps their change. The frames a video was rendered from join
+   * them (`renderDumpRules`), so no commit copies them into history. A file already in history
+   * stays there; a linked or missing ignore file is left alone.
    */
   async ensureWorkspaceRules(dir: string): Promise<PlacedRule[]> {
-    const rules = await this.#ignoreRules(dir);
+    const rules = [...(await this.#ignoreRules(dir)), ...(await renderDumpRules(dir))];
     await ensureFactIgnoreRules(dir, rules.map(ignoreLine));
     return rules;
   }
