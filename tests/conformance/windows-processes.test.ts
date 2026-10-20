@@ -3,6 +3,7 @@
  * plugins that find an editor by the project its arguments name. PowerShell is a stand-in here.
  */
 import assert from "node:assert/strict";
+import path from "node:path";
 import { describe, it } from "node:test";
 import { endEditors, windowsEditors } from "../../src/plugins/unity/processes.ts";
 import { windowsArgv, windowsProcesses, windowsProcessRows } from "../../src/substrate/windows-processes.ts";
@@ -86,6 +87,18 @@ describe("listing Windows' processes", () => {
     assert.deepEqual(await windowsProcesses(hostile, { run }), []);
     assert.equal(ran, 0);
   });
+
+  it(
+    "finds this test's own Node with its command line on a real Windows",
+    { skip: process.platform !== "win32" && "Windows PowerShell and WMI are Windows'" },
+    async () => {
+      const rows = await windowsProcesses([path.win32.basename(process.execPath)]);
+      const own = rows?.find((row) => row.pid === process.pid);
+      assert.ok(own, `this process (${process.pid}) is listed: ${JSON.stringify(rows)}`);
+      assert.equal(own.exec.toLowerCase(), process.execPath.toLowerCase());
+      assert.ok(own.args.startsWith(own.exec), own.args);
+    },
+  );
 
   it("answers null when PowerShell fails, so a caller can fall back", async () => {
     const failing = async () => {
