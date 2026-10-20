@@ -1,0 +1,25 @@
+[package]
+name = "genex-input"
+description = "Input actions for genex games: action ids, bindings, contexts, conditions and modifiers evaluated in ticks, touch controls, rebinding, the input journal and prompts."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+# The rebinding panel draws with egui; without `panel` this crate takes no UI dependency.
+[features]
+default = []
+panel = ["dep:egui"]
+
+[dependencies]
+# serde_json for bindings files and the runtime key, postcard for the journal's records, libm for
+# the stick math; all already locked (no new vendored crate).
+serde_json = { workspace = true }
+postcard = { workspace = true }
+libm = { workspace = true }
+egui = { workspace = true, optional = true }
