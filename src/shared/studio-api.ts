@@ -43,6 +43,8 @@ import type { AppAbout, ReadyUpdate, UpdateCheckResult } from "./app-update.ts";
 import type { PermissionMode, PermissionSettingsView, ToolPermissionAnswer } from "./permissions.ts";
 import type { LiveBehindEvent } from "./live-behind.ts";
 import type { NativeEmbedSize, NativeFrameMeta, NativeInputActions, NativeRunStatus } from "./native-contract.ts";
+import type { GameCrashesAnswer, GameCrashesUnavailable } from "./crash-record.ts";
+import type { FrameProfileAnswer, FrameProfileRequest } from "./frame-profile.ts";
 import type {
   AndroidLicence,
   MobileBuildTarget,
@@ -648,6 +650,14 @@ export interface StudioApi {
    * ended, which is also recorded as a `device_launch` event.
    */
   nativeLaunchDevice(project: string, request: DeviceLaunchRequest): Promise<DeviceLaunchResult>;
+  /**
+   * The frame profile of the game's run Live shows (`shared/frame-profile.ts`): its summary, a
+   * report, arming per-node GPU timing or a trace; `{state: "unavailable", reason}` when no run has
+   * one to give.
+   */
+  nativeProfile(project: string, request: FrameProfileRequest): Promise<FrameProfileAnswer>;
+  /** The game's kept crash records, newest first (`shared/crash-record.ts`); unavailable until the host keeps them. */
+  gameCrashes(project: string): Promise<GameCrashesAnswer | GameCrashesUnavailable>;
   /**
    * Re-take the seed copy of one harness module the agent kept from before Rust games, keeping its
    * edit as a patch; `module` is the workspace-relative path a refused night named.

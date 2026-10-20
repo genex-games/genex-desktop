@@ -301,6 +301,8 @@ export const NativeOp = {
   BakeAssets: "bakeAssets",
   /** Swap named asset files in a running dev game (`{files: [{path, digest}]}`) without a rebuild. */
   ReloadAssets: "reloadAssets",
+  /** Read a dev game's frame profile (`{action, frames?, mode?}`): summary, report, arm or trace. */
+  Profile: "profile",
 } as const;
 export type NativeOp = (typeof NativeOp)[keyof typeof NativeOp];
 
@@ -358,8 +360,22 @@ export const NativeEvent = {
   Frame: "frame",
   DeviceRestored: "device-restored",
   Starting: "starting",
+  /** The game crashed and sends its `genex-crash/1` record (before `ready` too). */
+  Crash: "crash",
 } as const;
 export type NativeEvent = (typeof NativeEvent)[keyof typeof NativeEvent];
+
+/** What a `profile` request asks for. Wire values: never rename one. */
+export const FrameProfileAction = { Summary: "summary", Report: "report", Arm: "arm", Trace: "trace" } as const;
+export type FrameProfileAction = (typeof FrameProfileAction)[keyof typeof FrameProfileAction];
+
+/** How a game times its GPU: the whole frame, or each frame-graph node while armed. Wire values. */
+export const GpuTimingMode = { Frame: "frame", Nodes: "nodes" } as const;
+export type GpuTimingMode = (typeof GpuTimingMode)[keyof typeof GpuTimingMode];
+
+/** The profile summary's and report's format numbers (their `v`). */
+const PROFILE_SUMMARY_VERSION = 1;
+const PROFILE_REPORT_VERSION = 2;
 
 /** How a native run is shown. Never rename a value. */
 export const NativeRunMode = {
@@ -377,6 +393,16 @@ export const NativeInputKind = {
   Touch: "touch",
 } as const;
 export type NativeInputKind = (typeof NativeInputKind)[keyof typeof NativeInputKind];
+
+/** Which kind of pad a `gamepad` action stands for: display only (button labels). Wire values. */
+export const NativeGamepadFamily = {
+  Generic: "generic",
+  Xbox: "xbox",
+  PlayStation: "playstation",
+  Nintendo: "nintendo",
+  Steam: "steam",
+} as const;
+export type NativeGamepadFamily = (typeof NativeGamepadFamily)[keyof typeof NativeGamepadFamily];
 
 /** The graphics path a native game reports in `ready`. Wire values. */
 export const NativeBackend = {
@@ -708,6 +734,8 @@ export interface NativeGamepadAction {
   index: number;
   buttons: readonly number[];
   axes: readonly number[];
+  /** The kind of pad, for its labels; absent reads as generic. */
+  family?: NativeGamepadFamily;
 }
 
 /** Committed text. */
@@ -791,6 +819,7 @@ export interface NativeOpArgs {
   [NativeOp.RenderSettings]: { set?: RenderSettingsChange };
   [NativeOp.BakeAssets]: { kind: BakeKind; name: string };
   [NativeOp.ReloadAssets]: { files: NativeReloadFile[] };
+  [NativeOp.Profile]: { action: FrameProfileAction; frames?: number; mode?: GpuTimingMode };
 }
 
 /** Per-op results, as the host checks every reply against them. Fields beyond these are ignored. */
@@ -818,6 +847,8 @@ export interface NativeOpResults {
   [NativeOp.RenderSettings]: RenderSettingsAnswer;
   [NativeOp.BakeAssets]: NativeBakeReply;
   [NativeOp.ReloadAssets]: NativeReloadAnswer;
+  /** Checked by shape only (summary `v: 1`, report `v: 2`, `{mode}` or `{bytes, digest}`); read it field by field. */
+  [NativeOp.Profile]: Record<string, unknown>;
 }
 
 /** Names a list answer may carry, and how long each may be. */
@@ -899,6 +930,14 @@ const isReloadAnswer = (value: unknown): boolean =>
   value.refused.length <= NATIVE_RELOAD_FILES_MAX &&
   value.refused.every(isReloadRefused) &&
   isCount(value.pending);
+/** A profile summary, report, arm or trace answer, by shape. */
+const isProfileReply = (value: unknown): boolean => {
+  if (!isRecord(value)) return false;
+  if (value.v === PROFILE_SUMMARY_VERSION) return typeof value.on === "boolean" && isCount(value.frames);
+  if (value.v === PROFILE_REPORT_VERSION) return Array.isArray(value.frames) && typeof value.truncated === "boolean";
+  if (Object.hasOwn(value, "mode")) return isOneOf(GpuTimingMode, value.mode);
+  return isCount(value.bytes) && typeof value.digest === "string" && DIGEST.test(value.digest);
+};
 
 /** One validator per op. */
 const RESULT_CHECKS: { readonly [K in keyof NativeOpResults]: (value: unknown) => boolean } = {
@@ -952,6 +991,7 @@ const RESULT_CHECKS: { readonly [K in keyof NativeOpResults]: (value: unknown) =
   [NativeOp.RenderSettings]: isRenderSettingsAnswer,
   [NativeOp.BakeAssets]: isBakeReply,
   [NativeOp.ReloadAssets]: isReloadAnswer,
+  [NativeOp.Profile]: isProfileReply,
 };
 
 const LIFECYCLES: ReadonlySet<string> = new Set<NativeLifecycle>(Object.values(NativeLifecycle));

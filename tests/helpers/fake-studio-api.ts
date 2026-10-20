@@ -207,6 +207,8 @@ const METHODS = [
   "nativeResize",
   "nativeFrames",
   "nativeLaunchDevice",
+  "nativeProfile",
+  "gameCrashes",
   "retakeSeedModule",
   "cratesList",
   "cratesDecide",
@@ -350,6 +352,9 @@ function defaults(): Partial<Record<StudioMethod, () => unknown>> {
     nativeUnembed: () => false,
     nativeInput: () => false,
     nativeResize: () => false,
+    // No run has a profile to give, and the host keeps no crash records yet.
+    nativeProfile: () => ({ state: "unavailable", reason: "no-run" }),
+    gameCrashes: () => ({ state: "unavailable", reason: "not-served" }),
     // No agent asked for a crate.
     cratesList: empty,
     cliUpdate: () => ({ provider: "codex", phase: "installed", startedAt: "" }),

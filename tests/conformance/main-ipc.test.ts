@@ -886,6 +886,61 @@ function nativeStatus(project: string, state: NativeRunState, extra: Partial<Nat
 
 const NATIVE_CHANNELS = ["studio:native.run", "studio:native.stop", "studio:native.state", "studio:native.front"];
 
+describe("a game's frame profile and crash records over IPC (PROF-0c)", () => {
+  const PROFILE_AND_CRASHES = ["studio:native.profile", "studio:game.crashes"];
+
+  it("answers unavailable until the host reads profiles and keeps crash records, in a fixture too", async () => {
+    const running = nativeStatus("pong-mac", NativeRunState.Ready);
+    for (const fixture of [false, true]) {
+      const live = await nativeIpc({ fixture, running });
+      assert.deepEqual(await live.invoke("studio:game.crashes", { project: "pong-mac" }), {
+        ok: true,
+        value: { state: "unavailable", reason: "not-served" },
+      });
+      assert.deepEqual(
+        await live.invoke("studio:native.profile", { project: "pong-mac", request: { action: "summary" } }),
+        {
+          ok: true,
+          value: { state: "unavailable", reason: "not-served" },
+        },
+      );
+      const idle = await nativeIpc({ fixture });
+      assert.deepEqual(
+        await idle.invoke("studio:native.profile", { project: "pong-mac", request: { action: "report", frames: 120 } }),
+        {
+          ok: true,
+          value: { state: "unavailable", reason: "no-run" },
+        },
+      );
+    }
+  });
+
+  it("refuses a request outside the profile's shape, and a name that is not a listed game, writing nothing", async () => {
+    const { invoke, asked, root } = await nativeIpc({ running: nativeStatus("pong-mac", NativeRunState.Ready) });
+    const before = await readdir(root, { recursive: true });
+    for (const request of [
+      undefined,
+      null,
+      {},
+      { action: "flame" },
+      { action: "report", frames: 241 },
+      { action: "arm", mode: "all" },
+    ]) {
+      const reply = await invoke("studio:native.profile", { project: "pong-mac", request });
+      assert.equal(reply.ok, false, JSON.stringify(request));
+    }
+    for (const channel of PROFILE_AND_CRASHES)
+      for (const project of ["", "../x", "pong-mac/../../x", "p".repeat(10 * 1024), "pong-pc", ["pong-mac"], null, 7])
+        assert.equal(
+          (await invoke(channel, { project, request: { action: "summary" } })).ok,
+          false,
+          `${channel} ${String(project).slice(0, 20)}`,
+        );
+    assert.deepEqual(asked, [], "the registry was never asked");
+    assert.deepEqual(await readdir(root, { recursive: true }), before, "nothing was written");
+  });
+});
+
 describe("a C++ game's own window over IPC", () => {
   it("Play on Mac starts the game's Mac build in a window and answers its status", async () => {
     const { invoke, asked } = await nativeIpc();

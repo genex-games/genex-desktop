@@ -1739,6 +1739,143 @@ export interface ProfileBegin {
 export type ProfileRequest = ProfileBegin | { action: "read" | "end" | "start"; sessionId: string };
 // ↑ src/shared/optimization.ts
 
+export type FrameProfileAction = 'summary' | 'report' | 'arm' | 'trace';
+// ↑ src/shared/frame-profile.ts
+
+export type GpuTimingMode = 'frame' | 'nodes';
+// ↑ src/shared/frame-profile.ts
+
+/** A `profile` request: the action, the report's frames and the arm's mode. */
+export interface FrameProfileRequest {
+  action: FrameProfileAction;
+  frames?: number;
+  mode?: GpuTimingMode;
+}
+// ↑ src/shared/frame-profile.ts
+
+/** A frame-time distribution, in milliseconds. */
+export interface ProfilePercentiles {
+  p50: number;
+  p95: number;
+}
+// ↑ src/shared/frame-profile.ts
+
+export type GpuTimeSource = 'timestamps' | 'timestamps-quantized' | 'submit-latency' | 'none';
+// ↑ src/shared/frame-profile.ts
+
+/** One memory row: a GPU budget kind, a CPU memory class or a process measure, in bytes. */
+export interface ProfileMemoryRow {
+  class: string;
+  bytes: number;
+  budget?: number;
+}
+// ↑ src/shared/frame-profile.ts
+
+export type NodeTimingState = 'off' | 'armed';
+// ↑ src/shared/frame-profile.ts
+
+/** `state().volatile.profile`: the last frames' summary (at most 4 KiB). */
+export interface ProfileSummaryV1 {
+  v: 1;
+  /** Scopes are recorded (off in exports, where cpu and gpu still come from the frame timers). */
+  on: boolean;
+  frames: number;
+  cpu: ProfilePercentiles;
+  gpu: (ProfilePercentiles & { source: GpuTimeSource }) | null;
+  top: Array<{ scope: string; game: boolean; p95: number }>;
+  counters: Record<string, number>;
+  memory: ProfileMemoryRow[];
+  hitches: { count: number; last: number | null };
+  nodes: NodeTimingState;
+  dropped: { scopes: number; counters: number; frames: number };
+}
+// ↑ src/shared/frame-profile.ts
+
+/** One timed scope of a report frame, microseconds from the frame's start. */
+export interface ProfileScope {
+  scope: string;
+  game: boolean;
+  depth: number;
+  startUs: number;
+  us: number;
+}
+// ↑ src/shared/frame-profile.ts
+
+/** One frame of a report. */
+export interface ProfileFrame {
+  index: number;
+  cpuMs: number;
+  gpuMs: number | null;
+  intervalMs: number;
+  scopes: ProfileScope[];
+  /** Per-node GPU time while armed: the frame graph row's wire name, or `world`. */
+  gpu: Array<{ node: string; ms: number }>;
+}
+// ↑ src/shared/frame-profile.ts
+
+export type HitchCause = 'cpu' | 'gpu' | 'pacing';
+// ↑ src/shared/frame-profile.ts
+
+/** One kept hitch: the frame, why, the line it crossed and its heaviest scopes. */
+export interface ProfileHitch {
+  frame: number;
+  cause: HitchCause;
+  thresholdMs: number;
+  top: Array<{ scope: string; us: number }>;
+}
+// ↑ src/shared/frame-profile.ts
+
+/** What the dev op `profile` answers for `report` (at most 256 KiB). */
+export interface ProfileReportV2 {
+  v: 2;
+  engine: string;
+  destination: string;
+  deviceClass: string;
+  frames: ProfileFrame[];
+  hitches: ProfileHitch[];
+  memory: ProfileMemoryRow[];
+  counters: Record<string, number>;
+  gpuSource: GpuTimeSource;
+  truncated: boolean;
+}
+// ↑ src/shared/frame-profile.ts
+
+/** What `arm` answers: the mode now in force. */
+export interface ProfileArmAnswer {
+  mode: GpuTimingMode;
+}
+// ↑ src/shared/frame-profile.ts
+
+/** What `trace` answers: the trace file's size and FNV-1a 64 digest. */
+export interface ProfileTraceAnswer {
+  bytes: number;
+  digest: string;
+}
+// ↑ src/shared/frame-profile.ts
+
+/** What each action answers, by action. */
+export interface ProfileAnswers {
+  [FrameProfileAction.Summary]: ProfileSummaryV1;
+  [FrameProfileAction.Report]: ProfileReportV2;
+  [FrameProfileAction.Arm]: ProfileArmAnswer;
+  [FrameProfileAction.Trace]: ProfileTraceAnswer;
+}
+// ↑ src/shared/frame-profile.ts
+
+export type ProfileUnavailableReason = 'not-served' | 'no-run' | 'unknown-op';
+// ↑ src/shared/frame-profile.ts
+
+/** What the host answers when it has no profile. */
+export interface ProfileUnavailable {
+  state: "unavailable";
+  reason: ProfileUnavailableReason;
+}
+// ↑ src/shared/frame-profile.ts
+
+/** What `preview.frameProfile` and `studio:native.profile` answer. */
+export type FrameProfileAnswer = ProfileAnswers[FrameProfileAction] | ProfileUnavailable;
+// ↑ src/shared/frame-profile.ts
+
 export type CaptureSurface = 'canvas' | 'page' | 'auto';
 // ↑ src/shared/preview-contract.ts
 
@@ -1888,7 +2025,7 @@ export interface PreviewPortStatus {
 }
 // ↑ src/shared/preview-contract.ts
 
-export type ReadyVia = 'shim' | 'contract' | 'none';
+export type ReadyVia = 'none' | 'shim' | 'contract';
 // ↑ src/shared/preview-contract.ts
 
 export type ReadyPhase = 'ready' | 'failed' | 'boot' | 'unknown';
@@ -2098,7 +2235,7 @@ export interface NativeCapabilityReceipt {
 export type GameBoxProblem = 'launcher-missing' | 'bubblewrap-missing' | 'userns-restricted' | 'x11-only' | 'no-wayland' | 'wayland-unrestricted' | 'no-headless-build' | 'box-refused' | 'wayland-helper-missing';
 // ↑ src/shared/native-contract.ts
 
-export type BootStage = 'ready' | 'wasm' | 'assets' | 'device' | 'pipelines' | 'frame';
+export type BootStage = 'ready' | 'frame' | 'wasm' | 'assets' | 'device' | 'pipelines';
 // ↑ src/shared/native-contract.ts
 
 /** Where a starting game's boot is: its stage and, where counted, `done` of `total` (null when not counted). */
@@ -2108,6 +2245,9 @@ export interface NativeBootProgress {
   total: number | null;
 }
 // ↑ src/shared/native-contract.ts
+
+export type CrashKind = 'device-lost' | 'panic' | 'gpu-validation' | 'wasm-trap' | 'native-fault' | 'out-of-memory' | 'hang' | 'process-exit';
+// ↑ src/shared/crash-record.ts
 
 /** What a run looks like to the renderer, the harness and `studio:native.state`. */
 export interface NativeRunStatus {
@@ -2131,10 +2271,145 @@ export interface NativeRunStatus {
   owner: string | null;
   /** Where a starting game's boot is (its last `starting` that named a stage); absent or null otherwise. */
   progress?: NativeBootProgress | null;
+  /** The crash record the host kept for this run (`game.crashes` names it); absent or null when none. */
+  crash?: { crashId: string; kind: CrashKind } | null;
   startedAt: string;
   endedAt: string | null;
 }
 // ↑ src/shared/native-contract.ts
+
+export type CrashSource = 'game' | 'shell' | 'platform' | 'host';
+// ↑ src/shared/crash-record.ts
+
+/** Where in the source the crash happened. */
+export interface CrashLocation {
+  file: string;
+  line: number;
+  column: number;
+}
+// ↑ src/shared/crash-record.ts
+
+/** One stack frame: a runtime address (`0x…`), or an offset into a named debug image (platform records). */
+export type CrashFrame = { ip: string } | { image: number; offset: string };
+// ↑ src/shared/crash-record.ts
+
+/** A debug image a platform record's frames point into (a MetricKit binary UUID, an Android build id). */
+export interface CrashImage {
+  name: string;
+  id: string;
+}
+// ↑ src/shared/crash-record.ts
+
+export type GpuErrorClass = 'out-of-memory' | 'validation' | 'internal';
+// ↑ src/shared/crash-record.ts
+
+/** The GPU's side of a `gpu-validation` or `device-lost` record. */
+export interface CrashGpu {
+  class: GpuErrorClass | null;
+  reason: string | null;
+  description: string;
+  backend: string | null;
+  adapter: string | null;
+}
+// ↑ src/shared/crash-record.ts
+
+export type WasmTrap = 'unreachable' | 'memory' | 'stack' | 'other';
+// ↑ src/shared/crash-record.ts
+
+/** A web trap's side: what trapped and the engine's `wasm-function[N]:0xOFF` frames. */
+export interface CrashWasm {
+  trap: WasmTrap;
+  stack: Array<{ func: number; offset: number }>;
+}
+// ↑ src/shared/crash-record.ts
+
+export type CrashFlavour = 'dev' | 'export';
+// ↑ src/shared/crash-record.ts
+
+/** Where the game was: every field the writer knew. */
+export interface CrashContext {
+  seed?: number;
+  tick?: number;
+  frame?: number;
+  simulatedMs?: number;
+  running?: boolean;
+  destination?: string;
+  flavour?: CrashFlavour;
+  build?: string;
+  contract?: number;
+  genex?: string;
+}
+// ↑ src/shared/crash-record.ts
+
+/** The input since the last seed or snapshot anchor, to replay the crash with `seed`, `input` and `step`. */
+export interface CrashReplay {
+  seed: number;
+  fromTick: number;
+  toTick: number;
+  /** False when the ring was busy or overflowed (then `fromTick` moved). */
+  complete: boolean;
+  /** Base64 of the InputTrack tail. */
+  track: string;
+}
+// ↑ src/shared/crash-record.ts
+
+export type CrashTrimmed = 'profile' | 'replay.track' | 'frames' | 'message' | 'location.file';
+// ↑ src/shared/crash-record.ts
+
+/** A `genex-crash/1` record as the host keeps it. */
+export interface CrashRecordV1 {
+  format: "genex-crash/1";
+  kind: CrashKind;
+  source: CrashSource;
+  fatal: boolean;
+  handled: boolean;
+  message: string;
+  location: CrashLocation | null;
+  thread: { name: string; main: boolean } | null;
+  frames: CrashFrame[];
+  /** The runtime address of `genex_crash::anchor`, from which the host computes the image's slide. */
+  anchor: string | null;
+  images: CrashImage[];
+  gpu: CrashGpu | null;
+  wasm: CrashWasm | null;
+  context: CrashContext;
+  replay: CrashReplay | null;
+  profile: ProfileSummaryV1 | null;
+  hitches: number[];
+  /** The host's symbolication; always null in what a game sends. */
+  symbols: null;
+  trimmed: CrashTrimmed[];
+}
+// ↑ src/shared/crash-record.ts
+
+/** One record `game.crashes` lists: the host's id for it, the run it came from, and how often it recurred. */
+export interface GameCrashEntry {
+  crashId: string;
+  runId: string | null;
+  /** When the host persisted it (ISO 8601). */
+  at: string;
+  /** How many runs crashed with the same signature. */
+  repeat: number;
+  symbolicated: boolean;
+  record: CrashRecordV1;
+}
+// ↑ src/shared/crash-record.ts
+
+/** What `game.crashes` and `studio:game.crashes` answer once the host keeps records. */
+export interface GameCrashesAnswer {
+  records: GameCrashEntry[];
+}
+// ↑ src/shared/crash-record.ts
+
+export type GameCrashesUnavailableReason = 'not-served';
+// ↑ src/shared/crash-record.ts
+
+/** What they answer before that. */
+export interface GameCrashesUnavailable {
+  state: "unavailable";
+  reason: GameCrashesUnavailableReason;
+}
+// ↑ src/shared/crash-record.ts
 
 /** What the harness sends with `game.conformance`: the game, optionally a playable worktree, and the demo to seed. */
 export interface GameConformanceParams {
@@ -2661,6 +2936,13 @@ export interface HarnessHostApi {
     result: string;
   };
   "preview.profile": { params: ProfileRequest & { handle: string }; result: unknown };
+  /**
+   * A Rust game's frame profile on a native or web lease (`shared/frame-profile.ts`): its summary,
+   * a `ProfileReport` v2 of the last `frames` (default 120, at most 240), arming per-node GPU timing,
+   * or a Chrome trace. `{state: "unavailable", reason}` when the lease runs no game, the game is an
+   * export or older than the verb, or this host does not serve profiles yet.
+   */
+  "preview.frameProfile": { params: FrameProfileRequest & { handle: string }; result: FrameProfileAnswer };
   "preview.reload": { params: { handle?: string; retry?: boolean }; result: boolean };
   "preview.screenshot": {
     params: {
@@ -2801,6 +3083,15 @@ export interface HarnessHostApi {
   "native.status": { params: { project: string; handle?: string }; result: NativeRunStatus | null };
   /** Stop the lease's run (`handle`) or the game's agent runs; false when none ran. */
   "native.stop": { params: { project: string; handle?: string }; result: boolean };
+  /**
+   * The game's crash records the host kept (`shared/crash-record.ts`, `genex-crash/1`), newest
+   * first, at most `GAME_CRASHES_MAX`: `since` (ISO 8601) keeps the later ones, `id` the one it
+   * names. `{state: "unavailable", reason}` until this host keeps records.
+   */
+  "game.crashes": {
+    params: { project: string; since?: string; id?: string };
+    result: GameCrashesAnswer | GameCrashesUnavailable;
+  };
 
   /**
    * Run the game conformance suite on the game's current Mac build (read-only: it builds, starts

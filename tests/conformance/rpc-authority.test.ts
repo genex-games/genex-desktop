@@ -711,7 +711,7 @@ describe("harness RPC authority", () => {
       await assertUntouched("native.build");
     });
 
-    it("native.build, native.status and native.stop refuse a game that is not in the library", async (t) => {
+    it("native.build, native.status, native.stop and game.crashes refuse a game that is not in the library", async (t) => {
       const calls = sideEffects(t);
       const { layout } = lite.core;
       const hostile = [
@@ -727,6 +727,7 @@ describe("harness RPC authority", () => {
         await assert.rejects(call(HostMethod.NativeBuild, { project, target }), REFUSED_OR_OUTSIDE, `build ${project}`);
         await assert.rejects(call(HostMethod.NativeStatus, { project }), REFUSED_OR_OUTSIDE, `status ${project}`);
         await assert.rejects(call(HostMethod.NativeStop, { project }), REFUSED_OR_OUTSIDE, `stop ${project}`);
+        await assert.rejects(call(HostMethod.GameCrashes, { project }), REFUSED_OR_OUTSIDE, `crashes ${project}`);
       }
       assert.deepEqual(calls(), NO_SIDE_EFFECTS, "no build, no spawn, no stop");
       await assertUntouched("native.status/stop");

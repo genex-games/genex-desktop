@@ -15,6 +15,7 @@ import type { ChatRewind, CheckpointSkippedPayload } from "./chat-rewind.ts";
 import type { PlanReviewRecord } from "./composer.ts";
 import type { ContextMeasurement } from "./context.ts";
 import type { CrateDecisionPayload, CrateRequestPayload } from "./crate-requests.ts";
+import type { GameCrashedPayload } from "./crash-record.ts";
 import type { DeviceLaunchPayload } from "./device-launch.ts";
 import type { ConformanceRunPayload, EngineEjectedPayload, GameTrustPayload } from "./game-conformance.ts";
 import type { AssetDeliveredPayload, PluginToolFinishedPayload, PluginToolStartedPayload } from "./game-assets.ts";
@@ -188,6 +189,8 @@ export const CustomEvent = {
   GameTrust: "game_trust",
   /** The person launched a phone build on a Simulator, emulator or phone (shared/device-launch.ts); written by the host only. */
   DeviceLaunch: "device_launch",
+  /** A game's run crashed and the host kept its `genex-crash/1` record (shared/crash-record.ts); written by the host only. */
+  GameCrashed: "game_crashed",
   FixtureNoise: "fixture_noise",
   GameArchived: "game_archived",
   GameCoverCreated: "game_cover_created",
@@ -659,6 +662,7 @@ export interface CustomEventMap {
   crate_request: CrateRequestPayload;
   delegation_incomplete: DelegationIncompletePayload;
   device_launch: DeviceLaunchPayload;
+  game_crashed: GameCrashedPayload;
   engine_ejected: EngineEjectedPayload;
   /** A chat rewound to before a message (`shared/chat-rewind.ts`); `files`: game files put back, null when none were asked for. */
   conversation_rewound: Partial<ChatRewind> & { files?: number | null };

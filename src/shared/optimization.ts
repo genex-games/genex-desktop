@@ -17,9 +17,13 @@ export interface Metric {
   reason: string | null;
   provenance: string;
 }
+/** What drew a profile sample: a web page's WebGL or WebGPU, or a native run's renderer. Wire values. */
+export const SampleBackend = { WebGl: "webgl", WebGpu: "webgpu", Native: "native" } as const;
+export type SampleBackend = (typeof SampleBackend)[keyof typeof SampleBackend];
+
 export interface ProfileSample {
   schemaVersion: 1;
-  backend: "webgl" | "webgpu";
+  backend: SampleBackend;
   renderer: string;
   version: string;
   scope: string;

@@ -402,6 +402,8 @@ function embedCalls(bridge: BridgeCalls) {
     nativeInput: (project, actions) => invoke("studio:native.input", { project, actions }),
     nativeResize: (project, size) => invoke("studio:native.resize", { project, size }),
     nativeLaunchDevice: (project, request) => invoke("studio:native.launchDevice", { project, request }),
+    nativeProfile: (project, request) => invoke("studio:native.profile", { project, request }),
+    gameCrashes: (project) => invoke("studio:game.crashes", { project }),
     retakeSeedModule: (module) => invoke("studio:seed.retake", { module }),
     cratesList: (project) => invoke("studio:crates.list", project === undefined ? {} : { project }),
     cratesDecide: (decision) => invoke("studio:crates.decide", decision),

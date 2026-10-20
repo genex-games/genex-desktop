@@ -132,6 +132,9 @@ import {
   stackForTargets,
 } from "../../src/shared/game-project.ts";
 import { HOST_MATRIX, judgingTarget, STACK_HOST_MATRIX, TargetRefusal } from "../../src/shared/game-targets.ts";
+import * as frameProfile from "../../src/shared/frame-profile.ts";
+import { SampleBackend } from "../../src/shared/optimization.ts";
+import { SampleBackend as SeedSampleBackend } from "../../src/harness-seed/loop/performance.ts";
 import * as native from "../../src/shared/native-contract.ts";
 import { HARNESS_MOBILE_ARTIFACTS, MobileArtifact } from "../../src/shared/game-export-contract.ts";
 import * as seedNative from "../../src/harness-seed/loop/native-contract.ts";
@@ -179,6 +182,23 @@ const ASSET_REPLY_CANDIDATES: unknown[] = [
   { reloaded: [1], refused: [], pending: 0 },
   { reloaded: [], refused: [], pending: -1 },
   { reloaded: [], refused: [] },
+];
+
+/** profile answers by shape (a summary, a report, an arm, a trace) and malformed ones: each op's verdict must agree. */
+const PROFILE_REPLY_CANDIDATES: unknown[] = [
+  { v: 1, on: true, frames: 120 },
+  { v: 1, on: "yes", frames: 120 },
+  { v: 1, on: true, frames: -1 },
+  { v: 2, frames: [], truncated: false },
+  { v: 2, frames: {}, truncated: false },
+  { v: 2, frames: [], truncated: 1 },
+  { v: 3, frames: [], truncated: false },
+  { mode: "nodes" },
+  { mode: "frame" },
+  { mode: "all" },
+  { bytes: 4096, digest: "0123456789abcdef" },
+  { bytes: 4096, digest: "0123456789ABCDEF" },
+  { bytes: -1, digest: "0123456789abcdef" },
 ];
 
 /** renderSettings answers, and captures with and without their render provenance: each op's verdict must agree. */
@@ -1193,6 +1213,7 @@ describe("the C++ · raylib contract (shared/game-project.ts, game-targets.ts, n
       "NativeEvent",
       "NativeRunMode",
       "NativeInputKind",
+      "NativeGamepadFamily",
       "NativeBackend",
       "NativeRunState",
       "NativeRefusal",
@@ -1205,6 +1226,15 @@ describe("the C++ · raylib contract (shared/game-project.ts, game-targets.ts, n
       "ReloadRefusal",
     ] as const)
       assert.deepEqual(seedNative[name], native[name], name);
+  });
+
+  it("both copies declare the profile op and the crash event, with frame-profile's actions and timing modes (PROF-0c)", () => {
+    for (const copy of [native, seedNative]) {
+      assert.equal(copy.NativeOp.Profile, "profile");
+      assert.equal(copy.NativeEvent.Crash, "crash");
+    }
+    assert.deepEqual(seedNative.FrameProfileAction, frameProfile.FrameProfileAction);
+    assert.deepEqual(seedNative.GpuTimingMode, frameProfile.GpuTimingMode);
   });
 
   it("both copies declare the asset ops: bakeAssets of a nav or impostor bake, reloadAssets of named files", () => {
@@ -1317,6 +1347,7 @@ describe("the C++ · raylib contract (shared/game-project.ts, game-targets.ts, n
       { safeArea: { top: 0, left: 0, bottom: 0, right: 0 } },
       ...RENDER_REPLY_CANDIDATES,
       ...ASSET_REPLY_CANDIDATES,
+      ...PROFILE_REPLY_CANDIDATES,
     ];
     for (const protocol of native.NATIVE_PROTOCOL_VERSIONS)
       for (const op of Object.values(native.NativeOp))
@@ -1585,5 +1616,12 @@ describe("a game's observers and a lead's claim (shared/observers.ts ↔ loop/fi
     assert.equal(seed.OBSERVER_CAPTURE_EVENT, CustomEvent.ObserverCapture);
     // Everything a lead's finish does happens inside its one call, which the bridge cuts at this deadline.
     assert.equal(seed.LEAD_CALL_MS, BRIDGE_TOOL_DEADLINE_MS);
+  });
+});
+
+describe("profile samples (shared/optimization.ts ↔ loop/performance.ts)", () => {
+  it("names the same sample backends, a native run's among them (PROF-0c)", () => {
+    assert.deepEqual(SeedSampleBackend, SampleBackend);
+    assert.equal(SampleBackend.Native, "native");
   });
 });

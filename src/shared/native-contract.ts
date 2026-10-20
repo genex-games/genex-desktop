@@ -16,6 +16,13 @@ import { SandboxProblemCode } from "./boot.ts";
 import type { BuildProblem } from "./build-problem.ts";
 import { SECOND_MS } from "./duration.ts";
 import { BuildTarget, type CompiledStack, GameStack } from "./game-project.ts";
+import { type CrashKind, type CrashRecordV1, parseCrashRecord } from "./crash-record.ts";
+import {
+  type FrameProfileAction,
+  GpuTimingMode,
+  PROFILE_REPORT_VERSION,
+  PROFILE_SUMMARY_VERSION,
+} from "./frame-profile.ts";
 import { DestinationBadge, TargetRefusal } from "./game-targets.ts";
 import { type PreviewInputAction, type PreviewTouchAction, TouchPhase } from "./preview-contract.ts";
 import {
@@ -103,6 +110,13 @@ export const NativeOp = {
    * `unknown-op`, a game that does not serve it yet `unavailable`, one mid-reload `busy`.
    */
   ReloadAssets: "reloadAssets",
+  /**
+   * Read the game's frame profile (`{action, frames?, mode?}`, `shared/frame-profile.ts`): the
+   * summary, a `ProfileReport` v2, arming per-node GPU timing, or a Chrome trace written into the
+   * run's `state/profile/`. Dev flavour only; an export (or a game made before the verb) answers
+   * `unknown-op`, a game that serves no profiles yet `unavailable`.
+   */
+  Profile: "profile",
 } as const;
 export type NativeOp = (typeof NativeOp)[keyof typeof NativeOp];
 
@@ -153,6 +167,13 @@ export interface NativeReloadAnswer {
   pending: number;
 }
 
+/**
+ * A `profile` reply as the port checks it: by shape only (a summary `v: 1`, a report `v: 2`, an
+ * arm's `{mode}` or a trace's `{bytes, digest}`). The profile leg reads it in full for the action it
+ * asked with `parseProfileAnswer` (`shared/frame-profile.ts`) and refuses what is out of shape there.
+ */
+export type NativeProfileReply = Record<string, unknown>;
+
 /** What `bakeAssets` answers: the bake it ran, and the size and digest of the file it wrote. */
 export interface NativeBakeReply {
   kind: BakeKind;
@@ -181,6 +202,12 @@ export const NativeEvent = {
    * violation.
    */
   Starting: "starting",
+  /**
+   * The game crashed and sends its `genex-crash/1` record (`shared/crash-record.ts`) before it
+   * exits (a fatal panic) or goes on (a caught panic, a lost device). Accepted before `ready` too:
+   * a boot panic has a record. A malformed record is a violation.
+   */
+  Crash: "crash",
 } as const;
 export type NativeEvent = (typeof NativeEvent)[keyof typeof NativeEvent];
 
@@ -242,6 +269,20 @@ export const NativeInputKind = {
   Touch: "touch",
 } as const;
 export type NativeInputKind = (typeof NativeInputKind)[keyof typeof NativeInputKind];
+
+/**
+ * Which kind of pad a `gamepad` action stands for (genex-core `PadFamily`, its wire spellings): the
+ * game picks button labels by it (Cross on a PlayStation pad, B for confirm on a Nintendo one).
+ * Display only: it never changes what a button does. Wire values: never rename one.
+ */
+export const NativeGamepadFamily = {
+  Generic: "generic",
+  Xbox: "xbox",
+  PlayStation: "playstation",
+  Nintendo: "nintendo",
+  Steam: "steam",
+} as const;
+export type NativeGamepadFamily = (typeof NativeGamepadFamily)[keyof typeof NativeGamepadFamily];
 
 /**
  * The graphics path a game reports in `ready.backend.api`: a diagnostic; the host's bundle gate
@@ -1170,6 +1211,12 @@ export interface NativeStartingEvent {
   progress?: NativeBootProgress;
 }
 
+/** The game's crash record, copied through `parseCrashRecord`. */
+export interface NativeCrashEvent {
+  event: typeof NativeEvent.Crash;
+  record: CrashRecordV1;
+}
+
 /** Every event a game may send. */
 export type NativeEventMessage =
   | NativeReadyEvent
@@ -1177,7 +1224,8 @@ export type NativeEventMessage =
   | NativeFocusEvent
   | NativeFrameEvent
   | NativeDeviceRestoredEvent
-  | NativeStartingEvent;
+  | NativeStartingEvent
+  | NativeCrashEvent;
 
 /** A pad's state as the Gamepad API reports it (standard mapping); at most 4 pads, 17 buttons, 4 axes. */
 export interface NativeGamepadAction {
@@ -1185,6 +1233,8 @@ export interface NativeGamepadAction {
   index: number;
   buttons: readonly number[];
   axes: readonly number[];
+  /** The kind of pad, so a run without real pads can show a family's labels; absent reads as generic. */
+  family?: NativeGamepadFamily;
 }
 
 /** Committed text, at most 256 UTF-16 units. */
@@ -1268,6 +1318,8 @@ export interface NativeOpArgs {
   [NativeOp.BakeAssets]: { kind: BakeKind; name: string };
   /** At most `NATIVE_RELOAD_FILES_MAX` files. */
   [NativeOp.ReloadAssets]: { files: NativeReloadFile[] };
+  /** `frames` 1..=240 for a report; `mode` for an arm. */
+  [NativeOp.Profile]: { action: FrameProfileAction; frames?: number; mode?: GpuTimingMode };
 }
 
 /**
@@ -1300,6 +1352,7 @@ export interface NativeOpResults {
   [NativeOp.RenderSettings]: RenderSettingsAnswer;
   [NativeOp.BakeAssets]: NativeBakeReply;
   [NativeOp.ReloadAssets]: NativeReloadAnswer;
+  [NativeOp.Profile]: NativeProfileReply;
 }
 
 // Every op has a result shape: an op added without one fails here.
@@ -1347,6 +1400,8 @@ export interface NativeRunStatus {
   owner: string | null;
   /** Where a starting game's boot is (its last `starting` that named a stage); absent or null otherwise. */
   progress?: NativeBootProgress | null;
+  /** The crash record the host kept for this run (`game.crashes` names it); absent or null when none. */
+  crash?: { crashId: string; kind: CrashKind } | null;
   startedAt: string;
   endedAt: string | null;
 }
@@ -1692,6 +1747,15 @@ function isReloadAssetsResult(value: unknown): value is NativeOpResults[typeof N
     isCount(value.pending)
   );
 }
+const GPU_TIMING_MODES: ReadonlySet<string> = new Set<GpuTimingMode>(Object.values(GpuTimingMode));
+/** A summary, a report, an arm's mode or a trace's size and digest, by shape. */
+function isProfileResult(value: unknown): value is NativeOpResults[typeof NativeOp.Profile] {
+  if (!isRecord(value)) return false;
+  if (value.v === PROFILE_SUMMARY_VERSION) return typeof value.on === "boolean" && isCount(value.frames);
+  if (value.v === PROFILE_REPORT_VERSION) return Array.isArray(value.frames) && typeof value.truncated === "boolean";
+  if (Object.hasOwn(value, "mode")) return typeof value.mode === "string" && GPU_TIMING_MODES.has(value.mode);
+  return isCount(value.bytes) && typeof value.digest === "string" && DIGEST.test(value.digest);
+}
 
 /** One validator per op. */
 const RESULT_CHECKS: { readonly [K in keyof NativeOpResults]: (value: unknown) => value is NativeOpResults[K] } = {
@@ -1718,6 +1782,7 @@ const RESULT_CHECKS: { readonly [K in keyof NativeOpResults]: (value: unknown) =
   [NativeOp.RenderSettings]: isRenderSettingsResult,
   [NativeOp.BakeAssets]: isBakeAssetsResult,
   [NativeOp.ReloadAssets]: isReloadAssetsResult,
+  [NativeOp.Profile]: isProfileResult,
 };
 
 /** What protocol 2 adds to an op's check; ops absent here are checked as in protocol 1. */
@@ -1821,6 +1886,10 @@ export function parseNativeEvent(value: unknown): NativeEventMessage | null {
       return { event: NativeEvent.DeviceRestored };
     case NativeEvent.Starting:
       return startingEvent(value);
+    case NativeEvent.Crash: {
+      const record = parseCrashRecord(value.record);
+      return record ? { event: NativeEvent.Crash, record } : null;
+    }
     default:
       return null;
   }
@@ -1856,6 +1925,10 @@ const button = (value: unknown): MouseButton | undefined => {
 };
 const touchPhase = (value: unknown): TouchPhase =>
   Object.values(TouchPhase).find((phase) => phase === value) ?? refuse();
+const padFamily = (value: unknown): NativeGamepadFamily | undefined => {
+  if (value === undefined) return undefined;
+  return Object.values(NativeGamepadFamily).find((family) => family === value) ?? refuse();
+};
 const touchId = (value: unknown): number =>
   Number.isSafeInteger(value) && Number(value) >= 0 && Number(value) <= TOUCH_ID_MAX ? Number(value) : refuse();
 const unitList = (value: unknown, max: number, low: number): number[] =>
@@ -1908,11 +1981,13 @@ const INPUT_PARSERS: Readonly<Record<string, (raw: Record<string, unknown>) => N
   [NativeInputKind.Gamepad]: (raw) => {
     const index = finite(raw.index);
     if (!Number.isInteger(index) || index < 0 || index >= NATIVE_GAMEPADS_MAX) refuse();
+    const family = padFamily(raw.family);
     return {
       type: NativeInputKind.Gamepad,
       index,
       buttons: unitList(raw.buttons, NATIVE_GAMEPAD_BUTTONS_MAX, 0),
       axes: unitList(raw.axes, NATIVE_GAMEPAD_AXES_MAX, -1),
+      ...(family === undefined ? {} : { family }),
     };
   },
   [NativeInputKind.Text]: (raw) => ({ type: NativeInputKind.Text, text: text(raw.text, NATIVE_TEXT_MAX_UNITS) }),

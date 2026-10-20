@@ -48,6 +48,7 @@ import {
   type NativeEmbedSize,
   NativeEvent,
   NativeFramesCode,
+  NativeGamepadFamily,
   NativeInputKind,
   NativeOp,
   type NativeOpResults,
@@ -74,6 +75,8 @@ import {
   NATIVE_RELOAD_FILES_MAX,
   ReloadRefusal,
 } from "../../src/shared/native-contract.ts";
+import { CRASH_RECORD_FORMAT, CrashKind, CrashSource, parseCrashRecord } from "../../src/shared/crash-record.ts";
+import { GpuTimingMode } from "../../src/shared/frame-profile.ts";
 import { parseRenderSettingsAnswer } from "../../src/shared/render-quality.ts";
 import { ReadyPhase, ReadyVia, TouchPhase } from "../../src/shared/preview-contract.ts";
 import type { PreviewPort } from "../../src/substrate/preview-port.ts";
@@ -242,6 +245,35 @@ const RESULTS: { [K in keyof NativeOpResults]: { good: unknown[]; bad: unknown[]
       { kind: BakeKind.Nav, name: "market", bytes: 4096 },
     ],
   },
+  // The host reads profile replies by shape here and in full in the profile leg (shared/frame-profile.ts).
+  [NativeOp.Profile]: {
+    good: [
+      { v: 1, on: true, frames: 120, cpu: { p50: 8, p95: 12 } },
+      { v: 1, on: false, frames: 0 },
+      { v: 2, engine: "rust-wgpu", frames: [], hitches: [], truncated: false },
+      { v: 2, frames: [{ index: 1 }], truncated: true },
+      { mode: GpuTimingMode.Nodes },
+      { mode: GpuTimingMode.Frame },
+      { bytes: 4096, digest: "0123456789abcdef" },
+      { bytes: 0, digest: "fedcba9876543210" },
+    ],
+    bad: [
+      {},
+      { v: 3, frames: [], truncated: false },
+      { v: 1, on: "yes", frames: 1 },
+      { v: 1, on: true, frames: -1 },
+      { v: 1, on: true, frames: 1.5 },
+      { v: 2, frames: {}, truncated: false },
+      { v: 2, frames: [], truncated: "no" },
+      { mode: "all" },
+      { mode: null },
+      { bytes: -1, digest: "0123456789abcdef" },
+      { bytes: 1, digest: "XYZ" },
+      { bytes: 1, digest: "0123456789ABCDEF" },
+      { bytes: 1 },
+      [],
+    ],
+  },
   [NativeOp.ReloadAssets]: {
     good: [
       { reloaded: ["textures/bark.png"], refused: [], pending: 0 },
@@ -395,6 +427,49 @@ describe("events are checked and copied", () => {
   });
 });
 
+describe("the crash event (PROF-0c): a game's genex-crash/1 record", () => {
+  const record = {
+    format: CRASH_RECORD_FORMAT,
+    kind: CrashKind.Panic,
+    source: CrashSource.Game,
+    fatal: true,
+    handled: false,
+    message: "attempt to divide by zero",
+    location: { file: "src/main.rs", line: 9, column: 5 },
+    thread: { name: "main", main: true },
+    frames: [{ ip: "0x10a0" }],
+    anchor: { ip: "0x1000" },
+    context: { seed: 1, tick: 3 },
+  };
+
+  it("names the crash event and the profile op in their wire spelling", () => {
+    assert.equal(NativeEvent.Crash, "crash");
+    assert.equal(NativeOp.Profile, "profile");
+  });
+
+  it("copies the record through parseCrashRecord, dropping what it does not know", () => {
+    const parsed = parseNativeEvent({ event: NativeEvent.Crash, record: { ...record, extra: 1 }, pid: 7 });
+    assert.deepEqual(parsed, { event: NativeEvent.Crash, record: parseCrashRecord(record) });
+    assert.ok(parsed && parsed.event === NativeEvent.Crash);
+    assert.equal(Object.hasOwn(parsed, "pid"), false);
+    assert.equal(Object.hasOwn(parsed.record, "extra"), false);
+  });
+
+  it("refuses a crash event with no record or a malformed one (the port kills it reply-invalid)", () => {
+    const bad = [
+      { event: NativeEvent.Crash },
+      { event: NativeEvent.Crash, record: null },
+      { event: NativeEvent.Crash, record: "panic" },
+      { event: NativeEvent.Crash, record: { ...record, format: "genex-crash/2" } },
+      { event: NativeEvent.Crash, record: { ...record, kind: "meltdown" } },
+      { event: NativeEvent.Crash, record: { ...record, fatal: "yes" } },
+      { event: NativeEvent.Crash, record: { ...record, frames: [{ ip: "main+0x10" }] } },
+      { event: NativeEvent.Crash, record: { ...record, context: { tick: -1 } } },
+    ];
+    for (const row of bad) assert.equal(parseNativeEvent(row), null, JSON.stringify(row).slice(0, 120));
+  });
+});
+
 describe("input from the renderer or the harness", () => {
   it("keeps every known kind, copied with only the fields it knows", () => {
     const actions = [
@@ -439,6 +514,38 @@ describe("input from the renderer or the harness", () => {
     for (const row of rows) assert.equal(parseNativeInput(row), null, JSON.stringify(row));
     for (const notAList of [undefined, null, "tap", { type: "tap", keys: ["KeyW"] }])
       assert.equal(parseNativeInput(notAList), null);
+  });
+
+  it("a pad keeps the family it names (IN-7), and one that names none carries no family", () => {
+    const pad = { type: NativeInputKind.Gamepad, index: 0, buttons: [], axes: [] };
+    assert.deepEqual(parseNativeInput([{ ...pad, family: "playstation" }]), [{ ...pad, family: "playstation" }]);
+    assert.deepEqual(parseNativeInput([pad]), [pad]);
+    assert.equal(Object.hasOwn(parseNativeInput([pad])?.[0] ?? {}, "family"), false);
+    for (const family of Object.values(NativeGamepadFamily))
+      assert.deepEqual(parseNativeInput([{ ...pad, family }]), [{ ...pad, family }], family);
+  });
+
+  it("names the pad families in genex-core's wire spelling", () => {
+    assert.deepEqual(NativeGamepadFamily, {
+      Generic: "generic",
+      Xbox: "xbox",
+      PlayStation: "playstation",
+      Nintendo: "nintendo",
+      Steam: "steam",
+    });
+  });
+
+  it("refuses the whole list for a pad family outside the vocabulary, so nothing is applied", () => {
+    const pad = { type: NativeInputKind.Gamepad, index: 0, buttons: [1], axes: [0.5] };
+    for (const family of [7, "PS5", "", "x".repeat(1024), "PlayStation", "__proto__", "toString", null, true, {}])
+      assert.equal(
+        parseNativeInput([
+          { type: "wait", ms: 1 },
+          { ...pad, family },
+        ]),
+        null,
+        JSON.stringify(family)?.slice(0, 40),
+      );
   });
 
   it("takes 5000 actions and refuses 5001", () => {
