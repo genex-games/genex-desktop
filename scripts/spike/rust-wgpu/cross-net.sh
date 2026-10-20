@@ -6,11 +6,13 @@
 #   bash scripts/spike/rust-wgpu/cross-net.sh
 #
 # Rows: aarch64-apple-ios, aarch64-apple-ios-sim, x86_64-pc-windows-gnullvm (crt-static; libcolyseus
-# also calls winpthreads' mutexes, linked statically, and BCryptGenRandom, so both are named) and
-# x86_64-unknown-linux-gnu.2.28 (cargo-zigbuild). aarch64-linux-android is recorded `not-run`
-# until the store builds Android's libcolyseus from source (upstream ships no Android prebuilt).
+# also calls winpthreads' mutexes, linked statically, and BCryptGenRandom, so both are named),
+# x86_64-unknown-linux-gnu.2.28 (cargo-zigbuild) and aarch64-linux-android (the NDK rust-env.sh
+# names, r30 when installed, with the empty libpthread.a shim: bionic folds pthread into libc).
+# Upstream ships no Android prebuilt: its folder is the store's offline source build,
+#   node scripts/toolchains/colyseus-android.ts <downloads> <component> <ndk> tools/colyseus <work>
 # Nothing is run: these rows prove the link only. Writes <evidence>/net-links.json and exits 1
-# when a row that ran failed.
+# when a row failed.
 
 set -euo pipefail
 # shellcheck source=cross-lib.sh
@@ -20,10 +22,13 @@ CROSS_NAME=cross-net
 COLYSEUS_TOOLS="$CROSS_SPIKE_DIR/tools/colyseus"
 # Static winpthreads and bcrypt: what the MinGW libcolyseus needs beyond the crate's own link names.
 WINDOWS_NET_RUSTFLAGS="-C target-feature=+crt-static -C link-arg=-Wl,-Bstatic -C link-arg=-lwinpthread -C link-arg=-Wl,-Bdynamic -C link-arg=-lbcrypt"
-ANDROID_NOT_RUN="Android's libcolyseus is built from the pinned source (MP-1b); upstream's build.zig needs zig 0.15.x"
+# The shim folder for -lpthread, which the relay client's build script names and bionic has no
+# archive for (rust-build-mobile.ts ANDROID_LINK_SHIMS: one empty `ar` archive).
+ANDROID_SHIMS="$CROSS_WORK/android-link-shims"
 
 # net_row <triple> <cargo subcommand> <target>: one link row's JSON, or a failure the caller records.
 net_row() {
+  set -e
   local triple=$1 subcommand=$2 target=$3 log="$CROSS_EVIDENCE/net-$1.jsonl" ms
   [ -f "$COLYSEUS_TOOLS/$triple/libcolyseus.a" ] ||
     cross_fail colyseus-missing "no $COLYSEUS_TOOLS/$triple/libcolyseus.a (setup-toolchain.sh --with colyseus)"
@@ -38,9 +43,13 @@ main() {
   mkdir -p "$CROSS_EVIDENCE"
   local rows="" failed=0 row status
   export CARGO_TARGET_X86_64_PC_WINDOWS_GNULLVM_RUSTFLAGS="$WINDOWS_NET_RUSTFLAGS"
+  mkdir -p "$ANDROID_SHIMS"
+  [ -f "$ANDROID_SHIMS/libpthread.a" ] || printf '!<arch>\n' >"$ANDROID_SHIMS/libpthread.a"
+  export CARGO_TARGET_AARCH64_LINUX_ANDROID_RUSTFLAGS="-L native=$ANDROID_SHIMS"
   for spec in "aarch64-apple-ios build aarch64-apple-ios" "aarch64-apple-ios-sim build aarch64-apple-ios-sim" \
     "x86_64-pc-windows-gnullvm build x86_64-pc-windows-gnullvm" \
-    "x86_64-unknown-linux-gnu zigbuild x86_64-unknown-linux-gnu.2.28"; do
+    "x86_64-unknown-linux-gnu zigbuild x86_64-unknown-linux-gnu.2.28" \
+    "aarch64-linux-android build aarch64-linux-android"; do
     # shellcheck disable=SC2086 # a spec is three words
     set -- $spec
     status=0
@@ -51,7 +60,6 @@ main() {
     fi
     rows="${rows:+$rows,}$row"
   done
-  rows="$rows,$(printf '{"triple":"aarch64-linux-android","linked":null,"notRun":"%s"}' "$(cross_json_escape "$ANDROID_NOT_RUN")")"
   cross_record net-links.json "$(printf '{"format":"genex-cross-net/1","rows":[%s],"ok":%s}' "$rows" \
     "$([ "$failed" -eq 0 ] && echo true || echo false)")"
   [ "$failed" -eq 0 ] || cross_fail rows-failed "a net link row failed (see $CROSS_EVIDENCE/net-links.json)"

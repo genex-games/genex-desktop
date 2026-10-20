@@ -752,8 +752,13 @@ game file or `genex.toml` key reaches it, so an agent can only suggest it in cha
   `colyseus` folder for its triple, or a folder inside the build that is never made, where the
   script stops on its own message (`main/rust-colyseus.ts`). The store unpacks the pinned assets
   with its own checks: sha256 and size, no link, no entry over 64 MiB, only `ar` libraries
-  (`toolchain-store/colyseus.ts`). A Windows export may import `WS2_32.dll` and `CRYPT32.dll`
-  only when it is a `[net]` game's (`RUST_WINDOWS_NET_DLLS`); an Android manifest asks for
+  (`toolchain-store/colyseus.ts`). Upstream ships no Android library, so the store builds it from
+  the pinned source with the pinned zig 0.15.2, the zig_msgpack archive and the person's pinned
+  NDK (`toolchain-store/colyseus-android.ts`): each input checked like an asset (only the source's
+  one listed link), `zig build --system` with no network, writes only its work folder, built
+  twice at the same paths and laid out only when both builds are byte-equal. A Windows export
+  may import `WS2_32.dll` and `CRYPT32.dll` only when it is a `[net]` game's
+  (`RUST_WINDOWS_NET_DLLS`); an Android manifest asks for
   `android.permission.INTERNET` only then, and the package check holds it to exactly that.
 - **Conformance gate.** Live's run, an agent's run and every export of an ejected game wait for
   a green `conformance_run` on the build they would use (`conformance-required`); the suite's own

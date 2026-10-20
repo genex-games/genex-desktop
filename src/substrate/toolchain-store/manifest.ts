@@ -83,7 +83,12 @@ export const RELEASE_URL_PREFIXES = {
   [ToolchainId.RustsecAdvisoryDb]: ["https://github.com/rustsec/advisory-db/archive/"],
   // Colyseus native-sdk's own release assets (`COLYSEUS_ASSETS`): the prebuilts and the source tarball.
   [ToolchainId.Colyseus]: ["https://github.com/colyseus/native-sdk/releases/download/"],
-  [ToolchainId.ColyseusSource]: ["https://github.com/colyseus/native-sdk/releases/download/"],
+  // Android's libcolyseus is built from the source with zig 0.15.2 and the zig_msgpack archive (MP-1b).
+  [ToolchainId.ColyseusSource]: [
+    "https://github.com/colyseus/native-sdk/releases/download/",
+    "https://ziglang.org/download/0.15.2/",
+    "https://github.com/zigcc/zig-msgpack/archive/",
+  ],
 } as const satisfies Record<ToolchainId, readonly string[]>;
 
 /**

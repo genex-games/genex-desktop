@@ -50,9 +50,15 @@ import { factsOfEngine } from "../../src/shared/project-facts.ts";
 
 describe("the mobile toolchain components", () => {
   it("are appended after every older id, in their wire spellings", () => {
-    // The crate checker's three ids (crate requests) follow the mobile ones.
-    const ids = Object.values(ToolchainId).slice(0, -3);
-    assert.deepEqual(Object.values(ToolchainId).slice(-3), ["cargo-deny", "cargo-vet", "rustsec-advisory-db"]);
+    // The crate checker's three ids (crate requests) follow the mobile ones, then libcolyseus's two (MP-1a).
+    const ids = Object.values(ToolchainId).slice(0, -5);
+    assert.deepEqual(Object.values(ToolchainId).slice(-5), [
+      "cargo-deny",
+      "cargo-vet",
+      "rustsec-advisory-db",
+      "colyseus",
+      "colyseus-source",
+    ]);
     assert.deepEqual(ids.slice(-8), [
       "android-sdk",
       "android-build-tools",
