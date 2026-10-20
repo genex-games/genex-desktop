@@ -7,7 +7,10 @@ share, is in [architecture](agent/architecture.md#processes-and-trust-boundaries
 drives sandbox-runtime's srt-win backend (vendored `srt-win.exe` from `app.asar.unpacked`):
 commands run as the local `srt-sandbox` user under Git Bash. The packaged app brings its own Git
 for Windows as `resources\git` and uses it only when the PC has no Git of its own (`findGitBash`);
-a development build uses the installed Git. The host runs git itself too, so the core settles which Git before
+a development build uses the installed Git. Claude Code is handed the same Git Bash
+(`CLAUDE_CODE_GIT_BASH_PATH`, unless the person set one): it looks only in Program Files and on
+PATH, and without one runs commands through its PowerShell tool, which the never-touch screen and
+saved Bash rules do not read. The host runs git itself too, so the core settles which Git before
 anything else at startup (`ensureHostGit`, which puts its `cmd` folder first on PATH); with none,
 the setup screen opens on `git-missing`. What differs from macOS:
 
@@ -40,7 +43,9 @@ the setup screen opens on `git-missing`. What differs from macOS:
   (`WindowsSetupNeed.LogonService`) the setup card names in one line. Set up sets it to Manual
   (`sc config seclogon start= demand`, [`windows-logon-service.ts`](../src/substrate/windows-logon-service.ts))
   through Windows PowerShell's `Start-Process -Verb RunAs` before srt-win's install. srt-win
-  elevates itself, so a PC that needs both sees two approval prompts. A service Set up could not
+  elevates itself, so a PC that needs both sees two approval prompts. On a standard account each
+  prompt asks for an administrator's password, and the setup card says so; the install is
+  machine-wide, so the standard account uses what the administrator approved. A service Set up could not
   turn on (a policy keeps it off) leaves the card saying how to do it in Services.
 - That egress check starts srt-win as the sandbox user before any grant, and Windows opens its
   program and working folder as that user. A per-user install lives in the profile, so the session
@@ -74,9 +79,14 @@ the setup screen opens on `git-missing`. What differs from macOS:
   CLIs that run in the sandbox, OpenCode among them.
 - Neither `spawn()`'s environment nor stdin reaches the child: each run's variables
   (`windowsRunEnv`) go to an env file in scratch and its stdin to a file, each deleted by the
-  command as it reads it. The host sends nothing down the stdin pipe the command swaps away. The harness hears the host over a loopback inbox
+  command as it reads it, for a long-lived process (`spawnLongLived`'s `stdin`, OpenCode's brief)
+  as for a run. The host sends nothing down the stdin pipe the command swaps away. The harness hears the host over a loopback inbox
   ([`src/substrate/harness-inbox.ts`](../src/substrate/harness-inbox.ts)) whose first line must
-  be the one-time `HARNESS_INBOX_TOKEN`; it answers on stdout.
+  be the one-time `HARNESS_INBOX_TOKEN`; it answers on stdout. A process whose input goes on for
+  its whole life (`liveInput`, a Play Protocol game) runs under a relay
+  ([`src/substrate/windows-live-input.ts`](../src/substrate/windows-live-input.ts)): the studio's
+  own Node in the same sandbox listens on loopback, starts the command under Git Bash with its
+  stdin piped, and passes on what the first connection to open with the one-time token sends.
 - Deny paths are session-wide (a per-command deny binds every command anyway); a path denied both
   ways is sent as a read deny only. A missing deny path in the profile outside every grant is
   dropped, since srt-win would create a placeholder; off the profile it is kept. srt-win's

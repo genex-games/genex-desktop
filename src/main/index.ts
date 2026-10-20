@@ -1833,7 +1833,7 @@ function opensWhileStarting(): boolean {
  * or turns into the setup screen.
  */
 function openStartWindow(): void {
-  bootGate.starting(StartStep.Games);
+  bootGate.starting(StartStep.Agents);
   createSetupWindow().catch((err) => studioLog.write("main", `start window: ${errorMessage(err)}`));
   setTimeout(startTookTooLong, START_TIMEOUT_MS).unref();
 }

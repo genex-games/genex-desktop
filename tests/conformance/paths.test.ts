@@ -14,8 +14,11 @@ import {
   isBelow,
   isInside,
   relativizeWorkspace,
+  samePath,
   toPosixRelative,
 } from "../../src/substrate/paths.ts";
+import { sessionFileResolver } from "../../src/substrate/engines/local-session-tools.ts";
+import { StudioPlatform } from "../../src/shared/boot.ts";
 
 describe("isInside and isBelow: lexical containment", () => {
   const table: Array<[root: string, target: string, inside: boolean, below: boolean, why: string]> = [
@@ -41,6 +44,56 @@ describe("isInside and isBelow: lexical containment", () => {
     assert.equal(isInside("games", "games/pond"), true);
     assert.equal(isInside("games", path.join(process.cwd(), "games", "pond")), true);
     assert.equal(isInside("games", "other/pond"), false);
+  });
+});
+
+describe("isInside, isBelow and samePath on Windows: names are case-blind, as NTFS reads them", () => {
+  const windows = StudioPlatform.Windows;
+  const table: Array<[root: string, target: string, inside: boolean, below: boolean, why: string]> = [
+    [
+      String.raw`C:\Users\Dima\AI Games\rift`,
+      String.raw`c:\users\dima\ai games\rift\src\a.js`,
+      true,
+      true,
+      "another case",
+    ],
+    [String.raw`c:\Users\Dima`, String.raw`C:\Users\Dima`, true, false, "the drive letter's case"],
+    [String.raw`C:\Users\Dima`, "C:/Users/Dima/a.js", true, true, "forward slashes"],
+    [String.raw`C:\Users\Dima`, String.raw`c:\users\dimaX\a.js`, false, false, "a sibling that shares the prefix"],
+    [String.raw`C:\Users\Dima`, String.raw`D:\Users\Dima\a.js`, false, false, "another drive"],
+    [String.raw`C:\Users\Dima`, String.raw`c:\users\dima\..\eve\a.js`, false, false, "a `..` that climbs out"],
+  ];
+  for (const [root, target, inside, below, why] of table) {
+    it(`${why}: ${root} ⊇ ${target}`, () => {
+      assert.equal(isInside(root, target, windows), inside);
+      assert.equal(isBelow(root, target, windows), below);
+    });
+  }
+  it("samePath ignores case and separators on Windows, and only there", () => {
+    assert.equal(samePath("C:\\Users\\Dima\\", "c:/users/dima", windows), true);
+    assert.equal(samePath(String.raw`C:\Users\Dima`, String.raw`C:\Users\Eve`, windows), false);
+    assert.equal(samePath("/Users/Dima", "/users/dima", StudioPlatform.Mac), false);
+    assert.equal(isInside("/games/Pond", "/games/pond/a.js", StudioPlatform.Mac), false);
+  });
+  it("a session writes through a differently cased spelling of its own workspace", {
+    skip: process.platform !== "win32" && "the file system is case-sensitive here",
+  }, async () => {
+    const dir = realpathSync.native(mkdtempSync(path.join(os.tmpdir(), "paths-case-")));
+    try {
+      writeFileSync(path.join(dir, "a.js"), "x");
+      const resolve = sessionFileResolver({
+        cwd: dir,
+        readRoots: [dir],
+        forbidden: [path.join(dir, "secret")],
+        deniedWrites: [],
+        readonly: false,
+        ownership: undefined,
+      });
+      assert.equal(await resolve(path.join(dir.toLowerCase(), "a.js"), true), path.join(dir, "a.js"));
+      await assert.rejects(resolve(path.join(dir.toUpperCase(), "SECRET", "b.js"), true));
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 

@@ -121,11 +121,17 @@ export const DEFAULT_LOCATIONS = [
   "uksouth",
 ];
 /**
- * What Azure answers when a region takes no new customers' resources, or has no capacity for a
- * size right now: either way another size or region may work.
+ * What Azure answers when a region takes no new customers' resources, has no capacity for a size
+ * right now, or has no quota left (the run's other machine may have taken the room both read as
+ * free): either way another size or region may work.
  */
 const TRY_ELSEWHERE =
-  /locationineligible|not accepting new customers|SkuNotAvailable|Capacity Restrictions|not available in location/i;
+  /locationineligible|not accepting new customers|SkuNotAvailable|Capacity Restrictions|not available in location|QuotaExceeded/i;
+
+/** Whether Azure's refusal `error` leaves another size or region worth trying. */
+export function triesElsewhere(error: string): boolean {
+  return TRY_ELSEWHERE.test(error);
+}
 const VM_SCRIPT = path.join(import.meta.dirname, "windows", "azure-vm.ps1");
 /** The Marketplace publisher of the Windows 11 and 10 images. */
 const CLIENT_PUBLISHER = "MicrosoftWindowsDesktop";
@@ -407,7 +413,7 @@ async function createSomewhere(
         return { group, storage: await create(group, account, { ...options, size, location }, ownerPassword) };
       } catch (error) {
         await deleteGroup(group);
-        if (!TRY_ELSEWHERE.test(String(error))) throw error;
+        if (!triesElsewhere(String(error))) throw error;
         console.log(`${location} refused ${size}: ${azureReason(String(error))}`);
       }
     }

@@ -5,7 +5,7 @@
  * assertion here is about that promise being mechanically true, not merely intended.
  */
 import assert from "node:assert/strict";
-import { chmod, mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readdir, readFile, rm, stat, utimes, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, it } from "node:test";
 import { EventStore } from "../../src/substrate/event-store.ts";
@@ -14,7 +14,11 @@ import {
   SnapshotIndex,
   STUDIO_COMMITTER,
   ensureRepo,
+  FIRST_COMMIT_MARKER,
   git,
+  gitOrNull,
+  INDEX_LOCK_WAIT_MS,
+  needsFirstCommit,
   snapshotRef,
 } from "../../src/substrate/snapshots.ts";
 import { NESTED_BACKUP, nestedRepos, versionNestedForLanding } from "../../src/substrate/game-workspace.ts";
@@ -53,6 +57,23 @@ it("host staging of a nested repository also excludes newly introduced environme
   const staged = await git(dir, ["diff", "--cached", "--name-only"]);
   assert.ok(staged.includes("nested/index.html"));
   assert.ok(!staged.includes(".env.local"));
+});
+
+it("a game folder with paths past Windows' 260 characters snapshots and restores", async () => {
+  const dir = await tmpDir();
+  const deep = path.join(dir, ...Array.from({ length: 8 }, (_, i) => `folder-with-a-long-name-${i}-xxxxxxxx`));
+  await mkdir(deep, { recursive: true });
+  const file = path.join(deep, "a-file-name-that-pushes-the-path-past-max-path.js");
+  assert.ok(file.length > 300, `${file.length} characters`);
+  await writeFile(file, "deep\n");
+  const engine = new SnapshotEngine([{ name: "game", dir }]);
+  await engine.init();
+  const before = await engine.snapshot({ scope: SnapshotScope.Game, gameWorkspace: "game", reason: "save" });
+  await writeFile(file, "changed\n");
+  await writeFile(path.join(deep, "later.js"), "made after the save\n");
+  await engine.restore(before, { gameWorkspace: "game" });
+  assert.equal(await readFile(file, "utf8"), "deep\n");
+  assert.equal(await exists(path.join(deep, "later.js")), false);
 });
 
 /**
@@ -214,6 +235,101 @@ describe("snapshot engine", () => {
     assert.equal((await packs()).length, 2);
     await git(dir, ["commit", "-q", "--allow-empty", "-m", "after edit"]);
     assert.equal((await packs()).length, 1, "the repack ran inside the commit, not after it");
+  });
+
+  /** A folder of seed-like files whose first commit an earlier start began and never finished. */
+  async function unfinishedFirstCommit(): Promise<string> {
+    const dir = path.join(await tmpDir(), "ws");
+    await mkdir(path.join(dir, "loop"), { recursive: true });
+    await writeFile(path.join(dir, "loop", "main.ts"), "export const version = 1;\n");
+    await writeFile(path.join(dir, "README.md"), "seed\n");
+    await mkdir(path.join(dir, ".git"));
+    await writeFile(path.join(dir, ".git", FIRST_COMMIT_MARKER), "");
+    await git(dir, ["init", "-q", "-b", "main"]);
+    return dir;
+  }
+
+  /** A clock the test moves: `sleep` advances it and runs `onSleep`. */
+  function movedClock(start: number, onSleep: () => Promise<void> = async () => {}) {
+    let now = start;
+    const slept: number[] = [];
+    return {
+      slept,
+      now: () => now,
+      sleep: async (ms: number) => {
+        slept.push(ms);
+        now += ms;
+        await onSleep();
+      },
+    };
+  }
+
+  it("finishes a first commit an earlier start left behind, past the lock its killed git left", async () => {
+    // A first start on a busy Windows PC spent minutes in the harness seed's `git add -A`; quitting
+    // then (or Try again, which relaunches) left `.git` with no commit and a stale index.lock, and
+    // every later start skipped the first commit while each snapshot failed on the lock.
+    const dir = await unfinishedFirstCommit();
+    const lock = path.join(dir, ".git", "index.lock");
+    await writeFile(lock, "");
+    const stale = new Date(Date.now() - 10 * 60_000);
+    await utimes(lock, stale, stale);
+    await ensureRepo(dir);
+    assert.match((await git(dir, ["rev-parse", "HEAD"])).trim(), /^[0-9a-f]{40}$/);
+    assert.equal((await git(dir, ["status", "--porcelain"])).trim(), "");
+    assert.deepEqual((await git(dir, ["ls-files"])).trim().split("\n").sort(), ["README.md", "loop/main.ts"]);
+    assert.equal(await needsFirstCommit(dir), false);
+    await ensureRepo(dir);
+    assert.equal((await git(dir, ["rev-list", "--count", "HEAD"])).trim(), "1");
+  });
+
+  it("waits for a git that is still writing the first commit's index, then finishes it", async () => {
+    // The killed start's git keeps running on Windows (a child outlives Genex) and holds the lock.
+    const dir = await unfinishedFirstCommit();
+    const lock = path.join(dir, ".git", "index.lock");
+    await writeFile(lock, "");
+    let sleeps = 0;
+    const clock = movedClock(Date.now(), async () => {
+      if (++sleeps === 3) await rm(lock);
+    });
+    await ensureRepo(dir, {
+      clock,
+      removeLock: async () => Promise.reject(Object.assign(new Error("busy"), { code: "EBUSY" })),
+    });
+    assert.equal(clock.slept.length, 3);
+    assert.match((await git(dir, ["rev-parse", "HEAD"])).trim(), /^[0-9a-f]{40}$/);
+  });
+
+  it("names the held lock when it never goes away, instead of waiting forever", async () => {
+    const dir = await unfinishedFirstCommit();
+    await writeFile(path.join(dir, ".git", "index.lock"), "");
+    const clock = movedClock(Date.now());
+    const busy = async () => Promise.reject(Object.assign(new Error("busy"), { code: "EBUSY" }));
+    await assert.rejects(ensureRepo(dir, { clock, removeLock: busy }), /index\.lock/);
+    const waited = clock.slept.reduce((sum, ms) => sum + ms, 0);
+    assert.ok(waited >= INDEX_LOCK_WAIT_MS && waited < INDEX_LOCK_WAIT_MS + 60_000, `waited ${waited} ms`);
+    assert.equal(await gitOrNull(dir, ["rev-parse", "--verify", "--quiet", "HEAD"]), null, "no commit was forced");
+  });
+
+  it("leaves a person's own repository that has no commits yet as it is", async () => {
+    const dir = path.join(await tmpDir(), "ws");
+    await mkdir(dir, { recursive: true });
+    await writeFile(path.join(dir, "notes.txt"), "mine\n");
+    await git(dir, ["init", "-q", "-b", "main"]);
+    assert.equal(await needsFirstCommit(dir), false);
+    await ensureRepo(dir);
+    assert.equal(await gitOrNull(dir, ["rev-parse", "--verify", "--quiet", "HEAD"]), null);
+    assert.equal((await git(dir, ["ls-files"])).trim(), "");
+  });
+
+  it("names each step of a first commit as it finishes, and none for a finished repository", async () => {
+    const dir = path.join(await tmpDir(), "ws");
+    await mkdir(dir);
+    await writeFile(path.join(dir, "README.md"), "hello\n");
+    const steps: string[] = [];
+    await ensureRepo(dir, { onStep: (step) => steps.push(step) });
+    assert.deepEqual(steps, ["init", "add", "commit"]);
+    await ensureRepo(dir, { onStep: (step) => steps.push(step) });
+    assert.deepEqual(steps, ["init", "add", "commit"]);
   });
 
   it("is idempotent about repo creation", async () => {

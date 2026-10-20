@@ -2,7 +2,7 @@
 // machine keeps its crash reports. One entry per package kind; run.ts drives them in order.
 import { spawn } from "node:child_process";
 import { existsSync, openSync } from "node:fs";
-import { mkdtemp, readdir, writeFile } from "node:fs/promises";
+import { mkdtemp, readdir, readFile, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -43,6 +43,9 @@ export interface Verdict {
   detail: string;
 }
 
+/** What a Windows machine is doing while a first start runs over (`overrun`). */
+const OVERRUN_SCRIPT = path.join(import.meta.dirname, "windows", "overrun.ps1");
+
 /** One kind of machine. */
 export interface Platform {
   /** The app's userData folder for this account, known before the install. */
@@ -53,6 +56,8 @@ export interface Platform {
   quit(installed: Installed): Promise<void>;
   /** The machine's own crash reports that name Genex. */
   crashReports(): Promise<string[]>;
+  /** What the machine is doing while a first start runs over its budget, into the evidence folder. */
+  overrun?(installed: Installed, evidence: string): Promise<void>;
 }
 
 async function namedFiles(dir: string, pattern: RegExp): Promise<string[]> {
@@ -196,6 +201,10 @@ const windows: Platform = {
       { dir: path.dirname(installed.packageDir) },
     );
     await sleep(QUIT_GRACE_MS);
+  },
+  async overrun(installed, evidence) {
+    const script = await readFile(OVERRUN_SCRIPT, "utf8");
+    await powershell(script, { userdata: installed.userData, file: path.join(evidence, "overrun.txt") });
   },
   async crashReports() {
     const local = await namedFiles(path.join(process.env.LOCALAPPDATA ?? "", "CrashDumps"), /^genex/i);

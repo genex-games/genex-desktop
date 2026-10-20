@@ -26,7 +26,7 @@ import { mkdir, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { createRequire } from "node:module";
-import type { Readable } from "node:stream";
+import type { Readable, Writable } from "node:stream";
 import { MINUTE_MS } from "../shared/duration.ts";
 import { errorMessage } from "../shared/errors.ts";
 import { type SandboxProblem, StudioPlatform } from "../shared/boot.ts";
@@ -75,6 +75,7 @@ import {
   writeDeniesBeyondRead,
 } from "./windows-sandbox.ts";
 import { DenyAccess } from "./windows-folder-ace.ts";
+import { type LiveInput, openLiveInput } from "./windows-live-input.ts";
 
 // Linux launches this native helper through a shell, which cannot traverse Electron's asar.
 // The runtime's automatic lookup returns its virtual archive path even when the file is unpacked.
@@ -822,23 +823,60 @@ export class ProcessSandbox {
     env?: Record<string, string>;
     label?: string;
     policy?: Partial<SandboxPolicy>;
-  }): Promise<{ child: ChildProcess; sandboxed: boolean }> {
+    /**
+     * All of the process's input, sent once and then closed. Pass it here rather than writing to
+     * the child: on Windows srt-win does not pass stdin on, so only the run's stdin file carries it.
+     */
+    stdin?: string;
+    /**
+     * Input the caller keeps writing for the life of the process (the Play Protocol's requests):
+     * write it to the answer's `input`, never to `child.stdin`, which srt-win does not pass on.
+     */
+    liveInput?: boolean;
+  }): Promise<{ child: ChildProcess; sandboxed: boolean; input: Writable }> {
     // Held open until the process is gone, as `run` holds it for the length of a run.
     const close = await this.#openDomains(request.policy);
+    let live: LiveInput | null = null;
     try {
-      const plan = await this.#launchPlan({ ...request, longLived: true });
+      live = request.liveInput ? await this.#liveInput(request.command) : null;
+      const launch = live ? { ...request, ...this.#relayed(live, request.env) } : request;
+      const plan = await this.#launchPlan({ ...launch, longLived: true });
+      const relay = live;
       const done = () => {
         plan.release?.();
         close();
+        void relay?.close();
       };
       const child = this.#start(plan);
       child.once("close", done);
       child.once("error", done);
-      return { child, sandboxed: plan.sandboxed };
+      if (request.stdin !== undefined) {
+        // A process that exits before reading its input lands EPIPE here; its exit already says so.
+        child.stdin.on("error", () => {});
+        child.stdin.end(plan.stdinInFile ? undefined : request.stdin);
+      }
+      if (relay) void relay.connect(() => child.exitCode === null && child.signalCode === null);
+      return { child, sandboxed: plan.sandboxed, input: relay?.input ?? child.stdin };
     } catch (err) {
       close();
+      await live?.close();
       throw err;
     }
+  }
+
+  /** Windows, sandboxed: the relay a process's live input goes through. Null elsewhere: stdin carries it. */
+  async #liveInput(command: string): Promise<LiveInput | null> {
+    await this.ensureReady();
+    const backend = this.#windows;
+    if (!this.enabled || !backend) return null;
+    return openLiveInput({ command, shell: backend.bash, scratchDir: this.scratchDir });
+  }
+
+  /** The relay in place of the caller's command, by the studio's own Node, its variables beside the caller's. */
+  #relayed(live: LiveInput, env: Record<string, string> | undefined): { command: string; env: Record<string, string> } {
+    const node = shellQuote(mixedPath(longPath(process.execPath, this.#platform)));
+    const file = shellQuote(mixedPath(live.file));
+    return { command: `export ELECTRON_RUN_AS_NODE=1; exec ${node} ${file}`, env: { ...env, ...live.env } };
   }
 
   /**

@@ -16,6 +16,7 @@ import {
   OpenCodeEngine,
   type OpenCodeExec,
   type OpenCodeInvocation,
+  openCodeEvents,
   openCodeSandbox,
   openCodeServerUrl,
   settledListing,
@@ -29,6 +30,7 @@ import {
 } from "../../src/substrate/engines/opencode-cli.ts";
 import { translateOpenCodeEvent } from "../../src/substrate/engines/opencode-events.ts";
 import { EngineError, type DelegateEvent } from "../../src/substrate/engines/types.ts";
+import { ProcessSandbox } from "../../src/substrate/spawn.ts";
 import { tmpDir } from "../helpers/tmp.ts";
 
 const FIXTURES = path.join(import.meta.dirname, "..", "fixtures", "transcripts");
@@ -263,6 +265,38 @@ describe("OpenCode's account", () => {
 });
 
 describe("OpenCode sessions", () => {
+  it("hands the brief to the CLI on stdin, through the sandbox that starts it", async () => {
+    const root = await tmpDir("opencode-stdin-");
+    // A stand-in CLI: Node, printing the whole of its stdin as one event.
+    const cli = path.join(root, "cli.cjs");
+    await writeFile(
+      cli,
+      'process.stdout.write(JSON.stringify({ brief: require("node:fs").readFileSync(0, "utf8") }) + "\\n");\n',
+    );
+    const sandbox = await ProcessSandbox.create({
+      writableRoots: [root],
+      scratchDir: path.join(root, "scratch"),
+      secretPaths: [],
+      enabled: false,
+    });
+    const brief = "Write hello to out.txt\nit's $(echo ran)";
+    const seen: Array<Record<string, unknown>> = [];
+    try {
+      const invocation = {
+        argv: [cli],
+        cwd: root,
+        prompt: brief,
+        env: {},
+        signal: new AbortController().signal,
+        domains: [],
+      };
+      for await (const event of openCodeEvents(sandbox, process.execPath, invocation)) seen.push(event);
+    } finally {
+      await sandbox.dispose();
+    }
+    assert.deepEqual(seen, [{ brief }]);
+  });
+
   it("builds from the prompt on stdin, mirrors every event, and adds up the run's tokens and price", async () => {
     const { engine, seen } = await engineWith(async function* () {
       yield* replay(await events("opencode-run-1.18.jsonl"));
