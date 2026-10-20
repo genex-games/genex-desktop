@@ -13,6 +13,7 @@ import { MODEL_LIMIT_PREFIX } from "../../shared/provider-usage.ts";
 import { type LocalServerInfo, LocalServerKind } from "../../shared/local-server.ts";
 import {
   type CompleteRequest,
+  CompletePurpose,
   DelegateEventType,
   type DelegateRequest,
   type DelegateResult,
@@ -23,6 +24,8 @@ import {
 import { BACKDROP_SYSTEM_PROMPT, REPAIR_OPENING } from "../core/backdrop-generation-prompts.ts";
 import { GAME_NAME_SYSTEM_PROMPT } from "../core/game-naming-prompts.ts";
 import { FIXTURE_MODEL } from "./fixture-kit.ts";
+import { fixtureText } from "../game-ai/doors/fixture.ts";
+import { AiOp } from "../../shared/game-ai.ts";
 import { setTimeout as sleep } from "node:timers/promises";
 import { ReasoningEffort } from "../../shared/model-preferences.ts";
 
@@ -199,7 +202,19 @@ function reply(id: EngineId, content: string, usage: Record<string, number> = {}
   };
 }
 
+/**
+ * A game's call (`CompletePurpose.Game`) answered as the fixture door answers it: the plainest value
+ * that fits the reply schema, or the fixed line, streamed when asked. Never a chat reply.
+ */
+function gameFixtureReply(id: EngineId, request: CompleteRequest) {
+  const op = request.responseSchema === undefined ? AiOp.Say : AiOp.Ask;
+  const text = fixtureText(op, request.responseSchema ?? null);
+  request.onDelta?.(text);
+  return reply(id, text, { input_tokens: 0, output_tokens: 0 });
+}
+
 async function completeFixture(id: EngineId, request: CompleteRequest) {
+  if (request.purpose === CompletePurpose.Game) return gameFixtureReply(id, request);
   // A game started from home is named first, whatever markers its request carries.
   if (request.systemPrompt === GAME_NAME_SYSTEM_PROMPT) {
     await sleep(NAMING_DELAY_MS, undefined, { signal: request.signal }).catch(() => {});

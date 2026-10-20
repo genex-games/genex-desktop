@@ -155,6 +155,10 @@ export interface GameAiGrants {
   setStatus(grantId: string, status: AiGrantStatus): Promise<void>;
   /** A payer changed (a key, a plan account, a sign-in): every grant naming the door stops; the games it stopped. */
   stopDoor(door: AiDoor): Promise<AiGameKey[]>;
+  /** The person already agreed to this door for this game (first-use consent per game and door); a payer change forgets it. */
+  consented(game: AiGameKey, door: AiDoor): boolean;
+  /** AI is turned off for this game: on its grant, or by the person before it held one. */
+  isOff(game: AiGameKey): boolean;
   list(): AiGrantRecord[];
   /** What the game may see of its grant. */
   view(grant: AiGrantRecord): AiBudgetView;
@@ -178,6 +182,8 @@ export interface GameAiQueue {
 
 /** One call as a door runs it: the request plus the model and the host's framing. */
 export interface AiDoorRequest {
+  /** The game the call is for, as main derived it: a tape's loaded playtest, the development lane's project. */
+  game: AiGameKey;
   request: AiCallRequest;
   model: AiModelRef;
   /** Always `CompletePurpose.Game`: the judge framing never reaches a game's call. */
@@ -204,6 +210,8 @@ export interface GameAiDoorImpl {
   /** Worst-case cost of a call, in USD micros, from its prompt and output budget. */
   worstCaseMicros(request: AiCallRequest, model: AiModelRef): number;
   run(call: AiDoorRequest, signal: AbortSignal, onDelta?: (text: string) => void): Promise<AiDoorAnswer>;
+  /** On a plan: the share of its current window used (0–100) and when it resets; absent on every other door. */
+  usage?(): Promise<{ usedPercent: number; resetsAt: string | null } | null>;
 }
 
 // ── the ledger, the cache and the tapes ────────────────────────────────────────────────────
@@ -354,6 +362,8 @@ export interface GameAiDeps {
   notify(notice: GameAiNotice): void;
   /** Redraw a Play game's pill (`PlayBarState.ai`). */
   drawPill(game: AiGameKey, bar: PlayAiBar): void;
+  /** The game's model menu (`GameAiPill.menu`): what Genex picks from when a game holds no grant. */
+  menu(game: AiGameKey): Promise<AiModelMenu>;
   /** Classify text other players will see before it is broadcast (D6); false refuses it as `moderated`. */
   moderate(text: string): Promise<boolean>;
 }

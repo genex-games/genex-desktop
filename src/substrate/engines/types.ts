@@ -106,6 +106,11 @@ export interface EngineModel {
   note?: string;
   /** Runs at no cost and with no account (OpenCode's own free models). */
   free?: boolean;
+  /**
+   * What a million tokens cost in US dollars, in and out, when the provider bills per token and its
+   * catalog quotes both prices (OpenRouter); absent when either price is unknown.
+   */
+  pricePerMillion?: { input: number; output: number };
 }
 
 /**

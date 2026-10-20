@@ -40,7 +40,7 @@ import { EventKind, ThreadKind, SnapshotScope } from "../shared/event-log.ts";
 import { assetKind, isAudioFile, type AssetDeliveredPayload } from "../shared/game-assets.ts";
 import { coverFromBrief, replaceableCover, type GameUpdate } from "../shared/game-library.ts";
 import type { HarnessHostHandlers, HarnessParams, HarnessResult, HostMethod } from "../shared/harness-api.ts";
-import type { GameAiHarnessHost } from "./game-ai/types.ts";
+import { GAME_AI_DIR, type GameAiHarnessHost } from "./game-ai/types.ts";
 import {
   type ExportReview,
   type PluginBinding,
@@ -966,9 +966,17 @@ export class StudioCore {
     return listed;
   }
 
-  /** What no agent process may read: the studio's secrets, the engines' homes and the Genex login. */
+  /**
+   * What no agent process may read: the studio's secrets, the engines' homes, the Genex login, and
+   * play-time AI's grants, limits and ledger (so no agent can grant itself AI or raise a limit).
+   */
   #protectedPaths(): string[] {
-    return [this.layout.secrets, this.layout.engineHomes, path.join(os.homedir(), ".genex")];
+    return [
+      this.layout.secrets,
+      this.layout.engineHomes,
+      path.join(os.homedir(), ".genex"),
+      path.join(this.options.paths.userData, GAME_AI_DIR),
+    ];
   }
 
   #createSandbox(games: GameProject[]): Promise<ProcessSandbox> {

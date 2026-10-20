@@ -59,6 +59,15 @@ describe("OpenRouter's catalog", () => {
     assert.equal(qwen?.note, "Free");
   });
 
+  it("keeps the per-token price a game's call reserves from, only when both prices are quoted", () => {
+    const [sonnet] = openRouterModels({ data: CATALOG });
+    assert.deepEqual(sonnet?.pricePerMillion, { input: 3, output: 15 });
+    const half = openRouterModels({
+      data: [{ id: "v/half", supported_parameters: ["tools"], pricing: { prompt: "0.000001" } }],
+    });
+    assert.equal(half[0]?.pricePerMillion, undefined, "an unquoted output price is unknown, never free");
+  });
+
   it("names a model without its vendor, and keeps a name that has none", () => {
     const named = (name: string) =>
       openRouterModels({ data: [{ id: "v/m", name, supported_parameters: ["tools"] }] })[0]?.label;

@@ -186,8 +186,10 @@ export function openRouterModel(entry: CatalogEntry): EngineModel | null {
   const replyCap = Math.min(MAX_REPLY_TOKENS, Math.floor(contextWindow / 4));
   const maxTokens = Math.min(positive(entry.top_provider?.max_completion_tokens) ?? replyCap, replyCap);
   const thinking = parameters.includes("reasoning");
-  const input = perMillion(entry.pricing?.prompt) ?? 0;
-  const output = perMillion(entry.pricing?.completion) ?? 0;
+  const quotedInput = perMillion(entry.pricing?.prompt);
+  const quotedOutput = perMillion(entry.pricing?.completion);
+  const input = quotedInput ?? 0;
+  const output = quotedOutput ?? 0;
   const row: EngineModel = {
     id: entry.id,
     label: modelLabel(entry, entry.id),
@@ -199,6 +201,10 @@ export function openRouterModel(entry: CatalogEntry): EngineModel | null {
     supportsThinking: thinking,
     ...(thinking ? { efforts: [...OPENROUTER_EFFORTS], defaultEffort: ReasoningEffort.Low } : {}),
     note: priceNote(input, output),
+    // Only a price the catalog quotes in full: a game's call reserves its worst case from it.
+    ...(quotedInput !== null && quotedOutput !== null
+      ? { pricePerMillion: { input: quotedInput, output: quotedOutput } }
+      : {}),
   };
   PRICES.set(row, { input, output });
   if (parameters.includes(STRUCTURED_OUTPUTS)) STRUCTURED.add(row);
