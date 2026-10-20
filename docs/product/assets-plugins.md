@@ -19,12 +19,13 @@ The prompt bar's Add menu holds attachments, plugin and MCP switches, Connect an
 Enabled, connected, signed in and permitted differ.
 
 The Plugins page lists installed plugins, your servers, the
-Marketplace (Coming soon) and the plugin guide, with
-[icons](../plugins.md#icons). Install from GitHub pins a pasted link's latest release
-(else newest commit). Games build, preview and export without plugins. The host draws Genex's
+Marketplace (Coming soon) and plugin guide, with
+[icons](../plugins.md#icons). Install from GitHub pins a link's latest release
+(else newest commit); games need no plugins. The host draws Genex's
 app-wide page and Local Blender's runtime card. Connect,
 unapproved, reuses a saved account or opens browser sign-in; setup survives restart and reinstall.
-Game spend is in the usage panel. Enabled Genex suggests assets in planning.
+Game spend is in the usage panel. Enabled Genex suggests assets in planning;
+[CC0 Library](../plugins.md#the-cc0-library) fetches free ones.
 
 Genex bundles its MCP (game/animation search, owned games, generation status) on the same account;
 host tools run the pinned CLI outside the game: `genex__cli` free; `genex__cli-paid` and

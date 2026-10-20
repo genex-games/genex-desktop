@@ -12,4 +12,9 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
-# Module stubs only: each work package adds the dependencies it uses from [workspace.dependencies].
+# genex-core for the save root the file sink writes under (and its reserved crash folder);
+# serde and serde_json for the record's JSON; thiserror for the refusal enums. All already locked.
+genex-core = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }

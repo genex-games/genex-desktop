@@ -1,0 +1,90 @@
+{
+  "apiVersion": 4,
+  "id": "cc0",
+  "version": "1.0.0",
+  "name": "CC0 Library",
+  "publisher": "Studio",
+  "description": "Free CC0 models, textures and skies from Poly Haven and ambientCG, fetched into your game with their licence recorded. No account or credits.",
+  "backend": "backend.mjs",
+  "capabilities": ["network", "project.write", "jobs"],
+  "network": {
+    "hosts": ["api.polyhaven.com", "dl.polyhaven.org", "ambientcg.com", "acg-download.struffelproductions.com"]
+  },
+  "tools": [
+    {
+      "name": "search",
+      "description": "Search the CC0 libraries: Poly Haven's models, textures and HDRI skies, and ambientCG's materials. Free, no account. Returns each result's source and id (what cc0__fetch takes), its name, authors, page, and for a model its polycount and size in millimetres. kind is model, texture or hdri (default texture); source narrows to polyhaven or ambientcg; limit is 1-24 (default 8). Search before generating a common prop, surface or sky.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "Words to look for in the name, tags and categories, for example 'wooden crate' or 'brick wall'."
+          },
+          "kind": {
+            "type": "string",
+            "description": "model, texture or hdri."
+          },
+          "source": {
+            "type": "string",
+            "description": "polyhaven or ambientcg; left out, both where they offer the kind."
+          },
+          "limit": {
+            "type": "number"
+          }
+        },
+        "required": ["query"]
+      }
+    },
+    {
+      "name": "fetch",
+      "description": "Fetch one CC0 asset into this game's assets/cc0/<job>/ folder. Studio downloads it, checks its size and digests and records it as CC0-1.0 with its source; you never download anything yourself. A Poly Haven model arrives as one self-contained GLB (its maps embedded); a texture as its maps (default diff, nor_gl and arm on Poly Haven; diff, nor_gl, rough, ao and metal on ambientCG); an HDRI as one .hdr. source is polyhaven, ambientcg or curated (a hand-picked, sha256-pinned pack by its id). resolution is 1k, 2k or 4k (default 1k): fetch the size it is seen at, phones 1k. maps names extra or different texture maps, comma-separated: diff, nor_gl, nor_dx, arm, rough, ao, metal, disp. Fetching the same asset and resolution again lands in the same folder.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "source": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string",
+            "description": "The id cc0__search returned, for example wooden_crate_01 or Bricks076C."
+          },
+          "resolution": {
+            "type": "string"
+          },
+          "maps": {
+            "type": "string"
+          }
+        },
+        "required": ["source", "id"]
+      }
+    }
+  ],
+  "skills": [
+    {
+      "name": "cc0-library",
+      "text": "Free CC0 assets come from the CC0 Library: cc0__search finds Poly Haven models, textures and HDRI skies and ambientCG materials; cc0__fetch puts one into assets/cc0/<job>/ and records it as CC0-1.0 in the asset lock. Never download assets yourself or write licence rows by hand. Prefer a CC0 asset to generating a common prop, surface or sky. Fetch at the size it is seen at (1k by default, 1k on phones). A Poly Haven model arrives as one self-contained GLB: load the returned path. A texture arrives as maps whose role (diff colour, nor_gl normal, arm occlusion/roughness/metalness) says how to sample it. Search results from Poly Haven carry the line Powered by Poly Haven; keep it next to them when you show them to the person.",
+      "stacks": ["three-js", "raylib-cpp"]
+    },
+    {
+      "name": "cc0-library-rust",
+      "text": "Free CC0 assets come from the CC0 Library: cc0__search finds Poly Haven models, textures and HDRI skies and ambientCG materials; cc0__fetch puts one into assets/cc0/<job>/ and records it as CC0-1.0 in genex-assets.lock. Never download assets yourself or write lock rows by hand. Prefer a CC0 asset to generating a common prop, surface or sky. Fetch at the size it is seen at (1k by default, 1k on phones). A Poly Haven model arrives as one self-contained GLB: load it in on_reset with gfx.assets().model(\"cc0/<job>/<name>.glb\"), the returned path without its leading assets/, and verify state().__render.missingModels stays absent. A texture arrives as maps whose role (diff colour, nor_gl normal, arm occlusion/roughness/metalness) decides its usage at import; declare a [[texture]] row only for a v2-material loose map. Search results from Poly Haven carry the line Powered by Poly Haven; keep it next to them when you show them to the person.",
+      "stacks": ["rust-wgpu"]
+    }
+  ],
+  "panels": [
+    {
+      "id": "library",
+      "title": "CC0 Library",
+      "file": "panel.html",
+      "placement": "settings"
+    }
+  ],
+  "settings": [],
+  "actions": [
+    {
+      "name": "search",
+      "label": "Search the CC0 libraries"
+    }
+  ]
+}
