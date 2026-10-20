@@ -1,0 +1,15 @@
+error[E0080]: evaluation panicked: a scope name is 1..=48 bytes of a-z, 0-9, '_', '.' and '-'
+ --> tests/ui/bad_scope_name.rs:3:39
+  |
+3 | const BAD: genex_profile::ScopeName = genex_profile::ScopeName::new("Bad Name");
+  |                                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `BAD` failed inside this call
+  |
+note: inside `ScopeName::new`
+ --> $RUST/core/src/panic.rs
+  |
+  = note: the failure occurred here
+  |
+ ::: src/scope.rs
+  |
+  |         assert!(is_scope_name(name), "a scope name is 1..=48 bytes of a-z, 0-9, '_', '.' and '-'");
+  |         ------------------------------------------------------------------------------------------ in this macro invocation

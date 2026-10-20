@@ -4,7 +4,8 @@
 //! Profiling never enters the checksum.
 //!
 //! Every planned module is declared now so each work package fills one body (G6 profiling,
-//! PROF-0d); a module that names its work package is still a stub.
+//! PROF-0d); a module that names its work package is still a stub. The recorder, its scope
+//! vocabulary, caps, counters and summary are filled (PROF-1a).
 
 pub mod scope;
 pub mod recorder;
@@ -16,3 +17,9 @@ pub mod gpu_lane;
 pub mod memory;
 pub mod report;
 pub mod trace;
+
+pub use caps::{CapsClass, ProfileCaps};
+pub use counters::Counters;
+pub use recorder::{Clock, Profiler, ProfilerConfig, WorkerLane, counter, default_clock, detach_thread};
+pub use scope::{EngineScope, ScopeGuard, ScopeKey, ScopeName, scope};
+pub use summary::{GpuTimeSource, NodeTiming, ProfileSummary};
