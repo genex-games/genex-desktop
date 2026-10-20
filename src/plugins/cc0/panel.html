@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><style>
+body{font:14px system-ui;padding:16px;color:var(--studio-fg,#ddd);background:var(--studio-bg,#222)}
+form{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+input,select,button{font:inherit;padding:8px 10px;background:#ffffff12;color:inherit;border:1px solid #ffffff30;border-radius:8px}
+input{flex:1 1 12em;min-width:0}button{cursor:pointer}button:hover{background:#ffffff24}button:disabled{opacity:.5;cursor:default}
+:focus-visible{outline:2px solid #999;outline-offset:1px}
+#results{list-style:none;padding:0;margin:12px 0 0;display:grid;gap:6px}
+#results li{padding:8px 10px;border:1px solid #ffffff1f;border-radius:8px;overflow-wrap:anywhere}
+.id{font-family:ui-monospace,monospace;opacity:.8}.meta{opacity:.7;font-size:13px}
+#credit{opacity:.75;font-size:13px}#error{color:#f99;white-space:pre-wrap}
+</style></head><body>
+<h2>CC0 Library</h2>
+<p>Free CC0 models, textures and skies from Poly Haven and ambientCG. Ask the agent to fetch one by its source and id: Studio downloads it into the game and records its licence. No account or credits.</p>
+<form id="form">
+  <input id="query" type="search" placeholder="wooden crate, brick wall, sunset…" aria-label="Search words" required>
+  <select id="kind" aria-label="Kind"><option value="model">Models</option><option value="texture" selected>Textures</option><option value="hdri">Skies (HDRI)</option></select>
+  <button id="go" type="submit">Search</button>
+</form>
+<p id="status" role="status"></p>
+<ul id="results"></ul>
+<p id="credit" hidden></p>
+<p id="error" role="alert"></p>
+<!-- STUDIO_PANEL_SDK -->
+<script>
+const api=window.studioPlugin,$=id=>document.getElementById(id);
+function row(r){
+  const li=document.createElement('li');
+  const name=document.createElement('strong');name.textContent=r.name;
+  const id=document.createElement('div');id.className='id';id.textContent=r.source+' · '+r.id;
+  const meta=document.createElement('div');meta.className='meta';
+  const parts=[r.authors.join(', ')];
+  if(typeof r.polycount==='number')parts.push(r.polycount.toLocaleString()+' polygons');
+  if(Array.isArray(r.dimensions))parts.push(r.dimensions.map(n=>(n/1000).toFixed(2)).join(' × ')+' m');
+  meta.textContent=parts.filter(Boolean).join(' · ');
+  li.append(name,id,meta);return li;
+}
+$('form').onsubmit=async(event)=>{
+  event.preventDefault();
+  $('go').disabled=true;$('error').textContent='';$('status').textContent='Searching…';
+  try{
+    const answer=await api.call('action','search',{query:$('query').value,kind:$('kind').value,limit:24});
+    $('results').replaceChildren(...answer.results.map(row));
+    $('status').textContent=answer.results.length?answer.results.length+' results':'Nothing matched.';
+    $('credit').hidden=!answer.credit;$('credit').textContent=answer.credit||'';
+  }catch(e){$('status').textContent='';$('error').textContent=String(e);}
+  finally{$('go').disabled=false;}
+};
+</script>
+</body></html>
