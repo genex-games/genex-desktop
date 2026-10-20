@@ -40,7 +40,7 @@ import type { CreateRouteHost } from "./create-route.ts";
 import { createByokDoor } from "./doors/byok.ts";
 import { cachedRows, type EngineSource, usableModels } from "./doors/engine.ts";
 import { createFixtureDoor } from "./doors/fixture.ts";
-import { createGenexDevDoor } from "./doors/genex-dev.ts";
+import { createGenexDevDoor, type GenexDevDoor } from "./doors/genex-dev.ts";
 import { createLocalDoor } from "./doors/local.ts";
 import { createOpenCodeDoor } from "./doors/opencode.ts";
 import { createPlanDoor } from "./doors/plan.ts";
@@ -371,6 +371,49 @@ function sharingOf(
   return { reports, fitCounts };
 }
 
+/** What the model check reads of the models' names and of genex.games' price for players. */
+function catalogReads(
+  catalog: ReturnType<typeof modelCatalog>,
+  dev: Pick<GenexDevDoor, "priceMicros">,
+): Pick<ModelCheckDeps, "label" | "playerCostMicros"> {
+  return {
+    label: (model) => catalog.labelNow(model),
+    playerCostMicros: (model, usage) => dev.priceMicros(model.model, usage),
+  };
+}
+
+/** What the model check reads of a published library game as its creator: their share and its audience. */
+function publishedReads(
+  playProject: (project: string) => Promise<string | null>,
+  creator: GenexAiCreatorReads,
+): Pick<ModelCheckDeps, "creatorShareBps" | "audience"> {
+  return {
+    creatorShareBps: async (project) => creatorShare(project, playProject, creator),
+    audience: async (project) => {
+      const published = await playProject(project);
+      return published ? creator.audience(published) : null;
+    },
+  };
+}
+
+/** The genex.games project a game is: a Play game's own, a library game's published one. */
+const gameProjectOf =
+  (playProject: (project: string) => Promise<string | null>) =>
+  async (game: AiGameKey): Promise<string | null> => {
+    const own = libraryName(game);
+    return own === null ? publishedId(game) : playProject(own);
+  };
+
+/** A game played in Godot's or Unity's own editor is answered through that editor's channel (D1 holds). */
+function editorRelaysOf(deps: GameAiHostDeps, service: GameAiServiceImpl, settings: GameAiSettings) {
+  if (!deps.editors) return null;
+  return editorAiRelays({
+    service,
+    ...deps.editors,
+    createRouteEnabled: () => settings.local().createRouteEnabled,
+  });
+}
+
 /** Play-time AI for one profile over `deps`; `start` before the first call. */
 export function createGameAi(deps: GameAiHostDeps): GameAiHost {
   const clock: GameAiClock = deps.clock ?? { now: () => Date.now() };
@@ -393,13 +436,8 @@ export function createGameAi(deps: GameAiHostDeps): GameAiHost {
     moments,
     queue,
     allowPlan: async () => settings.local().allowPlan,
-    label: (model) => catalog.labelNow(model),
-    playerCostMicros: (model, usage) => dev.priceMicros(model.model, usage),
-    creatorShareBps: async (project) => creatorShare(project, playProject, creator),
-    audience: async (project) => {
-      const published = await playProject(project);
-      return published ? creator.audience(published) : null;
-    },
+    ...catalogReads(catalog, dev),
+    ...publishedReads(playProject, creator),
   };
   const check = createModelCheck(checkDeps);
   const { reports, fitCounts } = sharingOf(deps, { clock, dir, settings, platform, check });
@@ -409,20 +447,10 @@ export function createGameAi(deps: GameAiHostDeps): GameAiHost {
     facts: (model) => catalog.facts(model),
     fitCounts,
     check: (game) => ownCheck(check, game),
-    projectIdOf: async (game) => {
-      const own = libraryName(game);
-      return own === null ? publishedId(game) : playProject(own);
-    },
+    projectIdOf: gameProjectOf(playProject),
   });
   account.onChange(() => service.payerChanged(AiDoor.GenexDev));
-  // A game played in Godot's or Unity's own editor is answered through that editor's channel.
-  const editors = deps.editors
-    ? editorAiRelays({
-        service,
-        ...deps.editors,
-        createRouteEnabled: () => settings.local().createRouteEnabled,
-      })
-    : null;
+  const editors = editorRelaysOf(deps, service, settings);
 
   const ipc = ipcOf(deps, { ...parts, service, check, library, warmNames: () => catalog.warm(doors.values()) });
   let built: boolean | null = null;
