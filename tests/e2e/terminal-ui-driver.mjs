@@ -138,7 +138,9 @@ const fixture = (project) => ({
   project,
 });
 async function acceptance() {
-  const { terminals } = await import(pathToFileURL(main));
+  // main.mjs is the boot entry (compile cache, then app.mjs); the app's exports live in app.mjs.
+  await import(pathToFileURL(main));
+  const { terminals } = await import(new URL("./app.mjs", pathToFileURL(main)).href);
   await app.whenReady();
   try {
     for (let n = 0; n < 200 && !win; n++) {
