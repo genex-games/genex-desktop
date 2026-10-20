@@ -154,10 +154,13 @@ exist itself; a missing one outside every grant is not sent.
 ## Residual risks
 
 srt-win is alpha. Every srt host on the machine shares the
-`srt-sandbox` SID and so each other's grants and denies. Claude Code's tool-less sessions (usage,
-model list, judge) run without its own sandbox on Windows (`toollessSandbox`); a worker's session
-needs it, and where the CLI cannot run it the worker is refused rather than run unboxed
-([harness runtime](harness-runtime.md#a-workers-engine-that-cannot-run-its-sandbox)). DNS still resolves; the proxy token is on the
+`srt-sandbox` SID and so each other's grants and denies. Claude Code's own sandbox is off on Windows: its tool-less sessions (usage,
+model list, judge) need none (`toollessSandbox`), and a worker's or unattended builder's commands run
+in Genex's sandbox through the studio's `run_command`, as the `srt-sandbox` user like every other
+agent command ([harness runtime](harness-runtime.md#a-workers-engine-that-cannot-run-its-sandbox)).
+The CLI process itself runs as the person, like Codex, so its sign-in and its network to Anthropic
+are its own; its file tools are held by the never-touch hook and the permission rules, as on every
+platform. DNS still resolves; the proxy token is on the
 runner's command line. A folder opened while the harness runs is writable only after it next
 stops. srt-win's stamp of a missing deny path (or a per-command one) re-propagates permissions
 under that path's parent, holding each folder open meanwhile. Genex's own entries stay between
@@ -198,4 +201,6 @@ through the folders the others keep in `%TEMP%`: tests remove theirs with `remov
 (`tests/helpers/tmp.ts`), and a test of session logic hands `ProcessSandbox` a
 `WindowsSandboxSession` over fake ancestor grants.
 A dispatch with `files` runs only those files after the sandbox setup
-(`gh workflow run windows.yml --ref <branch> -f files="tests/a.test.ts"`). `.gitattributes` keeps every checkout LF.
+(`gh workflow run windows.yml --ref <branch> -f files="tests/a.test.ts"`), and one with
+`desktop` only drives computer control on the runner's desktop
+(`tests/e2e/run-windows-desktop-control.mjs`). `.gitattributes` keeps every checkout LF.

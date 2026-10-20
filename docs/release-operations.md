@@ -128,7 +128,11 @@ Monday on the latest release, and by hand with a tag. Each machine downloads fro
 as a person does (a quarantined DMG into `/Applications`, `Genex-Setup.exe` with Mark of the Web, the
 deb or rpm whose repository must then offer the version), times a flag-free first start to
 `studio ready` in `studio.log`, and runs the release's own `run-electron-e2e.mjs --packaged` on the
-installed app until the self test's sandboxed chat turn has reported (`scripts/canary/`). Machines:
+installed app until the self test's sandboxed chat turn has reported (`scripts/canary/`). On Windows,
+when the release's runner has the stage, the run adds `--claude-worker`: one Loop worker on the real
+Claude Code CLI (the vendor's installer puts it in a home of the stage's own), its model a scripted Anthropic
+stand-in (`tests/helpers/fake-anthropic.ts`, a dummy token, nothing billed), must run its turn
+unrefused and write its folder from Genex's sandbox (`smoke/claude-worker-check.ts`). Machines:
 macOS 26 and 15, Ubuntu 26.04 and 24.04 and Windows Server 2025 on GitHub-hosted runners, Fedora
 (install and repository only, in a container), and with `CANARY_AZURE=on` Windows 11 and 10 on
 Azure VMs made for the run and deleted after it. Every Windows machine starts Genex as its

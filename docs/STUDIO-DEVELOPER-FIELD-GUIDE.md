@@ -226,7 +226,8 @@ link and pruned in place, so the `prePackage` hook refuses it. On Windows, `node
 tests/e2e/run-squirrel-install.mjs` installs `Genex-Setup.exe` for the current user, checks its
 shortcuts and path lengths, then uninstalls it. CI: `package.yml` makes and smokes unsigned packages on
 PRs into `main` and pushes to `main` (with that install on Windows, and there a packaged fixture chat turn:
-`node tests/e2e/run-electron-e2e.mjs --packaged`), and a dispatch with `only` (`darwin`, `linux` or `win32`)
+`node tests/e2e/run-electron-e2e.mjs --packaged --claude-worker`, the last a Claude Code worker on a
+scripted Anthropic stand-in), and a dispatch with `only` (`darwin`, `linux` or `win32`)
 builds one platform; `release.yml` signs, notarizes, verifies and uploads to a draft release ([release operations](release-operations.md)).
 Optimization UI replay additionally needs prior AG-931 result data; it is conditional, not a
 clean-checkout gate. Seed-upgrade, interrupted, snapshots, sandbox, harness-host and

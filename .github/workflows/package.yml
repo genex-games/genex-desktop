@@ -103,11 +103,13 @@ jobs:
       # A whole fixture chat turn (model, tools, workspace, preview) in the installed-shape package,
       # with the harness inside the Windows sandbox. The runner has Git installed, so the app is told
       # to use only its own, as on a PC without Git: the sandbox user runs the bundled Git Bash.
+      # It adds one Claude Code worker (`--claude-worker`): the real CLI, installed into a home of
+      # its own, against a scripted Anthropic stand-in, its command run in Genex's sandbox.
       - name: Packaged chat turn
         if: ${{ !cancelled() && runner.os == 'Windows' }}
         env:
           STUDIO_WINDOWS_BUNDLED_GIT_ONLY: "1"
-        run: node tests/e2e/run-electron-e2e.mjs --packaged
+        run: node tests/e2e/run-electron-e2e.mjs --packaged --claude-worker
       - name: Package sizes
         if: always()
         run: find out/make -type f -exec ls -l {} \; || true

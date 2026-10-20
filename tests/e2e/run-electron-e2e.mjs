@@ -12,12 +12,17 @@ import { resolveElectron, fixtureElectronArgs, fixtureElectronEnv } from "../../
 import { spawn } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { CLAUDE_WORKER_COMMAND, CLAUDE_WORKER_PROOF, startFakeAnthropic } from "../helpers/fake-anthropic.ts";
 import { startFakeOllama, stateFixtureBuild } from "../helpers/fake-ollama.ts";
 import { packagedApp } from "./packaged-app.mjs";
 
 const root = fileURLToPath(new URL("../..", import.meta.url));
 const show = process.argv.includes("--show");
 const keep = process.argv.includes("--keep");
+// `--claude-worker`: the self test also runs one Claude Code worker on the real CLI, its model the
+// scripted Anthropic stand-in below (the release canary asks for it; it needs a machine that has
+// or may install the CLI).
+const claudeWorker = process.argv.includes("--claude-worker");
 
 /** A small but real game: keeps the studio contract, adds its own probe. */
 const GAME_SOURCE = `import * as THREE from "three";
@@ -339,10 +344,20 @@ const appArgs = packaged ? [] : ["."];
 const args = [...appArgs, "--studio-selftest", `--ollama-host=${server.host}`];
 if (show) args.push("--show");
 if (keep) args.push("--keep-userdata");
+const anthropic = claudeWorker ? await startFakeAnthropic({ command: CLAUDE_WORKER_COMMAND }) : null;
+if (anthropic) args.push(`--claude-worker-check=${CLAUDE_WORKER_PROOF.file}`);
+// The scripted Anthropic stand-in, and a dummy token so the CLI starts signed in to nothing real.
+const claudeEnv = anthropic
+  ? {
+      ANTHROPIC_BASE_URL: anthropic.baseUrl,
+      CLAUDE_CODE_OAUTH_TOKEN: "selftest-fake-token",
+      CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1",
+    }
+  : {};
 
 console.log(`launching electron self test (model server at ${server.host})…`);
 const child = spawn(electron, fixtureElectronArgs(args), {
-  env: fixtureElectronEnv(),
+  env: { ...fixtureElectronEnv(), ...claudeEnv },
   cwd: root,
   stdio: ["ignore", "pipe", "pipe"],
 });
@@ -368,6 +383,11 @@ const code = await new Promise((resolve) => {
 });
 
 await server.close();
+if (anthropic) {
+  console.log(`Claude worker's shell: ${anthropic.calledShell() ?? "never called"}`);
+  console.log(`Claude worker's command answered: ${anthropic.shellResult() ?? "nothing"}`);
+  await anthropic.close();
+}
 
 const match = /__SELFTEST_JSON__([\s\S]*?)__END__/.exec(stdout);
 if (!match) {
