@@ -214,6 +214,60 @@ impl<K: ArenaKey, V> Arena<K, V> {
         self.iter().map(|(key, _)| key)
     }
 
+    /// The arena's layout for a save: every slot's generation, and the free slots from the next
+    /// one an insert takes. With the live keys in order, [`Arena::from_layout`] rebuilds an arena
+    /// that hands out the same keys from then on.
+    pub(crate) fn layout(&self) -> (Vec<u32>, Vec<u32>) {
+        let generations = self.slots.iter().map(|slot| slot.generation).collect();
+        let mut free = Vec::new();
+        let mut cursor = self.free;
+        while cursor != NULL_INDEX && free.len() < self.slots.len() {
+            free.push(cursor);
+            cursor = self.slots[cursor as usize].next;
+        }
+        (generations, free)
+    }
+
+    /// The arena [`Arena::layout`] described, holding `live` in the order given. `None` when the
+    /// parts disagree: a live key past the slots or of another generation, a slot both live and
+    /// free or named twice, a slot neither live nor free, or more slots than `u32` indexes.
+    pub(crate) fn from_layout(generations: &[u32], free: &[u32], live: Vec<(K, V)>) -> Option<Self> {
+        if generations.len() >= NULL_INDEX as usize || live.len() + free.len() != generations.len() {
+            return None;
+        }
+        let mut slots: Vec<Slot<V>> = generations.iter().map(|&generation| Slot { generation, value: None, prev: NULL_INDEX, next: NULL_INDEX }).collect();
+        let mut seen = vec![false; slots.len()];
+        let mut arena = Self { slots: Vec::new(), free: NULL_INDEX, head: NULL_INDEX, tail: NULL_INDEX, len: 0, marker: PhantomData };
+        for (key, value) in live {
+            let index = key.index() as usize;
+            let fits = index < slots.len() && !seen[index] && slots[index].generation == key.generation();
+            if !fits {
+                return None;
+            }
+            seen[index] = true;
+            let slot = &mut slots[index];
+            slot.value = Some(value);
+            slot.prev = arena.tail;
+            if arena.tail == NULL_INDEX {
+                arena.head = key.index();
+            } else {
+                slots[arena.tail as usize].next = key.index();
+            }
+            arena.tail = key.index();
+            arena.len += 1;
+        }
+        for (position, &index) in free.iter().enumerate() {
+            if index as usize >= slots.len() || seen[index as usize] {
+                return None;
+            }
+            seen[index as usize] = true;
+            slots[index as usize].next = free.get(position + 1).copied().unwrap_or(NULL_INDEX);
+        }
+        arena.free = free.first().copied().unwrap_or(NULL_INDEX);
+        arena.slots = slots;
+        Some(arena)
+    }
+
     /// Calls `f` on every live value, oldest first, mutably.
     pub fn for_each_mut(&mut self, mut f: impl FnMut(K, &mut V)) {
         let keys: Vec<K> = self.keys().collect();
@@ -272,6 +326,30 @@ mod tests {
         assert_eq!(arena.remove(a), None);
         assert_eq!(arena.get(b), Some(&"b"));
         assert!(TestKey::default().is_null());
+    }
+
+    #[test]
+    fn an_arena_rebuilt_from_its_layout_iterates_and_hands_out_keys_as_the_original() {
+        let mut arena: Arena<TestKey, u32> = Arena::new();
+        let keys: Vec<TestKey> = (0..6).map(|v| arena.insert(v)).collect();
+        arena.remove(keys[1]);
+        arena.remove(keys[4]);
+        arena.insert(10);
+        arena.remove(keys[2]);
+        let (generations, free) = arena.layout();
+        let live: Vec<(TestKey, u32)> = arena.iter().map(|(key, value)| (key, *value)).collect();
+        let mut rebuilt = Arena::from_layout(&generations, &free, live.clone()).expect("a consistent layout");
+        assert_eq!(rebuilt.iter().map(|(k, v)| (k, *v)).collect::<Vec<_>>(), live);
+        assert_eq!(rebuilt.len(), arena.len());
+        for value in 20..24 {
+            assert_eq!(rebuilt.insert(value), arena.insert(value), "the next keys agree");
+        }
+        assert_eq!(rebuilt.layout(), arena.layout());
+        // Layouts that do not hold together.
+        assert!(Arena::<TestKey, u32>::from_layout(&[0], &[0], vec![(TestKey::from_parts(0, 0), 1)]).is_none(), "live and free");
+        assert!(Arena::<TestKey, u32>::from_layout(&[0, 0], &[], vec![(TestKey::from_parts(0, 0), 1)]).is_none(), "a slot neither");
+        assert!(Arena::<TestKey, u32>::from_layout(&[3], &[], vec![(TestKey::from_parts(0, 2), 1)]).is_none(), "another generation");
+        assert!(Arena::<TestKey, u32>::from_layout(&[0], &[], vec![(TestKey::from_parts(5, 0), 1)]).is_none(), "past the slots");
     }
 
     #[test]

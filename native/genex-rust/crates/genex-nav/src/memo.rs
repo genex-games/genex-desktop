@@ -1,4 +1,4 @@
-//! Bake memos keyed by input digest, capped per device class (NAV-11).
+//! Bake memos keyed by input digest, one process-wide LRU at the desktop cap (NAV-11).
 //!
 //! A bake is a pure function of (input digest, config digest, crate version), so baking the same
 //! input twice may hand back the first bake's tiles. The memo saves wall time at a seed and never

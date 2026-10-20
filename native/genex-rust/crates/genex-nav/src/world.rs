@@ -17,8 +17,8 @@
 //!
 //! A [`Nav`] holds resident tiles as islands of the ported runtime (stitched at their shared
 //! edges on the next update), the area costs and gates, and the obstacles with their carving
-//! queue ([`crate::carve`]). Every refused call leaves it exactly as it was. NAV-12 adds the
-//! agent, link, body and query calls in `agents_api.rs`.
+//! queue ([`crate::carve`]). Every refused call leaves it exactly as it was. The agent, link,
+//! body, query, probe and save calls are in [`crate::agents_api`] (NAV-12).
 
 use std::sync::Arc;
 
@@ -309,8 +309,8 @@ pub(crate) struct Resident {
     pub(crate) island: Option<IslandId>,
 }
 
-/// The navigation world: tiles, area costs and gates, obstacles (and, with NAV-12, agents, links
-/// and bodies). `Nav::default()` is empty, for the default walker.
+/// The navigation world: tiles, area costs and gates, obstacles, and the agents, links and bodies
+/// of [`crate::agents_api`]. `Nav::default()` is empty, for the default walker.
 pub struct Nav {
     pub(crate) config: NavConfig,
     pub(crate) budget: NavBudget,
@@ -375,8 +375,8 @@ impl Nav {
     }
 
     /// The ported runtime underneath (read-only: queries, probes and debug draws), for this crate's
-    /// tests. Hidden from the docs and not part of a game's surface: the facade's own nav queries
-    /// arrive with NAV-12.
+    /// tests. Hidden from the docs and not part of a game's surface: a game uses the calls of
+    /// [`crate::agents_api`].
     #[doc(hidden)]
     pub fn archipelago(&self) -> &Archipelago<GenexCoords> {
         &self.archipelago
@@ -543,9 +543,17 @@ impl Nav {
     }
 
     /// One tick: work the carving queue by the budget's stage units and swap in what finished,
-    /// then the runtime's update (stitching, and with NAV-12 agents) over `dt` seconds.
+    /// then the runtime's update over `dt` seconds: stitching, then the agents (repaths within
+    /// the budget, steering, avoidance of each other, the bodies and the avoid obstacles).
     pub fn update(&mut self, dt: f32) {
-        let finished = self.carving.as_mut().map(|carving| carving.advance(self.budget.bake_units_per_tick)).unwrap_or_default();
+        self.advance_carving(self.budget.bake_units_per_tick);
+        self.archipelago.avoid_discs = crate::agents_api::avoid_discs(self);
+        self.archipelago.update(dt);
+    }
+
+    /// Work the carving queue by `units` stage units and swap in the tiles that finished.
+    pub(crate) fn advance_carving(&mut self, units: u32) {
+        let finished = self.carving.as_mut().map(|carving| carving.advance(units)).unwrap_or_default();
         for rebuilt in finished {
             let swapped = rebuilt.tile.and_then(|tile| island_mesh(&tile).map(|island| (tile, island)));
             match swapped {
@@ -554,7 +562,6 @@ impl Nav {
                 Err(_) => self.rebuilds_refused += 1,
             }
         }
-        self.archipelago.update(dt);
     }
 
     /// Put `tile` at its cell: its island's mesh replaced in place (keeping the island id), a new

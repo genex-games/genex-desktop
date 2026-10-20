@@ -389,6 +389,34 @@ impl Carving {
         true
     }
 
+    /// Exactly `obstacles`, under their own ids and in the order given, with ids handed out next
+    /// from `next_id` (a restored save): the tiles under the old and new shapes queue. Refused as
+    /// [`Carving::add`] refuses a shape, past [`NAV_OBSTACLES_MAX`], or `nav-input-invalid` for an
+    /// id repeated or not below `next_id`, with nothing changed.
+    pub(crate) fn restore(&mut self, obstacles: &[(NavObstacleId, NavObstacle)], next_id: u64) -> Result<(), NavError> {
+        if obstacles.len() > NAV_OBSTACLES_MAX {
+            return Err(NavError::too_large(format!("more than {NAV_OBSTACLES_MAX} obstacles")));
+        }
+        let mut ids = Set::default();
+        for (id, obstacle) in obstacles {
+            self.check(obstacle)?;
+            if id.0 >= next_id || !ids.insert(*id) {
+                return Err(NavError::input_invalid(format!("obstacle id {} repeats or is not below {next_id}", id.0)));
+            }
+        }
+        let mut touched: Vec<CellId> = self.obstacles.values().flat_map(|old| self.touched_cells(old)).collect();
+        touched.extend(obstacles.iter().flat_map(|(_, obstacle)| self.touched_cells(obstacle)));
+        self.obstacles = obstacles.iter().copied().collect();
+        self.next_id = next_id;
+        self.queue_cells(touched);
+        Ok(())
+    }
+
+    /// The id the next added obstacle gets.
+    pub(crate) fn next_id(&self) -> u64 {
+        self.next_id
+    }
+
     /// [`NavObstacle::check`], and `nav-input-invalid` for a carving obstacle with no input to
     /// rebuild tiles from.
     fn check(&self, obstacle: &NavObstacle) -> Result<(), NavError> {

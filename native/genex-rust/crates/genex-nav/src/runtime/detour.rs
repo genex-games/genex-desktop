@@ -14,7 +14,7 @@
 //!   shut; animation links are never walked (Detour skips off-mesh connections the same way);
 //! - polygons are counter-clockwise in the standard frame's xy plane (Z up), so the 2D tests read
 //!   x and y; a result's height comes from the polygon (or its height mesh) under it;
-//! - random numbers come only from genex-core's [`Pcg32`]: one `unit()` per polygon the search
+//! - random numbers come only from a genex-core [`GameRng`]: one `unit()` per polygon the search
 //!   visits, then two for the point (no global generator); the search is breadth-first, in
 //!   neighbour order, within [`DETOUR_NODES_MAX`] polygons;
 //! - hostile input (a non-finite point, a reach or radius that is not above zero, a point off
@@ -23,7 +23,7 @@
 use std::collections::VecDeque;
 
 use genex_core::map::Set;
-use genex_core::rng::Pcg32;
+use genex_core::rng::GameRng;
 use glam::{Vec2, Vec3, Vec3Swizzles};
 
 use super::archipelago::Archipelago;
@@ -438,10 +438,11 @@ impl<CS: CoordinateSystem> Archipelago<CS> {
 
     /// A random point on the polygons reachable from `around` (sampled within `reach`) whose
     /// portals come within `radius` of it, each polygon weighted by its area. Draws one `unit()`
-    /// per polygon visited, then two for the point.
+    /// per polygon visited, then two for the point (none when `around` is off the surface). Any
+    /// [`GameRng`] draws: a reset's `Pcg32` or a tick's `ctx.rng` (NAV-12).
     pub fn random_point(
         &self,
-        rng: &mut Pcg32,
+        rng: &mut impl GameRng,
         around: CS::Coordinate,
         radius: f32,
         reach: f32,
