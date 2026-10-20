@@ -23,6 +23,7 @@ import {
   ReleaseRefusal,
   ReleaseRefused,
   releaseAssetUrl,
+  releasedCrates,
   resolveGenex,
   vendorCrate,
   workspaceVersion,
@@ -443,4 +444,28 @@ test("cargo packages genex from a copy of the workspace outside version control:
     ["Cargo.toml", "src/lib.rs"],
     "a workspace outside git copies all but target",
   );
+});
+
+test("the release packages the crates the workspace lists as members, never a crate folder kept out of it", async () => {
+  const workspace = await tmpDir("rust-release-members-");
+  for (const name of ["genex", "genex-core", "genex-kept-out"])
+    await mkdir(path.join(workspace, "crates", name, "src"), { recursive: true });
+  const multiline = [
+    "[workspace]",
+    "members = [",
+    '  "crates/genex",',
+    "  # a comment between members",
+    '  "crates/genex-core",',
+    '  "examples/*",',
+    "]",
+    'default-members = ["crates/genex"]',
+    "",
+    "[workspace.package]",
+    `version = "${VERSION}"`,
+    "",
+  ].join("\n");
+  for (const manifest of [workspaceManifest(VERSION), multiline]) {
+    await writeFile(path.join(workspace, "Cargo.toml"), manifest);
+    assert.deepEqual(await releasedCrates(workspace), ["genex", "genex-core"]);
+  }
 });
