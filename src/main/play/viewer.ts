@@ -27,6 +27,8 @@ import {
   PlayViewerPhase,
 } from "../../shared/play.ts";
 import type { PlayMicReport } from "../../shared/play-mic.ts";
+import { playGameKey } from "../../shared/game-ai.ts";
+import type { PlayAiBar } from "../../shared/play-bar.ts";
 import type { PlayAiGame } from "../game-ai/bridge-play.ts";
 import { mintedTicket, type PlayGallery, type PlayWorld, SignInNeeded, TicketStatus } from "./gallery.ts";
 import { BarLayout, barReveal } from "./bar-reveal.ts";
@@ -435,6 +437,16 @@ function viewerCalls(loop: ViewerLoop, heldEsc: ReturnType<typeof heldEscape>) {
       if (ctx.session() && reveal.layout() !== BarLayout.Hidden) deps.bar.show(barBounds(deps, reveal.layout()));
     },
     ...viewerComments(ctx),
+    /**
+     * Draw the AI pill main computed for a game (`GameAiDeps.drawPill`), when it is the game on
+     * screen's: the pill of a game that closed, or of another one, is never drawn.
+     */
+    aiBar: (bar: PlayAiBar): void => {
+      const s = ctx.session();
+      if (!s?.world || bar.game !== playGameKey(s.world.id)) return;
+      s.state = { ...s.state, ai: bar };
+      ctx.draw();
+    },
     /**
      * The game on screen as its AI bridge names it, once its page facts are read: its genex.games
      * project id (its AI's key), its name and the address its page was opened at. Null when no game

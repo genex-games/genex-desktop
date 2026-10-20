@@ -282,8 +282,6 @@ export interface GenexAiPlatform {
   confirmTerms(request: GenexDesktopConfirmRequest): Promise<{ maxCredits: number; game: string } | null>;
   /** Approve or decline on genex.games itself. */
   answerConfirm(request: GenexDesktopConfirmRequest, approved: boolean): Promise<GenexDesktopConfirmAnswer>;
-  /** Whether the creator allowed device funding for a published game (read from the server, never the page). */
-  deviceFundingAllowed(projectId: string): Promise<boolean>;
   sendReport(bundle: AiReportBundle): Promise<AiReportOutcome>;
   /** Counts-only fit rows, sent only with the person's consent. */
   sendFitCounts(rows: readonly AiFitCountRow[]): Promise<void>;
@@ -315,9 +313,11 @@ export interface GameAiConsents {
   close(game: AiGameKey): void;
 }
 
-/** The pill and its menu, computed for one game. */
+/**
+ * The pill's model menu, computed for one game (`menu.ts`); the pill itself is drawn by the service
+ * from the game's grant and this menu (`GameAiDeps.drawPill`).
+ */
 export interface GameAiPill {
-  bar(game: AiGameKey): Promise<PlayAiBar>;
   menu(game: AiGameKey): Promise<AiModelMenu>;
 }
 
@@ -367,8 +367,11 @@ export interface GameAiDeps {
   drawPill(game: AiGameKey, bar: PlayAiBar): void;
   /** The game's model menu (`GameAiPill.menu`): what Genex picks from when a game holds no grant. */
   menu(game: AiGameKey): Promise<AiModelMenu>;
-  /** Classify text other players will see before it is broadcast (D6); false refuses it as `moderated`. */
-  moderate(text: string): Promise<boolean>;
+  /**
+   * Classify text other players will see before it is broadcast (D6), knowing the door that wrote
+   * it; false refuses it as `moderated`.
+   */
+  moderate(text: string, door: AiDoor): Promise<boolean>;
   /** Hears every settled call with its text: the session's Reports, model-check moments, fit counts. */
   traces?: GameAiTraceSink;
 }

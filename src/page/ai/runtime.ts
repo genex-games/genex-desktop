@@ -27,7 +27,7 @@ import {
 import type { AiGrantAnswer } from "../../shared/game-ai-bridge.ts";
 import type { AiLane } from "../../shared/game-ai-lane.ts";
 import { validateValue } from "../../shared/game-ai-schema.ts";
-import { callKeyInput } from "../../shared/game-ai-tape.ts";
+import { type AiMissedCall, AI_MISSES_KEPT, callKeyInput } from "../../shared/game-ai-tape.ts";
 import { COMPACT_PROMPT, COMPACT_ROLE } from "./compile-prompts.ts";
 import {
   type Compiled,
@@ -80,8 +80,12 @@ export interface RuntimeDeps {
   lanes: LaneSource;
   /** A person's click or key is being handled now (`navigator.userActivation.isActive`). */
   gesture(): boolean;
-  /** Hand the studio contract (`__studio.state().ai`, `__studio.seed()`) its view of this AI. */
-  register(handle: { status(): AiStatus; reset(seed: number): void }): void;
+  /**
+   * Hand the studio contract its view of this AI: `__studio.state().ai`, `__studio.seed()`, and the
+   * calls the saved playtest had no answer for since the last reset, which a harness recording
+   * answers one at a time (`ai.record`).
+   */
+  register(handle: { status(): AiStatus; reset(seed: number): void; missed(): AiMissedCall[] }): void;
 }
 
 /** One call from the moment the game made it to the drain that released it. */
@@ -132,6 +136,8 @@ interface Runtime {
   parked: Pending | null;
   disclosed: boolean;
   tape: string | null;
+  /** The calls the saved playtest had no answer for since the last reset, in the order they were made. */
+  missed: AiMissedCall[];
 }
 
 const freshCounts = (): Runtime["counts"] => ({ calls: 0, answered: 0, fallbacks: 0, misses: 0, refused: {} });
@@ -260,8 +266,16 @@ function settle(rt: Runtime, pending: Pending, reply: LaneReply): void {
     void movePlatform(rt).then((moved) => (moved ? send(rt, pending) : hold(rt, pending, answer, null)));
     return;
   }
-  if (reply.missed) rt.counts.misses += 1;
+  if (reply.missed) noteMiss(rt, pending);
   hold(rt, pending, answer, reply.frames);
+}
+
+/** Count a call the saved playtest had no answer for, and keep its request for a recording to answer. */
+function noteMiss(rt: Runtime, pending: Pending): void {
+  rt.counts.misses += 1;
+  if (pending.call && rt.missed.length < AI_MISSES_KEPT) {
+    rt.missed.push({ key: pending.key, n: pending.n, request: pending.call.wire });
+  }
 }
 
 function hold(rt: Runtime, pending: Pending, answer: AiCallAnswer, frames: number | null): void {
@@ -454,6 +468,7 @@ function reset(rt: Runtime, seed: number): void {
   rt.needsAi = null;
   rt.parked = null;
   rt.disclosed = false;
+  rt.missed = [];
   rt.lane?.reseed(rt.seed);
 }
 
@@ -566,9 +581,14 @@ export function createRuntime(options: CreateAiOptions | undefined, deps: Runtim
     parked: null,
     disclosed: false,
     tape: null,
+    missed: [],
   };
   rt.opening = open(rt);
-  deps.register({ status: () => status(rt), reset: (seed) => reset(rt, seed) });
+  deps.register({
+    status: () => status(rt),
+    reset: (seed) => reset(rt, seed),
+    missed: () => rt.missed.map((miss) => ({ ...miss })),
+  });
   const start = <T>(op: AiOp, request: unknown): AiTicket<T> => {
     const fields = fieldsOf(request);
     const compiled = COMPILE[op](fields, compileContext(rt));

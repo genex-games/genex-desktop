@@ -30,6 +30,8 @@ import { type PlayMicCommand, PlayMicChannel, type PlayMicReport, readMicReport 
 import { PlayAiChannel } from "../../shared/play-ai.ts";
 import { type PlayAiGame, playAiPort } from "../game-ai/bridge-play.ts";
 import type { GameAiPlayBridge } from "../game-ai/types.ts";
+import { reportCaptureOf, withinCaptureWait } from "../game-ai/capture.ts";
+import { REPORT_DEFAULT_ENGINE, type ReportCapture } from "../game-ai/report.ts";
 import { aiGatewayVerdict, type BlockedNotes, blockedNotes } from "./ai-gateway.ts";
 import type { FullScreenKey, Rect } from "../game-full-screen.ts";
 import { GAME_DISABLED_BLINK_FEATURES } from "../game-view.ts";
@@ -151,6 +153,52 @@ export interface PlayViews {
 
 /** `win`'s Play views, for the development control; null before the viewer is wired. */
 export const playViewsOf = (win: BrowserWindow): PlayViews | null => viewsOf.get(win) ?? null;
+
+/** The most console errors a game's page keeps for a Report, and the longest one. */
+const REPORT_CONSOLE_KEPT = 50;
+const REPORT_CONSOLE_CHARS = 2_000;
+/** The JPEG quality of the one frame a Report carries. */
+const REPORT_FRAME_QUALITY = 70;
+/** A game page's console errors, newest last, for a Report (D9). */
+const consoleErrorsOf = new WeakMap<WebContents, string[]>();
+/**
+ * What `genex-ai` says of itself in a game's page, as plain JSON, or null. Run in the page's own
+ * world: a page that redefined `__genexAi` gets only its own answer back, which the Report reads as
+ * hostile input.
+ */
+const AI_STATUS_EXPRESSION = `(() => { try { const ai = globalThis.__genexAi; const status = ai && typeof ai.status === "function" ? ai.status() : null; return status === null || status === undefined ? null : JSON.parse(JSON.stringify(status)); } catch { return null; } })()`;
+
+/** Keep a game page's console errors, bounded, for a Report. */
+function keepConsoleErrors(contents: WebContents): void {
+  const kept: string[] = [];
+  consoleErrorsOf.set(contents, kept);
+  contents.on("console-message", (details) => {
+    if (details.level !== "error") return;
+    kept.push(String(details.message).slice(0, REPORT_CONSOLE_CHARS));
+    if (kept.length > REPORT_CONSOLE_KEPT) kept.shift();
+  });
+}
+
+/**
+ * What a Report captures of the Play game in `win` (D9): `genex-ai`'s status, one frame of the
+ * game's view and its page's console errors; null with no game open.
+ */
+export async function playAiCapture(win: BrowserWindow): Promise<Partial<ReportCapture> | null> {
+  const view = viewsOf.get(win)?.game();
+  const contents = view?.webContents;
+  if (!contents || contents.isDestroyed()) return null;
+  const [ai, image] = await Promise.all([
+    withinCaptureWait(contents.executeJavaScript(AI_STATUS_EXPRESSION, false)),
+    withinCaptureWait(contents.capturePage()),
+  ]);
+  return reportCaptureOf({
+    state: { ai },
+    jpeg: image && !image.isEmpty() ? image.toJPEG(REPORT_FRAME_QUALITY) : null,
+    consoleErrors: consoleErrorsOf.get(contents) ?? [],
+    commit: null,
+    engine: REPORT_DEFAULT_ENGINE,
+  });
+}
 
 /** What the game's view reports to the viewer: its keys and pointer, how its page loads, and its microphone. */
 interface ViewerEvents {
@@ -403,6 +451,7 @@ function gameView(win: BrowserWindow, deps: PlayViewDeps, events: ViewerEvents, 
     micGates.set(contents, micGate());
     hearMic(contents, mine, events.mic);
     hearAi(contents, mine, { bridge: deps.ai ?? null, offline: deps.offline !== null }, events.aiGame);
+    keepConsoleErrors(contents);
     hearPointer(contents, mine, events.pointer);
     guardNavigation(contents, deps.offline !== null, deps.openExternal);
     contents.on("did-finish-load", () => mine() && events.loaded());

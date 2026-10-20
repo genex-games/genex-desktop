@@ -334,6 +334,49 @@ test("contract: main registers a handler for every channel of the map, and only 
   );
 });
 
+/**
+ * Contract: a domain registrar that `main/index.ts` never calls registers nothing, however complete
+ * its own handlers are — the scan above reads the registrar files and would pass. Every
+ * `register…Ipc` a module in `main/ipc/` exports is called in `main/index.ts`, or by another
+ * registrar that is. Parsed as data, as above.
+ */
+test("contract: main calls every domain registrar main/ipc exports", () => {
+  const mainDir = path.resolve(import.meta.dirname, "../../src/main");
+  const ipcFiles = readdirSync(path.join(mainDir, "ipc"))
+    .filter((name) => name.endsWith(".ts"))
+    .map((name) => path.join(mainDir, "ipc", name));
+  const indexFile = path.join(mainDir, "index.ts");
+  const program = ts.createProgram([indexFile, ...ipcFiles], {
+    noResolve: true,
+    noLib: true,
+    allowImportingTsExtensions: true,
+    noEmit: true,
+  });
+  const exported: string[] = [];
+  const called = new Set<string>();
+  const REGISTRAR = /^register[A-Za-z]*Ipc$/;
+  const visit = (node: ts.Node) => {
+    if (ts.isFunctionDeclaration(node) && node.name && REGISTRAR.test(node.name.text)) {
+      const exportedHere = node.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword);
+      if (exportedHere) exported.push(node.name.text);
+    }
+    if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && REGISTRAR.test(node.expression.text))
+      called.add(node.expression.text);
+    ts.forEachChild(node, visit);
+  };
+  for (const file of [indexFile, ...ipcFiles]) {
+    const source = program.getSourceFile(file);
+    assert.ok(source, path.relative(mainDir, file));
+    visit(source);
+  }
+  assert.ok(exported.length > 20, `only ${exported.length} registrars found — has the scan stopped matching?`);
+  assert.deepEqual(
+    exported.filter((name) => !called.has(name)).sort(),
+    [],
+    "a registrar main/ipc exports that nothing calls",
+  );
+});
+
 test("run summary watchers share one read and release their listener after the last subscriber", async () => {
   const { ipc, invokes, count } = rendererIpc(() => ({ ok: true, value: { project: "pong", runId: "run-1" } }));
   const api = createStudioBridge(ipc);

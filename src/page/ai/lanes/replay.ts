@@ -1,14 +1,14 @@
 /**
  * The lanes that never reach a model: off (no answers at all), tape (a saved playtest, and a call
- * it does not cover fails `ai_unrecorded`) and mock (the saved playtest where it covers the call,
- * else a value made up from the schema). A tape is game content an agent can write, so the page
+ * it does not cover fails `ai_unrecorded`), mock (the saved playtest where it covers the call,
+ * else a value made up from the schema) and edge (the worst value the call's schema admits). A tape is game content an agent can write, so the page
  * reads it as hostile input (`readTape`), takes a line only for the call slot, op and site it
  * names, and only when its value fits the call's schema. Nothing here is verified.
  */
 import { AiDoor, AiErrorCode, type AiGrantRequest, AiProvenance, AiSource } from "../../../shared/game-ai.ts";
 import type { AiGrantAnswer } from "../../../shared/game-ai-bridge.ts";
 import { AiLane } from "../../../shared/game-ai-lane.ts";
-import { validateValue } from "../../../shared/game-ai-schema.ts";
+import { edgeAnswer, edgeOfSeed, edgeText, validateValue } from "../../../shared/game-ai-schema.ts";
 import {
   AI_TAPE_MAX_BYTES,
   type TapeLine,
@@ -128,6 +128,44 @@ export function replayLane(options: ReplayLaneOptions): Lane {
     cancel: () => {},
     activeGrant: async () => grant(),
     async requestGrant(_request: AiGrantRequest) {
+      stopped = false;
+      return grant();
+    },
+    async stopGrant() {
+      stopped = true;
+      return true;
+    },
+    reseed(next) {
+      seed = next;
+    },
+  };
+}
+
+/**
+ * The edge lane: every call answered with the worst value its schema admits on the seed's side
+ * (`edgeOfSeed`: odd seeds the largest numbers, longest strings and fullest lists, even seeds the
+ * smallest), on a fixed frame, so a seed replays the same frames. It never misses and never reaches
+ * a model: a harness replay with `answers: "edge"` shows whether the game clamps what a model says.
+ */
+export function edgeLane(): Lane {
+  let seed = 1;
+  let stopped = false;
+  const grant = (): AiGrantAnswer => (stopped ? noGrant(null) : { view: replayGrant(AiDoor.Fixture), code: null });
+  return {
+    lane: AiLane.Edge,
+    needsGrant: false,
+    open: async () => ({ on: true, grant: grant(), tape: null }),
+    call: ({ call }) => {
+      const edge = edgeOfSeed(seed);
+      const { schema, ticket } = call.wire;
+      const value = schema === null ? edgeText(edge) : edgeAnswer(schema, edge);
+      if (value === undefined) return refusedReply(ticket, AiErrorCode.InvalidSchema);
+      const origin = { source: AiSource.Fixture, provenance: AiProvenance.Fixture };
+      return answeredReply(ticket, value, origin, MOCK_LATENCY_FRAMES);
+    },
+    cancel: () => {},
+    activeGrant: async () => grant(),
+    async requestGrant() {
       stopped = false;
       return grant();
     },

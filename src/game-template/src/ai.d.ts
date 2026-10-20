@@ -316,7 +316,7 @@ declare module "genex-ai" {
 
   /** The game's AI as `__studio.state().ai` reports it. */
   export interface AiStatus {
-    lane: "off" | "tape" | "mock" | "host" | "platform" | null;
+    lane: "off" | "tape" | "mock" | "edge" | "host" | "platform" | null;
     requires: AiRequirement;
     on: boolean;
     door: AiDoor | null;

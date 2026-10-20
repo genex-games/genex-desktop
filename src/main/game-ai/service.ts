@@ -67,6 +67,7 @@ import {
   AiStopReason,
   GameAiNoticeKind,
 } from "../../shared/game-ai-views.ts";
+import { AiValidation } from "../../shared/game-ai-report.ts";
 import { type PlayAiBar, PlayAiNote, PlayAiPhase } from "../../shared/play-bar.ts";
 import { CompletePurpose } from "../../substrate/engines/types.ts";
 import { consentTicket, type ConsentCardFacts } from "./approvals.ts";
@@ -74,6 +75,7 @@ import type { GameAiSettings } from "./budgets.ts";
 import { MESSAGE as PROMPTS, promptTokensOf } from "./game-ai-prompts.ts";
 import { failureOf } from "./refusal.ts";
 import type {
+  AiCallTrace,
   AiDoorAnswer,
   AiGrantRecord,
   AiHold,
@@ -101,7 +103,7 @@ const MENU_CHANNEL = "menu";
 
 const MESSAGE = {
   unavailable: "that model can't be used for this game here",
-  checkoutElsewhere: "checkout opens only on genex.games",
+  checkoutElsewhere: "checkout opens only on genex.games and its payment page",
 } as const;
 
 /** The model a replayed call names. */
@@ -297,7 +299,19 @@ export class GameAiServiceImpl implements GameAiService {
     if (signal.aborted) return refused(request.ticket, AiErrorCode.Canceled);
     const cached = keepsAnswers(admitted.route.door) ? await this.#deps.cache.get(caller.game, request) : null;
     // A kept answer only from the door this call routes to: never another door's provenance.
-    if (cached?.ok && cached.source === admitted.route.door && !admitted.silent) return cached;
+    if (cached?.ok && cached.source === admitted.route.door && !admitted.silent) {
+      const kept = { ...cached, ticket: request.ticket };
+      this.#trace(caller, request, admitted, {
+        rawOutput: null,
+        value: kept.value,
+        validation: AiValidation.Valid,
+        code: null,
+        answer: null,
+        charged: 0,
+        started: this.#deps.clock.now(),
+      });
+      return kept;
+    }
     const grant = admitted.silent ? await this.#silentStart(caller, admitted) : admitted.grant;
     const worst = admitted.door.worstCaseMicros(request, admitted.model);
     const hold = grant && admitted.route.door !== AiDoor.Tape ? await this.#deps.grants.reserve(grant, worst) : null;
@@ -390,6 +404,15 @@ export class GameAiServiceImpl implements GameAiService {
       const failure = failureOf(error);
       await hold?.settle(null);
       await this.#ledger(caller, request, admitted, { code: failure.code, repaired: false, answer: null, started });
+      this.#trace(caller, request, admitted, {
+        rawOutput: null,
+        value: null,
+        validation: AiValidation.NoReply,
+        code: failure.code,
+        answer: null,
+        charged: 0,
+        started,
+      });
       this.#refusedAfter(caller, failure.code, failure.retryAfterMs);
       return refused(request.ticket, failure.code, failure.retryAfterMs);
     } finally {
@@ -434,6 +457,15 @@ export class GameAiServiceImpl implements GameAiService {
       answer: null,
       started,
     });
+    this.#trace(caller, request, admitted, {
+      rawOutput: repair?.previous ?? null,
+      value: null,
+      validation: AiValidation.Invalid,
+      code: AiErrorCode.InvalidOutput,
+      answer: null,
+      charged: 0,
+      started,
+    });
     return refused(request.ticket, AiErrorCode.InvalidOutput);
   }
 
@@ -446,14 +478,18 @@ export class GameAiServiceImpl implements GameAiService {
     result: { answer: AiDoorAnswer; value: unknown; repaired: boolean; started: number },
   ): Promise<AiCallAnswer> {
     const { answer, value, repaired, started } = result;
-    if (request.authority === AiAuthority.Shared && !(await this.#passes(value))) {
+    const validation = repaired ? AiValidation.Repaired : AiValidation.Valid;
+    const outcome = { rawOutput: answer.text, validation, answer, started };
+    if (request.authority === AiAuthority.Shared && !(await this.#passes(value, admitted.route.door))) {
       await hold?.settle(null);
       await this.#ledger(caller, request, admitted, { code: AiErrorCode.Moderated, repaired, answer: null, started });
+      this.#trace(caller, request, admitted, { ...outcome, value: null, code: AiErrorCode.Moderated, charged: 0 });
       return refused(request.ticket, AiErrorCode.Moderated);
     }
     const charged = repaired ? null : { usage: answer.usage, costMicros: answer.costMicros };
     await hold?.settle(charged);
     await this.#ledger(caller, request, admitted, { code: null, repaired, answer, started });
+    this.#trace(caller, request, admitted, { ...outcome, value, code: null, charged: charged?.costMicros ?? 0 });
     const reply: AiCallAnswer = {
       v: GAME_AI_WIRE_VERSION,
       ok: true,
@@ -470,9 +506,49 @@ export class GameAiServiceImpl implements GameAiService {
   }
 
   /** D6: text other players will see passes moderation first; a classifier that fails refuses it. */
-  async #passes(value: unknown): Promise<boolean> {
+  async #passes(value: unknown, door: AiDoor): Promise<boolean> {
     const text = typeof value === "string" ? value : JSON.stringify(value);
-    return this.#deps.moderate(text).catch(() => false);
+    return this.#deps.moderate(text, door).catch(() => false);
+  }
+
+  /** Hand one call a door answered (or failed) to the trace sink; the sink never reaches the call. */
+  #trace(
+    caller: GameAiCaller,
+    request: AiCallRequest,
+    admitted: Admitted,
+    outcome: {
+      rawOutput: string | null;
+      value: unknown;
+      validation: AiValidation;
+      code: AiErrorCode | null;
+      answer: AiDoorAnswer | null;
+      charged: number;
+      started: number;
+    },
+  ): void {
+    const sink = this.#deps.traces;
+    if (!sink) return;
+    const trace: AiCallTrace = {
+      request,
+      rawOutput: outcome.rawOutput,
+      value: outcome.value,
+      validation: outcome.validation,
+      code: outcome.code,
+      door: admitted.route.door,
+      model: admitted.model,
+      servedModel: outcome.answer?.model ?? null,
+      provenance: admitted.route.provenance,
+      usage: outcome.answer?.usage ?? null,
+      costMicros: outcome.charged,
+      latencyMs: Math.max(0, this.#deps.clock.now() - outcome.started),
+      frame: null,
+      tick: null,
+    };
+    try {
+      sink(caller, trace);
+    } catch {
+      // A Report, a moment or a count that fails never fails the game's call.
+    }
   }
 
   /** The call's ledger line: ids, counts and money, never text. */
@@ -839,8 +915,17 @@ export interface GameAiIpcHostOptions {
   titleOf(game: AiGameKey): Promise<string>;
   /** Open a page in the person's browser. */
   openExternal(url: string): Promise<void>;
-  /** genex.games' own origin: checkout opens there and nowhere else. */
-  checkoutOrigin: string;
+  /** Where checkout may open: genex.games' own origin and the payment page it hands the person to. */
+  checkoutOrigins: readonly string[];
+}
+
+/** A checkout page on one of `origins`, over https with no user part, or null for anywhere else. */
+function checkoutPage(raw: string, origins: readonly string[]): string | null {
+  if (!URL.canParse(raw)) return null;
+  const url = new URL(raw);
+  const allowed = origins.some((origin) => URL.canParse(origin) && new URL(origin).origin === url.origin);
+  const plain = url.protocol === "https:" && !url.username && !url.password;
+  return allowed && plain ? url.href : null;
 }
 
 /** Whether a grant's spend shows as money in the Games list: credits or the person's key. */
@@ -872,11 +957,9 @@ export function createGameAiIpcHost(options: GameAiIpcHostOptions): GameAiIpcHos
     publishFacts: (project) => check.publishFacts(project),
     credits: () => options.platform.packs(),
     checkout: async (product) => {
-      const url = new URL(await options.platform.checkoutUrl(product));
-      if (url.origin !== new URL(options.checkoutOrigin).origin || url.protocol !== "https:") {
-        throw new Error(MESSAGE.checkoutElsewhere);
-      }
-      await options.openExternal(url.href);
+      const url = checkoutPage(await options.platform.checkoutUrl(product), options.checkoutOrigins);
+      if (!url) throw new Error(MESSAGE.checkoutElsewhere);
+      await options.openExternal(url);
     },
   };
   /** Settings' Games list: every game holding a grant, its model and what it spent this month. */

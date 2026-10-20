@@ -30,7 +30,8 @@ import {
   SHOW_GAME_AFTER_MS,
 } from "../../src/main/play/viewer.ts";
 import type { PlayComment } from "../../src/shared/play-comments.ts";
-import { PlayBarOverlay } from "../../src/shared/play-bar.ts";
+import { type PlayAiBar, PlayAiPhase, PlayBarOverlay } from "../../src/shared/play-bar.ts";
+import { AiDoor, AiFunding } from "../../src/shared/game-ai.ts";
 import {
   PLAY_BAR_HEIGHT,
   type PlayBarState,
@@ -990,6 +991,44 @@ describe("Play viewer's game, as its AI bridge names it", () => {
     viewer.open("lost-cathedral", "Lost Cathedral");
     await settle();
     assert.equal(await viewer.aiGame(), null);
+  });
+});
+
+describe("Play viewer's AI pill", () => {
+  const pill = (game: PlayAiBar["game"]): PlayAiBar => ({
+    game,
+    phase: PlayAiPhase.Ready,
+    model: { door: AiDoor.Local, engine: "ollama", model: "qwen3:8b" },
+    label: "Qwen3 8B",
+    shortLabel: "Qwen3 8B",
+    funding: AiFunding.Free,
+    tag: null,
+    balanceCredits: null,
+    lowCredits: false,
+    unranked: false,
+    note: null,
+    addedCredits: null,
+  });
+
+  it("draws the pill main computed for the game on screen into the bar", async () => {
+    const { viewer, events } = rig();
+    viewer.open("lost-cathedral", "Lost Cathedral");
+    await settle();
+    viewer.aiBar(pill(`play:${WORLD.id}`));
+    assert.deepEqual(events.at(-1)?.bar?.ai, pill(`play:${WORLD.id}`));
+  });
+
+  it("draws no pill of another game, or with no game open", async () => {
+    const { viewer, events } = rig();
+    viewer.aiBar(pill(`play:${WORLD.id}`));
+    assert.equal(events.length, 0);
+    viewer.open("lost-cathedral", "Lost Cathedral");
+    await settle();
+    const before = events.length;
+    viewer.aiBar(pill("play:another-project"));
+    viewer.aiBar(pill("create:Lost Cathedral"));
+    assert.equal(events.length, before);
+    assert.equal(events.at(-1)?.bar?.ai, null);
   });
 });
 

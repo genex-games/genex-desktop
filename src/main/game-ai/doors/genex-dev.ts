@@ -15,6 +15,7 @@ import {
   type AiCallRequest,
   type AiGameKey,
   type AiModelRef,
+  type AiUsage,
   creditsOfMicros,
   isPlainRecord,
   MICROS_PER_CREDIT,
@@ -60,6 +61,17 @@ const GenerationStatus = {
   Unknown: "unknown",
 } as const;
 
+/**
+ * genex.games' words for shared text it would not return (D6, its `play-ai/shared-text.ts`): the
+ * classifier withheld it, could not screen it, or the game never declared that other players see
+ * its AI text. Each is `moderated` to the game: shared text no stand screened is never broadcast.
+ */
+const MODERATION_ERRORS: ReadonlySet<string> = new Set([
+  "moderated",
+  "moderation_unavailable",
+  "ai_audience_undeclared",
+]);
+
 /** What a finished generation answers a game with, when it gave no answer. */
 const FAILED_CODE: Readonly<Record<string, AiErrorCode>> = {
   [GenerationStatus.Failed]: AiErrorCode.Provider,
@@ -68,12 +80,27 @@ const FAILED_CODE: Readonly<Record<string, AiErrorCode>> = {
   [GenerationStatus.Unknown]: AiErrorCode.Provider,
 };
 
-/** One model the lane serves, with its catalog price per million tokens. */
+/** One model the lane serves, with its name and its catalog price per million tokens. */
 interface DevModel {
   id: string;
+  label: string | null;
   input: number;
   output: number;
   contextLength: number;
+}
+
+/** The longest model name the lane keeps. */
+const LABEL_MAX = 120;
+
+/** The development lane's door, and what the menu and the model check read of its catalog. */
+export interface GenexDevDoor extends GameAiDoorImpl {
+  /** A model's name as genex.games' catalog gives it; null before the catalog is read, or for a model it does not serve. */
+  labelOf(model: string): string | null;
+  /**
+   * What `usage` on a model costs a player on Genex credits, in USD micros: its catalog price at
+   * genex.games' rate, in whole credits; null for a model the catalog does not price.
+   */
+  priceMicros(model: string, usage: AiUsage): number | null;
 }
 
 /** What the development lane runs on. */
@@ -90,18 +117,22 @@ export interface GenexDevDoorOptions {
 
 const isPrice = (value: unknown): value is number => typeof value === "number" && Number.isFinite(value) && value >= 0;
 
+/** One catalog row as untrusted input, or null: an id, a full price, a generation model, featured when the catalog features. */
+function readDevModel(row: unknown, featured: boolean): DevModel | null {
+  if (!isPlainRecord(row) || typeof row.id !== "string" || !row.id || row.id.length > MODEL_ID_MAX) return null;
+  if (!isPrice(row.inputUsdPerMillion) || !isPrice(row.outputUsdPerMillion)) return null;
+  if (row.kind !== undefined && row.kind !== "openrouter") return null;
+  if (featured && row.featured !== true) return null;
+  const contextLength = typeof row.contextLength === "number" && row.contextLength > 0 ? row.contextLength : 0;
+  const label = typeof row.label === "string" && row.label.trim() ? row.label.trim().slice(0, LABEL_MAX) : null;
+  return { id: row.id, label, input: row.inputUsdPerMillion, output: row.outputUsdPerMillion, contextLength };
+}
+
 /** The catalog's models as untrusted input: a row without a full price is never offered. */
 export function readDevModels(body: unknown): DevModel[] {
   const rows = isPlainRecord(body) && Array.isArray(body.models) ? body.models : [];
   const featured = isPlainRecord(body) && typeof body.featuredCount === "number" && body.featuredCount > 0;
-  return rows.flatMap((row) => {
-    if (!isPlainRecord(row) || typeof row.id !== "string" || !row.id || row.id.length > MODEL_ID_MAX) return [];
-    if (!isPrice(row.inputUsdPerMillion) || !isPrice(row.outputUsdPerMillion)) return [];
-    if (row.kind !== undefined && row.kind !== "openrouter") return [];
-    if (featured && row.featured !== true) return [];
-    const contextLength = typeof row.contextLength === "number" && row.contextLength > 0 ? row.contextLength : 0;
-    return [{ id: row.id, input: row.inputUsdPerMillion, output: row.outputUsdPerMillion, contextLength }];
-  });
+  return rows.flatMap((row) => readDevModel(row, featured) ?? []);
 }
 
 /** A generation as the lane answers it, read as untrusted input. */
@@ -128,6 +159,7 @@ function readGeneration(body: unknown): DevGeneration | null {
 /** What an HTTP refusal from the lane answers a game with. */
 function refusalOf(status: number, body: unknown): AiRefusal {
   const error = isPlainRecord(body) && typeof body.error === "string" ? body.error : "";
+  if (MODERATION_ERRORS.has(error)) return new AiRefusal(AiErrorCode.Moderated);
   if (status === 402 || error === "insufficient_balance") return new AiRefusal(AiErrorCode.OutOfCredits);
   if (status === 401 || status === 403) return new AiRefusal(AiErrorCode.DoorUnavailable);
   if (status === 429) return new AiRefusal(AiErrorCode.RateLimited, MINUTE_MS);
@@ -138,12 +170,19 @@ function refusalOf(status: number, body: unknown): AiRefusal {
 /** The text a finished generation gave: a string as it is, a JSON value as JSON. */
 const outputText = (output: unknown): string => (typeof output === "string" ? output : JSON.stringify(output ?? ""));
 
-/** The development lane's door. */
-export function createGenexDevDoor(options: GenexDevDoorOptions): GameAiDoorImpl {
-  return new GenexDevDoor(options);
+/** What `input` and `output` tokens cost at genex.games' rate on `row`, in whole credits as micros. */
+function standMicros(row: DevModel, input: number, output: number): number {
+  const provider = input * row.input + output * row.output;
+  // A whole credit at least, and whole credits: genex.games holds and charges whole credits.
+  return Math.max(1, creditsOfMicros(Math.ceil(provider * STAND_RATE))) * MICROS_PER_CREDIT;
 }
 
-class GenexDevDoor implements GameAiDoorImpl {
+/** The development lane's door. */
+export function createGenexDevDoor(options: GenexDevDoorOptions): GenexDevDoor {
+  return new DevDoor(options);
+}
+
+class DevDoor implements GenexDevDoor {
   readonly door = AiDoor.GenexDev;
   readonly #options: GenexDevDoorOptions;
   #models: { at: number; rows: DevModel[] } | null = null;
@@ -164,11 +203,23 @@ class GenexDevDoor implements GameAiDoorImpl {
   }
 
   worstCaseMicros(request: AiCallRequest, model: AiModelRef): number {
-    const row = this.#models?.rows.find((entry) => entry.id === model.model);
+    const row = this.#row(model.model);
     if (!row || model.door !== AiDoor.GenexDev) return Number.POSITIVE_INFINITY;
-    const provider = promptTokensOf(request) * row.input + request.maxOutputTokens * row.output;
-    // A whole credit at least, and whole credits: genex.games holds and charges whole credits.
-    return Math.max(1, creditsOfMicros(Math.ceil(provider * STAND_RATE))) * MICROS_PER_CREDIT;
+    return standMicros(row, promptTokensOf(request), request.maxOutputTokens);
+  }
+
+  labelOf(model: string): string | null {
+    return this.#row(model)?.label ?? null;
+  }
+
+  priceMicros(model: string, usage: AiUsage): number | null {
+    const row = this.#row(model);
+    return row ? standMicros(row, usage.inputTokens, usage.outputTokens) : null;
+  }
+
+  /** The catalog's row for a model, as last read. */
+  #row(model: string): DevModel | undefined {
+    return this.#models?.rows.find((entry) => entry.id === model);
   }
 
   async run(call: AiDoorRequest, signal: AbortSignal): Promise<AiDoorAnswer> {
@@ -186,13 +237,17 @@ class GenexDevDoor implements GameAiDoorImpl {
     if (created.status < 200 || created.status >= 300 || !first) throw refusalOf(created.status, created.body);
     const done = await this.#until(project, token, first, signal);
     if (done.status !== GenerationStatus.Succeeded) {
-      throw new AiRefusal(FAILED_CODE[done.status] ?? AiErrorCode.Provider);
+      const withheld = done.error !== null && MODERATION_ERRORS.has(done.error);
+      throw new AiRefusal(withheld ? AiErrorCode.Moderated : (FAILED_CODE[done.status] ?? AiErrorCode.Provider));
     }
     const text = outputText(done.output);
     return { text, model: call.model.model, usage: null, costMicros: done.chargedCredits * MICROS_PER_CREDIT };
   }
 
-  /** The lane's request body for one attempt: the framed prompt as one text, the schema, the output budget. */
+  /**
+   * The lane's request body for one attempt: the framed prompt as one text, the schema, the output
+   * budget, and who sees the answer — genex.games screens a shared one before it returns it (D6).
+   */
   #generationRequest(call: AiDoorRequest): Record<string, unknown> {
     const { request } = call;
     const suffix = call.repair ? REPAIR_SUFFIX : "";
@@ -203,6 +258,7 @@ class GenexDevDoor implements GameAiDoorImpl {
       outputFormat: request.schema === null ? "text" : "json",
       ...(request.schema === null ? {} : { schema: request.schema }),
       maxOutputTokens: request.maxOutputTokens,
+      authority: request.authority,
     };
   }
 

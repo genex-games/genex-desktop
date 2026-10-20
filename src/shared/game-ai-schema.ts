@@ -374,6 +374,9 @@ export const AI_EDGE_MAX_ITEMS = 64;
 /** The character an edge string is written in: a wide one, the worst for a layout. */
 const EDGE_CHAR = "W";
 
+/** The edge of free text (a `say` with no schema): the longest a call may be told, or nothing at all. */
+export const edgeText = (edge: AiEdge): string => (edge === AiEdge.Max ? EDGE_CHAR.repeat(AI_EDGE_MAX_CHARS) : "");
+
 /** The edge a replay seed plays: odd seeds the largest answers, even seeds the smallest. */
 export const edgeOfSeed = (seed: number): AiEdge => (Math.abs(seed) % 2 === 1 ? AiEdge.Max : AiEdge.Min);
 

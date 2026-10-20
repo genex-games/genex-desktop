@@ -224,6 +224,20 @@ export interface AiReplayResult {
   refused?: Partial<Record<AiErrorCode, number>>;
 }
 
+/** The most missed calls a page keeps for a recording to read (`__genexAi.missed()`). */
+export const AI_MISSES_KEPT = 16;
+
+/**
+ * A call a page's saved playtest had no answer for, as the page reports it to a harness recording:
+ * its key and occurrence as the page computed them, and the request it made. Hostile input to main,
+ * which computes the key again from the request.
+ */
+export interface AiMissedCall {
+  key: string;
+  n: number;
+  request: AiCallRequest;
+}
+
 /** What `ai.record` saved. */
 export interface AiRecordResult {
   demo: string;

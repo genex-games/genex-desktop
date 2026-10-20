@@ -101,8 +101,10 @@ trust it: only `verified` (Genex credits) may decide a leaderboard, a reward or 
 The game never chooses; the page finds its lane, and Studio enforces it.
 
 - **An agent's preview and the harness:** the demo's saved playtest (`ai/tapes/<demo>.jsonl`),
-  answered after exactly the frames each answer took when it was recorded. A call it lacks is
-  `ai_unrecorded`. `ai_record demo=<name>` records one on this Mac's models; never edit a tape.
+  answered after exactly the frames its line says. A call it lacks is `ai_unrecorded`.
+  `ai_record demo=<name>` records one on this Mac's models, each answer on the frame after its
+  call; never edit a tape. `ai_replay answers=none` plays with AI off, and `answers=edge` with the
+  largest answers the schemas allow on odd seeds and the smallest on even ones.
 - **The creator's live preview:** the saved playtest where it covers a call, else values made up
   from the schema, until the creator turns on AI for the preview; then this Mac's models or the
   creator's own picks.

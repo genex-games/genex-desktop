@@ -98,6 +98,7 @@ import {
   withdrawnNotice,
   withdrawnSince,
 } from "./delegation-prompts.ts";
+import type { NativeAiHost } from "../game-ai/bridge-native.ts";
 import { computerTools, type ComputerGrant, type ComputerTools } from "./computer-tools.ts";
 import { delegationMirror, scopedRecord, type ActivityScope, type DelegationMirror } from "./delegation-events.ts";
 import { withFallbacks } from "./engine-failure.ts";
@@ -801,14 +802,27 @@ export class DelegationService {
     const shape = await readProjectShape(initialRoot).catch(() => null);
     if (shape?.runtime !== TargetRuntime.Bridge)
       return computerTools(this.#x.previews, grant, initialRoot, outDir, session);
+    const ai = await this.#nativeAi(grant.project);
     const tools = computerTools(this.#x.previews, grant, initialRoot, outDir, session, {
-      bridge: { sandbox: this.#core.sandbox, engine: (engine, root) => this.#core.startEngine(engine, root) },
+      bridge: {
+        sandbox: this.#core.sandbox,
+        engine: (engine, root) => this.#core.startEngine(engine, root),
+        ...(ai ? { ai } : {}),
+      },
     });
     // A Play Protocol game says what it can do only once it runs: start it now, so the tool the
     // session is handed offers only what this game can do. A game that fails to start is said on
     // the first call.
     await tools.prepare().catch(() => {});
     return tools;
+  }
+
+  /** Play-time AI for a native game of the library the computer starts, named as the library names it. */
+  async #nativeAi(project: string): Promise<NativeAiHost | null> {
+    const native = this.#core.options.gameAiNative;
+    if (!native) return null;
+    const listed = (await this.#core.games.list().catch(() => [])).find((game) => game.name === project);
+    return native({ name: project, title: listed?.title || project });
   }
 
   /**

@@ -13,7 +13,7 @@ import type { PlatformOptions } from "../types.ts";
 import { desktopAiOf, desktopTransport, hostLane, routeIsOn, routeTransport } from "./host.ts";
 import type { Lane } from "./lane.ts";
 import { embedSdkOf, platformLane } from "./platform.ts";
-import { type FetchLike, offLane, replayLane } from "./replay.ts";
+import { edgeLane, type FetchLike, offLane, replayLane } from "./replay.ts";
 
 /** What the page offers the chooser; a test hands it fakes. */
 export interface PageEnv {
@@ -44,6 +44,7 @@ function published(scope: unknown): boolean {
 function hintedLane(env: PageEnv, lane: AiLane, tape: string | null): Lane {
   if (lane === AiLane.Host) return hostLane(routeTransport(env.fetch));
   if (lane === AiLane.Tape || lane === AiLane.Mock) return replayLane({ lane, demo: tape, fetch: env.fetch, seed: 1 });
+  if (lane === AiLane.Edge) return edgeLane();
   return offLane();
 }
 

@@ -23,6 +23,11 @@ export const AiLane = {
   Tape: "tape",
   /** The saved playtest where it covers the call, else values made up from the schema. */
   Mock: "mock",
+  /**
+   * The worst answers the call's schema admits (`edgeAnswer`): odd seeds the largest, even seeds
+   * the smallest. A harness replay with `answers: "edge"` plays on it (`ai.output-clamped`).
+   */
+  Edge: "edge",
   /** Main on this Mac: the Create Live route in Create, the Play view's bridge in Play. */
   Host: "host",
   /** genex.games through `@genex-ai/embed-sdk`: a published game's Genex credits or the player's plan. */
@@ -43,7 +48,7 @@ export const SHIM_TAG_SELECTOR = "script[data-studio-shim]";
 export const GENEX_AI_STUDIO_GLOBAL = "__genexAi";
 
 /** The lanes Studio's preview may hint; the platform lane is a published game's alone. */
-export const PREVIEW_LANES: readonly AiLane[] = [AiLane.Off, AiLane.Tape, AiLane.Mock, AiLane.Host];
+export const PREVIEW_LANES: readonly AiLane[] = [AiLane.Off, AiLane.Tape, AiLane.Mock, AiLane.Edge, AiLane.Host];
 
 /** Studio's hint to a preview page: the lane, and the demo whose saved playtest answers (`ai/tapes/<demo>.jsonl`). */
 export interface AiLaneHint {

@@ -283,6 +283,7 @@ function loginFixture(
   accountsFor: { signedIn?: string[]; emails?: Record<string, string> } = {},
 ) {
   const started: string[] = [];
+  const payers: string[] = [];
   const accountsRoot = mkdtempSync(path.join(os.tmpdir(), "studio-ipc-accounts-"));
   const signedIn = new Set(accountsFor.signedIn ?? []);
   const engines = new Map<string, SubscriptionEngine>(
@@ -344,10 +345,11 @@ function loginFixture(
     subscription: (id) => engines.get(id) ?? null,
     busy: () => busy,
     pushUiEvent: () => {},
+    payerChanged: (engine) => void payers.push(engine),
   };
   const { handle, invoke } = registrar();
   registerLoginIpc(handle, deps);
-  return { invoke, started, engines, accountsRoot, signedIn };
+  return { invoke, started, engines, accountsRoot, signedIn, payers };
 }
 
 describe("a subscription's accounts", () => {
@@ -394,12 +396,13 @@ describe("a subscription's accounts", () => {
   });
 
   it("switches accounts through the engine, Codex never while work is in flight", async () => {
-    const { invoke, started } = loginFixture({});
+    const { invoke, started, payers } = loginFixture({});
     assert.deepEqual(await invoke("studio:subscription.use-account", { engine: "claude-code", account: "studio" }), {
       ok: true,
       value: { code: EngineStatusCode.Ready, detail: "" },
     });
     assert.deepEqual(started, ["use claude-code studio"]);
+    assert.deepEqual(payers, ["claude-code"], "another account of the plan is another payer");
     const busy = loginFixture({}, true);
     const refused = await busy.invoke("studio:subscription.use-account", { engine: "codex", account: "studio" });
     assert.equal(refused.ok, false);
@@ -939,12 +942,14 @@ it("the OpenRouter key is saved and forgotten through the engine, and only its s
     const engines = new EngineRegistry();
     engines.register(new OpenRouterEngine({ root: await tmpDir("ipc-openrouter-"), keys, baseUrl: server.baseUrl }));
     const events: UiEvent[] = [];
+    const payers: string[] = [];
     const { handle, invoke } = registrar();
     registerModelsIpc(handle, {
       core: { engines },
       subscription: () => null,
       pushUiEvent: (event) => events.push(event),
       openRouterLogin: noSignIn,
+      payerChanged: (engine) => void payers.push(engine),
     });
     // Hostile payloads: nothing is kept, and no answer ever carries a key.
     for (const payload of [
@@ -960,6 +965,7 @@ it("the OpenRouter key is saved and forgotten through the engine, and only its s
       assert.equal(answer.ok && statusCode(answer.value), "needs_login", JSON.stringify(payload)?.slice(0, 40));
       assert.equal(await keys.read(), null);
     }
+    assert.deepEqual(payers, [], "a key that was never kept changed no payer");
     const saved = await invoke("studio:openrouter.key.save", { key: GOOD_KEY });
     assert.equal(saved.ok && statusCode(saved.value), "ready");
     assert.doesNotMatch(JSON.stringify(saved), /0123456789abcdef/);
@@ -969,6 +975,7 @@ it("the OpenRouter key is saved and forgotten through the engine, and only its s
     assert.equal(await keys.read(), null);
     assert.ok(events.every((event) => event.type === "engines.changed"));
     assert.equal(events.length, 9);
+    assert.deepEqual(payers, ["openrouter", "openrouter"], "a new key and a forgotten one each change the payer");
   } finally {
     await server.close();
   }

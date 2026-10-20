@@ -129,15 +129,15 @@ const sourceOf =
 
 const never = () => new AbortController().signal;
 
-async function refusedWith(promise: Promise<unknown>, code: AiErrorCode): Promise<AiRefusal> {
+async function refusedWith(promise: Promise<unknown>, code: AiErrorCode, label = ""): Promise<AiRefusal> {
   try {
     await promise;
   } catch (error) {
-    assert.ok(error instanceof AiRefusal, `refused with an AiRefusal, got ${String(error)}`);
-    assert.equal(error.code, code);
+    assert.ok(error instanceof AiRefusal, `refused with an AiRefusal, got ${String(error)} ${label}`);
+    assert.equal(error.code, code, label);
     return error;
   }
-  assert.fail(`expected a ${code} refusal`);
+  assert.fail(`expected a ${code} refusal ${label}`);
 }
 
 describe("this Mac's door", () => {
@@ -469,6 +469,7 @@ describe("the development lane", () => {
     const body = create?.body as { maxCredits: number; request: Record<string, unknown> };
     assert.ok(Number.isInteger(body.maxCredits) && body.maxCredits >= 1);
     assert.deepEqual(Object.keys(body.request).sort(), [
+      "authority",
       "idempotencyKey",
       "maxOutputTokens",
       "modelId",
@@ -495,6 +496,61 @@ describe("the development lane", () => {
     ]);
     await failed.door.models();
     await refusedWith(failed.door.run(doorCall(model), never()), AiErrorCode.Provider);
+  });
+
+  it("says who sees the answer, so genex.games screens shared text before it returns it (D6)", async () => {
+    for (const authority of [AiAuthority.Local, AiAuthority.Shared]) {
+      const { door, sent } = lane([]);
+      await door.models();
+      await door.run(doorCall(model, call({ authority })), never());
+      const body = sent.find((row) => row.method === "POST")?.body as { request: Record<string, unknown> };
+      assert.equal(body.request.authority, authority);
+    }
+  });
+
+  it("answers moderated when genex.games withheld or could not screen shared text, and refused it outright", async () => {
+    const rows: Array<{ label: string; answers: Array<{ status: number; body: unknown }> }> = [
+      {
+        label: "withheld by the classifier",
+        answers: [{ status: 200, body: { id: "gen_1", status: "failed", error: "moderated", chargedCredits: 0 } }],
+      },
+      {
+        label: "no classifier answered",
+        answers: [
+          { status: 200, body: { id: "gen_1", status: "failed", error: "moderation_unavailable", chargedCredits: 0 } },
+        ],
+      },
+      {
+        label: "a stand that cannot screen refuses before anything is held",
+        answers: [{ status: 503, body: { error: "moderation_unavailable" } }],
+      },
+      {
+        label: "the game never declared that others see its AI text",
+        answers: [{ status: 409, body: { error: "ai_audience_undeclared" } }],
+      },
+    ];
+    for (const row of rows) {
+      const { door } = lane(row.answers);
+      await door.models();
+      await refusedWith(
+        door.run(doorCall(model, call({ authority: AiAuthority.Shared })), never()),
+        AiErrorCode.Moderated,
+        row.label,
+      );
+    }
+  });
+
+  it("names a model as genex.games' catalog does, and prices a player's call at genex.games' rate", async () => {
+    const { door } = lane([]);
+    assert.equal(door.labelOf(model.model), null, "nothing is known before the catalog is read");
+    assert.equal(door.priceMicros(model.model, { inputTokens: 1_000, outputTokens: 100 }), null);
+    await door.models();
+    assert.equal(door.labelOf(model.model), "Haiku");
+    assert.equal(door.labelOf("x/unpriced"), null);
+    // 1,000 in at $1/M and 100 out at $5/M is $0.0015, times genex.games' rate, in whole credits.
+    const micros = door.priceMicros(model.model, { inputTokens: 1_000, outputTokens: 100 });
+    assert.equal(micros, 10_000);
+    assert.equal(door.priceMicros("x/unpriced", { inputTokens: 1, outputTokens: 1 }), null);
   });
 
   it("cancels the generation on genex.games when the call is stopped", async () => {

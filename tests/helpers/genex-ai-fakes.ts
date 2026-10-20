@@ -5,7 +5,7 @@
  */
 import { setImmediate as nextTurn } from "node:timers/promises";
 import { AiOp, AiSource, AiTier } from "../../src/shared/game-ai.ts";
-import { TAPE_WIRE_VERSION, type TapeLine, tapeLineText } from "../../src/shared/game-ai-tape.ts";
+import { type AiMissedCall, TAPE_WIRE_VERSION, type TapeLine, tapeLineText } from "../../src/shared/game-ai-tape.ts";
 import { callKeyNow } from "../../src/page/ai/sha256.ts";
 import type { Lane } from "../../src/page/ai/lanes/lane.ts";
 import { createRuntime, type RuntimeDeps } from "../../src/page/ai/runtime.ts";
@@ -69,9 +69,14 @@ export const tapeText = (lines: readonly TapeLine[]): string => lines.map(tapeLi
 
 /** The runtime over one lane, with the studio handle it registered and a switchable gesture. */
 export function aiOn(lane: Lane, options?: CreateAiOptions, platform: (() => Promise<Lane>) | null = null) {
-  const handle: { status: (() => AiStatus) | null; reset: ((seed: number) => void) | null } = {
+  const handle: {
+    status: (() => AiStatus) | null;
+    reset: ((seed: number) => void) | null;
+    missed: (() => AiMissedCall[]) | null;
+  } = {
     status: null,
     reset: null,
+    missed: null,
   };
   const gesture = { active: false };
   const deps: RuntimeDeps = {
@@ -80,6 +85,7 @@ export function aiOn(lane: Lane, options?: CreateAiOptions, platform: (() => Pro
     register: (registered) => {
       handle.status = registered.status;
       handle.reset = registered.reset;
+      handle.missed = registered.missed;
     },
   };
   const ai: GameAi = createRuntime(options, deps);

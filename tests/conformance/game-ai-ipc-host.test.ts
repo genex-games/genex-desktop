@@ -23,6 +23,8 @@ import { tmpDir } from "../helpers/tmp.ts";
 type Listener = (event: IpcSender, payload: unknown) => Promise<IpcResult>;
 const studio = { sender: "studio", senderFrame: "main-frame" };
 const GENEX = "https://genex.games";
+/** Where genex.games' checkout for a pack or Pro hands the person (a Stripe Checkout session). */
+const STRIPE = "https://checkout.stripe.com";
 
 /** Report and check stand-ins: every call recorded, never reached here. */
 function others() {
@@ -65,7 +67,7 @@ async function hosted(options: { checkoutUrl?: string } = {}) {
     },
     titleOf: async (game) => (game === CROWNS ? "Crowns of 1444" : "Moss Garden"),
     openExternal: async (url) => void opened.push(url),
-    checkoutOrigin: GENEX,
+    checkoutOrigins: [GENEX, STRIPE],
   });
   const listeners = new Map<string, Listener>();
   const handle = createIpcHandle(
@@ -167,14 +169,21 @@ describe("the play-time AI IPC host", () => {
     }
   });
 
-  it("opens checkout only on genex.games over https", async () => {
+  it("opens checkout only on genex.games or its Stripe checkout, over https", async () => {
     const h = await hosted();
     await h.host.checkout({ kind: AiCreditProductKind.Pack, packId: "pack_500" });
     assert.deepEqual(h.opened, [`${GENEX}/checkout/pack_500`]);
+    const stripe = await hosted({ checkoutUrl: `${STRIPE}/c/pay/cs_test_a1` });
+    await stripe.host.checkout({ kind: AiCreditProductKind.Pro });
+    assert.deepEqual(stripe.opened, [`${STRIPE}/c/pay/cs_test_a1`]);
     for (const url of [
       "https://genex.games.evil.example/checkout",
       "http://genex.games/checkout",
+      "https://checkout.stripe.com.evil.example/c/pay/cs_1",
+      "http://checkout.stripe.com/c/pay/cs_1",
+      "https://user@checkout.stripe.com/c/pay/cs_1",
       "file:///etc/passwd",
+      "not a url",
     ]) {
       const elsewhere = await hosted({ checkoutUrl: url });
       await assert.rejects(elsewhere.host.checkout({ kind: AiCreditProductKind.Pro }), url);

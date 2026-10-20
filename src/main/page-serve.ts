@@ -22,6 +22,7 @@ import { isPreviewCdnRead } from "../substrate/preview-network.ts";
 import { isInside } from "../substrate/paths.ts";
 import type { ContractReach } from "../substrate/game-page.ts";
 import { AI_ROUTE_PREFIX } from "../shared/game-ai-bridge.ts";
+import { AI_LANE_ATTRIBUTE, type AiLaneHint, aiLaneHintAttribute } from "../shared/game-ai-lane.ts";
 
 /** Where the bundles live under the vendor directory (`vendor/` is already a served route). */
 export const SHIM_PATH = "vendor/studio/shim.js";
@@ -102,6 +103,8 @@ export interface RewriteOptions {
   insertMap?: boolean;
   /** Baked into the shim tag and read back by the page bundle. */
   shim?: Partial<ShimOptions> | null;
+  /** The lane `genex-ai` plays on in this load (a harness replay); null names none. */
+  aiLane?: AiLaneHint | null;
 }
 
 export interface RewriteResult {
@@ -160,11 +163,18 @@ function isHtmlLike(contentType: string | null | undefined, relPath: string): bo
   return /\.x?html?(?:$|[?#])/i.test(String(relPath ?? ""));
 }
 
-/** The shim tag, with this load's options baked into it when they differ from the defaults. */
-export function shimTag(options?: Partial<ShimOptions> | null): string {
+/**
+ * The shim tag, with this load's options baked into it when they differ from the defaults, and the
+ * lane `genex-ai` plays on when the load names one (`AI_LANE_ATTRIBUTE`).
+ */
+export function shimTag(options?: Partial<ShimOptions> | null, aiLane?: AiLaneHint | null): string {
   const payload = options && Object.keys(options).length ? JSON.stringify(options) : "";
-  if (!payload) return SHIM_TAG;
-  return SHIM_TAG.replace(" data-studio-shim>", ` data-studio-shim data-studio-options="${escapeAttribute(payload)}">`);
+  const parts = [
+    payload ? ` data-studio-options="${escapeAttribute(payload)}"` : "",
+    aiLane ? ` ${AI_LANE_ATTRIBUTE}="${escapeAttribute(aiLaneHintAttribute(aiLane))}"` : "",
+  ].join("");
+  if (!parts) return SHIM_TAG;
+  return SHIM_TAG.replace(" data-studio-shim>", ` data-studio-shim${parts}>`);
 }
 
 function escapeAttribute(value: string): string {
@@ -202,7 +212,7 @@ export function rewriteGameHtml(html: string, options: RewriteOptions = {}): Rew
     working: inline.html,
     documentUrl,
     insertMap: options.insertMap !== false,
-    shim: shimTag(options.shim ?? null),
+    shim: shimTag(options.shim ?? null, options.aiLane ?? null),
     hooked,
     reach: Object.keys(inline.hooked).length ? "inline-url" : "none",
   });

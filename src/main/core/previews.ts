@@ -3,6 +3,7 @@
  * captures and computer sessions agents look through, the agent screens on the stage, and a run's
  * builds played or landed. Composed by `StudioCore`; its state stays in the core.
  */
+import type { AiLaneHint } from "../../shared/game-ai-lane.ts";
 import {
   genexJobDir,
   isGenexInspectionFile,
@@ -666,8 +667,11 @@ export class PreviewService {
     };
   }
 
-  /** `preview.load`: serve a game (or a checked worktree of it) into a preview, one load per handle at a time. */
-  loadPreview(p: HarnessParams<"preview.load">): Promise<string> {
+  /**
+   * `preview.load`: serve a game (or a checked worktree of it) into a preview, one load per handle
+   * at a time. `aiLane` names the lane `genex-ai` plays on in this load (a play-time AI replay).
+   */
+  loadPreview(p: HarnessParams<"preview.load">, options: { aiLane?: AiLaneHint | null } = {}): Promise<string> {
     const handle = p.handle ?? LIVE_HANDLE;
     return serial(this.#x.previewOperations, handle, async () => {
       const profiling = Boolean(p.candidateId && p.revision);
@@ -676,7 +680,7 @@ export class PreviewService {
       const port = this.preview(p.handle);
       if (p.candidateId && p.revision)
         return this.#loadCandidate(p, { candidateId: p.candidateId, revision: p.revision }, port);
-      return this.#loadServedPreview(p, handle, checkedRoot, port);
+      return this.#loadServedPreview(p, handle, checkedRoot, port, options.aiLane ?? null);
     });
   }
 
@@ -703,6 +707,7 @@ export class PreviewService {
     handle: string,
     checkedRoot: string | null,
     port: PreviewPort,
+    aiLane: AiLaneHint | null,
   ): Promise<string> {
     const remembered = { project: p.project, root: checkedRoot, entry: p.entry, loaded: null as string | null };
     this.#x.servedRoots.set(handle, remembered);
@@ -714,7 +719,7 @@ export class PreviewService {
     try {
       const served = await this.servedEntry(p.project, checkedRoot, p.entry, port, { fallback: isLive });
       if (!served) return unservedUrl(p);
-      const url = await port.load(p.project, served.entry, served.root, { loopback: served.loopback });
+      const url = await port.load(p.project, served.entry, served.root, { loopback: served.loopback, aiLane });
       // Only now is Live current: a load that failed leaves what waited for Reload waiting.
       if (isLive) await this.#live.loaded(p.project, { print, root: checkedRoot });
       remembered.loaded = servedKey(served);

@@ -18,6 +18,7 @@ import {
   type AiDoorAnswer,
   type GameAiCaller,
   type GameAiDoorImpl,
+  type GameAiTraceSink,
   type GenexAiPlatform,
 } from "../../src/main/game-ai/types.ts";
 import {
@@ -123,7 +124,6 @@ export function noPlatform(): GenexAiPlatform {
     setAutoTopUp: offline,
     confirmTerms: offline,
     answerConfirm: offline,
-    deviceFundingAllowed: offline,
     sendReport: offline,
     sendFitCounts: offline,
   };
@@ -134,8 +134,10 @@ export interface RigOptions {
   scripts?: Partial<Record<AiDoor, ScriptedRun[]>>;
   ready?: Partial<Record<AiDoor, boolean>>;
   settings?: GameAiSettingsPatch;
-  moderate?: (text: string) => Promise<boolean>;
+  moderate?: (text: string, door: AiDoor) => Promise<boolean>;
   worstMicros?: number;
+  /** Hears every settled call with its text (`GameAiDeps.traces`). */
+  traces?: GameAiTraceSink;
 }
 
 export async function rig(options: RigOptions = {}) {
@@ -200,6 +202,7 @@ export async function rig(options: RigOptions = {}) {
     drawPill: (_game, bar) => void bars.push(bar),
     menu: async (game) => menuFor(game),
     moderate: options.moderate ?? (async () => true),
+    ...(options.traces ? { traces: options.traces } : {}),
   });
   const ask = (request: AiCallRequest, who = caller(), onDelta?: (text: string) => void) =>
     service.handle(who, { op: AiBridgeOp.Call, body: request }, onDelta);

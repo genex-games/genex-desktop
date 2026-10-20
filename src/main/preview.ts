@@ -102,6 +102,7 @@ import type { PreviewPixelStats } from "./studio-core.ts";
 import { errorMessage } from "../shared/errors.ts";
 import { setTimeout as delay } from "node:timers/promises";
 import { type CreateRouteHost, type PreviewAi, previewAi, routeRequestAllowed } from "./game-ai/create-route.ts";
+import type { AiLaneHint } from "../shared/game-ai-lane.ts";
 
 /** What the preview's console tells the agent about the game view, and why a call is refused. */
 const MESSAGE = {
@@ -295,6 +296,8 @@ export class GamePreview {
   #entryPath: string | null = null;
   /** This load's shim overrides (the boot budget is the one that changes per game). */
   #shimLoad: Partial<ShimOptions> | null = null;
+  /** The lane `genex-ai` plays on in this load (a harness replay); null names none. */
+  #aiLaneLoad: AiLaneHint | null = null;
   /** Whether this build's vendor directory carries the shim bundle at all. */
   #shimPresent: boolean | null = null;
   /** Origins whose blocked request or navigation this load has already noted on the game's console. */
@@ -680,7 +683,7 @@ export class GamePreview {
       return null;
     }
     const html = await response.text();
-    const result = rewriteGameHtml(html, { shim: this.#shimOptions(), documentUrl });
+    const result = rewriteGameHtml(html, { shim: this.#shimOptions(), documentUrl, aiLane: this.#aiLaneLoad });
     for (const note of result.notes) this.#push({ at: Date.now(), level: "warning", message: note });
     if (isEntry) this.#reach = { reach: result.reach, hooked: result.hooked };
     return result.injected ? result.html : html;
@@ -752,13 +755,14 @@ export class GamePreview {
     project: string,
     entry = "index.html",
     root?: string,
-    options: { loopback?: boolean; shim?: Partial<ShimOptions> } = {},
+    options: { loopback?: boolean; shim?: Partial<ShimOptions>; aiLane?: AiLaneHint | null } = {},
   ): Promise<string> {
     this.#nativeDelivery = null;
     this.#pageSurfaceNoted = false;
     this.#stoppedUrl = null;
     this.#entryPath = String(entry ?? "index.html").split(/[?#]/)[0] ?? "index.html";
     this.#shimLoad = options.shim ?? null;
+    this.#aiLaneLoad = options.aiLane ?? null;
     this.#reach = { reach: "none", hooked: {} };
     await this.#profiler.invalidate("source loaded");
     const view = this.create();
