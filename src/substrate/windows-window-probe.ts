@@ -1,16 +1,18 @@
 /**
  * What Windows itself says about the desktop, for computer control on a PC: the app that holds the
- * keyboard and whether its focused field is a password field (UI Automation's `IsPassword`), and the
- * app a click at a screen point reaches (UI Automation's element at that point, up to its top-level
+ * keyboard and whether its focused field is a password field (UI Automation's `IsPassword`, or a
+ * Win32 edit control's own password style, which .NET's UI Automation does not read), and the app
+ * a click at a screen point reaches (UI Automation's element at that point, up to its top-level
  * window, as the click lands in that window). cua's window list cannot say either: it lists windows
  * on other virtual desktops and transparent overlays (a game overlay over the whole screen) as on
  * screen, and its app listing rescans every installed app.
  *
  * A host helper like the driver: Windows PowerShell (Microsoft's, on every Windows 10 and 11) runs a
  * fixed script, handed over as `-EncodedCommand` (no file, so no execution policy applies), outside
- * the ProcessSandbox, using only .NET's own UI Automation, Windows Forms and process reads: nothing
- * is compiled and no cmdlet runs, so no generated DLL, no compiler and no first-use preparation of
- * PowerShell's modules stand between it and its first answer. It reports its start in stages, says it is ready with the primary screen's size as
+ * the ProcessSandbox, using only .NET's own UI Automation, Windows Forms, process reads and user32's
+ * `GetWindowLongW` declared in memory: nothing is compiled and no cmdlet runs, so no generated DLL,
+ * no compiler and no first-use preparation of PowerShell's modules stand between it and its first
+ * answer. It reports its start in stages, says it is ready with the primary screen's size as
  * it sees it (Windows may scale a process's points), then answers one JSON line for each request
  * line on its stdin: `front`, `at <x> <y>` (in its own points: the caller scales the driver's
  * physical pixels to them) or `pid <n>`. An app is its executable's name and its file description
@@ -91,6 +93,22 @@ $Element = [System.Windows.Automation.AutomationElement]
 $Root = $Element::RootElement
 $Walker = [System.Windows.Automation.TreeWalker]::RawViewWalker
 $Edit = [System.Windows.Automation.ControlType]::Edit
+# A Win32 edit control's class (Notepad's, a Windows Forms text box's, a rich edit's), and the style
+# that makes one a password field (ES_PASSWORD).
+$EditClass = '^(Edit|RichEdit\w*|WindowsForms10\.(EDIT|RichEdit\w*)\..*)$'
+$PasswordStyle = 0x20
+
+# user32's GetWindowLongW, declared in memory (Reflection.Emit): nothing is compiled. .NET's UI
+# Automation names a Windows Forms text box a Pane with no password flag, so a Win32 edit's own
+# style is read instead. Without it the caller reads the window's tree.
+$User32 = $null
+try {
+  $assembly = [System.AppDomain]::CurrentDomain.DefineDynamicAssembly([System.Reflection.AssemblyName]::new('GenexWindowProbe'), [System.Reflection.Emit.AssemblyBuilderAccess]::Run)
+  $type = $assembly.DefineDynamicModule('GenexWindowProbe').DefineType('User32', 'Public, Class')
+  $method = $type.DefinePInvokeMethod('GetWindowLongW', 'user32.dll', 'Public, Static, PinvokeImpl', 'Standard', [int], [Type[]]@([IntPtr], [int]), 'Winapi', 'Unicode')
+  $method.SetImplementationFlags('PreserveSig')
+  $User32 = $type.CreateType()
+} catch { }
 
 # The primary screen in UI Automation's own points: Windows Forms' view of it, scaled by how the two
 # see the whole desktop (both are scaled alike unless Windows treats them differently).
@@ -114,13 +132,37 @@ function TopOf($node) {
   return $current
 }
 
-# Whether the focused element is a password field; null when focus is on no text field (an app whose
-# accessibility wakes on first asking may still say its window), so the caller reads the tree.
-function SecureOf($node) {
+# Whether an element is a Win32 edit control, by its class.
+function IsWin32Edit($node) {
+  try { return [string]$node.Current.ClassName -match $EditClass } catch { return $false }
+}
+
+# Whether a Win32 edit control has the password style; null when it is none or its style can't be read.
+function Win32SecureOf($node) {
+  if ($null -eq $User32 -or -not (IsWin32Edit $node)) { return $null }
   try {
-    if ($node.Current.ControlType -ne $Edit) { return $null }
-    return [bool]$node.Current.IsPassword
+    $handle = [IntPtr][long]$node.Current.NativeWindowHandle
+    if ($handle -eq [IntPtr]::Zero) { return $null }
+    return ($User32::GetWindowLongW($handle, -16) -band $PasswordStyle) -ne 0
   } catch { return $null }
+}
+
+# Whether the focused element is a password field: UI Automation's flag, or a Win32 edit's own
+# style; null when focus is on no text field (an app whose accessibility wakes on first asking may
+# still say its window), so the caller reads the tree.
+function SecureOf($node) {
+  $win32 = Win32SecureOf $node
+  if ($win32 -eq $true) { return $true }
+  try {
+    if ($node.Current.ControlType -ne $Edit) { return $win32 }
+    return [bool]$node.Current.IsPassword
+  } catch { return $win32 }
+}
+
+# Whether an element is a text field, as UI Automation or its Win32 class says.
+function IsTextField($node) {
+  try { if ($node.Current.ControlType -eq $Edit) { return $true } } catch { }
+  return IsWin32Edit $node
 }
 
 function AppOfProcess([int]$id) {
@@ -145,7 +187,7 @@ function AppOfElement($node, [bool]$focus) {
 # window before its field: focus that is on no text field is asked for once more, a moment later.
 function Focused() {
   $node = $Element::FocusedElement
-  if ($null -eq $node -or $node.Current.ControlType -eq $Edit) { return $node }
+  if ($null -eq $node -or (IsTextField $node)) { return $node }
   [System.Threading.Thread]::Sleep(${FOCUS_SETTLE_MS})
   $again = $Element::FocusedElement
   if ($null -eq $again) { return $node }

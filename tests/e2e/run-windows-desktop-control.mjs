@@ -31,7 +31,7 @@ import { desktopControl } from "../../src/main/core/desktop-control.ts";
 import { DesktopQuestion } from "../../src/main/core/desktop-tools.ts";
 import { connectCuaDriver, driverEnv, GrantHolder } from "../../src/substrate/cua-driver-client.ts";
 import { bundledCuaDriver, embeddedCuaDriver, HOST_BUNDLE_ID } from "../../src/substrate/cua-embedded.ts";
-import { windowsPowerShell } from "../../src/substrate/windows-window-probe.ts";
+import { probeCommand, windowsPowerShell, windowsProbe } from "../../src/substrate/windows-window-probe.ts";
 
 const root = fileURLToPath(new URL("../..", import.meta.url));
 const evidence = path.join(root, ".studio-dev", "evidence", "windows-desktop-control");
@@ -51,6 +51,8 @@ const PASSWORD_FORM =
  */
 const DOTNET =
   "$PSModuleAutoLoadingPreference = 'None'; foreach ($a in 'UIAutomationClient', 'UIAutomationTypes', 'WindowsBase', 'System.Windows.Forms') { [void][Reflection.Assembly]::LoadWithPartialName($a) }";
+/** How many points across and down a covered window is tried at, for one only it covers. */
+const GRID = 5;
 /** A UI Automation element's rectangle, as left,top,right,bottom. */
 const RECT = '$r = $e.Current.BoundingRectangle; "$([int]$r.Left),$([int]$r.Top),$([int]$r.Right),$([int]$r.Bottom)"';
 const report = { at: new Date().toISOString(), checks: [], asked: [], failed: 0 };
@@ -114,6 +116,20 @@ $named = [Windows.Automation.PropertyCondition]::new([Windows.Automation.Automat
 $e = [Windows.Automation.AutomationElement]::RootElement.FindFirst([Windows.Automation.TreeScope]::Children, $named)
 if ($null -ne $e) { ${RECT} }`),
   );
+}
+
+/**
+ * Minimize every window on the desktop that can be, as the person would before opening a window to
+ * work in: what this background runner opens next cannot take the front from them (the runner's own
+ * console, a dialog its image left open), so they are moved out of its way.
+ */
+async function clearDesktop() {
+  await powershell(`${DOTNET}
+$pattern = [Windows.Automation.WindowPattern]::Pattern
+foreach ($w in [Windows.Automation.AutomationElement]::RootElement.FindAll([Windows.Automation.TreeScope]::Children, [Windows.Automation.Condition]::TrueCondition)) {
+  try { $p = $w.GetCurrentPattern($pattern); if ($p.Current.CanMinimize) { $p.SetWindowVisualState([Windows.Automation.WindowVisualState]::Minimized) } } catch { }
+}`);
+  await sleep(700);
 }
 
 /**
@@ -239,7 +255,7 @@ function session(binary) {
   return { control, call };
 }
 
-/** The first call starts the daemon and the probe, as an agent's first call does; answers where a window's centre is in the picture. */
+/** The first call starts the daemon and the probe, as an agent's first call does; answers the screen's size and where a screen point is in the picture. */
 async function firstLook(call, binary) {
   const first = await call({ action: "screenshot" });
   const picture = first.images[0] ? pngSize(Buffer.from(first.images[0].data, "base64")) : null;
@@ -254,21 +270,47 @@ async function firstLook(call, binary) {
   check("the daemon is the bundled exe, embedded on a private named pipe", onPipe && bundled, processes);
   const screen = await screenSize();
   const scale = (value, to) => (picture ? Math.round((value * picture[to]) / screen[to]) : value);
-  return (rect) => {
-    const x = Math.round((rect.left + rect.right) / 2);
-    const y = Math.round((rect.top + rect.bottom) / 2);
-    return `${scale(x, "width")},${scale(y, "height")}`;
-  };
+  return { screen, at: (point) => `${scale(point.x, "width")},${scale(point.y, "height")}` };
+}
+
+/** A rectangle's centre on screen. */
+function middle(rect) {
+  return { x: Math.round((rect.left + rect.right) / 2), y: Math.round((rect.top + rect.bottom) / 2) };
+}
+
+/**
+ * A screen point inside `rect` that Windows says reaches `exe` (its centre when it can), or the
+ * apps that cover it instead. Windows lets only the app in front hand the front over, so a window
+ * this background runner opens can stay behind what is already there: the runner's own console,
+ * or a dialog the runner image left open. A click at a covered point lands in the window over it,
+ * and the studio rightly charges it to that app, so the step looks for a point only this window
+ * covers, asking the same probe the studio asks.
+ */
+async function uncovered(probe, screen, rect, exe) {
+  const points = [middle(rect)];
+  for (let i = 0; i < GRID; i++)
+    for (let j = 0; j < GRID; j++)
+      points.push({
+        x: Math.round(rect.left + ((rect.right - rect.left) * (i + 0.5)) / GRID),
+        y: Math.round(rect.top + ((rect.bottom - rect.top) * (j + 0.5)) / GRID),
+      });
+  const over = new Set();
+  for (const point of points) {
+    const app = await probe.at(point.x, point.y, screen).catch(() => null);
+    if (app?.exe.toLowerCase() === exe) return { point };
+    over.add(app ? app.name || app.exe : "no app");
+  }
+  return { covered: [...over] };
 }
 
 /** Notepad: click into it, type a line, read it back from its own tree. Answers its process. */
-async function notepadStep(call, centre) {
+async function notepadStep(call, look) {
   const notepadProcess = launch("notepad.exe");
   const notepad = await untilWindow("notepad");
   check("Notepad opens a window", notepad !== null, notepad);
   if (!notepad) return null;
   await toFront(notepadProcess.pid);
-  const click = await call({ action: "left_click", coordinate: centre(notepad) });
+  const click = await call({ action: "left_click", coordinate: look.at(middle(notepad)) });
   check(
     "a click into Notepad is allowed once the person allows Notepad",
     !REFUSED.test(click.text),
@@ -301,11 +343,11 @@ async function chordStep(call, notepadProcess) {
 }
 
 /** The saved-passwords dialog (rundll32.exe) and Windows Settings (a packaged app's frame): never driven. */
-async function neverDrivenSteps(call, centre) {
+async function neverDrivenSteps(call, look, probe) {
   launch("rundll32.exe", ["keymgr.dll,KRShowKeyMgr"]);
   const keys = await untilWindow("rundll32");
   if (keys) {
-    const refused = await call({ action: "left_click", coordinate: centre(keys) });
+    const refused = await call({ action: "left_click", coordinate: look.at(middle(keys)) });
     check(
       "a click in the saved-passwords dialog is refused",
       /never driven/i.test(refused.text),
@@ -313,36 +355,63 @@ async function neverDrivenSteps(call, centre) {
     );
   } else check("the saved-passwords dialog opens (not on every Windows edition)", true, "no window: skipped");
   await run("taskkill", ["/IM", "rundll32.exe", "/F"]).catch(() => {});
+  await clearDesktop();
   launch("explorer.exe", ["ms-settings:"]);
   const settings = await untilWindow("ApplicationFrameHost", 20_000);
   if (settings) {
     await toFront("Settings");
-    const refused = await call({ action: "left_click", coordinate: centre(settings) });
+    const free = await uncovered(probe, look.screen, settings, "applicationframehost.exe");
+    const refused = free.point ? await call({ action: "left_click", coordinate: look.at(free.point) }) : null;
     check(
       "a click in Windows Settings (ApplicationFrameHost) is refused",
-      /never driven/i.test(refused.text),
-      refused.text.slice(0, 300),
+      refused !== null && /never driven/i.test(refused.text),
+      refused ? refused.text.slice(0, 300) : `Settings is covered everywhere by: ${free.covered.join(", ")}`,
     );
   } else check("Windows Settings opens (not on every Windows edition)", true, "no Settings window: skipped");
   await run("taskkill", ["/IM", "SystemSettings.exe", "/F"]).catch(() => {});
 }
 
 /** A focused password field in an allowed app: typing into it is refused. */
-async function passwordStep(call, centre) {
-  const form = launch(windowsPowerShell(process.env), ["-NoProfile", "-Command", PASSWORD_FORM]);
+async function passwordStep(call, look, probe) {
+  // Started as this runner's own child, not detached: what PowerShell says, and its exit, are kept
+  // to say why no window opened.
+  await clearDesktop();
+  const form = spawn(windowsPowerShell(process.env), ["-NoProfile", "-NonInteractive", "-Command", PASSWORD_FORM], {
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  let said = "";
+  let exit = null;
+  const keep = (chunk) => {
+    said = `${said}${chunk}`.slice(-2_000);
+  };
+  form.stdout.on("data", keep);
+  form.stderr.on("data", keep);
+  form.on("error", (error) => keep(String(error)));
+  form.on("exit", (code, signal) => {
+    exit = code ?? signal;
+  });
   // Windows PowerShell and Windows Forms start slowly on a cold machine.
   const window = await untilWindow("Genex password field", 60_000, titledRect);
-  if (window) {
+  const free = window ? await uncovered(probe, look.screen, window, "powershell.exe") : null;
+  if (free?.point) {
     await toFront(form.pid);
-    await call({ action: "left_click", coordinate: centre(window) });
+    await call({ action: "left_click", coordinate: look.at(free.point) });
+    // What Windows says has the keyboard, as the studio's probe reads it: why a refusal did not come.
+    const front = await probe.front().catch((error) => String(error));
+    const focused = await powershell(
+      `${DOTNET}; $e = [Windows.Automation.AutomationElement]::FocusedElement; "$($e.Current.ControlType.ProgrammaticName)|$($e.Current.ClassName)|$($e.Current.IsPassword)|$($e.Current.FrameworkId)"`,
+    );
     const refused = await call({ action: "type", text: "hunter2" });
     check(
       "typing into a focused password field is refused",
-      /password field/i.test(refused.text),
-      refused.text.slice(0, 300),
+      // The refusal's own words: the form's title also says "password field".
+      /the focused field is a password field/i.test(refused.text),
+      { front, focused, said: refused.text.slice(0, 160) },
     );
     await call({ action: "screenshot" });
-  } else check("the password form opens", false, "no window");
+  } else if (window)
+    check("the password form can be clicked", false, `covered everywhere by: ${free.covered.join(", ")}`);
+  else check("the password form opens", false, { exit, said: said.trim() || "nothing" });
   try {
     process.kill(form.pid);
   } catch {}
@@ -391,13 +460,15 @@ async function main() {
   await mkdir(evidence, { recursive: true });
   const { resources, binary } = await vendored();
   const { control, call } = session(binary);
-  const centre = await firstLook(call, binary);
-  const notepad = await notepadStep(call, centre);
+  const look = await firstLook(call, binary);
+  const probe = windowsProbe(probeCommand(process.env));
+  const notepad = await notepadStep(call, look);
   await chordStep(call, notepad);
   // Notepad would sit over what opens next.
   await run("taskkill", ["/IM", "notepad.exe", "/F"]).catch(() => {});
-  await neverDrivenSteps(call, centre);
-  await passwordStep(call, centre);
+  await neverDrivenSteps(call, look, probe);
+  await passwordStep(call, look, probe);
+  await probe.close();
   await stopStep(control, call);
   await crashStep(resources);
   await run("taskkill", ["/IM", "notepad.exe", "/F"]).catch(() => {});

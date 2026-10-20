@@ -207,4 +207,6 @@ through the folders the others keep in `%TEMP%`: tests remove theirs with `remov
 (`tests/helpers/tmp.ts`), and a test of session logic hands `ProcessSandbox` a
 `WindowsSandboxSession` over fake ancestor grants.
 A dispatch with `files` runs only those files after the sandbox setup
-(`gh workflow run windows.yml --ref <branch> -f files="tests/a.test.ts"`). `.gitattributes` keeps every checkout LF.
+(`gh workflow run windows.yml --ref <branch> -f files="tests/a.test.ts"`), and one with
+`desktop` only drives computer control on the runner's desktop
+(`tests/e2e/run-windows-desktop-control.mjs`). `.gitattributes` keeps every checkout LF.
