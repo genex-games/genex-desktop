@@ -120,7 +120,12 @@ table `tests/fixtures/humanoid-aliases.json`); the host checks both in the recei
 iOS ASTC, Android ASTC and ETC2, the web all three), never RGBA8; a phone drops a source image its
 families cover and family mips above `PHONE_MAX_TEXTURE_PX`. It writes
 `assets/genex-asset-index.json` (ids from a trusted `genex-assets.lock`, files and bytes per
-family, `deps`, `boot`), and the receipt's `package` gives the bytes. A game file at that name is
+family, `deps`, `boot`), and the receipt's `package` gives the bytes. Streaming reads only the
+index ([`stream-facts.ts`](../../src/substrate/asset-import/stream-facts.ts)): a GLB's `mesh`
+lists its levels coarse first with their byte ranges, the head and vertex ranges every level
+needs, and its UV texel density; a KTX2 file's `levels` run smallest first with their ranges.
+`genex.toml`'s `[[asset_group]]` rows become the index's `groups`, and a member of any group is not
+`boot`. A game file at that name is
 refused `reserved-asset-name`. Every lane output passes `admitRustOutput` before
 `out/`, exports carry `rust-notices.ts` notices, phone exports
 ([`mobile-export-deps.ts`](../../src/main/core/mobile-export-deps.ts)) are signed by `mobile-sign.ts`, and a compiled-stack session builds with its lock's tools, never writing the store. The template is checked by

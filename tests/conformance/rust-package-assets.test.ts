@@ -495,17 +495,27 @@ describe("the asset index", () => {
       "tone.wav",
     ]);
     const astc = (await readFile(family("astc"))).length;
-    // bark.png went out as its ASTC file only: the entry keeps the name the game reads it by.
-    assert.deepEqual(byPath["bark.png"], {
-      path: "bark.png",
-      id: "00000000000000b1",
-      kind: "image",
-      licence: AssetLicence.Cc0,
-      bytes: astc,
-      files: [{ path: "bark.astc.ktx2", family: TextureCompression.Astc, bytes: astc, px: 64 }],
-      deps: [],
-      boot: true,
-    });
+    // bark.png went out as its ASTC file only: the entry keeps the name the game reads it by. Its
+    // file's levels (C-29, smallest first) are `rust-asset-index.test.ts`'s rows; here only their sides.
+    const barkFile = byPath["bark.png"]?.files[0];
+    assert.deepEqual(
+      barkFile?.levels?.map((level) => level.px),
+      [1, 2, 4, 8, 16, 32, 64],
+    );
+    const { levels: _levels, ...barkShipped } = barkFile ?? { path: "" };
+    assert.deepEqual(
+      { ...byPath["bark.png"], files: [barkShipped] },
+      {
+        path: "bark.png",
+        id: "00000000000000b1",
+        kind: "image",
+        licence: AssetLicence.Cc0,
+        bytes: astc,
+        files: [{ path: "bark.astc.ktx2", family: TextureCompression.Astc, bytes: astc, px: 64 }],
+        deps: [],
+        boot: true,
+      },
+    );
     assert.equal(byPath["ship.glb"]?.id, "00000000000000a1");
     assert.deepEqual(byPath["ship.glb"]?.deps, ["00000000000000a2"]);
     assert.equal(byPath["ship.mtl"]?.id, "00000000000000a2");
@@ -517,7 +527,7 @@ describe("the asset index", () => {
     );
     assert.ok(
       index.assets.every((entry) => entry.boot),
-      "every asset is boot until asset groups have a producer",
+      "every asset is boot when the game names no asset group (C-30)",
     );
     assert.deepEqual(
       report.dropped.filter((row) => row.reason === PackageDrop.SourceCovered).map((row) => row.file),
