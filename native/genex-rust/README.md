@@ -113,3 +113,28 @@ start a thread carry their own `clippy.toml` saying why; `genex-core` keeps its 
 f64 forms added (its audio meter's FFT is the one reasoned `#[allow]`).
 `scripts/spike/rust-wgpu/parity.sh` proves each rule on a fixture, runs the pond twice for
 bit-identical output and compares records across targets (see its header).
+
+## Play-time AI on the studio connection
+
+A Rust game speaks the play-time AI lines of `docs/play-protocol.md` ("Play-time AI") on its
+studio connection (fd 3, the Windows pipe) rather than on a Play Protocol stdout, with the
+native envelope around the studio's ops:
+
+- A game that calls `game.ai(..)` declares it in `ready`: `"capabilities": {"ai": true}`.
+- The studio takes the game's AI only by starting it with `GENEX_STUDIO_AI=1`
+  (`genex_studio::AI_ENV`). Without it the game writes no `ai` line (a host that reads an
+  unknown event as a violation never sees one), answers `ai.reply` / `ai.delta` `unknown-op`, and
+  every call fails `ai_off` at once so the game plays its fallbacks. A host sets the variable
+  only once its port reads `ai` events.
+- Lines are id-less events, `{"event":"ai","rid":"rsai-…","op":…,"body":…}`, byte for byte the
+  TypeScript's `JSON.stringify` of the same message (`tests/fixtures/play-ai-wire-v1.json`). Each
+  goes out before the reply of the request whose ticks printed it, and after each live frame.
+- The studio answers with `{"id":…,"op":"ai.reply","arg":{"rid":…,"reply":…}}` and streams a
+  `say` with `{"id":…,"op":"ai.delta","arg":{"rid":…,"text":…}}`; the game replies
+  `{"taken": bool}` (false for a rid it is not waiting for, such as a line of a run before a
+  `seed`), or `bad-argument` for an argument without a string `rid`.
+- `state().volatile.ai` is `{asked, answered, status}`: the rids sent and answered this run and
+  the AI's status, outside the checksum.
+
+`scripts/toolchains/play-ai-wire-fixture.ts check --from <checkout>` holds the fixture to the
+TypeScript modules of a checkout that has them.
