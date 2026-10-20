@@ -1,9 +1,11 @@
 //! Decoding with symphonia (kira's own copy): WAV, OGG Vorbis, MP3 and FLAC load; Opus and AAC
 //! are the import step's to convert (`needs-import`); raylib's QOA, XM and MOD are refused. A
 //! decoded file played on the device-less mixer gives the `audioLevel` the fixture holds, with no
-//! audio device, twice over.
+//! audio device, twice over. Hostile bytes (a truncated page, no bytes, another file's bytes, a
+//! header claiming 2^40 frames, an Opus stream named `.ogg`, a small file that decodes past the
+//! sound budget) are typed refusals, never a panic.
 
-use genex_audio::{AudioErrorCode, Mixer, decode_sound};
+use genex_audio::{AudioErrorCode, MAX_DECODED_FRAMES, Mixer, decode_sound};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -69,4 +71,52 @@ fn formats_the_runtime_does_not_decode_are_refused_typed() {
         assert_eq!(decode_sound(b"anything", ext).unwrap_err().code(), AudioErrorCode::UnsupportedFormat, "{ext}");
     }
     assert_eq!(decode_sound(b"not audio at all", "ogg").unwrap_err().code(), AudioErrorCode::Malformed);
+}
+
+fn crate_fixture(name: &str) -> Vec<u8> {
+    fs::read(Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures").join(name)).unwrap()
+}
+
+/// The Ogg page checksum (CRC-32, polynomial 0x04c11db7, not reflected, no final xor).
+fn ogg_crc(page: &[u8]) -> u32 {
+    page.iter().fold(0u32, |crc, byte| {
+        (0..8).fold(crc ^ (u32::from(*byte) << 24), |crc, _| if crc & 0x8000_0000 != 0 { (crc << 1) ^ 0x04c1_1db7 } else { crc << 1 })
+    })
+}
+
+/// `ogg` with its last page's granule position (the track length a reader trusts) set to
+/// `granule`, the page checksum recomputed so the page is still read.
+fn with_last_granule(ogg: &[u8], granule: u64) -> Vec<u8> {
+    let start = ogg.windows(4).rposition(|w| w == b"OggS").expect("an Ogg page");
+    let segments = usize::from(ogg[start + 26]);
+    let body: usize = ogg[start + 27..start + 27 + segments].iter().map(|s| usize::from(*s)).sum();
+    let end = start + 27 + segments + body;
+    let mut out = ogg.to_vec();
+    out[start + 6..start + 14].copy_from_slice(&granule.to_le_bytes());
+    out[start + 22..start + 26].fill(0);
+    let crc = ogg_crc(&out[start..end]);
+    out[start + 22..start + 26].copy_from_slice(&crc.to_le_bytes());
+    out
+}
+
+/// The hostile table: every row is refused with its code and nothing panics.
+#[test]
+fn hostile_bytes_are_typed_refusals_and_never_panic() {
+    let ogg = fs::read(fixture("tone.ogg")).unwrap();
+    assert_eq!(with_last_granule(&ogg, 24_000), ogg, "rewriting the true granule changes nothing: the checksum is right");
+    let rows: [(&str, Vec<u8>, &str, AudioErrorCode); 7] = [
+        ("truncated inside the first audio page", ogg[..ogg.len() / 3].to_vec(), "ogg", AudioErrorCode::Malformed),
+        ("truncated inside the last page", ogg[..ogg.len() - 40].to_vec(), "ogg", AudioErrorCode::Malformed),
+        ("zero bytes", Vec::new(), "ogg", AudioErrorCode::Malformed),
+        ("a model named .ogg", fs::read(fixture("lods-sphere.glb")).unwrap(), "ogg", AudioErrorCode::Malformed),
+        ("a header claiming 2^40 frames", with_last_granule(&ogg, 1 << 40), "ogg", AudioErrorCode::Malformed),
+        ("an Opus stream named .ogg", fs::read(fixture("tone.opus")).unwrap(), "ogg", AudioErrorCode::NeedsImport),
+        ("three minutes that decode past the sound budget", crate_fixture("silence-3min.ogg"), "ogg", AudioErrorCode::TooLarge),
+    ];
+    for (row, bytes, ext, code) in rows {
+        let refused = std::panic::catch_unwind(|| decode_sound(&bytes, ext).map(|sound| sound.frames()));
+        let refused = refused.unwrap_or_else(|_| panic!("{row}: panicked"));
+        assert_eq!(refused.map_err(|error| error.code()), Err(code), "{row}");
+    }
+    const { assert!(MAX_DECODED_FRAMES < 180 * 48_000, "three minutes at 48 kHz is past the budget") };
 }
