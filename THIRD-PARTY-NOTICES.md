@@ -288,6 +288,7 @@ credits its source in a comment.
 | `shaders/post/motion_blur.wgsl` (`fs_mb_direct`) | Motion blur, direct tier: samples along the pixel's own exposure vector, a nearer sample kept only where its own motion along that direction reaches the pixel, the scene kept below a pixel of motion (Genex compares the sample's exposure with the pixel's, spaces samples a pixel apart without noise and reads whole texels) | Bevy 0.20.0 (https://github.com/bevyengine/bevy), `crates/bevy_post_process/src/motion_blur/motion_blur.wesl` | Bevy contributors | MIT OR Apache-2.0, used under Apache 2.0 (see [Apache License 2.0](#apache-license-20)) |
 | `src/terrain/mod.rs` (`TerrainTree::select`, `TerrainLod`, `TerrainTree::vertex`), `shaders/terrain/terrain_core.wgsl` (`gx_terrain_morph_k`, `gx_terrain_vertex`) | Continuous distance-dependent level of detail for heightmap terrain: the quadtree selection by distance ranges with partial (quarter) nodes, the morph constants and the vertex morph of odd grid vertices onto their even neighbours (Genex selects on the CPU without a frustum and culls per view, floors the ranges so no node is two levels from a neighbour, reads 16-bit heights from a storage table and samples integer positions exactly) | CDLOD (https://github.com/fstrugar/CDLOD), `source/BasicCDLOD/CDLODQuadTree.cpp` (`LODSelect`), `CDLODRenderer.cpp` and the shader's `morphVertex` | Filip Strugar | MIT (see [CDLOD](#cdlod)) |
 | `shaders/terrain/hextile.wgsl` | Hex-tiling: the triangle grid of hexagons, each tile's rotation and offset, its centre, and the luminance-weighted blend of the three tiles' samples (Genex hashes the vertex ids with integers instead of `sin`, shares the tiles between a layer's colour and data textures and turns the data texture's normal back onto the surface) | mmikk/hextile-demo (https://github.com/mmikk/hextile-demo), `hextile-demo/hextiling.h` (`TriangleGrid`, `hash`, `MakeCenST`, `LoadRot2x2`, `hex2colTex`) | Morten S. Mikkelsen ("Practical Real-Time Hex-Tiling", JCGT 11(2) 2022) | MIT (see [hextile-demo](#hextile-demo)) |
+| `src/impostor/mod.rs` (`encode`, `decode`, `frame_direction`, `frame_axes`, `ImpostorBounds::of_points`), `src/impostor/bake.rs` (`ImpostorBaker`), `shaders/impostor/pack.wgsl`, `shaders/impostor/mip.wgsl` | Octahedral and hemi-octahedral impostors: the frame grid's encode and decode, the bake cameras' axes, the orthographic per-frame bake at a supersampled size, the pack compute (coverage, averages over covered render texels, the normal from the depth's slope where none was written, the dilation of empty texels) and the coverage-weighted mip compute. Genex adds a third atlas (occlusion, metallic, transmission, class), octahedrally encoded normals, the forward pass's own material evaluation in the bake fragment, texture-array layers per species, and coverage-preserving mips (Castano's rule) where kansei averages plainly | kansei (https://github.com/Siroko/kansei) at its 2026-10-18 head, `rust/kansei-core/src/impostors/{mod,bake}.rs`, `rust/kansei-core/src/shaders/impostor_pack.wgsl`, `impostor_mip.wgsl` (commit 1e3bddb8) | Felix Martinez | MIT (see [kansei](#kansei)) |
 
 ### CDLOD
 
@@ -618,6 +619,30 @@ the following restrictions:
 
 3. This notice may not be removed or altered from any source distribution.
 ```
+
+### kansei
+
+MIT License
+
+Copyright (c) 2024 Felix Martinez
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
 
 ## Rust game systems ports
 

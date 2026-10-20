@@ -577,7 +577,8 @@ mod texture_facts {
         cache.load(&own, &files, &mut Renderer::offering(&[]), &mut |_| {}).expect("no device loss");
         let (textures, issues) = texture_facts(&own, &cache);
         assert_eq!(textures, [fact("props/crate.glb#0", TextureKind::Color, TextureOrigin::Source)]);
-        assert!(issues.is_empty(), "embedded images wait for their sidecars (C-14): {issues:?}");
+        let uncompressed = AssetIssue { path: "props/crate.glb#0".to_owned(), code: AssetIssueCode::TextureUncompressed };
+        assert_eq!(issues, [uncompressed], "an embedded image the game ships no sidecar of is drawn uncompressed (C-14)");
         let mut replaced = Frame::default();
         model(&mut replaced, Some(&Material::color(Color::WHITE)));
         assert!(texture_facts(&replaced, &cache).0.is_empty(), "a material of the game's own binds none of the GLB's images");
@@ -609,7 +610,7 @@ mod texture_facts {
     #[test]
     fn the_issue_codes_have_their_wire_spellings() {
         let wire: Vec<&str> = AssetIssueCode::ALL.iter().map(|code| code.wire()).collect();
-        assert_eq!(wire, ["texture-uncompressed", "texture-family-refused"]);
+        assert_eq!(wire, ["texture-uncompressed", "texture-family-refused", "tangents-runtime"]);
         assert_eq!(TextureOrigin::Source.wire(), "source");
         assert_eq!(TextureOrigin::Family(TextureFamily::Etc2Rgba8).wire(), "etc2");
     }

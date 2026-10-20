@@ -51,6 +51,7 @@ import { type Ktx2FamilySkip, readKtx2Header } from "../substrate/asset-import/k
 import { objMaterialLibrary } from "../substrate/asset-import/obj.ts";
 import { readGameAsset } from "../substrate/asset-import/safe-asset.ts";
 import { type EncodedTexture, stageTextureUsages } from "../substrate/asset-import/texture-encode.ts";
+import { type StagedWorldCells, stageWorldCells } from "../substrate/asset-import/world-cells.ts";
 import {
   familyFileName,
   KTX2_VK_FORMAT,
@@ -540,6 +541,8 @@ export interface StagedImportReport {
   ms: number;
   /** Every staged file, in `/`-separated code-unit order. */
   files: StagedImportFile[];
+  /** The stage's `world/*.cells.json`, each compiled into its `assets/` or refused with nothing written (C-28). */
+  worlds?: StagedWorldCells[];
 }
 
 /** One build's stage to import for its destination. */
@@ -749,7 +752,10 @@ export async function importStagedAssets(
     const results = await importEach(deps, request, sources, jobs, releases);
     if (!results) return null;
     const files = await placeAll(request.stage, sources, results);
-    return { jobs, ms: Math.max(0, now() - started), files };
+    const admitted = await stagedAssets(request.stage);
+    const assets = new Set(admitted.map((file) => file.slice(STAGE_ASSETS_DIR.length + 1)));
+    const worlds = await stageWorldCells(request.stage, assets);
+    return { jobs, ms: Math.max(0, now() - started), files, worlds };
   } finally {
     await Promise.all(releases.map((release) => release()));
   }

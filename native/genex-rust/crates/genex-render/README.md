@@ -654,6 +654,13 @@ tangents; float or normalized 8/16-bit uvs and weights; 8/16-bit joints; unsigne
 other layout, such as a `KHR_mesh_quantization` one the Studio's import step did not dequantize,
 is refused `mesh-invalid` before the `gltf` reader would misread it or panic.
 
+A normal-mapped primitive without TANGENT gets MikkTSpace tangents when it loads
+(`bevy_mikktspace`, its sqrt and acos from libm so every target builds the same bits), split at
+mirrored uv seams the way the Studio's import step splits them, and its part says so
+(`GlbPart::runtime_tangents`, `tangents-runtime` in `__render.assetIssues`); any other primitive
+without TANGENT keeps one vertex per POSITION, each with its first corner's tangent, so its
+`genex_meshlets` and `genex_lods` still validate.
+
 A part also carries its material's `KHR_materials_*` extensions (`GlbPart::material_ext`, from
 `src/glb_material_ext.rs`): `ior`, `specular`, `clearcoat`, `sheen`, `transmission` (factor),
 `volume` (factors) and `anisotropy`, read from the raw extension JSON with the specification's
@@ -701,8 +708,10 @@ loss replays the family before the textures. The budget still reserves the array
 
 ### `genex_lods` in glTF
 
-The Studio's import step simplifies a GLB of at least 512 triangles with meshoptimizer and stores
-each primitive's levels in its `extras`, never as an extension:
+The Studio's import step simplifies a GLB of at least 512 triangles with meshoptimizer's
+attribute-aware simplifier (normals and the first texture coordinates weighed; vertices where
+primitives meet and every leaf card's vertices locked; each error at least how far the primitive's
+vertices lie from the level). Each primitive's levels go in its `extras`, never as an extension:
 
 ```json
 "extras": { "genex_lods": {
@@ -772,8 +781,13 @@ is not 1, an `image` is out of range, a `kind` is unknown, a `stem` holds a `/`,
 starts with a dot or passes 200 characters, or an image and kind appear twice; a reader then takes
 the embedded images, as it does for a GLB without the block. The embedded image always stays in the
 GLB as that fallback. An image the step cannot encode (a file beside the GLB, a WebP, a KTX2, a
-damaged one) has no row. The runtime does not read the block yet: it still decodes every embedded
-image as RGBA8.
+damaged one) has no row. The runtime reads the block (`GlbModel::sidecars`, checked as above; a
+malformed block loads the embedded images with a log line and never refuses the model). The
+facade's presenter uploads an image from `<stem>.<family>.ktx2` in the renderer's family and
+decodes the embedded image only when the block names no row for that image and usage, the game
+ships no file in that family, the file is under the family's smallest size class or the renderer
+refuses it (then named `texture-family-refused`). The family is chosen from the first textured
+frame's loose textures and its models' sidecars together.
 
 ## Extension layouts
 

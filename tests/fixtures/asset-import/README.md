@@ -38,8 +38,9 @@ texture inputs are the shared samples in `../asset-previews/`.
   around it), with a normal-mapped material (a 1 x 1 flat-normal PNG that decodes) and no `TANGENT`
   (the test's own `sphereGlb` and `normalMapped`); `tangents-mirrored.imported.glb` is what the
   import step writes from it, MikkTSpace tangents split at both mirror seams (C-8).
-  `rust-assets-tangents.test.ts` holds both to their functions and `convertAsset`; the runtime's
-  tangent fallback (C-9, not landed yet) is to be held to the second.
+  `rust-assets-tangents.test.ts` holds both to their functions and `convertAsset`; genex-render's
+  `tests/tangents.rs` holds the runtime's tangent fallback (C-9) to the second, per corner within
+  1e-4; genex's `present` Metal row draws both with a bumpy normal map.
 - genex's `imported_fixtures` Metal row draws `tangents-mirrored.imported.glb` and
   `lods-sphere.glb` under four suns and holds both to facing out, and the tangent sphere's normal
   map to being bound.

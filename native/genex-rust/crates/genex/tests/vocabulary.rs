@@ -207,6 +207,19 @@ fn the_render_facts_are_the_fixtures() {
     assert_eq!(names(&pinned["runtimeRender"]["families"]), families);
 }
 
+/// The runtime's `genex_textures` reader (C-14) reads the importer's schema (C-13's writer).
+#[test]
+fn the_glb_texture_sidecar_reader_is_the_fixture_s_schema() {
+    use genex_render::mesh::{GLB_TEXTURE_STEM_MAX_CHARS, GLB_TEXTURES_EXTRAS_KEY, GLB_TEXTURES_SCHEMA_VERSION, GlbTextureImageKey, GlbTextureUsage, GlbTexturesKey};
+    let pinned = &fixture()["textures"];
+    assert_eq!(pinned["extrasKey"], GLB_TEXTURES_EXTRAS_KEY);
+    assert_eq!(pinned["schemaVersion"], GLB_TEXTURES_SCHEMA_VERSION);
+    assert_eq!(names(&pinned["extrasKeys"]), GlbTexturesKey::ALL.map(GlbTexturesKey::wire));
+    assert_eq!(names(&pinned["imageKeys"]), GlbTextureImageKey::ALL.map(GlbTextureImageKey::wire));
+    assert_eq!(names(&pinned["kinds"]), GlbTextureUsage::ALL.map(GlbTextureUsage::wire));
+    assert_eq!(pinned["stemMaxChars"], GLB_TEXTURE_STEM_MAX_CHARS);
+}
+
 /// The calls the fixture pins under `key`, checked against the names a chain below calls.
 fn pinned_calls<'a>(pinned: &'a serde_json::Value, key: &str) -> Vec<&'a str> {
     names(&pinned[key]["calls"])

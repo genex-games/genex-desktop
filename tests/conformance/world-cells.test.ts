@@ -10,6 +10,8 @@ import {
   worldCellsLockOutputs,
 } from "../../src/substrate/asset-import/world-cells.ts";
 import { tmpDir } from "../helpers/tmp.ts";
+import { BuildTarget } from "../../src/shared/game-project.ts";
+import { importStagedAssets } from "../../src/main/rust-assets.ts";
 import {
   CELL_PACK_CAPS,
   CELL_PACK_FORMAT,
@@ -521,6 +523,21 @@ describe("world-cells: the import step's placement pass over a stage", () => {
     assert.deepEqual(
       rows.map((row) => row.refusal?.code ?? "ok"),
       [WorldCellsCode.PathUnsafe, "ok"],
+    );
+    assert.deepEqual(await listed(stage), ["assets/world/good/cells/0_0.cell", "assets/world/good/world.json"]);
+  });
+
+  it("the build's import step compiles the stage's placement files and reports them", async () => {
+    const stage = await stageWith({ "world/good.cells.json": placement({ cells: [{ x: 0, z: 0 }] }) });
+    const deps = {
+      jobsRoot: path.join(stage, "..", "jobs"),
+      sandboxFor: async () => assert.fail("nothing in the stage needs the importer"),
+      secretPaths: [],
+    };
+    const report = await importStagedAssets(deps, { stage, target: BuildTarget.Mac });
+    assert.deepEqual(
+      report?.worlds?.map((row) => [row.source, row.refusal?.code ?? "ok"]),
+      [["world/good.cells.json", "ok"]],
     );
     assert.deepEqual(await listed(stage), ["assets/world/good/cells/0_0.cell", "assets/world/good/world.json"]);
   });
