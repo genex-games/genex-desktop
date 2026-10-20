@@ -390,6 +390,10 @@ export function createGameAi(deps: GameAiHostDeps): GameAiHost {
     label: (model) => catalog.labelNow(model),
     playerCostMicros: (model, usage) => dev.priceMicros(model.model, usage),
     creatorShareBps: async (project) => creatorShare(project, playProject, creator),
+    audience: async (project) => {
+      const published = await playProject(project);
+      return published ? creator.audience(published) : null;
+    },
   };
   const check = createModelCheck(checkDeps);
   const { reports, fitCounts } = sharingOf(deps, { clock, dir, settings, platform, check });

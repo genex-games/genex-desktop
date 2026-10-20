@@ -240,6 +240,7 @@ const FACTS: Record<string, AiPublishFacts> = {
     fits: { fitted: 5, of: 6 },
     cost: AiCostLevel.Low,
     creatorShareBps: 1000,
+    audience: null,
   },
   unchecked: {
     project: GAME,
@@ -250,6 +251,7 @@ const FACTS: Record<string, AiPublishFacts> = {
     fits: null,
     cost: null,
     creatorShareBps: 1000,
+    audience: null,
   },
   free: {
     project: GAME,
@@ -260,6 +262,7 @@ const FACTS: Record<string, AiPublishFacts> = {
     fits: { fitted: 4, of: 6 },
     cost: AiCostLevel.Free,
     creatorShareBps: 1000,
+    audience: null,
   },
 };
 
@@ -512,6 +515,7 @@ function publishSample() {
     leaderboard: text("[data-publish-ai-leaderboard]"),
     share: text("[data-publish-ai-share]"),
     gate: text("[data-publish-ai-gate]"),
+    audience: text("[data-publish-ai-audience]"),
     segments: [...document.querySelectorAll<HTMLElement>("[data-publish-ai] [role=radio]")].map((el) => ({
       text: el.innerText.trim(),
       checked: el.getAttribute("aria-checked"),
@@ -531,8 +535,8 @@ async function pressPublish() {
   return publishSample();
 }
 
-async function choose(requires: "ai" | "optional") {
-  document.querySelector<HTMLElement>(`[data-publish-ai] [role=radio][data-value="${requires}"]`)?.click();
+async function choose(value: "ai" | "optional" | "player" | "shared" | "open_chat") {
+  document.querySelector<HTMLElement>(`[data-publish-ai] [role=radio][data-value="${value}"]`)?.click();
   await settle();
   return publishSample();
 }

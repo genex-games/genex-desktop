@@ -76,6 +76,7 @@ async function host() {
         fits: null,
         cost: null,
         creatorShareBps: null,
+        audience: null,
       };
       return facts;
     },

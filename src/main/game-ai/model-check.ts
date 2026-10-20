@@ -29,6 +29,7 @@ import {
   AiCheckState,
   AiCostLevel,
   AiPanelSlot,
+  type AiAudienceView,
   type AiPublishFacts,
   bestFits,
   checkSet,
@@ -118,6 +119,8 @@ export interface ModelCheckDeps {
   playerCostMicros(model: AiModelRef, usage: AiUsage): number | null;
   /** The creator's share of credits players spend on AI in the game, in basis points; null until set (D4). */
   creatorShareBps(project: string): Promise<number | null>;
+  /** Who the creator declared sees the game's AI text on genex.games; null when unpublished or unread. */
+  audience(project: string): Promise<AiAudienceView | null>;
   /** Wait `ms` (a slot the queue holds); rejects when `signal` aborts. */
   wait?(ms: number, signal: AbortSignal): Promise<void>;
 }
@@ -609,7 +612,7 @@ function publishFactsOf(
   moments: readonly AiMoment[],
   check: AiCheckResult,
   saved: Saved,
-  creatorShareBps: number | null,
+  genex: { creatorShareBps: number | null; audience: AiAudienceView | null },
 ): AiPublishFacts {
   const playtest = playtestModel(moments);
   const checked = saved.checkedAt !== null && saved.rows.length > 0;
@@ -623,7 +626,8 @@ function publishFactsOf(
     bestWith,
     fits: checked ? { fitted, of: saved.rows.length } : null,
     cost: checked ? playersCost(saved, bestWith) : null,
-    creatorShareBps,
+    creatorShareBps: genex.creatorShareBps,
+    audience: genex.audience,
   };
 }
 
@@ -678,13 +682,14 @@ export function createModelCheck(deps: ModelCheckDeps): ModelCheckService {
   };
 
   const publishFacts = async (project: string): Promise<AiPublishFacts> => {
-    const [moments, check, saved, share] = await Promise.all([
+    const [moments, check, saved, creatorShareBps, audience] = await Promise.all([
       deps.moments.list(project),
       state(project),
       store.read(project),
       deps.creatorShareBps(project).catch(() => null),
+      deps.audience(project).catch(() => null),
     ]);
-    return publishFactsOf(project, moments, check, saved, share);
+    return publishFactsOf(project, moments, check, saved, { creatorShareBps, audience });
   };
 
   const rowFor = async (game: AiGameKey, model: AiModelRef | null): Promise<AiCheckRow | null> => {

@@ -10,7 +10,14 @@
 import { CoreFact, hasFact } from "../../shared/project-facts.ts";
 import { publishesAsWebGame } from "../../shared/project-workspace.ts";
 import { cleanGenexTitle, GENEX_PLUGIN_ID, GenexAction } from "../../shared/genex.ts";
-import { type AiPublishChoice, readAiPublishChoice } from "../../shared/game-ai-check.ts";
+import {
+  AI_DISCLOSED_SITES_MAX,
+  type AiDisclosedSite,
+  type AiPublishChoice,
+  type AiPublishListing,
+  readAiPublishChoice,
+} from "../../shared/game-ai-check.ts";
+import { createGameAiTapes } from "../game-ai/tapes.ts";
 import { type ExportReview, type PluginBinding, PluginSourceKind } from "../../shared/plugins.ts";
 import type { StudioCore } from "../studio-core.ts";
 
@@ -101,9 +108,31 @@ function aiChoiceOf(raw: unknown): AiPublishChoice | undefined {
 }
 
 /**
+ * The call sites a game's saved playtests show, each once, in name order: what its AI disclosure
+ * names. The playtests are read through the tapes' own contained reads; one that can't be read names
+ * nothing.
+ */
+async function disclosedSites(dir: string): Promise<AiDisclosedSite[]> {
+  const tapes = createGameAiTapes();
+  const listed = await tapes.list(dir).catch(() => []);
+  const lines = (await Promise.all(listed.map((tape) => tapes.read(dir, tape.name).catch(() => [])))).flat();
+  const named = new Map(lines.map((line) => [`${line.site} ${line.op}`, { site: line.site, op: line.op }]));
+  return [...named.values()]
+    .sort((a, b) => a.site.localeCompare(b.site) || a.op.localeCompare(b.op))
+    .slice(0, AI_DISCLOSED_SITES_MAX);
+}
+
+/** What Genex is handed of a game's AI: the creator's choice and the call sites its playtests show. */
+async function listingOf(core: DialogCore, project: string, choice: AiPublishChoice): Promise<AiPublishListing> {
+  const dir = (await core.games.list()).find((game) => game.name === project)?.dir;
+  return { ...choice, sites: dir ? await disclosedSites(dir) : [] };
+}
+
+/**
  * Publish `project` to the Genex gallery under `title` (cleaned; the plugin picks the name when none is
  * left), after the person approved `review` in the dialog, with the game's play-time AI choice
- * (`ai`: Needs AI or Works without AI, and a leaderboard) when the dialog asked for one.
+ * (`ai`: Needs AI or Works without AI, a leaderboard and who sees its AI text) when the dialog asked
+ * for one, with the call sites its saved playtests show.
  */
 export async function publishFromDialog(
   core: DialogCore,
@@ -116,7 +145,8 @@ export async function publishFromDialog(
   const choice = aiChoiceOf(ai);
   const binding = await dialogBinding(core, project);
   const name = cleanGenexTitle(title);
-  const args = { ...(name ? { title: name } : {}), ...(choice ? { ai: choice } : {}) };
+  const listing = choice ? await listingOf(core, binding.project, choice) : null;
+  const args = { ...(name ? { title: name } : {}), ...(listing ? { ai: listing } : {}) };
   // Genex exports inside this call, so the approval lives exactly as long as it.
   await core.withApprovedExport(GENEX_PLUGIN_ID, binding.project, review, () =>
     core.plugins.action(GENEX_PLUGIN_ID, GenexAction.PublishGallery, args, binding),

@@ -147,7 +147,7 @@ app.whenReady().then(async()=>{
    // Publish (V3-Publish, V3-Publish-States).
    const fresh=await step(theme+'Publish','window.aiRig.publish({theme:'+t+',facts:"checked"})');
    assert.equal(fresh.block,'unchosen');
-   assert.deepEqual(fresh.segments,[{text:'Needs AI',checked:'false'},{text:'Works without AI',checked:'false'}],'nothing preselected');
+   assert.deepEqual(fresh.segments,[{text:'Needs AI',checked:'false'},{text:'Works without AI',checked:'false'},{text:'Only the player',checked:'true'},{text:'Other players',checked:'false'},{text:'Open chat',checked:'false'}],'no requirement preselected; the AI text stays with the player until the creator says otherwise');
    assert.equal(fresh.best,'Best with Claude Haiku 4.5 · fits 5 of 6 models Change');
    assert.equal(fresh.cost,'AI cost for players $ Low');
    assert.equal(fresh.overflow,false);
@@ -159,8 +159,10 @@ app.whenReady().then(async()=>{
    assert.equal(needs.leaderboard,'Keep a leaderboard Scores count only on Genex credits.');
    assert.equal(needs.share,'You earn 10% of the credits players spend on AI in this game. Players on their own plan or this Mac pay you nothing and cost you nothing.');
    await capture(theme+'-publish');
+   const shared=await step(theme+'PublishShared','window.aiRig.choose("shared")');
+   assert.equal(shared.audience,'Text other players see is checked by Genex before it shows.');
    const sent=await step(theme+'PublishSent','window.aiRig.pressPublish()');
-   assert.deepEqual(sent.published.at(-1),{requires:'ai',leaderboard:false});
+   assert.deepEqual(sent.published.at(-1),{requires:'ai',leaderboard:false,audience:'shared'});
    const unchecked=await step(theme+'PublishUnchecked','window.aiRig.publish({theme:'+t+',facts:"unchecked"})');
    assert.equal(unchecked.best,'Best with Claude Haiku 4.5 · the model you playtested Check models');
    assert.equal(unchecked.cost,null);

@@ -5594,6 +5594,12 @@ export const PUBLISH_AI_WORDS = {
     `You earn ${percent}% of the credits players spend on AI in this game. Players on their own plan or this Mac pay you nothing and cost you nothing.`,
   choose: (title: string) => `Choose whether ${title} needs AI.`,
   noPick: "No recommendation",
+  audienceLabel: "Who sees what the AI writes",
+  audiencePlayer: "Only the player",
+  audienceShared: "Other players",
+  audienceOpenChat: "Open chat",
+  audienceWhat: "Text other players see is checked by Genex before it shows.",
+  unscreened: "Genex can’t check shared AI text right now, so players won’t see it until it can.",
 } as const;
 
 /** The Player report inbox of the creator's own game, with Fix with agent (`panels/game-ai/ReportInbox.tsx`). */

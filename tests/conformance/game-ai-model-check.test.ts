@@ -19,6 +19,7 @@ import {
   type AiCheckResult,
 } from "../../src/shared/game-ai-check.ts";
 import {
+  AiAudience,
   AiDoor,
   AiErrorCode,
   AiFunding,
@@ -148,6 +149,7 @@ async function check(
     label: (model) => `label:${model.model}`,
     playerCostMicros: () => null,
     creatorShareBps: async () => null,
+    audience: async () => null,
     wait: async () => {},
     ...options,
   };
@@ -412,6 +414,7 @@ describe("what Publish shows", () => {
   it("names the playtest's model, with no fit or cost, before any check", async () => {
     const fx = await check((clock) => [door(AiDoor.Local, ["qwen3:8b"], fits, clock)], {
       creatorShareBps: async () => 1_000,
+      audience: async () => ({ audience: AiAudience.Shared, moderationAvailable: false }),
     });
     const facts = await fx.service.publishFacts(PROJECT);
     assert.deepEqual(facts, {
@@ -423,6 +426,7 @@ describe("what Publish shows", () => {
       fits: null,
       cost: null,
       creatorShareBps: 1_000,
+      audience: { audience: AiAudience.Shared, moderationAvailable: false },
     });
   });
 

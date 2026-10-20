@@ -18,6 +18,7 @@ import {
   publishReview,
 } from "../../src/main/core/genex-publish.ts";
 import type { ExportResult } from "../../src/shared/game-project.ts";
+import { TAPE_WIRE_VERSION } from "../../src/shared/game-ai-tape.ts";
 import { GENEX_PLUGIN_ID, GenexAction, GenexPublishKind } from "../../src/shared/genex.ts";
 import { HostMethod } from "../../src/shared/harness-api.ts";
 import { type ExportReview, type PluginBinding, PluginService, PluginSourceKind } from "../../src/shared/plugins.ts";
@@ -156,21 +157,59 @@ test("the name typed in the dialog reaches Genex as one clean line, and a blank 
   }
 });
 
-test("Publish's play-time AI choice reaches Genex as it was read, and a hostile one publishes nothing", async () => {
+// Flipped: the choice was {requires, leaderboard}; it now names who sees the game's AI text too (D6),
+// and Genex is handed the call sites the game's saved playtests show, for its AI disclosure.
+test("Publish's play-time AI choice reaches Genex as it was read, with its call sites, and a hostile one publishes nothing", async () => {
   const rig = await dialogRig();
   try {
-    const choice = { requires: "ai", leaderboard: true };
+    const dir = (await rig.core.games.list()).find((game) => game.name === GAME)?.dir;
+    assert.ok(dir);
+    await mkdir(path.join(dir, "ai", "tapes"), { recursive: true });
+    const line = (site: string, op: string, n: number) =>
+      JSON.stringify({
+        v: TAPE_WIRE_VERSION,
+        key: "a".repeat(64),
+        n,
+        site,
+        op,
+        value: op === "say" ? "hi" : { ok: true },
+        source: "local",
+        model: "qwen3:8b",
+        latencyFrames: 1,
+        usage: null,
+      });
+    await writeFile(
+      path.join(dir, "ai", "tapes", "talk.jsonl"),
+      [line("npc.reply", "ask", 0), line("npc.reply", "ask", 1), line("narrator.line", "say", 0), "not a line"].join(
+        "\n",
+      ),
+    );
+    await writeFile(path.join(dir, "ai", "tapes", "more.jsonl"), line("world.turn", "judge", 0));
+    const choice = { requires: "ai", leaderboard: true, audience: "shared" };
     await publishFromDialog(rig.core, GAME, await publishReview(rig.core, GAME), "Lantern Run", choice);
-    assert.deepEqual(rig.calls.at(-1)?.args, { title: "Lantern Run", ai: choice });
+    assert.deepEqual(rig.calls.at(-1)?.args, {
+      title: "Lantern Run",
+      ai: {
+        ...choice,
+        sites: [
+          { site: "narrator.line", op: "say" },
+          { site: "npc.reply", op: "ask" },
+          { site: "world.turn", op: "judge" },
+        ],
+      },
+    });
     await publishFromDialog(rig.core, GAME, await publishReview(rig.core, GAME), undefined, undefined);
     assert.deepEqual(rig.calls.at(-1)?.args, {}, "a game with no AI step sends no choice");
     const before = rig.calls.length;
     const hostile: unknown[] = [
       null,
       "ai",
-      { requires: "maybe", leaderboard: false },
-      { requires: "ai", leaderboard: "yes" },
-      { requires: "ai", leaderboard: false, creatorShareBps: 10_000 },
+      { requires: "maybe", leaderboard: false, audience: "player" },
+      { requires: "ai", leaderboard: "yes", audience: "player" },
+      { requires: "ai", leaderboard: false, audience: "everyone" },
+      { requires: "ai", leaderboard: false },
+      { requires: "ai", leaderboard: false, audience: "player", creatorShareBps: 10_000 },
+      { requires: "ai", leaderboard: false, audience: "player", sites: [] },
     ];
     for (const ai of hostile)
       await assert.rejects(

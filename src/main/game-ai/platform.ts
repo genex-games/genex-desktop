@@ -11,8 +11,8 @@
  * Fit counts (counts only, D12) and Reports (D9) go with no account at all, and a bundle holds no
  * account id. Electron-free: the request and the browser are handed in.
  */
-import { isPlainRecord } from "../../shared/game-ai.ts";
-import type { AiFitCountRow } from "../../shared/game-ai-check.ts";
+import { AiAudience, aiAudienceRoute, isPlainRecord, readMember } from "../../shared/game-ai.ts";
+import type { AiAudienceView, AiFitCountRow } from "../../shared/game-ai-check.ts";
 import { type AiReportBundle, AiReportFailure } from "../../shared/game-ai-report.ts";
 import {
   AI_MAX_SETTING_CREDITS,
@@ -411,6 +411,9 @@ export function createGenexAiPlatform(deps: GenexAiPlatformDeps): GenexAiPlatfor
 
 /** The most a share may be, in basis points: the whole of it. */
 const MAX_SHARE_BPS = 10_000;
+/** Whether genex.games can screen shared AI text now, in its words. Wire values. */
+const MODERATION_AVAILABLE = "available";
+const MODERATION_UNAVAILABLE = "unavailable";
 /** From here on a failure is genex.games' own, not the request's. */
 const HTTP_SERVER_ERROR = 500;
 /** A report id as genex.games stores it. */
@@ -428,6 +431,8 @@ export interface GenexAiCreatorReads {
   publishedTitle(projectId: string): Promise<string | null>;
   /** The creator's share of what players spend on AI in the game, in basis points; null when it cannot be read. */
   creatorShareBps(projectId: string): Promise<number | null>;
+  /** Who the creator declared sees the game's AI text, and whether genex.games screens it now; null when unread. */
+  audience(projectId: string): Promise<AiAudienceView | null>;
   /** The game's Player reports (D9), for the inbox (`report-inbox.ts`). */
   inbox: ReportInboxSource;
 }
@@ -452,6 +457,15 @@ export function createGenexAiCreatorReads(deps: GenexAiCreatorDeps): GenexAiCrea
       const answer = await read(PlatformRoute.creatorShare(projectId));
       const bps = answer && isSuccess(answer) && isPlainRecord(answer.body) ? answer.body.bps : null;
       return isCount(bps) && bps <= MAX_SHARE_BPS ? bps : null;
+    },
+    async audience(projectId) {
+      if (!PROJECT_ID_RE.test(projectId)) return null;
+      const answer = await read(aiAudienceRoute(projectId));
+      const body = answer && isSuccess(answer) && isPlainRecord(answer.body) ? answer.body : null;
+      const audience = readMember(AiAudience, body?.audience);
+      const moderation = body?.moderation;
+      const known = moderation === MODERATION_AVAILABLE || moderation === MODERATION_UNAVAILABLE;
+      return audience && known ? { audience, moderationAvailable: moderation === MODERATION_AVAILABLE } : null;
     },
     inbox: {
       async list(projectId) {

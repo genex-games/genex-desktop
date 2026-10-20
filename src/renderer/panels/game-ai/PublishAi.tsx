@@ -6,7 +6,7 @@
  * offers Check models. It shows only for a game that played with AI.
  */
 import { type JSX, useCallback, useEffect, useState } from "react";
-import { type AiModelRef, AiRequirement, createGameKey } from "../../../shared/game-ai.ts";
+import { AiAudience, type AiModelRef, AiRequirement, createGameKey } from "../../../shared/game-ai.ts";
 import type { AiPublishChoice, AiPublishFacts } from "../../../shared/game-ai-check.ts";
 import type { AiModelMenu } from "../../../shared/game-ai-views.ts";
 import { Button } from "../../ui/Button.tsx";
@@ -14,7 +14,14 @@ import { PickerSegmented } from "../../ui/PickerPanel.tsx";
 import { Toggle } from "../../ui/Toggle.tsx";
 import { PUBLISH_AI_WORDS } from "../../words.ts";
 import { ModelCheckDialog } from "./ModelCheckDialog.tsx";
-import { BestWithAction, modelLabel, publishAiView, publishChoice, publishShowsAi } from "./play-ai-view.ts";
+import {
+  audienceNote,
+  BestWithAction,
+  modelLabel,
+  publishAiView,
+  publishChoice,
+  publishShowsAi,
+} from "./play-ai-view.ts";
 
 const WORDS = PUBLISH_AI_WORDS;
 
@@ -25,6 +32,9 @@ export interface PublishAi {
   shown: boolean;
   requires: AiRequirement | null;
   leaderboard: boolean;
+  /** Who sees what the game's AI writes: declared on genex.games at Publish (D6). */
+  audience: AiAudience;
+  setAudience: (audience: AiAudience) => void;
   /** A Publish press found the requirement unchosen: the block says so. */
   attempted: boolean;
   setRequires: (requires: AiRequirement) => void;
@@ -42,6 +52,7 @@ export function usePublishAi(project: string): PublishAi {
   const [menu, setMenu] = useState<AiModelMenu | null>(null);
   const [requires, setRequires] = useState<AiRequirement | null>(null);
   const [leaderboard, setLeaderboard] = useState(false);
+  const [audience, setAudience] = useState<AiAudience>(AiAudience.Player);
   const [attempted, setAttempted] = useState(false);
   const refresh = useCallback(async () => {
     if (!project) return;
@@ -49,14 +60,18 @@ export function usePublishAi(project: string): PublishAi {
       window.studio.gameAiPublishFacts(project),
       window.studio.gameAiMenu(createGameKey(project)),
     ]);
-    if (read.status === "fulfilled" && read.value) setFacts(read.value);
+    if (read.status === "fulfilled" && read.value) {
+      setFacts(read.value);
+      // A game published before keeps the audience its creator declared.
+      if (read.value.audience) setAudience(read.value.audience.audience);
+    }
     if (models.status === "fulfilled" && models.value) setMenu(models.value);
   }, [project]);
   useEffect(() => {
     void refresh();
   }, [refresh]);
   const shown = publishShowsAi(facts);
-  const choice = publishChoice(requires, leaderboard);
+  const choice = publishChoice(requires, leaderboard, audience);
   return {
     facts,
     menu,
@@ -64,6 +79,8 @@ export function usePublishAi(project: string): PublishAi {
     requires,
     leaderboard,
     attempted,
+    audience,
+    setAudience,
     setRequires: (next) => {
       setRequires(next);
       setAttempted(false);
@@ -143,6 +160,21 @@ export function PublishAiBlock({
           </span>
           <Toggle on={ai.leaderboard} onChange={ai.setLeaderboard} ariaLabel={WORDS.leaderboard} />
         </div>
+      )}
+      <PickerSegmented<AiAudience>
+        label={WORDS.audienceLabel}
+        value={ai.audience}
+        onChange={ai.setAudience}
+        options={[
+          { value: AiAudience.Player, label: WORDS.audiencePlayer },
+          { value: AiAudience.Shared, label: WORDS.audienceShared },
+          { value: AiAudience.OpenChat, label: WORDS.audienceOpenChat },
+        ]}
+      />
+      {ai.audience !== AiAudience.Player && (
+        <p className="text-ink-3" data-publish-ai-audience={ai.audience}>
+          {audienceNote(ai.facts, ai.audience) ?? WORDS.audienceWhat}
+        </p>
       )}
       {view.share && (
         <p className="text-ink-3" data-publish-ai-share>

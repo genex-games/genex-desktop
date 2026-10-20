@@ -11,10 +11,13 @@
  * Browser-safe; pure.
  */
 import {
+  AI_SITE_RE,
+  AiAudience,
   AiDoor,
   AiFunding,
   type AiGameKey,
   type AiModelRef,
+  AiOp,
   AiRequirement,
   hasExactKeys,
   isPlainRecord,
@@ -167,23 +170,72 @@ export interface AiPublishFacts {
   cost: AiCostLevel | null;
   /** The creator's share of credits players spend on AI in the game, in basis points; null until set (D4). */
   creatorShareBps: number | null;
+  /** Who the creator declared sees the game's AI text on genex.games; null before it is published or read. */
+  audience: AiAudienceView | null;
 }
 
-/** What the creator chooses at Publish and the listing shows: whether the game needs AI, and a leaderboard. */
+/** A published game's declared AI audience, and whether genex.games can screen shared text now. */
+export interface AiAudienceView {
+  audience: AiAudience;
+  moderationAvailable: boolean;
+}
+
+/**
+ * What the creator chooses at Publish: whether the game needs AI, a leaderboard, and who sees its
+ * AI text (declared on genex.games, D6).
+ */
 export interface AiPublishChoice {
   requires: AiRequirement;
   /** Scores shared between players; they count only on Genex credits. */
   leaderboard: boolean;
+  audience: AiAudience;
 }
 
-const CHOICE_KEYS = ["requires", "leaderboard"] as const satisfies readonly (keyof AiPublishChoice)[];
+const CHOICE_KEYS = ["requires", "leaderboard", "audience"] as const satisfies readonly (keyof AiPublishChoice)[];
 
-/** Publish's choice from the renderer, or null: exact keys, a known requirement and a switch. */
+/** Publish's choice from the renderer, or null: exact keys, a known requirement, a switch and an audience. */
 export function readAiPublishChoice(raw: unknown): AiPublishChoice | null {
   if (!isPlainRecord(raw) || !hasExactKeys(raw, CHOICE_KEYS)) return null;
   const requires = readMember(AiRequirement, raw.requires);
+  const audience = readMember(AiAudience, raw.audience);
   const { leaderboard } = raw;
-  return requires && typeof leaderboard === "boolean" ? { requires, leaderboard } : null;
+  return requires && audience && typeof leaderboard === "boolean" ? { requires, leaderboard, audience } : null;
+}
+
+/** One place a game asks AI, as its saved playtests show it: the call site and the op. */
+export interface AiDisclosedSite {
+  site: string;
+  op: AiOp;
+}
+
+/** The most call sites one disclosure names. */
+export const AI_DISCLOSED_SITES_MAX = 64;
+
+/**
+ * What Publish hands the Genex plugin of a game's AI: the creator's choice and the call sites its
+ * saved playtests show, for the AI disclosure Publish writes beside the build (`AI-DISCLOSURE.md`).
+ */
+export interface AiPublishListing extends AiPublishChoice {
+  sites: AiDisclosedSite[];
+}
+
+const LISTING_KEYS = [...CHOICE_KEYS, "sites"] as const;
+
+/** A listing as it crosses the plugin boundary, or null: a choice, and call sites each named once. */
+export function readAiPublishListing(raw: unknown): AiPublishListing | null {
+  if (!isPlainRecord(raw) || !hasExactKeys(raw, LISTING_KEYS)) return null;
+  const { sites, ...rest } = raw;
+  const choice = readAiPublishChoice(rest);
+  if (!choice || !Array.isArray(sites) || sites.length > AI_DISCLOSED_SITES_MAX) return null;
+  const read = sites.map((entry) => {
+    if (!isPlainRecord(entry) || !hasExactKeys(entry, ["site", "op"])) return null;
+    const op = readMember(AiOp, entry.op);
+    return op && typeof entry.site === "string" && AI_SITE_RE.test(entry.site) ? { site: entry.site, op } : null;
+  });
+  if (read.some((entry) => entry === null)) return null;
+  const named = read.filter((entry): entry is AiDisclosedSite => entry !== null);
+  const once = new Set(named.map((entry) => `${entry.site} ${entry.op}`));
+  return once.size === named.length ? { ...choice, sites: named } : null;
 }
 
 // ── fit from real play (counts only) ───────────────────────────────────────────────────────

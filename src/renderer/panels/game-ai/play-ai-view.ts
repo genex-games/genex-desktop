@@ -4,7 +4,7 @@
  * model check's rows, Publish's block, and the engine Live card's line. Pure: every word comes
  * from `renderer/words.ts`, every number from main or genex.games.
  */
-import { AiDoor, AiFunding, type AiModelRef, AiRequirement } from "../../../shared/game-ai.ts";
+import { AiAudience, AiDoor, AiFunding, type AiModelRef, AiRequirement } from "../../../shared/game-ai.ts";
 import {
   AiCheckFit,
   type AiCheckResult,
@@ -299,10 +299,23 @@ export function publishAiView(
   return { bestWith, action, noCheck: !checked, cost, leaderboard: needs, share };
 }
 
-/** What Publish sends of the block: nothing until the creator chose, and a leaderboard only for a game that needs AI. */
-export function publishChoice(requires: AiRequirement | null, leaderboard: boolean): AiPublishChoice | null {
+/**
+ * What Publish sends of the block: nothing until the creator chose, a leaderboard only for a game
+ * that needs AI, and who sees its AI text.
+ */
+export function publishChoice(
+  requires: AiRequirement | null,
+  leaderboard: boolean,
+  audience: AiAudience,
+): AiPublishChoice | null {
   if (!requires) return null;
-  return { requires, leaderboard: requires === AiRequirement.Ai && leaderboard };
+  return { requires, leaderboard: requires === AiRequirement.Ai && leaderboard, audience };
+}
+
+/** A note under the audience choice: genex.games can't screen shared text now, so shared answers won't show. */
+export function audienceNote(facts: AiPublishFacts | null, audience: AiAudience): string | null {
+  const shared = audience !== AiAudience.Player;
+  return shared && facts?.audience?.moderationAvailable === false ? PUBLISH_AI_WORDS.unscreened : null;
 }
 
 // ── the engine Live card ─────────────────────────────────────────────────────────────────

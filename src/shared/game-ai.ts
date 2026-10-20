@@ -324,6 +324,19 @@ export const playGameKey = (projectId: string): AiGameKey => `${AiGameKind.Play}
 /** The key of a game in the person's library, by its name. */
 export const createGameKey = (project: string): AiGameKey => `${AiGameKind.Create}:${project}`;
 
+/**
+ * Who sees a published game's AI text, as its owner declares it on genex.games (D6,
+ * `PUT /api/runtime/projects/:id/ai-audience`): only the person playing, other players (a shared
+ * world, a multiplayer narrator) or an open chat. genex.games holds every call of a game that
+ * declared a shared audience as shared, and moderates it. Wire values: never rename one.
+ */
+export const AiAudience = { Player: "player", Shared: "shared", OpenChat: "open_chat" } as const;
+export type AiAudience = (typeof AiAudience)[keyof typeof AiAudience];
+
+/** The genex.games route a game's owner declares its AI audience on, and reads it back from. */
+export const aiAudienceRoute = (projectId: string): string =>
+  `/api/runtime/projects/${encodeURIComponent(projectId)}/ai-audience`;
+
 /** A model on one door: the engine that runs it (`EngineId`, or `genex` for the platform) and its id. */
 export interface AiModelRef {
   door: AiDoor;

@@ -10,7 +10,7 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { createGenexAiCreatorReads, createGenexAiPlatform, PlatformRoute } from "../../src/main/game-ai/platform.ts";
 import type { GalleryAnswer, GalleryRequest } from "../../src/main/play/gallery.ts";
-import { AiDoor } from "../../src/shared/game-ai.ts";
+import { AiAudience, AiDoor, aiAudienceRoute } from "../../src/shared/game-ai.ts";
 import { AI_FIT_COUNTS_ROUTE } from "../../src/shared/game-ai-check.ts";
 import {
   AI_REPORT_ROUTE,
@@ -494,6 +494,33 @@ describe("genex.games for play-time AI: the creator's own published game", () =>
     assert.equal(await reads({}, null).reads.creatorShareBps("proj_moss"), null);
     const hostile = reads({});
     assert.equal(await hostile.reads.creatorShareBps("../x"), null);
+    assert.equal(hostile.sent.length, 0);
+  });
+
+  it("reads who the creator declared sees the game's AI text, and whether genex.games can screen it", async () => {
+    const route = aiAudienceRoute("proj_moss");
+    const view = { audience: "shared", declaredAt: "2026-10-20T00:00:00.000Z", moderation: "unavailable" };
+    const a = reads({ [`GET ${route}`]: ok(view) });
+    assert.deepEqual(await a.reads.audience("proj_moss"), { audience: AiAudience.Shared, moderationAvailable: false });
+    assert.equal(a.sent[0]?.init.token, TOKEN);
+    const screened = reads({ [`GET ${route}`]: ok({ ...view, audience: "player", moderation: "available" }) });
+    assert.deepEqual(await screened.reads.audience("proj_moss"), {
+      audience: AiAudience.Player,
+      moderationAvailable: true,
+    });
+    for (const body of [
+      { ...view, audience: "everyone" },
+      { ...view, moderation: "maybe" },
+      { audience: "shared" },
+      null,
+    ]) {
+      const bad = reads({ [`GET ${route}`]: ok(body) });
+      assert.equal(await bad.reads.audience("proj_moss"), null, JSON.stringify(body));
+    }
+    assert.equal(await reads({}).reads.audience("proj_moss"), null, "another account's project is a 404");
+    assert.equal(await reads({}, null).reads.audience("proj_moss"), null);
+    const hostile = reads({});
+    assert.equal(await hostile.reads.audience("../x"), null);
     assert.equal(hostile.sent.length, 0);
   });
 

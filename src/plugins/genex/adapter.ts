@@ -35,6 +35,8 @@ import {
   type GenexStatus,
 } from "../../shared/genex.ts";
 import { MINUTE_MS, SECOND_MS } from "../../shared/duration.ts";
+import { aiAudienceRoute } from "../../shared/game-ai.ts";
+import { type AiPublishListing, readAiPublishListing } from "../../shared/game-ai-check.ts";
 import { errorMessage } from "../../shared/errors.ts";
 import { PluginStillProblemCode } from "../../shared/plugins.ts";
 import { GenexCliStopped, runGenexCli, genexCliPath } from "./cli.ts";
@@ -142,7 +144,9 @@ import {
   type ReviewAnswer,
 } from "./jobs.ts";
 import {
+  AI_DISCLOSURE_FILE,
   aiDirectWarning,
+  aiDisclosure,
   canForceSettle,
   checksDraftPage,
   deploymentCheckDue,
@@ -174,6 +178,7 @@ import {
   uploadMissing,
   wasInterrupted,
   workspaceManifest,
+  GENEX_PROJECT_ID_RE,
   type HostedMeta,
   type HostedStaging,
   type InterruptedJob,
@@ -732,9 +737,18 @@ export class GenexTools {
     exportStage: () => Promise<unknown>,
     title?: unknown,
     camera?: CoverCamera,
+    ai?: unknown,
   ): Promise<GenexPublishState> {
+    // The game's play-time AI as Publish read it: refused before anything is exported or sent.
+    const listing = ai === undefined ? null : readAiPublishListing(ai);
+    if (ai !== undefined && !listing) throw new Error(PUBLISH_MESSAGE.BadAiListing);
     return this.#account(() =>
-      this.#startPublish(project, GenexPublishKind.Gallery, { exportStage, title, ...(camera ? { camera } : {}) }),
+      this.#startPublish(project, GenexPublishKind.Gallery, {
+        exportStage,
+        title,
+        listing,
+        ...(camera ? { camera } : {}),
+      }),
     );
   }
   /** Record Genex's terms answer; false when the user still has to accept them. */
@@ -753,7 +767,17 @@ export class GenexTools {
   async #startPublish(
     project: string,
     kind: GenexPublishKind,
-    { exportStage, title, camera }: { exportStage?: () => Promise<unknown>; title?: unknown; camera?: CoverCamera },
+    {
+      exportStage,
+      title,
+      camera,
+      listing = null,
+    }: {
+      exportStage?: () => Promise<unknown>;
+      title?: unknown;
+      camera?: CoverCamera;
+      listing?: AiPublishListing | null;
+    },
   ): Promise<GenexPublishState> {
     const state = await this.publishStatus(project);
     if (!state.connected) throw new Error(PUBLISH_MESSAGE.ConnectFirst);
@@ -776,7 +800,7 @@ export class GenexTools {
     if (kind === GenexPublishKind.Gallery)
       job.title = cleanGenexTitle(title) ?? state.title ?? defaultGenexTitle(project);
     const exported = exportStage
-      ? await this.#exportGame(project, state, job, dir, exportStage)
+      ? await this.#exportGame(project, state, job, dir, { exportStage, listing })
       : { connect: false, warning: null };
     const { connect } = exported;
     const cover = coverRides(kind, state);
@@ -788,7 +812,7 @@ export class GenexTools {
     if (warnings.length) state.warnings = warnings;
     delete state.lastError;
     await this.#savePublishState(project, state);
-    const done = this.#runPublishJob(project, kind, job, { cover, connect });
+    const done = this.#runPublishJob(project, kind, job, { cover, connect, listing });
     this.#publishJobs.set(project, { job, done });
     this.#exporting.delete(project);
     void done.finally(() => {
@@ -806,7 +830,7 @@ export class GenexTools {
     state: GenexPublishState,
     job: GenexPublishJob,
     dir: string,
-    exportStage: () => Promise<unknown>,
+    { exportStage, listing }: { exportStage: () => Promise<unknown>; listing: AiPublishListing | null },
   ): Promise<{ connect: boolean; warning: string | null }> {
     this.#exporting.add(project);
     try {
@@ -820,6 +844,12 @@ export class GenexTools {
       if (Number.isSafeInteger(files)) job.export = { files: files as number };
       const connect = !bringsOwnSdk(exported?.genex);
       await this.#writeWorkspaceManifest(dir, project, job, exported?.genex, connect);
+      // A game that uses AI ships its disclosure beside the build, marked and tested with it.
+      if (listing)
+        await writeFile(
+          path.join(dir, "dist", AI_DISCLOSURE_FILE),
+          aiDisclosure(job.title ?? state.title ?? defaultGenexTitle(project), listing),
+        );
       job.deployment = await markDeployment(path.join(dir, "dist"), job.id);
       job.phase = startPhase;
       return { connect, warning: aiDirectWarning(exported) };
@@ -877,7 +907,7 @@ export class GenexTools {
     project: string,
     kind: GenexPublishKind,
     job: GenexPublishJob,
-    { cover, connect }: { cover: boolean; connect: boolean },
+    { cover, connect, listing: ai }: { cover: boolean; connect: boolean; listing: AiPublishListing | null },
   ): Promise<void> {
     const dir = this.#publishDir(project);
     const home = path.join(dir, "home");
@@ -887,6 +917,9 @@ export class GenexTools {
     try {
       const meta = await this.#ensureHostedProject(project, dir, home, job, controller.signal);
       run.attempt.slug = meta.slug;
+      // Who sees the game's AI text is declared before anything goes up: genex.games screens a
+      // shared audience's text (D6), and refuses a shared call of a game that declared none.
+      if (ai) await this.#declareAudience(meta, ai);
       if (connect) await this.#connectCopy(run, meta);
       const outs = kind === GenexPublishKind.Draft ? [await this.#uploadDraft(run)] : await this.#uploadTested(run);
       if (!outs) return;
@@ -900,6 +933,17 @@ export class GenexTools {
     } finally {
       this.#controllers.delete(controller);
     }
+  }
+  /** Declare on genex.games who sees the game's AI text, as the creator's own account; a refusal stops the publish. */
+  async #declareAudience(meta: HostedMeta, listing: AiPublishListing): Promise<void> {
+    const id = typeof meta.id === "string" && GENEX_PROJECT_ID_RE.test(meta.id) ? meta.id : null;
+    if (!id) throw new Error(PUBLISH_MESSAGE.AudienceRefused);
+    await this.#fetch(aiAudienceRoute(id), {
+      method: "PUT",
+      body: JSON.stringify({ audience: listing.audience }),
+    }).catch(() => {
+      throw new Error(PUBLISH_MESSAGE.AudienceRefused);
+    });
   }
   /** One CLI phase, persisted first, with Genex's record read just before anything is uploaded. */
   async #runStep(

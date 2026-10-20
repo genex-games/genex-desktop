@@ -6,7 +6,7 @@
  */
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { AiDoor, AiFunding, type AiModelRef, AiRequirement } from "../../src/shared/game-ai.ts";
+import { AiAudience, AiDoor, AiFunding, type AiModelRef, AiRequirement } from "../../src/shared/game-ai.ts";
 import {
   AiCheckFit,
   type AiCheckResult,
@@ -25,13 +25,14 @@ import {
   gameLine,
   PillState,
   pillView,
+  audienceNote,
   publishAiView,
   publishChoice,
   publishShowsAi,
   strugglesLine,
   usageWords,
 } from "../../src/renderer/panels/game-ai/play-ai-view.ts";
-import { checkoutPriceWords, keySpendWords } from "../../src/renderer/words.ts";
+import { checkoutPriceWords, keySpendWords, PUBLISH_AI_WORDS } from "../../src/renderer/words.ts";
 
 const MAC = StudioPlatform.Mac;
 const HAIKU: AiModelRef = { door: AiDoor.Plan, engine: "claude-code", model: "claude-haiku-4-5" };
@@ -262,6 +263,7 @@ const FACTS: AiPublishFacts = {
   fits: { fitted: 5, of: 6 },
   cost: AiCostLevel.Low,
   creatorShareBps: 1000,
+  audience: { audience: AiAudience.Player, moderationAvailable: true },
 };
 const labelOf = (model: AiModelRef) => (model.model === HAIKU.model ? "Claude Haiku 4.5" : model.model);
 
@@ -303,12 +305,33 @@ describe("Publish's play-time AI block", () => {
     assert.equal(publishShowsAi(null), false);
     assert.equal(publishShowsAi({ ...FACTS, playtested: false, check: null }), false);
     assert.equal(publishShowsAi(FACTS), true);
-    assert.equal(publishChoice(null, true), null);
-    assert.deepEqual(publishChoice(AiRequirement.Ai, true), { requires: AiRequirement.Ai, leaderboard: true });
-    assert.deepEqual(publishChoice(AiRequirement.Optional, true), {
+    // Flipped: the choice also names who sees the game's AI text (D6).
+    assert.equal(publishChoice(null, true, AiAudience.Player), null);
+    assert.deepEqual(publishChoice(AiRequirement.Ai, true, AiAudience.Shared), {
+      requires: AiRequirement.Ai,
+      leaderboard: true,
+      audience: AiAudience.Shared,
+    });
+    assert.deepEqual(publishChoice(AiRequirement.Optional, true, AiAudience.Player), {
       requires: AiRequirement.Optional,
       leaderboard: false,
+      audience: AiAudience.Player,
     });
+  });
+
+  it("says when genex.games can't screen shared AI text, only for an audience other players are in", () => {
+    const unscreened = { ...FACTS, audience: { audience: AiAudience.Player, moderationAvailable: false } };
+    assert.equal(audienceNote(unscreened, AiAudience.Player), null);
+    assert.equal(audienceNote(unscreened, AiAudience.Shared), PUBLISH_AI_WORDS.unscreened);
+    assert.equal(audienceNote(unscreened, AiAudience.OpenChat), PUBLISH_AI_WORDS.unscreened);
+    assert.equal(
+      audienceNote(
+        { ...FACTS, audience: { audience: AiAudience.Shared, moderationAvailable: true } },
+        AiAudience.Shared,
+      ),
+      null,
+    );
+    assert.equal(audienceNote({ ...FACTS, audience: null }, AiAudience.Shared), null, "unknown is not claimed");
   });
 });
 
