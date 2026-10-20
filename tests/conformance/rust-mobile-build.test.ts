@@ -57,6 +57,8 @@ const REQUIRED = process.env.GENEX_REQUIRE_TOOLCHAINS === "1";
 /** A cold cross build compiles the facade's whole dependency graph for the triple. */
 const CROSS_BUILD_MS = 30 * MINUTE_MS;
 const OUTPUT_BYTES = 64 * 1024 * 1024;
+/** The page size of an older Android link: what a 16 KB check has to refuse. */
+const SMALL_PAGE_BYTES = 4096;
 /** LC_BUILD_VERSION and its fixed size (cmd, cmdsize, platform, minos, sdk, ntools). */
 const LC_BUILD_VERSION = 0x32;
 const BUILD_VERSION_BYTES = 24;
@@ -430,7 +432,7 @@ async function crossBuild(
 
 describe("the Rust template cross-compiles offline for the phones", () => {
   it(
-    "for aarch64-linux-android every PT_LOAD is 16 KB aligned with the link args, and 4 KB without them",
+    "for aarch64-linux-android every PT_LOAD is 16 KB aligned with the link args, and a 4 KB link is caught",
     needs(MobileBuild.Android),
     async () => {
       const settings = mobileBuildSettings(MobileBuild.Android, {
@@ -446,11 +448,16 @@ describe("the Rust template cross-compiles offline for the phones", () => {
       assert.ok(built.facts.loadAlignments.length > 0);
       for (const align of built.facts.loadAlignments)
         assert.ok(align >= ANDROID_PAGE_BYTES, `a PT_LOAD aligned to ${align}`);
-      const bare = elfMobileFacts(await crossBuild(crate, MobileBuild.Android, [], {}));
-      assert.ok(bare.ok);
+      // Flipped in GC: this compared against a bare link, which NDK r27 aligns to 4 KB. The pinned
+      // NDK r30 (like every NDK since r28) aligns arm64 to 16 KB on its own, so a bare link proves
+      // nothing either way. A link that asks for 4 KB pages shows the check tells the two apart.
+      const small = elfMobileFacts(
+        await crossBuild(crate, MobileBuild.Android, ["-C", `link-arg=-Wl,-z,max-page-size=${SMALL_PAGE_BYTES}`], {}),
+      );
+      assert.ok(small.ok);
       assert.ok(
-        bare.facts.loadAlignments.some((align) => align < ANDROID_PAGE_BYTES),
-        `the NDK linker's own alignment is ${bare.facts.loadAlignments.join(", ")}: the link args would prove nothing`,
+        small.facts.loadAlignments.some((align) => align < ANDROID_PAGE_BYTES),
+        `a 4 KB link aligned to ${small.facts.loadAlignments.join(", ")}: the check would prove nothing`,
       );
     },
   );

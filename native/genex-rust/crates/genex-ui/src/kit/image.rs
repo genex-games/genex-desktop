@@ -13,6 +13,9 @@ pub const IMAGE_SIDE_MAX: u32 = 4096;
 pub const IMAGES_MAX: usize = 256;
 /// Where the cache lives in egui memory.
 const CACHE_ID: &str = "genex-ui.images";
+/// The most the PNG decoder may allocate: a [`IMAGE_SIDE_MAX`]-square image at 16-bit RGBA, with
+/// room for its rows.
+const DECODE_BYTES_MAX: usize = 160 * 1024 * 1024;
 /// The first bytes of every PNG file.
 const PNG_SIGNATURE: [u8; 8] = [0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A];
 
@@ -62,6 +65,10 @@ pub fn image(ctx: &egui::Context, asset: &str, read: impl FnOnce(&str) -> Option
 }
 
 /// Decode a PNG into straight-alpha RGBA texels, refusing anything else and anything too large.
+///
+/// The png crate decodes it directly (not the image crate, whose format dispatch links every
+/// decoder it was built with into a web build): palettes, low bit depths and `tRNS` are expanded,
+/// and 16-bit samples are rounded to 8 bits as the image crate rounds them.
 pub fn decode_png(bytes: &[u8]) -> Result<egui::ColorImage, ImageErrorCode> {
     if bytes.len() > IMAGE_BYTES_MAX {
         return Err(ImageErrorCode::TooLarge);
@@ -69,16 +76,53 @@ pub fn decode_png(bytes: &[u8]) -> Result<egui::ColorImage, ImageErrorCode> {
     if !bytes.starts_with(&PNG_SIGNATURE) {
         return Err(ImageErrorCode::Invalid);
     }
-    let mut reader = image::ImageReader::with_format(std::io::Cursor::new(bytes), image::ImageFormat::Png);
-    let mut limits = image::Limits::default();
-    limits.max_image_width = Some(IMAGE_SIDE_MAX);
-    limits.max_image_height = Some(IMAGE_SIDE_MAX);
-    reader.limits(limits);
-    let decoded = reader.decode().map_err(|error| match error {
-        image::ImageError::Limits(_) => ImageErrorCode::TooLarge,
+    let limits = png::Limits { bytes: DECODE_BYTES_MAX };
+    let mut decoder = png::Decoder::new_with_limits(std::io::Cursor::new(bytes), limits);
+    decoder.set_transformations(png::Transformations::EXPAND);
+    let mut reader = decoder.read_info().map_err(refusal)?;
+    let (width, height) = (reader.info().width, reader.info().height);
+    if width > IMAGE_SIDE_MAX || height > IMAGE_SIDE_MAX {
+        return Err(ImageErrorCode::TooLarge);
+    }
+    let mut texels = vec![0; reader.output_buffer_size().ok_or(ImageErrorCode::TooLarge)?];
+    let frame = reader.next_frame(&mut texels).map_err(refusal)?;
+    texels.truncate(frame.buffer_size());
+    let rgba = straight_rgba8(&texels, frame.color_type, frame.bit_depth).ok_or(ImageErrorCode::Invalid)?;
+    let size = [frame.width as usize, frame.height as usize];
+    Ok(egui::ColorImage::from_rgba_unmultiplied(size, &rgba))
+}
+
+/// A decoder error as the refusal it is: an allocation over the cap is too large, anything else invalid.
+fn refusal(error: png::DecodingError) -> ImageErrorCode {
+    match error {
+        png::DecodingError::LimitsExceeded => ImageErrorCode::TooLarge,
         _ => ImageErrorCode::Invalid,
-    })?;
-    let rgba = decoded.to_rgba8();
-    let size = [rgba.width() as usize, rgba.height() as usize];
-    Ok(egui::ColorImage::from_rgba_unmultiplied(size, rgba.as_raw()))
+    }
+}
+
+/// Expanded PNG samples (gray, gray-alpha, RGB or RGBA at 8 or 16 bits) as RGBA8 texels.
+fn straight_rgba8(samples: &[u8], color: png::ColorType, depth: png::BitDepth) -> Option<Vec<u8>> {
+    let channels = match color {
+        png::ColorType::Grayscale => 1,
+        png::ColorType::GrayscaleAlpha => 2,
+        png::ColorType::Rgb => 3,
+        png::ColorType::Rgba => 4,
+        png::ColorType::Indexed => return None,
+    };
+    let eight: Vec<u8> = match depth {
+        png::BitDepth::Eight => samples.to_vec(),
+        // Big-endian samples, rounded as round(v * 255 / 65535).
+        png::BitDepth::Sixteen => samples.as_chunks::<2>().0.iter().map(|pair| ((u32::from(u16::from_be_bytes(*pair)) + 128) / 257) as u8).collect(),
+        _ => return None,
+    };
+    let texel = |chunk: &[u8]| -> [u8; 4] {
+        match chunk {
+            [l] => [*l, *l, *l, u8::MAX],
+            [l, a] => [*l, *l, *l, *a],
+            [r, g, b] => [*r, *g, *b, u8::MAX],
+            [r, g, b, a] => [*r, *g, *b, *a],
+            _ => [0; 4],
+        }
+    };
+    Some(eight.chunks_exact(channels).flat_map(texel).collect())
 }

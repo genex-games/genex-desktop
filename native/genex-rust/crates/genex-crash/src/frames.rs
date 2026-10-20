@@ -1,8 +1,9 @@
 //! Stack frames as raw instruction pointers, never symbols: the game only walks its stack
-//! (`backtrace::trace`), and the host symbolicates against the build's debug file. The host finds
-//! the image's slide from [`anchor`]: the record carries the anchor's runtime address and the
-//! debug file names the same symbol. On wasm32 there is no stack walk (the web shell keeps the
-//! engine's own stack): a record there has no frames and no anchor.
+//! (`backtrace::trace`, or on iOS the system unwinder's `_Unwind_Backtrace`, which is what
+//! backtrace itself calls on Apple targets), and the host symbolicates against the build's debug
+//! file. The host finds the image's slide from [`anchor`]: the record carries the anchor's runtime
+//! address and the debug file names the same symbol. On wasm32 there is no stack walk (the web
+//! shell keeps the engine's own stack): a record there has no frames and no anchor.
 
 #[cfg(not(target_arch = "wasm32"))]
 use crate::caps::CRASH_FRAMES_MAX;
@@ -39,14 +40,77 @@ pub fn anchor_ip() -> Option<u64> {
 /// (the hook's own) are skipped; otherwise every frame is kept.
 #[cfg(not(target_arch = "wasm32"))]
 pub fn capture(hook_start: u64, callers: usize) -> Vec<CrashFrame> {
-    let limit = CRASH_FRAMES_MAX + HOOK_FRAMES_SEARCHED;
+    let ips = walk(CRASH_FRAMES_MAX + HOOK_FRAMES_SEARCHED);
+    let skip = hook_depth(&ips, hook_start).map_or(0, |depth| depth.saturating_add(callers));
+    ips.into_iter().skip(skip).take(CRASH_FRAMES_MAX).map(CrashFrame::Ip).collect()
+}
+
+/// The stack's raw return addresses, top first, at most `limit`.
+#[cfg(not(any(target_arch = "wasm32", target_os = "ios")))]
+fn walk(limit: usize) -> Vec<u64> {
     let mut ips: Vec<u64> = Vec::with_capacity(limit);
     backtrace::trace(|frame| {
         ips.push(frame.ip().addr() as u64);
         ips.len() < limit
     });
-    let skip = hook_depth(&ips, hook_start).map_or(0, |depth| depth.saturating_add(callers));
-    ips.into_iter().skip(skip).take(CRASH_FRAMES_MAX).map(CrashFrame::Ip).collect()
+    ips
+}
+
+/// The stack's raw return addresses on iOS, top first, at most `limit`.
+#[cfg(target_os = "ios")]
+fn walk(limit: usize) -> Vec<u64> {
+    unwind::walk(limit)
+}
+
+/// The system unwinder (libSystem's `_Unwind_Backtrace`), used on iOS where the backtrace crate
+/// does not build against the locked libc.
+#[cfg(target_os = "ios")]
+#[allow(unsafe_code)] // FFI to the system unwinder: two C calls and the callback's data pointer.
+mod unwind {
+    use std::ffi::{c_int, c_void};
+
+    /// The unwinder's opaque per-frame context.
+    #[repr(C)]
+    struct UnwindContext {
+        _opaque: [u8; 0],
+    }
+
+    /// `_URC_NO_REASON`: keep walking.
+    const URC_NO_REASON: c_int = 0;
+    /// `_URC_FAILURE`: stop the walk (backtrace's own stop code on this unwinder).
+    const URC_FAILURE: c_int = 9;
+
+    type Step = extern "C" fn(*mut UnwindContext, *mut c_void) -> c_int;
+
+    unsafe extern "C" {
+        fn _Unwind_Backtrace(step: Step, data: *mut c_void) -> c_int;
+        fn _Unwind_GetIP(context: *mut UnwindContext) -> usize;
+    }
+
+    /// The walk's state, handed to [`step`] through the unwinder's data pointer.
+    struct Walk {
+        ips: Vec<u64>,
+        limit: usize,
+    }
+
+    extern "C" fn step(context: *mut UnwindContext, data: *mut c_void) -> c_int {
+        // SAFETY: `data` is the `Walk` that `walk` lends for the whole `_Unwind_Backtrace` call,
+        // and nothing else touches it meanwhile.
+        let walk = unsafe { &mut *data.cast::<Walk>() };
+        // SAFETY: `context` is the live frame context the unwinder passes to this callback.
+        let ip = unsafe { _Unwind_GetIP(context) };
+        walk.ips.push(ip as u64);
+        if walk.ips.len() < walk.limit { URC_NO_REASON } else { URC_FAILURE }
+    }
+
+    /// Walks the current thread's stack, top first, at most `limit` return addresses.
+    pub(super) fn walk(limit: usize) -> Vec<u64> {
+        let mut walk = Walk { ips: Vec::with_capacity(limit), limit };
+        // SAFETY: `step` matches the callback type the unwinder expects, and `walk` outlives the
+        // call. The return code only says why the walk ended; the frames gathered are kept either way.
+        unsafe { _Unwind_Backtrace(step, (&raw mut walk).cast()) };
+        walk.ips
+    }
 }
 
 /// No stack walk on wasm32.

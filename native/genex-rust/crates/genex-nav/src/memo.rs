@@ -5,8 +5,9 @@
 //! changes a tick: what it returns is equal, tile for tile, to a fresh bake. It is an LRU by
 //! bytes: an entry that is read moves to the back, the front is evicted until a new entry fits
 //! the cap, and an entry larger than the whole cap is never kept. One process-wide memo serves
-//! [`crate::world::NavMesh::bake`]; its cap is per device class ([`NAV_MEMO_BYTES_MAX`] on a
-//! desktop, [`NAV_MEMO_BYTES_MAX_PHONE`] on a phone), set by the runtime with [`set_memo_cap`].
+//! [`crate::world::NavMesh::bake`] at [`NAV_MEMO_BYTES_MAX`]. [`NAV_MEMO_BYTES_MAX_PHONE`] is the
+//! phone cap for a runtime that picks the cap by device class with [`set_memo_cap`]; no runtime
+//! calls it yet, so every destination keeps the desktop cap.
 
 use std::sync::{Arc, Mutex, MutexGuard};
 
@@ -17,7 +18,8 @@ use crate::tile::{NAV_TILE_VERSION, NavTile};
 
 /// The process-wide memo's cap on a desktop, in bytes.
 pub const NAV_MEMO_BYTES_MAX: usize = 32 * 1024 * 1024;
-/// The process-wide memo's cap on a phone (and a phone's browser), in bytes.
+/// The cap a phone (and a phone's browser) is meant to get, in bytes; not applied yet (see the
+/// module docs).
 pub const NAV_MEMO_BYTES_MAX_PHONE: usize = 8 * 1024 * 1024;
 /// Bytes counted for each memoized tile beyond its geometry (its record and handle).
 const TILE_OVERHEAD_BYTES: usize = 64;
@@ -148,7 +150,8 @@ pub fn global() -> MutexGuard<'static, Option<BakeMemo>> {
     guard
 }
 
-/// Set the process-wide memo's cap (the runtime picks it by device class), evicting down to it.
+/// Set the process-wide memo's cap, evicting down to it (for a runtime that picks the cap by
+/// device class; none does yet).
 pub fn set_memo_cap(cap: usize) {
     if let Some(memo) = global().as_mut() {
         memo.set_cap(cap);

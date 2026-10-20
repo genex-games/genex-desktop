@@ -135,6 +135,8 @@ gltf = { version = "=1.4.1", features = ["import", "utils", "names", "extras", "
 # supercompressed (the export step writes them plain), so no zstd decoder.
 ktx2 = { version = "=0.5.0", default-features = false }
 image = { version = "0.25.10", default-features = false, features = ["png", "jpeg", "webp", "hdr", "exr", "dds", "gif", "bmp", "qoi"] }
+# The PNG decoder image uses, on its own for the UI kit (genex-ui): one copy in the lock.
+png = { version = "0.18.1" }
 
 # Core, protocol, saves. serde_json keeps object members in insertion order, as the C++ json.h
 # does, so probes merge in registration order and the checksum dump is order-stable.
@@ -189,7 +191,7 @@ spade = "2.15.1"
 # adopt them. Profiling (P6): puffin without serialization (no bincode, lz4 or zstd), its `web`
 # clock on wasm32; `profiling/profile-with-puffin` and rapier's `profiler` are dev-flavour features
 # the facade turns on (PROF-5). Crash reports (P6): backtrace's raw instruction pointers, never on
-# wasm32; object and addr2line, the versions backtrace brings, for the host's symbolicate tool.
+# wasm32 or iOS (genex-crash/Cargo.toml says why); object and addr2line, the versions backtrace brings, for the host's symbolicate tool.
 puffin = { version = "=0.20.0", default-features = false }
 profiling = { version = "1.0.18" }
 backtrace = { version = "=0.3.76" }

@@ -20,6 +20,9 @@ serde_json = { workspace = true }
 thiserror = { workspace = true }
 
 # backtrace for the raw instruction pointers of a panic's stack (`trace` only: the host
-# symbolicates); never on wasm32, where the web shell keeps the engine's stack.
-[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+# symbolicates); never on wasm32, where the web shell keeps the engine's stack. Not on iOS either:
+# backtrace 0.3.76 always compiles its gimli symbolizer there, which calls libc's _dyld_* functions,
+# and libc 0.2.190 declares those for macOS only. iOS walks the stack with the system unwinder
+# (frames.rs), the same _Unwind_Backtrace backtrace itself uses on Apple targets.
+[target.'cfg(not(any(target_arch = "wasm32", target_os = "ios")))'.dependencies]
 backtrace = { workspace = true }

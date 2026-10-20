@@ -7,7 +7,7 @@
 //! ([`crate::memo`]): baking the same input twice in one process hands back the first bake.
 //! `.navmesh` bytes ([`NavMesh::to_bytes`]) carry the input's digest, so
 //! [`NavMesh::from_bytes_for`] can tell bytes baked from another input and bake afresh, which it
-//! reports as [`NavMeshSource::Rebaked`] (`nav-bake-stale` in volatile, written by the runtime):
+//! reports as [`NavMeshSource::Rebaked`] (no runtime reports it in volatile yet):
 //!
 //! ```text
 //! "GXNM" | u16 version | u16 0 | u64 config digest | u64 input digest | u32 tiles
@@ -70,8 +70,8 @@ pub enum NavMeshSource {
 }
 
 impl NavMeshSource {
-    /// The volatile code the runtime reports for this source: `nav-bake-stale` for
-    /// [`NavMeshSource::Rebaked`], nothing otherwise.
+    /// The volatile code a runtime would report for this source: `nav-bake-stale` for
+    /// [`NavMeshSource::Rebaked`], nothing otherwise. No runtime reports it yet.
     pub const fn volatile_code(self) -> Option<&'static str> {
         match self {
             NavMeshSource::Rebaked => Some("nav-bake-stale"),
@@ -374,7 +374,10 @@ impl Nav {
         self.budget
     }
 
-    /// The ported runtime underneath (read-only: queries, probes and debug draws).
+    /// The ported runtime underneath (read-only: queries, probes and debug draws), for this crate's
+    /// tests. Hidden from the docs and not part of a game's surface: the facade's own nav queries
+    /// arrive with NAV-12.
+    #[doc(hidden)]
     pub fn archipelago(&self) -> &Archipelago<GenexCoords> {
         &self.archipelago
     }

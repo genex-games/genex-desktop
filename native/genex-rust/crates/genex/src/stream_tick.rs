@@ -12,10 +12,11 @@
 //!   commit enters and `Prefetch` priority for the ring past the radius. What they record,
 //!   `state().assets` paths included, is merged in cell order inside the commit slot.
 //! - A build that is late holds the frame, never the commit: the tick waits, counted in
-//!   `state().volatile.stream.stalls`. A wait is capped ([`STREAM_HOLD_MAX_MS`]) so a held
+//!   `state().volatile.__stream.stalls`. A wait is capped ([`STREAM_HOLD_MAX_MS`]) so a held
 //!   `step(ms)` answers before the host's call timeout; past it the tick does not run (nothing
-//!   changed) and `stream-hold-timeout` is reported. Live waits a slice per frame and shows the
-//!   loading look once a hold passes [`STREAM_HOLD_OVERLAY_MS`].
+//!   changed) and `stream-hold-timeout` is reported. Live waits a slice per frame. Once a hold
+//!   passes [`STREAM_HOLD_OVERLAY_MS`] the runtime says so (`Runtime::stream_loading`); no shell
+//!   draws a loading look from it yet.
 //!
 //! Ideas from Unreal's World Partition "Block on Slow Streaming" (proprietary; no code).
 
@@ -47,7 +48,7 @@ pub const STREAM_HOLD_LIVE_SLICE_MS: f64 = 8.0;
 const HOLD_POLL: std::time::Duration = std::time::Duration::from_micros(250);
 /// The longest anchor name, in characters.
 const ANCHOR_NAME_MAX_CHARS: usize = 64;
-/// Cell refusals kept for `state().volatile.stream.refused` (the newest).
+/// Cell refusals kept for `state().volatile.__stream.refused` (the newest).
 const REFUSALS_KEPT: usize = 32;
 
 /// A cell that entered the sim set at this tick's commit: the things its builders added (each
@@ -253,7 +254,7 @@ fn wall_clock() -> HoldClock {
 }
 
 /// The runtime's streaming engine: the builds in flight, the builders and the counters
-/// `state().volatile.stream` reports. Display and scheduling state only: nothing here reaches the
+/// `state().volatile.__stream` reports. Display and scheduling state only: nothing here reaches the
 /// simulation except through the commit slot, in canonical order.
 pub(crate) struct StreamTick {
     contents: Vec<CellContent>,
@@ -312,7 +313,8 @@ impl StreamTick {
         self.refused.clear();
     }
 
-    /// Whether a hold has lasted past [`STREAM_HOLD_OVERLAY_MS`]: Live shows the loading look.
+    /// Whether a hold has lasted past [`STREAM_HOLD_OVERLAY_MS`] (what a shell's loading look would
+    /// read; none reads it yet).
     pub(crate) fn loading(&self) -> bool {
         self.holding_ms >= STREAM_HOLD_OVERLAY_MS
     }
@@ -465,7 +467,7 @@ impl StreamTick {
         }
     }
 
-    /// `state().volatile.stream`: `{stalls, heldMs, inFlight, timeouts, refused: [{cell: [x, z],
+    /// `state().volatile.__stream`: `{stalls, heldMs, inFlight, timeouts, refused: [{cell: [x, z],
     /// code}]}`, plus `timeout: "stream-hold-timeout"` while a hold is past its cap.
     pub(crate) fn volatile_value(&self) -> CoreValue {
         let in_flight = self.builds.values().filter(|job| !job.is_ready()).count();

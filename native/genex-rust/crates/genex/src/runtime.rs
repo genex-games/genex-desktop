@@ -410,8 +410,8 @@ impl<W> Runtime<W> {
         self.core.running
     }
 
-    /// Whether a streaming commit has been held past `STREAM_HOLD_OVERLAY_MS`: a Live shell
-    /// paints the loading look over the last frame until it commits. Display only.
+    /// Whether a streaming commit has been held past `STREAM_HOLD_OVERLAY_MS`: what a shell's
+    /// loading look over the last frame would read (no shell paints one yet). Display only.
     pub fn stream_loading(&self) -> bool {
         self.core.stream.loading()
     }

@@ -525,6 +525,60 @@ fn image_decoding_refuses_hostile_bytes() {
     assert_eq!([ImageErrorCode::Missing, ImageErrorCode::Invalid, ImageErrorCode::TooLarge].map(ImageErrorCode::wire), ["image-missing", "image-invalid", "image-too-large"]);
 }
 
+/// A PNG of `width` x `height` written by the png encoder with these samples and settings.
+fn png_with(width: u32, height: u32, color: png::ColorType, depth: png::BitDepth, setup: impl FnOnce(&mut png::Encoder<'_, &mut Vec<u8>>), samples: &[u8]) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    let mut encoder = png::Encoder::new(&mut bytes, width, height);
+    encoder.set_color(color);
+    encoder.set_depth(depth);
+    setup(&mut encoder);
+    encoder.write_header().expect("header").write_image_data(samples).expect("data");
+    bytes
+}
+
+/// The texels the image crate decodes `bytes` to (its RGBA8 conversion), the reference the kit holds to.
+fn reference_texels(bytes: &[u8]) -> Vec<egui::Color32> {
+    let decoded = image::load_from_memory_with_format(bytes, image::ImageFormat::Png).expect("reference decode").to_rgba8();
+    decoded.pixels().map(|p| egui::Color32::from_rgba_unmultiplied(p[0], p[1], p[2], p[3])).collect()
+}
+
+#[test]
+fn image_decoding_matches_the_reference_decode_for_every_png_colour_type() {
+    use png::{BitDepth, ColorType};
+    let ramp = |n: usize| -> Vec<u8> { (0..n).map(|i| (i * 37 % 256) as u8).collect() };
+    let (w, h) = (5_u32, 3_u32);
+    let texels = (w * h) as usize;
+    let none = |_: &mut png::Encoder<'_, &mut Vec<u8>>| {};
+    let rows: Vec<(&str, Vec<u8>)> = vec![
+        ("gray 8", png_with(w, h, ColorType::Grayscale, BitDepth::Eight, none, &ramp(texels))),
+        ("gray 16", png_with(w, h, ColorType::Grayscale, BitDepth::Sixteen, none, &ramp(texels * 2))),
+        ("gray 1", png_with(8, 2, ColorType::Grayscale, BitDepth::One, none, &[0b1010_0110, 0b0101_1001])),
+        ("gray alpha 8", png_with(w, h, ColorType::GrayscaleAlpha, BitDepth::Eight, none, &ramp(texels * 2))),
+        ("gray alpha 16", png_with(w, h, ColorType::GrayscaleAlpha, BitDepth::Sixteen, none, &ramp(texels * 4))),
+        ("rgb 8", png_with(w, h, ColorType::Rgb, BitDepth::Eight, none, &ramp(texels * 3))),
+        ("rgb 16", png_with(w, h, ColorType::Rgb, BitDepth::Sixteen, none, &ramp(texels * 6))),
+        ("rgba 8", png_with(w, h, ColorType::Rgba, BitDepth::Eight, none, &ramp(texels * 4))),
+        ("rgba 16", png_with(w, h, ColorType::Rgba, BitDepth::Sixteen, none, &ramp(texels * 8))),
+        (
+            "palette 4 with tRNS",
+            png_with(4, 2, ColorType::Indexed, BitDepth::Four, |e| {
+                e.set_palette(vec![255, 0, 0, 0, 255, 0, 0, 0, 255]);
+                e.set_trns(vec![255, 128]);
+            }, &[0x01, 0x20, 0x12, 0x00]),
+        ),
+        (
+            "gray with tRNS",
+            png_with(w, h, ColorType::Grayscale, BitDepth::Eight, |e| e.set_trns(vec![0, 37]), &ramp(texels)),
+        ),
+    ];
+    for (name, bytes) in rows {
+        let decoded = decode_png(&bytes).unwrap_or_else(|e| panic!("{name}: {e:?}"));
+        let want = reference_texels(&bytes);
+        assert_eq!(decoded.pixels.len(), want.len(), "{name}");
+        assert_eq!(decoded.pixels, want, "{name}");
+    }
+}
+
 #[test]
 fn the_image_cache_reads_each_path_once_and_is_capped() {
     let ctx = context();
