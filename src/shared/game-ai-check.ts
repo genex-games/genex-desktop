@@ -10,7 +10,17 @@
  *
  * Browser-safe; pure.
  */
-import { AiDoor, AiFunding, type AiGameKey, type AiModelRef, readAiGameKey, readMember } from "./game-ai.ts";
+import {
+  AiDoor,
+  AiFunding,
+  type AiGameKey,
+  type AiModelRef,
+  AiRequirement,
+  hasExactKeys,
+  isPlainRecord,
+  readAiGameKey,
+  readMember,
+} from "./game-ai.ts";
 
 /** The standard panel's slots: two cheap cloud models, one strong one, two local sizes. Never rename one. */
 export const AiPanelSlot = {
@@ -157,6 +167,23 @@ export interface AiPublishFacts {
   cost: AiCostLevel | null;
   /** The creator's share of credits players spend on AI in the game, in basis points; null until set (D4). */
   creatorShareBps: number | null;
+}
+
+/** What the creator chooses at Publish and the listing shows: whether the game needs AI, and a leaderboard. */
+export interface AiPublishChoice {
+  requires: AiRequirement;
+  /** Scores shared between players; they count only on Genex credits. */
+  leaderboard: boolean;
+}
+
+const CHOICE_KEYS = ["requires", "leaderboard"] as const satisfies readonly (keyof AiPublishChoice)[];
+
+/** Publish's choice from the renderer, or null: exact keys, a known requirement and a switch. */
+export function readAiPublishChoice(raw: unknown): AiPublishChoice | null {
+  if (!isPlainRecord(raw) || !hasExactKeys(raw, CHOICE_KEYS)) return null;
+  const requires = readMember(AiRequirement, raw.requires);
+  const { leaderboard } = raw;
+  return requires && typeof leaderboard === "boolean" ? { requires, leaderboard } : null;
 }
 
 // ── fit from real play (counts only) ───────────────────────────────────────────────────────

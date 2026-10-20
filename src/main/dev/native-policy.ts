@@ -403,6 +403,10 @@ const FIXTURE_SAFE = [
   // The plan watcher's view and a sign-in's cancel answer from memory: no socket opens.
   "studio:plan-watcher",
   "studio:plan-watcher.cancel",
+  // The Player report inbox of the creator's own game, and Fix with agent saving one report's
+  // replay as a playtest in that game's own folder: a fixture launch answers from its stand-ins.
+  "studio:ai-reports.inbox",
+  "studio:ai-reports.fix",
 ] as const satisfies readonly StudioInvokeChannel[];
 export type NativeChannel = (typeof NATIVE_CHANNELS)[number];
 export type NativeStep = (typeof NATIVE_STEPS)[number];

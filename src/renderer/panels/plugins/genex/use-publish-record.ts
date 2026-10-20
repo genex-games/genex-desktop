@@ -6,6 +6,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { SECOND_MS } from "../../../../shared/duration.ts";
 import { GenexAction, GenexPublishStatusOperation, type GenexPublishState } from "../../../../shared/genex.ts";
+import type { AiPublishChoice } from "../../../../shared/game-ai-check.ts";
 import type { ExportReview, PluginInfo } from "../../../../shared/plugins.ts";
 import { type PluginReviewRequest, runPluginAction } from "../../../plugin-actions.ts";
 import { type PublishButton, publishView } from "./genex-publish-view.ts";
@@ -90,17 +91,20 @@ export function usePublishRecord(plugin: PluginInfo, project: string | null) {
     act: (name: string, args: Record<string, unknown> = {}): Promise<void> =>
       run(Pressing.Action, () => runPluginAction({ plugin, name, args, project, review: setReview })),
     listFiles: (): Promise<void> => run(Pressing.Files, currentFiles),
-    /** Publish under `title`: the press is the consent to exactly the listed files. */
-    publish: (title: string): Promise<void> =>
-      run(Pressing.Publish, async () => window.studio.genexPublish(game, await currentFiles(), title)),
+    /**
+     * Publish under `title`, with the game's play-time AI choice when Publish asked for one: the
+     * press is the consent to exactly the listed files.
+     */
+    publish: (title: string, ai?: AiPublishChoice): Promise<void> =>
+      run(Pressing.Publish, async () => window.studio.genexPublish(game, await currentFiles(), title, ai)),
     /**
      * Publish again while Studio cannot tell whether the last upload reached Genex: settle that
      * upload (`again` names it), then publish under `title` as Publish does.
      */
-    publishAgain: (again: PublishButton, title: string): Promise<void> =>
+    publishAgain: (again: PublishButton, title: string, ai?: AiPublishChoice): Promise<void> =>
       run(Pressing.Publish, async () => {
         await runPluginAction({ plugin, name: again.action, args: again.args ?? {}, project, review: setReview });
-        await window.studio.genexPublish(game, await currentFiles(), title);
+        await window.studio.genexPublish(game, await currentFiles(), title, ai);
       }),
   };
 }

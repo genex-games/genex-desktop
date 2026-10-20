@@ -10,6 +10,7 @@
 import { CoreFact, hasFact } from "../../shared/project-facts.ts";
 import { publishesAsWebGame } from "../../shared/project-workspace.ts";
 import { cleanGenexTitle, GENEX_PLUGIN_ID, GenexAction } from "../../shared/genex.ts";
+import { type AiPublishChoice, readAiPublishChoice } from "../../shared/game-ai-check.ts";
 import { type ExportReview, type PluginBinding, PluginSourceKind } from "../../shared/plugins.ts";
 import type { StudioCore } from "../studio-core.ts";
 
@@ -18,6 +19,7 @@ const MESSAGE = {
   NoGame: "Open a game to publish it",
   GenexUnavailable: "Publishing needs the Genex plugin, which isn't installed",
   NoFileList: "Review the files before publishing",
+  BadAiChoice: "Choose whether the game needs AI again",
   UnrealGame: (title: string) => `${title} builds in Unreal; publishing an Unreal game isn't supported yet.`,
   NotWebGame: (title: string) => `${title} isn't a web game, so Genex can't publish it yet.`,
 } as const;
@@ -90,21 +92,33 @@ export async function publishReview(core: DialogCore, project: unknown): Promise
   return core.publicCopyFiles(binding.project);
 }
 
+/** Publish's play-time AI choice as read, absent when the dialog showed no AI step; a bad one refuses. */
+function aiChoiceOf(raw: unknown): AiPublishChoice | undefined {
+  if (raw === undefined) return undefined;
+  const choice = readAiPublishChoice(raw);
+  if (!choice) throw new Error(MESSAGE.BadAiChoice);
+  return choice;
+}
+
 /**
  * Publish `project` to the Genex gallery under `title` (cleaned; the plugin picks the name when none is
- * left), after the person approved `review` in the dialog.
+ * left), after the person approved `review` in the dialog, with the game's play-time AI choice
+ * (`ai`: Needs AI or Works without AI, and a leaderboard) when the dialog asked for one.
  */
 export async function publishFromDialog(
   core: DialogCore,
   project: unknown,
   review: unknown,
   title?: unknown,
+  ai?: unknown,
 ): Promise<void> {
   if (!isExportReview(review)) throw new Error(MESSAGE.NoFileList);
+  const choice = aiChoiceOf(ai);
   const binding = await dialogBinding(core, project);
   const name = cleanGenexTitle(title);
+  const args = { ...(name ? { title: name } : {}), ...(choice ? { ai: choice } : {}) };
   // Genex exports inside this call, so the approval lives exactly as long as it.
   await core.withApprovedExport(GENEX_PLUGIN_ID, binding.project, review, () =>
-    core.plugins.action(GENEX_PLUGIN_ID, GenexAction.PublishGallery, name ? { title: name } : {}, binding),
+    core.plugins.action(GENEX_PLUGIN_ID, GenexAction.PublishGallery, args, binding),
   );
 }

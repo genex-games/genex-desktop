@@ -255,6 +255,8 @@ function playCalls(bridge: BridgeCalls) {
     planWatcherSignIn: () => invoke("studio:plan-watcher.sign-in"),
     planWatcherCancelSignIn: () => invoke("studio:plan-watcher.cancel"),
     planWatcherSignOut: () => invoke("studio:plan-watcher.sign-out"),
+    gameAiInbox: (project) => invoke("studio:ai-reports.inbox", { project }),
+    gameAiInboxFix: (project, id) => invoke("studio:ai-reports.fix", { project, id }),
     playHandleCheck: (handle) => invoke("studio:play.handle-check", { handle }),
     playSetHandle: (handle) => invoke("studio:play.handle", { handle }),
     playShare: (url, at) => invoke("studio:play.share", { url, at }),
@@ -337,7 +339,8 @@ function pluginCalls(bridge: BridgeCalls) {
       invoke("studio:plugins.action", { id, name, args, project, ticket }),
     pluginChooseFile: (id, request) => invoke("studio:plugins.choose-file", { id, request }),
     genexPublishReview: (project) => invoke("studio:plugins.genex-publish-review", { project }),
-    genexPublish: (project, review, title) => invoke("studio:plugins.genex-publish", { project, review, title }),
+    genexPublish: (project, review, title, ai) =>
+      invoke("studio:plugins.genex-publish", { project, review, title, ai }),
     pluginsIndex: (refresh) => invoke("studio:plugins.index", { refresh }),
     pluginInstallGithub: (spec) => invoke("studio:plugins.install-github", { spec }),
     pluginLookupGithub: (link, version) => invoke("studio:plugins.lookup-github", { link, version }),

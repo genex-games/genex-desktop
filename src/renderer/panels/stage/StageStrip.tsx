@@ -19,6 +19,7 @@ import { ViewSwitcher } from "../../ui/view-switcher.tsx";
 import { liveBehindLabel, liveBehindWords, STAGE_WORDS } from "../../words.ts";
 import type { Notify } from "../../state/toasts.ts";
 import { PluginToolbar } from "../PluginToolbar.tsx";
+import { StageAiPill } from "../game-ai/StageAiPill.tsx";
 import { LiveRun } from "./live-run.ts";
 import { activeStageTab, type StageTab, type StageTabKey, stageTabs } from "./stage-tabs.ts";
 import { useStripFold } from "./strip-fold.ts";
@@ -268,6 +269,16 @@ export function StageStrip({
       <div ref={end} className="flex shrink-0 items-center gap-2">
         {livePreview && gameControls ? <SoundButton on={sound.on} onToggle={sound.toggle} /> : null}
         {livePreview ? <FullScreenButton offered={fullScreen.offered} onEnter={fullScreen.enter} /> : null}
+        {project && livePreview ? (
+          <StageAiPill
+            project={project}
+            title={loaded?.title ?? project}
+            onOpenChange={onToolbarOpen}
+            onPlayNow={() => {
+              if (run.state === LiveRun.Stopped) run.toggle();
+            }}
+          />
+        ) : null}
         <PluginToolbar
           plugins={plugins}
           project={project}

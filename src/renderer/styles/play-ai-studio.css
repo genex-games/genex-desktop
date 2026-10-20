@@ -1,0 +1,296 @@
+/* Play-time AI in Studio's creator surfaces (`panels/game-ai/`, canvas `V3-*`): Settings →
+   Play-time AI, Get credits, Create's AI pill and its card, the model check, Player reports,
+   Publish's AI block and the engine Live card's line. Semantic tokens only; sans for words,
+   Geist Mono for values and money. */
+
+/* Settings: a group's label above its card, a quiet note beside it. */
+.play-ai-group + .play-ai-group {
+  margin-block-start: 8px;
+}
+.play-ai-group-label {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-block-end: 8px;
+  padding-inline: 4px;
+  color: var(--ink-3);
+  font-size: 12px;
+  font-weight: 500;
+}
+.appearance-section .play-ai-group-label {
+  font-size: 12px;
+  color: var(--ink-3);
+}
+.play-ai-group-label span {
+  font-weight: 400;
+}
+.play-ai-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-shrink: 0;
+}
+.play-ai-choice {
+  min-width: 96px;
+  max-width: 180px;
+  font-family: var(--font-family-mono);
+}
+[data-play-ai-balance] {
+  font-family: var(--font-family-mono);
+}
+
+/* Get credits: the packs as a grid of presses, the price in mono, the chosen one marked. */
+.play-ai-credits {
+  display: grid;
+  gap: 12px;
+}
+.play-ai-packs {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(96px, 1fr));
+  gap: 8px;
+}
+.play-ai-pack {
+  display: grid;
+  gap: 2px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  background: var(--card);
+  color: var(--ink);
+  text-align: start;
+  cursor: pointer;
+}
+.play-ai-pack:hover,
+.play-ai-pack:focus-visible {
+  background: var(--hover);
+  outline: none;
+}
+.play-ai-pack[aria-checked="true"] {
+  border-color: var(--accent-fill);
+  box-shadow: inset 0 0 0 1px var(--accent-fill);
+}
+.play-ai-pack-credits {
+  font-family: var(--font-family-mono);
+  font-weight: 500;
+}
+.play-ai-pack-price {
+  color: var(--ink-3);
+  font-family: var(--font-family-mono);
+  font-size: 12px;
+}
+.play-ai-credits-line {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 40px;
+  color: var(--ink-2);
+}
+.play-ai-dialog-presses {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+/* Create's pill: the strip's glass, the model's name, one tag. */
+.play-ai-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 220px;
+  height: 32px;
+  padding-inline: 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--card);
+  color: var(--ink);
+  font-size: 13px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.play-ai-pill:hover,
+.play-ai-pill[data-popup-open] {
+  background: var(--hover);
+}
+.play-ai-pill-asking {
+  border-color: var(--accent-fill);
+}
+.play-ai-pill-tag {
+  flex: none;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--hover);
+  color: var(--ink-3);
+  font-family: var(--font-family-mono);
+  font-size: 11px;
+  line-height: 18px;
+}
+.play-ai-pill-tag[data-low] {
+  color: var(--orange);
+  background: var(--orange-tint);
+}
+
+/* The menu's top line and the note beside a maker's label. */
+.play-ai-menu-top {
+  display: grid;
+  gap: 2px;
+  padding: 6px 8px 8px;
+  border-block-end: 1px solid var(--line);
+  margin-block-end: 4px;
+  font-size: 13px;
+}
+.play-ai-menu-note {
+  margin-inline-start: 6px;
+  color: var(--ink-3);
+  font-weight: 400;
+}
+
+/* The one-sentence card (`V3-First`). */
+.play-ai-card {
+  display: grid;
+  gap: 8px;
+  padding: 8px;
+  font-size: 13px;
+  line-height: 20px;
+}
+.play-ai-card-presses {
+  display: flex;
+  gap: 8px;
+}
+
+/* The model check's table. */
+.play-ai-check {
+  display: grid;
+  gap: 12px;
+  font-size: 13px;
+}
+.play-ai-check-table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+}
+.play-ai-check-table th,
+.play-ai-check-table td {
+  padding: 8px;
+  border-block-end: 1px solid var(--line);
+  text-align: start;
+  vertical-align: top;
+  font-weight: 400;
+}
+.play-ai-check-table thead th {
+  color: var(--ink-3);
+  font-size: 12px;
+}
+.play-ai-check-table thead th:first-child {
+  width: 46%;
+}
+.play-ai-check-table td[data-tone="orange"] {
+  color: var(--orange);
+}
+
+/* Player reports. */
+.play-ai-inbox {
+  display: grid;
+  gap: 12px;
+  font-size: 13px;
+}
+.play-ai-reports {
+  display: grid;
+  max-height: 420px;
+  overflow-y: auto;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-card);
+  background: var(--card);
+}
+.play-ai-report {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+}
+.play-ai-report + .play-ai-report {
+  border-block-start: 1px solid var(--line);
+}
+.play-ai-report-note {
+  color: var(--ink-2);
+  overflow-wrap: anywhere;
+}
+
+/* Publish's AI block. */
+.play-ai-publish {
+  /* Needs AI / Works without AI sit in the field's well, as the menus' segments do. */
+  --picker-well: var(--field);
+  display: grid;
+  gap: 10px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-card);
+  background: var(--card);
+  font-size: 13px;
+}
+.play-ai-publish-label {
+  color: var(--ink-3);
+  font-size: 12px;
+  font-weight: 500;
+}
+.play-ai-publish-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+/* The engine Live card's line: one dot and quiet words, never the engine's own button. */
+.play-ai-engine {
+  display: flex;
+  justify-content: center;
+  margin-block-start: 12px;
+}
+.play-ai-engine:empty {
+  display: none;
+}
+.play-ai-line {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  color: var(--ink-3);
+  font-size: 13px;
+}
+.play-ai-line-text {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.play-ai-dot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--green);
+}
+.play-ai-dot[data-tone="waiting"] {
+  background: var(--accent-fill);
+}
+.play-ai-dot[data-tone="stopped"] {
+  background: var(--orange);
+}
+.play-ai-dot[data-tone="off"] {
+  background: var(--ink-3);
+}
+.play-ai-line-choose {
+  margin-inline-start: 8px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--ink);
+  font-size: 13px;
+  text-decoration: underline;
+  text-decoration-color: color-mix(in oklab, currentColor 40%, transparent);
+  text-underline-offset: 4px;
+  cursor: pointer;
+}

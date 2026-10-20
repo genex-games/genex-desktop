@@ -26,8 +26,14 @@ import type { PlayBarHold } from "./play-bar.ts";
 import type { PlayComment, PlayCommentsPage } from "./play-comments.ts";
 import type { PlayCredits } from "./play-credits.ts";
 import type { AiGameKey, AiModelRef } from "./game-ai.ts";
-import type { AiCheckResult, AiPublishFacts } from "./game-ai-check.ts";
-import type { AiReportBundle, AiReportOutcome, AiReportRequest } from "./game-ai-report.ts";
+import type { AiCheckResult, AiPublishChoice, AiPublishFacts } from "./game-ai-check.ts";
+import type {
+  AiReportBundle,
+  AiReportFixOutcome,
+  AiReportInboxItem,
+  AiReportOutcome,
+  AiReportRequest,
+} from "./game-ai-report.ts";
 import type { AiWatcherView } from "./game-ai-watcher.ts";
 import type {
   AiActivity,
@@ -231,7 +237,7 @@ export interface StudioApi {
    * Publish the game to the Genex gallery from Studio's Publish dialog: its Publish press approved
    * the files in `review`; `title` is the name players see.
    */
-  genexPublish(project: string, review: ExportReview, title?: string): Promise<void>;
+  genexPublish(project: string, review: ExportReview, title?: string, ai?: AiPublishChoice): Promise<void>;
   pluginsIndex(refresh?: boolean): Promise<PluginIndexView>;
   pluginInstallGithub(spec: string): Promise<void>;
   /** What a pasted GitHub link leads to, pinned to one exact commit; nothing is installed. */
@@ -609,6 +615,10 @@ export interface StudioApi {
   planWatcherCancelSignIn(): Promise<AiWatcherView>;
   /** Forget the Genex player credential on this Mac; the watcher as it is after. */
   planWatcherSignOut(): Promise<AiWatcherView>;
+  /** Play-time AI: the Player reports genex.games holds for the creator's own published game, newest first. */
+  gameAiInbox(project: string): Promise<AiReportInboxItem[]>;
+  /** Play-time AI: save a Player report's replay as one of the game's playtests, for Fix with agent. */
+  gameAiInboxFix(project: string, id: string): Promise<AiReportFixOutcome>;
   /** The app's Genex account: signed out, signing in, signed in, or a sign-in genex.games ended. Never asks the network. */
   genexAccount(): Promise<GenexAccountView>;
   /** Sign in to Genex in the browser (again, after a sign-in ended); the account as it is after. */

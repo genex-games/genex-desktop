@@ -156,6 +156,35 @@ test("the name typed in the dialog reaches Genex as one clean line, and a blank 
   }
 });
 
+test("Publish's play-time AI choice reaches Genex as it was read, and a hostile one publishes nothing", async () => {
+  const rig = await dialogRig();
+  try {
+    const choice = { requires: "ai", leaderboard: true };
+    await publishFromDialog(rig.core, GAME, await publishReview(rig.core, GAME), "Lantern Run", choice);
+    assert.deepEqual(rig.calls.at(-1)?.args, { title: "Lantern Run", ai: choice });
+    await publishFromDialog(rig.core, GAME, await publishReview(rig.core, GAME), undefined, undefined);
+    assert.deepEqual(rig.calls.at(-1)?.args, {}, "a game with no AI step sends no choice");
+    const before = rig.calls.length;
+    const hostile: unknown[] = [
+      null,
+      "ai",
+      { requires: "maybe", leaderboard: false },
+      { requires: "ai", leaderboard: "yes" },
+      { requires: "ai", leaderboard: false, creatorShareBps: 10_000 },
+    ];
+    for (const ai of hostile)
+      await assert.rejects(
+        publishFromDialog(rig.core, GAME, await publishReview(rig.core, GAME), undefined, ai),
+        Error,
+        JSON.stringify(ai),
+      );
+    assert.equal(rig.calls.length, before, "Genex is asked nothing");
+    assert.deepEqual(rig.staged.length, before, "and nothing was staged");
+  } finally {
+    await rig.close();
+  }
+});
+
 test("files that changed since the dialog showed them are asked about in chat", async () => {
   const rig = await dialogRig();
   try {

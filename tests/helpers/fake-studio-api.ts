@@ -214,6 +214,8 @@ const METHODS = [
   "planWatcherSignIn",
   "planWatcherCancelSignIn",
   "planWatcherSignOut",
+  "gameAiInbox",
+  "gameAiInboxFix",
   "playHandleCheck",
   "playSetHandle",
   "playShare",
