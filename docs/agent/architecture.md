@@ -984,15 +984,12 @@ managed local runtime; core has no Blender tool of its own.
   Live observation the lock recorded. It never uses a file name. When nothing decides, the texture
   is not encoded and gets `usage-unknown`. A weaker source that disagrees raises `usage-conflict`.
   The usage and its source are recorded in the lock's settings.
-- **World placement.** [`src/substrate/asset-import/world-cells.ts`](../../src/substrate/asset-import/world-cells.ts)
-  compiles a Rust game's `world/*.cells.json` (format, caps and refusal codes in
-  [`src/shared/world-cells.ts`](../../src/shared/world-cells.ts)) during the import step. The output
-  is a cell pack v1 folder under the stage's `assets/` (`world.json` and `cells/<x>_<z>.cell`, the
-  bytes genex-stream's `pack.rs` reads, held byte for byte to `tests/fixtures/stream/cell-pack-v1.json`)
-  and, for a terrain, r16 tiles with their `terrain/terrain.json`. World-space lists are binned into
-  cells by each position's `f32` value. Each file is compiled all or nothing and deterministically.
-  A refusal is a `WorldCellsCode` with its JSON location. A pack folder may not hold the game's own
-  assets or another file's pack.
+- **World placement.** [`world-cells.ts`](../../src/substrate/asset-import/world-cells.ts) compiles
+  a Rust game's `world/*.cells.json` (format, caps and refusal codes in
+  [`src/shared/world-cells.ts`](../../src/shared/world-cells.ts)) in the import step into a cell
+  pack v1 folder under the stage's `assets/` (the bytes genex-stream's `pack.rs` reads, held to
+  `tests/fixtures/stream/cell-pack-v1.json`) and r16 terrain tiles, all or nothing and
+  deterministically. A refusal is a `WorldCellsCode` with its JSON location.
 - **Readers.** `studio:game.asset.still` reads the game folder and Genex frames only (allow-listed,
   byte-sniffed, 16 MiB) and never widens `readRunStill`. `studio:game.asset.preview`
   ([`src/main/asset-preview.ts`](../../src/main/asset-preview.ts)) takes a project and a relative
