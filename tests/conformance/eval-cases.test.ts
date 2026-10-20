@@ -346,6 +346,10 @@ describe("the committed case file", () => {
         ["loop-finish-check", CaseMode.LongHorizon],
         ["timed-wrap-up", CaseMode.LongHorizon],
         ["godot-loop", CaseMode.LongHorizon],
+        ["ai-kingdom-turns", CaseMode.Build],
+        ["ai-sketch-animals", CaseMode.Build],
+        ["ai-robot-tactics", CaseMode.Build],
+        ["ai-shopkeeper-talk", CaseMode.Build],
       ],
     );
     for (const c of cases) assert.equal(c.visibility, CaseVisibility.Public);

@@ -80,6 +80,8 @@ import { readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { tmpDir } from "../helpers/tmp.ts";
+import { AiCheckTest } from "../../src/harness-seed/loop/ai-contract.ts";
+import { aiCheckId } from "../../src/harness-seed/loop/ai-checks.ts";
 
 const repoRoot = pathMod.resolve(fileURLToPath(new URL("../..", import.meta.url)));
 
@@ -1004,6 +1006,8 @@ describe("craft leaves the law", () => {
   const seedDir = pathMod.join(repoRoot, "src", "harness-seed");
   /** The five technical checks that say "this is a game and the harness can see and drive it". */
   const KEEPERS = ["camera-player-eye", "demo-walk", "drawcalls-ceiling", "player-moved", "primary-action-registers"];
+  /** The play-time AI checks: harness-owned, put on a board only for a game that declares AI, never offered to a planner. */
+  const AI_KEEPERS = Object.values(AiCheckTest).map(aiCheckId);
   /** Bookkeeping the catalogue keeps and a recipe's copy of the body must not carry. */
   const BOOKKEEPING = new Set(["uses", "passes", "catches", "runs", "genres", "kinds", "lastUsed", "origin", "pack"]);
   const body = (id: string, entry: Record<string, unknown>) =>
@@ -1015,10 +1019,11 @@ describe("craft leaves the law", () => {
     const catalogue = await loadCatalogue(seedDir);
     assert.deepEqual(
       Object.keys(catalogue.checks).sort(),
-      KEEPERS,
-      "the shipped catalogue is the five technical checks",
+      [...KEEPERS, ...AI_KEEPERS].sort(),
+      "the shipped catalogue is the five technical checks and the play-time AI checks",
     );
     const menu = renderCatalogueForPlanner(catalogue);
+    for (const id of AI_KEEPERS) assert.ok(!menu.includes(id), `${id} rides on the board, never in the planner's menu`);
     const retired = Object.keys(frozen).filter((id) => !KEEPERS.includes(id) && id !== "fire-registers");
     assert.equal(retired.length, 41, "41 opinions left the board");
     for (const id of retired) assert.ok(!menu.includes(id), `the planner is not offered ${id} any more`);

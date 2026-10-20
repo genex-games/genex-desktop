@@ -51,9 +51,24 @@ import * as seedStateShape from "../../src/harness-seed/loop/state-shape.ts";
 import { SteerDelivery as seedSteerDelivery } from "../../src/harness-seed/loop/steer-delivery.ts";
 import * as seedTime from "../../src/harness-seed/loop/time.ts";
 import * as seedAi from "../../src/harness-seed/loop/ai-contract.ts";
-import { AiErrorCode } from "../../src/shared/game-ai.ts";
+import { AI_SITE_RE, AiErrorCode, AiRequirement } from "../../src/shared/game-ai.ts";
 import { AiSchemaProblem } from "../../src/shared/game-ai-schema.ts";
-import { AI_RECORD_MAX_CALLS, AI_REPLAY_MAX_SEEDS, TAPE_NAME_RE } from "../../src/shared/game-ai-tape.ts";
+import {
+  AI_RECORD_MAX_CALLS,
+  AI_REPLAY_MAX_SEEDS,
+  AI_TAPE_EXTENSION,
+  AI_TAPES_DIR,
+  AiReplayAnswers,
+  TAPE_NAME_RE,
+} from "../../src/shared/game-ai-tape.ts";
+import {
+  AI_KEY_SHAPES,
+  AI_VENDOR_HOSTS,
+  AiHostMatch,
+  AiVendor,
+  aiVendorOfHost,
+  findAiKeys,
+} from "../../src/shared/ai-vendors.ts";
 import { AI_BENCH_MAX_SAMPLES } from "../../src/shared/game-ai-check.ts";
 import * as seedWakeSchedule from "../../src/harness-seed/loop/director/wake-schedule.ts";
 import { DelegationRefusal as seedDelegationRefusal } from "../../src/harness-seed/loop/director/lead-session.ts";
@@ -721,14 +736,49 @@ describe("play-time AI (shared/game-ai*.ts ↔ loop/ai-contract.ts)", () => {
         calls: seedAi.AI_RECORD_MAX_CALLS,
         samples: seedAi.AI_BENCH_MAX_SAMPLES,
         name: seedAi.TAPE_NAME_RE.source,
+        site: seedAi.AI_SITE_RE.source,
       },
       {
         seeds: AI_REPLAY_MAX_SEEDS,
         calls: AI_RECORD_MAX_CALLS,
         samples: AI_BENCH_MAX_SAMPLES,
         name: TAPE_NAME_RE.source,
+        site: AI_SITE_RE.source,
       },
     );
+  });
+
+  it("has the same replay answers, requirements and tape folder", () => {
+    assert.deepEqual(seedAi.AiReplayAnswers, AiReplayAnswers);
+    assert.deepEqual(seedAi.AiRequirement, AiRequirement);
+    assert.deepEqual([seedAi.AI_TAPES_DIR, seedAi.AI_TAPE_EXTENSION], [AI_TAPES_DIR, AI_TAPE_EXTENSION]);
+  });
+
+  it("names the same AI vendors, hosts and key shapes as the app's export scan and Play's gateway", () => {
+    assert.deepEqual(seedAi.AiVendor, AiVendor);
+    assert.deepEqual(seedAi.AiHostMatch, AiHostMatch);
+    assert.deepEqual(seedAi.AI_VENDOR_HOSTS, AI_VENDOR_HOSTS);
+    assert.deepEqual(
+      seedAi.AI_KEY_SHAPES.map((shape) => [shape.vendor, shape.pattern.source, shape.pattern.flags]),
+      AI_KEY_SHAPES.map((shape) => [shape.vendor, shape.pattern.source, shape.pattern.flags]),
+    );
+    const hosts = [
+      "https://api.openai.com/v1/chat",
+      "openrouter.ai",
+      "us-central1-aiplatform.googleapis.com",
+      "generativelanguage.googleapis.com:443",
+      "openai.com.evil.io",
+      "notopenai.com",
+      "api.openai.co",
+      "evil-generativelanguage.googleapis.com",
+      "x.ai",
+      "max.ai",
+      "",
+      "::",
+    ];
+    for (const host of hosts) assert.equal(seedAi.aiVendorOfHost(host), aiVendorOfHost(host), host);
+    const text = `const k = "sk-or-v1-${"a".repeat(64)}"; // sk-ant- is a prefix; AIza${"B".repeat(35)} gsk_${"c".repeat(51)}`;
+    assert.deepEqual(seedAi.findAiKeys(text), findAiKeys(text));
   });
 });
 

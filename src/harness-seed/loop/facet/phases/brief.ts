@@ -18,6 +18,7 @@ import { fitBrief } from "../brief-fit.ts";
 import { blockBench } from "../build-block-prompts.ts";
 import { openCarriedFixes } from "../carried-fixes.ts";
 import { withIdentity } from "../../workers/identity.ts";
+import { aiOfGame, writeAiMethodFile } from "../../ai-game.ts";
 
 /** A template game's entry module, when the shape names none. */
 const DEFAULT_ENTRY = "src/main.js";
@@ -28,6 +29,7 @@ export async function writeBrief(loop: FacetLoop, round: FacetRound): Promise<Ro
   // ── the brief: `.studio/BRIEF.md` in the worktree, plus the prompt that points at it ──
   pickRecipes(loop, round);
   const recipesFile = await writeRecipesFile(loop, round);
+  await writeAiMethod(loop);
   // The four sections the prompt no longer renders for a delegated engine (M4.8b) live here, and
   // the whole of it stays within BRIEF_MAX_CHARS (loop/brief-budget.ts).
   const fitted = fitBrief(
@@ -71,6 +73,20 @@ async function writeRecipesFile(loop: FacetLoop, round: FacetRound): Promise<str
   const hits = round.injectedWithFix;
   const written = await writeWorktreeFile(workdir, RECIPES_FILE, renderRecipesFile(hits)).catch(() => null);
   return written && hits.length ? RECIPES_FILE_PATH : null;
+}
+
+/**
+ * `.studio/AI.md` beside the brief when the game calls a model in play (`ai-game.ts`): the
+ * workspace's AI method, which the brief's AI line names. Only for a delegated builder, which reads
+ * files; a direct engine reads the method as a skill. Rewritten every round, so an edit to the
+ * skill reaches the next round.
+ */
+async function writeAiMethod(loop: FacetLoop): Promise<void> {
+  const { delegated, game, run, workdir } = loop;
+  const declared = game ?? run.game;
+  if (!delegated || !workdir || !aiOfGame(declared)) return;
+  const workspace = loop.ctx?.workspace;
+  if (typeof workspace === "string") await writeAiMethodFile(workspace, workdir, declared).catch(() => null);
 }
 
 /**

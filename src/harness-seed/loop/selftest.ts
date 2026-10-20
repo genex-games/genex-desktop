@@ -7,6 +7,7 @@
  * retrieval and the outcome gate, the code reviewer's mechanical scan, and brief rendering.
  * No engine, no preview, no network — seconds, deterministic, and a real behavioural bar.
  */
+import { AiRequirement } from "./ai-contract.ts";
 import {
   normalizeFacetSpec,
   validateFacetSpec,
@@ -347,10 +348,17 @@ const SELFTEST_STEPS: readonly SelftestStep[] = [
         { id: "car", checks: [] as Check[], cameras: [] },
         { ownsMain: true, game: { kind: "racing" } },
       );
+      // A game that calls a model in play carries the AI checks on its main owner's board.
+      const oracle = withHarnessChecks(
+        { id: "oracle", checks: [] as Check[], cameras: [] },
+        { ownsMain: true, game: { ai: AiRequirement.Optional } },
+      );
       const ridesOnce = (id: string, board: { checks: Check[] }) => board.checks.filter((c) => c.id === id).length;
       check(
         "every harness check, no duplicate",
-        Object.keys(HARNESS_CHECKS).every((id) => Math.max(ridesOnce(id, spec), ridesOnce(id, racer)) === 1),
+        Object.keys(HARNESS_CHECKS).every(
+          (id) => Math.max(ridesOnce(id, spec), ridesOnce(id, racer), ridesOnce(id, oracle)) === 1,
+        ),
       );
       check(
         "the HUD budget is the kind's",

@@ -23,6 +23,7 @@ import { HostMethod } from "./host-methods.ts";
 import { clip, CLIP_DETAIL, CLIP_REASON, clipMarked } from "./text.ts";
 import { isRecord } from "./json.ts";
 import { appliesToBuild } from "./applies-to-build.ts";
+import { measureAiCheck, type AiBuild } from "./ai-checks.ts";
 import type { ElidedKind, StateShape } from "./state-shape.ts";
 import type { AnyRecord, HarnessCtx } from "../types/harness.d.ts";
 import type { PreviewPixelStats } from "../types/host-api.d.ts";
@@ -84,6 +85,8 @@ export interface CheckEvidence {
   stateEarly?: AnyRecord | null;
   demos?: Record<string, { ok?: boolean; error?: string; result?: unknown; [field: string]: unknown } | undefined>;
   demoStates?: Record<string, AnyRecord | undefined>;
+  /** The build the pass looked at, which the play-time AI checks replay (`ai-checks.ts`). */
+  build?: AiBuild | null;
   [field: string]: unknown;
 }
 
@@ -145,6 +148,7 @@ const Kind = {
   Demo: "demo",
   Vision: "vision",
   Play: "play",
+  Ai: "ai",
 } as const satisfies Record<string, CheckKind>;
 const Weight = { Identity: "identity", Normal: "normal" } as const satisfies Record<string, CheckWeight>;
 const Origin = { Judge: "judge" } as const satisfies Record<string, CheckOrigin>;
@@ -1273,6 +1277,20 @@ async function addSceneDetail(
   }
 }
 
+/**
+ * A play-time AI check (`ai-checks.ts`): the host's replays of the build the evidence names, read
+ * by the check's `test`. What the studio could not answer is unmeasured, never failed.
+ */
+export async function evaluateAiCheck(
+  ctx: HarnessCtx,
+  check: CheckLike,
+  evidence: CheckEvidence | null | undefined,
+): Promise<CheckResult> {
+  const verdict = await measureAiCheck(ctx, check.test, evidence);
+  if (verdict.pass === null) return unmeasured(check, verdict.reason, verdict.unavailable ? { unavailable: true } : {});
+  return result(check, verdict.pass, verdict.reason);
+}
+
 /** How each deterministic kind is evaluated; vision and play are left pending for the model-backed evaluators. */
 type DeterministicInput = {
   evidence: CheckEvidence | null | undefined;
@@ -1298,6 +1316,8 @@ function deterministicEvaluator(kind: string): Evaluator | null {
       return (_ctx, check, { evidence }) => evaluateDemoCheck(check, evidence);
     case Kind.Scene:
       return (ctx, check, { handle }) => evaluateSceneCheck(ctx, check, { handle });
+    case Kind.Ai:
+      return (ctx, check, { evidence }) => evaluateAiCheck(ctx, check, evidence);
     default:
       return null;
   }

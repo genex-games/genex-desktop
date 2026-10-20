@@ -26,6 +26,9 @@ import { demoOfFrame, isPassFrame } from "./pass-frames.ts";
 import { ProbeAfter } from "./throttle-bot.ts";
 import { PlayReaches } from "./quest.ts";
 import { HUD_LAYOUT_CHECKS } from "./hud-layout.ts";
+import { AiCheckTest } from "./ai-contract.ts";
+import { aiCheckId, isAiCheckTest } from "./ai-checks.ts";
+import { AI_CHECK_NOTES } from "./ai-checks-prompts.ts";
 // A namespace for what kinds.ts gained later: a seed upgrade keeps a kinds.ts the agent edited, and
 // a named import it lacks would stop this file loading.
 import * as kinds from "./kinds.ts";
@@ -216,6 +219,8 @@ export const CheckKind = {
   Demo: "demo",
   Vision: "vision",
   Play: "play",
+  /** A play-time AI check the harness measures through the host's replays (`ai-checks.ts`); `test` names which. */
+  Ai: "ai",
 } as const;
 export type CheckKind = (typeof CheckKind)[keyof typeof CheckKind];
 
@@ -307,6 +312,10 @@ const CHECK_GRAMMAR: Record<string, { shape: string; says: string; more?: string
   vision: {
     shape: `{"kind":"vision","camera":"camBridge","crop":[0.2,0.55,0.8,1.0],"ask":"Is the bridge's inverted silhouette recognisable in the water?"}`,
     says: 'ONE yes/no question about ONE crop, answered from the pixels; "expect":"no" flips it. Ask what a player can see or read, never the technique that draws it. The minority of any board.',
+  },
+  ai: {
+    shape: `{"kind":"ai","test":"handles-no-answer"}`,
+    says: `play-time AI, measured on the host's replays; test: ${Object.values(AiCheckTest).join("|")}. A plan that declares ai puts them all on the entry owner's board.`,
   },
   play: {
     shape: `{"kind":"play","ask":"Could you find the bench and sit on it?"}`,
@@ -497,6 +506,8 @@ const KIND_FIELDS: Record<CheckKind, (raw: AnyRecord, camera: string) => AnyReco
     expect: raw.expect === "no" ? "no" : "yes",
     ...(raw.reaches === PlayReaches.Setup ? { reaches: PlayReaches.Setup } : {}),
   }),
+  // Only a test the harness knows: one it does not is no test, and validation refuses the check.
+  [CheckKind.Ai]: (raw) => (isAiCheckTest(raw.test) ? { test: raw.test } : {}),
 };
 
 /** Normalise one check from planner JSON; returns null for something that is not a check at all. */
@@ -760,6 +771,8 @@ function missingField(check: Check, where: string): string | null {
   if (check.kind === CheckKind.Scene && !check.js) return `${where}: scene check needs "js"`;
   if (EXPRESSION_KINDS.has(check.kind) && !check.expr) return `${where}: ${check.kind} check needs "expr"`;
   if (check.kind === CheckKind.Demo && !check.name) return `${where}: demo check needs "name"`;
+  if (check.kind === CheckKind.Ai && !check.test)
+    return `${where}: ai check needs "test" (${Object.values(AiCheckTest).join("/")})`;
   if (QUESTION_KINDS.has(check.kind) && !check.ask)
     return `${where}: ${check.kind} check needs "ask" (one yes/no question)`;
   return null;
@@ -936,6 +949,25 @@ export function renderMilestones(
 
 // ── harness-owned checks ───────────────────────────────────────────────────────────────────
 
+/** The AI checks that decide whether a game that uses AI is done: it handles a missing answer, and it calls no vendor itself. */
+const AI_IDENTITY_TESTS: ReadonlySet<AiCheckTest> = new Set([
+  AiCheckTest.HandlesNoAnswer,
+  AiCheckTest.NoDirectModelCalls,
+]);
+
+/** The play-time AI checks, by board id: on the entry owner's board of a game that declares AI. */
+export const AI_HARNESS_CHECKS: Record<string, AnyRecord & { note: string }> = Object.fromEntries(
+  Object.values(AiCheckTest).map((test) => [
+    aiCheckId(test),
+    {
+      kind: CheckKind.Ai,
+      test,
+      weight: AI_IDENTITY_TESTS.has(test) ? CheckWeight.Identity : CheckWeight.Normal,
+      origin: CheckOrigin.Harness,
+      note: AI_CHECK_NOTES[test],
+    },
+  ]),
+);
 /**
  * Checks the loop itself puts on every plan (HARNESS-POSTMORTEM-SHOOTER.md §4.2–4.3). They
  * prove the two things the user notices first and no planner check ever covered: the screen
@@ -1026,6 +1058,7 @@ export const HARNESS_CHECKS: Record<string, AnyRecord & { expr?: string; note: s
     needs: ["race.position"],
     note: "harness-owned: a bot that only holds the throttle (steered by the game's racing line, never braking) must not win the race — report race.position (1 = leading) and race.finished in state()",
   },
+  ...AI_HARNESS_CHECKS,
 };
 
 /** The harness checks that only hold once the game is in play: off the front-end owner's board. */
@@ -1098,6 +1131,8 @@ function harnessCheckIds(
     ...(owner && driven ? ["reaches-play"] : []),
     // A kind with a throttle (a racer, a craft) races the throttle-only bot on the entry owner's board.
     ...(owner && throttleOf(game).length ? ["throttle-bot-loses"] : []),
+    // A game that declares AI replays its demos on the entry owner's board: the whole game's demos.
+    ...(owner && traits.ai ? Object.keys(AI_HARNESS_CHECKS) : []),
   ];
 }
 
@@ -1218,6 +1253,7 @@ const CHECK_WORDS: Record<CheckKind, (c: Check) => string> = {
   [CheckKind.Vision]: (c) =>
     `vision on ${c.camera}${c.crop ? ` crop [${c.crop.join(",")}]` : ""}: "${c.ask}" → ${c.expect}`,
   [CheckKind.Play]: (c) => `play: "${c.ask}" → ${c.expect}`,
+  [CheckKind.Ai]: (c) => `ai: ${c.test}`,
 };
 
 /** One check as a brief's line: its id and flags, what it measures, its note, and where it came from. */
