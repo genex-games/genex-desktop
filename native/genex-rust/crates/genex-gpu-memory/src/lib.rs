@@ -27,6 +27,10 @@
     allow(unsafe_code, reason = "wgpu's hal adapters and the backends' memory queries are FFI; each block says why it holds")
 )]
 
+mod process;
+
+pub use process::{ProcessMemory, process_memory};
+
 /// One MiB.
 const MIB: u64 = 1024 * 1024;
 
