@@ -111,6 +111,17 @@ What Play sends is in [PRIVACY](../PRIVACY.md#play).
   signed out, else the field with Post inside it once something is typed; at most 500 characters).
   The account's own comments can be deleted. Main reads and writes them for the game on screen
   (`main/play/comments.ts`); Esc, ✕ or a click outside closes it and the game gets the keyboard back.
+- A game that uses AI gets the AI pill before Like (`renderer/play/PlayAiPill.tsx`): the chat's model
+  button, naming the model (or Credits with the balance, AI · Choose while a card waits, AI off) and
+  wearing main's notes ("Report sent") in place of its label. It opens the same model menu as the
+  chat under it (`PlayAiMenu.tsx`): what the game's AI costs in the words of how it is paid, Genex
+  credits, the person's models by maker with one tag each (Free, plan, $–$$$, Best), the models that
+  may struggle folded, Turn off AI, Report and Add more models (which closes the game onto Settings →
+  Model Providers). Main's first-use and stop cards (`UiEvent.GameAi`) drop from the pill by
+  themselves and take no answer in their first 600 ms; Esc sets one aside on the pill. Get credits
+  shows genex.games' packs, auto top-up ("at most once a day", off by default) and Genex Pro, with
+  checkout in the browser; Report shows what it sends first. One overlay is open at a time, Comments
+  or the AI's (`PlayAiLayer.tsx`); the decisions are `play/ai-model.ts`'s.
 - The page stays on Genex games' addresses; a link it opens goes to the browser, at most one every
   few seconds.
 - Voice chat: a game that asks for a microphone gets the bar's mic switch, remembered per game.
