@@ -210,6 +210,7 @@ impl<W: Default + 'static> StudioRun<'_, W> {
             size: self.game.world_size(),
             seed: self.game.seed_value(),
             receipt,
+            ai: false,
         }
     }
 

@@ -28,6 +28,14 @@
 //!   area in `state()`, touch input, the GPU refusal and bound codes, the ring verbs' arguments),
 //!   held to the host's `native-contract.ts` through `tests/fixtures/native-wire-v2.json`.
 //!
+//! - Play-time AI (genex-ai, docs/play-protocol.md "Play-time AI"): a game that uses AI declares
+//!   `capabilities.ai` in `ready` ([`ReadyInfo::ai`]). Only when the studio set [`AI_ENV`] to `1`
+//!   does it take the game's AI ([`Studio::takes_ai`]): the game's id-less
+//!   `{"event":"ai","rid",…}` lines are written, each before the reply of the request whose ticks
+//!   printed it ([`Studio::flush_ai`]), and `ai.reply` / `ai.delta` are served and handed to
+//!   [`StudioGame::take_ai_op`]. Any other studio never sees a line and answers the ops
+//!   `unknown-op`.
+//!
 //! The adopted descriptor is marked close-on-exec, as `transport.cpp` does, so a process the game
 //! spawns never inherits the studio's socket.
 //!
@@ -47,8 +55,8 @@ pub use genex_core::input::Injection;
 #[cfg(unix)]
 pub use transport::SocketChannel;
 pub use transport::{
-    Channel, MAX_NONCE_BYTES, MAX_QUEUED_LINES, MAX_RUN_ID_CHARS, MIN_RUN_ID_CHARS, NONCE_ENV, PIPE_ENV, PIPE_PREFIX,
-    STUDIO_FD, Transport, WRITE_STALL, from_environment, report_panics, studio_pipe_name,
+    AI_ENV, AI_ENV_ON, Channel, MAX_NONCE_BYTES, MAX_QUEUED_LINES, MAX_RUN_ID_CHARS, MIN_RUN_ID_CHARS, NONCE_ENV,
+    PIPE_ENV, PIPE_PREFIX, STUDIO_FD, Transport, WRITE_STALL, from_environment, report_panics, studio_pipe_name,
 };
 pub use verbs::{
     CAPTURE_FORMAT, CAPTURE_MAX_BYTES, CAPTURE_MAX_PX, CAPTURES_KEPT, CaptureFault, DEFAULT_CAMERA, FatalReason, Op,

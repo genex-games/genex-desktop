@@ -103,6 +103,7 @@ fn info(receipt: Option<Receipt>) -> ReadyInfo {
         size: [960, 540],
         seed: 1,
         receipt,
+        ai: false,
     }
 }
 

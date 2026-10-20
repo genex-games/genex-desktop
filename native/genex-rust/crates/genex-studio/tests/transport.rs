@@ -100,7 +100,7 @@ fn ready_then_requests_are_answered_in_order() {
     let mut writer = host;
     let mut studio = Studio::native("");
     let mut game = Counter::default();
-    let info = ReadyInfo { build: "spike".into(), backend_api: "unknown".into(), device: None, size: [2, 2], seed: 1, receipt: None };
+    let info = ReadyInfo { build: "spike".into(), backend_api: "unknown".into(), device: None, size: [2, 2], seed: 1, receipt: None, ai: false };
     assert!(studio.announce_ready(&link, &info));
     let ready = read_line(&mut reader);
     assert_eq!(
@@ -128,7 +128,7 @@ fn requests_sent_before_ready_wait_in_the_queue_and_are_answered_after_it_in_ord
     assert!(link.wait(ROW_WAIT), "the reader queued the early lines");
     assert_eq!(studio.serve(&link, &mut game), Served::default(), "nothing is taken before ready");
     assert_eq!(game.seed, 1, "the early seed has not run yet");
-    let info = ReadyInfo { build: "spike".into(), backend_api: "unknown".into(), device: None, size: [2, 2], seed: 1, receipt: None };
+    let info = ReadyInfo { build: "spike".into(), backend_api: "unknown".into(), device: None, size: [2, 2], seed: 1, receipt: None, ai: false };
     assert!(studio.announce_ready(&link, &info));
     assert_eq!(read_line(&mut reader)["event"].as_str(), "ready", "ready comes before any answer");
     assert!(!serve_until(&mut studio, &link, &mut game, 2));
@@ -290,7 +290,7 @@ fn a_restored_device_forgets_lives_ring_and_tells_the_studio_which_announces_a_n
     let mut writer = host;
     let mut studio = Studio::native("");
     let mut game = Ringed::default();
-    let info = ReadyInfo { build: "spike".into(), backend_api: "metal".into(), device: None, size: [2, 2], seed: 1, receipt: None };
+    let info = ReadyInfo { build: "spike".into(), backend_api: "metal".into(), device: None, size: [2, 2], seed: 1, receipt: None, ai: false };
     assert!(studio.announce_ready(&link, &info));
     read_line(&mut reader);
     writer
@@ -324,7 +324,7 @@ fn still_starting_goes_out_before_ready_only() {
     let mut studio = Studio::native("");
     assert!(studio.still_starting(&link));
     assert_eq!(read_line(&mut reader).dump(), br#"{"event":"starting"}"#.to_vec());
-    let info = ReadyInfo { build: "spike".into(), backend_api: "metal".into(), device: None, size: [2, 2], seed: 1, receipt: None };
+    let info = ReadyInfo { build: "spike".into(), backend_api: "metal".into(), device: None, size: [2, 2], seed: 1, receipt: None, ai: false };
     assert!(studio.announce_ready(&link, &info));
     assert_eq!(read_line(&mut reader)["event"], Value::from("ready"));
     assert!(!studio.still_starting(&link), "nothing once ready");
