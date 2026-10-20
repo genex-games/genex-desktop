@@ -42,7 +42,6 @@ mod settings;
 mod ui;
 mod animation;
 mod camera;
-#[cfg(feature = "physics")]
 mod character;
 mod ctx;
 mod decal;
@@ -115,6 +114,12 @@ pub use gfx::{
 /// [`CharacterAsset`] describes, so a game names them without naming genex-anim.
 pub use genex_anim::skeleton::Skeleton;
 pub use genex_anim::{AnimationError, AnimationErrorCode};
+/// The character controller (genex-anim, AN-19): `Character::spawn` / `drive` through
+/// `sim.physics`, `Character::on_ground` / `drive_on` over a height function in any build.
+pub use character::{
+    CHARACTER_SKIN, Character, CharacterError, CharacterErrorCode, CharacterMotion, CharacterNav, CharacterParams, CharacterStep, GroundHit, NavFit, RootMotion,
+    TERMINAL_FALL_SPEED,
+};
 /// A native destination's asset files (the compiled table, then `assets/` by real path): host glue.
 #[cfg(not(target_arch = "wasm32"))]
 #[doc(hidden)]
@@ -183,6 +188,7 @@ pub mod prelude {
         Assets, Camera, Color, Ctx, CustomMaterial, CustomMesh, DemoDriver, FacetState, Frame, Game, Gfx, Input, Key, Map,
         Material, Model, Pcg32, PhysicsWorld, PostPass, Projection, Set, Sim, Touch, Transform, Value, View, egui, json,
     };
+    pub use crate::{Character, CharacterMotion, CharacterNav};
 }
 
 /// Start the runtime with this game. Required, once, at the end of the game's `main`.
