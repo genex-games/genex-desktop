@@ -72,7 +72,10 @@ certificates out of the checkout and do not give pull-request code release crede
 
 Retain the candidate's checksums, inventory, notices and signed-asset verification. Validate
 `codesign`, Gatekeeper and stapling on macOS, and Authenticode on Windows. The workflow validates tag/version and main ancestry before signing access, then requires full
-regression, terminal and gallery checks. An urgent fix may skip the regression with the repository
+regression, terminal and gallery checks. The regression runs the whole `npm test` inventory as
+parallel shards (`node scripts/ci-test-plan.mjs plan --full`: fast, rig and harness, each rig
+runner serial) beside the end-to-end suites, while the packages build; only the draft upload
+waits for both, and a failed shard re-runs alone. An urgent fix may skip the regression with the repository
 variable `RELEASE_REGRESSION=skip` (the builds then start after validation); dispatch a build-only
 run on `main` after publication to run it, and unset the variable. Build-only dispatches use the `candidate` environment
 and receive no signing secrets. Draft upload requires verified macOS signing plus the macOS and

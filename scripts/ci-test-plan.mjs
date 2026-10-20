@@ -34,6 +34,8 @@ import {
  * @property {import('./ci-harness-shards.mjs').HarnessPlan} harness
  * @property {import('./ci-harness-shards.mjs').SeedPlan} seed
  * @property {CiFileGroup} fast
+ * @property {CiFileGroup} rig
+ * @property {boolean} full
  */
 
 /** Contracts every Linux code-event run retains, even when no source change selects them. */
@@ -63,10 +65,10 @@ const GLOBAL_INPUTS = new Set([
   "tests/helpers/processes.ts",
   "tests/test-map.json",
 ]);
-const PLAN_VERSION = 2;
+const PLAN_VERSION = 3;
 const DEFAULT_SHARDS = 6;
 const MAX_SHARDS = 16;
-const GROUPS = ["unit", "harness", "seed", "fast"];
+const GROUPS = ["unit", "harness", "seed", "fast", "rig"];
 const SEED_UPGRADE = CI_BASELINE[0];
 const unique = (files) => [...new Set(files)].sort();
 const revision = (root) =>
@@ -113,22 +115,26 @@ function group(root, files, count) {
 
 /**
  * Plans each existing gate once; disjoint file shards retain the complete selected test inventory.
+ * A full plan (the release regression) selects every fast test and the whole harness gate whatever
+ * changed; its rig group holds every other rig test, so fast, rig and harness together are `npm test`.
  * @param {string} root
- * @param {{ changed?: string[], base?: string, shards?: number }} [options]
+ * @param {{ changed?: string[], base?: string, shards?: number, full?: boolean }} [options]
  * @returns {CiPlan}
  */
-export function createCiPlan(root, { changed, base, shards = DEFAULT_SHARDS } = {}) {
+export function createCiPlan(root, { changed, base, shards = DEFAULT_SHARDS, full = false } = {}) {
   if (!Number.isInteger(shards) || shards < 1 || shards > MAX_SHARDS) throw new Error("Invalid shard count");
-  const changes = changed ?? changedFiles(root, { base });
+  const changes = changed ?? (full ? [] : changedFiles(root, { base }));
   const tests = testFiles(root);
   const graph = importGraph(root, tests);
   const selected = selectTests(root, changes, { graph, tests });
   const globalChanges = unique(changes.filter((file) => GLOBAL_INPUTS.has(file)));
-  const harnessSelected = globalChanges.length > 0 || HARNESS_GATE.some((file) => selected.L3.includes(file));
+  const complete = full || globalChanges.length > 0;
+  const harnessSelected = complete || HARNESS_GATE.some((file) => selected.L3.includes(file));
   const harness = harnessSelected ? HARNESS_GATE : [];
   const rigs = new Set(rigTests(root, graph, tests));
   const fast = tests.filter((file) => !rigs.has(file));
-  const selectedUnits = globalChanges.length ? fast : selected.L1;
+  const rig = [...rigs].filter((file) => !HARNESS_GATE.includes(file));
+  const selectedUnits = complete ? fast : selected.L1;
   const units = unique([...CI_BASELINE, ...selectedUnits]).filter(
     (file) => file !== SEED_UPGRADE && !harness.includes(file),
   );
@@ -143,6 +149,8 @@ export function createCiPlan(root, { changed, base, shards = DEFAULT_SHARDS } = 
     harness: createHarnessPlan(root, harnessSelected),
     seed: createSeedPlan(root),
     fast: group(root, fast, shards),
+    rig: group(root, rig, shards),
+    full,
   };
   validateCiPlan(root, plan);
   return plan;
@@ -170,13 +178,14 @@ function validateGroup(root, name, value) {
 function validateGlobalCoverage(plan) {
   if (!Array.isArray(plan.changed) || !plan.changed.every((file) => typeof file === "string"))
     throw new Error("Invalid changed-file inventory");
+  if (typeof plan.full !== "boolean") throw new Error("Invalid full-plan flag");
   const global = unique(plan.changed.filter((file) => GLOBAL_INPUTS.has(file)));
   if (JSON.stringify(global) !== JSON.stringify(plan.globalChanges)) throw new Error("Invalid global-input inventory");
-  if (!global.length) return;
+  if (!global.length && !plan.full) return;
   const actual = unique([...plan.unit.files, ...plan.seed.files, ...plan.harness.files]);
   const expected = unique([...CI_BASELINE, ...plan.fast.files, ...HARNESS_GATE]);
   if (!plan.harness.files.length || JSON.stringify(actual) !== JSON.stringify(expected))
-    throw new Error("Global CI inputs require every fast test and the complete harness gate");
+    throw new Error("Global CI inputs and full plans require every fast test and the complete harness gate");
 }
 
 /**
@@ -187,7 +196,10 @@ function validateGlobalCoverage(plan) {
 export function validateCiPlan(root, plan) {
   if (!plan || plan.version !== PLAN_VERSION) throw new Error("Unsupported CI plan version");
   if (plan.revision !== revision(root)) throw new Error("CI plan revision does not match this checkout");
-  for (const name of ["unit", "fast"]) validateGroup(root, name, plan[name]);
+  for (const name of ["unit", "fast", "rig"]) validateGroup(root, name, plan[name]);
+  const fast = new Set(plan.fast.files);
+  if (plan.rig.files.some((file) => fast.has(file) || HARNESS_GATE.includes(file)))
+    throw new Error("Rig tests overlap the fast group or the harness gate");
   validateHarnessPlan(root, plan.harness);
   validateSeedPlan(root, plan.seed);
   for (const file of plan.seed.files) existingTest(root, file);
@@ -206,6 +218,8 @@ export function validateCiPlan(root, plan) {
 function commandsForShard(root, name, shard) {
   if (name === "seed") return seedCommands(root, shard);
   if (name === "harness") return harnessCommands(shard);
+  // Rig suites drive a real core and its harness children, so each runner takes them one at a time.
+  if (name === "rig") return [["--test-concurrency=1", ...shard.files]];
   return [["--test-concurrency=2", ...shard.files]];
 }
 
@@ -237,27 +251,43 @@ export function runCiShard(root, plan, name, id) {
   return 0;
 }
 
+/** Valued flags each action accepts; `plan --full` is the one flag without a value. */
+const VALUE_FLAGS = { plan: ["base", "output", "github-output"], run: ["plan", "group", "shard"] };
+
+function readFlag(action, options, rest) {
+  const flag = rest.shift();
+  if (!flag.startsWith("--")) throw new Error("Invalid CI planner flag");
+  const key = flag.slice(2);
+  if (Object.hasOwn(options, key)) throw new Error("Invalid CI planner arguments");
+  if (action === "plan" && key === "full") {
+    options.full = true;
+    return;
+  }
+  const value = rest.shift();
+  if (!VALUE_FLAGS[action].includes(key) || !value || value.startsWith("--"))
+    throw new Error("Invalid CI planner arguments");
+  options[key] = value;
+}
+
+function requiredArgs(options) {
+  if (options.action === "run") return ["plan", "group", "shard"];
+  // A full plan selects everything, so it has no base to compare against.
+  if (!options.full) return ["base", "output"];
+  if (options.base) throw new Error("A full CI plan takes no base");
+  return ["output"];
+}
+
 function readArgs(argv) {
   const [action, ...rest] = argv;
   if (action !== "plan" && action !== "run") throw new Error("Expected plan or run");
-  const allowed = action === "plan" ? ["base", "output", "github-output"] : ["plan", "group", "shard"];
   const options = { action };
-  while (rest.length) {
-    const flag = rest.shift();
-    if (!flag.startsWith("--")) throw new Error("Invalid CI planner flag");
-    const key = flag.slice(2);
-    const value = rest.shift();
-    if (!allowed.includes(key) || !value || value.startsWith("--") || Object.hasOwn(options, key))
-      throw new Error("Invalid CI planner arguments");
-    options[key] = value;
-  }
-  const required = action === "plan" ? ["base", "output"] : ["plan", "group", "shard"];
-  if (required.some((key) => !options[key])) throw new Error("Missing CI planner argument");
+  while (rest.length) readFlag(action, options, rest);
+  if (requiredArgs(options).some((key) => !options[key])) throw new Error("Missing CI planner argument");
   return options;
 }
 
 function writePlan(root, options) {
-  const plan = createCiPlan(root, { base: options.base });
+  const plan = createCiPlan(root, { base: options.base, full: options.full === true });
   fs.mkdirSync(path.dirname(options.output), { recursive: true });
   fs.writeFileSync(options.output, `${JSON.stringify(plan, null, 2)}\n`);
   if (options["github-output"]) {
@@ -271,7 +301,7 @@ function writePlan(root, options) {
   }
   if (plan.globalChanges.length) console.log(`Full fast + harness coverage: ${plan.globalChanges.join(", ")}`);
   console.log(
-    `CI plan: ${plan.unit.files.length} Linux files in ${plan.unit.shards.length} shards; ${plan.seed.shards.length} seed shards; ${plan.harness.files.length} harness files; ${plan.fast.files.length} macOS fast files`,
+    `CI plan: ${plan.unit.files.length} Linux files in ${plan.unit.shards.length} shards; ${plan.seed.shards.length} seed shards; ${plan.harness.files.length} harness files; ${plan.fast.files.length} macOS fast files; ${plan.rig.files.length} rig files`,
   );
 }
 
