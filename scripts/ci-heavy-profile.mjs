@@ -61,7 +61,11 @@ const AREAS = [
   { at: "AppData/Local/Programs/Microsoft VS Code/resources/app", weight: 2, shape: Shape.Packages },
   { at: "AppData/Roaming/npm", weight: 5, shape: Shape.Packages },
   // Proof only: a large per-user toolchain on PATH (Python, conda, nvm), granted whole for reading.
-  { at: "AppData/Local/Programs/Python/Python312", weight: 50, shape: Shape.Packages },
+  { at: "AppData/Local/Programs/Python/Python312/Lib/site-packages/a", weight: 10, shape: Shape.Packages },
+  { at: "AppData/Local/Programs/Python/Python312/Lib/site-packages/b", weight: 10, shape: Shape.Packages },
+  { at: "AppData/Local/Programs/Python/Python312/Lib/site-packages/c", weight: 10, shape: Shape.Packages },
+  { at: "AppData/Local/Programs/Python/Python312/Lib/site-packages/d", weight: 10, shape: Shape.Packages },
+  { at: "AppData/Local/Programs/Python/Python312/Lib/site-packages/e", weight: 10, shape: Shape.Packages },
   { at: "Documents/GitHub/web-app", weight: 6, shape: Shape.Packages },
   { at: "Documents/GitHub/game-jam", weight: 6, shape: Shape.Packages },
   { at: "Documents/GitHub/tools", weight: 2, shape: Shape.Packages },
