@@ -21,6 +21,10 @@ image = { workspace = true }
 # fluent-bundle and unic-langid for the text catalogs and locales (UIS-6).
 fluent-bundle = { workspace = true }
 unic-langid = { workspace = true }
+# serde (visitor only) and serde_json for genex-settings.json: a repeated key or deep nesting is
+# refused instead of read last-wins (UIS-7).
+serde = { workspace = true }
+serde_json = { workspace = true }
 
 [dev-dependencies]
 # The tests lay out text, so their contexts get the HUD's text fonts (egui is built without its

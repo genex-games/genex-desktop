@@ -1323,6 +1323,8 @@ dependencies = [
  "fluent-bundle",
  "genex-core",
  "image",
+ "serde",
+ "serde_json",
  "unic-langid",
 ]
 
