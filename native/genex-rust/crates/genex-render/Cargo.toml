@@ -44,6 +44,9 @@ offset-allocator = { workspace = true }
 # writes, for a normal-mapped primitive that reached the runtime without TANGENT. Safe Rust,
 # no_std, its sqrt and acos handed libm's (`mesh.rs`), so every target builds the same bits.
 bevy_mikktspace = { workspace = true }
+# The engine scopes `encode` and `submit` and the GPU lane's per-node samples (game systems PROF-2):
+# write-only profiling below the facade, recording nothing on a thread no profiler is attached to.
+genex-profile = { workspace = true }
 
 # Headless native runs block on adapter and device requests; the web awaits them instead.
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]

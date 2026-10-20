@@ -111,6 +111,8 @@
 
 /// Live GPU frame timing: two timestamps around a whole frame (plan §2.6).
 pub mod live_timing;
+/// Per-node GPU timing: brackets around each frame-graph step while armed (PROF-2).
+pub mod node_timing;
 /// The forward pass's RQ4 screen effects: fog row, AO term, contact-shadow mask (RQ4.6).
 mod effects;
 mod froxel_fog;
@@ -831,6 +833,8 @@ pub struct Renderer {
     /// The live frame timer, armed for one frame at a time (its begin pass is recorded by the
     /// `tables` node, which only sees the renderer shared).
     timer: std::cell::RefCell<Option<live_timing::FrameTimer>>,
+    /// The per-node brackets, armed one Live frame at a time (never a capture's).
+    node_timer: std::cell::RefCell<Option<node_timing::NodeTimer>>,
     pool: TargetPool,
     targets: Targets,
     groups: Option<(GroupsKey, FrameGroups)>,
@@ -2745,6 +2749,7 @@ impl Renderer {
             path: ScenePath::LEGACY,
             last_path: None,
             timer: std::cell::RefCell::new(None),
+            node_timer: std::cell::RefCell::new(None),
             pool,
             targets,
             groups: None,
@@ -3360,6 +3365,17 @@ impl Renderer {
             *slot = live_timing::FrameTimer::new(&self.device, queue);
         }
         Some(slot.as_mut()?.arm())
+    }
+
+    /// Bracket the next frame's graph steps on the GPU as frame `frame` (Live frames only): opens
+    /// the [`node_timing::NodeTimer`] on first use and answers earlier frames' landed per-node
+    /// times. None when the device has no timestamp queries.
+    pub fn arm_node_timer(&mut self, queue: &Queue, frame: u64) -> Option<Vec<node_timing::NodeFrame>> {
+        let mut slot = self.node_timer.borrow_mut();
+        if slot.is_none() {
+            *slot = node_timing::NodeTimer::new(&self.device, queue);
+        }
+        Some(slot.as_mut()?.arm(frame))
     }
 
     /// Close the armed frame's timing: its end pass (after everything the frame drew into the
@@ -5047,8 +5063,8 @@ impl Renderer {
         let prep = self.begin_frame_prepass(scene, path, stage.ldr_reason(), prepass)?;
         let mut frame = FrameEncoder::new(&self.device, &gpu.queue, "frame");
         let mut staged = Staged { nodes: self.world_nodes(&prep), stage };
-        let ran = crate::graph::run(&mut staged, &mut frame);
-        frame.submit();
+        let live = self.history_set == HistorySet::Live && !self.environment_settle;
+        let ran = node_timing::run_and_submit(&mut staged, &mut frame, self.node_timer.borrow_mut().as_mut(), live);
         let done = staged.nodes.finish();
         ran?;
         self.end_frame(prep, done);
@@ -5063,8 +5079,8 @@ impl Renderer {
         let prep = self.begin_frame_prepass(scene, path, stage.ldr_reason(), StagePrepass { demand, draws: stage.prepass_draws() })?;
         let mut frame = FrameEncoder::new(&self.device, &gpu.queue, "frame");
         let mut staged = CustomStaged { nodes: self.world_nodes(&prep), stage };
-        let ran = crate::graph::run(&mut staged, &mut frame);
-        frame.submit();
+        let live = self.history_set == HistorySet::Live && !self.environment_settle;
+        let ran = node_timing::run_and_submit(&mut staged, &mut frame, self.node_timer.borrow_mut().as_mut(), live);
         let done = staged.nodes.finish();
         ran?;
         self.end_frame(prep, done);

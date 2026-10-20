@@ -637,12 +637,29 @@ pub trait FrameNodes {
     fn encode_in_pass(&mut self, id: NodeId, pass: &mut RenderPass<'_>);
 }
 
+/// What brackets the steps of a timed frame (PROF-2's per-node GPU timing): called on the frame's
+/// encoder right before and right after each step, outside every pass the step opens.
+pub trait StepTimer {
+    /// Step `index` of the frame (`step`) is about to be recorded.
+    fn begin_step(&mut self, index: usize, step: &Step, frame: &mut FrameEncoder);
+    /// Step `index` was recorded.
+    fn end_step(&mut self, index: usize, step: &Step, frame: &mut FrameEncoder);
+}
+
 /// Run one frame of `nodes` into `frame` in table order; answers the steps that ran. The first
 /// refusal stops the frame there (what is recorded stays on `frame` for the caller to submit or
 /// drop).
 pub fn run(nodes: &mut dyn FrameNodes, frame: &mut FrameEncoder) -> Result<Vec<Step>, RenderError> {
+    run_timed(nodes, frame, None)
+}
+
+/// [`run`] with each step bracketed by `timer` when there is one (a refused step is left open).
+pub fn run_timed(nodes: &mut dyn FrameNodes, frame: &mut FrameEncoder, mut timer: Option<&mut dyn StepTimer>) -> Result<Vec<Step>, RenderError> {
     let steps = schedule(|id| nodes.enabled(id));
-    for step in &steps {
+    for (index, step) in steps.iter().enumerate() {
+        if let Some(timer) = timer.as_deref_mut() {
+            timer.begin_step(index, step, frame);
+        }
         match step {
             Step::Node(id) => nodes.encode(*id, frame)?,
             Step::World(rows) => {
@@ -653,6 +670,9 @@ pub fn run(nodes: &mut dyn FrameNodes, frame: &mut FrameEncoder) -> Result<Vec<S
                     nodes.encode_in_pass(*id, &mut pass);
                 }
             }
+        }
+        if let Some(timer) = timer.as_deref_mut() {
+            timer.end_step(index, step, frame);
         }
     }
     Ok(steps)

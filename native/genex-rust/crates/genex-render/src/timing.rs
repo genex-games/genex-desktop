@@ -386,6 +386,10 @@ pub enum TimerMode {
     Frame,
     /// Perf harness and dev builds: a begin/end pair per graph node, up to [`MAX_TIMED_NODES`].
     Nodes(u16),
+    /// Frame-graph step brackets (PROF-2): a pair per step, up to [`MAX_TIMED_NODES`], its beginning
+    /// written by the pass that opens the step ([`PassTiming::first`]) and its end by the pass that
+    /// closes it ([`PassTiming::last`]), as [`TimerMode::Frame`] does for its one pair.
+    Steps(u16),
 }
 
 /// Where a pass sits in the frame, for its timestamp writes.
@@ -478,7 +482,7 @@ impl GpuTimer {
         }
         let pairs = match mode {
             TimerMode::Frame => 1,
-            TimerMode::Nodes(nodes) => u32::from(nodes.clamp(1, MAX_TIMED_NODES)),
+            TimerMode::Nodes(nodes) | TimerMode::Steps(nodes) => u32::from(nodes.clamp(1, MAX_TIMED_NODES)),
         };
         let count = pairs * 2 * QUERY_RING_DEPTH as u32;
         debug_assert!(count <= QUERY_SET_MAX_QUERIES);
@@ -538,6 +542,7 @@ impl GpuTimer {
         let (pair, begin, end) = match self.mode {
             TimerMode::Frame => (0, pass.first, pass.last),
             TimerMode::Nodes(_) => (u32::from(pass.node), true, true),
+            TimerMode::Steps(_) => (u32::from(pass.node), pass.first, pass.last),
         };
         if pair >= self.pairs {
             return None;
@@ -669,7 +674,7 @@ impl GpuTimer {
         let frame_ms = first.zip(last).and_then(|(begin, end)| span_ms(begin, end, self.period_ns));
         let nodes = match self.mode {
             TimerMode::Frame => Vec::new(),
-            TimerMode::Nodes(_) => {
+            TimerMode::Nodes(_) | TimerMode::Steps(_) => {
                 pairs.iter().map(|pair| pair.and_then(|(begin, end)| span_ms(begin, end, self.period_ns))).collect()
             }
         };

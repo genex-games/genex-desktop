@@ -1381,6 +1381,7 @@ dependencies = [
  "bytemuck",
  "genex-core",
  "genex-gpu-memory",
+ "genex-profile",
  "glam 0.33.12",
  "gltf",
  "ktx2",
