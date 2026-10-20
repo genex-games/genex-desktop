@@ -113,6 +113,7 @@ import {
 } from "./common.ts";
 import { StudioTool, studioToolName } from "./studio-tool-prompts.ts";
 import { limitResetMs } from "./limit-reset.ts";
+import { gameCallSchema } from "./game-calls.ts";
 import {
   BLIND_JUDGE_NOTE,
   JUDGE_RULES,
@@ -715,6 +716,9 @@ export class CodexEngine implements Engine {
    * session writes no rollout, so no per-role report built from session files can count one.
    */
   async complete(request: CompleteRequest): Promise<CompleteResponse> {
+    // A game's call runs with no tool at all, and Codex's shell cannot be removed: a player's text
+    // would sit one instruction away from this Mac. It is never ready for one (`answersGameCalls`).
+    gameCallSchema(request, this.id);
     if (request.tools?.length) {
       throw new EngineError(EngineFailureKind.Other, this.id, MESSAGE.NoToolLoop);
     }

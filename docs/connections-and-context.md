@@ -134,7 +134,9 @@ local finish and the reference judge never pick one. Only the person's explicit 
 **OpenRouter** ([openrouter.ts](../src/substrate/engines/openrouter.ts)) is a direct engine on the
 same pi-ai path as Ollama ([pi-completions.ts](../src/substrate/engines/pi-completions.ts)), and a
 game chat or build runs as a Genex session (`LocalSessions`, under OpenRouter's own id), as Bonsai's
-does. Settings and first launch send a pasted key over `studio:openrouter.key.save` (native); main
+does. A game's play-time call pins its provider and reply schema and waits at most 3 s for a
+connection ([a game's calls](local-models.md#a-games-calls)). Settings and first launch send a
+pasted key over `studio:openrouter.key.save` (native); main
 checks it with `GET /key`, keeps it only when accepted (`openrouter-api-key` in the SecretStore
 under `userData/secrets/providers`, which no agent process may read) and answers with the engine
 status, never the key. First launch's Connect OpenRouter (`studio:openrouter.signin`, native) is
