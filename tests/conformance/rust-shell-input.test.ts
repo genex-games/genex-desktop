@@ -44,6 +44,8 @@ function shellPage(navigator: Record<string, unknown>): { page: Page; game: unkn
     URLSearchParams,
     setTimeout: () => 0,
     clearTimeout() {},
+    // The page's own listeners (resize, the trap catcher of CRASH-3): never dispatched here.
+    addEventListener() {},
   };
   page.window = page;
   vm.runInContext(script, vm.createContext(page));

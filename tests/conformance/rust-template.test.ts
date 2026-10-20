@@ -97,6 +97,9 @@ function genexModule(names: readonly string[]) {
   return { calls, exports: Object.fromEntries(names.map((name) => [name, all[name]])) };
 }
 
+/** What the template shell binds beside the page contract with `studio_call`: the profile verb and the crash records (PROF-4, CRASH-3). */
+const TEMPLATE_PAGE_EXTRAS = ["profile", "crashes"] as const;
+
 /**
  * The `window.__studio` a shell binds for a module with `exports`: its script runs as the page
  * would in a browser without WebGPU (boot stops at the unsupported page), then binds the module.
@@ -124,6 +127,8 @@ function boundStudio(html: string, exports: Record<string, unknown>): Record<str
     // here, so the stalled boot neither keeps the process alive nor reaches the card after the row.
     setTimeout: () => 0,
     clearTimeout() {},
+    // The page's own listeners (resize, the trap catcher of CRASH-3): never dispatched here.
+    addEventListener() {},
   };
   page.window = page;
   const context = vm.createContext(page);
@@ -271,7 +276,8 @@ describe("the Rust template is a Rust · wgpu game the studio can build on", () 
   it("web/shell.html binds the page contract for the module's exports, without the runtime spike's extras", () => {
     const every = genexModule(["studio_call", "studio_capture", "studio_self_test"]);
     const game = boundStudio(template("web/shell.html"), every.exports);
-    assert.deepEqual(Object.keys(game).sort(), [...PAGE_CONTRACT, "capture"].sort());
+    // The template shell also binds the frame profile and its crash records (PROF-4, CRASH-3).
+    assert.deepEqual(Object.keys(game).sort(), [...PAGE_CONTRACT, ...TEMPLATE_PAGE_EXTRAS, "capture"].sort());
     assert.equal((game.seed as (n: number) => unknown)(5), 5, "a verb goes through studio_call");
     assert.deepEqual(every.calls, [["seed", { seed: 5 }]]);
     const spike = boundStudio(readFileSync(NATIVE_SHELL, "utf8"), every.exports);
@@ -281,8 +287,9 @@ describe("the Rust template is a Rust · wgpu game the studio can build on", () 
   it("web/shell.html binds capture only with studio_capture, and no verb without studio_call", () => {
     const shell = template("web/shell.html");
     const noCapture = boundStudio(shell, genexModule(["studio_call"]).exports);
-    assert.deepEqual(Object.keys(noCapture).sort(), [...PAGE_CONTRACT].sort());
-    assert.deepEqual(Object.keys(boundStudio(shell, genexModule([]).exports)), ["version"]);
+    assert.deepEqual(Object.keys(noCapture).sort(), [...PAGE_CONTRACT, ...TEMPLATE_PAGE_EXTRAS].sort());
+    // The crash records are bound on every page, a module without studio_call too (CRASH-3).
+    assert.deepEqual(Object.keys(boundStudio(shell, genexModule([]).exports)), ["version", "crashes"]);
     assert.ok(shell.includes(`<title>${TITLE_PLACEHOLDER}</title>`), "the title is the scaffold's placeholder");
   });
 
