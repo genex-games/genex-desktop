@@ -463,9 +463,36 @@ export interface MeshoptSimplifierModule {
     targetError: number,
     flags?: readonly string[],
   ): [Uint32Array, number];
+  /**
+   * {@link simplify} weighing `vertexAttributes` (`attributeWeights` per float) beside the
+   * positions; a `vertexLock` of 1 keeps that vertex where it is.
+   */
+  simplifyWithAttributes(
+    indices: Uint32Array,
+    vertexPositions: Float32Array,
+    vertexPositionsStride: number,
+    vertexAttributes: Float32Array,
+    vertexAttributesStride: number,
+    attributeWeights: number[],
+    vertexLock: Uint8Array | null,
+    targetIndexCount: number,
+    targetError: number,
+    flags?: readonly MeshoptSimplifyFlag[],
+  ): [Uint32Array, number];
   /** The factor that turns a relative error into an object-space distance. */
   getScale(vertexPositions: Float32Array, vertexPositionsStride: number): number;
 }
+
+/** meshoptimizer's simplifier options the importer passes (`meshopt_simplifier.d.ts`). */
+export const MeshoptSimplifyFlag = {
+  /** Reports the attribute error on the position error's scale (meshoptimizer 1.3). */
+  ErrorClamped: "ErrorClamped",
+  /** Lets disconnected parts that fall under the target error disappear. */
+  Prune: "Prune",
+  /** Keeps thin folded sheets (double-sided cards, cloth) from collapsing onto themselves. */
+  PreserveFolds: "PreserveFolds",
+} as const;
+export type MeshoptSimplifyFlag = (typeof MeshoptSimplifyFlag)[keyof typeof MeshoptSimplifyFlag];
 
 let simplifier: Promise<MeshoptSimplifierModule> | null = null;
 
