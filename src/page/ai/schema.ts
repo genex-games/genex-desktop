@@ -8,11 +8,12 @@
  */
 import { AiSchemaType, type AiOutputSchema } from "../../shared/game-ai-schema.ts";
 
-/** The type a schema admits, carried by the schema for TypeScript and never present at run time. */
-declare const ADMITS: unique symbol;
-
-/** A schema of the dialect that admits values of type `T`. */
-export type Schema<T = unknown> = AiOutputSchema & { readonly [ADMITS]?: T };
+/**
+ * A schema of the dialect that admits values of type `T`. The type rides on a property that is
+ * never present at run time (a string key, so the template's own declaration of `genex-ai` names
+ * the very same type).
+ */
+export type Schema<T = unknown> = AiOutputSchema & { readonly "~admits"?: T };
 
 /** The type of value a schema admits. */
 export type Infer<S> = S extends Schema<infer T> ? T : never;

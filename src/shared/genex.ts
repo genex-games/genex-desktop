@@ -91,12 +91,19 @@ export const GENEX_MULTIPLAYER_VENDOR = {
 
 /**
  * Where Studio's build of `genex-ai` (`src/page/ai`, the one way a game asks a model at play time)
- * sits under a vendor folder, beside the embed SDK its platform lane loads (`../embed-sdk/`).
+ * sits under a vendor folder, beside the embed SDK (`GENEX_EMBED_VENDOR`).
  */
 export const GENEX_AI_VENDOR = {
   Dir: "genex/ai",
   Entry: "genex/ai/index.js",
 } as const;
+
+/**
+ * The global the connect module (`GENEX_EMBED_VENDOR.Connect`) puts the embed SDK it connected on,
+ * so `genex-ai`'s platform lane calls the very copy `initEmbed()` configured, with no import of its
+ * own. A game that brings its own SDK hands it over instead (`createAi({ platform: { sdk } })`).
+ */
+export const GENEX_EMBED_SDK_GLOBAL = "__genexEmbedSdk";
 
 /** The specifier a game imports play-time AI by. */
 export const GENEX_AI_SPECIFIER = "genex-ai";

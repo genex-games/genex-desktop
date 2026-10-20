@@ -33,6 +33,15 @@ export type AiLane = (typeof AiLane)[keyof typeof AiLane];
 /** The shim tag's attribute that carries Studio's lane hint to a preview page ({@link AiLaneHint} as JSON). */
 export const AI_LANE_ATTRIBUTE = "data-genex-ai";
 
+/** The shim's script tag in a preview page (`page-serve.ts` `SHIM_TAG`), where the hint rides. */
+export const SHIM_TAG_SELECTOR = "script[data-studio-shim]";
+
+/**
+ * The global a page's `genex-ai` registers on for the studio contract (`studio.js`): `status()`,
+ * which `__studio.state().ai` copies, and `reset(seed)`, which `__studio.seed()` calls.
+ */
+export const GENEX_AI_STUDIO_GLOBAL = "__genexAi";
+
 /** The lanes Studio's preview may hint; the platform lane is a published game's alone. */
 export const PREVIEW_LANES: readonly AiLane[] = [AiLane.Off, AiLane.Tape, AiLane.Mock, AiLane.Host];
 
