@@ -14,6 +14,7 @@ import { realpathSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
 import path from "node:path";
 import { after, afterEach, describe, it } from "node:test";
+import { setTimeout as sleep } from "node:timers/promises";
 import { promisify } from "node:util";
 import { SandboxLaunchCode, SandboxLaunchError } from "../../src/substrate/sandbox-unavailable.ts";
 import { ProcessSandbox } from "../../src/substrate/spawn.ts";
@@ -34,6 +35,11 @@ const TEST_TIMEOUT_MS = 300_000;
 const RUN_TIMEOUT_MS = 60_000;
 const RANGE_LOW = 60080;
 const RANGE_SIZE = 10;
+/** How long a reservation waits for other test files' sandboxes to let go of the range. */
+const RESERVE_WAIT_MS = 120_000;
+const RESERVE_RETRY_MS = 500;
+/** Windows' answer to a reservation over a port something listens on: ERROR_SHARING_VIOLATION. */
+const PORT_IN_USE = "32";
 /** The proxy's port in the sandboxed command's proxy variable. */
 const PROXY_PORT = /(?:127\.0\.0\.1|localhost):(\d+)/;
 /** The credentials in a proxy URL, kept out of a failure's message. */
@@ -57,13 +63,24 @@ async function powershell(script: string): Promise<string> {
 
 let reserved: number | undefined;
 
-/** Reserve the first `count` ports of the range, as winnat does. */
+/**
+ * Reserve the first `count` ports of the range, as winnat does. Other test files run sandboxes at
+ * the same time, and Windows refuses to reserve a port one of their proxies listens on: wait for it.
+ */
 async function reserve(count: number): Promise<void> {
-  const result = await powershell(
-    `${RESERVATION_API}\n$t = 0; [GenexTest.Ports]::CreatePersistentTcpPortReservation(${networkOrder(RANGE_LOW)}, ${count}, [ref]$t)`,
-  );
-  assert.equal(result, "0", `the reservation failed with Windows error ${result}`);
-  reserved = count;
+  const deadline = Date.now() + RESERVE_WAIT_MS;
+  for (;;) {
+    const result = await powershell(
+      `${RESERVATION_API}\n$t = 0; [GenexTest.Ports]::CreatePersistentTcpPortReservation(${networkOrder(RANGE_LOW)}, ${count}, [ref]$t)`,
+    );
+    if (result === "0") {
+      reserved = count;
+      return;
+    }
+    if (result !== PORT_IN_USE || Date.now() > deadline)
+      assert.fail(`the reservation failed with Windows error ${result}`);
+    await sleep(RESERVE_RETRY_MS);
+  }
 }
 
 async function release(): Promise<void> {
@@ -106,6 +123,8 @@ describe("Windows sandbox: reserved proxy ports", { skip: SKIP, timeout: TEST_TI
   it("starts on the ports Windows left free, and its commands reach the proxy there", async () => {
     await reserve(2);
     const { sandbox: started, workspace } = await start("partly-reserved");
+    // The proxies are bound now; other test files' sandboxes need the range back.
+    await release();
     const result = await started.run({
       // A file, not /dev/null: Windows paths reach native programs unchanged (MSYS_NO_PATHCONV), and curl.exe has no /dev/null.
       command: `printf '%s\\n' "\${HTTP_PROXY:-$http_proxy}"; status=$(curl -s -o proxy-answer.txt -w '%{http_code}' http://reserved-ports.invalid/); printf '%s\\n' "$status"`,
