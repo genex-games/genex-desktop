@@ -41,6 +41,7 @@ import {
   type StageView,
   stageView,
 } from "./unreal-stage-view.ts";
+import { EngineAiLine } from "../game-ai/StageAiPill.tsx";
 
 /** How often the card asks where the project stands; the panel asks as often. */
 const STATUS_POLL_MS = 3 * SECOND_MS;
@@ -267,6 +268,7 @@ export function UnrealStage({
             </Button>
           </div>
         ) : null}
+        <EngineAiLine project={game.name} title={name} />
       </div>
     </div>
   );

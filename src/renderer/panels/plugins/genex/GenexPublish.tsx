@@ -58,6 +58,7 @@ import { CoverControls, CoverMedia, CoverTool } from "./PublishCover.tsx";
 import { CoverKind, type PublishCover, useElapsed, usePublishCover } from "./use-publish-cover.ts";
 import { Pressing, usePublishRecord } from "./use-publish-record.ts";
 import { PublishShareLine } from "./PublishShare.tsx";
+import { type PublishAi, PublishAiBlock, usePublishAi } from "../../game-ai/PublishAi.tsx";
 import { useShareWhenLive } from "./use-publish-share.ts";
 
 const WORDS = GENEX_WORDS.publish;
@@ -728,6 +729,7 @@ function PublishBody({
   const publishing = record.pressing === Pressing.Publish || view.running;
   const celebrate = useCelebration(view, publishing);
   const share = useShareWhenLive(project, celebrate);
+  const ai = usePublishAi(project);
   // A name changed after it went live is listed again by Publish update ("Save name" while celebrating).
   const renamed = title !== null && title.trim() !== (record.state?.title ?? "") && view.stage === PublishStage.Public;
   const failure = record.error ? { text: record.error, details: record.error } : view.failure;
@@ -759,6 +761,7 @@ function PublishBody({
         ))}
         {view.running && <Progress view={view} />}
         {failure && !publishing && <p className="genex-publish-failure">{failure.text}</p>}
+        <PublishAiBlock ai={ai} project={project} title={name} quiet={{ publishing, celebrate }} />
         <PublishShareLine share={share} celebrate={celebrate} />
         {(!celebrate || renamed) && (
           <Presses
@@ -767,6 +770,7 @@ function PublishBody({
             name={name}
             publishing={publishing}
             project={project}
+            ai={ai}
             label={celebrate ? WORDS.saveName : undefined}
           />
         )}
@@ -778,6 +782,7 @@ function PublishBody({
           making={Boolean(cover.making)}
           record={record}
           name={name}
+          ai={ai}
         />
       </div>
     </div>
@@ -814,6 +819,7 @@ function Hint({
   making,
   record,
   name,
+  ai,
   testShown = false,
 }: {
   /** The test link's own line stands in for the default intro, so the two never both show. */
@@ -824,6 +830,8 @@ function Hint({
   making: boolean;
   record: ReturnType<typeof usePublishRecord>;
   name: string;
+  /** The game's play-time AI choice, sent again with a retried upload. */
+  ai: PublishAi;
 }): JSX.Element | null {
   const again = view.again;
   if (publishing && view.slow)
@@ -831,7 +839,10 @@ function Hint({
       <p className="genex-publish-hint">
         {WORDS.slow}{" "}
         {again && (
-          <TextButton aria-label={again.ariaLabel} onClick={() => void record.publishAgain(again, name)}>
+          <TextButton
+            aria-label={again.ariaLabel}
+            onClick={() => void record.publishAgain(again, name, ai.choice ?? undefined)}
+          >
             {again.label}
           </TextButton>
         )}
@@ -864,6 +875,7 @@ function Presses({
   name,
   publishing,
   project,
+  ai,
   label,
 }: {
   view: PublishView;
@@ -871,6 +883,8 @@ function Presses({
   name: string;
   publishing: boolean;
   project: string;
+  /** The game's play-time AI choice: Publish waits until a game that played with AI says whether it needs it. */
+  ai: PublishAi;
   /** The main press's words in place of the view's (Save name, for a rename right after it went live). */
   label?: string;
 }): JSX.Element {
@@ -898,7 +912,10 @@ function Presses({
       aria-label={view.primary.ariaLabel}
       aria-busy={publishing || undefined}
       disabled={publishing || !view.canPublish || record.pressing !== Pressing.None}
-      onClick={() => void record.publish(name)}
+      onClick={() => {
+        // Save name renames what is live; only a publish waits for the AI choice.
+        if (label || ai.ready()) void record.publish(name, ai.choice ?? undefined);
+      }}
     >
       {publishing ? <BusyLabel view={view} /> : (label ?? view.primary.label)}
     </Button>

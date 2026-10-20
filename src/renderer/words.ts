@@ -5010,7 +5010,9 @@ export const GET_CREDITS_WORDS = {
     `Add ${countWords(add)} when I’m under ${countWords(under)} · at most once a day`,
   pro: "Genex Pro",
   proWhat: "1,000 credits every month",
-  proButton: "Get Pro",
+  /** Genex Pro's one price, as genex.games sells it. */
+  proButton: "$9.99 a month",
+  proLabel: "Get Genex Pro for $9.99 a month",
   unread: "Genex can’t show its packs right now. Try again in a moment.",
   retry: "Try again",
   loading: "Loading packs…",
@@ -5218,6 +5220,14 @@ export const REPORT_INBOX_WORDS = {
   moments: (calls: number, invalid: number) =>
     invalid > 0 ? `${plural(calls, "AI moment")} · ${invalid} didn’t fit` : plural(calls, "AI moment"),
   fix: "Fix with agent",
+  fixLabel: (when: string) => `Fix the report from ${when} with your agent`,
+  /**
+   * What Fix with agent asks the game's chat. The player's note never goes in it: a player's
+   * words are not the creator's instructions. The agent reads the replay itself.
+   */
+  fixPrompt: (tape: string, reason: string, invalid: number) =>
+    `A player report came in for this game (${reason.toLowerCase()}). I saved that session’s AI replies as the playtest ${tape}. Replay it with ai.replay, find why the AI wrote what it did${invalid > 0 ? ` and why ${plural(invalid, "reply", "replies")} didn’t fit the game` : ""}, fix the prompt, the schema or how the game uses the reply, then replay the same playtest to check the fix.`,
+  model: (model: string) => `Last reply by ${model}`,
   fixing: "Saving the replay…",
   fixAgain: "Ask again",
   sent: "Sent to your agent",
