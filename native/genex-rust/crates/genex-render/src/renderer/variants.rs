@@ -489,14 +489,26 @@ impl Renderer {
     /// A cascade's variant casters (view `view`) into a map of `format`, after the plain ones,
     /// then the fade twins' faded casters, with the shadow group bound at group 0.
     pub(super) fn draw_caster_variants(&self, pass: &mut RenderPass<'_>, groups: PassGroups<'_>, (plan, view): (&FramePlan, u32), format: TextureFormat, counts: Option<&[u32]>, stats: &mut FrameStats) {
-        let at = usize::from(format == ShadowFormat::Depth16.texture_format());
         for fade in [false, true] {
-            let pass_views = pass_group(groups, fade);
-            for run in runs_of(plan, fade) {
-                let Some(casters) = self.variants.set(fade).casters[run.variant.index()].as_ref() else { continue };
-                pass.set_pipeline(&casters[at]);
-                self.draw_run(pass, pass_views, (plan, run, fade), view, counts, stats);
-            }
+            self.draw_caster_runs(pass, groups, (plan, view, fade), format, counts, stats);
+        }
+    }
+
+    /// A cascade's fade twins (view `view`) through the faded casters into a map of `format`,
+    /// with the shadow group bound at group 0: the overlay of a cached layer (game systems
+    /// LOD-05; the static cache never holds them).
+    pub(super) fn draw_caster_fades(&self, pass: &mut RenderPass<'_>, groups: PassGroups<'_>, (plan, view): (&FramePlan, u32), format: TextureFormat, stats: &mut FrameStats) {
+        self.draw_caster_runs(pass, groups, (plan, view, true), format, None, stats);
+    }
+
+    /// The whole variant runs' casters, or the fade twins' (`fade`), of view `view`.
+    fn draw_caster_runs(&self, pass: &mut RenderPass<'_>, groups: PassGroups<'_>, (plan, view, fade): (&FramePlan, u32, bool), format: TextureFormat, counts: Option<&[u32]>, stats: &mut FrameStats) {
+        let at = usize::from(format == ShadowFormat::Depth16.texture_format());
+        let pass_views = pass_group(groups, fade);
+        for run in runs_of(plan, fade) {
+            let Some(casters) = self.variants.set(fade).casters[run.variant.index()].as_ref() else { continue };
+            pass.set_pipeline(&casters[at]);
+            self.draw_run(pass, pass_views, (plan, run, fade), view, counts, stats);
         }
     }
 
@@ -508,10 +520,17 @@ impl Renderer {
         for run in &plan.variants {
             self.draw_run(pass, groups.0, (plan, run, false), view, counts, stats);
         }
+        self.draw_spot_fades(pass, groups.1, plan, view, counts, stats);
+    }
+
+    /// A shadowed spot's fade twins (view `view`) through the faded spot casters, through
+    /// `pass_fade` (the pass views and the fade table); the caller sets the plain spot pipeline
+    /// again before the next spot. Also the overlay of a cached spot layer (LOD-05).
+    pub(super) fn draw_spot_fades(&self, pass: &mut RenderPass<'_>, pass_fade: &BindGroup, plan: &FramePlan, view: u32, counts: Option<&[u32]>, stats: &mut FrameStats) {
         let Some(spots) = self.spot_shadow.as_ref().filter(|_| !plan.fade_runs.is_empty()) else { return };
         pass.set_pipeline(spots.faded_pipeline(self.shadow_desc.format));
         for run in &plan.fade_runs {
-            self.draw_run(pass, groups.1, (plan, run, true), view, counts, stats);
+            self.draw_run(pass, pass_fade, (plan, run, true), view, counts, stats);
         }
     }
 }

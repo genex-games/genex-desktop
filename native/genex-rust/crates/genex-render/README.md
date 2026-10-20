@@ -766,9 +766,13 @@ cover each pixel, or each MSAA sample, exactly once by a dither threshold (`gx_l
   prepass applied (coincident levels both pass the test); an alpha-tested batch keeps
   alpha-to-coverage and cuts whole pixels, never writing `sample_mask` beside it;
 - the sun's and the shadowed spots' casters cut the other level's texels by the unturned
-  threshold. The static shadow cache does not cast the twins yet (LOD-05).
+  threshold. The static shadow cache never holds a twin, a batch with levels or rows a far rule
+  thins (their casting follows the camera): they are its overlay, and the twins cast through the
+  faded casters over a cached layer's copy as a full draw casts them (`tests/shadow_cache.rs`:
+  a fading forest's cached frames equal uncached ones byte for byte).
 `tests/lod_fade.rs` holds the incoming share within 1/16 with no hole on every path. The band
-stays 0 by default until LOD-05 (the cache overlay) and LOD-06 (the band in `Quality`) land.
+stays 0 by default until LOD-06 (the band in `Quality`) lands; the first fade-in still waits for
+the faded pipelines' compile (the Live fallback to whole levels is open).
 
 Far field (`lod_rows::far_field`, `gx_far_field` in `shaders/cull.wgsl`): a draw naming a far
 rule (`DrawLod::far_rule`, 1 + its index in `Scene::far_rules`, at most `FAR_RULES_MAX`; cull
