@@ -105,7 +105,8 @@ describe("Windows sandbox: reserved proxy ports", { skip: SKIP, timeout: TEST_TI
     await reserve(2);
     const { sandbox: started, workspace } = await start("partly-reserved");
     const result = await started.run({
-      command: `printf '%s\\n' "$HTTP_PROXY"; curl -s -o /dev/null -w '%{http_code}' http://reserved-ports.invalid/`,
+      // A file, not /dev/null: Windows paths reach native programs unchanged (MSYS_NO_PATHCONV), and curl.exe has no /dev/null.
+      command: `printf '%s\\n' "$HTTP_PROXY"; status=$(curl -s -o proxy-answer.txt -w '%{http_code}' http://reserved-ports.invalid/); printf '%s\\n' "$status"`,
       cwd: workspace,
       timeoutMs: RUN_TIMEOUT_MS,
     });
