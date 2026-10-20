@@ -466,7 +466,10 @@ function testSummary(plugin: string, filter: string, line: string, result: Autom
 async function runTests(deps: ShipToolsDeps, target: EngineTarget, filter: string, dir: string, signal: AbortSignal) {
   const run = deps.runProgram ?? systemRunProgram;
   const args = automationArgs(target.projectFile, filter, dir);
-  const outcome = await run(editorCmdPath(target.engine.directory), args, { signal, timeoutMs: TEST_TIMEOUT_MS });
+  const outcome = await run(editorCmdPath(target.engine.directory, deps.platform), args, {
+    signal,
+    timeoutMs: TEST_TIMEOUT_MS,
+  });
   if (signal.aborted) throw new Error(MESSAGE.Stopped);
   if (outcome.timedOut) throw new Error(MESSAGE.TimedOut);
   const scrub = await pathScrubber(target.projectDir, target.engine.directory);

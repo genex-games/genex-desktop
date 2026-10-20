@@ -19,6 +19,7 @@ import { setTimeout as pause } from "node:timers/promises";
 import type { PluginContext } from "../../src/plugin-sdk/index.d.ts";
 import {
   automationArgs,
+  editorCmdPath,
   type ProgramOutcome,
   type RunProgram,
   systemRunProgram,
@@ -106,6 +107,8 @@ type Options = {
   quitGate?: Promise<void>;
   /** The host project has its own C++ module (default), or none yet. */
   module?: boolean;
+  /** The computer the backend runs on: a Mac (default) or Windows. */
+  platform?: NodeJS.Platform;
 };
 
 /** Settles a background job: yields until `done` says so. */
@@ -196,7 +199,7 @@ async function shipWorld(options: Options = {}) {
     });
   const stopped = new AbortController();
   const deps = {
-    platform: "darwin" as const,
+    platform: options.platform ?? "darwin",
     engine: async () => ({ version: "5.8", directory: engineDir }),
     project: async () => projectFile,
     xcode: async () => ({ state: XcodeState.Ready, app: XCODE_APP }),
@@ -341,6 +344,25 @@ describe("plugin-build", () => {
 });
 
 describe("plugin-test", () => {
+  it("the headless editor is the Mac's UnrealEditor-Cmd, or Windows' Win64 UnrealEditor-Cmd.exe", () => {
+    assert.equal(
+      editorCmdPath("/Users/Shared/Epic Games/UE_5.8", "darwin"),
+      "/Users/Shared/Epic Games/UE_5.8/Engine/Binaries/Mac/UnrealEditor-Cmd",
+    );
+    assert.equal(
+      editorCmdPath("C:\\Program Files\\Epic Games\\UE_5.8", "win32"),
+      "C:\\Program Files\\Epic Games\\UE_5.8\\Engine\\Binaries\\Win64\\UnrealEditor-Cmd.exe",
+    );
+  });
+
+  it("plugin-test on Windows runs the engine's Win64 UnrealEditor-Cmd.exe", async () => {
+    const w = await shipWorld({ platform: "win32" });
+    assert.deepEqual(await w.call(ShipToolName.PluginTest), { started: true, filter: PLUGIN });
+    await w.settled("test");
+    const [run] = w.programs;
+    assert.equal(run?.file, path.win32.join(w.engineDir, "Engine", "Binaries", "Win64", "UnrealEditor-Cmd.exe"));
+  });
+
   it("plugin-test runs the plugin's tests headless as a job and reports passes and failures", async () => {
     const w = await shipWorld();
     const tests = path.join(w.unreal, "Saved", "Genex", "Tests", PLUGIN);
@@ -353,7 +375,7 @@ describe("plugin-test", () => {
     assert.deepEqual(done.test.failures, [{ name: "LevelTools.Grid.Snaps", messages: ["Expected 16, got 15"] }]);
     assert.equal(done.test.report, `unreal/Saved/Genex/Tests/${PLUGIN}/summary.md`);
     const [run] = w.programs;
-    assert.equal(run?.file, path.join(w.engineDir, "Engine", "Binaries", "Mac", "UnrealEditor-Cmd"));
+    assert.equal(run?.file, path.posix.join(w.engineDir, "Engine", "Binaries", "Mac", "UnrealEditor-Cmd"));
     assert.deepEqual(run?.args, automationArgs(w.projectFile, PLUGIN, tests));
     for (const arg of [
       "-ExecCmds=Automation RunTests LevelTools",

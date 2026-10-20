@@ -66,9 +66,11 @@ export type RunProgram = (
 /** Whether `value` is a test filter Genex hands Automation. */
 export const isTestFilter = (value: unknown): value is string => typeof value === "string" && TEST_FILTER.test(value);
 
-/** The engine's command-line editor, which runs tests with no window. */
-export const editorCmdPath = (engineDir: string) =>
-  path.join(engineDir, "Engine", "Binaries", "Mac", "UnrealEditor-Cmd");
+/** The engine's command-line editor, which runs tests with no window: the Mac's, or Windows' `Win64` executable. */
+export function editorCmdPath(engineDir: string, platform: NodeJS.Platform): string {
+  if (platform === "win32") return path.win32.join(engineDir, "Engine", "Binaries", "Win64", "UnrealEditor-Cmd.exe");
+  return path.posix.join(engineDir, "Engine", "Binaries", "Mac", "UnrealEditor-Cmd");
+}
 
 /** The headless editor's arguments: the project, the tests to run, where the report goes and how to quit. */
 export function automationArgs(projectFile: string, filter: string, reportDir: string): string[] {
