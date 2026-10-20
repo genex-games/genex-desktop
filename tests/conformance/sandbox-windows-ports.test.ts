@@ -34,8 +34,10 @@ const TEST_TIMEOUT_MS = 300_000;
 const RUN_TIMEOUT_MS = 60_000;
 const RANGE_LOW = 60080;
 const RANGE_SIZE = 10;
-/** The proxy's port in the sandboxed command's proxy variable, without its token. */
-const PROXY_PORT = /@127\.0\.0\.1:(\d+)/;
+/** The proxy's port in the sandboxed command's proxy variable. */
+const PROXY_PORT = /127\.0\.0\.1:(\d+)/;
+/** The credentials in a proxy URL, kept out of a failure's message. */
+const PROXY_CREDENTIALS = /\/\/[^@/]*@/;
 
 /** iphlpapi's persistent TCP port reservation, from Windows PowerShell; the start port goes in network byte order. */
 const RESERVATION_API = `
@@ -106,14 +108,17 @@ describe("Windows sandbox: reserved proxy ports", { skip: SKIP, timeout: TEST_TI
     const { sandbox: started, workspace } = await start("partly-reserved");
     const result = await started.run({
       // A file, not /dev/null: Windows paths reach native programs unchanged (MSYS_NO_PATHCONV), and curl.exe has no /dev/null.
-      command: `printf '%s\\n' "$HTTP_PROXY"; status=$(curl -s -o proxy-answer.txt -w '%{http_code}' http://reserved-ports.invalid/); printf '%s\\n' "$status"`,
+      command: `printf '%s\\n' "\${HTTP_PROXY:-$http_proxy}"; status=$(curl -s -o proxy-answer.txt -w '%{http_code}' http://reserved-ports.invalid/); printf '%s\\n' "$status"`,
       cwd: workspace,
       timeoutMs: RUN_TIMEOUT_MS,
     });
     assert.equal(result.code, 0, result.stderr);
     const [proxy = "", status = ""] = result.stdout.trim().split(/\r?\n/);
     const port = Number(PROXY_PORT.exec(proxy)?.[1]);
-    assert.ok(port >= RANGE_LOW + 2 && port < RANGE_LOW + RANGE_SIZE, `the proxy listens on ${port}`);
+    assert.ok(
+      port >= RANGE_LOW + 2 && port < RANGE_LOW + RANGE_SIZE,
+      `the proxy listens on ${port} (${proxy.replace(PROXY_CREDENTIALS, "//…@")})`,
+    );
     assert.notEqual(status, "000", "the sandboxed command reaches the proxy, which answers for the refused host");
   });
 
