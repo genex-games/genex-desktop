@@ -109,6 +109,9 @@
     "generic-array-0.14.7": {
       "buildScript": "build.rs"
     },
+    "genex-audio-0.1.0": {
+      "nonSource": ["tests/fixtures/music-10s.ogg", "tests/fixtures/silence-3min.ogg", "tests/fixtures/tone-44k.ogg"]
+    },
     "genex-multiplayer-0.1.0": {
       "buildScript": "build.rs"
     },
@@ -695,9 +698,9 @@
   "release": {
     "genex": "0.1.0",
     "tree": {
-      "sha256": "b3f9e86a4d2f66d6a8a5b378b8d9e4fbc4a4dfeba504f44f98fc18a1c36768de",
-      "files": 26060,
-      "bytes": 692092050
+      "sha256": "6edcb5f36b96a5223b4e50f0f79dde14a77b3fc30c03f41c2a8b296dda088558",
+      "files": 26072,
+      "bytes": 692420670
     }
   }
 }
