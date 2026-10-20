@@ -119,6 +119,8 @@ counters carry the regression gates.
   launch checked while this launch's checks run (`main/engine-boot.ts`).
 - Plugin packages are inspected from directory listings, several folders at a time; event bodies
   are read through a sliding window.
+- The launch's seed upgrade (`substrate/seed-upgrade.ts`) hashes the seed and the harness
+  workspace, and rewrites renamed names, 32 files at a time rather than one after another.
 
 ## Packaged builds
 
