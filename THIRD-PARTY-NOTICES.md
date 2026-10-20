@@ -265,8 +265,11 @@ party), copied unchanged from the genex-demo monorepo at commit 8cd1477a2
 (`sdks/rust/genex-multiplayer`); its `PROVENANCE.toml` records every file's sha256, the one
 manifest line changed (the upstream edition, 2021) and the one file added (`clippy.toml`). Its
 native backend links the Colyseus native SDK 0.18.10 prebuilt (MIT), which bundles cJSON (MIT),
-mbedTLS (Apache-2.0), wslay (MIT), sds (BSD-2-Clause) and uthash (BSD-1-Clause); no build links it
-yet (net exports, a later step, take it from the toolchain store). Its build script uses RustCrypto
+mbedTLS (Apache-2.0), wslay (MIT), sds (BSD-2-Clause) and uthash (BSD-1-Clause). The toolchain
+store pins upstream's v0.18.10 release assets by sha256 (the `colyseus` component: the
+xcframework, the Linux x86_64 tarball and the MinGW zip, laid out unchanged one folder per triple,
+the universal Apple libraries thinned to arm64) and the source tarball (`colyseus-source`); only an
+export of a `[net]` game links it, and no shipped build does yet. Its build script uses RustCrypto
 sha2 (MIT OR Apache-2.0).
 
 The spike's Android packaging (`scripts/spike/rust-wgpu/android-apk.sh`, developer tool only)

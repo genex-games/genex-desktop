@@ -572,6 +572,31 @@ describe("the Rust lane builds behind the seam", { skip: SKIP_ON_WINDOWS }, () =
     }
   });
 
+  it("names a libcolyseus folder (GENEX_COLYSEUS_LIB_DIR) in every native build, so the relay client's build script never downloads one (MP-1a)", async () => {
+    const component = "/store/colyseus/0.18.10-0123456789ab";
+    for (const pinned of [false, true]) {
+      const parent = await realpath(await tmpDir("rust-colyseus-env-"));
+      const open = openSandboxes();
+      const onBuild = '{ printenv GENEX_COLYSEUS_LIB_DIR || echo unset; } > "$CARGO_TARGET_DIR/../colyseus"';
+      const { builds } = await lane(parent, open.sandbox, { stub: { onBuild }, staging: stager({ genex: "=0.1.0" }) });
+      if (pinned) {
+        const located = await builds.options.locate(LOCK, BuildTarget.Mac);
+        assert.ok(located.ok);
+        builds.options.locate = async () => ({ ok: true, toolchain: { ...located.toolchain, colyseus: component } });
+      }
+      const outcome = await builds.ensure(gameOf(await rustGame(parent)), BuildTarget.Mac, CppBuildPurpose.Live);
+      assert.equal(outcome.ok, true, JSON.stringify(outcome.problem));
+      const [spec] = open.specs;
+      assert.ok(spec);
+      const named = (await readFile(path.join(spec.bin, "colyseus"), "utf8")).trim();
+      // No component pinned on this host: a folder inside the build that is never made, so the script stops on its own message.
+      const expected = pinned
+        ? path.join(component, "lib", "aarch64-apple-darwin")
+        : path.join(spec.bin, "colyseus-not-pinned");
+      assert.equal(named, expected);
+    }
+  });
+
   it("compiles in genex.toml's [render] tables and [[wgsl]] rows (GENEX_RENDER_TOML, GENEX_WGSL_TOML) for every destination", async () => {
     const render = "[render]\n[render.look]\n[render.class.mobile-mid]\nrender_scale = 0.6\n";
     const wgsl = '[[wgsl]]\npath = "shaders/glow.wgsl"\nkind = "material"\napi = 1\n';

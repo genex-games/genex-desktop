@@ -11,7 +11,11 @@
 #   setup-toolchain.sh --relock                re-resolve the allowlist, rewrite the lock, vendor (network)
 #   setup-toolchain.sh --verify                offline check of everything installed
 #
-# GROUPS is a comma list of rust (always), wasm, zig, mingw, jdk, supply-chain, or all.
+# GROUPS is a comma list of rust (always), wasm, zig, mingw, jdk, supply-chain, colyseus, or all.
+# colyseus is the relay client's prebuilt libcolyseus (Colyseus native-sdk, MP-1a): the xcframework
+# on a Mac, the Linux and MinGW archives everywhere, each laid out per triple into
+# tools/colyseus/<triple> by scripts/toolchains/colyseus-libs.ts (the store's own checks), the
+# folder rust-env.ts names in GENEX_COLYSEUS_LIB_DIR: a workspace-wide build or test needs it.
 #
 # Install only ever uses the committed pins table, scripts/spike/rust-wgpu/pins.md (rows between
 # the genex-spike-pins markers; GENEX_SPIKE_APPROVALS overrides it for tests): an archive without
@@ -40,7 +44,7 @@
 # GENEX_SPIKE_VENDOR_ALLOWLIST override both files for tests.
 #
 # Layout: downloads/ (verified archives, kept for --verify), sysroot/ (rustc, cargo, clippy,
-# llvm-tools, rust-std per target), tools/ (bin/, zig/, binaryen/, llvm-mingw/, jdk/),
+# llvm-tools, rust-std per target), tools/ (bin/, zig/, binaryen/, llvm-mingw/, jdk/, colyseus/),
 # vendor/ (cargo vendor --versioned-dirs), vendor-manifest/ (the allowlist manifest and a copy of the
 # committed lock),
 # cargo-home/config.toml (crates.io replaced by vendor/, net.offline), receipt.tsv.
@@ -71,7 +75,9 @@ LLVM_MINGW_VERSION="20260922"
 JDK_FEATURE_VERSION="21"
 CARGO_DENY_VERSION="0.20.2"
 CARGO_VET_VERSION="0.10.0"
-ALL_GROUPS="rust,wasm,zig,mingw,jdk,supply-chain"
+# The Colyseus native-sdk release the vendored relay client binds (src/shared/toolchain.ts COLYSEUS_VERSION).
+COLYSEUS_VERSION="0.18.10"
+ALL_GROUPS="rust,wasm,zig,mingw,jdk,supply-chain,colyseus"
 # Crates of a GL backend: WebGPU core is the floor, so the vendored tree must not hold them.
 GL_CRATES="glow khronos-egl glutin glutin_egl_sys glutin_wgl_sys"
 # Where an approved archive may come from (redirects must stay https): the Rust and Zig download
@@ -83,7 +89,8 @@ OFFICIAL_SOURCES="https://static.rust-lang.org/dist/ https://ziglang.org/downloa
   https://github.com/mstorsjo/llvm-mingw/releases/download/
   https://github.com/adoptium/temurin21-binaries/releases/download/
   https://github.com/EmbarkStudios/cargo-deny/releases/download/
-  https://github.com/mozilla/cargo-vet/releases/download/"
+  https://github.com/mozilla/cargo-vet/releases/download/
+  https://github.com/colyseus/native-sdk/releases/download/"
 CURL_RETRIES=2
 SANDBOX_EXEC="/usr/bin/sandbox-exec"
 NO_NETWORK_PROFILE="(version 1)(allow default)(deny network*)"
@@ -159,6 +166,15 @@ setup_archives() {
       "$CARGO_DENY_VERSION" "$CARGO_DENY_HOST" "$CARGO_DENY_VERSION" "$CARGO_DENY_VERSION" "$CARGO_DENY_HOST"
     printf 'supply-chain\tcargo-vet-%s-%s.tar.xz\tgithub:mozilla/cargo-vet:v%s:cargo-vet-%s.tar.xz\n' \
       "$CARGO_VET_VERSION" "$HOST" "$CARGO_VET_VERSION" "$HOST" ;;
+  esac
+  case $groups in *,colyseus,*)
+    # Upstream's asset names, which the layout step reads the asset from; the xcframework serves
+    # only Apple destinations, so only a Mac fetches it.
+    local asset assets="colyseus-linux-x86_64.tar.gz colyseus-windows-x86_64.zip"
+    case $HOST in *-apple-darwin) assets="Colyseus.xcframework.zip $assets" ;; esac
+    for asset in $assets; do
+      printf 'colyseus\t%s\tgithub:colyseus/native-sdk:v%s:%s\n' "$asset" "$COLYSEUS_VERSION" "$asset"
+    done ;;
   esac
   return 0
 }
@@ -371,6 +387,10 @@ setup_install_tool() {
     zig-*) setup_unpack_single "$archive" "$SPIKE_TOOLS/zig" ;;
     llvm-mingw-*) setup_unpack_single "$archive" "$SPIKE_TOOLS/llvm-mingw" ;;
     temurin-jdk-*) setup_unpack_single "$archive" "$SPIKE_TOOLS/jdk" ;;
+    Colyseus.xcframework.zip | colyseus-linux-* | colyseus-windows-*)
+      node "$SETUP_SCRIPTS/../../toolchains/colyseus-libs.ts" "$archive" "$SPIKE_TOOLS/colyseus" >/dev/null ||
+        spike_refuse archive-not-approved "$file: the libcolyseus layout refused it"
+      ;;
     cargo-zigbuild-* | cargo-deny-* | cargo-vet-*)
       local bin=${file%%-[0-9]*}
       stage=$(mktemp -d "$SPIKE_DIR/stage.XXXXXX")

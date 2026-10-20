@@ -356,6 +356,8 @@ export interface RustBinaryRequest {
   bytes: Uint8Array;
   /** The lane linked the dev flavour (Live and judging builds); honoured only on {@link RUST_STUDIO_SERVED_TARGETS}. */
   servesStudio: boolean;
+  /** A `[net]` game's export, which links the relay client: its network imports are admitted (Windows: `RUST_WINDOWS_NET_DLLS`). Absent: none. */
+  network?: boolean;
 }
 
 /** An admitted Rust executable: its format, its sha256 and what it imports (libraries, DLLs, wasm modules). */
@@ -364,7 +366,11 @@ export type RustBinaryAdmission =
   | RustBinaryRefusal;
 
 /** The format's Rust policy over `bytes`: the imports it admitted, or its refusal. */
-function formatAdmission(target: BuildTarget, bytes: Uint8Array): { imports: string[] } | RustBinaryRefusal {
+function formatAdmission(
+  target: BuildTarget,
+  bytes: Uint8Array,
+  network: boolean,
+): { imports: string[] } | RustBinaryRefusal {
   switch (target) {
     case BuildTarget.Mac:
     case BuildTarget.Ios: {
@@ -372,7 +378,7 @@ function formatAdmission(target: BuildTarget, bytes: Uint8Array): { imports: str
       return admitted.ok ? { imports: admitted.image.dylibs } : admitted;
     }
     case BuildTarget.Windows: {
-      const admitted = admitRustPe(bytes);
+      const admitted = admitRustPe(bytes, { network });
       return admitted.ok ? { imports: [...admitted.image.imports, ...admitted.image.delayImports] } : admitted;
     }
     case BuildTarget.Linux:
@@ -393,7 +399,7 @@ function formatAdmission(target: BuildTarget, bytes: Uint8Array): { imports: str
  */
 export function admitRustBinary(request: RustBinaryRequest): RustBinaryAdmission {
   const { target, bytes } = request;
-  const admitted = formatAdmission(target, bytes);
+  const admitted = formatAdmission(target, bytes, request.network === true);
   if ("ok" in admitted) return admitted;
   const transportAllowed = request.servesStudio && RUST_STUDIO_SERVED_TARGETS.has(target);
   const marker = transportAllowed ? null : transportMarkerIn(bytes);
