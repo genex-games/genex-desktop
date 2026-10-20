@@ -20,6 +20,7 @@
  * still waits for its host-matrix row (M5.0) before the lane runs one. Nothing here launches a
  * Simulator, an emulator or a device: containment stage 1.
  */
+import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { StudioPlatform } from "../shared/boot.ts";
 import { SECOND_MS } from "../shared/duration.ts";
@@ -61,6 +62,28 @@ export const MobileSettingsRefusal = {
   NdkMissing: "ndk-missing",
 } as const;
 export type MobileSettingsRefusal = (typeof MobileSettingsRefusal)[keyof typeof MobileSettingsRefusal];
+
+/**
+ * The libraries a crate's build script may name with `-l` that bionic folds into its libc, so the
+ * NDK sysroot has no file for them (r27's `aarch64-linux-android` holds no `libpthread`): an empty
+ * archive of each satisfies the linker and adds nothing to the binary. The vendored relay client
+ * links `pthread` on Android (MP-1b).
+ */
+export const ANDROID_LINK_SHIMS: readonly string[] = Object.freeze(["libpthread.a"]);
+/** An empty `ar` archive: the global header alone. */
+const EMPTY_AR_ARCHIVE = "!<arch>\n";
+
+/** Writes {@link ANDROID_LINK_SHIMS} into `dir` (absolute; created), replacing none that is there already. */
+export async function writeAndroidLinkShims(dir: string): Promise<void> {
+  if (!path.isAbsolute(dir)) throw new TypeError(`the link shim folder must be absolute: ${dir}`);
+  await mkdir(dir, { recursive: true });
+  for (const name of ANDROID_LINK_SHIMS) await writeFile(path.join(dir, name), EMPTY_AR_ARCHIVE, { flag: "wx" });
+}
+
+/** The rustflags that put the shim folder on the linker's search path. */
+export function androidLinkShimRustflags(dir: string): string[] {
+  return ["-L", `native=${dir}`];
+}
 
 /** Why a phone build's output gave no facts. */
 export const MobileFactRefusal = { NotMachO: "not-macho", NotElf: "not-elf" } as const;

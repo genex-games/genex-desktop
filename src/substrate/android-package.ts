@@ -6,7 +6,7 @@
  *   game's application id, title, version and an orientation from {@link AndroidOrientation};
  *   `minSdkVersion` 29, `targetSdkVersion` 36 and the required `android.hardware.vulkan.version`
  *   0x401000 `uses-feature` (WebGPU core needs Vulkan 1.1; there is no GLES tier); no permission
- *   of any kind; NativeActivity with no code ({@link PACKAGED_ACTIVITY}); native libraries loaded
+ *   but the network for a `[net]` game's export ({@link AndroidPermission}); NativeActivity with no code ({@link PACKAGED_ACTIVITY}); native libraries loaded
  *   in place (`extractNativeLibs` false); every configuration change handled in place
  *   ({@link ANDROID_CONFIG_CHANGES}). {@link checkAndroidManifest} holds the text to that.
  * - **The payload** is the lane's admitted `out/` and nothing else ({@link readAndroidPayload}):
@@ -153,6 +153,13 @@ export const ANDROID_ACTIVITIES = {
 /** The activity Genex packages: NativeActivity (no Java code, no AAR closure; M0a.12 left the choice open). */
 export const PACKAGED_ACTIVITY = AndroidActivity.NativeActivity;
 
+/**
+ * The permissions a manifest may ask for. Wire values: never rename one. Only a `[net]` game's export
+ * asks for one, the network (its relay client); every other package asks for none.
+ */
+export const AndroidPermission = { Internet: "android.permission.INTERNET" } as const;
+export type AndroidPermission = (typeof AndroidPermission)[keyof typeof AndroidPermission];
+
 /** The orientations a game may ask for. Wire values: never rename one. */
 export const AndroidOrientation = { Landscape: "landscape", Portrait: "portrait", Any: "any" } as const;
 export type AndroidOrientation = (typeof AndroidOrientation)[keyof typeof AndroidOrientation];
@@ -210,6 +217,8 @@ const MESSAGE = {
   Orientation: (value: string) => `${JSON.stringify(value)} is not an orientation Genex packages`,
   Activity: (value: string) => `the ${value} activity is not packaged in this build of Genex`,
   ManifestRule: (rule: string) => `the manifest breaks a packaging rule: ${rule}`,
+  NoPermission: "no permission of any kind",
+  NetworkOnly: `the network permission (${AndroidPermission.Internet}) alone`,
   NotAdmitted: (rel: string, why: string) => `${rel} is not the build's admitted copy: ${why}`,
   Digest: (rel: string) => `${rel} is not the bytes the build admitted; build again, then export`,
   ExtraLibrary: (rel: string) => `${rel} is a native library besides the game's own; nothing else is packaged`,
@@ -255,6 +264,8 @@ export interface AndroidManifestSpec {
   orientation: AndroidOrientation;
   /** Absent: {@link PACKAGED_ACTIVITY}. */
   activity?: AndroidActivity;
+  /** A `[net]` game's export: the manifest asks for {@link AndroidPermission}`.Internet` and nothing else. Absent: no permission. */
+  network?: boolean;
 }
 
 /**
@@ -276,6 +287,11 @@ const XML_ESCAPES: Readonly<Record<string, string>> = {
 };
 const escapeXml = (text: string): string => text.replace(/[&<>"']/g, (char) => XML_ESCAPES[char] ?? char);
 
+/** The permissions a manifest for `spec` asks for: the network for a `[net]` export, else none. */
+function permissionsOf(spec: Pick<AndroidManifestSpec, "network">): readonly AndroidPermission[] {
+  return spec.network === true ? [AndroidPermission.Internet] : [];
+}
+
 /** The checked fields; a refusal names the field, never echoes a hostile value. */
 function checkedSpec(spec: AndroidManifestSpec) {
   const { applicationId, label, versionCode, versionName, orientation } = spec;
@@ -290,13 +306,23 @@ function checkedSpec(spec: AndroidManifestSpec) {
   if (screen === undefined) throw fail(AndroidPackageProblem.ManifestField, MESSAGE.Orientation(String(orientation)));
   const activity = spec.activity ?? PACKAGED_ACTIVITY;
   if (activity !== PACKAGED_ACTIVITY) throw fail(AndroidPackageProblem.ActivityUnavailable, MESSAGE.Activity(activity));
-  return { applicationId, label, versionCode, versionName, screen, activity: ANDROID_ACTIVITIES[activity] };
+  const activityRow = ANDROID_ACTIVITIES[activity];
+  return {
+    applicationId,
+    label,
+    versionCode,
+    versionName,
+    screen,
+    activity: activityRow,
+    permissions: permissionsOf(spec),
+  };
 }
 
 /**
  * The game's `AndroidManifest.xml`, written from the fixed table: every value checked (a refusal
  * is `manifest-field` or `activity-unavailable`), the title XML-escaped, and nothing a game's own
- * files say. No `<uses-permission>` of any kind; the Vulkan 1.1 feature required.
+ * files say. No `<uses-permission>` but the network for a `[net]` export ({@link
+ * AndroidPermission}); the Vulkan 1.1 feature required.
  */
 export function androidManifestXml(spec: AndroidManifestSpec): string {
   const field = checkedSpec(spec);
@@ -309,6 +335,7 @@ export function androidManifestXml(spec: AndroidManifestSpec): string {
     `    android:versionName="${field.versionName}">`,
     `  <uses-sdk android:minSdkVersion="${ANDROID_PINS.minSdk}" android:targetSdkVersion="${ANDROID_PINS.targetSdk}" />`,
     `  <uses-feature android:name="android.hardware.vulkan.version" android:version="${vulkan}" android:required="true" />`,
+    ...field.permissions.map((name) => `  <uses-permission android:name="${name}" />`),
     "  <application",
     `      android:label="${escapeXml(field.label)}"`,
     `      android:hasCode="${field.activity.hasCode}"`,
@@ -404,7 +431,6 @@ export function androidManifestFacts(text: string): AndroidManifestFacts {
 
 /** The rules a packaged manifest keeps, each named by the sentence a refusal gives. */
 const MANIFEST_RULES: ReadonlyArray<readonly [string, (facts: AndroidManifestFacts) => boolean]> = [
-  ["no permission of any kind", (facts) => facts.permissions.length === 0],
   [`minSdkVersion ${ANDROID_PINS.minSdk}`, (facts) => facts.minSdk === ANDROID_PINS.minSdk],
   [`targetSdkVersion ${ANDROID_PINS.targetSdk}`, (facts) => facts.targetSdk === ANDROID_PINS.targetSdk],
   [
@@ -421,9 +447,34 @@ const MANIFEST_RULES: ReadonlyArray<readonly [string, (facts: AndroidManifestFac
   ],
 ];
 
-/** Refuses (`manifest-field`) a manifest text that breaks a packaging rule. */
-export function checkAndroidManifest(xml: string): AndroidManifestFacts {
+/** The names of the plain `<uses-permission>` elements (no `-sdk-23` spelling), comments removed. */
+function plainPermissions(text: string): string[] {
+  const xml = text.replace(/<!--[\s\S]*?-->/g, "");
+  return (xml.match(/<uses-permission\s[^>]*>/g) ?? []).map((tag) => attributeOf(tag, "android:name") ?? "?");
+}
+
+/** Whether the manifest asks for exactly `granted`, each once, in plain `<uses-permission>` elements. */
+function asksExactly(xml: string, facts: AndroidManifestFacts, granted: readonly AndroidPermission[]): boolean {
+  const plain = plainPermissions(xml);
+  const same = (names: readonly string[]) =>
+    names.length === granted.length && granted.every((name, at) => names[at] === name);
+  return same(facts.permissions) && same(plain);
+}
+
+/**
+ * Refuses (`manifest-field`) a manifest text that breaks a packaging rule: among them, a permission
+ * beyond what `build` grants (the network for a `[net]` export, else none).
+ */
+export function checkAndroidManifest(
+  xml: string,
+  build: Pick<AndroidManifestSpec, "network"> = {},
+): AndroidManifestFacts {
   const facts = androidManifestFacts(xml);
+  const granted = permissionsOf(build);
+  if (!asksExactly(xml, facts, granted)) {
+    const rule = granted.length === 0 ? MESSAGE.NoPermission : MESSAGE.NetworkOnly;
+    throw fail(AndroidPackageProblem.ManifestField, MESSAGE.ManifestRule(rule));
+  }
   const broken = MANIFEST_RULES.find(([, holds]) => !holds(facts));
   if (broken) throw fail(AndroidPackageProblem.ManifestField, MESSAGE.ManifestRule(broken[0]));
   return facts;
@@ -939,7 +990,7 @@ function checkSigning(request: AndroidPackageRequest, bundle: boolean): void {
 /** The manifest written into staging, checked against the rules first. */
 async function stageManifest(staging: string, spec: AndroidManifestSpec): Promise<string> {
   const xml = androidManifestXml(spec);
-  checkAndroidManifest(xml);
+  checkAndroidManifest(xml, spec);
   const file = path.join(staging, "AndroidManifest.xml");
   await writeFile(file, xml, { flag: "wx" });
   return file;

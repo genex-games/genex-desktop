@@ -753,7 +753,8 @@ game file or `genex.toml` key reaches it, so an agent can only suggest it in cha
   script stops on its own message (`main/rust-colyseus.ts`). The store unpacks the pinned assets
   with its own checks: sha256 and size, no link, no entry over 64 MiB, only `ar` libraries
   (`toolchain-store/colyseus.ts`). A Windows export may import `WS2_32.dll` and `CRYPT32.dll`
-  only when it is a `[net]` game's (`RUST_WINDOWS_NET_DLLS`).
+  only when it is a `[net]` game's (`RUST_WINDOWS_NET_DLLS`); an Android manifest asks for
+  `android.permission.INTERNET` only then, and the package check holds it to exactly that.
 - **Conformance gate.** Live's run, an agent's run and every export of an ejected game wait for
   a green `conformance_run` on the build they would use (`conformance-required`); the suite's own
   runs (`check_conformance`) are the only ones the gate lets through. Only the host writes a
