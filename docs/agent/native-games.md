@@ -128,7 +128,12 @@ index ([`stream-facts.ts`](../../src/substrate/asset-import/stream-facts.ts)): a
 lists its levels coarse first with their byte ranges, the head and vertex ranges every level
 needs, and its UV texel density; a KTX2 file's `levels` run smallest first with their ranges.
 `genex.toml`'s `[[asset_group]]` rows become the index's `groups`, and a member of any group is not
-`boot`. A game file at that name is
+`boot`. The receipt's `package.budget` measures the package against its destination's budget
+(`assetBudgetOf` in [`genex-toml.ts`](../../src/substrate/genex-toml.ts), `ASSET_BUDGETS`: web 64 MB,
+iOS and Android 200 MB, desktop 2 GB unless `[assets]` names another): past it an export warns
+`assets-over-budget`, and past a hard cap (the web shell's 512 MB, a phone's 4096 MB)
+`packageCeilingRefusal` refuses the build `assets-over-ceiling`. `[assets] phone_max_texture_px`
+replaces the phone mip cap. A game file at that name is
 refused `reserved-asset-name`. Every lane output passes `admitRustOutput` before
 `out/`, exports carry `rust-notices.ts` notices, phone exports
 ([`mobile-export-deps.ts`](../../src/main/core/mobile-export-deps.ts)) are signed by `mobile-sign.ts`, and a compiled-stack session builds with its lock's tools, never writing the store. The template is checked by

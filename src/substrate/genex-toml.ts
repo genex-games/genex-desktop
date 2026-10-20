@@ -66,6 +66,14 @@
  * name = "castle"           # letters, digits, _ and -; never boot, sim or stream (the build's own groups)
  * paths = ["interiors/castle/**", "props/throne.glb"]  # globs under assets/: *, ? and whole-segment **
  *
+ * [assets]                  # optional: the package's budgets, in MB (C-17, owner call C8)
+ * budget_mb = 300           # every destination's budget: past it an export warns (`assets-over-budget`)
+ * phone_max_texture_px = 2048  # iOS and Android packages drop KTX2 levels above it: 512..=4096, a power of two
+ *
+ * [assets.web]              # one destination's own budget: web, ios, android or desktop (Mac, Windows, Linux)
+ * budget_mb = 64            # defaults web 64, ios 200, android 200, desktop 2048; at most the destination's
+ *                           # hard cap (web 512, the shell's; phones 4096), past which a build is refused
+ *
  * [engine]                  # written by the host alone when the person ejects the engine (level 5)
  * ejected_from = "0.1.0"    # the genex release copied into `engine/`; the build links that fork
  * ```
@@ -211,6 +219,14 @@ export const GenexTomlCode = {
    * under `assets/` (C-30); or more rows than {@link ASSET_GROUP_MAX}.
    */
   InvalidAssetGroup: "invalid-asset-group",
+  /**
+   * An `[assets]` or `[assets.<destination>]` `budget_mb` below {@link ASSET_BUDGET_MIN_MB} or past
+   * the destination's hard cap ({@link ASSET_BUDGETS}; {@link ASSET_BUDGET_MAX_MB} for `[assets]`
+   * and a destination without one).
+   */
+  AssetBudgetOutOfRange: "asset-budget-out-of-range",
+  /** An `[assets] phone_max_texture_px` that is not a power of two from {@link PHONE_TEXTURE_CAP_MIN_PX} to {@link PHONE_TEXTURE_CAP_MAX_PX}. */
+  InvalidTextureCap: "invalid-texture-cap",
 } as const;
 export type GenexTomlCode = (typeof GenexTomlCode)[keyof typeof GenexTomlCode];
 
@@ -249,6 +265,50 @@ const ASSET_GROUP_NAME = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
 const GLOB_SEGMENT = /^[A-Za-z0-9 _.*?-]+$/;
 /** The glob segment that matches any number of whole segments. */
 const ANY_SEGMENTS = "**";
+
+/**
+ * Where a package budget applies: an `[assets.<destination>]` table's name. Mac, Windows and Linux
+ * share one, `desktop`. Wire values (genex.toml keys): never rename one.
+ */
+export const AssetDestination = { Web: "web", Ios: "ios", Android: "android", Desktop: "desktop" } as const;
+export type AssetDestination = (typeof AssetDestination)[keyof typeof AssetDestination];
+
+/** One destination's package budget when the game names none, and the hard cap no package passes (null: none), in MB. */
+export interface AssetBudgetRow {
+  readonly defaultMb: number;
+  readonly ceilingMb: number | null;
+}
+
+/**
+ * Each destination's package budget (owner call C8): web 64 MB, iOS 200 MB (the cellular download
+ * limit), Android 200 MB (the Play base module) and desktop 2 GB. Only the hard caps refuse: the
+ * web shell's 512 MB (genex-platform-web's `MAX_ASSETS_TOTAL_BYTES`) and 4096 MB on a phone.
+ */
+export const ASSET_BUDGETS = Object.freeze({
+  [AssetDestination.Web]: { defaultMb: 64, ceilingMb: 512 },
+  [AssetDestination.Ios]: { defaultMb: 200, ceilingMb: 4096 },
+  [AssetDestination.Android]: { defaultMb: 200, ceilingMb: 4096 },
+  [AssetDestination.Desktop]: { defaultMb: 2048, ceilingMb: null },
+} as const satisfies Record<AssetDestination, AssetBudgetRow>);
+/** The smallest budget a game may name. */
+export const ASSET_BUDGET_MIN_MB = 1;
+/** The largest `[assets] budget_mb`, and a desktop's: a bound on the key, never a refusal of a package. */
+export const ASSET_BUDGET_MAX_MB = 65536;
+/** One megabyte as a package budget counts it: 2^20 bytes. */
+export const ASSET_BUDGET_MB_BYTES = 1024 * 1024;
+/** The smallest and largest `[assets] phone_max_texture_px` (the default is the package step's `PHONE_MAX_TEXTURE_PX`). */
+export const PHONE_TEXTURE_CAP_MIN_PX = 512;
+export const PHONE_TEXTURE_CAP_MAX_PX = 4096;
+/** Which budget each build destination's package is measured against. */
+const ASSET_DESTINATION_OF = Object.freeze({
+  [BuildTarget.Mac]: AssetDestination.Desktop,
+  [BuildTarget.Windows]: AssetDestination.Desktop,
+  [BuildTarget.Linux]: AssetDestination.Desktop,
+  [BuildTarget.Ios]: AssetDestination.Ios,
+  [BuildTarget.Android]: AssetDestination.Android,
+  [BuildTarget.Web]: AssetDestination.Web,
+} as const satisfies Record<BuildTarget, AssetDestination>);
+const ASSET_DESTINATIONS: readonly AssetDestination[] = Object.values(AssetDestination);
 
 /** The world target when `world_size` is absent. */
 const DEFAULT_WORLD_SIZE = [960, 540] as const;
@@ -309,6 +369,22 @@ export interface AssetGroupRow {
   paths: readonly string[];
 }
 
+/** `[assets]` and its `[assets.<destination>]` tables (C-17): the package's budgets, as the game names them. */
+export interface AssetsToml {
+  /** `[assets] budget_mb`: every destination's budget in MB; null: each destination's default. */
+  budgetMb: number | null;
+  /** `[assets] phone_max_texture_px`; null: the package step's default. */
+  phoneMaxTexturePx: number | null;
+  /** Each `[assets.<destination>] budget_mb` the game names, by destination. */
+  destinations: Partial<Record<AssetDestination, number>>;
+}
+
+/** A destination's package budget in bytes: past `budgetBytes` an export warns, past `ceilingBytes` (null: none) a build is refused. */
+export interface AssetBudget {
+  budgetBytes: number;
+  ceilingBytes: number | null;
+}
+
 /** A parsed, checked `genex.toml`. */
 export interface GenexToml {
   title: string;
@@ -335,6 +411,8 @@ export interface GenexToml {
   textures?: readonly TextureRow[];
   /** `[[asset_group]]` rows in file order (C-30); absent from a manifest built by hand. */
   assetGroups?: readonly AssetGroupRow[];
+  /** `[assets]`, or null when the file has none (absent from a manifest built by hand): every default. */
+  assets?: AssetsToml | null;
 }
 
 /** A refusal with its typed code and a short detail naming the offending value (never a host path). */
@@ -383,7 +461,8 @@ export function parseGenexToml(text: string): GenexTomlResult {
     checkCrateRequests(shaped.manifest) ??
     checkWgsl(shaped.manifest) ??
     checkEngine(shaped.manifest) ??
-    checkWeb(shaped.manifest);
+    checkWeb(shaped.manifest) ??
+    checkAssets(shaped.manifest);
   if (checked) return checked;
   const textures = checkTextures(shaped.rawTextures);
   if (!textures.ok) return textures;
@@ -493,6 +572,7 @@ const TOP_KEYS = [
   "physics",
   "texture",
   "asset_group",
+  "assets",
 ] as const;
 const ENGINE_KEYS = ["ejected_from"] as const;
 /** The `[engine]` section header the host writes and removes. */
@@ -523,6 +603,11 @@ const TEXTURE_KEYS: readonly string[] = Object.values(TextureKey);
 /** An `[[asset_group]]` row's keys (genex's `AssetGroupRow`). */
 const AssetGroupKey = { Name: "name", Paths: "paths" } as const;
 const ASSET_GROUP_KEYS: readonly string[] = Object.values(AssetGroupKey);
+/** `[assets]`'s keys (genex's `AssetsSection`): its own two, and a table per destination. */
+const AssetsKey = { BudgetMb: "budget_mb", PhoneMaxTexturePx: "phone_max_texture_px" } as const;
+const ASSETS_KEYS: readonly string[] = [...Object.values(AssetsKey), ...ASSET_DESTINATIONS];
+/** An `[assets.<destination>]` table's one key. */
+const DESTINATION_KEYS: readonly string[] = [AssetsKey.BudgetMb];
 const WGSL_KINDS: readonly string[] = Object.values(WgslKind);
 const NATIVE_FEATURES: readonly string[] = Object.values(NativeEnhancedFeature);
 
@@ -611,6 +696,7 @@ function shapeManifest(document: TomlTable): Shaped {
       render: null,
       wasmBudgetMb: webBudget(document.web),
       physics: physicsEnabled(document.physics),
+      assets: assetsTable(document.assets),
     };
     return { ok: true, manifest, featureNames, render, rawTextures, assetGroups };
   } catch (error) {
@@ -851,6 +937,32 @@ function webBudget(value: TomlValue | undefined): number | null {
   return budget === undefined ? null : integer(budget, `web.${WebKey.WasmBudgetMb}`);
 }
 
+/** An integer key of `found`, or null when it is absent. */
+function optionalInteger(found: TomlTable, key: string, where: string): number | null {
+  return found[key] === undefined ? null : integer(found[key], where);
+}
+
+/** `[assets]` and its destination tables as integers, or null when the file has none (their ranges are {@link checkAssets}'). */
+function assetsTable(value: TomlValue | undefined): AssetsToml | null {
+  if (value === undefined) return null;
+  const assets = table(value, "[assets]");
+  onlyKeys(assets, ASSETS_KEYS, "[assets]");
+  const destinations: Partial<Record<AssetDestination, number>> = {};
+  for (const destination of ASSET_DESTINATIONS) {
+    if (assets[destination] === undefined) continue;
+    const where = `[assets.${destination}]`;
+    const row = table(assets[destination], where);
+    onlyKeys(row, DESTINATION_KEYS, where);
+    const budget = optionalInteger(row, AssetsKey.BudgetMb, `assets.${destination}.${AssetsKey.BudgetMb}`);
+    if (budget !== null) destinations[destination] = budget;
+  }
+  return {
+    budgetMb: optionalInteger(assets, AssetsKey.BudgetMb, `assets.${AssetsKey.BudgetMb}`),
+    phoneMaxTexturePx: optionalInteger(assets, AssetsKey.PhoneMaxTexturePx, `assets.${AssetsKey.PhoneMaxTexturePx}`),
+    destinations,
+  };
+}
+
 /** `[physics] enabled`, true when the file has no table or the table no key. */
 function physicsEnabled(value: TomlValue | undefined): boolean {
   if (value === undefined) return true;
@@ -944,6 +1056,49 @@ export function assetGroupMatches(group: AssetGroupRow, rel: string): boolean {
     compiledGroups.set(group, expressions);
   }
   return expressions.some((expression) => expression.test(rel));
+}
+
+/** Whether `mb` is a budget from the minimum to `maxMb`. */
+const budgetFits = (mb: number, maxMb: number) => mb >= ASSET_BUDGET_MIN_MB && mb <= maxMb;
+
+/** Whether `px` is a phone texture cap: a power of two from the smallest cap to the largest. */
+const isTextureCap = (px: number) =>
+  px >= PHONE_TEXTURE_CAP_MIN_PX && px <= PHONE_TEXTURE_CAP_MAX_PX && (px & (px - 1)) === 0;
+
+/**
+ * `[assets]` names budgets from 1 MB to {@link ASSET_BUDGET_MAX_MB}, each destination's at most its
+ * hard cap, and a phone texture cap that is a power of two from 512 to 4096 px.
+ */
+function checkAssets(manifest: GenexToml): GenexTomlRefusal | null {
+  const assets = manifest.assets ?? null;
+  if (assets === null) return null;
+  const { budgetMb, phoneMaxTexturePx } = assets;
+  if (budgetMb !== null && !budgetFits(budgetMb, ASSET_BUDGET_MAX_MB))
+    return refuse(GenexTomlCode.AssetBudgetOutOfRange, `assets.${AssetsKey.BudgetMb} ${budgetMb}`);
+  for (const destination of ASSET_DESTINATIONS) {
+    const named = assets.destinations[destination];
+    const maxMb = ASSET_BUDGETS[destination].ceilingMb ?? ASSET_BUDGET_MAX_MB;
+    if (named !== undefined && !budgetFits(named, maxMb))
+      return refuse(GenexTomlCode.AssetBudgetOutOfRange, `assets.${destination}.${AssetsKey.BudgetMb} ${named}`);
+  }
+  if (phoneMaxTexturePx !== null && !isTextureCap(phoneMaxTexturePx))
+    return refuse(GenexTomlCode.InvalidTextureCap, `assets.${AssetsKey.PhoneMaxTexturePx} ${phoneMaxTexturePx}`);
+  return null;
+}
+
+/**
+ * The package budget `target` is measured against: its own `[assets.<destination>]` budget, else
+ * `[assets] budget_mb`, else the default (owner call C8), never past the destination's hard cap.
+ */
+export function assetBudgetOf(assets: AssetsToml | null | undefined, target: BuildTarget): AssetBudget {
+  const destination = ASSET_DESTINATION_OF[target];
+  const { defaultMb, ceilingMb } = ASSET_BUDGETS[destination];
+  const named = assets?.destinations[destination] ?? assets?.budgetMb ?? defaultMb;
+  const budgetMb = ceilingMb === null ? named : Math.min(named, ceilingMb);
+  return {
+    budgetBytes: budgetMb * ASSET_BUDGET_MB_BYTES,
+    ceilingBytes: ceilingMb === null ? null : ceilingMb * ASSET_BUDGET_MB_BYTES,
+  };
 }
 
 /** A web budget the game names is a whole number of MB from the minimum to the ceiling. */

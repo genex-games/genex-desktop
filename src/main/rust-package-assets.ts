@@ -25,6 +25,10 @@
  * - **Groups (C-30).** `genex.toml`'s `[[asset_group]]` rows become the index's `groups`, each
  *   listing the assets whose name one of its globs matches (an asset may be in several). An asset
  *   in any group is not `boot`: a game loads it during play; every other asset is.
+ * - **Budget (C-17).** The package's bytes (the index included) are measured against the
+ *   destination's budget (`genex-toml.ts`' `assetBudgetOf`, owner call C8): past it the receipt says
+ *   so and an export warns; past the destination's hard cap (the web shell's 512 MB, a phone's
+ *   4096 MB) {@link packageCeilingRefusal} names the refusal the build answers.
  *
  * Only regular files and folders are walked: a link, a FIFO or anything else in the stage is left
  * out, never followed. Pure over its inputs: two packages of one stage are byte-identical.
@@ -47,14 +51,20 @@ import {
   type TextureLevelFacts,
 } from "../substrate/asset-import/stream-facts.ts";
 import { DESTINATION_TEXTURES, KTX2_VK_FORMAT, TextureCompression } from "../substrate/asset-import/texture-table.ts";
-import { type AssetGroupRow, assetGroupMatches } from "../substrate/genex-toml.ts";
+import {
+  type AssetBudget,
+  type AssetGroupRow,
+  assetBudgetOf,
+  assetGroupMatches,
+  ASSET_BUDGET_MB_BYTES,
+} from "../substrate/genex-toml.ts";
 import type { StagedImportReport } from "./rust-assets.ts";
 
 /** The packaged asset index, at the top of `out/assets`. Reserved: a game's own file there is refused. */
 export const ASSET_INDEX_FILE = "genex-asset-index.json";
 /** The index format this host writes (genex's `info()` reads it). */
 export const ASSET_INDEX_VERSION = 1;
-/** The largest texture side a phone package keeps (`phone_max_texture_px`'s default, C-17 makes it a key). */
+/** The largest texture side a phone package keeps when `genex.toml` names no `[assets] phone_max_texture_px`. */
 export const PHONE_MAX_TEXTURE_PX = 2048;
 /** The largest family KTX2 the package step reads to trim its mips; a larger one goes out untrimmed. */
 const TRIM_READ_MAX_BYTES = 512 * 1024 * 1024;
@@ -70,6 +80,8 @@ const MESH_FACTS_MAX_BYTES = 256 * 1024 * 1024;
 export const PackageRefusal = {
   /** A game file at a name the package step writes ({@link ASSET_INDEX_FILE}). */
   ReservedAssetName: "reserved-asset-name",
+  /** The package passes its destination's hard cap (C-17): the web shell's 512 MB, a phone's 4096 MB. */
+  AssetsOverCeiling: "assets-over-ceiling",
 } as const;
 export type PackageRefusal = (typeof PackageRefusal)[keyof typeof PackageRefusal];
 
@@ -197,6 +209,16 @@ export interface PackageTrimmed {
   bytesAfter: number;
 }
 
+/** The package measured against its destination's budget (C-17). */
+export interface AssetPackageBudget {
+  /** Past it an export warns (`assets-over-budget`). */
+  budgetBytes: number;
+  /** Past it the build is refused ({@link PackageRefusal.AssetsOverCeiling}); null: the destination has none. */
+  ceilingBytes: number | null;
+  withinBudget: boolean;
+  withinCeiling: boolean;
+}
+
 /** The package's record in the build receipt (`package`). */
 export interface AssetPackageReport {
   target: BuildTarget;
@@ -208,6 +230,7 @@ export interface AssetPackageReport {
   bytesBy: Record<string, number>;
   dropped: PackageDropped[];
   trimmed: PackageTrimmed[];
+  budget: AssetPackageBudget;
 }
 
 /** One build's package: the stage's assets, where they go, and what the index draws on. */
@@ -225,7 +248,14 @@ export interface AssetPackageRequest {
   textureCapPx?: number;
   /** `genex.toml`'s checked `[[asset_group]]` rows (C-30); absent: none. */
   groups?: readonly AssetGroupRow[];
+  /** The budget the package is measured against (`assetBudgetOf`); absent: the destination's default. */
+  budget?: AssetBudget;
 }
+
+const MESSAGE = {
+  overCeiling: (target: BuildTarget, bytes: number, ceilingBytes: number) =>
+    `${PackageRefusal.AssetsOverCeiling}: the ${target} package is ${bytes} bytes, past its ${ceilingBytes / ASSET_BUDGET_MB_BYTES} MB cap`,
+};
 
 /** The stage's folder of game assets, and the package's in `out/`. */
 const ASSETS_DIR = "assets";
@@ -544,14 +574,37 @@ export async function packageAssets(request: AssetPackageRequest): Promise<Asset
   const text = `${JSON.stringify(index)}\n`;
   await writeFile(path.join(request.to, ASSET_INDEX_FILE), text);
   const indexBytes = Buffer.byteLength(text);
+  const bytes = files.reduce((sum, file) => sum + file.bytes, indexBytes);
   return {
     target: request.target,
-    bytes: files.reduce((sum, file) => sum + file.bytes, indexBytes),
+    bytes,
     files: files.length + 1,
     bytesBy: bytesBy(files, assets, indexBytes),
     dropped,
     trimmed,
+    budget: measured(bytes, request.budget ?? assetBudgetOf(null, request.target)),
   };
+}
+
+/** `bytes` against `budget`: within each bound when it is at most that bound. */
+function measured(bytes: number, budget: AssetBudget): AssetPackageBudget {
+  const { budgetBytes, ceilingBytes } = budget;
+  return {
+    budgetBytes,
+    ceilingBytes,
+    withinBudget: bytes <= budgetBytes,
+    withinCeiling: ceilingBytes === null || bytes <= ceilingBytes,
+  };
+}
+
+/**
+ * The refusal line of a package past its destination's hard cap (`assets-over-ceiling: …`, naming
+ * its size and the cap); null for one within it, however far past its budget.
+ */
+export function packageCeilingRefusal(report: AssetPackageReport): string | null {
+  const { ceilingBytes, withinCeiling } = report.budget;
+  if (withinCeiling || ceilingBytes === null) return null;
+  return MESSAGE.overCeiling(report.target, report.bytes, ceilingBytes);
 }
 
 /** Whether every family a destination's package lists is one its texture table may pick. */

@@ -82,6 +82,7 @@ import {
   WGSL_EXTENSION_APIS,
 } from "../../src/shared/render-quality.ts";
 import {
+  assetBudgetOf,
   assetGroupMatches,
   checkTargetFeatures,
   checkWgslFiles,
@@ -419,6 +420,127 @@ describe("genex.toml: [[asset_group]] rows name groups of assets loaded during p
   for (const [name, row, code] of REFUSED_GROUPS) {
     it(`refuses ${name} with ${code}`, () => {
       assert.equal(refusedCode(parseGenexToml(`${GAME}${row}`)), code);
+    });
+  }
+});
+
+const MIB = 1024 * 1024;
+const assetsRow = (lines: string) => `${GAME}[assets]\n${lines}`;
+const destinationRow = (destination: string, lines: string) => `${GAME}[assets.${destination}]\n${lines}`;
+
+/** `[assets]` texts refused, each with its code (C-17). */
+const REFUSED_ASSETS: Array<[string, string, string]> = [
+  ["a budget of 0 MB", assetsRow("budget_mb = 0\n"), GenexTomlCode.AssetBudgetOutOfRange],
+  ["a negative budget", assetsRow("budget_mb = -5\n"), GenexTomlCode.AssetBudgetOutOfRange],
+  ["a budget past any destination's bound", assetsRow("budget_mb = 65537\n"), GenexTomlCode.AssetBudgetOutOfRange],
+  [
+    "a web budget past the 512 MB shell cap",
+    destinationRow("web", "budget_mb = 513\n"),
+    GenexTomlCode.AssetBudgetOutOfRange,
+  ],
+  ["an iOS budget past 4096 MB", destinationRow("ios", "budget_mb = 4097\n"), GenexTomlCode.AssetBudgetOutOfRange],
+  [
+    "an Android budget past 4096 MB",
+    destinationRow("android", "budget_mb = 4097\n"),
+    GenexTomlCode.AssetBudgetOutOfRange,
+  ],
+  ["a desktop budget of 0 MB", destinationRow("desktop", "budget_mb = 0\n"), GenexTomlCode.AssetBudgetOutOfRange],
+  [
+    "a texture cap that is no power of two",
+    assetsRow("phone_max_texture_px = 1000\n"),
+    GenexTomlCode.InvalidTextureCap,
+  ],
+  ["a texture cap below 512", assetsRow("phone_max_texture_px = 256\n"), GenexTomlCode.InvalidTextureCap],
+  ["a texture cap above 4096", assetsRow("phone_max_texture_px = 8192\n"), GenexTomlCode.InvalidTextureCap],
+  ["a float budget", assetsRow("budget_mb = 64.5\n"), GenexTomlCode.Syntax],
+  ["a string budget", assetsRow('budget_mb = "64"\n'), GenexTomlCode.Syntax],
+  ["an unknown [assets] key", assetsRow("max_files = 9\n"), GenexTomlCode.Syntax],
+  ["an unknown destination", destinationRow("switch", "budget_mb = 9\n"), GenexTomlCode.Syntax],
+  ["a destination per OS (mac is desktop)", destinationRow("mac", "budget_mb = 9\n"), GenexTomlCode.Syntax],
+  ["a texture cap per destination", destinationRow("ios", "phone_max_texture_px = 1024\n"), GenexTomlCode.Syntax],
+  ["[assets] as an array", `${GAME}[[assets]]\nbudget_mb = 9\n`, GenexTomlCode.Syntax],
+];
+
+// Owner call C8: web 64 MB, iOS 200 MB, Android 200 MB, desktop 2 GB; an export past its budget warns
+// (`assets-over-budget`) and only a hard cap refuses (`assets-over-ceiling`): the web shell's 512 MB.
+describe("genex.toml: [assets] budgets per destination (C-17, owner call C8)", () => {
+  it("reads [assets] budget_mb and phone_max_texture_px, and each [assets.<destination>] budget_mb", () => {
+    const manifest = accepted(
+      `${GAME}[assets]\nbudget_mb = 300\nphone_max_texture_px = 1024\n\n[assets.web]\nbudget_mb = 48\n\n[assets.desktop]\nbudget_mb = 4096\n`,
+    );
+    assert.deepEqual(manifest.assets, {
+      budgetMb: 300,
+      phoneMaxTexturePx: 1024,
+      destinations: { web: 48, desktop: 4096 },
+    });
+  });
+
+  it("names no budgets when the file has no [assets], and none of a key the table leaves out", () => {
+    assert.equal(accepted(GAME).assets, null);
+    assert.deepEqual(accepted(`${GAME}[assets]\n`).assets, {
+      budgetMb: null,
+      phoneMaxTexturePx: null,
+      destinations: {},
+    });
+    assert.deepEqual(accepted(destinationRow("ios", "budget_mb = 150\n")).assets, {
+      budgetMb: null,
+      phoneMaxTexturePx: null,
+      destinations: { ios: 150 },
+    });
+  });
+
+  const defaults: Array<[BuildTarget, number, number | null]> = [
+    [BuildTarget.Web, 64, 512],
+    [BuildTarget.Ios, 200, 4096],
+    [BuildTarget.Android, 200, 4096],
+    [BuildTarget.Mac, 2048, null],
+    [BuildTarget.Windows, 2048, null],
+    [BuildTarget.Linux, 2048, null],
+  ];
+  for (const [target, budgetMb, ceilingMb] of defaults) {
+    it(`a game that names no budget gets ${budgetMb} MB on ${target}, ceiling ${ceilingMb ?? "none"}`, () => {
+      assert.deepEqual(assetBudgetOf(null, target), {
+        budgetBytes: budgetMb * MIB,
+        ceilingBytes: ceilingMb === null ? null : ceilingMb * MIB,
+      });
+      assert.deepEqual(assetBudgetOf(accepted(GAME).assets, target), assetBudgetOf(null, target));
+    });
+  }
+
+  it("a destination's own budget beats [assets] budget_mb, which beats the default", () => {
+    const { assets } = accepted(`${GAME}[assets]\nbudget_mb = 300\n\n[assets.ios]\nbudget_mb = 150\n`);
+    assert.equal(assetBudgetOf(assets, BuildTarget.Ios).budgetBytes, 150 * MIB);
+    assert.equal(assetBudgetOf(assets, BuildTarget.Android).budgetBytes, 300 * MIB);
+    assert.equal(assetBudgetOf(assets, BuildTarget.Linux).budgetBytes, 300 * MIB);
+    assert.equal(assetBudgetOf(assets, BuildTarget.Web).budgetBytes, 300 * MIB);
+  });
+
+  it("an [assets] budget_mb above a destination's hard cap is that cap there, never past it", () => {
+    const { assets } = accepted(assetsRow("budget_mb = 8000\n"));
+    assert.deepEqual(assetBudgetOf(assets, BuildTarget.Web), { budgetBytes: 512 * MIB, ceilingBytes: 512 * MIB });
+    assert.deepEqual(assetBudgetOf(assets, BuildTarget.Ios), {
+      budgetBytes: 4096 * MIB,
+      ceilingBytes: 4096 * MIB,
+    });
+    assert.deepEqual(assetBudgetOf(assets, BuildTarget.Mac), { budgetBytes: 8000 * MIB, ceilingBytes: null });
+  });
+
+  it("admits each budget at its bounds: 1 MB, the web shell's 512 MB, the phones' 4096 MB", () => {
+    for (const text of [
+      assetsRow("budget_mb = 1\n"),
+      destinationRow("web", "budget_mb = 512\n"),
+      destinationRow("ios", "budget_mb = 4096\n"),
+      destinationRow("android", "budget_mb = 4096\n"),
+      assetsRow("phone_max_texture_px = 512\n"),
+      assetsRow("phone_max_texture_px = 4096\n"),
+    ]) {
+      accepted(text);
+    }
+  });
+
+  for (const [name, text, code] of REFUSED_ASSETS) {
+    it(`refuses ${name} with ${code}`, () => {
+      assert.equal(refusedCode(parseGenexToml(text)), code);
     });
   }
 });
