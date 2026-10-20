@@ -221,7 +221,8 @@ fn more_triangles_than_the_cap_are_refused_too_large_before_anything_is_read() {
 fn the_wire_spellings_are_the_designs() {
     assert_eq!(NavErrorCode::InputInvalid.wire(), "nav-input-invalid");
     assert_eq!(NavErrorCode::TooLarge.wire(), "nav-too-large");
-    assert_eq!(NavErrorCode::ALL, [NavErrorCode::InputInvalid, NavErrorCode::TooLarge]);
+    // NAV-2 appends `nav-tile-invalid` and `nav-config-invalid` after these two.
+    assert_eq!(NavErrorCode::ALL[..2], [NavErrorCode::InputInvalid, NavErrorCode::TooLarge]);
 }
 
 // ---- Red row 2: a terrain window is the matching slice of the whole triangulation ----

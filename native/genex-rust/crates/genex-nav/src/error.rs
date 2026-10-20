@@ -15,17 +15,28 @@ pub enum NavErrorCode {
     /// Bake input over a cap: more than [`crate::input::NAV_INPUT_TRIANGLES_MAX`] triangles or
     /// [`crate::input::NAV_AREA_VOLUMES_MAX`] area volumes (NAV-3, `input.rs`).
     TooLarge,
+    /// Tile bytes that are not a tile: short, another format version, a digest that does not
+    /// match, a count over a cap, an index past its table or a non-finite vertex (NAV-2,
+    /// `tile.rs`).
+    TileInvalid,
+    /// A bake config that cannot be baked: a size that is not positive and finite, a slope
+    /// outside (0, 90) degrees, or a tile that is not a whole number of cells or is over
+    /// [`crate::bake::NAV_TILE_CELLS_MAX`] cells a side (NAV-2, `bake.rs`).
+    ConfigInvalid,
 }
 
 impl NavErrorCode {
     /// Every code, in declaration order.
-    pub const ALL: [NavErrorCode; 2] = [NavErrorCode::InputInvalid, NavErrorCode::TooLarge];
+    pub const ALL: [NavErrorCode; 4] =
+        [NavErrorCode::InputInvalid, NavErrorCode::TooLarge, NavErrorCode::TileInvalid, NavErrorCode::ConfigInvalid];
 
     /// The code's wire spelling.
     pub const fn wire(self) -> &'static str {
         match self {
             NavErrorCode::InputInvalid => "nav-input-invalid",
             NavErrorCode::TooLarge => "nav-too-large",
+            NavErrorCode::TileInvalid => "nav-tile-invalid",
+            NavErrorCode::ConfigInvalid => "nav-config-invalid",
         }
     }
 }
@@ -48,6 +59,16 @@ impl NavError {
     /// A `nav-too-large` refusal.
     pub fn too_large(detail: impl Into<String>) -> NavError {
         NavError { code: NavErrorCode::TooLarge, detail: detail.into() }
+    }
+
+    /// A `nav-tile-invalid` refusal.
+    pub fn tile_invalid(detail: impl Into<String>) -> NavError {
+        NavError { code: NavErrorCode::TileInvalid, detail: detail.into() }
+    }
+
+    /// A `nav-config-invalid` refusal.
+    pub fn config_invalid(detail: impl Into<String>) -> NavError {
+        NavError { code: NavErrorCode::ConfigInvalid, detail: detail.into() }
     }
 }
 
