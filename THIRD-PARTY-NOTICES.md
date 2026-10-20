@@ -15,8 +15,8 @@ licenses and terms of included third-party software.
   `@modelcontextprotocol/sdk`, `@xterm/*`, `zod` and their dependencies) keep their license
   files in the packaged `node_modules`.
 - Electron supplies its own license and Chromium notices.
-- On macOS, cua-driver (MIT) keeps its license and cua's notices under `dist/resources/cua-driver`
-  ([Vendored Cua Driver](#vendored-cua-driver-cua-driver)).
+- On macOS and Windows, cua-driver (MIT) keeps its license and cua's notices under
+  `dist/resources/cua-driver` ([Vendored Cua Driver](#vendored-cua-driver-cua-driver)).
 - On Windows, Git for Windows (GPL-2.0 and its components' licenses) keeps its `LICENSE.txt` and
   `usr/share/licenses` under `resources/git`
   ([Bundled Git for Windows](#bundled-git-for-windows)).
@@ -108,10 +108,11 @@ Basis Universal decoders to `dist/renderer/decoders`.
 
 ## Vendored Cua Driver (cua-driver)
 
-On macOS, computer control runs cua-driver 0.35.2 from [trycua/cua](https://github.com/trycua/cua)
-(MIT, Copyright (c) 2025 Cua AI, Inc.), bundled as `dist/resources/cua-driver/cua-driver`: the
-executable from cua's release, thinned to the app's architecture and signed with the app's identity
-(`scripts/vendor-cua-driver.ts`). Its license and cua's third-party notices for that release
+On macOS and Windows, computer control runs cua-driver 0.35.2 from
+[trycua/cua](https://github.com/trycua/cua) (MIT, Copyright (c) 2025 Cua AI, Inc.), bundled as
+`dist/resources/cua-driver/cua-driver` (`cua-driver.exe` on Windows): the executable from cua's
+release, on macOS thinned to the app's architecture and signed with the app's identity, on Windows
+as cua signed it (`scripts/vendor-cua-driver.ts`). Its license and cua's third-party notices for that release
 (code derived from trope-cua, Interface-Agent, yabai, QuickJS-ng, rquickjs and T3 Code, all MIT)
 ship beside it as `LICENSE.md` and `THIRD_PARTY_NOTICES.md`, copied from `build/cua-driver/`. The
 bundled copy runs with cua's telemetry and update check turned off.
@@ -202,8 +203,8 @@ generation for the film.
 These need an owner decision before public distribution; see
 [release readiness](docs/release-readiness.md#distribution-and-open-source).
 
-- Genex UI sources: components, theme tokens, the wordmark and the catalog-search engine were
-  adapted from the owner's `genex-cli-threejs` web app (`src/renderer/ui/GENEX-SOURCES.md`).
+- Genex UI sources: components, theme tokens, the wordmark, the coin mark and the catalog-search
+  engine were adapted from the owner's `genex-cli-threejs` web app (`src/renderer/ui/GENEX-SOURCES.md`).
   The owner's contributed adaptations are covered by the root MIT license. Genex's name and
   logo identify the product; the code license does not grant trademark rights.
 - The Genex guide https://genex.games/SKILL.md, vendored as `src/plugins/genex/skills/genex`:

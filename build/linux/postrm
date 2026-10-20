@@ -1,7 +1,8 @@
 #!/bin/sh
 # Take away the AppArmor profile postinst installed, on remove and purge. An upgrade keeps it: the
 # new version's postinst writes it again. The Genex package repository and its key go the same way:
-# with the app gone, apt has nothing to update from it. Nothing here may fail the removal.
+# with the app gone, apt has nothing to update from it, and so does the app's own copy of bubblewrap.
+# Nothing here may fail the removal.
 
 PROFILE_NAME=genex
 PROFILE="${DPKG_ROOT:-}/etc/apparmor.d/$PROFILE_NAME"
@@ -19,10 +20,17 @@ remove_repository() {
   rm -f "${DPKG_ROOT:-}/etc/apt/sources.list.d/genex.list" "${DPKG_ROOT:-}/etc/apt/keyrings/genex.asc"
 }
 
+# The copy of bubblewrap postinst put beside the app, which no package file owns.
+remove_own_bubblewrap() {
+  rm -f "${DPKG_ROOT:-}/usr/lib/genex/bwrap"
+  rmdir "${DPKG_ROOT:-}/usr/lib/genex" 2>/dev/null || true
+}
+
 case "$1" in
   remove | purge)
     remove_profile
     remove_repository
+    remove_own_bubblewrap
     ;;
 esac
 

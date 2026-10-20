@@ -16,8 +16,8 @@ import { makeResources } from "../helpers/resources.ts";
 import { tmpDir } from "../helpers/tmp.ts";
 
 test("fixtures lists the one exported fixture list without a profile or app", async () => {
-  // Flipped from 28: asset-library joined the list (from 27: genex-terms, 26: roblox-game, 25: building-card, 24: paused-build, 23: plugin-updates, 22: open-projects, 21: stills-game).
-  assert.equal(FIXTURE_NAMES.length, 29);
+  // Flipped from 29: agents-start-failed joined the list (from 28: asset-library, 27: genex-terms, 26: roblox-game, 25: building-card, 24: paused-build, 23: plugin-updates, 22: open-projects, 21: stills-game).
+  assert.equal(FIXTURE_NAMES.length, 30);
   for (const added of [
     "first-launch",
     "notifications",
@@ -35,6 +35,7 @@ test("fixtures lists the one exported fixture list without a profile or app", as
     "roblox-game",
     "genex-terms",
     "asset-library",
+    "agents-start-failed",
   ])
     assert.ok((FIXTURE_NAMES as readonly string[]).includes(added), added);
   assert.deepEqual(await main(["fixtures"]), { fixtures: [...FIXTURE_NAMES] });

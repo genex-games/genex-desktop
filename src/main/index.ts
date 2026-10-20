@@ -70,6 +70,7 @@ import {
   activateChatFixture,
   DevProviders,
   FIRST_LAUNCH_STATUS,
+  FIXTURE_AGENTS_FAILURE,
   FIXTURE_SANDBOX_PROBLEM,
   FIXTURE_UPDATE_RELEASE,
   FixtureName,
@@ -131,7 +132,8 @@ import {
 import { devStandAccountPort } from "./dev/dev-stand-account.ts";
 import { fixtureAccountPort } from "./dev/fixture-genex-account.ts";
 import { openGenexPage } from "./genex-browser.ts";
-import { fixtureGamePage, fixturePlayRequest } from "./dev/fixture-play.ts";
+import { fixtureGamePage, fixtureGetCoin, fixturePlayRequest } from "./dev/fixture-play.ts";
+import { FIXTURE_CONFIRM_ORIGIN } from "./dev/fixture-coin.ts";
 import { launchFixtureAccount } from "./dev/fixture-people.ts";
 import {
   fixtureUpload,
@@ -163,7 +165,9 @@ import { type MentionSources, vendorAssetModule } from "./core/mention-tags.ts";
 import type { PlayViewer } from "./play/viewer.ts";
 import { playMicStore } from "./play/mic-store.ts";
 import { playViewsOf, wirePlayViewer } from "./play/viewer-view.ts";
+import { purchaseConfirmOrigin } from "./play/purchase-window.ts";
 import { type PlayComments, playComments } from "./play/comments.ts";
+import { type PlayCoin, playCoin } from "./play/coin.ts";
 import { playOrigins } from "./play/origins.ts";
 import { PLAY_ORIGIN, type PlayPoint } from "../shared/play.ts";
 import { registerRunsIpc } from "./ipc/runs.ts";
@@ -199,6 +203,7 @@ import { windowControlsPainter } from "./window-chrome.ts";
 import { appUserModelId, installedWorkingDir, runSquirrelStep, squirrelStartup } from "./windows-install.ts";
 import { BootPhase, type SandboxProblem, StartStep, StudioPlatform } from "../shared/boot.ts";
 import { SandboxUnavailableError } from "../substrate/sandbox-unavailable.ts";
+import { type Painter, paintWhileUsed } from "../substrate/paint-while-used.ts";
 import { longPath } from "../substrate/windows-sandbox.ts";
 import { installWindowsSandbox } from "../substrate/windows-sandbox-setup.ts";
 import { toolchain } from "../substrate/toolchain.ts";
@@ -957,7 +962,8 @@ function attachPreviews(studio: StudioCore, win: BrowserWindow): void {
   // normal compositor never fires requestAnimationFrame, whatever backgroundThrottling says,
   // so a game in it stood still — the computer-smoke fixture reported frame 0 after a
   // 600 ms W hold. Offscreen rendering paints the frames itself at 60 fps, so a worker's
-  // window keeps simulating while the worker plays in it.
+  // window keeps simulating while the worker plays in it — and only then: a window nobody has
+  // called for a minute stops painting until the next call (`paint-while-used.ts`).
   const used = new Set<number>();
   studio.options.createHeadlessPreview = async () => {
     let slot = 1;
@@ -1149,6 +1155,29 @@ function playCommentsFor(studio: StudioCore): PlayComments {
   });
 }
 
+/**
+ * genex.games' coin for a game's purchase sheet, as the Genex account. Only its reads end the sign-in
+ * on a refused token (`refused`): a confirm or cancel genex.games refuses refuses Studio's sheet, not
+ * the account, so the request is not wrapped in `refusingRequest` here.
+ */
+function playCoinFor(studio: StudioCore): PlayCoin {
+  const account = genexAccountFor(studio);
+  return playCoin({
+    request: fixtureNativePolicy ? fixturePlayRequest : networkRequest(globalThis.fetch, playOrigin.api),
+    token: account.token,
+    now: Date.now,
+    localImages: fixtureNativePolicy,
+    refused: account.refused,
+  });
+}
+
+/** The purchase sheet's Sign in: the app's own Genex sign-in in the browser; how it went shows on the sheet's next read. */
+function signInToGenex(studio: StudioCore): void {
+  void genexAccountFor(studio)
+    .signIn()
+    .catch(() => undefined);
+}
+
 /** Play's full-screen viewer in `win`: a published game, the studio's bar over its top edge. */
 function attachPlay(studio: StudioCore, win: BrowserWindow): void {
   playView = wirePlayViewer({
@@ -1166,6 +1195,15 @@ function attachPlay(studio: StudioCore, win: BrowserWindow): void {
     barPreload: path.join(distRoot, "preload", "play-bar.cjs"),
     comments: playCommentsFor(studio),
     ...(gameAi ? { ai: gameAi.play } : {}),
+    coin: playCoinFor(studio),
+    account: { signIn: () => signInToGenex(studio) },
+    // Get coin: genex.games in the browser; a fixture launch opens nothing and tops its balance up.
+    openPage: (url) => {
+      if (fixtureNativePolicy) fixtureGetCoin();
+      else void openOutside(studio, win, url);
+    },
+    // A fixture launch's stand-in game confirms on a website that resolves nowhere (`fixture-coin.ts`).
+    confirmOrigin: fixtureNativePolicy ? FIXTURE_CONFIRM_ORIGIN : purchaseConfirmOrigin(playOrigin),
   });
 }
 
@@ -1219,7 +1257,22 @@ function createFacetPreview(studio: StudioCore, index: number, released: () => v
     else facetWin.setSize(width, height);
     port.setBounds({ x: 0, y: 0, width, height });
   };
-  return port;
+  return paintWhileUsed(port, facetPainter(port));
+}
+
+/** A facet window's painting, on whichever page its view holds now (`create` can replace it). */
+function facetPainter(port: GamePreview): Painter {
+  const page = (): Electron.WebContents | null => {
+    const wc = port.view?.webContents;
+    return wc && !wc.isDestroyed() ? wc : null;
+  };
+  return {
+    start: () => {
+      const wc = page();
+      if (wc && !wc.isPainting()) wc.startPainting();
+    },
+    stop: () => page()?.stopPainting(),
+  };
 }
 
 /** Collected before the first load so a renderer that fails on boot is diagnosable. */
@@ -1970,6 +2023,7 @@ async function launchStudio(studio: StudioCore): Promise<StartedStudio | null> {
     if (fixture) await activateChatFixture(studio, fixture);
     if (fixture?.project) await openFixtureGame(win, fixture.project);
     announceReady(userData);
+    showFixtureAgentsFailure(userData);
     const view = requirePreview();
     if (dev && __STUDIO_DEV_BUILD__) devRuntime = await startDevRuntime(dev, studio, win, view);
     return { core: studio, window: win, preview: view };
@@ -1985,6 +2039,12 @@ function announceReady(userData: string): void {
   studioLog.write("main", `studio ready at ${Math.round(performance.now())} ms`);
   // Rows a closed app left unsent go now, or are dropped once a week old.
   void runSharing.flush().catch((err) => studioLog.write("main", errorMessage(err)));
+}
+
+/** The agents-start-failed fixture: a started studio shows the agents' line, and its Try again just clears it. */
+function showFixtureAgentsFailure(userData: string): void {
+  if (!fixtureProviders || dev?.fixture !== FixtureName.AgentsStartFailed) return;
+  showAgentsFailure(FIXTURE_AGENTS_FAILURE, async () => announceReady(userData));
 }
 
 /** The game view `createWindow` attached; every started window has one. */
@@ -2058,8 +2118,8 @@ async function openFixtureGame(win: BrowserWindow, project: string): Promise<voi
 }
 
 /**
- * Boot the harness; false when it would not, and the window says so instead of the studio. A
- * developer or smoke launch throws, as its runner reads the failure from stderr.
+ * Boot the harness; false when it would not, and the studio's sidebar says so. A developer or smoke
+ * launch throws, as its runner reads the failure from stderr.
  */
 async function startHarness(studio: StudioCore): Promise<boolean> {
   try {
@@ -2068,25 +2128,24 @@ async function startHarness(studio: StudioCore): Promise<boolean> {
     return true;
   } catch (err) {
     if (dev || isSmoke) throw err;
-    await showStartFailure(studio, err);
+    showAgentsFailure(errorMessage(err), async () => {
+      await studio.start();
+      announceReady(userDataRoot);
+    });
     return false;
   }
 }
 
 /**
- * Hold the window on "Genex couldn't start" with the harness's error, Try again, a report and Quit,
- * and load it again to show that. It was an error box over the window, which quit the app when it
- * was closed. Try again boots the harness again and finishes the launch; a failure there shows its
- * own words.
+ * The studio's window is open, so it stays: the games and Play work without the harness, and the
+ * sidebar says the agents didn't start, with Try again (`retry`) and a report. On Windows the
+ * harness waits on a sandbox that starts behind the open window, so this can come a minute after
+ * the window opened. A Try again that fails shows its own words.
  */
-async function showStartFailure(studio: StudioCore, err: unknown): Promise<void> {
-  const failure = errorMessage(err);
+function showAgentsFailure(failure: string, retry: () => Promise<void>): void {
   studioLog.write("main", `harness would not start: ${failure}`);
-  bootGate.fail(failure, async () => {
-    await studio.start();
-    announceReady(userDataRoot);
-  });
-  await reshowBoot();
+  bootGate.agentsFailed(failure, retry);
+  pushUiEvent({ type: UiEvent.HarnessStartFailed, payload: { failure } });
 }
 
 /** The developer runtime, once the renderer shows its threads. */

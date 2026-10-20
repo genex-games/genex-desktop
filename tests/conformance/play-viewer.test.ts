@@ -22,165 +22,15 @@ import {
 } from "../../src/main/play/game-address.ts";
 import { BAR_FADE_MS, BAR_LINGER_MS, BAR_SHOWN_MS } from "../../src/main/play/bar-reveal.ts";
 import { closePage, closeWithWindow, dropGameView } from "../../src/main/play/view-drop.ts";
-import {
-  BAR_EDGE_PX,
-  NOTE_MS,
-  type PlayViewerDeps,
-  playViewer,
-  SHOW_GAME_AFTER_MS,
-} from "../../src/main/play/viewer.ts";
+import { BAR_EDGE_PX, NOTE_MS, SHOW_GAME_AFTER_MS } from "../../src/main/play/viewer.ts";
 import type { PlayComment } from "../../src/shared/play-comments.ts";
 import { type PlayAiBar, PlayAiPhase, PlayBarOverlay } from "../../src/shared/play-bar.ts";
 import { AiDoor, AiFunding } from "../../src/shared/game-ai.ts";
-import {
-  PLAY_BAR_HEIGHT,
-  type PlayBarState,
-  PlayControl,
-  PlayNote,
-  type PlayViewerEvent,
-  PlayViewerPhase,
-} from "../../src/shared/play.ts";
+import { PLAY_BAR_HEIGHT, PlayControl, PlayNote, PlayViewerPhase } from "../../src/shared/play.ts";
+import { esc, MINTED, NOT_MINTED, rig, SIGNED_OUT, saved, settle, WINDOW, WORLD } from "../helpers/play-viewer-rig.ts";
 
 /** A long session in a game: longer than any of the viewer's own timers. */
 const LONG_PLAY_MS = 30 * 60_000;
-const WINDOW = { width: 1440, height: 900 };
-
-const MINTED: PlayTicket = { status: TicketStatus.Minted, ticket: "T1" };
-const SIGNED_OUT: PlayTicket = { status: TicketStatus.SignedOut };
-const NOT_MINTED: PlayTicket = { status: TicketStatus.NotMinted };
-
-/** An Esc press in the game: down, or up again. */
-const esc = (type: "keyDown" | "keyUp") => ({ type, key: "Escape", isAutoRepeat: false });
-
-const WORLD: PlayWorld = {
-  id: "cm1",
-  slug: "lost-cathedral",
-  title: "Lost Cathedral",
-  multiplayer: true,
-  likes: 3,
-  liked: false,
-  remixable: true,
-  cloneUrl: "https://git.genex.games/u-1/lost-cathedral.git",
-  author: "Simeon M",
-  authorId: null,
-  plays: 5300,
-  online: 8,
-  comments: 2,
-};
-
-/** A fake clock whose timers run when the test advances it. */
-function fakeClock() {
-  let now = 0;
-  const timers = new Map<number, { at: number; run: () => void }>();
-  let next = 1;
-  return {
-    clock: {
-      setTimeout: (run: () => void, ms: number) => {
-        const id = next++;
-        timers.set(id, { at: now + ms, run });
-        return id;
-      },
-      clearTimeout: (id: unknown) => void timers.delete(id as number),
-    },
-    advance(ms: number) {
-      now += ms;
-      for (const [id, timer] of [...timers].sort((a, b) => a[1].at - b[1].at)) {
-        if (timer.at > now) continue;
-        timers.delete(id);
-        timer.run();
-      }
-    },
-  };
-}
-
-/** Let the viewer's awaited calls settle. */
-const settle = () => new Promise<void>((resolve) => setImmediate(resolve));
-
-/** A comment as the fake genex.games saves one. */
-const saved = (body: string): PlayComment => ({
-  id: "c9",
-  body,
-  at: 0,
-  author: { id: "u-1", name: "Rab", imageUrl: null, avatarVariant: 0 },
-  mine: true,
-});
-
-/** A viewer over recording fakes. */
-function rig(
-  overrides: Partial<PlayViewerDeps["gallery"]> & {
-    web?: string;
-    comments?: Partial<PlayViewerDeps["comments"]>;
-    barFades?: boolean;
-    barFocused?: () => boolean;
-  } = {},
-) {
-  const { clock, advance } = fakeClock();
-  const log: string[] = [];
-  const events: PlayViewerEvent[] = [];
-  const copied: string[] = [];
-  const opened: string[] = [];
-  const deps: PlayViewerDeps = {
-    gallery: {
-      world: async () => WORLD,
-      ticket: async () => MINTED,
-      setLiked: async (_id, liked) => ({ liked, likes: liked ? 4 : 3 }),
-      inviteCode: async () => "abc",
-      ...overrides,
-    },
-    gameUrl: (slug, ticket) => `game:${slug}:${ticket ?? "guest"}`,
-    window: {
-      contentSize: () => WINDOW,
-      buttons: (visible) => log.push(`buttons ${visible ? "shown" : "hidden"}`),
-      barFades: overrides.barFades ?? true,
-    },
-    game: {
-      open: (url) => {
-        opened.push(url);
-        log.push("game.open");
-      },
-      show: (bounds) => log.push(`game.show ${bounds.x},${bounds.y} ${bounds.width}x${bounds.height}`),
-      hide: () => log.push("game.hide"),
-      focus: () => log.push("game.focus"),
-      close: () => log.push("game.close"),
-    },
-    bar: {
-      show: (bounds) => log.push(`bar.show ${bounds.x},${bounds.y} ${bounds.width}x${bounds.height}`),
-      hide: () => log.push("bar.hide"),
-      focus: () => log.push("bar.focus"),
-      focused: overrides.barFocused ?? (() => false),
-      warm: () => log.push("bar.warm"),
-    },
-    comments: {
-      list: async (id, cursor) => {
-        log.push(`comments.list ${id} ${cursor ?? "first"}`);
-        return { items: [], nextCursor: null };
-      },
-      post: async (id, body) => {
-        log.push(`comments.post ${id}`);
-        return saved(String(body));
-      },
-      remove: async (id, commentId) => void log.push(`comments.remove ${id} ${String(commentId)}`),
-      ...overrides.comments,
-    },
-    clipboard: (text) => copied.push(text),
-    web: overrides.web ?? "https://genex.games",
-    emit: (event) => events.push(event),
-    clock,
-    // Voice chat has its own suite (play-mic.test.ts); these games never ask for a microphone.
-    mic: {
-      access: async () => true,
-      command: () => {},
-      menu: () => {},
-      openSettings: () => {},
-      store: { on: () => false, setOn: () => {}, device: () => null, setDevice: () => {} },
-    },
-  };
-  const viewer = playViewer(deps);
-  /** The header as last drawn. */
-  const bar = (): PlayBarState | undefined => events.findLast((event) => event.bar)?.bar;
-  return { viewer, log, events, bar, copied, opened, advance };
-}
-
 describe("Play viewer", () => {
   it("opens a game signed in, its header drawn with the game's likes and facts", async () => {
     const { viewer, events, opened, bar } = rig();
@@ -205,6 +55,7 @@ describe("Play viewer", () => {
         comments: null,
         signedIn: null,
         remixing: false,
+        purchase: null,
       },
     });
     assert.deepEqual(opened, ["game:lost-cathedral:T1"]);
@@ -223,6 +74,7 @@ describe("Play viewer", () => {
       comments: 2,
       signedIn: true,
       remixing: false,
+      purchase: null,
     });
     assert.equal(viewer.showing(), "lost-cathedral");
   });

@@ -72,7 +72,9 @@ certificates out of the checkout and do not give pull-request code release crede
 
 Retain the candidate's checksums, inventory, notices and signed-asset verification. Validate
 `codesign`, Gatekeeper and stapling on macOS, and Authenticode on Windows. The workflow validates tag/version and main ancestry before signing access, then requires full
-regression, terminal and gallery checks. Build-only dispatches use the `candidate` environment
+regression, terminal and gallery checks. An urgent fix may skip the regression with the repository
+variable `RELEASE_REGRESSION=skip` (the builds then start after validation); dispatch a build-only
+run on `main` after publication to run it, and unset the variable. Build-only dispatches use the `candidate` environment
 and receive no signing secrets. Draft upload requires verified macOS signing plus the macOS and
 Linux packaged smokes. Windows is built and tested every release, cannot hold the draft back, and
 joins it once its job passed (`windowsShips` in `scripts/release-policy.mjs`): signed when

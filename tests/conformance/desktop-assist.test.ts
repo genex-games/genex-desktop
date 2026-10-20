@@ -24,6 +24,7 @@ import {
   assistGrants,
   declaredEngineApps,
   declaredPlayerApps,
+  engineAppIds,
   engineAssist,
 } from "../../src/main/core/desktop-assist.ts";
 import { desktopControl } from "../../src/main/core/desktop-control.ts";
@@ -353,7 +354,8 @@ async function toyWithAssist(): Promise<string> {
 }
 
 describe("the apps engines declare", () => {
-  const plugin = (enabled: boolean, engine: { apps?: { mac?: string[] }; playerApps?: { mac?: string[] } }) => ({
+  type Apps = { mac?: string[]; windows?: string[] };
+  const plugin = (enabled: boolean, engine: { apps?: Apps; playerApps?: Apps }) => ({
     enabled,
     removed: false,
     manifest: {
@@ -366,8 +368,24 @@ describe("the apps engines declare", () => {
       plugin(true, { apps: { mac: ["com.kiln.Editor"] }, playerApps: { mac: ["com.kiln.Player"] } }),
       plugin(false, { playerApps: { mac: ["com.off.Player"] } }),
     ];
-    assert.deepEqual([...declaredPlayerApps(plugins)], ["com.kiln.Player"]);
-    assert.deepEqual([...declaredEngineApps(plugins)], ["com.kiln.Editor"]);
+    assert.deepEqual([...declaredPlayerApps(plugins, "darwin")], ["com.kiln.Player"]);
+    assert.deepEqual([...declaredEngineApps(plugins, "darwin")], ["com.kiln.Editor"]);
+  });
+
+  it("names them on Windows by executable, as the desktop does, whatever case the manifest wrote", () => {
+    const plugins = [
+      plugin(true, {
+        apps: { mac: ["com.kiln.Editor"], windows: ["KilnEditor.exe"] },
+        playerApps: { mac: ["com.kiln.Player"], windows: ["KilnPlayerBeta.exe"] },
+      }),
+    ];
+    assert.deepEqual([...declaredEngineApps(plugins, "win32")], ["kilneditor.exe"]);
+    assert.deepEqual([...declaredPlayerApps(plugins, "win32")], ["kilnplayerbeta.exe"]);
+    assert.deepEqual(
+      engineAppIds({ mac: ["com.kiln.Editor"] }, "win32"),
+      [],
+      "a Mac-only engine declares nothing here",
+    );
   });
 });
 

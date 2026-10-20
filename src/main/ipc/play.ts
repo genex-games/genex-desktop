@@ -97,6 +97,8 @@ export function registerPlayIpc(handle: IpcHandle, deps: PlayIpcDeps): void {
   // The bar names a control (and where it is, for a menu); the viewer acts only on one it knows.
   handle("studio:play.control", async (payload) => viewer()?.control(payload?.control, readPlayPoint(payload?.at)));
   handle("studio:play.bar", async (payload) => viewer()?.hold(payload));
+  // The purchase sheet's answer: the viewer reads it, and pays or cancels only the purchase it holds.
+  handle("studio:play.purchase", async (payload) => viewer()?.answerPurchase(payload));
   registerCommentsIpc(handle, viewer);
 }
 

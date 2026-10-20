@@ -9,9 +9,9 @@ import type { AiModelTag } from "./game-ai-views.ts";
 import type { StudioApi } from "./studio-api.ts";
 
 /**
- * The studio calls the bar's layer may make: the viewer's news, its controls, its game's comments and
- * AI. Get credits reads the packs and the person's auto top-up, and saves its switch; every spend
- * still waits for a card's yes or checkout in the browser.
+ * The studio calls the bar's layer may make: the viewer's news, its controls, its game's comments,
+ * purchase sheet and AI. Get credits reads the packs and the person's auto top-up, and saves its
+ * switch; every spend still waits for a card's yes or checkout in the browser.
  */
 export const PLAY_BAR_CALLS = [
   "onEvent",
@@ -32,6 +32,7 @@ export const PLAY_BAR_CALLS = [
   "gameAiCredits",
   "gameAiSettings",
   "gameAiSettingsSave",
+  "playPurchase",
 ] as const satisfies readonly (keyof StudioApi)[];
 
 /** The bridge the bar's layer gets. */

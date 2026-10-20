@@ -1132,7 +1132,7 @@ export interface StudioSettingsView {
   blender?: boolean;
   /** Resume builds automatically after an engine limit resets or the loop restarts; on by default. */
   autoResume?: boolean;
-  /** Let agents control your computer (Settings → Permissions, macOS); off by default. */
+  /** Let agents control your computer (Settings → Permissions, macOS and Windows); off by default. */
   computerControl?: boolean;
 }
 // ↑ src/shared/studio-api.ts

@@ -9,7 +9,7 @@
  * `BootRoot` chooses between these, the studio itself, and nothing while main has not answered yet.
  */
 import { type JSX, type ReactNode, useState } from "react";
-import { type InstallCommand, type SandboxProblem, StartStep, toolPackage } from "../shared/boot.ts";
+import { type InstallCommand, type SandboxProblem, StartStep, toolPackage, WindowsSetupNeed } from "../shared/boot.ts";
 import { App } from "./App.tsx";
 import { useAppLoaderDismissal } from "./app-loader.ts";
 import { type Boot, BootView, bootView, canSetUp, SetupReport } from "./state/boot.ts";
@@ -203,6 +203,7 @@ export function WindowsSetup({
       title={words.title}
     >
       <p className={step === WindowsStep.Failed ? "text-orange" : "text-ink-2"}>{words.line}</p>
+      {problem.windowsNeeds?.includes(WindowsSetupNeed.LogonService) && <LogonServiceLine step={step} />}
       {step === WindowsStep.SettingUp && <WorkingLine text={WORDS.windows.settingUp.step} />}
       {step === WindowsStep.NeedsOk && (
         <div className="pt-2">
@@ -215,6 +216,19 @@ export function WindowsSetup({
         <SetupFailed error={error} report={report} onSetUp={onSetUp} onReport={onReport} />
       )}
     </AnimationCard>
+  );
+}
+
+/**
+ * Windows' Secondary Logon service is disabled: Set up turns it back on, and after a Set up that
+ * could not, the line says how to do it by hand.
+ */
+function LogonServiceLine({ step }: { step: WindowsStep }): JSX.Element {
+  const words = WORDS.windows.logonService;
+  return (
+    <p data-windows-need={WindowsSetupNeed.LogonService} className="text-ink-2">
+      {step === WindowsStep.Failed ? words.fix : words.line}
+    </p>
   );
 }
 

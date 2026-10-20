@@ -59,3 +59,11 @@ Read from the owner's same sibling checkout, kept read-only:
 
 `shared/game-cover.ts` and the default geometric placeholder are original procedural code for
 this task. Existing fonts, logo paths and third-party notices are unchanged.
+
+## Coin mark
+
+Read from the owner's same repository (its checkout `genex-demo` holds the commit above), at
+`origin/main` `b275f132905d5e9d5b9429acf6396fbbf8cb9144` (19 October 2026), kept read-only:
+`apps/web/components/credits/CoinIcon.tsx` → `play/CoinMark.tsx`: genex.games' 11×10 pixel coin,
+row for row, and the light and shade of its one gold (45% of the gold in white, 65% in black), as
+the `--coin` tokens in `styles/play.css`. The component is written anew; its other palettes are not used.

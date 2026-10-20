@@ -358,6 +358,35 @@ along it every 1.3s. No "Loading" word; nothing of it draws once the game plays.
 navy card with a blue hairline, Back to Play and Try again; offline it says "You're offline" over
 the signal, "<game> opens as soon as you're back online.", and opens it by itself once back.
 
+A game's coin purchase is Studio's own sheet, never genex.games' page: Comments' dialog over the
+game dimmed by black at 50%, a 440px card (the popover colour, a 1px line edge, 16px corners, 20px
+padding, 16px between rows), with the bar left down under it. A 32px ✕ in ink at 6% sits top right.
+Rows: the game (its 28px 16:9 cover and title); the item (a 72px picture with 12px corners, or the
+plain tile with the box glyph; its name 20/28 medium with "× 5" in ink-3 above one; a game-priced
+payment's terms whole in ink-3 in a scroll area at most 120px tall with the scroll fade, so the
+price and the buttons always show); the price box (ink at 4% with an inset soft line, 12px corners):
+Price and the coin mark, "75 coin" 16/22 medium, "$0.75" in mono 12/16 ink-3, then under a line
+"Your balance 1,240 → 1,165 coin" in mono 13, the balance before paying quieter; and Cancel beside
+the one thing to do, right-aligned, 32px with 9px corners, the primary in Play's blue. The coin mark
+is genex.games' own 11×10 pixel coin (`CoinMark.tsx`) in `--coin` gold, its light 45% of the gold
+in white and its shade 65% in black; never the blue credits shard, since coin pays for what games sell
+and credits for making. Pay stays disabled for a second after the sheet shows; a press before then,
+a held key or the window's focus changing starts the second again. Paying shows the spinner and
+"Paying…" with Cancel and ✕ at half opacity. Paid tints the price box green (8%, a 30% inset edge),
+puts "✓ Paid" in the paid ink, badges the picture with a 24px green check and leaves only Back to
+game. Not enough coin shows the balance and "N more needed" in the short orange, Cancel and Get coin
+↗ with the note "Opens genex.games. Pay comes back once the coin lands."; once the coin arrives,
+Review; after genex.games refused Pay for want of coin, Back to game, Get coin and "Try again in the
+game once the coin lands." Sign in, Pending (a clock beside its title) and Failed are a title and
+body above the item in a compact 40px row (in ink-3, its picture at 0.6, when Failed): Failed reads
+"This purchase timed out", "…was canceled", "…didn't go through" or "…was refunded", each "Try again
+in the game."; a refunded one says the coin went back to the balance, never that none was charged.
+The game writes the item's words: they wrap anywhere, run in their own direction (`unicode-bidi:
+isolate`, direction controls removed) and are never cut. On the light theme the coin is a deeper
+gold and the green and orange words mix toward the ink to read at 4.5:1. The buttons keep the app's
+controls font. Focus starts on Cancel (Back once it is over) and stays in the card; Esc, ✕ or a left
+click outside cancels (or goes back), and nothing answers while Paying.
+
 At the sidebar's foot in Play, while the Genex plugin is missing, off or not connected, sits the
 Genex card: an 8px-inset surface card with a 19:10 muted looping film (`play-publish.mp4`, rendered
 with Remotion from `design/play-publish-video/`; its poster under Reduce Motion; paused while a game

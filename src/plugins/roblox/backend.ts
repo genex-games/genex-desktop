@@ -237,7 +237,7 @@ export interface RobloxDeps extends PlaceActionDeps {
   answers(): Promise<boolean>;
   /**
    * Whether Genex can click in Studio for the person here (Do it for me, Publish an update); when
-   * absent, the host is asked (`game.engine.canAssist`: a desktop with its driver, on a Mac only).
+   * absent, the host is asked (`game.engine.canAssist`: a desktop with its driver, on a Mac or a PC).
    */
   canClick?(): boolean;
   /** The shipped Genex helper file. */

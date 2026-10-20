@@ -12,9 +12,19 @@
   --play-placeholder: color-mix(in oklab, var(--ink) 6%, transparent);
   /* A liked heart and the like's sparks. */
   --play-like: #ff5c7a;
+  /* genex.games' coin (`CoinMark.tsx`): its gold, lit and shaded by mixing in white and black. */
+  --coin: #f2af48;
+  --coin-light: color-mix(in srgb, var(--coin) 45%, #ffffff);
+  --coin-dark: color-mix(in srgb, var(--coin) 65%, #000000);
+  /* The purchase sheet's green and orange words: the green lifted toward the ink; on the light theme the
+     orange too, so both read on white. */
+  --purchase-paid-ink: color-mix(in oklab, var(--green) 72%, var(--ink));
+  --purchase-short-ink: var(--orange);
 }
 :root[data-theme="light"] {
   --play-icon: #1f6fd6;
+  --coin: #c27405;
+  --purchase-short-ink: color-mix(in oklab, var(--orange) 60%, var(--ink));
 }
 
 /* Play's selected look, genex.games' blue secondary (its Invite and agent buttons): the blue at 12%
@@ -992,8 +1002,9 @@
   pointer-events: none;
   -webkit-app-region: no-drag;
 }
-/* An overlay (Comments, what the AI pill opens) covers the window: the bar under it drags nothing. */
-.play-bar-layer[data-overlay] .play-viewer-bar {
+/* An overlay (Comments, what the AI pill opens) or a purchase sheet covers the window: the bar under
+   its dimmed backdrop drags nothing. */
+.play-bar-layer:is([data-overlay], [data-sheet]) .play-viewer-bar {
   -webkit-app-region: no-drag;
 }
 /* Clear of macOS's traffic lights, on one line with them; on Windows and Linux, clear of the window
@@ -1480,14 +1491,16 @@
 /* The viewer's Comments: the app's dialog over the game, dimmed. A 480px card at least 520px tall,
    its title the count, its list scrolling inside with a soft fade at its foot, and a footer pinned
    under it: one line and Sign in, or the comment field with Post inside its right end. */
-.play-comments-scrim {
+.play-comments-scrim,
+.play-purchase-scrim {
   position: fixed;
   inset: 0;
   z-index: 210;
   background: rgb(0 0 0 / 0.5);
   animation: play-fade-in 150ms ease-out both;
 }
-.play-comments-scrim[data-state="closed"] {
+.play-comments-scrim[data-state="closed"],
+.play-purchase-scrim[data-state="closed"] {
   animation: play-fade-out 150ms ease-in both;
 }
 .play-comments {
@@ -1540,7 +1553,8 @@
   font-weight: 500;
   line-height: 28px;
 }
-.play-comments-close {
+.play-comments-close,
+.play-purchase-close {
   position: absolute;
   top: 14px;
   right: 14px;
@@ -1556,7 +1570,8 @@
     background-color var(--duration-quick),
     color var(--duration-quick);
 }
-.play-comments-close:hover {
+.play-comments-close:hover,
+.play-purchase-close:enabled:hover {
   background: color-mix(in oklab, var(--ink) 11%, transparent);
   color: var(--ink);
 }
@@ -1765,6 +1780,311 @@
   outline: none;
 }
 
+/* A game's coin purchase (`PlayPurchase.tsx`): Comments' dialog over the dimmed game, a 440px card. The
+   game, the item, the price with the balance (a receipt tinted green once paid), and Cancel beside the
+   one thing to do, right-aligned. A game writes the item's words: they wrap anywhere and run in their
+   own direction, and the description scrolls in a bounded area so the price and the buttons stay in
+   view. On a window too short for it all, the card itself scrolls. */
+.play-purchase {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  z-index: 211;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  width: min(440px, calc(100vw - 32px));
+  max-height: calc(100vh - 32px);
+  padding: 20px;
+  overflow-y: auto;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: var(--popover);
+  box-shadow: 0 10px 30px rgb(0 0 0 / 0.45);
+  color: var(--ink);
+  font-size: 14px;
+  line-height: 20px;
+  translate: -50% -50%;
+  outline: none;
+  animation: play-comments-in 200ms var(--ease-smooth-out) both;
+}
+.play-purchase-close {
+  z-index: 1;
+}
+.play-purchase-close:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.play-purchase :is(button, .play-purchase-description):focus-visible {
+  outline: 2px solid var(--focus-edge);
+  outline-offset: 2px;
+}
+.play-purchase-game {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding-inline-end: 40px;
+}
+.play-purchase-game-title {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.play-purchase :is(.play-purchase-game-title, .play-purchase-name, .play-purchase-description) {
+  unicode-bidi: isolate;
+}
+.play-purchase-item {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+.play-purchase-item-text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.play-purchase-title {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 500;
+  line-height: 28px;
+  overflow-wrap: anywhere;
+}
+.play-purchase-quantity {
+  margin-inline-start: 6px;
+  color: var(--ink-3);
+  font-weight: 400;
+  white-space: nowrap;
+}
+.play-purchase-description {
+  max-height: 120px;
+  overflow-y: auto;
+  color: var(--ink-3);
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+}
+.play-purchase-body {
+  margin: 0;
+  color: var(--ink-3);
+}
+/* The item's picture, 72px (40px in short), or a plain tile with a box; a green check once paid. */
+.play-purchase-picture {
+  position: relative;
+  flex: none;
+  width: 72px;
+  height: 72px;
+}
+.play-purchase-picture[data-compact] {
+  width: 40px;
+  height: 40px;
+}
+.play-purchase-picture > :is(img, .play-purchase-placeholder) {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: 100%;
+  border-radius: 12px;
+  object-fit: cover;
+  outline: 1px solid var(--line-soft);
+  outline-offset: -1px;
+}
+.play-purchase-picture[data-compact] > :is(img, .play-purchase-placeholder) {
+  border-radius: 8px;
+}
+.play-purchase-placeholder {
+  background: var(--play-placeholder);
+  color: var(--ink-3);
+}
+.play-purchase-badge {
+  position: absolute;
+  right: -6px;
+  bottom: -6px;
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--green);
+  box-shadow: 0 0 0 3px var(--popover);
+  color: var(--popover);
+}
+/* The price box: the price, then the balance under a line; the receipt tints it green. */
+.play-purchase-price {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  gap: 12px;
+  margin: 0;
+  padding: 14px 16px;
+  border-radius: 12px;
+  background: color-mix(in oklab, var(--ink) 4%, transparent);
+  box-shadow: inset 0 0 0 1px var(--line-soft);
+}
+.play-purchase-price[data-paid] {
+  background: color-mix(in srgb, var(--green) 8%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--green) 30%, transparent);
+}
+.play-purchase-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+}
+.play-purchase-row + .play-purchase-row {
+  padding-top: 12px;
+  border-top: 1px solid var(--line-soft);
+}
+.play-purchase-price[data-paid] .play-purchase-row + .play-purchase-row {
+  border-top-color: color-mix(in srgb, var(--green) 20%, transparent);
+}
+.play-purchase-row > :is(dt, dd) {
+  margin: 0;
+}
+.play-purchase-row > dt {
+  color: var(--ink-3);
+  line-height: 22px;
+}
+.play-purchase-row > dt.play-purchase-paid {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--purchase-paid-ink);
+}
+.play-purchase-amount {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+}
+.play-purchase-coins {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 16px;
+  font-weight: 500;
+  line-height: 22px;
+  white-space: nowrap;
+}
+.play-purchase-usd,
+.play-purchase-short,
+.play-purchase-note {
+  font: 12px / 16px var(--font-family-mono);
+}
+.play-purchase-usd {
+  color: var(--ink-3);
+}
+.play-purchase-short {
+  color: var(--purchase-short-ink);
+}
+.play-purchase-figures {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font: 13px / 20px var(--font-family-mono);
+  white-space: nowrap;
+}
+/* The balance before paying reads quieter than what it comes to. */
+.play-purchase-was {
+  color: var(--ink-3);
+}
+/* Signed out, Pending, Failed: a title with a line of news, then the item in short. */
+.play-purchase-notice {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.play-purchase-notice > .play-purchase-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.play-purchase-clock {
+  color: var(--purchase-short-ink);
+}
+.play-purchase-compact {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: color-mix(in oklab, var(--ink) 4%, transparent);
+  box-shadow: inset 0 0 0 1px var(--line-soft);
+}
+.play-purchase-compact[data-dimmed] {
+  color: var(--ink-3);
+}
+.play-purchase-compact[data-dimmed] .play-purchase-picture {
+  opacity: 0.6;
+}
+.play-purchase-compact-name {
+  display: -webkit-box;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+.play-purchase-compact .play-purchase-coins {
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 20px;
+}
+/* Cancel quiet, the one thing to do in Play's blue: 32px buttons with 9px corners and 13px labels, as
+   Comments' actions are, in the app's controls font as every Button is; a note under them, right-aligned. */
+.play-purchase-foot {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  gap: 12px;
+}
+.play-purchase-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.play-purchase-action {
+  height: 32px;
+  padding-inline: 14px;
+  border-radius: 9px;
+  font-size: 13px;
+  line-height: 18px;
+}
+.play-purchase-action[data-variant="secondary"] {
+  padding-inline: 12px;
+  background: color-mix(in oklab, var(--ink) 6%, transparent);
+  color: var(--ink);
+}
+.play-purchase-action[data-variant="secondary"]:enabled:hover {
+  background: color-mix(in oklab, var(--ink) 11%, transparent);
+}
+.play-purchase-note {
+  margin: 0;
+  color: var(--ink-3);
+  text-align: end;
+}
+/* The coin mark's pixels: light, mid and shade of the coin's gold. */
+.coin-mark {
+  display: inline-block;
+  flex: none;
+  vertical-align: middle;
+}
+.coin-mark rect[data-shade="L"] {
+  fill: var(--coin-light);
+}
+.coin-mark rect[data-shade="M"] {
+  fill: var(--coin);
+}
+.coin-mark rect[data-shade="D"] {
+  fill: var(--coin-dark);
+}
+
 /* Reduce Motion: things change in place; Play's shimmer and slides hold still. */
 @media (prefers-reduced-motion: reduce) {
   .play-viewer-bar[data-down] {
@@ -1788,6 +2108,8 @@
   .play-card-placeholder,
   .play-comments,
   .play-comments-scrim,
+  .play-purchase,
+  .play-purchase-scrim,
   .play-comment-skeleton-avatar::before,
   .play-comment-skeleton-line::before,
   .play-viewer,

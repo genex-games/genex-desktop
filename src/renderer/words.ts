@@ -33,9 +33,11 @@ import { AutoResumeCause, type CustomEvent, type CustomPayload } from "../shared
 import { EngineFailureKind } from "../shared/engine-requests.ts";
 import { LocalServerProblem } from "../shared/local-server.ts";
 import { COMPUTER_SETTING_QUESTION, type GithubLookupProblem } from "../shared/plugins.ts";
+import { computerControlOffered, desktopStopShortcut } from "../shared/computer-control.ts";
 import type { GenexPublishPhase } from "../shared/genex.ts";
 import { PlayCategory, PlayNote, PlayShelf, RemixStep } from "../shared/play.ts";
 import { CreditKind } from "../shared/play-credits.ts";
+import { PurchaseProblem } from "../shared/play-purchase.ts";
 import { AvatarBody, AvatarEyes, AvatarGear, BlockState } from "../shared/avatar-recipe.ts";
 import { HANDLE_LENGTH, HandleState } from "../shared/handle.ts";
 import { MakingKind } from "../shared/asset-making.ts";
@@ -1464,13 +1466,21 @@ export const AUTO_RESUME_SETTING_WORDS = {
     "When a session limit resets, a while after a model provider’s outage, or when Studio’s loop restarts, a paused build picks up where it left off, up to twice per build. A build you stop stays stopped, and one paused on a sign-in waits for you.",
 } as const;
 
-/** Settings → Permissions: the switch that lets agents ask to control the person's Mac. */
+/** Settings → Permissions: the switch that lets agents ask to control the person's computer. */
 export const COMPUTER_CONTROL_SETTING_WORDS = {
   section: "Computer control",
   label: "Let agents control your computer",
-  detail:
-    "With this on, an agent can click and type in the apps you allow. Each chat session asks you first, and ⌃⌥⌘Esc stops it. Agents can look at an app’s window without it, never at password managers, System Settings, password prompts or Genex. macOS only.",
 } as const;
+
+/** What the switch says on `platform`: how to stop it there and what it never touches, or where it runs. */
+export function computerControlDetail(platform: string): string {
+  const can = "With this on, an agent can click and type in the apps you allow.";
+  if (!computerControlOffered(platform)) return `${can} macOS and Windows only.`;
+  const stops = `Each chat session asks you first, and ${desktopStopShortcut(platform).keys} stops it.`;
+  if (platform === StudioPlatform.Windows)
+    return `${can} ${stops} It never uses password managers, Windows Settings, password prompts or Genex.`;
+  return `${can} ${stops} Agents can look at an app’s window without it, never at password managers, System Settings, password prompts or Genex.`;
+}
 
 export function resumedWords(parts: number): string {
   const done = Math.max(0, Math.trunc(parts || 0));
@@ -1881,6 +1891,7 @@ export const WORKER_STOP_WORDS = {
   [WorkerStopCode.RunEnded]: "The Loop ended first",
   [WorkerStopCode.StoppedByLead]: "The lead stopped it",
   [WorkerStopCode.Error]: "It ran into an error",
+  [WorkerStopCode.SandboxUnavailable]: "Claude Code can't run workers on this computer yet",
 } as const satisfies Record<WorkerStopCode, string>;
 
 /** Text as a sentence: its first letter capitalized, and a full stop when it has no end of its own. */
@@ -2420,6 +2431,21 @@ export const GENEX_TERMS_WORDS = {
   /** Opens genex.games' terms page in the browser. */
   review: "Review",
   reviewLabel: "Review Genex terms on genex.games",
+} as const;
+
+/** The sidebar's line while the open studio's agents would not start (`AgentsStartLine.tsx`). */
+export const AGENTS_START_WORDS = {
+  line: "Agents didn’t start",
+  /** The line while Try again runs. */
+  starting: "Starting agents",
+  tryAgain: "Try again",
+  /** The line's own name, which opens why. */
+  detailsLabel: "Why the agents didn’t start",
+  report: "Send a report",
+  sending: "Sending…",
+  /** The bare ✓'s label, once the report went. */
+  sent: "Report sent",
+  reportFailed: "The report didn’t send. Try again in a moment.",
 } as const;
 
 export const PLUGIN_UPDATE_WORDS = {
@@ -3386,6 +3412,11 @@ export const SANDBOX_SETUP_WORDS = {
       /** The bare ✓'s label, once the report went. */
       sent: "Report sent",
       reportFailed: "The report didn’t send. Try again in a moment.",
+    },
+    /** Windows' Secondary Logon service is disabled: agents start through it. */
+    logonService: {
+      line: "Secondary Logon is turned off on this PC. Set up turns it back on, since agents start through it.",
+      fix: "Turn on Secondary Logon in Windows Services (Startup type: Manual), then try again.",
     },
   },
   /** A Windows window opened before the core: what the start is doing, by `StartStep`. */
@@ -4372,6 +4403,60 @@ export const PLAY_WORDS = {
       if (days < 365) return unit(Math.floor(days / 30), "month");
       return unit(Math.floor(days / 365), "year");
     },
+  },
+  /** A game's coin purchase, over the dimmed game. Amounts arrive written (`1,240 coin`). */
+  purchase: {
+    close: "Close",
+    price: "Price",
+    balance: "Your balance",
+    /** Read between the balance and what it comes to, in place of the arrow. */
+    afterPaying: "after paying",
+    coin: (amount: string) => `${amount} coin`,
+    quantity: (count: string) => `× ${count}`,
+    cancel: "Cancel",
+    pay: (amount: string) => `Pay ${amount}`,
+    /** Pay with no price read: never pressable. */
+    payBare: "Pay",
+    paying: "Paying…",
+    paid: "Paid",
+    receipt: (game: string) => `${game} has your receipt.`,
+    back: "Back to game",
+    moreNeeded: (amount: string) => `${amount} more needed`,
+    getCoin: "Get coin",
+    getCoinNote: "Opens genex.games. Pay comes back once the coin lands.",
+    /** genex.games already ended the purchase for want of coin: it cannot come back here. */
+    overNote: "Try again in the game once the coin lands.",
+    review: "Review",
+    coinArrived: "Your coin arrived. Review the purchase, then pay.",
+    signedOutTitle: "Sign in to buy things in games",
+    signedOutBody: "Coin lives in your Genex account. Sign in once, then pay here.",
+    signIn: "Sign in to Genex",
+    signInNote: "Opens your browser. You’ll come back here to pay.",
+    signedInTitle: "You’re signed in",
+    signedInBody: "Review the purchase, then pay.",
+    pendingTitle: "Still checking the payment",
+    pendingBody: (game: string) =>
+      `Genex hasn’t confirmed it yet. ${game} finishes the purchase once it does. You won’t be charged twice.`,
+    /** How a purchase that ended unpaid (or refunded) reads: only a refusal may say it was refused. */
+    failed: {
+      [PurchaseProblem.Expired]: {
+        title: "This purchase timed out",
+        body: "Try again in the game. No coin was reserved or charged.",
+      },
+      [PurchaseProblem.Canceled]: {
+        title: "This purchase was canceled",
+        body: "Try again in the game. No coin was charged.",
+      },
+      [PurchaseProblem.Refused]: {
+        title: "This purchase didn’t go through",
+        body: "Try again in the game. No coin was charged.",
+      },
+      /** Paid, then given back: the coin was charged, so never "No coin was charged". */
+      [PurchaseProblem.Refunded]: {
+        title: "This purchase was refunded",
+        body: "Try again in the game. The coin went back to your balance.",
+      },
+    } satisfies Record<PurchaseProblem, { title: string; body: string }>,
   },
   promo: {
     label: "Genex account",

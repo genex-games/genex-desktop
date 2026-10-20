@@ -1,18 +1,30 @@
 /**
  * What the studio needs from a desktop driver: the plug between the desktop target
- * (`main/core/desktop-target.ts`) and whatever moves the real pointer — cua-driver on this Mac
- * (`cua-driver-client.ts`), or the computer server inside a VM. Coordinates are the driver's own
+ * (`main/core/desktop-target.ts`) and whatever moves the real pointer — cua-driver on this Mac or
+ * PC (`cua-driver-client.ts`), or the computer server inside a VM. Coordinates are the driver's own
  * screen space (points on macOS); the target scales the model's screenshot pixels to it.
  *
  * Electron-free; tests satisfy it with a plain object.
  */
+import path from "node:path";
 
 /** An app on the desktop, as the driver names it. */
 export interface DesktopApp {
   name: string;
-  /** The app's bundle identifier (macOS), when the driver knows it. */
+  /**
+   * The app's identifier, when the driver knows it: its bundle identifier on macOS, its
+   * executable's name on Windows ({@link windowsAppId}).
+   */
   bundleId: string | null;
   pid: number | null;
+}
+
+/**
+ * A Windows app's identifier: its executable's file name in lower case (`robloxplayerbeta.exe`), as
+ * Windows names a process and engine manifests name an app; Windows reads file names in any case.
+ */
+export function windowsAppId(exe: string): string {
+  return path.win32.basename(exe).toLowerCase();
 }
 
 /** What has the keyboard: the app in front, and whether the focused field is a secure (password) one. */

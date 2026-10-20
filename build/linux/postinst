@@ -54,10 +54,34 @@ add_repository() {
   echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/genex.asc] https://packages.genex.games stable main" > "$APT_LIST"
 }
 
+# Ubuntu 24.10 and later confine /usr/bin/bwrap itself (AppArmor's bwrap-userns-restrict): its
+# children run under unpriv_bwrap, which denies every capability, so the nested user namespace the
+# sandbox's seccomp step makes is refused and no agent process starts. A copy beside the app
+# attaches to no profile of its own and runs under genex's, as bubblewrap does on 24.04; the app
+# uses it when it is there (src/substrate/spawn.ts). Each install and upgrade copies it afresh. A
+# setuid bubblewrap is left alone: a copy would lose the bit it relies on.
+SYSTEM_BWRAP="$ROOT/usr/bin/bwrap"
+OWN_BWRAP="$ROOT/usr/lib/genex/bwrap"
+BWRAP_RESTRICTION="$ROOT/etc/apparmor.d/bwrap-userns-restrict"
+
+own_bubblewrap() {
+  if [ ! -e "$BWRAP_RESTRICTION" ] || [ ! -x "$SYSTEM_BWRAP" ] || [ -u "$SYSTEM_BWRAP" ]; then
+    rm -f "$OWN_BWRAP"
+    return 0
+  fi
+  mkdir -p "$(dirname "$OWN_BWRAP")" || return 0
+  if cp "$SYSTEM_BWRAP" "$OWN_BWRAP.new" && chmod 0755 "$OWN_BWRAP.new"; then
+    mv -f "$OWN_BWRAP.new" "$OWN_BWRAP"
+  else
+    rm -f "$OWN_BWRAP.new"
+  fi
+}
+
 case "$1" in
   configure)
     install_profile
     add_repository
+    own_bubblewrap
     ;;
 esac
 

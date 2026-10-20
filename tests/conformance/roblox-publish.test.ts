@@ -24,7 +24,7 @@ import {
   reviewPublish,
 } from "../../src/plugins/roblox/publish.ts";
 import { desktopControl } from "../../src/main/core/desktop-control.ts";
-import { assistGrants } from "../../src/main/core/desktop-assist.ts";
+import { assistGrants, engineAppIds } from "../../src/main/core/desktop-assist.ts";
 import { toEntries } from "../../src/renderer/chat-entries.ts";
 import { ConsentChoice, consentChoices, consentTitle } from "../../src/renderer/chat/consent-card.ts";
 import {
@@ -506,11 +506,14 @@ describe("the agent's card and the assist turn, through a real core with a fake 
     assert.equal(posted.length, 1);
     assert.equal(posted[0]?.text, `Roblox Studio asks: ${publishTask("obby")}`);
     assert.equal(posted[0]?.thread, threadId);
+    const manifest = validateManifest(JSON.parse(await readFile(MANIFEST, "utf8")));
     const grant = assistGrants(core).live(threadId);
-    assert.deepEqual(grant?.apps, new Set(["com.Roblox.RobloxStudio"]), "the turn may click Roblox Studio only");
+    // Studio as this system names it: its bundle id on a Mac, its executable on Windows.
+    const studio = engineAppIds(manifest.engine?.apps);
+    assert.deepEqual(grant?.apps, new Set(studio), "the turn may click Roblox Studio only");
+    assert.equal(studio.length, 1);
     assert.equal(grant?.messageId, posted[0]?.clientId);
 
-    const manifest = validateManifest(JSON.parse(await readFile(MANIFEST, "utf8")));
     const entries = toEntries(await core.store.listEvents(threadId)).filter(
       (entry) => (entry as { consentId?: string }).consentId,
     ) as Array<Parameters<typeof consentTitle>[0]>;

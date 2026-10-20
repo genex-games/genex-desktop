@@ -220,6 +220,7 @@ function playCalls(bridge: BridgeCalls) {
     playComments: (cursor) => invoke("studio:play.comments", { cursor }),
     playComment: (body) => invoke("studio:play.comment", { body }),
     playUncomment: (commentId) => invoke("studio:play.uncomment", { commentId }),
+    playPurchase: (sheet, answer) => invoke("studio:play.purchase", { sheet, answer }),
     playMe: () => invoke("studio:play.me"),
     playRename: (name) => invoke("studio:play.rename", { name }),
     playAvatar: (webp) => invoke("studio:play.avatar", { webp }),

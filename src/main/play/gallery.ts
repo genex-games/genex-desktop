@@ -168,6 +168,8 @@ export interface PlayWorld {
   online: number | null;
   /** How many comments it has. */
   comments: number;
+  /** Its cover, as its card shows it; null when it has none Play may load. */
+  coverUrl: string | null;
 }
 
 /** Whether a value is a plain object, as the API's JSON objects are. */
@@ -569,6 +571,7 @@ function accountCalls(deps: GalleryDeps) {
       plays,
       online,
       comments: count(item.commentsCount),
+      coverUrl: game.coverUrl,
     };
   };
 

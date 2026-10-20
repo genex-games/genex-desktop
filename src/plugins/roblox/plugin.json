@@ -1,7 +1,7 @@
 {
   "apiVersion": 3,
   "id": "roblox",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "icon": "icon.svg",
   "name": "Roblox Studio",
   "publisher": "Genex",
@@ -297,7 +297,7 @@
     {
       "name": "publish-update",
       "facts": ["roblox-project"],
-      "description": "Publish an update of this game's place to Roblox, only when the person asks for it. The person approves on a card; then this game's chat clicks File › Publish to Roblox in Roblox Studio with their computer control (a Mac only; elsewhere the answer gives the person Studio's click path). It updates a place that is already published (one the person just published by hand is linked first); a place never published gets first-publish instead. The place must be open in Studio: call open-studio first when it isn't. Never publish unasked, and never call it from the turn that does the clicking.",
+      "description": "Publish an update of this game's place to Roblox, only when the person asks for it. The person approves on a card; then this game's chat clicks File › Publish to Roblox in Roblox Studio with their computer control (on a Mac or a Windows PC; where it can't run, the answer gives the person Studio's click path). It updates a place that is already published (one the person just published by hand is linked first); a place never published gets first-publish instead. The place must be open in Studio: call open-studio first when it isn't. Never publish unasked, and never call it from the turn that does the clicking.",
       "confirmation": "Publish an update of this game's place to Roblox? This game's chat clicks File › Publish to Roblox in Roblox Studio with computer control. Everyone who plays the game gets the update, and it is published on your Roblox account.",
       "parameters": { "type": "object", "properties": {} }
     },

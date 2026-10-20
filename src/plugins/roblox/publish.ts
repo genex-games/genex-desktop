@@ -12,7 +12,7 @@
  *   stops the turn at any age, ID, two-step, terms or payment question, which stay the person's.
  * - **Publish an update** (`publish-update`): a published place, updated.
  *
- * Where Genex can't click (Windows, no driver, the person said no), the answer gives Studio's click
+ * Where Genex can't click (no desktop driver, the person said no), the answer gives Studio's click
  * path. Afterwards Genex links the game to the published place by itself (`relink.ts`).
  */
 import type {

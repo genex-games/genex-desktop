@@ -25,7 +25,7 @@ import { genexAiBundle } from "./genex-ai-bundle.mjs";
  *   dist/resources/*          read-only app resources: the harness seed, the bootstrap, the game
  *                             template, vendored three.js, and the TypeScript 7 compiler the
  *                             in-app type gate runs (dist/resources/tsc, scripts/vendor-tsc.ts);
- *                             on a macOS release, cua-driver for computer control
+ *                             on a macOS or Windows release, cua-driver for computer control
  *                             (dist/resources/cua-driver, scripts/vendor-cua-driver.ts)
  *
  * A Windows release also vendors Git for Windows, outside dist/ because it ships beside the
@@ -359,10 +359,11 @@ async function copyResources() {
       .map(([id, bytes]) => `${id} ${(bytes / 1024 / 1024).toFixed(1)} MB`)
       .join(", ")}`,
   );
-  // Computer control's driver ships with every macOS release, so it works once the app is installed
-  // (scripts/vendor-cua-driver.ts); a development build takes it only when asked to.
+  // Computer control's driver ships with every macOS and Windows release, so it works once the app is
+  // installed (scripts/vendor-cua-driver.ts); a development build takes it only when asked to.
   const vendorCua = release || process.env.GENEX_VENDOR_CUA_DRIVER === "1";
-  if (process.platform === "darwin" && vendorCua) {
+  const driverShipsHere = process.platform === "darwin" || process.platform === "win32";
+  if (driverShipsHere && vendorCua) {
     const cua = await vendorCuaDriver(root, resources);
     console.log(`vendored cua-driver ${cua.version}: ${(cua.bytes / 1024 / 1024).toFixed(1)} MB`);
   }

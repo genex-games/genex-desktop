@@ -1,10 +1,10 @@
 /**
  * Settings → Permissions' "Let agents control your computer": the studio setting that lets an
- * agent ask for the person's Mac (`computerControl`, off by default). Main owns it; this is a view
- * that loads it once, follows `settings.changed`, and changes only this one setting.
+ * agent ask for the person's computer (`computerControl`, off by default). Main owns it; this is a
+ * view that loads it once, follows `settings.changed`, and changes only this one setting. Where it
+ * is offered is `computerControlOffered` (`shared/computer-control.ts`).
  */
 import { useEffect, useState } from "react";
-import { StudioPlatform } from "../shared/boot.ts";
 import type { StudioApi, StudioSettingsView } from "../shared/studio-api.ts";
 import { UiEvent } from "../shared/ui-events.ts";
 import { problemWords } from "./words.ts";
@@ -12,11 +12,6 @@ import { problemWords } from "./words.ts";
 /** Whether the host's settings have computer control on; off until they say so. */
 export function computerControlOn(view: StudioSettingsView | null): boolean {
   return view?.computerControl === true;
-}
-
-/** Whether this platform can offer computer control: only macOS has a desktop driver. */
-export function computerControlOffered(platform: string): boolean {
-  return platform === StudioPlatform.Mac;
 }
 
 /** Turn computer control on or off; the answer is the host's saved settings. */

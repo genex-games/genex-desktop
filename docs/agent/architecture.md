@@ -803,11 +803,12 @@ only a page's own boot failure. `validateAt` answers `loaded`, `attached` or `mi
 **Worker windows and computer use.** Each building delegation and read-only looking session gets a
 pooled preview window
 ([`src/main/core/session-port.ts`](../../src/main/core/session-port.ts)). `capture` reloads and
-photographs; `computer` is the studio's own computer use: one tool, a session referee and
-swappable targets ([computer use](../computer-use.md)). Headless ports render offscreen. Native input is sent and synthetic copies withheld
+photographs; `computer` is the studio's computer use: one tool, a session referee and
+swappable targets ([computer use](../computer-use.md)). Headless ports render offscreen; idle ones pause
+(`paint-while-used.ts`). Native input is sent and synthetic copies withheld
 per event type once a trusted event is seen; a mousemove always sends its synthetic copy with the
 real delta, and `game-template/src/studio.js` de-duplicates. Two pool windows are never a worker's
-(`workerWindows(max)` = max − 2, at least 1). A lease the harness takes carries its boot as `owner`
+(`workerWindows(max)` = max − 2, at least 1). A harness's lease carries its boot as `owner`
 and is freed when that harness dies (`PreviewPool.releaseOwnedBy`). When no window is free, judge
 and playtest answer *no window free*; unskippable passes look through the stand-in, never Live. `preview.capacity` reports free windows and memory. Concurrent first `state` and
 `console` requests share one navigation. Each action emits

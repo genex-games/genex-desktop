@@ -14,6 +14,7 @@ import { errorMessage } from "../shared/errors.ts";
 const MESSAGE = {
   studioUiOnly: "This action is restricted to Studio UI",
   playBarOnly: "This action is restricted to Studio UI and Play's bar",
+  playBarPageOnly: "This action is restricted to Play's bar",
 } as const;
 
 export type { IpcResult } from "../shared/ipc-channels.ts";
@@ -52,6 +53,9 @@ const STUDIO_UI_ONLY = [
 
 // Writing and deleting comments as the Genex account: Studio's main frame or Play's bar layer only.
 const PLAY_BAR_WRITES: ReadonlySet<string> = new Set(["studio:play.comment", "studio:play.uncomment"]);
+// Paying for a game's purchase: the sheet lives only in Play's bar layer, so only its own page answers
+// it, never Studio's main frame, a game's page or a frame inside the bar.
+const PLAY_BAR_ONLY: ReadonlySet<string> = new Set(["studio:play.purchase"]);
 
 /** Why `event`'s sender may not call `channel`, or null when it may. */
 function senderRefusal(
@@ -62,6 +66,7 @@ function senderRefusal(
   const studio = options.isStudioUi(event);
   if (STUDIO_UI_ONLY.some((prefix) => channel.startsWith(prefix)) && !studio) return MESSAGE.studioUiOnly;
   if (PLAY_BAR_WRITES.has(channel) && !studio && options.isPlayBar?.(event) !== true) return MESSAGE.playBarOnly;
+  if (PLAY_BAR_ONLY.has(channel) && options.isPlayBar?.(event) !== true) return MESSAGE.playBarPageOnly;
   return null;
 }
 
@@ -77,7 +82,10 @@ export function createIpcHandle(
   options: {
     fixture: boolean;
     isStudioUi(event: IpcSender): boolean;
-    /** Play's bar layer's own page (its main frame), which may also post and delete comments. */
+    /**
+     * Play's bar layer's own page (its main frame), which may also post and delete comments, and alone
+     * answers a game's purchase sheet.
+     */
     isPlayBar?(event: IpcSender): boolean;
     performance?: PerformanceRecorder;
   },

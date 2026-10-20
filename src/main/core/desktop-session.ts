@@ -6,6 +6,7 @@
  */
 import path from "node:path";
 import { type AgentScreen, ScreenRole } from "../../shared/agent-screen.ts";
+import { desktopStopShortcut, stopShortcutWords } from "../../shared/computer-control.ts";
 import { type PluginBinding, StudioConsentSource } from "../../shared/plugins.ts";
 import { DESKTOP_TOOL_NAME } from "../../substrate/computer-tool.ts";
 import type { DesktopApp } from "../../substrate/desktop-driver.ts";
@@ -19,8 +20,7 @@ import { DesktopQuestion, type DesktopTools } from "./desktop-tools.ts";
 /** What the person reads on the consent card and the agent screen. */
 const MESSAGE = {
   label: "your computer",
-  session:
-    "Let this chat's agent see your screen and use your computer during this session? Each app it reaches asks you first. Stop it any time with Stop, or Control-Option-Command-Escape (⌃⌥⌘Esc).",
+  session: `Let this chat's agent see your screen and use your computer during this session? Each app it reaches asks you first. Stop it any time with Stop, or ${stopShortcutWords(desktopStopShortcut(process.platform))}.`,
   app: (app: string) => `Let this chat's agent use ${app}? It can click, type and read what ${app} shows.`,
 } as const;
 

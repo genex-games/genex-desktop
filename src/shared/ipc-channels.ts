@@ -19,6 +19,7 @@ import type { AddSource, ShareItem } from "./asset-library.ts";
 import type { ExportReview, GithubVersion } from "./plugins.ts";
 import type { PlayControl, PlayPoint, PlayShelf } from "./play.ts";
 import type { PlayBarHold } from "./play-bar.ts";
+import type { PlayPurchaseAnswer } from "./play-purchase.ts";
 import type { PlayCoverType, PlayGameChange } from "./play-manage.ts";
 import type { AvatarStyle, FriendActionRequest, PresenceVisibility } from "./play-people.ts";
 import type { StatsPeriod } from "./play-stats.ts";
@@ -180,6 +181,7 @@ export const STUDIO_INVOKE_CHANNELS = {
   "studio:play.comments": "playComments",
   "studio:play.comment": "playComment",
   "studio:play.uncomment": "playUncomment",
+  "studio:play.purchase": "playPurchase",
   "studio:play.me": "playMe",
   "studio:play.rename": "playRename",
   "studio:play.avatar": "playAvatar",
@@ -458,6 +460,7 @@ export interface StudioInvokePayloads {
   "studio:play.comments": { cursor: string | null };
   "studio:play.comment": { body: string };
   "studio:play.uncomment": { commentId: string };
+  "studio:play.purchase": PlayPurchaseAnswer;
   "studio:play.me": undefined;
   "studio:play.rename": { name: string };
   "studio:play.avatar": { webp: Uint8Array };

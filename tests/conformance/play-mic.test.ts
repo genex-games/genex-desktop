@@ -47,6 +47,7 @@ const WORLD: PlayWorld = {
   plays: 10,
   online: 2,
   comments: 2,
+  coverUrl: null,
 };
 const MINTED: PlayTicket = { status: TicketStatus.Minted, ticket: "T1" };
 
@@ -104,10 +105,21 @@ function rig(options: { access?: boolean; on?: string[]; device?: string | null 
       },
       remove: async () => {},
     },
+    // These games never ask to pay (play-purchase.test.ts has the purchase sheet).
+    coin: {
+      intent: async () => {
+        throw new Error("no purchases here");
+      },
+      balance: async () => 0,
+      confirm: async () => {},
+      cancel: async () => null,
+    },
+    account: { signIn: () => {} },
+    openPage: () => {},
     clipboard: () => {},
     web: "https://genex.games",
     emit: (event) => events.push(event),
-    clock: { setTimeout: () => 0, clearTimeout: () => {} },
+    clock: { setTimeout: () => 0, clearTimeout: () => {}, now: () => 0 },
     mic,
   };
   const viewer = playViewer(deps);

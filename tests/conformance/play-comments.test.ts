@@ -7,7 +7,10 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { CommentRoute, playComments, toComment, toCommentsPage } from "../../src/main/play/comments.ts";
+import { classifyChannel } from "../../src/main/dev/native-policy.ts";
 import { createIpcHandle, type IpcResult, type IpcSender } from "../../src/main/ipc-handle.ts";
+import { type PlayIpcDeps, registerPlayIpc } from "../../src/main/ipc/play.ts";
+import type { PlayViewer } from "../../src/main/play/viewer.ts";
 import { type GalleryAnswer, type GalleryRequest, SignInNeeded } from "../../src/main/play/gallery.ts";
 import {
   BarEscape,
@@ -23,7 +26,8 @@ import {
   withPosted,
 } from "../../src/renderer/play/bar-model.ts";
 import { PLAY_WORDS } from "../../src/renderer/words.ts";
-import { PlayViewerPhase } from "../../src/shared/play.ts";
+import { PLAY_ORIGIN, PlayViewerPhase } from "../../src/shared/play.ts";
+import { PurchaseAnswer } from "../../src/shared/play-purchase.ts";
 import { COMMENT_MAX, COMMENTS_PAGE, commentBody, type PlayComment } from "../../src/shared/play-comments.ts";
 
 const ME = "u-rab";
@@ -201,6 +205,65 @@ describe("Who may write comments", () => {
   });
 });
 
+describe("Who may answer a purchase sheet", () => {
+  /** Play's channels over a recording registrar, with a viewer that records the answers it is handed. */
+  function channels(fixture: boolean) {
+    const listeners = new Map<string, (event: IpcSender, payload: unknown) => Promise<IpcResult>>();
+    const ipc = {
+      handle: (channel: string, listener: (event: IpcSender, payload: unknown) => Promise<IpcResult>) =>
+        listeners.set(channel, listener),
+    };
+    const studio: IpcSender = { sender: "studio", senderFrame: "studio-main" };
+    const bar: IpcSender = { sender: "bar", senderFrame: "bar-main" };
+    const handle = createIpcHandle(ipc, {
+      fixture,
+      isStudioUi: (event) => event === studio,
+      isPlayBar: (event) => event === bar,
+    });
+    const answered: unknown[] = [];
+    const viewer = { answerPurchase: (value: unknown) => void answered.push(value) } as unknown as PlayViewer;
+    const unused = {} as unknown;
+    registerPlayIpc(handle, {
+      gallery: unused as PlayIpcDeps["gallery"],
+      remix: async () => "",
+      viewer: () => viewer,
+      people: unused as PlayIpcDeps["people"],
+      creators: unused as PlayIpcDeps["creators"],
+      credits: unused as PlayIpcDeps["credits"],
+      manage: unused as PlayIpcDeps["manage"],
+      web: PLAY_ORIGIN.web,
+      share: () => {},
+    });
+    const call = (event: IpcSender, payload: unknown) => listeners.get("studio:play.purchase")?.(event, payload);
+    return { call, answered, studio, bar };
+  }
+
+  it("takes an answer only from Play's bar layer: never Studio's own page, a game, a plugin or a frame in the bar", async () => {
+    const { call, answered, studio, bar } = channels(false);
+    const pay = { sheet: 1, answer: PurchaseAnswer.Pay };
+    const strangers: IpcSender[] = [
+      studio,
+      { sender: "game", senderFrame: "game-main" },
+      { sender: "plugin", senderFrame: "plugin-frame" },
+      { sender: "bar", senderFrame: "a frame inside the bar" },
+    ];
+    for (const stranger of strangers) {
+      const answer = await call(stranger, pay);
+      assert.equal(answer?.ok, false, String(stranger.senderFrame));
+    }
+    assert.deepEqual(answered, [], "no answer reached the viewer");
+    assert.equal((await call(bar, pay))?.ok, true);
+    assert.deepEqual(answered, [pay], "the viewer reads the page's answer itself");
+  });
+
+  it("answers the bar in a fixture launch too: its purchases come from the fixture's own coin", async () => {
+    assert.equal(classifyChannel("studio:play.purchase"), "fixture-safe");
+    const { call, answered, bar } = channels(true);
+    assert.equal((await call(bar, { sheet: 2, answer: PurchaseAnswer.Cancel }))?.ok, true);
+    assert.equal(answered.length, 1);
+  });
+});
+
 describe("Play comments in the bar's layer", () => {
   const comment = (id: string): PlayComment => ({
     id,
@@ -242,7 +305,7 @@ describe("Play comments in the bar's layer", () => {
   });
 
   it("acts on a fresh Esc only: back to a playing game, out of one still loading or failed, never over Comments", () => {
-    const fresh = { repeat: false, overlayOpen: false };
+    const fresh = { repeat: false, overlayOpen: false, sheetOpen: false };
     assert.equal(barEscape(PlayViewerPhase.Playing, fresh), BarEscape.Resume);
     assert.equal(barEscape(PlayViewerPhase.Loading, fresh), BarEscape.Leave);
     assert.equal(barEscape(PlayViewerPhase.Failed, fresh), BarEscape.Leave);
@@ -290,5 +353,14 @@ describe("Play comments in the bar's layer", () => {
     assert.equal(PLAY_WORDS.comments.title(0), "Comments");
     assert.equal(PLAY_WORDS.comments.title(1), "1 Comment");
     assert.equal(PLAY_WORDS.comments.title(26), "26 Comments");
+  });
+});
+
+describe("Esc in the bar's layer under a purchase sheet", () => {
+  it("leaves Esc to a purchase sheet while one is open: it never resumes the game or leaves under it", () => {
+    const sheet = { repeat: false, overlayOpen: false, sheetOpen: true };
+    assert.equal(barEscape(PlayViewerPhase.Playing, sheet), BarEscape.None, "the game stays covered");
+    assert.equal(barEscape(PlayViewerPhase.Loading, sheet), BarEscape.None, "the viewer stays open");
+    assert.equal(barEscape(PlayViewerPhase.Failed, sheet), BarEscape.None);
   });
 });

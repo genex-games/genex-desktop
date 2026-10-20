@@ -1234,7 +1234,7 @@ Studio closed, then opening Studio, its MCP server and the place), the MCP switc
 Studio's settings and the helper version Genex's record names, without reading `~/Documents`. On
 the next step the panel adds Restart Studio beside Do it for me, Studio's click path, what Genex
 waits for, and on a Mac before Set up the Documents note. Do it for me is offered only where Genex
-can click (`canClick`, the host's `game.engine.canAssist`: a Mac with computer control's driver;
+can click (`canClick`, the host's `game.engine.canAssist`: a Mac or PC with computer control's driver;
 elsewhere Restart Studio and Studio's click path) and only while the switch is off; while Studio doesn't answer, the MCP
 row first says to sign in on Studio's sign-in screen, and with no place open, the place step's
 buttons show beside it. Restart Studio reopens the game's own place. Answers are said in one
@@ -1776,7 +1776,7 @@ Available services are capability checked and scoped to the calling plugin:
   whose own `confirmation` card they approved; the host marks such a call `confirmed`; a plugin that
   came with Genex may start one from its own tools), `in-assist` (such an unasked one while the
   chat's own assist is under way: the turn answering it clicks), `no-chat`, `no-apps`,
-  `unavailable` (Windows, or a Mac with no desktop driver: show the click path instead) or
+  `unavailable` (a computer with no desktop driver: show the click path instead) or
   `declined`. A plugin that did not come with Genex shows the task on a card first, every time;
   with computer control off, the studio's own card offers to turn it on for every chat. It is for
   setup clicks and publishing the person approved, never for building or play-testing
@@ -1796,7 +1796,10 @@ single billing authority. Every client of a Genex account shares one per-account
 and a paid request refused by it fails: a status read asks Genex again only about generations it
 has not seen settle (`completed`, `failed`, `canceled`; remembered by the backend until sign-out),
 and the Genex page re-reads every 5 s only while a job is requested, submitting, accepted or
-generating or a sign-in waits, otherwise once a minute (`genexPollMs`). Plugin process failures
+generating or a sign-in waits, otherwise once a minute (`genexPollMs`); behind another app it reads
+once a minute (every 5 s still while a sign-in waits) and a hidden window reads nothing until shown.
+A status read reuses a game's `genex budget` answer for 30 s, and any other CLI command in that
+game forgets it. Plugin process failures
 are shown in Plugins and reported as a `failed` change.
 
 ## Project facts

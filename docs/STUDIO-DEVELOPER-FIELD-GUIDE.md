@@ -375,7 +375,8 @@ installed, and sign-in, links and downloads are refused as in every fixture) and
 and delivered, failed and stopped builds arrive as news; macOS notifications are refused) and
 sandbox-setup (the window opens on "Set up the protected workspace" for a Linux machine missing
 bubblewrap and socat, `[data-sandbox-setup]`; `[data-sandbox-retry]` opens the studio) and
-update-ready (the sidebar offers `[data-update-restart]` for a stand-in Genex 0.2.0; the restart
+agents-start-failed (the open studio's sidebar says "Agents didn't start", `[data-agents-start]`, with
+a stand-in srt-win timeout under its details; Try again clears it) and update-ready (the sidebar offers `[data-update-restart]` for a stand-in Genex 0.2.0; the restart
 itself is refused as native) and plugin-updates (Genex and Blender installed one version back: their
 rows and pages offer `Update to <version>` and the sidebar `[data-plugins-update]`, each refused as
 native) and unreal-game (the game linked to a stand-in Unreal project inside
@@ -488,7 +489,8 @@ in the UI; set it on start and restart.
 
 Transport descriptors are private local capabilities under the owned profile; never copy them
 into task records. Unix sockets live in a short 0700 temporary directory, with owner-only socket
-permissions. Protocol v1 uses bounded newline-delimited JSON, request IDs and one operation at
+permissions; on Windows the control is a named pipe with a fresh random name, which other accounts
+can open only read-only. Protocol v1 uses bounded newline-delimited JSON, request IDs and one operation at
 a time. A timeout is not success and does not authorize retrying a mutation blindly.
 
 ## Embedded terminal acceptance

@@ -40,6 +40,7 @@ const WORLD: PlayWorld = {
   plays: 0,
   online: null,
   comments: 2,
+  coverUrl: null,
 };
 
 /** Timers the test moves by hand. */

@@ -319,6 +319,9 @@ const FIXTURE_SAFE = [
   "studio:play.comments",
   "studio:play.comment",
   "studio:play.uncomment",
+  // A game's purchase sheet, answered from Play's bar: a fixture launch's coin calls go to its own
+  // fixture coin (`dev/fixture-coin.ts`), so no socket opens.
+  "studio:play.purchase",
   // Play's people: a fixture launch answers from its own people (`dev/fixture-play.ts`), signed out
   // unless the launch asks for its fixture account, and an avatar "upload" stays in memory.
   "studio:play.me",

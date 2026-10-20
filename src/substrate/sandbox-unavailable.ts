@@ -16,6 +16,7 @@ import {
   linuxInstallCommands,
   type SandboxProblem,
   type SandboxTool,
+  type WindowsSetupNeed,
 } from "../shared/boot.ts";
 
 /** sandbox-runtime's Windows error codes that mean "not set up yet", not "broken". */
@@ -91,6 +92,8 @@ export interface SandboxCheck {
   dependencyErrors: string[];
   /** Linux tools not found on PATH ({@link missingLinuxTools}). */
   missingTools: SandboxTool[];
+  /** Windows: what Set up does about the dependency errors, when the check says. */
+  windowsNeeds?: WindowsSetupNeed[];
 }
 
 /** The setup problem the checks describe, or null when the sandbox may initialize. */
@@ -98,7 +101,10 @@ export function sandboxProblem(check: SandboxCheck): SandboxProblem | null {
   const base = { platform: check.platform, missingTools: [], installCommands: [], details: check.dependencyErrors };
   if (!check.supported) return { ...base, code: SandboxProblemCode.UnsupportedPlatform };
   if (check.dependencyErrors.length === 0) return null;
-  if (check.platform === StudioPlatform.Windows) return { ...base, code: SandboxProblemCode.NotProvisioned };
+  if (check.platform === StudioPlatform.Windows) {
+    const needs = check.windowsNeeds ? { windowsNeeds: check.windowsNeeds } : {};
+    return { ...base, code: SandboxProblemCode.NotProvisioned, ...needs };
+  }
   if (check.platform !== StudioPlatform.Linux) return { ...base, code: SandboxProblemCode.MissingTools };
   return {
     ...base,

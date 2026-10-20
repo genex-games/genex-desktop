@@ -166,6 +166,7 @@ const BAR: PlayBarState = {
   comments: 4,
   signedIn: true,
   remixing: false,
+  purchase: null,
 };
 
 const AI: PlayAiBar = {

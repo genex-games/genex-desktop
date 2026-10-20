@@ -75,6 +75,9 @@ through the JS API imports `@typescript/typescript6`.
   (Live and the pooled windows, each logging what it was asked, over a page the test scripts), a
   real core over them (`observeHost`) and budgets on a clock the test holds (`heldClock`).
 - `director-run.ts`: a director's run without a rig (`fakeLoopRun`, `fakeClock`, `lead`).
+- `play-viewer-rig.ts`: Play's viewer over recording fakes (the game's view, the bar's layer, the
+  gallery, comments, the coin client, the sign-in, the browser) on a clock the test moves, every call
+  in `log`; `sheet()` is the purchase sheet as last drawn.
 - `project-fixtures.ts`: the synthetic project folders in `fixtures/projects/` (`copyProject`
   copies one into a test's folder and adds the files its engine writes while it runs), reads of a
   listed game's facts, a fake harness `ctx` whose `game.*` calls reach a `coreLite`, and a plugin

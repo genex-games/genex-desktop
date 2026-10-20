@@ -28,6 +28,8 @@ export class ModelCatalog {
   #epoch = 0;
   #attemptedAt = -Infinity;
   #pending: Promise<void> | undefined;
+  /** The newest read started; a forced refresh starts one while an older read still runs. */
+  #reading = 0;
   #models: EngineModel[] = [];
   #status: ModelCatalogStatus = { state: ModelCatalogState.Loading, revision: 0, refreshing: false };
   readonly #changed: () => void;
@@ -75,24 +77,32 @@ export class ModelCatalog {
       this.#models = [];
       this.#status = { state: ModelCatalogState.Loading, revision: this.#status.revision + 1, refreshing: false };
     }
-    if (this.#pending) return this.#pending;
+    if (this.#pending && !force) return this.#pending;
     if (!force && this.#now() - this.#attemptedAt < FRESH_MS) return Promise.resolve();
     const epoch = this.#epoch;
+    // A forced read follows a change (a sign-in): a read still running may have started before it,
+    // so only the newest read's answer lands.
+    const reading = ++this.#reading;
     this.#attemptedAt = this.#now();
     this.#status = { ...this.#status, refreshing: true };
-    this.#pending = this.#read(read, epoch).finally(() => {
-      if (epoch !== this.#epoch) return;
+    this.#pending = this.#read(read, epoch, reading).finally(() => {
+      if (!this.#current(epoch, reading)) return;
       this.#pending = undefined;
       this.#changed();
     });
     this.#changed();
     return this.#pending;
   }
-  async #read(read: () => Promise<CatalogResult>, epoch: number): Promise<void> {
+  /** Whether a read still speaks for the catalog: same account, and no newer read started since. */
+  #current(epoch: number, reading: number): boolean {
+    return epoch === this.#epoch && reading === this.#reading;
+  }
+  async #read(read: () => Promise<CatalogResult>, epoch: number, reading: number): Promise<void> {
     try {
-      this.publish(await read(), epoch, false);
+      const result = await read();
+      if (reading === this.#reading) this.publish(result, epoch, false);
     } catch (error) {
-      if (epoch !== this.#epoch) return;
+      if (!this.#current(epoch, reading)) return;
       const problem =
         error instanceof CatalogError
           ? error

@@ -14,11 +14,13 @@ import {
   type CuaConnection,
   connectCuaDriver,
   cuaDriver,
+  driverEnv,
   findCuaDriver,
   GrantHolder,
   vmDriverCommand,
 } from "../../src/substrate/cua-driver-client.ts";
 import { macApps, parseAppInfo } from "../../src/substrate/mac-apps.ts";
+import type { ProbedApp, WindowsProbe } from "../../src/substrate/windows-window-probe.ts";
 import { tmpDir } from "../helpers/tmp.ts";
 
 const PIXEL = Buffer.from(
@@ -236,6 +238,215 @@ describe("cua-driver as the desktop driver", () => {
   });
 });
 
+describe("cua-driver on Windows", () => {
+  /**
+   * A connection answering as the Windows driver does (windows by executable, its overlay above all),
+   * and a window probe answering as Windows does: which app is in front, which a point reaches.
+   */
+  function windowsDriver(probed: {
+    front?: () => ProbedApp | null;
+    at?: (x: number, y: number) => ProbedApp | null;
+    process?: (pid: number) => ProbedApp | null;
+    tree?: CuaAnswer;
+  }) {
+    const windows = [
+      { pid: 40, window_id: 400, app_name: "Notepad.exe", z_index: 1, bounds: { x: 0, y: 0, width: 756, height: 945 } },
+      {
+        pid: 99,
+        window_id: 990,
+        app_name: "cua-driver.exe",
+        z_index: 15,
+        bounds: { x: 0, y: 0, width: 1512, height: 945 },
+      },
+    ];
+    const calls: Array<{ tool: string; args: Record<string, unknown> }> = [];
+    const connection: CuaConnection = {
+      call: async (tool, args) => {
+        calls.push({ tool, args });
+        if (tool === "get_desktop_state")
+          return {
+            content: [{ type: "image", data: PIXEL.toString("base64"), mimeType: "image/png" }],
+            structuredContent: {
+              screenshot_width: 1366,
+              screenshot_height: 854,
+              screen_width: 2732,
+              screen_height: 1708,
+            },
+          };
+        if (tool === "list_windows")
+          return json({ windows: windows.filter((w) => args.pid === undefined || w.pid === args.pid) });
+        if (tool === "get_window_state")
+          return probed.tree ?? { content: [{ type: "text", text: '- [1] Window "Notepad"' }] };
+        return json({ ok: true });
+      },
+      close: async () => {},
+    };
+    const asked: string[] = [];
+    let closed = false;
+    const probe: WindowsProbe = {
+      front: async () => {
+        asked.push("front");
+        return probed.front?.() ?? null;
+      },
+      at: async (x, y, screen) => {
+        asked.push(`at ${x} ${y} of ${screen.width}x${screen.height}`);
+        return probed.at?.(x, y) ?? null;
+      },
+      process: async (pid) => probed.process?.(pid) ?? null,
+      close: async () => {
+        closed = true;
+      },
+    };
+    return { driver: cuaDriver(connection, { windows: probe }), calls, asked, closed: () => closed };
+  }
+  const NOTEPAD: ProbedApp = { pid: 40, exe: "Notepad.exe", name: "Notepad", secure: false, window: 4001 };
+  const PASSWORDS: ProbedApp = { pid: 41, exe: "1Password.exe", name: "1Password", secure: null, window: 4101 };
+
+  it("asks Windows which app is in front and which app a click reaches, named by executable", async () => {
+    const { driver, calls, asked } = windowsDriver({
+      front: () => NOTEPAD,
+      at: (x) => (x < 1366 ? { ...NOTEPAD, secure: null } : PASSWORDS),
+    });
+    await driver.screenshot();
+    assert.deepEqual(await driver.focus(), {
+      app: { name: "Notepad", bundleId: "notepad.exe", pid: 40 },
+      secure: false,
+    });
+    assert.deepEqual(await driver.appAt?.(100, 100), { name: "Notepad", bundleId: "notepad.exe", pid: 40 });
+    assert.deepEqual(await driver.appAt?.(1000, 100), { name: "1Password", bundleId: "1password.exe", pid: 41 });
+    // Picture pixels become the screen's physical pixels, as the driver's own click maps them; the
+    // probe scales those to its own points from the screen's size.
+    assert.deepEqual(asked.slice(1), ["at 200 200 of 2732x1708", "at 2000 200 of 2732x1708"]);
+    const slow = calls.filter((call) => call.tool === "list_apps" || call.tool === "get_window_state");
+    assert.deepEqual(slow, [], "no installed-app scan and no tree read while UI Automation answers");
+  });
+
+  it("asks Windows again for every action: the app in front is never an earlier answer", async () => {
+    let front: ProbedApp = NOTEPAD;
+    const { driver } = windowsDriver({ front: () => front });
+    assert.equal((await driver.focus()).app?.bundleId, "notepad.exe");
+    // A key opened a credential prompt: the next action sees it at once.
+    front = { pid: 52, exe: "CredentialUIBroker.exe", name: "Credential Dialog Xaml Host", secure: true, window: 5201 };
+    assert.deepEqual(await driver.focus(), {
+      app: { name: "Credential Dialog Xaml Host", bundleId: "credentialuibroker.exe", pid: 52 },
+      secure: true,
+    });
+  });
+
+  it("names an app Windows gives no description for by its executable, and no app where it reads none", async () => {
+    const { driver } = windowsDriver({
+      front: () => ({ pid: 7, exe: "Game.exe", name: "", secure: false, window: null }),
+      at: () => null,
+    });
+    await driver.screenshot();
+    assert.deepEqual((await driver.focus()).app, { name: "Game.exe", bundleId: "game.exe", pid: 7 });
+    assert.equal(await driver.appAt?.(5, 5), null, "a point no readable app's window reaches is refused");
+    assert.equal((await windowsDriver({}).driver.focus()).app, null, "an app in front Windows cannot read is no app");
+  });
+
+  it("reads a password field from the front window's tree, by its handle, only when UI Automation could not say", async () => {
+    const unknown = { ...NOTEPAD, secure: null };
+    const secure = async (tree: CuaAnswer, front: ProbedApp = unknown) =>
+      (await windowsDriver({ front: () => front, tree }).driver.focus()).secure;
+    const fake = windowsDriver({ front: () => unknown });
+    await fake.driver.focus();
+    assert.deepEqual(
+      fake.calls.map((call) => [call.tool, call.args.window_id]),
+      [["get_window_state", 4001]],
+      "the window the probe named, without cua's slow window list",
+    );
+    const rows = (text: string): CuaAnswer => ({ content: [{ type: "text", text }] });
+    assert.equal(await secure(rows('- [1] Window "Sign in"\n  - [3] Edit "Password"')), true);
+    assert.equal(await secure(rows('- [1] Window "Вход"\n  - [3] Edit "Пароль" [id=passwordBox]')), true);
+    assert.equal(await secure(rows('- [1] Window "Vault"\n  - [5] Button "Edit password"')), false, "a button");
+    assert.equal(await secure(rows('- [1] Window "Notes"\n  - [3] Edit "Title"')), false);
+    assert.equal(await secure(json({ elements: [{ element_index: 3, role: "Edit", label: "Password" }] })), true);
+    assert.equal(
+      await secure(rows('- [1] Window "Notes"'), { ...NOTEPAD, secure: true }),
+      true,
+      "UI Automation's own flag wins over a tree that shows none",
+    );
+  });
+
+  it("never presses the Windows key, nor a key name cua would press as its first letter", async () => {
+    const fake = windowsDriver({});
+    for (const keys of [["cmd", "r"], ["win"], ["meta", "s"], ["ctrl", "volumeup"], ["numpad5"], ["printscreen"]])
+      await assert.rejects(fake.driver.press(keys), /Windows key|not a key/, keys.join("+"));
+    await assert.rejects(
+      fake.driver.click(5, 5, { button: "left", count: 1, modifiers: ["cmd"] }),
+      /Windows key/,
+      "nor holds it under a click",
+    );
+    assert.deepEqual(
+      fake.calls.filter((c) => c.tool === "press_key" || c.tool === "click"),
+      [],
+      "nothing reached the driver",
+    );
+    for (const keys of [["ctrl", "s"], ["alt", "f4"], ["shift", "tab"], ["escape"], ["a"], ["F5"]])
+      await fake.driver.press(keys);
+  });
+
+  it("presses forward delete by Windows' name for it, leaves every other key as it is, and closes its probe", async () => {
+    const fake = windowsDriver({});
+    await fake.driver.press(["ctrl", "forward_delete"]);
+    await fake.driver.click(5, 5, { button: "left", count: 1, modifiers: ["shift"] });
+    const pressed = fake.calls.filter((c) => c.tool === "press_key" || c.tool === "click").map((c) => c.args);
+    assert.deepEqual(pressed[0], {
+      target: { kind: "desktop", display_id: "primary" },
+      delivery_mode: "foreground",
+      key: "delete",
+      modifiers: ["ctrl"],
+    });
+    assert.deepEqual(pressed[1]?.modifier, ["shift"]);
+    await fake.driver.close();
+    assert.equal(fake.closed(), true, "the probe ends with the connection");
+    // On a Mac, `delete` is Backspace: forward delete keeps its own name.
+    const mac = fakeConnection();
+    await cuaDriver(mac.connection).press(["forward_delete"]);
+    assert.equal(mac.actions()[0]?.args.key, "forward_delete");
+  });
+
+  it("runs an installed driver from cua's Windows install folder where none is bundled", async () => {
+    const home = await tmpDir("cua-home-");
+    const bundled = path.join(await tmpDir("cua-resources-"), "cua-driver", "cua-driver.exe");
+    assert.equal(await findCuaDriver({ bundled, home, platform: "win32" }), null);
+    const installed = path.join(home, "AppData", "Local", "Programs", "Cua", "cua-driver", "bin", "cua-driver.exe");
+    await mkdir(path.dirname(installed), { recursive: true });
+    await writeFile(installed, "MZ");
+    await chmod(installed, 0o755);
+    assert.equal(await findCuaDriver({ bundled, home, platform: "win32" }), installed);
+    await mkdir(path.dirname(bundled), { recursive: true });
+    await writeFile(bundled, "MZ");
+    await chmod(bundled, 0o755);
+    assert.equal(
+      await findCuaDriver({ bundled, home, platform: "win32" }),
+      bundled,
+      "the app's own, ahead of an installed one",
+    );
+  });
+
+  it("hands the driver Windows' own folders and the person's profile, and nothing of the studio's", () => {
+    const env = {
+      PATH: "C:\\Windows\\system32",
+      SystemRoot: "C:\\Windows",
+      LOCALAPPDATA: "C:\\Users\\p\\AppData\\Local",
+      USERPROFILE: "C:\\Users\\p",
+      ANTHROPIC_API_KEY: "a key",
+      GENEX_SECRET: "a secret",
+    };
+    assert.deepEqual(driverEnv(env, "win32"), {
+      PATH: env.PATH,
+      SystemRoot: env.SystemRoot,
+      LOCALAPPDATA: env.LOCALAPPDATA,
+      USERPROFILE: env.USERPROFILE,
+    });
+    assert.deepEqual(driverEnv({ PATH: "/usr/bin", HOME: "/Users/p", ANTHROPIC_API_KEY: "a key" }, "darwin"), {
+      PATH: "/usr/bin",
+      HOME: "/Users/p",
+    });
+  });
+});
+
 describe("cua-driver over a real MCP connection (a stand-in driver process)", () => {
   const FAKE = fileURLToPath(new URL("../fixtures/fake-cua-driver.mjs", import.meta.url));
 
@@ -305,6 +516,56 @@ describe("cua-driver over a real MCP connection (a stand-in driver process)", ()
       connectCuaDriver({ command: process.execPath, args: [FAKE, "--fail-start"] }, { local: false }),
       /daemon did not appear/,
     );
+  });
+
+  it("on Windows, asks no grant (Windows has none to give) and starts the window probe first", async () => {
+    const log = path.join(await tmpDir("cua-real-"), "calls.jsonl");
+    const denied = { command: process.execPath, args: [FAKE, "--denied", "--log", log] };
+    let probed = "not started";
+    const probe = () => ({
+      ready: async () => {
+        probed = "ready";
+      },
+      front: async () => null,
+      at: async () => null,
+      process: async () => null,
+      close: async () => {
+        probed = "closed";
+      },
+    });
+    const driver = await connectCuaDriver(denied, { local: true, platform: "win32", probe });
+    assert.equal(probed, "ready");
+    try {
+      assert.deepEqual([(await driver.screenshot()).width], [1366]);
+    } finally {
+      await driver.close();
+    }
+    assert.equal(probed, "closed", "the probe ends with the driver");
+    const calls = (await readFile(log, "utf8"))
+      .trim()
+      .split("\n")
+      .map((line) => (JSON.parse(line) as { name: string }).name);
+    assert.deepEqual(calls, ["get_desktop_state"], "no check_permissions: Windows' driver takes no prompt");
+  });
+
+  it("on Windows, refuses to start when the window probe cannot, and leaves no probe behind", async () => {
+    let closed = false;
+    const probe = () => ({
+      ready: async () => {
+        throw new Error("the Windows window probe did not start: PowerShell is blocked here");
+      },
+      front: async () => null,
+      at: async () => null,
+      process: async () => null,
+      close: async () => {
+        closed = true;
+      },
+    });
+    await assert.rejects(
+      connectCuaDriver({ command: process.execPath, args: [FAKE] }, { local: true, platform: "win32", probe }),
+      /PowerShell is blocked here/,
+    );
+    assert.equal(closed, true);
   });
 
   it("refuses to start without Accessibility or Screen Recording, and says whose grant to turn on", async () => {

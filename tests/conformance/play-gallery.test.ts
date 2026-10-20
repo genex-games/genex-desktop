@@ -472,6 +472,7 @@ describe("Play gallery calls", () => {
       plays: 2682,
       online: null,
       comments: 7,
+      coverUrl: "https://cdn.genex.technology/covers/cm1.webp?v=1",
     });
     const uncounted = rig(() => ok({ item: { ...item(), commentsCount: "many" } }));
     assert.equal(

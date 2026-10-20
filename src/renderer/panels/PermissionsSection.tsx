@@ -27,9 +27,10 @@ import { Icon } from "../ui/icons.tsx";
 import { Pending } from "../ui/Pending.tsx";
 import { Switch } from "../ui/switch.tsx";
 import { hostPlatform } from "../platform.ts";
-import { computerControlOffered, useComputerControl } from "../use-computer-control.ts";
+import { computerControlOffered } from "../../shared/computer-control.ts";
+import { useComputerControl } from "../use-computer-control.ts";
 import { usePermissionSettings } from "../use-permission-settings.ts";
-import { COMPUTER_CONTROL_SETTING_WORDS, permissionRuleWords, problemWords } from "../words.ts";
+import { COMPUTER_CONTROL_SETTING_WORDS, computerControlDetail, permissionRuleWords, problemWords } from "../words.ts";
 import { plural } from "../../shared/skill-words.ts";
 
 /** The section's own words. */
@@ -93,17 +94,18 @@ function StartingMode({
   );
 }
 
-/** "Let agents control your computer": off by default, and offered only where a desktop driver runs (macOS). */
+/** "Let agents control your computer": off by default, and offered only where a desktop driver runs (macOS, Windows). */
 function ComputerControl(): JSX.Element | null {
   const { on, busy, error, change } = useComputerControl();
   if (on === null && !error) return null;
-  const offered = computerControlOffered(hostPlatform());
+  const platform = hostPlatform();
+  const offered = computerControlOffered(platform);
   return (
     <section aria-label={COMPUTER_CONTROL_SETTING_WORDS.section} data-computer-control className="settings-card">
       <div className="flex items-center justify-between gap-3">
         <label htmlFor="permissions-computer-control" className="flex min-w-0 flex-col gap-0.5">
           <span className="settings-card-title">{COMPUTER_CONTROL_SETTING_WORDS.label}</span>
-          <span className="max-w-[460px] text-ink-3">{COMPUTER_CONTROL_SETTING_WORDS.detail}</span>
+          <span className="max-w-[460px] text-ink-3">{computerControlDetail(platform)}</span>
         </label>
         <Switch
           id="permissions-computer-control"

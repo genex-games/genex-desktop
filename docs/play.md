@@ -123,9 +123,35 @@ What Play sends is in [PRIVACY](../PRIVACY.md#play).
   day) go to main (`studio:game-ai.resume`). Get credits
   shows genex.games' packs, auto top-up ("at most once a day", off by default) and Genex Pro, with
   checkout in the browser; Report shows what it sends first. One overlay is open at a time, Comments
-  or the AI's (`PlayAiLayer.tsx`); the decisions are `play/ai-model.ts`'s.
+  or the AI's (`PlayAiLayer.tsx`), and none under a purchase sheet; the decisions are
+  `play/ai-model.ts`'s.
+- Paying in coin: a game's purchase (the embed SDK's `buy()` or `requestPayment()`) opens Studio's
+  own sheet over the dimmed game in the bar's layer (`main/play/viewer-purchase.ts`,
+  `renderer/play/PlayPurchase.tsx`), never genex.games' confirm page. The SDK's popup is made hidden,
+  at most one per game and only while the viewer may show a sheet; only the game's own top frame's
+  counts, its first move ends it, and it never loads the confirm page. While one lives, Play's session
+  cancels any request for a confirm page; with none alive it cancels none, and its refusal of AI
+  vendors' APIs (below) holds either way (`main/play/purchase-window.ts`, `purchase-address.ts`). Main reads the purchase as the app's Genex
+  account, then the coin balance
+  only for a purchase the game may ask for, and shows a sheet only for the game on screen while the
+  purchase is open to pay (`main/play/coin.ts`); an ask it drops waits 5 seconds like a Cancel.
+  Pay counts once the page has shown Ask for a second with no press in it; a press, a held key or the
+  window's focus changing starts that second again. Main confirms the purchase it holds, never one the
+  page names, and the game learns how it went from its own SDK. Cancel, Esc, ✕ or a click outside
+  cancels it on genex.games, and the next sheet waits 5 seconds; a page that reloads or leaves, or a
+  viewer that closes, cancels one still unpaid. Its states: Ask (`× N` above one; a game-priced
+  payment's terms whole, in a scroll area), Paying, Paid (the receipt and what is left), Not enough
+  coin (Get coin opens genex.games; once the coin arrives, Review; after genex.games refused Pay for
+  want of coin, try again in the game), Sign in (Review once signed in), Pending (genex.games has not
+  answered; asked every 2 seconds) and Failed (timed out, canceled, refused or refunded). A purchase
+  genex.games still holds open never times out sooner than its two minutes after the game asked, by
+  the app's own clock, however far that clock runs ahead. Signing in from the sheet signs the bar in
+  too. UNCONFIRMED with genex.games: confirming from Studio on the `native_modal` surface, and
+  `/inventory` as Get coin's page; each is one constant (`STUDIO_CONFIRM_SURFACE`, `playCoinPageUrl`).
+  A development profile pointing Studio at another API catches nothing.
 - The page stays on Genex games' addresses; a link it opens goes to the browser, at most one every
-  few seconds.
+  few seconds. A coin purchase's popup is the exception above: its confirm address no longer goes to
+  the browser.
 - Report (in the AI pill's menu) sends what the game's AI wrote this session to genex.games, for
   moderation and the game's maker: each AI call (prompts, the player's fields, the answer, the
   model and how it was paid), a replay tape, the seed and build, state digests, console errors and
@@ -140,8 +166,8 @@ What Play sends is in [PRIVACY](../PRIVACY.md#play).
   the game by its genex.games project id (`play:<id>`, never the slug), drops a burst past its
   window, holds a few envelopes unanswered at most, and takes a grant or a confirm only inside a
   person's click or key (the page's own activation and an input main saw). A confirm draws Genex's
-  card over the game with genex.games' own terms and approves there only after a yes; every popup
-  is still denied. Leaving for another page aborts its calls and closes its card (a link sent to
+  card over the game with genex.games' own terms and approves there only after a yes; every other
+  popup is denied. Leaving for another page aborts its calls and closes its card (a link sent to
   the browser does not). Play's session refuses requests to AI vendors' APIs
   (`shared/ai-vendors.ts`, `main/play/ai-gateway.ts`) and writes `ai_direct_blocked` to the
   page's console once per host; a near miss loads.
@@ -225,8 +251,11 @@ past the keep-for-building share a row goes back as a wait until the plan's rese
 [feature map](agent/feature-map.md). Fixtures: `STUDIO_FIXTURE_GENEX_ACCOUNT=1|admin|new|quiet|fresh|nickname|terms`
 signs a fixture launch in (the full account owns Snowball, and `admin` is it as a genex.games
 admin; `new` and `nickname` have not chosen a nickname; a few names, such as `rab`, read as taken),
-`ended` gives it a refused one. Tests: `tests/conformance/play-*`,
-`genex-account`, `app-account-plugin`.
+`ended` gives it a refused one. A fixture launch's stand-in game asks for a coin purchase from a
+button per case (`[data-fixture-buy="<case>"]`) or keys 1 to 9 and 0 (`dev/fixture-coin.ts`): every
+state of the sheet, on a confirm website that resolves nowhere; the account holds 1,240 coin, and Get
+coin adds 1,000. Tests: `tests/conformance/play-*`, `genex-account`, `app-account-plugin`; the
+purchase popup in Electron: `npm run test:ui -- play-purchase`.
 
 A live `studio:dev` profile can point Play at a local or test genex.games with
 `GENEX_DEV_PLAY_API_ORIGIN` and `GENEX_DEV_PLAY_WEB_ORIGIN` (bare origins: https, or http on this

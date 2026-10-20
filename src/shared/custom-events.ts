@@ -294,6 +294,7 @@ export const StopCode = {
   CircuitBreak: "circuit-break",
   UsageLimit: "usage-limit",
   EngineExhausted: "engine-exhausted",
+  SandboxUnavailable: "sandbox-unavailable",
   ObservationDown: "observation-down",
   JudgeDown: "judge-down",
   SignIn: "sign-in",

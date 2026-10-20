@@ -7,6 +7,7 @@
  */
 import { FEED_PAGE_SIZE, type GalleryAnswer, type GalleryRequest, PlayRoute } from "../play/gallery.ts";
 import { fixtureLibraryAnswer } from "./fixture-asset-library.ts";
+import { createFixtureCoin, FIXTURE_BUY_STYLE, fixtureBuyScript } from "./fixture-coin.ts";
 import { fixtureCommentCount, fixtureCommentsAnswer } from "./fixture-comments.ts";
 import { categoriesShelf, PlayMobileSupport } from "../../shared/play-manage.ts";
 import { PlayShelf } from "../../shared/play.ts";
@@ -339,6 +340,18 @@ function assetManifest(slug: string): GalleryAnswer {
   });
 }
 
+/** The launch's coin: a game's purchases and the account's balance (`fixture-coin.ts`), for the games still listed. */
+const coin = createFixtureCoin({
+  now: Date.now,
+  project: (slug) => {
+    const game = listed().find((candidate) => candidate.slug === slug);
+    return game ? { id: game.id, title: game.title } : null;
+  },
+});
+
+/** Get coin in a fixture launch: no page opens, and the balance grows as though coin were bought on genex.games. */
+export const fixtureGetCoin = (): void => coin.topUp();
+
 /** The fixture catalog by author: the gallery items of one author's games, as a profile lists them. */
 const catalog: FixtureCatalog = {
   games: (authorId) => listed().filter((game) => game.author.id === authorId),
@@ -354,6 +367,8 @@ export const fixturePlayRequest: GalleryRequest = async (route, init) => {
   if (people) return people;
   const comments = fixtureCommentsAnswer(route, init);
   if (comments) return comments;
+  const purchase = coin.answer(route, init);
+  if (purchase) return purchase;
   if (route === PlayRoute.Referral && fixtureAccountOf(init.token)) return ok(fixtureReferral());
   const [pathname = "", search = ""] = route.split("?");
   const query = new URLSearchParams(search);
@@ -375,11 +390,14 @@ export const fixturePlayRequest: GalleryRequest = async (route, init) => {
   return SIGNED_OUT;
 };
 
-/** The stand-in page a fixture launch plays for `slug`: its name over a moving sky, no network. */
+/**
+ * The stand-in page a fixture launch plays for `slug`: its name over a moving sky, no network, and a
+ * button and a key per coin purchase it can ask for (`fixture-coin.ts`).
+ */
 export function fixtureGamePage(slug: string): string {
   const game = CATALOG.find((candidate) => candidate.slug === slug);
   const title = (game?.title ?? slug).replace(/[<>&"]/g, "");
   const hue = game?.hue ?? 210;
-  const page = `<!doctype html><html><head><meta charset="utf-8"><title>${title}</title><style>html,body{margin:0;height:100%;background:#000;overflow:hidden;font:600 28px/1.2 -apple-system,system-ui,sans-serif;color:#fff}canvas{position:fixed;inset:0;width:100%;height:100%}h1{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);margin:0;text-shadow:0 2px 24px #000}</style></head><body data-fixture-game="${slug}"><canvas id="c"></canvas><h1>${title}</h1><script>const c=document.getElementById("c"),x=c.getContext("2d");let t=0;function f(){c.width=innerWidth;c.height=innerHeight;const g=x.createLinearGradient(0,0,0,c.height);g.addColorStop(0,"hsl(${hue} 55% 18%)");g.addColorStop(1,"hsl(${(hue + 30) % 360} 60% 42%)");x.fillStyle=g;x.fillRect(0,0,c.width,c.height);x.fillStyle="hsl(${(hue + 50) % 360} 90% 72%)";x.beginPath();x.arc(c.width*(.5+.3*Math.sin(t/90)),c.height*.35,40,0,7);x.fill();t++;requestAnimationFrame(f)}f()</script></body></html>`;
+  const page = `<!doctype html><html><head><meta charset="utf-8"><title>${title}</title><style>html,body{margin:0;height:100%;background:#000;overflow:hidden;font:600 28px/1.2 -apple-system,system-ui,sans-serif;color:#fff}canvas{position:fixed;inset:0;width:100%;height:100%}h1{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);margin:0;text-shadow:0 2px 24px #000}${FIXTURE_BUY_STYLE}</style></head><body data-fixture-game="${slug}"><canvas id="c"></canvas><h1>${title}</h1><script>const c=document.getElementById("c"),x=c.getContext("2d");let t=0;function f(){c.width=innerWidth;c.height=innerHeight;const g=x.createLinearGradient(0,0,0,c.height);g.addColorStop(0,"hsl(${hue} 55% 18%)");g.addColorStop(1,"hsl(${(hue + 30) % 360} 60% 42%)");x.fillStyle=g;x.fillRect(0,0,c.width,c.height);x.fillStyle="hsl(${(hue + 50) % 360} 90% 72%)";x.beginPath();x.arc(c.width*(.5+.3*Math.sin(t/90)),c.height*.35,40,0,7);x.fill();t++;requestAnimationFrame(f)}f()</script><script>${fixtureBuyScript(slug)}</script></body></html>`;
   return `data:text/html;charset=utf-8,${encodeURIComponent(page)}`;
 }

@@ -17,17 +17,31 @@ the setup screen opens on `git-missing`. What differs from macOS:
   holds the session; the last member out releases everything. A per-run grant outside the
   session's roots is refused (`not-granted`); network changes stay live (`updateConfig`).
   `initialize()` is tried up to three times only when srt-win's egress check (`wfp`) times out; a
-  timed-out ACL step fails at once, since a retry would repeat its walk under the denied path's parent.
+  timed-out ACL step fails at once, since a retry would repeat its walk under each granted folder
+  and each denied path's parent.
 - The version-guarded [SRT patch](../scripts/patch-sandbox-runtime.mjs) runs initialization,
   failed-initialization rollback, launcher rollback and session reset ACL commands asynchronously.
   Revoke and restore each keep their 60-second deadline, holder PID, SID and best-effort outcomes;
   a slow cleanup must not hold Electron's main thread. The actual process `exit` event retains
   synchronous cleanup, since promises cannot finish there. Partial grants remain eligible for
   that exit cleanup while initialization or its rollback is pending.
+- srt-win starts every command as `srt-sandbox` through CreateProcessWithLogonW, which the
+  Secondary Logon service (`seclogon`) carries out; where hardening disabled it, Windows refuses
+  every start ("Access is denied"). The setup check (`windowsSetupGaps`) reads its start type with
+  `sc qc seclogon`, which needs no administrator (the number decides; the word after it is
+  localized), beside srt-win's two status probes, and a disabled service is a setup gap
+  (`WindowsSetupNeed.LogonService`) the setup card names in one line. Set up sets it to Manual
+  (`sc config seclogon start= demand`, [`windows-logon-service.ts`](../src/substrate/windows-logon-service.ts))
+  through Windows PowerShell's `Start-Process -Verb RunAs` before srt-win's install. srt-win
+  elevates itself, so a PC that needs both sees two approval prompts. A service Set up could not
+  turn on (a policy keeps it off) leaves the card saying how to do it in Services.
 - That egress check starts srt-win as the sandbox user before any grant, and Windows opens its
   program and working folder as that user. A per-user install lives in the profile, so the session
   grants the install folder (and srt-win's, when apart) for reading first
   (`grantLauncherFolders`), and a packaged app works from its install folder (`installedWorkingDir`).
+  It asks srt-win for the user's SID up to three times; without that grant the check fails with
+  "CreateProcessWithLogonW(srt-sandbox): Access is denied", so the log says why one was not made.
+  The same refusal comes from a disabled Secondary Logon service (`seclogon`).
 - The sandbox user reads nothing in the profile unless granted, so each folder between
   `USERPROFILE` and a root gets `(S,RA)` (read attributes and synchronize, no listing) after every
   apply, since srt-win's deny stamps replace the entry. Synchronize matters before Windows 11
@@ -51,6 +65,27 @@ the setup screen opens on `git-missing`. What differs from macOS:
   dropped, since srt-win would create a placeholder; off the profile it is kept. srt-win's
   `argv_too_long`, `srt_win_timeout` and exit 16 `mapped_drive_cwd` become `SandboxLaunchError`
   codes.
+- Genex sets every deny on a path that exists itself (`routeWindowsDenies`, `ownDenyStamps`),
+  before srt-win grants anything. srt-win's stamp puts an inheritable FILE_DELETE_CHILD deny on
+  each denied path's parent, which Windows passes down through everything under it, once per
+  path: for `.ssh` or `.claude` the whole profile, for a game's `.claude` the whole game, past
+  srt-win's 60-second deadline on a large profile or a few large games
+  ([sandbox-runtime#457](https://github.com/anthropic-experimental/sandbox-runtime/issues/457)).
+  That stamp runs in the background start behind the open window, so its timeout replaced an idle
+  window with "Genex couldn't start". Genex denies the path, where it really is, to the sandbox
+  users' group, passed down through what is under the path alone, and FILE_DELETE_CHILD on its
+  parent folder alone (the shape
+  [sandbox-runtime#523](https://github.com/anthropic-experimental/sandbox-runtime/pull/523) proposes), with
+  [`windows-folder-ace.ts`](../src/substrate/windows-folder-ace.ts): `SetNamedSecurityInfoW` on
+  the path, `SetFileSecurityW` on the parent. A write deny there also refuses FILE_DELETE_CHILD.
+  Applying or removing a deny preserves whether the path's DACL is protected from inheritance;
+  protected paths use `PROTECTED_DACL_SECURITY_INFORMATION` together with the DACL mask.
+  The entries name the group because srt-win's recompose of a path drops every explicit entry for
+  the user's SID. Each Genex records its entries in `%LOCALAPPDATA%\genex-sandbox-denies\<pid>.json`;
+  every edit makes a path what all running holders need, and a gone holder's entries go on the
+  next sync. A per-command deny Genex already sets is not sent again. Without the group, where
+  PowerShell cannot run the batch or the running user holds the SID, srt-win stamps every deny as
+  before, and the log says so (`own denies off`). srt-win keeps a missing deny path (it makes its placeholder), a drive root and a share.
 - `killChild` kills the srt-win broker, whose job ends the tree; `HarnessHost.stop()` sends
   `shutdown` and kills only after the grace.
 
@@ -75,17 +110,24 @@ The terminal panel still opens an installed Git Bash, else PowerShell.
 `ProcessSandbox`'s base deny list (`baseDenyRead` in `spawn.ts`) is macOS and Linux's. Windows has its own list
 (`windowsDenyRead`): `.ssh`, `.aws`, `.azure`, `.kube`, `.docker`, `.config\gh`,
 `.git-credentials`, `_netrc`, the `%APPDATA%`/`%LOCALAPPDATA%` credential and DPAPI stores, GitHub
-CLI and gcloud, and the Chrome, Edge, Brave, Firefox and Opera profiles.
+CLI and gcloud, and the Chrome, Edge, Brave, Firefox and Opera profiles. Genex sets those that
+exist itself; a missing one outside every grant is not sent.
 
 ## Residual risks
 
 srt-win is alpha. Every srt host on the machine shares the
 `srt-sandbox` SID and so each other's grants and denies. Claude Code's tool-less sessions (usage,
-model list, judge) run without its own sandbox on Windows (`toollessSandbox`). DNS still resolves; the proxy token is on the
+model list, judge) run without its own sandbox on Windows (`toollessSandbox`); a worker's session
+needs it, and where the CLI cannot run it the worker is refused rather than run unboxed
+([harness runtime](harness-runtime.md#a-workers-engine-that-cannot-run-its-sandbox)). DNS still resolves; the proxy token is on the
 runner's command line. A folder opened while the harness runs is writable only after it next
 stops. srt-win's own entries are inheritable, so each apply and reset re-propagates them through
-everything under the folder they are on, holding each folder open meanwhile; its deny stamp on a
-denied path's parent covers the whole profile for `.ssh` or `.docker`. Every sandboxed process can read a run's env file until the command deletes it, and PATH
+everything under the folder they are on, holding each folder open meanwhile, and its stamp of a
+missing deny path (or a per-command one) does so under that path's parent. Genex's own deny still passes down through
+everything under its path (a large browser profile takes the longest), within srt-win's 60-second
+deadline for the batch. Two Genex editing one folder's entries at the same moment can lose one
+edit until the next sync, and a deny a crashed Genex left stays (still denying) until a Genex next
+starts: srt-win's own cleanup never sees it. Every sandboxed process can read a run's env file until the command deletes it, and PATH
 folders under the profile whole. A broker outlives an Electron crash.
 
 ## CI and curated suite
@@ -100,7 +142,9 @@ package.yml --ref <branch> -f only=win32`). `rig.yml` runs the rig group on PRs 
 runner only, it exports `GENEX_WINDOWS_SANDBOX=ready`) and `npm run test:windows -- --suite-only`
 (the curated `tests/windows-suite.json`). Its sandbox files are `windows-sandbox.test.ts` (grant
 session, env file and launch through fakes; runs everywhere) and `sandbox-windows.test.ts` (the
-real srt-win's hostile-input tables; skipped unless `GENEX_WINDOWS_SANDBOX=ready`). A dispatch
+real srt-win's hostile-input tables; skipped unless `GENEX_WINDOWS_SANDBOX=ready`).
+`windows-logon-service.test.ts` reads the runner's real Secondary Logon service and runs Set up's
+elevated step there (Actions only: it changes a service). A dispatch
 with `backlog` also runs the rest of the fast group as an informational pass that never fails;
 the job summary and `windows-tests` artifact list failing files and tests and clean files not yet
 in the suite. Test files run side by side, so one file's sandbox re-propagates srt-win's entries

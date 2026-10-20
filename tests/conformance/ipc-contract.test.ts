@@ -26,6 +26,7 @@ import {
 import { STUDIO_METHODS } from "../helpers/fake-studio-api.ts";
 import { RUN_SUMMARY_SPACING_MS } from "../../src/shared/run-summary-feed.ts";
 import type { StudioApi } from "../../src/shared/studio-api.ts";
+import { PurchaseAnswer } from "../../src/shared/play-purchase.ts";
 
 const INVOKE = Object.keys(STUDIO_INVOKE_CHANNELS) as StudioInvokeChannel[];
 const PUSH = Object.keys(STUDIO_PUSH_CHANNELS) as StudioPushChannel[];
@@ -148,6 +149,7 @@ test("the preload sends each payload in the shape main reads", async () => {
   await api.cancelModelDownload();
   await api.recheckEngines();
   await api.pluginChooseFile("unreal", { title: "Choose a project", extensions: ["uproject"] });
+  await api.playPurchase(3, PurchaseAnswer.Pay);
   assert.deepEqual(invokes, [
     { channel: "studio:bootstrap", payload: undefined },
     { channel: "studio:thread.new", payload: {} },
@@ -167,6 +169,7 @@ test("the preload sends each payload in the shape main reads", async () => {
       channel: "studio:plugins.choose-file",
       payload: { id: "unreal", request: { title: "Choose a project", extensions: ["uproject"] } },
     },
+    { channel: "studio:play.purchase", payload: { sheet: 3, answer: PurchaseAnswer.Pay } },
   ]);
 });
 

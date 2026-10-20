@@ -237,18 +237,49 @@ after a play ends, so the probe always puts back the device shown before.
 ## The person's computer
 
 The desktop and a VM are targets too ([`desktop-target.ts`](../src/main/core/desktop-target.ts)),
-driven by [cua-driver](https://github.com/trycua/cua) (MIT). On this Mac the driver ships inside the
-app and runs **embedded** (cua's `EMBEDDING.md`; [`cua-embedded.ts`](../src/substrate/cua-embedded.ts)):
-the app starts `cua-driver serve --embedded` itself, as its direct child, on a socket in a private
-folder, and talks MCP to it through `cua-driver mcp --embedded --socket <path>`. A child the app
-spawns stays in the app's macOS responsibility chain, so Accessibility and Screen Recording are
-**Genex's own** grants: one entry in System Settings, no second app, no driver prompt. The daemon
-runs with `DO_NOT_TRACK=1` and `CUA_DRIVER_RS_UPDATE_CHECK=0` (no product telemetry, no update
-check) and starts on first use. It stops 30 s after the last desktop session lets go (a quick next
-session reuses it); ⌃⌥⌘Esc and quitting stop it at once. Its grants are checked without a
-prompt; a daemon without them is restarted once (macOS keeps a process's old answer), and still
-without them Genex asks macOS itself: the Accessibility prompt, then System Settings at Screen
-Recording (`desktop-control-host.ts`). A VM's driver is reached as
+driven by [cua-driver](https://github.com/trycua/cua) (MIT). On a Mac and on Windows the driver ships
+inside the app and runs **embedded** (cua's `EMBEDDING.md`;
+[`cua-embedded.ts`](../src/substrate/cua-embedded.ts)): the app starts `cua-driver serve --embedded`
+itself, as its direct child, and talks MCP to it through `cua-driver mcp --embedded --socket <path>`.
+On a Mac the endpoint is a socket in a private folder; a child the app spawns stays in the app's
+macOS responsibility chain, so Accessibility and Screen Recording are **Genex's own** grants: one
+entry in System Settings, no second app, no driver prompt. The daemon runs with `DO_NOT_TRACK=1` and
+`CUA_DRIVER_RS_UPDATE_CHECK=0` (no product telemetry, no update check) and starts on first use. It
+stops 30 s after the last desktop session lets go (a quick next session reuses it); the stop
+shortcut and quitting stop it at once. On a Mac its grants are checked without a prompt; a daemon
+without them is restarted once (macOS keeps a process's old answer), and still without them Genex
+asks macOS itself: the Accessibility prompt, then System Settings at Screen Recording
+(`desktop-control-host.ts`).
+
+On Windows the endpoint is a named pipe with a fresh random name, which the embedded daemon lets
+only the person's own account open (so no sandboxed agent, which runs as another account, can reach
+it). Windows asks no grant, so none is checked: cua's own check takes no `prompt` there. The daemon
+runs in the person's session because Genex started it, with no console window, and a minimal
+environment of Windows' own folders and the person's profile (`driverEnv`). On both systems its
+stdin is the app's lifetime pipe (`CUA_DRIVER_PARENT_LIVENESS_STDIN`), so a crashed app takes its
+daemon with it. Elevated (administrator) apps refuse the driver's input, and it says so. cua spells
+forward delete `delete` there, and the client translates; it never presses the Windows key (the
+shell's: Start, Run and Search start any program), nor a key name cua does not know (cua would press
+its first letter).
+
+cua's Windows window list holds windows a click passes through (windows on other virtual desktops,
+transparent overlays such as a game overlay over the whole screen) and its app listing rescans every
+installed app, so the studio asks Windows itself through the window probe
+([`windows-window-probe.ts`](../src/substrate/windows-window-probe.ts)): Windows PowerShell running a
+fixed script, handed over as `-EncodedCommand` (no file, so no execution policy), that uses only .NET's
+UI Automation, Windows Forms and process reads: nothing compiled and no cmdlet, as a first cmdlet
+makes PowerShell prepare every installed module for first use (over 20 s on a fresh machine). It answers which app is in front
+and whether its focused field is a password field (UI Automation's `IsPassword`, asked again a moment
+later when focus is on no text field, as Chromium's accessibility wakes on first asking), and which
+app a click at a point reaches (the element there, up to its top-level window), with its window's
+handle so the tree fallback skips cua's slow window list. It says its view of the primary screen
+when ready, and click points are scaled to it, whatever DPI awareness PowerShell has. An app is its
+executable in lower case (`windowsAppId`: `notepad.exe`), shown by its file description (Notepad); a
+window no process can be read for is no app, which is refused. A probe that cannot start (PowerShell
+blocked by policy) stops the session from connecting, saying the stage it reached; one that does not
+answer in 5 s is ended, and the action refused.
+
+A VM's driver is reached as
 `ssh -T lume@<ip> cua-driver mcp` when `GENEX_COMPUTER_VM` names the guest, where the guest's
 CuaDriver.app holds the grants; the driver's own cursor overlay is never "the app under a point"
 ([`cua-driver-client.ts`](../src/substrate/cua-driver-client.ts)). Every action targets the whole
@@ -256,17 +287,21 @@ display in the foreground, because background clicks into a canvas are rerouted 
 success (cua #4350). The driver is a host helper started with fixed arguments and a minimal
 environment, outside the ProcessSandbox, which would deny it the screen.
 
-- **Where the driver comes from.** Every macOS release build downloads the pinned cua release
-  (version and SHA-256 in [`vendor-cua-driver.ts`](../scripts/vendor-cua-driver.ts); an archive with
-  any other digest is refused), takes only the `cua-driver` executable, thins it to the app's
-  architecture and puts it in `dist/resources/cua-driver` with cua's license and notices
-  (`build/cua-driver/`); the packager signs it with the app's identity. A development build takes it
-  with `GENEX_VENDOR_CUA_DRIVER=1`, else runs an installed driver (`~/.local/bin/cua-driver` and the
-  usual paths), embedded the same way. Moving to a newer driver: change the pin and the notices, then
-  verify the web and desktop scenarios live.
+- **Where the driver comes from.** Every macOS and Windows release build downloads the pinned cua
+  release (version and SHA-256 per system in [`vendor-cua-driver.ts`](../scripts/vendor-cua-driver.ts);
+  an archive with any other digest is refused), takes only the driver's executable and puts it in
+  `dist/resources/cua-driver` with cua's license and notices (`build/cua-driver/`). On macOS it is
+  thinned to the app's architecture and the packager signs it with the app's identity; on Windows
+  `cua-driver.exe` (x64) is taken from the zip by 7-Zip and ships as cua signed it (Cua AI, Inc.),
+  which the packaged smoke checks. A development build takes it with `GENEX_VENDOR_CUA_DRIVER=1`, else
+  runs an installed driver (`~/.local/bin/cua-driver` and the usual paths, or cua's Windows install
+  folder `%LOCALAPPDATA%\Programs\Cua\cua-driver\bin`), embedded the same way.
+  Moving to a newer driver: change both pins and the notices, then verify the web and desktop
+  scenarios live on both systems.
 - **The setting.** Settings → Permissions → **Let agents control your computer** (`computerControl`
   in the studio's `settings.json`) is off for every install, new or existing; only an explicit on
-  turns it on, and only macOS offers it. Off, no session is handed the `desktop` tool, no consent card
+  turns it on, and only macOS and Windows offer it (`computerControlOffered`,
+  [`shared/computer-control.ts`](../src/shared/computer-control.ts)). Off, no session is handed the `desktop` tool, no consent card
   shows, the driver is never looked for or started, and `desktop.computer` answers that computer
   control is off in Settings (an answer, never an error). Turning it off stops every running driver
   (`stopAll`, as ⌃⌥⌘Esc) and a session already holding the tool reads the same answer on its next
@@ -280,20 +315,24 @@ environment, outside the ProcessSandbox, which would deny it the screen.
   session's yes covers every app. A yes stands while the driver fails to connect (missing grants, no
   driver): the next call retries without a new card. A stop ends it, and the next call asks again.
 - **Never driven.** The studio itself (so an agent cannot answer its own card), password managers,
-  System Settings, Keychain Access and the system's password prompts; nothing is typed into a
-  password field (macOS's secure input on this Mac, or a field labelled as a password in the front
-  window's tree). A click is checked against the app whose window is under the point, and a point no
+  System Settings, Keychain Access and the system's password prompts; on Windows the same by
+  executable (`NEVER_DRIVEN_WINDOWS_APPS`), every packaged app's frame (`ApplicationFrameHost.exe`,
+  which holds Settings and Windows Security among others, and from which the studio cannot tell the
+  app), the shell (Explorer, which is also the desktop and the taskbar, Start and Search: each can
+  start any program) and the driver's own cursor overlay. Nothing is typed into a password field (macOS's secure input on a
+  Mac, UI Automation's password flag on Windows; where neither can say, a text field labelled as a
+  password in the front window's tree, `AXTextField` or Windows' `Edit`). A click is checked against the app whose window is under the point, and a point no
   window covers is refused, never put down to the app in front; a drag is checked at both ends, so
   dropping onto a refused or unasked app moves nothing. A refusal ends the plan and its reason is the
   answer. `app_look`, which only looks and so needs no setting ([tool permissions](tool-permissions.md#looking-at-apps)),
   never looks at these apps or Genex's own windows either.
-- **Never building or play-testing.** The apps an enabled engine plugin declares
-  (`engine.apps.mac`, its editor) are refused in plain words ("use the engine's own tools", and a
+- **Never building or play-testing.** The apps an enabled engine plugin declares for this system
+  (`engine.apps.mac` or `engine.apps.windows`, its editor) are refused in plain words ("use the engine's own tools", and a
   setup click or a publish goes through its plugin's tool) before
   the person is asked about them, unless the chat holds that plugin's setup assist; the tool's own
   description says so too. While an assist holds the chat, every app outside its grant is refused.
   The apps the studio never drives stay refused whatever a grant names (`engineAppRefusal`), and so
-  do the apps an enabled engine's games are played in (`engine.playerApps.mac`, such as Roblox's
+  do the apps an enabled engine's games are played in (`engine.playerApps`, such as Roblox's
   player): no agent plays in a live server, not even in a setup assist.
 - **Do it for me** ([`desktop-assist.ts`](../src/main/core/desktop-assist.ts), the plugin service
   `game.engine.assist`). Setup clicks and publishing the person approved, only: a switch or dialog
@@ -307,16 +346,18 @@ environment, outside the ProcessSandbox, which would deny it the screen.
   running turn it was steered into; never another turn of the chat building beside it) the
   plugin's declared apps until it ends, and never past 20 minutes; a session with no turn the host
   can follow holds it for those 20 minutes. That chat's own session then works as below, with its session and app
-  cards. Windows and a Mac with no driver answer `unavailable`, and `game.engine.canAssist` tells a
-  plugin so beforehand, so it shows its click path instead of the button. Roblox Studio's
+  cards. A computer with no driver (Linux, a development build without one) answers `unavailable`,
+  and `game.engine.canAssist` tells a plugin so beforehand, so it shows its click path instead of the button. Roblox Studio's
   publishing is the one assist that is not a setup click ([plugins](plugins.md)): the person
   presses Publish to Roblox or Publish an update, or approves the agent's `first-publish` card
   (the game's name, editable on it) or `publish-update` card, and the turn answering the task
   clicks File › Publish to Roblox in their Studio itself, keeping Studio's privacy and settings and stopping at any age, ID,
   two-step, terms or payment question (elsewhere the answer gives that click path). Genex then
   links the game to the published place by itself.
-- **Stopping.** The chat's Stop, the session's end, ⌃⌥⌘Esc (registered from the moment a driver
-  starts until the last session lets go) and quitting all stop the driver (`desktop-control.ts`). A
+- **Stopping.** The chat's Stop, the session's end, the stop shortcut (⌃⌥⌘Esc on a Mac,
+  Ctrl+Alt+Shift+Esc on Windows, where there is no Command key and Ctrl+Shift+Esc is Task Manager's;
+  registered from the moment a driver starts until the last session lets go) and quitting all stop
+  the driver (`desktop-control.ts`). A
   stop while the session's card waits or the driver starts cancels that call: a later yes connects
   nothing, a driver that arrives after it is closed unused, and nothing moves. A harness that ends
   (a crash or a restart) stops its `desktop.computer` sessions, and the next harness's first call asks

@@ -380,7 +380,7 @@ describe("a plugin's hooks, locks, needs and readiness", () => {
     const raw = JSON.parse(readFileSync("src/plugins/roblox/plugin.json", "utf8")) as PluginManifest;
     const roblox = validateManifest(raw);
     // A change to the plugin raises its version above the one dev has (check-plugin-versions).
-    assert.equal(roblox.version, "0.1.4", "one step above the version dev has");
+    assert.equal(roblox.version, "0.1.5", "one step above the version dev has");
     assert.deepEqual(roblox.locks, [
       { id: "studio", label: "Roblox Studio", per: LockScope.Project, personFirst: "studio-activity" },
     ]);

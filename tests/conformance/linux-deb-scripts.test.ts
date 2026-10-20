@@ -218,3 +218,78 @@ describe("the deb's package repository", {
     }
   });
 });
+
+/**
+ * Ubuntu 24.10 and later confine /usr/bin/bwrap itself (AppArmor's `bwrap-userns-restrict`): its
+ * children run under `unpriv_bwrap`, which denies every capability, so the nested user namespace
+ * the sandbox's seccomp step makes is refused and no agent process starts. A copy beside the app
+ * attaches to no profile of its own and runs under the app's, as bubblewrap does on 24.04.
+ */
+const SYSTEM_BWRAP = path.join("usr", "bin", "bwrap");
+const OWN_BWRAP = path.join("usr", "lib", "genex", "bwrap");
+const BWRAP_RESTRICTION = path.join("etc", "apparmor.d", "bwrap-userns-restrict");
+
+/** A root with bubblewrap installed and, when `restricted`, Ubuntu's profile confining it. */
+async function withBubblewrap(options: { restricted: boolean; setuid?: boolean }): Promise<string> {
+  const root = await unpacked();
+  await mkdir(path.join(root, path.dirname(SYSTEM_BWRAP)), { recursive: true });
+  await writeFile(path.join(root, SYSTEM_BWRAP), "#!/bin/sh\necho system bubblewrap\n");
+  await chmod(path.join(root, SYSTEM_BWRAP), options.setuid ? 0o4755 : 0o755);
+  if (options.restricted) {
+    await mkdir(path.join(root, path.dirname(BWRAP_RESTRICTION)), { recursive: true });
+    await writeFile(path.join(root, BWRAP_RESTRICTION), "profile bwrap /usr/bin/bwrap {}\n");
+  }
+  return root;
+}
+
+describe("the app's own bubblewrap", {
+  skip: process.platform === "win32" && "runs the maintainer scripts in sh",
+}, () => {
+  it("is copied beside the app where the system confines /usr/bin/bwrap", async () => {
+    const root = await withBubblewrap({ restricted: true });
+    const ran = await run(scripts.postinst, ["configure", ""], {}, root);
+    assert.equal(ran.status, 0, ran.stderr);
+    assert.equal(await read(root, OWN_BWRAP), await read(root, SYSTEM_BWRAP));
+    const { stat } = await import("node:fs/promises");
+    assert.equal((await stat(path.join(root, OWN_BWRAP))).mode & 0o7777, 0o755);
+  });
+
+  it("is refreshed by an upgrade, so a newer system bubblewrap reaches it", async () => {
+    const root = await withBubblewrap({ restricted: true });
+    await run(scripts.postinst, ["configure", ""], {}, root);
+    await writeFile(path.join(root, SYSTEM_BWRAP), "#!/bin/sh\necho newer bubblewrap\n");
+    await run(scripts.postinst, ["configure", "0.1.10"], {}, root);
+    assert.equal(await read(root, OWN_BWRAP), "#!/bin/sh\necho newer bubblewrap\n");
+  });
+
+  it("is not made, and an old one goes, where /usr/bin/bwrap is unconfined, missing or setuid", async () => {
+    for (const options of [{ restricted: false }, { restricted: true, setuid: true }]) {
+      const root = await withBubblewrap(options);
+      await mkdir(path.join(root, path.dirname(OWN_BWRAP)), { recursive: true });
+      await writeFile(path.join(root, OWN_BWRAP), "stale copy\n");
+      const ran = await run(scripts.postinst, ["configure", ""], {}, root);
+      assert.equal(ran.status, 0, JSON.stringify(options));
+      assert.equal(await read(root, OWN_BWRAP), null, JSON.stringify(options));
+    }
+    const missing = await unpacked();
+    await mkdir(path.join(missing, path.dirname(BWRAP_RESTRICTION)), { recursive: true });
+    await writeFile(path.join(missing, BWRAP_RESTRICTION), "profile bwrap /usr/bin/bwrap {}\n");
+    const ran = await run(scripts.postinst, ["configure", ""], {}, missing);
+    assert.equal(ran.status, 0);
+    assert.equal(await read(missing, OWN_BWRAP), null);
+  });
+
+  it("goes with the app on remove and purge, and stays through an upgrade", async () => {
+    for (const [action, kept] of [
+      ["remove", false],
+      ["purge", false],
+      ["upgrade", true],
+    ] as const) {
+      const root = await withBubblewrap({ restricted: true });
+      await run(scripts.postinst, ["configure", ""], {}, root);
+      const ran = await run(scripts.postrm, [action], {}, root);
+      assert.equal(ran.status, 0, action);
+      assert.equal((await read(root, OWN_BWRAP)) !== null, kept, action);
+    }
+  });
+});

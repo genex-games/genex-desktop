@@ -84,6 +84,8 @@ export const WorkerStopCode = {
   RunEnded: "run_ended",
   StoppedByLead: "stopped_by_lead",
   Error: "error",
+  /** Claude Code refused its session: the sandbox a worker runs in cannot run on this computer yet. */
+  SandboxUnavailable: "sandbox_unavailable",
 } as const;
 export type WorkerStopCode = (typeof WorkerStopCode)[keyof typeof WorkerStopCode];
 

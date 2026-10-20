@@ -16,6 +16,7 @@ import { UNTIL_DONE_CAP_MS } from "../../time-cap.ts";
 import { folderLabelOf } from "../../workers/identity.ts";
 import { RUN_POOL_WORDS } from "../../workers/prompts.ts";
 import { type RunPoolSeat, runPool } from "../../workers/run-pool.ts";
+import { tellIfRefused } from "../../workers/sandbox-refusal.ts";
 import type { LoopRun } from "../loop-run.ts";
 import { NoteKind } from "../wake-schedule.ts";
 import { closeUnderWay } from "../close-latch.ts";
@@ -187,8 +188,10 @@ function poolSeat(loopRun: LoopRun, open: OpenLoop): RunPoolSeat {
     // A merge whose turn comes once the Loop closes, stops or pauses lands nothing after its close kept the folder.
     mergeRefused: () => mergeRefusedNow(loopRun),
     // A worker's end is the lead's news: it wakes a resting lead with the rest.
-    onEnded: (record) =>
-      loopRun.note(RUN_POOL_WORDS.ended(record.id, record.title, record.state), NoteKind.WorkerEnded),
+    onEnded: (record) => {
+      loopRun.note(RUN_POOL_WORDS.ended(record.id, record.title, record.state), NoteKind.WorkerEnded);
+      tellIfRefused(loopRun, engine, record.stopCode);
+    },
   };
 }
 

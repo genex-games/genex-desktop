@@ -969,7 +969,7 @@ export type StudioConsentSource = (typeof StudioConsentSource)[keyof typeof Stud
  * consent record keeps it as the prompt, so both say the same words.
  */
 export const COMPUTER_SETTING_QUESTION =
-  "Turn on computer control? Agents in every chat can then ask to use apps on this Mac, one app at a time.";
+  "Turn on computer control? Agents in every chat can then ask to use apps on this computer, one app at a time.";
 
 /** The name a studio consent card shows. */
 export const STUDIO_CONSENT_NAMES: Readonly<Record<StudioConsentSource, string>> = {
@@ -1051,7 +1051,7 @@ export const ENGINE_ASSIST_TASK_MAX_CHARS = 300;
 
 /** Why `game.engine.assist` started nothing. */
 export const EngineAssistRefusal = {
-  /** No computer control on this computer: Windows, or a Mac with no desktop driver. */
+  /** No computer control on this computer: no desktop driver (Linux, or a development build without one). */
   Unavailable: "unavailable",
   /** The person said no to the task's card or to turning computer control on. */
   Declined: "declined",

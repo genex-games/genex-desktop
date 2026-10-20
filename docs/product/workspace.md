@@ -5,7 +5,7 @@
 The sidebar holds Search, Notifications, Send feedback
 ([what it sends](../../PRIVACY.md#send-feedback)), the Play/Create switch, New game, Plugins,
 Harness, Settings, Games, Friends and, once they wait, **Genex terms updated**,
-**plugin updates** and **Relaunch to update** (Linux: **Download**); lists scroll. Pinned games lead, then recent activity. Every launch
+**plugin updates** and **Relaunch to update** (Linux: **Download**). Pinned games lead, then recent activity. Every launch
 opens **home** (also the wordmark): one composer over an optional picture. A game opens its
 conversation beside the stage (Live, Builds once planned, Assets); Harness opens its conversation
 and Activity; Plugins fills the workspace.
@@ -29,7 +29,7 @@ idea.
 Then a Genex plugin card offers **Connect Genex plugin** once.
 
 A sandbox that cannot start opens **Set up the protected workspace**; Windows needs one
-administrator prompt.
+administrator prompt (two if Secondary Logon is off).
 
 ## Main actions
 
@@ -54,7 +54,7 @@ A game's folder owns its identity. Commits and checkpoints skip engine scratch (
 merges. Snapshots and links use raw bytes, Git hooks and filters off; LFS pointers stay
 pointers. Unsent text survives loading; hidden workspaces ignore keys.
 
-The live game is a native view; while an overlay covers it, the stage holds its frame.
+While an overlay covers the live game's native view, the stage holds its frame.
 
 ## Where to work
 

@@ -253,6 +253,10 @@ A game declares whether it can run without AI (`requires`: `ai` or `optional`; G
 `genex/ai/requires` project setting). Godot's GenexAI declares `capabilities.ai` through the
 addon's GenexPlay; a Rust game declares it in its own `hello`.
 
+**Not yet wired: Rust + wgpu.** The studio does not compose the Rust lane until the Rust + wgpu
+engine port meets play-time AI (genex-games/genex-desktop#287). Until then a Rust game's `ai` lines
+all settle `ai_off`, and it plays its fallbacks.
+
 ### Play-time AI in an engine's editor
 
 A game played in its editor speaks no protocol, so the SDK queues the same `ai` lines and Studio's
