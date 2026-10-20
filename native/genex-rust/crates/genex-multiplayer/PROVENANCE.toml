@@ -1,0 +1,129 @@
+# Where this crate comes from. genex-multiplayer (MIT, first party) is the Genex relay protocol 3
+# client, vendored byte for byte from the genex-demo monorepo: no fork, fixes go upstream first and
+# arrive here as a new pin. `tests/conformance/rust-vendored-multiplayer.test.ts` holds this
+# folder to the table below: every listed file present with its sha256 and size, nothing added,
+# nothing missing, no link. With the rewrites undone and the local files left out, the folder
+# hashes to the upstream git tree.
+#
+# Refreshing the pin: `git archive <commit>:sdks/rust/genex-multiplayer` into this folder, apply
+# the rewrites again, then rewrite this file (commit, tree and every row).
+
+schema = 1
+upstream = "genex-demo"
+path = "sdks/rust/genex-multiplayer"
+commit = "8cd1477a2a120937a1c79fc1c98b99cef3fcc145"
+tree = "d25b243dbf124e33d8fcfa56fe133a1bdd7a337e"
+licence = "MIT"
+
+# The upstream manifest inherits its edition from the genex-demo workspace (2021). This workspace
+# is on edition 2024, where the crate's `extern "C"` blocks and `std::env::remove_var` call no
+# longer compile, so the manifest names the upstream edition itself. Every other inherited key
+# (rust-version, licence, repository) resolves acceptably from this workspace.
+[[rewrite]]
+file = "Cargo.toml"
+upstream = 'edition.workspace = true'
+vendored = 'edition = "2021"'
+upstream_sha256 = "2fa7475d031b44c2473d063a92786dd57349d02ea8398347f2f16794abeb589f"
+
+# The one file this repository adds: the crate's own clippy rules, replacing the workspace's game
+# rules (it reads wall clocks and keys views in HashMaps, as host network code may).
+[[file]]
+path = "clippy.toml"
+sha256 = "8b033e4e599a2556afdb90428e2752457ef827287003e0f8d5c8c57d66cb2414"
+bytes = 551
+local = true
+
+[[file]]
+path = "Cargo.toml"
+sha256 = "a9ffddbeaf0460118a22a17eb124e04326c39dc75ae210f6af55aeb99c74fbf1"
+bytes = 1363
+
+[[file]]
+path = "build.rs"
+sha256 = "f8c751f7ae414e8ec46c472a7443d6fe7f918c6e94a39333a40d6c114a73da46"
+bytes = 6677
+
+[[file]]
+path = "examples/driver.rs"
+sha256 = "f95b03ae59f6e08390d81487799d5e6bdf9200bcd93d8f33fd31ff7c14026d42"
+bytes = 15161
+
+[[file]]
+path = "examples/identity.rs"
+sha256 = "d374bef3c635f673028a6d352767fa63eb8f1f0f749ec1d41d0b838b2dab0b32"
+bytes = 4233
+
+[[file]]
+path = "examples/reconnect.rs"
+sha256 = "3dd1b7f5ce9071c0f8513829f859587daf9c08ec7a01c82afa4c0bb2d3088e16"
+bytes = 13493
+
+[[file]]
+path = "examples/smoke.rs"
+sha256 = "f06bdcab45770b91372e7b8cd135edd3312d861c9f53bf4c35b83a0f0c443760"
+bytes = 13738
+
+[[file]]
+path = "src/interp.rs"
+sha256 = "be78d9e5213a8d77fbdb76b61ca9dfe7e2eb4efa9b308a2af035bc9dba4bb912"
+bytes = 21077
+
+[[file]]
+path = "src/lib.rs"
+sha256 = "2ef3b0ed2c0ba4dfc708fe791dd7534530e9327379fd6ead11bbce3fa91f101f"
+bytes = 2099
+
+[[file]]
+path = "src/msgpack.rs"
+sha256 = "ecb8ceca0ee8a6abc44f8b1317e2adf9ffc35c256e920523e08dfad98613c92f"
+bytes = 12698
+
+[[file]]
+path = "src/native/ffi.rs"
+sha256 = "66afa094e30d9ce763ab383cb3d53288b5a5bfb9cf3a45bdf8f8ffa15792c4f3"
+bytes = 10689
+
+[[file]]
+path = "src/native/identity.rs"
+sha256 = "7feaf370c3bbee3ebb8aba9a13ada112f11116437dca88d06ff526002be10b5e"
+bytes = 12398
+
+[[file]]
+path = "src/native/mod.rs"
+sha256 = "e257cda0d23eb5614b8dab61c091eac4b0f538850b4f370430b14412161c9613"
+bytes = 82626
+
+[[file]]
+path = "src/native/nodelay.rs"
+sha256 = "e310cf627e3725a1ad7986130d2124eef520bb42638bb7537eb11e36e8ef2752"
+bytes = 5295
+
+[[file]]
+path = "src/native/state.rs"
+sha256 = "5aab0a66b917ea78476a3eddeaf356f7c7e60328ae0bd1cf63c24c342b9b8a6d"
+bytes = 6016
+
+[[file]]
+path = "src/pose.rs"
+sha256 = "24b7e87f223855fd48dbb1e5df6a4faf5c1d7b07db8d4eb355cf68ed4727794c"
+bytes = 9715
+
+[[file]]
+path = "src/protocol.rs"
+sha256 = "ccf7a61f1d0470c37a4d419c48ef07d66c178365b860922e6895cc74f826f495"
+bytes = 8489
+
+[[file]]
+path = "src/stamp.rs"
+sha256 = "cd5fe3d77b7ac8f9ebc1b414215652773c2d485d71dab58611bfc8b6a36d988c"
+bytes = 5693
+
+[[file]]
+path = "src/types.rs"
+sha256 = "4433924a8cb12302d40c8cdcf9459a3f34000d224941edfc5f971da5f8029404"
+bytes = 10374
+
+[[file]]
+path = "src/web.rs"
+sha256 = "dcd098e5a7e86acfff5039d9cb60737f1f0f3c065427187e010b9ce8d674db40"
+bytes = 16998
