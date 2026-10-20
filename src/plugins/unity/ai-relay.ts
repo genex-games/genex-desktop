@@ -8,8 +8,9 @@
  * one thing interpolated into its code, so nothing a game or a model wrote ever becomes code. An
  * editor that is closed, plays nothing, or lacks the package answers no play.
  */
-import { PLAY_AI_MAX_LINE_CHARS, type PlayAiOutgoing } from "../../shared/play-protocol.ts";
+import type { PlayAiOutgoing } from "../../shared/play-protocol.ts";
 import { isJsonObject } from "../../substrate/fsx.ts";
+import { aiAnswerBatches, aiLineFromText } from "../../substrate/play-protocol-client.ts";
 import { pipelineResultOf } from "./computer-play.ts";
 import { type PipelineDeps, runCommand, systemPipelineDeps } from "./pipeline.ts";
 
@@ -28,32 +29,6 @@ export const AiRelayCode = {
   push: (base64: string) => `return Genex.AI.GenexAiRelay.Push("${base64}");`,
 } as const;
 
-/** One line of a pull, parsed: text within the Play Protocol line cap that is JSON, or undefined. */
-function lineOf(text: unknown): unknown {
-  if (typeof text !== "string" || text.length > PLAY_AI_MAX_LINE_CHARS) return undefined;
-  try {
-    return JSON.parse(text);
-  } catch {
-    return undefined;
-  }
-}
-
-/** The answers as base64 batches, each within {@link AI_RELAY_MAX_PUSH_CHARS} unless one alone is larger. */
-function batches(items: readonly PlayAiOutgoing[]): string[] {
-  const out: string[] = [];
-  let batch: PlayAiOutgoing[] = [];
-  const encode = (list: readonly PlayAiOutgoing[]) => Buffer.from(JSON.stringify(list), "utf8").toString("base64");
-  for (const item of items) {
-    const grown = [...batch, item];
-    if (batch.length && encode(grown).length > AI_RELAY_MAX_PUSH_CHARS) {
-      out.push(encode(batch));
-      batch = [item];
-    } else batch = grown;
-  }
-  if (batch.length) out.push(encode(batch));
-  return out;
-}
-
 /**
  * The play-time AI channel of the Unity editor that has the project at `root` open. Neither call
  * waits for a busy editor: the relay asks again on its next tick.
@@ -69,11 +44,11 @@ export function unityAiChannel(root: string, deps: PipelineDeps = systemPipeline
       const said = await evaluate(AiRelayCode.Pull, signal).catch(() => undefined);
       if (!isJsonObject(said) || said.playing !== true) return null;
       const lines = Array.isArray(said.lines) ? said.lines.slice(0, AI_RELAY_MAX_LINES) : [];
-      return lines.map(lineOf).filter((line) => line !== undefined);
+      return lines.map(aiLineFromText).filter((line) => line !== undefined);
     },
     /** Hands the playing game its answers, in order; false when the editor did not take them all. */
     async push(items: readonly PlayAiOutgoing[], signal: AbortSignal): Promise<boolean> {
-      for (const base64 of batches(items)) {
+      for (const base64 of aiAnswerBatches(items, AI_RELAY_MAX_PUSH_CHARS)) {
         const took = await evaluate(AiRelayCode.push(base64), signal).catch(() => undefined);
         if (took !== true) return false;
       }

@@ -156,6 +156,8 @@ async function buildUnreal(root, resources, sdk) {
     path.join(unreal, "panel.html"),
     await inlinePanelFonts(panel, path.join(root, "src/renderer/fonts")),
   );
+  // Genex's play-time AI plugin (C++), which a game that uses AI carries in its Plugins folder.
+  await cp(path.join(root, "src/plugins/unreal/GenexAI"), path.join(unreal, "GenexAI"), { recursive: true });
   // The editor helper is Unreal's own plugin, copied whole into a game's Plugins folder at setup.
   await cp(path.join(root, "src/plugins/unreal/GenexEditorHelper"), path.join(unreal, "GenexEditorHelper"), {
     recursive: true,

@@ -22,6 +22,7 @@ import { errorMessage } from "../shared/errors.ts";
 import {
   PLAY_AI_MAX_LINE_CHARS,
   type PlayAiLine,
+  type PlayAiOutgoing,
   PlayErrorCode,
   PlayEvent,
   PlayFailure,
@@ -29,6 +30,40 @@ import {
   type PlayRequestArgs,
   readPlayAiLine,
 } from "../shared/play-protocol.ts";
+
+/**
+ * One `ai` line an engine editor's relay handed over as JSON text (Unity's Pipeline, Unreal's
+ * editor port): parsed when it is text within the Play Protocol line cap, else undefined. What it
+ * parses to is read by `readPlayAiLine` like any other line.
+ */
+export function aiLineFromText(text: unknown): unknown {
+  if (typeof text !== "string" || text.length > PLAY_AI_MAX_LINE_CHARS) return undefined;
+  try {
+    return JSON.parse(text);
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * The answers for an engine editor's relay as base64 of their JSON, in order, each batch within
+ * `maxChars` unless one answer alone is larger. Base64 is all that rides into the editor's own
+ * code, so nothing a game or a model wrote ever becomes code.
+ */
+export function aiAnswerBatches(items: readonly PlayAiOutgoing[], maxChars: number): string[] {
+  const encode = (list: readonly PlayAiOutgoing[]) => Buffer.from(JSON.stringify(list), "utf8").toString("base64");
+  const out: string[] = [];
+  let batch: PlayAiOutgoing[] = [];
+  for (const item of items) {
+    const grown = [...batch, item];
+    if (batch.length && encode(grown).length > maxChars) {
+      out.push(encode(batch));
+      batch = [item];
+    } else batch = grown;
+  }
+  if (batch.length) out.push(encode(batch));
+  return out;
+}
 
 /** How long a process may take to print its ready line. */
 export const PLAY_READY_TIMEOUT_MS = 20 * SECOND_MS;
