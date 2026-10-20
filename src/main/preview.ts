@@ -15,6 +15,12 @@ import { PreviewProfiler, type ProfileRequest } from "../substrate/preview-profi
  * rewrites its own instructions. All interaction is one-way, from the main process, through
  * `webContents` APIs.
  *
+ * The one deliberate exception is the Create Live route (D1, `game-ai/create-route.ts`), off by
+ * default: a same-origin POST under `/__genex/ai/v1/` on the game's own origin reaches play-time AI
+ * from the Live human preview only, and only with Settings' switch on. Every other partition
+ * answers `ai_off`, and so does Live while a machine drives it (`input`, `studioCall`, an agent's
+ * `evaluate`). The preview still has no preload and no IPC.
+ *
  * These are also the studio's senses. Screenshots, console output, crash signals and
  * `window.__studio.state()` are what turn "it renders" into something a critic can judge.
  */
@@ -23,6 +29,7 @@ import {
   type CustomScheme,
   type NativeImage,
   type Session,
+  type WebFrameMain,
   WebContentsView,
   nativeImage,
   net,
@@ -35,11 +42,13 @@ import { pathToFileURL } from "node:url";
 import {
   HttpRouteKind,
   HttpStatus,
+  LIVE_PREVIEW_PARTITION,
   MAX_REWRITE_BYTES,
   confinePreviewContents,
   gameRequestAllowed,
   previewNavigationAllowed,
   rewriteGameHtml,
+  routeGame,
   routeHttp,
   servableProject,
   servedLocation,
@@ -92,12 +101,15 @@ import { SECOND_MS } from "../shared/duration.ts";
 import type { PreviewPixelStats } from "./studio-core.ts";
 import { errorMessage } from "../shared/errors.ts";
 import { setTimeout as delay } from "node:timers/promises";
+import { type CreateRouteHost, type PreviewAi, previewAi, routeRequestAllowed } from "./game-ai/create-route.ts";
 
 /** What the preview's console tells the agent about the game view, and why a call is refused. */
 const MESSAGE = {
   renderGone: (reason: string) => `render process gone: ${reason}`,
   unresponsive: "game loop is unresponsive",
   blocked: (what: string) => `the studio blocked ${what}: games run offline in the preview`,
+  aiBlocked: (from: string) =>
+    `the studio blocked a play-time AI request from ${from}: only the game's own page may ask on its origin`,
   pageSurfaceFallback: (reason: string | null) =>
     `the page surface could not be photographed${reason === null ? "" : ` (${reason})`}; the canvas was photographed instead`,
   noFrame: "the page produced no frame to photograph",
@@ -156,6 +168,12 @@ export interface GamePreviewOptions {
   muted?: boolean;
   /** The app's default page-shim settings; a single `load` may override any of them. */
   shim?: Partial<ShimOptions>;
+  /**
+   * Play-time AI behind the Create Live route (D1). Whether a page reaches it comes from this
+   * view's partition, never from here: only Live's does, and every other answers `ai_off`. Absent,
+   * the route answers `ai_off` everywhere.
+   */
+  ai?: CreateRouteHost;
 }
 
 const SCHEME = "game";
@@ -283,6 +301,10 @@ export class GamePreview {
   #blockedNoted = new Set<string>();
   /** How the studio reached this page's `three`, recorded when the entry was rewritten. */
   #reach: { reach: string; hooked: Record<string, string> } = { reach: "none", hooked: {} };
+  /** The Create Live route on this view: its context from the partition, its drive watch and gate. */
+  readonly #ai: PreviewAi;
+  /** This view's contents' id: the channel play-time AI abandons when its page goes. */
+  #aiChannel: string | null = null;
 
   #profiler = new PreviewProfiler(
     (s) => this.evaluate(s),
@@ -310,6 +332,11 @@ export class GamePreview {
   constructor(options: GamePreviewOptions) {
     this.options = options;
     this.#audioMuted = options.muted ?? false;
+    this.#ai = previewAi({
+      partition: options.partition ?? LIVE_PREVIEW_PARTITION,
+      offscreen: options.offscreen ?? false,
+      host: options.ai ?? null,
+    });
   }
 
   get view(): WebContentsView | null {
@@ -320,7 +347,7 @@ export class GamePreview {
   create(): WebContentsView {
     if (this.#closed) throw new Error(MESSAGE.closed);
     if (this.#view) return this.#view;
-    const partition = this.options.partition ?? "game-preview";
+    const partition = this.options.partition ?? LIVE_PREVIEW_PARTITION;
     const gameSession = session.fromPartition(partition);
     this.#session = gameSession;
 
@@ -341,13 +368,7 @@ export class GamePreview {
     if (!gameSession.protocol.isProtocolHandled("http")) {
       gameSession.protocol.handle("http", (request) => this.#serveLoopback(request));
     }
-    // A game runs offline (SECUI-3): the partition may reach the studio's own server and nothing
-    // else, so what an agent wrote into a game cannot leave the machine when the studio loads it.
-    gameSession.webRequest.onBeforeRequest((details, callback) => {
-      const allowed = gameRequestAllowed(details.url, loopbackPorts, details.method);
-      if (!allowed) this.#noteBlocked("request", details.url);
-      callback(allowed ? {} : { cancel: true });
-    });
+    this.#gateRequests(gameSession);
 
     const view = new WebContentsView({
       // Sandboxed, no preload, no on-device speech (`game-view.ts`).
@@ -358,8 +379,12 @@ export class GamePreview {
     if (this.options.offscreen) wc.setFrameRate(60);
     if (this.#audioMuted) wc.setAudioMuted(true);
     confinePreviewContents(wc);
-    wc.on("did-start-navigation", () => {
+    const channel = String(wc.id);
+    this.#aiChannel = channel;
+    wc.on("did-start-navigation", (details) => {
       void this.#profiler.invalidate("navigation changed");
+      // A new document in the top frame: the old page's AI cards cancel and its calls abort.
+      if (details.isMainFrame && !details.isSameDocument) this.#ai.abandon(channel);
     });
     wc.setWindowOpenHandler(() => ({ action: "deny" }));
     // The page stays on game:// or its loopback origin: a remote page inside the studio's chrome,
@@ -430,6 +455,23 @@ export class GamePreview {
     this.#view = view;
     this.#visibility.refresh();
     return view;
+  }
+
+  /**
+   * A game runs offline (SECUI-3): the partition may reach the studio's own server and nothing
+   * else, so what an agent wrote into a game cannot leave the machine when the studio loads it.
+   */
+  #gateRequests(gameSession: Session): void {
+    gameSession.webRequest.onBeforeRequest((details, callback) => {
+      const allowed = gameRequestAllowed(details.url, loopbackPorts, details.method);
+      if (!allowed) this.#noteBlocked("request", details.url);
+      // The Create Live route takes requests from a frame of its own origin only: Chromium gives
+      // the handler no Origin, and a protocol handler answers across origins with no CORS check.
+      const initiator = frameOrigin(details.frame);
+      const fromItsOrigin = routeRequestAllowed(details.url, loopbackPorts, initiator);
+      if (allowed && !fromItsOrigin) this.#noteAiBlocked(initiator);
+      callback(allowed && fromItsOrigin ? {} : { cancel: true });
+    });
   }
 
   attachTo(window: BaseWindow, bounds: Electron.Rectangle): void {
@@ -516,6 +558,8 @@ export class GamePreview {
   /** Serve files from the project folder, refusing anything that escapes it. */
   async #serve(request: Request): Promise<Response> {
     const url = new URL(request.url);
+    const route = routeGame(url);
+    if (route.route === HttpRouteKind.HostAi) return this.#answerAi(request, route.project);
     return this.#serveFile(url.hostname, url.pathname, request);
   }
 
@@ -524,7 +568,20 @@ export class GamePreview {
     const route = routeHttp(url, loopbackPorts);
     // Never re-fetched from the main process: that sent a game's plain-http beacon off the machine.
     if (route.route === HttpRouteKind.Deny) return textResponse(HttpStatus.Forbidden);
+    if (route.route === HttpRouteKind.HostAi) return this.#answerAi(request, route.project);
     return this.#serveFile(route.project, url.pathname, request);
+  }
+
+  /** The Create Live route, for `project`'s page: answered only for the game this view shows now. */
+  #answerAi(request: Request, project: string): Promise<Response> {
+    const running = this.#view !== null && this.#stoppedUrl === null;
+    const page = { project, loaded: running ? this.#project : null, channel: this.#aiChannel ?? "" };
+    return this.#ai.answer(request, page);
+  }
+
+  /** A machine's work on the page: the Create Live route answers `ai_off` while it runs. */
+  #driven<T>(work: () => Promise<T>): Promise<T> {
+    return this.#ai.drive(this.#aiChannel, work);
   }
 
   /** One console line per blocked origin per load: the harness reads why a game's request failed. */
@@ -545,6 +602,15 @@ export class GamePreview {
       level: "warning",
       message: MESSAGE.blocked(what),
     });
+  }
+
+  /** One console line per refused sender per load: why a page's play-time AI request failed. */
+  #noteAiBlocked(initiator: string | null): void {
+    const from = initiator === null ? "a worker or a frame that is gone" : `the origin ${initiator}`;
+    const key = `ai ${from}`;
+    if (this.#blockedNoted.has(key)) return;
+    this.#blockedNoted.add(key);
+    this.#push({ at: Date.now(), level: "warning", message: MESSAGE.aiBlocked(from) });
   }
 
   async #serveFile(project: string, pathname: string, request?: Request): Promise<Response> {
@@ -852,7 +918,7 @@ export class GamePreview {
     const stats = measured ?? computePixelStats(image.toBitmap(), size.width, size.height);
     let canvas = true;
     try {
-      canvas = Boolean(await this.evaluate("!!document.querySelector('canvas')"));
+      canvas = Boolean(await this.#evaluate("!!document.querySelector('canvas')"));
     } catch {
       /* an unreachable page defaults to true — a black screen should still be suspect */
     }
@@ -1038,7 +1104,7 @@ export class GamePreview {
    */
   async pageUi(): Promise<PageUi | null> {
     if (!this.#view) return null;
-    return probePageUi((expression) => this.evaluate(expression));
+    return probePageUi((expression) => this.#evaluate(expression));
   }
 
   /**
@@ -1212,6 +1278,11 @@ export class GamePreview {
    * agent wrote — so it is size-capped and only ever handled as JSON.
    */
   async evaluate(expression: string, maxChars = 64_000): Promise<unknown> {
+    return this.#driven(() => this.#evaluate(expression, maxChars));
+  }
+
+  /** {@link evaluate} for the studio's own probes, which read the page and never drive it. */
+  async #evaluate(expression: string, maxChars = 64_000): Promise<unknown> {
     const view = this.create();
     // `Promise.resolve` first: an expression that evaluates to a promise (a `fetch`, an async
     // probe) must be awaited *before* serialising, otherwise every async probe silently returns
@@ -1242,7 +1313,7 @@ export class GamePreview {
     if (this.#navigating || wc.isLoading()) return { ...base, navigating: true, page: null };
     const probe = `(() => { let state = null; try { const full = window.__studio ? window.__studio.state() : null; state = full ? { phase: full.phase, drawCalls: full.drawCalls } : null; } catch {} return { complete: document.readyState === "complete", resources: performance.getEntriesByType("resource").length, state }; })()`;
     const page = (await Promise.race([
-      this.evaluate(probe).catch(() => null),
+      this.#evaluate(probe).catch(() => null),
       delay(LIVE_PROBE_MS, null),
     ])) as PreviewLiveStatus["page"];
     const answered = page !== null && typeof page === "object" && "complete" in page;
@@ -1255,7 +1326,7 @@ export class GamePreview {
    * largest lists to stubs, never the tail of its text, and the `keep` paths are cut last.
    */
   async studioState(options?: { keep?: readonly string[] }): Promise<unknown> {
-    return this.evaluate(studioStateExpression(STATE_MAX_CHARS, options?.keep));
+    return this.#evaluate(studioStateExpression(STATE_MAX_CHARS, options?.keep));
   }
 
   /**
@@ -1265,7 +1336,7 @@ export class GamePreview {
    * whether the load failed before any of it ran.
    */
   async attachReport(): Promise<PageAttachReport> {
-    const page = (await this.evaluate(ATTACH_PROBE)) as Record<string, unknown> | null;
+    const page = (await this.#evaluate(ATTACH_PROBE)) as Record<string, unknown> | null;
     const answered = page && typeof page === "object" && !("__error" in page);
     const base: Record<string, unknown> = answered
       ? (page as Record<string, unknown>)
@@ -1285,7 +1356,7 @@ export class GamePreview {
    * installed on every load; an empty list means a clean context, not a missing probe.
    */
   async gpuErrors(): Promise<string[]> {
-    const value = await this.evaluate("window.__studioGl ? window.__studioGl.errors() : []");
+    const value = await this.#evaluate("window.__studioGl ? window.__studioGl.errors() : []");
     return Array.isArray(value) ? value.map((entry) => String(entry)) : [];
   }
 
@@ -1300,11 +1371,15 @@ export class GamePreview {
   }
 
   async studioCall(method: string, arg?: unknown): Promise<unknown> {
+    return this.#driven(() => this.#studioCall(method, arg));
+  }
+
+  async #studioCall(method: string, arg?: unknown): Promise<unknown> {
     await this.#profiler.invalidate(`studio ${method} during sample`);
     // The method name is interpolated into page JS: only a plain identifier may travel.
     if (!/^[A-Za-z_$][\w$]*$/.test(method)) throw new Error(MESSAGE.notMethodName(method));
     const argument = arg === undefined ? "" : JSON.stringify(arg);
-    return this.evaluate(
+    return this.#evaluate(
       `(window.__studio && typeof window.__studio.${method} === "function") ? window.__studio.${method}(${argument}) : { __missing: true }`,
     );
   }
@@ -1353,6 +1428,12 @@ export class GamePreview {
    * DOM events plus `__studio.injectInput`, so a paused `step()` playthrough still sees WASD.
    */
   async input(actions: PreviewInputAction[]): Promise<{ ok: boolean; applied: number; width: number; height: number }> {
+    return this.#driven(() => this.#input(actions));
+  }
+
+  async #input(
+    actions: PreviewInputAction[],
+  ): Promise<{ ok: boolean; applied: number; width: number; height: number }> {
     await this.#profiler.invalidate("input during sample");
     const view = this.create();
     const bounds = view.getBounds();
@@ -1491,6 +1572,7 @@ export class GamePreview {
   async destroy(): Promise<void> {
     void this.#profiler.invalidate("preview disposed");
     this.#closed = true;
+    if (this.#aiChannel !== null) this.#ai.abandon(this.#aiChannel);
     this.#view?.webContents.close();
     this.#view = null;
     const retired = this.#session;
@@ -1520,6 +1602,16 @@ export class GamePreview {
 
   get sessionRef(): Session | null {
     return this.#session;
+  }
+}
+
+/** The origin of the frame a request came from, or null: none, or one already gone. */
+function frameOrigin(frame: WebFrameMain | null | undefined): string | null {
+  try {
+    return frame?.origin ?? null;
+  } catch {
+    // A frame disposed mid-request has no origin to vouch for it.
+    return null;
   }
 }
 

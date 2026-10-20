@@ -21,6 +21,7 @@ import type { ShimOptions } from "../substrate/preview-port.ts";
 import { isPreviewCdnRead } from "../substrate/preview-network.ts";
 import { isInside } from "../substrate/paths.ts";
 import type { ContractReach } from "../substrate/game-page.ts";
+import { AI_ROUTE_PREFIX } from "../shared/game-ai-bridge.ts";
 
 /** Where the bundles live under the vendor directory (`vendor/` is already a served route). */
 export const SHIM_PATH = "vendor/studio/shim.js";
@@ -62,8 +63,18 @@ export const CHARSET_BUDGET = 1024;
 /** The `sec-fetch-dest` values of an in-page navigation, the ones a document is rewritten for. */
 const DOCUMENT_DESTS: ReadonlySet<string> = new Set(["document", "iframe", "frame"]);
 
-/** The statuses the `game://` protocol answers with. */
-export const HttpStatus = { Ok: 200, BadRequest: 400, Forbidden: 403, NotFound: 404 } as const;
+/** The statuses the preview's protocol handlers answer with: its files, and the Create Live route. */
+export const HttpStatus = {
+  Ok: 200,
+  BadRequest: 400,
+  Forbidden: 403,
+  NotFound: 404,
+  MethodNotAllowed: 405,
+  PayloadTooLarge: 413,
+  UnsupportedMediaType: 415,
+  TooManyRequests: 429,
+  InternalError: 500,
+} as const;
 export type HttpStatus = (typeof HttpStatus)[keyof typeof HttpStatus];
 
 /** What a refusal says when nothing more specific is known. */
@@ -72,6 +83,11 @@ const STATUS_TEXT: Record<HttpStatus, string> = {
   [HttpStatus.BadRequest]: "bad request",
   [HttpStatus.Forbidden]: "forbidden",
   [HttpStatus.NotFound]: "not found",
+  [HttpStatus.MethodNotAllowed]: "method not allowed",
+  [HttpStatus.PayloadTooLarge]: "payload too large",
+  [HttpStatus.UnsupportedMediaType]: "unsupported media type",
+  [HttpStatus.TooManyRequests]: "too many requests",
+  [HttpStatus.InternalError]: "internal error",
 };
 
 /** A plain-text protocol response: `body`, or the status's own words ("forbidden", "not found"). */
@@ -620,16 +636,29 @@ async function resolveLinkedModules(base: string, liveRoot: string, rel: string)
   return resolveServed(own, parts.slice(at + 1).join(path.sep) || ".");
 }
 
-/** What {@link routeHttp} decides for one request: serve it from a game's folder, or refuse it. */
-export const HttpRouteKind = { Serve: "serve", Deny: "deny" } as const;
+/**
+ * What the preview's protocol handlers decide for one request: serve it from a game's folder, hand
+ * it to the Create Live route (a path under `AI_ROUTE_PREFIX` on the game's own origin), or refuse it.
+ */
+export const HttpRouteKind = { Serve: "serve", HostAi: "host-ai", Deny: "deny" } as const;
 export type HttpRouteKind = (typeof HttpRouteKind)[keyof typeof HttpRouteKind];
 
 /**
- * What the game partition's http handler does with a request. A loopback origin on a port handed
- * out by `loopbackPortFor` is that game's file server; everything else is a 403 (SECUI-3). It used
- * to be re-fetched from the main process, which sent a game's plain-http beacon out of the machine.
+ * What a protocol handler does with a request. A loopback origin on a port handed out by
+ * `loopbackPortFor` is that game's server; everything else on http is a 403 (SECUI-3). It used to
+ * be re-fetched from the main process, which sent a game's plain-http beacon out of the machine.
  */
-export type HttpRoute = { route: typeof HttpRouteKind.Serve; project: string } | { route: typeof HttpRouteKind.Deny };
+export type HttpRoute =
+  | { route: typeof HttpRouteKind.Serve; project: string }
+  | { route: typeof HttpRouteKind.HostAi; project: string }
+  | { route: typeof HttpRouteKind.Deny };
+
+/**
+ * The Live human preview's session partition (`GamePreview`'s default). The Create Live route
+ * answers from play-time AI on this partition only; every other one (a facet, the stand-in, an
+ * offscreen window) answers `ai_off`.
+ */
+export const LIVE_PREVIEW_PARTITION = "game-preview";
 
 /** The host names that reach this Mac's own loopback interface. */
 const LOOPBACK_HOSTS: ReadonlySet<string> = new Set(["localhost", "127.0.0.1"]);
@@ -639,11 +668,28 @@ function isLoopbackHttp(url: URL): boolean {
   return url.protocol === "http:" && LOOPBACK_HOSTS.has(url.hostname);
 }
 
+/** A path on `project`'s own origin: the Create Live route's when under its prefix, else a file. */
+function projectRoute(project: string, pathname: string): HttpRoute {
+  if (pathname.startsWith(AI_ROUTE_PREFIX)) return { route: HttpRouteKind.HostAi, project };
+  return { route: HttpRouteKind.Serve, project };
+}
+
+/** What the game partition's http handler does with a request: the project is the loopback port's. */
 export function routeHttp(url: string | URL, loopbackPorts: ReadonlyMap<number, string>): HttpRoute {
   const parsed = typeof url === "string" ? new URL(url) : url;
   const project = isLoopbackHttp(parsed) ? loopbackPorts.get(Number(parsed.port)) : undefined;
-  return project ? { route: HttpRouteKind.Serve, project } : { route: HttpRouteKind.Deny };
+  return project ? projectRoute(project, parsed.pathname) : { route: HttpRouteKind.Deny };
 }
+
+/** What the `game:` handler does with a request: the project is the host name. */
+export function routeGame(url: string | URL): HttpRoute {
+  const parsed = typeof url === "string" ? new URL(url) : url;
+  if (parsed.protocol !== "game:" || !parsed.hostname) return { route: HttpRouteKind.Deny };
+  return projectRoute(parsed.hostname, parsed.pathname);
+}
+
+/** A route that reaches one of the games this preview serves: its files or its Create Live route. */
+const reachesGame = (route: HttpRoute): boolean => route.route !== HttpRouteKind.Deny;
 
 function parseUrl(url: string | URL): URL | null {
   if (url instanceof URL) return url;
@@ -689,7 +735,7 @@ export function gameRequestAllowed(
     case "devtools:":
       return true;
     case "http:":
-      return routeHttp(parsed, loopbackPorts).route === HttpRouteKind.Serve;
+      return reachesGame(routeHttp(parsed, loopbackPorts));
     case "https:":
       return isPreviewCdnRead(parsed, method);
     default:
@@ -712,7 +758,7 @@ export function previewNavigationAllowed(
   const parsed = parseUrl(url);
   if (!parsed) return false;
   if (parsed.protocol === "game:") return true;
-  if (parsed.protocol === "http:") return routeHttp(parsed, loopbackPorts).route === HttpRouteKind.Serve;
+  if (parsed.protocol === "http:") return reachesGame(routeHttp(parsed, loopbackPorts));
   if (frame.mainFrame) return false;
   if (parsed.protocol === "about:") return parsed.pathname === "blank" || parsed.pathname === "srcdoc";
   return parsed.protocol === "data:" || parsed.protocol === "blob:";
