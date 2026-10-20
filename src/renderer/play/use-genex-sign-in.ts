@@ -2,10 +2,12 @@
  * The presses of the app's Genex account, one path for each place that offers them (the plate, the
  * card in Play's sidebar, Settings, Publish, a game's guest card): sign in in the browser, cancel a
  * sign-in that waits there, and sign out. A press that fails says so in a toast and changes nothing.
+ * A game's AI pill may also close its viewer onto Settings → Model Providers.
  */
 import { useCallback, useEffect, useState } from "react";
 import { usePlay } from "../state/hooks.ts";
-import { installAnswered } from "../state/play.ts";
+import { installAnswered, modelsAnswered } from "../state/play.ts";
+import { openSettings, SettingsSection } from "../settings-navigation.ts";
 import { studio } from "../state/studio.ts";
 import { ToastTone } from "../state/toasts.ts";
 import { PLAY_WORDS } from "../words.ts";
@@ -48,5 +50,15 @@ export function useGuestSignIn(): void {
     if (!asked) return;
     studio().play.setState(installAnswered, true);
     void signInToGenex();
+  }, [asked]);
+}
+
+/** Opens Settings → Model Providers once for each time a game's AI pill asked to (its viewer has closed by then). */
+export function useModelsAsked(): void {
+  const asked = usePlay((s) => s.modelsAsked);
+  useEffect(() => {
+    if (!asked) return;
+    studio().play.setState(modelsAnswered, true);
+    openSettings(SettingsSection.Providers);
   }, [asked]);
 }
