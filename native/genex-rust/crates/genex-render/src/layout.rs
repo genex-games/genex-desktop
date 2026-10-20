@@ -306,7 +306,8 @@ pub struct GpuCullViews {
     /// position xyz; w the output's pixels a world unit at distance 1 over the error threshold
     /// (0: levels off, every instance at its mesh itself).
     pub lod: [f32; 4],
-    /// x: 1 when a batch draws a level (the cull looks each row's batch up only then); y, z, w: 0.
+    /// x: 1 when a batch draws a level (the cull looks each row's batch up only then); y: the
+    /// fade band's bits (`f32::to_bits` of `beta`, game systems LOD-03; 0 the hard switch); z, w: 0.
     pub lod_params: [u32; 4],
 }
 
@@ -513,17 +514,20 @@ pub const FRAME_MATERIAL_CLASS_BINDINGS: [(u32, &str); 6] = [
     (29, "data_textures_2048"),
 ];
 
-/// The forward frame group's instance fade table (renderer pass 2, LOD crossfade), as (binding,
-/// WGSL name): one f32 per instance-table row, parallel to the instance table so the frozen v1 rows
-/// keep their 160 bytes; [`INSTANCE_FADE_WHOLE`] for a row drawn whole, 0..1 for a row fading in or
-/// out (its fragments dithered away, shadow casters included). Reserved, not bound: the forward,
-/// prepass and caster pipelines declare it (behind `GX_LOD_FADE`) once the crossfade lands; it
-/// sits past binding 30, which the screen reflections take.
+/// The forward frame group's instance fade table (renderer pass 2, LOD crossfade; game systems
+/// LOD-03), as (binding, WGSL name): one `vec2<f32>` per visible-list slot, parallel to the visible
+/// list (every view's region), so the frozen v1 rows keep their 160 bytes and an instance drawn by
+/// two levels' fade batches has a fade per level. The cull writes it (`cull::CULL_FADES_BINDING`)
+/// for each survivor of a fade batch: x the signed fade (`mesh::lod_row_keep`: below 1 fading out,
+/// negative fading in), y the far field's grow (1 until LOD-18); no other slot is written. The
+/// draw stages read it as `instance_fade[visible_row(..)]` behind `GX_LOD_FADE` (LOD-04); it sits
+/// past binding 30, which the screen reflections take.
 pub const FRAME_INSTANCE_FADE_BINDING: (u32, &str) = (31, "instance_fade");
-/// An instance row's fade when it is drawn whole (`GX_INSTANCE_FADE_WHOLE`).
+/// An instance's fade when it is drawn whole (`GX_INSTANCE_FADE_WHOLE`).
 pub const INSTANCE_FADE_WHOLE: f32 = 1.0;
-/// Bytes of one instance fade row.
-pub const INSTANCE_FADE_BYTES: u64 = 4;
+/// Bytes of one slot of the instance fade table: its fade and its grow (game systems LOD-03
+/// flipped 4 -> 8).
+pub const INSTANCE_FADE_BYTES: u64 = 8;
 
 /// One meshlet of the library's meshlet table (`Meshlet`, R2): at most
 /// [`crate::meshlet::MESHLET_MAX_VERTICES`] vertices and [`crate::meshlet::MESHLET_MAX_TRIANGLES`]
@@ -705,6 +709,7 @@ pub const GPU_STRUCTS: &[GpuStructLayout] = &[
     layout_of::<GpuInstance>("Instance"),
     layout_of::<GpuMaterial>("Material"),
     layout_of::<GpuBatch>("Batch"),
+    layout_of::<crate::lod_rows::GpuLodRow>("LodRow"),
     layout_of::<GpuPassView>("PassView"),
     layout_of::<GpuCullViews>("CullViews"),
     layout_of::<DrawIndexedArgs>("DrawIndexedArgs"),

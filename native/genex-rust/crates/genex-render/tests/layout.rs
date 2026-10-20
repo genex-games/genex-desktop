@@ -77,7 +77,7 @@ use naga::proc::Layouter;
 use naga::valid::{Capabilities, ModuleInfo, ValidationFlags, Validator};
 
 /// The golden sizes in bytes. Changing one is a layout change for every shader and extension.
-const GOLDEN: [(&str, usize); 34] = [
+const GOLDEN: [(&str, usize); 35] = [
     // RQ5.6 flipped 752 -> 768: the camera's TAA jitter lane (`GpuFrame::jitter`). Pass 2's
     // contracts wave flipped 768 -> 784: each cascade's comparison bias (`GpuFrame::cascade_bias`).
     // P2-0.8b (T-06) flipped 784 -> 800: the frame's texture mip bias (`GpuFrame::texture_lod`).
@@ -88,6 +88,9 @@ const GOLDEN: [(&str, usize); 34] = [
     // Pass 2 A6.9 flipped 32 -> 36: each batch's first instance row (`GpuBatch::first_row`, a level's
     // batch has slots of its own over its mesh's rows) beside its level of detail (`lod`).
     ("Batch", 36),
+    // Game systems LOD-02 added the LOD row (cull binding 6): the sphere an instance's levels are
+    // measured from, its bias, its far rule and two spare words.
+    ("LodRow", 32),
     ("PassView", 16),
     // Pass 2 A6.9 flipped 880 -> 912: the levels of detail's view (`GpuCullViews::lod`, `lod_params`).
     ("CullViews", 912),
@@ -1574,8 +1577,44 @@ fn the_stage_zero_contract_slots_hold_todays_values() {
         .chain(FRAME_LIGHT_BINDINGS.iter().map(|(binding, _)| *binding))
         .chain(FRAME_MATERIAL_CLASS_BINDINGS.iter().map(|(binding, _)| *binding))
         .collect();
-    assert!(!taken.contains(&FRAME_INSTANCE_FADE_BINDING.0), "binding {} is free", FRAME_INSTANCE_FADE_BINDING.0);
+    assert!(!taken.contains(&FRAME_INSTANCE_FADE_BINDING.0), "binding {} collides with no forward frame binding", FRAME_INSTANCE_FADE_BINDING.0);
     assert!(FRAME_INSTANCE_FADE_BINDING.0 > 30, "it clears the screen reflections' binding 30");
+}
+
+/// Game systems LOD-02 and LOD-03: the cull reads the LOD rows (binding 6, `LodRow` per opaque
+/// row) and writes the instance fade table (binding 7, `vec2<f32>` per visible-list slot, the
+/// table the forward frame's binding 31 names), within WebGPU core's eight storage buffers per
+/// stage. Named flips: the fade table went from reserved and unbound (`binding 31 is free`) to
+/// bound and written by the cull, and its row from 4 bytes (f32 per instance row) to 8 (fade and
+/// grow per slot); the cull's storage buffers from 5 to 7 of 8.
+#[test]
+fn the_cull_reads_the_lod_rows_and_writes_the_fade_table_within_cores_storage_limit() {
+    use genex_render::cull::{CULL_FADES_BINDING, CULL_MARK_ENTRY, CULL_SCAN_ENTRY, CULL_SCATTER_ENTRY};
+    use genex_render::layout::INSTANCE_FADE_BYTES;
+    use genex_render::lod_rows::{CULL_LOD_ROWS_BINDING, LOD_ROW_BYTES};
+    assert_eq!(INSTANCE_FADE_BYTES, 8, "a fade and a grow per slot");
+    let module = parse("cull", shader("cull"));
+    let info = validated("cull", &module);
+    let global = |name: &str| module.global_variables.iter().find(|(_, global)| global.name.as_deref() == Some(name)).map(|(_, global)| global).unwrap_or_else(|| panic!("{name} declared"));
+    let (lod_rows, fades) = (global("lod_rows"), global("fades"));
+    assert_eq!(lod_rows.binding.as_ref().map(|at| (at.group, at.binding)), Some((0, CULL_LOD_ROWS_BINDING)));
+    assert_eq!(fades.binding.as_ref().map(|at| (at.group, at.binding)), Some((0, CULL_FADES_BINDING)));
+    assert_eq!(lod_rows.space, naga::AddressSpace::Storage { access: naga::StorageAccess::LOAD });
+    assert_eq!(fades.space, naga::AddressSpace::Storage { access: naga::StorageAccess::LOAD | naga::StorageAccess::STORE });
+    let stride = |global: &naga::GlobalVariable| match module.types[global.ty].inner {
+        naga::TypeInner::Array { stride, .. } => u64::from(stride),
+        ref other => panic!("an array, not {other:?}"),
+    };
+    assert_eq!((stride(lod_rows), stride(fades)), (LOD_ROW_BYTES, INSTANCE_FADE_BYTES));
+    let core = wgpu::Limits::defaults();
+    let declared = module.global_variables.iter().filter(|(_, global)| matches!(global.space, naga::AddressSpace::Storage { .. })).count() as u32;
+    assert_eq!(declared, 7, "the cull group's storage buffers");
+    assert!(declared <= core.max_storage_buffers_per_shader_stage, "{declared} of {}", core.max_storage_buffers_per_shader_stage);
+    for entry in [CULL_MARK_ENTRY, CULL_SCAN_ENTRY, CULL_SCATTER_ENTRY] {
+        let used = storage_buffers_used(&module, &info, entry);
+        eprintln!("{entry}: {} storage buffers {used:?}", used.len());
+        assert!(used.len() as u32 <= core.max_storage_buffers_per_shader_stage, "{entry}: {used:?}");
+    }
 }
 
 #[test]

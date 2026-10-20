@@ -724,10 +724,28 @@ Drawn: `MeshLibrary::add_part` keeps each level as a mesh of its own (the vertic
 the part's bounding sphere. A frame plans a batch per level of a mesh drawn whole; each holds all
 of the mesh's instance rows (`GpuBatch::first_row`) in slots of its own in the visible list
 (`FramePlan::visible_slots`), and the cull keeps an instance only in the batch of the level picked
-from the camera's distance to its sphere at a 1-pixel threshold of the output height
-(`mesh_lod::lod_keeps`, `gx_cull_lod_keeps`). Every view (cascades and spots too) draws an
-instance at the camera's level; an orthographic camera turns levels off. A clustered mesh (the
-meshlet path) and a transparent draw take the mesh itself. Level changes are not crossfaded yet.
+from the camera's distance at a 1-pixel threshold of the output height (`mesh_lod::lod_row_keep`,
+`gx_cull_lod_fade`). Every view (cascades and spots too) draws an instance at the camera's level;
+an orthographic camera turns levels off. A clustered mesh (the meshlet path) and a transparent
+draw take the mesh itself.
+
+The distance is measured from each opaque row's LOD row (`src/lod_rows.rs`, `GpuLodRow`, 32 bytes,
+cull binding 6, parallel to the instance rows so the 160-byte row stays frozen): the row's own
+sphere unless the draw names a model-space origin (`Scene::set_lod(DrawLod { origin, bias })`),
+so every part of a compound model measured from one sphere switches at the same distance; the
+bias scales the chain's projected errors (2 holds each level twice as far). A retained group
+computes its LOD rows once per version and uploads them over its instance rows' dirty ranges
+(`Renderer::last_lod_row_upload_bytes`); the LOD table is replaced exactly when the instance
+table is. With a fade band (`Scene::lod_band`, in (0, 1]; 0 by default, the hard switch) a plan
+adds a fade twin of every level batch after all other batches (`FramePlan::fade_runs`, their
+slot bases in `FramePlan::fade_slots`), the cull keeps an instance whose level's projected error
+is within the band's last share of the threshold in the two neighbouring twins, and its scatter
+writes each twin survivor's signed fade (and a grow of 1) into the per-slot fade table (cull
+binding 7, `vec2<f32>` per visible-list slot, held only by a frame with fade batches, the table
+the forward frame's binding 31 names;
+`Renderer::read_view_fades`). The faded pipelines that draw the twins are not landed yet, so no
+frame draws a fade batch and a band leaves its rows undrawn while they fade: keep it 0 until they
+land.
 
 ### `genex_textures` in glTF
 

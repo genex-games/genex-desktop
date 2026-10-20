@@ -15,9 +15,14 @@
 // keep what they held.
 // Levels of detail (renderer pass 2 A6.9): a mesh with levels has a batch per level, each with
 // slots of its own over all of the mesh's rows (`Batch::first_row`); `cull_mark` keeps an
-// instance only in the batch of the level the camera's distance picks (`gx_cull_lod_keeps`,
-// mesh_lod.rs `lod_keeps`), in every view. The three dispatches run over slots: without levels
+// instance only in the batch of the level the camera's distance picks (`gx_cull_lod_fade`,
+// mesh_lod.rs `lod_row_keep`), in every view. The three dispatches run over slots: without levels
 // a slot is its row.
+// The fade band (game systems LOD-02, LOD-03): an instance's level is measured from its LOD row
+// (`lod_rows`: the sphere its levels are measured from and its bias), and with a band (`beta`,
+// `views.lod_params.y`) a level's fade batch keeps the instances fading in or out of it
+// (`gx_cull_lod_fade`, mesh_lod.rs `lod_row_keep`); `cull_scatter` writes each fade-batch
+// survivor's fade into `fades`, slot for slot with the visible list, and no other slot.
 
 @group(0) @binding(0) var<uniform> views: CullViews;
 @group(0) @binding(1) var<storage, read> instances: array<Instance>;
@@ -27,6 +32,24 @@
 // Per active view (cull::scratch_words_per_view): the survivor bits of every block (eight words a
 // block), then each block's exclusive prefix and the view's total.
 @group(0) @binding(5) var<storage, read_write> scratch: array<u32>;
+
+// One opaque instance row's level-of-detail inputs (lod_rows.rs `GpuLodRow`).
+struct LodRow {
+    // The world sphere its levels are measured from (xyz, radius).
+    origin: vec4<f32>,
+    // Every projected error of its chain is scaled by this (2: each level held twice as far).
+    bias: f32,
+    // Its far rule (0: none; LOD-18).
+    far_rule: u32,
+    spare0: u32,
+    spare1: u32,
+}
+
+// Row for row with the opaque instance rows (lod_rows.rs CULL_LOD_ROWS_BINDING).
+@group(0) @binding(6) var<storage, read> lod_rows: array<LodRow>;
+// Per active view, slot for slot with the visible list: (fade, grow) of each fade-batch survivor
+// (layout.rs FRAME_INSTANCE_FADE_BINDING, cull.rs CULL_FADES_BINDING).
+@group(0) @binding(7) var<storage, read_write> fades: array<vec2<f32>>;
 
 // Rows per block (cull.rs CULL_BLOCK): one workgroup's invocations.
 const GX_CULL_BLOCK: u32 = 256u;
@@ -112,25 +135,39 @@ fn gx_cull_half(bits: u32) -> f32 {
     return bitcast<f32>(((exponent + 112u) << 23u) | (mantissa << 13u));
 }
 
-// Whether `batch`'s instance of world sphere `bounds` is drawn by it: always for a mesh without
-// levels; for a level's batch only when `gx_lod_select` picks that level for it from the camera
-// (the mesh itself when levels are off). mesh_lod.rs `lod_keeps` is its CPU twin.
-fn gx_cull_lod_keeps(batch: Batch, bounds: vec4<f32>) -> bool {
+// Whether `batch` keeps its instance row `row` of world sphere `bounds`, and the fade its
+// slot gets: x 1 when kept, y the signed fade (1 whole). A batch without levels keeps every
+// instance whole; a level's batch the instances whole at its level; its fade twin those fading in
+// to it (-share) or out of it to the next coarser level (1 - share), measured from the row's LOD
+// row (read only for a level's batch). Levels off (`lod.w` not positive) or a radius that is not
+// positive draw the mesh itself whole. mesh_lod.rs `lod_row_keep` is its CPU twin, expression for
+// expression.
+fn gx_cull_lod_fade(batch: Batch, bounds: vec4<f32>, row: u32) -> vec2<f32> {
     if (batch.lod & GX_LOD_TAG) == 0u {
-        return true;
-    }
-    if (batch.lod & GX_LOD_FADE_TAG) != 0u {
-        return false;
+        return vec2<f32>(1.0, 1.0);
     }
     let level = batch.lod & 15u;
-    if !(views.lod.w > 0.0) {
-        return level == 0u;
+    let fade = (batch.lod & GX_LOD_FADE_TAG) != 0u;
+    var band = vec2<f32>(0.0, 1.0);
+    if views.lod.w > 0.0 && bounds.w > 0.0 {
+        let levels = min((batch.lod >> 4u) & 15u, 4u);
+        let halves = vec4<u32>(batch.lod_error01 & 0xFFFFu, batch.lod_error01 >> 16u, batch.lod_error23 & 0xFFFFu, batch.lod_error23 >> 16u);
+        let errors = vec4<f32>(gx_cull_half(halves.x), gx_cull_half(halves.y), gx_cull_half(halves.z), gx_cull_half(halves.w)) * bounds.w;
+        let lod_row = lod_rows[row];
+        let distance = length(lod_row.origin.xyz - views.lod.xyz) - lod_row.origin.w;
+        band = gx_lod_band(errors, levels, distance, views.lod.w, 1.0, lod_row.bias, bitcast<f32>(views.lod_params.y));
     }
-    let levels = min((batch.lod >> 4u) & 15u, 4u);
-    let halves = vec4<u32>(batch.lod_error01 & 0xFFFFu, batch.lod_error01 >> 16u, batch.lod_error23 & 0xFFFFu, batch.lod_error23 >> 16u);
-    let errors = vec4<f32>(gx_cull_half(halves.x), gx_cull_half(halves.y), gx_cull_half(halves.z), gx_cull_half(halves.w)) * bounds.w;
-    let distance = length(bounds.xyz - views.lod.xyz) - bounds.w;
-    return gx_lod_select(errors, levels, distance, views.lod.w, 1.0) == level;
+    let picked = u32(band.x);
+    if band.y >= 1.0 {
+        return vec2<f32>(select(0.0, 1.0, !fade && level == picked), 1.0);
+    }
+    if !fade {
+        return vec2<f32>(0.0, 1.0);
+    }
+    if level == picked {
+        return vec2<f32>(1.0, -band.y);
+    }
+    return vec2<f32>(select(0.0, 1.0, level + 1u == picked), 1.0 - band.y);
 }
 
 // Inclusive Hillis-Steele scan of `scan` over the workgroup.
@@ -161,7 +198,7 @@ fn cull_mark(@builtin(workgroup_id) group: vec3<u32>, @builtin(local_invocation_
         if views.lod_params.x != 0u {
             let batch = batches[gx_cull_batch_of(slot)];
             row = batch.first_row + slot - batch.first_instance;
-            lod_keeps = gx_cull_lod_keeps(batch, instances[row].bounds);
+            lod_keeps = gx_cull_lod_fade(batch, instances[row].bounds, row).x > 0.0;
         }
         if lod_keeps && in_frustum(view, instances[row].bounds) {
             keep = 1u;
@@ -247,6 +284,12 @@ fn cull_scatter(@builtin(workgroup_id) group: vec3<u32>, @builtin(local_invocati
         let batch = batches[gx_cull_batch_of(own)];
         let slot = batch.first_instance + survivor - gx_cull_survivors_before(view, batch.first_instance);
         // The survivor's instance row: the row its own slot `own` stands for in its batch.
-        visible[view * views.params.x + slot] = batch.first_row + own - batch.first_instance;
+        let row = batch.first_row + own - batch.first_instance;
+        visible[view * views.params.x + slot] = row;
+        // A fade batch's survivor gets its fade (LOD-03); grow stays 1 until the far field.
+        if (batch.lod & GX_LOD_FADE_TAG) != 0u {
+            let fade = gx_cull_lod_fade(batch, instances[row].bounds, row).y;
+            fades[view * views.params.x + slot] = vec2<f32>(fade, 1.0);
+        }
     }
 }

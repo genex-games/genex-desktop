@@ -191,6 +191,11 @@ impl Table {
         self.buffer.as_ref().map(|buffer| (self.label, buffer.size()))
     }
 
+    /// The bytes its buffer holds (0 before it is first ensured).
+    fn capacity(&self) -> u64 {
+        self.buffer.as_ref().map_or(0, Buffer::size)
+    }
+
     /// The buffer (present once [`Table::ensure`] ran).
     pub(crate) fn get(&self) -> &Buffer {
         // Every table is ensured before a frame binds it; `expect` would be a renderer bug.
@@ -226,6 +231,13 @@ pub(crate) struct Tables {
     pub light_bins: Table,
     /// Each material row's extension (`material_ext`, RQ6.3: its emission), parallel to `materials`.
     pub material_ext: Table,
+    /// The LOD rows (game systems LOD-02, cull binding 6), parallel to the opaque instance rows:
+    /// sized by the instance table's room and replaced exactly when it is, so a retained group's
+    /// held instance rows mean its LOD rows are held too.
+    pub lod_rows: Table,
+    /// The per-slot fade table (game systems LOD-03, cull binding 7): `vec2<f32>` per visible-list
+    /// slot of every view, written by the cull for fade-batch survivors.
+    pub instance_fade: Table,
 }
 
 impl Tables {
@@ -251,6 +263,9 @@ impl Tables {
             light_ext: Table::new("light extensions", storage),
             light_bins: Table::new("light bins", storage),
             material_ext: Table::new("material extensions", storage),
+            lod_rows: Table::new("lod rows", storage),
+            // COPY_SRC: the fade rows read a view's region back (`Renderer::read_view_fades`).
+            instance_fade: Table::new("instance fade", storage | BufferUsages::COPY_SRC),
         }
     }
 
@@ -275,6 +290,8 @@ impl Tables {
             &self.light_ext,
             &self.light_bins,
             &self.material_ext,
+            &self.lod_rows,
+            &self.instance_fade,
         ]
         .into_iter()
         .filter_map(Table::held)
@@ -284,6 +301,11 @@ impl Tables {
     /// Make room for `uploads` (and the GPU-written tables of `plan`).
     pub(crate) fn ensure(&mut self, device: &Device, plan: &FramePlan, uploads: &Uploads) -> Result<(), RenderError> {
         let visible_rows = u64::from(plan.views) * u64::from(plan.visible_slots) + plan.transparent.len() as u64;
+        // The LOD table follows the instance table's room (LOD-02): a new instance table is a new
+        // LOD table, and the LOD table never grows on its own.
+        if !self.instances.holds(bytes_of_rows(&plan.instances)) {
+            self.lod_rows.buffer = None;
+        }
         let sizes = [
             (&mut self.instances, bytes_of_rows(&plan.instances)),
             (&mut self.materials, bytes_of_rows(&plan.materials)),
@@ -305,10 +327,13 @@ impl Tables {
             // bin table holds masks only on a binned frame (RQ6.2), else a zero bin header.
             (&mut self.light_ext, uploads.light_ext.len() as u64),
             (&mut self.light_bins, light_bin_bytes(plan, uploads)),
+            (&mut self.instance_fade, u64::from(plan.views) * fade_slots(plan) * crate::layout::INSTANCE_FADE_BYTES),
         ];
         for (table, bytes) in sizes {
             table.ensure(device, bytes)?;
         }
+        let instance_room = self.instances.capacity() / size_of::<crate::layout::GpuInstance>() as u64;
+        self.lod_rows.ensure(device, instance_room * crate::lod_rows::LOD_ROW_BYTES)?;
         Ok(())
     }
 }
@@ -336,6 +361,12 @@ pub(crate) struct Uploads {
     /// The instance-table rows this frame writes (renderer pass 2 A.0b): every row, less the
     /// retained groups' rows the table already holds as they were ([`instance_upload_ranges`]).
     pub instance_rows: Vec<std::ops::Range<usize>>,
+    /// The LOD rows this frame writes (game systems LOD-02): the instance rows written, clipped
+    /// to the opaque rows ([`crate::lod_rows::lod_row_upload_ranges`]).
+    pub lod_rows: Vec<std::ops::Range<usize>>,
+    /// The CPU path's fade table (every view's region; LOD-03), empty on the GPU path or without
+    /// fade batches.
+    pub fades: Vec<u8>,
 }
 
 /// The instance-table rows a frame of `rows` rows whose retained groups lie at `spans` writes when
@@ -467,6 +498,24 @@ fn pass_views(plan: &FramePlan) -> Vec<u8> {
     bytes
 }
 
+/// Each cull view's slots in the instance fade table (game systems LOD-03): the plan's visible
+/// slots when it has fade batches, else none (the table keeps its smallest size, which the cull
+/// binds and never writes).
+pub fn fade_slots(plan: &FramePlan) -> u64 {
+    if plan.fade_runs.is_empty() { 0 } else { u64::from(plan.visible_slots) }
+}
+
+/// The fade table the CPU path writes (game systems LOD-03): every view's fades, slot for slot
+/// with its visible list, when the plan has fade batches; nothing otherwise (or on the GPU path,
+/// whose cull writes them).
+fn cpu_fades(plan: &FramePlan, cpu_culls: &[CpuCull]) -> Vec<u8> {
+    if plan.fade_runs.is_empty() {
+        return Vec::new();
+    }
+    let fades: Vec<[f32; 2]> = cpu_culls.iter().flat_map(|cull| cull.fades.iter().copied()).collect();
+    bytemuck::cast_slice(&fades).to_vec()
+}
+
 /// The visible-list bytes a frame writes from the CPU, and where they start.
 fn visible_rows(plan: &FramePlan, path: CullPath) -> (Vec<u8>, u64, Vec<CpuCull>) {
     let cpu_culls: Vec<CpuCull> = match path {
@@ -485,6 +534,8 @@ fn visible_rows(plan: &FramePlan, path: CullPath) -> (Vec<u8>, u64, Vec<CpuCull>
 impl Uploads {
     pub(crate) fn new(plan: &mut FramePlan, path: CullPath, instance_rows: Vec<std::ops::Range<usize>>) -> Result<Uploads, RenderError> {
         let (visible, visible_offset, cpu_culls) = visible_rows(plan, path);
+        let lod_rows = crate::lod_rows::lod_row_upload_ranges(plan.lod_rows.len(), &instance_rows);
+        let fades = cpu_fades(plan, &cpu_culls);
         let uploads = Uploads {
             frame: bytemuck::bytes_of::<GpuFrame>(&plan.frame).to_vec(),
             cull_views: bytemuck::bytes_of::<GpuCullViews>(&plan.cull_views).to_vec(),
@@ -501,6 +552,8 @@ impl Uploads {
             visible_offset,
             cpu_culls,
             instance_rows,
+            lod_rows,
+            fades,
         };
         let mut budget = UploadBudget::new();
         for bytes in uploads.all() {
@@ -513,13 +566,14 @@ impl Uploads {
         }
         let written: usize = uploads.instance_rows.iter().map(ExactSizeIterator::len).sum();
         budget.charge((written * size_of::<crate::layout::GpuInstance>()) as u64)?;
+        budget.charge(uploads.lod_row_bytes())?;
         budget.charge(std::mem::size_of_val(uploads.prev_models.as_slice()) as u64)?;
         Ok(uploads)
     }
 
     /// The tables built here (the plan's own rows are [`plan_rows`]).
-    fn all(&self) -> [&Vec<u8>; 7] {
-        [&self.light_ext, &self.light_tiles, &self.light_zbins, &self.frame, &self.cull_views, &self.pass_views, &self.visible]
+    fn all(&self) -> [&Vec<u8>; 8] {
+        [&self.light_ext, &self.light_tiles, &self.light_zbins, &self.frame, &self.cull_views, &self.pass_views, &self.visible, &self.fades]
     }
 
     /// Every table write this frame makes from the CPU, for the upload arena: `plan`'s rows straight
@@ -530,6 +584,10 @@ impl Uploads {
         let instance_writes = self.instance_rows.iter().map(|range| {
             let bytes: &[u8] = bytemuck::cast_slice(&plan.instances[range.clone()]);
             (tables.instances.get(), (range.start * row) as u64, bytes)
+        });
+        let lod_writes = self.lod_rows.iter().map(|range| {
+            let bytes: &[u8] = bytemuck::cast_slice(&plan.lod_rows[range.clone()]);
+            (tables.lod_rows.get(), range.start as u64 * crate::lod_rows::LOD_ROW_BYTES, bytes)
         });
         let rest = [
             (tables.materials.get(), 0, materials),
@@ -546,8 +604,15 @@ impl Uploads {
             (tables.light_bins.get(), 0, self.light_zbins.as_slice()),
             (tables.prev_models.get(), 0, bytemuck::cast_slice(&self.prev_models)),
             (tables.visible.get(), self.visible_offset, self.visible.as_slice()),
+            (tables.instance_fade.get(), 0, self.fades.as_slice()),
         ];
-        instance_writes.chain(rest).collect()
+        instance_writes.chain(lod_writes).chain(rest).collect()
+    }
+
+    /// Bytes of LOD rows this frame writes (game systems LOD-02: a static retained group's are
+    /// written once).
+    pub(crate) fn lod_row_bytes(&self) -> u64 {
+        self.lod_rows.iter().map(ExactSizeIterator::len).sum::<usize>() as u64 * crate::lod_rows::LOD_ROW_BYTES
     }
 
     /// Bytes of instance rows this frame writes (A.0b).

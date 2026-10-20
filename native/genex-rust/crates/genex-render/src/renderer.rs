@@ -937,6 +937,8 @@ pub struct Renderer {
     retained_held: std::cell::RefCell<Option<(Buffer, Vec<crate::retained::RetainedSpan>)>>,
     /// Bytes of instance rows the last upload wrote.
     last_instance_bytes: std::cell::Cell<u64>,
+    /// Bytes of LOD rows the last frame wrote (game systems LOD-02).
+    last_lod_row_bytes: std::cell::Cell<u64>,
     /// The history set the next frames draw on (Live, or a settled capture's; RQ5.6).
     history_set: HistorySet,
     /// Whether a frame index of 0 keeps TAA's and the motion history (a dynamic-resolution step:
@@ -2748,6 +2750,7 @@ impl Renderer {
             last_meshlets: None,
             retained_held: std::cell::RefCell::new(None),
             last_instance_bytes: std::cell::Cell::new(0),
+            last_lod_row_bytes: std::cell::Cell::new(0),
             history_set: HistorySet::Live,
             temporal_kept: false,
             temporal: FrameTemporal::NONE,
@@ -4380,6 +4383,7 @@ impl Renderer {
         // to compare with (A.0b).
         *self.retained_held.borrow_mut() = Some((self.tables.instances.get().clone(), plan.retained.clone()));
         self.last_instance_bytes.set(uploads.instance_bytes());
+        self.last_lod_row_bytes.set(uploads.lod_row_bytes());
     }
 
     /// The instance-table rows `plan` writes: all of them, less its retained groups' rows the
@@ -4396,6 +4400,12 @@ impl Renderer {
     /// group's rows are written once).
     pub fn last_instance_upload_bytes(&self) -> u64 {
         self.last_instance_bytes.get()
+    }
+
+    /// Bytes of LOD rows the last frame wrote (game systems LOD-02: a static retained group's are
+    /// written once, with its instance rows).
+    pub fn last_lod_row_upload_bytes(&self) -> u64 {
+        self.last_lod_row_bytes.get()
     }
 
     /// Prepare a frame of `scene`: plan and room in the tables, the targets of the current scale
@@ -4497,6 +4507,8 @@ impl Renderer {
             visible: self.tables.visible.get(),
             args: self.tables.args.get(),
             scratch: self.tables.cull_scratch.get(),
+            lod_rows: self.tables.lod_rows.get(),
+            fades: self.tables.instance_fade.get(),
         };
         self.cull.encode(&self.device, encoder, &buffers, plan.visible_slots, plan.views, timestamps);
     }
@@ -4893,6 +4905,7 @@ impl Renderer {
             vertices: self.library.vertices().len() as u64,
             indices: self.library.indices().len() as u64,
             skin_vertices: self.library.skin().len() as u64,
+            fade_slots: crate::tables::fade_slots(&plan),
         };
         Ok(crate::budget::buffer_model(&counts))
     }
@@ -5566,6 +5579,18 @@ impl Renderer {
             return Ok(Vec::new());
         }
         let staging = stage_buffer(gpu, self.tables.visible.get(), u64::from(view) * bytes, bytes)?;
+        Ok(bytemuck::pod_collect_to_vec(&map_read_blocking(gpu, &staging, bytes)?))
+    }
+
+    /// The last frame's fade table in cull view `view`'s region (game systems LOD-03): `[fade,
+    /// grow]` per visible-list slot, meaningful for the slots of fade-batch survivors only.
+    pub fn read_view_fades(&self, gpu: &Gpu, view: u32) -> Result<Vec<[f32; 2]>, RenderError> {
+        let bytes = u64::from(self.last.opaque_instances) * crate::layout::INSTANCE_FADE_BYTES;
+        // A frame without fade batches holds no fade region (`tables::fade_slots`).
+        if bytes == 0 || view >= self.last.views || !self.tables.instance_fade.holds(u64::from(view + 1) * bytes) {
+            return Ok(Vec::new());
+        }
+        let staging = stage_buffer(gpu, self.tables.instance_fade.get(), u64::from(view) * bytes, bytes)?;
         Ok(bytemuck::pod_collect_to_vec(&map_read_blocking(gpu, &staging, bytes)?))
     }
 
