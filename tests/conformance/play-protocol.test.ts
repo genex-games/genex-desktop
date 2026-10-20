@@ -16,7 +16,9 @@ import { after, before, describe, it } from "node:test";
 import { setTimeout as sleep } from "node:timers/promises";
 import { canPoint, canStep, PointerLevel } from "../../src/shared/computer-target.ts";
 import { CaptureSurface, type PreviewInputAction } from "../../src/shared/preview-contract.ts";
+import { AiBridgeOp, AiErrorCode } from "../../src/shared/game-ai.ts";
 import {
+  PLAY_AI_MAX_IN_FLIGHT,
   PLAY_MAX_STEP_MS,
   PLAY_PROTOCOL_VERSION,
   PlayAiOp,
@@ -514,3 +516,69 @@ for (const subject of SUBJECTS) {
     });
   });
 }
+
+/**
+ * How the studio takes a game's `ai` lines, pinned on the fake game started with flags of its own:
+ * lines from a game that declared no ai, an oversize line, and more lines than may be in flight.
+ */
+describe("play protocol conformance — play-time AI lines the studio refuses", () => {
+  let sandbox: ProcessSandbox;
+
+  before(async () => {
+    const root = await tmpDir("play-conformance-ai-");
+    sandbox = await ProcessSandbox.create({
+      writableRoots: [root],
+      scratchDir: path.join(root, "scratch"),
+      secretPaths: [],
+      enabled: false,
+    });
+  });
+
+  after(async () => {
+    await sandbox?.dispose();
+  });
+
+  /** The fake game with `flags`, answered by a fixture broker, stopped after the row. */
+  async function fakeWith(flags: string) {
+    const ai = fixtureNativeHost("conformance", { replaying: true });
+    const game = await launchGameBridge({
+      sandbox,
+      command: `${FAKE_COMMAND} ${flags}`,
+      cwd: repo,
+      label: "conformance-ai",
+      target: { ai: ai.host },
+    });
+    after(() => game.stop());
+    await game.target.clock?.pause();
+    await game.target.seed?.(3);
+    await game.target.clock?.step?.(AI_ASK_WITHIN_MS);
+    await game.target.clock?.step?.(AI_SETTLE_STEP_MS);
+    const state = await game.target.state?.();
+    const codes =
+      isRecord(state) && isRecord(state.volatile) && isRecord(state.volatile.ai) ? state.volatile.ai.codes : [];
+    return { game, ai, echo: aiEchoOf(state), codes };
+  }
+
+  it("ignores every ai line of a game that declared no ai: none reaches the broker, and it plays on", async () => {
+    const { game, ai, echo } = await fakeWith("--ai-undeclared");
+    assert.equal(game.target.ai, null);
+    assert.equal(ai.asked.length, 0);
+    assert.ok(echo && echo.asked.length > 0, "the game did print its lines");
+    assert.deepEqual(echo?.answered, [], "and none was answered");
+    assert.ok(game.running());
+  });
+
+  it("drops an oversize ai line and answers the game's other lines by their rids", async () => {
+    const { ai, echo } = await fakeWith("--ai --ai-oversize");
+    assert.equal(ai.asked.length, 2, "its hello and its call reached the broker");
+    assert.ok(!ai.asked.some(({ message }) => message.op === AiBridgeOp.Cancel), "the oversize line never did");
+    assert.deepEqual([...(echo?.answered ?? [])].sort(), [...(echo?.asked ?? [])].sort());
+  });
+
+  it(`refuses lines past ${PLAY_AI_MAX_IN_FLIGHT} unanswered with grant_concurrency, each by its rid`, async () => {
+    const { ai, echo, codes } = await fakeWith(`--ai --ai-burst=${PLAY_AI_MAX_IN_FLIGHT + 1}`);
+    assert.equal(ai.asked.length, PLAY_AI_MAX_IN_FLIGHT, "the broker never held more than the cap");
+    assert.ok(Array.isArray(codes) && codes.includes(AiErrorCode.Concurrency), "a line past the cap was refused");
+    assert.deepEqual([...(echo?.answered ?? [])].sort(), [...(echo?.asked ?? [])].sort(), "every rid answered once");
+  });
+});
