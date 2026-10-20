@@ -15,7 +15,12 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { createGameKey } from "../../shared/game-ai.ts";
 import { AiContext } from "../../shared/game-ai-route.ts";
 import { errorMessage } from "../../shared/errors.ts";
-import { PLAY_AI_MAX_IN_FLIGHT, PLAY_AI_MAX_LINE_CHARS, readPlayAiLine } from "../../shared/play-protocol.ts";
+import {
+  PLAY_AI_MAX_IN_FLIGHT,
+  PLAY_AI_MAX_LINE_CHARS,
+  type PlayAiLine,
+  readPlayAiLine,
+} from "../../shared/play-protocol.ts";
 import {
   type AiLinePlace,
   type AiOutgoing,
@@ -89,9 +94,9 @@ export interface EditorAiRelay {
 }
 
 /** The lines of one pull Studio reads: each an `ai` line within its cap, at most {@link EDITOR_AI_MAX_PULL}. */
-function readPulled(raw: readonly unknown[], log: (line: string) => void) {
+function readPulled(raw: readonly unknown[], log: (line: string) => void): PlayAiLine[] {
   if (raw.length > EDITOR_AI_MAX_PULL) log(MESSAGE.tooMany(raw.length - EDITOR_AI_MAX_PULL));
-  const lines = [];
+  const lines: PlayAiLine[] = [];
   for (const item of raw.slice(0, EDITOR_AI_MAX_PULL)) {
     // The cap is the Play Protocol line's, counted on the line as the game would print it.
     const oversize = JSON.stringify(item ?? null).length > PLAY_AI_MAX_LINE_CHARS;
