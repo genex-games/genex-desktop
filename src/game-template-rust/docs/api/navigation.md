@@ -47,4 +47,40 @@ game.on_update(|sim, ctx| sim.nav.update(ctx.dt));
 - **Caps.** `NAV_TILES_MAX` 4096, `NAV_OBSTACLES_MAX` 256, `NAV_INPUT_TRIANGLES_MAX` 4,194,304,
   obstacles at most 256 m from their centre.
 
-Agents, off-mesh links, bodies, path queries and `frame.nav_debug` are not available yet.
+- **Agents.** `sim.nav.add_agent(NavAgent::new(at))` adds one (`with_speed(desired, max)`,
+  `with_radius`, `with_reach`, `with_links(&[kinds])`, `with_area_cost(area, cost)`); at most
+  `NAV_AGENTS_MAX` 1024, and `nav.remove_agent(agent)` removes one. `nav.move_to(agent, target)`
+  and `nav.stop(agent)` set its goal. The game moves it: after `nav.update(dt)`, read
+  `nav.desired_velocity(agent)`, move the body (by hand, a character controller or root motion)
+  and report back with `nav.set_position(agent, at, velocity)`. `nav.status(agent)` is `idle`,
+  `moving`, `waiting` (the tick's search budget is spent), `arrived`, `at-link`, `on-link`,
+  `no-path`, `off-mesh` (its tile streamed out: it stands still) or `target-off-mesh`;
+  `nav.next_corner(agent)` is where it heads next.
+- **Links.** `nav.add_link(NavLink::between(from, to, NavLinkKind::Ladder).both_ways())` joins two
+  places (`Jump`, `Drop`, `Ladder`, `Door`, `Teleport`, `Custom(n)`; `with_cost`), and
+  `nav.remove_link(link)` removes one. An agent at a link says `at-link`: `nav.take_link(agent)`
+  returns the crossing (start, end, kind), the game plays it, then `nav.finish_link(agent)`.
+  `nav.set_link_open(link, false)` locks one.
+- **Bodies.** `nav.add_body(NavBody { position, velocity, radius })` is something agents steer
+  around that the nav does not move (the player); `nav.set_body(body, ..)` moves it each tick and
+  `nav.remove_body(body)` removes it.
+- **Queries.** `nav.closest_point(near, reach)`, `nav.path(from, to, &NavFilter::new())` (steps,
+  length, `partial`), `nav.raycast(from, to, &filter)`, `nav.move_along(from, to, &filter)`,
+  `nav.distance_to_wall(at, reach)` and `nav.random_point(&mut rng, around, radius, &filter)`. A
+  reset passes its `Pcg32`; a tick passes `&mut &ctx.rng`. It draws one number per polygon its
+  search visits, then two. Queries read the mesh as of the last update. `NavFilter` sets
+  per-query area costs, shut areas and link kinds.
+- **Probe and saves.** `game.probe("nav", |sim| serde_json::Value::from(&sim.nav.probe()))` is a
+  few hundred bytes for any agent count: agents by status, tiles, links, bodies, obstacles,
+  pending rebuilds and an agents digest. `nav.snapshot()` saves agents (targets, paths, status),
+  bodies, obstacles, link and area state; re-add the meshes and links as at reset, then
+  `nav.restore(&snapshot)` (refused `nav-input-invalid` with nothing changed when they differ). A
+  carving rebuild still queued at the snapshot finishes at once on restore.
+- **Streamed islands.** With streaming, each cell's nav tiles come from its offline bake:
+  `NavIsland::from_bytes(bytes)` in the cell builder, carried as a part, and a
+  `game.stream_commit` hook that calls `NavIslands::enter`/`leave` (facet state) on `sim.nav`
+  through `StreamedNav`. Leaving cells go out descending, then entering cells come in ascending; a
+  late island holds the frame like a collider. Agents on a cell that leaves go `off-mesh` and
+  freeze; when it comes back they walk on. On the web, islands come only from offline bakes.
+
+`frame.nav_debug` draws nothing yet.

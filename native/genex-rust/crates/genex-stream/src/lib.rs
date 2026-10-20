@@ -21,5 +21,6 @@ pub use error::{StreamError, StreamErrorCode, StreamViewCode};
 pub use genex_core::cell::CellId;
 pub use grid::{CellDiff, Grid, SimCells, SimRadii, ViewCells};
 pub use ids::StreamTicket;
+pub use nav::{NavCommit, StreamNav};
 pub use pack::{CellPack, PackEntry, PackError, PackWorld};
 pub use residency::{EntryState, Requester, Residency, ResidencyClock, ResidencyLimits, ResidencyStats, Want};

@@ -11,9 +11,8 @@
 //! - Checksums are equal with 1 and 8 workers and with inline builds (the web's pool).
 //! - Four cells entering on one tick read and add their islands within the inline finish slice.
 //!
-//! Every row is new behaviour (section 0 of the game systems plan). genex-nav does not depend on
-//! genex-stream, so this file joins them with a small bridge until the integrator adds that
-//! dependency and the impl.
+//! Every row is new behaviour (section 0 of the game systems plan). `StreamedNav` implements
+//! `StreamNav` itself (genex-nav depends on genex-stream).
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -91,21 +90,6 @@ impl StreamNav for FakeNav {
     }
 }
 
-/// genex-nav's side of the slot.
-struct RealNav<'a>(StreamedNav<'a>);
-
-impl StreamNav for RealNav<'_> {
-    type Island = NavIsland;
-
-    fn island_leave(&mut self, cell: CellId) -> usize {
-        self.0.island_leave(cell)
-    }
-
-    fn island_enter(&mut self, cell: CellId, island: &NavIsland) -> usize {
-        self.0.island_enter(cell, island)
-    }
-}
-
 #[derive(Default)]
 struct World {
     /// (tick, entered?, cell, tiles of the cell in the nav right after).
@@ -131,7 +115,7 @@ impl NavHook {
             return fake.heard.len();
         }
         let islands = sim.facets.get_mut::<NavIslands>();
-        let mut real = RealNav(StreamedNav { nav: &mut sim.nav, islands });
+        let mut real = StreamedNav { nav: &mut sim.nav, islands };
         commit(&mut real, &left, &entered);
         sim.facets.get::<NavIslands>().tiles(cell).len()
     }
@@ -312,7 +296,7 @@ fn four_cells_entering_on_one_tick_fit_the_inline_finish_slice() {
         let started = std::time::Instant::now();
         let read: Vec<(CellId, NavIsland)> = cells.iter().map(|cell| (*cell, NavIsland::from_bytes(&bake[cell]).expect("reads"))).collect();
         let entering: Vec<(CellId, &NavIsland)> = read.iter().map(|(cell, island)| (*cell, island)).collect();
-        let done = commit(&mut RealNav(StreamedNav { nav: &mut nav, islands: &mut islands }), &[], &entering);
+        let done = commit(&mut StreamedNav { nav: &mut nav, islands: &mut islands }, &[], &entering);
         nav.update(1.0 / 60.0);
         best = best.min(started.elapsed().as_secs_f64() * 1000.0);
         assert_eq!((done.entered, done.tiles_in), (4, 16));

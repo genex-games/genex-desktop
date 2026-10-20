@@ -3,7 +3,7 @@
 //! (`tests/fixtures/rust-facade-vocabulary.json`) and documents them in the same change.
 //!
 //! `StreamViewCode` is the other vocabulary: why a streamed cell or asset of the view set was
-//! refused. Those are display state, reported in `state().volatile.stream.refused`, never a call's
+//! refused. Those are display state, reported in `state().volatile.__stream`, never a call's
 //! refusal; the cell pack codes are pinned by `tests/fixtures/stream/cell-pack-v1.json`.
 
 /// Why a streaming call refused.
@@ -21,7 +21,7 @@ pub enum StreamErrorCode {
     /// `stream_tick.rs`).
     NotRegistered,
     /// A commit held past the facade's `STREAM_HOLD_MAX_MS` waiting on a cell build: reported in
-    /// `state().volatile.stream`, never a call's refusal; the tick did not run (STR-9).
+    /// `state().volatile.__stream.timeout`, never a call's refusal; the tick did not run (STR-9).
     HoldTimeout,
 }
 

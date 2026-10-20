@@ -1270,6 +1270,7 @@ name = "genex-nav"
 version = "0.1.0"
 dependencies = [
  "genex-core",
+ "genex-stream",
  "glam 0.33.12",
  "rapier3d",
 ]

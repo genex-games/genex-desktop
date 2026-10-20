@@ -15,9 +15,10 @@ game.streaming(Streaming::grid(64.0).sim_radius(1));
 game.cell_content(|cell, inputs| {
     let (min, _) = inputs.bounds();
     let mut rng = inputs.rng();
-    // The cell draws this model; its path joins state().assets in cell order.
-    let _boulder = inputs.model("rocks/boulder.glb");
-    (0..4).fold(CellBuild::default(), |build, _| {
+    // The cell draws this model while it is in view; its path joins state().assets in cell order.
+    let boulder = inputs.model("rocks/boulder.glb");
+    let start = CellBuild::default().model(&boulder, Transform::from_xyz(min.x + 32.0, 0.0, min.y + 32.0));
+    (0..4).fold(start, |build, _| {
         build.thing(Rock { x: min.x + rng.unit() * 64.0, z: min.y + rng.unit() * 64.0 })
     })
 });
@@ -50,6 +51,16 @@ game.on_update(|sim, _| {
   generator for this cell alone, and `model(path)`), never the world or a clock. Each facet may
   register its own; they run in registration order. `inputs.model(path)` paths appear in
   `state().assets` in cell order.
+- `CellBuild::model(&model, transform)` draws a model while its cell is within the view radius of
+  the drawn camera. Drawing is automatic: the game makes no draw call.
+  `Streaming::grid(64.0).view_radius(metres)` sets the radius (default 4 cells, at most 64 cells;
+  past that `install` refuses `streaming-invalid`). Cells build again on a worker for the view,
+  and their models stream in under the device's memory pool and frame budget. A model that is
+  still loading draws nothing and is never listed as a missing model; a refused one draws the
+  missing-asset checker. A model the asset index lists with levels of detail loads its coarsest
+  level first and draws that until the whole model arrives. Display only: never in the checksum.
+- `frame.cells_debug()` outlines the view's cells on the ground. Green: drawn. Yellow: loading.
+  Grey: building. Red: refused.
 - Caps per cell, all builders together: 256 things, 64 colliders, 4096 group instances. A cell
   past one enters empty (`cell.refused()` is `stream-invalid`), nothing of it is kept, and
   `state().volatile.__stream.refused` names it.

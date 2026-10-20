@@ -1,13 +1,20 @@
 //! `genex::nav`: navigation, genex-nav's surface re-exported. The runtime owns the nav as it owns
 //! physics: `game.navigation(config)` registers it and every seed rebuilds `sim.nav` as an empty
-//! nav for that walker; a reset bakes (or reads) a `NavMesh` and adds it. Agents, links, bodies
-//! and queries arrive with NAV-12.
+//! nav for that walker; a reset bakes (or reads) a `NavMesh` and adds it. Agents, links, bodies,
+//! queries, the probe and saves are genex-nav's `agents_api`; streamed islands are its `stream` module.
 
+pub use genex_nav::agents_api::{
+    NAV_AGENTS_MAX, NAV_BODIES_MAX, NAV_SNAPSHOT_VERSION, NAV_SPEED_DEFAULT, NAV_SPEED_MAX_DEFAULT, NavAgent, NavBody, NavHit,
+    NavLinkReached, NavPath, NavPoint, NavStatus, NavStep,
+};
 pub use genex_nav::carve::{NAV_BAKE_UNITS_PER_TICK_DEFAULT, NAV_OBSTACLES_MAX, NAV_REBUILD_STAGES, NavObstacle};
 pub use genex_nav::error::NavError;
+pub use genex_nav::filter::NavFilter;
 pub use genex_nav::input::{HeightGrid, NAV_AREA_VOLUMES_MAX, NAV_INPUT_TRIANGLES_MAX, NavArea, NavInput, TerrainHeights};
 // NAV_MEMO_BYTES_MAX_PHONE stays in genex-nav until the runtime applies a per-class cap.
 pub use genex_nav::memo::NAV_MEMO_BYTES_MAX;
+pub use genex_nav::links::{NAV_LINKS_MAX, NavLink, NavLinkKind};
+pub use genex_nav::stream::{NavIsland, NavIslands, StreamedNav};
 pub use genex_nav::tile::NavTile;
 pub use genex_nav::world::{NAV_SEARCH_NODES_DEFAULT, NAV_SEARCHES_PER_TICK_DEFAULT, NAV_TILES_MAX, NavBudget, NavMesh, NavMeshSource};
 pub use genex_nav::{AgentId, Nav, NavBodyId, NavConfig, NavDebug, NavErrorCode, NavLinkId, NavObstacleId};

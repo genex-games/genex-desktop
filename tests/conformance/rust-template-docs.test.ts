@@ -71,8 +71,21 @@ const RUST_CASE_ID = "touch-physics";
 /** Words a user's brief never uses and the eval case must not name: the stack is the product's choice. */
 const STACK_WORDS = /\b(rust|wgpu|webgpu|genex|rapier|egui|cargo)\b/i;
 
-/** The `window.__studio` names the web shell adds beside the harness's `PageMethod` verbs (the page shapes of the C++ shell). */
-const PAGE_ONLY_VERBS = ["version", "state", "input", "injectInput", "eye", "player", "capture"] as const;
+/**
+ * The `window.__studio` names the web shell adds beside the harness's `PageMethod` verbs (the page
+ * shapes of the C++ shell), and the frame profile and crash records it binds (PROF-4, CRASH-3).
+ */
+const PAGE_ONLY_VERBS = [
+  "version",
+  "state",
+  "input",
+  "injectInput",
+  "eye",
+  "player",
+  "capture",
+  "profile",
+  "crashes",
+] as const;
 
 /** The refusals a Rust game's run, page or probe can meet; the contract page must name each. */
 const GAME_REFUSALS = [
@@ -729,5 +742,89 @@ describe("the Rust eval case", () => {
     assert.ok(rustCase);
     const asked = `${rustCase.brief}\n${rustCase.acceptance.map((item) => item.text).join("\n")}`;
     for (const axis of [/touch|tap|flick/i, /physic|topple|knock/i, /score|count/i]) assert.match(asked, axis);
+  });
+});
+
+/** The seed's asset recipes (C-24): the Rust techniques an agent retrieves for asset work. */
+const ASSET_RECIPES = ["rust.cc0-assets", "rust.texture-usage", "rust.asset-budgets"] as const;
+/** The most words the template guide's `## Assets` rules may take: rules, with the reference holding the how. */
+const GUIDE_ASSETS_WORDS_MAX = 300;
+/** What a seed recipe's menu note and intent may take (`harness-seed/loop/library.ts` clips past these). */
+const RECIPE_NOTE_CHARS_MAX = 160;
+const RECIPE_INTENT_CHARS_MAX = 1200;
+
+interface SeedRecipe {
+  id: string;
+  runtime: string;
+  pack: string;
+  kind: string;
+  origin: string;
+  note: string;
+  intent: string;
+  sketch: string;
+  evidence: Array<{ source: string }>;
+}
+const seedRecipe = (id: string): SeedRecipe =>
+  JSON.parse(readFileSync(path.join(RECIPES, `${id}.json`), "utf8")) as SeedRecipe;
+
+describe("the template guide's Assets rules (C-24)", () => {
+  const rules = () => section(read("CLAUDE.md"), "Assets");
+
+  it(`stay rules: at most ${GUIDE_ASSETS_WORDS_MAX} words, and the reference holds the how`, () => {
+    assert.ok(wordCount(rules()) <= GUIDE_ASSETS_WORDS_MAX, `${wordCount(rules())} words`);
+    for (const page of ["docs/api/assets.md", "docs/api/drawing.md", "docs/api/genex-toml.md"])
+      assert.ok(rules().includes(page), `the Assets rules point at ${page}`);
+  });
+
+  it("name the CC0 tools, the texture row, the budgets and the keys a capture shows", () => {
+    for (const word of [
+      "cc0__search",
+      "cc0__fetch",
+      "genex-assets.lock",
+      "[[texture]]",
+      "budget_mb",
+      "[[asset_group]]",
+      "assets-over-ceiling",
+      "texture-uncompressed",
+      "missingModels",
+    ])
+      assert.ok(rules().includes(word), `the Assets rules name ${word}`);
+  });
+});
+
+describe("the seed's asset recipes (C-24)", () => {
+  it("ship as Rust techniques the library keeps whole, citing sections the reference has", () => {
+    const sections = new Set(chapterTitles());
+    for (const id of ASSET_RECIPES) {
+      assert.ok(existsSync(path.join(RECIPES, `${id}.json`)), `${id} is in the seed`);
+      const recipe = seedRecipe(id);
+      assert.equal(recipe.id, id);
+      assert.equal(recipe.runtime, GameStack.RustWgpu, `${id} is a Rust recipe`);
+      assert.deepEqual([recipe.pack, recipe.kind, recipe.origin], ["rust", "technique", "seed"], id);
+      assert.ok(recipe.note.length <= RECIPE_NOTE_CHARS_MAX, `${id}'s note is ${recipe.note.length} characters`);
+      assert.ok(recipe.intent.length <= RECIPE_INTENT_CHARS_MAX, `${id}'s intent is ${recipe.intent.length}`);
+      const cited = recipe.evidence.flatMap(({ source }) => /GENEX_API\.md \(([^)]+)\)/.exec(source)?.[1] ?? []);
+      assert.ok(cited.length > 0, `${id} cites the reference`);
+      for (const heading of cited) assert.ok(sections.has(heading), `${id} cites "${heading}"`);
+    }
+  });
+
+  it("sketch genex.toml rows the build accepts", () => {
+    for (const id of ["rust.texture-usage", "rust.asset-budgets"]) {
+      const parsed = parseGenexToml(`[game]\ntitle = "Sketch"\n${seedRecipe(id).sketch.replace("# genex.toml\n", "")}`);
+      assert.ok(parsed.ok, `${id}: ${JSON.stringify(parsed)}`);
+    }
+  });
+
+  it("teach the codes the import and the renderer answer with", () => {
+    const texture = seedRecipe("rust.texture-usage").intent;
+    for (const code of ["texture-uncompressed", "texture-family-refused", "tangents-runtime"])
+      assert.ok(texture.includes(code), `rust.texture-usage names ${code}`);
+    const budgets = seedRecipe("rust.asset-budgets").intent;
+    for (const code of ["assets-over-budget", "assets-over-ceiling", "triangles-over-budget", "not-preloaded"])
+      assert.ok(budgets.includes(code), `rust.asset-budgets names ${code}`);
+    const cc0 = seedRecipe("rust.cc0-assets");
+    for (const word of ["cc0__search", "cc0__fetch", "missingModels", "gfx.assets().model"])
+      assert.ok(`${cc0.intent}\n${cc0.sketch}`.includes(word), `rust.cc0-assets names ${word}`);
   });
 });

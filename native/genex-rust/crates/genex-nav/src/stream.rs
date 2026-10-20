@@ -192,3 +192,15 @@ impl StreamedNav<'_> {
         self.islands.enter(self.nav, cell, island).unwrap_or(0)
     }
 }
+
+impl genex_stream::nav::StreamNav for StreamedNav<'_> {
+    type Island = NavIsland;
+
+    fn island_leave(&mut self, cell: CellId) -> usize {
+        StreamedNav::island_leave(self, cell)
+    }
+
+    fn island_enter(&mut self, cell: CellId, island: &NavIsland) -> usize {
+        StreamedNav::island_enter(self, cell, island)
+    }
+}

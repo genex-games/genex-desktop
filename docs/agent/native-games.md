@@ -85,7 +85,10 @@ and its duplicate or unreferenced accessors and materials dropped
 a vertex), a normal-mapped primitive without `TANGENT` gets MikkTSpace tangents, a mirrored UV
 seam's vertices split ([`tangents.ts`](../../src/substrate/asset-import/tangents.ts)), every
 triangle list is put in vertex cache and fetch order before its meshlets and LODs
-([`reorder.ts`](../../src/substrate/asset-import/reorder.ts)), and a Basis KTX2 gets its
+([`reorder.ts`](../../src/substrate/asset-import/reorder.ts)), a GLB whose nodes carry `MSFT_lod` gets
+the authored levels as `genex_lods` instead of simplified ones, each level's screen coverage
+converted to the error the runtime switches at ([`lod-authored.ts`](../../src/substrate/asset-import/lod-authored.ts)),
+and a Basis KTX2 gets its
 per-family files. The receipt carries each written GLB's counts
 and bytes (`sizes`, [`inspect.ts`](../../src/substrate/asset-import/inspect.ts)).
 A PNG or JPEG whose usage resolved (a `[[texture]]` row or a model's material slot; never its name)

@@ -149,6 +149,8 @@ pub use stream::{
     STREAM_CELL_SIZE_MIN, STREAM_CELL_THINGS_MAX, STREAM_RING_MAX, STREAM_SIM_BYTES_MAX, STREAM_SIM_RADIUS_MAX, STREAM_WORLD_EXTENT_MAX,
     StreamError, StreamErrorCode, StreamTicket, Streaming,
 };
+/// The view set's radius bounds (STR-16): `Streaming::view_radius` defaults to 4 cells, at most 64.
+pub use stream::{STREAM_VIEW_CELLS_MAX, STREAM_VIEW_RADIUS_DEFAULT_CELLS};
 pub use stream_tick::{EnteredCell, STREAM_HOLD_LIVE_SLICE_MS, STREAM_HOLD_MAX_MS, STREAM_HOLD_OVERLAY_MS, StreamCommit, StreamState};
 #[cfg(feature = "physics")]
 /// A cell's static colliders and the ledger of streamed colliders (STR-10).

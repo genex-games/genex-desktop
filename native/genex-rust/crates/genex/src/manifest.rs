@@ -176,21 +176,39 @@ pub const FOG_CALLS: [&str; 8] =
     [".fog", "Fog::default", ".with_density", ".with_height", ".with_range", ".with_color", ".with_aerial_perspective", ".with_volumetric"];
 /// Game systems (EP-0a1): the call and refusal blocks of the five areas, empty until each area's
 /// work package pins what works (`tests/fixtures/rust-facade-vocabulary.json` holds the same).
-/// The animation calls of the facade (`.wire` is a refusal code's wire spelling).
-pub const ANIMATION_CALLS: [&str; 5] = ["gfx.character", ".joint_count", ".skeleton", ".path", ".wire"];
-/// The streaming calls of the facade (STR-9).
-pub const STREAM_CALLS: [&str; 18] = [
-    "Streaming::grid", ".sim_radius", ".hysteresis", ".prefetch", ".anchors", "game.streaming",
-    "game.cell_content", "CellBuild::default", ".thing", "sim.stream.set_anchor", "sim.stream.clear_anchor",
-    "sim.stream.entered", "sim.stream.left", ".part", "CellColliders::new", ".with", "game.stream_colliders",
-    ".handles",
+/// The animation calls of the facade (`.wire` is a refusal code's wire spelling): the rig, the
+/// character controller (AN-19) and ragdolls (AN-20).
+pub const ANIMATION_CALLS: [&str; 27] = [
+    "gfx.character", ".joint_count", ".skeleton", ".path", ".wire", "Character::spawn", "Character::on_ground",
+    ".drive", ".drive_on", ".ground_ray", ".remove", ".feet", ".facing", ".transform", ".velocity", ".grounded",
+    ".nav_config", ".snapshot", ".restore", "Ragdoll::build", ".follow", ".go_limp", ".power", ".recover", ".view",
+    "RagdollProfile::humanoid", ".with_mass",
 ];
-/// The navigation calls of the facade (NAV-11).
-pub const NAV_CALLS: [&str; 17] = [
+/// The streaming calls of the facade (STR-9; the view set, STR-16).
+pub const STREAM_CALLS: [&str; 21] = [
+    "Streaming::grid", ".sim_radius", ".hysteresis", ".prefetch", ".anchors", "game.streaming", "game.cell_content",
+    "CellBuild::default", ".thing", "sim.stream.set_anchor", "sim.stream.clear_anchor", "sim.stream.entered",
+    "sim.stream.left", ".part", "CellColliders::new", ".with", "game.stream_colliders", ".handles", ".view_radius",
+    ".model", "frame.cells_debug",
+];
+/// The navigation calls of the facade (NAV-11; agents, links, bodies, queries and saves, NAV-12).
+pub const NAV_CALLS: [&str; 44] = [
     "frame.lines", "game.navigation", "NavConfig::walker", "NavInput::new", "NavMesh::bake", "NavMesh::bake_tile",
     "NavMesh::from_bytes_for", "nav.add_mesh", "nav.add_tile", "nav.remove_tile", "nav.set_area_cost",
     "nav.set_area_open", "nav.add_obstacle", "nav.move_obstacle", "nav.remove_obstacle", "nav.pending_rebuilds",
-    "nav.update",
+    "nav.update", "NavAgent::new", "NavLink::between", "nav.add_agent", "nav.remove_agent", "nav.move_to", "nav.stop",
+    "nav.set_position", "nav.desired_velocity", "nav.status", "nav.next_corner", "nav.take_link", "nav.finish_link",
+    "nav.add_link", "nav.remove_link", "nav.set_link_open", "nav.add_body", "nav.set_body", "nav.remove_body",
+    "nav.closest_point", "nav.path", "nav.raycast", "nav.move_along", "nav.random_point", "nav.distance_to_wall",
+    "nav.probe", "nav.snapshot", "nav.restore",
+];
+/// The input calls of the facade (IN-11, IN-12).
+pub const INPUT_CALLS: [&str; 30] = [
+    "game.input", "game.touch_controls", "ActionMap::new", ".context", "Context::new", ".button", ".axis1", ".axis2",
+    ".when", ".modify", ".pass_through", ".starts_off", "ctx.actions.down", "ctx.actions.pressed",
+    "ctx.actions.released", "ctx.actions.fired", "ctx.actions.value", "ctx.actions.axis2", "ctx.actions.held_ticks",
+    "ctx.actions.device", "ctx.actions.glyph", "ctx.actions.is_on", "ctx.actions.enable", "ctx.actions.disable",
+    "ctx.actions.free_touches", "TouchControls::new", ".stick", ".dpad", ".show", "controls_panel",
 ];
 /// The sim-side asset read calls of the facade, as a reset calls them (SF-1a); `.wire` is a
 /// refusal code's wire spelling.

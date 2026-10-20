@@ -20,5 +20,7 @@ physics = ["dep:rapier3d"]
 [dependencies]
 # `Map`/`Set`, `CellId` and `GameRng` live below the facade so this crate shares them with a game.
 genex-core = { workspace = true }
+# The nav slot of a streamed world's commit (STR-11): `StreamedNav` implements `genex_stream::nav::StreamNav`.
+genex-stream = { workspace = true }
 glam = { workspace = true }
 rapier3d = { workspace = true, optional = true }
