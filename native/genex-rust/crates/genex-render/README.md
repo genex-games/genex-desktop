@@ -783,6 +783,27 @@ frame's grow for both positions (under a tenth of a pixel a frame at 30 m/s;
 `tests/far_field.rs`). The GPU keeps the CPU twin's copies; its shares and grows may differ by
 about 1e-6 (WGSL's square roots and quotients).
 
+Impostors (`src/impostor/`, a port of kansei's, MIT): a species is baked from a model's parts
+(`Renderer::bake_impostor`) into three RGBA8 atlas arrays of N x N orthographic frames on an
+octahedral or hemi-octahedral grid (base colour and coverage; normal, depth and roughness;
+occlusion, metallic, transmission and class), sized per class (`ImpostorClass`). Placed with
+`Renderer::set_impostors` (`ImpostorInstance`: a model matrix, the species' row and a fade), each
+draws after the terrain and its grass as a camera-facing quad over its bounds
+(`shaders/impostor/draw.wgsl`): the three frames nearest the view direction, each reprojected
+along the view ray to its stored depth in three parallax steps (off on the phone sizes), their
+surface blended by sharpened weights and their coverage by the plain ones (cut at 0.35), lit
+through the forward chunks like a built-in surface. The prepass gets its depth and normal and,
+on motion frames, the reconstructed surface point's motion (the quad turning to face the camera
+is not motion). On desktop high and ultra (`impostor::draw::writes_depth`) the fragments write
+the reconstructed surface's depth (`frag_depth`); below, the quad's flat depth keeps early depth
+testing for tile GPUs. A fade cuts whole pixels with the meshes' dither. The forward frame group
+holds all of WebGPU core's 16 sampled textures, so the impostor pipelines bind group 0 without its
+eight material arrays (`renderer::impostor_frame_layout_entries`) and group 2 their own (species
+rows, instances, atlases). Impostors cast no shadow yet (LOD-15: the coarsest mesh casts).
+`tests/impostor_draw.rs` holds a cube's impostor to its mesh: silhouette IoU at least 0.95 at
+the switch, mean luminance within TAA's 0.04 accumulation floor under the sun, the sky and fog,
+and motion within a tenth of a pixel of the mesh's on a pan.
+
 ### `genex_textures` in glTF
 
 The Studio's import step writes the images a GLB carries inside it out as compressed textures, the

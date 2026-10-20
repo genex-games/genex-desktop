@@ -118,6 +118,7 @@ mod froxel_fog;
 mod lens;
 mod probe_capture;
 mod grass_draw;
+mod impostor_draw;
 mod shadow_cache_draw;
 mod ssr_draw;
 mod terrain_draw;
@@ -358,6 +359,9 @@ struct Layouts {
     lines: BindGroupLayout,
     /// The prepass's custom-geometry row (`prepass_draw`, group 1 binding 1, dynamic offset).
     prepass_draw: BindGroupLayout,
+    /// The impostor pipelines' group 0 (game systems LOD-14): the frame group without the
+    /// material texture arrays ([`impostor_frame_layout_entries`]).
+    impostor_frame: BindGroupLayout,
 }
 
 /// The pipelines that draw into the scene colour: one set for the legacy world format with standard
@@ -647,6 +651,8 @@ struct GroupsKey {
     effects: [TextureView; 4],
     /// The material sampler's anisotropy (P2-0.12 LG-02: a quality change replaces the sampler).
     anisotropy: u16,
+    /// Whether the impostor frame group is made too (LOD-14: impostors are placed).
+    impostors: bool,
 }
 
 impl GroupsKey {
@@ -888,6 +894,8 @@ pub struct Renderer {
     /// The impostors its pipelines stage baked (game systems LOD-13): the baker, the class's atlas
     /// arrays and each species' row ([`Renderer::bake_impostor`]).
     impostors: crate::impostor::bake::ImpostorStage,
+    /// The impostors placed and their draw (game systems LOD-14, [`Renderer::set_impostors`]).
+    impostor_draw: Option<crate::impostor::draw::ImpostorDraw>,
     /// The look's depth of field and motion blur (graph nodes 17a and 17b, renderer pass 2 A.9).
     lens: std::cell::RefCell<lens::LensNodes>,
     shadow_sampler: Sampler,
@@ -1120,7 +1128,22 @@ fn layouts(device: &Device) -> Layouts {
         // The line fragment reads the frame's pre-exposure on the HDR scene.
         lines: bind_group_layout(device, "lines", &[uniform(0, false, vertex | fragment)]),
         prepass_draw: bind_group_layout(device, "prepass draw", &[uniform(1, true, vertex)]),
+        impostor_frame: bind_group_layout(device, "impostor frame", &impostor_frame_layout_entries()),
     }
+}
+
+/// Whether the frame group's `binding` is a material texture array (the class-0 pair and the
+/// larger size classes'): the impostor frame group leaves them out.
+fn material_array_binding(binding: u32) -> bool {
+    binding == 8 || binding == 9 || FRAME_MATERIAL_CLASS_BINDINGS.iter().any(|(at, _)| *at == binding)
+}
+
+/// The impostor pipelines' group 0 (game systems LOD-14): the forward frame group's entries
+/// without its eight material texture arrays. The forward fragment stage holds all of WebGPU
+/// core's 16 sampled textures, so the impostor's three atlases (its group 2) take their room; an
+/// impostor reads its material from its atlases, never from the material arrays.
+pub fn impostor_frame_layout_entries() -> Vec<BindGroupLayoutEntry> {
+    frame_layout_entries().into_iter().filter(|entry| !material_array_binding(entry.binding)).collect()
 }
 
 /// The depth test of a depth-writing (`write`) or depth-testing pipeline, standard or `reversed`.
@@ -1902,6 +1925,8 @@ struct FrameGroups {
     /// The faded pipelines' group 1: the pass views and the instance fade table (LOD-18).
     pass_fade: BindGroup,
     lines: BindGroup,
+    /// The impostor pipelines' group 0 (LOD-14), on frames that draw impostors.
+    impostor_frame: Option<BindGroup>,
 }
 
 /// One frame's plan and uploads, from [`Renderer::begin_frame_prepass`] until [`Renderer::end_frame`].
@@ -2486,6 +2511,8 @@ impl<'a> WorldNodes<'a> {
                 // The terrain (A.7), after the opaque batches, then its grass (A.8).
                 renderer.draw_terrain(pass, &groups.frame, &groups.pass);
                 renderer.draw_grass(pass, &groups.frame, &groups.pass);
+                // The impostors (LOD-14), after the terrain and its grass.
+                renderer.draw_impostors(pass, &groups);
                 if !plan.lines.is_empty() {
                     pass.set_pipeline(&renderer.scene_pipelines().lines);
                     pass.set_bind_group(0, &groups.lines, &[]);
@@ -2749,6 +2776,7 @@ impl Renderer {
             grass_pipelines: grass_draw::GrassPipelines::default(),
             grass_time: grass_draw::GrassTime::default(),
             impostors: crate::impostor::bake::ImpostorStage::default(),
+            impostor_draw: None,
             lens: std::cell::RefCell::default(),
             shadow_sampler,
             point_sampler,
@@ -4120,6 +4148,7 @@ impl Renderer {
         // grass's (A.8).
         self.draw_terrain_prepass(&mut pass, prep, motion.map(|(group, _, _, _)| group));
         self.draw_grass_prepass(&mut pass, prep, motion.map(|(group, _, _, _)| group));
+        self.draw_impostors_prepass(&mut pass, prep, motion.map(|(group, _, _, _)| group));
         if let Some((group, motion_pipelines, _, _)) = motion {
             // T-03: the camera's motion wherever no geometry drew (the sky, its sun disc, the fog
             // horizon), after every draw of the pass: `Equal` against the cleared far plane.
@@ -4502,6 +4531,7 @@ impl Renderer {
         self.ensure_variants(&plan, &scene_path, prepass.as_ref(), spec.motion)?;
         self.prepare_terrain(&plan, &scene_path, prepass.as_ref(), spec.motion)?;
         self.prepare_grass(&plan, &scene_path, prepass.as_ref(), spec.motion)?;
+        self.prepare_impostors(&scene_path, prepass.as_ref(), spec.motion)?;
         self.path = scene_path;
         let meshlets = self.prepare_meshlets(meshlets, prepass.is_some())?;
         let consumers = prepass.as_ref().map_or(PrepassConsumers::NONE, |prepass| prepass.consumers);
@@ -4909,6 +4939,11 @@ impl Renderer {
         if grass > 0 {
             ledger.register(Buffers, crate::foliage::GRASS_LEDGER_LABEL, grass);
         }
+        // The placed impostors' species rows and instances (LOD-14).
+        let impostors = self.impostor_draw_bytes();
+        if impostors > 0 {
+            ledger.register(Buffers, crate::impostor::draw::IMPOSTOR_DRAW_LEDGER_LABEL, impostors);
+        }
         // The reflection probes' cubes, capture targets and rows (A.3), outside the target pool.
         let probes = self.environment.borrow().probes().bytes();
         if probes > 0 {
@@ -5107,6 +5142,7 @@ impl Renderer {
             environment: self.environment.borrow().generation(),
             effects: self.effect_views(),
             anisotropy: self.texture_anisotropy,
+            impostors: self.draws_impostors(),
         }
     }
 
@@ -5199,6 +5235,10 @@ impl Renderer {
         entries.push(wgpu::BindGroupEntry { binding: reflections_binding, resource: wgpu::BindingResource::TextureView(&reflections) });
         entries.push(entry(crate::layout::FRAME_INSTANCE_FADE_BINDING.0, t.instance_fade.get()));
         let frame = self.device.create_bind_group(&wgpu::BindGroupDescriptor { label: Some("frame"), layout: &self.layouts.frame, entries: &entries });
+        let impostor_frame = self.draws_impostors().then(|| {
+            let entries: Vec<wgpu::BindGroupEntry<'_>> = entries.iter().filter(|entry| !material_array_binding(entry.binding)).cloned().collect();
+            self.device.create_bind_group(&wgpu::BindGroupDescriptor { label: Some("impostor frame"), layout: &self.layouts.impostor_frame, entries: &entries })
+        });
         let color_classes = TextureClass::ALL.map(|class| self.textures.view(class, TextureKind::Color));
         let mut shadow_entries =
             vec![entry(0, &self.frame_uniforms), entry(1, t.instances.get()), entry(2, t.visible.get()), entry(3, t.slot_base.get())];
@@ -5232,7 +5272,7 @@ impl Renderer {
             layout: &self.layouts.lines,
             entries: &[entry(0, &self.frame_uniforms)],
         });
-        FrameGroups { frame, shadow, pass, pass_fade, lines }
+        FrameGroups { frame, shadow, pass, pass_fade, lines, impostor_frame }
     }
 
     /// Below scale 1: the upscale pipeline (made once) and its bind group over the scene target
