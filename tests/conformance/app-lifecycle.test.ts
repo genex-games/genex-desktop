@@ -15,6 +15,8 @@ import {
   runShutdown,
   settleWithin,
   type ShutdownTimers,
+  WindowClose,
+  windowClose,
 } from "../../src/main/app-lifecycle.ts";
 
 /** Timers that only fire when the test says so, recording each delay asked for. */
@@ -268,5 +270,71 @@ describe("quitQuestion: what a quit or a relaunch into an update asks first", ()
   ];
   for (const { name, want, ...state } of rows) {
     it(name, () => assert.equal(quitQuestion(state), want));
+  }
+});
+
+describe("windowClose: what the window's close button does", () => {
+  const rows: Array<{
+    name: string;
+    platform: NodeJS.Platform;
+    runActive: boolean;
+    quitConfirmed: boolean;
+    testLaunch: boolean;
+    want: WindowClose;
+  }> = [
+    {
+      name: "with nothing running, the window closes",
+      platform: "win32",
+      runActive: false,
+      quitConfirmed: false,
+      testLaunch: false,
+      want: WindowClose.Close,
+    },
+    {
+      name: "on Windows, a run asks to quit: there is no Dock to bring a hidden window back",
+      platform: "win32",
+      runActive: true,
+      quitConfirmed: false,
+      testLaunch: false,
+      want: WindowClose.AskToQuit,
+    },
+    {
+      name: "on Linux, a run asks to quit too",
+      platform: "linux",
+      runActive: true,
+      quitConfirmed: false,
+      testLaunch: false,
+      want: WindowClose.AskToQuit,
+    },
+    {
+      name: "on a Mac, a run hides the window and the Dock icon brings it back",
+      platform: "darwin",
+      runActive: true,
+      quitConfirmed: false,
+      testLaunch: false,
+      want: WindowClose.Hide,
+    },
+    {
+      name: "a test launch keeps the run's window hidden, as it does not quit on close",
+      platform: "win32",
+      runActive: true,
+      quitConfirmed: false,
+      testLaunch: true,
+      want: WindowClose.Hide,
+    },
+    {
+      name: "once the person agreed to end the run, the window closes",
+      platform: "win32",
+      runActive: true,
+      quitConfirmed: true,
+      testLaunch: false,
+      want: WindowClose.Close,
+    },
+  ];
+  for (const row of rows) {
+    it(row.name, () => {
+      const { name: _name, want, ...state } = row;
+      assert.equal(windowClose(state), want);
+    });
   }
 });

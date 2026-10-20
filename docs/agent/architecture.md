@@ -1106,11 +1106,12 @@ managed local runtime; core has no Blender tool of its own.
   renderer harness-log messages coalesce for 50 ms (at most 65,536 characters) and flush before
   other UI events or shutdown. Diagnostics read only a bounded log suffix.
 - **Lifecycle rules.** [`src/main/app-lifecycle.ts`](../../src/main/app-lifecycle.ts) holds the
-  Electron-free rules: process handlers log uncaught exceptions and rejections without exiting; the
+  Electron-free rules: process handlers log uncaught errors and rejections without exiting; the
   reload policy reloads a crashed renderer at most twice in 60 s and never after a `clean-exit`;
   `pageRecovery` notes each reload in the Studio chat and past the budget asks Reload/Quit (fixture
   and smoke sessions leave the page dead). The Dock, a second launch or Keep running revive a dead
-  page; pushes skip it. `runShutdown` runs quit steps in order, each bounded (`shutdownSteps`), logs
+  page; pushes skip it. Mid-run, closing the window hides it on a Mac and asks the quit question
+  elsewhere (`windowClose`). `runShutdown` runs quit steps in order, each bounded (`shutdownSteps`), logs
   a failed or hung step and moves on.
   `before-quit` calls `app.exit(0)` in a `finally`. `StudioCore.stop` stops the harness, then every
   agent job, and logs a plugin lease release that fails instead of skipping what follows it.

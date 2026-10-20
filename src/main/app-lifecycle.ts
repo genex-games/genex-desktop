@@ -6,6 +6,7 @@
  */
 import { errorMessage } from "../shared/errors.ts";
 import { MINUTE_MS, SECOND_MS } from "../shared/duration.ts";
+import { quitsWhenLastWindowCloses } from "./dev/launch-flags.ts";
 
 /** Where a line goes: the studio log's `write`. */
 export type LogLine = (source: string, line: string) => void;
@@ -148,6 +149,27 @@ export function quitQuestion(state: { runActive: boolean; resumeAt: number | nul
   if (state.confirmed) return QuitQuestion.None;
   if (state.runActive) return QuitQuestion.RunActive;
   return state.resumeAt === null ? QuitQuestion.None : QuitQuestion.ResumePending;
+}
+
+/** What the window's close button does: close it, hide it, or ask the quit question first. */
+export const WindowClose = { Close: "close", Hide: "hide", AskToQuit: "ask-to-quit" } as const;
+export type WindowClose = (typeof WindowClose)[keyof typeof WindowClose];
+
+/**
+ * A run outlives its window's close button: the preview dies with the window, so the window must
+ * not close under a run. On a Mac it hides, and the Dock icon brings it back (`activate`). Where
+ * closing the last window quits, a hidden window leaves no Dock, tray or taskbar button to find
+ * it by, and the run would go on spending unseen; there the close asks the quit question, and
+ * "Keep running" leaves the window where it was. Once the person agreed to end the run, it closes.
+ */
+export function windowClose(state: {
+  platform: NodeJS.Platform;
+  runActive: boolean;
+  quitConfirmed: boolean;
+  testLaunch: boolean;
+}): WindowClose {
+  if (!state.runActive || state.quitConfirmed) return WindowClose.Close;
+  return quitsWhenLastWindowCloses(state) ? WindowClose.AskToQuit : WindowClose.Hide;
 }
 
 export interface ShutdownStep {

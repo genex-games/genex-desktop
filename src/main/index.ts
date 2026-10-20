@@ -64,6 +64,8 @@ import {
   runShutdown,
   shutdownSteps,
   type ShutdownStep,
+  WindowClose,
+  windowClose,
 } from "./app-lifecycle.ts";
 import { createBootGate, startStepAfter } from "./boot-gate.ts";
 import {
@@ -1320,13 +1322,21 @@ function showWindow(win: BrowserWindow): void {
 
 function watchWindowLifecycle(win: BrowserWindow): void {
   // The preview's WebContentsView dies with its window — destroying it mid-run would blind (or
-  // kill) every remaining evidence pass. While a run is active, close means hide. A real quit is
-  // unaffected: before-quit releases the blocker before window close events fire. A restart into
-  // an update closes the windows first, so once the person agreed to end the run, close closes.
+  // kill) every remaining evidence pass. While a run is active, close hides on a Mac and asks the
+  // quit question elsewhere (`windowClose`). A real quit is unaffected: before-quit asks first and
+  // its yes sets quitConfirmed before window close events fire. A restart into an update closes
+  // the windows first, so once the person agreed to end the run, close closes.
   win.on("close", (event) => {
-    if (!keepAwake.held || quitConfirmed) return;
+    const action = windowClose({
+      platform: process.platform,
+      runActive: keepAwake.held,
+      quitConfirmed,
+      testLaunch: isSmoke || isSelfTest,
+    });
+    if (action === WindowClose.Close) return;
     event.preventDefault();
-    win.hide();
+    if (action === WindowClose.Hide) win.hide();
+    else app.quit();
   });
   win.on("closed", () => {
     window = null;
