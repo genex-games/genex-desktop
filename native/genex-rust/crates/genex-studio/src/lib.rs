@@ -48,7 +48,7 @@ pub use genex_core::input::Injection;
 pub use transport::SocketChannel;
 pub use transport::{
     Channel, MAX_NONCE_BYTES, MAX_QUEUED_LINES, MAX_RUN_ID_CHARS, MIN_RUN_ID_CHARS, NONCE_ENV, PIPE_ENV, PIPE_PREFIX,
-    STUDIO_FD, Transport, WRITE_STALL, from_environment, report_panics, studio_pipe_name,
+    STUDIO_FD, Transport, WRITE_STALL, from_environment, report_crashes, report_panics, studio_pipe_name,
 };
 pub use verbs::{
     CAPTURE_FORMAT, CAPTURE_MAX_BYTES, CAPTURE_MAX_PX, CAPTURES_KEPT, CaptureFault, CaptureLens, DEFAULT_CAMERA, FatalReason, Op,

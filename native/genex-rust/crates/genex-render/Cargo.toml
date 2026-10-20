@@ -47,6 +47,10 @@ bevy_mikktspace = { workspace = true }
 # The engine scopes `encode` and `submit` and the GPU lane's per-node samples (game systems PROF-2):
 # write-only profiling below the facade, recording nothing on a thread no profiler is attached to.
 genex-profile = { workspace = true }
+# Typed GPU incidents and caught panics (game systems CRASH-2): a device loss and an uncaptured
+# validation error become crash records, and the job pool and pipeline compiles catch panics as
+# handled. Records nothing until the game installs the crash hook.
+genex-crash = { workspace = true }
 
 # Headless native runs block on adapter and device requests; the web awaits them instead.
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]

@@ -1380,6 +1380,7 @@ dependencies = [
  "bevy_mikktspace",
  "bytemuck",
  "genex-core",
+ "genex-crash",
  "genex-gpu-memory",
  "genex-profile",
  "glam 0.33.12",
@@ -1419,6 +1420,7 @@ name = "genex-studio"
 version = "0.1.0"
 dependencies = [
  "genex-core",
+ "genex-crash",
  "libc",
  "log",
  "serde",

@@ -41,6 +41,9 @@ impl Event {
     /// (`{}`, or `{stage, done?, total?}`: a [`BootProgress`]); the host gives its ready deadline
     /// again from each, up to a cap.
     pub const STARTING: &'static str = "starting";
+    /// Before `fatal` (or alone, for a crash the game survives): one crash record, `{record}`, a
+    /// `genex-crash/1` object (game systems CRASH-2). Accepted before `ready` too.
+    pub const CRASH: &'static str = "crash";
 }
 
 /// Where a game's boot is (renderer pass 2, owner decision D11: real progress on every
