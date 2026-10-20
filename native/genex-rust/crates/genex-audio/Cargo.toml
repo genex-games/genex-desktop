@@ -1,5 +1,6 @@
 # Stub member written by M0a.1 so later work packages never edit the workspace manifest.
-# Filled by M0a.5, M2.7. Dependencies come from [workspace.dependencies] only.
+# Filled by M0a.5, M2.7 and the G6 audio work packages (AU-0..AU-5). Dependencies come from
+# [workspace.dependencies] only.
 [package]
 name = "genex-audio"
 description = "kira mixer with a device-less backend for headless and boxed runs; symphonia decoding."
@@ -19,3 +20,8 @@ kira = { workspace = true }
 cpal = { workspace = true }
 symphonia = { workspace = true }
 libm = { workspace = true }
+glam = { workspace = true }
+serde = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }
