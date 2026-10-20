@@ -3,8 +3,8 @@
 //! load, written at the end of a tick and swapped in before the next one, inside a total quota the
 //! runtime enforces on every destination.
 //!
-//! Every planned module is declared now so each work package fills one body (G6 saves, UIS-0); a
-//! module that names its work package is still a stub.
+//! Every planned module was declared by UIS-0 so each work package filled one body: the envelope,
+//! slots and codec (UIS-2) and migrations, the index, autosave, quota and the slot driver (UIS-3).
 
 pub mod error;
 pub mod slot;
@@ -15,3 +15,10 @@ pub mod quota;
 pub mod migrate;
 pub mod autosave;
 pub mod driver;
+
+pub use codec::{DEFLATE_ABOVE_BYTES, DEFLATE_LEVEL};
+pub use driver::{SAVE_LOAD_HOLD_MAX_MS, SLOTS_MAX};
+pub use envelope::{LABEL_CHARS_MAX, SECTION_NAME_MAX, SECTIONS_MAX};
+pub use index::META_BYTES_MAX;
+pub use migrate::MIGRATION_STEPS_MAX;
+pub use slot::{AUTOSAVE_RING_MAX, SLOT_NAME_MAX};

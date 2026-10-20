@@ -123,7 +123,7 @@ table `tests/fixtures/humanoid-aliases.json`); the host checks both in the recei
 iOS ASTC, Android ASTC and ETC2, the web all three), never RGBA8; a phone drops a source image its
 families cover and family mips above `PHONE_MAX_TEXTURE_PX`. It writes
 `assets/genex-asset-index.json` (ids from a trusted `genex-assets.lock`, files and bytes per
-family, `deps`, `boot`), and the receipt's `package` gives the bytes. Streaming reads only the
+family, `deps`, `boot`), and the receipt's `package` gives the bytes. On the web, `webAssetMap` ([`rust-build-web.ts`](../../src/main/rust-build-web.ts)) writes `assets.json` v2: each family file carries its `family` and the texture it is `of`, so the module plans only the family the shell's adapter samples (`studio_assets_plan(map, {features, mobile})`); the image is tagged `source`, and left out, only when the runtime never falls back to it (every shipped family, none RGBA8, each at least 512 px). Streaming reads only the
 index ([`stream-facts.ts`](../../src/substrate/asset-import/stream-facts.ts)): a GLB's `mesh`
 lists its levels coarse first with their byte ranges, the head and vertex ranges every level
 needs, and its UV texel density; a KTX2 file's `levels` run smallest first with their ranges.

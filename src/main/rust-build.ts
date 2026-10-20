@@ -60,7 +60,7 @@ import { hostOf, STACK_HOST_MATRIX } from "../shared/game-targets.ts";
 import type { ToolchainLock } from "../shared/toolchain.ts";
 import type { UiEventMap } from "../shared/ui-events.ts";
 import { atomicWriteText, openNoFollow, readRegularFile } from "../substrate/fsx.ts";
-import type { AssetGroupRow } from "../substrate/genex-toml.ts";
+import { type AssetGroupRow, type AssetsToml, assetBudgetOf } from "../substrate/genex-toml.ts";
 import { isInside, toPosixRelative } from "../substrate/paths.ts";
 import { literalGlob, ProcessSandbox, type RunRequest, type RunResult, shellQuote } from "../substrate/spawn.ts";
 import type { CrateRefusal } from "../shared/crate-requests.ts";
@@ -79,7 +79,13 @@ import {
   writeWebAssetMap,
 } from "./rust-build-web.ts";
 import type { RustStageImport, StagedImportReport } from "./rust-assets.ts";
-import { type AssetPackageReport, PackageRefusal, packageAssets, reservedAssetName } from "./rust-package-assets.ts";
+import {
+  type AssetPackageReport,
+  PackageRefusal,
+  packageAssets,
+  packageCeilingRefusal,
+  reservedAssetName,
+} from "./rust-package-assets.ts";
 import { AssetLockState, readAssetLock } from "./asset-db.ts";
 import type { AssetLockEntry } from "../shared/asset-db.ts";
 import { RUST_ENGINE_FOLDER, RustFlavour } from "./rust-manifest.ts";
@@ -296,6 +302,8 @@ export type RustStaged =
       loading?: LoadingStyle | null;
       /** `[[asset_group]]` rows, checked: the asset index's named groups (C-30); absent: none. */
       assetGroups?: readonly AssetGroupRow[];
+      /** `[assets]`, checked: the package's budget and a phone's texture cap (C-17); null or absent: the defaults. */
+      assets?: AssetsToml | null;
     }
   | { ok: false; code: string; detail: string };
 
@@ -603,6 +611,8 @@ interface Plan extends Pending {
   loading: LoadingStyle | null;
   /** The game's `[[asset_group]]` rows, as staged: the package's named groups (C-30). */
   assetGroups: readonly AssetGroupRow[];
+  /** The game's `[assets]`, as staged: the package's budget and a phone's texture cap (C-17); null: the defaults. */
+  assetBudgets: AssetsToml | null;
   /** What the game may use of its profile's crate overlay. */
   grant: Extract<RustCrateGrant, { ok: true }>;
   /** The store's own vendored crates (the toolchain's `vendor` is the merged source when the game has a grant). */
@@ -829,6 +839,7 @@ export class RustBuilds implements GameBuildLane {
         wasmBudgetMb: null,
         loading: null,
         assetGroups: [],
+        assetBudgets: null,
         grant,
         storeVendor: located.toolchain.vendor,
         trust,
@@ -875,13 +886,7 @@ export class RustBuilds implements GameBuildLane {
         rust: RustBuildRefusal.StageRefused,
       });
     }
-    plan.title = staged.title ?? plan.game.project;
-    plan.nativeFeatures = staged.nativeFeatures ?? [];
-    plan.renderToml = staged.renderToml ?? null;
-    plan.wgslToml = staged.wgslToml ?? null;
-    plan.wasmBudgetMb = staged.wasmBudgetMb ?? null;
-    plan.loading = staged.loading ?? null;
-    plan.assetGroups = staged.assetGroups ?? [];
+    adoptStaged(plan, staged);
     const outside = staged.dependencies.filter(
       (name) => name !== FACADE_CRATE && !Object.hasOwn(RUST_CRATE_ALLOWLIST, name) && !plan.grant.names.includes(name),
     );
@@ -1026,6 +1031,14 @@ export class RustBuilds implements GameBuildLane {
       return this.#outcome(plan, BuildProblemCode.CommandFailed, { ...web.refusal, lastGood, ran: true });
     }
     const written = await writeOutput(plan, inside, web ? path.join(plan.bin, WEB_DIR) : null, this.options.admit);
+    if (!written.ok && "packageRefused" in written) {
+      return this.#outcome(plan, BuildProblemCode.CommandFailed, {
+        lines: [written.packageRefused],
+        lastGood,
+        ran: true,
+        rust: RustBuildRefusal.PackageRefused,
+      });
+    }
     if (!written.ok) {
       const { file, refusal, problem, detail } = written.refused;
       return this.#outcome(plan, BuildProblemCode.CommandFailed, {
@@ -1640,10 +1653,23 @@ async function builtInside(bin: string, exe: string): Promise<string | null> {
   return realBin && realExe && isInside(realBin, realExe) && realExe !== realBin ? realExe : null;
 }
 
+/** What the stage read from `genex.toml`, taken into the plan: each field absent from the stage is its default. */
+function adoptStaged(plan: Plan, staged: Extract<RustStaged, { ok: true }>): void {
+  plan.title = staged.title ?? plan.game.project;
+  plan.nativeFeatures = staged.nativeFeatures ?? [];
+  plan.renderToml = staged.renderToml ?? null;
+  plan.wgslToml = staged.wgslToml ?? null;
+  plan.wasmBudgetMb = staged.wasmBudgetMb ?? null;
+  plan.loading = staged.loading ?? null;
+  plan.assetGroups = staged.assetGroups ?? [];
+  plan.assetBudgets = staged.assets ?? null;
+}
+
 /** What writing `<bin>.out` came to: the admitted files and the package, or the admission's refusal (nothing replaced). */
 type WrittenOutput =
   | { ok: true; outputs: RustBuildReceipt["outputs"]; package: AssetPackageReport | null }
-  | { ok: false; refused: Extract<RustOutputAdmission, { ok: false }> };
+  | { ok: false; refused: Extract<RustOutputAdmission, { ok: false }> }
+  | { ok: false; packageRefused: string };
 
 /**
  * Writes `<bin>.out` afresh: the executable under each of the builder's names (for the web, the
@@ -1672,8 +1698,16 @@ async function writeOutput(
         lock: await trustedLockRows(plan.source),
         imported: plan.assets,
         groups: plan.assetGroups,
+        budget: assetBudgetOf(plan.assetBudgets, plan.target),
+        ...(plan.assetBudgets?.phoneMaxTexturePx ? { textureCapPx: plan.assetBudgets.phoneMaxTexturePx } : {}),
       })
     : null;
+  // Past the destination's hard cap (the web shell's 512 MB) the build is refused; past its budget it only warns.
+  const overCeiling = pack ? packageCeilingRefusal(pack) : null;
+  if (overCeiling) {
+    await rm(fresh, { recursive: true, force: true });
+    return { ok: false, packageRefused: overCeiling };
+  }
   // A browser cannot list `assets/`: the page fetches by this map, and the module checks each file.
   if (web) await writeWebAssetMap(fresh);
   const servesStudio = rustFlavourOf(plan.purpose, plan.target) === RustFlavour.Dev;

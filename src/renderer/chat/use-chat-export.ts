@@ -165,6 +165,8 @@ function warningNotice(warning: ExportWarning): string {
   switch (warning.code) {
     case ExportWarningCode.WasmOverTarget:
       return EXPORT_WORDS.wasmOverTarget(megabytes(warning.gzipBytes, 1), megabytes(warning.budgetBytes, 0));
+    case ExportWarningCode.AssetsOverBudget:
+      return EXPORT_WORDS.assetsOverBudget(megabytes(warning.bytes, 1), megabytes(warning.budgetBytes, 0));
   }
 }
 

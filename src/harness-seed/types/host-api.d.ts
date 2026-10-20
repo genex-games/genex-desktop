@@ -1685,15 +1685,24 @@ export interface AttachReport {
 export type GpuQualification = 'untested' | 'real-gpu';
 // ↑ src/shared/game-export-contract.ts
 
-export type ExportWarningCode = 'wasm-over-target';
-// ↑ src/shared/game-export-contract.ts
-
-/** A warning on an export that was made: its code, the gzip size and the game's budget it passed. */
-export interface ExportWarning {
-  code: ExportWarningCode;
+/** The browser game's optimized code past its budget: the gzip size and the game's budget it passed. */
+export interface WasmExportWarning {
+  code: "wasm-over-target";
   gzipBytes: number;
   budgetBytes: number;
 }
+// ↑ src/shared/game-export-contract.ts
+
+/** The destination's asset package past its budget (C-17): the package's bytes and the budget it passed. */
+export interface AssetsExportWarning {
+  code: "assets-over-budget";
+  bytes: number;
+  budgetBytes: number;
+}
+// ↑ src/shared/game-export-contract.ts
+
+/** A warning on an export that was made, by its code. */
+export type ExportWarning = WasmExportWarning | AssetsExportWarning;
 // ↑ src/shared/game-export-contract.ts
 
 /** What `game.export` wrote: the public roots it assembled, and what it left out. */

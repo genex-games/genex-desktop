@@ -289,7 +289,9 @@ const refused = (refusal: RustWebRefusal, detail: string, receipt: WebReceipt | 
 /** The warnings a web export carries from its receipt: the code past its game's budget, or none. */
 export function webExportWarnings(receipt: WebReceipt | null | undefined): ExportWarning[] {
   if (!receipt?.warning) return [];
-  return [{ code: receipt.warning, gzipBytes: receipt.gzipBytes, budgetBytes: receipt.gzipBudgetBytes }];
+  return [
+    { code: ExportWarningCode.WasmOverTarget, gzipBytes: receipt.gzipBytes, budgetBytes: receipt.gzipBudgetBytes },
+  ];
 }
 
 const escapeHtml = (text: string): string => text.replace(/[&<>"']/g, (char) => HTML_ESCAPES[char] ?? char);

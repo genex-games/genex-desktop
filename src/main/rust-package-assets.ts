@@ -37,6 +37,7 @@ import { constants as FS } from "node:fs";
 import { copyFile, lstat, mkdir, readdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { AssetLicence, type AssetLockEntry } from "../shared/asset-db.ts";
+import { type AssetsExportWarning, ExportWarningCode } from "../shared/game-export-contract.ts";
 import { type AssetKind, assetKind } from "../shared/game-assets.ts";
 import { BuildTarget } from "../shared/game-project.ts";
 import { openNoFollow, readRegularFile } from "../substrate/fsx.ts";
@@ -595,6 +596,12 @@ function measured(bytes: number, budget: AssetBudget): AssetPackageBudget {
     withinBudget: bytes <= budgetBytes,
     withinCeiling: ceilingBytes === null || bytes <= ceilingBytes,
   };
+}
+
+/** The warning an export carries from its package: past the destination's budget (`assets-over-budget`), or none. */
+export function packageExportWarnings(report: AssetPackageReport | null | undefined): AssetsExportWarning[] {
+  if (!report || report.budget.withinBudget) return [];
+  return [{ code: ExportWarningCode.AssetsOverBudget, bytes: report.bytes, budgetBytes: report.budget.budgetBytes }];
 }
 
 /**

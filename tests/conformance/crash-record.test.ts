@@ -6,6 +6,7 @@
  * event's reader and the kinds a game's own process may send. All rows are new behaviour.
  */
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { describe, it } from "node:test";
 import {
   CRASH_FRAMES_MAX,
@@ -125,6 +126,12 @@ describe("parseCrashRecord copies a well-formed record", () => {
     });
     assert.ok(hang);
     assert.deepEqual([hang.frames, hang.context, hang.replay, hang.location], [[], {}, null, null]);
+  });
+
+  it("reads the record genex-crash writes (the shared fixture, CRASH-1a)", () => {
+    const fixture = JSON.parse(readFileSync(new URL("../fixtures/crash-record-v1.json", import.meta.url), "utf8"));
+    // The host keeps the anchor as its address string; the wire holds `{ip}`.
+    assert.deepEqual(parseCrashRecord(fixture), { ...fixture, anchor: fixture.anchor.ip });
   });
 });
 

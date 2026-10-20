@@ -42,6 +42,9 @@ over its code budget (4 MB of gzip unless `genex.toml` `[web] wasm_budget_mb` ra
 Past 32 MB the export is refused `wasm-over-budget`, and a budget outside 1..=32 is refused
 `invalid-web-budget`. A game that uses no physics sets `[physics] enabled = false`, which leaves
 Rapier (a fifth of the web build) out.
+Assets have a budget per destination too (web 64 MB, phones 200 MB, desktop 2 GB): an export past it
+still ships but downloads slower, so prefer compressed and fewer files over raising `[assets]
+budget_mb`; past 512 MB a web build is refused `assets-over-ceiling`.
 Every destination shows a loading screen until the first lit frame; never draw your own. Give it
 the game's look in `genex.toml` `[render.loading]` (title, `#rrggbb` background, accent and text, a
 logo under `assets/`), as `docs/api/loading-screen.md` shows.

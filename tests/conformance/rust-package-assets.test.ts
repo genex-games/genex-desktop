@@ -357,6 +357,34 @@ describe("a Rust build's package carries only what its destination reads", { ski
     });
   }
 
+  // C-17: the lane hands the package the game's [assets] (its texture cap and budget) from the stage.
+  it("an iPhone build trims to the game's phone_max_texture_px and measures its own [assets.ios] budget", {
+    timeout: LANE_ROW_MS,
+  }, async () => {
+    const parent = await realpath(await tmpDir("rust-package-assets-toml-"));
+    const dir = await gameWith(parent, [["huge.png", path.join(SAMPLES, "animated.gif")]]);
+    await writeFile(path.join(dir, "assets", "huge.astc.ktx2"), chain(TextureCompression.Astc, 1024));
+    const assets = { budgetMb: null, phoneMaxTexturePx: 512, destinations: { ios: 1 } };
+    const staging: RustBuildsOptions["stage"] = async (game, into) => ({ ...(await stage(game, into)), assets });
+    const built = await (await lane(parent, { stage: staging })).ensure(
+      gameOf(dir),
+      BuildTarget.Ios,
+      CppBuildPurpose.Live,
+    );
+    assert.equal(built.ok, true, JSON.stringify(built.problem));
+    const pack = (await receiptOf(String(built.output))).package as AssetPackageReport;
+    assert.deepEqual(
+      pack.trimmed.map((row) => [row.file, row.fromPx, row.toPx]),
+      [["huge.astc.ktx2", 1024, 512]],
+    );
+    assert.deepEqual(pack.budget, {
+      budgetBytes: 1024 * 1024,
+      ceilingBytes: 4096 * 1024 * 1024,
+      withinBudget: pack.bytes <= 1024 * 1024,
+      withinCeiling: true,
+    });
+  });
+
   it("a game's own file at the index's name is refused at stage: reserved-asset-name", {
     timeout: LANE_ROW_MS,
   }, async () => {

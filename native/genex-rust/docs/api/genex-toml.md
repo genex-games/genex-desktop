@@ -35,6 +35,13 @@ usage = "data"            # color | data | normal
 [[asset_group]]           # optional: assets the game loads during play, by name
 name = "castle"           # letters, digits, _ and -; never boot, sim or stream
 paths = ["interiors/castle/**", "props/throne.glb"]  # globs under assets/
+
+[assets]                  # optional: your packages' budgets, in MB
+budget_mb = 300           # every destination's; defaults web 64, ios 200, android 200, desktop 2048
+phone_max_texture_px = 2048  # 512..=4096, a power of two
+
+[assets.web]              # one destination's own budget: web, ios, android or desktop
+budget_mb = 64            # at most 512 on the web, 4096 on a phone
 ```
 
 Unknown keys are refused. A `[[crate_request]]` row is a request, never an approval: keep it
@@ -68,7 +75,7 @@ never comes from the file name. A usage outside `color`, `data` and `normal`, a 
 
 When a build knows a PNG or JPEG's usage, Studio encodes it into GPU-compressed KTX2 files beside it,
 one per texture family your destinations use (`ground.bc.ktx2` on desktops, `.astc` and `.etc2` on
-phones, all of them on the web), and keeps the image as the fallback. An image that is not square
+phones, all of them on the web, where a browser downloads only the one its GPU reads), and keeps the image as the fallback. An image that is not square
 with a power-of-two side is first resized to the nearest square power-of-two size (a 1000x600 image
 becomes 1024x1024), so sample it with UVs from 0 to 1. A WebP, or an image with no usage, ships as
 it is.
@@ -80,3 +87,13 @@ Studio's asset index lists each group with its assets and marks them as not need
 outside letters, digits, `_` and `-` (64 at most), `boot`, `sim` or `stream`, a name used twice, a
 group with no paths or more than 256, the same path twice, or a path outside `assets/` is refused
 `invalid-asset-group`; so are more than 64 groups.
+
+Each build's assets are measured against its destination's budget: 64 MB on the web, 200 MB on an
+iPhone or an Android phone, 2 GB on a desktop, unless `[assets]` names another (`budget_mb` for every
+destination, `[assets.<destination>] budget_mb` for one; `desktop` is Mac, Windows and Linux).
+Past its budget an export is still made, with a warning that it takes longer to download
+(`assets-over-budget`). Past the destination's hard cap (512 MB on the web, the most the page loads;
+4096 MB on a phone) the build is refused `assets-over-ceiling`, and a budget below 1 MB or past the
+cap is refused `asset-budget-out-of-range`. `phone_max_texture_px` (default 2048) is the largest
+texture side an iPhone or Android package keeps; one that is not a power of two from 512 to 4096 is
+refused `invalid-texture-cap`.
