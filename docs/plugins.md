@@ -2361,8 +2361,8 @@ UnrealBuildTool's Seatbelt profile: it loads the same host project and plugin bi
 person's own editor loads after every `plugin-build` (so the plugin's code gains no access it lacks
 there), and the editor needs what that profile denies (its per-user engine folders, the derived data
 cache, its shader workers). Its last lines and failure messages reach an agent with the project's
-and engine's folders taken out and any other absolute path cut to its base name (`ubt.ts`
-`pathScrubber`). `unreal__plugin-package {stop?}` runs `RunUAT.sh BuildPlugin`
+and engine's folders taken out and any other absolute path cut to its base name, Windows paths
+(`C:\…`, `C:/…`, `\\server\…`) included and compared without case (`ubt.ts` `pathScrubber`). `unreal__plugin-package {stop?}` runs `RunUAT.sh BuildPlugin`
 (`uat.ts`) in UnrealBuildTool's sandbox, which may also write the package folder (`extraWrites`), with
 UAT's logs in the sandbox's scratch; the package goes to `unreal/Saved/Genex/Packages/<Plugin>/` and a
 note beside it (`<Plugin>.md`: path, version, files, platforms, or the errors; a new run removes the

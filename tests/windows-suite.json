@@ -306,6 +306,7 @@
   "tests/conformance/unreal-editor-port.test.ts",
   "tests/conformance/unreal-find-projects.test.ts",
   "tests/conformance/unreal-game-view.test.ts",
+  "tests/conformance/unreal-path-scrub.test.ts",
   "tests/conformance/unreal-setup.test.ts",
   "tests/conformance/usage-words.test.ts",
   "tests/conformance/user-data-migration.test.ts",
