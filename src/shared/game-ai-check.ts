@@ -165,6 +165,13 @@ export interface AiPublishFacts {
 export const AI_FIT_MODEL_MAX_CHARS = 150;
 /** A count row's week, ISO (`2026-W43`). */
 export const AI_FIT_WEEK_RE = /^\d{4}-W(0[1-9]|[1-4]\d|5[0-3])$/;
+/** The most rows one send carries. */
+export const AI_FIT_MAX_ROWS = 500;
+/**
+ * genex.games' ingest for count rows: `POST { rows }` (1 to {@link AI_FIT_MAX_ROWS} rows of published
+ * games), with no account; any 2xx means stored. Sent only with the person's usage-stats consent.
+ */
+export const AI_FIT_COUNTS_ROUTE = "/api/runtime/ai-fit-counts";
 
 /** One (game, model, week)'s counts: how many replies fit the game's shape and how many did not. */
 export interface AiFitCountRow {

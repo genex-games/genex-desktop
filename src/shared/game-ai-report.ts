@@ -49,6 +49,15 @@ export const AI_REPORT_CONSOLE_MAX_CHARS = 500;
 export const AI_REPORT_FRAME_MAX_CHARS = 1024 * 1024;
 /** The bounds of a whole bundle as a reader takes it. */
 export const AI_REPORT_BOUNDS: JsonBounds = { nodes: 400_000, depth: 40, chars: 24 * 1024 * 1024 };
+/**
+ * genex.games' ingest for a bundle: `POST` the bundle itself as the JSON body, with no account
+ * (a Report needs no sign-in and carries none); it answers `{ id }` with the id it stored the
+ * bundle under, 413 for a body over {@link AI_REPORT_MAX_BODY_CHARS}, and refuses a bundle its
+ * reader refuses or one of a game it does not publish (a `create:` key).
+ */
+export const AI_REPORT_ROUTE = "/api/runtime/ai-reports";
+/** The longest JSON body a bundle is sent as; Studio drops the oldest calls until it fits. */
+export const AI_REPORT_MAX_BODY_CHARS = 20 * 1024 * 1024;
 
 /** Why a player reports. Wire values: never rename one (the moderation queue reads them). */
 export const AiReportReason = {

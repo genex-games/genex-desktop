@@ -35,7 +35,7 @@ import type {
 } from "../../shared/game-ai.ts";
 import type { AiBridgeAnswers, AiBridgeMessage, AiGrantAnswer } from "../../shared/game-ai-bridge.ts";
 import type { AiBenchResult, AiCheckResult, AiFitCountRow, AiPublishFacts } from "../../shared/game-ai-check.ts";
-import type { AiReportBundle, AiReportOutcome, AiReportRequest } from "../../shared/game-ai-report.ts";
+import type { AiReportBundle, AiReportOutcome, AiReportRequest, AiValidation } from "../../shared/game-ai-report.ts";
 import type { AiRecordResult, AiReplayResult, TapeLine } from "../../shared/game-ai-tape.ts";
 import type {
   AiActivity,
@@ -358,7 +358,39 @@ export interface GameAiDeps {
   menu(game: AiGameKey): Promise<AiModelMenu>;
   /** Classify text other players will see before it is broadcast (D6); false refuses it as `moderated`. */
   moderate(text: string): Promise<boolean>;
+  /** Hears every settled call with its text: the session's Reports, model-check moments, fit counts. */
+  traces?: GameAiTraceSink;
 }
+
+/**
+ * One settled call with its text, as the service hands it to {@link GameAiTraceSink}: kept in
+ * memory for this session's Reports (D9), saved as a model-check moment for the creator's own
+ * playtests (D10), and counted (never its text) for fit from play (D12). Never written to the ledger.
+ */
+export interface AiCallTrace {
+  request: AiCallRequest;
+  /** The model's last reply text before the game's shape was checked; null when none came. */
+  rawOutput: string | null;
+  /** The parsed value the game got; null when it got none. */
+  value: unknown;
+  validation: AiValidation;
+  code: AiErrorCode | null;
+  door: AiDoor;
+  /** The model the grant names; null when the call never reached one. */
+  model: AiModelRef | null;
+  /** The model id the provider says ran it. */
+  servedModel: string | null;
+  provenance: AiProvenance;
+  usage: AiUsage | null;
+  costMicros: number;
+  latencyMs: number;
+  /** The game's frame and tick when the bridge knows them. */
+  frame: number | null;
+  tick: number | null;
+}
+
+/** Where the service hands each settled call's trace; it never throws back into the call. */
+export type GameAiTraceSink = (caller: GameAiCaller, trace: AiCallTrace) => void;
 
 /** Runs every in-game AI call on this Mac. */
 export interface GameAiService {
