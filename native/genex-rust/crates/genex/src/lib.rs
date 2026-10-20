@@ -120,6 +120,13 @@ pub use character::{
     CHARACTER_SKIN, Character, CharacterError, CharacterErrorCode, CharacterMotion, CharacterNav, CharacterParams, CharacterStep, GroundHit, NavFit, RootMotion,
     TERMINAL_FALL_SPEED,
 };
+/// Humanoid ragdolls (genex-anim, AN-20; physics only): `Ragdoll::build` / `follow` / `go_limp` /
+/// `power` / `recover` / `view` over `sim.physics`.
+#[cfg(feature = "physics")]
+pub use ragdoll::{
+    HumanoidBone, RAGDOLL_DEFAULT_MASS, RAGDOLL_GROUP, RAGDOLL_LIMP_DAMPING, RAGDOLL_MOTOR_DAMPING, RAGDOLL_MOTOR_STIFFNESS, RAGDOLL_PARTS_MAX, Ragdoll, RagdollBody,
+    RagdollJoint, RagdollMode, RagdollPart, RagdollProfile, RagdollView,
+};
 /// A native destination's asset files (the compiled table, then `assets/` by real path): host glue.
 #[cfg(not(target_arch = "wasm32"))]
 #[doc(hidden)]
