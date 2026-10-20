@@ -14,7 +14,7 @@
 //! - the audio focus (`AudioManager.requestAudioFocus`), held while the app is resumed; a focus
 //!   change while resumed is not heard yet (it needs a Java listener class: TODO(M5-F1)).
 //! - [`gamepad`]: `KEYCODE_BUTTON_*` keys, each controller in its own slot, and the d-pad as
-//!   arrows (and the `AXIS_*` table) mapped onto the standard order.
+//!   arrows; joystick motion (sticks, triggers, hat) read per device id into the same slots.
 //! - [`thermal`]: the PowerManager's thermal status, which paces frames when the phone is hot.
 //! - the refusal screen for a GPU below WebGPU core, blitted into the `ANativeWindow` on the CPU
 //!   (`refusal_blit`, Android only).
@@ -53,11 +53,11 @@ pub const ACTIVITY: &str = if cfg!(feature = "game-activity") { "game-activity" 
 /// The platform suffix in record names (`pond-600-seed1-cast.android.json`).
 pub const PLATFORM: &str = "android";
 
-/// Android's platform hooks: gamepad buttons from key events, the thermal status, the display's
-/// refresh interval, and on a device
+/// Android's platform hooks: gamepad buttons from key events, the stick, trigger and hat axes the
+/// joystick reader queued, the thermal status, the display's refresh interval, and on a device
 /// the refusal screen blitted without wgpu. Pads are not polled (they arrive as events).
 pub const ANDROID_HOOKS: PlatformHooks = PlatformHooks {
-    pads: |_| {},
+    pads: gamepad::take_axes,
     pad_key: gamepad::pad_key,
     thermal: thermal::read,
     refresh_ms: display_refresh_ms,

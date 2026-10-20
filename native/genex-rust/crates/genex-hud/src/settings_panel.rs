@@ -9,25 +9,43 @@
 
 use egui::Ui;
 
-/// The panel's words (user copy).
-const MESSAGE: Message = Message {
-    heading: "Graphics",
-    quality: "Quality",
-    render_scale: "Render scale",
-    features: "Features",
-    device: "Device",
-    emulated: "emulating",
-    reset: "Reset graphics settings",
-};
+/// The panel's words (user copy): the English defaults, or a game's localised ones (UIS-8; the
+/// facade passes its catalog's text, genex-ui's settings menu its Graphics tab's).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PanelWords<'a> {
+    /// The panel's heading.
+    pub heading: &'a str,
+    /// The preset row's label.
+    pub quality: &'a str,
+    /// The render-scale slider's label.
+    pub render_scale: &'a str,
+    /// The feature switches' header.
+    pub features: &'a str,
+    /// The device line's label.
+    pub device: &'a str,
+    /// What the device line says before an emulated class.
+    pub emulated: &'a str,
+    /// The reset button's caption.
+    pub reset: &'a str,
+}
 
-struct Message {
-    heading: &'static str,
-    quality: &'static str,
-    render_scale: &'static str,
-    features: &'static str,
-    device: &'static str,
-    emulated: &'static str,
-    reset: &'static str,
+impl PanelWords<'static> {
+    /// The English words, byte for byte what the panel always showed.
+    pub const ENGLISH: PanelWords<'static> = PanelWords {
+        heading: "Graphics",
+        quality: "Quality",
+        render_scale: "Render scale",
+        features: "Features",
+        device: "Device",
+        emulated: "emulating",
+        reset: "Reset graphics settings",
+    };
+}
+
+impl Default for PanelWords<'static> {
+    fn default() -> PanelWords<'static> {
+        PanelWords::ENGLISH
+    }
 }
 
 /// The slider's step: render scales are coarse (each is an exact target size).
@@ -72,16 +90,21 @@ pub enum PanelChange {
 /// keyboard (Tab to it, Space or Enter). The body scrolls when the panel is given less height than
 /// it needs (a small world with the switches open), so the reset button is never cut off.
 pub fn settings_panel(ui: &mut Ui, panel: &SettingsPanel<'_>) -> Vec<PanelChange> {
+    settings_panel_with_words(ui, panel, &PanelWords::ENGLISH)
+}
+
+/// [`settings_panel`] in the caller's `words`.
+pub fn settings_panel_with_words(ui: &mut Ui, panel: &SettingsPanel<'_>, words: &PanelWords<'_>) -> Vec<PanelChange> {
     let mut changes = Vec::new();
     ui.group(|ui| {
         let height = ui.available_height();
         egui::ScrollArea::vertical().max_height(height).show(ui, |ui| {
-            ui.heading(MESSAGE.heading);
-            preset_choice(ui, panel, &mut changes);
-            scale_slider(ui, panel, &mut changes);
-            feature_switches(ui, panel, &mut changes);
-            device_line(ui, panel);
-            if ui.button(MESSAGE.reset).clicked() {
+            ui.heading(words.heading);
+            preset_choice(ui, panel, words, &mut changes);
+            scale_slider(ui, panel, words, &mut changes);
+            feature_switches(ui, panel, words, &mut changes);
+            device_line(ui, panel, words);
+            if ui.button(words.reset).clicked() {
                 changes.push(PanelChange::Reset);
             }
         });
@@ -90,9 +113,9 @@ pub fn settings_panel(ui: &mut Ui, panel: &SettingsPanel<'_>) -> Vec<PanelChange
 }
 
 /// The presets as a row of choices (wrapping on a narrow panel), each its own focusable button.
-fn preset_choice(ui: &mut Ui, panel: &SettingsPanel<'_>, changes: &mut Vec<PanelChange>) {
+fn preset_choice(ui: &mut Ui, panel: &SettingsPanel<'_>, words: &PanelWords<'_>, changes: &mut Vec<PanelChange>) {
     let mut chosen = panel.preset;
-    ui.label(MESSAGE.quality);
+    ui.label(words.quality);
     ui.horizontal_wrapped(|ui| {
         for (index, label) in panel.presets.iter().enumerate() {
             ui.selectable_value(&mut chosen, index, label.as_str());
@@ -103,11 +126,11 @@ fn preset_choice(ui: &mut Ui, panel: &SettingsPanel<'_>, changes: &mut Vec<Panel
     }
 }
 
-fn scale_slider(ui: &mut Ui, panel: &SettingsPanel<'_>, changes: &mut Vec<PanelChange>) {
+fn scale_slider(ui: &mut Ui, panel: &SettingsPanel<'_>, words: &PanelWords<'_>, changes: &mut Vec<PanelChange>) {
     let (low, high) = (f64::from(panel.scale_range.0), f64::from(panel.scale_range.1.max(panel.scale_range.0)));
     let before = f64::from(panel.render_scale).clamp(low, high);
     let mut scale = before;
-    ui.add(egui::Slider::new(&mut scale, low..=high).step_by(SCALE_STEP).text(MESSAGE.render_scale));
+    ui.add(egui::Slider::new(&mut scale, low..=high).step_by(SCALE_STEP).text(words.render_scale));
     if scale != before {
         changes.push(PanelChange::RenderScale(scale as f32));
     }
@@ -115,8 +138,8 @@ fn scale_slider(ui: &mut Ui, panel: &SettingsPanel<'_>, changes: &mut Vec<PanelC
 
 /// The switches fold under one header (closed until the person opens it), so the panel stays
 /// small on a phone's world.
-fn feature_switches(ui: &mut Ui, panel: &SettingsPanel<'_>, changes: &mut Vec<PanelChange>) {
-    egui::CollapsingHeader::new(MESSAGE.features).default_open(false).show(ui, |ui| {
+fn feature_switches(ui: &mut Ui, panel: &SettingsPanel<'_>, words: &PanelWords<'_>, changes: &mut Vec<PanelChange>) {
+    egui::CollapsingHeader::new(words.features).default_open(false).show(ui, |ui| {
         for (index, (label, on)) in panel.features.iter().enumerate() {
             let mut state = *on;
             if ui.checkbox(&mut state, *label).changed() {
@@ -126,10 +149,10 @@ fn feature_switches(ui: &mut Ui, panel: &SettingsPanel<'_>, changes: &mut Vec<Pa
     });
 }
 
-fn device_line(ui: &mut Ui, panel: &SettingsPanel<'_>) {
+fn device_line(ui: &mut Ui, panel: &SettingsPanel<'_>, words: &PanelWords<'_>) {
     let line = match panel.emulated {
-        Some(emulated) => format!("{}: {} ({} {emulated})", MESSAGE.device, panel.detected, MESSAGE.emulated),
-        None => format!("{}: {}", MESSAGE.device, panel.detected),
+        Some(emulated) => format!("{}: {} ({} {emulated})", words.device, panel.detected, words.emulated),
+        None => format!("{}: {}", words.device, panel.detected),
     };
     ui.label(line);
 }

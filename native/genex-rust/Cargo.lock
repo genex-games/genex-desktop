@@ -1172,6 +1172,7 @@ dependencies = [
  "epaint_default_fonts",
  "genex-core",
  "genex-platform-desktop",
+ "genex-ui",
  "wgpu",
 ]
 
