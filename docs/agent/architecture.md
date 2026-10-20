@@ -1099,23 +1099,23 @@ managed local runtime; core has no Blender tool of its own.
   `OllamaEngine` pointed at a scripted host.
 - **Log and crash dumps.** Main keeps `<userData>/logs/studio.log`
   ([`src/main/logs.ts`](../../src/main/logs.ts)): rotated at 5 files of 5 MB, mode 0600, never
-  throws, and every line passes `scrubForLog` (`redactSecrets`, email addresses as `[email]`, the
-  home folder as `~` only as a whole path segment). It receives harness and core stderr, main errors
-  (`appendErrorDurably`, startup failures, uncaught errors), renderer console errors,
-  render-process-gone decisions and quit-step problems. `crashReporter` runs local-only
+  throws, and every line passes `scrubForLog` (`redactSecrets`, emails as `[email]`, the home
+  folder as `~`). It receives harness and core stderr, main errors
+  (`appendErrorDurably`, startup and uncaught), renderer console errors, render-process-gone
+  decisions and quit-step problems. `crashReporter` runs local-only
   (`uploadToServer: false`) with dumps in `<userData>/Crashpad`. Persisted writes stay immediate;
-  renderer harness-log messages coalesce for 50 ms (at most 65,536 characters) and flush before
+  renderer harness-log messages coalesce for 50 ms (at most 65,536 characters), flushed before
   other UI events or shutdown. Diagnostics read only a bounded log suffix.
 - **Lifecycle rules.** [`src/main/app-lifecycle.ts`](../../src/main/app-lifecycle.ts) holds the
-  Electron-free rules: process handlers log uncaught errors and rejections without exiting; the
-  reload policy reloads a crashed renderer at most twice in 60 s and never after a `clean-exit`;
+  Electron-free rules: process handlers log uncaught errors and rejections, never exiting; the
+  reload policy reloads a crashed renderer at most twice in 60 s, never after a `clean-exit`;
   `pageRecovery` notes each reload in the Studio chat and past the budget asks Reload/Quit (fixture
-  and smoke sessions leave the page dead). The Dock, a second launch or Keep running revive a dead
-  page; pushes skip it. Mid-run, closing the window hides it on a Mac and asks the quit question
-  elsewhere (`windowClose`). `runShutdown` runs quit steps in order, each bounded (`shutdownSteps`), logs
-  a failed or hung step and moves on.
+  and smoke sessions leave the page dead). The Dock, a relaunch or Keep running revive a dead
+  page; pushes skip it. Mid-run, close hides the window on a Mac and asks to quit
+  elsewhere (`windowClose`). `runShutdown` runs quit steps in order, each bounded (`shutdownSteps`),
+  logging and passing a failed or hung one.
   `before-quit` calls `app.exit(0)` in a `finally`. `StudioCore.stop` stops the harness, then every
-  agent job, and logs a plugin lease release that fails instead of skipping what follows it.
+  agent job, and logs a failed plugin lease release, skipping nothing after it.
 - **Diagnostics.** [`src/main/diagnostics.ts`](../../src/main/diagnostics.ts) builds the redacted
   Settings → Harness → Copy diagnostics text (versions, OS, data and log paths, provider and CLI
   status, the last 100 log lines) served on `studio:diagnostics` (fixture-safe). The renderer's
