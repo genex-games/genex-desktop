@@ -12,4 +12,9 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
-# Module stubs only: each work package adds the dependencies it uses from [workspace.dependencies].
+# genex-core for the store's caps and write errors, the web mirror's wire codes and FNV-1a 64;
+# serde_json (preserve_order, ryu floats) for the envelope; miniz_oxide to deflate large bodies.
+# All already locked (no new vendored crate).
+genex-core = { workspace = true }
+serde_json = { workspace = true }
+miniz_oxide = { workspace = true }

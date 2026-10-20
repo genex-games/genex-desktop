@@ -1292,6 +1292,11 @@ dependencies = [
 [[package]]
 name = "genex-save"
 version = "0.1.0"
+dependencies = [
+ "genex-core",
+ "miniz_oxide 0.8.9",
+ "serde_json",
+]
 
 [[package]]
 name = "genex-stream"
