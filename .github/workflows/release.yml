@@ -370,11 +370,13 @@ jobs:
       # Its files' times, so the next release can balance the rig shards by time.
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
+        continue-on-error: true
         with:
           name: rig-durations-${{ matrix.shard }}
           path: .studio-dev/ci/durations
           include-hidden-files: true
           if-no-files-found: ignore
+          overwrite: true
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: failure()
         with:
@@ -480,6 +482,7 @@ jobs:
           include-hidden-files: true
           if-no-files-found: ignore
           retention-days: 90
+          overwrite: true
       - name: Require every regression shard
         env:
           STUDIO_CI_NEEDS: ${{ toJSON(needs) }}
