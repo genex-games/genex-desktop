@@ -884,8 +884,9 @@ describe("what a job leaves", () => {
     const written = await readFile(path.join(failing.unreal, "Saved", "Genex", "Tests", PLUGIN, "summary.md"), "utf8");
     for (const said of [JSON.stringify(done), written]) {
       assert.ok(!said.includes(failing.root), "no path of the project's folder");
-      assert.doesNotMatch(said, /\/Users\//, "no home path");
-      assert.match(said, /Plugins\/LevelTools\/Source\/Grid\.cpp/, "a file in the project, relative");
+      assert.doesNotMatch(said, /\/Users\/|[A-Za-z]:[\\/]+Users/i, "no home path");
+      // Relative with the host's own separator: `Plugins\LevelTools\Source/Grid.cpp` on Windows.
+      assert.match(said, /Plugins[\\/]+LevelTools[\\/]+Source[\\/]+Grid\.cpp/, "a file in the project, relative");
     }
   });
 
