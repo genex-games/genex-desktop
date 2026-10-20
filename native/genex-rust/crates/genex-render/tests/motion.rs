@@ -307,12 +307,13 @@ fn a_skinned_row_points_at_last_frame_s_skinned_vertices_of_the_same_mesh_only()
     let mut library = MeshLibrary::new();
     let skin = library.add_skinned(&skinned_cube()).expect("skinned");
     let other = library.add_skinned(&skinned_cube()).expect("skinned");
-    let joint = vec![translation(0.0, 0.0, 0.0)];
     let draw = |order: &[(&str, genex_render::skin::SkinId)]| {
         let mut scene = scene(ortho_camera());
         for (name, skin) in order {
             scene.set_id(Some(DrawId::from(*name)));
-            scene.draw_skinned(*skin, translation(0.0, 0.0, 0.0), joint.clone(), grey());
+            // A pose per id: draws of one bit-identical pose share their output (AN-16b).
+            let lift = if *name == "deer" { 0.0 } else { 0.001 };
+            scene.draw_skinned(*skin, translation(0.0, 0.0, 0.0), vec![translation(0.0, lift, 0.0)], grey());
         }
         scene
     };

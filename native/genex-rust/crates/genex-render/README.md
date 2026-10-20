@@ -61,6 +61,18 @@ renderer enables it. In-pass nodes draw inside one world pass.
 The HDR path draws camera views reverse-Z (`Greater`, cleared to 0) on `Depth32Float`; the
 legacy path keeps standard Z. `GxFrameV2` and `GxPostV2` expose `depth_reversed`.
 
+## Skinning
+
+`SkinnedModel::from_glb` loads every primitive of every node the first skin binds, one `SkinPart`
+per material in first-use order (a single-material GLB is one part in the file's primitive order).
+`Renderer::add_skinned_model` (or `add_skinned_parts`) keeps the parts; `Scene::draw_skinned_parts`
+names one material per part, `draw_skinned` one for all. Node 3 runs one job per part of each
+distinct pose: draws of one skin with a bit-identical palette share its jobs and output (one batch,
+one row each), and a job whose output the skinned table already holds is skipped, so a still
+character runs no skinning and its rows read last frame's vertices equal to this frame's (zero
+motion). The skinned output, its slots and last frame's copy grow to the need, then by quarter
+steps rounded to 64 KiB (`tables::skinned_growth`), not to the next power of two.
+
 ## Ambient occlusion: horizons, the visibility bitmask, screen-space GI
 
 Node 10 (`post::ao`) runs one horizon search, `shaders/post/gtao.wgsl`, in one of three methods

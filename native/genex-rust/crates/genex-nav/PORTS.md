@@ -82,3 +82,7 @@ their sha256 match upstream:
 The runtime core (NAV-4) and local avoidance (NAV-6) are ports too. Each ported file's header
 lists its patches. The FNV-pinned traces live in `tests/runtime_stitch.rs` and
 `tests/avoidance.rs`.
+
+`src/runtime/detour.rs` (NAV-9) ports Detour's raycast, moveAlongSurface,
+findRandomPointAroundCircle and findDistanceToWall (Zlib, altered; changes in the file header;
+pinned digest in `tests/detour.rs`).
