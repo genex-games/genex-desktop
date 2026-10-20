@@ -34,7 +34,8 @@ gilrs = "0.11"
 pollster = "0.4"
 
 # Physics.
-rapier3d = { version = "=0.36.0", features = ["enhanced-determinism", "serde-serialize"] }
+# `profiler` (rapier's step timings for genex-profile) is enabled by the dev flavour only (G6, P2).
+rapier3d = { version = "=0.36.0", features = ["enhanced-determinism", "serde-serialize", "profiler"] }
 
 # Audio: kira on cpal 0.18 (symphonia 0.6 is kira's own).
 kira = { version = "=0.12.5", default-features = false, features = ["cpal", "mp3", "ogg", "vorbis", "flac", "wav", "pcm"] }
@@ -85,6 +86,25 @@ android_logger = "0.15"
 offset-allocator = "=0.2.0"
 bevy_mikktspace = "=1.0.0"
 spade = "2.15"
+
+# G6 game systems: one dependency commit (owner call OX-3).
+# Profiling (P6): puffin's CPU scopes without serialization (no bincode, lz4 or zstd) and its web
+# clock; the profiling crate's puffin backend, which wgpu, egui and winit scopes report through.
+puffin = { version = "=0.20.0", default-features = false, features = ["web"] }
+profiling = { version = "1", features = ["profile-with-puffin"] }
+# Crash reports (P6): raw instruction pointers (not on wasm32); the host's symbolicate tool reads
+# them with the object and addr2line versions backtrace already brings.
+backtrace = "=0.3.76"
+object = { version = "0.37", default-features = false, features = ["read", "std"] }
+addr2line = { version = "0.25", default-features = false, features = ["std"] }
+# Gameplay UI and saves (U5): Fluent strings, the OS locale (native shells), deflate for saves.
+fluent-bundle = "0.16"
+unic-langid = "0.9"
+sys-locale = "=0.3.2"
+miniz_oxide = "=0.8.9"
+# Multiplayer (genex-multiplayer, vendored from genex-demo): its native build script verifies the
+# pinned libcolyseus archive with sha2.
+sha2 = "0.10"
 
 # The initial game allowlist (plan: facade re-exports plus a short reviewed list), with
 # `pathfinding` (generic graph search) added for the game systems.

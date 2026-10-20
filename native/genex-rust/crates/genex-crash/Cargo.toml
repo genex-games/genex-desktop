@@ -1,0 +1,15 @@
+[package]
+name = "genex-crash"
+description = "Crash reports for genex games: typed crash records with raw frames and context, the panic hook, a capped file sink and replay of the ticks before a crash."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+# Module stubs only: each work package adds the dependencies it uses from [workspace.dependencies].

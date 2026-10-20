@@ -27,6 +27,14 @@ members = [
   "crates/genex-anim",
   "crates/genex-nav",
   "crates/genex-stream",
+  # Multiplayer (MP-0): the net input stream below the facade.
+  "crates/genex-net",
+  # G6 core game systems (INT-prep): input, saves, gameplay UI, profiling and crash reports.
+  "crates/genex-input",
+  "crates/genex-save",
+  "crates/genex-ui",
+  "crates/genex-profile",
+  "crates/genex-crash",
   "crates/genex-platform-desktop",
   "crates/genex-platform-web",
   "crates/genex-platform-ios",
@@ -72,6 +80,13 @@ genex-audio = { path = "crates/genex-audio", version = "0.1.0" }
 genex-anim = { path = "crates/genex-anim", version = "0.1.0" }
 genex-nav = { path = "crates/genex-nav", version = "0.1.0" }
 genex-stream = { path = "crates/genex-stream", version = "0.1.0" }
+genex-net = { path = "crates/genex-net", version = "0.1.0" }
+# G6: the facade takes each only in its area's facade work package (EXT-PLAN M5).
+genex-input = { path = "crates/genex-input", version = "0.1.0" }
+genex-save = { path = "crates/genex-save", version = "0.1.0" }
+genex-ui = { path = "crates/genex-ui", version = "0.1.0" }
+genex-profile = { path = "crates/genex-profile", version = "0.1.0" }
+genex-crash = { path = "crates/genex-crash", version = "0.1.0" }
 genex-platform-desktop = { path = "crates/genex-platform-desktop", version = "0.1.0" }
 # Without its default `physics` too: the phone shells reach the facade through it and must not turn
 # Rapier on for a game that turned it off (a web game's manifest names the crate itself).
@@ -164,6 +179,23 @@ android_logger = "0.15.1"
 offset-allocator = "=0.2.0"
 bevy_mikktspace = "=1.0.0"
 spade = "2.15.1"
+
+# G6 game systems (one dependency commit, owner call OX-3), unused until the work packages that
+# adopt them. Profiling (P6): puffin without serialization (no bincode, lz4 or zstd), its `web`
+# clock on wasm32; `profiling/profile-with-puffin` and rapier's `profiler` are dev-flavour features
+# the facade turns on (PROF-5). Crash reports (P6): backtrace's raw instruction pointers, never on
+# wasm32; object and addr2line, the versions backtrace brings, for the host's symbolicate tool.
+puffin = { version = "=0.20.0", default-features = false }
+profiling = { version = "1.0.18" }
+backtrace = { version = "=0.3.76" }
+object = { version = "0.37.3", default-features = false, features = ["read", "std"] }
+addr2line = { version = "0.25.1", default-features = false, features = ["std"] }
+# Gameplay UI and saves (U5): Fluent catalogs and locales, the OS locale for the native shells,
+# and deflate for large saves (already in the lock through png; named as a direct dependency).
+fluent-bundle = { version = "0.16.0" }
+unic-langid = { version = "0.9.6" }
+sys-locale = { version = "=0.3.2" }
+miniz_oxide = { version = "=0.8.9" }
 
 # The initial game allowlist (plan "Agent policy"): `fastrand` seeded from ctx.rng only, and
 # `pathfinding` (generic graph search over a game's own graphs).

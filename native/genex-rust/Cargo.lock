@@ -1077,6 +1077,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "genex-crash"
+version = "0.1.0"
+
+[[package]]
 name = "genex-frames"
 version = "0.1.0"
 dependencies = [
@@ -1113,12 +1117,32 @@ dependencies = [
 ]
 
 [[package]]
+name = "genex-input"
+version = "0.1.0"
+dependencies = [
+ "egui",
+ "libm",
+ "postcard",
+ "serde_json",
+]
+
+[[package]]
 name = "genex-nav"
 version = "0.1.0"
 dependencies = [
  "genex-core",
  "glam 0.33.12",
  "rapier3d",
+]
+
+[[package]]
+name = "genex-net"
+version = "0.1.0"
+dependencies = [
+ "genex-core",
+ "glam 0.33.12",
+ "libm",
+ "serde_json",
 ]
 
 [[package]]
@@ -1192,6 +1216,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "genex-profile"
+version = "0.1.0"
+
+[[package]]
 name = "genex-render"
 version = "0.1.0"
 dependencies = [
@@ -1214,6 +1242,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "genex-save"
+version = "0.1.0"
+
+[[package]]
 name = "genex-stream"
 version = "0.1.0"
 dependencies = [
@@ -1233,6 +1265,10 @@ dependencies = [
  "serde_json",
  "windows-sys 0.61.2",
 ]
+
+[[package]]
+name = "genex-ui"
+version = "0.1.0"
 
 [[package]]
 name = "gethostname"

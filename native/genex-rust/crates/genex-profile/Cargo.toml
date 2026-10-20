@@ -1,0 +1,15 @@
+[package]
+name = "genex-profile"
+description = "Profiling for genex games: typed engine scopes over puffin with an injected clock, frame summaries, counters, hitches, GPU lanes, memory and trace reports."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+# Module stubs only: each work package adds the dependencies it uses from [workspace.dependencies].

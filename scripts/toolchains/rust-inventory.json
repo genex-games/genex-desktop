@@ -12,6 +12,9 @@
       "buildScript": "build.rs",
       "nonSource": ["android-games-sdk/import-games-sdk.sh"]
     },
+    "anyhow-1.0.104": {
+      "buildScript": "build.rs"
+    },
     "arboard-3.6.1": {
       "nonSource": ["tools/run_with_leaks.sh"]
     },
@@ -72,6 +75,9 @@
     "deprecate-until-1.0.0": {
       "procMacro": true
     },
+    "displaydoc-0.2.7": {
+      "procMacro": true
+    },
     "document-features-0.2.12": {
       "procMacro": true
     },
@@ -99,6 +105,9 @@
     },
     "foreign-types-macros-0.2.4": {
       "procMacro": true
+    },
+    "generic-array-0.14.7": {
+      "buildScript": "build.rs"
     },
     "getrandom-0.3.4": {
       "buildScript": "build.rs"
@@ -235,6 +244,9 @@
     "objc2-0.6.5": {
       "buildScript": "build.rs"
     },
+    "object-0.37.3": {
+      "buildScript": "build.rs"
+    },
     "orbclient-0.3.55": {
       "buildScript": "build.rs",
       "nonSource": ["res/unifont.font"]
@@ -309,6 +321,16 @@
     },
     "serde_json-1.0.151": {
       "buildScript": "build.rs"
+    },
+    "sha2-0.10.9": {
+      "nonSource": [
+        "tests/data/sha224.blb",
+        "tests/data/sha256.blb",
+        "tests/data/sha384.blb",
+        "tests/data/sha512.blb",
+        "tests/data/sha512_224.blb",
+        "tests/data/sha512_256.blb"
+      ]
     },
     "simd_cesu8-1.2.0": {
       "nonSource": ["img/decode_cesu8.png", "img/decode_mutf8.png", "img/encode_cesu8.png", "img/encode_mutf8.png"]
