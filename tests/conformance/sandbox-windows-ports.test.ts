@@ -6,7 +6,8 @@
  * listen there with EACCES; an administered `netsh` exclusion does not.
  *
  * Its own file, so its starts are this process's own. Windows only, on a disposable machine whose
- * sandbox is provisioned (the Windows CI job): it reserves ports machine-wide, as administrator.
+ * sandbox is provisioned (the Windows CI job): it reserves ports machine-wide, as administrator, so
+ * the Windows suite runs it alone (`RUN_ALONE` in scripts/test-windows.mjs).
  */
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";

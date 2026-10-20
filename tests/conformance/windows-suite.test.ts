@@ -11,7 +11,9 @@ import { SECOND_MS } from "../../src/shared/duration.ts";
 import { tmpDir } from "../helpers/tmp.ts";
 import reportOutcomes, { ERROR_CHARS } from "../../scripts/test-windows-reporter.mjs";
 import {
+  RUN_ALONE,
   readWindowsSuite,
+  requiredBatches,
   runTests,
   SuiteProblem,
   suiteCandidates,
@@ -29,6 +31,22 @@ test("the checked-in Windows suite names only real, sorted, non-rig test files",
   const suite = readWindowsSuite(repo);
   assert.ok(suite.length > 0);
   assert.ok(suite.includes("tests/conformance/sandbox-prepare.test.ts"));
+});
+
+test("a suite file that changes the whole machine runs alone, after every other file", () => {
+  const alone = RUN_ALONE[0];
+  const suite = ["tests/a.test.ts", alone, "tests/b.test.ts"];
+  const batches = requiredBatches(suite);
+  assert.deepEqual(
+    batches.map((batch: { files: string[] }) => batch.files),
+    [["tests/a.test.ts", "tests/b.test.ts"], [alone]],
+  );
+  assert.ok(batches[1].testArgs.includes("--test-concurrency=1"));
+  assert.deepEqual(
+    requiredBatches(["tests/a.test.ts"]).map((batch: { files: string[] }) => batch.files),
+    [["tests/a.test.ts"]],
+  );
+  for (const file of RUN_ALONE) assert.ok(readWindowsSuite(repo).includes(file), `${file} is in the suite`);
 });
 
 test("a curated suite entry that is not a runnable fast test is refused with its reason", () => {
