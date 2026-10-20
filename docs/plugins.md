@@ -691,7 +691,8 @@ testing <Part>: <signal> in <frame>", crash: {signal, frames}}` (the top eight f
 path or address; the frame named is the game module's first). The runner then calls `reopen-editor`
 (`editor-reopen.ts`): `{answering: true}` when Unreal answers, else `{started: true}` and a job that
 ends this project's leftover editor and crash reporter only (normal quit when it is the only editor,
-then `SIGTERM`, then `SIGKILL`; processes are listed on a Mac only), rebuilds the game's module with
+then `SIGTERM`, then `SIGKILL`; on Windows only the editors are listed, by WMI with their command
+lines, and each is ended with its process tree; the crash reporter is looked for on a Mac only), rebuilds the game's module with
 UnrealBuildTool (a hot reload leaves `UnrealEditor.modules` on a numbered library; a failed build
 fails the job with its errors) and opens the project, waiting up to 5 minutes. `editor-state`
 answers `{answering, running, reopening: {state: idle|reopening|done|failed, error?, seconds?},
@@ -2595,7 +2596,9 @@ agent-supplied C# remains subject to the connector's existing gate.
 Whether an editor has a project open is read from the computer's processes (`processes.ts`: a
 Unity editor whose command line names the project with `-projectPath`, in either spelling), and
 from the Pipeline descriptor's process only while the list shows it as a Unity editor that names
-this project or none (Windows' task list, `tasklist`, names Unity.exe without a command line).
+this project or none. On Windows the editors are listed by WMI with their command lines
+(`substrate/windows-processes.ts`; paths compared case-blind, either separator), else by the task
+list, `tasklist`, which names Unity.exe without a command line; an editor is ended with its tree.
 A stale descriptor whose id another app got blocks no Open, and that app is never signalled.
 Unity's lock file (`Temp/UnityLockfile`) is no sign: a killed editor leaves it and its descriptor
 behind. Installed

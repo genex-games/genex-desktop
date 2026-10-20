@@ -19,13 +19,18 @@
  * directly in the engine's or the project's crash folder, named for the project, not a link, whose
  * copy of the editor's log names this project. Unreal's normal quit goes first, and only while the
  * one editor running is this project's (it reaches whichever editor runs); then a terminate, then a
- * kill. Processes are listed on a Mac only; elsewhere none is ended.
+ * kill. Processes are listed on a Mac, all of them; on Windows only the editors are (WMI, with their
+ * command lines), each ended with what it started (`taskkill /T /F`), and the crash reporter, whose
+ * crash folders Windows names otherwise, is not looked for. Elsewhere none is ended.
  */
 import { execFile } from "node:child_process";
 import { lstat } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
+import { StudioPlatform } from "../../shared/boot.ts";
 import { MINUTE_MS, SECOND_MS } from "../../shared/duration.ts";
+import { killProcessTree } from "../../substrate/process-tree.ts";
+import { windowsProcesses } from "../../substrate/windows-processes.ts";
 import { projectModule } from "./cpp-module.ts";
 import { logOfProject } from "./editor-log.ts";
 import { pollUntil } from "./editor-queue.ts";
@@ -103,6 +108,9 @@ const SILENT_WAIT_MS = 15 * SECOND_MS;
 /** A terminate first, a kill for what outlives it. */
 const END_SIGNALS: readonly NodeJS.Signals[] = ["SIGTERM", "SIGKILL"];
 const EDITOR_PROGRAM = "UnrealEditor";
+/** Windows' editor program, the one the listing asks WMI for, and the suffix its file names carry. */
+const WINDOWS_EDITOR_PROGRAM = `${EDITOR_PROGRAM}.exe`;
+const WINDOWS_PROGRAM_SUFFIX = /\.exe$/i;
 const REPORTER_PROGRAM = /^CrashReportClient(?:Editor)?$/;
 /** A crash folder is `CrashReport-UE-<Project>-pid-<editor's id>-<crash's GUID>`. */
 const CRASH_FOLDER_PREFIX = "CrashReport-UE-";
@@ -149,9 +157,12 @@ function crashFolders(home: string, version: string | undefined, project: string
 const argumentsOf = (row: ProcessRow) =>
   row.args.startsWith(row.exec) ? row.args.slice(row.exec.length) : ` ${row.args}`;
 
+/** A process's program by its file name, without Windows' `.exe`: `UnrealEditor` on either platform. */
+const programOf = (row: ProcessRow): string => path.win32.basename(row.exec).replace(WINDOWS_PROGRAM_SUFFIX, "");
+
 /** Whether a process is an Unreal editor whose arguments name `project` as a whole argument. */
 const isOwnEditor = (row: ProcessRow, project: string) =>
-  path.basename(row.exec) === EDITOR_PROGRAM && ` ${argumentsOf(row)} `.includes(` ${project} `);
+  programOf(row) === EDITOR_PROGRAM && ` ${argumentsOf(row)} `.includes(` ${project} `);
 
 /** The crash folders of `name` inside `folder` that `args` names as whole arguments. */
 function namedCrashFolders(args: string, folder: string, name: string): string[] {
@@ -174,7 +185,7 @@ async function isOwnCrashFolder(folder: string, project: string): Promise<boolea
 
 /** Whether a process is Unreal's crash reporter for one of this project's crash folders. */
 async function isOwnReporter(row: ProcessRow, project: string, folders: readonly string[]): Promise<boolean> {
-  if (!REPORTER_PROGRAM.test(path.basename(row.exec))) return false;
+  if (!REPORTER_PROGRAM.test(programOf(row))) return false;
   const named = folders.flatMap((folder) => namedCrashFolders(argumentsOf(row), folder, projectName(project)));
   for (const folder of named) if (await isOwnCrashFolder(folder, project)) return true;
   return false;
@@ -420,13 +431,30 @@ async function macProcesses(): Promise<ProcessRow[]> {
   });
 }
 
-/** This computer's processes for the reopen job: listed on a Mac, none elsewhere; signals by `process.kill`. */
+/** This Windows computer's Unreal editors, with their command lines; none when they can't be listed. */
+export async function windowsEditors(list: typeof windowsProcesses = windowsProcesses): Promise<ProcessRow[]> {
+  return (await list([WINDOWS_EDITOR_PROGRAM])) ?? [];
+}
+
+/** Signals one process: by `process.kill` on a Mac; on Windows, which has no signals, it ends the tree. */
+function signalProcess(platform: NodeJS.Platform, pid: number, signal: NodeJS.Signals): void {
+  if (platform !== StudioPlatform.Windows) {
+    process.kill(pid, signal);
+    return;
+  }
+  process.kill(pid, 0);
+  void killProcessTree(pid, { platform });
+}
+
+/** This computer's processes for the reopen job: all on a Mac, the editors on Windows, none elsewhere. */
 export function systemProcesses(home: string, platform: NodeJS.Platform = process.platform): ProcessEnv {
+  const listed: Partial<Record<NodeJS.Platform, () => Promise<ProcessRow[]>>> = {
+    darwin: macProcesses,
+    win32: () => windowsEditors(),
+  };
   return {
     home,
-    list: async () => (platform === MAC ? macProcesses() : []),
-    signal: (pid, signal) => {
-      process.kill(pid, signal);
-    },
+    list: async () => (await listed[platform]?.().catch(() => [])) ?? [],
+    signal: (pid, signal) => signalProcess(platform, pid, signal),
   };
 }
