@@ -489,7 +489,8 @@ in the UI; set it on start and restart.
 
 Transport descriptors are private local capabilities under the owned profile; never copy them
 into task records. Unix sockets live in a short 0700 temporary directory, with owner-only socket
-permissions. Protocol v1 uses bounded newline-delimited JSON, request IDs and one operation at
+permissions; on Windows the control listens on a named pipe named for the launch's instance id.
+Protocol v1 uses bounded newline-delimited JSON, request IDs and one operation at
 a time. A timeout is not success and does not authorize retrying a mutation blindly.
 
 ## Embedded terminal acceptance
