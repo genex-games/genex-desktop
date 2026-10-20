@@ -1783,6 +1783,26 @@ Available services are capability checked and scoped to the calling plugin:
   on this computer: a desktop with its driver, and apps its `engine.apps` declares here (computer
   control that is off still counts, since its card offers to turn it on). It asks nothing and
   needs no bound game; offer Do it for me only when it answers true, and the click path otherwise.
+- `sandbox.run {program, args, reads, writes, scratchEnv?, env?, timeoutMs}` / `sandbox.result {id}` /
+  `sandbox.stop {id}` (capability `game-engine`, `substrate/plugins/sandbox-jobs.ts`): a long job of
+  the plugin's (Unreal's package on Windows) run in the studio's ProcessSandbox. `sandbox.run` checks
+  the request by real path (the program inside a folder it `reads`, no drive root or folder holding
+  the home folder read, each folder it `writes` a real folder strictly inside the bound game and
+  outside its hidden folders, no network share or device path, at most two running jobs per plugin,
+  a deadline from 1 s to `PLUGIN_SANDBOX_MAX_TIMEOUT_MS`, 60 minutes), starts it and answers `{id}`
+  at once; the host owns the job past the call, as `runtime.install` owns a download, and ends it
+  with its process tree at its deadline, on `sandbox.stop`, and when the plugin's backend stops, the
+  plugin is turned off or removed, or the studio stops. `sandbox.result` answers `running`, `exited`
+  (with `exitCode` and each output stream's first 4 MiB), `timed-out`, `stopped` or `failed` (an
+  error code), or null for a job the host doesn't know (another plugin's included). The writes go to
+  ProcessSandbox as the run's confinement and `scratchEnv` names variables set to folders in the
+  job's own scratch. A `.bat` or `.cmd` program runs as `cmd.exe /d /v:off /s /c %GENEX_COMMAND_LINE%`:
+  Git Bash would quote a prepared line again, so the host builds the line (`quotedScriptLine`: the
+  file and every non-plain argument whole in double quotes, `-Name="value"`) and cmd.exe expands it;
+  a quote, `%`, `!`, a control character or a backslash ending a quoted argument is refused. On
+  Windows, srt-win grants writes for its whole session and refuses a per-command read grant, so the
+  confinement there is the request rather than a fence, and the engine is read with the sandbox
+  user's own rights ([Windows sandbox](windows-sandbox.md#residual-risks)).
 - `credentials.read/write/clear`: plugin-scoped protected storage. Reserved account actions
   `unlock`, `connect`, `disconnect` authorize these operations; agents cannot invoke actions.
   Cache unlocked credentials only in the backend session. Background status must never unlock.
@@ -2364,8 +2384,14 @@ cache, its shader workers). Its last lines and failure messages reach an agent w
 and engine's folders taken out and any other absolute path cut to its base name, Windows paths
 (`C:\…`, `C:/…`, `\\server\…`) included and compared without case (`ubt.ts` `pathScrubber`). `unreal__plugin-package {stop?}` runs `RunUAT.sh BuildPlugin`
 (`uat.ts`) in UnrealBuildTool's sandbox, which may also write the package folder (`extraWrites`), with
-UAT's logs in the sandbox's scratch; the package goes to `unreal/Saved/Genex/Packages/<Plugin>/` and a
-note beside it (`<Plugin>.md`: path, version, files, platforms, or the errors; a new run removes the
+UAT's logs in the sandbox's scratch. On Windows it needs no Xcode: it hands `RunUAT.bat BuildPlugin
+-Plugin=… -Package=… -TargetPlatforms=Win64 -NoP4` to Genex's own process sandbox as a host job
+(`sandbox.run`, reading the engine and the project, writing the package folder, UAT's logs in the
+job's scratch through `uebp_LogFolder`, within 45 minutes); the record stays running until a later
+call of the plugin's tools sees the host's job ended, and that call writes the note (a job the host
+no longer knows reads as failed). A game whose path holds a quote, `%` or `!`, or lies on a network
+share, is refused before the package folder is made or emptied. Either way the package goes to `unreal/Saved/Genex/Packages/<Plugin>/` and a
+note beside it (`<Plugin>.md`: path, version, files, platforms (`Mac` or `Win64`), or the errors; a new run removes the
 last one first; the note is written only in the packages folder as it is when the job ends, never
 through a link swapped in meanwhile, and the packaged descriptor is read only as a plain file within
 its cap). One job runs at a time per project, reserved before anything is touched, and each job is
