@@ -1,0 +1,18 @@
+{
+	"FileVersion": 3,
+	"Version": 1,
+	"VersionName": "0.1.0",
+	"FriendlyName": "Genex AI",
+	"Description": "Play-time AI for a Genex game: the game asks a model for text, or for JSON that fits a USTRUCT, and Genex answers on the model the person chose. Results enter the game only through UGenexAiSubsystem::Drain (or the Ask AI Blueprint node), once per tick. Genex relays it while the game plays in this editor; a build shipped outside Genex answers ai_off and plays its fallbacks.",
+	"Category": "Gameplay",
+	"CreatedBy": "Genex",
+	"CanContainContent": false,
+	"EnabledByDefault": true,
+	"Modules": [
+		{
+			"Name": "GenexAI",
+			"Type": "Runtime",
+			"LoadingPhase": "Default"
+		}
+	]
+}

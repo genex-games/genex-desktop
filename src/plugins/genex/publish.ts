@@ -13,6 +13,8 @@ import {
   type GenexPublishState,
 } from "../../shared/genex.ts";
 import { SECOND_MS } from "../../shared/duration.ts";
+import { AiAudience, AiRequirement } from "../../shared/game-ai.ts";
+import type { AiPublishListing } from "../../shared/game-ai-check.ts";
 import { stripAnsi } from "./cli.ts";
 import type { GenexConnection } from "./entry-page.ts";
 import { DEFAULT_DASHBOARD, isGenexLink } from "./http.ts";
@@ -32,6 +34,8 @@ const BACKGROUND_RETRY_MS = 30 * SECOND_MS;
 export const PUBLISH_ERROR_TAIL_CHARS = 3000;
 
 export const MESSAGE = {
+  BadAiListing: "Publish's play-time AI choice is not one Genex can list. Choose again in the Publish dialog.",
+  AudienceRefused: "Genex didn't take who sees this game's AI text, so nothing was put online. Publish again.",
   UnknownAfterRestart: "Upload outcome is unknown after restart. Check the deployment page before retrying.",
   CannotReach: "Genex could not be reached to check this upload. Check again later.",
   DidNotLand: "The upload did not reach Genex: the hosted game is unchanged. You can upload again.",
@@ -54,7 +58,85 @@ export const MESSAGE = {
     "Publishing needs git and git-lfs on this Mac (brew install git-lfs). Studio will not let the Genex CLI install software.",
   DraftFailedTest:
     "The new build did not pass its test on the draft page, so it was not made public. Players still get the previous version.",
+  AiDirect: (hosts: readonly string[], more: number) =>
+    `This game calls an AI service directly (${hosts.join(", ")}${more > 0 ? ` and ${more} more` : ""}). Genex blocks that while people play, so its AI won't work there: ask the agent to make its AI calls through genex-ai.`,
 } as const;
+
+/** The most AI hosts a publish warning names; the rest are counted. */
+const AI_WARNING_HOSTS = 3;
+/** A hostname as the export names one. */
+const HOSTNAME_RE = /^[a-z0-9.-]{1,253}$/;
+
+const isObject = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+/**
+ * Publish's warning for a build that calls an AI vendor directly (D5), from the host's export answer
+ * (`ExportResult.aiDirect`), or null. The answer crosses the plugin boundary: anything that is not a
+ * list of hostnames reads as no warning.
+ */
+/** A hosted project's id as genex.games names one (a cuid): anything else never reaches a route. */
+export const GENEX_PROJECT_ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
+
+/** The file Publish writes beside an AI game's build: its AI use, for store surveys (Steam's Content Survey). */
+export const AI_DISCLOSURE_FILE = "AI-DISCLOSURE.md";
+
+/** What each audience means for the disclosure. */
+const AUDIENCE_LINE = {
+  [AiAudience.Player]: "Only the person playing sees what the AI writes.",
+  [AiAudience.Shared]:
+    "Other players see what the AI writes. Genex screens that text with its moderation before anyone sees it.",
+  [AiAudience.OpenChat]:
+    "The AI writes into an open chat other players read. Genex screens that text with its moderation before anyone sees it.",
+} as const satisfies Record<AiAudience, string>;
+
+/**
+ * The AI disclosure of a game Publish puts beside its build (§8, Store): that it generates content
+ * with AI while it is played, whether it needs AI, its leaderboard, who sees the AI's text, where it
+ * asks AI, and how players choose and pay for the model. Facts only: nothing it says is guessed.
+ */
+export function aiDisclosure(title: string, listing: AiPublishListing): string {
+  const needs =
+    listing.requires === AiRequirement.Ai
+      ? "Needs AI to play."
+      : "Works without AI: with AI off the game plays on without it.";
+  const leaderboard = listing.leaderboard
+    ? "Keeps a leaderboard: scores count only when the AI runs on Genex credits, so it is the same for every player."
+    : "Keeps no leaderboard.";
+  const sites = listing.sites.length
+    ? listing.sites.map((entry) => `- \`${entry.site}\` (${entry.op})`)
+    : ["- None recorded in the game's saved playtests yet."];
+  return [
+    `# AI disclosure: ${title}`,
+    "",
+    "This game generates content with AI while it is played (live-generated AI content).",
+    "",
+    `- ${needs}`,
+    `- ${leaderboard}`,
+    `- ${AUDIENCE_LINE[listing.audience]}`,
+    "",
+    "## Where the game asks AI",
+    "",
+    ...sites,
+    "",
+    "## How the AI runs",
+    "",
+    "Every model call goes through Genex's `genex-ai` SDK. The game holds no AI key and calls no AI vendor directly.",
+    "Each player chooses the model: a free model on their own computer, their own Claude or ChatGPT plan, their own OpenRouter key, or Genex credits.",
+    "Players can report what the AI wrote from the game's bar.",
+    "",
+  ].join("\n");
+}
+
+export function aiDirectWarning(exported: unknown): string | null {
+  const ai = isObject(exported) ? exported.aiDirect : null;
+  const rows: unknown[] = isObject(ai) && Array.isArray(ai.hosts) ? ai.hosts : [];
+  const hosts = rows.flatMap((row) =>
+    isObject(row) && typeof row.host === "string" && HOSTNAME_RE.test(row.host) ? [row.host] : [],
+  );
+  if (!hosts.length || hosts.length !== rows.length) return null;
+  return MESSAGE.AiDirect(hosts.slice(0, AI_WARNING_HOSTS), hosts.length - AI_WARNING_HOSTS);
+}
 
 /** Genex's own record of a hosted game, read by slug. `missing`: there is no hosted project. */
 export interface HostedStaging {

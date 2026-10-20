@@ -2,6 +2,7 @@
 const SKILLS: Record<string, string> = {
   "facet-decomposition": "how Harness plans a build",
   director: "how Harness leads a build",
+  "llm-games": "how Harness builds games that use AI while they are played",
 };
 
 export function skillWords(skill: string | undefined): string {

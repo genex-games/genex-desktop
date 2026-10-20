@@ -7,8 +7,11 @@
  * (`purchase-window.ts`). Play's session grants only mouse lock, full screen and clipboard writes, and
  * the microphone to a game's own page just after the viewer told it to open it (the bar's mic switch,
  * `mic.ts`); a purchase's hidden popup gets nothing. Its one preload (`preload/play-mic.ts`) gives the
- * page the app's microphone and carries the mic's word between the page and main; the menu of
- * microphones is a native one.
+ * page the app's microphone and `window.__genexDesktop` (play-time AI and the embed-sdk's desktop
+ * confirm), and carries their words between the page and main; the menu of microphones is a native
+ * one. Every other popup a page asks for is denied: the SDK's spend approval is Genex's card on the
+ * bar (`game-ai/bridge-play.ts`). Play's session refuses a game's direct requests to AI vendors
+ * (`ai-gateway.ts`).
  */
 import {
   type BrowserWindow,
@@ -27,6 +30,12 @@ import { StudioPlatform } from "../../shared/boot.ts";
 import type { PlayPoint, PlayViewerEvent } from "../../shared/play.ts";
 import { UiEvent } from "../../shared/ui-events.ts";
 import { type PlayMicCommand, PlayMicChannel, type PlayMicReport, readMicReport } from "../../shared/play-mic.ts";
+import { PlayAiChannel } from "../../shared/play-ai.ts";
+import { type PlayAiGame, playAiPort } from "../game-ai/bridge-play.ts";
+import type { GameAiPlayBridge } from "../game-ai/types.ts";
+import { reportCaptureOf, withinCaptureWait } from "../game-ai/capture.ts";
+import { REPORT_DEFAULT_ENGINE, type ReportCapture } from "../game-ai/report.ts";
+import { aiGatewayVerdict, type BlockedNotes, blockedNotes } from "./ai-gateway.ts";
 import type { FullScreenKey, Rect } from "../game-full-screen.ts";
 import { GAME_DISABLED_BLINK_FEATURES } from "../game-view.ts";
 import { createReloadPolicy, ReloadDecision } from "../app-lifecycle.ts";
@@ -38,7 +47,7 @@ import type { PlayGallery } from "./gallery.ts";
 import { playPermissionShown, playPermitted } from "./game-permissions.ts";
 import { type MicGate, micGate, micGateFor } from "./mic.ts";
 import { closePage, closeWithWindow, dropGameView } from "./view-drop.ts";
-import { isPurchaseWindow, wirePurchaseCapture } from "./purchase-window.ts";
+import { isPurchaseWindow, standRequests, wirePurchaseCapture } from "./purchase-window.ts";
 import type { PlayMicStore } from "./mic-store.ts";
 import { playViewer, type PlayViewer } from "./viewer.ts";
 
@@ -48,6 +57,8 @@ const viewsOf = new WeakMap<BrowserWindow, PlayViews>();
 const prepared = new WeakSet<Session>();
 /** Each game view's microphone gate: the session's handlers find a view's by its contents. */
 const micGates = new WeakMap<WebContents, MicGate>();
+/** Each game view's AI vendor refusals told to its page: the session's request filter finds a view's by its contents. */
+const vendorNotes = new WeakMap<WebContents, BlockedNotes>();
 /** Play's own storage: games keep their saves across launches, apart from the studio's. */
 export const PLAY_PARTITION = "persist:genex-play";
 /** What a game's page shows before it paints. */
@@ -104,6 +115,11 @@ export interface PlayViewDeps {
   barPreload: string;
   /** The game's comments on genex.games. */
   comments: PlayComments;
+  /**
+   * Play-time AI for the game's page (`game-ai/bridge-play.ts`). Absent in a studio composed
+   * without it: the page's bridge is still there, and answers that AI is off.
+   */
+  ai?: GameAiPlayBridge;
   /** genex.games' coin, for a game's purchase sheet. */
   coin: ViewerCoin;
   /** The app's Genex account: the purchase sheet's Sign in. */
@@ -115,6 +131,15 @@ export interface PlayViewDeps {
    * caught and shown as the viewer's sheet. Null catches nothing: every open is a link.
    */
   confirmOrigin: string | null;
+}
+
+/** Whether Play refuses a game's request (D5); a refused one is told to its page, once per host. */
+function refuseVendor(contents: WebContents | undefined, url: string): boolean {
+  const blocked = aiGatewayVerdict(url);
+  if (!blocked) return false;
+  if (contents && !contents.isDestroyed() && vendorNotes.get(contents)?.first(blocked))
+    contents.send(PlayAiChannel.Blocked, blocked);
+  return true;
 }
 
 /**
@@ -138,6 +163,12 @@ export function preparePlaySession(play: Session): Session {
     return playPermissionShown(permission, { mediaType: details.mediaType, isMainFrame: details.isMainFrame }, gate);
   });
   play.on("will-download", (event) => event.preventDefault());
+  // `genex-ai` is the only way a game reaches a model (D5): an AI vendor's API never loads in Play.
+  // It shares the session's one request listener with a purchase popup's (`purchase-window.ts`).
+  standRequests(play, (request) => {
+    const id = request.webContentsId;
+    return refuseVendor(id === undefined ? undefined : webContents.fromId(id), request.url);
+  });
   return play;
 }
 
@@ -153,6 +184,53 @@ export interface PlayViews {
 /** `win`'s Play views, for the development control; null before the viewer is wired. */
 export const playViewsOf = (win: BrowserWindow): PlayViews | null => viewsOf.get(win) ?? null;
 
+/** The most console errors a game's page keeps for a Report, and the longest one. */
+const REPORT_CONSOLE_KEPT = 50;
+const REPORT_CONSOLE_CHARS = 2_000;
+/** The JPEG quality of the one frame a Report carries. */
+const REPORT_FRAME_QUALITY = 70;
+/** A game page's console errors, newest last, for a Report (D9). */
+const consoleErrorsOf = new WeakMap<WebContents, string[]>();
+/**
+ * What `genex-ai` says of itself in a game's page, as plain JSON, or null. Run in the page's own
+ * world: a page that redefined `__genexAi` gets only its own answer back, which the Report reads as
+ * hostile input.
+ */
+const AI_STATUS_EXPRESSION = `(() => { try { const ai = globalThis.__genexAi; const status = ai && typeof ai.status === "function" ? ai.status() : null; return status === null || status === undefined ? null : JSON.parse(JSON.stringify(status)); } catch { return null; } })()`;
+
+/** Keep a game page's console errors, bounded, for a Report. */
+function keepConsoleErrors(contents: WebContents): void {
+  const kept: string[] = [];
+  consoleErrorsOf.set(contents, kept);
+  contents.on("console-message", (details) => {
+    if (details.level !== "error") return;
+    kept.push(String(details.message).slice(0, REPORT_CONSOLE_CHARS));
+    if (kept.length > REPORT_CONSOLE_KEPT) kept.shift();
+  });
+}
+
+/**
+ * What a Report captures of the Play game in `win` (D9): `genex-ai`'s status, one frame of the
+ * game's view and its page's console errors; null with no game open.
+ */
+export async function playAiCapture(win: BrowserWindow): Promise<Partial<ReportCapture> | null> {
+  const view = viewsOf.get(win)?.game();
+  const contents = view?.webContents;
+  if (!contents || contents.isDestroyed()) return null;
+  const [ai, image] = await Promise.all([
+    withinCaptureWait(contents.executeJavaScript(AI_STATUS_EXPRESSION, false)),
+    withinCaptureWait(contents.capturePage()),
+  ]);
+  return reportCaptureOf({
+    state: { ai },
+    jpeg: image && !image.isEmpty() ? image.toJPEG(REPORT_FRAME_QUALITY) : null,
+    consoleErrors: consoleErrorsOf.get(contents) ?? [],
+    commit: null,
+    engine: REPORT_DEFAULT_ENGINE,
+  });
+}
+
+/** What the game's view reports to the viewer: its keys and pointer, how its page loads, and its microphone. */
 /**
  * What the game's view reports to the viewer: its keys and pointer, how its page loads, its
  * microphone and the purchases it asks for; and what it asks the viewer before catching one.
@@ -165,6 +243,8 @@ interface ViewerEvents {
   /** The page committed a new document: it reloaded, or moved to another Genex game. */
   navigated(): void;
   mic(report: PlayMicReport): void;
+  /** The game on screen, as its AI bridge names it. */
+  aiGame(): Promise<PlayAiGame | null>;
   /** The game asked to pay for the purchase `intentId`. */
   purchase(intentId: string): void;
   /** Whether the viewer may show a purchase sheet now: a popup for one is made only then. */
@@ -265,6 +345,53 @@ function hearMic(contents: WebContents, mine: () => boolean, hear: (report: Play
     const report = readMicReport(raw);
     if (report) hear(report);
   });
+}
+
+/**
+ * The page's AI envelopes and the embed-sdk's confirms, from its own top frame only, attributed per
+ * message to the game it shows now (`game-ai/bridge-play.ts`). A person's click or key on the page
+ * is what lets it ask for a grant; a top-frame navigation abandons its calls and cards.
+ */
+function hearAi(
+  contents: WebContents,
+  mine: () => boolean,
+  ai: { bridge: GameAiPlayBridge | null; offline: boolean },
+  game: () => Promise<PlayAiGame | null>,
+): void {
+  const port = playAiPort({
+    bridge: ai.bridge,
+    game,
+    pageUrl: () => (contents.isDestroyed() ? "" : contents.getURL()),
+    navigable: (url) => playNavigationAllowed(url, ai.offline),
+    live: () => mine() && !contents.isDestroyed(),
+    channel: String(contents.id),
+    send: {
+      reply: (reply) => contents.send(PlayAiChannel.Reply, reply),
+      delta: (delta) => contents.send(PlayAiChannel.Delta, delta),
+    },
+    clock: { now: Date.now },
+  });
+  const notes = blockedNotes();
+  vendorNotes.set(contents, notes);
+  contents.ipc.on(PlayAiChannel.Request, (event, raw: unknown, gesture: unknown) => {
+    const frame = event.senderFrame;
+    void port.request({ url: frame?.url ?? "", top: Boolean(frame) && frame?.parent === null }, raw, gesture);
+  });
+  contents.on("input-event", (_event, input) => {
+    port.input({ type: input.type, keyCode: "keyCode" in input ? String(input.keyCode) : undefined });
+  });
+  contents.on("did-start-navigation", (details) => {
+    if (details.isMainFrame && !details.isSameDocument) port.navigating(details.url);
+  });
+  contents.on("did-navigate", () => {
+    notes.reset();
+    port.navigated();
+  });
+  contents.on("did-fail-load", (_event, _code, _description, _url, isMainFrame) => {
+    if (isMainFrame) port.stayed();
+  });
+  contents.on("did-stop-loading", () => port.stayed());
+  contents.once("destroyed", () => port.gone());
 }
 
 /**
@@ -381,6 +508,8 @@ function gameView(win: BrowserWindow, deps: PlayViewDeps, events: ViewerEvents, 
     const mine = () => current === view;
     micGates.set(contents, micGate());
     hearMic(contents, mine, events.mic);
+    hearAi(contents, mine, { bridge: deps.ai ?? null, offline: deps.offline !== null }, events.aiGame);
+    keepConsoleErrors(contents);
     hearPointer(contents, mine, events.pointer);
     // A purchase is caught only for the game on screen.
     guardNavigation(contents, play, deps, {
@@ -438,6 +567,7 @@ export function wirePlayViewer(deps: PlayViewDeps): PlayViewer {
     failed: () => viewer?.failed(),
     navigated: () => viewer?.navigated(),
     mic: (report) => viewer?.mic(report),
+    aiGame: () => viewer?.aiGame() ?? Promise.resolve(null),
     purchase: (intentId) => viewer?.purchase(intentId),
     mayReserve: () => viewer?.mayReserve() === true,
   };

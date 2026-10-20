@@ -1707,12 +1707,29 @@ export interface AttachReport {
 }
 // ↑ src/shared/game-project.ts
 
+export type AiVendor = 'openai' | 'anthropic' | 'google' | 'openrouter' | 'mistral' | 'groq' | 'together' | 'fireworks' | 'deepseek' | 'xai' | 'cohere' | 'perplexity' | 'replicate' | 'fal';
+// ↑ src/shared/ai-vendors.ts
+
+/** An AI vendor's API host a file of an export reaches (D5): Publish warns about it. */
+export interface ExportAiHost {
+  /** The file, relative to the export (posix). */
+  file: string;
+  host: string;
+  vendor: AiVendor;
+}
+// ↑ src/shared/game-project.ts
+
 /** What `game.export` wrote: the public roots it assembled, and what it left out. */
 export interface ExportResult {
   dir: string;
   files: number;
   included: string[];
   excluded: string[];
+  /**
+   * The game calls an AI vendor directly, which Play refuses (`ai_direct_blocked`): the hosts it
+   * reaches, and what the agent should do instead. Absent when it reaches none.
+   */
+  aiDirect?: { hosts: ExportAiHost[]; hint: string };
 }
 // ↑ src/shared/game-project.ts
 
@@ -1970,6 +1987,137 @@ export interface JobView {
   stoppedBy: JobStopper | null;
 }
 // ↑ src/shared/jobs.ts
+
+export type AiSchemaProblem = 'not-object' | 'too-deep' | 'unknown-type' | 'unknown-keyword' | 'bad-annotation' | 'bad-enum' | 'object-shape' | 'bad-property-name' | 'bad-required' | 'misplaced-keyword' | 'bad-bound';
+// ↑ src/shared/game-ai-schema.ts
+
+/** `ai.schemaCheck`'s answer: the dialect takes it, or the reason it does not. */
+export type AiSchemaCheck = { ok: true } | { ok: false; problem: AiSchemaProblem };
+// ↑ src/shared/harness-api.ts
+
+/** One saved playtest of a game. */
+export interface AiTapeSummary {
+  name: string;
+  calls: number;
+  sites: string[];
+  /** Lines the reader refused. */
+  rejected: number;
+  bytes: number;
+  recordedAt: string | null;
+}
+// ↑ src/shared/game-ai-views.ts
+
+export type AiReplayAnswers = 'none' | 'tape' | 'edge';
+// ↑ src/shared/game-ai-tape.ts
+
+export type AiErrorCode = 'provider' | 'timeout' | 'ai_off' | 'ai_unrecorded' | 'ai_direct_blocked' | 'bad_request' | 'prompt_too_large' | 'invalid_schema' | 'invalid_output' | 'consent_required' | 'consent_declined' | 'consent_pending' | 'no_gesture' | 'ai_paused' | 'grant_concurrency' | 'grant_rate_limited' | 'waiting_for_plan' | 'door_unavailable' | 'local_model_loading' | 'no_funding' | 'platform_door' | 'needs_verified' | 'plan_door_not_allowed' | 'insufficient_credits' | 'monthly_limit' | 'moderated' | 'canceled';
+// ↑ src/shared/game-ai.ts
+
+/** What `ai.replay` found: whether every seed replayed the same frames, and what the tape lacked. */
+export interface AiReplayResult {
+  demo: string;
+  deterministic: boolean;
+  /** Per seed, the state digests at each checkpoint, in order. */
+  stateDigests: string[][];
+  /** Calls the tape had no answer for (`ai_unrecorded`). */
+  misses: number;
+  /** Calls answered by the game's fallback. */
+  fallbacks: number;
+  /** Tape lines the reader refused. */
+  rejected: number;
+  /** What the calls were answered with; absent: the tape. */
+  answers?: AiReplayAnswers;
+  /** Calls still waiting for an answer when a seed's demo ended, over every seed; absent when the host cannot tell. */
+  stuck?: number;
+  /**
+   * Every seed's demo ended — it ran to its end, or stopped behind Studio's "needs AI" state —
+   * with no crash and no console error; absent when the host cannot tell.
+   */
+  settled?: boolean;
+  /** How many calls were refused, by code (a grant asked for outside a gesture is `no_gesture`); absent when the host cannot tell. */
+  refused?: Partial<Record<AiErrorCode, number>>;
+}
+// ↑ src/shared/game-ai-tape.ts
+
+/** What `ai.record` saved. */
+export interface AiRecordResult {
+  demo: string;
+  /** The tape, relative to the game's folder. */
+  file: string;
+  calls: number;
+  /** Calls refused by the run budget or a door; the game played its fallback. */
+  refused: number;
+}
+// ↑ src/shared/game-ai-tape.ts
+
+export type AiDoor = 'plan' | 'tape' | 'local' | 'opencode' | 'byok' | 'plan-watcher' | 'genex-credits' | 'genex-dev' | 'fixture';
+// ↑ src/shared/game-ai.ts
+
+/** A model on one door: the engine that runs it (`EngineId`, or `genex` for the platform) and its id. */
+export interface AiModelRef {
+  door: AiDoor;
+  engine: string;
+  model: string;
+}
+// ↑ src/shared/game-ai.ts
+
+/** What `ai.bench` measured of one call site on this Mac's local models. */
+export interface AiBenchResult {
+  site: string;
+  model: AiModelRef | null;
+  samples: number;
+  /** Samples whose reply fit the game's shape. */
+  fitted: number;
+  medianLatencyMs: number | null;
+  medianInputTokens: number | null;
+  medianOutputTokens: number | null;
+}
+// ↑ src/shared/game-ai-check.ts
+
+export type AiCheckState = 'checking' | 'failed' | 'ready' | 'empty' | 'done';
+// ↑ src/shared/game-ai-check.ts
+
+export type AiFunding = 'plan' | 'free' | 'credits' | 'key' | 'playtest';
+// ↑ src/shared/game-ai.ts
+
+export type AiCheckFit = 'fits' | 'struggles' | 'untested';
+// ↑ src/shared/game-ai-check.ts
+
+export type AiCostLevel = 'free' | 'low' | 'medium' | 'high';
+// ↑ src/shared/game-ai-check.ts
+
+/** One model's result. */
+export interface AiCheckRow {
+  model: AiModelRef;
+  /** Its name as the person's model menu shows it. */
+  label: string;
+  funding: AiFunding;
+  /** Moments replayed on it, and how many of its replies fit. */
+  moments: number;
+  fitted: number;
+  fit: AiCheckFit;
+  cost: AiCostLevel;
+  medianLatencyMs: number | null;
+  /** The judge's one line on a struggling model, for the creator. */
+  note: string | null;
+}
+// ↑ src/shared/game-ai-check.ts
+
+/** A game's check, as Create and Publish read it. */
+export interface AiCheckResult {
+  project: string;
+  state: AiCheckState;
+  /** Saved AI moments the check replays. */
+  moments: number;
+  /** While checking: models done of the set. */
+  progress: { done: number; total: number } | null;
+  rows: AiCheckRow[];
+  /** The creator's pick, which players on Genex credits get. */
+  recommended: AiModelRef | null;
+  /** When the last check finished (ISO). */
+  checkedAt: string | null;
+}
+// ↑ src/shared/game-ai-check.ts
 
 /**
  * Every method the host serves the harness: `params` is what `ctx.call` sends, `result` what the
@@ -2539,6 +2687,34 @@ export interface HarnessHostApi {
   };
   /** A harness notification forwarded to the renderer as a `UiEvent`, name and payload as sent. */
   "ui.notify": { params: { type: string; payload?: unknown }; result: boolean };
+
+  // ── play-time AI: tapes, mocks and this Mac's models only, never the network ──
+  /** Whether a schema is of the closed dialect a game's answers are held to, and if not, why. */
+  "ai.schemaCheck": { params: { schema: unknown }; result: AiSchemaCheck };
+  // `root` is the build an `ai.*` call plays: the game's own folder when it is left out, or a run's
+  // copy of it under scratch (a worker's worktree), checked real by the host like `preview.load`'s.
+  /** A game's saved playtests. */
+  "ai.tapes": { params: { project: string; root?: string | null }; result: AiTapeSummary[] };
+  /**
+   * Replay a demo under each seed — on its tape, with no answer at all (`answers: "none"`) or with
+   * the worst answers its shapes allow (`answers: "edge"`): whether the frames match, and what the tape lacked.
+   */
+  "ai.replay": {
+    params: { project: string; demo: string; seeds: number[]; root?: string | null; answers?: AiReplayAnswers | null };
+    result: AiReplayResult;
+  };
+  /** Play a demo with this Mac's models on a host-created run budget, and save its tape. */
+  "ai.record": {
+    params: { project: string; demo: string; seed: number; root?: string | null };
+    result: AiRecordResult;
+  };
+  /** Sample one call site on this Mac's models: fit, reply time, tokens. */
+  "ai.bench": {
+    params: { project: string; site: string; samples?: number; root?: string | null };
+    result: AiBenchResult;
+  };
+  /** The model check on this Mac's models only (the creator runs the cloud check from Create). */
+  "ai.modelCheck": { params: { project: string }; result: AiCheckResult };
 }
 // ↑ src/shared/harness-api.ts
 

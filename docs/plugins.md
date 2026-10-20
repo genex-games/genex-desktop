@@ -490,7 +490,10 @@ folder (New game puts it in `unreal/`); a project elsewhere is not.
 Epic's toolsets cannot press the player's buttons, so the plugin also ships the **Genex editor
 helper** (`src/plugins/unreal/GenexEditorHelper`), a Python-only plugin for Unreal itself (a
 `.uplugin` folder), so nothing compiles. Setup copies it into a project's `Plugins/` folder.
-Because it is enabled by default, Unreal loads it without a `.uproject` entry. Its `init_unreal.py` then registers the toolset `genex_play.tools.GenexPlayTools`, which
+Because it is enabled by default, Unreal loads it without a `.uproject` entry. Its `init_unreal.py` also registers
+`genex_ai.tools.GenexAiRelayTools` (`ai_pull`, `ai_push`), Studio's own relay of a playing game's
+play-time AI from the C++ plugin `GenexAI` (`src/plugins/unreal/GenexAI`, shipped beside the
+backend; `ai-relay.ts`; [Play Protocol](play-protocol.md#play-time-ai-in-an-engines-editor)), and the toolset `genex_play.tools.GenexPlayTools`, which
 Epic's server lists:
 - `project_file` names the project the editor has open (the bridge's check above).
 - `list_actions` lists the game's controls.
@@ -2571,6 +2574,11 @@ The plugin makes, sets up and opens that project itself (`backend.ts`), with no 
   the first change (`setup/<game>/manifest.json`); what was added is recorded, so Undo removes
   exactly that line and only while it is still the version Genex wrote. A project older than
   Unity 6 is refused.
+- `add-ai` embeds Genex's play-time AI package (`packages/com.genex.ai`, shipped beside the backend)
+  as `Packages/com.genex.ai` (`ai-package.ts`): every file as shipped, one the person changed kept
+  beside it as `.mine`, nothing through a link, and a project Unity never opened (no `Packages/`)
+  refused. While the game plays in the editor, Studio relays its AI through the Pipeline server
+  (`ai-relay.ts`: a fixed `eval`, answers as base64 only; [Play Protocol](play-protocol.md#play-time-ai-in-an-engines-editor)).
 - `open-editor` opens the project in the editor of exactly the version its `ProjectVersion.txt`
   names (`editor-open.ts`), never another one, and nothing when an editor already has it open.
   `new-game` and `setup` open it the same way. A Mac opens the app through `/usr/bin/open -n -a`,
@@ -3072,6 +3080,16 @@ Genex:
 - A game using `@genex-ai/embed-sdk` is previewed with `?genex_local_test=1`. A template game whose
   page loads Studio's copy (`/vendor/genex/`, `pageLoadsGenexSdk` in `shared/genex-page.ts`) is
   previewed on its loopback origin, where the SDK runs in local test mode without the query.
+- Play-time AI in a game is `genex-ai` ([`src/page/ai/`](../src/page/ai/)), bundled by
+  `scripts/genex-ai-bundle.mjs` into `vendor/genex/ai/index.js` (`GENEX_AI_VENDOR`) and mapped by
+  the template's import map (`GENEX_AI_IMPORT`); the export carries it like any vendored file. It
+  imports nothing: the connect module (`connect.js`, the preview's and a published copy's) puts the
+  SDK it connected on `window.__genexEmbedSdk` (`GENEX_EMBED_SDK_GLOBAL`), and `genex-ai`'s platform
+  lane calls that very copy, so on genex.games and in Play it calls Genex as the page's player. A game
+  that bundles its own SDK passes it as `createAi({ platform: { sdk } })`. Which lane answers
+  (`shared/game-ai-lane.ts`: off, a saved playtest, mock values, main's Create route or Play bridge,
+  genex.games) and every failure code are in the template's `docs/AI.md`; `studio.js` copies
+  `ai.status()` into `state().ai` and resets it on `seed()`.
 - `tools[].host` (API 3, id `genex`, source `bundled`, else refused before any hook runs) names a
   program Studio runs for the tool through the registry's `hostTool` hook. `genex-cli` backs
   `genex__cli` and `genex-cli-paid` backs `genex__cli-paid`: Studio's pinned CLI runs in
@@ -3228,6 +3246,10 @@ project's `.godot/genex/` (`editor-bridge.ts`; no port): the editor writes a hea
 scripts left unsaved or an editor that didn't answer; at `restore.before` either one blocks, so a
 restore never replaces work the editor still holds. `reload-editor` at `restore.after` rescans and
 reloads the open scenes. With no editor beating, each answers nothing.
+The addon also carries `genex_ai.gd`, play-time AI for a game that adds it as the `GenexAI` autoload
+(the skill says how): through GenexPlay when Genex started the game, through `ai-in-`/`ai-out-` files
+in the same `.godot/genex/` while a scene plays in the person's editor (`godotAiChannel`), `ai_off`
+everywhere else ([Play Protocol](play-protocol.md#play-time-ai-optional)).
 Its panel is an engine panel (design README): This game's project (state, the step: Set up for
 Genex or Open in Godot, Change project, ⋯ Export for the web) and This computer (Godot, the Web
 template), and Choose a project behind Change project: New project on top, then the person's Godot

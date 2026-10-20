@@ -14,6 +14,7 @@ import { vendorGitForWindows } from "./vendor-git-for-windows.ts";
 import { VENDORED_GIT } from "./package-git.cjs";
 import { vendorTsc } from "./vendor-tsc.ts";
 import { vendorGenexMultiplayer } from "./vendor-genex-multiplayer.ts";
+import { genexAiBundle } from "./genex-ai-bundle.mjs";
 /**
  * Build — assembles `dist/` for Electron.
  *
@@ -241,6 +242,8 @@ async function pageContexts() {
       }),
     );
   }
+  // genex-ai, the module a game imports by its import-map name ("genex-ai") for play-time AI.
+  contexts.push(await esbuild.context(genexAiBundle(root, path.join(dist, "resources"))));
   return contexts;
 }
 

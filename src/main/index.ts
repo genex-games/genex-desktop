@@ -99,6 +99,7 @@ import { diagnosticsText, gatherDiagnostics } from "./diagnostics.ts";
 import { type FeedbackSources, sendFeedback } from "./feedback.ts";
 import { renderGameCover } from "./game-cover-renderer.ts";
 import { createIpcHandle, pushToRenderer } from "./ipc-handle.ts";
+import type { IpcHandle } from "./ipc/registrar.ts";
 import { registerBootIpc } from "./ipc/boot.ts";
 import { registerUpdateIpc } from "./ipc/update.ts";
 import { registerGamesIpc } from "./ipc/games.ts";
@@ -117,6 +118,11 @@ import { type PreviewBoundsRecord, registerPreviewIpc } from "./ipc/preview.ts";
 import { registerProjectsIpc } from "./ipc/projects.ts";
 import { registerPlayIpc } from "./ipc/play.ts";
 import { registerGenexAccountIpc } from "./ipc/genex-account.ts";
+import { registerGameAiIpc } from "./ipc/game-ai.ts";
+import { registerGameAiInboxIpc } from "./ipc/game-ai-inbox.ts";
+import { registerPlanWatcherIpc } from "./ipc/plan-watcher.ts";
+import { type AppGameAi, composeGameAi } from "./game-ai-app.ts";
+import { payerDoorOf } from "./game-ai/host.ts";
 import {
   createGenexAccount,
   type GenexAccount,
@@ -465,6 +471,8 @@ let genexAccount: GenexAccount | null = null;
 const fixtureGenexAccount = launchFixtureAccount(process.env.STUDIO_FIXTURE_GENEX_ACCOUNT, dev?.fixture);
 /** Play's game viewer in the current window. */
 let playView: PlayViewer | null = null;
+/** Play-time AI for this launch's core: one service behind Play, Create Live, native games and the harness. */
+let gameAi: AppGameAi | null = null;
 /** Where startup stands for the window: Ready, or the sandbox setup screen with its Retry. */
 const bootGate = createBootGate(
   process.platform,
@@ -623,6 +631,8 @@ function pushUiEvent(event: UiEvent): void {
     void core?.checkpointPreview(project, cwd, note).catch(() => {});
   }
   keepAwake.observe(event);
+  // A run held awake is a build on this Mac: play-time AI's local doors and its watcher wait for it.
+  gameAi?.building(keepAwake.held);
 }
 
 /**
@@ -768,11 +778,47 @@ async function createCore(userData: string): Promise<StudioCore> {
   // The plugin-updates fixture's profile holds older plugins before the core reads its plugin store.
   if (fixtureProviders && dev?.fixture === FixtureName.PluginUpdates)
     await installOlderPlugins(studio.layout.engineHomes, resources);
+  const ai = await replaceGameAi(studio, userData);
   performanceRecorder.mark("core-start");
   await studio.init();
   performanceRecorder.mark("core-ready");
   wirePlugins(studio);
+  await ai.start();
   return studio;
+}
+
+/**
+ * Play-time AI for a new core, in place of an earlier core's (a start retried after the sandbox was
+ * set up): the earlier one's watcher stops first. Its harness and native hosts are the core's from
+ * here; it starts once the core has.
+ */
+async function replaceGameAi(studio: StudioCore, userData: string): Promise<AppGameAi> {
+  await gameAi?.dispose().catch((err) => studioLog.write("main", `play-time AI: ${errorMessage(err)}`));
+  const ai = composeGameAi({
+    studio,
+    userData,
+    fixture: fixtureNativePolicy,
+    origins: playOrigin,
+    version: app.getVersion(),
+    request: fixtureNativePolicy ? fixturePlayRequest : networkRequest(globalThis.fetch, playOrigin.api),
+    account: () => genexAccountFor(studio),
+    pushUiEvent,
+    log: (line) => studioLog.write("main", line),
+    playView: () => playView,
+    window: () => window,
+  });
+  gameAi = ai;
+  studio.options.gameAi = ai.harness;
+  // A native game an agent plays is the creator's own: a saved playtest, a fixture or this Mac's model answers it.
+  studio.options.gameAiNative = (game) => ai.native(game, false);
+  return ai;
+}
+
+/** A payer changed on this Mac (a key, a plan account, OpenCode's sign-in): play-time AI stops what it paid for. */
+function gameAiPayerChanged(engine: string): void {
+  const door = payerDoorOf(engine);
+  if (door)
+    void gameAi?.payerChanged(door).catch((err) => studioLog.write("main", `play-time AI: ${errorMessage(err)}`));
 }
 
 /** The marketplace, reacquisition, scanning and optional debug log of the core's plugins. */
@@ -909,6 +955,8 @@ function attachPreviews(studio: StudioCore, win: BrowserWindow): void {
     gamesRoot: studio.layout.gamesRoot,
     vendorDir: path.join(resources, "vendor"),
     resolveRoot: (name) => studio.games.dirFor(name),
+    // The Create Live route (D1): only this view's own partition reaches play-time AI, and off by default.
+    ...(gameAi ? { ai: gameAi.createRoute } : {}),
   });
   preview = view;
   studio.options.preview = view;
@@ -1152,6 +1200,7 @@ function attachPlay(studio: StudioCore, win: BrowserWindow): void {
     barPage: path.join(distRoot, "renderer", "play-bar.html"),
     barPreload: path.join(distRoot, "preload", "play-bar.cjs"),
     comments: playCommentsFor(studio),
+    ...(gameAi ? { ai: gameAi.play } : {}),
     coin: playCoinFor(studio),
     account: { signIn: () => signInToGenex(studio) },
     // Get coin: genex.games in the browser; a fixture launch opens nothing and tops its balance up.
@@ -1538,7 +1587,13 @@ function registerIpc(studio: StudioCore, engines: EngineBoot): void {
   registerGamesIpc(handle, { core: studio, runSummaryReader, pushUiEvent });
   registerStorageIpc(handle, { core: studio });
   registerJobsIpc(handle, { core: studio, openExternal: (url) => shell.openExternal(url) });
-  registerModelsIpc(handle, { core: studio, subscription, pushUiEvent, openRouterLogin });
+  registerModelsIpc(handle, {
+    core: studio,
+    subscription,
+    pushUiEvent,
+    openRouterLogin,
+    payerChanged: gameAiPayerChanged,
+  });
   registerPreviewIpc(handle, {
     core: studio,
     preview: () => preview,
@@ -1575,10 +1630,16 @@ function registerIpc(studio: StudioCore, engines: EngineBoot): void {
     subscription,
     pushUiEvent,
     busy: () => keepAwake.held || (core?.budget.userInFlight ?? 0) > 0,
+    payerChanged: gameAiPayerChanged,
   });
   registerCliInstallIpc(handle, cliInstalls(studio));
   registerProjectsIpc(handle, { core: studio, window: () => window, gamesRootLabel, web: playOrigin.web });
   registerGenexAccountIpc(handle, { account: genexAccountFor(studio) });
+  registerPlayChannels(handle, studio);
+}
+
+/** Play's channels, the asset library's, notifications' and play-time AI's. */
+function registerPlayChannels(handle: IpcHandle, studio: StudioCore): void {
   registerPlayIpc(handle, {
     gallery: playCatalogFor(studio),
     remix: (world) => remixPlayGame(studio, world),
@@ -1596,6 +1657,16 @@ function registerIpc(studio: StudioCore, engines: EngineBoot): void {
     setDockBadge: (text) => app.dock?.setBadge(text),
     pushUiEvent,
   });
+  const ai = requireGameAi();
+  registerGameAiIpc(handle, ai.ipc);
+  registerGameAiInboxIpc(handle, ai.inbox);
+  registerPlanWatcherIpc(handle, { watcher: ai.watcher });
+}
+
+/** This launch's play-time AI, made with its core. */
+function requireGameAi(): AppGameAi {
+  if (!gameAi) throw new Error(MESSAGE.coreNotStarted);
+  return gameAi;
 }
 
 async function main(): Promise<void> {
@@ -2197,7 +2268,7 @@ let shutdownInProgress = false;
  * exits; the harness is stopped first and, failing that, killed last.
  */
 function quitSteps(): ShutdownStep[] {
-  return shutdownSteps({ keepAwake, codexLogin, claudeLogin, terminals, core });
+  return shutdownSteps({ keepAwake, codexLogin, claudeLogin, terminals, core, gameAi });
 }
 
 // Nothing drives the person's computer once the studio is going away.

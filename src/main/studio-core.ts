@@ -40,6 +40,12 @@ import { EventKind, ThreadKind, SnapshotScope } from "../shared/event-log.ts";
 import { assetKind, isAudioFile, type AssetDeliveredPayload } from "../shared/game-assets.ts";
 import { coverFromBrief, replaceableCover, type GameUpdate } from "../shared/game-library.ts";
 import type { HarnessHostHandlers, HarnessParams, HarnessResult, HostMethod } from "../shared/harness-api.ts";
+import { GAME_AI_DIR, type GameAiHarnessHost } from "./game-ai/types.ts";
+import type { NativeAiHost } from "./game-ai/bridge-native.ts";
+import type { AiDemoResult, AiDemoRun } from "./game-ai/harness-host.ts";
+import { reportCaptureOf, withinCaptureWait } from "./game-ai/capture.ts";
+import { REPORT_DEFAULT_ENGINE, type ReportCapture } from "./game-ai/report.ts";
+import { corePlayerDeps, previewDemoPlayer } from "./core/ai-demo-player.ts";
 import {
   type ExportReview,
   type PluginBinding,
@@ -121,7 +127,7 @@ import { PluginRegistry } from "../substrate/plugins/registry.ts";
 import { PluginServices } from "../substrate/plugins/services.ts";
 import { createEngineLinks, type EngineLinks } from "../substrate/plugins/engine-links.ts";
 import type { PreviewInputAction } from "../substrate/preview-input.ts";
-import { DEFAULT_POOL_MAX } from "../substrate/preview-pool.ts";
+import { DEFAULT_POOL_MAX, LIVE_HANDLE } from "../substrate/preview-pool.ts";
 import type { PreviewConsoleEntry, PreviewPixelStats, PreviewPort } from "../substrate/preview-port.ts";
 import { SnapshotEngine, SnapshotIndex, HARNESS_WORKSPACE } from "../substrate/snapshots.ts";
 import { gitMissingProblem, SandboxUnavailableError } from "../substrate/sandbox-unavailable.ts";
@@ -189,6 +195,7 @@ import { pluginsRpc } from "./harness-rpc/plugins.ts";
 import { previewRpc } from "./harness-rpc/preview.ts";
 import { desktopRpc } from "./harness-rpc/desktop.ts";
 import { judgeRpc } from "./harness-rpc/judge.ts";
+import { aiRpc } from "./harness-rpc/ai.ts";
 import { runsRpc } from "./harness-rpc/runs.ts";
 import { snapshotRpc } from "./harness-rpc/snapshot.ts";
 import { hooksRpc } from "./harness-rpc/hooks.ts";
@@ -255,6 +262,10 @@ const MESSAGE = {
 
 /** The one lock every cover render takes: the GPU renderer draws one cover at a time. */
 const COVER_RENDERER = "renderer";
+/** The JPEG quality of the one frame a Report carries. */
+const REPORT_FRAME_QUALITY = 70;
+/** The console level a page's error is logged at. */
+const CONSOLE_ERROR_LEVEL = "error";
 
 /** settings.json as this build or an older one may have written it. */
 type SavedSettings = Partial<StudioSettings> & {
@@ -428,6 +439,18 @@ export interface StudioCoreOptions {
   onLog?: (line: string, stream: "stdout" | "stderr") => void;
   /** Where a message's @ tags are fetched from: genex.games, the account and git (`core/mention-tags.ts`). */
   mentionSources?: MentionSources;
+  /**
+   * Play-time AI for the harness (`harness-rpc/ai.ts`): tapes, mocks and this Mac's models on a
+   * host-created run budget. Absent in a studio composed without it, and in tests: the harness's
+   * `ai.*` calls then answer that it isn't running (the schema check still answers).
+   */
+  gameAi?: GameAiHarnessHost;
+  /**
+   * Play-time AI for a native player Studio starts for a game of the library
+   * (`game-ai/bridge-native.ts`): its `ai` lines are answered as that game, on tapes, fixtures and
+   * this Mac's models. Absent: every line is answered `ai_off` and the game plays its fallbacks.
+   */
+  gameAiNative?: (game: { name: string; title: string }) => NativeAiHost;
 }
 
 export type { CoreInternals };
@@ -958,9 +981,22 @@ export class StudioCore {
     return listed;
   }
 
-  /** What no agent process may read: the studio's secrets, the engines' homes and the Genex login. */
+  /**
+   * What no agent process may read: the studio's secrets, the engines' homes, the Genex login, and
+   * play-time AI's grants, limits and ledger (so no agent can grant itself AI or raise a limit).
+   */
+  /** What no agent process may read: play-time AI's plan watcher denies the same to every job it runs. */
+  deniedPaths(): string[] {
+    return this.#protectedPaths();
+  }
+
   #protectedPaths(): string[] {
-    return [this.layout.secrets, this.layout.engineHomes, path.join(os.homedir(), ".genex")];
+    return [
+      this.layout.secrets,
+      this.layout.engineHomes,
+      path.join(os.homedir(), ".genex"),
+      path.join(this.options.paths.userData, GAME_AI_DIR),
+    ];
   }
 
   #createSandbox(games: GameProject[]): Promise<ProcessSandbox> {
@@ -2192,6 +2228,7 @@ export class StudioCore {
       ...previewRpc(this, this.#x),
       ...desktopRpc(this, this.#x),
       ...judgeRpc(this),
+      ...aiRpc(this, this.#x),
     };
     return table;
   }
@@ -2554,6 +2591,35 @@ export class StudioCore {
     ...args: Parameters<DelegationService["_computerToolsFor"]>
   ): ReturnType<DelegationService["_computerToolsFor"]> {
     return this.#delegation._computerToolsFor(...args);
+  }
+
+  /**
+   * Play one demo of a game for play-time AI's harness calls (`ai.replay`, `ai.record`), on a hidden
+   * window of its own, with the lane `genex-ai` plays on named on the page (`core/ai-demo-player.ts`).
+   */
+  playAiDemo(run: AiDemoRun): Promise<AiDemoResult> {
+    return previewDemoPlayer(corePlayerDeps(this.#x)).play(run);
+  }
+
+  /**
+   * What a Report captures of a game the person plays in the Live preview (D9): its state's AI status
+   * and seed, one frame, the console's errors and the build's commit. Null when Live shows another
+   * game or none: a Report never captures a page the person is not playing.
+   */
+  async liveAiCapture(project: string): Promise<Partial<ReportCapture> | null> {
+    const port = this.options.preview;
+    const shown = this.#x.servedRoots.get(LIVE_HANDLE);
+    if (!port || shown?.project !== project) return null;
+    const [state, jpeg, commit] = await Promise.all([
+      withinCaptureWait(port.studioState()),
+      withinCaptureWait(port.screenshot(REPORT_FRAME_QUALITY)),
+      this.#x.previews.previewRevision(project, shown.root),
+    ]);
+    const consoleErrors = port
+      .consoleEntries(0)
+      .filter((entry) => entry.level === CONSOLE_ERROR_LEVEL)
+      .map((entry) => entry.message);
+    return reportCaptureOf({ state, jpeg, consoleErrors, commit, engine: REPORT_DEFAULT_ENGINE });
   }
 
   /** Whether the host's own records say this run is this game's (`preview.computer`'s run check). */

@@ -32,6 +32,7 @@ import {
   computerSession,
   type TargetSource,
 } from "./computer-session.ts";
+import type { NativeAiHost } from "../game-ai/bridge-native.ts";
 import { type EngineLauncher, gameBridgeSource } from "./game-bridge-target.ts";
 import { type EnginePlayCall, editorPlaySource } from "./editor-play-target.ts";
 import type { FramePort, PreviewService } from "./previews.ts";
@@ -158,7 +159,12 @@ export interface ComputerToolsOptions {
    * Set when the build's studio.json declares the `bridge` runtime: its game is started here, or by
    * `engine` when its play names an engine a plugin runs (an engine draws: a window and the GPU).
    */
-  bridge?: { sandbox: Pick<ProcessSandbox, "spawnLongLived">; engine?: EngineLauncher };
+  bridge?: {
+    sandbox: Pick<ProcessSandbox, "spawnLongLived">;
+    engine?: EngineLauncher;
+    /** Where a game that declares play-time AI is answered; absent, it is answered `ai_off`. */
+    ai?: NativeAiHost;
+  };
   /**
    * Set when the game is played in its engine's editor: the engine plugin's play tools, what its
    * declaration says the play can do (known before play opens, so the tool is described from it),
@@ -326,9 +332,11 @@ const TARGET_SOURCES: Record<ToolsRuntime, (deps: SourceDeps, build: ToolsBuilde
     const sandbox = deps.options.bridge?.sandbox;
     if (!sandbox) return TARGET_SOURCES[TargetRuntime.Browser](deps, build);
     const engine = deps.options.bridge?.engine;
+    const ai = deps.options.bridge?.ai;
     const source = gameBridgeSource({
       sandbox,
       ...(engine ? { engine } : {}),
+      ...(ai ? { target: { ai } } : {}),
       frame: (target, jpeg, caption, act) => {
         deps.previews.openScreen(deps.screen());
         return deps.previews.frame(targetFramePort(target), deps.screen(), jpeg, caption, act);

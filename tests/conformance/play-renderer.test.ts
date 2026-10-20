@@ -69,6 +69,7 @@ import {
   PlayPage,
   remixClosed,
   remixEnded,
+  modelsAnswered,
   remixFailureTold,
   remixOpened,
   remixProgressed,
@@ -436,6 +437,7 @@ describe("Play's viewer cover", () => {
       guestCard: false,
       facts: null,
       mic: null,
+      ai: null,
       title: "A",
       multiplayer: false,
       shown: true,
@@ -545,6 +547,7 @@ describe("Play's loader and header", () => {
       guestCard: false,
       facts: null,
       mic: null,
+      ai: null,
       title: "A",
       multiplayer: false,
       shown: true,
@@ -578,6 +581,7 @@ describe("Play's loader and header", () => {
       guestCard: false,
       facts: null,
       mic: null,
+      ai: null,
       title: "A",
       multiplayer: false,
       shown: true,
@@ -727,6 +731,20 @@ describe("Play state actions", () => {
     assert.deepEqual(closed.view, { page: PlayPage.Profile, userId: "u-maker", from: PlayPage.Shelf });
     const again = viewerReported(closed, { slug: "a", openId: 1, phase: PlayViewerPhase.Closed, profile: "u-other" });
     assert.equal(again, closed, "a viewer already gone shows nobody");
+  });
+
+  it("opens Settings → Model Providers once for the viewer shown closing for the AI pill's Add more models", () => {
+    const opened = gameOpened(initialPlay(), entry("a"));
+    const shown = viewerReported(opened, { slug: "a", openId: 1, phase: PlayViewerPhase.Playing });
+    assert.equal(shown.modelsAsked, false);
+    const closed = viewerReported(shown, { slug: "a", openId: 1, phase: PlayViewerPhase.Closed, models: true });
+    assert.equal(closed.modelsAsked, true);
+    assert.equal(closed.viewer, null);
+    const told = modelsAnswered(closed);
+    assert.equal(told.modelsAsked, false);
+    assert.equal(modelsAnswered(told), told, "nothing more to tell");
+    const stale = viewerReported(told, { slug: "a", openId: 1, phase: PlayViewerPhase.Closed, models: true });
+    assert.equal(stale.modelsAsked, false, "a viewer already gone asks nothing");
   });
 
   it("holds a remix's failure until the shell has told it", () => {

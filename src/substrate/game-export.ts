@@ -5,6 +5,7 @@ import type { Stats } from "node:fs";
 import type { ExportResult } from "../shared/game-project.ts";
 import { isBelow, isInside, toPosixRelative } from "./paths.ts";
 import { MIN_SECRET_LENGTH } from "../shared/redact.ts";
+import { EXPORT_AI_HINT, exportKeyRefusal, scanExportForAi } from "./export-ai-scan.ts";
 
 const excluded = (name: string) =>
   name.startsWith(".") ||
@@ -14,6 +15,16 @@ const excluded = (name: string) =>
   /^(AGENTS|CLAUDE|NOTES|README|PLAN)(\.|$)/i.test(name) ||
   /\.(pem|key|p12|pfx|jks|keystore|env|map|log)$/i.test(name) ||
   /^(id_rsa|id_ed25519|credentials|secrets|env)(\.|$)/i.test(name);
+
+/**
+ * A saved playtest (`ai/tapes/…`: recorded prompts, player text and answers) is private to the game's
+ * folder unless the creator put it in `ai/tapes/ship/` (§8 Privacy). Names are compared without case:
+ * the Mac's folders are, so `AI/Tapes` is the same folder.
+ */
+function isPrivateTape(parts: readonly string[]): boolean {
+  const [top, tapes, inside] = parts.map((part) => part.toLowerCase());
+  return top === "ai" && tapes === "tapes" && inside !== undefined && inside !== "ship";
+}
 
 /** `game.export` answers this to the harness, so it lives in `shared/game-project.ts`. */
 export type { ExportResult };
@@ -124,7 +135,7 @@ async function stagePath(
 ): Promise<void> {
   const parts = rel.split(/[\\/]/);
   if (path.isAbsolute(rel) || parts.includes("..")) throw new Error(MESSAGE.InvalidPublicPath(rel));
-  if (parts.some(excluded)) {
+  if (parts.some(excluded) || isPrivateTape(parts)) {
     result.excluded.push(destRel);
     return;
   }
@@ -349,14 +360,13 @@ export async function exportPublicGame(
         await stagePath(staging, result, await realpath(vendor), name, path.posix.join(VENDOR_DIR, name));
     }
     // Studio's own vendored library is not the game's to leak into; everything else is checked.
-    const leaked = options.secretValues
-      ? await fileWithSecret(
-          staging,
-          result.included.filter((rel) => !isVendorFile(rel, vendor)),
-          options.secretValues,
-        )
-      : undefined;
+    const gameFiles = result.included.filter((rel) => !isVendorFile(rel, vendor));
+    const leaked = options.secretValues ? await fileWithSecret(staging, gameFiles, options.secretValues) : undefined;
     if (leaked) throw new Error(MESSAGE.SecretLeaked(leaked));
+    // A vendor's key stops the export; a vendor's API host is a warning with the agent's hint (D5).
+    const ai = await scanExportForAi(staging, gameFiles);
+    if (ai.key) throw new Error(exportKeyRefusal(ai.key));
+    if (ai.hosts.length) result.aiDirect = { hosts: ai.hosts, hint: EXPORT_AI_HINT };
     const page = await rewriteEntry(staging);
     const neededVendor = await checkReferences(staging, page, result.included, vendor);
     if (vendor) await pruneUnusedVendor(staging, result, neededVendor);

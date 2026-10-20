@@ -26,11 +26,15 @@ import {
   isCutConnection,
   longHaulFetch,
   needsVision,
+  onPayload,
   type PiAssistant,
+  type PiPayloadEdit,
   piContext,
   type PiStreamFn,
   streamHttpStatus,
 } from "./pi-completions.ts";
+import { gameCallSchema, gameResponseFormat, isGameCall } from "./game-calls.ts";
+import type { AiOutputSchema } from "../../shared/game-ai-schema.ts";
 import { supersededBy } from "../hardware.ts";
 import { childEnv } from "../child-env.ts";
 import { HOUR_MS, SECOND_MS } from "../../shared/duration.ts";
@@ -442,6 +446,9 @@ export class OllamaEngine implements Engine {
   }
 
   async complete(request: CompleteRequest): Promise<CompleteResponse> {
+    // Ollama's OpenAI-compatible endpoint reads `response_format` as its own `format`: the reply is
+    // decoded against the game's schema, not merely asked to fit it.
+    const schema = gameCallSchema(request, this.id);
     const modelId = request.model ?? (await this.defaultModel());
     if (!modelId) {
       throw new EngineError(EngineFailureKind.Unavailable, this.id, MESSAGE.NoModel);
@@ -453,6 +460,7 @@ export class OllamaEngine implements Engine {
     this.#checkVision(request, model);
     const context = piContext(request);
     const attempt: StreamAttempt = { model: modelId };
+    const straight = thinking && answersStraight(request);
 
     try {
       const stream = (models as unknown as { stream: PiStreamFn }).stream(model, context, {
@@ -461,7 +469,8 @@ export class OllamaEngine implements Engine {
         timeoutMs: Math.min(request.timeoutMs ?? this.#timeoutMs, this.#timeoutMs),
         ...(request.signal ? { signal: request.signal } : {}),
         ...(request.maxTokens ? { maxTokens: request.maxTokens } : {}),
-        ...(thinking && request.effort ? { reasoningEffort: normalizeEffort(request.effort) } : {}),
+        ...(thinking && request.effort && !straight ? { reasoningEffort: normalizeEffort(request.effort) } : {}),
+        ...onPayload(gameCallEdit(schema, straight)),
       });
       await drainPiStream(stream, request, this.id);
       const assistant = (await stream.result()) as PiAssistant;
@@ -510,6 +519,29 @@ export class OllamaEngine implements Engine {
     if (error.status) return httpFailure(this.id, error.status, error.message, attempt.model);
     return translateStreamFailure(this.id, error.message, error.cause, attempt);
   }
+}
+
+/**
+ * Whether a call answers without thinking: a game's call that names no effort, or names none.
+ * Its thinking would come out of the game's own small output budget and leave no answer.
+ */
+function answersStraight(request: CompleteRequest): boolean {
+  if (!isGameCall(request)) return false;
+  return !request.effort || request.effort === ReasoningEffort.None;
+}
+
+/**
+ * The body edit a game's call needs, or null for a call that asks for nothing new: the reply schema
+ * as `response_format` (which Ollama reads as its own `format` and decodes against), and
+ * `reasoning_effort: "none"`, which Ollama reads as `think: false`, for a call that answers straight.
+ */
+function gameCallEdit(schema: AiOutputSchema | null, straight: boolean): PiPayloadEdit | null {
+  if (!schema && !straight) return null;
+  return (payload) => ({
+    ...payload,
+    ...(straight ? { reasoning_effort: ReasoningEffort.None } : {}),
+    ...(schema ? { response_format: gameResponseFormat(schema) } : {}),
+  });
 }
 
 /** Ollama's endpoint understands low/medium/high; clamp the wider scale into that range. */

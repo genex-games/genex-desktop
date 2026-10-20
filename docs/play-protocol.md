@@ -129,6 +129,7 @@ trace and answer say which binary it played. Capabilities are levels, matching t
 | `seed` | `true` when `reset {seed}` makes a run repeat |
 | `actions` | the names `act` accepts; empty for none |
 | `screenshot` | the formats it can answer in; JPEG is asked for when listed |
+| `ai` | `true` when the game uses play-time AI (below); absent or anything else is `false` |
 
 A game lacks — and answers `unsupported` to — `pointer` and `wheel` without an absolute pointer,
 `look` without any pointer, `pause` and `play` without a clock, `step` without a step-locked one,
@@ -210,6 +211,73 @@ refused `step` answers the session's clock as "cannot step". A process that is g
 that timed out, fails the whole plan.
 
 Stopping a game: `quit`, then the process tree is killed if it has not exited within two seconds.
+
+## Play-time AI (optional)
+
+A game that declares `capabilities.ai` asks the studio's AI broker for text or JSON with id-less
+lines on stdout, `{"event":"ai","rid":"<8–100 of A-Z a-z 0-9 _ ->","op":"<op>","body":<body>}`. The
+ops and bodies are the web bridge's (`AiBridgeOp` and `readAiBridgeBody` in
+`src/shared/game-ai-bridge.ts`): `hello`, `doors`, `budget.active` and `budget.stop` take `null`;
+`call` takes one call (`AiCallRequest`), `cancel` a `{ticket}`, `budget.request` a grant request.
+The studio answers each line once with the optional op `ai.reply {rid, reply}`, and streams a
+`say` answer's text with `ai.delta {rid, text}`; a game acknowledges them like any request and
+ignores a reply to a rid it is not waiting for (a line of a run before a `reset`).
+
+The studio sends `ai.*` ops only to a game whose `hello` declared `ai`, ignores an `ai` line from
+one that did not or that arrives before `ready`, drops a line longer than 200 Ki characters and
+answers a fifth unanswered line at once with `grant_concurrency`. A game that declared `ai` where
+no AI is wired gets `ai_off` for every line and plays its fallbacks. The caller is main's
+(`main/game-ai/bridge-native.ts`): the library game the process plays, on the process's channel
+(`native:<pid>`), never anything a line says. While the studio holds the clock, answers wait for
+the next step boundary and go out before that step; a replay's step first waits for its tape's
+answers, so the same seed and inputs get every answer on the same tick. A player the studio started
+runs with no network: AI reaches it only through these lines, on the doors main allows for its
+context (tapes and this Mac's models for an agent's run). A game may keep the rids it sent and those
+answered under `state().volatile.ai {asked, answered}`; the suite then checks every rid is echoed.
+
+### Engine SDKs and reserved names
+
+Each engine's SDK is only the wire, an inbox and typed helpers: results enter the game only through
+`drain()` (by that engine's name) once per fixed step, a call answers its ticket at once, and a
+failure carries the fallback the call named. These names are reserved; the Rust crate is built
+against this table.
+
+| Engine | Package | Calls | Drain | Schema from |
+|---|---|---|---|---|
+| Rust + wgpu | crate `genex-ai` (`native/genex-rust/crates/genex-ai`, lib `genex_ai`) | `GameAi::ask/say/judge/act`, `AiTicket`, `AiResult`, `AiFailure` | `GameAi::drain()` on the engine's fixed step | `#[derive(genex_ai::Schema)]`, serde `deny_unknown_fields` |
+| Godot | `addons/genex/genex_ai.gd`, the `GenexAI` autoload | `ask`, `say`, `judge`, `act`, `cancel`, `start`, `stop` | `GenexAI.drain()` in `_physics_process` | a `Dictionary` the host checks |
+| Unity | UPM `com.genex.ai` (`Genex.AI`) | `GenexAi.Ask<T>`, `Say`, `Judge<T>`, `Act<T>`, `StartAi`, `StopAi` | `GenexAi.Drain()` in `FixedUpdate` | `T` by reflection, `[GenexMaxItems]`, `[GenexMaxLength]` |
+| Unreal | plugin `GenexAI` (`UGenexAiSubsystem`, Blueprint node **Ask AI**) | `Ask`, `AskStruct`, `Say`, `Judge`, `Act`, `StartAi`, `StopAi` | `Drain()` on the fixed step | a `USTRUCT` by reflection, `meta=(GenexMaxItems=N, GenexMaxLength=N)` |
+
+A game declares whether it can run without AI (`requires`: `ai` or `optional`; Godot's
+`genex/ai/requires` project setting). Godot's GenexAI declares `capabilities.ai` through the
+addon's GenexPlay; a Rust game declares it in its own `hello`.
+
+**Not yet wired: Rust + wgpu.** The studio does not compose the Rust lane until the Rust + wgpu
+engine port meets play-time AI (genex-games/genex-desktop#287). Until then a Rust game's `ai` lines
+all settle `ai_off`, and it plays its fallbacks.
+
+### Play-time AI in an engine's editor
+
+A game played in its editor speaks no protocol, so the SDK queues the same `ai` lines and Studio's
+relay (`main/game-ai/bridge-editor.ts`) pulls them through the editor channel the engine plugin
+already has, and pushes the answers back by rid; no port or token is added. Main keeps one relay
+per Godot or Unity project a library game links (`main/game-ai/editor-relays.ts`, synced from the
+library every few seconds; a project that leads out of its game's folder is never relayed). The
+caller is the creator's own game: Create Live while a person plays, which answers `ai_off` while
+Settings' "AI in your playtests" is off, and a harness run while a run is going in the game. A play
+that ends abandons its calls. Answers travel as data only: files, or base64 of their JSON inside
+host-owned code. Unreal's channel is built, but main does not start its relay yet: the editor's port
+is the Unreal plugin's own record, so an Unreal game in PIE plays its fallbacks.
+
+| Engine | Channel | Lines in | Answers out | Relayed when |
+|---|---|---|---|---|
+| Godot | the project's `.godot/genex/` (`godotAiChannel`) | `ai-in-<rid>.json`, whole | `ai-out-<order>.json`, whole | the editor's heartbeat says a scene plays; Studio beats `ai-relay.json` |
+| Unity | the editor's Pipeline server (`unityAiChannel`) | `eval` of `Genex.AI.GenexAiRelay.Pull()` | `GenexAiRelay.Push("<base64>")` | Play mode, pulled within 3 s |
+| Unreal | the editor's port, the helper's `genex_ai.tools.GenexAiRelayTools` (`unrealAiChannel`) | `ai_pull` | `ai_push {answers: <base64>}` | a play session, pulled within 3 s |
+
+An SDK whose relay is not pulling answers `ai_off` at once, and a line still waiting when its relay
+stops is answered `ai_off`; a build shipped outside Genex is never relayed and plays its fallbacks.
 
 ## Playing in an engine's editor
 

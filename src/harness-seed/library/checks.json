@@ -1,6 +1,69 @@
 {
   "version": 2,
   "checks": {
+    "ai-budget-in-gesture": {
+      "kind": "ai",
+      "test": "budget-in-gesture",
+      "weight": "normal",
+      "note": "AI is asked for only inside a click or key handler, never at load or on a timer: a replay counts grants refused no_gesture.",
+      "uses": 0,
+      "passes": 0,
+      "origin": "seed"
+    },
+    "ai-disclosure-shown": {
+      "kind": "ai",
+      "test": "disclosure-shown",
+      "weight": "normal",
+      "note": "The HUD draws ai.disclosure() once the game uses AI, and state().ai.disclosed reports it; a state with no ai status is unmeasured.",
+      "uses": 0,
+      "passes": 0,
+      "origin": "seed"
+    },
+    "ai-handles-no-answer": {
+      "kind": "ai",
+      "test": "handles-no-answer",
+      "weight": "identity",
+      "note": "With AI off every demo ends with no call left waiting, no crash and no console error: an optional game plays on its fallback, an AI-only one stops behind Studio's needs-AI state.",
+      "uses": 0,
+      "passes": 0,
+      "origin": "seed"
+    },
+    "ai-no-direct-model-calls": {
+      "kind": "ai",
+      "test": "no-direct-model-calls",
+      "weight": "identity",
+      "note": "The build names no AI vendor's API host and holds no vendor key: genex-ai is the only way to a model.",
+      "uses": 0,
+      "passes": 0,
+      "origin": "seed"
+    },
+    "ai-output-clamped": {
+      "kind": "ai",
+      "test": "output-clamped",
+      "weight": "normal",
+      "note": "The largest and smallest answers the game's schemas allow break nothing: the applier clamps numbers, cuts strings and drops unknown ids before an answer reaches the game.",
+      "uses": 0,
+      "passes": 0,
+      "origin": "seed"
+    },
+    "ai-replay-deterministic": {
+      "kind": "ai",
+      "test": "replay-deterministic",
+      "weight": "normal",
+      "note": "A game that uses play-time AI replays every demo from its saved playtest (ai/tapes/<demo>.jsonl) and reaches the same frames under seeds 1-3. The harness puts it on the entry owner's board when the plan declares ai.",
+      "uses": 0,
+      "passes": 0,
+      "origin": "seed"
+    },
+    "ai-tape-covers-demos": {
+      "kind": "ai",
+      "test": "tape-covers-demos",
+      "weight": "normal",
+      "note": "Every AI call a demo makes is answered by its saved playtest; a call the tape has no line for, or a line the reader refuses, fails. Record again with ai_record after changing a prompt, a schema or a site.",
+      "uses": 0,
+      "passes": 0,
+      "origin": "seed"
+    },
     "camera-player-eye": {
       "kind": "scene",
       "js": "objects('player-eye').some(o => o.isCamera)",

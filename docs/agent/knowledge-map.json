@@ -292,7 +292,8 @@
         "src/main/core/self-edit-gate.ts",
         "src/substrate/type-gate.ts",
         "tests/conformance/self-edit-gate.test.ts",
-        "tests/conformance/seed-layout-migration.test.ts"
+        "tests/conformance/seed-layout-migration.test.ts",
+        "scripts/ai-starters/**"
       ],
       "documents": [
         "docs/agent/context.md",

@@ -35,6 +35,17 @@ import type { ComputerTraceSummary } from "./computer-target.ts";
 import type { ConversationRecord, EventData, EventEnvelope, Message, SnapshotRecord } from "./event-log.ts";
 import { FINISH_REASON_CHARS, type FinishCheckStep } from "./finish-check.ts";
 import type { ProjectAssets } from "./game-assets.ts";
+import { AI_SITE_RE } from "./game-ai.ts";
+import { AI_BENCH_MAX_SAMPLES, type AiBenchResult, type AiCheckResult } from "./game-ai-check.ts";
+import type { AiSchemaProblem } from "./game-ai-schema.ts";
+import {
+  AI_REPLAY_MAX_SEEDS,
+  type AiRecordResult,
+  AiReplayAnswers,
+  type AiReplayResult,
+  TAPE_NAME_RE,
+} from "./game-ai-tape.ts";
+import type { AiTapeSummary } from "./game-ai-views.ts";
 import type {
   AttachReport,
   ContentStamps,
@@ -849,7 +860,38 @@ export interface HarnessHostApi {
   };
   /** A harness notification forwarded to the renderer as a `UiEvent`, name and payload as sent. */
   "ui.notify": { params: { type: string; payload?: unknown }; result: boolean };
+
+  // ── play-time AI: tapes, mocks and this Mac's models only, never the network ──
+  /** Whether a schema is of the closed dialect a game's answers are held to, and if not, why. */
+  "ai.schemaCheck": { params: { schema: unknown }; result: AiSchemaCheck };
+  // `root` is the build an `ai.*` call plays: the game's own folder when it is left out, or a run's
+  // copy of it under scratch (a worker's worktree), checked real by the host like `preview.load`'s.
+  /** A game's saved playtests. */
+  "ai.tapes": { params: { project: string; root?: string | null }; result: AiTapeSummary[] };
+  /**
+   * Replay a demo under each seed — on its tape, with no answer at all (`answers: "none"`) or with
+   * the worst answers its shapes allow (`answers: "edge"`): whether the frames match, and what the tape lacked.
+   */
+  "ai.replay": {
+    params: { project: string; demo: string; seeds: number[]; root?: string | null; answers?: AiReplayAnswers | null };
+    result: AiReplayResult;
+  };
+  /** Play a demo with this Mac's models on a host-created run budget, and save its tape. */
+  "ai.record": {
+    params: { project: string; demo: string; seed: number; root?: string | null };
+    result: AiRecordResult;
+  };
+  /** Sample one call site on this Mac's models: fit, reply time, tokens. */
+  "ai.bench": {
+    params: { project: string; site: string; samples?: number; root?: string | null };
+    result: AiBenchResult;
+  };
+  /** The model check on this Mac's models only (the creator runs the cloud check from Create). */
+  "ai.modelCheck": { params: { project: string }; result: AiCheckResult };
 }
+
+/** `ai.schemaCheck`'s answer: the dialect takes it, or the reason it does not. */
+export type AiSchemaCheck = { ok: true } | { ok: false; problem: AiSchemaProblem };
 
 export type HarnessHostMethod = keyof HarnessHostApi;
 export type HarnessParams<K extends HarnessHostMethod> = HarnessHostApi[K]["params"];
@@ -979,6 +1021,12 @@ export const HostMethod = {
   GuardianValidateEdit: "guardian.validate_edit",
   GuardianWriteSelf: "guardian.write_self",
   UiNotify: "ui.notify",
+  AiSchemaCheck: "ai.schemaCheck",
+  AiTapes: "ai.tapes",
+  AiReplay: "ai.replay",
+  AiRecord: "ai.record",
+  AiBench: "ai.bench",
+  AiModelCheck: "ai.modelCheck",
 } as const satisfies Record<string, HarnessHostMethod>;
 export type HostMethod = (typeof HostMethod)[keyof typeof HostMethod];
 
@@ -1004,6 +1052,8 @@ const workerId = z.custom<string>(isWorkerId);
 const workerTitle = z.custom<string>(isWorkerTitle);
 /** A moment's label: one line of at most 120 characters. */
 const hookLabel = z.custom<string>(isHookLabel);
+/** A replay's seed: a whole number the game's RNG takes. */
+const aiSeed = z.number().int().min(0).max(Number.MAX_SAFE_INTEGER);
 /** A run named as one plain path segment, as the host names runs. */
 const runIdSegment = z.string().regex(/^[a-zA-Z0-9_-]{1,80}$/);
 /** The longest folder a reviewer may name to read, in characters. */
@@ -1140,6 +1190,22 @@ export const HARNESS_PARAM_SCHEMAS = {
     })
     .nullish(),
   "run.artifact": z.object({ runId: text, name: text }),
+  "ai.tapes": z.object({ project, root: optionalText }),
+  "ai.replay": z.object({
+    project,
+    demo: z.string().regex(TAPE_NAME_RE),
+    seeds: z.array(aiSeed).min(1).max(AI_REPLAY_MAX_SEEDS),
+    root: optionalText,
+    answers: z.enum([AiReplayAnswers.Tape, AiReplayAnswers.None, AiReplayAnswers.Edge]).nullish(),
+  }),
+  "ai.record": z.object({ project, demo: z.string().regex(TAPE_NAME_RE), seed: aiSeed, root: optionalText }),
+  "ai.bench": z.object({
+    project,
+    site: z.string().regex(AI_SITE_RE),
+    samples: z.number().int().min(1).max(AI_BENCH_MAX_SAMPLES).nullish(),
+    root: optionalText,
+  }),
+  "ai.modelCheck": z.object({ project }),
   "guardian.validate_edit": z.object({ files: z.array(z.object({ file: text, contents: text })) }),
   "guardian.write_self": z.object({
     file: text,

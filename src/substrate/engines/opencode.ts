@@ -26,6 +26,7 @@ import { cliVersion, resolveCodingCli } from "./external-cli.ts";
 import { runCommand } from "./claude-cli.ts";
 import { lockUnowned, ownershipBriefing, releaseLocks, releaseStaleLocks, type LockRecord } from "./ownership-locks.ts";
 import { StudioBridge, answerBridgeCall, bridgeTools } from "./studio-bridge.ts";
+import { gameCallSchema, isGameCall } from "./game-calls.ts";
 import { writeDelegateStills } from "./codex.ts";
 import { JUDGE_RULES, mcpToolsNote, offLimitsNote, planModeNote, readOnlyNote } from "./codex-prompts.ts";
 import {
@@ -342,8 +343,13 @@ export class OpenCodeEngine implements Engine {
     return completed(this.id, run, startedAt, request.model, recordedCalls(bridge, request));
   }
 
-  /** A one-shot answer (a judge's verdict): no tools, in an empty folder of its own. */
+  /**
+   * A one-shot answer (a judge's verdict, or a game's call without the judge's rules): no tools, in
+   * an empty folder of its own. OpenCode holds no reply to a schema; the caller validates it.
+   */
   async complete(request: CompleteRequest): Promise<CompleteResponse> {
+    // Refuses a game's call with tools, pictures or a schema outside the dialect before any session.
+    gameCallSchema(request, this.id);
     if (request.tools?.length) throw new EngineError(EngineFailureKind.Unavailable, this.id, MESSAGE.NoTools);
     const controller = abortControllerFor(request.signal);
     const ceiling = request.timeoutMs ?? COMPLETE_TIMEOUT_MS;
@@ -720,10 +726,14 @@ function chatMode(request: DelegateRequest): PermissionMode | null {
   return request.permissions ? engineMode(EngineId.OpenCode, request.permissions.mode) : null;
 }
 
-/** A judge's question as one prompt: the system words, the conversation, and the critic's two rules. */
+/**
+ * A one-shot question as one prompt: the system words, the conversation, and for a judge the
+ * critic's two rules (a game's call is answered from the game's own words alone).
+ */
 function answerPrompt(request: CompleteRequest): string {
   const conversation = request.messages.map((message) => `${message.role.toUpperCase()}:\n${message.content}`);
-  return [request.systemPrompt ?? "", ...conversation, ...JUDGE_RULES].filter((part) => part.trim()).join("\n\n");
+  const rules = isGameCall(request) ? [] : JUDGE_RULES;
+  return [request.systemPrompt ?? "", ...conversation, ...rules].filter((part) => part.trim()).join("\n\n");
 }
 
 function newRun(engine: string, resume: string | undefined): OpenCodeRun {

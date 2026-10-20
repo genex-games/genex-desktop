@@ -2,7 +2,8 @@
  * The studio's own turn loop talking to an OpenAI-compatible server through pi-ai: the message
  * conversion in both directions, the request context, the stream drain and the transport. Ollama
  * (a local server) and OpenRouter (a metered API) both complete through it; each engine keeps
- * its own provider description and its own words for a failure.
+ * its own provider description and its own words for a failure. A field pi-ai has no option for
+ * reaches the body through its `onPayload` hook ({@link onPayload}), applied just before sending.
  */
 import { randomUUID } from "node:crypto";
 import type { Message, Usage } from "../types.ts";
@@ -10,6 +11,8 @@ import { type CompleteRequest, EngineError, type ToolDefinition } from "./types.
 import { EngineFailureKind } from "../../shared/engine-requests.ts";
 import { EngineId } from "../../shared/providers.ts";
 import { CompletionStop, STOPPED_BY_USER } from "./common.ts";
+import { gameResponseFormat } from "./game-calls.ts";
+import type { AiOutputSchema } from "../../shared/game-ai-schema.ts";
 
 // ── message conversion (substrate ⇄ pi-ai) ─────────────────────────────────────────────────
 interface PiTextContent {
@@ -189,6 +192,26 @@ function toPiTool(tool: ToolDefinition): unknown {
   return { name: tool.name, description: tool.description, parameters: tool.parameters };
 }
 
+/** A request body as pi-ai built it, before it is sent: the OpenAI chat-completions fields. */
+export type PiPayload = Record<string, unknown>;
+
+/** One edit of the body pi-ai built, applied just before it is sent. */
+export type PiPayloadEdit = (payload: PiPayload) => PiPayload;
+
+/**
+ * pi-ai's `onPayload` option for a body edit, or no option at all when there is none, so a request
+ * that asks for nothing new goes out byte-identical. The edit is how a field pi-ai has no option
+ * for (`response_format`, OpenRouter's `provider`) reaches the wire.
+ */
+export function onPayload(edit: PiPayloadEdit | null): { onPayload?: (payload: unknown) => PiPayload } {
+  return edit ? { onPayload: (payload) => edit(payload as PiPayload) } : {};
+}
+
+/** The edit that holds the reply to a schema with strict structured output. */
+export function withResponseFormat(schema: AiOutputSchema): PiPayloadEdit {
+  return (payload) => ({ ...payload, response_format: gameResponseFormat(schema) });
+}
+
 /** Does the request carry a picture the model would have to see? */
 export function needsVision(request: CompleteRequest): boolean {
   return request.messages.some((message) => Boolean(message.images?.length));
@@ -262,9 +285,10 @@ export function isCutConnection(message: string): boolean {
  * `undici.globalDispatcher.1` symbol) rather than an npm `undici` — a separately installed
  * copy can disagree with the built-in fetch about the handler protocol.
  */
-let longHaulDispatcher: object | null = null;
-async function ensureLongHaulDispatcher(): Promise<object | null> {
-  if (longHaulDispatcher) return longHaulDispatcher;
+const longHaulDispatchers = new Map<number | null, object>();
+async function ensureLongHaulDispatcher(connectTimeoutMs: number | null): Promise<object | null> {
+  const made = longHaulDispatchers.get(connectTimeoutMs);
+  if (made) return made;
   const key = Symbol.for("undici.globalDispatcher.1");
   const globals = globalThis as unknown as Record<symbol, { constructor: new (opts: object) => object } | undefined>;
   if (!globals[key]) {
@@ -274,14 +298,26 @@ async function ensureLongHaulDispatcher(): Promise<object | null> {
   }
   const current = globals[key];
   if (!current) return null;
-  longHaulDispatcher = new current.constructor({ headersTimeout: 0, bodyTimeout: 0 });
-  return longHaulDispatcher;
+  const dispatcher = new current.constructor({
+    headersTimeout: 0,
+    bodyTimeout: 0,
+    // Only the wait for a connection (TCP and TLS) is bounded: a generation stays unbounded.
+    ...(connectTimeoutMs === null ? {} : { connect: { timeout: connectTimeoutMs } }),
+  });
+  longHaulDispatchers.set(connectTimeoutMs, dispatcher);
+  return dispatcher;
+}
+
+/** How a long-haul fetch connects: by default with undici's own connect timeout. */
+export interface LongHaulOptions {
+  /** The longest wait for a connection to the host, TCP and TLS together. */
+  connectTimeoutMs?: number;
 }
 
 /** The fetch pi-ai hands its OpenAI client: the long-haul dispatcher, and the user's Stop joined in. */
-export function longHaulFetch(stop: AbortSignal | undefined): typeof fetch {
+export function longHaulFetch(stop: AbortSignal | undefined, options: LongHaulOptions = {}): typeof fetch {
   return async (input, init) => {
-    const dispatcher = await ensureLongHaulDispatcher();
+    const dispatcher = await ensureLongHaulDispatcher(options.connectTimeoutMs ?? null);
     // The client routes its request timeout through the signal it hands this fetch, so the
     // user's Stop has to join that signal, not replace it — replacing would mask the
     // timeout and a dead connection would hang the loop instead of erroring.

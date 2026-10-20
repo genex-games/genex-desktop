@@ -274,6 +274,7 @@ describe("the bundled Unity plugin", () => {
           "unity__show-steps",
           "unity__setup",
           "unity__undo-setup",
+          "unity__add-ai",
           "unity__open-editor",
           "unity__restart-editor",
         ],

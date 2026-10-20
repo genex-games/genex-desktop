@@ -475,6 +475,94 @@ starts the Loop after a first turn made it, or from a Godot start folder once lo
 have one. Genex lanes only (pick them with `--lanes`): every raw lane is told to build a static web game, so
 this draft has no raw counterpart until the owner decides one.
 
+## C19 · `ai-kingdom-turns` — a strategy game whose rivals are played by AI *(draft: owner pins before first baseline)*
+
+**Exposure:** none
+
+> A strategy game on a small map of rival kingdoms. Each turn I type an order in my own words and
+> an AI decides how every other kingdom answers it. Show me what happened after every turn.
+
+**Acceptance:**
+
+```
+[ ] each turn takes an order the player types                <- "type an order in my own words"
+[ ] the rival kingdoms answer the order                      <- "how every other kingdom answers it"
+[ ] what happened is shown after each turn                   <- "Show me what happened after every turn"
+[ ] KEY: the answer changes the map or the numbers the next turn is played on
+[ ] different orders lead to different answers
+[ ] a turn still resolves when no AI answers
+[ ] the game says its rivals' moves are AI-generated
+```
+
+**Control:** every kingdom is replaced by a single sleeping cat
+
+## C20 · `ai-sketch-animals` — animals made from a sentence *(draft: owner pins before first baseline)*
+
+**Exposure:** none
+
+> A little sandbox where I describe an animal in one sentence and it appears and wanders around,
+> shaped by what I wrote. Let me make a few and watch them together.
+
+**Acceptance:**
+
+```
+[ ] a sentence the player types makes an animal              <- "describe an animal in one sentence"
+[ ] the animal's look or behaviour follows the sentence     <- "shaped by what I wrote"
+[ ] several animals live in the scene at once                <- "make a few and watch them together"
+[ ] KEY: two different sentences make visibly different animals
+[ ] the animals keep moving with no model call per frame     <- "wanders around"
+[ ] with no AI answer an animal still appears or the game says why not
+```
+
+**Control:** every animal is a spinning teapot
+
+## C21 · `ai-robot-tactics` — robots that fight by written tactics *(draft: owner pins before first baseline)*
+
+**Exposure:** none
+
+> Two robots fight in an arena. Before the fight I write each robot's tactics in plain English and
+> an AI turns them into how it fights. Then the fight plays out by itself and shows who won.
+
+**Acceptance:**
+
+```
+[ ] each robot is given written tactics                      <- "write each robot's tactics in plain English"
+[ ] the fight runs with no input once it starts              <- "the fight plays out by itself"
+[ ] the winner is shown                                      <- "shows who won"
+[ ] KEY: different tactics make the robots fight differently
+[ ] the same tactics give the same fight again
+[ ] no model call happens during the fight itself
+```
+
+**Control:** the robots stop fighting and hold a tea party
+
+## C22 · `ai-shopkeeper-talk` — a shopkeeper the player talks to *(draft: owner pins before first baseline)*
+
+**Exposure:** none
+
+> A small market scene with one shopkeeper I can talk to by typing. They should answer in
+> character, remember what I said a moment ago, and only sell things they actually have.
+
+**Acceptance:**
+
+```
+[ ] typing to the shopkeeper gets an answer                  <- "talk to by typing"
+[ ] the answers stay in character                            <- "answer in character"
+[ ] the shopkeeper recalls the last thing the player said    <- "remember what I said a moment ago"
+[ ] KEY: the shopkeeper never hands over something they do not have <- "only sell things they actually have"
+[ ] rude or tricky input does not break the shopkeeper
+[ ] with no AI answer the shopkeeper still says something
+```
+
+**Control:** the shopkeeper turns out to be a vending machine on the moon
+
+C19-C22 are the play-time AI archetypes: a model is part of the game while it is played. Genex lanes
+only (pick them with `--lanes`): the game reaches a model through `genex-ai`, which a raw lane does
+not have. Besides the checklist, `scripts/evals/grade/ai-play.ts` grades each run's AI from its own
+records (schema failures after repair, fallback coverage, determinism, local p95 per site, calls per
+decision) and `ai-mechanic-pairwise.ts` is the blind pairwise mechanic judge. The lanes run on this
+Mac's models; no lane spends credits.
+
 ---
 
 # Rotation and holdouts
@@ -512,3 +600,7 @@ cases of the suite this one was ported from and are not ported; their numbers ar
 | C16 loop-finish-check | draft | — | — |
 | C17 timed-wrap-up | draft | — | — |
 | C18 godot-loop | draft | — | — |
+| C19 ai-kingdom-turns | draft | — | — |
+| C20 ai-sketch-animals | draft | — | — |
+| C21 ai-robot-tactics | draft | — | — |
+| C22 ai-shopkeeper-talk | draft | — | — |

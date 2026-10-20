@@ -168,8 +168,12 @@ const TITLED_TEMPLATE_FILES = ["index.html", "NOTES.md"];
 /** What a new folder's `.gitignore` starts with, before the studio's own rules. */
 const GITIGNORE_HEADER = "export/\n.DS_Store\n";
 
-/** The folders a template game exports beside its `index.html` when studio.json names none. */
-const DEFAULT_EXPORT_DIRS = ["src", "assets"];
+/**
+ * The folders a template game exports beside its `index.html` when studio.json names none. `ai/`
+ * holds a game's play-time AI code (its schemas, prompts and appliers, as the AI starters lay it
+ * out); its saved playtests stay home unless shipped (`game-export.ts`).
+ */
+const DEFAULT_EXPORT_DIRS = ["src", "assets", "ai"];
 
 /**
  * The template files this folder must not receive. A game of its own keeps its entry and is

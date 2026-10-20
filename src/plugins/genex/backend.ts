@@ -278,7 +278,7 @@ const ACTIONS: Record<string, Action> = {
     genex.publishDraft(project, () => service(PluginService.ExportStage, {}), camera),
   ),
   [GenexAction.PublishGallery]: withProject((genex, project, args, service, camera) =>
-    genex.publishGallery(project, () => service(PluginService.ExportStage, {}), args.title, camera),
+    genex.publishGallery(project, () => service(PluginService.ExportStage, {}), args.title, camera, args.ai),
   ),
   [GenexAction.PublishAllowUpload]: withProject((genex, project, args) =>
     genex.publishAllowNewUpload(project, String(args.jobId ?? "")),

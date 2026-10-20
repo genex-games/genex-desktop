@@ -2,10 +2,10 @@
  * When the viewer's bar is up over the game. It is up while the game loads and when it could not
  * load; once the game plays it stays a few seconds, then fades up and out, and it comes back when the
  * pointer reaches the window's top edge or Esc is pressed in the game. While the pointer or the
- * keyboard is on it, or its Comments is open, it stays. Its layer is put away once it has faded, and
- * covers the whole window while Comments or a game's purchase sheet is open; the sheet does not raise
- * the bar, and nothing the bar's page says puts the layer away under it. Electron-free: the clock
- * comes in as a dep.
+ * keyboard is on it, or one of its overlays is open, it stays. Its layer is put away once it has
+ * faded, and covers the whole window while an overlay (Comments, an AI card or menu) or a game's
+ * purchase sheet is open; the sheet does not raise the bar, and nothing the bar's page says puts the
+ * layer away under it. Electron-free: the clock comes in as a dep.
  */
 import { SECOND_MS } from "../../shared/duration.ts";
 import type { PlayBarHold } from "../../shared/play-bar.ts";
@@ -23,7 +23,7 @@ export const BarLayout = {
   Hidden: "hidden",
   /** The bar's strip across the window's top. */
   Bar: "bar",
-  /** The whole window, for Comments or a purchase sheet over the dimmed game. */
+  /** The whole window, for an overlay or a purchase sheet over the dimmed game. */
   Full: "full",
 } as const;
 export type BarLayout = (typeof BarLayout)[keyof typeof BarLayout];
@@ -38,7 +38,7 @@ export interface BarRevealDeps {
   place(layout: BarLayout): void;
 }
 
-const NO_HOLD: PlayBarHold = { held: false, comments: false };
+const NO_HOLD: PlayBarHold = { held: false, overlay: null };
 
 /** The bar's reveal over `deps`. */
 export function barReveal(deps: BarRevealDeps) {
@@ -61,8 +61,8 @@ export function barReveal(deps: BarRevealDeps) {
     layout = next;
     deps.place(next);
   };
-  /** Comments or a purchase sheet lies over the whole window. */
-  const covering = (): boolean => hold.comments || sheet;
+  /** An overlay of the bar's (Comments, an AI card or menu) or a purchase sheet lies over the whole window. */
+  const covering = (): boolean => hold.overlay !== null || sheet;
   const show = (): void => {
     fadeTimer = stop(fadeTimer);
     placeAt(covering() ? BarLayout.Full : BarLayout.Bar);
@@ -84,11 +84,11 @@ export function barReveal(deps: BarRevealDeps) {
   const showFor = (ms: number): void => {
     hideTimer = stop(hideTimer);
     show();
-    if (playing && !hold.held && !hold.comments) hideTimer = clock.setTimeout(hide, ms);
+    if (playing && !hold.held && hold.overlay === null) hideTimer = clock.setTimeout(hide, ms);
   };
 
   return {
-    /** A game opened, or could not load: the bar is up, and stays (Comments stays open over a failure). */
+    /** A game opened, or could not load: the bar is up, and stays (an open overlay stays open over a failure). */
     pinned(): void {
       playing = false;
       showFor(0);
@@ -105,12 +105,12 @@ export function barReveal(deps: BarRevealDeps) {
     /** What the bar's layer says holds it; letting go leaves it a moment more. */
     hold(next: PlayBarHold): void {
       const was = hold;
-      hold = { held: next.held, comments: next.comments };
-      if (hold.held || hold.comments) showFor(0);
-      else if (was.held || was.comments) showFor(BAR_LINGER_MS);
+      hold = { held: next.held, overlay: next.overlay };
+      if (hold.held || hold.overlay !== null) showFor(0);
+      else if (was.held || was.overlay !== null) showFor(BAR_LINGER_MS);
     },
-    /** Comments is open over the game. */
-    comments: (): boolean => hold.comments,
+    /** One of the bar's overlays (Comments, an AI card or menu) is open over the game. */
+    overlaid: (): boolean => hold.overlay !== null,
     /**
      * A game's purchase sheet opened or closed. Open, the layer covers the whole window and the bar
      * stays as it was (it does not pop up); closed, the layer goes back to where the bar is.
@@ -118,9 +118,9 @@ export function barReveal(deps: BarRevealDeps) {
     sheet(open: boolean): void {
       sheet = open;
       if (open) placeAt(BarLayout.Full);
-      else if (!hold.comments) placeAt(up ? BarLayout.Bar : BarLayout.Hidden);
+      else if (hold.overlay === null) placeAt(up ? BarLayout.Bar : BarLayout.Hidden);
     },
-    /** Comments or a purchase sheet covers the window: the keyboard stays with the bar's layer. */
+    /** An overlay or a purchase sheet covers the window: the keyboard stays with the bar's layer. */
     covering,
     /** The viewer closed: the layer goes at once. */
     close(): void {

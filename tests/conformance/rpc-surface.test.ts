@@ -13,6 +13,12 @@ import { HostMethod } from "../../src/shared/harness-api.ts";
 import { coreLite } from "../helpers/core-lite.ts";
 
 const API_KEYS = [
+  "ai.bench",
+  "ai.modelCheck",
+  "ai.record",
+  "ai.replay",
+  "ai.schemaCheck",
+  "ai.tapes",
   "artifact.read",
   "artifact.write",
   "assets.checkpoint",

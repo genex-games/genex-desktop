@@ -3,6 +3,7 @@
  * implementation is Electron's GamePreview; tests satisfy it with a plain object, which is the
  * proof the port carries no Electron dependency.
  */
+import type { AiLaneHint } from "../shared/game-ai-lane.ts";
 import type { PageUi, PageUiAnswer } from "./page-ui.ts";
 import type { PreviewInputAction } from "./preview-input.ts";
 import type { PixelDiff, PixelStats } from "./pixel-stats.ts";
@@ -131,12 +132,17 @@ export interface PageAttachReport {
 export interface PreviewPort {
   invalidateProfile?(reason: string): Promise<void>;
   profile?(request: import("./preview-profiler.ts").ProfileRequest): Promise<unknown>;
-  /** `root` is a playable worktree; omit it to serve the live game folder. `loopback` serves it as http://localhost:<port>/ — what a game with its own shape expects. `shim` overrides the page shim for this load (the boot budget is the one that changes per game). */
+  /**
+   * `root` is a playable worktree; omit it to serve the live game folder. `loopback` serves it as
+   * http://localhost:<port>/ — what a game with its own shape expects. `shim` overrides the page
+   * shim for this load (the boot budget is the one that changes per game); `aiLane` names the lane
+   * `genex-ai` plays on in this load (a harness replay), on the shim's tag.
+   */
   load(
     project: string,
     entry?: string,
     root?: string,
-    options?: { loopback?: boolean; shim?: Partial<ShimOptions> },
+    options?: { loopback?: boolean; shim?: Partial<ShimOptions>; aiLane?: AiLaneHint | null },
   ): Promise<string>;
   reload(): Promise<void>;
   /** Optional: the person's Stop — the page is taken off the view until `resume`. */

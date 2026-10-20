@@ -60,6 +60,24 @@ const EYE_HEIGHT = 1.6;
 const DEG = Math.PI / 180;
 /** Mouse buttons arrive in `ctx.keys` under these names — the same set a harness click produces. */
 const MOUSE_KEYS = ["Mouse1", "Mouse3", "Mouse2"];
+/**
+ * Where the game's `genex-ai` registers itself when the game starts it (`createAi`): its
+ * `status()`, copied into `state().ai`, and its `reset(seed)`, which `seed()` calls with the world's.
+ */
+const GENEX_AI_GLOBAL = "__genexAi";
+
+/** The page's genex-ai, or null for a game that started none. */
+function genexAi() {
+  const ai = globalThis[GENEX_AI_GLOBAL];
+  return ai && typeof ai.status === "function" && typeof ai.reset === "function" ? ai : null;
+}
+
+/** `state()`'s `ai` key — only for a game that started genex-ai, so every other state is unchanged. */
+function aiEntry() {
+  const ai = genexAi();
+  return ai ? { ai: ai.status() } : {};
+}
+
 /** The screen flash fades by this factor per simulation step. */
 const FLASH_DECAY = 0.86;
 /**
@@ -625,6 +643,8 @@ export function installStudio(config) {
       hud.flashAlpha = 0;
       wheel.x = 0;
       wheel.y = 0;
+      // The AI forgets every call with the world, so the same seed replays the same answers.
+      genexAi()?.reset(seed);
       config.reset?.(seed);
       rememberSpawn();
       renderAll();
@@ -677,6 +697,7 @@ export function installStudio(config) {
         camera: currentCamera,
         error: window.__studio_error ?? null,
         player: playerNow(),
+        ...aiEntry(),
         ...(config.probes ? config.probes() : {}),
         ...flowEntry(),
       };

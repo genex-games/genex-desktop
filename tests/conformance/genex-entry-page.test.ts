@@ -5,10 +5,11 @@
  * to. Studio gives every published page a head, and connects a game that brings no SDK of its own.
  */
 import assert from "node:assert/strict";
-import { readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, it } from "node:test";
-import { GENEX_EMBED_VENDOR } from "../../src/shared/genex.ts";
+import { pathToFileURL } from "node:url";
+import { GENEX_EMBED_SDK_GLOBAL, GENEX_EMBED_VENDOR } from "../../src/shared/genex.ts";
 import { connectScript, embedSdkFiles } from "../../src/plugins/genex/entry-page.ts";
 import { withConnectScript, withHead } from "../../src/shared/genex-page.ts";
 import { tmpDir } from "../helpers/tmp.ts";
@@ -83,6 +84,35 @@ describe("the connect script in a published page", () => {
     assert.match(script, /slug: "rain-circuit"/);
     assert.match(script, /served\.apiUrl \?\? "https:\/\/api\.genex\.games"/);
     assert.match(script, /served\.dashboardOrigins \?\? \["https:\/\/genex\.games"\]/);
+  });
+
+  it("connects the SDK once and hands that same copy to genex-ai, so play-time AI calls Genex as the page's player", async () => {
+    const dir = await tmpDir("studio-connect-");
+    const vendor = path.join(dir, path.dirname(GENEX_EMBED_VENDOR.Connect));
+    await mkdir(path.join(dir, path.dirname(GENEX_EMBED_VENDOR.Entry)), { recursive: true });
+    await writeFile(
+      path.join(dir, GENEX_EMBED_VENDOR.Entry),
+      "export const seen = [];\nexport function initEmbed(config) { seen.push(config); }\n",
+    );
+    const connection = {
+      slug: "rain-circuit",
+      apiUrl: "https://api.genex.games",
+      dashboardOrigins: ["https://genex.games"],
+    };
+    await mkdir(vendor, { recursive: true });
+    await writeFile(path.join(dir, GENEX_EMBED_VENDOR.Connect), connectScript(connection));
+    const page = { __GENEX__: { apiUrl: "https://api.staging.genex.games" } };
+    Reflect.set(globalThis, "window", page);
+    try {
+      await import(pathToFileURL(path.join(dir, GENEX_EMBED_VENDOR.Connect)).href);
+      const sdk = await import(pathToFileURL(path.join(dir, GENEX_EMBED_VENDOR.Entry)).href);
+      assert.equal(Reflect.get(page, GENEX_EMBED_SDK_GLOBAL), sdk, "the very module initEmbed configured");
+      assert.deepEqual(sdk.seen, [
+        { slug: "rain-circuit", apiUrl: "https://api.staging.genex.games", dashboardOrigins: ["https://genex.games"] },
+      ]);
+    } finally {
+      Reflect.deleteProperty(globalThis, "window");
+    }
   });
 
   it("refuses a project or address that is not one", () => {

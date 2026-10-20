@@ -127,10 +127,13 @@ describe("the director's tool schemas stay small", () => {
     // `wrap_up` (18,498 to 18,876, after trimming finish's user_asked): the user's ask to finish
     // had no tool, and words in the chat alone never stopped a worker. Computer use then spent 219
     // bytes (18,876 to 19,095) on playtest's goal_state, the state a blind judge plays to and the
-    // studio verifies, also deliberately. The 15,000-byte target is NOT met; what is left is the
-    // fifteen tool descriptions themselves, and cutting those is its own change.
+    // studio verifies, also deliberately. Play-time AI then spent 420 bytes (19,095 to 19,515) on
+    // the plan's `ai` (the typed word that routes a game to the AI checks and method, with no
+    // English matching) and the `ai` check kind's grammar line, deliberately too. The 15,000-byte
+    // target is NOT met; what is left is the fifteen tool descriptions themselves, and cutting
+    // those is its own change.
     const size = JSON.stringify(DIRECTOR_TOOLS).length;
-    assert.ok(size <= 19_100, `DIRECTOR_TOOLS serialises to ${size} bytes, over the ratchet`);
+    assert.ok(size <= 19_520, `DIRECTOR_TOOLS serialises to ${size} bytes, over the ratchet`);
 
     // What the worker_start checks description is meant to become: the same grammar, one line
     // per kind, with no helper enumeration a tool schema cannot afford.
@@ -185,9 +188,14 @@ describe("the pages a builder is handed", () => {
     );
   });
 
-  it("ships exactly the two skills the run code reads", () => {
-    // director.md and facet-decomposition.md are read by name; four more used to ship and were
-    // read by nothing, which is what RETIRED_SEED_PATHS now takes off an install.
-    assert.deepEqual(readdirSync(pathMod.join(seedDir, "skills")).sort(), ["director.md", "facet-decomposition.md"]);
+  it("ships exactly the three skills the run code reads", () => {
+    // director.md and facet-decomposition.md are read by name, and so is llm-games.md (the AI
+    // method a game that declares play-time AI hands its builders, loop/ai-game.ts); four more used
+    // to ship and were read by nothing, which is what RETIRED_SEED_PATHS now takes off an install.
+    assert.deepEqual(readdirSync(pathMod.join(seedDir, "skills")).sort(), [
+      "director.md",
+      "facet-decomposition.md",
+      "llm-games.md",
+    ]);
   });
 });

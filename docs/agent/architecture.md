@@ -134,15 +134,15 @@ scope: Codex's cover pre-existing files, never directories; the Claude hook matc
 - **OpenCode reads its sign-ins; 2.x's server is unsandboxed** ([details](../connections-and-context.md#openrouter-and-opencode)).
 - **An install briefly opens the npm registry to every sandboxed process.** sandbox-runtime's
   proxy filters against one process-wide allow-list, so `ProcessSandbox.run` widens it for an
-  install's length (counted, restored in `finally`). The Install packages button, `genex__package`
+  install's length (counted). The Install packages button, `genex__package`
   (an exact-pinned `GENEX_GAME_PACKAGES` entry) and a remix's script-free `installGuarded` open
   it. No build starts meanwhile; agents' commands still reach it.
 - **A remix's setup scripts run** once trusted (Run setup scripts).
 - **Builds are confined on macOS and Linux only, and for writes**: a build can copy home files
   into the output Publish uploads.
 - **A Genex CLI run opens `api.genex.games` to every sandboxed process** for its length, the
-  same way. Other processes hold no Genex token (it reaches only the CLI's preload, on stdin), so
-  they reach the API but not as the user.
+  same way, as does a [plan watcher](../play.md#answering-games-with-your-plan) job its CLI's hosts.
+  Other processes hold neither token nor sign-in, so they reach those hosts but not as the user.
 - **Windows sandbox residuals** are listed in [Windows sandbox](../windows-sandbox.md#residual-risks).
 - **A command a reply offers runs outside the sandbox.** Run starts the agent-written line with the
   user's own permissions. Only one visible line without control characters is accepted; a
@@ -746,15 +746,14 @@ install that runs scripts keeps its own cache. A failed or empty build shows the
 still fails. `showBuild` requests coalesce; worktree swaps serialize per project, loads per handle.
 
 **Served page.** [`src/main/page-serve.ts`](../../src/main/page-serve.ts) holds the pure serving
-decisions (`servedRelative`, `resolveServed`, `servedLocation`, `routeHttp`,
+decisions (`servedRelative`, `resolveServed`, `servedLocation`, `routeHttp`, `routeGame`,
 `gameRequestAllowed`, `previewNavigationAllowed`) and the only page rewrite; the input dispatch
 string is in [`src/main/page-dispatch.ts`](../../src/main/page-dispatch.ts). `resolveServed` checks
-lexically and then realpaths every request against the real root pinned at load: 404 for a missing
-or non-regular file, 403 for an escape (including a root swapped after load), 400 for a malformed
-one. The rewrite touches only the served document (`shouldRewrite`: the entry or a document/frame
-fetch, never under `vendor/`, never over 8 MB, never non-HTML), never a file on disk: charset first,
+lexically, then realpaths each request against the root pinned at load: 404 for a missing
+or non-regular file, 403 for an escape (a root swapped after load too), 400 for a malformed one. The rewrite touches only the served document (`shouldRewrite`: the entry or a document/frame
+fetch; not `vendor/`, over 8 MB or non-HTML), never a file on disk: charset first,
 the classic shim script, the page's own import map with only `three` and `three/webgpu` pointed at
-the studio hook (or the studio's own map), the module hook, then the page. It is idempotent; a
+the studio hook (or the studio's map), the module hook, then the page. It is idempotent; a
 blocking meta CSP gets one console line, not an edited policy. Bundled games serve as
 `http://localhost:<port>/`, intercepted inside the preview's own session.
 
@@ -762,9 +761,10 @@ blocking meta CSP gets one console line, not an edited policy. Bundled games ser
 `blob:`, `devtools:`, registered loopback ports and https GET/HEAD to the exact public library and
 font CDN hosts in [`src/substrate/preview-network.ts`](../../src/substrate/preview-network.ts);
 `#serveLoopback` answers 403 instead of fetching; navigation stays on `game://` or the loopback
-origin; WebRTC is limited to proxied UDP (`confinePreviewContents`). Blocked origins are noted once
-per load; `validateAt` and the Open Game sheet name hosts a page loads code from. There is no
-per-game network opt-in yet.
+origin; WebRTC is limited to proxied UDP (`confinePreviewContents`). Blocked origins are noted once a load; `validateAt` and the Open Game sheet name hosts a page loads code from. No per-game
+network opt-in exists. The one way back, off by default, is the Create Live route
+([`create-route.ts`](../../src/main/game-ai/create-route.ts)): POSTs to `/__genex/ai/v1/*` from the
+game's own frames reach play-time AI on undriven on-screen Live; elsewhere, `ai_off`.
 
 **Game view.** Every game view (Live, facet ports, selftest, e2e fixtures) comes from
 `GamePreview.create()`: its own session partition (`game-preview`, `game-preview-facet-N`),
@@ -772,11 +772,10 @@ per-game network opt-in yet.
 The session grants pointer lock (plus fullscreen on screen) and denies every other permission,
 microphone and camera included. The view turns off `GAME_DISABLED_BLINK_FEATURES`
 (`OnDeviceWebSpeechAvailable`, `InstallOnDeviceSpeechRecognition`): on-device speech recognition
-asks for a Mojo binder only Chrome registers, and Electron kills the renderer for the bad message
-(reason 123). With both off those members exist in no frame; a plain `start()` ends in
-`not-allowed` and speech synthesis is untouched. The guard is engine-level: a page-world stub misses
-about:blank, srcdoc and blob: documents. `page-shim.test.ts` only proves the list is applied; the
-[speech selftest](verification.md#acceptance-evidence) proves it holds. Any other renderer death
+asks for a Mojo binder only Chrome registers, so Electron kills the renderer (reason 123). With
+both off no frame has them; `start()` ends in `not-allowed`; synthesis is untouched. The guard is
+engine-level (a page-world stub misses about:blank, srcdoc and blob:). `page-shim.test.ts` proves
+the list is applied, the [speech selftest](verification.md#acceptance-evidence) that it holds. Any other renderer death
 sets `status().crashed` and pushes one `render process gone: <reason>` console line, source `studio:window-gone` (a cross-site
 frame's death reports nothing); nothing reloads the page, a death during `load()` rejects it, and
 un-raced `evaluate()` calls never settle.
@@ -785,8 +784,8 @@ un-raced `evaluate()` calls never settle.
 `shim.ts` owns the clock (`step`, `pause`, `seed`), counts `steppedFrames` and yields a microtask
 per stepped frame; `window.__studio` is a merging facade that keeps whatever the game defines. The
 evidence globals (`__studioClock`, `__studioDraw`, `__studioCapture`, `__studioGl`, `__studioHook`)
-are accessors with no-op setters. `hook.ts` reports renderers and reads the scene and camera off
-frames the game draws; a bundled game adds `installStudio({ renderer, player })`. `capture.ts`
+are accessors with no-op setters. `hook.ts` reports renderers and reads scene and camera off
+drawn frames; a bundled game adds `installStudio({ renderer, player })`. `capture.ts`
 reads the canvas at the end of a drawn frame and composites over the page background (WebGPU reads
 depend on the recorded `alphaMode`); otherwise the compositor's `capturePage()` answers. Every shot
 records provenance (`stats.source`, `composited`, `drawCalls`, `provenance`, `surface`). Draw calls
@@ -794,29 +793,29 @@ are counted at the graphics API (`counters.ts`); WebGL and WebGPU are equals. `g
 `src/studio.js` is the contract every template game installs; never remove a method.
 
 **Readiness and validation.** [`src/substrate/preview-ready.ts`](../../src/substrate/preview-ready.ts)
-waits for a fact (`READY_PROBE`, `via: shim | contract | none`) and never throws. The order is
-ready → gesture → setup → start, with one boot budget (`bootBudget`, 1000–60000 ms, default 15000,
+waits for a fact (`READY_PROBE`, `via: shim | contract | none`), never throwing. Order:
+ready → gesture → setup → start, one boot budget (`bootBudget`, 1000–60000 ms, default 15000,
 `studio.json` `bootMs`). A spent budget is a note (`timedOut`), not a failure; `phase: "failed"` is
 only a page's own boot failure. `validateAt` answers `loaded`, `attached` or `missing`;
 `game.attached` asks the live page what the studio attached to. `preview.ready`, `preview.gesture`,
 `preview.pageUi` and `game.attached` are host RPC calls, not agent tools.
 
-**Worker windows and computer use.** Every building delegation and every looking read-only session
-gets one pooled preview window
+**Worker windows and computer use.** Each building delegation and read-only looking session gets a
+pooled preview window
 ([`src/main/core/session-port.ts`](../../src/main/core/session-port.ts)). `capture` reloads and
 photographs; `computer` is the studio's computer use: one tool, a session referee and
 swappable targets ([computer use](../computer-use.md)). Headless ports render offscreen; idle ones pause
 (`paint-while-used.ts`). Native input is sent and synthetic copies withheld
 per event type once a trusted event is seen; a mousemove always sends its synthetic copy with the
 real delta, and `game-template/src/studio.js` de-duplicates. Two pool windows are never a worker's
-(`workerWindows(max)` = max − 2, at least 1). A lease the harness takes carries its boot as `owner`
+(`workerWindows(max)` = max − 2, at least 1). A harness's lease carries its boot as `owner`
 and is freed when that harness dies (`PreviewPool.releaseOwnedBy`). When no window is free, judge
 and playtest answer *no window free*; unskippable passes look through the stand-in, never Live. `preview.capacity` reports free windows and memory. Concurrent first `state` and
 `console` requests share one navigation. Each action emits
 `preview.frame` and `preview.screen`.
 
 **Native preview layering.** Modal dialogs hide the WebContentsView; popovers hide it only while
-their rectangle intersects the Live slot; identical bounds do not repeat IPC.
+their rectangle intersects the Live slot; identical bounds skip IPC.
 
 ## Plugins, MCP and Genex
 
@@ -1002,9 +1001,9 @@ managed local runtime; core has no Blender tool of its own.
   the director calls `assets.checkpoint` before merging.
 - **Export.** [`src/substrate/game-export.ts`](../../src/substrate/game-export.ts) stages fresh public
   files and replaces only an app-managed destination; hidden files, env files, private-key names,
-  dependencies and symlinks are excluded or refused; parsed imports and references prune the
-  vendor folder. Static analysis cannot classify computed URLs, so browser export checks remain
-  required.
+  dependencies and symlinks are excluded or refused; parsed references prune the vendor folder. AI
+  vendor keys refuse it; vendor hosts warn (`export-ai-scan.ts`). Computed URLs need browser
+  checks.
 
 ## Persistence and the event log
 

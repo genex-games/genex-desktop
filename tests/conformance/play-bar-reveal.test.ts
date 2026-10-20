@@ -6,8 +6,10 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { BAR_FADE_MS, BAR_LINGER_MS, BAR_SHOWN_MS, BarLayout, barReveal } from "../../src/main/play/bar-reveal.ts";
+import { type PlayBarHold, PlayBarOverlay } from "../../src/shared/play-bar.ts";
 
-const NO_HOLD = { held: false, comments: false };
+const NO_HOLD: PlayBarHold = { held: false, overlay: null };
+const COMMENTS: PlayBarHold = { held: true, overlay: PlayBarOverlay.Comments };
 
 /** A reveal over a clock the test moves, recording what it shows and where it lays the layer. */
 function reveal() {
@@ -86,7 +88,7 @@ describe("Play bar's reveal under a purchase sheet", () => {
 
   it("lets no hold from the bar's page collapse the layer while the sheet is open", () => {
     const { reveal: bar, log, advance } = faded();
-    bar.hold({ held: true, comments: true });
+    bar.hold(COMMENTS);
     bar.sheet(true);
     log.length = 0;
     bar.hold(NO_HOLD);
@@ -113,7 +115,7 @@ describe("Play bar's reveal under a purchase sheet", () => {
     assert.deepEqual(up.log, [`place ${BarLayout.Bar}`], "the bar is up: its strip");
 
     const comments = faded();
-    comments.reveal.hold({ held: true, comments: true });
+    comments.reveal.hold(COMMENTS);
     comments.reveal.sheet(true);
     comments.log.length = 0;
     comments.reveal.sheet(false);
@@ -134,7 +136,7 @@ describe("Play bar's reveal under a purchase sheet", () => {
   it("says the window is covered while Comments or the sheet is open", () => {
     const { reveal: bar } = faded();
     assert.equal(bar.covering(), false);
-    bar.hold({ held: true, comments: true });
+    bar.hold(COMMENTS);
     assert.equal(bar.covering(), true);
     bar.hold(NO_HOLD);
     assert.equal(bar.covering(), false);

@@ -21,6 +21,7 @@ import {
   PURCHASE_TTL_MS,
 } from "../../src/main/play/viewer-purchase.ts";
 import { PLAY_BAR_HEIGHT, PlayControl } from "../../src/shared/play.ts";
+import { PlayBarOverlay } from "../../src/shared/play-bar.ts";
 import {
   PURCHASE_ARM_MS,
   PurchaseAnswer,
@@ -811,8 +812,8 @@ describe("A game's purchase sheet: leaving it", () => {
     answer(made, PurchaseAnswer.Shown);
     made.log.length = 0;
     made.viewer.loaded();
-    made.viewer.hold({ held: true, comments: true });
-    made.viewer.hold({ held: false, comments: false });
+    made.viewer.hold({ held: true, overlay: PlayBarOverlay.Comments });
+    made.viewer.hold({ held: false, overlay: null });
     made.viewer.control(PlayControl.Resume);
     assert.ok(
       !made.log.includes("game.focus"),

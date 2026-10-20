@@ -120,7 +120,7 @@ export function registerPluginsIpc(handle: IpcHandle, deps: PluginsIpcDeps): voi
   handle("studio:plugins.choose-file", async (p) => chooseFile(p?.id, p?.request));
   // Studio's own Publish dialog: its Publish press is the consent to the files it lists, so nothing asks again.
   handle("studio:plugins.genex-publish-review", async (p) => publishReview(core, p?.project));
-  handle("studio:plugins.genex-publish", async (p) => publishFromDialog(core, p?.project, p?.review, p?.title));
+  handle("studio:plugins.genex-publish", async (p) => publishFromDialog(core, p?.project, p?.review, p?.title, p?.ai));
   handle("studio:plugins.install", async (p) => installPlugin(ctx, p.id));
   handle("studio:plugins.index", async (p) => requireMarketplace(ctx).index(p?.refresh === true, core.plugins.list()));
   handle("studio:plugins.install-github", async (p) => installFromGithub(ctx, p.spec));

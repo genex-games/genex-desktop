@@ -17,16 +17,21 @@ import { describe, it } from "node:test";
 import type { PluginContext } from "../../src/plugin-sdk/index.d.ts";
 import { createGodotBackend, GodotTool } from "../../src/plugins/godot/backend.ts";
 import { systemEditorEnv } from "../../src/plugins/godot/editor.ts";
-import { liveEditor } from "../../src/plugins/godot/editor-bridge.ts";
+import { AI_RELAY_BEAT, BRIDGE_FOLDER, godotAiChannel, liveEditor } from "../../src/plugins/godot/editor-bridge.ts";
 import { hasWebTemplate, templateVersion } from "../../src/plugins/godot/web-export.ts";
 import { findGodots, systemGodotEnv, usableGodot } from "../../src/plugins/godot/find-godot.ts";
 import { confinedRunner } from "../../src/plugins/godot/godot-run.ts";
 import { launchGameBridge } from "../../src/main/core/game-bridge-target.ts";
+import { editorAiRelay, runEditorAiRelay } from "../../src/main/game-ai/bridge-editor.ts";
+import { AiBridgeOp } from "../../src/shared/game-ai.ts";
+import { AiContext } from "../../src/shared/game-ai-route.ts";
 import { HookEvent } from "../../src/shared/plugin-hooks.ts";
+import { PlayOp } from "../../src/shared/play-protocol.ts";
 import { CaptureSurface } from "../../src/shared/preview-contract.ts";
 import { PluginNativeServices } from "../../src/substrate/plugins/native.ts";
 import { spawnNativeLongLived } from "../../src/substrate/plugins/native-process.ts";
 import { readProjectShape } from "../../src/substrate/project-shape.ts";
+import { fixtureAiService, fixtureNativeHost } from "../helpers/ai-fixture-service.ts";
 import { ADDON, SCRIPTS, TEMPLATES } from "../helpers/godot-fake-engine.ts";
 import { tmpDir } from "../helpers/tmp.ts";
 
@@ -38,6 +43,8 @@ const run = promisify(execFile);
 /** How often, and how many times, the test looks for the editor's first heartbeat. */
 const EDITOR_START_POLL_MS = 500;
 const EDITOR_START_TRIES = 120;
+/** How often the stand-in for the editor plugin beats, as the plugin does. */
+const EDITOR_BEAT_MS = 1000;
 
 type Answer = Record<string, unknown>;
 
@@ -70,6 +77,60 @@ async function liveGame() {
   const call = async (name: string, args = {}, more = {}) =>
     (await backend.tool?.(name, args, context(more))) as Answer;
   return { game, project: path.join(game, "godot"), call };
+}
+
+/** What the AI probe prints, before each result it drains. */
+const PROBE_MARK = "genex-ai-probe ";
+/** A probe autoload that asks once, on its fifth physics tick, and prints each result it drains, short. */
+const AI_PROBE = [
+  "extends Node",
+  "",
+  "var _tick := 0",
+  "",
+  "func _physics_process(_delta: float) -> void:",
+  "\t_tick += 1",
+  "\tfor result in GenexAI.drain():",
+  `\t\tprinterr("${PROBE_MARK}" + JSON.stringify([result.site, result.ok, result.value]))`,
+  "\tif _tick == 5:",
+  '\t\tvar schema := {"type": "object", "properties": {"move": {"type": "string", "enum": ["left", "right"]}}, "required": ["move"], "additionalProperties": false}',
+  '\t\tGenexAI.ask("probe.move", "Pick the way the probe runs.", schema)',
+  "",
+].join("\n");
+
+/** The game's Godot project with GenexAI and the probe as autoloads after the Genex addon's own. */
+async function useAiProbe(project: string): Promise<void> {
+  await writeFile(path.join(project, "ai_probe.gd"), AI_PROBE);
+  const file = path.join(project, "project.godot");
+  const settings = await readFile(file, "utf8");
+  const play = /^GenexPlay=.*$/m;
+  assert.match(settings, play);
+  const autoloads = 'GenexAI="*res://addons/genex/genex_ai.gd"\nAiProbe="*res://ai_probe.gd"';
+  await writeFile(
+    file,
+    settings.replace(play, (line) => `${line}\n${autoloads}`),
+  );
+}
+
+/** Starts the plugin's Godot runtime for `game` the way Genex does: confined, with the GPU. */
+async function godotRuntime(game: string) {
+  const manifest = JSON.parse(await readFile("src/plugins/godot/plugin.json", "utf8"));
+  const found = await new PluginNativeServices(os.tmpdir(), []).detect(manifest.nativeRuntimes[0], os.tmpdir());
+  assert.equal(found.state, "ready", found.detail);
+  const engine = (await readProjectShape(game)).play?.engine;
+  assert.ok(engine && found.path);
+  const scratch = await realpath(await tmpDir("studio-godot-play-"));
+  return async () => ({
+    child: await spawnNativeLongLived({
+      binary: found.path ?? "",
+      args: engine.args,
+      cwd: game,
+      scratch,
+      reads: [game],
+      writes: [game],
+      denyRead: [],
+      gpu: true,
+    }),
+  });
 }
 
 describe("the Godot plugin on this Mac's Godot", { skip: !LIVE, timeout: LIVE_TIMEOUT_MS }, () => {
@@ -138,6 +199,119 @@ describe("the Godot plugin on this Mac's Godot", { skip: !LIVE, timeout: LIVE_TI
       assert.notDeepEqual(after.jpeg, before.jpeg, "the jump shows");
     } finally {
       await launched.stop();
+    }
+  });
+
+  it("answers a game's play-time AI through the Play Protocol: by its rid, before the step that drains it", async () => {
+    const { game, project, call } = await liveGame();
+    await call(GodotTool.NewGame, { template: "2d", name: "Live Probe" });
+    await useAiProbe(project);
+    const fixture = fixtureNativeHost("live", { replaying: true });
+    const launched = await launchGameBridge({
+      sandbox: { spawnLongLived: () => Promise.reject(new Error("the engine runs instead")) },
+      command: "",
+      cwd: game,
+      spawn: await godotRuntime(game),
+      target: { ai: fixture.host },
+    });
+    try {
+      assert.equal(launched.target.hello?.capabilities.ai, true, "a game with GenexAI declares ai");
+      await launched.target.clock?.pause();
+      await launched.target.clock?.step?.(1000);
+      await launched.target.clock?.step?.(100);
+      const asked = fixture.asked.filter(({ message }) => message.op === AiBridgeOp.Call);
+      assert.equal(asked.length, 1, "the probe asked once");
+      assert.equal(asked[0]?.caller.channel, `native:${launched.child.pid}`);
+      const state = (await launched.client.call(PlayOp.State, {})) as {
+        volatile: { ai: { asked: string[]; answered: string[] } };
+      };
+      assert.deepEqual(state.volatile.ai.answered, state.volatile.ai.asked, "every line answered by its rid");
+      const drained = launched.client
+        .stderrTail()
+        .filter((line) => line.startsWith(PROBE_MARK))
+        .map((line) => JSON.parse(line.slice(PROBE_MARK.length)));
+      assert.deepEqual(drained, [["probe.move", true, { move: "left" }]]);
+    } finally {
+      await launched.stop();
+    }
+  });
+
+  it("relays a game's play-time AI while it plays in the person's editor, through .godot/genex", async () => {
+    const { project, call } = await liveGame();
+    await call(GodotTool.NewGame, { template: "2d", name: "Live Probe" });
+    await useAiProbe(project);
+    const install = usableGodot(await findGodots(systemGodotEnv()));
+    assert.ok(install);
+    const folder = path.join(project, BRIDGE_FOLDER);
+    await mkdir(folder, { recursive: true });
+    // The editor plugin's heartbeat while a scene plays, as the person's editor writes it.
+    const beat = () => writeFile(path.join(folder, "editor.json"), JSON.stringify({ at: Date.now(), playing: true }));
+    await beat();
+    const beating = setInterval(() => void beat(), EDITOR_BEAT_MS);
+    const fixture = fixtureAiService();
+    const relay = editorAiRelay(godotAiChannel(project, systemEditorEnv()), {
+      service: fixture.service,
+      game: { name: "live", title: "Live Probe" },
+      place: { cwd: project, channel: "editor:godot:live" },
+      agentPlaying: () => false,
+      createRouteEnabled: () => true,
+    });
+    const stop = new AbortController();
+    const relaying = runEditorAiRelay(relay, { signal: stop.signal });
+    await relay.tick(stop.signal);
+    // The game as the editor plays it: Godot's own binary on the project, no Play Protocol.
+    const game = spawn(install.binary, ["--headless", "--path", project], { stdio: ["ignore", "ignore", "pipe"] });
+    const exited = once(game, "exit");
+    let stderr = "";
+    game.stderr.on("data", (chunk: Buffer) => {
+      stderr += chunk.toString("utf8");
+    });
+    try {
+      for (let tries = 0; tries < EDITOR_START_TRIES && !stderr.includes(PROBE_MARK); tries++)
+        await sleep(EDITOR_START_POLL_MS);
+      const drained = stderr
+        .split("\n")
+        .filter((line) => line.startsWith(PROBE_MARK))
+        .map((line) => JSON.parse(line.slice(PROBE_MARK.length)));
+      assert.deepEqual(drained, [["probe.move", true, { move: "left" }]]);
+      assert.equal(fixture.asked[0]?.caller.context, AiContext.CreateLive);
+      assert.deepEqual(
+        (await readdir(folder)).filter((name) => name.startsWith("ai-")),
+        [AI_RELAY_BEAT],
+        "every line and answer was taken",
+      );
+    } finally {
+      clearInterval(beating);
+      stop.abort();
+      await relaying;
+      game.kill();
+      await exited;
+    }
+  });
+
+  it("answers a game's play-time AI ai_off at once where nothing relays it, so it plays its fallbacks", async () => {
+    const { project, call } = await liveGame();
+    await call(GodotTool.NewGame, { template: "2d", name: "Live Probe" });
+    await useAiProbe(project);
+    const install = usableGodot(await findGodots(systemGodotEnv()));
+    assert.ok(install);
+    const game = spawn(install.binary, ["--headless", "--path", project], { stdio: ["ignore", "ignore", "pipe"] });
+    const exited = once(game, "exit");
+    let stderr = "";
+    game.stderr.on("data", (chunk: Buffer) => {
+      stderr += chunk.toString("utf8");
+    });
+    try {
+      for (let tries = 0; tries < EDITOR_START_TRIES && !stderr.includes(PROBE_MARK); tries++)
+        await sleep(EDITOR_START_POLL_MS);
+      const drained = stderr
+        .split("\n")
+        .filter((line) => line.startsWith(PROBE_MARK))
+        .map((line) => JSON.parse(line.slice(PROBE_MARK.length)));
+      assert.deepEqual(drained, [["probe.move", false, null]]);
+    } finally {
+      game.kill();
+      await exited;
     }
   });
 

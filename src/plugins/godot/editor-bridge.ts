@@ -5,12 +5,17 @@
  * Genex leaves an ask as `ask-<id>.json`, and the editor answers it as `answer-<id>.json`. Every file
  * appears whole (written beside, then renamed); nothing is written through a link. No editor, or an
  * editor whose heartbeat stopped, is asked nothing.
+ *
+ * The same folder carries play-time AI while a scene plays in that editor (`godotAiChannel`): the
+ * game's `genex_ai.gd` leaves each `ai` line as `ai-in-<rid>.json`, Studio takes them out, beats
+ * `ai-relay.json` so the game knows it is relayed, and hands the answers back as `ai-out-<order>.json`.
  */
 import { randomBytes } from "node:crypto";
-import { lstat, readFile, rename, rm } from "node:fs/promises";
+import { lstat, readdir, readFile, rename, rm } from "node:fs/promises";
 import path from "node:path";
 import { SECOND_MS } from "../../shared/duration.ts";
-import { writeFileNoFollow } from "../../substrate/fsx.ts";
+import { PLAY_AI_MAX_LINE_CHARS, type PlayAiOutgoing } from "../../shared/play-protocol.ts";
+import { readRegularFile, writeFileNoFollow } from "../../substrate/fsx.ts";
 
 /** The bridge's folder in a project. */
 export const BRIDGE_FOLDER = ".godot/genex";
@@ -26,6 +31,19 @@ export const ANSWER_WAIT_MS = 15 * SECOND_MS;
 const ANSWER_POLL_MS = 100;
 /** An ask's id: as many random bytes, in hex. */
 const ASK_ID_BYTES = 8;
+/** A line the game queued for Studio: `ai-in-<rid>.json`, the rid as Play Protocol bounds it. */
+const AI_IN = /^ai-in-([A-Za-z0-9_-]{8,100})\.json$/;
+/** An answer Studio hands the game: `ai-out-<order>.json`, the order sorting as they were given. */
+const AI_OUT_PREFIX = "ai-out-";
+/** Studio's beat while it relays a playing game's AI, which the game reads before it queues a line. */
+export const AI_RELAY_BEAT = "ai-relay.json";
+/** The most lines one pull takes out; the rest wait for the next. */
+export const AI_PULL_MAX_FILES = 8;
+/** The largest line file read: a Play Protocol line's characters, each up to three UTF-8 bytes. */
+const AI_LINE_MAX_BYTES = 3 * PLAY_AI_MAX_LINE_CHARS;
+/** The digits of an answer's order: its clock reading and its count, zero-padded so names sort. */
+const AI_OUT_STAMP_DIGITS = 15;
+const AI_OUT_COUNT_DIGITS = 6;
 
 /** What Genex asks the editor: save everything open, or reload what changed on disk. */
 export const EditorOp = { Save: "save", Reload: "reload" } as const;
@@ -110,3 +128,67 @@ export async function askEditor(
 
 /** How many scripts the editor said it still holds unsaved. */
 export const unsavedScriptsOf = (answer: Record<string, unknown>): number => count(answer.unsavedScripts);
+
+/** A line file's content as JSON, or undefined: not a plain file of the folder, over the cap or not JSON. */
+async function readLineFile(file: string): Promise<unknown> {
+  const bytes = await readRegularFile(file, AI_LINE_MAX_BYTES).catch(() => null);
+  if (!bytes) return undefined;
+  try {
+    return JSON.parse(bytes.toString("utf8"));
+  } catch {
+    return undefined;
+  }
+}
+
+/** Takes one line file out of the folder: a plain file or a link (the link alone), never a folder. */
+async function takeOut(file: string): Promise<void> {
+  const info = await lstat(file).catch(() => null);
+  if (info?.isFile() || info?.isSymbolicLink()) await rm(file, { force: true });
+}
+
+/** The lines queued in the folder, oldest first, at most {@link AI_PULL_MAX_FILES}, each taken out. */
+async function takeLines(folder: string): Promise<unknown[]> {
+  const names = (await readdir(folder)).filter((name) => AI_IN.test(name)).sort();
+  const lines: unknown[] = [];
+  for (const name of names.slice(0, AI_PULL_MAX_FILES)) {
+    const file = path.join(folder, name);
+    const info = await lstat(file).catch(() => null);
+    if (!info?.isFile() && !info?.isSymbolicLink()) continue;
+    const line = info.isFile() ? await readLineFile(file) : undefined;
+    await takeOut(file);
+    // A line is the game's only when it names the rid its file does.
+    if (isRecord(line) && !Array.isArray(line) && line.rid === AI_IN.exec(name)?.[1]) lines.push(line);
+  }
+  return lines;
+}
+
+/**
+ * The play-time AI channel of the editor that has the Godot project at `project` open: Studio's
+ * relay (`main/game-ai/bridge-editor.ts`) pulls the lines the playing game queued and pushes the
+ * answers back. No play while no scene plays in an editor with a fresh heartbeat.
+ */
+export function godotAiChannel(project: string, clock: BridgeClock) {
+  let count = 0;
+  const outName = () => {
+    count += 1;
+    const stamp = String(Math.max(0, Math.floor(clock.now()))).padStart(AI_OUT_STAMP_DIGITS, "0");
+    return `${AI_OUT_PREFIX}${stamp}-${String(count).padStart(AI_OUT_COUNT_DIGITS, "0")}.json`;
+  };
+  return {
+    /** The lines the playing game queued since the last pull, taken out; null while no scene plays. */
+    async pull(_signal: AbortSignal): Promise<unknown[] | null> {
+      const folder = await bridgeFolder(project);
+      const editor = folder ? await liveEditor(project, clock) : null;
+      if (!folder || !editor?.playing) return null;
+      await writeWhole(folder, AI_RELAY_BEAT, JSON.stringify({ at: clock.now() }));
+      return takeLines(folder);
+    },
+    /** Hands the playing game its answers, each a whole file; false when the folder is not there to take them. */
+    async push(items: readonly PlayAiOutgoing[], _signal: AbortSignal): Promise<boolean> {
+      const folder = await bridgeFolder(project);
+      if (!folder) return false;
+      for (const item of items) await writeWhole(folder, outName(), JSON.stringify(item));
+      return true;
+    },
+  };
+}
