@@ -6,6 +6,7 @@
 //! - [`rng`]: PCG32, the only randomness a simulation may use;
 //! - [`input`]: key names, the `input` verb's parser and the per-tick merge of real and injected
 //!   input (keys, look, wheel, pointer, pads, committed text);
+//! - [`pad_family`]: a gamepad's face-label family from its VID/PID or web id (display-only);
 //! - [`session`]: the seed/start/pause/step/frame state machine, `state()` and its checksum, the
 //!   frame timings and the audio level;
 //! - [`digest`]: FNV-1a 64;
@@ -30,6 +31,7 @@ pub mod glb_guard;
 pub mod input;
 pub mod json;
 pub mod map;
+pub mod pad_family;
 pub mod paths;
 pub mod protocol;
 pub mod rng;

@@ -6,6 +6,7 @@
 //! "ArrowUp"), mouse buttons "Mouse1".."Mouse3", and gamepads the Gamepad API's standard mapping.
 
 use crate::json::Value;
+use crate::pad_family::{PadFamily, family_from_web_id};
 
 /// Gamepads the runtime tracks.
 pub const MAX_PADS: usize = 4;
@@ -155,6 +156,8 @@ pub struct PadState {
     pub buttons: [f32; PAD_BUTTONS],
     /// Axis values by standard-mapping index.
     pub axes: [f32; PAD_AXES],
+    /// The face-label family; display-only, never part of a reading.
+    pub family: PadFamily,
 }
 
 /// Every pad slot.
@@ -341,6 +344,11 @@ impl Pads {
             (Some(p), Some(a)) => self.now[p].axes[a],
             _ => 0.0,
         }
+    }
+
+    /// The face-label family of `pad`, Generic when it is not connected.
+    pub fn family(&self, pad: i32) -> PadFamily {
+        slot(pad, MAX_PADS).filter(|&at| self.now[at].connected).map_or(PadFamily::Generic, |at| self.now[at].family)
     }
 
     /// Every slot's state this tick.
@@ -574,11 +582,23 @@ fn mouse_button(button: &Value) -> &'static str {
     MOUSE_BUTTONS.iter().find(|(dom, _)| dom.as_bytes() == name).map_or(MOUSE_BUTTONS[0].1, |(_, key)| key)
 }
 
-/// A pad from `{index, buttons, axes, connected?}`, or none when the index is not 0..3.
+/// A pad's family: a string `family` names it (an unknown one is Generic); without one, the web
+/// shell's `id` (the browser's `Gamepad.id`) names it; anything else is Generic.
+fn family_from(value: &Value) -> PadFamily {
+    match (&value["family"], &value["id"]) {
+        (Value::String(name), _) => std::str::from_utf8(name).ok().and_then(PadFamily::from_wire).unwrap_or_default(),
+        (_, Value::String(id)) => std::str::from_utf8(id).map_or(PadFamily::Generic, family_from_web_id),
+        _ => PadFamily::Generic,
+    }
+}
+
+/// A pad from `{index, buttons, axes, connected?, family?, id?}`, or none when the index is not
+/// 0..3; [`family_from`] reads its family.
 fn pad_from(value: &Value) -> (Option<usize>, PadState) {
     let index = value["index"].as_f64_or(-1.0);
     let valid = index.is_finite() && index >= 0.0 && index < MAX_PADS as f64 && index.floor() == index;
-    let mut pad = PadState { connected: value["connected"].as_bool_or(true), ..PadState::default() };
+    let family = family_from(value);
+    let mut pad = PadState { connected: value["connected"].as_bool_or(true), family, ..PadState::default() };
     for (slot, button) in pad.buttons.iter_mut().zip(value["buttons"].items()) {
         let pressed = match button {
             Value::Bool(flag) => f32::from(u8::from(*flag)),
@@ -697,11 +717,21 @@ fn add_touch(injection: &mut Injection, action: &Value) {
     }
 }
 
+/// The family of a merged slot: a connected injected pad's named family, else the connected real
+/// pad's, so an injection without a family never hides the pad on the desk.
+fn merged_family(real: &PadState, injected: &PadState) -> PadFamily {
+    if injected.connected && injected.family != PadFamily::Generic {
+        return injected.family;
+    }
+    if real.connected { real.family } else { PadFamily::Generic }
+}
+
 /// Real and injected pads as one: buttons at the larger value, axes at the larger magnitude.
 fn merge_pads(real: &PadStates, injected: &PadStates) -> PadStates {
     let mut merged = PadStates::default();
     for ((out, a), b) in merged.iter_mut().zip(real).zip(injected) {
         out.connected = a.connected || b.connected;
+        out.family = merged_family(a, b);
         for ((button, x), y) in out.buttons.iter_mut().zip(&a.buttons).zip(&b.buttons) {
             // std::max(a, b): `a < b ? b : a`.
             *button = if x < y { *y } else { *x };

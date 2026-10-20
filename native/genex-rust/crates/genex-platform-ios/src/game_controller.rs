@@ -8,9 +8,30 @@
 //! panic. Controllers are told apart by their object's address, stable while connected.
 //!
 //! GameController's y axes point up; the standard's point down, so the stick rows flip them.
+//!
+//! A controller's family comes from its `productCategory` (iOS 13+), by [`GC_FAMILIES`]: the
+//! category names GameController gives the pads it knows (the names SDL's MFi driver tells apart).
+//! Any other category, or none, is Generic.
 
 use crate::mobile::gamepad::{PhoneAxis, PhoneButton};
+use genex_core::pad_family::PadFamily;
 use std::ffi::CStr;
+
+/// `GCController.productCategory` values with a family; matched exactly.
+pub const GC_FAMILIES: [(&str, PadFamily); 7] = [
+    ("DualSense", PadFamily::PlayStation),
+    ("DualShock 4", PadFamily::PlayStation),
+    ("Xbox One", PadFamily::Xbox),
+    ("Switch Pro Controller", PadFamily::Nintendo),
+    ("Nintendo Switch Joy-Con (L)", PadFamily::Nintendo),
+    ("Nintendo Switch Joy-Con (R)", PadFamily::Nintendo),
+    ("Nintendo Switch Joy-Con (L/R)", PadFamily::Nintendo),
+];
+
+/// The family a `productCategory` names.
+pub fn family_of_category(category: &str) -> PadFamily {
+    GC_FAMILIES.iter().find(|(known, _)| *known == category).map_or(PadFamily::Generic, |(_, family)| *family)
+}
 
 /// `GCExtendedGamepad` buttons, by property.
 pub const GC_BUTTONS: [(&CStr, PhoneButton); 13] = [
@@ -73,8 +94,9 @@ pub fn diff(before: &[Option<f32>; GC_ELEMENTS], now: &[Option<f32>; GC_ELEMENTS
 
 #[cfg(target_os = "ios")]
 mod ios {
-    use super::{GC_BUTTONS, GC_DPAD, GC_ELEMENTS, GC_STICKS, diff};
+    use super::{GC_BUTTONS, GC_DPAD, GC_ELEMENTS, GC_STICKS, diff, family_of_category};
     use crate::mobile::gamepad::PadChange;
+    use genex_core::pad_family::PadFamily;
     use objc2::msg_send;
     use objc2::runtime::{AnyClass, AnyObject, MessageReceiver, Sel};
     use std::ffi::CStr;
@@ -123,8 +145,22 @@ mod ios {
         values
     }
 
-    /// The extended gamepads connected now, with their controller's address.
-    fn connected() -> Vec<(u64, [Option<f32>; GC_ELEMENTS])> {
+    /// The controller's family from its `productCategory` (an NSString, iOS 13+); Generic when
+    /// the property is missing, nil or not UTF-8.
+    fn family(controller: &AnyObject) -> PadFamily {
+        let Some(category) = child(controller, c"productCategory") else { return PadFamily::Generic };
+        // SAFETY: -[NSString UTF8String] answers a NUL-terminated C string owned by the string
+        // (or null), alive while the string is, which outlives this read.
+        let text: *const std::ffi::c_char = unsafe { msg_send![category, UTF8String] };
+        if text.is_null() {
+            return PadFamily::Generic;
+        }
+        // SAFETY: non-null and NUL-terminated, as above.
+        unsafe { CStr::from_ptr(text) }.to_str().map_or(PadFamily::Generic, family_of_category)
+    }
+
+    /// The extended gamepads connected now, with their controller's address and family.
+    fn connected() -> Vec<(u64, PadFamily, [Option<f32>; GC_ELEMENTS])> {
         let Some(class) = AnyClass::get(c"GCController") else { return Vec::new() };
         // SAFETY: +[GCController controllers] answers an NSArray of the connected controllers.
         let list: *mut AnyObject = unsafe { msg_send![class, controllers] };
@@ -139,7 +175,7 @@ mod ios {
                 // SAFETY: the array holds the controller for this poll.
                 let controller = unsafe { controller.as_ref() }?;
                 let pad = child(controller, c"extendedGamepad")?;
-                Some((std::ptr::from_ref(controller) as u64, read(pad)))
+                Some((std::ptr::from_ref(controller) as u64, family(controller), read(pad)))
             })
             .collect()
     }
@@ -148,19 +184,20 @@ mod ios {
     pub fn poll(changes: &mut Vec<(u64, PadChange)>) {
         let now = connected();
         let Ok(mut seen) = SEEN.lock() else { return };
-        for (id, _) in seen.iter().filter(|(id, _)| now.iter().all(|(current, _)| current != id)) {
+        for (id, _) in seen.iter().filter(|(id, _)| now.iter().all(|(current, _, _)| current != id)) {
             changes.push((*id, PadChange::Disconnected));
         }
         let mut found = Vec::new();
-        for (id, values) in &now {
+        for (id, family, values) in &now {
             let before = seen.iter().find(|(known, _)| known == id).map(|(_, values)| *values);
             if before.is_none() {
                 changes.push((*id, PadChange::Connected));
+                changes.push((*id, PadChange::Family(*family)));
             }
             diff(&before.unwrap_or([None; GC_ELEMENTS]), values, &mut found);
             changes.extend(found.drain(..).map(|change| (*id, change)));
         }
-        *seen = now;
+        *seen = now.into_iter().map(|(id, _, values)| (id, values)).collect();
     }
 }
 
@@ -206,5 +243,33 @@ mod tests {
         let mut changes = Vec::new();
         poll(&mut changes);
         assert!(changes.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod family_tests {
+    use super::*;
+    use genex_core::pad_family::PadFamily;
+
+    #[test]
+    fn product_categories_name_their_family() {
+        let rows = [
+            ("DualSense", PadFamily::PlayStation),
+            ("DualShock 4", PadFamily::PlayStation),
+            ("Xbox One", PadFamily::Xbox),
+            ("Switch Pro Controller", PadFamily::Nintendo),
+            ("Nintendo Switch Joy-Con (L)", PadFamily::Nintendo),
+            ("Nintendo Switch Joy-Con (R)", PadFamily::Nintendo),
+            ("Nintendo Switch Joy-Con (L/R)", PadFamily::Nintendo),
+            ("MFi", PadFamily::Generic),
+            ("Siri Remote (2nd Generation)", PadFamily::Generic),
+            ("", PadFamily::Generic),
+            ("dualsense", PadFamily::Generic),
+            ("DualSense\0", PadFamily::Generic),
+        ];
+        for (category, family) in rows {
+            assert_eq!(family_of_category(category), family, "{category:?}");
+        }
+        assert_eq!(family_of_category(&"DualSense".repeat(1000)), PadFamily::Generic);
     }
 }

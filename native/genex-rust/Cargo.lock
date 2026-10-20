@@ -1121,8 +1121,10 @@ name = "genex-input"
 version = "0.1.0"
 dependencies = [
  "egui",
+ "genex-core",
  "libm",
  "postcard",
+ "serde",
  "serde_json",
 ]
 

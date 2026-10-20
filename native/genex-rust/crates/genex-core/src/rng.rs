@@ -44,6 +44,18 @@ impl Pcg32 {
         self.next_u32();
     }
 
+    /// The stream's position as `[state, increment]`, which a save stores so a load continues
+    /// the stream exactly ([`Pcg32::from_parts`]).
+    pub const fn parts(&self) -> [u64; 2] {
+        [self.state, self.increment]
+    }
+
+    /// The stream at a position [`Pcg32::parts`] answered. The increment is made odd, as PCG's
+    /// always is, so an even one from a hostile save still gives a full-period stream.
+    pub const fn from_parts(parts: [u64; 2]) -> Self {
+        Pcg32 { state: parts[0], increment: parts[1] | 1 }
+    }
+
     /// The next 32 random bits.
     pub fn next_u32(&mut self) -> u32 {
         let old = self.state;
@@ -126,5 +138,30 @@ impl GameRng for Pcg32 {
 
     fn range_f32(&mut self, lo: f32, hi: f32) -> f32 {
         Pcg32::range_f32(self, lo, hi)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Pcg32;
+
+    #[test]
+    fn parts_restore_the_stream_exactly_where_it_was() {
+        let mut rng = Pcg32::new(7, 3);
+        for _ in 0..5 {
+            rng.next_u32();
+        }
+        let mut restored = Pcg32::from_parts(rng.parts());
+        assert_eq!(restored, rng);
+        let ahead: Vec<u32> = (0..8).map(|_| rng.next_u32()).collect();
+        let again: Vec<u32> = (0..8).map(|_| restored.next_u32()).collect();
+        assert_eq!(again, ahead);
+    }
+
+    #[test]
+    fn an_even_increment_from_a_hostile_save_is_made_odd() {
+        let rng = Pcg32::from_parts([12, 40]);
+        assert_eq!(rng.parts(), [12, 41], "PCG's increment is always odd");
+        assert_eq!(Pcg32::seeded(1).parts()[1] % 2, 1);
     }
 }

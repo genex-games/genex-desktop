@@ -17,6 +17,10 @@ default = []
 panel = ["dep:egui"]
 
 [dependencies]
+# genex-core for the merged tick input the actions read and its FNV-1a digest; serde (visitor only)
+# so a bindings file with a duplicate key or deep nesting is refused instead of read last-wins.
+genex-core = { workspace = true }
+serde = { workspace = true }
 # serde_json for bindings files and the runtime key, postcard for the journal's records, libm for
 # the stick math; all already locked (no new vendored crate).
 serde_json = { workspace = true }

@@ -3,13 +3,17 @@
 //! committed text. A port of the C++ runtime's `sampleInput` (`platform.cpp`); the merger, not
 //! the shell, turns `held` changes into edges. Mouse1 also drives one emulated touch
 //! ([`crate::touch`]), and the windowed loop fills `pads` from gilrs on exports only.
+//!
+//! The sampler also learns each key's layout label (what the key types on the person's layout,
+//! from winit's `logical_key`), for display beside bindings only: labels never enter a
+//! [`FrameSample`], so they never reach the tick.
 
 use crate::letterbox::Letterbox;
 use crate::touch::{MouseTouch, SampledTouch};
 use genex_core::input::PadStates;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use winit::event::{ElementState, MouseButton, MouseScrollDelta};
-use winit::keyboard::KeyCode;
+use winit::keyboard::{Key, KeyCode};
 
 /// One wheel notch, in pixels (the C++ runtime's `WHEEL_PIXELS_PER_NOTCH`).
 pub const WHEEL_PIXELS_PER_NOTCH: f32 = 100.0;
@@ -17,6 +21,9 @@ pub const WHEEL_PIXELS_PER_NOTCH: f32 = 100.0;
 pub const MAX_TEXT_CHARS: usize = 256;
 /// Where the pointer is before the cursor ever moved: the frame's centre.
 const POINTER_CENTRE: [f32; 2] = [0.5, 0.5];
+/// The longest layout label kept for a key, in bytes (a key types one character, or a short
+/// cluster).
+const KEY_LABEL_BYTES_MAX: usize = 16;
 
 /// winit's physical keys the protocol names, with their DOM `code` (the facade's `Key` table).
 const KEYS: [(KeyCode, &str); 80] = [
@@ -104,6 +111,15 @@ impl Default for FrameSample {
     }
 }
 
+/// The label a key's `logical_key` gives it: a short printable character, or none (named and dead
+/// keys, empty, control or overlong text).
+fn layout_label(logical: &Key) -> Option<&str> {
+    let Key::Character(text) = logical else { return None };
+    let text = text.as_str();
+    let printable = !text.is_empty() && text.len() <= KEY_LABEL_BYTES_MAX && !text.chars().any(char::is_control);
+    printable.then_some(text)
+}
+
 /// Collects winit's input events between frames.
 #[derive(Clone, Debug)]
 pub struct InputSampler {
@@ -117,6 +133,8 @@ pub struct InputSampler {
     text: String,
     touch: MouseTouch,
     pointer_lock: bool,
+    /// Layout labels by DOM `code`; display-only, kept across frames.
+    labels: BTreeMap<&'static str, String>,
 }
 
 impl Default for InputSampler {
@@ -132,6 +150,7 @@ impl Default for InputSampler {
             text: String::new(),
             touch: MouseTouch::default(),
             pointer_lock: false,
+            labels: BTreeMap::new(),
         }
     }
 }
@@ -142,6 +161,19 @@ impl InputSampler {
         if let Some(name) = key_name(code) {
             self.button(name, state);
         }
+    }
+
+    /// Learn what a physical key types on the current layout (AZERTY's `KeyW` types "z") from its
+    /// `logical_key`; a key the protocol does not name, or a named or dead key, learns nothing.
+    pub fn learn_label(&mut self, code: KeyCode, logical: &Key) {
+        if let (Some(name), Some(label)) = (key_name(code), layout_label(logical)) {
+            self.labels.insert(name, label.to_owned());
+        }
+    }
+
+    /// The layout label of the key with DOM `code`, once it has been pressed. Display-only.
+    pub fn key_label(&self, code: &str) -> Option<&str> {
+        self.labels.get(code).map(String::as_str)
     }
 
     /// A mouse button changed; buttons past the third are ignored. Mouse1 also drives the
@@ -243,5 +275,54 @@ impl InputSampler {
         self.look = [0.0, 0.0];
         self.wheel = [0.0, 0.0];
         sample
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use winit::keyboard::{Key, NamedKey, SmolStr};
+
+    fn typed(text: &str) -> Key {
+        Key::Character(SmolStr::new(text))
+    }
+
+    #[test]
+    fn a_key_takes_the_label_its_layout_types() {
+        let mut sampler = InputSampler::default();
+        sampler.learn_label(KeyCode::KeyW, &typed("z"));
+        sampler.learn_label(KeyCode::KeyQ, &typed("a"));
+        assert_eq!(sampler.key_label("KeyW"), Some("z"));
+        assert_eq!(sampler.key_label("KeyQ"), Some("a"));
+        assert_eq!(sampler.key_label("KeyE"), None, "a key never pressed has no label yet");
+        sampler.learn_label(KeyCode::KeyW, &typed("w"));
+        assert_eq!(sampler.key_label("KeyW"), Some("w"), "a layout switch relabels the key");
+    }
+
+    #[test]
+    fn named_dead_unnamed_and_hostile_keys_learn_nothing() {
+        let mut sampler = InputSampler::default();
+        sampler.learn_label(KeyCode::Enter, &Key::Named(NamedKey::Enter));
+        sampler.learn_label(KeyCode::BracketLeft, &Key::Dead(Some('^')));
+        sampler.learn_label(KeyCode::F13, &typed("x"));
+        sampler.learn_label(KeyCode::KeyA, &typed(""));
+        sampler.learn_label(KeyCode::KeyB, &typed("\u{7}"));
+        sampler.learn_label(KeyCode::KeyC, &typed(&"y".repeat(64)));
+        for code in ["Enter", "BracketLeft", "F13", "KeyA", "KeyB", "KeyC"] {
+            assert_eq!(sampler.key_label(code), None, "{code}");
+        }
+    }
+
+    #[test]
+    fn labels_never_enter_the_frame_sample() {
+        let mut labelled = InputSampler::default();
+        let mut plain = InputSampler::default();
+        for sampler in [&mut labelled, &mut plain] {
+            sampler.key(KeyCode::KeyW, ElementState::Pressed);
+        }
+        labelled.learn_label(KeyCode::KeyW, &typed("z"));
+        let letterbox = Letterbox::fit([640.0, 360.0], [640, 360]);
+        assert_eq!(labelled.take(letterbox), plain.take(letterbox));
+        assert_eq!(labelled.key_label("KeyW"), Some("z"), "taking a frame keeps the labels");
     }
 }
