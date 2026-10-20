@@ -161,3 +161,13 @@ through the folders the others keep in `%TEMP%`: tests remove theirs with `remov
 `WindowsSandboxSession` over fake ancestor grants.
 A dispatch with `files` runs only those files after the sandbox setup
 (`gh workflow run windows.yml --ref <branch> -f files="tests/a.test.ts"`). `.gitattributes` keeps every checkout LF.
+
+Each deny passes down through what is under it (the whole profile when srt-win stamps `.ssh`'s
+parent), and a hosted runner's profile is nearly empty. So the Windows
+jobs of `release.yml` and `package.yml` (PRs into `main`), after their other packaged checks, seed
+the runner's profile with 300,000 small files shaped like a developer's (`PROFILE_FILES` in
+`scripts/ci-heavy-profile.mjs`: package caches, `node_modules` trees, editor and browser data, the
+denied folders) and run `tests/e2e/run-sandbox-start-packaged.mjs`. It launches the package with
+`--studio-sandbox-start-smoke`, prints every `[sandbox]` step time and fails when the start fails or
+the first sandboxed command ends more than 60 s after launch. macOS has no such check: its sandbox compiles path
+rules without visiting the profile, and started in about 40 ms on an empty home and on that 300,000-file one.
