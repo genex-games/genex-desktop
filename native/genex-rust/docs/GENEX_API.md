@@ -115,8 +115,9 @@ so a draw that needs the time reads a tick the world keeps from `on_update` (`ct
   (a probe named like a `state()` key), `duplicate-camera-name`, `duplicate-eye`,
   `duplicate-demo`, `invalid-name`, `duplicate-facet-state` (one state type registered twice),
   `invalid-world-size`, `duplicate-streaming` (a second `game.streaming`) and `streaming-invalid`
-  (a cell size outside 8..=1024 metres, a radius or anchor count outside its range, or a
-  registration past the simulated cells' memory cap). `game.gpu_pass` panics `gpu-pass-invalid` as it is
+  (a cell size outside 8..=1024 metres, a radius or anchor count outside its range, a
+  registration past the simulated cells' memory cap, or, with `game.navigation`, a stream cell
+  that is not a whole number of nav tiles). `game.gpu_pass` panics `gpu-pass-invalid` as it is
   registered: an empty, overlong or repeated pass name, or one pass over the cap.
 
 ## Verbs

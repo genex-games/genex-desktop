@@ -74,7 +74,10 @@ its genex release). New games default by
 [harness runtime](../harness-runtime.md)). After staging, the lane's import step
 (`importStagedAssets` in [`rust-assets.ts`](../../src/main/rust-assets.ts), jobs in
 `layout.assetJobs`) plans every staged `assets/**` file for the destination and runs each
-importable one as its own sandboxed job, at most `IMPORT_JOBS_MAX` (4) at once. The outputs
+importable one as its own sandboxed job, at most `IMPORT_JOBS_MAX` (4) at once. A job whose
+importer was killed by a signal runs once more (the importer is a pure function of its job), and a
+refused file's row names why in `detail`: the importer's own line, its exit or timeout with the end
+of its stderr, or the sandbox's error. The outputs
 replace their sources in the stage and never in the game folder: an OBJ, STL or PLY becomes a GLB,
 a Draco, meshopt or quantized GLB is written back plain, every GLB has its identical vertices welded
 and its duplicate or unreferenced accessors and materials dropped

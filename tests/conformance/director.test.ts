@@ -3592,6 +3592,10 @@ describe("a director's run through the real core and harness", () => {
         "blender__model",
         "blender__retrieve",
         "blender__status",
+        // Flipped: the bundled CC0 Library (`cc0`) offers a lead its free models, textures and
+        // skies, as the Blender plugin offers its tools.
+        "cc0__fetch",
+        "cc0__search",
         "computer",
         "finish",
         "genex__asset",

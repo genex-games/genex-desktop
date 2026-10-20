@@ -3,7 +3,9 @@
 A world bigger than memory is cut into square cells on the ground. The game names where the
 action is (anchors: the player, a vehicle); the cells around them are simulated, and every cell
 that enters is built by the game's own builders. The same seed and input give the same cells,
-things and checksum on every destination and with any number of worker threads.
+things and checksum on every destination and with any number of worker threads. The example
+names its own use line beside the prelude: `use genex::{CellBuild, Streaming};` (`StreamCommit`,
+`CellColliders` and `StreamColliders` come from `genex` too).
 
 ```rust
 #[derive(Clone)]
@@ -65,9 +67,9 @@ game.on_update(|sim, _| {
 
 A build that is late holds the frame, never the commit: the tick waits for it, so the
 simulation is the same however fast the machine is. `state().volatile.__stream` counts `stalls`
-and `heldMs`. Live keeps drawing and shows the loading look after 250 ms. One `step(ms)` waits at
-most 6 s; past that it answers with fewer `ticks` than asked, nothing of the held tick ran, and
-`state().volatile.__stream.timeout` is `stream-hold-timeout` until the commit runs.
+and `heldMs`. One `step(ms)` waits at most 6 s; past that it answers with fewer `ticks` than
+asked, nothing of the held tick ran, and `state().volatile.__stream.timeout` is
+`stream-hold-timeout` until the commit runs.
 
 `state().__stream` is `{active, cells}`: the active cell count and a digest of the active cells.
 It is display only and never in the checksum.

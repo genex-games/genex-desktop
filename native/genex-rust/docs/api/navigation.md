@@ -2,7 +2,10 @@
 
 `game.navigation(NavConfig::walker(radius, height))` registers the nav. Every seed rebuilds
 `sim.nav` as an empty nav for that walker (the runtime owns it, as it owns physics). Bake in
-`on_reset` and call `sim.nav.update(ctx.dt)` once per tick in `on_update`.
+`on_reset` and call `sim.nav.update(ctx.dt)` once per tick in `on_update`. The nav types live in
+`genex::nav`, so the example names its own use line beside the prelude:
+`use genex::nav::{NavArea, NavConfig, NavInput, NavMesh};` (`NavObstacle`, `NavMeshSource`,
+`NavBudget` and the caps are there too).
 
 ```rust
 game.navigation(NavConfig::walker(0.4, 1.8).with_tile(16.0));
@@ -25,8 +28,7 @@ game.on_update(|sim, ctx| sim.nav.update(ctx.dt));
   thread; `NavMesh::bake_tile(&input, &config, cell)` bakes one. Baking the same input again in
   one process is free (a memo of at most 32 MiB). `mesh.to_bytes()` writes `.navmesh` bytes.
   `NavMesh::from_bytes_for(&input, &config, bytes)` uses them when they were baked from this
-  input and config; otherwise it bakes again and `mesh.source()` is `NavMeshSource::Rebaked`
-  (`nav-bake-stale`).
+  input and config; otherwise it bakes again and `mesh.source()` is `NavMeshSource::Rebaked`.
 - **Tiles.** Tiles sit on a grid anchored at world (0, 0), keyed by `CellId`
   (`config.tile_of(point)`). `nav.add_tile(&tile)` adds one, `nav.remove_tile(cell)` removes one,
   and `nav.tiles()` and `nav.digest()` read them.

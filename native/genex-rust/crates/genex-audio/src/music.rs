@@ -542,8 +542,11 @@ mod tests {
     use super::*;
     use crate::decode_sound;
 
+    /// Read at run time: `cargo test` sets the variable, and an ejected fork's sources may not
+    /// bake a build path in with `env!` (the stage refuses `env-not-fixed`).
     fn fixture() -> Vec<u8> {
-        std::fs::read(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/music-10s.ogg")).unwrap()
+        let dir = std::env::var_os("CARGO_MANIFEST_DIR").expect("cargo test sets CARGO_MANIFEST_DIR");
+        std::fs::read(std::path::Path::new(&dir).join("tests/fixtures/music-10s.ogg")).unwrap()
     }
 
     fn feed(feeder: &mut Feeder, frames: usize) -> Vec<Frame> {

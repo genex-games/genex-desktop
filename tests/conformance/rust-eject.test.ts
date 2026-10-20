@@ -735,6 +735,12 @@ describe("an ejected game builds its fork", { skip: SKIP_ON_WINDOWS }, () => {
       stageRustGame({ source: game, stage, target: BuildTarget.Mac, pins, engineVendor: vendor, ...recorded });
     assert.equal((await stageIt()).ok, true, 'the facade\'s option_env!("GENEX_GAME_NAME") stages');
     const core = path.join(game, "engine", "genex-core", "src", "lib.rs");
+    // genex-net's native relay bakes in the game's slug, the API and a relay override.
+    for (const name of ["GENEX_GAME_SLUG", "GENEX_API_URL", "GENEX_RELAY_URL"]) {
+      await writeFile(core, `pub const RELAY: Option<&str> = option_env!(${JSON.stringify(name)});\n`);
+      const relay = await stageIt();
+      assert.equal(relay.ok ? null : relay.code, null, `the engine's option_env!(${JSON.stringify(name)}) stages`);
+    }
     await writeFile(core, 'pub const HOME: Option<&str> = option_env!("HOME");\n');
     const home = await stageIt();
     assert.equal(home.ok ? null : home.code, RustStageCode.EnvNotFixed);
@@ -749,6 +755,12 @@ describe("an ejected game builds its fork", { skip: SKIP_ON_WINDOWS }, () => {
       RustStageCode.EnvNotFixed,
       "the game's own code reads cargo's variables only",
     );
+    await writeFile(
+      path.join(game, "src", "game.rs"),
+      (await readFile(path.join(game, "src", "game.rs"), "utf8")).replace("GENEX_GAME_NAME", "GENEX_GAME_SLUG"),
+    );
+    const slug = await stageIt();
+    assert.equal(slug.ok ? null : slug.code, RustStageCode.EnvNotFixed, "the relay binding is the engine's alone");
   });
 
   it("refuses an ejected game whose fork or vendored crate is missing", async () => {
@@ -767,6 +779,33 @@ describe("an ejected game builds its fork", { skip: SKIP_ON_WINDOWS }, () => {
     await rm(path.join(linked.game, "engine", "genex-core"), { recursive: true });
     await symlink(path.join(linked.vendor, `genex-core-${RELEASE}`), path.join(linked.game, "engine", "genex-core"));
     assert.equal(code(await stageOf(linked.game, linked.vendor)), RustStageCode.Symlink, "a forked crate as a link");
+  });
+
+  it("stages the workspace's own forked crates: no engine source the next release ships is refused", async () => {
+    const { game, vendor } = await ejected();
+    for (const name of RUST_ENGINE_CRATES) {
+      const fork = path.join(game, "engine", name);
+      const crate = path.join(WORKSPACE, "crates", name);
+      await rm(fork, { recursive: true, force: true });
+      // A crate's tests/ folder is never staged; leaving it out keeps the copy small.
+      await cp(crate, fork, { recursive: true, filter: (from) => from !== path.join(crate, "tests") });
+      if (!existsSync(path.join(vendor, `${name}-${RELEASE}`)))
+        await vendoredCrate(vendor, name, RELEASE, { "Cargo.toml": crateToml(name, RELEASE), "src/lib.rs": "\n" });
+    }
+    const stage = path.join(await realpath(await tmpDir("rust-eject-stage-")), "stage");
+    const pins = { genexVersion: RELEASE, baseLock: null };
+    const staged = await stageRustGame({
+      source: game,
+      stage,
+      target: BuildTarget.Mac,
+      pins,
+      engineVendor: vendor,
+      ...recorded,
+    });
+    assert.equal(staged.ok ? null : `${staged.code}: ${staged.detail}`, null, "every forked crate's sources stage");
+    assert.ok(staged.ok);
+    for (const name of RUST_ENGINE_CRATES)
+      assert.ok(staged.files.includes(`engine/${name}/src/lib.rs`), `engine/${name} is staged`);
   });
 
   it("links a fork only where the person ejected: a row and engine/ an agent wrote, or a row it removed or changed, is engine-unrecorded", async () => {
