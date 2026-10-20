@@ -64,6 +64,7 @@ import { DeviceClass } from "../shared/render-quality.ts";
 import {
   GameBoxProblem,
   NATIVE_CROSS_EXECUTABLES,
+  NATIVE_STUDIO_AI_ON,
   NativeEnv,
   NativeError,
   NativeRefusal,
@@ -313,6 +314,8 @@ export interface LinuxBoxRequest {
   audio: LinuxBoxAudio;
   /** The session's environment: only `WAYLAND_DISPLAY`, `DISPLAY` and (for audio) `XDG_RUNTIME_DIR` are read. */
   session: Readonly<Record<string, string | undefined>>;
+  /** The studio answers the game's play-time AI: the box sets `GENEX_STUDIO_AI=1`. Absent: no. */
+  ai?: boolean;
 }
 
 /** The sockets windowed play binds, checked. */
@@ -363,6 +366,8 @@ export interface LinuxBoxPlan {
   layout: LinuxBoxSystemLayout;
   /** The seccomp program for this mode, written to fd 4. */
   seccomp: Uint8Array;
+  /** The studio answers the game's play-time AI. */
+  ai: boolean;
 }
 
 type Refused = { ok: false; refusal: LinuxBoxRefusal; detail: string };
@@ -712,6 +717,7 @@ export async function planLinuxGameBox(
     display,
     layout,
     seccomp: linuxGameSeccompProgram({ unixSockets: display !== null }),
+    ai: request.ai === true,
   };
   return { ok: true, plan };
 }
@@ -746,6 +752,7 @@ function boxEnv(plan: LinuxBoxPlan): [string, string][] {
     [LinuxBoxEnv.VulkanLayersDisable, NO_IMPLICIT_LAYERS],
     ...stackEnv(plan),
   ];
+  if (plan.ai) env.push([NativeEnv.StudioAi, NATIVE_STUDIO_AI_ON]);
   if (!plan.display) return env;
   env.push(
     [LinuxBoxEnv.RuntimeDir, LINUX_BOX_RUNTIME],

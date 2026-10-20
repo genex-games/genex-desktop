@@ -16,12 +16,19 @@
 //!   and captures carry it.
 //! - A custom GPU pass `broken` whose rebuild refuses: the run lists it in
 //!   `state().volatile.customPasses` with `gpu-pass-invalid` and draws on without it.
+//! - Play-time AI: `KeyI` pressed says hello at site `protocol.greet` (fallback "Hello from the
+//!   fallback."); the drained answer or fallback and its failure code are the `said` probe.
 
+use genex::ai::{AiOptions, AiTicket, Say};
 use genex::gpu::{GpuCode, GpuError, GpuPass, GpuPassCtx, PassSetup, PassStage};
 use genex::prelude::*;
 
 /// The save file the `KeyS` press writes.
 const BEST: &str = "progress/best.txt";
+/// The say's call site, prompt and fallback.
+const GREET_SITE: &str = "protocol.greet";
+const GREET_PROMPT: &str = "Greet the player in one short sentence.";
+const GREET_FALLBACK: &str = "Hello from the fallback.";
 
 #[derive(Default)]
 struct World {
@@ -31,6 +38,10 @@ struct World {
     touch: Option<(u32, String, f32, f32)>,
     taps: u32,
     shop: bool,
+    /// The say waiting for its answer.
+    greeting: Option<AiTicket<String>>,
+    /// What the say ended with: the text (the answer or the fallback) and the failure's code.
+    said: Option<(Option<String>, Option<&'static str>)>,
 }
 
 /// A custom pass whose rebuild refuses, as a broken pass in a generated game would.
@@ -63,6 +74,15 @@ fn main() {
         if ctx.keys.pressed(Key::KeyH) {
             sim.world.shop = !sim.world.shop;
         }
+        if ctx.keys.pressed(Key::KeyI) {
+            let say = Say::new(GREET_SITE, GREET_PROMPT).fallback(GREET_FALLBACK.to_owned());
+            sim.world.greeting = Some(ctx.ai.say(say));
+        }
+        for result in ctx.ai.drain() {
+            let Some(ticket) = sim.world.greeting.as_ref().filter(|ticket| ticket.is(&result)) else { continue };
+            sim.world.said = Some((ticket.value(&result), result.code().map(|code| code.wire())));
+            sim.world.greeting = None;
+        }
         if ctx.touches.tapped() {
             sim.world.taps += 1;
         }
@@ -76,6 +96,7 @@ fn main() {
             let _ = ui.button("Shop");
         }
     });
+    game.ai(AiOptions::default());
     game.gpu_pass("broken", PassStage::Post, Broken);
     game.camera(|_| Camera::look_at(vec3(0.0, 0.0, 10.0), Vec3::ZERO));
     game.named_camera("top", |_| Camera::look_at(vec3(0.0, 12.0, 0.1), Vec3::ZERO));
@@ -90,6 +111,10 @@ fn main() {
         None => Value::Null,
     });
     game.probe("taps", |sim| json!(sim.world.taps));
+    game.probe("said", |sim| match &sim.world.said {
+        Some((text, code)) => json!({ "text": text, "code": code }),
+        None => Value::Null,
+    });
     game.probe_volatile("ticksSeen", |sim| json!(sim.world.x));
     game.demo("walk", |d| {
         d.inject(Input::key_down(Key::KeyD));

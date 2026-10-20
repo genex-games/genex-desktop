@@ -23,6 +23,7 @@ import { GameStack } from "../../src/shared/game-project.ts";
 import {
   GameBoxProblem,
   NATIVE_GAME_MEMORY_MAX_BYTES,
+  NATIVE_STUDIO_AI_ON,
   NativeEnv,
   NativeError,
   NativeRefusal,
@@ -310,6 +311,16 @@ describe("a Windows host's game box", () => {
     assert.equal(pipeOf(second), launcherPipeName(OTHER_WIN_RUN_ID));
     assert.notEqual(pipeOf(first), pipeOf(second), "each run has its own pipe");
     assert.equal(Object.hasOwn(first?.options.env ?? {}, NativeEnv.StudioPipe), false);
+  });
+
+  it("hands the launcher GENEX_STUDIO_AI=1 only for a run whose play-time AI the studio answers", async () => {
+    const { sandbox, spawned } = await windowsBox();
+    await sandbox.spawnGame({ ...winRun(), ai: true });
+    await sandbox.spawnGame(winRun(OTHER_WIN_RUN_ID));
+    const [answered, plain] = spawned.calls;
+    const env: Record<string, string | undefined> = { ...(answered?.options.env ?? {}) };
+    assert.equal(env[NativeEnv.StudioAi], NATIVE_STUDIO_AI_ON);
+    assert.equal(Object.hasOwn(plain?.options.env ?? {}, NativeEnv.StudioAi), false);
   });
 
   it("asks the launcher for the person's desktop and the host's memory cap", async () => {
@@ -803,6 +814,20 @@ describe("a Linux host's game box: the start", () => {
     );
     assert.ok(planned.ok, planned.ok ? "" : planned.detail);
     assert.deepEqual(spawned.calls[0]?.args, linuxGameBoxArgs(planned.plan));
+  });
+
+  it("sets GENEX_STUDIO_AI=1 in the box only for a run whose play-time AI the studio answers", async () => {
+    const { root, run } = await linuxRuns();
+    const { sandbox, spawned } = await linuxBox(root, { context: "/x" });
+    await sandbox.spawnGame({ ...run, mode: NativeRunMode.Headless, stack: GameStack.RustWgpu, ai: true });
+    const args = spawned.calls[0]?.args ?? [];
+    const at = args.findIndex((arg, index) => arg === "--setenv" && args[index + 1] === NativeEnv.StudioAi);
+    assert.ok(at >= 0, "the variable is set");
+    assert.equal(args[at + 2], NATIVE_STUDIO_AI_ON);
+    const other = await linuxRuns();
+    const plain = await linuxBox(other.root, { context: "/x" });
+    await plain.sandbox.spawnGame({ ...other.run, mode: NativeRunMode.Headless, stack: GameStack.RustWgpu });
+    assert.equal((plain.spawned.calls[0]?.args ?? []).includes(NativeEnv.StudioAi), false);
   });
 
   it("starts a run folder once: a second start is already-started, and spawns nothing more", async () => {

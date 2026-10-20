@@ -1203,6 +1203,11 @@ describe("the C++ · raylib contract (shared/game-project.ts, game-targets.ts, n
       // the lane's naga step); the harness reads a parsed receipt only.
       "NATIVE_RECEIPT_MAX_BYTES",
       "NATIVE_WGSL_MAX_BYTES",
+      // Play-time AI on the studio connection is the host's: its port reads a game's `ai` lines and
+      // its launchers set the variable; the harness never answers a game's AI itself.
+      "NATIVE_AI_EVENT",
+      "NATIVE_AI_MAX_LINE_CHARS",
+      "NATIVE_STUDIO_AI_ON",
     ]);
     const shared = Object.entries(native).filter(
       ([name, value]) => /^(NATIVE|MAC)_/.test(name) && typeof value !== "object" && !hostOnly.has(name),

@@ -61,6 +61,7 @@ import { UiEvent, uiEvent } from "../../shared/ui-events.ts";
 import { openNoFollow, readRegularFile } from "../../substrate/fsx.ts";
 import { removeRunDir } from "../../substrate/native-bundle.ts";
 import {
+  type NativeAiLinkStart,
   type NativeGamePort,
   NativeExitError,
   NativeOpRefusedError,
@@ -209,6 +210,20 @@ export interface NativeRunsOptions {
   frames?: NativeFramesHost | null;
   /** The host's platform, which decides how a stop ends a game (default: this one's). */
   platform?: NodeJS.Platform;
+  /**
+   * Play-time AI (genex-ai): what answers a run's `ai` lines, asked once per start; null when
+   * nothing answers this run. A run with an answer is started with `GENEX_STUDIO_AI=1` and its port
+   * starts the link at a `ready` that declares `capabilities.ai`. Absent: no run's AI is taken.
+   */
+  playAi?(run: NativeAiRun): NativeAiLinkStart | null;
+}
+
+/** The run `playAi` is asked about: whose game, which run, how it is shown and for which destination. */
+export interface NativeAiRun {
+  project: string;
+  runId: string;
+  mode: NativeRunMode;
+  target: BuildTarget;
 }
 
 /** A live run: its status and its port. */
@@ -801,10 +816,15 @@ export class NativeRuns implements NativeRunsHost {
       const { mode } = entry.request;
       const stack = prepared.build?.stack;
       const built = stack && isCompiledStack(stack) ? { stack } : {};
-      const child = await this.#options.spawn({ runId, runDir, exe, bundle, state, mode, nonce, ...frames, ...built });
+      const { project, target } = entry.request;
+      const ai = this.#options.playAi?.({ project, runId, mode, target }) ?? null;
+      const answered = ai ? { ai: true } : {};
+      const launch = { runId, runDir, exe, bundle, state, mode, nonce, ...frames, ...built, ...answered };
+      const child = await this.#options.spawn(launch);
       await this.#adopt(entry, child);
       entry.controller.signal.throwIfAborted();
-      const run = await this.#connect(entry, child, { nonce, stateDir: state, runId, build: prepared.build ?? null });
+      const io = { nonce, stateDir: state, runId, build: prepared.build ?? null, ...(ai ? { ai } : {}) };
+      const run = await this.#connect(entry, child, io);
       await this.#firstRing(entry, run.port);
       return run;
     } catch (error) {
@@ -855,7 +875,7 @@ export class NativeRuns implements NativeRunsHost {
   async #connect(
     entry: RunEntry,
     child: GameChild,
-    io: { nonce: string; stateDir: string; runId: string; build: BuildIdentity | null },
+    io: { nonce: string; stateDir: string; runId: string; build: BuildIdentity | null; ai?: NativeAiLinkStart },
   ): Promise<NativeRun> {
     const { timers } = this.#options;
     const { mode, project } = entry.request;

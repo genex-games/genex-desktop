@@ -124,8 +124,10 @@ native envelope around the studio's ops:
 - The studio takes the game's AI only by starting it with `GENEX_STUDIO_AI=1`
   (`genex_studio::AI_ENV`). Without it the game writes no `ai` line (a host that reads an
   unknown event as a violation never sees one), answers `ai.reply` / `ai.delta` `unknown-op`, and
-  every call fails `ai_off` at once so the game plays its fallbacks. A host sets the variable
-  only once its port reads `ai` events.
+  every call fails `ai_off` at once so the game plays its fallbacks. The desktop host sets the
+  variable only for a run whose `NativeRuns` `playAi` names an AI link; that run's
+  `NativeGamePort` hands each line to the link and writes its answers. Studio passes no
+  `playAi` yet, so today every Rust game it starts plays its fallbacks.
 - Lines are id-less events, `{"event":"ai","rid":"rsai-…","op":…,"body":…}`, byte for byte the
   TypeScript's `JSON.stringify` of the same message (`tests/fixtures/play-ai-wire-v1.json`). Each
   goes out before the reply of the request whose ticks printed it, and after each live frame.

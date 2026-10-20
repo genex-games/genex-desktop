@@ -40,7 +40,12 @@ import {
 import { UiEvent } from "../../src/shared/ui-events.ts";
 import { NativeRuns, type NativeRunsOptions, type NativeStartRequest } from "../../src/main/core/native-runs.ts";
 import type { NativeFramesHost } from "../../src/main/native-frames.ts";
-import { NativeExitError, NativeGamePort, fnv1a64Hex } from "../../src/substrate/native-game-port.ts";
+import {
+  type NativeAiLink,
+  NativeExitError,
+  NativeGamePort,
+  fnv1a64Hex,
+} from "../../src/substrate/native-game-port.ts";
 import type { GameChild, GameExit, GameSpawnRequest, RunRequest } from "../../src/substrate/spawn.ts";
 import { tmpDir } from "../helpers/tmp.ts";
 
@@ -1394,5 +1399,44 @@ describe("a GPU that hangs, a device that comes back, and where a capture came f
     assert.equal(shot.provenance.build, null);
     assert.equal(shot.provenance.runId, run.status.runId);
     await r.runs.stop(run.status.runId);
+  });
+});
+
+describe("play-time AI: the runs the studio answers", () => {
+  it("a run playAi answers is spawned with ai and its port starts the link; a run it does not answer gets neither", async () => {
+    const asked: unknown[] = [];
+    const requests: GameSpawnRequest[] = [];
+    const linked: string[] = [];
+    const link: NativeAiLink = { hear: () => {}, boundary: async () => {}, flush: async () => {}, close: () => {} };
+    const behaviour: Behaviour = { ready: { capabilities: { ai: true } } };
+    let pid = 7000;
+    const r = await registry(
+      {
+        playAi: (run) => {
+          asked.push(run);
+          if (run.project !== "oracle") return null;
+          return () => {
+            linked.push(run.runId);
+            return link;
+          };
+        },
+        spawn: async (request) => {
+          requests.push(request);
+          pid += 1;
+          return scriptedGame(request, pid, behaviour).child;
+        },
+      },
+      behaviour,
+    );
+    const answered = await started(r, request("oracle", NativeRunMode.Headless));
+    const plain = await started(r, request("pong", NativeRunMode.Headless));
+    assert.deepEqual(asked, [
+      { project: "oracle", runId: answered.status.runId, mode: NativeRunMode.Headless, target: BuildTarget.Mac },
+      { project: "pong", runId: plain.status.runId, mode: NativeRunMode.Headless, target: BuildTarget.Mac },
+    ]);
+    assert.equal(requests[0]?.ai, true);
+    assert.equal(Object.hasOwn(requests[1] ?? {}, "ai"), false);
+    assert.deepEqual(linked, [answered.status.runId], "only the answered run's port started a link");
+    await r.runs.stopAll();
   });
 });

@@ -20,6 +20,7 @@ import { errorMessage } from "../shared/errors.ts";
 import {
   type FdGameEnv,
   NATIVE_FRAMES_SERVICE_PREFIX,
+  NATIVE_STUDIO_AI_ON,
   NativeEnv,
   NativeError,
   NativeRefusal,
@@ -309,15 +310,20 @@ export interface GameLaunchRequest {
   nonce: string;
   /** Embedded runs only, and required there: `NATIVE_FRAMES_SERVICE_PREFIX` + `runId`. */
   frames?: string;
+  /** The studio answers the game's play-time AI: the game gets `GENEX_STUDIO_AI=1`. */
+  ai?: boolean;
 }
 
 /** How to start a checked game: `sandbox-exec` with its arguments, the exact environment and the working folder. */
 export interface GameLaunch {
   file: string;
   args: string[];
-  /** Exactly the game's environment: every name, and the frames service only for an embedded run. */
-  env: Record<Exclude<FdGameEnv, typeof NativeEnv.FramesService>, string> &
-    Partial<Record<typeof NativeEnv.FramesService, string>>;
+  /**
+   * Exactly the game's environment: every name, the frames service only for an embedded run and
+   * the AI variable only for a run whose play-time AI the studio answers.
+   */
+  env: Record<Exclude<FdGameEnv, typeof NativeEnv.FramesService | typeof NativeEnv.StudioAi>, string> &
+    Partial<Record<typeof NativeEnv.FramesService | typeof NativeEnv.StudioAi, string>>;
   cwd: string;
 }
 
@@ -427,6 +433,7 @@ export async function prepareGameLaunch(request: GameLaunchRequest, root: string
       [NativeEnv.AnglePlatform]: ANGLE_PLATFORM,
       [NativeEnv.Home]: home,
       ...(request.frames === undefined ? {} : { [NativeEnv.FramesService]: request.frames }),
+      ...(request.ai === true ? { [NativeEnv.StudioAi]: NATIVE_STUDIO_AI_ON } : {}),
     },
     cwd: run.state,
   };

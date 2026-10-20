@@ -20,6 +20,7 @@ import { after, before, describe, it, type TestContext } from "node:test";
 import { StudioPlatform } from "../../src/shared/boot.ts";
 import {
   NATIVE_FRAMES_SERVICE_PREFIX,
+  NATIVE_STUDIO_AI_ON,
   NativeEnv,
   NativeError,
   NativeRefusal,
@@ -444,6 +445,16 @@ describe("ProcessSandbox.spawnGame and the frames service", {
     const windowLaunch = await prepareGameLaunch({ ...windowRun, mode: NativeRunMode.Window }, runs);
     assert.ok(!(NativeEnv.FramesService in windowLaunch.env), "no frames service outside an embedded run");
     assert.ok(!windowLaunch.args.some((arg) => arg.startsWith("FRAMES=")));
+  });
+
+  it("a launch gets GENEX_STUDIO_AI=1 only for a run whose play-time AI the studio answers", async () => {
+    const { runs } = await gameBox();
+    const run = await standIn(runs);
+    const answered = await prepareGameLaunch({ ...run, mode: NativeRunMode.Headless, ai: true }, runs);
+    assert.equal(answered.env[NativeEnv.StudioAi], NATIVE_STUDIO_AI_ON);
+    const otherRun = await standIn(runs, "00112233445566778899");
+    const plain = await prepareGameLaunch({ ...otherRun, mode: NativeRunMode.Headless }, runs);
+    assert.ok(!(NativeEnv.StudioAi in plain.env), "no AI variable for a run nobody answers");
   });
 });
 

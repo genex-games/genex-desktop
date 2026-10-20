@@ -9,12 +9,19 @@
  * removes nothing there: the run dir goes when the run ends. `NativeLeasePort` is the pool's
  * lease: it starts a headless run through the native registry on `load` and stops it (or cancels
  * it while it starts) on `dispose`.
+ *
+ * Play-time AI (genex-ai): a run the studio started with `GENEX_STUDIO_AI=1` carries an AI link
+ * (`NativePortIo.ai`), started at a `ready` that declares `capabilities.ai`. The game's `ai` lines
+ * go to the link once their envelope is read (a line outside it is dropped with a warning: the
+ * AI service refuses, the game plays its fallback); the link answers with `ai.reply` /
+ * `ai.delta`. An `ai` line from any other game, or before `ready`, is a violation.
  */
 import { lstat } from "node:fs/promises";
 import path from "node:path";
 import { StringDecoder } from "node:string_decoder";
 import type { BuildIdentity, CaptureProvenance } from "../shared/build-preview.ts";
 import { SECOND_MS } from "../shared/duration.ts";
+import { errorMessage } from "../shared/errors.ts";
 import type { BuildTarget } from "../shared/game-project.ts";
 import {
   NATIVE_CALL_TIMEOUT_MS,
@@ -24,6 +31,11 @@ import {
   NATIVE_READY_TIMEOUT_MS,
   NATIVE_START_MAX_MS,
   NATIVE_STDERR_LINE_MAX_CHARS,
+  NATIVE_AI_EVENT,
+  type NativeAiArgs,
+  type NativeAiLine,
+  NativeAiOp,
+  type NativeAiResult,
   type NativeCaptureReply,
   NativeError,
   NativeEvent,
@@ -39,10 +51,13 @@ import {
   NativeRunMode,
   type NativeRunStatus,
   type NativeTimers,
+  checkNativeAiArg,
+  isNativeAiResult,
   isNativeProtocolVersion,
   isNativeResult,
   parseNativeEvent,
   parseNativeInput,
+  readNativeAiLine,
 } from "../shared/native-contract.ts";
 import {
   CaptureSurface,
@@ -84,6 +99,9 @@ const MESSAGE = {
   repeated: (count: number, line: string) => `(repeated ${count} times) ${line}`,
   released: "this native lease was given back",
   superseded: "a newer load of this native lease replaced this one",
+  aiDropped: "[play-ai] dropped an ai line outside the wire",
+  aiLinkFailed: (why: string) => `[play-ai] the AI link failed a line: ${why}`,
+  aiArgRefused: (op: string) => `the studio's ${op} is outside its shape`,
 } as const;
 
 /** The most console entries a port keeps (oldest dropped first). */
@@ -214,7 +232,39 @@ export interface NativePortIo {
   build?: BuildIdentity | null;
   /** Told once when the host ends the game (`kill`), after its group got SIGKILL: the registry watches the reap. */
   onKill?(refusal: NativeRefusal): void;
+  /**
+   * Play-time AI: present only for a run the studio started with `GENEX_STUDIO_AI=1`, whose AI it
+   * answers. Started at a `ready` that declares `capabilities.ai`; absent, an `ai` line is a violation.
+   */
+  ai?: NativeAiLinkStart;
 }
+
+/** What a port hands the AI link it starts: a writer for the game's AI ops and the game's clock. */
+export interface NativeAiPortIo {
+  /** One AI op to the game, checked first; resolves with whether it answered a line still waiting. */
+  write<K extends NativeAiOp>(op: K, arg: NativeAiArgs[K]): Promise<NativeAiResult>;
+  /** Whether the studio holds the game's clock now (it was seeded or paused, and not started since). */
+  held(): boolean;
+}
+
+/**
+ * The studio's side of one game's play-time AI: what answers its `ai` lines (main's AI service
+ * behind its line bridge). The port tells it each line, each step boundary of a held clock, a
+ * clock that starts running, and the game's end.
+ */
+export interface NativeAiLink {
+  /** One `ai` line the game printed, its envelope read. */
+  hear(line: NativeAiLine): void;
+  /** Before a step of a held clock: deliver what settled (a replay first waits for its tape). */
+  boundary(): Promise<void>;
+  /** The clock started running: deliver everything settled now. */
+  flush(): Promise<void>;
+  /** The game is gone: its calls are abandoned and nothing more is written. */
+  close(): void;
+}
+
+/** Starts the AI link of a game whose `ready` declared `capabilities.ai`. */
+export type NativeAiLinkStart = (io: NativeAiPortIo) => NativeAiLink;
 
 /** One capture as the port answers it: the JPEG, its stats, the surface, and where it came from. */
 export interface NativeCapture {
@@ -229,7 +279,7 @@ type OpArg<K extends keyof NativeOpResults> = K extends keyof NativeOpArgs ? Nat
 
 /** A call waiting for its reply: `settle` answers false for a result outside the op's shape. */
 interface PendingCall {
-  op: NativeOp;
+  op: NativeOp | NativeAiOp;
   settle(result: unknown): boolean;
   reject(error: Error): void;
   timer: unknown;
@@ -366,6 +416,8 @@ export class NativeGamePort implements PreviewPort {
   #observed = false;
   /** The camera the last answered `debugCamera` left the game on. */
   #camera: string = DEFAULT_CAMERA;
+  /** The game's play-time AI link, from a `ready` that declared it until the game ends; null otherwise. */
+  #ai: NativeAiLink | null = null;
 
   constructor(io: NativePortIo) {
     this.#io = io;
@@ -453,24 +505,53 @@ export class NativeGamePort implements PreviewPort {
     // starts is sent at the ready, so its deadline counts from there and the start's own deadline
     // decides a start that never ends.
     if (this.#readyEvent === null) return this.#handshake.promise.then(() => this.call(op, arg));
+    const send = () =>
+      this.#send(op, arg, (result): result is NativeOpResults[K] => {
+        if (!isNativeResult(op, result, this.#protocol())) return false;
+        this.#noteClock(op, result);
+        this.#noteCamera(op, arg, result);
+        return true;
+      });
+    // A step of a held clock first lets the AI link deliver what settled, so the same seed and
+    // inputs get every answer on the same tick. The boundary never fails the step.
+    const ai = this.#ai;
+    if (op === NativeOp.Step && ai && this.#clockHeld()) return ai.boundary().then(send, send);
+    return send();
+  }
+
+  /** One request line and its checked result; `accept` answers false for a result outside the op's shape. */
+  #send<T>(op: NativeOp | NativeAiOp, arg: unknown, accept: (result: unknown) => result is T): Promise<T> {
+    const gone = this.#gone();
+    if (gone) return Promise.reject(gone);
     const id = this.#nextId++;
     const line = JSON.stringify(arg === undefined ? { id, op } : { id, op, arg });
     if (Buffer.byteLength(line) > NATIVE_LINE_MAX_BYTES) return Promise.reject(new Error(MESSAGE.requestTooLarge));
-    return new Promise<NativeOpResults[K]>((resolve, reject) => {
+    return new Promise<T>((resolve, reject) => {
       const timer = this.#io.timers.setTimeout(
         () => this.kill(this.#deadlineRefusal(op), MESSAGE.callTimeout(op)),
         NATIVE_CALL_TIMEOUT_MS,
       );
       const settle = (result: unknown): boolean => {
-        if (!isNativeResult(op, result, this.#protocol())) return false;
-        this.#noteClock(op, result);
-        this.#noteCamera(op, arg, result);
+        if (!accept(result)) return false;
         resolve(result);
         return true;
       };
       this.#pending.set(id, { op, settle, reject, timer });
       this.#io.child.fd3.write(`${line}\n`);
     });
+  }
+
+  /** One AI op to a game whose AI link runs, checked before anything is written; answers `{taken}`. */
+  #aiOp<K extends NativeAiOp>(op: K, arg: NativeAiArgs[K]): Promise<NativeAiResult> {
+    const gone = this.#gone();
+    if (gone) return Promise.reject(gone);
+    if (!checkNativeAiArg(op, arg)) return Promise.reject(new Error(MESSAGE.aiArgRefused(op)));
+    return this.#send(op, arg, isNativeAiResult).then((result) => ({ taken: result.taken }));
+  }
+
+  /** Whether the studio holds the game's clock: seeded or paused, and not started since. */
+  #clockHeld(): boolean {
+    return this.#running === false;
   }
 
   /** Every checked event the game sends (`focus`, `fatal`, `frame`); returns the unsubscribe. */
@@ -650,6 +731,8 @@ export class NativeGamePort implements PreviewPort {
     if (op === NativeOp.Seed) this.#running = false;
     const clockOp = op === NativeOp.Start || op === NativeOp.Pause;
     if (clockOp && typeof result.running === "boolean") this.#running = result.running;
+    // What settled while the clock was held goes to the game now that it runs.
+    if (op === NativeOp.Start && this.#running === true) void this.#ai?.flush();
   }
 
   /** The camera an answered `debugCamera` moved the game to (its answer's name, else the one asked; null asks the default). */
@@ -722,6 +805,10 @@ export class NativeGamePort implements PreviewPort {
     const text = bytes.subarray(0, end).toString("utf8");
     if (text.trim() === "") return;
     const value = parseLine(text);
+    if (isRecord(value) && value.event === NATIVE_AI_EVENT) {
+      this.#aiLine(value, text.length);
+      return;
+    }
     if (isRecord(value) && Object.hasOwn(value, "event")) {
       this.#event(value);
       return;
@@ -731,6 +818,42 @@ export class NativeGamePort implements PreviewPort {
       return;
     }
     this.kill(NativeRefusal.ReplyInvalid, MESSAGE.replyInvalid);
+  }
+
+  /**
+   * One `ai` line: a violation from a game whose AI the studio did not take (or before its ready);
+   * otherwise read and told to the link, or dropped with a warning when it is outside the wire.
+   */
+  #aiLine(raw: Record<string, unknown>, chars: number): void {
+    const link = this.#ai;
+    if (!link) {
+      this.kill(NativeRefusal.ReplyInvalid, MESSAGE.replyInvalid);
+      return;
+    }
+    const line = readNativeAiLine(raw, chars);
+    if (!line) {
+      this.#note(ConsoleLevel.Warning, MESSAGE.aiDropped);
+      return;
+    }
+    try {
+      link.hear(line);
+    } catch (error) {
+      this.#note(ConsoleLevel.Warning, MESSAGE.aiLinkFailed(errorMessage(error)));
+    }
+  }
+
+  /** The AI link of a game whose `ready` declared AI, when the studio answers it. */
+  #startAi(ready: NativeReadyEvent): void {
+    const start = this.#io.ai;
+    if (!start || ready.ai !== true) return;
+    this.#ai = start({ write: (op, arg) => this.#aiOp(op, arg), held: () => this.#clockHeld() });
+  }
+
+  /** The game is gone: its AI link is closed, once. */
+  #closeAi(): void {
+    const link = this.#ai;
+    this.#ai = null;
+    link?.close();
   }
 
   #event(raw: Record<string, unknown>): void {
@@ -769,6 +892,7 @@ export class NativeGamePort implements PreviewPort {
     }
     this.#readyEvent = event;
     this.#io.timers.clearTimeout(this.#readyTimer);
+    this.#startAi(event);
     this.#handshake.resolve(event);
     for (const listener of this.#listeners) listener(event);
   }
@@ -887,8 +1011,9 @@ export class NativeGamePort implements PreviewPort {
     this.#fail(new NativeExitError(exit, this.#readyEvent !== null));
   }
 
-  /** Rejects every waiting call, and an unanswered handshake, with `error`. */
+  /** Rejects every waiting call, and an unanswered handshake, with `error`; the AI link closes. */
   #fail(error: Error): void {
+    this.#closeAi();
     this.#io.timers.clearTimeout(this.#readyTimer);
     if (!this.#readyEvent) this.#handshake.reject(error);
     for (const call of this.#pending.values()) {

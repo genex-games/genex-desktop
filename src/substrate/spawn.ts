@@ -42,6 +42,8 @@ import {
   GameBoxProblem,
   NATIVE_CROSS_EXECUTABLES,
   NATIVE_GAME_MEMORY_MAX_BYTES,
+  NATIVE_STUDIO_AI_ON,
+  NativeEnv,
   NativeError,
   NativeRefusal,
   NativeRunMode,
@@ -302,6 +304,11 @@ export interface GameSpawnRequest {
   frames?: string;
   /** The admitted build's stack: how a Linux box draws and whether it has a headless build. Absent: C++ · raylib. */
   stack?: CompiledStack;
+  /**
+   * The studio answers the game's play-time AI: the game starts with `GENEX_STUDIO_AI=1` and
+   * prints its `ai` lines. Absent or false: the variable is never set.
+   */
+  ai?: boolean;
 }
 
 /** How a started game ended. */
@@ -930,6 +937,7 @@ export class ProcessSandbox {
         desktop: launcherDesktopFor(request.mode),
         nonce: request.nonce,
         memoryBytes: NATIVE_GAME_MEMORY_MAX_BYTES,
+        ...(request.ai === true ? { env: { [NativeEnv.StudioAi]: NATIVE_STUDIO_AI_ON } } : {}),
       },
       deps,
     );
@@ -1012,6 +1020,7 @@ export class ProcessSandbox {
         audio: LinuxBoxAudio.Muted,
         session: seams.session ?? process.env,
         ...(request.stack ? { stack: request.stack } : {}),
+        ...(request.ai === true ? { ai: true } : {}),
       },
       { system, spawn: this.#boxSpawn(), claim: () => claimLinuxRun(folders) },
     );

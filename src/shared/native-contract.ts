@@ -865,10 +865,17 @@ export const NativeEnv = {
   FramesService: "GENEX_FRAMES_SERVICE",
   /** Windows: the protocol pipe's name, which the launcher passes instead of fd 3. */
   StudioPipe: "GENEX_STUDIO_PIPE",
+  /**
+   * {@link NATIVE_STUDIO_AI_ON} only for a run whose play-time AI the studio answers: a Rust game
+   * then prints its `ai` lines and serves `ai.reply` / `ai.delta` (genex-studio `AI_ENV`).
+   */
+  StudioAi: "GENEX_STUDIO_AI",
 } as const;
 export type NativeEnv = (typeof NativeEnv)[keyof typeof NativeEnv];
 /** What a game that speaks on fd 3 (a Mac or Linux game) starts with: every variable but the Windows pipe's. */
 export type FdGameEnv = Exclude<NativeEnv, typeof NativeEnv.StudioPipe>;
+/** {@link NativeEnv.StudioAi}'s value when the studio answers the game's play-time AI; it is absent otherwise. */
+export const NATIVE_STUDIO_AI_ON = "1";
 
 /** A typed native failure with its sentence, as `ToolchainError` does: no reader matches English. */
 export class NativeError extends Error {
@@ -973,6 +980,8 @@ export interface NativeReadyEvent {
   seed: number;
   /** Protocol 2 only (always present there, naming `backend.api`'s backend); a v1 ready has none. */
   receipt?: NativeCapabilityReceipt;
+  /** The game uses play-time AI (`"capabilities": {"ai": true}`); absent for a game that declares none. */
+  ai?: true;
 }
 
 /** The game's `fatal` event: it is about to exit. */
@@ -1526,6 +1535,10 @@ export function nativeRenderStatus(state: unknown): RenderStatus | null {
   return isRecord(volatile) ? parseRenderStatus(volatile[NATIVE_RENDER_KEY]) : null;
 }
 
+/** Whether a `ready` declares play-time AI: only `capabilities.ai === true`; any other shape is a game without it. */
+const declaresAi = (ready: Record<string, unknown>): boolean =>
+  isRecord(ready.capabilities) && ready.capabilities.ai === true;
+
 /** A `ready` line, copied field by field; null when any field is outside its shape. */
 function readyEvent(value: Record<string, unknown>): NativeReadyEvent | null {
   const { nonce, protocol, contractVersion, build, backend, size, seed } = value;
@@ -1545,6 +1558,7 @@ function readyEvent(value: Record<string, unknown>): NativeReadyEvent | null {
     backend: { api: backend.api, device: typeof device === "string" ? device : null },
     size: { width: size.width, height: size.height },
     seed,
+    ...(declaresAi(value) ? { ai: true as const } : {}),
   };
   // Protocol 1 (and any protocol the port will refuse by version) is read as it always was.
   if (protocol !== NATIVE_PROTOCOL_VERSION) return ready;
@@ -1581,6 +1595,85 @@ export function parseNativeEvent(value: unknown): NativeEventMessage | null {
     default:
       return null;
   }
+}
+
+// ── play-time AI on the studio connection ──────────────────────────────────────────────────
+
+/**
+ * The event a game whose play-time AI the studio took prints for each AI request (genex-ai;
+ * `native/genex-rust/README.md`, "Play-time AI on the studio connection"). Optional, like its two
+ * ops, so it stays out of {@link NativeEvent}: every other game never prints one.
+ */
+export const NATIVE_AI_EVENT = "ai";
+
+/** The studio's answers to a game's `ai` lines, sent as ops (`{id, op, arg}`). Wire values. */
+export const NativeAiOp = {
+  /** The answer to one line, by its rid: `{rid, reply}`. */
+  Reply: "ai.reply",
+  /** A streamed `say`'s text so far: `{rid, text}`. */
+  Delta: "ai.delta",
+} as const;
+export type NativeAiOp = (typeof NativeAiOp)[keyof typeof NativeAiOp];
+
+/** A line's request id, as both sides spell it (`patterns.id` of `tests/fixtures/play-ai-wire-v1.json`). */
+export const NATIVE_AI_RID = /^[A-Za-z0-9_-]{8,100}$/;
+/** The longest `ai` line the host reads, and the longest streamed text it sends, in characters (the wire's `AI_MAX_BODY_CHARS`). */
+export const NATIVE_AI_MAX_LINE_CHARS = 204_800;
+/** The longest op name an `ai` line may carry; the AI service reads the op itself. */
+const AI_OP_MAX_CHARS = 64;
+/** The keys of an `ai` line, exactly. */
+const AI_LINE_KEYS = ["event", "rid", "op", "body"] as const;
+
+/** One `ai` line a game printed: its rid, and the line as it came, for the AI service to read. */
+export interface NativeAiLine {
+  rid: string;
+  value: Record<string, unknown>;
+}
+
+/** What each AI op carries. */
+export interface NativeAiArgs {
+  [NativeAiOp.Reply]: { rid: string; reply: Record<string, unknown> };
+  [NativeAiOp.Delta]: { rid: string; text: string };
+}
+
+/** What a game answers an AI op: whether it answered a line still waiting. */
+export interface NativeAiResult {
+  taken: boolean;
+}
+
+/** Whether `value` has exactly `keys` as its own keys. */
+function hasExactKeys(value: Record<string, unknown>, keys: readonly string[]): boolean {
+  const own = Object.keys(value);
+  return own.length === keys.length && keys.every((key) => Object.hasOwn(value, key));
+}
+
+const isAiRid = (value: unknown): value is string => typeof value === "string" && NATIVE_AI_RID.test(value);
+
+/**
+ * An untrusted `ai` line of `chars` characters, read as far as the port reads it: exactly
+ * `event, rid, op, body`, a rid, an op name and a body that is null or an object, within the
+ * line limit; null otherwise. What the op and body say is the AI service's to read.
+ */
+export function readNativeAiLine(value: unknown, chars: number): NativeAiLine | null {
+  if (chars > NATIVE_AI_MAX_LINE_CHARS || !isRecord(value) || !hasExactKeys(value, AI_LINE_KEYS)) return null;
+  const { event, rid, op, body } = value;
+  if (event !== NATIVE_AI_EVENT || !isAiRid(rid)) return null;
+  const opOk = typeof op === "string" && op.length > 0 && op.length <= AI_OP_MAX_CHARS;
+  if (!opOk || !(body === null || isRecord(body))) return null;
+  return { rid, value };
+}
+
+/** Whether `arg` is what AI op `op` carries: a rid and a reply object, or a rid and a text within the limit. */
+export function checkNativeAiArg(op: string, arg: unknown): boolean {
+  if (!isRecord(arg) || !isAiRid(arg.rid)) return false;
+  if (op === NativeAiOp.Reply) return hasExactKeys(arg, ["rid", "reply"]) && isRecord(arg.reply);
+  if (op !== NativeAiOp.Delta || !hasExactKeys(arg, ["rid", "text"])) return false;
+  return typeof arg.text === "string" && arg.text.length <= NATIVE_AI_MAX_LINE_CHARS;
+}
+
+/** Whether a game's answer to an AI op is `{taken: boolean}` (fields beyond it are never read). */
+export function isNativeAiResult(value: unknown): value is NativeAiResult {
+  return isRecord(value) && typeof value.taken === "boolean";
 }
 
 // ── input from the renderer or the harness ─────────────────────────────────────────────────
