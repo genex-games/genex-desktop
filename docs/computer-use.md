@@ -122,7 +122,9 @@ inside the project, the engine a runtime an enabled plugin declares and the stud
 native-job sandbox with the GPU, as Godot needs to draw); the delegation then gives every role a `GameBridgeTarget`
 ([`src/main/core/game-bridge-target.ts`](../src/main/core/game-bridge-target.ts)) whose game runs in
 the `ProcessSandbox`. The playtest shorthands are not offered there; its moves are drawn on the
-worker's agent screen like a browser game's (`targetFramePort`). Every plugin is held to the shared
+worker's agent screen like a browser game's (`targetFramePort`). A game that declares play-time AI
+gets its answers through the target on step boundaries, from the AI host the computer tools are
+given (`bridge.ai`), and `ai_off` without one ([play-protocol.md](play-protocol.md#play-time-ai-optional)). Every plugin is held to the shared
 conformance suite (`tests/conformance/play-protocol.test.ts`, run against
 `tests/fixtures/fake-play-game.mjs`; `PLAY_GAME_COMMAND` points it at another game).
 
