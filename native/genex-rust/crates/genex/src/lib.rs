@@ -27,6 +27,18 @@
 //! phones' shells are their own crates.
 //! `docs/GENEX_API.md` and its topic pages in `docs/api/` are the full contract.
 
+// G6 facade contracts (UIS-0): module stubs each area's facade work package fills.
+mod actions;
+mod actions_journal;
+mod actions_touch;
+mod audio;
+mod crash;
+mod g6;
+mod net;
+mod profile;
+mod saves;
+mod settings;
+mod ui;
 mod animation;
 mod camera;
 #[cfg(feature = "physics")]

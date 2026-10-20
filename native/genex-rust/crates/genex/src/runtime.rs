@@ -260,6 +260,8 @@ struct Core<W> {
     tally: Tally,
     /// The render settings (display state: nothing the checksum reads).
     render: crate::render::RenderHandle,
+    /// The G6 areas' runtime state (UIS-0): every hook a no-op until its area lands.
+    g6: crate::g6::G6,
 }
 
 /// A game behind its registrations: what platform shells and the verb transport drive.
@@ -331,6 +333,7 @@ impl<W: Default + 'static> Runtime<W> {
             clock: FrameClock::default(),
             tally: Tally::default(),
             render: Rc::new(RefCell::new(RenderControl::new(game.render.clone(), (game.world_size[0], game.world_size[1])))),
+            g6: crate::g6::G6::default(),
         };
         let mut runtime = Runtime { game, core };
         runtime.seed(DEFAULT_SEED);
@@ -349,6 +352,7 @@ impl<W: Default + 'static> Runtime<W> {
         core.merger = Merger::default();
         core.pointer_lock = false;
         core.hud.reset();
+        core.g6.reset(&self.game.g6);
         core.gfx.assets().clear();
         core.gfx.clear_extensions();
         let mut rng = Pcg32::seeded(u64::from(seed));
@@ -548,6 +552,7 @@ impl<W> Runtime<W> {
         if !self.game.streaming.is_empty() {
             state.set(crate::stream::RUNTIME_KEY, crate::stream::runtime_value());
         }
+        core.g6.runtime_keys(&self.game.g6, &mut state);
         state
     }
 
@@ -766,7 +771,13 @@ fn saves_of(save_name: Option<&str>) -> Saves {
 }
 
 fn fresh_sim<W>(world: W, game: &Game<W>) -> Sim<W> {
-    Sim { world, physics: fresh_physics(), facets: FacetState::fresh(&game.facets), nav: crate::nav::fresh(game.navigation.as_ref()) }
+    Sim {
+        world,
+        physics: fresh_physics(),
+        facets: FacetState::fresh(&game.facets),
+        nav: crate::nav::fresh(game.navigation.as_ref()),
+        net: crate::net::SimNet,
+    }
 }
 
 /// An empty physics world stepping at the fixed tick.
@@ -796,15 +807,25 @@ fn step<W>(game: &Game<W>, core: &mut Core<W>, ms: f64) -> StepResult {
     StepResult { ticks, frame: core.tick, simulated_ms: simulated_ms(core.tick) }
 }
 
-/// One fixed tick: update hooks, UI hooks, then one physics step.
+/// One fixed tick: update hooks, UI hooks, then one physics step. The G6 areas' hooks (UIS-0) run
+/// in INPUT's order: merge, HUD focus gating, touch controls, device tracker, evaluate, journal,
+/// then the net cut, the update and UI hooks, physics and the net flush, inside `g6_tick_begin`
+/// and `g6_tick_end`.
 fn tick<W>(game: &Game<W>, core: &mut Core<W>) {
+    core.g6.tick_begin(&game.g6, core.tick);
     let input = core.merger.next_tick(game.world_size);
+    core.g6.input.merge(&game.g6.input, &input);
     core.pointer_lock = input.pointer_lock;
     // A HUD widget with the keyboard's focus (Tab to a settings switch, a tapped text field) takes
     // the keys from the update hooks until Escape or a click elsewhere; the HUD itself still gets
     // them below. Mouse buttons (and so touch 0) stay the game's.
     let taken = genex_hud::keys_taken(core.hud.context()).then(|| input.keys.mouse_buttons_only());
     let text = if taken.is_some() { "" } else { input.text.as_str() };
+    core.g6.touch.step(&game.g6.touch, &input);
+    core.g6.input.track_devices(&game.g6.input, &input);
+    core.g6.input.evaluate(&game.g6.input);
+    core.g6.journal.record(&core.g6.input);
+    core.g6.net.cut(&game.g6.net, &mut core.sim.net);
     let ctx = Ctx {
         keys: taken.as_ref().unwrap_or(&input.keys),
         touches: &input.touches,
@@ -819,6 +840,8 @@ fn tick<W>(game: &Game<W>, core: &mut Core<W>) {
         tick: core.tick,
         world_size: game.world_size,
         saves: core.gfx.saves(),
+        actions: core.g6.input.ctx(),
+        audio: core.g6.audio.ctx(),
     };
     for hook in &game.updates {
         hook(&mut core.sim, &ctx);
@@ -837,6 +860,8 @@ fn tick<W>(game: &Game<W>, core: &mut Core<W>) {
     }
     #[cfg(feature = "physics")]
     core.sim.physics.step();
+    core.g6.net.flush(&game.g6.net, &mut core.sim.net);
+    core.g6.tick_end(&game.g6, core.tick);
     core.tick += 1;
 }
 

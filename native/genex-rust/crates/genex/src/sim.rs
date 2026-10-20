@@ -16,6 +16,9 @@ pub struct Sim<W> {
     /// The navigation world, rebuilt on every seed: empty unless `game.navigation` registered one
     /// (the runtime owns it, as it owns physics).
     pub nav: crate::nav::Nav,
+    /// The tick's net frame, owned by the runtime like `nav` (G6 contract stub until MP-4a makes it
+    /// game API).
+    pub(crate) net: crate::net::SimNet,
 }
 
 impl<W> Sim<W> {

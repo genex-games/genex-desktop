@@ -68,6 +68,9 @@ pub struct Game<W> {
     pub(crate) render: crate::render::RenderConfig,
     /// Where its Level-2 `[[wgsl]]` sources come from (`game.wgsl`, extension ladder level 2).
     pub(crate) wgsl: crate::extend::WgslSetup,
+    /// The G6 areas' registrations (input, audio, saves, UI, settings, net), each written by its
+    /// area's `impl Game` block (UIS-0).
+    pub(crate) g6: crate::g6::G6Setup,
 }
 
 /// The handle `game.camera(..)` returns; `.camera_override()` lets this camera replace an
@@ -126,6 +129,7 @@ impl<W: Default + 'static> Game<W> {
             gpu_passes: Vec::new(),
             render: crate::render::RenderConfig::from_build(),
             wgsl: crate::extend::WgslSetup::default(),
+            g6: crate::g6::G6Setup::default(),
         }
     }
 
