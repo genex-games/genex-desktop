@@ -222,6 +222,8 @@ export const STUDIO_INVOKE_CHANNELS = {
   "studio:game-ai.publish-facts": "gameAiPublishFacts",
   "studio:game-ai.credits": "gameAiCredits",
   "studio:game-ai.checkout": "gameAiCheckout",
+  "studio:ai-reports.inbox": "gameAiInbox",
+  "studio:ai-reports.fix": "gameAiInboxFix",
   "studio:genex-account.read": "genexAccount",
   "studio:genex-account.sign-in": "genexSignIn",
   "studio:genex-account.cancel": "genexCancelSignIn",
@@ -369,7 +371,12 @@ export interface StudioInvokePayloads {
   "studio:plugins.action": { id: string; name: string; args: unknown; project?: string; ticket?: string };
   "studio:plugins.choose-file": { id: string; request: Arg<"pluginChooseFile", 1> };
   "studio:plugins.genex-publish-review": { project: string };
-  "studio:plugins.genex-publish": { project: string; review: ExportReview; title?: string };
+  "studio:plugins.genex-publish": {
+    project: string;
+    review: ExportReview;
+    title?: string;
+    ai?: Arg<"genexPublish", 3>;
+  };
   "studio:plugins.index": { refresh?: boolean };
   "studio:plugins.install-github": { spec: string };
   "studio:plugins.lookup-github": { link: string; version?: GithubVersion };
@@ -480,6 +487,8 @@ export interface StudioInvokePayloads {
   "studio:game-ai.publish-facts": { project: string };
   "studio:game-ai.credits": undefined;
   "studio:game-ai.checkout": { product: Arg<"gameAiCheckout", 0> };
+  "studio:ai-reports.inbox": { project: string };
+  "studio:ai-reports.fix": { project: string; id: string };
   "studio:genex-account.read": undefined;
   "studio:genex-account.sign-in": undefined;
   "studio:genex-account.cancel": undefined;

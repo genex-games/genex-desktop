@@ -77,6 +77,9 @@ import { type ConnectorStep, StepAction } from "./chat/connector-steps.ts";
 import { MentionMiss } from "../shared/prompt-mention.ts";
 import { AssetScope, LibraryKind } from "../shared/asset-library.ts";
 import { KindChoice } from "./play/asset-tiles.ts";
+import { AiCostLevel } from "../shared/game-ai-check.ts";
+import { AiReportFailure, AiReportReason } from "../shared/game-ai-report.ts";
+import { AiMaker, AiModelTag, AiPickPolicy } from "../shared/game-ai-views.ts";
 
 export type ToolIcon = "think" | "write" | "run" | "read" | "see" | "game";
 
@@ -4834,4 +4837,394 @@ export const MENTION_WORDS = {
   } satisfies Record<LibraryKind, string>,
   saved: "Saved",
   shared: "Shared",
+} as const;
+
+// ── play-time AI in Studio: Settings, Create's AI pill, the model check, Publish, Player reports ──
+//
+// Genex credits are the unit (1 credit = 1¢); dollars show only at checkout and for the person's own
+// OpenRouter key, which OpenRouter bills in dollars. No copy here names a price per hour or per reply.
+
+/** Counts as people read them: digit groups, the same on every Mac. */
+const AI_COUNT = new Intl.NumberFormat("en-US");
+/** A credit pack's price at checkout: `$5.50`, `$11`. */
+const AI_PRICE = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", minimumFractionDigits: 0 });
+/** USD micros in a dollar and in a cent. */
+const MICROS_PER_DOLLAR = 1_000_000;
+const MICROS_PER_CENT = 10_000;
+
+/** "this Mac", or "this computer" where the studio runs on another system (`renderer/platform.ts`). */
+export const thisMachine = (platform: string): string =>
+  platform && platform !== StudioPlatform.Mac ? "this computer" : "this Mac";
+
+/** A count of credits: "1 credit", "1,240 credits". */
+export const creditsWords = (credits: number): string =>
+  credits === 1 ? "1 credit" : `${AI_COUNT.format(credits)} credits`;
+
+/** A bare count with its digit groups ("1,240"). */
+export const countWords = (count: number): string => AI_COUNT.format(count);
+
+/** A pack's price at checkout, from cents: "$5.50", "$11". */
+export function checkoutPriceWords(cents: number): string {
+  const dollars = cents / 100;
+  return Number.isInteger(dollars) ? AI_PRICE.format(dollars) : AI_PRICE.format(Number(dollars.toFixed(2)));
+}
+
+/** Spend on the person's own key, from USD micros, as OpenRouter bills it: "41¢", "$1.24". */
+export function keySpendWords(micros: number): string {
+  if (micros < MICROS_PER_DOLLAR) return `${Math.ceil(Math.max(0, micros) / MICROS_PER_CENT)}¢`;
+  return AI_PRICE.format(Number((micros / MICROS_PER_DOLLAR).toFixed(2)));
+}
+
+/** A whole-dollar limit from USD micros: "$5". */
+export const dollarLimitWords = (micros: number): string => AI_PRICE.format(Math.round(micros / MICROS_PER_DOLLAR));
+
+/** What a model maker's plan is called. */
+const AI_PLAN_MAKER: Record<AiMaker, string> = {
+  [AiMaker.Claude]: "Claude",
+  [AiMaker.ChatGpt]: "ChatGPT",
+  [AiMaker.Google]: "Google",
+  [AiMaker.Local]: "",
+  [AiMaker.Other]: "",
+};
+
+/** "your Claude plan", or "your plan" when the maker is unknown. */
+export const yourPlanWords = (maker: AiMaker | null): string =>
+  maker && AI_PLAN_MAKER[maker] ? `your ${AI_PLAN_MAKER[maker]} plan` : "your plan";
+
+/** The share of a plan games keep off: "half", else a percent. */
+const keepShareWords = (percent: number): string => (percent === 50 ? "half" : `${percent}%`);
+
+/** What every play-time AI surface calls the same things. */
+export const AI_WORDS = {
+  /** The menu's groups, by who makes the models. */
+  makers: {
+    [AiMaker.Claude]: "Claude models",
+    [AiMaker.ChatGpt]: "ChatGPT models",
+    [AiMaker.Google]: "Google models",
+    [AiMaker.Local]: "Local models",
+    [AiMaker.Other]: "Other models",
+  } satisfies Record<AiMaker, string>,
+  /** The one tag a row wears. */
+  tags: {
+    [AiModelTag.Best]: "Best",
+    [AiModelTag.Free]: "Free",
+    [AiModelTag.Plan]: "plan",
+    [AiModelTag.CostLow]: "$",
+    [AiModelTag.CostMedium]: "$$",
+    [AiModelTag.CostHigh]: "$$$",
+  } satisfies Record<AiModelTag, string>,
+  /** What a model costs players, by its level. */
+  cost: {
+    [AiCostLevel.Free]: "Free",
+    [AiCostLevel.Low]: "$",
+    [AiCostLevel.Medium]: "$$",
+    [AiCostLevel.High]: "$$$",
+  } satisfies Record<AiCostLevel, string>,
+  /** The level's word beside its marks, on Publish. */
+  costName: {
+    [AiCostLevel.Free]: "Free",
+    [AiCostLevel.Low]: "Low",
+    [AiCostLevel.Medium]: "Medium",
+    [AiCostLevel.High]: "High",
+  } satisfies Record<AiCostLevel, string>,
+  yourPlan: "your plan",
+  genexCredits: "Genex credits",
+  openRouterKey: "your OpenRouter key",
+  openCode: "OpenCode",
+  getCredits: "Get credits",
+  signIn: "Sign in",
+} as const;
+
+/** Settings → Play-time AI (`panels/game-ai/PlayAiSection.tsx`, `V3-Settings`). */
+export const AI_SETTINGS_WORDS = {
+  tab: "Play-time AI",
+  loading: "Loading…",
+  models: "Models",
+  pick: "Games pick",
+  pickWhat: {
+    [AiPickPolicy.Best]: "The maker’s pick if you have it, else your best model that fits.",
+    [AiPickPolicy.FreeOnly]: "Only free models. A game asks before it uses anything else.",
+  } satisfies Record<AiPickPolicy, string>,
+  pickOptions: {
+    [AiPickPolicy.Best]: "Best I have",
+    [AiPickPolicy.FreeOnly]: "Free only",
+  } satisfies Record<AiPickPolicy, string>,
+  modelsCanUse: "Models games can use",
+  modelsCanUseWhat: "The same list as your chat’s model picker.",
+  openProviders: "Model Providers",
+  credits: "Genex credits",
+  creditsWhat: "The same credits you make games with. Free accounts refill to 200 every week; Pro to 1,000 a month.",
+  creditsUnread: "Your credits can’t be read right now.",
+  signedOut: "Sign in to Genex to play with your credits.",
+  topUp: "Top up automatically",
+  /** The guardrails genex.games holds auto top-up to (D11), in the words of its caps. */
+  topUpWhat: (perDay: number, perMonth: number) =>
+    `At most ${perDay === 1 ? "once" : `${perDay} times`} a day and ${perMonth} times a month. Turns off if a payment fails.`,
+  topUpUnder: (credits: number) => `under ${countWords(credits)}`,
+  topUpAdd: (credits: number) => `add ${countWords(credits)}`,
+  topUpUnderLabel: "Top up when you have under",
+  topUpAddLabel: "Credits each top-up adds",
+  limits: "Limits",
+  limitsNote: "all optional",
+  alert: "Alert me when a game spends",
+  alertWhat: "Per day, in credits.",
+  alertOff: "No alert",
+  keep: "Keep for building",
+  keepWhat: "Games pause before they use this share of each plan.",
+  percent: (value: number) => `${value}%`,
+  openRouter: "OpenRouter monthly limit",
+  openRouterNone: "No limit",
+  games: "Games",
+  gamesEmpty: "Games that use AI show here once you play them.",
+  /** A game's line: how it is paid, and what it spent this month when that costs money. */
+  gameCredits: (credits: number) => `Genex credits · ${countWords(credits)} this month`,
+  gamePlan: (model: string) => `${model} · your plan`,
+  gameFree: (model: string) => `${model} · Free`,
+  gameKey: (model: string, spend: string) => `${model} · ${spend} this month`,
+  gamePlaytest: "Saved playtests",
+  gameNoModel: "No model yet",
+  gameOff: "AI off",
+  turnOff: "Turn off",
+  turnOn: "Turn on",
+  turnOffLabel: (title: string) => `Turn off AI in ${title}`,
+  turnOnLabel: (title: string) => `Turn on AI in ${title}`,
+  makers: "For game makers",
+  createRoute: "AI in your playtests",
+  createRouteWhat: "Your games can use AI while you play them in Create. Agents always replay saved playtests.",
+  allowPlan: "Use my plan in playtests",
+  allowPlanWhat: "Your Claude or ChatGPT plan answers your own games while you play them.",
+  shareFit: "Share how models fit",
+  shareFitWhat:
+    "Sends Genex counts of replies that fit each game, never what was written. Players then see more model tags.",
+} as const;
+
+/** Get credits (`panels/game-ai/GetCreditsDialog.tsx`, `V3-TopUp`): the packs and Genex Pro, bought in the browser. */
+export const GET_CREDITS_WORDS = {
+  title: "Get Genex credits",
+  intro: "The same credits you make games with. 1 credit = 1¢.",
+  packs: "Pack",
+  buy: (credits: number) => `Buy ${creditsWords(credits)}`,
+  cancel: "Cancel",
+  checkout: "Checkout opens in your browser.",
+  topUpLine: (add: number, under: number) =>
+    `Add ${countWords(add)} when I’m under ${countWords(under)} · at most once a day`,
+  pro: "Genex Pro",
+  proWhat: "1,000 credits every month",
+  proButton: "Get Pro",
+  unread: "Genex can’t show its packs right now. Try again in a moment.",
+  retry: "Try again",
+  loading: "Loading packs…",
+} as const;
+
+/** Create's AI pill on the stage strip, its model menu and its cards (`panels/game-ai/StageAiPill.tsx`). */
+export const CREATE_AI_WORDS = {
+  pill: "AI",
+  pillChoose: "AI · Choose",
+  pillOff: "AI off",
+  pillPlaytest: "AI · Saved playtest",
+  pillCredits: "Credits",
+  pillFree: "Free",
+  pillLabel: (name: string) => `AI: ${name}`,
+  menuLabel: "Model for this game",
+  /** The menu's top line: what the game's AI costs, in the words of how it is paid (`V3-Pill`). */
+  usagePlan: (plan: string, percent: number | null) =>
+    percent === null ? `Uses ${plan}` : `Uses ${plan} · ${percent}% of this 5-hour window`,
+  usageFreeHere: (machine: string) => `Free · runs on ${machine}, works offline`,
+  usageFree: "Free",
+  usageCredits: (session: number, balance: number | null) =>
+    balance === null
+      ? `${creditsWords(session)} this session`
+      : `${creditsWords(session)} this session · ${countWords(balance)} left`,
+  usageKey: (spend: string) => `${spend} this month on your OpenRouter key`,
+  usagePlaytest: "Agents replay saved playtests. They never spend your plan or credits.",
+  genex: "Genex",
+  genexRow: "Genex credits",
+  genexRowWhat: (model: string | null) => (model ? `${model}, from your credits` : "Recommend a model to use credits"),
+  signInForCredits: "Sign in to use credits",
+  struggling: (count: number) => `${count} more may struggle`,
+  notReady: "Not ready yet",
+  turnOff: "Turn off AI",
+  turnOn: "Turn on AI",
+  checkModels: "Check models",
+  reports: "Player reports",
+  addModels: "Add more models",
+  /** The first-use cards (`V3-First`): one sentence, its model in bold, the fine print and two presses. */
+  consent: {
+    plan: (title: string) => ({ before: `${title} will use `, after: (plan: string) => ` on ${plan}.` }),
+    planSmall: (keepPercent: number) =>
+      `No extra cost. Pauses before ${keepShareWords(keepPercent)} of your 5-hour limit.`,
+    credits: (title: string) => ({ before: `${title} will use your `, strong: "Genex credits", after: "." }),
+    creditsSmall: (balance: number | null) =>
+      balance === null
+        ? "You pay only for what the AI writes."
+        : `You have ${countWords(balance)}. You pay only for what the AI writes.`,
+    key: (title: string) => ({ before: `${title} will use `, after: " on your OpenRouter key." }),
+    keySmall: "Billed by OpenRouter. The game never sees your key.",
+    leaderboard: (title: string) => ({ before: `${title} keeps a `, strong: "leaderboard", after: "." }),
+    leaderboardSmall: (balance: number | null) =>
+      balance === null
+        ? "Scores count only on Genex credits, so every player gets the same model."
+        : `Scores count only on Genex credits, so every player gets the same model. You have ${countWords(balance)}.`,
+    setUp: (title: string) => `${title} needs AI to play.`,
+    setUpSmall: (machine: string, download: string | null) =>
+      download
+        ? `Play free with a model on ${machine} (one ${download} download) or OpenCode’s free models. Or sign in to use your Genex credits.`
+        : "Play free with OpenCode’s free models, or sign in to use your Genex credits.",
+    setUpFree: (machine: string) => `Play free on ${machine}`,
+    confirm: (title: string) => ({ before: `${title} wants to use up to `, after: "." }),
+    confirmStrong: (credits: number) => `${creditsWords(credits)}`,
+    confirmSmall: "Genex records your yes on genex.games.",
+    play: "Play",
+    change: "Change",
+    onCredits: "Play on credits",
+    unranked: "Play unranked",
+    allow: "Allow",
+    notNow: "Not now",
+  },
+  /** The stop cards (`V3-Stops`): one each, with the one way on it offers. */
+  stop: {
+    outOfCredits: "You’re out of Genex credits.",
+    outOfCreditsSmall: (alternative: string | null, machine: string) =>
+      alternative
+        ? `Keep going free with ${alternative} on ${machine}, or get more credits.`
+        : "Get more credits to keep going.",
+    planResting: (plan: string, time: string | null) =>
+      time ? `${plan.charAt(0).toUpperCase()}${plan.slice(1)} is resting until ${time}.` : `${plan} is resting.`,
+    planRestingSmall: (alternative: string | null) =>
+      alternative
+        ? `Genex switched to ${alternative}, free. Switch back any time.`
+        : "Pick another model to keep going.",
+    dailyAlert: (title: string, credits: number) => `${title} has spent ${creditsWords(credits)} today.`,
+    dailyAlertSmall: "That’s the alert you set. Change it in Settings.",
+    needsAiOff: (title: string) => `${title} needs AI to play.`,
+    needsAiOffSmall: (model: string | null) => (model ? `Turn AI back on with ${model}.` : "Turn AI back on to play."),
+    notAnswering: (model: string | null) => `${model ?? "The model"} isn’t answering. Trying again…`,
+    notAnsweringSmall: "Your game is paused, nothing is charged.",
+    struggles: (model: string, title: string) => `${model} may struggle in ${title}.`,
+    strugglesSmall: (alternative: string | null) =>
+      alternative
+        ? `Replies may not fit the game. Your check recommends ${alternative}.`
+        : "Replies may not fit the game.",
+    use: (model: string) => `Use ${model}`,
+    keep: (model: string) => `Keep ${model}`,
+    ok: "OK",
+    keepPlaying: "Keep playing",
+    stopForToday: "Stop for today",
+    turnOn: "Turn on AI",
+    anotherModel: "Use another model",
+  },
+} as const;
+
+/** The engine Live card's AI line (`panels/game-ai/EngineAiLine.tsx`, Unreal and plugin engines). */
+export const ENGINE_AI_WORDS = {
+  freeHere: (model: string, machine: string) => `AI · ${model}, free on ${machine}`,
+  free: (model: string) => `AI · ${model}, free`,
+  plan: (plan: string, percent: number | null) =>
+    percent === null ? `AI · ${plan}` : `AI · ${plan.replace(/^your /, "")} ${percent}%`,
+  credits: "AI · Genex credits",
+  key: (model: string) => `AI · ${model} on your OpenRouter key`,
+  playtest: "AI · Saved playtest",
+  waiting: "AI is waiting for you to choose how it runs",
+  off: "AI off",
+  stopped: {
+    outOfCredits: "AI paused: you’re out of Genex credits",
+    planResting: (time: string | null) =>
+      time ? `AI paused: your plan is resting until ${time}` : "AI paused: your plan is resting",
+    dailyAlert: "AI paused at your daily alert",
+    needsAiOff: "AI is off, and this game needs it",
+    notAnswering: "AI paused: the model isn’t answering",
+    struggles: (model: string) => `AI · ${model} may struggle here`,
+  },
+  choose: "Choose",
+} as const;
+
+/** The optional model check (`panels/game-ai/ModelCheckDialog.tsx`, `V3-Create-Check`, `V3-Create-States`). */
+export const MODEL_CHECK_WORDS = {
+  title: (game: string) => `Models for ${game}`,
+  empty: (game: string) =>
+    `Play ${game} once with AI, then check which models fit. It runs on your own models, and it’s optional.`,
+  playNow: "Play now",
+  ready: (machine: string) =>
+    `Genex replays the AI moments from your playtests on the models you have: your plans, your OpenRouter key and ${machine}. No Genex credits. Optional.`,
+  start: "Check models",
+  checking: (done: number, total: number) => `Checking ${done} of ${total} models…`,
+  checkingNote: "You can keep building. Run it again after big changes.",
+  stop: "Stop",
+  done: (moments: number, models: number, sources: string) =>
+    `Genex replayed ${plural(moments, "moment")} from your playtests on the ${plural(models, "model")} you have: ${sources}. No Genex credits. Optional.`,
+  sourcePlans: "your plans",
+  sourcePlan: "your plan",
+  sourceKey: "your OpenRouter key",
+  sourceOpenCode: "OpenCode",
+  failed: "The check stopped before it finished. Nothing was spent from your credits.",
+  again: "Check again",
+  columns: { model: "Model", fit: "Fits the game", cost: "Cost here", reply: "Reply" },
+  fitLabel: (filled: number, of: number) => `${filled} of ${of}`,
+  untested: "Too few moments",
+  noReply: "—",
+  replySeconds: (ms: number) => `${(ms / 1000).toFixed(1)} s`,
+  best: "Best",
+  rowOpenRouter: "OpenRouter",
+  rowOpenCode: "OpenCode",
+  rowOpenCodeFree: "OpenCode, free",
+  rowHere: (machine: string) => machine,
+  why: (model: string, note: string | null, fitted: number, moments: number) =>
+    `${note ? `${model}: ${note.replace(/[.\s]+$/, "")}.` : `${model} fit ${fitted} of ${plural(moments, "moment")}.`} Players can still pick it; Genex warns them.`,
+  pickNote: "Players on Genex credits get your pick.",
+  recommend: (model: string) => `Recommend: ${model}`,
+  recommendNone: "Recommend a model",
+  noPick: "No recommendation",
+  close: "Done",
+} as const;
+
+/** Publish's play-time AI block (`panels/game-ai/PublishAi.tsx`, `V3-Publish`, `V3-Publish-States`). */
+export const PUBLISH_AI_WORDS = {
+  label: "Play-time AI",
+  needsLabel: "Does it need AI",
+  needs: "Needs AI",
+  without: "Works without AI",
+  bestWith: "Best with",
+  fits: (model: string, fitted: number, of: number) => `${model} · fits ${fitted} of ${plural(of, "model")}`,
+  playtested: (model: string) => `${model} · the model you playtested`,
+  change: "Change",
+  checkModels: "Check models",
+  cost: "AI cost for players",
+  costFree: "Free on most Macs",
+  noCheck: "Without a check, players see no fit tags and no AI cost level.",
+  leaderboard: "Keep a leaderboard",
+  leaderboardWhat: "Scores count only on Genex credits.",
+  share: (percent: string) =>
+    `You earn ${percent}% of the credits players spend on AI in this game. Players on their own plan or this Mac pay you nothing and cost you nothing.`,
+  choose: (title: string) => `Choose whether ${title} needs AI.`,
+  noPick: "No recommendation",
+} as const;
+
+/** The Player report inbox of the creator's own game, with Fix with agent (`panels/game-ai/ReportInbox.tsx`). */
+export const REPORT_INBOX_WORDS = {
+  title: (game: string) => `Player reports for ${game}`,
+  intro:
+    "Each report carries a replay of the player’s session. Fix with agent saves it as a playtest your agent replays.",
+  empty: "No reports yet. When a player reports what the AI wrote, it shows here.",
+  loading: "Loading reports…",
+  unread: "Reports can’t be read right now.",
+  retry: "Try again",
+  reasons: {
+    [AiReportReason.Harmful]: "Harmful or dangerous",
+    [AiReportReason.Sexual]: "Sexual content",
+    [AiReportReason.Hateful]: "Hateful or harassing",
+    [AiReportReason.Other]: "Something else",
+  } satisfies Record<AiReportReason, string>,
+  automatic: "A reply didn’t fit the game",
+  moments: (calls: number, invalid: number) =>
+    invalid > 0 ? `${plural(calls, "AI moment")} · ${invalid} didn’t fit` : plural(calls, "AI moment"),
+  fix: "Fix with agent",
+  fixing: "Saving the replay…",
+  fixAgain: "Ask again",
+  sent: "Sent to your agent",
+  failure: {
+    [AiReportFailure.Offline]: "You’re offline. Try again when you’re back.",
+    [AiReportFailure.Refused]: "Genex couldn’t hand over this report.",
+    [AiReportFailure.TooLarge]: "This report is too large to replay here.",
+  } satisfies Record<AiReportFailure, string>,
+  close: "Done",
 } as const;

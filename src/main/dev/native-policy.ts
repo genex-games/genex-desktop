@@ -395,6 +395,10 @@ const FIXTURE_SAFE = [
   "studio:game-ai.recommend",
   "studio:game-ai.publish-facts",
   "studio:game-ai.credits",
+  // The Player report inbox of the creator's own game, and Fix with agent saving one report's
+  // replay as a playtest in that game's own folder: a fixture launch answers from its stand-ins.
+  "studio:ai-reports.inbox",
+  "studio:ai-reports.fix",
 ] as const satisfies readonly StudioInvokeChannel[];
 export type NativeChannel = (typeof NATIVE_CHANNELS)[number];
 export type NativeStep = (typeof NATIVE_STEPS)[number];

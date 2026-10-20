@@ -194,6 +194,8 @@ const METHODS = [
   "gameAiPublishFacts",
   "gameAiCredits",
   "gameAiCheckout",
+  "gameAiInbox",
+  "gameAiInboxFix",
   "playHandleCheck",
   "playSetHandle",
   "playShare",

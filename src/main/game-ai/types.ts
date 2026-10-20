@@ -35,7 +35,13 @@ import type {
 } from "../../shared/game-ai.ts";
 import type { AiBridgeAnswers, AiBridgeMessage, AiGrantAnswer } from "../../shared/game-ai-bridge.ts";
 import type { AiBenchResult, AiCheckResult, AiFitCountRow, AiPublishFacts } from "../../shared/game-ai-check.ts";
-import type { AiReportBundle, AiReportOutcome, AiReportRequest } from "../../shared/game-ai-report.ts";
+import type {
+  AiReportBundle,
+  AiReportFixOutcome,
+  AiReportInboxItem,
+  AiReportOutcome,
+  AiReportRequest,
+} from "../../shared/game-ai-report.ts";
 import type { AiRecordResult, AiReplayResult, TapeLine } from "../../shared/game-ai-tape.ts";
 import type {
   AiActivity,
@@ -399,6 +405,17 @@ export interface GameAiIpcHost {
   publishFacts(project: string): Promise<AiPublishFacts>;
   credits(): Promise<AiCreditPack[]>;
   checkout(product: AiCreditProduct): Promise<void>;
+}
+
+/**
+ * What `main/ipc/game-ai-inbox.ts` delegates to: the Player reports of the creator's own published
+ * game (D9), and Fix with agent, which saves one report's replay as a playtest of that game.
+ */
+export interface GameAiInboxHost {
+  /** The reports genex.games holds for a library game's published self, newest first. */
+  inbox(project: string): Promise<AiReportInboxItem[]>;
+  /** Save one report's tape, redacted, as the game's playtest `reportTapeName(id)`, realpath-contained. */
+  inboxFix(project: string, id: string): Promise<AiReportFixOutcome>;
 }
 
 /** What `main/harness-rpc/ai.ts` delegates to: tapes, mocks and local models only, on a host-made run budget. */

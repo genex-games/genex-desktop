@@ -461,3 +461,116 @@ export function withoutPlayerText(bundle: AiReportBundle): AiReportBundle {
     replay: { ...bundle.replay, inputs: [] },
   };
 }
+
+// ── the creator's inbox (D9: a "Player report" their agent can replay and fix) ──────────────
+
+/** The most reports the inbox lists for one game; the newest are kept. */
+export const AI_REPORT_INBOX_MAX = 50;
+/** The most items a list from genex.games may hold before it is read at all. */
+const INBOX_READ_MAX = 1_000;
+/** How much of a report's id a saved playtest's name keeps, before its hash. */
+const TAPE_ID_CHARS = 40;
+
+/** One report of the creator's own published game, as Create's inbox lists it. */
+export interface AiReportInboxItem {
+  id: string;
+  kind: AiReportKind;
+  createdAt: string;
+  /** Null for an automatic report. */
+  reason: AiReportReason | null;
+  note: string | null;
+  /** The AI calls the bundle carries, and how many still failed the game's shape after their repair. */
+  calls: number;
+  invalid: number;
+  /** The model that wrote the newest reply in it; null when none answered. */
+  model: string | null;
+  /** The saved playtest Fix with agent made of it (`TAPE_NAME_RE`); null until then. */
+  tape: string | null;
+}
+
+/** What Fix with agent came to: the saved playtest the agent replays, or why there is none. */
+export type AiReportFixOutcome = { ok: true; tape: string } | { ok: false; failure: AiReportFailure };
+
+/** A report's id from the renderer or genex.games, or null. */
+export const readAiReportId = (raw: unknown): string | null => (isText(raw, ID_RE) ? raw : null);
+
+const MODEL_RE = /^[^\p{Cc}]{1,150}$/u;
+const TAPE_RE = /^[a-z0-9][a-z0-9_-]{0,63}$/;
+const ITEM_KEYS = [
+  "id",
+  "kind",
+  "createdAt",
+  "reason",
+  "note",
+  "calls",
+  "invalid",
+  "model",
+  "tape",
+] as const satisfies readonly (keyof AiReportInboxItem)[];
+
+/** An inbox item as Studio accepts it from genex.games or main, or null. Never throws. */
+export function readAiReportInboxItem(raw: unknown): AiReportInboxItem | null {
+  const item = exactly(raw, ITEM_KEYS);
+  const head = item ? readHead({ ...item, v: AI_REPORT_WIRE_VERSION, playerText: false }) : null;
+  if (!item || !head) return null;
+  const { calls, invalid, model, tape } = item;
+  if (!isCount(calls) || !isCount(invalid) || invalid > calls) return null;
+  if (model !== null && !isText(model, MODEL_RE)) return null;
+  if (tape !== null && !isText(tape, TAPE_RE)) return null;
+  const { id, kind, createdAt, reason, note } = head;
+  return { id, kind, createdAt, reason, note, calls, invalid, model, tape };
+}
+
+/**
+ * The inbox as genex.games or main lists it, newest first and at most {@link AI_REPORT_INBOX_MAX},
+ * or null: one bad item, or two of the same id, refuses the whole list.
+ */
+export function readAiReportInbox(raw: unknown): AiReportInboxItem[] | null {
+  if (!Array.isArray(raw) || raw.length > INBOX_READ_MAX) return null;
+  const items: AiReportInboxItem[] = [];
+  for (const entry of raw) {
+    const item = readAiReportInboxItem(entry);
+    if (!item || items.some((known) => known.id === item.id)) return null;
+    items.push(item);
+  }
+  return items.sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, AI_REPORT_INBOX_MAX);
+}
+
+/** 32-bit FNV-1a of `text` from `seed`, in base 36. */
+function fnv(text: string, seed: number): string {
+  let hash = seed;
+  for (let index = 0; index < text.length; index += 1) {
+    hash ^= text.charCodeAt(index);
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+  return hash.toString(36);
+}
+
+/**
+ * The saved playtest Fix with agent makes of a report: `report-`, the id's first characters in
+ * lower case, and a hash of the whole id, so ids that differ only in case or past the cut still
+ * name different playtests. Always a name the harness accepts (`TAPE_NAME_RE`).
+ */
+export function reportTapeName(id: string): string {
+  const slug = id
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]/g, "")
+    .slice(0, TAPE_ID_CHARS);
+  return `report-${slug}-${fnv(id, 0x811c9dc5)}${fnv(id, 0x050c5d1f)}`;
+}
+
+/** A bundle summed up for the inbox: its calls, those still invalid after the repair, and the newest model. */
+export function inboxItemOf(bundle: AiReportBundle, tape: string | null): AiReportInboxItem {
+  const answered = bundle.calls.filter((call) => call.model !== null);
+  return {
+    id: bundle.id,
+    kind: bundle.kind,
+    createdAt: bundle.createdAt,
+    reason: bundle.reason,
+    note: bundle.note,
+    calls: bundle.calls.length,
+    invalid: bundle.calls.filter((call) => call.validation === AiValidation.Invalid).length,
+    model: answered.at(-1)?.model ?? null,
+    tape,
+  };
+}
