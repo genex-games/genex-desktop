@@ -1091,6 +1091,7 @@ dependencies = [
  "glam 0.33.12",
  "gltf",
  "rapier3d",
+ "spade",
 ]
 
 [[package]]

@@ -24,3 +24,6 @@ glam = { workspace = true }
 # The rig importer (AN-1) reads GLBs with the same pinned parser genex-render and genex-assets use.
 gltf = { workspace = true }
 rapier3d = { workspace = true, optional = true }
+# Blend spaces (AN-8) triangulate cartesian points with spade's robust Delaunay; parry3d (Rapier)
+# already brings the same version into the lock.
+spade = { workspace = true }
