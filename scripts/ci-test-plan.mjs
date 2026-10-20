@@ -268,6 +268,8 @@ export function runCiShard(root, plan, name, id, { durations } = {}) {
   if (!GROUPS.includes(name)) throw new Error(`Unknown CI group: ${name}`);
   const shard = plan[name].shards.find((item) => item.id === id);
   if (!shard) throw new Error(`Unknown or empty ${name} shard: ${id}`);
+  // node --test opens a reporter destination without creating its folder.
+  if (durations) fs.mkdirSync(path.dirname(path.resolve(root, durations)), { recursive: true });
   const commands = commandsForShard(root, name, shard, durations);
   console.log(`${name} shard ${id}: ${commands.length} test batch(es)`);
   for (const args of commands) {

@@ -226,6 +226,7 @@ test("a rig worker asked for its times adds the durations reporter beside the sp
     "scripts/test.mjs",
     `import fs from 'node:fs'; fs.writeFileSync('worker-args.json', JSON.stringify(process.argv.slice(2)));`,
   );
+  assert.ok(!fs.existsSync(path.join(root, ".studio-dev/ci")));
   assert.equal(runCiShard(root, plan, "rig", 1, { durations: ".studio-dev/ci/rig-1.json" }), 0);
   assert.deepEqual(JSON.parse(fs.readFileSync(path.join(root, "worker-args.json"), "utf8")), [
     "--test-concurrency=1",
@@ -235,6 +236,8 @@ test("a rig worker asked for its times adds the durations reporter beside the sp
     "--test-reporter-destination=.studio-dev/ci/rig-1.json",
     "tests/conformance/rig-behavior.test.ts",
   ]);
+  // node --test opens a reporter destination without creating its folder.
+  assert.ok(fs.statSync(path.join(root, ".studio-dev/ci")).isDirectory());
 });
 
 test("recorded times balance the rig shards; a file without one weighs its bytes at their rate", (t) => {
