@@ -6,6 +6,11 @@
 //!
 //! Joint matrices follow glTF: `inverse(global(mesh node)) × global(joint) × inverse bind`.
 //!
+//! A skinned GLB loads every primitive of every node its skin binds, one [`SkinPart`] per material
+//! (game systems AN-16a, [`SkinnedModel`]); each part skins as a job of its own and draws under its
+//! own material. Draws posing one skin with a bit-identical palette share its jobs and output, and
+//! a job whose output the skinned table already holds is skipped (AN-16b, `SkinnedHeld`).
+//!
 //! Motion vectors (RQ5.1) need where each skinned vertex was last frame: [`SkinnedPair`] keeps two
 //! skinned output buffers and swaps them every frame, so last frame's output stays intact while
 //! this frame's is written (no copy), and the prepass's motion entry reads it at the row's
@@ -16,7 +21,7 @@ use glam::{Mat4, Quat, Vec3, Vec4};
 use wgpu::{BindGroupLayout, Buffer, ComputePipeline, Device};
 
 use crate::error::RenderError;
-use crate::layout::GpuSkinVertex;
+use crate::layout::{GpuSkinJob, GpuSkinVertex};
 use crate::mesh::{MeshData, Vertex, check_attribute_layout, invalid, open_glb, read_primitive};
 use crate::scene::MeshId;
 
@@ -214,6 +219,10 @@ pub struct SkinId {
     pub(crate) mesh: MeshId,
     pub(crate) skin_base: u32,
     pub(crate) joints: u32,
+    /// Its first part in the library's part list (AN-16a).
+    pub(crate) part_base: u32,
+    /// Its parts.
+    pub(crate) parts: u32,
 }
 
 impl SkinId {
@@ -226,18 +235,68 @@ impl SkinId {
     pub fn joint_count(self) -> u32 {
         self.joints
     }
+
+    /// Its parts: the materials [`crate::scene::Scene::draw_skinned_parts`] takes.
+    pub fn part_count(self) -> u32 {
+        self.parts
+    }
 }
 
 impl SkinnedMeshData {
-    /// The first skinned mesh of a GLB's default scene (or of any node), with its skin, node tree
-    /// and animations. Refused `mesh-invalid`: no skinned node, a primitive without JOINTS_0 or
-    /// WEIGHTS_0, a joint index past the skin's joints, more than [`MAX_JOINTS`] joints, a node
-    /// with two parents, or anything [`MeshData::from_glb`] refuses.
+    /// The skinned mesh of a GLB ([`SkinnedModel::from_glb`]) without its parts: every primitive
+    /// of every node sharing the first skin, merged. Refused as [`SkinnedModel::from_glb`].
     pub fn from_glb(bytes: &[u8]) -> Result<SkinnedMeshData, RenderError> {
+        SkinnedModel::from_glb(bytes).map(|model| model.data)
+    }
+}
+
+/// One part of a skinned mesh (game systems AN-16a): a run of its vertices and the triangles over
+/// them, drawn with one material. Its indices name only its own vertices, so its skinning job
+/// writes them alone and its batch draws them under its own material.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SkinPart {
+    /// Its first vertex in the mesh.
+    pub first_vertex: u32,
+    /// Its vertices.
+    pub vertex_count: u32,
+    /// Its first index in the mesh.
+    pub first_index: u32,
+    /// Its indices (a multiple of 3).
+    pub index_count: u32,
+    /// The glTF material its primitives name (`None`: none), the order [`crate::glb_material::GlbModel`]
+    /// lists a GLB's materials in when the skinned primitives are all it has.
+    pub material: Option<u32>,
+}
+
+impl SkinPart {
+    /// The whole of `mesh` as one part naming no material.
+    pub fn whole(mesh: &MeshData) -> SkinPart {
+        SkinPart { first_vertex: 0, vertex_count: mesh.vertices.len() as u32, first_index: 0, index_count: mesh.indices.len() as u32, material: None }
+    }
+}
+
+/// A skinned GLB with its parts (game systems AN-16a): the merged skinned mesh and one part per
+/// material, in the order the materials are first used.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SkinnedModel {
+    /// The skinned mesh: every part's vertices and triangles, part after part.
+    pub data: SkinnedMeshData,
+    /// Its parts, tiling its vertices and indices in order.
+    pub parts: Vec<SkinPart>,
+}
+
+impl SkinnedModel {
+    /// The skinned mesh of a GLB: the first skinned node's skin (of its default scene or of any
+    /// node) and every primitive of every node that skin binds, one part per material in
+    /// first-use order (a single-material GLB is one part, in the file's primitive order), with
+    /// its node tree and animations. Refused `mesh-invalid`: no skinned node, a primitive without
+    /// JOINTS_0 or WEIGHTS_0, a joint index past the skin's joints, more than [`MAX_JOINTS`]
+    /// joints, a node with two parents, or anything [`MeshData::from_glb`] refuses.
+    pub fn from_glb(bytes: &[u8]) -> Result<SkinnedModel, RenderError> {
         let gltf = open_glb(bytes)?;
         let blob = gltf.blob.as_deref();
         let node = gltf.nodes().find(|n| n.mesh().is_some() && n.skin().is_some()).ok_or_else(|| invalid("the GLB has no skinned mesh"))?;
-        let (Some(gltf_mesh), Some(skin)) = (node.mesh(), node.skin()) else { return Err(invalid("the GLB has no skinned mesh")) };
+        let Some(skin) = node.skin() else { return Err(invalid("the GLB has no skinned mesh")) };
         let joints: Vec<usize> = skin.joints().map(|j| j.index()).collect();
         if joints.is_empty() || joints.len() > MAX_JOINTS {
             return Err(invalid(format!("{} joints, between 1 and {MAX_JOINTS}", joints.len())));
@@ -249,39 +308,83 @@ impl SkinnedMeshData {
         if inverse_bind.len() != joints.len() {
             return Err(invalid("inverseBindMatrices and joints counts differ"));
         }
-        let (mesh, skin_rows) = read_skinned_mesh(&gltf_mesh, blob, joints.len())?;
+        // Every node the skin binds: a character split into body, clothes and hair is one skin
+        // over several nodes (glTF ignores a skinned node's own transform, so they share space).
+        let skinned_meshes: Vec<gltf::Mesh<'_>> =
+            gltf.nodes().filter(|n| n.skin().is_some_and(|s| s.index() == skin.index())).filter_map(|n| n.mesh()).collect();
+        let (mesh, skin_rows, parts) = read_skinned_parts(&skinned_meshes, blob, joints.len())?;
         let skeleton = Skeleton { nodes: skeleton_nodes(&gltf)?, joints, inverse_bind, mesh_node: Some(node.index()) };
         let animations = gltf.animations().map(|a| read_animation(&a, blob)).collect::<Result<_, _>>()?;
-        Ok(SkinnedMeshData { mesh, skin: skin_rows, skeleton, animations })
+        Ok(SkinnedModel { data: SkinnedMeshData { mesh, skin: skin_rows, skeleton, animations }, parts })
     }
 }
 
-fn read_skinned_mesh(gltf_mesh: &gltf::Mesh<'_>, blob: Option<&[u8]>, joint_count: usize) -> Result<(MeshData, Vec<GpuSkinVertex>), RenderError> {
+/// One material's primitives while a skinned mesh is read: their vertices, triangles (indices
+/// local to the group) and skin rows.
+struct PartGroup {
+    material: Option<usize>,
+    mesh: MeshData,
+    skin: Vec<GpuSkinVertex>,
+}
+
+/// The primitives of `meshes`, grouped by material in first-use order and laid out group after
+/// group: the merged mesh, its skin rows and one part per group with triangles.
+fn read_skinned_parts(meshes: &[gltf::Mesh<'_>], blob: Option<&[u8]>, joint_count: usize) -> Result<(MeshData, Vec<GpuSkinVertex>, Vec<SkinPart>), RenderError> {
+    let mut groups: Vec<PartGroup> = Vec::new();
+    for primitive in meshes.iter().flat_map(gltf::Mesh::primitives) {
+        let key = primitive.material().index();
+        let at = match groups.iter().position(|group| group.material == key) {
+            Some(at) => at,
+            None => {
+                groups.push(PartGroup { material: key, mesh: MeshData::default(), skin: Vec::new() });
+                groups.len() - 1
+            }
+        };
+        read_skinned_primitive(&primitive, blob, joint_count, &mut groups[at])?;
+    }
     let mut mesh = MeshData::default();
     let mut skin = Vec::new();
-    for primitive in gltf_mesh.primitives() {
-        let (vertices, indices) = read_primitive(&primitive, blob)?;
-        for semantic in [gltf::Semantic::Joints(0), gltf::Semantic::Weights(0)] {
-            check_attribute_layout(&primitive, &semantic)?;
-        }
-        let reader = primitive.reader(|_| blob);
-        let joints: Vec<[u16; 4]> = reader.read_joints(0).ok_or_else(|| invalid("a skinned primitive has no JOINTS_0"))?.into_u16().collect();
-        let weights: Vec<[f32; 4]> = reader.read_weights(0).ok_or_else(|| invalid("a skinned primitive has no WEIGHTS_0"))?.into_f32().collect();
-        if joints.len() != vertices.len() || weights.len() != vertices.len() {
-            return Err(invalid("JOINTS_0 or WEIGHTS_0 and POSITION counts differ"));
-        }
-        if joints.iter().flatten().any(|&j| usize::from(j) >= joint_count) {
-            return Err(invalid(format!("a joint index is past the skin's {joint_count} joints")));
-        }
-        let base = u32::try_from(mesh.vertices.len()).map_err(|_| invalid("too many vertices"))?;
-        skin.extend(joints.iter().zip(&weights).map(|(j, w)| skin_row(*j, *w)));
-        mesh.vertices.extend(vertices);
-        mesh.indices.extend(indices.iter().map(|i| base + i));
+    let mut parts = Vec::new();
+    for group in groups.into_iter().filter(|group| !group.mesh.indices.is_empty()) {
+        let first_vertex = u32::try_from(mesh.vertices.len()).map_err(|_| invalid("too many vertices"))?;
+        let first_index = u32::try_from(mesh.indices.len()).map_err(|_| invalid("too many indices"))?;
+        parts.push(SkinPart {
+            first_vertex,
+            vertex_count: group.mesh.vertices.len() as u32,
+            first_index,
+            index_count: group.mesh.indices.len() as u32,
+            material: group.material.map(|index| index as u32),
+        });
+        mesh.indices.extend(group.mesh.indices.iter().map(|i| first_vertex + i));
+        mesh.vertices.extend(group.mesh.vertices);
+        skin.extend(group.skin);
     }
     if mesh.indices.is_empty() {
         return Err(invalid("the skinned mesh has no triangles"));
     }
-    Ok((mesh, skin))
+    Ok((mesh, skin, parts))
+}
+
+/// Append one skinned primitive's vertices, triangles and skin rows to `group`.
+fn read_skinned_primitive(primitive: &gltf::Primitive<'_>, blob: Option<&[u8]>, joint_count: usize, group: &mut PartGroup) -> Result<(), RenderError> {
+    let (vertices, indices) = read_primitive(primitive, blob)?;
+    for semantic in [gltf::Semantic::Joints(0), gltf::Semantic::Weights(0)] {
+        check_attribute_layout(primitive, &semantic)?;
+    }
+    let reader = primitive.reader(|_| blob);
+    let joints: Vec<[u16; 4]> = reader.read_joints(0).ok_or_else(|| invalid("a skinned primitive has no JOINTS_0"))?.into_u16().collect();
+    let weights: Vec<[f32; 4]> = reader.read_weights(0).ok_or_else(|| invalid("a skinned primitive has no WEIGHTS_0"))?.into_f32().collect();
+    if joints.len() != vertices.len() || weights.len() != vertices.len() {
+        return Err(invalid("JOINTS_0 or WEIGHTS_0 and POSITION counts differ"));
+    }
+    if joints.iter().flatten().any(|&j| usize::from(j) >= joint_count) {
+        return Err(invalid(format!("a joint index is past the skin's {joint_count} joints")));
+    }
+    let base = u32::try_from(group.mesh.vertices.len()).map_err(|_| invalid("too many vertices"))?;
+    group.skin.extend(joints.iter().zip(&weights).map(|(j, w)| skin_row(*j, *w)));
+    group.mesh.vertices.extend(vertices);
+    group.mesh.indices.extend(indices.iter().map(|i| base + i));
+    Ok(())
 }
 
 /// Weights normalized to sum 1; none at all binds the vertex to joint 0.
@@ -486,7 +589,8 @@ impl SkinnedPair {
         self.written = true;
         let need = crate::tables::aligned(bytes);
         if self.buffers[self.current].as_ref().is_none_or(|buffer| buffer.size() < need) {
-            self.buffers[self.current] = Some(crate::tables::buffer(device, "skinned vertices", need.next_power_of_two(), usage)?);
+            let held = self.buffers[self.current].as_ref().map_or(0, Buffer::size);
+            self.buffers[self.current] = Some(crate::tables::buffer(device, "skinned vertices", crate::tables::skinned_growth(held, need), usage)?);
         }
         Ok(())
     }
@@ -505,5 +609,84 @@ impl SkinnedPair {
     pub(crate) fn forget(&mut self) {
         self.written = false;
         self.previous_written = false;
+    }
+}
+
+/// What the skinned output table holds (game systems AN-16b): the jobs of the last frame that
+/// skinned into it, with the joint table they read and the table buffers' generations then. A job
+/// of this frame that equals a held one at the same output (same vertices, skin rows and slot)
+/// with a bit-identical palette is skipped: the table already holds its output, so a still
+/// character runs no skinning, and its rows read last frame's vertices equal to this frame's (no
+/// motion). A frame's jobs become the held ones only once its skinning is recorded
+/// ([`SkinnedHeld::commit`]): a frame refused before then leaves the table and this record as
+/// they were.
+#[derive(Default)]
+pub(crate) struct SkinnedHeld {
+    held: Option<HeldSkinning>,
+    pending: Option<HeldSkinning>,
+}
+
+/// One frame's skinning as the table holds it.
+#[derive(Clone, Default)]
+struct HeldSkinning {
+    /// Its jobs by output base.
+    jobs: std::collections::BTreeMap<u32, GpuSkinJob>,
+    joints: Vec<[f32; 16]>,
+    /// Each job's palette length, by joint base.
+    palettes: std::collections::BTreeMap<u32, u32>,
+    generations: [u64; 2],
+}
+
+impl HeldSkinning {
+    fn of(jobs: &[GpuSkinJob], joints: &[[f32; 16]], generations: [u64; 2]) -> HeldSkinning {
+        let mut bases: Vec<u32> = jobs.iter().map(|job| job.joint_base).collect();
+        bases.sort_unstable();
+        bases.dedup();
+        let ends = bases.iter().skip(1).copied().chain(std::iter::once(joints.len() as u32));
+        let palettes = bases.iter().zip(ends).map(|(base, end)| (*base, end - base)).collect();
+        HeldSkinning { jobs: jobs.iter().map(|job| (job.dst_base, *job)).collect(), joints: joints.to_vec(), palettes, generations }
+    }
+
+    /// The palette `job` reads.
+    fn palette(&self, job: &GpuSkinJob) -> &[[f32; 16]] {
+        let len = self.palettes.get(&job.joint_base).copied().unwrap_or(0) as usize;
+        let start = job.joint_base as usize;
+        self.joints.get(start..start + len).unwrap_or(&[])
+    }
+
+    /// Whether the table holds `job`'s output as `now` (this frame's skinning) would write it.
+    fn holds(&self, job: &GpuSkinJob, now: &HeldSkinning) -> bool {
+        let Some(held) = self.jobs.get(&job.dst_base) else { return false };
+        let same_job = (held.src_base, held.count, held.skin_base, held.slot) == (job.src_base, job.count, job.skin_base, job.slot);
+        let (was, is) = (self.palette(held), now.palette(job));
+        same_job && !is.is_empty() && bytemuck::cast_slice::<[f32; 16], u32>(was) == bytemuck::cast_slice::<[f32; 16], u32>(is)
+    }
+}
+
+impl SkinnedHeld {
+    /// The jobs of a frame (`jobs` over `joints`, into tables of `generations`: the skinned output's
+    /// and its slots') that must run: those whose output the tables do not hold. The frame's jobs
+    /// wait to be committed.
+    pub(crate) fn jobs_to_run(&mut self, jobs: &[GpuSkinJob], joints: &[[f32; 16]], generations: [u64; 2]) -> Vec<GpuSkinJob> {
+        let now = HeldSkinning::of(jobs, joints, generations);
+        let run = match self.held.as_ref().filter(|held| held.generations == generations) {
+            Some(held) => jobs.iter().filter(|job| !held.holds(job, &now)).copied().collect(),
+            None => jobs.to_vec(),
+        };
+        self.pending = Some(now);
+        run
+    }
+
+    /// The pending frame's skinning was recorded: the tables hold its jobs' output.
+    pub(crate) fn commit(&mut self) {
+        if let Some(pending) = self.pending.take() {
+            self.held = Some(pending);
+        }
+    }
+
+    /// Forget what the tables hold (the meshes they skin from changed): every job runs next frame.
+    pub(crate) fn forget(&mut self) {
+        self.held = None;
+        self.pending = None;
     }
 }

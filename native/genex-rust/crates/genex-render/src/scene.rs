@@ -31,7 +31,7 @@ use crate::lod_rows::{DrawLod, FAR_RULE_NONE, FAR_RULES_MAX, GpuFarRule, GpuLodR
 use crate::retained::{InstanceGroup, RetainedSpan};
 use crate::settings::{Meshlets, ShadowSettings};
 use crate::shadow::{Cascades, camera_forward, fit};
-use crate::skin::{MAX_JOINTS, SkinId, SkinnedMeshData, skinned_bounds};
+use crate::skin::{MAX_JOINTS, SkinId, SkinPart, SkinnedMeshData, skinned_bounds};
 use crate::transparent::back_to_front;
 
 pub use crate::cull::{CpuCull, frustum_planes, frustum_planes_for, in_frustum};
@@ -221,6 +221,8 @@ pub struct MeshLibrary {
     indices: Vec<u32>,
     entries: Vec<MeshEntry>,
     skin: Vec<GpuSkinVertex>,
+    /// Every skinned mesh's parts (AN-16a), each mesh's a run named by its [`SkinId`].
+    skin_parts: Vec<SkinPart>,
     meshlet_setting: Meshlets,
     meshlets: MeshletLibrary,
     /// Per entry: how it draws on the meshlet path.
@@ -270,6 +272,7 @@ impl MeshLibrary {
             indices: Vec::new(),
             entries: Vec::new(),
             skin: Vec::new(),
+            skin_parts: Vec::new(),
             meshlet_setting: setting,
             meshlets: MeshletLibrary::default(),
             meshlet_states: Vec::new(),
@@ -566,10 +569,20 @@ impl MeshLibrary {
         self.lods.get(&id.index).filter(|_| self.is_live(id))
     }
 
-    /// Add a skinned mesh: its bind pose as a mesh and its skin rows. Refused `mesh-invalid` when
-    /// the skin rows and vertices differ in number, a joint index is past its joints, it has more
-    /// than [`MAX_JOINTS`] joints or its inverse bind matrices do not match them.
+    /// Add a skinned mesh: its bind pose as a mesh and its skin rows, one part drawn with one
+    /// material. Refused `mesh-invalid` when the skin rows and vertices differ in number, a joint
+    /// index is past its joints, it has more than [`MAX_JOINTS`] joints or its inverse bind
+    /// matrices do not match them.
     pub fn add_skinned(&mut self, data: &SkinnedMeshData) -> Result<SkinId, RenderError> {
+        self.add_skinned_parts(data, &[SkinPart::whole(&data.mesh)])
+    }
+
+    /// [`MeshLibrary::add_skinned`] with its parts (AN-16a, [`crate::skin::SkinnedModel::parts`]):
+    /// each part skins and draws on its own, under its own material. Refused `mesh-invalid`, as
+    /// `add_skinned` refuses, and when there is no part, a part is empty or reaches past the mesh's
+    /// vertices or indices, its indices are not whole triangles, or one of its indices names a
+    /// vertex outside the part.
+    pub fn add_skinned_parts(&mut self, data: &SkinnedMeshData, parts: &[SkinPart]) -> Result<SkinId, RenderError> {
         let joints = data.skeleton.joints.len();
         let refuse = |detail: String| Err(RenderError::refused(RenderCode::MeshInvalid, detail));
         if data.skin.len() != data.mesh.vertices.len() {
@@ -587,10 +600,19 @@ impl MeshLibrary {
             return refuse_too_large(format!("{skin_bytes} bytes of skin rows, past the {BUFFER_MAX_BYTES}-byte binding"));
         }
         MeshLibrary::check_mesh(&data.mesh)?;
+        check_skin_parts(&data.mesh, parts)?;
+        let part_base = u32::try_from(self.skin_parts.len()).map_err(|_| RenderError::refused(RenderCode::MeshInvalid, "the library is full"))?;
         let placement = self.place(&data.mesh)?;
         let mesh = self.push(data.mesh.clone(), EntryRole::Skinned, None, placement);
         self.skin.extend_from_slice(&data.skin);
-        Ok(SkinId { mesh, skin_base, joints: joints as u32 })
+        self.skin_parts.extend_from_slice(parts);
+        Ok(SkinId { mesh, skin_base, joints: joints as u32, part_base, parts: parts.len() as u32 })
+    }
+
+    /// The parts of skinned mesh `skin` (AN-16a): one for a mesh added whole.
+    pub fn skin_parts(&self, skin: SkinId) -> &[SkinPart] {
+        let start = skin.part_base as usize;
+        self.skin_parts.get(start..start + skin.parts as usize).unwrap_or(&[])
     }
 
     /// Remove mesh `id` and its levels of detail (game systems STR-2): their rows go back to the
@@ -861,6 +883,16 @@ pub struct SkinnedDraw {
     pub material: Material,
     /// The draw id current when it was drawn ([`Scene::set_id`]), if any (RQ5.1 motion vectors).
     pub id: Option<DrawId>,
+    /// One material per part of its skin ([`Scene::draw_skinned_parts`], AN-16a); empty: every
+    /// part draws with `material`.
+    pub part_materials: Vec<Material>,
+}
+
+impl SkinnedDraw {
+    /// The material part `part` draws with.
+    pub fn part_material(&self, part: usize) -> Material {
+        self.part_materials.get(part).copied().unwrap_or(self.material)
+    }
 }
 
 /// A line vertex: position and sRGB colour.
@@ -1009,9 +1041,20 @@ impl Scene {
         self.draws.len() + self.groups.iter().map(|draw| draw.group.len()).sum::<usize>()
     }
 
-    /// Draw a skinned mesh posed by `joints`: one logical draw.
+    /// Draw a skinned mesh posed by `joints`, every part with `material`: one logical draw.
     pub fn draw_skinned(&mut self, skin: SkinId, model: [f32; 16], joints: Vec<[f32; 16]>, material: Material) -> &mut Self {
-        self.skinned.push(SkinnedDraw { skin, model, joints, material, id: self.id });
+        self.skinned.push(SkinnedDraw { skin, model, joints, material, id: self.id, part_materials: Vec::new() });
+        self.logical_draws += 1;
+        self
+    }
+
+    /// Draw a skinned mesh posed by `joints`, each part with its own material (AN-16a): one
+    /// logical draw. `materials` holds one per part ([`SkinId::part_count`]); the frame is refused
+    /// `mesh-invalid` otherwise.
+    pub fn draw_skinned_parts(&mut self, skin: SkinId, model: [f32; 16], joints: Vec<[f32; 16]>, materials: Vec<Material>) -> &mut Self {
+        // A draw naming no material is refused at the plan (every skin has a part); white stands in.
+        let material = materials.first().copied().unwrap_or(Material::color([255; 4]));
+        self.skinned.push(SkinnedDraw { skin, model, joints, material, id: self.id, part_materials: materials });
         self.logical_draws += 1;
         self
     }
@@ -1470,26 +1513,60 @@ impl Rows {
         self.retained.push(RetainedSpan { group: group.clone(), first_row: first as u32, rows, material, bounds: (entry.center, entry.radius), lod: *lod });
     }
 
-    /// One opaque skinned draw's batch (one row), its slot base in `variant`'s region.
-    fn push_skinned(&mut self, part: &SkinnedPart, draw: &SkinnedDraw, variant: usize, key: Option<MotionRow>, materials: &mut Materials) {
-        let row = instance_row(&draw.model, part.center, part.radius, materials.row(&draw.material));
+    /// One skinned part's batch in `variant`'s region (its slot base there): one row per draw
+    /// sharing its skinned output (`rows`, AN-16b), in draw order.
+    fn push_skinned(&mut self, scene: &Scene, part: &SkinnedPart, rows: &[SkinnedRow], variant: usize, materials: &mut Materials) {
         self.slot_base[variant * self.slot_count + part.job.slot as usize] = self.slots;
-        let mut skinned = batch(self.slots as usize, 1, part.source.first_index, part.source.index_count, part.source.base_vertex);
+        let mut skinned = batch(self.slots as usize, rows.len(), part.source.first_index, part.source.index_count, part.source.base_vertex);
         skinned.first_row = self.instances.len() as u32;
         self.batches.push(skinned);
-        self.slots += 1;
-        self.lod_rows.push(lod_row(&draw.model, row.bounds, &DrawLod::OWN));
-        self.instances.push(row);
-        self.motion.extend(key);
+        self.slots += rows.len() as u32;
+        for skinned_row in rows {
+            let draw = &scene.skinned[skinned_row.draw];
+            let row = instance_row(&draw.model, part.center, part.radius, materials.row(&skinned_row.material));
+            self.lod_rows.push(lod_row(&draw.model, row.bounds, &DrawLod::OWN));
+            self.instances.push(row);
+            self.motion.extend(skinned_row.key);
+        }
+    }
+
+    /// The batches of `variant`'s opaque skinned rows (sorted by variant, then part): one per
+    /// part drawn, its rows together.
+    fn push_skinned_variant(&mut self, scene: &Scene, parts: &[SkinnedPart], rows: &[SkinnedRow], variant: usize, materials: &mut Materials) {
+        let first = rows.partition_point(|row| row.variant < variant);
+        let mine = &rows[first..first + rows[first..].partition_point(|row| row.variant == variant)];
+        for same_part in mine.chunk_by(|a, b| a.part == b.part) {
+            self.push_skinned(scene, &parts[same_part[0].part], same_part, variant, materials);
+        }
     }
 }
 
-/// One skinned draw's job, its batch geometry and its model-space bounds.
+/// One skinning job of a frame (a part of a skinned draw, shared by the draws posing the same skin
+/// with a bit-identical palette, AN-16b), its batch geometry and its model-space bounds.
 struct SkinnedPart {
     job: GpuSkinJob,
     source: DrawSource,
     center: [f32; 3],
     radius: f32,
+}
+
+/// One opaque instance row of a skinned part: its draw, its material and draw variant, and its
+/// identity across frames.
+#[derive(Clone, Copy)]
+struct SkinnedRow {
+    part: usize,
+    draw: usize,
+    variant: usize,
+    material: Material,
+    key: Option<MotionRow>,
+}
+
+/// A frame's skinning: its jobs, the joint table, and each skinned draw's jobs (its parts, in
+/// part order: indices into `parts`).
+struct SkinnedFrame {
+    parts: Vec<SkinnedPart>,
+    joints: Vec<[f32; 16]>,
+    uses: Vec<std::ops::Range<usize>>,
 }
 
 /// The camera's pixels a world unit at distance 1 per pixel of output height, over
@@ -1524,13 +1601,47 @@ fn mesh_entry(library: &MeshLibrary, mesh: MeshId) -> Result<&MeshEntry, RenderE
     library.entry(mesh).ok_or_else(|| RenderError::refused(RenderCode::MeshInvalid, format!("mesh {} is not in the library", mesh.raw())))
 }
 
-/// The skinning jobs of every skinned draw, refused `mesh-invalid` for an unknown mesh or a
-/// joint count that differs from its skin's.
-fn skinned_parts(scene: &Scene, library: &MeshLibrary) -> Result<(Vec<SkinnedPart>, Vec<[f32; 16]>), RenderError> {
-    let mut parts = Vec::with_capacity(scene.skinned.len());
-    let mut joints = Vec::new();
+/// Whether an opaque draw of `material` batches apart from the plain batches (P2-0.12).
+fn varied_material(material: &Material) -> bool {
+    !material.is_transparent() && material.draw_variant() != DrawVariant::PLAIN
+}
+
+/// Whether two palettes are bit for bit the same (a NaN equals itself, -0 differs from 0).
+fn same_palette(a: &[[f32; 16]], b: &[[f32; 16]]) -> bool {
+    bytemuck::cast_slice::<[f32; 16], u32>(a) == bytemuck::cast_slice::<[f32; 16], u32>(b)
+}
+
+/// Refuse `mesh-invalid` a part list that does not describe `mesh` (AN-16a).
+fn check_skin_parts(mesh: &MeshData, parts: &[SkinPart]) -> Result<(), RenderError> {
+    let refuse = |detail: String| Err(RenderError::refused(RenderCode::MeshInvalid, detail));
+    if parts.is_empty() {
+        return refuse("a skinned mesh has no part".to_owned());
+    }
+    let (vertices, indices) = (mesh.vertices.len() as u64, mesh.indices.len() as u64);
+    for (at, part) in parts.iter().enumerate() {
+        let vertex_end = u64::from(part.first_vertex) + u64::from(part.vertex_count);
+        let index_end = u64::from(part.first_index) + u64::from(part.index_count);
+        let empty = part.vertex_count == 0 || part.index_count == 0;
+        if empty || vertex_end > vertices || index_end > indices || part.index_count % 3 != 0 {
+            return refuse(format!("skinned part {at} is empty, not whole triangles, or past the mesh's {vertices} vertices and {indices} indices"));
+        }
+        let range = part.first_vertex..part.first_vertex + part.vertex_count;
+        let own = &mesh.indices[part.first_index as usize..index_end as usize];
+        if own.iter().any(|index| !range.contains(index)) {
+            return refuse(format!("skinned part {at} names a vertex outside its own"));
+        }
+    }
+    Ok(())
+}
+
+/// The skinning jobs of every skinned draw (one per part; AN-16a), refused `mesh-invalid` for an
+/// unknown mesh, a joint count that differs from its skin's, or a material count that differs
+/// from its parts'. A draw posing the same skin with a bit-identical palette as an earlier draw
+/// takes that draw's jobs, so its rows draw the same skinned output (AN-16b).
+fn skinned_parts(scene: &Scene, library: &MeshLibrary) -> Result<SkinnedFrame, RenderError> {
+    let mut frame = SkinnedFrame { parts: Vec::with_capacity(scene.skinned.len()), joints: Vec::new(), uses: Vec::with_capacity(scene.skinned.len()) };
     let mut dst_base = 0u32;
-    for (i, draw) in scene.skinned.iter().enumerate() {
+    for (at, draw) in scene.skinned.iter().enumerate() {
         let entry = mesh_entry(library, draw.skin.mesh)?;
         if draw.joints.len() != draw.skin.joints as usize {
             return Err(RenderError::refused(
@@ -1538,22 +1649,44 @@ fn skinned_parts(scene: &Scene, library: &MeshLibrary) -> Result<(Vec<SkinnedPar
                 format!("{} joint matrices for a skin of {}", draw.joints.len(), draw.skin.joints),
             ));
         }
-        let job = GpuSkinJob {
-            src_base: entry.base_vertex as u32,
-            count: entry.vertex_count,
-            dst_base,
-            joint_base: joints.len() as u32,
-            skin_base: draw.skin.skin_base,
-            slot: (library.len() + i) as u32,
-            pad: [0; 2],
-        };
-        let source = DrawSource { skinned: true, first_index: entry.first_index, index_count: entry.index_count, base_vertex: dst_base as i32 };
+        if !draw.part_materials.is_empty() && draw.part_materials.len() != draw.skin.parts as usize {
+            return Err(RenderError::refused(
+                RenderCode::MeshInvalid,
+                format!("{} materials for a skin of {} parts", draw.part_materials.len(), draw.skin.parts),
+            ));
+        }
+        let shared = scene.skinned[..at].iter().position(|earlier| earlier.skin == draw.skin && same_palette(&earlier.joints, &draw.joints));
+        if let Some(earlier) = shared {
+            frame.uses.push(frame.uses[earlier].clone());
+            continue;
+        }
         let (center, radius) = skinned_bounds(entry.center, entry.radius, &draw.joints);
-        joints.extend_from_slice(&draw.joints);
-        dst_base += entry.vertex_count;
-        parts.push(SkinnedPart { job, source, center, radius });
+        let joint_base = frame.joints.len() as u32;
+        frame.joints.extend_from_slice(&draw.joints);
+        let skin_parts = library.skin_parts(draw.skin);
+        if skin_parts.len() != draw.skin.parts as usize {
+            return Err(RenderError::refused(RenderCode::MeshInvalid, format!("skin of mesh {} is not this library's", draw.skin.mesh.raw())));
+        }
+        let first = frame.parts.len();
+        for part in skin_parts {
+            let job = GpuSkinJob {
+                src_base: entry.base_vertex as u32 + part.first_vertex,
+                count: part.vertex_count,
+                dst_base,
+                joint_base,
+                skin_base: draw.skin.skin_base + part.first_vertex,
+                slot: (library.len() + frame.parts.len()) as u32,
+                pad: [0; 2],
+            };
+            // The part's indices name mesh vertices from its first: shifted onto its own output.
+            let base_vertex = dst_base as i32 - part.first_vertex as i32;
+            let source = DrawSource { skinned: true, first_index: entry.first_index + part.first_index, index_count: part.index_count, base_vertex };
+            dst_base += part.vertex_count;
+            frame.parts.push(SkinnedPart { job, source, center, radius });
+        }
+        frame.uses.push(first..frame.parts.len());
     }
-    Ok((parts, joints))
+    Ok(frame)
 }
 
 impl FramePlan {
@@ -1590,7 +1723,7 @@ impl FramePlan {
     /// frame writes motion (`motion`); without, `motion` is empty and no key is made.
     pub fn build_with_motion(scene: &Scene, library: &MeshLibrary, aspect: f32, options: &PlanOptions, motion: bool) -> Result<FramePlan, RenderError> {
         let depth_reversed = options.depth_reversed;
-        let (parts, joints) = skinned_parts(scene, library)?;
+        let SkinnedFrame { parts, joints, uses } = skinned_parts(scene, library)?;
         let mut materials = Materials::default();
         let mut keys = DrawKeys { keys: motion.then(MotionKeys::default) };
         // Opaque draws by variant and mesh as indices into the scene's draws (and, with motion,
@@ -1636,9 +1769,9 @@ impl FramePlan {
             }
         }
         let slot_count = library.len() + parts.len();
-        let varied_skin = scene.skinned.iter().any(|draw| !draw.material.is_transparent() && draw.material.draw_variant() != DrawVariant::PLAIN);
+        let varied_skin = scene.skinned.iter().zip(&uses).any(|(draw, used)| (0..used.len()).any(|k| varied_material(&draw.part_material(k))));
         let varied = varied_skin || by_mesh.keys().any(|(variant, _)| *variant > 0);
-        let instances = scene.mesh_instances() + parts.len();
+        let instances = scene.mesh_instances() + uses.iter().map(ExactSizeIterator::len).sum::<usize>();
         let mut rows = Rows {
             instances: Vec::with_capacity(instances),
             motion: Vec::with_capacity(if motion { instances } else { 0 }),
@@ -1653,30 +1786,31 @@ impl FramePlan {
         };
         rows.push_meshes(scene, library, &by_mesh, 0, &key_of, &mut keys, &mut materials)?;
         let static_batches = rows.batches.len() as u32;
-        // The skinned draws in the game's order: the transparent ones to the glass, the plain ones
-        // batched now, the other variants after the plain batches.
-        let mut varied_skinned = Vec::new();
-        for (at, (part, draw)) in parts.iter().zip(&scene.skinned).enumerate() {
-            let key = keys.row(draw.id, draw.skin.mesh, RowKind::Skinned, Some(part.job.dst_base));
-            if draw.material.is_transparent() {
-                let row = instance_row(&draw.model, part.center, part.radius, materials.row(&draw.material));
-                glass.push(Glass { row, source: part.source, motion: key });
-                continue;
-            }
-            match draw.material.draw_variant().index() {
-                0 => rows.push_skinned(part, draw, 0, key, &mut materials),
-                variant => varied_skinned.push((variant, at, key)),
+        // The skinned draws' rows in the game's order, part by part (their identities made in that
+        // order): the transparent ones to the glass, the opaque ones batched by variant and part,
+        // the plain ones now and the other variants after the plain batches.
+        let mut skinned_rows = Vec::new();
+        for (at, draw) in scene.skinned.iter().enumerate() {
+            for (k, part) in uses[at].clone().enumerate() {
+                let material = draw.part_material(k);
+                let key = keys.row(draw.id, draw.skin.mesh, RowKind::Skinned, Some(parts[part].job.dst_base));
+                if material.is_transparent() {
+                    let row = instance_row(&draw.model, parts[part].center, parts[part].radius, materials.row(&material));
+                    glass.push(Glass { row, source: parts[part].source, motion: key });
+                    continue;
+                }
+                skinned_rows.push(SkinnedRow { part, draw: at, variant: material.draw_variant().index(), material, key });
             }
         }
+        skinned_rows.sort_by_key(|row| (row.variant, row.part));
+        rows.push_skinned_variant(scene, &parts, &skinned_rows, DrawVariant::PLAIN.index(), &mut materials);
         let plain_batches = rows.batches.len() as u32;
         let mut variants = Vec::new();
         for variant in DrawVariant::ALL.into_iter().skip(1) {
             let first = rows.batches.len() as u32;
             rows.push_meshes(scene, library, &by_mesh, variant.index(), &key_of, &mut keys, &mut materials)?;
             let skinned_from = rows.batches.len() as u32;
-            for (_, at, key) in varied_skinned.iter().filter(|(v, _, _)| *v == variant.index()) {
-                rows.push_skinned(&parts[*at], &scene.skinned[*at], variant.index(), *key, &mut materials);
-            }
+            rows.push_skinned_variant(scene, &parts, &skinned_rows, variant.index(), &mut materials);
             let end = rows.batches.len() as u32;
             if end > first {
                 variants.push(VariantRun { variant, batches: first..end, skinned_from });

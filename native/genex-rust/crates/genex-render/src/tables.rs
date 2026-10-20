@@ -1,5 +1,7 @@
 //! The storage-buffer tables a frame draws from and the bytes it writes into them. Every table
-//! grows to the next power of two when a frame needs more and is never shrunk; every byte a frame
+//! grows to the next power of two when a frame needs more and is never shrunk, except the skinned
+//! output and its slots, which grow by [`skinned_growth`] (game systems AN-16b: 48 B per skinned
+//! vertex per instance, twice with motion vectors, is too much to round up); every byte a frame
 //! writes is charged against the per-frame upload budget before the first write, so a refused
 //! frame leaves the GPU untouched (the world target keeps the previous frame).
 //!
@@ -159,16 +161,53 @@ pub(crate) fn aligned(bytes: u64) -> u64 {
     bytes.max(TABLE_MIN_BYTES).div_ceil(16) * 16
 }
 
+/// The granule the skinned tables grow in (AN-16b).
+pub const SKINNED_GROWTH_GRANULE_BYTES: u64 = 64 * 1024;
+/// How much a skinned table grows past what it held when a frame needs more (AN-16b): a quarter.
+const SKINNED_GROWTH_NUM: u64 = 5;
+const SKINNED_GROWTH_DEN: u64 = 4;
+
+/// The size a skinned table (the skinned output, its slots, last frame's copy) takes when it
+/// holds `held` bytes and a frame needs `need` (game systems AN-16b): `need` itself the first
+/// time, else at least 1.25 times what it held, rounded up to [`SKINNED_GROWTH_GRANULE_BYTES`]
+/// (below one granule, to the next power of two, as every other table) and never past
+/// [`crate::BUFFER_MAX_BYTES`] when `need` fits under it. A table of 48 MB of skinned vertices
+/// takes 48 MB, not the next power of two's 64.
+pub fn skinned_growth(held: u64, need: u64) -> u64 {
+    let grown = if held == 0 { need } else { need.max(held.saturating_mul(SKINNED_GROWTH_NUM) / SKINNED_GROWTH_DEN) };
+    if grown < SKINNED_GROWTH_GRANULE_BYTES {
+        return grown.next_power_of_two();
+    }
+    let rounded = grown.div_ceil(SKINNED_GROWTH_GRANULE_BYTES).saturating_mul(SKINNED_GROWTH_GRANULE_BYTES);
+    if need <= crate::BUFFER_MAX_BYTES { rounded.min(crate::BUFFER_MAX_BYTES) } else { rounded }
+}
+
+/// How a table grows when a frame needs more than it holds.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Growth {
+    /// To the next power of two.
+    PowerOfTwo,
+    /// By [`skinned_growth`].
+    Skinned,
+}
+
 /// One growable GPU table.
 pub(crate) struct Table {
     label: &'static str,
     usage: BufferUsages,
     buffer: Option<Buffer>,
+    growth: Growth,
+    /// How many buffers it has had: a new one holds nothing of the old one's.
+    generation: u64,
 }
 
 impl Table {
     const fn new(label: &'static str, usage: BufferUsages) -> Table {
-        Table { label, usage, buffer: None }
+        Table { label, usage, buffer: None, growth: Growth::PowerOfTwo, generation: 0 }
+    }
+
+    const fn skinned(label: &'static str, usage: BufferUsages) -> Table {
+        Table { label, usage, buffer: None, growth: Growth::Skinned, generation: 0 }
     }
 
     /// Make room for `bytes`; a grown table is a new, empty buffer.
@@ -177,8 +216,18 @@ impl Table {
         if self.buffer.as_ref().is_some_and(|b| b.size() >= need) {
             return Ok(());
         }
-        self.buffer = Some(buffer(device, self.label, need.next_power_of_two(), self.usage)?);
+        let size = match self.growth {
+            Growth::PowerOfTwo => need.next_power_of_two(),
+            Growth::Skinned => skinned_growth(self.capacity(), need),
+        };
+        self.buffer = Some(buffer(device, self.label, size, self.usage)?);
+        self.generation += 1;
         Ok(())
+    }
+
+    /// How many buffers the table has had (a changed count: what it held is gone).
+    pub(crate) fn generation(&self) -> u64 {
+        self.generation
     }
 
     /// Whether the table holds `bytes` without growing (a grown table loses what it held).
@@ -260,8 +309,8 @@ impl Tables {
             lines: Table::new("lines", BufferUsages::VERTEX | BufferUsages::COPY_DST),
             joints: Table::new("joints", storage),
             skin_jobs: Table::new("skin jobs", storage),
-            skinned: Table::new("skinned vertices", BufferUsages::STORAGE | BufferUsages::VERTEX | BufferUsages::COPY_SRC),
-            skinned_slots: Table::new("skinned slots", BufferUsages::STORAGE | BufferUsages::VERTEX),
+            skinned: Table::skinned("skinned vertices", BufferUsages::STORAGE | BufferUsages::VERTEX | BufferUsages::COPY_SRC),
+            skinned_slots: Table::skinned("skinned slots", BufferUsages::STORAGE | BufferUsages::VERTEX),
             prev_models: Table::new("previous models", storage),
             light_ext: Table::new("light extensions", storage),
             light_bins: Table::new("light bins", storage),

@@ -4,7 +4,8 @@
 //!
 //! 1. `tables`: the frame uniforms, cull views and tables are written to the queue;
 //! 2. `before-cull`: a [`WorldStage`]'s compute work (Level-3 `before-cull` passes);
-//! 3. `skinning`: compute skinning of every skinned draw into the skinned vertex buffer;
+//! 3. `skinning`: compute skinning of every skinned part into the skinned vertex buffer (one job
+//!    per part of each distinct pose; a job whose output the buffer holds is skipped, AN-16b);
 //! 4. `cull`: on the GPU-driven path, one compute cull of every opaque batch against every view
 //!    (the camera and each shadow cascade) writing `draw_indexed_indirect` arguments; the CPU path
 //!    culls the same tables on the CPU and issues direct draws, as the reference;
@@ -174,7 +175,7 @@ use crate::settings::{
     ShadowFormat, ShadowSettings, TextureClass, Tonemapper, Upscaler,
 };
 use crate::settle::{HistoryReset, HistorySet, TaaHistories};
-use crate::skin::{SkinBuffers, SkinId, SkinPass, SkinnedMeshData};
+use crate::skin::{SkinBuffers, SkinId, SkinPart, SkinPass, SkinnedHeld, SkinnedMeshData, SkinnedModel};
 use crate::sky::SkyState;
 use crate::tables::{ARGS_STRIDE, PASS_VIEW_STRIDE, Tables, Uploads, VERTEX_STRIDE, aligned, buffer, entry, pipeline_layout, storage, uniform};
 use crate::target_pool::{TargetDesc, TargetPolicy, TargetPool};
@@ -306,7 +307,8 @@ pub struct FrameStats {
     pub direct_opaque_draws: u32,
     /// Transparent direct draws.
     pub transparent_draws: u32,
-    /// Compute-skinning jobs.
+    /// Compute-skinning jobs run: one per part of each distinct pose, less those whose output the
+    /// skinned table already held (game systems AN-16a/b; 0 for a frame of still characters).
     pub skin_jobs: u32,
     /// Render passes the renderer's nodes opened (shadow cascades, the world pass, the upscale).
     pub render_passes: u32,
@@ -972,6 +974,8 @@ pub struct Renderer {
     motion_node: Option<MotionNode>,
     /// Last frame's skinned vertices for the motion prepass.
     skinned_prev: SkinnedPrevious,
+    /// What the skinned output table holds (AN-16b): a job whose output it holds is skipped.
+    skinned_held: std::cell::RefCell<SkinnedHeld>,
     /// TAA's histories, Live's and a capture's own (graph node 17), made on the first TAA frame.
     taa: std::cell::RefCell<Option<TaaHistories>>,
     /// The water's node and opaque copy (graph node 16a, B.3), made on the first frame with water.
@@ -2152,7 +2156,8 @@ impl<'a> WorldNodes<'a> {
         let plan = &self.prep.plan;
         match id {
             NodeId::Tables | NodeId::BeforeCull | NodeId::Opaque | NodeId::AfterOpaque | NodeId::Transparent => true,
-            NodeId::Skinning => !plan.skin_jobs.is_empty(),
+            // A frame whose jobs are all held still copies last frame's output for its motion.
+            NodeId::Skinning => plan.skinned_vertices > 0,
             // A frame that bins nothing keeps the zero bin header Uploads wrote (renderer pass 2
             // A.4: reflection probes and irradiance volumes are binned in a frame with no light).
             NodeId::LightBinning => plan.binned.as_ref().is_some_and(bins_anything),
@@ -2245,8 +2250,9 @@ impl<'a> WorldNodes<'a> {
             }
             NodeId::BeforeCull => stage.before_cull(frame.encoder(), &renderer.world_pass()),
             NodeId::Skinning => {
-                renderer.encode_skinning(frame.encoder(), plan);
-                self.count_compute(frame, 1);
+                if renderer.encode_skinning(frame.encoder(), plan) {
+                    self.count_compute(frame, 1);
+                }
             }
             NodeId::LightBinning => {
                 if renderer.encode_light_bins(frame, plan) {
@@ -2814,6 +2820,7 @@ impl Renderer {
             motion_history: [MotionHistory::new(), MotionHistory::new()],
             motion_node: None,
             skinned_prev: SkinnedPrevious::default(),
+            skinned_held: std::cell::RefCell::new(SkinnedHeld::default()),
             taa: std::cell::RefCell::new(None),
             water: std::cell::RefCell::new(None),
             reactive: None,
@@ -3495,6 +3502,8 @@ impl Renderer {
         synced?;
         self.meshes = mesh_buffers(&self.mesh_arena);
         self.mesh_uploads += 1;
+        // The skinned output was skinned from the meshes as they were.
+        self.skinned_held.get_mut().forget();
         Ok(())
     }
 
@@ -3540,9 +3549,21 @@ impl Renderer {
         self.mesh_arena.stats()
     }
 
-    /// Add a skinned mesh (its bind pose and skin) and upload its rows.
+    /// Add a skinned mesh (its bind pose and skin) and upload its rows: one part, drawn with one
+    /// material.
     pub fn add_skinned_mesh(&mut self, gpu: &Gpu, data: &SkinnedMeshData) -> Result<SkinId, RenderError> {
-        let id = self.library.add_skinned(data)?;
+        self.add_skinned_parts(gpu, data, &[SkinPart::whole(&data.mesh)])
+    }
+
+    /// Add a skinned GLB's mesh with its parts (AN-16a, [`SkinnedModel::from_glb`]): each part
+    /// draws with its own material ([`Scene::draw_skinned_parts`]).
+    pub fn add_skinned_model(&mut self, gpu: &Gpu, model: &SkinnedModel) -> Result<SkinId, RenderError> {
+        self.add_skinned_parts(gpu, &model.data, &model.parts)
+    }
+
+    /// Add a skinned mesh with `parts` ([`MeshLibrary::add_skinned_parts`]) and upload its rows.
+    pub fn add_skinned_parts(&mut self, gpu: &Gpu, data: &SkinnedMeshData, parts: &[SkinPart]) -> Result<SkinId, RenderError> {
+        let id = self.library.add_skinned_parts(data, parts)?;
         self.sync_meshes(&gpu.device, &gpu.queue)?;
         self.reset_meshlet_history();
         Ok(id)
@@ -3754,6 +3775,9 @@ impl Renderer {
         let uploads = Uploads::new(&mut plan, path, instance_rows)?;
         self.tables.ensure(&self.device, &plan, &uploads)?;
         self.keep_previous_skinned(previous_skinned)?;
+        // AN-16b: only the jobs whose output the skinned table does not hold run (and upload).
+        let generations = [self.tables.skinned.generation(), self.tables.skinned_slots.generation()];
+        plan.skin_jobs = self.skinned_held.get_mut().jobs_to_run(&plan.skin_jobs, &plan.joints, generations);
         self.last = LastFrame { batches: plan.batches.len() as u32, views: plan.views, skinned_vertices: plan.skinned_vertices, opaque_instances: plan.visible_slots };
         Ok((plan, uploads, environment_sun))
     }
@@ -3951,7 +3975,8 @@ impl Renderer {
         self.skinned_prev.copy = bytes.unwrap_or(0);
         let Some(bytes) = bytes else { return Ok(()) };
         if self.skinned_prev.buffer.as_ref().is_none_or(|buffer| buffer.size() < bytes) {
-            let size = aligned(bytes).next_power_of_two();
+            let held = self.skinned_prev.buffer.as_ref().map_or(0, Buffer::size);
+            let size = crate::tables::skinned_growth(held, aligned(bytes));
             self.skinned_prev.buffer = Some(buffer(&self.device, "previous skinned vertices", size, BufferUsages::STORAGE | BufferUsages::COPY_DST)?);
         }
         Ok(())
@@ -5033,12 +5058,15 @@ impl Renderer {
         node.read(gpu, frame)
     }
 
-    fn encode_skinning(&self, encoder: &mut wgpu::CommandEncoder, plan: &FramePlan) {
-        let Some(most) = plan.skin_jobs.iter().map(|job| job.count).max() else { return };
+    /// Graph node 3: last frame's skinned vertices copied for the motion prepass, then the jobs
+    /// whose output the table does not hold (AN-16b). Answers whether it dispatched.
+    fn encode_skinning(&self, encoder: &mut wgpu::CommandEncoder, plan: &FramePlan) -> bool {
         // Last frame's skinned vertices, kept for the motion prepass before they are overwritten.
         if let Some(previous) = self.skinned_prev.buffer.as_ref().filter(|_| self.skinned_prev.copy > 0) {
             encoder.copy_buffer_to_buffer(self.tables.skinned.get(), 0, previous, 0, self.skinned_prev.copy);
         }
+        self.skinned_held.borrow_mut().commit();
+        let Some(most) = plan.skin_jobs.iter().map(|job| job.count).max() else { return false };
         let buffers = SkinBuffers {
             source: &self.meshes.vertices,
             skin: &self.meshes.skin,
@@ -5048,6 +5076,7 @@ impl Renderer {
             output_slots: self.tables.skinned_slots.get(),
         };
         self.skinning.encode(&self.device, encoder, &buffers, plan.skin_jobs.len() as u32, most);
+        true
     }
 
     /// Draw `scene` into the world target. A refusal (unknown mesh, mismatched skin, upload
