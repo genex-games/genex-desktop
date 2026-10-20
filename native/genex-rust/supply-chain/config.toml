@@ -16,6 +16,10 @@ criteria = "safe-to-deploy"
 version = "0.24.1"
 criteria = "safe-to-deploy"
 
+[[exemptions.addr2line]]
+version = "0.25.1"
+criteria = "safe-to-deploy"
+
 [[exemptions.adler2]]
 version = "2.0.1"
 criteria = "safe-to-deploy"
@@ -108,6 +112,10 @@ criteria = "safe-to-deploy"
 version = "1.5.1"
 criteria = "safe-to-deploy"
 
+[[exemptions.backtrace]]
+version = "0.3.76"
+criteria = "safe-to-deploy"
+
 [[exemptions.base64]]
 version = "0.13.1"
 criteria = "safe-to-deploy"
@@ -134,6 +142,10 @@ criteria = "safe-to-deploy"
 
 [[exemptions.bitflags]]
 version = "2.13.2"
+criteria = "safe-to-deploy"
+
+[[exemptions.block-buffer]]
+version = "0.10.4"
 criteria = "safe-to-deploy"
 
 [[exemptions.block2]]
@@ -260,6 +272,10 @@ criteria = "safe-to-deploy"
 version = "0.18.2"
 criteria = "safe-to-deploy"
 
+[[exemptions.cpufeatures]]
+version = "0.2.17"
+criteria = "safe-to-deploy"
+
 [[exemptions.crc32fast]]
 version = "1.5.2"
 criteria = "safe-to-deploy"
@@ -276,12 +292,20 @@ criteria = "safe-to-deploy"
 version = "0.2.4"
 criteria = "safe-to-deploy"
 
+[[exemptions.crypto-common]]
+version = "0.1.7"
+criteria = "safe-to-deploy"
+
 [[exemptions.cursor-icon]]
 version = "1.2.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.dasp_sample]]
 version = "0.11.0"
+criteria = "safe-to-deploy"
+
+[[exemptions.digest]]
+version = "0.10.7"
 criteria = "safe-to-deploy"
 
 [[exemptions.dispatch]]
@@ -460,6 +484,10 @@ criteria = "safe-to-deploy"
 version = "0.3.34"
 criteria = "safe-to-deploy"
 
+[[exemptions.generic-array]]
+version = "0.14.7"
+criteria = "safe-to-deploy"
+
 [[exemptions.gethostname]]
 version = "1.1.0"
 criteria = "safe-to-deploy"
@@ -482,6 +510,10 @@ criteria = "safe-to-deploy"
 
 [[exemptions.gilrs-core]]
 version = "0.6.8"
+criteria = "safe-to-deploy"
+
+[[exemptions.gimli]]
+version = "0.32.3"
 criteria = "safe-to-deploy"
 
 [[exemptions.glam]]
@@ -980,6 +1012,10 @@ criteria = "safe-to-deploy"
 version = "0.3.2"
 criteria = "safe-to-deploy"
 
+[[exemptions.object]]
+version = "0.37.3"
+criteria = "safe-to-deploy"
+
 [[exemptions.offset-allocator]]
 version = "0.2.0"
 criteria = "safe-to-deploy"
@@ -1216,6 +1252,10 @@ criteria = "safe-to-deploy"
 version = "0.4.0"
 criteria = "safe-to-deploy"
 
+[[exemptions.rustc-demangle]]
+version = "0.1.28"
+criteria = "safe-to-deploy"
+
 [[exemptions.rustc-hash]]
 version = "1.1.0"
 criteria = "safe-to-deploy"
@@ -1294,6 +1334,10 @@ criteria = "safe-to-deploy"
 
 [[exemptions.serde_spanned]]
 version = "1.1.1"
+criteria = "safe-to-deploy"
+
+[[exemptions.sha2]]
+version = "0.10.9"
 criteria = "safe-to-deploy"
 
 [[exemptions.shlex]]

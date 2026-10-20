@@ -178,8 +178,12 @@ pub const FOG_CALLS: [&str; 8] =
 /// work package pins what works (`tests/fixtures/rust-facade-vocabulary.json` holds the same).
 /// The animation calls of the facade (`.wire` is a refusal code's wire spelling).
 pub const ANIMATION_CALLS: [&str; 5] = ["gfx.character", ".joint_count", ".skeleton", ".path", ".wire"];
-/// The streaming calls of the facade.
-pub const STREAM_CALLS: [&str; 0] = [];
+/// The streaming calls of the facade (STR-9).
+pub const STREAM_CALLS: [&str; 13] = [
+    "Streaming::grid", ".sim_radius", ".hysteresis", ".prefetch", ".anchors", "game.streaming",
+    "game.cell_content", "CellBuild::default", ".thing", "sim.stream.set_anchor", "sim.stream.clear_anchor",
+    "sim.stream.entered", "sim.stream.left",
+];
 /// The navigation calls of the facade.
 pub const NAV_CALLS: [&str; 1] = ["frame.lines"];
 /// The sim-side asset read calls of the facade, as a reset calls them (SF-1a); `.wire` is a

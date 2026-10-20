@@ -208,7 +208,7 @@
     "issueCodes": ["texture-uncompressed", "texture-family-refused", "tangents-runtime"]
   },
   "animation": { "calls": ["gfx.character", ".joint_count", ".skeleton", ".path", ".wire"], "refusals": ["animation-asset-invalid", "animation-graph-invalid"] },
-  "stream": { "calls": [], "refusals": ["stream-invalid", "stream-too-many-anchors", "stream-out-of-world", "stream-not-registered", "stream-hold-timeout"] },
+  "stream": { "calls": ["Streaming::grid", ".sim_radius", ".hysteresis", ".prefetch", ".anchors", "game.streaming", "game.cell_content", "CellBuild::default", ".thing", "sim.stream.set_anchor", "sim.stream.clear_anchor", "sim.stream.entered", "sim.stream.left"], "refusals": ["stream-invalid", "stream-too-many-anchors", "stream-out-of-world", "stream-not-registered", "stream-hold-timeout"] },
   "nav": { "calls": ["frame.lines"], "refusals": ["nav-input-invalid", "nav-too-large"] },
   "assets": {
     "calls": ["gfx.assets().bytes", "gfx.assets().triangles", "gfx.assets().info", ".json", ".digest", ".as_str", ".code", ".detail", ".wire"],

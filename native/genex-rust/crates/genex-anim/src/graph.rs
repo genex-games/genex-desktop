@@ -21,8 +21,9 @@ use glam::Vec2;
 
 use crate::clip::Clip;
 use crate::error::AnimationError;
+use crate::events::{EventTable, EventTableBuilder};
 use crate::humanoid::HumanoidMap;
-use crate::ids::{ClipId, LayerId, ParamId, StateId};
+use crate::ids::{ClipId, EventId, LayerId, ParamId, StateId};
 use crate::mask::{JointMask, Mask};
 use crate::params::{BoolParam, Condition, FloatParam, MAX_CONDITION_NODES, Param, ParamKind, ParamValue, TriggerParam, Vec2Param};
 use crate::skeleton::Skeleton;
@@ -207,6 +208,7 @@ struct GraphDef {
     layers: Vec<LayerInfo>,
     states: Vec<StateInfo>,
     transitions: Vec<TransitionDef>,
+    events: EventTable,
 }
 
 /// A checked animation graph: cheap to clone (an `Arc`), shared by every animator built from it.
@@ -224,7 +226,16 @@ impl PartialEq for AnimGraph {
 impl AnimGraph {
     /// A builder over a character's skeleton (for layer masks) and clips (for state motions).
     pub fn builder<'a>(skeleton: &'a Skeleton, clips: &'a [Clip]) -> AnimGraphBuilder<'a> {
-        AnimGraphBuilder { skeleton, clips, params: Vec::new(), layers: Vec::new(), states: Vec::new(), transitions: Vec::new(), problems: Vec::new() }
+        AnimGraphBuilder {
+            skeleton,
+            clips,
+            params: Vec::new(),
+            layers: Vec::new(),
+            states: Vec::new(),
+            transitions: Vec::new(),
+            events: EventTable::builder(clips),
+            problems: Vec::new(),
+        }
     }
 
     /// Layers, in declaration order (the order they are evaluated and stacked).
@@ -316,6 +327,11 @@ impl AnimGraph {
     pub(crate) fn transition_def(&self, index: u32) -> Option<&TransitionDef> {
         self.def.transitions.get(index as usize)
     }
+
+    /// Every notify of the graph's clips.
+    pub fn events(&self) -> &EventTable {
+        &self.def.events
+    }
 }
 
 /// Builds an [`AnimGraph`]; see the module docs.
@@ -327,6 +343,7 @@ pub struct AnimGraphBuilder<'a> {
     layers: Vec<LayerDef>,
     states: Vec<StateDef>,
     transitions: Vec<TransitionDef>,
+    events: EventTableBuilder<'a>,
     problems: Vec<String>,
 }
 
@@ -334,6 +351,13 @@ impl<'a> AnimGraphBuilder<'a> {
     /// The clip with exactly this name.
     pub fn clip(&self, name: &str) -> Option<ClipId> {
         self.clips.iter().position(|clip| clip.name() == name).map(|index| ClipId(index as u32))
+    }
+
+    /// The event `name` at `time` seconds of `clip` (a notify); the same name is one event.
+    pub fn event(&mut self, clip: ClipId, time: f32, name: &str) -> EventId {
+        let event = self.events.event(name);
+        self.events.at(clip, time, event);
+        event
     }
 
     /// Every clip with its name, in order.
@@ -444,7 +468,7 @@ impl<'a> AnimGraphBuilder<'a> {
     /// or a parameter of the wrong kind), a transition across layers, a NaN, infinite or negative
     /// blend time, a NaN threshold, a non-finite starting value, clip speed or layer weight, a
     /// mask the skeleton cannot resolve, an additive first layer, or `at_end`/`state_ended` out of
-    /// a state with no clip.
+    /// a state with no clip, or a notify [`EventTableBuilder::build`] refuses.
     pub fn build(self) -> Result<AnimGraph, AnimationError> {
         if let Some(problem) = self.problems.first() {
             return Err(AnimationError::graph_invalid(problem.clone()));
@@ -457,9 +481,10 @@ impl<'a> AnimGraphBuilder<'a> {
         for (index, state) in states.iter_mut().enumerate() {
             state.outgoing = self.outgoing(StateId(index as u32), state.layer);
         }
+        let events = self.events.build()?;
         let params = self.params;
         let transitions = self.transitions;
-        Ok(AnimGraph { def: Arc::new(GraphDef { params, layers, states, transitions }) })
+        Ok(AnimGraph { def: Arc::new(GraphDef { params, layers, states, transitions, events }) })
     }
 
     fn check_counts(&self) -> Result<(), String> {

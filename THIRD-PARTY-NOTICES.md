@@ -692,6 +692,9 @@ comment; each Apache 2.0 port carries the upstream notice and lists Genex's chan
 | `crates/genex-anim/src/graph.rs` (`AnimGraphBuilder`, `AnimGraph`), `src/machine.rs` (`Machine::step`) | The layered state machine: each layer with its own states, weight and mask, transitions within a layer, conditions built from parameters with and/or/not, and the per-layer update order (advance, then try the transitions). Only the structure and rules were taken; no code was copied. Genex adds priorities, any-state transitions, synced switches and interruptible blends | Fyrox 1.0.1 (https://github.com/FyroxEngine/Fyrox), `fyrox-animation/src/machine/{layer,state,transition,parameter}.rs` | Dmitry Stepanov and Fyrox Engine contributors | MIT (see [Fyrox](#fyrox)) |
 | `crates/genex-anim/src/graph.rs` (`TransitionBuilder::{priority, at_end, synced}`), `src/params.rs` (triggers) | Transition priorities, `AtEnd` and `Sync` switch modes, any-state transitions and one-shot requests consumed by the transition that takes them (the rules only; no code was copied) | Godot Engine 4.7.2-stable (https://github.com/godotengine/godot), `scene/animation/animation_node_state_machine.cpp` | Godot Engine contributors | MIT (see [Godot Engine](#godot-engine)) |
 | `crates/genex-anim/src/compact.rs` (`compact`, `CompactClip`) | Clip compaction: per-track key reduction against a model-space error measured at the joint's hierarchy radius (at least a 0.1 m skin distance), constant-track removal, smallest-three 16-bit rotations and 16-bit range-quantized translations and scales. Only the method was taken; no code was copied. Genex adds a whole-skeleton error check with tolerance halving and shared time-table indices | ozz-animation 0.17.0 (https://github.com/guillaumeblanc/ozz-animation), `src/animation/offline/animation_optimizer.cc`, `src/animation/runtime/animation_keyframe.h`, `src/animation/offline/animation_builder.cc` | Guillaume Blanc | MIT (see [ozz-animation](#ozz-animation)) |
+| `crates/genex-anim/src/inertial.rs` (`InertialOffset`, `decay_spring`, `fast_negexp`, `halflife_to_damping`, `fade_velocities`) | Inertialized transitions: the offset from the next pose to the visible one, with its velocity, decayed by a critically damped spring of a given half-life and added onto the next pose; Holden's rational `exp(-x)`; dead blending's fading velocity (Genex keeps rotation offsets as scaled axes in the parent's frame, takes the next pose's velocity at the switch as zero, clears an offset under 1e-4 and refuses non-finite parts) | Spring-It-On (https://github.com/orangeduck/Spring-It-On, commit 4d97b497), `common.h` (`fast_negexp`, `halflife_to_damping`, `damper_decay_exact`), `springdamper.c`, `inertialization.c`, `deadblending.c`; Motion-Matching (https://github.com/orangeduck/Motion-Matching, commit 57b7250e), `controller.cpp`, `spring.h` | Daniel Holden | MIT (see [Spring-It-On and Motion-Matching](#spring-it-on-and-motion-matching)) |
+| `crates/genex-anim/src/transition.rs` (`TransitionPlayer`) | What a layer shows across switches: a linear crossfade of the left and next states, an inertialized switch taking its offset from the visible pose, and an interrupted crossfade that starts from the frozen visible pose carried on by a fading velocity (the crossfade rule is Godot's xfade, the rule only; dead blending after Holden) | Godot Engine 4.7.2-stable (https://github.com/godotengine/godot), `scene/animation/animation_node_state_machine.cpp` (xfade); Spring-It-On, `deadblending.c` | Godot Engine contributors; Daniel Holden | MIT (see [Godot Engine](#godot-engine) and [Spring-It-On and Motion-Matching](#spring-it-on-and-motion-matching)) |
+| `crates/genex-anim/src/ik.rs` (`solve_two_bone`, `solve_aim`, `apply_two_bone`, `apply_look_at`) | Two-bone IK (the mid angle by the law of cosines, the start joint turned onto the target, then about the target axis toward the pole, an optional twist, softening near full reach, the weight as an nlerp from identity) and aim IK (a forward ray from an offset point turned through the target, up kept toward a pole). Changed: half-angle quaternions over `sqrt` instead of `acos`; a bent chain bends in its own plane (bevy_animation_graph's pole inference, the rule only) and `mid_axis` serves a straight one; Genex's own softening curve `1 - (4 / (r + 4))^4`; every degenerate input solves to no correction; a look-at chain split by share, base first | ozz-animation 0.17.0 (https://github.com/guillaumeblanc/ozz-animation), `src/animation/runtime/ik_two_bone_job.cc`, `src/animation/runtime/ik_aim_job.cc`, `samples/look_at/sample_look_at.cc`; bevy_animation_graph (https://github.com/mbrea-c/bevy_animation_graph), `twoboneik_node.rs` | Guillaume Blanc; bevy_animation_graph contributors | MIT (see [ozz-animation](#ozz-animation)); bevy_animation_graph MIT OR Apache-2.0, the rule only, no code copied |
 | `crates/genex-stream/src/residency.rs` (`Residency`, `ResidencyLimits`) | The residency policy: per-requester reference counts, an unload queue of unreferenced entries in release order, drained while resident bytes exceed a byte cap under a time limit, a cap on loads in flight, and `forbidHoles` (keep the coarser parent until every wanted child is resident) | cesium-native (https://github.com/CesiumGS/cesium-native), `Cesium3DTilesSelection/src/TilesetContentManager.cpp` (`unloadCachedTiles`, the tile reference counts and the unload list) and `Cesium3DTilesSelection/include/Cesium3DTilesSelection/TilesetOptions.h` (`maximumCachedBytes`, `maximumSimultaneousTileLoads`, `tileCacheUnloadTimeLimit`, `forbidHoles`) | CesiumGS, Inc. and Contributors | Apache 2.0 (see [Apache License 2.0](#apache-license-20); cesium-native ships no NOTICE file) |
 | `crates/genex-render/src/mesh_arena.rs` (`MeshArena::grow`, `move_to`) | Growing a full GPU buffer by remaking it twice as large and copying its live prefix buffer to buffer (the rule only; no code was copied) | Bevy (https://github.com/bevyengine/bevy), `crates/bevy_render/src/slab_allocator.rs` | Bevy contributors | MIT OR Apache-2.0, used under Apache 2.0 (see [Apache License 2.0](#apache-license-20)) |
 | `crates/genex-nav/src/runtime/dodgy/` (every file, with dodgy's own tests as `*_test.rs`) | ORCA local avoidance: velocity obstacles from neighbours and polygon obstacles, the 2D and 3D linear programs, the visibility set. Changed (§4(b), listed in `dodgy/mod.rs`): the `rand` direction for two agents on one spot is hashed from their keys, `Simulator::step` has no `HashMap` and keeps its near neighbours, visible line ids come back sorted, angles use libm, a zero responsibility sum no longer divides by zero, no `debug` feature | dodgy_2d 0.5.5 (https://github.com/andriyDev/dodgy, crates.io sha256 `d35627725e918aa4593ca54937cd8ef58078d3b9ab0fd060aee60c9bc3a2050e`), itself ported from RVO2 (https://gamma.cs.unc.edu/RVO2/) `Agent.cc` | andriyDev; RVO2: Jur van den Berg, Stephen J. Guy, Jamie Snape, Ming C. Lin, Dinesh Manocha, 2008 University of North Carolina at Chapel Hill | MIT OR Apache-2.0, used under Apache 2.0; RVO2 Apache 2.0 (see [Apache License 2.0](#apache-license-20) and [RVO2](#rvo2)) |
@@ -756,7 +759,7 @@ SOFTWARE.
 
 ### ozz-animation
 
-The licence of the ozz-animation code the skeleton, sampler, blend and mask port (table above).
+The licence of the ozz-animation code the skeleton, sampler, blend, mask and IK port (table above).
 
 ```
 ozz-animation is hosted at http://github.com/guillaumeblanc/ozz-animation and
@@ -805,6 +808,35 @@ Each ported file carries this header:
     United States of America
 
     <https://gamma.cs.unc.edu/RVO2/>
+
+### Spring-It-On and Motion-Matching
+
+The licence of Daniel Holden's code the inertialization and dead-blending port (table above). Both
+repositories carry the same text.
+
+```
+MIT License
+
+Copyright (c) 2021 Daniel Holden
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
 
 ## Rust showcase environment map
 
