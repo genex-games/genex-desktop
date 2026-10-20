@@ -50,21 +50,23 @@ export const Shape = {
 
 /** Where the files go under the profile, each area's share of them (weights sum to 100) and its shape. */
 const AREAS = [
-  { at: "AppData/Local/npm-cache/_cacache/content-v2/sha512", weight: 14, shape: Shape.Cache },
-  { at: "AppData/Local/npm-cache/_cacache/index-v5", weight: 6, shape: Shape.Cache },
-  { at: "AppData/Local/pnpm/store/v3/files", weight: 8, shape: Shape.Cache },
+  { at: "AppData/Local/npm-cache/_cacache/content-v2/sha512", weight: 8, shape: Shape.Cache },
+  { at: "AppData/Local/npm-cache/_cacache/index-v5", weight: 2, shape: Shape.Cache },
+  { at: "AppData/Local/pnpm/store/v3/files", weight: 4, shape: Shape.Cache },
   { at: "AppData/Local/Google/Chrome/User Data/Default/Cache/Cache_Data", weight: 5, shape: Shape.Cache },
   { at: "AppData/Local/Microsoft/Edge/User Data/Default/Code Cache/js", weight: 3, shape: Shape.Cache },
-  { at: "AppData/Local/Temp/vite-cache", weight: 3, shape: Shape.Cache },
-  { at: "AppData/Roaming/Code/User/workspaceStorage", weight: 2, shape: Shape.Cache },
-  { at: "Documents/GitHub/game-jam/.git/objects", weight: 4, shape: Shape.Cache },
-  { at: "AppData/Local/Programs/Microsoft VS Code/resources/app", weight: 4, shape: Shape.Packages },
+  { at: "AppData/Local/Temp/vite-cache", weight: 1, shape: Shape.Cache },
+  { at: "AppData/Roaming/Code/User/workspaceStorage", weight: 1, shape: Shape.Cache },
+  { at: "Documents/GitHub/game-jam/.git/objects", weight: 2, shape: Shape.Cache },
+  { at: "AppData/Local/Programs/Microsoft VS Code/resources/app", weight: 2, shape: Shape.Packages },
   { at: "AppData/Roaming/npm", weight: 5, shape: Shape.Packages },
-  { at: "Documents/GitHub/web-app", weight: 14, shape: Shape.Packages },
-  { at: "Documents/GitHub/game-jam", weight: 12, shape: Shape.Packages },
-  { at: "Documents/GitHub/tools", weight: 8, shape: Shape.Packages },
-  { at: ".vscode/extensions", weight: 8, shape: Shape.Packages },
-  { at: ".nuget/packages", weight: 4, shape: Shape.Packages },
+  // Proof only: a large per-user toolchain on PATH (Python, conda, nvm), granted whole for reading.
+  { at: "AppData/Local/Programs/Python/Python312", weight: 50, shape: Shape.Packages },
+  { at: "Documents/GitHub/web-app", weight: 6, shape: Shape.Packages },
+  { at: "Documents/GitHub/game-jam", weight: 6, shape: Shape.Packages },
+  { at: "Documents/GitHub/tools", weight: 2, shape: Shape.Packages },
+  { at: ".vscode/extensions", weight: 2, shape: Shape.Packages },
+  { at: ".nuget/packages", weight: 1, shape: Shape.Packages },
 ];
 
 /**

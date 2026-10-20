@@ -114,7 +114,15 @@ jobs:
       - name: Heavy user profile
         if: ${{ !cancelled() && runner.os == 'Windows' }}
         run: node scripts/ci-heavy-profile.mjs
-      - name: Packaged first start on the heavy profile
+      - name: Put the heavy toolchain on PATH
+        if: ${{ !cancelled() && runner.os == 'Windows' }}
+        shell: pwsh
+        run: Add-Content $env:GITHUB_PATH "$env:LOCALAPPDATA\Programs\Python\Python312"
+      - name: Packaged first start on the heavy profile (cold)
+        if: ${{ !cancelled() && runner.os == 'Windows' }}
+        continue-on-error: true
+        run: node tests/e2e/run-sandbox-start-packaged.mjs
+      - name: Packaged start on the heavy profile again (warm)
         if: ${{ !cancelled() && runner.os == 'Windows' }}
         run: node tests/e2e/run-sandbox-start-packaged.mjs
       - name: Package sizes
