@@ -145,160 +145,8 @@ jobs:
         env:
           SHARD: ${{ matrix.shard }}
         run: node scripts/ci-test-plan.mjs run --plan .studio-dev/ci/plan.json --group seed --shard "$SHARD"
-  # The macOS regression is `npm test` in disjoint shards (rig runners serial, as `npm test` runs
-  # them), the static gates once, and the end-to-end suites. Each shard reports on its own, so a
-  # failure names its shard and "Re-run failed jobs" repeats only that one.
-  regression-rig:
-    needs: validate
-    if: vars.RELEASE_REGRESSION != 'skip'
-    strategy:
-      fail-fast: false
-      matrix: ${{ fromJSON(needs.validate.outputs.rig_matrix) }}
-    runs-on: macos-26
-    timeout-minutes: 40
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          persist-credentials: false
-          fetch-depth: 0
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
-        with:
-          node-version: 24
-          cache: npm
-      - run: npm ci
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with:
-          name: regression-test-plan
-          path: .studio-dev/ci
-      - name: Regression rig shard
-        env:
-          SHARD: ${{ matrix.shard }}
-        run: node scripts/ci-test-plan.mjs run --plan .studio-dev/ci/plan.json --group rig --shard "$SHARD"
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        if: failure()
-        with:
-          name: regression-evidence-rig-${{ matrix.shard }}
-          path: .studio-dev/evidence
-          if-no-files-found: ignore
-  regression-harness:
-    needs: validate
-    if: vars.RELEASE_REGRESSION != 'skip'
-    strategy:
-      fail-fast: false
-      matrix: ${{ fromJSON(needs.validate.outputs.harness_matrix) }}
-    runs-on: macos-26
-    timeout-minutes: 40
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          persist-credentials: false
-          fetch-depth: 0
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
-        with:
-          node-version: 24
-          cache: npm
-      - run: npm ci
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with:
-          name: regression-test-plan
-          path: .studio-dev/ci
-      - name: Regression harness shard
-        env:
-          SHARD: ${{ matrix.shard }}
-        run: node scripts/ci-test-plan.mjs run --plan .studio-dev/ci/plan.json --group harness --shard "$SHARD"
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        if: failure()
-        with:
-          name: regression-evidence-harness-${{ matrix.shard }}
-          path: .studio-dev/evidence
-          if-no-files-found: ignore
-  regression-fast:
-    needs: validate
-    if: vars.RELEASE_REGRESSION != 'skip'
-    strategy:
-      fail-fast: false
-      matrix: ${{ fromJSON(needs.validate.outputs.fast_matrix) }}
-    runs-on: macos-26
-    timeout-minutes: 40
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          persist-credentials: false
-          fetch-depth: 0
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
-        with:
-          node-version: 24
-          cache: npm
-      - run: npm ci
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with:
-          name: regression-test-plan
-          path: .studio-dev/ci
-      # The macOS static gates, once, beside the first fast shard.
-      - if: matrix.shard == 1
-        run: node scripts/check-node.mjs && npm run verify:context && npm run verify:architecture && npm run typecheck
-      - name: Regression fast shard
-        env:
-          SHARD: ${{ matrix.shard }}
-        run: node scripts/ci-test-plan.mjs run --plan .studio-dev/ci/plan.json --group fast --shard "$SHARD"
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        if: failure()
-        with:
-          name: regression-evidence-fast-${{ matrix.shard }}
-          path: .studio-dev/evidence
-          if-no-files-found: ignore
-  regression-e2e:
-    needs: validate
-    if: vars.RELEASE_REGRESSION != 'skip'
-    runs-on: macos-26
-    timeout-minutes: 60
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          persist-credentials: false
-          fetch-depth: 0
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
-        with:
-          node-version: 24
-          cache: npm
-      - run: npm ci
-      - run: npm run rebuild:terminal
-      # `npm run verify` without `npm test` (the shards above) and its build smoke, which runs below
-      # without blocking the draft: 12 of its 198 checks broke while it ran only here (0.1.0:
-      # launches now open at home, and the runner is too small for Bonsai); restore it once green.
-      - run: npm run build && node tests/e2e/run-electron-e2e.mjs && npm run test:agentic-readiness
-      - name: Build smoke (non-blocking until fixed)
-        continue-on-error: true
-        run: node tests/e2e/run-build-smoke.mjs
-      # Its menu-levels fixture scored 55 and 56 on one seed on the runner (0.1.0 rehearsal).
-      - name: Game shapes e2e (non-blocking until fixed)
-        continue-on-error: true
-        run: node tests/e2e/run-shapes-e2e.mjs
-      - run: npm run test:terminal
-      - name: Design-system UI (non-blocking until it has run green once)
-        continue-on-error: true
-        run: npm run test:design-ui
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        if: always()
-        with:
-          name: release-regression-evidence
-          path: .studio-dev/evidence
-          if-no-files-found: ignore
-  # One stable result for the whole regression: success only when every shard and the e2e passed,
-  # skipped (with them) under RELEASE_REGRESSION=skip.
-  regression:
-    needs: [validate, regression-rig, regression-harness, regression-fast, regression-e2e]
-    if: ${{ !cancelled() && vars.RELEASE_REGRESSION != 'skip' }}
-    runs-on: ubuntu-22.04
-    timeout-minutes: 5
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          persist-credentials: false
-      - name: Require every regression shard
-        env:
-          STUDIO_CI_NEEDS: ${{ toJSON(needs) }}
-        run: node scripts/ci-check-result.mjs regression
+  # The macOS build and the e2e are listed before the shards so they queue first: only a few macOS
+  # jobs run at a time (a dry run queued these two for 18-20 min behind the shards).
   macos:
     needs: validate
     runs-on: macos-26
@@ -402,6 +250,160 @@ jobs:
         run: |
           if [ -f "$RUNNER_TEMP/release.keychain-db" ]; then security delete-keychain "$RUNNER_TEMP/release.keychain-db"; fi
           rm -f "$RUNNER_TEMP/AuthKey.p8" "$RUNNER_TEMP/cert.p12"
+  regression-e2e:
+    needs: validate
+    if: vars.RELEASE_REGRESSION != 'skip'
+    runs-on: macos-26
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run rebuild:terminal
+      # `npm run verify` without `npm test` (the shards above) and its build smoke, which runs below
+      # without blocking the draft: 12 of its 198 checks broke while it ran only here (0.1.0:
+      # launches now open at home, and the runner is too small for Bonsai); restore it once green.
+      - run: npm run build && node tests/e2e/run-electron-e2e.mjs && npm run test:agentic-readiness
+      - name: Build smoke (non-blocking until fixed)
+        continue-on-error: true
+        run: node tests/e2e/run-build-smoke.mjs
+      # Its menu-levels fixture scored 55 and 56 on one seed on the runner (0.1.0 rehearsal).
+      - name: Game shapes e2e (non-blocking until fixed)
+        continue-on-error: true
+        run: node tests/e2e/run-shapes-e2e.mjs
+      - run: npm run test:terminal
+      - name: Design-system UI (non-blocking until it has run green once)
+        continue-on-error: true
+        run: npm run test:design-ui
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: release-regression-evidence
+          path: .studio-dev/evidence
+          if-no-files-found: ignore
+  # The macOS regression is `npm test` in disjoint shards (rig runners serial, as `npm test` runs
+  # them), the static gates once, and the end-to-end suites. Each shard reports on its own, so a
+  # failure names its shard and "Re-run failed jobs" repeats only that one.
+  regression-rig:
+    needs: validate
+    if: vars.RELEASE_REGRESSION != 'skip'
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.validate.outputs.rig_matrix) }}
+    runs-on: macos-26
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: regression-test-plan
+          path: .studio-dev/ci
+      - name: Regression rig shard
+        env:
+          SHARD: ${{ matrix.shard }}
+        run: node scripts/ci-test-plan.mjs run --plan .studio-dev/ci/plan.json --group rig --shard "$SHARD"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: failure()
+        with:
+          name: regression-evidence-rig-${{ matrix.shard }}
+          path: .studio-dev/evidence
+          if-no-files-found: ignore
+  regression-harness:
+    needs: validate
+    if: vars.RELEASE_REGRESSION != 'skip'
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.validate.outputs.harness_matrix) }}
+    runs-on: macos-26
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: regression-test-plan
+          path: .studio-dev/ci
+      - name: Regression harness shard
+        env:
+          SHARD: ${{ matrix.shard }}
+        run: node scripts/ci-test-plan.mjs run --plan .studio-dev/ci/plan.json --group harness --shard "$SHARD"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: failure()
+        with:
+          name: regression-evidence-harness-${{ matrix.shard }}
+          path: .studio-dev/evidence
+          if-no-files-found: ignore
+  regression-fast:
+    needs: validate
+    if: vars.RELEASE_REGRESSION != 'skip'
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.validate.outputs.fast_matrix) }}
+    runs-on: macos-26
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: regression-test-plan
+          path: .studio-dev/ci
+      # The macOS static gates, once, beside the first fast shard.
+      - if: matrix.shard == 1
+        run: node scripts/check-node.mjs && npm run verify:context && npm run verify:architecture && npm run typecheck
+      - name: Regression fast shard
+        env:
+          SHARD: ${{ matrix.shard }}
+        run: node scripts/ci-test-plan.mjs run --plan .studio-dev/ci/plan.json --group fast --shard "$SHARD"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: failure()
+        with:
+          name: regression-evidence-fast-${{ matrix.shard }}
+          path: .studio-dev/evidence
+          if-no-files-found: ignore
+  # One stable result for the whole regression: success only when every shard and the e2e passed,
+  # skipped (with them) under RELEASE_REGRESSION=skip.
+  regression:
+    needs: [validate, regression-rig, regression-harness, regression-fast, regression-e2e]
+    if: ${{ !cancelled() && vars.RELEASE_REGRESSION != 'skip' }}
+    runs-on: ubuntu-22.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Require every regression shard
+        env:
+          STUDIO_CI_NEEDS: ${{ toJSON(needs) }}
+        run: node scripts/ci-check-result.mjs regression
   linux:
     needs: validate
     runs-on: ubuntu-22.04
