@@ -2,9 +2,14 @@
 //! layout genex-core's `PadButton`/`PadAxis` name). A Studio run never opens gilrs: its pads come
 //! only from the host's `input` op, so a pad on the person's desk cannot change a judged run, and
 //! a headless run has no pads at all.
+//!
+//! Each slot also carries the pad's family (which face labels it wears), named by its USB vendor
+//! and product ids through genex-core's SDL table when gilrs reports them. The family is
+//! display-only: it never changes a reading.
 
 use crate::mode::ShellMode;
 use genex_core::input::{MAX_PADS, PadAxis, PadButton, PadState, PadStates};
+use genex_core::pad_family::{PadFamily, pad_family};
 use gilrs::{Axis, Button, EventType};
 
 /// A d-pad reported as an axis presses its direction past this much.
@@ -161,6 +166,22 @@ impl PadSlots {
         }
     }
 
+    /// Whether the pad gilrs calls `gamepad` holds a slot.
+    fn holds(&self, gamepad: usize) -> bool {
+        self.owners.contains(&Some(gamepad))
+    }
+
+    /// Name the family of the pad gilrs calls `gamepad` from its USB ids. A pad without a slot
+    /// takes none; ids the platform does not report, or the table does not know, leave it Generic.
+    pub fn identify(&mut self, gamepad: usize, vendor: Option<u16>, product: Option<u16>) {
+        let Some(held) = self.owners.iter().position(|owner| *owner == Some(gamepad)) else { return };
+        let family = match (vendor, product) {
+            (Some(vendor), Some(product)) => pad_family(vendor, product),
+            _ => PadFamily::Generic,
+        };
+        self.states[held].family = family;
+    }
+
     /// Every slot's state.
     pub fn states(&self) -> PadStates {
         self.states
@@ -201,8 +222,13 @@ impl Gamepads {
     pub fn poll(&mut self) -> PadStates {
         if let Some(gilrs) = self.gilrs.as_mut() {
             while let Some(event) = gilrs.next_event() {
-                if let Some(pad_event) = PadEvent::from_gilrs(event.event) {
-                    self.slots.apply(usize::from(event.id), pad_event);
+                let Some(pad_event) = PadEvent::from_gilrs(event.event) else { continue };
+                let gamepad = usize::from(event.id);
+                let seen = self.slots.holds(gamepad);
+                self.slots.apply(gamepad, pad_event);
+                // A pad's ids are read once, when it takes its slot.
+                if !seen && let Some(pad) = gilrs.connected_gamepad(event.id) {
+                    self.slots.identify(gamepad, pad.vendor_id(), pad.product_id());
                 }
             }
         }
@@ -213,5 +239,67 @@ impl Gamepads {
 impl std::fmt::Debug for Gamepads {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Gamepads").field("open", &self.is_open()).field("slots", &self.slots).finish()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use genex_core::pad_family::PadFamily;
+
+    #[test]
+    fn a_connected_pad_takes_the_family_its_usb_ids_name() {
+        let mut slots = PadSlots::default();
+        slots.apply(40, PadEvent::Connected);
+        slots.identify(40, Some(0x054c), Some(0x0ce6));
+        assert_eq!(slots.states()[0].family, PadFamily::PlayStation);
+        slots.apply(41, PadEvent::Connected);
+        slots.identify(41, Some(0x045e), Some(0x0b13));
+        assert_eq!(slots.states()[1].family, PadFamily::Xbox);
+    }
+
+    #[test]
+    fn unknown_or_missing_ids_and_pads_without_a_slot_stay_generic() {
+        let mut slots = PadSlots::default();
+        slots.apply(1, PadEvent::Connected);
+        slots.identify(1, None, Some(0x0ce6));
+        slots.identify(1, Some(0x1234), Some(0x5678));
+        assert_eq!(slots.states()[0].family, PadFamily::Generic);
+        slots.identify(99, Some(0x054c), Some(0x0ce6));
+        assert!(slots.states().iter().skip(1).all(|pad| !pad.connected && pad.family == PadFamily::Generic), "no slot taken");
+    }
+
+    #[test]
+    fn a_pad_that_leaves_frees_its_family_with_its_slot() {
+        let mut slots = PadSlots::default();
+        slots.apply(7, PadEvent::Connected);
+        slots.identify(7, Some(0x057e), Some(0x2009));
+        slots.apply(7, PadEvent::Disconnected);
+        assert_eq!(slots.states()[0], PadState::default());
+        slots.apply(8, PadEvent::Connected);
+        assert_eq!(slots.states()[0].family, PadFamily::Generic, "the next pad starts generic");
+    }
+
+    #[test]
+    fn a_family_never_changes_a_reading() {
+        let mut named = PadSlots::default();
+        let mut plain = PadSlots::default();
+        for slots in [&mut named, &mut plain] {
+            slots.apply(3, PadEvent::Button(Button::South, 1.0));
+            slots.apply(3, PadEvent::Axis(Axis::LeftStickY, 0.5));
+        }
+        named.identify(3, Some(0x28de), Some(0x1205));
+        let (a, b) = (named.states()[0], plain.states()[0]);
+        assert_eq!(a.family, PadFamily::Steam);
+        assert_eq!((a.connected, a.buttons, a.axes), (b.connected, b.buttons, b.axes));
+    }
+
+    #[test]
+    fn studio_and_headless_runs_read_no_pads_and_no_family() {
+        let mut pads = Gamepads::open(GamepadPolicy::for_run(ShellMode::Windowed, true));
+        assert!(!pads.is_open());
+        assert_eq!(pads.poll(), PadStates::default());
+        let mut headless = Gamepads::open(GamepadPolicy::for_run(ShellMode::Headless, false));
+        assert_eq!(headless.poll(), PadStates::default());
     }
 }

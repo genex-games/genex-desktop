@@ -3,7 +3,9 @@
 //! display cutout GameActivity hands over natively (`Activity.getWindow().getDecorView()
 //! .getRootWindowInsets().getDisplayCutout()`, API 28+); for both candidates, the audio focus
 //! (`AudioManager.requestAudioFocus`), the thermal status (`PowerManager
-//! .getCurrentThermalStatus`) and the display's refresh rate (`Display.getRefreshRate`). A missing object or a Java exception answers `None`, never a panic.
+//! .getCurrentThermalStatus`), the display's refresh rate (`Display.getRefreshRate`) and an input
+//! device's USB vendor and product ids (`InputDevice.getVendorId`/`getProductId`, which name a
+//! gamepad's family). A missing object or a Java exception answers `None`, never a panic.
 
 #[cfg(feature = "native-activity")]
 use crate::SafeArea;
@@ -20,6 +22,8 @@ const AUDIOFOCUS_GAIN: i32 = 1;
 const AUDIOFOCUS_REQUEST_GRANTED: i32 = 1;
 /// `Context.POWER_SERVICE`.
 const POWER_SERVICE: &str = "power";
+/// `android.view.InputDevice`, whose static `getDevice(int)` answers a device by id.
+const INPUT_DEVICE_CLASS: &str = "android/view/InputDevice";
 /// `requestAudioFocus(OnAudioFocusChangeListener, int, int)` (deprecated in API 26, still served:
 /// the listener-less form needs no Java class of the app's own). A focus loss while resumed needs
 /// a listener, which is a Java class: the APK has none of its own (NativeActivity), so the shell
@@ -133,5 +137,23 @@ pub fn display_refresh_hz() -> Option<f32> {
         let manager = object(env, activity, "getWindowManager", "()Landroid/view/WindowManager;", &[])?;
         let display = object(env, &manager, "getDefaultDisplay", "()Landroid/view/Display;", &[])?;
         call(env, &display, "getRefreshRate", "()F", &[])?.f().ok()
+    })
+}
+
+/// The USB vendor and product ids of the input device with `device_id` (the id a key or motion
+/// event names; `InputDevice.getDevice(int)`, `getVendorId()`, `getProductId()`, API 19), or `None`
+/// for a device that is gone, a virtual one (ids 0) or ids outside a USB id's range.
+/// TODO(IN-6): the per-device joystick reader, which sees raw device ids before winit, sends
+/// `PadChange::Family(pad_family(vendor, product))` when a controller first takes a slot.
+pub fn input_device_ids(device_id: i32) -> Option<(u16, u16)> {
+    with_activity(|env, _| {
+        let found = env.call_static_method(INPUT_DEVICE_CLASS, "getDevice", "(I)Landroid/view/InputDevice;", &[JValue::Int(device_id)]);
+        if found.is_err() {
+            let _ = env.exception_clear();
+        }
+        let device = found.ok()?.l().ok().filter(|device| !device.is_null())?;
+        let vendor = u16::try_from(call(env, &device, "getVendorId", "()I", &[])?.i().ok()?).ok()?;
+        let product = u16::try_from(call(env, &device, "getProductId", "()I", &[])?.i().ok()?).ok()?;
+        (vendor != 0 || product != 0).then_some((vendor, product))
     })
 }

@@ -11,9 +11,14 @@
 //!
 //! A phone run is never a Studio run (Studio runs the desktop or web build), so real pads are
 //! always read here; injected pads (a demo's `inject`) still merge over them in genex-core.
+//!
+//! A [`PadChange::Family`] names a slot's family (which face labels the controller wears: iOS's
+//! `productCategory`, Android's `InputDevice` vendor and product ids). It is display-only and never
+//! changes a reading.
 
 use genex::Input;
 use genex_core::input::{Injection, MAX_PADS, PadAxis, PadButton, PadState, PadStates};
+use genex_core::pad_family::PadFamily;
 use std::hash::{DefaultHasher, Hash, Hasher};
 
 /// A d-pad reported as a hat axis presses its direction past this much.
@@ -183,6 +188,8 @@ pub enum PadChange {
     Button(PhoneButton, f32),
     /// An axis's value, in the standard's direction.
     Axis(PhoneAxis, f32),
+    /// Its family, display-only.
+    Family(PadFamily),
 }
 
 /// A finite value inside `lo..=hi`; anything else reads as rest (0).
@@ -247,6 +254,7 @@ impl PhonePads {
                     state.buttons[positive] = f32::from(u8::from(value > HAT_THRESHOLD));
                 }
             },
+            PadChange::Family(family) => state.family = family,
             PadChange::Connected | PadChange::Disconnected => {}
         }
         if self.states[index] != before {
@@ -390,5 +398,39 @@ mod tests {
         runtime.inject(pads.take_input().expect("input"));
         runtime.step(genex::FIXED_STEP_MS);
         assert_eq!(runtime.probes()["start"], genex::json!(true));
+    }
+}
+
+#[cfg(test)]
+mod family_tests {
+    use super::*;
+    use genex_core::pad_family::PadFamily;
+
+    #[test]
+    fn a_family_change_names_the_slots_family_and_reaches_the_game() {
+        let mut pads = PhonePads::default();
+        pads.apply(9, PadChange::Connected);
+        pads.take_input();
+        pads.apply(9, PadChange::Family(PadFamily::PlayStation));
+        assert_eq!(pads.states()[0].family, PadFamily::PlayStation);
+        let input = pads.take_input().expect("a family change is a change");
+        assert_eq!(input.injection().pads[0].1.family, PadFamily::PlayStation);
+        pads.apply(9, PadChange::Family(PadFamily::PlayStation));
+        assert!(pads.take_input().is_none(), "the same family is no change");
+    }
+
+    #[test]
+    fn a_family_never_changes_a_reading_and_leaves_with_its_slot() {
+        let mut named = PhonePads::default();
+        let mut plain = PhonePads::default();
+        for pads in [&mut named, &mut plain] {
+            pads.apply(4, PadChange::Button(PhoneButton::A, 1.0));
+            pads.apply(4, PadChange::Axis(PhoneAxis::LeftX, 0.5));
+        }
+        named.apply(4, PadChange::Family(PadFamily::Xbox));
+        let (a, b) = (named.states()[0], plain.states()[0]);
+        assert_eq!((a.connected, a.buttons, a.axes), (b.connected, b.buttons, b.axes));
+        named.apply(4, PadChange::Disconnected);
+        assert_eq!(named.states()[0], PadState::default());
     }
 }
