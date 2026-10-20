@@ -17,7 +17,6 @@
 //! their shells'.
 
 mod decode;
-#[cfg(not(any(target_arch = "wasm32", target_os = "ios", target_os = "android")))]
 mod device;
 mod director;
 mod events;
@@ -35,8 +34,7 @@ mod voices;
 mod zones;
 
 pub use decode::{MAX_CLAIMED_SECONDS, MAX_DECODED_FRAMES, MAX_SOUND_BYTES, decode_sound};
-#[cfg(not(any(target_arch = "wasm32", target_os = "ios", target_os = "android")))]
-pub use device::{DeviceOutput, Resampler};
+pub use device::{DeviceHealth, DeviceOutput, Resampler};
 pub use director::{Director, StepInput};
 pub use events::{AudioCounts, AudioEvent, EventLog};
 pub use meter::{AUDIO_WINDOW_FRAMES, AudioLevel, AudioMeter};
@@ -47,7 +45,10 @@ pub use ops::{
     AudioCommand, AudioSetup, Duck, Listener, LogicalVoice, MixerOp, MusicId, MusicOpts, MusicTrack, PRIORITY_DEFAULT, PRIORITY_UI,
     PhysicalSlot, PlayOpts, ReverbPreset, ReverbZone, SoundId, Spatial, Voice, ZoneId, ZoneShape,
 };
-pub use output::{AudioOutput, DeviceFault, PREFILL_TICKS_DESKTOP, PREFILL_TICKS_WEB_PHONE, prefill_ticks};
+pub use output::{
+    AudioOutput, CAPACITY_TICKS_DESKTOP, CAPACITY_TICKS_WEB_PHONE, DeviceFault, NullOutput, PREFILL_TICKS_DESKTOP,
+    PREFILL_TICKS_WEB_PHONE, capacity_ticks, prefill_ticks, stream_fault,
+};
 pub use sink::SinkQueue;
 pub use spatial::{
     CUTOFF_FAR_HZ, CUTOFF_OPEN_HZ, DOPPLER_RATE_MAX, DOPPLER_RATE_MIN, SPEED_OF_SOUND_M_S, attenuation_db, distance_cutoff_hz,
