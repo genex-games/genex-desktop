@@ -308,7 +308,7 @@ fn the_new_wire_spellings_are_the_designs() {
     assert_eq!(NavErrorCode::TileInvalid.wire(), "nav-tile-invalid");
     assert_eq!(NavErrorCode::ConfigInvalid.wire(), "nav-config-invalid");
     assert_eq!(
-        NavErrorCode::ALL,
+        NavErrorCode::ALL[..4],
         [NavErrorCode::InputInvalid, NavErrorCode::TooLarge, NavErrorCode::TileInvalid, NavErrorCode::ConfigInvalid]
     );
 }

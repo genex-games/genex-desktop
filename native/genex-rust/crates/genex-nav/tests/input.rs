@@ -221,7 +221,8 @@ fn more_triangles_than_the_cap_are_refused_too_large_before_anything_is_read() {
 fn the_wire_spellings_are_the_designs() {
     assert_eq!(NavErrorCode::InputInvalid.wire(), "nav-input-invalid");
     assert_eq!(NavErrorCode::TooLarge.wire(), "nav-too-large");
-    // NAV-2 appends `nav-tile-invalid` and `nav-config-invalid` after these two.
+    assert_eq!(NavErrorCode::LinkInvalid.wire(), "nav-link-invalid");
+    // NAV-2 appends `nav-tile-invalid` and `nav-config-invalid` after these two, NAV-8 `nav-link-invalid`.
     assert_eq!(NavErrorCode::ALL[..2], [NavErrorCode::InputInvalid, NavErrorCode::TooLarge]);
 }
 
