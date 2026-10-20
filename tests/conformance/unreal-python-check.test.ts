@@ -4,23 +4,15 @@
  * the user's own engine exports. Runs with any Python 3 here; the product uses Unreal's own.
  */
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
 import { mkdir, readdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, it } from "node:test";
 import { checkPython, PythonProblemCode } from "../../src/plugins/unreal/python-check.ts";
+import { findPython3 } from "../helpers/python3.ts";
 import { tmpDir } from "../helpers/tmp.ts";
 
-function python(): string | undefined {
-  try {
-    execFileSync("python3", ["-c", "import ast"], { stdio: "ignore" });
-    return "python3";
-  } catch {
-    return undefined;
-  }
-}
-const PYTHON = python();
-const skip = !PYTHON || process.platform === "win32" ? "needs python3 (the product uses Unreal's own)" : false;
+const PYTHON = findPython3()?.command;
+const skip = PYTHON ? false : "needs Python 3 on PATH (the product uses Unreal's own)";
 
 const NAMES = {
   EditorAssetLibrary: ["delete_directory", "save_directory"],
@@ -108,6 +100,24 @@ describe("checking a part's apply.py", { skip }, () => {
       problems[0]?.message ?? "",
       /set_editor_property\("generate_overlap_events"/,
       "a property is set with set_editor_property",
+    );
+  });
+});
+
+describe("apply.py with text outside ASCII", { skip }, () => {
+  // Windows Python reads a pipe in the ANSI code page, and `-I` ignores PYTHONUTF8: a profile
+  // folder like C:\Users\José or a Cyrillic label made every check "couldn't be checked".
+  it("checks a script whose names file and text are not ASCII", async () => {
+    const dir = path.join(await tmpDir("studio-python-check-"), "José Łukasz Ёлка");
+    await mkdir(dir);
+    const file = path.join(dir, "python-names.json");
+    await writeFile(file, JSON.stringify(NAMES));
+    const source = 'import unreal\nlabel = "Ёлка — café Ł"\nunreal.EditorAssetLibrary.save_directry("/Game/Ёлка")\n';
+    const problems = await checkPython({ python: PYTHON ?? "", names: file }, source);
+    assert.deepEqual(
+      problems.map((p) => [p.code, p.line]),
+      [[PythonProblemCode.UnknownName, 3]],
+      JSON.stringify(problems),
     );
   });
 });
