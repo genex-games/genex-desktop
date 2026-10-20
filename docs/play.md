@@ -120,6 +120,18 @@ What Play sends is in [PRIVACY](../PRIVACY.md#play).
   "See what's sent" shows exactly that. A reply still unusable after its repair sends an automatic
   Report with none of the player's words. With usage-stats consent, Studio also sends how many
   replies fit each game's shape per model and week, counts only.
+- Play-time AI: the view's one preload (`preload/play-mic.ts`, page half `play-ai-page.ts`) gives
+  the page `window.__genexDesktop`, the `genex-ai` host lane and embed-sdk 0.34's desktop confirm
+  (`shared/genex-desktop-bridge.ts`, mirrored in genex-demo's SDK). Main
+  (`main/game-ai/bridge-play.ts`) hears only the page's top frame on the origin it opened, keys
+  the game by its genex.games project id (`play:<id>`, never the slug), drops a burst past its
+  window, holds a few envelopes unanswered at most, and takes a grant or a confirm only inside a
+  person's click or key (the page's own activation and an input main saw). A confirm draws Genex's
+  card over the game with genex.games' own terms and approves there only after a yes; every popup
+  is still denied. Leaving for another page aborts its calls and closes its card (a link sent to
+  the browser does not). Play's session refuses requests to AI vendors' APIs
+  (`shared/ai-vendors.ts`, `main/play/ai-gateway.ts`) and writes `ai_direct_blocked` to the
+  page's console once per host; a near miss loads.
 - Voice chat: a game that asks for a microphone gets the bar's mic switch, remembered per game.
   Main lets the page open the microphone only right after it asked it to, and only on the game's
   own origin.

@@ -267,7 +267,11 @@ export interface GenexAiPlatform {
   checkoutUrl(product: AiCreditProduct): Promise<string>;
   autoTopUp(): Promise<AiAutoTopUp | null>;
   setAutoTopUp(next: AiAutoTopUp): Promise<AiAutoTopUp>;
-  /** A grant's or a generation's terms, read by id, for the confirm card. */
+  /**
+   * A grant's or a generation's terms, read by id, for the confirm card: the most it may spend, in
+   * credits, and `game`, the genex.games project id it belongs to (the Play bridge confirms only a
+   * grant of the game on screen).
+   */
   confirmTerms(request: GenexDesktopConfirmRequest): Promise<{ maxCredits: number; game: string } | null>;
   /** Approve or decline on genex.games itself. */
   answerConfirm(request: GenexDesktopConfirmRequest, approved: boolean): Promise<GenexDesktopConfirmAnswer>;

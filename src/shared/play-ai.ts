@@ -8,8 +8,9 @@
  *
  * Browser-safe; pure.
  */
+import type { AiVendor } from "./ai-vendors.ts";
 import { SECOND_MS } from "./duration.ts";
-import { AiBridgeOp, isPlainRecord, hasExactKeys, readMember } from "./game-ai.ts";
+import { AiBridgeOp, type AiErrorCode, isPlainRecord, hasExactKeys, readMember } from "./game-ai.ts";
 import { type AiBridgeAnswers, type AiBridgeBodies, readAiBridgeBody } from "./game-ai-bridge.ts";
 import {
   type GenexDesktopBridge,
@@ -26,6 +27,8 @@ export const PlayAiChannel = {
   Reply: "play-ai:reply",
   /** Main → page: text of a streamed `say` answer so far. */
   Delta: "play-ai:delta",
+  /** Main → page: Play refused a request of the page's to an AI vendor (D5); the page logs it. */
+  Blocked: "play-ai:blocked",
 } as const;
 export type PlayAiChannel = (typeof PlayAiChannel)[keyof typeof PlayAiChannel];
 
@@ -64,6 +67,17 @@ export type PlayAiReply = { [O in PlayBridgeOp]: { id: number; op: O; body: Play
 export interface PlayAiDelta {
   id: number;
   text: string;
+}
+
+/**
+ * A request of the page's that Play refused because it went to an AI vendor's API directly (D5):
+ * the page writes it to its console with the typed code, so the game's maker (and the in-app agent
+ * reading the console) learns to use `genex-ai`. Only the host and the vendor, never the address.
+ */
+export interface PlayAiBlocked {
+  code: typeof AiErrorCode.DirectBlocked;
+  vendor: AiVendor;
+  host: string;
 }
 
 const ENVELOPE_KEYS = ["id", "op", "body"] as const;
