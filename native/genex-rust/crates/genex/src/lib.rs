@@ -28,7 +28,8 @@
 //! `docs/GENEX_API.md` and its topic pages in `docs/api/` are the full contract.
 
 // G6 facade contracts (UIS-0): module stubs each area's facade work package fills.
-mod actions;
+/// Input actions: `game.input`, `ctx.actions`, touch controls, rebinding and prompts (genex-input).
+pub mod actions;
 mod actions_journal;
 mod actions_touch;
 mod audio;
@@ -176,6 +177,7 @@ pub mod physics {
 
 /// Everything a game file needs: `use genex::prelude::*;`.
 pub mod prelude {
+    pub use crate::actions::{ActionId, ActionMap, Binding, Condition, Context, ContextId, PadButton, Stick, TouchControls};
     pub use crate::math::{Mat3, Mat4, Quat, Vec2, Vec3, Vec4, vec2, vec3, vec4};
     pub use crate::{
         Assets, Camera, Color, Ctx, CustomMaterial, CustomMesh, DemoDriver, FacetState, Frame, Game, Gfx, Input, Key, Map,

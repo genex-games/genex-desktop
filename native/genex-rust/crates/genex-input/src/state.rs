@@ -585,3 +585,113 @@ fn swapped_axis(axis: PadAxis) -> PadAxis {
         PadAxis::RightY => PadAxis::LeftY,
     }
 }
+
+/// The format tag of an action state snapshot (a save's `input` section, IN-12).
+pub const ACTIONS_SNAPSHOT_FORMAT: &str = "genex-actions/1";
+
+impl ActionState {
+    /// The state between ticks as JSON, for an input snapshot: the contexts on, the context
+    /// switches queued for the next tick, each action's latches, value (f32 exact), hold ticks and
+    /// condition memory, the device and the ticks evaluated. Unknown reads are display only and
+    /// left out.
+    pub fn snapshot(&self) -> serde_json::Value {
+        let slots: Vec<serde_json::Value> = self
+            .ids
+            .iter()
+            .zip(&self.slots)
+            .map(|(id, slot)| {
+                let memory: Vec<serde_json::Value> = slot.memory.iter().map(|memory| serde_json::json!([memory.latch, memory.wait])).collect();
+                serde_json::json!({
+                    "id": id.name(),
+                    "raw": slot.raw_down,
+                    "down": slot.down,
+                    "was": slot.was_down,
+                    "fired": slot.fired,
+                    "value": [slot.value[0], slot.value[1]],
+                    "held": slot.held,
+                    "latch": slot.hold_latch,
+                    "memory": memory,
+                })
+            })
+            .collect();
+        let requests: Vec<serde_json::Value> = self.requests.borrow().iter().map(|(id, on)| serde_json::json!([id.name(), on])).collect();
+        let family = match self.device {
+            Device::Pad(family) => family.as_str(),
+            Device::KeyboardMouse | Device::Touch => PadFamily::Generic.as_str(),
+        };
+        serde_json::json!({
+            "format": ACTIONS_SNAPSHOT_FORMAT,
+            "on": self.on,
+            "requests": requests,
+            "slots": slots,
+            "device": self.device.as_str(),
+            "family": family,
+            "ticks": self.ticks,
+        })
+    }
+
+    /// The state a [`ActionState::snapshot`] of the same map saved. All or nothing: a snapshot of
+    /// another map refuses `input-track-mismatch`, a malformed one `input-track-invalid`.
+    pub fn restore(map: &ActionMap, snapshot: &serde_json::Value) -> Result<ActionState, crate::error::InputError> {
+        use crate::error::{InputError, InputErrorCode};
+        let invalid = |detail: &str| InputError::new(InputErrorCode::TrackInvalid, format!("action snapshot: {detail}"));
+        if snapshot["format"].as_str() != Some(ACTIONS_SNAPSHOT_FORMAT) {
+            return Err(invalid("not a genex-actions/1 snapshot"));
+        }
+        let mut state = ActionState::new(map);
+        let on = snapshot["on"].as_array().ok_or_else(|| invalid("no contexts"))?;
+        let slots = snapshot["slots"].as_array().ok_or_else(|| invalid("no actions"))?;
+        let same_ids = slots.iter().map(|row| row["id"].as_str()).eq(state.ids.iter().map(|id| Some(id.name())));
+        if on.len() != state.on.len() || !same_ids {
+            return Err(InputError::new(InputErrorCode::TrackMismatch, "the snapshot was taken with another action map"));
+        }
+        for (at, value) in on.iter().enumerate() {
+            state.on[at] = value.as_bool().ok_or_else(|| invalid("a context that is not true or false"))?;
+        }
+        for (slot, row) in state.slots.iter_mut().zip(slots) {
+            restore_slot(slot, row).ok_or_else(|| invalid("an action row that cannot be read"))?;
+        }
+        let requests = snapshot["requests"].as_array().ok_or_else(|| invalid("no context switches"))?;
+        for request in requests {
+            let name = request[0].as_str().ok_or_else(|| invalid("a context switch without a context"))?;
+            let on = request[1].as_bool().ok_or_else(|| invalid("a context switch without on or off"))?;
+            let context = state.contexts.iter().copied().find(|id| id.name() == name).ok_or_else(|| invalid("a switch of an unknown context"))?;
+            state.request(context, on);
+        }
+        let family = snapshot["family"].as_str().and_then(PadFamily::from_wire).ok_or_else(|| invalid("an unknown pad family"))?;
+        state.device = match snapshot["device"].as_str() {
+            Some("keyboard") => Device::KeyboardMouse,
+            Some("pad") => Device::Pad(family),
+            Some("touch") => Device::Touch,
+            _ => return Err(invalid("an unknown device")),
+        };
+        state.ticks = snapshot["ticks"].as_u64().ok_or_else(|| invalid("no tick count"))?;
+        Ok(state)
+    }
+}
+
+/// One action row of a snapshot into `slot`; `None` when a field is missing or malformed.
+fn restore_slot(slot: &mut Slot, row: &serde_json::Value) -> Option<()> {
+    let float = |value: &serde_json::Value| -> Option<f32> {
+        let wide = value.as_f64()?;
+        // An f32 survives JSON exactly; anything that does not narrow back exactly was edited.
+        let narrow = wide as f32;
+        (narrow.is_finite() && f64::from(narrow) == wide).then_some(narrow)
+    };
+    let memory = row["memory"].as_array()?;
+    if memory.len() != slot.memory.len() {
+        return None;
+    }
+    for (into, value) in slot.memory.iter_mut().zip(memory) {
+        into.latch = value[0].as_bool()?;
+        into.wait = u16::try_from(value[1].as_u64()?).ok()?;
+    }
+    slot.raw_down = row["raw"].as_bool()?;
+    slot.down = row["down"].as_bool()?;
+    slot.was_down = row["was"].as_bool()?;
+    slot.fired = row["fired"].as_bool()?;
+    slot.value = [float(&row["value"][0])?, float(&row["value"][1])?];
+    slot.held = u32::try_from(row["held"].as_u64()?).ok()?;
+    slot.hold_latch = row["latch"].as_bool()?;
+    Some(())
+}

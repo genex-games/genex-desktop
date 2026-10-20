@@ -91,8 +91,9 @@ so a draw that needs the time reads a tick the world keeps from `on_update` (`ct
   the checksum (use it for anything that is not a function of the seed and the input).
 - **State keys.** `state()` owns `version`, `contractVersion`, `seed`, `frame`, `simulatedMs`,
   `running`, `fps`, `held`, `pointerLock`, `hud`, `camera`, `error`, `player`, `volatile`,
-  `__render`, `assets` and `checksum`, and `__stream` while `game.streaming` is registered
-  (display only and never in the checksum, so a probe may be named `stream`). A streamed world
+  `__render`, `assets` and `checksum`, `__stream` while `game.streaming` is registered and
+  `__input` while `game.input` is registered (display only and never in the checksum, so a probe
+  may be named `stream` or `input`). A streamed world
   (`docs/api/streaming.md`) registers `Streaming::grid(64.0).sim_radius(1)` with
   `game.streaming(..)` and builds cells with `game.cell_content(..)` (`CellBuild::default()`,
   `.thing(..)`; `.hysteresis(..)`, `.prefetch(..)` and `.anchors(..)` tune it); the sim moves it
@@ -114,10 +115,12 @@ so a draw that needs the time reads a tick the world keeps from `on_update` (`ct
   anything runs: `duplicate-camera`, `duplicate-player`, `duplicate-probe`, `reserved-probe`
   (a probe named like a `state()` key), `duplicate-camera-name`, `duplicate-eye`,
   `duplicate-demo`, `invalid-name`, `duplicate-facet-state` (one state type registered twice),
-  `invalid-world-size`, `duplicate-streaming` (a second `game.streaming`) and `streaming-invalid`
+  `invalid-world-size`, `duplicate-streaming` (a second `game.streaming`), `streaming-invalid`
   (a cell size outside 8..=1024 metres, a radius or anchor count outside its range, a
   registration past the simulated cells' memory cap, or, with `game.navigation`, a stream cell
-  that is not a whole number of nav tiles). `game.gpu_pass` panics `gpu-pass-invalid` as it is
+  that is not a whole number of nav tiles), `duplicate-input` (a second `game.input`),
+  `input-invalid` (an action map or touch layout genex-input refuses) and
+  `duplicate-touch-controls` (a second `game.touch_controls`). `game.gpu_pass` panics `gpu-pass-invalid` as it is
   registered: an empty, overlong or repeated pass name, or one pass over the cap.
 
 ## Verbs

@@ -292,9 +292,9 @@ pub struct Ctx<'a> {
     pub world_size: [u32; 2],
     /// The game's save folder.
     pub saves: &'a Saves,
-    /// The tick's evaluated actions (G6 contract stub until IN-11 makes it game API).
-    #[expect(dead_code, reason = "IN-11 makes ctx.actions game API")]
-    pub(crate) actions: crate::actions::CtxActions<'a>,
+    /// The tick's evaluated input actions (`game.input`): `ctx.actions.pressed(JUMP)`. Without
+    /// `game.input` every action reads false.
+    pub actions: &'a crate::actions::Actions,
     /// What the tick's hooks play through (G6 contract stub until AU-7 makes it game API).
     #[expect(dead_code, reason = "AU-7 makes ctx.audio game API")]
     pub(crate) audio: crate::audio::CtxAudio<'a>,

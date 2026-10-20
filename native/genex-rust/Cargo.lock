@@ -1139,6 +1139,7 @@ dependencies = [
  "genex-core",
  "genex-frames",
  "genex-hud",
+ "genex-input",
  "genex-nav",
  "genex-platform-desktop",
  "genex-render",

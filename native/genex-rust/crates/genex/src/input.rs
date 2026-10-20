@@ -119,6 +119,9 @@ impl Input {
 /// The merged input one tick runs with.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct TickInput {
+    /// genex-core's merged tick itself: what the actions evaluate and the journal records (G6
+    /// input keeps one tick type; the fields below are the facade's view of it).
+    pub core: CoreTick,
     pub keys: Keys,
     pub touches: Touches,
     pub pads: Pads,
@@ -154,7 +157,13 @@ impl Merger {
 
     /// The input for the next tick; edges, deltas and touch steps are consumed.
     pub fn next_tick(&mut self, world_size: [u32; 2]) -> TickInput {
-        let tick = self.core.next_tick();
+        TickInput::from_core(self.core.next_tick(), world_size)
+    }
+}
+
+impl TickInput {
+    /// The facade's view of one merged genex-core tick (a merger's, or a replayed track row).
+    pub fn from_core(tick: CoreTick, world_size: [u32; 2]) -> TickInput {
         let keys = Keys {
             held: tick.keys.held().to_vec(),
             pressed: tick.keys.pressed_keys().to_vec(),
@@ -170,7 +179,8 @@ impl Merger {
             look: Vec2::new(tick.look.x, tick.look.y),
             wheel: Vec2::new(tick.wheel.x, tick.wheel.y),
             pointer_lock: tick.pointer_lock,
-            text: tick.text,
+            text: tick.text.clone(),
+            core: tick,
         }
     }
 }
