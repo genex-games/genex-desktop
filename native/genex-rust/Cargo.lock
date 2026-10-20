@@ -1006,6 +1006,7 @@ name = "genex"
 version = "0.1.0"
 dependencies = [
  "egui",
+ "genex-ai",
  "genex-core",
  "genex-frames",
  "genex-hud",

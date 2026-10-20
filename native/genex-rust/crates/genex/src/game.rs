@@ -62,6 +62,8 @@ pub struct Game<W> {
     pub(crate) render: crate::render::RenderConfig,
     /// Where its Level-2 `[[wgsl]]` sources come from (`game.wgsl`, extension ladder level 2).
     pub(crate) wgsl: crate::extend::WgslSetup,
+    /// Play-time AI, when the game uses it (`game.ai`).
+    pub(crate) ai: Option<genex_ai::AiOptions>,
 }
 
 /// The handle `game.camera(..)` returns; `.camera_override()` lets this camera replace an
@@ -117,6 +119,7 @@ impl<W: Default + 'static> Game<W> {
             gpu_passes: Vec::new(),
             render: crate::render::RenderConfig::from_build(),
             wgsl: crate::extend::WgslSetup::default(),
+            ai: None,
         }
     }
 
@@ -250,6 +253,15 @@ impl<W: Default + 'static> Game<W> {
         F: Fn(&mut DemoDriver<'_, W>) -> Value + 'static,
     {
         self.demos.push(Named { name: name.to_owned(), hook: Box::new(hook) });
+        self
+    }
+
+    /// The game uses play-time AI (`ctx.ai`): the studio's `ready` declares `capabilities.ai`,
+    /// and a studio that takes it answers the game's calls (a build without one plays every
+    /// call's fallback). `options` say whether the game needs AI to mean anything and which call
+    /// sites it uses.
+    pub fn ai(&mut self, options: genex_ai::AiOptions) -> &mut Self {
+        self.ai = Some(options);
         self
     }
 

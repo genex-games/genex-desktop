@@ -25,6 +25,7 @@ use crate::input::{Input, Merger, TickInput};
 use crate::map::Set;
 use crate::rng::Pcg32;
 use crate::sim::{FacetState, Sim};
+use genex_ai::GameAi;
 use genex_core::clock::FrameClock;
 use genex_core::json::Value as CoreValue;
 use genex_core::paths::{self, ANDROID_DATA_KEY, Destination, GameIdentity};
@@ -51,6 +52,9 @@ const MAX_NAME_CHARS: usize = 64;
 const DEFAULT_CAMERA: &str = "default";
 /// `state().__render`'s list of the models drawn as the missing-asset checker.
 const MISSING_MODELS_KEY: &str = "missingModels";
+/// `state().volatile.ai`: the AI echo and status of a game that declared play-time AI (rids are
+/// not part of a replay, so never the checksum).
+const AI_STATE_KEY: &str = "ai";
 /// The game's name and bundle id as the build lane names them (`GENEX_GAME_NAME`,
 /// `GENEX_BUNDLE_ID` at compile time, as the C++ lane's `-D` defines); an exported app saves
 /// under them unless the game set its own `save_name`.
@@ -240,6 +244,8 @@ struct Core<W> {
     tally: Tally,
     /// The render settings (display state: nothing the checksum reads).
     render: crate::render::RenderHandle,
+    /// Play-time AI: its answers enter the simulation only through `ctx.ai.drain()`.
+    ai: GameAi,
 }
 
 /// A game behind its registrations: what platform shells and the verb transport drive.
@@ -300,6 +306,7 @@ impl<W: Default + 'static> Runtime<W> {
             clock: FrameClock::default(),
             tally: Tally::default(),
             render: Rc::new(RefCell::new(RenderControl::new(game.render.clone(), (game.world_size[0], game.world_size[1])))),
+            ai: GameAi::new(game.ai.clone().unwrap_or_default()),
         };
         let mut runtime = Runtime { game, core };
         runtime.seed(DEFAULT_SEED);
@@ -320,6 +327,9 @@ impl<W: Default + 'static> Runtime<W> {
         core.hud.reset();
         core.gfx.assets().clear();
         core.gfx.clear_extensions();
+        // The run before is forgotten: a late answer to one of its lines is ignored, and calls
+        // count from 1 again, so a replay asks and drains as the run it repeats did.
+        core.ai.forget_run();
         let mut rng = Pcg32::seeded(u64::from(seed));
         for hook in &self.game.resets {
             hook(&mut core.sim, seed, &mut rng, &core.gfx);
@@ -508,11 +518,25 @@ impl<W> Runtime<W> {
         if let Some(rows) = core.gfx.extension_rows() {
             volatile.set(crate::extend::VOLATILE_EXTENSIONS_KEY, CoreValue::from(&rows));
         }
+        if self.uses_ai() {
+            volatile.set(AI_STATE_KEY, CoreValue::from(&core.ai.state_value()));
+        }
         for (name, value) in self.probe_leaves(true) {
             volatile.set(name, CoreValue::from(&value));
         }
         state.set(session::VOLATILE_KEY, volatile);
         state
+    }
+
+    /// The game's play-time AI: the runtime's adapters connect it, hand it the studio's AI ops
+    /// and write its lines.
+    pub fn ai(&self) -> &GameAi {
+        &self.core.ai
+    }
+
+    /// Whether the game declared play-time AI (`game.ai(..)`).
+    pub fn uses_ai(&self) -> bool {
+        self.game.ai.is_some()
     }
 
     /// `state().hud`: `{items, crosshair, flash}`, the widgets the last tick's UI drew by label.
@@ -724,6 +748,7 @@ fn tick<W>(game: &Game<W>, core: &mut Core<W>) {
         tick: core.tick,
         world_size: game.world_size,
         saves: core.gfx.saves(),
+        ai: &core.ai,
     };
     for hook in &game.updates {
         hook(&mut core.sim, &ctx);
@@ -794,6 +819,12 @@ fn check_single<F>(registrations: &[Single<F>], code: InstallErrorCode, detail: 
 fn check_probes<W>(game: &Game<W>) -> Result<(), InstallError> {
     let names = game.probes.iter().map(|p| p.name.as_str());
     check_names(names, InstallErrorCode::DuplicateProbe, &[])?;
+    // A game that uses play-time AI keeps `volatile.ai` for its echo.
+    let takes_ai_echo = |probe: &&crate::game::Probe<W>| probe.volatile && probe.name == AI_STATE_KEY;
+    if let Some(probe) = game.probes.iter().filter(|_| game.ai.is_some()).find(takes_ai_echo) {
+        let detail = format!("volatile.{} is the AI echo", probe.name);
+        return Err(InstallError::new(InstallErrorCode::ReservedProbe, detail));
+    }
     match game.probes.iter().find(|p| RUNTIME_KEYS.contains(&p.name.as_str())) {
         Some(probe) => Err(InstallError::new(InstallErrorCode::ReservedProbe, format!("{} is a state() key", probe.name))),
         None => Ok(()),

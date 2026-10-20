@@ -22,6 +22,9 @@ studio = ["dep:genex-studio", "dep:genex-frames"]
 # The clock, rng, input merger, state() snapshot and checksum, and saves are genex-core's
 # golden-checked port of the C++ template's units.
 genex-core = { workspace = true }
+# Play-time AI (`genex::ai`, `ctx.ai`): typed asks over the studio's `ai` lines; it reaches no
+# model vendor and holds no network crate.
+genex-ai = { workspace = true }
 egui = { workspace = true }
 glam = { workspace = true }
 indexmap = { workspace = true }
@@ -55,6 +58,11 @@ trybuild = { workspace = true }
 [[example]]
 name = "pond-snippet"
 path = "tests/snippets/pond_snippet.rs"
+
+# The play-time AI example of docs/GENEX_API.md: compiled by `cargo test`, never run.
+[[example]]
+name = "ai-snippet"
+path = "tests/snippets/ai_snippet.rs"
 
 # The Rust protocol game the host-side runtime suite drives (`tests/conformance/rust-runtime.test.ts`):
 # a generated game's sources, built with the dev flavour.

@@ -20,6 +20,8 @@ app never imports it. The game-facing contract is [docs/GENEX_API.md](docs/GENEX
 | `genex-platform-web` | WebGPU-only web shell | M0a.7, M2.9 |
 | `genex-assets` | glTF and image loaders | M2.7 |
 | `genex-platform-ios`, `genex-platform-android` | mobile shells | M0a.16, M2.10, M5.3 |
+| `genex-ai` | play-time AI (`genex::ai`, `ctx.ai`): ask, say, judge and act over the studio's `ai` lines, results only through `drain()`, the closed schema dialect; held to the TypeScript wire by `tests/fixtures/play-ai-wire-v1.json`; no network crate in its graph | play-time AI |
+| `genex-ai-derive` | `#[derive(genex_ai::Schema)]`: a type as the closed dialect, in step with its serde names; an enum of documented variants as an act call's tools | play-time AI |
 | `examples/pond` | the pond sample | M0a.7 |
 | `examples/custom-pass` | the custom GPU pass sample (`genex::gpu`, extension ladder level 3) | M2.19 |
 | `examples/showcase` | the lakeside showcase: a game folder (`game/`) Studio opens, on the current renderer (its built-in physical sky, `frame.environment`) plus five custom passes; its named shots are the renderer before/after captures (`tests/shots.rs`), beside three renderer bench scenes (`src/bench`: materials, outdoor, a 64k-instance city; `tests/bench_scenes.rs`), two stress scenes (`src/stress.rs`: 1,024 point lights over a plaza, a 1.5 M triangle forest) and the perf harness: the scenes x profiles x sizes matrix (`tests/perf_matrix.rs`, driven by `scripts/spike/rust-wgpu/render-perf.ts`: baseline, the 10% `off` gate, interleaved A/B against saved executables, feature costs against the plan's budgets) and the earlier single-profile bench (`cargo bench --bench render-baseline`) | renderer follow-up |

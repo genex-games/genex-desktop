@@ -2,6 +2,7 @@
 //! rng and the fixed clock. Game code reads nothing else (no wall clock, no direct winit input).
 
 use crate::rng::Pcg32;
+use genex_ai::GameAi;
 use genex_core::saves::Saves;
 use glam::Vec2;
 use std::cell::Cell;
@@ -292,6 +293,10 @@ pub struct Ctx<'a> {
     pub world_size: [u32; 2],
     /// The game's save folder.
     pub saves: &'a Saves,
+    /// The game's play-time AI (`game.ai(..)`): ask through it, and read answers only from
+    /// `ctx.ai.drain()`, once per update. Without a studio taking the game's AI every call fails
+    /// `ai_off` at once and its fallback plays.
+    pub ai: &'a GameAi,
 }
 
 impl Ctx<'_> {

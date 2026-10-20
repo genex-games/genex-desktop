@@ -75,6 +75,10 @@ pub use sim::{FacetState, Sim};
 #[doc(hidden)]
 pub use desktop::{DesktopShot, DesktopShotError, desktop_shot};
 
+/// Play-time AI (genex-ai, docs/play-protocol.md "Play-time AI"): `game.ai(..)` declares it,
+/// `ctx.ai` asks, `ctx.ai.drain()` once per update is the only way answers enter the game.
+pub use genex_ai as ai;
+
 /// Pinned re-exports, so games never name a crate version themselves.
 pub use egui;
 pub use glam;
@@ -97,6 +101,8 @@ pub mod prelude {
         Assets, Camera, Color, Ctx, CustomMaterial, CustomMesh, DemoDriver, FacetState, Frame, Game, Gfx, Input, Key, Map,
         Material, Model, Pcg32, PhysicsWorld, PostPass, Projection, Set, Sim, Touch, Transform, Value, View, egui, json,
     };
+    /// The play-time AI crate by its own name, so `#[derive(genex_ai::Schema)]` resolves in a game.
+    pub use genex_ai;
 }
 
 /// Start the runtime with this game. Required, once, at the end of the game's `main`.

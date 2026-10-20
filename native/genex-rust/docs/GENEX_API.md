@@ -95,8 +95,9 @@ answer.
 `ctx.keys` (`down`, `pressed`, `released` by `Key`, the DOM code names), `ctx.touches`,
 `ctx.pads`, `ctx.pointer` (fraction of the frame, y down), `ctx.look`, `ctx.wheel`,
 `ctx.text`, `ctx.rng` (the only randomness), `ctx.dt` (1/60), `ctx.tick` (ticks since the last
-seed), `ctx.world_size`, and `ctx.save(file, bytes)` / `ctx.load(file)` for the game's own save
-folder (a safe relative name; a folder the studio gives each run).
+seed), `ctx.world_size`, `ctx.save(file, bytes)` / `ctx.load(file)` for the game's own save
+folder (a safe relative name; a folder the studio gives each run), and `ctx.ai`, the game's
+play-time AI (see Play-time AI).
 
 Edges fire on the first tick after input arrives, so a long step never presses a key twice.
 `Input::key_tap(Key::Space)`, `Input::key_down`, `Input::key_up`, `Input::click_at(x, y)`,
@@ -126,6 +127,74 @@ by it (`state().hud.items`). While a widget holds the keyboard's focus (Tab to i
 text field), keys are the widget's and the update hooks see none until Escape or a click
 elsewhere; mouse buttons and touches stay the game's. On a phone keep tap targets large and clear
 of the screen edges.
+
+## Play-time AI
+
+A game can ask a model for text, or for JSON that fits a shape, while it plays (`genex::ai`, the
+`genex-ai` crate). Declare it once with `game.ai(AiOptions::default())` (`requires:
+AiRequirement::Ai` for a game that means nothing without a model, `sites` to name every call
+site), ask through `ctx.ai` in `on_update` or `on_ui`, and read answers only from
+`ctx.ai.drain()`, once per update, before anything uses them.
+
+```rust
+use genex::ai::{AiOptions, AiTicket, Ask, SchemaNode};
+use genex::prelude::*;
+
+#[derive(Default)]
+struct World {
+    x: i32,
+    waiting: Option<AiTicket<Value>>,
+}
+
+fn main() {
+    let mut game = Game::new(World::default()).title("Runner");
+    game.ai(AiOptions::default());
+    game.on_update(|sim, ctx| {
+        for result in ctx.ai.drain() {
+            let Some(ticket) = &sim.world.waiting else { continue };
+            if !ticket.is(&result) {
+                continue;
+            }
+            let way = ticket.value(&result).and_then(|v| v["move"].as_str().map(str::to_owned));
+            sim.world.x += if way.as_deref() == Some("right") { 1 } else { -1 };
+            sim.world.waiting = None;
+        }
+        if ctx.keys.pressed(Key::Space) && sim.world.waiting.is_none() {
+            let schema = SchemaNode::object().property("move", SchemaNode::string().one_of(["left", "right"]));
+            let ask = Ask::with_schema("dot.move", "Pick the way the dot runs.", schema);
+            sim.world.waiting = Some(ctx.ai.ask(ask.fallback(json!({"move": "left"}))));
+        }
+    });
+    genex::install(game);
+}
+```
+
+- **Calls.** `Ask::with_schema(site, prompt, schema)` asks for JSON that fits a `SchemaNode` (the
+  closed dialect: objects list every property and take no others, enums, number, length and
+  item bounds, at most 5 deep). `Ask::<T>::new` reads the answer into a type that derives
+  `genex_ai::Schema` and serde's `Deserialize` with `#[serde(deny_unknown_fields)]`. `Say` is
+  free text (`ctx.ai.partial(&ticket)` while it streams, `.max_chars(n)`); `Judge` answers
+  questions about a state (`Question::yes_no`, `choice`, `score`) as a `Judgement`; `Act::<T>`
+  picks one variant of an enum whose variants carry doc comments (the tool descriptions).
+- **Sites.** The first argument names the call site (`[A-Za-z][A-Za-z0-9_.-]{0,63}`, the same
+  every run): a saved playtest replays answers by it.
+- **Player text.** Text a player typed goes only in `.untrusted(name, text)`, which every model
+  sees fenced as the player's words; never put it in the prompt.
+- **Fallbacks.** Give every call `.fallback(value)`. A failure carries it with a typed code
+  (`result.code()`: `ai_off`, `invalid_output`, `timeout`, …), and `ticket.value(&result)`
+  answers the answer or the fallback, so the game plays on.
+- **Answers are data.** Clamp them before they change the world. Only an answer whose provenance
+  is `verified` may decide a leaderboard, a reward or what other players see (ask those with
+  `.authority(AiAuthority::Shared)`).
+- **Replays.** Answers arrive between steps, so the same seed and inputs replayed against a saved
+  playtest get the same answers on the same ticks. A seed forgets every earlier call: a late
+  answer is ignored, and ticket ids count from 1 again. `state().volatile.ai` echoes the lines
+  sent and answered and the AI's `status` (never in the checksum).
+- **No network.** The crate never reaches a model: the studio picks the model and who pays. A
+  build no studio drives (an export, the web build) answers every call `ai_off` at once.
+- **HUD.** `ctx.ai.status()` says whether AI is on, whether a call is on its way (`thinking()`)
+  and whether an AI-only game needs AI (`needs_ai`). A game that uses AI draws
+  `ctx.ai.disclosure().text` ("AI-generated") in the top-right corner.
 
 ## Drawing
 
@@ -543,6 +612,7 @@ a build failure, not a warning.
   `thread_rng`, `rng` and `random`, `getrandom`, and the global `fastrand` functions and
   `fastrand::Rng::new`; a `fastrand::Rng` is fine when built `with_seed` from `ctx.rng`.
 - Animation that exists only on screen derives from simulation state, never from a clock.
+- A model's answer enters the simulation only through `ctx.ai.drain()` (see Play-time AI).
 
 ## Facets
 
