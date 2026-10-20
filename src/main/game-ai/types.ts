@@ -252,8 +252,9 @@ export interface GameAiLedger {
 
 /** Answers kept by request content (`callKey`), per game; a cached answer costs nothing. */
 export interface GameAiCache {
-  get(game: AiGameKey, request: AiCallRequest): Promise<AiCallAnswer | null>;
-  put(game: AiGameKey, request: AiCallRequest, answer: AiCallAnswer): Promise<void>;
+  /** The answer kept for this call of `game` on `model`, under the call's authority; null when none. */
+  get(game: AiGameKey, request: AiCallRequest, model: AiModelRef): Promise<AiCallAnswer | null>;
+  put(game: AiGameKey, request: AiCallRequest, model: AiModelRef, answer: AiCallAnswer): Promise<void>;
 }
 
 /** A game's tapes in `<project>/ai/tapes/`, every path realpath-contained in the game's folder. */

@@ -102,9 +102,12 @@ export function PlayAiCard({
           style={{ top: place.top, right: place.right }}
           aria-describedby="play-ai-card-small"
           data-play-ai-card={card.kind === AiCardKind.Consent ? card.consent.kind : card.card.reason}
+          tabIndex={-1}
           onOpenAutoFocus={(event) => {
+            // Approve is never the default (§8): the card itself takes focus, so a key the player
+            // was already pressing for the game answers nothing; Tab reaches the buttons.
             event.preventDefault();
-            document.querySelector<HTMLElement>("[data-ai-primary]")?.focus();
+            (event.currentTarget as HTMLElement | null)?.focus();
           }}
         >
           <Dialog.Title className="play-ai-card-line" data-busy={retrying ? true : undefined}>

@@ -540,6 +540,31 @@ describe("the development lane", () => {
     }
   });
 
+  it("answers needs_verified and ai_paused by genex.games' own words, as the platform lane does", async () => {
+    const rows: Array<{ label: string; answer: { status: number; body: unknown }; code: AiErrorCode }> = [
+      {
+        label: "shared text on an unverified door",
+        answer: { status: 409, body: { error: "needs_verified" } },
+        code: AiErrorCode.NeedsVerified,
+      },
+      {
+        label: "a game paused after its top-ups",
+        answer: { status: 409, body: { error: "ai_paused", reason: "auto_topup" } },
+        code: AiErrorCode.Paused,
+      },
+      {
+        label: "a finished generation paused",
+        answer: { status: 200, body: { id: "gen_1", status: "failed", error: "ai_paused", chargedCredits: 0 } },
+        code: AiErrorCode.Paused,
+      },
+    ];
+    for (const row of rows) {
+      const { door } = lane([row.answer]);
+      await door.models();
+      await refusedWith(door.run(doorCall(model), never()), row.code, row.label);
+    }
+  });
+
   it("names a model as genex.games' catalog does, and prices a player's call at genex.games' rate", async () => {
     const { door } = lane([]);
     assert.equal(door.labelOf(model.model), null, "nothing is known before the catalog is read");

@@ -11,9 +11,12 @@
  *    game's text (`job.user`) goes on stdin, never argv, which any process can read;
  *  - the spawn goes through `ProcessSandbox` with reading the home folder denied, bar the job's
  *    folder, the CLI's own install and (Claude Code only) its own home (`runnerPolicy`);
+ *  - Claude Code loads no settings file and no memory of the person's (`--setting-sources=`): their
+ *    `~/.claude/CLAUDE.md`, hooks and plugins never meet a stranger's prompt;
  *  - a CLI is advertised only after `probeRunner` proves, under that policy, that a canary in the
- *    home folder stays unreadable and the CLI still says it is signed in. Codex's shell tool cannot
- *    be removed, so this is what keeps a prompt injection away from `~/.ssh` or its own sign-in.
+ *    home folder stays unreadable and the CLI still says it is signed in, and (Claude Code) that a
+ *    memory file's canary never reaches a job's answer. Codex's shell tool cannot be removed, so
+ *    this is what keeps a prompt injection away from `~/.ssh` or its own sign-in.
  *
  * genex.games serves the base args and the model flag per CLI, so wording and model mapping change
  * without a release. A served flag outside {@link CLAUDE_SERVED_FLAGS} / {@link CODEX_SERVED_FLAGS}
@@ -37,8 +40,10 @@ import {
   PlayerRelease,
   type RunnerBinaryPolicy,
   type RunnerJob,
+  RunnerMode,
   RunnerOutputFormat,
 } from "./player-api.ts";
+import { MEMORY_PROBE_PROMPT, MEMORY_PROBE_SYSTEM, memoryCanary } from "./player-runner-prompts.ts";
 
 /** Roughly how many bytes a token is worth, for the loose output ceiling. */
 const BYTES_PER_TOKEN = 4;
@@ -277,6 +282,9 @@ export function claudeArgv(job: RunnerJob, served: RunnerBinaryPolicy = {}): str
   add("--permission-prompts", "none");
   // The person's own MCP servers are not part of a game's job: an allowlisted one never prompts.
   add("--strict-mcp-config");
+  // No settings file (hooks, plugins) and no CLAUDE.md of the person's: a stranger's prompt meets none
+  // of them. Never served: a served policy naming setting sources runs the built-in invocation.
+  argv.push("--setting-sources=");
   argv.push("--append-system-prompt", job.system);
   if (structured) argv.push("--json-schema", JSON.stringify(job.schema));
   // Variadic, therefore last.
@@ -590,6 +598,8 @@ export const RunnerProbeFailure = {
   NotSignedIn: "not-signed-in",
   /** The box could not start on this Mac. */
   SandboxUnavailable: "sandbox-unavailable",
+  /** Claude Code loaded a memory file (or gave no answer that shows it did not): the person's would reach a job. */
+  MemoryLoaded: "memory-loaded",
 } as const;
 export type RunnerProbeFailure = (typeof RunnerProbeFailure)[keyof typeof RunnerProbeFailure];
 
@@ -622,9 +632,16 @@ function signedIn(runner: AiWatcherRunner, result: RunResult): boolean {
 }
 
 /** One probe run in a fresh box under the runner's policy; null when the box could not start. */
-async function probeRun(install: RunnerInstall, options: ProbeOptions, command: string): Promise<RunResult | null> {
+async function probeRun(
+  install: RunnerInstall,
+  options: ProbeOptions,
+  command: string,
+  job?: { stdin: string; files: Readonly<Record<string, string>> },
+): Promise<RunResult | null> {
   const cwd = await jobFolder(options.tmpRoot);
   try {
+    for (const [name, text] of Object.entries(job?.files ?? {}))
+      await writeFile(path.join(cwd, name), text, { mode: 0o600 });
     return await inBox(options.sandbox, install, cwd, {
       command,
       cwd,
@@ -632,15 +649,47 @@ async function probeRun(install: RunnerInstall, options: ProbeOptions, command: 
       policy: runnerPolicy(install, cwd, options.home),
       timeoutMs: options.timeoutMs ?? PROBE_TIMEOUT_MS,
       label: `genex-player-probe:${install.runner}`,
+      ...(job ? { stdin: job.stdin } : {}),
     }).catch(() => null);
   } finally {
     await rm(cwd, { recursive: true, force: true }).catch(() => {});
   }
 }
 
+/** The memory step's job: the smallest text job, on the plan's quickest model. */
+const MEMORY_PROBE_JOB: RunnerJob = {
+  system: MEMORY_PROBE_SYSTEM,
+  user: MEMORY_PROBE_PROMPT,
+  outputFormat: RunnerOutputFormat.Text,
+  model: { id: "anthropic/claude-haiku-4.5", family: PlayerProvider.Claude, cliModel: "haiku" },
+  maxOutputTokens: 256,
+  mode: RunnerMode.OneTime,
+  grantId: null,
+  leaseSeconds: 60,
+};
+
+/**
+ * Claude Code's memory step: a job's own invocation, in a folder whose `CLAUDE.md` holds a canary,
+ * asked what it was told. The same switch that keeps this file out keeps the person's own
+ * `~/.claude/CLAUDE.md` and settings out, and the person's own files are never written to. A run
+ * that gives no answer proves nothing, so it fails too.
+ */
+async function memoryStays(install: RunnerInstall, options: ProbeOptions): Promise<boolean | null> {
+  const secret = randomUUID();
+  const argv = claudeArgv(MEMORY_PROBE_JOB, FALLBACK_POLICY.claude);
+  const run = await probeRun(install, options, commandOf(install.binary, argv), {
+    stdin: MEMORY_PROBE_JOB.user,
+    files: { "CLAUDE.md": memoryCanary(secret) },
+  });
+  if (!run) return null;
+  const envelope = parseClaudeEnvelope(run.stdout);
+  return envelope.ok && !run.stdout.includes(secret);
+}
+
 /**
  * Whether a CLI may be advertised: under the policy its jobs run with, a canary written in the
- * home folder must stay unreadable, and the CLI must still say it is signed in. Never throws.
+ * home folder must stay unreadable, the CLI must still say it is signed in, and Claude Code must
+ * answer a job without a memory file's canary in it. Never throws.
  */
 export async function probeRunner(install: RunnerInstall, options: ProbeOptions): Promise<RunnerProbeResult> {
   const secret = randomUUID();
@@ -654,9 +703,11 @@ export async function probeRunner(install: RunnerInstall, options: ProbeOptions)
       return { ok: false, failure: RunnerProbeFailure.ReadNotDenied };
     const auth = await probeRun(install, options, commandOf(install.binary, AUTH_ARGV[install.runner]));
     if (!auth) return { ok: false, failure: RunnerProbeFailure.SandboxUnavailable };
-    return signedIn(install.runner, auth)
-      ? { ok: true, failure: null }
-      : { ok: false, failure: RunnerProbeFailure.NotSignedIn };
+    if (!signedIn(install.runner, auth)) return { ok: false, failure: RunnerProbeFailure.NotSignedIn };
+    if (install.runner !== AiWatcherRunner.Claude) return { ok: true, failure: null };
+    const stays = await memoryStays(install, options);
+    if (stays === null) return { ok: false, failure: RunnerProbeFailure.SandboxUnavailable };
+    return stays ? { ok: true, failure: null } : { ok: false, failure: RunnerProbeFailure.MemoryLoaded };
   } finally {
     await rm(canary, { force: true }).catch(() => {});
   }

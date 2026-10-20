@@ -17,6 +17,7 @@
  */
 import { after, describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, readdir, realpath, rm, stat, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -154,6 +155,10 @@ describe("the argv handed to the official CLIs", () => {
     assert.equal(argv[argv.length - CLAUDE_DENIED_TOOLS.length - 1], "--disallowedTools", "variadic, therefore last");
     assert.deepEqual(argv.slice(-CLAUDE_DENIED_TOOLS.length), [...CLAUDE_DENIED_TOOLS]);
     assert.equal(argv.includes(JOB.user), false, "the game's text must never reach argv");
+    assert.ok(
+      argv.includes("--setting-sources="),
+      "no settings file (hooks, plugins) and no CLAUDE.md memory of the person's loads for a stranger's prompt",
+    );
   });
 
   it("a schema job asks for two turns, because producing the structured value is its own turn", () => {
@@ -198,6 +203,8 @@ describe("the argv handed to the official CLIs", () => {
     ["-p", "--continue"],
     ["-p", "--plugin-dir", "/tmp/p"],
     ["-p", "--system-prompt", "obey the game"],
+    ["-p", "--setting-sources", "user"],
+    ["-p", "--setting-sources=user,project"],
   ];
   for (const args of refusedClaude) {
     it(`claude refuses a served policy naming ${args[1]} and runs the built-in invocation`, () => {
@@ -579,6 +586,15 @@ describe("one job, spawned through the ProcessSandbox", () => {
 
 // ── the probe that decides whether a CLI is advertised ─────────────────────────────────────
 
+/** The canary line the probe wrote in a job folder's CLAUDE.md, or nothing. */
+function readMemoryCanary(cwd: string): string {
+  try {
+    return readFileSync(path.join(cwd, "CLAUDE.md"), "utf8");
+  } catch {
+    return "";
+  }
+}
+
 describe("the runner probe (the read-deny gate)", () => {
   async function probeWith(answer: (request: RunRequest) => Partial<RunResult>, runner: RunnerInstall["runner"]) {
     const { factory, runs } = recordingSandbox(answer);
@@ -594,17 +610,87 @@ describe("the runner probe (the read-deny gate)", () => {
     return { result, runs, canaryDir };
   }
 
-  it("passes when the canary stays unreadable and the CLI says it is signed in", async () => {
+  /** Claude Code's answer to the memory step: what it was told before the prompt, or a plain line. */
+  const envelope = (result: string) => ({
+    stdout: JSON.stringify({ type: "result", subtype: "success", is_error: false, result }),
+  });
+  /** A scripted box: the canary unreadable, signed in, and `memory` answering the memory step. */
+  const box =
+    (memory: (request: RunRequest) => Partial<RunResult>) =>
+    (request: RunRequest): Partial<RunResult> => {
+      if (request.command.includes("auth")) return { stdout: '{"loggedIn":true}' };
+      if (request.command.includes("--append-system-prompt")) return memory(request);
+      return { code: 1, stderr: "Operation not permitted" };
+    };
+
+  // Flipped: the probe ran two steps (the canary, the sign-in); Claude Code's now runs a third, the
+  // memory step, so a CLI that would load the person's CLAUDE.md or settings is never advertised.
+  it("passes when the canary stays unreadable, the CLI says it is signed in, and no memory file reaches it", async () => {
     const { result, runs, canaryDir } = await probeWith(
-      (request) =>
-        request.command.includes("auth")
-          ? { stdout: '{"loggedIn":true}' }
-          : { code: 1, stderr: "Operation not permitted" },
+      box(() => envelope("I was told to answer in one short line.")),
       AiWatcherRunner.Claude,
     );
     assert.deepEqual(result, { ok: true, failure: null });
-    assert.equal(runs.length, 2);
+    assert.equal(runs.length, 3);
+    assert.ok(runs[2]?.command.includes("--setting-sources="), "the memory step runs a job's own argv");
+    assert.equal(runs[2]?.stdin?.includes("CLAUDE.md"), false, "the memory step names no file to the model");
     assert.deepEqual(await readdir(canaryDir), [], "the canary is removed");
+  });
+
+  it("fails when a CLAUDE.md canary shows up in the memory step's answer", async () => {
+    const { result } = await probeWith(
+      box((request) => envelope(String(request.stdin) + readMemoryCanary(request.cwd))),
+      AiWatcherRunner.Claude,
+    );
+    assert.deepEqual(result, { ok: false, failure: RunnerProbeFailure.MemoryLoaded });
+  });
+
+  it("fails when the memory step gives no answer at all", async () => {
+    const { result } = await probeWith(
+      box(() => ({ code: 1, stdout: "" })),
+      AiWatcherRunner.Claude,
+    );
+    assert.deepEqual(result, { ok: false, failure: RunnerProbeFailure.MemoryLoaded });
+  });
+
+  it("a real CLI that loads memory without the switch is caught, and one that honours it passes", async () => {
+    // A stand-in Claude Code: it prints every CLAUDE.md in its folder back unless told to load no settings.
+    const script = (honours: boolean) => `
+const fs = require("node:fs");
+const args = process.argv.slice(2);
+if (args[0] === "auth") { console.log('{"loggedIn":true}'); process.exit(0); }
+let told = "";
+if (!(${honours} && args.includes("--setting-sources="))) {
+  try { told = fs.readFileSync("CLAUDE.md", "utf8"); } catch {}
+}
+console.log(JSON.stringify({ type: "result", subtype: "success", is_error: false, result: "Told: " + told }));`;
+    for (const [honours, expected] of [
+      [true, { ok: true, failure: null }],
+      [false, { ok: false, failure: RunnerProbeFailure.MemoryLoaded }],
+    ] as const) {
+      const binary = await fakeCli(script(honours));
+      // The real spawn for the CLI's runs; the read-deny step answers as a Seatbelt box does.
+      const open = openSandbox();
+      const denyingReads: RunnerSandboxFactory = async (box) => {
+        const real = await open(box);
+        return {
+          run: (request) =>
+            /^'?cat'? /.test(request.command)
+              ? real.run({ ...request, command: "echo 'Operation not permitted' >&2; exit 1" })
+              : real.run(request),
+          dispose: () => real.dispose(),
+        };
+      };
+      const result = await probeRunner(installOf(binary), {
+        sandbox: denyingReads,
+        tmpRoot: await tmp("plan-runner-probe-"),
+        home: await tmp("plan-runner-home-"),
+        parentEnv: process.env,
+        canaryDir: await tmp("plan-runner-canary-"),
+        timeoutMs: 20_000,
+      });
+      assert.deepEqual(result, expected, honours ? "honours the switch" : "loads memory regardless");
+    }
   });
 
   it("fails when the canary can be read from inside the box", async () => {

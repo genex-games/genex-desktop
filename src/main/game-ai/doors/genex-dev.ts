@@ -17,6 +17,7 @@ import {
   type AiModelRef,
   type AiUsage,
   creditsOfMicros,
+  GENEX_GUARD_CODES,
   isPlainRecord,
   MICROS_PER_CREDIT,
 } from "../../../shared/game-ai.ts";
@@ -60,17 +61,6 @@ const GenerationStatus = {
   Expired: "expired",
   Unknown: "unknown",
 } as const;
-
-/**
- * genex.games' words for shared text it would not return (D6, its `play-ai/shared-text.ts`): the
- * classifier withheld it, could not screen it, or the game never declared that other players see
- * its AI text. Each is `moderated` to the game: shared text no stand screened is never broadcast.
- */
-const MODERATION_ERRORS: ReadonlySet<string> = new Set([
-  "moderated",
-  "moderation_unavailable",
-  "ai_audience_undeclared",
-]);
 
 /** What a finished generation answers a game with, when it gave no answer. */
 const FAILED_CODE: Readonly<Record<string, AiErrorCode>> = {
@@ -159,7 +149,9 @@ function readGeneration(body: unknown): DevGeneration | null {
 /** What an HTTP refusal from the lane answers a game with. */
 function refusalOf(status: number, body: unknown): AiRefusal {
   const error = isPlainRecord(body) && typeof body.error === "string" ? body.error : "";
-  if (MODERATION_ERRORS.has(error)) return new AiRefusal(AiErrorCode.Moderated);
+  // Shared text genex.games would not return (D6) and a game it paused (D11): one table with the platform lane.
+  const guarded = GENEX_GUARD_CODES[error];
+  if (guarded) return new AiRefusal(guarded);
   if (status === 402 || error === "insufficient_balance") return new AiRefusal(AiErrorCode.OutOfCredits);
   if (status === 401 || status === 403) return new AiRefusal(AiErrorCode.DoorUnavailable);
   if (status === 429) return new AiRefusal(AiErrorCode.RateLimited, MINUTE_MS);
@@ -237,8 +229,8 @@ class DevDoor implements GenexDevDoor {
     if (created.status < 200 || created.status >= 300 || !first) throw refusalOf(created.status, created.body);
     const done = await this.#until(project, token, first, signal);
     if (done.status !== GenerationStatus.Succeeded) {
-      const withheld = done.error !== null && MODERATION_ERRORS.has(done.error);
-      throw new AiRefusal(withheld ? AiErrorCode.Moderated : (FAILED_CODE[done.status] ?? AiErrorCode.Provider));
+      const guarded = done.error === null ? undefined : GENEX_GUARD_CODES[done.error];
+      throw new AiRefusal(guarded ?? FAILED_CODE[done.status] ?? AiErrorCode.Provider);
     }
     const text = outputText(done.output);
     return { text, model: call.model.model, usage: null, costMicros: done.chargedCredits * MICROS_PER_CREDIT };

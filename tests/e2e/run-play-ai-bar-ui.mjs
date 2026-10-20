@@ -175,6 +175,23 @@ app.whenReady().then(async()=>{
   await js('window.test.bar({phase:"off",note:null})');
   await until('AI off', 'document.querySelector("[data-play-ai-pill]").getAttribute("aria-label")==="AI off"');
   await shot('pill-off');
+
+  // Approve is never the default: each card that spends opens with no approving button focused,
+  // and a fresh Enter or Space after its 600 ms gate answers nothing.
+  await js('window.test.bar({phase:"ready",note:null})');
+  const answered=(await calls('gameAiAnswer')).length;
+  const press=async(keyCode)=>{wc.sendInputEvent({type:'keyDown',keyCode});wc.sendInputEvent({type:'char',keyCode});wc.sendInputEvent({type:'keyUp',keyCode});await wait(80);};
+  for (const [at,kind] of ['plan','credits','key','leaderboard'].entries()) {
+    await js('window.test.notice({kind:"consent",consent:window.test.consent({ticket:"ticket-01'+at+'0",kind:'+JSON.stringify(kind)+'})})');
+    await until(kind+' card', 'Boolean(document.querySelector("[data-play-ai-card='+kind+']"))');
+    check(kind+': the card opens with no approving button focused', !(await js('Boolean(document.activeElement?.closest("[data-ai-primary]"))')));
+    await wait(650);
+    await press('Enter');
+    await press('Space');
+    check(kind+': a fresh Enter or Space approves nothing', (await calls('gameAiAnswer')).length===answered);
+    await esc();
+    await until(kind+' set aside', '!document.querySelector("[data-play-ai-card]")');
+  }
   assert.deepEqual(report.errors,[]);
   console.log('PASS Play bar AI pill, menu, cards, Get credits and Report');
  } catch(error) { report.failure=error.stack; console.error(error); fs.writeFileSync(${JSON.stringify(evidence)}+'/failure.png',(await wc.capturePage()).toPNG()); }

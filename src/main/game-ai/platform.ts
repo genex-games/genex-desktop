@@ -8,8 +8,8 @@
  * Every answer is read as hostile input: a row or a field out of shape is dropped, never guessed.
  * An id the page named is checked against genex.games' own shape before it reaches a route, and a
  * page Studio opens in the browser for a card is Stripe's checkout over https and nothing else.
- * Fit counts go with no account at all (counts only, D12); a Report goes as the signed-in person,
- * its bundle holding no account id. Electron-free: the request and the browser are handed in.
+ * Fit counts (counts only, D12) and Reports (D9) go with no account at all, and a bundle holds no
+ * account id. Electron-free: the request and the browser are handed in.
  */
 import { isPlainRecord } from "../../shared/game-ai.ts";
 import type { AiFitCountRow } from "../../shared/game-ai-check.ts";
@@ -359,22 +359,17 @@ function confirmCalls(account: Account): Pick<GenexAiPlatform, "confirmTerms" | 
 /** genex.games for play-time AI over `deps`. */
 export function createGenexAiPlatform(deps: GenexAiPlatformDeps): GenexAiPlatform {
   const account = accountOf(deps);
-  // A Report goes as the signed-in person (genex.games refuses a guest's); counts go with no account.
-  const reports = genexAiIngest({
-    request: async (route, init) => {
-      const current = await account.token();
-      return deps.request(route, current ? { ...init, token: current } : init);
-    },
-  });
-  const counts = genexAiIngest({
+  // Reports and fit counts go with no account at all (D9, D12): genex.games takes both anonymously,
+  // and the Report sheet tells the player their account is not included.
+  const ingest = genexAiIngest({
     request: (route, init) => deps.request(route, { method: init.method, body: init.body }),
   });
   return {
     ...creditCalls(account),
     ...autoTopUpCalls(account, deps.openExternal),
     ...confirmCalls(account),
-    sendReport: (bundle: AiReportBundle) => reports.sendReport(bundle),
-    sendFitCounts: (rows: readonly AiFitCountRow[]) => counts.sendFitCounts(rows),
+    sendReport: (bundle: AiReportBundle) => ingest.sendReport(bundle),
+    sendFitCounts: (rows: readonly AiFitCountRow[]) => ingest.sendFitCounts(rows),
   };
 }
 

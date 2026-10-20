@@ -16,6 +16,16 @@ const excluded = (name: string) =>
   /\.(pem|key|p12|pfx|jks|keystore|env|map|log)$/i.test(name) ||
   /^(id_rsa|id_ed25519|credentials|secrets|env)(\.|$)/i.test(name);
 
+/**
+ * A saved playtest (`ai/tapes/…`: recorded prompts, player text and answers) is private to the game's
+ * folder unless the creator put it in `ai/tapes/ship/` (§8 Privacy). Names are compared without case:
+ * the Mac's folders are, so `AI/Tapes` is the same folder.
+ */
+function isPrivateTape(parts: readonly string[]): boolean {
+  const [top, tapes, inside] = parts.map((part) => part.toLowerCase());
+  return top === "ai" && tapes === "tapes" && inside !== undefined && inside !== "ship";
+}
+
 /** `game.export` answers this to the harness, so it lives in `shared/game-project.ts`. */
 export type { ExportResult };
 
@@ -125,7 +135,7 @@ async function stagePath(
 ): Promise<void> {
   const parts = rel.split(/[\\/]/);
   if (path.isAbsolute(rel) || parts.includes("..")) throw new Error(MESSAGE.InvalidPublicPath(rel));
-  if (parts.some(excluded)) {
+  if (parts.some(excluded) || isPrivateTape(parts)) {
     result.excluded.push(destRel);
     return;
   }

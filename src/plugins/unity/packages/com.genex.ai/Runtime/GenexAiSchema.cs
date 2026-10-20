@@ -25,7 +25,8 @@ namespace Genex.AI
             {
                 if (!Made.TryGetValue(type, out var schema))
                 {
-                    schema = Of(type, null, 1);
+                    // The root is depth 0, as Genex's own check counts it: five nested types and a leaf fit.
+                    schema = Of(type, null, 0);
                     Made[type] = schema;
                 }
                 return (JObject)schema.DeepClone();

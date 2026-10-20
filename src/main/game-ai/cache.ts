@@ -1,14 +1,15 @@
 /**
  * Play-time AI's answer cache: an answer kept by the content of the call that got it (`callKey`:
  * op, site, system, prompt, player fields, memory, schema and tier — never the ticket or the grant),
- * per game, in memory, for {@link CACHE_TTL_MS} on the injected clock and at most
+ * by who sees it (`authority`: a local answer was never moderated, so it never answers a shared call,
+ * D6) and by the model that wrote it, per game, in memory, for {@link CACHE_TTL_MS} on the injected clock and at most
  * {@link CACHE_MAX_ENTRIES} answers, the least recently used dropped first. A hit costs nothing and
  * answers the new ticket marked `cached`. Only answers are kept: a refusal is not, and neither is a
  * streamed call, whose player watches it arrive. The service serves a hit only from the door the
  * call routes to now, so a model change or a verified call never gets another door's answer.
  */
 import { MINUTE_MS } from "../../shared/duration.ts";
-import type { AiCallAnswer, AiCallRequest, AiGameKey } from "../../shared/game-ai.ts";
+import type { AiCallAnswer, AiCallRequest, AiGameKey, AiModelRef } from "../../shared/game-ai.ts";
 import { callKey, callKeyInput } from "../../shared/game-ai-tape.ts";
 import type { GameAiCache, GameAiClock } from "./types.ts";
 
@@ -25,14 +26,22 @@ interface Kept {
 
 /** A new, empty cache; one per profile. */
 export function createGameAiCache(options: { clock: GameAiClock }): GameAiCache {
-  /** By `<game> <callKey>`, in use order: the first is the least recently used. */
+  /** By game, authority, model and `callKey`, in use order: the first is the least recently used. */
   const kept = new Map<string, Kept>();
-  const keyOf = async (game: AiGameKey, request: AiCallRequest) => `${game} ${await callKey(callKeyInput(request))}`;
+  const keyOf = async (game: AiGameKey, request: AiCallRequest, model: AiModelRef) =>
+    JSON.stringify([
+      game,
+      request.authority,
+      model.door,
+      model.engine,
+      model.model,
+      await callKey(callKeyInput(request)),
+    ]);
 
   return {
-    async get(game, request) {
+    async get(game, request, model) {
       if (request.stream) return null;
-      const key = await keyOf(game, request);
+      const key = await keyOf(game, request, model);
       const entry = kept.get(key);
       if (!entry) return null;
       kept.delete(key);
@@ -40,9 +49,9 @@ export function createGameAiCache(options: { clock: GameAiClock }): GameAiCache 
       kept.set(key, entry);
       return { ...entry.answer, ticket: request.ticket, value: structuredClone(entry.answer.value), cached: true };
     },
-    async put(game, request, answer) {
+    async put(game, request, model, answer) {
       if (!answer.ok || request.stream) return;
-      const key = await keyOf(game, request);
+      const key = await keyOf(game, request, model);
       kept.delete(key);
       kept.set(key, {
         answer: { ...answer, value: structuredClone(answer.value) },

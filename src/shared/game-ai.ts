@@ -242,6 +242,20 @@ const ERROR_CODES: ReadonlySet<string> = new Set(Object.values(AiErrorCode));
 export const isAiErrorCode = (value: unknown): value is AiErrorCode =>
   typeof value === "string" && ERROR_CODES.has(value);
 
+/**
+ * genex.games' refusals of shared AI text (D6) and of a game it paused (D11), and the failure each
+ * is to a game, on both of its lanes (the platform lane and the development lane). Shared text no
+ * stand screened is never broadcast: a withheld answer, a classifier that could not answer and a
+ * shared call of a game whose owner declared no audience are all `moderated`. Its wire words.
+ */
+export const GENEX_GUARD_CODES: Readonly<Record<string, AiErrorCode>> = {
+  moderated: AiErrorCode.Moderated,
+  moderation_unavailable: AiErrorCode.Moderated,
+  ai_audience_undeclared: AiErrorCode.Moderated,
+  needs_verified: AiErrorCode.NeedsVerified,
+  ai_paused: AiErrorCode.Paused,
+};
+
 /** What a door's engine failure answers a game with: a limit waits, a lost sign-in or an outage is a door down. */
 export const AI_CODE_OF_FAILURE = {
   [EngineFailureKind.RateLimit]: AiErrorCode.RateLimited,

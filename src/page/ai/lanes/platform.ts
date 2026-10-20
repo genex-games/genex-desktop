@@ -20,6 +20,7 @@ import {
   AiProvenance,
   AiSource,
   AiTier,
+  GENEX_GUARD_CODES,
   isPlainRecord,
   MICROS_PER_CREDIT,
 } from "../../../shared/game-ai.ts";
@@ -41,6 +42,7 @@ const JUDGE_MODEL_KIND = "typesafe";
 
 /** genex.games' outcomes and the failure codes they become. Its own wire words: never rename one. */
 export const PLATFORM_ERROR_CODES: Readonly<Record<string, AiErrorCode>> = {
+  ...GENEX_GUARD_CODES,
   insufficient_credits: AiErrorCode.OutOfCredits,
   grant_insufficient_funds: AiErrorCode.OutOfCredits,
   insufficient_balance: AiErrorCode.OutOfCredits,
@@ -338,6 +340,8 @@ async function generation(platform: Platform, lane: LaneCall): Promise<LaneReply
     prompt,
     maxCredits: lane.call.maxCredits ?? platform.maxCredits,
     maxOutputTokens: wire.maxOutputTokens,
+    // Who sees the answer: genex.games screens a shared one before it returns it (D6).
+    authority: wire.authority,
     idempotencyKey: platform.key(),
   };
   if (wire.op === AiOp.Say) {

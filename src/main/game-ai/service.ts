@@ -298,7 +298,9 @@ export class GameAiServiceImpl implements GameAiService {
     const admitted = await this.#admit(caller, request);
     if ("ok" in admitted) return admitted;
     if (signal.aborted) return refused(request.ticket, AiErrorCode.Canceled);
-    const cached = keepsAnswers(admitted.route.door) ? await this.#deps.cache.get(caller.game, request) : null;
+    const cached = keepsAnswers(admitted.route.door)
+      ? await this.#deps.cache.get(caller.game, request, admitted.model)
+      : null;
     // A kept answer only from the door this call routes to: never another door's provenance.
     if (cached?.ok && cached.source === admitted.route.door && !admitted.silent) {
       const kept = { ...cached, ticket: request.ticket };
@@ -501,7 +503,7 @@ export class GameAiServiceImpl implements GameAiService {
       latencyMs: Math.max(0, this.#deps.clock.now() - started),
       cached: false,
     };
-    if (keepsAnswers(admitted.route.door)) await this.#deps.cache.put(caller.game, request, reply);
+    if (keepsAnswers(admitted.route.door)) await this.#deps.cache.put(caller.game, request, admitted.model, reply);
     this.#afterSettle(caller);
     return reply;
   }

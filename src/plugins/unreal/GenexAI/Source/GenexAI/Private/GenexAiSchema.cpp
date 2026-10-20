@@ -132,7 +132,8 @@ TSharedPtr<FJsonObject> GenexAiSchema::ObjectFor(const UScriptStruct* Struct, FS
 		Why = TEXT("no struct");
 		return nullptr;
 	}
-	return OfStruct(Struct, 1, Why);
+	// The root is depth 0, as Genex's own check counts it (`checkSchema`): five nested structs and a leaf fit.
+	return OfStruct(Struct, 0, Why);
 }
 
 FString GenexAiSchema::For(const UScriptStruct* Struct, FString& Why)

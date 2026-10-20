@@ -2,8 +2,8 @@
  * genex.games as play-time AI reaches it (`main/game-ai/platform.ts`), over a scripted API: the
  * balance, the packs at their one checkout price (D13), checkout and auto top-up's switch (D11,
  * whose caps genex.games enforces), the terms of a grant or generation the embed SDK asks the app
- * to confirm (D3) and the person's answer on genex.games, and the Report and fit-count sends (the
- * counts go with no account). Every answer is hostile input: a row or a field out of shape is
+ * to confirm (D3) and the person's answer on genex.games, and the Report and fit-count sends (both
+ * go with no account). Every answer is hostile input: a row or a field out of shape is
  * dropped, and an id that is not genex.games' shape never reaches a route.
  */
 import { describe, it } from "node:test";
@@ -364,7 +364,7 @@ function reportBundle(): AiReportBundle {
 }
 
 describe("genex.games for play-time AI: Reports and fit counts", () => {
-  it("sends fit counts with no account, and a Report as the signed-in person", async () => {
+  it("sends fit counts and every Report with no account, though one is signed in", async () => {
     const a = api({ [`POST ${AI_FIT_COUNTS_ROUTE}`]: ok({ accepted: 1 }) });
     await a.platform.sendFitCounts([
       {
@@ -380,10 +380,13 @@ describe("genex.games for play-time AI: Reports and fit counts", () => {
     const sent = a.sent.find((row) => row.route === AI_FIT_COUNTS_ROUTE);
     assert.ok(sent, "the counts were sent");
     assert.equal(sent.init.token, undefined, "counts never carry the account");
-    const reported = api({ [`POST ${AI_REPORT_ROUTE}`]: { status: 201, body: { id: "report_0001" } } });
-    const outcome = await reported.platform.sendReport(reportBundle());
-    assert.deepEqual(outcome, { ok: true, id: "report_0001" });
-    assert.equal(reported.sent[0]?.init.token, TOKEN);
+    for (const kind of [AiReportKind.Player, AiReportKind.Automatic]) {
+      const reported = api({ [`POST ${AI_REPORT_ROUTE}`]: { status: 201, body: { id: "report_0001" } } });
+      const outcome = await reported.platform.sendReport({ ...reportBundle(), kind });
+      assert.deepEqual(outcome, { ok: true, id: "report_0001" });
+      assert.equal(reported.sent.length, 1, `${kind}: one request`);
+      assert.equal(reported.sent[0]?.init.token, undefined, `${kind}: a Report never carries the account`);
+    }
   });
 });
 

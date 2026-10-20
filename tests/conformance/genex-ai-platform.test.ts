@@ -229,6 +229,23 @@ describe("a published game's calls", () => {
     assert.equal((await nextResult(ai))?.code, AiErrorCode.NeedsVerified);
   });
 
+  it("tells genex.games who sees each answer, so it screens shared text (D6)", async () => {
+    const { sdk, calls } = fakeSdk();
+    const { ai } = platformAi(sdk);
+    await ai.ready();
+    ai.ask({ site: "board.post", prompt: "p", schema: Line, authority: AiAuthority.Shared });
+    await nextResult(ai);
+    ai.ask({ site: "npc.reply", prompt: "p", schema: Line });
+    await nextResult(ai);
+    ai.say({ site: "narrator.line", prompt: "p", authority: AiAuthority.Shared });
+    await nextResult(ai);
+    assert.deepEqual(
+      calls.generate?.map((options) => options.authority),
+      [AiAuthority.Shared, AiAuthority.Local],
+    );
+    assert.equal(calls.generateStream?.[0]?.authority, AiAuthority.Shared);
+  });
+
   it("streams a say answer's text so far", async () => {
     const { sdk, calls } = fakeSdk();
     const { ai } = platformAi(sdk);
@@ -280,6 +297,15 @@ describe("a published game's calls", () => {
     ["an answer of the wrong shape", { status: "failed", error: "invalid_output" }, AiErrorCode.InvalidOutput],
     ["a call still running", { status: "pending", error: "wait_timeout" }, AiErrorCode.Timeout],
     ["a canceled call", { status: "canceled", error: "player_stopped" }, AiErrorCode.Canceled],
+    ["shared text withheld", { status: "failed", error: "moderated" }, AiErrorCode.Moderated],
+    ["shared text with no classifier", { status: "failed", error: "moderation_unavailable" }, AiErrorCode.Moderated],
+    [
+      "a shared call of an undeclared game",
+      { status: "failed", error: "ai_audience_undeclared" },
+      AiErrorCode.Moderated,
+    ],
+    ["shared text on an unverified door", { status: "failed", error: "needs_verified" }, AiErrorCode.NeedsVerified],
+    ["a game paused after its top-ups", { status: "failed", error: "ai_paused" }, AiErrorCode.Paused],
     ["an answer that is not one", ["succeeded"], AiErrorCode.Provider],
     [
       "output outside the schema",

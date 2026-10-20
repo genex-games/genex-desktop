@@ -513,17 +513,30 @@ describe("the passes it drives", () => {
   });
 });
 
+/** Claude Code's answer to the probe's memory step, with no memory file's words in it. */
+const MEMORY_ANSWER = JSON.stringify({
+  type: "result",
+  subtype: "success",
+  is_error: false,
+  result: "Answer briefly.",
+});
+/** Whether a run is the probe's memory step (a job's own invocation). */
+const isMemoryStep = (request: RunRequest): boolean => request.command.includes("--append-system-prompt");
+
+/** What a passing probe's CLI prints for a run: signed in, and a memory step that loaded nothing. */
+function probeStdout(request: RunRequest): string {
+  if (isMemoryStep(request)) return MEMORY_ANSWER;
+  if (request.command.includes("auth")) return '{"loggedIn":true}';
+  return request.command.includes("login") ? "Logged in using ChatGPT" : "";
+}
+
 /** A box whose canary read is refused and whose CLI says it is signed in. */
 function passingProbe(): RunnerSandboxFactory {
   return async () => ({
     run: async (request: RunRequest): Promise<RunResult> => ({
-      code: request.command.includes("auth") || request.command.includes("login") ? 0 : 1,
+      code: request.command.includes("auth") || request.command.includes("login") || isMemoryStep(request) ? 0 : 1,
       signal: null,
-      stdout: request.command.includes("auth")
-        ? '{"loggedIn":true}'
-        : request.command.includes("login")
-          ? "Logged in using ChatGPT"
-          : "",
+      stdout: probeStdout(request),
       stderr: "",
       durationMs: 1,
       timedOut: false,
@@ -546,9 +559,9 @@ describe("what it answers with", () => {
         const auth = request.command.includes("auth");
         const codexBox = box.ownHome.length === 0;
         return {
-          code: auth || codexBox ? 0 : 1,
+          code: auth || codexBox || isMemoryStep(request) ? 0 : 1,
           signal: null,
-          stdout: auth ? '{"loggedIn":true}' : "",
+          stdout: probeStdout(request),
           stderr: "",
           durationMs: 1,
           timedOut: false,
