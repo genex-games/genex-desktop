@@ -8,7 +8,8 @@ use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 use std::thread::JoinHandle;
 use std::time::Duration;
 
-use genex_core::json::Value;
+use genex_core::json::{self, Value};
+use genex_crash::{CrashRecord, CrashSink, FnSink, Installed};
 #[cfg(unix)]
 use genex_core::paths::STUDIO_FD_ENV;
 use genex_core::protocol::{self, Event, LineReader, NextLine};
@@ -327,14 +328,36 @@ pub fn from_environment(env: &dyn Fn(&str) -> Option<String>) -> Option<Transpor
     Some(Transport::new(channel, nonce))
 }
 
-/// Tell the studio the game is about to exit abnormally when it panics (`fatal`, reason
-/// [`FatalReason::TERMINATE`]), then run the hook that was installed before.
+/// [`report_crashes`] with no sink besides the studio's.
 pub fn report_panics(link: Arc<Transport>) {
+    report_crashes(link, Vec::new());
+}
+
+/// Tell the studio about every panic: the crash hook (genex-crash) sends its record as a `crash`
+/// event (CRASH-2) and to `sinks`, then `fatal` (reason [`FatalReason::TERMINATE`]) goes out as
+/// before, then the hook installed before. The crash hook is the process's and installs once:
+/// answers [`Installed::Already`] when it was, in which case `sinks` and the `crash` event are left
+/// out and only `fatal` is added.
+pub fn report_crashes(link: Arc<Transport>, mut sinks: Vec<Box<dyn CrashSink>>) -> Installed {
     let previous = std::panic::take_hook();
+    let fatal_link = Arc::clone(&link);
     std::panic::set_hook(Box::new(move |info| {
         let mut fields = Value::object();
         fields.set("reason", Value::from(FatalReason::TERMINATE));
-        link.send(&protocol::event(Event::FATAL, &fields));
+        fatal_link.send(&protocol::event(Event::FATAL, &fields));
         previous(info);
     }));
+    sinks.push(Box::new(FnSink(move |_record: &CrashRecord, json: &[u8]| {
+        send_crash(&link, json);
+    })));
+    genex_crash::install(sinks)
+}
+
+/// Send one crash record (its JSON, at most 64 KiB) as the `crash` event; nothing for JSON the
+/// protocol cannot carry.
+fn send_crash(link: &Transport, json: &[u8]) {
+    let Ok(record) = json::parse(json) else { return };
+    let mut fields = Value::object();
+    fields.set("record", record);
+    link.send(&protocol::event(Event::CRASH, &fields));
 }
