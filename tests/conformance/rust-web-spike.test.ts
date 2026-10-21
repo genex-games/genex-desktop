@@ -412,7 +412,11 @@ describe("the pond in Chromium's WebGPU", { skip: browserSkip() }, () => {
     });
     assert.deepEqual(await verb("cameras"), ["default"]);
     assert.deepEqual(await verb("eyes"), []);
-    assert.deepEqual(await verb("audio"), { available: false, rms: 0, centroid: 0 });
+    // The level probe reads the game's own mix (AU-8): available, and silent for the pond, whose
+    // splash plays on its own device-less mixer rather than through `ctx.audio`.
+    assert.deepEqual(await verb("audio"), { available: true, rms: 0, centroid: 0 });
+    assert.deepEqual(await verb("audio", { muted: true }), { muted: true });
+    assert.deepEqual(await verb("audio"), { available: true, rms: 0, centroid: 0 }, "the mute leaves the meter");
     assert.equal(await verb("capture", "sky"), null, "an unknown camera is refused");
     const shot = await page.evaluate(async () => {
       const notes: unknown[] = [];

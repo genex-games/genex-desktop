@@ -36,7 +36,9 @@
     "streaming-invalid",
     "duplicate-input",
     "input-invalid",
-    "duplicate-touch-controls"
+    "duplicate-touch-controls",
+    "duplicate-audio",
+    "audio-zone-limit"
   ],
   "registrationRefusals": ["gpu-pass-invalid"],
   "levelTwoCalls": [

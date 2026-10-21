@@ -63,6 +63,8 @@
 //! on the browser's device under error scopes and answers what each reported.
 
 use crate::assets::WebAssets;
+use crate::audio::{UNLOCK_EVENTS, Unlock, level_answer};
+use genex::audio::Device;
 use crate::draw::AssetTable;
 use crate::handle::GameHandle;
 use crate::saves::{SAVES_DATABASE_PREFIX, saves_state};
@@ -150,12 +152,19 @@ struct Shell {
     /// a Live frame drawn while it awaits its scopes or its readback would rebuild the renderer for
     /// Live's settings and overwrite the world target the capture reads.
     captures_in_flight: u32,
+    /// The page's audio device: opened by the first gesture after boot (AU-8, autoplay policy).
+    audio: Device,
+    /// Whether that gesture came (and the unlock listeners are gone).
+    unlock: Unlock,
 }
 
 thread_local! {
     static SHELL: RefCell<Option<Shell>> = const { RefCell::new(None) };
     /// The page verbs' studio: ready once `studio_boot` succeeded.
     static STUDIO: RefCell<Studio> = RefCell::new(Studio::web());
+    /// The listener the unlock events share; kept for the page's life, since it is removed from
+    /// inside its own call.
+    static UNLOCK_LISTENER: RefCell<Option<Closure<dyn FnMut()>>> = const { RefCell::new(None) };
 }
 
 /// Hand a game to the web shell under `name` (its saves database's): a game's `genex::install` in a
@@ -180,6 +189,8 @@ pub fn install_named<W: Default + 'static>(name: &str, game: Game<W>, assets: As
         draws: 0,
         gate: FrameGate::default(),
         captures_in_flight: 0,
+        audio: Device::default(),
+        unlock: Unlock::default(),
     };
     SHELL.with_borrow_mut(|slot| *slot = Some(shell));
 }
@@ -403,6 +414,58 @@ pub async fn studio_boot(canvas: Option<HtmlCanvasElement>, hints: Option<String
         STUDIO.with_borrow_mut(Studio::mark_ready);
         Ok(json!({ "ok": true, "receipt": receipt, "world": world }).to_string())
     })
+    .inspect(|_| listen_for_unlock())
+}
+
+/// Call `target[method](event, listener, true)` (a capturing listener) through reflection, so
+/// the shell needs no web-sys event features; a page without the method is left alone.
+fn call_listener_method(target: &JsValue, method: &str, event: &str, listener: &js_sys::Function) {
+    let Ok(function) = js_sys::Reflect::get(target, &JsValue::from_str(method)) else { return };
+    let Ok(function) = function.dyn_into::<js_sys::Function>() else { return };
+    // The page's own listener methods do not throw for a valid event name.
+    let _ = function.call3(target, &JsValue::from_str(event), listener, &JsValue::TRUE);
+}
+
+/// Add (or remove) the unlock listener for every [`UNLOCK_EVENTS`] name on the window.
+fn unlock_listeners(method: &str) {
+    let Some(window) = web_sys::window() else { return };
+    UNLOCK_LISTENER.with_borrow(|listener| {
+        let Some(listener) = listener.as_ref() else { return };
+        for event in UNLOCK_EVENTS {
+            call_listener_method(&window, method, event, listener.as_ref().unchecked_ref());
+        }
+    });
+}
+
+/// After boot: the first `pointerdown`, `keydown` or `touchend` opens the audio device inside the
+/// gesture (an `AudioContext` made there may play) and removes the listeners (AU-8).
+fn listen_for_unlock() {
+    let already = UNLOCK_LISTENER.with_borrow(Option::is_some);
+    if already {
+        return;
+    }
+    let listener = Closure::<dyn FnMut()>::new(|| {
+        let opened = with_shell(|shell| {
+            if !shell.unlock.gesture() {
+                return Ok(false);
+            }
+            let Shell { game, audio, .. } = shell;
+            started(game)?.follow_device(audio);
+            Ok(true)
+        });
+        if opened.is_ok() {
+            unlock_listeners("removeEventListener");
+        }
+    });
+    UNLOCK_LISTENER.with_borrow_mut(|slot| *slot = Some(listener));
+    unlock_listeners("addEventListener");
+}
+
+/// The page's `audio()` probe (AU-8): `{available: true, rms, centroid}` from the game's own mix,
+/// before the mute and whether or not the device opened yet; `not-booted` before `studio_boot`.
+#[wasm_bindgen]
+pub fn studio_audio_level() -> Result<String, JsValue> {
+    with_shell(|shell| Ok(level_answer(started(&mut shell.game)?.audio_level()).to_string()))
 }
 
 /// Draw the current view (a placed camera or eye, or the game's own) into the world target.
@@ -489,6 +552,10 @@ pub fn studio_frame(frame_ms: f64) -> Result<u32, JsValue> {
             return Ok(0);
         }
         let ticks = started(&mut shell.game)?.advance_live(frame_ms);
+        if shell.audio.tried() {
+            let Shell { game, audio, .. } = shell;
+            started(game)?.follow_device(audio);
+        }
         let action = shell.gate.frame(ticks);
         // Dynamic resolution reads display intervals, drawn or not (tickless frames are skipped).
         graphics(shell)?.screen.presenter.note_display_frame(frame_ms);

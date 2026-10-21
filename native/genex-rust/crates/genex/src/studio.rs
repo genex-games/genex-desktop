@@ -47,7 +47,7 @@ use genex_core::clock::FpsMeter;
 use genex_core::json::Value;
 use genex_core::paths::process_env;
 use genex_core::protocol::{BootProgress, BootStage};
-use genex_core::session::{FrameTiming, StepResult, Timings};
+use genex_core::session::{AudioLevel, FrameTiming, StepResult, Timings};
 use genex_render::{GpuCounters, RenderCode, RenderError};
 use genex_studio::verbs::{SpelledAnswer, SpelledChange, capture_provenance_value, render_answer_value, render_status_value, spell_change};
 use genex_studio::wire::{self, Backend, GpuRefusal, NativeEnhanced, Receipt, RenderSettingsChange, RenderSettingsRefusal, SurfaceArgs};
@@ -89,6 +89,9 @@ struct StudioRun<'a, W> {
     born: Instant,
     /// Custom passes refused at install, by name, with the code that refused each.
     install_refused: Vec<(String, RenderCode)>,
+    /// The audio device Studio Live opens with its first ring (AU-8): a headless studio run, which
+    /// never makes a ring, never opens one.
+    audio: crate::audio::Device,
 }
 
 /// The receipt `ready` carries: the renderer's backend, adapter and offered native-enhanced
@@ -233,6 +236,9 @@ impl<W: Default + 'static> StudioRun<'_, W> {
         }
         let update_ms = (ticked - ticked_from).as_secs_f64() * 1000.0;
         self.timing.record(frame.interval_ms, update_ms, ticked.elapsed().as_secs_f64() * 1000.0);
+        if self.audio.is_open() {
+            self.game.note_audio_device(true, self.audio.fault());
+        }
     }
 
     /// After a device loss, between the studio's requests: a new device, every mesh replayed, the
@@ -397,6 +403,15 @@ impl<W: Default + 'static> StudioGame for StudioRun<'_, W> {
     fn timings(&self) -> Timings {
         self.timing.timings()
     }
+    /// `audio({muted})`: the game's device output (the meter still reads the mix).
+    fn set_muted(&mut self, muted: bool) {
+        self.game.set_output_muted(muted);
+    }
+    /// `audioLevel`: the game's own mix, the last 2048 frames before the mute.
+    fn audio_level(&self) -> AudioLevel {
+        let level = self.game.audio_level();
+        AudioLevel { rms: level.rms, centroid: level.centroid }
+    }
     fn set_visible(&mut self, visible: bool) -> bool {
         self.visible = visible;
         if visible {
@@ -410,7 +425,10 @@ impl<W: Default + 'static> StudioGame for StudioRun<'_, W> {
     fn make_ring(&mut self, ring: &SurfaceArgs) -> Result<(), RingFault> {
         // Live's HUD is tessellated for the new ring from the next frame on.
         self.presenter.set_window_size((ring.width, ring.height));
-        self.live.make_ring(&self.presenter, ring)
+        self.live.make_ring(&self.presenter, ring)?;
+        // Live is the run a person sees and hears while embedded: its first ring opens the device.
+        self.audio.open_for(self.game);
+        Ok(())
     }
     fn release_slot(&mut self, generation: u32, slot: u32) {
         self.live.release(generation, slot);
@@ -490,6 +508,7 @@ fn studio_run<'a, W: Default + 'static>(
         fps: FpsMeter::default(),
         born: Instant::now(),
         install_refused,
+        audio: crate::audio::Device::default(),
     };
     // The first frame, then live play: what the game is at `ready`, as the C++ runtime begins.
     game.game.start();
@@ -658,7 +677,7 @@ mod metal {
         Some(studio_run(runtime, presenter, Live::from_env(&|_| None), &|_| {}))
     }
 
-    fn call(studio: &mut Studio, run: &mut StudioRun<'static, World>, op: &str, arg: &str) -> json::Value {
+    fn call<W: Default + 'static>(studio: &mut Studio, run: &mut StudioRun<'static, W>, op: &str, arg: &str) -> json::Value {
         let line = studio.call(run, op, &json::parse(arg.as_bytes()).expect("arg"));
         json::parse(&line).expect("a reply line")
     }
@@ -924,5 +943,44 @@ mod metal {
         assert_eq!(passes.items(), [expected], "{state:?}");
         let shot = call(&mut studio, &mut run, "capture", "{}");
         assert_eq!(shot["ok"], json::Value::Bool(true), "{shot:?}");
+    }
+
+    /// AU-7: `audioLevel` answers the Rust game's own mix (the tone it plays), not the silence
+    /// genex-studio's default answers; `audio({muted})` silences only the device, so the level
+    /// still reads the mix.
+    #[test]
+    #[ignore = "needs the host GPU: run with --ignored metal"]
+    fn metal_audio_level_answers_the_games_mix_and_a_mute_leaves_it() {
+        const TONE: &[u8] = include_bytes!("../../../../../tests/fixtures/asset-import/tone.wav");
+        static ASSETS: AssetTable = &[("sfx/tone.wav", TONE)];
+        #[derive(Default)]
+        struct Tone {
+            sound: Option<crate::audio::Sound>,
+            played: bool,
+        }
+        let mut game = Game::new(Tone::default()).world_size(96, 64);
+        game.on_reset(|sim, _, _, gfx| sim.world.sound = Some(gfx.sound("sfx/tone.wav")));
+        game.on_update(|sim, ctx| {
+            if let Some(sound) = sim.world.sound.as_ref().filter(|_| !sim.world.played) {
+                ctx.audio.play(sound);
+            }
+            sim.world.played = true;
+        });
+        let Some(presenter) = presenter(required()) else { return };
+        let runtime = Box::leak(Box::new(Runtime::with_assets(game, Box::new(ASSETS)).expect("installs")));
+        let mut run = studio_run(runtime, presenter, Live::from_env(&|_| None), &|_| {});
+        let mut studio = studio(&scratch("audio"));
+        call(&mut studio, &mut run, "seed", r#"{"seed":1}"#);
+        call(&mut studio, &mut run, "step", r#"{"ms":167}"#);
+        let level = call(&mut studio, &mut run, "audioLevel", "{}");
+        let rms = level["result"]["rms"].as_f64();
+        assert!((rms - 0.0886).abs() < 0.005, "the tone's level, not silence: {level:?}");
+        let muted = call(&mut studio, &mut run, "audio", r#"{"muted":true}"#);
+        assert_eq!(muted["result"]["muted"], json::Value::Bool(true), "{muted:?}");
+        call(&mut studio, &mut run, "step", r#"{"ms":17}"#);
+        let after = call(&mut studio, &mut run, "audioLevel", "{}");
+        assert!(after["result"]["rms"].as_f64() > 0.05, "the meter reads the mix under the mute: {after:?}");
+        let state = call(&mut studio, &mut run, "state", "{}");
+        assert_eq!(state["result"]["volatile"]["audio"]["device"]["muted"], json::Value::Bool(true), "{state:?}");
     }
 }

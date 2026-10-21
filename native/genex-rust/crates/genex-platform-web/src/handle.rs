@@ -3,6 +3,7 @@
 //! game through genex's shared presenter ([`GameHandle::draw`]), which binds the game's custom GPU
 //! passes to its simulation, as a native run does.
 
+use genex::audio::{AudioLevel, Device};
 use genex::gpu::PassStage;
 use genex::present::{Drawn, Presenter};
 use genex::{Camera, Frame, Input, Runtime, StepResult, UnknownName, Value, View};
@@ -70,6 +71,16 @@ pub trait GameHandle {
     fn warm_boot(&mut self, presenter: &mut Presenter);
     /// The game's title (`genex.toml`), which its loading screen names.
     fn title(&self) -> String;
+    /// `audio({muted})` and a phone's audio gate: silence the device output; the mix, the meter
+    /// and the simulation go on (AU-8).
+    fn set_output_muted(&mut self, muted: bool);
+    /// Whether the device output is muted.
+    fn output_muted(&self) -> bool;
+    /// `audioLevel`: the game's own mix, the last 2048 frames before the mute.
+    fn audio_level(&self) -> AudioLevel;
+    /// Open `device` on the game's audio queue (once: a run a person sees) and report it to
+    /// `state().volatile.audio.device`; an open device's last fault is reported again each call.
+    fn follow_device(&mut self, device: &mut Device);
 }
 
 /// The facade view a studio camera name resolves to: the game's own for None, a named camera, or
@@ -191,5 +202,25 @@ impl<W: Default + 'static> GameHandle for Runtime<W> {
 
     fn title(&self) -> String {
         Runtime::title(self).to_owned()
+    }
+
+    fn set_output_muted(&mut self, muted: bool) {
+        Runtime::set_output_muted(self, muted);
+    }
+
+    fn output_muted(&self) -> bool {
+        Runtime::output_muted(self)
+    }
+
+    fn audio_level(&self) -> AudioLevel {
+        Runtime::audio_level(self)
+    }
+
+    fn follow_device(&mut self, device: &mut Device) {
+        if device.tried() {
+            self.note_audio_device(device.is_open(), device.fault());
+            return;
+        }
+        device.open_for(self);
     }
 }

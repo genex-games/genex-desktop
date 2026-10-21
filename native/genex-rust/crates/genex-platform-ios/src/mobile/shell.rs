@@ -44,7 +44,7 @@
 //! [`orientation`]: crate::mobile::orientation
 
 use crate::mobile::admit::{Admission, ShellAdapter, admit};
-use crate::mobile::audio::{AudioGate, AudioPlatform};
+use crate::mobile::audio::{AudioGate, AudioPlatform, follow_gate};
 use crate::mobile::frame_time::FrameTimes;
 use crate::mobile::gamepad::{PadChange, PhoneButton, PhonePads, controller_id};
 use crate::mobile::keyboard::{KeyNews, TypingFeed, key_news};
@@ -184,6 +184,8 @@ struct App {
     lifecycle: Lifecycle,
     touches: TouchTracker,
     audio: AudioGate,
+    /// The audio device, opened the first time the gate lets the game be heard (AU-8).
+    sound: genex::audio::Device,
     pads: PhonePads,
     pad_changes: Vec<(u64, PadChange)>,
     ime: ImeBridge,
@@ -583,6 +585,8 @@ impl App {
                 self.log(self.audio.event());
             }
         }
+        // The output follows the gate; an open device's faults reach `volatile.audio.device`.
+        follow_gate(&self.audio, self.game.as_mut(), &mut self.sound);
         (self.config.hooks.pads)(&mut self.pad_changes);
         for (pad, change) in self.pad_changes.drain(..) {
             self.pads.apply(pad, change);
@@ -751,6 +755,7 @@ impl ApplicationHandler for App {
         self.log(json!({ "event": "resumed", "resumes": self.lifecycle.resumes() }));
         self.audio.resumed((self.config.audio.acquire)());
         self.log(self.audio.event());
+        follow_gate(&self.audio, self.game.as_mut(), &mut self.sound);
         self.frame_times.reset();
         self.refresh_read = None;
         self.pacer.reset();
@@ -773,6 +778,7 @@ impl ApplicationHandler for App {
         (self.config.audio.release)();
         self.audio.suspended();
         self.log(self.audio.event());
+        follow_gate(&self.audio, self.game.as_mut(), &mut self.sound);
         // The system hides the keyboard with the app; it comes back on resume while a field has focus.
         self.ime.hidden_by_platform();
     }
@@ -813,6 +819,7 @@ pub fn run_on(event_loop: EventLoop<()>, game: Box<dyn GameHandle>, config: Shel
         lifecycle: Lifecycle::default(),
         touches: TouchTracker::default(),
         audio: AudioGate::default(),
+        sound: genex::audio::Device::default(),
         pads: PhonePads::default(),
         pad_changes: Vec::new(),
         ime: ImeBridge::default(),
