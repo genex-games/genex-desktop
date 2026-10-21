@@ -165,6 +165,22 @@ describe("installing a mod", () => {
     ]);
   });
 
+  it("refuses a link to a file, in the mod or where a file would land, writing nothing", {
+    skip: ON_WINDOWS && "Windows makes file links only in Developer Mode",
+  }, async () => {
+    const s = await setUp();
+    const secret = path.join(s.root, "secret.txt");
+    await writeFile(secret, "secret");
+    const keyLink = path.join(s.project, "mod", "graphics", "key.txt");
+    await symlink(secret, keyLink);
+    await assert.rejects(installMod(s.places, GAME, { from: "mod", into: InstallRoot.Mods }), InstallRefused);
+    assert.deepEqual(await tree(s.mods), []);
+    await rm(keyLink);
+    await symlink(secret, path.join(s.game, "data.lua"));
+    await assert.rejects(installMod(s.places, GAME, { from: "mod/data.lua", into: InstallRoot.Game }), InstallRefused);
+    assert.equal(await readFile(secret, "utf8"), "secret");
+  });
+
   it("refuses a link on the way into the game before writing anything, even far down the list", async () => {
     const s = await setUp();
     const elsewhere = path.join(s.root, "elsewhere");
