@@ -179,7 +179,7 @@ and the Plugins page — no polling is needed for a change to show.
 | `hooks[]` | 3 | Up to 32 `{on, tool, facts?, messages?}`: the plugin's harness tools Genex runs at its moments; see [Hooks](#hooks-genexs-moments) |
 | `observers[]` | 3 | Up to 8 `{id, facts, tool, live?, label?}`: what Genex can capture of a project with these facts, and the Live view it shows; see [Observers](#observers) |
 | `judges[]` | 3 | Beside `engine` only: up to 8 `{id, label, facts?, brief, players?, probe?}`, blind judges that play the engine's games in its editor; see [Judges](#judges) |
-| `tools[].ready` | 3 | Agent tools with `makes` only: the harness tool that answers whether the kind can be made now (`{ready, note}`) |
+| `tools[].ready` | 3 | Agent tools with `makes` only: the harness tool that answers whether the kind can be made now (`{ready, note}`; `offered: false` leaves the kind out of the new game's question on this computer) |
 | `tools[].asset` | 3 | Agent tools only: `{kind, prompt?, tool?}`, the kind of asset a call makes; see [Assets being made](#assets-being-made) |
 | `icon` | any | The plugin's picture: a `.png`, `.jpg`, `.webp` or `.svg` file in the package, at most 512 KiB, square and full-bleed (Studio rounds the corners); see [Icons](#icons) |
 
@@ -3339,7 +3339,9 @@ GitHub releases, unpacked in the plugin's storage, `Godot.app` copied into Appli
 Gatekeeper accepts it; an older `Godot.app` there goes to the person's Trash, and the download is
 removed whether the install ends well or not), Stop (`stop-install`: it ends the download, the
 unpacking or the copy) and Don't use Godot (`skip`) in Hide's place, and `doneSays` once Godot is
-found.
+found. Off a Mac, `engine-status` answers `offered: false` (the new game's question leaves Godot
+out), `show-steps` shows no card, and `new-game` and `install-godot` refuse: Genex builds Godot games
+on a Mac only for now.
 Set up (and New Godot game) also turns on the addon's editor plugin (`addons/genex/editor_bridge.gd`,
 `[editor_plugins]` in `project.godot`). Its hooks reach the person's open editor through files in the
 project's `.godot/genex/` (`editor-bridge.ts`; no port): the editor writes a heartbeat each second

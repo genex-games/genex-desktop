@@ -1291,6 +1291,30 @@ describe("a kind's readiness, asked in time", () => {
     assert.deepEqual(await asked, [kind], "listed as it was: no readiness, no note");
     assert.ok(stopped, "the late ask was stopped");
   });
+
+  it("leaves out a kind its plugin says isn't offered on this computer, and keeps the others", async () => {
+    const core = {
+      plugins: {
+        list: () => [
+          { manifest: { id: "mac", tools: [{ name: "new-game", ready: "ready" }] } },
+          { manifest: { id: "any", tools: [{ name: "new-game", ready: "ready" }] } },
+        ],
+        tool: async (name: string) =>
+          name === "mac__ready"
+            ? { offered: false, ready: false, note: "Mac only" }
+            : { ready: true, note: "Offer it" },
+      },
+      pluginBinding: async () => ({ project: "bare", directory: "/games/bare" }),
+    };
+    const kind = (plugin: string) => ({
+      plugin,
+      name: plugin,
+      tool: `${plugin}__new-game`,
+      makes: [`${plugin}-project`],
+    });
+    const offered = await kindsWithReadiness(core as never, "bare", { facts: [] }, [kind("mac"), kind("any")] as never);
+    assert.deepEqual(offered, [{ ...kind("any"), ready: true, note: "Offer it" }]);
+  });
 });
 
 describe("a hook's answer", () => {

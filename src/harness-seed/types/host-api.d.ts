@@ -802,7 +802,8 @@ export interface PluginTool {
  * facts. `asksReady` says the tool declares a `ready` harness tool (a plugin's new-game tool, the
  * one its engine card offers). For a game with no kind yet, the host fills `ready` and `note` from
  * that tool (whether one can be made here now, and the words the engine card offers it with); both
- * are absent when it declares none or its answer didn't come.
+ * are absent when it declares none or its answer didn't come. A kind its plugin answers
+ * `offered: false` for (no kind this computer can make) is left out.
  */
 export interface PluginKindOffer {
   plugin: string;

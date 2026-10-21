@@ -12,6 +12,7 @@ import os from "node:os";
 import path from "node:path";
 import { MINUTE_MS, SECOND_MS } from "../../shared/duration.ts";
 import { NativeEndReason, runNativeProcess } from "../../substrate/plugins/native-process.ts";
+import { godotRunsOn } from "./find-godot.ts";
 import { type KeyPress, keysArg, PLAY_FPS, type ShotAt, shotsArg } from "./play-input.ts";
 
 /** The jobs Genex runs Godot for. Never rename a value: records name them. */
@@ -204,7 +205,7 @@ async function linkIntoHome(scratch: string, links: NonNullable<GodotCall["homeL
 /** The runner Genex uses: each job in the native-job sandbox, in a scratch folder removed after it. */
 export function confinedRunner(platform: NodeJS.Platform = process.platform): GodotRunner {
   return async (binary, call, signal) => {
-    if (platform !== "darwin") throw new Error(MESSAGE.MacOnly);
+    if (!godotRunsOn(platform)) throw new Error(MESSAGE.MacOnly);
     const scratch = await mkdtemp(path.join(os.tmpdir(), SCRATCH_PREFIX));
     try {
       await linkIntoHome(scratch, call.homeLinks ?? []);

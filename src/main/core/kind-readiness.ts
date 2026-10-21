@@ -1,9 +1,10 @@
 /**
  * The engine card's readiness of each kind on offer: for a game with no kind yet, each kind tool
  * that declares a `ready` harness tool is asked through it whether its kind can be made here now,
- * and with which words the card offers it (`PluginKindOffer.ready`, `note`). Genex never names a
- * plugin's tool for it: the manifest says which one answers. A plugin that doesn't answer in time,
- * or answers oddly, leaves its kind as listed.
+ * and with which words the card offers it (`PluginKindOffer.ready`, `note`); a kind its plugin says
+ * isn't made on this computer at all (`offered: false`) is left out. Genex never names a plugin's
+ * tool for it: the manifest says which one answers. A plugin that doesn't answer in time, or
+ * answers oddly, leaves its kind as listed.
  */
 import { SECOND_MS } from "../../shared/duration.ts";
 import { type PluginBinding, type PluginKindOffer, PluginToolAudience } from "../../shared/plugins.ts";
@@ -40,18 +41,22 @@ async function askInTime(ask: (signal: AbortSignal) => Promise<unknown>): Promis
   }
 }
 
-/** One kind with its plugin's answer read: `ready` only as a boolean, `note` only as text. */
+/**
+ * One kind with its plugin's answer read: `ready` only as a boolean, `note` only as text; null when
+ * its plugin answers `offered: false` (this computer can't make it at all, as Godot off a Mac).
+ */
 async function withReadiness(
   core: StudioCore,
   binding: PluginBinding,
   kind: PluginKindOffer,
-): Promise<PluginKindOffer> {
+): Promise<PluginKindOffer | null> {
   const name = readyToolOf(core, kind);
   if (!name) return kind;
   const answer = await askInTime((signal) =>
     core.plugins.tool(name, {}, binding, signal, PluginToolAudience.Harness, READY_ASK_MS),
   );
   const record = typeof answer === "object" && answer !== null ? (answer as Record<string, unknown>) : {};
+  if (record.offered === false) return null;
   const note = typeof record.note === "string" ? record.note.trim().slice(0, READY_NOTE_CHARS) : "";
   return {
     ...kind,
@@ -62,7 +67,8 @@ async function withReadiness(
 
 /**
  * The kinds on offer for a game, each with its readiness when the game has no kind yet (only then
- * does the card ask which kind it builds); a game with a kind gets them as listed.
+ * does the card ask which kind it builds), without those this computer can't make; a game with a
+ * kind gets them as listed.
  */
 export async function kindsWithReadiness(
   core: StudioCore,
@@ -73,5 +79,6 @@ export async function kindsWithReadiness(
   if (!project || kinds.length === 0 || game.facts.length > 0) return kinds;
   const binding = await core.pluginBinding(project).catch(() => undefined);
   if (!binding) return kinds;
-  return Promise.all(kinds.map((kind) => withReadiness(core, binding, kind)));
+  const read = await Promise.all(kinds.map((kind) => withReadiness(core, binding, kind)));
+  return read.filter((kind): kind is PluginKindOffer => kind !== null);
 }

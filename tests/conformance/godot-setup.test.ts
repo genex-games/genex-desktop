@@ -216,3 +216,41 @@ describe("Godot's card in a game's chat", () => {
     );
   });
 });
+
+describe("Godot on a computer that isn't a Mac", () => {
+  it("is no engine the new game's question offers: not offered, not ready, and why", async () => {
+    const fixture = await godotBackendFixture({ apps: [], platform: "win32" });
+    const answer = (await fixture.backend.tool?.("engine-status", {}, fixture.context())) as Record<string, unknown>;
+    assert.equal(answer.offered, false);
+    assert.equal(answer.ready, false);
+    assert.match(String(answer.note), /Mac only/);
+  });
+
+  it("never shows the setup card: the agent is told Genex builds Godot games on a Mac only", async () => {
+    const fixture = await godotBackendFixture({ apps: [], platform: "win32" });
+    const said = String(await fixture.backend.tool?.("show-steps", {}, fixture.context()));
+    assert.match(said, /Mac only/);
+    assert.doesNotMatch(said, /Do it for me/);
+    assert.ok(!fixture.hostCalls.some((call) => call.method === "game.engine.steps"), "no card in the chat");
+    const card = (await fixture.backend.action?.(GodotSetupAction.Steps, {}, fixture.context())) as ReturnType<
+      typeof godotSetupCard
+    >;
+    assert.equal(card.open, false);
+    assert.equal(card.primary, undefined, "no Do it for me");
+  });
+
+  it("refuses a new game and Do it for me in the same words, and installs nothing", async () => {
+    const mac = await installMac();
+    const fixture = await godotBackendFixture({ apps: [], platform: "win32", install: mac.deps });
+    await assert.rejects(
+      Promise.resolve(fixture.backend.tool?.("new-game", { template: "3d", name: "Valley" }, fixture.context())),
+      (error: Error) => /Mac only/.test(error.message) && !/show-steps/.test(error.message),
+    );
+    await assert.rejects(
+      Promise.resolve(fixture.backend.action?.(GodotSetupAction.Install, {}, fixture.context())),
+      /Mac only/,
+    );
+    assert.deepEqual(mac.ran, [], "no program ran");
+    assert.deepEqual(await readdir(mac.applications), [], "nothing installed");
+  });
+});
