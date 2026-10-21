@@ -577,6 +577,13 @@ impl<W> Runtime<W> {
         &mut self.core.sim
     }
 
+    /// The frame recorder a shell starts and closes frames on (`state().volatile.profile`, the
+    /// dev `profile` verb): host glue, never in the checksum (PROF-5).
+    #[doc(hidden)]
+    pub fn profiling(&mut self) -> &mut crate::profile::State {
+        &mut self.core.g6.profile
+    }
+
     /// The current seed.
     pub fn seed_value(&self) -> u32 {
         self.core.seed
@@ -1058,6 +1065,7 @@ fn seed_core<W: Default>(game: &Game<W>, core: &mut Core<W>, seed: u32) {
     core.pointer_lock = false;
     core.hud.reset();
     core.g6.reset(&game.g6);
+    core.g6.crash.seeded(seed);
     start_journal(game, core);
     core.gfx.assets().clear();
     core.gfx.clear_extensions();

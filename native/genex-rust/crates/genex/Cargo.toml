@@ -53,6 +53,10 @@ genex-input = { workspace = true, features = ["panel"] }
 genex-audio = { workspace = true }
 # Save slots (G6 saves): the envelope, migrations, the slot index, autosave and the slot driver.
 genex-save = { workspace = true }
+# Profiling (G6 profile): typed scopes over puffin, the frame summary, hitches, reports, traces.
+genex-profile = { workspace = true }
+# Crash reports (G6 crash): the process's crash context, the chained panic hook and its sinks.
+genex-crash = { workspace = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 genex-studio = { workspace = true, optional = true }

@@ -37,7 +37,9 @@ pub mod audio;
 mod crash;
 mod g6;
 mod net;
-mod profile;
+/// Profiling: `genex::profile_scope!` and `genex::profile::counter` (genex-profile), summarized in
+/// `state().volatile.profile` when a shell profiles.
+pub mod profile;
 /// Save slots: `game.saves`, `game.save_section`, `game.save_world` and `ctx.slots()` (genex-save).
 pub mod saves;
 mod settings;
@@ -93,6 +95,9 @@ mod present_files;
 #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
 mod desktop;
 
+/// Time the rest of the enclosing block under a name checked when the game compiles
+/// (`genex::profile_scope!("enemy_ai")`); write-only, never in the checksum.
+pub use genex_profile::profile_scope;
 pub use camera::{Camera, Projection};
 pub use ctx::{Ctx, CtxRng, Key, Keys, Pads, Touch, TouchPhase, Touches};
 pub use decal::Decal;

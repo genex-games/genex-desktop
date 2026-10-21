@@ -1,5 +1,5 @@
 {
-  "about": "Contract v2 wire names, held by tests/conformance/native-contract.test.ts (src/shared/native-contract.ts; the render block also by tests/conformance/genex-toml.test.ts for src/shared/render-quality.ts) and by genex-studio's wire.rs tests (native/genex-rust/crates/genex-studio/src/wire.rs; the render block's genex.toml vocabulary also by genex's tests/manifest.rs). Change every side with this file.",
+  "about": "Contract v2 wire names, held by tests/conformance/native-contract.test.ts (src/shared/native-contract.ts; the render block also by tests/conformance/genex-toml.test.ts for src/shared/render-quality.ts) and by genex-studio's wire.rs tests (native/genex-rust/crates/genex-studio/src/wire.rs; the reloadAssets block by crates/genex-studio/tests/reload_verb.rs; the render block's genex.toml vocabulary also by genex's tests/manifest.rs). Change every side with this file.",
   "protocol": { "v1": 1, "current": 2 },
   "inputKind": { "touch": "touch" },
   "events": { "deviceRestored": "device-restored", "starting": "starting" },
@@ -261,5 +261,13 @@
       "exposure": "instant"
     },
     "unavailable": "unavailable"
+  },
+  "reloadAssets": {
+    "op": "reloadAssets",
+    "filesMax": 256,
+    "refusals": ["unsafe-path", "digest-mismatch", "missing"],
+    "receiptKey": "reloadAssetsApi",
+    "apiVersion": 1,
+    "answer": { "reloaded": ["textures/bark.png"], "refused": [{ "path": "../bark.png", "code": "unsafe-path" }], "pending": 0 }
   }
 }

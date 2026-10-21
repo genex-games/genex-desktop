@@ -86,12 +86,12 @@ impl Op {
     pub const RENDER_SETTINGS: &'static str = wire::OP_RENDER_SETTINGS;
     /// Run one bake the game registered (dev flavour; NAV-14 and LOD-23 serve it).
     pub const BAKE_ASSETS: &'static str = wire::OP_BAKE_ASSETS;
-    /// Swap changed asset files in a running dev game (dev flavour; C-18 serves it).
+    /// Swap changed asset files in a running dev game (dev flavour; [`StudioGame::reload_assets`]).
     pub const RELOAD_ASSETS: &'static str = wire::OP_RELOAD_ASSETS;
     /// Read the game's frame profile (dev flavour; PROF-5 serves it, `unavailable` until then).
     pub const PROFILE: &'static str = wire::OP_PROFILE;
-    /// The asset tools a native run (only the dev flavour links the studio natively) knows and
-    /// answers `unavailable` until their runtime lands; the web flavour, which an export serves too,
+    /// The asset tools a native run (only the dev flavour links the studio natively) knows (a game
+    /// that does not serve one answers `unavailable`); the web flavour, which an export serves too,
     /// answers them `unknown-op` and never lists them (CONTRACT.md).
     pub const ASSET_TOOLS: [&'static str; 2] = [Op::BAKE_ASSETS, Op::RELOAD_ASSETS];
     /// Every op only a native run serves on top of [`Op::ALL`] (the dev flavour: an export never
@@ -256,6 +256,92 @@ pub enum ProfileAnswer {
     Trace(Vec<u8>),
 }
 
+/// The most files one `reloadAssets` names (`NATIVE_RELOAD_FILES_MAX`); a longer list is refused
+/// `bad-argument` before any file is looked at.
+pub const RELOAD_FILES_MAX: usize = 256;
+/// A `reloadAssets` digest's spelling: FNV-1a 64 as 16 lowercase hex digits.
+const RELOAD_DIGEST_HEX_DIGITS: usize = 16;
+
+/// Why `reloadAssets` refused one file (its answer's `refused[].code`, `ReloadRefusal`). Wire
+/// values: never rename one.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ReloadRefusal {
+    /// The path breaks the asset-path rule (refused by the studio; the game never reads it).
+    UnsafePath,
+    /// The bytes the game's source serves now do not have the digest the host named.
+    DigestMismatch,
+    /// Nothing is there.
+    Missing,
+}
+
+impl ReloadRefusal {
+    /// Every refusal, in the host's order.
+    pub const ALL: [ReloadRefusal; 3] = [ReloadRefusal::UnsafePath, ReloadRefusal::DigestMismatch, ReloadRefusal::Missing];
+
+    /// The wire spelling.
+    pub const fn wire(self) -> &'static str {
+        match self {
+            ReloadRefusal::UnsafePath => "unsafe-path",
+            ReloadRefusal::DigestMismatch => "digest-mismatch",
+            ReloadRefusal::Missing => "missing",
+        }
+    }
+}
+
+/// One file a `reloadAssets` names: its asset path and the FNV-1a 64 of the new bytes the host
+/// wrote there.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ReloadFile {
+    /// The `/`-separated path under `assets/`.
+    pub path: String,
+    /// The FNV-1a 64 of its new bytes.
+    pub digest: u64,
+}
+
+/// What a game did with the files of a `reloadAssets` ([`StudioGame::reload_assets`]).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ReloadOutcome {
+    /// The paths dropped from the renderer to be read again, in request order.
+    pub reloaded: Vec<String>,
+    /// The paths left as they were, with why.
+    pub refused: Vec<(String, ReloadRefusal)>,
+    /// Reloads not finished yet (a frame has not loaded them); a settled capture waits for 0.
+    pub pending: u32,
+}
+
+/// 16 lowercase hex digits as a u64.
+fn reload_digest(text: &str) -> Option<u64> {
+    let hex = text.len() == RELOAD_DIGEST_HEX_DIGITS && text.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b));
+    if !hex {
+        return None;
+    }
+    u64::from_str_radix(text, 16).ok()
+}
+
+/// A `reloadAssets` argument: `{files: [{path, digest}]}`, at most [`RELOAD_FILES_MAX`] files, each
+/// path a string and each digest 16 lowercase hex digits, in request order. A path's safety is
+/// not judged here (the studio refuses an unsafe one per file); unknown members are ignored.
+pub fn parse_reload(arg: &Value) -> Result<Vec<ReloadFile>, wire::BadField> {
+    if !matches!(arg, Value::Object(_)) {
+        return Err(wire::BadField("arg"));
+    }
+    let Some(files @ Value::Array(_)) = arg.get("files") else { return Err(wire::BadField("files")) };
+    if files.items().len() > RELOAD_FILES_MAX {
+        return Err(wire::BadField("files"));
+    }
+    files
+        .items()
+        .iter()
+        .map(|file| {
+            let (Some(Value::String(_)), Some(Value::String(_))) = (file.get("path"), file.get("digest")) else {
+                return Err(wire::BadField("files"));
+            };
+            let digest = reload_digest(file["digest"].as_str()).ok_or(wire::BadField("digest"))?;
+            Ok(ReloadFile { path: file["path"].as_str().to_owned(), digest })
+        })
+        .collect()
+}
+
 /// What the studio drives: the runtime behind a game (the facade's `Runtime`, a shell, a test
 /// double). Every method runs on the thread that serves the studio, between frames.
 pub trait StudioGame {
@@ -353,6 +439,13 @@ pub trait StudioGame {
     /// the verb answers `unavailable`, and its receipt does not advertise `renderSettingsApi`.
     fn render_settings(&mut self, _change: Option<&RenderSettingsChange>) -> Result<Value, RenderSettingsRefusal> {
         Err(RenderSettingsRefusal::Unavailable)
+    }
+    /// `reloadAssets`: re-read each of `files` (every path already under the asset-path rule) from
+    /// the game's source, refuse one that is missing or whose bytes are not its digest, drop what
+    /// the renderer holds of the rest and draw again, answering what is still pending. A game still
+    /// applying an earlier reload answers `busy`; one that does not serve the verb `unavailable`.
+    fn reload_assets(&mut self, _files: &[ReloadFile]) -> Result<ReloadOutcome, &'static str> {
+        Err(VerbRefusal::UNAVAILABLE)
     }
     /// Draw the frame `capture` reads: a game with render settings draws its pinned capture
     /// profile (no person override, no dynamic resolution) as a settled capture, K re-renders on
@@ -1005,7 +1098,8 @@ impl Studio {
                 Answer::Result(object([("visible", Value::from(visible))]))
             }
             Op::RENDER_SETTINGS => Studio::render_settings(game, arg),
-            Op::BAKE_ASSETS | Op::RELOAD_ASSETS => refuse(VerbRefusal::UNAVAILABLE),
+            Op::BAKE_ASSETS => refuse(VerbRefusal::UNAVAILABLE),
+            Op::RELOAD_ASSETS => Studio::reload_assets(game, arg),
             Op::PROFILE => self.profile(game, arg),
             // `handle` routes only the ops in this flavour's set here.
             _ => refuse(Refusal::UNKNOWN_OP),
@@ -1023,6 +1117,26 @@ impl Studio {
             Ok(answer) => Answer::Result(answer),
             Err(refusal) => refuse(refusal.wire()),
         }
+    }
+
+    /// `reloadAssets`: the argument checked here and every unsafe path refused here (the game
+    /// never reads one), the rest the game's to re-read; refusals in request order.
+    fn reload_assets<G: StudioGame>(game: &mut G, arg: &Value) -> Answer {
+        let Ok(files) = parse_reload(arg) else { return refuse(VerbRefusal::BAD_ARGUMENT) };
+        if game.busy() {
+            return refuse(VerbRefusal::BUSY);
+        }
+        let (safe, unsafe_paths): (Vec<ReloadFile>, Vec<ReloadFile>) = files.into_iter().partition(|file| paths::is_safe_asset_path(&file.path));
+        let outcome = match game.reload_assets(&safe) {
+            Ok(outcome) => outcome,
+            Err(code) => return refuse(code),
+        };
+        let unsafe_refusals = unsafe_paths.into_iter().map(|file| (file.path, ReloadRefusal::UnsafePath));
+        let mut refused = Value::array();
+        for (path, code) in unsafe_refusals.chain(outcome.refused) {
+            refused.push(object([("path", Value::from(path)), ("code", Value::from(code.wire()))]));
+        }
+        Answer::Result(object([("reloaded", names(outcome.reloaded)), ("refused", refused), ("pending", Value::from(outcome.pending))]))
     }
 
     /// `profile`: the argument checked here, the answer the game's; a trace is written here.
