@@ -369,12 +369,9 @@ fn xx_pseudo_clips_no_label_on_a_portrait_phone_inside_its_safe_area() {
     walk_every_screen_clipped_check(PORTRAIT_SIZE, PHONE_SAFE_AREA, "pseudo-portrait", true);
 }
 
-/// RED (genex-ui, not this example): the settings menu's tab row is one `ui.horizontal` that never
-/// wraps, so on a 390-pixel-wide phone its last tabs run off the screen, and `Toasts::show` places
-/// toasts in the whole frame (`content_rect`), under a notch. Each fix is one line in genex-ui
-/// (`horizontal_wrapped`; the caller's `ui.max_rect()`); until they land this row stays ignored.
+/// On a 390-pixel-wide phone the settings menu's tab row wraps instead of running off the screen,
+/// and `Toasts::show` places toasts in the caller's safe-area rect, clear of the notch.
 #[test]
-#[ignore = "RED: genex-ui's settings tab row does not wrap and its toasts ignore the safe area"]
 fn xx_pseudo_settings_tabs_and_toasts_fit_a_portrait_phone() {
     let mut rt = runtime_sized(PORTRAIT_SIZE, "pseudo-portrait-settings");
     let session = UiSession { locale: Some("xx-pseudo".to_owned()), safe_area: Some(PHONE_SAFE_AREA), ..UiSession::default() };

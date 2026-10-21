@@ -139,7 +139,8 @@ impl<'a> SettingsMenu<'a> {
     /// The tab row; answers a tab the pointer picked.
     fn tab_row(&self, ui: &mut egui::Ui, open: usize, tr: &dyn Fn(&str) -> String) -> Option<usize> {
         let mut clicked = None;
-        ui.horizontal(|ui| {
+        // Wraps on a narrow screen (a phone held upright), so no tab runs off it.
+        ui.horizontal_wrapped(|ui| {
             for (index, (tab, _)) in self.tabs.iter().enumerate() {
                 let button = egui::Button::selectable(index == open, tr(&tab_label_key(*tab)));
                 let response = ui.add(button).key(ui, &format!("{}.tab.{}", self.key, tab.wire()));
