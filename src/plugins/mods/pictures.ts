@@ -20,7 +20,7 @@ const APP_ID = /^\d{1,12}$/;
 /** The places Steam may keep this app's header, in the order tried. */
 async function headerPlaces(env: GamesEnv, appId: string): Promise<string[]> {
   const p = pathsOf(env);
-  const cache = p.join(steamRoot(env), "appcache", "librarycache");
+  const cache = p.join(await steamRoot(env), "appcache", "librarycache");
   const own = p.join(cache, appId);
   const below = await readdir(own, { withFileTypes: true }).catch(() => []);
   const nested = below.filter((e) => e.isDirectory()).map((e) => p.join(own, e.name, HEADER));

@@ -201,6 +201,11 @@ export interface PluginManifestTool extends PluginTool {
    * Their Allow runs the call with what the field holds (one plain line, 1–200 characters).
    */
   confirmationInput?: { parameter: string; label: string };
+  /**
+   * API 3, with `confirmation`: your backend's `card` words each call's card from its arguments;
+   * `confirmation` is asked whenever it answers nothing usable.
+   */
+  confirmationCard?: true;
   /** API 3, agent tools only: the kind of asset a call makes. */
   asset?: PluginToolAsset;
 }
@@ -309,7 +314,7 @@ export interface PluginToolbarItem {
   label: string;
   /** 1–60 characters, unique across the manifest. */
   ariaLabel: string;
-  /** A glyph of at most 4 characters, or a host icon: globe, export, play, image, box, boxes, unreal, godot, unity. */
+  /** A glyph of at most 4 characters, or a host icon: globe, export, play, image, box, boxes, unreal, godot, unity, gamepad. */
   icon?: string;
   /** Default true: the button waits for a loaded game. */
   requiresProject?: boolean;
@@ -878,6 +883,11 @@ export interface PluginActivation {
   action?(name: string, args: Record<string, unknown>, context: PluginContext): Promise<unknown>;
   /** Host-rendered evidence for a confirmed action. */
   review?(name: string, args: Record<string, unknown>, context: PluginContext): Promise<PluginReview>;
+  /**
+   * API 3: the words of one call's card, for an agent tool that declares `confirmationCard`: one plain
+   * line of at most 300 characters in `message`. Read only; it must not change anything.
+   */
+  card?(name: string, args: Record<string, PluginScalar>, context: PluginContext): Promise<{ message?: string }>;
 }
 
 /** The backend module's single export. */

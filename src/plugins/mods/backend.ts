@@ -15,11 +15,14 @@ import { findGames, type GamesEnv, type InstalledGame, systemGamesEnv } from "./
 import { SECOND_MS } from "../../shared/duration.ts";
 import {
   hasInstalled,
+  type InstallAsk,
   type InstallPlaces,
   InstallRefused,
   InstallRoot,
+  InstallUndone,
   installMod,
   keptSavesAt,
+  planInstall,
   readRecord,
   removeMod,
   restoreSaves,
@@ -37,7 +40,7 @@ import {
   writeLink,
 } from "./mod-link.ts";
 import { steamPicture } from "./pictures.ts";
-import { AGENT, gameLine, MAX_LISTED_GAMES, PERSON } from "./words.ts";
+import { AGENT, CARD, gameLine, MAX_LISTED_GAMES, PERSON } from "./words.ts";
 
 /** The host services this backend calls, by their public SDK names. */
 const HostService = { StorageRoot: "storage.root" } as const;
@@ -77,6 +80,9 @@ const MAX_SHOTS = 4;
 const SHOT_FILE = /\.(jpe?g|png)$/i;
 /** The plugin's storage folder of each project's installs. */
 const INSTALLS_FOLDER = "installs";
+/** The plugin's storage folder of each game's claims: which project placed each file. */
+const GAMES_FOLDER = "games";
+const CLAIMS_FILE = "claims.json";
 
 /** How long the panel's, the toolbar's and Live's polls reuse one read of the stores; tools always read afresh. */
 const STATUS_GAMES_MS = 10 * SECOND_MS;
@@ -118,12 +124,15 @@ function projectOf(context: PluginContext): { project: string; directory: string
 const textArg = (args: Record<string, unknown>, key: string): string =>
   typeof args[key] === "string" ? args[key].trim() : "";
 
-/** The places an install of `target` reads and writes for this project. */
+/** The places an install of `target` reads and writes for this project, and the game's claims shared by every project. */
 async function placesFor(context: PluginContext, target: ModTarget): Promise<InstallPlaces> {
   const { project, directory } = projectOf(context);
+  const storage = await storageOf(context);
   return {
     project: directory,
-    kept: path.join(await storageOf(context), INSTALLS_FOLDER, projectKey(project)),
+    kept: path.join(storage, INSTALLS_FOLDER, projectKey(project)),
+    claims: path.join(storage, GAMES_FOLDER, projectKey(target.id), CLAIMS_FILE),
+    owner: projectKey(project),
     roots: { [InstallRoot.Mods]: target.mods, [InstallRoot.Game]: target.folder },
     saves: target.saves,
   };
@@ -173,24 +182,43 @@ function intoOf(args: Record<string, unknown>, target: ModTarget): InstallRoot {
   return target.mods ? InstallRoot.Mods : InstallRoot.Game;
 }
 
-/** `install`: copies a file or folder of the project into the game; the person approved it on the card. */
-async function install(deps: ModsDeps, args: Record<string, unknown>, context: PluginContext): Promise<string> {
-  const target = await requireTarget(deps, context);
+/** What an install call asks for, from the agent's arguments. */
+function askOf(args: Record<string, unknown>, target: ModTarget): InstallAsk {
   const to = textArg(args, "to");
-  const ask = {
+  return {
     from: textArg(args, "from"),
     into: intoOf(args, target),
     contents: args.contents === true,
     replace: args.replace === true,
     ...(to ? { to } : {}),
   };
+}
+
+/** `install`: copies a file or folder of the project into the game; the person approved it on the card. */
+async function install(deps: ModsDeps, args: Record<string, unknown>, context: PluginContext): Promise<string> {
+  const target = await requireTarget(deps, context);
   try {
-    const done = await installMod(await placesFor(context, target), target.id, ask);
-    return AGENT.Installed(done.copied, done.replaced, done.folder, done.saves);
+    const done = await installMod(await placesFor(context, target), target.id, askOf(args, target));
+    return AGENT.Installed(target.name, done);
   } catch (error) {
-    if (error instanceof InstallRefused) return `${error.message} Nothing was copied.`;
+    if (error instanceof InstallRefused) return AGENT.InstallRefused(error.message);
+    if (error instanceof InstallUndone) return AGENT.InstallUndone(error);
     throw error;
   }
+}
+
+/**
+ * The install card's words for this call: the game by name, and plainly whether the install replaces
+ * any of the game's own files or takes an earlier version out. Nothing on a refusal: the card then
+ * asks the manifest's question, and the call itself says what was wrong.
+ */
+async function installCard(deps: ModsDeps, args: Record<string, unknown>, context: PluginContext) {
+  const target = await requireTarget(deps, context).catch(() => null);
+  if (!target) return {};
+  const places = await placesFor(context, target);
+  const plan = await planInstall(places, target.id, askOf(args, target)).catch(() => null);
+  if (!plan) return {};
+  return { message: CARD.Install(target.name, plan.replaced, args.replace === true) };
 }
 
 /** `remove` (and Remove mod): takes everything the project put in the game out again. */
@@ -200,8 +228,7 @@ async function remove(deps: ModsDeps, context: PluginContext): Promise<string> {
   if (!target) throw new Error(AGENT.NotLinked);
   const places = await placesFor(context, target);
   if (!(await hasInstalled(places.kept, target.id))) return AGENT.NothingToRemove(target.name);
-  const done = await removeMod(places, target.id);
-  return AGENT.Removed(target.name, done.removed, done.restored);
+  return AGENT.Removed(target.name, await removeMod(places, target.id));
 }
 
 /** `play` (and Play): opens the game through its store or launcher. */
@@ -294,7 +321,7 @@ async function openFolder(deps: ModsDeps, args: Record<string, unknown>, context
   return { opened: true };
 }
 
-/** Put back saves: the saves copied aside before the first install go back over the game's. */
+/** Put back saves: the saves copied aside before the first install go back over the game's, after today's are copied aside. */
 async function putBackSaves(deps: ModsDeps, context: PluginContext) {
   const target = await requireTarget(deps, context);
   return { restored: await restoreSaves(await placesFor(context, target), target.id) };
@@ -328,6 +355,9 @@ export function createModsBackend(given: ModsDeps): PluginActivation {
     async action(name, args, context) {
       if (!isModsAction(name)) throw new Error(AGENT.UnknownAction(name));
       return actions[name](args, context);
+    },
+    async card(name, args, context) {
+      return name === ModsTool.Install ? installCard(deps, args, context) : {};
     },
   };
 }

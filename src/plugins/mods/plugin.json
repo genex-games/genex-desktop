@@ -39,7 +39,7 @@
     },
     {
       "name": "install",
-      "description": "Copy a file or folder of this project into the game, after the person approves it on a card: into its mods folder (when Genex knows it) or into the game's own folder (a loader's files, a mod for a game Genex knows no mods folder for). Genex keeps every game file it replaces and copies the game's saves aside before the first install, so mods__remove puts the game back. Call it after the mod builds, and again after each change. Never copy the game's own files, decompiled code or anything you didn't make into the project for this.",
+      "description": "Copy a file or folder of this project into the game, after the person approves it on a card that names the game and the game files it replaces: into its mods folder (when Genex knows it) or into the game's own folder (a loader's files, a mod for a game Genex knows no mods folder for). Genex checks everything before it writes, keeps every game file it replaces, copies the game's saves aside before the first install and never writes over another mod project's files, so mods__remove puts the game back. Hidden files (.git, .DS_Store) stay out. Call it after the mod builds, and again after each change. Never copy the game's own files or anything you didn't make into the project for this.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -68,7 +68,8 @@
         "required": ["from"]
       },
       "facts": ["game-mod"],
-      "confirmation": "Put this mod into the game? Remove mod takes it out again."
+      "confirmation": "Put this mod into the game? Remove mod takes it out again.",
+      "confirmationCard": true
     },
     {
       "name": "remove",
@@ -140,6 +141,7 @@
       "id": "mod",
       "label": "Mod",
       "ariaLabel": "Game mod",
+      "icon": "gamepad",
       "facts": ["game-mod"],
       "target": { "kind": "panel", "id": "game" },
       "status": "toolbar-status"

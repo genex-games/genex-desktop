@@ -275,7 +275,7 @@ export class PluginProcess {
     return child;
   }
   async call(
-    method: "tool" | "action" | "review" | "ping",
+    method: "tool" | "action" | "review" | "card" | "ping",
     name: string,
     args: unknown,
     context?: PluginBinding,

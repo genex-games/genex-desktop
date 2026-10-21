@@ -6,10 +6,11 @@
  * keeps its mods and saves on a Mac and on Windows.
  */
 import assert from "node:assert/strict";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, realpath, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, it } from "node:test";
-import { findGames, GameStore, systemGamesEnv } from "../../src/plugins/mods/find-games.ts";
+import { documentsFolder, findGames, GameStore, steamRoot, systemGamesEnv } from "../../src/plugins/mods/find-games.ts";
+import { regValue, windowsPath } from "../../src/plugins/mods/windows-folders.ts";
 import { BuiltWith, fingerprint } from "../../src/plugins/mods/fingerprint.ts";
 import { KNOWN_GAMES, placeFolder } from "../../src/plugins/mods/known-games.ts";
 import { findTarget, ModRefusal } from "../../src/plugins/mods/mod-link.ts";
@@ -89,10 +90,25 @@ describe("finding installed games", () => {
     );
   });
 
-  it("finds nothing on a computer with no store", async () => {
-    const empty = await tmpDir("mods-empty-");
-    const env = { ...systemGamesEnv({}, "darwin"), home: empty, applications: path.join(empty, "Applications") };
-    assert.deepEqual(await findGames(env), []);
+  it("finds nothing on a computer with no game installed", async () => {
+    const empty = await fakeComputer();
+    assert.deepEqual(await findGames(empty.env), []);
+  });
+
+  it("on Windows, reads where Steam is and where Documents is from the registry, else their default places", async () => {
+    const values: Record<string, string> = {
+      SteamPath: "d:/games/steam",
+      Personal: "C:\\Users\\me\\OneDrive\\Documents",
+    };
+    const windows = {
+      ...systemGamesEnv({ USERPROFILE: "C:\\Users\\me", "ProgramFiles(x86)": "C:\\Program Files (x86)" }, "win32"),
+      registry: async (_key: string, value: string) => values[value] ?? null,
+    };
+    assert.equal(await steamRoot(windows), "d:\\games\\steam");
+    assert.equal(await documentsFolder(windows), "C:\\Users\\me\\OneDrive\\Documents");
+    const none = { ...windows, registry: async () => null };
+    assert.equal(await steamRoot(none), "C:\\Program Files (x86)\\Steam");
+    assert.equal(await documentsFolder(none), "C:\\Users\\me\\Documents");
   });
 
   it("reads a development test's made-up Mac, never the real one, when the test root is set", () => {
@@ -104,6 +120,13 @@ describe("finding installed games", () => {
 
 describe("what a game's folder says", () => {
   const table: Array<[string, string[], BuiltWith | null, string[]]> = [
+    [
+      "Easy Anti-Cheat in an Unreal game's Binaries",
+      ["FortniteGame/Content/Paks/a.pak", "FortniteGame/Binaries/Win64/EasyAntiCheat/"],
+      BuiltWith.Unreal,
+      ["Easy Anti-Cheat"],
+    ],
+    ["EA Javelin", ["EAAntiCheat.GameServiceLauncher.exe"], null, ["EA Javelin"]],
     ["a Unity game on a Mac", ["Hollow.app/Contents/Resources/Data/globalgamemanagers"], BuiltWith.Unity, []],
     [
       "a Unity IL2CPP game on Windows",
@@ -126,8 +149,17 @@ describe("what a game's folder says", () => {
     it(`tells ${name}`, async () => {
       const dir = await tmpDir("mods-print-");
       await writeTree(dir, files);
-      assert.deepEqual(await fingerprint(dir), { builtWith, antiCheat });
+      assert.deepEqual(await fingerprint(dir), { builtWith, antiCheat, cutShort: false });
     });
+
+  it("says when it couldn't read the folder whole, so anti-cheat can't be ruled out", async () => {
+    const dir = await tmpDir("mods-big-");
+    await writeTree(
+      dir,
+      Array.from({ length: 101 }, (_, at) => `part-${at}/`),
+    );
+    assert.equal((await fingerprint(dir)).cutShort, true);
+  });
 
   it("refuses a game that ships anti-cheat and an online game, by the game's own folder and id", async () => {
     const computer = await fakeComputer({
@@ -141,14 +173,32 @@ describe("what a game's folder says", () => {
     assert.equal((await findTarget(computer.env, "steam:570"))?.refusal, ModRefusal.Online);
     assert.equal((await findTarget(computer.env, "steam:427520"))?.refusal, null);
   });
+
+  it("refuses an online game Epic installed, and a game too big to check", async () => {
+    const fortnite = path.join(await realpath(await tmpDir("mods-epic-")), "Fortnite");
+    await mkdir(fortnite, { recursive: true });
+    const computer = await fakeComputer({
+      epic: [{ DisplayName: "Fortnite", AppName: "Fortnite", InstallLocation: fortnite, AppCategories: ["games"] }],
+      steam: [{ id: "4242", name: "Huge", files: Array.from({ length: 101 }, (_, at) => `part-${at}/`) }],
+    });
+    assert.equal((await findTarget(computer.env, "epic:Fortnite"))?.refusal, ModRefusal.Online);
+    assert.equal((await findTarget(computer.env, "steam:4242"))?.refusal, ModRefusal.Unchecked);
+  });
 });
 
 describe("where a known game keeps mods and saves", () => {
-  const mac = { platform: "darwin" as const, home: "/Users/me", appData: "", game: "/Steam/common/Stardew Valley" };
+  const mac = {
+    platform: "darwin" as const,
+    home: "/Users/me",
+    appData: "",
+    documents: "/Users/me/Documents",
+    game: "/Steam/common/Stardew Valley",
+  };
   const win = {
     platform: "win32" as const,
     home: "C:\\Users\\me",
     appData: "C:\\Users\\me\\AppData\\Roaming",
+    documents: "C:\\Users\\me\\Documents",
     game: "D:\\Games\\Stardew Valley",
   };
   const table: Array<[string, "mods" | "saves", string | null, string | null]> = [
@@ -208,5 +258,17 @@ describe("a game's own picture", () => {
       `data:image/jpeg;base64,${Buffer.from("new layout").toString("base64")}`,
     );
     assert.equal(await picture("minecraft"), null);
+  });
+});
+
+describe("Windows's registry, as reg.exe answers", () => {
+  it("reads a value's data and Steam's spelling of a path", () => {
+    const answer =
+      "\r\nHKEY_CURRENT_USER\\Software\\Valve\\Steam\r\n    SteamPath    REG_SZ    c:/program files (x86)/steam\r\n\r\n";
+    assert.equal(regValue(answer, "SteamPath"), "c:/program files (x86)/steam");
+    assert.equal(regValue(answer, "Personal"), null);
+    assert.equal(windowsPath("c:/program files (x86)/steam"), "c:\\program files (x86)\\steam");
+    for (const bad of [null, "", "steam", "\\\\server\\share", "/usr/local"])
+      assert.equal(windowsPath(bad), null, String(bad));
   });
 });

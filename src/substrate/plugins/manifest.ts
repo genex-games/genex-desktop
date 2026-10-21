@@ -184,6 +184,7 @@ const MESSAGE = {
   AudienceNeedsApi3: "tools[].audience requires apiVersion 3",
   InvalidToolAudience: `Invalid tools[].audience (${[...TOOL_AUDIENCES].join(", ")})`,
   AssetNeedsApi3: "tools[].asset requires apiVersion 3",
+  InvalidConfirmationCard: "Invalid tools[].confirmationCard (API 3: true, on a tool with a confirmation)",
   InvalidConfirmationInput: `Invalid tools[].confirmationInput (API 3, with a confirmation: { parameter: one of the tool's string parameters, label: one plain line of 1-${CONFIRMATION_INPUT_LABEL_MAX_CHARS} characters })`,
   InvalidToolAsset: `Invalid tools[].asset (an agent tool's { kind: ${Object.values(MakingKind).join("|")}, prompt?: one of its parameters, tool?: a short name })`,
   InvalidPanel: "Invalid panel",
@@ -348,6 +349,13 @@ function confirmationInput(t: PluginManifestTool, m: PluginManifest): PluginConf
   return { parameter: parameter as string, label: label as string };
 }
 
+/** That the backend words each call's card (API 3): only `true`, on a tool with a card of its own. */
+function confirmationCard(t: PluginManifestTool, m: PluginManifest): true {
+  if (m.apiVersion < 3 || t.confirmation === undefined || t.confirmationCard !== true)
+    throw new Error(MESSAGE.InvalidConfirmationCard);
+  return true;
+}
+
 /** A tool's optional declarations: its consent question (API 2), its host program and its audience. */
 function validateToolOptions(t: PluginManifestTool, m: PluginManifest): void {
   if (t.confirmation !== undefined) {
@@ -379,6 +387,7 @@ function validateTool(t: PluginManifestTool, m: PluginManifest, names: Set<strin
   };
   if (t.confirmation !== undefined) tool.confirmation = t.confirmation;
   if (t.confirmationInput !== undefined) tool.confirmationInput = confirmationInput(t, m);
+  if (t.confirmationCard !== undefined) tool.confirmationCard = confirmationCard(t, m);
   if (t.host !== undefined) tool.host = t.host;
   // Agents are the default audience, so only the harness is written.
   if (t.audience === PluginToolAudience.Harness) tool.audience = t.audience;

@@ -242,6 +242,23 @@ export function confirmationInputValue(value: unknown): string | undefined {
   return trimmed.length > 0 && trimmed.length <= CONFIRMATION_INPUT_MAX_CHARS ? trimmed : undefined;
 }
 
+/** The longest card a backend words for one call (`confirmationCard`), as long as a manifest's `confirmation`. */
+export const CONFIRMATION_CARD_MAX_CHARS = 300;
+
+/** Text of one line with nothing that breaks or reorders it: no control, format (bidi), line or paragraph separator. */
+const CARD_PRINTABLE = /^[^\p{Cc}\p{Cf}\p{Zl}\p{Zp}]+$/u;
+
+/**
+ * A backend's words for one call's card, as the host takes them: one plain line, trimmed, of 1 to
+ * 300 characters with nothing that reorders it (a card must read as it says); else undefined.
+ */
+export function confirmationCardText(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  const fits = trimmed.length > 0 && trimmed.length <= CONFIRMATION_CARD_MAX_CHARS;
+  return fits && CARD_PRINTABLE.test(trimmed) ? trimmed : undefined;
+}
+
 /**
  * A tool as the manifest declares it. `host`, `audience`, `facts`, `makes`, `needs` and `ready`
  * never reach an agent: the tool list the registry serves is plain `PluginTool`, which the harness
@@ -267,6 +284,12 @@ export interface PluginManifestTool extends PluginTool {
   asset?: PluginToolAsset;
   /** API 3, with `confirmation`: the text parameter the person may edit on the card. */
   confirmationInput?: PluginConfirmationInput;
+  /**
+   * API 3, with `confirmation`: the backend's `card` words each call's card from its arguments (the
+   * game and the files a call would change), within the confirmation's limits; `confirmation` is
+   * asked whenever it answers nothing usable.
+   */
+  confirmationCard?: true;
 }
 /** Whether agents are handed a manifest tool: every one but those only the harness calls. */
 export const isAgentTool = (tool: Pick<PluginManifestTool, "audience">): boolean =>
@@ -438,6 +461,7 @@ export const TOOLBAR_ICON_NAMES = [
   "unreal",
   "godot",
   "unity",
+  "gamepad",
 ] as const;
 export type ToolbarIconName = (typeof TOOLBAR_ICON_NAMES)[number];
 export const isToolbarIconName = (value: unknown): value is ToolbarIconName =>

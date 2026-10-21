@@ -1,8 +1,9 @@
 /**
  * What Genex knows about particular games before an agent looks: where a game loads its mods
  * from, where it keeps the person's saves, and the community's route in one line. A game missing
- * here can still be modded (its mods go in its own folder); one listed as online is never modded,
- * whatever its folder holds, and neither is a game that ships anti-cheat (`fingerprint.ts`).
+ * here can still be modded (its mods go in its own folder); one listed as online (on Steam or the
+ * Epic Games Launcher) is never modded, whatever its folder holds, and neither is a game that ships
+ * anti-cheat (`fingerprint.ts`).
  */
 import path from "node:path";
 import { StudioPlatform } from "../../shared/boot.ts";
@@ -35,6 +36,8 @@ export interface PlaceRoots {
   platform: NodeJS.Platform;
   home: string;
   appData: string;
+  /** The real Documents folder (on Windows often moved into OneDrive). */
+  documents: string;
   game: string;
 }
 
@@ -140,6 +143,34 @@ export const ONLINE_STEAM_APPS: ReadonlySet<string> = new Set([
   "236390", // War Thunder
   "1063730", // New World
   "1203220", // Naraka: Bladepoint
+  "2767030", // Marvel Rivals
+  "1422450", // Deadlock
+  "252950", // Rocket League
+  "1240440", // Halo Infinite
+  "381210", // Dead by Daylight
+  "594650", // Hunt: Showdown 1896
+  "1172620", // Sea of Thieves
+  "1097150", // Fall Guys
+  "291550", // Brawlhalla
+  "306130", // The Elder Scrolls Online
+  "1284210", // Guild Wars 2
+  "39210", // Final Fantasy XIV Online
+  "8500", // EVE Online
+  "582660", // Black Desert
+  "761890", // Albion Online
+  "2507950", // Delta Force
+  "2807960", // Battlefield 6
+  "2429640", // Throne and Liberty
+  "2139460", // Once Human
+]);
+
+/**
+ * Epic Games Launcher apps (by their app name) that are online games, for the same reason; most
+ * also ship anti-cheat, which refuses them by their folder too.
+ */
+export const ONLINE_EPIC_APPS: ReadonlySet<string> = new Set([
+  "Fortnite",
+  "Sugar", // Rocket League
 ]);
 
 /** Steam apps that are Steam's own tools, never games: its runtimes, Proton and shared redistributables. */
@@ -162,7 +193,7 @@ export function placeFolder(pair: PlacePair | undefined, roots: PlaceRoots): str
   const base = {
     [PlaceBase.Home]: roots.home,
     [PlaceBase.AppData]: roots.appData,
-    [PlaceBase.Documents]: join(roots.home, "Documents"),
+    [PlaceBase.Documents]: roots.documents,
     [PlaceBase.Game]: roots.game,
   }[place.base];
   return base ? join(base, ...place.parts) : null;

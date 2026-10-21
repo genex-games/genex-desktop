@@ -17,10 +17,11 @@ const host = {
     });
   },
 };
-/** One call's answer: a readiness ping, an empty review the plugin does not implement, or its own handler. */
+/** One call's answer: a readiness ping, an empty review or card the plugin does not implement, or its own handler. */
 async function answer(instance, message, context) {
   if (message.method === "ping") return { ready: true };
   if (message.method === "review" && !instance.review) return {};
+  if (message.method === "card" && !instance.card) return {};
   return instance[message.method](message.name, message.args, context);
 }
 process.on("message", async (message) => {

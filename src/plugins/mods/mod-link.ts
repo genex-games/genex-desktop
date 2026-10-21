@@ -9,15 +9,18 @@ import { createHash } from "node:crypto";
 import { mkdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { atomicWriteText } from "../../substrate/fsx.ts";
-import { findGames, type GamesEnv, GameStore, type InstalledGame, STORE_NAME } from "./find-games.ts";
-import { BUILT_WITH_NAME, type BuiltWith, fingerprint } from "./fingerprint.ts";
-import { KNOWN_GAMES, ONLINE_STEAM_APPS, placeFolder } from "./known-games.ts";
+import { documentsFolder, findGames, type GamesEnv, GameStore, type InstalledGame, STORE_NAME } from "./find-games.ts";
+import { BUILT_WITH_NAME, type BuiltWith, type Fingerprint, fingerprint } from "./fingerprint.ts";
+import { KNOWN_GAMES, ONLINE_EPIC_APPS, ONLINE_STEAM_APPS, placeFolder } from "./known-games.ts";
 
 /** The file that marks a project as a mod, at its root: the rule of the plugin's **Mod** scaffold finds it. */
 export const MOD_FILE = "genex-mod.json";
 
-/** Why Genex makes no mod for a game. Wire values: the agent reads them. */
-export const ModRefusal = { AntiCheat: "anti-cheat", Online: "online" } as const;
+/**
+ * Why Genex makes no mod for a game: it ships anti-cheat, it is an online game, or its folder was
+ * too big to read whole, so anti-cheat can't be ruled out. Wire values: the agent reads them.
+ */
+export const ModRefusal = { AntiCheat: "anti-cheat", Online: "online", Unchecked: "unchecked" } as const;
 export type ModRefusal = (typeof ModRefusal)[keyof typeof ModRefusal];
 
 /** An installed game as a mod sees it: its folders on this computer, what it was made with, and why it can't be modded. */
@@ -76,10 +79,17 @@ export async function writeLink(storage: string, project: string, game: Installe
   await atomicWriteText(file, `${JSON.stringify(record, null, 2)}\n`);
 }
 
-/** Why a game gets no mod (anti-cheat in its folder, or an online game's id); null when it may get one. */
-function refusalOf(game: InstalledGame, antiCheat: string[]): ModRefusal | null {
-  if (antiCheat.length) return ModRefusal.AntiCheat;
-  if (game.store === GameStore.Steam && game.storeId && ONLINE_STEAM_APPS.has(game.storeId)) return ModRefusal.Online;
+/** Each store's online games, by the store's own id. */
+const ONLINE_APPS: Partial<Record<GameStore, ReadonlySet<string>>> = {
+  [GameStore.Steam]: ONLINE_STEAM_APPS,
+  [GameStore.Epic]: ONLINE_EPIC_APPS,
+};
+
+/** Why a game gets no mod (anti-cheat in its folder, an online game's id, a folder not read whole); null when it may get one. */
+function refusalOf(game: InstalledGame, print: Fingerprint): ModRefusal | null {
+  if (print.antiCheat.length) return ModRefusal.AntiCheat;
+  if (game.storeId && ONLINE_APPS[game.store]?.has(game.storeId)) return ModRefusal.Online;
+  if (print.cutShort) return ModRefusal.Unchecked;
   return null;
 }
 
@@ -87,7 +97,8 @@ function refusalOf(game: InstalledGame, antiCheat: string[]): ModRefusal | null 
 export async function modTarget(env: GamesEnv, game: InstalledGame): Promise<ModTarget> {
   const print = await fingerprint(game.folder);
   const known = KNOWN_GAMES[game.id];
-  const roots = { platform: env.platform, home: env.home, appData: env.appData, game: game.folder };
+  const documents = await documentsFolder(env);
+  const roots = { platform: env.platform, home: env.home, appData: env.appData, documents, game: game.folder };
   return {
     ...game,
     builtWith: print.builtWith,
@@ -95,7 +106,7 @@ export async function modTarget(env: GamesEnv, game: InstalledGame): Promise<Mod
     mods: placeFolder(known?.mods, roots),
     saves: placeFolder(known?.saves, roots),
     route: known?.route ?? null,
-    refusal: refusalOf(game, print.antiCheat),
+    refusal: refusalOf(game, print),
   };
 }
 

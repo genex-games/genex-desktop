@@ -2,7 +2,7 @@
 
 This project is a mod of a game the person owns and installed on this computer. The project
 holds the mod's own files; `genex-mod.json` at its root names the game, its folders on this
-computer and the community's route to mod it. The person describes the change in plain words;
+computer and the route Genex knows for it. The person describes the change in plain words;
 you take it all the way to working in the real game.
 
 ## Rules
@@ -12,13 +12,16 @@ you take it all the way to working in the real game.
   against other players (aim help, seeing through walls, speed or teleport tricks, packet
   changes), whatever the reason given. Never disable or get around anti-cheat, DRM or an
   ownership check: if the only route needs that, stop and say so.
-- The project holds only what you make: code, patches, settings, and your own pictures, sounds
-  and models. Never put the game's files, its extracted assets or decompiled code in the project.
-  When you must read the game's code, decompile it into `decompiled/` and extract files into
-  `extracted/`: Genex keeps both out of save points and history. Read them; never ship them.
-- Everything that goes into the game goes in through `mods__install`, which asks the person,
-  keeps each game file it replaces and copies the saves aside before the first install. Never
-  write into the game's folders any other way. `mods__remove` puts the game back as it was.
+- Use the game's own modding surface: its official mod API, its data and settings files, or the
+  community loader its players use, through that loader's documented API. Don't decompile,
+  disassemble or patch the game's program: many games' terms forbid it. If an idea needs that,
+  tell the person in one line and offer what the mod API can do instead.
+- The project holds only what you make: code, patches to the game's data files, settings, and your
+  own pictures, sounds and models. Never put the game's files or its assets in the project.
+- Everything that goes into the game goes in through `mods__install`, which asks the person on a
+  card naming the game, checks every path before it writes, keeps each game file it replaces and
+  copies the saves aside before the first install. Never write into the game's folders any other
+  way. `mods__remove` puts the game back as it was.
 - Use loaders and tools only from their official repositories or sites (a mod "download"
   anywhere else is often malware), at their current release, and name each to the person with
   its link before you use it. A mod built on someone else's mod follows that mod's license.
@@ -26,15 +29,13 @@ you take it all the way to working in the real game.
 
 ## The loop
 
-1. Read `genex-mod.json` and its route. Look up how others modded this game before you write
-   anything: the field notes in universal-modder's knowledge base
-   (https://github.com/rehan-remade/universal-modder/blob/main/knowledge/INDEX.md), the game's
-   wiki page on modding, and its loader's own documentation.
-2. Pick the smallest route that reaches the idea: the game's data or settings files first, then
-   its loader's API (SMAPI, tModLoader, Fabric, BepInEx, UE4SS, Steamodded…), then patching code.
-   Write the route and why into `MODLOG.md` in the project.
-3. Build one working slice in the project (one item, one rule) with the loader's real API; read
-   the game's code in `decompiled/` only where the API says nothing.
+1. Read `genex-mod.json` and its route. Before you write anything, read how the game is modded:
+   its official modding documentation, the wiki page on modding the game, and its loader's own
+   documentation, at their current versions.
+2. Pick the smallest route that reaches the idea: the game's data or settings files first, then its
+   mod API or its loader's API (SMAPI, tModLoader, Fabric, BepInEx, UE4SS, Steamodded…). Write the
+   route and why into `MODLOG.md` in the project.
+3. Build one working slice in the project (one item, one rule) with that API as documented.
 4. Put it in with `mods__install` (`from` is the mod's folder in the project). A loader whose
    files sit beside the game goes in with `into: "game"` and `contents: true`. Installing again
    replaces the files it put there; a new version under another folder name goes in with
@@ -45,6 +46,19 @@ you take it all the way to working in the real game.
    until the change works in the game.
 6. Tell the person in a line or two what changed and how to see it in the game. Keep `MODLOG.md`
    current: versions, the route, what failed and why, the next step.
+
+## Before you start: what the field has learned
+
+- Search for how others did the same thing in this game first; reuse a loader's documented hooks
+  rather than inventing one.
+- Pin the exact game and loader versions in `MODLOG.md`: an update to either breaks mods, and the
+  next session needs to know what worked.
+- Work in small slices that each run in the game; most failures are a wrong version, a wrong
+  folder or a missing dependency, and the log names them.
+- Back up before the first change: Genex copies the saves aside at the first install; keep test
+  worlds or save files separate from the person's own when the game allows it.
+- A mod's files land beside the game, never inside a Mac app bundle; anything else is a sign of the
+  wrong route.
 
 ## On a Mac
 

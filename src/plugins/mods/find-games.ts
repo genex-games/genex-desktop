@@ -12,6 +12,7 @@ import { StudioPlatform } from "../../shared/boot.ts";
 import { engineTestMac } from "../../substrate/app-install.ts";
 import { MINECRAFT_ID, STEAM_TOOL_APPS } from "./known-games.ts";
 import { MAX_VDF_CHARS, parseVdf, vdfBlock, vdfText } from "./vdf.ts";
+import { DOCUMENTS_KEY, type RegistryRead, STEAM_KEY, systemRegistry, windowsPath } from "./windows-folders.ts";
 
 /** The store that installed a game. Wire values: part of a game's id. */
 export const GameStore = { Steam: "steam", Epic: "epic", Minecraft: "minecraft" } as const;
@@ -44,8 +45,10 @@ export interface GamesEnv {
   appData: string;
   /** Windows's shared app data (`%ProgramData%`), where Epic keeps its manifests. */
   programData: string;
-  /** Windows's 32-bit programs (`%ProgramFiles(x86)%`), where Steam installs itself. */
+  /** Windows's 32-bit programs (`%ProgramFiles(x86)%`), where Steam installs itself by default. */
   programFilesX86: string;
+  /** Windows's registry, where Steam records the folder it was installed to and Windows the real Documents. */
+  registry?: RegistryRead;
 }
 
 /** The most manifests read from one folder: a big library holds a few hundred games. */
@@ -78,23 +81,43 @@ async function readSmall(file: string, maxChars: number): Promise<string | null>
   return readFile(file, "utf8").catch(() => null);
 }
 
-/** Steam's own folder on this computer. */
-export function steamRoot(env: GamesEnv): string {
+/**
+ * Steam's own folder on this computer: on Windows the one the registry records (Steam may live on
+ * any drive), else its default place under Program Files.
+ */
+export async function steamRoot(env: GamesEnv): Promise<string> {
   const p = pathsOf(env);
-  if (env.platform === StudioPlatform.Windows) return p.join(env.programFilesX86, "Steam");
-  return p.join(env.home, "Library", "Application Support", "Steam");
+  if (env.platform !== StudioPlatform.Windows) return p.join(env.home, "Library", "Application Support", "Steam");
+  const recorded = windowsPath((await env.registry?.(STEAM_KEY.key, STEAM_KEY.value)) ?? null);
+  return recorded ?? p.join(env.programFilesX86, "Steam");
 }
 
-/** Every Steam library: Steam's own folder, then each one its library list names, each once. */
-async function steamLibraries(env: GamesEnv): Promise<string[]> {
+/** The libraries Steam's library list names, by their folders. */
+async function listedLibraries(env: GamesEnv, root: string): Promise<string[]> {
   const p = pathsOf(env);
-  const root = steamRoot(env);
   const listed = parseVdf((await readSmall(p.join(root, "steamapps", "libraryfolders.vdf"), MAX_VDF_CHARS)) ?? "");
   const folders = vdfBlock(listed, "libraryfolders") ?? listed ?? {};
-  const named = Object.values(folders)
+  return Object.values(folders)
     .map((entry) => (typeof entry === "object" ? vdfText(entry, "path") : null))
     .filter((dir): dir is string => Boolean(dir) && p.isAbsolute(dir ?? ""));
-  return [...new Set([root, ...named])].slice(0, MAX_LIBRARIES);
+}
+
+/** Every Steam library: Steam's own folder, then each one its library list names, each once (in any case on Windows). */
+async function steamLibraries(env: GamesEnv): Promise<string[]> {
+  const root = await steamRoot(env);
+  const all = [root, ...(await listedLibraries(env, root))];
+  const key = (dir: string) =>
+    env.platform === StudioPlatform.Windows ? path.win32.normalize(dir).toLowerCase() : dir;
+  const seen = new Set<string>();
+  return all.filter((dir) => !seen.has(key(dir)) && Boolean(seen.add(key(dir)))).slice(0, MAX_LIBRARIES);
+}
+
+/** The person's Documents folder: on Windows the one the registry records (often in OneDrive), else the home's. */
+export async function documentsFolder(env: GamesEnv): Promise<string> {
+  const p = pathsOf(env);
+  if (env.platform !== StudioPlatform.Windows) return p.join(env.home, "Documents");
+  const recorded = windowsPath((await env.registry?.(DOCUMENTS_KEY.key, DOCUMENTS_KEY.value)) ?? null);
+  return recorded ?? p.join(env.home, "Documents");
 }
 
 /** Whether a Steam app is one of Steam's own tools rather than a game. */
@@ -206,5 +229,6 @@ export function systemGamesEnv(env: NodeJS.ProcessEnv = process.env, platform = 
     appData: env.APPDATA ?? path.win32.join(windowsHome, "AppData", "Roaming"),
     programData: env.ProgramData ?? "C:\\ProgramData",
     programFilesX86: env["ProgramFiles(x86)"] ?? "C:\\Program Files (x86)",
+    ...(platform === StudioPlatform.Windows ? { registry: systemRegistry(env) } : {}),
   };
 }

@@ -34,6 +34,7 @@ import {
   pluginReach,
   pluginSkillTool,
   skillScope,
+  confirmationCardText,
   PluginAccountState,
   PluginCapability,
   PluginChangeReason,
@@ -161,6 +162,8 @@ const SKILL_READ_CHUNK_CHARS = 24_000;
 /** A runtime install action downloads and unpacks a whole application. */
 const RUNTIME_INSTALL_TIMEOUT_MS = 30 * MINUTE_MS;
 const CATALOG_DOWNLOAD_TIMEOUT_MS = 30 * SECOND_MS;
+/** How long a backend may take to word one call's card (`confirmationCard`) before its own `confirmation` is asked. */
+const CARD_TIMEOUT_MS = 10 * SECOND_MS;
 const SHA256_HEX = /^[a-f0-9]{64}$/;
 /** A project name an MCP server's per-project storage may use. */
 const MCP_PROJECT = /^[a-zA-Z0-9_-]{1,100}$/;
@@ -2045,7 +2048,8 @@ export class PluginRegistry {
    * approved this call's own card, with their edit of its field when it has one.
    */
   async #askFirst(id: string, asked: ConsentAsk, caller: PluginToolAudience): Promise<ConsentGiven> {
-    const { p, name, declaration, args, binding, signal } = asked;
+    const { p, name, args, binding, signal } = asked;
+    const declaration = await this.#cardWords(id, asked);
     if (localAgentCall(p, declaration, caller)) {
       if (!asksEachCall(p, declaration, caller)) return { confirmed: false };
       return this.#localConsented(id, p, name, declaration, args, binding, signal);
@@ -2054,6 +2058,21 @@ export class PluginRegistry {
     const host = declaration.host;
     const shown = host ? await this.#hostConsentArgs(id, host, args, binding) : args;
     return this.#consented(id, name, declaration, shown, binding, signal);
+  }
+  /**
+   * A tool that declares `confirmationCard` asks with the words its backend's `card` gives this call
+   * (read only, within {@link CARD_TIMEOUT_MS}); its own `confirmation` stands whenever the answer is
+   * late, fails or isn't one plain line of at most 300 characters.
+   */
+  async #cardWords(id: string, asked: ConsentAsk): Promise<PluginManifestTool> {
+    const { declaration, args, binding, signal } = asked;
+    if (!declaration.confirmationCard || !declaration.confirmation) return declaration;
+    const answer: unknown = await this.#process(id)
+      .call("card", declaration.name, args, binding, signal, CARD_TIMEOUT_MS)
+      .catch(() => null);
+    const message = answer && typeof answer === "object" && "message" in answer ? answer.message : undefined;
+    const words = confirmationCardText(message);
+    return words ? { ...declaration, confirmation: words } : declaration;
   }
   /**
    * Asks the user before a tool that declares `confirmation`; a no is thrown, and the plugin must
