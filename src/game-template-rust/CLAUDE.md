@@ -16,10 +16,11 @@ game with and which refusals a run can meet.
    `=<version>`. Never add cargo files, build scripts, `unsafe`, or renderer internals, and never
    edit `docs/GENEX_API.md`, `docs/api/` or `web/shell.html`.
 4. **One screen, one input path, phone first.** Draw all UI with egui in `on_ui` (the HUD is egui
-   too). Read input only from `ctx` inside the hooks (`ctx.keys`, `ctx.touches`, `ctx.pointer`,
-   `ctx.look`, `ctx.pads`, `ctx.text`). Touch is a first-class input: the mouse's first button
-   arrives as touch 0, so write one touch path that also serves the desktop, keep tap targets
-   large, and give every action a way to reach it without a keyboard.
+   too). Read input only from `ctx` inside the hooks (`ctx.actions` for a game's own actions,
+   `ctx.keys`, `ctx.touches`, `ctx.pointer`, `ctx.look`, `ctx.pads`, `ctx.text`). Touch is a
+   first-class input: the mouse's first button arrives as touch 0, so write one touch path that
+   also serves the desktop, keep tap targets large, and give every action a way to reach it
+   without a keyboard.
 5. **Tag and measure.** `frame.tag("<name>")` before what you draw, a `probe` per mechanic, a
    camera that shows it, a `demo` when a generic walk cannot reach it. The checks see the game only
    through these: a mechanic with no probe, tag or camera is unmeasured, and an unmeasured
@@ -148,6 +149,26 @@ order and look at a capture after each step (`docs/api/lighting.md`, then
   volume.
 - **Lens off in play.** `.depth_of_field(..)` and `.motion_blur(..)` suit cutscenes, photo modes
   and racers, never where the person steers.
+
+## Game systems
+
+Use the built-in system before writing your own; each page holds the how and its refusals.
+
+- **Input**: name actions once with `game.input(ActionMap::new()..)` and read `ctx.actions`, so
+  keys, pads and on-screen touch controls drive the same action (`docs/api/ctx.md`).
+- **UI and settings**: text, locales and the kit's menus through `game.ui(..)` and `genex::ui`
+  (`docs/api/ui.md`); the whole settings menu is `genex::settings::menu(ui)`
+  (`docs/api/settings.md`).
+- **A large world** streams in cells: `game.streaming(..)` (`docs/api/streaming.md`).
+- **Moving things**: `game.navigation(..)` for walkers and paths (`docs/api/navigation.md`),
+  `Character::spawn(..)` and ragdolls (`docs/api/characters.md`), `gfx.character(..)` with an
+  `Animator` for rigged models (`docs/api/animation.md`).
+- **Sound**: `gfx.sound(..)` in `on_reset`, `ctx.audio` to play; prove it played from
+  `state().volatile.audio`, never by ear (`docs/api/audio.md`).
+- **Saves**: `game.saves(..)` and `ctx.slots()` (`docs/api/saves.md`); multiplayer is
+  `docs/api/net.md`.
+- **A hitch**: time the suspects with `genex::profile_scope!` and read `volatile.profile`
+  (`docs/api/profiling.md`).
 
 ## Extension ladder
 

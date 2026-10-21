@@ -158,11 +158,28 @@ const GUIDE_WORLD_LOOK_WORDS_MAX = 320;
 
 /**
  * What the seed's Rust recipes must sketch, as calls, so a facet that fails a look check is
- * handed the built-in that fixes it: rooms lit by their own probe and volume, and the air and grade.
+ * handed the built-in that fixes it: rooms lit by their own probe and volume, and the air and grade;
+ * and a facet whose sound a check cannot prove played is handed the audio calls (AU-9).
  */
 const RECIPE_SKETCH_CALLS = [
   ["frame.reflection_probe", "frame.irradiance_volume"],
   ["Fog::default", ".with_moon", ".grading", ".exposure_curve"],
+  ["gfx.sound", "ctx.audio.play_at"],
+] as const;
+
+/** The topic pages of the game systems (stage 2), each of which the template guide routes an agent to. */
+const GAME_SYSTEMS_PAGES = [
+  "ctx",
+  "ui",
+  "settings",
+  "streaming",
+  "navigation",
+  "characters",
+  "animation",
+  "audio",
+  "saves",
+  "net",
+  "profiling",
 ] as const;
 
 /** The seed's recipes, whose `evidence` cites sections of the reference. */
@@ -799,6 +816,15 @@ describe("the agent-facing files agree with each other and the folder", () => {
     const text = read("CLAUDE.md");
     for (const target of ["docs/GENEX_API.md", "docs/CONTRACT.md", ".studio/BRIEF.md"])
       assert.ok(text.includes(target), `CLAUDE.md does not name ${target}`);
+  });
+
+  it("CLAUDE.md routes to every game-systems page and names the action map as an input source", () => {
+    const text = read("CLAUDE.md");
+    for (const page of GAME_SYSTEMS_PAGES)
+      assert.ok(text.includes(`docs/api/${page}.md`), `CLAUDE.md does not route to docs/api/${page}.md`);
+    assert.ok(section(text, "Game systems"), "CLAUDE.md has a Game systems section");
+    const inputRule = text.slice(text.indexOf("4. **"), text.indexOf("5. **"));
+    assert.ok(inputRule.includes("ctx.actions"), "rule 4 lists ctx.actions among the input sources");
   });
 
   it("CLAUDE.md carries the rules the lane enforces: probes, demos, touch, the HUD and determinism", () => {
