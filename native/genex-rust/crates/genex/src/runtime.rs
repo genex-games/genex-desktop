@@ -621,6 +621,32 @@ impl<W> Runtime<W> {
         Ok(answer.value)
     }
 
+    /// The app is being suspended or closed (a phone's background, a desktop window's close, a web
+    /// page hidden): write the autosave ring's oldest slot now, between ticks, through read hooks
+    /// only (UIS-12). None when the game registers no autosave ring or turned
+    /// `autosave_on_suspend` off; on the web the shell flushes the mirror next.
+    #[doc(hidden)]
+    pub fn suspend_save(&mut self) -> Option<Result<crate::saves::SlotInfo, crate::saves::SaveError>> {
+        let core = &mut self.core;
+        let view = crate::saves::SaveView { sim: &core.sim, seed: core.seed, tick: core.tick, rng: &core.rng, gfx: &core.gfx };
+        crate::saves::suspend_save(&self.game, &mut core.g6.saves, &view)
+    }
+
+    /// Rebase the saves onto the web's in-memory mirror (`genex_core::saves::mirror`), as a web
+    /// page's are: for tests and tools that stand in for one off wasm32.
+    #[doc(hidden)]
+    pub fn use_web_saves(&mut self) {
+        let game = paths::identity_of(self.game.save_name.as_deref().unwrap_or(""), "", BUILD_IDENTITY);
+        self.core.gfx.set_saves(Saves::for_destination(Destination::Web, &|_| None, game));
+    }
+
+    /// Time a load's hold for a lazy body on `clock` (milliseconds) instead of the process clock
+    /// (tests of `save-load-timeout`).
+    #[doc(hidden)]
+    pub fn use_saves_clock(&mut self, clock: Box<dyn FnMut() -> u64>) {
+        self.core.g6.saves.use_clock(clock);
+    }
+
     /// The simulation, read-only.
     pub fn sim(&self) -> &Sim<W> {
         &self.core.sim

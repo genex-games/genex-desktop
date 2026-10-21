@@ -1,6 +1,8 @@
 //! The shell's lifecycle rule, apart from winit so it can be tested: a surface exists only
 //! between `resumed` and `suspended`, frames keep coming without one (nothing is presented), and
-//! a close or the game's own exit ends the loop.
+//! a close or the game's own exit ends the loop. A close first tells the game it is
+//! [`ShellGame::closing`], so it writes its suspend autosave (G6 UIS-12); the windowed shell
+//! reports the OS locale once ([`os_locale`]).
 
 use crate::sample::FrameSample;
 use crate::surface::ShellSurface;
@@ -41,6 +43,11 @@ pub trait ShellGame {
     fn surface_lost(&mut self) {}
     /// The window gained or lost focus.
     fn focus(&mut self, _focused: bool) {}
+    /// The window is closing: write what must outlive the process now (the facade writes the
+    /// autosave ring's oldest slot, UIS-12). Told once, before the loop ends.
+    fn closing(&mut self) {}
+    /// The OS locale the windowed shell read (a BCP 47 tag, or none), below the person's choice.
+    fn os_locale(&mut self, _tag: Option<&str>) {}
     /// Whether the game wants the pointer locked (look from raw mouse motion, no cursor). The
     /// windowed shell asks before each frame and reports what the window granted in
     /// [`FrameSample::pointer_lock`]; a headless run has no pointer.
@@ -89,12 +96,14 @@ pub enum ShellEvent {
 pub struct ShellCore<G> {
     game: G,
     surface_live: bool,
+    /// Whether a close was handled (the game is told once).
+    closed: bool,
 }
 
 impl<G: ShellGame> ShellCore<G> {
     /// A core with no surface yet.
     pub fn new(game: G) -> ShellCore<G> {
-        ShellCore { game, surface_live: false }
+        ShellCore { game, surface_live: false, closed: false }
     }
 
     /// Apply one event.
@@ -120,9 +129,20 @@ impl<G: ShellGame> ShellCore<G> {
                 let frame = ShellFrame { sample, frame_ms, present: self.surface_live, headless: false };
                 return self.game.frame(frame);
             }
-            ShellEvent::CloseRequested => return FrameControl::Exit,
+            ShellEvent::CloseRequested => {
+                if !self.closed {
+                    self.closed = true;
+                    self.game.closing();
+                }
+                return FrameControl::Exit;
+            }
         }
         FrameControl::Continue
+    }
+
+    /// Hand the game the OS locale (`tag`, read once by the windowed shell).
+    pub fn report_os_locale(&mut self, tag: Option<&str>) {
+        self.game.os_locale(tag);
     }
 
     /// Whether a surface is live.
@@ -145,3 +165,14 @@ impl<G: ShellGame> ShellCore<G> {
         self.game
     }
 }
+
+/// The OS locale as a BCP 47 tag (`fr-FR`), through sys-locale; None when the OS names none or
+/// names one that is not a plain tag. A shell call with no file access; a Genex run ignores it.
+pub fn os_locale() -> Option<String> {
+    let tag = sys_locale::get_locale()?;
+    let plain = !tag.is_empty() && tag.len() <= LOCALE_TAG_MAX && tag.chars().all(|c| c.is_ascii_alphanumeric() || c == '-');
+    plain.then_some(tag)
+}
+
+/// The longest OS locale tag passed on, in bytes (BCP 47 tags in practice stay far below it).
+const LOCALE_TAG_MAX: usize = 64;

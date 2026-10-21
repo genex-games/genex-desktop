@@ -8,7 +8,12 @@
 //! The game starts in [`studio_boot`], not when the module is instantiated: [`install`] keeps the
 //! game, so the shell can fill the saves mirror from IndexedDB ([`studio_saves_preload`]) before
 //! the first reset reads it. [`studio_saves_take`] and [`studio_saves_flushed`] are the shell's
-//! write-behind: the files saved since, and how their IndexedDB write went.
+//! write-behind: the files saved since, and how their IndexedDB write went. Slot bodies stay lazy
+//! (G6 UIS-12): [`studio_saves_index`] names them with their sizes, [`studio_saves_requests`] and
+//! [`studio_saves_provide`] fetch the one a load asked for (the load holds the tick meanwhile),
+//! [`studio_saves_take_removed`] names deleted files, [`studio_saves_persistent`] takes the
+//! browser's persistent-storage answer, and [`studio_suspend_save`] writes the autosave ring's
+//! oldest slot when the page is hidden, before the flush.
 //!
 //! Before `studio_boot` the shell also hands over the game's staged assets: [`studio_assets_plan`]
 //! reads the build's asset map (with the adapter's features, so one family file per texture is
@@ -1315,10 +1320,67 @@ pub fn studio_saves_pending() -> u32 {
     u32::try_from(mirror::status().pending).unwrap_or(u32::MAX)
 }
 
-/// The mirror's account as JSON, `{store, files, pending, inFlight, error}`.
+/// The mirror's account as JSON, `{store, files, bytes, pending, inFlight, lazy, persistent, error}`.
 #[wasm_bindgen]
 pub fn studio_saves_status() -> String {
     saves_state(&mirror::status()).to_string()
+}
+
+/// One `[name, size]` pair of the shell's slot-body index; None for any other shape.
+fn indexed_entry(entry: &JsValue) -> Option<(String, u64)> {
+    let pair = entry.dyn_ref::<js_sys::Array>()?;
+    let name = pair.get(0).as_string()?;
+    let size = pair.get(1).as_f64().filter(|size| size.is_finite() && *size >= 0.0)?;
+    // A size past u64 cannot pass the mirror's cap anyway; `as` saturates.
+    Some((name, size as u64))
+}
+
+/// The slot bodies IndexedDB keeps, `[[name, size], …]`, by name and size only (after
+/// `studio_saves_preload`): a body is read only when a load asks for it (UIS-12). Entries of another
+/// shape, an unsafe name or too large a size are skipped. Exporting this tells the shell to keep
+/// `.sav` bodies lazy.
+#[wasm_bindgen]
+pub fn studio_saves_index(entries: js_sys::Array) {
+    mirror::preload_index(entries.iter().filter_map(|entry| indexed_entry(&entry)).collect());
+}
+
+/// The lazy bodies a load asked for since the last call, for the shell to read from IndexedDB and
+/// hand over with `studio_saves_provide`; each is asked once until it is provided.
+#[wasm_bindgen]
+pub fn studio_saves_requests() -> js_sys::Array {
+    mirror::take_requests().into_iter().map(|name| JsValue::from_str(&name)).collect()
+}
+
+/// The shell's answer to a request: the body's bytes, or undefined for a body the store does not
+/// keep (the held load then refuses `save-slot-missing` at once). A name the mirror is not waiting
+/// for changes nothing.
+#[wasm_bindgen]
+pub fn studio_saves_provide(name: &str, bytes: Option<js_sys::Uint8Array>) {
+    crate::saves::provide(name, bytes.map(|bytes| bytes.to_vec()));
+}
+
+/// The files the game removed since the last take, for the shell to delete from IndexedDB with its
+/// next flush.
+#[wasm_bindgen]
+pub fn studio_saves_take_removed() -> js_sys::Array {
+    mirror::take_removed().into_iter().map(|name| JsValue::from_str(&name)).collect()
+}
+
+/// Whether the browser granted persistent storage (`navigator.storage.persist()`), for
+/// `state().volatile.saves.persistent`.
+#[wasm_bindgen]
+pub fn studio_saves_persistent(persistent: bool) {
+    crate::saves::set_persistent(persistent);
+}
+
+/// The page is hidden or left (`visibilitychange` → hidden, `pagehide`): the game writes its
+/// autosave ring's oldest slot now, between frames, and the shell's flush that follows stores it.
+/// Nothing for a game without an autosave ring, or before `studio_boot` started it.
+#[wasm_bindgen]
+pub fn studio_suspend_save() {
+    // A refused suspend save is the slot's event in the next tick (and its volatile issue); the
+    // page has nothing to add.
+    let _ = with_shell(|shell| Ok(started(&mut shell.game)?.suspend_save()));
 }
 
 /// The WebGPU feature names (`GPUAdapter.features`) of the compressed texture families.
