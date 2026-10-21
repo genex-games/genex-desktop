@@ -36,6 +36,12 @@
 //! - the first frame presented on each surface is logged (`frame-presented`, [`frame_presented_event`]):
 //!   an admitted adapter is not a drawn frame, so a CI smoke waits for this one before it captures.
 //!
+//! - assets past the compiled table (game systems STR-15, owner call S10): a shell hands its
+//!   file-backed source in [`ShellConfig::files`] (iOS: the bundle's `assets/` through genex's
+//!   `AssetFiles`; Android: the APK's through `AAssetManager`), and every device the shell opens
+//!   draws models from it, the table first. A game with no file-backed assets (`files: None`)
+//!   draws from its table as before.
+//!
 //! The loop is plain winit + wgpu, so it builds and is linted on the host as well; `run` in
 //! genex-platform-ios and genex-platform-android are the entries. Saves live under the platform's
 //! root: the iOS app container's (from `HOME`), Android's activity data folder
@@ -58,7 +64,12 @@ use crate::mobile::safe_area::SafeArea;
 use crate::mobile::selftest::{self, run_and_record};
 use crate::mobile::thermal::{Pacer, Thermal, ThermalWatch};
 use crate::mobile::touch::{TouchEvent, TouchTracker};
-use genex::present::Presenter;
+use genex::present::{ModelSource, Presenter};
+use genex::{ASSET_READ_MAX_BYTES, AssetError, AssetErrorCode, AssetSource};
+use genex_core::paths::is_safe_asset_path;
+use std::io::{Read, Seek, SeekFrom};
+use std::ops::Range;
+use std::sync::atomic::{AtomicU64, Ordering};
 use genex::{Input, json};
 use genex_hud::{ImeBridge, KeyboardCall, LoadingLook, LoadingScreen, TextAction};
 use genex_platform_web::selftest::SelfTestPlan;
@@ -113,6 +124,8 @@ pub struct ShellConfig {
     pub plan: SelfTestPlan,
     /// The game's compiled-in assets.
     pub assets: AssetTable,
+    /// The game's assets past the table, table first (STR-15; `None`: the table only, as before).
+    pub files: Option<SharedAssets>,
     /// Where records go (`None`: nowhere to write, the self-test is skipped).
     pub records: Option<Records>,
     /// The platform's safe area for a window.
@@ -275,13 +288,146 @@ pub fn frame_presented_event(rendered: u64, window: (u32, u32)) -> serde_json::V
     json!({ "event": "frame-presented", "rendered": rendered, "window": [window.0, window.1] })
 }
 
-/// genex's presenter on an admitted GPU, its models from the game's compiled `assets`; after a
-/// loss it opens a new device from `instance` ([`reopen`]).
-fn device_on(gpu: Gpu, world: [u32; 2], assets: AssetTable, instance: &wgpu::Instance) -> Result<Device, RenderError> {
+/// A phone's assets past its compiled table, shared by every device the shell opens (STR-15): the
+/// table first, then the bundle's or the APK's files.
+pub type SharedAssets = Arc<dyn ModelSource + Send + Sync>;
+
+/// Bundled asset files a phone opens by name: Android's `AAssetManager` over the APK's `assets/`
+/// (STR-15), or a test's fake.
+pub trait BundleOpen: Send + Sync {
+    /// An opened file.
+    type File: std::io::Read + std::io::Seek;
+
+    /// The file at `path` (relative to the bundle's `assets/`, already held to the asset-path rule)
+    /// and its length in bytes, if the bundle has one.
+    fn open(&self, path: &str) -> Option<(Self::File, u64)>;
+}
+
+/// A phone's assets: the compiled table first, then the files a [`BundleOpen`] holds, read whole
+/// or by range (STR-15, owner call S10). A path outside the asset-path rule is refused before
+/// anything is opened; a range is checked against the file's length, and a read is held to
+/// [`ASSET_READ_MAX_BYTES`].
+pub struct BundleAssets<O> {
+    table: AssetTable,
+    bundle: Option<O>,
+    opened: AtomicU64,
+}
+
+impl<O: BundleOpen> BundleAssets<O> {
+    /// The table, then `bundle` (None: the table only).
+    pub fn new(table: AssetTable, bundle: Option<O>) -> BundleAssets<O> {
+        BundleAssets { table, bundle, opened: AtomicU64::new(0) }
+    }
+
+    /// Files opened so far (a refused path opens none).
+    pub fn opened(&self) -> u64 {
+        self.opened.load(Ordering::Relaxed)
+    }
+
+    fn table_bytes(&self, path: &str) -> Option<&'static [u8]> {
+        self.table.iter().find(|(known, _)| *known == path).map(|(_, bytes)| *bytes)
+    }
+
+    /// The bundle's file at `path` and its length, refusing an unsafe path before opening it.
+    fn open(&self, path: &str) -> Result<(O::File, u64), AssetError> {
+        if !is_safe_asset_path(path) {
+            return Err(AssetError::new(AssetErrorCode::UnsafePath, format!("{path}: not a plain path under assets/")));
+        }
+        let Some(bundle) = self.bundle.as_ref() else {
+            return Err(AssetError::new(AssetErrorCode::Missing, format!("{path}: no bundled assets")));
+        };
+        let opened = bundle.open(path).ok_or_else(|| AssetError::new(AssetErrorCode::Missing, path.to_owned()))?;
+        self.opened.fetch_add(1, Ordering::Relaxed);
+        Ok(opened)
+    }
+
+    /// Bytes `range` of `path` (None: all of it): the table's, else the bundle's file.
+    pub fn read_range(&self, path: &str, range: Option<Range<u64>>) -> Result<Arc<[u8]>, AssetError> {
+        if let Some(bytes) = self.table_bytes(path) {
+            let range = bundle_range(path, range, bytes.len() as u64)?;
+            let (start, end) = (usize::try_from(range.start).unwrap_or(usize::MAX), usize::try_from(range.end).unwrap_or(usize::MAX));
+            return Ok(Arc::from(bytes.get(start..end).unwrap_or_default()));
+        }
+        let (mut file, length) = self.open(path)?;
+        let range = bundle_range(path, range, length)?;
+        let mut bytes = vec![0; usize::try_from(range.end - range.start).unwrap_or(0)];
+        let read = file.seek(SeekFrom::Start(range.start)).and_then(|_| file.read_exact(&mut bytes));
+        read.map_err(|error| AssetError::new(AssetErrorCode::Missing, format!("{path}: {error}")))?;
+        Ok(Arc::from(bytes))
+    }
+}
+
+/// `range` (None: all of it) of an asset of `size` bytes: refused `malformed` when reversed or past
+/// the end, `too-large` past [`ASSET_READ_MAX_BYTES`].
+fn bundle_range(path: &str, range: Option<Range<u64>>, size: u64) -> Result<Range<u64>, AssetError> {
+    let range = range.unwrap_or(0..size);
+    if range.start > range.end || range.end > size {
+        let detail = format!("{path}: bytes {}..{} of a {size}-byte asset", range.start, range.end);
+        return Err(AssetError::new(AssetErrorCode::Malformed, detail));
+    }
+    if range.end - range.start > ASSET_READ_MAX_BYTES {
+        return Err(AssetError::new(AssetErrorCode::TooLarge, format!("{path}: {} bytes in one read", range.end - range.start)));
+    }
+    Ok(range)
+}
+
+impl<O: BundleOpen> AssetSource for BundleAssets<O> {
+    fn read(&self, path: &str) -> Result<Arc<[u8]>, AssetError> {
+        self.read_range(path, None)
+    }
+
+    fn size(&self, path: &str) -> Result<u64, AssetError> {
+        match self.table_bytes(path) {
+            Some(bytes) => Ok(bytes.len() as u64),
+            None => self.open(path).map(|(_, length)| length),
+        }
+    }
+}
+
+impl<O: BundleOpen> ModelSource for BundleAssets<O> {
+    fn model_bytes(&self, path: &str) -> Option<Vec<u8>> {
+        self.read(path).ok().map(|bytes| bytes.to_vec())
+    }
+
+    /// The table's bytes only: a bundled file's decoded upload is kept.
+    fn static_bytes(&self, path: &str) -> Option<&'static [u8]> {
+        self.table_bytes(path)
+    }
+}
+
+/// One device's view of [`SharedAssets`].
+struct SharedModels(SharedAssets);
+
+impl ModelSource for SharedModels {
+    fn model_bytes(&self, path: &str) -> Option<Vec<u8>> {
+        self.0.model_bytes(path)
+    }
+
+    fn has_asset(&self, path: &str) -> bool {
+        self.0.has_asset(path)
+    }
+
+    fn static_bytes(&self, path: &str) -> Option<&'static [u8]> {
+        self.0.static_bytes(path)
+    }
+}
+
+/// Where a device's models come from: the shared file-backed source when the shell has one, else
+/// the compiled table alone (a game with no file-backed assets, as before STR-15).
+pub fn models_for(assets: AssetTable, files: Option<&SharedAssets>) -> Box<dyn ModelSource> {
+    match files {
+        Some(files) => Box::new(SharedModels(Arc::clone(files))),
+        None => Box::new(assets),
+    }
+}
+
+/// genex's presenter on an admitted GPU, its models from `models` ([`models_for`]); after a loss
+/// it opens a new device from `instance` ([`reopen`]).
+fn device_on(gpu: Gpu, world: [u32; 2], models: Box<dyn ModelSource>, instance: &wgpu::Instance) -> Result<Device, RenderError> {
     let declared = genex::gpu::declared_native_features()?;
     let instance = instance.clone();
     let open = move || reopen(&instance);
-    let presenter = Presenter::with_gpu(gpu, world, declared, Box::new(open), Box::new(assets), log_refusal)?;
+    let presenter = Presenter::with_gpu(gpu, world, declared, Box::new(open), models, log_refusal)?;
     Ok(Device { presenter })
 }
 
@@ -461,7 +607,10 @@ impl App {
         };
         if self.device.is_none() {
             let opened = match open_gpu(&self.instance, &surface) {
-                Admission::Play(gpu) => device_on(gpu, self.game.world_size(), self.config.assets, &self.instance),
+                Admission::Play(gpu) => {
+                    let models = models_for(self.config.assets, self.config.files.as_ref());
+                    device_on(gpu, self.game.world_size(), models, &self.instance)
+                }
                 Admission::RefusalScreen(error) | Admission::Failed(error) => Err(error),
             };
             match opened {
@@ -1055,7 +1204,7 @@ mod tests {
             frame.cube(Transform::IDENTITY, Color::RED);
         });
         let mut runtime: Box<dyn GameHandle> = Box::new(genex::Runtime::new(game).expect("installs"));
-        let mut device = device_on(gpu, runtime.world_size(), &[], &core_instance()).expect("a presenter");
+        let mut device = device_on(gpu, runtime.world_size(), models_for(&[], None), &core_instance()).expect("a presenter");
         runtime.start();
         runtime.advance_live(1000.0 / 60.0);
         assert!(matches!(runtime.draw(&mut device.presenter, None), Some(Ok(_))), "the first frame draws");
@@ -1065,6 +1214,123 @@ mod tests {
         assert_eq!(runtime.recover(&mut device.presenter).map_err(|error| error.to_string()), Ok(true), "a new device");
         assert!(matches!(runtime.draw(&mut device.presenter, None), Some(Ok(_))), "the frame after draws again");
         assert_eq!(runtime.tick(), tick, "the game is where it was");
+    }
+
+    /// A fresh folder of `files` under the temp directory, for one test.
+    fn bundle(name: &str, files: &[(&str, &[u8])]) -> std::path::PathBuf {
+        let root = std::env::temp_dir().join(format!("genex-phone-bundle-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        for (path, bytes) in files {
+            let file = root.join(path);
+            std::fs::create_dir_all(file.parent().expect("a parent")).expect("folder");
+            std::fs::write(file, bytes).expect("file");
+        }
+        root
+    }
+
+    const MODEL: &[u8] = b"glTF-the-same-bytes-in-the-table-and-the-bundle";
+    const TABLE: AssetTable = &[("models/tree.glb", MODEL)];
+
+    /// Game systems STR-15 (new behaviour): a phone with file-backed assets draws models from its
+    /// bundle past the table, the table first; without them it draws from the table as before.
+    #[test]
+    fn a_phone_draws_from_its_bundle_past_the_table_and_without_one_from_the_table_alone() {
+        let root = bundle("models", &[("models/rock.glb", b"rock"), ("models/tree.glb", b"not the table's")]);
+        let files: SharedAssets = Arc::new(genex::AssetFiles::new(TABLE, Some(root.clone())));
+        let models = models_for(TABLE, Some(&files));
+        assert_eq!(models.model_bytes("models/rock.glb").as_deref(), Some(&b"rock"[..]), "the bundle's file");
+        assert_eq!(models.model_bytes("models/tree.glb").as_deref(), Some(MODEL), "the table first");
+        assert_eq!(models.static_bytes("models/tree.glb"), Some(MODEL), "the table's bytes stay static");
+        assert_eq!(models.static_bytes("models/rock.glb"), None, "a bundle file's upload is kept");
+        let table_only = models_for(TABLE, None);
+        assert_eq!(table_only.model_bytes("models/rock.glb"), None, "no bundle: the table alone");
+        assert_eq!(table_only.model_bytes("models/tree.glb").as_deref(), Some(MODEL));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    /// Game systems STR-15: the bundle source refuses every hostile path without opening a file,
+    /// and a range of a bundle file equals the same range of the table's bytes.
+    #[test]
+    fn the_bundle_source_refuses_a_hostile_path_table_opening_nothing_and_reads_ranges_as_the_table() {
+        use genex::{AssetErrorCode, AsyncSource, StreamFiles};
+        use genex_render::jobs::Priority;
+        let root = bundle("hostile", &[("models/tree.glb", MODEL), ("models/dir/inner.bin", b"x")]);
+        let outside = root.with_extension("outside");
+        std::fs::write(&outside, b"secret").expect("outside file");
+        std::os::unix::fs::symlink(&outside, root.join("models/link.glb")).expect("link");
+        let mut stream = StreamFiles::new(genex::AssetFiles::new(&[], Some(root.clone())));
+        let hostile = [
+            ("../genex-phone-bundle.outside", AssetErrorCode::UnsafePath),
+            ("/etc/passwd", AssetErrorCode::UnsafePath),
+            ("models//tree.glb", AssetErrorCode::UnsafePath),
+            ("models/./tree.glb", AssetErrorCode::UnsafePath),
+            ("models\\tree.glb", AssetErrorCode::UnsafePath),
+            ("models/link.glb", AssetErrorCode::UnsafePath),
+            ("models/dir", AssetErrorCode::Missing),
+            ("models/absent.glb", AssetErrorCode::Missing),
+        ];
+        let requests: Vec<_> = hostile.iter().map(|(path, _)| stream.request(path, None, Priority::Visible)).collect();
+        let mut answers = Vec::new();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while answers.len() < requests.len() && Instant::now() < deadline {
+            answers.extend(stream.poll());
+            std::thread::yield_now();
+        }
+        for (request, (path, code)) in requests.iter().zip(hostile) {
+            let answer = answers.iter().find(|(id, _)| id == request).map(|(_, answer)| answer.as_ref().map(|bytes| bytes.to_vec()));
+            let refused = answer.and_then(|answer| answer.err().map(genex::AssetError::code));
+            assert_eq!(refused, Some(code), "{path}");
+        }
+        assert_eq!(stream.opened(), 0, "no hostile path opened a file");
+        let range = 5..19_u64;
+        let request = stream.request("models/tree.glb", Some(range.clone()), Priority::Visible);
+        let mut read = None;
+        while read.is_none() && Instant::now() < deadline {
+            read = stream.poll().into_iter().find(|(id, _)| *id == request).map(|(_, answer)| answer.expect("read").to_vec());
+            std::thread::yield_now();
+        }
+        assert_eq!(read.as_deref(), Some(&MODEL[5..19]), "a bundle range equals the table's bytes");
+        assert_eq!(stream.opened(), 1, "the range opened its one file");
+        let _ = std::fs::remove_dir_all(root);
+        let _ = std::fs::remove_file(outside);
+    }
+
+    /// A bundle of in-memory files that counts what it opens (Android's `AAssetManager` on the host).
+    struct FakeBundle(Vec<(&'static str, &'static [u8])>);
+
+    impl BundleOpen for FakeBundle {
+        type File = std::io::Cursor<&'static [u8]>;
+
+        fn open(&self, path: &str) -> Option<(Self::File, u64)> {
+            self.0.iter().find(|(known, _)| *known == path).map(|(_, bytes)| (std::io::Cursor::new(*bytes), bytes.len() as u64))
+        }
+    }
+
+    /// Game systems STR-15 (new behaviour): the APK-style source refuses a hostile path table
+    /// before opening anything, reads a range equal to the table's bytes, keeps the table first and
+    /// checks every range against the file.
+    #[test]
+    fn a_bundle_source_refuses_hostile_paths_unopened_and_reads_ranges_as_the_table() {
+        let assets = BundleAssets::new(TABLE, Some(FakeBundle(vec![("models/rock.glb", MODEL), ("../escape.glb", b"no")])));
+        let hostile = ["../escape.glb", "/models/rock.glb", "models//rock.glb", "models/../rock.glb", "models\\rock.glb", "C:/rock.glb", "", "models/rock.glb\0"];
+        for path in hostile {
+            assert_eq!(assets.read(path).map(|bytes| bytes.len()).map_err(|error| error.code()), Err(AssetErrorCode::UnsafePath), "{path:?}");
+            assert_eq!(assets.size(path).map_err(|error| error.code()), Err(AssetErrorCode::UnsafePath), "{path:?}");
+        }
+        assert_eq!(assets.opened(), 0, "no hostile path opened a file");
+        let range = 5..19_u64;
+        let bundled = assets.read_range("models/rock.glb", Some(range.clone())).expect("a bundled range");
+        let tabled = assets.read_range("models/tree.glb", Some(range)).expect("a table range");
+        assert_eq!(&bundled[..], &MODEL[5..19], "a bundle range equals the table's bytes");
+        assert_eq!(bundled, tabled);
+        assert_eq!(assets.opened(), 1, "the table's file opened nothing");
+        let past = assets.read_range("models/rock.glb", Some(10..999)).map(|_| ()).map_err(|error| error.code());
+        assert_eq!(past, Err(AssetErrorCode::Malformed), "a range past the end");
+        assert_eq!(assets.read("models/absent.glb").map(|_| ()).map_err(|error| error.code()), Err(AssetErrorCode::Missing));
+        assert_eq!(assets.static_bytes("models/rock.glb"), None, "a bundled file's upload is kept");
+        assert_eq!(assets.static_bytes("models/tree.glb"), Some(MODEL));
+        let table_only: BundleAssets<FakeBundle> = BundleAssets::new(TABLE, None);
+        assert_eq!(table_only.read("models/rock.glb").map(|_| ()).map_err(|error| error.code()), Err(AssetErrorCode::Missing), "no bundle: the table alone");
     }
 
     #[test]

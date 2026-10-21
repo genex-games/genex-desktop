@@ -37,11 +37,11 @@ pub use mobile::present::{Presentation, SafePresenter};
 pub use mobile::records::Records;
 pub use mobile::refusal::{PixelLayout, RefusalImage};
 pub use mobile::safe_area::SafeArea;
-pub use mobile::shell::{PlatformHooks, ShellConfig, ShellOutcome};
+pub use mobile::shell::{PlatformHooks, SharedAssets, ShellConfig, ShellOutcome};
 pub use mobile::thermal::{Pacer, Thermal, ThermalWatch};
 pub use mobile::touch::{TouchEvent, TouchTracker};
 
-use genex::{Game, Runtime};
+use genex::{AssetFiles, Game, Runtime};
 use genex_platform_web::AssetTable;
 use std::path::PathBuf;
 use winit::event_loop::EventLoop;
@@ -108,8 +108,9 @@ pub fn run<W: Default + 'static>(name: &'static str, game: Game<W>, demo: &str, 
         log::set_max_level(log::LevelFilter::Info);
     }
     let records = documents_dir().map(|dir| Records::new(&dir, PLATFORM));
-    // The sim reads the compiled table from its first reset on, as the presenter draws from it.
-    let runtime = match Runtime::with_assets(game, Box::new(assets)) {
+    // The sim reads the compiled table, then the bundle's `assets/` beside the executable (game
+    // systems STR-15), from its first reset on, as the presenter draws from them.
+    let runtime = match Runtime::with_assets(game, Box::new(AssetFiles::for_process(assets))) {
         Ok(runtime) => runtime,
         Err(error) => {
             log::error!("{error}");
@@ -124,6 +125,7 @@ pub fn run<W: Default + 'static>(name: &'static str, game: Game<W>, demo: &str, 
         game: name,
         plan: mobile::selftest::device_plan(name, demo),
         assets,
+        files: Some(std::sync::Arc::new(AssetFiles::for_process(assets)) as SharedAssets),
         records,
         safe_area: window_safe_area,
         audio: audio_session::PLATFORM_AUDIO,
